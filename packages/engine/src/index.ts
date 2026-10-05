@@ -1,0 +1,14 @@
+export { runEngine, type EngineDeps, type EngineResult } from "./engine.ts";
+export { DEFAULT_CONFIG, ENGINE_VERSION, GENERATOR_NAMES, configHash, resolveConfig, type EngineConfig, type EngineConfigInput, type GeneratorName } from "./config.ts";
+export * from "./types.ts";
+export { localEmbed, cosine, tokenize, type EmbedFn } from "./embed.ts";
+export { JudgeCache, judgeCacheKey, parseVerdict, buildJudgeMessages, judgeOne } from "./judge.ts";
+export { candidateReason, memberReason, pairReason, type FilterReason } from "./filters.ts";
+export { composeGroup } from "./group.ts";
+export { gini, lorenz } from "./policy.ts";
+export { harmonic, mutualBenefit, netValue } from "./scoring.ts";
+export { World, buildWorld } from "./world.ts";
+export * as opportunity from "./opportunity.ts";
+export * as outreach from "./outreach.ts";
+export { MatcherScheduler, MemoryProposalStore, type ProposalStore } from "./tick.ts";
+export { Rng } from "./rng.ts";
