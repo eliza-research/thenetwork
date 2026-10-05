@@ -2,9 +2,12 @@
   "name": "thenetwork",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/*", "prototypes/*"],
+  "workspaces": [
+    "packages/*",
+    "prototypes/*"
+  ],
   "scripts": {
-    "test": "bun test",
+    "test": "bun test packages prototypes",
     "typecheck": "tsc --noEmit -p ."
   },
   "devDependencies": {
