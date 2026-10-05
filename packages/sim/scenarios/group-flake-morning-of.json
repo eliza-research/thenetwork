@@ -1,0 +1,235 @@
+{
+  "name": "group-flake-morning-of",
+  "description": "A dinner of six where one person (dinner-4) accepts and then cancels the morning of. The Network should tell the others without blame and keep or cancel the dinner gracefully.",
+  "seed": 21,
+  "days": 5,
+  "stub": {
+    "randomIntros": false
+  },
+  "personas": [
+    {
+      "ref": "dinner-1",
+      "name": "Ines Moreau",
+      "city": "sf",
+      "homeArea": "Noe Valley",
+      "interests": [
+        "cooking",
+        "wine",
+        "board_games"
+      ],
+      "skills": [
+        "hosting"
+      ],
+      "desires": [
+        "dinner_club"
+      ],
+      "capacity": 0.95,
+      "socialEnergy": 0.8,
+      "preferredGroupSize": 6,
+      "flakiness": 0,
+      "responsiveness": {
+        "latencyMedianMin": 20,
+        "ignoreProb": 0
+      },
+      "join": {
+        "day": 0,
+        "hour": 9
+      }
+    },
+    {
+      "ref": "dinner-2",
+      "name": "Kofi Abara",
+      "city": "sf",
+      "homeArea": "Noe Valley",
+      "interests": [
+        "cooking",
+        "wine",
+        "board_games"
+      ],
+      "skills": [
+        "chef"
+      ],
+      "desires": [
+        "dinner_club"
+      ],
+      "capacity": 0.95,
+      "socialEnergy": 0.8,
+      "preferredGroupSize": 6,
+      "flakiness": 0,
+      "responsiveness": {
+        "latencyMedianMin": 20,
+        "ignoreProb": 0
+      },
+      "join": {
+        "day": 0,
+        "hour": 9
+      }
+    },
+    {
+      "ref": "dinner-3",
+      "name": "Mira Sato",
+      "city": "sf",
+      "homeArea": "Noe Valley",
+      "interests": [
+        "cooking",
+        "wine",
+        "board_games"
+      ],
+      "skills": [],
+      "desires": [
+        "dinner_club"
+      ],
+      "capacity": 0.95,
+      "socialEnergy": 0.8,
+      "preferredGroupSize": 6,
+      "flakiness": 0,
+      "responsiveness": {
+        "latencyMedianMin": 20,
+        "ignoreProb": 0
+      },
+      "join": {
+        "day": 0,
+        "hour": 9
+      }
+    },
+    {
+      "ref": "dinner-4",
+      "name": "Felix Novak",
+      "city": "sf",
+      "homeArea": "Noe Valley",
+      "interests": [
+        "cooking",
+        "wine",
+        "board_games"
+      ],
+      "skills": [],
+      "desires": [
+        "dinner_club"
+      ],
+      "capacity": 0.95,
+      "socialEnergy": 0.8,
+      "preferredGroupSize": 6,
+      "flakiness": 0,
+      "responsiveness": {
+        "latencyMedianMin": 20,
+        "ignoreProb": 0
+      },
+      "join": {
+        "day": 0,
+        "hour": 9
+      }
+    },
+    {
+      "ref": "dinner-5",
+      "name": "Yara Haddad",
+      "city": "sf",
+      "homeArea": "Noe Valley",
+      "interests": [
+        "cooking",
+        "wine",
+        "board_games"
+      ],
+      "skills": [],
+      "desires": [
+        "dinner_club"
+      ],
+      "capacity": 0.95,
+      "socialEnergy": 0.8,
+      "preferredGroupSize": 6,
+      "flakiness": 0,
+      "responsiveness": {
+        "latencyMedianMin": 20,
+        "ignoreProb": 0
+      },
+      "join": {
+        "day": 0,
+        "hour": 9
+      }
+    },
+    {
+      "ref": "dinner-6",
+      "name": "Owen Byrne",
+      "city": "sf",
+      "homeArea": "Noe Valley",
+      "interests": [
+        "cooking",
+        "wine",
+        "board_games"
+      ],
+      "skills": [],
+      "desires": [
+        "dinner_club"
+      ],
+      "capacity": 0.95,
+      "socialEnergy": 0.8,
+      "preferredGroupSize": 6,
+      "flakiness": 0,
+      "responsiveness": {
+        "latencyMedianMin": 20,
+        "ignoreProb": 0
+      },
+      "join": {
+        "day": 0,
+        "hour": 9
+      }
+    }
+  ],
+  "actions": [
+    {
+      "at": {
+        "day": 0,
+        "hour": 20
+      },
+      "do": "force_flake",
+      "persona": "dinner-4",
+      "how": "notice"
+    },
+    {
+      "at": {
+        "day": 1,
+        "hour": 9,
+        "minute": 30
+      },
+      "do": "propose",
+      "kind": "group",
+      "participants": [
+        "dinner-1",
+        "dinner-2",
+        "dinner-3",
+        "dinner-4",
+        "dinner-5",
+        "dinner-6"
+      ],
+      "objective": "dinner for six",
+      "city": "sf",
+      "explanation": "everyone here loves cooking and wants a regular dinner group"
+    }
+  ],
+  "expectations": [
+    {
+      "check": "flake_notice",
+      "persona": "dinner-4"
+    },
+    {
+      "check": "others_notified_of_drop",
+      "persona": "dinner-4"
+    },
+    {
+      "check": "meeting_held",
+      "personas": [
+        "dinner-1",
+        "dinner-2",
+        "dinner-3",
+        "dinner-5",
+        "dinner-6"
+      ],
+      "min": 3
+    },
+    {
+      "check": "metric",
+      "path": "invariants.total",
+      "op": "==",
+      "value": 0
+    }
+  ]
+}

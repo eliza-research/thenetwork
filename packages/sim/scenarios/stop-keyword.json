@@ -1,0 +1,56 @@
+{
+  "name": "stop-keyword",
+  "description": "A member texts STOP on day 2. Nothing may be delivered to them afterwards (carrier requirement, F20).",
+  "seed": 61,
+  "days": 6,
+  "background": {
+    "personas": 12
+  },
+  "personas": [
+    {
+      "ref": "quitter",
+      "name": "Gwen Larsen",
+      "city": "sf",
+      "homeArea": "Castro",
+      "interests": [
+        "yoga",
+        "meditation",
+        "gardening"
+      ],
+      "desires": [
+        "new_friends"
+      ],
+      "capacity": 0.6,
+      "responsiveness": {
+        "latencyMedianMin": 20,
+        "ignoreProb": 0
+      },
+      "join": {
+        "day": 0,
+        "hour": 9
+      }
+    }
+  ],
+  "actions": [
+    {
+      "at": {
+        "day": 2,
+        "hour": 11
+      },
+      "do": "opt_out",
+      "persona": "quitter"
+    }
+  ],
+  "expectations": [
+    {
+      "check": "no_messages_after_stop",
+      "persona": "quitter"
+    },
+    {
+      "check": "metric",
+      "path": "invariants.byRule.send_after_stop",
+      "op": "==",
+      "value": 0
+    }
+  ]
+}

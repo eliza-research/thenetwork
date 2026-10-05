@@ -1,0 +1,80 @@
+{
+  "name": "nyc-to-sf-traveler",
+  "description": "A NYC member travels to SF for days 3-8 and announces it. A real engine should include them in SF opportunities during the window and not in NYC ones.",
+  "seed": 51,
+  "days": 10,
+  "background": {
+    "personas": 30
+  },
+  "personas": [
+    {
+      "ref": "nomad",
+      "name": "Kenji Rossi",
+      "city": "nyc",
+      "homeArea": "Williamsburg",
+      "archetype": "traveler",
+      "interests": [
+        "climbing",
+        "coffee",
+        "startups"
+      ],
+      "desires": [
+        "climbing_partner"
+      ],
+      "capacity": 0.8,
+      "responsiveness": {
+        "latencyMedianMin": 20,
+        "ignoreProb": 0.02
+      },
+      "trips": [
+        {
+          "city": "sf",
+          "fromDay": 3,
+          "toDay": 8
+        }
+      ],
+      "join": {
+        "day": 0,
+        "hour": 10
+      }
+    }
+  ],
+  "actions": [
+    {
+      "at": {
+        "day": 1,
+        "hour": 15
+      },
+      "do": "say",
+      "persona": "nomad",
+      "text": "Heads up, I'll be in SF from Thursday through next Tuesday. Anyone climb out there?"
+    }
+  ],
+  "expectations": [
+    {
+      "check": "proposal_in_city",
+      "persona": "nomad",
+      "city": "sf",
+      "fromDay": 3,
+      "toDay": 8,
+      "appliesTo": [
+        "engine"
+      ]
+    },
+    {
+      "check": "metric",
+      "path": "proposals.unsafe.cityMismatch",
+      "op": "==",
+      "value": 0,
+      "appliesTo": [
+        "engine"
+      ]
+    },
+    {
+      "check": "metric",
+      "path": "invariants.total",
+      "op": "==",
+      "value": 0
+    }
+  ]
+}

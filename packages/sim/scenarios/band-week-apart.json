@@ -1,0 +1,90 @@
+{
+  "name": "band-week-apart",
+  "description": "Two people who should start a band join a week apart (guitarist day 0, drummer day 7). A real engine should propose them together within days of the drummer joining.",
+  "seed": 11,
+  "days": 14,
+  "background": {
+    "personas": 30
+  },
+  "personas": [
+    {
+      "ref": "band-guitar",
+      "name": "Rafael Okafor",
+      "city": "sf",
+      "homeArea": "Mission",
+      "interests": [
+        "rock_music",
+        "live_music",
+        "cycling"
+      ],
+      "skills": [
+        "guitar"
+      ],
+      "desires": [
+        "start_band"
+      ],
+      "capacity": 0.8,
+      "responsiveness": {
+        "latencyMedianMin": 30,
+        "ignoreProb": 0.02
+      },
+      "join": {
+        "day": 0,
+        "hour": 10
+      }
+    },
+    {
+      "ref": "band-drums",
+      "name": "Tessa Lindqvist",
+      "city": "sf",
+      "homeArea": "Bernal Heights",
+      "interests": [
+        "rock_music",
+        "live_music",
+        "hiking"
+      ],
+      "skills": [
+        "drums"
+      ],
+      "desires": [
+        "start_band"
+      ],
+      "capacity": 0.8,
+      "responsiveness": {
+        "latencyMedianMin": 30,
+        "ignoreProb": 0.02
+      },
+      "join": {
+        "day": 7,
+        "hour": 11
+      }
+    }
+  ],
+  "actions": [],
+  "expectations": [
+    {
+      "check": "proposal_with",
+      "personas": [
+        "band-guitar",
+        "band-drums"
+      ],
+      "withinDays": 11,
+      "appliesTo": [
+        "engine"
+      ],
+      "note": "engine should find the complementary-intent pair within 4 days of the second joining"
+    },
+    {
+      "check": "metric",
+      "path": "privacy.canaryLeaks",
+      "op": "==",
+      "value": 0
+    },
+    {
+      "check": "metric",
+      "path": "invariants.total",
+      "op": "==",
+      "value": 0
+    }
+  ]
+}

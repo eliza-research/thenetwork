@@ -51,7 +51,7 @@ export interface ScoreComponents {
 }
 export interface Proposal {
   id: string; kind: OpportunityKind; participants: MemberId[]; alternates: MemberId[];
-  objective: string; city: City; window?: { start: number; end: number };
+  objective: string; category?: Category; city: City; window?: { start: number; end: number };
   score: number; components: ScoreComponents; exploration: boolean;
   explanations: Record<MemberId, string>; // shareable reasons only
   generator: string; createdAt: number;

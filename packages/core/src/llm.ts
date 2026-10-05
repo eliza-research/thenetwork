@@ -26,7 +26,14 @@ export class CerebrasLLM implements LLM {
       }
       if (!res.ok) throw new Error(`Cerebras ${res.status}: ${await res.text()}`);
       const data: any = await res.json();
-      return (data.choices?.[0]?.message?.content ?? "").trim();
+      const choice = data.choices?.[0];
+      const content = (choice?.message?.content ?? "").trim();
+      // Reasoning models can spend the whole budget thinking and return nothing usable.
+      if ((!content || choice?.finish_reason === "length") && attempt < 2) {
+        opts = { ...opts, maxTokens: Math.min((opts.maxTokens ?? 2048) * 2, 16384) };
+        continue;
+      }
+      return content;
     }
   }
 }

@@ -1,0 +1,63 @@
+{
+  "name": "member-goes-silent",
+  "description": "A member replies normally for a day, then stops replying entirely. The Network must not keep nudging: two-unanswered rule and weekly budget hold.",
+  "seed": 41,
+  "days": 10,
+  "background": {
+    "personas": 16
+  },
+  "personas": [
+    {
+      "ref": "ghost",
+      "name": "Hugo Delgado",
+      "city": "sf",
+      "homeArea": "Sunset",
+      "interests": [
+        "running",
+        "coffee",
+        "books"
+      ],
+      "desires": [
+        "run_club"
+      ],
+      "capacity": 0.7,
+      "responsiveness": {
+        "latencyMedianMin": 15,
+        "ignoreProb": 0
+      },
+      "join": {
+        "day": 0,
+        "hour": 9
+      }
+    }
+  ],
+  "actions": [
+    {
+      "at": {
+        "day": 1,
+        "hour": 12
+      },
+      "do": "go_silent",
+      "persona": "ghost"
+    }
+  ],
+  "expectations": [
+    {
+      "check": "silent_after",
+      "persona": "ghost",
+      "day": 1
+    },
+    {
+      "check": "metric",
+      "path": "invariants.byRule.two_unanswered",
+      "op": "==",
+      "value": 0
+    },
+    {
+      "check": "metric",
+      "path": "invariants.byRule.over_budget",
+      "op": "==",
+      "value": 0
+    }
+  ]
+}

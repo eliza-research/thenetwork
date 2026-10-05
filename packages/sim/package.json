@@ -1,0 +1,15 @@
+{
+  "name": "@thenetwork/sim",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "sim": "bun run src/cli.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@thenetwork/core": "workspace:*",
+    "@thenetwork/judge": "workspace:*"
+  }
+}
