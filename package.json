@@ -1,0 +1,14 @@
+{
+  "name": "thenetwork",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*", "prototypes/*"],
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  }
+}

@@ -1,0 +1,38 @@
+// Minimal OpenAI-compatible client for Cerebras (qwen-3.8-27b is a reasoning model:
+// leave room in max_tokens for hidden reasoning, and read message.content for the answer).
+export interface ChatMessage { role: "system" | "user" | "assistant"; content: string }
+export interface LLM {
+  chat(messages: ChatMessage[], opts?: { maxTokens?: number; temperature?: number; json?: boolean }): Promise<string>;
+}
+export class CerebrasLLM implements LLM {
+  constructor(
+    private apiKey = process.env.CEREBRAS_API_KEY ?? "",
+    private model = process.env.CEREBRAS_MODEL ?? "qwen-3.8-27b",
+    private baseUrl = process.env.CEREBRAS_BASE_URL ?? "https://api.cerebras.ai/v1",
+  ) { if (!this.apiKey) throw new Error("CEREBRAS_API_KEY missing (see .env.example)"); }
+  async chat(messages: ChatMessage[], opts: { maxTokens?: number; temperature?: number; json?: boolean } = {}) {
+    for (let attempt = 0; ; attempt++) {
+      const res = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: this.model, messages, max_tokens: opts.maxTokens ?? 2048,
+          temperature: opts.temperature ?? 0.7,
+          ...(opts.json ? { response_format: { type: "json_object" } } : {}),
+        }),
+      });
+      if ((res.status === 429 || res.status >= 500) && attempt < 4) {
+        await new Promise(r => setTimeout(r, 1000 * 2 ** attempt)); continue;
+      }
+      if (!res.ok) throw new Error(`Cerebras ${res.status}: ${await res.text()}`);
+      const data: any = await res.json();
+      return (data.choices?.[0]?.message?.content ?? "").trim();
+    }
+  }
+}
+/** Parse a JSON object out of a model reply (tolerates code fences / prose). */
+export function parseJson<T = any>(text: string): T {
+  const m = text.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
+  if (!m) throw new Error(`no JSON in model output: ${text.slice(0, 200)}`);
+  return JSON.parse(m[0]);
+}
