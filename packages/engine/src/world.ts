@@ -51,6 +51,8 @@ export class World {
   readonly positive = new Map<MemberId, Map<MemberId, number>>();
   readonly edgeTypes = new Map<string, Set<EdgeType>>();
   readonly holds = new Set<MemberId>();
+  /** Members under 18 (or with no valid age). Never connected to anyone (minors policy, PRD 17.4). */
+  readonly minors = new Set<MemberId>();
   readonly negativeFeedback = new Map<string, number>();
   readonly feedback: FeedbackRecord[];
   readonly pairInteractions = new Map<string, InteractionRecord[]>();
@@ -83,6 +85,9 @@ export class World {
     this.dim = embed("dimension probe").length;
     const now = this.now;
 
+    // Minors are identified before anything else so no derived structure can route through them.
+    for (const m of input.members) if (!(typeof m.age === "number" && m.age >= 18)) this.minors.add(m.id);
+
     // --- edges -------------------------------------------------------------------------
     const edges: Edge[] = input.edges.map(e => ({ ...e, from: C(e.from), to: C(e.to) }));
     for (const e of edges) {
@@ -91,7 +96,9 @@ export class World {
       if (!this.edgeTypes.has(k)) this.edgeTypes.set(k, new Set());
       this.edgeTypes.get(k)!.add(e.type);
       if (BLOCKING_EDGES.has(e.type)) this.blocked.add(k);
-      if (POSITIVE_EDGES.has(e.type)) {
+      // Minors policy: a minor is never a warm tie, a two-hop intermediary (`via`), or a source of
+      // degree / "friendliness" for anyone. Their edges stay out of the warm graph entirely.
+      if (POSITIVE_EDGES.has(e.type) && !this.minors.has(e.from) && !this.minors.has(e.to)) {
         for (const [a, b] of [[e.from, e.to], [e.to, e.from]] as const) {
           if (!this.positive.has(a)) this.positive.set(a, new Map());
           const cur = this.positive.get(a)!.get(b) ?? 0;
@@ -281,7 +288,8 @@ export class World {
       let cur = id; const seen = new Set<string>();
       while (true) {
         const inv = this.members.get(cur)?.m.invitedBy;
-        if (!inv || seen.has(inv) || !this.members.has(C(inv))) break;
+        // Never follow an invite chain into a minor: their id must not surface as a fairness cohort key.
+        if (!inv || seen.has(inv) || !this.members.has(C(inv)) || this.minors.has(C(inv))) break;
         seen.add(cur); cur = C(inv);
       }
       this.members.get(id)!.inviterRoot = cur;

@@ -423,7 +423,7 @@ export class World {
 }
 
 export function summarize(v: OracleVerdict): OracleSummary {
-  return { compatible: v.compatible, quality: v.quality, minEnjoyment: v.minEnjoyment, flags: v.flags, participants: v.participants };
+  return { compatible: v.compatible, unsafe: v.unsafe, quality: v.quality, minEnjoyment: v.minEnjoyment, flags: v.flags, participants: v.participants };
 }
 
 /** Convenience: build and run a world. */

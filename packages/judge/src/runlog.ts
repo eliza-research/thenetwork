@@ -17,6 +17,8 @@ export interface LoggedPersona {
 
 export interface OracleSummary {
   compatible: boolean; quality: number; minEnjoyment: number; flags: string[];
+  /** Hard-safety verdict (e.g. any participant under 18). Optional for older run logs. */
+  unsafe?: boolean;
   participants: Record<MemberId, { acceptProb: number; wouldAccept: boolean; showProb: number; wouldShow: boolean; enjoyment: number }>;
 }
 

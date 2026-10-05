@@ -102,6 +102,8 @@ export interface FunnelLog {
   rejectedBy: Record<string, number>; passedHardFilters: number; deduped: number;
   floorViolations: Record<string, number>; dealbreakers: number; belowThreshold: number;
   eligible: number; budgetSkips: number; selected: number; exploration: number;
+  /** Selected configurations withheld by the final policy guard (should always be absent). */
+  rejectedAfterSelection?: Record<string, number>;
 }
 export interface MatchingRunLog {
   runId: string; seed: number; configHash: string; inputHash: string; now: number;

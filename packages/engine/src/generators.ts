@@ -4,7 +4,7 @@ import type { Category, Facet, Intent, MemberId, OpportunityKind } from "@thenet
 import { DAY, HOUR } from "@thenetwork/core";
 import type { GeneratorName } from "./config.ts";
 import { cosine, tokenize } from "./embed.ts";
-import { isHomeEntry, memberReason, pairReason } from "./filters.ts";
+import { isHomeEntry, isMinor, memberReason, pairReason } from "./filters.ts";
 import { composeGroup } from "./group.ts";
 import { eligibleMembers, retrieveByEmbedding, retrieveForIntent, twoHop, type RetrievalCtx } from "./retrieval.ts";
 import type { Rng } from "./rng.ts";
@@ -256,7 +256,7 @@ export function warmPath(ctx: GenCtx): Candidate[] {
       const found: Candidate[] = [];
       for (const [b, path] of [...hop.entries()].sort((p, q) => (p[0] < q[0] ? -1 : 1))) {
         const mb = w.get(b);
-        if (!mb) continue;
+        if (!mb || isMinor(w, b) || isMinor(w, path.via)) continue;
         const f = w.intentFit(intent, mb, "match");
         if (f.sim < w.cfg.retrieval.warmMinSim) continue;
         const role: Role = f.facet && ["skill", "offer", "resource"].includes(f.facet.kind) ? "provider" : "peer";
@@ -348,6 +348,7 @@ export function groupComposer(ctx: GenCtx): Candidate[] {
     const themeMembers = new Map<string, Set<MemberId>>();
     for (const id of w.ids) {
       const mi = w.get(id)!;
+      if (isMinor(w, id)) continue; // minors never seed or size a group theme
       if (mi.m.homeCity !== city && !mi.presence.some(p => p.city === city)) continue;
       for (const f of mi.share) if (f.kind === "interest" || f.kind === "desire") for (const t of f.tags) {
         const k = t.toLowerCase();
@@ -491,7 +492,8 @@ export function networkGrowth(ctx: GenCtx): Candidate[] {
   const byCat = new Map<string, Intent[]>();
   for (const iid of [...ctx.unmatchedIntents].sort()) {
     const it = w.intentById.get(iid);
-    if (!it) continue;
+    // Minors policy: a minor's unmet need never becomes a growth ask shown to adults.
+    if (!it || isMinor(w, it.memberId)) continue;
     const k = `${w.get(it.memberId)!.m.homeCity}:${it.category}`;
     if (!byCat.has(k)) byCat.set(k, []);
     byCat.get(k)!.push(it);
@@ -504,6 +506,7 @@ export function networkGrowth(ctx: GenCtx): Candidate[] {
   const areaMembers = new Map<string, MemberId[]>();
   for (const id of w.ids) {
     const mi = w.get(id)!;
+    if (isMinor(w, id)) continue; // minors never count toward (or reveal) a host-less area
     for (const p of mi.presence) if (p.type === "home") for (const a of p.areas) {
       const k = `${p.city}:${a}`;
       if (!areaMembers.has(k)) areaMembers.set(k, []);

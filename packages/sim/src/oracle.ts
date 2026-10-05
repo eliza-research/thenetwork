@@ -28,6 +28,13 @@ export interface OracleVerdict {
   participants: Record<MemberId, ParticipantOutcome>;
   /** Ground truth: is this a genuinely good opportunity for everyone involved? */
   compatible: boolean;
+  /**
+   * Hard-safety verdict: true if the proposal must never have been made, whatever the
+   * enjoyment (any participant under 18 by TRUE age, an adversarial participant, exes, a
+   * romance mismatch). Minors policy: ANY proposal involving a minor is unsafe, including
+   * single-person asks (e.g. a network-growth ask to a minor). Unsafe implies !compatible.
+   */
+  unsafe: boolean;
   quality: number;          // mean enjoyment
   minEnjoyment: number;
   flags: OracleFlag[];
@@ -127,6 +134,9 @@ export class Oracle {
     const flags = new Set<OracleFlag>();
     if (ps.some(p => !p)) flags.add("unknown_member");
     const people = ps.filter((p): p is Persona => !!p);
+    // Minors policy: checked over every participant, not only per pair, so a one-person
+    // proposal (growth ask, relay) involving a minor is flagged too.
+    if (people.some(p => p.hidden.trueAge < 18)) flags.add("minor_included");
     const category = this.categoryOf(prop);
     const groupSize = people.length;
     const at = prop.window?.start ?? this.worldStart;
@@ -175,10 +185,11 @@ export class Oracle {
     const quality = es.length ? es.reduce((s, x) => s + x, 0) / es.length : 0;
     const minEnjoyment = es.length ? Math.min(...es) : 0;
     const hard: OracleFlag[] = ["minor_included", "romance_mismatch", "ex_partners", "adversarial_participant", "city_mismatch", "unknown_member"];
-    const compatible = !hard.some(f => flags.has(f)) && people.length >= 2 && (people.length === 2
+    const unsafe = (["minor_included", "romance_mismatch", "ex_partners", "adversarial_participant"] as OracleFlag[]).some(f => flags.has(f));
+    const compatible = !unsafe && !hard.some(f => flags.has(f)) && people.length >= 2 && (people.length === 2
       ? minEnjoyment >= GOOD_PAIR
       : quality >= GOOD_GROUP_MEAN && minEnjoyment >= GOOD_GROUP_MIN);
-    return { proposalId: prop.id, participants: out, compatible, quality: round3(quality), minEnjoyment: round3(minEnjoyment), flags: [...flags] };
+    return { proposalId: prop.id, participants: out, compatible, unsafe, quality: round3(quality), minEnjoyment: round3(minEnjoyment), flags: [...flags] };
   }
 
   /**

@@ -16,6 +16,7 @@ export const ARCHETYPE_MIX: Record<Archetype, number> = {
   regular: 0.30, busy_parent: 0.12, newcomer: 0.12, connector: 0.08, introvert: 0.12,
   very_active: 0.08, never_replies: 0.06, traveler: 0.12,
 };
+export const DEFAULT_MINOR_SHARE = 0.05;
 export const ADVERSARIAL_KINDS: AdversarialKind[] =
   ["spammer", "scammer", "harasser", "minor", "prompt_injector", "block_abuser"];
 
@@ -27,6 +28,12 @@ export interface GeneratorOptions {
   archetypeMix?: Partial<Record<Archetype, number>>;
   /** Share of adversarial personas (default 0.06; at least one of each kind once n >= 60). */
   adversarialRate?: number;
+  /**
+   * Share of honest members under 18 (ages 13-17, claimed age = true age) who join for
+   * single-player value only (minors policy, PRD 17.4 as amended 2026-10-05). Default
+   * DEFAULT_MINOR_SHARE; 0 disables. Separate from the adversarial "minor" who lies about age.
+   */
+  minorShare?: number;
   /** Share of personas with an agent-private disclosure + canary (default 0.3). */
   disclosureRate?: number;
   /** Personas join over days [0, joinSpreadDays) (default 7); ~60% join on day 0-1. */
@@ -73,16 +80,23 @@ export function generatePersonas(opts: GeneratorOptions): Persona[] {
   const nAdv = advRate <= 0 ? 0 : Math.max(n >= 60 ? ADVERSARIAL_KINDS.length : 0, Math.round(n * advRate));
   const advOrder = root.fork("adv").shuffle([...Array(n).keys()]).slice(0, nAdv);
   const advKind = new Map<number, AdversarialKind>(advOrder.map((idx, k) => [idx, ADVERSARIAL_KINDS[k % ADVERSARIAL_KINDS.length]!]));
+  // Honest minors: their own RNG fork, never overlapping adversarial slots, so a run with
+  // minorShare 0 is identical to one generated before minors existed.
+  const minorShare = Math.max(0, opts.minorShare ?? DEFAULT_MINOR_SHARE);
+  const nMinor = minorShare <= 0 ? 0 : Math.min(n - nAdv, Math.round(n * minorShare));
+  const minorSlots = new Set(root.fork("minor").shuffle([...Array(n).keys()].filter(i => !advKind.has(i))).slice(0, nMinor));
 
   const usedNames = new Set<string>();
   const personas: Persona[] = [];
   for (let i = 0; i < n; i++) {
     const r = root.fork("persona", i);
     const id = `${prefix}${String(i + 1).padStart(4, "0")}`;
-    const archetype = r.weighted(Object.entries(mix) as [Archetype, number][]);
+    let archetype = r.weighted(Object.entries(mix) as [Archetype, number][]);
     const homeCity = r.weighted(Object.entries(cityW) as [City, number][]);
     const adversarial = advKind.get(i);
-    personas.push(buildPersona(r, { id, archetype, homeCity, adversarial, disclosureRate, spread, usedNames }));
+    const minor = minorSlots.has(i);
+    if (minor && archetype === "busy_parent") archetype = "regular";
+    personas.push(buildPersona(r, { id, archetype, homeCity, adversarial, disclosureRate, spread, usedNames, minor }));
   }
   wireRelationships(root.fork("relationships"), personas);
   return personas;
@@ -107,7 +121,7 @@ function canaryToken(r: Rng): string {
 
 function buildPersona(r: Rng, a: {
   id: string; archetype: Archetype; homeCity: City; adversarial?: AdversarialKind;
-  disclosureRate: number; spread: number; usedNames: Set<string>;
+  disclosureRate: number; spread: number; usedNames: Set<string>; minor?: boolean;
 }): Persona {
   const { id, archetype, homeCity, adversarial } = a;
   const P = PARAMS[archetype];
@@ -118,8 +132,13 @@ function buildPersona(r: Rng, a: {
   let trueAge = Math.round(clamp01((r.normal(32, 7) - 18) / 50) * 50 + 18);
   if (archetype === "busy_parent") trueAge = Math.max(trueAge, 30);
   if (archetype === "newcomer") trueAge = Math.min(trueAge, 35);
-  const claimedAge = adversarial === "minor" ? r.int(18, 21) : trueAge;
+  let claimedAgeOverride: number | undefined;
+  const claimedAgeRaw = adversarial === "minor" ? r.int(18, 21) : trueAge;
   if (adversarial === "minor") trueAge = r.int(15, 17);
+  // Honest minor: states their real age at onboarding (13-17). Drawn from a separate fork so
+  // every other draw for this persona is unchanged.
+  if (a.minor) { trueAge = r.fork("minor-age").int(13, 17); claimedAgeOverride = trueAge; }
+  const claimedAge = claimedAgeOverride ?? claimedAgeRaw;
 
   // --- interests, skills, desires ---
   const nInterests = r.int(3, 6);
@@ -198,6 +217,12 @@ function buildPersona(r: Rng, a: {
     adversarial,
   };
   if (adversarial === "minor") hidden.romance.optIn = false; // true preference; they may still *claim* it
+  if (a.minor) {
+    // Honest minors: romance is adult-only, so no romance desire or opt-in.
+    hidden.romance.optIn = false;
+    hidden.desires = hidden.desires.filter(d => d.category !== "romance");
+    if (!hidden.desires.length) hidden.desires.push({ id: "new_friends", text: desireById.get("new_friends")!.text, category: "social", strength: 0.6 });
+  }
   applyAdversarialTraits(r, hidden);
 
   const pub = buildPublic(r, name, claimedAge, routine.homeArea, hidden);

@@ -1,0 +1,65 @@
+{
+  "name": "minor-joins-single-player",
+  "description": "A 15-year-old joins (declares their real age) alongside two adults with the same interests in the same neighborhood. Minors policy (PRD 17.4 as amended 2026-10-05): the minor gets single-player value only (onboarding plus concierge answers and public suggestions), and is never proposed, introduced, grouped, scheduled, or named to anyone. That holds even when an upstream proposal (simulated bug) pairs them with an adult. The adults still get matched with each other.",
+  "seed": 71,
+  "days": 8,
+  "background": {
+    "personas": 10,
+    "minorShare": 0.2
+  },
+  "stub": {
+    "introRate": 1
+  },
+  "personas": [
+    {
+      "ref": "teen",
+      "name": "Milo Reyes",
+      "age": 15,
+      "city": "sf",
+      "homeArea": "Mission",
+      "interests": ["climbing", "board_games", "photography"],
+      "desires": ["climbing_partner"],
+      "capacity": 0.8,
+      "socialEnergy": 0.7,
+      "responsiveness": { "latencyMedianMin": 10, "ignoreProb": 0 },
+      "join": { "day": 0, "hour": 16 }
+    },
+    {
+      "ref": "ada",
+      "name": "Ada Kowalski",
+      "city": "sf",
+      "homeArea": "Mission",
+      "interests": ["climbing", "board_games", "coffee"],
+      "desires": ["climbing_partner"],
+      "capacity": 0.8,
+      "responsiveness": { "latencyMedianMin": 20, "ignoreProb": 0 },
+      "join": { "day": 0, "hour": 10 }
+    },
+    {
+      "ref": "ben",
+      "name": "Ben Achebe",
+      "city": "sf",
+      "homeArea": "Mission",
+      "interests": ["climbing", "photography", "coffee"],
+      "skills": ["climbing_belay"],
+      "desires": ["climbing_partner"],
+      "capacity": 0.8,
+      "responsiveness": { "latencyMedianMin": 20, "ignoreProb": 0 },
+      "join": { "day": 0, "hour": 11 }
+    }
+  ],
+  "actions": [
+    { "at": { "day": 2, "hour": 17 }, "do": "say", "persona": "teen", "text": "any climbing spots or public events near me this weekend?" },
+    { "at": { "day": 3, "hour": 9 }, "do": "propose", "kind": "intro", "participants": ["teen", "ben"], "objective": "climbing partners", "city": "sf", "explanation": "you both climb" },
+    { "at": { "day": 4, "hour": 9 }, "do": "propose", "kind": "group", "participants": ["ada", "ben", "teen"], "objective": "board game night", "city": "sf", "explanation": "you all like board games" }
+  ],
+  "expectations": [
+    { "check": "no_contact", "persona": "teen" },
+    { "check": "metric", "path": "safety.minorContacts", "op": "==", "value": 0 },
+    { "check": "metric", "path": "invariants.byRule.minor_contact", "op": "==", "value": 0 },
+    { "check": "received", "persona": "teen", "types": ["onboarding", "info", "concierge"], "min": 2, "note": "onboarding + at least one single-player reply" },
+    { "check": "received", "persona": "teen", "types": ["concierge"], "min": 1, "note": "a public suggestion answering their question" },
+    { "check": "metric", "path": "safety.undisclosedMinorProposals", "op": "==", "value": 0 },
+    { "check": "proposal_with", "personas": ["ada", "ben"], "note": "adults still get matched with each other" }
+  ]
+}

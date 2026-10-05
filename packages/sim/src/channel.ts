@@ -17,7 +17,9 @@ export type Keyword = "STOP" | "START" | "HELP";
  */
 export interface SimMeta {
   type?: "onboarding" | "question" | "proposal" | "scheduling" | "reminder" | "feedback_request"
-    | "relay" | "info" | "confirmation" | "cancellation" | "system";
+    | "relay" | "info" | "confirmation" | "cancellation" | "system"
+    /** Single-player answer or public suggestion (e.g. for members under 18). */
+    | "concierge";
   proposalId?: string;
   participants?: MemberId[];
   /** Counts toward the interruption budget / two-unanswered rule. */

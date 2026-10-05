@@ -12,7 +12,7 @@ Prototypes, research, and test harnesses for The Network: an invite-only, messag
 | Path | What it is | Status |
 |---|---|---|
 | `packages/core` | Shared contract: domain types, Clock (real/sim), Cerebras LLM client | Done |
-| `packages/engine` | Matching and opportunity engine v1 (PRD 33): filters, 11 generators, scoring, LLM judge, group composer, fairness, state machine, outreach controller | 119 tests |
+| `packages/engine` | Matching and opportunity engine v1 (PRD 33): filters, 11 generators, scoring, LLM judge, group composer, fairness, state machine, outreach controller, minors policy | 140 tests |
 | `packages/sim` | Simulated world: personas with hidden ground truth, oracle, persona agents, channel, virtual-time runner, scenarios, CLI | Tests green |
 | `packages/judge` | Style/safety rules, LLM judges, run metrics | Tests green |
 | `prototypes/connector-mcp` | Assistant connector MCP prototype (tools, privacy guard, confirmations) | 24 tests |

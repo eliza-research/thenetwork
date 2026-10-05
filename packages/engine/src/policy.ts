@@ -218,6 +218,7 @@ export function updateExposureDebt(w: World, prior: Record<MemberId, number>, sc
   for (const s of selected) for (const id of s.s.c.participants) got.set(id, (got.get(id) ?? 0) + 1);
   const out: Record<MemberId, number> = {};
   for (const id of w.ids) {
+    if (w.minors.has(id)) continue; // minors carry no exposure debt (they are never proposed)
     // Relevance is normalised so that a member at the typical threshold accrues ~1 per run.
     const rel = Math.min(1, (bestRel.get(id) ?? 0) / Math.max(0.01, w.cfg.thresholds.byState.normal));
     const v = Math.max(0, (prior[id] ?? 0) + rel - (got.get(id) ?? 0));

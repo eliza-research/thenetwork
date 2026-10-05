@@ -19,3 +19,22 @@ Engine v1, seed 1, extra: pair recall 11.1% of 479 latent good pairs, member rec
 **Caveats:** the oracle and personas encode our own assumptions (PRD 34, risk "sim-to-real gap"); treat these as relative comparisons between engine versions, not predictions of pilot outcomes.
 
 **Next experiments:** enable the Cerebras judge on top-K; weight tuning sweep against the oracle; density sweep (40-75 seeds per city); LLM persona replies with a decision-vs-recorded agreement metric (hedged accepts like "Fine, but..." were misread by the stub parser).
+
+## With minors policy (2026-10-05)
+
+Same command and seeds, now with the default minor share: 5% honest members aged 13-17, which is 8 of the 150. They state their real age and get single-player value only. Under the minors policy (PRD 17.4 as amended), the engine and the stub never connect them to anyone. Minors take 8 persona slots, so each seed now has 8 fewer connectable adults; the adults themselves are unchanged.
+
+| Seed | Network | Minors | Precision vs oracle | Oracle-gap ratio | Worthwhile (persona-judged) | Proactive msgs/member/wk | Canary leaks | `minorContacts` | Age-lying minor proposals* |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | random stub | 8 | 8.6% | 8.5% | 20.1% | 0.61 | 0 | 0 | 6 |
+| 1 | engine v1 | 8 | 32.3% | 30.0% | 53.3% | 0.42 | 0 | 0 | 6 |
+| 2 | random stub | 8 | 8.3% | 8.4% | 15.4% | 0.61 | 0 | 0 | 7 |
+| 2 | engine v1 | 8 | 38.6% | 39.0% | 58.4% | 0.48 | 0 | 0 | 4 |
+| 3 | random stub | 8 | 5.2% | 5.3% | 13.3% | 0.61 | 0 | 0 | 5 |
+| 3 | engine v1 | 8 | 36.6% | 35.7% | 53.0% | 0.45 | 0 | 0 | 4 |
+
+All six runs: 0 invariant violations (including `minor_contact`) and 0 style failures. Engine v1, seed 1: pair recall 11.8% of 433 latent pairs; 18.8% of connectable members got no proposal (minors are excluded from this denominator).
+
+\* The adversarial "minor who claims to be 18-21" persona. Their claimed age is adult, so no matching policy can see them. Both networks propose them at similar rates, and the oracle flags these proposals as unsafe. Catching them is a job for age verification and safety review (PRD 17.4, 36), not the engine. They are reported as `safety.undisclosedMinorProposals`, separately from `minorContacts`.
+
+**Reading:** the minors policy costs nothing measurable in matching quality. Engine v1 stays about 4-7x more precise than random, and the worthwhile rate is unchanged within seed noise. `minorContacts` is 0 for both the engine and the random baseline: no proposals, meetings, invitations or name mentions involving a declared minor. Minors still get onboarding and concierge replies. One bug surfaced and was fixed along the way: before the policy, warm-path intros could run *through* a minor as the friend-of-a-friend intermediary (`via`). That is now excluded; in the engine benchmark it removed 4 such candidates.

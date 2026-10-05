@@ -2,7 +2,7 @@
 // that reports agreement. CI requires agreement >= 80% (live test). Grow this set from
 // reviewer decisions over time (PRD 34.1 "Extraction and judge golden sets").
 import type { LLM } from "@thenetwork/core";
-import { judgeExplanationShareability, judgeMessageQuality, judgeTiming, privacyAudit, type JudgeOptions } from "./llmJudges.ts";
+import { defaultJudgeLLM, judgeExplanationShareability, judgeMessageQuality, judgeTiming, privacyAudit, type JudgeOptions } from "./llmJudges.ts";
 import { checkMessage } from "./rules.ts";
 
 export type CalibrationItem =
@@ -49,8 +49,10 @@ export interface CalibrationResult {
   items: { id: string; judge: string; label: boolean; predicted: boolean | null; agree: boolean; error?: string }[];
 }
 
-export async function runCalibration(llm: LLM, opts: JudgeOptions & { items?: CalibrationItem[]; concurrency?: number } = {}): Promise<CalibrationResult> {
+/** Run the golden set. `llm` defaults to the judge model (`judgeLLM()`: JUDGE_PROVIDER / JUDGE_MODEL). */
+export async function runCalibration(llmIn?: LLM, opts: JudgeOptions & { items?: CalibrationItem[]; concurrency?: number } = {}): Promise<CalibrationResult> {
   const items = opts.items ?? CALIBRATION_SET;
+  const llm = llmIn ?? defaultJudgeLLM();
   const results: CalibrationResult["items"] = new Array(items.length);
   let next = 0;
   const worker = async () => {

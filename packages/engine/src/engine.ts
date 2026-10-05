@@ -6,7 +6,7 @@ import type { LLM, MemberId, WorldSnapshot } from "@thenetwork/core";
 import { configHash, ENGINE_VERSION, resolveConfig, type EngineConfigInput } from "./config.ts";
 import { localEmbed, type EmbedFn } from "./embed.ts";
 import { explain } from "./explain.ts";
-import { candidateReason, memberReason } from "./filters.ts";
+import { candidateReason, involvesMinor, memberReason } from "./filters.ts";
 import { GENERATORS, type GenCtx } from "./generators.ts";
 import { JudgeCache, judgeCandidates } from "./judge.ts";
 import { blockingPairs, fairnessMetrics, selectProposals, updateExposureDebt } from "./policy.ts";
@@ -132,7 +132,12 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   // 5. Global selection: exposure floor, greedy with load balancing + exposure debt, exploration.
   const priorDebt: Record<MemberId, number> = {};
   for (const [k, v] of Object.entries(input.exposureDebt ?? {})) priorDebt[w.canonical(k)] = (priorDebt[w.canonical(k)] ?? 0) + v;
-  const { selected, budgetSkips } = selectProposals(w, scored, rng.fork("select"), priorDebt);
+  const selection = selectProposals(w, scored, rng.fork("select"), priorDebt);
+  // Minors policy, last line of defence: hard filters already drop these, so this never fires
+  // in a correct build. If it ever does, the configuration is withheld (fail closed), not sent.
+  const selected = selection.selected.filter(x => !involvesMinor(w, x.s.c));
+  if (selected.length !== selection.selected.length) f.rejectedAfterSelection = { underage: selection.selected.length - selected.length };
+  const budgetSkips = selection.budgetSkips;
   f.budgetSkips = budgetSkips;
   f.selected = selected.length;
   f.exploration = selected.filter(s => s.exploration).length;

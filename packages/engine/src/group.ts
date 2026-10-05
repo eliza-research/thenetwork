@@ -5,7 +5,7 @@
 import type { Category, City, MemberId } from "@thenetwork/core";
 import { HOUR } from "@thenetwork/core";
 import { cosine } from "./embed.ts";
-import { memberReason, pairReason } from "./filters.ts";
+import { isMinor, memberReason, pairReason } from "./filters.ts";
 import type { GroupStats, Role } from "./types.ts";
 import type { World } from "./world.ts";
 
@@ -78,6 +78,9 @@ export function evaluateGroup(w: World, ids: MemberId[], opts: ComposeOptions, c
 }
 
 export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | null {
+  // Minors policy: never a member, host, or alternate of any group. A forced minor means no group.
+  if ((opts.forced ?? []).some(id => isMinor(w, id))) return null;
+  opts = { ...opts, pool: opts.pool.filter(p => !isMinor(w, p.id)) };
   const compat = makeCompat(w, opts.category);
   const affinity = new Map(opts.pool.map(p => [p.id, p.affinity]));
   const forced = opts.forced ?? [];

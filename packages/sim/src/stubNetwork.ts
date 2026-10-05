@@ -3,6 +3,9 @@
 // random one-to-one intros daily (or dispatches proposals handed to it by an Engine or a
 // scenario), runs a minimal consent -> schedule -> remind -> feedback loop, and honours
 // STOP, quiet hours, a weekly proactive budget, blocks and the two-unanswered rule.
+// Minors policy (PRD 17.4 as amended 2026-10-05): even as a baseline it never connects a member
+// under 18 to anyone (no random intros, and any proposal involving one is refused at dispatch);
+// minors get single-player value only: onboarding plus concierge answers and public suggestions.
 import { DAY, HOUR, type City, type MemberId, type Proposal, type ScoreComponents, type WorldSnapshot } from "@thenetwork/core";
 import { parseYesNo } from "./agent/policy.ts";
 import type { SimMeta } from "./channel.ts";
@@ -26,6 +29,8 @@ export interface StubOptions {
 
 interface MemberState {
   id: MemberId; first: string; display: string; city: City; area: string; quietHours: [number, number];
+  /** Declared age under 18 (or unknown): never connected to anyone. */
+  minor: boolean; ageSeen: boolean; interests: string[]; conciergeCount: number;
   stage: "new" | "asked" | "onboarded"; answers: string[];
   optedOut: boolean; unanswered: number; proactive: number[]; lastInbound: number;
   awaiting?: { kind: "invite" | "feedback"; pid: string };
@@ -70,6 +75,12 @@ export class StubNetwork implements NetworkUnderTest {
     if (msg.keyword === "HELP") return;
     const body = msg.body.trim();
 
+    if (m.stage === "new" && m.minor) {
+      m.stage = "asked";
+      this.send(m, `Hi ${m.first}, I'm the Network's agent (an AI). Since you're under 18, I won't introduce you to other members, but I can answer questions and point you to public events and places. Reply STOP anytime to opt out. What are you into?`,
+        { type: "onboarding", proactive: false, firstContact: true });
+      return;
+    }
     if (m.stage === "new") {
       m.stage = "asked";
       this.send(m, `Hi ${m.first}, I'm the Network's agent (an AI). Now and then I'll suggest people or plans that seem worth your time. Reply STOP anytime to opt out. To start: what would you like more of in your life right now?`,
@@ -93,6 +104,7 @@ export class StubNetwork implements NetworkUnderTest {
       this.send(m, "Thanks, that's really helpful.", { type: "info" });
       return;
     }
+    if (m.minor) return this.concierge(m, body);
     if (m.stage === "asked") {
       m.answers.push(body); m.stage = "onboarded";
       this.send(m, "Thanks, got it. I'll keep an eye out and only text when something looks worth your time.", { type: "info" });
@@ -160,7 +172,31 @@ export class StubNetwork implements NetworkUnderTest {
     };
   }
 
+  /** Single-player value for minors: answers and public suggestions, never other members. */
+  private concierge(m: MemberState, body: string) {
+    if (m.stage === "asked") {
+      m.answers.push(body); m.stage = "onboarded";
+      this.send(m, "Thanks, got it. Text me anytime for ideas: public events, classes and places near you.", { type: "info" });
+      return;
+    }
+    // Acknowledgements get no reply (same rule as for adults).
+    if (/^(thanks|thank you|got it|ok|okay|👍|cool|nice|see you|sounds good|perfect)/i.test(body.trim()) || body.trim().length < 12) return;
+    const topic = m.interests.find(t => body.toLowerCase().includes(t.toLowerCase().split(" ")[0]!))
+      ?? m.interests[m.conciergeCount % Math.max(1, m.interests.length)] ?? "something new";
+    const ideas = [
+      `look for an all-ages drop-in or public class near ${m.area}: rec centers, libraries and community gyms post them weekly`,
+      `check the free public events listings for ${m.area} this week; parks and libraries often run all-ages sessions`,
+    ];
+    m.conciergeCount++;
+    this.send(m, `For ${topic}, ${ideas[m.conciergeCount % ideas.length]}. Happy to suggest more anytime.`, { type: "concierge", proactive: false });
+  }
+
   private dispatch(p: Proposal, now: number) {
+    // Hard policy before anything else: a proposal touching a minor in any role is refused whole.
+    if ([...p.participants, ...(p.alternates ?? [])].some(id => this.member(id).minor)) {
+      this.ctx.log("proposal_skipped", { proposalId: p.id, reason: "minors_policy" });
+      return;
+    }
     // Never double-book: drop anyone already in an open or scheduled opportunity.
     const busy = (id: MemberId) => [...this.opps.values()].some(o => (o.stage === "inviting" || o.stage === "scheduled") && o.invites.get(id)?.status !== "no" && o.p.participants.includes(id));
     const free = p.participants.filter(id => !busy(id) && !this.member(id).optedOut);
@@ -337,6 +373,7 @@ export class StubNetwork implements NetworkUnderTest {
 
   // ------------------------------------------------------------------ helpers
   private canPropose(m: MemberState, now: number) {
+    if (m.minor) return false;
     if (m.stage !== "onboarded" || m.optedOut || m.unanswered >= 2 || m.awaiting) return false;
     if (m.proactive.filter(t => now - t < 7 * DAY).length >= (this.opts.weeklyBudget ?? 2)) return false;
     if (!this.proactiveAllowed(m, now)) return false;
@@ -359,6 +396,11 @@ export class StubNetwork implements NetworkUnderTest {
 
   private member(id: MemberId): MemberState {
     let m = this.members.get(id);
+    if (m && !m.ageSeen) {
+      // Created before the member was visible (e.g. not yet joined): re-read the declared age.
+      const mem = this.ctx.snapshot().members.find(x => x.id === id);
+      if (mem) { m.minor = !(typeof mem.age === "number" && mem.age >= 18); m.ageSeen = true; }
+    }
     if (!m) {
       const snap = this.ctx.snapshot();
       const mem = snap.members.find(x => x.id === id);
@@ -367,6 +409,9 @@ export class StubNetwork implements NetworkUnderTest {
       const area = snap.facets.find(f => f.memberId === id && f.tags.includes("neighborhood"))?.value.replace(/^lives near /, "") ?? "downtown";
       m = {
         id, first: first ?? name, display: last ? `${first} ${last[0]}.` : name, city: mem?.homeCity ?? "sf", area,
+        // Fail closed: a member we can't see an adult age for is treated as a minor.
+        minor: !(typeof mem?.age === "number" && mem.age >= 18), ageSeen: !!mem,
+        interests: snap.facets.filter(f => f.memberId === id && f.kind === "interest").map(f => f.value), conciergeCount: 0,
         quietHours: mem?.prefs.quietHours ?? [21, 9],
         stage: "new", answers: [], optedOut: false, unanswered: 0, proactive: [], lastInbound: 0,
       };

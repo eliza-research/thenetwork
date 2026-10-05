@@ -24,13 +24,36 @@ export interface MemberCheck {
   ownIntentCreatedAt?: number;
 }
 
+/**
+ * Minors policy (founder decision 2026-10-05, PRD 17.4 as amended): members under 18 may join
+ * but are NEVER connected to other people. This age is policy, not a tuning knob: config can
+ * raise the bar (`ageMin`) but never lower it below 18. Missing / non-numeric ages fail closed.
+ */
+export const ADULT_AGE = 18;
+export const isMinorAge = (age: unknown): boolean => !(typeof age === "number" && age >= ADULT_AGE);
+/** True if `id` is a known member under 18 (or with an unknown/invalid age). Unknown ids are not minors here. */
+export function isMinor(w: World, id: MemberId): boolean {
+  const mi = w.get(id);
+  return !!mi && isMinorAge(mi.m.age);
+}
+/**
+ * Every member a candidate touches in ANY role: participants, alternates (backfill), and the
+ * warm-path intermediary (`via`). Used for the minors hard filter.
+ */
+export function involvedMembers(c: Pick<Candidate, "participants" | "alternates" | "via">): MemberId[] {
+  return [...c.participants, ...(c.alternates ?? []), ...(c.via ? [c.via] : [])];
+}
+export function involvesMinor(w: World, c: Pick<Candidate, "participants" | "alternates" | "via">): boolean {
+  return involvedMembers(c).some(id => isMinor(w, id));
+}
+
 /** Member-level hard constraints for taking part in a candidate with a given role. */
 export function memberReason(w: World, id: MemberId, c: MemberCheck): FilterReason | null {
   const cfg = w.cfg;
   const mi = w.get(id);
   if (!mi) return "unknown_member";
   const m = mi.m;
-  if (!(m.age >= cfg.ageMin)) return "underage";
+  if (isMinorAge(m.age) || !(m.age >= cfg.ageMin)) return "underage";
   if (w.holds.has(id)) return "safety_hold";
   if (m.state === "paused") return "state_paused";
   if (m.state === "receiving" && CONTRIBUTOR_ROLES.has(c.role)) return "state_receiving_contributor";
@@ -54,6 +77,7 @@ export function memberReason(w: World, id: MemberId, c: MemberCheck): FilterReas
 export function pairReason(w: World, a: MemberId, b: MemberId, category: Category): FilterReason | null {
   const cfg = w.cfg;
   if (a === b) return "duplicate_participant";
+  if (isMinor(w, a) || isMinor(w, b)) return "underage"; // minors are never paired with anyone
   const k = pairKey(a, b);
   if (w.blocked.has(k)) return "blocked";
   const neg = w.negativeFeedback.get(k);
@@ -102,6 +126,8 @@ export function candidateReason(w: World, c: Candidate, usage?: RunUsage): Filte
     if (c.participants.length < cfg.group.minSize || c.participants.length > cfg.group.maxSize) return "group_size";
   }
   if (riskTerms(cfg, c.riskText).length) return "high_risk";
+  // Minors policy: no one under 18 in any role (participant, alternate, via/connector).
+  if (involvesMinor(w, c)) return "underage";
   for (const id of c.participants) {
     const own = c.anchor?.type === "intent" ? w.intentById.get(c.anchor.id) : undefined;
     const r = memberReason(w, id, {

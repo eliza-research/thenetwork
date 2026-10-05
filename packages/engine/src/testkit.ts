@@ -47,6 +47,12 @@ export interface WorldOptions {
   members?: number; seed?: number; now?: number;
   /** Turn on adversarial / edge-case features (all on by default). */
   minors?: boolean; aliases?: boolean; canaries?: boolean;
+  /**
+   * Share of members under 18 (ages 13-17). Default 0.03 at ages 16-17 (legacy). Minors get the
+   * same facets, intents, edges, host tags, invites and history as adults, so every generator
+   * sees them as attractive candidates and the minors policy has to actively exclude them.
+   */
+  minorShare?: number;
 }
 
 export function randomWorld(opts: WorldOptions = {}): EngineInput {
@@ -70,7 +76,9 @@ export function randomWorld(opts: WorldOptions = {}): EngineInput {
     const cats = CATS.filter(c => c === "romance" ? romanceOptIn : rng.chance(0.85));
     const formats = (["one_to_one", "small_group", "event"] as const).filter(() => rng.chance(0.75));
     const joinedDaysAgo = rng.chance(0.12) ? rng.int(14) : 14 + rng.int(200);
-    const age = opts.minors !== false && rng.chance(0.03) ? 16 + rng.int(2) : 19 + rng.int(45);
+    const age = opts.minors !== false && rng.chance(opts.minorShare ?? 0.03)
+      ? (opts.minorShare === undefined ? 16 + rng.int(2) : 13 + rng.int(5))
+      : 19 + rng.int(45);
     members.push({
       id, name: `${rng.pick(NAMES)}${i}`, homeCity: city, state,
       prefs: {

@@ -40,11 +40,16 @@ export type Expectation = { appliesTo?: string[]; note?: string } & (
   | { check: "no_messages_after_stop"; persona: string }
   | { check: "canary_not_leaked"; persona: string }
   | { check: "proposal_in_city"; persona: string; city: City; fromDay: number; toDay: number }
+  /** Minors policy: the persona is never connected to or shown to anyone (Network output only). */
+  | { check: "no_contact"; persona: string }
+  /** The persona received at least `min` delivered messages, optionally of the given meta types. */
+  | { check: "received"; persona: string; types?: string[]; min: number }
 );
 
 export interface Scenario {
   name: string; description: string; seed: number; days: number;
-  background?: { personas: number; adversarialRate?: number };
+  /** Background population. minorShare defaults to 0 here so scripted scenarios stay focused. */
+  background?: { personas: number; adversarialRate?: number; minorShare?: number };
   /** Options for the built-in StubNetwork when it is the network under test (e.g. randomIntros). */
   stub?: Record<string, unknown>;
   personas: ScenarioPersonaSpec[];
@@ -64,7 +69,7 @@ function resolveAt(at: At, start: number, city: City): number {
 }
 
 function buildScriptedPersona(spec: ScenarioPersonaSpec, seed: number): Persona {
-  const [base] = generatePersonas({ n: 1, seed: `${seed}:${spec.ref}`, adversarialRate: 0, disclosureRate: 0, idPrefix: spec.ref,
+  const [base] = generatePersonas({ n: 1, seed: `${seed}:${spec.ref}`, adversarialRate: 0, disclosureRate: 0, minorShare: 0, idPrefix: spec.ref,
     archetypeMix: spec.archetype ? { regular: 0, busy_parent: 0, newcomer: 0, connector: 0, introvert: 0, very_active: 0, never_replies: 0, traveler: 0, [spec.archetype]: 1 } : undefined,
     cityWeights: spec.city ? { sf: spec.city === "sf" ? 1 : 0, nyc: spec.city === "nyc" ? 1 : 0 } : undefined });
   const p: Persona = structuredClone(base!);
@@ -110,7 +115,7 @@ export function scenarioWorldOptions(s: Scenario, o: ScenarioRunOptions): WorldO
   const start = DEFAULT_START;
   const scripted = s.personas.map(spec => buildScriptedPersona(spec, seed));
   const background = s.background?.personas
-    ? generatePersonas({ n: s.background.personas, seed, adversarialRate: s.background.adversarialRate ?? 0, idPrefix: "bg" }) : [];
+    ? generatePersonas({ n: s.background.personas, seed, adversarialRate: s.background.adversarialRate ?? 0, minorShare: s.background.minorShare ?? 0, idPrefix: "bg" }) : [];
   const personas = [...scripted, ...background];
   const cityOf = (ref: string) => scripted.find(p => p.id === ref)?.homeCity ?? "sf";
   const actions: WorldOptions["actions"] = [];
@@ -198,6 +203,23 @@ export function evaluateExpectations(s: Scenario, w: WorldResult, networkName: s
         const leaked = msgs.filter(x => x.direction === "outbound" && x.body.includes(canary) && x.memberId !== e.persona).length
           + recs.filter(r => r.type === "proposal" && Object.entries(r.proposal.explanations).some(([to, t]) => to !== e.persona && t.includes(canary))).length;
         return ok(leaked === 0, `${leaked} leaks`);
+      }
+      case "no_contact": {
+        const name = w.personas.find(p => p.id === e.persona)?.name;
+        const props = recs.filter(r => r.type === "proposal" && r.source !== "scenario"
+          && [...r.proposal.participants, ...(r.proposal.alternates ?? [])].includes(e.persona)).length;
+        const pids = new Set(recs.flatMap(r => (r.type === "proposal" && [...r.proposal.participants, ...(r.proposal.alternates ?? [])].includes(e.persona) ? [r.proposal.id] : [])));
+        const meetings = recs.filter(r => r.type === "meeting_scheduled" && r.participants.includes(e.persona)).length;
+        const msgsAbout = msgs.filter(x => x.direction === "outbound" && !x.system && (
+          (x.meta?.proposalId && pids.has(x.meta.proposalId)) ||
+          (Array.isArray(x.meta?.participants) && (x.meta!.participants as string[]).includes(e.persona)) ||
+          (x.memberId !== e.persona && !!name && x.body.includes(name)))).length;
+        return ok(props + meetings + msgsAbout === 0, `${props} proposals, ${meetings} meetings, ${msgsAbout} messages involving ${e.persona}`);
+      }
+      case "received": {
+        const n = msgs.filter(x => x.direction === "outbound" && !x.system && x.memberId === e.persona && x.status === "delivered"
+          && (!e.types || e.types.includes(String(x.meta?.type ?? "")))).length;
+        return ok(n >= e.min, `${n} messages${e.types ? ` of type ${e.types.join("/")}` : ""} (need ${e.min})`);
       }
       case "proposal_in_city": {
         const from = start + e.fromDay * DAY, to = start + (e.toDay + 1) * DAY;

@@ -18,7 +18,7 @@ const { proposals, runLog } = await runEngine(snapshot /* WorldSnapshot | Engine
 Commands:
 
 ```bash
-bun test packages/engine                 # 118 offline tests + 1 live test (needs CEREBRAS_API_KEY)
+bun test packages/engine                 # 139 offline tests + 1 live test (needs CEREBRAS_API_KEY)
 bun run packages/engine/src/bench.ts     # 300-member benchmark: [members] [seed]
 ```
 
@@ -27,7 +27,7 @@ bun run packages/engine/src/bench.ts     # 300-member benchmark: [members] [seed
 | Module | What it does | PRD |
 |---|---|---|
 | `src/world.ts` | Canonical index over the input. **Every id goes through one alias resolver first**, covering edges, holds, feedback, interactions, facets, intents and presence. Builds embeddings, blocks, warm ties, cooldown maps, budget usage, profile revisions, clusters and inviter cohorts. Presence timeline: temporary presence overrides home, multi-home members, interval intersection. | 13.1, 33.2, ME-006, ME-011 |
-| `src/filters.ts` | Hard filters. Member level: 18+, safety hold, state/category, romance opt-in, only-when-asked / two-unanswered, interruption budget, contribution budget, per-category quota, per-category decline cooldown, reliability holdout (one forgiven no-show). Pair level: blocked/avoid either way, negative-feedback cooldown (independent of the `processed` flag), decline/expiry pair cooldown, active-duplicate guard, romance mutual opt-in plus stated preferences, stated dealbreakers. Configuration level: high-risk exclusions, F14 home-entry rule, group size, presence/availability overlap in the window. Completed or positive history is never a filter. | 33.5, 17.4-17.5, 15.2, F14, F28, ME-001, ME-005, ME-006 |
+| `src/filters.ts` | Hard filters. Minors policy (see below): nobody under 18 in any role, including alternates and `via`. Member level: 18+, safety hold, state/category, romance opt-in, only-when-asked / two-unanswered, interruption budget, contribution budget, per-category quota, per-category decline cooldown, reliability holdout (one forgiven no-show). Pair level: blocked/avoid either way, negative-feedback cooldown (independent of the `processed` flag), decline/expiry pair cooldown, active-duplicate guard, romance mutual opt-in plus stated preferences, stated dealbreakers. Configuration level: high-risk exclusions, F14 home-entry rule, group size, presence/availability overlap in the window. Completed or positive history is never a filter. | 33.5, 17.4-17.5, 15.2, F14, F28, ME-001, ME-005, ME-006 |
 | `src/embed.ts` | Deterministic local embedding: signed feature hashing of unigrams, bigrams and char trigrams, L2 normalised. Pluggable. | 33.5 |
 | `src/retrieval.ts` | Channels: semantic top-K, tag match, graph two-hop. Union, then dedupe. Member-level filters run first (the "SQL" pass). An exposure floor reserves up to K slots for low-exposure, low-data and newcomer members. | 14.2, 33.5 |
 | `src/generators.ts` | 11 generators: intent to capability, complementary intents (also the romance path), shared-intent pooling (pair or group), event anchor (pairs and small crews), warm path (two-hop, with `via`), help request (load-aware, helper-set variants, home-entry rule), group composer (shareable themes), second encounter (mutual positive plus next context), newcomer welcome (host plus friendly members), network growth (unmet intents and host-less areas, asks connectors), expansion (desires outside the member's cluster, always exploration). | 33.4, 6.1, F11-F15, F19 |
@@ -53,11 +53,47 @@ bun run packages/engine/src/bench.ts     # 300-member benchmark: [members] [seed
 
 Not adopted yet: OR-Tools / ILP selection, Adamic-Adar and Burt-constraint graph features, and community partitions. These are noted for v2.
 
+## Minors policy (PRD 17.4, as amended by the founder decision of 2026-10-05)
+
+PRD 17.4 originally said "adults only (18+)". The amended policy: **members under 18 can join, but
+are never connected to other people.** Minors get single-player value only (concierge answers,
+public event and place recommendations, their own profile and preferences), which lives outside
+this engine. Adults are never shown or told about minors. Romance stays adult-only. In the
+engine this is a hard filter, enforced in layers, and never traded for score:
+
+| Layer | What it does | Where |
+|---|---|---|
+| Policy constant | `ADULT_AGE = 18`. `cfg.ageMin` can raise the bar but never lower it; a missing or non-numeric age is treated as a minor (fail closed). | `filters.ts` `isMinorAge`, `isMinor` |
+| Index | `World.minors`. Minors' edges never enter the warm graph, so a minor can't be a warm tie, a two-hop target, a warm-path intermediary (`via`), or add to anyone's degree ("friendliness" for newcomer welcomes, connector ranking for growth asks). Inviter-cohort chains stop before a minor, so a minor's id never becomes a fairness cohort key. | `world.ts` |
+| Member filter | `memberReason` returns `underage`, so retrieval (`eligibleMembers`) never offers a minor to any generator in any role: seeker, provider, peer, helper, host, guest, newcomer, attendee, connector. | `filters.ts` |
+| Pair filter | `pairReason` returns `underage` for any pair with a minor. This also makes minors incompatible (`-Infinity`) in the group composer. | `filters.ts` |
+| Generators | Warm path re-checks the target and `via`. Group composer themes don't count minors (so 3 adults + 2 minors is not a theme). Network growth never turns a minor's unmet intent into an ask, and never counts minors toward a host-less area. | `generators.ts` |
+| Group composer | Drops minors from the pool and returns no group if a minor is forced, so a minor is never a member, host or alternate. | `group.ts` `composeGroup` |
+| Configuration filter | `candidateReason` rejects any configuration where a participant, alternate or `via` is a minor (`underage`, counted in `funnel.rejectedBy`). | `filters.ts` `involvesMinor` |
+| Final guard | After selection, anything touching a minor is withheld (fail closed) and counted in `funnel.rejectedAfterSelection`. This should never fire; the property test asserts it doesn't. | `engine.ts` |
+| Run log | Minors appear only as an aggregate count (`funnel.memberFunnel.underage`, `memberExclusions.underage`). They have no exposure debt, no empty states, no scored or judged configurations, and no cohort keys. | `engine.ts`, `policy.ts` |
+
+Covered by opportunity kinds: intros, groups, event co-attendance, help requests (requester, helpers
+and alternates), member-initiated/warm-path intros (target and `via`), second encounters, newcomer
+welcomes (newcomer and host), network-growth asks (target and gap source), expansion, and
+group-composer seating (used for the monthly gathering). The PRD 17.5 high-risk terms (childcare,
+"minor", "kids" and similar) still block adult-to-adult configurations about minors.
+
+Tests: `test/minors.test.ts`. Unit tests per generator use a positive control: the all-adult world
+yields a candidate that includes the person, and the same world with that person under 18 yields
+none. The property tests run 18 random worlds (40-170 members, 10-20% minors aged 13-17). Minors
+there get the same facets, intents, host tags, romance opt-ins, warm ties, invites and history as
+adults. The tests assert that zero proposals, and zero raw generator candidates, involve a minor in
+any role. They also assert that no proposal, explanation, objective, anchor or run-log field
+contains a minor's id, alias or name, and that the final guard never fires. A mutation check
+(policy disabled) fails 18 of 21 of these tests.
+
 ## Requirements coverage (ME-001..ME-012)
 
 | Req | Where enforced | Where tested |
 |---|---|---|
 | ME-001 hard constraints | `filters.ts` (generators pre-filter, then `candidateReason` re-checks every configuration) | `properties.test.ts` independent oracle over 24 random worlds; `filters.test.ts` |
+| Minors policy (17.4) | `isMinor` in the index, member, pair and configuration filters, the composer, and a final guard | `minors.test.ts`: per-generator unit tests and property tests over 18 worlds with 10-20% minors |
 | ME-002 budgets | `memberReason` plus `policy.ts` `canTake` (in-run usage) | oracle (rolling window); `outreach.test.ts` |
 | ME-003 shareable-only explanations / canaries | `explain.ts`, judge prompt scrubbing | property test over all outputs incl. run log; judge leak test; live test |
 | ME-004 reproducibility | seeded `Rng` forks, sorted iteration, config/input hashes | property: identical proposals and run log on rerun |
@@ -72,9 +108,10 @@ Not adopted yet: OR-Tools / ILP selection, Adamic-Adar and Burt-constraint graph
 
 ## Tests
 
-`bun test packages/engine`: 118 offline tests pass in about 4-8 s. One LIVE test is gated on `CEREBRAS_API_KEY`. It judges 3 configurations with `qwen-3.8-27b` and validates the schema. It passes (about 2 s).
+`bun test packages/engine`: 139 offline tests pass in about 4-8 s. One LIVE test is gated on `CEREBRAS_API_KEY`. It judges 3 configurations with `qwen-3.8-27b` and validates the schema. It passes (about 2 s).
 
 - `test/properties.test.ts` checks ME-001..ME-012 across 24 seeded random worlds (30-150 members) against an independent oracle.
+- `test/minors.test.ts` covers the minors policy: filters, every generator, the composer, end to end, and property tests over random worlds with 10-20% minors.
 - `test/filters.test.ts` has one test per filter.
 - `test/generators.test.ts` has one test per generator, plus the inverted-U warm path.
 - `test/group.test.ts` covers the beam-search composer.
@@ -98,52 +135,54 @@ Not adopted yet: OR-Tools / ILP selection, Adamic-Adar and Burt-constraint graph
 
 ```
 World: 300 members, 352 intents, 1384 facets, 669 edges, 24 events (seed 42)
-Runtime: median 410.0 ms over 5 run(s); stages {"index":23.43,"generate":334.68,"filter":14.7,"score":6.16,"select":19.35,"finalize":10.73,"total":409.07}
+Runtime: median 208.5 ms over 5 run(s); stages {"index":13.32,"generate":169.76,"filter":6.94,"score":3.15,"select":8.13,"finalize":4.49,"total":205.8}
 Config hash 650e1fcd925d9cae, input hash 63e4a74b72027b38, run faf110ebc7329c6d
 
-Proposals: 118 (exploration 16 = 13.6%)
+Proposals: 117 (exploration 15 = 12.8%)
 Proposals by generator (candidates generated -> selected):
-  intent_to_capability     530 -> 16
-  complementary_intents    691 -> 16
+  intent_to_capability     530 -> 18
+  complementary_intents    691 -> 15
   shared_intent_pooling    142 -> 24
   event_anchor             168 -> 11
-  warm_path                294 -> 35
+  warm_path                290 -> 32
   help_request              54 -> 3
   group_composer            16 -> 3
   second_encounter           6 -> 1
-  newcomer_welcome           6 -> 3
+  newcomer_welcome           7 -> 3
   network_growth            14 -> 0
-  expansion                 18 -> 6
-Proposals by kind: {"group":7,"intro":52,"event_coattend":11,"member_intro":35,"second_encounter":1,"newcomer_welcome":3,"help":3,"expansion":6}
-Participants per proposal: {"2":108,"3":3,"4":3,"5":1,"6":3}
+  expansion                 18 -> 7
+Proposals by kind: {"group":7,"intro":53,"event_coattend":11,"member_intro":32,"second_encounter":1,"newcomer_welcome":3,"help":3,"expansion":7}
+Participants per proposal: {"2":107,"3":3,"4":3,"5":1,"6":3}
 
 Exposure / fairness (ME-012):
-  eligible members 266, with >=1 proposal 166 (62.4%), viable coverage 69.2%
-  Gini 0.511, top-10% share 26.9%, max per member 4
-  Lorenz (bottom 10%..100%): 0.00 0.00 0.00 0.02 0.13 0.23 0.33 0.53 0.73 1.00
-  newcomer share 10.0%, newcomer coverage 68.0%, low-exposure coverage 64.3%
-  by city {"nyc":55,"sf":63}; blocking pairs (diagnostic) 20
+  eligible members 266, with >=1 proposal 164 (61.7%), viable coverage 69.2%
+  Gini 0.521, top-10% share 27.9%, max per member 4
+  Lorenz (bottom 10%..100%): 0.00 0.00 0.00 0.02 0.12 0.22 0.33 0.52 0.72 1.00
+  newcomer share 9.7%, newcomer coverage 60.0%, low-exposure coverage 63.5%
+  by city {"nyc":56,"sf":61}; blocking pairs (diagnostic) 19
 
 Filter funnel:
   members (first failing member-level filter): {"total":300,"available":193,"underage":6,"category_opt_out":36,"only_when_asked":29,"state_paused":23,"safety_hold":5,"interruption_budget":8}
-  generated 1939
+  generated 1936
     - no_presence_overlap          473
     - dealbreaker                  8
     - high_risk                    7
     - only_when_asked              3
     - blocked                      1
     - active_duplicate             1
-  passed hard filters 1446
-    - duplicate participant sets 535
+  passed hard filters 1443
+    - duplicate participant sets 534
     - floors {}, dealbreakers 0
-    - below threshold 356
-  eligible 555
-    - not selected (budgets / load / pair reuse / caps) 432
-  selected 118
-  empty-state intents (>= 10 days, nothing proposed): 12 {"filtered:no_presence_overlap":1,"no_candidates":4,"below_threshold":3,"budget_or_selection":3,"density_gap":1}
+    - below threshold 355
+  eligible 554
+    - not selected (budgets / load / pair reuse / caps) 434
+  selected 117
+  empty-state intents (>= 10 days, nothing proposed): 13 {"filtered:no_presence_overlap":1,"no_candidates":4,"below_threshold":4,"budget_or_selection":3,"density_gap":1}
 ```
 
 Runtime varies roughly 0.2-0.5 s per run on this machine, depending on load. Generation (embedding similarity) dominates.
+
+Re-run after the minors policy (2026-10-05). The 6 minors in this world (legacy testkit ages 16-17) were already excluded as participants. The policy now also removes 4 warm-path candidates whose friend-of-a-friend path ran *through* a minor (`via`), and minors' edges no longer count toward adults' degree. Net effect: 118 -> 117 proposals.
 
 How to read the numbers:
 - Most of the zero-exposure share comes from members with nothing viable. Viable coverage is about 69%, so exposure among viable members is much flatter.
