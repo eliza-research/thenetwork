@@ -77,9 +77,22 @@ export class OpenAILLM implements LLM {
   }
 }
 
-/** Judge LLM per .env (JUDGE_PROVIDER=openai|cerebras). Engine/agent stay on Cerebras. */
+export type Provider = "cerebras" | "openai" | "surplus";
+
+/** Any OpenAI-compatible provider by name. */
+export function llmFor(provider: Provider, model: string): LLM {
+  if (provider === "cerebras") return new CerebrasLLM(undefined, model);
+  if (provider === "surplus")
+    return new OpenAILLM(process.env.SURPLUS_API_KEY ?? "", model, process.env.SURPLUS_BASE_URL ?? "https://api.surplusintelligence.ai/v1");
+  return new OpenAILLM(undefined, model);
+}
+
+/** Judge LLM per .env (JUDGE_PROVIDER / JUDGE_MODEL). */
 export function judgeLLM(): LLM {
-  return (process.env.JUDGE_PROVIDER ?? "openai") === "cerebras"
-    ? new CerebrasLLM(undefined, process.env.JUDGE_MODEL)
-    : new OpenAILLM();
+  return llmFor((process.env.JUDGE_PROVIDER ?? "surplus") as Provider, process.env.JUDGE_MODEL ?? "gpt-6.1-sol");
+}
+
+/** Recommender LLM (engine judge for top-K configurations) per .env (RECOMMENDER_PROVIDER / RECOMMENDER_MODEL). */
+export function recommenderLLM(): LLM {
+  return llmFor((process.env.RECOMMENDER_PROVIDER ?? "surplus") as Provider, process.env.RECOMMENDER_MODEL ?? "gpt-6.1-sol");
 }
