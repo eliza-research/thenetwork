@@ -43,3 +43,43 @@ export function parseJson<T = any>(text: string): T {
   if (!m) throw new Error(`no JSON in model output: ${text.slice(0, 200)}`);
   return JSON.parse(m[0]);
 }
+
+/** OpenAI chat client (used for judges so the judge model family differs from the agent/engine model). */
+export class OpenAILLM implements LLM {
+  constructor(
+    private apiKey = process.env.OPENAI_API_KEY ?? "",
+    private model = process.env.JUDGE_MODEL ?? "gpt-6-luna",
+    private baseUrl = process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
+  ) { if (!this.apiKey) throw new Error("OPENAI_API_KEY missing (see .env.example)"); }
+  async chat(messages: ChatMessage[], opts: { maxTokens?: number; temperature?: number; json?: boolean } = {}) {
+    for (let attempt = 0; ; attempt++) {
+      const res = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: this.model, messages,
+          ...(opts.maxTokens ? { max_completion_tokens: opts.maxTokens } : {}),
+          ...(opts.json ? { response_format: { type: "json_object" } } : {}),
+        }),
+      });
+      if ((res.status === 429 || res.status >= 500) && attempt < 4) {
+        await new Promise(r => setTimeout(r, 1000 * 2 ** attempt)); continue;
+      }
+      if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`);
+      const data: any = await res.json();
+      const choice = data.choices?.[0];
+      const content = (choice?.message?.content ?? "").trim();
+      if ((!content || choice?.finish_reason === "length") && attempt < 2) {
+        opts = { ...opts, maxTokens: Math.min((opts.maxTokens ?? 4096) * 2, 32768) }; continue;
+      }
+      return content;
+    }
+  }
+}
+
+/** Judge LLM per .env (JUDGE_PROVIDER=openai|cerebras). Engine/agent stay on Cerebras. */
+export function judgeLLM(): LLM {
+  return (process.env.JUDGE_PROVIDER ?? "openai") === "cerebras"
+    ? new CerebrasLLM(undefined, process.env.JUDGE_MODEL)
+    : new OpenAILLM();
+}
