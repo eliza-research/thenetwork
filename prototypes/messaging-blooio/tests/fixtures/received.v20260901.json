@@ -1,0 +1,23 @@
+{
+  "id": "evt_legacyfields_0002",
+  "type": "message.received",
+  "api_version": "2026-09-01",
+  "created_at": 1791216000000,
+  "organization_id": "org_test",
+  "event": "message.received",
+  "timestamp": 1791216000000,
+  "external_id": "+15551234567",
+  "internal_id": "+15550000001",
+  "data": {
+    "id": "msg_in_0002",
+    "chat_id": "chat_abc",
+    "channel_id": "ch_1",
+    "channel_type": "blooio",
+    "sender": "+15551234567",
+    "recipient": "+15550000001",
+    "text": "STOP",
+    "protocol": "sms",
+    "is_group": false,
+    "attachments": []
+  }
+}

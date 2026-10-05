@@ -1,0 +1,14 @@
+{
+  "name": "@thenetwork/messaging-blooio",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Prototype: Blooio (iMessage/SMS) channel adapter, signed webhook receiver, STOP/HELP/START, quiet hours, idempotent outbound queue, and an in-memory simulated channel.",
+  "scripts": {
+    "test": "bun test",
+    "test:live": "BLOOIO_LIVE_TEST=1 bun test tests/live.readonly.test.ts",
+    "verify": "bun run scripts/verify-readonly.ts",
+    "receiver": "bun run src/main.ts",
+    "first-send": "bun run scripts/first-send.ts"
+  }
+}

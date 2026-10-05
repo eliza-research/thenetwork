@@ -1,0 +1,8 @@
+{
+  "id": "evt_typing_0008",
+  "type": "typing.started",
+  "api_version": "2026-10-01",
+  "created_at": 1791216001000,
+  "organization_id": "org_test",
+  "data": { "chat_id": "chat_abc", "direction": "inbound", "sender": "+15551234567", "contact": { "identifier": "+15551234567", "name": "Jordan Lee" } }
+}

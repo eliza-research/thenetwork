@@ -1,0 +1,29 @@
+{
+  "id": "evt_019fd421-b020-7a63-8f8b-152ea9c99333",
+  "type": "message.received",
+  "api_version": "2026-10-01",
+  "created_at": 1791216000000,
+  "organization_id": "org_test",
+  "data": {
+    "message_id": "msg_in_0001",
+    "chat_id": "chat_019fd421-af64-7040-aeae-3e8df24a8e89",
+    "channel_id": "ch_019fe466-5401-7ac7-a688-100c0f6a21f2",
+    "channel_type": "blooio",
+    "channel_address": "+15550000001",
+    "kind": "received",
+    "direction": "inbound",
+    "status": "received",
+    "protocol": "imessage",
+    "message_type": "text",
+    "text": "hey, anything fun this weekend?",
+    "sender": "+15551234567",
+    "recipient": "+15550000001",
+    "contact": { "contact_id": "ct_1", "identifier": "+15551234567", "name": "Jordan Lee" },
+    "group": null,
+    "reply_to_message_id": null,
+    "attachments": [
+      { "url": "https://media.blooio.com/a/photo.jpg", "media_type": "image/jpeg", "size": 1234 },
+      { "url": "https://evil.example.com/x.jpg", "media_type": "image/jpeg", "size": 1 }
+    ]
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "id": "evt_group_0003",
+  "type": "message.received",
+  "api_version": "2026-10-01",
+  "created_at": 1791216000000,
+  "organization_id": "org_test",
+  "data": {
+    "message_id": "msg_in_0003",
+    "chat_id": "chat_group_1",
+    "channel_type": "blooio",
+    "channel_address": "+15550000001",
+    "direction": "inbound",
+    "protocol": "imessage",
+    "text": "I'm in for Saturday",
+    "sender": "+15557654321",
+    "recipient": "+15550000001",
+    "contact": { "contact_id": null, "identifier": "+15557654321", "name": null },
+    "group": { "group_id": "grp_xyz789", "name": "Saturday hike" },
+    "attachments": []
+  }
+}

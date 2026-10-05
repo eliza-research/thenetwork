@@ -1,0 +1,8 @@
+{
+  "id": "evt_status_0007",
+  "type": "message.failed",
+  "api_version": "2026-10-01",
+  "created_at": 1791216009000,
+  "organization_id": "org_test",
+  "data": { "message_id": "msg_out_0002", "chat_id": "chat_def", "status": "failed", "direction": "outbound", "protocol": "unknown", "channel_type": "blooio", "error": { "code": "recipient_unreachable", "message": "Could not deliver" } }
+}

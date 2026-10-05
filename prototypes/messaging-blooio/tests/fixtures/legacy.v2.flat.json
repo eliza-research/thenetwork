@@ -1,0 +1,11 @@
+{
+  "event": "message.received",
+  "message_id": "legacy_0004",
+  "external_id": "+15551234567",
+  "internal_id": "+15550000001",
+  "text": "help",
+  "protocol": "imessage",
+  "is_group": false,
+  "received_at": 1791216000,
+  "attachments": []
+}

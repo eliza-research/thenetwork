@@ -1,0 +1,8 @@
+{
+  "id": "evt_safety_0009",
+  "type": "safety.state_changed",
+  "api_version": "2026-10-01",
+  "created_at": 1791216001000,
+  "organization_id": "org_test",
+  "data": { "phone_number": "+15550000001", "action": "pause_new", "previous_action": "slow", "reasons": { "one_way": { "first_reply_rate": 0.18 } } }
+}
