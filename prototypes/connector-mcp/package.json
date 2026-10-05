@@ -1,0 +1,16 @@
+{
+  "name": "@thenetwork/connector-mcp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Prototype: The Network four-tool remote MCP connector (in-memory fake Network, stubbed OAuth).",
+  "scripts": {
+    "start": "bun run src/main.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "@thenetwork/core": "workspace:*",
+    "zod": "^4.1.0"
+  }
+}
