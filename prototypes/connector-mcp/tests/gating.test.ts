@@ -1,121 +1,223 @@
 import { describe, expect, test } from "bun:test";
-import { HOUR } from "@thenetwork/core";
-import { connect, rid, world } from "./helpers.ts";
+import { HOUR, MINUTE } from "@thenetwork/core";
+import { DEFAULT_SCOPES, SCOPES } from "../src/schemas.ts";
+import { connect, key, principal, world } from "./helpers.ts";
 
-describe("confirmation gating", () => {
-  test("high risk (invite) cannot be completed by the host; only the Network channel executes it", async () => {
+const WITH_P2 = [...DEFAULT_SCOPES, SCOPES.writeRelay, SCOPES.writeInvites, SCOPES.sensitiveSafety];
+const handleOf = async (call: any, title: string) => (await call("get_network_updates", { limit: 10 })).data.items.find((i: any) => i.title === title).item_id;
+
+describe("tier 3: high-risk actions need confirmation in the Network's own channel", () => {
+  test("invite: the host's confirm never executes it; only the member's reply on the Network channel does", async () => {
     const w = world();
-    const { call } = await connect(w.net, w.ava.id);
-    const t = await call("network_talk", { message: "Please invite my friend Sam", client_request_id: rid() });
+    const { call } = await connect(w.net, principal(w, w.ava, { scopes: WITH_P2 }));
+    const t = await call("tell_network_agent", { instruction: "Please invite my friend Sam" });
+    expect(t.data.status).toBe("confirm_in_network_app");
     const p = t.data.pending_confirmation;
-    expect(p).toMatchObject({ risk: "high", confirm_via: "network_channel" });
+    expect(p.how_to_confirm).toBe("member_confirms_in_network_app");
+    expect(w.net.channelMessages.at(-1)).toMatchObject({ memberId: w.ava.id, confirmationId: p.confirmation_id });
+    expect(w.net.channelMessages.at(-1)!.text).toContain("Claude asked me to");
     expect(w.net.effects).toHaveLength(0);
 
-    const r = await call("network_respond", { item_id: p.confirmation_id, decision: "confirm", client_request_id: rid() });
-    expect(r.data.status).toBe("awaiting_network_channel");
+    const r = await call("respond_to_network_item", { item_id: p.confirmation_id, response: "confirm" });
+    expect(r.data.status).toBe("confirm_in_network_app");
     expect(w.net.effects).toHaveLength(0); // the model saying "confirm" is not consent
 
     expect(w.net.confirmOnNetworkChannel(p.confirmation_id, w.maya.id)).toBe(false); // wrong member
     expect(w.net.confirmOnNetworkChannel(p.confirmation_id, w.ava.id)).toBe(true);
-    expect(w.net.effects).toEqual([{ memberId: w.ava.id, capability: "invite", payload: { name: "Sam" } }]);
+    expect(w.net.effects).toEqual([{ memberId: w.ava.id, action: "invite", payload: { name: "Sam" }, via: "network_channel" }]);
+    expect(w.net.confirmOnNetworkChannel(p.confirmation_id, w.ava.id)).toBe(false); // single use
   });
 
-  test("contact sharing is high risk too", async () => {
+  for (const [instruction, action] of [
+    ["share my number with her", "share_contact"], ["message Maya that Thursday works", "relay_message"], ["I want to report someone who harassed me", "safety_report"],
+  ] as const) {
+    test(`${action} is tier 3`, async () => {
+      const w = world();
+      const { call } = await connect(w.net, principal(w, w.ava, { scopes: WITH_P2 }));
+      const t = await call("tell_network_agent", { instruction });
+      expect(t.data.pending_confirmation.how_to_confirm).toBe("member_confirms_in_network_app");
+      await call("respond_to_network_item", { item_id: t.data.pending_confirmation.confirmation_id, response: "confirm" });
+      expect(w.net.effects).toHaveLength(0);
+    });
+  }
+
+  test("without the optional P2 scope the action is not available here (no step-up loop)", async () => {
     const w = world();
-    const { call } = await connect(w.net, w.ava.id);
-    const t = await call("network_talk", { message: "share my number with her", client_request_id: rid() });
-    expect(t.data.pending_confirmation).toMatchObject({ risk: "high", confirm_via: "network_channel" });
+    const { call } = await connect(w.net, principal(w, w.ava));
+    const t = await call("tell_network_agent", { instruction: "Please invite my friend Sam" });
+    expect(t.data).toMatchObject({ status: "not_available_here", pending_confirmation: null });
+    expect(t.data.reply).toContain("ntwrk.love/assistants");
+    expect(w.net.channelMessages).toHaveLength(0);
   });
 
-  test("medium risk without elicitation: host asks the member, then confirms via respond", async () => {
+  test("accepting a contact-swap item is tier 3 even through respond", async () => {
     const w = world();
-    const { call } = await connect(w.net, w.ava.id);
-    const t = await call("network_talk", { message: "I need help moving a couch on Saturday", client_request_id: rid() });
+    const { call } = await connect(w.net, principal(w, w.ava));
+    const r = await call("respond_to_network_item", { item_id: await handleOf(call, w.contactSwap.title), response: "interested" });
+    expect(r.data.status).toBe("confirm_in_network_app");
+    expect(w.contactSwap.status).toBe("open");
+    expect(w.net.effects).toHaveLength(0);
+  });
+});
+
+describe("tier 1: host confirmation through respond_to_network_item", () => {
+  test("a help request from tell is drafted, then submitted only after respond(confirm)", async () => {
+    const w = world();
+    const { call } = await connect(w.net, principal(w, w.ava));
+    const t = await call("tell_network_agent", { instruction: "I need help moving a couch on Saturday" });
+    expect(t.data.status).toBe("needs_confirmation");
+    expect(t.data.changes.map((c: any) => c.kind)).toEqual(["request_drafted"]);
     const p = t.data.pending_confirmation;
-    expect(p).toMatchObject({ risk: "medium", confirm_via: "host_respond" });
-    expect(w.net.effects).toHaveLength(0); // drafting contacts nobody
-    const r = await call("network_respond", { item_id: p.confirmation_id, decision: "confirm", client_request_id: rid() });
+    expect(p.how_to_confirm).toBe("ask_member_then_respond");
+    expect(w.net.effects).toHaveLength(0);
+    const r = await call("respond_to_network_item", { item_id: p.confirmation_id, response: "confirm" });
     expect(r.data.status).toBe("done");
-    expect(w.net.effects.map((e) => e.capability)).toEqual(["ask_for_help"]);
-    expect(r.data.receipt.action_id).toMatch(/^act_/);
+    expect(w.net.effects.map((e) => [e.action, e.via])).toEqual([["submit_request", "host"]]);
   });
 
-  test("medium risk with elicitation: the member answers in host UI; a decline does nothing", async () => {
+  test("state changes from tell are proposals; confirming executes exactly the server-built payload", async () => {
     const w = world();
-    const asked: string[] = [];
-    let answer = false;
-    const { call } = await connect(w.net, w.ava.id, { elicit: (m) => (asked.push(m), answer) });
-    const t = await call("network_talk", { message: "I'm slammed, pause for now", client_request_id: rid() });
-    const p = t.data.pending_confirmation;
-    expect(p.confirm_via).toBe("host_elicitation");
-    const no = await call("network_respond", { item_id: p.confirmation_id, decision: "confirm", client_request_id: rid() });
-    expect(no.data.status).toBe("needs_confirmation");
+    const { call } = await connect(w.net, principal(w, w.ava));
+    const t = await call("tell_network_agent", { instruction: "I'm slammed, pause for now" });
+    expect(t.data.status).toBe("needs_confirmation");
+    expect(w.ava.state).toBe("normal");
+    await call("respond_to_network_item", { item_id: t.data.pending_confirmation.confirmation_id, response: "confirm", note: "actually set me to open" });
+    expect(w.ava.state).toBe("quiet");
+    expect(w.net.effects[0]!.payload).toEqual({ state: "quiet" });
+  });
+
+  test("interested / not_for_me on a cleared item execute immediately on an established verified grant", async () => {
+    const w = world();
+    const { call } = await connect(w.net, principal(w, w.ava));
+    const r = await call("respond_to_network_item", { item_id: await handleOf(call, w.intro.title), response: "interested" });
+    expect(r.data.status).toBe("done");
+    expect(w.intro.status).toBe("answered");
+    const again = await call("respond_to_network_item", { item_id: await handleOf(call, w.question.title), response: "not_for_me" });
+    expect(again.data.status).toBe("done");
+    expect(w.net.effects.map((e) => e.action)).toEqual(["respond_interested", "respond_not_for_me"]);
+  });
+
+  test("tell never accepts or declines; it points to respond_to_network_item", async () => {
+    const w = world();
+    const { call } = await connect(w.net, principal(w, w.ava));
+    const t = await call("tell_network_agent", { instruction: "accept the climbing intro" });
+    expect(t.data.status).toBe("nothing_changed");
+    expect(t.data.reply).toContain("respond_to_network_item");
+    expect(w.intro.status).toBe("open");
+  });
+});
+
+describe("tier 2: new grants and unverified clients confirm out of band", () => {
+  test("the first consequential action from a grant younger than 24 h goes to the Network channel; later ones don't", async () => {
+    const w = world();
+    const p = principal(w, w.ava, { grantAgeMs: 1 * HOUR });
+    const { call } = await connect(w.net, p);
+    const r = await call("respond_to_network_item", { item_id: await handleOf(call, w.intro.title), response: "interested" });
+    expect(r.data.status).toBe("confirm_in_network_app");
+    expect(r.data.pending_confirmation.how_to_confirm).toBe("member_confirms_in_network_app");
+    expect(w.intro.status).toBe("open");
+    expect(w.net.confirmOnNetworkChannel(r.data.pending_confirmation.confirmation_id, w.ava.id)).toBe(true);
+    expect(w.intro.status).toBe("answered");
+    const next = await call("respond_to_network_item", { item_id: await handleOf(call, w.question.title), response: "not_for_me" });
+    expect(next.data.status).toBe("done");
+  });
+
+  test("an unverified client never completes a consequential action on the host's word", async () => {
+    const w = world();
+    const { call } = await connect(w.net, principal(w, w.ava, { client: "unknown" }));
+    const r = await call("respond_to_network_item", { item_id: await handleOf(call, w.intro.title), response: "interested" });
+    expect(r.data.status).toBe("confirm_in_network_app");
+    const t = await call("tell_network_agent", { instruction: "I need help with my resume" });
+    expect(t.data.status).toBe("confirm_in_network_app");
+    expect((await call("respond_to_network_item", { item_id: t.data.pending_confirmation.confirmation_id, response: "confirm" })).data.status).toBe("confirm_in_network_app");
     expect(w.net.effects).toHaveLength(0);
-    answer = true;
-    const yes = await call("network_respond", { item_id: p.confirmation_id, decision: "confirm", client_request_id: rid() });
-    expect(yes.data.status).toBe("done");
-    expect(asked).toHaveLength(2);
-    expect(w.net.effects.map((e) => e.capability)).toEqual(["set_state"]);
+    expect(w.net.channelMessages.every((m) => m.text.startsWith("an assistant asked me to"))).toBe(true);
   });
 
-  test("cancel discards; expired or foreign confirmations are indistinguishable from missing ones", async () => {
+  test("tier 0 actions (tell_me_more, maybe_later, drafts) never need confirmation, even on a new grant", async () => {
     const w = world();
-    const ava = await connect(w.net, w.ava.id);
-    const maya = await connect(w.net, w.maya.id);
-    const a = (await ava.call("network_talk", { message: "anyone know a good guitar teacher?", client_request_id: rid() })).data.pending_confirmation;
-    const c = await ava.call("network_respond", { item_id: a.confirmation_id, decision: "cancel", client_request_id: rid() });
-    expect(c.data.status).toBe("done");
-    const after = await ava.call("network_respond", { item_id: a.confirmation_id, decision: "confirm", client_request_id: rid() });
-    expect(after.data.status).toBe("not_available");
+    const { call } = await connect(w.net, principal(w, w.ava, { grantAgeMs: 1 * MINUTE }));
+    const more = await call("respond_to_network_item", { item_id: await handleOf(call, w.intro.title), response: "tell_me_more" });
+    expect(more.data.status).toBe("details");
+    expect(more.data.details.length).toBeGreaterThan(20);
+    const later = await call("respond_to_network_item", { item_id: await handleOf(call, w.question.title), response: "maybe_later" });
+    expect(later.data.status).toBe("done");
+    const avail = await call("tell_network_agent", { instruction: "I'm free weeknights after 7" });
+    expect(avail.data).toMatchObject({ status: "done", pending_confirmation: null });
+    expect(w.net.channelMessages).toHaveLength(0);
+  });
+});
 
-    const b = (await ava.call("network_talk", { message: "looking for a running buddy", client_request_id: rid() })).data.pending_confirmation;
-    const foreign = await maya.call("network_respond", { item_id: b.confirmation_id, decision: "confirm", client_request_id: rid() });
-    const missing = await maya.call("network_respond", { item_id: "cnf_nope", decision: "confirm", client_request_id: rid() });
-    expect(foreign.data.message).toBe(missing.data.message);
-    expect(foreign.data.status).toBe("not_available");
+describe("confirmation lifecycle, idempotency and limits", () => {
+  test("cancel discards; foreign, cross-grant and unknown ids are indistinguishable; expired and finished are reported", async () => {
+    const w = world();
+    const ava = await connect(w.net, principal(w, w.ava));
+    const avaOtherGrant = await connect(w.net, principal(w, w.ava, { client: "chatgpt" }));
+    const maya = await connect(w.net, principal(w, w.maya));
+    const a = (await ava.call("tell_network_agent", { instruction: "anyone know a good guitar teacher?" })).data.pending_confirmation;
+    expect((await ava.call("respond_to_network_item", { item_id: a.confirmation_id, response: "cancel" })).data.status).toBe("done");
+    expect((await ava.call("respond_to_network_item", { item_id: a.confirmation_id, response: "confirm" })).data.status).toBe("already_done");
 
-    w.clock.advance(25 * HOUR);
-    const expired = await ava.call("network_respond", { item_id: b.confirmation_id, decision: "confirm", client_request_id: rid() });
-    expect(expired.data.status).toBe("not_available");
+    const b = (await ava.call("tell_network_agent", { instruction: "looking for a running buddy" })).data.pending_confirmation;
+    const foreign = await maya.call("respond_to_network_item", { item_id: b.confirmation_id, response: "confirm" });
+    const crossGrant = await avaOtherGrant.call("respond_to_network_item", { item_id: b.confirmation_id, response: "confirm" });
+    const missing = await maya.call("respond_to_network_item", { item_id: "cnf_nope12", response: "confirm" });
+    for (const r of [foreign, crossGrant, missing]) {
+      expect(r.isError).toBe(true);
+      expect(r.meta["network/error"].code).toBe("item_not_found");
+      expect(r.text).toBe(missing.text);
+    }
+    w.clock.advance(31 * MINUTE); // tier-1 confirmations live 30 minutes
+    expect((await ava.call("respond_to_network_item", { item_id: b.confirmation_id, response: "confirm" })).data.status).toBe("expired");
     expect(w.net.effects).toHaveLength(0);
   });
 
-  test("writes are idempotent per client_request_id and conflicting reuse is refused", async () => {
+  test("idempotency_key replays the stored result; reuse with different args is refused", async () => {
     const w = world();
-    const { call } = await connect(w.net, w.ava.id);
-    const p = (await call("network_talk", { message: "I need help with my resume", client_request_id: rid() })).data.pending_confirmation;
-    const key = rid();
-    const first = await call("network_respond", { item_id: p.confirmation_id, decision: "confirm", client_request_id: key });
-    const again = await call("network_respond", { item_id: p.confirmation_id, decision: "confirm", client_request_id: key });
-    expect(again.data.receipt.action_id).toBe(first.data.receipt.action_id);
-    expect(again.data.receipt.replayed).toBe(true);
+    const { call } = await connect(w.net, principal(w, w.ava));
+    const p = (await call("tell_network_agent", { instruction: "I need help with my resume" })).data.pending_confirmation;
+    const k = key();
+    const first = await call("respond_to_network_item", { item_id: p.confirmation_id, response: "confirm", idempotency_key: k });
+    const again = await call("respond_to_network_item", { item_id: p.confirmation_id, response: "confirm", idempotency_key: k });
+    expect(again.data).toEqual(first.data);
+    expect(again.meta["network/receipt"].action_id).toBe(first.meta["network/receipt"].action_id);
+    expect(again.meta["network/receipt"].replayed).toBe(true);
     expect(w.net.effects).toHaveLength(1);
-    const conflict = await call("network_respond", { item_id: p.confirmation_id, decision: "cancel", client_request_id: key });
+    const conflict = await call("respond_to_network_item", { item_id: p.confirmation_id, response: "cancel", idempotency_key: k });
     expect(conflict.isError).toBe(true);
-    expect(conflict.text).toContain("idempotency_conflict");
+    expect(conflict.meta["network/error"].code).toBe("idempotency_conflict");
   });
 
-  test("accepting a cleared item records a receipt; disallowed decisions are refused", async () => {
+  test("without a key, identical calls within 10 minutes replay (server fallback key)", async () => {
     const w = world();
-    const { call } = await connect(w.net, w.ava.id, { clientId: "claude-ai" });
-    const q = await call("network_respond", { item_id: w.question.item_id, decision: "accept", client_request_id: rid() });
-    expect(q.data.status).toBe("not_available"); // question only allows decline
-    const r = await call("network_respond", { item_id: w.intro.item_id, decision: "accept", client_request_id: rid() });
-    expect(r.data.status).toBe("done");
-    const receipts = w.net.audit.filter((e) => e.memberId === w.ava.id && e.receipt);
-    expect(receipts.at(-1)!.clientId).toBe("claude-ai");
-    expect(receipts.at(-1)!.summary).toContain("Accepted");
+    const { call } = await connect(w.net, principal(w, w.ava));
+    const a = await call("tell_network_agent", { instruction: "I'm free weekends most Saturdays" });
+    const b = await call("tell_network_agent", { instruction: "I'm free weekends most Saturdays" });
+    expect(b.meta["network/receipt"]).toMatchObject({ action_id: a.meta["network/receipt"].action_id, replayed: true });
+    w.clock.advance(11 * MINUTE);
+    const c = await call("tell_network_agent", { instruction: "I'm free weekends most Saturdays" });
+    expect(c.meta["network/receipt"].replayed).toBe(false);
   });
 
-  test("rate limits are enforced server-side with a retry hint", async () => {
+  test("agent turns are rate limited per member across grants, with a retry hint", async () => {
     const w = world();
-    const { call } = await connect(w.net, w.ava.id);
-    for (let i = 0; i < 30; i++) expect((await call("network_talk", { message: "hello", client_request_id: rid() })).isError).toBe(false);
-    const limited = await call("network_talk", { message: "hello", client_request_id: rid() });
+    const one = await connect(w.net, principal(w, w.ava));
+    const two = await connect(w.net, principal(w, w.ava, { client: "chatgpt" }));
+    for (let i = 0; i < 15; i++) expect((await one.call("ask_network_agent", { question: `hello ${i}` })).isError).toBe(false);
+    for (let i = 0; i < 15; i++) expect((await two.call("ask_network_agent", { question: `hello ${i}` })).isError).toBe(false);
+    const limited = await two.call("ask_network_agent", { question: "hello again" });
     expect(limited.isError).toBe(true);
-    expect(JSON.parse(limited.text)).toMatchObject({ error: "rate_limited" });
-    expect(JSON.parse(limited.text).retry_after_seconds).toBeGreaterThan(0);
-    w.clock.advance(11 * 60_000);
-    expect((await call("network_talk", { message: "hello", client_request_id: rid() })).isError).toBe(false);
+    expect(limited.meta["network/error"]).toMatchObject({ code: "rate_limited", retryable: true });
+    expect(limited.meta["network/retry_after_seconds"]).toBeGreaterThan(0);
+    w.clock.advance(HOUR);
+    expect((await one.call("ask_network_agent", { question: "hello" })).isError).toBe(false);
+  });
+
+  test("share_profile_with_network is limited to 5 per day", async () => {
+    const w = world();
+    const { call } = await connect(w.net, principal(w, w.ava));
+    for (let i = 0; i < 5; i++) expect((await call("share_profile_with_network", { interests: [`hobby ${i}`], member_approved: true })).isError).toBe(false);
+    const r = await call("share_profile_with_network", { interests: ["one more"], member_approved: true });
+    expect(r.meta["network/error"].code).toBe("rate_limited");
   });
 });

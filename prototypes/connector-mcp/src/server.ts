@@ -1,113 +1,235 @@
-// MCP surface: four tools + one UI resource. Every result passes the outbound privacy guard.
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { FakeNetwork, NetworkError, type CallContext } from "./fake-network.ts";
-import { findLeaks, NO_CAPS, type ClientCaps } from "./policy.ts";
+// MCP surface (design §4, §5): five tools rendered per surface profile, two prompts and one MCP Apps
+// resource. Built per request from the verified ConnectorPrincipal (stateless, §2.3). Uses the
+// SDK's low-level Server so tools/list publishes the design's literal JSON Schemas.
+//
+// Every tool result passes the output pipeline (§8.2): output-schema check → leak guard (other
+// members, contact patterns, internal ids, ISO timestamps, hidden items) → surface-profile
+// classifier → length cap. Internal ids and timestamps travel only in `_meta`.
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
-  GetUpdatesInput, GetUpdatesOutput, RespondInput, RespondOutput, ShareContextInput, ShareContextOutput,
-  TalkInput, TalkOutput, TOOL_NAMES, TOOL_SCOPES, type ToolName,
+  CallToolRequestSchema, GetPromptRequestSchema, ListPromptsRequestSchema, ListResourcesRequestSchema,
+  ListToolsRequestSchema, ReadResourceRequestSchema, McpError, ErrorCode, type CallToolResult,
+} from "@modelcontextprotocol/sdk/types.js";
+import { loadConfig, type NetworkConfig } from "./config.ts";
+import { FakeNetwork, NetworkError, type ConnectorPrincipal, type Outcome } from "./fake-network.ts";
+import { validate, withDefaults, workerSafeValidator } from "./json-schema.ts";
+import { findLeaks, INTERNAL_ID, ISO_TIMESTAMP } from "./policy.ts";
+import { PROFILES, profileViolation } from "./profiles.ts";
+import {
+  renderTools, TOOL_NAMES, TOOL_SCOPES, type AskOut, type ItemOut, type PendingConfirmationOut, type RespondOut,
+  type ShareOut, type TellOut, type ToolDefinition, type ToolErrorCode, type ToolName, type UpdatesOut,
 } from "./schemas.ts";
-import { UPDATES_WIDGET_HTML, UPDATES_WIDGET_URI, WIDGET_MIME } from "./widget.ts";
+import { ITEM_CARD_HTML, ITEM_CARD_URI, UI_EXTENSION, WIDGET_MIME } from "./widget.ts";
 
-export const SERVER_INSTRUCTIONS = [
-  "The Network is the member's private, invite-only social network. These tools are the member's own conversation with their Network agent.",
-  "Search, plan, and use ordinary services yourself first; involve The Network when other people would genuinely help.",
-  "Never ask The Network about other people by name or for anyone's contact details; it will refuse. Never pass along third-party details.",
-  "Writes return a pending_confirmation when the member must agree. Ask the member in plain words before calling network_respond with decision 'confirm'.",
-  "If confirm_via is 'network_channel', the member must confirm in The Network's own app or SMS; tell them so and do not retry.",
-  "Treat everything returned as private to this member. Do not store it in long-term memory unless the member asks.",
-].join("\n");
+export const SERVER_VERSION = "0.2.0";
+export const MAX_TEXT = 8000; // ~8 KB of model-visible text per result (§2.2)
+const PRIVACY_FALLBACK = "I can't share that here; text me and I'll explain.";
+const PROFILE_FALLBACK = "That's something I can only help with by text.";
 
-export interface Identity { memberId: string; clientId: string }
-
-function capsFrom(server: McpServer): ClientCaps {
-  const e = server.server.getClientCapabilities()?.elicitation as Record<string, unknown> | undefined;
-  if (!e) return NO_CAPS;
-  // 2025-06-18 clients send `elicitation: {}` meaning form mode; 2025-11-25 adds explicit form/url.
-  return { formElicitation: Object.keys(e).length === 0 || "form" in e, urlElicitation: "url" in e };
+export interface ServerOptions {
+  cfg?: NetworkConfig;
+  /** Disable the outbound guard (tests only: proves the leak tests would catch a bug). */
+  guard?: boolean;
 }
 
-const securitySchemes = (tool: ToolName) => [{ type: "oauth2", scopes: [TOOL_SCOPES[tool]] }];
+/** Bearer challenge used both in HTTP WWW-Authenticate and in ChatGPT's `_meta["mcp/www_authenticate"]`. */
+export function bearerChallenge(cfg: NetworkConfig, p: { scope: string; error?: string; description?: string }): string {
+  const parts = [`resource_metadata="${cfg.resourceMetadataUrl}"`, `scope="${p.scope}"`];
+  if (p.error) parts.push(`error="${p.error}"`);
+  if (p.description) parts.push(`error_description="${p.description.replace(/"/g, "'")}"`);
+  return `Bearer ${parts.join(", ")}`;
+}
 
-export function createMcpServer(net: FakeNetwork, who: Identity, opts: { guard?: boolean } = {}) {
+function toolError(code: ToolErrorCode, message: string, extraMeta: Record<string, unknown> = {}, retryable = false): CallToolResult {
+  return {
+    isError: true,
+    content: [{ type: "text", text: message }],
+    // Not in structuredContent: SDK clients validate structuredContent against outputSchema even on
+    // errors, so an {error} object would be rejected as a schema violation.
+    _meta: { "network/error": { code, message, retryable }, ...extraMeta },
+  };
+}
+
+export function createMcpServer(net: FakeNetwork, principal: ConnectorPrincipal, opts: ServerOptions = {}) {
+  const cfg = opts.cfg ?? loadConfig();
   const guardOn = opts.guard ?? true;
-  const server = new McpServer({ name: "the-network", title: "The Network", version: "0.0.1" }, { instructions: SERVER_INSTRUCTIONS });
-  const ctx = (): CallContext => ({ ...who, caps: capsFrom(server) });
+  const profile = PROFILES[principal.surfaceProfile];
+  const tools = renderTools(principal.surfaceProfile);
+  const byName = new Map(tools.map((t) => [t.name, t] as const));
 
-  async function run(tool: ToolName, args: unknown, fn: () => unknown | Promise<unknown>) {
+  const server = new Server(
+    { name: "the-network", title: "The Network", version: SERVER_VERSION },
+    { capabilities: { tools: { listChanged: false }, prompts: {}, resources: {} }, instructions: profile.instructions, jsonSchemaValidator: workerSafeValidator },
+  );
+
+  const clientDeclaresUi = () => {
+    const caps = server.getClientCapabilities() as any;
+    return Boolean(caps?.extensions?.[UI_EXTENSION] ?? caps?.experimental?.[UI_EXTENSION]);
+  };
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: tools.map((t) => {
+      if (t.name !== TOOL_NAMES.updates || !clientDeclaresUi()) return t;
+      // MCP Apps card only for clients that declare the UI extension (§9.2).
+      return { ...t, _meta: { ...t._meta, ui: { resourceUri: ITEM_CARD_URI }, "openai/outputTemplate": ITEM_CARD_URI } };
+    }),
+  }));
+
+  const scopeChallenge = (scope: string, description: string) =>
+    toolError("needs_scope", description, {
+      // ChatGPT shows its account-linking UI from this on a tool error [O5]; Claude needs HTTP 401/403 (http.ts).
+      "mcp/www_authenticate": [bearerChallenge(cfg, { scope, error: "insufficient_scope", description })],
+    });
+
+  async function call(name: ToolName, args: Record<string, unknown>): Promise<CallToolResult> {
+    const def = byName.get(name)!;
+    const v = validate(def.inputSchema, args);
+    if (!v.valid) return toolError("invalid_input", `Invalid input for ${name}: ${v.errors.slice(0, 3).join("; ")}`);
+    const scope = TOOL_SCOPES[name];
+    if (!principal.scopes.includes(scope))
+      return scopeChallenge(scope, `Connect The Network again to allow this (${scope}).`);
+
+    let outcome: Outcome<unknown>;
     try {
-      const out = await fn();
-      const text = JSON.stringify(out);
-      // Strings the caller itself supplied (e.g. an echoed item_id) cannot leak to that caller.
-      const supplied = JSON.stringify(args);
-      const forbidden = net.forbiddenFor(who.memberId).filter((f) => !supplied.includes(f));
-      const leaks = guardOn ? findLeaks(text, forbidden) : [];
-      if (leaks.length) {
-        net.audit.push({ memberId: who.memberId, clientId: who.clientId, tool, summary: `privacy_guard_blocked:${leaks.join(",")}`, at: net.clock.now() });
-        return { isError: true, content: [{ type: "text" as const, text: JSON.stringify({ error: "privacy_guard_blocked", message: "The Network withheld this response. Try asking differently." }) }] };
-      }
-      return { content: [{ type: "text" as const, text }], structuredContent: out as Record<string, unknown> };
+      const a = withDefaults(def.inputSchema, args) as any;
+      outcome =
+        name === TOOL_NAMES.ask ? net.ask(principal, a)
+        : name === TOOL_NAMES.tell ? net.tell(principal, a)
+        : name === TOOL_NAMES.share ? net.shareProfile(principal, a)
+        : name === TOOL_NAMES.updates ? net.getUpdates(principal, a)
+        : net.respond(principal, a);
     } catch (err) {
-      const e = err instanceof NetworkError ? err : new NetworkError("internal_error", "Something went wrong in The Network. Nothing new was saved.");
-      return { isError: true, content: [{ type: "text" as const, text: JSON.stringify({ error: e.code, message: e.message, retry_after_seconds: e.retryAfterSeconds }) }] };
+      if (err instanceof NetworkError) {
+        if (err.code === "needs_scope") return scopeChallenge(scope, err.message);
+        return toolError(err.code, err.message, err.retryAfterSeconds ? { "network/retry_after_seconds": err.retryAfterSeconds } : {}, err.retryable);
+      }
+      return toolError("temporarily_unavailable", "Something went wrong in The Network. Nothing new was saved.", {}, true);
     }
+    return pipeline(def, args, outcome);
   }
 
-  server.registerTool(TOOL_NAMES.talk, {
-    title: "network.talk",
-    description:
-      "Send the member's message to their Network agent and get its reply: ask for something, answer its question, change preferences, or accept/decline in plain language. " +
-      "Has no side effects beyond the conversation; anything that would involve other people comes back as pending_confirmation.",
-    inputSchema: TalkInput, outputSchema: TalkOutput,
-    annotations: { title: "Talk to your Network", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    _meta: { securitySchemes: securitySchemes(TOOL_NAMES.talk), "openai/toolInvocation/invoking": "Asking your Network…", "openai/toolInvocation/invoked": "Your Network replied" },
-  }, async (args) => run(TOOL_NAMES.talk, args, () => net.talk(ctx(), args)));
+  function pipeline(def: ToolDefinition, args: Record<string, unknown>, outcome: Outcome<unknown>): CallToolResult {
+    const structured = outcome.result as Record<string, unknown>;
+    const out = validate(def.outputSchema, structured);
+    if (!out.valid) {
+      net.audit.push({ memberId: principal.memberId, grantId: principal.grantId, hostKey: principal.hostKey, tool: def.name, summary: `output_schema_violation:${out.errors[0]}`, at: net.clock.now() });
+      return toolError("temporarily_unavailable", "The Network couldn't answer that right now. Nothing new was saved.", {}, true);
+    }
+    let text = renderText(def.name, structured);
+    if (text.length > MAX_TEXT) text = `${text.slice(0, MAX_TEXT - 1)}…`;
+    const meta: Record<string, unknown> = outcome.receipt ? { "network/receipt": outcome.receipt } : {};
 
-  server.registerTool(TOOL_NAMES.share_context, {
-    title: "network.share_context",
-    description:
-      "With the member's OK, pass facts about the member (interests, skills, goals, what they can offer, availability) that you already know. " +
-      "Show the member the exact list first. Only facts about the member; never other people, contact details, or secrets. Facts arrive as private suggestions the member confirms in The Network.",
-    inputSchema: ShareContextInput, outputSchema: ShareContextOutput,
-    annotations: { title: "Share context with your Network", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    _meta: { securitySchemes: securitySchemes(TOOL_NAMES.share_context) },
-  }, async (args) => run(TOOL_NAMES.share_context, args, () => net.shareContext(ctx(), args)));
+    if (guardOn) {
+      const visible = JSON.stringify({ structured, text });
+      const supplied = JSON.stringify(args);
+      const member = net.members.get(principal.memberId);
+      const forbidden = net.forbiddenFor(principal).filter((f) => !supplied.includes(f));
+      const leaks = findLeaks(visible, forbidden);
+      if (INTERNAL_ID.test(visible)) leaks.push("internal_id");
+      if (ISO_TIMESTAMP.test(visible)) leaks.push("iso_timestamp");
+      leaks.push(...findLeaks(JSON.stringify(meta), forbidden).filter((l) => l.startsWith("forbidden:")));
+      if (leaks.length) {
+        net.audit.push({ memberId: principal.memberId, grantId: principal.grantId, hostKey: principal.hostKey, tool: def.name, summary: `leak_block:${leaks.join(",")}`, at: net.clock.now() });
+        return toolError("temporarily_unavailable", PRIVACY_FALLBACK);
+      }
+      const off = profileViolation(visible, profile, member?.age);
+      if (off) {
+        net.audit.push({ memberId: principal.memberId, grantId: principal.grantId, hostKey: principal.hostKey, tool: def.name, summary: `profile_block:${principal.surfaceProfile}`, at: net.clock.now() });
+        return toolError("not_available_on_this_assistant", PROFILE_FALLBACK);
+      }
+    }
+    return { content: [{ type: "text", text }], structuredContent: structured, ...(Object.keys(meta).length ? { _meta: meta } : {}) };
+  }
 
-  server.registerTool(TOOL_NAMES.get_updates, {
-    title: "network.get_updates",
-    description: "Fetch opportunities, questions and reminders The Network has already cleared for this member. Read-only.",
-    inputSchema: GetUpdatesInput, outputSchema: GetUpdatesOutput,
-    annotations: { title: "Check Network updates", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    _meta: {
-      securitySchemes: securitySchemes(TOOL_NAMES.get_updates),
-      ui: { resourceUri: UPDATES_WIDGET_URI }, // MCP Apps (SEP-1865): ChatGPT, Claude
-      "openai/outputTemplate": UPDATES_WIDGET_URI, // legacy Apps SDK alias
-      "openai/toolInvocation/invoking": "Checking your Network…",
-      "openai/toolInvocation/invoked": "Checked your Network",
+  server.setRequestHandler(CallToolRequestSchema, async (req) => {
+    const name = req.params.name as ToolName;
+    if (!byName.has(name)) throw new McpError(ErrorCode.InvalidParams, `Unknown tool: ${req.params.name}`);
+    return call(name, (req.params.arguments ?? {}) as Record<string, unknown>);
+  });
+
+  // ---- prompts (user-invoked; §4)
+  const PROMPTS = [
+    { name: "network_checkin", title: "Check in with my Network", description: "What's new from my Network?" },
+    {
+      name: "network_help_request", title: "Ask my Network for help",
+      description: "Search first, then ask The Network if people would help more.",
+      arguments: [{ name: "need", description: "What you need help with", required: true }],
     },
-  }, async (args) => run(TOOL_NAMES.get_updates, args, () => net.getUpdates(ctx(), args)));
+  ];
+  server.setRequestHandler(ListPromptsRequestSchema, async () => ({ prompts: PROMPTS }));
+  server.setRequestHandler(GetPromptRequestSchema, async (req) => {
+    if (req.params.name === "network_checkin")
+      return { messages: [{ role: "user", content: { type: "text", text: "What's new from my Network?" } }] };
+    if (req.params.name === "network_help_request") {
+      const need = String(req.params.arguments?.need ?? "").slice(0, 500);
+      return {
+        messages: [{
+          role: "user",
+          content: { type: "text", text: `I need help with: ${need}. Look for a service, place or answer yourself first. If other people would help more, ask my Network with tell_network_agent.` },
+        }],
+      };
+    }
+    throw new McpError(ErrorCode.InvalidParams, `Unknown prompt: ${req.params.name}`);
+  });
 
-  server.registerTool(TOOL_NAMES.respond, {
-    title: "network.respond",
-    description:
-      "Record the member's explicit answer to one item: accept, decline, tell_me_more, or confirm/cancel a pending_confirmation. " +
-      "Call only after the member has said so in this conversation. Accepting can lead The Network to contact another member.",
-    inputSchema: RespondInput, outputSchema: RespondOutput,
-    // destructiveHint: an accepted intro or confirmed action can send a message to someone else (irreversible).
-    annotations: { title: "Answer a Network item", readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
-    _meta: { securitySchemes: securitySchemes(TOOL_NAMES.respond) },
-  }, async (args) => run(TOOL_NAMES.respond, args, () => net.respond(ctx(), args, async (summary) => {
-    const r = await server.server.elicitInput({
-      mode: "form",
-      message: `The Network asks you to confirm: ${summary}`,
-      requestedSchema: { type: "object", properties: { confirm: { type: "boolean", title: "Yes, do this" } }, required: ["confirm"] },
-    });
-    return r.action === "accept" && r.content?.confirm === true;
-  })));
-
-  server.registerResource("updates-widget", UPDATES_WIDGET_URI, {
-    title: "Network updates", description: "Cards for items from network_get_updates.", mimeType: WIDGET_MIME,
-    _meta: { ui: { csp: { connectDomains: [], resourceDomains: [] }, prefersBorder: true } },
-  }, async () => ({ contents: [{ uri: UPDATES_WIDGET_URI, mimeType: WIDGET_MIME, text: UPDATES_WIDGET_HTML }] }));
+  // ---- resources: only the MCP Apps item card; never a graph or member directory (GW-001)
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources: [{ uri: ITEM_CARD_URI, name: "item-card", title: "Network item card", description: "Cards for items from get_network_updates.", mimeType: WIDGET_MIME }],
+  }));
+  server.setRequestHandler(ReadResourceRequestSchema, async (req) => {
+    if (req.params.uri !== ITEM_CARD_URI) throw new McpError(ErrorCode.InvalidParams, "Unknown resource");
+    return {
+      contents: [{
+        uri: ITEM_CARD_URI, mimeType: WIDGET_MIME, text: ITEM_CARD_HTML,
+        _meta: { ui: { csp: { connectDomains: [], resourceDomains: [] }, prefersBorder: true } },
+      }],
+    };
+  });
 
   return server;
+}
+
+// --------------------------------------------------------------------------------- text renderings
+// Complete human-readable text for hosts that ignore structuredContent (Grok, Muse; §9.2).
+// Only opaque handles (itm_/cnf_) appear; no internal ids, no timestamps.
+
+function pendingText(p: PendingConfirmationOut | null | undefined): string {
+  if (!p) return "";
+  return p.how_to_confirm === "ask_member_then_respond"
+    ? `\nNeeds the member's OK: ${p.summary} (confirmation ${p.confirmation_id}, ${p.expires_in ?? "expires soon"}).`
+    : `\nThe member confirms this in The Network's own messages; the assistant can't confirm it: ${p.summary}`;
+}
+
+function itemText(i: ItemOut, n: number): string {
+  const extra = [i.when && `When: ${i.when}`, i.where && `Where: ${i.where}`, i.expires && i.expires[0]!.toUpperCase() + i.expires.slice(1)].filter(Boolean).join(". ");
+  return `${n}. ${i.title} (${i.kind}, ${i.item_id}): ${i.summary}${extra ? ` ${extra}.` : ""} Answers: ${i.allowed_responses.join(", ")}.`;
+}
+
+export function renderText(name: ToolName, s: Record<string, unknown>): string {
+  switch (name) {
+    case TOOL_NAMES.ask: {
+      const o = s as unknown as AskOut;
+      const rel = o.related_items.length ? `\nRelated: ${o.related_items.map((r) => `${r.title} (${r.item_id})`).join("; ")}` : "";
+      return `${o.answer}${rel}`;
+    }
+    case TOOL_NAMES.tell: {
+      const o = s as unknown as TellOut;
+      const ch = o.changes.length ? `\nChanges: ${o.changes.map((c) => c.summary).join("; ")}` : "";
+      return `${o.reply}${ch}${pendingText(o.pending_confirmation)}`;
+    }
+    case TOOL_NAMES.share: {
+      const o = s as unknown as ShareOut;
+      const rej = o.rejected.length ? `\nNot accepted: ${o.rejected.map((r) => `${r.field}${r.index !== undefined ? `[${r.index}]` : ""} (${r.reason.replace(/_/g, " ")})`).join("; ")}` : "";
+      return `Sent ${o.accepted_count} detail${o.accepted_count === 1 ? "" : "s"} for the member to review.${rej}\n${o.next_step}`;
+    }
+    case TOOL_NAMES.updates: {
+      const o = s as unknown as UpdatesOut;
+      if (!o.items.length) return "Nothing new from The Network right now.";
+      return [`${o.items.length} item${o.items.length === 1 ? "" : "s"} from The Network:`, ...o.items.map((i, n) => itemText(i, n + 1)), o.next_cursor ? "More items are available." : ""].filter(Boolean).join("\n");
+    }
+    case TOOL_NAMES.respond: {
+      const o = s as unknown as RespondOut;
+      return `${o.message}${o.details ? `\n${o.details}` : ""}${pendingText(o.pending_confirmation)}`;
+    }
+  }
 }

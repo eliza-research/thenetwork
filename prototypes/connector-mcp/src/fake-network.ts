@@ -1,284 +1,506 @@
-// In-memory stand-in for The Network service. The real service is the Network agent turn
-// (network_talk), the enrichment pipeline (share_context), member-visible opportunities
-// (get_updates) and the consent workflow (respond). Only behavior the connector contract depends
-// on is modeled: ownership, cleared items, confirmations, idempotency, receipts, privacy.
-import type { Clock, PrivacyScope, ParticipationState, City } from "@thenetwork/core";
+// In-memory stand-in for The Network service behind the connector (design §5.2, §6, §7, §8). The real
+// service runs the member's shared-agent turn, the enrichment pipeline, the cleared-items query and
+// the opportunity state machine. Only behavior the connector contract depends on is modeled:
+// ownership, per-grant handles, surface profiles, member eligibility (minors), tiered confirmation,
+// idempotency, receipts and privacy.
+import { createHash, createHmac, randomBytes } from "node:crypto";
+import type { City, Clock, ParticipationState, PrivacyScope } from "@thenetwork/core";
+import type { HostKey, TrustTier } from "./config.ts";
 import {
-  CAPABILITY_RISK, confirmVia, looksLikeContact, looksLikeCredential, looksSensitive,
-  RateLimiter, type Capability, type ClientCaps,
+  ACTION_TIER, confirmationTtlMs, effectiveTier, looksAboutSomeoneElse, looksLikeContact, looksLikeCredential,
+  looksLikeStreetAddress, looksNightlife, looksRomantic, looksSensitive, RateLimiter, type ActionKind, type LimitName, type Tier,
 } from "./policy.ts";
-import type {
-  ItemT, PendingConf, ReceiptT, RespondIn, RespondOut, ShareIn, ShareOut, TalkIn, TalkOut, UpdatesIn, UpdatesOut,
+import { ADULT_AGE, PROFILES, visibility, type ContentFacts, type SurfaceProfileName } from "./profiles.ts";
+import {
+  SCOPES, TOOL_NAMES, type AskIn, type AskOut, type ChangeKind, type ItemKind, type ItemOut, type PendingConfirmationOut,
+  type Receipt, type RespondIn, type RespondOut, type ResponseValue, type ShareIn, type ShareOut, type ShareRejectReason,
+  type TellIn, type TellOut, type ToolErrorCode, type ToolName, type UpdatesIn, type UpdatesOut,
 } from "./schemas.ts";
 
+/** Who is calling, built only from the verified access token (design §3.6), never from tool args. */
+export interface ConnectorPrincipal {
+  memberId: string;
+  grantId: string;
+  clientId: string;
+  hostKey: HostKey;
+  hostDisplayName: string;
+  scopes: string[];
+  surfaceProfile: SurfaceProfileName;
+  trustTier: TrustTier;
+  grantCreatedAt: number;
+}
+
 export interface FakeMember {
-  id: string; firstName: string; city: City; state: ParticipationState;
+  id: string; firstName: string; age: number; city: City; state: ParticipationState;
   phone: string; email: string;
   facets: { value: string; scope: PrivacyScope }[];
 }
-interface StoredItem extends ItemT { viewerId: string; opportunityId: string; counterpartId?: string; status: "open" | "accepted" | "declined" }
-interface Confirmation extends PendingConf {
-  memberId: string; clientId: string; capability: Capability; payload: Record<string, string>;
-  status: "pending" | "done" | "cancelled" | "awaiting_channel";
-}
-export interface AuditEvent { memberId: string; clientId: string; tool: string; receipt?: ReceiptT; summary: string; at: number }
 
-/** Who is calling: resolved from the OAuth access token, never from tool arguments. */
-export interface CallContext { memberId: string; clientId: string; caps: ClientCaps }
-/** Lets the MCP layer ask the human directly (MCP elicitation) for medium-risk confirmations. */
-export type AskMember = (summary: string) => Promise<boolean>;
+interface StoredItem {
+  internalId: string; // opp_… — never leaves the service
+  viewerId: string;
+  kind: ItemKind;
+  title: string;
+  summary: string;
+  details: string;
+  when?: string;
+  where?: string;
+  expiresAt: number | null;
+  allowedResponses: ResponseValue[];
+  facts: ContentFacts;
+  counterpartId?: string;
+  status: "open" | "answered" | "snoozed";
+}
+
+interface Confirmation {
+  confirmationId: string;
+  memberId: string;
+  grantId: string;
+  hostDisplayName: string;
+  action: ActionKind;
+  /** Built by the server at creation and executed exactly; never host-supplied (design §6.2). */
+  payload: Record<string, string>;
+  summary: string;
+  tier: Tier;
+  status: "pending" | "done" | "cancelled";
+  expiresAt: number;
+  confirmedVia?: "host" | "network_channel";
+}
+
+export interface AuditEvent {
+  memberId: string; grantId: string; hostKey: string; tool: string; summary: string;
+  tier?: Tier; receipt?: Receipt; at: number;
+}
+export interface Effect { memberId: string; action: ActionKind; payload: Record<string, string>; via: "host" | "network_channel" }
 
 export class NetworkError extends Error {
-  constructor(public code: string, message: string, public retryAfterSeconds?: number) { super(message); }
+  constructor(public code: ToolErrorCode, message: string, public retryable = false, public retryAfterSeconds?: number) { super(message); }
 }
+
+export interface Outcome<T> { result: T; receipt?: Receipt }
+
+const NOT_AVAILABLE = "That isn't available.";
+const TEXT_ONLY = "That's something I can only help with by text.";
+const IDEM_WINDOW_MS = 10 * 60_000;
+
+const humanDuration = (ms: number) => {
+  if (ms >= 48 * 3600_000) return `${Math.round(ms / 86_400_000)} days`;
+  if (ms >= 3600_000) { const h = Math.round(ms / 3600_000); return `${h} hour${h === 1 ? "" : "s"}`; }
+  return `${Math.max(1, Math.round(ms / 60_000))} minutes`;
+};
 
 export class FakeNetwork {
   members = new Map<string, FakeMember>();
   private items: StoredItem[] = [];
   private confirmations = new Map<string, Confirmation>();
-  proposals: { id: string; memberId: string; kind: string; text: string; scope: PrivacyScope; status: "proposed" }[] = [];
+  proposals: { memberId: string; field: string; value: string; privacyScope: PrivacyScope; status: "proposed"; provenance: string }[] = [];
   audit: AuditEvent[] = [];
-  /** Side effects the Network performed (stand-in for SMS, invites, contact swaps). */
-  effects: { memberId: string; capability: Capability; payload: Record<string, string> }[] = [];
-  private idem = new Map<string, { argsKey: string; result: any }>();
+  /** Side effects the Network performed (stand-in for intros, invites, contact swaps, state changes). */
+  effects: Effect[] = [];
+  /** Messages the Network sent the member on its OWN channel (iMessage/SMS), e.g. tier-2/3 confirmations. */
+  channelMessages: { memberId: string; text: string; confirmationId?: string }[] = [];
+  private idem = new Map<string, { argsHash: string; result: unknown; receipt?: Receipt; at: number }>();
+  private consequentialGrants = new Set<string>();
   private seq = 0;
   private limiter: RateLimiter;
 
-  constructor(public clock: Clock) { this.limiter = new RateLimiter(clock); }
+  private handleKey: string;
+  private assistantsUrl: string;
+  constructor(public clock: Clock, opts: { handleKey?: string; assistantsUrl?: string } = {}) {
+    this.limiter = new RateLimiter(clock);
+    this.handleKey = opts.handleKey ?? "prototype-item-handle-key";
+    this.assistantsUrl = opts.assistantsUrl ?? "ntwrk.love/assistants";
+  }
 
   private id(prefix: string) { return `${prefix}_${(++this.seq).toString(36).padStart(5, "0")}`; }
-  private iso(t: number) { return new Date(t).toISOString(); }
 
   addMember(m: FakeMember) { this.members.set(m.id, m); return m; }
-  /** The engine clears an opportunity for one viewer; body must already be shareable-only text. */
-  addItem(viewerId: string, item: Omit<ItemT, "item_id" | "created_at"> & { counterpartId?: string; createdAt?: number }) {
-    const stored: StoredItem = {
-      item_id: this.id("itm"), kind: item.kind, title: item.title, body: item.body,
-      created_at: this.iso(item.createdAt ?? this.clock.now()), expires_at: item.expires_at,
-      allowed_decisions: item.allowed_decisions, viewerId, opportunityId: this.id("opp"),
-      counterpartId: item.counterpartId, status: "open",
-    };
+  /** The engine clears an item for one viewer; text must already be shareable-only. */
+  addItem(viewerId: string, item: Omit<StoredItem, "internalId" | "viewerId" | "status" | "details"> & { details?: string }) {
+    const stored: StoredItem = { ...item, details: item.details ?? item.summary, internalId: this.id("opp"), viewerId, status: "open" };
     this.items.push(stored);
     return stored;
   }
 
-  /** Strings that must never appear in tool output for this viewer (used by the output guard and tests). */
-  forbiddenFor(viewerId: string): string[] {
+  /** Per-grant HMAC handle: two hosts can't correlate items, and a leaked handle is useless elsewhere (§5.6). */
+  itemHandle(grantId: string, item: StoredItem): string {
+    const mac = createHmac("sha256", this.handleKey).update(`${grantId}|${item.internalId}`).digest();
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    return "itm_" + [...mac.subarray(0, 10)].map((b) => alphabet[b % 62]).join("");
+  }
+  private newConfirmationId() {
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    return "cnf_" + [...randomBytes(10)].map((b) => alphabet[b % 62]).join("");
+  }
+
+  /**
+   * Strings that must never appear in any output to this principal: other members' ids, contact
+   * details and non-shareable facets; every internal opportunity id; other members' item text; and
+   * the text of this member's items that are hidden by profile or eligibility ("excluded items aren't
+   * mentioned", §7.1). Used by the outbound guard and by the tests.
+   */
+  forbiddenFor(p: ConnectorPrincipal): string[] {
     const out: string[] = [];
+    const viewer = this.members.get(p.memberId);
     for (const m of this.members.values()) {
-      if (m.id === viewerId) continue;
+      if (m.id === p.memberId) {
+        for (const f of m.facets) if (f.scope === "agent_private") out.push(f.value); // connector egress policy (§8.2.3)
+        continue;
+      }
       out.push(m.id, m.phone, m.email);
       for (const f of m.facets) if (f.scope !== "shareable") out.push(f.value);
     }
-    for (const i of this.items) { out.push(i.opportunityId); if (i.viewerId !== viewerId) out.push(i.item_id); }
+    for (const i of this.items) {
+      out.push(i.internalId);
+      const hidden = i.viewerId !== p.memberId || !viewer || visibility(i.facts, viewer.age, PROFILES[p.surfaceProfile]) !== "visible";
+      if (hidden) out.push(i.title, i.summary);
+    }
     return out;
   }
 
-  // ---------- shared plumbing ----------
-  private guard(ctx: CallContext, tool: string) {
-    const m = this.members.get(ctx.memberId);
-    if (!m) throw new NetworkError("member_not_found", "This connection is not linked to an active Network member.");
-    const retry = this.limiter.hit(ctx.memberId, tool);
-    if (retry !== null) throw new NetworkError("rate_limited", `Too many ${tool} calls. Try again in ${retry}s.`, retry);
+  // ------------------------------------------------------------------------------- plumbing
+  private member(p: ConnectorPrincipal, tool: ToolName, scope: string): FakeMember {
+    const m = this.members.get(p.memberId);
+    if (!m) throw new NetworkError("not_member", "This connection isn't linked to an active Network member.");
+    if (!p.scopes.includes(scope)) throw new NetworkError("needs_scope", `This assistant isn't allowed to do that yet (needs ${scope}).`);
+    const checks: [LimitName, string][] = [["grant_minute", p.grantId], ["grant_day", p.grantId]];
+    if (tool === TOOL_NAMES.ask || tool === TOOL_NAMES.tell) checks.push(["agent_turns", p.memberId]);
+    if (tool === TOOL_NAMES.share) checks.push(["share_profile", p.memberId]);
+    if (tool === TOOL_NAMES.tell || tool === TOOL_NAMES.share || tool === TOOL_NAMES.respond) checks.push(["writes", p.memberId]);
+    const retry = this.limiter.hit(checks);
+    if (retry !== null) throw new NetworkError("rate_limited", `Too many requests to The Network right now. Try again in about ${humanDuration(retry * 1000)}.`, true, retry);
     return m;
   }
-  private once<T extends { receipt: ReceiptT }>(ctx: CallContext, tool: string, key: string, args: unknown, fn: () => T): T {
-    const k = `${ctx.memberId}:${tool}:${key}`;
-    const argsKey = JSON.stringify(args);
-    const prior = this.idem.get(k);
-    if (prior) {
-      if (prior.argsKey !== argsKey) throw new NetworkError("idempotency_conflict", "client_request_id was already used with different arguments.");
-      return { ...prior.result, receipt: { ...prior.result.receipt, replayed: true } };
+
+  /** Idempotency (GW-003, §5.1): (grant, tool, key) or (grant, tool, sha256(canonical args)) for 10 min. */
+  private once<T>(p: ConnectorPrincipal, tool: ToolName, args: { idempotency_key?: string }, fn: () => Outcome<T>): Outcome<T> {
+    const { idempotency_key, ...rest } = args;
+    const argsHash = createHash("sha256").update(canonical(rest)).digest("hex");
+    const key = `${p.grantId}:${tool}:${idempotency_key ? `k:${idempotency_key}` : `h:${argsHash}`}`;
+    const now = this.clock.now();
+    const prior = this.idem.get(key);
+    if (prior && (idempotency_key || now - prior.at < IDEM_WINDOW_MS)) {
+      if (prior.argsHash !== argsHash) throw new NetworkError("idempotency_conflict", "That idempotency_key was already used with different arguments. Use a new key for a new action.");
+      return { result: prior.result as T, receipt: prior.receipt && { ...prior.receipt, replayed: true } };
     }
-    const result = fn();
-    this.idem.set(k, { argsKey, result });
-    return result;
+    const out = fn();
+    this.idem.set(key, { argsHash, result: out.result, receipt: out.receipt, at: now });
+    return out;
   }
-  private receipt(ctx: CallContext, tool: string, summary: string, actionId = this.id("act")): ReceiptT {
-    const r: ReceiptT = { receipt_id: this.id("rcp"), action_id: actionId, tool, client_id: ctx.clientId, at: this.iso(this.clock.now()), summary, replayed: false };
-    this.audit.push({ memberId: ctx.memberId, clientId: ctx.clientId, tool, receipt: r, summary, at: this.clock.now() });
+
+  private receipt(p: ConnectorPrincipal, tool: ToolName, summary: string, tier?: Tier): Receipt {
+    const r: Receipt = { receipt_id: this.id("rcp"), action_id: this.id("act"), at: new Date(this.clock.now()).toISOString(), replayed: false };
+    this.audit.push({ memberId: p.memberId, grantId: p.grantId, hostKey: p.hostKey, tool, summary, tier, receipt: r, at: this.clock.now() });
     return r;
   }
-  private pend(ctx: CallContext, capability: Exclude<Capability, "get_me" | "search_world" | "find_possibilities">, summary: string, payload: Record<string, string>): Confirmation {
-    const risk = CAPABILITY_RISK[capability] as "medium" | "high";
-    const c: Confirmation = {
-      confirmation_id: this.id("cnf"), summary, risk, confirm_via: confirmVia(risk, ctx.caps),
-      expires_at: this.iso(this.clock.now() + 24 * 3600_000),
-      memberId: ctx.memberId, clientId: ctx.clientId, capability, payload, status: "pending",
+  private logRead(p: ConnectorPrincipal, tool: ToolName, summary: string) {
+    this.audit.push({ memberId: p.memberId, grantId: p.grantId, hostKey: p.hostKey, tool, summary, at: this.clock.now() });
+  }
+
+  private publicConf(c: Confirmation): PendingConfirmationOut {
+    return {
+      confirmation_id: c.confirmationId, summary: c.summary.slice(0, 300),
+      how_to_confirm: c.tier >= 2 ? "member_confirms_in_network_app" : "ask_member_then_respond",
+      expires_in: `expires in ${humanDuration(c.expiresAt - this.clock.now())}`,
     };
-    this.confirmations.set(c.confirmation_id, c);
+  }
+
+  private pend(p: ConnectorPrincipal, action: ActionKind, summary: string, payload: Record<string, string>, baseTier: Tier = ACTION_TIER[action]): Confirmation {
+    const tier = this.tierFor(p, baseTier);
+    const c: Confirmation = {
+      confirmationId: this.newConfirmationId(), memberId: p.memberId, grantId: p.grantId, hostDisplayName: p.hostDisplayName,
+      action, payload, summary, tier, status: "pending", expiresAt: this.clock.now() + confirmationTtlMs(tier),
+    };
+    this.confirmations.set(c.confirmationId, c);
+    if (tier >= 2) this.askOnNetworkChannel(c);
     return c;
   }
-  private publicConf(c: Confirmation): PendingConf {
-    const { confirmation_id, summary, risk, confirm_via, expires_at } = c;
-    return { confirmation_id, summary, risk, confirm_via, expires_at };
+  private tierFor(p: ConnectorPrincipal, base: Tier): Tier {
+    return effectiveTier(base, { trustTier: p.trustTier, grantCreatedAt: p.grantCreatedAt, hasPriorConsequentialAction: this.consequentialGrants.has(p.grantId) }, this.clock.now());
   }
-  private execute(c: Confirmation, via: string) {
+  /** Out-of-band confirmation request on the member's primary Network channel (§6.2). */
+  private askOnNetworkChannel(c: Confirmation) {
+    if (this.channelMessages.some((m) => m.confirmationId === c.confirmationId)) return;
+    this.channelMessages.push({
+      memberId: c.memberId, confirmationId: c.confirmationId,
+      text: `${c.hostDisplayName} asked me to: ${c.summary} Reply YES to confirm or NO to cancel.`,
+    });
+  }
+
+  private execute(c: Confirmation, via: "host" | "network_channel") {
     c.status = "done";
-    this.effects.push({ memberId: c.memberId, capability: c.capability, payload: c.payload });
-    this.audit.push({ memberId: c.memberId, clientId: via, tool: `capability:${c.capability}`, summary: `Executed: ${c.summary}`, at: this.clock.now() });
+    c.confirmedVia = via;
+    this.consequentialGrants.add(c.grantId);
+    if (c.payload.item) {
+      const item = this.items.find((i) => i.internalId === c.payload.item);
+      if (item) item.status = "answered";
+    }
+    if (c.action === "set_state" && c.payload.state) this.members.get(c.memberId)!.state = c.payload.state as ParticipationState;
+    this.effects.push({ memberId: c.memberId, action: c.action, payload: c.payload, via });
+    this.audit.push({ memberId: c.memberId, grantId: c.grantId, hostKey: via, tool: `action:${c.action}`, summary: `Executed: ${c.summary}`, tier: c.tier, at: this.clock.now() });
   }
 
-  // ---------- network_talk ----------
-  talk(ctx: CallContext, input: TalkIn): TalkOut {
-    const me = this.guard(ctx, "network_talk");
-    return this.once(ctx, "network_talk", input.client_request_id, input, () => {
-      const msg = input.message;
-      const conversation_id = input.conversation_id ?? this.id("cnv");
-      let reply: string, pending: Confirmation | null = null;
-      const open = this.items.filter((i) => i.viewerId === me.id && i.status === "open");
-      if (/share my (number|phone|contact)/i.test(msg)) {
-        pending = this.pend(ctx, "share_contact", "Offer to swap phone numbers with your current match. They are asked separately; numbers are exchanged only if both agree.", {});
-        reply = "I can offer a number swap. You'll get a confirmation from The Network directly; nothing is shared until you and they both say yes.";
-      } else if (/\binvite\b/i.test(msg)) {
-        const name = msg.match(/invite (?:my (?:friend|colleague) )?([A-Z][a-z]+)/)?.[1] ?? "your friend";
-        pending = this.pend(ctx, "invite", `Create a personal invitation from you for ${name}.`, { name });
-        reply = `Happy to. I'll send you a link to forward to ${name}; confirm it in The Network app or by text first.`;
-      } else if (/\b(who else|list (all |the )?members|everyone (in|who)|member list|their (phone|number|email|address)|('s|s') (phone|number|email|address|last name))\b/i.test(msg)) {
-        reply = "I can't share other members' details or who is in the Network. If someone seems like a fit for you, I'll suggest it, ask them privately, and only connect you if you both say yes.";
-      } else if (/\b(pause|slammed|quiet|only when i ask|stop sending)\b/i.test(msg)) {
-        pending = this.pend(ctx, "set_state", "Switch to Quiet: only messages you ask for, until you say otherwise.", { state: "quiet" });
-        reply = "Want me to go quiet until you check back in?";
-      } else if (/\b(need help|help me|looking for|anyone (know|who)|find (me )?(someone|people))\b/i.test(msg)) {
-        pending = this.pend(ctx, "ask_for_help", `Draft a request to the Network: "${msg.slice(0, 120)}". No one is contacted until you confirm.`, { text: msg.slice(0, 500) });
-        reply = "First, a service or place may solve this faster; I'll check that. If people would help more, I can draft a request. It won't go to anyone until you confirm.";
-      } else if (/\b(update|anything new|what'?s new|pending|opportunit)/i.test(msg)) {
-        reply = open.length ? `You have ${open.length} item(s) waiting. Ask me to show them, or use network_get_updates.` : "Nothing new yet. I'll reach out when something genuinely fits.";
-      } else if (/what do you know about me/i.test(msg)) {
-        const mine = me.facets.filter((f) => f.scope === "shareable" || f.scope === "matchable").map((f) => f.value);
-        reply = `Here is what I use for matching: ${mine.join("; ") || "nothing yet"}. You can see and edit everything, including private notes, on your Network page.`;
-      } else {
-        reply = "Got it. Tell me what you'd like more of, or ask me for something specific.";
-      }
-      return {
-        reply, conversation_id,
-        pending_confirmation: pending ? this.publicConf(pending) : null,
-        related_item_ids: /update|new|pending|opportunit/i.test(msg) ? open.map((i) => i.item_id) : [],
-        receipt: this.receipt(ctx, "network_talk", pending ? `Proposed: ${pending.summary}` : "Talked with your Network agent."),
-      };
-    });
-  }
-
-  // ---------- network_share_context ----------
-  shareContext(ctx: CallContext, input: ShareIn): ShareOut {
-    const me = this.guard(ctx, "network_share_context");
-    return this.once(ctx, "network_share_context", input.client_request_id, input, () => {
-      const accepted: ShareOut["accepted"] = [], rejected: ShareOut["rejected"] = [];
-      input.facts.forEach((f, index) => {
-        if (looksLikeContact(f.text)) return rejected.push({ index, reason: "contact_details_not_accepted" });
-        if (looksLikeCredential(f.text)) return rejected.push({ index, reason: "credential_like_text" });
-        if (looksSensitive(f.text)) return rejected.push({ index, reason: "sensitive_topic_tell_network_directly" });
-        if (this.proposals.some((p) => p.memberId === me.id && p.text.toLowerCase() === f.text.toLowerCase()))
-          return rejected.push({ index, reason: "duplicate" });
-        const proposal_id = this.id("prp");
-        // Host-provided facts start agent-private and unconfirmed; the member confirms and sets scope in the Network (F5, F7).
-        this.proposals.push({ id: proposal_id, memberId: me.id, kind: f.kind, text: f.text, scope: "agent_private", status: "proposed" });
-        accepted.push({ index, proposal_id, kind: f.kind });
-      });
-      return {
-        status: "proposed_pending_member_review" as const, accepted, rejected,
-        note: "Saved as private suggestions. Your Network agent will confirm them with you before using them for matching; nothing is shown to other members.",
-        receipt: this.receipt(ctx, "network_share_context", `Received ${accepted.length} suggested fact(s) from your assistant.`),
-      };
-    });
-  }
-
-  // ---------- network_get_updates ----------
-  getUpdates(ctx: CallContext, input: UpdatesIn): UpdatesOut {
-    const me = this.guard(ctx, "network_get_updates");
-    const limit = input.limit ?? 10;
-    const after = input.cursor ? Number.parseInt(input.cursor.replace(/^c_/, ""), 36) : -1;
+  private visibleItems(p: ConnectorPrincipal, me: FakeMember): StoredItem[] {
     const now = this.clock.now();
-    const mine = this.items
-      .map((it, idx) => ({ it, idx }))
-      .filter(({ it, idx }) =>
-        it.viewerId === me.id && it.status === "open" && idx > after &&
-        (!it.expires_at || Date.parse(it.expires_at) > now) &&
-        (!input.kinds || input.kinds.includes(it.kind)));
-    const page = mine.slice(0, limit);
-    this.audit.push({ memberId: me.id, clientId: ctx.clientId, tool: "network_get_updates", summary: `Read ${page.length} update(s).`, at: now });
+    const profile = PROFILES[p.surfaceProfile];
+    return this.items.filter((i) =>
+      i.viewerId === me.id && i.status === "open" && (i.expiresAt === null || i.expiresAt > now) &&
+      visibility(i.facts, me.age, profile) === "visible");
+  }
+  private findOwnItem(p: ConnectorPrincipal, me: FakeMember, handle: string) {
+    return this.items.find((i) => i.viewerId === me.id && this.itemHandle(p.grantId, i) === handle);
+  }
+  private itemOut(p: ConnectorPrincipal, i: StoredItem): ItemOut {
+    const out: ItemOut = { item_id: this.itemHandle(p.grantId, i), kind: i.kind, title: i.title, summary: i.summary, allowed_responses: i.allowedResponses };
+    if (i.when) out.when = i.when;
+    if (i.where) out.where = i.where;
+    if (i.expiresAt !== null) out.expires = `expires in ${humanDuration(i.expiresAt - this.clock.now())}`;
+    return out;
+  }
+
+  /** Content outside the member's eligibility or this surface's profile (§7.1 step 4, §7.2). */
+  private outOfBounds(p: ConnectorPrincipal, me: FakeMember, text: string): string | null {
+    if (looksRomantic(text)) return TEXT_ONLY; // romance never through a connector; adult-only in the Network itself
+    const minor = me.age < ADULT_AGE;
+    if (minor && involvesPeople(text)) return NOT_AVAILABLE; // under-18 members are never connected to people
+    if ((minor || !PROFILES[p.surfaceProfile].allowAgeRestrictedVenues) && looksNightlife(text)) return TEXT_ONLY;
+    return null;
+  }
+
+  // ------------------------------------------------------------------------ ask_network_agent
+  ask(p: ConnectorPrincipal, input: AskIn): Outcome<AskOut> {
+    const me = this.member(p, TOOL_NAMES.ask, SCOPES.readBasic);
+    const q = input.question;
+    const visible = this.visibleItems(p, me);
+    const related = (items: StoredItem[]) => items.slice(0, 5).map((i) => ({ item_id: this.itemHandle(p.grantId, i), title: i.title }));
+    let out: AskOut;
+    if (input.about_item_id) {
+      const it = this.findOwnItem(p, me, input.about_item_id);
+      out = it && visible.includes(it)
+        ? { answer: `${it.title}: ${it.details}`, related_items: related([it]), suggested_tool: "respond_to_network_item" }
+        : { answer: "I can't find that item. It may have expired or already been answered.", related_items: [], suggested_tool: "get_network_updates" };
+    } else if (/\b(who else|list (all |the )?members|everyone (in|who)|member list|members who|is [A-Z][a-z]+ a member|(phone|number|email|address|last name|earn|salary)\b.*\b[A-Z][a-z]+|[A-Z][a-z]+'s (phone|number|email|address|last name))|everything you know about [A-Z]/i.test(q)) {
+      out = { answer: "I can't share other members' details or who is in the Network. If someone seems like a good fit for you, I'll suggest it, check with them privately, and only connect you if you both say yes.", related_items: [], suggested_tool: "none" };
+    } else if (this.outOfBounds(p, me, q)) {
+      out = { answer: this.outOfBounds(p, me, q)!, related_items: [], suggested_tool: "none" };
+    } else if (/what do you know about me/i.test(q)) {
+      const mine = me.facets.filter((f) => f.scope === "shareable" || f.scope === "matchable").map((f) => f.value);
+      out = { answer: `Here's what I use to look out for you: ${mine.join("; ") || "nothing yet"}. You can see and edit everything, including private notes, in The Network.`, related_items: [], suggested_tool: "none" };
+    } else if (/\b(new|update|pending|waiting|status|opportunit|anything for me)\b/i.test(q)) {
+      out = visible.length
+        ? { answer: `You have ${visible.length} thing${visible.length === 1 ? "" : "s"} waiting: ${visible.map((i) => i.title).join("; ")}.`, related_items: related(visible), suggested_tool: "get_network_updates" }
+        : { answer: "Nothing new right now. I'll reach out when something genuinely fits.", related_items: [], suggested_tool: "none" };
+    } else if (/\b(can you|could you|please|pause|go quiet|introduc|invite|find me|sign me up|remember)\b/i.test(q)) {
+      out = { answer: "I can do that if you'd like. Tell me to go ahead and I'll take care of it; anything that involves someone else needs your OK first.", related_items: [], suggested_tool: "tell_network_agent" };
+    } else {
+      out = { answer: "Good question. I don't have anything specific on that yet; tell me more about what you're after.", related_items: [], suggested_tool: "none" };
+    }
+    this.logRead(p, TOOL_NAMES.ask, "Answered a question.");
+    return { result: out };
+  }
+
+  // ------------------------------------------------------------------------ tell_network_agent
+  tell(p: ConnectorPrincipal, input: TellIn): Outcome<TellOut> {
+    const me = this.member(p, TOOL_NAMES.tell, SCOPES.writeRequests);
+    return this.once(p, TOOL_NAMES.tell, input, () => {
+      const t = input.instruction;
+      const done = (reply: string, status: TellOut["status"], changes: { kind: ChangeKind; summary: string }[] = [], conf: Confirmation | null = null, tier?: Tier): Outcome<TellOut> => ({
+        result: { reply, status, changes, pending_confirmation: conf ? this.publicConf(conf) : null },
+        receipt: this.receipt(p, TOOL_NAMES.tell, conf ? `Proposed: ${conf.summary}` : changes.map((c) => c.summary).join(" ") || reply.slice(0, 80), tier),
+      });
+      const pending = (c: Confirmation, reply: string, changes: { kind: ChangeKind; summary: string }[] = []) =>
+        c.tier >= 2
+          ? done(`${reply} The Network has messaged you directly to confirm; nothing happens until you reply there.`, "confirm_in_network_app", changes, c, c.tier)
+          : done(reply, "needs_confirmation", changes, c, c.tier);
+      const needsScope = (scope: string) => !p.scopes.includes(scope)
+        ? done(`I can't do that from ${p.hostDisplayName}. You can do it by texting me, or enable it at ${this.assistantsUrl}.`, "not_available_here")
+        : null;
+
+      if (/\b(accept|decline|say yes to|i'?m interested|not for me|pass on)\b/i.test(t))
+        return done("To answer an item, tell me which one and your answer, and I'll record it with respond_to_network_item.", "nothing_changed");
+      const blocked = this.outOfBounds(p, me, t);
+      if (blocked) return done(blocked, "not_available_here");
+
+      if (/\b(report|unsafe|harass\w*|threaten\w*)\b/i.test(t))
+        return needsScope(SCOPES.sensitiveSafety) ?? pending(this.pend(p, "safety_report", "Start a private safety report with The Network's safety team.", {}), "I'll start a safety report.");
+      if (/share my (number|phone|contact)|swap (numbers|contacts)/i.test(t))
+        return needsScope(SCOPES.writeRelay) ?? pending(this.pend(p, "share_contact", "Offer to swap phone numbers with your current match. They are asked separately; numbers are exchanged only if both agree.", {}), "I can offer a number swap.");
+      if (/\binvite\b/i.test(t)) {
+        const name = /invite (?:my (?:friend|colleague) )?([A-Z][a-z]+)/.exec(t)?.[1] ?? "your friend";
+        return needsScope(SCOPES.writeInvites) ?? pending(this.pend(p, "invite", `Create a personal invitation from you for ${name}.`, { name }), `Happy to invite ${name}.`);
+      }
+      if (/\b(message|tell|text|ask) [A-Z][a-z]+\b/.test(t))
+        return needsScope(SCOPES.writeRelay) ?? pending(this.pend(p, "relay_message", "Pass a message from you to the other person in your current introduction.", { text: t.slice(0, 500) }), "I can pass that along.");
+      if (/\b(pause|slammed|go quiet|quiet mode|only when i ask|stop sending|resume|unpause)\b/i.test(t)) {
+        const state = /\b(resume|unpause)\b/i.test(t) ? "normal" : "quiet";
+        const summary = state === "quiet" ? "Switch to Quiet: only messages you ask for, until you say otherwise." : "Switch back to Normal outreach.";
+        return pending(this.pend(p, "set_state", summary, { state }), state === "quiet" ? "Want me to go quiet until you check back in?" : "Want me to start reaching out again?");
+      }
+      if (/\bcancel (my )?(request|ask)\b/i.test(t))
+        return pending(this.pend(p, "cancel_request", "Cancel your open request to the Network.", {}), "I can cancel that request.");
+      if (/\b(available|free) (on )?(weeknights|weekends|mornings|evenings|after|before|most)/i.test(t))
+        return done("Noted. I'll use that when timing comes up.", "done", [{ kind: "availability_updated", summary: `Added availability: ${t.slice(0, 120)}` }]);
+      if (/\b(need help|help me|looking for|anyone (know|who)|find (me )?(someone|people|a)|introduc\w*|meet)\b/i.test(t)) {
+        const draft = `Draft request: "${t.slice(0, 120)}"`;
+        const c = this.pend(p, "submit_request", `Send your request to the Network: "${t.slice(0, 120)}". No one is contacted until you confirm.`, { text: t.slice(0, 500) });
+        return pending(c, "I'll check whether a service or place solves this faster first. If people would help more, I've drafted a request; it won't go to anyone until you confirm.", [{ kind: "request_drafted", summary: draft.slice(0, 200) }]);
+      }
+      if (/\b(more|less|only|into|interested in)\b/i.test(t))
+        return done("Got it. I've noted that as a suggestion you can review in The Network.", "done", [{ kind: "profile_proposed", summary: `Preference suggestion: ${t.slice(0, 120)}` }]);
+      return done("Got it. Tell me what you'd like more of, or ask me for something specific.", "nothing_changed");
+    });
+  }
+
+  // ------------------------------------------------------------------------ share_profile_with_network
+  shareProfile(p: ConnectorPrincipal, input: ShareIn): Outcome<ShareOut> {
+    const me = this.member(p, TOOL_NAMES.share, SCOPES.writeProfile);
+    return this.once(p, TOOL_NAMES.share, input, () => {
+      const rejected: ShareOut["rejected"] = [];
+      let accepted = 0;
+      const consider = (field: string, value: string, index?: number) => {
+        let reason: ShareRejectReason | null = null;
+        if (looksLikeContact(value)) reason = "contact_details_not_accepted";
+        else if (looksLikeCredential(value) || looksSensitive(value)) reason = "sensitive_tell_the_network_directly";
+        else if (looksAboutSomeoneElse(value)) reason = "about_someone_else";
+        else if (field.startsWith("home_area") && looksLikeStreetAddress(value)) reason = "too_precise_location";
+        else if (looksRomantic(value)) reason = "not_available_here";
+        else if (this.proposals.some((x) => x.memberId === me.id && x.field === field && x.value.toLowerCase() === value.toLowerCase())) reason = "duplicate";
+        if (reason) { rejected.push(index === undefined ? { field, reason } : { field, index, reason }); return; }
+        // Host-provided details are proposals, matchable at most, below member-stated confidence (§5.5).
+        this.proposals.push({ memberId: me.id, field, value, privacyScope: "matchable", status: "proposed", provenance: `connector:${p.hostKey}` });
+        accepted++;
+      };
+      const list = (field: "interests" | "skills_offered" | "goals" | "languages") => input[field]?.forEach((v, i) => consider(field, v, i));
+      list("interests"); list("skills_offered"); list("goals");
+      input.looking_for?.forEach((v, i) => {
+        // Under-18 members are never connected to people: only "things_to_do" is accepted.
+        if (me.age < ADULT_AGE && v !== "things_to_do") rejected.push({ field: "looking_for", index: i, reason: "not_available_here" });
+        else consider("looking_for", v, i);
+      });
+      if (input.home_area) {
+        consider("home_area.city", input.home_area.city);
+        if (input.home_area.neighborhood) consider("home_area.neighborhood", input.home_area.neighborhood);
+      }
+      if (input.availability_note) consider("availability_note", input.availability_note);
+      list("languages");
+      if (accepted) this.channelMessages.push({ memberId: me.id, text: `${p.hostDisplayName} suggested ${accepted} detail${accepted === 1 ? "" : "s"} for your profile. Review them in The Network.` });
+      return {
+        result: {
+          status: "proposed_for_member_review", accepted_count: accepted, rejected,
+          next_step: accepted
+            ? "The Network will ask the member to review these. Nothing is shown to other members until they confirm."
+            : "Nothing was saved. The member can tell The Network directly by text.",
+        },
+        receipt: this.receipt(p, TOOL_NAMES.share, `Received ${accepted} suggested profile detail(s).`, 0),
+      };
+    });
+  }
+
+  // ------------------------------------------------------------------------ get_network_updates
+  getUpdates(p: ConnectorPrincipal, input: UpdatesIn): Outcome<UpdatesOut> {
+    const me = this.member(p, TOOL_NAMES.updates, SCOPES.readBasic);
+    const limit = input.limit ?? 5;
+    const offset = input.cursor && /^c[0-9a-z]+$/.test(input.cursor) ? Number.parseInt(input.cursor.slice(1), 36) : 0;
+    const all = this.visibleItems(p, me).filter((i) => !input.kinds || input.kinds.includes(i.kind));
+    const page = all.slice(offset, offset + limit);
+    this.logRead(p, TOOL_NAMES.updates, `Read ${page.length} update(s).`); // seen-via, not delivery (§5.6)
     return {
-      items: page.map(({ it }) => ({
-        item_id: it.item_id, kind: it.kind, title: it.title, body: it.body,
-        created_at: it.created_at, expires_at: it.expires_at, allowed_decisions: it.allowed_decisions,
-      })),
-      next_cursor: mine.length > limit ? `c_${page.at(-1)!.idx.toString(36)}` : null,
-      member_state: me.state,
+      result: {
+        items: page.map((i) => this.itemOut(p, i)),
+        next_cursor: offset + limit < all.length ? `c${(offset + limit).toString(36)}` : null,
+        participation_state: me.state,
+      },
     };
   }
 
-  // ---------- network_respond ----------
-  async respond(ctx: CallContext, input: RespondIn, askMember?: AskMember): Promise<RespondOut> {
-    const me = this.guard(ctx, "network_respond");
-    const k = `${ctx.memberId}:network_respond:${input.client_request_id}`;
-    const prior = this.idem.get(k);
-    if (prior) {
-      if (prior.argsKey !== JSON.stringify(input)) throw new NetworkError("idempotency_conflict", "client_request_id was already used with different arguments.");
-      return { ...prior.result, receipt: { ...prior.result.receipt, replayed: true } };
-    }
-    const result = await this.respondOnce(ctx, me, input, askMember);
-    this.idem.set(k, { argsKey: JSON.stringify(input), result });
-    return result;
+  // ------------------------------------------------------------------------ respond_to_network_item
+  respond(p: ConnectorPrincipal, input: RespondIn): Outcome<RespondOut> {
+    const me = this.member(p, TOOL_NAMES.respond, SCOPES.writeResponses);
+    return this.once(p, TOOL_NAMES.respond, input, () => {
+      const r = (out: RespondOut, summary: string, tier?: Tier): Outcome<RespondOut> => ({ result: out, receipt: this.receipt(p, TOOL_NAMES.respond, summary, tier) });
+      const now = this.clock.now();
+      // Unknown, foreign-member and foreign-grant ids are indistinguishable (no enumeration oracle).
+      const notFound = () => new NetworkError("item_not_found", "I can't find that item. Check get_network_updates for current items.");
+
+      if (input.item_id.startsWith("cnf_")) {
+        const c = this.confirmations.get(input.item_id);
+        if (!c || c.memberId !== me.id || c.grantId !== p.grantId) throw notFound();
+        if (c.status !== "pending") return r({ status: "already_done", message: c.status === "done" ? "That was already done." : "That was already cancelled.", pending_confirmation: null }, "Answered a finished confirmation.");
+        if (c.expiresAt <= now) return r({ status: "expired", message: "That confirmation expired. Nothing was done.", pending_confirmation: null }, "Answered an expired confirmation.");
+        if (input.response === "cancel") {
+          c.status = "cancelled";
+          return r({ status: "done", message: "Cancelled. Nothing was sent.", pending_confirmation: null }, `Cancelled: ${c.summary}`);
+        }
+        if (input.response !== "confirm")
+          return r({ status: "needs_confirmation", message: `Answer with confirm or cancel: ${c.summary}`, pending_confirmation: this.publicConf(c) }, "Asked about a pending confirmation.");
+        // Re-evaluate at confirmation time: a tier-1 confirmation can escalate, never de-escalate.
+        const tier = Math.max(c.tier, this.tierFor(p, c.tier)) as Tier;
+        if (tier >= 2) {
+          c.tier = tier;
+          this.askOnNetworkChannel(c);
+          return r({ status: "confirm_in_network_app", message: "The Network has messaged you directly to confirm this. Nothing happens until you reply there.", pending_confirmation: this.publicConf(c) }, `Asked member to confirm in the Network channel: ${c.summary}`, tier);
+        }
+        this.execute(c, "host");
+        return r({ status: "done", message: `Done: ${c.summary}`, pending_confirmation: null }, `Confirmed: ${c.summary}`, tier);
+      }
+
+      const it = this.findOwnItem(p, me, input.item_id);
+      if (!it) throw notFound();
+      // Excluded by profile or not eligible (e.g. an intro for a member under 18): polite, no reason given.
+      if (visibility(it.facts, me.age, PROFILES[p.surfaceProfile]) !== "visible")
+        return r({ status: "not_available_here", message: NOT_AVAILABLE, pending_confirmation: null }, "Tried to answer an item not available here.");
+      if (it.status === "answered") return r({ status: "already_done", message: "You already answered that one.", pending_confirmation: null }, "Answered an item twice.");
+      if (it.expiresAt !== null && it.expiresAt <= now) return r({ status: "expired", message: "That one has expired.", pending_confirmation: null }, "Answered an expired item.");
+      if (!it.allowedResponses.includes(input.response))
+        return r({ status: "not_available_here", message: `That answer isn't available for this item. Options: ${it.allowedResponses.join(", ")}.`, pending_confirmation: null }, "Gave a disallowed answer.");
+
+      if (input.response === "tell_me_more")
+        return r({ status: "details", message: it.title, details: it.details, pending_confirmation: null }, "Asked for more detail.", 0);
+      if (input.response === "maybe_later") {
+        it.status = "snoozed";
+        return r({ status: "done", message: "Okay, I'll bring it back later if it's still open.", pending_confirmation: null }, `Snoozed: ${it.title}`, 0);
+      }
+      const action: ActionKind = input.response === "interested" ? "respond_interested" : input.response === "not_for_me" || input.response === "cancel" ? "respond_not_for_me" : "respond_confirm_item";
+      const base: Tier = it.facts.connection === "contact" && input.response !== "not_for_me" ? 3 : ACTION_TIER[action];
+      const summary = `${input.response === "interested" ? "Say you're interested in" : input.response === "confirm" ? "Confirm" : "Pass on"}: ${it.title}.`;
+      const c = this.pend(p, action, summary, { item: it.internalId, response: input.response }, base);
+      if (c.tier >= 2)
+        return r({ status: "confirm_in_network_app", message: "The Network has messaged you directly to confirm this. Nothing happens until you reply there.", pending_confirmation: this.publicConf(c) }, `Asked member to confirm in the Network channel: ${summary}`, c.tier);
+      this.execute(c, "host");
+      const message = input.response === "interested"
+        ? "Great. I'll check with them privately and let you know if it's a yes. If not, you won't hear anything awkward."
+        : input.response === "confirm" ? "Confirmed." : "No problem. They won't be told you passed.";
+      return r({ status: "done", message, pending_confirmation: null }, summary, c.tier);
+    });
   }
 
-  private notAvailable(ctx: CallContext, input: RespondIn): RespondOut {
-    // Same answer for "does not exist", "belongs to someone else" and "expired": no enumeration oracle.
-    return { status: "not_available", message: "That item is no longer available.", item_id: input.item_id, pending_confirmation: null, receipt: this.receipt(ctx, "network_respond", "Tried to answer an unavailable item.") };
-  }
-
-  private async respondOnce(ctx: CallContext, me: FakeMember, input: RespondIn, askMember?: AskMember): Promise<RespondOut> {
-    const now = this.clock.now();
-    const conf = this.confirmations.get(input.item_id);
-    if (conf) {
-      if (conf.memberId !== me.id || Date.parse(conf.expires_at) <= now || conf.status === "done" || conf.status === "cancelled")
-        return this.notAvailable(ctx, input);
-      if (input.decision === "cancel" || input.decision === "decline") {
-        conf.status = "cancelled";
-        return { status: "done", message: "Cancelled. Nothing was sent.", item_id: input.item_id, pending_confirmation: null, receipt: this.receipt(ctx, "network_respond", `Cancelled: ${conf.summary}`) };
-      }
-      if (input.decision !== "confirm") return { status: "needs_confirmation", message: conf.summary, item_id: input.item_id, pending_confirmation: this.publicConf(conf), receipt: this.receipt(ctx, "network_respond", "Asked about a pending action.") };
-      if (conf.risk === "high") {
-        // The host model cannot complete a high-risk action, whatever it claims about the member.
-        conf.status = "awaiting_channel";
-        return {
-          status: "awaiting_network_channel",
-          message: "The Network sent you a confirmation by text/app. Reply there to finish; nothing happens until you do.",
-          item_id: input.item_id, pending_confirmation: this.publicConf(conf),
-          receipt: this.receipt(ctx, "network_respond", `Requested member confirmation on Network channel: ${conf.summary}`),
-        };
-      }
-      if (conf.confirm_via === "host_elicitation") {
-        const yes = askMember ? await askMember(conf.summary) : false;
-        if (!yes) return { status: "needs_confirmation", message: "Not confirmed by the member. Nothing was done.", item_id: input.item_id, pending_confirmation: this.publicConf(conf), receipt: this.receipt(ctx, "network_respond", "Member did not confirm.") };
-      }
-      this.execute(conf, ctx.clientId);
-      return { status: "done", message: `Done: ${conf.summary}`, item_id: input.item_id, pending_confirmation: null, receipt: this.receipt(ctx, "network_respond", `Confirmed: ${conf.summary}`) };
-    }
-    const item = this.items.find((i) => i.item_id === input.item_id);
-    if (!item || item.viewerId !== me.id || item.status !== "open" || (item.expires_at && Date.parse(item.expires_at) <= now) || !item.allowed_decisions.includes(input.decision))
-      return this.notAvailable(ctx, input);
-    if (input.decision === "tell_me_more")
-      return { status: "details", message: `${item.body} It would take about an hour; you can say no at any time.`, item_id: item.item_id, pending_confirmation: null, receipt: this.receipt(ctx, "network_respond", "Asked for more detail.") };
-    item.status = input.decision === "accept" ? "accepted" : "declined";
-    const message = item.status === "accepted"
-      ? "Great. I'll check with them privately and let you know if it's a yes. If not, you won't hear anything awkward."
-      : "No problem. They won't be told you passed.";
-    return { status: "done", message, item_id: item.item_id, pending_confirmation: null, receipt: this.receipt(ctx, "network_respond", `${item.status === "accepted" ? "Accepted" : "Declined"}: ${item.title}`) };
-  }
-
-  /** Simulates the member replying YES on the Network's own SMS/app channel for a high-risk action. */
-  confirmOnNetworkChannel(confirmationId: string, memberId: string) {
+  /** The member replies YES on the Network's own channel (tier 2/3). Only this executes those actions. */
+  confirmOnNetworkChannel(confirmationId: string, memberId: string): boolean {
     const c = this.confirmations.get(confirmationId);
-    if (!c || c.memberId !== memberId || c.status !== "awaiting_channel") return false;
+    if (!c || c.memberId !== memberId || c.status !== "pending" || c.tier < 2 || c.expiresAt <= this.clock.now()) return false;
     this.execute(c, "network_channel");
     return true;
   }
 }
 
-/** Small synthetic world for tests and local runs. Clearly fictional; canary strings detect leaks. */
+/** Requests that would connect the member with other people (blocked for under-18 members). */
+export const involvesPeople = (s: string) =>
+  /\b(introduc\w*|intro|meet|meetup|connect me|find (me )?(someone|people|a|friends|partner)|partner|buddy|buddies|friends?|group|invite|share my (number|phone|contact)|swap (numbers|contacts)|need help|help me|looking for|anyone (know|who))\b/i.test(s) ||
+  /\b(message|tell|text|ask) [A-Z][a-z]+\b/.test(s);
+
+function canonical(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+  if (v && typeof v === "object") return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical((v as any)[k])}`).join(",")}}`;
+  return JSON.stringify(v);
+}
+
+// ------------------------------------------------------------------------------------------------
+/** Small synthetic world for tests and local runs. Clearly fictional; CANARY strings detect leaks. */
 export function seedWorld(net: FakeNetwork) {
+  const day = 24 * 3600_000;
+  const now = net.clock.now();
   const ava = net.addMember({
-    id: "mem_ava_7f3a", firstName: "Ava", city: "sf", state: "normal", phone: "+14155550101", email: "ava@example.test",
+    id: "mem_ava_7f3a", firstName: "Ava", age: 29, city: "sf", state: "normal", phone: "+14155550101", email: "ava@example.test",
     facets: [
       { value: "Climbs at Mission Cliffs on Thursdays", scope: "shareable" },
       { value: "Wants more low-pressure local friends", scope: "matchable" },
@@ -286,7 +508,7 @@ export function seedWorld(net: FakeNetwork) {
     ],
   });
   const maya = net.addMember({
-    id: "mem_maya_91c2", firstName: "Maya", city: "sf", state: "open", phone: "+14155550102", email: "maya@example.test",
+    id: "mem_maya_91c2", firstName: "Maya", age: 31, city: "sf", state: "open", phone: "+14155550102", email: "maya@example.test",
     facets: [
       { value: "Product designer who loves bouldering", scope: "shareable" },
       { value: "CANARY_MAYA_MATCHABLE_recently divorced", scope: "matchable" },
@@ -294,22 +516,82 @@ export function seedWorld(net: FakeNetwork) {
     ],
   });
   const theo = net.addMember({
-    id: "mem_theo_44d0", firstName: "Theo", city: "nyc", state: "normal", phone: "+12125550103", email: "theo@example.test",
+    id: "mem_theo_44d0", firstName: "Theo", age: 40, city: "nyc", state: "normal", phone: "+12125550103", email: "theo@example.test",
     facets: [{ value: "CANARY_THEO_PRIVATE_salary 400k", scope: "agent_private" }],
   });
-  const day = 24 * 3600_000;
+  const kai = net.addMember({
+    id: "mem_kai_2b19", firstName: "Kai", age: 16, city: "sf", state: "normal", phone: "+14155550104", email: "kai@example.test",
+    facets: [{ value: "Into skateboarding and robotics", scope: "matchable" }],
+  });
+
+  const plain = { venueMinAge: 0 as const, alcoholCentric: false, sponsored: false };
   const intro = net.addItem(ava.id, {
     kind: "opportunity", title: "Climbing partner in the Mission",
-    body: "Maya, a product designer who also boulders, is around on Thursday evenings. Want an intro?",
-    expires_at: new Date(net.clock.now() + 2 * day).toISOString(), allowed_decisions: ["accept", "decline", "tell_me_more"], counterpartId: maya.id,
+    summary: "Maya, a product designer who also boulders, is around on Thursday evenings. Want an intro?",
+    details: "You both climb on Thursdays and want low-key partners. If you're both in, The Network suggests a time; it would take about an hour, and you can say no at any time.",
+    when: "Thursdays after 6pm", where: "Mission District", expiresAt: now + 2 * day,
+    allowedResponses: ["interested", "not_for_me", "maybe_later", "tell_me_more"],
+    facts: { category: "activity_partners", connection: "intro", ...plain }, counterpartId: maya.id,
   });
   const question = net.addItem(ava.id, {
-    kind: "question", title: "Quick question", body: "Are weekday evenings or weekend mornings better for meeting people?",
-    expires_at: null, allowed_decisions: ["decline"],
+    kind: "question", title: "Quick question", summary: "Are weekday evenings or weekend mornings better for meeting people?",
+    expiresAt: null, allowedResponses: ["not_for_me", "maybe_later", "tell_me_more"],
+    facts: { category: "friendship", connection: null, ...plain },
+  });
+  const trivia = net.addItem(ava.id, {
+    kind: "opportunity", title: "Trivia night at a cocktail bar", summary: "A small team needs a fifth for trivia at a cocktail bar in Hayes Valley (21+).",
+    when: "Wed 8pm", where: "Hayes Valley", expiresAt: now + 3 * day,
+    allowedResponses: ["interested", "not_for_me", "tell_me_more"],
+    facts: { category: "nightlife", connection: "group", venueMinAge: 21, alcoholCentric: true, sponsored: false },
+  });
+  const romance = net.addItem(ava.id, {
+    kind: "opportunity", title: "CANARY_ROMANCE_dating match", summary: "CANARY_ROMANCE_someone you might want to date",
+    expiresAt: now + 3 * day, allowedResponses: ["interested", "not_for_me"],
+    facts: { category: "romance", connection: "intro", venueMinAge: 0, alcoholCentric: false, sponsored: false },
+  });
+  const sponsored = net.addItem(ava.id, {
+    kind: "notice", title: "CANARY_SPONSORED_gym day pass", summary: "CANARY_SPONSORED_partner offer from a climbing gym",
+    expiresAt: now + 5 * day, allowedResponses: ["interested", "not_for_me"],
+    facts: { category: "events", connection: null, venueMinAge: 0, alcoholCentric: false, sponsored: true },
+  });
+  const contactSwap = net.addItem(ava.id, {
+    kind: "question", title: "Swap numbers with your climbing partner?", summary: "Your climbing partner from last week would like to swap numbers. Only if you both say yes.",
+    expiresAt: now + 2 * day, allowedResponses: ["interested", "not_for_me"],
+    facts: { category: "activity_partners", connection: "contact", ...plain },
   });
   const mayaItem = net.addItem(maya.id, {
-    kind: "opportunity", title: "Climbing partner", body: "Someone nearby who climbs on Thursdays would like to meet. Interested?",
-    expires_at: new Date(net.clock.now() + 2 * day).toISOString(), allowed_decisions: ["accept", "decline"], counterpartId: ava.id,
+    kind: "opportunity", title: "CANARY_MAYA_ITEM_climbing partner", summary: "CANARY_MAYA_ITEM_someone nearby who climbs on Thursdays would like to meet.",
+    expiresAt: now + 2 * day, allowedResponses: ["interested", "not_for_me"],
+    facts: { category: "activity_partners", connection: "intro", ...plain }, counterpartId: ava.id,
   });
-  return { ava, maya, theo, intro, question, mayaItem };
+
+  // Kai is 16: can be a member, never connected to other people (founder decision 3).
+  const kaiIntro = net.addItem(kai.id, {
+    kind: "opportunity", title: "CANARY_KAI_INTRO_skate buddy", summary: "CANARY_KAI_INTRO_another member skates at the same park",
+    expiresAt: now + 2 * day, allowedResponses: ["interested", "not_for_me", "tell_me_more"],
+    facts: { category: "activity_partners", connection: "intro", ...plain },
+  });
+  const kaiGroup = net.addItem(kai.id, {
+    kind: "opportunity", title: "CANARY_KAI_GROUP_robotics team", summary: "CANARY_KAI_GROUP_a group building a robot on Saturdays",
+    expiresAt: now + 2 * day, allowedResponses: ["interested", "not_for_me"],
+    facts: { category: "activity_partners", connection: "group", ...plain },
+  });
+  const kaiRelay = net.addItem(kai.id, {
+    kind: "notice", title: "CANARY_KAI_RELAY_message from a member", summary: "CANARY_KAI_RELAY_someone sent you a note",
+    expiresAt: now + 2 * day, allowedResponses: ["tell_me_more"],
+    facts: { category: "friendship", connection: "relay", ...plain },
+  });
+  const kaiContact = net.addItem(kai.id, {
+    kind: "question", title: "CANARY_KAI_CONTACT_swap numbers", summary: "CANARY_KAI_CONTACT_someone wants to swap numbers",
+    expiresAt: now + 2 * day, allowedResponses: ["interested", "not_for_me"],
+    facts: { category: "friendship", connection: "contact", ...plain },
+  });
+  const kaiEvent = net.addItem(kai.id, {
+    kind: "opportunity", title: "Robotics open lab at the library", summary: "An all-ages drop-in robotics lab at the main library this Saturday afternoon.",
+    when: "Sat 1–4pm", where: "Civic Center", expiresAt: now + 4 * day,
+    allowedResponses: ["interested", "not_for_me", "tell_me_more"],
+    facts: { category: "events", connection: null, ...plain },
+  });
+
+  return { ava, maya, theo, kai, intro, question, trivia, romance, sponsored, contactSwap, mayaItem, kaiIntro, kaiGroup, kaiRelay, kaiContact, kaiEvent };
 }

@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Prototype: The Network four-tool remote MCP connector (in-memory fake Network, stubbed OAuth).",
+  "description": "Prototype: The Network five-tool remote MCP connector for https://mcp.ntwrk.love/mcp (in-memory fake Network, stubbed OAuth AS).",
   "scripts": {
     "start": "bun run src/main.ts",
     "test": "bun test"

@@ -1,10 +1,12 @@
-// Minimal MCP Apps (SEP-1865) widget for network_get_updates. Renders cleared items as cards with
-// accept / decline / tell-me-more buttons that call network_respond through the host bridge.
-// Sketch only: production needs the @modelcontextprotocol/ext-apps client, theming, and review screenshots.
-export const UPDATES_WIDGET_URI = "ui://the-network/updates.html";
+// MCP Apps item card (design §4, §9.2; P2). Renders cleared items from get_network_updates with at
+// most two primary actions ("Interested", "Not for me") that call respond_to_network_item through the
+// host bridge. Linked from tools/list only when the client declares the UI extension.
+// Sketch only: production needs the @modelcontextprotocol/ext-apps client, theming and review screenshots.
+export const ITEM_CARD_URI = "ui://network/item-card.html";
 export const WIDGET_MIME = "text/html;profile=mcp-app";
+export const UI_EXTENSION = "io.modelcontextprotocol/ui";
 
-export const UPDATES_WIDGET_HTML = `<!doctype html>
+export const ITEM_CARD_HTML = `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
 :root{--bg:#fff;--fg:#141414;--muted:#666;--line:#e4e4e4;--accent:#141414}
@@ -16,6 +18,7 @@ button{font:inherit;border:1px solid var(--accent);background:none;color:var(--f
 .empty{color:var(--muted);padding:12px}
 </style></head><body><div id="root"><div class="empty">Loading…</div></div>
 <script>
+const PRIMARY = { interested: "Interested", not_for_me: "Not for me" };
 let nextId = 1; const pending = new Map();
 function rpc(method, params){ const id = nextId++; parent.postMessage({jsonrpc:"2.0", id, method, params}, "*");
   return new Promise(r => pending.set(id, r)); }
@@ -26,12 +29,13 @@ function render(data){
   for (const it of items){
     const c = document.createElement("div"); c.className = "card";
     const t = document.createElement("div"); t.className = "t"; t.textContent = it.title;
-    const b = document.createElement("div"); b.className = "b"; b.textContent = it.body;
+    const b = document.createElement("div"); b.className = "b"; b.textContent = it.summary;
     c.append(t, b);
-    for (const d of it.allowed_decisions){
-      const btn = document.createElement("button"); btn.textContent = d.replace(/_/g, " ");
+    for (const r of Object.keys(PRIMARY)){
+      if (!it.allowed_responses.includes(r)) continue;
+      const btn = document.createElement("button"); btn.textContent = PRIMARY[r];
       btn.onclick = async () => { btn.disabled = true;
-        await rpc("tools/call", {name:"network_respond", arguments:{item_id: it.item_id, decision: d, client_request_id: crypto.randomUUID()}});
+        await rpc("tools/call", {name:"respond_to_network_item", arguments:{item_id: it.item_id, response: r}});
         c.querySelectorAll("button").forEach(x => x.disabled = true); };
       c.append(btn);
     }
@@ -43,7 +47,6 @@ window.addEventListener("message", (e) => {
   if (m.id && pending.has(m.id)){ pending.get(m.id)(m.result); pending.delete(m.id); return; }
   if (m.method === "ui/notifications/tool-result") render(m.params && m.params.structuredContent);
 });
-rpc("ui/initialize", {appInfo:{name:"the-network-updates", version:"0.0.1"}, appCapabilities:{}, protocolVersion:"2026-01-26"})
+rpc("ui/initialize", {appInfo:{name:"the-network-item-card", version:"0.2.0"}, appCapabilities:{}, protocolVersion:"2026-01-26"})
   .then(() => parent.postMessage({jsonrpc:"2.0", method:"ui/notifications/initialized"}, "*"));
-if (window.openai && window.openai.toolOutput) render(window.openai.toolOutput); // legacy Apps SDK host
 </script></body></html>`;
