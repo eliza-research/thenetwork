@@ -176,7 +176,7 @@ Opportunity is the core product object. An opportunity is a proposed configurati
 | Unused physical/commercial capacity | A studio has three empty seats Tuesday. | Can become sponsored or paid opportunity inventory. |
 | Network need | A new neighborhood cluster lacks a host. | The Network may create opportunities that strengthen its topology. |
 | Standing intent | "I want to start a band with people who like rock." "I want to meet climate founders." "I am open to dating." | Overt, durable wants that the member has made room for. Matched asynchronously as new members and events arrive. Capacity is checked on both sides before anyone is contacted. |
-| Romantic interest (opt-in) | A member has opted in to romance and described what they are looking for. | Only between members who both opted in; delivered as dinners, activities, or friend-of-a-friend introductions rather than swipe-style matches. |
+| Romantic interest (opt-in) | A member has opted in to romance and described what they are looking for. | Only between adult members who both opted in; delivered as dinners, activities, or friend-of-a-friend introductions rather than swipe-style matches. |
 | Professional goal | "I am hiring a designer." "I want a cofounder." "I want to meet people in biotech." | Common early demand; often satisfiable by intros between members with shareable work context. |
 | Fun / play | "Surprise me this weekend." A karaoke night with two open spots. | Synchronicity for its own sake: playful, low-stakes, time-bounded invitations. |
 | External world (single-player) | Luma, Partiful, Eventbrite, Cerebral Valley, venue calendars, listings. | The agent recommends events and places directly, and turns them into opportunities when two or more compatible members are going or would go. |
@@ -218,7 +218,7 @@ A successful one-off interaction should create an edge in the graph, not a finis
 States are not online/away statuses. Within any state a member can set per-category preferences (for example: "only tell me about dating and music," "no work stuff," "only when I ask") and quiet hours. Members can say it in plain language ("I am slammed until November," "surprise me this weekend" - an informal "ready to mingle" mode maps to Open). The agent may suggest a state change based on repeated declines or explicit life context. Non-response is handled mechanically and transparently: after two consecutive unanswered proactive messages the member automatically moves to "only when I ask" for proactive outreach, and the next time they message the agent it says so and offers to turn proactive messages back on. This is an outreach setting, not a judgment: it never counts as low seriousness or reliability.
 # 8. End-to-end member experience
 ## 8.1 Entry
-A member receives an invitation from a person or steward. The invitation explains what The Network is and offers three ways to begin: text a Network number, call and speak to the agent, or open a lightweight web/app flow. If the member already uses a supported AI assistant, the invitation can also offer to connect The Network there after identity verification. The Network needs members to grow it, but not by inviting strangers. An invitation is a vouch: the inviter tells the agent how they know the person, for how long, how well, what the person is like and wants, and anything the Network should know. Vouch strength (relationship depth, duration, context) is stored as evidence on the invite edge and seeds the new member's profile with consent. Invitations are scarce and intentional; the Network may ask a member for a specific kind of person it needs ("we have few hosts in Brooklyn; do you know someone?"). New-member approval is automatic with an internal soft-approval score; only flagged cases go to a human. (Post-MVP.)
+A member receives an invitation from a person or steward. The invitation explains what The Network is and offers three ways to begin: text a Network number, call and speak to the agent, or open a lightweight web/app flow. If the member already uses a supported AI assistant, the invitation can also offer to connect The Network there after identity verification. The Network needs members to grow it, but not by inviting strangers. An invitation is a vouch: the inviter tells the agent how they know the person, for how long, how well, what the person is like and wants, and anything the Network should know. Vouch strength (relationship depth, duration, context) is stored as evidence on the invite edge and seeds the new member's profile with consent. Invitations are scarce and intentional; the Network may ask a member for a specific kind of person it needs ("we have few hosts in Brooklyn; do you know someone?"). New-member approval is automatic with an internal soft-approval score; only flagged cases go to a human. (Post-MVP.) Members under 18 can join for single-player help (things to do, events, learning) but are never connected to other people (Section 17.4).
 ## 8.2 First value
 The first goal is not profile completeness. It is a useful outcome within the first two weeks: receiving help, helping in a way that feels good, joining something unusually relevant, making an introduction, or discovering an opportunity the member would not have found alone. The agent should be honest when local density cannot yet support a request.
 Most members arrive wanting a few concrete things: career colleagues and collaborators, people who share an interest, hobby or activity partners, new friends, romantic partners, or people who can introduce them to any of those. Onboarding should identify one or two of these explicitly as standing intents, so the engine has something to work on from day one. The first-two-weeks target is at least one of: a relevant event or place recommendation the member acts on; one high-conviction introduction or group invitation; or an honest "nobody fits yet; here is what would help" (Section 29, flow F21).
@@ -317,7 +317,7 @@ As of October 2026, ChatGPT supports MCP-powered apps/plugins, Claude supports c
 - The connector receives only scopes the member explicitly grants. Default scopes should be minimal and revocable.
 - All actions create server-side audit receipts visible to the member regardless of which client initiated them.
 ## 11.2 Proposed connector tools
-Decision (v0.2): the earlier tool list was too granular. External assistants get a small, opaque surface; the Network itself decides state, privacy, matching, and timing. The MVP does not ship the connector (Section 28). When it ships, it exposes four tools:
+Decision (v0.2): the earlier tool list was too granular. External assistants get a small, opaque surface; the Network itself decides state, privacy, matching, and timing. The MVP does not ship the connector (Section 28). Approved v0.2 tool set (five tools, because ChatGPT and Claude reject a catch-all tool that mixes reads and writes): ask_network_agent (read-only), tell_network_agent (write), share_profile_with_network (narrow typed fields only, no chat history), get_network_updates (read-only), and respond_to_network_item (the only accept/decline path). Served at https://mcp.ntwrk.love/mcp. The original four-tool draft is kept below for reference:
 
 | Tool | Purpose | Risk |
 |---|---|---|
@@ -349,7 +349,7 @@ A skill/instruction file ships with the connector telling the host assistant whe
 A member might say in ChatGPT or another assistant: "I need help moving a table Saturday. First see if there is an easier solution, then ask The Network if it is worth involving people." The host assistant can search/plan first, then call Network tools with the user's permission. The Network service, not the host model, applies candidate privacy, interruption budgets, trust, and consent policy. The Network is itself an AI with search, places, and events: while the network is small it should usually find a service, place, or event first. Involving other people is often the last resort, not the first move.
 Conversely, the host assistant could say: "The Network has an opportunity that seems relevant to what you are discussing. Want me to show it?" This should occur only when the connector is enabled and the host supports such suggestions.
 ## 11.4 Connector requirements
-Connectors should be as thin and opaque as possible: the host assistant never sees the graph, other members, or scoring, only the member's own conversation with the Network and items cleared for them.
+Connectors should be as thin and opaque as possible: the host assistant never sees the graph, other members, or scoring, only the member's own conversation with the Network and items cleared for them. The ChatGPT connector uses a teen-safe surface profile (no romance, bars or nightlife, alcohol, 18+ or 21+ venues, or sponsored items), described honestly to app reviewers.
 | ID | Requirement |
 |---|---|
 | GW-001 | External assistants never receive the full raw social graph by default. |
@@ -515,7 +515,7 @@ Decision (v0.2): members always message each other through the Network, never di
 ## 17.4 Safety architecture
 - Invite-only entry, verified communication channel, and human welcome for the early network. (v0.2: approval is automatic with flagged-case review (8.1); the welcome is a newcomer-welcome opportunity plus the monthly gathering.)
 - Clear block/report controls across every surface, including SMS.
-- Risk classification for opportunities involving homes, transport, money, vulnerable people, minors, regulated advice, or intimate contexts. The Network is adults only (18+); minors are excluded from membership and from opportunities. Risk signals feed the internal ranking so that bad actors cannot exploit trust. ID verification (for example, Stripe Identity or Persona) is post-MVP for general members and planned first for hosts and home-entry opportunities.
+- Risk classification for opportunities involving homes, transport, money, vulnerable people, minors, regulated advice, or intimate contexts. Decision (v0.2): members under 18 may join, but the Network never connects them to other people. They get only single-player help (concierge answers, public events and places, their own profile and preferences). Every multi-person opportunity (intros, groups, event co-attendance, help requests, relay, contact swaps, warm paths, member-initiated intros, gatherings seating) is adult-only, in any role including as an intermediary. Romance is adult-only and double opt-in. Adults are never shown or told about minors. The Network is not an 18+ product. Risk signals feed the internal ranking so that bad actors cannot exploit trust. ID verification (for example, Stripe Identity or Persona) is post-MVP for general members and planned first for hosts and home-entry opportunities.
 - Role-specific verification where legally and operationally appropriate; membership alone is never a safety certification.
 - Human safety review with documented decisions, appeals, and conflict-of-interest rules.
 - Serious safety reports may temporarily restrict access while reviewed; this is separate from popularity or engagement.
@@ -774,7 +774,7 @@ Launch one city first, not two. NYC and San Francisco are both plausible, but th
 - Canonical event model, relationship graph, opportunity state machine, SMS relay, privacy scopes. Monthly events open to all members in each city.
 - Native app beta with Today, People, Network, and Me. (v0.2: not in MVP; members use messaging plus the web pages in Section 32.17; app features are post-MVP, Section 28.4.)
 - First automated candidate retrieval; steward approves proactive contacts.
-- Initial ChatGPT/Claude/Grok connector prototype via Network Gateway where supported. (v0.2: post-MVP, four-tool surface, Section 11.2.)
+- Initial ChatGPT/Claude/Grok connector prototype via Network Gateway where supported. (v0.2: post-MVP, five-tool surface, Section 11.2.)
 - No economic marketplace yet except direct expense reimbursements if operationally necessary.
 ## 25.4 Stage 2 - Calibrated automation and local capacity (5-9 months)
 - Automated high-confidence opportunities for low-risk categories.
@@ -830,7 +830,7 @@ A purely technical founding plan is insufficient. The product is a social system
 | How should model vendors be selected? | Task-based evaluation; vendor-neutral gateway. | Implementation. |
 | Voluntary paid governance membership? | Under discussion: belonging stays free; a paid governance membership could fund inference and the Commons and confer voice, never social priority. | Before any monetization (post-MVP). |
 | No-show consequences | MVP: one forgiven no-show, then held from group and time-sensitive opportunities until a lower-stakes commitment is completed. Refundable deposits are a post-MVP experiment. | Revisit after first 100 completed meetups. |
-| ID verification | Not required for MVP members (vouch + phone + 18+ attestation). Required for hosts of home-based events when that ships. | Before home hosting. |
+| ID verification | Not required for MVP members (vouch + phone + age attestation; under-18 members are single-player only). Required for hosts of home-based events when that ships. | Before home hosting. |
 | Profiles of non-members | No. No scraped or third-party profiles; growth is invite and vouch only. | Decided. |
 | Proactive outreach to unresponsive members | Stop after two unanswered proactive messages; resume on re-engagement. | Decided; tune with data. |
 | Sender numbers per city or one national? | Open; decide after Blooio and 10DLC checks (32.2, 36.1). | M0. |
@@ -855,7 +855,7 @@ An invite-only Network in San Francisco and New York for about 150-300 members (
 
 | Area | MVP scope | Where specified |
 |---|---|---|
-| Membership | Invite and vouch flow, founding-team seed invites, automatic soft approval with flagged-case review, 18+ attestation, phone verification, SF/NYC home city with multi-city presence. | 8.1, 32.1, 32.15 |
+| Membership | Invite and vouch flow, founding-team seed invites, automatic soft approval with flagged-case review, age attestation (under-18 members are single-player only), phone verification, SF/NYC home city with multi-city presence. | 8.1, 32.1, 32.15 |
 | Channels | iMessage via Blooio, SMS via Twilio, optional inbound/outbound voice call for onboarding, web chat on eliza.app. STOP/HELP compliance. | 32.2 |
 | Agent | Eliza shared agent with Network character, Network plugin (actions, providers, evaluators), progressive profiling, concierge search for events and places. | 32.3 |
 | Profile model | Members, facets, intents, presence, edges, consent, provenance and confidence, privacy scopes. | 13.1, 32.4 |
@@ -881,7 +881,7 @@ An invite-only Network in San Francisco and New York for about 150-300 members (
 |---|---|---|
 | Native app Network tab, push notifications, location sharing, "around tonight" presence, map | Messaging covers the MVP loop; location needs privacy validation (20.3). | Presence model, Capacitor app, native location plugin |
 | Bluetooth/proximity discovery at events | Needs app and safety design. | Presence, events program |
-| ChatGPT / Claude / Grok connectors (four-tool MCP surface) | Needs OAuth for MCP clients, which Eliza Cloud does not yet have (Section 30). | network.talk = the same agent turn; share_context = enrichment pipeline |
+| ChatGPT / Claude / Grok / Muse connectors (five-tool MCP surface at mcp.ntwrk.love) | Needs OAuth for MCP clients, which Eliza Cloud does not yet have (Section 30). | ask/tell_network_agent = the same agent turn; share_profile_with_network = enrichment pipeline |
 | Telegram, WhatsApp, Signal channels; agent in existing group chats | Telegram and WhatsApp adapters exist in the cloud gateway, so these are fast follows; Signal has no connector. | Channel gateway, identity linking |
 | Forwarding opportunities to non-members via private links | Validation gate in 20.3 (forwarding and privacy expectations). | Invitations, consent workflow |
 | Gmail, Instagram, and broader data import | Sensitive; prove value with lighter sources first. | Enrichment pipeline with provenance |
@@ -889,7 +889,7 @@ An invite-only Network in San Francisco and New York for about 150-300 members (
 | Refundable no-show deposits | Needs payments and careful testing. | Reliability evidence, attendance records |
 | Network Commons, sponsorship, partner inventory, institutional contracts | Deferred (18-19). | Opportunity object, world knowledge |
 | Governance and paid governance membership | Decide after product-market fit. | Admin metrics, audit log |
-| ID verification | MVP relies on vouch, phone, and 18+ attestation. Needed first for home hosting. | Safety subsystem |
+| ID verification | MVP relies on vouch, phone, and age attestation. Needed first for home hosting. | Safety subsystem |
 | Home-hosted events, childcare, money custody, regulated services | High risk (17.5). | Safety classes |
 | Learned ranking models and learned joint embeddings | Need labeled outcomes from MVP first. | Review labels, outcome data, matching logs |
 | Graph topology optimization, capability-coverage modeling | Need scale. | Graph analytics in admin |
@@ -954,13 +954,13 @@ Each flow lists the trigger, the steps, the systems involved, and the main edge 
 
 ## 29.2 MVP flows in detail
 ### F1. Member invites and vouches for someone
-Trigger: a member says "I want to invite my friend Sam" or the agent asks for a specific kind of person the Network needs. Steps: (1) agent checks invite allowance; (2) agent collects the vouch: how they know Sam, for how long, how well, what Sam is like and wants, anything important, and Sam's phone number; (3) the vouch is stored as an invite edge with strength evidence; (4) soft-approval scoring flags only unusual cases (very weak vouch, many invites in a short time, risk keywords) for a human; (5) the agent sends Sam a personal invitation that names the inviter and explains the Network, or the inviter forwards a link if they prefer. Edge cases: invitee already a member (merge, tell inviter nothing private); invitee declines (no further contact); invitee is under 18 (blocked at acceptance). Inviter is told when the invitee joins, never what they said in onboarding. (v0.2: by default the inviter forwards a personal link or a pre-written text from their own phone. The agent sends at most one invitation message itself, and only if the inviter confirms Sam expects it; it names the inviter, includes opt-out language, and is never followed up if unanswered. Vouch notes about Sam are held as non-matchable invite data, used only to seed Sam's profile with Sam's consent at acceptance, and deleted if the invite is declined or expires after 30 days.)
+Trigger: a member says "I want to invite my friend Sam" or the agent asks for a specific kind of person the Network needs. Steps: (1) agent checks invite allowance; (2) agent collects the vouch: how they know Sam, for how long, how well, what Sam is like and wants, anything important, and Sam's phone number; (3) the vouch is stored as an invite edge with strength evidence; (4) soft-approval scoring flags only unusual cases (very weak vouch, many invites in a short time, risk keywords) for a human; (5) the agent sends Sam a personal invitation that names the inviter and explains the Network, or the inviter forwards a link if they prefer. Edge cases: invitee already a member (merge, tell inviter nothing private); invitee declines (no further contact); invitee is under 18 (may join as a single-player member and is never connected to others). Inviter is told when the invitee joins, never what they said in onboarding. (v0.2: by default the inviter forwards a personal link or a pre-written text from their own phone. The agent sends at most one invitation message itself, and only if the inviter confirms Sam expects it; it names the inviter, includes opt-out language, and is never followed up if unanswered. Vouch notes about Sam are held as non-matchable invite data, used only to seed Sam's profile with Sam's consent at acceptance, and deleted if the invite is declined or expires after 30 days.)
 ### F2. Founding team seeds an invite
 An admin creates invites in bulk for the seed cohort with vouch notes and city. Same downstream flow as F1; invites are attributed to the team member.
 ### F3. Invite acceptance and identity
-Invitee replies to the invitation or opens the link. Steps: confirm phone ownership (they are texting from it, or one-time code on web), accept terms and messaging consent, 18+ attestation, choose iMessage or SMS (detected automatically when possible). Creates the member record, an Eliza Cloud user, and channel identities. Edge cases: different number than invited (verify and link); duplicate account (identity link codes already exist in Eliza Cloud).
+Invitee replies to the invitation or opens the link. Steps: confirm phone ownership (they are texting from it, or one-time code on web), accept terms and messaging consent, age attestation (members under 18 join as single-player members and are never connected to others), choose iMessage or SMS (detected automatically when possible). Creates the member record, an Eliza Cloud user, and channel identities. Edge cases: different number than invited (verify and link); duplicate account (identity link codes already exist in Eliza Cloud).
 ### F4. Onboarding conversation
-Default is a messaging conversation of 6-12 short exchanges, resumable at any time; the member can ask for a voice call instead. The agent opens with what it already knows from the vouch and connected sources, then covers: consent and what the Network remembers; what they want more of (one or two intents: career, interests, hobbies, friends, romance opt-in, introductions); what they enjoy giving; city, neighborhoods, travel tolerance, normal-week routine; social format and boundaries; 2-3 hypothetical opportunities to calibrate interruptions ("would this be worth a text?"); and a read-back summary for corrections. Output: facets with provenance, intents, preferences, presence, initial participation state. Ends with an immediate single-player win when possible (an event or place this week). Edge cases: member stops mid-way (profile still usable; agent resumes later at most once); sensitive disclosures (stored agent-private); romance only if explicitly opted in.
+Default is a messaging conversation of 6-12 short exchanges, resumable at any time; the member can ask for a voice call instead. The agent opens with what it already knows from the vouch and connected sources, then covers: consent and what the Network remembers; what they want more of (one or two intents: career, interests, hobbies, friends, romance opt-in, introductions); what they enjoy giving; city, neighborhoods, travel tolerance, normal-week routine; social format and boundaries; 2-3 hypothetical opportunities to calibrate interruptions ("would this be worth a text?"); and a read-back summary for corrections. Output: facets with provenance, intents, preferences, presence, initial participation state. Ends with an immediate single-player win when possible (an event or place this week). Edge cases: member stops mid-way (profile still usable; agent resumes later at most once); sensitive disclosures (stored agent-private); romance only for adults who explicitly opt in.
 ### F5. Review and edit what the Network knows
 Member asks "what do you know about me?" or opens the web page. Shows facets grouped by kind with source and privacy scope; the member can correct, delete, or change scope. Deletions remove derived embeddings and are honored by the engine on the next run.
 ### F6. Progressive profiling question
@@ -1048,7 +1048,7 @@ This analysis is based on a review of the elizaOS v3 monorepo (github.com/elizaO
 | iMessage / SMS in and out | Blooio and Twilio adapters, gateway, outbound send | Exists | Dedicated Network numbers; A2P 10DLC/toll-free registration; STOP/HELP handling verified; per-channel rate limits |
 | Proactive outbound from backend jobs | Gateway internal delivery (Blooio, Telegram); core sendMessageToTarget | Partial | Network outbound service: budget, quiet hours, idempotency, delivery receipts, Twilio SMS path for proactive sends |
 | Voice onboarding | Twilio voice to realtime session | Exists | Network voice prompt; recording consent; transcript to extraction |
-| Identity and login | Steward auth, identity links, phone verification | Exists | Member table linked to Cloud user; invite tokens; 18+ attestation |
+| Identity and login | Steward auth, identity links, phone verification | Exists | Member table linked to Cloud user; invite tokens; age attestation and minor flag |
 | Network data model | General Eliza memory, relationships (single-owner) | Missing | New network schema: members, facets, intents, presence, edges, opportunities, participations, threads, consents, feedback, events, audit |
 | Profile extraction | plugin-form field extraction; personal-assistant profile evaluators | Partial | Network extraction prompts (strict fields + additive enrichment), provenance/confidence, facet merge |
 | Enrichment from sources | Google Calendar, Gmail, X, web search | Partial | URL-based LinkedIn/X profile summarizer, AI-memory paste parser, member approval step |
@@ -1069,7 +1069,7 @@ This analysis is based on a review of the elizaOS v3 monorepo (github.com/elizaO
 | Admin: conversations, graph, analytics | Admin API basics, moderation UI, trajectory viewers | Mostly missing | Network admin console (Section 35) |
 | Simulated world | Scenario runner, multi-agent arena, LLM user simulators, logical/fake clocks, synthetic-world plumbing (no virtual clock yet) | Partial | Network world simulator with persona agents, virtual clock, outcome simulation |
 | Analytics warehouse | Analytics routes, trajectory export | Partial | Event log + read replica/warehouse + metric definitions |
-| MCP connector for ChatGPT/Claude | Platform MCP endpoint (API key auth); no OAuth authorization-server metadata | Partial | Later: OAuth for MCP clients and the four tools |
+| MCP connector for ChatGPT/Claude | Platform MCP endpoint (API key auth); no OAuth authorization-server metadata | Partial | Later: OAuth for MCP clients and the five tools |
 | Payments | Stripe, credits, crypto | Exists (not MVP) | Later |
 
 
@@ -1195,7 +1195,7 @@ Specified in detail in Section 33.
 - New: feedback records (factual, subjective, would-meet-again, free text), attendance-derived reliability evidence by context (type, lead time, size, distance), rater-bias weighting, edge updates (met, enjoyed, would-interact-again, group-only, avoid), second-encounter candidate generation.
 - Rules: declines never affect reliability; one forgiven no-show; negative feedback weakens only that pair and is corroboration-weighted; nothing is shown as a score.
 ## 32.14 Policy, privacy, and safety
-- New: privacy scope on every facet and message field; explanation builder that can only use shareable evidence; outbound leak checker (deterministic checks for agent-private facts and contact details plus an LLM classifier for indirect inference, using canary facts in tests); PII scrubber/pseudonymizer for reviewer views, logs, analytics, and third-party models; safety classifier on inbound messages (none, flag, urgent); blocks; safety cases with evidence preservation and holds; high-risk category filter (17.5); 18+ enforcement.
+- New: privacy scope on every facet and message field; explanation builder that can only use shareable evidence; outbound leak checker (deterministic checks for agent-private facts and contact details plus an LLM classifier for indirect inference, using canary facts in tests); PII scrubber/pseudonymizer for reviewer views, logs, analytics, and third-party models; safety classifier on inbound messages (none, flag, urgent); blocks; safety cases with evidence preservation and holds; high-risk category filter (17.5); age policy enforcement (no member under 18 in any multi-person opportunity, in any role; romance 18+).
 ## 32.15 Invitations and growth
 - New: invitation allowances (default 3 per member per month, adjustable by network need), vouch capture, invite edges with strength evidence, soft-approval scoring, targeted growth asks ("we need hosts in Brooklyn"), newcomer welcome opportunities.
 ## 32.16 Events program
@@ -1244,7 +1244,7 @@ Each generator proposes candidate opportunities of one type. All share retrieval
 
 
 ## 33.5 Candidate retrieval
-- Hard filters in SQL first: member active and in a state that allows this category; city or presence overlap during the opportunity window; not blocked either way; no active safety hold; not over interruption or contribution budget; not asked about something similar recently (cooldowns per pair and per category); romance only between mutual opt-ins with mutual stated preferences; 18+; high-risk categories excluded. Every filter uses the same ID space (member_id UUID) everywhere.
+- Hard filters in SQL first: member active and in a state that allows this category; city or presence overlap during the opportunity window; not blocked either way; no active safety hold; not over interruption or contribution budget; not asked about something similar recently (cooldowns per pair and per category); romance only between adult mutual opt-ins with mutual stated preferences; no member under 18 in any multi-person opportunity, in any role (including as an intermediary or warm path); high-risk categories excluded. Every filter uses the same ID space (member_id UUID) everywhere.
 - Retrieval channels (union, then dedupe): vector kNN on intent-to-facet and intent-to-intent embeddings (top 50 per channel); tag and category matches; graph neighbors within two hops via recursive SQL over edges; event-interest matches; availability overlap and travel-time limits (H3 neighborhoods first, maps API for finalists).
 - Exposure floor: each run reserves part of the candidate pool for members with few recent proposals or little data, so they are not starved by stronger profiles.
 ## 33.6 Scoring
@@ -1314,7 +1314,7 @@ The Network is a social system, so most failures are not crashes. They are a bad
 
 | Subsystem | How it is tested |
 |---|---|
-| Identity and membership | Invite token lifecycle; duplicate and merged identities; phone change preserving history; 18+ refusal; soft-approval flags; role-based access to admin endpoints. |
+| Identity and membership | Invite token lifecycle; duplicate and merged identities; phone change preserving history; under-18 single-player gating; soft-approval flags; role-based access to admin endpoints. |
 | Channel gateway | Inbound webhook signature checks and dedupe; outbound idempotency (same key sent twice delivers once); STOP/HELP/START keywords per channel; quiet hours across time zones; iMessage to SMS fallback; delivery-failure retries; rate limits. |
 | Network agent | Scenario suite per action with simulated users of different styles (terse, chatty, sarcastic, non-native English, voice transcripts); style rules (concise, no guilt, no over-flattery); tool-call correctness; refusal of out-of-scope or high-risk requests; prompt-injection attempts in member text. |
 | Profile model | Merge rules (said beats inferred), confidence decay, contradiction questions, revision bumps, deletion removing embeddings, engine-learned state surviving profile syncs. |
@@ -1327,7 +1327,7 @@ The Network is a social system, so most failures are not crashes. They are a bad
 | Relay | Prefixing and fan-out; contact swap requires both; moderation hold; thread persistence; leaving a thread. |
 | Scheduling | Slot proposals across availability types; calendar free/busy; time zones and DST; reschedule chains needing everyone; reminders and check-ins at the right virtual times; replacement on drop. |
 | Feedback and reliability | Declines never affect reliability; one forgiven no-show; rater-bias weighting; negative feedback only affects the pair; second-encounter generation. |
-| Privacy and safety | Canary facts (agent-private) seeded into personas must never appear in any outbound message, explanation, reviewer view, or log; inference-leak scenarios (for example, timing that reveals a private disclosure); block and report from every channel; safety holds stop all outreach; 18+ and high-risk filters. |
+| Privacy and safety | Canary facts (agent-private) seeded into personas must never appear in any outbound message, explanation, reviewer view, or log; inference-leak scenarios (for example, timing that reveals a private disclosure); block and report from every channel; safety holds stop all outreach; minor-isolation (zero minor contacts) and high-risk filters. |
 | Invitations and events | Allowances; vouch capture; monthly event invitations, RSVPs, reminders, groupings, and follow-ups. |
 | Member web | Edit and delete flows, privacy scope changes reflected in the engine, export completeness, magic-link auth. |
 | Jobs and Clock | Due jobs run exactly once under concurrency; lease expiry recovery; SimClock advancing drains jobs in time order; no code path reads the system clock directly (lint rule). |
@@ -1354,7 +1354,7 @@ A simulated city of persona agents that use The Network exactly as real members 
 - Cost and latency: LLM tokens and cost per member per week, job latency, send latency.
 ## 34.5 Judges and rubrics
 - Deterministic rules first (length, one question at a time, no contact details, opt-out language present, no banned phrases).
-- LLM judges with written rubrics for tone, clarity, explanation quality, appropriateness of timing, and privacy; judges use a different model than the agent; judge agreement is spot-checked by humans weekly.
+- LLM judges with written rubrics for tone, clarity, explanation quality, appropriateness of timing, and privacy; judges use a different model family than the agent (during prototyping: OpenAI gpt-6-luna for judges; Cerebras qwen-3.8-27b for the engine, agent, and simulated personas); judge agreement is spot-checked by humans weekly.
 - Reports in JSONL and an admin dashboard; CI runs a fast subset on every change touching Network code and the full world nightly.
 ## 34.6 Shadow mode and pilot evaluation
 Before proactive matching is switched on in a city, the engine runs in shadow mode on real seed data for at least two weeks. Reviewers label proposals as if they were to be sent; this sets the precision baseline required by Section 20.3. During the pilot, a share of review decisions is double-reviewed to measure reviewer agreement.
@@ -1395,11 +1395,11 @@ The team must be able to see everything happening in the Network, from any membe
 ## 36.1 Messaging compliance and deliverability
 - US SMS requires A2P 10DLC brand and campaign registration or toll-free verification; budget several weeks. Record consent wording at invite acceptance; honor STOP/HELP/START; no proactive messages without consent; quiet hours in the recipient's time zone.
 - iMessage via Blooio: confirm per-number throughput, group messaging support, and reliability for proactive sends; keep SMS as fallback.
-- Number strategy: dedicated Network numbers (per city or one national), memorable sender identity, contact card (vCard) sent at onboarding so members save the Network as a contact.
+- Number strategy: dedicated Network numbers (per city or one national), memorable sender identity, contact card (vCard) sent at onboarding so members save the Network as a contact. Prototyping uses the existing Blooio line +1 (808) 788-1821; dedicated per-city lines follow.
 - Voice: two-party recording consent (California) announced at the start of any recorded call.
 ## 36.2 Legal and policy
 - Terms of service, privacy policy, community guidelines, and a short "how the Network uses what you tell it" explainer written in plain language.
-- Adults only (18+); meetups in public places by default for first meetings; liability language for in-person meetings.
+- Members under 18 may join for single-player help only and are never connected to other people (age-appropriate design and children's privacy rules apply); meetups in public places by default for first meetings; liability language for in-person meetings.
 - Data rights: export and deletion (CCPA/CPRA in California; New York SHIELD Act security requirements), data retention schedule, breach response plan.
 - Respect terms of service of event sources and profile sources used for enrichment.
 ## 36.3 Trust and safety operations
@@ -1420,7 +1420,7 @@ The team must be able to see everything happening in the Network, from any membe
 ## 36.9 Data, backup, and recovery
 - Network schema included in existing Postgres backups with point-in-time recovery; tested restore; nightly export to R2; disaster-recovery runbook.
 ## 36.10 Repository and ownership
-- Create the Network workspace inside the Eliza monorepo (plugin plus service package plus admin area) or a dedicated repository that depends on published Eliza packages; decide before build starts. Name an owner for each subsystem in Section 32.
+- Create the Network workspace inside the Eliza monorepo (plugin plus service package plus admin area) or a dedicated repository that depends on published Eliza packages; decide before build starts. Name an owner for each subsystem in Section 32. Prototypes, research, and test harnesses live in https://github.com/lalalune/thenetwork (private). The product domain is ntwrk.love; the assistant connector is served at https://mcp.ntwrk.love/mcp.
 # 37. MVP build plan and milestones
 Indicative sequence assuming a small team (2-3 engineers, 1 product/community lead, part-time design, contract reviewers). Each milestone ends with simulated-world tests passing for the flows it delivers.
 
@@ -1473,7 +1473,7 @@ This section records the decisions made while resolving the October 4-5, 2026 re
 | First value | Expanded to career colleagues, interest and hobby partners, friends, romance, and introducers. | 8.2 |
 | Onboarding testing | A/B test essential vs annoying questions; phone call optional; in-person testing of all channels. | 9.2, 20.2 |
 | Relay | Always through the Network until both agree to swap contacts; persistent threads so people can reconnect later. | 17.3, 32.11 |
-| Safety and minors | Adults only; risk signals in ranking; ID verification later, first for hosts. | 17.4, 27 |
+| Safety and minors | Under-18 members may join but are never connected to other people; romance and every multi-person opportunity are adult-only; risk signals in ranking; ID verification later, first for hosts. | 17.4, 27 |
 | Location | Collect as precisely as allowed, never share precisely. | 16.1, 22.6 |
 | PII | PII scrubbing and pseudonymization for reviewers, logs, analytics, and third-party models. | 22.6, 32.14 |
 | Payments processor | Stripe (later). | 22.6 |
@@ -1541,7 +1541,7 @@ A parent wants to attend a small community dinner but has no childcare and does 
 
 
 ## B.3 Connector authorization scopes
-Post-MVP. With the four-tool connector (11.2): network.get_updates needs read.basic; network.respond needs write.responses; network.share_context needs write.profile; network.talk can reach any write scope only through server-side confirmation, so the member grants scopes once and the Network enforces them per action.
+Post-MVP. With the five-tool connector (11.2): get_network_updates and ask_network_agent need read.basic; respond_to_network_item needs write.responses; share_profile_with_network needs write.profile; tell_network_agent can reach any write scope only through server-side confirmation, so the member grants scopes once and the Network enforces them per action.
 | Scope | Allows |
 |---|---|
 | network.read.basic | Member-safe summary and already-visible opportunities. |
