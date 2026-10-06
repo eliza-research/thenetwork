@@ -1,0 +1,443 @@
+{
+ "entries": [
+  {
+   "api_id": "evt-0hO7sNSRbHzJSg1",
+   "event": {
+    "api_id": "evt-0hO7sNSRbHzJSg1",
+    "calendar_api_id": "cal-sDJfMC6BdLAM99V",
+    "cover_url": "https://images.lumacdn.com/uploads/ho/5d291a77-ad2d-4873-8466-135d183463cb.png",
+    "end_at": "2026-10-06T20:00:00.000Z",
+    "event_type": "independent",
+    "hide_rsvp": false,
+    "location_type": "offline",
+    "name": "Pangram in SF: Coffee Meetup",
+    "one_to_one": true,
+    "recurrence_id": null,
+    "show_guest_list": false,
+    "social_image_url": "https://images.lumacdn.com/event-social/1t/8a21e95c-7926-4b22-bfae-4eac3220807d.png",
+    "start_at": "2026-10-06T16:00:00.000Z",
+    "timezone": "America/Los_Angeles",
+    "url": "t17j2bto",
+    "user_api_id": "usr-Ceg5PduJlxzEPUC",
+    "visibility": "public",
+    "virtual_info": {
+     "has_access": false
+    },
+    "geo_address_info": {
+     "mode": "obfuscated",
+     "city": "San Francisco",
+     "city_state": "San Francisco, CA",
+     "sublocality": "Jackson Square",
+     "country": "United States",
+     "country_code": "US",
+     "region": "California",
+     "region_short": "CA"
+    },
+    "geo_address_visibility": "guests-only",
+    "coordinate": {
+     "latitude": 37.796826610098094,
+     "longitude": -122.4059060662772
+    },
+    "waitlist_enabled": true,
+    "waitlist_status": "enabled"
+   },
+   "calendar": {
+    "api_id": "cal-sDJfMC6BdLAM99V",
+    "name": "Pangram",
+    "slug": "pangram",
+    "access_level": "public"
+   },
+   "start_at": "2026-10-06T16:00:00.000Z",
+   "guest_count": 0,
+   "ticket_count": 0,
+   "ticket_info": {
+    "price": null,
+    "is_free": true,
+    "max_price": null,
+    "is_sold_out": false,
+    "spots_remaining": 45,
+    "is_near_capacity": false,
+    "require_approval": true
+   },
+   "registration_availability": "open",
+   "waitlist_active": false,
+   "featured_city": {
+    "api_id": "discplace-BDj7GNbGlsF7Cka",
+    "name": "San Francisco",
+    "slug": "sf"
+   }
+  },
+  {
+   "api_id": "evt-GmzaMgBi65qZ5W5",
+   "event": {
+    "api_id": "evt-GmzaMgBi65qZ5W5",
+    "calendar_api_id": "cal-Ve0M7LoDOpdnF3z",
+    "cover_url": "https://images.lumacdn.com/uploads/b7/402d55ff-4ff7-4ae7-9dac-d1b32033161b.png",
+    "end_at": "2026-10-06T19:00:00.000Z",
+    "event_type": "independent",
+    "hide_rsvp": false,
+    "location_type": "offline",
+    "name": "-1 to Physical Intelligence with Sergey Levine",
+    "one_to_one": true,
+    "recurrence_id": null,
+    "show_guest_list": false,
+    "social_image_url": "https://images.lumacdn.com/event-social/u9/ec854549-02bd-4f5e-a9c8-03a0d9bdc79a.png",
+    "start_at": "2026-10-06T17:30:00.000Z",
+    "timezone": "America/Los_Angeles",
+    "url": "sergey-spc",
+    "user_api_id": "usr-VPOChxgUvsrEjSA",
+    "visibility": "public",
+    "virtual_info": {
+     "has_access": false
+    },
+    "geo_address_info": {
+     "mode": "obfuscated",
+     "city": "San Francisco",
+     "city_state": "San Francisco, California",
+     "sublocality": "South Beach",
+     "country": "United States",
+     "country_code": "US",
+     "region": "California"
+    },
+    "geo_address_visibility": "guests-only",
+    "coordinate": {
+     "latitude": 37.779563921315976,
+     "longitude": -122.39454243260293
+    },
+    "waitlist_enabled": false,
+    "waitlist_status": "disabled"
+   },
+   "calendar": {
+    "api_id": "cal-Ve0M7LoDOpdnF3z",
+    "name": "South Park Commons",
+    "slug": "southparkcommons-events",
+    "access_level": "public"
+   },
+   "start_at": "2026-10-06T17:30:00.000Z",
+   "guest_count": 0,
+   "ticket_count": 0,
+   "ticket_info": {
+    "price": null,
+    "is_free": true,
+    "max_price": null,
+    "is_sold_out": false,
+    "spots_remaining": null,
+    "is_near_capacity": false,
+    "require_approval": true
+   },
+   "registration_availability": "open",
+   "waitlist_active": false,
+   "featured_city": {
+    "api_id": "discplace-BDj7GNbGlsF7Cka",
+    "name": "San Francisco",
+    "slug": "sf"
+   }
+  },
+  {
+   "api_id": "evt-islB27yVhuMTH1E",
+   "event": {
+    "api_id": "evt-islB27yVhuMTH1E",
+    "calendar_api_id": "cal-gN2Y0aVeA6NHtxp",
+    "cover_url": "https://images.lumacdn.com/uploads/70/0d05d954-f77c-4751-99ab-8ff3b2bf3dcb.png",
+    "end_at": "2026-10-07T00:00:00.000Z",
+    "event_type": "independent",
+    "hide_rsvp": false,
+    "location_type": "offline",
+    "name": "Carta Presents: The State of the Round",
+    "one_to_one": true,
+    "recurrence_id": null,
+    "show_guest_list": false,
+    "social_image_url": "https://images.lumacdn.com/event-social/7t/aecb84bc-a04e-4419-b11d-7412bcf40106.png",
+    "start_at": "2026-10-06T21:00:00.000Z",
+    "timezone": "America/Los_Angeles",
+    "url": "1vqfea7z",
+    "user_api_id": "usr-g7utrETVUbDLPUx",
+    "visibility": "public",
+    "virtual_info": {
+     "has_access": false
+    },
+    "geo_address_info": {
+     "city": "San Francisco",
+     "type": "google",
+     "region": "California",
+     "address": "Chase Center",
+     "country": "United States",
+     "place_id": "ChIJ6QBEf8Z_j4AR40Gh2OOTZ30",
+     "localized": null,
+     "city_state": "San Francisco, CA",
+     "description": "",
+     "sublocality": "Mission Bay",
+     "country_code": "US",
+     "full_address": "Chase Center, 1 Warriors Wy, San Francisco, CA 94158, USA",
+     "region_short": "CA",
+     "short_address": "1 Warriors Wy, San Francisco",
+     "place_coordinate": {
+      "latitude": 37.7680183,
+      "longitude": -122.38787719999999
+     },
+     "apple_maps_place_id": "I8C4D1FF69BFDAFE5",
+     "mode": "shown"
+    },
+    "geo_address_visibility": "public",
+    "coordinate": {
+     "longitude": -122.38787719999999,
+     "latitude": 37.7680183
+    },
+    "waitlist_enabled": true,
+    "waitlist_status": "active"
+   },
+   "calendar": {
+    "api_id": "cal-gN2Y0aVeA6NHtxp",
+    "name": "Carta Events",
+    "slug": null,
+    "access_level": "public"
+   },
+   "start_at": "2026-10-06T21:00:00.000Z",
+   "guest_count": 0,
+   "ticket_count": 0,
+   "ticket_info": {
+    "price": null,
+    "is_free": true,
+    "max_price": null,
+    "is_sold_out": true,
+    "spots_remaining": 0,
+    "is_near_capacity": false,
+    "require_approval": true
+   },
+   "registration_availability": "waitlist",
+   "waitlist_active": true,
+   "featured_city": {
+    "api_id": "discplace-BDj7GNbGlsF7Cka",
+    "name": "San Francisco",
+    "slug": "sf"
+   }
+  },
+  {
+   "api_id": "evt-YRt5Ue7wcpfHjDl",
+   "event": {
+    "api_id": "evt-YRt5Ue7wcpfHjDl",
+    "calendar_api_id": "cal-QeHmEXmggVBEYsD",
+    "cover_url": "https://images.lumacdn.com/uploads/y4/510919fe-7d8a-4374-8da6-4f4d20f30251.png",
+    "end_at": "2026-10-07T02:00:00.000Z",
+    "event_type": "independent",
+    "hide_rsvp": false,
+    "location_type": "offline",
+    "name": "The SOLO Founder Club",
+    "one_to_one": true,
+    "recurrence_id": null,
+    "show_guest_list": false,
+    "social_image_url": "https://images.lumacdn.com/event-social/65/36739c97-6cf4-4bff-9f65-9ba29f2ab4b2.png",
+    "start_at": "2026-10-06T23:00:00.000Z",
+    "timezone": "America/Los_Angeles",
+    "url": "ejwagfv9",
+    "user_api_id": "usr-xLTO1rTNRkmvW1J",
+    "visibility": "public",
+    "virtual_info": {
+     "has_access": false
+    },
+    "geo_address_info": {
+     "mode": "obfuscated",
+     "city": "San Francisco",
+     "city_state": "San Francisco, CA",
+     "sublocality": "Central Waterfront",
+     "country": "United States",
+     "country_code": "US",
+     "region": "California",
+     "region_short": "CA"
+    },
+    "geo_address_visibility": "guests-only",
+    "coordinate": {
+     "latitude": 37.75695518003088,
+     "longitude": -122.38389825791361
+    },
+    "waitlist_enabled": false,
+    "waitlist_status": "disabled"
+   },
+   "calendar": {
+    "api_id": "cal-QeHmEXmggVBEYsD",
+    "name": "Array Ventures",
+    "slug": "arrayvc",
+    "access_level": "public"
+   },
+   "start_at": "2026-10-06T23:00:00.000Z",
+   "guest_count": 0,
+   "ticket_count": 0,
+   "ticket_info": {
+    "price": null,
+    "is_free": true,
+    "max_price": null,
+    "is_sold_out": false,
+    "spots_remaining": null,
+    "is_near_capacity": false,
+    "require_approval": true
+   },
+   "registration_availability": "open",
+   "waitlist_active": false,
+   "featured_city": {
+    "api_id": "discplace-BDj7GNbGlsF7Cka",
+    "name": "San Francisco",
+    "slug": "sf"
+   }
+  },
+  {
+   "api_id": "evt-V7xJVHFTVdD3ny1",
+   "event": {
+    "api_id": "evt-V7xJVHFTVdD3ny1",
+    "calendar_api_id": "cal-BZEN9BxMkDnqIL5",
+    "cover_url": "https://images.lumacdn.com/uploads/a3/ef758bc6-7ed7-42af-b86c-6c30599ce555.png",
+    "end_at": "2026-10-07T03:00:00.000Z",
+    "event_type": "independent",
+    "hide_rsvp": false,
+    "location_type": "offline",
+    "name": "Compute Trading Happy Hour",
+    "one_to_one": true,
+    "recurrence_id": null,
+    "show_guest_list": true,
+    "social_image_url": "https://images.lumacdn.com/event-social/28/141f48e8-8f48-4de4-88cc-ca1e96028a6f.png",
+    "start_at": "2026-10-07T00:00:00.000Z",
+    "timezone": "America/Los_Angeles",
+    "url": "y0ki9bun",
+    "user_api_id": "usr-TQ02LCxHB4IhwUx",
+    "visibility": "public",
+    "virtual_info": {
+     "has_access": false
+    },
+    "geo_address_info": {
+     "city": "San Francisco",
+     "type": "google",
+     "region": "California",
+     "address": "Chotto Matte San Francisco",
+     "country": "United States",
+     "place_id": "ChIJVz7re7eBhYAR617i_Ga1FPs",
+     "localized": null,
+     "city_state": "San Francisco, CA",
+     "description": "",
+     "sublocality": "Union Square",
+     "country_code": "US",
+     "full_address": "Chotto Matte San Francisco, 50 O'Farrell St, San Francisco, CA 94108, USA",
+     "region_short": "CA",
+     "short_address": "50 O'Farrell St, San Francisco",
+     "place_coordinate": {
+      "latitude": 37.7869198,
+      "longitude": -122.40577839999999
+     },
+     "apple_maps_place_id": "IEDA6E2F1ECC99A30",
+     "mode": "shown"
+    },
+    "geo_address_visibility": "public",
+    "coordinate": {
+     "longitude": -122.40577839999999,
+     "latitude": 37.7869198
+    },
+    "waitlist_enabled": false,
+    "waitlist_status": "disabled"
+   },
+   "calendar": {
+    "api_id": "cal-BZEN9BxMkDnqIL5",
+    "name": "Silicon Data",
+    "slug": "silicon-data",
+    "access_level": "public"
+   },
+   "start_at": "2026-10-07T00:00:00.000Z",
+   "guest_count": 223,
+   "ticket_count": 223,
+   "ticket_info": {
+    "price": null,
+    "is_free": true,
+    "max_price": null,
+    "is_sold_out": false,
+    "spots_remaining": null,
+    "is_near_capacity": false,
+    "require_approval": true
+   },
+   "registration_availability": "open",
+   "waitlist_active": false,
+   "featured_city": {
+    "api_id": "discplace-BDj7GNbGlsF7Cka",
+    "name": "San Francisco",
+    "slug": "sf"
+   }
+  },
+  {
+   "api_id": "evt-jUiPZAm27IqTm6i",
+   "event": {
+    "api_id": "evt-jUiPZAm27IqTm6i",
+    "calendar_api_id": "cal-gmMOid1Rsqc3Hih",
+    "cover_url": "https://images.lumacdn.com/gallery-images/ru/6ed80c40-d1f6-4022-8f67-b8380b15066a.png",
+    "end_at": "2026-10-07T03:30:00.000Z",
+    "event_type": "independent",
+    "hide_rsvp": false,
+    "location_type": "offline",
+    "name": "SF Tech Week AI Demo Night",
+    "one_to_one": true,
+    "recurrence_id": null,
+    "show_guest_list": false,
+    "social_image_url": "https://images.lumacdn.com/event-social/un/7c7ebc9a-d5f7-41e9-872f-c862002c3906.png",
+    "start_at": "2026-10-07T00:00:00.000Z",
+    "timezone": "America/Los_Angeles",
+    "url": "clickh-zngw",
+    "user_api_id": "usr-EPwlJNccYzXE3Et",
+    "visibility": "public",
+    "virtual_info": {
+     "has_access": false
+    },
+    "geo_address_info": {
+     "city": "San Francisco",
+     "type": "google",
+     "region": "California",
+     "address": "CANOPY Jackson Square",
+     "country": "United States",
+     "place_id": "ChIJsS6Z6PSAhYARALMpp8fBsQU",
+     "localized": null,
+     "city_state": "San Francisco, CA",
+     "description": "",
+     "sublocality": "North Beach",
+     "country_code": "US",
+     "full_address": "CANOPY Jackson Square, 595 Pacific Ave 4th floor, San Francisco, CA 94133, USA",
+     "region_short": "CA",
+     "short_address": "595 Pacific Ave 4th floor, San Francisco",
+     "place_coordinate": {
+      "latitude": 37.7969806,
+      "longitude": -122.40487819999998
+     },
+     "apple_maps_place_id": "IBE0CEDF1B125B4F1",
+     "mode": "shown"
+    },
+    "geo_address_visibility": "public",
+    "coordinate": {
+     "longitude": -122.40487819999998,
+     "latitude": 37.7969806
+    },
+    "waitlist_enabled": true,
+    "waitlist_status": "active"
+   },
+   "calendar": {
+    "api_id": "cal-gmMOid1Rsqc3Hih",
+    "name": "ClickHouse Events",
+    "slug": "clickhouse-events",
+    "access_level": "public"
+   },
+   "start_at": "2026-10-07T00:00:00.000Z",
+   "guest_count": 0,
+   "ticket_count": 0,
+   "ticket_info": {
+    "price": null,
+    "is_free": true,
+    "max_price": null,
+    "is_sold_out": true,
+    "spots_remaining": 0,
+    "is_near_capacity": false,
+    "require_approval": false
+   },
+   "registration_availability": "waitlist",
+   "waitlist_active": true,
+   "featured_city": {
+    "api_id": "discplace-BDj7GNbGlsF7Cka",
+    "name": "San Francisco",
+    "slug": "sf"
+   }
+  }
+ ],
+ "has_more": true,
+ "next_cursor": "x"
+}

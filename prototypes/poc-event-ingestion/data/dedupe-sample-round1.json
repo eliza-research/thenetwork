@@ -1,0 +1,848 @@
+[
+ {
+  "key": "luma-discover:evt-GmzaMgBi65qZ5W5||cerebral-valley:https://luma.com/sergey-spc",
+  "band": "0.8-1.01",
+  "score": 1,
+  "title": 1,
+  "time": 0,
+  "venue": 0,
+  "link": true,
+  "a": {
+   "id": "luma-discover:evt-GmzaMgBi65qZ5W5",
+   "title": "-1 to Physical Intelligence with Sergey Levine",
+   "start": "2026-10-06T17:30:00.000Z",
+   "venue": null,
+   "address": "South Beach, San Francisco, California",
+   "latlng": [
+    37.7796,
+    -122.3945
+   ],
+   "url": "https://luma.com/sergey-spc"
+  },
+  "b": {
+   "id": "cerebral-valley:https://luma.com/sergey-spc",
+   "title": "-1 to Physical Intelligence with Sergey Levine",
+   "start": "2026-10-06",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://luma.com/sergey-spc"
+  }
+ },
+ {
+  "key": "luma-ics:evt-D083fftWbb5Dpqv||cerebral-valley:https://luma.com/init-conf",
+  "band": "0.8-1.01",
+  "score": 1,
+  "title": 1,
+  "time": 0,
+  "venue": 0,
+  "link": true,
+  "a": {
+   "id": "luma-ics:evt-D083fftWbb5Dpqv",
+   "title": "init() by WorkOS",
+   "start": "2026-10-07T15:00:00.000Z",
+   "venue": "SFJAZZ",
+   "address": "SFJAZZ, 201 Franklin St, San Francisco, CA 94102, USA",
+   "latlng": [
+    37.7764,
+    -122.4216
+   ],
+   "url": "https://luma.com/init-conf"
+  },
+  "b": {
+   "id": "cerebral-valley:https://luma.com/init-conf",
+   "title": "init by WorkOS",
+   "start": "2026-10-07",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://luma.com/init-conf"
+  }
+ },
+ {
+  "key": "luma-ics:evt-bD3P1xxKxTJssRJ||cerebral-valley:https://luma.com/claude-founder-salon",
+  "band": "0.8-1.01",
+  "score": 1,
+  "title": 1,
+  "time": 0,
+  "venue": 0,
+  "link": true,
+  "a": {
+   "id": "luma-ics:evt-bD3P1xxKxTJssRJ",
+   "title": "Claude Founder Salon",
+   "start": "2026-10-08T20:45:00.000Z",
+   "venue": null,
+   "address": null,
+   "latlng": [
+    37.7855,
+    -122.3917
+   ],
+   "url": "https://luma.com/claude-founder-salon"
+  },
+  "b": {
+   "id": "cerebral-valley:https://luma.com/claude-founder-salon",
+   "title": "Claude Founder Salon",
+   "start": "2026-10-08",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://luma.com/claude-founder-salon"
+  }
+ },
+ {
+  "key": "luma-discover:evt-hnBEwpgdB1yLhQi||cerebral-valley:https://luma.com/TheNewReach",
+  "band": "0.8-1.01",
+  "score": 1,
+  "title": 1,
+  "time": 1,
+  "venue": 0,
+  "link": true,
+  "a": {
+   "id": "luma-discover:evt-hnBEwpgdB1yLhQi",
+   "title": "ElevenLabs × Creator Spotlight: The New Reach: How creators are growing with AI audio tooling",
+   "start": "2026-10-06T22:30:00.000Z",
+   "venue": null,
+   "address": "Lower Manhattan, New York, NY",
+   "latlng": [
+    40.7196,
+    -74.0009
+   ],
+   "url": "https://luma.com/TheNewReach"
+  },
+  "b": {
+   "id": "cerebral-valley:https://luma.com/TheNewReach",
+   "title": "ElevenLabs × Creator Spotlight: The New Reach: How creators are growing with AI audio tooling",
+   "start": "2026-10-06T22:30:00.000Z",
+   "venue": null,
+   "address": "New York City",
+   "latlng": null,
+   "url": "https://luma.com/TheNewReach"
+  }
+ },
+ {
+  "key": "cerebral-valley:https://www.meetup.com/thalesians/events/316553977||meetup:316553977",
+  "band": "0.8-1.01",
+  "score": 1,
+  "title": 1,
+  "time": 1,
+  "venue": 0,
+  "link": true,
+  "a": {
+   "id": "cerebral-valley:https://www.meetup.com/thalesians/events/316553977",
+   "title": "Hybrid Event: Nizar Touzi - Schrödinger & Bass for Generative Diffusion Modeling",
+   "start": "2026-10-06T22:00:00.000Z",
+   "venue": null,
+   "address": "New York City",
+   "latlng": null,
+   "url": "https://www.meetup.com/thalesians/events/316553977"
+  },
+  "b": {
+   "id": "meetup:316553977",
+   "title": "Hybrid Event: Nizar Touzi - Schrödinger & Bass for Generative Diffusion Modeling",
+   "start": "2026-10-06T22:00:00.000Z",
+   "venue": "Fordham University at Lincoln Center",
+   "address": "113 W 60th St, New York, NY 10023, USA, New York, NY, New York",
+   "latlng": null,
+   "url": "https://www.meetup.com/thalesians/events/316553977/"
+  }
+ },
+ {
+  "key": "cerebral-valley:https://www.meetup.com/new-york-coworking-friends/events/316633923||meetup:316633923",
+  "band": "0.8-1.01",
+  "score": 1,
+  "title": 1,
+  "time": 1,
+  "venue": 0,
+  "link": true,
+  "a": {
+   "id": "cerebral-valley:https://www.meetup.com/new-york-coworking-friends/events/316633923",
+   "title": "PHDs & Pints: How AI Sees Cancer",
+   "start": "2026-10-06T22:30:00.000Z",
+   "venue": null,
+   "address": "New York City",
+   "latlng": null,
+   "url": "https://www.meetup.com/new-york-coworking-friends/events/316633923"
+  },
+  "b": {
+   "id": "meetup:316633923",
+   "title": "PHDs & Pints: How AI Sees Cancer",
+   "start": "2026-10-06T22:30:00.000Z",
+   "venue": "Moxy NYC Chelsea",
+   "address": "105 W 28th St, New York, NY, New York",
+   "latlng": null,
+   "url": "https://www.meetup.com/new-york-coworking-friends/events/316633923/"
+  }
+ },
+ {
+  "key": "luma-discover:evt-5Dp3ebA9iX6Zsdh||cerebral-valley:https://luma.com/claude-r5w5",
+  "band": "0.8-1.01",
+  "score": 1,
+  "title": 0.72,
+  "time": 0,
+  "venue": 0,
+  "link": true,
+  "a": {
+   "id": "luma-discover:evt-5Dp3ebA9iX6Zsdh",
+   "title": "Claude Build Day | Mental Health & Wellness",
+   "start": "2026-10-08T21:00:00.000Z",
+   "venue": null,
+   "address": "Lower Manhattan, New York, NY",
+   "latlng": [
+    40.7243,
+    -74.008
+   ],
+   "url": "https://luma.com/claude-r5w5"
+  },
+  "b": {
+   "id": "cerebral-valley:https://luma.com/claude-r5w5",
+   "title": "Claude Impact Lab | Mental Health & Wellness",
+   "start": "2026-10-08",
+   "venue": null,
+   "address": "New York City, NY",
+   "latlng": null,
+   "url": "https://luma.com/claude-r5w5"
+  }
+ },
+ {
+  "key": "luma-ics:evt-KSlsJ1Mx01Jw0pc||cerebral-valley:https://luma.com/3h1nafmg",
+  "band": "0.8-1.01",
+  "score": 1,
+  "title": 1,
+  "time": 0,
+  "venue": 0,
+  "link": true,
+  "a": {
+   "id": "luma-ics:evt-KSlsJ1Mx01Jw0pc",
+   "title": "Reactor x Google: World Models Hackathon",
+   "start": "2026-10-08T14:00:00.000Z",
+   "venue": "315 Hudson St",
+   "address": "315 Hudson St, New York, NY 10013, USA",
+   "latlng": [
+    40.7262,
+    -74.0077
+   ],
+   "url": "https://luma.com/3h1nafmg"
+  },
+  "b": {
+   "id": "cerebral-valley:https://luma.com/3h1nafmg",
+   "title": "Reactor x Google: World Models Hackathon",
+   "start": "2026-10-08",
+   "venue": null,
+   "address": "New York City, NY",
+   "latlng": null,
+   "url": "https://luma.com/3h1nafmg"
+  }
+ },
+ {
+  "key": "sfpl:2026/10/06/celebration-made-sf-handcrafted-high-tech-manufacturing-dogpatch||meetup:316362218",
+  "band": "0.8-1.01",
+  "score": 0.86,
+  "title": 0.9,
+  "time": 1,
+  "venue": 0,
+  "link": false,
+  "a": {
+   "id": "sfpl:2026/10/06/celebration-made-sf-handcrafted-high-tech-manufacturing-dogpatch",
+   "title": "Celebration: Made in SF: Handcrafted to High-Tech Manufacturing in Dogpatch",
+   "start": "2026-10-06T23:00:00.000Z",
+   "venue": "SFPL Main",
+   "address": null,
+   "latlng": null,
+   "url": "https://sfpl.org/events/2026/10/06/celebration-made-sf-handcrafted-high-tech-manufacturing-dogpatch"
+  },
+  "b": {
+   "id": "meetup:316362218",
+   "title": "Made in SF: Handcrafted to High-Tech Manufacturing in Dogpatch",
+   "start": "2026-10-06T23:00:00.000Z",
+   "venue": "Woods Yard Park",
+   "address": "915 22nd Street, san francisco, CA, san francisco",
+   "latlng": null,
+   "url": "https://www.meetup.com/worldschool/events/316362218/"
+  }
+ },
+ {
+  "key": "cerebral-valley:https://luma.com/campai-sftw-2026||cerebral-valley:https://partiful.com/e/wgzQaLCyAPobkZnJpzOP",
+  "band": "0.8-1.01",
+  "score": 0.81,
+  "title": 1,
+  "time": 0,
+  "venue": 0,
+  "link": false,
+  "a": {
+   "id": "cerebral-valley:https://luma.com/campai-sftw-2026",
+   "title": "Camp AI: Production-Ready Agents",
+   "start": "2026-10-07",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://luma.com/campai-sftw-2026"
+  },
+  "b": {
+   "id": "cerebral-valley:https://partiful.com/e/wgzQaLCyAPobkZnJpzOP",
+   "title": "Camp AI: Production-Ready Agents - #SFTechWeek",
+   "start": "2026-10-07",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://partiful.com/e/wgzQaLCyAPobkZnJpzOP"
+  }
+ },
+ {
+  "key": "cerebral-valley:https://www.tech-week.com/calendar/sf/events/neural-concept-workshop-33acf3cd-ea43-42df-8d22-9f12e18131d9||cerebral-valley:https://partiful.com/e/yw9gLOT2Saia2PpXt8ih",
+  "band": "0.62-0.8",
+  "score": 0.74,
+  "title": 0.9,
+  "time": 0,
+  "venue": 0,
+  "link": false,
+  "a": {
+   "id": "cerebral-valley:https://www.tech-week.com/calendar/sf/events/neural-concept-workshop-33acf3cd-ea43-42df-8d22-9f12e18131d9",
+   "title": "Neural Concept WorkShop",
+   "start": "2026-10-06",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://www.tech-week.com/calendar/sf/events/neural-concept-workshop-33acf3cd-ea43-42df-8d22-9f12e18131d9"
+  },
+  "b": {
+   "id": "cerebral-valley:https://partiful.com/e/yw9gLOT2Saia2PpXt8ih",
+   "title": "Neural Concept Workshop: Engineering Intelligence in Action",
+   "start": "2026-10-06",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://partiful.com/e/yw9gLOT2Saia2PpXt8ih"
+  }
+ },
+ {
+  "key": "cerebral-valley:https://www.tech-week.com/calendar/sf/events/matched-by-nexa-sf-quest-week-843f4dd8-3971-496e-98de-8d7ab59396fa||cerebral-valley:https://partiful.com/e/KziCESuBftyxz0IPC2lJ",
+  "band": "0.62-0.8",
+  "score": 0.74,
+  "title": 0.9,
+  "time": 0,
+  "venue": 0,
+  "link": false,
+  "a": {
+   "id": "cerebral-valley:https://www.tech-week.com/calendar/sf/events/matched-by-nexa-sf-quest-week-843f4dd8-3971-496e-98de-8d7ab59396fa",
+   "title": "Matched by NEXA",
+   "start": "2026-10-06",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://www.tech-week.com/calendar/sf/events/matched-by-nexa-sf-quest-week-843f4dd8-3971-496e-98de-8d7ab59396fa"
+  },
+  "b": {
+   "id": "cerebral-valley:https://partiful.com/e/KziCESuBftyxz0IPC2lJ",
+   "title": "Matched by NEXA - Quest Week",
+   "start": "2026-10-06",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://partiful.com/e/KziCESuBftyxz0IPC2lJ"
+  }
+ },
+ {
+  "key": "luma-discover:evt-4M7eyIkR3AyapEO||cerebral-valley:https://agenticzero.xyz/",
+  "band": "0.62-0.8",
+  "score": 0.74,
+  "title": 0.9,
+  "time": 0,
+  "venue": 0,
+  "link": false,
+  "a": {
+   "id": "luma-discover:evt-4M7eyIkR3AyapEO",
+   "title": "Agentic Zero: The Agentic Finance Summit #SFTechWeek",
+   "start": "2026-10-07T16:00:00.000Z",
+   "venue": "The Avalon",
+   "address": "The Avalon, 1244 Sutter St, San Francisco, CA 94109, USA",
+   "latlng": [
+    37.7879,
+    -122.421
+   ],
+   "url": "https://luma.com/jlr72ut4"
+  },
+  "b": {
+   "id": "cerebral-valley:https://agenticzero.xyz/",
+   "title": "Agentic Zero",
+   "start": "2026-10-07",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://agenticzero.xyz/"
+  }
+ },
+ {
+  "key": "luma-ics:evt-4M7eyIkR3AyapEO||cerebral-valley:https://agenticzero.xyz/",
+  "band": "0.62-0.8",
+  "score": 0.74,
+  "title": 0.9,
+  "time": 0,
+  "venue": 0,
+  "link": false,
+  "a": {
+   "id": "luma-ics:evt-4M7eyIkR3AyapEO",
+   "title": "Agentic Zero: The Agentic Finance Summit #SFTechWeek",
+   "start": "2026-10-07T16:00:00.000Z",
+   "venue": "The Avalon",
+   "address": "The Avalon, 1244 Sutter St, San Francisco, CA 94109, USA",
+   "latlng": [
+    37.7879,
+    -122.421
+   ],
+   "url": "https://luma.com/jlr72ut4"
+  },
+  "b": {
+   "id": "cerebral-valley:https://agenticzero.xyz/",
+   "title": "Agentic Zero",
+   "start": "2026-10-07",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://agenticzero.xyz/"
+  }
+ },
+ {
+  "key": "cerebral-valley:https://www.eventbrite.com/e/tickets-1990614661037||eventbrite:1990614661037",
+  "band": "0.62-0.8",
+  "score": 0.74,
+  "title": 0.9,
+  "time": 0,
+  "venue": 0,
+  "link": false,
+  "a": {
+   "id": "cerebral-valley:https://www.eventbrite.com/e/tickets-1990614661037",
+   "title": "Data Streaming Summit 2026: The Data Streaming + Agent Infra Conference",
+   "start": "2026-10-07",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://www.eventbrite.com/e/tickets-1990614661037"
+  },
+  "b": {
+   "id": "eventbrite:1990614661037",
+   "title": "Data Streaming Summit 2026: The Data + Agent Conference",
+   "start": "2026-10-07T16:00:00.000Z",
+   "venue": "Hotel Nikko San Francisco",
+   "address": "222 Mason Street, San Francisco, CA 94102",
+   "latlng": [
+    37.786,
+    -122.4093
+   ],
+   "url": "https://www.eventbrite.com/e/data-streaming-summit-2026-the-data-agent-conference-tickets-1990614661037"
+  }
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/RJzxgE7vucl2zlePSYkJ||cerebral-valley:https://luma.com/builde-q0bj",
+  "band": "0.62-0.8",
+  "score": 0.74,
+  "title": 0.9,
+  "time": 0,
+  "venue": 0,
+  "link": false,
+  "a": {
+   "id": "cerebral-valley:https://partiful.com/e/RJzxgE7vucl2zlePSYkJ",
+   "title": "Pax Silica Hackathon: The Nordic x Innovation",
+   "start": "2026-10-07",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://partiful.com/e/RJzxgE7vucl2zlePSYkJ"
+  },
+  "b": {
+   "id": "cerebral-valley:https://luma.com/builde-q0bj",
+   "title": "Pax Silica Hackathon: Tech Week",
+   "start": "2026-10-07",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://luma.com/builde-q0bj"
+  }
+ },
+ {
+  "key": "luma-discover:evt-nxyKvlc4QghQdd4||cerebral-valley:https://partiful.com/e/NANZ87JdLhh0sePgmzOK",
+  "band": "0.62-0.8",
+  "score": 0.74,
+  "title": 0.9,
+  "time": 0,
+  "venue": 0,
+  "link": false,
+  "a": {
+   "id": "luma-discover:evt-nxyKvlc4QghQdd4",
+   "title": "Agents You Can Trust : A COLM Happy Hour",
+   "start": "2026-10-09T01:00:00.000Z",
+   "venue": null,
+   "address": "SoMa, San Francisco, CA",
+   "latlng": [
+    37.7796,
+    -122.4096
+   ],
+   "url": "https://luma.com/hv3vd3aa"
+  },
+  "b": {
+   "id": "cerebral-valley:https://partiful.com/e/NANZ87JdLhh0sePgmzOK",
+   "title": "COLM Happy Hour",
+   "start": "2026-10-08",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://partiful.com/e/NANZ87JdLhh0sePgmzOK"
+  }
+ },
+ {
+  "key": "luma-ics:evt-nxyKvlc4QghQdd4||cerebral-valley:https://partiful.com/e/NANZ87JdLhh0sePgmzOK",
+  "band": "0.62-0.8",
+  "score": 0.74,
+  "title": 0.9,
+  "time": 0,
+  "venue": 0,
+  "link": false,
+  "a": {
+   "id": "luma-ics:evt-nxyKvlc4QghQdd4",
+   "title": "Agents You Can Trust : A COLM Happy Hour",
+   "start": "2026-10-09T01:00:00.000Z",
+   "venue": null,
+   "address": null,
+   "latlng": [
+    37.7796,
+    -122.4096
+   ],
+   "url": "https://luma.com/hv3vd3aa"
+  },
+  "b": {
+   "id": "cerebral-valley:https://partiful.com/e/NANZ87JdLhh0sePgmzOK",
+   "title": "COLM Happy Hour",
+   "start": "2026-10-08",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://partiful.com/e/NANZ87JdLhh0sePgmzOK"
+  }
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/NANZ87JdLhh0sePgmzOK||cerebral-valley:https://luma.com/yhcfodng",
+  "band": "0.62-0.8",
+  "score": 0.74,
+  "title": 0.9,
+  "time": 0,
+  "venue": 0,
+  "link": false,
+  "a": {
+   "id": "cerebral-valley:https://partiful.com/e/NANZ87JdLhh0sePgmzOK",
+   "title": "COLM Happy Hour",
+   "start": "2026-10-08",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://partiful.com/e/NANZ87JdLhh0sePgmzOK"
+  },
+  "b": {
+   "id": "cerebral-valley:https://luma.com/yhcfodng",
+   "title": "Appen x CoLM: Happy Hour",
+   "start": "2026-10-08",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://luma.com/yhcfodng"
+  }
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/NANZ87JdLhh0sePgmzOK||cerebral-valley:https://luma.com/timy2nh8",
+  "band": "0.62-0.8",
+  "score": 0.74,
+  "title": 0.9,
+  "time": 0,
+  "venue": 0,
+  "link": false,
+  "a": {
+   "id": "cerebral-valley:https://partiful.com/e/NANZ87JdLhh0sePgmzOK",
+   "title": "COLM Happy Hour",
+   "start": "2026-10-08",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://partiful.com/e/NANZ87JdLhh0sePgmzOK"
+  },
+  "b": {
+   "id": "cerebral-valley:https://luma.com/timy2nh8",
+   "title": "Goodfire COLM Happy Hour",
+   "start": "2026-10-08",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://luma.com/timy2nh8"
+  }
+ },
+ {
+  "key": "cerebral-valley:https://www.tech-week.com/calendar/sf/events/ai-insider-dinner-and-roundtable-invite-only-2fe6e2bb-d17b-42d3-b29b-d2787c17f537||cerebral-valley:https://partiful.com/e/QI7bnEeEUf2sgk5oO4Y0",
+  "band": "0.45-0.62",
+  "score": 0.614,
+  "title": 0.72,
+  "time": 0,
+  "venue": 0,
+  "link": false,
+  "a": {
+   "id": "cerebral-valley:https://www.tech-week.com/calendar/sf/events/ai-insider-dinner-and-roundtable-invite-only-2fe6e2bb-d17b-42d3-b29b-d2787c17f537",
+   "title": "AI Insider Dinner & Roundtable (Invite Only)",
+   "start": "2026-10-07",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://www.tech-week.com/calendar/sf/events/ai-insider-dinner-and-roundtable-invite-only-2fe6e2bb-d17b-42d3-b29b-d2787c17f537"
+  },
+  "b": {
+   "id": "cerebral-valley:https://partiful.com/e/QI7bnEeEUf2sgk5oO4Y0",
+   "title": "AI Leaders Dinner (Invite-Only)",
+   "start": "2026-10-07",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://partiful.com/e/QI7bnEeEUf2sgk5oO4Y0"
+  }
+ },
+ {
+  "key": "cerebral-valley:https://luma.com/4w7ljpgy||cerebral-valley:https://www.meetup.com/new-york-coworking-friends/events/316633923",
+  "band": "0.45-0.62",
+  "score": 0.545,
+  "title": 0.45,
+  "time": 1,
+  "venue": 0,
+  "link": false,
+  "a": {
+   "id": "cerebral-valley:https://luma.com/4w7ljpgy",
+   "title": "New AI Teammates",
+   "start": "2026-10-06T22:00:00.000Z",
+   "venue": null,
+   "address": "New York City",
+   "latlng": null,
+   "url": "https://luma.com/4w7ljpgy"
+  },
+  "b": {
+   "id": "cerebral-valley:https://www.meetup.com/new-york-coworking-friends/events/316633923",
+   "title": "PHDs & Pints: How AI Sees Cancer",
+   "start": "2026-10-06T22:30:00.000Z",
+   "venue": null,
+   "address": "New York City",
+   "latlng": null,
+   "url": "https://www.meetup.com/new-york-coworking-friends/events/316633923"
+  }
+ },
+ {
+  "key": "luma-discover:evt-UIFp0V36rAAHLdz||cerebral-valley:https://partiful.com/e/j7k5LyRyyuuvxpkSegCj",
+  "band": "0.45-0.62",
+  "score": 0.53,
+  "title": 0.6,
+  "time": 0,
+  "venue": 0,
+  "link": false,
+  "a": {
+   "id": "luma-discover:evt-UIFp0V36rAAHLdz",
+   "title": "Goodfire COLM Happy Hour",
+   "start": "2026-10-08T02:00:00.000Z",
+   "venue": null,
+   "address": "Union Square, San Francisco, CA",
+   "latlng": [
+    37.7918,
+    -122.405
+   ],
+   "url": "https://luma.com/timy2nh8"
+  },
+  "b": {
+   "id": "cerebral-valley:https://partiful.com/e/j7k5LyRyyuuvxpkSegCj",
+   "title": "Compute Happy Hour",
+   "start": "2026-10-07",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://partiful.com/e/j7k5LyRyyuuvxpkSegCj"
+  }
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/j7k5LyRyyuuvxpkSegCj||cerebral-valley:https://partiful.com/e/icp7kaojabHTxhwkLEFN",
+  "band": "0.45-0.62",
+  "score": 0.53,
+  "title": 0.6,
+  "time": 0,
+  "venue": 0,
+  "link": false,
+  "a": {
+   "id": "cerebral-valley:https://partiful.com/e/j7k5LyRyyuuvxpkSegCj",
+   "title": "Compute Happy Hour",
+   "start": "2026-10-07",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://partiful.com/e/j7k5LyRyyuuvxpkSegCj"
+  },
+  "b": {
+   "id": "cerebral-valley:https://partiful.com/e/icp7kaojabHTxhwkLEFN",
+   "title": "AI + Games: Good Start Labs Happy Hour",
+   "start": "2026-10-07",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://partiful.com/e/icp7kaojabHTxhwkLEFN"
+  }
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/UyAvfVLzWQ6hBCkyG1KN||cerebral-valley:https://partiful.com/e/7uGdxj9tFbEVQz7KTHCE",
+  "band": "0.45-0.62",
+  "score": 0.53,
+  "title": 0.6,
+  "time": 0,
+  "venue": 0,
+  "link": false,
+  "a": {
+   "id": "cerebral-valley:https://partiful.com/e/UyAvfVLzWQ6hBCkyG1KN",
+   "title": "Decant the Decision on Your AI-Native Finance Tech Stack: Build vs. Buy with Tabs & Campfire",
+   "start": "2026-10-08",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://partiful.com/e/UyAvfVLzWQ6hBCkyG1KN"
+  },
+  "b": {
+   "id": "cerebral-valley:https://partiful.com/e/7uGdxj9tFbEVQz7KTHCE",
+   "title": "Build the AI-Native Office of the CFO Stack",
+   "start": "2026-10-08",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://partiful.com/e/7uGdxj9tFbEVQz7KTHCE"
+  }
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/Q0t9NuXxZumV4XLCTH3a||cerebral-valley:https://partiful.com/e/UVbHvRJ8GTxln0dw7m6v",
+  "band": "0.45-0.62",
+  "score": 0.492,
+  "title": 0.55,
+  "time": 0,
+  "venue": 0,
+  "link": false,
+  "a": {
+   "id": "cerebral-valley:https://partiful.com/e/Q0t9NuXxZumV4XLCTH3a",
+   "title": "Own the Intelligence",
+   "start": "2026-10-08",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://partiful.com/e/Q0t9NuXxZumV4XLCTH3a"
+  },
+  "b": {
+   "id": "cerebral-valley:https://partiful.com/e/UVbHvRJ8GTxln0dw7m6v",
+   "title": "Infra for Intelligence",
+   "start": "2026-10-08",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://partiful.com/e/UVbHvRJ8GTxln0dw7m6v"
+  }
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/x6eA2bIYn8udQ73qpKHN||cerebral-valley:https://www.meetup.com/startups-and-tech-events-in-san-francisco/events/315907918",
+  "band": "0.3-0.45",
+  "score": 0.449,
+  "title": 0.48,
+  "time": 0,
+  "venue": 0,
+  "link": false,
+  "a": {
+   "id": "cerebral-valley:https://partiful.com/e/x6eA2bIYn8udQ73qpKHN",
+   "title": "Databricks for Startups Networking Party",
+   "start": "2026-10-08",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://partiful.com/e/x6eA2bIYn8udQ73qpKHN"
+  },
+  "b": {
+   "id": "cerebral-valley:https://www.meetup.com/startups-and-tech-events-in-san-francisco/events/315907918",
+   "title": "Startup Pitch & Networking",
+   "start": "2026-10-08",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://www.meetup.com/startups-and-tech-events-in-san-francisco/events/315907918"
+  }
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/vYWYVvKrK1xOzBFCLsFd||cerebral-valley:https://partiful.com/e/nb5OgG4Muhx5ENLSv0iR",
+  "band": "0.3-0.45",
+  "score": 0.334,
+  "title": 0.32,
+  "time": 0,
+  "venue": 0,
+  "link": false,
+  "a": {
+   "id": "cerebral-valley:https://partiful.com/e/vYWYVvKrK1xOzBFCLsFd",
+   "title": "UK AI Hardware Plan",
+   "start": "2026-10-07",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://partiful.com/e/vYWYVvKrK1xOzBFCLsFd"
+  },
+  "b": {
+   "id": "cerebral-valley:https://partiful.com/e/nb5OgG4Muhx5ENLSv0iR",
+   "title": "SF Hardware & Robotics Showcase | #SFTechWeek",
+   "start": "2026-10-07",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://partiful.com/e/nb5OgG4Muhx5ENLSv0iR"
+  }
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/IL3sKweGcfohlDRJGFkk||cerebral-valley:https://partiful.com/e/thtgzDIovjistP8GWvTd",
+  "band": "0.3-0.45",
+  "score": 0.32,
+  "title": 0.3,
+  "time": 0,
+  "venue": 0,
+  "link": false,
+  "a": {
+   "id": "cerebral-valley:https://partiful.com/e/IL3sKweGcfohlDRJGFkk",
+   "title": "From Prototype to Production: Scaling Voice AI #SFTechWeek",
+   "start": "2026-10-07",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://partiful.com/e/IL3sKweGcfohlDRJGFkk"
+  },
+  "b": {
+   "id": "cerebral-valley:https://partiful.com/e/thtgzDIovjistP8GWvTd",
+   "title": "The AI Convergence: Voice, Video, Agents & Infrastructure",
+   "start": "2026-10-07",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://partiful.com/e/thtgzDIovjistP8GWvTd"
+  }
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/0evIJ7ZYrAtvyBxQybIT||cerebral-valley:https://partiful.com/e/6A07TfJAH7Lley6MVjUD",
+  "band": "0.3-0.45",
+  "score": 0.32,
+  "title": 0.3,
+  "time": 0,
+  "venue": 0,
+  "link": false,
+  "a": {
+   "id": "cerebral-valley:https://partiful.com/e/0evIJ7ZYrAtvyBxQybIT",
+   "title": "Scaling AI and Deep Tech Companies across International Markets",
+   "start": "2026-10-07",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://partiful.com/e/0evIJ7ZYrAtvyBxQybIT"
+  },
+  "b": {
+   "id": "cerebral-valley:https://partiful.com/e/6A07TfJAH7Lley6MVjUD",
+   "title": "Embodied AI ≠ Robotics",
+   "start": "2026-10-07",
+   "venue": null,
+   "address": "San Francisco, CA",
+   "latlng": null,
+   "url": "https://partiful.com/e/6A07TfJAH7Lley6MVjUD"
+  }
+ }
+]
