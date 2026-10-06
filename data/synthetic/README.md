@@ -16,7 +16,7 @@ Every record has a top-level `"synthetic": true`, and so does `manifest.json`.
 | `hidden_truth.jsonl` | 500 | **Ground truth. Never load this into the engine or show it in a product surface.** It holds the sim `HiddenTruth` (true age, real interests and desires, honesty, flakiness, responsiveness, private disclosure plus canary, trips, adversarial kind), archetype, gender, community, workplace, relationships (including exes, which are never disclosed), adversarial notes with scripted messages, and the public persona |
 | `manifest.json` | | Seed, snapshot time, generator version, sim-generator source hash, model, counts, LLM usage and cost, file hashes |
 | `validation.json` | | Output of `validate.ts` |
-| `engine_v1_run.json` | | Output of `load.ts --engine`. **Stale:** produced from generator 1.0.0 data and the pre-change engine; rerun after the engine changes land (see below) |
+| `engine_v1_run.json` | | Output of `load.ts --engine` (generator 1.1.0 data, engine at commit 2613cea) |
 
 Every timestamp is relative to the snapshot time `now = 2026-10-12T17:00Z` (Mon 10:00 PDT / 13:00 EDT). Member ids are `sf-0001..sf-0250` and `ny-0001..ny-0250`. Facet ids are `<member>:fNN` and intent ids are `<member>:iN`.
 
@@ -133,33 +133,33 @@ const personas = await loadPersonas();
 
 ### Engine v1 on the loaded snapshot (`v1/engine_v1_run.json`, seed 1, no LLM judge)
 
-> **Needs a rerun.** These numbers come from the 1.0.0 data (46% romance opt-in, 889 intents) and the engine as of commit 1a6cd58. The engine is being changed right now, so they were deliberately not regenerated for 1.1.0. Rerun `bun scripts/synthetic/load.ts --engine` once the engine changes land and replace this section.
+Rerun on 2026-10-06 against generator 1.1.0 data (28.9% adult romance opt-in, 843 intents) and the engine after the review fixes (commit 2613cea).
 
-The run produced **204 proposals** in 1.3 s, touching 276 members (SF 110, NYC 94). 28 of the proposals are exploration picks.
+The run produced **210 proposals** in 3.6 s, touching 287 members (SF 106 proposals, NYC 104). 28 are exploration picks.
 
 | Generator | Candidates | Selected |
 |---|---:|---:|
-| warm_path | 720 | **130** |
-| intent_to_capability | 880 | 31 |
-| complementary_intents | 2,005 | 17 |
-| shared_intent_pooling | 256 | 14 |
+| warm_path | 713 | **96** |
+| intent_to_capability | 892 | 39 |
+| complementary_intents | 1,244 | 36 |
+| shared_intent_pooling | 255 | 24 |
 | newcomer_welcome | 16 | 6 |
-| group_composer | 16 | 3 |
-| help_request | 165 | 2 |
-| network_growth | 16 | 1 |
+| network_growth | 16 | 4 |
+| help_request | 165 | 3 |
+| group_composer | 16 | 2 |
 | event_anchor / second_encounter / expansion | 0 | 0 |
 
-- **Funnel:** 4,074 generated, 2,332 passed the hard filters, 997 eligible, 204 selected.
-  - Rejections: `no_presence_overlap` 1,316, `high_risk` 404, `dealbreaker` 17, `home_entry_rule` 5.
+- **By category:** social 91, professional 61, hobby 39, romance 12, growth 4, help 3.
+- **Funnel:** 3,317 generated, 3,279 passed the hard filters, 1,185 eligible, 210 selected.
+  - Rejections: `high_risk` 18, `home_entry_rule` 16, `no_presence_overlap` 4.
   - Member funnel: 415 available, 50 underage, 21 only-when-asked, 14 paused.
-- **Fairness:** Gini 0.50, top-10% share 0.25.
+- **Fairness:** Gini 0.47, top-10% share 0.24.
 - **Safety checks:** 0 minors in any participant, alternate or via role; 0 canary leaks in the proposals.
-- **What this shows:**
-  - The dense invite and friend graph makes `warm_path` dominate. With no events or feedback in the snapshot, `event_anchor` and `second_encounter` are idle.
-  - Romance produced 0 proposals despite 160 intents.
-  - The 404 `high_risk` rejections suggest the engine's risk-term list is hitting ordinary text in intent details, such as "kids".
-
-  All three are worth a look before demos.
+- **Compared with the first run** (1.0.0 data, pre-fix engine: 204 proposals, warm_path 130, romance 0, `high_risk` 404, Gini 0.50):
+  - Romance now produces proposals. There are fewer than the 35 seen on 1.0.0 data during the review, because opt-in was lowered from 46% to 29%.
+  - `high_risk` false positives are gone: whole-word, context-aware risk terms.
+  - `warm_path` share fell from 64% to 46%.
+  - `event_anchor` and `second_encounter` are still idle, because the snapshot has no events or meeting history. Tests cover them with that data present.
 
 ## Privacy note
 
