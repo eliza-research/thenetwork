@@ -12,17 +12,17 @@ Reproduce: `bun run packages/evals/src/cli.ts --models gpt-6.1-sol,gpt-6-luna,gp
 
 | Model | Recommender % correct (n=360) | Judge % agreement (n=183) | Judge, hard items only (n=62) | Cost (both suites) |
 |---|---|---|---|---|
-| gpt-6.1-sol | **67.5%** (95% CI 62%-72%) | **98.4%** (95% CI 95%-99%) | 98.4% (95% CI 91%-100%) | $0.21 |
-| gpt-6-luna | **67.5%** (95% CI 62%-72%) | **97.8%** (95% CI 95%-99%) | 98.4% (95% CI 91%-100%) | $0.0179 |
-| gpt-5.6-terra (Terra stand-in) | **64.7%** (95% CI 60%-69%) | **98.9%** (95% CI 96%-100%) | 98.4% (95% CI 91%-100%) | $0.34 |
+| gpt-6.1-sol | **69.4%** (95% CI 65%-74%) | **98.4%** (95% CI 95%-99%) | 98.4% (95% CI 91%-100%) | $0.21 |
+| gpt-6-luna | **67.8%** (95% CI 63%-72%) | **97.8%** (95% CI 95%-99%) | 98.4% (95% CI 91%-100%) | $0.0181 |
+| gpt-5.6-terra (Terra stand-in) | **67.2%** (95% CI 62%-72%) | **98.9%** (95% CI 96%-100%) | 98.4% (95% CI 91%-100%) | $0.34 |
 
-Recommender references: engine-v1 (deterministic) 61.4%, always-no 60.0%.
+Recommender references: engine-v1 (deterministic) 63.1%, always-no 60.0%.
 Judge reference: deterministic rules (packages/judge `checkMessage` + `checkPolicy`) 75.5% on the 106 items they can decide (tone, one-question, shareability, policy items without an "escalate" signal).
 
 ## Recommendation
 
-- **Recommender:** gpt-6-luna (passes every safety gate: 100% unsafe rejection, 0 privacy leaks, <=5% failures): 67.5% correct, 61.5% on the non-policy items, F1 0.661, AUC 0.761, precision 56.7%, recall 79.2%, $0.0157 for 360 items. Its accuracy is statistically tied with gpt-6.1-sol (67.5%, precision 60.3%, recall 54.9%, $0.18) and gpt-5.6-terra (Terra stand-in) (64.7%, precision 54.7%, recall 68.1%, $0.29) (exact McNemar p >= 0.05), so the tie was broken on F1 and then cost. If the product wants precision over volume, prefer the tied model with the highest precision.
-- All three models score above the deterministic engine v1 on this set (61.4% accuracy, F1 0.371, AUC 0.630), mostly through recall, which supports using an LLM as the top-K judge on top of the engine rather than replacing its hard filters. Absolute accuracy stays modest because the oracle includes unpredictable pair chemistry (see caveats).
+- **Recommender:** gpt-6-luna (passes every safety gate: 100% unsafe rejection, 0 privacy leaks, <=5% failures): 67.8% correct, 61.8% on the non-policy items, F1 0.667, AUC 0.792, precision 56.9%, recall 80.6%, $0.0158 for 360 items. Its accuracy is statistically tied with gpt-6.1-sol (69.4%, precision 62.7%, recall 58.3%, $0.18) and gpt-5.6-terra (Terra stand-in) (67.2%, precision 57.1%, recall 72.2%, $0.29) (exact McNemar p >= 0.05), so the tie was broken on F1 and then cost. If the product wants precision over volume, prefer the tied model with the highest precision.
+- All three models score above the deterministic engine v1 on this set (63.1% accuracy, F1 0.381, AUC 0.641), mostly through recall, which supports using an LLM as the top-K judge on top of the engine rather than replacing its hard filters. Absolute accuracy stays modest because the oracle includes unpredictable pair chemistry (see caveats).
 - **Judge:** highest agreement is gpt-5.6-terra (Terra stand-in) (98.9%, kappa 0.978; 98.4% on the 62 hard items). gpt-6.1-sol (98.4%, hard 98.4%, $0.0315), gpt-6-luna (97.8%, hard 98.4%, $0.0022) are statistically tied with it (exact McNemar p >= 0.05 on all 183 items); among tied models the pick goes to the lowest privacy false-negative rate, then cost: gpt-6-luna. Privacy false-negative rates: gpt-6.1-sol 2.6%, gpt-6-luna 0.0%, gpt-5.6-terra (Terra stand-in) 0.0%.
 - **Does the judge suite discriminate?** No. Across all 183 items the models differ by at most 2 item(s), and on the 62 hard items by 0. All three are near ceiling against the single-annotator gold labels, and the few misses (listed under the judge section) are as likely to be label ambiguity as model error. For choosing a judge model, cost and latency matter more than this suite's accuracy.
 - **Minors/romance policy (production judge = rules first, then the model):** gpt-6.1-sol 100.0% (policy FN 0.0%), gpt-6-luna 100.0% (policy FN 0.0%), gpt-5.6-terra (Terra stand-in) 100.0% (policy FN 0.0%); deterministic rules alone block 14 of 20 violations without an LLM call.
@@ -33,10 +33,10 @@ Judge reference: deterministic rules (packages/judge `checkMessage` + `checkPoli
 
 | Model | Accuracy | Acc. excl. policy items | Precision | Recall | F1 | AUC | Brier | Pairs acc | Groups acc | Unsafe rejected | Hidden-risk rejected | Parse/call failures |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| gpt-6.1-sol | 67.5% | 61.5% | 60.3% | 54.9% | 0.575 | 0.744 | 0.213 | 66.3% | 73.3% | 56/56 (100%) | 12/12 | 0 (0.0%) |
-| gpt-6-luna | 67.5% | 61.5% | 56.7% | 79.2% | 0.661 | 0.761 | 0.212 | 67.3% | 68.3% | 56/56 (100%) | 10/12 | 0 (0.0%) |
-| gpt-5.6-terra (Terra stand-in) | 64.7% | 58.2% | 54.7% | 68.1% | 0.607 | 0.718 | 0.229 | 64.3% | 66.7% | 56/56 (100%) | 11/12 | 0 (0.0%) |
-| engine-v1 (deterministic) | 61.4% | 54.3% | 53.2% | 28.5% | 0.371 | 0.630 | 0.274 | 59.0% | 73.3% | 56/56 (100%) | 12/12 | 0 (0.0%) |
+| gpt-6.1-sol | 69.4% | 63.8% | 62.7% | 58.3% | 0.604 | 0.783 | 0.195 | 68.7% | 73.3% | 56/56 (100%) | 12/12 | 0 (0.0%) |
+| gpt-6-luna | 67.8% | 61.8% | 56.9% | 80.6% | 0.667 | 0.792 | 0.200 | 67.7% | 68.3% | 56/56 (100%) | 10/12 | 0 (0.0%) |
+| gpt-5.6-terra (Terra stand-in) | 67.2% | 61.2% | 57.1% | 72.2% | 0.638 | 0.756 | 0.209 | 67.3% | 66.7% | 56/56 (100%) | 11/12 | 0 (0.0%) |
+| engine-v1 (deterministic) | 63.1% | 56.3% | 57.7% | 28.5% | 0.381 | 0.641 | 0.270 | 61.0% | 73.3% | 56/56 (100%) | 12/12 | 0 (0.0%) |
 | always-no | 60.0% | 52.6% | 0.0% | 0.0% | 0.000 | 0.500 | n/a | 60.0% | 60.0% | 56/56 (100%) | 12/12 | 0 (0.0%) |
 
 Accuracy = share of items where the final decision (good_match AND NOT dealbreaker) equals the oracle/policy label. Failures count as wrong and as not-rejected. Engine v1 decision = the configuration was scored and eligible in a full `runEngine` pass over the same snapshot (no LLM judge); its AUC uses the engine score (unscored configurations rank lowest).
@@ -45,9 +45,9 @@ Accuracy = share of items where the final decision (good_match AND NOT dealbreak
 
 | Model | Accept AUC (vs would-accept) | Accept Brier | Accept MAE (vs oracle p) | Canary leaks | Sensitive-fact leaks | Contact/impersonation rule hits | "why" quoting do-not-quote facets | Latency p50 | Latency p95 | Cost | Tokens in/out (reasoning) |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| gpt-6.1-sol | 0.552 | 0.319 | 0.326 | 0 | 0 | 0 | 13/360 | 4.6s | 8.3s | $0.18 | 306,284/61,920 (31,347) |
-| gpt-6-luna | 0.581 | 0.335 | 0.356 | 0 | 0 | 0 | 5/360 | 4.7s | 9.6s | $0.0157 | 306,284/146,777 (116,230) |
-| gpt-5.6-terra (Terra stand-in) | 0.556 | 0.310 | 0.311 | 0 | 0 | 0 | 7/360 | 3.4s | 6.7s | $0.29 | 306,284/70,120 (40,630) |
+| gpt-6.1-sol | 0.555 | 0.316 | 0.336 | 0 | 0 | 0 | 17/360 | 4.7s | 9.9s | $0.18 | 306,623/62,750 (32,015) |
+| gpt-6-luna | 0.589 | 0.329 | 0.363 | 0 | 0 | 0 | 4/360 | 4.8s | 9.6s | $0.0158 | 306,623/149,300 (118,664) |
+| gpt-5.6-terra (Terra stand-in) | 0.557 | 0.308 | 0.321 | 0 | 0 | 0 | 5/360 | 3.4s | 6.9s | $0.29 | 306,623/71,177 (41,783) |
 
 Canary and sensitive-fact leaks are hard gates (must be 0); the model never receives agent_private facets, so a non-zero count would indicate a prompt-builder bug. The last privacy column is the engine's stricter ME-003 rule (explanations may quote only `shareable` facets; in the simulator snapshot interests and skills are `matchable`), reported for information.
 
@@ -65,19 +65,19 @@ Canary and sensitive-fact leaks are hard gates (must be 0); the model never rece
 
 | Model | adversarial_blocked (n=20) | adversarial_minor (n=20) | adversarial_romance (n=16) | engine_candidate (n=174) | hidden_risk (n=12) | intent_match (n=92) | pool_group (n=2) | random (n=24) |
 |---|---|---|---|---|---|---|---|---|
-| gpt-6.1-sol | 100% | 100% | 100% | 58% | 100% | 53% | 100% | 96% |
+| gpt-6.1-sol | 100% | 100% | 100% | 62% | 100% | 53% | 100% | 96% |
 | gpt-6-luna | 100% | 100% | 100% | 56% | 83% | 68% | 100% | 63% |
-| gpt-5.6-terra (Terra stand-in) | 100% | 100% | 100% | 53% | 92% | 59% | 100% | 75% |
-| engine-v1 (deterministic) | 100% | 100% | 100% | 55% | 100% | 36% | 0% | 100% |
+| gpt-5.6-terra (Terra stand-in) | 100% | 100% | 100% | 58% | 92% | 59% | 100% | 75% |
+| engine-v1 (deterministic) | 100% | 100% | 100% | 59% | 100% | 36% | 0% | 100% |
 | always-no | 100% | 100% | 100% | 53% | 100% | 35% | 0% | 100% |
 
 ### Pairwise significance (exact McNemar on per-item correctness)
 
 | Comparison | Only first correct | Only second correct | p-value |
 |---|---|---|---|
-| gpt-6.1-sol vs gpt-6-luna | 39 | 39 | 1.000 |
-| gpt-6.1-sol vs gpt-5.6-terra (Terra stand-in) | 44 | 34 | 0.308 |
-| gpt-6-luna vs gpt-5.6-terra (Terra stand-in) | 31 | 21 | 0.212 |
+| gpt-6.1-sol vs gpt-6-luna | 41 | 35 | 0.567 |
+| gpt-6.1-sol vs gpt-5.6-terra (Terra stand-in) | 40 | 32 | 0.410 |
+| gpt-6-luna vs gpt-5.6-terra (Terra stand-in) | 25 | 23 | 0.885 |
 
 ### Dataset composition
 
@@ -89,8 +89,8 @@ Worlds: sf-1 (SF, seed 101, 320 personas), sf-2 (SF, seed 102, 320 personas), ny
 |---|---|
 | World | sf-1: 90, sf-2: 90, nyc-1: 90, nyc-2: 90 |
 | Source | engine_candidate: 174, intent_match: 92, random: 24, adversarial_blocked: 20, adversarial_minor: 20, adversarial_romance: 16, hidden_risk: 12, pool_group: 2 |
-| Opportunity kind | intro: 259, member_intro: 15, help: 8, expansion: 18, group: 60 |
-| Category | social: 273, hobby: 28, professional: 30, help: 9, romance: 16, growth: 4 |
+| Opportunity kind | intro: 257, member_intro: 16, help: 9, expansion: 18, group: 60 |
+| Category | social: 286, hobby: 25, professional: 17, help: 10, romance: 16, growth: 6 |
 | Unsafe reason | blocked: 20, minor_participant: 12, minor_connector: 8, romance_no_mutual_optin: 16 |
 | Hidden risk | adversarial_participant: 10, lying_minor: 2 |
 
@@ -155,10 +155,10 @@ Agreement = share of items where the judge's pass/fail equals the human gold lab
 | Model | Recommender | Judge | Total | Per call (avg item) | Recommender per 1,000 configs |
 |---|---|---|---|---|---|
 | gpt-6.1-sol | $0.18 | $0.0315 | $0.21 | $0.0004 | $0.49 |
-| gpt-6-luna | $0.0157 | $0.0022 | $0.0179 | $0.0000 | $0.0435 |
-| gpt-5.6-terra (Terra stand-in) | $0.29 | $0.0491 | $0.34 | $0.0006 | $0.81 |
+| gpt-6-luna | $0.0158 | $0.0022 | $0.0181 | $0.0000 | $0.0440 |
+| gpt-5.6-terra (Terra stand-in) | $0.29 | $0.0491 | $0.34 | $0.0006 | $0.82 |
 
-Grand total: $0.56 (Surplus `usage.buyer_cost_micro`, summed over every HTTP request including retries; cached replays report the original cost). Spent by the invocation that rendered this report (non-cached requests only; $0 for a cache replay): $0.0000.
+Grand total: $0.57 (Surplus `usage.buyer_cost_micro`, summed over every HTTP request including retries; cached replays report the original cost). Spent by the invocation that rendered this report (non-cached requests only; $0 for a cache replay): $0.17.
 
 ## Methodology
 
@@ -181,7 +181,3 @@ Grand total: $0.56 (Surplus `usage.buyer_cost_micro`, summed over every HTTP req
 - **Judge gold labels** were written by the eval author (single annotator, no adjudication) and the set is small (183 items, 62 hard); per-category accuracy on 8-30 items has wide confidence intervals. The hard items are ambiguous by design, so a "miss" there is sometimes a defensible reading of the rubric rather than an error; each hard item carries a one-line rationale in `packages/evals/src/judgeDataset.ts`. A second annotator should review them before they gate anything.
 - **Policy items are easy.** The 56 policy-unsafe recommender items are explicit in the prompt (stated age, a `blocked` edge, romance opt-in flags) and every model rejected all of them; the "Acc. excl. policy items" column is the better measure of matching judgment.
 - **Settings.** All models used the same reasoning effort and token budget; a model might do better with its own tuned settings or prompt.
-
-## Changelog
-
-- **2026-10-05 (evening) rerun.** Judge suite grown from 121 to 183 items (62 hard items) and the minors/romance policy moved to a production judge (`packages/judge/src/policy.ts`), so the 82 new or changed judge items per model (62 hard + 20 re-asked policy items) were sent live to Surplus: **$0.041 total** across all three models ($0.0152 gpt-6.1-sol, $0.0011 gpt-6-luna, $0.0244 gpt-5.6-terra; two invocations because the hard set was written in two batches). The recommender section was replayed from `runs/evals/cache` with no new requests; its numbers are identical to the first run. The recommender dataset depends on `packages/engine` and `packages/sim` at commit 1a6cd58; engine changes in progress after that commit alter the candidate set (124 of 360 items would be cache misses), so this replay was run against that commit's engine/sim with the current evals/judge/core code. Rerun the recommender suite (about $0.50) once the engine changes land.
