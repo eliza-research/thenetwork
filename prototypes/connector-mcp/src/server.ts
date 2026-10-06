@@ -13,10 +13,10 @@ import {
 import { loadConfig, type NetworkConfig } from "./config.ts";
 import { FakeNetwork, NetworkError, type ConnectorPrincipal, type Outcome } from "./fake-network.ts";
 import { validate, withDefaults, workerSafeValidator } from "./json-schema.ts";
-import { findLeaks, INTERNAL_ID, ISO_TIMESTAMP } from "./policy.ts";
+import { findLeaks } from "./policy.ts";
 import { PROFILES, profileViolation } from "./profiles.ts";
 import {
-  renderTools, TOOL_NAMES, TOOL_SCOPES, type AskOut, type ItemOut, type PendingConfirmationOut, type RespondOut,
+  ALL_AS_SCOPES, renderTools, TOOL_NAMES, TOOL_SCOPES, type AskOut, type ItemOut, type PendingConfirmationOut, type RespondOut,
   type ShareOut, type TellOut, type ToolDefinition, type ToolErrorCode, type ToolName, type UpdatesOut,
 } from "./schemas.ts";
 import { ITEM_CARD_HTML, ITEM_CARD_URI, UI_EXTENSION, WIDGET_MIME } from "./widget.ts";
@@ -32,12 +32,33 @@ export interface ServerOptions {
   guard?: boolean;
 }
 
-/** Bearer challenge used both in HTTP WWW-Authenticate and in ChatGPT's `_meta["mcp/www_authenticate"]`. */
+/**
+ * RFC 6750 §3 Bearer challenge, used both in the HTTP `WWW-Authenticate` header (401/403) and, for
+ * ChatGPT, as the single string inside the `_meta["mcp/www_authenticate"]` array [O5].
+ */
 export function bearerChallenge(cfg: NetworkConfig, p: { scope: string; error?: string; description?: string }): string {
   const parts = [`resource_metadata="${cfg.resourceMetadataUrl}"`, `scope="${p.scope}"`];
   if (p.error) parts.push(`error="${p.error}"`);
-  if (p.description) parts.push(`error_description="${p.description.replace(/"/g, "'")}"`);
+  // RFC 6750: error_description is %x20-21 / %x23-5B / %x5D-7E (no quote, no backslash, ASCII only).
+  if (p.description) parts.push(`error_description="${p.description.replace(/"/g, "'").replace(/[^\x20-\x7e]|\\/g, "")}"`);
   return `Bearer ${parts.join(", ")}`;
+}
+
+/**
+ * Scope for an insufficient_scope challenge: the scopes already granted plus the one needed (MCP
+ * 2025-11-25 recommended approach, so step-up never loses a granted scope), limited to scopes our AS
+ * can issue and listed in a stable order.
+ */
+export function stepUpScope(granted: readonly string[], need: string): string {
+  return ALL_AS_SCOPES.filter((s) => s === need || granted.includes(s)).join(" ");
+}
+
+/** Every string value inside `v` (object keys excluded: they are fixed by the schemas). */
+export function stringLeaves(v: unknown, out: string[] = []): string[] {
+  if (typeof v === "string") out.push(v);
+  else if (Array.isArray(v)) for (const x of v) stringLeaves(x, out);
+  else if (v && typeof v === "object") for (const x of Object.values(v)) stringLeaves(x, out);
+  return out;
 }
 
 function toolError(code: ToolErrorCode, message: string, extraMeta: Record<string, unknown> = {}, retryable = false): CallToolResult {
@@ -75,16 +96,51 @@ export function createMcpServer(net: FakeNetwork, principal: ConnectorPrincipal,
     }),
   }));
 
+  const audit = (tool: string, summary: string) =>
+    net.audit.push({ memberId: principal.memberId, grantId: principal.grantId, hostKey: principal.hostKey, tool, summary, at: net.clock.now() });
+
+  /**
+   * Strings that must not reach this host: everything in forbiddenFor(), except that the member's
+   * OWN agent-private facets may be echoed when the member's own message supplied them (§8.2 step 3).
+   * Other members' data is never exempt, even if the caller supplied it: an exemption would turn the
+   * guard into an oracle ("is Maya recently divorced?" → echoed answer passes the check).
+   */
+  const forbiddenStrings = (args: Record<string, unknown>) => {
+    const supplied = stringLeaves(args).join("\n");
+    const own = new Set(net.ownPrivateFacets(principal));
+    return net.forbiddenFor(principal).filter((f) => !(own.has(f) && findLeaks(supplied, [f]).length > 0));
+  };
+
+  /** Output pipeline for any model-visible text: leak guard, then the surface-profile classifier. */
+  const check = (visibleText: string, forbidden: string[]): { kind: "leak" | "profile"; detail: string } | null => {
+    if (!guardOn) return null;
+    const leaks = findLeaks(visibleText, forbidden);
+    if (leaks.length) return { kind: "leak", detail: leaks.join(",") };
+    const off = profileViolation(visibleText, profile, net.members.get(principal.memberId)?.age);
+    return off ? { kind: "profile", detail: principal.surfaceProfile } : null;
+  };
+
+  /** Tool errors are model-visible too, so their text passes the same checks (it can echo input). */
+  const guardedError = (tool: ToolName, code: ToolErrorCode, message: string, extraMeta: Record<string, unknown> = {}, retryable = false, args: Record<string, unknown> = {}) => {
+    const hit = check(message, forbiddenStrings(args));
+    if (!hit) return toolError(code, message, extraMeta, retryable);
+    audit(tool, `${hit.kind}_block_error:${hit.detail}`);
+    return toolError(code, code === "invalid_input" ? `Invalid input for ${tool}.` : PRIVACY_FALLBACK, extraMeta, retryable);
+  };
+
   const scopeChallenge = (scope: string, description: string) =>
     toolError("needs_scope", description, {
-      // ChatGPT shows its account-linking UI from this on a tool error [O5]; Claude needs HTTP 401/403 (http.ts).
-      "mcp/www_authenticate": [bearerChallenge(cfg, { scope, error: "insufficient_scope", description })],
+      // ChatGPT shows its account-linking UI from this on a tool error [O5]. OpenAI specifies an ARRAY
+      // of WWW-Authenticate challenge strings, each with error and error_description
+      // (https://developers.openai.com/apps-sdk/build/auth, "Triggering authentication UI").
+      // Claude needs HTTP 401/403 instead (http.ts).
+      "mcp/www_authenticate": [bearerChallenge(cfg, { scope: stepUpScope(principal.scopes, scope), error: "insufficient_scope", description })],
     });
 
   async function call(name: ToolName, args: Record<string, unknown>): Promise<CallToolResult> {
     const def = byName.get(name)!;
     const v = validate(def.inputSchema, args);
-    if (!v.valid) return toolError("invalid_input", `Invalid input for ${name}: ${v.errors.slice(0, 3).join("; ")}`);
+    if (!v.valid) return guardedError(name, "invalid_input", `Invalid input for ${name}: ${v.errors.slice(0, 3).join("; ")}`, {}, false, args);
     const scope = TOOL_SCOPES[name];
     if (!principal.scopes.includes(scope))
       return scopeChallenge(scope, `Connect The Network again to allow this (${scope}).`);
@@ -101,7 +157,7 @@ export function createMcpServer(net: FakeNetwork, principal: ConnectorPrincipal,
     } catch (err) {
       if (err instanceof NetworkError) {
         if (err.code === "needs_scope") return scopeChallenge(scope, err.message);
-        return toolError(err.code, err.message, err.retryAfterSeconds ? { "network/retry_after_seconds": err.retryAfterSeconds } : {}, err.retryable);
+        return guardedError(name, err.code, err.message, err.retryAfterSeconds ? { "network/retry_after_seconds": err.retryAfterSeconds } : {}, err.retryable, args);
       }
       return toolError("temporarily_unavailable", "Something went wrong in The Network. Nothing new was saved.", {}, true);
     }
@@ -112,32 +168,29 @@ export function createMcpServer(net: FakeNetwork, principal: ConnectorPrincipal,
     const structured = outcome.result as Record<string, unknown>;
     const out = validate(def.outputSchema, structured);
     if (!out.valid) {
-      net.audit.push({ memberId: principal.memberId, grantId: principal.grantId, hostKey: principal.hostKey, tool: def.name, summary: `output_schema_violation:${out.errors[0]}`, at: net.clock.now() });
+      audit(def.name, `output_schema_violation:${out.errors[0]}`);
       return toolError("temporarily_unavailable", "The Network couldn't answer that right now. Nothing new was saved.", {}, true);
     }
     let text = renderText(def.name, structured);
-    if (text.length > MAX_TEXT) text = `${text.slice(0, MAX_TEXT - 1)}…`;
     const meta: Record<string, unknown> = outcome.receipt ? { "network/receipt": outcome.receipt } : {};
 
     if (guardOn) {
-      const visible = JSON.stringify({ structured, text });
-      const supplied = JSON.stringify(args);
-      const member = net.members.get(principal.memberId);
-      const forbidden = net.forbiddenFor(principal).filter((f) => !supplied.includes(f));
-      const leaks = findLeaks(visible, forbidden);
-      if (INTERNAL_ID.test(visible)) leaks.push("internal_id");
-      if (ISO_TIMESTAMP.test(visible)) leaks.push("iso_timestamp");
-      leaks.push(...findLeaks(JSON.stringify(meta), forbidden).filter((l) => l.startsWith("forbidden:")));
-      if (leaks.length) {
-        net.audit.push({ memberId: principal.memberId, grantId: principal.grantId, hostKey: principal.hostKey, tool: def.name, summary: `leak_block:${leaks.join(",")}`, at: net.clock.now() });
+      // Raw string leaves, not JSON: JSON escapes newlines and quotes, which hid "the\nbar" from a
+      // word-boundary check and kept forbidden strings containing quotes from matching.
+      const forbidden = forbiddenStrings(args);
+      const hit = check([text, ...stringLeaves(structured)].join("\n"), forbidden);
+      // _meta is hidden from the model on ChatGPT but not on every host: no forbidden strings there either.
+      const metaLeak = findLeaks(stringLeaves(meta).join("\n"), forbidden).filter((l) => l.startsWith("forbidden:"));
+      if (hit?.kind === "leak" || metaLeak.length) {
+        audit(def.name, `leak_block:${[hit?.detail, ...metaLeak].filter(Boolean).join(",")}`);
         return toolError("temporarily_unavailable", PRIVACY_FALLBACK);
       }
-      const off = profileViolation(visible, profile, member?.age);
-      if (off) {
-        net.audit.push({ memberId: principal.memberId, grantId: principal.grantId, hostKey: principal.hostKey, tool: def.name, summary: `profile_block:${principal.surfaceProfile}`, at: net.clock.now() });
+      if (hit?.kind === "profile") {
+        audit(def.name, `profile_block:${hit.detail}`);
         return toolError("not_available_on_this_assistant", PROFILE_FALLBACK);
       }
     }
+    if (text.length > MAX_TEXT) text = `${text.slice(0, MAX_TEXT - 1)}…`;
     return { content: [{ type: "text", text }], structuredContent: structured, ...(Object.keys(meta).length ? { _meta: meta } : {}) };
   }
 

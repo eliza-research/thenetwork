@@ -170,14 +170,14 @@ Clients are resolved in this order. It follows the spec order [A25], with a trus
 | Path | Who | Handling | Trust tier |
 |---|---|---|---|
 | Pre-registered | Gemini Enterprise, Microsoft 365, Meta, Copilot Studio, and any host with a fixed client [connectors/other-assistants.md §0] | Rows in `network.oauth_clients` created by staff, with an exact redirect allowlist; confidential clients get a hashed secret | `verified` |
-| **CIMD** | ChatGPT (`https://chatgpt.com/oauth/...client.json`), Claude, Claude Code [O5, A6] | `client_id` is an HTTPS URL. Fetch it with an SSRF guard: HTTPS only, public IPs only after DNS resolution, no redirects, 5 KB cap, 3 s timeout. The document's `client_id` must equal the URL, and `redirect_uris` are exact-matched. Cache 1 h in KV, honoring `Cache-Control` up to 24 h. `jwks_uri` is used for `private_key_jwt`. | `verified` if the URL host is in the `KNOWN_HOSTS` table (chatgpt.com, claude.ai, …), otherwise `unverified` |
-| **DCR (RFC 7591)** | Gemini app/CLI, Le Chat, Perplexity, Copilot Studio, older clients [connectors/other-assistants.md] | Public clients only (`token_endpoint_auth_method: "none"`). `redirect_uris` must be HTTPS or loopback. Rate-limited at 20 registrations/hour/IP. Registered clients **never expire**: ChatGPT reuses its DCR client, and expiry causes `invalid_client` [O5]. Clients unused for 180 days are garbage-collected only if they hold no grants. Perplexity's DCR sends public-client requests without a secret, so never require `client_secret` (verify). | `verified` only if the redirect host is in `KNOWN_HOSTS`, otherwise `unverified` |
+| **CIMD** | ChatGPT (`https://chatgpt.com/oauth/client.json` or `https://chatgpt.com/oauth/{callback_id}/client.json`), Claude, Claude Code [O5, A6] | `client_id` is an HTTPS URL. Fetch it with an SSRF guard: HTTPS only, public IPs only after DNS resolution, no redirects, 5 KB cap, 3 s timeout. The document's `client_id` must equal the URL, and `redirect_uris` are exact-matched. Cache 1 h in KV, honoring `Cache-Control` up to 24 h. `jwks_uri` is used for `private_key_jwt`. | `verified` if the URL host is in the `KNOWN_HOSTS` table (chatgpt.com, claude.ai, …) with no port, userinfo, query or fragment, and, where the host documents its CIMD paths, the path is one of them (ChatGPT: the two forms above [O5]); otherwise `unverified`. A document elsewhere on a known host could be user content the host serves. |
+| **DCR (RFC 7591)** | Gemini app/CLI, Le Chat, Perplexity, Copilot Studio, older clients [connectors/other-assistants.md] | Public clients only (`token_endpoint_auth_method: "none"`). `redirect_uris` must be HTTPS or loopback. Rate-limited at 20 registrations/hour/IP. Registered clients **never expire**: ChatGPT reuses its DCR client, and expiry causes `invalid_client` [O5]. Clients unused for 180 days are garbage-collected only if they hold no grants. Perplexity's DCR sends public-client requests without a secret, so never require `client_secret` (verify). | `verified` only if **every** registered redirect is an exact known redirect and they all map to **one host key** (Claude registers both the `claude.ai` and `claude.com` callbacks); a mix of hosts, or any loopback/unknown redirect, is `unverified` |
 
 Redirect handling:
 - Exact match, except loopback. Claude Code uses `http://localhost:<any>/callback` and `http://127.0.0.1:<any>/callback`, matched without regard to port [A6].
 - `KNOWN_HOSTS` maps redirect/CIMD hosts to a host key and a default surface profile (§7). Examples: `claude.ai` → `claude`; `chatgpt.com` → `chatgpt`; `vertexaisearch.cloud.google.com` → `gemini_enterprise`.
 - **The host key is derived from authenticated registration data** (the CIMD URL host or an exact redirect host), never from `clientInfo.name`, which is unauthenticated and varies [A9].
-- Be lenient on the `resource` parameter's trailing slash: normalize `…/mcp` and `…/mcp/` to the canonical value. Perplexity breaks on strict matching [connectors/other-assistants.md, P3].
+- Be lenient on the `resource` parameter's trailing slash: normalize `…/mcp` and `…/mcp/` to the canonical value. Perplexity breaks on strict matching [connectors/other-assistants.md, P3]. Also accept an uppercase scheme and host, which the 2025-11-25 spec says implementations SHOULD accept [A25]. Nothing else is lenient: the bare origin, another path, a port, userinfo, a query or a fragment is a different resource and the token is rejected (`invalid_token`, or `invalid_target` at the AS).
 
 ### 3.3 Member sign-in (the `/oauth/authorize` page)
 
@@ -233,7 +233,7 @@ The flow:
 
 How scopes are enforced:
 - Every tool call checks scopes **before** calling the Network service, and the Network service checks again: it receives `{member_id, grant_id, scopes, surface_profile}` as an explicit `ConnectorPrincipal`.
-- A missing scope returns **HTTP 403** with `WWW-Authenticate: Bearer error="insufficient_scope", scope="…", resource_metadata="…"` for step-up [A25]. Hosts that don't step up get the in-band fallback in §3.8.
+- A missing scope returns **HTTP 403** with `WWW-Authenticate: Bearer error="insufficient_scope", scope="…", resource_metadata="…", error_description="…"` for step-up [A25]. The challenged `scope` is the scopes the token already holds **plus** the one needed, in a stable order (for example `scope="network.read.basic network.write.responses"`). This is the spec's "recommended approach", which keeps a step-up from dropping scopes the member already granted [A25, "Runtime Insufficient Scope Errors"]. Hosts that don't step up get the in-band fallback in §3.8.
 - When `tell_network_agent` detects that an intent needs an ungranted scope (relay, invites, safety), the agent replies: "I can't do that from <host>. You can do it by texting me, or enable it at <network-domain>/assistants." The action is not executed. Optionally the response carries the 403 step-up.
 
 ### 3.5 Consent screen
@@ -260,7 +260,7 @@ Buttons are Allow and Cancel. On Allow we create or update the grant described i
 3. looks up `grant_id` status (KV cache, 30 s TTL; falls through to Postgres on miss) and rejects revoked or suspended grants
 4. loads member status, rejecting `paused-account`, `restricted` and `removed`
 
-On failure it returns **HTTP 401** with `WWW-Authenticate: Bearer resource_metadata="https://mcp.<network-domain>/.well-known/oauth-protected-resource/mcp", scope="network.read.basic …", error="invalid_token"`. This 401 is returned **before** the MCP SDK parses the body, which Claude requires [A7].
+On failure it returns **HTTP 401** with `WWW-Authenticate: Bearer resource_metadata="https://mcp.<network-domain>/.well-known/oauth-protected-resource/mcp", scope="network.read.basic …", error="invalid_token", error_description="…"`. A request with no token at all gets the same challenge **without** `error` (RFC 6750 §3.1: no error code when the request carried no credentials). This 401 is returned **before** the MCP SDK parses the body, which Claude requires [A7]. `error_description` is restricted to the RFC 6750 character set (printable ASCII without `"` or `\`).
 
 **No token passthrough.** The MCP token is never forwarded to Eliza Cloud APIs or to the gateway. Internal calls use a service principal, `ConnectorPrincipal`, built from the verified token [A25, S3].
 
@@ -301,7 +301,13 @@ The worst-case lag is one cache TTL (30 s), plus at most 10 minutes of access-to
 There are two challenge paths, and we always use both:
 
 1. **Transport level** (Claude, and generic spec clients): any unauthenticated or expired POST gets HTTP 401 with `WWW-Authenticate` [A7]. Nothing is public in P0–P1, so every request needs a token. In P2 we may expose `get_network_updates` metadata unauthenticated for directory scanners ("lazy auth"), but there are no unauthenticated tools.
-2. **Tool level** (ChatGPT): when a tool call fails on auth or scope inside a valid session (for example, scope revoked mid-conversation), return `isError: true` with `_meta["mcp/www_authenticate"]` set to the same Bearer challenge string, including `error` and `error_description` [O5]. Each tool also declares `securitySchemes: [{type:"oauth2", scopes:[…]}]`, as the field ChatGPT reads [O5]. All three pieces must exist for ChatGPT's sign-in UI to appear [O5].
+2. **Tool level** (ChatGPT): when a tool call fails on auth or scope inside a valid session (for example, scope revoked mid-conversation), return `isError: true` with `_meta["mcp/www_authenticate"]` set to an **array of `WWW-Authenticate` challenge strings**. We send one element, the same Bearer challenge as the HTTP 403 (granted ∪ needed scope), and it must include both `error` and `error_description` [O5]. OpenAI's example (section "Triggering authentication UI" of https://developers.openai.com/plugins/build/auth, also served at https://developers.openai.com/apps-sdk/build/auth; checked 2026-10-05) is:
+
+   ```
+   "_meta": { "mcp/www_authenticate": ["Bearer resource_metadata=\"https://your-mcp.example.com/.well-known/oauth-protected-resource\", error=\"insufficient_scope\", error_description=\"You need to login to continue\""] }
+   ```
+
+   (OpenAI's page wraps the string in an extra pair of single quotes, which reads as a typo, so we send the bare challenge.) An earlier draft of this design said "string"; the array is what OpenAI specifies, and the prototype and tests use it. Each tool also declares `securitySchemes: [{type:"oauth2", scopes:[…]}]`, as the field ChatGPT reads [O5]. All three pieces (protected-resource metadata, `securitySchemes`, the runtime `_meta` challenge) must exist for ChatGPT's sign-in UI to appear [O5].
 
 ---
 
@@ -360,9 +366,13 @@ The PRD's "Network.talk" titles survive as human `title`s ("Ask your Network age
   - Server key: `(grant_id, tool, idempotency_key)` when present; otherwise `(grant_id, tool, sha256(canonical_args))` over a 10-minute window.
   - On replay we return the stored result with `replayed: true` in the receipt.
   - The same key with different arguments returns error `idempotency_conflict`.
+  - Keys are per grant: the same key on another grant is a different action and never replays the first grant's result.
+  - The server fallback key (no `idempotency_key`) never replays a result whose `pending_confirmation` has since been confirmed, cancelled or expired. "Pause", confirm, "resume", then "pause" again within 10 minutes is a new request. An explicit `idempotency_key` always replays.
   - Stored in `network.connector_actions`, unique on `(grant_id, tool, key)`, and written in the same transaction as the domain change.
 - **Errors:**
-  - Tool errors return `isError: true` with an actionable text message [A2] and `structuredContent: {error: {code, message, retryable}}`.
+  - Tool errors return `isError: true` with an actionable text message in `content` [A2] and the machine-readable error in `_meta["network/error"] = {code, message, retryable}` (plus `_meta["network/retry_after_seconds"]` when rate-limited).
+  - Errors are **not** put in `structuredContent`. Every tool has an `outputSchema` with `additionalProperties: false`, and the official MCP TypeScript SDK client (1.32.1) validates any `structuredContent` against `outputSchema` even when `isError` is true, so `{error: …}` would fail validation in SDK-based hosts. Widening every output schema with a `oneOf` error branch would complicate all five contracts for no host benefit.
+  - Error text is model-visible, so it passes the same leak guard and profile classifier as results (§8.2). An invalid-input message can echo a caller-chosen property name; if that trips a check, the text becomes a generic "Invalid input for <tool>."
   - Codes: `not_member`, `not_available_on_this_assistant`, `item_not_found`, `item_expired`, `rate_limited`, `idempotency_conflict`, `invalid_input`, `temporarily_unavailable`, `needs_scope`.
   - Auth errors use §3.8.
   - We never return stack traces or raw upstream errors.
@@ -658,6 +668,12 @@ The tier is set by policy in the Network service, never by the host or the agent
 
 The action payload is fixed at creation. Confirming executes **exactly** that payload, so a host can't swap arguments between proposal and confirmation.
 
+- **One open confirmation per (grant, action, payload).** Asking again (a retry with a fresh key, or an injected loop) returns the same pending row and sends no second "Reply YES" text.
+- **Re-checked at execution,** whoever confirms: the item behind the confirmation must still be open, unexpired and something the member is eligible for. Otherwise the confirmation is cancelled and nothing runs, for example when the member answered the same item from another assistant in the meantime.
+- **The summary shows exactly what will happen.** For a relay it quotes the message text, because the member confirms in the Network's channel, where they can't see the host conversation.
+- **Saying yes to a relayed-message item** (`connection = relay`) is tier 3, like a contact swap.
+- Phone numbers and email addresses are refused in `tell_network_agent` instructions and in `respond_to_network_item` notes. Contact exchange is only the Network's own tier-3 flow.
+
 - **Tier 1.** The host asks the member, then calls `respond_to_network_item({item_id: cnf_…, response: "confirm"})`. This maps directly onto 2026-07-28 MRTR, where the "incomplete result plus resubmission with input" is this same object [S1].
 - **Tier 2 and 3.** `how_to_confirm: member_confirms_in_network_app`. The Network sends the member a message on their primary channel: "ChatGPT asked me to share your number with Sam from Saturday's climbing group. Reply YES to confirm or NO to cancel." The agent handles the reply through a new deterministic intercept, `CONFIRM_PENDING` (exact YES or NO, plus the confirmation's short code when several are open). A `confirm` call from the host for a tier-3 confirmation returns `status: confirm_in_network_app` and does nothing.
 
@@ -686,15 +702,17 @@ A surface profile is a named server-side policy bundle that is chosen per grant 
 | Profile | Assigned to | Content categories exposed | Tool and instruction text | Notes |
 |---|---|---|---|---|
 | `teen_safe_directory` | ChatGPT (directory and dev mode, for consistency); any host whose directory requires all-ages content | Friendship and activity partners, hobbies, events (all-ages venues), help requests, professional and mentoring, skills exchange, volunteering | Professional, hobby, events, help, friendship vocabulary only | **Never** exposes the romance category, dating or sexual content, adult venues (bars, nightlife, 21+ events), alcohol-centric events, or sponsored or underwritten items [O3 R6, R7]. |
-| `general_assistant` | Claude, Grok, Muse, Gemini, Perplexity, Le Chat, Copilot (until a host requires otherwise) | All non-restricted categories, including 21+ events where the member is eligible | Standard | Romance is still excluded from **all** connector profiles in P0–P2 (§7.2). |
+| `general_assistant` | Claude, Grok, Muse, Gemini, Perplexity, Le Chat, Copilot (until a host requires otherwise) | All non-restricted categories, including 21+ events where the member is eligible | Standard | Romance is still excluded from **all** connector profiles in P0–P2 (§7.2). Sponsored or underwritten items are also excluded on every connector profile, not only ChatGPT's: Anthropic's directory policy prohibits "advertisement/sponsored content vehicles" [connectors/claude.md R4, A8], and a per-host exception isn't worth the review risk. Revisit only with written reviewer guidance. |
 | `enterprise_professional` | M365 Copilot / Agent Store, Gemini Enterprise | Professional introductions, mentoring, help within a work context | Professional framing | For the enterprise value bar [connectors/other-assistants.md §3]. |
 
 How the profiles are enforced, in four places:
 
 1. **The `tools/list` registry.** Descriptions and enums are rendered per profile. For example, `looking_for` never contains romance values, and there are no nightlife examples.
-2. **The query layer.** `get_network_updates` and `tell_me_more` filter items by `opportunity.category` and `venue.age_restriction` against the profile allowlist. Excluded items aren't mentioned: the member still gets them through the Network's own channel.
+2. **The query layer.** `get_network_updates` and `tell_me_more` filter items by `opportunity.category` and `venue.age_restriction` against the profile allowlist, **and** run the profile classifier over each item's own text (title, summary, details, when, where). A mislabeled item, such as category `events` with "happy hour at a brewery", is excluded like any other out-of-profile item instead of tripping the output check and failing the whole list. Excluded items aren't mentioned: the member still gets them through the Network's own channel.
 3. **The agent turn.** The `surface_profile` goes into the turn as trusted metadata. The Network character's connector rules say to keep to the profile's categories. The deterministic **output policy check** (§8.2) runs a profile classifier over the reply and blocks or rewrites out-of-profile content into "That's something I can only help with by text."
 4. **Inputs.** `tell_network_agent` intents classified as out-of-profile (for example, "find me a date") get the polite `not_available_here` reply.
+
+**Matching rules for the deterministic checks.** Word lists are matched on folded text: lowercase, Unicode compatibility forms (fullwidth letters), accents stripped, zero-width and other format characters removed (and, separately, read as spaces), common Cyrillic and Greek homoglyphs mapped to Latin, `_` read as a space, spaced-out letters collapsed ("b a r", "n.i.g.h.t"), and digit-for-letter substitutions undone ("c0cktail"). Age gates match "21+", "(21+)", "18+", "21 and over", "over 21" and "adults only"; `\b21\+\b` alone never matched, because there is no word boundary after `+`. The checks are fail-closed: a false positive costs a polite refusal.
 
 **Honesty rule:** profiles narrow **content** to fit the host's rules. They never change what the product is or how it describes itself (§7.4).
 
@@ -781,6 +799,8 @@ Every model-visible string (reply, answer, summary, details, message) passes a p
 3. **Connector egress policy:** blocks the member's own **sensitive** agent-private facts from being echoed to a third-party host unless the member's own message asked about them. The host is the member's processor, not the member.
 4. **Surface-profile classifier** (§7.1).
 5. Length caps.
+
+The deterministic checks run on the raw model-visible strings (`content` text plus every string value in `structuredContent`), never on a JSON serialization: JSON escapes newlines and quotes, which hid "the\nbar" from a word-boundary check and kept forbidden strings containing a quote from matching. Forbidden strings match case-, Unicode- and punctuation-insensitively. Phone patterns allow up to three separators between digits ("(415) 555-0102"); spelled-out emails ("name [at] example [dot] com") count as emails. Other members' data is **never** exempt because the caller supplied it: that would turn the guard into an oracle ("is it true Maya is recently divorced?" echoed back). Only the member's **own** agent-private facts may be echoed, and only when the member's own message contained them (step 3). Tool error text goes through the same checks. `_meta` may carry internal ids (receipts) but never forbidden strings.
 
 On a block, we regenerate once with a stricter brief. If it is blocked again, return the safe fallback ("I can't share that here; text me and I'll explain") and log a `leak_block` event for review. A block is never silently passed through.
 
@@ -1069,7 +1089,28 @@ All under `shared/src/lib/network/mcp/` (new):
 
 ### 13.9 The prototype
 
-`prototypes/connector-mcp` stays as is. It is the place to try schema and behavior changes before they are ported. Its tests (gating, leak, schemas) are good seeds for the unit layer above.
+`prototypes/connector-mcp` is the place to try schema and behavior changes before they are ported. Its tests (gating, leak, schemas, minors, profiles, http, worker, adversarial) are good seeds for the unit layer above. Run them with `bun test` and `bunx tsc --noEmit -p .` in that folder.
+
+**Decisions the prototype makes where this document was silent or wrong (reviewed 2026-10-05):**
+
+| Topic | Prototype behavior | Why |
+|---|---|---|
+| Tool errors | `_meta["network/error"]`, not `structuredContent` | §5.1: SDK clients validate `structuredContent` against `outputSchema` even on errors |
+| Sponsored items | Hidden on every connector profile | §7.1: Anthropic's ads-vehicle rule [A8]; same risk as ChatGPT [O3 R7] |
+| Elicitation | None. Two-step `pending_confirmation` only | §6.4 P1: server-initiated elicitation needs SSE state the stateless Worker doesn't have, and form elicitation can't authorize tiers 2–3 anyway |
+| ChatGPT `_meta["mcp/www_authenticate"]` | Array with one challenge string | §3.8, per OpenAI's auth docs [O5] |
+| 403 / `_meta` challenge scope | Granted ∪ needed | §3.4, spec recommended approach [A25] |
+| DCR on the Worker | 501 like the other AS endpoints | An isolate-local registry would issue client_ids that vanish, with no per-IP limit; local runs and tests keep the in-memory DCR |
+| Worker gating | `NETWORK_MCP_ENABLED !== "true"` returns 404 before config is parsed | A bad `MCP_ORIGIN` can't turn the disabled host into a 500 |
+
+**Worker dry runs** always name the environment, because `wrangler.toml` defines a top level (production) and `[env.staging]`, and wrangler warns when it has to guess:
+
+```
+./scripts/wrangler.sh deploy --dry-run --env="" -c prototypes/connector-mcp/wrangler.toml       # production vars
+./scripts/wrangler.sh deploy --dry-run --env staging -c prototypes/connector-mcp/wrangler.toml  # staging vars
+```
+
+The prototype is never deployed. `wrangler.toml` holds no secrets: the account id and route are identifiers, and production secrets go in `wrangler secret put` (§12.2).
 
 ---
 

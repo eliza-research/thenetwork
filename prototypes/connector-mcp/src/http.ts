@@ -6,7 +6,7 @@ import { normalizeResource, type NetworkConfig } from "./config.ts";
 import type { ConnectorPrincipal, FakeNetwork } from "./fake-network.ts";
 import { authorizationServerMetadata, ClientRegistry, protectedResourceMetadata } from "./oauth.ts";
 import { DEFAULT_SCOPES, TOOL_SCOPES, type ToolName } from "./schemas.ts";
-import { bearerChallenge, createMcpServer } from "./server.ts";
+import { bearerChallenge, createMcpServer, stepUpScope } from "./server.ts";
 
 /** Claims from a verified `at+jwt` access token (design §3.6). */
 export interface VerifiedToken {
@@ -39,6 +39,12 @@ export interface HttpOptions {
   enforceHost?: boolean;
   /** NETWORK_MCP_ENABLED (design §12.1): when false every path returns 404. */
   enabled?: boolean;
+  /**
+   * Serve the in-memory DCR endpoint (local runs and tests). The Worker sets this to false: an
+   * isolate-local registry would hand out client_ids that vanish on the next isolate, and it has no
+   * per-IP registration limit (design §3.2), so /oauth/register is a 501 stub there like the rest of the AS.
+   */
+  dynamicRegistration?: boolean;
 }
 
 const CORS_ALLOW_HEADERS = "Authorization, Content-Type, MCP-Protocol-Version, Mcp-Session-Id, Last-Event-ID";
@@ -74,14 +80,14 @@ export function createHttpHandler(net: FakeNetwork, o: HttpOptions) {
       return json(authorizationServerMetadata(cfg), 200, pub);
 
     // ---- authorization server (prototype: DCR works, the rest is stubbed)
-    if (u.pathname === "/oauth/register" && req.method === "POST") {
+    if (u.pathname === "/oauth/register" && req.method === "POST" && o.dynamicRegistration !== false) {
       let body: unknown;
       try { body = await req.json(); } catch { return json({ error: "invalid_client_metadata" }, 400); }
       const r = clients.register(body);
       return json(r.body, r.status);
     }
     if (u.pathname === "/oauth/jwks.json" && req.method === "GET") return json({ keys: [] }, 200);
-    if (["/oauth/authorize", "/oauth/token", "/oauth/revoke"].includes(u.pathname))
+    if (["/oauth/authorize", "/oauth/token", "/oauth/revoke", "/oauth/register"].includes(u.pathname))
       return json({ error: "temporarily_unavailable", error_description: "Prototype stub: the Network authorization server is not implemented yet (design §3.3, §3.6)." }, 501);
 
     if (u.pathname !== "/mcp" && u.pathname !== "/mcp/") return json({ error: "not_found" }, 404);
@@ -102,10 +108,12 @@ export function createHttpHandler(net: FakeNetwork, o: HttpOptions) {
     if (Array.isArray(msg)) return json({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "JSON-RPC batches are not supported" } }, 400);
     if (msg?.method === "tools/call") {
       const need = TOOL_SCOPES[msg.params?.name as ToolName];
-      // Claude & spec clients: HTTP 403 step-up. ChatGPT: let the tool return its _meta challenge [O5].
+      // Claude & spec clients: HTTP 403 step-up (MCP 2025-11-25 "Runtime Insufficient Scope Errors").
+      // The challenged scope is granted ∪ needed, the spec's recommended approach, so re-authorizing
+      // never drops scopes the member already granted. ChatGPT: the tool returns its _meta challenge [O5].
       if (need && !v.scopes.includes(need) && client.scopeChallenge === "http")
         return json({ error: "insufficient_scope" }, 403, {
-          "www-authenticate": bearerChallenge(cfg, { scope: need, error: "insufficient_scope", description: `This action needs ${need}.` }),
+          "www-authenticate": bearerChallenge(cfg, { scope: stepUpScope(v.scopes, need), error: "insufficient_scope", description: `This action needs ${need}.` }),
         });
     }
 

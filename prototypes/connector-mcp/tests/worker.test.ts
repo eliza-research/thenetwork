@@ -15,6 +15,24 @@ describe("Cloudflare Worker config for mcp.ntwrk.love (not deployed)", () => {
     expect(toml).toMatch(/^NETWORK_MCP_ENABLED = "false"$/m);
     expect(toml).toMatch(/nodejs_compat/);
     expect(toml).toMatch(/^workers_dev = false$/m);
+    // dry runs name the environment (no "multiple environments" warning), and nothing secret is configured
+    expect(toml).toContain('deploy --dry-run --env="" -c prototypes/connector-mcp/wrangler.toml');
+    expect(toml).not.toMatch(/^\s*[A-Z_]*(SECRET|TOKEN|PASSWORD|API_KEY|PRIVATE)[A-Z_]*\s*=/m);
+    expect(toml).toMatch(/\[env\.staging\.vars\][\s\S]*NETWORK_MCP_ENABLED = "false"/);
+  });
+
+  test("the flag is checked before config is parsed: a bad MCP_ORIGIN while disabled is a 404, not a 500", async () => {
+    for (const NETWORK_MCP_ENABLED of [undefined, "false", "TRUE", "1", "yes"]) {
+      const r = await worker.fetch(new Request("https://mcp.ntwrk.love/mcp", { method: "POST" }), { ...prodVars, MCP_ORIGIN: "http://not-https.example", NETWORK_MCP_ENABLED });
+      expect(r.status).toBe(404);
+    }
+  });
+
+  test("DCR is a 501 stub on the Worker (no isolate-local client store)", async () => {
+    const r = await worker.fetch(new Request("https://mcp.ntwrk.love/oauth/register", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ redirect_uris: ["https://claude.ai/api/mcp/auth_callback"] }),
+    }), { ...prodVars, NETWORK_MCP_ENABLED: "true" });
+    expect(r.status).toBe(501);
   });
 
   test("disabled → 404 everywhere", async () => {

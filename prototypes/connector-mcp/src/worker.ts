@@ -15,6 +15,8 @@ export interface Env {
 
 let cached: { key: string; handle: (req: Request) => Promise<Response> } | null = null;
 
+const notFound = () => Response.json({ error: "not_found" }, { status: 404, headers: { "cache-control": "no-store" } });
+
 export function handlerFor(env: Env) {
   const key = JSON.stringify(env);
   if (cached?.key === key) return cached.handle;
@@ -24,6 +26,7 @@ export function handlerFor(env: Env) {
     verifier: new RejectAllVerifier(),
     enforceHost: true,
     enabled: env.NETWORK_MCP_ENABLED === "true",
+    dynamicRegistration: false, // no persistent client store on this Worker yet (design §3.2)
     allowedBrowserOrigins: (env.ALLOWED_BROWSER_ORIGINS ?? "https://claude.ai,https://chatgpt.com").split(",").map((s) => s.trim()).filter(Boolean),
   });
   cached = { key, handle };
@@ -31,7 +34,9 @@ export function handlerFor(env: Env) {
 }
 
 export default {
-  fetch(req: Request, env: Env): Promise<Response> {
+  async fetch(req: Request, env: Env): Promise<Response> {
+    // Gate first (design §12.1): with the flag off nothing is parsed, so a bad MCP_ORIGIN can't 500.
+    if (env.NETWORK_MCP_ENABLED !== "true") return notFound();
     return handlerFor(env)(req);
   },
 };

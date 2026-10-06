@@ -43,6 +43,7 @@ function render(data){
   }
 }
 window.addEventListener("message", (e) => {
+  if (e.source !== parent) return; // only the host frame may answer or push tool results
   const m = e.data; if (!m || m.jsonrpc !== "2.0") return;
   if (m.id && pending.has(m.id)){ pending.get(m.id)(m.result); pending.delete(m.id); return; }
   if (m.method === "ui/notifications/tool-result") render(m.params && m.params.structuredContent);

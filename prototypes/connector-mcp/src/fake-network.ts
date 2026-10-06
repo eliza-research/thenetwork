@@ -7,10 +7,10 @@ import { createHash, createHmac, randomBytes } from "node:crypto";
 import type { City, Clock, ParticipationState, PrivacyScope } from "@thenetwork/core";
 import type { HostKey, TrustTier } from "./config.ts";
 import {
-  ACTION_TIER, confirmationTtlMs, effectiveTier, looksAboutSomeoneElse, looksLikeContact, looksLikeCredential,
-  looksLikeStreetAddress, looksNightlife, looksRomantic, looksSensitive, RateLimiter, type ActionKind, type LimitName, type Tier,
+  ACTION_TIER, confirmationTtlMs, effectiveTier, looksAboutSomeoneElse, looksLikeContact, looksLikeCredential, looksLikePhoneOrEmail,
+  looksLikeStreetAddress, looksNightlife, looksRomantic, looksSensitive, matchFolded, RateLimiter, type ActionKind, type LimitName, type Tier,
 } from "./policy.ts";
-import { ADULT_AGE, PROFILES, visibility, type ContentFacts, type SurfaceProfileName } from "./profiles.ts";
+import { ADULT_AGE, PROFILES, profileViolation, visibility, type ContentFacts, type SurfaceProfileName } from "./profiles.ts";
 import {
   SCOPES, TOOL_NAMES, type AskIn, type AskOut, type ChangeKind, type ItemKind, type ItemOut, type PendingConfirmationOut,
   type Receipt, type RespondIn, type RespondOut, type ResponseValue, type ShareIn, type ShareOut, type ShareRejectReason,
@@ -152,10 +152,27 @@ export class FakeNetwork {
     }
     for (const i of this.items) {
       out.push(i.internalId);
-      const hidden = i.viewerId !== p.memberId || !viewer || visibility(i.facts, viewer.age, PROFILES[p.surfaceProfile]) !== "visible";
-      if (hidden) out.push(i.title, i.summary);
+      const hidden = i.viewerId !== p.memberId || !viewer || !this.itemVisible(p, viewer, i);
+      if (hidden) out.push(i.title, i.summary, i.details);
     }
     return out;
+  }
+
+  /** The member's own agent-private facets (may be echoed only when the member supplied them, §8.2 step 3). */
+  ownPrivateFacets(p: ConnectorPrincipal): string[] {
+    return this.members.get(p.memberId)?.facets.filter((f) => f.scope === "agent_private").map((f) => f.value) ?? [];
+  }
+
+  /**
+   * Whether this host may see an item (design §7.1 step 2): the member is eligible, the profile allows
+   * the item's category and flags, AND the item's own text is in the profile's vocabulary. The text
+   * check means a mislabeled item (category "events" but "happy hour at a brewery") is excluded and
+   * never mentioned, instead of tripping the output classifier and failing the whole list.
+   */
+  private itemVisible(p: ConnectorPrincipal, me: FakeMember, i: StoredItem): boolean {
+    const profile = PROFILES[p.surfaceProfile];
+    if (visibility(i.facts, me.age, profile) !== "visible") return false;
+    return profileViolation([i.title, i.summary, i.details, i.when ?? "", i.where ?? ""].join("\n"), profile, me.age) === null;
   }
 
   // ------------------------------------------------------------------------------- plumbing
@@ -179,13 +196,24 @@ export class FakeNetwork {
     const key = `${p.grantId}:${tool}:${idempotency_key ? `k:${idempotency_key}` : `h:${argsHash}`}`;
     const now = this.clock.now();
     const prior = this.idem.get(key);
-    if (prior && (idempotency_key || now - prior.at < IDEM_WINDOW_MS)) {
+    // The server fallback key dedupes accidental double calls. It must not hand back a confirmation
+    // that has since been confirmed, cancelled or expired: "pause" → confirm → "resume" → "pause"
+    // within 10 minutes is a new request, not a replay. An explicit idempotency_key always replays.
+    const stale = !idempotency_key && prior !== undefined && this.hasFinishedConfirmation(prior.result);
+    if (prior && !stale && (idempotency_key || now - prior.at < IDEM_WINDOW_MS)) {
       if (prior.argsHash !== argsHash) throw new NetworkError("idempotency_conflict", "That idempotency_key was already used with different arguments. Use a new key for a new action.");
       return { result: prior.result as T, receipt: prior.receipt && { ...prior.receipt, replayed: true } };
     }
     const out = fn();
     this.idem.set(key, { argsHash, result: out.result, receipt: out.receipt, at: now });
     return out;
+  }
+
+  private hasFinishedConfirmation(result: unknown): boolean {
+    const id = (result as { pending_confirmation?: { confirmation_id?: string } | null })?.pending_confirmation?.confirmation_id;
+    if (!id) return false;
+    const c = this.confirmations.get(id);
+    return !c || c.status !== "pending" || c.expiresAt <= this.clock.now();
   }
 
   private receipt(p: ConnectorPrincipal, tool: ToolName, summary: string, tier?: Tier): Receipt {
@@ -206,6 +234,14 @@ export class FakeNetwork {
   }
 
   private pend(p: ConnectorPrincipal, action: ActionKind, summary: string, payload: Record<string, string>, baseTier: Tier = ACTION_TIER[action]): Confirmation {
+    // One open confirmation per (grant, action, payload). Re-asking (a retry with a fresh key, or a
+    // prompt-injected loop) returns the same pending row instead of stacking duplicate confirmations
+    // and duplicate "Reply YES" texts that could each execute.
+    const now = this.clock.now();
+    const same = canonical(payload);
+    for (const c of this.confirmations.values()) {
+      if (c.status === "pending" && c.expiresAt > now && c.grantId === p.grantId && c.memberId === p.memberId && c.action === action && canonical(c.payload) === same) return c;
+    }
     const tier = this.tierFor(p, baseTier);
     const c: Confirmation = {
       confirmationId: this.newConfirmationId(), memberId: p.memberId, grantId: p.grantId, hostDisplayName: p.hostDisplayName,
@@ -227,6 +263,21 @@ export class FakeNetwork {
     });
   }
 
+  /**
+   * Re-checked at execution time, whoever confirms: the item behind a confirmation must still be open,
+   * unexpired and something the member is eligible for. Returns false (and cancels) otherwise.
+   */
+  private stillActionable(c: Confirmation): boolean {
+    if (!c.payload.item) return true;
+    const item = this.items.find((i) => i.internalId === c.payload.item);
+    const me = this.members.get(c.memberId);
+    const now = this.clock.now();
+    const ok = !!item && !!me && item.viewerId === me.id && item.status === "open" && (item.expiresAt === null || item.expiresAt > now) &&
+      visibility(item.facts, me.age, PROFILES.general_assistant) !== "not_eligible";
+    if (!ok) c.status = "cancelled";
+    return ok;
+  }
+
   private execute(c: Confirmation, via: "host" | "network_channel") {
     c.status = "done";
     c.confirmedVia = via;
@@ -242,10 +293,8 @@ export class FakeNetwork {
 
   private visibleItems(p: ConnectorPrincipal, me: FakeMember): StoredItem[] {
     const now = this.clock.now();
-    const profile = PROFILES[p.surfaceProfile];
     return this.items.filter((i) =>
-      i.viewerId === me.id && i.status === "open" && (i.expiresAt === null || i.expiresAt > now) &&
-      visibility(i.facts, me.age, profile) === "visible");
+      i.viewerId === me.id && i.status === "open" && (i.expiresAt === null || i.expiresAt > now) && this.itemVisible(p, me, i));
   }
   private findOwnItem(p: ConnectorPrincipal, me: FakeMember, handle: string) {
     return this.items.find((i) => i.viewerId === me.id && this.itemHandle(p.grantId, i) === handle);
@@ -316,10 +365,15 @@ export class FakeNetwork {
         ? done(`I can't do that from ${p.hostDisplayName}. You can do it by texting me, or enable it at ${this.assistantsUrl}.`, "not_available_here")
         : null;
 
-      if (/\b(accept|decline|say yes to|i'?m interested|not for me|pass on)\b/i.test(t))
-        return done("To answer an item, tell me which one and your answer, and I'll record it with respond_to_network_item.", "nothing_changed");
+      // Eligibility and profile first, so no later branch can be reached with an out-of-bounds request.
       const blocked = this.outOfBounds(p, me, t);
       if (blocked) return done(blocked, "not_available_here");
+      if (/\b(accept|decline|say yes to|i'?m interested|not for me|pass on)\b/i.test(t))
+        return done("To answer an item, tell me which one and your answer, and I'll record it with respond_to_network_item.", "nothing_changed");
+      // Phone numbers and emails never travel through a connector (PRD 17.3, design §8.1); contact
+      // exchange is the Network's own tier-3 share_contact flow.
+      if (looksLikePhoneOrEmail(t))
+        return done("I can't take phone numbers or email addresses through an assistant. Text me directly, or ask me to offer a number swap.", "not_available_here");
 
       if (/\b(report|unsafe|harass\w*|threaten\w*)\b/i.test(t))
         return needsScope(SCOPES.sensitiveSafety) ?? pending(this.pend(p, "safety_report", "Start a private safety report with The Network's safety team.", {}), "I'll start a safety report.");
@@ -329,8 +383,11 @@ export class FakeNetwork {
         const name = /invite (?:my (?:friend|colleague) )?([A-Z][a-z]+)/.exec(t)?.[1] ?? "your friend";
         return needsScope(SCOPES.writeInvites) ?? pending(this.pend(p, "invite", `Create a personal invitation from you for ${name}.`, { name }), `Happy to invite ${name}.`);
       }
-      if (/\b(message|tell|text|ask) [A-Z][a-z]+\b/.test(t))
-        return needsScope(SCOPES.writeRelay) ?? pending(this.pend(p, "relay_message", "Pass a message from you to the other person in your current introduction.", { text: t.slice(0, 500) }), "I can pass that along.");
+      if (/\b(message|tell|text|ask) [A-Z][a-z]+\b/.test(t)) {
+        // The member confirms in the Network's channel, so the summary must show exactly what is sent.
+        const text = t.slice(0, 240);
+        return needsScope(SCOPES.writeRelay) ?? pending(this.pend(p, "relay_message", `Pass this message from you to the other person in your current introduction: "${text}"`, { text }), "I can pass that along.");
+      }
       if (/\b(pause|slammed|go quiet|quiet mode|only when i ask|stop sending|resume|unpause)\b/i.test(t)) {
         const state = /\b(resume|unpause)\b/i.test(t) ? "normal" : "quiet";
         const summary = state === "quiet" ? "Switch to Quiet: only messages you ask for, until you say otherwise." : "Switch back to Normal outreach.";
@@ -364,6 +421,8 @@ export class FakeNetwork {
         else if (looksAboutSomeoneElse(value)) reason = "about_someone_else";
         else if (field.startsWith("home_area") && looksLikeStreetAddress(value)) reason = "too_precise_location";
         else if (looksRomantic(value)) reason = "not_available_here";
+        // Under-18 members are never connected to people, so people-seeking details aren't accepted either.
+        else if (me.age < ADULT_AGE && involvesPeople(value)) reason = "not_available_here";
         else if (this.proposals.some((x) => x.memberId === me.id && x.field === field && x.value.toLowerCase() === value.toLowerCase())) reason = "duplicate";
         if (reason) { rejected.push(index === undefined ? { field, reason } : { field, index, reason }); return; }
         // Host-provided details are proposals, matchable at most, below member-stated confidence (§5.5).
@@ -419,6 +478,8 @@ export class FakeNetwork {
     return this.once(p, TOOL_NAMES.respond, input, () => {
       const r = (out: RespondOut, summary: string, tier?: Tier): Outcome<RespondOut> => ({ result: out, receipt: this.receipt(p, TOOL_NAMES.respond, summary, tier) });
       const now = this.clock.now();
+      if (input.note && looksLikeContact(input.note))
+        throw new NetworkError("invalid_input", "The note can't include phone numbers, emails, links or handles.");
       // Unknown, foreign-member and foreign-grant ids are indistinguishable (no enumeration oracle).
       const notFound = () => new NetworkError("item_not_found", "I can't find that item. Check get_network_updates for current items.");
 
@@ -437,9 +498,12 @@ export class FakeNetwork {
         const tier = Math.max(c.tier, this.tierFor(p, c.tier)) as Tier;
         if (tier >= 2) {
           c.tier = tier;
+          c.expiresAt = Math.max(c.expiresAt, now + confirmationTtlMs(tier)); // the member gets the channel's full window
           this.askOnNetworkChannel(c);
           return r({ status: "confirm_in_network_app", message: "The Network has messaged you directly to confirm this. Nothing happens until you reply there.", pending_confirmation: this.publicConf(c) }, `Asked member to confirm in the Network channel: ${c.summary}`, tier);
         }
+        if (!this.stillActionable(c))
+          return r({ status: "expired", message: "That's no longer open. Nothing was done.", pending_confirmation: null }, "Confirmed an item that is no longer open.");
         this.execute(c, "host");
         return r({ status: "done", message: `Done: ${c.summary}`, pending_confirmation: null }, `Confirmed: ${c.summary}`, tier);
       }
@@ -447,7 +511,7 @@ export class FakeNetwork {
       const it = this.findOwnItem(p, me, input.item_id);
       if (!it) throw notFound();
       // Excluded by profile or not eligible (e.g. an intro for a member under 18): polite, no reason given.
-      if (visibility(it.facts, me.age, PROFILES[p.surfaceProfile]) !== "visible")
+      if (!this.itemVisible(p, me, it))
         return r({ status: "not_available_here", message: NOT_AVAILABLE, pending_confirmation: null }, "Tried to answer an item not available here.");
       if (it.status === "answered") return r({ status: "already_done", message: "You already answered that one.", pending_confirmation: null }, "Answered an item twice.");
       if (it.expiresAt !== null && it.expiresAt <= now) return r({ status: "expired", message: "That one has expired.", pending_confirmation: null }, "Answered an expired item.");
@@ -461,7 +525,8 @@ export class FakeNetwork {
         return r({ status: "done", message: "Okay, I'll bring it back later if it's still open.", pending_confirmation: null }, `Snoozed: ${it.title}`, 0);
       }
       const action: ActionKind = input.response === "interested" ? "respond_interested" : input.response === "not_for_me" || input.response === "cancel" ? "respond_not_for_me" : "respond_confirm_item";
-      const base: Tier = it.facts.connection === "contact" && input.response !== "not_for_me" ? 3 : ACTION_TIER[action];
+      // Saying yes to a contact swap or to a relayed message commits another member: tier 3 (§6.1).
+      const base: Tier = (it.facts.connection === "contact" || it.facts.connection === "relay") && action !== "respond_not_for_me" ? 3 : ACTION_TIER[action];
       const summary = `${input.response === "interested" ? "Say you're interested in" : input.response === "confirm" ? "Confirm" : "Pass on"}: ${it.title}.`;
       const c = this.pend(p, action, summary, { item: it.internalId, response: input.response }, base);
       if (c.tier >= 2)
@@ -478,15 +543,18 @@ export class FakeNetwork {
   confirmOnNetworkChannel(confirmationId: string, memberId: string): boolean {
     const c = this.confirmations.get(confirmationId);
     if (!c || c.memberId !== memberId || c.status !== "pending" || c.tier < 2 || c.expiresAt <= this.clock.now()) return false;
+    if (!this.stillActionable(c)) return false;
     this.execute(c, "network_channel");
     return true;
   }
 }
 
 /** Requests that would connect the member with other people (blocked for under-18 members). */
+// Runs on folded text (case, Unicode forms, homoglyphs, spacing and leetspeak; policy.ts), and fails
+// closed: a false positive is a polite "isn't available", a false negative connects a minor.
+const PEOPLE = /\b(introduc\w*|intros?|meet\w*|connect(ed|ing)? (me|with)|find (me )?(someone|somebody|people|a|friends?|partners?)|partners?|buddy|buddies|friends?|friendships?|pen ?pals?|mentors?|mentee|mentoring|mentorship|tutor\w*|teammates?|team|group|club|crew|squad|people|someone|somebody|person|hang ?out|hangout|chat with|talk to|invite\w*|share my (number|phone|contact|email)|swap (numbers|contacts)|need help|help me|looking for|anyone (know|who)|(message|text|dm|call|email|ping) (?!me\b)[a-z]+|let (?!me\b)[a-z]+ know)\b/;
 export const involvesPeople = (s: string) =>
-  /\b(introduc\w*|intro|meet|meetup|connect me|find (me )?(someone|people|a|friends|partner)|partner|buddy|buddies|friends?|group|invite|share my (number|phone|contact)|swap (numbers|contacts)|need help|help me|looking for|anyone (know|who))\b/i.test(s) ||
-  /\b(message|tell|text|ask) [A-Z][a-z]+\b/.test(s);
+  matchFolded(PEOPLE, s) !== null || /\b([Mm]essage|[Tt]ell|[Tt]ext|[Aa]sk|[Ll]et) (?!I\b)[A-Z][a-z]*\b/.test(s.normalize("NFKC"));
 
 function canonical(v: unknown): string {
   if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;

@@ -1,7 +1,11 @@
 # Cloudflare Worker for The Network's MCP origin, https://mcp.ntwrk.love/mcp (design §2.5, §12).
 # Prototype config only. DO NOT DEPLOY from here: the authorization server is a stub and the
 # production plan is a host-classified shard inside the eliza-cloud-api Worker (design D1, §13.3).
-# Validate without deploying (repo root): ./scripts/wrangler.sh deploy --dry-run -c prototypes/connector-mcp/wrangler.toml
+# Validate without deploying (repo root). Always name the environment: the top level is production
+# (--env="") and [env.staging] is staging; omitting --env makes wrangler warn and guess.
+#   ./scripts/wrangler.sh deploy --dry-run --env="" -c prototypes/connector-mcp/wrangler.toml
+#   ./scripts/wrangler.sh deploy --dry-run --env staging -c prototypes/connector-mcp/wrangler.toml
+# No secrets live here: the prototype needs none, and production secrets go in `wrangler secret put` (design §12.2).
 name = "network-mcp"
 # Cloudflare account that owns the ntwrk.love zone.
 account_id = "50ad2052bbc6ca528d6993a689b419a4"

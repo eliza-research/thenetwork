@@ -2,7 +2,17 @@
 // resource are the permanent MCP origin (https://mcp.ntwrk.love). The authorization, token and
 // revocation endpoints are stubs in this prototype; the metadata is what production will publish.
 import { isLoopbackRedirect, KNOWN_HOSTS, resolveClient, type NetworkConfig, type ResolvedClient } from "./config.ts";
+import { textVariants } from "./policy.ts";
 import { ALL_AS_SCOPES, DEFAULT_SCOPES } from "./schemas.ts";
+
+const BRAND_WORDS = [
+  "network", "ntwrk", "official", "verified", "openai", "chatgpt", "anthropic", "claude", "google", "gemini",
+  ...Object.values(KNOWN_HOSTS).map((h) => h.displayName.toLowerCase().replace(/[^a-z0-9]/g, "")),
+];
+/** True if a client-supplied name contains (a look-alike of) our brand, a host brand, "official" or "verified". */
+export function looksLikeBrand(name: string): boolean {
+  return textVariants(name).some((v) => { const k = v.replace(/[^a-z0-9]/g, ""); return BRAND_WORDS.some((b) => k.includes(b)); });
+}
 
 /** RFC 9728 protected resource metadata, served at /.well-known/oauth-protected-resource[/mcp]. */
 export function protectedResourceMetadata(cfg: NetworkConfig) {
@@ -61,9 +71,9 @@ export class ClientRegistry {
     const clientName = typeof b.client_name === "string" ? b.client_name.slice(0, 80) : undefined;
     const clientId = `dcr_${crypto.randomUUID().replace(/-/g, "")}`;
     const resolved = resolveClient(clientId, uris as string[]);
-    // Look-alike names are refused for unverified clients (design §8.3).
-    const brands = new RegExp(`\\b(network|official|${Object.values(KNOWN_HOSTS).map((h) => h.displayName).join("|")})\\b`, "i");
-    if (resolved.trustTier === "unverified" && clientName && brands.test(clientName))
+    // Look-alike names are refused for unverified clients (design §8.3), compared on a folded
+    // skeleton so case, fullwidth forms, homoglyphs, zero-width characters and spacing don't help.
+    if (resolved.trustTier === "unverified" && clientName && looksLikeBrand(clientName))
       return { status: 400, body: { error: "invalid_client_metadata", error_description: "client_name is not allowed for this client." } };
     this.dcr.set(clientId, { redirectUris: uris as string[], clientName });
     return {

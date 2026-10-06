@@ -6,7 +6,10 @@
   "description": "Prototype: The Network five-tool remote MCP connector for https://mcp.ntwrk.love/mcp (in-memory fake Network, stubbed OAuth AS).",
   "scripts": {
     "start": "bun run src/main.ts",
-    "test": "bun test"
+    "test": "bun test",
+    "typecheck": "tsc --noEmit -p .",
+    "dry-run": "../../scripts/wrangler.sh deploy --dry-run --env=\"\" -c wrangler.toml",
+    "dry-run:staging": "../../scripts/wrangler.sh deploy --dry-run --env staging -c wrangler.toml"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",

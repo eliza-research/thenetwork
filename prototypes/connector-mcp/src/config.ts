@@ -37,9 +37,18 @@ export function loadConfig(env: Env = {}): NetworkConfig {
   };
 }
 
-/** Accepts `…/mcp` and `…/mcp/` (Perplexity sends a trailing slash; design §3.2). */
+/**
+ * RFC 8707 audience / resource check. Accepts `…/mcp` and `…/mcp/` (Perplexity sends a trailing
+ * slash; design §3.2) and uppercase scheme and host, which MCP 2025-11-25 says servers SHOULD accept.
+ * Anything else (another path on this origin, the bare origin, a query or fragment, another host) is
+ * not this resource.
+ */
 export function normalizeResource(value: string, cfg: NetworkConfig): string | null {
-  return value.replace(/\/+$/, "") === cfg.resource ? cfg.resource : null;
+  let u: URL;
+  try { u = new URL(value); } catch { return null; }
+  if (u.search || u.hash || u.username || u.password) return null;
+  const canonical = `${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, "")}`;
+  return canonical === cfg.resource ? cfg.resource : null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -52,6 +61,12 @@ export type AuthChallengeStyle = "http" | "tool_meta";
 
 export interface KnownHost {
   hostKey: HostKey;
+  /**
+   * CIMD client_id paths this host publishes. A CIMD URL on the host but outside these paths is not
+   * the host's client (it could be user content the host serves) and resolves as unverified.
+   * Omitted = any path on the host (the CIMD fetch still requires `client_id` to equal the URL).
+   */
+  cimdPath?: RegExp;
   displayName: string;
   profile: SurfaceProfileName;
   /**
@@ -63,7 +78,8 @@ export interface KnownHost {
 }
 
 export const KNOWN_HOSTS: Record<string, KnownHost> = {
-  "chatgpt.com": { hostKey: "chatgpt", displayName: "ChatGPT", profile: "teen_safe_directory", scopeChallenge: "tool_meta" },
+  // OpenAI documents exactly two CIMD forms: /oauth/client.json and /oauth/{callback_id}/client.json [O5].
+  "chatgpt.com": { hostKey: "chatgpt", displayName: "ChatGPT", profile: "teen_safe_directory", scopeChallenge: "tool_meta", cimdPath: /^\/oauth\/(?:[A-Za-z0-9_-]+\/)?client\.json$/ },
   "claude.ai": { hostKey: "claude", displayName: "Claude", profile: "general_assistant", scopeChallenge: "http" },
   "claude.com": { hostKey: "claude", displayName: "Claude", profile: "general_assistant", scopeChallenge: "http" },
   "vertexaisearch.cloud.google.com": { hostKey: "gemini_enterprise", displayName: "Gemini Enterprise", profile: "enterprise_professional", scopeChallenge: "http" },
@@ -104,14 +120,24 @@ export function knownRedirectHost(uri: string): string | null {
  * opaque DCR / pre-registered id, in which case its registered redirect URIs decide the host.
  */
 export function resolveClient(clientId: string, registeredRedirects: string[] = []): ResolvedClient {
-  let host: string | null = null;
-  if (/^https:\/\//.test(clientId)) {
-    try { host = new URL(clientId).hostname; } catch { host = null; }
+  let known: KnownHost | undefined;
+  if (/^https:\/\//i.test(clientId)) {
+    // CIMD: the URL host decides, and only on the paths that host publishes.
+    try {
+      const u = new URL(clientId);
+      const k = KNOWN_HOSTS[u.hostname];
+      if (k && !u.port && !u.username && !u.password && !u.search && !u.hash && (!k.cimdPath || k.cimdPath.test(u.pathname))) known = k;
+    } catch { known = undefined; }
   } else {
-    const hosts = new Set(registeredRedirects.map(knownRedirectHost));
-    if (hosts.size === 1) host = [...hosts][0] ?? null; // all redirects must agree on one known host
+    // DCR / pre-registered: every registered redirect must be an exact known redirect of ONE host key
+    // (Claude legitimately registers both claude.ai and claude.com callbacks).
+    const keys = new Set(registeredRedirects.map((r) => { const h = knownRedirectHost(r); return h ? KNOWN_HOSTS[h]!.hostKey : null; }));
+    if (keys.size === 1 && !keys.has(null)) {
+      const h = knownRedirectHost(registeredRedirects[0]!)!;
+      known = KNOWN_HOSTS[h];
+    }
   }
-  const known = host ? KNOWN_HOSTS[host] : undefined;
   if (!known) return { clientId, trustTier: "unverified", ...UNKNOWN };
-  return { clientId, trustTier: "verified", ...known };
+  const { cimdPath: _ignored, ...rest } = known;
+  return { clientId, trustTier: "verified", ...rest };
 }

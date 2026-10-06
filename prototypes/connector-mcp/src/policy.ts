@@ -79,45 +79,122 @@ export class RateLimiter {
   }
 }
 
+// ---------------------------------------------------------------------------- text folding
+// Every deterministic check (input detectors, the profile classifier, the leak guard) runs on folded
+// variants of the text so case, Unicode compatibility forms (fullwidth letters), accents, zero-width
+// and other format characters, common Cyrillic/Greek homoglyphs, spaced-out letters ("b a r") and
+// digit/letter substitutions ("c0cktail") don't slip past a word list. Matching stays fail-closed:
+// a false positive costs a polite refusal, a false negative costs a policy breach.
+const CONFUSABLES: Record<string, string> = {
+  "а": "a", "в": "b", "е": "e", "ѕ": "s", "і": "i", "ј": "j", "к": "k", "м": "m", "н": "h", "о": "o", "р": "p", "с": "c",
+  "т": "t", "у": "y", "х": "x", "һ": "h", "ԁ": "d", "ӏ": "l", "ɡ": "g", "ɑ": "a", "ı": "i",
+  "α": "a", "β": "b", "ε": "e", "ζ": "z", "η": "n", "ι": "i", "κ": "k", "μ": "m", "ν": "v", "ο": "o", "ρ": "p", "τ": "t",
+  "υ": "u", "χ": "x", "ϲ": "c", "ϳ": "j",
+};
+const LEET: Record<string, string> = { "0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "8": "b", "@": "a", "$": "s", "!": "i", "|": "l" };
+
+function fold(s: string, formatChars: "" | " "): string {
+  return s
+    .normalize("NFKD")
+    .replace(/\p{Mn}/gu, "")
+    .replace(/\p{Cf}/gu, formatChars)
+    .toLowerCase()
+    .replace(/[^\u0000-\u007f]/g, (c) => CONFUSABLES[c] ?? c)
+    .replace(/[\u2010-\u2015\u2212\ufe58\ufe63\uff0d]/g, "-");
+}
+
+/** Folded variants of `s` for contact/identifier checks (no letter substitutions). */
+export function plainVariants(s: string): string[] {
+  const joined = fold(s, "");
+  const out = new Set([joined, fold(s, " ")]);
+  // snake_case / kebab-free identifiers: "_" is a word character, so \bcocktail\b misses "cocktail_bar".
+  for (const v of [...out]) if (v.includes("_")) out.add(v.replace(/_/g, " "));
+  return [...out];
+}
+
+/** Folded variants of `s` for vocabulary checks: plain variants + spaced letters collapsed + leetspeak undone. */
+export function textVariants(s: string): string[] {
+  const out = new Set<string>();
+  for (const v of plainVariants(s)) {
+    out.add(v);
+    const collapsed = v.replace(/\b(?:[a-z][ .\-_*~·]){2,}[a-z]\b/g, (m) => m.replace(/[^a-z]/g, ""));
+    out.add(collapsed);
+    for (const base of [v, collapsed]) {
+      out.add(base.replace(/[a-z0-9@$!|]+/g, (tok) =>
+        /[a-z]/.test(tok) && /[0-9@$!|]/.test(tok) ? tok.replace(/[0-9@$!|]/g, (c) => LEET[c] ?? c) : tok));
+    }
+  }
+  return [...out];
+}
+
+/** First match of `re` in any variant of `s` (vocabulary checks), or null. */
+export function matchFolded(re: RegExp, s: string): string | null {
+  for (const v of textVariants(s)) {
+    const m = re.exec(v);
+    if (m) return m[0];
+  }
+  return null;
+}
+const anyFolded = (re: RegExp, s: string) => matchFolded(re, s) !== null;
+const anyPlain = (re: RegExp, s: string) => plainVariants(s).some((v) => re.test(v));
+
 // ---------------------------------------------------------------------------- input detectors (§8.3)
-const PHONE = /(?:\+?\d[\s().-]?){10,15}/;
-const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+// Digits separated by up to three spaces, dots, dashes or brackets: "(415) 555-0102", "+1 415 555 0102".
+const PHONE = /(?:\+?\d[\s().\-\/]{0,3}){9,14}\d/;
+const EMAIL = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i;
+// "maya [at] example [dot] test", "maya at example dot test".
+const EMAIL_SPELLED = /\b[a-z0-9._%+-]{1,64}[\s([{]{1,3}at[\s)\]}]{1,3}[a-z0-9-]{1,63}[\s([{]{1,3}dot[\s)\]}]{1,3}[a-z]{2,10}\b/i;
 const URL_RE = /\bhttps?:\/\/\S+|\bwww\.\S+/i;
-const HANDLE = /(^|\s)@[A-Za-z0-9_]{2,}/;
-export const looksLikeContact = (s: string) => PHONE.test(s) || EMAIL.test(s) || URL_RE.test(s) || HANDLE.test(s);
+const HANDLE = /(^|\s)@[a-z0-9_]{2,}/i;
+export const looksLikePhoneOrEmail = (s: string) => anyPlain(PHONE, s) || anyPlain(EMAIL, s) || anyPlain(EMAIL_SPELLED, s);
+export const looksLikeContact = (s: string) => looksLikePhoneOrEmail(s) || anyPlain(URL_RE, s) || anyPlain(HANDLE, s);
 export const looksLikeCredential = (s: string) =>
-  /\b(password|passcode|api[_ -]?key|secret|otp|one[- ]time code|sk-[A-Za-z0-9]{8,})\b/i.test(s);
+  anyFolded(/\b(password|passcode|api[_ -]?key|secret|otp|one[- ]time code|sk-[a-z0-9]{8,})\b/, s);
 /** Special-category data the member should tell the Network directly (PRD 17.1, 17.2; design §5.5). */
 export const looksSensitive = (s: string) =>
-  /\b(diagnos\w*|pregnan\w*|hiv|therapy|therapist|medication|disabilit\w*|sexual\w*|gay|lesbian|bisexual|transgender|religio\w*|church|mosque|synagogue|immigration status|lonely|depress\w*|anxiety)\b/i.test(s);
+  anyFolded(/\b(diagnos\w*|pregnan\w*|hiv|therapy|therapist|medication|disabilit\w*|sexual\w*|gay|lesbian|bisexual|transgender|religio\w*|church|mosque|synagogue|immigration status|lonely|depress\w*|anxiety)\b/, s);
 /** Third-party facts: "my friend Jo …", "my sister's …", "Sam is …". */
 export const looksAboutSomeoneElse = (s: string) =>
-  /\b(my|his|her|their) (friend|sister|brother|mom|mother|dad|father|wife|husband|partner|boss|colleague|coworker|roommate|ex|kid|son|daughter)\b/i.test(s) ||
-  /\b[A-Z][a-z]+'s (number|phone|email|address|health|diagnosis|job|salary|divorce|birthday|kids?)\b/.test(s);
+  anyFolded(/\b(my|his|her|their) (friend|sister|brother|mom|mother|dad|father|wife|husband|partner|boss|colleague|coworker|roommate|ex|kid|son|daughter)\b/, s) ||
+  /\b[A-Z][a-z]+'s (number|phone|email|address|health|diagnosis|job|salary|divorce|birthday|kids?)\b/.test(s.normalize("NFKC"));
 /** Street-level location (design §5.5: city and neighborhood only). */
 export const looksLikeStreetAddress = (s: string) =>
-  /\b\d{1,6}\s+[A-Za-z0-9.]+(\s+[A-Za-z0-9.]+)*\s+(st|street|ave|avenue|rd|road|blvd|boulevard|ln|lane|dr|drive|way|ct|court|pl|place)\b/i.test(s) ||
-  /\b\d{5}(-\d{4})?\b/.test(s);
+  anyPlain(/\b\d{1,6}\s+[a-z0-9.]+(\s+[a-z0-9.]+)*\s+(st|street|ave|avenue|rd|road|blvd|boulevard|ln|lane|dr|drive|way|ct|court|pl|place)\b/, s) ||
+  anyPlain(/\b\d{5}(-\d{4})?\b/, s);
 /** Romance/dating intent: never through any connector, adult-only inside the Network (§7.2). */
 export const looksRomantic = (s: string) =>
-  /\b(date|dates|dating|romance|romantic|girlfriend|boyfriend|hook ?up|single (men|women|people)|find (me )?(a|someone to) (date|love))\b/i.test(s);
+  anyFolded(/\b(date|dates|dating|romance|romantic|girlfriend|boyfriend|hook ?up|single (men|women|people)|find (me )?(a|someone to) (date|love))\b/, s);
 export const looksNightlife = (s: string) =>
-  /\b(bars?|pubs?|nightlife|night ?clubs?|clubbing|cocktails?|happy hour|drinks|brewery|wine bar|21\+)\b/i.test(s);
+  anyFolded(/\b(bars?|pubs?|nightlife|night ?clubs?|clubbing|cocktails?|happy hour|drinks|brewery|breweries|wine bar|beer|booze|alcohol)\b|(?<![\w+])21 ?(\+|plus\b)|\b(over|ages?) ?21\b|\b21 (and|&) (over|up|older)\b/, s);
 
 // ---------------------------------------------------------------------------- outbound guard (§8.2)
+const squash = (s: string) => s.replace(/[^a-z0-9]/g, "");
+
 /**
  * Defense in depth behind the Network's own policy: any model-visible output containing another
  * member's id, contact details or non-shareable facet text, an internal id, or a phone/email pattern
- * is blocked. Returns the violations (empty = clean).
+ * is blocked. `text` is the raw model-visible strings (never a JSON serialization: JSON escapes
+ * quotes and newlines, so a forbidden string containing either would never match). Forbidden strings
+ * match case-, Unicode- and punctuation-insensitively. Returns the violations (empty = clean).
  */
-export function findLeaks(serialized: string, forbidden: string[]): string[] {
+export function findLeaks(text: string, forbidden: string[]): string[] {
   const v: string[] = [];
-  for (const f of forbidden) if (f && serialized.includes(f)) v.push(`forbidden:${f.slice(0, 12)}`);
-  if (PHONE.test(serialized)) v.push("phone_pattern");
-  if (EMAIL.test(serialized)) v.push("email_pattern");
+  const variants = plainVariants(text);
+  const squashed = variants.map(squash);
+  for (const f of forbidden) {
+    if (!f) continue;
+    const [ff] = plainVariants(f);
+    const sf = squash(ff!);
+    if (variants.some((t) => t.includes(ff!)) || (sf.length >= 6 && squashed.some((t) => t.includes(sf))))
+      v.push(`forbidden:${f.slice(0, 12)}`);
+  }
+  if (variants.some((t) => PHONE.test(t))) v.push("phone_pattern");
+  if (variants.some((t) => EMAIL.test(t) || EMAIL_SPELLED.test(t))) v.push("email_pattern");
+  if (variants.some((t) => INTERNAL_ID.test(t))) v.push("internal_id");
+  if (variants.some((t) => ISO_TIMESTAMP.test(t))) v.push("iso_timestamp");
   return v;
 }
 
 /** Internal identifiers and ISO timestamps that must never be in model-visible content (§5.1). */
-export const INTERNAL_ID = /\b(mem|opp|act|rcp|grt|prp)_[A-Za-z0-9]+/;
-export const ISO_TIMESTAMP = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+export const INTERNAL_ID = /\b(mem|opp|act|rcp|grt|prp|dcr)_[a-z0-9]+/i;
+export const ISO_TIMESTAMP = /\b\d{4}-\d{2}-\d{2}t\d{2}:\d{2}/i;

@@ -3,6 +3,8 @@
 // Member eligibility (age, 18+ / 21+ features, minors never connected to people) is a separate
 // Network-side check on the member account (§7.2, founder decision 3) and applies on every profile.
 
+import { matchFolded } from "./policy.ts";
+
 export type SurfaceProfileName = "teen_safe_directory" | "general_assistant" | "enterprise_professional";
 
 export type Category =
@@ -30,11 +32,15 @@ const BASE_INSTRUCTIONS =
   "Do search and plan on your own first; the Network involves other people only when that is worth it. " +
   "Don't paste other people's personal details into these tools. The Network asks the member to confirm consequential actions itself.";
 
-// Teen-safe vocabulary check: romance/dating, bars/nightlife/alcohol, 21+, sponsored [O3 R6, R7].
-const TEEN_BLOCK =
-  /\b(romance|romantic|dating|date night|go on a date|hook ?up|sexual|bars?|pubs?|nightlife|night ?clubs?|clubbing|cocktails?|happy hour|brewery|breweries|wine bar|beer|booze|alcohol|21\+|18\+|sponsored|underwritten|promoted)\b/i;
+// Teen-safe vocabulary check: romance/dating, bars/nightlife/alcohol, 18+/21+, sponsored [O3 R6, R7].
+// Patterns run on lowercase folded text (policy.ts textVariants). "21+" needs lookarounds, not \b:
+// there is no word boundary after "+", so `\b21\+\b` never matched "(21+)" or "21+ only".
+const AGE_GATE = String.raw`(?<![\w+])(18|21) ?(\+|plus\b)|\b(over|ages?) ?(18|21)\b|\b(18|21) (and|&) (over|up|older)\b|\b(adults?|grown-?ups?)[ -]only\b`;
+const ROMANCE_WORDS = String.raw`romance|romantic|dating|date night|go on a date|hook ?up|sexual|sexy`;
+const TEEN_BLOCK = new RegExp(
+  String.raw`\b(${ROMANCE_WORDS}|bars?|pubs?|taverns?|nightlife|night ?clubs?|clubbing|cocktails?|happy hour|brewery|breweries|wine bar|wine tasting|beer|booze|alcohol\w*|liquor|drinking|sponsored|underwritten|promoted|advertisement)\b|${AGE_GATE}`);
 // Romance is excluded from every connector profile in P0–P2 (§7.1, §5.5).
-const ROMANCE_BLOCK = /\b(romance|romantic|dating|date night|go on a date|hook ?up|sexual)\b/i;
+const ROMANCE_BLOCK = new RegExp(String.raw`\b(${ROMANCE_WORDS})\b`);
 
 export const PROFILES: Record<SurfaceProfileName, SurfaceProfile> = {
   teen_safe_directory: {
@@ -106,5 +112,5 @@ export function visibility(facts: ContentFacts, memberAge: number, profile: Surf
  */
 export function profileViolation(text: string, profile: SurfaceProfile, memberAge: number = ADULT_AGE): string | null {
   const block = memberAge < ADULT_AGE ? TEEN_BLOCK : profile.outputBlocklist;
-  return block?.exec(text)?.[0] ?? null;
+  return block ? matchFolded(block, text) : null;
 }

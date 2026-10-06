@@ -26,6 +26,9 @@ function setup() {
     chatgpt_readonly: tok(CLIENTS.chatgpt, [SCOPES.readBasic]),
     otheraud: tok(CLIENTS.claude, [...DEFAULT_SCOPES], { audience: "https://elsewhere.test/mcp" }),
     trailing: tok(CLIENTS.claude, [...DEFAULT_SCOPES], { audience: `${ORIGIN}/mcp/` }),
+    upperhost: tok(CLIENTS.claude, [...DEFAULT_SCOPES], { audience: "HTTPS://MCP.NTWRK.LOVE/mcp" }),
+    originonly: tok(CLIENTS.claude, [...DEFAULT_SCOPES], { audience: ORIGIN }),
+    otherpath: tok(CLIENTS.claude, [...DEFAULT_SCOPES], { audience: `${ORIGIN}/mcp/admin` }),
     expired: tok(CLIENTS.claude, [...DEFAULT_SCOPES], { expiresAt: w.clock.now() - 1 }),
   }, () => w.clock.now());
   const handle = createHttpHandler(w.net, { cfg, verifier, clients, allowedBrowserOrigins: ["https://claude.ai", "https://chatgpt.com"] });
@@ -136,7 +139,7 @@ describe("auth challenges", () => {
 
   test("invalid, expired, wrong-audience tokens → 401 error=invalid_token; trailing-slash audience accepted", async () => {
     const { handle } = setup();
-    for (const t of ["nope", "expired", "otheraud"]) {
+    for (const t of ["nope", "expired", "otheraud", "originonly", "otherpath"]) {
       const r = await handle(rpc(t, init()));
       expect(r.status).toBe(401);
       const h = r.headers.get("www-authenticate")!;
@@ -145,14 +148,15 @@ describe("auth challenges", () => {
       expect(h).toContain("error_description=");
     }
     expect((await handle(rpc("trailing", init()))).status).toBe(200);
+    expect((await handle(rpc("upperhost", init()))).status).toBe(200); // MCP 2025-11-25: SHOULD accept uppercase scheme/host
   });
 
-  test("Claude-style missing scope → HTTP 403 insufficient_scope step-up; nothing executes", async () => {
+  test("Claude-style missing scope → HTTP 403 insufficient_scope step-up (granted ∪ needed scopes); nothing executes", async () => {
     const { handle, w } = setup();
     const r = await handle(rpc("claude_readonly", toolCall("respond_to_network_item", { item_id: "itm_abcdef1234", response: "interested" })));
     expect(r.status).toBe(403);
     expect(r.headers.get("www-authenticate")).toBe(
-      `Bearer resource_metadata="${PRM_URL}", scope="network.write.responses", error="insufficient_scope", error_description="This action needs network.write.responses."`);
+      `Bearer resource_metadata="${PRM_URL}", scope="network.read.basic network.write.responses", error="insufficient_scope", error_description="This action needs network.write.responses."`);
     expect(w.net.audit).toHaveLength(0);
   });
 
@@ -163,8 +167,10 @@ describe("auth challenges", () => {
     const body = await r.json();
     expect(body.result.isError).toBe(true);
     const challenges = body.result._meta["mcp/www_authenticate"];
+    // OpenAI Apps SDK auth docs: an ARRAY of challenge strings (https://developers.openai.com/apps-sdk/build/auth).
     expect(Array.isArray(challenges)).toBe(true);
-    expect(challenges[0]).toMatch(new RegExp(`^Bearer resource_metadata="${PRM_URL.replace(/[./]/g, "\\$&")}", scope="network\\.write\\.requests", error="insufficient_scope", error_description="[^"]+"$`));
+    expect(challenges).toHaveLength(1);
+    expect(challenges[0]).toMatch(new RegExp(`^Bearer resource_metadata="${PRM_URL.replace(/[./]/g, "\\$&")}", scope="network\\.read\\.basic network\\.write\\.requests", error="insufficient_scope", error_description="[^"]+"$`));
     expect(body.result._meta["network/error"].code).toBe("needs_scope");
     expect(body.result.structuredContent).toBeUndefined();
     expect(w.net.effects).toHaveLength(0);

@@ -29,15 +29,19 @@ Sources: [docs/research/connectors/chatgpt.md](../../docs/research/connectors/ch
 - Receipt ids, action ids and ISO timestamps are only in `_meta["network/receipt"]`.
 - Item handles are per-grant HMACs, so ChatGPT and Claude see different ids for the same item.
 
-**Teen-safe surface profile [O3 R6, R7].** The verified client (a CIMD URL on `chatgpt.com`, or a DCR client with the exact ChatGPT redirect) gets `teen_safe_directory`. It never returns:
+**Teen-safe surface profile [O3 R6, R7].** The verified client gets `teen_safe_directory`: a CIMD URL of one of the two forms OpenAI documents (`https://chatgpt.com/oauth/client.json`, `https://chatgpt.com/oauth/{callback_id}/client.json`), or a DCR client whose redirects are all exact ChatGPT redirects. It never returns:
 - romance or dating
 - bars, nightlife, alcohol-centric or 18+/21+ venues
 - sponsored items
 
 Enforcement runs at three points:
-- query-level filtering
+- query-level filtering, by item category and flags and by the item's own text
 - polite `not_available_here` replies for out-of-profile requests
-- a deterministic output classifier that blocks any leaked term
+- a deterministic output classifier over results and error text that blocks any leaked term
+
+The word checks fold case, fullwidth forms, homoglyphs, zero-width characters, spaced-out letters and digit substitutions, and catch "21+" / "(21+)" / "over 21".
+
+**What this profile is, for reviewers.** It narrows what ChatGPT can see; it doesn't change what The Network is. The Network is not an 18+ product, and the ChatGPT surface is not a separate kids' product: it is the teen-safe content profile of the same invite-only service. Features such as 21+ events exist only inside The Network's own app and messaging (and only for eligible members), and the submission must say so (design §7.4).
 
 The profile is never derived from `clientInfo.name`.
 
@@ -54,9 +58,9 @@ The profile is never derived from `clientInfo.name`.
 **Auth.** All three pieces ChatGPT needs for its sign-in UI exist [O5]:
 - RFC 9728 metadata at `/.well-known/oauth-protected-resource[/mcp]`
 - per-tool `securitySchemes`
-- the runtime challenge: a missing scope on a ChatGPT grant returns `isError: true` with `_meta["mcp/www_authenticate"]: ["Bearer resource_metadata=\"…\", scope=\"…\", error=\"insufficient_scope\", error_description=\"…\""]`
+- the runtime challenge: a missing scope on a ChatGPT grant returns `isError: true` with `_meta["mcp/www_authenticate"]: ["Bearer resource_metadata=\"…\", scope=\"…\", error=\"insufficient_scope\", error_description=\"…\""]`. The value is an **array** of challenge strings, as OpenAI specifies ("Triggering authentication UI", https://developers.openai.com/plugins/build/auth, checked 2026-10-05). `scope` is the granted scopes plus the missing one, so re-linking never drops a scope.
 
-Invalid or expired tokens get HTTP 401 for every host. Claude grants get HTTP 403 for missing scopes.
+Invalid, expired or wrong-audience tokens get HTTP 401 for every host. Claude grants get HTTP 403 for missing scopes, with the same granted-plus-needed `scope`.
 
 **AS metadata (RFC 8414, issuer `https://mcp.ntwrk.love`):**
 - `code_challenge_methods_supported: ["S256"]`
@@ -69,14 +73,15 @@ With `iss` support, ChatGPT uses `https://chatgpt.com/connector_platform_oauth_r
 
 **UI.** The `ui://network/item-card.html` MCP Apps card is linked from `get_network_updates` only when the client declares the `io.modelcontextprotocol/ui` extension. It shows at most two primary actions.
 
-## Deviations from the design, and why
+## Decisions recorded in the design (§5.1, §7.1, §6.4, §13.9)
 
-- **Tool errors don't carry `structuredContent: {error}`.** The SDK client validates `structuredContent` against `outputSchema` even when `isError` is set, so an `{error}` object fails validation. The error is in `content` text and in `_meta["network/error"]` (`{code, message, retryable}`) instead.
+- **Tool errors don't carry `structuredContent: {error}`.** The SDK client validates `structuredContent` against `outputSchema` even when `isError` is set, so an `{error}` object fails validation. The error is in `content` text and in `_meta["network/error"]` (`{code, message, retryable}`) instead. The design now says the same.
 - **Sponsored items** are excluded from `general_assistant` too, not only from ChatGPT, because of Claude's ads-vehicle rule [A8 R4].
+- **No elicitation in P1.** Confirmations are the two-step `pending_confirmation`; tiers 2 and 3 are confirmed only in The Network's own channel.
 
 ## Gaps before submission
 
-1. **Authorization server.** `/oauth/authorize`, `/oauth/token` and `/oauth/revoke` return 501. DCR works in memory. Real phone-code login, consent, `at+jwt`, refresh rotation, `iss` on every redirect, CIMD fetch and grants are design §3.3–§3.7.
+1. **Authorization server.** `/oauth/authorize`, `/oauth/token` and `/oauth/revoke` return 501. DCR works in memory for local runs and tests and is a 501 on the Worker. Real phone-code login, consent, `at+jwt`, refresh rotation, `iss` on every redirect, CIMD fetch and grants are design §3.3–§3.7.
 2. **Age policy text.** The PRD still says 18+. Terms and privacy must match the founder decision before listing (design §15 Q4, §7.5). Confirm with OpenAI that an invite-only service is acceptable (Q5).
 3. **Reviewer tenant** with synthetic data and a password login (design §3.3).
 4. **Listing**, privacy policy, and the 5 positive / 3 negative test cases [O4].
@@ -90,6 +95,7 @@ cd prototypes/connector-mcp && bun run start
 #   Authorization: Bearer dev-ava-chatgpt   (ChatGPT teen-safe profile)
 #   Authorization: Bearer dev-ava           (Claude general profile)
 #   Authorization: Bearer dev-kai           (16-year-old member)
-# Validate the Worker without deploying (repo root):
-./scripts/wrangler.sh deploy --dry-run -c prototypes/connector-mcp/wrangler.toml
+# Validate the Worker without deploying (repo root; always name the environment):
+./scripts/wrangler.sh deploy --dry-run --env="" -c prototypes/connector-mcp/wrangler.toml
+./scripts/wrangler.sh deploy --dry-run --env staging -c prototypes/connector-mcp/wrangler.toml
 ```
