@@ -2,13 +2,13 @@
   "synthetic": true,
   "dataset": "The Network synthetic members (SF + NYC)",
   "datasetVersion": "v1",
-  "generatorVersion": "synthetic-gen 1.0.0",
+  "generatorVersion": "synthetic-gen 1.1.0",
   "simGeneratorSourceSha256": "0697ffdf97e5563ffbe30eac64bc4da86e30add8bc9ef57fb46011209412a0a4",
   "seed": 20261005,
   "snapshotNow": 1791824400000,
   "snapshotNowIso": "2026-10-12T17:00:00.000Z",
-  "generatedAt": "2026-10-06T00:09:28.972Z",
-  "model": "qwen-3.8-27b",
+  "generatedAt": "2026-10-06T00:41:07.237Z",
+  "model": "gpt-6-luna + qwen-3.8-27b",
   "counts": {
     "members": 500,
     "byCity": {
@@ -35,17 +35,17 @@
       "scammer": 4
     },
     "travelers": 50,
-    "facets": 6783,
+    "facets": 6700,
     "facetsByScope": {
       "matchable": 1915,
-      "shareable": 3524,
-      "agent_private": 1344
+      "shareable": 3518,
+      "agent_private": 1267
     },
-    "intents": 889,
+    "intents": 843,
     "intentsByCategory": {
-      "romance": 160,
+      "romance": 110,
       "help": 142,
-      "social": 262,
+      "social": 266,
       "professional": 148,
       "growth": 57,
       "hobby": 120
@@ -74,39 +74,120 @@
     "workplaces": 51
   },
   "llm": {
-    "provider": "cerebras",
-    "model": "qwen-3.8-27b",
-    "concurrency": 4,
-    "personasEnrichedByLLM": 499,
-    "fromCache": 88,
-    "templateFallbacks": 1,
-    "fallbackReasons": {
-      "Cerebras 429": 1
+    "provider": "surplus",
+    "model": "gpt-6-luna",
+    "concurrency": 6,
+    "personasEnrichedByLLM": 500,
+    "fromCache": 450,
+    "freshThisRun": 50,
+    "freshMemberIds": [
+      "sf-0004",
+      "sf-0010",
+      "sf-0017",
+      "sf-0018",
+      "sf-0023",
+      "sf-0034",
+      "sf-0051",
+      "sf-0060",
+      "sf-0069",
+      "sf-0093",
+      "sf-0110",
+      "sf-0113",
+      "sf-0116",
+      "sf-0157",
+      "sf-0163",
+      "sf-0170",
+      "sf-0182",
+      "sf-0188",
+      "sf-0213",
+      "sf-0247",
+      "sf-0249",
+      "ny-0021",
+      "ny-0025",
+      "ny-0027",
+      "ny-0029",
+      "ny-0033",
+      "ny-0068",
+      "ny-0073",
+      "ny-0075",
+      "ny-0076",
+      "ny-0077",
+      "ny-0079",
+      "ny-0132",
+      "ny-0133",
+      "ny-0134",
+      "ny-0150",
+      "ny-0159",
+      "ny-0161",
+      "ny-0175",
+      "ny-0176",
+      "ny-0179",
+      "ny-0193",
+      "ny-0198",
+      "ny-0208",
+      "ny-0217",
+      "ny-0219",
+      "ny-0222",
+      "ny-0229",
+      "ny-0231",
+      "ny-0245"
+    ],
+    "enrichedByModel": {
+      "qwen-3.8-27b": 450,
+      "gpt-6-luna": 50
     },
+    "templateFallbacks": 0,
+    "fallbackReasons": {},
     "partialFieldFallbacks": 0,
     "contactScrubs": 0,
-    "httpCalls": 1038,
-    "http429": 517,
+    "httpCalls": 50,
+    "http429": 0,
     "http5xx": 0,
-    "promptTokens": 307313,
-    "completionTokens": 1685741,
-    "reasoningTokens": 1508154,
-    "estimatedCostUsd": 2.816,
-    "pricingAssumption": "qwen-3.8-27b ~$0.99/M input, ~$1.49/M output (docs/test-plan.md section 15; confirm on Cerebras console)",
-    "enrichmentWallMs": 792706
+    "promptTokens": 21505,
+    "completionTokens": 30724,
+    "reasoningTokens": 13803,
+    "costUsdThisRun": 0.002621,
+    "costSource": "provider-reported usage.buyer_cost_micro (Surplus) summed via the core client's onResponse hook",
+    "enrichmentWallMs": 76796,
+    "previousRuns": [
+      {
+        "generatorVersion": "synthetic-gen 1.0.0",
+        "generatedAt": "2026-10-06T00:09:28.972Z",
+        "provider": "cerebras",
+        "model": "qwen-3.8-27b",
+        "concurrency": 4,
+        "personasEnrichedByLLM": 499,
+        "fromCache": 88,
+        "templateFallbacks": 1,
+        "fallbackReasons": {
+          "Cerebras 429": 1
+        },
+        "partialFieldFallbacks": 0,
+        "contactScrubs": 0,
+        "httpCalls": 1038,
+        "http429": 517,
+        "http5xx": 0,
+        "promptTokens": 307313,
+        "completionTokens": 1685741,
+        "reasoningTokens": 1508154,
+        "estimatedCostUsd": 2.816,
+        "pricingAssumption": "qwen-3.8-27b ~$0.99/M input, ~$1.49/M output (docs/test-plan.md section 15; confirm on Cerebras console)",
+        "enrichmentWallMs": 792706
+      }
+    ]
   },
   "files": {
     "members.jsonl": {
       "records": 500,
-      "sha256": "bdc354e34b7f3adbdfb0e21a30533cb70b3decaf5fd902eb9b10202f2a2bed01"
+      "sha256": "25377124b724237dfb4916b9569d75394495e7deeb4b23f04d7a88f0810ad4f6"
     },
     "facets.jsonl": {
-      "records": 6783,
-      "sha256": "5b8e810cf0f8b52abc3e2fff0641a0a72da1dabd8f37601499e9dbd19fcdcc8e"
+      "records": 6700,
+      "sha256": "3a172b10bae73dd378bd0f6c5c8ed03a9b2be39bf3be47dbecde58443f90223a"
     },
     "intents.jsonl": {
-      "records": 889,
-      "sha256": "753a6aa49dd5def30ddc95092cd426fa35e444d0d213ef7d01c86d9b788e72ae"
+      "records": 843,
+      "sha256": "933c7a56e3f2542cf896e2b54a5481f75664f80afd1630a8d8b9fcc9217bf5f9"
     },
     "presence.jsonl": {
       "records": 549,
@@ -118,13 +199,14 @@
     },
     "hidden_truth.jsonl": {
       "records": 500,
-      "sha256": "f051fbc0246b2b5f299ee83cd3289f4dc5142a12d107a846505f76d56d680d1a"
+      "sha256": "d2bcf337d0f3f66983574241509e10cd5c3f4ca90f5cb585099d2c8a7d87b6f3"
     }
   },
   "notes": [
     "ALL RECORDS ARE SYNTHETIC. Invented people with invented names; any resemblance to real persons is coincidental.",
     "Phone numbers use the fictional 555-01xx range; emails use example.com.",
     "hidden_truth.jsonl is ground truth for the simulator/oracle and evaluation only. Never load it into the engine or show it in product surfaces.",
-    "LLM text is cached under runs/synthetic-cache/v1 (gitignored); without the cache, regeneration yields the same structure but different prose."
+    "LLM text is cached under runs/synthetic-cache/v1 (gitignored); without the cache, regeneration yields the same structure but different prose.",
+    "generator 1.1.0: adult romance opt-in calibrated to ~25-30% (calibrateRomance in generate.ts); only members whose prompt changed (a dropped dating intent) or that had template text got new LLM text."
   ]
 }

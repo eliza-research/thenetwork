@@ -22,7 +22,11 @@ export interface ReportInput {
   models: string[];
   settings: Record<string, unknown>;
   rec?: { items: RecItem[]; scores: RecScore[]; baselines: RecScore[] };
-  judge?: { items: JudgeEvalItem[]; scores: JudgeScore[]; rules: JudgeScore };
+  judge?: {
+    items: JudgeEvalItem[]; scores: JudgeScore[]; rules: JudgeScore;
+    /** Per model: production policy judge (checkPolicy rules first, then the model's rubric verdict). */
+    production?: JudgeScore[];
+  };
   worlds: string;
   command: string;
 }
@@ -69,32 +73,50 @@ function recommendation(inp: ReportInput): string[] {
   if (inp.judge) {
     const { best, tied } = pick(inp.judge.scores, s => s.agreement, s => -s.privacyFnRate);
     const top = [...inp.judge.scores].sort((a, b) => b.agreement - a.agreement)[0];
-    if (best && top) out.push(`- **Judge:** highest agreement is ${displayName(top.name)} (${pct(top.agreement)}, kappa ${f3(top.kappa)}). ${tied.length > 1 ? `All of ${tied.map(t => `${displayName(t.name)} (${pct(t.agreement)}, ${usd(t.costMicro)})`).join(", ")} are statistically tied (exact McNemar p >= 0.05) and the set is near ceiling, so it does not separate the models well; on cost, ${displayName(best.name)} is the pick.` : `${displayName(best.name)} is the pick.`} Privacy false-negative rates: ${inp.judge.scores.map(s => `${displayName(s.name)} ${pct(s.privacyFnRate)}`).join(", ")}.`);
+    if (best && top) out.push(`- **Judge:** highest agreement is ${displayName(top.name)} (${pct(top.agreement)}, kappa ${f3(top.kappa)}; ${pct(top.hardAccuracy)} on the ${top.hardN} hard items). ${tied.length > 1 ? `${tied.filter(t => t !== top).map(t => `${displayName(t.name)} (${pct(t.agreement)}, hard ${pct(t.hardAccuracy)}, ${usd(t.costMicro)})`).join(", ")} are statistically tied with it (exact McNemar p >= 0.05 on all ${top.n} items); among tied models the pick goes to the lowest privacy false-negative rate, then cost: ${displayName(best.name)}.` : `${displayName(best.name)} is the pick.`} Privacy false-negative rates: ${inp.judge.scores.map(s => `${displayName(s.name)} ${pct(s.privacyFnRate)}`).join(", ")}.`);
+    const hardCorrect = inp.judge.scores.map(s => Math.round(s.hardAccuracy * s.hardN));
+    const spread = Math.max(...hardCorrect) - Math.min(...hardCorrect), allSpread = Math.max(...inp.judge.scores.map(s => s.correct.filter(Boolean).length)) - Math.min(...inp.judge.scores.map(s => s.correct.filter(Boolean).length));
+    out.push(`- **Does the judge suite discriminate?** ${allSpread <= 3 ? "No." : "Partly."} Across all ${inp.judge.items.length} items the models differ by at most ${allSpread} item(s), and on the ${inp.judge.scores[0]?.hardN ?? 0} hard items by ${spread}. All three are near ceiling against the single-annotator gold labels, and the few misses (listed under the judge section) are as likely to be label ambiguity as model error. For choosing a judge model, cost and latency matter more than this suite's accuracy.`);
+    if (inp.judge.production?.length) out.push(`- **Minors/romance policy (production judge = rules first, then the model):** ${inp.judge.production.map(s => `${displayName(s.name.replace(/ \+ rules$/, ""))} ${pct(s.byCategory.policy?.accuracy ?? NaN)} (policy FN ${pct(s.policyFnRate)})`).join(", ")}; deterministic rules alone block ${inp.judge.items.filter((it, i) => it.category === "policy" && inp.judge!.rules.correct[i] && !it.label).length} of ${inp.judge.items.filter(it => it.category === "policy" && !it.label).length} violations without an LLM call.`);
   }
   return out;
+}
+
+function pairwise(scores: { name: string; correct: boolean[] }[]): string[] {
+  const rows: string[][] = [];
+  for (let a = 0; a < scores.length; a++) for (let b = a + 1; b < scores.length; b++) {
+    const A = scores[a]!, B = scores[b]!;
+    let onlyA = 0, onlyB = 0;
+    A.correct.forEach((c, i) => { if (c && !B.correct[i]) onlyA++; if (!c && B.correct[i]) onlyB++; });
+    rows.push([`${displayName(A.name)} vs ${displayName(B.name)}`, String(onlyA), String(onlyB), mcnemar(onlyA, onlyB).toFixed(3)]);
+  }
+  return [table(["Comparison", "Only first correct", "Only second correct", "p-value"], rows), ""];
 }
 
 export function renderReport(inp: ReportInput): string {
   const L: string[] = [];
   L.push(`# Model comparison: recommender and judge (${inp.date})`, "");
-  L.push(`Models: ${inp.models.map(displayName).join(", ")}. All three were called through Surplus Intelligence with \`llmFor("surplus", model)\` and identical request settings (${Object.entries(inp.settings).map(([k, v]) => `\`${k}=${v}\``).join(", ")}).`, "");
+  L.push(`> **Decision (2026-10-05):** gpt-6-luna on Surplus Intelligence was chosen for all uses (judge, recommender, synthetic data, default LLM; see \`defaultLLM()\` / \`judgeLLM()\` / \`recommenderLLM()\` in \`packages/core/src/llm.ts\`). This report keeps comparing all three models as evidence for that choice.`, "");
+  L.push(`Models: ${inp.models.map(displayName).join(", ")}. All three were called through Surplus Intelligence with the core OpenAI-compatible client (\`OpenAILLM\` with \`ClientOptions\` hooks: \`extraBody\` for request settings, a caching \`fetch\`, \`onResponse\` for usage/cost) and identical request settings (${Object.entries(inp.settings).map(([k, v]) => `\`${k}=${v}\``).join(", ")}).`, "");
   L.push(`> **Terra stand-in:** gpt-6-terra is not available on Surplus (no sellers) or via the OpenAI key (model_not_found). Every "Terra" number below is **gpt-5.6-terra**, an older Terra model, not gpt-6-terra.`, "");
   L.push(`Reproduce: \`${inp.command}\` (responses are cached under \`runs/evals/cache/\`, so reruns are free).`, "");
 
   // ---------------- headline ----------------
   L.push("## Headline: % correct", "");
-  const head = ["Model", ...(inp.rec ? ["Recommender % correct (n=" + inp.rec.items.length + ")"] : []), ...(inp.judge ? ["Judge % agreement (n=" + inp.judge.items.length + ")"] : []), "Cost (both suites)"];
+  const hardN = inp.judge?.scores[0]?.hardN ?? 0;
+  const head = ["Model", ...(inp.rec ? ["Recommender % correct (n=" + inp.rec.items.length + ")"] : []), ...(inp.judge ? ["Judge % agreement (n=" + inp.judge.items.length + ")", `Judge, hard items only (n=${hardN})`] : []), "Cost (both suites)"];
   L.push(table(head, inp.models.map(m => {
     const r = inp.rec?.scores.find(s => s.name === m), j = inp.judge?.scores.find(s => s.name === m);
     return [displayName(m), ...(inp.rec ? [r ? `**${pct(r.accuracy)}** (95% CI ${ci(Math.round(r.accuracy * r.n), r.n)})` : "-"] : []),
-      ...(inp.judge ? [j ? `**${pct(j.agreement)}** (95% CI ${ci(Math.round(j.agreement * j.scored), j.scored)})` : "-"] : []),
+      ...(inp.judge ? [j ? `**${pct(j.agreement)}** (95% CI ${ci(Math.round(j.agreement * j.scored), j.scored)})` : "-",
+        j ? `${pct(j.hardAccuracy)} (95% CI ${ci(Math.round(j.hardAccuracy * j.hardN), j.hardN)})` : "-"] : []),
       usd((r?.costMicro ?? 0) + (j?.costMicro ?? 0))];
   })));
   if (inp.rec) {
     const refs = inp.rec.baselines.map(b => `${b.name} ${pct(b.accuracy)}`).join(", ");
     L.push("", `Recommender references: ${refs}.`);
   }
-  if (inp.judge) L.push(`Judge reference: deterministic rules (packages/judge) ${pct(inp.judge.rules.agreement)} on the ${inp.judge.rules.scored} items they can score (tone, one-question, shareability).`);
+  if (inp.judge) L.push(`Judge reference: deterministic rules (packages/judge \`checkMessage\` + \`checkPolicy\`) ${pct(inp.judge.rules.agreement)} on the ${inp.judge.rules.scored} items they can decide (tone, one-question, shareability, policy items without an "escalate" signal).`);
   L.push("", "## Recommendation", "", ...recommendation(inp), "");
 
   // ---------------- recommender ----------------
@@ -121,17 +143,7 @@ export function renderReport(inp: ReportInput): string {
     const sources = [...new Set(items.map(i => i.source))].sort();
     L.push(table(["Model", ...sources.map(s => `${s} (n=${items.filter(i => i.source === s).length})`)], all.map(s => [displayName(s.name), ...sources.map(src => pct(s.bySource[src] ?? NaN, 0))])));
     L.push("");
-    if (scores.length > 1) {
-      L.push("### Pairwise significance (exact McNemar on per-item correctness)", "");
-      const rows: string[][] = [];
-      for (let a = 0; a < scores.length; a++) for (let b = a + 1; b < scores.length; b++) {
-        const A = scores[a]!, B = scores[b]!;
-        let onlyA = 0, onlyB = 0;
-        A.correct.forEach((c, i) => { if (c && !B.correct[i]) onlyA++; if (!c && B.correct[i]) onlyB++; });
-        rows.push([`${displayName(A.name)} vs ${displayName(B.name)}`, String(onlyA), String(onlyB), mcnemar(onlyA, onlyB).toFixed(3)]);
-      }
-      L.push(table(["Comparison", "Only first correct", "Only second correct", "p-value"], rows), "");
-    }
+    if (scores.length > 1) { L.push("### Pairwise significance (exact McNemar on per-item correctness)", ""); L.push(...pairwise(scores)); }
 
     const c = datasetComposition(items);
     L.push("### Dataset composition", "");
@@ -157,6 +169,24 @@ export function renderReport(inp: ReportInput): string {
         s.privacyLeaks ? `${pct(s.privacyFnRate)} (${s.privacyFn}/${s.privacyLeaks})` : "-", pct(s.inferenceFnRate), pct(s.policyFnRate), pct(s.falseFlagRate), String(s.failures),
         s.name === "rules" ? "-" : `${ms(s.latencyP50)} / ${ms(s.latencyP95)}`, s.name === "rules" ? "$0" : usd(s.costMicro)])));
     L.push("", `Agreement = share of items where the judge's pass/fail equals the human gold label; kappa corrects for chance. Privacy FN rate = share of true leaks (privacy-audit and shareability items labeled "fail") that the judge let through; a failed call counts as a miss. False-flag rate = share of acceptable items the judge failed. The "rules" row is the deterministic checker from packages/judge, scored only on the items it can evaluate (n=${rules.scored}).`, "");
+    if (inp.judge.production?.length) {
+      L.push("### Minors/romance policy: model rubric alone vs production judge (rules first)", "");
+      const pol = items.filter(i => i.category === "policy");
+      const hardPol = items.map((it, i) => i).filter(i => items[i]!.category === "policy" && items[i]!.sub === "hard");
+      L.push(table(["Model", `LLM rubric only (n=${pol.length})`, "Rules + LLM (production)", "Policy FN (rules + LLM)", `Hard policy items, rules + LLM (n=${hardPol.length})`],
+        scores.map((sc, k) => {
+          const pr = inp.judge!.production![k]!;
+          return [displayName(sc.name), pct(sc.byCategory.policy?.accuracy ?? NaN), pct(pr.byCategory.policy?.accuracy ?? NaN), pct(pr.policyFnRate),
+            pct(hardPol.filter(i => pr.correct[i]).length / (hardPol.length || NaN))];
+        })));
+      L.push("", "`checkPolicy` (packages/judge/src/policy.ts) blocks hard violations deterministically (a stated minor connected to anyone in any role; strong romantic framing with a minor or with anyone not opted in). Everything else, including implicit minor signals and weak romantic cues, goes to the LLM rubric. The LLM can never un-block a rule violation.", "");
+    }
+    L.push("### Accuracy on the original vs hard items", "");
+    const hardCats = cats.filter(c => items.some(i => i.category === c && i.sub === "hard"));
+    L.push(table(["Model", `Original items (n=${items.filter(i => i.sub !== "hard").length})`, `Hard items (n=${items.filter(i => i.sub === "hard").length})`, ...hardCats.map(c => `hard ${c} (n=${items.filter(i => i.category === c && i.sub === "hard").length})`)],
+      scores.map(sc => [displayName(sc.name), pct(sc.baseAccuracy), pct(sc.hardAccuracy),
+        ...hardCats.map(c => { const ix = items.map((_, i) => i).filter(i => items[i]!.category === c && items[i]!.sub === "hard"); return ix.length ? pct(ix.filter(i => sc.correct[i]).length / ix.length, 0) : "-"; })])), "");
+    if (scores.length > 1) { L.push("### Pairwise significance, judge (exact McNemar on per-item correctness, all items)", ""); L.push(...pairwise(scores)); }
     L.push("### Items each judge got wrong", "");
     L.push(table(["Model", "Disagreements with gold (item: predicted)"], scores.map(sc => [displayName(sc.name),
       items.map((it, i) => (sc.correct[i] ? "" : `${it.id}: ${it.label ? "fail" : "pass"}`)).filter(Boolean).join(", ") || "none"])), "");
@@ -178,7 +208,8 @@ export function renderReport(inp: ReportInput): string {
   });
   L.push(table(["Model", "Recommender", "Judge", "Total", "Per call (avg item)", "Recommender per 1,000 configs"], costRows));
   const grand = inp.models.reduce((s, m) => s + (inp.rec?.scores.find(x => x.name === m)?.costMicro ?? 0) + (inp.judge?.scores.find(x => x.name === m)?.costMicro ?? 0), 0);
-  L.push("", `Grand total: ${usd(grand)} (Surplus \`usage.buyer_cost_micro\`, summed over every HTTP request including retries; cached replays report the original cost).`, "");
+  const fresh = inp.models.reduce((s, m) => s + (inp.rec?.scores.find(x => x.name === m)?.freshCostMicro ?? 0) + (inp.judge?.scores.find(x => x.name === m)?.freshCostMicro ?? 0), 0);
+  L.push("", `Grand total: ${usd(grand)} (Surplus \`usage.buyer_cost_micro\`, summed over every HTTP request including retries; cached replays report the original cost). Spent by the invocation that rendered this report (non-cached requests only; $0 for a cache replay): ${usd(fresh)}.`, "");
 
   // ---------------- methodology & caveats ----------------
   L.push("## Methodology", "");
@@ -188,7 +219,7 @@ export function renderReport(inp: ReportInput): string {
     "- **Labels.** `good` = oracle `compatible` (hidden-truth enjoyment above threshold for everyone, same city, no hard flags) AND no public policy violation. Per-participant accept/show/enjoyment come from the oracle (`evaluate`, seeded). Policy-unsafe items (blocked pair, anyone under 18 in any role including connector, romance without every participant opted in) are always \"no\". Labels are never shown to the model.",
     "- **What the model sees.** `buildPublicView` + `recommenderMessages`: pseudonymous refs (P1..), stated age, city, participation state, stated preferences, shareable facets, matchable facets marked do-not-quote, active intents, presence (incl. trips), and explicit edges among the people (knows, invited_by, blocked). Never names, member ids, agent_private facets (boundaries, private disclosures, canaries) or hidden truth. Offline tests enforce this.",
     "- **Output.** Structured JSON verdict: good_match, match_probability, accept_probability per attending participant, dealbreaker (+reason), and a short shareable why. Decision = good_match AND NOT dealbreaker. One retry on schema/parse failure.",
-    "- **Judge eval.** Production judges from `packages/judge` (`judgeMessageQuality`, `judgeExplanationShareability`, `judgeTiming`, `privacyAudit`) are run unchanged; minors/romance policy uses an eval-local rubric (`POLICY_RUBRIC`) because no production judge covers it yet. The 12 existing `CALIBRATION_SET` items are reused verbatim; the rest were written for this eval with gold labels.",
+    "- **Judge eval.** Production judges from `packages/judge` (`judgeMessageQuality`, `judgeExplanationShareability`, `judgeTiming`, `privacyAudit`, and the minors/romance policy judge `judgePolicyLLM`) are run unchanged. Models are compared on the policy rubric alone; the production policy judge (`judgePolicy` = deterministic `checkPolicy` first, rubric only when rules find no hard violation) is scored from the same responses. The 12 existing `CALIBRATION_SET` items are reused verbatim; the rest were written for this eval with gold labels, including 62 deliberately ambiguous \"hard\" items (borderline tone, subtle inferred privacy leaks, near-miss timing incl. time zones, implicit minors signals incl. age arithmetic and a minor connector, over-flag traps) added on 2026-10-06 because the first 121 items saturated (96-99% for every model). They were written in two batches: 42, then 20 more after the first batch still scored 97-100%; gold labels were fixed before any model saw an item, but the second batch was aimed at failure modes, so it is adversarially selected.",
     "- **Execution.** Identical items, prompts and request settings for every model; bounded concurrency; HTTP 429/5xx retried with backoff by the core client; every response cached by request hash under `runs/evals/cache/` (gitignored).",
     "",
   );
@@ -200,7 +231,7 @@ export function renderReport(inp: ReportInput): string {
     "- **Romance.** The simulator snapshot does not expose gender or romance preferences, so the eval only tests the opt-in rule for romance, not romantic compatibility.",
     "- **Coverage of opportunity kinds.** The simulator snapshot has no events or interaction history, so `event_coattend`, `second_encounter` and `network_growth` are not covered; pairs cover intro, help, member_intro (warm path via a connector) and expansion; groups cover 3-5 person groups.",
     "- **Terra.** gpt-5.6-terra stands in for gpt-6-terra, which was unavailable; conclusions about \"Terra\" may not transfer to gpt-6-terra.",
-    "- **Judge gold labels** were written by the eval author (single annotator) and the set is small (~120); per-category accuracy on 14-24 items has wide confidence intervals. The set is near ceiling for all three models, so it mostly verifies that each model is a competent judge rather than ranking them; harder, more ambiguous items are needed to separate them. Some disagreements are arguably label ambiguity (e.g. a confirmation message with no question, which the quality rubric's \"makes saying no easy\" criterion can penalize).",
+    "- **Judge gold labels** were written by the eval author (single annotator, no adjudication) and the set is small (183 items, 62 hard); per-category accuracy on 8-30 items has wide confidence intervals. The hard items are ambiguous by design, so a \"miss\" there is sometimes a defensible reading of the rubric rather than an error; each hard item carries a one-line rationale in `packages/evals/src/judgeDataset.ts`. A second annotator should review them before they gate anything.",
     "- **Policy items are easy.** The 56 policy-unsafe recommender items are explicit in the prompt (stated age, a `blocked` edge, romance opt-in flags) and every model rejected all of them; the \"Acc. excl. policy items\" column is the better measure of matching judgment.",
     "- **Settings.** All models used the same reasoning effort and token budget; a model might do better with its own tuned settings or prompt.",
     "",

@@ -56,6 +56,7 @@ export interface EngineConfig {
   newcomerDays: number;
   emptyStateDays: number;
   highRiskTerms: string[];
+  highRiskPatterns: string[];
   homeEntryTerms: string[];
 }
 
@@ -82,8 +83,15 @@ export const DEFAULT_CONFIG: EngineConfig = {
     exploration: 0.15,
   },
   floors: { fit: 0.12, mutualBenefit: 0.08, confidence: 0.3, maxSocialRisk: 0.8, judgeDimension: 0.25 },
+  // warmPath 0.3 -> 0.2 (2026-10, synthetic v1 review). A warm tie is credited twice: through
+  // this component (warmPathValue never drops below 0.3 and peaks at 1.0) and through the graph
+  // channel raising retrieval agreement in Confidence. At 0.3 warm_path took 122 of 221
+  // proposals with the lowest mean fit of any intent generator (0.51), spending members'
+  // 2-per-week budgets ahead of better-fitting cold intros. At 0.2: warm_path 94/217, mean
+  // selected fit 0.559 -> 0.583. There is no per-generator cap by design; the exploration slice
+  // (13-14%) and exposure debt were checked and behave as specified.
   weights: {
-    fit: 1.0, mutualBenefit: 0.8, warmPath: 0.3, novelty: 0.2, timingFit: 0.3,
+    fit: 1.0, mutualBenefit: 0.8, warmPath: 0.2, novelty: 0.2, timingFit: 0.3,
     activationCost: 0.25, interruptionCost: 0.2, load: 0.4, repetition: 0.4, socialRisk: 0.4,
   },
   retrieval: { topK: 50, exposureFloorK: 10, lowExposureMax: 1, minSim: 0.2, warmMinSim: 0.15, poolSim: 0.4 },
@@ -96,9 +104,24 @@ export const DEFAULT_CONFIG: EngineConfig = {
   inviteTtlMs: 48 * HOUR, sameDayInviteTtlMs: 3 * HOUR,
   newcomerDays: 14,
   emptyStateDays: 10,
-  highRiskTerms: ["childcare", "babysit", "babysitting", "minor", "minors", "kid", "kids", "child", "children",
-    "medical", "nursing", "clinical", "medication", "loan", "lend", "cash", "custody", "drug", "drugs",
-    "weed", "substance", "home_hosted", "therapy"],
+  // High-risk vocabulary (F14/F15 safety rules). Matched on whole words (with plurals), so
+  // "kids" never fires on "kid-friendly"... unless a rule below says so. Kept deliberately
+  // small: generic words about children, money or health are handled by the context rules in
+  // `highRiskPatterns`, because members routinely write "parents with young kids", "lend a
+  // hand" or "loan a drum pad" (the v1 list rejected 404 synthetic candidates on such text).
+  highRiskTerms: ["childcare", "child care", "babysit", "babysitter", "babysitting", "nanny", "playdate", "play date",
+    "custody", "minors", "underage", "medical", "nursing", "clinical", "medication", "prescription",
+    "drug", "weed", "cannabis", "substance", "home hosted", "therapy", "cash"],
+  // Context rules (case-insensitive regex sources, applied to text with "_" read as a space):
+  // children only count when someone would care for, supervise, transport or teach them, or a
+  // service is offered to them; lending only when it is money.
+  highRiskPatterns: [
+    "\\b(watch(ing)?|sit(ting)?|look(ing)? after|care for|caring for|supervis\\w*|pick(ing)? up|drop(ping)? off|driv(e|ing)|tutor\\w*|mentor\\w*|coach\\w*|teach\\w*|alone with)\\b(\\W+\\w+){0,3}?\\W+(my |our |your |their |the |a )?(kids?|child|children|minors?|teens?|teenagers?|toddlers?|bab(y|ies)|sons?|daughters?)\\b",
+    "\\b(for|to) (\\w+ )?(little |young |small )?(kids|children|toddlers|teens|teenagers|minors)\\b(?!')",
+    "\\bunder (the age of )?1[0-7]\\b",
+    "\\b(lend|lending|loan|loans|borrow|borrowing)\\b(\\W+\\w+){0,3}?\\W+(money|cash|dollars|rent|funds?|\\$)",
+    "\\$\\s?\\d+\\s?(loan|cash)\\b", "\\b(personal|payday) loans?\\b",
+  ],
   homeEntryTerms: ["home", "apartment", "house", "move", "moving", "couch", "furniture", "my place"],
 };
 

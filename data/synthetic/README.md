@@ -9,14 +9,14 @@ Every record has a top-level `"synthetic": true`, and so does `manifest.json`.
 | File | Records | What it holds |
 |---|---|---|
 | `members.jsonl` | 500 | Core `Member` (packages/core) plus `segment` (`adult`/`minor`) and `profile`: pronouns, neighborhood, borough, occupation, bio, texting voice (`style`, `samples`), routine, availability, `secondaryCity`, fictional `contact`, and `enrichment` (`llm`/`template`) |
-| `facets.jsonl` | 6,783 | Core `Facet`: interests, skills, offers, boundaries, romance and dealbreaker preferences, neighborhood, occupation, availability pattern, and canary-bearing private disclosures |
-| `intents.jsonl` | 889 | Core `Intent`: an objective from the sim taxonomy, plus an LLM-written `details` sentence followed by `(format; tags)`, and `desiredPeople` |
+| `facets.jsonl` | 6,700 | Core `Facet`: interests, skills, offers, boundaries, romance and dealbreaker preferences, neighborhood, occupation, availability pattern, and canary-bearing private disclosures |
+| `intents.jsonl` | 843 | Core `Intent`: an objective from the sim taxonomy, plus an LLM-written `details` sentence followed by `(format; tags)`, and `desiredPeople` |
 | `presence.jsonl` | 549 | Core `Presence`: 500 home, 24 routine (bi-coastal members), 25 temporary (trips already announced at snapshot time) |
 | `edges.jsonl` | 2,092 | Core `Edge` plus `relation`: `invited_by` 490, `vouched_for` 334, `knows` 1,253 (949 friend, 297 coworker, 7 roommate), `blocked` 15 |
 | `hidden_truth.jsonl` | 500 | **Ground truth. Never load this into the engine or show it in a product surface.** It holds the sim `HiddenTruth` (true age, real interests and desires, honesty, flakiness, responsiveness, private disclosure plus canary, trips, adversarial kind), archetype, gender, community, workplace, relationships (including exes, which are never disclosed), adversarial notes with scripted messages, and the public persona |
 | `manifest.json` | | Seed, snapshot time, generator version, sim-generator source hash, model, counts, LLM usage and cost, file hashes |
 | `validation.json` | | Output of `validate.ts` |
-| `engine_v1_run.json` | | Output of `load.ts --engine` |
+| `engine_v1_run.json` | | Output of `load.ts --engine`. **Stale:** produced from generator 1.0.0 data and the pre-change engine; rerun after the engine changes land (see below) |
 
 Every timestamp is relative to the snapshot time `now = 2026-10-12T17:00Z` (Mon 10:00 PDT / 13:00 EDT). Member ids are `sf-0001..sf-0250` and `ny-0001..ny-0250`. Facet ids are `<member>:fNN` and intent ids are `<member>:iN`.
 
@@ -53,19 +53,20 @@ Every timestamp is relative to the snapshot time `now = 2026-10-12T17:00Z` (Mon 
 ## Regenerate
 
 ```bash
-bun scripts/synthetic/generate.ts                  # Cerebras-enriched; uses CEREBRAS_* from .env
+bun scripts/synthetic/generate.ts --dry-run        # list members whose text is cached vs needs the LLM; no API calls, writes nothing
+bun scripts/synthetic/generate.ts --max-fresh 60   # LLM-enriched via defaultLLM() (DEFAULT_LLM_PROVIDER/MODEL, default Surplus gpt-6-luna); refuses if >60 members need new text
 bun scripts/synthetic/generate.ts --no-llm         # template prose only, no API calls (~0.1 s)
-bun scripts/synthetic/generate.ts --concurrency 4 --fresh   # ignore the LLM cache
+bun scripts/synthetic/generate.ts --concurrency 4 --fresh   # ignore the LLM cache (regenerates all 500)
 bun scripts/synthetic/validate.ts                  # writes v1/validation.json, exit 1 on failure
 bun scripts/synthetic/load.ts --engine             # runs engine v1, writes v1/engine_v1_run.json
 ```
 
-Everything except the LLM prose is a pure function of `SEED = 20261005` (`scripts/synthetic/common.ts`), the `packages/sim` generator and the taxonomy. The manifest records `simGeneratorSourceSha256`, so you can tell when the sim generator changed underneath the dataset. LLM outputs are cached per member under `runs/synthetic-cache/v1/` (gitignored), keyed by a hash of model plus prompt. A rerun with the cache in place reproduces the data files byte for byte, except for members that fell back to template text, which the rerun retries. This was verified: a cached rerun differed only in `sf-0103`, the one fallback member. Without the cache you get the same structure with different prose.
+Everything except the LLM prose is a pure function of `SEED = 20261005` (`scripts/synthetic/common.ts`), the `packages/sim` generator and the taxonomy. The manifest records `simGeneratorSourceSha256`, so you can tell when the sim generator changed underneath the dataset. LLM outputs are cached per member under `runs/synthetic-cache/v1/` (gitignored). Each entry stores the model that wrote it and a hash of model plus prompt; an entry is reused whenever the member's prompt is unchanged, **whichever model wrote it**, so switching the default model does not regenerate existing text. A rerun with the cache in place reproduces the data files byte for byte, except for members without a valid entry (template fallbacks, or members whose prompt changed), which the rerun sends to the LLM. Without the cache you get the same structure with different prose.
 
 The pipeline:
 1. `generatePersonas` runs once per city.
 2. Deterministic post-processing adds invented names, real neighborhoods, the age mix including minors, extra career intents (about 25% of adults), travelers, workplaces, join dates, participation state and the graph.
-3. One Cerebras call per member returns JSON with bio, occupation, 3 voice samples, routine, availability, offers, intent details, desired people and rephrased boundaries.
+3. One LLM call per member (`defaultLLM()` from `packages/core`; v1.0.0 used Cerebras `qwen-3.8-27b`) returns JSON with bio, occupation, 3 voice samples, routine, availability, offers, intent details, desired people and rephrased boundaries.
 4. Outputs are scrubbed for contact info and canaries. If a call fails, the member falls back to template text and the fallback is counted.
 
 ## Load
@@ -87,9 +88,16 @@ const personas = await loadPersonas();
 
 `loadSnapshot` never reads `hidden_truth.jsonl`. It strips the dataset-only fields (`synthetic`, `segment`, `profile`, `relation`), so the engine sees exactly the `packages/core` contract. `recentProposals` is empty, and there are no `events`, feedback or interactions, so `event_anchor` and `second_encounter` have nothing to work from.
 
-## Results (generated 2026-10-06)
+## Results (generator 1.1.0, regenerated 2026-10-06)
 
-### Generation
+### What changed in 1.1.0
+- **Romance opt-in calibrated.** In 1.0.0, 207 of 450 adults (46%) were opted in to romance: the sim's independent 30% hidden opt-in plus dating intents sampled from the taxonomy. `calibrateRomance` in `generate.ts` now keeps a stated dating intent with p = 0.68 and a hidden-only opt-in with p = 0.3, and makes hidden truth agree with the public opt-in (adversarial personas are untouched, so the harassers keep their opt-in). Result: **130 of 450 adults (28.9%)**, 110 romance intents (was 160).
+- **Only changed members got new text.** Dropping a dating intent changes a member's prompt, so those **50 members** were re-enriched with Surplus `gpt-6-luna` (50 calls, 0 retries, 21.5K prompt / 30.7K completion tokens, **$0.0026**, provider-reported). The other 450 reuse their cached `qwen-3.8-27b` text unchanged. The manifest lists the 50 ids under `llm.freshMemberIds` and keeps the 1.0.0 run stats under `llm.previousRuns`.
+- **`sf-0103` now has LLM text.** It was the one template fallback in 1.0.0 (after repeated Cerebras 429s). A valid cached `qwen-3.8-27b` entry for its exact prompt was written by an earlier cache-repair run, and the cache-aware generator picked it up; 500/500 members now have LLM text.
+- Prose is now from two models (450 qwen, 50 gpt-6-luna); a scan of the 50 new profiles found no brand/employer/school names and no dating language.
+- Counts that moved: facets 6,783 -> 6,700 (fewer romance-preference facets and offers), intents 889 -> 843. Everything else (members, ages, minors, travelers, graph, canaries) is identical.
+
+### Generation (1.0.0, the 450 members whose text was reused)
 - **Model and time:** Cerebras `qwen-3.8-27b` at concurrency 4. The run took **13m13s** of wall time.
 - **Coverage:** 499 of 500 members were enriched by the LLM. 88 of those came from the cache of an earlier partial run. **1 member fell back to template text** after repeated 429s. There were 0 partial-field fallbacks and 0 contact scrubs.
 - **Rate limits:** the run made 1,038 HTTP calls, and 517 of them were 429s. The 150K TPM limit is the constraint, because about 88% of the output tokens are hidden reasoning. The retries absorbed all of these.
@@ -99,12 +107,12 @@ const personas = await loadPersonas();
   - These figures use the price assumption in `docs/test-plan.md` §15 ($0.99/M input, $1.49/M output). Confirm them on the console.
 - **Checks:** a scan of bios and voice samples for common real brand, employer and school names found 0 hits.
 
-### Validation: 13/13 pass (`v1/validation.json`)
+### Validation: 13/13 pass on the 1.1.0 data (`v1/validation.json`)
 
 | Check | Result |
 |---|---|
 | manifest integrity | sha256 and record counts match |
-| schema conformance (core types) | 500 members, 6,783 facets, 889 intents, 549 presence, 2,092 edges valid; enums are tied to core types at compile time; the snapshot carries no extra keys |
+| schema conformance (core types) | 500 members, 6,700 facets, 843 intents, 549 presence, 2,092 edges valid; enums are tied to core types at compile time; the snapshot carries no extra keys |
 | all records synthetic | yes, in all 6 JSONL files |
 | names and contact | 500 unique names; every phone `+1-AAA-555-01xx` and unique; every email `@example.com`; no phone, email or URL in free text |
 | city and neighborhood | 250/250; every neighborhood, borough and presence area valid for its city |
@@ -119,11 +127,13 @@ const personas = await loadPersonas();
 
 - **Archetypes:** regular 167, newcomer 67, busy_parent 62, introvert 50, traveler 50, very_active 40, connector 34, never_replies 30.
 - **Genders:** woman 254, man 217, nonbinary 29.
-- **Intents by category:** social 262, romance 160, professional (career) 148, help 142, hobby 120, growth 57. That is 1.78 intents per member over 20 objectives.
-- **Romance:** 207 adults are opted in to romance. That is high, because it inherits the sim's 30% rate plus dating intents, so tune it down if the demos need to.
+- **Intents by category:** social 266, professional (career) 148, help 142, hobby 120, romance 110, growth 57. That is 1.69 intents per member over 20 objectives.
+- **Romance:** 130 of 450 adults (28.9%) are opted in to romance (was 207, 46%, in 1.0.0; see "What changed").
 - **Coverage:** all 38 interest tags and all 8 writing styles appear.
 
 ### Engine v1 on the loaded snapshot (`v1/engine_v1_run.json`, seed 1, no LLM judge)
+
+> **Needs a rerun.** These numbers come from the 1.0.0 data (46% romance opt-in, 889 intents) and the engine as of commit 1a6cd58. The engine is being changed right now, so they were deliberately not regenerated for 1.1.0. Rerun `bun scripts/synthetic/load.ts --engine` once the engine changes land and replace this section.
 
 The run produced **204 proposals** in 1.3 s, touching 276 members (SF 110, NYC 94). 28 of the proposals are exploration picks.
 

@@ -83,7 +83,22 @@ export const unansweredDeadline = (m: OutboundMessage) => Math.min(m.at + UNANSW
 
 /** Number of consecutive most-recent proactive messages that are unanswered (pending ones skipped). */
 export function unansweredStreak(history: OutboundMessage[], now: number): number {
-  const pro = history.filter(m => isProactive(m.kind) && m.at <= now).sort((a, b) => b.at - a.at);
+  // Bundled items share one message id (one text, one budget unit): count each message once,
+  // answered if any of its rows has a reply. Otherwise one unanswered bundle of two items
+  // would trip the two-unanswered rule on its own.
+  const byId = new Map<string, OutboundMessage>();
+  for (const m of history) {
+    if (!isProactive(m.kind) || m.at > now) continue;
+    const cur = byId.get(m.id);
+    if (!cur) { byId.set(m.id, m); continue; }
+    const replied = [cur.repliedAt, m.repliedAt].filter((x): x is number => x !== undefined);
+    byId.set(m.id, {
+      ...cur, at: Math.min(cur.at, m.at),
+      expiresAt: cur.expiresAt === undefined || m.expiresAt === undefined ? undefined : Math.max(cur.expiresAt, m.expiresAt),
+      repliedAt: replied.length ? Math.min(...replied) : undefined,
+    });
+  }
+  const pro = [...byId.values()].sort((a, b) => (b.at - a.at) || (a.id < b.id ? -1 : 1));
   let n = 0;
   for (const m of pro) {
     const dl = unansweredDeadline(m);

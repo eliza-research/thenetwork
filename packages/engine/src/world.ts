@@ -320,9 +320,37 @@ export class World {
     return out;
   }
 
+  private locCache = new Map<string, Map<City, Interval[]>>();
+  /** Memoised `location` (the world is immutable, so a member's whereabouts for a window never change). */
+  private locationCached(id: MemberId, start: number, end: number): Map<City, Interval[]> {
+    const k = `${id}|${start}|${end}`;
+    let v = this.locCache.get(k);
+    if (!v) { v = this.location(id, start, end); this.locCache.set(k, v); }
+    return v;
+  }
+
+  /**
+   * True if all `ids` share enough time in one run city during the default opportunity window.
+   * Generators use this before ranking so co-location never costs a candidate its top-K slot.
+   */
+  canMeet(ids: MemberId[]): boolean {
+    const start = this.now, end = this.now + this.cfg.windowDays * DAY;
+    if (ids.length !== 2) return this.overlap(ids, start, end) !== null;
+    const k = pairKey(ids[0]!, ids[1]!);
+    let v = this.meetCache.get(k);
+    if (v === undefined) {
+      // Fast path: no run city in common at all (the common case across SF/NYC).
+      const la = this.locationCached(ids[0]!, start, end), lb = this.locationCached(ids[1]!, start, end);
+      v = this.cfg.cities.some(c => la.has(c) && lb.has(c)) && this.overlap(ids, start, end) !== null;
+      this.meetCache.set(k, v);
+    }
+    return v;
+  }
+  private meetCache = new Map<string, boolean>();
+
   /** Common availability of all members in one city (prefers `preferred`, else largest overlap). */
   overlap(ids: MemberId[], start: number, end: number, preferred?: City): { city: City; intervals: Interval[]; hours: number } | null {
-    const locs = ids.map(id => this.location(id, start, end));
+    const locs = ids.map(id => this.locationCached(id, start, end));
     let best: { city: City; intervals: Interval[]; hours: number } | null = null;
     for (const city of this.cfg.cities) {
       let ivs: Interval[] = [[start, end]];

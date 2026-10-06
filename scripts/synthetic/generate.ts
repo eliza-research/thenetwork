@@ -1,19 +1,24 @@
 // Generate the SYNTHETIC SF + NYC member dataset (data/synthetic/v1/).
 //
-//   bun scripts/synthetic/generate.ts                 # 250 SF + 250 NYC, Cerebras-enriched (cached)
+//   bun scripts/synthetic/generate.ts                 # 250 SF + 250 NYC, LLM-enriched (cached), defaultLLM()
 //   bun scripts/synthetic/generate.ts --no-llm        # template text only (no API calls)
+//   bun scripts/synthetic/generate.ts --dry-run       # report cache hits/misses, write nothing, no API calls
+//   bun scripts/synthetic/generate.ts --max-fresh 60  # refuse to run if more than 60 members need new LLM text
 //   bun scripts/synthetic/generate.ts --concurrency 4 --fresh
 //
 // Pipeline: packages/sim generatePersonas (seeded hidden truth + public profile) -> deterministic
 // post-processing (invented names, real neighborhoods, ages incl. ~10% minors, travelers,
 // workplaces, join dates, invite/vouch trees, friendship/coworker clusters with bridges) ->
-// Cerebras enrichment (bio, texting voice, routine, offers, intent details) with template fallback
+// LLM enrichment via core defaultLLM() (DEFAULT_LLM_PROVIDER / DEFAULT_LLM_MODEL, default Surplus
+// gpt-6-luna; v1 text was originally written by Cerebras qwen-3.8-27b and is reused from the cache)
+// (bio, texting voice, routine, offers, intent details) with template fallback
 // -> public JSONL files + hidden_truth.jsonl (kept separate) + manifest.json.
 // Everything except the LLM text is a pure function of SEED; LLM outputs are cached under
-// runs/synthetic-cache/ (gitignored) keyed by prompt hash, so reruns are reproducible.
+// runs/synthetic-cache/ (gitignored) per member; an entry is reused whenever its prompt is unchanged,
+// whichever model wrote it, so changing the default model never regenerates existing text.
 import { mkdirSync, existsSync, readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { CerebrasLLM, DAY, HOUR, type City, type LLM } from "../../packages/core/src/index.ts";
+import { DAY, DEFAULT_MODEL, DEFAULT_PROVIDER, HOUR, defaultLLM, type City, type LLM } from "../../packages/core/src/index.ts";
 import { generatePersonas } from "../../packages/sim/src/generator.ts";
 import { chatJson, mapLimit } from "../../packages/sim/src/llmGenerator.ts";
 import type { AdversarialKind, Archetype, Desire, Persona, Relationship, RelationshipType } from "../../packages/sim/src/persona.ts";
@@ -33,6 +38,8 @@ const args = parseArgs({
     fresh: { type: "boolean", default: false },
     concurrency: { type: "string", default: "6" },
     "llm-limit": { type: "string" },
+    "max-fresh": { type: "string" },
+    "dry-run": { type: "boolean", default: false },
     out: { type: "string", default: DATA_DIR },
   },
 }).values;
@@ -111,6 +118,30 @@ function adultAge(r: Rng, arch: Archetype): number {
   return a;
 }
 
+// Romance calibration (generator 1.1.0). The sim's independent 30% hidden opt-in plus dating intents
+// sampled from the taxonomy put 46% of adults in romance (v1.0.0), which is high for a general social
+// network. Keep a stated dating intent with p = ROMANCE_KEEP_STATED and a hidden-only opt-in with
+// p = ROMANCE_KEEP_HIDDEN_ONLY (target ~25-30% of adults), and make hidden truth agree with the public
+// opt-in. Adversarial personas are untouched (harassers keep their opt-in by design).
+const ROMANCE_KEEP_STATED = 0.68, ROMANCE_KEEP_HIDDEN_ONLY = 0.3;
+function calibrateRomance(p: Persona, r: Rng) {
+  const h = p.hidden;
+  if (h.adversarial) return;
+  if (p.public.statedIntents.some(i => i.category === "romance")) {
+    if (r.bool(ROMANCE_KEEP_STATED)) { h.romance.optIn = true; return; }
+    p.public.statedIntents = p.public.statedIntents.filter(i => i.category !== "romance");
+    h.desires = h.desires.filter(d => d.category !== "romance");
+    h.romance.optIn = false;
+    if (!h.desires.length) {
+      const def = desireById.get("new_friends")!;
+      h.desires.push({ id: def.id, text: def.text, category: def.category, strength: 0.6 });
+      p.public.statedIntents.push({ desireId: def.id, text: def.text, category: def.category });
+    }
+  } else if (h.romance.optIn) {
+    h.romance.optIn = r.bool(ROMANCE_KEEP_HIDDEN_ONLY);
+  }
+}
+
 const usedNames = new Set<string>();
 for (const city of CITIES) {
   const ps = personas.filter(p => p.homeCity === city);
@@ -136,6 +167,7 @@ for (const city of CITIES) {
         for (const t of def.needsInterests) if (!p.public.statedInterests.includes(t)) p.public.statedInterests.push(t);
         p.public.statedIntents.push({ desireId: def.id, text: def.text, category: def.category });
       }
+      calibrateRomance(p, r.fork("romance-calibration"));
     }
     X.set(p.id, {
       segment: minorIds.has(p.id) ? "minor" : "adult", community: "", joinedAt: 0, state: "normal", unanswered: 0,
@@ -552,55 +584,61 @@ function normalize(p: Persona, j: any, fb: Enriched): { e: Enriched; partial: bo
   return { e, partial };
 }
 
-// LLM usage accounting: observe Cerebras responses (usage + status) without touching the key.
-const usage = { calls: 0, http429: 0, http5xx: 0, promptTokens: 0, completionTokens: 0, reasoningTokens: 0 };
-const realFetch = globalThis.fetch;
-globalThis.fetch = (async (input: any, init?: any) => {
-  const res = await realFetch(input, init);
-  if (String(input).includes("/chat/completions")) {
-    usage.calls++;
-    if (res.status === 429) usage.http429++;
-    if (res.status >= 500) usage.http5xx++;
-    if (res.ok) {
-      try {
-        const u = (await res.clone().json())?.usage;
-        usage.promptTokens += u?.prompt_tokens ?? 0; usage.completionTokens += u?.completion_tokens ?? 0;
-        usage.reasoningTokens += u?.completion_tokens_details?.reasoning_tokens ?? 0;
-      } catch { /* ignore */ }
-    }
-  }
-  return res;
-}) as typeof fetch;
-
-const MODEL = process.env.CEREBRAS_MODEL ?? "qwen-3.8-27b";
-const enrich = new Map<string, { e: Enriched; source: "llm" | "template"; partial?: boolean; cached?: boolean; error?: string }>();
+// LLM usage accounting through the core client's onResponse hook (no global fetch patching; the
+// hook never sees the API key).
+const usage = { calls: 0, http429: 0, http5xx: 0, promptTokens: 0, completionTokens: 0, reasoningTokens: 0, costMicro: 0 };
+const PROVIDER = process.env.DEFAULT_LLM_PROVIDER ?? DEFAULT_PROVIDER;
+const MODEL = process.env.DEFAULT_LLM_MODEL ?? DEFAULT_MODEL;
+const enrich = new Map<string, { e: Enriched; source: "llm" | "template"; partial?: boolean; cached?: boolean; model?: string; error?: string }>();
 const t0 = Date.now();
+const keyFor = (model: string, prompt: string) => sha256(`${model}\n${prompt}`).slice(0, 24);
+/** Cached LLM output for this member if it was produced for exactly this prompt (by any model). */
+function cached(p: Persona, prompt: string): { out: any; model: string } | undefined {
+  const file = `${CACHE_DIR}/${p.id}.json`;
+  if (args.fresh || !existsSync(file)) return undefined;
+  try {
+    const c = JSON.parse(readFileSync(file, "utf8"));
+    if (c?.out && typeof c.model === "string" && c.key === keyFor(c.model, prompt)) return { out: c.out, model: c.model };
+  } catch { /* regenerate */ }
+  return undefined;
+}
+const freshIds: string[] = [];
 {
   const useLLM = !args["no-llm"];
-  const llm: LLM | undefined = useLLM ? new CerebrasLLM() : undefined;
   const limit = args["llm-limit"] ? Number(args["llm-limit"]) : Infinity;
+  if (useLLM) {
+    personas.forEach((p, idx) => { if (idx < limit && !cached(p, buildPrompt(p))) freshIds.push(p.id); });
+    console.error(`LLM cache: ${personas.length - freshIds.length} reusable, ${freshIds.length} need new text (${PROVIDER}/${MODEL})${freshIds.length <= 80 ? `: ${freshIds.join(", ")}` : ""}`);
+    if (args["dry-run"]) process.exit(0);
+    const maxFresh = args["max-fresh"] !== undefined ? Number(args["max-fresh"]) : Infinity;
+    if (freshIds.length > maxFresh) { console.error(`refusing: ${freshIds.length} > --max-fresh ${maxFresh}`); process.exit(2); }
+  }
+  const llm: LLM | undefined = useLLM && freshIds.length ? defaultLLM({
+    timeoutMs: 180_000,
+    onResponse: i => {
+      usage.calls++;
+      if (i.status === 429) usage.http429++;
+      if (i.status >= 500) usage.http5xx++;
+      usage.promptTokens += i.usage.promptTokens; usage.completionTokens += i.usage.completionTokens;
+      usage.reasoningTokens += i.usage.reasoningTokens; usage.costMicro += i.costMicro;
+    },
+  }) : undefined;
   if (useLLM) mkdirSync(CACHE_DIR, { recursive: true });
   let done = 0;
   await mapLimit(personas, Math.max(1, Number(args.concurrency)), async (p, idx) => {
     const fb = template(p);
-    if (!llm || idx >= limit) { enrich.set(p.id, { e: fb, source: "template", error: llm ? "llm-limit" : "no-llm" }); return; }
+    if (!useLLM || idx >= limit) { enrich.set(p.id, { e: fb, source: "template", error: useLLM ? "llm-limit" : "no-llm" }); return; }
     const prompt = buildPrompt(p);
-    const key = sha256(`${MODEL}\n${prompt}`).slice(0, 24);
-    const cacheFile = `${CACHE_DIR}/${p.id}.json`;
-    if (!args.fresh && existsSync(cacheFile)) {
-      try {
-        const c = JSON.parse(readFileSync(cacheFile, "utf8"));
-        if (c.key === key) { const n = normalize(p, c.out, fb); enrich.set(p.id, { ...n, source: "llm", cached: true }); return; }
-      } catch { /* regenerate */ }
-    }
+    const hit = cached(p, prompt);
+    if (hit) { const n = normalize(p, hit.out, fb); enrich.set(p.id, { ...n, source: "llm", cached: true, model: hit.model }); return; }
     let lastErr = "";
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const out = await chatJson<any>(llm, [{ role: "user", content: prompt }], { maxTokens: 4000, temperature: 0.9, retries: 1 });
+        const out = await chatJson<any>(llm!, [{ role: "user", content: prompt }], { maxTokens: 4000, temperature: 0.9, retries: 1 });
         if (!out || typeof out.bio !== "string") throw new Error("missing bio");
-        await Bun.write(cacheFile, JSON.stringify({ key, model: MODEL, out }));
+        await Bun.write(`${CACHE_DIR}/${p.id}.json`, JSON.stringify({ key: keyFor(MODEL, prompt), model: MODEL, provider: PROVIDER, out }));
         const n = normalize(p, out, fb);
-        enrich.set(p.id, { ...n, source: "llm" });
+        enrich.set(p.id, { ...n, source: "llm", model: MODEL });
         break;
       } catch (e: any) {
         lastErr = String(e?.message ?? e).replace(/Bearer\s+\S+/g, "Bearer [redacted]").slice(0, 200);
@@ -608,7 +646,7 @@ const t0 = Date.now();
       }
     }
     if (!enrich.has(p.id)) enrich.set(p.id, { e: fb, source: "template", error: lastErr });
-    if (++done % 50 === 0) console.error(`  enriched ${done}/${personas.length} (${Math.round((Date.now() - t0) / 1000)}s)`);
+    if (++done % 50 === 0) console.error(`  enriched ${done}/${freshIds.length} (${Math.round((Date.now() - t0) / 1000)}s)`);
   });
 }
 const wallMs = Date.now() - t0;
@@ -749,8 +787,8 @@ await write(FILES.edges, edges);
 await write(FILES.hidden, hiddenRecs);
 
 const countBy = <T>(xs: T[], f: (x: T) => string) => xs.reduce<Record<string, number>>((m, x) => { const k = f(x); m[k] = (m[k] ?? 0) + 1; return m; }, {});
-const PRICE = { inPerM: 0.99, outPerM: 1.49 };
 const simSrc = ["generator.ts", "taxonomy.ts", "persona.ts"].map(f => readFileSync(`${REPO}/packages/sim/src/${f}`, "utf8")).join("\n");
+const previousManifest: any = existsSync(`${outDir}/${FILES.manifest}`) ? JSON.parse(readFileSync(`${outDir}/${FILES.manifest}`, "utf8")) : undefined;
 const manifest: Manifest = {
   synthetic: true,
   dataset: "The Network synthetic members (SF + NYC)",
@@ -758,7 +796,7 @@ const manifest: Manifest = {
   simGeneratorSourceSha256: sha256(simSrc),
   seed: SEED, snapshotNow: NOW, snapshotNowIso: new Date(NOW).toISOString(),
   generatedAt: new Date().toISOString(),
-  model: args["no-llm"] ? "none (template)" : MODEL,
+  model: args["no-llm"] ? "none (template)" : Object.keys(countBy([...enrich.values()].filter(x => x.source === "llm"), x => x.model ?? "unknown")).sort().join(" + ") || MODEL,
   counts: {
     members: members.length,
     byCity: countBy(members, m => m.homeCity),
@@ -773,14 +811,17 @@ const manifest: Manifest = {
     workplaces: [...wpMembers.keys()].length,
   },
   llm: {
-    provider: "cerebras", model: args["no-llm"] ? null : MODEL, concurrency: Number(args.concurrency),
-    personasEnrichedByLLM: personas.length - fallbackCount, fromCache: cachedCount, templateFallbacks: fallbackCount,
+    provider: args["no-llm"] ? null : PROVIDER, model: args["no-llm"] ? null : MODEL, concurrency: Number(args.concurrency),
+    personasEnrichedByLLM: personas.length - fallbackCount, fromCache: cachedCount, freshThisRun: freshIds.length,
+    freshMemberIds: freshIds, enrichedByModel: countBy([...enrich.values()].filter(x => x.source === "llm"), x => x.model ?? "unknown"),
+    templateFallbacks: fallbackCount,
     fallbackReasons: fallbackErrors, partialFieldFallbacks: partialCount, contactScrubs: scrubbed,
     httpCalls: usage.calls, http429: usage.http429, http5xx: usage.http5xx,
     promptTokens: usage.promptTokens, completionTokens: usage.completionTokens, reasoningTokens: usage.reasoningTokens,
-    estimatedCostUsd: Math.round((usage.promptTokens * PRICE.inPerM + usage.completionTokens * PRICE.outPerM) / 1e6 * 10000) / 10000,
-    pricingAssumption: "qwen-3.8-27b ~$0.99/M input, ~$1.49/M output (docs/test-plan.md section 15; confirm on Cerebras console)",
+    costUsdThisRun: Math.round(usage.costMicro / 1e6 * 1e6) / 1e6,
+    costSource: "provider-reported usage.buyer_cost_micro (Surplus) summed via the core client's onResponse hook",
     enrichmentWallMs: wallMs,
+    previousRuns: [...(previousManifest?.llm?.previousRuns ?? []), ...(previousManifest?.llm ? [{ generatorVersion: previousManifest.generatorVersion, generatedAt: previousManifest.generatedAt, ...Object.fromEntries(Object.entries(previousManifest.llm).filter(([k]) => k !== "previousRuns" && k !== "freshMemberIds")) }] : [])],
   },
   files: filesOut,
   notes: [
@@ -788,6 +829,7 @@ const manifest: Manifest = {
     "Phone numbers use the fictional 555-01xx range; emails use example.com.",
     "hidden_truth.jsonl is ground truth for the simulator/oracle and evaluation only. Never load it into the engine or show it in product surfaces.",
     "LLM text is cached under runs/synthetic-cache/v1 (gitignored); without the cache, regeneration yields the same structure but different prose.",
+    "generator 1.1.0: adult romance opt-in calibrated to ~25-30% (calibrateRomance in generate.ts); only members whose prompt changed (a dropped dating intent) or that had template text got new LLM text.",
   ],
 };
 await Bun.write(`${outDir}/${FILES.manifest}`, JSON.stringify(manifest, null, 2) + "\n");

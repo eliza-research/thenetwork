@@ -67,7 +67,10 @@ export function intentToCapability(ctx: GenCtx): Candidate[] {
     for (const intent of ma.intents) {
       if (intent.category === "help" || intent.category === "romance" || intent.category === "growth") continue;
       if (memberReason(w, a, { category: intent.category, role: "seeker", format: intentFormat(intent), timeSensitive: false, ownIntentCreatedAt: intent.createdAt })) continue;
-      const pool = eligibleMembers(ctx, intent.category, "provider", "one_to_one", false, new Set([a]));
+      // Only people the seeker can actually meet this window (home city, routine city or a trip):
+      // otherwise far-away members take the top-K slots and are all dropped later as
+      // no_presence_overlap, starving the intent of a nearby match.
+      const pool = eligibleMembers(ctx, intent.category, "provider", "one_to_one", false, new Set([a])).filter(id => w.canMeet([a, id]) && !pairReason(w, a, id, intent.category));
       const got = retrieveForIntent(ctx, intent, pool, "caps", w.cfg.retrieval.minSim);
       if (!got.length) { ctx.unmatchedIntents.add(intent.id); continue; }
       for (const r of got.slice(0, w.cfg.maxPerIntent)) {
@@ -93,24 +96,25 @@ export function intentToCapability(ctx: GenCtx): Candidate[] {
 export function complementaryIntents(ctx: GenCtx): Candidate[] {
   const { w } = ctx;
   const out: Candidate[] = [];
-  const all: Intent[] = w.ids.flatMap(id => w.get(id)!.intents).filter(i => i.category !== "help" && i.category !== "growth");
+  const all: Intent[] = w.ids.flatMap(id => w.get(id)!.intents).filter(i => !["help", "growth", "romance"].includes(i.category));
   for (let x = 0; x < all.length; x++) for (let y = x + 1; y < all.length; y++) {
     const i = all[x]!, j = all[y]!;
     if (i.memberId === j.memberId || i.category !== j.category) continue;
     const a = i.memberId, b = j.memberId;
     if (pairReason(w, a, b, i.category)) continue;
+    if (!w.canMeet([a, b])) continue;
     const ma = w.get(a)!, mb = w.get(b)!;
     const fab = w.intentFit(i, mb, "match"), fba = w.intentFit(j, ma, "match");
     const min = w.cfg.retrieval.minSim;
     if (fab.sim < min || fba.sim < min) continue;
-    const fmt: Format = i.category === "romance" ? "one_to_one" : intentFormat(i);
+    const fmt: Format = intentFormat(i);
     const ok = (id: MemberId, own: Intent) => !memberReason(w, id, { category: i.category, role: "peer", format: fmt, timeSensitive: false, ownIntentCreatedAt: own.createdAt });
     if (!ok(a, i) || !ok(b, j)) continue;
     const sharedA = label(fab.facet) ?? label(bestShareable(w, mb, w.intentEmb.get(i.id)!));
     out.push(makeCandidate({
       kind: "intro", generator: "complementary_intents", category: i.category,
       participants: [a, b], roles: { [a]: "peer", [b]: "peer" }, format: fmt,
-      objective: i.category === "romance" ? "A low-key dinner introduction" : `Intro: ${sharedA ?? CATEGORY_LABEL[i.category]}`,
+      objective: `Intro: ${sharedA ?? CATEGORY_LABEL[i.category]}`,
       anchor: { type: "intent", id: i.id }, preferredCity: ma.m.homeCity,
       channels: new Set(["semantic", "intent_pair"]),
       evidence: { [a]: [fba.facet?.id].filter(Boolean) as string[], [b]: [fab.facet?.id].filter(Boolean) as string[] },
@@ -118,6 +122,78 @@ export function complementaryIntents(ctx: GenCtx): Candidate[] {
       riskText: `${intentText(i)} ${intentText(j)}`,
     }));
   }
+  out.push(...romanceIntros(ctx));
+  return out;
+}
+
+/**
+ * Romance path (part of complementary_intents). Each live romance intent is matched against
+ * every other member who has opted in to romance, whether or not they currently have a romance
+ * intent of their own: opting in to the romance category is the consent to receive romance
+ * proposals, and the invitation itself is still double opt-in (both must accept, 32.10).
+ *
+ * Hard rules come from the shared filters: both members romance-opted-in with romance in their
+ * categories (memberReason), both 18+ (memberReason + pairReason), not blocked, no dealbreaker,
+ * and each side's stated orientation / age range admits the other (pairReason). A member who is
+ * "only when I ask" is only matched through their own fresh intent.
+ *
+ * Previously romance only paired two members who BOTH had a live romance intent and scored the
+ * pair purely on intent-text similarity, which "meet someone to date" rarely clears: the
+ * synthetic v1 run produced 0 romance proposals from 88 live intents and 207 opted-in adults.
+ * Fit now also uses shared interests (desire centroids), and mutually satisfied stated
+ * preferences count as evidence.
+ */
+export function romanceIntros(ctx: GenCtx): Candidate[] {
+  const { w } = ctx;
+  const out: Candidate[] = [];
+  const minSim = w.cfg.retrieval.minSim;
+  const intents = w.ids.flatMap(id => w.get(id)!.intents).filter(i => i.category === "romance");
+  const byPair = new Map<string, Candidate>();
+  if (!intents.length) return out;
+  const ownIntent = new Map<MemberId, Intent>();
+  for (const i of intents) if (!ownIntent.has(i.memberId)) ownIntent.set(i.memberId, i);
+  const check = (id: MemberId, own?: Intent) => memberReason(w, id, { category: "romance", role: "peer", format: "one_to_one", timeSensitive: false, ownIntentCreatedAt: own?.createdAt });
+  // Partners: every member who may receive a romance proposal right now (generic check; a member
+  // whose only route is their own fresh intent is admitted with that intent).
+  const partners = w.ids.filter(id => !check(id) || (ownIntent.has(id) && !check(id, ownIntent.get(id))));
+  for (const i of intents) {
+    const a = i.memberId;
+    if (check(a, i)) continue;
+    const ma = w.get(a)!;
+    const found: Candidate[] = [];
+    for (const b of partners) {
+      if (b === a || pairReason(w, a, b, "romance") || !w.canMeet([a, b])) continue;
+      const mb = w.get(b)!;
+      const j = ownIntent.get(b);
+      if (check(b, j)) continue;
+      const fab = w.intentFit(i, mb, "match");
+      const fba = j ? w.intentFit(j, ma, "match") : { sim: cosine(mb.desireEmb, ma.profileEmb), facet: undefined };
+      const shared = Math.max(0, cosine(ma.desireEmb, mb.desireEmb));
+      const sideA = Math.max(fab.sim, shared);
+      const sideB = j ? Math.max(fba.sim, shared) : 0.85 * Math.max(fba.sim, shared);
+      if (sideA < minSim || sideB < minSim * 0.75) continue;
+      // Both sides stated preferences and each admits the other (checked in pairReason).
+      const prefBonus = ma.romance && mb.romance && ma.romance.seeks.length && mb.romance.seeks.length ? 0.1 : 0;
+      const bA = Math.min(1, sideA + prefBonus), bB = Math.min(1, sideB + prefBonus);
+      found.push(makeCandidate({
+        kind: "intro", generator: "complementary_intents", category: "romance",
+        participants: [a, b], roles: { [a]: "peer", [b]: "peer" }, format: "one_to_one",
+        objective: "A low-key dinner introduction", anchor: { type: "intent", id: i.id }, preferredCity: ma.m.homeCity,
+        channels: new Set(["semantic", "romance_prefs", ...(j ? ["intent_pair"] : [])]),
+        evidence: { [a]: [fba.facet?.id].filter(Boolean) as string[], [b]: [fab.facet?.id].filter(Boolean) as string[] },
+        fit: (bA + bB) / 2, benefit: { [a]: bA, [b]: bB },
+        riskText: `${intentText(i)} ${j ? intentText(j) : ""}`,
+      }));
+    }
+    found.sort((p, q) => (q.fit - p.fit) || (p.key < q.key ? -1 : 1));
+    for (const c of found.slice(0, w.cfg.maxPerIntent)) {
+      // When both members have a romance intent the pair is found twice: keep one.
+      const k = pairKey(c.participants[0]!, c.participants[1]!);
+      const cur = byPair.get(k);
+      if (!cur || c.fit > cur.fit || (c.fit === cur.fit && c.key < cur.key)) byPair.set(k, c);
+    }
+  }
+  out.push(...[...byPair.values()].sort((p, q) => (p.key < q.key ? -1 : 1)));
   return out;
 }
 
@@ -137,6 +213,7 @@ export function sharedIntentPooling(ctx: GenCtx): Candidate[] {
       if (o.memberId === seed.memberId || o.category !== seed.category) continue;
       const s = cosine(se, w.intentEmb.get(o.id)!);
       if (s < w.cfg.retrieval.poolSim) continue;
+      if (!w.canMeet([seed.memberId, o.memberId]) || pairReason(w, seed.memberId, o.memberId, seed.category)) continue;
       if (memberReason(w, o.memberId, { category: seed.category, role: "peer", format: fmt, timeSensitive: false, ownIntentCreatedAt: o.createdAt })) continue;
       if (similar.some(x => x.id === o.memberId)) continue;
       similar.push({ id: o.memberId, sim: s, intent: o });
@@ -165,7 +242,8 @@ export function sharedIntentPooling(ctx: GenCtx): Candidate[] {
             fit: g.stats.avgPairwise * 0.3 + 0.7 * (g.primary.filter(id => id !== seed.memberId).reduce((s, id) => s + (sims.get(id) ?? 0), 0) / (g.primary.length - 1)),
             benefit: Object.fromEntries(g.primary.map(id => [id, id === seed.memberId ? 0.8 : (sims.get(id) ?? 0.3)])),
             alternates: g.alternates, groupStats: g.stats, warm: g.stats.warmTies > 0 ? 0.5 : 0,
-            riskText: [seed, ...similar.map(s => s.intent)].map(intentText).join(" "),
+            // Risk text from the members actually in the group (not every similar intent).
+            riskText: [seed, ...similar.filter(s => g.primary.includes(s.id)).map(s => s.intent)].map(intentText).join(" "),
           }));
         }
       }
@@ -211,7 +289,7 @@ export function eventAnchor(ctx: GenCtx): Candidate[] {
         objective: `Go together: ${ev.title}`, anchor, preferredCity: ev.city, fixedWindow: { start: ev.start, end: ev.end },
         channels: new Set([...a.channels, "event_interest"]), timeSensitive,
         evidence: { [a.id]: [a.facet?.id].filter(Boolean) as string[], [b.id]: [b.facet?.id].filter(Boolean) as string[] },
-        fit: (a.sim + b.sim) / 2, benefit: { [a.id]: a.sim, [b.id]: b.sim }, riskText: eventRiskText(ev),
+        fit: (a.sim + b.sim) / 2, benefit: { [a.id]: a.sim, [b.id]: b.sim }, riskText: eventRiskText(ev), riskFlags: ev.riskTags,
       }));
     }
     if (got.length >= w.cfg.group.minSize) {
@@ -231,7 +309,7 @@ export function eventAnchor(ctx: GenCtx): Candidate[] {
           evidence: Object.fromEntries(g.primary.map(id => [id, [sims.get(id)?.facet?.id].filter(Boolean) as string[]])),
           fit: g.primary.reduce((s, id) => s + (sims.get(id)?.sim ?? 0), 0) / g.primary.length,
           benefit: Object.fromEntries(g.primary.map(id => [id, sims.get(id)?.sim ?? 0])),
-          alternates: g.alternates, groupStats: g.stats, warm: g.stats.warmTies > 0 ? 0.5 : 0, riskText: eventRiskText(ev),
+          alternates: g.alternates, groupStats: g.stats, warm: g.stats.warmTies > 0 ? 0.5 : 0, riskText: eventRiskText(ev), riskFlags: ev.riskTags,
         }));
       }
     }
@@ -257,6 +335,8 @@ export function warmPath(ctx: GenCtx): Candidate[] {
       for (const [b, path] of [...hop.entries()].sort((p, q) => (p[0] < q[0] ? -1 : 1))) {
         const mb = w.get(b);
         if (!mb || isMinor(w, b) || isMinor(w, path.via)) continue;
+        // Pair rules before ranking, so a blocked / dealbreaker pair never takes one of the slots.
+        if (!w.canMeet([a, b]) || pairReason(w, a, b, intent.category)) continue;
         const f = w.intentFit(intent, mb, "match");
         if (f.sim < w.cfg.retrieval.warmMinSim) continue;
         const role: Role = f.facet && ["skill", "offer", "resource"].includes(f.facet.kind) ? "provider" : "peer";
@@ -294,7 +374,7 @@ export function helpRequest(ctx: GenCtx): Candidate[] {
       const words: Record<string, number> = { one: 1, two: 2, three: 3 };
       let need = m ? (Number(m[1]) || words[m[1]!.toLowerCase()] || 1) : 1;
       const home = isHomeEntry(w.cfg, text);
-      const pool = eligibleMembers(ctx, "help", "helper", need > 1 ? "small_group" : "one_to_one", false, new Set([a]));
+      const pool = eligibleMembers(ctx, "help", "helper", need > 1 ? "small_group" : "one_to_one", false, new Set([a])).filter(id => w.canMeet([a, id]));
       const got = retrieveForIntent(ctx, intent, pool, "caps", w.cfg.retrieval.minSim);
       if (!got.length) { ctx.unmatchedIntents.add(intent.id); continue; }
       // Load-aware helper ranking: prefer people who enjoy it, penalise recent giving, develop new helpers.
@@ -434,7 +514,7 @@ export function secondEncounter(ctx: GenCtx): Candidate[] {
         channels: new Set(["history", ...(useEvent ? ["event_interest"] : [])]),
         evidence: { [a]: shared ? [shared.id] : [], [b]: mb.share.filter(g => shared?.tags.some(t => g.tags.includes(t))).map(g => g.id).slice(0, 1) },
         fit: Math.max(0.4, useEvent ? bs : sim), benefit: { [a]: 0.8, [b]: 0.8 }, warm: 1, confidenceHint: 0.95,
-        riskText: useEvent ? eventRiskText(bestEv!) : (shared?.value ?? ""),
+        riskText: useEvent ? eventRiskText(bestEv!) : (shared?.value ?? ""), riskFlags: useEvent ? bestEv!.riskTags : undefined,
       }));
     }
   }
@@ -552,7 +632,7 @@ export function expansion(ctx: GenCtx): Candidate[] {
     if (memberReason(w, a, { category, role: "seeker", format: "one_to_one", timeSensitive: false })) continue;
     const d = outside[0]!;
     const q = ma.facetEmb.get(d.id)!;
-    const pool = eligibleMembers(ctx, category, "provider", "one_to_one", false, new Set([a])).filter(id => w.get(id)!.cluster !== ma.cluster);
+    const pool = eligibleMembers(ctx, category, "provider", "one_to_one", false, new Set([a])).filter(id => w.get(id)!.cluster !== ma.cluster && w.canMeet([a, id]));
     let best: { id: MemberId; sim: number; facet?: Facet } | undefined;
     for (const id of pool) {
       const r = w.bestFacet(w.get(id)!, q, "caps");

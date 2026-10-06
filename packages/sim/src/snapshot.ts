@@ -15,6 +15,9 @@ export interface SnapshotState {
   recentProposals: Proposal[];
 }
 
+/** Longest look-back any engine budget uses (Quiet: 1 per 30 days). */
+export const RECENT_PROPOSAL_DAYS = 30;
+
 export function quietHoursOf(p: Persona): [number, number] {
   return [Math.min(p.routine.sleep === 0 ? 24 : p.routine.sleep, 22) % 24, Math.max(p.routine.wake + 1, 8)];
 }
@@ -82,5 +85,9 @@ export function buildSnapshot(personas: Persona[], s: SnapshotState): WorldSnaps
     }
   }
   for (const b of s.blocks) if (ids.has(b.from)) edges.push({ from: b.from, to: b.to, type: "blocked", strength: 1, explicit: true, createdAt: b.at });
-  return { now: s.now, members, facets, intents, presence, edges, recentProposals: s.recentProposals.slice(-200) };
+  // Recent proposals by time, not by count: the engine's budgets look back up to 30 days (Quiet),
+  // so a fixed last-200 cut silently forgot proposals once a run produced more than 200 in that
+  // window, and members were over-proposed.
+  const since = s.now - RECENT_PROPOSAL_DAYS * DAY;
+  return { now: s.now, members, facets, intents, presence, edges, recentProposals: s.recentProposals.filter(p => p.createdAt >= since && p.createdAt <= s.now) };
 }

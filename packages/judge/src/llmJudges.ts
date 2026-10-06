@@ -1,7 +1,9 @@
-// LLM judges with written rubrics (PRD 34.5). Each returns structured JSON. Judges use a
-// different model family than the Network agent/engine/persona agents (Cerebras qwen): by
-// default `judgeLLM()` from core, which reads JUDGE_PROVIDER / JUDGE_MODEL (default Surplus
-// Intelligence gpt-6.1-sol). Pass an explicit LLM to override (tests, comparisons). Treat
+// LLM judges with written rubrics (PRD 34.5). Each returns structured JSON. By default judges use
+// `judgeLLM()` from core, which reads JUDGE_PROVIDER / JUDGE_MODEL (default Surplus Intelligence
+// gpt-6-luna, chosen for all uses on 2026-10-05). Note: with one model for everything, the judge
+// is no longer a different model family from the agent/recommender, so self-preference bias is
+// possible; set JUDGE_MODEL to a different model for adversarial audits. The minors/romance policy
+// judge lives in policy.ts (rules first). Pass an explicit LLM to override (tests, comparisons). Treat
 // verdicts as one bounded input, calibrated against labeled examples (calibration.ts), never
 // as ground truth.
 import { judgeLLM, parseJson, type LLM } from "@thenetwork/core";

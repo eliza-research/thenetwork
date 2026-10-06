@@ -76,16 +76,24 @@ export function wilson(k: number, n: number, z = 1.96): [number, number] {
   return [(c - h) / d, (c + h) / d];
 }
 
-/** Exact two-sided McNemar test p-value on discordant counts (b: A right/B wrong, c: A wrong/B right). */
+/**
+ * Exact two-sided McNemar test p-value on discordant counts (b: A right/B wrong, c: A wrong/B right):
+ * p = min(1, 2 * P(X <= min(b, c))), X ~ Binomial(b + c, 1/2). Computed in log space so it stays
+ * finite for any n (the naive C(n,k) / 2^n overflows past n ~ 1000).
+ */
 export function mcnemar(b: number, c: number): number {
   const n = b + c;
   if (!n) return 1;
   const k = Math.min(b, c);
-  let tail = 0;
-  let coef = 1; // C(n,0)
+  // log C(n, i) - n log 2, accumulated with log-sum-exp.
+  let logCoef = 0, maxLog = -Infinity;
+  const logs: number[] = [];
   for (let i = 0; i <= k; i++) {
-    if (i > 0) coef = (coef * (n - i + 1)) / i;
-    tail += coef;
+    if (i > 0) logCoef += Math.log(n - i + 1) - Math.log(i);
+    const l = logCoef - n * Math.LN2;
+    logs.push(l);
+    if (l > maxLog) maxLog = l;
   }
-  return Math.min(1, (2 * tail) / 2 ** n);
+  const tail = Math.exp(maxLog) * logs.reduce((s, l) => s + Math.exp(l - maxLog), 0);
+  return Math.min(1, 2 * tail);
 }

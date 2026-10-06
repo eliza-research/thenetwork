@@ -1,4 +1,4 @@
-// LLM persona agent (Cerebras): the persona's WORDS come from a model role-playing the
+// LLM persona agent (defaultLLM(), Surplus gpt-6-luna by default): the persona's WORDS come from a model role-playing the
 // persona card; every DECISION (reply/ignore, accept/decline/counter, flake, STOP, timing)
 // comes from the deterministic choice model in policy.ts + oracle.ts. LLM-simulated users
 // are known to over-accept, so letting the model choose would grade the engine against

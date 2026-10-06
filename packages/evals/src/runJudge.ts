@@ -1,25 +1,18 @@
 // Judge suite runner + scoring. Uses the production judges from packages/judge unchanged
-// (quality, shareability, timing, privacy audit) and an eval-local policy judge for the
-// minors / romance rules, which has no production judge yet.
-import { llmFor, parseJson, type LLM } from "../../core/src/index.ts";
+// (quality, shareability, timing, privacy audit, and the minors / romance policy judge). For
+// policy items the models are compared on the LLM rubric alone (judgePolicyLLM); the production
+// combination (deterministic checkPolicy first, LLM only if rules find no hard violation) is
+// scored offline from the same responses by `productionPolicy`.
+import type { LLM } from "../../core/src/index.ts";
 import { checkMessage } from "../../judge/src/rules.ts";
 import { judgeExplanationShareability, judgeMessageQuality, judgeTiming, privacyAudit } from "../../judge/src/llmJudges.ts";
-import { POLICY_RUBRIC, type JudgeEvalItem, type JudgeCategory, type PolicyItem } from "./judgeDataset.ts";
+import { checkPolicy, judgePolicyLLM } from "../../judge/src/policy.ts";
+import type { JudgeEvalItem, JudgeCategory } from "./judgeDataset.ts";
 import { classification, cohensKappa, percentile } from "./metrics.ts";
 import { pmap, withScope, type HttpRecord } from "./transport.ts";
 import type { RunOptions } from "./runRec.ts";
 
 export interface JudgeResult { itemId: string; model: string; predicted: boolean | null; error?: string; records: HttpRecord[] }
-
-export async function judgePolicy(llm: LLM, it: PolicyItem, maxTokens: number): Promise<boolean> {
-  const out = await llm.chat([
-    { role: "system", content: `${POLICY_RUBRIC}\nReturn ONLY JSON: {"compliant": boolean, "violations": string[], "reasoning": "one sentence"}` },
-    { role: "user", content: `Context: ${it.context}\nMessage:\n"""${it.message}"""` },
-  ], { maxTokens, json: true });
-  const j = parseJson<{ compliant?: unknown }>(out);
-  if (typeof j.compliant !== "boolean") throw new Error("policy judge: compliant must be boolean");
-  return j.compliant;
-}
 
 export async function predictJudge(llm: LLM, item: JudgeEvalItem, maxTokens: number): Promise<boolean> {
   const it = item.input;
@@ -29,26 +22,43 @@ export async function predictJudge(llm: LLM, item: JudgeEvalItem, maxTokens: num
     case "shareability": return (await judgeExplanationShareability(llm, { explanation: it.explanation, privateFacts: it.privateFacts }, o)).shareable;
     case "timing": return (await judgeTiming(llm, it, o)).appropriate;
     case "privacy": return (await privacyAudit(llm, it, o)).pass;
-    case "policy": return judgePolicy(llm, it, maxTokens);
+    case "policy": return (await judgePolicyLLM(llm, { message: it.message, context: it.context }, o)).compliant;
   }
 }
 
 export async function runJudgeSuite(model: string, items: JudgeEvalItem[], o: RunOptions): Promise<JudgeResult[]> {
-  const llm = llmFor("surplus", model);
   return pmap(items, o.concurrency, async (item): Promise<JudgeResult> => {
-    const r = await withScope({ attempt: 0, cacheDir: o.cacheDir, settings: o.settings, offline: o.offline }, () => predictJudge(llm, item, o.maxTokens));
+    const r = await withScope(model, { attempt: 0, cacheDir: o.cacheDir, settings: o.settings, offline: o.offline, fetch: o.fetch }, llm => predictJudge(llm, item, o.maxTokens));
     return { itemId: item.id, model, predicted: typeof r.value === "boolean" ? r.value : null, error: r.error, records: r.records };
   }, d => o.onProgress?.(d, items.length));
 }
 
-/** Deterministic rules from packages/judge as a reference rater, where they apply. */
+/**
+ * Deterministic rules from packages/judge as a reference rater, where they can decide:
+ * checkMessage for tone/shareability, checkPolicy for policy (a hard violation = fail, no signal
+ * at all = pass, "escalate" = cannot decide). Everything else is unscored (null).
+ */
 export function rulesBaseline(items: JudgeEvalItem[]): JudgeResult[] {
   return items.map(item => {
     const it = item.input;
     let predicted: boolean | null = null;
     if (it.judge === "quality") predicted = checkMessage(it.message).pass;
     else if (it.judge === "shareability") predicted = checkMessage(it.explanation).pass;
+    else if (it.judge === "policy") {
+      const v = checkPolicy(it.message, it.context).verdict;
+      predicted = v === "violation" ? false : v === "clear" ? true : null;
+    }
     return { itemId: item.id, model: "rules", predicted, records: [] };
+  });
+}
+
+/** Production policy judge from a model's LLM-only results: rules violation overrides the model. */
+export function productionPolicy(items: JudgeEvalItem[], results: JudgeResult[], name: string): JudgeResult[] {
+  return items.map((item, i) => {
+    const r = results[i]!;
+    if (item.input.judge !== "policy") return r;
+    const v = checkPolicy(item.input.message, item.input.context).verdict;
+    return { ...r, model: name, predicted: v === "violation" ? false : r.predicted };
   });
 }
 
@@ -61,6 +71,10 @@ export interface JudgeScore {
   inferenceFnRate: number;
   policyFnRate: number;
   falseFlagRate: number;
+  /** Accuracy on the deliberately ambiguous "hard" items (sub === "hard"). */
+  hardN: number; hardAccuracy: number;
+  /** Accuracy on the original (non-hard) items. */
+  baseAccuracy: number;
   latencyP50: number; latencyP95: number; costMicro: number; freshCostMicro: number;
   correct: boolean[];
 }
@@ -88,6 +102,7 @@ export function scoreJudge(name: string, items: JudgeEvalItem[], results: JudgeR
   };
   const priv = fnRate(it => it.category === "privacy" || it.category === "shareability");
   const negatives = idx.filter(i => items[i]!.label);
+  const hardIdx = idx.filter(i => items[i]!.sub === "hard"), baseIdx = idx.filter(i => items[i]!.sub !== "hard");
   const recs = idx.flatMap(i => results[i]!.records);
   const lat = idx.filter(i => results[i]!.records.length).map(i => results[i]!.records.reduce((s, x) => s + x.latencyMs, 0));
   return {
@@ -96,6 +111,8 @@ export function scoreJudge(name: string, items: JudgeEvalItem[], results: JudgeR
     privacyFnRate: priv.rate, privacyFn: priv.missed, privacyLeaks: priv.n,
     inferenceFnRate: fnRate(it => it.category === "privacy" && it.sub === "inference").rate,
     policyFnRate: fnRate(it => it.category === "policy").rate,
+    hardN: hardIdx.length, hardAccuracy: hardIdx.length ? hardIdx.filter(i => correctAll[i]).length / hardIdx.length : NaN,
+    baseAccuracy: baseIdx.length ? baseIdx.filter(i => correctAll[i]).length / baseIdx.length : NaN,
     falseFlagRate: negatives.length ? negatives.filter(i => results[i]!.predicted === false).length / negatives.length : NaN,
     latencyP50: percentile(lat, 50), latencyP95: percentile(lat, 95),
     costMicro: recs.reduce((s, x) => s + x.costMicro, 0), freshCostMicro: recs.filter(x => !x.cached).reduce((s, x) => s + x.costMicro, 0),

@@ -53,7 +53,8 @@ export function nextLocalHour(t: number, city: City, hour: number): number {
     const diff = hour - localHour(guess, city);
     guess += (diff > 12 ? diff - 24 : diff < -12 ? diff + 24 : diff) * HOUR;
   }
-  return guess < t ? guess + DAY : Math.floor(guess / MINUTE) * MINUTE;
+  // Never return an instant before t (localHour drops seconds, so flooring can step back).
+  return guess < t ? guess + DAY : Math.max(t, Math.floor(guess / MINUTE) * MINUTE);
 }
 
 /** Push t forward to the end of a [start,end) local-hour window if it falls inside it. */

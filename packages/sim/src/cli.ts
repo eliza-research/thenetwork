@@ -1,15 +1,16 @@
 #!/usr/bin/env bun
 // Network World Simulator CLI.
 //   bun run packages/sim/src/cli.ts --personas 40 --days 14 --mode discrete --seed 1 --network stub
-//   bun run packages/sim/src/cli.ts --personas 6 --days 3 --seed 2 --llm          (Cerebras persona agents)
+//   bun run packages/sim/src/cli.ts --personas 6 --days 3 --seed 2 --llm          (LLM persona agents, default gpt-6-luna)
 //   bun run packages/sim/src/cli.ts --scenario packages/sim/scenarios/stop-keyword.json --k 4
 //   bun run packages/sim/src/cli.ts --engine ./path/to/engine.ts                   (module exporting createEngine())
 //   bun run packages/sim/src/cli.ts --judge 20                                     (LLM-judge 20 sent messages)
-// Model split: persona agents (and LLM persona bios) use Cerebras (CerebrasLLM). Any judging
-// the CLI does uses the judge model, judgeLLM() (JUDGE_PROVIDER / JUDGE_MODEL), never Cerebras.
+// Models (founder decision 2026-10-05): persona agents and LLM persona bios use defaultLLM()
+// (DEFAULT_LLM_PROVIDER / DEFAULT_LLM_MODEL, default Surplus gpt-6-luna); judging uses judgeLLM()
+// (JUDGE_PROVIDER / JUDGE_MODEL, default Surplus gpt-6-luna).
 import { parseArgs } from "node:util";
 import { resolve } from "node:path";
-import { CerebrasLLM, judgeLLM } from "@thenetwork/core";
+import { defaultLLM, judgeLLM } from "@thenetwork/core";
 import { formatMetrics, judgeMessageQuality, privacyAudit, type RunRecord } from "@thenetwork/judge";
 import { LLMPersonaAgent } from "./agent/llmAgent.ts";
 import { generatePersonas } from "./generator.ts";
@@ -51,12 +52,13 @@ if (a.help) {
   --seed N            run seed (default 1)
   --network NAME      network under test: stub (default)
   --engine PATH       module exporting createEngine(): Engine; proposals go to the network
-  --llm               persona agents speak via Cerebras (decisions stay model-driven); use small runs
-  --llm-personas      also enrich persona bios via Cerebras
+  --llm               persona agents speak via defaultLLM() (DEFAULT_LLM_PROVIDER/DEFAULT_LLM_MODEL,
+                      default surplus gpt-6-luna; decisions stay model-driven); use small runs
+  --llm-personas      also enrich persona bios via defaultLLM()
   --adversarial-rate  share of adversarial personas (default 0.06)
   --minor-share       share of honest members aged 13-17 (default 0.05; never connected to anyone)
   --judge N           after the run, LLM-judge N sent proactive messages (quality + privacy audit)
-                      with the judge model judgeLLM() (JUDGE_PROVIDER/JUDGE_MODEL, default surplus gpt-6.1-sol)
+                      with the judge model judgeLLM() (JUDGE_PROVIDER/JUDGE_MODEL, default surplus gpt-6-luna)
   --scenario PATH     run a scenario file instead of a random world; --k N for pass^k
   --no-log            don't write runs/<runId>/
   --json              print metrics JSON`);
@@ -81,7 +83,7 @@ async function loadEngine(): Promise<Engine | undefined> {
 }
 
 const engine = await loadEngine();
-const llm = a.llm || a["llm-personas"] ? new CerebrasLLM() : undefined;
+const llm = a.llm || a["llm-personas"] ? defaultLLM() : undefined;
 const agent = a.llm && llm ? new LLMPersonaAgent(llm, DEFAULT_START) : undefined;
 
 if (a.scenario) {
@@ -119,7 +121,7 @@ if (a.judge) await judgeRun(res.records, Number(a.judge));
 
 /** LLM judges over a deterministic, evenly spaced sample of delivered proactive messages. */
 async function judgeRun(records: RunRecord[], k: number) {
-  const judge = judgeLLM(); // judge model family, distinct from the Cerebras persona agents
+  const judge = judgeLLM(); // judge model per JUDGE_PROVIDER / JUDGE_MODEL
   const sent = records.flatMap(r => (r.type === "message" && r.msg.direction === "outbound" && !r.msg.system && r.msg.status === "delivered" && r.msg.meta?.proactive ? [r.msg] : []));
   const step = Math.max(1, Math.floor(sent.length / Math.max(1, k)));
   const sample = sent.filter((_, i) => i % step === 0).slice(0, k);
@@ -128,7 +130,7 @@ async function judgeRun(records: RunRecord[], k: number) {
   const audit = facts.length && sample.length ? await privacyAudit(judge, { privateFacts: facts.slice(0, 40), messages: sample.map(m => ({ to: m.memberId, text: m.body })) }).catch(() => null) : null;
   const passN = quality.filter(q => q.pass).length;
   const out = {
-    judge: `${process.env.JUDGE_PROVIDER ?? "surplus"}/${process.env.JUDGE_MODEL ?? "gpt-6.1-sol"}`,
+    judge: `${process.env.JUDGE_PROVIDER ?? "surplus"}/${process.env.JUDGE_MODEL ?? "gpt-6-luna"}`,
     sampled: sample.length, qualityPass: passN, qualityPassRate: sample.length ? Math.round((passN / sample.length) * 1000) / 1000 : 0,
     meanScore: sample.length ? Math.round((quality.reduce((s, q) => s + q.score, 0) / sample.length) * 100) / 100 : 0,
     privacyLeaks: audit ? audit.leaks.length : null,

@@ -1,5 +1,5 @@
 // LLM-enriched persona generator: starts from the deterministic generator (so hidden truth
-// stays structured and oracle-scorable) and asks Cerebras for a realistic public bio and
+// stays structured and oracle-scorable) and asks the default LLM (defaultLLM()) for a realistic public bio and
 // voice sample consistent with that truth. Private disclosures never enter public fields.
 import { parseJson, type ChatMessage, type LLM } from "@thenetwork/core";
 import { generatePersonas, type GeneratorOptions } from "./generator.ts";
@@ -50,7 +50,7 @@ export async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T, i: nu
 }
 
 /**
- * JSON chat with retries: qwen-3.8-27b is a reasoning model and occasionally spends its
+ * JSON chat with retries: a reasoning model occasionally spends its
  * whole budget thinking (empty or truncated content), so retry with a larger budget.
  */
 export async function chatJson<T>(llm: LLM, messages: ChatMessage[], opts: { maxTokens?: number; temperature?: number; retries?: number } = {}): Promise<T> {

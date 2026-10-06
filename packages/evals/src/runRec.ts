@@ -1,5 +1,5 @@
 // Recommender suite runner + scoring.
-import { llmFor, parseJson, type MemberId } from "../../core/src/index.ts";
+import { parseJson, type MemberId } from "../../core/src/index.ts";
 import { localEmbed, tokenize } from "../../engine/src/embed.ts";
 import { resolveConfig } from "../../engine/src/config.ts";
 import { involvesMinor, pairReason } from "../../engine/src/filters.ts";
@@ -20,7 +20,12 @@ export interface RecResult {
   leaks: { canary: string[]; sensitive: string[]; scope: string[]; rules: string[] };
 }
 
-export interface RunOptions { cacheDir: string; settings: RequestSettings; concurrency: number; maxTokens: number; offline?: boolean; onProgress?: (done: number, total: number) => void }
+export interface RunOptions {
+  cacheDir: string; settings: RequestSettings; concurrency: number; maxTokens: number; offline?: boolean;
+  /** Network transport behind the cache (tests). */
+  fetch?: (url: string, init: RequestInit) => Promise<Response>;
+  onProgress?: (done: number, total: number) => void;
+}
 
 /** Distinctive keywords of each private-disclosure template (taxonomy PRIVATE_DISCLOSURES). */
 const SENSITIVE_KEYWORDS: [RegExp, RegExp][] = [
@@ -61,7 +66,6 @@ export function leakChecks(ds: RecDataset, item: RecItem, view: PublicView, why:
 }
 
 export async function runRecommender(model: string, ds: RecDataset, o: RunOptions): Promise<RecResult[]> {
-  const llm = llmFor("surplus", model);
   return pmap(ds.items, o.concurrency, async (item): Promise<RecResult> => {
     const view = buildPublicView(ds.worlds.get(item.world)!.snapshot(), item.config);
     const messages = recommenderMessages(view);
@@ -69,7 +73,7 @@ export async function runRecommender(model: string, ds: RecDataset, o: RunOption
     const records: HttpRecord[] = [];
     let lastErr = "";
     for (let attempt = 0; attempt < 2; attempt++) {
-      const r = await withScope({ attempt, cacheDir: o.cacheDir, settings: o.settings, offline: o.offline }, async () => {
+      const r = await withScope(model, { attempt, cacheDir: o.cacheDir, settings: o.settings, offline: o.offline, fetch: o.fetch }, async llm => {
         const out = await llm.chat(messages, { maxTokens: o.maxTokens, json: true });
         return parseRecPrediction(parseJson(out), attending);
       });

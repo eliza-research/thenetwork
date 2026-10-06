@@ -46,6 +46,14 @@ describe("prompt builder never leaks hidden truth", () => {
       expect(keys.has("refs")).toBe(false);
     }
   });
+  test("no item metadata (ids, source, hidden-risk kind, adversarial kind) reaches the prompt", () => {
+    const bad = /\b(adversarial|harasser|scammer|spammer|prompt_injector|block_abuser|lying_minor|ex_partners|hidden_risk|engine_candidate|intent_match|pool_group|oracle|trueAge|true_age)\b/i;
+    for (const i of ds.items) {
+      const text = promptText(ds, i);
+      expect(bad.test(text)).toBe(false);
+      expect(text.includes(i.id)).toBe(false);
+    }
+  });
   test("prompt is a function of the public config only: changing labels never changes it", () => {
     for (const i of ds.items.slice(0, 40)) {
       const before = promptText(ds, i);

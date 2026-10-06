@@ -59,6 +59,12 @@ const CORE_RULES: TransitionRule[] = [
   R("MUTUALLY_ACCEPTED", "SCHEDULING", "start_scheduling", ["system"]),
   R("MUTUALLY_ACCEPTED", "COMPLETED", "async_intro", ["system"]),
   R("MUTUALLY_ACCEPTED", "CANCELLED", "cancel", ["member", "system"]),
+  // Late acceptances once a group is going ahead: recorded, no state change (previously these
+  // threw, so the 5th and 6th invitees of a 6-person group with quorum 4 could never say yes).
+  R("QUORUM_MET", "QUORUM_MET", "accept", ["member"]),
+  R("SCHEDULING", "SCHEDULING", "accept", ["member"]),
+  R("SCHEDULED", "SCHEDULED", "accept", ["member"]),
+  R("RESCHEDULE_REQUESTED", "RESCHEDULE_REQUESTED", "accept", ["member"]),
   R("QUORUM_MET", "SCHEDULING", "start_scheduling", ["system"]),
   R("QUORUM_MET", "CANCELLED", "cancel", ["member", "system"]),
   R("SCHEDULING", "SCHEDULED", "confirm_time", ["member"]),
@@ -164,6 +170,7 @@ export function dispatchInvites(o: Opportunity, clock: Clock, eventId: string): 
   return o;
 }
 
+const LATE_ACCEPT_STATES: ReadonlySet<OpportunityState> = new Set<OpportunityState>(["QUORUM_MET", "SCHEDULING", "SCHEDULED", "RESCHEDULE_REQUESTED"]);
 const accepted = (o: Opportunity) => Object.values(o.participants).filter(s => s === "accepted" || s === "confirmed").length;
 const outstanding = (o: Opportunity) => Object.values(o.participants).filter(s => s === "invited").length;
 
@@ -179,7 +186,8 @@ export function respond(o: Opportunity, memberId: MemberId, accept: boolean, clo
       const n = accepted(o);
       const total = Object.keys(o.participants).filter(id => o.participants[id] !== "declined" && o.participants[id] !== "expired" && o.participants[id] !== "replaced").length;
       let to: OpportunityState;
-      if (o.state === "NEEDS_REPLACEMENT") to = "QUORUM_MET";
+      if (LATE_ACCEPT_STATES.has(o.state)) to = o.state;
+      else if (o.state === "NEEDS_REPLACEMENT") to = "QUORUM_MET";
       else if (!o.isGroup) to = n === total && n >= o.quorum ? "MUTUALLY_ACCEPTED" : "PARTIALLY_ACCEPTED";
       else to = n >= o.quorum ? "QUORUM_MET" : "PARTIALLY_ACCEPTED";
       if (o.state === "NEEDS_REPLACEMENT" && n < o.quorum) { o.events.push({ eventId, at: clock.now(), from: o.state, to: o.state, trigger: "accept", actor: "member", memberId }); o.appliedEventIds.push(eventId); return o; }

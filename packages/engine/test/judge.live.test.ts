@@ -1,14 +1,16 @@
-// LIVE: runs the Cerebras judge on 3 configurations and validates the JSON schema.
-// Skipped unless CEREBRAS_API_KEY is set (Bun loads .env from the repo root).
+// LIVE: runs the judge with the default LLM (defaultLLM(): Surplus gpt-6-luna unless DEFAULT_LLM_* say
+// otherwise) on 3 configurations and validates the JSON schema. Skipped unless that provider's
+// API key is set (Bun loads .env from the repo root).
 import { describe, expect, test } from "bun:test";
-import { CerebrasLLM } from "@thenetwork/core";
+import { defaultLLM } from "@thenetwork/core";
 import { candidateReason } from "../src/filters.ts";
 import { buildJudgeMessages, judgeOne } from "../src/judge.ts";
 import { baseMember, cand, emptyInput, facet, mkWorld, NOW } from "./helpers.ts";
 
-const live = !!process.env.CEREBRAS_API_KEY;
+const PROVIDER_KEY: Record<string, string> = { surplus: "SURPLUS_API_KEY", cerebras: "CEREBRAS_API_KEY", openai: "OPENAI_API_KEY" };
+const live = !!process.env[PROVIDER_KEY[process.env.DEFAULT_LLM_PROVIDER ?? "surplus"] ?? "SURPLUS_API_KEY"];
 
-describe.skipIf(!live)("LIVE Cerebras judge", () => {
+describe.skipIf(!live)("LIVE judge (default LLM)", () => {
   test("judges 3 configurations with a valid schema and leak-free inputs", async () => {
     const inp = emptyInput(NOW);
     for (const id of ["a", "b", "c", "d"]) {
@@ -32,7 +34,7 @@ describe.skipIf(!live)("LIVE Cerebras judge", () => {
       cand(["b", "c", "d"], { kind: "group", category: "social", format: "small_group", objective: "Small group around film" }),
     ];
     for (const c of configs) expect(candidateReason(w, c)).toBeNull();
-    const llm = new CerebrasLLM();
+    const llm = defaultLLM();
     const verdicts = await Promise.all(configs.map(c => judgeOne(w, c, llm, 2500)));
     for (const [i, v] of verdicts.entries()) {
       const c = configs[i]!;

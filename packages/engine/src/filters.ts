@@ -3,7 +3,6 @@
 import type { Category, MemberId } from "@thenetwork/core";
 import { DAY, HOUR } from "@thenetwork/core";
 import type { EngineConfig } from "./config.ts";
-import { tokenize } from "./embed.ts";
 import type { Candidate, Format, Role } from "./types.ts";
 import { CONTRIBUTOR_ROLES } from "./types.ts";
 import { pairKey, type World } from "./world.ts";
@@ -104,9 +103,33 @@ function romanceCompatible(seeker: NonNullable<ReturnType<World["get"]>>, other:
   return true;
 }
 
+const riskCache = new WeakMap<EngineConfig, RegExp[]>();
+const escapeRe = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function riskMatchers(cfg: EngineConfig): RegExp[] {
+  let rs = riskCache.get(cfg);
+  if (!rs) {
+    rs = [
+      // Whole words / phrases only (plural allowed; "-" or "_" may stand for a space).
+      ...cfg.highRiskTerms.map(t => new RegExp(`\\b${escapeRe(t.toLowerCase().replace(/_/g, " ")).replace(/ /g, "[\\s-]+")}(s|es)?\\b`)),
+      ...(cfg.highRiskPatterns ?? []).map(p => new RegExp(p)),
+    ];
+    riskCache.set(cfg, rs);
+  }
+  return rs;
+}
+/**
+ * High-risk content in candidate text (F14/F15): the matched words or phrases, empty if none.
+ * Whole-word terms plus context rules (see config.highRiskPatterns), so "parents with young
+ * kids" or "lend a hand" pass while "babysit my kids" or "lend me cash" do not.
+ */
 export function riskTerms(cfg: EngineConfig, text: string): string[] {
-  const toks = new Set(tokenize(text.replace(/_/g, " ")).concat((text.toLowerCase().match(/[a-z_]+/g) ?? [])));
-  return cfg.highRiskTerms.filter(t => toks.has(t));
+  const norm = text.toLowerCase().replace(/_/g, " ").replace(/[\u2018\u2019]/g, "'");
+  const out: string[] = [];
+  for (const re of riskMatchers(cfg)) {
+    const m = norm.match(re);
+    if (m) out.push(m[0].trim());
+  }
+  return out;
 }
 export function isHomeEntry(cfg: EngineConfig, text: string): boolean {
   const low = ` ${text.toLowerCase()} `;
@@ -125,9 +148,18 @@ export function candidateReason(w: World, c: Candidate, usage?: RunUsage): Filte
   if (c.kind === "group" || c.kind === "newcomer_welcome") {
     if (c.participants.length < cfg.group.minSize || c.participants.length > cfg.group.maxSize) return "group_size";
   }
-  if (riskTerms(cfg, c.riskText).length) return "high_risk";
+  if (c.riskFlags?.length || riskTerms(cfg, c.riskText).length) return "high_risk";
   // Minors policy: no one under 18 in any role (participant, alternate, via/connector).
   if (involvesMinor(w, c)) return "underage";
+  // The warm-path intermediary is named to both sides and asked to vouch: never someone on a
+  // safety hold, paused, or blocked by either participant.
+  if (c.via) {
+    const v = w.get(c.via);
+    if (!v) return "unknown_member";
+    if (w.holds.has(c.via)) return "safety_hold";
+    if (v.m.state === "paused") return "state_paused";
+    if (c.participants.some(id => w.blocked.has(pairKey(id, c.via!)))) return "blocked";
+  }
   for (const id of c.participants) {
     const own = c.anchor?.type === "intent" ? w.intentById.get(c.anchor.id) : undefined;
     const r = memberReason(w, id, {

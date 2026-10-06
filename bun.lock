@@ -20,6 +20,16 @@
         "@thenetwork/core": "workspace:*",
       },
     },
+    "packages/evals": {
+      "name": "@thenetwork/evals",
+      "version": "0.0.0",
+      "dependencies": {
+        "@thenetwork/core": "workspace:*",
+        "@thenetwork/engine": "workspace:*",
+        "@thenetwork/judge": "workspace:*",
+        "@thenetwork/sim": "workspace:*",
+      },
+    },
     "packages/judge": {
       "name": "@thenetwork/judge",
       "version": "0.0.0",
@@ -59,6 +69,8 @@
     "@thenetwork/core": ["@thenetwork/core@workspace:packages/core"],
 
     "@thenetwork/engine": ["@thenetwork/engine@workspace:packages/engine"],
+
+    "@thenetwork/evals": ["@thenetwork/evals@workspace:packages/evals"],
 
     "@thenetwork/judge": ["@thenetwork/judge@workspace:packages/judge"],
 

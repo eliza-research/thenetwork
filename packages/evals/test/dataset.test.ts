@@ -64,9 +64,9 @@ describe("recommender dataset", () => {
 
 describe("judge dataset", () => {
   const items = buildJudgeDataset();
-  test("~120 items, unique ids, all calibration items reused verbatim", () => {
-    expect(items.length).toBeGreaterThanOrEqual(110);
-    expect(items.length).toBeLessThanOrEqual(130);
+  test("183 items (121 original + 62 hard), unique ids, all calibration items reused verbatim", () => {
+    expect(items.length).toBe(183);
+    expect(items.filter(i => i.sub === "hard").length).toBe(62);
     expect(new Set(items.map(i => i.id)).size).toBe(items.length);
     for (const c of CALIBRATION_SET) expect(items.find(i => i.id === c.id)?.input).toBe(c);
   });
@@ -100,5 +100,35 @@ describe("judge dataset", () => {
     expect(f.privacyFnRate).toBe(1);
     const rules = scoreJudge("rules", items, rulesBaseline(items), { skipUnscored: true });
     expect(rules.scored).toBeLessThan(items.length);
+  });
+  test("hard items: every category has both labels; ids marked *-hard-*", () => {
+    for (const cat of ["tone", "privacy", "shareability", "timing", "policy"]) {
+      const xs = items.filter(i => i.category === cat && i.sub === "hard");
+      expect(xs.length).toBeGreaterThanOrEqual(7);
+      expect(xs.some(i => i.label)).toBe(true);
+      expect(xs.some(i => !i.label)).toBe(true);
+      for (const x of xs) expect(x.id).toContain("-hard-");
+    }
+  });
+  test("policy rules are high-precision: a deterministic violation is never on a compliant gold item", () => {
+    const { checkPolicy } = require("../../judge/src/policy.ts");
+    let blocked = 0;
+    for (const i of items.filter(x => x.category === "policy")) {
+      const it = i.input as any;
+      const v = checkPolicy(it.message, it.context).verdict;
+      if (v === "violation") { blocked++; expect(i.label).toBe(false); }
+      if (v === "clear" && !i.label) console.log(`  rules see no signal on violating item ${i.id} (the LLM must catch it)`);
+    }
+    expect(blocked).toBeGreaterThanOrEqual(12);
+  });
+  test("production policy = rules override the model; rules never flip a model's fail to pass", () => {
+    const { productionPolicy } = require("../src/runJudge.ts");
+    const yes = items.map(i => ({ itemId: i.id, model: "m", predicted: true, records: [] }));
+    const prod = productionPolicy(items, yes, "m + rules");
+    const pol = items.map((it, k) => k).filter(k => items[k]!.category === "policy");
+    expect(pol.some(k => prod[k].predicted === false)).toBe(true);
+    for (let k = 0; k < items.length; k++) if (items[k]!.category !== "policy") expect(prod[k].predicted).toBe(true);
+    const no = items.map(i => ({ itemId: i.id, model: "m", predicted: false, records: [] }));
+    for (const r of productionPolicy(items, no, "x")) expect(r.predicted).toBe(false);
   });
 });

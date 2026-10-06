@@ -1,17 +1,18 @@
-// Instrumented transport for eval calls made through `llmFor("surplus", model)`.
+// Instrumented, cached transport for eval calls.
 //
-// The shared LLM interface (packages/core/src/llm.ts) returns only message text, but evals need
-// usage, cost, latency and a response cache. Rather than fork the client, we wrap global fetch
-// for the duration of an eval call (scoped with AsyncLocalStorage, so concurrent calls never mix):
-//   - injects identical request settings for every model (reasoning_effort, ...);
-//   - caches each chat-completions response on disk keyed by the exact request body + attempt,
-//     so reruns are free and deterministic;
-//   - records latency, tokens and Surplus cost (usage.buyer_cost_micro) per HTTP request.
+// Uses the core client's hooks (packages/core/src/llm.ts ClientOptions) instead of patching global
+// fetch: each eval call gets its own client with
+//   - extraBody: identical request settings for every model (reasoning_effort, ...);
+//   - fetch: a disk cache keyed by the exact request body + eval attempt, so reruns are free and
+//     deterministic (and --offline replays without network);
+//   - onResponse: latency, tokens and Surplus cost (usage.buyer_cost_micro) per HTTP request.
 // API keys are never logged or written: only the request BODY is hashed/stored, never headers.
-import { AsyncLocalStorage } from "node:async_hooks";
+// Cache key format is unchanged from the earlier fetch-patch version (sha256 of {body, attempt, v:1}),
+// so existing runs/evals/cache entries stay valid.
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { OpenAILLM, type LLM, type ResponseInfo } from "../../core/src/index.ts";
 
 export interface RequestSettings {
   /** Surplus/OpenAI reasoning effort, applied identically to every model. */
@@ -26,96 +27,90 @@ export interface HttpRecord {
 }
 
 export interface CallScope {
-  records: HttpRecord[];
+  /** Eval-level attempt (a re-ask after a schema failure is a new cache key). */
   attempt: number;
   cacheDir: string;
   settings: RequestSettings;
   /** When true, never touch the network (cache-only replay). */
   offline?: boolean;
+  /** Network transport behind the cache (default global fetch). Tests pass a fake. */
+  fetch?: (url: string, init: RequestInit) => Promise<Response>;
+  /** Override the Surplus endpoint / key (default SURPLUS_BASE_URL / SURPLUS_API_KEY from .env). */
+  baseUrl?: string; apiKey?: string;
 }
-
-const scope = new AsyncLocalStorage<CallScope>();
-let installed = false;
-let realFetch: typeof fetch;
 
 export const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 
-function stable(v: unknown): string {
+export function stable(v: unknown): string {
   if (Array.isArray(v)) return `[${v.map(stable).join(",")}]`;
   if (v && typeof v === "object") return `{${Object.keys(v as object).sort().map(k => `${JSON.stringify(k)}:${stable((v as any)[k])}`).join(",")}}`;
   return JSON.stringify(v);
 }
 
-export function installTransport() {
-  if (installed) return;
-  installed = true;
-  realFetch = globalThis.fetch;
-  const patched = async (input: any, init?: any): Promise<Response> => {
-    const s = scope.getStore();
-    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input?.url;
-    if (!s || !url || !String(url).endsWith("/chat/completions") || !init?.body) return realFetch(input, init);
+export const cacheKey = (body: unknown, attempt: number) => sha(stable({ body, attempt, v: 1 }));
+
+const CACHE_HEADER = "x-evals-cache";
+const LATENCY_HEADER = "x-evals-cached-latency-ms";
+/** Status used for an offline cache miss: non-retryable, so the core client fails fast. */
+export const OFFLINE_MISS_STATUS = 412;
+
+/** A fetch-compatible function that serves/stores chat-completions responses from a disk cache. */
+export function cachingFetch(s: CallScope): (url: string, init: RequestInit) => Promise<Response> {
+  const net = s.fetch ?? ((url: string, init: RequestInit) => fetch(url, init));
+  return async (url, init) => {
     const body = JSON.parse(String(init.body));
-    Object.assign(body, s.settings);
-    const key = sha(stable({ body, attempt: s.attempt, v: 1 }));
     const dir = join(s.cacheDir, String(body.model).replace(/[^\w.-]/g, "_"));
-    const file = join(dir, `${key}.json`);
+    const file = join(dir, `${cacheKey(body, s.attempt)}.json`);
     if (existsSync(file)) {
       const c = JSON.parse(readFileSync(file, "utf8"));
-      s.records.push({ ...recordFrom(body.model, 200, c.data, c.latencyMs), cached: true });
-      return new Response(JSON.stringify(c.data), { status: 200, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify(c.data), {
+        status: 200, headers: { "Content-Type": "application/json", [CACHE_HEADER]: "hit", [LATENCY_HEADER]: String(c.latencyMs ?? 0) },
+      });
     }
-    if (s.offline) {
-      s.records.push({ ...emptyRecord(body.model, 599), error: "offline cache miss" });
-      throw new Error(`offline: no cached response for ${body.model}`);
-    }
+    if (s.offline) return new Response(`offline: no cached response for ${body.model}`, { status: OFFLINE_MISS_STATUS });
     const t0 = performance.now();
-    let res: Response;
-    try {
-      res = await realFetch(input, { ...init, body: JSON.stringify(body), signal: AbortSignal.timeout(180_000) });
-    } catch (e) {
-      s.records.push({ ...emptyRecord(body.model, 0), latencyMs: performance.now() - t0, error: String(e).slice(0, 200) });
-      // Surface as a retryable 5xx so the core client's backoff handles it.
-      return new Response(JSON.stringify({ error: "network error" }), { status: 503 });
-    }
-    const latencyMs = performance.now() - t0;
+    const res = await net(url, init);
     const text = await res.text();
-    if (!res.ok) {
-      s.records.push({ ...emptyRecord(body.model, res.status), latencyMs, error: text.slice(0, 300) });
-      return new Response(text, { status: res.status, headers: { "Content-Type": "application/json" } });
+    if (res.ok) {
+      const data = JSON.parse(text);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(file, JSON.stringify({ request: body, latencyMs: performance.now() - t0, data }));
     }
-    const data = JSON.parse(text);
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(file, JSON.stringify({ request: body, latencyMs, data }));
-    s.records.push(recordFrom(body.model, res.status, data, latencyMs));
     return new Response(text, { status: res.status, headers: { "Content-Type": "application/json" } });
   };
-  globalThis.fetch = Object.assign(patched, { preconnect: (realFetch as any).preconnect }) as typeof fetch;
 }
 
-function emptyRecord(model: string, status: number): HttpRecord {
-  return { model, status, cached: false, latencyMs: 0, promptTokens: 0, completionTokens: 0, reasoningTokens: 0, costMicro: 0 };
-}
-
-export function recordFrom(model: string, status: number, data: any, latencyMs: number): HttpRecord {
-  const u = data?.usage ?? {};
+export function recordOf(info: ResponseInfo): HttpRecord {
+  const cached = info.headers?.get(CACHE_HEADER) === "hit";
   return {
-    model, status, cached: false, latencyMs,
-    promptTokens: u.prompt_tokens ?? 0, completionTokens: u.completion_tokens ?? 0,
-    reasoningTokens: u.completion_tokens_details?.reasoning_tokens ?? 0,
-    costMicro: Number(u.buyer_cost_micro ?? (typeof u.cost === "number" ? u.cost * 1e6 : 0)) || 0,
-    finishReason: data?.choices?.[0]?.finish_reason,
+    model: info.model, status: info.status, cached,
+    latencyMs: cached ? Number(info.headers?.get(LATENCY_HEADER) ?? 0) : info.latencyMs,
+    promptTokens: info.usage.promptTokens, completionTokens: info.usage.completionTokens, reasoningTokens: info.usage.reasoningTokens,
+    costMicro: info.costMicro, finishReason: info.finishReason, ...(info.error ? { error: info.error } : {}),
   };
 }
 
-/** Run `fn` with instrumented, cached transport; returns its value plus the HTTP records. */
-export async function withScope<T>(s: Omit<CallScope, "records">, fn: () => Promise<T>): Promise<{ value?: T; error?: string; records: HttpRecord[] }> {
-  installTransport();
-  const full: CallScope = { ...s, records: [] };
+/** A Surplus client for `model` wired to the cache + recorder for one eval call. */
+export function instrumentedLLM(model: string, s: CallScope, records: HttpRecord[]): LLM {
+  // Offline replay needs no key: the cache answers or the call fails fast with OFFLINE_MISS_STATUS.
+  const key = s.apiKey ?? (process.env.SURPLUS_API_KEY || (s.offline ? "offline-no-key" : ""));
+  const base = s.baseUrl ?? process.env.SURPLUS_BASE_URL ?? "https://api.surplusintelligence.ai/v1";
+  return new OpenAILLM(key, model, base, {
+    extraBody: { ...s.settings },
+    fetch: cachingFetch(s),
+    onResponse: info => records.push(recordOf(info)),
+    timeoutMs: 180_000,
+  });
+}
+
+/** Run one eval call with an instrumented, cached client; returns its value plus the HTTP records. */
+export async function withScope<T>(model: string, s: CallScope, fn: (llm: LLM) => Promise<T>): Promise<{ value?: T; error?: string; records: HttpRecord[] }> {
+  const records: HttpRecord[] = [];
   try {
-    const value = await scope.run(full, fn);
-    return { value, records: full.records };
+    const value = await fn(instrumentedLLM(model, s, records));
+    return { value, records };
   } catch (e) {
-    return { error: String((e as Error)?.message ?? e).slice(0, 300), records: full.records };
+    return { error: String((e as Error)?.message ?? e).slice(0, 300), records };
   }
 }
 

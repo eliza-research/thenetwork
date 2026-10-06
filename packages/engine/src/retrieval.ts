@@ -35,6 +35,8 @@ export function twoHop(w: World, a: MemberId): Map<MemberId, { via: MemberId; st
   const out = new Map<MemberId, { via: MemberId; strength: number }>();
   const direct = w.positive.get(a) ?? new Map<MemberId, number>();
   for (const x of [...direct.keys()].sort()) {
+    // An intermediary on a safety hold or paused never carries a warm path (hard filter on `via`).
+    if (w.holds.has(x) || w.get(x)?.m.state === "paused") continue;
     const sx = direct.get(x)!;
     for (const [b, sb] of [...(w.positive.get(x) ?? new Map<MemberId, number>()).entries()].sort((p, q) => (p[0] < q[0] ? -1 : 1))) {
       if (b === a || direct.has(b)) continue;

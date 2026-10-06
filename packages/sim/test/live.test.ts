@@ -1,13 +1,15 @@
-// LIVE tests: call Cerebras. Skipped unless CEREBRAS_API_KEY is set. Kept few and bounded.
+// LIVE tests: call the default LLM (defaultLLM(): DEFAULT_LLM_PROVIDER / DEFAULT_LLM_MODEL, Surplus gpt-6-luna).
+// Skipped unless that provider's API key is set. Kept few and bounded.
 import { describe, expect, test } from "bun:test";
-import { CerebrasLLM } from "@thenetwork/core";
+import { defaultLLM } from "@thenetwork/core";
 import { DEFAULT_START, LLMPersonaAgent, StubNetwork, generateLLMPersonas, generatePersonas, runWorld } from "../src/index.ts";
 
-const live = !!process.env.CEREBRAS_API_KEY;
+const PROVIDER_KEY: Record<string, string> = { surplus: "SURPLUS_API_KEY", cerebras: "CEREBRAS_API_KEY", openai: "OPENAI_API_KEY" };
+const live = !!process.env[PROVIDER_KEY[process.env.DEFAULT_LLM_PROVIDER ?? "surplus"] ?? "SURPLUS_API_KEY"];
 
-describe.skipIf(!live)("live (Cerebras)", () => {
+describe.skipIf(!live)("live (default LLM)", () => {
   test("generates 3 LLM-enriched personas consistent with hidden truth", async () => {
-    const llm = new CerebrasLLM();
+    const llm = defaultLLM();
     const ps = await generateLLMPersonas({ n: 3, seed: 101, llm, adversarialRate: 0, disclosureRate: 1, concurrency: 3 });
     expect(ps).toHaveLength(3);
     for (const p of ps) {
@@ -20,7 +22,7 @@ describe.skipIf(!live)("live (Cerebras)", () => {
   }, 90_000);
 
   test("2-persona exchange through LLM persona agents and the stub Network", async () => {
-    const llm = new CerebrasLLM();
+    const llm = defaultLLM();
     const personas = generatePersonas({ n: 2, seed: 5, adversarialRate: 0, cityWeights: { sf: 1, nyc: 0 }, archetypeMix: { very_active: 1, regular: 0, busy_parent: 0, newcomer: 0, connector: 0, introvert: 0, never_replies: 0, traveler: 0 }, joinSpreadDays: 1 });
     for (const p of personas) { p.hidden.interests = ["climbing", "coffee"]; p.public.statedInterests = ["climbing", "coffee"]; p.hidden.responsiveness.ignoreProb = 0; p.joinDay = 0; }
     const agent = new LLMPersonaAgent(llm, DEFAULT_START);

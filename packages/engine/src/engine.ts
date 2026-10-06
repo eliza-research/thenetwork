@@ -47,7 +47,7 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
     runId: sha256(`${hashInput(input)}|${configHash(cfg)}|${cfg.seed}`).slice(0, 16),
     seed: cfg.seed, configHash: configHash(cfg), inputHash: hashInput(input), now: w.now,
     engineVersion: ENGINE_VERSION, embedModel: deps.embedModel ?? (deps.embed ? "custom" : "local-hash-v1"),
-    judgeModel: deps.llm && cfg.judge.enabled ? (deps.judgeModel ?? process.env.CEREBRAS_MODEL ?? "qwen-3.8-27b") : undefined,
+    judgeModel: deps.llm && cfg.judge.enabled ? (deps.judgeModel ?? process.env.RECOMMENDER_MODEL ?? process.env.DEFAULT_LLM_MODEL ?? "gpt-6-luna") : undefined,
     funnel: {
       generated: 0, byGenerator: {}, memberFunnel: {}, memberExclusions: {}, rejectedBy: {}, passedHardFilters: 0, deduped: 0,
       floorViolations: {}, dealbreakers: 0, belowThreshold: 0, eligible: 0, budgetSkips: 0, selected: 0, exploration: 0,

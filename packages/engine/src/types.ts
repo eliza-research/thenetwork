@@ -65,6 +65,8 @@ export interface Candidate {
   fit: number; benefit: Record<MemberId, number>;
   warm: number; alternates: MemberId[]; exploration: boolean; safetyClass: SafetyClass;
   timeSensitive: boolean; riskText: string; groupStats?: GroupStats;
+  /** Structured risk markers (e.g. an event's riskTags): any entry makes the candidate high-risk. */
+  riskFlags?: string[];
   /** Evidence quality when it does not come from facets (e.g. mutual feedback, graph position). */
   confidenceHint?: number;
 }

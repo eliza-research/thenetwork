@@ -52,3 +52,78 @@ describe("metrics", () => {
     expect(mcnemar(10, 0)).toBeCloseTo(2 / 1024);
   });
 });
+
+// Reference values below were computed independently (closed forms / scipy / R conventions).
+describe("metrics against known reference values", () => {
+  test("F1 equals the harmonic mean and 2TP/(2TP+FP+FN)", () => {
+    // 6 TP, 2 FP, 3 FN, 9 TN
+    const pred = [...Array(6).fill(true), ...Array(2).fill(true), ...Array(3).fill(false), ...Array(9).fill(false)];
+    const gold = [...Array(6).fill(true), ...Array(2).fill(false), ...Array(3).fill(true), ...Array(9).fill(false)];
+    const c = classification(pred, gold);
+    expect(c.precision).toBeCloseTo(0.75);
+    expect(c.recall).toBeCloseTo(2 / 3);
+    expect(c.f1).toBeCloseTo((2 * 6) / (2 * 6 + 2 + 3)); // 12/17 = 0.70588
+    expect(c.accuracy).toBeCloseTo(15 / 20);
+  });
+  test("AUC equals the brute-force pairwise probability (ties = 1/2) on random data", () => {
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31);
+    for (let rep = 0; rep < 20; rep++) {
+      const n = 30 + rep;
+      const scores = Array.from({ length: n }, () => Math.round(rnd() * 10) / 10); // many ties
+      const gold = Array.from({ length: n }, () => rnd() < 0.4);
+      if (!gold.some(Boolean) || gold.every(Boolean)) continue;
+      let num = 0, den = 0;
+      for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+        if (!gold[i] || gold[j]) continue;
+        den++; num += scores[i]! > scores[j]! ? 1 : scores[i] === scores[j] ? 0.5 : 0;
+      }
+      expect(auc(scores, gold)).toBeCloseTo(num / den, 10);
+    }
+    // sklearn.metrics.roc_auc_score([0,0,1,1],[0.1,0.4,0.35,0.8]) = 0.75
+    expect(auc([0.1, 0.4, 0.35, 0.8], [false, false, true, true])).toBeCloseTo(0.75);
+  });
+  test("Cohen's kappa: textbook examples", () => {
+    const build = (a: number, b: number, c: number, d: number) => {
+      const A: boolean[] = [], B: boolean[] = [];
+      const add = (k: number, x: boolean, y: boolean) => { for (let i = 0; i < k; i++) { A.push(x); B.push(y); } };
+      add(a, true, true); add(b, true, false); add(c, false, true); add(d, false, false);
+      return [A, B] as const;
+    };
+    // Wikipedia example: 20 yes/yes, 5 yes/no, 10 no/yes, 15 no/no -> po=0.7, pe=0.5, kappa=0.4
+    expect(cohensKappa(...build(20, 5, 10, 15))).toBeCloseTo(0.4);
+    // Wikipedia second example: 45/15/25/15 -> kappa = 0.1304
+    expect(cohensKappa(...build(45, 15, 25, 15))).toBeCloseTo(0.1304, 4);
+    // Perfect disagreement on a balanced set -> -1
+    expect(cohensKappa([true, false, true, false], [false, true, false, true])).toBeCloseTo(-1);
+    // Symmetric in its arguments
+    const [A, B] = build(7, 3, 11, 9);
+    expect(cohensKappa(A, B)).toBeCloseTo(cohensKappa(B, A));
+  });
+  test("exact McNemar matches the binomial tail (scipy.stats.binomtest, two-sided)", () => {
+    // binomtest(3, 15, 0.5).pvalue = 0.03515625
+    expect(mcnemar(3, 12)).toBeCloseTo(0.03515625, 10);
+    expect(mcnemar(12, 3)).toBeCloseTo(0.03515625, 10);
+    // binomtest(1, 6, 0.5).pvalue = 0.21875
+    expect(mcnemar(1, 5)).toBeCloseTo(0.21875, 10);
+    // binomtest(7, 20, 0.5).pvalue = 0.263176...
+    expect(mcnemar(7, 13)).toBeCloseTo(0.26317596, 7);
+    // Stays finite and sensible far beyond 2^1024.
+    const big = mcnemar(1000, 1000);
+    expect(big).toBe(1);
+    const skew = mcnemar(400, 700);
+    expect(Number.isFinite(skew)).toBe(true);
+    expect(skew).toBeGreaterThan(0);
+    expect(skew).toBeLessThan(1e-15);
+  });
+  test("Wilson interval reference values", () => {
+    // statsmodels proportion_confint(0, 10, method="wilson") = (0, 0.2775)
+    const [lo0, hi0] = wilson(0, 10);
+    expect(lo0).toBeCloseTo(0, 6);
+    expect(hi0).toBeCloseTo(0.2775, 4);
+    // proportion_confint(81, 263, method="wilson") = (0.2553, 0.3662)
+    const [lo, hi] = wilson(81, 263);
+    expect(lo).toBeCloseTo(0.2553, 3);
+    expect(hi).toBeCloseTo(0.3662, 3);
+  });
+});

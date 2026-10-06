@@ -1,6 +1,6 @@
 {
   "dataset": "data/synthetic/v1",
-  "validatedAt": "2026-10-06T00:09:32.232Z",
+  "validatedAt": "2026-10-06T00:41:09.533Z",
   "pass": true,
   "passed": 13,
   "total": 13,
@@ -10,9 +10,9 @@
       "pass": true,
       "details": {
         "seed": 20261005,
-        "generatorVersion": "synthetic-gen 1.0.0",
-        "model": "qwen-3.8-27b",
-        "generatedAt": "2026-10-06T00:09:28.972Z"
+        "generatorVersion": "synthetic-gen 1.1.0",
+        "model": "gpt-6-luna + qwen-3.8-27b",
+        "generatedAt": "2026-10-06T00:41:07.237Z"
       }
     },
     {
@@ -20,8 +20,8 @@
       "pass": true,
       "details": {
         "members": 500,
-        "facets": 6783,
-        "intents": 889,
+        "facets": 6700,
+        "intents": 843,
         "presence": 549,
         "edges": 2092,
         "snapshotMembers": 500
@@ -100,11 +100,11 @@
       "pass": true,
       "details": {
         "canaries": 133,
-        "agentPrivateFacets": 1344,
+        "agentPrivateFacets": 1267,
         "facetsByScope": {
           "matchable": 1915,
-          "shareable": 3524,
-          "agent_private": 1344
+          "shareable": 3518,
+          "agent_private": 1267
         }
       }
     },
@@ -235,16 +235,16 @@
           "nonbinary": 29
         },
         "intentsByCategory": {
-          "romance": 160,
+          "romance": 110,
           "help": 142,
-          "social": 262,
+          "social": 266,
           "professional": 148,
           "growth": 57,
           "hobby": 120
         },
         "intentsByCategoryCity": {
           "sf": {
-            "romance": 73,
+            "romance": 52,
             "social": 136,
             "growth": 24,
             "hobby": 64,
@@ -252,23 +252,23 @@
             "professional": 73
           },
           "nyc": {
-            "romance": 87,
+            "romance": 58,
             "help": 72,
-            "social": 126,
+            "social": 130,
             "professional": 75,
             "growth": 33,
             "hobby": 56
           }
         },
-        "intentsPerMember": 1.78,
+        "intentsPerMember": 1.69,
         "distinctIntentObjectives": 20,
-        "romanceOptInAdults": 207,
+        "romanceOptInAdults": 130,
         "interestTagsUsed": 38,
         "facetKinds": {
           "interest": 2378,
-          "offer": 1446,
+          "offer": 1440,
           "boundary": 442,
-          "preference": 282,
+          "preference": 205,
           "fact": 1133,
           "availability_pattern": 500,
           "skill": 602
@@ -283,10 +283,9 @@
           "lowercase-casual": 75,
           "non-native English": 35
         },
-        "distinctOccupations": 373,
+        "distinctOccupations": 370,
         "enrichment": {
-          "llm": 499,
-          "template": 1
+          "llm": 500
         },
         "states": {
           "normal": 342,
