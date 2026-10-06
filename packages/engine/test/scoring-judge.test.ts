@@ -25,7 +25,10 @@ describe("scoring (Section 33.6)", () => {
     expect(s.eligible).toBe(true);
   });
   test("floors make a configuration ineligible no matter how good the rest is", () => {
-    const w = mkWorld(sailingPair());
+    // Floors apply to fit / mutual benefit AFTER the structured complementarity blend (a sailing
+    // learner + sailing teacher is structurally complementary, which legitimately lifts fit 0.01).
+    // The floor mechanics are tested with the blend off; complementarity.test.ts covers the blend.
+    const w = mkWorld(sailingPair(), { complementarity: { weight: 0 } });
     const c = cand(["a", "b"], { fit: 0.01, warm: 1 });
     candidateReason(w, c);
     const s = scoreCandidate(w, c);

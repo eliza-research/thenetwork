@@ -1,18 +1,18 @@
 {
   "dataset": "data/synthetic/v1",
-  "validatedAt": "2026-10-06T16:51:41.143Z",
+  "validatedAt": "2026-10-06T21:31:50.943Z",
   "pass": true,
-  "passed": 19,
-  "total": 19,
+  "passed": 20,
+  "total": 20,
   "checks": [
     {
       "name": "manifest_integrity",
       "pass": true,
       "details": {
         "seed": 20261005,
-        "generatorVersion": "synthetic-gen 1.2.0",
+        "generatorVersion": "synthetic-gen 1.2.1",
         "model": "gpt-6-luna + qwen-3.8-27b",
-        "generatedAt": "2026-10-06T16:51:40.916Z"
+        "generatedAt": "2026-10-06T21:31:40.223Z"
       }
     },
     {
@@ -20,7 +20,7 @@
       "pass": true,
       "details": {
         "members": 500,
-        "facets": 5224,
+        "facets": 5226,
         "intents": 659,
         "presence": 549,
         "edges": 2092,
@@ -102,11 +102,11 @@
         "canaries": 133,
         "canariesUnique": 133,
         "disclosedToAgent": 71,
-        "agentPrivateFacets": 860,
+        "agentPrivateFacets": 862,
         "facetsByScope": {
           "shareable": 2074,
           "matchable": 2290,
-          "agent_private": 860
+          "agent_private": 862
         }
       }
     },
@@ -264,13 +264,13 @@
         },
         "intentsPerMember": 1.32,
         "distinctIntentObjectives": 26,
-        "romanceOptInAdults": 117,
+        "romanceOptInAdults": 119,
         "interestTagsUsed": 38,
         "facetKinds": {
           "interest": 1939,
           "offer": 590,
           "boundary": 252,
-          "preference": 182,
+          "preference": 184,
           "fact": 1299,
           "availability_pattern": 472,
           "skill": 436,
@@ -342,7 +342,7 @@
           "medium": {
             "members": 150,
             "facetsPerMember": 10.17,
-            "chatFacetsPerMember": 8.09,
+            "chatFacetsPerMember": 8.1,
             "sourceFacetsPerMember": 2.07,
             "intentsPerMember": 1.64,
             "activeSourcesPerMember": 0.92,
@@ -351,8 +351,8 @@
           },
           "rich": {
             "members": 100,
-            "facetsPerMember": 17.45,
-            "chatFacetsPerMember": 12.57,
+            "facetsPerMember": 17.46,
+            "chatFacetsPerMember": 12.58,
             "sourceFacetsPerMember": 4.88,
             "intentsPerMember": 1.67,
             "activeSourcesPerMember": 2.09,
@@ -377,7 +377,7 @@
       "pass": true,
       "details": {
         "facetsBySource": {
-          "chat": 3723,
+          "chat": 3725,
           "google_calendar": 190,
           "gmail": 457,
           "linkedin": 263,
@@ -523,6 +523,27 @@
           "spotify": 9,
           "github": 8
         }
+      }
+    },
+    {
+      "name": "intent_liveness_anchored",
+      "pass": true,
+      "details": {
+        "recordVsHiddenWant": {
+          "paused/held": 61,
+          "closed/lapsed": 142,
+          "live/held": 399,
+          "live/lapsed": 27,
+          "live/not_a_hidden_want": 9,
+          "expired/held": 12,
+          "expired/lapsed": 6,
+          "paused/lapsed": 2,
+          "paused/not_a_hidden_want": 1
+        },
+        "activeExpiredPct": 4,
+        "adultsWithLiveIntent": 306,
+        "adults": 450,
+        "medianRecordAgeDays": 18
       }
     }
   ]

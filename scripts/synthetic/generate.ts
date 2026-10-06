@@ -22,6 +22,7 @@ import { DAY, DEFAULT_MODEL, DEFAULT_PROVIDER, HOUR, defaultLLM, type City, type
 import { generatePersonas } from "../../packages/sim/src/generator.ts";
 import { chatJson, mapLimit } from "../../packages/sim/src/llmGenerator.ts";
 import type { AdversarialKind, Archetype, Desire, Persona, Relationship, RelationshipType } from "../../packages/sim/src/persona.ts";
+import { drawLapse, intentHorizonDays, intentRecordTiming } from "../../packages/sim/src/persona.ts";
 import { Rng, clamp01 } from "../../packages/sim/src/rng.ts";
 import { DESIRES, INTERESTS, SKILLS, desireById } from "../../packages/sim/src/taxonomy.ts";
 import { DEFAULT_RICHNESS_MIX, VAGUE_INTENT, assignRichness, inferredRole, simulateKnowledge, type Knowledge } from "../../packages/sim/src/sources.ts";
@@ -46,6 +47,12 @@ const args = parseArgs({
 }).values;
 
 const NOW = SNAPSHOT_NOW;
+/**
+ * Mean lifetime (days) of a hidden want before it lapses (generator 1.2.1). Bounded help asks
+ * resolve in weeks; dating searches end or pause within months; hobby/social/professional wants
+ * typically last about a year.
+ */
+const LAPSE_MEAN_DAYS: Record<string, number> = { help: 45, romance: 240, default: 365 };
 const R = new Rng(`${SEED}:post`);
 const other = (c: City): City => (c === "sf" ? "nyc" : "sf");
 const r2 = (x: number) => Math.round(x * 100) / 100;
@@ -139,7 +146,9 @@ function calibrateRomance(p: Persona, r: Rng) {
       p.public.statedIntents.push({ desireId: def.id, text: def.text, category: def.category });
     }
   } else if (h.romance.optIn) {
-    h.romance.optIn = r.bool(ROMANCE_KEEP_HIDDEN_ONLY);
+    // An unstated dating want (an exaggerating persona states something else) keeps the opt-in:
+    // a dating desire implies romance opt-in (generator 1.2.1; see packages/sim generator.ts).
+    if (!h.desires.some(d => d.category === "romance")) h.romance.optIn = r.bool(ROMANCE_KEEP_HIDDEN_ONLY);
   }
 }
 
@@ -763,17 +772,33 @@ for (const p of [...personas].sort((a, b) => (a.id < b.id ? -1 : 1))) {
   facets.push(...memberFacets);
 
   // Intents (only the ones the member told the agent; minimal = one vague want, light = objective only).
+  // Timing (generator 1.2.1): `stated` is when the member first told the agent (join + 0-20 days,
+  // the same draws as 1.2.0). The record is then anchored to NOW: the agent re-asks every 30 days
+  // and the member re-confirms a want they still hold, or withdraws ("closed") one that has
+  // lapsed; members who don't answer let the record age out (packages/sim persona.ts
+  // intentRecordTiming). Hidden wants lapse with an exponential lifetime from when they were
+  // stated (LAPSE_MEAN_DAYS, own RNG fork so every other draw is unchanged).
+  const drawn = stated.map(() => {
+    const created = Math.min(NOW - HOUR, x.joinedAt + r.int(0, 20) * DAY);
+    return { created, paused: x.state === "paused" ? true : r.bool(0.08) };
+  });
+  const lr = R.fork("lapse", p.id);
+  for (const d of h.desires) {
+    const k = stated.findIndex(i => i.desireId === d.id);
+    d.lapsesAt = drawLapse(lr.fork(d.id), k >= 0 ? drawn[k]!.created : x.joinedAt, LAPSE_MEAN_DAYS[d.category] ?? LAPSE_MEAN_DAYS.default!);
+  }
+  stated.forEach((it, k) => { it.statedAt = drawn[k]!.created; });
   stated.forEach((it, k) => {
     const def = desireById.get(it.desireId);
     const tags = def ? [...def.needsInterests, ...def.needsSkills, def.pool ?? ""].filter(Boolean) : [];
-    const created = Math.min(NOW - HOUR, x.joinedAt + r.int(0, 20) * DAY);
-    const status = x.state === "paused" ? "paused" : r.bool(0.08) ? "paused" : "active";
     if (!knownIntents.has(k)) return;
+    const rec = intentRecordTiming(p, k, NOW, drawn[k]!.created, { unresponsive: x.unanswered >= 2 })!;
+    const status = rec.status === "closed" ? "closed" : drawn[k]!.paused ? "paused" : "active";
     const mode = chat.intentMode;
     intents.push({
       synthetic: true, id: `${p.id}:i${k}`, memberId: p.id, objective: mode === "vague" ? VAGUE_INTENT[it.category] ?? "meet some new people" : it.text, category: it.category,
       ...(mode === "detailed" ? { details: `${e.intentDetails[k] ?? ""}${def ? ` (format: ${minor ? "solo" : def.format}; tags: ${tags.join(",")})` : ""}`.trim(), desiredPeople: e.desiredPeople[k] } : {}),
-      horizonDays: it.category === "romance" ? 90 : 60, status, createdAt: created,
+      horizonDays: intentHorizonDays(it.category), status, createdAt: rec.createdAt,
     });
   });
 
@@ -870,6 +895,10 @@ const manifest: Manifest = {
     travelers: hiddenRecs.filter(h => X.get(h.memberId)!.travelMode).length,
     facets: facets.length, facetsByScope: countBy(facets, f => f.scope),
     intents: intents.length, intentsByCategory: countBy(intents, i => i.category),
+    intentsByLiveness: countBy(intents, i => (i.status !== "active" ? i.status : i.createdAt + i.horizonDays * DAY > NOW ? "active_live" : "active_expired")),
+    adultsWithLiveIntent: members.filter(m => m.segment === "adult" && intents.some(i => i.memberId === m.id && i.status === "active" && i.createdAt + i.horizonDays * DAY > NOW)).length,
+    hiddenDesiresLapsedAtSnapshot: hiddenRecs.reduce((n, h) => n + h.hidden.desires.filter(d => d.lapsesAt !== undefined && d.lapsesAt <= NOW).length, 0),
+    hiddenDesires: hiddenRecs.reduce((n, h) => n + h.hidden.desires.length, 0),
     presence: presence.length, presenceByType: countBy(presence, p => p.type),
     edges: edges.length, edgesByType: countBy(edges, e => e.type), edgesByRelation: countBy(edges, e => e.relation),
     workplaces: [...wpMembers.keys()].length,
@@ -902,6 +931,7 @@ const manifest: Manifest = {
     "LLM text is cached under runs/synthetic-cache/v1 (gitignored); without the cache, regeneration yields the same structure but different prose.",
     "generator 1.1.0: adult romance opt-in calibrated to ~25-30% (calibrateRomance in generate.ts); only members whose prompt changed (a dropped dating intent) or that had template text got new LLM text.",
     "generator 1.2.0: hidden profile richness tiers (minimal 15% / light 25% / medium 30% / rich 20% / very_rich 10%) and simulated connected sources (packages/sim/src/sources.ts). Public facets/intents/profile hold only what the member told the agent plus source-derived facets (with source, confidence, observedAt, inferred, confirmedByMember); hidden_truth.jsonl keeps the complete truth plus a truth label per source facet. No new LLM text (prompts unchanged).",
+    "generator 1.2.1: intent records anchored to the snapshot. Before, createdAt was the first statement (join + 0-20 days) with no re-confirmation, so 304 of 582 active intents were past their 60/90-day horizon at snapshot time and 252 of 450 adults had no live intent while the oracle still counted those wants. Now the agent re-asks every 30 days: answered check-ins re-confirm a held want (createdAt = that check-in) or withdraw a lapsed one (status closed); unanswered ones let the record age out. Hidden wants carry lapsesAt (exponential lifetime from when stated: help 45 d, romance 240 d, other 365 d), and the oracle ignores a want once it lapses. Same RNG streams as 1.2.0 for everything else; no new LLM text.",
   ],
 };
 await Bun.write(`${outDir}/${FILES.manifest}`, JSON.stringify(manifest, null, 2) + "\n");

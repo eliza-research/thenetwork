@@ -1,6 +1,7 @@
 // Persona model: a synthetic member with HIDDEN ground truth (what the Network can never
 // read directly) and a PUBLIC side (what they will reveal in conversation). PRD 34.3.
-import type { Category, City, MemberId } from "@thenetwork/core";
+import { DAY, type Category, type City, type MemberId } from "@thenetwork/core";
+import { Rng, hash32 } from "./rng.ts";
 import type { WritingStyle } from "./taxonomy.ts";
 import type { Knowledge, RichnessTier } from "./sources.ts";
 
@@ -30,7 +31,16 @@ export interface Responsiveness {
   ignoreProb: number;
 }
 
-export interface Desire { id: string; text: string; category: Category; strength: number }
+export interface Desire {
+  id: string; text: string; category: Category; strength: number;
+  /**
+   * Hidden: when this want genuinely ends (epoch ms): the member got it, lost interest, or life
+   * changed. Absent = held throughout. A lapsed want no longer counts for the oracle
+   * (Oracle.evaluate via withLiveDesires), and the member withdraws the matching intent at the
+   * next re-confirmation they answer (intentRecordTiming).
+   */
+  lapsesAt?: number;
+}
 
 export interface Trip { city: City; fromDay: number; toDay: number }
 
@@ -65,7 +75,11 @@ export interface PublicProfile {
   /** What they say when asked what they're into (may exaggerate or omit). */
   statedInterests: string[];
   statedSkills: string[];
-  statedIntents: { desireId: string; text: string; category: Category }[];
+  /**
+   * `statedAt` (epoch ms): when the member first told the agent this want. Absent = at join.
+   * Harness-side; buildSnapshot turns it into the intent record's createdAt/status.
+   */
+  statedIntents: { desireId: string; text: string; category: Category; statedAt?: number }[];
   claimedAge: number;
   bio: string;
   /** Short sample of how they write, used by LLM persona agents. */
@@ -100,4 +114,79 @@ export interface Persona {
 export function canariesOf(personas: Persona[]): { memberId: MemberId; canary: string; fact: string }[] {
   return personas.flatMap(p => p.hidden.privateDisclosure
     ? [{ memberId: p.id, canary: p.hidden.privateDisclosure.canary, fact: p.hidden.privateDisclosure.fact }] : []);
+}
+
+// ---- intent liveness (the Network's intent record vs the persona's hidden want) ----------------
+//
+// The Network keeps an intent live for `horizonDays` after it was stated or last re-confirmed
+// (engine world.ts drops `createdAt + horizonDays <= now`). The agent re-asks every
+// INTENT_RECONFIRM_DAYS; a member who answers re-confirms a want they still hold (createdAt moves
+// to that check-in) or withdraws one that has lapsed (status "closed"). A member who doesn't
+// answer leaves the record as it was, so it ages out on its own.
+//
+// The oracle judges TRUE compatibility from hidden wants, so its liveness rule depends on hidden
+// truth only: a want counts until its hidden `lapsesAt`, whatever the Network's record says. A
+// want the Network doesn't know about (never told, or the record expired because the member
+// stopped answering) is still a real want, exactly like an untold want under the richness tiers:
+// the engine is fairly penalized for missing it. A lapsed want never counts, even while a stale
+// record still looks live to the engine (the engine pays for that staleness too). The two views
+// therefore agree except for those two information lags, and nothing hidden reaches the engine.
+
+/** Agent check-in cadence for open intents (days). */
+export const INTENT_RECONFIRM_DAYS = 30;
+/** Horizon the Network gives an intent record (days), by category. */
+export const intentHorizonDays = (category: Category): number => (category === "romance" ? 90 : 60);
+
+/** True while the persona still holds this want at time `at` (hidden truth). */
+export const desireLive = (d: Desire, at: number): boolean => d.lapsesAt === undefined || at < d.lapsesAt;
+
+/** The persona as of `at`: lapsed wants removed. Returns `p` itself when nothing has lapsed. */
+export function withLiveDesires(p: Persona, at: number): Persona {
+  if (p.hidden.desires.every(d => desireLive(d, at))) return p;
+  return { ...p, hidden: { ...p.hidden, desires: p.hidden.desires.filter(d => desireLive(d, at)) } };
+}
+
+export interface IntentRecordTiming {
+  /** When the member stated or last re-confirmed it (the record's createdAt). */
+  createdAt: number;
+  /** "closed" = the member withdrew it at a check-in after the want lapsed. */
+  status: "active" | "closed";
+  /** Check-ins the member answered with "still want it". */
+  reconfirmations: number;
+}
+
+/**
+ * The Network's record of stated intent `index` at time `now`, or undefined if not yet stated.
+ * `statedAt` defaults to `fallbackStatedAt` (the join time). Each check-in is answered with
+ * probability 1 - responsiveness.ignoreProb, drawn deterministically per (persona, intent,
+ * check-in), so the record is the same whenever it is rebuilt. `unresponsive`: the member is
+ * ignoring the agent right now (no check-in counts).
+ */
+export function intentRecordTiming(p: Persona, index: number, now: number, fallbackStatedAt: number, opts: { unresponsive?: boolean } = {}): IntentRecordTiming | undefined {
+  const it = p.public.statedIntents[index];
+  if (!it) return undefined;
+  const stated = it.statedAt ?? fallbackStatedAt;
+  if (stated > now) return undefined;
+  // A stated intent that is not a hidden desire (an exaggerating or adversarial persona) never lapses.
+  const lapse = p.hidden.desires.find(d => d.id === it.desireId)?.lapsesAt;
+  const answer = 1 - p.hidden.responsiveness.ignoreProb;
+  let createdAt = stated, reconfirmations = 0;
+  // A member who is currently ignoring the agent (2+ unanswered proactive messages, so "only when
+  // I ask") is not answering check-ins either: a fresh re-confirmation would read as a new ask.
+  if (opts.unresponsive) return { createdAt, status: "active", reconfirmations };
+  for (let k = 1; stated + k * INTENT_RECONFIRM_DAYS * DAY <= now; k++) {
+    const t = stated + k * INTENT_RECONFIRM_DAYS * DAY;
+    if (new Rng(hash32("reconfirm", p.id, index, k)).next() >= answer) continue;
+    if (lapse !== undefined && t >= lapse) return { createdAt, status: "closed", reconfirmations };
+    createdAt = t; reconfirmations++;
+  }
+  return { createdAt, status: "active", reconfirmations };
+}
+
+/**
+ * Hidden lapse time for a want held since `since`: exponential lifetime with mean `meanDays`
+ * (deterministic from `r`). Used by the synthetic generator and the sim's optional intentLapse.
+ */
+export function drawLapse(r: Rng, since: number, meanDays: number): number {
+  return Math.round(since + -Math.log(1 - r.next()) * meanDays * DAY);
 }

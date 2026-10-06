@@ -3,11 +3,16 @@
 // low-exposure / low-data members so they are not starved by stronger profiles.
 import type { Category, Facet, Intent, MemberId } from "@thenetwork/core";
 import { cosine, tokenize } from "./embed.ts";
+import { intentSatisfaction } from "./complementarity.ts";
 import { memberReason, type FilterReason } from "./filters.ts";
 import type { Format, Role } from "./types.ts";
 import { intentText, type World } from "./world.ts";
 
-export interface Retrieved { id: MemberId; sim: number; facet?: Facet; channels: Set<string>; floor: boolean }
+export interface Retrieved {
+  id: MemberId; sim: number; facet?: Facet; channels: Set<string>; floor: boolean;
+  /** Ordering key: sim plus the complementarity weight x structured satisfaction (= sim when off). */
+  rank?: number;
+}
 
 export interface RetrievalCtx {
   w: World;
@@ -57,6 +62,10 @@ export function retrieveForIntent(ctx: RetrievalCtx, intent: Intent, pool: Membe
   const cfg = w.cfg.retrieval;
   const toks = new Set(tokenize(intentText(intent)));
   const hop = twoHop(w, intent.memberId);
+  // Structured "need" channel (complementarity.ts): members whose skills / offers / pool meet the
+  // intent are kept even below minSim, and structured satisfaction joins the ordering.
+  const cc = w.cfg.complementarity;
+  const structured = cc.weight > 0;
   const scored: Retrieved[] = [];
   for (const id of pool) {
     const mi = w.get(id)!;
@@ -65,13 +74,16 @@ export function retrieveForIntent(ctx: RetrievalCtx, intent: Intent, pool: Membe
     const tagHit = [...mi.tags].some(t => toks.has(t));
     if (tagHit) channels.add("tag");
     if (hop.has(id) && sim >= cfg.warmMinSim) channels.add("graph");
-    if (sim < minSim && !channels.has("graph")) continue;
-    scored.push({ id, sim, facet, channels, floor: false });
+    const need = structured ? intentSatisfaction(w, intent, id) : 0;
+    if (cc.retrievalChannel && structured && need >= cc.channelMin) channels.add("need");
+    if (sim < minSim && !channels.has("graph") && !channels.has("need")) continue;
+    scored.push({ id, sim, facet, channels, floor: false, rank: sim + cc.weight * need });
   }
-  scored.sort((a, b) => (b.sim - a.sim) || (a.id < b.id ? -1 : 1));
+  const byRank = (a: Retrieved, b: Retrieved) => ((b.rank ?? b.sim) - (a.rank ?? a.sim)) || (a.id < b.id ? -1 : 1);
+  scored.sort(byRank);
   const out = new Map<MemberId, Retrieved>();
   scored.slice(0, cfg.topK).forEach(r => { if (r.sim >= minSim) r.channels.add("semantic"); out.set(r.id, r); });
-  for (const r of scored) if (r.channels.has("tag") || r.channels.has("graph")) if (!out.has(r.id)) out.set(r.id, r);
+  for (const r of scored) if (r.channels.has("tag") || r.channels.has("graph") || r.channels.has("need")) if (!out.has(r.id)) out.set(r.id, r);
   // Exposure floor.
   let floor = 0;
   for (const r of scored) {
@@ -82,7 +94,7 @@ export function retrieveForIntent(ctx: RetrievalCtx, intent: Intent, pool: Membe
       r.channels.add("exposure_floor"); r.floor = true; out.set(r.id, r); floor++;
     }
   }
-  return [...out.values()].sort((a, b) => (b.sim - a.sim) || (a.id < b.id ? -1 : 1));
+  return [...out.values()].sort(byRank);
 }
 
 /** Members interested in a query embedding (events, themes), best desire/interest facet. */

@@ -381,7 +381,7 @@ export function helpRequest(ctx: GenCtx): Candidate[] {
       const ranked = got.map(r => {
         const mi = w.get(r.id)!;
         const acquainted = w.edgeHas(a, r.id, "met") || w.edgeHas(a, r.id, "knows") || w.edgeHas(a, r.id, "helped");
-        const s = r.sim + (r.facet?.kind === "offer" ? 0.1 : 0) - 0.1 * mi.recentContribution + (mi.recentContribution === 0 ? 0.03 : 0) + (home && acquainted ? 0.2 : 0);
+        const s = (r.rank ?? r.sim) + (r.facet?.kind === "offer" ? 0.1 : 0) - 0.1 * mi.recentContribution + (mi.recentContribution === 0 ? 0.03 : 0) + (home && acquainted ? 0.2 : 0);
         return { ...r, s, acquainted };
       }).filter(r => !pairReason(w, a, r.id, "help"))
         .sort((p, q) => (q.s - p.s) || (p.id < q.id ? -1 : 1));

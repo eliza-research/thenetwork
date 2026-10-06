@@ -564,6 +564,40 @@ const isPolicyFacet = (f: FacetRecord) => f.tags.some(t => POLICY_TAGS.includes(
   });
 }
 
+// ---- 17. intent liveness (1.2.1): records anchored to the snapshot, consistent with hidden wants ---------
+// Every intent record must be explainable from hidden truth: an active record past its horizon only
+// for a member who did not answer the check-ins; a closed record only for a want that has lapsed.
+// Most active records must be live at snapshot time (the 1.2.0 bug: 52% of active records expired).
+{
+  const e: string[] = [];
+  const DAY_MS = 86_400_000, RECONFIRM_MS = 30 * DAY_MS;
+  const live = (i: IntentRecord) => i.status === "active" && i.createdAt + i.horizonDays * DAY_MS > SNAPSHOT_NOW;
+  const tab: Record<string, number> = {};
+  for (const i of intents) {
+    const h = H.get(i.memberId)!;
+    const st = h.personaPublic.statedIntents[Number(i.id.split(":i")[1])];
+    const want = st && h.hidden.desires.find(d => d.id === st.desireId);
+    const lapsed = !!want && want.lapsesAt !== undefined && want.lapsesAt <= SNAPSHOT_NOW;
+    const rec = i.status !== "active" ? i.status : live(i) ? "live" : "expired";
+    tab[`${rec}/${!want ? "not_a_hidden_want" : lapsed ? "lapsed" : "held"}`] = (tab[`${rec}/${!want ? "not_a_hidden_want" : lapsed ? "lapsed" : "held"}`] ?? 0) + 1;
+    if (i.createdAt > SNAPSHOT_NOW) e.push(`${i.id}: createdAt after the snapshot`);
+    if (st?.statedAt === undefined || i.createdAt < st.statedAt) e.push(`${i.id}: createdAt before the member stated it (or no statedAt)`);
+    if (i.status === "closed" && !lapsed) e.push(`${i.id}: closed but the hidden want has not lapsed`);
+    if (rec === "expired" && h.hidden.responsiveness.ignoreProb < 0.05 && M.get(i.memberId)!.unansweredProactive < 2) e.push(`${i.id}: expired for a member who answers ~every check-in`);
+    if (st?.statedAt !== undefined && i.createdAt !== st.statedAt && (i.createdAt - st.statedAt) % RECONFIRM_MS !== 0) e.push(`${i.id}: createdAt is not a check-in time`);
+  }
+  const active = intents.filter(i => i.status === "active");
+  const expiredShare = pct(active.filter(i => !live(i)).length, active.length);
+  if (expiredShare > 10) e.push(`${expiredShare}% of active intents are past their horizon (max 10%)`);
+  const adults = members.filter(m => m.segment === "adult");
+  const withLive = new Set(intents.filter(live).map(i => i.memberId));
+  check("intent_liveness_anchored", e, {
+    recordVsHiddenWant: tab, activeExpiredPct: expiredShare,
+    adultsWithLiveIntent: adults.filter(m => withLive.has(m.id)).length, adults: adults.length,
+    medianRecordAgeDays: (() => { const a = intents.map(i => (SNAPSHOT_NOW - i.createdAt) / DAY_MS).sort((x, y) => x - y); return Math.round(a[Math.floor(a.length / 2)] ?? 0); })(),
+  });
+}
+
 // ---- report -----------------------------------------------------------------------------------------
 const failed = checks.filter(c => !c.pass);
 const report = { dataset: dir.replace(/.*\/data\//, "data/"), validatedAt: new Date().toISOString(), pass: failed.length === 0, passed: checks.length - failed.length, total: checks.length, checks };

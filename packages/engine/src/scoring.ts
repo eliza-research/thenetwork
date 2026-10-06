@@ -6,6 +6,7 @@ import type { Facet, MemberId, ScoreComponents } from "@thenetwork/core";
 import { DAY, HOUR } from "@thenetwork/core";
 import type { Candidate, JudgeVerdict } from "./types.ts";
 import { CONTRIBUTOR_ROLES } from "./types.ts";
+import { complementarity } from "./complementarity.ts";
 import { pairKey, provenanceWeight, type World } from "./world.ts";
 
 export interface Scored {
@@ -13,6 +14,8 @@ export interface Scored {
   eligible: boolean; reason?: string; verdict?: JudgeVerdict | null;
   /** Leak-gated member-facing text from pass 3 (deep review), preferred over pass-2 text. */
   memberWhy?: Record<MemberId, string>;
+  /** Structured complementarity pair value blended into fit (undefined when not applied). */
+  complementarity?: number;
 }
 
 const clamp = (x: number, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, Number.isFinite(x) ? x : lo));
@@ -52,6 +55,15 @@ export function computeComponents(w: World, c: Candidate, verdict?: JudgeVerdict
 
   let fit = clamp(c.fit);
   let mb = mutualBenefit(ids.map(id => c.benefit[id] ?? 0));
+  // Structured complementarity (complementarity.ts): blended into fit and into each side's
+  // benefit before the reciprocal (harmonic / without-misery) aggregation. Not applied when a
+  // participant has no structured profile (neutral, not a penalty).
+  const cw = cfg.complementarity.weight;
+  const comp = cw > 0 ? complementarity(w, ids) : undefined;
+  if (comp) {
+    fit = clamp((1 - cw) * fit + cw * comp.pair);
+    mb = mutualBenefit(ids.map(id => (1 - cw) * clamp(c.benefit[id] ?? 0) + cw * comp.benefit[id]!));
+  }
   let warmPath = clamp(c.warm);
   if (!warmPath && pairs.some(([a, b]) => w.isWarm(a, b))) warmPath = ids.length > 2 ? 0.5 : 0.3;
 
@@ -170,8 +182,9 @@ export function scoreCandidate(w: World, c: Candidate, verdict?: JudgeVerdict | 
   const threshold = thresholdFor(w, c);
   const fv = floorViolation(w, components, verdict);
   const thr = c.exploration ? Math.min(threshold, w.cfg.thresholds.exploration) : threshold;
+  const comp = w.cfg.complementarity.weight > 0 ? complementarity(w, c.participants) : undefined;
   return {
-    c, components, score, threshold: thr, verdict,
+    c, components, score, threshold: thr, verdict, ...(comp ? { complementarity: comp.pair } : {}),
     eligible: !fv && score >= thr,
     reason: fv ?? (score < thr ? "below_threshold" : undefined),
   };

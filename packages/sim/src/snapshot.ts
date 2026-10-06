@@ -3,7 +3,7 @@
 // private disclosures are present as agent_private facets (that is realistic: members tell
 // the agent things in confidence) so engines can be tested for privacy leaks.
 import { DAY, type Edge, type Facet, type Intent, type Member, type Presence, type Proposal, type WorldSnapshot } from "@thenetwork/core";
-import type { Persona } from "./persona.ts";
+import { intentHorizonDays, intentRecordTiming, type Persona } from "./persona.ts";
 import { desireById, SKILLS } from "./taxonomy.ts";
 import { VAGUE_INTENT, type Knowledge } from "./sources.ts";
 
@@ -51,7 +51,7 @@ export function memberOf(p: Persona, s: Pick<SnapshotState, "joined" | "optedOut
  * coverage) plus facets from their active connected sources. Hidden truth labels are stripped.
  * Minors (stated age < 18): every facet agent_private.
  */
-function pushKnownFacets(p: Persona, k: Knowledge, jt: number, facets: Facet[], intents: Intent[]) {
+function pushKnownFacets(p: Persona, k: Knowledge, jt: number, now: number, unresponsive: (id: string) => boolean, facets: Facet[], intents: Intent[]) {
   const minor = p.public.claimedAge < 18;
   const c = k.chat;
   const said = (kind: Facet["kind"], value: string, tags: string[], scope: Facet["scope"], i: number): Facet =>
@@ -71,12 +71,13 @@ function pushKnownFacets(p: Persona, k: Knowledge, jt: number, facets: Facet[], 
   k.observations.forEach((o, i) => facets.push({ ...o.facet, tags: [...o.facet.tags], id: `${p.id}:s${facets.length}:${i}`, memberId: p.id, scope: minor ? "agent_private" : o.facet.scope }));
   for (const i of c.intents) {
     const it = p.public.statedIntents[i];
-    if (!it) continue;
+    const rec = it && intentRecordTiming(p, i, now, jt, { unresponsive: unresponsive(p.id) });
+    if (!it || !rec) continue;
     const def = desireById.get(it.desireId);
     intents.push({
       id: `${p.id}:i${i}`, memberId: p.id, objective: c.intentMode === "vague" ? VAGUE_INTENT[it.category] ?? "meet some new people" : it.text, category: it.category,
       details: c.intentMode === "detailed" && def ? `format: ${def.format}; tags: ${[...def.needsInterests, ...def.needsSkills, def.pool ?? ""].filter(Boolean).join(",")}` : undefined,
-      horizonDays: 60, status: "active", createdAt: jt,
+      horizonDays: intentHorizonDays(it.category), status: rec.status, createdAt: rec.createdAt,
     });
   }
 }
@@ -92,7 +93,7 @@ export function buildSnapshot(personas: Persona[], s: SnapshotState): WorldSnaps
   for (const p of joined) {
     const jt = s.joined.get(p.id)!;
     const k = p.knowledge;
-    if (k) pushKnownFacets(p, k, jt, facets, intents);
+    if (k) pushKnownFacets(p, k, jt, s.now, id => (s.unanswered.get(id) ?? 0) >= 2, facets, intents);
     else {
       const f = (kind: Facet["kind"], value: string, tags: string[], scope: Facet["scope"], i: number): Facet =>
         ({ id: `${p.id}:f${facets.length}:${i}`, memberId: p.id, kind, value, tags, scope, provenance: "said", confidence: 0.8, validFrom: jt });
@@ -108,11 +109,15 @@ export function buildSnapshot(personas: Persona[], s: SnapshotState): WorldSnaps
       }
       facets.push(f("fact", `lives near ${p.routine.homeArea}`, ["neighborhood"], "shareable", 0));
       p.public.statedIntents.forEach((it, i) => {
+        // Anchored to the snapshot's `now`: stated at join (or statedAt), re-confirmed at the
+        // check-ins the member answered, withdrawn once the want lapsed (persona.ts).
+        const rec = intentRecordTiming(p, i, s.now, jt, { unresponsive: (s.unanswered.get(p.id) ?? 0) >= 2 });
+        if (!rec) return;
         const def = desireById.get(it.desireId);
         intents.push({
           id: `${p.id}:i${i}`, memberId: p.id, objective: it.text, category: it.category,
           details: def ? `format: ${def.format}; tags: ${[...def.needsInterests, ...def.needsSkills, def.pool ?? ""].filter(Boolean).join(",")}` : undefined,
-          horizonDays: 60, status: "active", createdAt: jt,
+          horizonDays: intentHorizonDays(it.category), status: rec.status, createdAt: rec.createdAt,
         });
       });
     }

@@ -1,4 +1,4 @@
-# Synthetic members: SF + NYC (v1, generator 1.2.0)
+# Synthetic members: SF + NYC (v1, generator 1.2.1)
 
 > **Disclaimer: every record here is SYNTHETIC.** These are invented people with invented names, made for development, demos, the simulator and the admin console. None of them is a real person, member or employee of a real company. Given names are common names drawn from many cultures. Surnames are invented by joining morphemes from unrelated traditions (for example "Hokuthorne" or "Vasalund"), so any resemblance to a real person is coincidental. Phone numbers use only the fictional `555-01xx` range, and emails use `example.com`. Workplaces are generic descriptions such as "a 45-person fintech company in Flatiron", never named employers. The PRD forbids profiles of non-members, so do not add real people or scrape real profiles into this directory.
 
@@ -10,13 +10,13 @@ Every record has a top-level `"synthetic": true`, and so does `manifest.json`.
 |---|---|---|
 | `members.jsonl` | 500 | Core `Member` (packages/core), including `connectedSources` (1.2.0), plus `segment` (`adult`/`minor`) and `profile`. The `profile` holds pronouns, neighborhood, borough, a fictional `contact`, `enrichment` (`llm`/`template`) and `secondaryCity`. Since 1.2.0 it also holds `chatMessages`, a `bio` with `bioSource` (`member` for the rich tiers, otherwise a `summary` of known facets), texting `voice` with 0-3 samples, and `occupation`, `routine` and `availability` **only if the member told the agent** |
 | `facets.jsonl` | 5,224 | Core `Facet` with `source`, `observedAt`, `inferred`, `confirmedByMember` and, on sensitive inferences, `sensitive`. It holds **only known facts**: what the member said in chat (3,723) plus facets from their active connected sources (1,501) |
-| `intents.jsonl` | 659 | Core `Intent`, only the ones the member told the agent. Minimal-tier members have one vague category-level want, and light-tier members the objective only. From the medium tier up, intents carry an LLM-written `details` sentence followed by `(format; tags)`, plus `desiredPeople` |
+| `intents.jsonl` | 659 | Core `Intent`, only the ones the member told the agent. Minimal-tier members have one vague category-level want, and light-tier members the objective only. From the medium tier up, intents carry an LLM-written `details` sentence followed by `(format; tags)`, plus `desiredPeople`. Since 1.2.1, `createdAt` is when the want was stated or last re-confirmed, and `status` can be `closed` (withdrawn after the want lapsed) |
 | `presence.jsonl` | 549 | Core `Presence`: 500 home, 24 routine (bi-coastal members), 25 temporary (trips already announced at snapshot time) |
 | `edges.jsonl` | 2,092 | Core `Edge` plus `relation`: `invited_by` 490, `vouched_for` 334, `knows` 1,253 (949 friend, 297 coworker, 7 roommate), `blocked` 15 |
 | `hidden_truth.jsonl` | 500 | **Ground truth. Never load this into the engine or show it in a product surface.** It holds the sim `HiddenTruth` (true age, real interests and desires, honesty, flakiness, responsiveness, private disclosure plus canary, trips, adversarial kind, `richness` tier), `knowledge` (tier, chat coverage, every source entry, and a `correct`/`stale`/`wrong_inference` label for each source-derived facet), `personaTexture` (the full LLM prose whether or not it is known), archetype, gender, community, workplace, relationships (including exes, which are never disclosed), adversarial notes with scripted messages, and the public persona |
 | `manifest.json` | | Seed, snapshot time, generator version, sim-generator source hash, model, counts, LLM usage and cost, file hashes |
 | `validation.json` | | Output of `validate.ts` |
-| `engine_v1_run.json` | | Output of `load.ts --engine` (generator 1.2.0 data), including `byRichness`, which is stratified by the hidden tier (harness-only read of hidden truth) |
+| `engine_v1_run.json` | | Output of `load.ts --engine` (generator 1.2.1 data, engine v1.1.0). It includes `byRichness`, stratified by the hidden tier, and `oracle`: whole-run precision, pair recall and adults without a live intent. Both are harness-only reads of hidden truth |
 
 Every timestamp is relative to the snapshot time `now = 2026-10-12T17:00Z` (Mon 10:00 PDT / 13:00 EDT). Member ids are `sf-0001..sf-0250` and `ny-0001..ny-0250`. Facet ids are `<member>:fNN` and intent ids are `<member>:iN`.
 
@@ -95,7 +95,24 @@ const personas = await loadPersonas();
 
 `loadPersonas` also rebuilds each persona's `knowledge` (tier, chat coverage, sources, and source facets with truth labels), so sim `buildSnapshot` exposes the same tiered view. `loadSnapshot` never reads `hidden_truth.jsonl`. It strips the dataset-only fields (`synthetic`, `segment`, `profile`, `relation`), so the engine sees exactly the `packages/core` contract. `recentProposals` is empty, and there are no `events`, feedback or interactions, so `event_anchor` and `second_encounter` have nothing to work from.
 
-## Results (generator 1.2.0, regenerated 2026-10-06)
+## Results (generator 1.2.1, regenerated 2026-10-06)
+
+### What changed in 1.2.1: intent liveness and the dating opt-in
+Full analysis: `docs/results/2026-10-06-liveness-complementarity.md`.
+
+- **Intent records are anchored to the snapshot.** In 1.2.0, `createdAt` was the first statement (join + 0-20 days) with a 60/90-day horizon and no re-confirmation. So 304 of 582 active records had expired at `now`, and **252 of 450 adults had no live intent**, while the oracle still counted those wants.
+  - The agent now re-asks every 30 days (`packages/sim/src/persona.ts` `intentRecordTiming`).
+  - An answered check-in re-confirms a held want, which moves `createdAt`, or withdraws a lapsed one: `status: "closed"`.
+  - Unanswered check-ins let the record age out. Members at 2 or more unanswered proactive messages count no check-ins.
+  - Hidden wants carry `lapsesAt`: an exponential lifetime from when the want was stated, with mean 45 days for help, 240 for romance and 365 for everything else. Each stated intent carries `statedAt` in `personaPublic`. The oracle ignores a want once it has lapsed.
+- **Result:**
+  - Records: 435 active and live, 18 active but expired, 142 closed, 64 paused.
+  - **144 of 450 adults have no live intent**; 23 of them never stated one.
+  - The median record age is 18 days.
+  - 205 of 855 hidden wants (24%) have lapsed by `now`.
+  - 541 of 595 non-paused records match hidden truth exactly. The rest are realistic lags: 27 live but lapsed, 12 expired but held, 6 expired and lapsed, plus 9 wants an exaggerating persona states without holding.
+- **A dating desire implies the romance opt-in.** The fix is in `packages/sim/src/generator.ts` and `calibrateRomance`. Two adults changed, and adult romance opt-in goes from 117 to 119. The only dating holders who are opted out are the 3 age-lying minors.
+- **Unchanged:** members, facets (except 2 romance-preference facets), presence and edges are byte-identical to 1.2.0. RNG streams are unchanged (lapses use their own fork). There was no new LLM text: 0 calls, $0.
 
 ### What changed in 1.2.0: profile richness and connected sources
 The founder asked for profiles ranging from barely known to well known, and for simulated Gmail, connected sources and found social profiles. The full design is in `docs/data-model-sources.md`, and the code is in `packages/sim/src/sources.ts`.
@@ -140,7 +157,14 @@ The founder asked for profiles ranging from barely known to well known, and for 
   - These figures use the price assumption in `docs/test-plan.md` §15 ($0.99/M input, $1.49/M output). Confirm them on the console.
 - **Checks:** a scan of bios and voice samples for common real brand, employer and school names found 0 hits.
 
-### Validation: 19/19 pass on the 1.2.0 data (`v1/validation.json`)
+### Validation: 20/20 pass on the 1.2.1 data (`v1/validation.json`)
+
+Added in 1.2.1: **`intent_liveness_anchored`**. Every record has to be explainable from hidden truth:
+
+- `createdAt` is at or after `statedAt`, on a check-in, and not after `now`;
+- `closed` only for a lapsed want;
+- an expired active record only for a member who doesn't answer check-ins;
+- at most 10% of active records expired (now 4.0%; 1.2.0 fails this check with 52%).
 
 The six checks added in 1.2.0:
 
@@ -179,7 +203,21 @@ The table below is from 1.1.0. The counts it gives for facets, intents and roman
 - **Romance:** 130 of 450 adults (28.9%) are opted in to romance (was 207, 46%, in 1.0.0; see "What changed").
 - **Coverage:** all 38 interest tags and all 8 writing styles appear.
 
-### Engine v1 by richness tier (1.2.0 data, seed 1, no LLM judge, engine working tree of 2026-10-06)
+### Engine v1.1.0 by richness tier (1.2.1 data, seed 1, no LLM judge)
+
+Engine v1.1.0 adds structured complementarity (weight 0.5). The run produced **208 proposals** touching 247 members. Oracle precision is **34.6%** (20.5% for engine v1 on 1.2.0 data), and latent-pair recall is 2.1% of 3,191 latent pairs (1.2% of 4,192). The run had 0 minors in any proposal and 0 canary leaks.
+
+| Tier (adults) | Proposals per member | Share with any proposal | Mean fit | Mean confidence | Oracle compatible | Latent-pair recall |
+|---|---:|---:|---:|---:|---:|---:|
+| minimal (63) | 0.30 | 25% | 0.61 | 0.69 | 0.23 (n=13) | 0.3% |
+| light (115) | 0.56 | 40% | 0.61 | 0.75 | 0.35 | 0.9% |
+| medium (131) | 0.99 | 64% | 0.58 | 0.78 | 0.34 | 2.3% |
+| rich (94) | 1.44 | 72% | 0.57 | 0.79 | 0.35 | 3.9% |
+| very_rich (47) | 1.55 | 70% | 0.57 | 0.79 | 0.33 | 4.2% |
+
+Precision is now roughly flat across the tiers that have data (33-35%), against 17-19% before. Reach still rises with richness.
+
+### Engine v1 by richness tier (historical: 1.2.0 data, seed 1, no LLM judge, engine working tree of 2026-10-06)
 
 The run produced 151 proposals touching 230 members. Under 1.1.0 it produced 210 touching 287. The run had 0 minors in any proposal and 0 canary leaks. Fit is `components.fit`, and "oracle compatible" is the share of the tier's proposals that the sim oracle rates good from hidden truth. Recall is the share of the oracle's latent good same-city stranger pairs touching the tier that the engine proposed.
 

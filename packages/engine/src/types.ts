@@ -115,7 +115,8 @@ export interface MatchingRunLog {
   runId: string; seed: number; configHash: string; inputHash: string; now: number;
   engineVersion: string; embedModel: string; judgeModel?: string;
   funnel: FunnelLog;
-  scored: { key: string; generator: string; participants: MemberId[]; components: ScoreComponents; score: number; eligible: boolean; reason?: string; judged: boolean }[];
+  /** `complementarity`: the structured pair value blended into fit (absent when not applied). */
+  scored: { key: string; generator: string; participants: MemberId[]; components: ScoreComponents; score: number; eligible: boolean; reason?: string; judged: boolean; complementarity?: number }[];
   /** Pass 2 (rubric judge) stats and verdicts, plus optional pass 1 (screen) and pass 3 (deep review). */
   judge: {
     calls: number; cacheHits: number; failures: number; verdicts: { key: string; cacheKey: string; verdict: JudgeVerdict | null; cached: boolean }[];

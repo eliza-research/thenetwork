@@ -12,6 +12,7 @@ import type {
   AdversarialKind, Archetype, Desire, Gender, HiddenTruth, Persona, PublicProfile, Relationship,
   RelationshipType, Responsiveness, Routine,
 } from "./persona.ts";
+import { drawLapse } from "./persona.ts";
 
 export const ARCHETYPE_MIX: Record<Archetype, number> = {
   regular: 0.30, busy_parent: 0.12, newcomer: 0.12, connector: 0.08, introvert: 0.12,
@@ -50,6 +51,13 @@ export interface GeneratorOptions {
   richness?: boolean | Partial<Record<RichnessTier, number>>;
   /** Reference time for source timestamps / staleness (default 2026-10-05 00:00 SF, the sim epoch). */
   knowledgeNow?: number;
+  /**
+   * Hidden wants lapse over time (persona.ts Desire.lapsesAt): each want gets an exponential
+   * lifetime from the persona's join day, mean `meanDays` (default 365). `start` is the world's
+   * epoch (default the sim epoch). Off by default so existing worlds are unchanged; uses its own
+   * RNG fork, so every other draw is identical with or without it.
+   */
+  intentLapse?: boolean | { meanDays?: number; start?: number };
 }
 
 /** Sim epoch (same as world.ts DEFAULT_START), duplicated to avoid an import cycle. */
@@ -112,6 +120,11 @@ export function generatePersonas(opts: GeneratorOptions): Persona[] {
     personas.push(buildPersona(r, { id, archetype, homeCity, adversarial, disclosureRate, spread, usedNames, minor }));
   }
   wireRelationships(root.fork("relationships"), personas);
+  if (opts.intentLapse) {
+    const o = opts.intentLapse === true ? {} : opts.intentLapse;
+    const start = o.start ?? KNOWLEDGE_NOW_DEFAULT, mean = o.meanDays ?? 365, lr = root.fork("lapse");
+    for (const p of personas) for (const d of p.hidden.desires) d.lapsesAt = drawLapse(lr.fork(p.id, d.id), start + p.joinDay * 86_400_000, mean);
+  }
   if (opts.richness) attachKnowledge(personas, root.fork("richness"), opts.richness === true ? DEFAULT_RICHNESS_MIX : opts.richness, opts.knowledgeNow ?? KNOWLEDGE_NOW_DEFAULT);
   return personas;
 }
@@ -190,7 +203,11 @@ function buildPersona(r: Rng, a: {
   if (desires.some(d => d.id === "start_band") && !skills.some(s => ["guitar", "drums", "bass", "vocals"].includes(s)) && r.bool(0.8))
     skills.push(r.pick(["guitar", "drums", "bass", "vocals"]));
 
-  const romanceOptIn = adversarial === "harasser" ? true : r.bool(0.3);
+  // A dating desire implies the romance opt-in (error analysis 2026-10-06: 264 of 505 adults who
+  // wanted to date were hidden opt-outs, so they stated "meet someone to date", the Network showed
+  // them opted in, and the oracle gave every date zero value). Same draws as before: the r.bool
+  // is still consumed, and the extra-dating draw below is skipped for dating holders either way.
+  const romanceOptIn = (adversarial === "harasser" ? true : r.bool(0.3)) || desires.some(d => d.id === "dating");
   if (romanceOptIn && !desires.some(d => d.id === "dating") && r.bool(0.5))
     desires.push({ id: "dating", text: "meet someone to date", category: "romance", strength: Number(r.range(0.4, 0.9).toFixed(2)) });
   const seeking: Gender[] = gender === "nonbinary" ? r.sample(["woman", "man", "nonbinary"] as Gender[], r.int(1, 3))

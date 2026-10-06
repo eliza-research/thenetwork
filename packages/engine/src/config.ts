@@ -4,7 +4,7 @@ import type { Category, City, ParticipationState } from "@thenetwork/core";
 import { DAY, HOUR } from "@thenetwork/core";
 import { sha256, stableStringify } from "./rng.ts";
 
-export const ENGINE_VERSION = "engine-v1.0.0";
+export const ENGINE_VERSION = "engine-v1.1.0";
 
 export const GENERATOR_NAMES = [
   "intent_to_capability", "complementary_intents", "shared_intent_pooling", "event_anchor",
@@ -43,6 +43,14 @@ export interface EngineConfig {
   floors: { fit: number; mutualBenefit: number; confidence: number; maxSocialRisk: number; judgeDimension: number };
   weights: Weights;
   retrieval: { topK: number; exposureFloorK: number; lowExposureMax: number; minSim: number; warmMinSim: number; poolSim: number };
+  /**
+   * Structured needs -> offers complementarity (complementarity.ts). `weight` blends it into
+   * fit and each side's benefit: x' = (1 - weight) x + weight * structured; 0 turns it off.
+   * `overlap` / `need` / `give` weigh a side's benefit (interest overlap; the other member meets
+   * my want; I meet theirs). `retrievalChannel` adds members whose skills / offers / pools meet
+   * an intent (satisfaction >= `channelMin`) to that intent's candidates, even below minSim.
+   */
+  complementarity: { weight: number; overlap: number; need: number; give: number; retrievalChannel: boolean; channelMin: number };
   generators: Record<GeneratorName, boolean>;
   maxPerIntent: number;
   group: {
@@ -104,6 +112,15 @@ export const DEFAULT_CONFIG: EngineConfig = {
     activationCost: 0.25, interruptionCost: 0.2, load: 0.4, repetition: 0.4, socialRisk: 0.4,
   },
   retrieval: { topK: 50, exposureFloorK: 10, lowExposureMax: 1, minSim: 0.2, warmMinSim: 0.15, poolSim: 0.4 },
+  // Complementarity (2026-10-06, docs/results/2026-10-06-liveness-complementarity.md). Inside the
+  // engine's own candidate set the embedding-based score picked good pairs at 24-28% against a 22%
+  // base rate, while a structured needs -> offers score reached 46-47% (PoC). weight 0.5 gives the
+  // structured evidence the same say as the semantic evidence rather than replacing it: semantic
+  // fit still carries free-text wants outside the taxonomy, and the term is neutral (not applied)
+  // for members with no structured profile. Side weights: what I get (need 0.55) dominates, then
+  // shared interests (0.35), then the pleasure of helping (0.1), the same ordering as the reasons
+  // members give for a good intro. Sensitivity: weights 0.25-0.75 in the results doc.
+  complementarity: { weight: 0.5, overlap: 0.35, need: 0.55, give: 0.1, retrievalChannel: false, channelMin: 0.85 },
   generators: Object.fromEntries(GENERATOR_NAMES.map(g => [g, true])) as Record<GeneratorName, boolean>,
   maxPerIntent: 4,
   group: { minSize: 3, maxSize: 6, beamWidth: 8, poolSize: 24, minPairwise: 0.05, maxAnchorsPerCity: 8, alternates: 3, minThemeMembers: 4 },

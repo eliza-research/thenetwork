@@ -218,6 +218,7 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   runLog.scored = scored.map(s => ({
     key: s.c.key, generator: s.c.generator, participants: s.c.participants, components: roundAll(s.components),
     score: round(s.score), eligible: s.eligible, reason: s.reason, judged: !!s.verdict,
+    ...(s.complementarity !== undefined ? { complementarity: round(s.complementarity) } : {}),
   }));
   runLog.fairness = fairnessMetrics(w, selected, scored);
   runLog.blockingPairs = blockingPairs(selected, scored);

@@ -11,7 +11,7 @@ import type { ChatCoverage, ObservationTruth, RichnessTier } from "../../package
 import type { ConnectedSourceSummary, SensitiveCategory, SourceKind, SourceLink, SourceStatus } from "../../packages/core/src/index.ts";
 
 export const DATASET_VERSION = "v1";
-export const GENERATOR_VERSION = "synthetic-gen 1.2.0";
+export const GENERATOR_VERSION = "synthetic-gen 1.2.1";
 export const SEED = 20261005;
 /** Snapshot time: Mon 2026-10-12 10:00 PDT / 13:00 EDT. All timestamps are relative to this. */
 export const SNAPSHOT_NOW = Date.UTC(2026, 9, 12, 17, 0, 0);

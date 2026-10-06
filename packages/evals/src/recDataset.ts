@@ -103,7 +103,9 @@ function makeConfig(w: EvalWorld, ps: Persona[], o: { kind?: OpportunityKind; ca
   const group = ps.length > 2;
   let kind: OpportunityKind = o.kind ?? (group ? "group" : anchor?.help ? "help" : anchor ? "intro" : "expansion");
   if (o.via && !o.kind) kind = "member_intro";
-  const category: Category = o.category ?? (kind === "help" ? "help" : anchor?.category === "romance" ? "social" : anchor?.category ?? "social");
+  // A dating anchor stays "romance" (it was relabeled "social", so policy and the oracle's
+  // romance-mismatch logic never applied to dating intros; error analysis 2026-10-06).
+  const category: Category = o.category ?? (kind === "help" ? "help" : anchor?.category ?? "social");
   const roles: Record<string, string> = {};
   for (const p of ps) roles[p.id] = group ? "peer" : kind === "help" ? (p === anchor?.owner ? "seeker" : "helper") : anchor?.owner === p ? "initiator" : "peer";
   const shared = sharedInterestLabel(ps);

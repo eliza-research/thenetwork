@@ -27,7 +27,7 @@ function mutated<T>(file: string, f: (rows: T[]) => void): string {
   return dir;
 }
 
-describe("synthetic v1 dataset (generator 1.2.0)", () => {
+describe("synthetic v1 dataset (generator 1.2.1)", () => {
   test("committed data passes every validation check", () => {
     const dir = tmp();
     cpSync(DATA_DIR, dir, { recursive: true });
@@ -36,7 +36,7 @@ describe("synthetic v1 dataset (generator 1.2.0)", () => {
     expect(exit).toBe(0);
     const manifest = JSON.parse(readFileSync(join(DATA_DIR, FILES.manifest), "utf8"));
     expect(manifest.generatorVersion).toBe(GENERATOR_VERSION);
-    expect(GENERATOR_VERSION).toBe("synthetic-gen 1.2.0");
+    expect(GENERATOR_VERSION).toBe("synthetic-gen 1.2.1");
     rmSync(dir, { recursive: true });
   }, 60_000);
 

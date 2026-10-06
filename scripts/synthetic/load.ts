@@ -5,6 +5,8 @@
 //
 //   bun scripts/synthetic/load.ts                     # summary of the snapshot
 //   bun scripts/synthetic/load.ts --engine            # also run engine v1 once and report proposals
+//   bun scripts/synthetic/load.ts --engine --config '{"complementarity":{"weight":0}}'   # config override
+//   bun scripts/synthetic/load.ts --engine --dir /tmp/x --no-write   # other dataset; don't write engine_v1_run.json
 //
 // loadSnapshot never reads hidden_truth.jsonl. loadPersonas (simulator/oracle only) does.
 import { parseArgs } from "node:util";
@@ -94,7 +96,10 @@ export async function loadPersonas(dir = DATA_DIR): Promise<Persona[]> {
 
 // ---------------------------------------------------------------------------------------------
 if (import.meta.main) {
-  const a = parseArgs({ options: { engine: { type: "boolean", default: false }, seed: { type: "string", default: "1" }, dir: { type: "string", default: DATA_DIR } } }).values;
+  const a = parseArgs({ options: {
+    engine: { type: "boolean", default: false }, seed: { type: "string", default: "1" }, dir: { type: "string", default: DATA_DIR },
+    config: { type: "string" }, "no-write": { type: "boolean", default: false },
+  } }).values;
   const d = await loadPublic(a.dir);
   const snap = toSnapshot(d);
   const count = <T>(xs: T[], f: (x: T) => string) => xs.reduce<Record<string, number>>((m, x) => { m[f(x)] = (m[f(x)] ?? 0) + 1; return m; }, {});
@@ -105,7 +110,8 @@ if (import.meta.main) {
   if (a.engine) {
     const { runEngine, GENERATOR_NAMES } = await import("../../packages/engine/src/index.ts");
     const t0 = performance.now();
-    const { proposals, runLog } = await runEngine(snap, { seed: Number(a.seed) });
+    const override = a.config ? JSON.parse(a.config) : {};
+    const { proposals, runLog } = await runEngine(snap, { ...override, seed: Number(a.seed) });
     const ms = Math.round(performance.now() - t0);
     const minors = new Set(d.members.filter(m => m.age < 18).map(m => m.id));
     const canaries = d.facets.filter(f => f.tags.includes("sensitive")).map(f => /\(ref ([^)]+)\)/.exec(f.value)?.[1]).filter(Boolean) as string[];
@@ -114,6 +120,7 @@ if (import.meta.main) {
     const touched = new Set(proposals.flatMap(p => p.participants));
     const report: Record<string, unknown> = {
       engineVersion: runLog.engineVersion, seed: runLog.seed, configHash: runLog.configHash, inputHash: runLog.inputHash, wallMs: ms,
+      ...(a.config ? { configOverride: override } : {}),
       judge: runLog.judgeModel ?? "off (no llm dep)",
       proposals: proposals.length,
       proposalsByGenerator: byGen,
@@ -148,6 +155,17 @@ if (import.meta.main) {
       const tiers = ["minimal", "light", "medium", "rich", "very_rich"];
       const mean = (xs: number[]) => (xs.length ? Math.round((xs.reduce((s, x) => s + x, 0) / xs.length) * 1000) / 1000 : null);
       const adultIds = new Set(d.members.filter(m => m.age >= 18).map(m => m.id));
+      // Whole-run oracle view (all tiers): precision of proposals and of one-to-one intros, pair recall.
+      const intros = proposals.filter(p => p.participants.length === 2);
+      const liveIntent = new Set(snap.intents.filter(i => i.status === "active" && i.createdAt + i.horizonDays * 86_400_000 > snap.now).map(i => i.memberId));
+      report.oracle = {
+        compatibleRate: mean(proposals.map(p => (verdict.get(p.id)!.compatible ? 1 : 0))),
+        introCompatibleRate: mean(intros.map(p => (verdict.get(p.id)!.compatible ? 1 : 0))),
+        meanQuality: mean(proposals.map(p => verdict.get(p.id)!.quality)),
+        latentGoodPairs: latent.length,
+        latentPairRecall: mean([latent.filter(l => proposedPairs.has([l.a, l.b].sort().join("|"))).length / Math.max(1, latent.length)]),
+        adultsWithoutLiveIntent: [...adultIds].filter(id => !liveIntent.has(id)).length, adults: adultIds.size,
+      };
       report.byRichness = Object.fromEntries(tiers.map(t => {
         const ids = d.members.filter(m => tierOf.get(m.id) === t && adultIds.has(m.id)).map(m => m.id);
         const set = new Set(ids);
@@ -170,7 +188,7 @@ if (import.meta.main) {
       }));
     }
     summary.engine = report;
-    await Bun.write(`${a.dir}/engine_v1_run.json`, JSON.stringify(report, null, 2) + "\n");
+    if (!a["no-write"]) await Bun.write(`${a.dir}/engine_v1_run.json`, JSON.stringify(report, null, 2) + "\n");
   }
   console.log(JSON.stringify(summary, null, 2));
 }
