@@ -1,0 +1,301 @@
+{
+  "dataset": "data/synthetic/v1",
+  "validatedAt": "2026-10-06T00:09:32.232Z",
+  "pass": true,
+  "passed": 13,
+  "total": 13,
+  "checks": [
+    {
+      "name": "manifest_integrity",
+      "pass": true,
+      "details": {
+        "seed": 20261005,
+        "generatorVersion": "synthetic-gen 1.0.0",
+        "model": "qwen-3.8-27b",
+        "generatedAt": "2026-10-06T00:09:28.972Z"
+      }
+    },
+    {
+      "name": "schema_conformance_core_types",
+      "pass": true,
+      "details": {
+        "members": 500,
+        "facets": 6783,
+        "intents": 889,
+        "presence": 549,
+        "edges": 2092,
+        "snapshotMembers": 500
+      }
+    },
+    {
+      "name": "all_records_synthetic",
+      "pass": true
+    },
+    {
+      "name": "names_unique_and_contact_fictional",
+      "pass": true,
+      "details": {
+        "uniqueNames": 500,
+        "members": 500
+      }
+    },
+    {
+      "name": "city_neighborhood_validity",
+      "pass": true,
+      "details": {
+        "byCity": {
+          "nyc": 250,
+          "sf": 250
+        },
+        "neighborhoodsUsed": {
+          "sf": 34,
+          "nyc": 41
+        },
+        "nycBoroughs": {
+          "Bronx": 24,
+          "Queens": 20,
+          "Manhattan": 108,
+          "Brooklyn": 83,
+          "Staten Island": 15
+        }
+      }
+    },
+    {
+      "name": "age_distribution",
+      "pass": true,
+      "details": {
+        "publicAgeBuckets": {
+          "25-34": 174,
+          "18-24": 69,
+          "35-44": 121,
+          "45-54": 61,
+          "55+": 25,
+          "13-17": 50
+        },
+        "minorsBySegment": 50,
+        "minorSharePct": 10,
+        "minorAges": {
+          "13": 6,
+          "14": 10,
+          "15": 7,
+          "16": 17,
+          "17": 10
+        },
+        "trueMinorsIncludingAgeMisrepresentation": 54,
+        "medianAdultAge": 33
+      }
+    },
+    {
+      "name": "minors_single_player_invited_by_only",
+      "pass": true,
+      "details": {
+        "minors": 54,
+        "minorEdges": {
+          "invited_by": 54
+        }
+      }
+    },
+    {
+      "name": "canaries_agent_private_and_hidden_split",
+      "pass": true,
+      "details": {
+        "canaries": 133,
+        "agentPrivateFacets": 1344,
+        "facetsByScope": {
+          "matchable": 1915,
+          "shareable": 3524,
+          "agent_private": 1344
+        }
+      }
+    },
+    {
+      "name": "adversarial_flagged_in_hidden_truth",
+      "pass": true,
+      "details": {
+        "adversarial": 20,
+        "sharePct": 4,
+        "byKind": {
+          "spammer": 4,
+          "minor": 4,
+          "harasser": 4,
+          "prompt_injector": 2,
+          "block_abuser": 2,
+          "scammer": 4
+        }
+      }
+    },
+    {
+      "name": "invite_vouch_trees",
+      "pass": true,
+      "details": {
+        "roots": 10,
+        "rootsByCity": {
+          "nyc": 5,
+          "sf": 5
+        },
+        "maxDepth": 7,
+        "depthHistogram": {
+          "0": 10,
+          "1": 92,
+          "2": 155,
+          "3": 130,
+          "4": 74,
+          "5": 30,
+          "6": 7,
+          "7": 2
+        },
+        "maxFanout": 18,
+        "inviters": 186,
+        "crossCityInvites": 16,
+        "vouches": 334,
+        "vouchedMembers": 298
+      }
+    },
+    {
+      "name": "clusters_and_bridges",
+      "pass": true,
+      "details": {
+        "socialGraphEdges": 1440,
+        "knowsByRelation": {
+          "friend": 949,
+          "coworker": 297,
+          "roommate": 7
+        },
+        "components": 1,
+        "largestComponent": 500,
+        "isolated": 0,
+        "adultDegree": {
+          "min": 1,
+          "median": 6,
+          "p90": 10,
+          "max": 21
+        },
+        "generatorCommunities": 18,
+        "modularityGeneratorCommunities": 0.588,
+        "publicGraphLouvainClusters": 100,
+        "publicGraphLouvainTop8Sizes": [
+          47,
+          33,
+          25,
+          23,
+          15,
+          13,
+          12,
+          9
+        ],
+        "modularityPublicGraphLouvain": 0.487,
+        "intraCommunityEdges": 941,
+        "crossCommunityEdges": 499,
+        "crossCommunitySharePct": 34.7,
+        "bridgeMembers_3plusCommunities": 214,
+        "sfNycEdges": 61,
+        "membersWithCrossCityTie": 84,
+        "graphBridges": 60
+      }
+    },
+    {
+      "name": "multi_city_travelers",
+      "pass": true,
+      "details": {
+        "multiCityMembers": 50,
+        "sharePct": 10,
+        "visibleInSnapshotPresence": 43,
+        "byHomeCity": {
+          "nyc": 25,
+          "sf": 25
+        },
+        "presenceByType": {
+          "home": 500,
+          "routine": 24,
+          "temporary": 25
+        }
+      }
+    },
+    {
+      "name": "diversity",
+      "pass": true,
+      "details": {
+        "archetypes": {
+          "regular": 167,
+          "introvert": 50,
+          "traveler": 50,
+          "busy_parent": 62,
+          "newcomer": 67,
+          "very_active": 40,
+          "connector": 34,
+          "never_replies": 30
+        },
+        "segments": {
+          "adult": 450,
+          "minor": 50
+        },
+        "genders": {
+          "man": 217,
+          "woman": 254,
+          "nonbinary": 29
+        },
+        "intentsByCategory": {
+          "romance": 160,
+          "help": 142,
+          "social": 262,
+          "professional": 148,
+          "growth": 57,
+          "hobby": 120
+        },
+        "intentsByCategoryCity": {
+          "sf": {
+            "romance": 73,
+            "social": 136,
+            "growth": 24,
+            "hobby": 64,
+            "help": 70,
+            "professional": 73
+          },
+          "nyc": {
+            "romance": 87,
+            "help": 72,
+            "social": 126,
+            "professional": 75,
+            "growth": 33,
+            "hobby": 56
+          }
+        },
+        "intentsPerMember": 1.78,
+        "distinctIntentObjectives": 20,
+        "romanceOptInAdults": 207,
+        "interestTagsUsed": 38,
+        "facetKinds": {
+          "interest": 2378,
+          "offer": 1446,
+          "boundary": 442,
+          "preference": 282,
+          "fact": 1133,
+          "availability_pattern": 500,
+          "skill": 602
+        },
+        "writingStyles": {
+          "chatty": 78,
+          "formal": 46,
+          "sarcastic": 33,
+          "terse": 78,
+          "warm": 89,
+          "emoji-heavy": 66,
+          "lowercase-casual": 75,
+          "non-native English": 35
+        },
+        "distinctOccupations": 373,
+        "enrichment": {
+          "llm": 499,
+          "template": 1
+        },
+        "states": {
+          "normal": 342,
+          "paused": 14,
+          "quiet": 62,
+          "open": 73,
+          "receiving": 9
+        }
+      }
+    }
+  ]
+}

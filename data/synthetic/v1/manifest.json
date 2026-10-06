@@ -1,0 +1,130 @@
+{
+  "synthetic": true,
+  "dataset": "The Network synthetic members (SF + NYC)",
+  "datasetVersion": "v1",
+  "generatorVersion": "synthetic-gen 1.0.0",
+  "simGeneratorSourceSha256": "0697ffdf97e5563ffbe30eac64bc4da86e30add8bc9ef57fb46011209412a0a4",
+  "seed": 20261005,
+  "snapshotNow": 1791824400000,
+  "snapshotNowIso": "2026-10-12T17:00:00.000Z",
+  "generatedAt": "2026-10-06T00:09:28.972Z",
+  "model": "qwen-3.8-27b",
+  "counts": {
+    "members": 500,
+    "byCity": {
+      "nyc": 250,
+      "sf": 250
+    },
+    "bySegment": {
+      "adult": 450,
+      "minor": 50
+    },
+    "byState": {
+      "normal": 342,
+      "paused": 14,
+      "quiet": 62,
+      "open": 73,
+      "receiving": 9
+    },
+    "adversarial": {
+      "spammer": 4,
+      "minor": 4,
+      "harasser": 4,
+      "prompt_injector": 2,
+      "block_abuser": 2,
+      "scammer": 4
+    },
+    "travelers": 50,
+    "facets": 6783,
+    "facetsByScope": {
+      "matchable": 1915,
+      "shareable": 3524,
+      "agent_private": 1344
+    },
+    "intents": 889,
+    "intentsByCategory": {
+      "romance": 160,
+      "help": 142,
+      "social": 262,
+      "professional": 148,
+      "growth": 57,
+      "hobby": 120
+    },
+    "presence": 549,
+    "presenceByType": {
+      "home": 500,
+      "routine": 24,
+      "temporary": 25
+    },
+    "edges": 2092,
+    "edgesByType": {
+      "blocked": 15,
+      "invited_by": 490,
+      "knows": 1253,
+      "vouched_for": 334
+    },
+    "edgesByRelation": {
+      "block": 15,
+      "invite": 490,
+      "friend": 949,
+      "coworker": 297,
+      "roommate": 7,
+      "vouch": 334
+    },
+    "workplaces": 51
+  },
+  "llm": {
+    "provider": "cerebras",
+    "model": "qwen-3.8-27b",
+    "concurrency": 4,
+    "personasEnrichedByLLM": 499,
+    "fromCache": 88,
+    "templateFallbacks": 1,
+    "fallbackReasons": {
+      "Cerebras 429": 1
+    },
+    "partialFieldFallbacks": 0,
+    "contactScrubs": 0,
+    "httpCalls": 1038,
+    "http429": 517,
+    "http5xx": 0,
+    "promptTokens": 307313,
+    "completionTokens": 1685741,
+    "reasoningTokens": 1508154,
+    "estimatedCostUsd": 2.816,
+    "pricingAssumption": "qwen-3.8-27b ~$0.99/M input, ~$1.49/M output (docs/test-plan.md section 15; confirm on Cerebras console)",
+    "enrichmentWallMs": 792706
+  },
+  "files": {
+    "members.jsonl": {
+      "records": 500,
+      "sha256": "bdc354e34b7f3adbdfb0e21a30533cb70b3decaf5fd902eb9b10202f2a2bed01"
+    },
+    "facets.jsonl": {
+      "records": 6783,
+      "sha256": "5b8e810cf0f8b52abc3e2fff0641a0a72da1dabd8f37601499e9dbd19fcdcc8e"
+    },
+    "intents.jsonl": {
+      "records": 889,
+      "sha256": "753a6aa49dd5def30ddc95092cd426fa35e444d0d213ef7d01c86d9b788e72ae"
+    },
+    "presence.jsonl": {
+      "records": 549,
+      "sha256": "884ec6d11480d5436f903f2cf965d3465fc6f29d396d35b20c126bb40dd9bad2"
+    },
+    "edges.jsonl": {
+      "records": 2092,
+      "sha256": "dddc836eae9bb0c42084bbd7e11fd1f27c2896c66ce758bea3d6924fe018ecec"
+    },
+    "hidden_truth.jsonl": {
+      "records": 500,
+      "sha256": "f051fbc0246b2b5f299ee83cd3289f4dc5142a12d107a846505f76d56d680d1a"
+    }
+  },
+  "notes": [
+    "ALL RECORDS ARE SYNTHETIC. Invented people with invented names; any resemblance to real persons is coincidental.",
+    "Phone numbers use the fictional 555-01xx range; emails use example.com.",
+    "hidden_truth.jsonl is ground truth for the simulator/oracle and evaluation only. Never load it into the engine or show it in product surfaces.",
+    "LLM text is cached under runs/synthetic-cache/v1 (gitignored); without the cache, regeneration yields the same structure but different prose."
+  ]
+}

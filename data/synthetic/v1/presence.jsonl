@@ -1,0 +1,549 @@
+{"synthetic":true,"memberId":"ny-0001","city":"nyc","type":"home","areas":["Mott Haven","SoHo"]}
+{"synthetic":true,"memberId":"ny-0002","city":"nyc","type":"home","areas":["Riverdale"]}
+{"synthetic":true,"memberId":"ny-0003","city":"nyc","type":"home","areas":["Ridgewood","Financial District"]}
+{"synthetic":true,"memberId":"ny-0004","city":"nyc","type":"home","areas":["Jackson Heights"]}
+{"synthetic":true,"memberId":"ny-0005","city":"nyc","type":"home","areas":["Financial District","Tribeca"]}
+{"synthetic":true,"memberId":"ny-0006","city":"nyc","type":"home","areas":["Crown Heights","Lower East Side"]}
+{"synthetic":true,"memberId":"ny-0007","city":"nyc","type":"home","areas":["Red Hook","Midtown"]}
+{"synthetic":true,"memberId":"ny-0007","city":"sf","type":"routine","areas":["Marina"]}
+{"synthetic":true,"memberId":"ny-0007","city":"sf","type":"temporary","areas":[],"from":1792738800000,"to":1793343600000}
+{"synthetic":true,"memberId":"ny-0008","city":"nyc","type":"home","areas":["St. George","Long Island City"]}
+{"synthetic":true,"memberId":"ny-0009","city":"nyc","type":"home","areas":["East Village","Flushing"]}
+{"synthetic":true,"memberId":"ny-0010","city":"nyc","type":"home","areas":["DUMBO","Prospect Heights"]}
+{"synthetic":true,"memberId":"ny-0011","city":"nyc","type":"home","areas":["Murray Hill","Long Island City"]}
+{"synthetic":true,"memberId":"ny-0012","city":"nyc","type":"home","areas":["SoHo","Greenpoint"]}
+{"synthetic":true,"memberId":"ny-0013","city":"nyc","type":"home","areas":["SoHo","Midtown"]}
+{"synthetic":true,"memberId":"ny-0014","city":"nyc","type":"home","areas":["Mott Haven","Flatiron"]}
+{"synthetic":true,"memberId":"ny-0015","city":"nyc","type":"home","areas":["Flatbush","Flushing"]}
+{"synthetic":true,"memberId":"ny-0016","city":"nyc","type":"home","areas":["St. George"]}
+{"synthetic":true,"memberId":"ny-0017","city":"nyc","type":"home","areas":["East Village"]}
+{"synthetic":true,"memberId":"ny-0018","city":"nyc","type":"home","areas":["East Harlem","Flushing"]}
+{"synthetic":true,"memberId":"ny-0019","city":"nyc","type":"home","areas":["East Village","Midtown"]}
+{"synthetic":true,"memberId":"ny-0019","city":"sf","type":"temporary","areas":[],"from":1792306800000,"to":1792998000000}
+{"synthetic":true,"memberId":"ny-0020","city":"nyc","type":"home","areas":["Washington Heights"]}
+{"synthetic":true,"memberId":"ny-0021","city":"nyc","type":"home","areas":["Mott Haven","Prospect Heights"]}
+{"synthetic":true,"memberId":"ny-0022","city":"nyc","type":"home","areas":["Tribeca"]}
+{"synthetic":true,"memberId":"ny-0022","city":"sf","type":"routine","areas":["Hayes Valley"]}
+{"synthetic":true,"memberId":"ny-0023","city":"nyc","type":"home","areas":["Riverdale","DUMBO"]}
+{"synthetic":true,"memberId":"ny-0024","city":"nyc","type":"home","areas":["Murray Hill","SoHo"]}
+{"synthetic":true,"memberId":"ny-0025","city":"nyc","type":"home","areas":["Riverdale"]}
+{"synthetic":true,"memberId":"ny-0026","city":"nyc","type":"home","areas":["Sunset Park","Lower East Side"]}
+{"synthetic":true,"memberId":"ny-0027","city":"nyc","type":"home","areas":["St. George","Tribeca"]}
+{"synthetic":true,"memberId":"ny-0027","city":"sf","type":"temporary","areas":[],"from":1791615600000,"to":1792220400000}
+{"synthetic":true,"memberId":"ny-0028","city":"nyc","type":"home","areas":["Greenpoint","Carroll Gardens"]}
+{"synthetic":true,"memberId":"ny-0029","city":"nyc","type":"home","areas":["Sunset Park"]}
+{"synthetic":true,"memberId":"ny-0030","city":"nyc","type":"home","areas":["Riverdale","Prospect Heights"]}
+{"synthetic":true,"memberId":"ny-0031","city":"nyc","type":"home","areas":["Crown Heights","Carroll Gardens"]}
+{"synthetic":true,"memberId":"ny-0032","city":"nyc","type":"home","areas":["Midtown"]}
+{"synthetic":true,"memberId":"ny-0033","city":"nyc","type":"home","areas":["Flushing","Long Island City"]}
+{"synthetic":true,"memberId":"ny-0033","city":"sf","type":"routine","areas":["NoPa"]}
+{"synthetic":true,"memberId":"ny-0034","city":"nyc","type":"home","areas":["Red Hook","Riverdale"]}
+{"synthetic":true,"memberId":"ny-0035","city":"nyc","type":"home","areas":["East Village","Chinatown"]}
+{"synthetic":true,"memberId":"ny-0036","city":"nyc","type":"home","areas":["East Village"]}
+{"synthetic":true,"memberId":"ny-0037","city":"nyc","type":"home","areas":["Tribeca","Midtown"]}
+{"synthetic":true,"memberId":"ny-0038","city":"nyc","type":"home","areas":["Tribeca","Chinatown"]}
+{"synthetic":true,"memberId":"ny-0039","city":"nyc","type":"home","areas":["East Village","Lower East Side"]}
+{"synthetic":true,"memberId":"ny-0040","city":"nyc","type":"home","areas":["Chelsea"]}
+{"synthetic":true,"memberId":"ny-0041","city":"nyc","type":"home","areas":["Sunnyside","Prospect Heights"]}
+{"synthetic":true,"memberId":"ny-0042","city":"nyc","type":"home","areas":["Sunset Park","Chinatown"]}
+{"synthetic":true,"memberId":"ny-0043","city":"nyc","type":"home","areas":["Tribeca","Lower East Side"]}
+{"synthetic":true,"memberId":"ny-0044","city":"nyc","type":"home","areas":["Chelsea","Riverdale"]}
+{"synthetic":true,"memberId":"ny-0045","city":"nyc","type":"home","areas":["Mott Haven"]}
+{"synthetic":true,"memberId":"ny-0046","city":"nyc","type":"home","areas":["Financial District","DUMBO"]}
+{"synthetic":true,"memberId":"ny-0047","city":"nyc","type":"home","areas":["Fort Greene","Lower East Side"]}
+{"synthetic":true,"memberId":"ny-0048","city":"nyc","type":"home","areas":["St. George","DUMBO"]}
+{"synthetic":true,"memberId":"ny-0049","city":"nyc","type":"home","areas":["Chelsea"]}
+{"synthetic":true,"memberId":"ny-0050","city":"nyc","type":"home","areas":["St. George","Midtown"]}
+{"synthetic":true,"memberId":"ny-0051","city":"nyc","type":"home","areas":["East Village","Lower East Side"]}
+{"synthetic":true,"memberId":"ny-0052","city":"nyc","type":"home","areas":["Park Slope","Flushing"]}
+{"synthetic":true,"memberId":"ny-0053","city":"nyc","type":"home","areas":["Tribeca","Financial District"]}
+{"synthetic":true,"memberId":"ny-0054","city":"nyc","type":"home","areas":["Inwood","Chinatown"]}
+{"synthetic":true,"memberId":"ny-0055","city":"nyc","type":"home","areas":["Gramercy","Upper East Side"]}
+{"synthetic":true,"memberId":"ny-0055","city":"sf","type":"temporary","areas":[],"from":1791529200000,"to":1792134000000}
+{"synthetic":true,"memberId":"ny-0056","city":"nyc","type":"home","areas":["Bed-Stuy","Crown Heights"]}
+{"synthetic":true,"memberId":"ny-0057","city":"nyc","type":"home","areas":["Tribeca","SoHo"]}
+{"synthetic":true,"memberId":"ny-0058","city":"nyc","type":"home","areas":["Chelsea"]}
+{"synthetic":true,"memberId":"ny-0059","city":"nyc","type":"home","areas":["Murray Hill","Upper East Side"]}
+{"synthetic":true,"memberId":"ny-0060","city":"nyc","type":"home","areas":["Mott Haven","Chelsea"]}
+{"synthetic":true,"memberId":"ny-0061","city":"nyc","type":"home","areas":["Chelsea"]}
+{"synthetic":true,"memberId":"ny-0062","city":"nyc","type":"home","areas":["Sunnyside","Carroll Gardens"]}
+{"synthetic":true,"memberId":"ny-0062","city":"sf","type":"temporary","areas":[],"from":1792134000000,"to":1792738800000}
+{"synthetic":true,"memberId":"ny-0063","city":"nyc","type":"home","areas":["Upper West Side","Flatiron"]}
+{"synthetic":true,"memberId":"ny-0064","city":"nyc","type":"home","areas":["Tribeca","Chinatown"]}
+{"synthetic":true,"memberId":"ny-0065","city":"nyc","type":"home","areas":["Carroll Gardens","DUMBO"]}
+{"synthetic":true,"memberId":"ny-0066","city":"nyc","type":"home","areas":["Red Hook","Crown Heights"]}
+{"synthetic":true,"memberId":"ny-0066","city":"sf","type":"temporary","areas":[],"from":1792393200000,"to":1792911600000}
+{"synthetic":true,"memberId":"ny-0067","city":"nyc","type":"home","areas":["DUMBO"]}
+{"synthetic":true,"memberId":"ny-0068","city":"nyc","type":"home","areas":["Inwood","SoHo"]}
+{"synthetic":true,"memberId":"ny-0069","city":"nyc","type":"home","areas":["East Village","DUMBO"]}
+{"synthetic":true,"memberId":"ny-0070","city":"nyc","type":"home","areas":["St. George","Upper East Side"]}
+{"synthetic":true,"memberId":"ny-0071","city":"nyc","type":"home","areas":["Crown Heights","DUMBO"]}
+{"synthetic":true,"memberId":"ny-0071","city":"sf","type":"routine","areas":["Glen Park"]}
+{"synthetic":true,"memberId":"ny-0072","city":"nyc","type":"home","areas":["Murray Hill"]}
+{"synthetic":true,"memberId":"ny-0073","city":"nyc","type":"home","areas":["Financial District","Flushing"]}
+{"synthetic":true,"memberId":"ny-0074","city":"nyc","type":"home","areas":["Sunset Park","Chinatown"]}
+{"synthetic":true,"memberId":"ny-0075","city":"nyc","type":"home","areas":["Carroll Gardens"]}
+{"synthetic":true,"memberId":"ny-0076","city":"nyc","type":"home","areas":["Hell's Kitchen"]}
+{"synthetic":true,"memberId":"ny-0077","city":"nyc","type":"home","areas":["Greenpoint","Flushing"]}
+{"synthetic":true,"memberId":"ny-0078","city":"nyc","type":"home","areas":["Prospect Heights"]}
+{"synthetic":true,"memberId":"ny-0079","city":"nyc","type":"home","areas":["St. George","Financial District"]}
+{"synthetic":true,"memberId":"ny-0079","city":"sf","type":"routine","areas":["Outer Sunset"]}
+{"synthetic":true,"memberId":"ny-0079","city":"sf","type":"temporary","areas":[],"from":1792393200000,"to":1792911600000}
+{"synthetic":true,"memberId":"ny-0080","city":"nyc","type":"home","areas":["Bushwick","Greenpoint"]}
+{"synthetic":true,"memberId":"ny-0081","city":"nyc","type":"home","areas":["Sunset Park","Midtown"]}
+{"synthetic":true,"memberId":"ny-0081","city":"sf","type":"temporary","areas":[],"from":1792220400000,"to":1792738800000}
+{"synthetic":true,"memberId":"ny-0082","city":"nyc","type":"home","areas":["Crown Heights","Park Slope"]}
+{"synthetic":true,"memberId":"ny-0083","city":"nyc","type":"home","areas":["Gramercy"]}
+{"synthetic":true,"memberId":"ny-0084","city":"nyc","type":"home","areas":["DUMBO"]}
+{"synthetic":true,"memberId":"ny-0085","city":"nyc","type":"home","areas":["Chinatown","Prospect Heights"]}
+{"synthetic":true,"memberId":"ny-0086","city":"nyc","type":"home","areas":["Park Slope","Greenpoint"]}
+{"synthetic":true,"memberId":"ny-0087","city":"nyc","type":"home","areas":["Long Island City","Chinatown"]}
+{"synthetic":true,"memberId":"ny-0088","city":"nyc","type":"home","areas":["Red Hook","Long Island City"]}
+{"synthetic":true,"memberId":"ny-0089","city":"nyc","type":"home","areas":["Astoria","Riverdale"]}
+{"synthetic":true,"memberId":"ny-0090","city":"nyc","type":"home","areas":["Financial District"]}
+{"synthetic":true,"memberId":"ny-0091","city":"nyc","type":"home","areas":["DUMBO","Chelsea"]}
+{"synthetic":true,"memberId":"ny-0092","city":"nyc","type":"home","areas":["DUMBO","Flushing"]}
+{"synthetic":true,"memberId":"ny-0093","city":"nyc","type":"home","areas":["Bed-Stuy","Riverdale"]}
+{"synthetic":true,"memberId":"ny-0094","city":"nyc","type":"home","areas":["Financial District","Prospect Heights"]}
+{"synthetic":true,"memberId":"ny-0095","city":"nyc","type":"home","areas":["West Village"]}
+{"synthetic":true,"memberId":"ny-0096","city":"nyc","type":"home","areas":["Mott Haven"]}
+{"synthetic":true,"memberId":"ny-0097","city":"nyc","type":"home","areas":["St. George","Financial District"]}
+{"synthetic":true,"memberId":"ny-0098","city":"nyc","type":"home","areas":["Red Hook","Riverdale"]}
+{"synthetic":true,"memberId":"ny-0099","city":"nyc","type":"home","areas":["Mott Haven","Midtown"]}
+{"synthetic":true,"memberId":"ny-0100","city":"nyc","type":"home","areas":["Tribeca","Chinatown"]}
+{"synthetic":true,"memberId":"ny-0101","city":"nyc","type":"home","areas":["Tribeca","Financial District"]}
+{"synthetic":true,"memberId":"ny-0102","city":"nyc","type":"home","areas":["Jackson Heights"]}
+{"synthetic":true,"memberId":"ny-0103","city":"nyc","type":"home","areas":["East Village","Chinatown"]}
+{"synthetic":true,"memberId":"ny-0104","city":"nyc","type":"home","areas":["Red Hook"]}
+{"synthetic":true,"memberId":"ny-0105","city":"nyc","type":"home","areas":["Riverdale"]}
+{"synthetic":true,"memberId":"ny-0106","city":"nyc","type":"home","areas":["Crown Heights","Greenpoint"]}
+{"synthetic":true,"memberId":"ny-0107","city":"nyc","type":"home","areas":["Hell's Kitchen","SoHo"]}
+{"synthetic":true,"memberId":"ny-0108","city":"nyc","type":"home","areas":["Greenpoint"]}
+{"synthetic":true,"memberId":"ny-0109","city":"nyc","type":"home","areas":["Mott Haven","Murray Hill"]}
+{"synthetic":true,"memberId":"ny-0110","city":"nyc","type":"home","areas":["Tribeca","Greenpoint"]}
+{"synthetic":true,"memberId":"ny-0111","city":"nyc","type":"home","areas":["DUMBO"]}
+{"synthetic":true,"memberId":"ny-0112","city":"nyc","type":"home","areas":["Fort Greene","Lower East Side"]}
+{"synthetic":true,"memberId":"ny-0113","city":"nyc","type":"home","areas":["Flushing","Chelsea"]}
+{"synthetic":true,"memberId":"ny-0114","city":"nyc","type":"home","areas":["Sunset Park","DUMBO"]}
+{"synthetic":true,"memberId":"ny-0115","city":"nyc","type":"home","areas":["Financial District","Prospect Heights"]}
+{"synthetic":true,"memberId":"ny-0116","city":"nyc","type":"home","areas":["Greenpoint"]}
+{"synthetic":true,"memberId":"ny-0117","city":"nyc","type":"home","areas":["Gramercy"]}
+{"synthetic":true,"memberId":"ny-0118","city":"nyc","type":"home","areas":["Chelsea"]}
+{"synthetic":true,"memberId":"ny-0119","city":"nyc","type":"home","areas":["Bed-Stuy"]}
+{"synthetic":true,"memberId":"ny-0120","city":"nyc","type":"home","areas":["Upper East Side","Long Island City"]}
+{"synthetic":true,"memberId":"ny-0121","city":"nyc","type":"home","areas":["Crown Heights","Carroll Gardens"]}
+{"synthetic":true,"memberId":"ny-0122","city":"nyc","type":"home","areas":["St. George","Tribeca"]}
+{"synthetic":true,"memberId":"ny-0123","city":"nyc","type":"home","areas":["St. George"]}
+{"synthetic":true,"memberId":"ny-0124","city":"nyc","type":"home","areas":["Flatiron","Chelsea"]}
+{"synthetic":true,"memberId":"ny-0124","city":"sf","type":"temporary","areas":[],"from":1792393200000,"to":1792738800000}
+{"synthetic":true,"memberId":"ny-0125","city":"nyc","type":"home","areas":["Bed-Stuy","Long Island City"]}
+{"synthetic":true,"memberId":"ny-0126","city":"nyc","type":"home","areas":["St. George","Prospect Heights"]}
+{"synthetic":true,"memberId":"ny-0127","city":"nyc","type":"home","areas":["Gramercy","Carroll Gardens"]}
+{"synthetic":true,"memberId":"ny-0128","city":"nyc","type":"home","areas":["Williamsburg","Midtown"]}
+{"synthetic":true,"memberId":"ny-0129","city":"nyc","type":"home","areas":["Sunset Park"]}
+{"synthetic":true,"memberId":"ny-0130","city":"nyc","type":"home","areas":["Red Hook"]}
+{"synthetic":true,"memberId":"ny-0131","city":"nyc","type":"home","areas":["Riverdale","Crown Heights"]}
+{"synthetic":true,"memberId":"ny-0132","city":"nyc","type":"home","areas":["SoHo"]}
+{"synthetic":true,"memberId":"ny-0133","city":"nyc","type":"home","areas":["Chelsea"]}
+{"synthetic":true,"memberId":"ny-0134","city":"nyc","type":"home","areas":["Flatiron"]}
+{"synthetic":true,"memberId":"ny-0135","city":"nyc","type":"home","areas":["Park Slope"]}
+{"synthetic":true,"memberId":"ny-0136","city":"nyc","type":"home","areas":["Bed-Stuy"]}
+{"synthetic":true,"memberId":"ny-0137","city":"nyc","type":"home","areas":["Jackson Heights","Bay Ridge"]}
+{"synthetic":true,"memberId":"ny-0137","city":"sf","type":"temporary","areas":[],"from":1792220400000,"to":1792566000000}
+{"synthetic":true,"memberId":"ny-0138","city":"nyc","type":"home","areas":["SoHo","Long Island City"]}
+{"synthetic":true,"memberId":"ny-0139","city":"nyc","type":"home","areas":["Financial District","Tribeca"]}
+{"synthetic":true,"memberId":"ny-0140","city":"nyc","type":"home","areas":["Williamsburg","Flatiron"]}
+{"synthetic":true,"memberId":"ny-0141","city":"nyc","type":"home","areas":["East Village","Lower East Side"]}
+{"synthetic":true,"memberId":"ny-0142","city":"nyc","type":"home","areas":["Flatiron","Flushing"]}
+{"synthetic":true,"memberId":"ny-0143","city":"nyc","type":"home","areas":["East Village","Lower East Side"]}
+{"synthetic":true,"memberId":"ny-0144","city":"nyc","type":"home","areas":["Crown Heights"]}
+{"synthetic":true,"memberId":"ny-0145","city":"nyc","type":"home","areas":["East Village","SoHo"]}
+{"synthetic":true,"memberId":"ny-0146","city":"nyc","type":"home","areas":["Murray Hill","Upper East Side"]}
+{"synthetic":true,"memberId":"ny-0147","city":"nyc","type":"home","areas":["East Village"]}
+{"synthetic":true,"memberId":"ny-0148","city":"nyc","type":"home","areas":["Red Hook"]}
+{"synthetic":true,"memberId":"ny-0149","city":"nyc","type":"home","areas":["Harlem","DUMBO"]}
+{"synthetic":true,"memberId":"ny-0150","city":"nyc","type":"home","areas":["Jackson Heights","Bay Ridge"]}
+{"synthetic":true,"memberId":"ny-0151","city":"nyc","type":"home","areas":["St. George","Flatiron"]}
+{"synthetic":true,"memberId":"ny-0152","city":"nyc","type":"home","areas":["Red Hook","Financial District"]}
+{"synthetic":true,"memberId":"ny-0153","city":"nyc","type":"home","areas":["Greenpoint","Financial District"]}
+{"synthetic":true,"memberId":"ny-0154","city":"nyc","type":"home","areas":["Tribeca","Flatiron"]}
+{"synthetic":true,"memberId":"ny-0154","city":"sf","type":"routine","areas":["Bayview"]}
+{"synthetic":true,"memberId":"ny-0155","city":"nyc","type":"home","areas":["Red Hook","Long Island City"]}
+{"synthetic":true,"memberId":"ny-0156","city":"nyc","type":"home","areas":["East Village","Flatiron"]}
+{"synthetic":true,"memberId":"ny-0157","city":"nyc","type":"home","areas":["East Village","Lower East Side"]}
+{"synthetic":true,"memberId":"ny-0158","city":"nyc","type":"home","areas":["Chinatown","Riverdale"]}
+{"synthetic":true,"memberId":"ny-0159","city":"nyc","type":"home","areas":["West Village","DUMBO"]}
+{"synthetic":true,"memberId":"ny-0160","city":"nyc","type":"home","areas":["DUMBO","Flushing"]}
+{"synthetic":true,"memberId":"ny-0161","city":"nyc","type":"home","areas":["Fort Greene","Lower East Side"]}
+{"synthetic":true,"memberId":"ny-0162","city":"nyc","type":"home","areas":["Jackson Heights","DUMBO"]}
+{"synthetic":true,"memberId":"ny-0163","city":"nyc","type":"home","areas":["Inwood"]}
+{"synthetic":true,"memberId":"ny-0164","city":"nyc","type":"home","areas":["Gramercy","Midtown"]}
+{"synthetic":true,"memberId":"ny-0165","city":"nyc","type":"home","areas":["Bushwick","DUMBO"]}
+{"synthetic":true,"memberId":"ny-0166","city":"nyc","type":"home","areas":["Mott Haven"]}
+{"synthetic":true,"memberId":"ny-0167","city":"nyc","type":"home","areas":["Tribeca"]}
+{"synthetic":true,"memberId":"ny-0168","city":"nyc","type":"home","areas":["Carroll Gardens","Chelsea"]}
+{"synthetic":true,"memberId":"ny-0169","city":"nyc","type":"home","areas":["Murray Hill"]}
+{"synthetic":true,"memberId":"ny-0169","city":"sf","type":"temporary","areas":[],"from":1791874800000,"to":1792393200000}
+{"synthetic":true,"memberId":"ny-0170","city":"nyc","type":"home","areas":["Upper East Side"]}
+{"synthetic":true,"memberId":"ny-0171","city":"nyc","type":"home","areas":["Bushwick"]}
+{"synthetic":true,"memberId":"ny-0172","city":"nyc","type":"home","areas":["Bed-Stuy","DUMBO"]}
+{"synthetic":true,"memberId":"ny-0173","city":"nyc","type":"home","areas":["Sunnyside"]}
+{"synthetic":true,"memberId":"ny-0174","city":"nyc","type":"home","areas":["Sunset Park","Financial District"]}
+{"synthetic":true,"memberId":"ny-0175","city":"nyc","type":"home","areas":["Jackson Heights"]}
+{"synthetic":true,"memberId":"ny-0176","city":"nyc","type":"home","areas":["Long Island City"]}
+{"synthetic":true,"memberId":"ny-0177","city":"nyc","type":"home","areas":["Mott Haven","Flatiron"]}
+{"synthetic":true,"memberId":"ny-0178","city":"nyc","type":"home","areas":["Financial District","Tribeca"]}
+{"synthetic":true,"memberId":"ny-0179","city":"nyc","type":"home","areas":["Chelsea"]}
+{"synthetic":true,"memberId":"ny-0179","city":"sf","type":"routine","areas":["Japantown"]}
+{"synthetic":true,"memberId":"ny-0180","city":"nyc","type":"home","areas":["East Village","Flushing"]}
+{"synthetic":true,"memberId":"ny-0181","city":"nyc","type":"home","areas":["Sunset Park","DUMBO"]}
+{"synthetic":true,"memberId":"ny-0182","city":"nyc","type":"home","areas":["Bushwick"]}
+{"synthetic":true,"memberId":"ny-0183","city":"nyc","type":"home","areas":["East Village","Lower East Side"]}
+{"synthetic":true,"memberId":"ny-0184","city":"nyc","type":"home","areas":["St. George","Long Island City"]}
+{"synthetic":true,"memberId":"ny-0184","city":"sf","type":"routine","areas":["Outer Richmond"]}
+{"synthetic":true,"memberId":"ny-0185","city":"nyc","type":"home","areas":["Tribeca","Greenpoint"]}
+{"synthetic":true,"memberId":"ny-0186","city":"nyc","type":"home","areas":["St. George"]}
+{"synthetic":true,"memberId":"ny-0187","city":"nyc","type":"home","areas":["Mott Haven","DUMBO"]}
+{"synthetic":true,"memberId":"ny-0188","city":"nyc","type":"home","areas":["Sunnyside","Financial District"]}
+{"synthetic":true,"memberId":"ny-0189","city":"nyc","type":"home","areas":["Flushing","Chinatown"]}
+{"synthetic":true,"memberId":"ny-0190","city":"nyc","type":"home","areas":["Washington Heights"]}
+{"synthetic":true,"memberId":"ny-0191","city":"nyc","type":"home","areas":["Gramercy","Murray Hill"]}
+{"synthetic":true,"memberId":"ny-0192","city":"nyc","type":"home","areas":["Murray Hill","Long Island City"]}
+{"synthetic":true,"memberId":"ny-0192","city":"sf","type":"temporary","areas":[],"from":1792393200000,"to":1792825200000}
+{"synthetic":true,"memberId":"ny-0193","city":"nyc","type":"home","areas":["Chelsea","Long Island City"]}
+{"synthetic":true,"memberId":"ny-0194","city":"nyc","type":"home","areas":["Gramercy","Upper East Side"]}
+{"synthetic":true,"memberId":"ny-0195","city":"nyc","type":"home","areas":["Crown Heights"]}
+{"synthetic":true,"memberId":"ny-0195","city":"sf","type":"temporary","areas":[],"from":1792134000000,"to":1792652400000}
+{"synthetic":true,"memberId":"ny-0196","city":"nyc","type":"home","areas":["Sunset Park"]}
+{"synthetic":true,"memberId":"ny-0197","city":"nyc","type":"home","areas":["Red Hook","Riverdale"]}
+{"synthetic":true,"memberId":"ny-0198","city":"nyc","type":"home","areas":["Red Hook","Riverdale"]}
+{"synthetic":true,"memberId":"ny-0199","city":"nyc","type":"home","areas":["Carroll Gardens"]}
+{"synthetic":true,"memberId":"ny-0200","city":"nyc","type":"home","areas":["Bed-Stuy","Crown Heights"]}
+{"synthetic":true,"memberId":"ny-0201","city":"nyc","type":"home","areas":["East Village","Flushing"]}
+{"synthetic":true,"memberId":"ny-0202","city":"nyc","type":"home","areas":["Red Hook","DUMBO"]}
+{"synthetic":true,"memberId":"ny-0203","city":"nyc","type":"home","areas":["East Village","Lower East Side"]}
+{"synthetic":true,"memberId":"ny-0204","city":"nyc","type":"home","areas":["Crown Heights","Greenpoint"]}
+{"synthetic":true,"memberId":"ny-0205","city":"nyc","type":"home","areas":["Bay Ridge","Financial District"]}
+{"synthetic":true,"memberId":"ny-0206","city":"nyc","type":"home","areas":["West Village"]}
+{"synthetic":true,"memberId":"ny-0207","city":"nyc","type":"home","areas":["Sunnyside","Flatiron"]}
+{"synthetic":true,"memberId":"ny-0208","city":"nyc","type":"home","areas":["Flatiron","Greenpoint"]}
+{"synthetic":true,"memberId":"ny-0209","city":"nyc","type":"home","areas":["Tribeca"]}
+{"synthetic":true,"memberId":"ny-0210","city":"nyc","type":"home","areas":["Bushwick","Chinatown"]}
+{"synthetic":true,"memberId":"ny-0211","city":"nyc","type":"home","areas":["St. George","Prospect Heights"]}
+{"synthetic":true,"memberId":"ny-0212","city":"nyc","type":"home","areas":["Mott Haven"]}
+{"synthetic":true,"memberId":"ny-0213","city":"nyc","type":"home","areas":["Chelsea"]}
+{"synthetic":true,"memberId":"ny-0214","city":"nyc","type":"home","areas":["Bushwick"]}
+{"synthetic":true,"memberId":"ny-0215","city":"nyc","type":"home","areas":["Chinatown","DUMBO"]}
+{"synthetic":true,"memberId":"ny-0215","city":"sf","type":"routine","areas":["Outer Richmond"]}
+{"synthetic":true,"memberId":"ny-0216","city":"nyc","type":"home","areas":["Midtown","Chelsea"]}
+{"synthetic":true,"memberId":"ny-0217","city":"nyc","type":"home","areas":["Chelsea","Flatiron"]}
+{"synthetic":true,"memberId":"ny-0218","city":"nyc","type":"home","areas":["Red Hook","Financial District"]}
+{"synthetic":true,"memberId":"ny-0219","city":"nyc","type":"home","areas":["Riverdale"]}
+{"synthetic":true,"memberId":"ny-0220","city":"nyc","type":"home","areas":["Hell's Kitchen"]}
+{"synthetic":true,"memberId":"ny-0221","city":"nyc","type":"home","areas":["DUMBO","Financial District"]}
+{"synthetic":true,"memberId":"ny-0222","city":"nyc","type":"home","areas":["Red Hook"]}
+{"synthetic":true,"memberId":"ny-0223","city":"nyc","type":"home","areas":["Red Hook","Riverdale"]}
+{"synthetic":true,"memberId":"ny-0224","city":"nyc","type":"home","areas":["Greenpoint","Flatiron"]}
+{"synthetic":true,"memberId":"ny-0225","city":"nyc","type":"home","areas":["Mott Haven"]}
+{"synthetic":true,"memberId":"ny-0226","city":"nyc","type":"home","areas":["Sunset Park","Flatiron"]}
+{"synthetic":true,"memberId":"ny-0227","city":"nyc","type":"home","areas":["East Village"]}
+{"synthetic":true,"memberId":"ny-0228","city":"nyc","type":"home","areas":["Chelsea"]}
+{"synthetic":true,"memberId":"ny-0229","city":"nyc","type":"home","areas":["Harlem","Prospect Heights"]}
+{"synthetic":true,"memberId":"ny-0230","city":"nyc","type":"home","areas":["Mott Haven"]}
+{"synthetic":true,"memberId":"ny-0231","city":"nyc","type":"home","areas":["Jackson Heights"]}
+{"synthetic":true,"memberId":"ny-0232","city":"nyc","type":"home","areas":["East Village"]}
+{"synthetic":true,"memberId":"ny-0233","city":"nyc","type":"home","areas":["Riverdale"]}
+{"synthetic":true,"memberId":"ny-0234","city":"nyc","type":"home","areas":["Carroll Gardens"]}
+{"synthetic":true,"memberId":"ny-0235","city":"nyc","type":"home","areas":["Sunset Park"]}
+{"synthetic":true,"memberId":"ny-0236","city":"nyc","type":"home","areas":["Flatiron","DUMBO"]}
+{"synthetic":true,"memberId":"ny-0237","city":"nyc","type":"home","areas":["Fort Greene","Financial District"]}
+{"synthetic":true,"memberId":"ny-0238","city":"nyc","type":"home","areas":["Tribeca","Flatiron"]}
+{"synthetic":true,"memberId":"ny-0239","city":"nyc","type":"home","areas":["Murray Hill"]}
+{"synthetic":true,"memberId":"ny-0240","city":"nyc","type":"home","areas":["Carroll Gardens","Chelsea"]}
+{"synthetic":true,"memberId":"ny-0241","city":"nyc","type":"home","areas":["West Village","Hell's Kitchen"]}
+{"synthetic":true,"memberId":"ny-0242","city":"nyc","type":"home","areas":["East Village"]}
+{"synthetic":true,"memberId":"ny-0243","city":"nyc","type":"home","areas":["Financial District"]}
+{"synthetic":true,"memberId":"ny-0243","city":"sf","type":"routine","areas":["Castro"]}
+{"synthetic":true,"memberId":"ny-0244","city":"nyc","type":"home","areas":["Flatiron"]}
+{"synthetic":true,"memberId":"ny-0245","city":"nyc","type":"home","areas":["Murray Hill","Midtown"]}
+{"synthetic":true,"memberId":"ny-0246","city":"nyc","type":"home","areas":["Prospect Heights"]}
+{"synthetic":true,"memberId":"ny-0247","city":"nyc","type":"home","areas":["Jackson Heights","Bay Ridge"]}
+{"synthetic":true,"memberId":"ny-0248","city":"nyc","type":"home","areas":["Riverdale","SoHo"]}
+{"synthetic":true,"memberId":"ny-0249","city":"nyc","type":"home","areas":["Chelsea","Murray Hill"]}
+{"synthetic":true,"memberId":"ny-0250","city":"nyc","type":"home","areas":["Mott Haven","Financial District"]}
+{"synthetic":true,"memberId":"sf-0001","city":"sf","type":"home","areas":["Dogpatch","Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0002","city":"sf","type":"home","areas":["Tenderloin","Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0003","city":"sf","type":"home","areas":["North Beach"]}
+{"synthetic":true,"memberId":"sf-0004","city":"sf","type":"home","areas":["Excelsior","Tenderloin"]}
+{"synthetic":true,"memberId":"sf-0005","city":"sf","type":"home","areas":["Lower Haight","Western Addition"]}
+{"synthetic":true,"memberId":"sf-0006","city":"sf","type":"home","areas":["Portola","SoMa"]}
+{"synthetic":true,"memberId":"sf-0007","city":"sf","type":"home","areas":["Cole Valley","Hayes Valley"]}
+{"synthetic":true,"memberId":"sf-0008","city":"sf","type":"home","areas":["Noe Valley"]}
+{"synthetic":true,"memberId":"sf-0009","city":"sf","type":"home","areas":["Lower Haight"]}
+{"synthetic":true,"memberId":"sf-0010","city":"sf","type":"home","areas":["Russian Hill","Hayes Valley"]}
+{"synthetic":true,"memberId":"sf-0011","city":"sf","type":"home","areas":["Cole Valley","SoMa"]}
+{"synthetic":true,"memberId":"sf-0012","city":"sf","type":"home","areas":["NoPa","Mission"]}
+{"synthetic":true,"memberId":"sf-0013","city":"sf","type":"home","areas":["Nob Hill"]}
+{"synthetic":true,"memberId":"sf-0014","city":"sf","type":"home","areas":["Bayview","Marina"]}
+{"synthetic":true,"memberId":"sf-0015","city":"sf","type":"home","areas":["Russian Hill"]}
+{"synthetic":true,"memberId":"sf-0016","city":"sf","type":"home","areas":["Duboce Triangle","Financial District"]}
+{"synthetic":true,"memberId":"sf-0017","city":"sf","type":"home","areas":["Cow Hollow","Mission"]}
+{"synthetic":true,"memberId":"sf-0018","city":"sf","type":"home","areas":["Chinatown","Hayes Valley"]}
+{"synthetic":true,"memberId":"sf-0019","city":"sf","type":"home","areas":["Pacific Heights","SoMa"]}
+{"synthetic":true,"memberId":"sf-0020","city":"sf","type":"home","areas":["Nob Hill","Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0021","city":"sf","type":"home","areas":["Dogpatch"]}
+{"synthetic":true,"memberId":"sf-0022","city":"sf","type":"home","areas":["Mission Dolores","Hayes Valley"]}
+{"synthetic":true,"memberId":"sf-0023","city":"sf","type":"home","areas":["Nob Hill","SoMa"]}
+{"synthetic":true,"memberId":"sf-0023","city":"nyc","type":"routine","areas":["Flushing"]}
+{"synthetic":true,"memberId":"sf-0024","city":"sf","type":"home","areas":["Mission Bay","Financial District"]}
+{"synthetic":true,"memberId":"sf-0024","city":"nyc","type":"routine","areas":["Long Island City"]}
+{"synthetic":true,"memberId":"sf-0025","city":"sf","type":"home","areas":["Portola"]}
+{"synthetic":true,"memberId":"sf-0026","city":"sf","type":"home","areas":["Nob Hill"]}
+{"synthetic":true,"memberId":"sf-0027","city":"sf","type":"home","areas":["Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0028","city":"sf","type":"home","areas":["Bernal Heights"]}
+{"synthetic":true,"memberId":"sf-0029","city":"sf","type":"home","areas":["Japantown","SoMa"]}
+{"synthetic":true,"memberId":"sf-0030","city":"sf","type":"home","areas":["Bernal Heights"]}
+{"synthetic":true,"memberId":"sf-0031","city":"sf","type":"home","areas":["Dogpatch","Haight-Ashbury"]}
+{"synthetic":true,"memberId":"sf-0032","city":"sf","type":"home","areas":["NoPa"]}
+{"synthetic":true,"memberId":"sf-0033","city":"sf","type":"home","areas":["Duboce Triangle","Marina"]}
+{"synthetic":true,"memberId":"sf-0034","city":"sf","type":"home","areas":["Bayview"]}
+{"synthetic":true,"memberId":"sf-0035","city":"sf","type":"home","areas":["Bernal Heights"]}
+{"synthetic":true,"memberId":"sf-0035","city":"nyc","type":"routine","areas":["Bay Ridge"]}
+{"synthetic":true,"memberId":"sf-0036","city":"sf","type":"home","areas":["Russian Hill"]}
+{"synthetic":true,"memberId":"sf-0037","city":"sf","type":"home","areas":["Russian Hill","Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0038","city":"sf","type":"home","areas":["Marina","Chinatown"]}
+{"synthetic":true,"memberId":"sf-0039","city":"sf","type":"home","areas":["Noe Valley","Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0040","city":"sf","type":"home","areas":["NoPa","SoMa"]}
+{"synthetic":true,"memberId":"sf-0041","city":"sf","type":"home","areas":["NoPa","Russian Hill"]}
+{"synthetic":true,"memberId":"sf-0042","city":"sf","type":"home","areas":["Russian Hill"]}
+{"synthetic":true,"memberId":"sf-0043","city":"sf","type":"home","areas":["Chinatown","Russian Hill"]}
+{"synthetic":true,"memberId":"sf-0044","city":"sf","type":"home","areas":["Financial District"]}
+{"synthetic":true,"memberId":"sf-0045","city":"sf","type":"home","areas":["North Beach"]}
+{"synthetic":true,"memberId":"sf-0046","city":"sf","type":"home","areas":["NoPa","Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0047","city":"sf","type":"home","areas":["Cow Hollow"]}
+{"synthetic":true,"memberId":"sf-0048","city":"sf","type":"home","areas":["Japantown"]}
+{"synthetic":true,"memberId":"sf-0049","city":"sf","type":"home","areas":["Inner Sunset","Dogpatch"]}
+{"synthetic":true,"memberId":"sf-0050","city":"sf","type":"home","areas":["Japantown","Financial District"]}
+{"synthetic":true,"memberId":"sf-0051","city":"sf","type":"home","areas":["Russian Hill","Financial District"]}
+{"synthetic":true,"memberId":"sf-0052","city":"sf","type":"home","areas":["Portola"]}
+{"synthetic":true,"memberId":"sf-0053","city":"sf","type":"home","areas":["North Beach"]}
+{"synthetic":true,"memberId":"sf-0054","city":"sf","type":"home","areas":["Potrero Hill"]}
+{"synthetic":true,"memberId":"sf-0055","city":"sf","type":"home","areas":["Mission Dolores"]}
+{"synthetic":true,"memberId":"sf-0056","city":"sf","type":"home","areas":["Mission","Financial District"]}
+{"synthetic":true,"memberId":"sf-0057","city":"sf","type":"home","areas":["NoPa","Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0058","city":"sf","type":"home","areas":["Financial District","Dogpatch"]}
+{"synthetic":true,"memberId":"sf-0059","city":"sf","type":"home","areas":["Bernal Heights","Mission"]}
+{"synthetic":true,"memberId":"sf-0060","city":"sf","type":"home","areas":["Pacific Heights","Mission"]}
+{"synthetic":true,"memberId":"sf-0061","city":"sf","type":"home","areas":["Potrero Hill","SoMa"]}
+{"synthetic":true,"memberId":"sf-0062","city":"sf","type":"home","areas":["Bernal Heights","Mission"]}
+{"synthetic":true,"memberId":"sf-0063","city":"sf","type":"home","areas":["Bernal Heights","Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0064","city":"sf","type":"home","areas":["Outer Sunset","SoMa"]}
+{"synthetic":true,"memberId":"sf-0065","city":"sf","type":"home","areas":["Bernal Heights"]}
+{"synthetic":true,"memberId":"sf-0066","city":"sf","type":"home","areas":["Potrero Hill"]}
+{"synthetic":true,"memberId":"sf-0067","city":"sf","type":"home","areas":["Bernal Heights"]}
+{"synthetic":true,"memberId":"sf-0068","city":"sf","type":"home","areas":["Japantown","Financial District"]}
+{"synthetic":true,"memberId":"sf-0069","city":"sf","type":"home","areas":["Bernal Heights","Hayes Valley"]}
+{"synthetic":true,"memberId":"sf-0070","city":"sf","type":"home","areas":["Japantown","SoMa"]}
+{"synthetic":true,"memberId":"sf-0071","city":"sf","type":"home","areas":["Bernal Heights","Hayes Valley"]}
+{"synthetic":true,"memberId":"sf-0072","city":"sf","type":"home","areas":["Chinatown","Dogpatch"]}
+{"synthetic":true,"memberId":"sf-0073","city":"sf","type":"home","areas":["Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0073","city":"nyc","type":"routine","areas":["Upper West Side"]}
+{"synthetic":true,"memberId":"sf-0074","city":"sf","type":"home","areas":["Lower Haight","SoMa"]}
+{"synthetic":true,"memberId":"sf-0075","city":"sf","type":"home","areas":["NoPa"]}
+{"synthetic":true,"memberId":"sf-0076","city":"sf","type":"home","areas":["Outer Richmond","Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0077","city":"sf","type":"home","areas":["Russian Hill","Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0078","city":"sf","type":"home","areas":["Russian Hill","SoMa"]}
+{"synthetic":true,"memberId":"sf-0079","city":"sf","type":"home","areas":["Nob Hill"]}
+{"synthetic":true,"memberId":"sf-0080","city":"sf","type":"home","areas":["Financial District","Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0081","city":"sf","type":"home","areas":["North Beach","Hayes Valley"]}
+{"synthetic":true,"memberId":"sf-0082","city":"sf","type":"home","areas":["Nob Hill"]}
+{"synthetic":true,"memberId":"sf-0083","city":"sf","type":"home","areas":["Castro","Hayes Valley"]}
+{"synthetic":true,"memberId":"sf-0084","city":"sf","type":"home","areas":["Financial District"]}
+{"synthetic":true,"memberId":"sf-0085","city":"sf","type":"home","areas":["Cow Hollow","Financial District"]}
+{"synthetic":true,"memberId":"sf-0085","city":"nyc","type":"routine","areas":["Inwood"]}
+{"synthetic":true,"memberId":"sf-0085","city":"nyc","type":"temporary","areas":[],"from":1792220400000,"to":1792825200000}
+{"synthetic":true,"memberId":"sf-0086","city":"sf","type":"home","areas":["Tenderloin","SoMa"]}
+{"synthetic":true,"memberId":"sf-0087","city":"sf","type":"home","areas":["Marina"]}
+{"synthetic":true,"memberId":"sf-0088","city":"sf","type":"home","areas":["NoPa","SoMa"]}
+{"synthetic":true,"memberId":"sf-0089","city":"sf","type":"home","areas":["Japantown","Dogpatch"]}
+{"synthetic":true,"memberId":"sf-0090","city":"sf","type":"home","areas":["Russian Hill","SoMa"]}
+{"synthetic":true,"memberId":"sf-0091","city":"sf","type":"home","areas":["Inner Sunset","SoMa"]}
+{"synthetic":true,"memberId":"sf-0092","city":"sf","type":"home","areas":["Pacific Heights","Dogpatch"]}
+{"synthetic":true,"memberId":"sf-0092","city":"nyc","type":"routine","areas":["Washington Heights"]}
+{"synthetic":true,"memberId":"sf-0092","city":"nyc","type":"temporary","areas":[],"from":1792998000000,"to":1793602800000}
+{"synthetic":true,"memberId":"sf-0093","city":"sf","type":"home","areas":["Chinatown"]}
+{"synthetic":true,"memberId":"sf-0094","city":"sf","type":"home","areas":["Financial District"]}
+{"synthetic":true,"memberId":"sf-0094","city":"nyc","type":"temporary","areas":[],"from":1792306800000,"to":1792998000000}
+{"synthetic":true,"memberId":"sf-0095","city":"sf","type":"home","areas":["Outer Richmond","SoMa"]}
+{"synthetic":true,"memberId":"sf-0096","city":"sf","type":"home","areas":["Outer Richmond"]}
+{"synthetic":true,"memberId":"sf-0096","city":"nyc","type":"temporary","areas":[],"from":1792479600000,"to":1793170800000}
+{"synthetic":true,"memberId":"sf-0097","city":"sf","type":"home","areas":["Bernal Heights","Dogpatch"]}
+{"synthetic":true,"memberId":"sf-0098","city":"sf","type":"home","areas":["Russian Hill","Mission"]}
+{"synthetic":true,"memberId":"sf-0099","city":"sf","type":"home","areas":["Bernal Heights"]}
+{"synthetic":true,"memberId":"sf-0100","city":"sf","type":"home","areas":["Russian Hill","Cole Valley"]}
+{"synthetic":true,"memberId":"sf-0100","city":"nyc","type":"temporary","areas":[],"from":1792220400000,"to":1792738800000}
+{"synthetic":true,"memberId":"sf-0101","city":"sf","type":"home","areas":["Bernal Heights","Western Addition"]}
+{"synthetic":true,"memberId":"sf-0102","city":"sf","type":"home","areas":["Japantown"]}
+{"synthetic":true,"memberId":"sf-0103","city":"sf","type":"home","areas":["Mission Dolores"]}
+{"synthetic":true,"memberId":"sf-0104","city":"sf","type":"home","areas":["Portola","Financial District"]}
+{"synthetic":true,"memberId":"sf-0105","city":"sf","type":"home","areas":["Russian Hill"]}
+{"synthetic":true,"memberId":"sf-0106","city":"sf","type":"home","areas":["Japantown"]}
+{"synthetic":true,"memberId":"sf-0107","city":"sf","type":"home","areas":["Bernal Heights"]}
+{"synthetic":true,"memberId":"sf-0108","city":"sf","type":"home","areas":["Bernal Heights","Japantown"]}
+{"synthetic":true,"memberId":"sf-0109","city":"sf","type":"home","areas":["Bernal Heights","NoPa"]}
+{"synthetic":true,"memberId":"sf-0110","city":"sf","type":"home","areas":["Chinatown"]}
+{"synthetic":true,"memberId":"sf-0111","city":"sf","type":"home","areas":["North Beach"]}
+{"synthetic":true,"memberId":"sf-0111","city":"nyc","type":"routine","areas":["Bay Ridge"]}
+{"synthetic":true,"memberId":"sf-0112","city":"sf","type":"home","areas":["Marina","Chinatown"]}
+{"synthetic":true,"memberId":"sf-0113","city":"sf","type":"home","areas":["Excelsior","Russian Hill"]}
+{"synthetic":true,"memberId":"sf-0114","city":"sf","type":"home","areas":["Mission Dolores","Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0115","city":"sf","type":"home","areas":["Cole Valley","Hayes Valley"]}
+{"synthetic":true,"memberId":"sf-0116","city":"sf","type":"home","areas":["Nob Hill","SoMa"]}
+{"synthetic":true,"memberId":"sf-0117","city":"sf","type":"home","areas":["Portola"]}
+{"synthetic":true,"memberId":"sf-0118","city":"sf","type":"home","areas":["Dogpatch"]}
+{"synthetic":true,"memberId":"sf-0119","city":"sf","type":"home","areas":["Mission Dolores"]}
+{"synthetic":true,"memberId":"sf-0120","city":"sf","type":"home","areas":["Portola","SoMa"]}
+{"synthetic":true,"memberId":"sf-0120","city":"nyc","type":"routine","areas":["West Village"]}
+{"synthetic":true,"memberId":"sf-0120","city":"nyc","type":"temporary","areas":[],"from":1792825200000,"to":1793343600000}
+{"synthetic":true,"memberId":"sf-0121","city":"sf","type":"home","areas":["Duboce Triangle","Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0121","city":"nyc","type":"temporary","areas":[],"from":1791529200000,"to":1792134000000}
+{"synthetic":true,"memberId":"sf-0122","city":"sf","type":"home","areas":["North Beach","Mission"]}
+{"synthetic":true,"memberId":"sf-0123","city":"sf","type":"home","areas":["Russian Hill","Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0124","city":"sf","type":"home","areas":["Bayview"]}
+{"synthetic":true,"memberId":"sf-0125","city":"sf","type":"home","areas":["Western Addition"]}
+{"synthetic":true,"memberId":"sf-0126","city":"sf","type":"home","areas":["Outer Sunset","SoMa"]}
+{"synthetic":true,"memberId":"sf-0127","city":"sf","type":"home","areas":["Tenderloin"]}
+{"synthetic":true,"memberId":"sf-0128","city":"sf","type":"home","areas":["Haight-Ashbury","Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0129","city":"sf","type":"home","areas":["Mission","SoMa"]}
+{"synthetic":true,"memberId":"sf-0130","city":"sf","type":"home","areas":["Bernal Heights"]}
+{"synthetic":true,"memberId":"sf-0131","city":"sf","type":"home","areas":["Lower Haight","SoMa"]}
+{"synthetic":true,"memberId":"sf-0132","city":"sf","type":"home","areas":["Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0133","city":"sf","type":"home","areas":["Lower Haight","SoMa"]}
+{"synthetic":true,"memberId":"sf-0134","city":"sf","type":"home","areas":["Bernal Heights","SoMa"]}
+{"synthetic":true,"memberId":"sf-0135","city":"sf","type":"home","areas":["Cole Valley","SoMa"]}
+{"synthetic":true,"memberId":"sf-0136","city":"sf","type":"home","areas":["SoMa"]}
+{"synthetic":true,"memberId":"sf-0137","city":"sf","type":"home","areas":["Cole Valley"]}
+{"synthetic":true,"memberId":"sf-0138","city":"sf","type":"home","areas":["Russian Hill","Hayes Valley"]}
+{"synthetic":true,"memberId":"sf-0139","city":"sf","type":"home","areas":["Outer Sunset","SoMa"]}
+{"synthetic":true,"memberId":"sf-0140","city":"sf","type":"home","areas":["Financial District"]}
+{"synthetic":true,"memberId":"sf-0141","city":"sf","type":"home","areas":["Cole Valley","SoMa"]}
+{"synthetic":true,"memberId":"sf-0142","city":"sf","type":"home","areas":["Castro","SoMa"]}
+{"synthetic":true,"memberId":"sf-0143","city":"sf","type":"home","areas":["Outer Sunset"]}
+{"synthetic":true,"memberId":"sf-0144","city":"sf","type":"home","areas":["North Beach","Hayes Valley"]}
+{"synthetic":true,"memberId":"sf-0145","city":"sf","type":"home","areas":["Marina","Mission"]}
+{"synthetic":true,"memberId":"sf-0146","city":"sf","type":"home","areas":["Chinatown"]}
+{"synthetic":true,"memberId":"sf-0147","city":"sf","type":"home","areas":["Financial District","Marina"]}
+{"synthetic":true,"memberId":"sf-0148","city":"sf","type":"home","areas":["Lower Haight"]}
+{"synthetic":true,"memberId":"sf-0149","city":"sf","type":"home","areas":["Cole Valley"]}
+{"synthetic":true,"memberId":"sf-0150","city":"sf","type":"home","areas":["Mission Dolores","Chinatown"]}
+{"synthetic":true,"memberId":"sf-0151","city":"sf","type":"home","areas":["NoPa"]}
+{"synthetic":true,"memberId":"sf-0152","city":"sf","type":"home","areas":["Financial District","Mission"]}
+{"synthetic":true,"memberId":"sf-0153","city":"sf","type":"home","areas":["Mission","SoMa"]}
+{"synthetic":true,"memberId":"sf-0153","city":"nyc","type":"temporary","areas":[],"from":1792220400000,"to":1792738800000}
+{"synthetic":true,"memberId":"sf-0154","city":"sf","type":"home","areas":["Chinatown","Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0155","city":"sf","type":"home","areas":["Potrero Hill","SoMa"]}
+{"synthetic":true,"memberId":"sf-0156","city":"sf","type":"home","areas":["North Beach"]}
+{"synthetic":true,"memberId":"sf-0157","city":"sf","type":"home","areas":["Outer Richmond","SoMa"]}
+{"synthetic":true,"memberId":"sf-0158","city":"sf","type":"home","areas":["Bernal Heights","Mission"]}
+{"synthetic":true,"memberId":"sf-0159","city":"sf","type":"home","areas":["NoPa","SoMa"]}
+{"synthetic":true,"memberId":"sf-0160","city":"sf","type":"home","areas":["Lower Haight"]}
+{"synthetic":true,"memberId":"sf-0161","city":"sf","type":"home","areas":["Bernal Heights","Cole Valley"]}
+{"synthetic":true,"memberId":"sf-0162","city":"sf","type":"home","areas":["Russian Hill","Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0162","city":"nyc","type":"routine","areas":["Park Slope"]}
+{"synthetic":true,"memberId":"sf-0163","city":"sf","type":"home","areas":["Bernal Heights"]}
+{"synthetic":true,"memberId":"sf-0164","city":"sf","type":"home","areas":["Duboce Triangle","Haight-Ashbury"]}
+{"synthetic":true,"memberId":"sf-0165","city":"sf","type":"home","areas":["Potrero Hill","SoMa"]}
+{"synthetic":true,"memberId":"sf-0166","city":"sf","type":"home","areas":["North Beach","Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0167","city":"sf","type":"home","areas":["Lower Haight","SoMa"]}
+{"synthetic":true,"memberId":"sf-0168","city":"sf","type":"home","areas":["North Beach","Financial District"]}
+{"synthetic":true,"memberId":"sf-0169","city":"sf","type":"home","areas":["North Beach"]}
+{"synthetic":true,"memberId":"sf-0170","city":"sf","type":"home","areas":["Japantown","Financial District"]}
+{"synthetic":true,"memberId":"sf-0171","city":"sf","type":"home","areas":["North Beach","Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0172","city":"sf","type":"home","areas":["Noe Valley","Financial District"]}
+{"synthetic":true,"memberId":"sf-0172","city":"nyc","type":"routine","areas":["East Village"]}
+{"synthetic":true,"memberId":"sf-0173","city":"sf","type":"home","areas":["North Beach","Dogpatch"]}
+{"synthetic":true,"memberId":"sf-0173","city":"nyc","type":"routine","areas":["Lower East Side"]}
+{"synthetic":true,"memberId":"sf-0174","city":"sf","type":"home","areas":["Outer Sunset","Russian Hill"]}
+{"synthetic":true,"memberId":"sf-0175","city":"sf","type":"home","areas":["Mission Dolores"]}
+{"synthetic":true,"memberId":"sf-0176","city":"sf","type":"home","areas":["Lower Haight","Financial District"]}
+{"synthetic":true,"memberId":"sf-0177","city":"sf","type":"home","areas":["Japantown"]}
+{"synthetic":true,"memberId":"sf-0178","city":"sf","type":"home","areas":["Chinatown","Japantown"]}
+{"synthetic":true,"memberId":"sf-0179","city":"sf","type":"home","areas":["Hayes Valley","SoMa"]}
+{"synthetic":true,"memberId":"sf-0180","city":"sf","type":"home","areas":["Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0180","city":"nyc","type":"routine","areas":["Murray Hill"]}
+{"synthetic":true,"memberId":"sf-0180","city":"nyc","type":"temporary","areas":[],"from":1792738800000,"to":1793170800000}
+{"synthetic":true,"memberId":"sf-0181","city":"sf","type":"home","areas":["Glen Park"]}
+{"synthetic":true,"memberId":"sf-0182","city":"sf","type":"home","areas":["Mission Bay","Haight-Ashbury"]}
+{"synthetic":true,"memberId":"sf-0183","city":"sf","type":"home","areas":["Mission"]}
+{"synthetic":true,"memberId":"sf-0184","city":"sf","type":"home","areas":["Noe Valley"]}
+{"synthetic":true,"memberId":"sf-0185","city":"sf","type":"home","areas":["Marina","Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0186","city":"sf","type":"home","areas":["Excelsior","Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0187","city":"sf","type":"home","areas":["Russian Hill","SoMa"]}
+{"synthetic":true,"memberId":"sf-0188","city":"sf","type":"home","areas":["Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0189","city":"sf","type":"home","areas":["Portola","Dogpatch"]}
+{"synthetic":true,"memberId":"sf-0190","city":"sf","type":"home","areas":["Bernal Heights"]}
+{"synthetic":true,"memberId":"sf-0191","city":"sf","type":"home","areas":["Duboce Triangle","Marina"]}
+{"synthetic":true,"memberId":"sf-0192","city":"sf","type":"home","areas":["Lower Haight","Hayes Valley"]}
+{"synthetic":true,"memberId":"sf-0193","city":"sf","type":"home","areas":["Western Addition","Dogpatch"]}
+{"synthetic":true,"memberId":"sf-0194","city":"sf","type":"home","areas":["Potrero Hill","Mission"]}
+{"synthetic":true,"memberId":"sf-0195","city":"sf","type":"home","areas":["Portola","SoMa"]}
+{"synthetic":true,"memberId":"sf-0196","city":"sf","type":"home","areas":["Financial District"]}
+{"synthetic":true,"memberId":"sf-0197","city":"sf","type":"home","areas":["Outer Richmond","Hayes Valley"]}
+{"synthetic":true,"memberId":"sf-0198","city":"sf","type":"home","areas":["Japantown"]}
+{"synthetic":true,"memberId":"sf-0199","city":"sf","type":"home","areas":["Russian Hill"]}
+{"synthetic":true,"memberId":"sf-0200","city":"sf","type":"home","areas":["Russian Hill"]}
+{"synthetic":true,"memberId":"sf-0200","city":"nyc","type":"routine","areas":["Gramercy"]}
+{"synthetic":true,"memberId":"sf-0201","city":"sf","type":"home","areas":["Bernal Heights"]}
+{"synthetic":true,"memberId":"sf-0202","city":"sf","type":"home","areas":["Lower Haight","Marina"]}
+{"synthetic":true,"memberId":"sf-0203","city":"sf","type":"home","areas":["Russian Hill","Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0203","city":"nyc","type":"temporary","areas":[],"from":1791874800000,"to":1792220400000}
+{"synthetic":true,"memberId":"sf-0204","city":"sf","type":"home","areas":["Chinatown","Cole Valley"]}
+{"synthetic":true,"memberId":"sf-0205","city":"sf","type":"home","areas":["Tenderloin","Haight-Ashbury"]}
+{"synthetic":true,"memberId":"sf-0206","city":"sf","type":"home","areas":["Outer Richmond","Cole Valley"]}
+{"synthetic":true,"memberId":"sf-0207","city":"sf","type":"home","areas":["Russian Hill"]}
+{"synthetic":true,"memberId":"sf-0208","city":"sf","type":"home","areas":["Portola","SoMa"]}
+{"synthetic":true,"memberId":"sf-0209","city":"sf","type":"home","areas":["Outer Sunset","SoMa"]}
+{"synthetic":true,"memberId":"sf-0209","city":"nyc","type":"routine","areas":["Inwood"]}
+{"synthetic":true,"memberId":"sf-0210","city":"sf","type":"home","areas":["Russian Hill"]}
+{"synthetic":true,"memberId":"sf-0211","city":"sf","type":"home","areas":["Tenderloin"]}
+{"synthetic":true,"memberId":"sf-0212","city":"sf","type":"home","areas":["Pacific Heights","Bernal Heights"]}
+{"synthetic":true,"memberId":"sf-0213","city":"sf","type":"home","areas":["Portola","Mission"]}
+{"synthetic":true,"memberId":"sf-0214","city":"sf","type":"home","areas":["Inner Richmond","Cole Valley"]}
+{"synthetic":true,"memberId":"sf-0215","city":"sf","type":"home","areas":["Dogpatch","SoMa"]}
+{"synthetic":true,"memberId":"sf-0216","city":"sf","type":"home","areas":["Mission Dolores","Financial District"]}
+{"synthetic":true,"memberId":"sf-0216","city":"nyc","type":"temporary","areas":[],"from":1792306800000,"to":1792825200000}
+{"synthetic":true,"memberId":"sf-0217","city":"sf","type":"home","areas":["Russian Hill","Cole Valley"]}
+{"synthetic":true,"memberId":"sf-0218","city":"sf","type":"home","areas":["Outer Richmond","SoMa"]}
+{"synthetic":true,"memberId":"sf-0218","city":"nyc","type":"temporary","areas":[],"from":1792393200000,"to":1792911600000}
+{"synthetic":true,"memberId":"sf-0219","city":"sf","type":"home","areas":["Japantown","Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0220","city":"sf","type":"home","areas":["Bernal Heights","Western Addition"]}
+{"synthetic":true,"memberId":"sf-0221","city":"sf","type":"home","areas":["Hayes Valley","SoMa"]}
+{"synthetic":true,"memberId":"sf-0222","city":"sf","type":"home","areas":["Russian Hill"]}
+{"synthetic":true,"memberId":"sf-0223","city":"sf","type":"home","areas":["Inner Sunset","SoMa"]}
+{"synthetic":true,"memberId":"sf-0224","city":"sf","type":"home","areas":["Bernal Heights","Financial District"]}
+{"synthetic":true,"memberId":"sf-0225","city":"sf","type":"home","areas":["Pacific Heights","SoMa"]}
+{"synthetic":true,"memberId":"sf-0226","city":"sf","type":"home","areas":["Mission Bay","Western Addition"]}
+{"synthetic":true,"memberId":"sf-0227","city":"sf","type":"home","areas":["Bernal Heights"]}
+{"synthetic":true,"memberId":"sf-0228","city":"sf","type":"home","areas":["Russian Hill","Mission"]}
+{"synthetic":true,"memberId":"sf-0229","city":"sf","type":"home","areas":["Duboce Triangle","Bernal Heights"]}
+{"synthetic":true,"memberId":"sf-0230","city":"sf","type":"home","areas":["Japantown","Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0231","city":"sf","type":"home","areas":["Bernal Heights","SoMa"]}
+{"synthetic":true,"memberId":"sf-0232","city":"sf","type":"home","areas":["Nob Hill"]}
+{"synthetic":true,"memberId":"sf-0233","city":"sf","type":"home","areas":["Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0234","city":"sf","type":"home","areas":["Bernal Heights","SoMa"]}
+{"synthetic":true,"memberId":"sf-0235","city":"sf","type":"home","areas":["Duboce Triangle","Marina"]}
+{"synthetic":true,"memberId":"sf-0236","city":"sf","type":"home","areas":["Financial District"]}
+{"synthetic":true,"memberId":"sf-0237","city":"sf","type":"home","areas":["Nob Hill"]}
+{"synthetic":true,"memberId":"sf-0238","city":"sf","type":"home","areas":["Chinatown","Castro"]}
+{"synthetic":true,"memberId":"sf-0239","city":"sf","type":"home","areas":["Japantown","Hayes Valley"]}
+{"synthetic":true,"memberId":"sf-0240","city":"sf","type":"home","areas":["Bernal Heights","SoMa"]}
+{"synthetic":true,"memberId":"sf-0241","city":"sf","type":"home","areas":["Cow Hollow","Mission"]}
+{"synthetic":true,"memberId":"sf-0242","city":"sf","type":"home","areas":["Mission Bay","NoPa"]}
+{"synthetic":true,"memberId":"sf-0243","city":"sf","type":"home","areas":["Lower Haight","Marina"]}
+{"synthetic":true,"memberId":"sf-0244","city":"sf","type":"home","areas":["Nob Hill","Castro"]}
+{"synthetic":true,"memberId":"sf-0245","city":"sf","type":"home","areas":["Hayes Valley","Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0246","city":"sf","type":"home","areas":["Marina","SoMa"]}
+{"synthetic":true,"memberId":"sf-0247","city":"sf","type":"home","areas":["Russian Hill","Mission"]}
+{"synthetic":true,"memberId":"sf-0248","city":"sf","type":"home","areas":["Potrero Hill","SoMa"]}
+{"synthetic":true,"memberId":"sf-0249","city":"sf","type":"home","areas":["Portola","Mission Bay"]}
+{"synthetic":true,"memberId":"sf-0250","city":"sf","type":"home","areas":["Potrero Hill"]}

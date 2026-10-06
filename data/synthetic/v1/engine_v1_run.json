@@ -1,0 +1,122 @@
+{
+  "engineVersion": "engine-v1.0.0",
+  "seed": 1,
+  "configHash": "01c098e2387a9ac3",
+  "inputHash": "e4068b8c9c934d23",
+  "wallMs": 1297,
+  "judge": "off (no llm dep)",
+  "proposals": 204,
+  "proposalsByGenerator": {
+    "intent_to_capability": 31,
+    "complementary_intents": 17,
+    "shared_intent_pooling": 14,
+    "event_anchor": 0,
+    "warm_path": 130,
+    "help_request": 2,
+    "group_composer": 3,
+    "second_encounter": 0,
+    "newcomer_welcome": 6,
+    "network_growth": 1,
+    "expansion": 0
+  },
+  "proposalsByKind": {
+    "member_intro": 130,
+    "intro": 62,
+    "group": 3,
+    "newcomer_welcome": 6,
+    "help": 2,
+    "network_growth": 1
+  },
+  "proposalsByCity": {
+    "sf": 110,
+    "nyc": 94
+  },
+  "proposalsByCategory": {
+    "social": 108,
+    "hobby": 34,
+    "professional": 59,
+    "help": 2,
+    "growth": 1
+  },
+  "exploration": 28,
+  "membersWithProposal": 276,
+  "candidatesByGenerator": {
+    "intent_to_capability": 880,
+    "complementary_intents": 2005,
+    "shared_intent_pooling": 256,
+    "event_anchor": 0,
+    "warm_path": 720,
+    "help_request": 165,
+    "group_composer": 16,
+    "second_encounter": 0,
+    "newcomer_welcome": 16,
+    "network_growth": 16,
+    "expansion": 0
+  },
+  "funnel": {
+    "generated": 4074,
+    "passedHardFilters": 2332,
+    "deduped": 446,
+    "eligible": 997,
+    "belowThreshold": 889,
+    "budgetSkips": 807,
+    "selected": 204,
+    "rejectedBy": {
+      "no_presence_overlap": 1316,
+      "high_risk": 404,
+      "dealbreaker": 17,
+      "home_entry_rule": 5
+    },
+    "memberFunnel": {
+      "total": 500,
+      "available": 415,
+      "state_paused": 14,
+      "underage": 50,
+      "only_when_asked": 21
+    }
+  },
+  "fairness": {
+    "eligibleMembers": 436,
+    "membersWithProposal": 276,
+    "zeroExposureShare": 0.3669724770642202,
+    "gini": 0.4958524906244041,
+    "top10Share": 0.24942263279445728,
+    "newcomerShare": 0.2817551963048499,
+    "newcomerCoverage": 0.8658536585365854,
+    "lowExposureCoverage": 0.6330275229357798,
+    "byCity": {
+      "sf": 110,
+      "nyc": 94
+    },
+    "byInviterCluster": {
+      "sf-0165": 132,
+      "ny-0112": 48,
+      "sf-0248": 62,
+      "ny-0041": 29,
+      "ny-0044": 52,
+      "ny-0086": 33,
+      "sf-0134": 34,
+      "sf-0029": 20,
+      "sf-0017": 13,
+      "ny-0211": 10
+    },
+    "maxPerMember": 4,
+    "lorenz": [
+      0,
+      0,
+      0,
+      0.0323,
+      0.1339,
+      0.2356,
+      0.3487,
+      0.552,
+      0.7506,
+      1
+    ],
+    "viableCoverage": 0.7201834862385321
+  },
+  "checks": {
+    "minorsInAnyProposal": 0,
+    "canaryLeaksInProposals": 0
+  }
+}
