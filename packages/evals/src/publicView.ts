@@ -4,95 +4,17 @@
 //             stated age, participation state, stated preferences, explicit edges among the people.
 //   excluded: agent_private facets (boundaries, private disclosures + canaries), hidden truth,
 //             names, member ids, oracle verdicts.
-import type { ChatMessage, Facet, MemberId, WorldSnapshot } from "../../core/src/index.ts";
-import { DAY } from "../../core/src/index.ts";
-import type { ConfigSpec, RecPrediction } from "./types.ts";
+// The builder itself lives in packages/engine/src/judgeScreen.ts (pass 1) so the engine and the
+// evals build exactly the same prompt input; it is re-exported here unchanged. This file keeps the
+// ORIGINAL single-pass prompt (rec-eval-v1) so the previous luna baseline replays byte-identically.
+import type { ChatMessage } from "../../core/src/index.ts";
+import { prob } from "../../engine/src/judgeCommon.ts";
+import type { RecPrediction } from "./types.ts";
+
+export { buildPublicView, type PublicPerson, type PublicView } from "../../engine/src/judgeScreen.ts";
+import type { PublicView } from "../../engine/src/judgeScreen.ts";
 
 export const PROMPT_VERSION = "rec-eval-v1";
-
-export interface PublicPerson {
-  ref: string;
-  role: string;
-  attending: boolean;
-  age: number;
-  home_city: string;
-  participation_state: string;
-  joined_days_ago: number;
-  preferences: { formats: string[]; categories_opted_in: string[]; romance_opt_in: boolean; max_travel_minutes: number; only_when_asked: boolean };
-  shareable: string[];
-  matchable_do_not_quote: string[];
-  intents: { objective: string; category: string }[];
-  presence: { city: string; type: string; areas: string[]; from_day?: number; to_day?: number }[];
-}
-
-export interface PublicView {
-  configuration: {
-    kind: string; category: string; objective: string; city: string;
-    window_days: { from: number; to: number };
-  };
-  people: PublicPerson[];
-  relationships: { a: string; b: string; type: string }[];
-  /** ref -> member id; kept OUT of the prompt, used only to map predictions back. */
-  refs: Record<string, MemberId>;
-}
-
-/** Scopes the recommender may read. agent_private / opportunity_specific are never exposed. */
-const VISIBLE: ReadonlySet<Facet["scope"]> = new Set(["shareable", "matchable"]);
-
-export function buildPublicView(snap: WorldSnapshot, cfg: ConfigSpec): PublicView {
-  const ids = [...cfg.participants, ...(cfg.via ? [cfg.via] : [])];
-  const refs: Record<string, MemberId> = {};
-  const refOf = new Map<MemberId, string>();
-  ids.forEach((id, i) => { const r = `P${i + 1}`; refs[r] = id; refOf.set(id, r); });
-  const day = (t: number) => Math.round(((t - snap.now) / DAY) * 10) / 10;
-  // Replace any member id that might appear inside a text value with its ref (or a neutral token).
-  const scrub = (s: string) => s.replace(/\b[a-z]{2,4}-\d-\d{4}\b/gi, m => refOf.get(m) ?? "another member");
-
-  const people = ids.map((id): PublicPerson => {
-    const m = snap.members.find(x => x.id === id);
-    if (!m) throw new Error(`unknown member ${id}`);
-    const facets = snap.facets.filter(f => f.memberId === id && VISIBLE.has(f.scope)
-      && (f.validFrom === undefined || f.validFrom <= snap.now) && (f.validTo === undefined || f.validTo >= snap.now));
-    return {
-      ref: refOf.get(id)!,
-      role: id === cfg.via ? "connector (introduces the others, does not attend)" : cfg.roles[id] ?? "peer",
-      attending: id !== cfg.via,
-      age: m.age,
-      home_city: m.homeCity,
-      participation_state: m.state,
-      joined_days_ago: Math.max(0, Math.round((snap.now - m.joinedAt) / DAY)),
-      preferences: {
-        formats: [...m.prefs.formats], categories_opted_in: [...m.prefs.categoriesOptIn],
-        romance_opt_in: m.prefs.romanceOptIn, max_travel_minutes: m.prefs.maxTravelMinutes,
-        only_when_asked: m.prefs.onlyWhenAsked,
-      },
-      shareable: facets.filter(f => f.scope === "shareable").map(f => scrub(`${f.kind}: ${f.value}`)),
-      matchable_do_not_quote: facets.filter(f => f.scope === "matchable").map(f => scrub(`${f.kind}: ${f.value}`)),
-      intents: snap.intents.filter(i => i.memberId === id && i.status === "active").map(i => ({ objective: scrub(i.objective), category: i.category })),
-      presence: snap.presence.filter(p => p.memberId === id).map(p => ({
-        city: p.city, type: p.type, areas: [...p.areas],
-        ...(p.from !== undefined ? { from_day: day(p.from) } : {}), ...(p.to !== undefined ? { to_day: day(p.to) } : {}),
-      })),
-    };
-  });
-  const relationships: PublicView["relationships"] = [];
-  const seen = new Set<string>();
-  for (const e of snap.edges) {
-    const a = refOf.get(e.from), b = refOf.get(e.to);
-    if (!a || !b || a === b) continue;
-    const k = `${a}|${b}|${e.type}`;
-    if (seen.has(k)) continue;
-    seen.add(k);
-    relationships.push({ a, b, type: e.type === "blocked" ? `${a} blocked ${b}` : e.type });
-  }
-  return {
-    configuration: {
-      kind: cfg.kind, category: cfg.category, objective: scrub(cfg.objective), city: cfg.city,
-      window_days: { from: day(cfg.window.start), to: day(cfg.window.end) },
-    },
-    people, relationships, refs,
-  };
-}
 
 export const RECOMMENDER_SYSTEM = `You are the recommender for The Network, an invite-only service that introduces adults to each other for friendship, activities, help, professional goals and (only when everyone involved opted in) dating.
 You evaluate ONE candidate configuration of people and decide whether the Network should propose it. Be a thoughtful, skeptical friend: precision over volume. Most candidates are NOT good; say yes only when every attending person clearly gains and would plausibly accept.
@@ -118,13 +40,6 @@ export function recommenderMessages(view: PublicView): ChatMessage[] {
     { role: "user", content: JSON.stringify(visible) },
   ];
 }
-
-const prob = (x: unknown): number | undefined => {
-  const n = typeof x === "string" ? Number(x) : x;
-  if (typeof n !== "number" || !Number.isFinite(n)) return undefined;
-  const v = n > 1 && n <= 100 ? n / 100 : n;
-  return v < 0 || v > 1 ? undefined : v;
-};
 
 /** Validate a raw model reply. Throws on schema errors (counted as parse failures). */
 export function parseRecPrediction(raw: unknown, attendingRefs: string[]): RecPrediction {

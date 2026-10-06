@@ -50,7 +50,16 @@ export interface EngineConfig {
     maxAnchorsPerCity: number; alternates: number; minThemeMembers: number;
   };
   exploration: { rate: number; maxShare: number };
-  judge: { enabled: boolean; topK: number; groupTopK: number; ttlMs: number; maxTokens: number; weight: number; concurrency: number };
+  judge: {
+    /** Pass 2 (rubric judge, judge.ts) on the top configurations. */
+    enabled: boolean; topK: number; groupTopK: number; ttlMs: number; maxTokens: number; weight: number; concurrency: number;
+    /** A pass-2 verdict of "no" makes the configuration ineligible ("judge_reject"), like a dealbreaker. */
+    verdictGates: boolean;
+    /** Pass 1 (screen, judgeScreen.ts): a cheap look at more candidates; pass 2 then sees only survivors. */
+    screen: { enabled: boolean; topK: number; groupTopK: number; maxTokens: number };
+    /** Pass 3 (deep review, judgeDeep.ts) on the best survivors of passes 1-2. Can only remove candidates. */
+    deep: { enabled: boolean; topK: number; maxTokens: number };
+  };
   selection: { maxProposalsPerCity: number; runLoadPenalty: number; exposureFloorShare: number; exposureDebtWeight: number; exposureDebtCap: number };
   inviteTtlMs: number; sameDayInviteTtlMs: number;
   newcomerDays: number;
@@ -99,7 +108,13 @@ export const DEFAULT_CONFIG: EngineConfig = {
   maxPerIntent: 4,
   group: { minSize: 3, maxSize: 6, beamWidth: 8, poolSize: 24, minPairwise: 0.05, maxAnchorsPerCity: 8, alternates: 3, minThemeMembers: 4 },
   exploration: { rate: 0.125, maxShare: 0.15 },
-  judge: { enabled: true, topK: 10, groupTopK: 3, ttlMs: 7 * DAY, maxTokens: 2500, weight: 0.4, concurrency: 4 },
+  // Passes 1 and 3 are off by default (evaluated in docs/results/2026-10-06-judge-passes.md);
+  // turning them on changes which candidates survive and adds LLM calls.
+  judge: {
+    enabled: true, topK: 10, groupTopK: 3, ttlMs: 7 * DAY, maxTokens: 2500, weight: 0.4, concurrency: 4, verdictGates: true,
+    screen: { enabled: false, topK: 30, groupTopK: 6, maxTokens: 2500 },
+    deep: { enabled: false, topK: 6, maxTokens: 6000 },
+  },
   selection: { maxProposalsPerCity: 120, runLoadPenalty: 0.08, exposureFloorShare: 0.25, exposureDebtWeight: 0.05, exposureDebtCap: 3 },
   inviteTtlMs: 48 * HOUR, sameDayInviteTtlMs: 3 * HOUR,
   newcomerDays: 14,

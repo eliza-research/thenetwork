@@ -2,12 +2,12 @@
   "synthetic": true,
   "dataset": "The Network synthetic members (SF + NYC)",
   "datasetVersion": "v1",
-  "generatorVersion": "synthetic-gen 1.1.0",
-  "simGeneratorSourceSha256": "0697ffdf97e5563ffbe30eac64bc4da86e30add8bc9ef57fb46011209412a0a4",
+  "generatorVersion": "synthetic-gen 1.2.0",
+  "simGeneratorSourceSha256": "821e3c59ce379b775565e39aca08ea05b95dcfc2e6d97fd9f538b6c6d3326fe8",
   "seed": 20261005,
   "snapshotNow": 1791824400000,
   "snapshotNowIso": "2026-10-12T17:00:00.000Z",
-  "generatedAt": "2026-10-06T00:41:07.237Z",
+  "generatedAt": "2026-10-06T16:51:40.916Z",
   "model": "gpt-6-luna + qwen-3.8-27b",
   "counts": {
     "members": 500,
@@ -35,20 +35,20 @@
       "scammer": 4
     },
     "travelers": 50,
-    "facets": 6700,
+    "facets": 5224,
     "facetsByScope": {
-      "matchable": 1915,
-      "shareable": 3518,
-      "agent_private": 1267
+      "shareable": 2074,
+      "matchable": 2290,
+      "agent_private": 860
     },
-    "intents": 843,
+    "intents": 659,
     "intentsByCategory": {
-      "romance": 110,
-      "help": 142,
-      "social": 266,
-      "professional": 148,
-      "growth": 57,
-      "hobby": 120
+      "romance": 85,
+      "help": 121,
+      "social": 192,
+      "professional": 109,
+      "growth": 51,
+      "hobby": 101
     },
     "presence": 549,
     "presenceByType": {
@@ -71,67 +71,83 @@
       "roommate": 7,
       "vouch": 334
     },
-    "workplaces": 51
+    "workplaces": 51,
+    "byRichness": {
+      "medium": 150,
+      "rich": 100,
+      "light": 125,
+      "very_rich": 50,
+      "minimal": 75
+    },
+    "facetsBySource": {
+      "chat": 3723,
+      "google_calendar": 190,
+      "gmail": 457,
+      "linkedin": 263,
+      "strava": 75,
+      "personal_website": 40,
+      "instagram": 172,
+      "ai_memory": 115,
+      "x": 40,
+      "spotify": 45,
+      "luma": 18,
+      "partiful": 14,
+      "github": 57,
+      "eventbrite": 15
+    },
+    "sourceFacetsByTruth": {
+      "correct": 1314,
+      "wrong_inference": 148,
+      "stale": 39
+    },
+    "sensitiveInferences": {
+      "finances": 14,
+      "health": 13,
+      "children": 11,
+      "religion": 9,
+      "relationship": 4,
+      "sexuality": 7
+    },
+    "activeSourcesPerMember": {
+      "0": 189,
+      "1": 151,
+      "2": 76,
+      "3": 45,
+      "4": 16,
+      "5": 16,
+      "6": 7
+    },
+    "sourceEntriesByStatus": {
+      "connected": 529,
+      "confirmed": 95,
+      "revoked": 21,
+      "rejected": 22,
+      "pending_confirmation": 32
+    },
+    "activeSourcesByKind": {
+      "google_calendar": 101,
+      "gmail": 92,
+      "linkedin": 73,
+      "strava": 26,
+      "personal_website": 23,
+      "instagram": 62,
+      "ai_memory": 33,
+      "github": 49,
+      "x": 33,
+      "spotify": 68,
+      "luma": 22,
+      "partiful": 21,
+      "eventbrite": 21
+    }
   },
   "llm": {
     "provider": "surplus",
     "model": "gpt-6-luna",
     "concurrency": 6,
     "personasEnrichedByLLM": 500,
-    "fromCache": 450,
-    "freshThisRun": 50,
-    "freshMemberIds": [
-      "sf-0004",
-      "sf-0010",
-      "sf-0017",
-      "sf-0018",
-      "sf-0023",
-      "sf-0034",
-      "sf-0051",
-      "sf-0060",
-      "sf-0069",
-      "sf-0093",
-      "sf-0110",
-      "sf-0113",
-      "sf-0116",
-      "sf-0157",
-      "sf-0163",
-      "sf-0170",
-      "sf-0182",
-      "sf-0188",
-      "sf-0213",
-      "sf-0247",
-      "sf-0249",
-      "ny-0021",
-      "ny-0025",
-      "ny-0027",
-      "ny-0029",
-      "ny-0033",
-      "ny-0068",
-      "ny-0073",
-      "ny-0075",
-      "ny-0076",
-      "ny-0077",
-      "ny-0079",
-      "ny-0132",
-      "ny-0133",
-      "ny-0134",
-      "ny-0150",
-      "ny-0159",
-      "ny-0161",
-      "ny-0175",
-      "ny-0176",
-      "ny-0179",
-      "ny-0193",
-      "ny-0198",
-      "ny-0208",
-      "ny-0217",
-      "ny-0219",
-      "ny-0222",
-      "ny-0229",
-      "ny-0231",
-      "ny-0245"
-    ],
+    "fromCache": 500,
+    "freshThisRun": 0,
+    "freshMemberIds": [],
     "enrichedByModel": {
       "qwen-3.8-27b": 450,
       "gpt-6-luna": 50
@@ -140,15 +156,15 @@
     "fallbackReasons": {},
     "partialFieldFallbacks": 0,
     "contactScrubs": 0,
-    "httpCalls": 50,
+    "httpCalls": 0,
     "http429": 0,
     "http5xx": 0,
-    "promptTokens": 21505,
-    "completionTokens": 30724,
-    "reasoningTokens": 13803,
-    "costUsdThisRun": 0.002621,
+    "promptTokens": 0,
+    "completionTokens": 0,
+    "reasoningTokens": 0,
+    "costUsdThisRun": 0,
     "costSource": "provider-reported usage.buyer_cost_micro (Surplus) summed via the core client's onResponse hook",
-    "enrichmentWallMs": 76796,
+    "enrichmentWallMs": 118,
     "previousRuns": [
       {
         "generatorVersion": "synthetic-gen 1.0.0",
@@ -173,21 +189,48 @@
         "estimatedCostUsd": 2.816,
         "pricingAssumption": "qwen-3.8-27b ~$0.99/M input, ~$1.49/M output (docs/test-plan.md section 15; confirm on Cerebras console)",
         "enrichmentWallMs": 792706
+      },
+      {
+        "generatorVersion": "synthetic-gen 1.1.0",
+        "generatedAt": "2026-10-06T00:41:07.237Z",
+        "provider": "surplus",
+        "model": "gpt-6-luna",
+        "concurrency": 6,
+        "personasEnrichedByLLM": 500,
+        "fromCache": 450,
+        "freshThisRun": 50,
+        "enrichedByModel": {
+          "qwen-3.8-27b": 450,
+          "gpt-6-luna": 50
+        },
+        "templateFallbacks": 0,
+        "fallbackReasons": {},
+        "partialFieldFallbacks": 0,
+        "contactScrubs": 0,
+        "httpCalls": 50,
+        "http429": 0,
+        "http5xx": 0,
+        "promptTokens": 21505,
+        "completionTokens": 30724,
+        "reasoningTokens": 13803,
+        "costUsdThisRun": 0.002621,
+        "costSource": "provider-reported usage.buyer_cost_micro (Surplus) summed via the core client's onResponse hook",
+        "enrichmentWallMs": 76796
       }
     ]
   },
   "files": {
     "members.jsonl": {
       "records": 500,
-      "sha256": "25377124b724237dfb4916b9569d75394495e7deeb4b23f04d7a88f0810ad4f6"
+      "sha256": "29bddc4d9f5e381d2d5df5ea453a93e678b415abd5a91dda74d46e921172fdb8"
     },
     "facets.jsonl": {
-      "records": 6700,
-      "sha256": "3a172b10bae73dd378bd0f6c5c8ed03a9b2be39bf3be47dbecde58443f90223a"
+      "records": 5224,
+      "sha256": "1f9c22115e3b7ee7b20e5cd69a9c7ec0b8b04c8a41ea031d34a9e9897527fd72"
     },
     "intents.jsonl": {
-      "records": 843,
-      "sha256": "933c7a56e3f2542cf896e2b54a5481f75664f80afd1630a8d8b9fcc9217bf5f9"
+      "records": 659,
+      "sha256": "32ed0202683958ec0c4bec6b7667aebe5e061854d240a9fd2ec3afd4c1756afa"
     },
     "presence.jsonl": {
       "records": 549,
@@ -199,7 +242,7 @@
     },
     "hidden_truth.jsonl": {
       "records": 500,
-      "sha256": "d2bcf337d0f3f66983574241509e10cd5c3f4ca90f5cb585099d2c8a7d87b6f3"
+      "sha256": "2ea854ffb5898b2033f008697496b73b3c6c32e77b721842fd1cb97246dc1c5d"
     }
   },
   "notes": [
@@ -207,6 +250,7 @@
     "Phone numbers use the fictional 555-01xx range; emails use example.com.",
     "hidden_truth.jsonl is ground truth for the simulator/oracle and evaluation only. Never load it into the engine or show it in product surfaces.",
     "LLM text is cached under runs/synthetic-cache/v1 (gitignored); without the cache, regeneration yields the same structure but different prose.",
-    "generator 1.1.0: adult romance opt-in calibrated to ~25-30% (calibrateRomance in generate.ts); only members whose prompt changed (a dropped dating intent) or that had template text got new LLM text."
+    "generator 1.1.0: adult romance opt-in calibrated to ~25-30% (calibrateRomance in generate.ts); only members whose prompt changed (a dropped dating intent) or that had template text got new LLM text.",
+    "generator 1.2.0: hidden profile richness tiers (minimal 15% / light 25% / medium 30% / rich 20% / very_rich 10%) and simulated connected sources (packages/sim/src/sources.ts). Public facets/intents/profile hold only what the member told the agent plus source-derived facets (with source, confidence, observedAt, inferred, confirmedByMember); hidden_truth.jsonl keeps the complete truth plus a truth label per source facet. No new LLM text (prompts unchanged)."
   ]
 }

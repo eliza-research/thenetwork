@@ -49,7 +49,7 @@ export type Expectation = { appliesTo?: string[]; note?: string } & (
 export interface Scenario {
   name: string; description: string; seed: number; days: number;
   /** Background population. minorShare defaults to 0 here so scripted scenarios stay focused. */
-  background?: { personas: number; adversarialRate?: number; minorShare?: number };
+  background?: { personas: number; adversarialRate?: number; minorShare?: number; richness?: boolean };
   /** Options for the built-in StubNetwork when it is the network under test (e.g. randomIntros). */
   stub?: Record<string, unknown>;
   personas: ScenarioPersonaSpec[];
@@ -115,7 +115,7 @@ export function scenarioWorldOptions(s: Scenario, o: ScenarioRunOptions): WorldO
   const start = DEFAULT_START;
   const scripted = s.personas.map(spec => buildScriptedPersona(spec, seed));
   const background = s.background?.personas
-    ? generatePersonas({ n: s.background.personas, seed, adversarialRate: s.background.adversarialRate ?? 0, minorShare: s.background.minorShare ?? 0, idPrefix: "bg" }) : [];
+    ? generatePersonas({ n: s.background.personas, seed, adversarialRate: s.background.adversarialRate ?? 0, minorShare: s.background.minorShare ?? 0, idPrefix: "bg", richness: s.background.richness }) : [];
   const personas = [...scripted, ...background];
   const cityOf = (ref: string) => scripted.find(p => p.id === ref)?.homeCity ?? "sf";
   const actions: WorldOptions["actions"] = [];

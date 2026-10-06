@@ -57,7 +57,11 @@ export class FakeLLM implements LLM {
   constructor(private reply: (msgs: ChatMessage[]) => string) {}
   async chat(messages: ChatMessage[]) { this.calls++; this.lastMessages = messages; return this.reply(messages); }
 }
+/** A pass-2 (judge-v2) reply: reasoning first, then scores, verdict, confidence, member-facing why. */
 export const verdictJson = (o: Partial<Record<string, unknown>> = {}, refs = ["P1", "P2"]) => JSON.stringify({
+  reasoning: "P1.own_request asks to learn sailing; P2.shareable offers sailing lessons, so both gain.",
+  cited_facts: [{ ref: "P1", field: "own_request", fact: "learn sailing this season" }],
+  verdict: o.dealbreaker === true ? "no" : "yes", match_probability: o.dealbreaker === true ? 0.1 : 0.8,
   fit: 5, mutual_value: 5, capacity_realism: 5, timing: 5, social_comfort: 5, red_flags: 1, certainty: 5,
   dealbreaker: false, dealbreaker_reason: "", why: Object.fromEntries(refs.map(r => [r, "You both love being out on the water."])), ...o,
 });

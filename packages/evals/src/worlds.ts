@@ -12,13 +12,23 @@ export const WORLD_START = Date.UTC(2026, 9, 5, 7);
 /** Evaluate configurations three days in, so announced trips are visible as temporary presence. */
 export const EVAL_NOW = WORLD_START + 3 * DAY;
 
-export interface WorldSpec { id: string; city: City; seed: number; n: number }
+export interface WorldSpec {
+  id: string; city: City; seed: number; n: number;
+  /**
+   * Profile richness tiers + simulated connected sources (sim generator option, 2026-10-06). The
+   * snapshot then holds only what the Network knows (chat coverage + source observations, with
+   * source / observedAt / inferred / confirmedByMember); hidden truth and oracle labels are unchanged.
+   */
+  richness?: boolean;
+}
 export const DEFAULT_WORLDS: WorldSpec[] = [
   { id: "sf-1", city: "sf", seed: 101, n: 320 },
   { id: "sf-2", city: "sf", seed: 102, n: 320 },
   { id: "nyc-1", city: "nyc", seed: 201, n: 320 },
   { id: "nyc-2", city: "nyc", seed: 202, n: 320 },
 ];
+/** The same four worlds with richness tiers and connected sources on (judgment-passes suite). */
+export const RICHNESS_WORLDS: WorldSpec[] = DEFAULT_WORLDS.map(w => ({ ...w, richness: true }));
 
 export interface EvalWorld {
   spec: WorldSpec;
@@ -36,6 +46,7 @@ export function buildEvalWorld(spec: WorldSpec): EvalWorld {
     cityWeights: spec.city === "sf" ? { sf: 1, nyc: 0 } : { sf: 0, nyc: 1 },
     // Everyone has joined by EVAL_NOW so the whole population is matchable.
     joinSpreadDays: 3,
+    ...(spec.richness ? { richness: true } : {}),
   });
   const byId = new Map(personas.map(p => [p.id, p]));
   const oracle = new Oracle(personas, `evals:${spec.id}:${spec.seed}`, WORLD_START);

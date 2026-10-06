@@ -35,7 +35,7 @@ function phrase(name: string, f: Facet): string {
   return p ? `${name} ${p} ${f.value}.` : `${name}: ${f.value}.`;
 }
 
-export function explain(w: World, c: Candidate, verdict?: JudgeVerdict | null): { explanations: Record<MemberId, string>; objective: string } {
+export function explain(w: World, c: Candidate, verdict?: JudgeVerdict | null, deepWhy?: Record<MemberId, string>): { explanations: Record<MemberId, string>; objective: string } {
   const vocab = privateVocabulary(w, c.participants);
   const objective = leaks(c.objective, vocab) ? `Proposed ${c.kind.replace(/_/g, " ")}` : c.objective;
   const out: Record<MemberId, string> = {};
@@ -67,7 +67,8 @@ export function explain(w: World, c: Candidate, verdict?: JudgeVerdict | null): 
     // Template text is built from shareable facets only, so it is safe by construction; the
     // judge's free text is accepted only if it passes the leak checker.
     let text = bits.join(" ");
-    const why = verdict?.why?.[me];
+    // Pass-3 text (already leak-gated) wins over pass-2 text; both are re-checked here.
+    const why = deepWhy?.[me] || verdict?.why?.[me];
     if (why && !leaks(why, vocab)) text = `${why} ${bits.filter(b => b.startsWith("Part of the reason")).join(" ")}`.trim();
     if (/canary/i.test(text)) text = "The Network thinks this could be a good fit for you.";
     out[me] = text;

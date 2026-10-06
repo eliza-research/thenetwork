@@ -24,11 +24,12 @@ import { chatJson, mapLimit } from "../../packages/sim/src/llmGenerator.ts";
 import type { AdversarialKind, Archetype, Desire, Persona, Relationship, RelationshipType } from "../../packages/sim/src/persona.ts";
 import { Rng, clamp01 } from "../../packages/sim/src/rng.ts";
 import { DESIRES, INTERESTS, SKILLS, desireById } from "../../packages/sim/src/taxonomy.ts";
+import { DEFAULT_RICHNESS_MIX, VAGUE_INTENT, assignRichness, inferredRole, simulateKnowledge, type Knowledge } from "../../packages/sim/src/sources.ts";
 import {
   AREA_CODES, BUSINESS_AREAS, CACHE_DIR, CITIES, DATA_DIR, DATASET_VERSION, FILES, GENERATOR_VERSION, NEIGHBORHOODS,
   PER_CITY, REPO, SEED, SNAPSHOT_NOW, sha256,
   type EdgeRecord, type EdgeRelation, type FacetRecord, type HiddenTruthRecord, type IntentRecord, type Manifest,
-  type MemberRecord, type PresenceRecord, type Segment,
+  type HiddenKnowledge, type MemberRecord, type PresenceRecord, type Segment,
 } from "./common.ts";
 import { inventName } from "./names.ts";
 
@@ -652,6 +653,25 @@ const freshIds: string[] = [];
 const wallMs = Date.now() - t0;
 
 // ----------------------------------------------------------------------------------------------
+// 6b. Profile richness + connected sources (generator 1.2.0). Runs AFTER the LLM prompts are built
+// so prompts (and the cache) are unchanged. Deterministic from SEED: tiers by rank of a noisy
+// engagement score (archetype + tenure), chat coverage and source observations from hidden truth
+// plus seeded noise (packages/sim/src/sources.ts). Hidden truth stays complete.
+// ----------------------------------------------------------------------------------------------
+const KN = new Map<string, Knowledge>();
+{
+  const tiers = assignRichness(personas.map(p => ({ id: p.id, archetype: p.archetype, tenureDays: (NOW - X.get(p.id)!.joinedAt) / DAY, minor: X.get(p.id)!.segment === "minor", adversarial: p.hidden.adversarial })), R.fork("richness"), DEFAULT_RICHNESS_MIX);
+  for (const p of personas) {
+    const x = X.get(p.id)!;
+    const tier = tiers.get(p.id)!;
+    p.hidden.richness = tier;
+    const minor = x.segment === "minor";
+    const sector = x.workplace ? x.workplace.descriptor.replace(/^an? /, "").replace(/ (in|with offices in) .*$/, "") : inferredRole(p).sector;
+    KN.set(p.id, simulateKnowledge(p, { tier, now: NOW, joinedAt: x.joinedAt, minor, occupation: minor ? undefined : enrich.get(p.id)!.e.occupation, sector }, R.fork("knowledge", p.id)));
+  }
+}
+
+// ----------------------------------------------------------------------------------------------
 // 7. Assemble public records + hidden truth.
 // ----------------------------------------------------------------------------------------------
 const ADV_NOTES: Record<AdversarialKind, { notes: string; scripted: string[] }> = {
@@ -675,75 +695,117 @@ for (const p of [...personas].sort((a, b) => (a.id < b.id ? -1 : 1))) {
   if (en.partial) partialCount++;
   if (en.cached) cachedCount++;
   const e = en.e;
+  const kn = KN.get(p.id)!; const chat = kn.chat; const tier = kn.richness;
   const r = R.fork("records", p.id);
   const stated = p.public.statedIntents;
-  const romance = !minor && (stated.some(i => i.category === "romance") || (h.romance.optIn && h.adversarial !== "minor"));
-  const cats: string[] = minor ? ["hobby", "growth"] : [...new Set<string>(["social", ...stated.map(i => i.category), ...(r.bool(0.5) ? ["events"] : [])])];
+  const knownIntents = new Set(chat.intents);
+  // Romance opt-in is a setting the member chose; a minimal-tier member only has it if their one
+  // (vague) want was romance.
+  const romance = !minor && (stated.some((i, k) => i.category === "romance" && knownIntents.has(k))
+    || (tier !== "minimal" && (stated.some(i => i.category === "romance") || (h.romance.optIn && h.adversarial !== "minor"))));
+  const eventsDraw = !minor && r.bool(0.5);
+  const cats: string[] = minor ? ["hobby", "growth"] : [...new Set<string>(["social", ...stated.filter((_, k) => knownIntents.has(k)).map(i => i.category), ...(eventsDraw ? ["events"] : [])])];
   if (romance && !cats.includes("romance")) cats.push("romance");
   const qh: [number, number] = [Math.min(p.routine.sleep === 0 ? 24 : p.routine.sleep, 22) % 24, Math.max(p.routine.wake + 1, 8)];
   const formats: MemberRecord["prefs"]["formats"] = minor ? ["one_to_one"] : h.preferredGroupSize <= 2 ? ["one_to_one", "small_group"] : ["small_group", "one_to_one", "event"];
   const hood = NEIGHBORHOODS[p.homeCity].find(n => n.name === p.routine.homeArea)!;
-  members.push({
-    synthetic: true, id: p.id, name: p.name, homeCity: p.homeCity, state: x.state,
-    prefs: {
-      categoriesOptIn: cats as MemberRecord["prefs"]["categoriesOptIn"], quietHours: qh, romanceOptIn: romance, formats,
-      maxTravelMinutes: minor ? 15 : p.archetype === "busy_parent" ? 20 : r.pick([25, 30, 35, 45]),
-      onlyWhenAsked: minor || x.unanswered >= 2,
-    },
-    ...(p.invitedBy ? { invitedBy: p.invitedBy } : {}),
-    joinedAt: x.joinedAt, age: p.public.claimedAge, unansweredProactive: x.unanswered,
-    segment: x.segment,
-    profile: {
-      pronouns: pronounsOf(p.gender), neighborhood: hood.name, ...(hood.borough ? { borough: hood.borough } : {}),
-      occupation: e.occupation, bio: e.bio, voice: { style: h.style, samples: e.voiceSamples },
-      routine: e.routine, availability: e.availability,
-      ...(p.secondaryCity ? { secondaryCity: p.secondaryCity } : {}),
-      contact: { phone: x.phone, email: x.email }, enrichment: en.source,
-    },
-  });
+  const maxTravel = minor ? 15 : p.archetype === "busy_parent" ? 20 : r.pick([25, 30, 35, 45]);
 
   // Facets. Minors: everything agent_private (single-player; nothing is matchable or shareable).
+  // Only what the member told the agent (chat coverage for their tier) plus facets from their
+  // active connected sources become facets; everything else stays in hidden truth only. Random
+  // draws happen for every candidate facet (kept or not) so the stream is stable across tiers.
+  const memberFacets: FacetRecord[] = [];
+  const truthOf: HiddenKnowledge["observationTruth"] = {};
   let fi = 0;
-  const F = (kind: FacetRecord["kind"], value: string, tags: string[], scope: FacetRecord["scope"], provenance: FacetRecord["provenance"] = "said", confidence = 0.8) => {
-    facets.push({ synthetic: true, id: `${p.id}:f${String(fi++).padStart(2, "0")}`, memberId: p.id, kind, value, tags, scope: minor ? "agent_private" : scope, provenance, confidence, validFrom: x.joinedAt });
+  const F = (keep: boolean, kind: FacetRecord["kind"], value: string, tags: string[], scope: FacetRecord["scope"], provenance: FacetRecord["provenance"] = "said", confidence = 0.8) => {
+    if (!keep) return;
+    const inferred = provenance === "inferred";
+    const observedAt = Math.min(NOW - HOUR, x.joinedAt + Math.floor((NOW - x.joinedAt) * ((fi * 0.37) % 1)));
+    memberFacets.push({
+      synthetic: true, id: `${p.id}:f${String(fi++).padStart(2, "0")}`, memberId: p.id, kind, value, tags, scope: minor ? "agent_private" : scope, provenance, confidence, validFrom: x.joinedAt,
+      source: "chat", observedAt, inferred, confirmedByMember: !inferred,
+    });
   };
   for (const t of p.public.statedInterests) {
-    const inferred = r.bool(0.1);
-    F("interest", label(t), [t, clusterOf(t)], r.bool(0.6) ? "shareable" : "matchable", inferred ? "inferred" : "said", inferred ? 0.55 : r2(r.range(0.7, 0.95)));
+    const inferred = r.bool(0.1); const shareable = r.bool(0.6); const conf = inferred ? 0.55 : r2(r.range(0.7, 0.95));
+    // Inferred (not stated) facets are never shareable until the member confirms them (1.2.0).
+    F(chat.interests.includes(t), "interest", label(t), [t, clusterOf(t)], shareable && !inferred ? "shareable" : "matchable", inferred ? "inferred" : "said", conf);
   }
   for (const t of p.public.statedSkills) {
     const sk = SKILLS.find(s => s.tag === t);
-    F("skill", skillLabel(t), [t, ...(sk?.teaches ? [sk.teaches] : []), ...(t === "hosting" || t === "chef" ? ["host"] : [])], "matchable");
+    F(chat.skills.includes(t), "skill", skillLabel(t), [t, ...(sk?.teaches ? [sk.teaches] : []), ...(t === "hosting" || t === "chef" ? ["host"] : [])], "matchable");
   }
   e.offers.forEach((o, k) => {
     const tag = p.public.statedSkills[k] ?? p.public.statedSkills[0] ?? p.public.statedInterests[k] ?? p.public.statedInterests[0];
     const sk = SKILLS.find(s => s.tag === tag);
-    F("offer", o, [...(tag ? [tag] : []), ...(sk?.teaches ? [sk.teaches] : []), ...(tag === "hosting" || tag === "chef" ? ["host"] : [])], "shareable");
+    F(k < chat.offers, "offer", o, [...(tag ? [tag] : []), ...(sk?.teaches ? [sk.teaches] : []), ...(tag === "hosting" || tag === "chef" ? ["host"] : [])], "shareable");
   });
-  e.boundaries.forEach(b => F("boundary", b, ["boundary"], "agent_private"));
-  if (!minor && !h.adversarial && r.bool(0.04)) F("preference", "Not interested in crypto pitches", ["dealbreaker:crypto"], "agent_private");
+  e.boundaries.forEach((b, k) => F(chat.boundaries.includes(k), "boundary", b, ["boundary"], "agent_private"));
+  const crypto = !minor && !h.adversarial && r.bool(0.04);
+  F(crypto && (tier === "medium" || tier === "rich" || tier === "very_rich"), "preference", "Not interested in crypto pitches", ["dealbreaker:crypto"], "agent_private");
   if (romance) {
     const seeks = h.romance.seeking;
-    F("preference", `Open to dating; interested in ${seeks.map(g => (g === "nonbinary" ? "nonbinary people" : `${g === "woman" ? "women" : "men"}`)).join(" and ")}, ages ${h.romance.ageRange[0]}-${h.romance.ageRange[1]}`,
+    F(true, "preference", `Open to dating; interested in ${seeks.map(g => (g === "nonbinary" ? "nonbinary people" : `${g === "woman" ? "women" : "men"}`)).join(" and ")}, ages ${h.romance.ageRange[0]}-${h.romance.ageRange[1]}`,
       [`romance:is:${p.gender}`, ...seeks.map(g => `romance:seeks:${g}`), `romance:age:${h.romance.ageRange[0]}-${h.romance.ageRange[1]}`], "agent_private");
   }
-  if (minor) F("preference", "Under 18: single-player only (no introductions, groups or events with other members)", ["single_player", "minor"], "agent_private", "said", 1);
-  F("fact", `lives near ${hood.name}`, ["neighborhood", slug(hood.name)], "shareable");
-  F("fact", minor || /^works /i.test(e.occupation) ? e.occupation : `works as ${e.occupation}`, ["occupation"], "matchable");
-  F("availability_pattern", e.availability, [...p.routine.freeEvenings.map(d => `evening:${DAYS[d]!.toLowerCase()}`), `wake:${p.routine.wake}`], "shareable");
-  if (h.privateDisclosure) F("fact", `${h.privateDisclosure.fact} (ref ${h.privateDisclosure.canary})`, ["sensitive"], "agent_private");
+  if (minor) F(true, "preference", "Under 18: single-player only (no introductions, groups or events with other members)", ["single_player", "minor"], "agent_private", "said", 1);
+  F(chat.neighborhood, "fact", `lives near ${hood.name}`, ["neighborhood", slug(hood.name)], "shareable");
+  F(chat.occupation, "fact", minor || /^works /i.test(e.occupation) ? e.occupation : `works as ${e.occupation}`, ["occupation"], "matchable");
+  F(chat.availability, "availability_pattern", e.availability, [...p.routine.freeEvenings.map(d => `evening:${DAYS[d]!.toLowerCase()}`), `wake:${p.routine.wake}`], "shareable");
+  if (h.privateDisclosure) F(chat.disclosure, "fact", `${h.privateDisclosure.fact} (ref ${h.privateDisclosure.canary})`, ["sensitive"], "agent_private");
+  // Connected-source facets (hidden truth label kept in hidden_truth.jsonl only).
+  for (const o of kn.observations) {
+    const id = `${p.id}:s${String(fi++).padStart(2, "0")}`;
+    memberFacets.push({ synthetic: true, id, memberId: p.id, ...o.facet, tags: [...o.facet.tags], scope: minor ? "agent_private" : o.facet.scope });
+    truthOf[id] = { truth: o.truth, ...(o.note ? { note: o.note } : {}) };
+  }
+  facets.push(...memberFacets);
 
-  // Intents
+  // Intents (only the ones the member told the agent; minimal = one vague want, light = objective only).
   stated.forEach((it, k) => {
     const def = desireById.get(it.desireId);
     const tags = def ? [...def.needsInterests, ...def.needsSkills, def.pool ?? ""].filter(Boolean) : [];
     const created = Math.min(NOW - HOUR, x.joinedAt + r.int(0, 20) * DAY);
+    const status = x.state === "paused" ? "paused" : r.bool(0.08) ? "paused" : "active";
+    if (!knownIntents.has(k)) return;
+    const mode = chat.intentMode;
     intents.push({
-      synthetic: true, id: `${p.id}:i${k}`, memberId: p.id, objective: it.text, category: it.category,
-      details: `${e.intentDetails[k] ?? ""}${def ? ` (format: ${minor ? "solo" : def.format}; tags: ${tags.join(",")})` : ""}`.trim(),
-      desiredPeople: e.desiredPeople[k], horizonDays: it.category === "romance" ? 90 : 60,
-      status: x.state === "paused" ? "paused" : r.bool(0.08) ? "paused" : "active", createdAt: created,
+      synthetic: true, id: `${p.id}:i${k}`, memberId: p.id, objective: mode === "vague" ? VAGUE_INTENT[it.category] ?? "meet some new people" : it.text, category: it.category,
+      ...(mode === "detailed" ? { details: `${e.intentDetails[k] ?? ""}${def ? ` (format: ${minor ? "solo" : def.format}; tags: ${tags.join(",")})` : ""}`.trim(), desiredPeople: e.desiredPeople[k] } : {}),
+      horizonDays: it.category === "romance" ? 90 : 60, status, createdAt: created,
     });
+  });
+
+  // Public profile = what the Network can show about the member. Rich tiers wrote their own bio;
+  // otherwise it is a summary of known facets only. The full LLM texture stays in hidden truth.
+  const first = p.name.split(" ")[0]!;
+  const knownInterests = memberFacets.filter(f => f.kind === "interest" && f.scope !== "agent_private" && (f.source === "chat" || f.confirmedByMember)).map(f => label(f.tags[0]!));
+  const summary = `${first}, ${p.public.claimedAge}, ${chat.neighborhood ? `lives near ${hood.name}` : `in ${CITY_NAME[p.homeCity]}`}.`
+    + (chat.occupation ? ` ${/^works /i.test(e.occupation) ? e.occupation.charAt(0).toUpperCase() + e.occupation.slice(1) : minor ? `A ${e.occupation}` : `Works as ${e.occupation}`}.` : "")
+    + (knownInterests.length ? ` Into ${[...new Set(knownInterests)].slice(0, 3).join(", ")}.` : "")
+    + (memberFacets.length <= 1 && intents.filter(i => i.memberId === p.id).length === 0 ? " Hasn't shared much yet." : "");
+  const connectedSources = kn.sources.map(s => ({ ...s }));
+  members.push({
+    synthetic: true, id: p.id, name: p.name, homeCity: p.homeCity, state: x.state,
+    prefs: {
+      categoriesOptIn: cats as MemberRecord["prefs"]["categoriesOptIn"], quietHours: qh, romanceOptIn: romance, formats,
+      maxTravelMinutes: maxTravel,
+      onlyWhenAsked: minor || x.unanswered >= 2,
+    },
+    ...(p.invitedBy ? { invitedBy: p.invitedBy } : {}),
+    joinedAt: x.joinedAt, age: p.public.claimedAge, unansweredProactive: x.unanswered,
+    ...(connectedSources.length ? { connectedSources } : {}),
+    segment: x.segment,
+    profile: {
+      pronouns: pronounsOf(p.gender), neighborhood: hood.name, ...(hood.borough ? { borough: hood.borough } : {}),
+      ...(chat.occupation ? { occupation: e.occupation } : {}),
+      bio: chat.bio ? e.bio : summary, bioSource: chat.bio ? "member" : "summary",
+      voice: { style: h.style, samples: e.voiceSamples.slice(0, chat.voiceSamples) },
+      ...(chat.availability ? { routine: e.routine, availability: e.availability } : {}),
+      ...(p.secondaryCity ? { secondaryCity: p.secondaryCity } : {}),
+      contact: { phone: x.phone, email: x.email }, enrichment: en.source, chatMessages: chat.messages,
+    },
   });
 
   // Presence
@@ -763,6 +825,8 @@ for (const p of [...personas].sort((a, b) => (a.id < b.id ? -1 : 1))) {
     routine: p.routine, relationships: p.relationships.sort((a, b) => (a.to < b.to ? -1 : 1)) as Relationship[],
     hidden: h,
     personaPublic: { ...p.public, bio: e.bio, voiceSample: e.voiceSamples[0] },
+    personaTexture: { occupation: e.occupation, routine: e.routine, availability: e.availability, voiceSamples: e.voiceSamples, offers: e.offers },
+    knowledge: { richness: tier, chat, sources: kn.sources, observationTruth: truthOf },
   });
 }
 edges.sort((a, b) => (a.type < b.type ? -1 : a.type > b.type ? 1 : a.from < b.from ? -1 : a.from > b.from ? 1 : a.to < b.to ? -1 : a.to > b.to ? 1 : 0));
@@ -787,7 +851,7 @@ await write(FILES.edges, edges);
 await write(FILES.hidden, hiddenRecs);
 
 const countBy = <T>(xs: T[], f: (x: T) => string) => xs.reduce<Record<string, number>>((m, x) => { const k = f(x); m[k] = (m[k] ?? 0) + 1; return m; }, {});
-const simSrc = ["generator.ts", "taxonomy.ts", "persona.ts"].map(f => readFileSync(`${REPO}/packages/sim/src/${f}`, "utf8")).join("\n");
+const simSrc = ["generator.ts", "taxonomy.ts", "persona.ts", "sources.ts"].map(f => readFileSync(`${REPO}/packages/sim/src/${f}`, "utf8")).join("\n");
 const previousManifest: any = existsSync(`${outDir}/${FILES.manifest}`) ? JSON.parse(readFileSync(`${outDir}/${FILES.manifest}`, "utf8")) : undefined;
 const manifest: Manifest = {
   synthetic: true,
@@ -809,6 +873,13 @@ const manifest: Manifest = {
     presence: presence.length, presenceByType: countBy(presence, p => p.type),
     edges: edges.length, edgesByType: countBy(edges, e => e.type), edgesByRelation: countBy(edges, e => e.relation),
     workplaces: [...wpMembers.keys()].length,
+    byRichness: countBy(hiddenRecs, h => h.knowledge.richness),
+    facetsBySource: countBy(facets, f => f.source ?? "none"),
+    sourceFacetsByTruth: countBy(hiddenRecs.flatMap(h => Object.values(h.knowledge.observationTruth)), t => t.truth),
+    sensitiveInferences: countBy(facets.filter(f => f.sensitive), f => f.sensitive!),
+    activeSourcesPerMember: countBy(members, m => String((m.connectedSources ?? []).filter(s => s.status === "connected" || s.status === "confirmed").length)),
+    sourceEntriesByStatus: countBy(members.flatMap(m => m.connectedSources ?? []), s => s.status),
+    activeSourcesByKind: countBy(members.flatMap(m => (m.connectedSources ?? []).filter(s => s.status === "connected" || s.status === "confirmed")), s => s.source),
   },
   llm: {
     provider: args["no-llm"] ? null : PROVIDER, model: args["no-llm"] ? null : MODEL, concurrency: Number(args.concurrency),
@@ -830,6 +901,7 @@ const manifest: Manifest = {
     "hidden_truth.jsonl is ground truth for the simulator/oracle and evaluation only. Never load it into the engine or show it in product surfaces.",
     "LLM text is cached under runs/synthetic-cache/v1 (gitignored); without the cache, regeneration yields the same structure but different prose.",
     "generator 1.1.0: adult romance opt-in calibrated to ~25-30% (calibrateRomance in generate.ts); only members whose prompt changed (a dropped dating intent) or that had template text got new LLM text.",
+    "generator 1.2.0: hidden profile richness tiers (minimal 15% / light 25% / medium 30% / rich 20% / very_rich 10%) and simulated connected sources (packages/sim/src/sources.ts). Public facets/intents/profile hold only what the member told the agent plus source-derived facets (with source, confidence, observedAt, inferred, confirmedByMember); hidden_truth.jsonl keeps the complete truth plus a truth label per source facet. No new LLM text (prompts unchanged).",
   ],
 };
 await Bun.write(`${outDir}/${FILES.manifest}`, JSON.stringify(manifest, null, 2) + "\n");

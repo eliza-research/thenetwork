@@ -15,3 +15,4 @@ export * from "./agent/policy.ts";
 export * from "./agent/llmAgent.ts";
 export * from "./world.ts";
 export * from "./scenario.ts";
+export * from "./sources.ts";

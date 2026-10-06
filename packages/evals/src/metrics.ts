@@ -97,3 +97,109 @@ export function mcnemar(b: number, c: number): number {
   const tail = Math.exp(maxLog) * logs.reduce((s, l) => s + Math.exp(l - maxLog), 0);
   return Math.min(1, 2 * tail);
 }
+
+/** Reliability bins (equal-width on [0,1]): mean predicted probability vs observed rate per bin. */
+export function reliability(probs: number[], outcomes: boolean[], bins = 10): { lo: number; hi: number; n: number; meanP: number; rate: number }[] {
+  const out = Array.from({ length: bins }, (_, i) => ({ lo: i / bins, hi: (i + 1) / bins, n: 0, sumP: 0, pos: 0 }));
+  probs.forEach((p, i) => {
+    const b = out[Math.min(bins - 1, Math.max(0, Math.floor(p * bins)))]!;
+    b.n++; b.sumP += p; if (outcomes[i]) b.pos++;
+  });
+  return out.map(b => ({ lo: b.lo, hi: b.hi, n: b.n, meanP: b.n ? b.sumP / b.n : NaN, rate: b.n ? b.pos / b.n : NaN }));
+}
+
+/** Expected calibration error: sum over bins of (n_bin / n) * |mean predicted - observed rate|. */
+export function ece(probs: number[], outcomes: boolean[], bins = 10): number {
+  if (!probs.length) return NaN;
+  return reliability(probs, outcomes, bins).reduce((s, b) => s + (b.n ? (b.n / probs.length) * Math.abs(b.meanP - b.rate) : 0), 0);
+}
+
+/** A three-way decision: propose, reject, or abstain ("insufficient information"). null = call failed. */
+export type Decision3 = "yes" | "no" | "abstain";
+
+export interface AbstentionMetrics {
+  n: number; failures: number; abstentions: number;
+  /** Share of items with an answer (not abstained, not failed). */
+  coverage: number;
+  /** Abstentions / items (the "insufficient info" rate). */
+  abstainRate: number;
+  /** Abstention rate among gold-good and gold-bad items (is abstaining informative?). */
+  abstainRateOnGood: number; abstainRateOnBad: number;
+  /** Abstain counts as "no"; failures count as wrong (flip of gold). */
+  asNo: { accuracy: number; precision: number; recall: number; f1: number; tp: number; fp: number; tn: number; fn: number };
+  /** Answered items only (selective prediction). Recall here is over answered gold-positives. */
+  selective: { n: number; accuracy: number; precision: number; recall: number; f1: number };
+  /**
+   * Coverage-adjusted precision: precision is unchanged by "abstain = no" (abstentions are never
+   * positive predictions), so it is reported together with the share of gold-positives that got a
+   * committed "yes" (recall over ALL positives) and with precision x coverage, which penalises a
+   * system that buys precision by abstaining on everything hard.
+   */
+  coverageAdjustedPrecision: number;
+}
+
+export function abstentionMetrics(pred: (Decision3 | null)[], gold: boolean[]): AbstentionMetrics {
+  const n = pred.length;
+  const failures = pred.filter(p => p === null).length;
+  const abst = pred.filter(p => p === "abstain").length;
+  const asNoPred = pred.map((p, i) => (p === null ? !gold[i] : p === "yes"));
+  const asNo = classification(asNoPred, gold);
+  const ans = pred.map((p, i) => i).filter(i => pred[i] === "yes" || pred[i] === "no");
+  const sel = classification(ans.map(i => pred[i] === "yes"), ans.map(i => gold[i]!));
+  const goodIdx = gold.map((g, i) => i).filter(i => gold[i]), badIdx = gold.map((g, i) => i).filter(i => !gold[i]);
+  const coverage = n ? ans.length / n : NaN;
+  return {
+    n, failures, abstentions: abst, coverage, abstainRate: n ? abst / n : NaN,
+    abstainRateOnGood: goodIdx.length ? goodIdx.filter(i => pred[i] === "abstain").length / goodIdx.length : NaN,
+    abstainRateOnBad: badIdx.length ? badIdx.filter(i => pred[i] === "abstain").length / badIdx.length : NaN,
+    asNo: { accuracy: asNo.accuracy, precision: asNo.precision, recall: asNo.recall, f1: asNo.f1, tp: asNo.tp, fp: asNo.fp, tn: asNo.tn, fn: asNo.fn },
+    selective: { n: ans.length, accuracy: sel.accuracy, precision: sel.precision, recall: sel.recall, f1: sel.f1 },
+    coverageAdjustedPrecision: asNo.precision * coverage,
+  };
+}
+
+/** Deterministic PRNG (mulberry32) for bootstraps. */
+function mulberry32(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Paired bootstrap of a statistic difference over items: resample item indices with replacement,
+ * compute stat(A) - stat(B) on the same sample. Returns the observed difference, a 95% percentile
+ * interval, and a two-sided p-value (share of resamples on the other side of 0, doubled).
+ */
+export function pairedBootstrap(n: number, statA: (idx: number[]) => number, statB: (idx: number[]) => number, B = 2000, seed = 7):
+  { diff: number; lo: number; hi: number; p: number } {
+  const all = Array.from({ length: n }, (_, i) => i);
+  const diff = statA(all) - statB(all);
+  const rnd = mulberry32(seed);
+  const ds: number[] = [];
+  for (let b = 0; b < B; b++) {
+    const idx = Array.from({ length: n }, () => Math.floor(rnd() * n));
+    const d = statA(idx) - statB(idx);
+    if (Number.isFinite(d)) ds.push(d);
+  }
+  ds.sort((x, y) => x - y);
+  const q = (p: number) => ds[Math.min(ds.length - 1, Math.max(0, Math.floor(p * ds.length)))]!;
+  const below = ds.filter(d => d <= 0).length / ds.length, above = ds.filter(d => d >= 0).length / ds.length;
+  return { diff, lo: q(0.025), hi: q(0.975), p: Math.min(1, 2 * Math.min(below, above)) };
+}
+
+/** Precision of yes-predictions over a subset of item indices (0 when there are no yes-predictions). */
+export function precisionOn(idx: number[], pred: boolean[], gold: boolean[]): number {
+  let tp = 0, fp = 0;
+  for (const i of idx) if (pred[i]) { if (gold[i]) tp++; else fp++; }
+  return tp + fp ? tp / (tp + fp) : 0;
+}
+export function f1On(idx: number[], pred: boolean[], gold: boolean[]): number {
+  let tp = 0, fp = 0, fn = 0;
+  for (const i of idx) { if (pred[i] && gold[i]) tp++; else if (pred[i]) fp++; else if (gold[i]) fn++; }
+  return tp ? (2 * tp) / (2 * tp + fp + fn) : 0;
+}

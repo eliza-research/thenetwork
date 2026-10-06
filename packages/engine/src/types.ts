@@ -75,7 +75,11 @@ export interface GroupStats { avgPairwise: number; minBest: number; roleCoverage
 export interface JudgeVerdict {
   fit: number; mutualValue: number; capacityRealism: number; timing: number; socialComfort: number;
   redFlags: number; dealbreaker: boolean; dealbreakerReason?: string; certainty: number;
+  /** Member-facing text per participant (shareable only; explain.ts re-checks it for leaks). */
   why: Record<MemberId, string>; model?: string;
+  /** Pass-2 (judge-v2) fields. Internal only: never shown to members. Optional for older verdicts. */
+  reasoning?: string; citedFacts?: { ref: string; field: string; fact: string }[];
+  verdict?: "yes" | "no"; matchProbability?: number; reasoningFirst?: boolean;
 }
 
 export interface EngineProposal extends Proposal {
@@ -112,7 +116,22 @@ export interface MatchingRunLog {
   engineVersion: string; embedModel: string; judgeModel?: string;
   funnel: FunnelLog;
   scored: { key: string; generator: string; participants: MemberId[]; components: ScoreComponents; score: number; eligible: boolean; reason?: string; judged: boolean }[];
-  judge: { calls: number; cacheHits: number; failures: number; verdicts: { key: string; cacheKey: string; verdict: JudgeVerdict | null; cached: boolean }[] };
+  /** Pass 2 (rubric judge) stats and verdicts, plus optional pass 1 (screen) and pass 3 (deep review). */
+  judge: {
+    calls: number; cacheHits: number; failures: number; verdicts: { key: string; cacheKey: string; verdict: JudgeVerdict | null; cached: boolean }[];
+    screen?: { calls: number; cacheHits: number; failures: number; verdicts: { key: string; cacheKey: string; verdict: unknown; cached: boolean }[] };
+    deep?: {
+      calls: number; cacheHits: number; failures: number;
+      verdicts: {
+        key: string; verdict: "yes" | "no" | "insufficient_information"; matchProbability: number; rubric: Record<string, number>;
+        /** Internal synthesis (redacted, truncated). Never shown to members. */
+        reasoning: string; hardGate?: string;
+        /** The one clarifying question for "insufficient_information" (only if it passed the leak gate). */
+        question?: { memberId?: MemberId; question: string };
+        memberFacingRejected: number;
+      }[];
+    };
+  };
   proposalsByGenerator: Record<string, number>;
   fairness: FairnessMetrics;
   emptyStates: { intentId: string; memberId: MemberId; reason: string }[];

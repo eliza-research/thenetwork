@@ -49,7 +49,7 @@ function bestShareable(w: World, of: MemberIndex, q: number[]): Facet | undefine
   return best;
 }
 
-function intentFormat(i: Intent): Format { return /\b(group|band|team|crew|club|doubles|people)\b/i.test(intentText(i)) ? "small_group" : "one_to_one"; }
+export function intentFormat(i: Intent): Format { return /\b(group|band|team|crew|club|doubles|people)\b/i.test(intentText(i)) ? "small_group" : "one_to_one"; }
 
 function benefitForProvider(w: World, provider: MemberIndex, seeker: MemberIndex, facet?: Facet): number {
   const interest = cosine(provider.desireEmb, seeker.profileEmb);

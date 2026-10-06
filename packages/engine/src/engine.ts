@@ -5,10 +5,13 @@
 import type { LLM, MemberId, WorldSnapshot } from "@thenetwork/core";
 import { configHash, ENGINE_VERSION, resolveConfig, type EngineConfigInput } from "./config.ts";
 import { localEmbed, type EmbedFn } from "./embed.ts";
-import { explain } from "./explain.ts";
+import { explain, privateVocabulary } from "./explain.ts";
 import { candidateReason, involvesMinor, memberReason } from "./filters.ts";
 import { GENERATORS, type GenCtx } from "./generators.ts";
-import { JudgeCache, judgeCandidates } from "./judge.ts";
+import { JudgeCache, judgeCandidates, runCachedPass } from "./judge.ts";
+import { checkMemberFacing, redactPrivate } from "./judgeCommon.ts";
+import { DEEP_PROMPT_VERSION, deepReviewOne, gateMemberFacing, hardGate, type DeepVerdict } from "./judgeDeep.ts";
+import { SCREEN_PROMPT_VERSION, screenDecision, screenOne, type ScreenVerdict } from "./judgeScreen.ts";
 import { blockingPairs, fairnessMetrics, selectProposals, updateExposureDebt } from "./policy.ts";
 import { Rng, sha256, stableStringify } from "./rng.ts";
 import { scoreCandidate, type Scored } from "./scoring.ts";
@@ -20,6 +23,9 @@ export interface EngineDeps {
   embed?: EmbedFn;
   /** Judge verdict cache shared across runs (ME-008). A fresh one is used if omitted. */
   judgeCache?: JudgeCache;
+  /** Pass-1 (screen) and pass-3 (deep review) verdict caches, same expiry rules. */
+  screenCache?: JudgeCache<ScreenVerdict>;
+  deepCache?: JudgeCache<{ verdict: DeepVerdict; refs: Record<MemberId, string> }>;
   /** Identifier of the embedding model for the run log (ME-004). */
   embedModel?: string;
   judgeModel?: string;
@@ -111,16 +117,64 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   scored = [...bySet.values()].sort((a, b) => (a.c.key < b.c.key ? -1 : 1));
   t = lap("score", t);
 
-  // 4. Optional LLM judge on the top configurations (one input, never the whole score).
+  // 4. LLM judgment passes on the top configurations (each is one input, never the whole score;
+  //    hard filters already ran and can never be undone by a model).
+  //    Pass 1 (screen, optional): cheap look at more candidates; "no" => screen_reject.
+  //    Pass 2 (rubric judge): dimension scores blended into the score; dealbreaker / "no" => ineligible.
+  //    Pass 3 (deep review, optional): richer context on the best survivors; "no" => deep_reject,
+  //    "insufficient_information" => deep_insufficient (with the question to ask), "yes" keeps it.
   if (deps.llm && cfg.judge.enabled && cfg.judge.topK > 0) {
-    const cache = deps.judgeCache ?? new JudgeCache(cfg.judge.ttlMs);
-    const ranked = scored.filter(s => !s.reason || s.reason === "below_threshold").sort((a, b) => (b.score - a.score) || (a.c.key < b.c.key ? -1 : 1));
-    const top = ranked.filter(s => s.c.participants.length <= 2).slice(0, cfg.judge.topK);
-    const groups = ranked.filter(s => s.c.participants.length > 2).slice(0, cfg.judge.groupTopK);
-    const toJudge = [...top, ...groups].map(s => s.c);
-    const verdicts = await judgeCandidates(w, toJudge, deps.llm, cache, runLog.judge, runLog.judge.verdicts);
+    const llm = deps.llm;
+    const byScore = (xs: Scored[]) => [...xs].sort((a, b) => (b.score - a.score) || (a.c.key < b.c.key ? -1 : 1));
+    const pickTop = (xs: Scored[], k: number, gk: number) => [...xs.filter(s => s.c.participants.length <= 2).slice(0, k), ...xs.filter(s => s.c.participants.length > 2).slice(0, gk)];
+    let pool = byScore(scored.filter(s => !s.reason || s.reason === "below_threshold"));
+    if (cfg.judge.screen.enabled && cfg.judge.screen.topK > 0) {
+      const sc = cfg.judge.screen;
+      const toScreen = pickTop(pool, sc.topK, sc.groupTopK).map(s => s.c);
+      const screenStats = { calls: 0, cacheHits: 0, failures: 0 };
+      const screenLog: { key: string; cacheKey: string; verdict: ScreenVerdict | null; cached: boolean }[] = [];
+      const res = await runCachedPass(w, toScreen, SCREEN_PROMPT_VERSION, deps.screenCache ?? new JudgeCache<ScreenVerdict>(cfg.judge.ttlMs),
+        screenStats, c => screenOne(w, c, llm, sc.maxTokens).then(r => r.verdict), screenLog);
+      runLog.judge.screen = { ...screenStats, verdicts: screenLog };
+      const rejected = new Set([...res].filter(([, v]) => v && !screenDecision(v)).map(([k]) => k));
+      scored = scored.map(s => (rejected.has(s.c.key) ? { ...s, eligible: false, reason: "screen_reject" } : s));
+      // Pass 2 only looks at screened survivors (a failed screen call fails open to pass 2).
+      pool = pool.filter(s => res.has(s.c.key) && !rejected.has(s.c.key));
+      t = lap("judge_screen", t);
+    }
+    const toJudge = pickTop(pool, cfg.judge.topK, cfg.judge.groupTopK).map(s => s.c);
+    const verdicts = await judgeCandidates(w, toJudge, llm, deps.judgeCache ?? new JudgeCache(cfg.judge.ttlMs), runLog.judge, runLog.judge.verdicts);
     scored = scored.map(s => (verdicts.has(s.c.key) && verdicts.get(s.c.key) ? scoreCandidate(w, s.c, verdicts.get(s.c.key)) : s));
     t = lap("judge", t);
+    if (cfg.judge.deep.enabled && cfg.judge.deep.topK > 0) {
+      const dc = cfg.judge.deep;
+      const survivors = byScore(scored.filter(s => s.eligible && s.verdict && s.verdict.verdict !== "no")).slice(0, dc.topK);
+      const deepLog: { key: string; cacheKey: string; verdict: { verdict: DeepVerdict; refs: Record<MemberId, string> } | null; cached: boolean }[] = [];
+      const stats = { calls: 0, cacheHits: 0, failures: 0 };
+      const res = await runCachedPass(w, survivors.map(s => s.c), DEEP_PROMPT_VERSION, deps.deepCache ?? new JudgeCache<{ verdict: DeepVerdict; refs: Record<MemberId, string> }>(cfg.judge.ttlMs),
+        stats, c => deepReviewOne(w, c, llm, dc.maxTokens), deepLog);
+      runLog.judge.deep = { ...stats, verdicts: [] };
+      scored = scored.map(s => {
+        const r = res.get(s.c.key);
+        if (!r) return s; // not reviewed, or the call failed: keep the pass-2 outcome
+        const v = r.verdict;
+        const gate = hardGate(w, s.c);
+        const gated = gateMemberFacing(w, s.c, v, r.refs);
+        // Run log: decision fields only; internal text is redacted and member-facing text is gated.
+        runLog.judge.deep!.verdicts.push({
+          key: s.c.key, verdict: v.verdict, matchProbability: v.matchProbability, rubric: { ...v.rubric },
+          reasoning: redactPrivate(v.reasoning).slice(0, 600), hardGate: gate ?? undefined,
+          question: v.question && gateQuestion(w, s.c, v.question.question) ? { memberId: r.refs[v.question.ref], question: v.question.question } : undefined,
+          memberFacingRejected: gated.rejected.length,
+        });
+        if (gate) return { ...s, eligible: false, reason: `hard_gate:${gate}` }; // never fires after the filters; defense in depth
+        if (v.verdict === "no") return { ...s, eligible: false, reason: "deep_reject" };
+        if (v.verdict === "insufficient_information") return { ...s, eligible: false, reason: "deep_insufficient" };
+        return { ...s, memberWhy: gated.why };
+      });
+      runLog.judge.deep.verdicts.sort((a, b) => (a.key < b.key ? -1 : 1));
+      t = lap("judge_deep", t);
+    }
   }
   for (const s of scored) {
     if (s.reason === "below_threshold") f.belowThreshold++;
@@ -146,7 +200,7 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   // 6. Proposals with shareable-only explanations.
   const proposals: EngineProposal[] = selected.map(sel => {
     const { c, components, score, threshold, verdict } = sel.s;
-    const { explanations, objective } = explain(w, c, verdict as JudgeVerdict | null | undefined);
+    const { explanations, objective } = explain(w, c, verdict as JudgeVerdict | null | undefined, sel.s.memberWhy);
     const sameDay = c.window ? c.window.start - w.now < 24 * 3_600_000 : false;
     return {
       id: `p_${sha256(`${c.key}|${w.now}`).slice(0, 16)}`,
@@ -190,4 +244,9 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
 const round = (x: number) => Math.round(x * 1e6) / 1e6;
 function roundAll<T extends object>(o: T): T {
   return Object.fromEntries(Object.entries(o).map(([k, v]) => [k, round(v as number)])) as T;
+}
+
+/** A pass-3 clarifying question is only logged if it passes the same leak gate as member-facing text. */
+function gateQuestion(w: World, c: Candidate, q: string): boolean {
+  return checkMemberFacing(q, privateVocabulary(w, [...c.participants, ...(c.via ? [c.via] : [])])).ok;
 }

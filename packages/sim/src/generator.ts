@@ -7,6 +7,7 @@ import {
   BOUNDARIES, DESIRES, FIRST_NAMES, INTERESTS, LAST_NAMES, NEIGHBORHOODS, PRIVATE_DISCLOSURES,
   SKILLS, STYLES, desireById, type WritingStyle,
 } from "./taxonomy.ts";
+import { DEFAULT_RICHNESS_MIX, assignRichness, simulateKnowledge, type RichnessTier } from "./sources.ts";
 import type {
   AdversarialKind, Archetype, Desire, Gender, HiddenTruth, Persona, PublicProfile, Relationship,
   RelationshipType, Responsiveness, Routine,
@@ -40,7 +41,19 @@ export interface GeneratorOptions {
   joinSpreadDays?: number;
   /** Prefix for member ids (default "m"). */
   idPrefix?: string;
+  /**
+   * Profile richness tiers + simulated connected sources (sources.ts). true = DEFAULT_RICHNESS_MIX
+   * (15/25/30/20/10); an object overrides the mix. Off by default so existing worlds are unchanged.
+   * Sets hidden.richness and persona.knowledge; buildSnapshot then exposes only what is known.
+   * Uses its own RNG forks: every other draw is identical with or without it.
+   */
+  richness?: boolean | Partial<Record<RichnessTier, number>>;
+  /** Reference time for source timestamps / staleness (default 2026-10-05 00:00 SF, the sim epoch). */
+  knowledgeNow?: number;
 }
+
+/** Sim epoch (same as world.ts DEFAULT_START), duplicated to avoid an import cycle. */
+const KNOWLEDGE_NOW_DEFAULT = Date.UTC(2026, 9, 5, 7);
 
 interface ArchetypeParams {
   latency: number; sigma: number; ignore: number; flake: number; capacity: number;
@@ -99,7 +112,19 @@ export function generatePersonas(opts: GeneratorOptions): Persona[] {
     personas.push(buildPersona(r, { id, archetype, homeCity, adversarial, disclosureRate, spread, usedNames, minor }));
   }
   wireRelationships(root.fork("relationships"), personas);
+  if (opts.richness) attachKnowledge(personas, root.fork("richness"), opts.richness === true ? DEFAULT_RICHNESS_MIX : opts.richness, opts.knowledgeNow ?? KNOWLEDGE_NOW_DEFAULT);
   return personas;
+}
+
+/** Assign richness tiers (exact quotas) and simulate chat coverage + connected sources. */
+export function attachKnowledge(personas: Persona[], r: Rng, mix: Partial<Record<RichnessTier, number>> = DEFAULT_RICHNESS_MIX, now = KNOWLEDGE_NOW_DEFAULT): void {
+  const tenure = new Map(personas.map(p => [p.id, p.archetype === "newcomer" ? r.fork("tenure", p.id).int(0, 20) : r.fork("tenure", p.id).int(0, 220)]));
+  const tiers = assignRichness(personas.map(p => ({ id: p.id, archetype: p.archetype, tenureDays: tenure.get(p.id)!, minor: p.public.claimedAge < 18, adversarial: p.hidden.adversarial })), r.fork("tiers"), mix);
+  for (const p of personas) {
+    const tier = tiers.get(p.id)!;
+    p.hidden.richness = tier;
+    p.knowledge = simulateKnowledge(p, { tier, now, joinedAt: now - tenure.get(p.id)! * 86_400_000, minor: p.public.claimedAge < 18 }, r.fork("knowledge", p.id));
+  }
 }
 
 function uniqueName(r: Rng, used: Set<string>): string {

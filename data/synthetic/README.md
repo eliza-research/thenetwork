@@ -1,4 +1,4 @@
-# Synthetic members: SF + NYC (v1)
+# Synthetic members: SF + NYC (v1, generator 1.2.0)
 
 > **Disclaimer: every record here is SYNTHETIC.** These are invented people with invented names, made for development, demos, the simulator and the admin console. None of them is a real person, member or employee of a real company. Given names are common names drawn from many cultures. Surnames are invented by joining morphemes from unrelated traditions (for example "Hokuthorne" or "Vasalund"), so any resemblance to a real person is coincidental. Phone numbers use only the fictional `555-01xx` range, and emails use `example.com`. Workplaces are generic descriptions such as "a 45-person fintech company in Flatiron", never named employers. The PRD forbids profiles of non-members, so do not add real people or scrape real profiles into this directory.
 
@@ -8,15 +8,15 @@ Every record has a top-level `"synthetic": true`, and so does `manifest.json`.
 
 | File | Records | What it holds |
 |---|---|---|
-| `members.jsonl` | 500 | Core `Member` (packages/core) plus `segment` (`adult`/`minor`) and `profile`: pronouns, neighborhood, borough, occupation, bio, texting voice (`style`, `samples`), routine, availability, `secondaryCity`, fictional `contact`, and `enrichment` (`llm`/`template`) |
-| `facets.jsonl` | 6,700 | Core `Facet`: interests, skills, offers, boundaries, romance and dealbreaker preferences, neighborhood, occupation, availability pattern, and canary-bearing private disclosures |
-| `intents.jsonl` | 843 | Core `Intent`: an objective from the sim taxonomy, plus an LLM-written `details` sentence followed by `(format; tags)`, and `desiredPeople` |
+| `members.jsonl` | 500 | Core `Member` (packages/core), including `connectedSources` (1.2.0), plus `segment` (`adult`/`minor`) and `profile`. The `profile` holds pronouns, neighborhood, borough, a fictional `contact`, `enrichment` (`llm`/`template`) and `secondaryCity`. Since 1.2.0 it also holds `chatMessages`, a `bio` with `bioSource` (`member` for the rich tiers, otherwise a `summary` of known facets), texting `voice` with 0-3 samples, and `occupation`, `routine` and `availability` **only if the member told the agent** |
+| `facets.jsonl` | 5,224 | Core `Facet` with `source`, `observedAt`, `inferred`, `confirmedByMember` and, on sensitive inferences, `sensitive`. It holds **only known facts**: what the member said in chat (3,723) plus facets from their active connected sources (1,501) |
+| `intents.jsonl` | 659 | Core `Intent`, only the ones the member told the agent. Minimal-tier members have one vague category-level want, and light-tier members the objective only. From the medium tier up, intents carry an LLM-written `details` sentence followed by `(format; tags)`, plus `desiredPeople` |
 | `presence.jsonl` | 549 | Core `Presence`: 500 home, 24 routine (bi-coastal members), 25 temporary (trips already announced at snapshot time) |
 | `edges.jsonl` | 2,092 | Core `Edge` plus `relation`: `invited_by` 490, `vouched_for` 334, `knows` 1,253 (949 friend, 297 coworker, 7 roommate), `blocked` 15 |
-| `hidden_truth.jsonl` | 500 | **Ground truth. Never load this into the engine or show it in a product surface.** It holds the sim `HiddenTruth` (true age, real interests and desires, honesty, flakiness, responsiveness, private disclosure plus canary, trips, adversarial kind), archetype, gender, community, workplace, relationships (including exes, which are never disclosed), adversarial notes with scripted messages, and the public persona |
+| `hidden_truth.jsonl` | 500 | **Ground truth. Never load this into the engine or show it in a product surface.** It holds the sim `HiddenTruth` (true age, real interests and desires, honesty, flakiness, responsiveness, private disclosure plus canary, trips, adversarial kind, `richness` tier), `knowledge` (tier, chat coverage, every source entry, and a `correct`/`stale`/`wrong_inference` label for each source-derived facet), `personaTexture` (the full LLM prose whether or not it is known), archetype, gender, community, workplace, relationships (including exes, which are never disclosed), adversarial notes with scripted messages, and the public persona |
 | `manifest.json` | | Seed, snapshot time, generator version, sim-generator source hash, model, counts, LLM usage and cost, file hashes |
 | `validation.json` | | Output of `validate.ts` |
-| `engine_v1_run.json` | | Output of `load.ts --engine` (generator 1.1.0 data, engine at commit 2613cea) |
+| `engine_v1_run.json` | | Output of `load.ts --engine` (generator 1.2.0 data), including `byRichness`, which is stratified by the hidden tier (harness-only read of hidden truth) |
 
 Every timestamp is relative to the snapshot time `now = 2026-10-12T17:00Z` (Mon 10:00 PDT / 13:00 EDT). Member ids are `sf-0001..sf-0250` and `ny-0001..ny-0250`. Facet ids are `<member>:fNN` and intent ids are `<member>:iN`.
 
@@ -27,7 +27,13 @@ Every timestamp is relative to the snapshot time `now = 2026-10-12T17:00Z` (Mon 
   - Skills and occupation are `matchable`.
   - Offers, neighborhood and availability are `shareable`.
   - Boundaries, romance preferences (`romance:is|seeks|age` tags), dealbreakers and private disclosures are `agent_private`.
-- **Private disclosures:** each one carries a unique canary (`(ref XX-1234-WORD)`), exactly as the simulator does, so leak checks are exact.
+- **Private disclosures:** each one carries a unique canary (`(ref XX-1234-WORD)`), exactly as the simulator does, so leak checks are exact. Since 1.2.0 a disclosure is a facet only if the member told the agent (71 of 133). The others stay in hidden truth only.
+- **Source-derived facets (1.2.0):**
+  - Sensitive inferences (health, finances, religion, sexuality, relationship, children; all from Gmail) are always `agent_private`.
+  - A confirmed interest, availability or offer is `shareable`.
+  - Everything else is `matchable`.
+  - An unconfirmed inference is never `shareable`, and since 1.2.0 that includes chat-inferred interests.
+  - For minors, only Calendar, Spotify and GitHub are allowed, and every facet is `agent_private`. See `docs/data-model-sources.md`.
 
 ### Population design
 - **Cities and ages:** 250 SF and 250 NYC. The NYC members cover all five boroughs. The data uses 34 real SF neighborhoods and 41 real NYC neighborhoods.
@@ -57,7 +63,8 @@ bun scripts/synthetic/generate.ts --dry-run        # list members whose text is 
 bun scripts/synthetic/generate.ts --max-fresh 60   # LLM-enriched via defaultLLM() (DEFAULT_LLM_PROVIDER/MODEL, default Surplus gpt-6-luna); refuses if >60 members need new text
 bun scripts/synthetic/generate.ts --no-llm         # template prose only, no API calls (~0.1 s)
 bun scripts/synthetic/generate.ts --concurrency 4 --fresh   # ignore the LLM cache (regenerates all 500)
-bun scripts/synthetic/validate.ts                  # writes v1/validation.json, exit 1 on failure
+bun scripts/synthetic/validate.ts                  # writes v1/validation.json (or --out PATH), exit 1 on failure
+bun test scripts                                   # dataset invariants, validator negative tests, determinism
 bun scripts/synthetic/load.ts --engine             # runs engine v1, writes v1/engine_v1_run.json
 ```
 
@@ -86,9 +93,35 @@ const personas = await loadPersonas();
 // runWorld({ personas, start: snapshot.now, days: 30, network, engine, seed: 1 })
 ```
 
-`loadSnapshot` never reads `hidden_truth.jsonl`. It strips the dataset-only fields (`synthetic`, `segment`, `profile`, `relation`), so the engine sees exactly the `packages/core` contract. `recentProposals` is empty, and there are no `events`, feedback or interactions, so `event_anchor` and `second_encounter` have nothing to work from.
+`loadPersonas` also rebuilds each persona's `knowledge` (tier, chat coverage, sources, and source facets with truth labels), so sim `buildSnapshot` exposes the same tiered view. `loadSnapshot` never reads `hidden_truth.jsonl`. It strips the dataset-only fields (`synthetic`, `segment`, `profile`, `relation`), so the engine sees exactly the `packages/core` contract. `recentProposals` is empty, and there are no `events`, feedback or interactions, so `event_anchor` and `second_encounter` have nothing to work from.
 
-## Results (generator 1.1.0, regenerated 2026-10-06)
+## Results (generator 1.2.0, regenerated 2026-10-06)
+
+### What changed in 1.2.0: profile richness and connected sources
+The founder asked for profiles ranging from barely known to well known, and for simulated Gmail, connected sources and found social profiles. The full design is in `docs/data-model-sources.md`, and the code is in `packages/sim/src/sources.ts`.
+- **Hidden tiers, as exact quotas:** minimal 75 (15%), light 125 (25%), medium 150 (30%), rich 100 (20%), very_rich 50 (10%). Ranking uses a noisy archetype plus tenure score.
+- **What is known:** the public files hold only what each member told the agent (chat coverage by tier) plus facets from their active sources. Hidden truth is unchanged and complete, so the oracle is unaffected.
+
+| Tier | Facets per member | True interests known | Active sources | Median chat messages |
+|---|---:|---:|---:|---:|
+| minimal | 0.21 (policy only) | 0% | 0 | 2 |
+| light | 5.5 | 41% | 0.46 | 8 |
+| medium | 10.2 | 65% | 0.92 | 26 |
+| rich | 17.5 | 84% | 2.09 | 75 |
+| very_rich | 24.9 | 98% | 4.38 | 208 |
+
+- **Sources:**
+  - 624 active: 529 connected via OAuth, profile URL or paste, plus 95 found public profiles of the member that the member confirmed.
+  - 75 inactive: 32 found profiles pending confirmation, 22 rejected namesakes (nothing kept), 21 revoked.
+  - 189 members connected nothing.
+  - Active by kind: Calendar 101, Gmail 92, LinkedIn 73, Spotify 68, Instagram 62, GitHub 49, AI memory 33, X 33, Strava 26, website 23, Luma 22, Partiful 21, Eventbrite 21.
+- **Source facets: 1,501**, of which 1,314 are correct, 148 are wrong inferences (a gift read as a hobby, a shared Spotify, a friend's hobby on Instagram, a colleague's endorsement, a calendar that looks free) and 39 are stale (an old LinkedIn job, a stale website or AI-memory goal). 553 are member-confirmed (correct ones only). There are 58 sensitive inferences, all `agent_private`.
+- **Knock-on counts:**
+  - Facets 6,700 -> 5,224 and intents 843 -> 659.
+  - Adult romance opt-in 130 -> 117, because a minimal member opted in only if their one want was romance.
+  - 71 of 133 canaries are disclosed to the agent.
+  - Members, graph, presence, ages, minors and travelers are unchanged.
+- **No new LLM text.** Prompts are unchanged, so all 500 members reuse cached prose (0 calls, $0). The full prose moved to `hidden_truth.jsonl` `personaTexture`.
 
 ### What changed in 1.1.0
 - **Romance opt-in calibrated.** In 1.0.0, 207 of 450 adults (46%) were opted in to romance: the sim's independent 30% hidden opt-in plus dating intents sampled from the taxonomy. `calibrateRomance` in `generate.ts` now keeps a stated dating intent with p = 0.68 and a hidden-only opt-in with p = 0.3, and makes hidden truth agree with the public opt-in (adversarial personas are untouched, so the harassers keep their opt-in). Result: **130 of 450 adults (28.9%)**, 110 romance intents (was 160).
@@ -107,7 +140,22 @@ const personas = await loadPersonas();
   - These figures use the price assumption in `docs/test-plan.md` §15 ($0.99/M input, $1.49/M output). Confirm them on the console.
 - **Checks:** a scan of bios and voice samples for common real brand, employer and school names found 0 hits.
 
-### Validation: 13/13 pass on the 1.1.0 data (`v1/validation.json`)
+### Validation: 19/19 pass on the 1.2.0 data (`v1/validation.json`)
+
+The six checks added in 1.2.0:
+
+| Check | Result |
+|---|---|
+| richness tier distribution | Every tier is within 2 points of its target. Minimal members have only policy facets and at most one vague intent. Facets per member rise strictly by tier |
+| known facets have a channel, no hidden leak | Every chat facet is within that member's chat coverage, and every source facet comes from an active source of that member and has a hidden truth label. `profile.occupation` appears only when stated, and summary bios mention only known interests. An unconfirmed inference is never `shareable` |
+| connected sources track richness | Minimal members have 0 sources. Very rich members have 3-6 active sources (11/16/16/7 with 3/4/5/6). Observation counts match the facets |
+| no observations about non-members | Every source has `subject: "self"`. Pending and rejected found profiles carry no facets, and no source facet names another member, a handle or a URL |
+| sensitive inferences never shareable | 58 sensitive facets, all `agent_private` and none confirmed; none is visible in the engine snapshot |
+| minors: no social or Gmail matching facets | 27 of the 50 minors have sources (Calendar 19, Spotify 16, GitHub 10), with no found profiles and every facet `agent_private` |
+
+The canary check now requires every canary to be unique (133 of 133). A canary must appear in exactly one `agent_private` facet if it was disclosed to the agent, and in none otherwise.
+
+The table below is from 1.1.0. The counts it gives for facets, intents and romance moved in 1.2.0 (see above).
 
 | Check | Result |
 |---|---|
@@ -131,7 +179,23 @@ const personas = await loadPersonas();
 - **Romance:** 130 of 450 adults (28.9%) are opted in to romance (was 207, 46%, in 1.0.0; see "What changed").
 - **Coverage:** all 38 interest tags and all 8 writing styles appear.
 
-### Engine v1 on the loaded snapshot (`v1/engine_v1_run.json`, seed 1, no LLM judge)
+### Engine v1 by richness tier (1.2.0 data, seed 1, no LLM judge, engine working tree of 2026-10-06)
+
+The run produced 151 proposals touching 230 members. Under 1.1.0 it produced 210 touching 287. The run had 0 minors in any proposal and 0 canary leaks. Fit is `components.fit`, and "oracle compatible" is the share of the tier's proposals that the sim oracle rates good from hidden truth. Recall is the share of the oracle's latent good same-city stranger pairs touching the tier that the engine proposed.
+
+| Tier (adults) | Proposals per member | Share with any proposal | Mean fit | Mean confidence | Oracle compatible | Latent-pair recall |
+|---|---:|---:|---:|---:|---:|---:|
+| minimal (63) | 0.25 | 21% | 0.75 | 0.67 | 0.30 (n=10) | 0.3% |
+| light (115) | 0.51 | 41% | 0.62 | 0.73 | 0.17 | 0.7% |
+| medium (131) | 0.71 | 50% | 0.56 | 0.76 | 0.18 | 1.1% |
+| rich (94) | 1.14 | 71% | 0.55 | 0.77 | 0.18 | 1.8% |
+| very_rich (47) | 1.19 | 79% | 0.57 | 0.78 | 0.19 | 3.3% |
+
+Reach and recall rise steeply with richness: very rich members get about 5x the proposals of minimal ones, and recall is 11x higher. Confidence rises too.
+
+Fit and oracle quality are flat or noisy. Minimal members surface almost only through `warm_path`, `newcomer_welcome` and network moves, which carry fixed fit floors, so their fit is high but rests on 10 proposals. Other generators are moving in the engine at the same time, so treat these numbers as a snapshot.
+
+### Engine v1 on the 1.1.0 snapshot (historical, seed 1, no LLM judge)
 
 Rerun on 2026-10-06 against generator 1.1.0 data (28.9% adult romance opt-in, 843 intents) and the engine after the review fixes (commit 2613cea).
 

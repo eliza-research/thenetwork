@@ -1,18 +1,22 @@
 // Validate data/synthetic/v1 against packages/core types and the dataset's privacy/safety rules.
 //
-//   bun scripts/synthetic/validate.ts [--dir data/synthetic/v1]
+//   bun scripts/synthetic/validate.ts [--dir data/synthetic/v1] [--out path/to/validation.json]
 //
 // Writes <dir>/validation.json and exits 1 if any check fails. Hidden truth is read here only to
 // verify the public/hidden split and ground-truth invariants (adversarial flags, true ages).
 import { parseArgs } from "node:util";
 import { loadSnapshot } from "./load.ts";
+import { DEFAULT_RICHNESS_MIX, MINOR_ALLOWED_SOURCES, RICHNESS_TIERS } from "../../packages/sim/src/sources.ts";
+import { INTERESTS } from "../../packages/sim/src/taxonomy.ts";
 import {
   CATEGORIES, CITIES, DATA_DIR, EDGE_TYPES, FACET_KINDS, FILES, FORMATS, HIDDEN_ONLY_KEYS, INTENT_STATUS, NEIGHBORHOODS,
-  PHONE_RE, PRESENCE_TYPES, PROVENANCES, SCOPES, STATES, neighborhoodSet, readJsonl, sha256,
+  PHONE_RE, PRESENCE_TYPES, PROVENANCES, SCOPES, SENSITIVE_CATEGORIES, SNAPSHOT_NOW, SOURCE_KINDS_ALL, SOURCE_LINKS, SOURCE_STATUSES, STATES,
+  neighborhoodSet, readJsonl, sha256,
   type EdgeRecord, type FacetRecord, type HiddenTruthRecord, type IntentRecord, type Manifest, type MemberRecord, type PresenceRecord,
 } from "./common.ts";
 
-const dir = parseArgs({ options: { dir: { type: "string", default: DATA_DIR } } }).values.dir!;
+const cli = parseArgs({ options: { dir: { type: "string", default: DATA_DIR }, out: { type: "string" } } }).values;
+const dir = cli.dir!;
 
 interface Check { name: string; pass: boolean; details?: unknown; errors?: string[] }
 const checks: Check[] = [];
@@ -60,12 +64,19 @@ const H = new Map(hidden.map(h => [h.memberId, h]));
     if (!p || !Array.isArray(p.categoriesOptIn) || !p.categoriesOptIn.every(c => inSet(CATEGORIES, c)) || !Array.isArray(p.quietHours) || p.quietHours.length !== 2 || !p.quietHours.every(h => Number.isInteger(h) && h >= 0 && h < 24)
       || typeof p.romanceOptIn !== "boolean" || !Array.isArray(p.formats) || !p.formats.every(f => inSet(FORMATS, f)) || !isNum(p.maxTravelMinutes) || typeof p.onlyWhenAsked !== "boolean") e.push(`member ${m.id}: prefs invalid`);
     if (m.invitedBy !== undefined && !M.has(m.invitedBy)) e.push(`member ${m.id}: invitedBy unknown`);
-    if (!["adult", "minor"].includes(m.segment) || !m.profile || !isStr(m.profile.bio) || !isStr(m.profile.occupation) || !Array.isArray(m.profile.voice?.samples) || !m.profile.voice.samples.length) e.push(`member ${m.id}: profile invalid`);
+    if (!["adult", "minor"].includes(m.segment) || !m.profile || !isStr(m.profile.bio) || !["member", "summary"].includes(m.profile.bioSource) || (m.profile.occupation !== undefined && !isStr(m.profile.occupation))
+      || !Array.isArray(m.profile.voice?.samples) || !Number.isInteger(m.profile.chatMessages)) e.push(`member ${m.id}: profile invalid`);
+    for (const c of m.connectedSources ?? []) {
+      if (!inSet(SOURCE_KINDS_ALL, c.source) || ["chat", "vouch"].includes(c.source as string) || !inSet(SOURCE_LINKS, c.link) || !inSet(SOURCE_STATUSES, c.status) || c.subject !== "self" || !isNum(c.connectedAt) || !Number.isInteger(c.observations)) e.push(`member ${m.id}: connectedSources entry invalid`);
+    }
   }
   const fids = new Set<string>();
   for (const f of facets) {
     if (!isStr(f.id) || fids.has(f.id)) e.push(`facet ${f.id}: missing/duplicate id`); fids.add(f.id);
     if (!M.has(f.memberId) || !inSet(FACET_KINDS, f.kind) || !isStr(f.value) || !Array.isArray(f.tags) || !f.tags.every(isStr) || !inSet(SCOPES, f.scope) || !inSet(PROVENANCES, f.provenance) || !(f.confidence >= 0 && f.confidence <= 1)) e.push(`facet ${f.id}: invalid`);
+    // 1.2.0 provenance detail: every facet says where it came from and when.
+    if (!inSet(SOURCE_KINDS_ALL, f.source) || !isNum(f.observedAt) || f.observedAt! > SNAPSHOT_NOW || typeof f.inferred !== "boolean" || typeof f.confirmedByMember !== "boolean"
+      || (f.sensitive !== undefined && !inSet(SENSITIVE_CATEGORIES, f.sensitive))) e.push(`facet ${f.id}: provenance detail invalid`);
   }
   const iids = new Set<string>();
   for (const i of intents) {
@@ -108,7 +119,7 @@ const H = new Map(hidden.map(h => [h.memberId, h]));
   for (const [p, c] of Object.entries(phones)) if (c > 1) e.push(`duplicate phone ${p}`);
   // Free text must not contain phone numbers, emails or URLs.
   const texts = [
-    ...members.flatMap(m => [m.profile.bio, m.profile.routine, m.profile.availability, m.profile.occupation, ...m.profile.voice.samples].map(t => [m.id, t] as const)),
+    ...members.flatMap(m => [m.profile.bio, m.profile.routine ?? "", m.profile.availability ?? "", m.profile.occupation ?? "", ...m.profile.voice.samples].map(t => [m.id, t] as const)),
     ...facets.map(f => [f.memberId, f.value] as const), ...intents.flatMap(i => [[i.memberId, i.details ?? ""], [i.memberId, i.desiredPeople ?? ""]] as const),
   ];
   for (const [id, t] of texts) if (/(\d{3}[\s.-]\d{3}[\s.-]\d{4})|([\w.+-]+@[\w-]+\.[a-z]{2,})|(https?:\/\/)|(www\.)/i.test(t)) e.push(`${id}: contact-like text: ${t.slice(0, 80)}`);
@@ -186,9 +197,15 @@ const publicMinor = new Set(members.filter(m => m.age < 18).map(m => m.id));
   const e: string[] = [];
   const canaries = hidden.flatMap(h => (h.hidden.privateDisclosure ? [{ id: h.memberId, c: h.hidden.privateDisclosure.canary }] : []));
   const publicText = [FILES.members, FILES.intents, FILES.presence, FILES.edges].map(f => raw[f]).join("\n");
+  // Canaries are unique; a canary is in exactly one agent_private facet if the member told the
+  // agent (chat coverage), and in none otherwise.
+  if (new Set(canaries.map(x => x.c)).size !== canaries.length) e.push("canaries not unique");
+  let disclosed = 0;
   for (const { id, c } of canaries) {
     const fs = facets.filter(f => f.value.includes(c));
-    if (fs.length !== 1) e.push(`${id}: canary ${c} in ${fs.length} facets (want 1)`);
+    const want = H.get(id)!.knowledge.chat.disclosure ? 1 : 0;
+    disclosed += want;
+    if (fs.length !== want) e.push(`${id}: canary ${c} in ${fs.length} facets (want ${want})`);
     for (const f of fs) { if (f.scope !== "agent_private") e.push(`${f.id}: canary facet scope ${f.scope}`); if (f.memberId !== id) e.push(`${f.id}: canary on wrong member`); }
     if (publicText.includes(c)) e.push(`${id}: canary appears outside its agent_private facet`);
   }
@@ -199,7 +216,7 @@ const publicMinor = new Set(members.filter(m => m.age < 18).map(m => m.id));
   const pubKeys = new Set<string>();
   for (const rows of [members, facets, intents, presence, edges]) for (const r of rows as unknown[]) keysIn(r, pubKeys);
   for (const k of HIDDEN_ONLY_KEYS) if (pubKeys.has(k)) e.push(`hidden-only key "${k}" present in public files`);
-  check("canaries_agent_private_and_hidden_split", e, { canaries: canaries.length, agentPrivateFacets: facets.filter(f => f.scope === "agent_private").length, facetsByScope: count(facets, f => f.scope) });
+  check("canaries_agent_private_and_hidden_split", e, { canaries: canaries.length, canariesUnique: new Set(canaries.map(x => x.c)).size, disclosedToAgent: disclosed, agentPrivateFacets: facets.filter(f => f.scope === "agent_private").length, facetsByScope: count(facets, f => f.scope) });
 }
 
 // ---- 8. adversarial personas flagged ----------------------------------------------------------------
@@ -360,9 +377,9 @@ const publicMinor = new Set(members.filter(m => m.age < 18).map(m => m.id));
   const interestTags = new Set(facets.filter(f => f.kind === "interest").map(f => f.tags[0]));
   const styles = count(hidden, h => h.hidden.style);
   const enrich = count(members, m => m.profile.enrichment);
-  const bioDupes = Object.values(count(members, m => m.profile.bio)).filter(c => c > 1).length;
+  const bioDupes = Object.values(count(members.filter(m => m.profile.bioSource === "member"), m => m.profile.bio)).filter(c => c > 1).length;
   if (bioDupes) e.push(`${bioDupes} duplicated bios`);
-  const occupations = new Set(members.map(m => m.profile.occupation.toLowerCase())).size;
+  const occupations = new Set(hidden.map(h => h.personaTexture.occupation.toLowerCase())).size;
   check("diversity", e, {
     archetypes: arche, segments: count(members, m => m.segment), genders: count(hidden, h => h.gender),
     intentsByCategory: intentCat, intentsByCategoryCity: { sf: count(intents.filter(i => M.get(i.memberId)!.homeCity === "sf"), i => i.category), nyc: count(intents.filter(i => M.get(i.memberId)!.homeCity === "nyc"), i => i.category) },
@@ -374,10 +391,183 @@ const publicMinor = new Set(members.filter(m => m.age < 18).map(m => m.id));
   });
 }
 
+
+// ---- 12. richness tiers (1.2.0) -----------------------------------------------------------------------
+const tierOf = new Map(hidden.map(h => [h.memberId, h.knowledge?.richness]));
+const ACTIVE = new Set(["connected", "confirmed"]);
+const activeSources = (m: MemberRecord) => (m.connectedSources ?? []).filter(s => ACTIVE.has(s.status));
+const facetsOf = new Map<string, FacetRecord[]>(members.map(m => [m.id, []]));
+for (const f of facets) facetsOf.get(f.memberId)?.push(f);
+const intentsOf = new Map<string, IntentRecord[]>(members.map(m => [m.id, []]));
+for (const i of intents) intentsOf.get(i.memberId)?.push(i);
+const POLICY_TAGS = ["single_player"];
+const isPolicyFacet = (f: FacetRecord) => f.tags.some(t => POLICY_TAGS.includes(t) || t.startsWith("romance:"));
+{
+  const e: string[] = [];
+  const byTier = count(hidden, h => h.knowledge?.richness ?? "missing");
+  for (const t of RICHNESS_TIERS) {
+    const share = pct(byTier[t] ?? 0, hidden.length);
+    if (Math.abs(share - DEFAULT_RICHNESS_MIX[t] * 100) > 2) e.push(`tier ${t} share ${share}% vs target ${DEFAULT_RICHNESS_MIX[t] * 100}%`);
+  }
+  if (byTier.missing) e.push(`${byTier.missing} members without a tier`);
+  for (const h of hidden) if (h.hidden.richness !== h.knowledge?.richness) e.push(`${h.memberId}: hidden.richness disagrees with knowledge.richness`);
+  // Minimal: name, city, maybe one vague intent. Only policy facets (single_player, romance opt-in).
+  for (const m of members.filter(m => tierOf.get(m.id) === "minimal")) {
+    const fs = facetsOf.get(m.id)!.filter(f => !isPolicyFacet(f));
+    if (fs.length) e.push(`${m.id}: minimal member has ${fs.length} non-policy facets`);
+    if (intentsOf.get(m.id)!.length > 1) e.push(`${m.id}: minimal member has ${intentsOf.get(m.id)!.length} intents`);
+    if (intentsOf.get(m.id)!.some(i => i.details || i.desiredPeople)) e.push(`${m.id}: minimal member intent has details`);
+  }
+  const mean = (xs: number[]) => Math.round((xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length)) * 100) / 100;
+  const stats = Object.fromEntries(RICHNESS_TIERS.map(t => {
+    const ms = members.filter(m => tierOf.get(m.id) === t);
+    return [t, {
+      members: ms.length,
+      facetsPerMember: mean(ms.map(m => facetsOf.get(m.id)!.length)),
+      chatFacetsPerMember: mean(ms.map(m => facetsOf.get(m.id)!.filter(f => f.source === "chat").length)),
+      sourceFacetsPerMember: mean(ms.map(m => facetsOf.get(m.id)!.filter(f => f.source !== "chat").length)),
+      intentsPerMember: mean(ms.map(m => intentsOf.get(m.id)!.length)),
+      activeSourcesPerMember: mean(ms.map(m => activeSources(m).length)),
+      chatMessagesMedian: ms.map(m => m.profile.chatMessages).sort((a, b) => a - b)[Math.floor(ms.length / 2)],
+      // Coverage of TRUE interests (hidden) by known, non-private interest facets.
+      trueInterestCoverage: mean(ms.map(m => { const h = H.get(m.id)!.hidden; const known = new Set(facetsOf.get(m.id)!.filter(f => f.kind === "interest").map(f => f.tags[0])); return h.interests.filter(t => known.has(t)).length / Math.max(1, h.interests.length); })),
+    }];
+  }));
+  for (let i = 1; i < RICHNESS_TIERS.length; i++) {
+    const a = (stats as any)[RICHNESS_TIERS[i - 1]!], b = (stats as any)[RICHNESS_TIERS[i]!];
+    if (!(b.facetsPerMember > a.facetsPerMember)) e.push(`facets per member not increasing ${RICHNESS_TIERS[i - 1]} -> ${RICHNESS_TIERS[i]}`);
+  }
+  check("richness_tier_distribution", e, { byTier, targetMix: DEFAULT_RICHNESS_MIX, byTierStats: stats });
+}
+
+// ---- 13. known facets have a channel; nothing hidden leaks into the known view -------------------------
+{
+  const e: string[] = [];
+  for (const m of members) {
+    const h = H.get(m.id)!; const k = h.knowledge; const chat = k.chat;
+    const act = new Set(activeSources(m).map(s => s.source));
+    for (const f of facetsOf.get(m.id)!) {
+      if (f.source === "chat") {
+        if (f.provenance === "connected_source") e.push(`${f.id}: chat facet with connected_source provenance`);
+        if (f.kind === "interest" && !chat.interests.includes(f.tags[0]!)) e.push(`${f.id}: chat interest ${f.tags[0]} not in chat coverage`);
+        if (f.kind === "skill" && !chat.skills.includes(f.tags[0]!)) e.push(`${f.id}: chat skill ${f.tags[0]} not in chat coverage`);
+        if (f.tags.includes("occupation") && !chat.occupation) e.push(`${f.id}: occupation facet without chat coverage`);
+        if (f.tags.includes("neighborhood") && !chat.neighborhood) e.push(`${f.id}: neighborhood facet without chat coverage`);
+      } else {
+        if (!act.has(f.source as any)) e.push(`${f.id}: source ${f.source} is not an active source of ${m.id}`);
+        if (f.provenance !== "connected_source") e.push(`${f.id}: source facet provenance ${f.provenance}`);
+        if (!k.observationTruth[f.id]) e.push(`${f.id}: source facet without a hidden truth label`);
+      }
+      // Inferred facets are never shareable until confirmed.
+      if (f.inferred && !f.confirmedByMember && f.scope === "shareable") e.push(`${f.id}: unconfirmed inference is shareable`);
+    }
+    for (const id of Object.keys(k.observationTruth)) if (!facetsOf.get(m.id)!.some(f => f.id === id)) e.push(`${m.id}: truth label for missing facet ${id}`);
+    for (const i of intentsOf.get(m.id)!) if (!chat.intents.includes(Number(i.id.split(":i")[1]))) e.push(`${i.id}: intent not in chat coverage`);
+    if ((m.profile.occupation !== undefined) !== chat.occupation) e.push(`${m.id}: profile.occupation presence disagrees with chat coverage`);
+    if (m.profile.voice.samples.length > chat.voiceSamples) e.push(`${m.id}: more voice samples than chat coverage`);
+    if (m.profile.bioSource === "summary") {
+      const known = new Set(facetsOf.get(m.id)!.filter(f => f.kind === "interest").map(f => f.tags[0]));
+      const bio = m.profile.bio.toLowerCase().split((m.profile.occupation ?? "\u0000").toLowerCase()).join(" ");
+      for (const it of INTERESTS) if (bio.includes(it.label.toLowerCase()) && !known.has(it.tag)) e.push(`${m.id}: summary bio mentions unknown interest ${it.tag}`);
+    }
+    for (const c of m.connectedSources ?? []) {
+      const n = facetsOf.get(m.id)!.filter(f => f.source === c.source).length;
+      if (ACTIVE.has(c.status) ? c.observations !== n : c.observations !== 0) e.push(`${m.id}: ${c.source} (${c.status}) says ${c.observations} observations, facets ${n}`);
+    }
+  }
+  const truth = count(hidden.flatMap(h => Object.values(h.knowledge.observationTruth)), t => t.truth);
+  if (!truth.stale || !truth.wrong_inference) e.push(`no noise: ${JSON.stringify(truth)}`);
+  check("known_facets_have_channel_no_hidden_leak", e, {
+    facetsBySource: count(facets, f => f.source ?? "none"), sourceFacetTruth: truth,
+    inferredFacets: facets.filter(f => f.inferred).length, confirmedSourceFacets: facets.filter(f => f.source !== "chat" && f.confirmedByMember).length,
+    staleOver1y: facets.filter(f => SNAPSHOT_NOW - (f.observedAt ?? SNAPSHOT_NOW) > 365 * 86_400_000).length,
+  });
+}
+
+// ---- 14. connected sources: rates track richness; subject is always the member ------------------------
+{
+  const e: string[] = [];
+  for (const m of members) {
+    const t = tierOf.get(m.id); const n = activeSources(m).length;
+    if (t === "minimal" && (m.connectedSources ?? []).length) e.push(`${m.id}: minimal member has source entries`);
+    if (t === "very_rich" && (n < 3 || n > 6)) e.push(`${m.id}: very_rich member has ${n} active sources (want 3-6)`);
+    if (new Set(activeSources(m).map(s => s.source)).size !== n) e.push(`${m.id}: duplicate active source`);
+  }
+  const all = members.flatMap(m => m.connectedSources ?? []);
+  const byTier = Object.fromEntries(RICHNESS_TIERS.map(t => {
+    const ms = members.filter(m => tierOf.get(m.id) === t);
+    return [t, { none: ms.filter(m => !activeSources(m).length).length, activeHistogram: count(ms, m => String(activeSources(m).length)) }];
+  }));
+  check("connected_sources_track_richness", e, {
+    membersWithNoActiveSource: members.filter(m => !activeSources(m).length).length, byTier,
+    activeByKind: count(all.filter(s => ACTIVE.has(s.status)), s => s.source), entriesByStatus: count(all, s => s.status),
+    activeByLink: count(all.filter(s => ACTIVE.has(s.status)), s => s.link),
+  });
+}
+{
+  const e: string[] = [];
+  // No observations about non-members: every facet belongs to a member, every source is about the
+  // member themselves, found profiles that are pending or rejected (namesakes) keep no data, and no
+  // facet text names another person.
+  for (const f of facets) if (!M.has(f.memberId)) e.push(`${f.id}: facet about a non-member`);
+  for (const m of members) for (const c of m.connectedSources ?? []) {
+    if (c.subject !== "self") e.push(`${m.id}: source ${c.source} subject ${c.subject}`);
+    if (!ACTIVE.has(c.status) && facetsOf.get(m.id)!.some(f => f.source === c.source)) e.push(`${m.id}: facets from ${c.status} source ${c.source}`);
+    if (c.link === "found_profile" && !["confirmed", "pending_confirmation", "rejected"].includes(c.status)) e.push(`${m.id}: found profile with status ${c.status}`);
+    if (c.status === "confirmed" && c.link !== "found_profile") e.push(`${m.id}: 'confirmed' status is for found profiles`);
+  }
+  const fullNames = members.map(m => ({ id: m.id, n: m.name.toLowerCase(), last: m.name.split(" ").slice(-1)[0]!.toLowerCase() }));
+  for (const f of facets.filter(f => f.source !== "chat")) {
+    const v = f.value.toLowerCase();
+    for (const x of fullNames) if (x.id !== f.memberId && (v.includes(x.n) || new RegExp(`\\b${x.last}\\b`).test(v))) e.push(`${f.id}: names ${x.id}`);
+    if (/@\w|https?:|www\./.test(f.value)) e.push(`${f.id}: handle or URL in a source facet`);
+  }
+  check("no_observations_about_non_members", e, {
+    foundProfiles: count(members.flatMap(m => (m.connectedSources ?? []).filter(s => s.link === "found_profile")), s => s.status),
+    sourceFacets: facets.filter(f => f.source !== "chat").length,
+  });
+}
+
+// ---- 15. sensitive inferences: agent_private, never shareable -------------------------------------------
+{
+  const e: string[] = [];
+  const SENSITIVE_TEXT = /pharmacy|clinic receipts|overdraft|late-payment|congregation|lgbtq|breakup|separation|school newsletter|child's school/i;
+  for (const f of facets) {
+    if (f.sensitive && (f.scope !== "agent_private" || !f.tags.includes("sensitive"))) e.push(`${f.id}: sensitive (${f.sensitive}) facet scope ${f.scope}`);
+    if (f.source !== "chat" && SENSITIVE_TEXT.test(f.value) && !f.sensitive) e.push(`${f.id}: sensitive-looking source facet not flagged`);
+    if (f.sensitive && f.confirmedByMember) e.push(`${f.id}: sensitive inference marked confirmed`);
+  }
+  const snap = await loadSnapshot(dir);
+  const visible = snap.facets.filter(f => f.scope === "shareable" || f.scope === "matchable");
+  if (visible.some(f => f.sensitive || f.tags.includes("sensitive"))) e.push("a sensitive facet is matchable/shareable in the engine snapshot");
+  check("sensitive_inferences_never_shareable", e, { sensitiveInferences: count(facets.filter(f => f.sensitive), f => f.sensitive!), sensitiveByScope: count(facets.filter(f => f.sensitive), f => f.scope) });
+}
+
+// ---- 16. minors: no social / Gmail-derived matching facets -------------------------------------------------
+{
+  const e: string[] = [];
+  const minorsPublic = members.filter(m => m.segment === "minor");
+  for (const m of minorsPublic) {
+    for (const c of m.connectedSources ?? []) {
+      if (!MINOR_ALLOWED_SOURCES.has(c.source as any)) e.push(`${m.id}: minor has source ${c.source}`);
+      if (c.link === "found_profile") e.push(`${m.id}: profile discovery for a minor`);
+    }
+    for (const f of facetsOf.get(m.id)!) {
+      if (f.scope !== "agent_private") e.push(`${f.id}: minor facet ${f.scope}`);
+      if (f.source !== "chat" && !MINOR_ALLOWED_SOURCES.has(f.source as any)) e.push(`${f.id}: minor facet from ${f.source}`);
+      if (f.sensitive) e.push(`${f.id}: sensitive inference about a minor`);
+    }
+  }
+  check("minors_no_social_or_gmail_matching_facets", e, {
+    minors: minorsPublic.length, minorsWithSources: minorsPublic.filter(m => activeSources(m).length).length,
+    minorSourceKinds: count(minorsPublic.flatMap(activeSources), s => s.source), minorFacetsBySource: count(minorsPublic.flatMap(m => facetsOf.get(m.id)!), f => f.source ?? "none"),
+  });
+}
+
 // ---- report -----------------------------------------------------------------------------------------
 const failed = checks.filter(c => !c.pass);
 const report = { dataset: dir.replace(/.*\/data\//, "data/"), validatedAt: new Date().toISOString(), pass: failed.length === 0, passed: checks.length - failed.length, total: checks.length, checks };
-await Bun.write(`${dir}/validation.json`, JSON.stringify(report, null, 2) + "\n");
+await Bun.write(cli.out ?? `${dir}/validation.json`, JSON.stringify(report, null, 2) + "\n");
 for (const c of checks) console.log(`${c.pass ? "PASS" : "FAIL"}  ${c.name}${c.errors ? `\n      ${c.errors.slice(0, 5).join("\n      ")}` : ""}`);
-console.log(`\n${report.passed}/${report.total} checks passed -> ${dir}/validation.json`);
+console.log(`\n${report.passed}/${report.total} checks passed -> ${cli.out ?? `${dir}/validation.json`}`);
 process.exit(failed.length ? 1 : 0);

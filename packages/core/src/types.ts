@@ -9,10 +9,33 @@ export type FacetKind =
   | "trait" | "fact" | "resource" | "preference" | "availability_pattern";
 export type Category = "social" | "professional" | "romance" | "hobby" | "help" | "events" | "growth";
 
+/**
+ * Where a facet came from (PRD 9.3, 32.5). "chat" = the member said it to the agent; "vouch" = an
+ * inviter's vouch note; the rest are sources the member connected (OAuth, a profile URL they gave,
+ * a pasted AI-memory summary) or public profiles OF THE MEMBER THEMSELVES that the Network found
+ * with their consent and they confirmed. Never profiles of non-members (PRD 13.3, 27).
+ */
+export type SourceKind =
+  | "chat" | "vouch" | "ai_memory" | "gmail" | "google_calendar" | "linkedin" | "x" | "instagram"
+  | "github" | "strava" | "spotify" | "eventbrite" | "partiful" | "luma" | "personal_website";
+/** Sensitive inference categories: always agent_private, never matchable or shareable. */
+export type SensitiveCategory = "health" | "finances" | "religion" | "sexuality" | "relationship" | "children";
+
 export interface Facet {
   id: string; memberId: MemberId; kind: FacetKind; value: string;
   tags: string[]; scope: PrivacyScope; provenance: Provenance; confidence: number;
   embedding?: number[]; validFrom?: number; validTo?: number;
+  // ---- optional provenance detail (additive; absent on older data) ----
+  /** Channel the facet came from. */
+  source?: SourceKind;
+  /** When the underlying evidence was observed (ms). now - observedAt = staleness. */
+  observedAt?: number;
+  /** true = derived/guessed from evidence; false = stated by the member (or a source field verbatim). */
+  inferred?: boolean;
+  /** The member reviewed and confirmed it ("What the Network knows about me"). */
+  confirmedByMember?: boolean;
+  /** Set on sensitive inferences; such facets are always scope agent_private. */
+  sensitive?: SensitiveCategory;
 }
 export interface Intent {
   id: string; memberId: MemberId; objective: string; category: Category;
@@ -29,10 +52,31 @@ export interface Preferences {
   romanceOptIn: boolean; formats: ("one_to_one" | "small_group" | "event")[];
   maxTravelMinutes: number; onlyWhenAsked: boolean;
 }
+/** How a source was linked: OAuth, a profile URL the member gave, a paste, or a found-and-confirmed public profile. */
+export type SourceLink = "oauth" | "profile_url" | "paste" | "found_profile";
+/**
+ * connected / confirmed: active, produces facets. pending_confirmation: a found profile the member
+ * has not confirmed yet (no facets). rejected: a found profile the member said is not them (a
+ * namesake; nothing about it is kept). revoked: disconnected by the member (its facets are deleted).
+ */
+export type SourceStatus = "connected" | "confirmed" | "pending_confirmation" | "rejected" | "revoked";
+export interface ConnectedSourceSummary {
+  source: Exclude<SourceKind, "chat" | "vouch">;
+  link: SourceLink;
+  status: SourceStatus;
+  /** Sources only ever describe the member themselves. */
+  subject: "self";
+  connectedAt: number;
+  lastSyncAt?: number;
+  /** Facets currently derived from this source (0 unless connected/confirmed). */
+  observations: number;
+}
 export interface Member {
   id: MemberId; name: string; homeCity: City; state: ParticipationState;
   prefs: Preferences; invitedBy?: MemberId; joinedAt: number; age: number;
   unansweredProactive: number; // two-unanswered rule (F28)
+  /** Consented sources (additive; absent on older data). */
+  connectedSources?: ConnectedSourceSummary[];
 }
 export type EdgeType =
   | "invited_by" | "vouched_for" | "knows" | "met" | "introduced" | "helped" | "hosted"

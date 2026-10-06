@@ -11,6 +11,8 @@ import { pairKey, provenanceWeight, type World } from "./world.ts";
 export interface Scored {
   c: Candidate; components: ScoreComponents; score: number; threshold: number;
   eligible: boolean; reason?: string; verdict?: JudgeVerdict | null;
+  /** Leak-gated member-facing text from pass 3 (deep review), preferred over pass-2 text. */
+  memberWhy?: Record<MemberId, string>;
 }
 
 const clamp = (x: number, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, Number.isFinite(x) ? x : lo));
@@ -153,6 +155,7 @@ export function netValue(w: World, k: ScoreComponents): number {
 export function floorViolation(w: World, k: ScoreComponents, verdict?: JudgeVerdict | null): string | undefined {
   const f = w.cfg.floors;
   if (verdict?.dealbreaker) return "dealbreaker";
+  if (verdict?.verdict === "no" && w.cfg.judge.verdictGates) return "judge_reject";
   if (k.fit < f.fit) return "fit_floor";
   if (k.mutualBenefit < f.mutualBenefit) return "mutual_benefit_floor";
   if (k.confidence < f.confidence) return "confidence_floor";

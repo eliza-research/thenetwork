@@ -2,6 +2,7 @@
 // read directly) and a PUBLIC side (what they will reveal in conversation). PRD 34.3.
 import type { Category, City, MemberId } from "@thenetwork/core";
 import type { WritingStyle } from "./taxonomy.ts";
+import type { Knowledge, RichnessTier } from "./sources.ts";
 
 export type Archetype =
   | "regular" | "busy_parent" | "newcomer" | "connector" | "introvert" | "very_active"
@@ -53,6 +54,11 @@ export interface HiddenTruth {
   privateDisclosure?: { fact: string; canary: string };
   trips: Trip[];
   adversarial?: AdversarialKind;
+  /**
+   * How much the Network knows about this persona (hidden; evals stratify by it). Set when the
+   * generator runs with `richness`; absent means the legacy "full public profile is known" view.
+   */
+  richness?: RichnessTier;
 }
 
 export interface PublicProfile {
@@ -82,6 +88,12 @@ export interface Persona {
   public: PublicProfile;
   /** True when bio/voice came from the LLM generator. */
   enriched?: boolean;
+  /**
+   * What the Network knows (chat coverage + connected sources + source-derived facets with their
+   * hidden truth labels). Harness-side: buildSnapshot turns it into facets and strips the labels.
+   * Absent = legacy behavior (every stated trait is known, no sources).
+   */
+  knowledge?: Knowledge;
 }
 
 /** All canary strings in a population (for leak scanning). */

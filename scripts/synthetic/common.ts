@@ -7,9 +7,11 @@ import type {
 import type {
   AdversarialKind, Archetype, Gender, HiddenTruth, PublicProfile, Relationship, Routine,
 } from "../../packages/sim/src/persona.ts";
+import type { ChatCoverage, ObservationTruth, RichnessTier } from "../../packages/sim/src/sources.ts";
+import type { ConnectedSourceSummary, SensitiveCategory, SourceKind, SourceLink, SourceStatus } from "../../packages/core/src/index.ts";
 
 export const DATASET_VERSION = "v1";
-export const GENERATOR_VERSION = "synthetic-gen 1.1.0";
+export const GENERATOR_VERSION = "synthetic-gen 1.2.0";
 export const SEED = 20261005;
 /** Snapshot time: Mon 2026-10-12 10:00 PDT / 13:00 EDT. All timestamps are relative to this. */
 export const SNAPSHOT_NOW = Date.UTC(2026, 9, 12, 17, 0, 0);
@@ -61,14 +63,21 @@ export interface MemberProfile {
   pronouns: string;
   neighborhood: string;
   borough?: string;
-  occupation: string;
+  /** Present only if the member told the agent (1.2.0). */
+  occupation?: string;
+  /** "member": a bio the member wrote/said (rich tiers). "summary": built from known facets only. */
   bio: string;
+  bioSource: "member" | "summary";
+  /** Messages the member actually sent the agent (0-3 kept as samples, by tier). */
   voice: { style: string; samples: string[] };
-  routine: string;
-  availability: string;
+  /** Present only if the member described their week (1.2.0). */
+  routine?: string;
+  availability?: string;
   secondaryCity?: City;
   contact: { phone: string; email: string };
   enrichment: "llm" | "template";
+  /** Chat history length with the agent. */
+  chatMessages: number;
 }
 export interface MemberRecord extends Member { synthetic: true; segment: Segment; profile: MemberProfile }
 export interface FacetRecord extends Facet { synthetic: true }
@@ -93,6 +102,19 @@ export interface HiddenTruthRecord {
   relationships: Relationship[];
   hidden: HiddenTruth;
   personaPublic: PublicProfile;
+  /** Full LLM texture (what the persona would say), whether or not the Network knows it. */
+  personaTexture: { occupation: string; routine: string; availability: string; voiceSamples: string[]; offers: string[] };
+  /** What the Network knows, and ground truth about it (1.2.0). */
+  knowledge: HiddenKnowledge;
+}
+
+/** Hidden: richness tier, chat coverage, all source entries, and the truth label of every source facet. */
+export interface HiddenKnowledge {
+  richness: RichnessTier;
+  chat: ChatCoverage;
+  sources: ConnectedSourceSummary[];
+  /** facet id (facets.jsonl, source-derived) -> correct / stale / wrong_inference (+ why). */
+  observationTruth: Record<string, { truth: ObservationTruth; note?: string }>;
 }
 
 export interface Manifest {
@@ -122,6 +144,10 @@ export const PROVENANCES = tuple<Provenance>()(["said", "connected_source", "inf
 export const FACET_KINDS = tuple<FacetKind>()(["interest", "skill", "offer", "desire", "goal", "boundary", "trait", "fact", "resource", "preference", "availability_pattern"] as const);
 export const CATEGORIES = tuple<Category>()(["social", "professional", "romance", "hobby", "help", "events", "growth"] as const);
 export const EDGE_TYPES = tuple<EdgeType>()(["invited_by", "vouched_for", "knows", "met", "introduced", "helped", "hosted", "enjoyed", "would_interact_again", "group_only", "avoid", "blocked"] as const);
+export const SOURCE_KINDS_ALL = tuple<SourceKind>()(["chat", "vouch", "ai_memory", "gmail", "google_calendar", "linkedin", "x", "instagram", "github", "strava", "spotify", "eventbrite", "partiful", "luma", "personal_website"] as const);
+export const SENSITIVE_CATEGORIES = tuple<SensitiveCategory>()(["health", "finances", "religion", "sexuality", "relationship", "children"] as const);
+export const SOURCE_STATUSES = tuple<SourceStatus>()(["connected", "confirmed", "pending_confirmation", "rejected", "revoked"] as const);
+export const SOURCE_LINKS = tuple<SourceLink>()(["oauth", "profile_url", "paste", "found_profile"] as const);
 export const FORMATS = ["one_to_one", "small_group", "event"] as const;
 export const PRESENCE_TYPES = ["home", "routine", "temporary"] as const;
 export const INTENT_STATUS = ["active", "paused", "closed"] as const;
@@ -130,6 +156,7 @@ export const INTENT_STATUS = ["active", "paused", "closed"] as const;
 export const HIDDEN_ONLY_KEYS = [
   "trueAge", "adversarial", "honesty", "flakiness", "socialEnergy", "capacity", "responsiveness",
   "privateDisclosure", "openness", "verbosity", "archetype", "community", "relationships", "hidden",
+  "richness", "observationTruth", "truth", "personaTexture", "knowledge",
 ];
 
 export const readJsonl = async <T = any>(path: string): Promise<T[]> =>

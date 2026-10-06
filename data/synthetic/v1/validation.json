@@ -1,18 +1,18 @@
 {
   "dataset": "data/synthetic/v1",
-  "validatedAt": "2026-10-06T00:41:09.533Z",
+  "validatedAt": "2026-10-06T16:51:41.143Z",
   "pass": true,
-  "passed": 13,
-  "total": 13,
+  "passed": 19,
+  "total": 19,
   "checks": [
     {
       "name": "manifest_integrity",
       "pass": true,
       "details": {
         "seed": 20261005,
-        "generatorVersion": "synthetic-gen 1.1.0",
+        "generatorVersion": "synthetic-gen 1.2.0",
         "model": "gpt-6-luna + qwen-3.8-27b",
-        "generatedAt": "2026-10-06T00:41:07.237Z"
+        "generatedAt": "2026-10-06T16:51:40.916Z"
       }
     },
     {
@@ -20,8 +20,8 @@
       "pass": true,
       "details": {
         "members": 500,
-        "facets": 6700,
-        "intents": 843,
+        "facets": 5224,
+        "intents": 659,
         "presence": 549,
         "edges": 2092,
         "snapshotMembers": 500
@@ -100,11 +100,13 @@
       "pass": true,
       "details": {
         "canaries": 133,
-        "agentPrivateFacets": 1267,
+        "canariesUnique": 133,
+        "disclosedToAgent": 71,
+        "agentPrivateFacets": 860,
         "facetsByScope": {
-          "matchable": 1915,
-          "shareable": 3518,
-          "agent_private": 1267
+          "shareable": 2074,
+          "matchable": 2290,
+          "agent_private": 860
         }
       }
     },
@@ -235,43 +237,45 @@
           "nonbinary": 29
         },
         "intentsByCategory": {
-          "romance": 110,
-          "help": 142,
-          "social": 266,
-          "professional": 148,
-          "growth": 57,
-          "hobby": 120
+          "romance": 85,
+          "help": 121,
+          "social": 192,
+          "professional": 109,
+          "growth": 51,
+          "hobby": 101
         },
         "intentsByCategoryCity": {
           "sf": {
-            "romance": 52,
-            "social": 136,
-            "growth": 24,
-            "hobby": 64,
-            "help": 70,
-            "professional": 73
+            "romance": 41,
+            "growth": 22,
+            "social": 102,
+            "hobby": 56,
+            "help": 56,
+            "professional": 57
           },
           "nyc": {
-            "romance": 58,
-            "help": 72,
-            "social": 130,
-            "professional": 75,
-            "growth": 33,
-            "hobby": 56
+            "romance": 44,
+            "help": 65,
+            "social": 90,
+            "professional": 52,
+            "growth": 29,
+            "hobby": 45
           }
         },
-        "intentsPerMember": 1.69,
-        "distinctIntentObjectives": 20,
-        "romanceOptInAdults": 130,
+        "intentsPerMember": 1.32,
+        "distinctIntentObjectives": 26,
+        "romanceOptInAdults": 117,
         "interestTagsUsed": 38,
         "facetKinds": {
-          "interest": 2378,
-          "offer": 1440,
-          "boundary": 442,
-          "preference": 205,
-          "fact": 1133,
-          "availability_pattern": 500,
-          "skill": 602
+          "interest": 1939,
+          "offer": 590,
+          "boundary": 252,
+          "preference": 182,
+          "fact": 1299,
+          "availability_pattern": 472,
+          "skill": 436,
+          "goal": 17,
+          "trait": 37
         },
         "writingStyles": {
           "chatty": 78,
@@ -293,6 +297,231 @@
           "quiet": 62,
           "open": 73,
           "receiving": 9
+        }
+      }
+    },
+    {
+      "name": "richness_tier_distribution",
+      "pass": true,
+      "details": {
+        "byTier": {
+          "medium": 150,
+          "rich": 100,
+          "light": 125,
+          "very_rich": 50,
+          "minimal": 75
+        },
+        "targetMix": {
+          "minimal": 0.15,
+          "light": 0.25,
+          "medium": 0.3,
+          "rich": 0.2,
+          "very_rich": 0.1
+        },
+        "byTierStats": {
+          "minimal": {
+            "members": 75,
+            "facetsPerMember": 0.21,
+            "chatFacetsPerMember": 0.21,
+            "sourceFacetsPerMember": 0,
+            "intentsPerMember": 0.6,
+            "activeSourcesPerMember": 0,
+            "chatMessagesMedian": 2,
+            "trueInterestCoverage": 0
+          },
+          "light": {
+            "members": 125,
+            "facetsPerMember": 5.53,
+            "chatFacetsPerMember": 4.42,
+            "sourceFacetsPerMember": 1.11,
+            "intentsPerMember": 1,
+            "activeSourcesPerMember": 0.46,
+            "chatMessagesMedian": 8,
+            "trueInterestCoverage": 0.41
+          },
+          "medium": {
+            "members": 150,
+            "facetsPerMember": 10.17,
+            "chatFacetsPerMember": 8.09,
+            "sourceFacetsPerMember": 2.07,
+            "intentsPerMember": 1.64,
+            "activeSourcesPerMember": 0.92,
+            "chatMessagesMedian": 26,
+            "trueInterestCoverage": 0.65
+          },
+          "rich": {
+            "members": 100,
+            "facetsPerMember": 17.45,
+            "chatFacetsPerMember": 12.57,
+            "sourceFacetsPerMember": 4.88,
+            "intentsPerMember": 1.67,
+            "activeSourcesPerMember": 2.09,
+            "chatMessagesMedian": 75,
+            "trueInterestCoverage": 0.84
+          },
+          "very_rich": {
+            "members": 50,
+            "facetsPerMember": 24.94,
+            "chatFacetsPerMember": 13.68,
+            "sourceFacetsPerMember": 11.26,
+            "intentsPerMember": 1.52,
+            "activeSourcesPerMember": 4.38,
+            "chatMessagesMedian": 208,
+            "trueInterestCoverage": 0.98
+          }
+        }
+      }
+    },
+    {
+      "name": "known_facets_have_channel_no_hidden_leak",
+      "pass": true,
+      "details": {
+        "facetsBySource": {
+          "chat": 3723,
+          "google_calendar": 190,
+          "gmail": 457,
+          "linkedin": 263,
+          "strava": 75,
+          "personal_website": 40,
+          "instagram": 172,
+          "ai_memory": 115,
+          "x": 40,
+          "spotify": 45,
+          "luma": 18,
+          "partiful": 14,
+          "github": 57,
+          "eventbrite": 15
+        },
+        "sourceFacetTruth": {
+          "correct": 1314,
+          "wrong_inference": 148,
+          "stale": 39
+        },
+        "inferredFacets": 1363,
+        "confirmedSourceFacets": 553,
+        "staleOver1y": 40
+      }
+    },
+    {
+      "name": "connected_sources_track_richness",
+      "pass": true,
+      "details": {
+        "membersWithNoActiveSource": 189,
+        "byTier": {
+          "minimal": {
+            "none": 75,
+            "activeHistogram": {
+              "0": 75
+            }
+          },
+          "light": {
+            "none": 67,
+            "activeHistogram": {
+              "0": 67,
+              "1": 58
+            }
+          },
+          "medium": {
+            "none": 47,
+            "activeHistogram": {
+              "0": 47,
+              "1": 68,
+              "2": 35
+            }
+          },
+          "rich": {
+            "none": 0,
+            "activeHistogram": {
+              "1": 25,
+              "2": 41,
+              "3": 34
+            }
+          },
+          "very_rich": {
+            "none": 0,
+            "activeHistogram": {
+              "3": 11,
+              "4": 16,
+              "5": 16,
+              "6": 7
+            }
+          }
+        },
+        "activeByKind": {
+          "google_calendar": 101,
+          "gmail": 92,
+          "linkedin": 73,
+          "strava": 26,
+          "personal_website": 23,
+          "instagram": 62,
+          "ai_memory": 33,
+          "github": 49,
+          "x": 33,
+          "spotify": 68,
+          "luma": 22,
+          "partiful": 21,
+          "eventbrite": 21
+        },
+        "entriesByStatus": {
+          "connected": 529,
+          "confirmed": 95,
+          "revoked": 21,
+          "rejected": 22,
+          "pending_confirmation": 32
+        },
+        "activeByLink": {
+          "oauth": 414,
+          "found_profile": 95,
+          "profile_url": 82,
+          "paste": 33
+        }
+      }
+    },
+    {
+      "name": "no_observations_about_non_members",
+      "pass": true,
+      "details": {
+        "foundProfiles": {
+          "confirmed": 95,
+          "rejected": 22,
+          "pending_confirmation": 32
+        },
+        "sourceFacets": 1501
+      }
+    },
+    {
+      "name": "sensitive_inferences_never_shareable",
+      "pass": true,
+      "details": {
+        "sensitiveInferences": {
+          "finances": 14,
+          "health": 13,
+          "children": 11,
+          "religion": 9,
+          "relationship": 4,
+          "sexuality": 7
+        },
+        "sensitiveByScope": {
+          "agent_private": 58
+        }
+      }
+    },
+    {
+      "name": "minors_no_social_or_gmail_matching_facets",
+      "pass": true,
+      "details": {
+        "minors": 50,
+        "minorsWithSources": 27,
+        "minorSourceKinds": {
+          "google_calendar": 19,
+          "spotify": 16,
+          "github": 10
+        },
+        "minorFacetsBySource": {
+          "chat": 292,
+          "google_calendar": 38,
+          "spotify": 9,
+          "github": 8
         }
       }
     }

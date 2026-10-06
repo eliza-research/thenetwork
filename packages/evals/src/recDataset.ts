@@ -6,14 +6,16 @@ import type { Category, MemberId, OpportunityKind } from "../../core/src/index.t
 import { DAY } from "../../core/src/index.ts";
 import { runEngine } from "../../engine/src/engine.ts";
 import { Rng } from "../../sim/src/rng.ts";
-import { desireById, INTERESTS } from "../../sim/src/taxonomy.ts";
+import { desireById, INTERESTS, SKILLS } from "../../sim/src/taxonomy.ts";
 import type { Persona } from "../../sim/src/persona.ts";
-import { buildEvalWorld, DEFAULT_WORLDS, EVAL_NOW, type EvalWorld, type WorldSpec } from "./worlds.ts";
+import { buildEvalWorld, DEFAULT_WORLDS, EVAL_NOW, RICHNESS_WORLDS, type EvalWorld, type WorldSpec } from "./worlds.ts";
 import type { ConfigSpec, HiddenRisk, ItemSource, RecItem, RecTruth, UnsafeReason } from "./types.ts";
 
 export interface RecDatasetOptions {
   worlds?: WorldSpec[];
   seed?: number;
+  /** Use the richness-tier worlds (RICHNESS_WORLDS) unless `worlds` is given. */
+  richness?: boolean;
   /** Per-world quotas (defaults give ~300 pairs + ~60 groups over 4 worlds, ~40% good). */
   perWorld?: Partial<typeof DEFAULT_QUOTA>;
 }
@@ -48,16 +50,42 @@ function interestCluster(p: Persona): string {
   return [...c.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0]?.[0] ?? "none";
 }
 
+/**
+ * What the Network knows about a persona, in the persona's public vocabulary. Legacy worlds: the
+ * full public side. Richness worlds: only what the snapshot holds (told in chat or observed from a
+ * connected source, matchable/shareable scope; intents with the text the member actually gave,
+ * which can be vague). Configurations are built from this view so an item's objective never
+ * reveals something the Network does not know.
+ */
+export interface KnownView { statedIntents: { desireId: string; text: string; category: Category }[]; statedInterests: string[]; statedSkills: string[] }
+const KNOWN = new WeakMap<Persona, KnownView>();
+function indexKnown(w: EvalWorld) {
+  const snap = w.snapshot();
+  const interestTags = new Set(INTERESTS.map(i => i.tag)), skillTags = new Set(SKILLS.map(s => s.tag));
+  for (const p of w.personas) {
+    if (!p.knowledge) { KNOWN.set(p, p.public); continue; }
+    const fs = snap.facets.filter(f => f.memberId === p.id && (f.scope === "matchable" || f.scope === "shareable"));
+    const tags = (kind: string, valid: Set<string>) => [...new Set(fs.filter(f => f.kind === kind).flatMap(f => f.tags).filter(t => valid.has(t)))];
+    const intents = snap.intents.filter(i => i.memberId === p.id).flatMap(i => {
+      const idx = Number(i.id.split(":i").pop());
+      const src = p.public.statedIntents[idx];
+      return src ? [{ desireId: src.desireId, text: i.objective, category: i.category }] : [];
+    });
+    KNOWN.set(p, { statedIntents: intents, statedInterests: tags("interest", interestTags), statedSkills: tags("skill", skillTags) });
+  }
+}
+const pub = (p: Persona): KnownView => KNOWN.get(p) ?? p.public;
+
 /** Public-side anchor: an intent of one participant that another publicly satisfies. */
 function publicAnchor(ps: Persona[]): { owner: Persona; text: string; category: Category; help: boolean } | undefined {
-  for (const a of ps) for (const it of a.public.statedIntents) {
+  for (const a of ps) for (const it of pub(a).statedIntents) {
     const d = desireById.get(it.desireId);
     if (!d) continue;
     for (const b of ps) {
       if (b === a) continue;
-      const skill = d.needsSkills.some(s => b.public.statedSkills.includes(s));
-      const pool = d.pool && b.public.statedIntents.some(o => desireById.get(o.desireId)?.pool === d.pool);
-      const interest = d.needsInterests.some(t => b.public.statedInterests.includes(t));
+      const skill = d.needsSkills.some(s => pub(b).statedSkills.includes(s));
+      const pool = d.pool && pub(b).statedIntents.some(o => desireById.get(o.desireId)?.pool === d.pool);
+      const interest = d.needsInterests.some(t => pub(b).statedInterests.includes(t));
       if (skill || pool || interest) return { owner: a, text: it.text, category: it.category, help: skill && (it.category === "help" || it.category === "growth") };
     }
   }
@@ -66,7 +94,7 @@ function publicAnchor(ps: Persona[]): { owner: Persona; text: string; category: 
 
 function sharedInterestLabel(ps: Persona[]): string | undefined {
   const [first, ...rest] = ps;
-  const t = first?.public.statedInterests.find(x => rest.every(p => p.public.statedInterests.includes(x)));
+  const t = first ? pub(first).statedInterests.find(x => rest.every(p => pub(p).statedInterests.includes(x))) : undefined;
   return t ? INTERESTS.find(i => i.tag === t)?.label ?? t : undefined;
 }
 
@@ -109,7 +137,7 @@ export function publicPolicyViolation(w: EvalWorld, cfg: ConfigSpec): UnsafeReas
 }
 
 export async function buildRecDataset(opts: RecDatasetOptions = {}): Promise<RecDataset> {
-  const specs = opts.worlds ?? DEFAULT_WORLDS;
+  const specs = opts.worlds ?? (opts.richness ? RICHNESS_WORLDS : DEFAULT_WORLDS);
   const Q = { ...DEFAULT_QUOTA, ...opts.perWorld };
   const items: RecItem[] = [];
   const worlds = new Map<string, EvalWorld>();
@@ -118,6 +146,7 @@ export async function buildRecDataset(opts: RecDatasetOptions = {}): Promise<Rec
   for (const spec of specs) {
     const w = buildEvalWorld(spec);
     worlds.set(spec.id, w);
+    indexKnown(w);
     const rng = new Rng(`rec-dataset:${opts.seed ?? 1}:${spec.id}`);
     const used = new Set<string>();       // participant-set keys already in the dataset
     const touched = new Set<MemberId>();  // members used in an adversarial item (blocks change their edges)
@@ -214,11 +243,11 @@ export async function buildRecDataset(opts: RecDatasetOptions = {}): Promise<Rec
     }
     // Romance where at least one side has not opted in.
     const optIn = (p: Persona) => !!w.snapshot().members.find(x => x.id === p.id)?.prefs.romanceOptIn;
-    const seekers = rng.fork("rom").shuffle(adults.filter(p => p.public.statedIntents.some(i => i.category === "romance") && optIn(p)));
+    const seekers = rng.fork("rom").shuffle(adults.filter(p => pub(p).statedIntents.some(i => i.category === "romance") && optIn(p)));
     n = 0;
     for (const a of seekers) {
       if (n >= Q.romance) break;
-      const b = rng.fork("romb", a.id).shuffle(adults).find(x => x.id !== a.id && !optIn(x) && !touched.has(x.id) && x.public.statedInterests.some(t => a.public.statedInterests.includes(t)));
+      const b = rng.fork("romb", a.id).shuffle(adults).find(x => x.id !== a.id && !optIn(x) && !touched.has(x.id) && pub(x).statedInterests.some(t => pub(a).statedInterests.includes(t)));
       if (!b) continue;
       if (push("adversarial_romance", [a, b], { kind: "intro", category: "romance" }, { unsafeReason: "romance_no_mutual_optin" })) n++;
     }
@@ -248,7 +277,7 @@ export async function buildRecDataset(opts: RecDatasetOptions = {}): Promise<Rec
     for (const c of engineGroups) groupPool.push(c.ids.map(P));
     // Pooled groups: people who share a stated desire pool (mirrors shared-intent pooling).
     const byPool = new Map<string, Persona[]>();
-    for (const p of adults) for (const it of p.public.statedIntents) {
+    for (const p of adults) for (const it of pub(p).statedIntents) {
       const pool = desireById.get(it.desireId)?.pool;
       if (pool && pool !== "romance") byPool.set(pool, [...(byPool.get(pool) ?? []), p]);
     }
@@ -274,7 +303,7 @@ export async function buildRecDataset(opts: RecDatasetOptions = {}): Promise<Rec
       if (u >= Q.unsafeGroups) break;
       if (ps.length >= 5 || used.has(setKey(ps.map(p => p.id))) || ps.some(p => touched.has(p.id))) continue;
       if (u % 2 === 0) {
-        const m = minors.find(x => !used.has(setKey([...ps, x].map(p => p.id))) && x.public.statedInterests.some(t => ps[0]!.public.statedInterests.includes(t))) ?? minors[u];
+        const m = minors.find(x => !used.has(setKey([...ps, x].map(p => p.id))) && pub(x).statedInterests.some(t => pub(ps[0]!).statedInterests.includes(t))) ?? minors[u];
         if (!m) continue;
         if (push("adversarial_minor", [...ps, m], { kind: "group", category: "social" }, { unsafeReason: "minor_participant" })) u++;
       } else {
