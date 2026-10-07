@@ -16,6 +16,7 @@ import { DAY, HOUR } from "@thenetwork/core";
 import * as A from "../src/attention.ts";
 import { DEFAULT_ATTENTION, engineSupplyBudgets, resolveAttention, type AttentionConfigInput, type EngineConfigInput } from "../src/config.ts";
 import type { AttentionItem, AttentionLedgerEntry, EngineInput, EngineProposal } from "../src/types.ts";
+import { Rng as SimRng, hash32 } from "../../sim/src/rng.ts";
 import { SNAPSHOT_FEATURES } from "../../sim/src/snapshot.ts";
 import type { World as SimWorld } from "../../sim/src/world.ts";
 import { AttentionNetwork, type AttentionNetOptions } from "./attentionNetwork.ts";
@@ -30,11 +31,22 @@ const SEEDS = args.seeds!.split(",").map(Number);
 
 export interface Variant {
   name: string; cfg?: EngineConfigInput;
+  /**
+   * Iteration 2 simulator-fidelity fixes, harness only: (1) ask priming for probes (a member who
+   * recently asked for this kind of thing answers a specific probe as they would a named invite,
+   * `oracle.evaluatePrimed`); (2) outside-world items: public events matching a member's stated
+   * interests go into digests, and whether the member acts on one is decided offline.
+   */
+  fixes?: boolean | { priming?: boolean; events?: boolean; eventsAlone?: boolean };
   /** undefined = the sim's own StubNetwork (today). */
   net?: Omit<AttentionNetOptions, "seed" | "randomIntros" | "choose"> & { choose?: "oracle" | "first" };
 }
 /** D1: the engine supplies up to cap x items per message; the attention layer enforces the interruption cap. */
 const SUPPLY = engineSupplyBudgets(resolveAttention());
+const NAMED = { mode: "attention" as const, choose: "oracle" as const };
+/** A+rules: today's dispatch (items go out as they arrive, one per message, no price) with every hard send-time rule. */
+const RULES = { ...NAMED, cadence: "immediate" as const, capOnly: true, partnerAnyCap: true, attention: { maxItems: { open: 1, normal: 1, quiet: 1, receiving: 1 } } };
+const BEST = { ...NAMED, lambdaScale: 0, partnerAnyCap: true }; // iteration-2 search base: (a) + (b)
 export const VARIANTS: Variant[] = [
   { name: "A v1.2 defaults (stub network: one item per interruption)" },
   { name: "A' v1.2 via the harness network (must equal A)", net: { mode: "v12" } },
@@ -49,6 +61,51 @@ export const VARIANTS: Variant[] = [
   { name: "D2 D1, cap only (no price, no quality bar)", cfg: SUPPLY, net: { mode: "attention", choose: "oracle", partnerAnyCap: true, capOnly: true } },
   { name: "D3 C, partner probes any remaining cap, cap only", cfg: SUPPLY, net: { mode: "attention", probes: true, choose: "oracle", partnerAnyCap: true, capOnly: true } },
   { name: "E1 D1, no separate acknowledgement messages", cfg: SUPPLY, net: { mode: "attention", choose: "oracle", partnerAnyCap: true, suppressAcks: true } },
+  // ---- iteration 2 (named items unless "probes") ----
+  { name: "R A+rules: today's dispatch with every hard send-time rule", net: RULES },
+  { name: "I1 B, no price (λ = 0, quality bar kept)", cfg: SUPPLY, net: { ...NAMED, lambdaScale: 0 } },
+  { name: "I2 B, half price (λ x 0.5)", cfg: SUPPLY, net: { ...NAMED, lambdaScale: 0.5 } },
+  { name: "I3 I1 + partner probes on any remaining cap", cfg: SUPPLY, net: BEST },
+  { name: "I4 I2 + partner probes on any remaining cap", cfg: SUPPLY, net: { ...NAMED, lambdaScale: 0.5, partnerAnyCap: true } },
+  { name: "I5 I3, twice-weekly digest", cfg: SUPPLY, net: { ...BEST, cadence: "twice" } },
+  { name: "I6 I3, rolling (daily slot when something clears the bar)", cfg: SUPPLY, net: { ...BEST, cadence: "rolling" } },
+  { name: "I7 I3, immediate (as items arrive, up to 3 batched)", cfg: SUPPLY, net: { ...BEST, cadence: "immediate" } },
+  { name: "I8 I6, acknowledgements folded", cfg: SUPPLY, net: { ...BEST, cadence: "rolling", suppressAcks: true } },
+  { name: "I9 I6, acknowledgements exempt from the streak", cfg: SUPPLY, net: { ...BEST, cadence: "rolling", ackExempt: true } },
+  { name: "I10 I8, learned cadence (D11)", cfg: SUPPLY, net: { ...BEST, cadence: "rolling", suppressAcks: true, learnedCadence: true } },
+  { name: "I11 I8, engine supply unchanged", net: { ...BEST, cadence: "rolling", suppressAcks: true } },
+  { name: "J1 R + acknowledgements folded", net: { ...RULES, suppressAcks: true } },
+  { name: "J2 R + acknowledgements exempt from the streak", net: { ...RULES, ackExempt: true } },
+  { name: "J3 I9 + unpicked items go back to the hold queue", cfg: SUPPLY, net: { ...BEST, cadence: "rolling", ackExempt: true, requeueUnpicked: true } },
+  { name: "J4 I8 + unpicked items go back to the hold queue", cfg: SUPPLY, net: { ...BEST, cadence: "rolling", suppressAcks: true, requeueUnpicked: true } },
+  { name: "J5 immediate menus, no price, partner any cap, acks folded, requeue", cfg: SUPPLY, net: { ...BEST, cadence: "immediate", suppressAcks: true, requeueUnpicked: true } },
+  { name: "F-J1 J1, fixes", fixes: true, net: { ...RULES, suppressAcks: true } },
+  { name: "F-J4 J4, fixes", fixes: true, cfg: SUPPLY, net: { ...BEST, cadence: "rolling", suppressAcks: true, requeueUnpicked: true } },
+  { name: "F-J4p J4 + consent-first probes, fixes", fixes: true, cfg: SUPPLY, net: { ...BEST, cadence: "rolling", suppressAcks: true, requeueUnpicked: true, probes: true } },
+  { name: "F-J1p J1 + consent-first probes, fixes", fixes: true, net: { ...RULES, suppressAcks: true, probes: true } },
+  // ---- the two fixes separately; events only as companions of a people item ----
+  { name: "P-Rp A+rules with probes, priming fix only", fixes: { priming: true }, net: { ...RULES, probes: true } },
+  { name: "P-J1p J1 + probes, priming fix only", fixes: { priming: true }, net: { ...RULES, suppressAcks: true, probes: true } },
+  { name: "P-C C (probes), priming fix only", fixes: { priming: true }, cfg: SUPPLY, net: { mode: "attention", probes: true, choose: "oracle" } },
+  { name: "P-I8p I8 + probes, priming fix only", fixes: { priming: true }, cfg: SUPPLY, net: { ...BEST, cadence: "rolling", suppressAcks: true, probes: true } },
+  { name: "G-B B, both fixes, events only with a people item", fixes: { priming: true, events: true }, cfg: SUPPLY, net: { mode: "attention", choose: "oracle" } },
+  { name: "G-I8 I8, both fixes, events only with a people item", fixes: { priming: true, events: true }, cfg: SUPPLY, net: { ...BEST, cadence: "rolling", suppressAcks: true } },
+  { name: "G-I8p I8 + probes, both fixes, events only with a people item", fixes: { priming: true, events: true }, cfg: SUPPLY, net: { ...BEST, cadence: "rolling", suppressAcks: true, probes: true } },
+  { name: "G-J4 J4, both fixes, events only with a people item", fixes: { priming: true, events: true }, cfg: SUPPLY, net: { ...BEST, cadence: "rolling", suppressAcks: true, requeueUnpicked: true } },
+  { name: "G-J4w G-J4 with the weekly Thursday digest (D2)", fixes: { priming: true, events: true }, cfg: SUPPLY, net: { ...BEST, suppressAcks: true, requeueUnpicked: true } },
+  { name: "G-J4λ G-J4 with the doc's shadow price", fixes: { priming: true, events: true }, cfg: SUPPLY, net: { ...BEST, lambdaScale: 1, cadence: "rolling", suppressAcks: true, requeueUnpicked: true } },
+  { name: "G-J4b G-J4 with partner probes on break-ins only (D4)", fixes: { priming: true, events: true }, cfg: SUPPLY, net: { ...BEST, partnerAnyCap: false, cadence: "rolling", suppressAcks: true, requeueUnpicked: true } },
+  // ---- with the simulator fixes (ask-primed probes, outside-world event items) ----
+  { name: "F-A v1.2 defaults, fixes", fixes: true },
+  { name: "F-R A+rules, fixes", fixes: true, net: RULES },
+  { name: "F-Rp A+rules with consent-first probes, fixes", fixes: true, net: { ...RULES, probes: true } },
+  { name: "F-B B, fixes", fixes: true, cfg: SUPPLY, net: { mode: "attention", choose: "oracle" } },
+  { name: "F-C C (probes), fixes", fixes: true, cfg: SUPPLY, net: { mode: "attention", probes: true, choose: "oracle" } },
+  { name: "F-I3 I3, fixes", fixes: true, cfg: SUPPLY, net: BEST },
+  { name: "F-I6 I6, fixes", fixes: true, cfg: SUPPLY, net: { ...BEST, cadence: "rolling" } },
+  { name: "F-I8 I8, fixes", fixes: true, cfg: SUPPLY, net: { ...BEST, cadence: "rolling", suppressAcks: true } },
+  { name: "F-I8p I8 + consent-first probes, fixes", fixes: true, cfg: SUPPLY, net: { ...BEST, cadence: "rolling", suppressAcks: true, probes: true } },
+  { name: "F-I10p I10 + consent-first probes, fixes", fixes: true, cfg: SUPPLY, net: { ...BEST, cadence: "rolling", suppressAcks: true, learnedCadence: true, probes: true } },
 ];
 
 // ------------------------------------------------------------------ per-seed run and metrics
@@ -59,7 +116,7 @@ export interface SeedRow {
   autoPausePer100MemberMonths: number; stops: number; stopPer1000: number; ttvMedian: number | null; v14: number;
   zeroAll: number; zeroDelivered: number; giniAll: number; giniDelivered: number; worthwhile: number;
   minors: number; leaks: number; invariants: number; byRule: Record<string, number>;
-  overStateCap: number; quietHours: number; streakInterrupt: number; blooio4th: number;
+  overStateCap: number; quietHours: number; streakInterrupt: number; blooio4th: number; eventValues: number;
   stats?: Record<string, unknown>;
 }
 
@@ -76,7 +133,44 @@ function oracleChooser(get: () => SimWorld) {
   };
 }
 
+/**
+ * Fix 1 (harness only): `oracle.probe` with the same ask priming named invites get. A persona that
+ * asked for this category in the last 7 days (its memory's "ask" signals) answers a specific probe
+ * with `evaluatePrimed(..., "ask")`, as `decideProposal` does for a named proposal.
+ */
+function primeProbes(world: SimWorld, seed: number) {
+  const W = world as any;
+  const oracle = world.oracle;
+  const orig = oracle.probe.bind(oracle);
+  oracle.probe = (id, q) => {
+    const now = world.clock.now();
+    const mem = W.memories.get(id);
+    const asked = (mem?.signals ?? []).some((sg: any) => sg.source === "ask" && sg.category === q.category && now - sg.at < 7 * DAY);
+    if (!asked || !q.participants || q.participants.length < 2) return orig(id, q);
+    const v = oracle.evaluatePrimed({ id: `probe:${q.key}`, kind: q.kind ?? "intro", participants: q.participants, city: q.city, window: { start: q.at, end: q.at }, category: q.category }, { [id]: "ask" });
+    const yesProb = v.participants[id]?.acceptProb ?? 0;
+    return { yesProb, yes: new SimRng(hash32(seed, "probe-primed", q.key, id)).next() < yesProb };
+  };
+}
+/**
+ * Fix 2 (harness only): does the member act on an event suggestion? P = (spare capacity x fatigue x
+ * appetite for events x presence, `oracle.probe` without participants) x (1 if the event's tag is a
+ * hidden interest, else 0.2) x (1 - the member's ignore probability: an unread text is not acted on).
+ */
+function eventActor(get: () => SimWorld, seed: number) {
+  return (memberId: MemberId, ev: { id: string; city: string; start: number; tags: string[] }) => {
+    const o = get().oracle;
+    const p = o.persona(memberId);
+    if (!p) return false;
+    const r = o.probe(memberId, { key: `ev:${ev.id}`, category: "events", city: ev.city as any, at: ev.start });
+    const like = ev.tags.some(t => p.hidden.interests.includes(t)) ? 1 : 0.2;
+    const pr = r.yesProb * like * (1 - p.hidden.responsiveness.ignoreProb);
+    return new SimRng(hash32(seed, "act", ev.id, memberId)).next() < pr;
+  };
+}
+
 export async function runSeed(v: Variant, seed: number): Promise<SeedRow> {
+  const fx: { priming?: boolean; events?: boolean; eventsAlone?: boolean } = v.fixes === true ? { priming: true, events: true, eventsAlone: true } : v.fixes ? { eventsAlone: false, ...v.fixes } : {};
   let world!: SimWorld;
   let net: AttentionNetwork | undefined;
   const res = await runSim({
@@ -84,8 +178,9 @@ export async function runSeed(v: Variant, seed: number): Promise<SeedRow> {
     network: v.net ? s => (net = new AttentionNetwork({
       seed: s, randomIntros: false, ...v.net!,
       choose: v.net!.choose === "oracle" ? oracleChooser(() => world) : undefined,
+      ...(fx.events && v.net!.mode === "attention" ? { outsideWorld: true, actOnEvent: eventActor(() => world, seed), eventsAlone: fx.eventsAlone } : {}),
     })) : undefined,
-    onWorld: w => { world = w; },
+    onWorld: w => { world = w; if (fx.priming) primeProbes(w, seed); },
     augment: input => (net ? net.engineView(input as EngineInput) : input),
   });
   const m = res.metrics;
@@ -109,7 +204,7 @@ export async function runSeed(v: Variant, seed: number): Promise<SeedRow> {
       if (x.system || x.status !== "delivered") continue;
       msgs.push(x);
       const items: string[] = x.meta?.attention?.items ?? (x.meta?.type === "proposal" && x.meta?.proactive && x.meta?.proposalId ? [x.meta.proposalId] : []);
-      for (const pid of items) { delivered.add(pid); deliveredTo.set(x.memberId, (deliveredTo.get(x.memberId) ?? 0) + 1); }
+      for (const pid of items.filter(i => !String(i).startsWith("ev:"))) { delivered.add(pid); deliveredTo.set(x.memberId, (deliveredTo.get(x.memberId) ?? 0) + 1); }
     }
   }
   // Interruption ledger, built the same way for both arms from what was actually sent.
@@ -135,7 +230,8 @@ export async function runSeed(v: Variant, seed: number): Promise<SeedRow> {
   }
   // Value events (3.3): attended a meeting that was held. Met + worthwhile: everyone who came enjoyed it.
   const outs = outcomes(res.records);
-  const values: A.ValueEvent[] = [];
+  const values: A.ValueEvent[] = [...(net?.stats.eventValues ?? [])];
+  const eventValues = net?.stats.eventValues.length ?? 0;
   for (const r of recs) if (r.type === "outcome") {
     const shows = Object.entries(r.attendance as Record<string, any>).filter(([, a]) => a.showed);
     if (shows.length >= 2) for (const [id] of shows) values.push({ memberId: id, at: r.at });
@@ -176,7 +272,7 @@ export async function runSeed(v: Variant, seed: number): Promise<SeedRow> {
     ttvMedian: am.timeToValueDaysMedian, v14: am.v14, zeroAll: m.fairness.zeroProposalShare, giniAll: m.fairness.gini,
     zeroDelivered: counts.length ? counts.filter(c => c === 0).length / counts.length : 0, giniDelivered: gini(counts), worthwhile: m.experience.worthwhileRate,
     minors: m.safety.minorContacts, leaks: m.privacy.canaryLeaks, invariants: m.invariants.total, byRule: m.invariants.byRule,
-    overStateCap, quietHours: m.invariants.byRule.quiet_hours ?? 0, streakInterrupt, blooio4th,
+    overStateCap, quietHours: m.invariants.byRule.quiet_hours ?? 0, streakInterrupt, blooio4th, eventValues,
     stats: net ? { ...net.stats, shownTo: undefined, shown: undefined, autoPauses: net.stats.autoPauses.length, ledger: net.ledger.length } : undefined,
   };
 }
@@ -194,7 +290,7 @@ export function summaryTables(rows: VariantRow[]): string {
     return [r.name, `${mean(mw).toFixed(1)} ± ${(sd(mw) / Math.sqrt(mw.length)).toFixed(1)}${r === rows[0] ? "" : d(mean(mw), base ? avg(base, "metWorth") : undefined)}`,
       mw.join(" "), avg(r.seeds, "interruptionsPerMemberWeek").toFixed(2), avg(r.seeds, "itemsPerInterruption").toFixed(2),
       avg(r.seeds, "metWorthPerInterruption").toFixed(3), avg(r.seeds, "valuePerInterruption").toFixed(3), pct(avg(r.seeds, "v14")),
-      (avg(r.seeds, "ttvMedian") || NaN).toFixed(1)];
+      (avg(r.seeds, "ttvMedian") || NaN).toFixed(1), (avg(r.seeds, "eventValues") || 0).toFixed(1)];
   });
   const annoy = rows.map(r => [r.name, pct(avg(r.seeds, "unansweredRate")), avg(r.seeds, "autoPausePer100MemberMonths").toFixed(1), `${sum(r.seeds, "stops")} (${avg(r.seeds, "stopPer1000").toFixed(1)})`, pct(avg(r.seeds, "worthwhile"))]);
   const match = rows.map(r => [r.name, avg(r.seeds, "proposals").toFixed(0), pct(avg(r.seeds, "precisionAll")), avg(r.seeds, "delivered").toFixed(0), pct(avg(r.seeds, "precisionDelivered")),
@@ -203,7 +299,7 @@ export function summaryTables(rows: VariantRow[]): string {
     `${sum(r.seeds, "invariants")} ${JSON.stringify(r.seeds.reduce((o, s) => { for (const [k, v] of Object.entries(s.byRule)) o[k] = (o[k] ?? 0) + (v as number); return o; }, {} as Record<string, number>))}`]);
   return [
     "### Value and interruptions (mean over seeds; met + worthwhile ± standard error)\n",
-    table(["variant", "met + worthwhile /seed", "per seed", "interruptions /member/wk", "items /interruption", "met+worthwhile /interruption", "value events /interruption", "V14", "time to value (median days)"], value),
+    table(["variant", "met + worthwhile /seed", "per seed", "interruptions /member/wk", "items /interruption", "met+worthwhile /interruption", "value events /interruption", "V14", "time to value (median days)", "event value events /seed"], value),
     "\n### Annoyance\n",
     table(["variant", "unanswered rate (72h)", "auto-pause /100 member-months", "STOP total (per 1,000 interruptions)", "persona worthwhile"], annoy),
     "\n### Match quality and spread (engine proposals / items actually delivered)\n",

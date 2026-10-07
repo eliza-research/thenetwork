@@ -7,20 +7,31 @@ import { SNAPSHOT_FEATURES } from "../../sim/src/snapshot.ts";
 import { AttentionNetwork } from "../experiments/attentionNetwork.ts";
 import { runSim } from "../experiments/lib.ts";
 
-async function run(probes: boolean) {
+type Cfg = { name: string; probes: boolean; iter2?: boolean };
+async function run(c: Cfg) {
   let net!: AttentionNetwork;
   const res = await runSim({
     seed: 3, personas: 80, days: 14, cfg: engineSupplyBudgets(), keepTraces: false, snapshot: { features: SNAPSHOT_FEATURES, records: true, asks: true },
-    network: s => (net = new AttentionNetwork({ seed: s, randomIntros: false, mode: "attention", probes })),
+    gen: c.iter2 ? { minorShare: 0.1 } : undefined,
+    network: s => (net = new AttentionNetwork({
+      seed: s, randomIntros: false, mode: "attention", probes: c.probes,
+      ...(c.iter2 ? { cadence: "rolling" as const, lambdaScale: 0, partnerAnyCap: true, suppressAcks: true, outsideWorld: true, actOnEvent: () => false } : {}),
+    })),
     augment: input => net.engineView(input as any),
   });
   return { res, net };
 }
 
-for (const probes of [false, true]) {
-  describe(`attention send path in the simulator (${probes ? "consent-first probes" : "named items"})`, () => {
+const CFGS: Cfg[] = [
+  { name: "named items", probes: false },
+  { name: "consent-first probes", probes: true },
+  { name: "iteration 2: rolling, no price, partner on any cap, acks folded, events, probes", probes: true, iter2: true },
+];
+for (const c of CFGS) {
+  const probes = c.probes;
+  describe(`attention send path in the simulator (${c.name})`, () => {
     test("0 minor contacts, 0 canary leaks, 0 quiet-hour sends, 0 over-cap, 0 interruptions past the Blooio reservation; digests <= 3 items; romance alone", async () => {
-      const { res, net } = await run(probes);
+      const { res, net } = await run(c);
       const m = res.metrics;
       expect(m.safety.minorContacts).toBe(0);
       expect(m.privacy.canaryLeaks).toBe(0);
@@ -33,7 +44,7 @@ for (const probes of [false, true]) {
       const out = new Map<string, number>();
       const pro = new Map<string, number[]>();
       const recs = (res.records as any[]).filter(r => r.type === "message" && !r.msg.system && r.msg.status === "delivered");
-      let interruptions = 0;
+      let interruptions = 0, minorMsgs = 0;
       for (const r of recs) {
         const x = r.msg;
         if (x.direction === "inbound") { out.set(x.memberId, 0); continue; }
@@ -41,12 +52,26 @@ for (const probes of [false, true]) {
         if (x.meta?.proactive) {
           interruptions++;
           expect(k).toBeLessThanOrEqual(DEFAULT_ATTENTION.blooio.interruptMaxOutstanding);
-          const items: string[] = x.meta.attention?.items ?? [];
-          expect(items.length).toBeGreaterThanOrEqual(1);
-          expect(items.length).toBeLessThanOrEqual(3);
+          const all: string[] = x.meta.attention?.items ?? [];
+          expect(all.length).toBeGreaterThanOrEqual(1);
+          expect(all.length).toBeLessThanOrEqual(3);
+          const items = all.filter(id => !id.startsWith("ev:"));
+          const minor = (personas.get(x.memberId)?.public.claimedAge ?? 30) < 18;
+          if (minor) {
+            minorMsgs++;
+            // D9: events only, 1 per 7 days, at most 2 items, never on a school night after 20:00.
+            expect(items.length).toBe(0);
+            expect(all.length).toBeLessThanOrEqual(2);
+            const lp = new Date(x.ts).toLocaleString("en-US", { timeZone: personas.get(x.memberId)!.homeCity === "sf" ? "America/Los_Angeles" : "America/New_York", weekday: "short", hour: "numeric", hourCycle: "h23" });
+            const [wd, hh] = lp.split(" ");
+            const h = Number(hh);
+            if (h >= 20) expect(["Fri", "Sat"].includes(wd!.replace(",", ""))).toBe(true);
+            if (h < 8) expect(["Sat", "Sun"].includes(wd!.replace(",", ""))).toBe(true);
+          }
           const cats = items.map(id => res.records.find((q: any) => q.type === "proposal" && q.proposal.id === id) as any).map(q => q.proposal.category);
           if (cats.includes("romance")) expect(cats.length).toBe(1);
-          const cap = personas.get(x.memberId)?.archetype === "busy_parent" ? DEFAULT_ATTENTION.caps.quiet : DEFAULT_ATTENTION.caps.normal;
+          const isMinor = (personas.get(x.memberId)?.public.claimedAge ?? 30) < 18;
+          const cap = isMinor ? DEFAULT_ATTENTION.minors.cap : personas.get(x.memberId)?.archetype === "busy_parent" ? DEFAULT_ATTENTION.caps.quiet : DEFAULT_ATTENTION.caps.normal;
           const ts = [...(pro.get(x.memberId) ?? []), x.ts].filter(t => x.ts - t < cap.periodDays * DAY);
           expect(ts.length).toBeLessThanOrEqual(cap.limit);
           pro.set(x.memberId, ts);
@@ -61,6 +86,7 @@ for (const probes of [false, true]) {
         out.set(x.memberId, k + 1);
       }
       expect(interruptions).toBeGreaterThan(10);
+      if (c.iter2) { expect(net.stats.eventsShown).toBeGreaterThan(0); expect(minorMsgs).toBeGreaterThan(0); }
       expect(net.ledger.filter(e => e.countsAgainstCap).length).toBe(interruptions);
       void HOUR;
     }, 120_000);

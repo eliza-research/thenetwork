@@ -312,6 +312,11 @@ describe("hold queue (1.6)", () => {
       bl: "ineligible:blocked", busy: "partner_busy",
     });
     expect(r.kept[0]!.revalidateAt).toBe(NOW + 24 * HOUR);
+    // D9: a member aged 13-17 keeps outside-world items (no other member involved); people items are dropped.
+    const ev = held(item("ev", { memberId: "kid", kind: "event_suggestion", others: [], involvesMember: false, reviewState: "not_needed" }));
+    const r2 = A.revalidateHold([ev, held(item("pp", { memberId: "kid", others: ["b"] }))], NOW, eligibilityFor(w));
+    expect(r2.kept.map(x => x.id)).toEqual(["ev"]);
+    expect(r2.dropped.map(d => d.reason)).toEqual(["ineligible:underage"]);
   });
 
   test("items from proposals: the member with the want first; groups in parallel; event items expire 24h before the start", () => {

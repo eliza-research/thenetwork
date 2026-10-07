@@ -165,3 +165,114 @@ The engine side is pure functions in `packages/engine/src/attention.ts` (exporte
 - New: `packages/engine/src/attention.ts`, `packages/engine/test/attention.test.ts`, `packages/engine/test/attention-sim.test.ts`, `packages/engine/experiments/attention.ts`, `packages/engine/experiments/attentionNetwork.ts`, this document.
 - Changed (additive): `src/config.ts` (attention section: `AttentionConfig`, `DEFAULT_ATTENTION`, `resolveAttention`, `attentionConfigHash`, `engineSupplyBudgets`), `src/types.ts` (attention data model, `EngineProposal.acceptance`), `src/engine.ts` (fills `acceptance`), `src/index.ts` (exports), `src/outreach.ts` (caps from the attention config, P2-12 deferral), `test/outreach.test.ts`, `experiments/lib.ts` (`runSim({ network, onWorld })`, `acceptance` in traced proposals; `verify.ts` still byte-identical).
 - Not touched: `opportunity.ts`, `filters.ts`, `judge*.ts`, `world.ts`, `packages/network`, `packages/sim`, `packages/observatory`, `packages/evals`.
+
+---
+
+# Iteration 2: a fair baseline, a design search, simulator fixes (2026-10-07)
+
+## Result
+
+**Against a fair baseline, no attention design wins on meetings; the best one ties and doubles value per interruption once outside-world items exist.**
+
+- **The fair baseline (R)** is today's daily dispatch with every hard send-time rule: the cap counted in interruptions, at most 1 outbound outstanding for a new interruption, the Blooio limit (logistics at most 2 outstanding), quiet hours, hold revalidation and the probe leak gate. It keeps **23.1 met + worthwhile per seed** (A: 25.5; the -2.4 is inside noise) with **0 over-cap sends** (A: 63) and **0 messages past Blooio's 3rd unanswered** (A: 21). The rules are cheap: the bar is high.
+- **Without the simulator fixes**, the best design that keeps every rule (I8: rolling daily slot, no shadow price, partner probes on any remaining cap, acknowledgements folded) reaches **21.3** (R - 1.8, inside noise) at the same interruption rate (0.70 vs 0.67 per member-week), with value per interruption 0.052 vs 0.058. It does not beat R.
+- **With both simulator fixes** (ask-primed probes, outside-world event items), the best design (G-J4: I8 + unpicked items requeued + events only as companions of a people item) keeps meetings within noise of R (**21.1** vs 23.1) at the same interruption rate (0.69 vs 0.67) and **almost doubles value events per interruption (0.325 vs 0.171)** and V14 (**29.8% vs 21.1%**), with unanswered rate 7.3% (R 7.2%) and auto-pauses 1.0 vs 0.5 per 100 member-months. This is the one place menus earn their keep: a message carries a people item plus the events a member might act on, and today's one-item-per-message dispatch has no slot for them.
+- **Consent-first probes** still cost 6-9 meetings per seed after the priming fix (J1 21.0 vs probes 15.5; I8 21.3 vs 12.5): three answers are needed instead of two (probe, partner probe, reveal), and each can be ignored.
+
+## What was added
+
+- `attentionNetwork.ts` options: `lambdaScale` (price; quality bar kept), `cadence` ("weekly", "twice", "rolling" = a daily 18:00 slot used only when the best held item clears the bar and the member has cap, everything else ready batched in; "immediate" = as items arrive), `suppressAcks` (content-free acknowledgements folded, i.e. not sent as their own message), `ackExempt` (sent but not counted on the Network's streak), `learnedCadence` (D11: digest hour learned from the member's own messages; weekly and at most 2 items for 14 days after an unanswered interruption; through `applyLearnedCadence`, so never more frequent), `requeueUnpicked` (items shown next to the one picked go back to the hold queue: picking one is not a pass on the others), `outsideWorld` + `eventsAlone` (event items; alone or only as companions), `passedAs` (a passed item now blocks its pair for about 28 days instead of being re-proposed nightly; no measurable effect, kept as the default).
+- **A+rules (R)** is the same send path configured as today's dispatch: `cadence: "immediate"`, one item per message, no price and no bar, partner probes on any remaining cap, the engine's default budget, named invitations.
+- **Fix 1, ask priming for probes (harness only, `primeProbes`)**: a persona that asked for this category in the last 7 days answers a specific probe through `oracle.evaluatePrimed(..., "ask")`, exactly as the persona agent answers a named proposal.
+- **Fix 2, outside-world items (harness only)**: each day the network takes the snapshot's public listings (`publicEvents(snapshot, 6)`), starting 1-8 days ahead in the member's city, and offers each to members who stated a matching interest (engine-visible facets only): `event_suggestion`, effort glance, Ê 0.5, P̂acc prior, expiry start - 24 h, no review needed, allowed for members aged 13-17 (D9). Whether the member acts on it is decided offline (`eventActor`): P = `oracle.probe` without participants (spare capacity this week x fatigue x appetite for events x presence) x (1 if the tag is a hidden interest, else 0.2) x (1 - the member's ignore probability). An acted-on event is a value event (3.3: "Event or place: the member acted on it") for V14 and value per interruption; it is not a meeting.
+- **Engine fix found by the minors check**: `revalidateHold` ran the send-time check, which refuses anyone under 18 (`underage`) for every item. That is right for people items and wrong for D9's outside-world items, so a member aged 13-17 never got an event. Items that involve no other member now pass `underage` (D9 limits stay in `itemGate`); unit test added, and `test/attention-sim.test.ts` now runs an iteration-2 configuration with 10% minors and checks that minors get only event messages, at most 2 items, at most 1 per 7 days and never on a school night after 20:00.
+
+## Results (8 seeds, `bun packages/engine/experiments/attention.ts --only "<variant>"`)
+
+Met + worthwhile per seed ± standard error; over 8 seeds a difference under about 4 is noise. "Value / int." = value events (attended a held meeting, or acted on an event) per interruption. All variants below except A have 0 minor contacts, 0 canary leaks, 0 over-cap sends, 0 quiet-hour sends and 0 messages past Blooio's 3rd unanswered, unless the last column says otherwise.
+
+| Variant | Met + worthwhile | Interruptions /member-wk | Items /int. | Met+w /int. | Value /int. | V14 | Unanswered | Auto-pause /100 m-mo | Notes |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| A today (no rules) | 25.5 ± 1.2 | 0.70 | 1.00 | 0.062 | 0.185 | 24.8% | 8.1% | 3.6 | 63 over-cap, 365 interruptions with >= 2 outstanding, 21 past Blooio's 3rd |
+| **R A+rules (fair baseline)** | **23.1 ± 2.0** | 0.67 | 1.00 | 0.058 | 0.171 | 21.1% | 7.2% | 0.5 | |
+| B Phase 1 founder defaults | 10.3 ± 0.6 | 0.44 | 1.44 | 0.040 | 0.121 | 10.0% | 8.7% | 0.3 | |
+| *(a) price* I1 B, no price | 14.4 ± 1.7 | 0.56 | 1.27 | 0.043 | 0.133 | 13.9% | 7.8% | 0.5 | |
+| I2 B, half price | 15.0 ± 0.8 | 0.53 | 1.31 | 0.049 | 0.139 | 14.4% | 8.0% | 0.3 | |
+| *(b) partner* I3 I1 + partner probes on any remaining cap | 17.0 ± 1.8 | 0.57 | 1.26 | 0.050 | 0.162 | 17.5% | 8.2% | 0.4 | |
+| I4 I2 + partner on any cap | 16.9 ± 1.2 | 0.53 | 1.30 | 0.054 | 0.157 | 15.7% | 7.9% | 0.3 | |
+| *(c) cadence* I5 I3, twice weekly | 17.3 ± 2.1 | 0.62 | 1.20 | 0.046 | 0.148 | 16.9% | 7.7% | 0.7 | |
+| I6 I3, rolling | 17.9 ± 1.6 | 0.65 | 1.15 | 0.047 | 0.152 | 17.2% | 7.9% | 0.5 | time to value 8.2 days |
+| I7 I3, immediate (batched) | 17.4 ± 1.6 | 0.67 | 1.14 | 0.044 | 0.142 | 17.0% | 8.1% | 0.7 | |
+| *(d) acks* **I8 I6, acknowledgements folded** | **21.3 ± 1.5** | 0.70 | 1.14 | 0.052 | 0.159 | 20.8% | 8.4% | 1.4 | best without the fixes |
+| I9 I6, acknowledgements exempt from the streak | 22.0 ± 1.7 | 0.68 | 1.14 | 0.055 | 0.162 | 20.9% | 7.7% | 1.1 | **96 interruptions with >= 2 outstanding on Blooio's count**: breaks the reservation |
+| *(e) learned* I10 I8, learned cadence (D11) | 19.1 ± 1.3 | 0.68 | 1.15 | 0.048 | 0.141 | 18.6% | 8.0% | 1.2 | |
+| I11 I8, engine supply unchanged | 20.6 ± 1.6 | 0.63 | 1.07 | 0.055 | 0.162 | 20.1% | 7.6% | 0.6 | |
+| J1 R + acknowledgements folded | 21.0 ± 1.8 | 0.69 | 1.00 | 0.052 | 0.162 | 20.8% | 7.7% | 1.3 | |
+| J2 R + acknowledgements exempt | 23.9 ± 1.1 | 0.70 | 1.00 | 0.058 | 0.175 | 22.0% | 8.1% | 1.3 | **109 with >= 2 outstanding on Blooio's count** |
+| J4 I8 + unpicked requeued | 18.5 ± 2.0 | 0.69 | 1.16 | 0.045 | 0.149 | 19.9% | 7.8% | 2.0 | |
+| J5 immediate menus + folded + requeued | 16.5 ± 1.2 | 0.71 | 1.16 | 0.040 | 0.136 | 17.8% | 8.1% | 1.6 | |
+| **Fix 1 only (ask-primed probes)** | | | | | | | | | |
+| C Phase 1 with probes (no fix) | 4.3 ± 0.9 | 0.42 | 1.48 | 0.017 | 0.057 | 5.1% | 8.7% | 0.1 | |
+| P-C C, priming fix | 8.3 ± 1.1 | 0.42 | 1.46 | 0.033 | 0.099 | 9.7% | 8.7% | 0.6 | |
+| P-Rp A+rules with probes, priming fix | 14.5 ± 1.4 | 0.62 | 1.00 | 0.040 | 0.116 | 14.5% | 8.4% | 1.0 | |
+| P-J1p J1 with probes, priming fix | 15.5 ± 0.9 | 0.66 | 1.00 | 0.040 | 0.118 | 15.0% | 8.2% | 1.2 | |
+| P-I8p I8 with probes, priming fix | 12.5 ± 1.2 | 0.62 | 1.12 | 0.034 | 0.113 | 14.0% | 7.8% | 1.0 | |
+| **Both fixes, events only alongside a people item** | | | | | | | | | event value events /seed in brackets |
+| G-B B | 11.4 ± 1.4 | 0.47 | 1.96 | 0.041 | 0.284 | 22.0% | 8.3% | 0.5 | (46) |
+| G-I8 I8 | 18.3 ± 0.7 | 0.69 | 1.70 | 0.045 | 0.304 | 29.7% | 7.8% | 1.0 | (66) |
+| **G-J4 I8 + unpicked requeued** | **21.1 ± 1.8** | 0.69 | 1.73 | 0.052 | **0.325** | **29.8%** | 7.3% | 1.0 | (69) best with the fixes |
+| G-I8p I8 with probes | 12.4 ± 1.1 | 0.63 | 1.66 | 0.033 | 0.271 | 25.1% | 7.6% | 0.9 | (59) |
+| G-J4w G-J4, weekly Thursday digest (D2) | 16.8 ± 1.1 | 0.57 | 1.74 | 0.049 | 0.287 | 25.8% | 7.9% | 1.1 | (45); time to value 12.6 vs 9.8 days |
+| G-J4λ G-J4 with the doc's shadow price | 17.3 ± 0.8 | 0.59 | 2.07 | 0.050 | 0.376 | 30.5% | 8.0% | 1.7 | (78) |
+| G-J4b G-J4, partner probes on break-ins only (D4) | 18.3 ± 1.6 | 0.69 | 1.73 | 0.045 | 0.307 | 29.4% | 7.2% | 1.1 | (70) |
+| **Both fixes, events allowed alone** | | | | | | | | | |
+| F-R A+rules + event-only messages | 7.8 ± 1.2 | 0.88 | 1.00 | 0.015 | 0.238 | 24.3% | **36.8%** | **29.3** | (99) |
+| F-B B | 10.3 ± 1.3 | 0.60 | 1.79 | 0.029 | 0.343 | 30.2% | 25.3% | 4.5 | (92) |
+| F-I8 I8 | 13.0 ± 1.2 | 1.06 | 1.43 | 0.021 | 0.318 | 35.9% | 34.5% | 39.2 | (160) |
+| F-J4 J4 | 9.6 ± 1.0 | 1.06 | 1.46 | 0.015 | 0.319 | 34.3% | 33.3% | 36.8 | (167) |
+
+Precision of delivered items is 38-40% for R, I8, J1 and G-J4 (A: 39.7%); the share of adults with nothing delivered is 16% for R and G-J4 (A: 11%). The full tables (every variant, every column, including precision, Gini and per-seed values) are printed by `bun packages/engine/experiments/attention.ts --merge <json files>`; the JSON for this run is reproducible with `--json`. The 1-3 "interruptions with >= 2 outstanding" in R, I1, F-R and F-I8 are the record-ordering artefact noted in iteration 1 (a reply and a send with the same timestamp); the 1-3 `duplicate_send` are the stub's repeated acknowledgement.
+
+## What the search says
+
+1. **The rules are not what costs value; the Phase 1 send rule is.** R keeps 23.1 of A's 25.5 with every hard rule. Phase 1 with the founder defaults keeps 10.3. The difference is the design's own choices, which the search undoes one by one: the shadow price (+4.1, B → I1), partner probes waiting for a break-in (+2.6, I1 → I3), weekly cadence (+0.9, I3 → I6, inside noise; but +4.3 on the final combination, G-J4w → G-J4), and acknowledgements on the streak (+3.4, I6 → I8).
+2. **Acknowledgements matter more than the doc expected.** Each "Thanks, noted." is an outbound message on Blooio's per-conversation streak, so after one, a single unanswered message pauses the member until they write in. Folding them (not sending a content-free message on its own) is worth about 3 meetings per seed and keeps every rule. Exempting them from the Network's counter is worth as much but sends 96-109 interruptions per run that Blooio would count with two outbound messages outstanding: it breaks the reservation the design relies on. **Fold, don't exempt.**
+3. **Learned cadence (D11) does what D11 says: it only makes the Network quieter, and quieter costs meetings** (I10 19.1 vs I8 21.3, inside noise) without lowering unanswered rate or auto-pauses in this simulator (whose personas do not get annoyed below 3 + 4 x capacity texts a week, so nothing STOPs in any arm). It needs a real annoyance signal to pay off.
+4. **Menus pay only when there is something cheap to put next to a people item.** With only people items, every menu variant is at or below one-item-per-message (I7 17.4, J5 16.5 vs R 23.1): a member picks at most one, and requeueing the rest does not recover it. With outside-world items, the menu carries events at almost no attention cost (glance effort) and value per interruption nearly doubles (G-J4 0.325 vs R 0.171).
+5. **Event-only messages are harmful under the two-unanswered rule.** Members rarely reply to "here's an event", so a message carrying only events counts as an unanswered interruption: unanswered rate rises to 25-37% and auto-pauses to 4-39 per 100 member-months, which then blocks people items (F-R 7.8, F-I8 13.0). **Events should ride along with a people item (or a member's pull), never alone**, or the reply rule needs a "no reply expected" class of message, which the doc does not have.
+6. **The doc's price is a dial, not a bug.** On the final combination it trades 3.8 meetings per seed (17.3 vs 21.1) for 15% fewer interruptions (0.59 vs 0.69) and higher value per interruption (0.376 vs 0.325) with the same met + worthwhile per interruption (0.050 vs 0.052). With the simulator's personas never STOPping, the simulator cannot show what those saved interruptions are worth; it can only show their cost in meetings.
+7. **Consent-first probes cost meetings even with ask priming** (about -6 to -9 per seed). Three answers instead of two, and the reveal arrives a step later. If D5 stays, it is a cost the founder is choosing for privacy, not one this simulator can make back.
+
+## Recommended defaults (for the founder)
+
+Every recommendation below keeps the hard rules (cap in interruptions, <= 1 outstanding before a new interruption, Blooio limit, quiet hours, revalidation, leak gate), which cost little (R vs A: -2.4, noise) and remove 63 over-cap sends and 21 Blooio breaches per 8 seeds.
+
+| Decision | Founder default | Recommendation | Evidence (8 seeds, both fixes unless stated) |
+|---|---|---|---|
+| **D2** digest cadence | Weekly, Thursday 18:00 local | **Change: a rolling daily slot** (18:00 local, sent only when the best held item clears the bar and the member has cap; whatever else is ready is batched in). Members can still ask for a weekly digest. | G-J4 rolling 21.1 vs G-J4w weekly 16.8 met + worthwhile (+4.3, about 2 SE); value events per interruption 0.325 vs 0.287; V14 29.8% vs 25.8%; time to value 9.8 vs 12.6 days; unanswered and auto-pauses equal (7.3% / 1.0 vs 7.9% / 1.1). Interruptions rise from 0.57 to 0.69 per member-week, still well under the cap of 2 |
+| **D4** break-ins | Expiring high-value items only: Normal 1/7d, Open 2/7d, Quiet 0 | **Change for partner probes only**: a partner probe (the first member already said yes) may use any remaining cap, within the state cap; keep D4 for everything else | G-J4 21.1 vs G-J4b 18.3 (+2.8); no-fixes I3 17.0 vs I1 14.4 (+2.6); unanswered 7.3% vs 7.2% |
+| **D1 send rule** (1.3) | Cap + shadow price λ (0.15 / 0.25 / 0.50) + θ_bar | **Keep the cap and θ_bar; set λ_state to 0 at launch** and treat it as the dial to turn up once a real annoyance signal exists | G-J4 21.1 vs G-J4λ 17.3 (+3.8) at 0.69 vs 0.59 interruptions per member-week; same met + worthwhile per interruption (0.052 vs 0.050). D1's unit (interruptions) and caps stay |
+| **D1 items per message** | Up to 3 | **Keep, with outside-world items only as companions of a people item (never alone)** | G-J4 (companions) 21.1, unanswered 7.3% vs F-J4 (alone) 9.6, unanswered 33.3%, auto-pause 36.8 per 100 member-months |
+| Acknowledgements (1.9, not a D-decision) | Counted on the streak | **Fold them into the next message; do not send content-free acknowledgements alone; do not exempt them** | I8 21.3 vs I6 17.9 (+3.4, no fixes); exempt (I9, J2) breaks the Blooio reservation 96-109 times |
+| **D6** re-engagement | Once, >= 30 days, high-value item | **Keep.** It never fires in a 30-day run (0 re-engagements in every arm), so the simulator has no evidence either way; unit-tested only | - |
+| **D11** learned cadence | Never increases frequency | **Keep the rule; do not turn learned cadence on yet** | I10 19.1 vs I8 21.3 (inside noise), no annoyance benefit measurable here |
+| **D5** probes | Reveal only after both say yes | **Founder call: it costs 6-9 meetings per seed** even with the priming fix | P-J1p 15.5 vs J1 21.0; G-I8p 12.4 vs G-I8 18.3 |
+| D3, D9, D10, D13 | | Keep | D9 now exercised in the simulator (minors get events only, within 1/7d and school-night quiet hours) |
+
+## Integration note, additions for the network / dispatcher owner
+
+On top of the iteration-1 note:
+
+1. **Ship the hard rules on today's dispatch now** (variant R): count the cap in interruptions at send time over rolling windows, require `canInterrupt` (<= 1 outbound outstanding) for every proactive message and `canSendLogistics` (<= 2) for logistics, revalidate before every send, gate every member-facing text. This is a small change to the existing send path and costs no measurable value.
+2. **Do not send content-free acknowledgements as separate messages.** Fold "Thanks, noted." into the next real message, or drop it. Keep them on the streak counter (Blooio counts them).
+3. **Outside-world items never travel alone** unless the member pulled them ("anything this weekend?"). `revalidateHold` now lets members aged 13-17 keep outside-world items.
+4. If the founder adopts the recommendations: rolling daily slot (`CadencePrefs.digestDays = [0..6]`), `lambda` 0 for open / normal / receiving / quiet, partner probes allowed on any remaining cap, items shown beside a picked one returned to the hold queue.
+
+**For the simulator owner:** both harness fixes should move into `packages/sim`: (1) `oracle.probe` with the same ask priming as `evaluatePrimed`; (2) outside-world suggestions with an acted-on model, and persona replies to them (a tapback or "thanks" would count as an answer). Without (2), any design that sends events alone is punished by the two-unanswered rule in a way real members may not cause.
+
+## Files (iteration 2)
+
+- `packages/engine/src/attention.ts`: `revalidateHold` lets items that involve no other member pass `underage` (D9).
+- `packages/engine/test/attention.test.ts` (+ the D9 revalidation case), `packages/engine/test/attention-sim.test.ts` (+ the iteration-2 configuration with minors).
+- `packages/engine/experiments/attentionNetwork.ts` (the options above), `packages/engine/experiments/attention.ts` (variants R, I1-I11, J1-J5, P-*, G-*, F-*; `primeProbes`, `eventActor`; `--merge`, `--no-baseline`).
+- Not touched: `opportunity.ts`, `filters.ts`, `judge*.ts`, `world.ts`, `packages/network`, `packages/sim`, `packages/observatory`, `packages/evals`.

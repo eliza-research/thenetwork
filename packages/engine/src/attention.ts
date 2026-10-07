@@ -555,7 +555,10 @@ export function revalidateHold(queue: readonly HeldItem[], now: number, eligible
     else if (it.reviewState === "rejected") reason = "review_rejected";
     if (!reason && eligible) {
       const why = eligible(it.memberId, it.others);
-      if (why) reason = `ineligible:${why}`;
+      // The send-time check is about meeting people: "underage" does not apply to an item that involves
+      // no other member (D9: members 13-17 do get events, places and solo plans; itemGate enforces that).
+      const solo = it.others.length === 0 && !it.involvesMember;
+      if (why && !(solo && why === "underage")) reason = `ineligible:${why}`;
       else for (const o of it.others) {
         const w = eligible(o, [it.memberId, ...it.others.filter(x => x !== o)]);
         if (w) { reason = `partner_ineligible:${w}`; break; }
