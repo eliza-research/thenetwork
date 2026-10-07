@@ -217,6 +217,7 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
       category: c.category, roles: { ...c.roles }, expiresAt: w.now + (sameDay ? cfg.sameDayInviteTtlMs : cfg.inviteTtlMs),
       anchor: c.anchor ? { ...c.anchor } : undefined, via: c.via, safetyClass: c.safetyClass, threshold,
       channels: [...c.channels].sort(), judged: !!verdict, selectorRank: sel.rank, selectionProbability: round(sel.probability),
+      acceptance: Object.fromEntries(c.participants.map(id => [id, round(w.get(id)?.acceptance ?? cfg.acceptance.prior)])),
     };
   });
   for (const p of proposals) runLog.proposalsByGenerator[p.generator] = (runLog.proposalsByGenerator[p.generator] ?? 0) + 1;

@@ -3,6 +3,7 @@
 import type { Category, City, ParticipationState } from "@thenetwork/core";
 import { DAY, HOUR } from "@thenetwork/core";
 import { sha256, stableStringify } from "./rng.ts";
+import type { Effort, ItemKind } from "./types.ts";
 
 export const ENGINE_VERSION = "engine-v1.2.0";
 
@@ -244,6 +245,116 @@ export const PRESETS: Record<"v1_1" | "comboD", EngineConfigInput> = {
     thresholds: { useCategoryOverride: true }, budgets: { normal: { limit: 3, periodDays: 7 } }, romance: { requireStatedPrefs: true },
   },
 };
+
+// ------------------------------------------------------------------------------------------------
+// Attention budget (docs/design/2026-10-07-experience-design.md section 1, Phase 1; founder
+// defaults D1-D18). A send-time layer used by attention.ts; it is NOT part of EngineConfig, so
+// runEngine's behaviour and config hash are unchanged. It has its own hash (attentionConfigHash).
+// Weekdays are JavaScript getDay() numbers (0 = Sunday, 4 = Thursday), as in the design doc.
+
+export interface AttentionConfig {
+  version: string;
+  /** D1: interruptions (messages the Network starts), not opportunities, per rolling period. */
+  caps: Record<ParticipationState, { limit: number; periodDays: number }>;
+  /** D4: single-item break-ins outside the digest, within the cap. */
+  breakIns: Record<ParticipationState, { limit: number; periodDays: number }>;
+  /** Shadow price base lambda_state (1.3). Paused = Infinity. */
+  lambda: Record<ParticipationState, number>;
+  /** Items per message (1.7). */
+  maxItems: Record<ParticipationState, number>;
+  /** At most this many items per message that involve another member (1.3). */
+  maxMemberItems: number;
+  /** theta_bar (1.5): the best item's calibrated enjoyment must clear this, per state. */
+  qualityBar: Record<ParticipationState, number>;
+  /** Quiet members get items with E >= this only (1.7); only_when_great members too (1.5). */
+  quietMinEnjoy: number; onlyWhenGreatMinEnjoy: number;
+  /** D2: digest slots per state (JS weekdays), local hour, weekly or monthly (first matching weekday). */
+  digest: { days: Record<ParticipationState, number[]>; period: Record<ParticipationState, "week" | "month">; hour: number; spreadMinutes: number };
+  /** D4: a break-in needs V >= valueRatio x the member's median digest-item V (defaultMedianValue before any digest). */
+  breakIn: { valueRatio: number; defaultMedianValue: number };
+  /** u_i(t): items that expire before the next digest slot. */
+  urgencyBoost: number;
+  /** w_kind (1.3). profiling_question / reconfirm use min(weight, item.evi). */
+  kindWeight: Record<ItemKind, number>;
+  /** e per effort class (1.3 table). */
+  effortCost: Record<Effort, number>;
+  /** D13: V uses acceptance^exponent (0.5 = square root). `acceptancePrior` when no estimate exists. */
+  acceptanceExponent: number; acceptancePrior: number;
+  /** Hold queue (1.6). replaceMargin: hysteresis for replacing a held item with the same key (6.2). */
+  hold: { capacity: number; replaceMargin: number; dismissDays: number; revalidateHours: number };
+  /** Hold expiry (1.6). partnerProbeDays: a partner probe after the first member said yes. */
+  expiry: { introProbeDays: number; partnerProbeDays: number; groupProbeDays: number; profilingDays: number; placeDays: number; eventLeadHours: number };
+  /** r_m (1.3): learned annoyance multiplier. */
+  annoyance: { min: number; max: number; less: number; unanswered: number; positive: number; halfLifeDays: number; fastPickHours: number; unansweredHours: number };
+  /** D9: members aged 13-17. */
+  minors: { cap: { limit: number; periodDays: number }; maxItems: number; breakIns: number; quietHours: [number, number]; schoolNights: number[]; allowedKinds: ItemKind[] };
+  /** First 14 days (1.7). */
+  newcomer: { days: number; lambda: number; breakIns: number };
+  /** 1.9 / D6: Blooio coupling. */
+  blooio: { interruptMaxOutstanding: number; logisticsMaxOutstanding: number; reengageAfterDays: number; reengagePercentile: number };
+  /** D10: romance items share a digest only if the member allows it. */
+  romanceInDigest: boolean;
+  /** V14 (3.3). */
+  v14: { windowDays: number; minTenureDays: number };
+}
+
+const perState = <T>(open: T, normal: T, quiet: T, receiving: T, paused: T): Record<ParticipationState, T> => ({ open, normal, quiet, receiving, paused });
+
+export const DEFAULT_ATTENTION: AttentionConfig = {
+  version: "attention-v1.0.0",
+  caps: perState({ limit: 4, periodDays: 7 }, { limit: 2, periodDays: 7 }, { limit: 1, periodDays: 30 }, { limit: 2, periodDays: 7 }, { limit: 0, periodDays: 7 }),
+  breakIns: perState({ limit: 2, periodDays: 7 }, { limit: 1, periodDays: 7 }, { limit: 0, periodDays: 30 }, { limit: 1, periodDays: 7 }, { limit: 0, periodDays: 7 }),
+  lambda: perState(0.15, 0.25, 0.5, 0.25, Infinity),
+  maxItems: perState(3, 3, 2, 2, 0),
+  maxMemberItems: 2,
+  qualityBar: perState(0.22, 0.3, 0.42, 0.3, Infinity),
+  quietMinEnjoy: 0.6, onlyWhenGreatMinEnjoy: 0.6,
+  digest: { days: perState([2, 4], [4], [4], [4], []), period: perState("week", "week", "month", "week", "week"), hour: 18, spreadMinutes: 120 },
+  breakIn: { valueRatio: 1.5, defaultMedianValue: 0.25 },
+  urgencyBoost: 1.3,
+  kindWeight: {
+    intro_probe: 1, plan_probe: 1, group_probe: 1, event_suggestion: 0.7, place_suggestion: 0.5, help_ask: 0.6,
+    advice_route: 0.4, profiling_question: 0.5, reconfirm: 0.5, worthwhile_check: 0.3, nothing_yet: 0.2,
+  },
+  effortCost: { glance: 0.1, reply: 0.2, meet_short: 0.4, meet_long: 0.6, contribute: 0.8 },
+  acceptanceExponent: 0.5, acceptancePrior: 0.45,
+  hold: { capacity: 10, replaceMargin: 0.1, dismissDays: 30, revalidateHours: 24 },
+  expiry: { introProbeDays: 14, partnerProbeDays: 2, groupProbeDays: 14, profilingDays: 30, placeDays: 7, eventLeadHours: 24 },
+  annoyance: { min: 0.5, max: 3, less: 1.5, unanswered: 1.25, positive: 0.8, halfLifeDays: 30, fastPickHours: 2, unansweredHours: 72 },
+  minors: {
+    cap: { limit: 1, periodDays: 7 }, maxItems: 2, breakIns: 0, quietHours: [20, 8],
+    // Evenings before a school day: Sunday-Thursday (the morning after is Monday-Friday).
+    schoolNights: [0, 1, 2, 3, 4],
+    allowedKinds: ["event_suggestion", "place_suggestion", "plan_probe"],
+  },
+  newcomer: { days: 14, lambda: 0.2, breakIns: 1 },
+  blooio: { interruptMaxOutstanding: 1, logisticsMaxOutstanding: 2, reengageAfterDays: 30, reengagePercentile: 0.75 },
+  romanceInDigest: false,
+  v14: { windowDays: 14, minTenureDays: 14 },
+};
+
+export type AttentionConfigInput = DeepPartial<AttentionConfig>;
+export function resolveAttention(input: AttentionConfigInput = {}): AttentionConfig {
+  const cfg = merge(DEFAULT_ATTENTION, input);
+  for (const s of Object.keys(cfg.caps) as ParticipationState[]) {
+    if (cfg.breakIns[s].limit > cfg.caps[s].limit) throw new Error(`attention.breakIns.${s} must be within the cap (D4)`);
+    if (cfg.maxItems[s] > 3) throw new Error("attention.maxItems is at most 3 (D1)");
+  }
+  return cfg;
+}
+/**
+ * D1: with the attention layer on, the interruption cap lives at send time (attention.ts), so the
+ * engine's per-member proposal budget becomes a SUPPLY limit: cap x items per message (Normal
+ * 2 x 3 = 6 per 7 days). Pass the result as engine config overrides; DEFAULT_CONFIG is unchanged.
+ */
+export function engineSupplyBudgets(att: AttentionConfig = DEFAULT_ATTENTION): EngineConfigInput {
+  const out: Partial<Record<ParticipationState, { limit: number; periodDays: number }>> = {};
+  for (const st of Object.keys(att.caps) as ParticipationState[]) out[st] = { limit: att.caps[st].limit * Math.max(1, att.maxItems[st]), periodDays: att.caps[st].periodDays };
+  return { budgets: out };
+}
+export function attentionConfigHash(cfg: AttentionConfig): string {
+  return sha256(stableStringify(JSON.parse(JSON.stringify(cfg, (_k, v) => (v === Infinity ? "Infinity" : v))))).slice(0, 16);
+}
 
 export type DeepPartial<T> = { [K in keyof T]?: T[K] extends (infer U)[] ? U[] : T[K] extends object ? DeepPartial<T[K]> : T[K] };
 export type EngineConfigInput = DeepPartial<EngineConfig>;

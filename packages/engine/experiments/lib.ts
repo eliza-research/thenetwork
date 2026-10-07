@@ -28,6 +28,7 @@ import { Oracle, PAIR_CHEMISTRY_SD } from "../../sim/src/oracle.ts";
 import type { Persona } from "../../sim/src/persona.ts";
 import { Rng as SimRng, hash32 } from "../../sim/src/rng.ts";
 import { buildSnapshot, type SnapshotFeatures } from "../../sim/src/snapshot.ts";
+import type { NetworkUnderTest } from "../../sim/src/network.ts";
 import { StubNetwork } from "../../sim/src/stubNetwork.ts";
 import { World as SimWorld, DEFAULT_START } from "../../sim/src/world.ts";
 import type { RunRecord } from "../../judge/src/index.ts";
@@ -120,6 +121,7 @@ export function tracedEngine(input: EngineInput, cfgIn: EngineConfigInput = {}, 
       category: c.category, roles: { ...c.roles }, expiresAt: w.now + (sameDay ? cfg.sameDayInviteTtlMs : cfg.inviteTtlMs),
       anchor: c.anchor ? { ...c.anchor } : undefined, via: c.via, safetyClass: c.safetyClass, threshold,
       channels: [...c.channels].sort(), judged: !!verdict, selectorRank: sel.rank, selectionProbability: round(sel.probability),
+      acceptance: Object.fromEntries(c.participants.map(id => [id, round(w.get(id)?.acceptance ?? cfg.acceptance.prior)])),
     };
   });
   const exposureDebt = updateExposureDebt(w, priorDebt, scored, selected);
@@ -154,6 +156,10 @@ export interface SimOptions {
    * simulated members never answer). Undefined = the world's own snapshot, unchanged.
    */
   snapshot?: { features?: Partial<SnapshotFeatures>; records?: boolean; asks?: boolean };
+  /** Network under test (default: the sim's StubNetwork with engine-fed proposals, as before). */
+  network?: (seed: number) => NetworkUnderTest;
+  /** Called once the sim world exists (before it runs): harness access to the oracle. */
+  onWorld?: (world: SimWorld) => void;
 }
 
 export interface SimHookCtx { world: SimWorld; personas: Persona[]; city: string; now: number; state: Record<string, any> }
@@ -192,7 +198,9 @@ export async function runSim(o: SimOptions): Promise<SimResult> {
       return opts?.city ? res.proposals.filter(p => p.city === opts.city) : res.proposals;
     },
   };
-  world = new SimWorld({ seed: o.seed, personas, days, mode: "discrete", network: new StubNetwork({ seed: o.seed, randomIntros: false }), engine: engine as any, writeLog: false });
+  const network = o.network ? o.network(o.seed) : new StubNetwork({ seed: o.seed, randomIntros: false });
+  world = new SimWorld({ seed: o.seed, personas, days, mode: "discrete", network, engine: engine as any, writeLog: false });
+  o.onWorld?.(world);
   const res = await world.run();
   return { seed: o.seed, metrics: res.metrics, records: res.records, personas, runs, oracle: world.oracle, start: DEFAULT_START, end: DEFAULT_START + days * DAY };
 }

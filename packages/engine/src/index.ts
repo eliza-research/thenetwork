@@ -12,3 +12,5 @@ export * as opportunity from "./opportunity.ts";
 export * as outreach from "./outreach.ts";
 export { MatcherScheduler, MemoryProposalStore, type ProposalStore } from "./tick.ts";
 export { Rng } from "./rng.ts";
+export * as attention from "./attention.ts";
+export { DEFAULT_ATTENTION, resolveAttention, attentionConfigHash, type AttentionConfig, type AttentionConfigInput } from "./config.ts";

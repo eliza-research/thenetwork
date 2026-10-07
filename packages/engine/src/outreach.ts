@@ -4,6 +4,7 @@
 // two consecutive unanswered proactive messages move the member to "only when I ask".
 import type { Category, City, Clock, Member, MemberId, ParticipationState } from "@thenetwork/core";
 import { DAY, HOUR, MINUTE } from "@thenetwork/core";
+import { DEFAULT_ATTENTION } from "./config.ts";
 
 export type MessageKind =
   | "invitation" | "profiling_question" | "recommendation" | "worthwhile_check"
@@ -35,11 +36,17 @@ export interface OutboundMessage {
 }
 
 export interface Budget { limit: number; period: "week" | "month" }
+/**
+ * Interruption caps (D1). One number per state, shared with the attention budget (config.ts
+ * DEFAULT_ATTENTION.caps, audit P2-13). This controller counts them per calendar week / month in
+ * the member's local time; attention.ts counts the same caps over rolling 7 / 30 days, which is the
+ * founder's definition (D1: "Normal 2/7d") and the one the Network's send path should use.
+ */
 export const BUDGETS: Record<ParticipationState, Budget> = {
-  open: { limit: 4, period: "week" },
-  normal: { limit: 2, period: "week" },
-  quiet: { limit: 1, period: "month" },
-  receiving: { limit: 2, period: "week" }, // support-only (see decide)
+  open: { limit: DEFAULT_ATTENTION.caps.open.limit, period: "week" },
+  normal: { limit: DEFAULT_ATTENTION.caps.normal.limit, period: "week" },
+  quiet: { limit: DEFAULT_ATTENTION.caps.quiet.limit, period: "month" },
+  receiving: { limit: DEFAULT_ATTENTION.caps.receiving.limit, period: "week" }, // support-only (see decide)
   paused: { limit: 0, period: "week" },
 };
 export const UNANSWERED_WINDOW = 72 * HOUR;
@@ -193,7 +200,15 @@ export class OutreachController {
     let sendAt = now;
     let reason = "ok";
     if (this.budgetUsed(member, mine, now) >= b.limit) {
+      // Audit P2-12: messages already deferred into a later window (history entries with a future
+      // `at`) use that window's budget, so several over-budget messages never share one instant.
       sendAt = nextWindowStart(now, tz, b.period);
+      for (let i = 0; i < 12; i++) {
+        const end = nextWindowStart(sendAt, tz, b.period);
+        const queued = new Set(mine.filter(m => isProactive(m.kind) && m.at >= sendAt && m.at < end).map(m => m.id)).size;
+        if (queued < b.limit) break;
+        sendAt = end;
+      }
       reason = "budget_exhausted";
     }
     if (inQuietHours(sendAt, tz, member.prefs.quietHours)) {

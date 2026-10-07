@@ -1,0 +1,167 @@
+# Attention budget, digests, hold queue and consent-first probes: Phase 1, measured (2026-10-07)
+
+Spec: [docs/design/2026-10-07-experience-design.md](../design/2026-10-07-experience-design.md), section 1 and Phase 1 of section 8, with the founder defaults D1-D18 ("the doc"). Builds on [2026-10-07-engine-v1.2.md](2026-10-07-engine-v1.2.md) ("v1.2"). **No LLM calls, $0.** Tests run with keys unset and without `LIVE_TESTS`.
+
+## Result in one paragraph
+
+Everything in Phase 1 is built as specified, unit-tested, and holds every invariant in the simulator: 0 minor contacts, 0 canary leaks, 0 quiet-hour sends, **0 over-cap sends** (v1.2 today: 63 over 8 seeds) and **0 interruptions sent past the Blooio reservation** (v1.2: 365 interruptions sent with two or more outbound messages unanswered, 21 outbound messages past Blooio's third unanswered). Auto-pauses fall from 3.6 to 0.3 per 100 member-months. **But with the founder defaults it delivers far less value in a 30-day simulation:** met + worthwhile 10.3 per seed against 25.5 (-15.3, about 11 standard errors), at 0.44 interruptions per member-week against 0.70, and value per interruption falls too (0.040 vs 0.062 met + worthwhile per interruption). The doc's Phase 1 success bar (met + worthwhile >= 19.6 at <= 0.6 interruptions per member-week) is **not met**; the best variant that keeps every invariant (D2: partner probes may use any remaining cap, no shadow price) reaches 16.1 at 0.58. Consent-first probes (C) cost a further 6 per seed in this simulator, mostly from a simulator asymmetry (approximation 5). What costs value, in order: the shadow price refusing single-item messages (+3.3 when removed, B2), the partner probe waiting for the partner's digest or a scarce break-in (+2.1 when it may use any remaining cap, D1), and the weekly cadence itself. Menus add little here (+0.7, B vs B1, inside noise) because the engine produces only member items, so a digest holds at most 2. **Recommendation:** adopt the send-time invariants now (cap counted in interruptions at send time, the Blooio streak, hold queue revalidation, the probe leak gate); do not replace today's dispatch with weekly digests until the founder revisits λ (D1 send rule) and partner-probe timing (D4), and the simulator gets outside-world items and a probe model with ask priming.
+
+## What was built
+
+| Design (doc section, decision) | Code |
+|---|---|
+| 1.1 unit of account: interruptions, not opportunities (D1) | `AttentionLedgerEntry.countsAgainstCap`; `attention.ts interruptionsUsed` counts unique message ids in a rolling 7 / 30-day window |
+| 1.2 data model | `types.ts`: `ItemKind`, `Effort`, `AttentionItem`, `HeldItem`, `CadencePrefs`, `Responsiveness`, `AttentionLedgerEntry` (additive). `attention.ts`: `MemberAttention`, `Conversation` |
+| 1.3 item value V = Ê x sqrt(P̂acc) x w_kind x w_m x u (D13) | `itemValue`, `kindWeight` (profiling capped by EVI), `itemAcceptance` (cold pair: product of both members' P̂acc, i.e. sqrt(P(mutual accept)); partner probe: the partner's own), `knotCalibrator` / `DEFAULT_ENJOY_KNOTS` (Ê, see below). `EngineProposal.acceptance` (new, additive, `engine.ts`) carries P̂acc per participant from `world.ts acceptanceOf` |
+| 1.3 cost A(M), shadow price λ, annoyance r | `attentionCost`, `shadowPrice` (newcomers 0.20, minors 0.25), `annoyance` (x1.25 unanswered, x1.5 "less"/STOP, x0.8 "more", 30-day half-life), `messageUtility` |
+| 1.3 send rule | `composeMessage`: gates (paused, two-unanswered, Blooio streak, quiet hours, cap, break-in limit), packing (best V first, <= 3 items, <= 2 member-involving, never two items about one person, an item joins only if V_i > λ e_i (1 - Ê_i)), θ_bar, U(M) > 0 |
+| 1.4 digest slots (D2), break-ins (D4) | `nextDigestSlot`, `lastDigestSlot`, `digestDue`, `digestJitter` (2-hour spread); `composeMessage(mode: "break_in")` (expires before the next slot, V >= 1.5 x median digest V); `breakInLimit` (Normal 1/7d, Open 2/7d, Quiet 0, minors 0, newcomers 1) |
+| 1.5 silence below the bar | `qualityBar` per state; nothing is sent below it (no filler) |
+| 1.6 hold queue | `addToHold` (10 per member, evict lowest V, partner probes last; same opportunity replaced only if V is higher by 0.10; "seen and passed" keys refused for 30 days), `revalidateHold` (expiry first, then the existing send-time check `filters.ts eligibilityFor` for the member and every other member, then runtime checks), `holdExpiry` (intro 14 d, events start - 24 h, partner probe 2 d) |
+| 1.7 per-state defaults | `config.ts DEFAULT_ATTENTION` (+ `resolveAttention`, `attentionConfigHash`). Separate from `EngineConfig`: `runEngine` output and config hash are unchanged |
+| 1.8 consent-first probes (D5) | `firstToProbe`, `itemsForProposal` / `partnerItem`, `ProbeFlow` (`startProbeFlow`, `toProbe`, `recordProbeAnswer`, `canReveal`, `revealFor`), `buildProbe` (activity, time, area, at most one shareable interest/skill/goal; never a name, employer-like fact, matchable or agent_private text; every candidate text passes `judgeCommon.ts checkMemberFacing` with `explain.ts privateVocabulary` of the other people, plus a name-token check; falls back to a generic activity, then returns null), `digestText` |
+| 1.9 Blooio coupling, re-engagement (D6) | `Conversation.outboundSinceInbound`, `canInterrupt` (<= 1), `canSendLogistics` (<= 2), `unansweredInterruptions`, `reengagement` (auto-paused only, >= 30 days silent, once per silence, item above the member's 75th percentile, `REENGAGE_SUFFIX` "Want me to keep sending these?") |
+| D9 members aged 13-17 | `capFor` (1/7d), `breakInLimit` (0), `maxItemsFor` (2), `itemGate` (events, places and solo plans only), `inMemberQuietHours` (20:00-08:00 on school nights, Sun-Thu evenings), `buildProbe` returns null |
+| D10 romance alone | `composeMessage` compares the best romance-only message with the best romance-free digest; `romanceInDigest` opt-in |
+| D11 learning never increases frequency | `applyLearnedCadence` (every frequency field is the quieter of explicit and learned), `annoyance` (learned positives only undo annoyance, floor 1), `capFor` clamps explicit overrides to the state cap |
+| D1 engine supply | `config.ts engineSupplyBudgets`: with the attention layer on, the engine's per-member proposal budget becomes cap x items per message (Normal 6/7d); the cap itself is enforced at send time |
+| 1.10 / 3.3 metrics | `attentionMetrics` (interruptions per member-week, unanswered rate, auto-pause per 100 member-months, STOP per 1,000 interruptions, items per interruption, value events per interruption, time to value, V14), `v14` |
+| Audit P2-12 / P2-13 (outreach.ts) | `BUDGETS` now read the attention caps (one set of numbers); an over-budget deferral counts messages already deferred into the target window |
+
+Tests: `test/attention.test.ts` (35 tests: cost function, cap math, packing, romance and minors rules, Blooio and two-unanswered gates, quiet hours and school nights, digest slots, hold capacity / hysteresis / dismissal / expiry / revalidation, item construction, probe order and reveal, probe leak gate including a random-world property test, D6, D11 including a 300-case property test, V14 and the ledger metrics), `test/attention-sim.test.ts` (end-to-end: a 14-day simulator run in both modes with 0 minor contacts, 0 canary leaks, 0 quiet-hour sends, 0 over-cap, every interruption sent with <= 1 outbound outstanding, logistics <= 2, <= 3 items per message, romance alone, no partner name in any probe), `test/outreach.test.ts` (P2-12, P2-13).
+
+## How it was measured
+
+`packages/engine/experiments/attention.ts` (harness) drives the simulator (150 personas, 30 days, seeds 1-8, engine-v1.2.0 defaults, v1.2 snapshot, the Network's records fed back) with `experiments/attentionNetwork.ts`, a subclass of the sim's `StubNetwork`:
+
+- **A** is today's behaviour: the sim's own `StubNetwork`, one item per interruption, each engine proposal dispatched the next morning, the partner asked as soon as the first member says yes. **A'** is the subclass in `v12` mode; it reproduces A exactly on every seed (the check that the harness network does not change the baseline).
+- **B** is the attention budget + digest + hold queue with the founder defaults: every engine proposal becomes an item in the first member's hold queue; weekly digest Thursday 18:00 local; break-ins under D4; the shadow price and quality bar; the Blooio streak (interruptions only with <= 1 outbound outstanding, logistics <= 2); the partner's item goes into the partner's hold queue after the first yes (2-day deadline: next digest if it lands in time, else a break-in, else it lapses). Items are named, as in A, so B isolates the attention layer.
+- **C** is B plus consent-first probes (full Phase 1): anonymous probe text from `buildProbe`, the partner probed only after the first yes, then a reveal message (logistics, not an interruption) that each side confirms.
+- **B1-B5, D1-D3, E1** change one thing each (see the table).
+
+What the Network reports to the engine (`AttentionNetwork.engineView`, the integration ask below): items never shown are unsent (not billed, `unsentProposalIds`); held pairs are reported as a pending interaction so the engine proposes the next-best partner instead of the same pair every night; shown items are billed like a sent invite; a shown item the member passed on is "cancelled" (no decline cooldown, D: "none is not a decline of any person"); probe "no" answers are declines; live probe flows are open opportunities. The engine runs with `engineSupplyBudgets()` in the attention arms (B5 shows the unchanged budget).
+
+**Approximations (harness only, documented here because they shape the numbers):**
+
+1. *Menus.* The persona agents cannot read a menu. When a digest carries several items, the harness asks the oracle, offline, which item the member would value most (highest oracle acceptance probability for that member) and attaches that item to the message; the persona agent then decides on it exactly as on a single invitation (accept, decline, or ignore). One pick per digest ("1 and 3" is not modelled), so menus are credited conservatively. B3 replaces the oracle pick with "take the top-V item" (no oracle): the gap between B and B3 is the value of the member's own choice.
+2. *Review.* The simulator has no reviewer (the stub has none either); member-involving items are approved on arrival.
+3. *Ê calibration.* Ê is an isotonic fit of persona "worth a text?" judgments on the engine score from v1.2 runs on seeds 101-104, disjoint from the evaluation seeds (`attention.ts --fit`; pooled base rate 58.7%, 1,650 labels; per-category knots where n >= 100). It is shipped as `DEFAULT_ENJOY_KNOTS` / `DEFAULT_ENJOY_BY_CATEGORY` and should be refit on production labels (5.3).
+4. *Only member items exist in the simulator.* The engine produces no outside-world items (events, places), no profiling questions and no plans, so every item involves another member and the "at most 2 member items" rule caps a digest at 2 items. The third slot the doc reserves for low-effort items is never exercised. Members aged 13-17 never get any item in the simulator (they get no proposals), so D9 is covered by unit tests only.
+5. *The sim's probe model.* A persona answers a probe (`oracle.probe`) with the plain acceptance model, but answers a named proposal with "ask priming" (`evaluatePrimed`: about 0.96 acceptance when the persona recently asked for this kind of thing and the match meets that want). So, in this simulator, a member who asked for something says yes to a named invitation far more often than to an anonymous probe for the same thing. That is a simulator asymmetry, not a property of probes, and it is the main reason C is below B (ask below).
+6. *Logistics copy.* The stub's own acknowledgements ("Thanks, noted.", "No problem at all...") are kept. Each is an outbound message on Blooio's per-conversation streak; E1 measures the variant that does not send them as separate messages.
+7. *Quiet hours.* The stub only texts 09:00-20:00 local; the attention arms use the union of that window and the member's quiet hours, so both arms are held to the same window.
+8. *V14 in a 30-day run.* Tenure >= 14 days means V14 is averaged over days 14-30 only, and members joined in days 0-7. It is reported because the doc asks for it; the 85% sim target assumes a steady-state network.
+9. *Interruptions in A* are every proactive message (invitations to either side). In B/C they are digests, break-ins and re-engagements; partner probes are interruptions for the partner in both arms.
+
+## Results (8 seeds, `bun packages/engine/experiments/attention.ts`)
+
+### Value and interruptions (mean over seeds; met + worthwhile ± standard error)
+
+| variant | met + worthwhile /seed | per seed | interruptions /member/wk | items /interruption | met+worthwhile /interruption | value events /interruption | V14 | time to value (median days) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| A v1.2 defaults (stub network: one item per interruption) | 25.5 ± 1.2 | 27 30 23 28 20 28 26 22 | 0.70 | 1.00 | 0.062 | 0.185 | 24.8% | 11.5 |
+| A' v1.2 via the harness network (must equal A) | 25.5 ± 1.2 (+0.0) | 27 30 23 28 20 28 26 22 | 0.70 | 1.00 | 0.062 | 0.185 | 24.8% | 11.5 |
+| B attention budget + digest + hold queue (founder defaults) | 10.3 ± 0.6 (-15.3) | 10 12 12 9 10 11 7 11 | 0.44 | 1.44 | 0.040 | 0.121 | 10.0% | 11.0 |
+| C B + consent-first probes (full Phase 1) | 4.3 ± 0.9 (-21.3) | 1 6 4 7 4 8 2 2 | 0.42 | 1.48 | 0.017 | 0.057 | 5.1% | 9.3 |
+| B1 B, one item per message (no menu) | 9.6 ± 1.5 (-15.9) | 5 15 6 6 16 7 12 10 | 0.44 | 1.00 | 0.037 | 0.116 | 10.8% | 12.2 |
+| B2 B, cap only (no price, no quality bar) | 13.6 ± 1.1 (-11.9) | 14 18 12 16 15 9 15 10 | 0.58 | 1.26 | 0.040 | 0.133 | 14.2% | 10.7 |
+| B3 B, member takes the top-V item (no oracle choice) | 9.9 ± 1.3 (-15.6) | 9 17 7 11 8 13 7 7 | 0.42 | 1.46 | 0.039 | 0.128 | 10.0% | 10.2 |
+| B4 B, partner probes wait up to 7 days (next digest) | 11.9 ± 1.7 (-13.6) | 3 18 8 16 10 12 16 12 | 0.41 | 1.39 | 0.049 | 0.152 | 12.7% | 13.8 |
+| B5 B, engine supply budget unchanged (2 proposals /7d) | 12.9 ± 1.4 (-12.6) | 10 14 11 21 10 12 9 16 | 0.40 | 1.37 | 0.055 | 0.153 | 11.5% | 12.4 |
+| D1 B, partner probes may use any remaining cap | 12.4 ± 1.0 (-13.1) | 15 16 8 14 12 13 9 12 | 0.45 | 1.44 | 0.047 | 0.143 | 12.9% | 9.7 |
+| D2 D1, cap only (no price, no quality bar) | 16.1 ± 1.5 (-9.4) | 15 23 10 17 16 12 20 16 | 0.58 | 1.25 | 0.047 | 0.145 | 16.0% | 9.7 |
+| D3 C, partner probes any remaining cap, cap only | 10.0 ± 0.9 (-15.5) | 8 12 7 10 6 13 12 12 | 0.55 | 1.23 | 0.031 | 0.081 | 7.8% | 9.5 |
+| E1 D1, no separate acknowledgement messages | 13.0 ± 1.0 (-12.5) | 13 18 11 12 9 12 16 13 | 0.46 | 1.42 | 0.048 | 0.143 | 12.4% | 10.7 |
+
+### Annoyance
+
+| variant | unanswered rate (72h) | auto-pause /100 member-months | STOP total (per 1,000 interruptions) | persona worthwhile |
+| --- | --- | --- | --- | --- |
+| A v1.2 defaults (stub network: one item per interruption) | 8.1% | 3.6 | 0 (0.0) | 59.2% |
+| A' v1.2 via the harness network (must equal A) | 8.1% | 3.6 | 0 (0.0) | 59.2% |
+| B attention budget + digest + hold queue (founder defaults) | 8.7% | 0.3 | 0 (0.0) | 60.2% |
+| C B + consent-first probes (full Phase 1) | 8.7% | 0.1 | 0 (0.0) | 40.5% |
+| B1 B, one item per message (no menu) | 8.8% | 0.3 | 0 (0.0) | 54.2% |
+| B2 B, cap only (no price, no quality bar) | 7.9% | 0.4 | 0 (0.0) | 57.3% |
+| B3 B, member takes the top-V item (no oracle choice) | 8.1% | 0.3 | 0 (0.0) | 57.3% |
+| B4 B, partner probes wait up to 7 days (next digest) | 9.2% | 0.5 | 0 (0.0) | 59.3% |
+| B5 B, engine supply budget unchanged (2 proposals /7d) | 8.5% | 0.3 | 0 (0.0) | 62.9% |
+| D1 B, partner probes may use any remaining cap | 8.1% | 0.2 | 0 (0.0) | 60.5% |
+| D2 D1, cap only (no price, no quality bar) | 8.6% | 0.6 | 0 (0.0) | 57.5% |
+| D3 C, partner probes any remaining cap, cap only | 8.1% | 0.5 | 0 (0.0) | 39.1% |
+| E1 D1, no separate acknowledgement messages | 8.4% | 0.9 | 0 (0.0) | 61.6% |
+
+### Match quality and spread (engine proposals / items actually delivered)
+
+| variant | engine proposals /seed | precision (all proposals) | proposals delivered /seed | precision (delivered) | no proposal: all / delivered | Gini: all / delivered |
+| --- | --- | --- | --- | --- | --- | --- |
+| A v1.2 defaults (stub network: one item per interruption) | 349 | 39.2% | 271 | 39.7% | 2.9% / 11.1% | 0.346 / 0.379 |
+| A' v1.2 via the harness network (must equal A) | 349 | 39.2% | 271 | 39.7% | 2.9% / 11.1% | 0.346 / 0.379 |
+| B attention budget + digest + hold queue (founder defaults) | 660 | 35.7% | 301 | 36.4% | 2.0% / 20.4% | 0.395 / 0.467 |
+| C B + consent-first probes (full Phase 1) | 693 | 35.8% | 302 | 35.6% | 1.4% / 21.1% | 0.396 / 0.469 |
+| B1 B, one item per message (no menu) | 786 | 34.6% | 193 | 34.6% | 0.9% / 18.6% | 0.400 / 0.399 |
+| B2 B, cap only (no price, no quality bar) | 600 | 36.5% | 333 | 36.9% | 1.1% / 16.1% | 0.385 / 0.439 |
+| B3 B, member takes the top-V item (no oracle choice) | 671 | 35.2% | 296 | 37.2% | 1.8% / 20.1% | 0.397 / 0.464 |
+| B4 B, partner probes wait up to 7 days (next digest) | 572 | 36.1% | 259 | 36.3% | 1.8% / 21.1% | 0.375 / 0.458 |
+| B5 B, engine supply budget unchanged (2 proposals /7d) | 522 | 37.2% | 255 | 37.1% | 2.7% / 24.6% | 0.393 / 0.486 |
+| D1 B, partner probes may use any remaining cap | 670 | 35.7% | 299 | 36.4% | 1.7% / 18.6% | 0.398 / 0.458 |
+| D2 D1, cap only (no price, no quality bar) | 591 | 36.3% | 322 | 36.5% | 1.8% / 14.5% | 0.390 / 0.439 |
+| D3 C, partner probes any remaining cap, cap only | 559 | 36.6% | 310 | 36.9% | 1.6% / 15.4% | 0.383 / 0.448 |
+| E1 D1, no separate acknowledgement messages | 677 | 35.6% | 302 | 36.7% | 1.4% / 18.5% | 0.402 / 0.462 |
+
+### Invariants (summed over seeds)
+
+| variant | minor contacts | canary leaks | over state cap | quiet-hour sends | interruptions with >= 2 outstanding | outbound with >= 3 outstanding (Blooio 4th) | judge invariants |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| A v1.2 defaults (stub network: one item per interruption) | 0 | 0 | 63 | 0 | 365 | 21 | 0 {} |
+| A' v1.2 via the harness network (must equal A) | 0 | 0 | 63 | 0 | 365 | 21 | 0 {} |
+| B attention budget + digest + hold queue (founder defaults) | 0 | 0 | 0 | 0 | 0 | 0 | 0 {} |
+| C B + consent-first probes (full Phase 1) | 0 | 0 | 0 | 0 | 0 | 0 | 0 {} |
+| B1 B, one item per message (no menu) | 0 | 0 | 0 | 0 | 0 | 0 | 1 {"duplicate_send":1} |
+| B2 B, cap only (no price, no quality bar) | 0 | 0 | 0 | 0 | 2 | 0 | 0 {} |
+| B3 B, member takes the top-V item (no oracle choice) | 0 | 0 | 0 | 0 | 0 | 0 | 0 {} |
+| B4 B, partner probes wait up to 7 days (next digest) | 0 | 0 | 0 | 0 | 0 | 0 | 0 {} |
+| B5 B, engine supply budget unchanged (2 proposals /7d) | 0 | 0 | 0 | 0 | 0 | 0 | 0 {} |
+| D1 B, partner probes may use any remaining cap | 0 | 0 | 0 | 0 | 0 | 0 | 2 {"duplicate_send":2} |
+| D2 D1, cap only (no price, no quality bar) | 0 | 0 | 0 | 0 | 0 | 0 | 0 {} |
+| D3 C, partner probes any remaining cap, cap only | 0 | 0 | 0 | 0 | 0 | 0 | 0 {} |
+| E1 D1, no separate acknowledgement messages | 0 | 0 | 0 | 0 | 0 | 0 | 0 {} |
+
+
+Notes on the table:
+
+- **Significance** (as in v1.2): over 8 seeds a met + worthwhile difference under about 4 per seed, or a precision difference under about 2.5 points, is noise. Every attention variant is significantly below A on met + worthwhile; among attention variants only B2 / D2 (no price) and D1 (partner probes on any remaining cap) are clearly above B.
+- **Interruptions** stay far below the cap (0.44 per member-week against 2). The binding constraints are, per slot: the price rule (a single average item, V about 0.25, does not pay for its own interruption at λ = 0.25: λ A = 0.25 x 1.18 = 0.30), members already committed (waiting on a partner, a meeting ahead), and the conversation streak. The streak binds more than the doc expected because each content-free acknowledgement ("Thanks, noted.") is an outbound message on the same counter: after one, a single unanswered digest pauses the member until they write in. Not sending them as separate messages (E1) moved met + worthwhile by +0.6 only, so it is a cheap fix but not the main one.
+- **Partner probes.** After the first member's yes, the partner's probe lands just after the partner's own Thursday digest (same city, same slot), so it needs a break-in (1 per 7 days, V >= 1.5 x median) or waits a week. About 40% of partner probes lapsed at a 2-day deadline (B); a 7-day deadline (B4) keeps them but adds a week of latency (time to value 13.8 days); letting them use any remaining cap (D1) is better than both.
+- **Engine supply (B5).** Billing the engine for shown items and letting it supply cap x 3 items is not better than leaving its budget at 2 proposals per 7 days (B5 12.9 vs B 10.3, inside noise); precision of delivered items is 36-37% either way against 39.7% today. More supply mostly adds lower-scored partners for the same members.
+- **Member choice (B3).** Taking the top-V item instead of the oracle's pick changes nothing measurable (9.9 vs 10.3): V already orders items about as well as the member would in this simulator.
+- **Spread.** The share of adults with no item delivered rises from 11.1% to about 20%, and the delivered Gini from 0.38 to 0.47: fewer, weekly decision points reach fewer people in 30 days.
+- **V14** (3.3) is 24.8% today and 10.0% for B; both are far from the 85% target in a 30-day run with no outside-world items (approximation 8). Time to value is about the same (11.0 vs 11.5 days) because the first digest arrives on day 3.
+- **STOP** is 0 everywhere: the persona STOP rule (more than 3 + 4 x capacity proactive messages a week) never triggers at these volumes, so the simulator cannot show the attention layer's main benefit (fewer opt-outs). Unanswered rate is 8-9% in every arm.
+- The 2 "interruptions with >= 2 outstanding" in B2 are an ablation-only artefact (`capOnly` changes the price and bar, not the streak gate; they come from same-timestamp ordering of a member's reply and a send in the record-based count). The founder-default arms have 0. The 1-2 `duplicate_send` are the stub's repeated acknowledgement (v1.2 P5), not this layer.
+
+## Defaults
+
+The founder defaults D1-D18 are in `config.ts DEFAULT_ATTENTION` unchanged: caps Open 4/7d, Normal 2/7d, Quiet 1/30d, Receiving 2/7d (support only), Paused 0; up to 3 items per message (Quiet and Receiving 2, minors 2), at most 2 member-involving; weekly digest Thursday 18:00 local (Open Tue + Thu, Quiet the first Thursday of the month); break-ins Normal 1/7d, Open 2/7d, Quiet 0; λ_state 0.15 / 0.25 / 0.50 / 0.25 / ∞; θ_bar 0.22 / 0.30 / 0.42; Quiet and only-when-great items need Ê >= 0.6; probes reveal activity, time, area and at most one shareable fact; one re-engagement at >= 30 days; members 13-17: 1/7d, events, places and solo plans, quiet 20:00-08:00 on school nights; romance alone; learning never raises frequency; V ordered by Ê x sqrt(P̂acc).
+
+Choices the doc left open, made here: partner probe deadline 2 days (`expiry.partnerProbeDays`; B4 measures 7 days); hold expiry 14 days for intros and groups; a "seen and passed" item is not offered again for 30 days; break-in reference median 0.25 before a member has any digest history; w_kind for re-confirmations 0.5, "worth a text?" 0.3, "nothing yet" 0.2; Ê calibrated as above. The engine default `acceptance.exponent` stays 0 (D13 is applied at send time, in V; the engine-side ordering was measured as no win in v1.2, S4).
+
+## Integration note for the network / dispatcher owner (packages/network, Blooio queue)
+
+The engine side is pure functions in `packages/engine/src/attention.ts` (exported as `attention` from `@thenetwork/engine`) with config in `DEFAULT_ATTENTION`. `experiments/attentionNetwork.ts` is a working reference of the whole send path on top of the stub network (about 400 lines). What the Network runtime needs to adopt:
+
+1. **Send path.** Engine proposal -> `itemsForProposal(p, { now, reviewState })` -> `addToHold(queue, item, prefs, now, { dismissed })` per member. Every tick: `digestDue(member, now, lastServedSlot)` (serve a slot missed for a transient reason later in the week), or, for items that expire before `nextDigestSlot`, a break-in. Before a send: `revalidateHold(queue, now, eligibilityFor(world, optedOut), extra)` (extra = partner already committed, listing gone), `buildProbe(world, spec, member, others, now)` for each candidate (drop null), `composeMessage({ member, items, ledger, conversation, now, mode })`, send `digestText(lines)`, push one `AttentionLedgerEntry` per message (`countsAgainstCap: true`). On a reply: set `repliedAt` / `replyKind` on the open entries, resolve the pick or "none", `recordProbeAnswer`; on the first yes create `partnerItem` into the partner's hold queue; after `canReveal`, send `revealFor` names as logistics.
+2. **One streak counter, shared with the Blooio queue** (1.9): `Conversation.outboundSinceInbound` counts every outbound message and resets on any inbound or tapback. Interruptions need `canInterrupt` (<= 1), logistics `canSendLogistics` (<= 2); a member who stops answering mid-plan is not messaged a fourth time. Do not send content-free acknowledgements as separate messages (E1).
+3. **Numbers to align in `packages/network/src/outreach.ts`** with the founder defaults (or tell me if the network numbers are deliberate): unanswered after **72 h** (network: 48 h; the engine's outreach and the doc use 72 h); re-engagement once at **>= 30 days** and only for a high-value held item (D6; network: 14 days); Receiving **2/7d support-only** (doc 1.7; network: 0). Both use rolling windows; the engine's `outreach.ts BUDGETS` now read the same caps (P2-13).
+4. **What to report to the engine** (extends v1.2's P1/P2): items never shown -> `unsentProposalIds` (not billed); held items -> block their pair without billing (the harness reports a pending interaction; a first-class `EngineInput.heldProposalIds` would be cleaner, and needs a small additive change in `world.ts`, which I did not make); shown items are billed; a shown item the member passed on -> outcome `cancelled` (no decline cooldown); probe "no" -> `declinedBy`; live probe flows -> `openOpportunities`. With the attention layer on, pass `engineSupplyBudgets()` as engine config overrides (B5 says the default budget also works).
+5. **P̂acc**: read `EngineProposal.acceptance` (new, additive) instead of estimating it in the network.
+6. **Review gate**: member-involving items start `reviewState: "pending"` and `composeMessage` refuses them until "approved"; the reviewer queue must flip it (the simulator auto-approves).
+7. **Measured choices for the founder before this becomes the default send path:** λ_state (B2/D2: the price costs 3-4 meetings per seed), partner-probe timing (D1: let a partner probe use any remaining cap rather than only the D4 break-in), and digest cadence.
+
+**For the simulator owner (packages/sim):** (a) `oracle.probe` should apply the same ask priming as `evaluatePrimed`, otherwise every consent-first comparison is biased against probes (approximation 5); (b) persona agents that read a menu ("1 and 3", "none") would remove the harness chooser; (c) outside-world items (events, places) and profiling questions are needed to exercise the third digest slot and V14. **For the judge owner:** `attentionMetrics` and `v14` are pure and can back `packages/judge/src/metrics.ts`.
+
+## Files
+
+- New: `packages/engine/src/attention.ts`, `packages/engine/test/attention.test.ts`, `packages/engine/test/attention-sim.test.ts`, `packages/engine/experiments/attention.ts`, `packages/engine/experiments/attentionNetwork.ts`, this document.
+- Changed (additive): `src/config.ts` (attention section: `AttentionConfig`, `DEFAULT_ATTENTION`, `resolveAttention`, `attentionConfigHash`, `engineSupplyBudgets`), `src/types.ts` (attention data model, `EngineProposal.acceptance`), `src/engine.ts` (fills `acceptance`), `src/index.ts` (exports), `src/outreach.ts` (caps from the attention config, P2-12 deferral), `test/outreach.test.ts`, `experiments/lib.ts` (`runSim({ network, onWorld })`, `acceptance` in traced proposals; `verify.ts` still byte-identical).
+- Not touched: `opportunity.ts`, `filters.ts`, `judge*.ts`, `world.ts`, `packages/network`, `packages/sim`, `packages/observatory`, `packages/evals`.

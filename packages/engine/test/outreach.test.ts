@@ -142,3 +142,28 @@ describe("outreach controller (32.9, F28)", () => {
     expect(b.deferred.map(x => x.id)).toEqual(["x"]);
   });
 });
+
+describe("over-budget deferral counts what is already deferred (audit P2-12)", () => {
+  test("three messages against a budget of 2: the third waits for the window after", () => {
+    const clock = new SimClock(MON);
+    const oc = new OutreachController(clock);
+    const m = baseMember("a", { state: "normal" });
+    const hist: OutboundMessage[] = [msg("x1", MON - 2 * HOUR, { repliedAt: MON - HOUR }), msg("x2", MON - HOUR, { repliedAt: MON - HOUR })];
+    const sendAts: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const d = oc.decide(m, msg(`n${i}`, MON), hist);
+      expect(d.action).toBe("defer");
+      if (d.action !== "defer") throw 0;
+      sendAts.push(d.sendAt);
+      hist.push(msg(`n${i}`, d.sendAt)); // the deferred message is queued at its send time
+    }
+    expect(sendAts[0]).toBe(sendAts[1]);
+    expect(sendAts[2]! - sendAts[0]!).toBeGreaterThanOrEqual(6 * DAY);
+    expect(localParts(sendAts[2]!, "America/Los_Angeles").weekday).toBe(0);
+  });
+  test("the caps are the attention budget's caps (one definition, P2-13)", () => {
+    expect(BUDGETS.normal.limit).toBe(2);
+    expect(BUDGETS.open.limit).toBe(4);
+    expect(BUDGETS.quiet).toEqual({ limit: 1, period: "month" });
+  });
+});

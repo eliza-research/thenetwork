@@ -127,6 +127,11 @@ export interface EngineProposal extends Proposal {
   safetyClass: SafetyClass; threshold: number; channels: string[]; judged: boolean;
   /** Off-policy logging: selector rank and probability this proposal was selected (1 for greedy picks). */
   selectorRank: number; selectionProbability: number;
+  /**
+   * Estimated P(each participant says yes), engine-visible data only (world.ts acceptanceOf).
+   * Additive (attention budget, D13): the send-time layer orders items by E x sqrt(P_acc).
+   */
+  acceptance?: Record<MemberId, number>;
 }
 
 export interface FairnessMetrics {
@@ -183,4 +188,81 @@ export interface MatchingRunLog {
   blockingPairs: number;
   /** Updated exposure debt to persist for the next run. */
   exposureDebt: Record<MemberId, number>;
+}
+
+// ------------------------------------------------------------------------------------------------
+// Attention budget data model (docs/design/2026-10-07-experience-design.md 1.2; engine-local first,
+// proposed for promotion into core). Functions live in attention.ts.
+
+export type ItemKind = "intro_probe" | "plan_probe" | "group_probe" | "event_suggestion" | "place_suggestion"
+  | "help_ask" | "advice_route" | "profiling_question" | "reconfirm" | "worthwhile_check" | "nothing_yet";
+export type Effort = "glance" | "reply" | "meet_short" | "meet_long" | "contribute";
+
+/** One thing the Network could tell a member about. Several items can share one message (D1). */
+export interface AttentionItem {
+  id: string; memberId: MemberId; kind: ItemKind; category: Category;
+  /** Engine proposal, plan, or concierge result this item comes from. */
+  sourceProposalId?: string;
+  /** Other members this item involves (empty for outside-world items and solo plans). Never shown before the reveal (D5). */
+  others: MemberId[];
+  /** true => human review before the first probe (under 1,000 members). */
+  involvesMember: boolean;
+  effort: Effort;
+  /** Ê: calibrated P(worthwhile | it happens), 0..1. */
+  enjoy: number;
+  /** P̂acc: P(member says yes), 0..1. */
+  accept: number;
+  urgency: { expiresAt: number; bestBy?: number };
+  createdAt: number; reviewState: "not_needed" | "pending" | "approved" | "rejected";
+  /** Same opportunity re-proposed on a later engine run => same key (hold-queue dedupe). */
+  key: string;
+  /** Consent-first order (1.8): "first" = the member with the live want; "partner" = probed after the first said yes. */
+  stage?: "first" | "partner";
+  /** Expected value of information (profiling_question / reconfirm only; w_kind is capped by it). */
+  evi?: number;
+}
+
+export type HoldReason = "cap" | "below_send_value" | "quiet_hours" | "awaiting_review" | "only_when_asked" | "digest_wait";
+export interface HeldItem extends AttentionItem {
+  heldReason: HoldReason;
+  heldAt: number;
+  /** Re-run eligibility (age, blocks, holds, open opportunities) before any send and at least this often. */
+  revalidateAt: number;
+}
+
+/** Explicit cadence preferences, set by the member in plain language (F20). */
+export interface CadencePrefs {
+  mode: "digest" | "as_it_comes" | "only_when_great" | "only_when_asked";
+  /** JavaScript weekdays (0 = Sunday); default [4] (Thursday). */
+  digestDays: number[]; digestHour: number;
+  /** Weekly slots, or monthly (the first matching weekday of the month; Quiet). */
+  digestPeriod: "week" | "month";
+  /** "more of X" 1.5, "less of Y" 0.5, off 0. */
+  categoryWeight: Partial<Record<Category, number>>;
+  maxItemsPerDigest: 1 | 2 | 3;
+  /** D10: default false. */
+  romanceInDigest: boolean;
+  /**
+   * An explicit member request for a different number of interruptions per period (D11). It can
+   * lower the state cap or restore it, never exceed it.
+   */
+  capOverride?: number;
+}
+
+/** Learned, engine-visible only. Learning can only make the Network quieter (D11). */
+export interface Responsiveness {
+  replyRateByHour: number[];
+  medianLatencyMin: number;
+  acceptRate: { yes: number; n: number };
+  /** Annoyance multiplier r in [0.5, 3] (1.3). */
+  annoyance: number;
+}
+
+export type LedgerKind = "digest" | "break_in" | "probe" | "question" | "logistics" | "reply" | "notice" | "reengage";
+export type ReplyKind = "pick" | "none" | "more" | "less" | "stop" | "tapback" | "other";
+/** One per outbound message (1.2). */
+export interface AttentionLedgerEntry {
+  messageId: string; memberId: MemberId; at: number; kind: LedgerKind;
+  itemIds: string[]; countsAgainstCap: boolean;
+  repliedAt?: number; replyKind?: ReplyKind;
 }
