@@ -2,18 +2,21 @@
 // EVERY recommender item (so each pass can be scored on its own), then derives the production
 // pipeline (hard filters -> pass 1 -> pass 2 -> pass 3) from the same responses.
 //
-// Prompts come from the engine (packages/engine/src/judgeScreen.ts, judge.ts, judgeDeep.ts); the
-// eval only adapts each item into the engine's inputs (World + Candidate). Labels (item.truth),
-// item ids, sources and persona hidden truth never reach a prompt (see test/passes.test.ts).
-import { parseJson, type MemberId } from "../../core/src/index.ts";
+// Prompts, parsers and decision rules come from the engine (packages/engine/src/judgeContext.ts,
+// judgeScreen.ts, judge.ts, judgeDeep.ts); the eval only adapts each item into the engine's inputs
+// (World + Candidate). The two historical v3 prompts for passes 1 and 3, which the engine no longer
+// ships, come from historicalPrompts.ts (judge-v2 replay). Labels (item.truth), item ids, sources and
+// persona hidden truth never reach a prompt (see test/passes.test.ts).
+import { tryChatJson, type ChatMessage, type MemberId, type WorldSnapshot } from "../../core/src/index.ts";
 import { resolveConfig } from "../../engine/src/config.ts";
 import { localEmbed } from "../../engine/src/embed.ts";
 import { leaks as engineLeaks, privateVocabulary } from "../../engine/src/explain.ts";
 import { intentFormat } from "../../engine/src/generators.ts";
-import { buildJudgeMessages, parseVerdict } from "../../engine/src/judge.ts";
-import { checkMemberFacing } from "../../engine/src/judgeCommon.ts";
-import { buildDeepMessages, deepDecision, gateMemberFacing, hardGate, parseDeepVerdict, type DeepVerdict } from "../../engine/src/judgeDeep.ts";
-import { buildPublicView, parseScreenVerdict, screenDecision, screenMessages, type ScreenVerdict } from "../../engine/src/judgeScreen.ts";
+import { buildJudgeMessages, parseVerdict, passOutcome, pipelineDecision, type PassName, type PassOutcome } from "../../engine/src/judge.ts";
+import { attendingRefs, checkMemberFacing, passMessages } from "../../engine/src/judgeCommon.ts";
+import { buildDeepContext, buildPublicView, type PublicView, type ScreenConfig } from "../../engine/src/judgeContext.ts";
+import { buildDeepMessages, gateMemberFacing, hardGate, parseDeepVerdict, type DeepVerdict } from "../../engine/src/judgeDeep.ts";
+import { parseScreenVerdict, SCREEN_SYSTEM, screenMessages, type ScreenVerdict } from "../../engine/src/judgeScreen.ts";
 import type { Candidate, JudgeVerdict, Role } from "../../engine/src/types.ts";
 import { World } from "../../engine/src/world.ts";
 import { findCanaries } from "../../judge/src/rules.ts";
@@ -21,10 +24,11 @@ import { canariesOf } from "../../sim/src/persona.ts";
 import type { RecDataset } from "./recDataset.ts";
 import { itemTier, proxyBucket } from "./richness.ts";
 import { leakChecks, type RecResult } from "./runRec.ts";
-import { pmap, withScope, type HttpRecord, type RequestSettings } from "./transport.ts";
+import { DEEP_SYSTEM_V3, SCREEN_SYSTEM_V3 } from "./historicalPrompts.ts";
+import { attemptScopes, errorText, pmap, type HttpRecord, type RequestSettings } from "./transport.ts";
 import type { RecItem } from "./types.ts";
 
-export type PassName = "pass1" | "pass2" | "pass3";
+export type { PassName };
 export const PASSES: PassName[] = ["pass1", "pass2", "pass3"];
 
 /** Fresh-spend guard shared by every call in a run (USD micro). Calls stop once it is exceeded. */
@@ -71,7 +75,7 @@ export interface PassRunOptions {
   offline?: boolean; fetch?: (url: string, init: RequestInit) => Promise<Response>;
   guard?: SpendGuard; onProgress?: (done: number, total: number) => void;
   passes?: PassName[];
-  /** Prompt version per pass (default: the current engine prompts, v3 / judge-v3). */
+  /** Prompt version per pass (default: NEW_VARIANTS, the judge-v2 "new" arm; ENGINE_VARIANTS = what the engine ships). */
   variants?: PassVariants;
   /** Added to the eval attempt number: a non-zero offset re-samples the same prompt (new cache key). */
   attemptOffset?: number;
@@ -81,6 +85,25 @@ export interface PassRunOptions {
 export interface PassVariants { pass1: "v2" | "v3"; pass2: "v2.1" | "v3"; pass3: "v2" | "v3" }
 export const OLD_VARIANTS: PassVariants = { pass1: "v2", pass2: "v2.1", pass3: "v2" };
 export const NEW_VARIANTS: PassVariants = { pass1: "v3", pass2: "v3", pass3: "v3" };
+/** The prompts the engine ships (pass1-screen-v2, judge-v3 under the default pass2Context, pass3-deep-v2). */
+export const ENGINE_VARIANTS: PassVariants = { pass1: "v2", pass2: "v3", pass3: "v2" };
+
+/** Pass-1 messages for a variant (v2 = the engine's prompt; v3 = historical). */
+export function screenVariantMessages(view: PublicView, v: PassVariants["pass1"]): ChatMessage[] {
+  return screenMessages(view, v === "v3" ? SCREEN_SYSTEM_V3 : SCREEN_SYSTEM);
+}
+/** Pass-3 messages for a variant (v2 = the engine's prompt; v3 = historical, on the v3 context). */
+export function deepVariantMessages(w: World, c: Candidate, v: PassVariants["pass3"]): { messages: ChatMessage[]; refs: Record<string, MemberId> } {
+  if (v === "v2") return buildDeepMessages(w, c);
+  const { context, refs } = buildDeepContext(w, c, { version: "v3" });
+  return { refs, messages: passMessages(DEEP_SYSTEM_V3, context) };
+}
+/** The exact messages one pass sends for an item under a prompt variant. */
+export function variantMessages(pass: PassName, v: string, snap: WorldSnapshot, cfg: ScreenConfig, w: World, c: Candidate): ChatMessage[] {
+  if (pass === "pass1") return screenVariantMessages(buildPublicView(snap, cfg, { version: v as PassVariants["pass1"] }), v as PassVariants["pass1"]);
+  if (pass === "pass2") return buildJudgeMessages(w, c, v as PassVariants["pass2"]).messages;
+  return deepVariantMessages(w, c, v as PassVariants["pass3"]).messages;
+}
 
 /** One engine World per eval world (built from the FINAL snapshot, incl. adversarial blocks). */
 export function engineWorlds(ds: RecDataset): Map<string, World> {
@@ -109,23 +132,17 @@ export function candidateOf(w: World, item: RecItem): Candidate {
   };
 }
 
-async function call<V>(model: string, o: PassRunOptions, maxTokens: number, messages: { role: "system" | "user" | "assistant"; content: string }[],
-  parse: (raw: unknown) => V): Promise<PassRun<V>> {
+async function call<V>(model: string, o: PassRunOptions, maxTokens: number, messages: ChatMessage[], parse: (raw: unknown) => V): Promise<PassRun<V>> {
   const records: HttpRecord[] = [];
   const visible = JSON.parse(messages[messages.length - 1]!.content);
-  let lastErr = "";
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try { o.guard?.check(); } catch (e) { return { ok: false, error: String((e as Error).message), verdict: null, attempts: attempt, records, visible }; }
-    const r = await withScope(model, { attempt: attempt + (o.attemptOffset ?? 0), cacheDir: o.cacheDir, settings: o.settings, offline: o.offline, fetch: o.fetch }, async llm => {
-      const out = await llm.chat(messages, { maxTokens, json: true });
-      return parse(parseJson(out));
-    });
-    records.push(...r.records);
-    o.guard?.add(r.records);
-    if (r.value !== undefined) return { ok: true, verdict: r.value, attempts: attempt + 1, records, visible };
-    lastErr = r.error ?? "unknown";
-  }
-  return { ok: false, error: lastErr, verdict: null, attempts: 2, records, visible };
+  const scopes = attemptScopes(model, { cacheDir: o.cacheDir, settings: o.settings, offline: o.offline, fetch: o.fetch }, o.attemptOffset ?? 0);
+  const r = await tryChatJson(scopes.llm, messages, parse, {
+    attempts: 2, maxTokens,
+    beforeAttempt: () => o.guard?.check(),
+    afterAttempt: () => { const rs = scopes.records(); records.push(...rs); o.guard?.add(rs); },
+  });
+  if (r.ok) return { ok: true, verdict: r.value, attempts: r.attempts, records, visible };
+  return { ok: false, error: r.stopped ? String((r.error as Error).message) : errorText(r.error), verdict: null, attempts: r.attempts, records, visible };
 }
 
 const SKIPPED = <V>(): PassRun<V> => ({ ok: false, error: "skipped", verdict: null, attempts: 0, records: [], visible: null });
@@ -140,11 +157,11 @@ export async function runPasses(model: string, ds: RecDataset, o: PassRunOptions
     const w = worlds.get(item.world)!;
     const c = candidateOf(w, item);
     const view = buildPublicView(snap, item.config, { version: vv.pass1 });
-    const attending = Object.entries(view.refs).filter(([, id]) => item.config.participants.includes(id)).map(([r]) => r);
+    const attending = attendingRefs(view.refs, item.config);
     const j = buildJudgeMessages(w, c, vv.pass2);
-    const d = buildDeepMessages(w, c, { version: vv.pass3 });
+    const d = deepVariantMessages(w, c, vv.pass3);
     const [p1, p2, p3] = await Promise.all([
-      want.has("pass1") ? call(model, o, o.maxTokens.pass1, screenMessages(view, vv.pass1), raw => parseScreenVerdict(raw, attending)) : SKIPPED<ScreenVerdict>(),
+      want.has("pass1") ? call(model, o, o.maxTokens.pass1, screenVariantMessages(view, vv.pass1), raw => parseScreenVerdict(raw, attending)) : SKIPPED<ScreenVerdict>(),
       want.has("pass2") ? call(model, o, o.maxTokens.pass2, j.messages, raw => parseVerdict(raw, j.refs)) : SKIPPED<JudgeVerdict>(),
       want.has("pass3") ? call(model, o, o.maxTokens.pass3, d.messages, raw => parseDeepVerdict(raw, attending)) : SKIPPED<DeepVerdict>(),
     ]);
@@ -161,7 +178,7 @@ export async function runPasses(model: string, ds: RecDataset, o: PassRunOptions
         gateRejected: rejected, afterGateCanary: b.canary.length ? 1 : 0, afterGateSensitive: b.sensitive.length ? 1 : 0,
       };
     };
-    const why1 = p1.verdict && screenDecision(p1.verdict) ? p1.verdict.memberWhy : "";
+    const why1 = p1.verdict && passOutcome("pass1", p1.verdict) === "yes" ? p1.verdict.memberWhy : "";
     const why1ok = why1 && checkMemberFacing(why1, vocab).ok ? why1 : "";
     const why2raw: Record<string, string> = {}, why2: Record<string, string> = {};
     let rej2 = 0;
@@ -218,20 +235,13 @@ export async function runPasses(model: string, ds: RecDataset, o: PassRunOptions
 
 // ---- decisions ---------------------------------------------------------------------------------
 
-export type D3 = "yes" | "no" | "abstain";
+export type D3 = PassOutcome;
 
-/** Model-only decision for one pass (null = the call failed). */
+/** Model-only decision for one pass (null = the call failed). The rules are the engine's (judge.ts passOutcome). */
 export function passDecision(r: PassItemResult, p: PassName): D3 | null {
-  if (p === "pass1") { const v = r.pass1.verdict; return v ? (screenDecision(v) ? "yes" : "no") : null; }
-  if (p === "pass2") { const v = r.pass2.verdict; return v ? (pass2Yes(v) ? "yes" : "no") : null; }
-  const v = r.pass3.verdict;
-  return v ? (v.verdict === "insufficient_information" ? "abstain" : deepDecision(v) ? "yes" : "no") : null;
-}
-
-/** Pass-2 "yes" mirrors the engine: verdict yes, no dealbreaker, every dimension at or above the judge floor. */
-export const PASS2_FLOOR = resolveConfig({}).floors.judgeDimension;
-export function pass2Yes(v: JudgeVerdict): boolean {
-  return v.verdict === "yes" && !v.dealbreaker && Math.min(v.fit, v.mutualValue, v.capacityRealism, v.timing, v.socialComfort) >= PASS2_FLOOR;
+  if (p === "pass1") return r.pass1.verdict ? passOutcome("pass1", r.pass1.verdict) : null;
+  if (p === "pass2") return r.pass2.verdict ? passOutcome("pass2", r.pass2.verdict) : null;
+  return r.pass3.verdict ? passOutcome("pass3", r.pass3.verdict) : null;
 }
 
 export function passProb(r: PassItemResult, p: PassName): number | null {
@@ -240,24 +250,15 @@ export function passProb(r: PassItemResult, p: PassName): number | null {
 }
 
 /**
- * Production pipeline from the same responses: hard gate, then pass 1, pass 2, pass 3 in order,
- * stopping at the first "no" (abstain at pass 3 = not proposed). A failed call is skipped (fails
- * open to the previous stage, as the engine does). Returns the decision, the stage it stopped at,
- * and a ranking score (min probability over the stages reached).
+ * Production pipeline from the same responses (the engine's judge.ts pipelineDecision): hard gate,
+ * then the passes in order, stopping at the first "no" (abstain at pass 3 = not proposed); a failed
+ * call fails open to the previous stage. Adds a ranking score: min probability over the stages reached.
  */
 export function pipeline(r: PassItemResult, stages: PassName[] = PASSES): { decision: D3; stoppedAt: string; prob: number; reached: PassName[] } {
-  if (r.hardGate) return { decision: "no", stoppedAt: `hard_gate:${r.hardGate}`, prob: 0, reached: [] };
-  let prob = 1;
-  const reached: PassName[] = [];
-  for (const p of stages) {
-    reached.push(p);
-    const d = passDecision(r, p);
-    const pr = passProb(r, p);
-    if (pr !== null) prob = Math.min(prob, pr);
-    if (d === null) continue;
-    if (d !== "yes") return { decision: d, stoppedAt: p, prob, reached };
-  }
-  return { decision: "yes", stoppedAt: "proposed", prob, reached };
+  const res = pipelineDecision(r.hardGate, stages.map(p => ({ pass: p, outcome: passDecision(r, p) })));
+  let prob = r.hardGate ? 0 : 1;
+  for (const p of res.reached) { const pr = passProb(r, p); if (pr !== null) prob = Math.min(prob, pr); }
+  return { decision: res.decision, stoppedAt: res.stoppedAt, prob, reached: res.reached };
 }
 
 // ---- per-item export for error analysis -------------------------------------------------------

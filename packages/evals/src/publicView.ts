@@ -4,15 +4,15 @@
 //             stated age, participation state, stated preferences, explicit edges among the people.
 //   excluded: agent_private facets (boundaries, private disclosures + canaries), hidden truth,
 //             names, member ids, oracle verdicts.
-// The builder itself lives in packages/engine/src/judgeScreen.ts (pass 1) so the engine and the
+// The builder itself lives in packages/engine/src/judgeContext.ts (pass 1) so the engine and the
 // evals build exactly the same prompt input; it is re-exported here unchanged. This file keeps the
 // ORIGINAL single-pass prompt (rec-eval-v1) so the previous luna baseline replays byte-identically.
 import type { ChatMessage } from "../../core/src/index.ts";
 import { prob } from "../../engine/src/judgeCommon.ts";
 import type { RecPrediction } from "./types.ts";
 
-export { type PublicPerson, type PublicView } from "../../engine/src/judgeScreen.ts";
-import { buildPublicView as buildView, type PublicView, type ScreenConfig } from "../../engine/src/judgeScreen.ts";
+export { type PublicPerson, type PublicView } from "../../engine/src/judgeContext.ts";
+import { buildPublicView as buildView, type PublicView, type ScreenConfig } from "../../engine/src/judgeContext.ts";
 import type { WorldSnapshot } from "../../core/src/index.ts";
 
 /** The view rec-eval-v1 was built for (the v2 public view: no evidence notes, no boundary flags). */
