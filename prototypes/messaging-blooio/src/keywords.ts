@@ -39,7 +39,7 @@ export function detectKeyword(text: string): KeywordAction | null {
 
 export interface KeywordCopy { optOut: string; optIn: string; help: string }
 
-export function defaultCopy(supportContact = "help@thenetwork.example"): KeywordCopy {
+export function defaultCopy(supportContact = "help@ntwrk.love"): KeywordCopy {
   return {
     optOut: "You're unsubscribed from The Network and won't get more messages here. Reply START to resume.",
     optIn: "You're back on The Network. Reply STOP anytime to opt out, HELP for help.",

@@ -10,7 +10,7 @@ The founders fill these in; they must match IRS records exactly.
 
 | Field | Value |
 |---|---|
-| Legal company name | `{{LEGAL_NAME}}` (exactly as on the EIN letter) |
+| Legal company name | Eliza Research Corporation (must match the EIN letter exactly) |
 | EIN | entered by the founders in the console |
 | Company type | Private for-profit (or as applicable) |
 | Website | https://ntwrk.love |

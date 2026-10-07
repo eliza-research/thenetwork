@@ -3244,7 +3244,7 @@ index 8a9558b8284c..175894cdc03b 100644
          providerStatus === 403 ||
 diff --git a/packages/cloud/services/gateway-webhook/src/network-compliance.ts b/packages/cloud/services/gateway-webhook/src/network-compliance.ts
 new file mode 100644
-index 000000000000..87267fc0a3e8
+index 000000000000..477921f28c09
 --- /dev/null
 +++ b/packages/cloud/services/gateway-webhook/src/network-compliance.ts
 @@ -0,0 +1,350 @@
@@ -3298,7 +3298,7 @@ index 000000000000..87267fc0a3e8
 +    "You're unsubscribed from The Network and won't get more messages here. Reply START to resume.",
 +  optIn:
 +    "You're back on The Network. Reply STOP anytime to opt out, HELP for help.",
-+  help: "The Network: invite-only messages about people, plans, and events you asked for. Message frequency varies. Msg & data rates may apply. Reply STOP to opt out.",
++  help: "The Network: invite-only messages about people, plans, and events you asked for. Message frequency varies. Msg & data rates may apply. Reply STOP to opt out. Help: help@ntwrk.love",
 +} as const;
 +
 +export function normalizeKeyword(text: string): string {
