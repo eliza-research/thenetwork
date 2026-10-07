@@ -93,6 +93,8 @@ describe("minors policy: every generator (positive control, then the same world 
       for (const m of i.members) { m.prefs.romanceOptIn = true; m.prefs.categoriesOptIn.push("romance"); }
       i.facets.push(facet("a", 0, "interest", "live jazz and cooking", ["music"]), facet("b", 0, "interest", "live jazz and cooking dinners", ["music"]));
       i.intents.push(intent("a", "open to dating someone who loves live jazz", "romance"), intent("b", "open to dating someone who loves cooking and jazz", "romance"));
+      // engine-v1.2: romance needs stated preferences on both sides.
+      i.facets.push(facet("a", 9, "preference", "dating: men", ["romance:is:woman", "romance:seeks:man"], "agent_private"), facet("b", 9, "preference", "dating: women", ["romance:is:man", "romance:seeks:woman"], "agent_private"));
     });
     expect(complementaryIntents(ctx(romance)).length).toBe(1);
     expect(complementaryIntents(ctx(setAge(romance, "b", 17)))).toEqual([]);

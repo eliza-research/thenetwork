@@ -73,6 +73,8 @@ export interface PassRunOptions {
   passes?: PassName[];
   /** Prompt version per pass (default: the current engine prompts, v3 / judge-v3). */
   variants?: PassVariants;
+  /** Added to the eval attempt number: a non-zero offset re-samples the same prompt (new cache key). */
+  attemptOffset?: number;
 }
 
 /** Prompt versions: pass 1 pass1-screen-v2|v3, pass 2 judge-v2.1|v3, pass 3 pass3-deep-v2|v3. */
@@ -114,7 +116,7 @@ async function call<V>(model: string, o: PassRunOptions, maxTokens: number, mess
   let lastErr = "";
   for (let attempt = 0; attempt < 2; attempt++) {
     try { o.guard?.check(); } catch (e) { return { ok: false, error: String((e as Error).message), verdict: null, attempts: attempt, records, visible }; }
-    const r = await withScope(model, { attempt, cacheDir: o.cacheDir, settings: o.settings, offline: o.offline, fetch: o.fetch }, async llm => {
+    const r = await withScope(model, { attempt: attempt + (o.attemptOffset ?? 0), cacheDir: o.cacheDir, settings: o.settings, offline: o.offline, fetch: o.fetch }, async llm => {
       const out = await llm.chat(messages, { maxTokens, json: true });
       return parse(parseJson(out));
     });

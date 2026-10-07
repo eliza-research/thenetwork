@@ -53,6 +53,8 @@ describe("generators (Section 33.4)", () => {
       i.members[1]!.prefs.romanceOptIn = bOpt;
       i.facets.push(facet("a", 0, "interest", "live jazz and cooking", ["music"]), facet("b", 0, "interest", "live jazz and cooking dinners", ["music"]));
       i.intents.push(intent("a", "open to dating someone who loves live jazz", "romance"), intent("b", "open to dating someone who loves cooking and jazz", "romance"));
+      // engine-v1.2: romance needs stated preferences on both sides.
+      i.facets.push(facet("a", 9, "preference", "dating: men", ["romance:is:woman", "romance:seeks:man"], "agent_private"), facet("b", 9, "preference", "dating: women", ["romance:is:man", "romance:seeks:woman"], "agent_private"));
     });
     expect(complementaryIntents(ctx(mk(true))).length).toBe(1);
     expect(complementaryIntents(ctx(mk(false))).length).toBe(0);

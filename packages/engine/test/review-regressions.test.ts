@@ -180,7 +180,8 @@ describe("event_anchor and second_encounter end to end (idle on the synthetic sn
       i.events = [{ id: "e1", title: "Climate tech founder demo night", city: "sf", start: NOW + 2 * DAY, end: NOW + 2 * DAY + 3 * HOUR, tags: ["climate"], category: "events" }];
       for (const m of i.members) m.prefs.categoriesOptIn.push("events");
     });
-    const { proposals, runLog } = await runEngine(inp, { seed: 1 });
+    // Checks the event plumbing (window, anchor). The v1.2 per-generator bar (0.40) is covered in v12.test.ts.
+    const { proposals, runLog } = await runEngine(inp, { seed: 1, thresholds: { useByGenerator: false } });
     expect(runLog.funnel.byGenerator.event_anchor).toBeGreaterThan(0);
     const ev = proposals.filter(p => p.generator === "event_anchor");
     expect(ev.length).toBeGreaterThan(0);

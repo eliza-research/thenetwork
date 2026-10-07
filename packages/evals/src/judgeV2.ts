@@ -143,13 +143,23 @@ async function main() {
   const concurrency = Number(arg("concurrency", "10"));
   const common = { cacheDir, settings, concurrency, offline, guard, passes, maxTokens: { pass1: 4000, pass2: 4000, pass3: 6000 } };
   // Baseline, old prompts and new prompts run side by side (each with its own concurrency limit).
-  const [baseline, old, neu] = await Promise.all([
+  const rerunOn = arg("rerun") === "true";
+  const [baseline, old, neu, rerun] = await Promise.all([
     arg("no-baseline") === "true" ? undefined : runRecommender(model, ds, { cacheDir, settings, concurrency, maxTokens: 4000, offline, onProgress: progress("baseline") }).then(rs => { for (const r of rs) guard.add(r.records); return rs; }),
     which === "new" ? undefined : runPasses(model, ds, { ...common, variants: OLD_VARIANTS, onProgress: progress("old prompts") }),
     which === "old" ? undefined : runPasses(model, ds, { ...common, variants: NEW_VARIANTS, onProgress: progress("new prompts") }),
+    // Same-prompt re-run arm: the new prompts again (pass 1 and pass 3), a fresh sample per item.
+    rerunOn ? runPasses(model, ds, { ...common, passes: ["pass1", "pass3"], variants: NEW_VARIANTS, attemptOffset: 10, onProgress: progress("new prompts re-run") }) : undefined,
   ]);
 
   const rows = scoreSplit(items, old, neu, baseline, [{ name: "engine-v1 (deterministic)", results: engineBaseline(ds) }, { name: "always-no", results: constantBaseline(ds, false) }]);
+  if (rerun) {
+    const so = { tiers: rerun.map(r => r.meta.tier), proxies: rerun.map(r => r.meta.proxyBucket) };
+    const d1 = rerun.map(r => passDecision(r, "pass1"));
+    rows.push(scoreRow("re-run: pass1 new + hard gate", items, rerun.map((r, i) => (r.hardGate ? "no" : d1[i]!)), rerun.map(r => (r.hardGate ? 0 : passProb(r, "pass1"))), rerun.map(r => r.pass1.records), so));
+    const pl = rerun.map(r => pipeline(r, ["pass1", "pass3"]));
+    rows.push(scoreRow("re-run: pipeline new: gate > 1 > 3", items, pl.map(x => x.decision), pl.map(x => x.prob), rerun.map((r, i) => pl[i]!.reached.flatMap(p => r[p].records)), so));
+  }
   const gold = items.map(i => i.truth.good), soft = items.map(i => i.truth.pGood!);
   const by = (n: string) => rows.find(r => r.name === n) ?? rows.find(r => r.name.startsWith(n));
   const pairs: [string, string][] = [
@@ -160,6 +170,10 @@ async function main() {
     ["pipeline new: gate > 1 > 2 > 3", "pipeline new: gate > 1 > 3"],
     ["pipeline new: gate > 1 > 2", "pipeline new: gate > 1 > 3"],
     ["pipeline new: gate > 1 > 3", "pipeline new: gate > 1 only"],
+    ["re-run: pass1 new + hard gate", "pass1 new (pass1-screen-v3) + hard gate"],
+    ["re-run: pipeline new: gate > 1 > 3", "pipeline new: gate > 1 > 3"],
+    ["pass1 new (pass1-screen-v3) + hard gate", "pass1 old (pass1-screen-v2) + hard gate"],
+    ["pass3 new (pass3-deep-v3) + hard gate", "pass3 old (pass3-deep-v2) + hard gate"],
     ["pipeline old: gate > 1 > 3", "baseline"], ["pipeline new: gate > 1 > 3", "baseline"], ["pass1 new", "baseline"],
   ];
   const comps = pairs.flatMap(([a, b]) => {

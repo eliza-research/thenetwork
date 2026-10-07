@@ -208,9 +208,12 @@ function skillTags(t: string, feat: SnapshotFeatures): string[] {
   const sk = SKILLS.find(x => x.tag === t);
   return [t, ...(sk?.teaches ? [sk.teaches] : []), ...(feat.hostTags && (t === "hosting" || t === "chef") ? ["host"] : [])];
 }
-/** With a Knowledge profile, romance preferences are known only if the member talked about dating. */
-function knowsRomance(p: Persona, k: Knowledge): boolean {
-  return k.chat.intents.some(i => p.public.statedIntents[i]?.category === "romance") || k.richness !== "minimal";
+/**
+ * With a Knowledge profile, romance preferences are known except for minimal-tier members (one
+ * vague want, no details): the engine asks them first (engine v1.2 romance gate).
+ */
+function knowsRomance(_p: Persona, k: Knowledge): boolean {
+  return k.richness !== "minimal";
 }
 /** Same tags and wording as the synthetic dataset (scripts/synthetic/generate.ts). */
 function romancePrefFacet(p: Persona, jt: number, n: number): Facet {
@@ -220,6 +223,7 @@ function romancePrefFacet(p: Persona, jt: number, n: number): Facet {
     id: `${p.id}:f${n}:romance`, memberId: p.id, kind: "preference", value: `Open to dating; interested in ${who}, ages ${r.ageRange[0]}-${r.ageRange[1]}`,
     tags: [`romance:is:${p.gender}`, ...r.seeking.map(g => `romance:seeks:${g}`), `romance:age:${r.ageRange[0]}-${r.ageRange[1]}`],
     scope: "agent_private", provenance: "said", confidence: 0.8, validFrom: jt,
+    source: "chat", observedAt: jt, inferred: false, confirmedByMember: true,
   };
 }
 

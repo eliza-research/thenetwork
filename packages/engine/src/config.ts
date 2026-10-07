@@ -4,7 +4,7 @@ import type { Category, City, ParticipationState } from "@thenetwork/core";
 import { DAY, HOUR } from "@thenetwork/core";
 import { sha256, stableStringify } from "./rng.ts";
 
-export const ENGINE_VERSION = "engine-v1.1.0";
+export const ENGINE_VERSION = "engine-v1.2.0";
 
 export const GENERATOR_NAMES = [
   "intent_to_capability", "complementary_intents", "shared_intent_pooling", "event_anchor",
@@ -85,10 +85,11 @@ export interface EngineConfig {
   acceptance: { exponent: number; prior: number; strength: number; signals: boolean };
   /**
    * v1.2 "ask before proposing": adults the engine cannot match well yet (no structured want, or
-   * fewer than `minFacets` matchable facets) get an EngineAsk instead of proposals; not re-asked
-   * within `cooldownDays` (input.recentAsks).
+   * fewer than `minFacets` matchable facets) get an EngineAsk; thin profiles are held back from
+   * proposals while the question is open (`cooldownDays`, input.recentAsks), members with no
+   * structured want too with `holdNoWant`.
    */
-  ask: { enabled: boolean; minFacets: number; cooldownDays: number };
+  ask: { enabled: boolean; minFacets: number; cooldownDays: number; holdNoWant: boolean };
   /** v1.2: romance proposals only when both members stated romance preferences (else ask for them). */
   romance: { requireStatedPrefs: boolean };
   maxPerIntent: number;
@@ -146,7 +147,9 @@ export const DEFAULT_CONFIG: EngineConfig = {
     categoryOverride: { professional: 0.38, romance: 0.45, hobby: 0.26 },
     useCategoryOverride: false,
     byGenerator: { event_anchor: 0.4, group_composer: 0.4 },
-    useByGenerator: false,
+    // On in v1.2: with events and shareable interests in the snapshot, event pairs and theme
+    // groups at the state threshold ran at 29.7% precision (8 sim seeds); at 0.40, 38.2%.
+    useByGenerator: true,
     exploration: 0.15,
   },
   floors: { fit: 0.12, mutualBenefit: 0.08, confidence: 0.3, maxSocialRisk: 0.8, judgeDimension: 0.25 },
@@ -172,11 +175,18 @@ export const DEFAULT_CONFIG: EngineConfig = {
   // members give for a good intro. Sensitivity: weights 0.25-0.75 in the results doc.
   complementarity: { weight: 0.5, overlap: 0.35, need: 0.55, give: 0.1, retrievalChannel: false, channelMin: 0.85 },
   generators: Object.fromEntries(GENERATOR_NAMES.map(g => [g, true])) as Record<GeneratorName, boolean>,
-  dispatch: { skipOpenOpportunities: false, billOnlySent: false },
-  personalGrowthAsHobby: false,
+  // v1.2 defaults (docs/results/2026-10-07-engine-v1.2.md, 8 sim seeds, history fed). On: dispatch
+  // awareness (met + worthwhile +5.1 per seed on the v1.2 snapshot), personal growth as hobby
+  // (recall +1.9 points, a bug fix), the romance preference gate (no cost when preferences are
+  // stated; blind romance ran at 3-18% precision). Off (measured, no significant win): the
+  // acceptance ordering, category overrides, "ask before proposing" (also needs the Network to
+  // send asks and report answers), and Normal 3/week (over-budget sends; PRD 32.9 says 2).
+  dispatch: { skipOpenOpportunities: true, billOnlySent: true },
+  personalGrowthAsHobby: true,
   acceptance: { exponent: 0, prior: 0.45, strength: 2, signals: false },
-  ask: { enabled: false, minFacets: 3, cooldownDays: 14 },
-  romance: { requireStatedPrefs: false },
+  // holdNoWant true: synthetic tick-1 precision 41.1% vs 34.2% when no-want members stay matchable.
+  ask: { enabled: false, minFacets: 3, cooldownDays: 14, holdNoWant: true },
+  romance: { requireStatedPrefs: true },
   maxPerIntent: 4,
   group: { minSize: 3, maxSize: 6, beamWidth: 8, poolSize: 24, minPairwise: 0.05, maxAnchorsPerCity: 8, alternates: 3, minThemeMembers: 4 },
   exploration: { rate: 0.125, maxShare: 0.15 },
@@ -210,6 +220,26 @@ export const DEFAULT_CONFIG: EngineConfig = {
     "\\$\\s?\\d+\\s?(loan|cash)\\b", "\\b(personal|payday) loans?\\b",
   ],
   homeEntryTerms: ["home", "apartment", "house", "move", "moving", "couch", "furniture", "my place"],
+};
+
+/**
+ * Named configurations measured in docs/results/2026-10-07-engine-v1.2.md.
+ * - `v1_1`: engine-v1.1.0 behaviour (every v1.2 flag off).
+ * - `comboD`: COMBO D of docs/research/2026-10-07-match-failures-and-diversity.md: dispatch-aware,
+ *   Normal 3/week, category overrides, personal growth as hobby, romance preference gate. Not the
+ *   default: Normal 3/week produced over-budget sends (3+ proactive messages in 7 days) in the
+ *   simulator, because invitations go out after the proposal is created; PRD 32.9 says 2/week.
+ */
+export const PRESETS: Record<"v1_1" | "comboD", EngineConfigInput> = {
+  v1_1: {
+    dispatch: { skipOpenOpportunities: false, billOnlySent: false }, personalGrowthAsHobby: false,
+    thresholds: { useCategoryOverride: false, useByGenerator: false }, acceptance: { exponent: 0 },
+    ask: { enabled: false }, romance: { requireStatedPrefs: false },
+  },
+  comboD: {
+    dispatch: { skipOpenOpportunities: true, billOnlySent: true }, personalGrowthAsHobby: true,
+    thresholds: { useCategoryOverride: true }, budgets: { normal: { limit: 3, periodDays: 7 } }, romance: { requireStatedPrefs: true },
+  },
 };
 
 export type DeepPartial<T> = { [K in keyof T]?: T[K] extends (infer U)[] ? U[] : T[K] extends object ? DeepPartial<T[K]> : T[K] };

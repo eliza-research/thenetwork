@@ -34,7 +34,11 @@ export interface OpenOpportunity {
   until?: number;
 }
 /** A question the agent asked a member instead of proposing (engine output "ask"; v1.2). */
-export interface AskRecord { memberId: MemberId; at: number; reason: AskReason }
+export interface AskRecord {
+  memberId: MemberId; at: number; reason: AskReason;
+  /** When the member replied. An answered question is closed: the member is proposed normally again. */
+  answeredAt?: number;
+}
 export type AskReason = "no_structured_want" | "few_facets" | "romance_prefs";
 /**
  * Engine output "ask": a question to send to a member before proposing anyone to them, because

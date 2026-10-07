@@ -48,9 +48,11 @@ export function planAsks(w: World, input: EngineInput): AskPlan {
   const plan: AskPlan = { asks: [], exclude: new Set(), extraProactive: new Map() };
   if (!cfg.ask.enabled && !cfg.romance.requireStatedPrefs) return plan;
   const lastAsk = new Map<string, number>();
+  const answered = new Set<string>();
   for (const a of input.recentAsks ?? []) {
     const k = `${w.canonical(a.memberId)}|${a.reason}`;
     lastAsk.set(k, Math.max(lastAsk.get(k) ?? -Infinity, a.at));
+    if (a.answeredAt !== undefined && a.answeredAt <= w.now) answered.add(w.canonical(a.memberId));
   }
   const anyAsk = (id: MemberId, reasons: AskReason[]) => Math.max(-Infinity, ...reasons.map(r => lastAsk.get(`${id}|${r}`) ?? -Infinity));
   const cooldown = cfg.ask.cooldownDays * DAY;
@@ -59,15 +61,20 @@ export function planAsks(w: World, input: EngineInput): AskPlan {
     plan.extraProactive.set(id, (plan.extraProactive.get(id) ?? 0) + 1);
   };
   for (const id of w.ids) {
-    if (isMinor(w, id)) continue;
     const mi = w.get(id)!;
+    if (isMinor(w, id) || !cfg.cities.includes(mi.m.homeCity)) continue;
     if (cfg.ask.enabled) {
       const reason: AskReason | undefined = profileOf(w, id).wants.length === 0 ? "no_structured_want" : mi.match.length < cfg.ask.minFacets ? "few_facets" : undefined;
-      if (reason) {
+      if (reason && !answered.has(id)) {
+        // Held back while the question is open: always for too-thin profiles (the engine cannot
+        // judge fit); for "no structured want" only with ask.holdNoWant (they still serve as
+        // providers and peers for other members' wants).
+        const hold = reason === "few_facets" || cfg.ask.holdNoWant;
         const last = anyAsk(id, ["no_structured_want", "few_facets"]);
-        if (w.now - last < cooldown) { plan.exclude.add(id); continue; } // question still open
-        if (last === -Infinity && !memberReason(w, id, { category: "social", role: "peer", format: "one_to_one", timeSensitive: false })) {
-          add(id, reason); plan.exclude.add(id); continue;
+        if (w.now - last < cooldown) { if (hold) { plan.exclude.add(id); continue; } }
+        else if (last === -Infinity && !memberReason(w, id, { category: "social", role: "peer", format: "one_to_one", timeSensitive: false })) {
+          add(id, reason);
+          if (hold) { plan.exclude.add(id); continue; }
         }
       }
     }
