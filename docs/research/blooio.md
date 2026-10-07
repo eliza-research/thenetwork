@@ -271,3 +271,12 @@ The prototype's `bun run scripts/verify-readonly.ts` reproduces this table. `BLO
 - iMessage automation guide (consent, throughput, P2P vs A2P): https://blooio.com/guides/imessage-automation
 - Eliza code (read-only): `v3/plugins/plugin-imessage/src/{blooio-transport,blooio-readiness,service}.ts`,
   `v3/packages/cloud/shared/src/lib/utils/blooio-api.ts`, `v3/packages/cloud/services/gateway-webhook/src/adapters/blooio.ts`
+
+## Live verification (2026-10-07)
+
+First real send on the Network line +18087881821, to the founder's phone, via `scripts/first-send.ts`:
+- **Delivery:** the API accepted it (status `queued`, protocol `pending`), and it was `delivered` over **iMessage** within 5 seconds.
+- **Webhooks:** a second, channel-scoped webhook on payload version `2026-10-01`, pointing at a temporary tunnel to `src/main.ts`, received `message.sent`, `message.queued` and `message.delivered`. All three passed HMAC verification.
+- **Ordering:** **`sent` arrived before `queued`**, so status webhooks really do arrive out of order. The outbound queue already never regresses a status.
+- **Fixtures:** the payloads are saved, with the phone number replaced and signatures stripped, in `prototypes/messaging-blooio/tests/fixtures/live-2026-10-07/`, with tests in `tests/live-fixtures.test.ts`. `BLOOIO_CAPTURE_DIR` makes the receiver save future payloads the same way.
+- **Pending:** inbound replies and the HELP/STOP/START round trip, waiting for the founder's replies.
