@@ -458,3 +458,96 @@ export function configHash(cfg: EngineConfig): string {
   // Infinity is not JSON; stringify it explicitly.
   return sha256(stableStringify(JSON.parse(JSON.stringify(cfg, (_k, v) => (v === Infinity ? "Infinity" : v))))).slice(0, 16);
 }
+
+// ------------------------------------------------------------------------------------------------
+// Plans (docs/design/2026-10-07-experience-design.md section 4, Phase 2; growth doc section 3: public
+// venues only, no home hosting, no money). Used by plans.ts, the planner that runs beside the
+// generators. NOT part of EngineConfig, so runEngine's behaviour and config hash are unchanged. It has
+// its own hash (plansConfigHash). Measured in docs/results/2026-10-08-plans.md.
+
+export interface PlansConfig {
+  version: string;
+  /** Plans are proposed with starts from `minLeadHours` to `horizonDays` ahead (2-hour slots, attention.candidateSlots). */
+  minLeadHours: number; horizonDays: number;
+  /** Probe deadline (4.6): the earlier of `probeWindowHours` after the plan is made and `deadlineBeforeStartHours` before the start. */
+  deadlineBeforeStartHours: number; probeWindowHours: number;
+  /** A member invited to a plan is not planned again for this many days (one plan at a time, less probe fatigue). */
+  memberCooldownDays: number;
+  /** Plan only for members a one-to-one intro is not serving right now (no engine item held or in flight; design 0 and 3.2: plans are the default for D2-D4 members). */
+  unservedOnly: boolean;
+  /** A late "yes" after quorum may still join until this many hours before the start. */
+  lateJoinHours: number;
+  /** Group plans 3-6 (D15), activity-partner plans exactly 2. `target` = how many are probed at first. */
+  size: { min: number; max: number; target: number; partner: number };
+  /** A group plan is proposed only if at least this many can be invited (quorum + a spare: one silence does not sink it). */
+  minInvite: number;
+  /** Activity-partner plans (exactly 2) when no group clears the floors and the activity allows 2. */
+  partnerPlans: boolean;
+  /** A yes to a plan that has not reached quorum does not hold the member back from other items (only a booked plan does). */
+  yesHolds: boolean;
+  /** Planner runs (JS weekdays, local 09:00): Monday for the week, Thursday for the weekend (design 4.4: the pre-weekend run). */
+  runDays: number[];
+  /** Quorum: group plans `group`, activity-partner plans `partner`. */
+  quorum: { group: number; partner: number };
+  /** Beam search (group.ts style) width, pool cap per (slot, activity), alternates kept for backfill. */
+  beamWidth: number; poolSize: number; alternates: number;
+  /** Least misery: U = minWeight x min_i u_i + (1 - minWeight) x mean_i u_i (design 4.5 step 4). */
+  minWeight: number;
+  /** Floors (4.5 step 6): every member's u_i, and the plan's U. */
+  minMemberU: number; threshold: number;
+  /** Member-level demand: P(free) in the slot from evidence at least this, and evidence beyond the daypart prior (stated, standing or learned). */
+  minFree: number;
+  /** Activity fit: a member's stated interest or live want = 1; another activity in the same family = `familyFit`; below `minFit` the member is not in the pool. */
+  familyFit: number; minFit: number;
+  /** Venue fit: venue in one of the member's areas = 1, elsewhere in the city = `otherAreaFit`. */
+  otherAreaFit: number;
+  /** Familiarity (4.5 step 5): bonus per member with exactly one familiar face and a new face; penalty per member with >= 2 familiar faces; total clamped. */
+  familiarity: { oneBonus: number; cliquePenalty: number; maxBonus: number; maxPenalty: number };
+  /** Pairwise compatibility floor (makeCompat, as group.minPairwise). */
+  minPairwise: number;
+  /** Plans per member per planner run, and at most one live plan per member. Plans per city per run. */
+  maxPlansPerCityRun: number;
+  /** Stated windows from the weekly check-in: confidence, and P(free) target inside one. */
+  stated: { confidence: number; inside: number; outsideFactor: number };
+  /** Fallbacks (4.6): a smaller group of 2 if the activity allows it, a solo public event, the demand carried to next week (bonus on the same activity). */
+  fallback: { smaller: boolean; soloEvent: boolean; nextWeek: boolean; carryBonus: number; carryDays: number };
+  /** Recurring crews (4.7): >= minMembers attended >= minPlans plans together, all reporting positive; or 1 plan with a recurring ("weekly", "regular", "club") want. */
+  crews: { enabled: boolean; minMembers: number; minPlans: number; cadenceDays: number; handOffAfterSessions: number };
+  /** Calibrated E for a plan item (attention.ts): Ê = clamp(enjoyIntercept + enjoySlope x U). */
+  enjoyIntercept: number; enjoySlope: number;
+}
+
+export const DEFAULT_PLANS: PlansConfig = {
+  version: "plans-v1.0.0",
+  minLeadHours: 72, horizonDays: 7,
+  deadlineBeforeStartHours: 30, probeWindowHours: 96, memberCooldownDays: 5, unservedOnly: false, lateJoinHours: 6,
+  size: { min: 3, max: 6, target: 6, partner: 2 },
+  minInvite: 4, partnerPlans: true, yesHolds: false, runDays: [1, 4],
+  quorum: { group: 3, partner: 2 },
+  beamWidth: 8, poolSize: 24, alternates: 3,
+  minWeight: 0.6,
+  minMemberU: 0.4, threshold: 0.4,
+  minFree: 0.5,
+  familyFit: 0.5, minFit: 1,
+  otherAreaFit: 0.85,
+  familiarity: { oneBonus: 0.05, cliquePenalty: 0.1, maxBonus: 0.1, maxPenalty: 0.2 },
+  minPairwise: 0.05,
+  maxPlansPerCityRun: 6,
+  stated: { confidence: 0.8, inside: 0.85, outsideFactor: 0.5 },
+  fallback: { smaller: true, soloEvent: true, nextWeek: true, carryBonus: 0.1, carryDays: 10 },
+  crews: { enabled: true, minMembers: 3, minPlans: 2, cadenceDays: 7, handOffAfterSessions: 3 },
+  enjoyIntercept: 0.1, enjoySlope: 1,
+};
+
+export type PlansConfigInput = DeepPartial<PlansConfig>;
+export function resolvePlans(input: PlansConfigInput = {}): PlansConfig {
+  const cfg = merge(DEFAULT_PLANS, input);
+  if (cfg.size.min < 3 || cfg.size.max > 6 || cfg.size.min > cfg.size.max) throw new Error("plans.size must be within 3..6 (D15, PRD 33.4)");
+  if (cfg.size.partner !== 2) throw new Error("plans.size.partner is 2 (D15)");
+  if (cfg.crews.minPlans < 1 || cfg.crews.minPlans > 2) throw new Error("plans.crews.minPlans is 1 or 2");
+  if (cfg.quorum.group < cfg.size.min || cfg.quorum.group > cfg.size.max) throw new Error("plans.quorum.group must be within the group size");
+  return cfg;
+}
+export function plansConfigHash(cfg: PlansConfig): string {
+  return sha256(stableStringify(cfg)).slice(0, 16);
+}
