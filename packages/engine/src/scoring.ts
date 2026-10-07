@@ -39,10 +39,19 @@ export function mutualBenefit(benefits: number[]): number {
   return clamp(Math.min(mean, 2 * Math.min(...benefits)));
 }
 
+/**
+ * Effective threshold. Default: max(state of any participant, category floor). v1.2 overrides
+ * (per generator, then per category) replace the state bar so they can lower it as well as raise
+ * it, except that a participant in a stricter-than-Normal state (Quiet, Paused) keeps that bar.
+ */
 export function thresholdFor(w: World, c: Candidate): number {
+  const T = w.cfg.thresholds;
   let t = 0;
-  for (const id of c.participants) t = Math.max(t, w.cfg.thresholds.byState[w.get(id)!.m.state]);
-  const cat = w.cfg.thresholds.byCategory[c.category];
+  for (const id of c.participants) t = Math.max(t, T.byState[w.get(id)!.m.state]);
+  const over = (T.useByGenerator ? T.byGenerator[c.generator as keyof typeof T.byGenerator] : undefined)
+    ?? (T.useCategoryOverride ? T.categoryOverride[c.category] : undefined);
+  if (over !== undefined) return t > T.byState.normal ? Math.max(t, over) : over;
+  const cat = T.byCategory[c.category];
   if (cat !== undefined) t = Math.max(t, cat);
   return t;
 }

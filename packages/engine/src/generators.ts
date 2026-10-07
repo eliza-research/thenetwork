@@ -155,10 +155,13 @@ export function romanceIntros(ctx: GenCtx): Candidate[] {
   const check = (id: MemberId, own?: Intent) => memberReason(w, id, { category: "romance", role: "peer", format: "one_to_one", timeSensitive: false, ownIntentCreatedAt: own?.createdAt });
   // Partners: every member who may receive a romance proposal right now (generic check; a member
   // whose only route is their own fresh intent is admitted with that intent).
-  const partners = w.ids.filter(id => !check(id) || (ownIntent.has(id) && !check(id, ownIntent.get(id))));
+  // v1.2 (config.romance.requireStatedPrefs): romance only between members who both stated who
+  // they hope to meet; the engine asks the others first (engine.ts asks).
+  const statedPrefs = (id: MemberId) => !w.cfg.romance.requireStatedPrefs || !!w.get(id)!.romance?.seeks.length;
+  const partners = w.ids.filter(id => statedPrefs(id) && (!check(id) || (ownIntent.has(id) && !check(id, ownIntent.get(id)))));
   for (const i of intents) {
     const a = i.memberId;
-    if (check(a, i)) continue;
+    if (check(a, i) || !statedPrefs(a)) continue;
     const ma = w.get(a)!;
     const found: Candidate[] = [];
     for (const b of partners) {

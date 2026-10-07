@@ -67,3 +67,16 @@ export function objectivesFor(text: string, details?: string, category?: string)
   if (!tags.size) return [];
   return OBJECTIVES.filter(o => !o.romance && ((o.pool && tags.has(o.pool)) || o.needs.some(n => tags.has(n))));
 }
+
+/**
+ * Category semantics (v1.2). The engine uses "growth" for growing the Network (the network_growth
+ * generator: asking a member to bring in someone who fills a gap). Members, and the simulator,
+ * use "growth" for personal growth: "learn to sail", "try ceramics", "join a writing group".
+ * Every intent generator skipped "growth" intents, so those wants were never matched
+ * (docs/research/2026-10-07-match-failures-and-diversity.md, finding 4). A member intent is
+ * personal growth unless its text is about growing the Network itself.
+ */
+const NETWORK_GROWTH_TEXT = /\b(invite|bring|grow|recruit|introduce)\b.*\b(network|community|members?|friends to (join|the network))\b/i;
+export function isPersonalGrowth(i: { category: string; objective: string; details?: string }): boolean {
+  return i.category === "growth" && !NETWORK_GROWTH_TEXT.test(`${i.objective} ${i.details ?? ""}`);
+}

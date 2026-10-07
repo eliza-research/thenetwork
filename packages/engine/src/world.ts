@@ -6,6 +6,7 @@ import { canBeMatched, DAY, HOUR } from "@thenetwork/core";
 import type { EngineConfig } from "./config.ts";
 import { centroid, cosine, tokenize, type EmbedFn } from "./embed.ts";
 import { sha256, stableStringify } from "./rng.ts";
+import { isPersonalGrowth } from "./taxonomy.ts";
 import type { EngineInput, FeedbackRecord, InteractionRecord, NetworkEvent, ReliabilityEvidence, Role } from "./types.ts";
 import { CONTRIBUTOR_ROLES } from "./types.ts";
 
@@ -41,6 +42,10 @@ export interface MemberIndex {
   dealbreakers: string[]; romance?: RomanceProfile;
   isHost: boolean; degree: number; inviterRoot: string;
   presence: Presence[];
+  /** v1.2: in an opportunity that was sent and is still open (config.dispatch.skipOpenOpportunities). */
+  inOpenOpportunity: boolean;
+  /** v1.2: estimated P(this member says yes to an invite), engine-visible data only (acceptanceOf). */
+  acceptance: number;
 }
 
 export class World {
@@ -126,6 +131,12 @@ export class World {
       }
     }
 
+    // --- open opportunities (v1.2 dispatch awareness) ----------------------------------------
+    const openMembers = new Set<MemberId>();
+    if (cfg.dispatch.skipOpenOpportunities) {
+      for (const o of input.openOpportunities ?? []) if (o.until === undefined || o.until > now) for (const id of o.participants) openMembers.add(C(id));
+    }
+
     // --- interactions ----------------------------------------------------------------------
     this.interactions = (input.interactions ?? []).map(r => ({
       ...r, participants: r.participants.map(C), declinedBy: r.declinedBy?.map(C), contributors: r.contributors?.map(C),
@@ -148,7 +159,9 @@ export class World {
     }
     // Recent proposals (not yet resolved in interactions) are active duplicates for a while.
     const resolved = new Set(this.interactions.filter(r => r.outcome !== "pending").map(r => r.id));
-    const recent: Proposal[] = (input.recentProposals ?? []).map(p => ({
+    // v1.2: proposals the Network never sent neither count against budgets nor block the pair.
+    const unsent = new Set(cfg.dispatch.billOnlySent ? input.unsentProposalIds ?? [] : []);
+    const recent: Proposal[] = (input.recentProposals ?? []).filter(p => !unsent.has(p.id)).map(p => ({
       ...p, participants: p.participants.map(C), alternates: (p.alternates ?? []).map(C),
     }));
     for (const p of recent) {
@@ -176,11 +189,15 @@ export class World {
       facetsBy.get(id)!.push({ ...f, memberId: id });
     }
     const intentsBy = new Map<MemberId, Intent[]>();
+    // v1.2: personal-growth wants are matched as hobby; stating one opts the member in to hobby.
+    const growthAsHobby = new Set<MemberId>();
     for (const it of input.intents) {
       const id = C(it.memberId);
+      const personal = cfg.personalGrowthAsHobby && isPersonalGrowth(it);
+      if (personal) growthAsHobby.add(id);
       const live = it.status === "active" && it.createdAt + it.horizonDays * DAY > now;
       if (!live) continue;
-      const intent = { ...it, memberId: id };
+      const intent: Intent = { ...it, memberId: id, ...(personal ? { category: "hobby" as const } : {}) };
       if (!intentsBy.has(id)) intentsBy.set(id, []);
       intentsBy.get(id)!.push(intent);
       this.intentById.set(intent.id, intent);
@@ -225,7 +242,10 @@ export class World {
     }
 
     const tagCount = new Map<string, number>();
-    for (const m of [...input.members].sort((a, b) => (a.id < b.id ? -1 : 1))) {
+    const response = responseHistory(this.interactions, now);
+    for (const raw of [...input.members].sort((a, b) => (a.id < b.id ? -1 : 1))) {
+      const m: Member = growthAsHobby.has(raw.id) && !raw.prefs.categoriesOptIn.includes("hobby")
+        ? { ...raw, prefs: { ...raw.prefs, categoriesOptIn: [...raw.prefs.categoriesOptIn, "hobby"] } } : raw;
       const all = facetsBy.get(m.id) ?? [];
       const match = all.filter(f => (f.scope === "matchable" || f.scope === "shareable") && MATCH_KINDS.has(f.kind));
       const share = all.filter(f => f.scope === "shareable");
@@ -280,6 +300,8 @@ export class World {
         degree: this.positive.get(m.id)?.size ?? 0,
         inviterRoot: "",
         presence: presenceBy.get(m.id) ?? [],
+        inOpenOpportunity: openMembers.has(m.id),
+        acceptance: acceptanceOf(cfg, m, intentsBy.get(m.id) ?? [], response.get(m.id), proactive.get(m.id) ?? 0, now),
       });
     }
     this.ids = [...this.members.keys()].sort();
@@ -387,6 +409,42 @@ export class World {
 
   isWarm(a: MemberId, b: MemberId): boolean { return this.positive.get(a)?.has(b) ?? false; }
   edgeHas(a: MemberId, b: MemberId, t: EdgeType): boolean { return this.edgeTypes.get(pairKey(a, b))?.has(t) ?? false; }
+}
+
+/** Per member: invites answered yes / all invites resolved (yes, no, or expired unanswered). */
+export function responseHistory(interactions: InteractionRecord[], now: number): Map<MemberId, { yes: number; n: number }> {
+  const out = new Map<MemberId, { yes: number; n: number }>();
+  const bump = (id: MemberId, yes: boolean) => { const a = out.get(id) ?? { yes: 0, n: 0 }; a.n++; if (yes) a.yes++; out.set(id, a); };
+  for (const r of interactions) {
+    if (r.at > now) continue;
+    for (const id of r.acceptedBy ?? []) bump(id, true);
+    for (const id of r.declinedBy ?? []) bump(id, false);
+    for (const id of r.noResponse ?? []) bump(id, false);
+  }
+  return out;
+}
+
+/**
+ * v1.2 acceptance estimate: P(member says yes to the next invite), from engine-visible data only
+ * (no oracle, no hidden truth). A Beta-smoothed share of the invites the member said yes to,
+ * with prior `acceptance.prior` and weight `acceptance.strength`. With `acceptance.signals` the
+ * prior also moves with participation state, unanswered proactive messages (responsiveness),
+ * recent proactive load (capacity) and whether the member stated a want in the last week
+ * (intent freshness).
+ */
+export function acceptanceOf(cfg: EngineConfig, m: Member, intents: Intent[], hist: { yes: number; n: number } | undefined, recentProactive: number, now: number): number {
+  const A = cfg.acceptance;
+  let prior = A.prior;
+  if (A.signals) {
+    prior += m.state === "open" ? 0.1 : m.state === "quiet" ? -0.1 : m.state === "receiving" ? -0.05 : 0;
+    prior -= 0.1 * Math.min(2, m.unansweredProactive ?? 0);
+    if (m.prefs.onlyWhenAsked) prior -= 0.1;
+    const limit = cfg.budgets[m.state].limit;
+    if (limit > 0 && recentProactive >= limit - 1) prior -= 0.05;
+    if (intents.some(i => now - i.createdAt < 7 * DAY)) prior += 0.1;
+    prior = Math.max(0.05, Math.min(0.95, prior));
+  }
+  return ((hist?.yes ?? 0) + prior * A.strength) / ((hist?.n ?? 0) + A.strength);
 }
 
 export function intentText(i: Intent): string {

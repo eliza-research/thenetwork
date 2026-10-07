@@ -37,7 +37,19 @@ export interface EngineConfig {
   askedRecencyDays: number;
   thresholds: {
     byState: Record<ParticipationState, number>;
+    /** Category floors: the effective threshold is max(state, category). */
     byCategory: Partial<Record<Category, number>>;
+    /**
+     * v1.2: category thresholds that replace the state threshold, so they can LOWER it as well as
+     * raise it. A participant in a stricter-than-Normal state (Quiet, Paused) still keeps their
+     * stricter bar. Takes precedence over `byCategory` for that category. Applied only when
+     * `useCategoryOverride` is true.
+     */
+    categoryOverride: Partial<Record<Category, number>>;
+    useCategoryOverride: boolean;
+    /** v1.2: per-generator thresholds, same override rule; applied only when `useByGenerator`. */
+    byGenerator: Partial<Record<GeneratorName, number>>;
+    useByGenerator: boolean;
     exploration: number;
   };
   floors: { fit: number; mutualBenefit: number; confidence: number; maxSocialRisk: number; judgeDimension: number };
@@ -52,6 +64,33 @@ export interface EngineConfig {
    */
   complementarity: { weight: number; overlap: number; need: number; give: number; retrievalChannel: boolean; channelMin: number };
   generators: Record<GeneratorName, boolean>;
+  /**
+   * v1.2 dispatch awareness. `skipOpenOpportunities`: members in an opportunity that was sent and
+   * is still open (input.openOpportunities) are not selected. `billOnlySent`: proposals the Network
+   * never sent (input.unsentProposalIds) do not count against budgets or block the pair.
+   */
+  dispatch: { skipOpenOpportunities: boolean; billOnlySent: boolean };
+  /**
+   * v1.2: members state personal-growth wants ("learn to sail", "try ceramics") with category
+   * "growth", but the engine reserves "growth" for growing the Network and every intent generator
+   * skips it. When true, such intents are matched as "hobby" (taxonomy.ts isPersonalGrowth) and
+   * stating one counts as opting in to hobby matching.
+   */
+  personalGrowthAsHobby: boolean;
+  /**
+   * v1.2 acceptance estimate (world.ts acceptanceOf): P(member says yes) from engine-visible data
+   * only. Selection orders eligible candidates by adjusted score x (product of P)^exponent; the
+   * threshold still applies to the score itself. exponent 0 = off.
+   */
+  acceptance: { exponent: number; prior: number; strength: number; signals: boolean };
+  /**
+   * v1.2 "ask before proposing": adults the engine cannot match well yet (no structured want, or
+   * fewer than `minFacets` matchable facets) get an EngineAsk instead of proposals; not re-asked
+   * within `cooldownDays` (input.recentAsks).
+   */
+  ask: { enabled: boolean; minFacets: number; cooldownDays: number };
+  /** v1.2: romance proposals only when both members stated romance preferences (else ask for them). */
+  romance: { requireStatedPrefs: boolean };
   maxPerIntent: number;
   group: {
     minSize: number; maxSize: number; beamWidth: number; poolSize: number; minPairwise: number;
@@ -102,6 +141,12 @@ export const DEFAULT_CONFIG: EngineConfig = {
   thresholds: {
     byState: { open: 0.22, normal: 0.3, quiet: 0.42, receiving: 0.3, paused: Infinity },
     byCategory: { romance: 0.35, help: 0.25, growth: 0.2 },
+    // Values from docs/research/2026-10-07-match-failures-and-diversity.md (score calibration by
+    // category; per-generator thresholds for the structural levers).
+    categoryOverride: { professional: 0.38, romance: 0.45, hobby: 0.26 },
+    useCategoryOverride: false,
+    byGenerator: { event_anchor: 0.4, group_composer: 0.4 },
+    useByGenerator: false,
     exploration: 0.15,
   },
   floors: { fit: 0.12, mutualBenefit: 0.08, confidence: 0.3, maxSocialRisk: 0.8, judgeDimension: 0.25 },
@@ -127,6 +172,11 @@ export const DEFAULT_CONFIG: EngineConfig = {
   // members give for a good intro. Sensitivity: weights 0.25-0.75 in the results doc.
   complementarity: { weight: 0.5, overlap: 0.35, need: 0.55, give: 0.1, retrievalChannel: false, channelMin: 0.85 },
   generators: Object.fromEntries(GENERATOR_NAMES.map(g => [g, true])) as Record<GeneratorName, boolean>,
+  dispatch: { skipOpenOpportunities: false, billOnlySent: false },
+  personalGrowthAsHobby: false,
+  acceptance: { exponent: 0, prior: 0.45, strength: 2, signals: false },
+  ask: { enabled: false, minFacets: 3, cooldownDays: 14 },
+  romance: { requireStatedPrefs: false },
   maxPerIntent: 4,
   group: { minSize: 3, maxSize: 6, beamWidth: 8, poolSize: 24, minPairwise: 0.05, maxAnchorsPerCity: 8, alternates: 3, minThemeMembers: 4 },
   exploration: { rate: 0.125, maxShare: 0.15 },

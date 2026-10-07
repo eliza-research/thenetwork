@@ -22,6 +22,30 @@ export type InteractionOutcome =
 export interface InteractionRecord {
   id: string; kind: OpportunityKind; category: Category; participants: MemberId[];
   at: number; outcome: InteractionOutcome; declinedBy?: MemberId[]; contributors?: MemberId[];
+  /** Invitees who said yes (engine-visible responsiveness history; v1.2 acceptance estimate). */
+  acceptedBy?: MemberId[];
+  /** Invitees who were asked but never answered before the invite expired. */
+  noResponse?: MemberId[];
+}
+/** An opportunity the Network already sent and that is still open (invite pending or meeting ahead). */
+export interface OpenOpportunity {
+  id: string; participants: MemberId[]; stage: "inviting" | "scheduled";
+  /** Invite expiry or meeting time (epoch ms), if known. */
+  until?: number;
+}
+/** A question the agent asked a member instead of proposing (engine output "ask"; v1.2). */
+export interface AskRecord { memberId: MemberId; at: number; reason: AskReason }
+export type AskReason = "no_structured_want" | "few_facets" | "romance_prefs";
+/**
+ * Engine output "ask": a question to send to a member before proposing anyone to them, because
+ * the engine cannot yet match them well (no structured want, too few matchable facets, or no
+ * stated romance preferences). Text is a fixed template about the member's own profile; it never
+ * names or describes another member.
+ */
+export interface EngineAsk {
+  kind: "ask"; id: string; memberId: MemberId; reason: AskReason; question: string; createdAt: number;
+  /** The romance intent the preferences are for (reason "romance_prefs"). */
+  intentId?: string;
 }
 export interface ReliabilityEvidence { noShows: number; completedSinceLastNoShow: number }
 
@@ -41,6 +65,18 @@ export interface EngineInput extends WorldSnapshot {
    * cumulative proposals). The run log returns the updated values to persist.
    */
   exposureDebt?: Record<MemberId, number>;
+  /**
+   * Opportunities already sent and still open (v1.2, config.dispatch.skipOpenOpportunities):
+   * their participants are not proposed again until they close.
+   */
+  openOpportunities?: OpenOpportunity[];
+  /**
+   * Ids of `recentProposals` the Network recorded but never sent (v1.2, config.dispatch.billOnlySent):
+   * they do not count against budgets and do not block the pair.
+   */
+  unsentProposalIds?: string[];
+  /** Questions asked recently (v1.2, config.ask): a member is not asked again within the cooldown. */
+  recentAsks?: AskRecord[];
 }
 
 export type Role =

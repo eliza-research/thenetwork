@@ -70,10 +70,11 @@ test("defaults: gpt-6-luna on Surplus for default, judge and recommender; env ov
   expect((defaultLLM() as any).model).toBe("other-model");
 });
 
-test("surplus provider: no silent OpenAI fallback by default (audit P1-14)", async () => {
+test("surplus provider: LLM_ALLOW_OPENAI_FALLBACK=0 keeps every call on Surplus", async () => {
   for (const k of ENV) delete process.env[k];
   process.env.SURPLUS_API_KEY = "s-key";
   process.env.OPENAI_API_KEY = "o-key";
+  process.env.LLM_ALLOW_OPENAI_FALLBACK = "0";
   const calls: string[] = [];
   const fakeFetch = (surplusStatus: number) => async (url: string, init: RequestInit) => {
     const host = new URL(url).host, auth = (init.headers as Record<string, string>).Authorization;
@@ -89,11 +90,10 @@ test("surplus provider: no silent OpenAI fallback by default (audit P1-14)", asy
   expect(() => defaultLLM()).toThrow("SURPLUS_API_KEY missing");
 });
 
-test("surplus provider: LLM_ALLOW_OPENAI_FALLBACK=1 enables the fallback explicitly, with a warning", async () => {
+test("surplus provider: falls back to OpenAI by default (no Surplus key, or 429), with a warning", async () => {
   for (const k of ENV) delete process.env[k];
   process.env.SURPLUS_API_KEY = "s-key";
   process.env.OPENAI_API_KEY = "o-key";
-  process.env.LLM_ALLOW_OPENAI_FALLBACK = "1";
   const warn = console.warn, warnings: string[] = [];
   console.warn = (...a: unknown[]) => { warnings.push(a.join(" ")); };
   try {
@@ -105,7 +105,7 @@ test("surplus provider: LLM_ALLOW_OPENAI_FALLBACK=1 enables the fallback explici
     };
     expect(await llmFor("surplus", "gpt-6-luna", { fetch: fakeFetch(429) }).chat([{ role: "user", content: "x" }])).toBe("from openai");
     expect(calls).toEqual(["api.surplusintelligence.ai Bearer s-key", "api.openai.com Bearer o-key"]);
-    expect(warnings.some(w => w.includes("LLM_ALLOW_OPENAI_FALLBACK"))).toBe(true);
+    expect(warnings.some(w => w.includes("falling back to api.openai.com"))).toBe(true);
 
     calls.length = 0;
     await expect(llmFor("surplus", "gpt-6-luna", { fetch: fakeFetch(400) }).chat([{ role: "user", content: "x" }])).rejects.toThrow("400");

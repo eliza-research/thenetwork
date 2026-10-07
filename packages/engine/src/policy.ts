@@ -4,9 +4,13 @@
 // penalty and an amortized exposure-debt lift; an exposure-floor pass first; then a seeded
 // 10-15% exploration slice, logged with selection probabilities for off-policy evaluation.
 import type { City, MemberId } from "@thenetwork/core";
+import { DAY } from "@thenetwork/core";
+import { profileOf } from "./complementarity.ts";
+import { isMinor, memberReason } from "./filters.ts";
+import { sha256 } from "./rng.ts";
 import type { Rng } from "./rng.ts";
 import type { Scored } from "./scoring.ts";
-import type { FairnessMetrics } from "./types.ts";
+import type { AskReason, EngineAsk, EngineInput, FairnessMetrics } from "./types.ts";
 import { CONTRIBUTOR_ROLES } from "./types.ts";
 import { pairKey, type World } from "./world.ts";
 
@@ -14,12 +18,78 @@ export interface Selected { s: Scored; exploration: boolean; rank: number; proba
 
 export interface SelectionResult { selected: Selected[]; budgetSkips: number }
 
-export function selectProposals(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId, number>): SelectionResult {
+export interface SelectOptions {
+  /** Members that must not be proposed this run (v1.2: members the engine asks a question first). */
+  exclude?: ReadonlySet<MemberId>;
+  /** Proactive messages already planned this run outside selection (v1.2: asks), per member. */
+  extraProactive?: ReadonlyMap<MemberId, number>;
+}
+
+export const ASK_QUESTIONS: Record<AskReason, string> = {
+  no_structured_want: "What would you most like to do or find in the next few weeks? Something specific, like an activity, a skill to learn or the kind of people you'd like to meet, helps me find the right person.",
+  few_facets: "Tell me a bit more about you: two or three things you enjoy or are good at help me find people you'd actually like to meet.",
+  romance_prefs: "Before I suggest anyone to date: who are you hoping to meet, and what age range feels right?",
+};
+
+export interface AskPlan { asks: EngineAsk[]; exclude: Set<MemberId>; extraProactive: Map<MemberId, number> }
+
+/**
+ * v1.2 "ask before proposing" (config.ask, config.romance.requireStatedPrefs). An ask is a
+ * proactive message, so it needs the same availability and budget as an invitation.
+ * - Adults the engine cannot match well (no structured want, or fewer than ask.minFacets
+ *   matchable facets) get one question and are not proposed while it is open (asked within
+ *   ask.cooldownDays). If they never answer, they are proposed again after the cooldown, and not
+ *   re-asked: silence must not lock a member out.
+ * - Members with a live romance intent but no stated preferences are asked for them; romance
+ *   proposals wait for the answer (generators.ts romanceIntros), other proposals do not.
+ */
+export function planAsks(w: World, input: EngineInput): AskPlan {
+  const cfg = w.cfg;
+  const plan: AskPlan = { asks: [], exclude: new Set(), extraProactive: new Map() };
+  if (!cfg.ask.enabled && !cfg.romance.requireStatedPrefs) return plan;
+  const lastAsk = new Map<string, number>();
+  for (const a of input.recentAsks ?? []) {
+    const k = `${w.canonical(a.memberId)}|${a.reason}`;
+    lastAsk.set(k, Math.max(lastAsk.get(k) ?? -Infinity, a.at));
+  }
+  const anyAsk = (id: MemberId, reasons: AskReason[]) => Math.max(-Infinity, ...reasons.map(r => lastAsk.get(`${id}|${r}`) ?? -Infinity));
+  const cooldown = cfg.ask.cooldownDays * DAY;
+  const add = (id: MemberId, reason: AskReason, intentId?: string) => {
+    plan.asks.push({ kind: "ask", id: `a_${sha256(`${id}|${reason}|${w.now}`).slice(0, 16)}`, memberId: id, reason, question: ASK_QUESTIONS[reason], createdAt: w.now, ...(intentId ? { intentId } : {}) });
+    plan.extraProactive.set(id, (plan.extraProactive.get(id) ?? 0) + 1);
+  };
+  for (const id of w.ids) {
+    if (isMinor(w, id)) continue;
+    const mi = w.get(id)!;
+    if (cfg.ask.enabled) {
+      const reason: AskReason | undefined = profileOf(w, id).wants.length === 0 ? "no_structured_want" : mi.match.length < cfg.ask.minFacets ? "few_facets" : undefined;
+      if (reason) {
+        const last = anyAsk(id, ["no_structured_want", "few_facets"]);
+        if (w.now - last < cooldown) { plan.exclude.add(id); continue; } // question still open
+        if (last === -Infinity && !memberReason(w, id, { category: "social", role: "peer", format: "one_to_one", timeSensitive: false })) {
+          add(id, reason); plan.exclude.add(id); continue;
+        }
+      }
+    }
+    if (cfg.romance.requireStatedPrefs && !mi.romance?.seeks.length) {
+      const it = mi.intents.find(i => i.category === "romance");
+      if (it && anyAsk(id, ["romance_prefs"]) === -Infinity && !memberReason(w, id, { category: "romance", role: "peer", format: "one_to_one", timeSensitive: false, ownIntentCreatedAt: it.createdAt })) add(id, "romance_prefs", it.id);
+    }
+  }
+  return plan;
+}
+
+/** v1.2: product of the participants' estimated acceptance (world.ts acceptanceOf). */
+export function mutualAcceptance(w: World, ids: MemberId[]): number {
+  return ids.reduce((p, id) => p * (w.get(id)?.acceptance ?? 1), 1);
+}
+
+export function selectProposals(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId, number>, opts: SelectOptions = {}): SelectionResult {
   // Dry run without exploration sizes the slice; the real run reserves exploration capacity
   // before the greedy pass so exploration picks are not starved of member budget.
-  const dry = selectOnce(w, scored, rng, debt, 0);
+  const dry = selectOnce(w, scored, rng, debt, 0, opts);
   const slots = Math.floor((w.cfg.exploration.rate * dry.selected.length) / (1 - w.cfg.exploration.rate));
-  const res = selectOnce(w, scored, rng, debt, slots);
+  const res = selectOnce(w, scored, rng, debt, slots, opts);
   const maxE = Math.floor(w.cfg.exploration.maxShare * res.selected.length);
   let e = 0;
   res.selected = res.selected.filter(s => !s.exploration || ++e <= maxE);
@@ -27,7 +97,7 @@ export function selectProposals(w: World, scored: Scored[], rng: Rng, debt: Reco
   return res;
 }
 
-function selectOnce(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId, number>, explorationSlots: number): SelectionResult {
+function selectOnce(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId, number>, explorationSlots: number, opts: SelectOptions = {}): SelectionResult {
   const cfg = w.cfg;
   const proactive = new Map<MemberId, number>();
   const contribution = new Map<MemberId, number>();
@@ -45,7 +115,10 @@ function selectOnce(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId,
     if ((perCity.get(c.city!) ?? 0) >= cfg.selection.maxProposalsPerCity) return false;
     for (const id of c.participants) {
       const mi = w.get(id)!;
-      if (mi.recentProactive + (proactive.get(id) ?? 0) + 1 > cfg.budgets[mi.m.state].limit) return false;
+      if (mi.recentProactive + (opts.extraProactive?.get(id) ?? 0) + (proactive.get(id) ?? 0) + 1 > cfg.budgets[mi.m.state].limit) return false;
+      // v1.2: never propose someone already in a sent, still-open opportunity (the Network would
+      // skip it) or someone the engine is asking a question first.
+      if (mi.inOpenOpportunity || opts.exclude?.has(id)) return false;
       const role = c.roles[id];
       if (role && CONTRIBUTOR_ROLES.has(role) && mi.recentContribution + (contribution.get(id) ?? 0) + 1 > cfg.contribution.limit) return false;
       if (c.fixedWindow && c.window) {
@@ -117,15 +190,20 @@ function selectOnce(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId,
     while (idx < avail.length - 1 && r >= weights[idx]!) { r -= weights[idx]!; idx++; }
     take(avail[idx]!, true, weights[idx]! / total);
   }
-  // 3. Greedy global selection with in-run load penalty and exposure-debt lift.
+  // 3. Greedy global selection with in-run load penalty and exposure-debt lift. v1.2: with
+  //    acceptance.exponent > 0 the order (not the bar) is adjusted x P(all accept)^exponent.
   const remaining = main.filter(x => !taken.has(x.c.key));
+  const accExp = cfg.acceptance.exponent;
+  const accept = new Map<string, number>();
+  if (accExp > 0) for (const x of remaining) accept.set(x.c.key, Math.pow(mutualAcceptance(w, x.c.participants), accExp));
   while (true) {
     let best: Scored | undefined; let bestV = -Infinity;
     for (const x of remaining) {
       if (taken.has(x.c.key)) continue;
       const v = adjusted(x);
       if (v < x.threshold) continue; // the adjusted score must still clear the bar
-      if (v > bestV && canTake(x)) { best = x; bestV = v; }
+      const key = accExp > 0 ? v * accept.get(x.c.key)! : v;
+      if (key > bestV && canTake(x)) { best = x; bestV = key; }
     }
     if (!best) break;
     take(best, false, 1);
