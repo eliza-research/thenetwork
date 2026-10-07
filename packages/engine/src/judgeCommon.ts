@@ -4,6 +4,7 @@
 // text. Internal reasoning is never shown to members; member-facing text goes through a
 // deterministic leak gate before it can be used.
 import type { MemberId } from "@thenetwork/core";
+import { labelHash, LeakGuard, textVariants } from "@thenetwork/core";
 import { tokenize } from "./embed.ts";
 
 /** One fact the model says it relied on, addressed by field (e.g. {ref:"P1", field:"intents[0]"}). */
@@ -51,6 +52,8 @@ export function keyOrderOk(raw: unknown, before: string[], after: string): boole
 
 /** Sim-style canary tokens (e.g. "QX-4821-ORCHID") and "(ref ...)" markers on private facts. */
 const CANARY_TOKEN = /\b[A-Z]{2}-\d{4}-[A-Z]{3,}\b/g;
+/** Non-global copy for .test() (a /g regex keeps lastIndex between calls). */
+const CANARY_TOKEN_ONE = new RegExp(CANARY_TOKEN.source);
 const REF_MARKER = /\s*\(ref [^)]*\)/gi;
 
 /**
@@ -68,8 +71,49 @@ export function scrubIds(s: string, refOf: Map<MemberId, string>): string {
 
 export interface MemberTextCheck {
   ok: boolean;
-  /** Why the text was rejected: canary, private_vocabulary:<word>, contact, too_long. */
+  /**
+   * Why the text was rejected: canary, private_vocabulary:<hash>, forbidden_phrase, contact, too_long.
+   * Reasons never carry the matched private word.
+   */
   reasons: string[];
+}
+
+/** Compiled core guards per vocabulary set (privateVocabulary returns a fresh set per candidate). */
+const guards = new WeakMap<Set<string>, { size: number; guard: LeakGuard }>();
+function vocabGuard(privateVocab: Set<string>): LeakGuard {
+  const hit = guards.get(privateVocab);
+  if (hit && hit.size === privateVocab.size) return hit.guard;
+  const guard = new LeakGuard({ privateVocab: [...privateVocab] });
+  guards.set(privateVocab, { size: privateVocab.size, guard });
+  return guard;
+}
+
+/**
+ * Leak reasons for text that could reach a member: the shared core guard (packages/core/src/guard.ts:
+ * private vocabulary on folded, de-leeted and letter-collapsed variants; phone, email, address, URL
+ * and handle patterns; `extraForbidden` as exact strings) plus the engine's own stricter checks (any
+ * "canary" word or sim canary token, stemmed vocabulary tokens, the legacy phone/email regexes).
+ */
+function leakReasons(text: string, privateVocab: Set<string>, extraForbidden: string[]): string[] {
+  const reasons = new Set<string>();
+  if (/canary/i.test(text) || CANARY_TOKEN_ONE.test(text) || textVariants(text).some(v => /canary/.test(v))) reasons.add("canary");
+  for (const t of tokenize(text)) if (privateVocab.has(t)) { reasons.add(`private_vocabulary:${labelHash(t)}`); break; }
+  const forbidden = extraForbidden.filter(Boolean);
+  if (forbidden.some(f => text.toLowerCase().includes(f.toLowerCase()))) reasons.add("forbidden_phrase");
+  if (/\b[\w.+-]+@[\w-]+\.[\w.-]+\b/.test(text) || /\(?\b\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/.test(text)) reasons.add("contact");
+  const core = forbidden.length ? new LeakGuard({ privateVocab: [...privateVocab], exact: forbidden }).check(text) : vocabGuard(privateVocab).check(text);
+  for (const r of core) {
+    if (r.startsWith("private_vocab:")) { if (![...reasons].some(x => x.startsWith("private_vocabulary:"))) reasons.add(`private_vocabulary:${r.slice("private_vocab:".length)}`); }
+    else if (r.startsWith("forbidden:")) reasons.add("forbidden_phrase");
+    else if (r.startsWith("contact:")) reasons.add("contact");
+    else if (r.startsWith("canary:")) reasons.add("canary");
+  }
+  return [...reasons];
+}
+
+/** True if `text` leaks: canary, private vocabulary, contact details or a forbidden phrase (no length limit). */
+export function leaksMemberFacing(text: string, privateVocab: Set<string>, extraForbidden: string[] = []): boolean {
+  return leakReasons(text, privateVocab, extraForbidden).length > 0;
 }
 
 /**
@@ -78,11 +122,7 @@ export interface MemberTextCheck {
  * reasoning never goes through here because it is never shown to members.
  */
 export function checkMemberFacing(text: string, privateVocab: Set<string>, extraForbidden: string[] = []): MemberTextCheck {
-  const reasons: string[] = [];
-  if (/canary/i.test(text) || /\b[A-Z]{2}-\d{4}-[A-Z]{3,}\b/.test(text)) reasons.push("canary");
-  for (const t of tokenize(text)) if (privateVocab.has(t)) { reasons.push(`private_vocabulary:${t}`); break; }
-  for (const f of extraForbidden) if (f && text.toLowerCase().includes(f.toLowerCase())) { reasons.push("forbidden_phrase"); break; }
-  if (/\b[\w.+-]+@[\w-]+\.[\w.-]+\b/.test(text) || /\(?\b\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/.test(text)) reasons.push("contact");
+  const reasons = leakReasons(text, privateVocab, extraForbidden);
   if (text.length > 600) reasons.push("too_long");
   return { ok: reasons.length === 0, reasons };
 }

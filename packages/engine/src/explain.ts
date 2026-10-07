@@ -3,6 +3,7 @@
 // objectives) that contains vocabulary found only in non-shareable facets.
 import type { Facet, MemberId } from "@thenetwork/core";
 import { cosine, tokenize } from "./embed.ts";
+import { leaksMemberFacing } from "./judgeCommon.ts";
 import type { Candidate, JudgeVerdict } from "./types.ts";
 import type { World } from "./world.ts";
 
@@ -25,9 +26,9 @@ export function privateVocabulary(w: World, ids: MemberId[]): Set<string> {
   return priv;
 }
 
+/** Leak gate for explanation text: the shared core guard plus the engine's canary/vocabulary checks (judgeCommon.ts). */
 export function leaks(text: string, vocab: Set<string>): boolean {
-  if (/canary/i.test(text)) return true;
-  return tokenize(text).some(t => vocab.has(t));
+  return leaksMemberFacing(text, vocab);
 }
 
 function phrase(name: string, f: Facet): string {

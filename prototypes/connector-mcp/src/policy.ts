@@ -85,56 +85,11 @@ export class RateLimiter {
 // and other format characters, common Cyrillic/Greek homoglyphs, spaced-out letters ("b a r") and
 // digit/letter substitutions ("c0cktail") don't slip past a word list. Matching stays fail-closed:
 // a false positive costs a polite refusal, a false negative costs a policy breach.
-const CONFUSABLES: Record<string, string> = {
-  "а": "a", "в": "b", "е": "e", "ѕ": "s", "і": "i", "ј": "j", "к": "k", "м": "m", "н": "h", "о": "o", "р": "p", "с": "c",
-  "т": "t", "у": "y", "х": "x", "һ": "h", "ԁ": "d", "ӏ": "l", "ɡ": "g", "ɑ": "a", "ı": "i",
-  "α": "a", "β": "b", "ε": "e", "ζ": "z", "η": "n", "ι": "i", "κ": "k", "μ": "m", "ν": "v", "ο": "o", "ρ": "p", "τ": "t",
-  "υ": "u", "χ": "x", "ϲ": "c", "ϳ": "j",
-};
-const LEET: Record<string, string> = { "0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "8": "b", "@": "a", "$": "s", "!": "i", "|": "l" };
+// The folding and fuzzy matching live in the shared core guard (packages/core/src/guard.ts); deep
+// import keeps the Worker bundle small.
+import { LeakGuard, matchFolded, plainVariants, stem, textVariants } from "@thenetwork/core/src/guard.ts";
+export { matchFolded, plainVariants, stem, textVariants };
 
-function fold(s: string, formatChars: "" | " "): string {
-  return s
-    .normalize("NFKD")
-    .replace(/\p{Mn}/gu, "")
-    .replace(/\p{Cf}/gu, formatChars)
-    .toLowerCase()
-    .replace(/[^\u0000-\u007f]/g, (c) => CONFUSABLES[c] ?? c)
-    .replace(/[\u2010-\u2015\u2212\ufe58\ufe63\uff0d]/g, "-");
-}
-
-/** Folded variants of `s` for contact/identifier checks (no letter substitutions). */
-export function plainVariants(s: string): string[] {
-  const joined = fold(s, "");
-  const out = new Set([joined, fold(s, " ")]);
-  // snake_case / kebab-free identifiers: "_" is a word character, so \bcocktail\b misses "cocktail_bar".
-  for (const v of [...out]) if (v.includes("_")) out.add(v.replace(/_/g, " "));
-  return [...out];
-}
-
-/** Folded variants of `s` for vocabulary checks: plain variants + spaced letters collapsed + leetspeak undone. */
-export function textVariants(s: string): string[] {
-  const out = new Set<string>();
-  for (const v of plainVariants(s)) {
-    out.add(v);
-    const collapsed = v.replace(/\b(?:[a-z][ .\-_*~·]){2,}[a-z]\b/g, (m) => m.replace(/[^a-z]/g, ""));
-    out.add(collapsed);
-    for (const base of [v, collapsed]) {
-      out.add(base.replace(/[a-z0-9@$!|]+/g, (tok) =>
-        /[a-z]/.test(tok) && /[0-9@$!|]/.test(tok) ? tok.replace(/[0-9@$!|]/g, (c) => LEET[c] ?? c) : tok));
-    }
-  }
-  return [...out];
-}
-
-/** First match of `re` in any variant of `s` (vocabulary checks), or null. */
-export function matchFolded(re: RegExp, s: string): string | null {
-  for (const v of textVariants(s)) {
-    const m = re.exec(v);
-    if (m) return m[0];
-  }
-  return null;
-}
 const anyFolded = (re: RegExp, s: string) => matchFolded(re, s) !== null;
 const anyPlain = (re: RegExp, s: string) => plainVariants(s).some((v) => re.test(v));
 
@@ -191,109 +146,25 @@ export function statedAge(s: string, currentYear: number): number | null {
 }
 
 // ---------------------------------------------------------------------------- outbound guard (§8.2)
-const squash = (s: string) => s.replace(/[^a-z0-9]/g, "");
-
 /**
  * Defense in depth behind the Network's own policy: any model-visible output containing another
  * member's id, contact details or non-shareable facet text, an internal id, or a phone/email pattern
  * is blocked. `text` is the raw model-visible strings (never a JSON serialization: JSON escapes
  * quotes and newlines, so a forbidden string containing either would never match). Forbidden strings
- * match case-, Unicode- and punctuation-insensitively. Returns the violations (empty = clean).
+ * match as substrings, case-, Unicode- and punctuation-insensitively (core `exact`). Private facts
+ * (`opts.facts`) also match on fragments, leetspeak and reordering (core fuzzy facts, audit P1-3).
+ * Returns the violations (empty = clean); forbidden matches are `forbidden:<hash>`, never the value.
  */
 export function findLeaks(text: string, forbidden: string[], opts: { facts?: string[] } = {}): string[] {
-  const v: string[] = [];
+  const v = new LeakGuard({ exact: forbidden.filter(Boolean), facts: (opts.facts ?? []).filter(Boolean), contacts: false }).check(text);
+  // The connector's own contact/identifier checks (kept narrower than core CONTACT_PATTERNS: item
+  // text may carry links and venue addresses).
   const variants = plainVariants(text);
-  const squashed = variants.map(squash);
-  for (const f of forbidden) {
-    if (!f) continue;
-    const [ff] = plainVariants(f);
-    const sf = squash(ff!);
-    if (variants.some((t) => t.includes(ff!)) || (sf.length >= 6 && squashed.some((t) => t.includes(sf))))
-      v.push(`forbidden:${labelHash(f)}`);
-  }
-  // Private facts also match on fragments, leetspeak and reordering (audit P1-3).
-  const facts = (opts.facts ?? []).filter((f) => f && !v.includes(`forbidden:${labelHash(f)}`));
-  if (facts.length) {
-    const textTokens = textVariants(text).map(tokens);
-    const textSquashed = textVariants(text).map(squash);
-    for (const f of facts) if (factLeaks(f, textTokens, textSquashed)) v.push(`forbidden:${labelHash(f)}`);
-  }
   if (variants.some((t) => PHONE.test(t))) v.push("phone_pattern");
   if (variants.some((t) => EMAIL.test(t) || EMAIL_SPELLED.test(t))) v.push("email_pattern");
   if (variants.some((t) => INTERNAL_ID.test(t))) v.push("internal_id");
   if (variants.some((t) => ISO_TIMESTAMP.test(t))) v.push("iso_timestamp");
   return v;
-}
-
-// ---------------------------------------------------------------------------- fuzzy private-fact matching
-// Exact matching misses a fragment ("isolated since the move"), leetspeak ("1s0lated") and reordering
-// ("the move left me isolated"). For private facts we compare light-stemmed word tokens of the folded
-// text: a fact leaks if (a) its canary-stripped body appears squashed, (b) any word 3-gram of the fact
-// with at least two content words appears, or (c) a window of the output contains enough of the fact's
-// distinct content words (2 of 2-3, else 60%). Fail-closed: a false positive costs a polite fallback.
-
-const STOPWORDS = new Set((
-  "a an and are as at be been but by for from had has have he her hers him his i if in into is it its me my mine " +
-  "of on or our ours she so than that the their them they this to too up us was we were what when where which " +
-  "who will with you your yours since about after before just very really more most some any all not no out over"
-).split(" "));
-
-/** Light suffix stemmer: "isolated"/"isolation"/"isolating" → "isolat", "moved"/"moving"/"move" → "mov". */
-export function stem(w: string): string {
-  if (w.length <= 3 || /\d/.test(w)) return w;
-  for (const suf of ["ingly", "edly", "ions", "ing", "ion", "ies", "ied", "ed", "es", "ly", "s", "e"]) {
-    if (w.endsWith(suf) && w.length - suf.length >= 3) {
-      let r = w.slice(0, -suf.length);
-      if (r.length > 3 && r.at(-1) === r.at(-2) && !/[aeiou]/.test(r.at(-1)!)) r = r.slice(0, -1); // "stopp" → "stop"
-      return r;
-    }
-  }
-  return w;
-}
-
-// Stopwords are kept (for n-grams) but marked with "~" and never stemmed or counted as content.
-const tokens = (s: string): string[] => s.split(/[^a-z0-9]+/).filter(Boolean).map((w) => (STOPWORDS.has(w) ? `~${w}` : stem(w)));
-const isContent = (t: string) => t.length >= 3 && !t.startsWith("~");
-/** Strip a seeded canary prefix ("canary_maya_private_") so the fact's real words are what's matched. */
-const factBody = (f: string) => plainVariants(f)[0]!.replace(/^canary_[a-z0-9]+_[a-z]+_/, "");
-
-function factLeaks(fact: string, textTokens: string[][], textSquashed: string[]): boolean {
-  const body = factBody(fact);
-  const sb = squash(body);
-  if (sb.length >= 8 && textSquashed.some((t) => t.includes(sb))) return true;
-  const ft = tokens(body);
-  const content = [...new Set(ft.filter(isContent))];
-  if (content.length < 2) return false; // one-word facts: exact/squashed match only
-  // (b) word 3-grams of the fact with at least two content words.
-  const grams = new Set<string>();
-  for (let i = 0; i + 3 <= ft.length; i++) {
-    const g = ft.slice(i, i + 3);
-    if (g.filter(isContent).length >= 2) grams.add(g.join(" "));
-  }
-  const need = content.length <= 3 ? 2 : Math.ceil(0.6 * content.length);
-  const window = Math.max(12, 3 * content.length);
-  const want = new Set(content);
-  for (const tt of textTokens) {
-    if (grams.size) for (let i = 0; i + 3 <= tt.length; i++) if (grams.has(tt.slice(i, i + 3).join(" "))) return true;
-    // (c) sliding window: count distinct fact content words present.
-    const counts = new Map<string, number>();
-    let distinct = 0;
-    for (let i = 0; i < tt.length; i++) {
-      const add = tt[i]!;
-      if (want.has(add)) { const c = counts.get(add) ?? 0; if (c === 0) distinct++; counts.set(add, c + 1); }
-      const drop = i - window >= 0 ? tt[i - window]! : undefined;
-      if (drop !== undefined && want.has(drop)) { const c = counts.get(drop)! - 1; counts.set(drop, c); if (c === 0) distinct--; }
-      if (distinct >= need) return true;
-    }
-  }
-  return false;
-}
-
-/** Short non-reversible label for audit logs: never log the blocked value itself (audit P2-24). */
-function labelHash(s: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193) >>> 0;
-  return h.toString(16).padStart(8, "0");
 }
 
 /** Internal identifiers and ISO timestamps that must never be in model-visible content (§5.1). */

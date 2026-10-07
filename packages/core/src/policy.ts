@@ -8,7 +8,8 @@
 export const MIN_MEMBER_AGE = 13;
 export const ADULT_AGE = 18;
 
-const validAge = (age: unknown): age is number => typeof age === "number" && Number.isFinite(age) && age >= 0;
+/** True for a usable age: a finite number, 0 or more. Anything else is treated as unknown (fail closed). */
+export const validAge = (age: unknown): age is number => typeof age === "number" && Number.isFinite(age) && age >= 0;
 
 /** True if someone of this age may join The Network (13 or older). */
 export const canJoin = (age: unknown): boolean => validAge(age) && age >= MIN_MEMBER_AGE;

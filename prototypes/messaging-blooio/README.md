@@ -46,6 +46,15 @@ Agent-initiated means every kind except `reply` (a direct answer to the member's
 5. **Line safety** from Blooio `safety.*` webhooks.
 6. **Rate limits**: per-recipient hourly cap, and the per-line daily cap on brand-new conversations (default 20)
    for every agent-initiated kind. The line comes from `from`, else `defaultFrom` (set from `BLOOIO_FROM`).
+7. **Leak guard**, immediately before the provider send: the shared `LeakGuard` from `packages/core/src/guard.ts`.
+   The optional `forbiddenProvider(recipient, message) => { forbidden, facts, privateVocab, canaries, publicPhrases }`
+   supplies the recipient-specific lists (other members' private facts, never the recipient's own); it may be async
+   and fails closed if it throws. Without a provider, contact patterns (phone, email, address, URL, handle) and
+   canary-shaped tokens are still checked. Compliance copy skips only the contact patterns; `leakAllow` lists other
+   fixed copy that may carry the Network's own contact details. A hit parks the record (`parked_leak_review`), stores
+   hashed reasons in `leakReasons` and history (never the text or the matched value) and alerts `leak_blocked`.
+   `leakReviewQueue()` lists parked records; `resolveLeakReview(key, "approve" | "drop")` re-queues (skipping only the
+   leak check) or ends them.
 
 Every address is normalized to E.164 first, so `+1 (555) 010-0001`, `15550100001` and `+15550100001` share one
 opt-out, one counter and one cap. An unexpected error while dispatching one record parks it (`parked_error`) and
