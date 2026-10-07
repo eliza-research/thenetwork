@@ -4,11 +4,16 @@
   "type": "module",
   "workspaces": [
     "packages/*",
-    "prototypes/*"
+    "prototypes/*",
+    "eliza/packages/core",
+    "eliza/packages/testing",
+    "eliza/plugins/plugin-sql",
+    "eliza/plugins/plugin-sqlite",
+    "eliza/plugins/plugin-assistant"
   ],
   "scripts": {
-    "test": "bun test packages prototypes",
-    "typecheck": "tsc --noEmit -p .",
+    "test": "bun test --conditions eliza-source ./packages ./prototypes",
+    "typecheck": "tsc --noEmit -p . && bun run --cwd packages/plugin-network typecheck",
     "observatory": "bun run packages/observatory/src/server.ts",
     "observatory:db": "bun run packages/observatory/db/dev-pg.ts up && bun run packages/observatory/db/seed.ts --from-sim --days 14"
   },

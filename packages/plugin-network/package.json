@@ -1,0 +1,41 @@
+{
+  "name": "@thenetwork/plugin-network",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The Network edge plugin for the Eliza shared agent: MEMBER_CONTEXT provider, SET_STATE action, NETWORK_SIGNALS evaluator, Network routing (state intent, structured action field, authz). Bound to an injected NetworkStore; Eliza Cloud supplies the Postgres store.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "sideEffects": false,
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "eliza-source": "./src/index.ts",
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@elizaos/core": "workspace:*",
+    "@elizaos/plugin-assistant": "workspace:*",
+    "@elizaos/plugin-sqlite": "workspace:*",
+    "@elizaos/testing": "workspace:*",
+    "typescript": "^6.0.3"
+  },
+  "scripts": {
+    "test": "bun test --conditions eliza-source",
+    "typecheck": "./node_modules/.bin/tsc --noEmit -p tsconfig.json"
+  },
+  "eliza": {
+    "platforms": [
+      "edge"
+    ],
+    "platformDetails": {
+      "edge": "createNetworkEdgePlugin factory with injected NetworkStore; no plugin-owned state"
+    }
+  },
+  "peerDependencies": {
+    "@elizaos/core": "*"
+  }
+}

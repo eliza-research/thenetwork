@@ -5,5 +5,5 @@
     "types": ["bun"], "resolveJsonModule": true, "allowImportingTsExtensions": true
   },
   "include": ["packages/**/*.ts", "prototypes/**/*.ts"],
-  "exclude": ["**/node_modules", "reference/**"]
+  "exclude": ["**/node_modules", "reference/**", "eliza/**", "packages/plugin-network/**"]
 }
