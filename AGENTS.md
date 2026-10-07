@@ -32,7 +32,7 @@ Do not break these. They are checked in tests and in every simulated run.
 
 ## LLMs
 
-- Use `defaultLLM()`, `judgeLLM()` or `recommenderLLM()` from `packages/core/src/llm.ts`. Every use is `gpt-6-luna` on Surplus Intelligence. OpenAI (same model IDs) is the fallback by default, when Surplus has no key or returns 429 / 5xx / a timeout; `LLM_ALLOW_OPENAI_FALLBACK=0` turns it off. Cerebras is optional and legacy. Use `endpointsFor(provider)` to check whether a provider has a key. Do not add a new LLM client or provider.
+- Use `defaultLLM()`, `judgeLLM()` or `recommenderLLM()` from `packages/core/src/llm.ts`. Every use is `gpt-6-luna` on Surplus Intelligence. OpenAI (same model IDs) is used when there is no `SURPLUS_API_KEY`, and as the fallback when Surplus returns 429 / 5xx / a timeout. Cerebras is optional and legacy. Use `endpointsFor(provider)` to check whether a provider has a key. Do not add a new LLM client or provider.
 - Requests time out after 60 s by default (`LLM_TIMEOUT_MS`) and retry at most 4 times (`LLM_MAX_RETRIES`).
 - Live (paid, networked) tests run only with `LIVE_TESTS=1`. A key in `.env` is not enough. Gate any new live test with `liveTestsEnabled()` from `packages/core`.
 - Judge prompts write the explanation before the verdict.

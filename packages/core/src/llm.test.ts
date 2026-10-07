@@ -10,7 +10,7 @@ const ok = (content: string, usage: object = { prompt_tokens: 4, completion_toke
 
 const ENV = [
   "DEFAULT_LLM_PROVIDER", "DEFAULT_LLM_MODEL", "JUDGE_PROVIDER", "JUDGE_MODEL", "RECOMMENDER_PROVIDER", "RECOMMENDER_MODEL", "SURPLUS_API_KEY", "OPENAI_API_KEY",
-  "CEREBRAS_API_KEY", "LLM_ALLOW_OPENAI_FALLBACK", "LLM_TIMEOUT_MS", "LLM_MAX_RETRIES",
+  "CEREBRAS_API_KEY", "LLM_TIMEOUT_MS", "LLM_MAX_RETRIES",
 ] as const;
 const saved = Object.fromEntries(ENV.map(k => [k, process.env[k]]));
 afterEach(() => { for (const k of ENV) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } });
@@ -70,27 +70,7 @@ test("defaults: gpt-6-luna on Surplus for default, judge and recommender; env ov
   expect((defaultLLM() as any).model).toBe("other-model");
 });
 
-test("surplus provider: LLM_ALLOW_OPENAI_FALLBACK=0 keeps every call on Surplus", async () => {
-  for (const k of ENV) delete process.env[k];
-  process.env.SURPLUS_API_KEY = "s-key";
-  process.env.OPENAI_API_KEY = "o-key";
-  process.env.LLM_ALLOW_OPENAI_FALLBACK = "0";
-  const calls: string[] = [];
-  const fakeFetch = (surplusStatus: number) => async (url: string, init: RequestInit) => {
-    const host = new URL(url).host, auth = (init.headers as Record<string, string>).Authorization;
-    calls.push(`${host} ${auth}`);
-    return host.includes("surplus") ? new Response("busy", { status: surplusStatus }) : ok("from openai");
-  };
-  expect(endpointsFor("surplus").map(e => new URL(e.baseUrl).host)).toEqual(["api.surplusintelligence.ai"]);
-  await expect(llmFor("surplus", "gpt-6-luna", { fetch: fakeFetch(429), maxRetries: 1, retryBaseMs: 1 }).chat([{ role: "user", content: "x" }])).rejects.toThrow("429");
-  expect(calls.every(c => c.startsWith("api.surplusintelligence.ai"))).toBe(true);
-  expect(calls.length).toBe(2); // first try + 1 bounded retry, never OpenAI
-
-  delete process.env.SURPLUS_API_KEY;
-  expect(() => defaultLLM()).toThrow("SURPLUS_API_KEY missing");
-});
-
-test("surplus provider: falls back to OpenAI by default (no Surplus key, or 429), with a warning", async () => {
+test("surplus provider: Surplus then OpenAI on 429, OpenAI alone without a Surplus key, error without either", async () => {
   for (const k of ENV) delete process.env[k];
   process.env.SURPLUS_API_KEY = "s-key";
   process.env.OPENAI_API_KEY = "o-key";

@@ -2,7 +2,7 @@
 // Default for every use is Surplus Intelligence gpt-6-luna (founder decision 2026-10-05); see
 // defaultLLM() / judgeLLM() / recommenderLLM(). Provider "surplus" falls back to OpenAI (same model
 // IDs) when SURPLUS_API_KEY is unset or Surplus fails with 429 / 5xx / timeout; each fallback logs a
-// warning. LLM_ALLOW_OPENAI_FALLBACK=0 turns the fallback off (Surplus only). Cerebras is optional and legacy.
+// warning. If neither key is set, a warning is logged when this module loads. Cerebras is optional and legacy.
 // Every request has a timeout (default 60 s, LLM_TIMEOUT_MS or ClientOptions.timeoutMs) and
 // retries are bounded (default 4, with capped, jittered exponential backoff).
 // Reasoning models spend hidden tokens: leave room in the completion budget, and read
@@ -134,7 +134,7 @@ async function chatCompletions(
     // Retryable failure: try the next endpoint, else back off on the last one, else give up.
     const retry = async (error: string, retryAfterMs?: number) => {
       if (e < endpoints.length - 1) {
-        warnOnce(`fallback:${label}`, `[llm] ${label} failed (${error.slice(0, 80)}); falling back to ${new URL(endpoints[e + 1]!.baseUrl).host} (LLM_ALLOW_OPENAI_FALLBACK=0 disables this)`);
+        warnOnce(`fallback:${label}`, `[llm] ${label} failed (${error.slice(0, 80)}); falling back to ${new URL(endpoints[e + 1]!.baseUrl).host}`);
         e++;
       } else if (retries < maxRetries) await sleep(backoffMs(retries++, hooks.retryBaseMs ?? 1000, retryAfterMs));
       else throw new Error(`${label} ${error} (after ${retries} retries)`);
@@ -229,8 +229,9 @@ export function parseProvider(name: string | undefined | null): Provider {
   throw new Error(`Unknown LLM provider ${JSON.stringify(name)} (expected one of: ${PROVIDERS.join(", ")})`);
 }
 
-/** Provider "surplus" may fall back to OpenAI unless LLM_ALLOW_OPENAI_FALLBACK=0/false/no (default: on). */
-export const openAIFallbackAllowed = () => !/^(0|false|no)$/i.test((process.env.LLM_ALLOW_OPENAI_FALLBACK ?? "").trim());
+// Startup check: every default LLM use needs SURPLUS_API_KEY or OPENAI_API_KEY.
+if (!process.env.SURPLUS_API_KEY && !process.env.OPENAI_API_KEY)
+  console.warn("[llm] Neither SURPLUS_API_KEY nor OPENAI_API_KEY is set: LLM calls will fail (see .env.example).");
 
 /** The project-wide default model (founder decision 2026-10-05: Surplus gpt-6-luna for everything). */
 export const DEFAULT_PROVIDER: Provider = "surplus";
@@ -239,7 +240,7 @@ export const DEFAULT_MODEL = "gpt-6-luna";
 /**
  * Endpoints with a key for a provider, in the order to try them. "surplus" is Surplus, then OpenAI:
  * OpenAI is used alone when SURPLUS_API_KEY is unset, and as the fallback on 429 / 5xx / timeouts.
- * LLM_ALLOW_OPENAI_FALLBACK=0 makes "surplus" Surplus only. Provider names are
+ * Provider names are
  * validated case-insensitively; unknown names throw.
  */
 export function endpointsFor(providerName: Provider | string): Endpoint[] {
@@ -248,8 +249,7 @@ export function endpointsFor(providerName: Provider | string): Endpoint[] {
   const surplus = { baseUrl: env.SURPLUS_BASE_URL ?? "https://api.surplusintelligence.ai/v1", apiKey: env.SURPLUS_API_KEY ?? "" };
   const openai = { baseUrl: env.OPENAI_BASE_URL ?? "https://api.openai.com/v1", apiKey: env.OPENAI_API_KEY ?? "" };
   const cerebras = { baseUrl: env.CEREBRAS_BASE_URL ?? "https://api.cerebras.ai/v1", apiKey: env.CEREBRAS_API_KEY ?? "" };
-  const fallback = provider === "surplus" && openAIFallbackAllowed();
-  const order = provider === "surplus" ? (fallback ? [surplus, openai] : [surplus]) : provider === "openai" ? [openai] : [cerebras];
+  const order = provider === "surplus" ? [surplus, openai] : provider === "openai" ? [openai] : [cerebras];
   return order.filter(e => e.apiKey);
 }
 
@@ -259,7 +259,7 @@ export function llmFor(providerName: Provider | string, model: string, hooks: Cl
   const [first, ...fallbacks] = endpointsFor(provider);
   if (!first) {
     throw new Error(provider === "surplus"
-      ? (openAIFallbackAllowed() ? "SURPLUS_API_KEY or OPENAI_API_KEY missing (see .env.example)" : "SURPLUS_API_KEY missing (see .env.example; the OpenAI fallback is off: LLM_ALLOW_OPENAI_FALLBACK=0)")
+      ? "SURPLUS_API_KEY or OPENAI_API_KEY missing (see .env.example)"
       : `${provider.toUpperCase()}_API_KEY missing (see .env.example)`);
   }
   if (provider === "cerebras") return new CerebrasLLM(first.apiKey, model, first.baseUrl, hooks);
