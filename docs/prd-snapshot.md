@@ -44,6 +44,7 @@ Version 0.2 (October 5, 2026). This revision resolves every review comment, adds
 36. Launch requirements we were missing
 37. MVP build plan and milestones
 38. Review decisions and comment resolution log
+39. Growth, network capital, and member ownership
 Appendix A. Example experiences and conversations
 Appendix B. Core data objects and tool contracts
 Appendix C. Validation experiment matrix
@@ -54,7 +55,7 @@ The Network is a real-world social intelligence layer. It learns what people car
 Core thesis: Most people are surrounded by far more friendship, knowledge, help, opportunity, love, adventure, generosity, space, tools, and useful human capacity than they can currently access. The problem is not only scarcity. It is coordination.
 The Network is not primarily a dating product, friendship product, services marketplace, professional network, volunteer app, event platform, or mutual-aid marketplace. It must be general enough to produce all of those outcomes without defining itself by any one of them. Its unit of value is an opportunity: a plausible configuration of people and circumstances that can make a life larger, easier, more connected, more useful, more surprising, or more meaningful.
 The product should feel like engineered synchronicity. The member does not receive a stream of assigned tasks. Instead, the agent occasionally notices that something interesting has become possible: someone nearby needs exactly the kind of help the member likes giving; two people have a reason to meet; a friend-of-a-friend has a capability that could unlock a problem; an underused room plus an organizer plus six curious people could become a dinner; a business has unused capacity that can become a community experience; a person is already going somewhere and someone else would enjoy joining.
-The Network is valuable when it increases the reachable possibility of a person's life while decreasing the effort required to coordinate it. It should create surface area, not screen time. It should make people more capable outside the product, not more dependent on it.
+The Network is valuable when it increases the reachable possibility of a person's life while decreasing the effort required to coordinate it. It should create surface area, not screen time. It should make people more capable outside the product, not more dependent on it. The goal is to grow the network's capability: more people, skills, knowledge, trust, and warm paths within reach. Members build the Network and, after the MVP, will own it (Section 39); introductions are one output among several.
 Network effects matter: by Metcalfe's law, a network's value grows roughly with the square of its connected members, which is why density within each city matters more than total size (Section 25.1).
 ## 1.1 Product promise
 You have more possible life around you than you can currently see. The Network helps the right possibilities become real.
@@ -544,7 +545,7 @@ V1 should not casually coordinate childcare, unsupervised minor interactions, ho
 - Members can export their own data and direct contacts acquired with mutual consent.
 - The Network should deliberately make members more capable outside the product.
 # 18. Regenerative business model - no monthly membership fee
-Status (v0.2): deferred. For the MVP we ignore the business model and focus on growth and quality. Nothing in Sections 18-19 is built in the MVP. Members handle any money between themselves outside the Network (Venmo, cash, etc.); the agent may help them agree on it. These sections are retained as direction for later.
+Status (v0.2): deferred. For the MVP we ignore the business model and focus on growth and quality. Nothing in Sections 18-19 is built in the MVP. Members handle any money between themselves outside the Network (Venmo, cash, etc.); the agent may help them agree on it. These sections are retained as direction for later. The ownership direction (a member-owned protocol and treasury governed through decision markets, post-MVP) is in Section 39.4.
 Hard constraint: no recurring consumer membership fee. Belonging is free once invited. The Network earns when it creates new economic value, mobilizes underused capacity, or is underwritten to create public/shared value. (Open question, Section 27: a voluntary paid governance membership, which confers voice but never social priority, is being discussed and would not contradict this constraint as long as belonging stays free.)
 ## 18.1 Economic constitution
 - Money cannot buy social rank, more desirable people, priority access to human generosity, or a higher chance of being matched socially.
@@ -582,7 +583,7 @@ Hard constraint: no recurring consumer membership fee. Belonging is free once in
 5. Create the Network Commons with transparent inflows/outflows once revenue is meaningful.
 6. Only later evaluate institutional contracts and ownership/governance mechanisms at scale.
 # 19. Network Commons and capital regeneration
-Status (v0.2): not MVP. Abuse risk is real and must be tested at small scale first. One governance direction under discussion: an open-source non-profit governed by members who choose to pay a membership fee; fees first fund the app and inference, and any surplus flows into the Commons pool. DAO governance experiments are worth studying for what to copy and what to avoid. Another idea for later: members contribute compute (with PII scrubbed so contributors cannot see what is computed) in exchange for points or ownership in the network.
+Status (v0.2): not MVP. Abuse risk is real and must be tested at small scale first. One governance direction under discussion: an open-source non-profit governed by members who choose to pay a membership fee; fees first fund the app and inference, and any surplus flows into the Commons pool. DAO governance experiments are worth studying for what to copy and what to avoid. Another idea for later: members contribute compute (with PII scrubbed so contributors cannot see what is computed) in exchange for points or ownership in the network. The current ownership direction is in Section 39.4: after the MVP, a member-owned protocol and treasury, with treasury decisions made through decision markets.
 The Network Commons is a proposed pool of financial capital dedicated to removing barriers and increasing future shared capability. It is not a loyalty program and not a pool that members can cash out based on popularity.
 ## 19.1 Example uses
 - Transport for a member who otherwise cannot participate.
@@ -608,7 +609,7 @@ A spending decision is regenerative when it plausibly creates durable capacity b
 
 
 ## 19.4 Governance direction
-Long-term ownership and governance should be designed so members who create the network's value are not treated purely as data-producing users. Options to explore include a public-benefit company with binding mission commitments, a community trust or member pool holding equity/economic rights, or eventually cooperative elements. Platform cooperative models provide examples of shared stakeholder ownership and governance, but this PRD does not commit the company to a cooperative structure at launch.[6]
+Long-term ownership and governance should be designed so members who create the network's value are not treated purely as data-producing users. Options to explore include a public-benefit company with binding mission commitments, a community trust or member pool holding equity/economic rights, or eventually cooperative elements. Platform cooperative models provide examples of shared stakeholder ownership and governance, but this PRD does not commit the company to a cooperative structure at launch.[6] Current direction (2026-10-07): after the MVP, The Network becomes a protocol and treasury owned by its members (founders included), governed through gasless voting and Umia-style decision markets (Section 39.4).
 # 20. Validation plan: social hypotheses and mechanical tests
 Many of the hardest questions cannot be answered by software tests alone. The founding team must explicitly separate social hypotheses from mechanical implementation assumptions. Each major social claim should have a low-cost real-world experiment and a measurable gate before scaling.
 ## 20.1 Concierge-first validation
@@ -655,6 +656,10 @@ This is not a single perfect number. The product should use a balanced scorecard
 | Life-expansion rate | Share of accepted opportunities members describe as outside their normal pattern but worthwhile. |
 | Receiving dignity | Comfort and willingness to ask again after receiving support. |
 | Regenerative spend effect | Incremental outcomes enabled by Commons or partner-funded barrier removal. |
+| Network capability created | Per city: new members who activate, new recurring crews, new skills and knowledge within reach, newly connected clusters (39.5). |
+| Vouch quality | Share of vouched members who activate, get value, and have no safety flags within 90 days. |
+| Member-created opportunities | Share of opportunities started by members (asks, crews, member intros, missions) rather than the engine. |
+| Network capital fairness | Outcome gap between NC deciles and NC Gini; gaming detection rate and time (39.2). |
 
 
 ## 21.3 Anti-metrics
@@ -889,6 +894,7 @@ An invite-only Network in San Francisco and New York for about 150-300 members (
 | Member web | "What the Network knows about me" review and edit, states and preferences, connected sources, invites, history, export and delete. | 32.17 |
 | Admin and analytics | Member 360, conversation viewer, member-perspective timeline, social-graph explorer, opportunity pipeline, matching-run inspector, review queue, safety queue, metrics dashboards, audit log. | 35 |
 | Testing | Unit/contract/policy tests per subsystem, simulated world with persona agents, virtual clock, scenario library, LLM judges, privacy canaries, load and chaos tests. | 34 |
+| Network capital (internal) | Private ledger built from events the MVP already records (vouches, attendance, feedback, confirmed help, organizing). Drives agent effort tiers, vouch capacity, and organizing reach; private "what you've built" view. Never visible to others, never used in anyone else's ranking, no cash value. | 39.2 |
 
 
 ## 28.4 Explicitly not in MVP (and what it builds on)
@@ -904,13 +910,16 @@ An invite-only Network in San Francisco and New York for about 150-300 members (
 | Payments, balances, splitting costs, paid professional services | Business model deferred (18). | Opportunity commercial_mode, Stripe in Eliza Cloud |
 | Refundable no-show deposits | Needs payments and careful testing. | Reliability evidence, attendance records |
 | Network Commons, sponsorship, partner inventory, institutional contracts | Deferred (18-19). | Opportunity object, world knowledge |
-| Governance and paid governance membership | Decide after product-market fit. | Admin metrics, audit log |
+| Governance, paid governance membership, member ownership, protocol tokens, and decision-market governance | Decide after product-market fit; needs legal review and token design first (39.4). | Admin metrics, audit log, network capital ledger |
 | ID verification | MVP relies on vouch, phone, and age attestation (13+). Needed first for home hosting. | Safety subsystem |
-| Home-hosted events, childcare, money custody, regulated services | High risk (17.5). | Safety classes |
+| Home-hosted events, childcare, money custody, regulated services | High risk (17.5). Home hosting comes after light-touch opportunities prove out (39.3). | Safety classes |
 | Learned ranking models and learned joint embeddings | Need labeled outcomes from MVP first. | Review labels, outcome data, matching logs |
 | Graph topology optimization, capability-coverage modeling | Need scale. | Graph analytics in admin |
 | Private progression, roles, gamification | Validation gate (20.3). | Feedback and edge history |
 | Cities beyond SF and NYC | Expansion gates (25.6). | Multi-city presence model |
+| Spendable network capital (time-bank style requests between members) | Needs the internal ledger, fairness and gaming results, and legal review first (39.2). | Network capital ledger, effort tiers |
+| Borrowing, lending, rental, and a marketplace | Goods changing hands need custody, disputes, and safety design (39.3). | Opportunity object, reliability evidence |
+| Group purchases and collective buying | Needs payments and money custody (18, 39.3). | Intents, small-group composition |
 
 
 ## 28.5 MVP launch gates (go/no-go)
@@ -1499,9 +1508,129 @@ This section records the decisions made while resolving the October 4-5, 2026 re
 | Introductions | Encourage members to introduce people; it builds social capital. | 6.1, A.3 |
 | Channels | Blooio (iMessage) and Twilio (SMS/voice) first; then Telegram, WhatsApp, Signal; later group chats. | 22.1, 22.4, 28.4 |
 | Login and agent verification | All login is by phone number and a text-message code; no passwords, email, or magic links. Agents using the skill or connector verify the member's number by texted code and receive a scoped, revocable agent key, kept for the session in chat assistants or stored locally by agents on a computer. | 9.1, 11.1, 11.5, 22.2, 29.3, 32.1, B.3 |
+| Member ownership | Post-MVP: a member-owned protocol and treasury. Tokens are an ownership stake, held virtually against the member's phone and agent with an open claim to self-custody; gasless voting; Umia-style decision markets for treasury decisions. Amounts decided by the founding team at launch; on chain when the time is right. | 1, 18, 19.4, 28.4, 39.4 |
+| Founders are members | Everyone, including the founders, is just a member. No founding cohort or special status. Invites are vouches. | 8.1, 39 |
+| Network capital | MVP-lite: internal ledger, effort tiers, vouch capacity, and a private "what you've built" view. No visible score, no cash value, no promised conversion. A spendable currency comes later. | 28.3, 28.4, 39.2 |
+| MVP opportunity mix | Favor light-touch opportunities: asks, work intros, light help, public-venue groups, plans and crews, events, and information missions. Home hosting, borrowing, rental, marketplace, and group buying come later. | 28.4, 39.3 |
 
 
 Comments that were agreement or emphasis (for example on contraction, activation energy, silence as a valid state, anti-metrics, examples, and LGTMs) were acknowledged and closed without changes; the text they endorsed is unchanged.
+# 39. Growth, network capital, and member ownership
+Status (2026-10-07): network capital has an MVP version and a later version; member ownership is post-MVP. Everyone, including the founders, is just a member, with no founding cohort or special status. Invites are vouches.
+## 39.1 Framing
+The goal is to grow the network: more members, but above all more capability, meaning more people who can help, more skills and knowledge within reach, more recurring groups, more warm paths, more cities, and more trust. Introductions are one way that capability gets used; they are not the product.
+The pitch is a network its members build and, after the MVP, own, not "an AI that introduces you to people". Each member's agent puts the network's capital to work for them, and each member grows that capital by taking part.
+Capital comes in many forms (Section 5), and they convert into each other more liquidly here than through money: an hour of advice becomes a warm introduction, a vouch becomes a new member who can teach something, and showing up reliably becomes trust that opens better opportunities. Money markets handle these conversions badly; The Network handles them with an agent and a shared ledger.
+## 39.2 Network capital
+### 39.2.1 What it is and is not
+Network capital (NC) is a member's account of what they have put into and taken out of the Network: the internal unit for deciding where to spend the Network's scarce resources (AI effort, reviewer time, invites, proactive reach). It is earned by growing the network and lost through behavior that damages it.
+It is not a public score, a rank, or a measure of worth. It never buys access to a specific person or changes how you appear or rank for others. Principles 5 and 6 still apply: money buys capacity, never people, and no single score is shown to others.
+### 39.2.2 Earning and losing
+
+| Earn | Lose |
+|---|---|
+| A vouch that works out: the invitee activates, gets value within 30 days, and has no safety flags | A vouched member removed for serious abuse within 90 days (bounded stake) |
+| Showing up to an accepted intro, group, plan, or event; giving feedback | A no-show after confirming, beyond the forgiven one (15.2); ghosting after accepting |
+| Helping: answering an ask, giving advice, making an introduction, sharing knowledge, confirmed by the recipient | Confirmed spam, harassment, scams, or policy violations (alongside safety action) |
+| Organizing at public venues: starting or leading a recurring crew, plan, or volunteer outing | Gaming: clawback of credit found to be fraudulent |
+| Answering the Network's needs list ("we need someone who knows X") |  |
+| Reviewing and stewarding (staff, later trained members) |  |
+
+
+Never earned or lost: declining, being in Quiet, Receiving, or Paused, inactivity, sharing more personal data (rewarding it would pressure privacy), or anything an invitee does short of serious abuse.
+### 39.2.3 What NC changes
+In the MVP:
+- Agent effort. Effort tiers set how much AI is spent on the member (deep judge passes, research depth, how often standing intents are re-searched). Everyone gets a high floor, with diminishing returns at the top.
+- Vouch capacity. Invite allowance grows with good vouches and shrinks after bad ones.
+- Organizing reach. Members with good history can start crews and plans that reach more people; invitees still opt in and budgets still apply.
+- Reviewer context (staff only): helps decide whether to approve a member-initiated request.
+NC never gives priority for a specific person, ranking in anyone else's results, visibility to others, romance advantage, or a way around any safety rule, budget, or review.
+### 39.2.4 What members see
+- MVP: a private, itemized "what you've built" history in the member web and by text ("you've vouched for 3 people who are now active; you organized 2 climbing nights"). No number is shown (20.3: no visible progression until it is shown to improve belonging, not hierarchy).
+- Later: a visible balance, if the pilot shows it helps and doesn't hurt.
+### 39.2.5 Strengths
+
+| Strength | Why it matters |
+|---|---|
+| Aligns incentives with growth | Good vouches, showing up, helping, and organizing are rewarded. |
+| Makes vouching mean something | An invite puts a bounded stake behind someone, so quality matters more than quantity. |
+| Principled basis for AI spend | Spend more AI where it creates more value. |
+| Rewards non-monetary contribution | Time, attention, knowledge, and introductions count, and help given in one form can be returned in another. |
+| Bridge to ownership | NC history records who built the network, an input the founding team can use for ownership post-MVP (no promised conversion). |
+
+
+### 39.2.6 Risks and mitigations
+
+| Risk | Mitigation |
+|---|---|
+| Hidden caste (24): more NC brings more AI, better outcomes, and more NC | High baseline for everyone; diminishing returns; capped top tier; other members' matching never reads NC; audits by NC decile. |
+| Conflict with Principle 6 (one number collapses capital) | Itemized ledger with categories; reliability stays contextual and separate; NC never shown to others or used in their ranking. |
+| Gaming: vouch rings, staged meetups, help farming | Counterpart confirmation plus a real outcome; diminishing credit per pair and period; anomaly detection; spot checks; clawback. |
+| Punishing people for life (illness, caregiving, volatile work) | Free cancellation before a cutoff; one forgiven no-show; declines never cost; Quiet, Receiving, and Paused never decay NC. |
+| Vouch liability chills inviting | Bounded stake, lost only for serious confirmed violations within about 90 days. |
+| Crowding out kindness; loss of dignity in receiving | No per-act pricing shown; gifts stay gifts (18.1); Receiving and safety support never depend on NC; asking never costs NC. |
+| Coercion to say yes | Only follow-through on accepted commitments counts. |
+| Legal (security, taxable reward, stored value) | In the MVP, NC is non-transferable, has no cash value, and carries no promise of conversion; securities and tax counsel before any link to tokens. |
+| Privacy, inference, and minors | Entries visible only to the member and audited staff; no private facts in entries (17.2); under-18s excluded. |
+
+
+### 39.2.7 MVP and later
+
+| MVP | Later |
+|---|---|
+| Internal ledger built from events the MVP already records (vouches, attendance, feedback, help confirmations, organizing) | NC as a spendable currency between members: time-bank style requests, with the helper earning what the requester spends |
+| Effort tiers, vouch capacity, and organizing reach driven by NC | Visible balance, categories, and transfers |
+| Private "what you've built" view | NC history as one input to ownership allocation (founding team decides) |
+| Bounded vouch stake; flake and abuse deductions with grace rules | Commons-funded missions that pay out NC |
+| Simulation of NC dynamics, gaming, and inequality before launch |  |
+
+
+Before launch, the simulated world (34) adds invitees, flaky personas, and gaming adversaries, and measures NC inequality, gaming success and detection time, vouch quality, and penalties on life-driven cancellations. Launch gate: the bottom NC decile's V14 is at least 80% of the top decile's, and no gaming strategy in the scenario library yields more than a small bounded gain.
+## 39.3 Lower-lift MVP opportunities vs later
+The MVP favors opportunities that need little physical resource, money, or risk and create real value quickly. Anything that needs homes, money custody, goods changing hands, or bulk buying comes later.
+
+| MVP (light touch, high value) | Why | Later |
+|---|---|---|
+| Ask the Network: answers, advice, member-vetted recommendations | AI first, members second; no logistics | Home hosting |
+| Warm intros for work: clients, jobs, collaborators, investors, mentors | The clearest way members make money | Borrowing, lending, rental, and a marketplace |
+| Light help: a 15-minute call, resume or pitch feedback, a question answered | High value per unit of attention; bounded | Group purchases and collective buying |
+| One-to-one intros and small groups at public venues | The core MVP | Payments, splits, and paid services |
+| Plans and recurring crews at public venues (run club, climbing, dinner) | Creates repeat relationships with no hosting burden | Childcare and care swaps |
+| Event co-attendance, including volunteer events | Missions with zero resource draw | Partner inventory and unused-capacity deals |
+| Vouch invites plus the Network's needs list | Growth with quality | The Commons and funded missions |
+| Monthly all-member gathering per city | Already MVP | The ownership protocol |
+| Information missions: curate or map something useful ("quiet cafes to work from in the Mission") | Builds shared knowledge |  |
+
+
+## 39.4 Member ownership (post-MVP)
+### 39.4.1 Direction
+After the MVP, The Network becomes a protocol whose treasury and governance are owned by its members, founders included. Tokens represent an ownership stake in the protocol and treasury; amounts are decided by the founding team at launch. It goes on chain when the time is right; nothing is on chain in the MVP.
+### 39.4.2 Virtual ownership and the open claim
+- Virtual ownership by default: each member's stake is held for them, tied to their phone number and Network account. No wallet, seed phrase, or gas.
+- Open claim: any member can claim their tokens and self-custody them at any time, subject to eligibility checks.
+- Governance from the phone or the agent: members direct their voting power by text or through their agent. The agent acts only on explicit authorization for each decision, or on a standing instruction the member set and can revoke.
+- Gasless voting: votes are signed and relayed, so members never pay transaction fees.
+### 39.4.3 Decision markets for the treasury
+Treasury allocation and major protocol decisions use Umia-style decision markets: participants trade on conditional outcomes ("if this passes, what happens to metric M?"), and the forecast informs or decides the result. Metrics are network-health measures from Section 21 (V14, repeat relationships, capability coverage, safety) plus treasury health. Members take part with their virtual holdings, from their phone or agent.
+### 39.4.4 Guardrails
+- Belonging stays free. Ownership never buys social priority, matching rank, or access to people (18.1, 18.3).
+- Legal first. Securities, tax, money transmission, and consumer protection review per jurisdiction before launch. Ownership and claims are for members 18 and over.
+- Identity and security. Phone control is exposed to SIM swaps, so claims and large votes need stronger authentication, cooling-off periods, and recovery.
+- Agent authority. The agent votes only within the member's explicit instructions; every agent vote is logged and visible to the member.
+- Anti-capture. Caps, delegation limits, and vesting against concentration and vote buying; safeguards against market manipulation.
+- Data. Governance never exposes personal or graph data; proposals and markets use aggregate metrics only.
+- Relationship to NC. NC history may inform allocation, with no promised conversion rate; MVP NC has no cash value.
+### 39.4.5 Sequence
+1. MVP: no ownership mechanics; record the NC ledger.
+2. After product-market fit: legal structure, token design, and allocation decided by the founding team; build the virtual ownership ledger and gasless voting.
+3. Launch governance with decision markets on a small part of the treasury; expand as safeguards prove out.
+4. Open claims and self-custody once custody, compliance, and recovery are ready.
+## 39.5 Metrics
+Added to Section 21.2:
+- Network capability created per city: new members who activate, new recurring crews, new skills and knowledge within reach, newly connected clusters.
+- Vouch quality: share of vouched members who activate, get value, and have no safety flags within 90 days.
+- Member-created opportunities: share of opportunities started by members (asks, crews, member intros, missions) rather than the engine.
+- NC fairness: outcome gap between NC deciles, NC Gini, and gaming detection rate and time.
 # Appendix A. Example experiences and conversations
 ## A.1 The surprising birthday
 Agent -> Member: "I thought of you for something slightly ridiculous. Someone one connection away is turning 30 tonight and their plans fell apart. You are four blocks away, you told me you love singing, and three members are already going. They need someone willing to show up around 9:15 and sing an unnecessarily dramatic Happy Birthday. About 20 minutes unless you want to stay. Interested?"
