@@ -1,6 +1,6 @@
 # Experience design: attention budget, introduction types, plans and continuous conversation (2026-10-07)
 
-Status: design proposal, for founder review. Section 1 (Phase 1) is implemented in `packages/engine/src/attention.ts` and measured in `docs/results/2026-10-07-attention-budget.md` (iterations 1-3). The founder's decisions of 2026-10-07 replace D2, D4 and D5 (section 9) and are written into section 1 below; section 1.11 (availability capture) is new. No LLM calls were made to write it.
+Status: design proposal, for founder review. Section 1 (Phase 1) is implemented in `packages/engine/src/attention.ts` and measured in `docs/results/2026-10-07-attention-budget.md` (iterations 1-4). Section 4 (Phase 2, plans) is implemented in `packages/engine/src/plans.ts` and `activities.ts` and measured in `docs/results/2026-10-08-plans.md`; section 4.11 records what was built and the measured defaults. The founder's decisions of 2026-10-07 replace D2, D4 and D5 (section 9) and are written into section 1 below; section 1.11 (availability capture) is new. No LLM calls were made to write it.
 
 Builds on:
 - `docs/research/2026-10-07-match-failures-and-diversity.md` ("the match report")
@@ -504,7 +504,7 @@ The activity taxonomy starts from `packages/engine/src/taxonomy.ts` (shared with
 
 ### 4.4 Engine integration: a planner, not a generator
 
-Plans are a separate planner module, `packages/engine/src/planner.ts`, that emits candidates into the same selection, review and outreach path, registered as `plan` in `GENERATOR_NAMES` for logging and per-generator thresholds.
+Plans are a separate planner module that emits plans into the same review and outreach path. **As built (2026-10-08):** `packages/engine/src/plans.ts` (planner, scoring, quorum, fallbacks, crews, probe copy) and `activities.ts` (activity taxonomy, venue type), with a `plans` config section (`config.ts DEFAULT_PLANS`, its own hash, like the attention section). It is not registered in `GENERATOR_NAMES`: that would change the engine config and its hash for every run. A plan becomes an `EngineProposal` with `generator: "plan"` (`planToProposal`) for logs and review, and `plan_probe` attention items (`planItem`).
 
 Why not a plain generator:
 - **Windows first.** Generators start from an intent or a pair. The planner starts from aggregated demand per window (who is free Saturday 7-11pm in this city) and builds activity × venue × group.
@@ -535,8 +535,8 @@ For each city and window w with at least `size.min` available members:
 ### 4.6 Probes, quorum, booking and reminders
 
 - **Probe wave.** After review, anonymous probes go to the target group: "Saturday 7pm: bouldering at a gym in the Mission with 3 others who like climbing, about $25. In?" Probes go in the digest if the digest lands before the deadline, else as a break-in.
-- **Quorum.** min 3 (2 for activity pairs), deadline the earlier of 24 hours after probes or 30 hours before start. On each decline or expiry, the next alternate is probed (re-reviewed if they were not in the reviewed alternate list).
-- **Reveal.** When quorum is met: first names, the shareable why, the group relay thread (F16).
+- **Quorum.** min 3 (2 for activity pairs), deadline the earlier of 24 hours after probes or 30 hours before start. On each decline or expiry, the next alternate is probed (re-reviewed if they were not in the reviewed alternate list). *As built:* the deadline is the earlier of 96 hours after the plan is made and 30 hours before the start (a 24-hour window left most invitees unreached under the 2/7d cap, 4.11); a yes waiting for quorum does not hold the member back from other items, only a booked plan does; activity-partner plans probe the second member only after the first says yes (one-to-one rules).
+- **Reveal.** When quorum is met: first names, the shareable why, the group relay thread (F16). *As built:* the reveal is the booked plan (attention v1.2 "(c)"): "You're in: bouldering at <place>, Sat 7pm, with Ana R., Ben K. Everyone pays their own way. Reply if you can't make it." A later yes joins until 6 hours before the start; a "can't" removes only that member, and the plan is cancelled only below 2.
 - **Booking.** MVP: the agent suggests the venue and a booking link. The host, or a volunteer among participants, books; everyone pays their own way (32.12). Bookings needing a deposit are not proposed.
 - **Reminders.** T−24h and T−3h, day-of check-in. Logistics, not budgeted; quiet hours apply.
 - **Fallbacks,** in order: (1) a smaller group if ≥ 2 said yes and the activity allows it; (2) a solo event suggestion for the yes-sayers ("the group didn't come together; this is happening nearby, want the link?"); (3) next week: the demand carries forward as a held plan item with the same activity.
@@ -585,6 +585,23 @@ The oracle must also adopt the match report's calibration fixes (decision noise 
 | Capture-to-plan | Hours from a stated window to a probe | Median ≤ 24h |
 | Crew formation | Crews per city per 60 days | ≥ 1 per 50 active members |
 | Coverage | Share of members with a stated window who got a plan or fallback | ≥ 80% |
+
+### 4.11 As built and measured (2026-10-08)
+
+Built in `packages/engine/src/plans.ts` and `activities.ts` (config `DEFAULT_PLANS`, `plans-v1.0.0`), measured in `docs/results/2026-10-08-plans.md` (8 seeds, 150 personas, 30 days; harness `experiments/plans*.ts`; no LLM calls). MVP scope per the growth doc, section 3: public venues and listed events only, volunteer shifts at existing organizations, no home hosting, no money through the Network.
+
+| Design item | As built |
+|---|---|
+| Data model (4.3) | `ActivityType` (32 activities, 9 families, mapped to facet tags and taxonomy objectives), `Venue` (public only), `Plan`, `Crew`; availability = attention's `AvailabilityEvidence` plus this week's `StatedWindows`. A slot is demand only with a stated, standing or learned window (never the daypart prior alone) |
+| Capture (4.2, 1.11 d) | Opt-in weekly "what's your week like?" (Sunday 17:00, a profiling ask, never on the cap) and standing availability at onboarding. The midweek digest prompt and calendar were not added |
+| Planner (4.4, 4.5) | Separate from the generators, not in `GENERATOR_NAMES` (keeps the engine config hash); runs Monday and Thursday 09:00 local; least misery with familiarity as specified; invite 4-6, quorum 3; activity-partner plans of 2 only when no group clears the floors; activity fit = a stated interest or want (family fit does not qualify) |
+| Probes, quorum, booking (4.6) | Anonymous `plan_probe` carrying the plan's time (D5), review first; deadline the earlier of 96 h after the plan is made and 30 h before the start; backfill from reviewed alternates; the reveal is the booked plan (attention v1.2 "(c)"); a yes waiting for quorum does not hold the member; no double booking within 4 h |
+| Fallbacks (4.6) | Smaller group (activity allows 2), solo public event, next week (demand carried, +0.1 fit for 10 days) |
+| Crews (4.7) | `detectCrews` (>= 3 positive at 2 plans, or 1 plan plus a recurring want), weekly sessions, rotating member host, hand-off after 3 sessions |
+
+Measured against attention v1.2 "(c)" with fixes 1-3: **V14 28.4% → 35.5% (+7.1 ± 1.4 points), adults with no value event 56.1% → 47.8% (-8.3 ± 1.0), Gini of value events 0.686 → 0.637; met + worthwhile 15.0 → 18.5 per seed (+3.5 ± 2.1, not significant)**: plans add +5.5 ± 0.6 met + worthwhile meetings per seed and take -2.0 ± 2.0 from intros through the shared 2/7d cap (+0.23 interruptions per member-week, all within cap). Quorum rate 23% and attendance 65% are below the 4.10 targets (50%, 75%); plan precision 34% (target 40%). 17% of members' first value came from a plan. Invariants: 0 declared minors in any plan role, 0 minor contacts, 0 canary leaks, 0 names in plan probes, 0 over-cap and 0 quiet-hour sends.
+
+What carries the result, and what is still assumed: the weekly check-in (standing availability alone: V14 +2.5, met + worthwhile -1.1 ± 1.0) and window priming, a harness assumption that a member who said "free Saturday" answers a matching plan like a request they made (without it: met + worthwhile +0.0 ± 1.7, V14 +4.1). The pilot should measure that yes rate first. Crews almost never form within 60 days under the 2-plan rule because the planner does not yet regroup people who enjoyed a plan (4.8's `would_interact_again` edges are not fed back yet). The familiarity term, kept on as specified, measured a small cost to plan quality in the simulator, which cannot represent its benefit (open decision in the results doc).
 
 ---
 

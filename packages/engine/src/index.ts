@@ -14,3 +14,5 @@ export { MatcherScheduler, MemoryProposalStore, type ProposalStore } from "./tic
 export { Rng } from "./rng.ts";
 export * as attention from "./attention.ts";
 export { DEFAULT_ATTENTION, resolveAttention, attentionConfigHash, type AttentionConfig, type AttentionConfigInput } from "./config.ts";
+export * as plans from "./plans.ts";
+export { DEFAULT_PLANS, resolvePlans, plansConfigHash, type PlansConfig, type PlansConfigInput } from "./config.ts";
