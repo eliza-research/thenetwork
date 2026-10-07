@@ -11,9 +11,26 @@ const MON = Date.UTC(2026, 9, 5, 16);
 const msg = (id: string, at: number, over: Partial<OutboundMessage> = {}): OutboundMessage => ({ id, memberId: "a", kind: "invitation", at, ...over });
 
 describe("outreach controller (32.9, F28)", () => {
-  test("what counts as proactive", () => {
-    for (const k of ["invitation", "profiling_question", "recommendation", "worthwhile_check"] as const) expect(isProactive(k)).toBe(true);
-    for (const k of ["reply", "scheduling", "reminder", "check_in", "relay", "safety_notice", "account_notice"] as const) expect(isProactive(k)).toBe(false);
+  test("what counts as proactive: initial invites only (founder decision 3)", () => {
+    for (const k of ["invitation", "recommendation"] as const) expect(isProactive(k)).toBe(true);
+    for (const k of ["profiling_question", "worthwhile_check", "reply", "scheduling", "reminder", "check_in", "relay", "safety_notice", "account_notice"] as const) expect(isProactive(k)).toBe(false);
+  });
+
+  test("profiling and feedback asks are not budgeted but follow the one-question rule", () => {
+    const clock = new SimClock(MON);
+    const oc = new OutreachController(clock);
+    const m = baseMember("a", { state: "normal" });
+    // Budget used up by two invites this week: an ask still goes out, and does not count.
+    const hist = [msg("x1", MON - 2 * HOUR, { repliedAt: MON - HOUR }), msg("x2", MON - HOUR, { repliedAt: MON - 30 * 60_000 })];
+    const d1 = oc.decide(m, msg("q1", MON, { kind: "profiling_question" }), hist);
+    expect(d1).toMatchObject({ action: "send", countsAgainstBudget: false });
+    hist.push(msg("q1", MON, { kind: "profiling_question" }));
+    clock.advance(HOUR);
+    expect(oc.decide(m, msg("q2", clock.now(), { kind: "worthwhile_check" }), hist)).toMatchObject({ action: "hold", reason: "one_question" });
+    // Answered: the next ask may go. Unanswered asks never trip the two-unanswered pause.
+    hist[2] = { ...hist[2]!, repliedAt: clock.now() };
+    expect(oc.decide(m, msg("q3", clock.now(), { kind: "worthwhile_check" }), hist).action).toBe("send");
+    expect(unansweredStreak([msg("q", MON - 10 * DAY, { kind: "profiling_question" }), msg("w", MON - 9 * DAY, { kind: "worthwhile_check" })], MON)).toBe(0);
   });
 
   test("budgets per state: Open 4/wk, Normal 2/wk, Quiet 1/mo, Paused 0", () => {

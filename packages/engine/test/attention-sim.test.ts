@@ -7,7 +7,7 @@ import { SNAPSHOT_FEATURES } from "../../sim/src/snapshot.ts";
 import { AttentionNetwork } from "../experiments/attentionNetwork.ts";
 import { runSim } from "../experiments/lib.ts";
 
-type Cfg = { name: string; probes: boolean; iter2?: boolean };
+type Cfg = { name: string; probes: boolean; iter2?: boolean; iter3?: boolean };
 async function run(c: Cfg) {
   let net!: AttentionNetwork;
   const res = await runSim({
@@ -16,6 +16,12 @@ async function run(c: Cfg) {
     network: s => (net = new AttentionNetwork({
       seed: s, randomIntros: false, mode: "attention", probes: c.probes,
       ...(c.iter2 ? { cadence: "rolling" as const, lambdaScale: 0, partnerAnyCap: true, suppressAcks: true, outsideWorld: true, actOnEvent: () => false } : {}),
+      // Iteration 3 (founder decisions 1-4): learned send time, partner probes in the partner's send window, time options.
+      ...(c.iter3 ? {
+        cadence: "rolling" as const, lambdaScale: 0, suppressAcks: true, requeueUnpicked: true, outsideWorld: true, eventsAlone: false, actOnEvent: () => false,
+        sendTime: "learned" as const, sendWindowHours: 6, partnerInWindow: true, timeOptions: true,
+        hiddenFree: (_id: string, t: number) => new Date(t).getUTCHours() % 2 === 0, connectsCalendar: () => true,
+      } : {}),
     })),
     augment: input => net.engineView(input as any),
   });
@@ -26,6 +32,7 @@ const CFGS: Cfg[] = [
   { name: "named items", probes: false },
   { name: "consent-first probes", probes: true },
   { name: "iteration 2: rolling, no price, partner on any cap, acks folded, events, probes", probes: true, iter2: true },
+  { name: "iteration 3: learned send time, partner in window, time options, probes", probes: true, iter3: true },
 ];
 for (const c of CFGS) {
   const probes = c.probes;
@@ -87,6 +94,12 @@ for (const c of CFGS) {
       }
       expect(interruptions).toBeGreaterThan(10);
       if (c.iter2) { expect(net.stats.eventsShown).toBeGreaterThan(0); expect(minorMsgs).toBeGreaterThan(0); }
+      if (c.iter3) {
+        // Probes carry 2-3 concrete times; a meeting set from them is at a time everyone picked.
+        expect(net.stats.probesWithOptions).toBeGreaterThan(0);
+        expect(recs.some(r => r.msg.meta?.type === "probe" && / or (Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day \d+(am|pm)/.test(r.msg.body))).toBe(true);
+        for (const r of recs) if (r.msg.meta?.type === "scheduling" && r.msg.meta?.meetingAt && net.stats.timedMeetings + net.stats.untimedMeetings > 0) expect(r.msg.meta.meetingAt).toBeGreaterThan(r.msg.ts);
+      }
       expect(net.ledger.filter(e => e.countsAgainstCap).length).toBe(interruptions);
       void HOUR;
     }, 120_000);

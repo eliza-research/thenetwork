@@ -1,6 +1,6 @@
 # Experience design: attention budget, introduction types, plans and continuous conversation (2026-10-07)
 
-Status: design proposal, for founder review. Nothing here is implemented. No LLM calls were made to write it.
+Status: design proposal, for founder review. Section 1 (Phase 1) is implemented in `packages/engine/src/attention.ts` and measured in `docs/results/2026-10-07-attention-budget.md` (iterations 1-3). The founder's decisions of 2026-10-07 replace D2, D4 and D5 (section 9) and are written into section 1 below; section 1.11 (availability capture) is new. No LLM calls were made to write it.
 
 Builds on:
 - `docs/research/2026-10-07-match-failures-and-diversity.md` ("the match report")
@@ -45,17 +45,22 @@ Sections 1-7 take the founder's seven directions in order (attention budget, int
 
 The scarce resource is the member's attention, and the thing that spends it is an **interruption**: a message the Network starts that the member did not ask for. The budget counts interruptions, not opportunities.
 
-| Message | Interruption? | Counts against cap | Counts toward two-unanswered |
-|---|---|---|---|
-| Digest (menu of 1-3 items) | Yes | 1 | 1 |
-| Break-in (single urgent item) | Yes | 1 | 1 |
-| Consent-first probe sent alone | Yes | 1 | 1 |
-| Profiling question sent alone (F6) | Yes | 1 | 1 |
-| Profiling question inside a digest | No extra | 0 | (part of the digest) |
-| "Was that worth a text?" | Only if sent alone | 1 | 1 |
-| Reply to a member's message, including items offered in that reply | No | 0 | 0 |
-| Logistics inside an accepted item (scheduling, reminders, check-ins, relay) | No | 0 | 0 (but counts toward Blooio's per-conversation streak, 1.6) |
-| Safety and account notices | No | 0 | 0 |
+**Founder decision 3 (2026-10-07): only initial invites count against the cap.** The first message that proposes a new opportunity to a given member counts once against **that member's** cap. For the second person in a pair, their first probe is their initial invite and counts against **their** cap; it needs no break-in and can go out as soon as the first person says yes, within their cap, their quiet hours and their learned send time (1.4). Everything after the initial invite is free: check-ins, the partner follow-up after a yes, the reveal, scheduling, reminders, day-of check-ins, feedback asks and acknowledgements. The hard limits still apply to everything: Blooio's third-unanswered rule (1.9), the two-unanswered pause on initial invites, and quiet hours.
+
+| Message | Initial invite? | Counts against cap | Counts toward two-unanswered | Blooio streak |
+|---|---|---|---|---|
+| Message carrying at least one new opportunity (probe, menu of 1-3 items, outside-world suggestion) | Yes | 1 (once per message) | 1 | 1 |
+| The partner's first probe after the first member's yes | Yes, for the partner | 1 for the partner | 1 for the partner | 1 |
+| Re-engagement (D6) | Yes | 1 | exempt from the pause (`meta.reengagement`), still counted | 1 |
+| Profiling question, including an opt-in "what's your week like?" check-in with no proposal (1.11 d) | No | 0; one-question rule: at most one open question | 0 | 1 |
+| Same check-in carrying a proposal | Yes | 1 | 1 | 1 |
+| "Was that worth a text?" and other feedback asks | No | 0 (one-question rule) | 0 | 1 |
+| Reveal, scheduling, reminders, day-of check-ins, relay, partner follow-up | No | 0 | 0 | 1 (logistics need <= 2 outstanding) |
+| Acknowledgements ("Thanks, noted.") | No | 0 | 0 | folded into the next message, never sent alone (iteration 2) |
+| Reply to a member's message, including items offered in that reply | No | 0 | 0 | resets the streak |
+| Safety and account notices | No | 0 | 0 | exempt |
+
+Implementation: `attention.ts isInitialInvite`, `countsAgainstCap` (a message counts iff it carries an item whose kind is not in `cfg.notInvites`), `composeMessage` (at cap, only non-invite asks can still go), `outreach.ts isProactive` (`invitation`, `recommendation`) and `isAsk` (profiling and feedback asks: not budgeted, one open at a time).
 
 This keeps PRD 32.9 intact (Normal: 2 proactive messages per week) while letting one message carry up to three things. The match report shows recall saturates at 3 items per week (budget 3: 20.0%, budget 4: 19.4%), and COMBO D's gain came from the third slot. Packing the third item into an existing message buys that gain without a third interruption (D3).
 
@@ -86,7 +91,8 @@ interface HeldItem extends AttentionItem {
 
 interface CadencePrefs {               // explicit, set in plain language (F20)
   mode: "digest" | "as_it_comes" | "only_when_great" | "only_when_asked";
-  digestDays: number[]; digestHour: number;    // default [4] (Thu), 18 local
+  digestDays: number[]; digestHour: number;    // default every day (rolling), 12 local (founder decision 1)
+  sendHours?: { weekday: number; weekend: number };  // learned from the member's replies (1.4)
   categoryWeight: Partial<Record<Category, number>>;  // "more of X" 1.5, "less of Y" 0.5, off 0
   maxItemsPerDigest: 1 | 2 | 3;
   romanceInDigest: boolean;            // default false (D10)
@@ -153,20 +159,25 @@ The "1" is the fixed cost of the buzz in the pocket. The surcharge is effort wei
 
 Otherwise everything stays in the hold queue. Learned signals can only make the Network quieter than the state cap allows. Only an explicit member request raises frequency, and never above the state cap (D11).
 
-### 1.4 Delivery: digest slots and break-ins
+### 1.4 Delivery: rolling sends at a learned send time
 
-- **Digest.** Default one slot per week for Normal at Thursday 18:00 local, after the Wednesday pre-weekend engine run (PRD 33.3), so weekend plans and events are fresh. The member can move it ("weekly on Sundays"). Composition runs 18 hours before the slot so member-involving items clear the 12-hour review SLA.
-- **Break-in.** One item may go out alone, outside the digest, when it expires before the next slot, has V ≥ 1.5 × the member's median digest-item V, and break-ins used in the window are below the per-state limit (Normal 1/7d, Open 2/7d, Quiet 0). Same-day plans use the 1-hour review SLA.
+**Founder decision 1 (2026-10-07, replaces D2): rolling sends, not a weekly digest.**
+
+- **Rolling slot.** Every day has one send slot per member. It is used only when the best held item clears the quality bar and the member has cap; whatever else is ready is batched into the same message (up to 3 items, at most 2 that involve another member). Nothing ready, nothing sent. The member can still ask for a weekly digest ("weekly on Sundays" sets `digestDays`).
+- **Send time.** Default around lunchtime local: **12:00**, spread over 2 hours by per-member jitter (burst smoothing, 1.9). A message may go out from the slot until 6 hours after it (`sendTime.windowHours`); a slot missed for a transient reason (quiet hours, the Blooio streak) is retried inside that window only.
+- **Learning the send time** (`attention.ts learnSendProfile`). Track when each member actually replies. Replies are bucketed into slots (morning 07-11 → send 09:00, lunch 11-14 → 12:00, afternoon 14-17 → 15:00, evening 17-22 → 18:00), recency-weighted (half-life 28 days), with **separate weekday and weekend profiles**. A profile moves off 12:00 only with **at least 5 replies** in it, when the best slot holds at least 40% of the weight and beats the default slot by at least 15 points. A slot whose send hour is in the member's quiet hours is never chosen. Moving the hour is not a frequency change (D11).
+- **Partner probes** (decision 3) go as soon as the first member says yes, inside the partner's send window, within the partner's cap and quiet hours. They need no break-in.
+- **Break-ins** (D4, now narrow). With a slot every day, a break-in is only for an item that expires before the next slot (a same-day plan): V ≥ 1.5 × the member's median item V, within the per-state break-in limit (Normal 1/7d, Open 2/7d, Quiet 0) and the cap. Same-day plans use the 1-hour review SLA.
+- **Review SLA.** A member-involving item must be reviewed before its first probe; with a daily slot, an item reviewed after today's window waits for tomorrow's.
 - **Pull.** "Anything for me?" or "what's on this weekend?" is a member-initiated thread. The reply can show the top held items at zero cost. This is the main channel for Quiet and only-when-asked members.
 
 Reply grammar for a digest: "1", "2 and 3", "none", "not this week", "more like 2", "less of this", or free text. Any reply, including "none" and a tapback, marks the message answered. "none" is not a decline of any person: probe partners are released politely and no pair cooldown is set.
 
-Example (Normal, Thursday 18:04):
+Example (Normal, Thursday 12:17, two things were ready):
 
-> Three things for this weekend, reply with a number (or "none"):
-> 1. Sat 10am: a couple of climbers near the Mission are looking for a bouldering partner. Want in?
+> Two things, reply with a number (or "none"):
+> 1. Up for a bouldering partner near the Mission, Saturday 10am or Sunday 2pm? I'll only share who it is if you both say yes.
 > 2. Fri 7pm: a small film-photography walk in Dumbo, $15, 12 spots left.
-> 3. Quick one: are you still looking for a running group, or has that changed?
 
 ### 1.5 Silence below the quality bar
 
@@ -186,24 +197,25 @@ Example (Normal, Thursday 18:04):
 
 | State | Cap (interruptions) | Digest | Break-ins | λ_state | Max items | Item classes allowed |
 |---|---|---|---|---|---|---|
-| Open | 4 / 7d | Twice weekly (Tue, Thu) | 2 / 7d | 0.15 | 3 | All |
-| Normal | 2 / 7d | Weekly (Thu 18:00) | 1 / 7d | 0.25 | 3 | All |
-| Quiet | 1 / 30d | Monthly (first Thu) | 0 | 0.50 | 2 | Ê ≥ 0.6 only |
-| Receiving | 2 / 7d | Weekly | 1 / 7d | 0.25 | 2 | Support and low-effort social only; no contribute asks |
+| Open | 4 / 7d | Rolling daily slot, learned send time (default 12:00) | 2 / 7d (same-day items only) | 0.15 | 3 | All |
+| Normal | 2 / 7d | Rolling daily slot, learned send time (default 12:00) | 1 / 7d (same-day items only) | 0.25 | 3 | All |
+| Quiet | 1 / 30d | Rolling daily slot; the cap keeps it to one a month | 0 | 0.50 | 2 | Ê ≥ 0.6 only |
+| Receiving | 2 / 7d | Rolling daily slot | 1 / 7d | 0.25 | 2 | Support and low-effort social only; no contribute asks |
 | Paused | 0 | None | 0 | ∞ | 0 | Safety and account notices only |
 | Only-when-asked (any state) | 0 | None | 0 | n/a | n/a | Pull only; held items shown when asked |
-| Member aged 13-17 | 1 / 7d (D9) | Weekly | 0 | 0.25 | 2 | Events, places, solo plans, answers. Never people. |
-| First 14 days (newcomer) | State cap | Weekly, plus one welcome item | 1 | 0.20 | 3 | Newcomer welcome and outside-world prioritized |
+| Member aged 13-17 | 1 / 7d (D9) | Rolling, never after 20:00 on school nights | 0 | 0.25 | 2 | Events, places, solo plans, answers. Never people. |
+| First 14 days (newcomer) | State cap | Rolling, plus one welcome item | 1 | 0.20 | 3 | Newcomer welcome and outside-world prioritized |
 
-Contribution asks (helper, host, provider, mentor, introducer) keep their own 2/14d budget on top (config `contribution`).
+Caps count initial invites only (decision 3, 1.1). Contribution asks (helper, host, provider, mentor, introducer) keep their own 2/14d budget on top (config `contribution`).
 
 ### 1.8 Consent-first probes
 
-A probe asks about the activity and the time before it reveals the person: "Up for a climbing partner Saturday morning near the Mission?"
+**Founder decision 2 (2026-10-07): always probe first.** Every member-involving opportunity is consent-first, whatever its type or category. A probe asks about the activity and the time before it reveals the person, with 2-3 concrete times (1.11 a): "Up for a climbing partner near the Mission, Thursday 7pm or Saturday 10am?"
 
-- Content: only the activity, time window, area and at most one `shareable` attribute of the other person ("also new to bouldering"). Never a name, photo, employer or anything `matchable` or `agent_private` (D5).
-- Order: probe the member with the live want first (the seeker or initiator). Only on their yes is the partner probed. Declines therefore cost only the person who asked for the thing, and the partner's scarce slot is spent only on a half-confirmed match.
-- Reveal: first names and the shareable "why" go to both only after both say yes. Then relay (F16) and scheduling (F17) begin. Neither side ever learns of a decline (32.10).
+- Content (D5, unchanged): only the activity, 2-3 time options (or a time window), the area and at most one `shareable` attribute of the other person ("also new to bouldering"). Never a name, photo, employer or anything `matchable` or `agent_private` until both say yes. Time options are built from availability evidence (1.11) and pass the same leak gate as the rest of the text.
+- Order: probe the member with the live want first (the seeker or initiator). Only on their yes is the partner probed, with the times the first member picked. Declines therefore cost only the person who asked for the thing, and the partner's scarce slot is spent only on a half-confirmed match. The partner's probe is the partner's initial invite (decision 3): it counts against the partner's cap, needs no break-in and goes in the partner's next send window.
+- Reveal: first names, the shareable "why" and the time both picked go to both only after both say yes. Then relay (F16) and scheduling (F17) begin. If no offered time fits both, the reveal proposes the best estimated joint time. Neither side ever learns of a decline (32.10). The reveal and everything after it are not invites (decision 3).
+- Cost, measured: consent-first probes cost meetings in the simulator (three answers instead of two; iteration 2: 6-9 met and worthwhile per seed). Iteration 3 measures the founder's defaults with probes on for everything.
 - Review: the reviewer approves the underlying proposal before the first probe. A partner swap after a decline is a new proposal and is reviewed again (audit P1-9).
 - Romance probes are never anonymous-to-identified surprises: the probe states it is a romance intro ("someone you might like to go on a date with"), is sent only to adults with stated preferences, and is always double opt-in.
 
@@ -217,7 +229,7 @@ Blooio enforces, per conversation, at most 3 unanswered outbound messages, then 
 | Reserve the third slot | An interruption may be sent only if `outboundSinceInbound ≤ 1`. Then the Network's own auto-pause (2 unanswered interruptions) always fires before Blooio's limit, and the third Blooio slot stays free for logistics inside an accepted item (a reminder) or a safety notice. |
 | Logistics | Reminders and check-ins for an accepted item are sent while `outboundSinceInbound ≤ 2`. If a member stops answering mid-plan, the plan continues without them and they are marked unconfirmed, not messaged a fourth time. |
 | Auto-pause | After two unanswered interruptions (72h or expiry, as F28), the member moves to only-when-asked. Their held items stay held; probes on their behalf to partners are withdrawn politely. |
-| Re-engagement | Blooio allows one message after 14 days. Use it at most once, at ≥ 30 days of silence, and only if a held item has V above the member's 75th percentile. It is a single item plus "want me to keep sending these?" If unanswered, permanent silence until inbound (D6). |
+| Re-engagement | Blooio allows one message after 14 days. Use it at most once, at ≥ 30 days of silence, and only if a held item has V above the member's 75th percentile. It is a single item plus "want me to keep sending these?" If unanswered, permanent silence until inbound (D6). It carries `meta.reengagement: true`, which the judge exempts from the two-unanswered check (it still counts toward the streak). |
 | New conversations | Digests and probes go only to existing conversations. New conversations are invitations (F1) and first onboarding messages, capped at 20 per line per day, sent 10:00-19:00 recipient local (Blooio's 8am-8pm guidance, inside quiet hours). |
 | Burst smoothing | Digest sends are spread over a 2-hour window with per-member jitter, and cities are split into Wednesday and Thursday cohorts once a line has over 500 conversations (audit P2-5). |
 
@@ -239,6 +251,35 @@ Blooio enforces, per conversation, at most 3 unanswered outbound messages, then 
 | | Probe yield | Probes that led to a mutual yes / probes sent | ≥ 25% |
 
 All of these are computed from the attention ledger and the event log (32.19), in the simulator and in production, by the same code in `packages/judge/src/metrics.ts`.
+
+### 1.11 Availability capture (founder decision 4)
+
+A plan dies most often on "when?". Every round trip about time is another message, another chance to be ignored, and another slot on Blooio's streak. Availability capture puts the time into the probe, so a yes is a yes to a time.
+
+**The four sources, and what each is good for**
+
+| Source | How | Pros | Cons | Use |
+|---|---|---|---|---|
+| **Ask in the probe** (a) | 2-3 concrete options in the probe itself: "climbing Thursday 7pm or Saturday 10am?" | No extra message; the answer is current and specific; the member chooses; works on day 1 with no history; fits the one-question rule (it is the same question) | The options are only as good as the evidence behind them; a member who is free only at other times says "neither" (one more turn); 3 options is the limit before the text gets long | **Always**, in every probe for a member-involving opportunity |
+| **Standing availability** (b) | "Usually free Tue evenings and Sun mornings", from onboarding or conversation (and `availability_pattern` facets) | Free to use once stated; covers members with no calendar; the member said it, so it is trusted | Goes stale (jobs, seasons, kids); says nothing about one-off conflicts; people over-state it | A **decaying prior**: confidence 0.8 (stated) or 0.5 (inferred), half-life 45 days, re-confirmed after 30 days as a profiling ask ("still free Tuesday evenings?") inside a message that is going anyway |
+| **Calendar** (c) | Google free/busy only, never titles (F7) | The best signal of when someone is NOT free; no question needed; catches one-off conflicts | Many people never connect it; a free calendar does not mean free (evenings and weekends are often unrecorded); consent and trust cost; asking for it up front looks like a land grab | **Busy filter only**: a busy block multiplies P(free) by 0.05; a free calendar only nudges P up. Offer it at the **moment of value**, after a first accepted plan: "want me to check your calendar next time so I don't have to ask?" Tentative holds only with explicit consent |
+| **Inference** (e) | Times the member accepted and attended | Free; improves with use; specific to the person | Slow to learn; biased by what we offered; cannot tell "free" from "made an effort once" | Learned weight n / (n + 2), **capped at 0.5** until the member confirms it; "can't do those times" answers pull P down |
+
+Plus **(d) an opt-in weekly "what's your week like?" check-in** for members who want plans: one short question at their send time (default Sunday 17:00 local, `availability.weeklyCheckIn`). It is an initial invite only if it carries a proposal; otherwise it is a profiling ask under the one-question rule and does not count against the cap (decision 3). Answers become stated windows for that week (confidence 0.8, expiring at the end of the week). Presence windows (travel) set P = 0 outside the city.
+
+**Recommendation.** Ask in the probe, always, and choose the options with everything else: calendar as a busy filter when connected, standing availability as a decaying prior, inference capped until confirmed, presence as a hard filter. Do not ask for availability as a separate message except in the opt-in weekly check-in; do not require a calendar; offer the calendar once, after the first accepted plan.
+
+**Choosing the options** (`attention.ts chooseTimeOptions`, implemented):
+
+1. Candidate slots in the recipient's local time, 24 hours to 7 days ahead: weekday 19:00, weekend 10:00, 14:00 and 19:00, 2 hours long, inside the opportunity's window if it has one. A fixed-time opportunity (an event) offers its own time only.
+2. For each candidate and each member: P(free) = daypart prior (weekday day 0.10, weekday evening 0.35, weekend day 0.45, weekend evening 0.40), moved toward 0.85 by a standing window that covers it (or down by up to 50% when the member has standing windows that do not), toward 0.8 by learned accepts and attends in the same weekday/weekend daypart, × 0.05 for a calendar busy block (or toward 0.8 by 0.3 for a free calendar); 0 in quiet hours or away.
+3. Joint P = the product over the members (independent).
+4. Greedy: add the slot with the largest gain in P(at least one works) = 1 − Π(1 − joint), at most one per day, until P(any) ≥ 0.9 or an option adds under 0.03, with at least 2 options and at most 3.
+5. The first member gets the options; the partner gets the slots the first member picked; the meeting is set at the earliest slot both picked. If none fits, the reveal proposes the best estimated joint slot.
+
+Every option and every piece of evidence is engine-visible only; the probe shows times, never why a time was chosen.
+
+Measured (results doc, iteration 3): when attendance depends on the meeting time, time options halve the share of meeting seats set at a time the member is not free (30% vs 59% with capture off) and add about 2 met and worthwhile meetings per seed; they do not reduce yeses.
 
 ---
 
@@ -397,6 +438,8 @@ Targets: simulator ≥ 85% on the v1.2 snapshot, pilot ≥ 70%. The PRD 28.2 fir
 Plans are time-first, not person-first. A member who says "free Saturday, into climbing" needs no stated want, no rich profile and no perfect partner: a group of compatible people with an activity and a venue clears the bar far more often than a one-to-one intro. This is the structural lever the match report found for diversity and coverage, made into the default experience for D2, D3 and D4 members.
 
 ### 4.2 Capture
+
+Availability capture is specified in section 1.11 (founder decision 4); this table lists the channels.
 
 | Channel | How | Effort for member |
 |---|---|---|
@@ -835,10 +878,11 @@ Later, after Phase 4: the Ê/P̂acc refit loop on review labels (5.4), learning-
 | # | Question | Recommended default |
 |---|---|---|
 | D1 | Adopt "interruptions, not opportunities" as the unit of the PRD 32.9 budget? | Yes. Caps unchanged (Open 4/7d, Normal 2/7d, Quiet 1/30d); one message may carry up to 3 items |
-| D2 | Default digest slot | Weekly, Thursday 18:00 local (after the Wednesday pre-weekend run); member can change day and time |
+| ~~D2~~ → **F1** (decided 2026-10-07) | Default send cadence and time | **Rolling sends**, not a weekly digest: a daily slot used only when something clears the bar and the member has cap. Default **12:00 local**; learned per member from reply times (>= 5 replies per profile, 28-day half-life, weekday and weekend separately), quiet hours always respected (1.4) |
 | D3 | Raise Normal to 3 per week (COMBO D)? | No. Keep 2 interruptions; get the third item through the menu |
-| D4 | Allow break-ins outside the digest? | Yes, for expiring high-value items only: Normal 1/7d, Open 2/7d, Quiet 0, within the cap |
-| D5 | What may an anonymous probe reveal about the other person? | Activity, time, area and at most one `shareable` attribute; never name, photo, employer or `matchable` facts until both say yes |
+| ~~D4~~ → **F3** (decided 2026-10-07) | What counts against the cap? Break-ins? | **Only initial invites count**: the first message proposing a new opportunity to a member counts once against that member's cap; the partner's first probe counts against the partner's cap but needs no break-in and goes as soon as the first says yes, within cap, quiet hours and send time. Check-ins, partner follow-ups, reveals, scheduling, reminders, day-of check-ins, feedback asks and acks never count. Hard limits stay: Blooio's 3rd unanswered, the two-unanswered pause on initial invites, quiet hours. Break-ins remain only for same-day items (1.1, 1.4) |
+| ~~D5~~ → **F2** (decided 2026-10-07) | Consent-first? What may a probe reveal? | **Always probe first** for every member-involving opportunity. A probe shows the activity, 2-3 time options, the area and at most one `shareable` attribute; never a name, photo or employer until both say yes (1.8) |
+| **F4** (decided 2026-10-07) | How is availability captured? | Time options in the probe; standing availability as a decaying prior, re-confirmed; calendar as a free/busy filter, offered after the first accepted plan; an opt-in weekly check-in; learning from accepted and attended times (1.11) |
 | D6 | Use Blooio's single re-engagement after auto-pause? | Once, at ≥ 30 days of silence, only for a held item above the member's 75th-percentile value, framed as "want me to keep sending these?" |
 | D7 | Do outside-world suggestions (events, places, services) need human review under 1,000 members? | No, they are not matches; review a 20% sample weekly. Anything that names or probes for a member is reviewed before the first probe |
 | D8 | Plans: does the Network book or hold money? | No (PRD 32.12). Suggest venue and link; the host or a volunteer books; no deposits |
