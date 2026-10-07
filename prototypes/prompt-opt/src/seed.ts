@@ -1,4 +1,4 @@
-// The seed prompt: pass1-screen-v2 exactly as committed (git HEAD), with CITATION_RULES interpolated.
+// The seed prompt: pass1-screen-v2 exactly as committed at 9219c89, with CITATION_RULES interpolated.
 // Read with `git show` so the other agent's uncommitted judge-v2 edits in the working tree are not used.
 const gitShow = (path: string, rev = "HEAD") => {
   const r = Bun.spawnSync(["git", "show", `${rev}:${path}`], { cwd: `${import.meta.dir}/../../..` });
@@ -8,7 +8,8 @@ const gitShow = (path: string, rev = "HEAD") => {
 
 export const SEED_VERSION = "pass1-screen-v2";
 
-export function seedPrompt(rev = "HEAD"): string {
+/** Pinned to the commit the pilot was run on (HEAD moved on when judge v2 was committed). */
+export function seedPrompt(rev = "9219c89"): string {
   const screen = gitShow("packages/engine/src/judgeScreen.ts", rev);
   const common = gitShow("packages/engine/src/judgeCommon.ts", rev);
   const m = screen.match(/export const SCREEN_SYSTEM = `([\s\S]*?)`;/);
