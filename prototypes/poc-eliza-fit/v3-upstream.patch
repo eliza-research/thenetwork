@@ -57,7 +57,7 @@ index 3c70f10fa5c2..6863b4c57f4b 100644
      "@solana/spl-token-group/@solana/codecs/@solana/codecs-core/@solana/errors": ["@solana/errors@2.0.0-rc.1", "", { "dependencies": { "chalk": "^5.3.0", "commander": "^12.1.0" }, "peerDependencies": { "typescript": ">=5" }, "bin": { "errors": "bin/cli.mjs" } }, "sha512-ejNvQ2oJ7+bcFAYWj225lyRkHnixuAeb7RQCixm+5mH4n1IA4Qya/9Bmfy5RAAHQzxK43clu3kZmL5eF9VGtYQ=="],
  
 diff --git a/packages/cloud/api/__tests__/shared-eliza-runtime.miniflare.test.ts b/packages/cloud/api/__tests__/shared-eliza-runtime.miniflare.test.ts
-index df0032d33cb4..80fc7bd1126f 100644
+index df0032d33cb4..ea604d8fc693 100644
 --- a/packages/cloud/api/__tests__/shared-eliza-runtime.miniflare.test.ts
 +++ b/packages/cloud/api/__tests__/shared-eliza-runtime.miniflare.test.ts
 @@ -4,10 +4,11 @@
@@ -285,7 +285,7 @@ index df0032d33cb4..80fc7bd1126f 100644
 +                            action: "SET_STATE",
 +                            state: "busy",
 +                            until: "2099-01-02",
-+                            evidence: "slammed until friday, hold my intros",
++                            evidence: "slammed, hold my intros",
 +                          },
 +                        }),
 +                      },
@@ -462,7 +462,7 @@ index df0032d33cb4..80fc7bd1126f 100644
      if (buildDirectory) await rm(buildDirectory, { recursive: true });
    });
  
-@@ -944,6 +1275,209 @@ describe("Shared Eliza runtime in Workerd", () => {
+@@ -944,6 +1275,211 @@ describe("Shared Eliza runtime in Workerd", () => {
      ).toBe(true);
    }, 120_000);
  
@@ -580,7 +580,9 @@ index df0032d33cb4..80fc7bd1126f 100644
 +    ).rows.length;
 +    const response = await miniflare.dispatchFetch(
 +      `https://runtime.test/network-pg-turn?routing=structured&i=900&message=${encodeURIComponent(
-+        "structured probe: slammed until friday, hold my intros",
++        // No date in the member's words, so the proposed until (2099-01-02) is used;
++        // stated dates would be resolved in code and override it (plugin dates.ts).
++        "structured probe: slammed, hold my intros",
 +      )}`,
 +    );
 +    const body = await response.text();
@@ -672,7 +674,7 @@ index df0032d33cb4..80fc7bd1126f 100644
    test("runs the genuine TODO action and returns its applied mutation inside Workerd", async () => {
      const requestsBefore = modelRequests.length;
      const response = await miniflare.dispatchFetch(
-@@ -1317,4 +1851,252 @@ describe("Shared Eliza runtime in Workerd", () => {
+@@ -1317,4 +1853,252 @@ describe("Shared Eliza runtime in Workerd", () => {
      },
      120_000,
    );

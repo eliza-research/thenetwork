@@ -597,3 +597,26 @@ Re-ran the live eval for design B only (`NETWORK_LIVE_DESIGNS=structured`, 2 run
 
 - Every committed reply is now the deterministic past-tense confirmation, for example "Done: your Network intros are paused until Oct 20."
 - **Remaining miss: future travel.** "I'll be in London from next monday until the 15th" got a clarifying question instead of a commit, in one run. The state model has an end date (`until`) but no start date, so travel that starts later can't be represented. Follow-up: add a start date to SET_STATE (`from`) and to the store, so presence becomes a window (PRD 16.1-16.3, ME-011).
+
+## Final live eval: presence windows, deterministic dates, date guards (2026-10-07)
+
+Design B, 3 runs × 30 messages, gpt-6-luna on Surplus ([routing-eval-final.jsonl](routing-eval-final.jsonl)). Plugin changes since the previous run:
+- **Presence windows:** SET_STATE carries a start date (`from`), so future travel is stored.
+- **Dates resolved in code:** dates the member states are resolved by `packages/plugin-network/src/routing/dates.ts` and override the model's. An intermediate run showed luna often leaves `until` empty, even for "until November 3".
+- **Date guards:** a non-open state is never written without the end date the member stated, or with dates that contradict their words. The agent asks a specific question instead.
+
+| | First live run (Eliza planner, before this work) | Final |
+|---|---|---|
+| State changes committed | 1/20 | **58/60** |
+| Committed with the correct state and correct dates | n/a | **58/60** |
+| False commits on control messages | n/a | **0/30** |
+| Model calls per state change | up to 7 | **1** |
+| State-turn latency p50 / p95 | n/a | **2.4 s / 6.7 s** (target p95 < 8 s) |
+
+- Every date the members stated was stored exactly. For example, "until after new years" was stored as Jan 2, "back on the 12th" as Oct 12, and "all next week" as Oct 12-18.
+- **The two misses were turns where the model did not propose a state change** ("until december" got a question about which day; "only ping me if it's really good" got an acknowledgement). Code cannot act on a change the model never proposed, so these need a better prompt or examples from pilot transcripts.
+- **All-turn p95 is 13.5 s.** That figure is driven by non-Network control messages going through Eliza's general planner (up to 6 calls). It is Eliza's ordinary chat latency, not the Network state path.
+
+Intermediate runs, kept for reference:
+- [routing-eval-windows.jsonl](routing-eval-windows.jsonl): presence windows only, 36/40.
+- [routing-eval-dates.jsonl](routing-eval-dates.jsonl): plus the prompt's date rules, 38/40, but some commits dropped the end date the member gave.
