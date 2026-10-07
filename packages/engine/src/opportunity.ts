@@ -32,6 +32,8 @@ const CORE_RULES: TransitionRule[] = [
   R("IN_REVIEW", "EXPIRED", "review_sla_missed", ["clock"], "review SLA (12h standard, 1h same-day)"),
   R("APPROVED", "INVITING", "dispatch", ["system"]),
   R("APPROVED", "EXPIRED", "review_sla_missed", ["clock"], "dispatch window"),
+  // Send-time eligibility (audit P1-5): an anchor who became ineligible before dispatch cancels it.
+  R("APPROVED", "CANCELLED", "cancel", ["system"]),
   // Invitations (independent per participant; F11/F12).
   R("INVITING", "PARTIALLY_ACCEPTED", "accept", ["member"]),
   R("INVITING", "MUTUALLY_ACCEPTED", "accept", ["member"]),
@@ -41,6 +43,10 @@ const CORE_RULES: TransitionRule[] = [
   R("INVITING", "NEEDS_REPLACEMENT", "invite_expired", ["clock"], "invite TTL (48h; same-day 3h)"),
   R("INVITING", "EXPIRED", "invite_expired", ["clock"], "invite TTL (48h; same-day 3h)"),
   R("INVITING", "QUORUM_FAILED", "quorum_deadline", ["clock"], "quorum deadline"),
+  // The seeker/initiator (an anchor) declining, or becoming ineligible, ends the opportunity: no backfill (audit P1-9).
+  R("INVITING", "CANCELLED", "cancel", ["member", "system"]),
+  // Not enough eligible people left to invite at dispatch or backfill time.
+  R("INVITING", "QUORUM_FAILED", "no_alternates", ["system"]),
   R("PARTIALLY_ACCEPTED", "PARTIALLY_ACCEPTED", "accept", ["member"]),
   R("PARTIALLY_ACCEPTED", "MUTUALLY_ACCEPTED", "accept", ["member"]),
   R("PARTIALLY_ACCEPTED", "QUORUM_MET", "accept", ["member"]),
@@ -49,6 +55,7 @@ const CORE_RULES: TransitionRule[] = [
   R("PARTIALLY_ACCEPTED", "NEEDS_REPLACEMENT", "invite_expired", ["clock"], "invite TTL"),
   R("PARTIALLY_ACCEPTED", "EXPIRED", "invite_expired", ["clock"], "invite TTL"),
   R("PARTIALLY_ACCEPTED", "QUORUM_FAILED", "quorum_deadline", ["clock"], "quorum deadline"),
+  R("PARTIALLY_ACCEPTED", "CANCELLED", "cancel", ["member", "system"]),
   R("NEEDS_REPLACEMENT", "INVITING", "invite_alternates", ["system"]),
   R("NEEDS_REPLACEMENT", "QUORUM_FAILED", "no_alternates", ["system"]),
   R("NEEDS_REPLACEMENT", "QUORUM_MET", "replacement_found", ["member"]),
@@ -112,8 +119,24 @@ export type ParticipationStatus =
 
 export interface OpportunityEvent { eventId: string; at: number; from: OpportunityState; to: OpportunityState; trigger: Trigger; actor: Actor; memberId?: MemberId }
 
+/**
+ * Send-time eligibility re-check (audit P1-5). Returns null if `memberId` may still be invited or
+ * stay in this opportunity alongside `others`, else a reason ("state_paused", "blocked",
+ * "safety_hold", "underage", "opted_out", ...). Build one from a World with `eligibilityFor`
+ * (filters.ts). Without it, dispatch/accept/backfill act on ids only, as before.
+ */
+export type EligibilityCheck = (memberId: MemberId, others: MemberId[]) => string | null;
+export interface EligibilityOpts { eligible?: EligibilityCheck }
+
 export interface Opportunity {
   id: string; state: OpportunityState; isGroup: boolean;
+  /**
+   * The seeker/initiator(s) the opportunity exists for. If an anchor declines or becomes ineligible,
+   * the opportunity is cancelled instead of backfilled; only helper/peer roles are replaced.
+   */
+  anchors: MemberId[];
+  /** Why members were removed at send time (member -> reason). Never shown to other participants. */
+  removed: Record<MemberId, string>;
   participants: Record<MemberId, ParticipationStatus>;
   inviteExpiresAt: Record<MemberId, number>;
   alternates: MemberId[]; quorum: number;
@@ -123,10 +146,11 @@ export interface Opportunity {
   appliedEventIds: string[];
 }
 
-export function createOpportunity(p: { id: string; participants: MemberId[]; alternates?: MemberId[]; quorum?: number; sameDay?: boolean }): Opportunity {
+export function createOpportunity(p: { id: string; participants: MemberId[]; alternates?: MemberId[]; quorum?: number; sameDay?: boolean; anchors?: MemberId[] }): Opportunity {
   const isGroup = p.participants.length > 2;
+  for (const a of p.anchors ?? []) if (!p.participants.includes(a)) throw new Error(`anchor ${a} is not a participant`);
   return {
-    id: p.id, state: "DRAFT", isGroup,
+    id: p.id, state: "DRAFT", isGroup, anchors: [...(p.anchors ?? [])], removed: {},
     participants: Object.fromEntries(p.participants.map(id => [id, "pending" as ParticipationStatus])),
     inviteExpiresAt: {}, alternates: [...(p.alternates ?? [])],
     quorum: p.quorum ?? (isGroup ? Math.max(3, Math.ceil(p.participants.length * 2 / 3)) : p.participants.length),
@@ -158,15 +182,57 @@ export function transition(o: Opportunity, to: OpportunityState, trigger: Trigge
 
 export const inviteTtl = (o: Opportunity) => (o.sameDay ? 3 * HOUR : 48 * HOUR);
 
-/** Approved -> Inviting: invite every pending participant with an expiry timer (F29). */
-export function dispatchInvites(o: Opportunity, clock: Clock, eventId: string): Opportunity {
+const isAnchor = (o: Opportunity, id: MemberId) => o.anchors.includes(id);
+/** Members still in the opportunity (not declined, expired, replaced or removed). */
+const live = (o: Opportunity) => Object.keys(o.participants).filter(id => !["declined", "expired", "replaced"].includes(o.participants[id]!));
+const ineligible = (o: Opportunity, id: MemberId, opts: EligibilityOpts) =>
+  opts.eligible?.(id, live(o).filter(x => x !== id)) ?? null;
+
+/** Remove a member at send time; returns true if that ends the opportunity (anchor). */
+function removeIneligible(o: Opportunity, id: MemberId, reason: string): boolean {
+  o.participants[id] = "replaced";
+  o.removed[id] = reason;
+  return isAnchor(o, id);
+}
+
+/** Pop eligible alternates (dropping ineligible ones from the list) to cover `n` places. */
+function takeAlternates(o: Opportunity, n: number, opts: EligibilityOpts): MemberId[] {
+  const out: MemberId[] = [];
+  while (out.length < n && o.alternates.length) {
+    const id = o.alternates.shift()!;
+    if (o.participants[id] !== undefined && o.participants[id] !== "pending") continue; // already involved
+    const why = opts.eligible?.(id, [...live(o), ...out]) ?? null;
+    if (why) { o.removed[id] = why; continue; }
+    out.push(id);
+  }
+  return out;
+}
+
+/**
+ * Approved -> Inviting: invite every pending participant with an expiry timer (F29). With
+ * `opts.eligible`, every invitee is re-checked first (paused, blocked, safety hold, minor, opted
+ * out). An ineligible anchor cancels the opportunity; an ineligible helper/peer is removed and
+ * backfilled from eligible alternates; if quorum is then out of reach it fails.
+ */
+export function dispatchInvites(o: Opportunity, clock: Clock, eventId: string, opts: EligibilityOpts = {}): Opportunity {
   if (o.appliedEventIds.includes(eventId)) return o;
+  if (opts.eligible) {
+    for (const [id, st] of Object.entries(o.participants)) if (st === "pending") {
+      const why = ineligible(o, id, opts);
+      if (why && removeIneligible(o, id, why)) return transition(o, "CANCELLED", "cancel", "system", clock, eventId);
+    }
+  }
   transition(o, "INVITING", "dispatch", "system", clock, eventId);
   for (const [id, st] of Object.entries(o.participants)) if (st === "pending") {
     o.participants[id] = "invited";
     o.inviteExpiresAt[id] = clock.now() + inviteTtl(o);
   }
   o.quorumDeadline ??= clock.now() + inviteTtl(o) * 2;
+  const short = o.quorum - accepted(o) - outstanding(o);
+  if (short > 0) {
+    for (const id of takeAlternates(o, short, opts)) { o.participants[id] = "invited"; o.inviteExpiresAt[id] = clock.now() + inviteTtl(o); }
+    if (accepted(o) + outstanding(o) < o.quorum) return transition(o, "QUORUM_FAILED", "no_alternates", "system", clock, `${eventId}:short`);
+  }
   return o;
 }
 
@@ -174,15 +240,32 @@ const LATE_ACCEPT_STATES: ReadonlySet<OpportunityState> = new Set<OpportunitySta
 const accepted = (o: Opportunity) => Object.values(o.participants).filter(s => s === "accepted" || s === "confirmed").length;
 const outstanding = (o: Opportunity) => Object.values(o.participants).filter(s => s === "invited").length;
 
-/** Member accepts or declines (independently; nobody learns another's decline). */
-export function respond(o: Opportunity, memberId: MemberId, accept: boolean, clock: Clock, eventId: string): Opportunity {
+/**
+ * Member accepts or declines (independently; nobody learns another's decline).
+ * - A decline by an anchor (the seeker/initiator) cancels the opportunity; it is never backfilled.
+ * - With `opts.eligible`, an accept from a member who has since become ineligible (paused, blocked,
+ *   held, minor, opted out) is not recorded as an acceptance: the member is removed, and the
+ *   opportunity continues as if they had declined (or is cancelled if they are an anchor).
+ * - No responses are taken on a terminal or safety-held opportunity.
+ */
+export function respond(o: Opportunity, memberId: MemberId, accept: boolean, clock: Clock, eventId: string, opts: EligibilityOpts = {}): Opportunity {
   if (o.appliedEventIds.includes(eventId)) return o;
+  if (TERMINAL_STATES.has(o.state) || o.state === "SAFETY_HOLD") throw new InvalidTransitionError(o.state, o.state, accept ? "accept" : "decline", "member", `opportunity is ${o.state}`);
   if (o.participants[memberId] !== "invited") throw new InvalidTransitionError(o.state, o.state, accept ? "accept" : "decline", "member", `${memberId} has no open invitation`);
   if (clock.now() >= (o.inviteExpiresAt[memberId] ?? Infinity)) throw new InvalidTransitionError(o.state, o.state, accept ? "accept" : "decline", "member", "invitation expired");
   const prevStatus = o.participants[memberId];
-  o.participants[memberId] = accept ? "accepted" : "declined";
+  const why = accept ? ineligible(o, memberId, opts) : null;
+  if (why) {
+    // Became ineligible since the invite: treat as a withdrawal, never as a yes.
+    accept = false;
+    o.removed[memberId] = why;
+  }
+  o.participants[memberId] = why ? "replaced" : accept ? "accepted" : "declined";
   try {
-    if (accept) {
+    if (!accept && isAnchor(o, memberId)) {
+      // The seeker/initiator said no (or can't take part): end it, don't find them a substitute.
+      transition(o, "CANCELLED", "cancel", why ? "system" : "member", clock, eventId, memberId);
+    } else if (accept) {
       const n = accepted(o);
       const total = Object.keys(o.participants).filter(id => o.participants[id] !== "declined" && o.participants[id] !== "expired" && o.participants[id] !== "replaced").length;
       let to: OpportunityState;
@@ -209,12 +292,20 @@ export function respond(o: Opportunity, memberId: MemberId, accept: boolean, clo
 }
 
 /** Invite the next alternates to cover the shortfall (F12 quorum backfill). */
-export function inviteAlternates(o: Opportunity, clock: Clock, eventId: string): Opportunity {
+export function inviteAlternates(o: Opportunity, clock: Clock, eventId: string, opts: EligibilityOpts = {}): Opportunity {
   if (o.appliedEventIds.includes(eventId)) return o;
+  // Re-check the people who stay in it: an anchor who became ineligible ends it.
+  if (opts.eligible) {
+    for (const id of live(o)) {
+      const why = ineligible(o, id, opts);
+      if (why && removeIneligible(o, id, why)) return transition(o, "CANCELLED", "cancel", "system", clock, eventId);
+    }
+  }
   if (o.alternates.length === 0) return transition(o, "QUORUM_FAILED", "no_alternates", "system", clock, eventId);
   if (!findRule(o.state, "INVITING", "invite_alternates")) throw new InvalidTransitionError(o.state, "INVITING", "invite_alternates", "system", "not in transition table");
   const shortfall = Math.max(1, o.quorum - accepted(o) - outstanding(o));
-  const next = o.alternates.splice(0, shortfall);
+  const next = takeAlternates(o, shortfall, opts);
+  if (next.length === 0) return transition(o, "QUORUM_FAILED", "no_alternates", "system", clock, eventId);
   for (const id of next) { o.participants[id] = "invited"; o.inviteExpiresAt[id] = clock.now() + inviteTtl(o); }
   return transition(o, "INVITING", "invite_alternates", "system", clock, eventId);
 }

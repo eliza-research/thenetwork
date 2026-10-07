@@ -8,16 +8,16 @@ This document lists every prototype needed to prove out the system before and wh
 
 | Term | Meaning |
 |---|---|
-| **Standalone** | Lives in this repo as a Bun workspace under `prototypes/<id>-<slug>/` (the root `package.json` already declares `prototypes/*`), depends only on `packages/core`. Runs locally against PGlite, the SimClock, and Cerebras. Logic that proves out is promoted into the Eliza monorepo Network service package / plugin (PRD 31.1). |
+| **Standalone** | Lives in this repo as a Bun workspace under `prototypes/<id>-<slug>/` (the root `package.json` already declares `prototypes/*`), depends only on `packages/core`. Runs locally against PGlite, the SimClock, and Surplus `gpt-6-luna`. Logic that proves out is promoted into the Eliza monorepo Network service package / plugin (PRD 31.1). |
 | **Eliza spike** | Built inside the Eliza monorepo / Eliza Cloud staging (`eliza-cloud-api-staging`, staging Postgres, gateway-webhook). Proves platform assumptions that cannot be faked locally. |
 | **Effort** | S = up to 3 engineer-days, M = 1-2 engineer-weeks, L = 3+ engineer-weeks. |
 | **Priority** | **T1 Before pilot** = required to pass the 28.5 launch gates and enter M6. **T2 Before proactive matching** = required before proactive sends are switched on in a city (M7, 20.3, 32.8 precision gate). **T3 Later** = post-MVP (28.4). "Start now" marks long-lead items. |
 | **Citations** | Section numbers refer to the PRD. Flows F1-F29 / L1-L10 (29.1), engine requirements ME-001..ME-012 (33.12), success criteria (28.2), launch gates (28.5), phone requirements PH-xxx (9.4), gateway GW-xxx (11.4), security SEC-xxx (22.6). |
-| **LLM** | All LLM work uses Cerebras `qwen-3.8-27b` through `packages/core/src/llm.ts` for now. Cerebras also serves `gpt-oss-120b` on the same API, which is a different model family and is the recommended cross-check for judges and personas (see test-plan section 9.3). |
+| **LLM** | All LLM work uses `gpt-6-luna` on Surplus Intelligence through `packages/core/src/llm.ts` (`defaultLLM()`, `judgeLLM()`, `recommenderLLM()`; founder decision 2026-10-05). No automatic fallback to another provider. Cerebras is optional and legacy. A different judge model is used for audits only, with founder approval (see test-plan section 9.3). |
 
 ### 0.1 What already exists
 
-`packages/core/src` contains `types.ts` (domain contract), `clock.ts` (`Clock`, `RealClock`, `SimClock`), `llm.ts` (`CerebrasLLM` with retry on 429/5xx and `parseJson`), and a live smoke test. P01 and P03 extend these files; they do not replace them.
+`packages/core/src` contains `types.ts` (domain contract), `clock.ts` (`Clock`, `RealClock`, `SimClock`), `llm.ts` (OpenAI-compatible clients for Surplus, OpenAI and Cerebras with a 60 s timeout, bounded retries on 429/5xx, provider validation, and `parseJson`), and live smoke tests that run only with `LIVE_TESTS=1`. P01 and P03 extend these files; they do not replace them.
 
 ### 0.2 Age is a policy dimension (founder direction, 2026-10-05)
 
@@ -39,7 +39,7 @@ Owners: P01 (types), P16 (hard filters), P20 (explanations), P22 (enforcement), 
 |---|---|---|---|---|---|---|
 | P01 | Shared contract, Clock, and job runner | Foundations | Standalone (`packages/core`) | M | T1, start now | M0 |
 | P02 | Network schema and event log | Foundations | Standalone (PGlite + Postgres) | M | T1, start now | M0 |
-| P03 | LLM gateway and Cerebras harness | Foundations | Standalone (`packages/core`) | M | T1, start now | M0 |
+| P03 | LLM gateway and model harness | Foundations | Standalone (`packages/core`) | M | T1, start now | M0 |
 | P04 | Persona and synthetic population generator | Simulation | Standalone | M | T1 | M2 |
 | P05 | Persona agents (LLM user simulators) | Simulation | Standalone | L | T1 | M2 |
 | P06 | World simulator and virtual time | Simulation | Standalone | L | T1 | M2 |
@@ -81,7 +81,7 @@ Owners: P01 (types), P16 (hard filters), P20 (explanations), P22 (enforcement), 
 | P42 | Assistant connector (MCP + OAuth) for Claude, ChatGPT, Grok, Muse | Platform spike | Eliza spike | L | T3 (OAuth feasibility S in T2) | Post-MVP |
 | P43 | Pilot validation kit (experiments, "worth a text?", interviews) | Validation | Standalone + admin | S | T2 | M6-M7 |
 
-Coverage check against the requested minimum: shared contract + Clock (P01), Cerebras harness (P03), persona generator (P04), persona agents (P05), world simulator (P06), simulated channel (P07), matching engine v1 (P16-P20), leak checker + canaries (P21), outreach controller (P23), consent workflow (P24), relay (P25), scheduling (P26), feedback/reliability (P27), extraction and enrichment (P12, P13), onboarding (P11), concierge + events (P14), review queue (P31), admin console (P32), member web (P33), Eliza spike (P39), messaging spike (P40), connector (P42), seed invites (P28), judges (P34), metrics (P35), load/chaos (P37), red team (P36), shadow mode (P38). Added because the PRD needs them and nothing above covers them: P02 schema/event log, P08 scenario runner, P09 simulated reviewer, P10 agent core, P15 location/travel, P22 safety, P29 monthly gathering, P30 identity/data rights, P41 voice, P43 pilot validation kit.
+Coverage check against the requested minimum: shared contract + Clock (P01), model harness (P03), persona generator (P04), persona agents (P05), world simulator (P06), simulated channel (P07), matching engine v1 (P16-P20), leak checker + canaries (P21), outreach controller (P23), consent workflow (P24), relay (P25), scheduling (P26), feedback/reliability (P27), extraction and enrichment (P12, P13), onboarding (P11), concierge + events (P14), review queue (P31), admin console (P32), member web (P33), Eliza spike (P39), messaging spike (P40), connector (P42), seed invites (P28), judges (P34), metrics (P35), load/chaos (P37), red team (P36), shadow mode (P38). Added because the PRD needs them and nothing above covers them: P02 schema/event log, P08 scenario runner, P09 simulated reviewer, P10 agent core, P15 location/travel, P22 safety, P29 monthly gathering, P30 identity/data rights, P41 voice, P43 pilot validation kit.
 
 ## 2. Prototype specifications
 
@@ -112,13 +112,13 @@ Coverage check against the requested minimum: shared contract + Clock (P01), Cer
 | Exit criteria | Migrations identical on PGlite and PG18; a unique partial index rejects a second active opportunity for the same participant set and objective hash; advisory-lock exclusivity test; member deletion leaves 0 PII rows outside the retention table and 0 embeddings (row scan); projection rebuilt from events equals live tables for a 300-persona, 30-day simulated snapshot; a profile sync leaves engine tables unchanged. |
 | Effort / priority | M / T1, start now (M0). |
 
-#### P03. LLM gateway and Cerebras harness
+#### P03. LLM gateway and model harness
 
 | Field | Detail |
 |---|---|
 | Proves | 22.1 vendor-neutral model gateway; 22.4 structured, schema-validated output before it becomes state; 21.4 / 32.20 model versions attached to decisions; ME-004; 36.4 cost tracking and alerts; 34.5 "judges use a different model"; SEC-001 (scrub before third-party models). |
-| What | Wraps `CerebrasLLM`: role routing (`AGENT_MODEL`, `PERSONA_MODEL`, `JUDGE_MODEL`, `EXTRACT_MODEL`, `LEAKCHECK_MODEL`) via env; zod schema validation with one repair retry; token and cost metering (input, output, reasoning, cached); a token-bucket limiter per model for RPM and TPM; record/replay cassettes keyed by hash(model, messages, params) for deterministic CI; a deterministic fake LLM for unit tests; versioned prompt registry; latency and fault injection hooks (used by P37); scrub hook before any call; the API key never logged. |
-| Notes | `qwen-3.8-27b` is a reasoning model, so hidden reasoning tokens consume `max_tokens`; measure the overhead per prompt type and size budgets from data. Cerebras Developer tier limits (docs, Oct 2026): qwen-3.8-27b 300 RPM, 150K uncached TPM, 750K total TPM; gpt-oss-120b 1K RPM, 1M uncached TPM. These limits bound simulation throughput (test-plan section 15). |
+| What | Wraps the core clients (`defaultLLM()`, `judgeLLM()`, `recommenderLLM()`): role routing (`AGENT_MODEL`, `PERSONA_MODEL`, `JUDGE_MODEL`, `EXTRACT_MODEL`, `LEAKCHECK_MODEL`) via env; zod schema validation with one repair retry; token and cost metering (input, output, reasoning, cached); a token-bucket limiter per model for RPM and TPM; record/replay cassettes keyed by hash(model, messages, params) for deterministic CI; a deterministic fake LLM for unit tests; versioned prompt registry; latency and fault injection hooks (used by P37); scrub hook before any call; the API key never logged. |
+| Notes | `gpt-6-luna` is a reasoning model, so hidden reasoning tokens consume the completion budget; measure the overhead per prompt type and size budgets from data. Surplus rate limits bound simulation throughput and have not been measured yet (test-plan section 15). |
 | Inputs / outputs | Inputs: prompts, schemas, role. Outputs: validated objects, usage records, cassettes. |
 | Build | TypeScript, zod. Standalone in `packages/core`. |
 | Dependencies | P01. |
@@ -146,7 +146,7 @@ Coverage check against the requested minimum: shared contract + Clock (P01), Cer
 | Proves | 34.3 persona agents "driven by hidden ground truth plus calibrated randomness"; makes 28.2 metrics measurable before the pilot; 34.5 "the system is not graded by itself" (see the same-model limitation, test-plan 9.3). |
 | What | Each persona has (a) a deterministic, seeded **policy layer** that decides reply or ignore, latency, accept/decline/counter-propose, flake, honesty distortion, when to disclose a canary, and STOP/block/report; and (b) an **LLM voice layer** that writes the text in the persona's style with memory (rolling summary plus recent turns). A private self-report channel answers "was that worth a text?" from hidden truth. Three modes: scripted (templates, no LLM), hybrid (LLM for focal personas only), full LLM. |
 | Inputs / outputs | Inputs: persona card, inbound messages, virtual time. Outputs: outbound persona messages with virtual timestamps, decisions, self-reports, feedback. |
-| Build | TypeScript + P03. Standalone. Default `PERSONA_MODEL=qwen-3.8-27b`; recommended `gpt-oss-120b` once P03 routing exists. |
+| Build | TypeScript + P03. Standalone. Persona model: `gpt-6-luna` via `defaultLLM()` (no separate persona model). |
 | Dependencies | P03, P04. |
 | Exit criteria | On 500 probe invitations with known hidden fit, accept rate is monotone in fit and within 5 points of the configured tendency curve; sampled latencies pass a KS test (p > 0.05) against the configured distribution; persona-realism judge (J7) at least 85%; 0 ground-truth leaks outside designed disclosures in 1,000 turns of agent probing; cost per persona turn within budget (test-plan 15). |
 | Effort / priority | L / T1 (M2). |
@@ -206,7 +206,7 @@ Coverage check against the requested minimum: shared contract + Clock (P01), Cer
 | What | A framework-agnostic Network plugin core: providers (MEMBER_CONTEXT, ACTIVE_ITEMS, CITY_CONTEXT), the 12 actions (UPDATE_PROFILE, MANAGE_INTENT, ASK_NETWORK, RESPOND_TO_OPPORTUNITY, RELAY_MESSAGE, SHARE_CONTACT, SCHEDULE, SET_STATE, INVITE_PERSON, BLOCK_OR_REPORT, GIVE_FEEDBACK, CONCIERGE_SEARCH), deterministic handlers that call the Network service API, reply phrasing from a brief, and deterministic style rules. A surface-profile and category age-gate filter applies to every reply and every item list, so romance and adult-only content never reach a surface or member that is not allowed to see it. An F8 classifier routes requests to information, recommendation, standing intent, or human opportunity. An adapter lets the same core run standalone in the simulator and inside Eliza (P39). |
 | Build | TypeScript + P03. Standalone `prototypes/p10-agent-core`, promoted to the Eliza Network plugin. |
 | Dependencies | P01-P03, P12, P14, P21, P22. |
-| Exit criteria | Action selection at least 95% on a 300-utterance labeled set (terse, sarcastic, non-native English, voice transcripts); F8 route accuracy at least 90% with human-opportunity over-escalation at most 10%; style rules pass at least 98%; 0 tool calls caused by injected instructions over 100 injection probes; p95 turn latency under 6 s on Cerebras. |
+| Exit criteria | Action selection at least 95% on a 300-utterance labeled set (terse, sarcastic, non-native English, voice transcripts); F8 route accuracy at least 90% with human-opportunity over-escalation at most 10%; style rules pass at least 98%; 0 tool calls caused by injected instructions over 100 injection probes; p95 turn latency under 6 s on `gpt-6-luna`. |
 | Effort / priority | L / T1 (M1). |
 
 #### P11. Onboarding conversation
@@ -481,7 +481,7 @@ Coverage check against the requested minimum: shared contract + Clock (P01), Cer
 | What | Judge library J1-J13 (test-plan section 9) with versioned rubrics and anchors, deterministic pre-checks, calibration sets with human labels, known-bad controls injected into every judging batch, `JUDGE_MODEL` switch, JSONL output. |
 | Build | TypeScript + P03. Standalone. |
 | Dependencies | P03. |
-| Exit criteria | Each judge reaches kappa at least 0.6 against human labels on at least 100 items; known-bad detection at least 95%; test-retest at least 0.9; cross-family agreement reported once `gpt-oss-120b` is enabled. |
+| Exit criteria | Each judge reaches kappa at least 0.6 against human labels on at least 100 items; known-bad detection at least 95%; test-retest at least 0.9; cross-family agreement reported on audit samples (a different audit model needs founder approval). |
 | Effort / priority | M / T1 (M2). |
 
 #### P35. Metrics and analytics pipeline
@@ -725,8 +725,8 @@ Critical path: P01 -> P02/P03 -> P04 -> P05 -> P06 -> P08 (simulator) in paralle
 
 | # | Risk | Retired by | Early signal |
 |---|---|---|---|
-| R1 | Cerebras Developer-tier limits for qwen-3.8-27b (300 RPM, 150K uncached TPM) make the PRD's nightly 300-persona x 60-day full-LLM world take roughly 15-20 hours, so it cannot run nightly. | P03 metering, P05 scripted/hybrid modes, P06 discrete-event | Measured tokens per persona-day in the M2 run; decision on lean mode, gpt-oss-120b for personas and judges, or provisioned limits. |
-| R2 | Today the agent, personas, and judges may all be the same model, so the system can grade itself and personas can "understand" the agent better than humans would. | P04 deterministic oracle, P34 controls and human calibration, P03 routing to gpt-oss-120b | Judge-vs-human kappa; cross-family disagreement rate. |
+| R1 | Provider rate limits (Surplus `gpt-6-luna`, not yet measured) may make the PRD's nightly 300-persona x 60-day full-LLM world too slow to run nightly. | P03 metering, P05 scripted/hybrid modes, P06 discrete-event | Measured tokens per persona-day and Surplus limits in the M2 run; decision on lean mode or higher limits. |
+| R2 | The agent, personas, and judges are the same model (`gpt-6-luna`), so the system can grade itself and personas can "understand" the agent better than humans would. | P04 deterministic oracle, P34 controls and human calibration, different prompts/passes; a cross-family audit model for audits only, with founder approval | Judge-vs-human kappa; audit disagreement rate. |
 | R3 | Sim-to-real gap: persona behavior and the ground-truth oracle encode the team's assumptions, and the oracle shares a taxonomy with the engine (circularity). | P04 oracle independence rules, P38 shadow mode, P43 recalibration | Sim precision vs shadow approval-without-edit gap per generator. |
 | R4 | Density: 40-75 members per city may contain too few high-conviction latent opportunities to hit 28.2 (60% first value in 14 days, 40% opt-in). | P04 density curve, P14 concierge, P19 exposure floors | Latent opportunities per persona at 40/75/150 members. |
 | R5 | Messaging compliance and deliverability (10DLC approval time, Blooio per-number throughput and proactive-send reliability) block the pilot. | P40 | 10DLC status; measured throughput and failure rate. |

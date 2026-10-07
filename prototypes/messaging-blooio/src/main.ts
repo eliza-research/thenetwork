@@ -3,12 +3,15 @@
 // Expose with a tunnel (e.g. `ngrok http 8787`) and point a Blooio webhook at https://<tunnel>/webhooks/blooio.
 // Creating that webhook is a configuration change on the Blooio account: a human does it, not this script.
 
+import { resolve } from "node:path";
 import { RealClock } from "../../../packages/core/src/clock.ts";
 import { BlooioClient } from "./blooio/client.ts";
 import { BlooioAdapter, DryRunAdapter } from "./adapters/blooio-adapter.ts";
 import { InMemoryDedupeStore } from "./dedupe.ts";
 import { Gateway } from "./gateway.ts";
+import { FileConsentStore } from "./consent-store.ts";
 import { ConsentLedger, defaultCopy } from "./keywords.ts";
+import { resolveSenderLine } from "./line.ts";
 import { OutboundQueue } from "./outbound-queue.ts";
 import { createWebhookHandler, WEBHOOK_PATH } from "./server.ts";
 
@@ -20,12 +23,20 @@ if (!secret) {
 const apiKey = process.env.BLOOIO_API_KEY;
 const allowSend = process.env.BLOOIO_ALLOW_SEND === "1";
 const clock = new RealClock();
+const from = resolveSenderLine(); // BLOOIO_FROM (alias BLOOIO_FROM_NUMBER), E.164
 
-const real = apiKey ? new BlooioAdapter(new BlooioClient({ apiKey }), process.env.BLOOIO_FROM) : null;
+const real = apiKey ? new BlooioAdapter(new BlooioClient({ apiKey }), from) : null;
 const adapter = allowSend && real ? real : new DryRunAdapter(real ?? { kind: "blooio", send: async () => { throw new Error("unreachable"); } });
 
-const consent = new ConsentLedger(clock);
-const queue = new OutboundQueue({ clock, adapters: { blooio: adapter }, consent, onAlert: (r, why) => console.warn(`[alert] ${r.id} ${why}`) });
+// Opt-outs survive restarts. runs/ is gitignored. Production: Postgres.
+const consentPath = process.env.BLOOIO_CONSENT_FILE ?? resolve(import.meta.dir, "../../../runs/blooio/consent.jsonl");
+const consent = new ConsentLedger(clock, "address", new FileConsentStore(consentPath));
+// No member store in this prototype, so no recipientPolicy: the Network runtime must supply one before live
+// agent-initiated sends (it re-checks paused/blocked/held/minor at send time).
+const queue = new OutboundQueue({
+  clock, adapters: { blooio: adapter }, consent, defaultFrom: from ? { blooio: from } : undefined,
+  onAlert: (r, why) => console.warn(`[alert] ${r.id} ${why}`),
+});
 const gateway = new Gateway({
   dedupe: new InMemoryDedupeStore(clock),
   consent,

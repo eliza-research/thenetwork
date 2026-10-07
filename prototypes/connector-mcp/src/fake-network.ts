@@ -8,8 +8,9 @@ import type { City, Clock, ParticipationState, PrivacyScope } from "@thenetwork/
 import type { HostKey, TrustTier } from "./config.ts";
 import {
   ACTION_TIER, confirmationTtlMs, effectiveTier, looksAboutSomeoneElse, looksLikeContact, looksLikeCredential, looksLikePhoneOrEmail,
-  looksLikeStreetAddress, looksNightlife, looksRomantic, looksSensitive, matchFolded, RateLimiter, type ActionKind, type LimitName, type Tier,
+  looksLikeStreetAddress, looksNightlife, looksRomantic, looksSensitive, matchFolded, RateLimiter, statedAge, type ActionKind, type LimitName, type Tier,
 } from "./policy.ts";
+import { canJoin, UNDER_MIN_AGE_DECLINE } from "@thenetwork/core/src/policy.ts";
 import { ADULT_AGE, PROFILES, profileViolation, visibility, type ContentFacts, type SurfaceProfileName } from "./profiles.ts";
 import {
   SCOPES, TOOL_NAMES, type AskIn, type AskOut, type ChangeKind, type ItemKind, type ItemOut, type PendingConfirmationOut,
@@ -81,6 +82,9 @@ export interface Outcome<T> { result: T; receipt?: Receipt }
 
 const NOT_AVAILABLE = "That isn't available.";
 const TEXT_ONLY = "That's something I can only help with by text.";
+/** Safety/report intent. Checked before any eligibility filter so minors can always report. */
+const SAFETY_REPORT = /\b(report\w*|unsafe|harass\w*|threat\w*|bully\w*|stalk\w*|abus\w*|scared of|creep(y|ing)?)\b/i;
+const SAFETY_FALLBACK = "You can always text The Network directly and say \"report\" to reach the safety team. If you're in danger right now, call 911.";
 const IDEM_WINDOW_MS = 10 * 60_000;
 
 const humanDuration = (ms: number) => {
@@ -114,7 +118,17 @@ export class FakeNetwork {
 
   private id(prefix: string) { return `${prefix}_${(++this.seq).toString(36).padStart(5, "0")}`; }
 
-  addMember(m: FakeMember) { this.members.set(m.id, m); return m; }
+  /** Under-13s cannot join (core MIN_MEMBER_AGE): refused, nothing stored. 13-17 join as minors. */
+  addMember(m: FakeMember) {
+    if (!canJoin(m.age)) throw new Error("member must be at least 13 to join");
+    this.members.set(m.id, m);
+    return m;
+  }
+  /** The member's own statement of an age under 13 anywhere in `texts` (they can't be a member). */
+  private statesUnderMinAge(texts: string[]): boolean {
+    const year = new Date(this.clock.now()).getUTCFullYear();
+    return texts.some((t) => { const a = statedAge(t, year); return a !== null && !canJoin(a); });
+  }
   /** The engine clears an item for one viewer; text must already be shareable-only. */
   addItem(viewerId: string, item: Omit<StoredItem, "internalId" | "viewerId" | "status" | "details"> & { details?: string }) {
     const stored: StoredItem = { ...item, details: item.details ?? item.summary, internalId: this.id("opp"), viewerId, status: "open" };
@@ -154,6 +168,20 @@ export class FakeNetwork {
       out.push(i.internalId);
       const hidden = i.viewerId !== p.memberId || !viewer || !this.itemVisible(p, viewer, i);
       if (hidden) out.push(i.title, i.summary, i.details);
+    }
+    return out;
+  }
+
+  /**
+   * Facet values in forbiddenFor() (other members' non-shareable facets and this member's own
+   * agent-private ones). The guard matches these fuzzily (fragments, leetspeak, reordering).
+   */
+  privateFactsFor(p: ConnectorPrincipal): string[] {
+    const out: string[] = [];
+    for (const m of this.members.values()) {
+      for (const f of m.facets) {
+        if (m.id === p.memberId ? f.scope === "agent_private" : f.scope !== "shareable") out.push(f.value);
+      }
     }
     return out;
   }
@@ -330,6 +358,9 @@ export class FakeNetwork {
         : { answer: "I can't find that item. It may have expired or already been answered.", related_items: [], suggested_tool: "get_network_updates" };
     } else if (/\b(who else|list (all |the )?members|everyone (in|who)|member list|members who|is [A-Z][a-z]+ a member|(phone|number|email|address|last name|earn|salary)\b.*\b[A-Z][a-z]+|[A-Z][a-z]+'s (phone|number|email|address|last name))|everything you know about [A-Z]/i.test(q)) {
       out = { answer: "I can't share other members' details or who is in the Network. If someone seems like a good fit for you, I'll suggest it, check with them privately, and only connect you if you both say yes.", related_items: [], suggested_tool: "none" };
+    } else if (SAFETY_REPORT.test(q)) {
+      // Before the minors/profile filter: everyone, including under-18 members, can always report (audit P1-6).
+      out = { answer: `I'm sorry that's happening. Tell me "report" with what happened and I'll start a private safety report. ${SAFETY_FALLBACK}`, related_items: [], suggested_tool: "tell_network_agent" };
     } else if (this.outOfBounds(p, me, q)) {
       out = { answer: this.outOfBounds(p, me, q)!, related_items: [], suggested_tool: "none" };
     } else if (/what do you know about me/i.test(q)) {
@@ -364,8 +395,16 @@ export class FakeNetwork {
       const needsScope = (scope: string) => !p.scopes.includes(scope)
         ? done(`I can't do that from ${p.hostDisplayName}. You can do it by texting me, or enable it at ${this.assistantsUrl}.`, "not_available_here")
         : null;
+      // Without the safety scope, still point to the Network's own channel and an emergency resource.
+      const needsSafetyScope = () => !p.scopes.includes(SCOPES.sensitiveSafety) ? done(SAFETY_FALLBACK, "not_available_here") : null;
 
-      // Eligibility and profile first, so no later branch can be reached with an out-of-bounds request.
+      // Safety reports come before every eligibility/profile filter: a minor saying "someone is harassing me"
+      // (or anyone whose report mentions dating or a bar) must always reach the safety team (audit P1-6).
+      if (SAFETY_REPORT.test(t))
+        return needsSafetyScope() ?? pending(this.pend(p, "safety_report", "Start a private safety report with The Network's safety team.", {}), "I'll start a safety report.");
+      // Under 13 can't be a member: decline kindly, store nothing (founder decision 2026-10-07).
+      if (!canJoin(me.age) || this.statesUnderMinAge([t])) return done(UNDER_MIN_AGE_DECLINE, "not_available_here");
+      // Eligibility and profile next, so no later branch can be reached with an out-of-bounds request.
       const blocked = this.outOfBounds(p, me, t);
       if (blocked) return done(blocked, "not_available_here");
       if (/\b(accept|decline|say yes to|i'?m interested|not for me|pass on)\b/i.test(t))
@@ -375,8 +414,6 @@ export class FakeNetwork {
       if (looksLikePhoneOrEmail(t))
         return done("I can't take phone numbers or email addresses through an assistant. Text me directly, or ask me to offer a number swap.", "not_available_here");
 
-      if (/\b(report|unsafe|harass\w*|threaten\w*)\b/i.test(t))
-        return needsScope(SCOPES.sensitiveSafety) ?? pending(this.pend(p, "safety_report", "Start a private safety report with The Network's safety team.", {}), "I'll start a safety report.");
       if (/share my (number|phone|contact)|swap (numbers|contacts)/i.test(t))
         return needsScope(SCOPES.writeRelay) ?? pending(this.pend(p, "share_contact", "Offer to swap phone numbers with your current match. They are asked separately; numbers are exchanged only if both agree.", {}), "I can offer a number swap.");
       if (/\binvite\b/i.test(t)) {
@@ -412,6 +449,15 @@ export class FakeNetwork {
   shareProfile(p: ConnectorPrincipal, input: ShareIn): Outcome<ShareOut> {
     const me = this.member(p, TOOL_NAMES.share, SCOPES.writeProfile);
     return this.once(p, TOOL_NAMES.share, input, () => {
+      // Under 13 can't be a member: decline kindly and store nothing at all (founder decision 2026-10-07).
+      const texts = [...(input.interests ?? []), ...(input.skills_offered ?? []), ...(input.goals ?? []), ...(input.languages ?? []),
+        input.availability_note ?? "", input.home_area?.city ?? "", input.home_area?.neighborhood ?? ""];
+      if (!canJoin(me.age) || this.statesUnderMinAge(texts)) {
+        return {
+          result: { status: "proposed_for_member_review", accepted_count: 0, rejected: [{ field: "member", reason: "not_available_here" }], next_step: UNDER_MIN_AGE_DECLINE },
+          receipt: this.receipt(p, TOOL_NAMES.share, "Nothing was saved.", 0),
+        };
+      }
       const rejected: ShareOut["rejected"] = [];
       let accepted = 0;
       const consider = (field: string, value: string, index?: number) => {

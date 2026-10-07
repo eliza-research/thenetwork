@@ -1,0 +1,48 @@
+# Offline CI: install, typecheck, and every offline test. No secrets are given to CI, and LIVE_TESTS
+# is never set, so no paid LLM call, Blooio call or Cloudflare deploy can happen here.
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Blank every provider key and leave LIVE_TESTS unset: live tests skip themselves.
+      SURPLUS_API_KEY: ""
+      OPENAI_API_KEY: ""
+      CEREBRAS_API_KEY: ""
+      BLOOIO_API_KEY: ""
+      BLOOIO_LIVE_TEST: ""
+      NTWRK_ALLOW_DEPLOY: ""
+      LLM_ALLOW_OPENAI_FALLBACK: ""
+      # Any accidental LLM call fails fast instead of hanging.
+      LLM_TIMEOUT_MS: "10000"
+      LLM_MAX_RETRIES: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Install
+        run: bun install --frozen-lockfile
+        timeout-minutes: 5
+      - name: Typecheck
+        run: bunx tsc --noEmit -p .
+        timeout-minutes: 5
+      - name: Offline tests
+        run: |
+          if [ -n "${LIVE_TESTS:-}" ]; then echo "LIVE_TESTS must be unset in CI"; exit 1; fi
+          bun test packages prototypes --timeout 120000
+        timeout-minutes: 12

@@ -2,7 +2,7 @@
 // ONE id space (member id) before any filter runs (ME-006; Soulmates pitfall: blocks stored in
 // one id space and compared in another).
 import type { Category, City, Edge, EdgeType, Facet, FacetKind, Intent, Member, MemberId, Presence, Proposal } from "@thenetwork/core";
-import { DAY, HOUR } from "@thenetwork/core";
+import { canBeMatched, DAY, HOUR } from "@thenetwork/core";
 import type { EngineConfig } from "./config.ts";
 import { centroid, cosine, tokenize, type EmbedFn } from "./embed.ts";
 import { sha256, stableStringify } from "./rng.ts";
@@ -86,7 +86,7 @@ export class World {
     const now = this.now;
 
     // Minors are identified before anything else so no derived structure can route through them.
-    for (const m of input.members) if (!(typeof m.age === "number" && m.age >= 18)) this.minors.add(m.id);
+    for (const m of input.members) if (!canBeMatched(m.age)) this.minors.add(m.id);
 
     // --- edges -------------------------------------------------------------------------
     const edges: Edge[] = input.edges.map(e => ({ ...e, from: C(e.from), to: C(e.to) }));

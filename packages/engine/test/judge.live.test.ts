@@ -1,14 +1,14 @@
 // LIVE: runs the judge with the default LLM (defaultLLM(): Surplus gpt-6-luna unless DEFAULT_LLM_* say
-// otherwise) on 3 configurations and validates the JSON schema. Skipped unless that provider's
+// otherwise) on 3 configurations and validates the JSON schema. Skipped unless LIVE_TESTS=1 and that provider's
 // API key is set (Bun loads .env from the repo root).
 import { describe, expect, test } from "bun:test";
-import { defaultLLM } from "@thenetwork/core";
+import { defaultLLM, endpointsFor, liveTestsEnabled, type Provider } from "@thenetwork/core";
 import { candidateReason } from "../src/filters.ts";
 import { buildJudgeMessages, judgeOne } from "../src/judge.ts";
 import { baseMember, cand, emptyInput, facet, mkWorld, NOW } from "./helpers.ts";
 
-const PROVIDER_KEY: Record<string, string> = { surplus: "SURPLUS_API_KEY", cerebras: "CEREBRAS_API_KEY", openai: "OPENAI_API_KEY" };
-const live = !!process.env[PROVIDER_KEY[process.env.DEFAULT_LLM_PROVIDER ?? "surplus"] ?? "SURPLUS_API_KEY"];
+// Opt-in only: LIVE_TESTS=1 as well as a key (Bun loads the root .env, so a key alone is not consent).
+const live = liveTestsEnabled() && endpointsFor((process.env.DEFAULT_LLM_PROVIDER || "surplus") as Provider).length > 0;
 
 describe.skipIf(!live)("LIVE judge (default LLM)", () => {
   test("judges 3 configurations with a valid schema and leak-free inputs", async () => {

@@ -1,7 +1,7 @@
 // Hard filters (Section 33.5). Hard constraints are never traded for score (33.1): a candidate
 // failing any of these is dropped before scoring, and the reason is counted in the run funnel.
 import type { Category, MemberId } from "@thenetwork/core";
-import { DAY, HOUR } from "@thenetwork/core";
+import { ADULT_AGE as CORE_ADULT_AGE, canBeMatched, DAY, HOUR } from "@thenetwork/core";
 import type { EngineConfig } from "./config.ts";
 import type { Candidate, Format, Role } from "./types.ts";
 import { CONTRIBUTOR_ROLES } from "./types.ts";
@@ -24,12 +24,13 @@ export interface MemberCheck {
 }
 
 /**
- * Minors policy (founder decision 2026-10-05, PRD 17.4 as amended): members under 18 may join
- * but are NEVER connected to other people. This age is policy, not a tuning knob: config can
- * raise the bar (`ageMin`) but never lower it below 18. Missing / non-numeric ages fail closed.
+ * Minors policy (founder decisions 2026-10-05 and 2026-10-07; `packages/core/src/policy.ts`):
+ * under-13s cannot join; members aged 13-17 may join but are NEVER matched or connected to other
+ * people. This age is policy, not a tuning knob: config can raise the bar (`ageMin`) but never
+ * lower it below 18. Missing / non-numeric ages fail closed.
  */
-export const ADULT_AGE = 18;
-export const isMinorAge = (age: unknown): boolean => !(typeof age === "number" && age >= ADULT_AGE);
+export const ADULT_AGE = CORE_ADULT_AGE;
+export const isMinorAge = (age: unknown): boolean => !canBeMatched(age);
 /** True if `id` is a known member under 18 (or with an unknown/invalid age). Unknown ids are not minors here. */
 export function isMinor(w: World, id: MemberId): boolean {
   const mi = w.get(id);
@@ -198,3 +199,28 @@ export function candidateReason(w: World, c: Candidate, usage?: RunUsage): Filte
   }
   return null;
 }
+
+/**
+ * Send-time re-check for invites, accepts and backfills (audit P1-5). Narrower than memberReason:
+ * budgets, quotas and cooldowns were already applied when the opportunity was proposed and must
+ * not cancel a live invite, but these always win at send time:
+ *  - unknown member, under 18 (or unknown age), safety hold, paused;
+ *  - opted out of proactive contact ("only when I ask" / two-unanswered) is NOT included: the
+ *    member already has the invite; it is handled by outreach.ts on the next proactive message;
+ *  - a block (either direction) with anyone else still in the opportunity.
+ * `optedOut` lets the caller add channel-level opt-outs (STOP) that the World doesn't model.
+ */
+export function sendTimeReason(w: World, id: MemberId, others: MemberId[] = [], optedOut?: (id: MemberId) => boolean): FilterReason | "opted_out" | null {
+  const mi = w.get(id);
+  if (!mi) return "unknown_member";
+  if (isMinorAge(mi.m.age)) return "underage";
+  if (w.holds.has(id)) return "safety_hold";
+  if (mi.m.state === "paused") return "state_paused";
+  if (optedOut?.(id)) return "opted_out";
+  for (const o of others) if (o !== id && w.blocked.has(pairKey(id, o))) return "blocked";
+  return null;
+}
+
+/** An opportunity.ts `EligibilityCheck` over a World snapshot. */
+export const eligibilityFor = (w: World, optedOut?: (id: MemberId) => boolean) =>
+  (id: MemberId, others: MemberId[]): string | null => sendTimeReason(w, id, others, optedOut);

@@ -13,6 +13,18 @@ export type MessageKind =
 const PROACTIVE: ReadonlySet<MessageKind> = new Set<MessageKind>(["invitation", "profiling_question", "recommendation", "worthwhile_check"]);
 export const isProactive = (k: MessageKind) => PROACTIVE.has(k);
 const ALWAYS: ReadonlySet<MessageKind> = new Set<MessageKind>(["safety_notice", "account_notice"]);
+/**
+ * Audit 2026-10-07 P1-8: everything the Network starts on its own is agent-initiated: proactive
+ * kinds plus scheduling, reminders, check-ins/nudges and relays. Quiet hours and pause apply to all
+ * of them. Only a direct reply to the member's own message and safety/account notices are exempt.
+ */
+export const isAgentInitiated = (k: MessageKind) => k !== "reply" && !ALWAYS.has(k);
+
+/** True if `tz` is an IANA zone this runtime understands. */
+export function isValidTimeZone(tz: string | undefined): tz is string {
+  if (!tz) return false;
+  try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); return true; } catch { return false; }
+}
 
 export interface OutboundMessage {
   id: string; memberId: MemberId; kind: MessageKind; category?: Category;
@@ -157,8 +169,19 @@ export class OutreachController {
     const tz = this.tzFor(member);
     if (ALWAYS.has(msg.kind)) return { action: "send", reason: "safety_or_account_notice", sendAt: now, countsAgainstBudget: false };
     if (msg.expiresAt !== undefined && msg.expiresAt <= now) return { action: "drop", reason: "expired" };
+    if (msg.kind === "reply") return { action: "send", reason: "reply", sendAt: now, countsAgainstBudget: false };
+    // Agent-initiated from here on. Without a usable zone we can't honour quiet hours: hold, never guess
+    // (Intl would silently fall back to the server's zone).
+    if (!isValidTimeZone(tz)) return { action: "hold", reason: "unknown_timezone" };
     if (!isProactive(msg.kind)) {
-      // Inside an accepted opportunity or a reply: never budgeted, never blocked by the unanswered rule.
+      // Inside an accepted opportunity (scheduling, reminder, check-in, relay): never budgeted and never
+      // blocked by the unanswered rule, but pause and quiet hours still apply.
+      if (member.state === "paused") return { action: "hold", reason: "paused" };
+      if (inQuietHours(now, tz, member.prefs.quietHours)) {
+        const sendAt = quietHoursEnd(now, tz, member.prefs.quietHours);
+        if (msg.expiresAt !== undefined && sendAt >= msg.expiresAt) return { action: "drop", reason: "quiet_hours_until_expiry" };
+        return { action: "defer", reason: "quiet_hours", sendAt, countsAgainstBudget: false };
+      }
       return { action: "send", reason: "not_proactive", sendAt: now, countsAgainstBudget: false };
     }
     if (member.state === "paused") return { action: "drop", reason: "paused" };

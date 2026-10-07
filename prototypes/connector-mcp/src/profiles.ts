@@ -77,7 +77,9 @@ export const PROFILES: Record<SurfaceProfileName, SurfaceProfile> = {
   },
 };
 
-export const ADULT_AGE = 18;
+// Age policy lives in packages/core/src/policy.ts (13 to join, 18 to be matched). Deep import keeps the Worker bundle small.
+export { ADULT_AGE } from "@thenetwork/core/src/policy.ts";
+import { ADULT_AGE } from "@thenetwork/core/src/policy.ts";
 
 /** Network-side eligibility for content shown to (or acted on by) a member, independent of host. */
 export interface ContentFacts {

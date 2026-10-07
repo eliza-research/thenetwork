@@ -18,7 +18,7 @@ const { proposals, runLog } = await runEngine(snapshot /* WorldSnapshot | Engine
 Commands:
 
 ```bash
-bun test packages/engine                 # 139 offline tests + 1 live test (needs CEREBRAS_API_KEY)
+cd packages/engine && bun test          # offline; the live judge test also needs LIVE_TESTS=1 and SURPLUS_API_KEY
 bun run packages/engine/src/bench.ts     # 300-member benchmark: [members] [seed]
 ```
 
@@ -111,7 +111,10 @@ contains a minor's id, alias or name, and that the final guard never fires. A mu
 
 ## Tests
 
-`bun test packages/engine`: 139 offline tests pass in about 4-8 s. One LIVE test is gated on `CEREBRAS_API_KEY`. It judges 3 configurations with `qwen-3.8-27b` and validates the schema. It passes (about 2 s).
+`bun test` in `packages/engine` runs the offline suite in a few seconds. One LIVE test runs only with `LIVE_TESTS=1` and a key for the default provider (`SURPLUS_API_KEY`). It judges 3 configurations with `gpt-6-luna` on Surplus and validates the schema.
+
+- `test/send-time.test.ts` covers the 2026-10-07 audit fixes: eligibility re-checked at invite, accept and backfill (`eligibilityFor` / `sendTimeReason` in `filters.ts`); an anchor (seeker/initiator) decline cancels instead of backfilling; quiet hours and pause for every agent-initiated outreach kind.
+- The state machine has `IN_REVIEW` → `approve`, but `packages/network` does not use it yet, so proposals there are not human-reviewed (audit P0-1).
 
 - `test/properties.test.ts` checks ME-001..ME-012 across 24 seeded random worlds (30-150 members) against an independent oracle.
 - `test/minors.test.ts` covers the minors policy: filters, every generator, the composer, end to end, and property tests over random worlds with 10-20% minors.
@@ -132,7 +135,7 @@ contains a minor's id, alias or name, and that the final guard never fires. A mu
   - there is no wall clock;
   - tick lock and crash safety;
   - the bench uses the production path.
-- `test/judge.live.test.ts` is the live Cerebras judge test.
+- `test/judge.live.test.ts` is the live judge test (`defaultLLM()`: Surplus `gpt-6-luna`, OpenAI fallback). It runs when a key is set.
 
 ## Benchmark (`bun run packages/engine/src/bench.ts`, 300 members, seed 42, local embeddings, no LLM)
 
@@ -192,7 +195,7 @@ How to read the numbers:
 - Budget-limited selection is the main cut from eligible to selected. This is intentional: Normal members get at most 2 proposals a week.
 - `network_growth` asks are generated, but they rarely clear the Normal threshold with the default weights. This is a tuning knob (`thresholds.byCategory.growth` only raises the bar; the max-of-state rule applies).
 
-With a live judge (top 6 pairs + 2 groups, 120-member world) a run takes about 4 s for 8 Cerebras calls.
+With a live judge (top 6 pairs + 2 groups, 120-member world) a run makes 8 LLM calls (measured on the earlier Cerebras model at about 4 s; `gpt-6-luna` on Surplus is now the default).
 
 ## Proposed core changes (packages/core)
 

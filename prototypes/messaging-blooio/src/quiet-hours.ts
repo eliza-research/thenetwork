@@ -51,3 +51,24 @@ export function nextAllowedAt(ms: number, tz: string, w: QuietWindow = DEFAULT_Q
 
 /** Fallback zone when a member's zone is unknown: derive from the city they joined in. */
 export const CITY_TZ: Record<string, string> = { sf: "America/Los_Angeles", nyc: "America/New_York" };
+
+/** True if `tz` is an IANA zone this runtime understands. Never throws. */
+export function isValidTimeZone(tz: string | undefined | null): tz is string {
+  if (!tz || typeof tz !== "string") return false;
+  try {
+    fmt(tz);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The zone to use for quiet hours: the member's own zone if valid, else the zone of their city, else null
+ * (the caller must not send agent-initiated messages to someone whose local time it cannot compute).
+ */
+export function resolveTimeZone(tz: string | undefined, city?: string): string | null {
+  if (isValidTimeZone(tz)) return tz;
+  const byCity = city ? CITY_TZ[city.toLowerCase()] : undefined;
+  return isValidTimeZone(byCity) ? byCity : null;
+}

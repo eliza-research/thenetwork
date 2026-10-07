@@ -7,6 +7,8 @@ import { parseArgs } from "node:util";
 import { BlooioClient } from "../src/blooio/client.ts";
 import { ChannelSendError } from "../src/types.ts";
 import { checkFirstSendArgs } from "../src/first-send-guard.ts";
+import { resolveSenderLine } from "../src/line.ts";
+import { toE164 } from "../src/phone.ts";
 import { loadRootEnv } from "./env.ts";
 
 const { values } = parseArgs({
@@ -21,7 +23,10 @@ if (problem) { console.error(problem); process.exit(2); }
 loadRootEnv();
 const apiKey = process.env.BLOOIO_API_KEY;
 if (!apiKey) { console.error("BLOOIO_API_KEY not set"); process.exit(1); }
-const from = values.from ?? process.env.BLOOIO_FROM;
+// BLOOIO_FROM is canonical; BLOOIO_FROM_NUMBER is accepted as an alias (src/line.ts).
+const from = values.from ? toE164(values.from) ?? undefined : resolveSenderLine();
+if (values.from && !from) { console.error("--from must be an E.164 number"); process.exit(2); }
+if (from && toE164(values.to!) === from) { console.error("Refusing to send: --to is the sending line itself"); process.exit(2); }
 const text = values.text ?? "The Network: first Blooio test message. Reply anything to confirm inbound works, or STOP to test opt-out.";
 const client = new BlooioClient({ apiKey });
 

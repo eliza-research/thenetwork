@@ -108,13 +108,18 @@ export function createMcpServer(net: FakeNetwork, principal: ConnectorPrincipal,
   const forbiddenStrings = (args: Record<string, unknown>) => {
     const supplied = stringLeaves(args).join("\n");
     const own = new Set(net.ownPrivateFacets(principal));
-    return net.forbiddenFor(principal).filter((f) => !(own.has(f) && findLeaks(supplied, [f]).length > 0));
+    return net.forbiddenFor(principal).filter((f) => !(own.has(f) && findLeaks(supplied, [f], { facts: [f] }).length > 0));
+  };
+  /** The subset of forbidden strings that are private facts: these also match on fragments/leetspeak/reordering. */
+  const factsIn = (forbidden: string[]) => {
+    const facts = new Set(net.privateFactsFor(principal));
+    return forbidden.filter((f) => facts.has(f));
   };
 
   /** Output pipeline for any model-visible text: leak guard, then the surface-profile classifier. */
   const check = (visibleText: string, forbidden: string[]): { kind: "leak" | "profile"; detail: string } | null => {
     if (!guardOn) return null;
-    const leaks = findLeaks(visibleText, forbidden);
+    const leaks = findLeaks(visibleText, forbidden, { facts: factsIn(forbidden) });
     if (leaks.length) return { kind: "leak", detail: leaks.join(",") };
     const off = profileViolation(visibleText, profile, net.members.get(principal.memberId)?.age);
     return off ? { kind: "profile", detail: principal.surfaceProfile } : null;
@@ -180,7 +185,7 @@ export function createMcpServer(net: FakeNetwork, principal: ConnectorPrincipal,
       const forbidden = forbiddenStrings(args);
       const hit = check([text, ...stringLeaves(structured)].join("\n"), forbidden);
       // _meta is hidden from the model on ChatGPT but not on every host: no forbidden strings there either.
-      const metaLeak = findLeaks(stringLeaves(meta).join("\n"), forbidden).filter((l) => l.startsWith("forbidden:"));
+      const metaLeak = findLeaks(stringLeaves(meta).join("\n"), forbidden, { facts: factsIn(forbidden) }).filter((l) => l.startsWith("forbidden:"));
       if (hit?.kind === "leak" || metaLeak.length) {
         audit(def.name, `leak_block:${[hit?.detail, ...metaLeak].filter(Boolean).join(",")}`);
         return toolError("temporarily_unavailable", PRIVACY_FALLBACK);

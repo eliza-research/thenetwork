@@ -1,11 +1,11 @@
 // LIVE tests: call the default LLM (defaultLLM(): DEFAULT_LLM_PROVIDER / DEFAULT_LLM_MODEL, Surplus gpt-6-luna).
-// Skipped unless that provider's API key is set. Kept few and bounded.
+// Skipped unless LIVE_TESTS=1 and that provider's API key is set. Kept few and bounded.
 import { describe, expect, test } from "bun:test";
-import { defaultLLM } from "@thenetwork/core";
+import { defaultLLM, endpointsFor, liveTestsEnabled, type Provider } from "@thenetwork/core";
 import { DEFAULT_START, LLMPersonaAgent, StubNetwork, generateLLMPersonas, generatePersonas, runWorld } from "../src/index.ts";
 
-const PROVIDER_KEY: Record<string, string> = { surplus: "SURPLUS_API_KEY", cerebras: "CEREBRAS_API_KEY", openai: "OPENAI_API_KEY" };
-const live = !!process.env[PROVIDER_KEY[process.env.DEFAULT_LLM_PROVIDER ?? "surplus"] ?? "SURPLUS_API_KEY"];
+// Opt-in only: LIVE_TESTS=1 as well as a key (Bun loads the root .env, so a key alone is not consent).
+const live = liveTestsEnabled() && endpointsFor((process.env.DEFAULT_LLM_PROVIDER || "surplus") as Provider).length > 0;
 
 describe.skipIf(!live)("live (default LLM)", () => {
   test("generates 3 LLM-enriched personas consistent with hidden truth", async () => {

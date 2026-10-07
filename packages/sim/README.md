@@ -11,10 +11,10 @@ packages/sim/src/
   taxonomy.ts       interests, skills, desires, neighborhoods, private disclosures, writing styles
   persona.ts        Persona = HIDDEN truth + PUBLIC profile
   generator.ts      deterministic seeded generator (archetypes + adversaries, relationships, invite chains)
-  llmGenerator.ts   Cerebras enrichment: realistic bio + voice sample consistent with hidden truth
+  llmGenerator.ts   LLM enrichment (defaultLLM()): realistic bio + voice sample consistent with hidden truth
   oracle.ts         ground-truth compatibility oracle + calibrated choice model
   agent/policy.ts   deterministic persona policy (decisions + timing) and template voice
-  agent/llmAgent.ts LLM persona agent (Cerebras writes the words; the choice model decides)
+  agent/llmAgent.ts LLM persona agent (defaultLLM() writes the words; the choice model decides)
   channel.ts        in-memory SMS/iMessage bus: STOP/START/HELP, idempotency, failures, per-recipient logs
   scheduler.ts      discrete-event queue over SimClock; discrete | accelerated | realtime
   network.ts        NetworkUnderTest + Engine interfaces (dependency injection; engine not imported)
@@ -31,13 +31,13 @@ packages/sim/scenarios/*.json   scripted situations (band, group flake, canary, 
 ```bash
 bun install
 bun run packages/sim/src/cli.ts --personas 40 --days 14 --mode discrete --seed 1 --network stub
-bun run packages/sim/src/cli.ts --personas 6 --days 3 --seed 2 --llm        # Cerebras persona voices
+bun run packages/sim/src/cli.ts --personas 6 --days 3 --seed 2 --llm        # LLM persona voices (defaultLLM())
 bun run packages/sim/src/cli.ts --scenario packages/sim/scenarios/group-flake-morning-of.json --k 4
 bun run packages/sim/src/cli.ts --engine ./my-engine.ts                     # module exporting createEngine()
-bun test packages/sim packages/judge                                         # live tests need CEREBRAS_API_KEY (personas) / SURPLUS_API_KEY (judges)
+bun test packages/sim packages/judge                                         # live tests need SURPLUS_API_KEY or OPENAI_API_KEY
 ```
 
-The other flags are `--mode accelerated --speed 1440` (one sim day per wall minute), `--mode realtime`, `--llm-personas` (Cerebras-enriched bios), `--adversarial-rate`, `--minor-share` (default 0.05), `--judge N` (LLM-judge N sent proactive messages with `judgeLLM()`), `--no-log` and `--json`. Model split: persona agents and persona bios use Cerebras (`CerebrasLLM`). Any judging uses the judge model, `judgeLLM()` (`JUDGE_PROVIDER`/`JUDGE_MODEL`, default Surplus `gpt-6.1-sol`).
+The other flags are `--mode accelerated --speed 1440` (one sim day per wall minute), `--mode realtime`, `--llm-personas` (LLM-enriched bios), `--adversarial-rate`, `--minor-share` (default 0.05), `--judge N` (LLM-judge N sent proactive messages with `judgeLLM()`), `--no-log` and `--json`. Models: persona agents and persona bios use `defaultLLM()` (`DEFAULT_LLM_PROVIDER`/`DEFAULT_LLM_MODEL`). Any judging uses `judgeLLM()` (`JUDGE_PROVIDER`/`JUDGE_MODEL`). Both default to Surplus `gpt-6-luna`, with OpenAI as the fallback.
 
 Each run writes `runs/<runId>/events.jsonl`, `personas.json` (which includes hidden truth, so keep it for analysis only) and `metrics.json`. The `runs/` directory is gitignored.
 
@@ -171,7 +171,7 @@ All results were recorded on 2026-10-05 with Bun 1.4.2.
 
 `bun test packages/sim packages/judge`: **53 pass, 0 fail**, 8 s including the live tests.
 - **Deterministic tests:** generator determinism and coverage, oracle, channel adapter, discrete-event ordering, SimClock monotonicity, accelerated-mode pacing, world replay, snapshot isolation, a leaky-network negative control, Engine injection, run-folder output, all scenarios, pass^3, rules, and metrics.
-- **Live tests (Cerebras `qwen-3.8-27b`):**
+- **Live tests (`gpt-6-luna` on Surplus; run only with `LIVE_TESTS=1` and `SURPLUS_API_KEY`):**
   - 3 LLM-enriched personas
   - a 2-persona conversation through LLM persona agents and the stub network
   - judge calibration at 12/12 = 100% agreement (threshold 80%)
@@ -209,7 +209,7 @@ At scale: 300 personas over 60 days runs in about 1.2 s wall time. That run gave
 
 ### LLM run
 
-`--personas 6 --days 3 --seed 2 --llm` made 8 Cerebras calls in about 7.5 s with 0 failures:
+`--personas 6 --days 3 --seed 2 --llm` made 8 LLM calls in about 7.5 s with 0 failures (measured on the earlier Cerebras `qwen-3.8-27b` model; the default is now `gpt-6-luna` on Surplus):
 
 ```
 Matching vs oracle
@@ -222,7 +222,7 @@ Member experience
 Privacy: canaryLeaks=0   Invariants: violations=0   Style: checked=14 failing=0
 ```
 
-Transcript excerpt (persona voices from Cerebras):
+Transcript excerpt (persona voices from the earlier Cerebras run):
 
 ```
 m0001 <- A recurring dinner group that doesn't require a calendar intervention. Good food, low-key rock music, maybe a glaze disaster. ...
@@ -247,7 +247,7 @@ The leaky-stub negative control fails the canary scenario, which confirms the ca
 
 ## Notes and limitations
 
-- **Persona and judge model.** Persona agents use Cerebras qwen. The judges use `judgeLLM()`, a different model family (default Surplus `gpt-6.1-sol`), as PRD 34.3 asks.
-- **JSON retries.** `qwen-3.8-27b` sometimes spends its whole token budget on reasoning and returns empty or truncated content. `chatJson`, and the judges' `ask`, retry with a larger budget, and persona agents fall back to template text if the model still fails.
+- **Persona and judge model.** Persona agents and judges both default to `gpt-6-luna` (founder decision 2026-10-05). Judges use a different prompt and pass, not a different model. Use a different judge model (`JUDGE_MODEL`) for audits only; a cross-family audit needs founder approval because it sends data to another provider.
+- **JSON retries.** Reasoning models (`gpt-6-luna`, and the earlier `qwen-3.8-27b`) sometimes spend their whole token budget on reasoning and returns empty or truncated content. `chatJson`, and the judges' `ask`, retry with a larger budget, and persona agents fall back to template text if the model still fails.
 - **Stub network.** It is a test fixture, not a reference implementation. It parses replies with keywords, makes only random pairs (groups come only from an engine or a scenario), and has no relay or contact swap.
 - **Not built yet:** world shocks (rainy weekend, holiday, invite burst) and a synthetic event calendar are not modeled yet.

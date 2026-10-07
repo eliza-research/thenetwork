@@ -167,6 +167,29 @@ export const looksRomantic = (s: string) =>
 export const looksNightlife = (s: string) =>
   anyFolded(/\b(bars?|pubs?|nightlife|night ?clubs?|clubbing|cocktails?|happy hour|drinks|brewery|breweries|wine bar|beer|booze|alcohol)\b|(?<![\w+])21 ?(\+|plus\b)|\b(over|ages?) ?21\b|\b21 (and|&) (over|up|older)\b/, s);
 
+/**
+ * An age the member states about themselves ("I'm 12", "I am 12 years old", "I was born in 2015"),
+ * or null. Used to decline under-13s kindly before anything is stored (core MIN_MEMBER_AGE).
+ */
+const AGE_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+  thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19,
+};
+export function statedAge(s: string, currentYear: number): number | null {
+  const t = s.normalize("NFKC").toLowerCase();
+  const num = (x: string) => (/^\d+$/.test(x) ? Number(x) : AGE_WORDS[x] ?? NaN);
+  const WORDS = "(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)";
+  const NOT_AGE = "(?!\\s*(?:%|'|am\\b|pm\\b|min|minutes?|hours?|hrs?|days?|weeks?|months?|miles?|mi\\b|km|blocks?|times?|people|friends?|kids?|dollars?|bucks|\\$|-?ish\\b|:|\\.\\d))";
+  // First person only, so "my son is 12" or "climbing for 12 years" never decline the member.
+  // Digits: "I'm 12", "I am 12 years old". Number words need "years old": "I'm one of the hosts" is not an age.
+  const m = new RegExp(`\\b(?:i'?m|i am|im|my age is)\\s+(\\d{1,2})\\b${NOT_AGE}`).exec(t)
+    ?? new RegExp(`\\b(?:i'?m|i am|im|my age is)\\s+${WORDS}(?:\\s+|-)(?:years?|yrs?)(?:\\s+|-)old\\b`).exec(t);
+  if (m) { const n = num(m[1]!); if (Number.isFinite(n)) return n; }
+  const born = /\b(?:i was|i'?m|i am)\s+born\s+(?:in\s+)?((?:19|20)\d{2})\b/.exec(t);
+  if (born) { const age = currentYear - Number(born[1]); if (age >= 0 && age < 120) return age; }
+  return null;
+}
+
 // ---------------------------------------------------------------------------- outbound guard (§8.2)
 const squash = (s: string) => s.replace(/[^a-z0-9]/g, "");
 
@@ -177,7 +200,7 @@ const squash = (s: string) => s.replace(/[^a-z0-9]/g, "");
  * quotes and newlines, so a forbidden string containing either would never match). Forbidden strings
  * match case-, Unicode- and punctuation-insensitively. Returns the violations (empty = clean).
  */
-export function findLeaks(text: string, forbidden: string[]): string[] {
+export function findLeaks(text: string, forbidden: string[], opts: { facts?: string[] } = {}): string[] {
   const v: string[] = [];
   const variants = plainVariants(text);
   const squashed = variants.map(squash);
@@ -186,13 +209,91 @@ export function findLeaks(text: string, forbidden: string[]): string[] {
     const [ff] = plainVariants(f);
     const sf = squash(ff!);
     if (variants.some((t) => t.includes(ff!)) || (sf.length >= 6 && squashed.some((t) => t.includes(sf))))
-      v.push(`forbidden:${f.slice(0, 12)}`);
+      v.push(`forbidden:${labelHash(f)}`);
+  }
+  // Private facts also match on fragments, leetspeak and reordering (audit P1-3).
+  const facts = (opts.facts ?? []).filter((f) => f && !v.includes(`forbidden:${labelHash(f)}`));
+  if (facts.length) {
+    const textTokens = textVariants(text).map(tokens);
+    const textSquashed = textVariants(text).map(squash);
+    for (const f of facts) if (factLeaks(f, textTokens, textSquashed)) v.push(`forbidden:${labelHash(f)}`);
   }
   if (variants.some((t) => PHONE.test(t))) v.push("phone_pattern");
   if (variants.some((t) => EMAIL.test(t) || EMAIL_SPELLED.test(t))) v.push("email_pattern");
   if (variants.some((t) => INTERNAL_ID.test(t))) v.push("internal_id");
   if (variants.some((t) => ISO_TIMESTAMP.test(t))) v.push("iso_timestamp");
   return v;
+}
+
+// ---------------------------------------------------------------------------- fuzzy private-fact matching
+// Exact matching misses a fragment ("isolated since the move"), leetspeak ("1s0lated") and reordering
+// ("the move left me isolated"). For private facts we compare light-stemmed word tokens of the folded
+// text: a fact leaks if (a) its canary-stripped body appears squashed, (b) any word 3-gram of the fact
+// with at least two content words appears, or (c) a window of the output contains enough of the fact's
+// distinct content words (2 of 2-3, else 60%). Fail-closed: a false positive costs a polite fallback.
+
+const STOPWORDS = new Set((
+  "a an and are as at be been but by for from had has have he her hers him his i if in into is it its me my mine " +
+  "of on or our ours she so than that the their them they this to too up us was we were what when where which " +
+  "who will with you your yours since about after before just very really more most some any all not no out over"
+).split(" "));
+
+/** Light suffix stemmer: "isolated"/"isolation"/"isolating" → "isolat", "moved"/"moving"/"move" → "mov". */
+export function stem(w: string): string {
+  if (w.length <= 3 || /\d/.test(w)) return w;
+  for (const suf of ["ingly", "edly", "ions", "ing", "ion", "ies", "ied", "ed", "es", "ly", "s", "e"]) {
+    if (w.endsWith(suf) && w.length - suf.length >= 3) {
+      let r = w.slice(0, -suf.length);
+      if (r.length > 3 && r.at(-1) === r.at(-2) && !/[aeiou]/.test(r.at(-1)!)) r = r.slice(0, -1); // "stopp" → "stop"
+      return r;
+    }
+  }
+  return w;
+}
+
+// Stopwords are kept (for n-grams) but marked with "~" and never stemmed or counted as content.
+const tokens = (s: string): string[] => s.split(/[^a-z0-9]+/).filter(Boolean).map((w) => (STOPWORDS.has(w) ? `~${w}` : stem(w)));
+const isContent = (t: string) => t.length >= 3 && !t.startsWith("~");
+/** Strip a seeded canary prefix ("canary_maya_private_") so the fact's real words are what's matched. */
+const factBody = (f: string) => plainVariants(f)[0]!.replace(/^canary_[a-z0-9]+_[a-z]+_/, "");
+
+function factLeaks(fact: string, textTokens: string[][], textSquashed: string[]): boolean {
+  const body = factBody(fact);
+  const sb = squash(body);
+  if (sb.length >= 8 && textSquashed.some((t) => t.includes(sb))) return true;
+  const ft = tokens(body);
+  const content = [...new Set(ft.filter(isContent))];
+  if (content.length < 2) return false; // one-word facts: exact/squashed match only
+  // (b) word 3-grams of the fact with at least two content words.
+  const grams = new Set<string>();
+  for (let i = 0; i + 3 <= ft.length; i++) {
+    const g = ft.slice(i, i + 3);
+    if (g.filter(isContent).length >= 2) grams.add(g.join(" "));
+  }
+  const need = content.length <= 3 ? 2 : Math.ceil(0.6 * content.length);
+  const window = Math.max(12, 3 * content.length);
+  const want = new Set(content);
+  for (const tt of textTokens) {
+    if (grams.size) for (let i = 0; i + 3 <= tt.length; i++) if (grams.has(tt.slice(i, i + 3).join(" "))) return true;
+    // (c) sliding window: count distinct fact content words present.
+    const counts = new Map<string, number>();
+    let distinct = 0;
+    for (let i = 0; i < tt.length; i++) {
+      const add = tt[i]!;
+      if (want.has(add)) { const c = counts.get(add) ?? 0; if (c === 0) distinct++; counts.set(add, c + 1); }
+      const drop = i - window >= 0 ? tt[i - window]! : undefined;
+      if (drop !== undefined && want.has(drop)) { const c = counts.get(drop)! - 1; counts.set(drop, c); if (c === 0) distinct--; }
+      if (distinct >= need) return true;
+    }
+  }
+  return false;
+}
+
+/** Short non-reversible label for audit logs: never log the blocked value itself (audit P2-24). */
+function labelHash(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193) >>> 0;
+  return h.toString(16).padStart(8, "0");
 }
 
 /** Internal identifiers and ISO timestamps that must never be in model-visible content (§5.1). */

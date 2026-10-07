@@ -1,7 +1,12 @@
 // Minimal OpenAI-compatible chat clients (Surplus Intelligence, OpenAI, Cerebras).
 // Default for every use is Surplus Intelligence gpt-6-luna (founder decision 2026-10-05); see
-// defaultLLM() / judgeLLM() / recommenderLLM(). Reasoning models spend hidden tokens: leave room
-// in the completion budget, and read message.content for the answer.
+// defaultLLM() / judgeLLM() / recommenderLLM(). There is NO silent fallback to OpenAI: provider
+// "surplus" uses Surplus only, unless LLM_ALLOW_OPENAI_FALLBACK=1 is set, which logs a warning
+// (member data would go to a second processor). Cerebras is optional and legacy.
+// Every request has a timeout (default 60 s, LLM_TIMEOUT_MS or ClientOptions.timeoutMs) and
+// retries are bounded (default 4, with capped, jittered exponential backoff).
+// Reasoning models spend hidden tokens: leave room in the completion budget, and read
+// message.content for the answer.
 //
 // Optional per-client hooks (ClientOptions) let callers such as evals add request params, observe
 // usage/cost and supply their own transport (e.g. a response cache) without patching global fetch.
@@ -14,6 +19,8 @@ export interface LLM {
 /** What `onResponse` receives for every HTTP attempt (including retries and failures). Never contains the API key. */
 export interface ResponseInfo {
   model: string;
+  /** Endpoint that served this attempt (shows when the Surplus -> OpenAI fallback was used). */
+  baseUrl: string;
   /** HTTP status; 0 when the request failed before a response (network error, timeout). */
   status: number;
   ok: boolean;
@@ -39,37 +46,99 @@ export interface ClientOptions {
   onResponse?: (info: ResponseInfo) => void;
   /** Transport override (defaults to global fetch). Used by evals for a disk cache; never patch globals. */
   fetch?: (url: string, init: RequestInit) => Promise<Response>;
-  /** Per-request timeout in ms (default: none). */
+  /** Per-request timeout in ms (default 60 s, or LLM_TIMEOUT_MS; 0 disables). A timeout counts as a retryable error. */
   timeoutMs?: number;
-  /** Max retries for 429 / 5xx / network errors (default 4). */
+  /** Max retries for 429 / 5xx / network errors / timeouts on the last endpoint (default 4, or LLM_MAX_RETRIES). */
   maxRetries?: number;
+  /** First backoff delay in ms (default 1000); doubles per retry, capped at 30 s, with jitter. */
+  retryBaseMs?: number;
 }
 
-/** Usage + cost from an OpenAI-compatible response body. */
+/**
+ * OpenAI list prices in USD per 1M tokens (= micro-USD per token), standard tier, short context,
+ * from https://developers.openai.com/api/docs/pricing on 2026-10-06. OpenAI responses carry no
+ * cost, so it is computed from these. Reasoning tokens are part of completion_tokens (billed as output).
+ */
+export const OPENAI_PRICES: Record<string, { input: number; cachedInput: number; cacheWrite: number; output: number }> = {
+  "gpt-6-luna": { input: 0.10, cachedInput: 0.01, cacheWrite: 0.125, output: 0.50 },
+  "gpt-6.1-sol": { input: 2.00, cachedInput: 0.10, cacheWrite: 2.50, output: 10.00 },
+};
+
+/** Usage + cost from an OpenAI-compatible response body (provider-reported cost, else OPENAI_PRICES). */
 export function usageOf(data: any): Pick<ResponseInfo, "usage" | "costMicro" | "finishReason"> {
   const u = data?.usage ?? {};
+  const promptTokens = u.prompt_tokens ?? 0, completionTokens = u.completion_tokens ?? 0;
+  const reported = u.buyer_cost_micro ?? (typeof u.cost === "number" ? u.cost * 1e6 : undefined);
+  const p = OPENAI_PRICES[data?.model];
+  const cached = u.prompt_tokens_details?.cached_tokens ?? 0, writes = u.prompt_tokens_details?.cache_write_tokens ?? 0;
+  const priced = p ? (promptTokens - cached - writes) * p.input + cached * p.cachedInput + writes * p.cacheWrite + completionTokens * p.output : 0;
   return {
-    usage: {
-      promptTokens: u.prompt_tokens ?? 0, completionTokens: u.completion_tokens ?? 0,
-      reasoningTokens: u.completion_tokens_details?.reasoning_tokens ?? 0,
-    },
-    costMicro: Number(u.buyer_cost_micro ?? (typeof u.cost === "number" ? u.cost * 1e6 : 0)) || 0,
+    usage: { promptTokens, completionTokens, reasoningTokens: u.completion_tokens_details?.reasoning_tokens ?? 0 },
+    costMicro: Number(reported ?? priced) || 0,
     finishReason: data?.choices?.[0]?.finish_reason,
   };
 }
 
 type BodyFor = (opts: ChatOptions) => Record<string, unknown>;
 
-/** Shared retrying POST to /chat/completions. */
+/** An OpenAI-compatible endpoint. */
+export interface Endpoint { baseUrl: string; apiKey: string }
+
+/**
+ * Shared POST to /chat/completions over one or more endpoints, in order. A 429, 5xx or network
+ * error moves to the next endpoint at once; the last endpoint retries with backoff. Other 4xx
+ * errors fail at once (the next provider would reject the same request).
+ */
+export const DEFAULT_TIMEOUT_MS = 60_000;
+export const DEFAULT_MAX_RETRIES = 4;
+const MAX_BACKOFF_MS = 30_000;
+
+const envInt = (name: string): number | undefined => {
+  const v = process.env[name];
+  if (v === undefined || v.trim() === "") return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : undefined;
+};
+/** Effective per-request timeout: hook, else LLM_TIMEOUT_MS, else 60 s. 0 means no timeout. */
+export const timeoutFor = (hooks: ClientOptions): number => hooks.timeoutMs ?? envInt("LLM_TIMEOUT_MS") ?? DEFAULT_TIMEOUT_MS;
+/** Backoff before retry `n` (0-based): base * 2^n, capped at 30 s, with up to 50% jitter; honours a shorter Retry-After. */
+export function backoffMs(n: number, baseMs = 1000, retryAfterMs?: number, rand = Math.random): number {
+  const exp = Math.min(MAX_BACKOFF_MS, baseMs * 2 ** n);
+  const jittered = exp * (0.5 + 0.5 * rand());
+  return retryAfterMs !== undefined && retryAfterMs >= 0 ? Math.min(MAX_BACKOFF_MS, Math.max(retryAfterMs, jittered * 0.5)) : jittered;
+}
+const retryAfterOf = (h?: Headers): number | undefined => {
+  const v = h?.get("retry-after");
+  if (!v) return undefined;
+  const s = Number(v);
+  if (Number.isFinite(s)) return s * 1000;
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? Math.max(0, t - Date.now()) : undefined;
+};
+const warned = new Set<string>();
+const warnOnce = (key: string, msg: string) => { if (!warned.has(key)) { warned.add(key); console.warn(msg); } };
+
 async function chatCompletions(
-  label: string, baseUrl: string, apiKey: string, model: string, messages: ChatMessage[], opts: ChatOptions,
+  endpoints: Endpoint[], model: string, messages: ChatMessage[], opts: ChatOptions,
   bodyFor: BodyFor, defaultMax: number, maxCap: number, hooks: ClientOptions,
 ): Promise<string> {
   const doFetch = hooks.fetch ?? ((url: string, init: RequestInit) => fetch(url, init));
-  const maxRetries = hooks.maxRetries ?? 4;
+  const maxRetries = hooks.maxRetries ?? envInt("LLM_MAX_RETRIES") ?? DEFAULT_MAX_RETRIES;
+  const timeoutMs = timeoutFor(hooks);
   const emit = (info: ResponseInfo) => { try { hooks.onResponse?.(info); } catch { /* observer errors never break calls */ } };
+  let e = 0, retries = 0;
   for (let attempt = 0; ; attempt++) {
+    const { baseUrl, apiKey } = endpoints[e]!;
+    const label = new URL(baseUrl).host;
     const body = { model, messages, ...bodyFor(opts), ...(hooks.extraBody ?? {}) };
+    // Retryable failure: try the next endpoint, else back off on the last one, else give up.
+    const retry = async (error: string, retryAfterMs?: number) => {
+      if (e < endpoints.length - 1) {
+        warnOnce(`fallback:${label}`, `[llm] ${label} failed (${error.slice(0, 80)}); falling back to ${new URL(endpoints[e + 1]!.baseUrl).host} (explicit fallback is enabled)`);
+        e++;
+      } else if (retries < maxRetries) await sleep(backoffMs(retries++, hooks.retryBaseMs ?? 1000, retryAfterMs));
+      else throw new Error(`${label} ${error} (after ${retries} retries)`);
+    };
     const t0 = performance.now();
     let res: Response;
     try {
@@ -77,23 +146,24 @@ async function chatCompletions(
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify(body),
-        ...(hooks.timeoutMs ? { signal: AbortSignal.timeout(hooks.timeoutMs) } : {}),
+        ...(timeoutMs > 0 ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
       });
-    } catch (e) {
-      const error = String((e as Error)?.message ?? e).slice(0, 200);
-      emit({ model, status: 0, ok: false, latencyMs: performance.now() - t0, attempt, request: body, ...usageOf(undefined), error });
-      if (attempt < maxRetries) { await sleep(1000 * 2 ** attempt); continue; }
-      throw new Error(`${label} network error: ${error}`);
+    } catch (err) {
+      const error = String((err as Error)?.message ?? err).slice(0, 200);
+      emit({ model, baseUrl, status: 0, ok: false, latencyMs: performance.now() - t0, attempt, request: body, ...usageOf(undefined), error });
+      await retry(`network error: ${error}`);
+      continue;
     }
     const latencyMs = performance.now() - t0;
     if (!res.ok) {
       const text = await res.text();
-      emit({ model, status: res.status, ok: false, latencyMs, attempt, request: body, ...usageOf(undefined), headers: res.headers, error: text.slice(0, 300) });
-      if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) { await sleep(1000 * 2 ** attempt); continue; }
-      throw new Error(`${label} ${res.status}: ${text.slice(0, 500)}`);
+      emit({ model, baseUrl, status: res.status, ok: false, latencyMs, attempt, request: body, ...usageOf(undefined), headers: res.headers, error: text.slice(0, 300) });
+      if (res.status !== 429 && res.status < 500) throw new Error(`${label} ${res.status}: ${text.slice(0, 500)}`);
+      await retry(`${res.status}: ${text.slice(0, 500)}`, retryAfterOf(res.headers));
+      continue;
     }
     const data: any = await res.json();
-    emit({ model, status: res.status, ok: true, latencyMs, attempt, request: body, data, ...usageOf(data), headers: res.headers });
+    emit({ model, baseUrl, status: res.status, ok: true, latencyMs, attempt, request: body, data, ...usageOf(data), headers: res.headers });
     const choice = data.choices?.[0];
     const content = (choice?.message?.content ?? "").trim();
     // Reasoning models can spend the whole budget thinking and return nothing usable.
@@ -106,6 +176,7 @@ async function chatCompletions(
 }
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
+/** Optional, legacy provider (not used by default since 2026-10-05). The qwen default is kept for old runs only. */
 export class CerebrasLLM implements LLM {
   constructor(
     private apiKey = process.env.CEREBRAS_API_KEY ?? "",
@@ -114,7 +185,7 @@ export class CerebrasLLM implements LLM {
     private hooks: ClientOptions = {},
   ) { if (!this.apiKey) throw new Error("CEREBRAS_API_KEY missing (see .env.example)"); }
   chat(messages: ChatMessage[], opts: ChatOptions = {}) {
-    return chatCompletions("Cerebras", this.baseUrl, this.apiKey, this.model, messages, opts, o => ({
+    return chatCompletions([{ baseUrl: this.baseUrl, apiKey: this.apiKey }], this.model, messages, opts, o => ({
       max_tokens: o.maxTokens ?? 2048, temperature: o.temperature ?? 0.7,
       ...(o.json ? { response_format: { type: "json_object" } } : {}),
     }), 2048, 16384, this.hooks);
@@ -128,16 +199,20 @@ export function parseJson<T = any>(text: string): T {
   return JSON.parse(m[0]);
 }
 
-/** OpenAI-compatible chat client (OpenAI, Surplus Intelligence). Temperature is not sent (reasoning models ignore it). */
+/**
+ * OpenAI-compatible chat client (OpenAI, Surplus Intelligence). Temperature is not sent (reasoning
+ * models ignore it). `fallbacks` are tried in order on 429 / 5xx / network errors.
+ */
 export class OpenAILLM implements LLM {
   constructor(
     private apiKey = process.env.OPENAI_API_KEY ?? "",
     private model = process.env.JUDGE_MODEL ?? "gpt-6-luna",
     private baseUrl = process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
     private hooks: ClientOptions = {},
+    private fallbacks: Endpoint[] = [],
   ) { if (!this.apiKey) throw new Error("API key missing for OpenAI-compatible client (see .env.example)"); }
   chat(messages: ChatMessage[], opts: ChatOptions = {}) {
-    return chatCompletions("OpenAI", this.baseUrl, this.apiKey, this.model, messages, opts, o => ({
+    return chatCompletions([{ baseUrl: this.baseUrl, apiKey: this.apiKey }, ...this.fallbacks], this.model, messages, opts, o => ({
       ...(o.maxTokens ? { max_completion_tokens: o.maxTokens } : {}),
       ...(o.json ? { response_format: { type: "json_object" } } : {}),
     }), 4096, 32768, this.hooks);
@@ -145,30 +220,70 @@ export class OpenAILLM implements LLM {
 }
 
 export type Provider = "cerebras" | "openai" | "surplus";
+export const PROVIDERS: readonly Provider[] = ["surplus", "openai", "cerebras"];
+
+/** Validate a provider name case-insensitively ("Surplus" -> "surplus"). Throws on anything unknown. */
+export function parseProvider(name: string | undefined | null): Provider {
+  const p = String(name ?? "").trim().toLowerCase();
+  if ((PROVIDERS as readonly string[]).includes(p)) return p as Provider;
+  throw new Error(`Unknown LLM provider ${JSON.stringify(name)} (expected one of: ${PROVIDERS.join(", ")})`);
+}
+
+/** True only when LLM_ALLOW_OPENAI_FALLBACK=1/true: lets provider "surplus" fall back to OpenAI. */
+export const openAIFallbackAllowed = () => /^(1|true|yes)$/i.test(process.env.LLM_ALLOW_OPENAI_FALLBACK ?? "");
 
 /** The project-wide default model (founder decision 2026-10-05: Surplus gpt-6-luna for everything). */
 export const DEFAULT_PROVIDER: Provider = "surplus";
 export const DEFAULT_MODEL = "gpt-6-luna";
 
+/**
+ * Endpoints with a key for a provider, in the order to try them. "surplus" is Surplus only. With
+ * LLM_ALLOW_OPENAI_FALLBACK=1 (explicit opt-in, logged), OpenAI is appended: used alone when
+ * SURPLUS_API_KEY is unset, and as the fallback on 429 / 5xx / timeouts. Provider names are
+ * validated case-insensitively; unknown names throw.
+ */
+export function endpointsFor(providerName: Provider | string): Endpoint[] {
+  const provider = parseProvider(providerName);
+  const env = process.env;
+  const surplus = { baseUrl: env.SURPLUS_BASE_URL ?? "https://api.surplusintelligence.ai/v1", apiKey: env.SURPLUS_API_KEY ?? "" };
+  const openai = { baseUrl: env.OPENAI_BASE_URL ?? "https://api.openai.com/v1", apiKey: env.OPENAI_API_KEY ?? "" };
+  const cerebras = { baseUrl: env.CEREBRAS_BASE_URL ?? "https://api.cerebras.ai/v1", apiKey: env.CEREBRAS_API_KEY ?? "" };
+  const fallback = provider === "surplus" && openAIFallbackAllowed();
+  if (fallback) warnOnce("fallback-enabled", "[llm] LLM_ALLOW_OPENAI_FALLBACK=1: Surplus requests may be sent to OpenAI (a second processor).");
+  const order = provider === "surplus" ? (fallback ? [surplus, openai] : [surplus]) : provider === "openai" ? [openai] : [cerebras];
+  return order.filter(e => e.apiKey);
+}
+
 /** Any OpenAI-compatible provider by name. `hooks` are optional (extra body params, usage/cost callback, transport). */
-export function llmFor(provider: Provider, model: string, hooks: ClientOptions = {}): LLM {
-  if (provider === "cerebras") return new CerebrasLLM(undefined, model, undefined, hooks);
-  if (provider === "surplus")
-    return new OpenAILLM(process.env.SURPLUS_API_KEY ?? "", model, process.env.SURPLUS_BASE_URL ?? "https://api.surplusintelligence.ai/v1", hooks);
-  return new OpenAILLM(undefined, model, undefined, hooks);
+export function llmFor(providerName: Provider | string, model: string, hooks: ClientOptions = {}): LLM {
+  const provider = parseProvider(providerName);
+  const [first, ...fallbacks] = endpointsFor(provider);
+  if (!first) {
+    throw new Error(provider === "surplus"
+      ? (openAIFallbackAllowed() ? "SURPLUS_API_KEY or OPENAI_API_KEY missing (see .env.example)" : "SURPLUS_API_KEY missing (see .env.example; OpenAI is used only with LLM_ALLOW_OPENAI_FALLBACK=1)")
+      : `${provider.toUpperCase()}_API_KEY missing (see .env.example)`);
+  }
+  if (provider === "cerebras") return new CerebrasLLM(first.apiKey, model, first.baseUrl, hooks);
+  return new OpenAILLM(first.apiKey, model, first.baseUrl, hooks, fallbacks);
 }
 
 /** Default LLM for any use per .env (DEFAULT_LLM_PROVIDER / DEFAULT_LLM_MODEL), default Surplus gpt-6-luna. */
 export function defaultLLM(hooks: ClientOptions = {}): LLM {
-  return llmFor((process.env.DEFAULT_LLM_PROVIDER ?? DEFAULT_PROVIDER) as Provider, process.env.DEFAULT_LLM_MODEL ?? DEFAULT_MODEL, hooks);
+  return llmFor(parseProvider(process.env.DEFAULT_LLM_PROVIDER || DEFAULT_PROVIDER), process.env.DEFAULT_LLM_MODEL ?? DEFAULT_MODEL, hooks);
 }
 
 /** Judge LLM per .env (JUDGE_PROVIDER / JUDGE_MODEL), default Surplus gpt-6-luna. */
 export function judgeLLM(hooks: ClientOptions = {}): LLM {
-  return llmFor((process.env.JUDGE_PROVIDER ?? DEFAULT_PROVIDER) as Provider, process.env.JUDGE_MODEL ?? DEFAULT_MODEL, hooks);
+  return llmFor(parseProvider(process.env.JUDGE_PROVIDER || DEFAULT_PROVIDER), process.env.JUDGE_MODEL ?? DEFAULT_MODEL, hooks);
 }
 
 /** Recommender LLM (engine judge for top-K configurations) per .env (RECOMMENDER_PROVIDER / RECOMMENDER_MODEL), default Surplus gpt-6-luna. */
 export function recommenderLLM(hooks: ClientOptions = {}): LLM {
-  return llmFor((process.env.RECOMMENDER_PROVIDER ?? DEFAULT_PROVIDER) as Provider, process.env.RECOMMENDER_MODEL ?? DEFAULT_MODEL, hooks);
+  return llmFor(parseProvider(process.env.RECOMMENDER_PROVIDER || DEFAULT_PROVIDER), process.env.RECOMMENDER_MODEL ?? DEFAULT_MODEL, hooks);
 }
+
+/**
+ * Live (paid, networked) tests run only with an explicit opt-in: LIVE_TESTS=1. A key in .env is
+ * not enough, because Bun auto-loads the repo-root .env (audit P1-15).
+ */
+export const liveTestsEnabled = (): boolean => /^(1|true|yes)$/i.test(process.env.LIVE_TESTS ?? "");

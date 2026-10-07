@@ -825,14 +825,14 @@ Calibration for every judge: a human-labeled set of at least 100 items (two labe
 
 ### 9.3 Limitation: the judge may be the same model as the agent
 
-Today the only configured model is `qwen-3.8-27b`, so the Network agent, the persona agents, and the judges may all be the same model. This violates the PRD's intent (34.3, 34.5) that the system is not graded by itself. Risks: self-preference (a model rates its own phrasing higher), shared blind spots (the judge misses the same leak the agent made), and **mutual intelligibility** (personas parse the agent's phrasing better than real people, inflating acceptance and comprehension).
+Every LLM use is `gpt-6-luna` on Surplus Intelligence (founder decision 2026-10-05), so the Network agent, the persona agents, and the judges are the same model. They use different prompts and passes. This violates the PRD's intent (34.3, 34.5) that the system is not graded by itself. Risks: self-preference (a model rates its own phrasing higher), shared blind spots (the judge misses the same leak the agent made), and **mutual intelligibility** (personas parse the agent's phrasing better than real people, inflating acceptance and comprehension).
 
 Mitigations, in order of strength:
 
 | # | Mitigation | Effect |
 |---|---|---|
 | 1 | All gating metrics that can be deterministic are deterministic: oracle precision and recall, invariants, canary scans, budgets. LLM judges gate only J2, J3, J8, J10, J12, each with controls. | Removes self-grading from the most important gates. |
-| 2 | Use the other model family already on the same API: Cerebras serves `gpt-oss-120b` (Developer tier 1K RPM, 1M uncached TPM, about $0.35/$0.75 per million input/output tokens). Set `JUDGE_MODEL=gpt-oss-120b` and `PERSONA_MODEL=gpt-oss-120b` as soon as P03 routing lands; keep a qwen judge as second opinion and report disagreement. | Cross-family grading today at lower cost. Not yet a frontier-model judge. |
+| 2 | Use a different judge model for audits only (for example a periodic cross-family audit of a judged sample, reporting disagreement). A cross-family audit sends data to another provider, so it needs founder approval first. Day-to-day judging stays on `gpt-6-luna`. | Cross-family check on a sample without a second processor in the normal path. |
 | 3 | Known-good/known-bad controls in every batch; batch invalid if controls fail. | Detects drift and lenient judging. |
 | 4 | Pairwise comparison with position swap (A/B then B/A) when comparing versions, instead of absolute scores. | Reduces scale bias and self-preference. |
 | 5 | Judges never see the agent's system prompt or rationale; they see only member-visible output plus the minimum context. | Avoids "agreeing with the reasoning". |
@@ -990,11 +990,13 @@ Each nightly run is compared to the last accepted baseline on the same seeds. Re
 
 Golden sets (extraction, enrichment, classifier, judge calibration, action selection) are versioned in the repo with labeling guidelines; additions need two labelers; a change in a golden set resets that suite's baseline.
 
-## 15. Cost and throughput estimates for simulations on Cerebras
+## 15. Cost and throughput estimates for simulations
 
-### 15.1 Assumptions (replace with P03 measurements after the M2 run)
+All roles use `gpt-6-luna` on Surplus Intelligence (founder decision 2026-10-05). Earlier versions of this section priced Cerebras `qwen-3.8-27b`; Cerebras is now optional and legacy.
 
-Prices are from third-party listings (computeprices.com, aipricing.guru, Oct 2026) and must be confirmed on the Cerebras console: `qwen-3.8-27b` about $0.99 per million input tokens and $1.49 per million output tokens; `gpt-oss-120b` about $0.35 / $0.75. Developer-tier limits from Cerebras docs: qwen-3.8-27b 300 RPM, 150K uncached TPM, 750K total TPM; gpt-oss-120b 1K RPM, 1M uncached TPM, 3M total TPM. Output tokens include hidden reasoning for qwen.
+### 15.1 Assumptions (replace with measured tokens and Surplus-reported cost)
+
+Prices: the upper bound below uses the OpenAI list price for `gpt-6-luna` ($0.10 per million input tokens, $0.50 per million output tokens, `OPENAI_PRICES` in `packages/core/src/llm.ts`, 2026-10-06). Surplus reports its actual cost per call (`usage.buyer_cost_micro`), which is lower; use the evals and run logs for real numbers. Output tokens include hidden reasoning tokens. No prompt-cache discount is assumed.
 
 | Call type | Model role | Input tokens | Output tokens | Calls per persona-day (steady state) |
 |---|---|---|---|---|
@@ -1010,41 +1012,29 @@ Prices are from third-party listings (computeprices.com, aipricing.guru, Oct 202
 
 Onboarding adds a one-time cost per persona of about 103K input and 28K output tokens (10 exchanges plus one enrichment).
 
-### 15.2 Cost per persona-day by mode
+### 15.2 Cost per persona-day (upper bound, list price)
 
 | Mode | Description | Cost per persona-day | Onboarding per persona |
 |---|---|---|---|
-| A. All qwen | Every role on qwen-3.8-27b | About $0.021 | About $0.14 |
-| B. Cross-family | Agent, extraction, leakcheck, composer, engine judge on qwen; personas and quality judges on gpt-oss-120b | About $0.018 | About $0.13 |
-| C. Lean | B plus realistic activity (0.5 agent turns/day), 70% scripted background personas, 10% judge sample | About $0.009 | About $0.13 |
+| A. Full LLM | Every role on gpt-6-luna | About $0.0036 | About $0.024 |
+| C. Lean | Realistic activity (0.5 agent turns/day), 70% scripted background personas, 10% judge sample | About $0.0015 | About $0.024 |
 
-### 15.3 Cost per run
+### 15.3 Cost per run (upper bound, list price)
 
-| Run | Persona-days | Mode A | Mode B | Mode C |
-|---|---|---|---|---|
-| PR live smoke (20 x 3) | 60 | About $4 | About $4 | About $3 |
-| M2 exit (100 x 14) | 1,400 | About $44 | About $38 | About $26 |
-| Nightly W3 (150 x 30) | 4,500 | About $117 | About $100 | About $61 |
-| Launch gate W1 (300 x 30), per seed | 9,000 | About $235 | About $200 | About $123 |
-| PRD nightly target (300 x 60) | 18,000 | About $426 | About $362 | About $207 |
-| Scale (2,000 x 30) full LLM | 60,000 | About $1,560 | About $1,330 | About $820 |
-| Scale W4 scripted (engine judge only) | 60,000 | About $130 | n/a | n/a |
-| Red team (500 episodes x 8 turns) | n/a | About $55 | About $45 | n/a |
-| Golden sets (all, live) | n/a | About $5 | About $5 | About $5 |
+| Run | Persona-days | Mode A | Mode C |
+|---|---|---|---|
+| PR live smoke (20 x 3) | 60 | About $0.70 | About $0.60 |
+| M2 exit (100 x 14) | 1,400 | About $7 | About $5 |
+| Nightly W3 (150 x 30) | 4,500 | About $20 | About $10 |
+| Launch gate W1 (300 x 30), per seed | 9,000 | About $40 | About $21 |
+| PRD nightly target (300 x 60) | 18,000 | About $72 | About $34 |
+| Scale (2,000 x 30) full LLM | 60,000 | About $264 | About $138 |
 
-Indicative monthly CI spend with section 14 tiers in lean mode: nightly about $1,850, weekly about $830 (300 x 60) plus about $350 (fairness, red team, time/travel), PR live smoke about $650 (about 10 per working day): **about $3,700 per month**, plus pre-release runs.
+Indicative monthly CI spend at list price in lean mode (nightly W3, weekly 300 x 60, PR live smoke about 10 per working day): **under about $1,000 per month**. Live tests run only with `LIVE_TESTS=1`; default CI is offline and spends nothing.
 
-### 15.4 Throughput: rate limits are the binding constraint
+### 15.4 Throughput
 
-Per simulated day, a 300-persona world makes about 1,400 qwen calls and about 4.3M qwen tokens (mode B).
-
-| Limit | Per simulated day (300 personas) | Wall time per simulated day |
-|---|---|---|
-| 300 RPM (qwen) | About 1,400 calls | At least 5 minutes |
-| 150K uncached TPM (qwen), assuming 60% of input served from prompt cache | About 2.3M uncached tokens | About 15 minutes |
-| 750K total TPM (qwen) | About 4.3M tokens | About 6 minutes |
-
-So a 300 x 60 world needs about 15 hours on the Developer tier, a 300 x 30 launch-gate run about 8 hours, and a 150 x 30 nightly about 2 hours. The PRD's "300 personas over 60 days nightly" (34.3) is therefore not feasible on the current tier; this plan runs it weekly. Options to restore it: move persona, judge, and leakcheck traffic to gpt-oss-120b (separate, higher limits), raise prompt-cache hit rates with stable system-prompt prefixes, request provisioned Enterprise limits, or run some agent turns on a second provider through the P03 gateway. Load tests (P37) use a fake LLM with a latency model, never Cerebras.
+Per simulated day, a 300-persona world makes about 2,000 LLM calls and about 5.9M tokens (mode A). Surplus rate limits for `gpt-6-luna` have not been measured here; measure them before planning nightly 300 x 60 runs. Every request has a 60 s timeout and at most 4 retries (`packages/core/src/llm.ts`), so a slow provider makes a run slower but cannot hang it. Load tests (P37) use a fake LLM with a latency model, never a live provider.
 
 ## 16. Traceability matrix
 
@@ -1142,7 +1132,7 @@ So a 300 x 60 world needs about 15 hours on the Developer tier, a 300 x 30 launc
 | Number strategy (per-city vs national) | M0 | F20, F25 channel tests |
 | Precision gate and SLA values confirmed | Before M6 | 12.3, F27-E1 |
 | Whether member-initiated intros can skip review after pilot | M7 | F15 review requirement |
-| Judge and persona model choice (qwen only vs gpt-oss-120b cross-family) | M2 | Section 9.3, cost section 15 |
+| Judge and persona model choice: decided 2026-10-05, `gpt-6-luna` on Surplus for all uses; a cross-family audit model needs founder approval | Done | Section 9.3, cost section 15 |
 | **Are under-18 members ever allowed?** (Open. PRD 17.4/27 say adults only; founder says the Network is not 18+ by definition and only romance and adult-only features are age-gated.) | Before M6 | Selects which `agePolicy` is the production default; both are tested (6.6, 7.30) |
 | What counts as `verified_18plus` in the MVP (attestation plus vouch, or ID verification) | Before M6 | Strength of INV-AGE-01; F4-E10 expected flow |
 | Which categories besides romance are adult-only (for example 21+ venues) | M3 | AGE-03 fixtures |
