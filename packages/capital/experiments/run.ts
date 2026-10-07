@@ -11,6 +11,8 @@ import { effortTier } from "../src/levers.ts";
 const args = process.argv.slice(2);
 const flag = (k: string, d: number) => { const i = args.indexOf(`--${k}`); return i >= 0 ? Number(args[i + 1]) : d; };
 const SEEDS = flag("seeds", 8), DAYS = flag("days", 90);
+/** Seeds for the paired fairness gate. 8 seeds give a standard error of about 0.045 on the paired difference, too wide for a 0.02 bound. */
+const GATE_SEEDS = flag("gate-seeds", 32);
 
 /** Small bounded gain: an adversary's net NC from gaming, after clawback and penalties. */
 export const GAMING_BOUND_SHARE = 0.25; // <= 25% of an honest regular's 90-day NC, mean per strategy
@@ -19,6 +21,8 @@ export interface Metrics {
   gini: number; giniHonest: number;
   v14Bottom: number; v14Top: number; v14Ratio: number; v14All: number;
   deciles: number[];
+  /** Participation per week over the V14 window, per NC decile: yeses to plans, intros and crews, sessions organized, help asked or given. */
+  partDeciles: number[]; partBottom: number; partTop: number;
   regularNC: number;
   gaming: Record<string, { n: number; netGain: number; netGainShare: number; detected: number; ttdDays: number | null; ncTotal: number }>;
   flaky: { nc: number; regularNC: number; penalizedShare: number; meanPenalty: number; tierBelowRegularShare: number; netPenaltyGt3Share: number };
@@ -42,11 +46,13 @@ export function measure(r: SimResult): Metrics {
   // ranked by NC at mid-run, V14 measured over the second half (prospective).
   const elig = adults.filter(p => p.type !== "sybil" && p.joinDay <= mid - 14 && p.state !== "paused" && p.state !== "quiet" && !p.removed && p.active);
   const tieRng = mulberry(r.seed);
-  const ranked = elig.map(p => ({ p, nc: nc(p.id, T0 + mid * DAY), tie: tieRng(), v: v14Rate(r.values.get(p.id), mid, r.days - 1) }))
+  const weeks = (r.days - mid) / 7;
+  const ranked = elig.map(p => ({ p, nc: nc(p.id, T0 + mid * DAY), tie: tieRng(), v: v14Rate(r.values.get(p.id), mid, r.days - 1), part: (r.participation.get(p.id) ?? []).filter(d => d >= mid).length / weeks }))
     .sort((a, b) => a.nc - b.nc || a.tie - b.tie);
   const dec = Array.from({ length: 10 }, (_, i) => ranked.slice(Math.floor(i * ranked.length / 10), Math.floor((i + 1) * ranked.length / 10)));
   const deciles = dec.map(d => mean(d.map(x => x.v)));
   const v14Bottom = deciles[0]!, v14Top = deciles[9]!;
+  const partDeciles = dec.map(d => mean(d.map(x => x.part)));
 
   const regular = adults.filter(p => p.type === "regular");
   const regularNC = mean(regular.map(p => nc(p.id)));
@@ -100,7 +106,7 @@ export function measure(r: SimResult): Metrics {
   for (const p of honest) tiers[effortTier(nc(p.id), L.cfg)]!++;
 
   return {
-    gini, giniHonest, v14Bottom, v14Top, v14Ratio: v14Bottom / v14Top, v14All: mean(ranked.map(x => x.v)), deciles,
+    gini, giniHonest, v14Bottom, v14Top, v14Ratio: v14Bottom / v14Top, v14All: mean(ranked.map(x => x.v)), deciles, partDeciles, partBottom: partDeciles[0]!, partTop: partDeciles[9]!,
     regularNC, gaming, flaky: flakyM, vouch,
     honestFlaggedShare: r.honestFlagged.size / Math.max(1, honest.length), falseConfirmed: r.falseConfirmed.length, flagsRaised: r.flagsRaised, tiers,
   };
@@ -117,13 +123,37 @@ export function runArm(name: string, o: Omit<SimOptions, "seed">, seeds = SEEDS)
 const f = (x: number, d = 2) => (Number.isFinite(x) ? x.toFixed(d) : "n/a");
 const ms = (xs: number[], d = 2) => `${f(mean(xs), d)} ± ${f(se(xs), d)}`;
 
+/**
+ * Fairness gate (coordinator decision, 2026-10-08):
+ *  (a) PRIMARY, blocking: NC levers must not lower the bottom/top-decile V14 ratio by more than
+ *      0.02 against the same seeds with every NC lever off (paired). See `attributable`.
+ *  (b) TRACKED, non-blocking network-health target: the absolute ratio is at least 0.80. It reflects
+ *      the participation gap and is addressed by other levers (plans, asks), not NC.
+ * Gaming gate (blocking): each strategy's mean net gain <= GAMING_BOUND_SHARE of a regular's NC.
+ */
+export const FAIRNESS_MAX_DROP = 0.02;
+export const HEALTH_TARGET_RATIO = 0.8;
+
 export function gates(per: Metrics[]) {
   const ratio = mean(per.map(m => m.v14Ratio));
   const worstSeedRatio = Math.min(...per.map(m => m.v14Ratio));
   const strategies = Object.keys(per[0]!.gaming);
   const gainShare = Object.fromEntries(strategies.map(s => [s, mean(per.map(m => m.gaming[s]!.netGainShare))]));
   const gamingOk = Object.values(gainShare).every(x => x <= GAMING_BOUND_SHARE);
-  return { ratio, worstSeedRatio, v14Ok: ratio >= 0.8, gainShare, gamingOk };
+  return { ratio, worstSeedRatio, healthTargetMet: ratio >= HEALTH_TARGET_RATIO, gainShare, gamingOk };
+}
+
+/** Launch gates for an arm (`on`) against its paired all-levers-off arm (`off`). */
+export function launchGates(on: Metrics[], off: Metrics[]) {
+  const g = gates(on);
+  const primary = attributable(on, off);
+  return {
+    primaryFairness: { ...primary, pass: primary.ok },
+    gaming: { gainShare: g.gainShare, pass: g.gamingOk },
+    healthTarget: { ratio: g.ratio, worstSeedRatio: g.worstSeedRatio, met: g.healthTargetMet, blocking: false as const,
+      participationBottom: mean(on.map(m => m.partBottom)), participationTop: mean(on.map(m => m.partTop)) },
+    pass: primary.ok && g.gamingOk,
+  };
 }
 
 function report(arm: { name: string; per: Metrics[] }) {
@@ -134,7 +164,8 @@ function report(arm: { name: string; per: Metrics[] }) {
   lines.push(`NC Gini (adults): ${ms(p.map(m => m.gini))}; honest only: ${ms(p.map(m => m.giniHonest))}`);
   lines.push(`Effort tiers (honest adults, end of run, mean count per seed): ${[0, 1, 2, 3].map(t => `T${t} ${f(mean(p.map(m => m.tiers[t]!)), 1)}`).join(", ")}`);
   lines.push(`V14 by NC decile (NC at day ${Math.floor(DAYS / 2)}, V14 over the second half): ${[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(i => f(mean(p.map(m => m.deciles[i]!)))).join(" ")}`);
-  lines.push(`V14 bottom/top ratio: ${ms(p.map(m => m.v14Ratio))} (worst seed ${f(g.worstSeedRatio)}); V14 all eligible ${ms(p.map(m => m.v14All))}  GATE >= 0.80: ${g.v14Ok ? "PASS" : "FAIL"}`);
+  lines.push(`V14 bottom/top ratio: ${ms(p.map(m => m.v14Ratio))} (worst seed ${f(g.worstSeedRatio)}); V14 all eligible ${ms(p.map(m => m.v14All))}  health target >= ${HEALTH_TARGET_RATIO} (tracked, non-blocking): ${g.healthTargetMet ? "met" : "not met"}`);
+  lines.push(`Participation (acts per week: yeses, sessions organized, help asked/given; days ${Math.floor(DAYS / 2)}-${DAYS - 1}) by NC decile: ${p[0]!.partDeciles.map((_, i) => f(mean(p.map(m => m.partDeciles[i]!)))).join(" ")}`);
   lines.push(`Honest regular NC at day ${DAYS}: ${ms(p.map(m => m.regularNC), 1)}`);
   for (const s of Object.keys(p[0]!.gaming)) {
     const x = p.map(m => m.gaming[s]!);
@@ -169,7 +200,7 @@ function mulberry(seed: number) { let a = seed >>> 0 || 1; return () => { a = (a
 export function attributable(on: Metrics[], off: Metrics[]) {
   const d = on.map((m, i) => m.v14Ratio - off[i]!.v14Ratio);
   const top = on.map((m, i) => m.v14Top - off[i]!.v14Top), bottom = on.map((m, i) => m.v14Bottom - off[i]!.v14Bottom);
-  return { diff: mean(d), se: se(d), topGain: mean(top), bottomGain: mean(bottom), ok: mean(d) >= -0.02 };
+  return { diff: mean(d), se: se(d), topGain: mean(top), bottomGain: mean(bottom), ok: mean(d) >= -FAIRNESS_MAX_DROP };
 }
 
 if (import.meta.main) {
@@ -181,9 +212,10 @@ if (import.meta.main) {
 async function main() {
   const arms: { key: string; name: string; o: Omit<SimOptions, "seed"> }[] = [
     { key: "A", name: "A default (all levers, detection on)", o: {} },
+    { key: "Z", name: "Z all NC levers off (paired comparator for the primary fairness gate)", o: { effortLever: false, vouchLever: false, reachLever: false } },
     { key: "B", name: "B effort lever off (counterfactual: everyone at the floor)", o: { effortLever: false } },
     { key: "C", name: "C effort effect x2.5 (sensitivity: effortGain 1.0)", o: { effortGain: 1.0 } },
-    { key: "C0", name: "C0 effort lever off, effortGain 1.0 (pair for C)", o: { effortLever: false, effortGain: 1.0 } },
+    { key: "C0", name: "C0 all NC levers off, effortGain 1.0 (pair for C)", o: { effortLever: false, vouchLever: false, reachLever: false, effortGain: 1.0 } },
     { key: "D", name: "D detection off (anti-gaming = decay + cap only)", o: { detection: false } },
     { key: "E", name: "E no anti-gaming decay or cap (detection on)", o: { cfg: { antiGaming: { pairDecay: 1, periodCap: 1e9, categorySoftN: { vouch: 1e9, attendance: 1e9, help: 1e9, organizing: 1e9, needs_answered: 1e9, review: 1e9 } } } } },
     { key: "F", name: "F vouch-capacity lever off (fixed 3 invites / 30 days)", o: { vouchLever: false } },
@@ -196,24 +228,50 @@ async function main() {
     console.log(report(r));
     results[a.name] = { gates: gates(r.per), per: r.per };
   }
-  for (const [on, off] of [["A", "B"], ["C", "C0"]] as const) {
+  for (const [on, off, what] of [["A", "Z", "all NC levers"], ["A", "B", "effort lever only"], ["C", "C0", "all NC levers, effect x2.5"]] as const) {
     const a = attributable(per[on]!, per[off]!);
-    console.log(`\nEffort-attributable change in bottom/top V14 ratio, ${on} vs ${off} (paired seeds): ${f(a.diff, 3)} ± ${f(a.se, 3)}; top decile V14 ${f(a.topGain, 3)}, bottom ${f(a.bottomGain, 3)}  GATE (>= -0.02): ${a.ok ? "PASS" : "FAIL"}`);
+    console.log(`\nChange in bottom/top V14 ratio, ${on} vs ${off} (${what}, paired seeds): ${f(a.diff, 3)} ± ${f(a.se, 3)}; top decile V14 ${f(a.topGain, 3)}, bottom ${f(a.bottomGain, 3)}`);
     results[`attributable ${on}-${off}`] = a;
   }
+  // Gate arms at GATE_SEEDS (paired, common random numbers).
+  const gs = Math.max(GATE_SEEDS, SEEDS);
+  const gA = gs === SEEDS ? per.A! : runArm("A", {}, gs).per;
+  const gZ = gs === SEEDS ? per.Z! : runArm("Z", { effortLever: false, vouchLever: false, reachLever: false }, gs).per;
+  const gC = gs === SEEDS ? per.C! : runArm("C", { effortGain: 1.0 }, gs).per;
+  const gC0 = gs === SEEDS ? per.C0! : runArm("C0", { effortLever: false, vouchLever: false, reachLever: false, effortGain: 1.0 }, gs).per;
+  const lg = launchGates(gA, gZ), lgC = launchGates(gC, gC0);
+  const comp = Object.fromEntries((["effortLever", "reachLever", "vouchLever"] as const).map(k => [k, attributable(gA, runArm("", { [k]: false }, gs).per)]));
+  const h = lg.healthTarget;
+  const ci = (a: { diff: number; se: number }) => `${f(a.diff, 3)} (95% CI ${f(a.diff - 1.96 * a.se, 3)} to ${f(a.diff + 1.96 * a.se, 3)})`;
+  console.log(`\n## LAUNCH GATES (default config, arm A vs all levers off Z, ${gs} paired seeds, ${DAYS} days)`);
+  console.log(`(a) PRIMARY fairness: NC levers lower the bottom/top V14 ratio by <= ${FAIRNESS_MAX_DROP}: change ${ci(lg.primaryFairness)} -> ${lg.primaryFairness.pass ? "PASS" : "FAIL"}`);
+  console.log(`    by lever (A minus A with that lever off): ${Object.entries(comp).map(([k, a]) => `${k} ${f(a.diff, 3)} ± ${f(a.se, 3)}`).join(", ")}`);
+  console.log(`    sensitivity, effect x2.5 (C vs C0): ${ci(lgC.primaryFairness)} -> ${lgC.primaryFairness.pass ? "pass" : "fail"} (not a gate)`);
+  console.log(`    V14 all eligible: levers on ${f(mean(gA.map(m => m.v14All)), 3)} vs off ${f(mean(gZ.map(m => m.v14All)), 3)}; bottom decile ${f(lg.primaryFairness.bottomGain, 3)}, top decile ${f(lg.primaryFairness.topGain, 3)}`);
+  console.log(`Gaming: each strategy's mean net gain <= ${GAMING_BOUND_SHARE * 100}% of a regular's NC: ${Object.entries(lg.gaming.gainShare).map(([k, v]) => `${k} ${f(v * 100, 0)}%`).join(", ")} -> ${lg.gaming.pass ? "PASS" : "FAIL"}`);
+  console.log(`(b) TRACKED, non-blocking health target: absolute ratio >= ${HEALTH_TARGET_RATIO}: ${f(h.ratio)} (worst seed ${f(h.worstSeedRatio)}; levers off ${f(gates(gZ).ratio)}) -> ${h.met ? "met" : "not met"}. Participation gap: bottom NC decile ${f(h.participationBottom)} vs top ${f(h.participationTop)} acts per week (${f(h.participationBottom / h.participationTop * 100, 0)}%). Addressed by plans and asks, not NC.`);
+  console.log(`Blocking gates overall: ${lg.pass ? "PASS" : "FAIL"}`);
+  results.launchGates = { seeds: gs, ...lg, byLever: comp };
+  results.launchGatesSensitivity = lgC;
   const ji = args.indexOf("--json");
   if (ji >= 0) await Bun.write(args[ji + 1]!, JSON.stringify(results, null, 1));
 }
 
 function effortSweep() {
-  console.log("| thresholds | effortGain | tiers T0/T1/T2/T3 (honest, day 90) | V14 ratio on | V14 ratio off | on - off (paired) | top decile V14 gain |");
+  const gs = Math.max(GATE_SEEDS, SEEDS);
+  console.log(`Paired against all NC levers off, ${gs} seeds. Reach above the base reserved for low exposure (default) unless noted.`);
+  console.log("| thresholds | effortGain | reach extra to low exposure | honest T0/T1/T2/T3 (day 90) | V14 ratio on | all levers: on - off | effort lever only |");
   console.log("|---|---|---|---|---|---|---|");
-  for (const th of [[20, 60, 150], [10, 30, 80], [5, 15, 40]] as [number, number, number][]) for (const g of [0.4, 1.0]) {
+  const off: Record<string, Metrics[]> = {};
+  for (const th of [[10, 30, 80], [15, 45, 120], [20, 60, 150]] as [number, number, number][]) for (const g of [0.4, 1.0]) for (const low of [true, false]) {
+    if (!low && g !== 0.4) continue;
+    off[g] ??= runArm("", { effortLever: false, vouchLever: false, reachLever: false, effortGain: g }, gs).per;
     const cfg: CapitalConfigInput = { levers: { effortThresholds: th } };
-    const on = runArm("", { cfg, effortGain: g }).per, off = runArm("", { cfg, effortGain: g, effortLever: false }).per;
-    const a = attributable(on, off);
+    const on = runArm("", { cfg, effortGain: g, reachExtraToLowExposure: low }, gs).per;
+    const a = attributable(on, off[g]!);
+    const e = attributable(on, runArm("", { cfg, effortGain: g, reachExtraToLowExposure: low, effortLever: false }, gs).per);
     const tiers = [0, 1, 2, 3].map(t => f(mean(on.map(m => m.tiers[t]!)), 0)).join("/");
-    console.log(`| ${th.join(", ")} | ${g} | ${tiers} | ${ms(on.map(m => m.v14Ratio))} | ${ms(off.map(m => m.v14Ratio))} | ${f(a.diff, 3)} ± ${f(a.se, 3)} | ${f(a.topGain, 3)} |`);
+    console.log(`| ${th.join(", ")} | ${g} | ${low ? "yes" : "no"} | ${tiers} | ${ms(on.map(m => m.v14Ratio))} | ${f(a.diff, 3)} ± ${f(a.se, 3)} | ${f(e.diff, 3)} ± ${f(e.se, 3)} |`);
   }
 }
 

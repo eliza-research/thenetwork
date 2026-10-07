@@ -334,13 +334,13 @@ describe("levers", () => {
     expect(vouchCapacity(L.internalEntries("a"))).toBe(0);
   });
 
-  test("organizing reach grows with sessions, capped, reduced after abuse", () => {
+  test("organizing reach grows with sessions, capped, extra slots reserved for low exposure, reduced after abuse", () => {
     const L = world({ a: 30, ...Object.fromEntries(Array.from({ length: 80 }, (_, i) => [`m${i}`, 30])) });
-    expect(organizingReach(L.internalEntries("a"))).toBe(8);
+    expect(organizingReach(L.internalEntries("a"))).toEqual({ max: 8, reservedForLowExposure: 0 });
     for (let i = 0; i < 40; i++) L.record(ev({ type: "organized", t: T0 + i * DAY, organizer: "a", planId: `o${i}`, publicVenue: true, recurring: true, attendees: [`m${2 * i}`, `m${2 * i + 1}`], label: "run club" }));
-    expect(organizingReach(L.internalEntries("a"))).toBe(16);
+    expect(organizingReach(L.internalEntries("a"))).toEqual({ max: 16, reservedForLowExposure: 8 });
     L.record(ev({ type: "abuse_confirmed", t: T0 + 41 * DAY, member: "a", kind: "policy" }));
-    expect(organizingReach(L.internalEntries("a"))).toBe(4);
+    expect(organizingReach(L.internalEntries("a"))).toEqual({ max: 4, reservedForLowExposure: 0 });
   });
 });
 
