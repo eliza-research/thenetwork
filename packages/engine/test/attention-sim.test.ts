@@ -7,7 +7,7 @@ import { SNAPSHOT_FEATURES } from "../../sim/src/snapshot.ts";
 import { AttentionNetwork } from "../experiments/attentionNetwork.ts";
 import { runSim } from "../experiments/lib.ts";
 
-type Cfg = { name: string; probes: boolean; iter2?: boolean; iter3?: boolean };
+type Cfg = { name: string; probes: boolean; iter2?: boolean; iter3?: boolean; iter4?: boolean };
 async function run(c: Cfg) {
   let net!: AttentionNetwork;
   const res = await runSim({
@@ -22,6 +22,8 @@ async function run(c: Cfg) {
         sendTime: "learned" as const, sendWindowHours: 6, partnerInWindow: true, timeOptions: true,
         hiddenFree: (_id: string, t: number) => new Date(t).getUTCHours() % 2 === 0, connectsCalendar: () => true,
       } : {}),
+      // Iteration 4: parallel probes, opt-out reveal (booked plan), warm mentions.
+      ...(c.iter4 ? { parallelProbes: true, revealOptOut: true, warmConsent: () => true } : {}),
     })),
     augment: input => net.engineView(input as any),
   });
@@ -33,6 +35,7 @@ const CFGS: Cfg[] = [
   { name: "consent-first probes", probes: true },
   { name: "iteration 2: rolling, no price, partner on any cap, acks folded, events, probes", probes: true, iter2: true },
   { name: "iteration 3: learned send time, partner in window, time options, probes", probes: true, iter3: true },
+  { name: "iteration 4: iteration 3 + parallel probes, opt-out reveal, warm mentions", probes: true, iter3: true, iter4: true },
 ];
 for (const c of CFGS) {
   const probes = c.probes;
@@ -94,6 +97,14 @@ for (const c of CFGS) {
       }
       expect(interruptions).toBeGreaterThan(10);
       if (c.iter2) { expect(net.stats.eventsShown).toBeGreaterThan(0); expect(minorMsgs).toBeGreaterThan(0); }
+      if (c.iter4) {
+        // Nobody is named before both said yes: every reveal follows a yes from each participant.
+        expect(net.stats.revealOptOut).toBeGreaterThan(0);
+        for (const r of recs) if (r.msg.meta?.reveal) {
+          const fl = net.flows.get(r.msg.meta.proposalId);
+          expect(fl && Object.values(fl.f.answers).every(a => a === "yes")).toBe(true);
+        }
+      }
       if (c.iter3) {
         // Probes carry 2-3 concrete times; a meeting set from them is at a time everyone picked.
         expect(net.stats.probesWithOptions).toBeGreaterThan(0);

@@ -41,6 +41,12 @@ export interface Variant {
   fixes?: boolean | { priming?: boolean; events?: boolean; eventsAlone?: boolean; attendance?: boolean };
   /** Iteration 3: run with the current attention defaults (rolling 12:00, ...). Older variants are pinned to the iteration-2 digest config (ITER2). */
   iter3?: boolean;
+  /**
+   * Iteration 4, HARNESS ONLY: warm mentions. Members consent to being mentioned as a mutual (and to
+   * their connection being mentioned) with p = 0.7; `warmLift` = how much a "friend of <mutual>" probe
+   * raises the yes probability, P' = P + lift x (1 - P) (the simulator's probe model has no warm effect; 0 = as is).
+   */
+  warm?: { lift: number };
   /** undefined = the sim's own StubNetwork (today). */
   net?: Omit<AttentionNetOptions, "seed" | "randomIntros" | "choose"> & { choose?: "oracle" | "first" };
 }
@@ -60,6 +66,11 @@ const ITER2: AttentionConfigInput = { digest: { days: { open: [2, 4], normal: [4
  */
 const N3 = { ...BEST, cadence: "rolling" as const, suppressAcks: true, requeueUnpicked: true, probes: true, sendTime: "learned" as const, sendWindowHours: 6, partnerAnyCap: false, partnerInWindow: true, timeOptions: true };
 const FIX3 = { priming: true, events: true, attendance: true };
+/** Iteration 4: cheaper probe-first. (a) parallel probes, (b) opt-out reveal (booked plan), (c) = time options + (b) (the probe's yes carries the time). */
+const Q_A = { ...N3, parallelProbes: true };
+const Q_B = { ...N3, timeOptions: false, revealOptOut: true };
+const Q_C = { ...N3, revealOptOut: true };
+const Q_AC = { ...N3, parallelProbes: true, revealOptOut: true };
 export const VARIANTS: Variant[] = [
   { name: "A v1.2 defaults (stub network: one item per interruption)" },
   { name: "A' v1.2 via the harness network (must equal A)", net: { mode: "v12" } },
@@ -130,6 +141,19 @@ export const VARIANTS: Variant[] = [
   { name: "H-N3f18 N3, fixed 18:00 send time, fixes 1-3", iter3: true, fixes: FIX3, cfg: SUPPLY, net: { ...N3, sendTime: "fixed", attention: { digest: { hour: 18 } } } },
   { name: "H-N3n N3 with named invites (no probes, so no time options), fixes 1-3", iter3: true, fixes: FIX3, cfg: SUPPLY, net: { ...N3, probes: false } },
   { name: "H-N3λ N3 with the doc's shadow price, fixes 1-3", iter3: true, fixes: FIX3, cfg: SUPPLY, net: { ...N3, lambdaScale: 1 } },
+  // ---- iteration 4: cheaper probe-first (anonymous until both say yes) ----
+  { name: "Q-a N3 + parallel probes", iter3: true, cfg: SUPPLY, net: Q_A },
+  { name: "Q-b N3 + opt-out reveal, no time options (time inferred)", iter3: true, cfg: SUPPLY, net: Q_B },
+  { name: "Q-c N3 + opt-out reveal on the picked time (pre-commit)", iter3: true, cfg: SUPPLY, net: Q_C },
+  { name: "Q-ac parallel + pre-commit", iter3: true, cfg: SUPPLY, net: Q_AC },
+  { name: "Q-acw Q-ac + warm mentions (lift 0.3)", iter3: true, cfg: SUPPLY, net: Q_AC, warm: { lift: 0.3 } },
+  { name: "Q-acw0 Q-ac + warm mentions (no lift)", iter3: true, cfg: SUPPLY, net: Q_AC, warm: { lift: 0 } },
+  { name: "HQ-a N3 + parallel probes, fixes 1-3", iter3: true, fixes: FIX3, cfg: SUPPLY, net: Q_A },
+  { name: "HQ-b N3 + opt-out reveal, no time options, fixes 1-3", iter3: true, fixes: FIX3, cfg: SUPPLY, net: Q_B },
+  { name: "HQ-c N3 + pre-commit, fixes 1-3", iter3: true, fixes: FIX3, cfg: SUPPLY, net: Q_C },
+  { name: "HQ-ac parallel + pre-commit, fixes 1-3", iter3: true, fixes: FIX3, cfg: SUPPLY, net: Q_AC },
+  { name: "HQ-acw HQ-ac + warm mentions (lift 0.3), fixes 1-3", iter3: true, fixes: FIX3, cfg: SUPPLY, net: Q_AC, warm: { lift: 0.3 } },
+  { name: "HQ-acw0 HQ-ac + warm mentions (no lift), fixes 1-3", iter3: true, fixes: FIX3, cfg: SUPPLY, net: Q_AC, warm: { lift: 0 } },
 ];
 
 // ------------------------------------------------------------------ per-seed run and metrics
@@ -143,6 +167,8 @@ export interface SeedRow {
   overStateCap: number; quietHours: number; streakInterrupt: number; blooio4th: number; eventValues: number;
   /** Iteration 3: meetings scheduled, and participant-meetings at a time the participant was not (hidden) free. */
   meetings?: number; meetingSeats?: number; seatsUnavailable?: number;
+  /** Iteration 4: reveals sent, and reveal recipients whose decision on the named plan was no (learned who, then backed out, said so or not). */
+  reveals?: number; revealDeclines?: number;
   stats?: Record<string, unknown>;
 }
 
@@ -249,7 +275,25 @@ function timeDependentAttendance(world: SimWorld, seed: number, free: (id: Membe
   };
 }
 
+/**
+ * Iteration 4, HARNESS ONLY: a probe that named a consenting mutual ("a friend of Sam") is answered
+ * yes with P' = P + lift x (1 - P). Wraps oracle.probe (after primeProbes).
+ */
+function warmProbes(world: SimWorld, net: () => AttentionNetwork | undefined, lift: number) {
+  if (!lift) return;
+  const oracle = world.oracle;
+  const orig = oracle.probe.bind(oracle);
+  oracle.probe = (id, q) => {
+    const r = orig(id, q);
+    if (!net()?.warmMentioned.has(`${q.key}|${id}`)) return r;
+    const yesProb = r.yesProb + lift * (1 - r.yesProb);
+    return { yesProb, yes: r.yes || new SimRng(hash32(seed0, "warm", q.key, id)).next() < (yesProb - r.yesProb) / Math.max(1e-9, 1 - r.yesProb) };
+  };
+}
+let seed0 = 0;
+
 export async function runSeed(v: Variant, seed: number): Promise<SeedRow> {
+  seed0 = seed;
   const fx: { priming?: boolean; events?: boolean; eventsAlone?: boolean; attendance?: boolean } = v.fixes === true ? { priming: true, events: true, eventsAlone: true } : v.fixes ? { eventsAlone: false, ...v.fixes } : {};
   let world!: SimWorld;
   let net: AttentionNetwork | undefined;
@@ -264,13 +308,14 @@ export async function runSeed(v: Variant, seed: number): Promise<SeedRow> {
       choose: v.net!.choose === "oracle" ? oracleChooser(() => world) : undefined,
       ...(attention ? { attention } : {}),
       ...(fx.events && v.net!.mode === "attention" ? { outsideWorld: true, actOnEvent: eventActor(() => world, seed), eventsAlone: fx.eventsAlone } : {}),
+      ...(v.warm ? { warmConsent: (id: MemberId) => new SimRng(hash32(seed, "warm-consent", id)).next() < 0.7 } : {}),
       ...(v.net!.timeOptions ? {
         hiddenFree: free,
         connectsCalendar: (id: MemberId) => new SimRng(hash32(seed, "calendar", id)).next() < 0.5,
         calendarShowsBusy: (id: MemberId, t: number) => new SimRng(hash32(seed, "calendar-recall", id, t)).next() < 0.85,
       } : {}),
     })) : undefined,
-    onWorld: w => { world = w; if (fx.priming) primeProbes(w, seed); timeDependentAttendance(w, seed, free, !!fx.attendance, mcount); },
+    onWorld: w => { world = w; if (fx.priming) primeProbes(w, seed); if (v.warm) warmProbes(w, () => net, v.warm.lift); timeDependentAttendance(w, seed, free, !!fx.attendance, mcount); },
     augment: input => (net ? net.engineView(input as EngineInput) : input),
   });
   const m = res.metrics;
@@ -364,6 +409,11 @@ export async function runSeed(v: Variant, seed: number): Promise<SeedRow> {
     minors: m.safety.minorContacts, leaks: m.privacy.canaryLeaks, invariants: m.invariants.total, byRule: m.invariants.byRule,
     overStateCap, quietHours: m.invariants.byRule.quiet_hours ?? 0, streakInterrupt, blooio4th, eventValues,
     meetings: mcount.meetings, meetingSeats: mcount.seats, seatsUnavailable: mcount.unavailable,
+    ...(() => {
+      const revealIds = new Set(msgs.filter(x => x.meta?.reveal).map(x => x.id));
+      const ds = recs.filter(r => r.type === "decision" && revealIds.has(r.messageId));
+      return { reveals: revealIds.size, revealDeclines: ds.filter(r => r.decision === "decline").length };
+    })(),
     stats: net ? { ...net.stats, shownTo: undefined, shown: undefined, sendHourMembers: undefined, autoPauses: net.stats.autoPauses.length, ledger: net.ledger.length } : undefined,
   };
 }
@@ -401,6 +451,13 @@ export function summaryTables(rows: VariantRow[]): string {
       const seats = sum(r.seeds, "meetingSeats" as keyof SeedRow), un = sum(r.seeds, "seatsUnavailable" as keyof SeedRow);
       const picks = st("optionPicked") + st("optionNoneFit");
       return [r.name, (avg(r.seeds, "meetings" as keyof SeedRow) || 0).toFixed(1), seats ? pct(un / seats) : "-", st("probesWithOptions").toFixed(0), picks ? pct(st("optionNoneFit") / picks) : "-", st("timedMeetings").toFixed(1), st("calendarsConnected").toFixed(1), st("sendHourMoved").toFixed(0)];
+    })),
+    "\n### Consent-first cost and privacy (iteration 4)\n",
+    table(["variant", "initial invites per meeting", "invites wasted /seed (opportunity died on the other's no or silence)", "of which the member had said yes", "reveals /seed", "learned who, then said no (share of reveals)", "explicit back-outs after an opt-out reveal /seed", "probes naming a mutual /seed"], rows.map(r => {
+      const st = (k: string) => mean(r.seeds.map(x => Number((x.stats as any)?.[k] ?? 0)));
+      const meet = avg(r.seeds, "meetings" as keyof SeedRow) || 0;
+      const rv = sum(r.seeds, "reveals" as keyof SeedRow), rd = sum(r.seeds, "revealDeclines" as keyof SeedRow);
+      return [r.name, meet ? (avg(r.seeds, "interruptions") / meet).toFixed(1) : "-", st("wastedInvites").toFixed(1), st("wastedYes").toFixed(1), (rv / r.seeds.length).toFixed(1), rv ? pct(rd / rv) : "-", st("backouts").toFixed(1), st("warmProbes").toFixed(1)];
     })),
     "\n### Invariants (summed over seeds)\n",
     table(["variant", "minor contacts", "canary leaks", "over state cap", "quiet-hour sends", "interruptions with >= 2 outstanding", "outbound with >= 3 outstanding (Blooio 4th)", "judge invariants"], inv),

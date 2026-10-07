@@ -724,8 +724,9 @@ export function itemAcceptance(p: Pick<EngineProposal, "participants" | "accepta
  * Items for a fresh engine proposal: pairs probe the member with the want first (the partner's
  * item is created only after their yes, partnerItem); groups probe everyone in parallel (quorum).
  */
-export function itemsForProposal(p: EngineProposal, o: ItemOptions): AttentionItem[] {
-  if (p.participants.length > 2) return p.participants.map(id => itemFor(p, id, "first", o));
+export function itemsForProposal(p: EngineProposal, o: ItemOptions & { parallel?: boolean }): AttentionItem[] {
+  // Groups, and pairs probed in parallel (iteration 4, design 1.8): everyone at once, reveal when all needed said yes.
+  if (p.participants.length > 2 || o.parallel) return p.participants.map(id => itemFor(p, id, "first", o));
   return [itemFor(p, firstToProbe(p), "first", o)];
 }
 /** The partner's item, once the first member said yes. Expires sooner (cfg.expiry.partnerProbeDays). */
@@ -739,25 +740,32 @@ export function partnerItem(p: EngineProposal, partner: MemberId, o: ItemOptions
 export type ProbeAnswer = "pending" | "yes" | "no";
 export interface ProbeFlow {
   proposalId: string; first: MemberId; partners: MemberId[]; group: boolean; quorum: number;
+  /** A pair probed in parallel: both at once, any order; revealed when both said yes, closed on any no. */
+  parallel?: boolean;
   answers: Record<MemberId, ProbeAnswer>;
   stage: "probing_first" | "probing_partners" | "revealed" | "closed";
 }
 
-/** Pairs: probe the first member, then the partner on yes. Groups: everyone in parallel; reveal at quorum. */
-export function startProbeFlow(p: Pick<EngineProposal, "id" | "participants" | "roles">): ProbeFlow {
+/**
+ * Pairs: probe the first member, then the partner on yes (sequential), or both at once (`parallel`).
+ * Groups: everyone in parallel; reveal at quorum. Either way nobody is named before everyone needed said yes.
+ */
+export function startProbeFlow(p: Pick<EngineProposal, "id" | "participants" | "roles">, o: { parallel?: boolean } = {}): ProbeFlow {
   const group = p.participants.length > 2;
+  const parallel = !group && !!o.parallel;
   const first = group ? p.participants[0]! : firstToProbe(p);
   return {
     proposalId: p.id, first, partners: p.participants.filter(x => x !== first), group,
     quorum: group ? Math.max(3, Math.ceil(p.participants.length * 0.66)) : 2,
     answers: Object.fromEntries(p.participants.map(x => [x, "pending" as ProbeAnswer])),
-    stage: group ? "probing_partners" : "probing_first",
+    stage: group || parallel ? "probing_partners" : "probing_first",
+    ...(parallel ? { parallel: true } : {}),
   };
 }
 /** Who should be probed now (members with no answer whose turn it is). */
 export function toProbe(f: ProbeFlow): MemberId[] {
   if (f.stage === "probing_first") return f.answers[f.first] === "pending" ? [f.first] : [];
-  if (f.stage === "probing_partners") return Object.keys(f.answers).filter(x => f.answers[x] === "pending" && (f.group || x !== f.first));
+  if (f.stage === "probing_partners") return Object.keys(f.answers).filter(x => f.answers[x] === "pending" && (f.group || f.parallel || x !== f.first));
   return [];
 }
 export function recordProbeAnswer(f: ProbeFlow, member: MemberId, yes: boolean): ProbeFlow {
@@ -767,7 +775,8 @@ export function recordProbeAnswer(f: ProbeFlow, member: MemberId, yes: boolean):
   const yesN = Object.values(answers).filter(a => a === "yes").length;
   const open = Object.values(answers).filter(a => a === "pending").length;
   let stage: ProbeFlow["stage"] = f.stage;
-  if (!f.group) {
+  if (f.parallel) stage = !yes ? "closed" : yesN === Object.keys(answers).length ? "revealed" : f.stage;
+  else if (!f.group) {
     if (member === f.first) stage = yes ? "probing_partners" : "closed";
     else stage = yes && answers[f.first] === "yes" ? "revealed" : "closed";
   } else if (yesN >= f.quorum) stage = "revealed";
@@ -786,6 +795,26 @@ const EMPLOYER_TAGS = /^(employer|employer_type|occupation|company|job|job_title
 const EMPLOYER_TEXT = /\b(works? (at|for)|employer|employed|company|job|occupation|workplace|engineer at|manager at)\b/i;
 const ATTRIBUTE_KINDS = new Set(["interest", "skill", "goal"]);
 
+/**
+ * Warm-path mention (iteration 4): "a friend of Sam" in a probe, when the opportunity came through a
+ * mutual (`EngineProposal.via`). It stays within D5 only as THE one shareable fact (the attribute is
+ * dropped), and only when: both the mutual and the person described consented to mutual mentions
+ * (`consented`); the mutual is an adult in good standing; the recipient and the other person are
+ * each directly connected to the mutual; the mutual has at least `minAnonymity` connections other
+ * than the recipient (so "a friend of Sam" does not single out one person); never for romance. The
+ * mutual's first name only. Returns the first name or null.
+ */
+export function warmMention(w: World, via: MemberId | undefined, recipient: MemberId, others: readonly MemberId[], consented: (id: MemberId) => boolean, category: Category, cfg: AttentionConfig = DEFAULT_ATTENTION): string | null {
+  if (!via || others.length !== 1 || category === "romance") return null;
+  const mv = w.get(via);
+  if (!mv || isMinor(mv.m.age) || mv.m.state === "paused" || w.holds.has(via)) return null;
+  if (!consented(via) || !consented(others[0]!)) return null;
+  const friends = w.positive.get(via);
+  if (!friends?.has(recipient) || !friends.has(others[0]!)) return null;
+  if ([...friends.keys()].filter(x => x !== recipient).length < cfg.consent.warmMinAnonymity) return null;
+  return mv.m.name.trim().split(/\s+/)[0] || null;
+}
+
 export interface ProbeSpec {
   proposalId: string; kind: EngineProposal["kind"]; category: Category; objective: string;
   window?: { start: number; end: number }; tz: string;
@@ -793,8 +822,10 @@ export interface ProbeSpec {
   role?: Role;
   /** Founder decision 4a: 2-3 concrete time options (chooseTimeOptions) asked in the probe itself. */
   options?: TimeSlot[];
+  /** Iteration 4: a consenting mutual's first name (warmMention); replaces the attribute as the one fact. */
+  mutual?: string;
 }
-export interface Probe { text: string; attribute?: string; area?: string }
+export interface Probe { text: string; attribute?: string; area?: string; mutual?: string }
 
 const GENERIC_ACTIVITY: Record<Category, string> = {
   social: "meeting new people", hobby: "a shared hobby", professional: "work and career", romance: "dating",
@@ -853,7 +884,7 @@ export function buildProbe(w: World, spec: ProbeSpec, recipient: MemberId, other
   if (spec.category === "romance" && others.length !== 1) return null;
   const when = spec.options?.length ? timeOptionsPhrase(spec.options, spec.tz) : whenPhrase(spec.window, now, spec.tz);
   const area = w.get(recipient)!.presence.find(p => p.type === "home")?.areas?.[0] ?? w.get(recipient)!.presence[0]?.areas?.[0];
-  const attr = others.length === 1 ? shareableAttribute(w, others[0]!, recipient) : undefined;
+  const attr = others.length === 1 && !spec.mutual ? shareableAttribute(w, others[0]!, recipient) : undefined;
   const contributor = spec.role && CONTRIBUTOR_ROLES.has(spec.role);
   const frame = (activity: string, a?: string, ar?: string) => {
     const near = ar ? ` near ${ar}` : "";
@@ -862,18 +893,22 @@ export function buildProbe(w: World, spec: ProbeSpec, recipient: MemberId, other
     if (spec.kind === "network_growth") return `Know someone who'd be great for ${activity}? No pressure either way.`;
     if (contributor) return `Someone nearby could use a hand with ${activity}, ${when}${near}. Would you be up for helping? An easy no is fine.${also}`;
     if (others.length > 1) return `A few people are getting together around ${activity}, ${when}${near}. Want in? I'll share who's coming once enough people say yes.`;
-    return `Up for meeting someone around ${activity}, ${when}${near}?${also} I'll only share who it is if you both say yes.`;
+    return `Up for meeting ${mutual ? `a friend of ${mutual}` : "someone"} around ${activity}, ${when}${near}?${also} I'll only share who it is if you both say yes.`;
   };
+  let mutual: string | undefined = spec.mutual;
   const vocab = privateVocabulary(w, others);
   const names = nameTokens(w, others);
   const forbidden = employerValues(w, others);
   const ok = (text: string) => !tokenize(text).some(t => names.has(t.toLowerCase())) && checkMemberFacing(text, vocab, forbidden).ok;
   // The activity can itself come from someone's private facet (e.g. a matchable workplace word):
   // then a generic phrase for the category is used instead.
-  for (const activity of [...new Set([activityOf(spec.objective), GENERIC_ACTIVITY[spec.category], "meeting new people"])]) {
-    for (const [a, ar] of [[attr, area], [attr, undefined], [undefined, area], [undefined, undefined]] as const) {
-      const text = frame(activity, a, ar);
-      if (ok(text)) return { text, ...(a ? { attribute: a } : {}), ...(ar ? { area: ar } : {}) };
+  for (const m of mutual ? [mutual, undefined] : [undefined]) {
+    mutual = m;
+    for (const activity of [...new Set([activityOf(spec.objective), GENERIC_ACTIVITY[spec.category], "meeting new people"])]) {
+      for (const [a, ar] of [[attr, area], [attr, undefined], [undefined, area], [undefined, undefined]] as const) {
+        const text = frame(activity, a, ar);
+        if (ok(text)) return { text, ...(a ? { attribute: a } : {}), ...(ar ? { area: ar } : {}), ...(m ? { mutual: m } : {}) };
+      }
     }
   }
   return null;
