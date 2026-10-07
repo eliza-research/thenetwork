@@ -29,7 +29,7 @@ import { constantBaseline, engineBaseline, runRecommender, scoreRec, type RecRes
 import { productionPolicy, rulesBaseline, runJudgeSuite, scoreJudge, type JudgeResult } from "./runJudge.ts";
 import type { RequestSettings } from "./transport.ts";
 import { DEFAULT_WORLDS } from "./worlds.ts";
-import { DEFAULT_MODEL } from "../../core/src/index.ts";
+import { DEFAULT_MODEL, endpointsFor } from "../../core/src/index.ts";
 import { itemRecord, runPasses, SpendGuard, type PassName } from "./runPasses.ts";
 import { scorePasses } from "./passScore.ts";
 import { renderPassesReport } from "./passReport.ts";
@@ -57,7 +57,7 @@ async function main() {
   const cacheDir = join(ROOT, "runs/evals/cache");
   const resultsDir = join(ROOT, "runs/evals/results");
   mkdirSync(resultsDir, { recursive: true });
-  if (!offline && !process.env.SURPLUS_API_KEY && arg("dataset-only") !== "true") throw new Error("SURPLUS_API_KEY missing (.env)");
+  if (!offline && !endpointsFor("surplus").length && arg("dataset-only") !== "true") throw new Error("SURPLUS_API_KEY or OPENAI_API_KEY missing (.env)");
 
   const t0 = performance.now();
   const recDs = suites.has("recommender") ? await buildRecDataset() : undefined;
@@ -132,7 +132,7 @@ async function runPassesSuite() {
   const passes = (arg("passes", "pass1,pass2,pass3")!).split(",").map(s => s.trim()) as PassName[];
   const guard = new SpendGuard(Number(arg("max-spend", "3")) * 1e6);
   mkdirSync(resultsDir, { recursive: true });
-  if (!offline && !process.env.SURPLUS_API_KEY) throw new Error("SURPLUS_API_KEY missing (.env)");
+  if (!offline && !endpointsFor("surplus").length) throw new Error("SURPLUS_API_KEY or OPENAI_API_KEY missing (.env)");
 
   const t0 = performance.now();
   const richness = arg("legacy-data") !== "true";

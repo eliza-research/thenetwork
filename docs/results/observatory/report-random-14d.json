@@ -1,0 +1,88 @@
+{
+  "world": {
+    "seed": 1,
+    "days": 14,
+    "engine": "random",
+    "members": 500,
+    "wallMs": 408
+  },
+  "proposals": {
+    "total": 483,
+    "byState": {
+      "DECLINED": 417,
+      "FEEDBACK_COLLECTED": 9,
+      "EXPIRED": 47,
+      "ABANDONED": 2,
+      "INVITING": 7,
+      "MUTUALLY_ACCEPTED": 1
+    },
+    "skippedAtDispatch": {
+      "count": 0,
+      "share": 0,
+      "reasons": {}
+    },
+    "precisionVsTruth": 0.075,
+    "unsafe": {
+      "count": 41,
+      "share": 0.085,
+      "byFlag": {
+        "adversarial_participant": 35,
+        "boundary_conflict": 9,
+        "minor_included": 6
+      },
+      "reachedInvite": 41
+    }
+  },
+  "people": {
+    "invites": 570,
+    "acceptRate": 0.175,
+    "meetingsHeld": 9,
+    "showRate": 0.909,
+    "meanEnjoyment": 0.544,
+    "membersWhoMet": 20,
+    "proactivePerMemberPerWeek": 0.57,
+    "optOuts": 0,
+    "blocks": 9,
+    "safetyFlags": 128,
+    "invariantViolations": 0
+  },
+  "engineRunsByDay": [],
+  "learnedGraph": {
+    "introduced": 12,
+    "met": 9,
+    "enjoyed": 4,
+    "would_interact_again": 0,
+    "avoid": 0,
+    "blocked": 18
+  },
+  "scoreboard": [
+    {
+      "source": "player",
+      "label": "You",
+      "points": 0,
+      "proposals": 0,
+      "accepted": 0,
+      "declined": 0,
+      "meetings": 0,
+      "showRate": 0,
+      "meanEnjoyment": 0,
+      "precision": 0,
+      "unsafe": 0,
+      "perProposal": 0
+    },
+    {
+      "source": "network",
+      "label": "Random baseline",
+      "points": -5495,
+      "proposals": 483,
+      "accepted": 100,
+      "declined": 417,
+      "meetings": 9,
+      "showRate": 0.909,
+      "meanEnjoyment": 0.544,
+      "precision": 0.075,
+      "unsafe": 41,
+      "perProposal": -11.377
+    }
+  ]
+}

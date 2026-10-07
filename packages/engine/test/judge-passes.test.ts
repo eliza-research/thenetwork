@@ -3,10 +3,10 @@
 import { describe, expect, test } from "bun:test";
 import type { ChatMessage } from "@thenetwork/core";
 import { runEngine } from "../src/engine.ts";
-import { buildJudgeMessages, JUDGE_SYSTEM, parseVerdict } from "../src/judge.ts";
-import { checkMemberFacing, keyOrderOk, parsePassVerdict, redactPrivate } from "../src/judgeCommon.ts";
-import { basisOf, buildDeepMessages, DEEP_SYSTEM, gateMemberFacing, hardGate, parseDeepVerdict, summarizeConnectedSources } from "../src/judgeDeep.ts";
-import { buildPublicView, parseScreenVerdict, SCREEN_SYSTEM, screenConfigOf, screenMessages } from "../src/judgeScreen.ts";
+import { buildJudgeMessages, JUDGE_SYSTEM, JUDGE_SYSTEM_V3, parseVerdict } from "../src/judge.ts";
+import { boundaryRelevance, checkMemberFacing, keyOrderOk, parsePassVerdict, redactPrivate } from "../src/judgeCommon.ts";
+import { basisOf, buildDeepMessages, DEEP_SYSTEM, DEEP_SYSTEM_V2, gateMemberFacing, hardGate, parseDeepVerdict, summarizeConnectedSources } from "../src/judgeDeep.ts";
+import { buildPublicView, parseScreenVerdict, SCREEN_SYSTEM, SCREEN_SYSTEM_V2, screenConfigOf, screenMessages } from "../src/judgeScreen.ts";
 import { privateVocabulary } from "../src/explain.ts";
 import { baseMember, cand, facet, FakeLLM, mkWorld, sailingPair, verdictJson } from "./helpers.ts";
 
@@ -186,5 +186,57 @@ describe("hard filters always win", () => {
     expect(r.runLog.judge.screen!.calls).toBe(1);
     expect(r.runLog.judge.calls).toBe(0);
     expect(r.runLog.scored.some(s => s.reason === "screen_reject")).toBe(true);
+  });
+});
+
+describe("v3 prompts (2026-10-07): evidence notes, redacted boundary flag, pass 2 with deep context", () => {
+  const world = () => {
+    const inp = sailingPair();
+    inp.facets.push(facet("a", 10, "boundary", "prefers groups over one-on-one with strangers", ["boundary"], "agent_private"));
+    inp.facets.push({ ...facet("b", 7, "interest", "receipts suggest a painting habit", ["painting"], "matchable"), provenance: "connected_source", source: "gmail", inferred: true, confidence: 0.5 } as any);
+    return mkWorld(inp);
+  };
+  test("pass 1 view: basis/confidence/age on every fact, HYPOTHESIS mark, redacted boundary flag (no content); v2 view unchanged", () => {
+    const w = world();
+    const c = cand(["a", "b"]);
+    const v3 = buildPublicView(w.input, screenConfigOf(w, c));
+    const v2 = buildPublicView(w.input, screenConfigOf(w, c), { version: "v2" });
+    const s3 = JSON.stringify(v3);
+    expect(v3.people[0]!.private_boundary_relevant_to).toEqual(["format"]);
+    expect(s3).not.toContain("prefers groups");
+    expect(v3.people[1]!.matchable_do_not_quote.find(x => x.includes("painting"))).toMatch(/inferred via gmail, conf 0.5, .*HYPOTHESIS/);
+    expect(v3.people.every(p => [...p.shareable, ...p.matchable_do_not_quote].every(x => /\[(stated|confirmed|observed|inferred|vouched)/.test(x)))).toBe(true);
+    expect(JSON.stringify(v2)).not.toContain("private_boundary_relevant_to");
+    expect(JSON.stringify(v2)).not.toContain("conf ");
+    // A group intro does not raise the one-to-one format flag.
+    expect(boundaryRelevance(["prefers groups over one-on-one with strangers"], { category: "social", attendingCount: 3 })).toEqual([]);
+    expect(boundaryRelevance(["no networking-heavy events", "doesn't want to talk about work"], { category: "professional", attendingCount: 2 })).toEqual(["category", "topic"]);
+    expect(boundaryRelevance(["no bars or heavy drinking"], { category: "social", attendingCount: 2 })).toEqual([]);
+  });
+  test("pass 2 v3: pass-3 context without private context, attending refs only; template order kept", () => {
+    const w = world();
+    const c = cand(["a", "b"]);
+    const m = buildJudgeMessages(w, c, "v3");
+    const s = JSON.stringify(m.messages);
+    expect(m.messages[0]!.content).toBe(JUDGE_SYSTEM_V3);
+    expect(s).not.toContain("private_context_never_quote");
+    expect(s).not.toContain("prefers groups");
+    expect(s).toContain("private_boundary_relevant_to");
+    expect(s).toContain("\\\"hypothesis\\\":true");
+    expect(Object.keys(m.refs)).toEqual(["P1", "P2"]);
+    const tpl = JUDGE_SYSTEM_V3.slice(JUDGE_SYSTEM_V3.indexOf("Return ONLY"));
+    expect(increasing(order(tpl, ["reasoning", "cited_facts", "fit", "red_flags", "dealbreaker", "verdict", "match_probability", "certainty", "why"]))).toBe(true);
+    // Config default keeps the compact pass-2 input unless judge.pass2Context = "deep".
+    expect(buildJudgeMessages(w, c).messages[0]!.content).toBe(JUDGE_SYSTEM);
+    expect(buildJudgeMessages(mkWorld(sailingPair(), { judge: { pass2Context: "deep" } }), c).messages[0]!.content).toBe(JUDGE_SYSTEM_V3);
+  });
+  test("pass 3 v3 prompt: boundaries are penalties, live intents re-read; v2 prompt still available", () => {
+    expect(DEEP_SYSTEM).toContain("penalties, not vetoes");
+    expect(DEEP_SYSTEM).toContain("re-read their \"intents\" list");
+    expect(DEEP_SYSTEM).not.toContain("a violated boundary)");
+    expect(DEEP_SYSTEM_V2).toContain("a violated boundary)");
+    expect(buildDeepMessages(world(), cand(["a", "b"]), { version: "v2" }).messages[0]!.content).toBe(DEEP_SYSTEM_V2);
+    expect(SCREEN_SYSTEM).toContain("ENJOY AND BENEFIT");
+    expect(SCREEN_SYSTEM_V2).toContain("would plausibly accept");
   });
 });

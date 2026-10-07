@@ -1,0 +1,84 @@
+// Trust and safety state per member (PRD 17, 32.14). A risk score accumulates from abuse signals
+// and decays with clean time. Levels:
+//   ok     - normal
+//   watch  - score >= 3: never put into new opportunities (they can still use concierge), 14 days
+//   hold   - score >= 6: everything paused, open opportunities involving them cancelled, staff review
+// Reports only count against the target when corroborated (two distinct reporters, or a target
+// already at risk), so one person can't get someone removed; a member who blocks or reports many
+// people in a short time is flagged as a block abuser instead. Inviters are accountable: when
+// someone they vouched for reaches hold, the inviter loses invites for 30 days.
+import { DAY, type MemberId } from "@thenetwork/core";
+import type { Abuse } from "./classify.ts";
+
+export type TrustLevel = "ok" | "watch" | "hold";
+export interface TrustEvent { at: number; kind: Abuse | "report_received" | "block_abuse" | "invitee_held" | "decay"; points: number; by?: MemberId }
+export interface TrustRecord {
+  score: number; level: TrustLevel; events: TrustEvent[]; reportsFrom: Set<MemberId>; blocksMade: number[];
+  heldAt?: number; lastDecay?: number;
+}
+
+export const WATCH = 3, HOLD = 6;
+const DECAY_DAYS = 14;
+
+export class Trust {
+  private recs = new Map<MemberId, TrustRecord>();
+  /** Fired when a member's level changes (the Network cancels opportunities, tells staff...). */
+  onChange?: (id: MemberId, from: TrustLevel, to: TrustLevel, why: string) => void;
+
+  get(id: MemberId): TrustRecord {
+    let r = this.recs.get(id);
+    if (!r) { r = { score: 0, level: "ok", events: [], reportsFrom: new Set(), blocksMade: [] }; this.recs.set(id, r); }
+    return r;
+  }
+  level(id: MemberId): TrustLevel { return this.recs.get(id)?.level ?? "ok"; }
+  ok(id: MemberId) { return this.level(id) === "ok"; }
+  all() { return this.recs; }
+
+  add(id: MemberId, now: number, kind: TrustEvent["kind"], points: number, by?: MemberId) {
+    const r = this.get(id);
+    r.lastDecay ??= now;
+    r.score += points;
+    r.events.push({ at: now, kind, points, by });
+    this.relevel(id, now, kind);
+  }
+
+  /** A member blocked someone. Many blocks in two weeks = block abuse (flag the blocker). */
+  block(from: MemberId, now: number) {
+    const r = this.get(from);
+    r.blocksMade = [...r.blocksMade.filter(t => now - t < 14 * DAY), now];
+    if (r.blocksMade.length === 3) this.add(from, now, "block_abuse", 2);
+  }
+
+  /** A report against `target`. Counts only when corroborated or the target is already at risk. */
+  report(target: MemberId, by: MemberId, now: number) {
+    const r = this.get(target);
+    const reporter = this.get(by);
+    const reporterCredible = reporter.level === "ok" && reporter.blocksMade.filter(t => now - t < 14 * DAY).length < 3;
+    if (!reporterCredible) return; // a serial reporter's reports don't count toward corroboration either
+    r.reportsFrom.add(by);
+    if (r.reportsFrom.size >= 2 || r.score > 0) this.add(target, now, "report_received", 3, by);
+  }
+
+  /** Clean time pays the score down one point per two weeks (never below zero). */
+  decay(now: number) {
+    for (const [id, r] of this.recs) {
+      if (r.lastDecay === undefined) { r.lastDecay = now; continue; }
+      const steps = Math.floor((now - r.lastDecay) / (DECAY_DAYS * DAY));
+      if (steps <= 0) continue;
+      r.lastDecay += steps * DECAY_DAYS * DAY;
+      if (r.level === "hold" || r.score <= 0) continue; // holds are lifted by a person, not by time
+      r.score = Math.max(0, r.score - steps);
+      this.relevel(id, now, "decay");
+    }
+  }
+
+  private relevel(id: MemberId, now: number, why: string) {
+    const r = this.get(id);
+    const prev = r.level;
+    const next: TrustLevel = r.level === "hold" || r.score >= HOLD ? "hold" : r.score >= WATCH ? "watch" : "ok";
+    if (next === prev) return;
+    r.level = next;
+    if (next === "hold") r.heldAt = now;
+    this.onChange?.(id, prev, next, why);
+  }
+}

@@ -4,7 +4,7 @@
 import type { HttpRecord } from "./transport.ts";
 import type { RecItem } from "./types.ts";
 import type { RecResult } from "./runRec.ts";
-import { abstentionMetrics, auc, brier, ece, mcnemar, pairedBootstrap, percentile, precisionOn, f1On, reliability, type AbstentionMetrics } from "./metrics.ts";
+import { abstentionMetrics, auc, brier, brierSoft, ece, eceSoft, logLossSoft, mcnemar, pairedBootstrap, percentile, precisionOn, f1On, reliability, type AbstentionMetrics } from "./metrics.ts";
 import { PASSES, passDecision, passProb, pipeline, type D3, type PassItemResult, type PassName } from "./runPasses.ts";
 import { PROXY_ORDER, TIERS } from "./richness.ts";
 
@@ -28,6 +28,13 @@ export interface RowScore extends AbstentionMetrics {
   byTier: Record<string, { n: number; accuracy: number; precision: number; recall: number; abstain: number; yes: number }>;
   byProxy: Record<string, { n: number; accuracy: number; precision: number; recall: number; abstain: number; yes: number }>;
   bySource: Record<string, number>;
+  /** Pair vs group strata. */
+  byGroup: RowScore["byTier"];
+  /**
+   * Dataset v2: match_probability against the soft label pGood (null on v1 items). ece is then
+   * computed against the binary label (pGood >= 0.5); eceSoft against pGood.
+   */
+  soft: { brier: number; logLoss: number; ece: number } | null;
 }
 
 function strata(items: RecItem[], key: (i: number) => string | undefined, decisions: (D3 | null)[], order: string[]) {
@@ -75,6 +82,11 @@ export function scoreRow(name: string, items: RecItem[], decisions: (D3 | null)[
     byTier: o.tiers ? strata(items, i => o.tiers![i], decisions, [...TIERS]) : {},
     byProxy: o.proxies ? strata(items, i => o.proxies![i], decisions, PROXY_ORDER) : {},
     bySource,
+    byGroup: strata(items, i => (items[i]!.group ? "group" : "pair"), decisions, ["pair", "group"]),
+    soft: items.every(i => typeof i.truth.pGood === "number") ? (() => {
+      const t = ok.map(i => items[i]!.truth.pGood!);
+      return { brier: brierSoft(p, t), logLoss: logLossSoft(p, t), ece: eceSoft(p, t) };
+    })() : null,
   };
 }
 

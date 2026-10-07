@@ -14,7 +14,9 @@ export type MessageType = NonNullable<SimMeta["type"]>;
 /** What the persona does with one inbound message. */
 export type Intent =
   | "join" | "answer_question" | "accept" | "decline" | "counter" | "confirm_schedule"
-  | "flake_notice" | "ack" | "feedback" | "opt_out" | "relay_reply" | "ignore";
+  | "flake_notice" | "ack" | "feedback" | "opt_out" | "relay_reply" | "ignore"
+  /** Answers to consent-first probes and growth asks. */
+  | "probe_yes" | "probe_no" | "invite_friend";
 
 export interface PersonaMemory {
   joined: boolean;
@@ -32,11 +34,18 @@ export interface PersonaMemory {
   forceFlake?: "notice" | "no_show";
   /** Names of people the Network most recently proposed (for adversarial follow-ups). */
   recentMatches: MemberId[];
+  /**
+   * Fresh signals of wanting something now: the persona asked for it, or said yes to a probe.
+   * A primed persona judges a matching invitation on fit, not on spare capacity (oracle.primedAccept).
+   */
+  signals?: { category: import("@thenetwork/core").Category; at: number; source: "ask" | "probe"; key?: string }[];
+  /** Friends this persona has invited (growth). */
+  invited?: string[];
 }
 
 export const newMemory = (): PersonaMemory => ({
   joined: false, optedOut: false, disclosed: false, questionsAnswered: 0, proposals: {}, meetings: {},
-  proactiveReceived: [], blocked: [], recentMatches: [],
+  proactiveReceived: [], blocked: [], recentMatches: [], signals: [], invited: [],
 });
 
 export interface PersonaContext {

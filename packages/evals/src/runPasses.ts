@@ -46,7 +46,9 @@ export interface LeakSummary { canary: number; sensitive: number; scope: number;
 export interface PassItemResult {
   itemId: string; world: string; model: string;
   /** Ground truth (results file only; never in a prompt). */
-  label: { good: boolean; unsafe: boolean; unsafeReason?: string; hiddenRisk?: string; oracleFlags: string[]; quality: number; minEnjoyment: number };
+  label: { good: boolean; unsafe: boolean; unsafeReason?: string; hiddenRisk?: string; oracleFlags: string[]; quality: number; minEnjoyment: number; pGood?: number; drawnGood?: boolean };
+  split?: string;
+  variants?: PassVariants;
   meta: { group: boolean; source: string; kind: string; category: string; objective: string; tier?: string; proxyBucket: string };
   refs: Record<string, MemberId>;
   hardGate: string | null;
@@ -69,7 +71,14 @@ export interface PassRunOptions {
   offline?: boolean; fetch?: (url: string, init: RequestInit) => Promise<Response>;
   guard?: SpendGuard; onProgress?: (done: number, total: number) => void;
   passes?: PassName[];
+  /** Prompt version per pass (default: the current engine prompts, v3 / judge-v3). */
+  variants?: PassVariants;
 }
+
+/** Prompt versions: pass 1 pass1-screen-v2|v3, pass 2 judge-v2.1|v3, pass 3 pass3-deep-v2|v3. */
+export interface PassVariants { pass1: "v2" | "v3"; pass2: "v2.1" | "v3"; pass3: "v2" | "v3" }
+export const OLD_VARIANTS: PassVariants = { pass1: "v2", pass2: "v2.1", pass3: "v2" };
+export const NEW_VARIANTS: PassVariants = { pass1: "v3", pass2: "v3", pass3: "v3" };
 
 /** One engine World per eval world (built from the FINAL snapshot, incl. adversarial blocks). */
 export function engineWorlds(ds: RecDataset): Map<string, World> {
@@ -122,17 +131,18 @@ const SKIPPED = <V>(): PassRun<V> => ({ ok: false, error: "skipped", verdict: nu
 export async function runPasses(model: string, ds: RecDataset, o: PassRunOptions): Promise<PassItemResult[]> {
   const worlds = engineWorlds(ds);
   const want = new Set(o.passes ?? PASSES);
+  const vv = o.variants ?? NEW_VARIANTS;
   return pmap(ds.items, o.concurrency, async (item): Promise<PassItemResult> => {
     const ew = ds.worlds.get(item.world)!;
     const snap = ew.snapshot();
     const w = worlds.get(item.world)!;
     const c = candidateOf(w, item);
-    const view = buildPublicView(snap, item.config);
+    const view = buildPublicView(snap, item.config, { version: vv.pass1 });
     const attending = Object.entries(view.refs).filter(([, id]) => item.config.participants.includes(id)).map(([r]) => r);
-    const j = buildJudgeMessages(w, c);
-    const d = buildDeepMessages(w, c);
+    const j = buildJudgeMessages(w, c, vv.pass2);
+    const d = buildDeepMessages(w, c, { version: vv.pass3 });
     const [p1, p2, p3] = await Promise.all([
-      want.has("pass1") ? call(model, o, o.maxTokens.pass1, screenMessages(view), raw => parseScreenVerdict(raw, attending)) : SKIPPED<ScreenVerdict>(),
+      want.has("pass1") ? call(model, o, o.maxTokens.pass1, screenMessages(view, vv.pass1), raw => parseScreenVerdict(raw, attending)) : SKIPPED<ScreenVerdict>(),
       want.has("pass2") ? call(model, o, o.maxTokens.pass2, j.messages, raw => parseVerdict(raw, j.refs)) : SKIPPED<JudgeVerdict>(),
       want.has("pass3") ? call(model, o, o.maxTokens.pass3, d.messages, raw => parseDeepVerdict(raw, attending)) : SKIPPED<DeepVerdict>(),
     ]);
@@ -184,7 +194,8 @@ export async function runPasses(model: string, ds: RecDataset, o: PassRunOptions
     }
     return {
       itemId: item.id, world: item.world, model,
-      label: { good: t.good, unsafe: t.unsafe, unsafeReason: t.unsafeReason, hiddenRisk: t.hiddenRisk, oracleFlags: t.oracleFlags, quality: t.quality, minEnjoyment: t.minEnjoyment },
+      label: { good: t.good, unsafe: t.unsafe, unsafeReason: t.unsafeReason, hiddenRisk: t.hiddenRisk, oracleFlags: t.oracleFlags, quality: t.quality, minEnjoyment: t.minEnjoyment, ...(t.pGood !== undefined ? { pGood: t.pGood, drawnGood: t.drawnGood } : {}) },
+      ...(item.split ? { split: item.split } : {}), variants: vv,
       meta: {
         group: item.group, source: item.source, kind: item.config.kind, category: item.config.category, objective: item.config.objective,
         tier: itemTier(ew, snap, item.config.participants), proxyBucket: proxyBucket(snap, item.config.participants),

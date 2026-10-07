@@ -20,6 +20,8 @@ export interface WorldSpec {
    * source / observedAt / inferred / confirmedByMember); hidden truth and oracle labels are unchanged.
    */
   richness?: boolean;
+  /** Dataset v2 split. */
+  split?: "dev" | "test";
 }
 export const DEFAULT_WORLDS: WorldSpec[] = [
   { id: "sf-1", city: "sf", seed: 101, n: 320 },
@@ -29,6 +31,22 @@ export const DEFAULT_WORLDS: WorldSpec[] = [
 ];
 /** The same four worlds with richness tiers and connected sources on (judgment-passes suite). */
 export const RICHNESS_WORLDS: WorldSpec[] = DEFAULT_WORLDS.map(w => ({ ...w, richness: true }));
+/**
+ * Dataset v2 (judge v2 work, 2026-10-07). Dev = the four richness worlds the error analysis and the
+ * prompt fixes were derived from (already seen, so prompt tuning happens there). Test = six fresh
+ * worlds nobody had looked at, used once for the final numbers.
+ */
+export const V2_DEV_WORLDS: WorldSpec[] = RICHNESS_WORLDS.map(w => ({ ...w, split: "dev" as const }));
+export const V2_TEST_WORLDS: WorldSpec[] = [
+  { id: "sf-3", city: "sf", seed: 103, n: 320, richness: true, split: "test" },
+  { id: "sf-4", city: "sf", seed: 104, n: 320, richness: true, split: "test" },
+  { id: "sf-5", city: "sf", seed: 105, n: 320, richness: true, split: "test" },
+  { id: "nyc-3", city: "nyc", seed: 203, n: 320, richness: true, split: "test" },
+  { id: "nyc-4", city: "nyc", seed: 204, n: 320, richness: true, split: "test" },
+  { id: "nyc-5", city: "nyc", seed: 205, n: 320, richness: true, split: "test" },
+];
+/** Oracle seed of an eval world (the drawn label); Monte Carlo draws derive from it. */
+export const oracleSeedOf = (spec: WorldSpec) => `evals:${spec.id}:${spec.seed}`;
 
 export interface EvalWorld {
   spec: WorldSpec;
@@ -49,7 +67,7 @@ export function buildEvalWorld(spec: WorldSpec): EvalWorld {
     ...(spec.richness ? { richness: true } : {}),
   });
   const byId = new Map(personas.map(p => [p.id, p]));
-  const oracle = new Oracle(personas, `evals:${spec.id}:${spec.seed}`, WORLD_START);
+  const oracle = new Oracle(personas, oracleSeedOf(spec), WORLD_START);
   const blocks: EvalWorld["blocks"] = [];
   let cached: WorldSnapshot | undefined;
   let cachedBlocks = -1;

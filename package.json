@@ -8,7 +8,9 @@
   ],
   "scripts": {
     "test": "bun test packages prototypes",
-    "typecheck": "tsc --noEmit -p ."
+    "typecheck": "tsc --noEmit -p .",
+    "observatory": "bun run packages/observatory/src/server.ts",
+    "observatory:db": "bun run packages/observatory/db/dev-pg.ts up && bun run packages/observatory/db/seed.ts --from-sim --days 14"
   },
   "devDependencies": {
     "@types/bun": "latest",

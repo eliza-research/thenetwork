@@ -63,6 +63,11 @@ export interface EngineConfig {
     enabled: boolean; topK: number; groupTopK: number; ttlMs: number; maxTokens: number; weight: number; concurrency: number;
     /** A pass-2 verdict of "no" makes the configuration ineligible ("judge_reject"), like a dealbreaker. */
     verdictGates: boolean;
+    /**
+     * Pass-2 input: "compact" = the scrubbed profile (judge-v2.1); "deep" = pass 3's context minus
+     * private context (judge-v3). See docs/results/2026-10-07-judge-v2.md.
+     */
+    pass2Context: "compact" | "deep";
     /** Pass 1 (screen, judgeScreen.ts): a cheap look at more candidates; pass 2 then sees only survivors. */
     screen: { enabled: boolean; topK: number; groupTopK: number; maxTokens: number };
     /** Pass 3 (deep review, judgeDeep.ts) on the best survivors of passes 1-2. Can only remove candidates. */
@@ -128,7 +133,7 @@ export const DEFAULT_CONFIG: EngineConfig = {
   // Passes 1 and 3 are off by default (evaluated in docs/results/2026-10-06-judge-passes.md);
   // turning them on changes which candidates survive and adds LLM calls.
   judge: {
-    enabled: true, topK: 10, groupTopK: 3, ttlMs: 7 * DAY, maxTokens: 2500, weight: 0.4, concurrency: 4, verdictGates: true,
+    enabled: true, topK: 10, groupTopK: 3, ttlMs: 7 * DAY, maxTokens: 2500, weight: 0.4, concurrency: 4, verdictGates: true, pass2Context: "compact",
     screen: { enabled: false, topK: 30, groupTopK: 6, maxTokens: 2500 },
     deep: { enabled: false, topK: 6, maxTokens: 6000 },
   },

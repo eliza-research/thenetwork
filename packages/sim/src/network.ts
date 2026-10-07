@@ -25,13 +25,18 @@ export interface NetworkContext {
    */
   snapshot(): WorldSnapshot;
   /** Sim hook: the Network created a proposal (logged and scored against the oracle). */
-  recordProposal(p: Proposal, source?: "network" | "engine" | "scenario"): void;
+  recordProposal(p: Proposal, source?: "network" | "engine" | "scenario" | "player"): void;
   /** Sim hook: a meeting was confirmed; the world will decide attendance and outcomes. */
   recordMeeting(m: MeetingReport): string;
   /** Sim hook: a member blocked another (also visible in later snapshots as an edge). */
   recordBlock(from: MemberId, to: MemberId): void;
   /** Free-form structured log line. */
   log(type: string, detail: Record<string, unknown>): void;
+  /**
+   * Growth: a member invited a friend (by first name). The world creates that person, who joins
+   * later if they accept. Returns the new member id, or undefined when the world has no factory.
+   */
+  invite?(inviterId: MemberId, friendName: string): MemberId | undefined;
 }
 
 export interface NetworkUnderTest {

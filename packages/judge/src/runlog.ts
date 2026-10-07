@@ -29,7 +29,7 @@ export type RunRecord =
   | { t: number; type: "message"; msg: LoggedMessage }
   | { t: number; type: "decision"; memberId: MemberId; messageId: string; messageType: string; intent: string; decision: string; proposalId?: string; delayMs: number }
   | { t: number; type: "judgment"; memberId: MemberId; messageId: string; worthwhile: boolean; source: "policy" | "llm" }
-  | { t: number; type: "proposal"; source: "network" | "engine" | "scenario"; proposal: Proposal; oracle: OracleSummary }
+  | { t: number; type: "proposal"; source: "network" | "engine" | "scenario" | "player"; proposal: Proposal; oracle: OracleSummary }
   | { t: number; type: "meeting_scheduled"; meetingId: string; proposalId: string; participants: MemberId[]; at: number; city: City }
   | { t: number; type: "outcome"; meetingId: string; proposalId: string; at: number; attendance: Record<MemberId, { showed: boolean; cancelledWithNotice: boolean; enjoyment: number }> }
   | { t: number; type: "feedback"; memberId: MemberId; proposalId?: string; text: string; enjoyment?: number }

@@ -203,3 +203,24 @@ export function f1On(idx: number[], pred: boolean[], gold: boolean[]): number {
   for (const i of idx) { if (pred[i] && gold[i]) tp++; else if (pred[i]) fp++; else if (gold[i]) fn++; }
   return tp ? (2 * tp) / (2 * tp + fp + fn) : 0;
 }
+
+/** Soft-label scores: Brier and log-loss of predicted probabilities against target probabilities. */
+export function brierSoft(probs: number[], targets: number[]): number {
+  if (!probs.length) return NaN;
+  return probs.reduce((s, p, i) => s + (p - targets[i]!) ** 2, 0) / probs.length;
+}
+/** Cross-entropy of predictions q against soft targets p (q clipped to [0.01, 0.99]). */
+export function logLossSoft(probs: number[], targets: number[]): number {
+  if (!probs.length) return NaN;
+  return probs.reduce((s, q0, i) => {
+    const q = Math.min(0.99, Math.max(0.01, q0)), p = targets[i]!;
+    return s - (p * Math.log(q) + (1 - p) * Math.log(1 - q));
+  }, 0) / probs.length;
+}
+/** ECE against soft targets: per equal-width bin of the prediction, |mean prediction - mean target|, weighted by bin size. */
+export function eceSoft(probs: number[], targets: number[], bins = 10): number {
+  if (!probs.length) return NaN;
+  const b = Array.from({ length: bins }, () => ({ n: 0, p: 0, t: 0 }));
+  probs.forEach((q, i) => { const x = b[Math.min(bins - 1, Math.max(0, Math.floor(q * bins)))]!; x.n++; x.p += q; x.t += targets[i]!; });
+  return b.reduce((s, x) => s + (x.n ? (x.n / probs.length) * Math.abs(x.p / x.n - x.t / x.n) : 0), 0);
+}

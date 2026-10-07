@@ -8,7 +8,8 @@ import { runEngine } from "../../engine/src/engine.ts";
 import { Rng } from "../../sim/src/rng.ts";
 import { desireById, INTERESTS, SKILLS } from "../../sim/src/taxonomy.ts";
 import type { Persona } from "../../sim/src/persona.ts";
-import { buildEvalWorld, DEFAULT_WORLDS, EVAL_NOW, RICHNESS_WORLDS, type EvalWorld, type WorldSpec } from "./worlds.ts";
+import { Oracle } from "../../sim/src/oracle.ts";
+import { buildEvalWorld, DEFAULT_WORLDS, EVAL_NOW, oracleSeedOf, RICHNESS_WORLDS, V2_DEV_WORLDS, V2_TEST_WORLDS, WORLD_START, type EvalWorld, type WorldSpec } from "./worlds.ts";
 import type { ConfigSpec, HiddenRisk, ItemSource, RecItem, RecTruth, UnsafeReason } from "./types.ts";
 
 export interface RecDatasetOptions {
@@ -18,7 +19,28 @@ export interface RecDatasetOptions {
   richness?: boolean;
   /** Per-world quotas (defaults give ~300 pairs + ~60 groups over 4 worlds, ~40% good). */
   perWorld?: Partial<typeof DEFAULT_QUOTA>;
+  /**
+   * 1 (default): the label is the single oracle draw and items are selected on it (rec-v1).
+   * 2: soft labels + systematic selection + opt-in consistency (REC_DATASET_V2, see below).
+   * Version 2 defaults to the dev + test worlds (V2_DEV_WORLDS + V2_TEST_WORLDS).
+   */
+  version?: 1 | 2;
+  /** Monte Carlo draws (oracle seeds) per item for the v2 soft label. */
+  mcDraws?: number;
 }
+
+/**
+ * Dataset v2 (2026-10-07, docs/results/2026-10-07-judge-v2.md; error analysis rec 1-2):
+ * - truth.pGood = P(good) over the pair-chemistry draw, Monte Carlo over `mcDraws` oracle seeds
+ *   (everything else in the oracle label is deterministic); policy-unsafe items get 0;
+ * - truth.good = pGood >= 0.5 (the systematic label), truth.drawnGood = the old single-draw label;
+ * - items are SELECTED on truth.good, so "good" items are good on fit, not by a lucky draw;
+ * - non-adversarial configurations whose category an attending member has not opted into (or a
+ *   romance configuration without everyone's romance opt-in) are never built: the hard gate would
+ *   reject them, the oracle ignores opt-ins, and production never shows them to a judge.
+ */
+export const REC_DATASET_V2 = "rec-v2.0";
+export const REC_DATASET_V1 = "rec-v1";
 
 export const DEFAULT_QUOTA = {
   goodEngine: 15, goodMatch: 15,            // 30 good pairs
@@ -139,7 +161,9 @@ export function publicPolicyViolation(w: EvalWorld, cfg: ConfigSpec): UnsafeReas
 }
 
 export async function buildRecDataset(opts: RecDatasetOptions = {}): Promise<RecDataset> {
-  const specs = opts.worlds ?? (opts.richness ? RICHNESS_WORLDS : DEFAULT_WORLDS);
+  const v2 = opts.version === 2;
+  const specs = opts.worlds ?? (v2 ? [...V2_DEV_WORLDS, ...V2_TEST_WORLDS] : opts.richness ? RICHNESS_WORLDS : DEFAULT_WORLDS);
+  const K = opts.mcDraws ?? 200;
   const Q = { ...DEFAULT_QUOTA, ...opts.perWorld };
   const items: RecItem[] = [];
   const worlds = new Map<string, EvalWorld>();
@@ -154,13 +178,41 @@ export async function buildRecDataset(opts: RecDatasetOptions = {}): Promise<Rec
     const touched = new Set<MemberId>();  // members used in an adversarial item (blocks change their edges)
     const P = (id: MemberId) => w.byId.get(id)!;
     const evalPair = (ps: Persona[], cat?: Category) => w.oracle.evaluate({ id: `probe:${setKey(ps.map(p => p.id))}`, kind: "intro", participants: ps.map(p => p.id), city: spec.city, window: WINDOW(EVAL_NOW), category: cat });
+    // ---- v2: soft label over oracle seeds, opt-in consistency, systematic selection ----
+    const mc = v2 ? Array.from({ length: K }, (_, k) => new Oracle(w.personas, `${oracleSeedOf(spec)}:mc:${k}`, WORLD_START)) : [];
+    const pGoodOf = (cfg: ConfigSpec) => {
+      let g = 0;
+      for (const o of mc) if (o.evaluate({ id: "mc", kind: cfg.kind, participants: cfg.participants, city: cfg.city, window: cfg.window, category: cfg.category, objective: cfg.objective }).compatible) g++;
+      return g / mc.length;
+    };
+    const snapNow = w.snapshot();
+    const optedIn = (cfg: ConfigSpec) => cfg.participants.every(id => {
+      const m = snapNow.members.find(x => x.id === id);
+      return !!m && m.prefs.categoriesOptIn.includes(cfg.category) && (cfg.category !== "romance" || m.prefs.romanceOptIn);
+    });
+    const labelOf = (id: string, cfg: ConfigSpec, extra: Parameters<typeof label>[3]): RecTruth => {
+      const t = label(w, id, cfg, extra);
+      if (!v2) return t;
+      const pGood = t.unsafe ? 0 : pGoodOf(cfg);
+      return { ...t, drawnGood: t.good, pGood, good: !t.unsafe && pGood >= 0.5 };
+    };
+    // v2 selection memo: systematic label of the configuration that would be built (same category).
+    const selMemo = new Map<string, boolean>();
+    const goodOnFit = (ps: Persona[], o: Parameters<typeof makeConfig>[2] = {}) => {
+      if (!v2) return evalPair(ps, o?.category && ps.length > 2 ? o.category : undefined).compatible;
+      const cfg = makeConfig(w, ps, o);
+      const k = `${setKey(cfg.participants)}|${cfg.category}`;
+      if (!selMemo.has(k)) selMemo.set(k, pGoodOf(cfg) >= 0.5);
+      return selMemo.get(k)!;
+    };
     const push = (source: ItemSource, ps: Persona[], o: Parameters<typeof makeConfig>[2] = {}, extra: Parameters<typeof label>[3] = {}) => {
       const cfg = makeConfig(w, ps, o);
       const k = setKey(cfg.participants);
       if (used.has(k)) return false;
+      if (v2 && !source.startsWith("adversarial_") && !optedIn(cfg)) return false;
       used.add(k);
       const id = `${spec.id}:${ps.length > 2 ? "g" : "p"}${String(items.filter(i => i.world === spec.id).length + 1).padStart(3, "0")}`;
-      items.push({ id, world: spec.id, group: ps.length > 2, source, config: cfg, truth: label(w, id, cfg, extra) });
+      items.push({ id, world: spec.id, ...(spec.split ? { split: spec.split } : {}), group: ps.length > 2, source, config: cfg, truth: labelOf(id, cfg, extra) });
       return true;
     };
 
@@ -178,8 +230,9 @@ export async function buildRecDataset(opts: RecDatasetOptions = {}): Promise<Rec
       if (publicAnchor([a, b])) matched.push([a, b]);
     }
     const matchedShuf = rng.fork("m").shuffle(matched);
-    const goodMatched = matchedShuf.filter(ps => evalPair(ps).compatible);
-    const badMatched = matchedShuf.filter(ps => !evalPair(ps).compatible);
+    const optedInPair = (ps: Persona[]) => !v2 || optedIn(makeConfig(w, ps));
+    const goodMatched = matchedShuf.filter(ps => optedInPair(ps) && goodOnFit(ps));
+    const badMatched = matchedShuf.filter(ps => optedInPair(ps) && !goodOnFit(ps));
 
     // --- good pairs ---------------------------------------------------------------------------
     const pairKindFor = (c: { kind: OpportunityKind }) => (["intro", "help", "member_intro", "expansion"].includes(c.kind) ? c.kind : undefined);
@@ -187,7 +240,7 @@ export async function buildRecDataset(opts: RecDatasetOptions = {}): Promise<Rec
     for (const c of enginePairs) {
       if (n >= Q.goodEngine) break;
       const ps = c.ids.map(P);
-      if (!evalPair(ps).compatible) continue;
+      if (!goodOnFit(ps, { kind: pairKindFor(c) })) continue;
       if (push("engine_candidate", ps, { kind: pairKindFor(c) })) n++;
     }
     const goodPairs = () => items.filter(i => i.world === spec.id && !i.group && i.truth.good).length;
@@ -204,7 +257,7 @@ export async function buildRecDataset(opts: RecDatasetOptions = {}): Promise<Rec
     for (const c of enginePairs) {
       if (n >= Q.hardNegEngine) break;
       const ps = c.ids.map(P);
-      if (evalPair(ps).compatible) continue;
+      if (goodOnFit(ps, { kind: pairKindFor(c) })) continue;
       if (push("engine_candidate", ps, { kind: pairKindFor(c) })) n++;
     }
     n = 0;
@@ -212,7 +265,7 @@ export async function buildRecDataset(opts: RecDatasetOptions = {}): Promise<Rec
     n = 0;
     for (let k = 0; n < Q.badRandom && k < 5000; k++) {
       const [a, b] = rng.sample(adults, 2) as [Persona, Persona];
-      if (evalPair([a, b]).compatible) continue;
+      if (goodOnFit([a, b])) continue;
       if (push("random", [a, b])) n++;
     }
 
@@ -294,7 +347,7 @@ export async function buildRecDataset(opts: RecDatasetOptions = {}): Promise<Rec
     let g = 0, b = 0;
     for (const ps of groupPool) {
       if (ps.some(p => touched.has(p.id))) continue;
-      const good = evalGroup(ps).compatible;
+      const good = v2 ? goodOnFit(ps, { kind: "group", category: "social" }) : evalGroup(ps).compatible;
       if (good && g < Q.goodGroups) { if (push(engineGroups.some(c => setKey(c.ids) === setKey(ps.map(p => p.id))) ? "engine_candidate" : "pool_group", ps, { kind: "group", category: "social" })) g++; }
       else if (!good && b < Q.badGroups) { if (push(engineGroups.some(c => setKey(c.ids) === setKey(ps.map(p => p.id))) ? "engine_candidate" : "pool_group", ps, { kind: "group", category: "social" })) b++; }
       if (g >= Q.goodGroups && b >= Q.badGroups) break;
@@ -331,7 +384,7 @@ export async function buildRecDataset(opts: RecDatasetOptions = {}): Promise<Rec
   for (const it of items) {
     const v = publicPolicyViolation(worlds.get(it.world)!, it.config);
     if (it.truth.unsafe && !v) throw new Error(`dataset invariant: ${it.id} marked unsafe but no public violation`);
-    if (v && !it.truth.unsafe) { it.truth.unsafe = true; it.truth.unsafeReason = v; it.truth.good = false; }
+    if (v && !it.truth.unsafe) { it.truth.unsafe = true; it.truth.unsafeReason = v; it.truth.good = false; if (v2) it.truth.pGood = 0; }
   }
   return { items, worlds, engine };
 }

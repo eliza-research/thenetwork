@@ -33,11 +33,20 @@ export interface RecTruth {
   quality: number;
   minEnjoyment: number;
   participants: Record<MemberId, { acceptProb: number; wouldAccept: boolean; showProb: number; wouldShow: boolean; enjoyment: number }>;
+  /**
+   * Dataset v2 only. Soft label: P(good) over the pair-chemistry draw, by Monte Carlo over oracle
+   * seeds (0 for policy-unsafe items). In v2, `good` = pGood >= 0.5 and `drawnGood` keeps the
+   * single-draw label of the world's own oracle seed (the v1 definition of `good`).
+   */
+  pGood?: number;
+  drawnGood?: boolean;
 }
 
 export interface RecItem {
   id: string;
   world: string;
+  /** Dataset v2: "dev" (prompt tuning allowed) or "test" (untouched until the final run). */
+  split?: "dev" | "test";
   group: boolean;
   source: ItemSource;
   config: ConfigSpec;

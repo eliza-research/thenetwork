@@ -20,44 +20,27 @@ import { DAY, parseJson } from "@thenetwork/core";
 import { privateVocabulary } from "./explain.ts";
 import { involvesMinor } from "./filters.ts";
 import {
-  checkMemberFacing, CITATION_RULES, JUDGING_NOTES, keyOrderOk, parseCitedFacts, parsePassVerdict, prob, redactPrivate, scrubIds, str,
-  type CitedFact, type PassVerdict,
+  basisOf, checkMemberFacing, CITATION_RULES, CODE_ENFORCED_V3, HYPOTHESIS_CONFIDENCE, JUDGING_NOTES, JUDGING_NOTES_V3, keyOrderOk, parseCitedFacts, parsePassVerdict, prob, redactPrivate, scrubIds,
+  isHypothesis, STALE_DAYS, str, type CitedFact, type EvidenceBasis, type PassVerdict,
 } from "./judgeCommon.ts";
 import type { Candidate } from "./types.ts";
 import { pairKey, type World } from "./world.ts";
 
-export const DEEP_PROMPT_VERSION = "pass3-deep-v2";
-/** Facts older than this are flagged stale for the model (it also gets the exact age). */
-export const STALE_DAYS = 180;
+/** Current pass-3 prompt (v3, 2026-10-07). The v2 prompt stays available as DEEP_SYSTEM_V2 for paired evals. */
+export const DEEP_PROMPT_VERSION = "pass3-deep-v3";
+export const DEEP_PROMPT_VERSION_V2 = "pass3-deep-v2";
+export { basisOf, STALE_DAYS, type EvidenceBasis } from "./judgeCommon.ts";
 
-/**
- * Optional provenance fields on a facet (connected sources / richness work in core types).
- * Read defensively: every field may be absent.
- */
+/** Optional provenance fields on a facet (connected sources / richness work in core types). */
 type FacetX = Facet & {
   source?: string; observedAt?: number; inferred?: boolean; confirmedByMember?: boolean;
 };
 
-export type EvidenceBasis = "stated" | "confirmed" | "observed" | "inferred" | "vouched";
-
-/**
- * Evidence basis of a fact: "stated" = the member said it (chat / onboarding); "confirmed" = taken
- * from a connected source and confirmed by the member; "observed" = taken verbatim from a connected
- * source, not confirmed; "inferred" = derived or guessed (never confirmed); "vouched" = an inviter said it.
- */
-export function basisOf(f: Facet): EvidenceBasis {
-  const x = f as FacetX;
-  const fromChat = x.source === undefined ? f.provenance === "said" : /^(chat|said|conversation|onboarding)$/i.test(x.source);
-  if (f.provenance === "vouched" || x.source === "vouch") return "vouched";
-  if (fromChat) return x.inferred === true || f.provenance === "inferred" ? "inferred" : "stated";
-  if (x.confirmedByMember === true) return "confirmed";
-  if (x.inferred === true || f.provenance === "inferred") return "inferred";
-  return "observed";
-}
-
 export interface DeepFact {
   field: string; value: string; visibility: "shareable" | "do_not_quote";
   basis: EvidenceBasis; source?: string; confidence: number; age_days?: number; older_than_180_days?: boolean;
+  /** v3 context only: unconfirmed inferred/observed fact with confidence < 0.65 (never a sole anchor). */
+  hypothesis?: boolean;
 }
 
 export interface DeepPerson {
@@ -127,7 +110,11 @@ export function summarizeConnectedSources(x: unknown, now: number): unknown {
   return undefined;
 }
 
-export function buildDeepContext(w: World, c: Candidate): { context: DeepContext; refs: Record<string, MemberId> } {
+/** Context options: v3 marks hypothesis facts; v2 is the context the pass3-deep-v2 prompt was run on. */
+export interface DeepContextOptions { version?: "v2" | "v3" }
+
+export function buildDeepContext(w: World, c: Candidate, o: DeepContextOptions = {}): { context: DeepContext; refs: Record<string, MemberId> } {
+  const v3 = (o.version ?? "v3") === "v3";
   const ids = [...c.participants, ...(c.via ? [c.via] : [])];
   const refs: Record<string, MemberId> = {};
   const refOf = new Map<MemberId, string>();
@@ -156,6 +143,7 @@ export function buildDeepContext(w: World, c: Candidate): { context: DeepContext
           basis: basisOf(f), ...(typeof x.source === "string" ? { source: x.source } : {}),
           confidence: Math.round(f.confidence * 100) / 100,
           ...(age !== undefined ? { age_days: age } : {}), ...(age !== undefined && age > STALE_DAYS ? { older_than_180_days: true } : {}),
+          ...(v3 && isHypothesis(f) ? { hypothesis: true } : {}),
         };
       })
       // Most useful first: shareable, then confident and fresh.
@@ -261,7 +249,7 @@ export const RUBRIC_KEYS = [
 ] as const;
 export type RubricKey = typeof RUBRIC_KEYS[number];
 
-export const DEEP_SYSTEM = `You are the final reviewer (third pass) for The Network, an invite-only service that introduces adults to each other for friendship, activities, help, professional goals and (only when everyone opted in) dating. Earlier passes found this configuration plausible; your job is discernment: catch the ones that only look good, and do not guess when one question would settle it.
+export const DEEP_SYSTEM_V2 = `You are the final reviewer (third pass) for The Network, an invite-only service that introduces adults to each other for friendship, activities, help, professional goals and (only when everyone opted in) dating. Earlier passes found this configuration plausible; your job is discernment: catch the ones that only look good, and do not guess when one question would settle it.
 You get much richer context than earlier passes: every visible fact with its basis ("stated" = the member said it; "confirmed" = from a connected source and confirmed by the member; "observed" = taken from a connected source, unconfirmed; "inferred" = derived or guessed, can be wrong; "vouched" = an inviter said it), source, confidence and age in days (older_than_180_days marks facts older than ${STALE_DAYS} days, which may no longer be true); presence and schedule overlap; relationships, mutual contacts and the warm path; recent proposals, declines and feedback; each person's state, capacity and preferences; and private context.
 Private context ("private_context_never_quote") may inform your judgment, but you must never mention, hint at or paraphrase it in member_why or question_to_ask. In your internal fields refer to it only generically (e.g. "a private boundary of P2 about venues").
 Hard filters (age, blocks, opt-ins, safety holds) are enforced by code; you cannot override them. Most candidates are NOT good: be a skeptical friend who protects members' attention.
@@ -292,9 +280,56 @@ Write the JSON keys in EXACTLY this order (explanation first, verdict after, mem
 11. "member_why": LAST. If the verdict is "yes", for each attending ref one or two warm sentences using ONLY facts with visibility "shareable" and the logistics; otherwise "" for each ref. No names, ids, ages, contact details, do-not-quote facts or private context.
 Return ONLY the JSON object.`;
 
-export function buildDeepMessages(w: World, c: Candidate): { messages: ChatMessage[]; refs: Record<string, MemberId>; context: DeepContext } {
-  const { context, refs } = buildDeepContext(w, c);
-  return { refs, context, messages: [{ role: "system", content: DEEP_SYSTEM }, { role: "user", content: JSON.stringify(context) }] };
+/**
+ * pass3-deep-v3 (2026-10-07). Changes from v2, all from the luna error analysis (recs 3-5):
+ * - shared v3 judging notes: enjoyment and benefit if they meet (not acceptance); a shared stated
+ *   intent is sufficient; each person's gain maps to their own live intent (one-sided fits fail);
+ *   groups judged as a whole; unknown schedules are normal; hypothesis facts never anchor alone;
+ * - private boundaries are penalties (values_energy), not vetoes, unless a hard dealbreaker for this
+ *   intro; "a violated boundary" no longer defines risk_safety = 1;
+ * - re-read every person's intents before claiming they have none (live intents outrank inferred
+ *   or old "goal" facts);
+ * - abstention questions about format, logistics or schedules are not allowed.
+ */
+export const DEEP_SYSTEM = `You are the final reviewer (third pass) for The Network, an invite-only service that introduces adults to each other for friendship, activities, help, professional goals and (only when everyone opted in) dating. Earlier passes found this configuration plausible; your job is discernment: catch the ones that only look good, and do not guess when one question would settle it.
+You get much richer context than earlier passes: every visible fact with its basis ("stated" = the member said it; "confirmed" = from a connected source and confirmed by the member; "observed" = taken from a connected source, unconfirmed; "inferred" = derived or guessed, can be wrong; "vouched" = an inviter said it), source, confidence and age in days (older_than_180_days marks facts older than ${STALE_DAYS} days; hypothesis marks unconfirmed facts with confidence below ${HYPOTHESIS_CONFIDENCE}); each person's live intents with their age; presence and schedule overlap; relationships, mutual contacts and the warm path; recent proposals, declines and feedback; each person's state, capacity and preferences; and private context.
+Private context ("private_context_never_quote") may inform your judgment, but you must never mention, hint at or paraphrase it in member_why or question_to_ask. In your internal fields refer to it only generically (e.g. "a private boundary of P2 about venues").
+Hard filters (age, blocks, opt-ins, safety holds) are enforced by code; you cannot override them. Be a skeptical friend who protects members' attention, and also one who does not withhold a good intro.
+${JUDGING_NOTES_V3}
+${CODE_ENFORCED_V3}
+- Intents: before you claim that a person has no relevant intent, re-read their "intents" list. A live intent (shown there with its age) outranks an inferred or old "goal" fact; an identical live intent on both sides is the strongest evidence there is.
+
+Rubric (integers 1-5, higher is always better):
+- mutual_benefit: 1 = nobody clearly gains; 3 = modest gains; 5 = every attending person gets something specific that one of their own intents asks for.
+- reciprocity: 1 = one-sided (one person's intent is served, the other's is not; someone may feel used); 5 = balanced, or the asymmetry is explicitly welcome (e.g. a stated offer to help or mentor).
+- intent_timing: 1 = no live intent behind it, or vague / expiring; 5 = answers a specific, current intent within the window.
+- logistics: 1 = cannot meet at all in the window (wrong city for the whole window, no overlap); 3 = unknown schedules (normal); 5 = same area, ample overlap.
+- stage_fit: career/life stage and seniority fit for THIS purpose; 3 if irrelevant or unknown.
+- values_energy: values, energy, preferred formats and vibe signals; a private format or topic boundary that this intro touches lowers this score (it is a penalty, not a veto); 1 = clear clash, 5 = clearly compatible.
+- novelty: 1 = redundant (already close, or recently proposed / declined together); 5 = a valuable new tie.
+- evidence_quality: 1 = thin, stale or hypothesis-only evidence; 5 = several fresh facts that members stated or confirmed.
+- risk_safety: 1 = serious concern (pressure, exploitation, safety, or a hard dealbreaker boundary for this exact intro); 5 = no concern. A soft preference is not a safety concern.
+
+Write the JSON keys in EXACTLY this order (explanation first, verdict after, member-facing text last):
+1. "evidence_review": which facts are strong (stated/confirmed, fresh) and which are thin, stale or hypotheses; list each attending person's live intents. ${CITATION_RULES}
+2. "steelman_for": the strongest honest case FOR proposing it, naming for each person which of their own intents (or offers) it serves.
+3. "steelman_against": the strongest honest case AGAINST, citing facts.
+4. "rubric": {"mutual_benefit":n,"reciprocity":n,"intent_timing":n,"logistics":n,"stage_fit":n,"values_energy":n,"novelty":n,"evidence_quality":n,"risk_safety":n}
+5. "would_thank_us": for each ATTENDING ref, "yes", "no" or "unsure": would this person be glad, afterwards, that they met?
+6. "reasoning": 2-4 sentences weighing the case for against the case against, and deciding.
+7. "cited_facts": at most 8: [{"ref":"P1","field":"facts[2]","fact":"..."}].
+8. "verdict": "yes" (propose), "no", or "insufficient_information". Rules: say "yes" when every attending person would plausibly be glad they met and nothing scores 1 on mutual_benefit, logistics or risk_safety. Use "insufficient_information" rarely (well under one candidate in ten): ONLY when the case for yes is strong AND one specific missing fact about what a person wants would flip it AND one short question to one member would get it; otherwise decide. Never use it for format, schedule, logistics or opt-in questions. Thin evidence that does not hinge on one fact means a lower match_probability.
+9. "question_to_ask": when the verdict is "insufficient_information", {"ref":"P1","question":"..."}: one short, friendly question to that member that would settle it, using no private context and nothing about the other people's do-not-quote facts; otherwise null.
+10. "match_probability": your calibrated probability (0-1) that every attending person would enjoy and benefit from this meeting. Calibrated means: of the configurations you give 0.7, about 7 in 10 should go well. Use the full range.
+11. "member_why": LAST. If the verdict is "yes", for each attending ref one or two warm sentences using ONLY facts with visibility "shareable" and the logistics; otherwise "" for each ref. No names, ids, ages, contact details, do-not-quote facts or private context.
+Return ONLY the JSON object.`;
+
+export const DEEP_PROMPTS = { v2: { version: DEEP_PROMPT_VERSION_V2, system: DEEP_SYSTEM_V2 }, v3: { version: DEEP_PROMPT_VERSION, system: DEEP_SYSTEM } } as const;
+
+export function buildDeepMessages(w: World, c: Candidate, o: DeepContextOptions = {}): { messages: ChatMessage[]; refs: Record<string, MemberId>; context: DeepContext } {
+  const version = o.version ?? "v3";
+  const { context, refs } = buildDeepContext(w, c, { version });
+  return { refs, context, messages: [{ role: "system", content: DEEP_PROMPTS[version].system }, { role: "user", content: JSON.stringify(context) }] };
 }
 
 export interface DeepVerdict {

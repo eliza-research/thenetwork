@@ -12,7 +12,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { OpenAILLM, type LLM, type ResponseInfo } from "../../core/src/index.ts";
+import { endpointsFor, OpenAILLM, type LLM, type ResponseInfo } from "../../core/src/index.ts";
 
 export interface RequestSettings {
   /** Surplus/OpenAI reasoning effort, applied identically to every model. */
@@ -20,7 +20,7 @@ export interface RequestSettings {
 }
 
 export interface HttpRecord {
-  model: string; status: number; cached: boolean; latencyMs: number;
+  model: string; baseUrl: string; status: number; cached: boolean; latencyMs: number;
   promptTokens: number; completionTokens: number; reasoningTokens: number;
   /** Surplus buyer cost in micro-USD (usage.buyer_cost_micro). */
   costMicro: number; finishReason?: string; error?: string;
@@ -35,7 +35,7 @@ export interface CallScope {
   offline?: boolean;
   /** Network transport behind the cache (default global fetch). Tests pass a fake. */
   fetch?: (url: string, init: RequestInit) => Promise<Response>;
-  /** Override the Surplus endpoint / key (default SURPLUS_BASE_URL / SURPLUS_API_KEY from .env). */
+  /** Override the endpoint / key (default: Surplus, falling back to OpenAI, from .env). */
   baseUrl?: string; apiKey?: string;
 }
 
@@ -83,24 +83,25 @@ export function cachingFetch(s: CallScope): (url: string, init: RequestInit) => 
 export function recordOf(info: ResponseInfo): HttpRecord {
   const cached = info.headers?.get(CACHE_HEADER) === "hit";
   return {
-    model: info.model, status: info.status, cached,
+    model: info.model, baseUrl: info.baseUrl, status: info.status, cached,
     latencyMs: cached ? Number(info.headers?.get(LATENCY_HEADER) ?? 0) : info.latencyMs,
     promptTokens: info.usage.promptTokens, completionTokens: info.usage.completionTokens, reasoningTokens: info.usage.reasoningTokens,
     costMicro: info.costMicro, finishReason: info.finishReason, ...(info.error ? { error: info.error } : {}),
   };
 }
 
-/** A Surplus client for `model` wired to the cache + recorder for one eval call. */
+/** A Surplus client (OpenAI fallback) for `model` wired to the cache + recorder for one eval call. */
 export function instrumentedLLM(model: string, s: CallScope, records: HttpRecord[]): LLM {
+  const surplusUrl = "https://api.surplusintelligence.ai/v1";
+  const [first, ...fallbacks] = s.baseUrl || s.apiKey ? [{ baseUrl: s.baseUrl ?? surplusUrl, apiKey: s.apiKey ?? "" }] : endpointsFor("surplus");
   // Offline replay needs no key: the cache answers or the call fails fast with OFFLINE_MISS_STATUS.
-  const key = s.apiKey ?? (process.env.SURPLUS_API_KEY || (s.offline ? "offline-no-key" : ""));
-  const base = s.baseUrl ?? process.env.SURPLUS_BASE_URL ?? "https://api.surplusintelligence.ai/v1";
-  return new OpenAILLM(key, model, base, {
+  const { baseUrl, apiKey } = first ?? { baseUrl: surplusUrl, apiKey: s.offline ? "offline-no-key" : "" };
+  return new OpenAILLM(apiKey, model, baseUrl, {
     extraBody: { ...s.settings },
     fetch: cachingFetch(s),
     onResponse: info => records.push(recordOf(info)),
     timeoutMs: 180_000,
-  });
+  }, fallbacks);
 }
 
 /** Run one eval call with an instrumented, cached client; returns its value plus the HTTP records. */

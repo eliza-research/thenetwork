@@ -23,7 +23,8 @@ export type WorldAction =
   | { do: "go_silent"; persona: MemberId }
   | { do: "force_flake"; persona: MemberId; how: "notice" | "no_show" }
   | { do: "say"; persona: MemberId; text: string }
-  | { do: "propose"; proposal: Proposal }
+  /** source "player": a human playing the Network in the observatory (counted like Network output). */
+  | { do: "propose"; proposal: Proposal; source?: "scenario" | "player" }
   | { do: "opt_out"; persona: MemberId };
 
 export interface WorldOptions {
@@ -54,6 +55,13 @@ export interface WorldOptions {
   maxLatentMembers?: number;
   /** Progress callback (sim day finished). */
   onDay?: (day: number) => void;
+  /** Live listener for every run record as it is logged (observatory, streaming UIs). */
+  onRecord?: (r: RunRecord) => void;
+  /**
+   * Growth: build the persona for a friend a member invites (ctx.invite). Return undefined to
+   * decline (e.g. an invite cap). The new persona joins `joinDelayMs` later.
+   */
+  spawnFriend?: (inviter: Persona, friendName: string, seq: number) => { persona: Persona; joinDelayMs: number } | undefined;
 }
 
 export interface WorldResult {
@@ -84,7 +92,12 @@ export class World {
   private notices = new Set<string>(); // `${proposalId}|${memberId}` flake notices given
   private nameIndex: { re: RegExp; id: MemberId }[] = [];
   private meetingSeq = 0;
+  private spawnSeq = 0;
+  private ctx?: NetworkContext;
+  private wall0 = 0;
   readonly runId: string;
+  /** Simulation end (start + days). */
+  readonly end: number;
 
   constructor(private opts: WorldOptions) {
     this.start = opts.start ?? DEFAULT_START;
@@ -96,12 +109,17 @@ export class World {
     this.agent = opts.agent ?? new PolicyPersonaAgent(this.start);
     this.rng = new Rng(hash32("world", opts.seed));
     this.runId = opts.runId ?? `run-${new Date().toISOString().replace(/[:.]/g, "-")}-s${opts.seed}-${opts.network.name}`;
+    this.end = this.start + opts.days * DAY;
     for (const p of opts.personas) this.memories.set(p.id, newMemory());
     this.buildNameIndex();
   }
 
   // ------------------------------------------------------------------ logging
-  private rec(r: RunRecordInput) { this.records.push({ t: this.clock.now(), ...r } as RunRecord); }
+  private rec(r: RunRecordInput) {
+    const full = { t: this.clock.now(), ...r } as RunRecord;
+    this.records.push(full);
+    this.opts.onRecord?.(full);
+  }
   private logMessage(m: SimMessage) {
     this.rec({ type: "message", msg: { id: m.id, ts: m.ts, direction: m.direction, memberId: m.memberId, body: m.body, status: m.status, keyword: m.keyword, system: m.system, meta: m.meta as any } });
   }
@@ -139,6 +157,13 @@ export class World {
         this.rec({ type: "proposal", source, proposal: p, oracle: summarize(v) });
       },
       recordMeeting: m => this.scheduleMeeting(m),
+      invite: (inviterId, friendName) => {
+        const inviter = this.personas.get(inviterId);
+        const made = inviter && this.opts.spawnFriend?.(inviter, friendName, ++this.spawnSeq);
+        if (!made) return undefined;
+        this.spawn(made.persona, this.clock.now() + made.joinDelayMs);
+        return made.persona.id;
+      },
       recordBlock: (from, to) => {
         this.blocks.push({ from, to, at: this.clock.now() });
         this.rec({ type: "block", from, to });
@@ -196,12 +221,47 @@ export class World {
   }
 
   // ------------------------------------------------------------------ run
+  /** Run the whole world: begin(), advanceTo(end), complete(). */
   async run(): Promise<WorldResult> {
-    const wall0 = performance.now();
+    await this.begin();
+    await this.advanceTo(this.end);
+    return this.complete();
+  }
+
+  /** Public snapshot of joined members, exactly what the Network and engines see. */
+  snapshot() { return (this.ctx ?? this.networkContext()).snapshot(); }
+  /** Personas in this world (harness view, includes hidden truth). */
+  personaList(): Persona[] { return [...this.personas.values()]; }
+  proposal(id: string): Proposal | undefined { return this.proposals.get(id); }
+  /** Add a persona mid-run (growth); they join at `joinAt` (sim ms). */
+  spawn(p: Persona, joinAt: number) {
+    if (this.personas.has(p.id)) return;
+    this.personas.set(p.id, p);
+    this.memories.set(p.id, newMemory());
+    this.oracle.addPersona(p);
+    const [first, last] = p.name.split(" ");
+    const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    this.nameIndex.push({ re: new RegExp(`\\b(${[esc(p.name), ...(last ? [`${esc(first!)} ${esc(last[0]!)}\\.`] : [])].join("|")})\\b`), id: p.id });
+    this.rec({ type: "persona", persona: {
+      id: p.id, name: p.name, archetype: p.archetype, adversarial: p.hidden.adversarial, homeCity: p.homeCity,
+      joinDay: Math.floor((joinAt - this.start) / DAY), trueAge: p.hidden.trueAge, claimedAge: p.public.claimedAge, quietHours: quietHoursOf(p),
+      canary: p.hidden.privateDisclosure?.canary, privateFact: p.hidden.privateDisclosure?.fact, romanceOptIn: p.hidden.romance.optIn,
+    } });
+    this.scheduler.at(joinAt, "join", { personaId: p.id });
+  }
+
+  /** Schedule a world action to run at the current sim time (on the next advance). */
+  act(action: WorldAction) { this.scheduler.at(this.clock.now(), "action", { action }); }
+  /** Advance the simulation to sim time t (capped at the end), processing every due event. */
+  async advanceTo(t: number) { await this.scheduler.runUntil(Math.min(t, this.end)); }
+
+  /** Register handlers and seed the event queue. Call once before advanceTo(). */
+  async begin(): Promise<void> {
+    this.wall0 = performance.now();
     const { network, days } = this.opts;
-    const end = this.start + days * DAY;
+    const end = this.end;
     const s = this.scheduler;
-    const ctx = this.networkContext();
+    const ctx = this.ctx = this.networkContext();
     await network.init(ctx);
 
     this.channel.onDeliverToMember(m => {
@@ -256,10 +316,14 @@ export class World {
     s.at(this.start + 5 * MINUTE, "tick", {});
     if (this.opts.engine) s.at(this.start + 2 * HOUR, "engine_run", {});
     for (let d = 1; d <= days; d++) s.at(this.start + d * DAY - 1, "day", { day: d });
+  }
 
-    await s.runUntil(end);
+  /** Close the run at the current sim time: latent opportunities, run_end, metrics, log folder. */
+  async complete(): Promise<WorldResult> {
+    const s = this.scheduler;
+    const end = Math.max(this.clock.now(), this.start);
     this.finish(end);
-    const wallMs = Math.round(performance.now() - wall0);
+    const wallMs = Math.round(performance.now() - this.wall0);
     this.rec({ type: "run_end", simEnd: end, wallMs, stats: {
       events: s.processed, messages: this.channel.all().length, proposals: this.proposals.size, meetings: this.meetings.size,
       joined: this.joined.size, optedOut: this.optedOut.size,
@@ -398,7 +462,7 @@ export class World {
       case "opt_out": this.personaSend(this.personas.get(a.persona)!, "STOP"); break;
       case "propose": {
         const p = { ...a.proposal, createdAt: this.clock.now() };
-        ctx.recordProposal(p, "scenario");
+        ctx.recordProposal(p, a.source ?? "scenario");
         await this.opts.network.submitProposal?.(p);
         break;
       }

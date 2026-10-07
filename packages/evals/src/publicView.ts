@@ -11,8 +11,12 @@ import type { ChatMessage } from "../../core/src/index.ts";
 import { prob } from "../../engine/src/judgeCommon.ts";
 import type { RecPrediction } from "./types.ts";
 
-export { buildPublicView, type PublicPerson, type PublicView } from "../../engine/src/judgeScreen.ts";
-import type { PublicView } from "../../engine/src/judgeScreen.ts";
+export { type PublicPerson, type PublicView } from "../../engine/src/judgeScreen.ts";
+import { buildPublicView as buildView, type PublicView, type ScreenConfig } from "../../engine/src/judgeScreen.ts";
+import type { WorldSnapshot } from "../../core/src/index.ts";
+
+/** The view rec-eval-v1 was built for (the v2 public view: no evidence notes, no boundary flags). */
+export const buildPublicView = (snap: WorldSnapshot, cfg: ScreenConfig): PublicView => buildView(snap, cfg, { version: "v2" });
 
 export const PROMPT_VERSION = "rec-eval-v1";
 

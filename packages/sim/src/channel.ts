@@ -19,7 +19,11 @@ export interface SimMeta {
   type?: "onboarding" | "question" | "proposal" | "scheduling" | "reminder" | "feedback_request"
     | "relay" | "info" | "confirmation" | "cancellation" | "system"
     /** Single-player answer or public suggestion (e.g. for members under 18). */
-    | "concierge";
+    | "concierge"
+    /** Anonymous availability/interest check before any person is revealed (consent-first). */
+    | "probe"
+    /** Ask to invite someone (growth). */
+    | "growth_ask";
   proposalId?: string;
   participants?: MemberId[];
   /** Counts toward the interruption budget / two-unanswered rule. */
@@ -30,6 +34,8 @@ export interface SimMeta {
   meetingAt?: number;
   /** For relay messages: the original sender. */
   relayFrom?: MemberId;
+  /** For probes: the category and a stable key for the opportunity being checked. */
+  probe?: { key: string; category: import("@thenetwork/core").Category; participants?: MemberId[]; kind?: import("@thenetwork/core").OpportunityKind; window?: { start: number; end: number } };
   [k: string]: unknown;
 }
 

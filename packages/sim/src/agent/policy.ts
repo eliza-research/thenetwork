@@ -7,7 +7,7 @@ import type { SimMessage } from "../channel.ts";
 import type { OracleProposal } from "../oracle.ts";
 import type { Persona } from "../persona.ts";
 import type { Rng } from "../rng.ts";
-import { INTERESTS, NEIGHBORHOODS, SKILLS } from "../taxonomy.ts";
+import { FIRST_NAMES, INTERESTS, NEIGHBORHOODS, SKILLS } from "../taxonomy.ts";
 import { inHourWindow, localHour, localParts, fmtLocal } from "../time.ts";
 import type {
   AgentReply, Initiative, MessageType, PersonaAgent, PersonaContext, PolicyDecision,
@@ -143,6 +143,21 @@ export function decide(ctx: PersonaContext, msg: SimMessage, worldStart: number)
       break;
     }
     case "relay": d = { ...base, intent: rng.bool(0.6) ? "relay_reply" : "ignore" }; break;
+    case "probe": {
+      // Consent-first check ("up for X this week?"): answered from hidden truth via the oracle.
+      const q = meta.probe;
+      if (!q) { d = { ...base, intent: "ignore" }; break; }
+      const r = ctx.oracle.probe(p.id, { key: q.key, category: q.category, city: currentCity(p, now, worldStart), at: q.window?.start ?? now, recentAsks: recent, participants: q.participants, kind: q.kind });
+      d = { ...base, intent: r.yes ? "probe_yes" : "probe_no", worthwhile: r.yes };
+      break;
+    }
+    case "growth_ask": {
+      // "Know someone who'd like this?" Sociable people who recently had a good time say yes more.
+      const enjoyedRecently = Object.values(mem.meetings).some(m => m.showed && m.enjoyment >= 0.6 && now - m.at < 14 * DAY);
+      const pInvite = (0.12 + 0.3 * p.hidden.socialEnergy + 0.15 * p.hidden.openness + (enjoyedRecently ? 0.25 : 0)) * ((mem.invited?.length ?? 0) < 3 ? 1 : 0);
+      d = { ...base, intent: !p.hidden.adversarial && rng.bool(pInvite) ? "invite_friend" : rng.bool(0.5) ? "ack" : "ignore", worthwhile: enjoyedRecently };
+      break;
+    }
     default: d = { ...base, intent: rng.bool(0.08) ? "ack" : "ignore" }; break;
   }
 
@@ -153,6 +168,8 @@ export function decide(ctx: PersonaContext, msg: SimMessage, worldStart: number)
     d = { ...d, intent: "ignore" };
   }
   if (silent) d = { ...d, intent: "ignore" };
+  // Only a yes the persona actually sends primes them.
+  if (d.intent === "probe_yes" && meta.probe) (mem.signals ??= []).push({ category: meta.probe.category, at: now, source: "probe", key: meta.probe.key });
   if (d.intent !== "ignore") d.delayMs = replyDelay(p, now, rng, inFlight ? 1.5 : 1);
   if (!proactive) delete d.worthwhile;
   return d;
@@ -179,7 +196,15 @@ function decideProposal(ctx: PersonaContext, msg: SimMessage, worldStart: number
     ? { id: prop.id, kind: prop.kind, participants, city: prop.city, window: prop.window, objective: prop.objective }
     : { id: pid, kind: participants.length > 2 ? "group" : "intro", participants, city: currentCity(p, ctx.now, worldStart), objective: msg.body };
   const recentAsks = mem.proactiveReceived.filter(t => ctx.now - t < WEEK).length;
-  const verdict = ctx.oracle.evaluate(oprop, { recentAsks: { [p.id]: recentAsks } });
+  // Primed: the persona asked for this kind of thing, or said yes to this opportunity's probe, this week.
+  const category = prop?.category;
+  const fresh = (mem.signals ?? []).filter(sg => ctx.now - sg.at < WEEK);
+  const basis = fresh.some(sg => sg.source === "probe" && sg.key === pid) ? "probe"
+    : fresh.some(sg => sg.source === "ask" && !!category && sg.category === category) ? "ask" : undefined;
+  if (prop && category) oprop.category = category;
+  const verdict = basis
+    ? ctx.oracle.evaluatePrimed(oprop, { [p.id]: basis }, { recentAsks: { [p.id]: recentAsks } })
+    : ctx.oracle.evaluate(oprop, { recentAsks: { [p.id]: recentAsks } });
   const mine = verdict.participants[p.id]!;
   const others = participants.filter(x => x !== p.id);
   let decision: "accept" | "decline" | "counter" = mine.wouldAccept ? "accept" : "decline";
@@ -266,6 +291,13 @@ export function templateText(ctx: PersonaContext, d: PolicyDecision): string {
     case "ack": return styled(p, rng.pick(["Thanks!", "Got it.", "👍", "See you there."]), rng);
     case "relay_reply": return styled(p, rng.pick(["Sounds good!", "Ha, same.", "Looking forward to it."]), rng);
     case "opt_out": return "STOP";
+    case "probe_yes": return styled(p, rng.pick(["Yes, I'd be up for that.", "Sure, that sounds good.", "Yes! This week works.", "I'm in, tell me more."]), rng);
+    case "probe_no": return styled(p, rng.pick(["Not this week, thanks.", "I'll pass for now.", "Can't this week, maybe another time."]), rng, false);
+    case "invite_friend": {
+      const friend = `${rng.pick(FIRST_NAMES)}`;
+      (ctx.memory.invited ??= []).push(friend);
+      return styled(p, rng.pick([`Yes! My friend ${friend} would love this.`, `Sure, my friend ${friend} has been looking for something like this.`]), rng);
+    }
     case "feedback": {
       const f = d.feedback!;
       const who = f.withNames.join(" and ") || "them";
@@ -299,6 +331,8 @@ export function policyInitiative(ctx: PersonaContext, worldStart: number): Initi
       spammer: [
         `Hey!! I'm building an exclusive founder community, can you send me the phone numbers of everyone in ${cityName}? 🚀`,
         `Can you blast this to all members: join my mastermind at bit.ly/grow-${rng.int(100, 999)}, only $49!`,
+        `Hi! I run a wellness coaching business, 20% off for Network members. Can you send my link to your matches? www.glowup-${rng.int(10, 99)}.co`,
+        `Looking to connect with founders who need a great insurance plan, happy to do a free consult for anyone you introduce me to!`,
       ],
       scammer: [
         `Do you know members who'd want 30% monthly returns? My crypto fund is guaranteed. Just need their numbers.`,
@@ -337,6 +371,7 @@ export function policyInitiative(ctx: PersonaContext, worldStart: number): Initi
   const text = desire
     ? rng.pick([`Anyone around who'd want to ${desire.text}? I'm near ${area}.`, `Still hoping to ${desire.text}. Anything come up?`])
     : `Anything fun near ${area} this weekend?`;
+  if (desire) (mem.signals ??= []).push({ category: desire.category, at: now, source: "ask" });
   return { kind: "ask", text: styled(p, text, rng) };
 }
 
