@@ -11,6 +11,13 @@
 //   λ_m  = λ_state x (1 + used/cap)^2 x r_m                               (shadow price)
 //   send M iff hard gates pass, used < cap, max Ê >= θ_bar and U(M) = ΣV - λ A(M) > 0
 //
+// Founder decisions of 2026-10-07 (iteration 3, replacing D2, D4 and D5): rolling sends at a learned
+// per-member send time (default 12:00 local; learnSendProfile); consent-first probes for every
+// member-involving opportunity; only a member's initial invite to a new opportunity counts against
+// their cap (isInitialInvite / countsAgainstCap); availability capture with 2-3 concrete time
+// options in the probe (chooseTimeOptions over calendar free/busy, standing availability, learned
+// times and presence).
+//
 // Everything here is a deterministic pure function of its inputs (no clock reads, no randomness,
 // no LLM calls). The Network runtime owns the state (hold queues, ledger, conversation streaks)
 // and calls these functions; see docs/results/2026-10-07-attention-budget.md for the integration note.
@@ -53,7 +60,7 @@ export interface Conversation {
 
 export const isMinor = (age: unknown) => !canBeMatched(age);
 
-/** Default cadence for a participation state (D2: weekly, Thursday 18:00 local). */
+/** Default cadence for a participation state (founder decision 1: a rolling daily slot at 12:00 local). */
 export function defaultCadence(state: ParticipationState, cfg: AttentionConfig = DEFAULT_ATTENTION): CadencePrefs {
   const items = Math.max(1, Math.min(3, cfg.maxItems[state] || 1)) as 1 | 2 | 3;
   return {
@@ -274,7 +281,8 @@ function slotOnDay(m: Pick<MemberAttention, "memberId" | "tz" | "prefs">, ts: nu
   const d = new Date(Date.UTC(p.year, p.month - 1, p.day + offset));
   if (!m.prefs.digestDays.includes(d.getUTCDay())) return undefined;
   if (m.prefs.digestPeriod === "month" && d.getUTCDate() > 7) return undefined; // first such weekday of the month
-  return fromLocal(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), m.prefs.digestHour, m.tz) + digestJitter(m.memberId, cfg);
+  const hour = m.prefs.sendHours ? (cfg.sendTime.weekendDays.includes(d.getUTCDay()) ? m.prefs.sendHours.weekend : m.prefs.sendHours.weekday) : m.prefs.digestHour;
+  return fromLocal(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), hour, m.tz) + digestJitter(m.memberId, cfg);
 }
 /** The next digest slot strictly after `ts`. */
 export function nextDigestSlot(m: Pick<MemberAttention, "memberId" | "tz" | "prefs">, ts: number, cfg: AttentionConfig = DEFAULT_ATTENTION): number {
@@ -299,6 +307,70 @@ export function digestDue(m: MemberAttention, now: number, lastServedSlot: numbe
   return lastServedSlot !== undefined && lastServedSlot >= s ? undefined : s;
 }
 
+/**
+ * Founder decision 3: inside the member's send window right now (from today's slot until
+ * cfg.sendTime.windowHours after it). A partner probe (the first member already said yes) may go out
+ * at any moment inside this window, even if the slot already served a message: it needs no
+ * break-in, only the partner's cap, quiet hours and send time.
+ */
+export function inSendWindow(m: MemberAttention, now: number, cfg: AttentionConfig = DEFAULT_ATTENTION): boolean {
+  if (m.prefs.mode === "as_it_comes") return true;
+  const s = lastDigestSlot(m, now, cfg);
+  return s !== undefined && now - s < cfg.sendTime.windowHours * HOUR;
+}
+
+// ------------------------------------------------------------------------------------------------
+// Send time learned from replies (founder decision 1)
+
+const hourInQuiet = (h: number, [s, e]: [number, number]) => (s === e ? false : s < e ? h >= s && h < e : h >= s || h < e);
+
+export interface SendProfile {
+  /** Local send hour on weekdays and on weekends. */
+  weekday: number; weekend: number;
+  /** Replies seen per profile, and whether the hour moved off the default. */
+  samples: { weekday: number; weekend: number };
+  learned: { weekday: boolean; weekend: boolean };
+}
+
+/**
+ * When to send to this member: the default hour (12:00 local) until their own replies say
+ * otherwise. `replies` are the timestamps of the member's inbound messages (answers to the
+ * Network). Weekday and weekend profiles are learned separately; each needs cfg.sendTime.minSamples
+ * replies; replies are recency-weighted (half-life halfLifeDays) and bucketed into the configured
+ * slots; the hour moves to the best slot only when it holds >= minShare of the weight AND beats the
+ * default slot by `margin`. A slot whose send hour falls in the member's quiet hours is never chosen.
+ */
+export function learnSendProfile(replies: readonly number[], tz: string, now: number, quietHours: [number, number] | undefined, cfg: AttentionConfig = DEFAULT_ATTENTION): SendProfile {
+  const T = cfg.sendTime;
+  const slotOf = (h: number) => T.slots.findIndex(sl => h >= sl.start && h < sl.end);
+  const def = slotOf(T.defaultHour);
+  const okHour = (h: number) => !quietHours || Array.from({ length: Math.max(1, T.minOpenHours) }, (_, i) => (h + i) % 24).every(x => !hourInQuiet(x, quietHours));
+  const learn = (weekend: boolean) => {
+    const w = T.slots.map(() => 0);
+    let n = 0;
+    for (const t of replies) {
+      if (t > now) continue;
+      const p = localParts(t, tz);
+      if (T.weekendDays.includes((p.weekday + 1) % 7) !== weekend) continue;
+      const k = slotOf(p.hour);
+      if (k < 0) continue;
+      n++;
+      w[k] += Math.pow(2, -(now - t) / (T.halfLifeDays * DAY));
+    }
+    const fallback = okHour(T.defaultHour) ? T.defaultHour : T.slots.find(sl => okHour(sl.send))?.send ?? T.defaultHour;
+    if (n < T.minSamples) return { hour: fallback, n, learned: false };
+    const total = w.reduce((a, b) => a + b, 0);
+    const order = w.map((x, i) => ({ x, i })).filter(o => okHour(T.slots[o.i]!.send)).sort((a, b) => (b.x - a.x) || (a.i - b.i));
+    const best = order[0];
+    if (!best || total <= 0 || best.i === def) return { hour: fallback, n, learned: false };
+    const share = best.x / total, defShare = def >= 0 ? w[def]! / total : 0;
+    if (share >= T.minShare && share - defShare >= T.margin) return { hour: T.slots[best.i]!.send, n, learned: true };
+    return { hour: fallback, n, learned: false };
+  };
+  const wd = learn(false), we = learn(true);
+  return { weekday: wd.hour, weekend: we.hour, samples: { weekday: wd.n, weekend: we.n }, learned: { weekday: wd.learned, weekend: we.learned } };
+}
+
 // ------------------------------------------------------------------------------------------------
 // Composition: digest packing and break-ins (1.3, 1.4, D1, D4, D9, D10)
 
@@ -316,12 +388,25 @@ export interface ComposeInput {
 }
 export interface ComposeResult {
   send: boolean; reason: string; kind?: LedgerKind;
+  /** Founder decision 3: whether this message carries an initial invite (push the ledger entry with this). */
+  countsAgainstCap?: boolean;
   items: AttentionItem[]; values: number[];
   value: number; cost: number; price: number; utility: number;
   cap: Cap; used: number;
   /** Items left out and why (they stay in the hold queue unless the reason is terminal). */
   skipped: { itemId: string; reason: string }[];
 }
+
+/**
+ * Founder decision 3: the first message proposing a new opportunity to a member is their initial
+ * invite and counts once against THEIR cap. That includes the partner's first probe after the first
+ * member's yes (stage "partner"). Profiling asks, re-confirmations, "worth a text?" and "nothing yet"
+ * are not invites. Everything after the invite (reveal, scheduling, reminders, check-ins, feedback,
+ * acknowledgements) is not an item at all and never counts.
+ */
+export const isInitialInvite = (it: Pick<AttentionItem, "kind">, cfg: AttentionConfig = DEFAULT_ATTENTION) => !cfg.notInvites.includes(it.kind);
+/** A message counts against the cap (once) iff it carries at least one initial invite. A "what's your week like?" check-in without a proposal does not. */
+export const countsAgainstCap = (items: readonly Pick<AttentionItem, "kind">[], cfg: AttentionConfig = DEFAULT_ATTENTION) => items.some(it => isInitialInvite(it, cfg));
 
 const MINOR_SAFE = (it: AttentionItem, cfg: AttentionConfig) => cfg.minors.allowedKinds.includes(it.kind) && it.others.length === 0 && !it.involvesMember;
 
@@ -375,17 +460,21 @@ export function composeMessage(inp: ComposeInput): ComposeResult {
   // Reserve Blooio's third unanswered slot for logistics and safety (1.9).
   if (inp.conversation.outboundSinceInbound > cfg.blooio.interruptMaxOutstanding) return no("conversation_streak");
   if (inMemberQuietHours(m, now, cfg)) return no("quiet_hours");
-  if (used >= cap.limit) return no("cap");
+  // Founder decision 3: the cap binds initial invites only. At cap, a message may still carry
+  // items that are not invites (a profiling ask under the one-question rule).
+  const atCap = used >= cap.limit;
+  if (atCap && !inp.items.some(it => !isInitialInvite(it, cfg))) return no("cap");
   if (inp.mode === "break_in") {
     const bl = breakInLimit(m, cfg);
     if (breakInsUsed(ledger, m.memberId, now, bl.periodDays) >= bl.limit) return no("break_in_limit");
   }
   const r = annoyance(ledger, m.memberId, now, cfg);
-  const price = shadowPrice(m, used, cap.limit, r, cfg);
+  // At cap only non-invite asks remain; they do not use the cap, so they are priced as the first slot.
+  const price = shadowPrice(m, atCap ? 0 : used, cap.limit, r, cfg);
   const next = nextDigestSlot(m, now, cfg);
   const eligible: { it: AttentionItem; v: number }[] = [];
   for (const it of inp.items) {
-    const why = itemGate(m, it, now, cfg);
+    const why = atCap && isInitialInvite(it, cfg) ? "cap" : itemGate(m, it, now, cfg);
     if (why) { res.skipped.push({ itemId: it.id, reason: why }); continue; }
     eligible.push({ it, v: itemValue(it, m.prefs, cfg, next) });
   }
@@ -425,7 +514,7 @@ export function composeMessage(inp: ComposeInput): ComposeResult {
     if (rest.length) options.push(evaluate(pack(rest, maxItems)));
     if (romanceAlone && rom.length) options.push(evaluate([rom[0]!]));
   }
-  if (!options.length || options.every(o => !o.xs.length)) return { ...no(eligible.length ? "no_urgent_item" : "nothing_eligible"), price };
+  if (!options.length || options.every(o => !o.xs.length)) return { ...no(atCap && !eligible.length ? "cap" : eligible.length ? "no_urgent_item" : "nothing_eligible"), price };
   options.sort((a, b) => (b.utility - a.utility) || (b.xs.length - a.xs.length));
   const best = options[0]!;
   const out = {
@@ -435,7 +524,7 @@ export function composeMessage(inp: ComposeInput): ComposeResult {
   const bar = cfg.qualityBar[m.state];
   if (Math.max(...best.xs.map(x => x.it.enjoy)) < bar) return { ...out, items: [], values: [], reason: "below_quality_bar" };
   if (!(best.utility > 0)) return { ...out, items: [], values: [], reason: "below_send_value" };
-  return { ...out, send: true, reason: "ok", kind: inp.mode === "break_in" ? "break_in" : "digest" };
+  return { ...out, send: true, reason: "ok", kind: inp.mode === "break_in" ? "break_in" : "digest", countsAgainstCap: countsAgainstCap(best.xs.map(x => x.it), cfg) };
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -702,6 +791,8 @@ export interface ProbeSpec {
   window?: { start: number; end: number }; tz: string;
   /** The recipient's own role (contributor roles get a "could you help" probe). */
   role?: Role;
+  /** Founder decision 4a: 2-3 concrete time options (chooseTimeOptions) asked in the probe itself. */
+  options?: TimeSlot[];
 }
 export interface Probe { text: string; attribute?: string; area?: string }
 
@@ -760,7 +851,7 @@ export function buildProbe(w: World, spec: ProbeSpec, recipient: MemberId, other
   const ids = [recipient, ...others];
   if (ids.some(id => !w.get(id) || isMinor(w.get(id)!.m.age))) return null;
   if (spec.category === "romance" && others.length !== 1) return null;
-  const when = whenPhrase(spec.window, now, spec.tz);
+  const when = spec.options?.length ? timeOptionsPhrase(spec.options, spec.tz) : whenPhrase(spec.window, now, spec.tz);
   const area = w.get(recipient)!.presence.find(p => p.type === "home")?.areas?.[0] ?? w.get(recipient)!.presence[0]?.areas?.[0];
   const attr = others.length === 1 ? shareableAttribute(w, others[0]!, recipient) : undefined;
   const contributor = spec.role && CONTRIBUTOR_ROLES.has(spec.role);
@@ -794,6 +885,165 @@ export function digestText(lines: string[]): string {
   const head = lines.length === 2 ? "Two things for this week" : "Three things for this week";
   return `${head}, reply with a number (or "none"):\n${lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}`;
 }
+
+// ------------------------------------------------------------------------------------------------
+// Availability capture and time options (founder decision 4; design doc 1.11)
+
+export interface TimeSlot { start: number; end: number }
+/** A recurring weekly window in local time (JS weekdays, hours [startHour, endHour)). */
+export interface WeeklyWindow { byDay: number[]; startHour: number; endHour: number }
+/** Standing availability (4b): "usually free Tue evenings", from onboarding, conversation or a calendar pattern. */
+export interface StandingAvailability extends WeeklyWindow {
+  source: "onboarding" | "conversation" | "calendar_pattern";
+  /** When it was stated (or inferred), and last re-confirmed by the member. */
+  statedAt: number; confirmedAt?: number;
+  /** true = inferred (e.g. from calendar patterns), false = said by the member. */
+  inferred?: boolean;
+}
+/** Everything the Network knows about when a member is free. All of it is engine-visible; none of it is shareable. */
+export interface AvailabilityEvidence {
+  memberId: MemberId; tz: string;
+  quietHours?: [number, number];
+  /** Connected calendar, free/busy only (4c): busy blocks, never titles. Absent = not connected. */
+  calendar?: { busy: TimeSlot[] };
+  standing?: StandingAvailability[];
+  /** Times the member accepted (picked) or attended, and times they turned down as "can't then" (4e). */
+  history?: { at: number; outcome: "accepted" | "attended" | "declined_time" }[];
+  /** Presence windows: the member is away (outside the city) in these intervals. */
+  away?: TimeSlot[];
+}
+
+const daypart = (h: number) => (h < 17 ? "day" : "evening");
+/** P(the member is free for `slot`), from all evidence. Pure; deterministic. */
+export function availabilityProb(ev: AvailabilityEvidence, slot: TimeSlot, now: number, cfg: AttentionConfig = DEFAULT_ATTENTION): number {
+  const A = cfg.availability;
+  const lp = localParts(slot.start, ev.tz);
+  const day = (lp.weekday + 1) % 7;
+  const weekend = cfg.sendTime.weekendDays.includes(day);
+  if (ev.quietHours && hourInQuiet(lp.hour, ev.quietHours)) return 0;
+  if (ev.away?.some(a => a.start < slot.end && a.end > slot.start)) return 0;
+  const part = daypart(lp.hour);
+  let p = weekend ? (part === "day" ? A.prior.weekendDay : A.prior.weekendEvening) : (part === "day" ? A.prior.weekdayDay : A.prior.weekdayEvening);
+  // (b) standing availability: a decaying prior.
+  let inside = 0, any = 0;
+  for (const w of ev.standing ?? []) {
+    const c0 = w.inferred ? A.standing.inferredConfidence : A.standing.statedConfidence;
+    const conf = c0 * Math.pow(2, -Math.max(0, now - (w.confirmedAt ?? w.statedAt)) / (A.standing.halfLifeDays * DAY));
+    any = Math.max(any, conf);
+    if (w.byDay.includes(day) && lp.hour >= w.startHour && lp.hour < w.endHour) inside = Math.max(inside, conf);
+  }
+  if (inside > 0) p += inside * (A.standing.inside - p);
+  else if (any > 0) p *= 1 - A.standing.outsideFactor * any;
+  // (e) learned from accepted / attended times in the same weekday-or-weekend daypart.
+  let pos = 0, neg = 0;
+  for (const h of ev.history ?? []) {
+    if (h.at > now + 14 * DAY) continue;
+    const hp = localParts(h.at, ev.tz);
+    const hd = (hp.weekday + 1) % 7;
+    if (cfg.sendTime.weekendDays.includes(hd) !== weekend || daypart(hp.hour) !== part) continue;
+    const w = Math.pow(2, -Math.max(0, now - h.at) / (A.learned.halfLifeDays * DAY)) * (hd === day ? 1 : 0.5);
+    if (h.outcome === "declined_time") neg += w; else pos += w;
+  }
+  if (pos > 0) p += Math.min(A.learned.maxWeight, pos / (pos + A.learned.k)) * (A.learned.target - p);
+  if (neg > 0) p *= 1 - A.learned.declinePenalty * (neg / (neg + A.learned.k));
+  // (c) calendar free/busy: a hard-ish filter.
+  if (ev.calendar) {
+    if (ev.calendar.busy.some(b => b.start < slot.end && b.end > slot.start)) p *= A.calendar.busyFactor;
+    else p += A.calendar.freeWeight * (A.calendar.freeTarget - p);
+  }
+  return Math.max(0, Math.min(1, p));
+}
+
+/** Candidate slots in the recipient's local time: `minLeadHours` to `horizonDays` ahead, at the template hours, inside `window` if given. */
+export function candidateSlots(tz: string, now: number, o: { window?: TimeSlot } = {}, cfg: AttentionConfig = DEFAULT_ATTENTION): TimeSlot[] {
+  const A = cfg.availability;
+  const out: TimeSlot[] = [];
+  const p = localParts(now, tz);
+  for (let k = 0; k <= A.horizonDays; k++) {
+    const d = new Date(Date.UTC(p.year, p.month - 1, p.day + k));
+    const hours = cfg.sendTime.weekendDays.includes(d.getUTCDay()) ? A.templates.weekend : A.templates.weekday;
+    for (const h of hours) {
+      const start = fromLocal(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), h, tz);
+      const slot = { start, end: start + A.slotHours * HOUR };
+      if (start < now + A.minLeadHours * HOUR || start > now + A.horizonDays * DAY) continue;
+      if (o.window && (start < o.window.start || slot.end > o.window.end + A.slotHours * HOUR)) continue;
+      out.push(slot);
+    }
+  }
+  return out;
+}
+
+export interface TimeOptions { slots: { slot: TimeSlot; joint: number; each: Record<MemberId, number> }[]; pAny: number }
+
+/**
+ * Pick 2-3 time options for a probe that maximize the chance that at least one works for everyone
+ * (4a): joint P = product of each member's availabilityProb (independent members); options are
+ * added greedily by their gain in P(any) = 1 - prod(1 - joint), at most one per local day, until
+ * targetAny is reached or an option adds less than minGain (always at least minOptions when
+ * candidates exist above minJoint). A fixed-time opportunity (an event) gets its own time only.
+ */
+export function chooseTimeOptions(members: readonly AvailabilityEvidence[], now: number, o: { tz: string; window?: TimeSlot; fixed?: boolean; candidates?: TimeSlot[] }, cfg: AttentionConfig = DEFAULT_ATTENTION): TimeOptions {
+  const A = cfg.availability;
+  const score = (slot: TimeSlot) => {
+    const each: Record<MemberId, number> = {};
+    let joint = 1;
+    for (const m of members) { const p = availabilityProb(m, slot, now, cfg); each[m.memberId] = p; joint *= p; }
+    return { slot, joint, each };
+  };
+  if (o.fixed && o.window) {
+    const one = score({ start: o.window.start, end: Math.max(o.window.end, o.window.start + A.slotHours * HOUR) });
+    return { slots: [one], pAny: one.joint };
+  }
+  const cands = (o.candidates ?? candidateSlots(o.tz, now, { window: o.window }, cfg)).map(score)
+    .filter(c => c.joint >= A.minJoint).sort((a, b) => (b.joint - a.joint) || (a.slot.start - b.slot.start));
+  const chosen: TimeOptions["slots"] = [];
+  const dayOf = (t: number) => { const p = localParts(t, o.tz); return `${p.year}-${p.month}-${p.day}`; };
+  let miss = 1;
+  for (const c of cands) {
+    if (chosen.length >= A.maxOptions) break;
+    if (chosen.some(x => dayOf(x.slot.start) === dayOf(c.slot.start))) continue;
+    const gain = miss * c.joint;
+    if (chosen.length >= A.minOptions && (1 - miss >= A.targetAny || gain < A.minGain)) break;
+    chosen.push(c);
+    miss *= 1 - c.joint;
+  }
+  chosen.sort((a, b) => a.slot.start - b.slot.start);
+  return { slots: chosen, pAny: 1 - miss };
+}
+
+const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+/** "Thursday 7pm or Saturday 10am" (local time of the recipient). */
+export function timeOptionsPhrase(slots: readonly TimeSlot[], tz: string): string {
+  const one = (t: number) => {
+    const p = localParts(t, tz);
+    const h = p.hour % 12 === 0 ? 12 : p.hour % 12;
+    return `${WEEKDAY_NAMES[(p.weekday + 1) % 7]} ${h}${p.minute ? `:${String(p.minute).padStart(2, "0")}` : ""}${p.hour < 12 ? "am" : "pm"}`;
+  };
+  const xs = slots.map(s => one(s.start));
+  return xs.length <= 2 ? xs.join(" or ") : `${xs.slice(0, -1).join(", ")} or ${xs[xs.length - 1]}`;
+}
+
+/** Standing availability from `availability_pattern` facets ("calendar usually free Tue/Thu evenings": tags evening:Tue). */
+export function standingFromFacets(facets: readonly { kind: string; tags: string[]; inferred?: boolean; observedAt?: number; validFrom?: number }[], now: number): StandingAvailability[] {
+  const DAYS3 = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const PARTS: Record<string, [number, number]> = { morning: [7, 12], afternoon: [12, 17], evening: [17, 22] };
+  const out: StandingAvailability[] = [];
+  for (const f of facets) {
+    if (f.kind !== "availability_pattern") continue;
+    const by = new Map<string, number[]>();
+    for (const t of f.tags) {
+      const [part, d] = t.split(":");
+      const i = DAYS3.indexOf(d ?? "");
+      if (!part || !PARTS[part] || i < 0) continue;
+      by.set(part, [...(by.get(part) ?? []), i]);
+    }
+    for (const [part, days] of by) out.push({ byDay: days, startHour: PARTS[part]![0], endHour: PARTS[part]![1], source: f.inferred ? "calendar_pattern" : "conversation", statedAt: f.observedAt ?? f.validFrom ?? now, inferred: !!f.inferred });
+  }
+  return out;
+}
+
+/** Standing windows due for re-confirmation ("still free Tuesday evenings?"), a profiling ask, never an invite. */
+export const needsReconfirm = (w: StandingAvailability, now: number, cfg: AttentionConfig = DEFAULT_ATTENTION) => now - (w.confirmedAt ?? w.statedAt) >= cfg.availability.standing.reconfirmDays * DAY;
 
 // ------------------------------------------------------------------------------------------------
 // Metrics (1.10, 3.3)

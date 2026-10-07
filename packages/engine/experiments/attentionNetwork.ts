@@ -18,6 +18,7 @@ import type { SimMeta } from "../../sim/src/channel.ts";
 import type { InboundMessage, NetworkContext } from "../../sim/src/network.ts";
 import { publicEvents } from "../../sim/src/snapshot.ts";
 import { StubNetwork, type StubOptions } from "../../sim/src/stubNetwork.ts";
+import { fmtLocal } from "../../sim/src/time.ts";
 import * as A from "../src/attention.ts";
 import { resolveAttention, resolveConfig, type AttentionConfig, type AttentionConfigInput } from "../src/config.ts";
 import { eligibilityFor } from "../src/filters.ts";
@@ -70,11 +71,30 @@ export interface AttentionNetOptions extends StubOptions {
   requeueUnpicked?: boolean;
   /** Outside-world items may make up a message on their own (default true); false = only as companions of a people item. */
   eventsAlone?: boolean;
+  // ---- iteration 3 (founder decisions 1-4) ----
+  /** Decision 1: per-member send time learned from the member's replies (attention.ts learnSendProfile); "fixed" = cfg digest.hour. */
+  sendTime?: "learned" | "fixed";
+  /** Hours after a rolling slot during which it may still be served (default: slotWindowHours). */
+  sendWindowHours?: number;
+  /** Decision 3: a partner probe goes out as soon as the first member said yes, inside the partner's send window, within their cap (no break-in). */
+  partnerInWindow?: boolean;
+  /** Decision 4: 2-3 time options in each probe (attention.ts chooseTimeOptions); the meeting is set at a time both picked. */
+  timeOptions?: boolean;
+  /** HARNESS ONLY: is the member actually free at t (hidden weekly availability)? Used to simulate which offered slots a persona picks, and its calendar. */
+  hiddenFree?: (memberId: MemberId, t: number) => boolean;
+  /** HARNESS ONLY: does the member connect their calendar when offered (after their first accepted plan)? */
+  connectsCalendar?: (memberId: MemberId) => boolean;
+  /** HARNESS ONLY: does a connected calendar show this hidden-busy slot as busy (busy recall)? */
+  calendarShowsBusy?: (memberId: MemberId, t: number) => boolean;
 }
 
 export interface SimEventLite { id: string; title: string; city: string; start: number; end: number; tags: string[] }
 
-interface Flow { p: EngineProposal; f: A.ProbeFlow; stage: "probing" | "revealing" | "scheduled" | "closed"; reveal: Map<MemberId, "sent" | "yes" | "no">; revealDeadline?: number }
+interface Flow {
+  p: EngineProposal; f: A.ProbeFlow; stage: "probing" | "revealing" | "scheduled" | "closed"; reveal: Map<MemberId, "sent" | "yes" | "no">; revealDeadline?: number;
+  /** Decision 4: slots still open (offered and picked by everyone who said yes so far); undefined = no time options in play. */
+  times?: A.TimeSlot[];
+}
 interface Pending { messageId: string; memberId: MemberId; at: number; kind: "digest" | "break_in" | "reengage"; items: AttentionItem[]; picked?: AttentionItem }
 
 const trivialEmbed = () => [0];
@@ -107,6 +127,7 @@ export class AttentionNetwork extends StubNetwork {
     itemsShown: 0, shownTo: new Map<MemberId, number>(), shown: [] as { pid: string; memberId: MemberId; at: number }[],
     composeNo: {} as Record<string, number>, autoPauses: [] as { memberId: MemberId; at: number }[], probeGate: 0, picks: 0, nones: 0, unanswered: 0,
     selfQuiet: 0, selfOverCap: 0, selfStreak: 0, suppressedLogistics: 0, suppressedAcks: 0,
+    sendHourMoved: 0, sendHourMembers: new Set<MemberId>(), probesWithOptions: 0, optionsOffered: 0, optionPicked: 0, optionNoneFit: 0, timedMeetings: 0, untimedMeetings: 0, calendarsConnected: 0, partnerInWindow: 0,
     eventItems: 0, eventsShown: 0, eventValues: [] as { memberId: MemberId; at: number }[], eventOnlyMessages: 0, exemptAcks: 0,
     funnel: { firstYes: 0, partnerCreated: 0, partnerShown: 0, partnerYes: 0, groupYes: 0, revealSent: 0, revealYes: 0, scheduled: 0, partnerDropped: {} as Record<string, number> },
   };
@@ -114,6 +135,13 @@ export class AttentionNetwork extends StubNetwork {
   private events = new Map<string, SimEventLite>();
   private eventDay = -1;
   private inboundHours = new Map<MemberId, number[]>();
+  /** Decision 1: timestamps of each member's inbound messages (replies), for the learned send time. */
+  private inboundTimes = new Map<MemberId, number[]>();
+  /** Decision 4: options offered per item id; accepted / declined times per member; connected calendars; accepted plans per member. */
+  private itemOptions = new Map<string, A.TimeSlot[]>();
+  private availHistory = new Map<MemberId, { at: number; outcome: "accepted" | "attended" | "declined_time" }[]>();
+  private calendars = new Set<MemberId>();
+  private acceptedPlans = new Map<MemberId, number>();
 
   constructor(private o: AttentionNetOptions) {
     super(o);
@@ -232,8 +260,14 @@ export class AttentionNetwork extends StubNetwork {
       }
       prefs = A.applyLearnedCadence(prefs, learned);
     }
+    const tz = mem.homeCity === "sf" ? "America/Los_Angeles" : "America/New_York";
+    if (this.o.sendTime === "learned") {
+      const prof = A.learnSendProfile(this.inboundTimes.get(id) ?? [], tz, now, quietHours, this.cfg);
+      prefs = { ...prefs, sendHours: { weekday: prof.weekday, weekend: prof.weekend } };
+      if ((prof.learned.weekday || prof.learned.weekend) && !this.stats.sendHourMembers.has(id)) { this.stats.sendHourMembers.add(id); this.stats.sendHourMoved++; }
+    }
     return {
-      memberId: id, state, age: mem.age, tz: mem.homeCity === "sf" ? "America/Los_Angeles" : "America/New_York", quietHours,
+      memberId: id, state, age: mem.age, tz, quietHours,
       onlyWhenAsked: st.unanswered >= 2 || A.unansweredInterruptions(this.ledger, id, now, this.cfg) >= 2,
       newcomer: now - (mem.joinedAt ?? 0) < this.cfg.newcomer.days * DAY,
       prefs, categoriesOptIn: mem.prefs.categoriesOptIn,
@@ -277,8 +311,16 @@ export class AttentionNetwork extends StubNetwork {
       if (!v) continue;
       // A slot missed for a transient reason (busy in an open opportunity, quiet hours, the
       // conversation streak) is served at the first chance before the next slot.
-      const slot = A.digestDue(v, now, this.served.get(id), this.cfg, this.o.slotWindowHours ?? 6 * 24);
+      const slot = A.digestDue(v, now, this.served.get(id), this.cfg, this.o.sendWindowHours ?? this.o.slotWindowHours ?? 6 * 24);
       if (slot !== undefined) { this.attempt(id, v, now, "digest", slot); continue; }
+      // Decision 3: a partner probe needs no break-in: it goes inside the partner's send window, within their cap.
+      if (this.o.partnerInWindow) {
+        if (r.kept.some(it => it.stage === "partner") && A.inSendWindow(v, now, this.o.sendWindowHours ? { ...this.cfg, sendTime: { ...this.cfg.sendTime, windowHours: this.o.sendWindowHours } } : this.cfg)) {
+          this.stats.partnerInWindow++;
+          this.attempt(id, v, now, "digest", undefined, true);
+        }
+        continue;
+      }
       const next = A.nextDigestSlot(v, now, this.cfg);
       if (this.o.partnerAnyCap && r.kept.some(it => it.stage === "partner")) { this.attempt(id, v, now, "break_in", undefined, true); continue; }
       if (r.kept.some(it => it.urgency.expiresAt < next)) this.attempt(id, v, now, "break_in");
@@ -350,13 +392,65 @@ export class AttentionNetwork extends StubNetwork {
     const p = this.proposals.get(it.sourceProposalId!);
     if (!p) return null;
     if (this.o.probes) {
-      const pr = A.buildProbe(w, { proposalId: p.id, kind: p.kind, category: p.category, objective: p.objective, window: p.window, tz: p.city === "sf" ? "America/Los_Angeles" : "America/New_York", role: p.roles?.[it.memberId] },
+      const tz = p.city === "sf" ? "America/Los_Angeles" : "America/New_York";
+      const options = this.o.timeOptions ? this.optionsFor(w, it, p, tz, now) : undefined;
+      const pr = A.buildProbe(w, { proposalId: p.id, kind: p.kind, category: p.category, objective: p.objective, window: p.window, tz, role: p.roles?.[it.memberId], ...(options?.length ? { options } : {}) },
         it.memberId, it.others, now);
+      if (pr && options?.length) this.itemOptions.set(it.id, options); else this.itemOptions.delete(it.id);
       return pr?.text ?? null;
     }
     const others = it.others.map(id => this.s.member(id));
     const why = p.explanations[it.memberId] ?? "it seemed like a good fit";
     return others.length === 1 ? `Meet ${others[0].display}: ${why}` : `A small ${p.objective} with ${others.length} others (${why}).`;
+  }
+
+  /** Decision 4: everything the Network knows about when a member is free (engine-visible only). */
+  private evidence(w: World, id: MemberId, tz: string, now: number): A.AvailabilityEvidence {
+    const v = this.view(id, now);
+    const facets = w.input.facets.filter(f => f.memberId === id);
+    const ev: A.AvailabilityEvidence = { memberId: id, tz, quietHours: v?.quietHours, standing: A.standingFromFacets(facets, now), history: this.availHistory.get(id) ?? [] };
+    const home = this.snapMembers?.byId.get(id)?.homeCity;
+    const away = w.input.presence.filter(pr => pr.memberId === id && pr.type === "temporary" && pr.city !== home && pr.from !== undefined && pr.to !== undefined);
+    if (away.length) ev.away = away.map(pr => ({ start: pr.from!, end: pr.to! }));
+    if (this.calendars.has(id) && this.o.hiddenFree) {
+      // Free/busy only: the calendar's busy blocks over the candidate slots (harness: hidden availability, imperfect recall).
+      ev.calendar = { busy: A.candidateSlots(tz, now, {}, this.cfg).filter(sl => !this.o.hiddenFree!(id, sl.start) && (this.o.calendarShowsBusy?.(id, sl.start) ?? true)) };
+    }
+    return ev;
+  }
+  /** Time options for a probe: the partner gets the slots the first member picked; otherwise the best joint slots for everyone involved. */
+  private optionsFor(w: World, it: AttentionItem, p: EngineProposal, tz: string, now: number): A.TimeSlot[] | undefined {
+    const fl = this.flows.get(p.id);
+    if (it.stage === "partner" && fl?.times !== undefined) {
+      // The partner chooses among the slots the first member picked; if none of the first member's options fit, no times (scheduled the default way).
+      const xs = fl.times.filter(t => t.start > now + 12 * HOUR).slice(0, this.cfg.availability.maxOptions);
+      return xs.length ? xs : undefined;
+    }
+    const fixed = p.anchor?.type === "event" && !!p.window && p.window.end - p.window.start <= 6 * HOUR;
+    const ids = [it.memberId, ...it.others];
+    const r = A.chooseTimeOptions(ids.map(x => this.evidence(w, x, tz, now)), now, { tz, ...(fixed ? { fixed: true, window: p.window } : {}) }, this.cfg);
+    return r.slots.map(x => x.slot);
+  }
+  /** HARNESS: the persona said yes to a probe with options; which of them they pick comes from their hidden weekly availability. */
+  private pickTimes(pid: string, it: AttentionItem, id: MemberId, now: number) {
+    const opts = this.itemOptions.get(it.id);
+    this.itemOptions.delete(it.id);
+    const fl = this.flows.get(pid);
+    if (!fl || !opts?.length || !this.o.hiddenFree) return;
+    // Groups: everyone answers in parallel, so keep only slots every yes so far picked.
+    const prior = fl.times?.length ? new Set(fl.times.map(t => t.start)) : undefined;
+    const ok = opts.filter(t => t.start > now && this.o.hiddenFree!(id, t.start) && (!prior || prior.has(t.start)));
+    const hist = this.availHistory.get(id) ?? [];
+    if (!ok.length) {
+      // "Yes, but none of those times": the opportunity goes on without a time (scheduled the default way).
+      this.stats.optionNoneFit++;
+      for (const t of opts) hist.push({ at: t.start, outcome: "declined_time" });
+      this.availHistory.set(id, hist);
+      fl.times = [];
+      return;
+    }
+    this.stats.optionPicked++;
+    fl.times = ok;
   }
 
   private sendItems(id: MemberId, v: A.MemberAttention, items: AttentionItem[], values: number[], kind: "digest" | "break_in" | "reengage", texts: Map<string, string>, now: number) {
@@ -387,7 +481,9 @@ export class AttentionNetwork extends StubNetwork {
     const msg = this.s.send(m, body, meta);
     m.awaiting = { kind: "digest", pid: p?.id ?? "" };
     m.proactive.push(now);
-    this.ledger.push({ messageId: msg.id, memberId: id, at: now, kind, itemIds: items.map(x => x.id), countsAgainstCap: true });
+    // Decision 3: a message counts against the cap iff it carries an initial invite (all harness items are invites).
+    this.ledger.push({ messageId: msg.id, memberId: id, at: now, kind, itemIds: items.map(x => x.id), countsAgainstCap: A.countsAgainstCap(items, this.cfg) });
+    for (const it of items) if (this.itemOptions.has(it.id)) { this.stats.probesWithOptions++; this.stats.optionsOffered += this.itemOptions.get(it.id)!.length; }
     this.pending.set(id, { messageId: msg.id, memberId: id, at: now, kind, items, picked });
     const sent = new Set(items.map(x => x.id));
     this.hold.set(id, (this.hold.get(id) ?? []).filter(x => !sent.has(x.id)));
@@ -406,6 +502,7 @@ export class AttentionNetwork extends StubNetwork {
     const now = this.now();
     const c = this.convOf(msg.memberId);
     c.outboundSinceInbound = 0; c.lastInboundAt = now;
+    if (this.o.sendTime === "learned" && !msg.keyword) this.inboundTimes.set(msg.memberId, [...(this.inboundTimes.get(msg.memberId) ?? []), now]);
     if (this.o.learnedCadence) {
       const city = this.snapMembers?.byId.get(msg.memberId)?.homeCity ?? "sf";
       const h = Number(new Date(now).toLocaleString("en-US", { timeZone: city === "sf" ? "America/Los_Angeles" : "America/New_York", hour: "numeric", hourCycle: "h23" }));
@@ -453,6 +550,7 @@ export class AttentionNetwork extends StubNetwork {
     const requeue: AttentionItem[] = [];
     for (const it of pend.items) {
       if (pick && it === pend.picked) continue;
+      this.itemOptions.delete(it.id);
       if (pick && this.o.requeueUnpicked && it.stage !== "partner" && it.urgency.expiresAt > now) { requeue.push(it); continue; }
       // Seen and passed on: not offered again for 30 days; "none" is not a decline of any person.
       dis.set(it.key, now + this.cfg.hold.dismissDays * DAY);
@@ -464,6 +562,12 @@ export class AttentionNetwork extends StubNetwork {
     if (!pend.picked) return; // an outside-world-only message: any reply answers it
     if (!pick) { this.stats.nones++; this.s.send(m, "No problem at all, thanks for letting me know.", { type: "info" }); return; }
     this.stats.picks++;
+    if (this.o.timeOptions && this.o.probes) {
+      const pid = pend.picked.sourceProposalId!;
+      const fl = this.flows.get(pid) ?? { p: this.proposals.get(pid)!, f: A.startProbeFlow(this.proposals.get(pid)!), stage: "probing" as const, reveal: new Map() };
+      this.flows.set(pid, fl);
+      this.pickTimes(pid, pend.picked, id, now);
+    }
     this.answer(pend.picked.sourceProposalId!, id, true, "picked");
   }
 
@@ -517,7 +621,8 @@ export class AttentionNetwork extends StubNetwork {
       if (!r) continue;
       if (!A.canSendLogistics(this.convOf(id), this.cfg)) { fl.reveal.set(id, "no"); continue; }
       const why = fl.p.explanations[id] ?? "";
-      this.s.send(m, `Good news: ${r.names.join(", ")} ${r.names.length > 1 ? "are" : "is"} up for it too. ${why} Want me to set it up?`.replace(/\s+/g, " ").trim(),
+      const when = fl.times?.length ? ` ${fmtLocal(fl.times[0]!.start, fl.p.city)} works for both of you.` : "";
+      this.s.send(m, `Good news: ${r.names.join(", ")} ${r.names.length > 1 ? "are" : "is"} up for it too.${when} ${why} Want me to set it up?`.replace(/\s+/g, " ").trim(),
         { type: "proposal", proposalId: fl.p.id, participants: fl.p.participants, proactive: false });
       this.ledger.push({ messageId: `reveal:${fl.p.id}:${id}`, memberId: id, at: now, kind: "logistics", itemIds: [], countsAgainstCap: false });
       fl.reveal.set(id, "sent");
@@ -555,7 +660,32 @@ export class AttentionNetwork extends StubNetwork {
       quorum: fl.f.group ? fl.f.quorum : 2, deadline: now + 48 * HOUR,
     };
     this.s.opps.set(fl.p.id, opp);
-    this.s.schedule(opp, now);
+    let t = fl.times?.find(x => x.start > now + 2 * HOUR);
+    if (fl.times !== undefined) { if (t) this.stats.timedMeetings++; else this.stats.untimedMeetings++; }
+    if (!t && this.o.timeOptions) {
+      // No option fit everyone: the reveal proposes the best estimated joint slot instead of a fixed default (inference only, 4e/4b/4c).
+      const tz = fl.p.city === "sf" ? "America/Los_Angeles" : "America/New_York";
+      const w = this.world(now);
+      t = A.chooseTimeOptions(going.map(x => this.evidence(w, x, tz, now)), now, { tz }, { ...this.cfg, availability: { ...this.cfg.availability, minOptions: 1, maxOptions: 1 } }).slots[0]?.slot;
+    }
+    if (!t) return this.s.schedule(opp, now);
+    // Decision 4: the meeting is at the time everyone picked.
+    (opp as any).stage = "scheduled";
+    (opp as any).meetingAt = t.start;
+    this.s.ctx.recordMeeting({ proposalId: fl.p.id, participants: going, at: t.start, city: fl.p.city, kind: fl.p.kind });
+    for (const id of going) {
+      const m = this.s.member(id);
+      const others = going.filter(x => x !== id).map(x => this.s.member(x).first).join(", ");
+      this.s.send(m, `You're all set with ${others}: ${fmtLocal(t.start, fl.p.city)} near ${this.s.member(going[0]!).area}. I'll send a reminder that day.`,
+        { type: "scheduling", proposalId: fl.p.id, meetingAt: t.start, proactive: false });
+      const h = this.availHistory.get(id) ?? [];
+      h.push({ at: t.start, outcome: "accepted" });
+      this.availHistory.set(id, h);
+      // 4c: offer the calendar at the moment of value (folded into this confirmation; no extra message).
+      const n = (this.acceptedPlans.get(id) ?? 0) + 1;
+      this.acceptedPlans.set(id, n);
+      if (n === this.cfg.availability.calendar.offerAfterAcceptedPlans && !this.calendars.has(id) && this.o.connectsCalendar?.(id)) { this.calendars.add(id); this.stats.calendarsConnected++; }
+    }
   }
 
   private expirePending(now: number) {

@@ -78,4 +78,48 @@ describe("metrics", () => {
     expect(m.invariants.byRule.over_budget).toBe(1);
     expect(m.invariants.byRule.two_unanswered).toBe(2);
   });
+
+  test("the single re-engagement (meta.reengagement) is exempt from two-unanswered; the next unanswered send is not", () => {
+    const base = log().filter(r => r.type !== "proposal" && r.type !== "message");
+    const extra: RunRecord[] = [
+      msg(at(1, 12), "y1", "c", "ping 1", "outbound", { proactive: true }),
+      msg(at(4, 12), "y2", "c", "ping 2", "outbound", { proactive: true }),
+      msg(at(40, 12), "y3", "c", "Want me to keep sending these?", "outbound", { proactive: true, reengagement: true }),
+      msg(at(48, 12), "y4", "c", "ping 4", "outbound", { proactive: true }),
+    ];
+    const m = computeMetrics([...base.slice(0, -1), ...extra, base[base.length - 1]!]);
+    expect(m.invariants.byRule.two_unanswered).toBe(1);
+  });
+
+  test("unreviewed_contact: probes and proposal messages need a prior approve review_decision (player origin exempt)", () => {
+    const nl = (t: number, kind: string, detail: Record<string, unknown>) => ({ t, type: "network_log", kind, detail }) as RunRecord;
+    const base = log().filter(r => r.type !== "proposal" && r.type !== "message");
+    const end = base[base.length - 1]!;
+    const run = (extra: RunRecord[]) => computeMetrics([...base.slice(0, -1), ...extra, end]).invariants.byRule.unreviewed_contact ?? 0;
+    const probeMsg = (t: number, id: string, to: string, opp: string) => msg(t, id, to, "Up for a climb Saturday?", "outbound", { type: "probe", proactive: true, probe: { key: opp, category: "hobby" } });
+    // Approved before the probe and the reveal: fine.
+    expect(run([
+      nl(at(1, 9), "review_queued", { proposal: { id: "o1" }, origin: "engine" }),
+      nl(at(1, 10), "review_decision", { oppId: "o1", decision: "approve" }),
+      nl(at(1, 10), "probe_started", { proposal: { id: "o1" }, origin: "engine" }),
+      probeMsg(at(1, 11), "m1", "a", "o1"), nl(at(1, 11), "probe_sent", { oppId: "o1", memberId: "a" }),
+      msg(at(2, 11), "m2", "a", "Good news: b is up for it too.", "outbound", { type: "proposal", proposalId: "o1" }),
+    ])).toBe(0);
+    // A probe and a proposal message with no review, or only a reject, or before the approval: flagged.
+    expect(run([
+      nl(at(1, 9), "review_queued", { proposal: { id: "o2" }, origin: "engine" }),
+      nl(at(1, 10), "probe_sent", { oppId: "o2", memberId: "a" }),
+      nl(at(1, 11), "review_decision", { oppId: "o2", decision: "approve" }),
+      nl(at(1, 12), "review_decision", { oppId: "o3", decision: "reject" }),
+      msg(at(2, 11), "m3", "b", "Meet a?", "outbound", { type: "proposal", proposalId: "o3" }),
+    ])).toBe(2);
+    // Player-origin opportunities skip review (probe_started origin "player" / reviewed: false).
+    expect(run([
+      nl(at(1, 10), "probe_started", { proposal: { id: "o4" }, origin: "player", reviewed: false }),
+      nl(at(1, 11), "probe_sent", { oppId: "o4", memberId: "a" }),
+      msg(at(2, 11), "m4", "a", "Good news.", "outbound", { type: "proposal", proposalId: "o4" }),
+    ])).toBe(0);
+    // A network with no review gate (no review logs at all, e.g. the sim's stub) is not checked.
+    expect(computeMetrics(log()).invariants.byRule.unreviewed_contact ?? 0).toBe(0);
+  });
 });

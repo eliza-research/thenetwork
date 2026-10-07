@@ -139,9 +139,31 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
   const unsafe = { minor: 0, adversarial: 0, cityMismatch: 0, romanceMismatch: 0, exPartners: 0 };
   const proposalQuality: { participants: MemberId[]; quality: number; compatible: boolean }[] = [];
 
+  // Review before contact (PRD 32.8): in a run whose network runs the review gate (it logs
+  // review_queued / review_decision / review_mode / probe_started), every probe_sent and every
+  // proposal message must follow a review_decision "approve" for its opportunity. Opportunities with
+  // origin "player" (probe_started detail origin "player" or reviewed: false) are exempt. Networks
+  // without a review gate (the sim's stub, harness networks) log none of these and are not checked here.
+  const REVIEW_LOGS = new Set(["review_queued", "review_decision", "review_mode", "probe_started"]);
+  const reviewGated = records.some(r => r.type === "network_log" && REVIEW_LOGS.has(r.kind));
+  const approvedOpps = new Set<string>();
+  const reviewExempt = new Set<string>();
+  const unreviewed = (oppId: unknown, what: string) => {
+    if (!reviewGated || typeof oppId !== "string" || !oppId) return;
+    if (!approvedOpps.has(oppId) && !reviewExempt.has(oppId)) violate("unreviewed_contact", `${what} for ${oppId} before an approve review_decision`);
+  };
+
   for (const r of records) {
     if (r.type === "block") blocked.add(pairKey(r.from, r.to));
     if (r.type === "invariant_violation") violate(r.rule, r.detail);
+    if (r.type === "network_log") {
+      const d = r.detail ?? {};
+      if (r.kind === "review_decision" && d.decision === "approve" && typeof d.oppId === "string") approvedOpps.add(d.oppId);
+      else if (r.kind === "probe_started") {
+        const id = (d.proposal as { id?: unknown } | undefined)?.id ?? d.oppId;
+        if (typeof id === "string" && (d.origin === "player" || d.reviewed === false)) reviewExempt.add(id);
+      } else if (r.kind === "probe_sent") unreviewed(d.oppId, `probe_sent to ${String(d.memberId ?? "?")}`);
+    }
     if (r.type === "proposal") {
       const p = r.proposal;
       total++; bySource[r.source] = (bySource[r.source] ?? 0) + 1;
@@ -189,6 +211,7 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
         minorContact(`message ${m.id} to ${m.memberId} about a proposal involving a minor`);
       else for (const n of minorNames) if (n.id !== m.memberId && n.re.test(m.body)) minorContact(`message ${m.id} to ${m.memberId} names minor ${n.id}`);
     }
+    if (m.direction === "outbound" && !m.system && m.status === "delivered" && m.meta?.type === "proposal") unreviewed(m.meta.proposalId, `proposal message ${m.id} to ${m.memberId}`);
     if (m.direction === "inbound") { consecutiveUnanswered.set(m.memberId, 0); continue; }
     if (m.system) continue;
     // attempted sends after STOP are violations even if the channel suppressed them
@@ -205,7 +228,10 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
       if (ts.length > budget) violate("over_budget", `${m.memberId}: ${ts.length} proactive in 7d`);
       if (persona && inWindow(localHour(m.ts, persona.homeCity), persona.quietHours)) violate("quiet_hours", `${m.id} to ${m.memberId}`);
       const un = consecutiveUnanswered.get(m.memberId) ?? 0;
-      if (un >= 2) violate("two_unanswered", `${m.id} to ${m.memberId} after ${un} unanswered`);
+      // The single re-engagement after an auto-pause (design D6, meta.reengagement) is the one
+      // message allowed past the two-unanswered rule; it still counts toward the streak, so anything
+      // after it without a reply is a violation.
+      if (un >= 2 && m.meta?.reengagement !== true) violate("two_unanswered", `${m.id} to ${m.memberId} after ${un} unanswered`);
       consecutiveUnanswered.set(m.memberId, un + 1);
     }
     const last = lastBodies.get(m.memberId);

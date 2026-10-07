@@ -18,6 +18,7 @@ import { DEFAULT_ATTENTION, engineSupplyBudgets, resolveAttention, type Attentio
 import type { AttentionItem, AttentionLedgerEntry, EngineInput, EngineProposal } from "../src/types.ts";
 import { Rng as SimRng, hash32 } from "../../sim/src/rng.ts";
 import { SNAPSHOT_FEATURES } from "../../sim/src/snapshot.ts";
+import { localParts as simLocalParts } from "../../sim/src/time.ts";
 import type { World as SimWorld } from "../../sim/src/world.ts";
 import { AttentionNetwork, type AttentionNetOptions } from "./attentionNetwork.ts";
 import { gini, mean, outcomes, pct, runSim, table } from "./lib.ts";
@@ -37,7 +38,9 @@ export interface Variant {
    * `oracle.evaluatePrimed`); (2) outside-world items: public events matching a member's stated
    * interests go into digests, and whether the member acts on one is decided offline.
    */
-  fixes?: boolean | { priming?: boolean; events?: boolean; eventsAlone?: boolean };
+  fixes?: boolean | { priming?: boolean; events?: boolean; eventsAlone?: boolean; attendance?: boolean };
+  /** Iteration 3: run with the current attention defaults (rolling 12:00, ...). Older variants are pinned to the iteration-2 digest config (ITER2). */
+  iter3?: boolean;
   /** undefined = the sim's own StubNetwork (today). */
   net?: Omit<AttentionNetOptions, "seed" | "randomIntros" | "choose"> & { choose?: "oracle" | "first" };
 }
@@ -47,6 +50,16 @@ const NAMED = { mode: "attention" as const, choose: "oracle" as const };
 /** A+rules: today's dispatch (items go out as they arrive, one per message, no price) with every hard send-time rule. */
 const RULES = { ...NAMED, cadence: "immediate" as const, capOnly: true, partnerAnyCap: true, attention: { maxItems: { open: 1, normal: 1, quiet: 1, receiving: 1 } } };
 const BEST = { ...NAMED, lambdaScale: 0, partnerAnyCap: true }; // iteration-2 search base: (a) + (b)
+/** The iteration-1/2 founder defaults for digest slots (D2: weekly Thursday 18:00, Open Tue + Thu, Quiet monthly). Pinned for every pre-iteration-3 variant. */
+const ITER2: AttentionConfigInput = { digest: { days: { open: [2, 4], normal: [4], quiet: [4], receiving: [4], paused: [] }, period: { open: "week", normal: "week", quiet: "month", receiving: "week", paused: "week" }, hour: 18 } };
+/**
+ * Iteration 3: the founder's decisions 1-4 on top of the iteration-2 best (G-J4: rolling slot, no
+ * price, acknowledgements folded, unpicked items requeued): learned send time from 12:00, a 6-hour
+ * send window, consent-first probes for everything, partner probes inside the partner's send window
+ * within their cap, only initial invites on the cap, and time options from availability capture.
+ */
+const N3 = { ...BEST, cadence: "rolling" as const, suppressAcks: true, requeueUnpicked: true, probes: true, sendTime: "learned" as const, sendWindowHours: 6, partnerAnyCap: false, partnerInWindow: true, timeOptions: true };
+const FIX3 = { priming: true, events: true, attendance: true };
 export const VARIANTS: Variant[] = [
   { name: "A v1.2 defaults (stub network: one item per interruption)" },
   { name: "A' v1.2 via the harness network (must equal A)", net: { mode: "v12" } },
@@ -106,6 +119,17 @@ export const VARIANTS: Variant[] = [
   { name: "F-I8 I8, fixes", fixes: true, cfg: SUPPLY, net: { ...BEST, cadence: "rolling", suppressAcks: true } },
   { name: "F-I8p I8 + consent-first probes, fixes", fixes: true, cfg: SUPPLY, net: { ...BEST, cadence: "rolling", suppressAcks: true, probes: true } },
   { name: "F-I10p I10 + consent-first probes, fixes", fixes: true, cfg: SUPPLY, net: { ...BEST, cadence: "rolling", suppressAcks: true, learnedCadence: true, probes: true } },
+  // ---- iteration 3: founder decisions 1-4 ----
+  { name: "N3 new defaults (decisions 1-4)", iter3: true, cfg: SUPPLY, net: N3 },
+  { name: "N3na N3, availability capture off", iter3: true, cfg: SUPPLY, net: { ...N3, timeOptions: false } },
+  { name: "H-R R, fixes 1-3", fixes: FIX3, net: RULES },
+  { name: "H-J4 G-J4, fixes 1-3", fixes: FIX3, cfg: SUPPLY, net: { ...BEST, cadence: "rolling", suppressAcks: true, requeueUnpicked: true } },
+  { name: "H-N3 N3, fixes 1-3", iter3: true, fixes: FIX3, cfg: SUPPLY, net: N3 },
+  { name: "H-N3na N3, availability capture off, fixes 1-3", iter3: true, fixes: FIX3, cfg: SUPPLY, net: { ...N3, timeOptions: false } },
+  { name: "H-N3f12 N3, fixed 12:00 send time (no learning), fixes 1-3", iter3: true, fixes: FIX3, cfg: SUPPLY, net: { ...N3, sendTime: "fixed" } },
+  { name: "H-N3f18 N3, fixed 18:00 send time, fixes 1-3", iter3: true, fixes: FIX3, cfg: SUPPLY, net: { ...N3, sendTime: "fixed", attention: { digest: { hour: 18 } } } },
+  { name: "H-N3n N3 with named invites (no probes, so no time options), fixes 1-3", iter3: true, fixes: FIX3, cfg: SUPPLY, net: { ...N3, probes: false } },
+  { name: "H-N3λ N3 with the doc's shadow price, fixes 1-3", iter3: true, fixes: FIX3, cfg: SUPPLY, net: { ...N3, lambdaScale: 1 } },
 ];
 
 // ------------------------------------------------------------------ per-seed run and metrics
@@ -117,6 +141,8 @@ export interface SeedRow {
   zeroAll: number; zeroDelivered: number; giniAll: number; giniDelivered: number; worthwhile: number;
   minors: number; leaks: number; invariants: number; byRule: Record<string, number>;
   overStateCap: number; quietHours: number; streakInterrupt: number; blooio4th: number; eventValues: number;
+  /** Iteration 3: meetings scheduled, and participant-meetings at a time the participant was not (hidden) free. */
+  meetings?: number; meetingSeats?: number; seatsUnavailable?: number;
   stats?: Record<string, unknown>;
 }
 
@@ -169,18 +195,82 @@ function eventActor(get: () => SimWorld, seed: number) {
   };
 }
 
+/**
+ * HARNESS ONLY (iteration 3): hidden weekly availability from the persona's routine. A 2-hour slot
+ * starting at t is free when it is between waking + 1h and bedtime; not on a day with a one-off
+ * commitment (p = 0.15 per day); evenings (from 17:00): the persona's free evenings, plus 30% of
+ * other weekend evenings; weekday daytime: outside the routine's busy blocks (work, school run) and
+ * then half the time; weekend daytime: 60%. Draws are keyed by (seed, member, local date, part), so
+ * the same slot is always free or always busy. Not visible to the engine or the Network.
+ */
+export function hiddenAvailability(get: () => SimWorld, seed: number) {
+  return (id: MemberId, t: number): boolean => {
+    const p = get().oracle.persona(id);
+    if (!p) return false;
+    const lp = simLocalParts(t, p.homeCity);
+    const h = lp.hour + lp.minute / 60, d = lp.weekday;
+    const { wake, sleep, busyBlocks, freeEvenings } = p.routine;
+    const bed = sleep < 12 ? sleep + 24 : sleep;
+    if (h < wake + 1 || h + 2 > bed) return false;
+    const key = `${lp.year}-${lp.month}-${lp.day}`;
+    const draw = (tag: string) => new SimRng(hash32(seed, "avail", tag, id, key)).next();
+    if (draw("shock") < 0.15) return false;
+    const weekend = d === 0 || d === 6;
+    if (h >= 17) return freeEvenings.includes(d) || (weekend && draw("weekend-evening") < 0.3);
+    if (!weekend) return !busyBlocks.some(([a, b]) => h < b && h + 2 > a) && draw("weekday-day") < 0.5;
+    return draw(h < 12 ? "weekend-am" : "weekend-pm") < 0.6;
+  };
+}
+
+/**
+ * Fix 3 (harness only): time-dependent attendance. When a meeting is set at a time a participant is
+ * not free (hiddenAvailability), they do not come with p = 0.7 (the other 30% rearrange). In the sim
+ * without this fix the meeting time has no effect on attendance at all. Also counts, in every arm,
+ * participant-meetings set at a time the participant was not free.
+ */
+function timeDependentAttendance(world: SimWorld, seed: number, free: (id: MemberId, t: number) => boolean, apply: boolean, counts: { meetings: number; seats: number; unavailable: number }) {
+  const W = world as any;
+  const orig = W.scheduleMeeting.bind(W);
+  const seen = new Set<string>();
+  W.scheduleMeeting = (m: { proposalId: string; participants: MemberId[]; at: number }) => {
+    const id = orig(m);
+    if (!seen.has(m.proposalId)) { seen.add(m.proposalId); counts.meetings++; }
+    for (const pid of m.participants) {
+      const k = `${m.proposalId}|${pid}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      counts.seats++;
+      if (free(pid, m.at)) continue;
+      counts.unavailable++;
+      const pr = W.memories.get(pid)?.proposals?.[m.proposalId];
+      if (apply && pr?.plannedShow && new SimRng(hash32(seed, "unavailable", m.proposalId, pid)).next() < 0.7) pr.plannedShow = false;
+    }
+    return id;
+  };
+}
+
 export async function runSeed(v: Variant, seed: number): Promise<SeedRow> {
-  const fx: { priming?: boolean; events?: boolean; eventsAlone?: boolean } = v.fixes === true ? { priming: true, events: true, eventsAlone: true } : v.fixes ? { eventsAlone: false, ...v.fixes } : {};
+  const fx: { priming?: boolean; events?: boolean; eventsAlone?: boolean; attendance?: boolean } = v.fixes === true ? { priming: true, events: true, eventsAlone: true } : v.fixes ? { eventsAlone: false, ...v.fixes } : {};
   let world!: SimWorld;
   let net: AttentionNetwork | undefined;
+  const free = hiddenAvailability(() => world, seed);
+  const mcount = { meetings: 0, seats: 0, unavailable: 0 };
+  // Pre-iteration-3 variants keep the iteration-2 digest config (the defaults moved to rolling 12:00).
+  const attention = v.net && !v.iter3 ? { ...ITER2, ...(v.net.attention ?? {}) } : v.net?.attention;
   const res = await runSim({
     seed, cfg: v.cfg ?? {}, keepTraces: false, snapshot: { features: SNAPSHOT_FEATURES, records: true, asks: true },
     network: v.net ? s => (net = new AttentionNetwork({
       seed: s, randomIntros: false, ...v.net!,
       choose: v.net!.choose === "oracle" ? oracleChooser(() => world) : undefined,
+      ...(attention ? { attention } : {}),
       ...(fx.events && v.net!.mode === "attention" ? { outsideWorld: true, actOnEvent: eventActor(() => world, seed), eventsAlone: fx.eventsAlone } : {}),
+      ...(v.net!.timeOptions ? {
+        hiddenFree: free,
+        connectsCalendar: (id: MemberId) => new SimRng(hash32(seed, "calendar", id)).next() < 0.5,
+        calendarShowsBusy: (id: MemberId, t: number) => new SimRng(hash32(seed, "calendar-recall", id, t)).next() < 0.85,
+      } : {}),
     })) : undefined,
-    onWorld: w => { world = w; if (fx.priming) primeProbes(w, seed); },
+    onWorld: w => { world = w; if (fx.priming) primeProbes(w, seed); timeDependentAttendance(w, seed, free, !!fx.attendance, mcount); },
     augment: input => (net ? net.engineView(input as EngineInput) : input),
   });
   const m = res.metrics;
@@ -273,7 +363,8 @@ export async function runSeed(v: Variant, seed: number): Promise<SeedRow> {
     zeroDelivered: counts.length ? counts.filter(c => c === 0).length / counts.length : 0, giniDelivered: gini(counts), worthwhile: m.experience.worthwhileRate,
     minors: m.safety.minorContacts, leaks: m.privacy.canaryLeaks, invariants: m.invariants.total, byRule: m.invariants.byRule,
     overStateCap, quietHours: m.invariants.byRule.quiet_hours ?? 0, streakInterrupt, blooio4th, eventValues,
-    stats: net ? { ...net.stats, shownTo: undefined, shown: undefined, autoPauses: net.stats.autoPauses.length, ledger: net.ledger.length } : undefined,
+    meetings: mcount.meetings, meetingSeats: mcount.seats, seatsUnavailable: mcount.unavailable,
+    stats: net ? { ...net.stats, shownTo: undefined, shown: undefined, sendHourMembers: undefined, autoPauses: net.stats.autoPauses.length, ledger: net.ledger.length } : undefined,
   };
 }
 
@@ -304,6 +395,13 @@ export function summaryTables(rows: VariantRow[]): string {
     table(["variant", "unanswered rate (72h)", "auto-pause /100 member-months", "STOP total (per 1,000 interruptions)", "persona worthwhile"], annoy),
     "\n### Match quality and spread (engine proposals / items actually delivered)\n",
     table(["variant", "engine proposals /seed", "precision (all proposals)", "proposals delivered /seed", "precision (delivered)", "no proposal: all / delivered", "Gini: all / delivered"], match),
+    "\n### Meetings and time (iteration 3; hidden availability, harness only)\n",
+    table(["variant", "meetings scheduled /seed", "seats at a time the member was not free", "probes with time options /seed", "no option fit (share of picks)", "meetings at a picked time /seed", "calendars connected /seed", "members whose send time moved /seed"], rows.map(r => {
+      const st = (k: string) => mean(r.seeds.map(x => Number((x.stats as any)?.[k] ?? 0)));
+      const seats = sum(r.seeds, "meetingSeats" as keyof SeedRow), un = sum(r.seeds, "seatsUnavailable" as keyof SeedRow);
+      const picks = st("optionPicked") + st("optionNoneFit");
+      return [r.name, (avg(r.seeds, "meetings" as keyof SeedRow) || 0).toFixed(1), seats ? pct(un / seats) : "-", st("probesWithOptions").toFixed(0), picks ? pct(st("optionNoneFit") / picks) : "-", st("timedMeetings").toFixed(1), st("calendarsConnected").toFixed(1), st("sendHourMoved").toFixed(0)];
+    })),
     "\n### Invariants (summed over seeds)\n",
     table(["variant", "minor contacts", "canary leaks", "over state cap", "quiet-hour sends", "interruptions with >= 2 outstanding", "outbound with >= 3 outstanding (Blooio 4th)", "judge invariants"], inv),
   ].join("\n");

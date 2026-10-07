@@ -10,9 +10,22 @@ export type MessageKind =
   | "invitation" | "profiling_question" | "recommendation" | "worthwhile_check"
   | "reply" | "scheduling" | "reminder" | "check_in" | "relay" | "safety_notice" | "account_notice";
 
-/** F28 / 32.9: what counts as proactive (and against the budget). */
-const PROACTIVE: ReadonlySet<MessageKind> = new Set<MessageKind>(["invitation", "profiling_question", "recommendation", "worthwhile_check"]);
+/**
+ * F28 / 32.9 as amended by founder decision 3 (2026-10-07): only INITIAL INVITES count against the
+ * budget and toward the two-unanswered pause: an invitation (a probe or invite to a new opportunity,
+ * including the partner's first probe) or a recommendation (an outside-world suggestion). Everything
+ * after the invite (scheduling, reminders, check-ins, relays, feedback asks, acknowledgements) and
+ * profiling asks never count.
+ */
+const PROACTIVE: ReadonlySet<MessageKind> = new Set<MessageKind>(["invitation", "recommendation"]);
 export const isProactive = (k: MessageKind) => PROACTIVE.has(k);
+/**
+ * Agent-initiated asks that are not invites: a profiling question (including an opt-in weekly
+ * "what's your week like?" check-in that carries no proposal) and a "was that worth a text?"
+ * feedback ask. Not budgeted; held by the one-question rule: at most one such ask open at a time.
+ */
+const ASKS: ReadonlySet<MessageKind> = new Set<MessageKind>(["profiling_question", "worthwhile_check"]);
+export const isAsk = (k: MessageKind) => ASKS.has(k);
 const ALWAYS: ReadonlySet<MessageKind> = new Set<MessageKind>(["safety_notice", "account_notice"]);
 /**
  * Audit 2026-10-07 P1-8: everything the Network starts on its own is agent-initiated: proactive
@@ -180,6 +193,20 @@ export class OutreachController {
     // Agent-initiated from here on. Without a usable zone we can't honour quiet hours: hold, never guess
     // (Intl would silently fall back to the server's zone).
     if (!isValidTimeZone(tz)) return { action: "hold", reason: "unknown_timezone" };
+    if (isAsk(msg.kind)) {
+      // Founder decision 3: not budgeted. Pause, only-when-asked and quiet hours apply; one open
+      // question at a time (an ask sent in the last 72h with no reply blocks the next one).
+      if (member.state === "paused") return { action: "hold", reason: "paused" };
+      if (member.prefs.onlyWhenAsked || member.unansweredProactive >= 2) return { action: "hold", reason: "only_when_asked" };
+      const open = history.some(h => h.memberId === member.id && isAsk(h.kind) && h.at <= now && h.at > now - UNANSWERED_WINDOW && (h.repliedAt === undefined || h.repliedAt > now));
+      if (open) return { action: "hold", reason: "one_question" };
+      if (inQuietHours(now, tz, member.prefs.quietHours)) {
+        const sendAt = quietHoursEnd(now, tz, member.prefs.quietHours);
+        if (msg.expiresAt !== undefined && sendAt >= msg.expiresAt) return { action: "drop", reason: "quiet_hours_until_expiry" };
+        return { action: "defer", reason: "quiet_hours", sendAt, countsAgainstBudget: false };
+      }
+      return { action: "send", reason: "ask_not_budgeted", sendAt: now, countsAgainstBudget: false };
+    }
     if (!isProactive(msg.kind)) {
       // Inside an accepted opportunity (scheduling, reminder, check-in, relay): never budgeted and never
       // blocked by the unanswered rule, but pause and quiet hours still apply.

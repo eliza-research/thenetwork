@@ -247,6 +247,12 @@ export interface CadencePrefs {
    * lower the state cap or restore it, never exceed it.
    */
   capOverride?: number;
+  /**
+   * Learned send time (founder decision 1, 2026-10-07): the local hour of the member's rolling send
+   * slot on weekdays and on weekends (attention.ts learnSendProfile). Absent: digestHour. Moving
+   * the hour is not a frequency change (D11).
+   */
+  sendHours?: { weekday: number; weekend: number };
 }
 
 /** Learned, engine-visible only. Learning can only make the Network quieter (D11). */

@@ -24,6 +24,8 @@ const item = (id: string, over: Partial<AttentionItem> = {}): AttentionItem => (
 const member = (over: Partial<A.MemberAttention> = {}): A.MemberAttention => ({
   memberId: "a", state: "normal", age: 30, tz: LA, quietHours: [21, 9], onlyWhenAsked: false, prefs: A.defaultCadence("normal"), ...over,
 });
+/** The iteration-1 founder default (D2): a weekly Thursday 18:00 digest; still available on request. */
+const weeklyPrefs = () => ({ ...A.defaultCadence("normal"), digestDays: [4], digestHour: 18 });
 const entry = (messageId: string, at: number, over: Partial<AttentionLedgerEntry> = {}): AttentionLedgerEntry => ({
   messageId, memberId: "a", at, kind: "digest", itemIds: [], countsAgainstCap: true, repliedAt: at + HOUR, replyKind: "pick", ...over,
 });
@@ -118,14 +120,16 @@ describe("cap math (D1, D4, D9)", () => {
     expect(A.breakInLimit(member({ state: "open", newcomer: true })).limit).toBe(1);
     expect(() => resolveAttention({ breakIns: { normal: { limit: 3, periodDays: 7 } } })).toThrow();
     const urgent = item("u", { enjoy: 0.8, accept: 0.8, urgency: { expiresAt: T + DAY } }); // expires before Thursday's slot
-    const breakIn = (ledger: AttentionLedgerEntry[], m = member()) => compose({ items: [urgent], ledger, mode: "break_in", member: m });
+    // Break-ins matter for members on a weekly digest; with rolling daily slots (founder decision 1) the next slot is always < 24h away.
+    const wk = (o: Partial<A.MemberAttention> = {}) => member({ prefs: weeklyPrefs(), ...o });
+    const breakIn = (ledger: AttentionLedgerEntry[], m = wk()) => compose({ items: [urgent], ledger, mode: "break_in", member: m });
     expect(breakIn([]).send).toBe(true);
     expect(breakIn([entry("b1", T - DAY, { kind: "break_in" })]).reason).toBe("break_in_limit");
-    expect(breakIn([entry("b1", T - DAY, { kind: "break_in" })], member({ state: "open" })).send).toBe(true);
-    expect(breakIn([], member({ state: "quiet", age: 30 })).send).toBe(false);
+    expect(breakIn([entry("b1", T - DAY, { kind: "break_in" })], wk({ state: "open" })).send).toBe(true);
+    expect(breakIn([], wk({ state: "quiet", age: 30 })).send).toBe(false);
     // Only items that expire before the next slot, with V >= 1.5 x the median digest V.
-    expect(compose({ items: [item("n", { enjoy: 0.8, accept: 0.8 })], mode: "break_in" }).reason).toBe("no_urgent_item");
-    expect(compose({ items: [urgent], mode: "break_in", medianDigestValue: 2 }).reason).toBe("no_urgent_item");
+    expect(compose({ items: [item("n", { enjoy: 0.8, accept: 0.8 })], mode: "break_in", member: wk() }).reason).toBe("no_urgent_item");
+    expect(compose({ items: [urgent], mode: "break_in", medianDigestValue: 2, member: wk() }).reason).toBe("no_urgent_item");
   });
 
   test("held (unsent) items never count against the cap", () => {
@@ -243,8 +247,21 @@ describe("quiet hours and digest slots (D2, D9)", () => {
     expect(A.inMemberQuietHours(member({ quietHours: [23, 7] }), at(0, 21))).toBe(false); // adults: own hours only
   });
 
-  test("D2: weekly digest Thursday 18:00 local (per-member spread under 2h); monthly = first Thursday", () => {
+  test("founder decision 1: a rolling daily slot at 12:00 local by default; learned weekday / weekend hours", () => {
     const m = member();
+    const s = A.nextDigestSlot(m, NOW); // Monday 09:00 PDT -> Monday 12:00 (+ jitter under 2h)
+    expect(s - A.digestJitter("a") - Date.UTC(2026, 9, 5, 19)).toBe(0);
+    expect(A.nextDigestSlot(m, s) - A.digestJitter("a") - Date.UTC(2026, 9, 6, 19)).toBe(0); // next day
+    expect(A.inSendWindow(m, s + 5 * HOUR)).toBe(true);
+    expect(A.inSendWindow(m, s + 7 * HOUR)).toBe(false);
+    const learned = member({ prefs: { ...A.defaultCadence("normal"), sendHours: { weekday: 18, weekend: 9 } } });
+    const j = A.digestJitter("a");
+    expect(localParts(A.nextDigestSlot(learned, NOW) - j, LA)).toMatchObject({ day: 5, hour: 18, minute: 0 });
+    expect(localParts(A.nextDigestSlot(learned, Date.UTC(2026, 9, 10, 7)) - j, LA)).toMatchObject({ day: 10, weekday: 5, hour: 9, minute: 0 }); // Saturday 00:00 -> Saturday 09:00
+  });
+
+  test("weekly Thursday 18:00 digest on request (per-member spread under 2h); monthly = first Thursday", () => {
+    const m = member({ prefs: weeklyPrefs() });
     const s = A.nextDigestSlot(m, NOW);
     const p = localParts(s, LA);
     expect(p.weekday).toBe(3); // Thursday (Monday = 0)
@@ -255,10 +272,10 @@ describe("quiet hours and digest slots (D2, D9)", () => {
     expect(A.digestDue(m, s + HOUR, undefined)).toBe(s);
     expect(A.digestDue(m, s + HOUR, s)).toBeUndefined(); // served
     expect(A.digestDue(m, s + 30 * HOUR, undefined)).toBeUndefined(); // window passed
-    const monthly = member({ state: "quiet", prefs: A.defaultCadence("quiet") });
+    const monthly = member({ state: "quiet", prefs: { ...weeklyPrefs(), digestPeriod: "month" } });
     const ms = A.nextDigestSlot(monthly, NOW);
     expect(localParts(ms, LA)).toMatchObject({ month: 11, day: 5, weekday: 3 });
-    const ny = member({ tz: "America/New_York" });
+    const ny = member({ tz: "America/New_York", prefs: weeklyPrefs() });
     expect(localParts(A.nextDigestSlot(ny, NOW), "America/New_York").weekday).toBe(3);
     expect(A.digestDue(member({ prefs: { ...A.defaultCadence("normal"), mode: "as_it_comes" } }), T, T - HOUR)).toBe(T);
   });
@@ -411,6 +428,10 @@ describe("consent-first probes (1.8, D5)", () => {
     expect(A.buildProbe(w, spec({ category: "romance" }), "seek", ["prov"], NOW)!.text).toContain("date");
     expect(A.buildProbe(w, spec(), "kid", ["prov"], NOW)).toBeNull();
     expect(A.buildProbe(w, spec(), "seek", ["kid"], NOW)).toBeNull();
+    // Founder decision 4a: time options in the probe itself, still through the leak gate.
+    const opt = A.buildProbe(w, spec({ options: [{ start: Date.UTC(2026, 9, 9, 2), end: Date.UTC(2026, 9, 9, 4) }, { start: Date.UTC(2026, 9, 10, 17), end: Date.UTC(2026, 9, 10, 19) }] }), "seek", ["prov"], NOW)!;
+    expect(opt.text).toContain("Thursday 7pm or Saturday 10am");
+    for (const bad of ["Zelda", "Acme", "falconry", "QX-4821-ORCHID"]) expect(opt.text).not.toContain(bad);
   });
 
   test("property: probes on random worlds never contain the other person's name, a canary, or a non-shareable-only word", () => {
@@ -465,8 +486,9 @@ describe("re-engagement (D6)", () => {
 });
 
 describe("learned cadence never increases frequency (D11)", () => {
-  const explicit = A.defaultCadence("normal");
+  const explicit = weeklyPrefs();
   test("learned prefs can only make it quieter", () => {
+    expect(A.applyLearnedCadence(A.defaultCadence("normal"), { digestDays: [1, 2] }).digestDays).toEqual([1, 2]); // rolling -> fewer days only
     const learned = A.applyLearnedCadence(explicit, { digestDays: [1, 2, 3, 4, 5], maxItemsPerDigest: 3, capOverride: 9, mode: "as_it_comes", categoryWeight: { social: 3 }, digestHour: 12 });
     expect(learned.digestDays).toEqual([4]);
     expect(learned.maxItemsPerDigest).toBe(3);
@@ -538,5 +560,80 @@ describe("metrics (1.10, 3.3)", () => {
     expect(m.stopPer1000).toBe(500);
     expect(m.interruptionsPerMemberWeek).toBe(1);
     expect(m.timeToValueDaysMedian).toBe(3);
+  });
+});
+
+describe("iteration 3: founder decisions 1-4 (send time, initial invites, availability)", () => {
+  // Replies at a given local hour on weekdays (Oct 2026: Mon 5 .. Fri 9, Mon 12 ..) and weekends (Sat 10, Sun 11).
+  const at = (y: number, mo: number, d: number, h: number) => Date.UTC(y, mo - 1, d, h + 7); // PDT
+  const weekdays = (h: number, n: number) => Array.from({ length: n }, (_, i) => at(2026, 10, [5, 6, 7, 8, 9, 12, 13, 14][i]!, h));
+  const END = at(2026, 10, 15, 8);
+
+  test("send time: default 12:00 until enough replies; weekday and weekend learned separately; quiet hours win", () => {
+    const none = A.learnSendProfile([], LA, END, [22, 8]);
+    expect([none.weekday, none.weekend, none.learned.weekday]).toEqual([12, 12, false]);
+    // 4 evening replies: below the minimum sample size, no move.
+    expect(A.learnSendProfile(weekdays(19, 4), LA, END, [22, 8]).weekday).toBe(12);
+    // 6 evening replies on weekdays: weekday moves to the evening slot, weekend stays at the default.
+    const ev = A.learnSendProfile(weekdays(19, 6), LA, END, [22, 8]);
+    expect([ev.weekday, ev.weekend, ev.samples.weekday, ev.samples.weekend]).toEqual([17, 12, 6, 0]);
+    // Evening slot needs 3 open hours before quiet hours: quiet from 19:00 leaves 2, so stay at the default.
+    expect(A.learnSendProfile(weekdays(19, 6), LA, END, [19, 8]).weekday).toBe(12);
+    // Mixed replies with no clear winner over lunch: stay at the default.
+    expect(A.learnSendProfile([...weekdays(19, 3), ...weekdays(12, 3)], LA, END, [22, 8]).weekday).toBe(12);
+    // Recency: old evening replies are outweighed by recent lunchtime ones.
+    const old = Array.from({ length: 6 }, (_, i) => at(2026, 8, 1 + i, 19)); // early September weekdays and a weekend
+    expect(A.learnSendProfile([...old, ...weekdays(9, 6)], LA, END, [22, 8]).weekday).toBe(9);
+    // The learned slot is never in quiet hours (quiet 17:00-09:00 here): fall back to the default.
+    expect(A.learnSendProfile(weekdays(19, 6), LA, END, [17, 9]).weekday).toBe(12);
+  });
+
+  test("only initial invites count against the cap; a profiling ask at cap still goes, without counting", () => {
+    const full = [entry("i1", T - 2 * DAY), entry("i2", T - DAY)];
+    expect(compose({ items: [item("x")], ledger: full }).reason).toBe("cap");
+    const ask = item("q", { kind: "profiling_question", others: [], involvesMember: false, effort: "reply", evi: 0.5, enjoy: 0.9, accept: 0.9, reviewState: "not_needed" });
+    const r = compose({ items: [item("x"), ask], ledger: full });
+    expect(r.send).toBe(true);
+    expect(r.items.map(i => i.id)).toEqual(["q"]);
+    expect(r.countsAgainstCap).toBe(false);
+    // A partner's first probe is THEIR initial invite: it counts.
+    expect(compose({ items: [item("p", { stage: "partner" })] }).countsAgainstCap).toBe(true);
+    // A "what's your week like?" check-in counts only when it carries a proposal.
+    expect(A.countsAgainstCap([ask])).toBe(false);
+    expect(A.countsAgainstCap([ask, item("x")])).toBe(true);
+    // Reveal, scheduling, reminders and acks are not items; unanswered asks do not trip the pause.
+    expect(A.unansweredInterruptions([entry("q1", T - 10 * DAY, { countsAgainstCap: false, repliedAt: undefined }), entry("q2", T - 9 * DAY, { countsAgainstCap: false, repliedAt: undefined })], "a", T)).toBe(0);
+  });
+
+  test("time options maximize joint availability from calendar, standing availability, learned times and presence", () => {
+    const now = at(2026, 10, 5, 9); // Monday 09:00 PDT
+    const thu7 = at(2026, 10, 8, 19), sat10 = at(2026, 10, 10, 10), tue7 = at(2026, 10, 6, 19);
+    const a: A.AvailabilityEvidence = { memberId: "a", tz: LA, quietHours: [22, 8], standing: [{ byDay: [4], startHour: 17, endHour: 22, source: "onboarding", statedAt: now - DAY }] };
+    const b: A.AvailabilityEvidence = { memberId: "b", tz: LA, quietHours: [22, 8], calendar: { busy: [{ start: tue7, end: tue7 + 3 * HOUR }] }, history: [{ at: sat10 - 14 * DAY, outcome: "attended" }] };
+    const r = A.chooseTimeOptions([a, b], now, { tz: LA });
+    expect(r.slots.length).toBeGreaterThanOrEqual(2);
+    expect(r.slots.length).toBeLessThanOrEqual(3);
+    const starts = r.slots.map(x => x.slot.start);
+    expect(starts).toContain(thu7); // a's standing window, b's calendar free
+    expect(starts).not.toContain(tue7); // b's calendar is busy
+    expect(new Set(starts.map(t => localParts(t, LA).day)).size).toBe(starts.length); // one per day
+    expect(r.pAny).toBeGreaterThan(Math.max(...r.slots.map(x => x.joint)));
+    // Each source moves the estimate the right way.
+    const p = (ev: A.AvailabilityEvidence, t: number) => A.availabilityProb(ev, { start: t, end: t + 2 * HOUR }, now);
+    const bare: A.AvailabilityEvidence = { memberId: "c", tz: LA };
+    expect(p(a, thu7)).toBeGreaterThan(p(bare, thu7));
+    expect(p(a, tue7)).toBeLessThan(p(bare, tue7)); // outside the stated windows
+    expect(p(b, tue7)).toBeLessThan(0.05);
+    expect(p(b, sat10)).toBeGreaterThan(p(bare, sat10));
+    expect(p({ ...bare, away: [{ start: thu7 - DAY, end: thu7 + DAY }] }, thu7)).toBe(0);
+    // Standing availability decays until re-confirmed.
+    const stale = { ...a, standing: [{ ...a.standing![0]!, statedAt: now - 120 * DAY }] };
+    expect(p(stale, thu7)).toBeLessThan(p(a, thu7));
+    expect(A.needsReconfirm(stale.standing[0]!, now)).toBe(true);
+    // A fixed-time opportunity (an event) offers its own time only.
+    expect(A.chooseTimeOptions([a, b], now, { tz: LA, fixed: true, window: { start: sat10, end: sat10 + 2 * HOUR } }).slots.map(x => x.slot.start)).toEqual([sat10]);
+    expect(A.timeOptionsPhrase(r.slots.map(x => x.slot), LA)).toMatch(/^(Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day \d+(am|pm)/);
+    // Standing availability from availability_pattern facets.
+    expect(A.standingFromFacets([{ kind: "availability_pattern", tags: ["evening:Tue", "evening:Thu"], inferred: true }], now)).toEqual([{ byDay: [2, 4], startHour: 17, endHour: 22, source: "calendar_pattern", statedAt: now, inferred: true }]);
   });
 });

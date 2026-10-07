@@ -248,7 +248,8 @@ export const PRESETS: Record<"v1_1" | "comboD", EngineConfigInput> = {
 
 // ------------------------------------------------------------------------------------------------
 // Attention budget (docs/design/2026-10-07-experience-design.md section 1, Phase 1; founder
-// defaults D1-D18). A send-time layer used by attention.ts; it is NOT part of EngineConfig, so
+// defaults D1-D18, with D2, D4 and D5 replaced by the founder's decisions of 2026-10-07: rolling
+// sends at a learned time, initial invites only on the cap, always probe first, availability capture). A send-time layer used by attention.ts; it is NOT part of EngineConfig, so
 // runEngine's behaviour and config hash are unchanged. It has its own hash (attentionConfigHash).
 // Weekdays are JavaScript getDay() numbers (0 = Sunday, 4 = Thursday), as in the design doc.
 
@@ -268,7 +269,7 @@ export interface AttentionConfig {
   qualityBar: Record<ParticipationState, number>;
   /** Quiet members get items with E >= this only (1.7); only_when_great members too (1.5). */
   quietMinEnjoy: number; onlyWhenGreatMinEnjoy: number;
-  /** D2: digest slots per state (JS weekdays), local hour, weekly or monthly (first matching weekday). */
+  /** Send slots per state (JS weekdays), local hour, weekly or monthly (first matching weekday). Founder decision 1: every day (rolling) at 12:00; D2's weekly Thursday 18:00 remains available per member. */
   digest: { days: Record<ParticipationState, number[]>; period: Record<ParticipationState, "week" | "month">; hour: number; spreadMinutes: number };
   /** D4: a break-in needs V >= valueRatio x the member's median digest-item V (defaultMedianValue before any digest). */
   breakIn: { valueRatio: number; defaultMedianValue: number };
@@ -296,12 +297,56 @@ export interface AttentionConfig {
   romanceInDigest: boolean;
   /** V14 (3.3). */
   v14: { windowDays: number; minTenureDays: number };
+  /**
+   * Founder decision 1 (2026-10-07, replaces D2): rolling sends at a per-member send time. Default
+   * hour `defaultHour` (lunchtime local). Replies are bucketed into `slots` (local hours [start, end),
+   * sent at `send`); a member's slot moves when at least `minSamples` replies in that profile
+   * (weekday / weekend, separately) are recency-weighted (half-life `halfLifeDays`) so that the best
+   * slot holds >= `minShare` of the weight and beats the default slot by `margin`. Quiet hours always
+   * win. A message is sent from the slot until `windowHours` after it.
+   */
+  sendTime: {
+    defaultHour: number; windowHours: number; weekendDays: number[];
+    slots: { name: string; start: number; end: number; send: number }[];
+    minSamples: number; halfLifeDays: number; minShare: number; margin: number;
+    /** A slot is usable only if at least this many hours from its send hour are outside the member's quiet hours (room to retry inside the window). */
+    minOpenHours: number;
+  };
+  /** Founder decision 2 (replaces D5's scope): every member-involving opportunity is probed before anyone is named. */
+  consentFirst: boolean;
+  /**
+   * Founder decision 3: only a member's initial invite to a new opportunity counts against their cap
+   * (and toward the two-unanswered pause). Items of these kinds never make a message count.
+   */
+  notInvites: ItemKind[];
+  /** Founder decision 4: availability capture and time options in probes (section 1.11 of the design doc). */
+  availability: {
+    /** Embed time options in probes (4a). */
+    timeOptions: boolean;
+    /** Options per probe: up to `maxOptions`, at least `minOptions` when that many candidates exist. */
+    minOptions: number; maxOptions: number;
+    /** Candidate slots: from `minLeadHours` to `horizonDays` ahead, at these local start hours, `slotHours` long. */
+    minLeadHours: number; horizonDays: number; slotHours: number;
+    templates: { weekday: number[]; weekend: number[] };
+    /** Stop adding options once P(at least one works for everyone) reaches this, or an option adds less than `minGain`. */
+    targetAny: number; minGain: number; minJoint: number;
+    /** Base rates of "free" by daypart before any evidence. */
+    prior: { weekdayDay: number; weekdayEvening: number; weekendDay: number; weekendEvening: number };
+    /** Standing availability (4b): a decaying prior, re-confirmed after `reconfirmDays`. */
+    standing: { inside: number; outsideFactor: number; halfLifeDays: number; statedConfidence: number; inferredConfidence: number; reconfirmDays: number };
+    /** Calendar free/busy (4c): a busy block multiplies P by `busyFactor`; a free calendar pulls P toward `freeTarget` by `freeWeight`. */
+    calendar: { busyFactor: number; freeTarget: number; freeWeight: number; offerAfterAcceptedPlans: number };
+    /** Learned from accepted and attended times (4e): weight n / (n + k), capped at `maxWeight` (unconfirmed). */
+    learned: { target: number; k: number; maxWeight: number; halfLifeDays: number; declinePenalty: number };
+    /** Opt-in weekly "what's your week like?" check-in (4d): JS weekday and local hour. */
+    weeklyCheckIn: { day: number; hour: number };
+  };
 }
 
 const perState = <T>(open: T, normal: T, quiet: T, receiving: T, paused: T): Record<ParticipationState, T> => ({ open, normal, quiet, receiving, paused });
 
 export const DEFAULT_ATTENTION: AttentionConfig = {
-  version: "attention-v1.0.0",
+  version: "attention-v1.1.0",
   caps: perState({ limit: 4, periodDays: 7 }, { limit: 2, periodDays: 7 }, { limit: 1, periodDays: 30 }, { limit: 2, periodDays: 7 }, { limit: 0, periodDays: 7 }),
   breakIns: perState({ limit: 2, periodDays: 7 }, { limit: 1, periodDays: 7 }, { limit: 0, periodDays: 30 }, { limit: 1, periodDays: 7 }, { limit: 0, periodDays: 7 }),
   lambda: perState(0.15, 0.25, 0.5, 0.25, Infinity),
@@ -309,7 +354,9 @@ export const DEFAULT_ATTENTION: AttentionConfig = {
   maxMemberItems: 2,
   qualityBar: perState(0.22, 0.3, 0.42, 0.3, Infinity),
   quietMinEnjoy: 0.6, onlyWhenGreatMinEnjoy: 0.6,
-  digest: { days: perState([2, 4], [4], [4], [4], []), period: perState("week", "week", "month", "week", "week"), hour: 18, spreadMinutes: 120 },
+  // Founder decision 1: rolling sends (a daily slot, used only when something clears the bar and the
+  // member has cap), at lunchtime local by default; Quiet stays at 1 interruption per 30 days via its cap.
+  digest: { days: perState([0, 1, 2, 3, 4, 5, 6], [0, 1, 2, 3, 4, 5, 6], [0, 1, 2, 3, 4, 5, 6], [0, 1, 2, 3, 4, 5, 6], []), period: perState("week", "week", "week", "week", "week"), hour: 12, spreadMinutes: 120 },
   breakIn: { valueRatio: 1.5, defaultMedianValue: 0.25 },
   urgencyBoost: 1.3,
   kindWeight: {
@@ -331,6 +378,27 @@ export const DEFAULT_ATTENTION: AttentionConfig = {
   blooio: { interruptMaxOutstanding: 1, logisticsMaxOutstanding: 2, reengageAfterDays: 30, reengagePercentile: 0.75 },
   romanceInDigest: false,
   v14: { windowDays: 14, minTenureDays: 14 },
+  sendTime: {
+    defaultHour: 12, windowHours: 6, weekendDays: [0, 6],
+    slots: [
+      { name: "morning", start: 7, end: 11, send: 9 }, { name: "lunch", start: 11, end: 14, send: 12 },
+      { name: "afternoon", start: 14, end: 17, send: 15 }, { name: "evening", start: 17, end: 22, send: 17 },
+    ],
+    minSamples: 5, halfLifeDays: 28, minShare: 0.4, margin: 0.15, minOpenHours: 3,
+  },
+  consentFirst: true,
+  notInvites: ["profiling_question", "reconfirm", "worthwhile_check", "nothing_yet"],
+  availability: {
+    timeOptions: true, minOptions: 2, maxOptions: 3,
+    minLeadHours: 24, horizonDays: 7, slotHours: 2,
+    templates: { weekday: [19], weekend: [10, 14, 19] },
+    targetAny: 0.9, minGain: 0.03, minJoint: 0.02,
+    prior: { weekdayDay: 0.1, weekdayEvening: 0.35, weekendDay: 0.45, weekendEvening: 0.4 },
+    standing: { inside: 0.85, outsideFactor: 0.5, halfLifeDays: 45, statedConfidence: 0.8, inferredConfidence: 0.5, reconfirmDays: 30 },
+    calendar: { busyFactor: 0.05, freeTarget: 0.8, freeWeight: 0.3, offerAfterAcceptedPlans: 1 },
+    learned: { target: 0.8, k: 2, maxWeight: 0.5, halfLifeDays: 60, declinePenalty: 0.5 },
+    weeklyCheckIn: { day: 0, hour: 17 },
+  },
 };
 
 export type AttentionConfigInput = DeepPartial<AttentionConfig>;

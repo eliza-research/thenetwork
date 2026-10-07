@@ -276,3 +276,101 @@ On top of the iteration-1 note:
 - `packages/engine/test/attention.test.ts` (+ the D9 revalidation case), `packages/engine/test/attention-sim.test.ts` (+ the iteration-2 configuration with minors).
 - `packages/engine/experiments/attentionNetwork.ts` (the options above), `packages/engine/experiments/attention.ts` (variants R, I1-I11, J1-J5, P-*, G-*, F-*; `primeProbes`, `eventActor`; `--merge`, `--no-baseline`).
 - Not touched: `opportunity.ts`, `filters.ts`, `judge*.ts`, `world.ts`, `packages/network`, `packages/sim`, `packages/observatory`, `packages/evals`.
+
+---
+
+# Iteration 3: the founder's decisions 1-4 (2026-10-07)
+
+The founder replaced D2, D4 and D5 (design doc section 9, now F1-F4): (1) rolling sends at a learned per-member send time, default 12:00 local; (2) always probe first; (3) only a member's initial invite counts against their cap; (4) availability capture, with 2-3 concrete time options in every probe. All four are implemented, are the new `DEFAULT_ATTENTION` (`attention-v1.1.0`), and were measured over 8 seeds against R (A+rules) and the iteration-2 best (G-J4), with and without the simulator fixes. **No LLM calls, $0.** Tests ran with every key empty (`OPENAI_API_KEY= SURPLUS_API_KEY= CEREBRAS_API_KEY=`, so Bun's `.env` loading cannot fill them) and without `LIVE_TESTS`.
+
+## Result
+
+- **The new defaults do not reach R in this simulator.** Without the fidelity fixes: N3 **7.4 ± 1.2** met + worthwhile per seed against R **23.1 ± 2.0** and the iteration-2 best's configuration J4 **18.5 ± 2.0** (G-J4 with fixes 1-2: **21.3 ± 1.8**; iteration 2 reported 21.1, the 0.2 drift is from changes in the shared tree since; R and J4 reproduce exactly). With fixes 1-3: H-N3 **7.3 ± 0.9** against H-R **8.6 ± 1.0** and H-J4 **6.9 ± 1.5**: all three within noise of each other. Every arm keeps every invariant (0 minor contacts, 0 canary leaks, 0 over-cap, 0 quiet-hour sends, 0 Blooio 4th-unanswered, 0 judge invariants).
+- **Almost all of the gap without fixes is decision 2 (probe first),** as in iterations 1-2: the consent funnel needs three answers (probe, partner probe, reveal). In N3, 91 first yeses per seed become 23 partner yeses and 16 meetings; R turns 119 first yeses into 44 meetings. Without ask priming for probes (fix 1), probes are also accepted less than named invites (persona worthwhile 37% vs 59%).
+- **Availability capture works where time matters.** When attendance depends on whether the member is actually free at the meeting time (fix 3, below), time options halve the share of meeting seats set at a time the member is not free (**30% vs 59%** with capture off; R: 61%) and add **+2.2 met + worthwhile per seed** (H-N3 7.3 vs H-N3na 5.1; a first run of the same pair, before the evening-slot change below, gave 8.8 vs 4.8). Under fix 3 the consent-first arm with time options ties R's named invites (7.3 vs 8.6), whereas without fix 3 probes lose by 16. Without fix 3, where the simulator ignores the meeting time entirely, capture can only cost: N3 7.4 vs N3na 8.4 (noise), and it does not reduce yeses (first yes 91 in both).
+- **Learned send time shows no benefit in this simulator** (H-N3 learned 7.3 vs H-N3f12 fixed 12:00 9.1, inside noise): persona reply timing comes from their routine and does not change whether they accept. 46-70 members per seed moved off 12:00. It is shipped because the founder asked for it, with a conservative rule (>= 5 replies per profile) so it can only move a member with evidence.
+- **Only initial invites on the cap** changes nothing measurable here because the simulator's Network sends no profiling or feedback asks; it matters in production, where they would otherwise use the cap.
+- **The doc's shadow price** still trades meetings for interruptions (H-N3λ 7.4 at 0.56 interruptions per member-week vs H-N3 7.3 at 0.67; value events per interruption 0.274 vs 0.220). Not a default (λ_state stays as configured; the harness runs λ x 0).
+
+## What was built
+
+| Decision | Code |
+|---|---|
+| 1. Rolling sends, 12:00 default, learned send time | `config.ts`: `digest.days` every day, `digest.hour` 12, new `sendTime` (slots morning 07-11 → 09:00, lunch 11-14 → 12:00, afternoon 14-17 → 15:00, evening 17-22 → 17:00; `minSamples` 5 per profile, `halfLifeDays` 28, `minShare` 0.4, `margin` 0.15 over the default slot, `minOpenHours` 3, `windowHours` 6, weekend = Sat, Sun). `attention.ts learnSendProfile` (weekday and weekend profiles separately; recency-weighted; a slot is usable only if its send hour and the next 2 hours are outside quiet hours), `CadencePrefs.sendHours` (types.ts, additive) used by the slot functions, `inSendWindow` |
+| 2. Always probe first | `config.ts consentFirst: true`; the probe content rule (D5) is unchanged; `buildProbe` takes `options` and still runs every candidate text through the leak gate |
+| 3. Only initial invites count | `config.ts notInvites` (profiling_question, reconfirm, worthwhile_check, nothing_yet); `attention.ts isInitialInvite`, `countsAgainstCap`; `composeMessage` lets a non-invite ask through at cap (priced as the first slot) and returns `countsAgainstCap` for the ledger entry; `outreach.ts isProactive` = invitation, recommendation only; new `isAsk` (profiling, feedback: not budgeted, held by the one-question rule, never toward two-unanswered) |
+| 4. Availability capture | `attention.ts`: `AvailabilityEvidence` (calendar busy blocks, standing windows, accepted / attended / declined-time history, away windows, quiet hours), `availabilityProb`, `candidateSlots`, `chooseTimeOptions` (greedy on P(at least one works for everyone), one per day, 2-3 options, fixed-time events get their own time), `timeOptionsPhrase`, `standingFromFacets` (`availability_pattern` facets), `needsReconfirm`; `config.ts availability` |
+| Judge item 5 | `packages/judge/src/metrics.ts`: `meta.reengagement: true` is exempt from `two_unanswered` (still counted in the streak), with a test |
+| Judge (coordinator request) | `packages/judge/src/metrics.ts`: new invariant `unreviewed_contact`: in a run whose network logs review events, every `probe_sent` and every `type: "proposal"` message needs an earlier `review_decision` "approve" for its opportunity; opportunities whose `probe_started` has origin "player" or `reviewed: false` are exempt; networks without a review gate (the stub, harness networks) are not checked. Test covers approve-before, no review, reject only, approve-after, player origin and no-gate runs. `bun test packages/network packages/sim packages/observatory` stays green (179 pass) |
+
+The harness (`attentionNetwork.ts`) gained `sendTime: "learned" | "fixed"`, `sendWindowHours`, `partnerInWindow` (decision 3: the partner's probe goes inside the partner's send window, within their cap, no break-in), `timeOptions` (options built per probe from engine-visible evidence; the partner is offered the slots the first member picked; the meeting is set at the earliest slot both picked; if none fit, the reveal proposes the best estimated joint slot; the calendar offer is folded into the first scheduling confirmation), and records the history the estimator learns from.
+
+## Harness-only simulation of time answers (documented, not engine behaviour)
+
+Persona agents cannot read time options. The harness simulates them from a **hidden weekly availability** (`experiments/attention.ts hiddenAvailability`) built from the persona's routine: a 2-hour slot is free if it is between waking + 1h and bedtime; not on a day with a one-off commitment (p = 0.15); evenings from 17:00: the persona's `freeEvenings`, plus 30% of other weekend evenings; weekday daytime: outside the routine's busy blocks, then 50%; weekend daytime 60%. Draws are keyed by (seed, member, local date, daypart), so a slot is always free or always busy. The engine and the Network never see it.
+
+- **Picking a slot.** When a persona says yes to a probe with options (the persona agent decides yes / no / ignore as before), it picks the offered slots it is free for; if none, it is a "yes, but not those times" (the opportunity continues without a time; the times are recorded as `declined_time`). Members of a group keep only slots every yes so far picked.
+- **Calendar.** 50% of members connect a calendar when offered after their first accepted plan; a connected calendar shows 85% of their hidden-busy candidate slots as busy (free/busy only).
+- **Fix 3, time-dependent attendance** (new, harness only). The simulator decides attendance without looking at the meeting time. With fix 3, a participant whose meeting is set at a time they are not free does not come with p = 0.7 (30% rearrange). The share of seats at a not-free time is reported in every arm. Caveat that matters for reading the H rows: today's dispatch (R) and the stub schedule every meeting two days later at 19:00 without asking. A real Network would ask "when works?" after both say yes (one more round trip, not modelled), so fix 3 overstates how much R loses to bad times, and the H rows overstate capture's advantage over named invites. The comparison H-N3 vs H-N3na (same flow, capture on or off) is clean.
+
+## Results (8 seeds, `bun packages/engine/experiments/attention.ts --only "<variant>"`)
+
+Pre-iteration-3 variants (R, J4, G-J4, H-R, H-J4) are pinned to the iteration-2 slot config (weekly Thursday 18:00 for the weekly arms, 18:00 for rolling) so they reproduce iteration 2 exactly (R: 23.1, identical per-seed values). Fixes 1-3 = ask-primed probes, outside-world event items (only as companions of a people item), time-dependent attendance.
+
+| Variant | Met + worthwhile | Int. /member-wk | Items /int. | Met+w /int. | Value /int. | V14 | Unanswered | Auto-pause /100 m-mo | Seats at a not-free time | Meetings /seed |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **No fidelity fixes** | | | | | | | | | | |
+| R A+rules (fair baseline) | **23.1 ± 2.0** | 0.67 | 1.00 | 0.058 | 0.171 | 21.1% | 7.2% | 0.5 | 62% | 43.5 |
+| J4 iteration-2 best without fixes | 18.5 ± 2.0 | 0.69 | 1.16 | 0.045 | 0.149 | 19.9% | 7.8% | 2.0 | 57% | 37.9 |
+| G-J4 iteration-2 best (fixes 1-2) | 21.3 ± 1.8 | 0.69 | 1.73 | 0.052 | 0.325 | 29.8% | 7.3% | 1.1 | 61% | 40.1 |
+| **N3 new defaults (decisions 1-4)** | **7.4 ± 1.2** | 0.64 | 1.13 | 0.020 | 0.063 | 8.1% | 7.9% | 0.5 | **25%** | 16.3 |
+| N3na N3, availability capture off | 8.4 ± 1.2 | 0.64 | 1.14 | 0.022 | 0.075 | 8.8% | 8.1% | 1.2 | 62% | 17.3 |
+| **Fixes 1-3** | | | | | | | | | | |
+| H-R R | **8.6 ± 1.0** | 0.66 | 1.00 | 0.022 | 0.060 | 9.0% | 7.2% | 0.5 | 61% | 45.3 |
+| H-J4 G-J4 | 6.9 ± 1.5 | 0.70 | 1.73 | 0.016 | 0.223 | 20.8% | 7.6% | 1.6 | 61% | 38.6 |
+| **H-N3 N3** | **7.3 ± 0.9** | 0.67 | 1.67 | 0.018 | 0.220 | 21.3% | 8.8% | 1.4 | **30%** | 27.1 |
+| H-N3na N3, availability capture off | 5.1 ± 1.1 | 0.68 | 1.69 | 0.013 | 0.204 | 20.5% | 8.3% | 1.5 | 59% | 28.3 |
+| H-N3f12 N3, fixed 12:00 (no learning) | 9.1 ± 1.5 | 0.67 | 1.66 | 0.023 | 0.229 | 22.7% | 8.3% | 1.5 | 30% | 29.8 |
+| H-N3f18 N3, fixed 18:00 | 2.6 ± 0.5 | 0.35 | 1.75 | 0.012 | 0.204 | 11.0% | 9.1% | 0.6 | 20% | 7.3 |
+| H-N3n N3 with named invites (no probes, no options) | 6.0 ± 1.1 | 0.67 | 1.68 | 0.015 | 0.218 | 21.4% | 8.4% | 1.6 | 47% | 36.9 |
+| H-N3λ N3 with the doc's shadow price | 7.4 ± 0.6 | 0.56 | 2.04 | 0.022 | 0.274 | 21.7% | 8.7% | 0.7 | 30% | 20.9 |
+
+Per-seed met + worthwhile: N3 2 8 4 9 5 12 10 9; N3na 11 14 8 6 3 11 7 7; H-R 5 13 9 12 7 9 7 7; H-J4 4 10 2 15 8 6 4 6; H-N3 8 8 6 10 6 11 4 5; H-N3na 0 6 10 4 5 7 2 7. Over 8 seeds a difference under about 4 is noise (about 3 under fix 3, where the spread is smaller).
+
+Time options (N3 / H-N3): about 400 probes per seed carried options, 2.3 options each on average; 25-26% of yes answers had no offered slot that fit; 9-13 meetings per seed were set at a slot both picked; 14-20 members per seed connected a calendar. Funnel per seed (first yes → partner yes → reveal yes → meetings): R 119 → 43 → (named) → 44; N3 91 → 23 → 39 → 16; H-N3 110 → 37 → 63 → 27. 18-25 partner probes per seed lapse at the 2-day deadline (R: 19-21), so partner-in-window timing (decision 3) is not losing more partners than "any remaining cap" did.
+
+Notes:
+
+- **H-N3f18 is a simulator artefact, not evidence against an evening send time.** The stub texts only 09:00-20:00 local, which the harness adds to quiet hours for parity; a slot at 18:00 plus up to 2 hours of jitter leaves almost no room to retry inside the window, so half the members get nothing delivered (50.5%). The same artefact pushed learned evening members out of their window in a first run of N3; the evening slot now sends at 17:00 and a slot needs 3 open hours before quiet hours (`sendTime.minOpenHours`). With real quiet hours (22:00-08:00 by default) 18:00 has 4 open hours.
+- **Learned vs fixed 12:00** (7.3 vs 9.1) is inside noise. The learned profile moves 46-70 members per seed; the simulator cannot show a benefit because the persona's reply probability does not depend on when the message arrives.
+- **Named vs probes under fix 3** (H-N3n 6.0 vs H-N3 7.3): with time options, consent-first is not worse than named invites in this setting; without time options it is (H-N3na 5.1). Named invites cannot carry time options in this harness (they would need their own time question).
+- The 1-8 "interruptions with >= 2 outstanding" in H-R, H-J4 and H-N3λ are the record-ordering artefact noted in iterations 1-2.
+
+## Defaults (config.ts DEFAULT_ATTENTION, attention-v1.1.0)
+
+- **Send time:** rolling daily slot (`digest.days` every day for Open, Normal, Quiet and Receiving; caps unchanged keep Quiet at 1 per 30 days), `digest.hour` **12**, 2-hour jitter, `sendTime.windowHours` 6; learned per member from replies as above. A member can still ask for a weekly digest.
+- **Consent-first:** `consentFirst: true`; probe content per D5 plus time options.
+- **Cap:** only initial invites (`notInvites`: profiling_question, reconfirm, worthwhile_check, nothing_yet never make a message count). Caps unchanged (Open 4/7d, Normal 2/7d, Quiet 1/30d, Receiving 2/7d). Break-ins kept for same-day items only.
+- **Availability:** `timeOptions: true`, 2-3 options, 24 hours to 7 days ahead, weekday 19:00 and weekend 10:00 / 14:00 / 19:00 candidates, 2-hour slots, stop at P(any) >= 0.9 or gain < 0.03; priors weekday day 0.10, weekday evening 0.35, weekend day 0.45, weekend evening 0.40; standing windows 0.85 inside (confidence 0.8 stated / 0.5 inferred, half-life 45 days, re-confirm after 30 days); calendar busy x 0.05, free pulls toward 0.8 by 0.3, offered after the first accepted plan; learned weight n / (n + 2) capped at 0.5; weekly check-in Sunday 17:00 (opt-in).
+- Unchanged from iteration 1: λ_state, θ_bar, items per message, hold queue, D6, D9, D10, D11, D13. The iteration-2 recommendations (λ = 0 at launch, acknowledgements folded, outside-world items only as companions, unpicked items requeued) remain recommendations for the Network's send path; the harness N3 arms use them.
+
+## Integration asks for the network session (packages/network)
+
+1. **Send time.** Keep each member's inbound reply timestamps (answers to the Network, not keywords). Before composing, call `attention.learnSendProfile(replies, tz, now, quietHours)` and set `CadencePrefs.sendHours`; use the rolling slot from `nextDigestSlot` / `digestDue` (12:00 default, 6-hour window, per-member jitter). Retry a missed slot only inside its window.
+2. **Cap counting.** Push one ledger entry per message with `countsAgainstCap` from `composeMessage(...).countsAgainstCap` (true iff the message carries an initial invite). The partner's first probe counts against the partner. Reveal, scheduling, reminders, day-of check-ins, feedback asks and acknowledgements never count and never feed the two-unanswered pause; they stay on the Blooio streak (logistics <= 2 outstanding). Align `packages/network/src/outreach.ts` with `packages/engine/src/outreach.ts`: `isProactive` = invitation, recommendation; profiling and feedback asks not budgeted, one open question at a time (`isAsk`).
+3. **Partner probes.** Send the partner's probe as soon as the first member says yes, in the partner's next send window, within the partner's cap and quiet hours; no break-in allowance.
+4. **Time options in probes.** Build `AvailabilityEvidence` per member (calendar free/busy blocks if connected; `standingFromFacets` from `availability_pattern` facets and stated windows; accepted / attended / "can't do those times" history; temporary presence away from the home city; quiet hours) and call `chooseTimeOptions([first, partner], now, { tz, window, fixed })`. Put the options in the probe copy (`buildProbe` takes `spec.options`; or `timeOptionsPhrase` in your own copy), keeping the leak gate. Parse the answer ("Thursday", "the first one", "either", "neither"); offer the partner the slots the first member picked; set the meeting at the earliest slot both picked; if none fits, propose the best joint slot in the reveal. Record outcomes into the history.
+5. **Calendar.** Offer it once, in the confirmation of a member's first accepted plan ("want me to check your calendar next time so I don't have to ask?"), free/busy only; tentative holds only with explicit consent.
+6. **Weekly check-in (opt-in).** "What's your week like?" at Sunday 17:00 local for members who opted in; send it as a profiling ask (`countsAgainstCap: false`) unless it carries a proposal. Store answers as stated windows for that week.
+7. **Judge.** Re-engagement messages already carry `meta.reengagement: true` (network.ts); the judge now exempts them from `two_unanswered`. The new `unreviewed_contact` invariant needs the existing logs: `review_decision` (oppId, decision), `probe_started` (proposal.id, origin; `reviewed: false` for player origin), `probe_sent` (oppId), and reveal / proposal messages with `meta.type: "proposal"` and `meta.proposalId` = the opportunity id.
+
+**For the simulator owner (packages/sim; the network session is doing priming, tapbacks and menus):** (a) persona answers to time options from a hidden weekly availability (this harness's `hiddenAvailability` is a starting point); (b) time-dependent attendance (fix 3); (c) the stub schedules every meeting at 19:00 two days after the last yes without asking, which is what makes 60% of seats land at a time the member is not free.
+
+## Files (iteration 3)
+
+- `packages/engine/src/config.ts` (attention section: new defaults and `sendTime`, `consentFirst`, `notInvites`, `availability`), `packages/engine/src/types.ts` (`CadencePrefs.sendHours`, additive), `packages/engine/src/attention.ts` (send time, initial-invite counting, availability capture and time options, `buildProbe` options), `packages/engine/src/outreach.ts` (initial invites only; `isAsk`, one-question rule).
+- `packages/engine/test/attention.test.ts` (rolling slot, learned send time, initial invites, time options; old D2 tests now use an explicit weekly preference), `packages/engine/test/attention-sim.test.ts` (an iteration-3 end-to-end configuration), `packages/engine/test/outreach.test.ts`.
+- `packages/engine/experiments/attentionNetwork.ts` (iteration-3 options), `packages/engine/experiments/attention.ts` (variants N3*, H-*; `hiddenAvailability`; fix 3; meetings-and-time table; pre-iteration-3 variants pinned to the iteration-2 slot config).
+- `packages/judge/src/metrics.ts`, `packages/judge/test/metrics.test.ts` (re-engagement exemption, `unreviewed_contact`).
+- `docs/design/2026-10-07-experience-design.md` (decisions F1-F4 replace D2, D4, D5; new section 1.11).
+- Not touched: `packages/network`, `packages/observatory`, `packages/sim`.
