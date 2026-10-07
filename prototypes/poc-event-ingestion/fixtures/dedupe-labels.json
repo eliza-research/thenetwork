@@ -1,0 +1,634 @@
+[
+ {
+  "key": "luma-discover:evt-GmzaMgBi65qZ5W5||cerebral-valley:https://luma.com/sergey-spc",
+  "dup": true,
+  "why": "same Luma URL",
+  "a": "-1 to Physical Intelligence with Sergey Levine",
+  "b": "-1 to Physical Intelligence with Sergey Levine",
+  "round": 1
+ },
+ {
+  "key": "luma-ics:evt-D083fftWbb5Dpqv||cerebral-valley:https://luma.com/init-conf",
+  "dup": true,
+  "why": "same Luma URL",
+  "a": "init() by WorkOS",
+  "b": "init by WorkOS",
+  "round": 1
+ },
+ {
+  "key": "luma-ics:evt-bD3P1xxKxTJssRJ||cerebral-valley:https://luma.com/claude-founder-salon",
+  "dup": true,
+  "why": "same Luma URL",
+  "a": "Claude Founder Salon",
+  "b": "Claude Founder Salon",
+  "round": 1
+ },
+ {
+  "key": "luma-discover:evt-hnBEwpgdB1yLhQi||cerebral-valley:https://luma.com/TheNewReach",
+  "dup": true,
+  "why": "same Luma URL",
+  "a": "ElevenLabs \u00d7 Creator Spotlight: The New Reach: How creators are growing with AI audio tooling",
+  "b": "ElevenLabs \u00d7 Creator Spotlight: The New Reach: How creators are growing with AI audio tooling",
+  "round": 1
+ },
+ {
+  "key": "cerebral-valley:https://www.meetup.com/thalesians/events/316553977||meetup:316553977",
+  "dup": true,
+  "why": "same Meetup URL",
+  "a": "Hybrid Event: Nizar Touzi - Schr\u00f6dinger & Bass for Generative Diffusion Modeling",
+  "b": "Hybrid Event: Nizar Touzi - Schr\u00f6dinger & Bass for Generative Diffusion Modeling",
+  "round": 1
+ },
+ {
+  "key": "cerebral-valley:https://www.meetup.com/new-york-coworking-friends/events/316633923||meetup:316633923",
+  "dup": true,
+  "why": "same Meetup URL",
+  "a": "PHDs & Pints: How AI Sees Cancer",
+  "b": "PHDs & Pints: How AI Sees Cancer",
+  "round": 1
+ },
+ {
+  "key": "luma-discover:evt-5Dp3ebA9iX6Zsdh||cerebral-valley:https://luma.com/claude-r5w5",
+  "dup": true,
+  "why": "same Luma URL; event renamed",
+  "a": "Claude Build Day | Mental Health & Wellness",
+  "b": "Claude Impact Lab | Mental Health & Wellness",
+  "round": 1
+ },
+ {
+  "key": "luma-ics:evt-KSlsJ1Mx01Jw0pc||cerebral-valley:https://luma.com/3h1nafmg",
+  "dup": true,
+  "why": "same Luma URL",
+  "a": "Reactor x Google: World Models Hackathon",
+  "b": "Reactor x Google: World Models Hackathon",
+  "round": 1
+ },
+ {
+  "key": "sfpl:2026/10/06/celebration-made-sf-handcrafted-high-tech-manufacturing-dogpatch||meetup:316362218",
+  "dup": true,
+  "why": "identical title+time; SFPL lists organizing branch (Main), Meetup lists actual site - likely same event (moderate confidence)",
+  "a": "Celebration: Made in SF: Handcrafted to High-Tech Manufacturing in Dogpatch",
+  "b": "Made in SF: Handcrafted to High-Tech Manufacturing in Dogpatch",
+  "round": 1
+ },
+ {
+  "key": "cerebral-valley:https://luma.com/campai-sftw-2026||cerebral-valley:https://partiful.com/e/wgzQaLCyAPobkZnJpzOP",
+  "dup": true,
+  "why": "same title, same day, cross-posted on Luma and Partiful; descriptions name same speakers (Auth0)",
+  "a": "Camp AI: Production-Ready Agents",
+  "b": "Camp AI: Production-Ready Agents - #SFTechWeek",
+  "round": 1
+ },
+ {
+  "key": "cerebral-valley:https://www.tech-week.com/calendar/sf/events/neural-concept-workshop-33acf3cd-ea43-42df-8d22-9f12e18131d9||cerebral-valley:https://partiful.com/e/yw9gLOT2Saia2PpXt8ih",
+  "dup": true,
+  "why": "same title, same day; Tech Week calendar entry and Partiful page for the same workshop",
+  "a": "Neural Concept WorkShop",
+  "b": "Neural Concept Workshop: Engineering Intelligence in Action",
+  "round": 1
+ },
+ {
+  "key": "cerebral-valley:https://www.tech-week.com/calendar/sf/events/matched-by-nexa-sf-quest-week-843f4dd8-3971-496e-98de-8d7ab59396fa||cerebral-valley:https://partiful.com/e/KziCESuBftyxz0IPC2lJ",
+  "dup": true,
+  "why": "same NEXA matching program, same day",
+  "a": "Matched by NEXA",
+  "b": "Matched by NEXA - Quest Week",
+  "round": 1
+ },
+ {
+  "key": "luma-discover:evt-4M7eyIkR3AyapEO||cerebral-valley:https://agenticzero.xyz/",
+  "dup": true,
+  "why": "Agentic Zero summit: CV links to its own site, Luma has the RSVP page",
+  "a": "Agentic Zero: The Agentic Finance Summit #SFTechWeek",
+  "b": "Agentic Zero",
+  "round": 1
+ },
+ {
+  "key": "luma-ics:evt-4M7eyIkR3AyapEO||cerebral-valley:https://agenticzero.xyz/",
+  "dup": true,
+  "why": "same as previous (Luma ICS copy)",
+  "a": "Agentic Zero: The Agentic Finance Summit #SFTechWeek",
+  "b": "Agentic Zero",
+  "round": 1
+ },
+ {
+  "key": "cerebral-valley:https://www.eventbrite.com/e/tickets-1990614661037||eventbrite:1990614661037",
+  "dup": true,
+  "why": "same summit, Eventbrite title shortened",
+  "a": "Data Streaming Summit 2026: The Data Streaming + Agent Infra Conference",
+  "b": "Data Streaming Summit 2026: The Data + Agent Conference",
+  "round": 1
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/RJzxgE7vucl2zlePSYkJ||cerebral-valley:https://luma.com/builde-q0bj",
+  "dup": true,
+  "why": "same Pax Silica hackathon (Nordic theme) on Partiful and Luma (moderate confidence)",
+  "a": "Pax Silica Hackathon: The Nordic x Innovation",
+  "b": "Pax Silica Hackathon: Tech Week",
+  "round": 1
+ },
+ {
+  "key": "luma-discover:evt-nxyKvlc4QghQdd4||cerebral-valley:https://partiful.com/e/NANZ87JdLhh0sePgmzOK",
+  "dup": false,
+  "why": "different COLM happy hours: Luma one hosted by Centific/Reinforce Labs, Partiful one with Workato",
+  "a": "Agents You Can Trust : A COLM Happy Hour",
+  "b": "COLM Happy Hour",
+  "round": 1
+ },
+ {
+  "key": "luma-ics:evt-nxyKvlc4QghQdd4||cerebral-valley:https://partiful.com/e/NANZ87JdLhh0sePgmzOK",
+  "dup": false,
+  "why": "same as previous (Luma ICS copy)",
+  "a": "Agents You Can Trust : A COLM Happy Hour",
+  "b": "COLM Happy Hour",
+  "round": 1
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/NANZ87JdLhh0sePgmzOK||cerebral-valley:https://luma.com/yhcfodng",
+  "dup": false,
+  "why": "different hosts: Workato vs Appen",
+  "a": "COLM Happy Hour",
+  "b": "Appen x CoLM: Happy Hour",
+  "round": 1
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/NANZ87JdLhh0sePgmzOK||cerebral-valley:https://luma.com/timy2nh8",
+  "dup": false,
+  "why": "different hosts: Workato vs Goodfire",
+  "a": "COLM Happy Hour",
+  "b": "Goodfire COLM Happy Hour",
+  "round": 1
+ },
+ {
+  "key": "cerebral-valley:https://www.tech-week.com/calendar/sf/events/ai-insider-dinner-and-roundtable-invite-only-2fe6e2bb-d17b-42d3-b29b-d2787c17f537||cerebral-valley:https://partiful.com/e/QI7bnEeEUf2sgk5oO4Y0",
+  "dup": false,
+  "why": "different dinners: Business Insider roundtable vs Rasa",
+  "a": "AI Insider Dinner & Roundtable (Invite Only)",
+  "b": "AI Leaders Dinner (Invite-Only)",
+  "round": 1
+ },
+ {
+  "key": "cerebral-valley:https://luma.com/4w7ljpgy||cerebral-valley:https://www.meetup.com/new-york-coworking-friends/events/316633923",
+  "dup": false,
+  "why": "different events",
+  "a": "New AI Teammates",
+  "b": "PHDs & Pints: How AI Sees Cancer",
+  "round": 1
+ },
+ {
+  "key": "luma-discover:evt-UIFp0V36rAAHLdz||cerebral-valley:https://partiful.com/e/j7k5LyRyyuuvxpkSegCj",
+  "dup": false,
+  "why": "different happy hours",
+  "a": "Goodfire COLM Happy Hour",
+  "b": "Compute Happy Hour",
+  "round": 1
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/j7k5LyRyyuuvxpkSegCj||cerebral-valley:https://partiful.com/e/icp7kaojabHTxhwkLEFN",
+  "dup": false,
+  "why": "different happy hours",
+  "a": "Compute Happy Hour",
+  "b": "AI + Games: Good Start Labs Happy Hour",
+  "round": 1
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/UyAvfVLzWQ6hBCkyG1KN||cerebral-valley:https://partiful.com/e/7uGdxj9tFbEVQz7KTHCE",
+  "dup": false,
+  "why": "different CFO events: Tabs & Campfire vs Maxima/Levelpath",
+  "a": "Decant the Decision on Your AI-Native Finance Tech Stack: Build vs. Buy with Tabs & Campfire",
+  "b": "Build the AI-Native Office of the CFO Stack",
+  "round": 1
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/Q0t9NuXxZumV4XLCTH3a||cerebral-valley:https://partiful.com/e/UVbHvRJ8GTxln0dw7m6v",
+  "dup": false,
+  "why": "different events: Future AGI vs BytePort",
+  "a": "Own the Intelligence",
+  "b": "Infra for Intelligence",
+  "round": 1
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/x6eA2bIYn8udQ73qpKHN||cerebral-valley:https://www.meetup.com/startups-and-tech-events-in-san-francisco/events/315907918",
+  "dup": false,
+  "why": "different",
+  "a": "Databricks for Startups Networking Party",
+  "b": "Startup Pitch & Networking",
+  "round": 1
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/vYWYVvKrK1xOzBFCLsFd||cerebral-valley:https://partiful.com/e/nb5OgG4Muhx5ENLSv0iR",
+  "dup": false,
+  "why": "different",
+  "a": "UK AI Hardware Plan",
+  "b": "SF Hardware & Robotics Showcase | #SFTechWeek",
+  "round": 1
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/IL3sKweGcfohlDRJGFkk||cerebral-valley:https://partiful.com/e/thtgzDIovjistP8GWvTd",
+  "dup": false,
+  "why": "different",
+  "a": "From Prototype to Production: Scaling Voice AI #SFTechWeek",
+  "b": "The AI Convergence: Voice, Video, Agents & Infrastructure",
+  "round": 1
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/0evIJ7ZYrAtvyBxQybIT||cerebral-valley:https://partiful.com/e/6A07TfJAH7Lley6MVjUD",
+  "dup": false,
+  "why": "different",
+  "a": "Scaling AI and Deep Tech Companies across International Markets",
+  "b": "Embodied AI \u2260 Robotics",
+  "round": 1
+ },
+ {
+  "key": "luma-ics:evt-GmzaMgBi65qZ5W5||cerebral-valley:https://luma.com/sergey-spc",
+  "dup": true,
+  "why": "same Luma URL",
+  "a": "-1 to Physical Intelligence with Sergey Levine",
+  "b": "-1 to Physical Intelligence with Sergey Levine",
+  "round": 2
+ },
+ {
+  "key": "luma-discover:evt-yxLJ9l2Dak0Ac1w||cerebral-valley:https://luma.com/neocloud_summit_oct8",
+  "dup": true,
+  "why": "same Luma URL",
+  "a": "NeoCloud Summit 2026 \u2014 Where the Next Cloud Gets Built",
+  "b": "NeoCloud Summit 2026 \u2014 Where the Next Cloud Gets Built",
+  "round": 2
+ },
+ {
+  "key": "luma-ics:evt-yxLJ9l2Dak0Ac1w||cerebral-valley:https://luma.com/neocloud_summit_oct8",
+  "dup": true,
+  "why": "same Luma URL",
+  "a": "NeoCloud Summit 2026 \u2014 Where the Next Cloud Gets Built",
+  "b": "NeoCloud Summit 2026 \u2014 Where the Next Cloud Gets Built",
+  "round": 2
+ },
+ {
+  "key": "luma-ics:evt-upHsmIFulrMzHhz||cerebral-valley:https://luma.com/notion-jz9u",
+  "dup": true,
+  "why": "same Luma URL; same start time",
+  "a": "Product Leader Collective presents: The Software Factory Debate",
+  "b": "The Software Factory Debate",
+  "round": 2
+ },
+ {
+  "key": "cerebral-valley:https://www.meetup.com/elastic-new-york-city-user-group/events/316299245||meetup:316299245",
+  "dup": true,
+  "why": "same Meetup URL",
+  "a": "Coding Agents with Elastic Memory + The Evolution to Stateless Serverless",
+  "b": "Coding Agents with Elastic Memory + The Evolution to Stateless Serverless",
+  "round": 2
+ },
+ {
+  "key": "cerebral-valley:https://www.meetup.com/elastic-new-york-city-user-group/events/316516887||meetup:316516887",
+  "dup": true,
+  "why": "same Meetup URL",
+  "a": "AI Agents Hack Night | Mistral AI x Elasticsearch",
+  "b": "AI Agents Hack Night | Mistral AI x Elasticsearch",
+  "round": 2
+ },
+ {
+  "key": "luma-discover:evt-SX0cuyCJwCrUEWu||cerebral-valley:https://luma.com/m2o3zerh",
+  "dup": true,
+  "why": "same Luma URL",
+  "a": "Building at the Frontier: Hypergrowth Startup Operator Panel",
+  "b": "Building at the Frontier: Hypergrowth Startup Operator Panel",
+  "round": 2
+ },
+ {
+  "key": "luma-ics:evt-SX0cuyCJwCrUEWu||cerebral-valley:https://luma.com/m2o3zerh",
+  "dup": true,
+  "why": "same Luma URL",
+  "a": "Building at the Frontier: Hypergrowth Startup Operator Panel",
+  "b": "Building at the Frontier: Hypergrowth Startup Operator Panel",
+  "round": 2
+ },
+ {
+  "key": "luma-ics:evt-l26jfmAN8H5rOxc||cerebral-valley:https://partiful.com/e/XaBTYkfWChPrquuI6uPH",
+  "dup": true,
+  "why": "Claude Founder House program listed on Luma (Anthropic calendar) and Partiful, same day (moderate confidence)",
+  "a": "Claude Founder House San Francisco",
+  "b": "Claude Founder House",
+  "round": 2
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/bJFh4FHPWWvaOQaBbLcP||cerebral-valley:https://www.tech-week.com/calendar/sf/events/extending-postgres-with-sync-engine-1c3e2ea9-089a-4320-ab2e-0f0ec071a792",
+  "dup": true,
+  "why": "identical title, same day; Partiful RSVP page and Tech Week calendar entry",
+  "a": "Extending Postgres With Sync Engine",
+  "b": "Extending Postgres With Sync Engine",
+  "round": 2
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/MXd2fC8umpyvOwQ3KP3S||cerebral-valley:https://partiful.com/e/DH6cYUdnnwdmcVhZgyT4",
+  "dup": false,
+  "why": "two different sessions in a Google for Startups & NVIDIA series",
+  "a": "Google for Startups & NVIDIA: From Compute to Competitive Moats: Building Defensibly",
+  "b": "Google for Startups & NVIDIA: Scaling Velocity, Open Infrastructure, and Frontier AI",
+  "round": 2
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/LWLwNu1IOgyHjy9oJrt9||cerebral-valley:https://www.tech-week.com/calendar/sf/events/ship-like-a-baddie-build-an-ai-product-or-automate-a-workflow-in-5-hours-406b649e-24c9-484c-838a-5f3e97d656b3",
+  "dup": true,
+  "why": "same 'Ship Like a Baddie' build day listed on Partiful and Tech Week (moderate confidence)",
+  "a": "Ship Like a Baddie: Build & Launch an AI Product in One Day",
+  "b": "Ship Like a Baddie: Build an AI Product or Automate a Workflow in 5 Hours",
+  "round": 2
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/78cklI4QrHnDOqiRcOkx||cerebral-valley:https://partiful.com/e/mV93caH0Cl9Xb3LEkcsk",
+  "dup": false,
+  "why": "two different sessions in a 'Founder Reset' series",
+  "a": "The Founder Reset: What Your Company Data is Worth",
+  "b": "The Founder Reset: Zero to Unicorn with Bolt.new CEO",
+  "round": 2
+ },
+ {
+  "key": "luma-discover:evt-vNKl2M28SygYc1r||luma-ics:evt-a8KcgWc4t3KYW0b",
+  "dup": false,
+  "why": "same club, different chapters/venues (Williamsburg vs Midtown East)",
+  "a": "The New York Philosophy Club: Williamsburg",
+  "b": "The New York Philosophy Club: Midtown East",
+  "round": 2
+ },
+ {
+  "key": "luma-discover:evt-vNKl2M28SygYc1r||luma-ics:evt-quCntudV7JvVi9B",
+  "dup": false,
+  "why": "same club, different chapters/venues (Williamsburg vs Columbus Circle)",
+  "a": "The New York Philosophy Club: Williamsburg",
+  "b": "The New York Philosophy Club: Columbus Circle",
+  "round": 2
+ },
+ {
+  "key": "luma-discover:evt-sKns4nz7xGsK7ZJ||luma-ics:evt-UIFp0V36rAAHLdz",
+  "dup": false,
+  "why": "different COLM happy hours (Appen vs Goodfire)",
+  "a": "Appen x CoLM: Happy Hour in San Francisco",
+  "b": "Goodfire COLM Happy Hour",
+  "round": 2
+ },
+ {
+  "key": "luma-discover:evt-UIFp0V36rAAHLdz||luma-ics:evt-sKns4nz7xGsK7ZJ",
+  "dup": false,
+  "why": "different COLM happy hours (Goodfire vs Appen)",
+  "a": "Goodfire COLM Happy Hour",
+  "b": "Appen x CoLM: Happy Hour in San Francisco",
+  "round": 2
+ },
+ {
+  "key": "cerebral-valley:https://www.meetup.com/new-york-software-tech-group/events/316687672||cerebral-valley:https://www.meetup.com/new-york-coworking-friends/events/316633923",
+  "dup": true,
+  "why": "same talk 'How AI Sees Cancer' co-listed by two Meetup groups 30 min apart (low confidence)",
+  "a": "Tech Connect: How AI Sees Cancer",
+  "b": "PHDs & Pints: How AI Sees Cancer",
+  "round": 2
+ },
+ {
+  "key": "cerebral-valley:https://www.meetup.com/new-york-software-tech-group/events/316687672||meetup:316633923",
+  "dup": true,
+  "why": "same as previous; Meetup row for the PHDs & Pints listing (low confidence)",
+  "a": "Tech Connect: How AI Sees Cancer",
+  "b": "PHDs & Pints: How AI Sees Cancer",
+  "round": 2
+ },
+ {
+  "key": "cerebral-valley:https://www.tech-week.com/calendar/sf/events/tfot-global-innovation-showcase-deep-tech-dual-tech-proptech-web3-at-war-memoria-8a16e53a-b118-493d-bfd2-b0893d518417||cerebral-valley:https://www.tech-week.com/calendar/sf/events/tfot-global-innovation-showcase-scaling-ai-and-deep-tech-at-war-memorial-952db2ad-f119-471e-bb84-db089219c202",
+  "dup": false,
+  "why": "two different showcase tracks at War Memorial",
+  "a": "TFOT: Global Innovation Showcase Deep Tech, Dual Tech, Proptech, Web3 at War Memorial",
+  "b": "TFOT: Global Innovation Showcase Scaling AI & Deep Tech at War Memorial",
+  "round": 2
+ },
+ {
+  "key": "cerebral-valley:https://www.meetup.com/startups-and-tech-events-in-san-francisco/events/315907920||cerebral-valley:https://www.meetup.com/startups-and-tech-events-in-san-francisco/events/315907918",
+  "dup": false,
+  "why": "different",
+  "a": "Tech Networking Event by Startup Valley",
+  "b": "Startup Pitch & Networking",
+  "round": 2
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/WLapougeR4S8RhzELmuj||cerebral-valley:https://partiful.com/e/v6nBj3CCfP9ZwfcyHMNT",
+  "dup": false,
+  "why": "different",
+  "a": "Kyberis Agentic Threat Happy Hour",
+  "b": "Agentic Knowledge Happy Hour",
+  "round": 2
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/rmHzgSeqOPk9MfqNMNWY||cerebral-valley:https://partiful.com/e/i4ZCqGUWc7HJ6JaKFZlc",
+  "dup": false,
+  "why": "different",
+  "a": "Far From the Frontier",
+  "b": "Germany at the Frontier",
+  "round": 2
+ },
+ {
+  "key": "cerebral-valley:https://www.eventbrite.com/e/tickets-1996127981527||cerebral-valley:https://www.eventbrite.com/e/tickets-1997947852811",
+  "dup": false,
+  "why": "different organizers",
+  "a": "Tech Week: AI & Tech Networking",
+  "b": "AI & Tech Networking Event by Ascent Valley",
+  "round": 2
+ },
+ {
+  "key": "cerebral-valley:https://www.tech-week.com/calendar/sf/events/the-frontier-of-finance-e66c05be-d7e6-41fd-89d2-bb67c81eb8ed||cerebral-valley:https://partiful.com/e/i4ZCqGUWc7HJ6JaKFZlc",
+  "dup": false,
+  "why": "different",
+  "a": "The Frontier of Finance",
+  "b": "Germany at the Frontier",
+  "round": 2
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/NANZ87JdLhh0sePgmzOK||cerebral-valley:https://partiful.com/e/oLMID6xfrXbLu4nvzqNI",
+  "dup": false,
+  "why": "different",
+  "a": "COLM Happy Hour",
+  "b": "Neural Concept VIP Happy Hour",
+  "round": 2
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/tjiOWQ6R0REOGWjUZ3Kf||cerebral-valley:https://partiful.com/e/RJzxgE7vucl2zlePSYkJ",
+  "dup": false,
+  "why": "different",
+  "a": "The Musa Labs Hackathon",
+  "b": "Pax Silica Hackathon: The Nordic x Innovation",
+  "round": 2
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/7O725PQ56Ki4P8gHKyiM||sfpl:2026/10/07/workshop-ball-bounce-test",
+  "dup": false,
+  "why": "different",
+  "a": "Ship an AI Voice Agent Workshop",
+  "b": "Workshop: Ball Bounce Test",
+  "round": 2
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/77nr2ZLJBqO1M5wpTyIZ||cerebral-valley:https://partiful.com/e/Ac0K8kEf23vKSJnAfaVQ",
+  "dup": false,
+  "why": "different",
+  "a": "Robotics x AI Pitch & Wine",
+  "b": "AWS \u00d7 NVIDIA AI Pitch Competition",
+  "round": 2
+ },
+ {
+  "key": "luma-discover:evt-D083fftWbb5Dpqv||cerebral-valley:https://luma.com/init-conf",
+  "dup": true,
+  "why": "same Luma URL",
+  "a": "init() by WorkOS",
+  "b": "init by WorkOS",
+  "round": 3
+ },
+ {
+  "key": "luma-discover:evt-bD3P1xxKxTJssRJ||cerebral-valley:https://luma.com/claude-founder-salon",
+  "dup": true,
+  "why": "same Luma URL",
+  "a": "Claude Founder Salon",
+  "b": "Claude Founder Salon",
+  "round": 3
+ },
+ {
+  "key": "luma-discover:evt-upHsmIFulrMzHhz||cerebral-valley:https://luma.com/notion-jz9u",
+  "dup": true,
+  "why": "same Luma URL; same start time",
+  "a": "Product Leader Collective presents: The Software Factory Debate",
+  "b": "The Software Factory Debate",
+  "round": 3
+ },
+ {
+  "key": "luma-ics:evt-hnBEwpgdB1yLhQi||cerebral-valley:https://luma.com/TheNewReach",
+  "dup": true,
+  "why": "same Luma URL",
+  "a": "ElevenLabs \u00d7 Creator Spotlight: The New Reach: How creators are growing with AI audio tooling",
+  "b": "ElevenLabs \u00d7 Creator Spotlight: The New Reach: How creators are growing with AI audio tooling",
+  "round": 3
+ },
+ {
+  "key": "cerebral-valley:https://www.meetup.com/ai-circle-for-entrepreneurs/events/316803470||meetup:316803470",
+  "dup": true,
+  "why": "same Meetup URL",
+  "a": "AI AFTER: Founders & Entrepreneurs Afterwork Hangout #2 @230 Fifth Rooftop",
+  "b": "AI AFTER: NYC Founders & Entrepreneurs Afterwork Hangout #2 @230 Fifth Rooftop",
+  "round": 3
+ },
+ {
+  "key": "luma-discover:evt-KSlsJ1Mx01Jw0pc||cerebral-valley:https://luma.com/3h1nafmg",
+  "dup": true,
+  "why": "same Luma URL",
+  "a": "Reactor x Google: World Models Hackathon",
+  "b": "Reactor x Google: World Models Hackathon",
+  "round": 3
+ },
+ {
+  "key": "luma-ics:evt-5Dp3ebA9iX6Zsdh||cerebral-valley:https://luma.com/claude-r5w5",
+  "dup": true,
+  "why": "same Luma URL; renamed",
+  "a": "Claude Build Day | Mental Health & Wellness",
+  "b": "Claude Impact Lab | Mental Health & Wellness",
+  "round": 3
+ },
+ {
+  "key": "sfpl:2026/10/06/services-mastering-medi-cal-untangling-web||meetup:316362146",
+  "dup": true,
+  "why": "same Medi-Cal session; SFPL Main is 100 Larkin St, the Meetup venue",
+  "a": "Services: Mastering Medi-Cal\u2014Untangling the Web",
+  "b": "Mastering Medi-Cal\u2014Untangling the Web",
+  "round": 3
+ },
+ {
+  "key": "cerebral-valley:https://luma.com/AIR-AgentControls||cerebral-valley:https://www.tech-week.com/calendar/sf/events/agent-controls-and-the-governance-gap-272d2be8-d2ab-4112-9ab3-741d00d664e0",
+  "dup": true,
+  "why": "identical title, same day; Luma page and Tech Week calendar entry",
+  "a": "Agent Controls and the Governance Gap",
+  "b": "Agent Controls and the Governance Gap",
+  "round": 3
+ },
+ {
+  "key": "cerebral-valley:https://luma.com/xgnl2vci||cerebral-valley:https://luma.com/user/vstarpr",
+  "dup": true,
+  "why": "identical title, same day; event page vs host's Luma profile link",
+  "a": "The AI Founder Playbook, Rewritten - #AIWeekNY #Dinner",
+  "b": "The AI Founder Playbook, Rewritten",
+  "round": 3
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/FReBp8EVikvNdpsi8Eai||cerebral-valley:https://worth.com/event/techonomy-2026",
+  "dup": true,
+  "why": "Techonomy 2026 conference: Partiful side-listing and the official site",
+  "a": "Techonomy26 - #SFTechWeek",
+  "b": "Techonomy 2026",
+  "round": 3
+ },
+ {
+  "key": "eventbrite:1977905173618||meetup:316760402",
+  "dup": false,
+  "why": "improv class vs spikeball",
+  "a": "SF - Thursday Night Drop-In Improv Class (SanFrancisco-CA)",
+  "b": "San Francisco - Thursday Pickup Spikeball",
+  "round": 3
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/XrZoQnhDUi9SNhu88DZf||cerebral-valley:https://partiful.com/e/z6zF9hVebCOfeMWLmM8B",
+  "dup": false,
+  "why": "different dinners",
+  "a": "AI x Games Dinner",
+  "b": "AI x Healthcare Dinner",
+  "round": 3
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/MfFE7jGzh5Hi6jww7h1e||cerebral-valley:https://partiful.com/e/6rjykg0wVlXaYeKnRhFp",
+  "dup": false,
+  "why": "different dinners",
+  "a": "Investing: Dinner with Founders & Investors",
+  "b": "Dinner with 14 Investors + 1 Imposter",
+  "round": 3
+ },
+ {
+  "key": "nyc-parks:2109868||meetup:316318189",
+  "dup": false,
+  "why": "different events in different parks",
+  "a": "Summer on the Hudson: Forest Bathing",
+  "b": "Blood on the Clocktower",
+  "round": 3
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/XrZoQnhDUi9SNhu88DZf||cerebral-valley:https://partiful.com/e/OYitylvrnt5tXcBtWXug",
+  "dup": false,
+  "why": "different dinners",
+  "a": "AI x Games Dinner",
+  "b": "Benchmark AI Dinner",
+  "round": 3
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/j7k5LyRyyuuvxpkSegCj||cerebral-valley:https://partiful.com/e/Z2JcaSjMuPo5UZe8Lq86",
+  "dup": false,
+  "why": "different happy hours",
+  "a": "Compute Happy Hour",
+  "b": "Physical AI Happy Hour",
+  "round": 3
+ },
+ {
+  "key": "cerebral-valley:https://www.tech-week.com/calendar/sf/events/physical-ai-in-the-real-world-a7d424ea-46d0-4ce3-a9fd-d49fa4374e9a||cerebral-valley:https://partiful.com/e/njAleOwDWhsRleoXm2aD",
+  "dup": false,
+  "why": "different",
+  "a": "Physical AI in the Real World",
+  "b": "Psychological Burnout in the Age of AI",
+  "round": 3
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/EdIq0UGqC8Pk1Qh0ZRCT||cerebral-valley:https://partiful.com/e/6nYbFMRG6CSAERI5EDP4",
+  "dup": false,
+  "why": "different",
+  "a": "AI, Product, & the Teams Building Both: A Dinner for CPTOs",
+  "b": "Unprompted: Founders building the next thing people do for fun",
+  "round": 3
+ },
+ {
+  "key": "cerebral-valley:https://partiful.com/e/s3bUQ8Pis81pPefbZA9C||cerebral-valley:https://partiful.com/e/RJzxgE7vucl2zlePSYkJ",
+  "dup": false,
+  "why": "different hackathons",
+  "a": "Marathon Mode Hackathon (No Compaction Allowed)",
+  "b": "Pax Silica Hackathon: The Nordic x Innovation",
+  "round": 3
+ }
+]

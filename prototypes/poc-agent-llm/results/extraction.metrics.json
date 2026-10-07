@@ -1,0 +1,384 @@
+{
+  "n": 200,
+  "schemaValidFirst": 1,
+  "schemaValidAfterRepair": 1,
+  "perField": {
+    "city": {
+      "precision": 1,
+      "recall": 0.975,
+      "tp": 79,
+      "fp": 0,
+      "fn": 2
+    },
+    "state_change": {
+      "precision": 1,
+      "recall": 1,
+      "tp": 38,
+      "fp": 0,
+      "fn": 0
+    },
+    "romance_opt_in": {
+      "precision": 1,
+      "recall": 1,
+      "tp": 40,
+      "fp": 0,
+      "fn": 0
+    },
+    "romance=opt_in": {
+      "precision": 1,
+      "recall": 1,
+      "tp": 25,
+      "fp": 0,
+      "fn": 0
+    },
+    "quiet_hours": {
+      "precision": 1,
+      "recall": 1,
+      "tp": 29,
+      "fp": 0,
+      "fn": 0
+    },
+    "age_signal": {
+      "precision": 0.95,
+      "recall": 1,
+      "tp": 38,
+      "fp": 2,
+      "fn": 0
+    },
+    "age=under_18": {
+      "precision": 1,
+      "recall": 1,
+      "tp": 16,
+      "fp": 0,
+      "fn": 0
+    },
+    "intents": {
+      "precision": 0.932,
+      "recall": 0.986,
+      "tp": 219,
+      "fp": 16,
+      "fn": 3
+    },
+    "intents(any)": {
+      "precision": 0.994,
+      "recall": 1,
+      "tp": 165,
+      "fp": 1,
+      "fn": 0
+    },
+    "sensitive(topic)": {
+      "precision": 0.939,
+      "recall": 1,
+      "tp": 46,
+      "fp": 3,
+      "fn": 0
+    },
+    "sensitive(any)": {
+      "precision": 0.958,
+      "recall": 1,
+      "tp": 46,
+      "fp": 2,
+      "fn": 0
+    }
+  },
+  "strictGatingMicro": {
+    "precision": 0.991,
+    "recall": 0.991,
+    "tp": 224,
+    "fp": 2,
+    "fn": 2
+  },
+  "strictAllMicro": {
+    "precision": 0.959,
+    "recall": 0.99,
+    "tp": 489,
+    "fp": 21,
+    "fn": 5
+  },
+  "exactMatchAllFields": 0.895,
+  "falseRomanceOptIns": 0,
+  "sensitive": {
+    "labeled": 46,
+    "detected": 46,
+    "recall": 1,
+    "markedNonPrivate": 0,
+    "falsePositiveItems": 2
+  },
+  "failures": {
+    "intents": [
+      {
+        "id": "ex_001",
+        "style": "longer rambling message (3-5 sentences) mixing context and the request",
+        "text": "Hey! I live in the Mission and work late shifts until 10pm most nights which makes it hard to stay consistent with my running goals. I'm looking for an accountability buddy to help keep me on track with getting out there regularly, someone who can check in and push me to actually follow through even when I'm tired. My friend Sarah just moved here and is hoping to meet someone to date if you have any ideas for her by the way. Between juggling two kids and these hours I really need the structure to make sure I don't skip my runs!",
+        "label": [
+          "growth"
+        ],
+        "pred": [
+          "hobby",
+          "growth"
+        ]
+      },
+      {
+        "id": "ex_005",
+        "style": "emoji-heavy casual text",
+        "text": "hey!! 👋 so i just moved to astoria and honestly it's been pretty rough, like really lonely 😔 would love to connect with other founders who are working on climate stuff? trying to build community here and meet people who get the work 🌍💚",
+        "label": [
+          "professional"
+        ],
+        "pred": [
+          "professional",
+          "social"
+        ]
+      },
+      {
+        "id": "ex_082",
+        "style": "non-native English speaker (Spanish first language): small grammar mistakes",
+        "text": "Hey! I want to find some people to start a band with, I play the bass. But just to be clear, I'm looking for friends only, I have girlfriend so no dating please. Let me know if you can help!",
+        "label": [
+          "hobby"
+        ],
+        "pred": [
+          "hobby",
+          "social"
+        ]
+      },
+      {
+        "id": "ex_096",
+        "style": "non-native English speaker (Mandarin first language): article/tense mistakes",
+        "text": "Hey! I have two thing I want try. First, I looking for some designer who can help collaborate on side project I working on - need someone good with UI/UX stuff. Second thing is I want to start band! I play bass guitar and want find other musician to jam with. Also just want mention I am in therapy right now for anxiety, so sometimes I might need little time to respond but I really want to meet new people and do creative things, I think it will help me a lot.",
+        "label": [
+          "professional",
+          "hobby"
+        ],
+        "pred": [
+          "professional",
+          "hobby",
+          "social"
+        ]
+      },
+      {
+        "id": "ex_121",
+        "style": "non-native English speaker (Hindi first language): Indian English phrasing",
+        "text": "Hi! I'm having lot more free time these days, so please send me more suggestions, anything interesting you think of! I stay near Dolores Park side and would love to meet more people around this area only. Last week I went for dinner with someone from Hinge - total disaster that one was 😅 but anyway! I'm 52 now and honestly just wanting to know more neighbors and friendly people for chai, walks, whatever. Can you help with this?",
+        "label": [
+          "social"
+        ],
+        "pred": [
+          "events",
+          "social"
+        ]
+      },
+      {
+        "id": "ex_144",
+        "style": "friendly normal texting, 1-3 sentences",
+        "text": "Hey! I'd love to find a boyfriend through the Network, and I'm also looking for angel investors to chat with about my seed round. Oh and a climbing partner would be awesome too—I'm open to any cuisine btw so down for whatever food spots!",
+        "label": [
+          "romance",
+          "professional",
+          "hobby"
+        ],
+        "pred": [
+          "romance",
+          "professional",
+          "hobby",
+          "events"
+        ]
+      },
+      {
+        "id": "ex_158",
+        "style": "SMS with several typos and autocorrect errors",
+        "text": "Hey! So I'm lookimg for two things - first, I'd really love it if you could match me with someone for datinf, like actually find me a boyfriend haha. Also I need someone who can do a mock interveiw with me for practice, that would be super helpful! Oh and pls don't message me between 9pm and 7am, I need my sleep lol",
+        "label": [
+          "romance",
+          "help"
+        ],
+        "pred": [
+          "romance",
+          "growth"
+        ]
+      },
+      {
+        "id": "ex_163",
+        "style": "non-native English speaker (Mandarin first language): article/tense mistakes",
+        "text": "Hi! I looking for someone to play tennis with regular, I want to improve my game. Also can you help me find some fun thing to do this weekend? I'm free and want to try new activities. Just so you know, I am going through IVF treatment right now, so some days my energy is not so good but I still want to stay active and meet people.",
+        "label": [
+          "hobby",
+          "events"
+        ],
+        "pred": [
+          "hobby",
+          "growth",
+          "events",
+          "social"
+        ]
+      },
+      {
+        "id": "ex_187",
+        "style": "non-native English speaker (Hindi first language): Indian English phrasing",
+        "text": "Hey, I need to take break from Network messages for some time. I'm in LES only but too much work pressure these days. Can we pause until after 15th date? Will let you know when I'm free again to meet people.",
+        "label": [],
+        "pred": [
+          "social"
+        ]
+      },
+      {
+        "id": "ex_188",
+        "style": "gen-z slang and abbreviations (ngl, lowkey, fr, tbh), lowercase",
+        "text": "hey! i live in astoria and lowkey wanna get better at public speaking but it's scary lol. can yall help me find someone to practice with or like workshops or smth? would be so helpful fr",
+        "label": [
+          "growth"
+        ],
+        "pred": [
+          "growth",
+          "events"
+        ]
+      },
+      {
+        "id": "ex_191",
+        "style": "non-native English speaker (Mandarin first language): article/tense mistakes",
+        "text": "Hey! I'm visiting SoMa next week for work trip. My wife and I just celebrate my 27th birthday last month, she got me new running shoes haha. I want to find someone who can be accountability partner for running - I always skip morning run when nobody expect me to show up 😅 Also what fun thing happening this weekend? I have free time and want explore city more before I go back.",
+        "label": [
+          "events",
+          "growth"
+        ],
+        "pred": [
+          "hobby",
+          "growth",
+          "events"
+        ]
+      },
+      {
+        "id": "ex_205",
+        "style": "longer rambling message (3-5 sentences) mixing context and the request",
+        "text": "Hey! I'm living in Williamsburg and just got laid off last week so money is pretty tight right now, but I'm trying to stay active and meet people. I'd love if you could match me with someone to actually date – ready to put myself out there romantically. Also been wanting to play more pickup soccer on the weekends if you know anyone looking for an extra player!",
+        "label": [
+          "romance",
+          "hobby"
+        ],
+        "pred": [
+          "social",
+          "romance",
+          "hobby"
+        ]
+      },
+      {
+        "id": "ex_216",
+        "style": "emoji-heavy casual text",
+        "text": "hey!! 👋 so i live in bushwick and i'm trying to prep for college interviews soon (i'm 15 lol) - can you connect me with someone who'd be down to do a mock interview?? 🎤 also i just paused my gym membership cuz i wasn't going enough 😅 but i DO wanna get out more!! any good live music shows happening around here?? like indie rock or whatever 🎸🎶 lmk!!",
+        "label": [
+          "help",
+          "events"
+        ],
+        "pred": [
+          "growth",
+          "events"
+        ]
+      },
+      {
+        "id": "ex_222",
+        "style": "non-native English speaker (Mandarin first language): article/tense mistakes",
+        "text": "Hey! I'm visiting Berkeley next week and would love to meet some people while I'm there. Last week I had really bad date that was just... not great experience lol. Anyway, I want to focus on work stuff now - can you help me connect with other founder who working on climate? That would be amazing. Also just so you know, I'm bi but I don't out at my workplace yet, so just wanted to mention that.",
+        "label": [
+          "professional"
+        ],
+        "pred": [
+          "social",
+          "professional"
+        ]
+      },
+      {
+        "id": "ex_272",
+        "style": "non-native English speaker (Russian first language): dropped articles",
+        "text": "Hey! I live in Berkeley and want to meet new people but just to be clear - I'm in relationship so no dating please, only platonic connections. Looking for two things: first, need accountability partner for running, someone who will push me to actually go on runs and stay consistent with training. Second, would love to find group of people to hang out with on weekends - maybe grab coffee, explore city, just spend time together. One more thing - please don't message me after 10pm, need my evenings quiet for winding down. Thanks!",
+        "label": [
+          "growth",
+          "social"
+        ],
+        "pred": [
+          "hobby",
+          "social"
+        ]
+      }
+    ],
+    "sensitive": [
+      {
+        "id": "ex_036",
+        "style": "emoji-heavy casual text",
+        "text": "Hey! 👋 So I'm turning 34 next week and realizing I need to actually make some plans lol 😅 Two things: 1) Does anyone in the network have a truck I could borrow for like 3-4 hours? Need to move some furniture donations 📦🚚 and 2) I'd love to find some chill people to grab weeknight dinners with - nothing fancy, just like tacos or ramen vibes 🍜✨ Been 8 months sober now so I'm all about those low-key hangs without the bar scene 🙏 Also just paused my gym membership bc honestly wasn't using it enough to justify the cost 💸 Oh and please don't text me between 10pm-8am, I'm trying to be better about sleep hygiene 😴 Thanks!! 💙",
+        "label": [
+          "substance_use"
+        ],
+        "pred": [
+          {
+            "topic": "substance_use",
+            "scope": "agent_private",
+            "summary": "Has been sober for eight months"
+          },
+          {
+            "topic": "finances",
+            "scope": "agent_private",
+            "summary": "Paused gym membership because the cost wasn't justified by how often they used it"
+          }
+        ]
+      },
+      {
+        "id": "ex_076",
+        "style": "non-native English speaker (Hindi first language): Indian English phrasing",
+        "text": "Hi! I want to resume getting introductions again. I'll be visiting Mission area next week and looking for someone to play tennis with regularly. Please note I'm already in relationship so no dating matches, only platonic connections. Can you help find a proper tennis partner?",
+        "label": [],
+        "pred": [
+          {
+            "topic": "other_sensitive",
+            "scope": "agent_private",
+            "summary": "Currently in a relationship."
+          }
+        ]
+      },
+      {
+        "id": "ex_200",
+        "style": "longer rambling message (3-5 sentences) mixing context and the request",
+        "text": "Hey! I'm in Brooklyn and just celebrated my 41st birthday last week, so feeling motivated to finally get some projects off the ground this year. I'd love to meet people who are into literary fiction for a book club I'm trying to start, and also I'm raising a seed round for my startup so connecting with angel investors would be amazing. Oh and just to be clear, I'm in a relationship so definitely not looking for anything romantic here, just professional connections and hobby friends!",
+        "label": [],
+        "pred": [
+          {
+            "topic": "other_sensitive",
+            "scope": "agent_private",
+            "summary": "In a relationship"
+          }
+        ]
+      }
+    ],
+    "age_signal": [
+      {
+        "id": "ex_078",
+        "style": "gen-z slang and abbreviations (ngl, lowkey, fr, tbh), lowercase",
+        "text": "ngl the office is mad quiet this week, literally just me and like two other teachers around lol. anyway i teach 11th grade chemistry and lowkey forgot how chaotic lab day prep is when you're doing it solo 😅",
+        "label": null,
+        "pred": "adult"
+      },
+      {
+        "id": "ex_126",
+        "style": "terse all-lowercase SMS, 3-12 words, no punctuation",
+        "text": "visiting dolores park next week need climate founders daughter in tenth grade tons of cc debt",
+        "label": null,
+        "pred": "adult"
+      }
+    ],
+    "city": [
+      {
+        "id": "ex_187",
+        "style": "non-native English speaker (Hindi first language): Indian English phrasing",
+        "text": "Hey, I need to take break from Network messages for some time. I'm in LES only but too much work pressure these days. Can we pause until after 15th date? Will let you know when I'm free again to meet people.",
+        "label": "nyc",
+        "pred": null
+      },
+      {
+        "id": "ex_234",
+        "style": "emoji-heavy casual text",
+        "text": "hey!! so i need to pause for a bit 🙈 just found out i'm 10 weeks along and literally haven't told a soul yet, not even my partner 😅 need some time to process everything before i'm out meeting new people in crown heights ya know?? 💕 will reach back out when i'm ready!!",
+        "label": "nyc",
+        "pred": null
+      }
+    ]
+  }
+}

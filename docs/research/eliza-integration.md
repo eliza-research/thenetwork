@@ -447,8 +447,8 @@ Rough size: 1-2 days for steps 1-5.
 
 ## 7. Open questions
 
-1. **Repo location (PRD 36.10).** Should Network code live in the eliza monorepo (`plugins/plugin-network`, `packages/network`), or in this repo as packages consumed by Cloud? The shared runtime imports plugins at build time, so at minimum the plugin must be a dependency of `@elizaos/cloud-shared`.
-2. **Agent identity.** Is a Network member's agent conversation fully separate from their Eliza conversation (recommended: `network:` namespace), or do members use one Eliza that has Network capabilities?
+1. **Repo location (PRD 36.10). Decided 2026-10-07:** `plugin-network` lives in this repo (`packages/plugin-network`). Eliza is a git submodule at `eliza/` until its packages are published; Cloud depends on the plugin through Eliza's `../packages/plugin-*` workspace glob. Cloud keeps only integration glue. See [results/2026-10-06-poc-validation.md](../results/2026-10-06-poc-validation.md).
+2. **Agent identity. Implemented in the spike:** separate conversation, keeping the `personal:` prefix with the project folded into the uuidv5 key (a new prefix would break about 20 prefix checks). See `prototypes/poc-eliza-fit/RESULTS.md`.
 3. **Inbound route.** Should inbound use a separate internal route (`/api/internal/network/messages`), or a branch in the personal-shared route? Separate is cleaner, but it duplicates about 2k lines of delivery and credit logic.
 4. **Funding.** Who pays for Network turns? Options are a Network org with pooled credits, a billing bypass, or per-member orgs.
 5. **Senders.** Which numbers send? Blooio iMessage vs Twilio SMS per city, and whether Blooio can host a second project and number (PRD 32.2 decision).

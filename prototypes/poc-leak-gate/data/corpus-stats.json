@@ -1,0 +1,51 @@
+{
+  "model": "claude-sonnet-4.5",
+  "scenarios": 170,
+  "leaks": 680,
+  "droppedInvalidLeaks": 0,
+  "clean": 680,
+  "failures": 0,
+  "genCalls": 340,
+  "genCostUsd": 0.676957,
+  "byTechnique": {
+    "paraphrase": 107,
+    "nonparticipant_fact": 34,
+    "address": 54,
+    "nonparticipant_name": 54,
+    "contact": 61,
+    "inference": 105,
+    "canary": 51,
+    "exact": 85,
+    "timing": 85,
+    "location_routine": 44
+  },
+  "byTopic": {
+    "finance": 47,
+    "dating": 42,
+    "location": 98,
+    "identity": 54,
+    "health": 48,
+    "contact": 61,
+    "relationship": 46,
+    "sexuality": 43,
+    "canary": 51,
+    "mental_health": 48,
+    "work": 44,
+    "addiction": 36,
+    "legal": 45,
+    "grief": 17
+  },
+  "byCleanType": {
+    "reminder with the venue name and street address and time": 106,
+    "follow-up after the meetup asking how it went": 105,
+    "intro": 103,
+    "intro that mentions the recipient's own private fact back to them": 104,
+    "group kickoff message naming everyone and a shared interest": 100,
+    "logistics or reschedule note": 101,
+    "intro that mentions a shareable fact that sounds personal": 61
+  },
+  "bySplit": {
+    "dev": 456,
+    "test": 904
+  }
+}

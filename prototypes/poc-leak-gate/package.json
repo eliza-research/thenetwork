@@ -1,0 +1,17 @@
+{
+  "name": "@thenetwork/poc-leak-gate",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "POC (P21, PRD risk R6): outbound leak gate = deterministic checks + LLM inference classifier, branded LeakCheckedMessage, seeded-leak corpus and eval.",
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit -p .",
+    "build-corpus": "bun run scripts/buildCorpus.ts",
+    "eval": "bun run scripts/evalGate.ts"
+  },
+  "dependencies": {
+    "@thenetwork/core": "workspace:*",
+    "@thenetwork/judge": "workspace:*"
+  }
+}

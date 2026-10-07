@@ -1,0 +1,204 @@
+{
+  "latentPairs": 4172,
+  "sameCityCandidatePairs": 49056,
+  "baseRate": 0.08504566210045662,
+  "report": [
+    {
+      "backend": "local-hash",
+      "ms": 970,
+      "cfg": {},
+      "proposals": 210,
+      "scored": {
+        "n": 3016,
+        "g": 657,
+        "precision": 0.21783819628647214,
+        "recall": 0.1574784276126558
+      },
+      "eligible": {
+        "n": 1493,
+        "g": 333,
+        "precision": 0.22304085733422638,
+        "recall": 0.07981783317353787
+      },
+      "selected": {
+        "n": 280,
+        "g": 65,
+        "precision": 0.23214285714285715,
+        "recall": 0.01558005752636625
+      },
+      "selectedIntro": {
+        "n": 196,
+        "g": 58,
+        "precision": 0.29591836734693877,
+        "recall": 0.013902205177372963
+      },
+      "rankingPrecisionAtN": {
+        "N": 280,
+        "engineScore": 0.24285714285714285,
+        "structuredPublic": 0.4642857142857143,
+        "oracleSystematicCeiling": 0.6857142857142857,
+        "random": 0.21783819628647214
+      }
+    },
+    {
+      "backend": "text-embedding-3-small (default thresholds)",
+      "ms": 2664,
+      "cfg": {},
+      "proposals": 240,
+      "scored": {
+        "n": 6308,
+        "g": 1127,
+        "precision": 0.17866201648700064,
+        "recall": 0.2701342281879195
+      },
+      "eligible": {
+        "n": 3311,
+        "g": 719,
+        "precision": 0.21715493808517064,
+        "recall": 0.17233940556088206
+      },
+      "selected": {
+        "n": 276,
+        "g": 70,
+        "precision": 0.2536231884057971,
+        "recall": 0.016778523489932886
+      },
+      "selectedIntro": {
+        "n": 234,
+        "g": 63,
+        "precision": 0.2692307692307692,
+        "recall": 0.015100671140939598
+      },
+      "rankingPrecisionAtN": {
+        "N": 276,
+        "engineScore": 0.2753623188405797,
+        "structuredPublic": 0.4673913043478261,
+        "oracleSystematicCeiling": 0.7355072463768116,
+        "random": 0.17866201648700064
+      }
+    },
+    {
+      "backend": "text-embedding-3-small (quantile-mapped thresholds)",
+      "ms": 2555,
+      "cfg": {
+        "retrieval": {
+          "minSim": 0.3999941672024954,
+          "warmMinSim": 0.34852624015486616,
+          "poolSim": 0.514666879031368
+        }
+      },
+      "proposals": 240,
+      "scored": {
+        "n": 3001,
+        "g": 654,
+        "precision": 0.21792735754748419,
+        "recall": 0.15675934803451583
+      },
+      "eligible": {
+        "n": 2427,
+        "g": 563,
+        "precision": 0.2319736299958797,
+        "recall": 0.13494726749760308
+      },
+      "selected": {
+        "n": 264,
+        "g": 74,
+        "precision": 0.2803030303030303,
+        "recall": 0.017737296260786194
+      },
+      "selectedIntro": {
+        "n": 234,
+        "g": 71,
+        "precision": 0.3034188034188034,
+        "recall": 0.017018216682646213
+      },
+      "rankingPrecisionAtN": {
+        "N": 264,
+        "engineScore": 0.2727272727272727,
+        "structuredPublic": 0.4696969696969697,
+        "oracleSystematicCeiling": 0.7045454545454546,
+        "random": 0.21792735754748419
+      }
+    },
+    {
+      "backend": "text-embedding-3-large (default thresholds)",
+      "ms": 4350,
+      "cfg": {},
+      "proposals": 240,
+      "scored": {
+        "n": 6349,
+        "g": 1139,
+        "precision": 0.1793983304457395,
+        "recall": 0.2730105465004794
+      },
+      "eligible": {
+        "n": 3035,
+        "g": 674,
+        "precision": 0.22207578253706756,
+        "recall": 0.16155321188878236
+      },
+      "selected": {
+        "n": 290,
+        "g": 69,
+        "precision": 0.23793103448275862,
+        "recall": 0.01653883029721956
+      },
+      "selectedIntro": {
+        "n": 233,
+        "g": 65,
+        "precision": 0.27896995708154504,
+        "recall": 0.01558005752636625
+      },
+      "rankingPrecisionAtN": {
+        "N": 290,
+        "engineScore": 0.27241379310344827,
+        "structuredPublic": 0.46206896551724136,
+        "oracleSystematicCeiling": 0.7241379310344828,
+        "random": 0.1793983304457395
+      }
+    },
+    {
+      "backend": "text-embedding-3-large (quantile-mapped thresholds)",
+      "ms": 3737,
+      "cfg": {
+        "retrieval": {
+          "minSim": 0.385300839093501,
+          "warmMinSim": 0.3344456181490894,
+          "poolSim": 0.4958778210775264
+        }
+      },
+      "proposals": 240,
+      "scored": {
+        "n": 3067,
+        "g": 643,
+        "precision": 0.2096511248777307,
+        "recall": 0.15412272291466922
+      },
+      "eligible": {
+        "n": 2390,
+        "g": 538,
+        "precision": 0.22510460251046024,
+        "recall": 0.1289549376797699
+      },
+      "selected": {
+        "n": 290,
+        "g": 71,
+        "precision": 0.24482758620689654,
+        "recall": 0.017018216682646213
+      },
+      "selectedIntro": {
+        "n": 233,
+        "g": 67,
+        "precision": 0.2875536480686695,
+        "recall": 0.016059443911792905
+      },
+      "rankingPrecisionAtN": {
+        "N": 290,
+        "engineScore": 0.27241379310344827,
+        "structuredPublic": 0.4689655172413793,
+        "oracleSystematicCeiling": 0.6827586206896552,
+        "random": 0.2096511248777307
+      }
+    }
+  ]
+}

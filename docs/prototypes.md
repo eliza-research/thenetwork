@@ -237,7 +237,7 @@ Coverage check against the requested minimum: shared contract + Clock (P01), mod
 | Field | Detail |
 |---|---|
 | Proves | 32.5, F7, 9.3 source order of preference, 1.2.8 and 13.3 no shadow profiles, 36.2 respect the terms of profile sources, F1 vouch-note handling. |
-| What | LinkedIn or X URL fetched once (or a paste fallback when fetching is not allowed), summarized, shown as proposed facets (provenance connected_source) for member approval; AI-memory paste parser (ChatGPT, Claude, Grok, Muse exports and freeform); Google Calendar free/busy to availability_pattern facets (no event titles); vouch notes held non-matchable until acceptance and purged on decline or after 30 days. |
+| What | Paste-first (PoC 2026-10-06: LinkedIn's robots.txt and terms prohibit automated access and X shows only the bio without its paid API, so member paste is the main path, not a fallback; see `prototypes/poc-enrichment-sources/`). X bio from the og: tag only where the terms register allows it, summarized, shown as proposed facets (provenance connected_source) for member approval; AI-memory paste parser (ChatGPT, Claude, Grok, Muse exports and freeform); Google Calendar free/busy to availability_pattern facets (no event titles); vouch notes held non-matchable until acceptance and purged on decline or after 30 days. |
 | Build | TypeScript + P03. Standalone with recorded fixtures; the calendar connector is proved in P39 against the existing Eliza plugin-calendar. |
 | Dependencies | P03, P12. |
 | Exit criteria | 50 profile fixtures and 50 memory pastes: facet precision at least 0.85; 0 facets confirmed without member approval; 0 member or stub records created for third parties named in pastes; vouch notes purged at 30 days on the SimClock; fetching disabled for sources flagged no-fetch in a per-source terms register. |
@@ -251,7 +251,7 @@ Coverage check against the requested minimum: shared contract + Clock (P01), mod
 | What | Per-city ingestion jobs for Luma, Partiful public pages, Eventbrite, Cerebral Valley, venue calendars (plus Meetup); a normalized events table (title, time, place, H3 cell, categories, price, source, freshness, embedding); cross-source dedupe; staleness rules; CONCIERGE_SEARCH ranking by interests, presence, and format; places via the maps service. Prefer public APIs and feeds; store links and minimal metadata. |
 | Build | TypeScript. Standalone with recorded source fixtures; scheduled as Network jobs. |
 | Dependencies | P01-P03, P15. |
-| Exit criteria | At least 200 future events per week per city; dedupe precision at least 0.95 and recall at least 0.9 on labeled duplicates; 0 replies that assert hours or availability without a fresh source; J11 relevance at least 4/5 for 70% of persona queries; a written terms review per source. |
+| Exit criteria | At least 200 *relevant* (adult, social/professional, not civic/kids) future events per week per city from sources whose terms allow ingestion (PoC 2026-10-06: raw counts are met by Cerebral Valley, Luma calendar ICS feeds, NYC Open Data, SFPL and SF Rec & Park; Eventbrite, Meetup and Partiful forbid scraping and need partnerships; see `prototypes/poc-event-ingestion/`); dedupe precision at least 0.95 and recall at least 0.9 on labeled duplicates; 0 replies that assert hours or availability without a fresh source; J11 relevance at least 4/5 for 70% of persona queries; a written terms review per source. |
 | Effort / priority | M / T1 (M1). |
 
 #### P15. Location, presence, and travel-time model
@@ -262,7 +262,7 @@ Coverage check against the requested minimum: shared contract + Clock (P01), mod
 | What | H3 cells at several resolutions for neighborhoods; presence (home, routine, temporary with window); travel-time estimator (H3 heuristic first, maps API for finalists, cached); personal friction preferences; coarse-only rendering for other members. |
 | Build | TypeScript, h3-js. Standalone. |
 | Dependencies | P01, P02. |
-| Exit criteria | ME-011 property tests; temporary presence includes a member in the other city only inside the window (0 out-of-window proposals); estimates within 25% of the maps API on 200 sampled pairs; 0 outbound messages containing an exact address before opportunity-specific consent. |
+| Exit criteria | ME-011 property tests; temporary presence includes a member in the other city only inside the window (0 out-of-window proposals); estimates within 25% of the maps API on 200 sampled pairs (PoC 2026-10-06, H3 res-8 heuristic vs OSRM: walk and bike 85-100% within 25%, car NYC 95%, car SF 60% (78% for trips over 10 minutes); transit not yet validated; see `prototypes/poc-travel-time/`); 0 outbound messages containing an exact address before opportunity-specific consent. |
 | Effort / priority | S-M / T1 (M3). |
 
 ### Matching and opportunity engine v1

@@ -1,0 +1,73 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Luma//WorkOS Events//EN
+X-WR-CALNAME:WorkOS Events
+X-WR-CALDESC:Luma Calendar
+REFRESH-INTERVAL;VALUE=DURATION:PT12H
+X-PUBLISHED-TTL:PT12H
+CALSCALE:GREGORIAN
+METHOD:PUBLISH
+BEGIN:VEVENT
+DTSTART:20250515T003000Z
+DTEND:20250515T043000Z
+DTSTAMP:20261006T170139Z
+ORGANIZER;CN="Host":MAILTO:calendar-invite@lu.ma
+UID:evt-vwkbK0LIWMJ8ZoH@events.lu.ma
+SUMMARY:MCP Night by WorkOS
+DESCRIPTION:Get up-to-date information at: https://luma.com/quvg7kzs\n\nAd
+ dress:\nExploratorium\nSan Francisco, California\nUnited States\n\nHosted
+  by Host
+LOCATION:Exploratorium, Pier 15 Embarcadero at, Green St, San Francisco, C
+ A 94111, USA
+GEO:37.801665;-122.397348
+SEQUENCE:213469299
+STATUS:TENTATIVE
+END:VEVENT
+BEGIN:VEVENT
+DTSTART:20250628T010000Z
+DTEND:20250628T040000Z
+DTSTAMP:20261006T170139Z
+ORGANIZER;CN="Host":MAILTO:calendar-invite@lu.ma
+UID:evt-qo4ZNlrKQJNZmsy@events.lu.ma
+SUMMARY:SF Devtools Drinkup - Summer Edition
+DESCRIPTION:Get up-to-date information at: https://luma.com/p9lxpv5i\n\nAd
+ dress:\nSouthern Pacific Brewing\nSan Francisco, California\nUnited State
+ s\n\nHosted by Host
+LOCATION:Southern Pacific Brewing, 620 Treat Ave, San Francisco, CA 94110,
+  USA
+GEO:37.760076;-122.414224
+SEQUENCE:213469299
+STATUS:TENTATIVE
+END:VEVENT
+BEGIN:VEVENT
+DTSTART:20250707T163000Z
+DTEND:20250707T200000Z
+DTSTAMP:20261006T170139Z
+ORGANIZER;CN="Host":MAILTO:calendar-invite@lu.ma
+UID:evt-ZSryHz6VihFj5LI@events.lu.ma
+SUMMARY:AI Devtools Meetup
+DESCRIPTION:Get up-to-date information at: https://luma.com/9c8f4diq\n\nAd
+ dress:\nDrake & Morgan at King's Cross\nLondon, England\nUnited Kingdom\n
+ \nHosted by Host
+LOCATION:Drake & Morgan at King's Cross, 6 Pancras Sq, London N1C 4AG, UK
+GEO:51.5335008;-0.1260193
+SEQUENCE:213469299
+STATUS:TENTATIVE
+END:VEVENT
+BEGIN:VEVENT
+DTSTART:20250808T003000Z
+DTEND:20250808T050000Z
+DTSTAMP:20261006T170139Z
+ORGANIZER;CN="Host":MAILTO:calendar-invite@lu.ma
+UID:evt-RAJgujFMr95tJ8K@events.lu.ma
+SUMMARY:MCP Night 2.0 by WorkOS
+DESCRIPTION:Get up-to-date information at: https://luma.com/mcp-night-2\n\
+ nAddress:\nThe Regency Ballroom\nSan Francisco, California\nUnited States
+ \n\nHosted by Host
+LOCATION:The Regency Ballroom, 1300 Van Ness Ave, San Francisco, CA 94109,
+  USA
+GEO:37.7878701;-122.4214133
+SEQUENCE:213469299
+STATUS:TENTATIVE
+END:VEVENT
+END:VCALENDAR
