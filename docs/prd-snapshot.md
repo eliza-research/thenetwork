@@ -245,10 +245,10 @@ Most members arrive wanting a few concrete things: career colleagues and collabo
 Phone onboarding should be a first-class product, not a fallback. The initial experience can happen through an AI voice conversation or SMS thread tied to a verified phone number. The native app should deepen the relationship later rather than gate it. (v0.2: the MVP has no native app surface; see Sections 28.4 and 32.17.)
 ## 9.1 Identity model
 - A phone number is an authentication and communication channel, not the permanent identity key. Every member has a stable internal member ID.
-- Invitation token + phone verification establishes the first account session.
-- Passkeys/app authentication can be added later for stronger security.
+- All login, on every surface, is by phone number and a text-message code; there are no passwords, email logins, or magic links. Invitation token + phone verification establishes the first account session.
+- Passkeys can be added later as an optional second factor on top of phone verification, never as a replacement for it.
 - Changing a phone number must not create a new identity or break relationship history.
-- Linking a third-party AI assistant uses OAuth-style account authorization to the same Network identity.
+- Linking a third-party AI assistant or agent uses the same phone verification: the agent asks for the member's number, the member reads back the texted code, and the Network issues an agent key bound to the same Network identity (Section 11.5).
 ## 9.2 Voice/SMS onboarding flow
 1. Welcome and provenance: who invited the person and why The Network exists.
 2. Consent: what the agent may remember, what can be used for matching, and what is never shared by default.
@@ -313,7 +313,7 @@ As of October 2026, ChatGPT supports MCP-powered apps/plugins, Claude supports c
 - A remote MCP-compatible server is the preferred portable tool surface where the host supports it.
 - A conventional REST/JSON API sits underneath so clients without MCP can be supported with adapters.
 - A Network-specific skill/instruction package teaches host assistants the product philosophy: protect attention, prefer AI/search first, never leak private graph data, request confirmation for consequential actions, and avoid implying social entitlement.
-- Identity linking uses OAuth 2.x / secure delegated authorization rather than sharing Network passwords or phone OTPs with the host assistant.
+- Identity linking uses phone verification through the skill (Section 11.5): the member gives the agent their number and the texted one-time code, and the Network issues a scoped, revocable agent key. The host assistant never holds a reusable Network credential other than that key.
 - The connector receives only scopes the member explicitly grants. Default scopes should be minimal and revocable.
 - All actions create server-side audit receipts visible to the member regardless of which client initiated them.
 ## 11.2 Proposed connector tools
@@ -361,6 +361,22 @@ Connectors should be as thin and opaque as possible: the host assistant never se
 | GW-007 | Feature capability is negotiated per client so unsupported interactive UI or approval flows degrade gracefully. |
 
 
+## 11.5 Phone verification and agent keys
+Decision (October 6, 2026): all login to The Network, on every surface, is by phone number and a text-message code. There are no passwords, email logins, or magic links. This covers the web (eliza.app), a new phone or channel (F25), and any AI assistant or agent that uses the Network skill or connector. An agent proves it acts for a member by holding an agent key, which it gets only after the member verifies their phone number through it. The skill file teaches the agent this flow:
+1. Check for a key. Before its first Network call in a conversation, the agent looks for a key: one already issued in this conversation or, on a computer, one saved in its key store (below). With no key, or when a call returns not_signed_in or key_expired, the agent treats itself as logged out and goes to step 2.
+2. Ask for the number. The agent asks the member for their mobile number and calls start_phone_verification. The Network texts a six-digit code in the member's usual Network thread, for example: “Your Network code is 482913. It connects Claude to your Network. Only give it to the assistant you are setting up right now.” The tool's reply is identical whether or not the number belongs to a member, so it cannot be used to find out who is in The Network.
+3. Read back the code. The member tells the agent the code and the agent calls verify_phone_code. A correct code returns an agent key: a long random token bound to the member ID, the verified number, a client label (for example “Claude, Mac”), the granted scopes (Appendix B.3), and an expiry. The key is shown once; the Network stores only a hash.
+4. Use the key. The agent sends the key with every Network call, in the Authorization header where the host supports it, otherwise as a key argument. The server identifies the member from the key alone and never trusts a member ID, name, or phone number the agent supplies.
+5. Confirm by text. The Network texts the member in the same thread: “Claude (Mac) is now connected to your Network. Reply DISCONNECT to remove it.” A member can link several agents; each gets its own key.
+Rules:
+- Session keys in chat assistants. A host with no storage of its own (ChatGPT, Claude.ai, Grok) keeps the key in the conversation only. The key stays valid for that session: it expires after 24 hours without use or 7 days in total, whichever comes first, and a new conversation verifies again. (Proposed defaults; tune in the pilot.)
+- Stored keys on computers. An agent running on the member's own computer (Claude Code, Codex, a local Eliza or Milady agent, and similar) may save the key so the member does not verify every session: in the OS keychain where available, otherwise in ~/.config/thenetwork/agent-key.json with owner-only permissions (0600), never inside a project folder or repository. A stored key expires after 30 days without use or 90 days in total, then the agent verifies again.
+- When the agent is unsure. Every Network reply includes the masked number the key belongs to (for example •••-•••-4321). If the agent is not sure it is talking to that member (a shared computer, a stored key it did not create, or the member says it is the wrong account), it asks the member to confirm the last four digits. If they do not match, it calls sign_out, deletes any stored key, and starts again at step 2.
+- Verification tools. Three tools sit outside the five-tool set in 11.2 and need no key: start_phone_verification(phone), verify_phone_code(phone, code, client_label), and sign_out(). The five tools return not_signed_in until a valid key is presented.
+- Code rules. Codes are six digits, single use, expire after 10 minutes, and lock after 5 wrong tries. At most 3 codes per number per 15 minutes and 10 per day, plus per-client and per-IP limits. Codes go only to numbers that belong to a member or have a pending invite, and only to supported countries (US at launch), which prevents SMS-pumping fraud and unwanted texts to strangers. Verification texts are transactional and covered by the consent recorded at invite acceptance (36.1).
+- Revocation. The member can list and remove linked agents by texting the Network (“which assistants are connected?”, “disconnect Claude”) or on the web. Removing a member, a lost or recycled number, or a safety hold revokes every key for that member at once. A phone number change (F25) moves keys to the new number without breaking them.
+- Handling secrets. The skill tells the agent never to repeat the key or the code in chat, never to put either in a URL, link, or shared file, never to pass them to any other tool or site, and to discard the code once verified. Keys never appear in logs; the admin console (Section 35) shows only key IDs, client labels, and last-used times.
+- Why not OAuth first. Phone verification works in every host, including ones without OAuth support or a browser, and matches how members already reach The Network by text. The one-time code passes through the host assistant, but it is single use and expires in minutes, so the only reusable credential the host ever holds is the scoped, revocable agent key. If a host requires OAuth for remote connectors, its sign-in page uses the same phone and text-code step and issues the same kind of key.
 # 12. The Network agent
 ## 12.1 Responsibilities
 - Understand requests, desires, and offers in natural language.
@@ -658,17 +674,17 @@ Decision (v0.2): The Network is built on the existing Eliza stack: Eliza Cloud (
 | Web | Modern TypeScript/React framework. | Onboarding, account settings, ops links, desktop access. |
 | Backend API | TypeScript service layer with strict typed schemas. Decision (v0.2): Eliza Cloud (Hono on Cloudflare Workers) with a new Network module, plus the Eliza agent runtime and plugins. | Existing auth, messaging gateway, shared agent, cron, billing, admin, and deployment. |
 | Primary database | PostgreSQL (Railway, existing Eliza Cloud instance, separate network schema); H3 cells for geo. | Canonical relational state plus strong geospatial primitives. |
-| Semantic retrieval | pgvector initially. Decision (v0.2): pgvector (HNSW) in the existing Postgres; post-MVP, learned joint embeddings. | Already used by Eliza Cloud. Post-MVP: learned joint embeddings (a JEPA-like model trained on outcomes) instead of generic text embeddings. |
+| Semantic retrieval | pgvector initially. Decision (v0.2): pgvector (HNSW) in the existing Postgres, with per-city partial indexes and per-query hnsw.ef_search and iterative_scan settings. Validated 2026-10-06: pgvector's defaults silently return too few rows under a city filter, and generic text embeddings did not beat keyword or hashing retrieval for matching, so ranking relies on structured needs-to-offers complementarity. Post-MVP, learned joint embeddings. | Already used by Eliza Cloud. Post-MVP: learned joint embeddings (a JEPA-like model trained on outcomes) instead of generic text embeddings. |
 | Graph | Relational edges + materialized graph projections initially; dedicated graph DB only when query scale/complexity justifies it. | Avoid premature dual-source-of-truth architecture. |
 | Workflow | Postgres job table with due times and leases, driven by existing Cloudflare cron fan-out; a batch worker for matching. | Opportunity state, reminders, timeouts, bilateral consent, cancellation, and settlement are long-running workflows. |
 | Messaging/voice | iMessage via Blooio and SMS/voice via Twilio through the Eliza Cloud webhook gateway; later Telegram, WhatsApp, Signal. | Already integrated in Eliza Cloud; meet people on the channel they already use. |
 | Model layer | Vendor-neutral model gateway with structured outputs and tool calling. | Different tasks may use different models; social policy stays server-side. |
-| External AI integration | Remote MCP + REST adapter + OAuth. (Post-MVP, Section 28.4.) | Portable across compatible assistant ecosystems. |
+| External AI integration | Remote MCP + REST adapter + phone-verified agent keys (11.5). (Post-MVP, Section 28.4.) | Portable across compatible assistant ecosystems. |
 | Analytics | Event stream to warehouse; product metrics and model evaluation separated from operational DB. (MVP: nightly Postgres export to Parquet in R2 queried with DuckDB, plus a read replica, Section 31.4.) | Reproducibility and experimentation. |
 
 
 ## 22.2 Core services
-- Identity Service: member IDs, phone verification, passkeys, OAuth connector grants, session management. (Passkeys and connector grants post-MVP.)
+- Identity Service: member IDs, phone verification (the only login method), web sessions, and agent keys for skills and connectors (Section 11.5). (Agent keys ship with the connector, post-MVP; passkeys, if added, are a second factor only.)
 - Profile/Capital Service: structured wants, capabilities, resources, participation state, permissions, and current capacity.
 - Graph Service: relationship edges, interaction history, warm paths, cluster/topology features.
 - Opportunity Service: create, classify, state-transition, complete, cancel, and archive opportunities.
@@ -694,9 +710,9 @@ The agent should have strong web/local search so it does not bother humans with 
 |---|---|
 | SEC-001 | Encrypt sensitive data in transit and at rest; use separate keys/domains for especially sensitive relationship and safety data where practical. PII is scrubbed or swapped for stable pseudonyms before data reaches human reviewers, logs, analytics, evaluation sets, and any third-party model that does not need it. |
 | SEC-002 | Role-based and attribute-based controls must restrict staff access; all sensitive staff reads are audited. |
-| SEC-003 | No assistant connector receives raw secrets, private safety reports, or unrestricted graph exports. |
+| SEC-003 | No assistant connector receives raw secrets, private safety reports, or unrestricted graph exports. Agent keys (11.5) are stored only as hashes, never logged, scoped, and revocable per agent. |
 | SEC-004 | Location precision is minimized by default and exact coordinates have explicit retention rules. Revised (v0.2): location is collected at the highest precision the member allows, but never shared: other members and partners only ever see coarse areas or travel-time estimates, and exact coordinates have explicit retention rules. In the MVP, location comes only from what members say and calendar data (no device location). |
-| SEC-005 | Deletion/export workflows include derived embeddings and graph projections where technically feasible. |
+| SEC-005 | Deletion/export workflows include derived embeddings and graph projections where technically feasible. Validated 2026-10-06: deleted rows stay on disk until tables are rewritten, so erasure schedules a physical purge within 24 hours; backups expire after a set window (proposed 30 days), and erasures are replayed after any restore. |
 | SEC-006 | Threat-model prompt injection and malicious member text as untrusted input; tools authorize independently of model instructions. |
 | SEC-007 | Financial workflows use established payment processors; The Network should not store card data directly. (Stripe.) |
 
@@ -859,8 +875,8 @@ An invite-only Network in San Francisco and New York for about 150-300 members (
 | Channels | iMessage via Blooio, SMS via Twilio, optional inbound/outbound voice call for onboarding, web chat on eliza.app. STOP/HELP compliance. | 32.2 |
 | Agent | Eliza shared agent with Network character, Network plugin (actions, providers, evaluators), progressive profiling, concierge search for events and places. | 32.3 |
 | Profile model | Members, facets, intents, presence, edges, consent, provenance and confidence, privacy scopes. | 13.1, 32.4 |
-| Enrichment | Conversation extraction; inviter vouch notes; optional Google Calendar connection; public LinkedIn/X profile from a URL the member gives; pasted memory summary from the member's AI assistant. If a profile URL cannot be fetched within the source's terms, the member pastes the text instead. | 32.5 |
-| World knowledge | Curated per-city event ingestion (Luma, Partiful public pages, Eventbrite, Cerebral Valley, venue calendars) plus web search and maps. | 32.6 |
+| Enrichment | Conversation extraction; inviter vouch notes; optional Google Calendar connection; public LinkedIn/X profile from a URL the member gives; pasted memory summary from the member's AI assistant. LinkedIn's terms prohibit automated fetching, so for LinkedIn the member pastes their profile text; this is the main path, not a fallback. An X bio may be read from the URL where the terms allow. | 32.5 |
+| World knowledge | Curated per-city event ingestion from sources whose terms allow it (Cerebral Valley, Luma calendar feeds, open-data and venue calendars; Eventbrite, Meetup and Partiful only through partnerships) plus web search and maps. | 32.6 |
 | Matching engine | Opportunity types: 1:1 intro, small group, event co-attendance, help request, member-initiated introduction, newcomer welcome, network-growth ask. Hard filters, retrieval, scoring with LLM judgment, group composition, load balancing, exploration, explanations. | 33 |
 | Human review | Review queue for every proactive proposal; approve, edit, re-roll, reject with reason codes; reviewer rubric; labels stored as training data. | 32.8, 33.9 |
 | Outreach control | Interruption budget, per-category preferences, quiet hours, two-unanswered auto-pause, participation states. | 7.2, 32.9 |
@@ -881,7 +897,7 @@ An invite-only Network in San Francisco and New York for about 150-300 members (
 |---|---|---|
 | Native app Network tab, push notifications, location sharing, "around tonight" presence, map | Messaging covers the MVP loop; location needs privacy validation (20.3). | Presence model, Capacitor app, native location plugin |
 | Bluetooth/proximity discovery at events | Needs app and safety design. | Presence, events program |
-| ChatGPT / Claude / Grok / Muse connectors (five-tool MCP surface at mcp.ntwrk.love) | Needs OAuth for MCP clients, which Eliza Cloud does not yet have (Section 30). | ask/tell_network_agent = the same agent turn; share_profile_with_network = enrichment pipeline |
+| ChatGPT / Claude / Grok / Muse connectors (five-tool MCP surface at mcp.ntwrk.love) | Needs phone-verified agent keys for MCP clients (Section 11.5); OAuth only if a host requires it (Section 30). | ask/tell_network_agent = the same agent turn; share_profile_with_network = enrichment pipeline |
 | Telegram, WhatsApp, Signal channels; agent in existing group chats | Telegram and WhatsApp adapters exist in the cloud gateway, so these are fast follows; Signal has no connector. | Channel gateway, identity linking |
 | Forwarding opportunities to non-members via private links | Validation gate in 20.3 (forwarding and privacy expectations). | Invitations, consent workflow |
 | Gmail, Instagram, and broader data import | Sensitive; prove value with lighter sources first. | Enrichment pipeline with provenance |
@@ -940,7 +956,7 @@ Each flow lists the trigger, the steps, the systems involved, and the main edge 
 | F27 | Reviewer approves, edits, re-rolls, or rejects a proposal | Yes | Review queue |
 | F28 | Unresponsive member auto-pause and re-engagement | Yes | Outreach control |
 | F29 | Opportunity expires or quorum fails | Yes | Consent workflow |
-| L1 | Use The Network from ChatGPT/Claude/Grok | Later | Connector |
+| L1 | Use The Network from ChatGPT/Claude/Grok (phone-verified agent key, 11.5) | Later | Connector |
 | L2 | Forward an opportunity to a non-member via private link | Later | Invitations, consent |
 | L3 | Telegram, WhatsApp, Signal; agent joins an existing group chat | Later | Channels |
 | L4 | App: location presence, "around tonight", map, push | Later | App, presence |
@@ -1002,7 +1018,7 @@ Admin creates the event; the engine suggests who to personally invite first (new
 ### F24. Export or delete
 Member requests export (data package by secure link) or deletion (account, facets, embeddings, messages; minimal retained records for safety and legal obligations, disclosed in the privacy policy). Deletion cancels the member's open opportunities (others are told without blame), removes their name from other members' relay threads, and keeps messages others already received only as long as safety retention requires.
 ### F25. Phone number change or new channel
-Verified through the existing channel or web login; identities link to the same member ID; history is preserved.
+Verified by a text-message code to the new number plus confirmation from the existing number (or steward review if the old number is lost); identities link to the same member ID; linked agent keys move to the new number; history is preserved.
 ### F26. Travel and multi-city presence
 "I will be in SF the 10th to the 14th." Creates time-bounded presence; the engine includes the member in that city's opportunities for that window ("if you are in SF this weekend..."). Members who live in both cities have two home areas with learned weekly patterns.
 ### F27. Review queue decision
@@ -1017,7 +1033,7 @@ Invitations expire (default 48h; same-day opportunities 2-4h). Partial acceptanc
 |---|---|---|---|
 | iMessage / SMS | Primary for everything | Still primary | Short messages, one question at a time, easy no |
 | Voice call | Optional onboarding; occasional check-in on request | Voice-first members | Recording consent required |
-| Web (eliza.app) | Web chat with the agent, profile review, privacy, states, invites, history, export | Richer views | Magic-link login |
+| Web (eliza.app) | Web chat with the agent, profile review, privacy, states, invites, history, export | Richer views | Phone number + text-code login |
 | Native app | Not required | Location, presence, push, map | Capacitor Eliza app |
 | AI assistants | Not in MVP | Four-tool connector | Server-side policy only |
 | Admin console | Team operations | Steward and member governance tools | Section 35 |
@@ -1069,7 +1085,7 @@ This analysis is based on a review of the elizaOS v3 monorepo (github.com/elizaO
 | Admin: conversations, graph, analytics | Admin API basics, moderation UI, trajectory viewers | Mostly missing | Network admin console (Section 35) |
 | Simulated world | Scenario runner, multi-agent arena, LLM user simulators, logical/fake clocks, synthetic-world plumbing (no virtual clock yet) | Partial | Network world simulator with persona agents, virtual clock, outcome simulation |
 | Analytics warehouse | Analytics routes, trajectory export | Partial | Event log + read replica/warehouse + metric definitions |
-| MCP connector for ChatGPT/Claude | Platform MCP endpoint (API key auth); no OAuth authorization-server metadata | Partial | Later: OAuth for MCP clients and the five tools |
+| MCP connector for ChatGPT/Claude | Platform MCP endpoint (API key auth); no OAuth authorization-server metadata | Partial | Later: phone-verified agent keys (11.5) and the five tools; OAuth only if a host requires it |
 | Payments | Stripe, credits, crypto | Exists (not MVP) | Later |
 
 
@@ -1140,9 +1156,9 @@ Each subsystem lists purpose, what is reused from Eliza, what is new, key data, 
 ## 32.1 Identity, membership, and access
 - Purpose: one stable member identity across channels, cities, and number changes; roles and permissions.
 - Reuse: Eliza Cloud users and Steward auth; identity-link codes; phone verification.
-- New: network.members (member_id, cloud_user_id, status, roles, home areas, states, invite lineage, age attestation, created_at), network.channel_identities (channel, address, verified_at, primary), network.roles (member, connector, host, steward; staff roles admin, reviewer, safety, analyst, engineer per Section 35.1).
+- New: network.members (member_id, cloud_user_id, status, roles, home areas, states, invite lineage, age attestation, created_at), network.channel_identities (channel, address, verified_at, primary), network.agent_keys (key_id, member_id, key_hash, verified_phone, client_label, scopes, created_at, last_used_at, expires_at, revoked_at), network.roles (member, connector, host, steward; staff roles admin, reviewer, safety, analyst, engineer per Section 35.1).
 - Logic: invite token or verified inbound number creates a member; soft-approval score; account states (invited, onboarding, active, paused, restricted, removed); role-based admin access with audit. (The account state 'paused' is distinct from the participation state Paused (7.2) and from the 'only when I ask' outreach setting applied by the two-unanswered rule (F28).)
-- MVP scope: everything above; passkeys and ID verification later.
+- MVP scope: everything above, with phone number + text-message code as the only login on every surface; agent keys ship with the connector (11.5); passkeys (second factor only) and ID verification later.
 ## 32.2 Channel gateway and messaging
 - Purpose: receive and send messages on every supported channel reliably and compliantly.
 - Reuse: Blooio and Twilio adapters, gateway-webhook, outbound send utilities, Twilio voice bridge, group bindings.
@@ -1154,7 +1170,7 @@ Each subsystem lists purpose, what is reused from Eliza, what is new, key data, 
 - New: Network character (observant, concise, non-needy; style rules in 12.4 as testable rules); Network plugin with:
 - Providers: MEMBER_CONTEXT (shareable profile summary, states, preferences), ACTIVE_ITEMS (pending invitations, upcoming commitments, open relay threads, outstanding questions), CITY_CONTEXT (events this week, presence).
 - Actions: UPDATE_PROFILE, MANAGE_INTENT, ASK_NETWORK (classify and route requests), RESPOND_TO_OPPORTUNITY, RELAY_MESSAGE, SHARE_CONTACT, SCHEDULE (availability, confirm, reschedule, cancel), SET_STATE, INVITE_PERSON, BLOCK_OR_REPORT, GIVE_FEEDBACK, CONCIERGE_SEARCH.
-- Evaluators: facet/intent extraction, sentiment and safety signals, unanswered-question tracking.
+- Evaluators: facet/intent extraction, sentiment and safety signals, unanswered-question tracking. Validated (2026-10-06): state changes use one structured decision on the first model call, not the multi-step planner. The model proposes, deterministic code authorizes and executes, and the member sees a confirmation built from what actually executed. With gpt-6-luna the planner committed SET_STATE in 1 of 20 turns; the structured decision committed 38 of 40 with one model call (estimated p95 4.5-6.9 s against the 8 s target).
 - Logic: state-changing actions call the Network API, never write tables directly; deterministic handlers decide state, the LLM phrases replies from a brief; any message about another member is built only from fields the privacy policy allows.
 - MVP scope: all of the above. A dedicated (non-shared) agent tier is not needed.
 ## 32.4 Profile and knowledge model
@@ -1164,11 +1180,11 @@ Each subsystem lists purpose, what is reused from Eliza, what is new, key data, 
 ## 32.5 Extraction and enrichment
 - Purpose: turn conversation and connected sources into facets and intents with minimal asking.
 - Reuse: plugin-form extraction patterns; personal-assistant profile evaluators; Google Calendar; X; web search.
-- New: strict extraction (gating fields: city, intents, consent answers, state changes) and additive enrichment (new insights only, never deleting), English-normalized vocabularies, vouch-note ingestion, LinkedIn/X URL summarizer, AI-memory paste parser, calendar routine inference (free/busy patterns only), proposed-facet confirmation UX.
+- New: strict extraction (gating fields: city, intents, consent answers, state changes) and additive enrichment (new insights only, never deleting), English-normalized vocabularies, vouch-note ingestion, LinkedIn/X profile paste parser (validated 2026-10-06: LinkedIn's terms prohibit automated fetching and X shows only a bio without its paid API, so pasting is the main path), AI-memory paste parser, calendar routine inference (free/busy patterns only), proposed-facet confirmation UX.
 - Quality bar: precision over recall; golden test sets per extractor (Section 34.2).
 ## 32.6 World and concierge knowledge
 - Purpose: make the Network useful before the graph is dense and seed opportunities around real events.
-- New: per-city ingestion jobs for event sources (Luma, Partiful public pages, Eventbrite, Cerebral Valley, venue calendars, Meetup), normalized events table (title, time, place, H3 cell, categories, price, source, freshness, embedding), dedupe, staleness rules (never state real-time facts without a fresh source), places via maps service.
+- New: per-city ingestion jobs for event sources whose terms allow it (Cerebral Valley feed, Luma calendar subscription feeds, city open-data, library and parks calendars, venue calendars; Eventbrite, Meetup and Partiful forbid scraping and need partner or API agreements. Validated 2026-10-06: allowed sources give about 200-280 adult events a week per city, mostly civic, so relevant volume depends on those partnerships), normalized events table (title, time, place, H3 cell, categories, price, source, freshness, embedding), dedupe, staleness rules (never state real-time facts without a fresh source), places via maps service.
 - Interfaces: CONCIERGE_SEARCH action; engine event-anchored generators.
 - Legal: respect each source's terms; prefer public APIs and feeds; store links and minimal metadata.
 ## 32.7 Opportunity engine
@@ -1195,13 +1211,13 @@ Specified in detail in Section 33.
 - New: feedback records (factual, subjective, would-meet-again, free text), attendance-derived reliability evidence by context (type, lead time, size, distance), rater-bias weighting, edge updates (met, enjoyed, would-interact-again, group-only, avoid), second-encounter candidate generation.
 - Rules: declines never affect reliability; one forgiven no-show; negative feedback weakens only that pair and is corroboration-weighted; nothing is shown as a score.
 ## 32.14 Policy, privacy, and safety
-- New: privacy scope on every facet and message field; explanation builder that can only use shareable evidence; outbound leak checker (deterministic checks for agent-private facts and contact details plus an LLM classifier for indirect inference, using canary facts in tests); PII scrubber/pseudonymizer for reviewer views, logs, analytics, and third-party models; safety classifier on inbound messages (none, flag, urgent); blocks; safety cases with evidence preservation and holds; high-risk category filter (17.5); age policy enforcement (minimum age 13, under-13s declined at join; no member under 18 in any multi-person opportunity, in any role; romance 18+).
+- New: privacy scope on every facet and message field; explanation builder that can only use shareable evidence; outbound leak checker (deterministic checks for agent-private facts and contact details plus an LLM classifier for indirect inference, using canary facts in tests; validated 2026-10-06 at about 99% recall on seeded leaks, with 2-3% of clean messages held for human review; subtle inference leaks still need a human-labelled test set); PII scrubber/pseudonymizer for reviewer views, logs, analytics, and third-party models; safety classifier on inbound messages (none, flag, urgent); blocks; safety cases with evidence preservation and holds; high-risk category filter (17.5); age policy enforcement (minimum age 13, under-13s declined at join; no member under 18 in any multi-person opportunity, in any role; romance 18+).
 ## 32.15 Invitations and growth
 - New: invitation allowances (default 3 per member per month, adjustable by network need), vouch capture, invite edges with strength evidence, soft-approval scoring, targeted growth asks ("we need hosts in Brooklyn"), newcomer welcome opportunities.
 ## 32.16 Events program
 - New: monthly all-member gathering per city: event records, priority invitation lists (newcomers, isolated members, pending second encounters), RSVP tracking, suggested conversation groupings, follow-up "who do you want to see again?" feeding second encounters.
 ## 32.17 Member web surface
-- New: pages on eliza.app: What the Network knows (facets by kind with source, scope, edit), Intents, States and preferences, Connected sources, Invites, History (opportunities and outcomes), Privacy and data (export, delete). Magic-link login via SMS. Mobile-first.
+- New: pages on eliza.app: What the Network knows (facets by kind with source, scope, edit), Intents, States and preferences, Connected sources, Invites, History (opportunities and outcomes), Privacy and data (export, delete). Login by phone number and text-message code only. Mobile-first.
 ## 32.18 Jobs, scheduling, and the Clock
 - New: network.jobs (type, payload, due_at, attempts, lease, idempotency key, status), job runner invoked by cron fan-out every minute and by the matcher service; Clock interface (now, sleep-until semantics via due_at) with RealClock and SimClock; all timers expressed as due_at rows so a simulation can advance time and drain due jobs deterministically.
 ## 32.19 Data platform and event log
@@ -1329,7 +1345,7 @@ The Network is a social system, so most failures are not crashes. They are a bad
 | Feedback and reliability | Declines never affect reliability; one forgiven no-show; rater-bias weighting; negative feedback only affects the pair; second-encounter generation. |
 | Privacy and safety | Canary facts (agent-private) seeded into personas must never appear in any outbound message, explanation, reviewer view, or log; inference-leak scenarios (for example, timing that reveals a private disclosure); block and report from every channel; safety holds stop all outreach; minor-isolation (zero minor contacts) and high-risk filters. |
 | Invitations and events | Allowances; vouch capture; monthly event invitations, RSVPs, reminders, groupings, and follow-ups. |
-| Member web | Edit and delete flows, privacy scope changes reflected in the engine, export completeness, magic-link auth. |
+| Member web | Edit and delete flows, privacy scope changes reflected in the engine, export completeness, phone + text-code login, agent key issue, expiry, and revocation. |
 | Jobs and Clock | Due jobs run exactly once under concurrency; lease expiry recovery; SimClock advancing drains jobs in time order; no code path reads the system clock directly (lint rule). |
 
 
@@ -1406,7 +1422,7 @@ The team must be able to see everything happening in the Network, from any membe
 - Safety runbook: emergencies (direct to 911 first), harassment, stalking, scams, impersonation, minors; escalation contacts; evidence preservation; appeals.
 - On-call rotation for safety reports during pilot hours; response targets (urgent within 1 hour, others within 24 hours). Outside covered hours, urgent reports get an immediate automated reply directing the member to emergency services, plus an automatic safety hold on the reported member's opportunities until reviewed.
 ## 36.4 Cost model and budgets
-- Per-member monthly cost drivers: agent turns (LLM tokens), extraction and enrichment, matching judge calls, SMS and iMessage fees, voice minutes, embeddings, infrastructure. Target an all-in cost per active member per month that the team tracks weekly in the admin console; set alerts on per-member and per-day spend. Use cheaper models for pre-screening and extraction and stronger models only for final judgments and member-facing phrasing. Set a numeric target cost per active member per month and a monthly pilot budget per city before M6, including monthly gathering costs (venue, food) and how they are covered in the MVP (team-funded or members self-pay).
+- Per-member monthly cost drivers: agent turns (LLM tokens), extraction and enrichment, matching judge calls, SMS and iMessage fees, voice minutes, embeddings, infrastructure. Target an all-in cost per active member per month that the team tracks weekly in the admin console; set alerts on per-member and per-day spend. Use cheaper models for pre-screening and extraction and stronger models only for final judgments and member-facing phrasing. Measured LLM cost (2026-10-06, gpt-6-luna on Surplus): about $3 a month for 300 members sending 5 messages a day each, or about $260 at list prices, so confirm provider pricing before budgeting. Set a numeric target cost per active member per month and a monthly pilot budget per city before M6, including monthly gathering costs (venue, food) and how they are covered in the MVP (team-funded or members self-pay).
 ## 36.5 Seed and density plan
 - Each city: a founding seed of 40-75 members recruited through the founders' and early members' vouches, deliberately spanning several clusters (not one industry), concentrated in a few adjacent neighborhoods (for example, Mission/SoMa/Hayes Valley in SF; Lower Manhattan and north Brooklyn in NYC; final choice by where the seed lives).
 - First monthly gathering in each city within two weeks of opening.
@@ -1420,7 +1436,7 @@ The team must be able to see everything happening in the Network, from any membe
 ## 36.9 Data, backup, and recovery
 - Network schema included in existing Postgres backups with point-in-time recovery; tested restore; nightly export to R2; disaster-recovery runbook.
 ## 36.10 Repository and ownership
-- Create the Network workspace inside the Eliza monorepo (plugin plus service package plus admin area) or a dedicated repository that depends on published Eliza packages; decide before build starts. Name an owner for each subsystem in Section 32. Prototypes, research, and test harnesses live in https://github.com/lalalune/thenetwork (private). The product domain is ntwrk.love; the assistant connector is served at https://mcp.ntwrk.love/mcp.
+- Decided (2026-10-07): Network code lives in the thenetwork repository, including the Network plugin (packages/plugin-network). Eliza is included as a git submodule until its packages are published. Eliza Cloud keeps only the integration glue: identity scoping, the invite gate, STOP/HELP, the Twilio path, capability flags, network migrations, the Postgres store and per-turn wiring. Name an owner for each subsystem in Section 32. Prototypes, research, and test harnesses live in https://github.com/lalalune/thenetwork (private). The product domain is ntwrk.love; the assistant connector is served at https://mcp.ntwrk.love/mcp.
 # 37. MVP build plan and milestones
 Indicative sequence assuming a small team (2-3 engineers, 1 product/community lead, part-time design, contract reviewers). Each milestone ends with simulated-world tests passing for the flows it delivers.
 
@@ -1482,6 +1498,7 @@ This section records the decisions made while resolving the October 4-5, 2026 re
 | Monthly events | Monthly all-member gathering per city in MVP. | 25.3, 32.16 |
 | Introductions | Encourage members to introduce people; it builds social capital. | 6.1, A.3 |
 | Channels | Blooio (iMessage) and Twilio (SMS/voice) first; then Telegram, WhatsApp, Signal; later group chats. | 22.1, 22.4, 28.4 |
+| Login and agent verification | All login is by phone number and a text-message code; no passwords, email, or magic links. Agents using the skill or connector verify the member's number by texted code and receive a scoped, revocable agent key, kept for the session in chat assistants or stored locally by agents on a computer. | 9.1, 11.1, 11.5, 22.2, 29.3, 32.1, B.3 |
 
 
 Comments that were agreement or emphasis (for example on contraction, activation energy, silence as a valid state, anti-metrics, examples, and LGTMs) were acknowledged and closed without changes; the text they endorsed is unchanged.
@@ -1541,7 +1558,7 @@ A parent wants to attend a small community dinner but has no childcare and does 
 
 
 ## B.3 Connector authorization scopes
-Post-MVP. With the five-tool connector (11.2): get_network_updates and ask_network_agent need read.basic; respond_to_network_item needs write.responses; share_profile_with_network needs write.profile; tell_network_agent can reach any write scope only through server-side confirmation, so the member grants scopes once and the Network enforces them per action.
+Post-MVP. Scopes are attached to the agent key issued by phone verification (11.5). With the five-tool connector (11.2): get_network_updates and ask_network_agent need read.basic; respond_to_network_item needs write.responses; share_profile_with_network needs write.profile; tell_network_agent can reach any write scope only through server-side confirmation, so the member grants scopes once and the Network enforces them per action.
 | Scope | Allows |
 |---|---|
 | network.read.basic | Member-safe summary and already-visible opportunities. |
