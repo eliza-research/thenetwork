@@ -32,15 +32,17 @@ export class InMemoryNetworkStore implements NetworkStore {
     const member = this.members.get(input.memberId);
     if (!member) throw new Error(`unknown member ${input.memberId}`);
     const previous = member.state;
-    if (previous === input.state && (member.stateUntil ?? null) === (input.until ?? null)) {
+    const from = input.from ?? null;
+    if (previous === input.state && (member.stateFrom ?? null) === from && (member.stateUntil ?? null) === (input.until ?? null)) {
       const noop: SetStateExecution = {
-        eventId: null, previous, current: previous, until: input.until,
+        eventId: null, previous, current: previous, from, until: input.until,
         committedAt: this.now(), replayed: false, unchanged: true,
       };
       this.ledger.set(input.idempotencyKey, noop);
       return noop;
     }
     member.state = input.state;
+    member.stateFrom = from;
     member.stateUntil = input.until;
     this.seq += 1;
     const eventId = `evt-${String(this.seq).padStart(6, "0")}`;
@@ -48,12 +50,13 @@ export class InMemoryNetworkStore implements NetworkStore {
       id: eventId,
       type: "member.state_changed",
       memberId: input.memberId,
-      payload: { previous, current: input.state, until: input.until, note: input.note },
+      payload: { previous, current: input.state, from, until: input.until, note: input.note },
     });
     const exec: SetStateExecution = {
       eventId,
       previous,
       current: input.state,
+      from,
       until: input.until,
       committedAt: this.now(),
       replayed: false,

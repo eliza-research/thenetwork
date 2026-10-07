@@ -1,6 +1,17 @@
 {
   "extends": "../../tsconfig.json",
-  "compilerOptions": { "customConditions": ["eliza-source"] },
+  "compilerOptions": {
+    "customConditions": ["eliza-source"],
+    // Eliza packages are unpublished: resolve them from the eliza/ submodule, using
+    // Eliza's own install (run `bun install` in eliza/). Never list them as workspaces
+    // here: two installs writing the same node_modules split drizzle-orm instances.
+    "paths": {
+      "@elizaos/core": ["../../eliza/packages/core/src/index.ts"],
+      "@elizaos/testing": ["../../eliza/packages/testing/src/index.ts"],
+      "@elizaos/plugin-assistant": ["../../eliza/plugins/plugin-assistant/src/index.ts"],
+      "@elizaos/plugin-sqlite/portable": ["../../eliza/plugins/plugin-sqlite/portable.ts"]
+    }
+  },
   "include": ["src/**/*.ts", "test/**/*.ts"],
   "exclude": ["node_modules"]
 }

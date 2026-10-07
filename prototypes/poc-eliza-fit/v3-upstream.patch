@@ -57,7 +57,7 @@ index 3c70f10fa5c2..6863b4c57f4b 100644
      "@solana/spl-token-group/@solana/codecs/@solana/codecs-core/@solana/errors": ["@solana/errors@2.0.0-rc.1", "", { "dependencies": { "chalk": "^5.3.0", "commander": "^12.1.0" }, "peerDependencies": { "typescript": ">=5" }, "bin": { "errors": "bin/cli.mjs" } }, "sha512-ejNvQ2oJ7+bcFAYWj225lyRkHnixuAeb7RQCixm+5mH4n1IA4Qya/9Bmfy5RAAHQzxK43clu3kZmL5eF9VGtYQ=="],
  
 diff --git a/packages/cloud/api/__tests__/shared-eliza-runtime.miniflare.test.ts b/packages/cloud/api/__tests__/shared-eliza-runtime.miniflare.test.ts
-index df0032d33cb4..018f32da5b96 100644
+index df0032d33cb4..80fc7bd1126f 100644
 --- a/packages/cloud/api/__tests__/shared-eliza-runtime.miniflare.test.ts
 +++ b/packages/cloud/api/__tests__/shared-eliza-runtime.miniflare.test.ts
 @@ -4,10 +4,11 @@
@@ -573,7 +573,7 @@ index df0032d33cb4..018f32da5b96 100644
 +  test("design B: one Stage-1 call proposes SET_STATE, code executes it, and the planner is skipped", async () => {
 +    structuredProbeBodies.length = 0;
 +    await networkDb.query(
-+      `UPDATE network.members SET state = 'open', paused_until = NULL`,
++      `UPDATE network.members SET state = 'open', state_from = NULL, paused_until = NULL`,
 +    );
 +    const eventsBefore = (
 +      await networkDb.query(`SELECT 1 FROM network.member_events`)
@@ -827,7 +827,7 @@ index df0032d33cb4..018f32da5b96 100644
 +          }> = [];
 +          for (const testCase of cases.slice(skipCases)) {
 +            await networkDb.query(
-+              `UPDATE network.members SET state = $1, paused_until = NULL`,
++              `UPDATE network.members SET state = $1, state_from = NULL, paused_until = NULL`,
 +              [testCase.expect === "open" ? "paused" : "open"],
 +            );
 +            networkLiveCalls.length = 0;
@@ -3856,10 +3856,10 @@ index 1cad18f7e736..68c930a7c1d0 100644
      "@huggingface/tokenizers": "0.2.0",
 diff --git a/packages/cloud/shared/src/db/migrations/0474_network_core.sql b/packages/cloud/shared/src/db/migrations/0474_network_core.sql
 new file mode 100644
-index 000000000000..7105d30d3210
+index 000000000000..3af64b457e5a
 --- /dev/null
 +++ b/packages/cloud/shared/src/db/migrations/0474_network_core.sql
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,141 @@
 +-- The Network: minimal invite-gated membership and SMS consent tables.
 +-- Rides the canonical Cloud migration ledger in its own Postgres schema, the
 +-- same way 0206_shared_todos.sql adds "todos". Nothing in "public" changes, so
@@ -3878,6 +3878,8 @@ index 000000000000..7105d30d3210
 +  "first_name" text,
 +  "city" text,
 +  "state" text DEFAULT 'open' NOT NULL,
++  -- Start of a scheduled state window (future travel); NULL = effective now.
++  "state_from" timestamp with time zone,
 +  "paused_until" timestamp with time zone,
 +  -- Shareable profile facets only; private facets never live in this column.
 +  "facets" text[] DEFAULT '{}'::text[] NOT NULL,
@@ -4164,10 +4166,10 @@ index 000000000000..c80d5ad0a0a0
 +});
 diff --git a/packages/cloud/shared/src/db/network/schema.ts b/packages/cloud/shared/src/db/network/schema.ts
 new file mode 100644
-index 000000000000..32c89fbf65b2
+index 000000000000..3c4963bd97bd
 --- /dev/null
 +++ b/packages/cloud/shared/src/db/network/schema.ts
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,67 @@
 +/**
 + * Typed Drizzle view of the `network` Postgres schema created by
 + * `migrations/0474_network_core.sql`. Kept out of `db/schemas/index.ts` on
@@ -4188,6 +4190,7 @@ index 000000000000..32c89fbf65b2
 +  firstName: text("first_name"),
 +  city: text("city"),
 +  state: text("state").default("open").notNull(),
++  stateFrom: timestamp("state_from", { withTimezone: true }),
 +  pausedUntil: timestamp("paused_until", { withTimezone: true }),
 +  facets: text("facets").array().default(sql`'{}'::text[]`).notNull(),
 +  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`).notNull(),
@@ -4617,10 +4620,10 @@ index 000000000000..bb78f11ac0eb
 +);
 diff --git a/packages/cloud/shared/src/lib/network/member-store.pglite.test.ts b/packages/cloud/shared/src/lib/network/member-store.pglite.test.ts
 new file mode 100644
-index 000000000000..8275241589e4
+index 000000000000..5d7191af046c
 --- /dev/null
 +++ b/packages/cloud/shared/src/lib/network/member-store.pglite.test.ts
-@@ -0,0 +1,244 @@
+@@ -0,0 +1,260 @@
 +/** Postgres NetworkStore and invite acceptance against the real 0474 schema on PGlite. */
 +
 +import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -4825,6 +4828,22 @@ index 000000000000..8275241589e4
 +    expect((await database.query(`SELECT 1 FROM network.member_events`)).rows).toHaveLength(2);
 +  });
 +
++  test("SET_STATE stores a future presence window and reads it back", async () => {
++    await seedMember();
++    const store = createPostgresNetworkStore(db);
++    const trip = {
++      memberId: USER, state: "traveling" as const, from: "2026-10-12T00:00:00.000Z",
++      until: "2026-10-15T00:00:00.000Z", note: null,
++    };
++    const applied = await store.setState({ ...trip, idempotencyKey: "w1" });
++    expect(applied).toMatchObject({ current: "traveling", from: trip.from, until: trip.until, unchanged: false });
++    expect(await store.getMemberContext(USER)).toMatchObject({ state: "traveling", stateFrom: trip.from, stateUntil: trip.until });
++    // Same window again: no event. A different start date: a real change.
++    expect(await store.setState({ ...trip, idempotencyKey: "w2" })).toMatchObject({ unchanged: true, eventId: null });
++    expect(await store.setState({ ...trip, from: "2026-10-13T00:00:00.000Z", idempotencyKey: "w3" })).toMatchObject({ unchanged: false });
++    expect((await database.query(`SELECT 1 FROM network.member_events`)).rows).toHaveLength(2);
++  });
++
 +  test("signals are recorded once per (message, kind)", async () => {
 +    await seedMember();
 +    const store = createPostgresNetworkStore(db);
@@ -4867,10 +4886,10 @@ index 000000000000..8275241589e4
 +});
 diff --git a/packages/cloud/shared/src/lib/network/member-store.ts b/packages/cloud/shared/src/lib/network/member-store.ts
 new file mode 100644
-index 000000000000..bef0076210bc
+index 000000000000..31803619a6f9
 --- /dev/null
 +++ b/packages/cloud/shared/src/lib/network/member-store.ts
-@@ -0,0 +1,230 @@
+@@ -0,0 +1,241 @@
 +/**
 + * Postgres-backed NetworkStore for the Network plugin, over the `network`
 + * schema (migration 0474), and the server-owned `execution.network` binding.
@@ -4941,7 +4960,7 @@ index 000000000000..bef0076210bc
 +    async getMemberContext(cloudUserId: string): Promise<NetworkMemberContext | null> {
 +      const [row] = rowsOf(
 +        await (await db()).execute(sql`
-+          SELECT "id", "first_name", "city", "state", "paused_until", "facets"
++          SELECT "id", "first_name", "city", "state", "state_from", "paused_until", "facets"
 +            FROM "network"."members"
 +           WHERE "cloud_user_id" = ${cloudUserId}::uuid AND "state" <> 'removed'
 +           LIMIT 1
@@ -4953,6 +4972,7 @@ index 000000000000..bef0076210bc
 +        firstName: typeof row.first_name === "string" && row.first_name ? row.first_name : "there",
 +        city: typeof row.city === "string" ? row.city : "",
 +        state: memberState(row.state),
++        stateFrom: iso(row.state_from),
 +        stateUntil: iso(row.paused_until),
 +        facets: facetsOf(row.facets),
 +        // Active items (open invitations, threads) arrive with the
@@ -4963,6 +4983,7 @@ index 000000000000..bef0076210bc
 +
 +    async setState(input: SetStateInput): Promise<SetStateExecution> {
 +      const until = input.until ? new Date(input.until).toISOString() : null;
++      const from = input.from ? new Date(input.from).toISOString() : null;
 +      // One statement: lock the member, insert the idempotent event, and apply
 +      // the state only when the event was new. A replayed key inserts nothing,
 +      // updates nothing, and falls through to the stored event below. A request
@@ -4971,7 +4992,7 @@ index 000000000000..bef0076210bc
 +      const applied = rowsOf(
 +        await (await db()).execute(sql`
 +          WITH "member" AS (
-+            SELECT "id", "state", "paused_until" FROM "network"."members"
++            SELECT "id", "state", "state_from", "paused_until" FROM "network"."members"
 +             WHERE "cloud_user_id" = ${input.memberId}::uuid AND "state" <> 'removed'
 +             FOR UPDATE
 +          ), "event" AS (
@@ -4980,17 +5001,20 @@ index 000000000000..bef0076210bc
 +                   jsonb_build_object(
 +                     'previous', "member"."state",
 +                     'current', ${input.state}::text,
++                     'from', ${from}::text,
 +                     'until', ${until}::text,
 +                     'note', ${input.note}::text
 +                   )
 +              FROM "member"
 +             WHERE NOT ("member"."state" = ${input.state}::text
++                        AND "member"."state_from" IS NOT DISTINCT FROM ${from}::timestamptz
 +                        AND "member"."paused_until" IS NOT DISTINCT FROM ${until}::timestamptz)
 +            ON CONFLICT ("idempotency_key") DO NOTHING
 +            RETURNING "id", "member_id", "payload", "created_at"
 +          ), "updated" AS (
 +            UPDATE "network"."members" AS m
-+               SET "state" = ${input.state}, "paused_until" = ${until}::timestamptz, "updated_at" = now()
++               SET "state" = ${input.state}, "state_from" = ${from}::timestamptz,
++                   "paused_until" = ${until}::timestamptz, "updated_at" = now()
 +              FROM "event"
 +             WHERE m."id" = "event"."member_id"
 +            RETURNING m."id"
@@ -4998,11 +5022,13 @@ index 000000000000..bef0076210bc
 +          SELECT "event"."id", "event"."payload", "event"."created_at",
 +                 (SELECT count(*) FROM "updated") AS "updated",
 +                 (SELECT count(*) FROM "member") AS "members",
-+                 NULL::text AS "member_state", NULL::timestamptz AS "member_until"
++                 NULL::text AS "member_state", NULL::timestamptz AS "member_from",
++                 NULL::timestamptz AS "member_until"
 +            FROM "event"
 +          UNION ALL
 +          SELECT NULL, NULL, NULL, 0, (SELECT count(*) FROM "member"),
-+                 (SELECT "state" FROM "member"), (SELECT "paused_until" FROM "member")
++                 (SELECT "state" FROM "member"), (SELECT "state_from" FROM "member"),
++                 (SELECT "paused_until" FROM "member")
 +           WHERE NOT EXISTS (SELECT 1 FROM "event")
 +        `),
 +      );
@@ -5021,12 +5047,15 @@ index 000000000000..bef0076210bc
 +        );
 +        if (!stored) {
 +          const unchanged =
-+            first.member_state === input.state && (iso(first.member_until) ?? null) === until;
++            first.member_state === input.state &&
++            (iso(first.member_from) ?? null) === from &&
++            (iso(first.member_until) ?? null) === until;
 +          if (!unchanged) throw new Error("Network state change was neither applied nor recorded");
 +          return {
 +            eventId: null,
 +            previous: memberState(first.member_state),
 +            current: memberState(first.member_state),
++            from,
 +            until,
 +            committedAt: new Date(),
 +            replayed: false,
@@ -5043,6 +5072,7 @@ index 000000000000..bef0076210bc
 +        eventId: `evt-${String(event.id)}`,
 +        previous: memberState(payload.previous),
 +        current: memberState(payload.current),
++        from: iso(payload.from),
 +        until: iso(payload.until),
 +        committedAt: new Date(iso(event.created_at) ?? Date.now()),
 +        replayed,

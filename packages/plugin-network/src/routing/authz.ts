@@ -14,6 +14,7 @@
  * a self-only SET_STATE; it ports with those actions.
  */
 import { NETWORK_MEMBER_STATES, type NetworkMemberState } from "../types.js";
+import { resolveWindow } from "./dates.js";
 
 /** Applied before evidence comparison (prototype `sanitize`). */
 export function sanitize(text: string): string {
@@ -70,6 +71,49 @@ export function resolveBusyVsPaused(state: NetworkMemberState, memberText: strin
   return BUSY_CUE.test(own) && !EXPLICIT_PAUSE.test(own) ? "busy" : state;
 }
 
+// Date guards (2026-10-07 live eval): the model sometimes dropped an end date the
+// member gave ("stop the intros until after new years" became an indefinite pause) or
+// asked about dates it could resolve. Code never invents dates; it refuses a proposal
+// that ignores or contradicts dates in the member's own words, and the agent asks.
+const END_MARKER = /\b(?:until|till|til|thru|through|back (?:on|by|the|in)|after|for (?:a |an |the )?(?:\d+|one|two|three|four|five|six|few|a few|couple|a couple(?: of)?)\s*(?:days?|weeks?|months?))\b|\bthis week\b|\bnext week\b/i;
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+const MONTH_RE = /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/gi;
+const ORDINAL_RE = /\b(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)\b/gi;
+
+/** Member's own words with quoted third-party spans removed. */
+function ownWords(memberText: string): string {
+  let own = sanitize(memberText);
+  for (const q of quotedSpans(memberText)) own = own.replace(q, " ");
+  return own;
+}
+
+export type DateGuard = { ok: true } | { ok: false; reason: "missing until" | "date mismatch" };
+
+/** Checks proposed dates against the dates the member actually stated. */
+export function checkDates(
+  state: NetworkMemberState,
+  from: string | null,
+  until: string | null,
+  memberText: string,
+): DateGuard {
+  if (state === "open") return { ok: true };
+  const own = ownWords(memberText);
+  if (!until && END_MARKER.test(own)) return { ok: false, reason: "missing until" };
+  const proposed = [from, until].filter((d): d is string => Boolean(d)).map((d) => new Date(d));
+  if (proposed.length === 0) return { ok: true };
+  const days = [...own.matchAll(ORDINAL_RE)].map((m) => Number(m[1]));
+  if (days.length && !proposed.some((d) => days.includes(d.getUTCDate()))) {
+    return { ok: false, reason: "date mismatch" };
+  }
+  const months = [...own.matchAll(MONTH_RE)].map((m) => MONTHS.indexOf(m[1]!.slice(0, 3).toLowerCase()));
+  if (months.length && !proposed.some((d) => months.includes(d.getUTCMonth()))) {
+    // "until december" may resolve to Dec 1 or to the first of January; both name December.
+    const lastDayOf = proposed.some((d) => d.getUTCDate() === 1 && months.includes((d.getUTCMonth() + 11) % 12));
+    if (!lastDayOf) return { ok: false, reason: "date mismatch" };
+  }
+  return { ok: true };
+}
+
 export interface ProposedSetState {
   state: NetworkMemberState;
   until: string | null;
@@ -77,11 +121,11 @@ export interface ProposedSetState {
 }
 
 export type SetStateDecision =
-  | { allowed: true; state: NetworkMemberState; until: string | null }
+  | { allowed: true; state: NetworkMemberState; from: string | null; until: string | null }
   | { allowed: false; reason: string };
 
 export function authorizeSetState(
-  proposal: { state: unknown; until: unknown; evidence: unknown },
+  proposal: { state: unknown; from?: unknown; until: unknown; evidence: unknown },
   memberText: string,
   now: Date = new Date(),
 ): SetStateDecision {
@@ -106,10 +150,28 @@ export function authorizeSetState(
     }
     until = new Date(parsed).toISOString();
   }
+  let from: string | null = null;
+  if (typeof proposal.from === "string" && proposal.from.trim()) {
+    const parsed = Date.parse(proposal.from);
+    if (Number.isNaN(parsed)) return { allowed: false, reason: "invalid from" };
+    if (parsed < now.getTime() - 24 * 60 * 60 * 1000) return { allowed: false, reason: "from is in the past" };
+    // A window that starts today or earlier is simply "now".
+    from = parsed > now.getTime() ? new Date(parsed).toISOString() : null;
+  }
+  // Dates stated in the member's own words win over the model's: resolved deterministically.
+  const stated = resolveWindow(ownWords(memberText), now);
+  if (stated.until) until = stated.until;
+  if (stated.from) from = Date.parse(stated.from) > now.getTime() ? stated.from : null;
+  if (from && until && Date.parse(until) <= Date.parse(from)) {
+    return { allowed: false, reason: "until is not after from" };
+  }
   const state = resolveBusyVsPaused(proposal.state as NetworkMemberState, memberText);
+  const dates = checkDates(state, from, until, memberText);
+  if (!dates.ok) return { allowed: false, reason: dates.reason };
   return {
     allowed: true,
     state,
+    from: state === "open" ? null : from,
     until: state === "open" ? null : until,
   };
 }

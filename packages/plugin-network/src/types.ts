@@ -19,6 +19,8 @@ export interface NetworkMemberContext {
   firstName: string;
   city: string;
   state: NetworkMemberState;
+  /** Start of a scheduled state window (e.g. travel next week); null = effective now. */
+  stateFrom?: string | null;
   stateUntil: string | null;
   /** Shareable profile facets only; private facets never reach the plugin. */
   facets: string[];
@@ -28,6 +30,8 @@ export interface NetworkMemberContext {
 export interface SetStateInput {
   memberId: string;
   state: NetworkMemberState;
+  /** Window start (ISO); null = now. Presence windows: PRD 16.1-16.3, ME-011. */
+  from?: string | null;
   until: string | null;
   note: string | null;
   idempotencyKey: string;
@@ -38,6 +42,7 @@ export interface SetStateExecution {
   eventId: string | null;
   previous: NetworkMemberState;
   current: NetworkMemberState;
+  from?: string | null;
   until: string | null;
   committedAt: Date;
   replayed: boolean;

@@ -42,6 +42,7 @@ This repository builds the MVP defined in PRD Section 28: SF and NYC, about 150-
 
 ```bash
 git submodule update --init --filter=blob:none eliza   # Eliza source (large repo; blob-less clone)
+(cd eliza && bun install)   # Eliza's own install; packages/plugin-network resolves @elizaos/* through it
 cp .env.example .env   # add SURPLUS_API_KEY (and BLOOIO_* for messaging)
 bun install
 bun run test           # offline: live LLM/network tests are skipped unless LIVE_TESTS=1
@@ -78,6 +79,6 @@ NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/network bun run observator
 
 All LLM uses (recommender, judge, persona agents, synthetic data, evals) use `gpt-6-luna` on Surplus Intelligence, configured by `DEFAULT_LLM_*`, `JUDGE_*` and `RECOMMENDER_*` in `.env`. Provider names are checked case-insensitively and an unknown name is an error. OpenAI (same model IDs) is the fallback: with no `SURPLUS_API_KEY` every call goes to OpenAI, and a Surplus 429, 5xx, timeout or network error is retried on OpenAI at once. Other 4xx errors do not fall back. Each fallback logs a warning. If neither key is set, a warning is logged at startup. Every request times out after 60 s (`LLM_TIMEOUT_MS`) and retries at most 4 times with capped, jittered backoff (`LLM_MAX_RETRIES`). Cerebras is optional and legacy. OpenAI responses carry no cost, so it is computed from the list prices in `OPENAI_PRICES` (`packages/core/src/llm.ts`, taken from the OpenAI pricing page on 2026-10-06; update them when prices change).
 
-Tests run with `--conditions eliza-source` so the Eliza packages resolve to their TypeScript source in the submodule. `bun run typecheck` also typechecks `packages/plugin-network` with Eliza's TypeScript 6.
+Tests run with `--conditions eliza-source`. `packages/plugin-network` resolves `@elizaos/*` from the submodule through `tsconfig` `paths`, using Eliza's own install. The Eliza packages are deliberately not workspaces of this repo: two installs writing the same `node_modules` split `drizzle-orm` instances and break Eliza Cloud's typecheck. `bun run typecheck` also typechecks the plugin with Eliza's TypeScript 6.
 
 To work on Eliza Cloud with the plugin, run `bun install` inside `eliza/`. Cloud depends on `@thenetwork/plugin-network` through `file:../../../../packages/plugin-network`, so re-run that install after adding files to the plugin; edits to existing files are picked up live. Eliza's turbo refuses workspace packages outside its root, which is why this is a `file:` dependency and not a workspace.

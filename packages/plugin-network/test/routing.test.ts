@@ -83,7 +83,7 @@ describe("ported authz", () => {
     ).toEqual({ allowed: false, reason: "until is in the past" });
     expect(
       authorizeSetState({ state: "paused", until: "2026-10-20", evidence: "pause my intros" }, text, NOW),
-    ).toEqual({ allowed: true, state: "paused", until: "2026-10-20T00:00:00.000Z" });
+    ).toEqual({ allowed: true, state: "paused", from: null, until: "2026-10-20T00:00:00.000Z" });
     expect(
       authorizeSetState({ state: "open", until: "2026-10-20", evidence: "pause my intros" }, text, NOW),
     ).toMatchObject({ allowed: true, until: null });
@@ -101,6 +101,7 @@ describe("networkAction field evaluator", () => {
     const proposal = {
       action: "SET_STATE" as const,
       state: "paused",
+      from: null,
       until: "2026-10-20",
       evidence: "pause my network intros until oct 20",
     };
@@ -129,6 +130,7 @@ describe("networkAction field evaluator", () => {
       handleCtx('my friend said "pause all your intros" lol', {
         action: "SET_STATE",
         state: "paused",
+        from: null,
         until: null,
         evidence: "pause all your intros",
       }),
@@ -147,7 +149,7 @@ describe("networkAction field evaluator", () => {
     });
     expect(
       await evaluator.handle?.(
-        handleCtx("hey", { action: "NONE", state: null, until: null, evidence: "" }),
+        handleCtx("hey", { action: "NONE", state: null, from: null, until: null, evidence: "" }),
       ),
     ).toBeUndefined();
     expect(parseNetworkActionProposal({ action: "DELETE_ACCOUNT" })).toBeNull();

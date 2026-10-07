@@ -9,8 +9,9 @@ export { InMemoryNetworkStore } from "./memory-store.js";
 export { createMemberContextProvider } from "./providers/member-context.js";
 export * from "./types.js";
 export { NETWORK_CONTEXT_DEFINITION } from "./routing/context.js";
-export { authorizeSetState, evidenceOk, resolveBusyVsPaused, sanitize } from "./routing/authz.js";
+export { authorizeSetState, checkDates, evidenceOk, resolveBusyVsPaused, sanitize } from "./routing/authz.js";
 export {
+  clarificationFor,
   confirmationFor,
   createNetworkActionFieldEvaluator,
   NETWORK_ACTION_FIELD,
@@ -19,3 +20,4 @@ export {
 } from "./routing/structured-field.js";
 export type { NetworkActionProposal } from "./routing/structured-field.js";
 export { isNetworkStateIntent } from "./routing/state-intent.js";
+export { parseDateExpr, resolveWindow, type DateWindow } from "./routing/dates.js";

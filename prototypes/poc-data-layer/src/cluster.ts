@@ -13,7 +13,14 @@ function run(cmd: string[]) {
 
 export interface Cluster { url: string; port: number; dir: string; version: string; stop(): void }
 
-export function startCluster(port = Number(process.env.PG_PORT ?? 54329)): Cluster {
+/** True when nothing is listening on 127.0.0.1:port (a stray cluster from a killed run holds its port). */
+function portFree(port: number): boolean {
+  try { Bun.listen({ hostname: "127.0.0.1", port, socket: { data() {} } }).stop(true); return true; } catch { return false; }
+}
+
+export function startCluster(preferred = Number(process.env.PG_PORT ?? 54329)): Cluster {
+  let port = preferred;
+  while (!portFree(port)) port++;
   const dir = mkdtempSync(join(tmpdir(), "network-pg-"));
   const data = join(dir, "data");
   run([`${BIN}/initdb`, "-D", data, "-U", "postgres", "--auth=trust", "-E", "UTF8", "--no-sync"]);

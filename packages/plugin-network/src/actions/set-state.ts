@@ -97,6 +97,12 @@ export function createSetStateAction(options: SetStateActionOptions): Action {
         schema: { type: "string" as const, enum: [...NETWORK_MEMBER_STATES] },
       },
       {
+        name: "from",
+        description: "Optional ISO-8601 date when the state starts, for plans that start later.",
+        required: false,
+        schema: { type: "string" as const },
+      },
+      {
         name: "until",
         description: "Optional ISO-8601 date/time when the state ends.",
         required: false,
@@ -128,6 +134,10 @@ export function createSetStateAction(options: SetStateActionOptions): Action {
       if (until === "invalid") {
         return failure("invalid_param", "until must be an ISO-8601 date");
       }
+      const from = readIsoDate(params.from);
+      if (from === "invalid") {
+        return failure("invalid_param", "from must be an ISO-8601 date");
+      }
       const note =
         typeof params.note === "string" && params.note.trim()
           ? params.note.trim().slice(0, 280)
@@ -139,6 +149,7 @@ export function createSetStateAction(options: SetStateActionOptions): Action {
       const exec = await options.store.setState({
         memberId: options.authority.memberId,
         state: params.state,
+        from,
         until,
         note,
         idempotencyKey,

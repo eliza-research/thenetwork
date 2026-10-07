@@ -4,12 +4,7 @@
   "type": "module",
   "workspaces": [
     "packages/*",
-    "prototypes/*",
-    "eliza/packages/core",
-    "eliza/packages/testing",
-    "eliza/plugins/plugin-sql",
-    "eliza/plugins/plugin-sqlite",
-    "eliza/plugins/plugin-assistant"
+    "prototypes/*"
   ],
   "scripts": {
     "test": "bun test --conditions eliza-source ./packages ./prototypes",
