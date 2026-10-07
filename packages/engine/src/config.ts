@@ -191,9 +191,12 @@ export const DEFAULT_CONFIG: EngineConfig = {
   group: { minSize: 3, maxSize: 6, beamWidth: 8, poolSize: 24, minPairwise: 0.05, maxAnchorsPerCity: 8, alternates: 3, minThemeMembers: 4 },
   exploration: { rate: 0.125, maxShare: 0.15 },
   // Passes 1 and 3 are off by default (evaluated in docs/results/2026-10-06-judge-passes.md);
-  // turning them on changes which candidates survive and adds LLM calls.
+  // turning them on changes which candidates survive and adds LLM calls. Pass 2 reads pass 3's
+  // context ("deep", judge-v3) since 2026-10-07: on the held-out test split it beat the compact
+  // input by +8.6 pp accuracy with the hard gate (p < 0.001) and had lower Brier
+  // (docs/results/2026-10-07-judge-v2.md). Passes 1 and 3 keep their v2 prompts (v3 did not win on test).
   judge: {
-    enabled: true, topK: 10, groupTopK: 3, ttlMs: 7 * DAY, maxTokens: 2500, weight: 0.4, concurrency: 4, verdictGates: true, pass2Context: "compact",
+    enabled: true, topK: 10, groupTopK: 3, ttlMs: 7 * DAY, maxTokens: 2500, weight: 0.4, concurrency: 4, verdictGates: true, pass2Context: "deep",
     screen: { enabled: false, topK: 30, groupTopK: 6, maxTokens: 2500 },
     deep: { enabled: false, topK: 6, maxTokens: 6000 },
   },
