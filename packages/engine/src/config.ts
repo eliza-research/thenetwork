@@ -315,6 +315,13 @@ export interface AttentionConfig {
   /** Founder decision 2 (replaces D5's scope): every member-involving opportunity is probed before anyone is named. */
   consentFirst: boolean;
   /**
+   * Iteration 4: how probe-first runs. `parallel`: probe both members of a pair at once (else the
+   * member with the want first, the partner after their yes). `reveal`: "opt_out" = after both yeses
+   * the reveal is the booked plan ("You're both in: meet Sam, Thu 7pm. Reply if you can't make it"),
+   * "confirm" = a third yes is required. `warmMentions`: a probe may say "a friend of <mutual>" (warmMention).
+   */
+  consent: { parallel: boolean; reveal: "confirm" | "opt_out"; warmMentions: boolean; warmMinAnonymity: number };
+  /**
    * Founder decision 3: only a member's initial invite to a new opportunity counts against their cap
    * (and toward the two-unanswered pause). Items of these kinds never make a message count.
    */
@@ -346,7 +353,7 @@ export interface AttentionConfig {
 const perState = <T>(open: T, normal: T, quiet: T, receiving: T, paused: T): Record<ParticipationState, T> => ({ open, normal, quiet, receiving, paused });
 
 export const DEFAULT_ATTENTION: AttentionConfig = {
-  version: "attention-v1.1.0",
+  version: "attention-v1.2.0",
   caps: perState({ limit: 4, periodDays: 7 }, { limit: 2, periodDays: 7 }, { limit: 1, periodDays: 30 }, { limit: 2, periodDays: 7 }, { limit: 0, periodDays: 7 }),
   breakIns: perState({ limit: 2, periodDays: 7 }, { limit: 1, periodDays: 7 }, { limit: 0, periodDays: 30 }, { limit: 1, periodDays: 7 }, { limit: 0, periodDays: 7 }),
   lambda: perState(0.15, 0.25, 0.5, 0.25, Infinity),
@@ -387,6 +394,9 @@ export const DEFAULT_ATTENTION: AttentionConfig = {
     minSamples: 5, halfLifeDays: 28, minShare: 0.4, margin: 0.15, minOpenHours: 3,
   },
   consentFirst: true,
+  // Iteration 4: the reveal is the booked plan with an easy opt-out (measured +7.7 met + worthwhile with
+  // fixes 1-3); parallel probes measured no gain and more wasted invites; warm mentions need consent capture first.
+  consent: { parallel: false, reveal: "opt_out", warmMentions: false, warmMinAnonymity: 3 },
   notInvites: ["profiling_question", "reconfirm", "worthwhile_check", "nothing_yet"],
   availability: {
     timeOptions: true, minOptions: 2, maxOptions: 3,

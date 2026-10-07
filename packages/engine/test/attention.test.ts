@@ -637,3 +637,51 @@ describe("iteration 3: founder decisions 1-4 (send time, initial invites, availa
     expect(A.standingFromFacets([{ kind: "availability_pattern", tags: ["evening:Tue", "evening:Thu"], inferred: true }], now)).toEqual([{ byDay: [2, 4], startHour: 17, endHour: 22, source: "calendar_pattern", statedAt: now, inferred: true }]);
   });
 });
+
+describe("iteration 4: cheaper probe-first (parallel probes, warm mentions)", () => {
+  const pair = { id: "p", participants: ["prov", "seek"], roles: { prov: "provider", seek: "seeker" } } as unknown as EngineProposal;
+  test("parallel probes: both at once, any order; reveal only when both said yes; any no closes it", () => {
+    let f = A.startProbeFlow(pair, { parallel: true });
+    expect(A.toProbe(f).sort()).toEqual(["prov", "seek"]);
+    f = A.recordProbeAnswer(f, "prov", true); // the partner may answer first
+    expect(A.canReveal(f)).toBe(false);
+    expect(A.revealFor(f, "prov", x => x)).toBeNull();
+    expect(A.toProbe(f)).toEqual(["seek"]);
+    f = A.recordProbeAnswer(f, "seek", true);
+    expect(A.revealFor(f, "prov", x => x)).toEqual({ names: ["seek"] });
+    const no = A.recordProbeAnswer(A.recordProbeAnswer(A.startProbeFlow(pair, { parallel: true }), "prov", true), "seek", false);
+    expect(no.stage).toBe("closed");
+    expect(A.revealFor(no, "prov", x => x)).toBeNull();
+    const p = { ...pair, kind: "intro", category: "hobby", score: 0.45, explanations: {}, alternates: [], objective: "Intro: sailing", city: "sf" } as unknown as EngineProposal;
+    expect(A.itemsForProposal(p, { now: NOW, parallel: true }).map(i => [i.memberId, i.stage])).toEqual([["prov", "first"], ["seek", "first"]]);
+  });
+
+  test("warm mention: consent of the mutual and of the person described, both tied to the mutual, an anonymity set of >= 3, never romance; replaces the attribute", () => {
+    const inp = emptyInput(NOW);
+    inp.members.push(baseMember("seek", { name: "Ada Lovelace" }), baseMember("prov", { name: "Zelda Quintana" }), baseMember("sam", { name: "Sam Rivera" }),
+      baseMember("f1"), baseMember("f2"), baseMember("kid", { age: 15, name: "Kim Young" }));
+    inp.presence.push({ memberId: "seek", city: "sf", type: "home", areas: ["Mission"] });
+    inp.facets.push(facet("prov", 0, "interest", "film photography", ["film_photography"]), facet("seek", 0, "interest", "film photography", ["film_photography"]));
+    const edge = (a: string, b: string) => ({ from: a, to: b, type: "knows" as const, strength: 0.8, explicit: true, createdAt: NOW - 30 * DAY });
+    inp.edges.push(edge("sam", "seek"), edge("sam", "prov"), edge("sam", "f1"), edge("kid", "seek"), edge("kid", "prov"));
+    const all = () => true;
+    let w = mkWorld(inp);
+    // Sam's friends other than the recipient: prov, f1 (2 < 3): could single out the person.
+    expect(A.warmMention(w, "sam", "seek", ["prov"], all, "hobby")).toBeNull();
+    inp.edges.push(edge("sam", "f2"));
+    w = mkWorld(inp);
+    expect(A.warmMention(w, "sam", "seek", ["prov"], all, "hobby")).toBe("Sam");
+    expect(A.warmMention(w, "sam", "seek", ["prov"], id => id !== "sam", "hobby")).toBeNull(); // the mutual did not consent
+    expect(A.warmMention(w, "sam", "seek", ["prov"], id => id !== "prov", "hobby")).toBeNull(); // the person described did not
+    expect(A.warmMention(w, "sam", "seek", ["prov"], all, "romance")).toBeNull();
+    expect(A.warmMention(w, "kid", "seek", ["prov"], all, "hobby")).toBeNull(); // a minor is never a mutual
+    expect(A.warmMention(w, "sam", "f9", ["prov"], all, "hobby")).toBeNull(); // the recipient must know the mutual
+    const spec: A.ProbeSpec = { proposalId: "p", kind: "member_intro", category: "hobby", objective: "Friend-of-a-friend intro: film photography", tz: LA, window: { start: NOW + 3 * DAY, end: NOW + 4 * DAY } };
+    const pr = A.buildProbe(w, { ...spec, mutual: "Sam" }, "seek", ["prov"], NOW)!;
+    expect(pr.text).toContain("a friend of Sam");
+    expect(pr.mutual).toBe("Sam");
+    expect(pr.attribute).toBeUndefined(); // the connection is the one fact (D5)
+    for (const bad of ["Zelda", "Quintana"]) expect(pr.text).not.toContain(bad);
+    expect(A.buildProbe(w, spec, "seek", ["prov"], NOW)!.attribute).toBe("film photography");
+  });
+});
