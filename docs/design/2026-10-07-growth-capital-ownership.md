@@ -109,6 +109,62 @@ Never:
   - whether people with life-driven cancellations are penalized.
 - Launch gate: the outcome gap between NC deciles stays within a set bound (for example the bottom decile's 14-day value rate (V14) is at least 80% of the top decile's), and no gaming strategy in the scenario library yields more than a small bounded gain.
 
+### 2.9 MVP-lite build and simulation (2026-10-08)
+
+Status: built in `packages/capital` and simulated before launch. Not yet wired into the Network or the engine. Results, commands and caveats are in [docs/results/2026-10-08-network-capital.md](../results/2026-10-08-network-capital.md).
+
+**What is built:**
+- An append-only ledger. Each entry has a category, a sign, and provenance: the event, the counterparts, who confirmed it, and the outcome. Reversals are new entries.
+- Members aged 13-17, and members with an unknown age, get no entries.
+- Declining, the Quiet, Receiving and Paused states, inactivity, asking for help and sharing data never write an entry.
+
+**Rules that make section 2.4 concrete (defaults):**
+- Vouch:
+  - The voucher earns 10 when the invitee activates and gets value within 30 days, has no safety flag, and the value came from someone outside the voucher's close circle.
+  - If the invitee is removed for serious abuse within 90 days, the voucher's credit is reversed and the voucher loses a further 10.
+- Attendance:
+  - An accepted plan that the member attended and that was verified earns 2.
+  - Feedback earns 0.5. It is scaled by the same anti-gaming multiplier as the attendance.
+- Help confirmed useful by the recipient earns 3. Each answered need earns 3.
+- Organizing earns 4 per session at a public venue with at least 2 attendees.
+- A no-show after confirming costs 3. A late cancellation after confirming counts as a no-show.
+- Cancelling at least 4 hours before the start is free.
+- One no-show is forgiven per 90 days.
+- Ghosting after accepting costs 2. Confirmed abuse costs 20.
+- Confirmed gaming claws back every credit earned with the ring, plus a penalty of 10 (once per 30 days).
+
+**Anti-gaming:**
+- Credit with the same counterpart decays by x0.5 for each earlier credit with them.
+  - The window is 30 days for matches made by the engine or an organizer.
+  - The window is 90 days for interactions the pair chose themselves: help, needs, and plans a member started.
+- Within a category, each credit in the last 30 days reduces later credits: the multiplier is 1/(1 + n/softN).
+- Positive NC is capped at 40 per 30 days.
+- Detection flags three patterns:
+  - reciprocal rings, using member-controlled credits only;
+  - staged meetups: 3 or more plans with the same people, started by a member and verified only by each other;
+  - vouch rings.
+- A flag goes to a reviewer. It never changes NC by itself.
+
+**Levers:**
+- Effort tiers are set at NC 10, 30 and 80. The effort index is 1.0, 1.12, 1.20 and 1.25 (capped).
+  - Tier 0 is today's engine default, so everyone keeps the full current service.
+  - Each tier changes only the judge pass-2 top-K, deep-pass eligibility, concierge research depth, re-search interval and plan options.
+  - Each tier is an overlay for this member's own intents. It is never a ranking input.
+- Vouch capacity starts at 2 invites per 30 days.
+  - It gains 1 per vouch that worked out, up to 3 more, with a maximum of 5.
+  - It loses 2 per lost stake.
+  - It is 0 for 90 days after abuse or fraud.
+- Organizing reach starts at 8 people.
+  - It gains 2 for every 3 sessions, up to 16.
+  - It is 4 for 90 days after abuse or fraud.
+
+**Launch gate, measured (8 seeds, 90 days):**
+- The gaming gate passes when reviewers work flags. Every strategy ends with a net loss: vouch ring -8.5, staged meetups -9.4 and help farming -10.2 NC, against +16.5 for an honest regular. Median time to detection is 9 days.
+- The V14 gate as written (bottom NC decile's V14 at least 80% of the top's) fails: 0.74.
+  - It also fails with every NC lever off: 0.75. The gap comes from participation, not NC. NC measures participation, so its top decile is organizers and helpers, who get more value whatever the effort.
+  - NC's own contribution is small. The effort lever changes the ratio by -0.010 ± 0.008 (paired seeds), and by -0.016 at 2.5x the assumed effort effect.
+- Decision needed: restate the gate as "NC levers must not lower the bottom/top V14 ratio by more than 0.02 against the same population with the levers off", or accept a gate that NC defaults cannot move.
+
 ## 3. Lower lift, higher value for the MVP
 
 The MVP should favor opportunities that need little physical resource, money or risk, and that create real value quickly. Anything that needs homes, money custody, goods changing hands or bulk purchasing comes later.
