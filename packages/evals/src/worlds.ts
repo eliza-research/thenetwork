@@ -5,7 +5,7 @@ import { DAY } from "../../core/src/index.ts";
 import { generatePersonas } from "../../sim/src/generator.ts";
 import { Oracle } from "../../sim/src/oracle.ts";
 import type { Persona } from "../../sim/src/persona.ts";
-import { buildSnapshot } from "../../sim/src/snapshot.ts";
+import { buildSnapshot, LEGACY_SNAPSHOT_FEATURES, type SnapshotFeatures } from "../../sim/src/snapshot.ts";
 
 /** Same epoch the simulator uses (Mon Oct 5 2026, 00:00 SF). */
 export const WORLD_START = Date.UTC(2026, 9, 5, 7);
@@ -22,7 +22,15 @@ export interface WorldSpec {
   richness?: boolean;
   /** Dataset v2 split. */
   split?: "dev" | "test";
+  /** Simulator snapshot features (default LEGACY_SNAPSHOT_FEATURES). */
+  snapshotFeatures?: SnapshotFeatures;
 }
+/**
+ * Snapshot features dataset v2 (judge v2, 2026-10-07) was built and run with: the engine v1.2
+ * defaults at that time (events, shareable-interest consent, host tags, romance preference facets).
+ * Pinned here, not read from SNAPSHOT_FEATURES, so later simulator changes do not move the items.
+ */
+export const JUDGE_V2_SNAPSHOT_FEATURES: SnapshotFeatures = { eventsPerWeek: 6, shareInterests: true, hostTags: true, romancePrefs: true };
 export const DEFAULT_WORLDS: WorldSpec[] = [
   { id: "sf-1", city: "sf", seed: 101, n: 320 },
   { id: "sf-2", city: "sf", seed: 102, n: 320 },
@@ -36,14 +44,14 @@ export const RICHNESS_WORLDS: WorldSpec[] = DEFAULT_WORLDS.map(w => ({ ...w, ric
  * prompt fixes were derived from (already seen, so prompt tuning happens there). Test = six fresh
  * worlds nobody had looked at, used once for the final numbers.
  */
-export const V2_DEV_WORLDS: WorldSpec[] = RICHNESS_WORLDS.map(w => ({ ...w, split: "dev" as const }));
+export const V2_DEV_WORLDS: WorldSpec[] = RICHNESS_WORLDS.map(w => ({ ...w, split: "dev" as const, snapshotFeatures: JUDGE_V2_SNAPSHOT_FEATURES }));
 export const V2_TEST_WORLDS: WorldSpec[] = [
-  { id: "sf-3", city: "sf", seed: 103, n: 320, richness: true, split: "test" },
-  { id: "sf-4", city: "sf", seed: 104, n: 320, richness: true, split: "test" },
-  { id: "sf-5", city: "sf", seed: 105, n: 320, richness: true, split: "test" },
-  { id: "nyc-3", city: "nyc", seed: 203, n: 320, richness: true, split: "test" },
-  { id: "nyc-4", city: "nyc", seed: 204, n: 320, richness: true, split: "test" },
-  { id: "nyc-5", city: "nyc", seed: 205, n: 320, richness: true, split: "test" },
+  { id: "sf-3", city: "sf", seed: 103, n: 320, richness: true, split: "test", snapshotFeatures: JUDGE_V2_SNAPSHOT_FEATURES },
+  { id: "sf-4", city: "sf", seed: 104, n: 320, richness: true, split: "test", snapshotFeatures: JUDGE_V2_SNAPSHOT_FEATURES },
+  { id: "sf-5", city: "sf", seed: 105, n: 320, richness: true, split: "test", snapshotFeatures: JUDGE_V2_SNAPSHOT_FEATURES },
+  { id: "nyc-3", city: "nyc", seed: 203, n: 320, richness: true, split: "test", snapshotFeatures: JUDGE_V2_SNAPSHOT_FEATURES },
+  { id: "nyc-4", city: "nyc", seed: 204, n: 320, richness: true, split: "test", snapshotFeatures: JUDGE_V2_SNAPSHOT_FEATURES },
+  { id: "nyc-5", city: "nyc", seed: 205, n: 320, richness: true, split: "test", snapshotFeatures: JUDGE_V2_SNAPSHOT_FEATURES },
 ];
 /** Oracle seed of an eval world (the drawn label); Monte Carlo draws derive from it. */
 export const oracleSeedOf = (spec: WorldSpec) => `evals:${spec.id}:${spec.seed}`;
@@ -79,6 +87,9 @@ export function buildEvalWorld(spec: WorldSpec): EvalWorld {
       cached = buildSnapshot(personas, {
         now: EVAL_NOW, worldStart: WORLD_START, joined, optedOut: new Set(), blocks: [...blocks],
         unanswered: new Map(), recentProposals: [],
+        // Snapshot features are pinned per world set so cached eval items stay byte-identical when
+        // the simulator's defaults change: legacy for the 2026-10-06 suites, JUDGE_V2 for dataset v2.
+        features: spec.snapshotFeatures ?? LEGACY_SNAPSHOT_FEATURES,
       });
       cachedBlocks = blocks.length;
       return cached;

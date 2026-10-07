@@ -26,9 +26,14 @@ import {
 import type { Candidate } from "./types.ts";
 import { pairKey, type World } from "./world.ts";
 
-/** Current pass-3 prompt (v3, 2026-10-07). The v2 prompt stays available as DEEP_SYSTEM_V2 for paired evals. */
-export const DEEP_PROMPT_VERSION = "pass3-deep-v3";
+/**
+ * Pass-3 prompt versions. v3 (2026-10-07) did not beat v2 on the held-out test split
+ * (docs/results/2026-10-07-judge-v2.md), so the engine default stays v2; v3 is kept for evals.
+ */
 export const DEEP_PROMPT_VERSION_V2 = "pass3-deep-v2";
+export const DEEP_PROMPT_VERSION_V3 = "pass3-deep-v3";
+/** The engine's pass-3 prompt version (cache key). */
+export const DEEP_PROMPT_VERSION = DEEP_PROMPT_VERSION_V2;
 export { basisOf, STALE_DAYS, type EvidenceBasis } from "./judgeCommon.ts";
 
 /** Optional provenance fields on a facet (connected sources / richness work in core types). */
@@ -114,7 +119,7 @@ export function summarizeConnectedSources(x: unknown, now: number): unknown {
 export interface DeepContextOptions { version?: "v2" | "v3" }
 
 export function buildDeepContext(w: World, c: Candidate, o: DeepContextOptions = {}): { context: DeepContext; refs: Record<string, MemberId> } {
-  const v3 = (o.version ?? "v3") === "v3";
+  const v3 = (o.version ?? "v2") === "v3";
   const ids = [...c.participants, ...(c.via ? [c.via] : [])];
   const refs: Record<string, MemberId> = {};
   const refOf = new Map<MemberId, string>();
@@ -291,7 +296,7 @@ Return ONLY the JSON object.`;
  *   or old "goal" facts);
  * - abstention questions about format, logistics or schedules are not allowed.
  */
-export const DEEP_SYSTEM = `You are the final reviewer (third pass) for The Network, an invite-only service that introduces adults to each other for friendship, activities, help, professional goals and (only when everyone opted in) dating. Earlier passes found this configuration plausible; your job is discernment: catch the ones that only look good, and do not guess when one question would settle it.
+export const DEEP_SYSTEM_V3 = `You are the final reviewer (third pass) for The Network, an invite-only service that introduces adults to each other for friendship, activities, help, professional goals and (only when everyone opted in) dating. Earlier passes found this configuration plausible; your job is discernment: catch the ones that only look good, and do not guess when one question would settle it.
 You get much richer context than earlier passes: every visible fact with its basis ("stated" = the member said it; "confirmed" = from a connected source and confirmed by the member; "observed" = taken from a connected source, unconfirmed; "inferred" = derived or guessed, can be wrong; "vouched" = an inviter said it), source, confidence and age in days (older_than_180_days marks facts older than ${STALE_DAYS} days; hypothesis marks unconfirmed facts with confidence below ${HYPOTHESIS_CONFIDENCE}); each person's live intents with their age; presence and schedule overlap; relationships, mutual contacts and the warm path; recent proposals, declines and feedback; each person's state, capacity and preferences; and private context.
 Private context ("private_context_never_quote") may inform your judgment, but you must never mention, hint at or paraphrase it in member_why or question_to_ask. In your internal fields refer to it only generically (e.g. "a private boundary of P2 about venues").
 Hard filters (age, blocks, opt-ins, safety holds) are enforced by code; you cannot override them. Be a skeptical friend who protects members' attention, and also one who does not withhold a good intro.
@@ -324,10 +329,12 @@ Write the JSON keys in EXACTLY this order (explanation first, verdict after, mem
 11. "member_why": LAST. If the verdict is "yes", for each attending ref one or two warm sentences using ONLY facts with visibility "shareable" and the logistics; otherwise "" for each ref. No names, ids, ages, contact details, do-not-quote facts or private context.
 Return ONLY the JSON object.`;
 
-export const DEEP_PROMPTS = { v2: { version: DEEP_PROMPT_VERSION_V2, system: DEEP_SYSTEM_V2 }, v3: { version: DEEP_PROMPT_VERSION, system: DEEP_SYSTEM } } as const;
+export const DEEP_PROMPTS = { v2: { version: DEEP_PROMPT_VERSION_V2, system: DEEP_SYSTEM_V2 }, v3: { version: DEEP_PROMPT_VERSION_V3, system: DEEP_SYSTEM_V3 } } as const;
+/** The engine's pass-3 system prompt (v2; see DEEP_PROMPT_VERSION). */
+export const DEEP_SYSTEM = DEEP_SYSTEM_V2;
 
 export function buildDeepMessages(w: World, c: Candidate, o: DeepContextOptions = {}): { messages: ChatMessage[]; refs: Record<string, MemberId>; context: DeepContext } {
-  const version = o.version ?? "v3";
+  const version = o.version ?? "v2";
   const { context, refs } = buildDeepContext(w, c, { version });
   return { refs, context, messages: [{ role: "system", content: DEEP_PROMPTS[version].system }, { role: "user", content: JSON.stringify(context) }] };
 }

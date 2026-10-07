@@ -17,9 +17,14 @@ import {
 import type { Candidate } from "./types.ts";
 import type { World } from "./world.ts";
 
-/** Current pass-1 prompt (v3, 2026-10-07). The v2 prompt and view stay available for paired evals. */
-export const SCREEN_PROMPT_VERSION = "pass1-screen-v3";
+/**
+ * Pass-1 prompt versions. v3 (2026-10-07) won on the dev split but not on the held-out test split
+ * (docs/results/2026-10-07-judge-v2.md), so the engine default stays v2; v3 is kept for evals.
+ */
 export const SCREEN_PROMPT_VERSION_V2 = "pass1-screen-v2";
+export const SCREEN_PROMPT_VERSION_V3 = "pass1-screen-v3";
+/** The engine's pass-1 prompt version (cache key). */
+export const SCREEN_PROMPT_VERSION = SCREEN_PROMPT_VERSION_V2;
 
 /** The configuration being screened (no labels, no hidden truth). Structurally equal to evals ConfigSpec. */
 export interface ScreenConfig {
@@ -68,15 +73,15 @@ export interface PublicView {
 const VISIBLE: ReadonlySet<Facet["scope"]> = new Set(["shareable", "matchable"]);
 
 /**
- * View options. "v2" is the view the rec-eval-v1 baseline and pass1-screen-v2 were run on. "v3"
- * (default) adds, per fact, its basis, source, confidence and age (and a HYPOTHESIS mark for
+ * View options. "v2" (default) is the view the rec-eval-v1 baseline and pass1-screen-v2 use. "v3"
+ * adds, per fact, its basis, source, confidence and age (and a HYPOTHESIS mark for
  * unconfirmed low-confidence facts), the age of each intent, drops expired intents, and gives a
  * redacted private-boundary flag (which aspect of this configuration it touches, never its content).
  */
 export interface PublicViewOptions { version?: "v2" | "v3" }
 
 export function buildPublicView(snap: WorldSnapshot, cfg: ScreenConfig, o: PublicViewOptions = {}): PublicView {
-  const v3 = (o.version ?? "v3") === "v3";
+  const v3 = (o.version ?? "v2") === "v3";
   const ids = [...cfg.participants, ...(cfg.via ? [cfg.via] : [])];
   const refs: Record<string, MemberId> = {};
   const refOf = new Map<MemberId, string>();
@@ -165,7 +170,7 @@ Return ONLY a JSON object: {"reasoning":string,"cited_facts":[...],"dealbreaker"
  * to their own live intent; groups as a whole; unknown schedules are normal; facts carry basis,
  * confidence and age, and hypothesis facts never anchor alone; a redacted private-boundary flag.
  */
-export const SCREEN_SYSTEM = `You are the first-pass screen for The Network, an invite-only service that introduces adults to each other for friendship, activities, help, professional goals and (only when everyone involved opted in) dating.
+export const SCREEN_SYSTEM_V3 = `You are the first-pass screen for The Network, an invite-only service that introduces adults to each other for friendship, activities, help, professional goals and (only when everyone involved opted in) dating.
 You evaluate ONE candidate configuration of people and decide whether the Network should propose it. Be a thoughtful, skeptical friend: protect members' attention, and do not withhold an intro that would clearly serve both sides.
 Hard policy (any violation means verdict "no" and dealbreaker=true):
 - Everyone involved in ANY role (attending or connector) must be 18 or older.
@@ -187,10 +192,12 @@ Think in this order and write the JSON keys in EXACTLY this order:
 7. "member_why": LAST, one or two warm sentences that could be shown to the participants, using ONLY items under "shareable" and the configuration's logistics (never the bracketed evidence notes). Never quote matchable_do_not_quote items; never use names, ids, ages, contact details, or anything sensitive. Use "" when the verdict is "no".
 Return ONLY a JSON object: {"reasoning":string,"cited_facts":[...],"dealbreaker":bool,"dealbreaker_reason":string,"verdict":"yes"|"no","match_probability":number,"accept_probability":{"P1":number,...},"member_why":string}`;
 
-export const SCREEN_PROMPTS = { v2: { version: SCREEN_PROMPT_VERSION_V2, system: SCREEN_SYSTEM_V2 }, v3: { version: SCREEN_PROMPT_VERSION, system: SCREEN_SYSTEM } } as const;
+export const SCREEN_PROMPTS = { v2: { version: SCREEN_PROMPT_VERSION_V2, system: SCREEN_SYSTEM_V2 }, v3: { version: SCREEN_PROMPT_VERSION_V3, system: SCREEN_SYSTEM_V3 } } as const;
+/** The engine's pass-1 system prompt (v2; see SCREEN_PROMPT_VERSION). */
+export const SCREEN_SYSTEM = SCREEN_SYSTEM_V2;
 
 /** Messages for pass 1. Takes ONLY the public view (the refs map is dropped). */
-export function screenMessages(view: PublicView, version: "v2" | "v3" = "v3"): ChatMessage[] {
+export function screenMessages(view: PublicView, version: "v2" | "v3" = "v2"): ChatMessage[] {
   const { refs: _refs, ...visible } = view;
   return [
     { role: "system", content: SCREEN_PROMPTS[version].system },

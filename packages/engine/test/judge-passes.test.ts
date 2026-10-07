@@ -5,8 +5,8 @@ import type { ChatMessage } from "@thenetwork/core";
 import { runEngine } from "../src/engine.ts";
 import { buildJudgeMessages, JUDGE_SYSTEM, JUDGE_SYSTEM_V3, parseVerdict } from "../src/judge.ts";
 import { boundaryRelevance, checkMemberFacing, keyOrderOk, parsePassVerdict, redactPrivate } from "../src/judgeCommon.ts";
-import { basisOf, buildDeepMessages, DEEP_SYSTEM, DEEP_SYSTEM_V2, gateMemberFacing, hardGate, parseDeepVerdict, summarizeConnectedSources } from "../src/judgeDeep.ts";
-import { buildPublicView, parseScreenVerdict, SCREEN_SYSTEM, SCREEN_SYSTEM_V2, screenConfigOf, screenMessages } from "../src/judgeScreen.ts";
+import { basisOf, buildDeepMessages, DEEP_SYSTEM, DEEP_SYSTEM_V2, DEEP_SYSTEM_V3, gateMemberFacing, hardGate, parseDeepVerdict, summarizeConnectedSources } from "../src/judgeDeep.ts";
+import { buildPublicView, parseScreenVerdict, SCREEN_SYSTEM, SCREEN_SYSTEM_V2, SCREEN_SYSTEM_V3, screenConfigOf, screenMessages } from "../src/judgeScreen.ts";
 import { privateVocabulary } from "../src/explain.ts";
 import { baseMember, cand, facet, FakeLLM, mkWorld, sailingPair, verdictJson } from "./helpers.ts";
 
@@ -199,8 +199,8 @@ describe("v3 prompts (2026-10-07): evidence notes, redacted boundary flag, pass 
   test("pass 1 view: basis/confidence/age on every fact, HYPOTHESIS mark, redacted boundary flag (no content); v2 view unchanged", () => {
     const w = world();
     const c = cand(["a", "b"]);
-    const v3 = buildPublicView(w.input, screenConfigOf(w, c));
-    const v2 = buildPublicView(w.input, screenConfigOf(w, c), { version: "v2" });
+    const v3 = buildPublicView(w.input, screenConfigOf(w, c), { version: "v3" });
+    const v2 = buildPublicView(w.input, screenConfigOf(w, c));
     const s3 = JSON.stringify(v3);
     expect(v3.people[0]!.private_boundary_relevant_to).toEqual(["format"]);
     expect(s3).not.toContain("prefers groups");
@@ -226,17 +226,19 @@ describe("v3 prompts (2026-10-07): evidence notes, redacted boundary flag, pass 
     expect(Object.keys(m.refs)).toEqual(["P1", "P2"]);
     const tpl = JUDGE_SYSTEM_V3.slice(JUDGE_SYSTEM_V3.indexOf("Return ONLY"));
     expect(increasing(order(tpl, ["reasoning", "cited_facts", "fit", "red_flags", "dealbreaker", "verdict", "match_probability", "certainty", "why"]))).toBe(true);
-    // Config default keeps the compact pass-2 input unless judge.pass2Context = "deep".
-    expect(buildJudgeMessages(w, c).messages[0]!.content).toBe(JUDGE_SYSTEM);
-    expect(buildJudgeMessages(mkWorld(sailingPair(), { judge: { pass2Context: "deep" } }), c).messages[0]!.content).toBe(JUDGE_SYSTEM_V3);
+    // Config default is the deep pass-2 input since 2026-10-07; "compact" restores judge-v2.1.
+    expect(buildJudgeMessages(w, c).messages[0]!.content).toBe(JUDGE_SYSTEM_V3);
+    expect(buildJudgeMessages(mkWorld(sailingPair(), { judge: { pass2Context: "compact" } }), c).messages[0]!.content).toBe(JUDGE_SYSTEM);
   });
-  test("pass 3 v3 prompt: boundaries are penalties, live intents re-read; v2 prompt still available", () => {
-    expect(DEEP_SYSTEM).toContain("penalties, not vetoes");
-    expect(DEEP_SYSTEM).toContain("re-read their \"intents\" list");
-    expect(DEEP_SYSTEM).not.toContain("a violated boundary)");
-    expect(DEEP_SYSTEM_V2).toContain("a violated boundary)");
-    expect(buildDeepMessages(world(), cand(["a", "b"]), { version: "v2" }).messages[0]!.content).toBe(DEEP_SYSTEM_V2);
-    expect(SCREEN_SYSTEM).toContain("ENJOY AND BENEFIT");
+  test("pass 3 v3 prompt: boundaries are penalties, live intents re-read; engine defaults stay v2 for passes 1 and 3", () => {
+    expect(DEEP_SYSTEM_V3).toContain("penalties, not vetoes");
+    expect(DEEP_SYSTEM_V3).toContain("re-read their \"intents\" list");
+    expect(DEEP_SYSTEM_V3).not.toContain("a violated boundary)");
+    expect(DEEP_SYSTEM).toBe(DEEP_SYSTEM_V2);
+    expect(buildDeepMessages(world(), cand(["a", "b"]), { version: "v3" }).messages[0]!.content).toBe(DEEP_SYSTEM_V3);
+    expect(buildDeepMessages(world(), cand(["a", "b"])).messages[0]!.content).toBe(DEEP_SYSTEM_V2);
+    expect(SCREEN_SYSTEM_V3).toContain("ENJOY AND BENEFIT");
+    expect(SCREEN_SYSTEM).toBe(SCREEN_SYSTEM_V2);
     expect(SCREEN_SYSTEM_V2).toContain("would plausibly accept");
   });
 });

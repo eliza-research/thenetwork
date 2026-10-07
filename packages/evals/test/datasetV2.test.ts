@@ -63,9 +63,9 @@ describe("v3 prompts carry no hidden truth (dataset v2)", () => {
     const w = worlds.get(i.world)!;
     const c = candidateOf(w, i);
     return {
-      p1: JSON.stringify(screenMessages(buildPublicView(ds.worlds.get(i.world)!.snapshot(), i.config))),
+      p1: JSON.stringify(screenMessages(buildPublicView(ds.worlds.get(i.world)!.snapshot(), i.config, { version: "v3" }), "v3")),
       p2: JSON.stringify(buildJudgeMessages(w, c, "v3").messages),
-      p3: JSON.stringify(buildDeepMessages(w, c).messages),
+      p3: JSON.stringify(buildDeepMessages(w, c, { version: "v3" }).messages),
     };
   };
   test("no canaries, names, ids, labels or source-truth words; passes 1-2 never see a boundary or private disclosure", () => {
