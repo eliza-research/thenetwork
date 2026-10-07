@@ -104,5 +104,5 @@ The network was degraded during the run, so latency is estimated as calls × the
 | Transit travel time | No free transit router | Google Routes or OpenTripPlanner with GTFS on about 200 pairs per city |
 | Relevant-event supply | Allowed sources are mostly civic | Partnerships: Cerebral Valley (lift the feed cap), Luma, Meetup Pro, Eventbrite |
 | Workers + Hyperdrive + Railway latency on staging | No staging deploy from this session | Deploy the spike branch to `eliza-cloud-api-staging`; measure provider latency per turn |
-| LLM cost at list price | Surplus prices look about 100× below list | Confirm Surplus pricing stability; budget both cases (about $3 vs about $260 a month for 300 members) |
+| LLM cost at list price | **Resolved 2026-10-07.** gpt-6-luna lists at $0.10 per million input and $0.50 per million output tokens on both Surplus and OpenAI; we are billed 9-21% of that (prompt caching, marketplace pricing) | Budget about $3/month billed, about $27/month worst case at list with no caching (300 members, 5 messages/day, plus the outbound leak check). The earlier "$260" assumed a $1/$10 price that does not apply |
 | Sim-to-real gap (R3) | Synthetic people | Shadow mode (P38) and pilot calibration (P43) |
