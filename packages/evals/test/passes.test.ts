@@ -3,7 +3,8 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { buildJudgeMessages } from "../../engine/src/judge.ts";
 import { buildDeepMessages } from "../../engine/src/judgeDeep.ts";
-import { buildPublicView, screenMessages } from "../../engine/src/judgeScreen.ts";
+import { buildPublicView } from "../../engine/src/judgeContext.ts";
+import { screenMessages } from "../../engine/src/judgeScreen.ts";
 import { canariesOf } from "../../sim/src/persona.ts";
 import { abstentionMetrics, ece, pairedBootstrap, reliability } from "../src/metrics.ts";
 import { buildRecDataset, type RecDataset } from "../src/recDataset.ts";

@@ -1,5 +1,5 @@
 // Recommender suite runner + scoring.
-import { parseJson, type MemberId } from "../../core/src/index.ts";
+import { tryChatJson, type MemberId } from "../../core/src/index.ts";
 import { localEmbed, tokenize } from "../../engine/src/embed.ts";
 import { resolveConfig } from "../../engine/src/config.ts";
 import { involvesMinor, pairReason } from "../../engine/src/filters.ts";
@@ -8,7 +8,7 @@ import { findCanaries, checkMessage } from "../../judge/src/rules.ts";
 import { canariesOf } from "../../sim/src/persona.ts";
 import { buildPublicView, decision, parseRecPrediction, recommenderMessages, type PublicView } from "./publicView.ts";
 import type { RecDataset } from "./recDataset.ts";
-import { withScope, pmap, type HttpRecord, type RequestSettings } from "./transport.ts";
+import { attemptScopes, errorText, pmap, type HttpRecord, type RequestSettings } from "./transport.ts";
 import type { RecItem, RecPrediction } from "./types.ts";
 import { auc, brier, classification, mae, mean, percentile } from "./metrics.ts";
 
@@ -71,19 +71,12 @@ export async function runRecommender(model: string, ds: RecDataset, o: RunOption
     const messages = recommenderMessages(view);
     const attending = Object.entries(view.refs).filter(([, id]) => item.config.participants.includes(id)).map(([r]) => r);
     const records: HttpRecord[] = [];
-    let lastErr = "";
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const r = await withScope(model, { attempt, cacheDir: o.cacheDir, settings: o.settings, offline: o.offline, fetch: o.fetch }, async llm => {
-        const out = await llm.chat(messages, { maxTokens: o.maxTokens, json: true });
-        return parseRecPrediction(parseJson(out), attending);
-      });
-      records.push(...r.records);
-      if (r.value) {
-        return { itemId: item.id, model, prediction: r.value, attempts: attempt + 1, refs: view.refs, records, leaks: leakChecks(ds, item, view, r.value.why) };
-      }
-      lastErr = r.error ?? "unknown";
-    }
-    return { itemId: item.id, model, prediction: null, error: lastErr, attempts: 2, refs: view.refs, records, leaks: { canary: [], sensitive: [], scope: [], rules: [] } };
+    const scopes = attemptScopes(model, { cacheDir: o.cacheDir, settings: o.settings, offline: o.offline, fetch: o.fetch });
+    const r = await tryChatJson(scopes.llm, messages, raw => parseRecPrediction(raw, attending), {
+      attempts: 2, maxTokens: o.maxTokens, afterAttempt: () => { records.push(...scopes.records()); },
+    });
+    if (r.ok) return { itemId: item.id, model, prediction: r.value, attempts: r.attempts, refs: view.refs, records, leaks: leakChecks(ds, item, view, r.value.why) };
+    return { itemId: item.id, model, prediction: null, error: errorText(r.error), attempts: 2, refs: view.refs, records, leaks: { canary: [], sensitive: [], scope: [], rules: [] } };
   }, d => o.onProgress?.(d, ds.items.length));
 }
 

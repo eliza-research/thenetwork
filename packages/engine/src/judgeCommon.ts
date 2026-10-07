@@ -1,11 +1,129 @@
-// Shared pieces of the three LLM judgment passes (see judgeScreen.ts = pass 1, judge.ts = pass 2,
-// judgeDeep.ts = pass 3). Every pass returns structured JSON whose FIRST field is an internal,
-// fact-citing explanation, then the verdict, then the confidence, and only then any member-facing
-// text. Internal reasoning is never shown to members; member-facing text goes through a
-// deterministic leak gate before it can be used.
-import type { MemberId } from "@thenetwork/core";
-import { labelHash, LeakGuard, textVariants } from "@thenetwork/core";
+// Shared pieces of the three LLM judgment passes (judgeScreen.ts = pass 1, judge.ts = pass 2,
+// judgeDeep.ts = pass 3; the one context builder is judgeContext.ts). Every pass returns structured
+// JSON whose FIRST field is an internal, fact-citing explanation, then the verdict, then the
+// confidence, and only then any member-facing text. Internal reasoning is never shown to members;
+// member-facing text goes through a deterministic leak gate before it can be used.
+//
+// This module holds what the passes share: the runner (one call with retry, core chatJson), the
+// verdict cache and the cached, bounded-concurrency pass loop, the parser base (field readers that
+// collect schema errors), the leak gate, evidence helpers and the shared prompt fragments.
+import type { ChatMessage, LLM, MemberId } from "@thenetwork/core";
+import { chatJson, labelHash, LeakGuard, textVariants } from "@thenetwork/core";
 import { tokenize } from "./embed.ts";
+import { sha256 } from "./rng.ts";
+import type { Candidate, JudgeVerdict } from "./types.ts";
+import type { World } from "./world.ts";
+
+// ---- runner, cache, pass loop ---------------------------------------------------------------------
+
+/** System prompt + the context object as the user message (the prompt bytes every pass sends). */
+export const passMessages = (system: string, context: unknown): ChatMessage[] =>
+  [{ role: "system", content: system }, { role: "user", content: JSON.stringify(context) }];
+
+/** One pass call: ask for JSON, validate with `parse`, one retry (the engine's budget for every pass). */
+export function runPass<V>(llm: LLM, messages: ChatMessage[], parse: (raw: unknown) => V, maxTokens: number, temperature?: number): Promise<V> {
+  return chatJson(llm, messages, parse, { attempts: 2, maxTokens, temperature });
+}
+
+export class JudgeCache<V = JudgeVerdict> {
+  private m = new Map<string, { verdict: V; at: number }>();
+  constructor(public ttlMs: number) {}
+  get(key: string, now: number): V | undefined {
+    const e = this.m.get(key);
+    if (!e) return undefined;
+    if (now - e.at >= this.ttlMs || now < e.at) { this.m.delete(key); return undefined; }
+    return e.verdict;
+  }
+  set(key: string, verdict: V, now: number) { this.m.set(key, { verdict, at: now }); }
+  get size() { return this.m.size; }
+  /** Drop every entry involving a member whose profile changed (keys also embed revisions). */
+  clear() { this.m.clear(); }
+}
+
+/** Cache key: prompt version, configuration shape and every participant's profile revision. */
+export function passCacheKey(w: World, c: Candidate, version: string): string {
+  const parts = [...c.participants].sort().map(id => `${id}@${w.get(id)?.revision ?? "?"}`);
+  return sha256(`${version}|${c.kind}|${c.category}|${c.anchor?.type}:${c.anchor?.id}|${parts.join(",")}`).slice(0, 24);
+}
+
+export interface JudgeRunStats { calls: number; cacheHits: number; failures: number }
+
+/**
+ * Run one judgment pass over candidates with caching and bounded concurrency (shared by all three
+ * passes). Returns key -> verdict (null on failure). Failures are never cached (ME-008).
+ */
+export async function runCachedPass<V>(w: World, cands: Candidate[], version: string, cache: JudgeCache<V>, stats: JudgeRunStats,
+  judge: (c: Candidate) => Promise<V>, log: { key: string; cacheKey: string; verdict: V | null; cached: boolean }[]): Promise<Map<string, V | null>> {
+  const out = new Map<string, V | null>();
+  const hits = new Set<string>();
+  const queue = [...cands];
+  const worker = async () => {
+    while (queue.length) {
+      const c = queue.shift()!;
+      const ck = passCacheKey(w, c, version);
+      const hit = cache.get(ck, w.now);
+      if (hit) { stats.cacheHits++; hits.add(c.key); out.set(c.key, hit); continue; }
+      stats.calls++;
+      try {
+        const v = await judge(c);
+        cache.set(ck, v, w.now);
+        out.set(c.key, v);
+      } catch {
+        stats.failures++;
+        out.set(c.key, null); // not cached: a noisy failure must not stick (ME-008)
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, w.cfg.judge.concurrency) }, worker));
+  // Deterministic log order.
+  for (const c of [...cands].sort((a, b) => (a.key < b.key ? -1 : 1))) {
+    log.push({ key: c.key, cacheKey: passCacheKey(w, c, version), verdict: out.get(c.key) ?? null, cached: hits.has(c.key) });
+  }
+  return out;
+}
+
+/** Attending refs (participants, not the connector) of a ref map. */
+export const attendingRefs = (refs: Record<string, MemberId>, c: Pick<Candidate, "participants">) =>
+  Object.entries(refs).filter(([, id]) => c.participants.includes(id)).map(([r]) => r);
+
+// ---- parser base -----------------------------------------------------------------------------------
+
+/**
+ * Field readers for a raw model reply that collect schema errors. Each pass reads its fields in its
+ * own order with its own error labels (the error text is part of recorded eval results), then calls
+ * `done(prefix, separator)`, which throws if anything was missing.
+ */
+export class ReplyFields {
+  readonly errs: string[] = [];
+  readonly o: Record<string, any>;
+  constructor(raw: unknown, notObject: string) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(notObject);
+    this.o = raw as Record<string, any>;
+  }
+  /** Non-empty trimmed text (capped at 4000 chars); `err` is recorded when empty. */
+  text(key: string, err = key): string { const v = str(this.o[key]); if (!v) this.errs.push(err); return v; }
+  verdict(allowInsufficient: boolean, err = "verdict"): PassVerdict | undefined {
+    const v = parsePassVerdict(this.o.verdict, allowInsufficient);
+    if (!v) this.errs.push(err);
+    return v;
+  }
+  prob(key: string, value: unknown = this.o[key], err = key): number | undefined {
+    const p = prob(value);
+    if (p === undefined) this.errs.push(err);
+    return p;
+  }
+  bool(key: string, err = key): void { if (typeof this.o[key] !== "boolean") this.errs.push(err); }
+  /** Integer-ish score in [1,5] (undefined + error otherwise). */
+  score(value: unknown, err: string): number | undefined {
+    const v = Number(value);
+    if (!Number.isFinite(v) || v < 1 || v > 5) { this.errs.push(err); return undefined; }
+    return v;
+  }
+  done(prefix: string, sep: string): void { if (this.errs.length) throw new Error(`${prefix}${this.errs.join(sep)}`); }
+  citedFacts(): CitedFact[] { return parseCitedFacts(this.o.cited_facts); }
+  /** The model wrote `before` keys before its verdict (JSON key order). */
+  reasoningFirst(before: string[] = ["reasoning"]): boolean { return keyOrderOk(this.o, before, "verdict"); }
+}
 
 /** One fact the model says it relied on, addressed by field (e.g. {ref:"P1", field:"intents[0]"}). */
 export interface CitedFact { ref: string; field: string; fact: string }

@@ -4,9 +4,12 @@ import { describe, expect, test } from "bun:test";
 import type { ChatMessage } from "@thenetwork/core";
 import { runEngine } from "../src/engine.ts";
 import { buildJudgeMessages, JUDGE_SYSTEM, JUDGE_SYSTEM_V3, parseVerdict } from "../src/judge.ts";
-import { boundaryRelevance, checkMemberFacing, keyOrderOk, parsePassVerdict, redactPrivate } from "../src/judgeCommon.ts";
-import { basisOf, buildDeepMessages, DEEP_SYSTEM, DEEP_SYSTEM_V2, DEEP_SYSTEM_V3, gateMemberFacing, hardGate, parseDeepVerdict, summarizeConnectedSources } from "../src/judgeDeep.ts";
-import { buildPublicView, parseScreenVerdict, SCREEN_SYSTEM, SCREEN_SYSTEM_V2, SCREEN_SYSTEM_V3, screenConfigOf, screenMessages } from "../src/judgeScreen.ts";
+import { basisOf, boundaryRelevance, checkMemberFacing, keyOrderOk, parsePassVerdict, redactPrivate } from "../src/judgeCommon.ts";
+import { buildPublicView, screenConfigOf, summarizeConnectedSources } from "../src/judgeContext.ts";
+import * as Deep from "../src/judgeDeep.ts";
+import { buildDeepMessages, DEEP_PROMPT_VERSION, DEEP_SYSTEM, gateMemberFacing, hardGate, parseDeepVerdict } from "../src/judgeDeep.ts";
+import * as Screen from "../src/judgeScreen.ts";
+import { parseScreenVerdict, SCREEN_PROMPT_VERSION, SCREEN_SYSTEM, screenMessages } from "../src/judgeScreen.ts";
 import { privateVocabulary } from "../src/explain.ts";
 import { baseMember, cand, facet, FakeLLM, mkWorld, sailingPair, verdictJson } from "./helpers.ts";
 
@@ -230,15 +233,16 @@ describe("v3 prompts (2026-10-07): evidence notes, redacted boundary flag, pass 
     expect(buildJudgeMessages(w, c).messages[0]!.content).toBe(JUDGE_SYSTEM_V3);
     expect(buildJudgeMessages(mkWorld(sailingPair(), { judge: { pass2Context: "compact" } }), c).messages[0]!.content).toBe(JUDGE_SYSTEM);
   });
-  test("pass 3 v3 prompt: boundaries are penalties, live intents re-read; engine defaults stay v2 for passes 1 and 3", () => {
-    expect(DEEP_SYSTEM_V3).toContain("penalties, not vetoes");
-    expect(DEEP_SYSTEM_V3).toContain("re-read their \"intents\" list");
-    expect(DEEP_SYSTEM_V3).not.toContain("a violated boundary)");
-    expect(DEEP_SYSTEM).toBe(DEEP_SYSTEM_V2);
-    expect(buildDeepMessages(world(), cand(["a", "b"]), { version: "v3" }).messages[0]!.content).toBe(DEEP_SYSTEM_V3);
-    expect(buildDeepMessages(world(), cand(["a", "b"])).messages[0]!.content).toBe(DEEP_SYSTEM_V2);
-    expect(SCREEN_SYSTEM_V3).toContain("ENJOY AND BENEFIT");
-    expect(SCREEN_SYSTEM).toBe(SCREEN_SYSTEM_V2);
-    expect(SCREEN_SYSTEM_V2).toContain("would plausibly accept");
+  test("engine ships pass1-screen-v2 and pass3-deep-v2; the losing v3 prompts are not in the engine", () => {
+    expect(SCREEN_PROMPT_VERSION).toBe("pass1-screen-v2");
+    expect(DEEP_PROMPT_VERSION).toBe("pass3-deep-v2");
+    expect(SCREEN_SYSTEM).toContain("would plausibly accept");
+    expect(DEEP_SYSTEM).toContain("a violated boundary)");
+    expect(buildDeepMessages(world(), cand(["a", "b"])).messages[0]!.content).toBe(DEEP_SYSTEM);
+    for (const m of [Screen, Deep] as Record<string, unknown>[]) for (const v of Object.values(m)) {
+      if (typeof v !== "string") continue;
+      expect(v).not.toContain("ENJOY AND BENEFIT");
+      expect(v).not.toContain("penalties, not vetoes");
+    }
   });
 });

@@ -104,6 +104,9 @@ export function instrumentedLLM(model: string, s: CallScope, records: HttpRecord
   }, fallbacks);
 }
 
+/** How an eval call's error is recorded in results (first 300 chars of the message). */
+export const errorText = (e: unknown): string => String((e as Error)?.message ?? e).slice(0, 300);
+
 /** Run one eval call with an instrumented, cached client; returns its value plus the HTTP records. */
 export async function withScope<T>(model: string, s: CallScope, fn: (llm: LLM) => Promise<T>): Promise<{ value?: T; error?: string; records: HttpRecord[] }> {
   const records: HttpRecord[] = [];
@@ -111,8 +114,21 @@ export async function withScope<T>(model: string, s: CallScope, fn: (llm: LLM) =
     const value = await fn(instrumentedLLM(model, s, records));
     return { value, records };
   } catch (e) {
-    return { error: String((e as Error)?.message ?? e).slice(0, 300), records };
+    return { error: errorText(e), records };
   }
+}
+
+/**
+ * Per-attempt clients for core tryChatJson: attempt n gets its own cache scope (eval attempt
+ * n + offset, so a re-ask after a schema failure is a new cache key), and `records()` returns the
+ * HTTP records of the attempt that ran last.
+ */
+export function attemptScopes(model: string, base: Omit<CallScope, "attempt">, offset = 0): { llm: (attempt: number) => LLM; records: () => HttpRecord[] } {
+  let current: HttpRecord[] = [];
+  return {
+    llm: attempt => { current = []; return instrumentedLLM(model, { ...base, attempt: attempt + offset }, current); },
+    records: () => current,
+  };
 }
 
 /** Bounded-concurrency map preserving order. */

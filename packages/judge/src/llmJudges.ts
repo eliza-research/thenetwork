@@ -6,7 +6,7 @@
 // judge lives in policy.ts (rules first). Pass an explicit LLM to override (tests, comparisons). Treat
 // verdicts as one bounded input, calibrated against labeled examples (calibration.ts), never
 // as ground truth.
-import { judgeLLM, parseJson, type LLM } from "@thenetwork/core";
+import { chatJson, judgeLLM, type ChatJsonOptions, type LLM } from "@thenetwork/core";
 
 let defaultJudge: LLM | undefined;
 /** The default judge model (lazily created so importing this module never needs a key). */
@@ -42,18 +42,13 @@ export interface PrivacyAuditVerdict { pass: boolean; leaks: PrivacyLeak[] }
 
 export interface JudgeOptions { maxTokens?: number; temperature?: number }
 
+/** Budget for every judge call: 3 attempts, doubling the completion budget (cap 8000) after a failure. */
+export const judgeCallOptions = (o: JudgeOptions = {}): ChatJsonOptions =>
+  ({ attempts: 3, maxTokens: o.maxTokens ?? 3000, temperature: o.temperature ?? 0, grow: t => Math.min(8000, t * 2) });
+
 /** One judge call; retries with a bigger budget if the reasoning model returns no/partial JSON. */
 async function ask<T>(llmIn: LLM | undefined, system: string, user: string, o: JudgeOptions = {}): Promise<T> {
-  const llm = llmIn ?? defaultJudgeLLM();
-  let maxTokens = o.maxTokens ?? 3000, lastErr: unknown;
-  for (let i = 0; i < 3; i++) {
-    try {
-      const out = await llm.chat([{ role: "system", content: system }, { role: "user", content: user }],
-        { maxTokens, temperature: o.temperature ?? 0, json: true });
-      return parseJson<T>(out);
-    } catch (e) { lastErr = e; maxTokens = Math.min(8000, maxTokens * 2); }
-  }
-  throw lastErr;
+  return chatJson(llmIn ?? defaultJudgeLLM(), [{ role: "system", content: system }, { role: "user", content: user }], raw => raw as T, judgeCallOptions(o));
 }
 
 export async function judgeMessageQuality(llm: LLM | undefined, input: { message: string; context?: string }, o?: JudgeOptions): Promise<QualityVerdict> {

@@ -1,18 +1,31 @@
-// PASS 2: the rubric judge for the top configurations (Section 33.6, 33.7). Receives scrubbed,
-// scope-limited profiles (pseudonymous refs, no agent_private or opportunity_specific facets).
-// Output order (judge-v2): a fact-citing internal explanation FIRST, then per-dimension scores
-// with calibration anchors, the dealbreaker flag, the verdict, the confidence (match_probability,
-// certainty), and LAST a short shareable "why" per participant (the only member-facing text,
-// which explain.ts accepts only if it passes the leak checker). Verdicts are cached by participant
-// profile revisions and expire (ME-008: no permanent zeros). Failures are never cached.
-// Pass 1 (screen) is judgeScreen.ts; pass 3 (deep review) is judgeDeep.ts.
+// PASS 2: the rubric judge for the top configurations (Section 33.6, 33.7). Output order: a
+// fact-citing internal explanation FIRST, then per-dimension scores with calibration anchors, the
+// dealbreaker flag, the verdict, the confidence (match_probability, certainty), and LAST a short
+// shareable "why" per participant (the only member-facing text, which explain.ts accepts only if
+// it passes the leak checker). Verdicts are cached by participant profile revisions and expire
+// (ME-008: no permanent zeros). Failures are never cached.
+//
+// Input (judgeContext.ts): "matchable" visibility = pass 3's context minus private context
+// (judge-v3, the default, `judge.pass2Context = "deep"`), or the "compact" scrubbed profile
+// (judge-v2.1, `pass2Context = "compact"`). judge-v3 beat judge-v2.1 on the held-out test split
+// (docs/results/2026-10-07-judge-v2.md); v2.1 stays only because the config can still select it.
+//
+// Also here: the pass decisions and the pipeline decision the evals score (pass2Accepts,
+// passOutcome, pipelineDecision), so the evals measure the engine's rules instead of copying them.
 import type { ChatMessage, LLM, MemberId } from "@thenetwork/core";
-import { parseJson } from "@thenetwork/core";
-import { boundaryRelevance, CITATION_RULES, CODE_ENFORCED_V3, HYPOTHESIS_CONFIDENCE, JUDGING_NOTES, JUDGING_NOTES_V3, keyOrderOk, parseCitedFacts, parsePassVerdict, prob, str } from "./judgeCommon.ts";
-import { buildDeepContext } from "./judgeDeep.ts";
-import { sha256 } from "./rng.ts";
+import type { EngineConfig } from "./config.ts";
+import { DEFAULT_CONFIG } from "./config.ts";
+import {
+  CITATION_RULES, CODE_ENFORCED_V3, HYPOTHESIS_CONFIDENCE, JudgeCache, JUDGING_NOTES, JUDGING_NOTES_V3, passCacheKey, passMessages,
+  ReplyFields, runCachedPass, runPass, type JudgeRunStats,
+} from "./judgeCommon.ts";
+import { buildPassContext } from "./judgeContext.ts";
+import { deepDecision, type DeepVerdict } from "./judgeDeep.ts";
+import { screenDecision, type ScreenVerdict } from "./judgeScreen.ts";
 import type { Candidate, JudgeVerdict } from "./types.ts";
 import type { World } from "./world.ts";
+
+export { JudgeCache, runCachedPass, type JudgeRunStats } from "./judgeCommon.ts";
 
 export const JUDGE_PROMPT_VERSION = "judge-v2.1";
 /** Pass 2 with pass-3-style context (2026-10-07). Selected by `judge.pass2Context = "deep"`. */
@@ -22,26 +35,11 @@ export type JudgeVersion = "v2.1" | "v3";
 export const judgeVersionOf = (w: World): JudgeVersion => (w.cfg.judge.pass2Context === "deep" ? "v3" : "v2.1");
 const versionTag = (v: JudgeVersion) => (v === "v3" ? JUDGE_PROMPT_VERSION_V3 : JUDGE_PROMPT_VERSION);
 
-export class JudgeCache<V = JudgeVerdict> {
-  private m = new Map<string, { verdict: V; at: number }>();
-  constructor(public ttlMs: number) {}
-  get(key: string, now: number): V | undefined {
-    const e = this.m.get(key);
-    if (!e) return undefined;
-    if (now - e.at >= this.ttlMs || now < e.at) { this.m.delete(key); return undefined; }
-    return e.verdict;
-  }
-  set(key: string, verdict: V, now: number) { this.m.set(key, { verdict, at: now }); }
-  get size() { return this.m.size; }
-  /** Drop every entry involving a member whose profile changed (keys also embed revisions). */
-  clear() { this.m.clear(); }
-}
-
 export function judgeCacheKey(w: World, c: Candidate, version = JUDGE_PROMPT_VERSION): string {
-  const parts = [...c.participants].sort().map(id => `${id}@${w.get(id)?.revision ?? "?"}`);
-  return sha256(`${version}|${c.kind}|${c.category}|${c.anchor?.type}:${c.anchor?.id}|${parts.join(",")}`).slice(0, 24);
+  return passCacheKey(w, c, version);
 }
 
+/** judge-v2.1 system prompt (input: the "compact" context). */
 export const JUDGE_SYSTEM = `You are the matching judge for The Network, an invite-only service that introduces adults to each other for friendship, activities, help, professional goals and (only when both opted in) dating.
 You evaluate ONE proposed configuration of people. Be a thoughtful, skeptical friend: precision over volume. Most candidates should NOT be proposed.
 ${JUDGING_NOTES}
@@ -63,10 +61,8 @@ Think in this order and write the JSON keys in EXACTLY this order:
 Return ONLY a JSON object: {"reasoning":string,"cited_facts":[...],"fit":n,"mutual_value":n,"capacity_realism":n,"timing":n,"social_comfort":n,"red_flags":n,"dealbreaker":bool,"dealbreaker_reason":string,"verdict":"yes"|"no","match_probability":number,"certainty":n,"why":{"P1":string,...}}`;
 
 /**
- * judge-v3 system prompt: the same output schema as judge-v2.1 (so the engine's score blend and
- * floors are unchanged), but the input is pass 3's context (every fact with basis, source,
- * confidence and age; live intents with age; logistics; edges and history), minus the private
- * context, which is replaced by the redacted boundary flag pass 1 gets. Judging notes are v3.
+ * judge-v3 system prompt (the engine default): the same output schema as judge-v2.1 (so the
+ * engine's score blend and floors are unchanged), on the "matchable" context. Judging notes are v3.
  */
 export const JUDGE_SYSTEM_V3 = `You are the matching judge for The Network, an invite-only service that introduces adults to each other for friendship, activities, help, professional goals and (only when both opted in) dating.
 You evaluate ONE proposed configuration of people. Be a thoughtful, skeptical friend: protect members' attention, and do not withhold an intro that would clearly serve both sides.
@@ -90,145 +86,97 @@ Think in this order and write the JSON keys in EXACTLY this order:
 7. "why": LAST, for each ATTENDING person ref, one or two warm sentences addressed to that participant explaining why they might enjoy this, using ONLY facts with visibility "shareable". Never mention or hint at do_not_quote facts. No names, no contact details. This is the only text members may see.
 Return ONLY a JSON object: {"reasoning":string,"cited_facts":[...],"fit":n,"mutual_value":n,"capacity_realism":n,"timing":n,"social_comfort":n,"red_flags":n,"dealbreaker":bool,"dealbreaker_reason":string,"verdict":"yes"|"no","match_probability":number,"certainty":n,"why":{"P1":string,...}}`;
 
-/** Pass-2 v3 input: pass 3's context with private context replaced by the redacted boundary flag. Refs = attending only. */
-export function buildJudgeMessagesV3(w: World, c: Candidate): { messages: ChatMessage[]; refs: Record<string, MemberId> } {
-  const { context, refs: all } = buildDeepContext(w, c, { version: "v3" });
-  const people = context.people.map(p => {
-    const { private_context_never_quote, history: _h, ...rest } = p;
-    const id = all[p.ref]!;
-    const directTie = c.participants.some(o => o !== id && w.isWarm(o, id));
-    const rel = p.attending ? boundaryRelevance(private_context_never_quote.filter(f => f.field === "boundary").map(f => f.value),
-      { category: c.category, attendingCount: c.participants.length, directTie }) : [];
-    return { ...rest, ...(rel.length ? { private_boundary_relevant_to: rel } : {}) };
-  });
-  const refs: Record<string, MemberId> = {};
-  for (const [r, id] of Object.entries(all)) if (c.participants.includes(id)) refs[r] = id;
-  const user = { ...context, people };
-  return { refs, messages: [{ role: "system", content: JUDGE_SYSTEM_V3 }, { role: "user", content: JSON.stringify(user) }] };
-}
-
 /** Pass-2 messages for the given prompt version (default: the engine config's choice). */
 export function buildJudgeMessages(w: World, c: Candidate, version: JudgeVersion = judgeVersionOf(w)): { messages: ChatMessage[]; refs: Record<string, MemberId> } {
-  if (version === "v3") return buildJudgeMessagesV3(w, c);
-  const refs: Record<string, MemberId> = {};
-  const people = c.participants.map((id, i) => {
-    const ref = `P${i + 1}`;
-    refs[ref] = id;
-    const mi = w.get(id)!;
-    return {
-      ref, role: c.roles[id] ?? "peer", state: mi.m.state, preferred_formats: mi.m.prefs.formats,
-      shareable: mi.share.filter(f => f.kind !== "boundary").map(f => `${f.kind}: ${f.value}`).slice(0, 8),
-      context_do_not_quote: mi.match.filter(f => f.scope === "matchable").map(f => `${f.kind}: ${f.value}`).slice(0, 6),
-      own_request: c.anchor?.type === "intent" && w.intentById.get(c.anchor.id)?.memberId === id
-        ? `${w.intentById.get(c.anchor.id)!.objective}` : undefined,
-    };
-  });
-  const user = {
-    configuration: {
-      kind: c.kind, category: c.category, format: c.format, objective: c.objective,
-      window_hours: c.window ? Math.round((c.window.end - c.window.start) / 3_600_000) : undefined,
-      safety_class: c.safetyClass, existing_warm_ties: c.participants.length > 1 ? countWarm(w, c.participants) : 0,
-    },
-    participants: people,
-  };
-  return { refs, messages: [{ role: "system", content: JUDGE_SYSTEM }, { role: "user", content: JSON.stringify(user) }] };
-}
-
-function countWarm(w: World, ids: MemberId[]) {
-  let n = 0;
-  for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) if (w.isWarm(ids[i]!, ids[j]!)) n++;
-  return n;
+  const { context, refs } = buildPassContext(w, c, version === "v3" ? "matchable" : "compact");
+  return { refs, messages: passMessages(version === "v3" ? JUDGE_SYSTEM_V3 : JUDGE_SYSTEM, context) };
 }
 
 const DIMS = ["fit", "mutual_value", "capacity_realism", "timing", "social_comfort", "red_flags", "certainty"] as const;
 
 /** Validate and normalise a raw judge reply. Throws with a list of schema errors. */
 export function parseVerdict(raw: unknown, refs: Record<string, MemberId>): JudgeVerdict {
-  const errors: string[] = [];
-  const o = raw as Record<string, any>;
-  if (!o || typeof o !== "object" || Array.isArray(o)) throw new Error("judge verdict: not an object");
+  const f = new ReplyFields(raw, "judge verdict: not an object");
+  const o = f.o;
   const n: Record<string, number> = {};
   for (const d of DIMS) {
-    const v = Number(o[d]);
-    if (!Number.isFinite(v) || v < 1 || v > 5) errors.push(`${d} must be a number 1-5 (got ${JSON.stringify(o[d])})`);
-    else n[d] = (v - 1) / 4;
+    const v = f.score(o[d], `${d} must be a number 1-5 (got ${JSON.stringify(o[d])})`);
+    if (v !== undefined) n[d] = (v - 1) / 4;
   }
-  if (typeof o.dealbreaker !== "boolean") errors.push("dealbreaker must be boolean");
-  const reasoning = str(o.reasoning);
-  if (!reasoning) errors.push("reasoning must be a non-empty string (written before the verdict)");
-  const verdict = parsePassVerdict(o.verdict, false) as "yes" | "no" | undefined;
-  if (!verdict) errors.push(`verdict must be "yes" or "no" (got ${JSON.stringify(o.verdict)})`);
-  const mp = prob(o.match_probability);
-  if (mp === undefined) errors.push("match_probability must be a probability 0-1");
+  f.bool("dealbreaker", "dealbreaker must be boolean");
+  const reasoning = f.text("reasoning", "reasoning must be a non-empty string (written before the verdict)");
+  const verdict = f.verdict(false, `verdict must be "yes" or "no" (got ${JSON.stringify(o.verdict)})`) as "yes" | "no" | undefined;
+  const mp = f.prob("match_probability", o.match_probability, "match_probability must be a probability 0-1");
   const why: Record<MemberId, string> = {};
   const whyObj = o.why && typeof o.why === "object" && !Array.isArray(o.why) ? o.why as Record<string, unknown> : undefined;
   // A "no" verdict needs no member-facing text (it will never be shown).
-  if (!whyObj && verdict !== "no") errors.push("why must be an object keyed by participant ref");
+  if (!whyObj && verdict !== "no") f.errs.push("why must be an object keyed by participant ref");
   for (const ref of Object.keys(refs)) {
     const t = whyObj?.[ref];
     if (typeof t === "string" && t.trim()) why[refs[ref]!] = t.trim().slice(0, 400);
-    else if (whyObj && verdict !== "no") errors.push(`why.${ref} missing`);
+    else if (whyObj && verdict !== "no") f.errs.push(`why.${ref} missing`);
   }
-  if (errors.length) throw new Error(`judge verdict schema: ${errors.join("; ")}`);
+  f.done("judge verdict schema: ", "; ");
   return {
     fit: n.fit!, mutualValue: n.mutual_value!, capacityRealism: n.capacity_realism!, timing: n.timing!,
     socialComfort: n.social_comfort!, redFlags: n.red_flags!, certainty: n.certainty!,
     dealbreaker: o.dealbreaker, dealbreakerReason: typeof o.dealbreaker_reason === "string" ? o.dealbreaker_reason : undefined, why,
-    reasoning, citedFacts: parseCitedFacts(o.cited_facts), verdict, matchProbability: mp,
-    reasoningFirst: keyOrderOk(o, ["reasoning"], "verdict"),
+    reasoning, citedFacts: f.citedFacts(), verdict, matchProbability: mp,
+    reasoningFirst: f.reasoningFirst(),
   };
 }
 
 export async function judgeOne(w: World, c: Candidate, llm: LLM, maxTokens: number): Promise<JudgeVerdict> {
   const { messages, refs } = buildJudgeMessages(w, c);
-  let lastErr: unknown;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const out = await llm.chat(messages, { maxTokens, temperature: 0.2, json: true });
-      return parseVerdict(parseJson(out), refs);
-    } catch (e) { lastErr = e; }
-  }
-  throw lastErr;
-}
-
-export interface JudgeRunStats { calls: number; cacheHits: number; failures: number }
-
-/**
- * Run one judgment pass over candidates with caching and bounded concurrency (shared by all three
- * passes). Returns key -> verdict (null on failure). Failures are never cached (ME-008).
- */
-export async function runCachedPass<V>(w: World, cands: Candidate[], version: string, cache: JudgeCache<V>, stats: JudgeRunStats,
-  judge: (c: Candidate) => Promise<V>, log: { key: string; cacheKey: string; verdict: V | null; cached: boolean }[]): Promise<Map<string, V | null>> {
-  const out = new Map<string, V | null>();
-  const hits = new Set<string>();
-  const queue = [...cands];
-  const worker = async () => {
-    while (queue.length) {
-      const c = queue.shift()!;
-      const ck = judgeCacheKey(w, c, version);
-      const hit = cache.get(ck, w.now);
-      if (hit) { stats.cacheHits++; hits.add(c.key); out.set(c.key, hit); continue; }
-      stats.calls++;
-      try {
-        const v = await judge(c);
-        cache.set(ck, v, w.now);
-        out.set(c.key, v);
-      } catch {
-        stats.failures++;
-        out.set(c.key, null); // not cached: a noisy failure must not stick (ME-008)
-      }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.max(1, w.cfg.judge.concurrency) }, worker));
-  // Deterministic log order.
-  for (const c of [...cands].sort((a, b) => (a.key < b.key ? -1 : 1))) {
-    log.push({ key: c.key, cacheKey: judgeCacheKey(w, c, version), verdict: out.get(c.key) ?? null, cached: hits.has(c.key) });
-  }
-  return out;
+  return runPass(llm, messages, raw => parseVerdict(raw, refs), maxTokens, 0.2);
 }
 
 /** Pass 2 over candidates. Returns key -> verdict (null on failure). */
 export async function judgeCandidates(w: World, cands: Candidate[], llm: LLM, cache: JudgeCache, stats: JudgeRunStats,
   log: { key: string; cacheKey: string; verdict: JudgeVerdict | null; cached: boolean }[]): Promise<Map<string, JudgeVerdict | null>> {
   return runCachedPass(w, cands, versionTag(judgeVersionOf(w)), cache, stats, c => judgeOne(w, c, llm, w.cfg.judge.maxTokens), log);
+}
+
+// ---- decisions (engine rules, exported for the evals) ---------------------------------------------
+
+/**
+ * Pass 2 lets a configuration through: no dealbreaker, not a gated "no" (`judge.verdictGates`), and
+ * every dimension at or above `floors.judgeDimension`. These are the judge checks of scoring.ts
+ * floorViolation (which also applies the non-judge floors and the score threshold).
+ */
+export function pass2Accepts(v: JudgeVerdict, cfg: Pick<EngineConfig, "floors" | "judge"> = DEFAULT_CONFIG): boolean {
+  if (v.dealbreaker) return false;
+  if (v.verdict === "no" && cfg.judge.verdictGates) return false;
+  return Math.min(v.fit, v.mutualValue, v.capacityRealism, v.timing, v.socialComfort) >= cfg.floors.judgeDimension;
+}
+
+export type PassName = "pass1" | "pass2" | "pass3";
+export type PassOutcome = "yes" | "no" | "abstain";
+
+/** One pass's decision as the engine applies it (pass 3 "insufficient_information" = abstain, never a proposal). */
+export function passOutcome(pass: "pass1", v: ScreenVerdict): PassOutcome;
+export function passOutcome(pass: "pass2", v: JudgeVerdict, cfg?: Pick<EngineConfig, "floors" | "judge">): PassOutcome;
+export function passOutcome(pass: "pass3", v: DeepVerdict): PassOutcome;
+export function passOutcome(pass: PassName, v: ScreenVerdict | JudgeVerdict | DeepVerdict, cfg?: Pick<EngineConfig, "floors" | "judge">): PassOutcome {
+  if (pass === "pass1") return screenDecision(v as ScreenVerdict) ? "yes" : "no";
+  if (pass === "pass2") return pass2Accepts(v as JudgeVerdict, cfg) ? "yes" : "no";
+  const d = v as DeepVerdict;
+  return d.verdict === "insufficient_information" ? "abstain" : deepDecision(d) ? "yes" : "no";
+}
+
+/**
+ * The pipeline rule: a hard-gate reason rejects at once; then the passes in order, stopping at the
+ * first outcome that is not "yes". A failed call (null) is skipped: it fails open to the previous
+ * stage, as the engine does. Returns the decision, where it stopped and the passes reached.
+ */
+export function pipelineDecision<P extends string>(hardGate: string | null, stages: { pass: P; outcome: PassOutcome | null }[]):
+  { decision: PassOutcome; stoppedAt: string; reached: P[] } {
+  if (hardGate) return { decision: "no", stoppedAt: `hard_gate:${hardGate}`, reached: [] };
+  const reached: P[] = [];
+  for (const s of stages) {
+    reached.push(s.pass);
+    if (s.outcome === null) continue;
+    if (s.outcome !== "yes") return { decision: s.outcome, stoppedAt: s.pass, reached };
+  }
+  return { decision: "yes", stoppedAt: "proposed", reached };
 }

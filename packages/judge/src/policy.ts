@@ -6,8 +6,8 @@
 //      school grade or parental curfew, insinuated romance, ambiguous framing).
 //   judgePolicy() = rules first, then the LLM only when rules found no hard violation.
 // The LLM never overrides a rule violation; rules never certify compliance on their own.
-import { parseJson, type LLM } from "@thenetwork/core";
-import { defaultJudgeLLM, type JudgeOptions } from "./llmJudges.ts";
+import { chatJson, type LLM } from "@thenetwork/core";
+import { defaultJudgeLLM, judgeCallOptions, type JudgeOptions } from "./llmJudges.ts";
 
 export type PolicyRole = "recipient" | "participant" | "group_member" | "connector" | "introduced" | "subject";
 
@@ -110,24 +110,18 @@ export function renderPolicyContext(ctx: PolicyContext): string {
 
 /** LLM rubric only (no rules). Used by judgePolicy after rules, and by evals to compare models. */
 export async function judgePolicyLLM(llmIn: LLM | undefined, input: { message: string; context: PolicyContext }, o: JudgeOptions = {}): Promise<{ compliant: boolean; violations: string[]; reasoning: string }> {
-  const llm = llmIn ?? defaultJudgeLLM();
-  let maxTokens = o.maxTokens ?? 3000, lastErr: unknown;
-  for (let i = 0; i < 3; i++) {
-    try {
-      const out = await llm.chat([
-        { role: "system", content: `${POLICY_RUBRIC}\nReturn ONLY JSON: {"compliant": boolean, "violations": string[], "reasoning": "one sentence"}` },
-        { role: "user", content: `${renderPolicyContext(input.context)}\nMessage:\n"""${input.message}"""` },
-      ], { maxTokens, temperature: o.temperature ?? 0, json: true });
-      const j = parseJson<{ compliant?: unknown; violations?: unknown; reasoning?: unknown }>(out);
-      if (typeof j.compliant !== "boolean") throw new Error("policy judge: compliant must be boolean");
-      return {
-        compliant: j.compliant,
-        violations: Array.isArray(j.violations) ? j.violations.map(String) : [],
-        reasoning: typeof j.reasoning === "string" ? j.reasoning : "",
-      };
-    } catch (e) { lastErr = e; maxTokens = Math.min(8000, maxTokens * 2); }
-  }
-  throw lastErr;
+  return chatJson(llmIn ?? defaultJudgeLLM(), [
+    { role: "system", content: `${POLICY_RUBRIC}\nReturn ONLY JSON: {"compliant": boolean, "violations": string[], "reasoning": "one sentence"}` },
+    { role: "user", content: `${renderPolicyContext(input.context)}\nMessage:\n"""${input.message}"""` },
+  ], raw => {
+    const j = raw as { compliant?: unknown; violations?: unknown; reasoning?: unknown };
+    if (typeof j.compliant !== "boolean") throw new Error("policy judge: compliant must be boolean");
+    return {
+      compliant: j.compliant,
+      violations: Array.isArray(j.violations) ? j.violations.map(String) : [],
+      reasoning: typeof j.reasoning === "string" ? j.reasoning : "",
+    };
+  }, judgeCallOptions(o));
 }
 
 /** Production policy judge: deterministic rules first; the LLM rubric only if rules found no hard violation. */

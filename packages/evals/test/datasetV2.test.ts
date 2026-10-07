@@ -2,15 +2,16 @@
 // labels behave as specified, the build is deterministic, and no v3 prompt carries hidden truth.
 import { beforeAll, describe, expect, test } from "bun:test";
 import { buildJudgeMessages } from "../../engine/src/judge.ts";
-import { buildDeepMessages, hardGate } from "../../engine/src/judgeDeep.ts";
-import { buildPublicView, screenMessages } from "../../engine/src/judgeScreen.ts";
+import { hardGate } from "../../engine/src/judgeDeep.ts";
 import type { World } from "../../engine/src/world.ts";
 import { Oracle } from "../../sim/src/oracle.ts";
 import { canariesOf } from "../../sim/src/persona.ts";
 import { brierSoft, eceSoft, logLossSoft } from "../src/metrics.ts";
 import { buildRecDataset, publicPolicyViolation, type RecDataset } from "../src/recDataset.ts";
-import { candidateOf, engineWorlds } from "../src/runPasses.ts";
+import { candidateOf, engineWorlds, variantMessages } from "../src/runPasses.ts";
+import { cacheKey } from "../src/transport.ts";
 import { oracleSeedOf, V2_DEV_WORLDS, V2_TEST_WORLDS, WORLD_START } from "../src/worlds.ts";
+import replay from "./fixtures/judge-v2-replay.json";
 
 const WORLDS = [V2_DEV_WORLDS[0]!, V2_TEST_WORLDS[0]!];
 let ds: RecDataset;
@@ -62,10 +63,11 @@ describe("v3 prompts carry no hidden truth (dataset v2)", () => {
   const prompts = (i: RecDataset["items"][number]) => {
     const w = worlds.get(i.world)!;
     const c = candidateOf(w, i);
+    const snap = ds.worlds.get(i.world)!.snapshot();
     return {
-      p1: JSON.stringify(screenMessages(buildPublicView(ds.worlds.get(i.world)!.snapshot(), i.config, { version: "v3" }), "v3")),
+      p1: JSON.stringify(variantMessages("pass1", "v3", snap, i.config, w, c)),
       p2: JSON.stringify(buildJudgeMessages(w, c, "v3").messages),
-      p3: JSON.stringify(buildDeepMessages(w, c, { version: "v3" }).messages),
+      p3: JSON.stringify(variantMessages("pass3", "v3", snap, i.config, w, c)),
     };
   };
   test("no canaries, names, ids, labels or source-truth words; passes 1-2 never see a boundary or private disclosure", () => {
@@ -94,6 +96,28 @@ describe("v3 prompts carry no hidden truth (dataset v2)", () => {
       const before = prompts(i);
       expect(prompts({ ...i, id: "zz", source: "random", truth: { ...i.truth, good: !i.truth.good, pGood: 0.123, participants: {} } })).toEqual(before);
     }
+  });
+});
+
+describe("prompt bytes are unchanged for the recorded judge-v2 run", () => {
+  // judgeReplay.test.ts replays the recorded responses; this checks that today's code sends the very
+  // requests they answered: same messages, so the same evals cache keys (transport.ts cacheKey).
+  test("every fixture request rebuilds to its recorded cache key (both prompt arms, all attempts)", () => {
+    const fx = replay as unknown as { maxTokens: Record<string, number>; items: { itemId: string; arms: Record<string, { passes: Record<string, { variant: string; keys: string[] }> }> }[] };
+    let checked = 0;
+    for (const f of fx.items) {
+      const item = ds.items.find(i => i.id === f.itemId)!;
+      expect(item).toBeDefined();
+      const w = worlds.get(item.world)!;
+      const c = candidateOf(w, item);
+      const snap = ds.worlds.get(item.world)!.snapshot();
+      for (const arm of Object.values(f.arms)) for (const [pass, p] of Object.entries(arm.passes)) {
+        const messages = variantMessages(pass as "pass1" | "pass2" | "pass3", p.variant, snap, item.config, w, c);
+        const body = { model: "gpt-6-luna", messages, max_completion_tokens: fx.maxTokens[pass], response_format: { type: "json_object" }, reasoning_effort: "medium" };
+        p.keys.forEach((k, attempt) => { expect(cacheKey(body, attempt)).toBe(k); checked++; });
+      }
+    }
+    expect(checked).toBeGreaterThanOrEqual(90);
   });
 });
 
