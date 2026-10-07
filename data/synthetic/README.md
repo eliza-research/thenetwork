@@ -203,7 +203,21 @@ The table below is from 1.1.0. The counts it gives for facets, intents and roman
 - **Romance:** 130 of 450 adults (28.9%) are opted in to romance (was 207, 46%, in 1.0.0; see "What changed").
 - **Coverage:** all 38 interest tags and all 8 writing styles appear.
 
-### Engine v1.1.0 by richness tier (1.2.1 data, seed 1, no LLM judge)
+### Engine v1.2.0 by richness tier (1.2.1 data, seed 1, no LLM judge)
+
+Engine v1.2.0 (docs/results/2026-10-07-engine-v1.2.md) turns on dispatch awareness, personal-growth wants matched as hobby, the 0.40 bar for event pairs and theme groups, and the romance stated-preferences gate. On this one-tick snapshot only the growth fix and the group bar act (no history, no events in the files). The run produced **218 proposals** touching 256 members (v1.1.0: 208 touching 247). Oracle precision is **33.0%** (34.6%, inside the ±6.5-point CI), latent-pair recall 2.2% (2.1%), Gini 0.540 (0.558). The run had 0 minors in any proposal and 0 canary leaks. `bun scripts/synthetic/load.ts --engine` regenerates `v1/engine_v1_run.json`.
+
+| Tier (adults) | Proposals per member | Share with any proposal | Mean fit | Mean confidence | Oracle compatible | Latent-pair recall |
+|---|---:|---:|---:|---:|---:|---:|
+| minimal (63) | 0.27 | 22% | 0.66 | 0.66 | 0.27 (n=11) | 0.3% |
+| light (115) | 0.67 | 46% | 0.63 | 0.75 | 0.33 | 0.9% |
+| medium (131) | 1.05 | 66% | 0.58 | 0.77 | 0.33 | 2.5% |
+| rich (94) | 1.48 | 72% | 0.58 | 0.79 | 0.35 | 4.2% |
+| very_rich (47) | 1.49 | 72% | 0.59 | 0.79 | 0.36 | 4.4% |
+
+Light-tier reach rises most (40% → 46%), from growth wants now matched. With a weekly event feed (6 per city), v1.2 reaches 60.0% of adults at 32.3% precision. With "ask before proposing" (off by default) and the answers arriving one tick later, it reaches 64.4% of adults and 33% of minimal-tier members (25% before); see the results doc.
+
+### Engine v1.1.0 by richness tier (historical: 1.2.1 data, seed 1, no LLM judge)
 
 Engine v1.1.0 adds structured complementarity (weight 0.5). The run produced **208 proposals** touching 247 members. Oracle precision is **34.6%** (20.5% for engine v1 on 1.2.0 data), and latent-pair recall is 2.1% of 3,191 latent pairs (1.2% of 4,192). The run had 0 minors in any proposal and 0 canary leaks.
 
