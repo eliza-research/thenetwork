@@ -580,3 +580,20 @@ Use `NETWORK_LIVE_DESIGNS=planner` for design A. The key is never logged.
 | `cloud/shared` `tsc` | clean |
 | `cloud/api` `typecheck` (`tsc`, router contract with 767 routes, worker bundle 27,845.77 KiB / 6,873.58 KiB gzip) | clean |
 | `cloud/api` Workerd `shared-eliza-runtime.miniflare` | 12 pass, 2 skip (live), 0 fail. Includes the design B path (1 model call; the planner is skipped) and the design A must-call and `network` context assertions. |
+
+## Design B re-run on a clean network, after the plugin fixes (2026-10-07)
+
+Re-ran the live eval for design B only (`NETWORK_LIVE_DESIGNS=structured`, 2 runs × 30 messages, gpt-6-luna on Surplus). Surplus latency had recovered to 1-3.6 s per trivial call. The plugin now lives in `packages/plugin-network` with the eval fixes (busy vs paused correction, executed-confirmation replies, no-op state changes). Per-turn rows: [routing-eval-clean.jsonl](routing-eval-clean.jsonl).
+
+| | Degraded run, before fixes | Clean run, after fixes |
+|---|---|---|
+| Commit rate on state messages | 38/40 | **39/40** |
+| Correct state stored | 32/40 | **39/40** |
+| False commits on controls | 1/20 | **0/20** |
+| Failed turns | 3/60 | **0/60** |
+| Model calls per state turn (mean / max) | 1.0 / 1 | 1.0 / 1 |
+| State-turn latency p50 / p95, measured | (degraded) | **2.0 s / 6.4 s**, so the p95 < 8 s target is met |
+| All-turn latency p50 / p95 | (degraded) | 2.5 s / 7.1 s |
+
+- Every committed reply is now the deterministic past-tense confirmation, for example "Done: your Network intros are paused until Oct 20."
+- **Remaining miss: future travel.** "I'll be in London from next monday until the 15th" got a clarifying question instead of a commit, in one run. The state model has an end date (`until`) but no start date, so travel that starts later can't be represented. Follow-up: add a start date to SET_STATE (`from`) and to the store, so presence becomes a window (PRD 16.1-16.3, ME-011).

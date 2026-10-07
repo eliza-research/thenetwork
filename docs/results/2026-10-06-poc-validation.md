@@ -15,7 +15,7 @@ Model for all LLM work: `gpt-6-luna` on Surplus. Test data and audits used other
 | 5 | We can legitimately ingest ≥200 future events a week per city (32.6, P14) | [poc-event-ingestion](../../prototypes/poc-event-ingestion/) | **Raw count yes, relevance no** | Allowed sources: Cerebral Valley, Luma calendar ICS feeds, NYC Open Data, SFPL, SF Rec & Park. Eventbrite, Meetup and Partiful forbid scraping, so they need partnerships. Normal-week adult events: about 200 SF, 280 NYC, mostly civic. Dedupe P 1.00 / R 0.975 on 79 pairs. |
 | 6 | Enrichment can fetch a member's LinkedIn/X URL (32.5, P13) | [poc-enrichment-sources](../../prototypes/poc-enrichment-sources/) | **No: paste-first** | LinkedIn's robots.txt and terms prohibit automated access; X shows only the bio without its paid API. |
 | 7 | Travel time can be estimated from coarse H3 cells (16.2, SEC-004, P15) | [poc-travel-time](../../prototypes/poc-travel-time/) | **Yes for walk/bike; car partly; transit unknown** | Within 25% of OSRM: walk 95-100%, bike 85-95%, car NYC 95%, car SF 60% (78% for trips over 10 minutes). Transit not validated. |
-| 8 | The Eliza shared agent + Network plugin fits the platform (30, 31, P39) | [poc-eliza-fit](../../prototypes/poc-eliza-fit/) | **Plugin yes; Cloud needs changes; planner routing is a risk** | See below. |
+| 8 | The Eliza shared agent + Network plugin fits the platform (30, 31, P39) | [poc-eliza-fit](../../prototypes/poc-eliza-fit/) | **Yes, with design B routing and the Cloud glue** | The plugin needs no monkey patches. Eliza's planner failed with luna (1/20); one structured Stage-1 call works: 39/40 correct, 0/20 false commits, p95 6.4 s measured. See below. |
 | 9 | Blooio line works for iMessage/SMS (36.1, P40) | existing [messaging-blooio](../../prototypes/messaging-blooio/) | **Account and line live; no real send yet** | Read-only check: key valid; 3 active channels (iMessage/SMS/RCS). The test line's webhook points at an Eliza host. |
 
 ## Fixes applied after the PoCs
@@ -71,6 +71,11 @@ Model for all LLM work: `gpt-6-luna` on Surplus. Test data and audits used other
 | Estimated clean p95 per state turn | 8.5-11.5 s | **4.5-6.9 s** (target < 8 s) |
 
 The network was degraded during the run, so latency is estimated as calls × the clean per-call latency measured in poc-agent-llm.
+
+**Re-run on a clean network after the fixes** (2 × 30 messages, design B; [routing-eval-clean.jsonl](../../prototypes/poc-eliza-fit/routing-eval-clean.jsonl)):
+- 39/40 commits, 39/40 with the correct state, 0/20 false commits, 0 failed turns.
+- State-turn latency p50 2.0 s and p95 6.4 s, measured, so the 8 s target is met.
+- The one miss is future travel ("from next Monday until the 15th"): the state model has no start date. Follow-up: presence windows (`from` + `until`, ME-011).
 
 **Design B fixes, made after the eval** (in `packages/plugin-network`, tests in `test/eval-fixes.test.ts`):
 - A proposed `paused` becomes `busy` when the member's own words are busy cues without an explicit stop. This covers all 6 mislabels.
