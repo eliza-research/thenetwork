@@ -23,19 +23,25 @@ import type { CapitalEvent, CapitalEventInput as NoId } from "../src/types.ts";
 export const DAY = 86_400_000, HOUR = 3_600_000;
 export const T0 = Date.UTC(2026, 9, 5, 0);
 
-export class Rng {
-  private a: number;
-  constructor(seed: number) { this.a = (seed >>> 0) || 0x9e3779b9; }
-  next(): number {
-    this.a = (this.a + 0x6d2b79f5) >>> 0;
-    let t = this.a;
+/**
+ * Common random numbers: every decision draws from a hash of (seed, purpose, day, members), not a
+ * shared stream. Arms that differ only in a lever then see the same coin flips for the same
+ * decisions, so paired comparisons stay paired even when a lever changes who joins.
+ */
+export class Keyed {
+  constructor(private seed: number) {}
+  u(...parts: (string | number)[]): number {
+    let h = (0x811c9dc5 ^ Math.imul(this.seed, 0x9e3779b1)) >>> 0;
+    const str = parts.join("|");
+    for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+    let t = (h + 0x6d2b79f5) >>> 0;
     t = Math.imul(t ^ (t >>> 15), t | 1);
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   }
-  chance(p: number) { return this.next() < p; }
-  int(n: number) { return Math.floor(this.next() * n); }
-  pick<T>(xs: readonly T[]): T { return xs[this.int(xs.length)]!; }
+  chance(p: number, ...parts: (string | number)[]) { return this.u(...parts) < p; }
+  int(n: number, ...parts: (string | number)[]) { return Math.floor(this.u(...parts) * n); }
+  pick<T>(xs: readonly T[], ...parts: (string | number)[]): T { return xs[this.int(xs.length, ...parts)]!; }
 }
 
 export type PType =
@@ -58,6 +64,8 @@ export interface SimOptions {
   /** Levers on/off (off = everyone at the floor / fixed capacity). */
   effortLever?: boolean; vouchLever?: boolean; reachLever?: boolean;
   effortGain?: number;
+  /** Organizing reach above the base goes to members with the least recent participation (default true). */
+  reachExtraToLowExposure?: boolean;
   detection?: boolean;
 }
 
@@ -65,6 +73,8 @@ export interface SimResult {
   seed: number; personas: Persona[]; ledger: CapitalLedger;
   /** Truth value events per member (day). */
   values: Map<string, number[]>;
+  /** Truth: days on which the member took part: said yes to a plan, intro or crew, organized a session, asked for or gave help. */
+  participation: Map<string, number[]>;
   gamingEvents: Set<string>;
   firstGaming: Map<string, number>; detectedAt: Map<string, number>;
   falseConfirmed: string[]; flagsRaised: number; honestFlagged: Set<string>;
@@ -80,12 +90,13 @@ const BUDGET: Record<Persona["state"], number> = { open: 4, normal: 2, quiet: 0.
 export function simulate(o: SimOptions): SimResult {
   const days = o.days ?? 90, N = o.members ?? 240;
   const effortLever = o.effortLever ?? true, vouchLever = o.vouchLever ?? true, reachLever = o.reachLever ?? true;
-  const effortGain = o.effortGain ?? 0.4, detection = o.detection ?? true;
-  const rng = new Rng(o.seed * 7919 + 13);
-  const out = new Rng(o.seed * 104729 + 7); // outcome draws: one draw per outcome in every arm, so arms stay aligned
+  const effortGain = o.effortGain ?? 0.4, reachExtraToLowExposure = o.reachExtraToLowExposure ?? true, detection = o.detection ?? true;
+  const K = new Keyed(o.seed);
   const L = new CapitalLedger(o.cfg ?? {});
   const P = new Map<string, Persona>();
   const values = new Map<string, number[]>();
+  const participation = new Map<string, number[]>();
+  const took = (m: string, day: number) => { if (!participation.has(m)) participation.set(m, []); participation.get(m)!.push(day); };
   const gamingEvents = new Set<string>();
   const firstGaming = new Map<string, number>(), detectedAt = new Map<string, number>();
   const falseConfirmed: string[] = [];
@@ -115,7 +126,7 @@ export function simulate(o: SimOptions): SimResult {
       : type === "flaky_legit" ? { cancel: 0.3, noShow: 0.06, ghost: 0.01 }
       : type === "helper" ? { helpRate: 2 }
       : type === "organizer" ? { helpRate: 0.5 }
-      : type === "quiet" ? { state: rng.pick(["quiet", "receiving", "paused"] as const), accept: 0.4 }
+      : type === "quiet" ? { state: K.pick(["quiet", "receiving", "paused"] as const, "state", id), accept: 0.4 }
       : type === "low_activity" || type === "invitee_mediocre" ? { accept: 0.2, activity: 0.5, helpRate: 0.1, vouchPerMonth: 0.1 }
       : type === "minor" ? { age: 15, vouchPerMonth: 0, helpRate: 0 }
       : type === "invitee_bad" ? { accept: 0.3, noShow: 0.1, ghost: 0.1, helpRate: 0, vouchPerMonth: 0.5, inviteeQuality: 0.2 }
@@ -135,7 +146,7 @@ export function simulate(o: SimOptions): SimResult {
   let k = 0;
   for (const [type, share] of mix) for (let i = 0; i < Math.round(share * N); i++) mk(`m${k++}`, type, 0);
   for (let i = 0; i < 4; i++) P.get(`m${i}`)!.steward = true;
-  for (let i = 0; i < 12; i++) mk(`minor${i}`, "minor", rng.int(30));
+  for (let i = 0; i < 12; i++) mk(`minor${i}`, "minor", K.int(30, "minorjoin", i));
   // adversaries: 2 vouch rings x 3, 3 staged pairs, 2 help-farm trios (18 = 7% of adults)
   for (let g = 0; g < 2; g++) for (let i = 0; i < 3; i++) mk(`ring${g}_${i}`, "adv_vouch_ring", 0, { group: g });
   for (let g = 0; g < 3; g++) for (let i = 0; i < 2; i++) mk(`staged${g}_${i}`, "adv_staged", 0, { group: g });
@@ -153,7 +164,7 @@ export function simulate(o: SimOptions): SimResult {
 
   let planSeq = 0;
   /** A plan with the given participants. `served` = whose effort tier shapes the match. */
-  const runPlan = (day: number, parts: string[], served: string, kind: "intro" | "crew", origin: "engine" | "member" | "organizer", q: number, label?: string, organizer?: string) => {
+  const runPlan = (pk: string, day: number, parts: string[], served: string, kind: "intro" | "crew", origin: "engine" | "member" | "organizer", q: number, label?: string, organizer?: string) => {
     const planId = `p${++planSeq}`;
     const tAcc = T0 + day * DAY + 9 * HOUR;
     const startsAt = T0 + (day + 2) * DAY + 18 * HOUR;
@@ -161,7 +172,8 @@ export function simulate(o: SimOptions): SimResult {
     for (const m of parts) {
       const p = P.get(m)!;
       emit({ type: "plan_accepted", t: tAcc, member: m, planId, kind, startsAt });
-      const r = rng.next();
+      took(m, day);
+      const r = K.u(pk, m, "fate");
       if (r < p.cancel) emit({ type: "plan_cancelled", t: startsAt - 24 * HOUR, member: m, planId });
       else if (r < p.cancel + p.ghost) emit({ type: "plan_ghosted", t: startsAt + 2 * HOUR, member: m, planId });
       else {
@@ -175,19 +187,20 @@ export function simulate(o: SimOptions): SimResult {
       const others = everyone.filter(x => x !== m);
       emit({ type: "plan_attended", t: startsAt + 3 * HOUR, member: m, planId, counterparts: others,
         verifiedBy: kind === "crew" ? ["checkin"] : others.length ? ["counterpart"] : ["checkin"], origin, publicVenue: true });
-      if (rng.chance(0.6)) emit({ type: "feedback_given", t: startsAt + 20 * HOUR, member: m, planId });
+      if (K.chance(0.6, pk, m, "fb")) emit({ type: "feedback_given", t: startsAt + 20 * HOUR, member: m, planId });
     }
     // outcomes (truth): good only if someone else came
     for (const m of parts) {
-      const u = out.next();
+      const u = K.u(pk, m, "out");
       if (attended.includes(m) && everyone.length >= 2 && u < Math.min(0.95, q * boost(served))) {
         addValue(m, day + 2);
         emit({ type: "value_received", t: startsAt + 21 * HOUR, member: m, with: everyone.filter(x => x !== m) });
       }
     }
     if (organizer) {
+      took(organizer, day);
       emit({ type: "organized", t: startsAt + 4 * HOUR, organizer, planId, publicVenue: true, recurring: true, attendees: attended, label: label ?? "crew" });
-      const u = out.next();
+      const u = K.u(pk, organizer, "out");
       if (attended.length >= 2 && u < q * boost(organizer)) addValue(organizer, day + 2);
     }
   };
@@ -201,42 +214,44 @@ export function simulate(o: SimOptions): SimResult {
     // refresh effort tiers from the ledger (yesterday's balance)
     for (const p of P.values()) tierCache.set(p.id, effortOverlay(L.internalEntries(p.id), T0 + day * DAY, L.cfg).effortIndex);
     const pool = adultActive(day);
-    const matchable = pool.filter(p => p.state !== "quiet" || rng.chance(0.2));
+    const matchable = pool.filter(p => p.state !== "quiet" || K.chance(0.2, "qm", day, p.id));
 
     // --- engine intros
     for (const p of pool) {
       const rate = BUDGET[p.state] / 7 / 2 * p.activity;
-      if (!rng.chance(rate)) continue;
-      const c = rng.pick(matchable);
+      if (!K.chance(rate, "intro", day, p.id)) continue;
+      const c = K.pick(matchable, "cp", day, p.id);
       if (c.id === p.id) continue;
-      const aYes = rng.chance(p.accept), bYes = rng.chance(c.accept);
+      const aYes = K.chance(p.accept, "acc", day, p.id, c.id), bYes = K.chance(c.accept, "acc", day, c.id, p.id);
       if (!aYes) emit({ type: "declined", t: t9, member: p.id });
       if (!bYes) emit({ type: "declined", t: t9, member: c.id });
-      if (aYes && bYes) runPlan(day, [p.id, c.id], p.id, "intro", "engine", BASE_Q);
+      if (aYes && bYes) runPlan(`i:${day}:${p.id}:${c.id}`, day, [p.id, c.id], p.id, "intro", "engine", BASE_Q);
     }
 
     // --- help asks
     const helpers = pool.filter(p => p.helpRate > 0);
     const helpW = helpers.reduce((s, p) => s + p.helpRate, 0);
     for (const p of pool) {
-      if (!rng.chance(p.state === "receiving" ? 0.08 : 0.025)) continue;
+      if (!K.chance(p.state === "receiving" ? 0.08 : 0.025, "ask", day, p.id)) continue;
       emit({ type: "help_asked", t: t9, member: p.id });
-      let r = rng.next() * helpW, h = helpers[0]!;
+      took(p.id, day);
+      let r = K.u("helper", day, p.id) * helpW, h = helpers[0]!;
       for (const x of helpers) { r -= x.helpRate; if (r <= 0) { h = x; break; } }
-      if (h.id === p.id || !rng.chance(0.7)) continue;
+      if (h.id === p.id || !K.chance(0.7, "helps", day, p.id)) continue;
       const helpId = `h${seq}`;
       emit({ type: "help_given", t: t9 + 2 * HOUR, helper: h.id, recipient: p.id, helpId });
-      const u = out.next();
+      took(h.id, day);
+      const u = K.u("useful", day, p.id);
       const useful = u < Math.min(0.95, HELP_USEFUL * boost(p.id));
       if (useful) { addValue(p.id, day); emit({ type: "value_received", t: t9 + 5 * HOUR, member: p.id, with: [h.id] }); }
-      if (rng.chance(0.85)) emit({ type: "help_confirmed", t: t9 + 6 * HOUR, helpId, recipient: p.id, useful });
+      if (K.chance(0.85, "hconf", day, p.id)) emit({ type: "help_confirmed", t: t9 + 6 * HOUR, helpId, recipient: p.id, useful });
     }
 
     // --- needs list (weekly)
     if (day % 7 === 3) for (let i = 0; i < 4; i++) {
       const cands = pool.filter(p => p.helpRate >= 0.3);
-      if (!cands.length || !rng.chance(0.6)) continue;
-      emit({ type: "need_answered", t: t9 + 8 * HOUR, member: rng.pick(cands).id, needId: `n${day}_${i}`, confirmedBy: "staff" });
+      if (!cands.length || !K.chance(0.6, "need", day, i)) continue;
+      emit({ type: "need_answered", t: t9 + 8 * HOUR, member: K.pick(cands, "needby", day, i).id, needId: `n${day}_${i}`, confirmedBy: "staff" });
     }
 
     // --- stewards (weekly review work)
@@ -245,35 +260,45 @@ export function simulate(o: SimOptions): SimResult {
     // --- organizers: weekly crew at a public venue
     for (const p of pool) {
       if (p.type !== "organizer" || (day + Number(p.id.slice(1))) % 7 !== 0) continue;
-      const reach = reachLever ? organizingReach(L.internalEntries(p.id), T0 + day * DAY, L.cfg) : 8;
+      const base = L.cfg.levers.reach.base;
+      const reach = reachLever ? organizingReach(L.internalEntries(p.id), T0 + day * DAY, L.cfg).max : base;
       const invited = new Set<string>();
-      for (let i = 0; i < reach * 2 && invited.size < reach; i++) { const c = rng.pick(matchable); if (c.id !== p.id) invited.add(c.id); }
-      const yes = [...invited].filter(m => { const ok = rng.chance(P.get(m)!.accept * 0.8); if (!ok) emit({ type: "declined", t: t9, member: m }); return ok; });
-      runPlan(day, yes, p.id, "crew", "organizer", CREW_Q, LABELS[Number(p.id.slice(1)) % LABELS.length], p.id);
+      // The lever reserves every slot above the base for low exposure (OrganizingReach.reservedForLowExposure).
+      const firstSlots = reachExtraToLowExposure ? Math.min(reach, base) : reach;
+      for (let i = 0; i < firstSlots * 2 && invited.size < firstSlots; i++) { const c = K.pick(matchable, "crewinv", day, p.id, i); if (c.id !== p.id) invited.add(c.id); }
+      if (reachExtraToLowExposure && reach > invited.size) {
+        // Extra reach earned through NC goes to members with the least recent participation (exposure floor).
+        const recent = (m: string) => (participation.get(m) ?? []).filter(d => day - d < 14).length;
+        const cands = [...new Set(Array.from({ length: (reach - invited.size) * 4 }, (_, i) => K.pick(matchable, "crewx", day, p.id, i)))]
+          .filter(c => c.id !== p.id && !invited.has(c.id)).sort((a, b) => recent(a.id) - recent(b.id) || (a.id < b.id ? -1 : 1));
+        for (const c of cands) { if (invited.size >= reach) break; invited.add(c.id); }
+      }
+      const yes = [...invited].filter(m => { const ok = K.chance(P.get(m)!.accept * 0.8, "crewacc", day, p.id, m); if (!ok) emit({ type: "declined", t: t9, member: m }); return ok; });
+      runPlan(`c:${day}:${p.id}`, day, yes, p.id, "crew", "organizer", CREW_Q, LABELS[Number(p.id.slice(1)) % LABELS.length], p.id);
     }
 
     // --- vouching (honest and bad vouchers; ring vouching is below)
     for (const p of pool) {
       if (p.type === "adv_vouch_ring" || p.type === "minor" || p.vouchPerMonth <= 0) continue;
-      if (!rng.chance(p.vouchPerMonth / 30)) continue;
+      if (!K.chance(p.vouchPerMonth / 30, "vouch", day, p.id)) continue;
       const recent = p.vouchTimes.filter(d => day - d < 30).length;
       const cap = vouchLever ? vouchCapacity(L.internalEntries(p.id), T0 + day * DAY, L.cfg) : 3;
       if (recent >= cap) continue;
       p.vouchTimes.push(day);
-      const r = rng.next();
+      const r = K.u("vq", day, p.id);
       const quality = r < p.inviteeQuality ? "good" : r < p.inviteeQuality + (1 - p.inviteeQuality) / 2 ? "mediocre" : "bad";
-      const joined = rng.chance(0.75);
+      const joined = K.chance(0.75, "vjoin", day, p.id);
       const invId = `inv${nextInviteN.n++}`;
       invites.push({ voucher: p.id, invitee: invId, day, quality, joined });
       if (!joined || day + 2 >= days) continue;
       const ip = mk(invId, quality === "good" ? "invitee_good" : quality === "mediocre" ? "invitee_mediocre" : "invitee_bad", day + 2, { invitedBy: p.id, active: false });
       emit({ type: "member_joined", t: T0 + (day + 2) * DAY, member: ip.id, age: 30, vouchedBy: p.id });
       const actP = quality === "good" ? 0.85 : quality === "mediocre" ? 0.55 : 0.7;
-      if (rng.chance(actP)) { ip.activateDay = day + 3 + rng.int(5); }
-      if (quality === "bad" && rng.chance(0.6)) {
-        const fd = day + 5 + rng.int(50);
+      if (K.chance(actP, "act", ip.id)) { ip.activateDay = day + 3 + K.int(5, "actday", ip.id); }
+      if (quality === "bad" && K.chance(0.6, "flag", ip.id)) {
+        const fd = day + 5 + K.int(50, "flagday", ip.id);
         safetyFlagDay.set(ip.id, fd);
-        if (rng.chance(0.55)) (ip as Persona & { removeDay?: number }).removeDay = fd + 3 + rng.int(7);
+        if (K.chance(0.55, "rm", ip.id)) (ip as Persona & { removeDay?: number }).removeDay = fd + 3 + K.int(7, "rmday", ip.id);
       }
     }
     for (const p of P.values()) {
@@ -291,7 +316,7 @@ export function simulate(o: SimOptions): SimResult {
       const ring = groupOf("adv_vouch_ring", g).filter(p => !p.gamingStopped);
       for (const p of ring) {
         // sybil vouching
-        if (rng.chance(p.vouchPerMonth / 30)) {
+        if (K.chance(p.vouchPerMonth / 30, "rvouch", day, p.id)) {
           const recent = p.vouchTimes.filter(d => day - d < 30).length;
           const cap = vouchLever ? vouchCapacity(L.internalEntries(p.id), T0 + day * DAY, L.cfg) : 3;
           if (recent < cap && day + 6 < days) {
@@ -315,9 +340,9 @@ export function simulate(o: SimOptions): SimResult {
           }
         }
         // reciprocal help inside the ring, ~2 per week each
-        if (rng.chance(2 / 7)) {
+        if (K.chance(2 / 7, "rhelp", day, p.id)) {
           const others = ring.filter(x => x.id !== p.id);
-          const r = others.length ? rng.pick(others) : undefined;
+          const r = others.length ? K.pick(others, "rhto", day, p.id) : undefined;
           if (r) {
             const helpId = `rh${seq}`;
             emit({ type: "help_given", t: t9 + 12 * HOUR, helper: p.id, recipient: r.id, helpId }, [p.id]);
@@ -340,10 +365,10 @@ export function simulate(o: SimOptions): SimResult {
     for (let g = 0; g < 2; g++) {
       const trio = groupOf("adv_help_farm", g).filter(p => !p.gamingStopped);
       for (const p of trio) {
-        if (!rng.chance(0.5)) continue;
+        if (!K.chance(0.5, "farm", day, p.id)) continue;
         const others = trio.filter(x => x.id !== p.id);
         if (!others.length) continue;
-        const r = rng.pick(others);
+        const r = K.pick(others, "farmto", day, p.id);
         const helpId = `fh${seq}`;
         emit({ type: "help_given", t: t9 + 14 * HOUR, helper: p.id, recipient: r.id, helpId }, [p.id]);
         emit({ type: "help_confirmed", t: t9 + 15 * HOUR, helpId, recipient: r.id, useful: true }, [p.id]);
@@ -369,8 +394,8 @@ export function simulate(o: SimOptions): SimResult {
       for (const r of reviewQ.filter(r => r.day === day)) {
         const bad = r.members.filter(m => isBad(P.get(m)!.type));
         let confirm: string[] = [];
-        if (bad.length) { if (rng.chance(0.9)) confirm = bad; }
-        else if (rng.chance(0.02)) { confirm = r.members; falseConfirmed.push(...r.members); }
+        if (bad.length) { if (K.chance(0.9, "rev", day, r.members.join(","))) confirm = bad; }
+        else if (K.chance(0.02, "rev", day, r.members.join(","))) { confirm = r.members; falseConfirmed.push(...r.members); }
         if (!confirm.length) continue;
         L.record({ id: `fraud${++seq}`, t: dayEnd - 1, type: "fraud_confirmed", members: confirm });
         for (const m of confirm) {
@@ -381,7 +406,7 @@ export function simulate(o: SimOptions): SimResult {
       }
     }
   }
-  return { seed: o.seed, personas: [...P.values()], ledger: L, values, gamingEvents, firstGaming, detectedAt, falseConfirmed, flagsRaised, honestFlagged, invites, safetyFlagDay, days };
+  return { seed: o.seed, personas: [...P.values()], ledger: L, values, participation, gamingEvents, firstGaming, detectedAt, falseConfirmed, flagsRaised, honestFlagged, invites, safetyFlagDay, days };
 }
 
 export const isBad = (t: PType) => (ADVERSARY as readonly string[]).includes(t) || t === "sybil";

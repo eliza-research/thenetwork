@@ -71,11 +71,23 @@ export function vouchCapacity(entries: readonly LedgerEntry[], at = Infinity, cf
   return Math.max(0, Math.min(v.max, v.base + Math.min(v.maxBonus, good * v.perGood) - lost * v.perLost));
 }
 
-/** Max people a member-started crew or plan may reach (invitees still opt in; their budgets still apply). */
-export function organizingReach(entries: readonly LedgerEntry[], at = Infinity, cfg: CapitalConfig = DEFAULT_CAPITAL): number {
+export interface OrganizingReach {
+  /** Max people a member-started crew or plan may reach (invitees still opt in; their budgets still apply). */
+  max: number;
+  /**
+   * Slots above the base that the Network must fill with members who have had the least recent
+   * participation (exposure floor). Earned reach widens the network, not the organizer's circle:
+   * without this, extra reach went to the most active members and widened the V14 gap
+   * (docs/results/2026-10-08-network-capital.md, fairness gate).
+   */
+  reservedForLowExposure: number;
+}
+
+export function organizingReach(entries: readonly LedgerEntry[], at = Infinity, cfg: CapitalConfig = DEFAULT_CAPITAL): OrganizingReach {
   const r = cfg.levers.reach;
-  if (recentPenalty(entries, at, r.abuseLockDays)) return r.afterAbuse;
+  if (recentPenalty(entries, at, r.abuseLockDays)) return { max: r.afterAbuse, reservedForLowExposure: 0 };
   const reversed = new Set(entries.filter(e => e.provenance.reverses && e.t <= at).map(e => e.provenance.reverses!));
   const sessions = entries.filter(e => e.category === "organizing" && e.t <= at && !reversed.has(e.id)).length;
-  return Math.min(r.max, r.base + Math.floor(sessions / r.perSessions) * r.step);
+  const max = Math.min(r.max, r.base + Math.floor(sessions / r.perSessions) * r.step);
+  return { max, reservedForLowExposure: Math.max(0, max - r.base) };
 }

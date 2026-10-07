@@ -67,7 +67,7 @@ export const DEFAULT_CAPITAL: CapitalConfig = {
   },
   detection: { windowDays: 30, ringMinCredits: 5, ringShare: 0.6, ringMaxSize: 6, stagedRepeat: 3 },
   levers: {
-    effortThresholds: [10, 30, 80],
+    effortThresholds: [15, 45, 120],
     vouch: { base: 2, perGood: 1, maxBonus: 3, perLost: 2, max: 5, periodDays: 30, abuseLockDays: 90 },
     reach: { base: 8, perSessions: 3, step: 2, max: 16, afterAbuse: 4, abuseLockDays: 90 },
   },
