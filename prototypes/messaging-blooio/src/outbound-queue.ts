@@ -19,12 +19,17 @@
 //  - Blooio conversation limits (429 conversation_*) hold the message until the recipient engages; they are
 //    never retried on a timer (docs: messaging-safety).
 //  - Terminal failure on the primary channel can fall back to another adapter (e.g. Twilio SMS) when allowed.
+//  - The shared leak guard (packages/core/src/guard.ts findLeaks) runs right before every provider send (PRD
+//    28.5, 32.14). An injectable `forbiddenProvider` supplies the recipient-specific lists (other members'
+//    private facts, private vocabulary, canaries); without one, contact patterns and canary shapes are still
+//    checked. A hit blocks the send, records only hashed reasons, and parks the message for human review.
 // Production: persist records in Postgres with a unique index on idempotency_key and use SELECT ... FOR UPDATE
 // SKIP LOCKED for dispatch; this in-memory version keeps the same state machine.
 
 import { DEFAULT_QUIET, isQuietAt, isValidTimeZone, nextAllowedAt, resolveTimeZone, type QuietWindow } from "./quiet-hours.ts";
 import type { ConsentLedger } from "./keywords.ts";
 import { normalizeAddress } from "./phone.ts";
+import { LeakGuard } from "../../../packages/core/src/guard.ts";
 import {
   ChannelSendError, type ChannelAdapter, type ChannelKind, type Clock, type DeliveryStatus, type StatusUpdate, type Transport,
 } from "./types.ts";
@@ -56,6 +61,37 @@ export type RecipientPolicy = (
   ctx: { kind: MessageKind; channel: ChannelKind; briefId?: string; agentInitiated: boolean },
 ) => RecipientCheck | Promise<RecipientCheck>;
 
+/**
+ * What must not appear in a message to this recipient, from the Network's member store. Every field is
+ * optional. `forbidden` = other members' agent-private facts (whole or 4-word runs); `facts` = the same kind of
+ * strings, additionally matched on fragments, leetspeak and reordering; `fuzzy: true` treats every forbidden
+ * string as a fact; `privateVocab` = words that must never appear; `canaries` = privacy canary tokens;
+ * `publicPhrases` = the Network's own public vocabulary, cut out of facts before matching. Exclude the
+ * recipient's own facts. See LeakOptions in packages/core/src/guard.ts.
+ */
+export interface LeakSources {
+  forbidden?: string[];
+  privateVocab?: string[];
+  canaries?: string[];
+  facts?: string[];
+  fuzzy?: boolean;
+  publicPhrases?: string[];
+}
+/** The message being checked (the provider may key its lists on the brief or kind). */
+export interface LeakCheckMessage {
+  idempotencyKey: string;
+  text: string;
+  kind: MessageKind;
+  channel: ChannelKind;
+  briefId?: string;
+}
+/**
+ * Supplies the leak lists for one send. Called at dispatch, right before the provider send, so it sees the
+ * current member store. `recipient` is the normalized address (E.164, Apple ID email, or `chat:<id>` for a group,
+ * in which case cover every participant). Throwing parks the message (fails closed).
+ */
+export type ForbiddenProvider = (recipient: string, message: LeakCheckMessage) => LeakSources | Promise<LeakSources>;
+
 /** Per-conversation counters used for the unanswered cap and the single re-engagement. */
 export interface ContactState {
   unanswered: number;
@@ -68,11 +104,11 @@ export type RecordStatus =
   | "pending" | "sending" | "deferred_quiet_hours" | "held_awaiting_reply" | "retry_scheduled"
   | "accepted" | "sent" | "delivered" | "read"
   | "failed" | "suppressed_opt_out" | "suppressed_no_consent" | "suppressed_ineligible" | "blocked" | "fell_back"
-  | "parked_invalid_timezone" | "parked_error";
+  | "parked_invalid_timezone" | "parked_error" | "parked_leak_review" | "dropped_after_review";
 
 const TERMINAL: RecordStatus[] = [
   "delivered", "read", "failed", "suppressed_opt_out", "suppressed_no_consent", "suppressed_ineligible", "blocked", "fell_back",
-  "parked_invalid_timezone", "parked_error",
+  "parked_invalid_timezone", "parked_error", "parked_leak_review", "dropped_after_review",
 ];
 const PROVIDER_RANK: Record<string, number> = { accepted: 1, queued: 1, sent: 2, delivered: 3, read: 4 };
 
@@ -110,6 +146,10 @@ export interface OutboundRecord extends EnqueueInput {
   readAt?: number;
   lastError?: { failure?: string; status?: number; code?: string; message: string };
   fallbackRecordId?: string;
+  /** Hashed leak-guard reasons (e.g. "forbidden:1a2b3c4d", "contact:phone") when parked for leak review. */
+  leakReasons?: string[];
+  /** A reviewer approved this exact text after a leak block: later dispatches (and retries) skip the leak check. */
+  leakReviewApproved?: boolean;
   history: { at: number; status: RecordStatus; note?: string }[];
 }
 
@@ -136,6 +176,10 @@ export interface QueueOptions {
   defaultFrom?: Partial<Record<ChannelKind, string>>;
   /** Send-time recipient eligibility (paused/blocked/held/minor/opted out). Strongly recommended for live use. */
   recipientPolicy?: RecipientPolicy;
+  /** Recipient-specific leak lists (other members' private facts, vocabulary, canaries). Strongly recommended for live use. */
+  forbiddenProvider?: ForbiddenProvider;
+  /** Text the Network may include verbatim (its own HELP/STOP copy); removed before the contact-pattern checks. */
+  leakAllow?: string[];
   maxAttempts?: number;
   baseBackoffMs?: number;
   onAlert?: (rec: OutboundRecord, reason: string) => void;
@@ -161,7 +205,7 @@ export class OutboundQueue {
   #lineSafety = new Map<string, string>(); // line -> Blooio safety action
   #seq = 0;
   #draining = false;
-  readonly o: Required<Omit<QueueOptions, "onAlert" | "adapters" | "consent" | "clock" | "quiet" | "defaultFrom" | "recipientPolicy">> & QueueOptions;
+  readonly o: Required<Omit<QueueOptions, "onAlert" | "adapters" | "consent" | "clock" | "quiet" | "defaultFrom" | "recipientPolicy" | "forbiddenProvider" | "leakAllow">> & QueueOptions;
 
   constructor(opts: QueueOptions) {
     this.o = {
@@ -325,7 +369,19 @@ export class OutboundQueue {
     const adapter = this.o.adapters[rec.channel];
     if (!adapter) return this.#fail(rec, { message: `no adapter for channel ${rec.channel}`, failure: "invalid" });
 
-    // 5. Send.
+    // 7. Leak guard, immediately before the send (after every hold/defer, so it sees the current lists).
+    if (!rec.leakReviewApproved) {
+      const reasons = await this.#leakReasons(rec);
+      if (reasons.length) {
+        rec.leakReasons = reasons;
+        // Only hashed labels reach the history and the alert: never the message text or the matched value.
+        this.#set(rec, "parked_leak_review", `leak: ${reasons.join(",")}`);
+        this.o.onAlert?.(rec, "leak_blocked");
+        return;
+      }
+    }
+
+    // 8. Send.
     this.#set(rec, "sending");
     rec.attempts++;
     try {
@@ -365,6 +421,50 @@ export class OutboundQueue {
           return this.#fail(rec, rec.lastError);
       }
     }
+  }
+
+  /** Leak-guard reasons for this record (empty = clean). Fails closed: a provider error is a reason. */
+  async #leakReasons(rec: OutboundRecord): Promise<string[]> {
+    let src: LeakSources = {};
+    if (this.o.forbiddenProvider) {
+      try {
+        src = await this.o.forbiddenProvider(rec.to, { idempotencyKey: rec.idempotencyKey, text: rec.text, kind: rec.kind, channel: rec.channel, briefId: rec.briefId });
+      } catch {
+        return ["leak_check_error"];
+      }
+    }
+    const guard = new LeakGuard({
+      ...src,
+      canaryShapes: true,
+      allow: this.o.leakAllow,
+      // STOP/HELP/START confirmations are the Network's fixed copy (which may carry its own contact details);
+      // blocking them would break compliance. They still get the forbidden and canary checks.
+      contacts: rec.kind !== "compliance",
+    });
+    return guard.check(rec.text);
+  }
+
+  /** Messages parked by the leak guard, waiting for a human. */
+  leakReviewQueue(): OutboundRecord[] {
+    return [...this.records.values()].filter((r) => r.status === "parked_leak_review");
+  }
+
+  /**
+   * Resolve a leak-guard park. "approve" re-queues the same text (a record's text never changes) and skips the
+   * leak check for it from then on; every other pre-send check still runs; "drop" ends the record. Returns false if the record is not parked.
+   */
+  resolveLeakReview(idempotencyKey: string, decision: "approve" | "drop", reviewer?: string): boolean {
+    const rec = this.records.get(idempotencyKey);
+    if (!rec || rec.status !== "parked_leak_review") return false;
+    const who = reviewer ? ` by ${reviewer}` : "";
+    if (decision === "drop") {
+      this.#set(rec, "dropped_after_review", `leak review: dropped${who}`);
+      return true;
+    }
+    rec.leakReviewApproved = true;
+    rec.nextAttemptAt = this.#now;
+    this.#set(rec, "pending", `leak review: approved${who}`);
+    return true;
   }
 
   #fail(rec: OutboundRecord, error: OutboundRecord["lastError"]) {
