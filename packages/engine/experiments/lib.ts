@@ -16,10 +16,10 @@ import { localEmbed } from "../src/embed.ts";
 import { explain } from "../src/explain.ts";
 import { candidateReason, involvesMinor } from "../src/filters.ts";
 import { GENERATORS, type GenCtx } from "../src/generators.ts";
-import { selectProposals, updateExposureDebt, gini, type SelectionResult } from "../src/policy.ts";
+import { planAsks, selectProposals, updateExposureDebt, gini, type SelectionResult } from "../src/policy.ts";
 import { Rng, sha256 } from "../src/rng.ts";
 import { scoreCandidate, type Scored } from "../src/scoring.ts";
-import type { Candidate, EngineInput, EngineProposal } from "../src/types.ts";
+import type { Candidate, EngineAsk, EngineInput, EngineProposal } from "../src/types.ts";
 import { World, pairKey } from "../src/world.ts";
 import { selectX, type SelectLevers } from "./select.ts";
 
@@ -27,6 +27,7 @@ import { generatePersonas } from "../../sim/src/generator.ts";
 import { Oracle, PAIR_CHEMISTRY_SD } from "../../sim/src/oracle.ts";
 import type { Persona } from "../../sim/src/persona.ts";
 import { Rng as SimRng, hash32 } from "../../sim/src/rng.ts";
+import { buildSnapshot, type SnapshotFeatures } from "../../sim/src/snapshot.ts";
 import { StubNetwork } from "../../sim/src/stubNetwork.ts";
 import { World as SimWorld, DEFAULT_START } from "../../sim/src/world.ts";
 import type { RunRecord } from "../../judge/src/index.ts";
@@ -58,7 +59,7 @@ export interface Hooks {
 }
 
 export interface TracedResult {
-  proposals: EngineProposal[]; trace: TraceRow[]; scored: Scored[]; world: World;
+  proposals: EngineProposal[]; asks: EngineAsk[]; trace: TraceRow[]; scored: Scored[]; world: World;
   exposureDebt: Record<MemberId, number>; selected: SelectionResult["selected"];
 }
 
@@ -99,7 +100,9 @@ export function tracedEngine(input: EngineInput, cfgIn: EngineConfigInput = {}, 
   const priorDebt: Record<MemberId, number> = {};
   for (const [k, v] of Object.entries(input.exposureDebt ?? {})) priorDebt[w.canonical(k)] = (priorDebt[w.canonical(k)] ?? 0) + v;
   const levers = typeof hooks.levers === "function" ? hooks.levers(w) : hooks.levers;
-  const selection = levers ? selectX(w, scored, rng.fork("select"), priorDebt, levers) : selectProposals(w, scored, rng.fork("select"), priorDebt);
+  const askPlan = planAsks(w, input);
+  const sopts = { exclude: askPlan.exclude, extraProactive: askPlan.extraProactive };
+  const selection = levers ? selectX(w, scored, rng.fork("select"), priorDebt, levers, sopts) : selectProposals(w, scored, rng.fork("select"), priorDebt, sopts);
   let selected = selection.selected.filter(x => !involvesMinor(w, x.s.c));
   if (hooks.postSelect) selected = hooks.postSelect(w, selected);
   const byCand = new Map(scored.map(s => [s.c, s]));
@@ -120,7 +123,7 @@ export function tracedEngine(input: EngineInput, cfgIn: EngineConfigInput = {}, 
     };
   });
   const exposureDebt = updateExposureDebt(w, priorDebt, scored, selected);
-  return { proposals, trace, scored, world: w, exposureDebt, selected };
+  return { proposals, asks: askPlan.asks, trace, scored, world: w, exposureDebt, selected };
 }
 
 const round = (x: number) => Math.round(x * 1e6) / 1e6;
@@ -143,6 +146,14 @@ export interface SimOptions {
   keepTraces?: boolean;
   /** Called after every nightly engine run (per city). */
   onRun?: (res: TracedResult, ctx: SimHookCtx, input: EngineInput) => void;
+  /**
+   * Rebuild each night's snapshot with these sim snapshot features and, with `records`, the
+   * Network's own records (interactions, feedback, open opportunities, unsent proposals) -- the
+   * buildSnapshot call packages/sim world.ts would make with the 2026-10-07 proposal applied.
+   * `asks`: feed the engine's earlier asks back as input.recentAsks (the Network sent them; the
+   * simulated members never answer). Undefined = the world's own snapshot, unchanged.
+   */
+  snapshot?: { features?: Partial<SnapshotFeatures>; records?: boolean; asks?: boolean };
 }
 
 export interface SimHookCtx { world: SimWorld; personas: Persona[]; city: string; now: number; state: Record<string, any> }
@@ -163,10 +174,19 @@ export async function runSim(o: SimOptions): Promise<SimResult> {
       const seed = typeof opts?.seed === "number" ? opts.seed : 1;
       const hctx: SimHookCtx = { world, personas, city: opts?.city ?? "", now: snapshot.now, state };
       let input = snapshot as EngineInput;
+      if (o.snapshot) {
+        const W = world as any; // the world's own snapshot inputs (private fields; harness only)
+        input = buildSnapshot([...W.personas.values()], {
+          now: snapshot.now, worldStart: W.start, joined: W.joined, optedOut: W.optedOut, blocks: W.blocks, unanswered: W.unanswered,
+          recentProposals: [...W.proposals.values()], features: o.snapshot.features, records: o.snapshot.records ? world.records : undefined,
+        }) as EngineInput;
+        if (o.snapshot.asks) input = { ...input, recentAsks: state.asks ?? [] };
+      }
       if (o.augment) input = o.augment(input, hctx);
       const hooks = typeof o.hooks === "function" ? o.hooks(hctx) : (o.hooks ?? {});
       const res = tracedEngine(input, { ...(o.cfg ?? {}), seed, ...(opts?.city ? { cities: [opts.city as any] } : {}) }, hooks);
       state.lastDebt = { ...(state.lastDebt ?? {}), ...res.exposureDebt };
+      if (res.asks.length) state.asks = [...(state.asks ?? []), ...res.asks.map(a => ({ memberId: a.memberId, at: a.createdAt, reason: a.reason }))];
       o.onRun?.(res, hctx, input);
       if (o.keepTraces !== false) runs.push({ now: snapshot.now, city: opts?.city ?? "", trace: res.trace, snapshotMembers: snapshot.members.length });
       return opts?.city ? res.proposals.filter(p => p.city === opts.city) : res.proposals;

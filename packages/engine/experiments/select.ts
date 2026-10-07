@@ -6,7 +6,7 @@ import type { Rng } from "../src/rng.ts";
 import type { Scored } from "../src/scoring.ts";
 import { CONTRIBUTOR_ROLES } from "../src/types.ts";
 import { pairKey, type World } from "../src/world.ts";
-import type { Selected, SelectionResult } from "../src/policy.ts";
+import { mutualAcceptance, type Selected, type SelectionResult, type SelectOptions } from "../src/policy.ts";
 
 export interface SelectLevers {
   /** Max share of selected proposals per generator (e.g. { warm_path: 0.3 }). */
@@ -37,10 +37,10 @@ export interface SelectLevers {
   exploreWeight?: (x: Scored) => number;
 }
 
-export function selectX(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId, number>, L: SelectLevers = {}): SelectionResult {
-  const dry = selectOnceX(w, scored, rng, debt, 0, L);
+export function selectX(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId, number>, L: SelectLevers = {}, opts: SelectOptions = {}): SelectionResult {
+  const dry = selectOnceX(w, scored, rng, debt, 0, L, opts);
   const slots = Math.floor((w.cfg.exploration.rate * dry.selected.length) / (1 - w.cfg.exploration.rate));
-  const res = selectOnceX(w, scored, rng, debt, slots, L);
+  const res = selectOnceX(w, scored, rng, debt, slots, L, opts);
   const maxE = Math.floor(w.cfg.exploration.maxShare * res.selected.length);
   let e = 0;
   res.selected = res.selected.filter(s => !s.exploration || ++e <= maxE);
@@ -53,7 +53,7 @@ const clusterPair = (w: World, ids: MemberId[]) => {
   return cs.join("|");
 };
 
-function selectOnceX(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId, number>, explorationSlots: number, L: SelectLevers): SelectionResult {
+function selectOnceX(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId, number>, explorationSlots: number, L: SelectLevers, opts: SelectOptions = {}): SelectionResult {
   const cfg = w.cfg;
   const proactive = new Map<MemberId, number>();
   const contribution = new Map<MemberId, number>();
@@ -86,7 +86,8 @@ function selectOnceX(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId
     if ((perCity.get(c.city!) ?? 0) >= cfg.selection.maxProposalsPerCity) return false;
     for (const id of c.participants) {
       const mi = w.get(id)!;
-      if (mi.recentProactive + (proactive.get(id) ?? 0) + 1 > cfg.budgets[mi.m.state].limit) return false;
+      if (mi.recentProactive + (opts.extraProactive?.get(id) ?? 0) + (proactive.get(id) ?? 0) + 1 > cfg.budgets[mi.m.state].limit) return false;
+      if (mi.inOpenOpportunity || opts.exclude?.has(id)) return false;
       if (L.perRunCap !== undefined && (proactive.get(id) ?? 0) + 1 > L.perRunCap) return false;
       if (L.exclude?.has(id)) return false;
       const role = c.roles[id];
@@ -190,7 +191,7 @@ function selectOnceX(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId
       if (taken.has(x.c.key)) continue;
       const v = adjusted(x);
       if (v < x.threshold) continue;
-      const key = L.orderKey ? L.orderKey(x, v) : v;
+      const key = L.orderKey ? L.orderKey(x, v) : cfg.acceptance.exponent > 0 ? v * Math.pow(mutualAcceptance(w, x.c.participants), cfg.acceptance.exponent) : v;
       if (key > bestV && canTake(x) && quotaOk(x)) { best = x; bestV = key; }
     }
     if (!best) break;

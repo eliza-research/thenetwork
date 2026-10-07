@@ -144,6 +144,8 @@ export interface FunnelLog {
   rejectedBy: Record<string, number>; passedHardFilters: number; deduped: number;
   floorViolations: Record<string, number>; dealbreakers: number; belowThreshold: number;
   eligible: number; budgetSkips: number; selected: number; exploration: number;
+  /** v1.2: questions emitted this run, and members held back from proposals while a question is open. */
+  asks?: number; askFirst?: number;
   /** Selected configurations withheld by the final policy guard (should always be absent). */
   rejectedAfterSelection?: Record<string, number>;
 }

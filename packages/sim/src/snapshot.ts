@@ -2,10 +2,37 @@
 // capture). This is what an Engine receives; it never includes hidden truth, except that
 // private disclosures are present as agent_private facets (that is realistic: members tell
 // the agent things in confidence) so engines can be tested for privacy leaks.
-import { DAY, type Edge, type Facet, type Intent, type Member, type Presence, type Proposal, type WorldSnapshot } from "@thenetwork/core";
+import { DAY, HOUR, type Category, type City, type Edge, type Facet, type Intent, type Member, type MemberId, type OpportunityKind, type Presence, type Proposal, type WorldSnapshot } from "@thenetwork/core";
+import type { RunRecord } from "@thenetwork/judge";
 import { intentHorizonDays, intentRecordTiming, type Persona } from "./persona.ts";
+import { hash32 } from "./rng.ts";
 import { desireById, SKILLS } from "./taxonomy.ts";
 import { VAGUE_INTENT, type Knowledge } from "./sources.ts";
+
+/**
+ * What the snapshot exposes beyond the legacy public profile (2026-10-07, engine v1.2). Each is
+ * information a production Network has; none is hidden truth the member did not share.
+ */
+export interface SnapshotFeatures {
+  /** Public event listings per city per week (the Network ingests public events; M1). 0 = none. */
+  eventsPerWeek: number;
+  /**
+   * Members agreed that some interests they told the agent may be mentioned in introductions
+   * (scope "shareable"; per interest, SHARE_CONSENT of the time, as in the synthetic dataset).
+   * Enables theme groups (group_composer).
+   */
+  shareInterests: boolean;
+  /** Hosting / cooking-for-groups skills carry the "host" tag (newcomer_welcome needs hosts). */
+  hostTags: boolean;
+  /** Members opted in to romance stated who they hope to meet (romance:is / seeks / age tags, agent_private). */
+  romancePrefs: boolean;
+}
+/** Default since engine v1.2 (docs/results/2026-10-07-engine-v1.2.md). */
+export const SNAPSHOT_FEATURES: SnapshotFeatures = { eventsPerWeek: 6, shareInterests: true, hostTags: true, romancePrefs: true };
+/** The snapshot before 2026-10-07 (pass as `features` to reproduce older runs and eval worlds). */
+export const LEGACY_SNAPSHOT_FEATURES: SnapshotFeatures = { eventsPerWeek: 0, shareInterests: false, hostTags: false, romancePrefs: false };
+/** Share of stated interests a member agrees to have mentioned (synthetic dataset: 0.6). */
+export const SHARE_CONSENT = 0.6;
 
 export interface SnapshotState {
   now: number; worldStart: number;
@@ -14,6 +41,31 @@ export interface SnapshotState {
   blocks: { from: string; to: string; at: number }[];
   unanswered: Map<string, number>;
   recentProposals: Proposal[];
+  /** Snapshot features (default SNAPSHOT_FEATURES). */
+  features?: Partial<SnapshotFeatures>;
+  /**
+   * The run's records so far. When given, the snapshot also carries what the Network itself
+   * recorded: interactions and feedback (pair cooldowns, second encounters, response history),
+   * open opportunities, and which proposals were never sent (networkStateFromRecords).
+   */
+  records?: readonly RunRecord[];
+}
+
+/** Engine-extension fields (structurally the engine's EngineInput extensions; sim does not import the engine). */
+export interface SimEvent { id: string; title: string; city: City; start: number; end: number; tags: string[]; category: Category }
+export interface SimInteraction {
+  id: string; kind: OpportunityKind; category: Category; participants: MemberId[]; at: number;
+  outcome: "pending" | "accepted" | "declined" | "expired" | "completed" | "no_show";
+  declinedBy?: MemberId[]; acceptedBy?: MemberId[]; noResponse?: MemberId[];
+}
+export interface SimFeedback { id: string; from: MemberId; about: MemberId; opportunityId: string; at: number; sentiment: "positive" | "neutral" | "negative"; wouldMeetAgain: boolean }
+export interface SimOpenOpportunity { id: string; participants: MemberId[]; stage: "inviting" | "scheduled"; until?: number }
+export interface SimSnapshot extends WorldSnapshot {
+  events?: SimEvent[];
+  interactions?: SimInteraction[];
+  feedback?: SimFeedback[];
+  openOpportunities?: SimOpenOpportunity[];
+  unsentProposalIds?: string[];
 }
 
 /** Longest look-back any engine budget uses (Quiet: 1 per 30 days). */
@@ -51,17 +103,14 @@ export function memberOf(p: Persona, s: Pick<SnapshotState, "joined" | "optedOut
  * coverage) plus facets from their active connected sources. Hidden truth labels are stripped.
  * Minors (stated age < 18): every facet agent_private.
  */
-function pushKnownFacets(p: Persona, k: Knowledge, jt: number, now: number, unresponsive: (id: string) => boolean, facets: Facet[], intents: Intent[]) {
+function pushKnownFacets(p: Persona, k: Knowledge, jt: number, now: number, unresponsive: (id: string) => boolean, facets: Facet[], intents: Intent[], feat: SnapshotFeatures) {
   const minor = p.public.claimedAge < 18;
   const c = k.chat;
   const said = (kind: Facet["kind"], value: string, tags: string[], scope: Facet["scope"], i: number): Facet =>
     ({ id: `${p.id}:f${facets.length}:${i}`, memberId: p.id, kind, value, tags, scope: minor ? "agent_private" : scope, provenance: "said", confidence: 0.8,
       validFrom: jt, source: "chat", observedAt: jt, inferred: false, confirmedByMember: true });
-  c.interests.forEach((t, i) => facets.push(said("interest", t.replace(/_/g, " "), [t], "matchable", i)));
-  c.skills.forEach((t, i) => {
-    const sk = SKILLS.find(x => x.tag === t);
-    facets.push(said("skill", sk?.label ?? t, [t, ...(sk?.teaches ? [sk.teaches] : [])], "matchable", i));
-  });
+  c.interests.forEach((t, i) => facets.push(said("interest", t.replace(/_/g, " "), [t], interestScope(p, t, feat), i)));
+  c.skills.forEach((t, i) => facets.push(said("skill", SKILLS.find(x => x.tag === t)?.label ?? t, skillTags(t, feat), "matchable", i)));
   c.boundaries.forEach(i => { const b = p.hidden.boundaries[i]; if (b) facets.push(said("boundary", b, ["boundary"], "agent_private", i)); });
   if (c.disclosure && p.hidden.privateDisclosure) {
     const d = p.hidden.privateDisclosure;
@@ -82,7 +131,8 @@ function pushKnownFacets(p: Persona, k: Knowledge, jt: number, now: number, unre
   }
 }
 
-export function buildSnapshot(personas: Persona[], s: SnapshotState): WorldSnapshot {
+export function buildSnapshot(personas: Persona[], s: SnapshotState): SimSnapshot {
+  const feat: SnapshotFeatures = { ...SNAPSHOT_FEATURES, ...(s.features ?? {}) };
   const joined = personas.filter(p => s.joined.has(p.id));
   const ids = new Set(joined.map(p => p.id));
   const members = joined.map(p => memberOf(p, s));
@@ -93,14 +143,14 @@ export function buildSnapshot(personas: Persona[], s: SnapshotState): WorldSnaps
   for (const p of joined) {
     const jt = s.joined.get(p.id)!;
     const k = p.knowledge;
-    if (k) pushKnownFacets(p, k, jt, s.now, id => (s.unanswered.get(id) ?? 0) >= 2, facets, intents);
+    if (k) pushKnownFacets(p, k, jt, s.now, id => (s.unanswered.get(id) ?? 0) >= 2, facets, intents, feat);
     else {
       const f = (kind: Facet["kind"], value: string, tags: string[], scope: Facet["scope"], i: number): Facet =>
         ({ id: `${p.id}:f${facets.length}:${i}`, memberId: p.id, kind, value, tags, scope, provenance: "said", confidence: 0.8, validFrom: jt });
-      p.public.statedInterests.forEach((t, i) => facets.push(f("interest", t.replace(/_/g, " "), [t], "matchable", i)));
+      p.public.statedInterests.forEach((t, i) => facets.push(f("interest", t.replace(/_/g, " "), [t], interestScope(p, t, feat), i)));
       p.public.statedSkills.forEach((t, i) => {
         const sk = SKILLS.find(x => x.tag === t);
-        facets.push(f("skill", sk?.label ?? t, [t, ...(sk?.teaches ? [sk.teaches] : [])], "matchable", i));
+        facets.push(f("skill", sk?.label ?? t, skillTags(t, feat), "matchable", i));
       });
       p.hidden.boundaries.forEach((b, i) => facets.push(f("boundary", b, ["boundary"], "agent_private", i)));
       if (p.hidden.privateDisclosure) {
@@ -121,6 +171,10 @@ export function buildSnapshot(personas: Persona[], s: SnapshotState): WorldSnaps
         });
       });
     }
+    if (feat.romancePrefs) {
+      const m = members.find(x => x.id === p.id)!;
+      if (m.prefs.romanceOptIn && (!k || knowsRomance(p, k))) facets.push(romancePrefFacet(p, jt, facets.length));
+    }
     presence.push({ memberId: p.id, city: p.homeCity, type: "home", areas: [p.routine.homeArea, p.routine.workArea] });
     if (p.secondaryCity) presence.push({ memberId: p.id, city: p.secondaryCity, type: "routine", areas: [] });
     // Trips become known once announced (we expose them from 2 days before departure).
@@ -140,5 +194,116 @@ export function buildSnapshot(personas: Persona[], s: SnapshotState): WorldSnaps
   // so a fixed last-200 cut silently forgot proposals once a run produced more than 200 in that
   // window, and members were over-proposed.
   const since = s.now - RECENT_PROPOSAL_DAYS * DAY;
-  return { now: s.now, members, facets, intents, presence, edges, recentProposals: s.recentProposals.filter(p => p.createdAt >= since && p.createdAt <= s.now) };
+  const snap: SimSnapshot = { now: s.now, members, facets, intents, presence, edges, recentProposals: s.recentProposals.filter(p => p.createdAt >= since && p.createdAt <= s.now) };
+  if (feat.eventsPerWeek > 0) snap.events = publicEvents(snap, feat.eventsPerWeek);
+  if (s.records) Object.assign(snap, networkStateFromRecords(s.records, s.now));
+  return snap;
+}
+
+function interestScope(p: Persona, tag: string, feat: SnapshotFeatures): Facet["scope"] {
+  if (!feat.shareInterests || p.public.claimedAge < 18) return "matchable";
+  return (hash32("share-consent", p.id, tag) % 1000) / 1000 < SHARE_CONSENT ? "shareable" : "matchable";
+}
+function skillTags(t: string, feat: SnapshotFeatures): string[] {
+  const sk = SKILLS.find(x => x.tag === t);
+  return [t, ...(sk?.teaches ? [sk.teaches] : []), ...(feat.hostTags && (t === "hosting" || t === "chef") ? ["host"] : [])];
+}
+/** With a Knowledge profile, romance preferences are known only if the member talked about dating. */
+function knowsRomance(p: Persona, k: Knowledge): boolean {
+  return k.chat.intents.some(i => p.public.statedIntents[i]?.category === "romance") || k.richness !== "minimal";
+}
+/** Same tags and wording as the synthetic dataset (scripts/synthetic/generate.ts). */
+function romancePrefFacet(p: Persona, jt: number, n: number): Facet {
+  const r = p.hidden.romance;
+  const who = r.seeking.map(g => (g === "nonbinary" ? "nonbinary people" : g === "woman" ? "women" : "men")).join(" and ");
+  return {
+    id: `${p.id}:f${n}:romance`, memberId: p.id, kind: "preference", value: `Open to dating; interested in ${who}, ages ${r.ageRange[0]}-${r.ageRange[1]}`,
+    tags: [`romance:is:${p.gender}`, ...r.seeking.map(g => `romance:seeks:${g}`), `romance:age:${r.ageRange[0]}-${r.ageRange[1]}`],
+    scope: "agent_private", provenance: "said", confidence: 0.8, validFrom: jt,
+  };
+}
+
+/**
+ * Public event listings: `perWeek` events per city per week, this week and next, around the
+ * interests most common among the city's adult members (a city has listings for what its people
+ * like; the engine sees only title, time, place and tags). Deterministic.
+ */
+export function publicEvents(snap: Pick<WorldSnapshot, "now" | "members" | "facets">, perWeek: number): SimEvent[] {
+  const events: SimEvent[] = [];
+  for (const city of ["sf", "nyc"] as const) {
+    const ids = new Set(snap.members.filter(m => m.homeCity === city && m.age >= 18).map(m => m.id));
+    const counts = new Map<string, number>();
+    for (const f of snap.facets) if (ids.has(f.memberId) && f.kind === "interest" && f.tags[0]) counts.set(f.tags[0], (counts.get(f.tags[0]) ?? 0) + 1);
+    const tags = [...counts.entries()].sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : 1)).map(([t]) => t);
+    const week = Math.floor(snap.now / (7 * DAY));
+    for (let w = 0; w < 2; w++) for (let k = 0; k < perWeek; k++) {
+      const tag = tags[(k + (week + w) * perWeek) % Math.max(1, tags.length)];
+      if (!tag) continue;
+      const start = (week + w) * 7 * DAY + ((k % 6) + 1) * DAY + (city === "sf" ? 26 : 23) * HOUR; // ~7pm local
+      if (start < snap.now) continue;
+      events.push({ id: `ev:${city}:${week + w}:${k}`, title: `${tag.replace(/_/g, " ")} night`, city, start, end: start + 3 * HOUR, tags: [tag], category: "social" });
+    }
+  }
+  return events;
+}
+
+/**
+ * What the Network itself recorded, rebuilt from the run's records up to `now`: interactions
+ * (with who said yes, who declined and who never answered), meeting feedback, opportunities still
+ * open (invite pending or meeting ahead) and proposals it never sent. No hidden truth: decisions,
+ * attendance and the enjoyment members report after a meeting are all things the Network sees.
+ */
+export function networkStateFromRecords(records: readonly RunRecord[], now: number): Required<Pick<SimSnapshot, "interactions" | "feedback" | "openOpportunities" | "unsentProposalIds">> {
+  const props = new Map<string, Proposal>();
+  const skipped = new Set<string>();
+  const declines = new Map<string, MemberId[]>(), yes = new Map<string, Set<MemberId>>(), invited = new Map<string, Map<MemberId, number>>();
+  const scheduled = new Map<string, number>();
+  const outcome = new Map<string, Extract<RunRecord, { type: "outcome" }>>();
+  const decided = new Set<string>();
+  for (const r of records) {
+    if (r.t > now) break;
+    if (r.type === "proposal") props.set(r.proposal.id, r.proposal);
+    else if (r.type === "network_log" && r.kind === "proposal_skipped") skipped.add(String(r.detail.proposalId));
+    else if (r.type === "message" && r.msg.meta?.type === "proposal" && r.msg.meta.proposalId) {
+      const pid = r.msg.meta.proposalId; if (!invited.has(pid)) invited.set(pid, new Map()); invited.get(pid)!.set(r.msg.memberId, r.msg.ts);
+    } else if (r.type === "decision" && r.messageType === "proposal" && r.proposalId) {
+      decided.add(`${r.proposalId}|${r.memberId}`);
+      if (r.decision === "decline") { if (!declines.has(r.proposalId)) declines.set(r.proposalId, []); declines.get(r.proposalId)!.push(r.memberId); }
+      else if (r.decision === "accept" || r.decision === "counter") { if (!yes.has(r.proposalId)) yes.set(r.proposalId, new Set()); yes.get(r.proposalId)!.add(r.memberId); }
+    } else if (r.type === "meeting_scheduled") scheduled.set(r.proposalId, r.at);
+    else if (r.type === "outcome") outcome.set(r.proposalId, r);
+  }
+  const interactions: SimInteraction[] = [];
+  const feedback: SimFeedback[] = [];
+  const openOpportunities: SimOpenOpportunity[] = [];
+  for (const [pid, p] of props) {
+    if (skipped.has(pid)) continue;
+    const acceptedBy: MemberId[] = [], noResponse: MemberId[] = [];
+    for (const [id, ts] of invited.get(pid) ?? new Map<MemberId, number>()) {
+      if (decided.has(`${pid}|${id}`)) { if (yes.get(pid)?.has(id)) acceptedBy.push(id); else if (!declines.get(pid)?.includes(id)) noResponse.push(id); }
+      else if (now - ts > 48 * HOUR) noResponse.push(id); // an expired invite is an implicit no
+    }
+    let out: SimInteraction["outcome"] = "pending";
+    let at = p.createdAt;
+    const dec = declines.get(pid);
+    const o = outcome.get(pid);
+    if (dec?.length) out = "declined";
+    else if (o) {
+      const shows = Object.entries(o.attendance).filter(([, a]) => a.showed);
+      out = shows.length >= 2 ? "completed" : "no_show"; at = o.at;
+      if (shows.length >= 2) for (const [a, x] of shows) for (const [b] of shows) if (a !== b) {
+        const e = x.enjoyment;
+        feedback.push({ id: `fb:${pid}:${a}:${b}`, from: a, about: b, opportunityId: pid, at: o.at + 3 * HOUR, sentiment: e >= 0.6 ? "positive" : e < 0.4 ? "negative" : "neutral", wouldMeetAgain: e >= 0.6 });
+      }
+    } else if (scheduled.has(pid)) {
+      out = "accepted";
+      if (scheduled.get(pid)! > now) openOpportunities.push({ id: pid, participants: [...p.participants], stage: "scheduled", until: scheduled.get(pid)! });
+    } else if (now - p.createdAt > 3 * DAY) out = "expired";
+    else openOpportunities.push({ id: pid, participants: [...p.participants], stage: "inviting", until: p.createdAt + 3 * DAY });
+    interactions.push({
+      id: pid, kind: p.kind, category: p.category ?? "social", participants: [...p.participants], at, outcome: out,
+      ...(dec?.length ? { declinedBy: dec } : {}), ...(acceptedBy.length ? { acceptedBy } : {}), ...(noResponse.length ? { noResponse } : {}),
+    });
+  }
+  return { interactions, feedback, openOpportunities, unsentProposalIds: [...skipped] };
 }

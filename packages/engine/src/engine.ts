@@ -12,10 +12,10 @@ import { JudgeCache, judgeCandidates, runCachedPass } from "./judge.ts";
 import { checkMemberFacing, redactPrivate } from "./judgeCommon.ts";
 import { DEEP_PROMPT_VERSION, deepReviewOne, gateMemberFacing, hardGate, type DeepVerdict } from "./judgeDeep.ts";
 import { SCREEN_PROMPT_VERSION, screenDecision, screenOne, type ScreenVerdict } from "./judgeScreen.ts";
-import { blockingPairs, fairnessMetrics, selectProposals, updateExposureDebt } from "./policy.ts";
+import { blockingPairs, fairnessMetrics, planAsks, selectProposals, updateExposureDebt } from "./policy.ts";
 import { Rng, sha256, stableStringify } from "./rng.ts";
 import { scoreCandidate, type Scored } from "./scoring.ts";
-import type { Candidate, EngineInput, EngineProposal, JudgeVerdict, MatchingRunLog } from "./types.ts";
+import type { Candidate, EngineAsk, EngineInput, EngineProposal, JudgeVerdict, MatchingRunLog } from "./types.ts";
 import { World } from "./world.ts";
 
 export interface EngineDeps {
@@ -31,7 +31,11 @@ export interface EngineDeps {
   judgeModel?: string;
 }
 
-export interface EngineResult { proposals: EngineProposal[]; runLog: MatchingRunLog }
+/**
+ * `asks` (v1.2, config.ask / config.romance.requireStatedPrefs): questions to send instead of, or
+ * before, proposals. Empty when both flags are off.
+ */
+export interface EngineResult { proposals: EngineProposal[]; asks: EngineAsk[]; runLog: MatchingRunLog }
 
 function hashInput(input: EngineInput): string {
   const strip = (x: unknown) => JSON.parse(JSON.stringify(x, (k, v) => (k === "embedding" ? undefined : v)));
@@ -186,7 +190,10 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   // 5. Global selection: exposure floor, greedy with load balancing + exposure debt, exploration.
   const priorDebt: Record<MemberId, number> = {};
   for (const [k, v] of Object.entries(input.exposureDebt ?? {})) priorDebt[w.canonical(k)] = (priorDebt[w.canonical(k)] ?? 0) + v;
-  const selection = selectProposals(w, scored, rng.fork("select"), priorDebt);
+  const askPlan = planAsks(w, input);
+  f.asks = askPlan.asks.length;
+  f.askFirst = askPlan.exclude.size;
+  const selection = selectProposals(w, scored, rng.fork("select"), priorDebt, { exclude: askPlan.exclude, extraProactive: askPlan.extraProactive });
   // Minors policy, last line of defence: hard filters already drop these, so this never fires
   // in a correct build. If it ever does, the configuration is withheld (fail closed), not sent.
   const selected = selection.selected.filter(x => !involvesMinor(w, x.s.c));
@@ -239,7 +246,7 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   }
   lap("finalize", t);
   timings.total = Math.round((performance.now() - t0) * 100) / 100;
-  return { proposals, runLog };
+  return { proposals, asks: askPlan.asks, runLog };
 }
 
 const round = (x: number) => Math.round(x * 1e6) / 1e6;
