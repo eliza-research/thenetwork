@@ -148,21 +148,32 @@ export class FakeNetwork {
   }
 
   /**
-   * Strings that must never appear in any output to this principal: other members' ids, contact
-   * details and non-shareable facets; every internal opportunity id; other members' item text; and
-   * the text of this member's items that are hidden by profile or eligibility ("excluded items aren't
-   * mentioned", §7.1). Used by the outbound guard and by the tests.
+   * The members this principal's items are about (the other person in an intro, a swap, a relay).
+   * Only their private facets can reach this member's output, so only theirs are guarded
+   * (audit plugin-prototypes-21): guarding every member's facets let one member break another's
+   * connector with a common phrase, and turned the guard into a probe for anyone's private facts.
+   */
+  private counterpartsOf(memberId: string): Set<string> {
+    return new Set(this.items.filter((i) => i.viewerId === memberId && i.counterpartId).map((i) => i.counterpartId!));
+  }
+
+  /**
+   * Strings that must never appear in any output to this principal: other members' ids and contact
+   * details; the non-shareable facets of this member's counterparts; every internal opportunity id;
+   * other members' item text; and the text of this member's items that are hidden by profile or
+   * eligibility ("excluded items aren't mentioned", §7.1). Used by the outbound guard and by the tests.
    */
   forbiddenFor(p: ConnectorPrincipal): string[] {
     const out: string[] = [];
     const viewer = this.members.get(p.memberId);
+    const counterparts = this.counterpartsOf(p.memberId);
     for (const m of this.members.values()) {
       if (m.id === p.memberId) {
         for (const f of m.facets) if (f.scope === "agent_private") out.push(f.value); // connector egress policy (§8.2.3)
         continue;
       }
       out.push(m.id, m.phone, m.email);
-      for (const f of m.facets) if (f.scope !== "shareable") out.push(f.value);
+      if (counterparts.has(m.id)) for (const f of m.facets) if (f.scope !== "shareable") out.push(f.value);
     }
     for (const i of this.items) {
       out.push(i.internalId);
@@ -173,14 +184,15 @@ export class FakeNetwork {
   }
 
   /**
-   * Facet values in forbiddenFor() (other members' non-shareable facets and this member's own
+   * Facet values in forbiddenFor() (counterparts' non-shareable facets and this member's own
    * agent-private ones). The guard matches these fuzzily (fragments, leetspeak, reordering).
    */
   privateFactsFor(p: ConnectorPrincipal): string[] {
     const out: string[] = [];
+    const counterparts = this.counterpartsOf(p.memberId);
     for (const m of this.members.values()) {
       for (const f of m.facets) {
-        if (m.id === p.memberId ? f.scope === "agent_private" : f.scope !== "shareable") out.push(f.value);
+        if (m.id === p.memberId ? f.scope === "agent_private" : counterparts.has(m.id) && f.scope !== "shareable") out.push(f.value);
       }
     }
     return out;

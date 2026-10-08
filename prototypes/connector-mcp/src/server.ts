@@ -61,6 +61,32 @@ export function stringLeaves(v: unknown, out: string[] = []): string[] {
   return out;
 }
 
+const WORD = /[\p{L}\p{N}_']+/gu;
+const foldWord = (w: string) => w.normalize("NFKC").toLowerCase();
+
+/**
+ * `text` with every run of two or more words that the caller sent verbatim blanked out. The guard
+ * checks the masked text, so echoing the caller's own words back can never fail a call: whether a
+ * call fails no longer depends on whether the echoed words match a private fact (audit
+ * plugin-prototypes-21, the guard was an oracle). The host still gets the unmasked text, which holds
+ * nothing it did not send. A leak the Network adds itself (other words, a reordering) is still caught.
+ */
+export function maskEchoes(text: string, supplied: string[]): string {
+  const hay = ` ${supplied.map((s) => (s.match(WORD) ?? []).map(foldWord).join(" ")).join(" \u0000 ")} `;
+  if (!hay.trim()) return text;
+  const words = [...text.matchAll(WORD)].map((m) => ({ at: m.index!, end: m.index! + m[0].length, w: foldWord(m[0]) }));
+  let out = text;
+  for (let i = 0; i < words.length;) {
+    let j = i + 1;
+    while (j < words.length && hay.includes(` ${words.slice(i, j + 1).map((x) => x.w).join(" ")} `)) j++;
+    if (j - i >= 2) {
+      out = out.slice(0, words[i]!.at) + " ".repeat(words[j - 1]!.end - words[i]!.at) + out.slice(words[j - 1]!.end);
+      i = j;
+    } else i++;
+  }
+  return out;
+}
+
 function toolError(code: ToolErrorCode, message: string, extraMeta: Record<string, unknown> = {}, retryable = false): CallToolResult {
   return {
     isError: true,
@@ -102,8 +128,8 @@ export function createMcpServer(net: FakeNetwork, principal: ConnectorPrincipal,
   /**
    * Strings that must not reach this host: everything in forbiddenFor(), except that the member's
    * OWN agent-private facets may be echoed when the member's own message supplied them (§8.2 step 3).
-   * Other members' data is never exempt, even if the caller supplied it: an exemption would turn the
-   * guard into an oracle ("is Maya recently divorced?" → echoed answer passes the check).
+   * Verbatim echoes of any caller input are masked before the check (maskEchoes), so the guard's
+   * verdict never depends on whether the caller guessed someone's private fact.
    */
   const forbiddenStrings = (args: Record<string, unknown>) => {
     const supplied = stringLeaves(args).join("\n");
@@ -117,9 +143,9 @@ export function createMcpServer(net: FakeNetwork, principal: ConnectorPrincipal,
   };
 
   /** Output pipeline for any model-visible text: leak guard, then the surface-profile classifier. */
-  const check = (visibleText: string, forbidden: string[]): { kind: "leak" | "profile"; detail: string } | null => {
+  const check = (visibleText: string, forbidden: string[], args: Record<string, unknown> = {}): { kind: "leak" | "profile"; detail: string } | null => {
     if (!guardOn) return null;
-    const leaks = findLeaks(visibleText, forbidden, { facts: factsIn(forbidden) });
+    const leaks = findLeaks(maskEchoes(visibleText, stringLeaves(args)), forbidden, { facts: factsIn(forbidden) });
     if (leaks.length) return { kind: "leak", detail: leaks.join(",") };
     const off = profileViolation(visibleText, profile, net.members.get(principal.memberId)?.age);
     return off ? { kind: "profile", detail: principal.surfaceProfile } : null;
@@ -127,7 +153,7 @@ export function createMcpServer(net: FakeNetwork, principal: ConnectorPrincipal,
 
   /** Tool errors are model-visible too, so their text passes the same checks (it can echo input). */
   const guardedError = (tool: ToolName, code: ToolErrorCode, message: string, extraMeta: Record<string, unknown> = {}, retryable = false, args: Record<string, unknown> = {}) => {
-    const hit = check(message, forbiddenStrings(args));
+    const hit = check(message, forbiddenStrings(args), args);
     if (!hit) return toolError(code, message, extraMeta, retryable);
     audit(tool, `${hit.kind}_block_error:${hit.detail}`);
     return toolError(code, code === "invalid_input" ? `Invalid input for ${tool}.` : PRIVACY_FALLBACK, extraMeta, retryable);
@@ -183,9 +209,9 @@ export function createMcpServer(net: FakeNetwork, principal: ConnectorPrincipal,
       // Raw string leaves, not JSON: JSON escapes newlines and quotes, which hid "the\nbar" from a
       // word-boundary check and kept forbidden strings containing quotes from matching.
       const forbidden = forbiddenStrings(args);
-      const hit = check([text, ...stringLeaves(structured)].join("\n"), forbidden);
+      const hit = check([text, ...stringLeaves(structured)].join("\n"), forbidden, args);
       // _meta is hidden from the model on ChatGPT but not on every host: no forbidden strings there either.
-      const metaLeak = findLeaks(stringLeaves(meta).join("\n"), forbidden, { facts: factsIn(forbidden) }).filter((l) => l.startsWith("forbidden:"));
+      const metaLeak = findLeaks(maskEchoes(stringLeaves(meta).join("\n"), stringLeaves(args)), forbidden, { facts: factsIn(forbidden) }).filter((l) => l.startsWith("forbidden:"));
       if (hit?.kind === "leak" || metaLeak.length) {
         audit(def.name, `leak_block:${[hit?.detail, ...metaLeak].filter(Boolean).join(",")}`);
         return toolError("temporarily_unavailable", PRIVACY_FALLBACK);
