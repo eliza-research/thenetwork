@@ -15,6 +15,7 @@ import { isMinor } from "../../core/src/policy.ts";
 import { resolveCapital, type CapitalConfig, type CapitalConfigInput } from "./config.ts";
 import type { CapitalEvent, EarnCategory, EntryCategory, LedgerEntry, LoseCategory, MemberId, Viewer } from "./types.ts";
 import { CapitalEventRejected, validateCapitalEvent } from "./validate.ts";
+import type { CapitalStore } from "./store.ts";
 
 interface MemberRec {
   joinedAt: number; eligible: boolean; vouchedBy?: MemberId;
@@ -49,7 +50,28 @@ export class CapitalLedger {
   private readonly rejects: Rejection[] = [];
   private lastT = -Infinity;
 
-  constructor(cfg: CapitalConfigInput = {}) { this.cfg = resolveCapital(cfg); }
+  private store?: CapitalStore;
+
+  /**
+   * With a `store`, the ledger replays the stored events and staff reads first (capital-5), then
+   * appends every event it accepts before applying it. A restart keeps balances, levers and audit.
+   */
+  constructor(cfg: CapitalConfigInput = {}, opts: { store?: CapitalStore } = {}) {
+    this.cfg = resolveCapital(cfg);
+    if (opts.store) {
+      const { events, reads } = opts.store.load();
+      for (const e of events) this.record(e);
+      this.staffReads.push(...reads);
+      this.store = opts.store;
+    }
+  }
+
+  /** A ledger rebuilt from an event log (duplicates are skipped). Same events, same entries. */
+  static replay(events: Iterable<CapitalEvent>, cfg: CapitalConfigInput = {}): CapitalLedger {
+    const L = new CapitalLedger(cfg);
+    for (const e of events) L.record(e);
+    return L;
+  }
 
   // ---------------------------------------------------------------------------------------------- reads
 
@@ -59,7 +81,9 @@ export class CapitalLedger {
       if (viewer.member !== member) throw new Error("NC entries are private to the member");
     } else {
       if (!viewer.reason) throw new Error("staff reads need a reason");
-      this.staffReads.push({ t: this.lastT, staff: viewer.staff, role: viewer.role, reason: viewer.reason, member });
+      const r: StaffRead = { t: this.lastT, staff: viewer.staff, role: viewer.role, reason: viewer.reason, member };
+      this.store?.appendRead(r);
+      this.staffReads.push(r);
     }
     return this.byMember.get(member) ?? [];
   }
@@ -102,6 +126,7 @@ export class CapitalLedger {
     if (bad) this.reject(ev, bad);
     if (this.seen.has(ev.id)) return [];
     if (ev.t < this.lastT) this.reject(ev, `events must be recorded in time order (t ${ev.t} < ${this.lastT})`);
+    this.store?.appendEvent(ev);
     this.seen.add(ev.id);
     this.lastT = ev.t;
     const out: LedgerEntry[] = [];
