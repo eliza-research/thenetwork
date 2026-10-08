@@ -1,6 +1,6 @@
 // Run friends.help arms over seeds and print the comparison table (docs/results/2026-10-08-friends-pack.md).
 // No LLM calls.
-//   bun run packages/worlds/src/friends/cli.ts --seeds 1-4 --n 400 --weeks 8 [--only pack,random,greedy,oracle] [--json out.json]
+//   bun run packages/sim/src/apps/friends/cli.ts --seeds 1-4 --n 400 --weeks 8 [--only pack,random,greedy,oracle] [--json out.json]
 import { friendsArms } from "./arms.ts";
 import { historicalGates, officialGates, printGates, trackedMetrics } from "./gates.ts";
 import { friendsMetrics, type FriendsMetrics } from "./metrics.ts";

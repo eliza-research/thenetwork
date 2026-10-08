@@ -1,5 +1,5 @@
 // A small seeded peon.biz EngineInput for the conformance suite and unit tests (engine-local; the
-// full hiring world with hidden truth is packages/worlds/src/peon). Adversarial on purpose: 15%
+// full hiring world with hidden truth is packages/sim/src/apps/peon). Adversarial on purpose: 15%
 // minors (13-17) with full candidate profiles, unverified and scam-cued jobs, jobs without a pay
 // range, excluded companies, blocks, holds, canaries, id aliases and agent_private proxies.
 import type { City, Edge, Facet, Intent, Member, Presence } from "@thenetwork/core";

@@ -13,7 +13,7 @@
 // earlier hand-entered table keep their earlier values (rounded to about 0.005 degrees, under 1 km),
 // so slop worlds and goldens are unchanged; the slop world still draws home zips from that set
 // (SIM_HOME_ZIPS). Area labels are common neighborhood names (agent-side only, never shown with a
-// distance). The slop world (packages/worlds/src/slop/geo.ts) reads this same table.
+// distance). The slop world (packages/sim/src/apps/slop/geo.ts) reads this same table.
 //
 // Unknown zips do not fail: the profile falls back to a neighborhood the member named
 // (`zipForArea`), and slopPack asks the member for a nearby zip or neighborhood (ask "slop_zip");

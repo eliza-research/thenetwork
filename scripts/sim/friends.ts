@@ -14,12 +14,12 @@ import { DEFAULT_FRIENDS_POLICY, FRIENDS_PLANS, ROMANCE_FRAMING, friendsInfo, fr
 import { buildPlanProbe } from "../../packages/engine/src/plans.ts";
 import type { Candidate, EngineInput } from "../../packages/engine/src/types.ts";
 import { World } from "../../packages/engine/src/world.ts";
-import { BASELINES } from "../../packages/worlds/src/friends/baselines.ts";
-import { officialGates, trackedMetrics } from "../../packages/worlds/src/friends/gates.ts";
-import { friendsMetrics, type FriendsMetrics } from "../../packages/worlds/src/friends/metrics.ts";
-import { engineInputOf, evidenceOf, friendsPackMatcher } from "../../packages/worlds/src/friends/packMatcher.ts";
-import { buildFriendsSnapshot, NYC_TZ, type FriendsSnapshot } from "../../packages/worlds/src/friends/snapshot.ts";
-import { runFriendsWorld, VENUES } from "../../packages/worlds/src/friends/world.ts";
+import { BASELINES } from "../../packages/sim/src/apps/friends/baselines.ts";
+import { officialGates, trackedMetrics } from "../../packages/sim/src/apps/friends/gates.ts";
+import { friendsMetrics, type FriendsMetrics } from "../../packages/sim/src/apps/friends/metrics.ts";
+import { engineInputOf, evidenceOf, friendsPackMatcher } from "../../packages/sim/src/apps/friends/packMatcher.ts";
+import { buildFriendsSnapshot, NYC_TZ, type FriendsSnapshot } from "../../packages/sim/src/apps/friends/snapshot.ts";
+import { runFriendsWorld, VENUES } from "../../packages/sim/src/apps/friends/world.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
 

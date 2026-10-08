@@ -1,6 +1,6 @@
 // Run the slop.date baselines over seeds and print the table used in
 // docs/results/2026-10-08-slop-world.md. No LLM calls.
-//   bun run packages/worlds/src/slop/cli.ts --seeds 1-8 --per-city 300 --weeks 4 [--only random,greedy,oracle] [--json out.json]
+//   bun run packages/sim/src/apps/slop/cli.ts --seeds 1-8 --per-city 300 --weeks 4 [--only random,greedy,oracle] [--json out.json]
 import { BASELINES } from "./baselines.ts";
 import { slopMetrics, type SlopMetrics } from "./metrics.ts";
 import { runSlopWorld } from "./world.ts";

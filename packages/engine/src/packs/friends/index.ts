@@ -124,7 +124,7 @@ export const friendsPack: AppPack = {
   },
   metrics: {
     primary: ["repeat_meetup_rate", "v14", "friendship_track_share", "crews_formed", "median_group_max_travel"],
-    // Official gates, adopted by the founder 2026-10-08 (packages/worlds/src/friends/gates.ts computes
+    // Official gates, adopted by the founder 2026-10-08 (packages/sim/src/apps/friends/gates.ts computes
     // them; docs/results/2026-10-08-friends-pack.md "Gates"). Ratios are against random-within-area
     // and the hidden-truth oracle on the same seeds.
     gates: [

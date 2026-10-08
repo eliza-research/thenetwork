@@ -8,13 +8,13 @@
 import { canBeMatched } from "../../packages/core/src/index.ts";
 import { PEON_ENGINE_CONFIG, peonPack } from "../../packages/engine/src/packs/peon/index.ts";
 import { peonTestWorld } from "../../packages/engine/src/packs/peon/testkit.ts";
-import { ARMS } from "../../packages/worlds/src/peon/arms.ts";
-import { keywordMatcher, packMatcher } from "../../packages/worlds/src/peon/baselines.ts";
-import { officialGates } from "../../packages/worlds/src/peon/gates.ts";
-import { peonMetrics, type PeonMetrics } from "../../packages/worlds/src/peon/metrics.ts";
-import { generatePeonPopulation, type PeonPopulation } from "../../packages/worlds/src/peon/persona.ts";
-import { buildPeonSnapshot, PEON_WORLD_START, type PeonNetworkState } from "../../packages/worlds/src/peon/snapshot.ts";
-import { REALISM_V2, runPeonWorld } from "../../packages/worlds/src/peon/world.ts";
+import { ARMS } from "../../packages/sim/src/apps/peon/arms.ts";
+import { keywordMatcher, packMatcher } from "../../packages/sim/src/apps/peon/baselines.ts";
+import { officialGates } from "../../packages/sim/src/apps/peon/gates.ts";
+import { peonMetrics, type PeonMetrics } from "../../packages/sim/src/apps/peon/metrics.ts";
+import { generatePeonPopulation, type PeonPopulation } from "../../packages/sim/src/apps/peon/persona.ts";
+import { buildPeonSnapshot, PEON_WORLD_START, type PeonNetworkState } from "../../packages/sim/src/apps/peon/snapshot.ts";
+import { REALISM_V2, runPeonWorld } from "../../packages/sim/src/apps/peon/world.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
 

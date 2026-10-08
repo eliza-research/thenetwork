@@ -22,7 +22,7 @@ import { computeMetrics, type RunRecord } from "@thenetwork/judge";
 import { PolicyPersonaAgent, PRIMED_MODEL, StubNetwork, World, type NetworkUnderTest, type Persona } from "@thenetwork/sim";
 import { loadPersonas } from "../../../scripts/synthetic/load.ts";
 import { DATA_DIR } from "../../../scripts/synthetic/common.ts";
-import { createEngine } from "../../sim/engines/engine-v1.ts";
+import { createEngine } from "../../sim/src/engineAdapter.ts";
 import { friendFactory } from "./growth.ts";
 import { ConsentNetwork, type NetworkOptions } from "../src/network.ts";
 import { capitalWiring } from "../src/capital.ts";

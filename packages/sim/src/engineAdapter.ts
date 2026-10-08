@@ -1,6 +1,6 @@
 // Adapter: plugs @thenetwork/engine (v1) into the simulator's Engine interface.
-import { runEngine } from "../../engine/src/index.ts";
-import type { Engine } from "../src/network.ts";
+import { runEngine } from "@thenetwork/engine";
+import type { Engine } from "@thenetwork/core";
 
 export function createEngine(): Engine {
   return {

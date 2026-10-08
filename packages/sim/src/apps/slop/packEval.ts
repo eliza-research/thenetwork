@@ -1,6 +1,6 @@
 // Evaluate the slop.date AppPack (the real engine with slopPack) against the baselines on the slop
 // world, with the launch gates of docs/results/2026-10-08-slop-pack.md. No LLM calls.
-//   bun run packages/worlds/src/slop/packEval.ts --seeds 1-4 --weeks 4 [--arms random,greedy,oracle,slop]
+//   bun run packages/sim/src/apps/slop/packEval.ts --seeds 1-4 --weeks 4 [--arms random,greedy,oracle,slop]
 //       [--variant '{"assignment":"stable"}' --variant-name stable] [--json out.json] [--md]
 // Arms: random, greedy, oracle (the world's baselines) and slop (the pack with its defaults); every
 // --variant adds a slop arm with those pack options (ablations / tuning).

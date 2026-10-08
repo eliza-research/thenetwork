@@ -1,5 +1,5 @@
 // peon.biz snapshot schema: how hiring data rides on the core types (Member, Facet, Intent) without
-// changing them. The world builder (packages/worlds/src/peon/snapshot.ts) writes these tags; the
+// changing them. The world builder (packages/sim/src/apps/peon/snapshot.ts) writes these tags; the
 // pack reads them ONLY through profile.ts. A leaf module (no engine imports).
 //
 // ENTITIES. Two kinds of member record share the core `Member` type:

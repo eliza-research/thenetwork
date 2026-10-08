@@ -4,8 +4,8 @@
 // truth. See docs/results/2026-10-08-slop-world.md for the model and its research grounding.
 import type { MemberId } from "@thenetwork/core";
 import { Rng, hash32 } from "@thenetwork/core";
-import { FIRST_NAMES, LAST_NAMES, INTERESTS } from "@thenetwork/sim/src/taxonomy.ts";
-import type { RichnessTier } from "@thenetwork/sim/src/sources.ts";
+import { FIRST_NAMES, LAST_NAMES, INTERESTS } from "../../taxonomy.ts";
+import type { RichnessTier } from "../../sources.ts";
 import { CITY_ANCHOR_ZIP, SLOP_CITIES, zipInfo, zipsIn, type SlopCity } from "./geo.ts";
 
 export type { RichnessTier };

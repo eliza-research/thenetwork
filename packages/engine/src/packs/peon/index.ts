@@ -123,7 +123,7 @@ export const peonPack: AppPack = {
   metrics: {
     primary: ["hires", "interviews_per_hire", "retention_90d", "time_to_fill_days", "under_applied_filled"],
     // Official gates (adopted 2026-10-08; evaluated against the keyword job board and the oracle on
-    // the same seeds by packages/worlds/src/peon/gates.ts officialGates). Ratios are pack / baseline.
+    // the same seeds by packages/sim/src/apps/peon/gates.ts officialGates). Ratios are pack / baseline.
     gates: [
       { metric: "hires_vs_keyword", op: ">=", value: 0.9, seeds: 4, blocking: true },
       { metric: "intros_vs_keyword", op: "<=", value: 0.2, seeds: 4, blocking: true },
