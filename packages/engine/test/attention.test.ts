@@ -174,11 +174,12 @@ describe("digest packing (1.3, 1.4, D1, D9, D10)", () => {
   test("D10: romance goes in its own message unless the member allows it in a digest", () => {
     const rom = item("r", { category: "romance", enjoy: 0.95, accept: 0.9 });
     const soc = item("s", { enjoy: 0.8, accept: 0.8 });
-    const r = compose({ items: [rom, soc] });
+    const optedIn = member({ categoriesOptIn: ["romance", "social"] });
+    const r = compose({ items: [rom, soc], member: optedIn });
     expect(r.items.map(i => i.id)).toEqual(["r"]);
     const weakRom = item("r2", { category: "romance", enjoy: 0.5, accept: 0.3 });
-    expect(compose({ items: [weakRom, soc] }).items.map(i => i.id)).toEqual(["s"]);
-    const allow = member({ prefs: { ...A.defaultCadence("normal"), romanceInDigest: true } });
+    expect(compose({ items: [weakRom, soc], member: optedIn }).items.map(i => i.id)).toEqual(["s"]);
+    const allow = member({ categoriesOptIn: ["romance", "social"], prefs: { ...A.defaultCadence("normal"), romanceInDigest: true } });
     expect(compose({ items: [rom, soc], member: allow }).items.map(i => i.id).sort()).toEqual(["r", "s"]);
     expect(compose({ items: [rom], member: member({ categoriesOptIn: ["social"] }) }).reason).toBe("nothing_eligible");
   });
@@ -718,5 +719,13 @@ describe("audit 2026-10-08 (engine-attention-plans-1, -5, -6, -8)", () => {
     expect(A.reengagement({ ...base, conversation: { ...base.conversation, outboundSinceInbound: 3 } }).reason).toBe("conversation_streak");
     const pack = { ...networkPack, attention: { ...networkPack.attention, itemGate: () => "lane_closed" } };
     expect(A.reengagement({ ...base, pack }).reason).toBe("nothing_eligible");
+  });
+});
+
+describe("audit 2026-10-08 (engine-attention-plans-7)", () => {
+  test("a romance item is not sent when the member view has no categoriesOptIn", () => {
+    const rom = item("r", { category: "romance", enjoy: 0.9, accept: 0.9 });
+    expect(A.itemGate(member(), rom, T)).toBe("romance_not_allowed");
+    expect(A.itemGate(member({ categoriesOptIn: ["romance", "social"] }), rom, T)).toBeNull();
   });
 });

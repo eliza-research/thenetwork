@@ -84,8 +84,9 @@ export const networkPack: AppPack = {
     calibrator: { knots: DEFAULT_ENJOY_KNOTS, byLane: DEFAULT_ENJOY_BY_CATEGORY },
     shipsAloneLane: "romance",
     noWarmMentionLanes: ["romance"],
-    // Was attention.ts itemGate: romance items only for opted-in adults.
-    itemGate: (m, it) => (it.category === "romance" && (!(typeof m.age === "number" && Number.isFinite(m.age) && m.age >= 18) || !(m.categoriesOptIn ?? ["romance"]).includes("romance")) ? "romance_not_allowed" : null),
+    // Was attention.ts itemGate: romance items only for opted-in adults. A view without
+    // categoriesOptIn has no romance consent: fail closed (engine-attention-plans-7).
+    itemGate: (m, it) => (it.category === "romance" && (!(typeof m.age === "number" && Number.isFinite(m.age) && m.age >= 18) || !(m.categoriesOptIn ?? []).includes("romance")) ? "romance_not_allowed" : null),
     probeAllowed: (lane, othersCount) => !(lane === "romance" && othersCount !== 1),
     laneActivity: GENERIC_ACTIVITY,
     probeText: (ctx, activity, a, ar) => networkProbeText(ctx, activity, a, ar),
