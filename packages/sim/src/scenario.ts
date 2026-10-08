@@ -2,7 +2,8 @@
 // top of a background world, then grade the run by its FINAL STATE (run log + metrics),
 // not by transcript vibes. pass^k: a scenario passes only if it passes on k seeds.
 import { DAY, MINUTE, type City, type OpportunityKind, type Proposal } from "@thenetwork/core";
-import type { Metrics, RunRecord } from "@thenetwork/judge";
+import type { RunRecord } from "@thenetwork/core";
+import type { Metrics } from "./judge/metrics.ts";
 import { generatePersonas } from "./generator.ts";
 import type { AdversarialKind, Archetype, Persona, Responsiveness, Trip } from "./persona.ts";
 import { desireById } from "./taxonomy.ts";

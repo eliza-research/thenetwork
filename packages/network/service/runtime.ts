@@ -17,7 +17,7 @@
 import { randomUUID } from "node:crypto";
 import type { SQL } from "bun";
 import { DAY, type City, type Clock, type MemberId, type WorldSnapshot } from "@thenetwork/core";
-import type { RunRecord } from "@thenetwork/judge";
+import type { RunRecord } from "@thenetwork/core";
 import type { NetworkContext, SimMessage } from "@thenetwork/core";
 import { ConsentNetwork, type NetworkOptions, type NetworkState } from "../src/network.ts";
 import { PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";

@@ -4,7 +4,8 @@
 // Everything flows through the same Network pipeline and is scored against the oracle's hidden
 // ground truth; the judge scorer checks the run records for invariants, leaks and minor contacts.
 import { DAY, HOUR, MIN_MEMBER_AGE, MINUTE, type City, type MemberId, type Proposal, type ScoreComponents } from "@thenetwork/core";
-import { computeMetrics, type RunRecord } from "@thenetwork/judge";
+import type { RunRecord } from "@thenetwork/core";
+import { computeMetrics } from "@thenetwork/sim";
 import {
   DEFAULT_START, generatePersonas, PolicyPersonaAgent, StubNetwork, World, type Persona,
 } from "@thenetwork/sim";

@@ -17,3 +17,7 @@ export * from "./plans.ts";
 export * from "./world.ts";
 export * from "./scenario.ts";
 export * from "./sources.ts";
+// The judge: deterministic message rules, the run metrics and the LLM graders (harness only).
+export * from "./judge/rules.ts";
+export * from "./judge/metrics.ts";
+export * from "./judge/llmJudges.ts";

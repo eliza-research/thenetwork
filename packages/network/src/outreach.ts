@@ -3,7 +3,7 @@
 // ConsentNetwork send path, the Blooio queue hook and the tests all read these numbers from here
 // (audit P2-13). The send-time functions themselves come from the engine (@thenetwork/engine
 // attention.ts): learnSendProfile, inSendWindow, inMemberQuietHours, canInterrupt, canSendLogistics.
-import { DAY, HOUR, MINUTE } from "@thenetwork/core";
+import { DAY, HOUR, MINUTE, type ParticipationState } from "@thenetwork/core";
 import { DEFAULT_ATTENTION } from "@thenetwork/engine";
 
 export const NY = "America/New_York";
@@ -84,3 +84,26 @@ export function allowedAt(t: number, quietHours: [number, number]): boolean {
   return !inWindow(nyParts(t).hour, quietHours);
 }
 
+/**
+ * Interruption budget per participation state (PRD 32.9, INV-OUT-01): at most `n` proactive messages
+ * in any rolling `days` window. The ConsentNetwork caps every unsolicited send with it, and the
+ * simulator's judge (packages/sim/src/judge/metrics.ts) grades runs against it. Receiving is
+ * "support-only": the judge cannot see the category, so it allows no proactive message. (Initial
+ * invites have their own per-state numbers, OUTREACH.budget above, where Receiving is 2 / 7 days.)
+ */
+export const PRD_BUDGETS: Record<ParticipationState, { n: number; days: number }> = {
+  open: { n: 4, days: 7 }, normal: { n: 2, days: 7 }, quiet: { n: 1, days: 30 }, receiving: { n: 0, days: 7 }, paused: { n: 0, days: 7 },
+};
+/**
+ * Lanes outside the state budget (founder decisions 2026-10-08): plan invites have their own
+ * allowance (1 per 7 days), and the opt-in weekly availability check-in is not an interruption
+ * (1 per 7 days). A message is in a lane when its meta says so (`lane: "plan"`, `checkIn: true`);
+ * each lane is capped here, so a mislabeled message gains at most that lane's allowance. Members
+ * whose state budget is 0 (receiving, paused) get nothing in any lane.
+ */
+export const LANE_BUDGETS: Record<"plan" | "check_in", { n: number; days: number }> = {
+  plan: { n: 1, days: 7 }, check_in: { n: 1, days: 7 },
+};
+
+/** Text that connects the recipient to other people (an intro, a meetup, a group): the observatory's real source and the simulator's judge read it. */
+export const CONNECTION = /\b(intro(duce|duction|s)?|connect (you|him|her|them)|set (you |it )?up|set up (a|an|the)\b|meet (up )?with|meet (him|her|them)|match(ed)? (you )?with|put you in (touch|a group|the group)|group chat|join (him|her|them)|grab (coffee|a coffee|lunch|dinner) with|with (him|her|them) this|mentor|pair you|(see|check|ask) if (anyone|someone|others?|other members?|a few people)( else)? (is |are |would be |wants? to )?(up for|interested|in|free|around|join))\b/i;

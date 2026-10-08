@@ -9,9 +9,9 @@
 // (minors, blocks, names), or to exempt a message that belongs to an opportunity the member
 // really accepted (a simulator decision record).
 import { classifyYesNo, DAY, HOUR, isMinor as isMinorAge, type AppId, type MemberId, type ParticipationState } from "@thenetwork/core";
-import { CONNECTION } from "./policy.ts";
+import { CONNECTION, LANE_BUDGETS, PRD_BUDGETS } from "../../../network/src/outreach.ts";
 import { checkMessage, findContactDetails, hasPausePath, normalizeCanary } from "./rules.ts";
-import type { LoggedMessage, LoggedPersona, RunRecord } from "./runlog.ts";
+import type { LoggedMessage, LoggedPersona, RunRecord } from "@thenetwork/core";
 
 /** Enjoyment at or above which a held meeting counts as a good outcome. One constant for every metric and harness that grades meetings. */
 export const GOOD_MEETING_ENJOYMENT = 0.6;
@@ -22,26 +22,6 @@ export interface MetricsOptions {
   /** Check review-before-contact even if the run logs no review events (fail closed when the network is configured with a review gate). */
   requireReview?: boolean;
 }
-
-/**
- * Interruption budget per participation state (PRD 32.9, INV-OUT-01): at most `n` proactive messages
- * in any rolling `days` window. Copied from the PRD and owned by the judge: a network's own budget
- * config is never the reference. Receiving is "support-only": the judge cannot see the category, so
- * it allows no proactive message.
- */
-export const PRD_BUDGETS: Record<ParticipationState, { n: number; days: number }> = {
-  open: { n: 4, days: 7 }, normal: { n: 2, days: 7 }, quiet: { n: 1, days: 30 }, receiving: { n: 0, days: 7 }, paused: { n: 0, days: 7 },
-};
-/**
- * Lanes outside the state budget (founder decisions 2026-10-08): plan invites have their own
- * allowance (1 per 7 days), and the opt-in weekly availability check-in is not an interruption
- * (1 per 7 days). A message is in a lane when its meta says so (`lane: "plan"`, `checkIn: true`);
- * each lane is capped here, so a mislabeled message gains at most that lane's allowance. Members
- * whose state budget is 0 (receiving, paused) get nothing in any lane.
- */
-export const LANE_BUDGETS: Record<"plan" | "check_in", { n: number; days: number }> = {
-  plan: { n: 1, days: 7 }, check_in: { n: 1, days: 7 },
-};
 
 export interface Metrics {
   run: { runId: string; seed: number | string; days: number; personas: number; joined: number; adversarial: number; minors: number; network: string; agent: string };

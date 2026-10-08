@@ -1,8 +1,8 @@
-// Event-sourced projection: simulator run records (packages/judge/src/runlog.ts) -> observatory
+// Event-sourced projection: simulator run records (packages/core/src/runlog.ts) -> observatory
 // state. Opportunities follow the PRD 32.10 state machine as far as the records reveal it; the
 // edges the Network learns follow PRD 32.13 (introduced, met, enjoyed, would_interact_again, avoid).
 import { UNDER_MIN_AGE_DECLINE, type MemberId, type Proposal } from "@thenetwork/core";
-import type { RunRecord } from "@thenetwork/judge";
+import type { RunRecord } from "@thenetwork/core";
 import { requestLabel } from "./events.ts";
 import { emptyCounters, type Store } from "./store.ts";
 import type { MemberStatus, ObsOpportunity, OppSource, OppState, ParticipantStatus, ReviewInfo, ReviewReason, TimeChoice } from "./types.ts";

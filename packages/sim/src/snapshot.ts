@@ -3,7 +3,7 @@
 // private disclosures are present as agent_private facets (that is realistic: members tell
 // the agent things in confidence) so engines can be tested for privacy leaks.
 import { DAY, HOUR, parseReply, type Category, type City, type Edge, type Facet, type Intent, type Member, type MemberId, type OpportunityKind, type Presence, type Proposal, type WorldSnapshot } from "@thenetwork/core";
-import type { RunRecord } from "@thenetwork/judge";
+import type { RunRecord } from "@thenetwork/core";
 import { intentHorizonDays, intentRecordTiming, type Persona } from "./persona.ts";
 import { hash32 } from "@thenetwork/core";
 import { desireById, SKILLS } from "./taxonomy.ts";

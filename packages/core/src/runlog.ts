@@ -1,7 +1,7 @@
-// Run-log schema: one JSON object per line in runs/<runId>/events.jsonl. The simulator
-// writes it; the metrics module (and later the admin console) reads it. Kept here so
-// the judge package has no runtime dependency on the simulator.
-import type { AppId, City, MemberId, ParticipationState, Proposal } from "@thenetwork/core";
+// Run-log schema: one JSON object per line in runs/<runId>/events.jsonl. The simulator writes it;
+// the Network service writes the same records, the observatory projects them, and the simulator's
+// judge (packages/sim/src/judge/metrics.ts) grades them.
+import type { AppId, City, MemberId, ParticipationState, Proposal } from "./types.ts";
 
 export interface LoggedMessage {
   id: string; ts: number; direction: "outbound" | "inbound"; memberId: MemberId; body: string;

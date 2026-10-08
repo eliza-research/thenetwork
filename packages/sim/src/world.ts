@@ -5,7 +5,8 @@
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DAY, HOUR, MINUTE, SimClock, type MemberId, type Proposal } from "@thenetwork/core";
-import { computeMetrics, type Metrics, type RunRecord, type RunRecordInput, type OracleSummary } from "@thenetwork/judge";
+import type { OracleSummary, RunRecord, RunRecordInput } from "@thenetwork/core";
+import { computeMetrics, type Metrics } from "./judge/metrics.ts";
 import { PolicyPersonaAgent, templateText, timeConflict, type PolicyOptions } from "./agent/policy.ts";
 import { newMemory, type PersonaAgent, type PersonaContext, type PersonaMemory } from "./agent/types.ts";
 import { SimChannel, type Reaction, type SimMessage } from "./channel.ts";

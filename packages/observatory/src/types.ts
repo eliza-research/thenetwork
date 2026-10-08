@@ -5,7 +5,7 @@ import type {
   Category, City, EdgeType, Facet, Intent, MemberId, OpportunityKind, OpportunityState,
   ParticipationState, Presence, ScoreComponents,
 } from "@thenetwork/core";
-import type { OracleSummary } from "@thenetwork/judge";
+import type { OracleSummary } from "@thenetwork/core";
 
 export type Mode = "game" | "real";
 
@@ -216,7 +216,7 @@ export interface ObsStats {
   compatible: number; unsafe: number; oracleJudged: number;
   edgesByType: Record<string, number>;
   /**
-   * Game only: the judge scorer (@thenetwork/judge computeMetrics) over the run records, at most
+   * Game only: the judge scorer (@thenetwork/sim computeMetrics) over the run records, at most
    * once per sim hour. All three counts must stay 0.
    */
   judge?: JudgeStats;

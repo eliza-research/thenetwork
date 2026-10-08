@@ -5,7 +5,7 @@
 // not stored as events, and leak-guard reasons keep only their kind. One exception, as before:
 // feedback_given keeps the feedback text in its payload; describe() never shows it.
 import type { MemberId } from "@thenetwork/core";
-import type { RunRecord } from "@thenetwork/judge";
+import type { RunRecord } from "@thenetwork/core";
 import { desireById } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { SLOT_KINDS, type SendKind } from "@thenetwork/network";
 import type { SystemEvent } from "./types.ts";

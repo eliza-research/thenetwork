@@ -11,7 +11,9 @@
 import { parseArgs } from "node:util";
 import { resolve } from "node:path";
 import { defaultLLM, judgeLLM } from "@thenetwork/core";
-import { formatMetrics, judgeMessageQuality, privacyAudit, type RunRecord } from "@thenetwork/judge";
+import type { RunRecord } from "@thenetwork/core";
+import { formatMetrics } from "./judge/metrics.ts";
+import { judgeMessageQuality, privacyAudit } from "./judge/llmJudges.ts";
 import { LLMPersonaAgent } from "./agent/llmAgent.ts";
 import { PolicyPersonaAgent } from "./agent/policy.ts";
 import { generatePersonas } from "./generator.ts";

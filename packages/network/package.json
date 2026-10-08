@@ -16,7 +16,6 @@
   "dependencies": {
     "@thenetwork/core": "workspace:*",
     "@thenetwork/engine": "workspace:*",
-    "@thenetwork/sim": "workspace:*",
-    "@thenetwork/judge": "workspace:*"
+    "@thenetwork/sim": "workspace:*"
   }
 }

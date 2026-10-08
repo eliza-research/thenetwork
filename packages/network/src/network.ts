@@ -42,8 +42,7 @@ import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import { brandOf, copy, copyFor, type Copy, whenPhrase } from "./copy.ts";
 import { APPS, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { meetingSpot, nearbyVenues, NEIGHBORHOOD, NEIGHBORHOODS, neighborhood, travelMinutes, VENUES, type Venue } from "./geo.ts";
-import { ABOUT_OTHERS, ASK_KINDS, NEVER_REPLY, nextAt, NY, nyParts, OUTREACH, SLOT_KINDS, type SendKind } from "./outreach.ts";
-import { LANE_BUDGETS, PRD_BUDGETS } from "@thenetwork/judge";
+import { ABOUT_OTHERS, ASK_KINDS, LANE_BUDGETS, NEVER_REPLY, nextAt, NY, nyParts, OUTREACH, PRD_BUDGETS, SLOT_KINDS, type SendKind } from "./outreach.ts";
 import { BASE_REACH, FLOOR_EFFORT, type CapitalEvent, type CapitalEventInput, type CapitalReader, type GamingFlag, type NetworkEffort } from "./capital.ts";
 import { activityHints, BOOKING_GAP, PLAN_VENUES, planLedger, statedWindows } from "./plans.ts";
 

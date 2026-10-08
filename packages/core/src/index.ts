@@ -9,3 +9,4 @@ export * from "./fence.ts";
 export * from "./time.ts";
 export * from "./rng.ts";
 export * from "./network.ts";
+export * from "./runlog.ts";

@@ -18,7 +18,8 @@
 // Every arm reports the judge's scores (computeMetrics) too, so the Observatory lab can call this.
 import { parseArgs } from "node:util";
 import { DAY } from "@thenetwork/core";
-import { computeMetrics, type RunRecord } from "@thenetwork/judge";
+import type { RunRecord } from "@thenetwork/core";
+import { computeMetrics } from "@thenetwork/sim";
 import { PolicyPersonaAgent, PRIMED_MODEL, StubNetwork, World, type NetworkUnderTest, type Persona } from "@thenetwork/sim";
 import { loadPersonas } from "../../../scripts/synthetic/load.ts";
 import { DATA_DIR } from "../../../scripts/synthetic/common.ts";

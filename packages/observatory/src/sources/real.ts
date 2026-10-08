@@ -13,7 +13,7 @@ import {
   DAY, isMinor, validAge, type City, type EdgeType, type WorldSnapshot,
 } from "@thenetwork/core";
 import { OUTREACH, SIM_AUTO_REVIEWER } from "@thenetwork/network";
-import { CONNECTION } from "@thenetwork/judge";
+import { CONNECTION } from "@thenetwork/network";
 import { facetOf, intentOf, loadSnapshot, presenceOf } from "@thenetwork/network/service/snapshot";
 import { runEngineSummarized } from "../engineCapture.ts";
 import { describe, onTimeline, requestLabel, type EventRow } from "../events.ts";
