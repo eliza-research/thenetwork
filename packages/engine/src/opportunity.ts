@@ -2,7 +2,7 @@
 // The allowed transitions are an explicit table (from, to, trigger, actor, timer). Anything not
 // in the table throws InvalidTransitionError. Transitions are idempotent by event id, permission
 // checked against the actor, and logged as events. Expiry timers run on a Clock.
-import type { Clock, MemberId, OpportunityState } from "@thenetwork/core";
+import type { Category, Clock, MemberId, OpportunityState } from "@thenetwork/core";
 import { HOUR } from "@thenetwork/core";
 
 export type Actor = "engine" | "system" | "reviewer" | "member" | "clock" | "steward";
@@ -125,7 +125,8 @@ export interface OpportunityEvent { eventId: string; at: number; from: Opportuni
  * "safety_hold", "underage", "opted_out", ...). Build one from a World with `eligibilityFor`
  * (filters.ts). Without it, dispatch/accept/backfill act on ids only, as before.
  */
-export type EligibilityCheck = (memberId: MemberId, others: MemberId[]) => string | null;
+/** `lane`: the opportunity's category, when the caller knows it (re-checks lane opt-ins). */
+export type EligibilityCheck = (memberId: MemberId, others: MemberId[], lane?: Category) => string | null;
 export interface EligibilityOpts { eligible?: EligibilityCheck }
 
 export interface Opportunity {

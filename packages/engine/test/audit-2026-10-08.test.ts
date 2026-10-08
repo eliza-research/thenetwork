@@ -4,10 +4,10 @@ import { describe, expect, test } from "bun:test";
 import { DEFAULT_CONFIG, resolveConfig } from "../src/config.ts";
 import { runEngine } from "../src/engine.ts";
 import { MatcherScheduler, MemoryProposalStore } from "../src/tick.ts";
-import { isHomeEntry, riskTerms } from "../src/filters.ts";
+import { eligibilityFor, isHomeEntry, riskTerms } from "../src/filters.ts";
 import { randomWorld } from "../src/testkit.ts";
 import { DAY, HOUR } from "@thenetwork/core";
-import { baseMember, emptyInput, facet, FakeLLM, NOW } from "./helpers.ts";
+import { baseMember, emptyInput, facet, FakeLLM, mkWorld, NOW } from "./helpers.ts";
 
 describe("engine-pipeline-1: exploration never selects judge-rejected configurations", () => {
   test("a judge that says no to everything: no selected proposal carries a rejection reason or the 'no' text", async () => {
@@ -127,3 +127,22 @@ describe("engine-pipeline-5 / -22: per-city ticks share budgets and ids; the tic
     expect(b.status).toBe("ran");
   });
 });
+
+describe("engine-pipeline-10: send-time re-check covers withdrawn lane consent and the match age", () => {
+  test("romance opt-out after the proposal, a dropped lane and an age under config.ageMin fail at send time", () => {
+    const inp = emptyInput(NOW);
+    inp.members.push(
+      baseMember("a", { prefs: { romanceOptIn: true, categoriesOptIn: ["romance", "social"] } as never }),
+      baseMember("withdrew", { prefs: { romanceOptIn: false, categoriesOptIn: ["romance", "social"] } as never }),
+      baseMember("nolane", { prefs: { romanceOptIn: true, categoriesOptIn: ["social"] } as never }),
+      baseMember("young", { age: 20 }),
+    );
+    const w = mkWorld(inp, { ageMin: 21 });
+    const romance = eligibilityFor(w, undefined, "romance");
+    expect(romance("a", ["withdrew"])).toBeNull();
+    expect(romance("withdrew", ["a"])).toBe("romance_opt_out");
+    expect(romance("nolane", ["a"])).toBe("category_opt_out");
+    expect(eligibilityFor(w)("young", [])).toBe("underage");
+  });
+});
+

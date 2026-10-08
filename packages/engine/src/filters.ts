@@ -225,17 +225,26 @@ export function candidateReason(w: World, c: Candidate, usage?: RunUsage): Filte
  *  - a block (either direction) with anyone else still in the opportunity.
  * `optedOut` lets the caller add channel-level opt-outs (STOP) that the World doesn't model.
  */
-export function sendTimeReason(w: World, id: MemberId, others: MemberId[] = [], optedOut?: (id: MemberId) => boolean): FilterReason | "opted_out" | null {
+export function sendTimeReason(w: World, id: MemberId, others: MemberId[] = [], optedOut?: (id: MemberId) => boolean, lane?: Category): FilterReason | "opted_out" | null {
   const mi = w.get(id);
   if (!mi) return "unknown_member";
-  if (isMinorAge(mi.m.age)) return "underage";
+  // The effective match age (config ageMin and the pack's floor), not only the 18 policy floor.
+  if (isMinorAge(mi.m.age) || !(mi.m.age >= w.cfg.ageMin) || !(mi.m.age >= w.pack.eligibility.minMatchAge)) return "underage";
   if (w.holds.has(id)) return "safety_hold";
   if (mi.m.state === "paused") return "state_paused";
   if (optedOut?.(id)) return "opted_out";
+  // With the lane: a lane opt-in withdrawn after the proposal (engine-pipeline-10), romance included.
+  if (lane !== undefined) {
+    if (!mi.m.prefs.categoriesOptIn.includes(lane)) return "category_opt_out";
+    if (lane === "romance" && !mi.m.prefs.romanceOptIn) return "romance_opt_out";
+  }
   for (const o of others) if (o !== id && w.blocked.has(pairKey(id, o))) return "blocked";
   return null;
 }
 
-/** An opportunity.ts `EligibilityCheck` over a World snapshot. */
-export const eligibilityFor = (w: World, optedOut?: (id: MemberId) => boolean) =>
-  (id: MemberId, others: MemberId[]): string | null => sendTimeReason(w, id, others, optedOut);
+/**
+ * An opportunity.ts `EligibilityCheck` over a World snapshot. `lane` (the opportunity's category)
+ * re-checks lane opt-ins; a caller may also pass the lane per call (attention.ts revalidateHold).
+ */
+export const eligibilityFor = (w: World, optedOut?: (id: MemberId) => boolean, lane?: Category) =>
+  (id: MemberId, others: MemberId[], itemLane?: Category): string | null => sendTimeReason(w, id, others, optedOut, itemLane ?? lane);
