@@ -43,6 +43,17 @@ describe("ConsentNetwork invariants (NYC, 10 days, simulated reviewer)", () => {
     expect(m.errors).toBe(0);
   });
 
+  test("no minor or unknown age is ever an alternate (a possible backfill)", () => {
+    // Members the Network can know are minors (their stated age); a hidden minor who claims 18+ is out of reach until a signal.
+    const minors = new Set([...run.personas.values()].filter(p => p.public.claimedAge < 18).map(p => p.id));
+    const started = run.records.filter(r => r.type === "network_log" && r.kind === "probe_started");
+    expect(started.length).toBeGreaterThan(0);
+    for (const r of started) {
+      const alts = ((r as { detail: { proposal?: { alternates?: string[] } } }).detail.proposal?.alternates ?? []);
+      expect(alts.filter(id => minors.has(id))).toEqual([]);
+    }
+  });
+
   test("every opportunity is reviewed before anyone is contacted (review_decision precedes every probe and reveal)", () => {
     const approvedAt = new Map(logs(run.records, "review_decision").filter(l => l.detail.decision === "approve").map(l => [String(l.detail.oppId), l.t]));
     const sent = logs(run.records, "probe_sent");

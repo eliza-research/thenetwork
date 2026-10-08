@@ -2302,7 +2302,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       // An opportunity they were an alternate in is closed too while it is still open (the judge counts
       // every later message about it as a minor contact), unless it is already booked between adults.
       const wasAlternate = minor && o.alternates.includes(id);
-      if (minor) o.alternates = o.alternates.filter(x => x !== id);
+      // Anyone dropped (minor signal, opt-out, hold) leaves every open alternate list.
+      o.alternates = o.alternates.filter(x => x !== id);
       if (wasAlternate && !o.participants.includes(id) && o.stage !== "scheduled") { this.close(o, reason); continue; }
       if (!o.participants.includes(id)) continue;
       if (minor && o.stage !== "scheduled") this.close(o, reason);
@@ -3682,6 +3683,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     const firsts = new Set(participants.map(p => this.members.get(p)?.first.toLowerCase()).filter(Boolean));
     const out: MemberId[] = [];
     for (const a of alternates) {
+      // Minors policy: an alternate (a possible backfill) is never a minor or someone of unknown age,
+      // whoever proposed it (search, engine, planner, player or scenario).
+      const am = this.members.get(a);
+      if (!am || am.minor || am.minorSignal) continue;
       if (participants.includes(a) || [...participants, ...out].some(p => this.blocked(p, a))) continue;
       const f = this.members.get(a)?.first.toLowerCase();
       if (f && firsts.has(f)) continue;
