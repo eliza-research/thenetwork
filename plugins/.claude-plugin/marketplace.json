@@ -1,0 +1,15 @@
+{
+  "name": "the-network",
+  "description": "The Network's Claude Code plugin: skills and MCP servers for its four apps.",
+  "owner": {
+    "name": "Eliza Research Corporation",
+    "url": "https://ntwrk.love"
+  },
+  "plugins": [
+    {
+      "name": "the-network",
+      "source": "./claude",
+      "description": "Skills and MCP servers for ntwrk.love, slop.date, peon.biz and friends.help."
+    }
+  ]
+}

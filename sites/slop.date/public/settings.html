@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings · slop.date</title><meta name="description" content="See your membership, export your data, stop messages, or delete your data.">
+<meta name="theme-color" content="#20231a">
+<meta name="turnstile-sitekey" content="{{TURNSTILE_SITE_KEY}}">
+<link rel="stylesheet" href="./styles.css"><script type="module" src="../../shared/settings.ts"></script></head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="wrap top">
+  <a class="mark" href="/">slop<span>.date</span></a>
+  <nav aria-label="Main"><a href="/safety">Safety</a><a href="/settings" aria-current="page">Settings</a><a class="cta" href="/join">Join</a></nav>
+</div>
+<main id="main" class="narrow page">
+<h1>Settings</h1>
+<div class="flow" data-settings data-export-name="slop-date-my-data"
+  data-msg-stopped="Messages from slop.date are stopped. Text START to us to turn them back on."
+  data-gone-app="You left slop.date. We deleted your profile and messages for slop.date."
+  data-gone-all="We deleted everything tied to your phone number. We keep only a scrambled copy of the number, so that we never text it again.">
+  <p class="notice" data-flow-error role="alert" hidden></p>
+  <noscript><p class="notice">Settings need JavaScript. You can also email <a href="mailto:help@ntwrk.love">help@ntwrk.love</a>.</p></noscript>
+  <section data-step="loading" hidden><p aria-live="polite">Loading…</p></section>
+
+  <section data-step="phone" hidden>
+    <h2>Log in</h2>
+    <p>Log in with your phone number to see and change your membership. We text you a code.</p>
+    <form data-form="phone" novalidate>
+      <div class="field"><label for="phone">Mobile number</label>
+        <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="(212) 555-0123" required aria-describedby="phone-hint">
+        <p class="hint" id="phone-hint">US numbers only. Message and data rates may apply.</p></div>
+      <div class="human" data-turnstile></div>
+      <p class="error" data-error role="alert" hidden></p>
+      <button class="btn" type="submit" data-busy="Sending…">Text me a code</button>
+    </form>
+  </section>
+
+  <section data-step="code" hidden>
+    <h2>Enter the code</h2>
+    <p>We sent a code to <strong data-slot="phoneShown"></strong>. It can take a minute to arrive.</p>
+    <form data-form="code" novalidate>
+      <div class="field"><label for="code">Code</label>
+        <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" required data-focus></div>
+      <p class="error" data-error role="alert" hidden></p>
+      <div class="row"><button class="btn" type="submit" data-busy="Checking…">Log in</button>
+        <button class="linkish" type="button" data-action="resend">Send a new code</button>
+        <button class="linkish" type="button" data-action="change-number">Use a different number</button></div>
+    </form>
+  </section>
+
+  <section data-step="account" hidden>
+    <h2>Your membership</h2>
+    <dl class="facts">
+      <dt>Phone</dt><dd data-slot="phoneMasked"></dd>
+      <dt data-when="has-membership">Name</dt><dd data-when="has-membership" data-slot="firstName"></dd>
+      <dt data-when="has-membership">Status</dt><dd data-when="has-membership" data-slot="state"></dd>
+      <dt data-when="has-membership">Joined</dt><dd data-when="has-membership" data-slot="joinedAt"></dd>
+    </dl>
+    <p data-when="no-membership" hidden>This number has not joined slop.date. <a href="/join">Join slop.date</a>.</p>
+    <p class="status" data-status aria-live="polite"></p>
+    <div class="actions" data-when="has-membership">
+      <div><h3>Export my data</h3><p>Download a file with what slop.date holds about you. It holds only this site's data.</p><button class="btn quiet" type="button" data-action="export">Export my data</button></div>
+      <div data-when="not-stopped"><h3>Stop messages</h3><p>Every app powered by The Network stops texting this number, not only this one. Your membership stays. Text START to turn messages back on.</p><button class="btn quiet" type="button" data-action="stop">Stop messages</button></div>
+      <div data-when="stopped" hidden><h3>Messages are stopped</h3><p>Text START to slop.date to turn them back on.</p></div>
+      <div><h3>Leave slop.date</h3><p>We delete your profile, messages and matching data for slop.date.</p><button class="btn quiet" type="button" data-action="leave">Leave slop.date</button></div>
+    </div>
+    <div class="actions">
+      <div class="danger-zone"><h3>Delete everything</h3><p>We delete all data tied to this phone number, everywhere Eliza Research Corporation holds it, and log you out. This cannot be undone.</p><button class="btn danger" type="button" data-action="delete-all">Delete everything</button></div>
+    </div>
+    <p><button class="linkish" type="button" data-action="logout">Log out</button></p>
+
+    <dialog data-confirm="stop" aria-labelledby="d-stop"><form method="dialog">
+      <h2 id="d-stop">Stop messages from slop.date?</h2><p>You will get no more texts from slop.date until you text START.</p>
+      <div class="row"><button class="btn" value="confirm">Stop messages</button><button class="btn quiet" value="cancel">Cancel</button></div></form></dialog>
+    <dialog data-confirm="leave" aria-labelledby="d-leave"><form method="dialog">
+      <h2 id="d-leave">Leave slop.date?</h2><p>We delete your profile, messages and matching data for slop.date. You can join again later.</p>
+      <div class="row"><button class="btn danger" value="confirm">Leave</button><button class="btn quiet" value="cancel">Cancel</button></div></form></dialog>
+    <dialog data-confirm="delete-all" data-word="DELETE" aria-labelledby="d-all"><form method="dialog">
+      <h2 id="d-all">Delete everything?</h2><p>We delete all data tied to this phone number, everywhere we hold it. This cannot be undone.</p>
+      <div class="field"><label for="confirmText">Type DELETE to confirm</label><input id="confirmText" name="confirmText" type="text" autocomplete="off" autocapitalize="characters"></div>
+      <div class="row"><button class="btn danger" value="confirm">Delete everything</button><button class="btn quiet" value="cancel">Cancel</button></div></form></dialog>
+  </section>
+
+  <section data-step="gone" hidden>
+    <h2>Done</h2>
+    <p data-slot="goneText"></p>
+    <p><a href="/">Back to slop.date</a></p>
+  </section>
+</div>
+</main>
+<footer class="foot"><div class="wrap">
+  <p>slop.date is powered by <a href="https://ntwrk.love">The Network</a> and operated by Eliza Research Corporation. Help: <a href="/support">support</a> or <a href="mailto:help@ntwrk.love">help@ntwrk.love</a>. Message and data rates may apply. Text STOP to stop all texts from us, or "leave slop.date" to stop slop.date only. Text HELP for help.</p>
+  <nav aria-label="Legal"><a href="/safety">Safety notice</a><a href="/guidelines">Community guidelines</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/sms-terms">Text messaging terms</a><a href="/settings">Your data</a><a href="/support">Support</a></nav>
+</div></footer>
+</body></html>

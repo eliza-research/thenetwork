@@ -1,0 +1,28 @@
+/* The agent-first landing page (founder decision 10): the name, one line, "Copy this into your agent."
+   with the prompt, a Copy button and "Open in <agent>" links. Each site sets the tokens below in its
+   own styles.css (body.landing); the layout is shared. The design canvases are the source of truth. */
+body.landing { margin: 0; min-height: 100vh; display: flex; flex-direction: column; background: var(--l-bg); color: var(--l-ink); font: 500 17px/1.5 var(--l-font); }
+.landing .l-wrap { width: min(100% - 32px, 1040px); margin-inline: auto; }
+.landing .l-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-block: 28px; }
+.landing .l-mark { font: 900 26px/1 var(--l-display); letter-spacing: -0.03em; color: var(--l-ink); text-decoration: none; }
+.landing .l-by { font-size: 15px; color: var(--l-muted); }
+.landing .l-by a { color: var(--l-muted); }
+.landing main { flex-grow: 1; display: flex; flex-direction: column; gap: 28px; padding-block: 40px 64px; }
+.landing h1 { margin: 0; font: 900 clamp(44px, 8vw, 96px)/0.98 var(--l-display); letter-spacing: -0.035em; color: var(--l-h1); text-wrap: balance; }
+.landing .l-box { background: var(--l-accent); color: var(--l-accent-ink); border-radius: var(--l-radius); padding: 28px; display: flex; flex-direction: column; gap: 18px; }
+.landing .l-box h2 { margin: 0; font: 900 clamp(26px, 4vw, 40px)/1.05 var(--l-display); letter-spacing: -0.02em; }
+.landing .l-prompt { background: var(--l-panel); color: var(--l-panel-ink); border-radius: calc(var(--l-radius) * 0.65); padding: 18px 18px 18px 22px; display: flex; flex-wrap: wrap; gap: 14px; align-items: center; justify-content: space-between; }
+.landing .l-prompt code { font: 16px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; flex: 1 1 280px; min-width: 0; overflow-wrap: anywhere; user-select: all; }
+.landing .l-prompt button { min-height: 44px; padding: 0 18px; border-radius: 10px; border: 1px solid var(--l-panel-rule); background: var(--l-panel-button); color: var(--l-panel-ink); font: 700 15px var(--l-font); cursor: pointer; }
+.landing .l-agents { display: flex; flex-wrap: wrap; gap: 10px; }
+.landing .l-agents a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 16px; border-radius: var(--l-pill); background: var(--l-pill-bg); color: var(--l-pill-ink); font-weight: 800; font-size: 15px; text-decoration: none; }
+.landing .l-agents a:hover { text-decoration: underline; }
+.landing .l-line { margin: 0; font-size: 16px; color: var(--l-muted); }
+.landing .l-apps { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+.landing .l-apps a { display: flex; flex-direction: column; gap: 6px; padding: 22px; border-radius: 16px; min-height: 110px; text-decoration: none; }
+.landing .l-apps strong { font-size: 24px; }
+.landing .l-foot { display: flex; flex-wrap: wrap; gap: 8px 20px; padding-block: 20px 32px; font-size: 14px; }
+.landing .l-foot a { color: var(--l-muted); }
+.landing :focus-visible { outline: 3px solid var(--l-focus); outline-offset: 3px; border-radius: 4px; }
+.landing .skip { position: absolute; left: -9999px; }
+.landing .skip:focus { left: 16px; top: 16px; background: var(--l-accent); color: var(--l-accent-ink); padding: 8px 12px; z-index: 10; }

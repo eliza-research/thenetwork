@@ -7,13 +7,19 @@
     "prototypes/*"
   ],
   "scripts": {
-    "test": "bun test --conditions eliza-source ./packages ./prototypes",
-    "typecheck": "tsc --noEmit -p . && bun run --cwd packages/plugin-network typecheck",
+    "test": "bun test --conditions eliza-source ./packages ./prototypes ./sites ./deploy ./scripts ./tests/e2e",
+    "test:e2e": "bun test ./tests/e2e --timeout 180000",
+    "typecheck": "tsc --noEmit -p . && tsc --noEmit -p sites/tsconfig.json && bun run --cwd packages/plugin-network typecheck",
     "observatory": "bun run packages/observatory/src/server.ts",
-    "observatory:db": "bun run packages/observatory/db/dev-pg.ts up && bun run packages/observatory/db/seed.ts --from-sim --days 14"
+    "observatory:db": "bun run packages/observatory/db/dev-pg.ts up && bun run packages/observatory/db/seed.ts --from-sim --days 14",
+    "db:migrate": "bun run packages/observatory/db/migrate.ts",
+    "sites:dev": "bun run scripts/sites-dev.ts",
+    "platform:dev": "bun run scripts/platform-dev.ts",
+    "start:backend": "bun run deploy/backend/server.ts",
+    "sites:build": "bun run sites/sites.ts"
   },
   "devDependencies": {
-    "@types/bun": "latest",
+    "@types/bun": "1.4.2",
     "typescript": "^5.6.0"
   }
 }

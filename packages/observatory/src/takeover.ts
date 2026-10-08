@@ -2,7 +2,9 @@
 // player and waits. The simulator awaits agent replies, so the world simply pauses until the
 // player answers (or asks the persona's own policy to answer). Everyone else uses the inner agent.
 import { MINUTE, type MemberId } from "@thenetwork/core";
-import { decide, parseYesNo, type AgentReply, type PersonaAgent, type PersonaContext, type SimMessage } from "@thenetwork/sim";
+import { decide, type AgentReply, type PersonaAgent, type PersonaContext, type SimMessage } from "@thenetwork/sim";
+// The Network's own reader (refusal first): the simulator's parseYesNo read "absolutely not" as yes.
+import { parseYesNo } from "@thenetwork/network";
 import type { PlayerPrompt } from "./types.ts";
 
 interface Pending { prompt: PlayerPrompt; ctx: PersonaContext; msg: SimMessage; resolve: (r: AgentReply) => void }

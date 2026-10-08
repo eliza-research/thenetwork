@@ -8,3 +8,5 @@ runs/
 *.log
 .venv/
 __pycache__/
+.wrangler/
+.dev.vars

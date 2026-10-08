@@ -13,6 +13,7 @@ export * from "./stubNetwork.ts";
 export * from "./agent/types.ts";
 export * from "./agent/policy.ts";
 export * from "./agent/llmAgent.ts";
+export * from "./plans.ts";
 export * from "./world.ts";
 export * from "./scenario.ts";
 export * from "./sources.ts";

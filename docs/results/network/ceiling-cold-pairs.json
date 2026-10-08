@@ -1,0 +1,47 @@
+{
+ "note": "Hand-written scratch analysis: Oracle.evaluate() on every pair of NYC adults who are not adversarial (215 people, 23,005 pairs), kind intro, no category, window day 1-5, per oracle seed. mutual = product of the two acceptProb values (a cold proposal: no probe, no ask). good = oracle compatible.",
+ "rows": [
+  {
+   "seed": 1,
+   "people": 215,
+   "pairs": 23005,
+   "max": "0.694",
+   "p999": "0.545",
+   "p99": "0.361",
+   "median": "0.011",
+   "atLeast09": 0,
+   "goodPairs": 1738,
+   "goodMax": "0.682",
+   "goodP999": "0.678",
+   "goodMedian": "0.148"
+  },
+  {
+   "seed": 2,
+   "people": 215,
+   "pairs": 23005,
+   "max": "0.700",
+   "p999": "0.503",
+   "p99": "0.366",
+   "median": "0.011",
+   "atLeast09": 0,
+   "goodPairs": 1659,
+   "goodMax": "0.700",
+   "goodP999": "0.680",
+   "goodMedian": "0.150"
+  },
+  {
+   "seed": 3,
+   "people": 215,
+   "pairs": 23005,
+   "max": "0.693",
+   "p999": "0.530",
+   "p99": "0.362",
+   "median": "0.011",
+   "atLeast09": 0,
+   "goodPairs": 1717,
+   "goodMax": "0.693",
+   "goodP999": "0.645",
+   "goodMedian": "0.153"
+  }
+ ]
+}

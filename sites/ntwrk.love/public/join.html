@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How to join · The Network</title><meta name="description" content="The Network is invite-only. You join by replying to an invitation text.">
+<meta name="turnstile-sitekey" content="{{TURNSTILE_SITE_KEY}}">
+<link rel="stylesheet" href="./styles.css"><script type="module" src="../../shared/join.ts"></script></head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header><a class="brand" href="/">The Network</a><nav aria-label="Main"><a href="/#apps">Apps</a><a href="/join" aria-current="page">Join</a><a href="/settings">Settings</a><a href="/support">Support</a></nav></header>
+<main id="main">
+<h1>How to join</h1>
+
+<div class="flow" data-join data-join-mode="invite" data-min-age="13"
+  data-msg-under-age="You must be 13 or older to use The Network. We did not save your details."
+  data-msg-invite-only="The Network is invite-only right now. You join by replying to an invitation text from a member or from our team.">
+  <p class="notice" data-flow-error role="alert" hidden></p>
+
+  <section data-step="invite">
+    <p class="lede">The Network is invite-only. There is no sign-up form.</p>
+    <ul>
+      <li>A member who knows you, or our team, sends you an invitation by text.</li>
+      <li>Reply to that text to accept. Your reply is your opt-in to messages from The Network.</li>
+      <li>You must be 13 or older. Only adults 18 and older are matched. Members under 18 get personal help only. They are never introduced to other members.</li>
+    </ul>
+    <p>Do you know a member? Ask them to invite you.</p>
+    <div class="box">
+      <p><strong>Already a member?</strong> Log in with your phone number to see your membership, export your data, stop messages, or delete your data.</p>
+      <p><a class="btn quiet" href="/settings">Log in to settings</a></p>
+    </div>
+  </section>
+
+  <noscript><p class="box">Joining and settings need JavaScript. You can also text The Network, or email <a href="mailto:help@ntwrk.love">help@ntwrk.love</a>.</p></noscript>
+
+  <section data-step="loading" hidden><p aria-live="polite">Loading…</p></section>
+
+  <section data-step="phone" hidden>
+    <h2>Your phone number</h2>
+    <p>We text you a code to check that the number is yours.</p>
+    <form data-form="phone" novalidate>
+      <div class="field"><label for="phone">Mobile number</label>
+        <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="(212) 555-0123" required aria-describedby="phone-hint">
+        <p class="hint" id="phone-hint">US numbers only. Message and data rates may apply.</p></div>
+      <div class="human" data-turnstile></div>
+      <p class="error" data-error role="alert" hidden></p>
+      <button class="btn" type="submit" data-busy="Sending…">Text me a code</button>
+    </form>
+  </section>
+
+  <section data-step="code" hidden>
+    <h2>Enter the code</h2>
+    <p>We sent a code to <strong data-slot="phoneShown"></strong>. It can take a minute to arrive.</p>
+    <form data-form="code" novalidate>
+      <div class="field"><label for="code">Code</label>
+        <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" required data-focus></div>
+      <p class="error" data-error role="alert" hidden></p>
+      <div class="row"><button class="btn" type="submit" data-busy="Checking…">Continue</button>
+        <button class="linkish" type="button" data-action="resend">Send a new code</button>
+        <button class="linkish" type="button" data-action="change-number">Use a different number</button></div>
+    </form>
+  </section>
+
+  <section data-step="profile" hidden>
+    <h2>A little about you</h2>
+    <form data-form="profile" novalidate>
+      <div class="field"><label for="firstName">First name</label><input id="firstName" name="firstName" type="text" autocomplete="given-name" required data-focus></div>
+      <div class="field"><label for="age">Age</label><input id="age" name="age" type="number" inputmode="numeric" min="1" max="120" required aria-describedby="age-hint">
+        <p class="hint" id="age-hint">You must be <span data-slot="minJoinAge">13</span> or older to join. Only adults 18 and older are matched.</p></div>
+      <div class="field"><label for="neighborhood">Neighbourhood <span class="hint">(optional)</span></label><input id="neighborhood" name="neighborhood" type="text" autocomplete="off"></div>
+      <div class="field"><label for="about">One line about what you're looking for <span class="hint">(optional)</span></label><input id="about" name="about" type="text" maxlength="200"></div>
+      <label class="consent"><input type="checkbox" name="consent" required>
+        <span data-consent-wording>I agree to receive recurring text messages from The Network at this number: replies, introductions and plans I ask for, reminders, and occasional suggestions. Message frequency varies. Message and data rates may apply. Reply STOP to stop and HELP for help. Consent is not a condition of any purchase.</span></label>
+      <p class="hint">See the <a href="/terms#sms">text messaging terms</a> and the <a href="/privacy">privacy policy</a>.</p>
+      <p class="error" data-error role="alert" hidden></p>
+      <div class="row"><button class="btn" type="submit" data-busy="Saving…">Join</button></div>
+    </form>
+  </section>
+
+  <section data-step="done" hidden>
+    <h2>You're in, <span data-slot="firstName"></span>.</h2>
+    <p>The Network will text you soon. Reply STOP at any time to stop.</p>
+  </section>
+
+  <section data-step="member" hidden>
+    <h2>You're already a member.</h2>
+    <p>You joined on <span data-slot="joinedAt"></span>. <a href="/settings">Go to settings</a> to see or change your membership.</p>
+  </section>
+
+  <section data-step="blocked" hidden>
+    <h2>We can't add you right now</h2>
+    <p data-slot="blockedReason"></p>
+    <p><a href="/">Back to The Network</a></p>
+  </section>
+</div>
+
+</main>
+<footer><p>The Network powers <a href="https://slop.date">slop.date</a>, <a href="https://friends.help">friends.help</a> and <a href="https://peon.biz">peon.biz</a>. It is operated by Eliza Research Corporation. Help: <a href="/support">support</a> or <a href="mailto:help@ntwrk.love">help@ntwrk.love</a>.</p>
+<nav class="legal" aria-label="Legal"><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/terms#sms">Text messaging terms</a><a href="/guidelines">Community guidelines</a><a href="/settings">Your data</a><a href="/support">Support</a></nav></footer>
+</body></html>
