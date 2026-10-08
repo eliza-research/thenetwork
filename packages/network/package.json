@@ -11,7 +11,6 @@
     "./service/snapshot": "./service/snapshot.ts"
   },
   "scripts": {
-    "test": "bun test",
     "service": "bun run service/main.ts"
   },
   "dependencies": {

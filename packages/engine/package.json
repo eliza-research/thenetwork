@@ -3,10 +3,6 @@
   "version": "0.0.0",
   "type": "module",
   "main": "src/index.ts",
-  "scripts": {
-    "test": "bun test",
-    "bench": "bun run src/bench.ts"
-  },
   "dependencies": {
     "@thenetwork/core": "workspace:*"
   }

@@ -5,7 +5,6 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "test": "bun test",
     "link-test-page": "bun run scripts/link-test-page.ts"
   }
 }

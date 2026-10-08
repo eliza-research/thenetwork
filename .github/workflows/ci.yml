@@ -115,9 +115,7 @@ jobs:
       - name: Security suite (pending decision)
         run: |
           if [ -n "${LIVE_TESTS:-}" ]; then echo "LIVE_TESTS must be unset in CI"; exit 1; fi
-          bun test --conditions eliza-source --timeout 120000 \
-            packages/platform/test/db.test.ts packages/platform/test/api-security.test.ts \
-            packages/mcp/test/oauth.test.ts deploy/backend/backend.test.ts
+          bun run security
         timeout-minutes: 15
 
   plugin-network:

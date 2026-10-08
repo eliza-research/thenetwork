@@ -33,7 +33,6 @@
   },
   "private": true,
   "scripts": {
-    "test": "bun test --conditions eliza-source",
     "typecheck": "./node_modules/.bin/tsc --noEmit -p tsconfig.json"
   },
   "sideEffects": false,

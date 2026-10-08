@@ -6,8 +6,7 @@
   "main": "src/index.ts",
   "scripts": {
     "start": "bun run src/server.ts",
-    "dev": "bun --hot run src/server.ts",
-    "test": "bun test"
+    "dev": "bun --hot run src/server.ts"
   },
   "dependencies": {
     "@thenetwork/core": "workspace:*",

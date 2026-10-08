@@ -5,8 +5,7 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "sim": "bun run src/cli.ts",
-    "test": "bun test"
+    "sim": "bun run src/cli.ts"
   },
   "dependencies": {
     "@thenetwork/core": "workspace:*",
