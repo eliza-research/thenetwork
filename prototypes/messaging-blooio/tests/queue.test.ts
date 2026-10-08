@@ -7,6 +7,8 @@ import { world } from "./helpers.ts";
 const ALICE = "+15551110001";
 const LA = "America/Los_Angeles";
 const consentAll = (w: ReturnType<typeof world>, ...who: string[]) => who.forEach((a) => w.consent.record("sim", a, "opted_in", "invite_acceptance"));
+/** The person just texted us, so a "reply" to them is a real reply. */
+const engaged = (w: ReturnType<typeof world>, ...who: string[]) => who.forEach((a) => w.queue.onRecipientEngaged("sim", a));
 
 describe("idempotent outbound", () => {
   test("same key twice delivers once", async () => {
@@ -30,6 +32,7 @@ describe("idempotent outbound", () => {
 
   test("a retry after a lost response reuses the provider key: no double text", async () => {
     const w = world();
+    engaged(w, ALICE);
     // Adapter that delivers but then 'loses' the response on the first attempt.
     const sim = w.bus.adapter();
     let first = true;
@@ -54,6 +57,7 @@ describe("idempotent outbound", () => {
 
   test("delivery and read receipts advance status; out-of-order receipts never regress", async () => {
     const w = world();
+    engaged(w, ALICE);
     const { record } = w.queue.enqueue({ idempotencyKey: "k", channel: "sim", to: ALICE, text: "hi", kind: "reply" });
     await w.queue.drain();
     await w.bus.readAll(ALICE); // read arrives before delivered
@@ -80,8 +84,9 @@ describe("policy at dispatch time", () => {
     expect(w.bus.inbox.get(ALICE)?.length).toBe(1);
   });
 
-  test("proactive without recorded consent is suppressed; replies are not", async () => {
+  test("proactive without recorded consent is suppressed; replies to the member's message are not", async () => {
     const w = world();
+    engaged(w, ALICE);
     const p = w.queue.enqueue({ idempotencyKey: "p", channel: "sim", to: ALICE, text: "x", kind: "proactive", timeZone: LA }).record;
     const r = w.queue.enqueue({ idempotencyKey: "r", channel: "sim", to: ALICE, text: "y", kind: "reply" }).record;
     await w.queue.drain();
@@ -96,6 +101,7 @@ describe("policy at dispatch time", () => {
     w.clock.set(Date.parse("2026-10-06T02:00:00Z")); // 19:00 PDT, 22:00 EDT
     const la = w.queue.enqueue({ idempotencyKey: "la", channel: "sim", to: ALICE, text: "x", kind: "proactive", timeZone: LA }).record;
     const ny = w.queue.enqueue({ idempotencyKey: "ny", channel: "sim", to: NY, text: "x", kind: "proactive", timeZone: "America/New_York" }).record;
+    engaged(w, NY);
     const reply = w.queue.enqueue({ idempotencyKey: "reply", channel: "sim", to: NY, text: "sure!", kind: "reply" }).record;
     await w.queue.drain();
     expect(la.status).toBe("sent");
@@ -114,6 +120,7 @@ describe("policy at dispatch time", () => {
 
   test("Blooio conversation limit holds the message until the recipient engages (no timer retries)", async () => {
     const w = world();
+    engaged(w, ALICE);
     w.bus.failNext(ALICE, new ChannelSendError("limit", "await_recipient", 429, "conversation_awaiting_reply"));
     const { record } = w.queue.enqueue({ idempotencyKey: "k", channel: "sim", to: ALICE, text: "4th opener", kind: "reply" });
     await w.queue.drain();
@@ -129,6 +136,7 @@ describe("policy at dispatch time", () => {
 
   test("5xx retries with exponential backoff then fails after maxAttempts", async () => {
     const w = world({ maxAttempts: 3 });
+    engaged(w, ALICE);
     w.bus.failNext(ALICE, new ChannelSendError("503", "retryable", 503), 5);
     const { record } = w.queue.enqueue({ idempotencyKey: "k", channel: "sim", to: ALICE, text: "x", kind: "reply" });
     await w.queue.drain();
@@ -147,20 +155,35 @@ describe("policy at dispatch time", () => {
     const smsSent: SendRequest[] = [];
     const sms: ChannelAdapter = { kind: "twilio", async send(r) { smsSent.push(r); return { providerMessageId: `tw_${smsSent.length}`, status: "sent", transport: "sms" }; } };
     const w = world({ extraAdapters: { twilio: sms } });
-    w.bus.failNext(ALICE, new ChannelSendError("banned line", "blocked", 403, "safety_account_review"));
+    engaged(w, ALICE);
+    w.bus.failNext(ALICE, new ChannelSendError("not reachable on iMessage", "invalid", 422, "recipient_unreachable"));
     const { record } = w.queue.enqueue({ idempotencyKey: "k", channel: "sim", to: ALICE, text: "x", kind: "reply", fallbackChannel: "twilio" });
     await w.queue.drain();
     expect(record.status).toBe("fell_back");
     await w.queue.drain();
     expect(smsSent.length).toBe(1);
     expect(smsSent[0].idempotencyKey).toBe("tn:k:fallback:twilio");
-    expect(w.alerts).toEqual(["k:safety_account_review"]);
+  });
+
+  test("a policy block (line safety) never falls back to SMS (plugin-prototypes-16)", async () => {
+    const smsSent: SendRequest[] = [];
+    const sms: ChannelAdapter = { kind: "twilio", async send(r) { smsSent.push(r); return { providerMessageId: `tw_${smsSent.length}`, status: "sent", transport: "sms" }; } };
+    const w = world({ extraAdapters: { twilio: sms } });
+    consentAll(w, ALICE);
+    w.bus.failNext(ALICE, new ChannelSendError("banned line", "blocked", 403, "safety_reply_only"));
+    const { record } = w.queue.enqueue({ idempotencyKey: "k", channel: "sim", to: ALICE, text: "x", kind: "proactive", timeZone: LA, fallbackChannel: "twilio" });
+    await w.queue.drain();
+    await w.queue.drain();
+    expect(record.status).toBe("blocked");
+    expect(smsSent.length).toBe(0);
+    expect(w.alerts).toEqual(["k:safety_reply_only"]);
   });
 
   test("failed delivery receipt also triggers fallback", async () => {
     const smsSent: SendRequest[] = [];
     const sms: ChannelAdapter = { kind: "twilio", async send(r) { smsSent.push(r); return { providerMessageId: "tw_1", status: "sent" }; } };
     const w = world({ extraAdapters: { twilio: sms } });
+    engaged(w, ALICE);
     const { record } = w.queue.enqueue({ idempotencyKey: "k", channel: "sim", to: ALICE, text: "x", kind: "reply", fallbackChannel: "twilio" });
     await w.queue.drain();
     await w.gateway.handle({ kind: "status", channel: "sim", eventId: "e1", providerMessageId: record.providerMessageId!, status: "failed", errorCode: "recipient_unreachable", at: w.clock.now() });
@@ -170,8 +193,9 @@ describe("policy at dispatch time", () => {
   });
 
   test("per-recipient hourly cap and per-line new-conversation cap", async () => {
-    // New-chat cap counts every first contact on the line (ALICE below is one), but only blocks proactive sends.
-    const w = world({ perRecipientPerHour: 2, newChatsPerLinePerDay: 3 });
+    // New-chat cap counts first contacts the line starts; ALICE texted first, so she is not one.
+    const w = world({ perRecipientPerHour: 2, newChatsPerLinePerDay: 2 });
+    engaged(w, ALICE);
     for (let i = 0; i < 3; i++) w.queue.enqueue({ idempotencyKey: `r${i}`, channel: "sim", to: ALICE, text: `m${i}`, kind: "reply" });
     await w.queue.drain();
     expect(w.bus.inbox.get(ALICE)?.length).toBe(2);

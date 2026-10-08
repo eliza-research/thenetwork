@@ -1,6 +1,6 @@
 // Pre-send enforcement added after the 2026-10-07 audit (P1-5, P1-7, P1-10, P1-11, P1-16).
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DAY, HOUR, SimClock } from "../../../packages/core/src/clock.ts";
@@ -15,6 +15,8 @@ import { world } from "./helpers.ts";
 const ALICE = "+15550100001";
 const BOB = "+15550100002";
 const LA = "America/Los_Angeles";
+/** The person just texted us, so a "reply" to them is a real reply. */
+const engaged = (w: ReturnType<typeof world>, ...who: string[]) => who.forEach((a) => w.queue.onRecipientEngaged("sim", a));
 
 describe("E.164 normalization", () => {
   test.each([
@@ -68,6 +70,24 @@ describe("durable opt-outs", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+  test("a corrupt middle line fails closed instead of forgetting a STOP (plugin-prototypes-17)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "blooio-consent-"));
+    try {
+      const path = join(dir, "consent.jsonl");
+      const line = (address: string, state: string, at: number) => JSON.stringify({ channel: "blooio", address, state, at, source: "x" });
+      writeFileSync(path, `${line(ALICE, "opted_in", 1)}\n{"channel":"blooio","address":"${ALICE}","state":"opted_out","at":2,"sou\n${line(BOB, "opted_in", 3)}\n`);
+      expect(() => new ConsentLedger(new SimClock(), "address", new FileConsentStore(path))).toThrow("corrupt entry on line 2");
+      // A torn FINAL line (crash during the last append) is skipped, and the next append starts a new line.
+      writeFileSync(path, `${line(ALICE, "opted_in", 1)}\n{"channel":"blooio","addr`);
+      const l = new ConsentLedger(new SimClock(), "address", new FileConsentStore(path));
+      l.record("blooio", ALICE, "opted_out", "keyword:STOP");
+      const again = new ConsentLedger(new SimClock(), "address", new FileConsentStore(path));
+      expect(again.isOptedOut("blooio", ALICE)).toBe(true);
+      expect(readFileSync(path, "utf8").split("\n").filter(Boolean).length).toBe(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
   test("a store failure is not swallowed and leaves state unchanged", () => {
     const store = new InMemoryConsentStore();
     store.append = () => { throw new Error("disk full"); };
@@ -105,6 +125,7 @@ describe("time zones never wedge the queue", () => {
   });
   test("an unexpected dispatch error parks the record and the drain continues", async () => {
     const w = world();
+    engaged(w, ALICE, BOB);
     const boom = w.queue.enqueue({ idempotencyKey: "boom", channel: "sim", to: ALICE, text: "x", kind: "reply" }).record;
     const ok = w.queue.enqueue({ idempotencyKey: "ok", channel: "sim", to: BOB, text: "y", kind: "reply" }).record;
     boom.timeZone = "Mars/Olympus";
@@ -127,6 +148,7 @@ describe("quiet hours apply to every agent-initiated kind", () => {
   test("reminders/nudges (transactional) are deferred at night; replies and compliance are not", async () => {
     const w = world();
     w.clock.set(Date.parse("2026-10-06T06:00:00Z")); // 23:00 PDT
+    engaged(w, BOB); // BOB just texted, so the answer goes out at night
     const nudge = w.queue.enqueue({ idempotencyKey: "nudge", channel: "sim", to: ALICE, text: "still up for it?", kind: "transactional", timeZone: LA }).record;
     const reply = w.queue.enqueue({ idempotencyKey: "reply", channel: "sim", to: BOB, text: "sure", kind: "reply" }).record;
     await w.queue.drain();
@@ -160,6 +182,7 @@ describe("conversation rules: 3 unanswered, one re-engagement after 14 days", ()
 
   test("replies count toward the cap too (Blooio counts every outbound)", async () => {
     const w = world({ perRecipientPerHour: 100 });
+    engaged(w, ALICE);
     for (const k of ["r1", "r2", "r3", "r4"]) send(w, k, "reply");
     await w.queue.drain();
     expect(w.queue.get("r4")?.status).toBe("held_awaiting_reply");
@@ -213,6 +236,7 @@ describe("send-time recipient eligibility", () => {
   test("a member paused/blocked/minor after enqueue is not messaged", async () => {
     const state = new Map<string, RecipientCheck>();
     const w = world({ recipientPolicy: (to, ctx) => (ctx.agentInitiated ? state.get(to) ?? { ok: true } : { ok: true }) });
+    engaged(w, ALICE);
     const a = w.queue.enqueue({ idempotencyKey: "a", channel: "sim", to: ALICE, text: "intro", kind: "transactional", timeZone: LA }).record;
     const r = w.queue.enqueue({ idempotencyKey: "r", channel: "sim", to: ALICE, text: "answer", kind: "reply" }).record;
     state.set(ALICE, { ok: false, reason: "paused" }); // changed between enqueue and send
@@ -223,6 +247,7 @@ describe("send-time recipient eligibility", () => {
   });
   test("policy errors fail closed", async () => {
     const w = world({ recipientPolicy: () => { throw new Error("db down"); } });
+    engaged(w, ALICE);
     const a = w.queue.enqueue({ idempotencyKey: "a", channel: "sim", to: ALICE, text: "x", kind: "reply" }).record;
     await w.queue.drain();
     expect(a.status).toBe("suppressed_ineligible");
@@ -234,6 +259,55 @@ describe("send-time recipient eligibility", () => {
     w.queue.enqueue({ idempotencyKey: "a", channel: "sim", to: "(555) 010-0001", text: "x", kind: "transactional", timeZone: LA });
     await w.queue.drain();
     expect(seen).toEqual([`${ALICE}:transactional`]);
+  });
+});
+
+describe("audit 2026-10-08 send rules (plugin-prototypes-13, 14, 15)", () => {
+  const GROUP = "chat:grp_abc";
+  test("a group send checks every participant: no resolver, or one opted-out participant, suppresses it", async () => {
+    const people = [ALICE, BOB];
+    const w0 = world();
+    w0.consent.record("sim", GROUP, "opted_in", "admin");
+    const r0 = w0.queue.enqueue({ idempotencyKey: "g0", channel: "sim", to: GROUP, text: "plan for saturday?", kind: "proactive", timeZone: LA }).record;
+    await w0.queue.drain();
+    expect(r0.status).toBe("suppressed_ineligible");
+
+    const w = world({ groupParticipants: () => people });
+    for (const p of people) w.consent.record("sim", p, "opted_in", "invite_acceptance");
+    w.consent.record("sim", BOB, "opted_out", "keyword:STOP");
+    const r = w.queue.enqueue({ idempotencyKey: "g1", channel: "sim", to: GROUP, text: "plan for saturday?", kind: "proactive", timeZone: LA }).record;
+    await w.queue.drain();
+    expect(r.status).toBe("suppressed_opt_out");
+    expect(w.bus.sendCalls).toBe(0);
+  });
+  test("a 'reply' with no recent inbound is not sent (no quiet-hours or consent bypass)", async () => {
+    const w = world();
+    w.clock.set(Date.parse("2026-10-06T10:00:00Z")); // 03:00 PDT
+    const r = w.queue.enqueue({ idempotencyKey: "r", channel: "sim", to: "+15550100999", text: "You've been invited to The Network", kind: "reply" }).record;
+    await w.queue.drain();
+    expect(r.status).toBe("suppressed_ineligible");
+    expect(w.bus.sendCalls).toBe(0);
+    expect(w.alerts).toContain("r:reply_without_recent_inbound");
+  });
+  test("a reply_only line holds proactive sends even to known contacts", async () => {
+    const w = world({ defaultFrom: { sim: "+15550000001" } });
+    w.consent.record("sim", ALICE, "opted_in", "invite_acceptance");
+    await w.bus.inbound(ALICE, "hi");
+    w.queue.setLineSafety("+15550000001", "reply_only");
+    const p = w.queue.enqueue({ idempotencyKey: "p", channel: "sim", to: ALICE, text: "New intro for you", kind: "proactive", timeZone: LA }).record;
+    const r = w.queue.enqueue({ idempotencyKey: "r", channel: "sim", to: ALICE, text: "answer", kind: "reply" }).record;
+    await w.queue.drain();
+    expect(p.status).toBe("retry_scheduled");
+    expect(r.status).toBe("sent");
+  });
+  test("with no sender line, any line under review holds the send (fail closed)", async () => {
+    const w = world();
+    w.consent.record("sim", ALICE, "opted_in", "invite_acceptance");
+    w.queue.setLineSafety("+15550000001", "review");
+    const p = w.queue.enqueue({ idempotencyKey: "p", channel: "sim", to: ALICE, text: "New intro", kind: "proactive", timeZone: LA }).record;
+    await w.queue.drain();
+    expect(p.status).toBe("retry_scheduled");
+    expect(w.bus.sendCalls).toBe(0);
   });
 });
 
