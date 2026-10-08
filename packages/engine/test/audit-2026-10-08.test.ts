@@ -1,7 +1,9 @@
 // Regression tests for the 2026-10-08 adversarial audit (engine findings). Each test names its
 // finding id and failed before the fix.
 import { describe, expect, test } from "bun:test";
+import { resolveConfig } from "../src/config.ts";
 import { runEngine } from "../src/engine.ts";
+import { isHomeEntry, riskTerms } from "../src/filters.ts";
 import { randomWorld } from "../src/testkit.ts";
 import { FakeLLM } from "./helpers.ts";
 
@@ -47,3 +49,28 @@ describe("engine-pipeline-6: exploration keeps Quiet and romance bars", () => {
   }, 60_000);
 });
 
+describe("engine-pipeline-4: curated risk and home-entry corpus", () => {
+  const cfg = resolveConfig({});
+  const risky = [
+    "can someone watch my 6 year old saturday", "pick up my 8yo from school", "need a sitter for my toddler", "tutor my 12 year old in math",
+    "baby-sitting needed", "my 15 yo son wants a coding mentor", "give my kids a ride", "watch my twelve-year-old after school",
+    "can someone spot me $200 till friday", "venmo me 50 bucks", "looking for a sugar daddy", "lend me money",
+    "selling edibles", "need someone to hold my meds", "chill and smoke 420", "help me get some molly",
+    "need a ride to the clinic after my procedure",
+  ];
+  const benign = [
+    "dog sitter needed for the weekend", "pet-sitter swap", "a 5 year old startup", "diet coke and pizza", "mushroom foraging walk",
+    "joint venture ideas", "I teach yoga to adults", "I mentor junior engineers", "my son's soccer team parents", "parents of toddlers coffee",
+    "high school reunion", "send me the link", "give me a call", "coding mentor for a career switch", "nurse who loves hiking",
+    "running buddies, I'm 35 years old", "my 30 year old brother", "a 3 year old dog who loves the park", "pay 20 dollars for the class",
+    "I have two kids and love board games", "parents with young kids", "I can lend a hand with a small furniture move",
+  ];
+  for (const t of risky) test(`risky: ${t}`, () => expect(riskTerms(cfg, t).length).toBeGreaterThan(0));
+  for (const t of benign) test(`benign: ${t}`, () => expect(riskTerms(cfg, t)).toEqual([]));
+  const home = [
+    "need help assembling a bed at my condo", "help me hang shelves in my flat", "come over to my studio to fix my sink", "help at home!",
+    "help at my home?", "help me paint my bedroom", "help carry a dresser up to my 4th floor walkup", "plumbing help at my house; urgent",
+  ];
+  for (const t of home) test(`home entry: ${t}`, () => expect(isHomeEntry(cfg, t)).toBe(true));
+  test("not home entry: a park cleanup", () => expect(isHomeEntry(cfg, "help with a park cleanup on Saturday")).toBe(false));
+});
