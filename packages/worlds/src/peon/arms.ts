@@ -50,5 +50,8 @@ export const ARMS: Record<string, Arm> = {
     name: "pack: no employer checks", about: "verified-employer, scam-cue and pay-range rules removed",
     matcher: packMatcher({ name: "pack-no-safety", pack: withPack({ eligibility: { ...peonPack.eligibility, memberRules: peonPack.eligibility.memberRules.filter(r => !["employer_unverified", "employer_scam_signal", "no_pay_range"].includes(r.id)) } }) }),
   },
+  "probation-interview": { name: "pack: probation until first interview", about: "new-employer limit lasts until the company's first real interview", matcher: packMatcher({ name: "pack-probation-interview" }), setup: tune(CONGESTION, { probationUntil: "interview" }) },
+  "no-probation": { name: "pack: no new-employer limit", about: "no per-employer rate limit", matcher: packMatcher({ name: "pack-no-probation" }), setup: tune(CONGESTION, { probationProbes: 1000 }) },
+  "floor-on": { name: "pack: exposure floor on", about: "core exposure floor (now calls the pack hook) at 25%", matcher: packMatcher({ name: "pack-floor-on", cfg: { selection: { exposureFloorShare: 0.25 } } as never }) },
   "proxy-leak": { name: "pack + proxy screen", about: "honours 'young only' requests via graduation year (what the firewall forbids)", matcher: packMatcher({ name: "pack-proxy-leak", post: proxyLeak }) },
 };

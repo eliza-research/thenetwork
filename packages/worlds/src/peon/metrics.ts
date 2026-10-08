@@ -35,10 +35,20 @@ export interface PeonMetrics {
   accepts: number; acceptRate: number; hires: number; interviewsPerHire: number;
   openings: number; fillRate: number; medianTimeToFill: number; meanTimeToFill: number;
   retention90: number; qualityOfHire: number;
+  /** Recruiter hours (reading + interviewing) per hire; iteration 2 only. */
+  recruiterHoursPerHire: number;
+  /** Jobs closed without a peon hire: deadline / filled through another channel. */
+  closedDeadline: number; closedExternal: number;
+  /** Applications that expired with no answer from an open job (ghosted). */
+  ghostedApplications: number;
+  /** Applications lost because the role closed while they waited. */
+  lostToClosedRole: number;
   congestion: { giniApplicationsPerJob: number; zeroIntroCandidateShare: number; top10JobShareOfApplications: number; giniIntrosPerCandidate: number; expiredApplications: number };
   underApplied: { jobs: number; hires: number; jobsFilled: number; openingsFilledShare: number };
   safety: {
-    minorsMatched: number; minorsProposed: number; scamIntros: number; scamReach: number; unverifiedIntros: number; noRangeIntros: number;
+    minorsMatched: number; minorsProposed: number; scamIntros: number; scamReach: number;
+    /** Largest number of real candidates one scam employer reached (the research gate: median reach per scam employer <= 1). */
+    scamReachMaxPerEmployer: number; unverifiedIntros: number; noRangeIntros: number;
     fakeReachedEmployer: number; fakeHires: number;
   };
   discrimination: { employers: number; detected: number; falseFlags: number; requests: number; requestsApplied: number };
@@ -85,6 +95,9 @@ export function peonMetrics(r: PeonRunResult, o: { requestsApplied?: number } = 
     openings, fillRate: div(hires.filter(h => oracle.job.get(h.job)!.hidden.real).length, openings),
     medianTimeToFill: median(hires.map(h => h.timeToFill)), meanTimeToFill: div(hires.reduce((s, h) => s + h.timeToFill, 0), hires.length),
     retention90: div(hires.filter(h => h.retained).length, hires.length), qualityOfHire: div(hires.reduce((s, h) => s + h.qoh, 0), hires.length),
+    recruiterHoursPerHire: div(r.recruiterHours, hires.length), closedDeadline: r.closed.deadline, closedExternal: r.closed.external,
+    ghostedApplications: applied.filter(f => f.expired && f.rec?.outcome === "expired").length,
+    lostToClosedRole: applied.filter(f => f.roleClosed).length,
     congestion: {
       giniApplicationsPerJob: gini(apps), zeroIntroCandidateShare: div([...introsPerCand.values()].filter(x => x === 0).length, introsPerCand.size),
       top10JobShareOfApplications: div([...apps].sort((a, b) => b - a).slice(0, topN).reduce((a, b) => a + b, 0), totalApps),
@@ -98,6 +111,9 @@ export function peonMetrics(r: PeonRunResult, o: { requestsApplied?: number } = 
       minorsMatched: flows.filter(f => f.minor).length, minorsProposed: flows.filter(f => f.minor).length,
       scamIntros: delivered.filter(f => f.scam).length,
       scamReach: new Set(delivered.filter(f => f.scamContact && realIds.has(f.cand)).map(f => f.cand)).size,
+      scamReachMaxPerEmployer: Math.max(0, ...[...delivered.filter(f => f.scamContact && realIds.has(f.cand)).reduce((m, f) => {
+        const co = oracle.job.get(f.job)!.company; if (!m.has(co)) m.set(co, new Set<MemberId>()); m.get(co)!.add(f.cand); return m;
+      }, new Map<string, Set<MemberId>>()).values()].map(x => x.size)),
       unverifiedIntros: delivered.filter(f => f.unverified).length, noRangeIntros: delivered.filter(f => f.noRange).length,
       fakeReachedEmployer: delivered.filter(f => f.fake && f.reviewed).length, fakeHires: hires.filter(h => oracle.cand.get(h.cand)!.truth.fake).length,
     },

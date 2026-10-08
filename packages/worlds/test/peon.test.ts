@@ -6,13 +6,13 @@ import { canBeMatched } from "@thenetwork/core";
 import { PEON_ENGINE_CONFIG, peonPack } from "@thenetwork/engine/src/packs/peon/index.ts";
 import { runConformance } from "../../engine/test/conformance.ts";
 import {
-  ARMS, PEON_WORLD_START, buildPeonSnapshot, createPeonWorld, generatePeonPopulation, keywordMatcher, packMatcher, peonMetrics, runPeonWorld,
+  ARMS, PEON_WORLD_START, REALISM_V1, buildPeonSnapshot, createPeonWorld, generatePeonPopulation, keywordMatcher, packMatcher, peonMetrics, runPeonWorld,
   type PeonNetworkState, type PeonPopulation,
 } from "../src/peon/index.ts";
 
 const emptyState = (pop: PeonPopulation, week = 0): PeonNetworkState => ({
   now: PEON_WORLD_START + week * 7 * 86_400_000, week, interactions: [], recentProposals: [], safetyHolds: [], edges: [], feedbackFacets: [],
-  hired: new Set(), exited: new Set(), openings: new Map(pop.jobs.map(j => [j.id, j.openings])),
+  hired: new Set(), exited: new Set(), openings: new Map(pop.jobs.map(j => [j.id, j.openings])), feedback: [],
 });
 const clone = <T>(x: T): T => structuredClone(x);
 
@@ -102,6 +102,19 @@ describe("harness", () => {
     const p = peonMetrics(await runPeonWorld({ seed: 1, matcher: packMatcher() }));
     expect(a.impact.ratio["offered|assessed"]!.age40!).toBeLessThan(0.8);
     expect(p.impact.ratio["offered|assessed"]!.age40!).toBeGreaterThanOrEqual(0.8);
+  }, 60_000);
+
+  test("iteration-2 realism: fatigue lowers replies to a 10-a-week channel, recruiter hours are spent, roles close; v1 has none of it", async () => {
+    const k10 = await runPeonWorld({ seed: 3, weeks: 4, matcher: keywordMatcher });
+    const k3 = await runPeonWorld({ seed: 3, weeks: 4, matcher: ARMS.keyword3!.matcher });
+    const v1 = await runPeonWorld({ seed: 3, weeks: 4, matcher: keywordMatcher, realism: REALISM_V1 });
+    const m10 = peonMetrics(k10), m3 = peonMetrics(k3), m1 = peonMetrics(v1);
+    expect(m10.replyRate).toBeLessThan(m3.replyRate - 0.05);
+    expect(k10.recruiterHours).toBeGreaterThan(0);
+    expect(m10.closedDeadline + m10.closedExternal).toBeGreaterThan(0);
+    expect(v1.recruiterHours).toBe(0);
+    expect(m1.closedDeadline + m1.closedExternal).toBe(0);
+    expect(m1.replyRate).toBeGreaterThan(m10.replyRate);
   }, 60_000);
 
   test("oracle sanity: qualified pairs pass more often; scam jobs never hire; fake candidates rarely pass", () => {

@@ -10,6 +10,7 @@ import type { MemberId } from "@thenetwork/core";
 import type { Candidate } from "../../types.ts";
 import type { World } from "../../world.ts";
 import { poolSize } from "./generators.ts";
+import { daysOpen } from "./rules.ts";
 import { historyOf, jobs, sides, worldScratch, type JobProfile } from "./profile.ts";
 
 export const CONGESTION = {
@@ -26,23 +27,43 @@ export const CONGESTION = {
   underLift: 0.08, underPool: 12,
   /** Lift for candidates with no intro so far. */
   newCandidateLift: 0.04,
+  /** Time pressure: lift by stated urgency (0 at 1, full at 3) and by weeks open (full at 6 weeks); roles close. */
+  urgencyLift: 0, staleLift: 0,
   /**
-   * Per-employer rate limit until the employer has a track record (domain research B2): a company
-   * with no answered application yet gets at most `probationProbes` probes a week across its jobs.
+   * Per-employer rate limit until the employer has a track record (domain research B2: "per-employer
+   * rate limits"; a human verifies the first job): at most `probationProbes` probes a week, split
+   * across the company's open seats, until the company has answered an application ("answered",
+   * the default, selected on tuning seeds 1-8) or until its first REAL interview ("interview": an
+   * interview record from one of its seats; a scam never interviews). Both held scam reach to <= 1
+   * per seed on seeds 1-8; "interview" cost 1.6 more hires per seed (docs/results Iteration 2).
    */
   probationProbes: 3,
+  probationUntil: "answered" as "interview" | "answered",
   /** Employer responsiveness learned from the Network's log (Beta prior answered:ghosted = 2:0.5); value x estimate^respPower. */
   respPower: 1,
 };
 
-/** Has the company answered any application yet (on any of its job seats)? Cached per World. */
-export function companyAnswered(w: World, j: JobProfile): boolean {
-  const answered = worldScratch(w, "companyAnswered", () => {
+/** Has the company passed probation (first real interview, or any answered application under the old rule)? Cached per World. */
+export function companyTrusted(w: World, j: JobProfile): boolean {
+  const ok = worldScratch(w, `companyTrusted:${CONGESTION.probationUntil}`, () => {
     const out = new Set<string>();
-    for (const x of jobs(w)) if (x.company && historyOf(w, x.id).answered > 0) out.add(x.company);
+    const interviewed = new Set(w.feedback.map(f => f.from));
+    for (const x of jobs(w)) {
+      if (!x.company) continue;
+      if (CONGESTION.probationUntil === "answered" ? historyOf(w, x.id).answered > 0 : interviewed.has(x.id)) out.add(x.company);
+    }
     return out;
   });
-  return !!j.company && answered.has(j.company);
+  return !!j.company && ok.has(j.company);
+}
+/** Open seats per company (the probation budget is split across them). */
+function seatsOf(w: World, company: string | undefined): number {
+  const m = worldScratch(w, "seatsPerCompany", () => {
+    const out = new Map<string, number>();
+    for (const x of jobs(w)) if (x.company && x.open) out.set(x.company, (out.get(x.company) ?? 0) + 1);
+    return out;
+  });
+  return company ? Math.max(1, m.get(company) ?? 1) : 1;
 }
 
 /** P(the employer answers an application), from applications they answered vs let expire. */
@@ -57,7 +78,7 @@ export function slateCap(w: World, j: JobProfile): number {
   // Applications the employer has not reviewed yet use up the slate (no pile-ups, no ghosted queues).
   const room = Math.max(0, target - historyOf(w, j.id).pendingReview);
   const cap = Math.ceil(room / C.expectedYes);
-  return companyAnswered(w, j) ? cap : Math.min(cap, C.probationProbes);
+  return companyTrusted(w, j) ? cap : Math.min(cap, Math.ceil(C.probationProbes / seatsOf(w, j.company)));
 }
 
 export function underApplied(w: World, j: JobProfile): number {
@@ -80,5 +101,6 @@ export function peonAdjust(w: World, c: Candidate, value: number, times: (id: Me
   let v = value * responsiveness(w, s.job) ** C.respPower - C.spread * (t / Math.max(1, cap));
   v += C.underLift * underApplied(w, s.job);
   if (historyOf(w, s.cand.id).intros === 0) v += C.newCandidateLift;
+  v += C.urgencyLift * Math.max(0, s.job.urgency - 1) / 2 + C.staleLift * Math.min(1, daysOpen(w, s.job) / 42);
   return v;
 }

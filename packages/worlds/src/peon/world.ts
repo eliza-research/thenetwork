@@ -13,6 +13,18 @@
 // proposal with a minor is counted as a violation); a candidate contacted by a scam employer reports
 // it with p = 0.6, which holds the company and blocks the seat.
 // All randomness is keyed by (seed, member, job, week), so arms see the same draws for the same event.
+//
+// REALISM PROFILES. `REALISM_V1` is the first world (docs/results/2026-10-08-peon-pack.md 1-8).
+// `REALISM_V2` (iteration 2, the default) adds the attention costs of volume on both sides:
+//   - employer screening: each job reads at most 20 / 30 / 40 applications a week (by urgency) out of
+//     a recruiter-hours budget that also pays for interviews; 60% of employers order the pile with a
+//     crude keyword screen (claims on paper), the rest read in arrival order; unread applications
+//     expire (ghosted);
+//   - candidate attention: P(reply) falls with each further role shown that week (x0.85 per earlier
+//     one, as slop's probe fatigue) and with the channel's track record for this candidate (trust:
+//     declined / ignored roles and ghosted applications lower it, an employer yes raises it);
+//   - timing: stronger candidates leave the market faster (hired elsewhere); roles close at a
+//     deadline (8 / 6 / 4 weeks by urgency) or are filled through another channel (4% a week).
 import { DAY, canBeMatched, type MemberId } from "@thenetwork/core";
 import type { InteractionRecord } from "@thenetwork/engine/src/types.ts";
 import { Rng, hash32 } from "@thenetwork/sim/src/rng.ts";
@@ -38,6 +50,25 @@ export const SCAM_REPORT = 0.6;
 export const RELAY_CATCH = 0.7;
 export const FEEDBACK_P = 0.7;
 export const EXPIRE_WEEKS = 3;
+
+export interface Realism {
+  name: string;
+  /** Employer screening: weekly read cap (base + per urgency level above 1) and recruiter hours per job per week. */
+  screening?: { readBase: number; readPerUrgency: number; hoursBase: number; hoursPerUrgency: number; readHours: number; interviewHours: number; atsShare: number };
+  /** Candidate attention: per-week fatigue and channel trust. */
+  attention?: { fatigue: number; trustDeclined: number; trustIgnored: number; trustGhosted: number; trustGood: number; trustFloor: number };
+  /** Timing: strength-dependent exits, role deadlines (weeks, by urgency 1-3) and fills through other channels. */
+  timing?: { exitBase: number; exitStrength: number; deadlineWeeks: [number, number, number]; externalFill: number };
+}
+/** Iteration 1: fixed review capacity (4-8 a week), no fatigue, flat 2% weekly exits, no deadlines. */
+export const REALISM_V1: Realism = { name: "v1" };
+/** Iteration 2 (default). Parameters and their grounding: docs/results/2026-10-08-peon-pack.md, Iteration 2. */
+export const REALISM_V2: Realism = {
+  name: "v2",
+  screening: { readBase: 20, readPerUrgency: 10, hoursBase: 3, hoursPerUrgency: 1, readHours: 0.1, interviewHours: 1.5, atsShare: 0.6 },
+  attention: { fatigue: 0.85, trustDeclined: 0.02, trustIgnored: 0.02, trustGhosted: 0.05, trustGood: 0.05, trustFloor: 0.3 },
+  timing: { exitBase: 0.01, exitStrength: 0.04, deadlineWeeks: [8, 6, 4], externalFill: 0.04 },
+};
 
 export interface Intro { cand: MemberId; job: MemberId }
 export interface PeonMatcherContext {
@@ -68,6 +99,10 @@ export interface Flow {
   replied?: boolean; yes?: boolean; reviewed?: boolean; reviewWeek?: number; employerYes?: boolean; expired?: boolean;
   interviewWeek?: number; interviewed?: boolean; passed?: boolean; score?: number; offered?: boolean; accepted?: boolean; hired?: boolean;
   withdrawn?: boolean;
+  /** Read and acceptable, waiting for an interview slot (iteration 2). */
+  onFile?: boolean;
+  /** The role closed (deadline or filled elsewhere) while this application was open. */
+  roleClosed?: boolean;
   // flags
   minor: boolean; unverified: boolean; noRange: boolean; scam: boolean; fake: boolean; qualified: boolean; underApplied: boolean;
   scamContact?: boolean;
@@ -80,12 +115,20 @@ export interface PeonWorld {
   /** Jobs with the lowest organic demand per opening (bottom third): under-applied (Horton 2017). */
   underApplied: Set<MemberId>;
 }
-export interface PeonRunResult { world: PeonWorld; flows: Flow[]; hires: Hire[]; audits: AuditFlag[][]; matcher: string; heldCompanies: Set<string>; assessed: Set<MemberId> }
+export interface PeonRunResult {
+  world: PeonWorld; flows: Flow[]; hires: Hire[]; audits: AuditFlag[][]; matcher: string; heldCompanies: Set<string>; assessed: Set<MemberId>;
+  /** Recruiter hours spent reading applications and interviewing (iteration 2; 0 under v1). */
+  recruiterHours: number;
+  /** Jobs closed without a peon hire: at the deadline, or filled through another channel. */
+  closed: { deadline: number; external: number };
+}
 
 export interface PeonRunOptions extends Omit<PeonGenOptions, "seed"> {
   seed: number; weeks?: number;
   matcher: PeonMatcher | ((w: PeonWorld) => PeonMatcher);
   pop?: PeonPopulation;
+  /** World realism profile (default REALISM_V2). */
+  realism?: Realism;
 }
 
 export function createPeonWorld(o: Omit<PeonRunOptions, "matcher">): PeonWorld {
@@ -94,7 +137,7 @@ export function createPeonWorld(o: Omit<PeonRunOptions, "matcher">): PeonWorld {
   const oracle = new PeonOracle(pop, o.seed);
   const state: PeonNetworkState = {
     now: PEON_WORLD_START, week: 0, interactions: [], recentProposals: [], safetyHolds: [], edges: [], feedbackFacets: [],
-    hired: new Set(), exited: new Set(), openings: new Map(pop.jobs.map(j => [j.id, j.openings])),
+    hired: new Set(), exited: new Set(), openings: new Map(pop.jobs.map(j => [j.id, j.openings])), feedback: [],
   };
   return { seed: o.seed, weeks, pop, oracle, state, underApplied: underAppliedJobs(pop, oracle) };
 }
@@ -123,6 +166,19 @@ export async function runPeonWorld(o: PeonRunOptions): Promise<PeonRunResult> {
   const world = createPeonWorld(o);
   const matcher = typeof o.matcher === "function" ? o.matcher(world) : o.matcher;
   const { oracle, state, seed } = world;
+  const R = o.realism ?? REALISM_V2;
+  const S = R.screening, A = R.attention, TM = R.timing;
+  let recruiterHours = 0;
+  const closed = { deadline: 0, external: 0 };
+  // Channel trust per candidate (iteration 2): the track record of the roles this channel sent them.
+  const trust = new Map<MemberId, number>();
+  const bumpTrust = (id: MemberId, d: number) => { if (A) trust.set(id, Math.max(A.trustFloor, Math.min(1, (trust.get(id) ?? 1) + d))); };
+  const ghost = (f: Flow) => bumpTrust(f.cand, -(A?.trustGhosted ?? 0));
+  // Candidate strength (true skill in their own family, 0-1): stronger candidates are hired elsewhere sooner.
+  const strength = (c: Candidate) => {
+    const lv = Object.values(c.truth.skills).sort((a, b) => b - a).slice(0, 3);
+    return Math.max(0, Math.min(1, lv.reduce((x, y) => x + y, 0) / 15));
+  };
   const flows: Flow[] = [], hires: Hire[] = [], audits: AuditFlag[][] = [];
   const queue = new Map<MemberId, Flow[]>(); // job -> applications waiting for review
   const introduced = new Set<string>();
@@ -142,6 +198,12 @@ export async function runPeonWorld(o: PeonRunOptions): Promise<PeonRunResult> {
   for (let week = 0; week < world.weeks; week++) {
     state.week = week;
     state.now = PEON_WORLD_START + week * 7 * DAY + 12 * 3_600_000;
+    // ---- 0. roles close at their deadline or are filled through another channel ----------------
+    if (TM) for (const j of world.pop.jobs) {
+      if (j.postedWeek > week || (state.openings.get(j.id) ?? 0) <= 0) continue;
+      if (week >= j.postedWeek + TM.deadlineWeeks[Math.min(2, Math.max(0, j.urgency - 1))]!) { state.openings.set(j.id, 0); closed.deadline++; }
+      else if (week > j.postedWeek && u01(seed, "extfill", j.id, week) < TM.externalFill) { state.openings.set(j.id, 0); closed.external++; }
+    }
     const snapshot = buildPeonSnapshot(world.pop, state);
     const intros = await matcher.propose({ week, snapshot, rng: new Rng(hash32(seed, "matcher", week)), seed, assessed });
     const probes = new Map<MemberId, number>();
@@ -169,10 +231,13 @@ export async function runPeonWorld(o: PeonRunOptions): Promise<PeonRunResult> {
       const rec: InteractionRecord = { id: f.key, kind: "intro", category: "professional", participants: [c.id, j.id], at: state.now, outcome: "pending" };
       f.rec = rec; state.interactions.push(rec);
       const active = u01(seed, "active", c.id, week) < c.truth.intensity;
-      f.replied = active && u01(seed, "reply", c.id, j.id) < c.truth.replyProb;
-      if (!f.replied) { rec.outcome = "expired"; rec.noResponse = [c.id]; return; }
+      // Attention (iteration 2): each further role shown this week is read less, and a channel that
+      // keeps sending poor roles or ghosted applications is trusted less.
+      const att = A ? Math.pow(A.fatigue, (probes.get(c.id) ?? 1) - 1) * (trust.get(c.id) ?? 1) : 1;
+      f.replied = active && u01(seed, "reply", c.id, j.id) < c.truth.replyProb * att;
+      if (!f.replied) { rec.outcome = "expired"; rec.noResponse = [c.id]; bumpTrust(c.id, -(A?.trustIgnored ?? 0)); return; }
       f.yes = u01(seed, "yes", c.id, j.id) < oracle.pInterested(c, j);
-      if (!f.yes) { rec.outcome = "declined"; rec.declinedBy = [c.id]; return; }
+      if (!f.yes) { rec.outcome = "declined"; rec.declinedBy = [c.id]; bumpTrust(c.id, -(A?.trustDeclined ?? 0)); return; }
       rec.acceptedBy = [c.id];
       if (!queue.has(j.id)) queue.set(j.id, []);
       queue.get(j.id)!.push(f);
@@ -227,6 +292,8 @@ export async function runPeonWorld(o: PeonRunOptions): Promise<PeonRunResult> {
       if (!f.interviewed) { f.rec!.outcome = "no_show"; continue; }
       f.passed = u01(seed, "pass", c.id, j.id) < oracle.pPass(c, j);
       f.score = oracle.interviewScore(c, j);
+      // The employer's interview record (visible to the Network: a real interview happened).
+      state.feedback.push({ id: `fb:${f.key}`, from: j.id, about: c.id, opportunityId: f.key, at: state.now, sentiment: "neutral" });
       // Interview feedback: the employer reports the levels they saw on the must-haves (visible next week).
       if (j.hidden.real && u01(seed, "feedback", c.id, j.id) < FEEDBACK_P) for (const m of j.must) {
         const lvl = c.truth.skills[m.skill] ?? 0;
@@ -239,52 +306,76 @@ export async function runPeonWorld(o: PeonRunOptions): Promise<PeonRunResult> {
       const j = oracle.job.get(jid)!, co = oracle.co(j);
       const pending = q.filter(f => f.reviewed === undefined && !f.expired);
       for (const f of pending) if (week - f.week >= EXPIRE_WEEKS || state.hired.has(f.cand) || (state.openings.get(jid) ?? 0) <= 0) {
-        f.expired = true; f.rec!.outcome = state.hired.has(f.cand) ? "cancelled" : "expired"; if (!state.hired.has(f.cand)) f.rec!.noResponse = [jid];
+        f.expired = true;
+        if (state.hired.has(f.cand)) f.rec!.outcome = "cancelled";
+        else if ((state.openings.get(jid) ?? 0) <= 0) { f.rec!.outcome = "cancelled"; f.roleClosed = true; }
+        else { f.rec!.outcome = "expired"; f.rec!.noResponse = [jid]; ghost(f); }
       }
       if (held(jid)) continue;
       if (u01(seed, "responsive", jid, week) >= co.responsiveness) continue;
-      // The employer reads the queue in arrival order, up to the weekly review capacity. Each
-      // application is acceptable or not (claims vs must-haves); the acceptable ones are RANKED by
-      // how strong they look on paper and the best fill next week's interview slots. Acceptable
-      // applications that do not get a slot stay on file (re-read next week) until they expire.
-      // On paper, over-claimers and fake candidates look strongest: in a flood they take the slots.
       let slots = IV_BASE + (state.openings.get(jid) ?? 0) - flows.filter(x => x.job === jid && x.interviewWeek === week + 1).length;
-      const batch = pending.filter(f => !f.expired).slice(0, j.hidden.reviewCap);
-      const acceptable: Flow[] = [];
-      for (const f of batch) {
-        const c = oracle.cand.get(f.cand)!;
-        if (u01(seed, "emp", c.id, jid) < oracle.pEmployerYes(c, j, !matcher.blindReview)) acceptable.push(f);
-        else { f.reviewed = true; f.reviewWeek = week; f.employerYes = false; f.rec!.outcome = "declined"; f.rec!.declinedBy = [jid]; }
-      }
       const looks = (f: Flow) => oracle.onPaper(oracle.cand.get(f.cand)!, j) + 0.15 * n01(seed, "paper", f.cand, jid);
-      acceptable.sort((a, b) => (looks(b) - looks(a)) || (a.cand < b.cand ? -1 : 1));
-      for (const f of acceptable) {
-        const c = oracle.cand.get(f.cand)!;
+      const acceptableOf = (f: Flow) => u01(seed, "emp", f.cand, jid) < oracle.pEmployerYes(oracle.cand.get(f.cand)!, j, !matcher.blindReview);
+      const schedule = (f: Flow) => {
+        f.reviewed = true; f.reviewWeek = week; f.employerYes = true; f.onFile = false;
+        f.rec!.outcome = "accepted"; f.rec!.acceptedBy = [f.cand, jid];
+        bumpTrust(f.cand, A?.trustGood ?? 0);
         if (co.adversary === "scam") {
-          f.reviewed = true; f.reviewWeek = week; f.employerYes = true; f.rec!.outcome = "accepted"; f.rec!.acceptedBy = [c.id, jid];
           // The intro opens contact: the scam asks for money / bank details / an SSN.
-          if (matcher.relayScreen && u01(seed, "relay", c.id, jid) < RELAY_CATCH) {
+          if (matcher.relayScreen && u01(seed, "relay", f.cand, jid) < RELAY_CATCH) {
             holdCompany(co.id, "relay screen: asked for money or bank details");
             f.rec!.outcome = "cancelled";
-            continue;
+            return;
           }
           f.scamContact = true;
-          if (u01(seed, "report", c.id, jid) < SCAM_REPORT) {
+          if (u01(seed, "report", f.cand, jid) < SCAM_REPORT) {
             holdCompany(co.id, "reported: asked for money or bank details");
-            state.edges.push({ from: c.id, to: jid, type: "blocked", strength: 1, explicit: true, createdAt: state.now });
+            state.edges.push({ from: f.cand, to: jid, type: "blocked", strength: 1, explicit: true, createdAt: state.now });
           }
           f.rec!.outcome = "cancelled";
-          continue;
+          return;
         }
-        if (slots <= 0) continue; // on file
-        f.reviewed = true; f.reviewWeek = week; f.employerYes = true;
-        f.rec!.outcome = "accepted"; f.rec!.acceptedBy = [c.id, jid];
         f.interviewWeek = week + 1; slots--;
+      };
+      const decline = (f: Flow) => { f.reviewed = true; f.reviewWeek = week; f.employerYes = false; f.onFile = false; f.rec!.outcome = "declined"; f.rec!.declinedBy = [jid]; };
+      if (!S) {
+        // Iteration 1: read up to the review capacity in arrival order; acceptable ones are ranked on
+        // paper and fill next week's interview slots; the rest stay on file until they expire.
+        const batch = pending.filter(f => !f.expired).slice(0, j.hidden.reviewCap);
+        const acceptable: Flow[] = [];
+        for (const f of batch) if (acceptableOf(f)) acceptable.push(f); else decline(f);
+        acceptable.sort((a, b) => (looks(b) - looks(a)) || (a.cand < b.cand ? -1 : 1));
+        for (const f of acceptable) if (co.adversary === "scam" || slots > 0) schedule(f);
+        continue;
+      }
+      // Iteration 2: a recruiter-hours budget per job per week pays for reading (readHours each) and
+      // for next week's interviews (interviewHours each). Applications already read and on file are
+      // invited first (best on paper); then new ones are read, in arrival order or by a crude keyword
+      // screen (claims on paper, so over-claimers and fakes float up), until the read cap, the hours
+      // or the interview slots run out. What is not read waits, and expires after EXPIRE_WEEKS.
+      let hours = S.hoursBase + S.hoursPerUrgency * j.urgency;
+      const canInterview = () => co.adversary === "scam" || (slots > 0 && hours >= S.interviewHours);
+      const invite = (f: Flow) => { if (co.adversary !== "scam") { hours -= S.interviewHours; recruiterHours += S.interviewHours; } schedule(f); };
+      for (const f of pending.filter(x => !x.expired && x.onFile).sort((a, b) => (looks(b) - looks(a)) || (a.cand < b.cand ? -1 : 1))) if (canInterview()) invite(f);
+      const ats = u01(seed, "ats", co.id) < S.atsShare;
+      const unread = pending.filter(x => !x.expired && !x.onFile);
+      if (ats) unread.sort((a, b) => (looks(b) - looks(a)) || (a.week - b.week) || (a.cand < b.cand ? -1 : 1));
+      const readCap = S.readBase + S.readPerUrgency * (j.urgency - 1);
+      let reads = 0;
+      for (const f of unread) {
+        if (reads >= readCap || hours < S.readHours || !canInterview()) break;
+        reads++; hours -= S.readHours; recruiterHours += S.readHours;
+        if (!acceptableOf(f)) { decline(f); continue; }
+        if (canInterview()) invite(f); else f.onFile = true;
       }
     }
 
     // ---- 5. candidates leave the search for reasons outside the platform --------------------------
-    for (const c of world.pop.candidates) if (candActive(c, week) && u01(seed, "exit", c.id, week) < EXIT_HAZARD) state.exited.add(c.id);
+    for (const c of world.pop.candidates) {
+      if (!candActive(c, week)) continue;
+      const hazard = TM ? TM.exitBase + TM.exitStrength * strength(c) : EXIT_HAZARD;
+      if (u01(seed, "exit", c.id, week) < hazard) state.exited.add(c.id);
+    }
 
     // ---- 6. monthly adverse-impact audit (peon's monitor): flagged companies are held -------------
     if (matcher.audit && matcher.audit !== "off" && (week === 3 || week === 7)) {
@@ -293,5 +384,5 @@ export async function runPeonWorld(o: PeonRunOptions): Promise<PeonRunResult> {
       if (matcher.audit === "hold") for (const fl of flags) holdCompany(fl.company, `audit: ${fl.reason}`);
     }
   }
-  return { world, flows, hires, audits, matcher: matcher.name, heldCompanies, assessed };
+  return { world, flows, hires, audits, matcher: matcher.name, heldCompanies, assessed, recruiterHours, closed };
 }

@@ -9,7 +9,7 @@
 // agent_private `peon:proxy:*` facts that the pack never reads; Member.name is the person's name.
 import { DAY, canBeMatched, type Edge, type Facet, type Intent, type Member, type MemberId, type Presence, type Proposal } from "@thenetwork/core";
 import { JOB_INTENT, SAFETY, SEARCH_INTENT, T } from "@thenetwork/engine/src/packs/peon/schema.ts";
-import type { EngineInput, InteractionRecord, SafetyHold } from "@thenetwork/engine/src/types.ts";
+import type { EngineInput, FeedbackRecord, InteractionRecord, SafetyHold } from "@thenetwork/engine/src/types.ts";
 import type { Candidate, Job, PeonPopulation } from "./persona.ts";
 import { FAMILY } from "./skills.ts";
 
@@ -27,8 +27,10 @@ export interface PeonNetworkState {
   feedbackFacets: Facet[];
   /** Hired or otherwise out of the search. */
   hired: Set<MemberId>; exited: Set<MemberId>;
-  /** Remaining openings per job seat. */
+  /** Remaining openings per job seat (0 once filled, closed at the deadline or filled elsewhere). */
   openings: Map<MemberId, number>;
+  /** Interview records from employers (a real interview happened): FeedbackRecord from the job seat. */
+  feedback: FeedbackRecord[];
 }
 
 export type PeonSnapshot = EngineInput & { interactions: InteractionRecord[]; safetyHolds: SafetyHold[] };
@@ -76,6 +78,7 @@ export function buildPeonSnapshot(pop: PeonPopulation, state: PeonNetworkState):
     now: state.now, members, facets, intents, presence,
     edges: state.edges.map(e => ({ ...e })), recentProposals: state.recentProposals,
     interactions: state.interactions.map(r => ({ ...r })), safetyHolds: state.safetyHolds.map(h => ({ ...h })),
+    feedback: state.feedback.map(f => ({ ...f })),
   };
 }
 

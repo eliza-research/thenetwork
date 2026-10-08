@@ -116,6 +116,31 @@ describe("peonPack", () => {
     }
   });
 
+  test("the core exposure floor applies the pack's hook: slate caps hold with the floor on", async () => {
+    for (const seed of SEEDS) {
+      const input = worldOf(seed);
+      const w = W(input, seed);
+      const r = await runEngine(input, { ...PEON_ENGINE_CONFIG, seed, selection: { ...PEON_ENGINE_CONFIG.selection, exposureFloorShare: 0.25 } as never }, { pack: peonPack });
+      expect(r.proposals.length).toBeGreaterThan(0);
+      const perJob = new Map<string, number>();
+      for (const p of r.proposals) { const s = sides(w, p.participants)!; perJob.set(s.job.id, (perJob.get(s.job.id) ?? 0) + 1); }
+      for (const [j, n] of perJob) expect(n).toBeLessThanOrEqual(slateCap(w, jobOf(w, j)!));
+    }
+  });
+
+  test("new employers are rate-limited: before any answer, a company gets at most ceil(probationProbes / seats) probes per seat", async () => {
+    for (const seed of SEEDS) {
+      const input = worldOf(seed); // no interaction history: every company is new
+      const w = W(input, seed);
+      const r = await run(input, seed);
+      const perJob = new Map<string, number>();
+      for (const p of r.proposals) { const s = sides(w, p.participants)!; perJob.set(s.job.id, (perJob.get(s.job.id) ?? 0) + 1); }
+      const seats = new Map<string, number>();
+      for (const id of w.ids) { const j = jobOf(w, id); if (j?.open && j.company) seats.set(j.company, (seats.get(j.company) ?? 0) + 1); }
+      for (const [j, n] of perJob) expect(n).toBeLessThanOrEqual(Math.ceil(CONGESTION.probationProbes / seats.get(jobOf(w, j)!.company!)!));
+    }
+  });
+
   test("slates are unranked: seeded random order, must-have checkmarks, no names or scores", async () => {
     const input = worldOf(3);
     const w = W(input, 3);
