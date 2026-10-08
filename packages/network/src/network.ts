@@ -15,7 +15,7 @@
 //  - Grows. Invite asks after good experiences and for unmet requests; invitees join and are welcomed.
 //  - Real places. Meetings are at public NYC venues that keep everyone's trip short (geo.ts).
 import {
-  canBeMatched, DAY, HOUR, MINUTE, type Category, type Facet, type Intent, type MemberId, type Proposal, type ScoreComponents, type WorldSnapshot,
+  DAY, HOUR, MINUTE, type Category, type Facet, type Intent, type MemberId, type Proposal, type ScoreComponents, type WorldSnapshot,
 } from "@thenetwork/core";
 import { runEngine, type EngineConfigInput, type EngineInput, type EngineProposal, type FeedbackRecord, type InteractionRecord, type MatchingRunLog } from "@thenetwork/engine";
 import { desireById, INTERESTS, parseYesNo, SKILLS, type InboundMessage, type NetworkContext, type NetworkUnderTest, type SimMeta } from "@thenetwork/sim";
@@ -458,9 +458,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const o: Opp = {
       recorded: x.recorded,
       id: x.id ?? `nw-${this.opts.seed}-${++this.oppSeq}`, origin: x.origin, kind: x.kind, category: x.category, objective: x.objective, detail: x.detail,
-      // Minors policy: an alternate (a possible backfill) is never a minor or someone of unknown age,
-      // whoever proposed it (search, engine, player or scenario).
-      participants: [...x.participants], alternates: x.alternates.filter(a => !x.participants.includes(a) && this.matchable(a)), primed: new Set(x.primed), requester: x.requester,
+      participants: [...x.participants], alternates: x.alternates.filter(a => !x.participants.includes(a)), primed: new Set(x.primed), requester: x.requester,
       status: new Map(x.participants.map(id => [id, "probing" as PStatus])), explanations: { ...x.explanations },
       stage: "probing", deadline: now + PROBE_TTL, createdAt: now, score: x.score, components: x.components ?? ZERO, generator: x.generator,
       exploration: !!x.exploration, tags: x.tags, replacements: 0,
@@ -649,10 +647,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.ctx.log(wasProbing ? "probe_closed" : "opportunity_closed", { proposalId: o.id, reason: wasProbing ? `not sent: ${reason}` : reason });
   }
 
-  /** Remove a member from everything open (opt-out, hold, minor signal), alternate lists included. */
+  /** Remove a member from everything open (opt-out, hold, minor signal). */
   private dropMember(id: MemberId, reason: string) {
     for (const o of this.opps.values()) {
-      if (OPEN_STAGES.has(o.stage) && o.alternates.includes(id)) o.alternates = o.alternates.filter(a => a !== id);
       if (!OPEN_STAGES.has(o.stage) || !o.participants.includes(id)) continue;
       if (o.stage === "probing") { o.status.set(id, "unavailable"); this.replaceOrClose(o, id); }
       else if (o.stage === "inviting") this.close(o, reason);
@@ -1068,12 +1065,6 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** Share of our asks this member answers (Laplace prior: 2 of 2), the best predictor of a silent reveal. */
   responsiveness(id: MemberId): number { const m = this.members.get(id); return m ? (m.answered + 2) / (m.asked + 2) : 1; }
 
-  /** Known member, an adult by every age signal the Network has (minors and unknown ages fail closed). */
-  private matchable(id: MemberId): boolean {
-    const m = this.members.get(id);
-    return !!m && !m.minor && !m.minorSignal;
-  }
-
   /** Can this member be put into a new opportunity right now (and be here for it this week)? */
   eligible(id: MemberId, o: { asked?: boolean } = {}): boolean {
     const m = this.members.get(id);
@@ -1124,7 +1115,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         id, first: first ?? name, display: last ? `${first} ${last[0]}.` : name, area: home ?? "Midtown",
         quietHours: mem?.prefs.quietHours ?? [21, 9], state: mem?.state ?? "normal",
         // Fail closed: no visible adult age means treated as a minor.
-        minor: !canBeMatched(mem?.age), minorSignal: false, stage: "new",
+        minor: !(typeof mem?.age === "number" && mem.age >= 18), minorSignal: false, stage: "new",
         optedOut: false, unanswered: 0, proactive: [], lastInbound: 0, joinedAt: this.now(), invitedBy: mem?.invitedBy,
         invites: [], invitesBlockedUntil: 0, lastGrowthAsk: 0, lastInterview: 0,
         learned: { interests: new Set(), skills: new Set(), desires: new Set() }, noShows: 0, completedSinceNoShow: 0, msgsIn: 0, asked: 0, answered: 0,
