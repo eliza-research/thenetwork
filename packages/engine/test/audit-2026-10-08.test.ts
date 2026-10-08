@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { DEFAULT_CONFIG, resolveConfig } from "../src/config.ts";
 import { cosine, localEmbed, tokenize } from "../src/embed.ts";
 import { runEngine } from "../src/engine.ts";
+import { Rng } from "../src/rng.ts";
 import { MatcherScheduler, MemoryProposalStore } from "../src/tick.ts";
 import { eligibilityFor, isHomeEntry, riskTerms } from "../src/filters.ts";
 import { randomWorld } from "../src/testkit.ts";
@@ -204,4 +205,20 @@ describe("engine-pipeline-13: tokenizer and retrieval for non-Latin and accented
     expect(localEmbed("походы в горы").some(x => x !== 0)).toBe(true);
     expect(cosine(localEmbed("походы в горы по выходным"), localEmbed("люблю походы в горы"))).toBeGreaterThan(0.3);
   });
+});
+
+describe("engine-pipeline-17: output does not depend on input row order", () => {
+  test("shuffled snapshot rows give identical proposals, input hash and run id", async () => {
+    for (const seed of [1, 2, 3, 4]) {
+      const input = randomWorld({ members: 150, seed });
+      const a = await runEngine(input, { seed });
+      const r = new Rng(seed + 99);
+      const sh = <T,>(xs: T[] | undefined) => { const c = [...(xs ?? [])]; r.shuffle(c); return c; };
+      const b = await runEngine({ ...input, members: sh(input.members), facets: sh(input.facets), intents: sh(input.intents), presence: sh(input.presence), edges: sh(input.edges),
+        events: sh(input.events), interactions: sh(input.interactions), feedback: sh(input.feedback), recentProposals: sh(input.recentProposals) }, { seed });
+      expect(JSON.stringify(b.proposals)).toBe(JSON.stringify(a.proposals));
+      expect(b.runLog.inputHash).toBe(a.runLog.inputHash);
+      expect(b.runLog.runId).toBe(a.runLog.runId);
+    }
+  }, 60_000);
 });

@@ -49,11 +49,32 @@ function hashInput(input: EngineInput): string {
   return sha256(stableStringify(strip(input))).slice(0, 16);
 }
 
+/**
+ * The input with every top-level list in a canonical order (by id, else by content), so the
+ * output, the input hash and the run id do not depend on the row order of the snapshot
+ * (engine-pipeline-17: the snapshot loader has no ORDER BY). Nested lists keep their order
+ * (participants[0] is the requester).
+ */
+export function canonicalInput(input: EngineInput): EngineInput {
+  const keyOf = (x: unknown): string => {
+    const id = (x as { id?: unknown }).id;
+    return typeof id === "string" ? `0|${id}` : `1|${stableStringify(JSON.parse(JSON.stringify(x, (k, v) => (k === "embedding" ? undefined : v))))}`;
+  };
+  const out: Record<string, unknown> = { ...input };
+  for (const [k, v] of Object.entries(input)) {
+    if (!Array.isArray(v)) continue;
+    const keyed = v.map(x => ({ x, k: typeof x === "string" ? x : keyOf(x) }));
+    keyed.sort((a, b) => (a.k < b.k ? -1 : a.k > b.k ? 1 : 0));
+    out[k] = keyed.map(e => e.x);
+  }
+  return out as unknown as EngineInput;
+}
+
 export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: EngineConfigInput = {}, deps: EngineDeps = {}): Promise<EngineResult> {
   const t0 = performance.now();
   const timings: Record<string, number> = {};
   const lap = (name: string, since: number) => { timings[name] = Math.round((performance.now() - since) * 100) / 100; return performance.now(); };
-  const input = snapshot as EngineInput;
+  const input = canonicalInput(snapshot as EngineInput);
   const cfg = resolveConfig(cfgIn);
   const rng = new Rng(cfg.seed);
   const embed = deps.embed ?? localEmbed;
