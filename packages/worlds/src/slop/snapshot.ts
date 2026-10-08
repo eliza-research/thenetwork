@@ -260,7 +260,7 @@ export function slopFacetsOf(p: SlopPersona, joinedAt: number, learned?: Readonl
 /** The member record (claimed age; romance only for adults by claimed age). */
 export function slopMemberOf(p: SlopPersona, joinedAt: number, s: Pick<SlopNetworkState, "paused">): Member {
   const S = p.stated, adult = canBeMatched(S.claimedAge);
-  const city = zipInfo.get(S.homeZip)!.city;
+  const city = zipInfo.get(S.homeZip)?.city ?? p.hidden.homeCity; // an unknown zip falls back to the home city
   const known = KNOWS[p.hidden.richness];
   return {
     id: p.id, name: p.name, homeCity: asCoreCity(city), state: s.paused.has(p.id) ? "paused" : "normal",
@@ -301,7 +301,7 @@ export function buildSlopSnapshot(personas: readonly SlopPersona[], state: SlopN
         facets.push({ id: `${p.id}:review`, memberId: p.id, kind: "fact", value: `safety review ${d}`, tags: [`review:${d}`], scope: "agent_private", provenance: "vouched", confidence: 0.95, validFrom: joinedAt + rv.days * DAY, source: "chat", observedAt: joinedAt + rv.days * DAY, inferred: false, confirmedByMember: false });
       }
     }
-    const S = p.stated, city = zipInfo.get(S.homeZip)!.city;
+    const S = p.stated, city = zipInfo.get(S.homeZip)?.city ?? p.hidden.homeCity;
     const K = knowsWith(KNOWS[p.hidden.richness], learned);
     if (canBeMatched(S.claimedAge)) {
       const lastAsk = state.inboundAsks.filter(a => a.memberId === p.id).reduce((m, a) => Math.max(m, a.at), joinedAt);

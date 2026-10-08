@@ -127,7 +127,14 @@ export interface OpportunityEvent { eventId: string; at: number; from: Opportuni
  */
 /** `lane`: the opportunity's category, when the caller knows it (re-checks lane opt-ins). */
 export type EligibilityCheck = (memberId: MemberId, others: MemberId[], lane?: Category) => string | null;
-export interface EligibilityOpts { eligible?: EligibilityCheck }
+export interface EligibilityOpts {
+  eligible?: EligibilityCheck;
+  /**
+   * Age gate for alternates (backfill): false for a minor or an unknown age (core canBeMatched,
+   * fail closed). Applied even without `eligible`, so an id-only caller still never backfills a minor.
+   */
+  canMatch?: (memberId: MemberId) => boolean;
+}
 
 export interface Opportunity {
   id: string; state: OpportunityState; isGroup: boolean;
@@ -202,6 +209,7 @@ function takeAlternates(o: Opportunity, n: number, opts: EligibilityOpts): Membe
   while (out.length < n && o.alternates.length) {
     const id = o.alternates.shift()!;
     if (o.participants[id] !== undefined && o.participants[id] !== "pending") continue; // already involved
+    if (opts.canMatch && !opts.canMatch(id)) { o.removed[id] = "underage"; continue; } // never backfill a minor
     const why = opts.eligible?.(id, [...live(o), ...out]) ?? null;
     if (why) { o.removed[id] = why; continue; }
     out.push(id);

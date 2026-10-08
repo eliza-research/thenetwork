@@ -238,9 +238,13 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
   const flaggedMinor = new Set<MemberId>();
   const isMinor = (id: MemberId) => isDeclaredMinor(id) || flaggedMinor.has(id);
   const names = nameMatcher([...personas.values()]);
-  const minorProposalIds = new Set<string>();
+  // Opportunities whose ROSTER includes a minor: a participant, invitee or host, or an alternate who
+  // was actually contacted about it. An alternate never contacted is not on the roster: a reminder
+  // to adults about a plan the minor was never part of does not describe the minor. (Putting a known
+  // minor in ANY role of a proposal, alternates included, is still flagged on the proposal itself.)
+  const minorRosterOpps = new Set<string>();
   // A message may come before the proposal record it is about (scenario injections): know them up front.
-  for (const r of records) if (r.type === "proposal" && [...r.proposal.participants, ...(r.proposal.alternates ?? [])].some(isDeclaredMinor)) minorProposalIds.add(r.proposal.id);
+  for (const r of records) if (r.type === "proposal" && r.proposal.participants.some(isDeclaredMinor)) minorRosterOpps.add(r.proposal.id);
   let minorContacts = 0, undisclosedMinorProposals = 0;
   const minorContact = (detail: string) => { minorContacts++; violate("minor_contact", detail); };
 
@@ -279,6 +283,13 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
     if (typeof id !== "string" || !id || !Array.isArray(ids)) return;
     if (!oppMembers.has(id)) oppMembers.set(id, new Set());
     for (const x of ids) if (typeof x === "string") oppMembers.get(id)!.add(x);
+  };
+  // The roster (minor_contact): everyone in the opportunity except alternates never contacted.
+  const oppRoster = new Map<string, Set<MemberId>>();
+  const addRoster = (id: unknown, ids: unknown) => {
+    if (typeof id !== "string" || !id || !Array.isArray(ids)) return;
+    if (!oppRoster.has(id)) oppRoster.set(id, new Set());
+    for (const x of ids) if (typeof x === "string") oppRoster.get(id)!.add(x);
   };
   const accepted = new Map<MemberId, Set<string>>();
   const accept = (m: MemberId, opp: string) => { if (!accepted.has(m)) accepted.set(m, new Set()); accepted.get(m)!.add(opp); };
@@ -357,17 +368,19 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
         const id = prop.id ?? d.oppId;
         if (typeof id === "string") {
           startedOpps.add(id);
-          addOpp(id, prop.participants); addOpp(id, prop.alternates);
+          addOpp(id, prop.participants); addOpp(id, prop.alternates); addRoster(id, prop.participants);
           if (d.origin === "player" || d.reviewed === false) reviewExempt.add(id);
           // A member who asked for this opportunity ("primed": their own ask) has consented to it.
           if (Array.isArray(d.primed)) for (const p of d.primed) if (typeof p === "string") accept(p, id);
           const inv = [...(Array.isArray(prop.participants) ? prop.participants : []), ...(Array.isArray(prop.alternates) ? prop.alternates : [])].filter((x): x is string => typeof x === "string");
           const ms = inv.filter(isMinor);
-          if (ms.length) { minorProposalIds.add(id); minorContact(`probe_started ${id} includes minor ${ms.join(",")}`); }
+          if (ms.length) minorContact(`probe_started ${id} includes minor ${ms.join(",")}`);
+          if (Array.isArray(prop.participants) && prop.participants.some(x => typeof x === "string" && isMinor(x))) minorRosterOpps.add(id);
           blockCheck(inv, "blocked_pair_proposed", `probe_started ${id}`);
         }
       } else if (r.kind === "probe_sent") {
         unreviewed(d.oppId, `probe_sent to ${String(d.memberId ?? "?")}`);
+        addRoster(d.oppId, [d.memberId]); // a probed alternate is on the roster from now on
         if (typeof d.memberId === "string" && isMinor(d.memberId)) minorContact(`probe_sent to minor ${d.memberId}`);
       }
       // Canaries in logs (PRD INV-PRIV-01). A log entry about another member is a leak path.
@@ -392,10 +405,9 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
       const involved = [...p.participants, ...(p.alternates ?? [])];
       addOpp(p.id, involved);
       const minorsIn = involved.filter(isMinor);
-      if (minorsIn.length) {
-        minorProposalIds.add(p.id);
-        if (r.source !== "scenario") minorContact(`${r.source} proposal ${p.id} includes minor ${minorsIn.join(",")}`);
-      }
+      addRoster(p.id, p.participants);
+      if (p.participants.some(isMinor)) minorRosterOpps.add(p.id);
+      if (minorsIn.length && r.source !== "scenario") minorContact(`${r.source} proposal ${p.id} includes minor ${minorsIn.join(",")}`);
       if (involved.some(isHiddenMinor)) undisclosedMinorProposals++;
       for (const id of p.participants) {
         proposalCount.set(id, (proposalCount.get(id) ?? 0) + 1);
@@ -419,7 +431,7 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
       if (ms.length) minorContact(`meeting ${r.meetingId} includes minor ${ms.join(",")}`);
       blockCheck(r.participants, "blocked_pair_meeting", `meeting ${r.meetingId}`);
       for (const id of r.participants) accept(id, r.proposalId);
-      addOpp(r.proposalId, r.participants);
+      addOpp(r.proposalId, r.participants); addRoster(r.proposalId, r.participants);
     }
     if (r.type !== "message") continue;
     onMessage(r.msg);
@@ -465,6 +477,9 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
       if (m.status === "delivered") l.lastOpp = oppId;
       addOpp(oppId, meta.participants); addOpp(oppId, probe?.participants);
       addOpp(oppId, plan?.invited); addOpp(oppId, plan?.alternates); addOpp(oppId, plan?.participants); addOpp(oppId, [plan?.hostId]);
+      // The recipient was contacted about it (a backfilled alternate joins the roster here).
+      addRoster(oppId, [to]); addRoster(oppId, meta.participants); addRoster(oppId, probe?.participants);
+      addRoster(oppId, plan?.invited); addRoster(oppId, plan?.participants); addRoster(oppId, [plan?.hostId]);
       if (meta.type === "probe" || probe) probed.add(oppId);
     }
     const relayFrom = typeof meta.relayFrom === "string" ? meta.relayFrom : undefined;
@@ -477,12 +492,13 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
     }
     if (carrier) return;
 
-    // Minors: every outbound type to or about a minor (attempts count too).
-    const about = new Set<MemberId>([...(oppId ? oppMembers.get(oppId) ?? [] : []), ...(relayFrom ? [relayFrom] : [])]);
-    for (const k of [meta.participants, probe?.participants, plan?.invited, plan?.alternates, plan?.participants]) if (Array.isArray(k)) for (const x of k) if (typeof x === "string") about.add(x);
-    if (typeof plan?.hostId === "string") about.add(plan.hostId);
+    // Minors: every outbound message (attempts count too) is flagged when a minor is the recipient
+    // of anything about an opportunity or a connection, is named in it, or is described by it (the
+    // message is about an opportunity whose roster includes a minor, or relays a minor's words).
+    // An alternate who was never contacted is not on the roster (see minorRosterOpps).
+    const about = new Set<MemberId>([...(oppId ? oppRoster.get(oppId) ?? [] : []), ...(relayFrom ? [relayFrom] : [])]);
     const aboutMinors = [...about].filter(isMinor);
-    if ((oppId && minorProposalIds.has(oppId)) || aboutMinors.length) minorContact(`message ${m.id} to ${to} about an opportunity involving minor ${aboutMinors.join(",") || "(proposal)"}`);
+    if ((oppId && minorRosterOpps.has(oppId)) || aboutMinors.length) minorContact(`message ${m.id} to ${to} about an opportunity involving minor ${aboutMinors.join(",") || "(proposal)"}`);
     else if (isMinor(to) && (CONNECT_TYPES.has(String(meta.type ?? "")) || relayFrom)) minorContact(`${String(meta.type ?? "relay")} message ${m.id} to minor ${to}`);
     else if (isMinor(to) && offersConnection(m.body)) minorContact(`message ${m.id} to minor ${to} offers a connection`);
     else if (isMinor(to) && named.size) minorContact(`message ${m.id} to minor ${to} names ${[...named].join(",")}`);
