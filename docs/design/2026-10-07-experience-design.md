@@ -2,6 +2,8 @@
 
 Status: design proposal, for founder review. Section 1 (Phase 1) is implemented in `packages/engine/src/attention.ts` and measured in `docs/results/2026-10-07-attention-budget.md` (iterations 1-4). Section 4 (Phase 2, plans) is implemented in `packages/engine/src/plans.ts` and `activities.ts` and measured in `docs/results/2026-10-08-plans.md`; section 4.11 records what was built and the measured defaults. The founder's decisions of 2026-10-07 replace D2, D4 and D5 (section 9) and are written into section 1 below; section 1.11 (availability capture) is new. No LLM calls were made to write it.
 
+slop.date exception (founder decision, 2026-10-08; PRD 40.5): a slop.date probe may include one photo, for adults only (lowest stated age 18+). Name and contact still stay hidden until both say yes. Everywhere else D5 and F2 below still hold: no name or photo before both say yes.
+
 Builds on:
 - `docs/research/2026-10-07-match-failures-and-diversity.md` ("the match report"; summarized in `docs/results/SUMMARY.md`, full text in git history at 16cde70)
 - `docs/results/2026-10-07-engine-v1.2.md` ("the v1.2 results")

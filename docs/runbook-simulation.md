@@ -141,7 +141,7 @@ The Lab tab in the Observatory runs the same three arms in the background: one c
 
 Results are saved to `runs/lab/<id>.json`. A run's status changes only after its file is written. The analyst, engineer or admin role for the app can start a run.
 
-Per app: `POST /api/lab/run?app=slop` with `{"arms":["consent"],"seeds":[1],"days":1,"app":"slop"}`. Every app runs The Network's NYC world; slop and peon runs get `--max-new 0` (no new engine opportunities), because their matching is off. There is no 18+ join gate in the lab yet. Checked on 2026-10-08: a 1-day slop run as `engineer@*` finished with 0 judge invariants, canary leaks and minor contacts.
+Per app: `POST /api/lab/run?app=slop` with `{"arms":["consent"],"seeds":[1],"days":1,"app":"slop"}`. Every app runs The Network's NYC world; slop and peon runs still get `--max-new 0` (no new engine opportunities). That is stale: their packs are wired, so the lab should run them with `slopPack` and `peonPack` (docs/mvp-gaps.md, critical path item 6). There is no 18+ join gate in the lab yet. Checked on 2026-10-08: a 1-day slop run as `engineer@*` finished with 0 judge invariants, canary leaks and minor contacts.
 
 One seed without the UI is the same command the lab runs:
 

@@ -1,5 +1,7 @@
 # A2P 10DLC registration for The Network (Twilio)
 
+Superseded as a launch gate (2026-10-08): registration is in the deferred compliance backlog (PRD 40.7), and the pilot runs on one Blooio iMessage line (PRD 40.3). Kept as reference for when SMS sending starts.
+
 US carriers require every application-to-person SMS sent from a 10-digit long code to be registered: one **brand** (the company) and one **campaign** (what we send and how people opt in). Unregistered traffic is filtered or blocked. Approval typically takes 1-3 weeks; launch gate PRD 28.5 requires it before the first live SMS sends (Section 37 marks the old M6 milestone superseded; iMessage on Blooio is P2P and not covered).
 
 Prerequisite done in this repo: [`sites/ntwrk.love`](../../sites/ntwrk.love/) is a site describing the program, with a privacy policy and SMS terms. Carriers check these URLs during vetting, so it must be **live before submitting the campaign**.

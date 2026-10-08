@@ -9,7 +9,7 @@ brand
 
 ## Users
 
-People in New York (and San Francisco for The Network) who read a site on a phone, often after
+People in New York who read a site on a phone, often after
 a friend sends a link. They want to know what the service is, whether it is safe, and how to
 join or leave. Each site has one job: explain one app, let a person join it by phone, and let a
 member see, export, stop or delete their data.
