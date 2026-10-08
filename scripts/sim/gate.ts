@@ -62,6 +62,11 @@ export class Block {
   }
 }
 
+/** A short digest of a run's outputs: `bun run sim --json` before and after a refactor must match. */
+export function digest(x: unknown): string {
+  return new Bun.CryptoHasher("sha256").update(JSON.stringify(x)).digest("hex").slice(0, 16);
+}
+
 export function print(g: Gate): void {
   const tag = g.pass ? "PASS " : g.blocking ? "FAIL " : "track";
   const line = `  ${tag} ${g.name}${g.detail && (!g.pass || !g.blocking || g.detail.length < 160) ? `: ${g.detail}` : ""}`;

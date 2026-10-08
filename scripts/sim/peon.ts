@@ -16,7 +16,7 @@ import { generatePeonPopulation, type PeonPopulation } from "../../packages/worl
 import { buildPeonSnapshot, PEON_WORLD_START, type PeonNetworkState } from "../../packages/worlds/src/peon/snapshot.ts";
 import { REALISM_V2, runPeonWorld } from "../../packages/worlds/src/peon/world.ts";
 import { conformance } from "./conformance.ts";
-import { Block, expect } from "./gate.ts";
+import { Block, digest, expect } from "./gate.ts";
 
 export const PEON_PINNED = { seeds: [13, 14, 15, 16], weeks: 8 };
 const SAFETY = new Set(["scam_reach", "minors", "unverified", "pay_range"]);
@@ -32,6 +32,7 @@ export async function peonBlock(b: Block, o: { quick: boolean }): Promise<void> 
   for (const arm of ["pack", "keyword", "oracle"] as const) for (const seed of spec.seeds) {
     all[arm].push(peonMetrics(await runPeonWorld({ seed, perCity: 400, jobsPerCity: 80, weeks: spec.weeks, matcher: ARMS[arm]!.matcher, realism: REALISM_V2 })));
   }
+  b.track("fingerprint: pack, keyword and oracle arms", true, digest(all));
   for (const g of officialGates(all.pack, all.keyword, all.oracle)) b.gate(`gate ${g.gate}`, g.pass, g.value, SAFETY.has(g.id) || !o.quick);
   b.gate("positive control: the keyword board reaches unverified, no-range and scam jobs", all.keyword.some(m => m.safety.unverifiedIntros > 0) && all.keyword.some(m => m.safety.noRangeIntros > 0) && all.keyword.some(m => m.safety.scamIntros > 0));
 

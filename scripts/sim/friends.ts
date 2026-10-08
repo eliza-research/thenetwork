@@ -21,7 +21,7 @@ import { engineInputOf, evidenceOf, friendsPackMatcher } from "../../packages/wo
 import { buildFriendsSnapshot, NYC_TZ, type FriendsSnapshot } from "../../packages/worlds/src/friends/snapshot.ts";
 import { runFriendsWorld, VENUES } from "../../packages/worlds/src/friends/world.ts";
 import { conformance } from "./conformance.ts";
-import { Block, expect } from "./gate.ts";
+import { Block, digest, expect } from "./gate.ts";
 
 export const FRIENDS_PINNED = { seeds: [5, 6, 7, 8], weeks: 8, n: 400 };
 const SAFETY = new Set(["minors", "known_adversary"]);
@@ -44,6 +44,7 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
   const all: Record<"pack" | "random" | "oracle", FriendsMetrics[]> = { pack: [], random: [], oracle: [] };
   const matchers = { pack: friendsPackMatcher(), random: BASELINES.random, oracle: BASELINES.oracle };
   for (const arm of ["pack", "random", "oracle"] as const) for (const seed of spec.seeds) all[arm].push(friendsMetrics(runFriendsWorld({ seed, n: spec.n, weeks: spec.weeks, matcher: matchers[arm] })));
+  b.track("fingerprint: pack, random and oracle arms", true, digest(all));
   for (const g of officialGates(all.pack, all.random, all.oracle)) b.gate(`gate ${g.gate}`, g.pass, g.value, SAFETY.has(g.id) || !o.quick);
   for (const g of trackedMetrics(all.pack, all.random)) b.track(`tracked ${g.gate}`, g.pass, g.value);
   b.gate("pack: 0 declared-minor proposals", all.pack.every(m => m.safety.declaredMinorProposals === 0));

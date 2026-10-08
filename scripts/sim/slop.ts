@@ -39,7 +39,7 @@ import { BASELINES } from "../../packages/worlds/src/slop/baselines.ts";
 import { slopMetrics } from "../../packages/worlds/src/slop/metrics.ts";
 import { runSlopWorld, runSlopWorldAsync } from "../../packages/worlds/src/slop/world.ts";
 import { conformance } from "./conformance.ts";
-import { Block, expect } from "./gate.ts";
+import { Block, digest, expect } from "./gate.ts";
 
 export const SLOP_PINNED = { seeds: [13, 14, 15, 16], weeks: 4, perCity: 300 };
 const POPULATION: WorldSpec = { catfish: 0.005, bodyTypes: true };
@@ -74,6 +74,7 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
   const spec = o.quick ? { seeds: [13], weeks: 2, perCity: 150 } : SLOP_PINNED;
   const random = await runArm("random", spec.seeds, spec.weeks, spec.perCity, undefined, POPULATION);
   const pack = await runArm("slop", spec.seeds, spec.weeks, spec.perCity, { $world: PACK_WORLD }, { ...POPULATION, ...WORLD });
+  b.track("fingerprint: random and slop arms", true, digest([random, pack]));
   for (const g of gates3(pack, random)) {
     const value = g.name.includes("cut") ? `${(g.value * 100).toFixed(1)}%` : g.value.toFixed(3);
     const safety = SAFETY.some(r => r.test(g.name));

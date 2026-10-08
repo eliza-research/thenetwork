@@ -13,7 +13,7 @@ import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, VENUES, typ
 import { styleViolations } from "../../packages/network/src/copy.ts";
 import { DATA_DIR } from "../synthetic/common.ts";
 import { conformance } from "./conformance.ts";
-import { Block, expect } from "./gate.ts";
+import { Block, digest, expect } from "./gate.ts";
 
 type Msg = Extract<RunRecord, { type: "message" }>;
 type Log = Extract<RunRecord, { type: "network_log" }>;
@@ -40,6 +40,7 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
   await run.w.advanceTo(run.w.end);
   await run.w.complete();
   const R = run.records;
+  b.track("fingerprint: invariant run (seed 3, 10 days) records", true, digest(R));
 
   await b.run("invariants (seed 3, 10 days): judge 0 invariant violations, minor contacts, canary leaks, errors", () => {
     expect(R.length).toBeGreaterThan(1000);
@@ -267,6 +268,7 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     const push = await runArm("push_baseline", { days: 21, seed: 1 });
     const consent: ArmResult[] = [];
     for (const seed of [1, 2, 3]) consent.push(await runArm("consent", { days: 21, seed }));
+    b.track("fingerprint: consent vs push arms", true, digest([push, ...consent]));
     const sum = (f: (r: ArmResult) => number) => consent.reduce((x, r) => x + f(r), 0);
     const allYes = sum(r => r.proposalsAllYes) / sum(r => r.proposals);
     b.gate(`consent vs push: everyone-yes (pooled seeds 1-3) > ${ALL_YES_MIN}`, allYes > ALL_YES_MIN, allYes.toFixed(3));
