@@ -14,6 +14,7 @@ import { DAY, HOUR } from "../../core/src/clock.ts";
 import { isMinor } from "../../core/src/policy.ts";
 import { resolveCapital, type CapitalConfig, type CapitalConfigInput } from "./config.ts";
 import type { CapitalEvent, EarnCategory, EntryCategory, LedgerEntry, LoseCategory, MemberId, Viewer } from "./types.ts";
+import { CapitalEventRejected, validateCapitalEvent } from "./validate.ts";
 
 interface MemberRec {
   joinedAt: number; eligible: boolean; vouchedBy?: MemberId;
@@ -26,6 +27,8 @@ interface HelpRec { helper: MemberId; recipient: MemberId; resolved: boolean }
 type Prov = LedgerEntry["provenance"];
 
 export interface StaffRead { t: number; staff: string; role: string; reason: string; member: MemberId }
+/** An event `record` refused (malformed or out of time order). Kept so a caller that catches the error cannot hide it. */
+export interface Rejection { id: string; t: unknown; reason: string }
 
 export class CapitalLedger {
   readonly cfg: CapitalConfig;
@@ -37,6 +40,7 @@ export class CapitalLedger {
   private readonly seen = new Set<string>();
   private readonly reversed = new Set<string>();
   private readonly staffReads: StaffRead[] = [];
+  private readonly rejects: Rejection[] = [];
   private lastT = -Infinity;
 
   constructor(cfg: CapitalConfigInput = {}) { this.cfg = resolveCapital(cfg); }
@@ -72,12 +76,20 @@ export class CapitalLedger {
 
   isEligible(member: MemberId): boolean { return this.members.get(member)?.eligible ?? false; }
 
+  /** Events this ledger refused, in order. The service should log each one and a harness should fail on any. */
+  rejected(): readonly Rejection[] { return this.rejects; }
+
   // ---------------------------------------------------------------------------------------------- writes
 
-  /** Record one Network event. Returns the entries it wrote (often none). */
+  /**
+   * Record one Network event. Returns the entries it wrote (often none). A malformed or out-of-order
+   * event throws `CapitalEventRejected` and changes nothing (it is listed in `rejected()`).
+   */
   record(ev: CapitalEvent): LedgerEntry[] {
+    const bad = validateCapitalEvent(ev);
+    if (bad) this.reject(ev, bad);
     if (this.seen.has(ev.id)) return [];
-    if (ev.t < this.lastT) throw new Error(`events must be recorded in time order (${ev.id})`);
+    if (ev.t < this.lastT) this.reject(ev, `events must be recorded in time order (t ${ev.t} < ${this.lastT})`);
     this.seen.add(ev.id);
     this.lastT = ev.t;
     const out: LedgerEntry[] = [];
@@ -241,6 +253,13 @@ export class CapitalLedger {
         break;
     }
     return out;
+  }
+
+  private reject(ev: unknown, reason: string): never {
+    const e = (typeof ev === "object" && ev !== null ? ev : {}) as { id?: unknown; t?: unknown };
+    const id = typeof e.id === "string" ? e.id : String(e.id);
+    this.rejects.push({ id, t: e.t, reason });
+    throw new CapitalEventRejected(id, reason);
   }
 
   // ---------------------------------------------------------------------------------------------- rules

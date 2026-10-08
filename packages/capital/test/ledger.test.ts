@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CapitalLedger, type CapitalEventInput, detectGaming, effortOverlay, effortTier, organizingReach, vouchCapacity, whatYouBuilt, EFFORT_TABLE, OVERLAY_ENGINE_KEYS, DEFAULT_CAPITAL, type CapitalEvent } from "../src/index.ts";
+import { CapitalLedger, CapitalEventRejected, resolveCapital, type CapitalEventInput, detectGaming, effortOverlay, effortTier, organizingReach, vouchCapacity, whatYouBuilt, EFFORT_TABLE, OVERLAY_ENGINE_KEYS, DEFAULT_CAPITAL, type CapitalEvent } from "../src/index.ts";
 
 const DAY = 86_400_000, HOUR = 3_600_000;
 const T0 = Date.UTC(2026, 9, 5, 16);
@@ -366,5 +366,41 @@ describe("what you've built", () => {
 
   test("empty history", () => {
     expect(whatYouBuilt([])).toMatch(/^Nothing here yet/);
+  });
+});
+
+describe("input validation (capital-3, capital-m2)", () => {
+  test("a NaN or Infinity time, or a NaN count, is rejected and changes nothing", () => {
+    const L = world();
+    const before = L.all().length;
+    expect(() => L.record(ev({ type: "declined", t: NaN, member: "a" }))).toThrow(CapitalEventRejected);
+    // NaN no longer turns off the time-order check
+    L.record(ev({ type: "need_answered", t: T0 + DAY, member: "a", needId: "n1", confirmedBy: "staff" }));
+    expect(() => L.record(ev({ type: "need_answered", t: T0, member: "a", needId: "n0", confirmedBy: "staff" }))).toThrow(CapitalEventRejected);
+    // Infinity no longer locks the ledger
+    expect(() => L.record(ev({ type: "declined", t: Infinity, member: "a" }))).toThrow(CapitalEventRejected);
+    expect(L.record(ev({ type: "need_answered", t: T0 + 2 * DAY, member: "a", needId: "n2", confirmedBy: "staff" }))).toHaveLength(1);
+    // a NaN count no longer poisons the balance
+    expect(() => L.record(ev({ type: "review_completed", t: T0 + 2 * DAY, member: "b", items: NaN }))).toThrow(CapitalEventRejected);
+    expect(() => L.record(ev({ type: "plan_accepted", t: T0 + 2 * DAY, member: "b", planId: "p", kind: "intro", startsAt: NaN }))).toThrow(CapitalEventRejected);
+    expect(Number.isFinite(L.balance("b"))).toBe(true);
+    expect(L.all().length).toBe(before + 2);
+    expect(L.rejected().map(r => r.reason.split(" ")[0])).toEqual(["t", "events", "t", "items", "startsAt"]);
+  });
+
+  test("a malformed event is rejected before it is marked seen, so the fixed event with the same id is taken", () => {
+    const L = world();
+    const bad = { id: "v1", type: "value_received", t: T0, member: "a" } as unknown as CapitalEvent; // no `with`
+    expect(() => L.record(bad)).toThrow(CapitalEventRejected);
+    expect(L.record({ id: "v1", type: "need_answered", t: T0, member: "a", needId: "n", confirmedBy: "staff" })).toHaveLength(1);
+  });
+
+  test("invalid config is refused", () => {
+    expect(() => resolveCapital({ antiGaming: { pairDecay: 0 } })).toThrow(/pairDecay/);
+    expect(() => resolveCapital({ credit: { help: NaN } })).toThrow(/credit.help/);
+    expect(() => resolveCapital({ levers: { effortThresholds: [45, 15, 120] } })).toThrow(/increase/);
+    expect(() => resolveCapital({ antiGaming: { periodCapp: 3 } } as never)).toThrow(/unknown key antiGaming.periodCapp/);
+    expect(() => new CapitalLedger({ detection: { ringShare: 2 } })).toThrow(/ringShare/);
+    expect(resolveCapital({ antiGaming: { periodCap: 60 } }).antiGaming.periodCap).toBe(60);
   });
 });
