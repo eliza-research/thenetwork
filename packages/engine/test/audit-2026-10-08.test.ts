@@ -87,7 +87,7 @@ describe("engine-pipeline-15: romance is pairs-only and needs stated preferences
       inp.facets.push(facet(id, 0, "interest", "salsa dancing nights", ["salsa"]));
       if (withPrefs) inp.facets.push({ ...facet(id, 1, "preference", "x", ["romance:is:q", "romance:seeks:q"]), scope: "matchable" });
     }
-    inp.events.push({ id: "ev1", title: "Salsa dancing singles night", description: "salsa dancing", tags: ["salsa"], category: "romance", city: "sf", start: NOW + 2 * DAY, end: NOW + 2 * DAY + 3 * HOUR });
+    inp.events!.push({ id: "ev1", title: "Salsa dancing singles night", description: "salsa dancing", tags: ["salsa"], category: "romance", city: "sf", start: NOW + 2 * DAY, end: NOW + 2 * DAY + 3 * HOUR });
     return inp;
   };
   test("a romance-category event never yields a romance configuration of more than two people", async () => {
