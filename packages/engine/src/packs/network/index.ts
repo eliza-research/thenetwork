@@ -108,7 +108,7 @@ export const networkPack: AppPack = {
   },
   plans: { config: DEFAULT_PLANS, lane: "social", activities: ACTIVITIES },
   capital: {
-    earn: ["vouch", "attendance", "help", "organizing", "needs_answered", "review"],
+    earn: ["vouch", "attendance", "help", "organizing", "needs_answered", "review", "feedback"],
     lose: ["vouch_stake", "no_show", "ghosting", "abuse", "clawback", "fraud"],
     minorsExcluded: true,
   },
