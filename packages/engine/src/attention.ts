@@ -948,6 +948,13 @@ export function buildProbe(w: World, spec: ProbeSpec, recipient: MemberId, other
 }
 
 /** The digest message text: a numbered menu with the reply grammar (1.4). */
+/** PRD PH-003: every proactive message includes a simple path to silence or pause future outreach. */
+export const PAUSE_PATH = "Reply STOP anytime to opt out.";
+/** The message body with the pause path appended once (PH-003), unless it already has one. */
+export function withPausePath(body: string): string {
+  return /\breply stop\b|\bstop to opt out\b|\bopt[- ]out\b/i.test(body) ? body : `${body}${/\n/.test(body) ? "\n" : " "}${PAUSE_PATH}`;
+}
+
 export function digestText(lines: string[]): string {
   // The head names the count, so only 1-3 lines are valid (engine-attention-plans-19).
   if (lines.length < 1 || lines.length > 3) throw new Error(`digestText takes 1-3 lines, got ${lines.length}`);

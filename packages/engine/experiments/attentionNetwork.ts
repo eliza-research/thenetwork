@@ -490,6 +490,7 @@ export class AttentionNetwork extends StubNetwork {
     const p = picked ? this.proposals.get(picked.sourceProposalId!)! : undefined;
     let body = A.digestText(items.map(it => texts.get(it.id) ?? ""));
     if (kind === "reengage") body = `${body} ${A.REENGAGE_SUFFIX}`;
+    body = A.withPausePath(body); // PRD PH-003 (judge pause_path_missing)
     const note = this.notes.get(id);
     if (note) { body = `${note}\n\n${body}`; this.notes.delete(id); }
     const attention = { kind, items: items.map(x => x.sourceProposalId ?? x.key), picked: picked?.sourceProposalId };
@@ -497,6 +498,8 @@ export class AttentionNetwork extends StubNetwork {
       : this.o.probes
         ? { type: "probe", proactive: true, probe: { key: p.id, category: p.category, participants: [...p.participants], kind: p.kind, window: p.window }, attention }
         : { type: "proposal", proposalId: p.id, participants: p.participants, proactive: true, attention };
+    // Plan invites go in their own lane (founder decision 2026-10-08: plan allowance, judge LANE_BUDGETS).
+    if (memberItems.length && memberItems.every(x => x.kind === "plan_probe")) meta.lane = "plan";
     if (!p) this.stats.eventOnlyMessages++;
     for (const it of items) if (it.kind === "event_suggestion") {
       this.stats.eventsShown++;

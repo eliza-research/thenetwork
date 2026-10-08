@@ -154,7 +154,8 @@ export class PlanNetwork extends AttentionNetwork {
       // A profiling ask: not an interruption (decision 3), but it needs the Blooio reservation like one.
       if (!A.canInterrupt(this.x.convOf(id), this.cfg)) continue;
       this.checkInWeek.set(id, week);
-      const msg = this.x.send(m, CHECKIN_TEXT, { type: "question", proactive: false, checkIn: true });
+      // An opt-in profiling ask, not an interruption (founder decision 3); still carries a pause path (PRD PH-003).
+      const msg = this.x.send(m, A.withPausePath(CHECKIN_TEXT), { type: "question", proactive: false, checkIn: true });
       if (!msg || msg.status !== "delivered") continue;
       if (A.inMemberQuietHours(v, now, this.cfg)) this.planStats.checkInQuiet++;
       this.ledger.push({ messageId: msg.id, memberId: id, at: now, kind: "question", itemIds: [], countsAgainstCap: false });

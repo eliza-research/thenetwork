@@ -755,3 +755,12 @@ describe("audit 2026-10-08 (engine-attention-plans-16, -19, -22)", () => {
     expect(pr!.text).not.toContain("later today");
   });
 });
+
+describe("PRD PH-003 pause path (judge pause_path_missing)", () => {
+  test("withPausePath appends the pause path once", () => {
+    const { withPausePath, PAUSE_PATH } = require("../src/attention.ts") as typeof import("../src/attention.ts");
+    expect(withPausePath("Up for a hike Saturday?")).toBe(`Up for a hike Saturday? ${PAUSE_PATH}`);
+    expect(withPausePath(`Hi. ${PAUSE_PATH}`)).toBe(`Hi. ${PAUSE_PATH}`);
+    expect(withPausePath("Two things:\n1. a\n2. b")).toBe(`Two things:\n1. a\n2. b\n${PAUSE_PATH}`);
+  });
+});
