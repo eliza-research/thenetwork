@@ -37,6 +37,9 @@ export function parseYesNo(body: string): "yes" | "no" | "counter" | "unclear" {
   const r = parseReply(body);
   if (r.answer === "no") return "no";
   if (r.counter) return "counter";
+  // "sure, not this week though": a yes with a time constraint is not a yes to the proposed time,
+  // so the caller re-offers a slot instead of booking it.
+  if (r.answer === "yes" && r.constraints.some(c => c.kind === "time")) return "counter";
   return r.answer === "yes" ? "yes" : "unclear";
 }
 
