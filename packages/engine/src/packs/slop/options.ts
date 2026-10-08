@@ -155,9 +155,11 @@ export const SLOP_DEFAULT_OPTIONS: SlopPackOptions = {
   maxAsksPerField: 2,
   // Iteration 4 (founder decision 2026-10-08): ON. Soft, not band: in iteration 3 with photos in the
   // probe the band cut dates per member to 0.69-0.77x random and hurt small pools for no quality gain,
-  // while soft 0.1 tied photos alone on quality and kept volume (docs, I4).
+  // while soft 0.1 tied photos alone on quality and kept volume. Iteration-4 tuning (seeds 1-12, photos
+  // in the probe, body types in the world): soft 0.05 + body type had the best realized second-date
+  // rate and feasible-group fairness among rater-on arms; every rater-on arm tied rater-off within noise.
   appearance: {
-    mode: "soft", band: 1, softWeight: 0.1, minConfidence: 0.3,
+    mode: "soft", band: 1, softWeight: 0.05, minConfidence: 0.3,
     dims: { face: 0.25, body: 0.25, overall: 0.5 },
     bodyType: { enabled: true, statedWeight: 0.3, revealedWeight: 0.5, revealedShrink: 3, minConfidence: 0.4 },
   },

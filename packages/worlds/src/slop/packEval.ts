@@ -158,6 +158,8 @@ export async function runArm(arm: string, seeds: number[], weeks: number, perCit
 }
 
 const STACK = { verification: true, relay: true, review: 3, widen: true };
+/** Iteration-3 appearance semantics (overall only, no body type), so the it3 presets reproduce after the iteration-4 defaults. */
+const IT3 = { dims: { face: 0, body: 0, overall: 1 }, bodyType: { enabled: false } };
 /** The tuning trail (cumulative steps; run on seeds 1-4) and the ablations (each component off; held-out 5-8). */
 const OFF = { safetyGate: false, trust: { enabled: false }, asks: false, compatAsks: false, typeAsk: false, learned: { enabled: false }, reprobeAfterDays: 0, congestion: { scarceDegree: 0 } };
 export const PRESETS: Record<string, [string, object][]> = {
@@ -194,58 +196,66 @@ export const PRESETS: Record<string, [string, object][]> = {
   // Iteration 3 (tuning seeds 1-12, held-out 13-16), all with --population '{"catfish":0.005}' --world STACK3.
   it3tune: [
     ["stack3", {}],
-    ["soft 0.1", { $world: { rater: true }, appearance: { mode: "soft", softWeight: 0.1 } }],
-    ["soft 0.25", { $world: { rater: true }, appearance: { mode: "soft", softWeight: 0.25 } }],
-    ["soft 0.5", { $world: { rater: true }, appearance: { mode: "soft", softWeight: 0.5 } }],
-    ["band 1", { $world: { rater: true }, appearance: { mode: "band", band: 1 } }],
-    ["band 1.5", { $world: { rater: true }, appearance: { mode: "band", band: 1.5 } }],
+    ["soft 0.1", { $world: { rater: true }, appearance: { ...IT3, mode: "soft", softWeight: 0.1 } }],
+    ["soft 0.25", { $world: { rater: true }, appearance: { ...IT3, mode: "soft", softWeight: 0.25 } }],
+    ["soft 0.5", { $world: { rater: true }, appearance: { ...IT3, mode: "soft", softWeight: 0.5 } }],
+    ["band 1", { $world: { rater: true }, appearance: { ...IT3, mode: "band", band: 1 } }],
+    ["band 1.5", { $world: { rater: true }, appearance: { ...IT3, mode: "band", band: 1.5 } }],
     ["photos 1", { $world: { photos: 1 } }],
     ["photos 1 + learning", { $world: { photos: 1 }, attraction: { enabled: true } }],
-    ["photos 1 + soft 0.25", { $world: { photos: 1, rater: true }, appearance: { mode: "soft", softWeight: 0.25 } }],
-    ["photos 1 + band 1", { $world: { photos: 1, rater: true }, appearance: { mode: "band", band: 1 } }],
+    ["photos 1 + soft 0.25", { $world: { photos: 1, rater: true }, appearance: { ...IT3, mode: "soft", softWeight: 0.25 } }],
+    ["photos 1 + band 1", { $world: { photos: 1, rater: true }, appearance: { ...IT3, mode: "band", band: 1 } }],
   ],
   it3held: [
     ["stack3", {}],
-    ["stack3 + soft 0.1", { $world: { rater: true }, appearance: { mode: "soft", softWeight: 0.1 } }],
-    ["stack3 + band 1", { $world: { rater: true }, appearance: { mode: "band", band: 1 } }],
+    ["stack3 + soft 0.1", { $world: { rater: true }, appearance: { ...IT3, mode: "soft", softWeight: 0.1 } }],
+    ["stack3 + band 1", { $world: { rater: true }, appearance: { ...IT3, mode: "band", band: 1 } }],
     ["photos 1", { $world: { photos: 1 } }],
     ["photos 1 + learning", { $world: { photos: 1 }, attraction: { enabled: true } }],
-    ["photos 1 + soft 0.1", { $world: { photos: 1, rater: true }, appearance: { mode: "soft", softWeight: 0.1 } }],
-    ["photos 1 + band 1", { $world: { photos: 1, rater: true }, appearance: { mode: "band", band: 1 } }],
-    ["soft 0.1, bias 0.5", { $world: { rater: { bias: 0.5 } }, appearance: { mode: "soft", softWeight: 0.1 } }],
-    ["soft 0.1, bias 1", { $world: { rater: { bias: 1 } }, appearance: { mode: "soft", softWeight: 0.1 } }],
-    ["band 1, bias 0.5", { $world: { rater: { bias: 0.5 } }, appearance: { mode: "band", band: 1 } }],
-    ["band 1, bias 1", { $world: { rater: { bias: 1 } }, appearance: { mode: "band", band: 1 } }],
-    ["photos 1 + band 1, bias 1", { $world: { photos: 1, rater: { bias: 1 } }, appearance: { mode: "band", band: 1 } }],
+    ["photos 1 + soft 0.1", { $world: { photos: 1, rater: true }, appearance: { ...IT3, mode: "soft", softWeight: 0.1 } }],
+    ["photos 1 + band 1", { $world: { photos: 1, rater: true }, appearance: { ...IT3, mode: "band", band: 1 } }],
+    ["soft 0.1, bias 0.5", { $world: { rater: { bias: 0.5 } }, appearance: { ...IT3, mode: "soft", softWeight: 0.1 } }],
+    ["soft 0.1, bias 1", { $world: { rater: { bias: 1 } }, appearance: { ...IT3, mode: "soft", softWeight: 0.1 } }],
+    ["band 1, bias 0.5", { $world: { rater: { bias: 0.5 } }, appearance: { ...IT3, mode: "band", band: 1 } }],
+    ["band 1, bias 1", { $world: { rater: { bias: 1 } }, appearance: { ...IT3, mode: "band", band: 1 } }],
+    ["photos 1 + band 1, bias 1", { $world: { photos: 1, rater: { bias: 1 } }, appearance: { ...IT3, mode: "band", band: 1 } }],
     ["random + stack3", { $baseline: "random" }],
   ],
   it3bias: [
-    ["band 1, bias 0", { $world: { rater: { bias: 0 } }, appearance: { mode: "band", band: 1 } }],
-    ["band 1, bias 0.5", { $world: { rater: { bias: 0.5 } }, appearance: { mode: "band", band: 1 } }],
-    ["band 1, bias 1", { $world: { rater: { bias: 1 } }, appearance: { mode: "band", band: 1 } }],
-    ["soft 0.25, bias 0", { $world: { rater: { bias: 0 } }, appearance: { mode: "soft", softWeight: 0.25 } }],
-    ["soft 0.25, bias 0.5", { $world: { rater: { bias: 0.5 } }, appearance: { mode: "soft", softWeight: 0.25 } }],
-    ["soft 0.25, bias 1", { $world: { rater: { bias: 1 } }, appearance: { mode: "soft", softWeight: 0.25 } }],
+    ["band 1, bias 0", { $world: { rater: { bias: 0 } }, appearance: { ...IT3, mode: "band", band: 1 } }],
+    ["band 1, bias 0.5", { $world: { rater: { bias: 0.5 } }, appearance: { ...IT3, mode: "band", band: 1 } }],
+    ["band 1, bias 1", { $world: { rater: { bias: 1 } }, appearance: { ...IT3, mode: "band", band: 1 } }],
+    ["soft 0.25, bias 0", { $world: { rater: { bias: 0 } }, appearance: { ...IT3, mode: "soft", softWeight: 0.25 } }],
+    ["soft 0.25, bias 0.5", { $world: { rater: { bias: 0.5 } }, appearance: { ...IT3, mode: "soft", softWeight: 0.25 } }],
+    ["soft 0.25, bias 1", { $world: { rater: { bias: 1 } }, appearance: { ...IT3, mode: "soft", softWeight: 0.25 } }],
   ],
   // Iteration 4 (rater ON by default; founder wants photos in the probe). Run with
   // --population '{"catfish":0.005,"bodyTypes":true}' --world STACK3 (+ checkin). Tuning seeds 1-12, held-out 13-16.
   it4tune: [
     ["photos 1, rater off", { $world: { photos: 1 } }],
-    ["photos 1 + it3 soft 0.1 (overall only)", { $world: { photos: 1, rater: true }, appearance: { dims: { face: 0, body: 0, overall: 1 }, bodyType: { enabled: false } } }],
-    ["photos 1 + soft 0.1 face/body/overall", { $world: { photos: 1, rater: true }, appearance: { bodyType: { enabled: false } } }],
+    ["photos 1 + it3 soft 0.1 (overall only)", { $world: { photos: 1, rater: true }, appearance: { softWeight: 0.1, dims: { face: 0, body: 0, overall: 1 }, bodyType: { enabled: false } } }],
+    ["photos 1 + soft 0.1 face/body/overall", { $world: { photos: 1, rater: true }, appearance: { softWeight: 0.1, bodyType: { enabled: false } } }],
     ["photos 1 + body type only", { $world: { photos: 1, rater: true }, appearance: { softWeight: 0 } }],
-    ["photos 1 + soft 0.05 + body type", { $world: { photos: 1, rater: true }, appearance: { softWeight: 0.05 } }],
-    ["photos 1 + soft 0.1 + body type (default)", { $world: { photos: 1, rater: true } }],
+    ["photos 1 + soft 0.05 + body type (chosen default)", { $world: { photos: 1, rater: true } }],
+    ["photos 1 + soft 0.1 + body type", { $world: { photos: 1, rater: true }, appearance: { softWeight: 0.1 } }],
     ["photos 1 + soft 0.2 + body type", { $world: { photos: 1, rater: true }, appearance: { softWeight: 0.2 } }],
-    ["photos 1 + soft 0.1 + body type 0.6/1", { $world: { photos: 1, rater: true }, appearance: { bodyType: { statedWeight: 0.6, revealedWeight: 1 } } }],
+    ["photos 1 + soft 0.1 + body type 0.6/1", { $world: { photos: 1, rater: true }, appearance: { softWeight: 0.1, bodyType: { statedWeight: 0.6, revealedWeight: 1 } } }],
     ["photos 1 + band 1 + body type", { $world: { photos: 1, rater: true }, appearance: { mode: "band", band: 1 } }],
     ["no photos + default", { $world: { rater: true } }],
+  ],
+  // Pooled with it4held for the bias-sensitivity table (run on seeds 1-12).
+  it4bias: [
+    ["photos 1, rater off", { $world: { photos: 1 } }],
+    ["photos 1 + rater, bias 0", { $world: { photos: 1, rater: { bias: 0 } } }],
+    ["photos 1 + rater, bias 0.5", { $world: { photos: 1, rater: { bias: 0.5 } } }],
+    ["photos 1 + rater, bias 1", { $world: { photos: 1, rater: { bias: 1 } } }],
   ],
   it4held: [
     ["stack3, rater off", {}],
     ["no photos + rater (default)", { $world: { rater: true } }],
     ["photos 1, rater off", { $world: { photos: 1 } }],
-    ["photos 1 + it3 soft 0.1", { $world: { photos: 1, rater: true }, appearance: { dims: { face: 0, body: 0, overall: 1 }, bodyType: { enabled: false } } }],
+    ["photos 1 + it3 soft 0.1", { $world: { photos: 1, rater: true }, appearance: { softWeight: 0.1, dims: { face: 0, body: 0, overall: 1 }, bodyType: { enabled: false } } }],
+    ["photos 1 + soft 0.1 face/body/overall", { $world: { photos: 1, rater: true }, appearance: { softWeight: 0.1, bodyType: { enabled: false } } }],
     ["photos 1 + band 1 + body type", { $world: { photos: 1, rater: true }, appearance: { mode: "band", band: 1 } }],
     ["photos 1 + rater (DEFAULT)", { $world: { photos: 1, rater: true } }],
     ["photos 1 + rater, bias 0.5", { $world: { photos: 1, rater: { bias: 0.5 } } }],
