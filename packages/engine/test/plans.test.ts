@@ -1,7 +1,7 @@
 // Plans (src/plans.ts): planner scoring and least misery, the minors and romance exclusions, quorum,
 // backfill and fallbacks, crews, and the probe content rules (D5). Deterministic, no LLM calls.
 import { describe, expect, test } from "bun:test";
-import { DAY, HOUR } from "@thenetwork/core";
+import { DAY, HOUR, isSensitiveTerm } from "@thenetwork/core";
 import { ACTIVITIES, type Venue } from "../src/activities.ts";
 import * as A from "../src/attention.ts";
 import { DEFAULT_PLANS, resolvePlans } from "../src/config.ts";
@@ -274,6 +274,9 @@ describe("plan items and probe content (D5)", () => {
       expect(text!).not.toMatch(/divorce|recovery|evenings|goals/i);
     }
     expect(P.buildPlanProbe(w, plan({ invited: ids, activityId: "group_run" }), "ana", NOW, TZ)).toContain("Free.");
+  });
+  test("the probe copy allowlist never contains a sensitive term", () => {
+    for (const t of P.PLAN_COPY_PUBLIC) expect(isSensitiveTerm(t)).toBe(false);
   });
   test("crew, partner and group probe copy reads as English for every activity", () => {
     const w = mkWorld(climbers(["ana", "ben", "cy"]));
