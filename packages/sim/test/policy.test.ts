@@ -16,6 +16,10 @@ describe("persona policy helpers", () => {
     expect(parseYesNo("yeah im in lol")).toBe("yes");
     expect(parseYesNo("No thanks, not right now.")).toBe("no");
     expect(parseYesNo("I'll pass this time")).toBe("no");
+    // A yes with a time constraint is not a yes to the proposed time (re-offer a slot).
+    expect(parseYesNo("sure, not this week though")).toBe("counter");
+    expect(parseYesNo("yes but not Thursday")).toBe("counter");
+    expect(parseYesNo("yes, thursday works")).toBe("yes");
     expect(parseYesNo("Interested, but could we do a different day?")).toBe("counter");
     expect(parseYesNo("hmm")).toBe("unclear");
     // A conditional yes followed by a "no" is not consent: ask again (audit network-consent-2).
