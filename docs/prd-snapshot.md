@@ -39,13 +39,14 @@ Version 0.2 (October 5, 2026). This revision resolves every review comment, adds
 31. MVP system architecture
 32. Subsystem specifications
 33. Matching and opportunity engine v1: detailed design
-34. Testing strategy and the simulated world
+34. Validation: simulations only
 35. Admin console, backend tools, and data analysis
 36. Launch requirements we were missing
 37. MVP build plan and milestones
 38. Review decisions and comment resolution log
 39. Growth, network capital, and member ownership
 40. Work, friendship, love: the multi-app platform
+41. Experience design: attention budget, plans and continuous conversation
 Appendix A. Example experiences and conversations
 Appendix B. Core data objects and tool contracts
 Appendix C. Validation experiment matrix
@@ -75,7 +76,7 @@ You have more possible life around you than you can currently see. The Network h
 8. It must work through ordinary channels - especially phone and existing AI assistants - rather than requiring constant app engagement. It must not build profiles of people who have not joined: no scraped or shadow profiles. Growth comes from a carefully invited seed of high-quality members, and early value comes from single-player concierge help (events, places, plans) until the graph is dense enough for high-conviction introductions.
 9. Its economic model must not let money buy social rank, preferential access to people, or algorithmic favoritism.
 ## 1.3 MVP at a glance
-The MVP is an invite-only, messaging-first Network in two dense cities (San Francisco and New York) for roughly 150-300 members. Members talk to one Network agent by iMessage or SMS (optional voice call and web). The agent is built on Eliza Cloud's shared agent and stores everything in Postgres. A new, asynchronous matching and opportunity engine runs over that data, proposes introductions, small groups, event co-attendance, and help requests, and passes them through a human review queue. Approved proposals become double opt-in invitations sent by the agent. The agent then relays messages, schedules, reminds, handles flakes, and collects feedback. Admin, social-graph, and analytics tools, plus a simulated world of persona agents for testing, ship as part of the MVP. Payments, the Commons, partner inventory, the native-app map/location features, and third-party assistant connectors come after the MVP. Full definition: Section 28. Updated 2026-10-08 (Section 40): the MVP launches slop.date first on the shared platform, each app has its own agent persona on one shared iMessage line, and peon.biz and friends.help run locally only. The two-city and one-agent wording above is superseded in part by Section 40.
+The MVP is slop.date in New York City, the first app on The Network's shared platform (Section 40). People join by texting the one Blooio iMessage line ("slop") or through their own AI assistant, which reads the site's skill file and submits a profile through the MCP server (28.3). Adults are matched by lowest stated age (18+); members aged 13-17 may join but are never matched. The engine with the slop pack proposes pairs, and a human reviews every proposal before the first anonymous probe, which can include a photo. On mutual yes the agent books a first date at a public venue, and anything the two exchange (messages, numbers, photos) goes through the agent with consent per item. The four sites are on Cloudflare Pages and the shared backend runs on Railway. The team runs it from the admin console (the Observatory) and validates it with simulations only (Section 34). The Network's own matching follows in New York; San Francisco comes after the expansion gates (25.6). Payments, the Commons, the native app and hosted-assistant connectors beyond onboarding come later.
 # 2. Problem: why lives contract
 The enemy is not simply loneliness. It is contraction. Over time, many people develop less social and experiential surface area: fewer places they go repeatedly, fewer weak ties, fewer people they might call, fewer unfamiliar situations, fewer opportunities to be useful, fewer chances to discover a new interest, and fewer spontaneous reasons to be in a room with someone outside their existing pattern.
 People often say they do not have time. Clock time is real, especially during demanding life stages, but the product must recognize that lack of time usually bundles several distinct frictions.
@@ -673,7 +674,7 @@ Daily active users, minutes in app, notifications opened, and message volume may
 - Consent and privacy events require immutable audit logs.
 - Human overrides must be tagged so automated and concierge performance can be compared.
 # 22. Technical architecture and implementation requirements
-Decision (v0.2): The Network is built on the existing Eliza stack: Eliza Cloud (Cloudflare Workers API, Railway Postgres via Hyperdrive, webhook gateway), the Eliza shared agent for all member conversations, and the eliza.app website and Capacitor app. No sandbox or per-member container agents. All matching and opportunity processing is asynchronous over data in Postgres; the engine's output is turned into messages that the agent sends. Section 31 supersedes the generic stack below where they differ.
+Decision (v0.2): The Network is built on the existing Eliza stack: Eliza Cloud (Cloudflare Workers API, Railway Postgres via Hyperdrive, webhook gateway), the Eliza shared agent for all member conversations, and the eliza.app website and Capacitor app. No sandbox or per-member container agents. All matching and opportunity processing is asynchronous over data in Postgres; the engine's output is turned into messages that the agent sends. Section 31 supersedes the generic stack below where they differ. Superseded for the pilot (2026-10-08): the shared backend runs on Railway as its own service (deploy/backend) and the sites on Cloudflare Pages; see the Section 31 status note.
 
 ## 22.1 Recommended MVP stack
 | Layer | Recommendation | Reason |
@@ -687,7 +688,7 @@ Decision (v0.2): The Network is built on the existing Eliza stack: Eliza Cloud (
 | Workflow | Postgres job table with due times and leases, driven by existing Cloudflare cron fan-out; a batch worker for matching. | Opportunity state, reminders, timeouts, bilateral consent, cancellation, and settlement are long-running workflows. |
 | Messaging/voice | iMessage via Blooio and SMS/voice via Twilio through the Eliza Cloud webhook gateway; later Telegram, WhatsApp, Signal. | Already integrated in Eliza Cloud; meet people on the channel they already use. |
 | Model layer | Vendor-neutral model gateway with structured outputs and tool calling. | Different tasks may use different models; social policy stays server-side. |
-| External AI integration | Remote MCP + REST adapter + phone-verified agent keys (11.5). (Post-MVP, Section 28.4.) | Portable across compatible assistant ecosystems. |
+| External AI integration | Remote MCP + REST adapter + phone-verified agent keys (11.5). (Onboarding through MCP is MVP, 28.3; the wider connector surface is later, 28.4.) | Portable across compatible assistant ecosystems. |
 | Analytics | Event stream to warehouse; product metrics and model evaluation separated from operational DB. (MVP: nightly Postgres export to Parquet in R2 queried with DuckDB, plus a read replica, Section 31.4.) | Reproducibility and experimentation. |
 
 
@@ -785,7 +786,7 @@ The Network is unusually powerful because it sits between people, relationships,
 
 # 25. Launch plan and staged roadmap
 ## 25.1 City strategy
-Launch one city first, not two. NYC and San Francisco are both plausible, but the key variable is local density and founder/operator reach. A network of 100 people spread across two cities is often weaker than 75 people concentrated within a small set of adjacent neighborhoods. Superseded (v0.2): launch two cities, San Francisco and New York, each concentrated in a small set of adjacent neighborhoods. Two cities from day one prove the system works multi-city and serve the many members who live between both. The density risk is managed with per-city thresholds: each city needs its own dense seed (40-75 members, Section 36.5) and at least 40 committed members before proactive matching is switched on there (Section 28.5); the MVP target is 75-150 active members per city (Section 28.1). Superseded in part by Section 40 (2026-10-08): slop.date launches first, matched within one city, several cities, or a radius from a zip code; SF and NYC remain The Network's own cities.
+Launch one city first, not two. NYC and San Francisco are both plausible, but the key variable is local density and founder/operator reach. A network of 100 people spread across two cities is often weaker than 75 people concentrated within a small set of adjacent neighborhoods. Superseded (v0.2): launch two cities, San Francisco and New York, each concentrated in a small set of adjacent neighborhoods. Two cities from day one prove the system works multi-city and serve the many members who live between both. The density risk is managed with per-city thresholds: each city needs its own dense seed (40-75 members, Section 36.5) and at least 40 committed members before proactive matching is switched on there (Section 28.5); the MVP target is 75-150 active members per city (Section 28.1). Superseded in part by Section 40 (2026-10-08): slop.date launches first, matched within one city, several cities, or a radius from a zip code; SF and NYC remain The Network's own cities. Current (2026-10-08): New York City only for the pilot, starting with slop.date; San Francisco follows only after the expansion gates (25.6).
 ## 25.2 Stage 0 - Concierge prototype (0-8 weeks)
 - 30-50 invite-only members in one dense geography. Revised (v0.2): 30-50 in each of two dense geographies (SF and NYC). In the v0.2 plan the seed is 40-75 per city (Section 36.5), and Stage 0 corresponds to milestone M6 (private pilot, about weeks 12-14 of the build, Section 37), not weeks 0-8.
 - Phone/SMS onboarding; human stewards use an internal profile template. Channels: iMessage via Blooio and SMS via Twilio to start; later Signal, Telegram, and WhatsApp.
@@ -842,7 +843,7 @@ A purely technical founding plan is insufficient. The product is a social system
 # 27. Open questions and decision log
 | Question | Current PRD position | When to decide |
 |---|---|---|
-| NYC or San Francisco first? | Decided (v0.2): both, each with a dense neighborhood seed and its own activation threshold. (Superseded in part by Section 40: slop.date launches first.) | Decided. |
+| NYC or San Francisco first? | Decided (v0.2): both, each with a dense neighborhood seed and its own activation threshold. (Superseded: New York City only for the pilot, slop.date first; San Francisco after the expansion gates, 25.6.) | Decided. |
 | Should the product use XP/levels? | Only private, optional, role-based progression; no universal hierarchy. | After qualitative pilot proves motivation need. |
 | How many invites does each member get? | MVP default: 3 per member per month, adjustable by network need (Section 32.15); not a recruiting reward. | Tune weekly during pilot (Section 36.5). |
 | Should there be any member-visible "capital" view? | Show inventories/capabilities and collective growth, not a score, and only when the member opts in. Never show scores directly. | Design prototype. |
@@ -866,13 +867,20 @@ A purely technical founding plan is insufficient. The product is a social system
 | Profile enrichment sources | The member's own AI summary, conversation, screenshots, pasted LinkedIn text, Calendar, X OAuth (never for sensitive traits). No Gmail scopes, no scraping without legal sign-off, never non-members (32.5). | Decided. |
 | Notifications across apps and assistants | One inbox for every surface; at most one message per person per send; links into the member's assistant carry a task token, never a credential (32.9). | Decided; tune caps in the pilot. |
 | X bot, Telegram, WhatsApp | X bot not in MVP (later, for distribution only). Telegram is the first channel after launch. WhatsApp is excluded while its ban on AI assistants stands. | After launch. |
+| STOP/HELP owner on the shared line | Open. The service answers keywords today; Eliza Cloud may also receive the line's webhook. One owner only. | Before any live send. |
+| Where the conversation runs | Open: the service's own LLM reader or the Eliza shared agent (packages/plugin-network). The service owns every member message today (32.3). | Before the onboarding work (37.1, item 4). |
+| Join mode for peon.biz and friends.help on production | Open: invite, open or waitlist. The code default is open, and the setting is data (40.2). | Before their sites take joins. |
+| Ban evasion | Open: build a same-face check, or drop that gate and rely on bans by phone and person (40.5). | Before the pilot. |
+| Keep the security suite? | Open: bun run security (six files) runs as a non-blocking CI job (34.2). | Before the backend deploy. |
+| Clef weight fitting | Open: the fitter was deleted in the cleanup and the shipped weights are a placeholder. Rebuild it for prototype P2, or keep ratings off until fitted weights exist. | Before ratings feed live matching. |
+| Other platform questions | A legal entity per app, a second line, recycled numbers, storing a refused age, hash-key rotation, review deadlines per app and more: docs/mvp-gaps.md, section 5. | Before or during the pilot. |
 
 
 
 # 28. MVP definition: what ships first and what does not
 Sections 1-27 describe the full product direction. This section defines the first version precisely. Anything not listed as MVP here is not built for launch, even if an earlier section describes it.
 ## 28.1 The MVP in one paragraph
-An invite-only Network in San Francisco and New York for about 150-300 members (target 75-150 active per city). Members join through a vouch from an existing member or the founding team, and talk to one Network agent over iMessage (Blooio) or SMS (Twilio), with an optional voice call for onboarding and a web page for reviewing what the Network knows. The agent is the Eliza Cloud shared agent with a Network character and a Network plugin; all state lives in Postgres. A new asynchronous matching and opportunity engine runs over that data and produces proposals: one-to-one introductions, small groups (3-6), event co-attendance, bounded help requests, and network-growth asks. While the network is under 1,000 members, every proactive proposal is reviewed by a human before it is sent. Approved proposals become double opt-in invitations sent by the agent; once accepted, the agent relays messages, schedules, reminds, checks in on the day, handles cancellations and flakes, and collects feedback that updates the graph. Each city has a monthly all-member gathering. The team operates the Network through an admin console with full conversation, social-graph, member-perspective, and analytics views, and tests it with a simulated world of persona agents that send real messages through the same pipeline. (A committed member has completed onboarding and opted into proactive messages. An active member has exchanged a message with the agent or taken part in an opportunity in the last 30 days.) Update (2026-10-08, Section 40): the MVP now launches slop.date first on the shared multi-app platform, with ntwrk.love as the home page and one iMessage line with keyword routing; peon.biz and friends.help run locally only. The San Francisco and New York pilot described above is superseded in part by Section 40.
+Status (2026-10-08): the first pilot is slop.date in New York City, on the shared multi-app platform (Section 40), starting with about 40-75 committed adults. People join by texting the one Blooio iMessage line with a keyword ("slop"; with no keyword they join The Network and the agent asks what they want) or through their own AI assistant, which reads the site's SKILL.md, has them confirm their own phone by text code, and submits the profile through the MCP server. The minimum age is 13: under-13s are declined and nothing is stored beyond the decline, and members aged 13-17 use the agent for themselves and are never matched or connected. Adult means the lowest stated age is 18 or more; there is no ID check. The engine runs the slop pack over Postgres and proposes pairs. While the network is under 1,000 members, a human reviews every proactive proposal and every member-initiated request before any member is contacted, and a proposal that misses its review deadline expires. Approved proposals start with a consent-first anonymous probe (age band, distance band, intent, one shareable fact, optionally one photo). On mutual yes the agent books a first date at a public venue, relays messages, numbers and photos with consent per item, reminds, checks in after the date and collects feedback. The four sites (ntwrk.love, slop.date, peon.biz, friends.help) are Cloudflare Pages projects, and the shared backend runs on Railway at api.ntwrk.love (31). The team operates the Network through the admin console, first built as the Observatory (packages/observatory), with staff sign-in, roles, review, safety and analytics, and validates it with simulations only (34). The Network's own matching (ntwrk) follows in New York City as an invite-only network of about 150 members with a monthly all-member gathering. The peon.biz and friends.help sites are live, but their matching and sends stay local. (A committed member has completed onboarding and opted into proactive messages. An active member has exchanged a message with the agent or taken part in an opportunity in the last 30 days.)
 ## 28.2 What the MVP must prove
 - Members find unexpected messages from the Network worth receiving (worthwhile-interruption rate at least 70%, mute/complaint rate under 5%).
 - High-conviction opportunities get accepted and happen (opt-in rate at least 40% of sent proposals; completion at least 70% of mutually accepted).
@@ -884,30 +892,32 @@ An invite-only Network in San Francisco and New York for about 150-300 members (
 
 | Area | MVP scope | Where specified |
 |---|---|---|
-| Membership | Invite and vouch flow, founding-team seed invites, automatic soft approval with flagged-case review, age attestation (13+; under-18 members are single-player only), phone verification, SF/NYC home city with multi-city presence. Updated 2026-10-08 (Section 40.3): members aged 13 and up may join every app; matching is 18+ in every app; slop.date locates members by city, several cities, or a radius from a zip code. | 8.1, 32.1, 32.15 |
-| Channels | iMessage via Blooio, SMS via Twilio, optional inbound/outbound voice call for onboarding, web chat on eliza.app. STOP/HELP compliance. | 32.2 |
-| Agent | Eliza shared agent with Network character, Network plugin (actions, providers, evaluators), progressive profiling, concierge search for events and places. One persona per app on the shared agent (40.3). | 32.3 |
+| Membership | Join by keyword on the shared line, by the person's own AI through MCP, or on the web; invite and vouch for The Network (slop.date is open join). Founding-team seed invites; automatic soft approval with flagged-case review; phone verification by text code. Minimum age 13: under-13s are declined kindly and nothing is stored beyond the decline; members aged 13-17 may join every app and are never matched (matching is 18+ by lowest stated age, 40.3). New York City is the home city; a member can record a trip to another city. slop.date locates members by city, several cities, or a radius from a zip code. | 8.1, 32.1, 32.15 |
+| Channels | One Blooio iMessage line for every app, routed by keyword (40.3). Twilio only sends the web login codes. SMS fallback, voice and web chat are later. STOP/HELP compliance, with one system owning keywords on the line (an open founder decision, 27). | 32.2 |
+| Agent | Today the Network service (deploy/backend) answers every member message, with deterministic asks per app; an LLM reader for free text is still to be wired (37.1). Whether the conversation moves to the Eliza shared agent (Network character and plugin, packages/plugin-network) is an open founder decision (27). One persona per app (40.3); progressive profiling; concierge search for events and places later. | 32.3 |
 | Profile model | Members, facets, intents, presence, edges, consent, provenance and confidence, privacy scopes. | 13.1, 32.4 |
 | Enrichment | Conversation extraction; inviter vouch notes; optional Google Calendar connection; public LinkedIn/X profile from a URL the member gives; pasted memory summary from the member's AI assistant. LinkedIn's terms prohibit automated fetching, so for LinkedIn the member pastes their profile text; this is the main path, not a fallback. An X bio may be read from the URL where the terms allow. | 32.5 |
-| World knowledge | Curated per-city event ingestion from sources whose terms allow it (Cerebral Valley, Luma calendar feeds, open-data and venue calendars; Eventbrite, Meetup and Partiful only through partnerships) plus web search and maps. | 32.6 |
+| World knowledge | Curated New York City event ingestion from sources whose terms allow it (Cerebral Valley, Luma calendar feeds, open-data and venue calendars; Eventbrite, Meetup and Partiful only through partnerships) plus web search and maps. | 32.6 |
 | Matching engine | Opportunity types: 1:1 intro, small group, event co-attendance, help request, member-initiated introduction, newcomer welcome, network-growth ask. Hard filters, retrieval, scoring with LLM judgment, group composition, load balancing, exploration, explanations. | 33 |
-| Human review | Review queue for every proactive proposal; approve, edit, re-roll, reject with reason codes; reviewer rubric; labels stored as training data. | 32.8, 33.9 |
+| Human review | Review queue for every proactive proposal and every member-initiated request, before the first member contact (the anonymous probe included). Approve, edit, re-roll, reject with reason codes. A proposal that misses its SLA expires and is never sent late. Eligibility is checked again on approve. Review is required in code while the live member count is under 1,000. Reviewer rubric. Labels are stored as training data. | 32.8, 33.9 |
 | Outreach control | Interruption budget, per-category preferences, quiet hours, two-unanswered auto-pause, participation states. | 7.2, 32.9 |
-| Consent workflow | Opportunity state machine, independent double opt-in, quorum for groups, expiry, decline without penalty, no exposure of who declined. | 32.10 |
+| Consent workflow | Opportunity state machine. A consent-first anonymous probe goes to each participant before anyone learns who the others are. Then independent double opt-in, quorum for groups, expiry, and decline without penalty. No member learns who said no to a probe or an invitation. | 32.10 |
 | Relay | Network-mediated messaging between participants; contact swap on mutual request; persistent relay threads. | 17.3, 32.11 |
 | Scheduling | Availability capture, time proposals, calendar free/busy check (if connected), venue suggestions, confirmation, reminders, day-of check-in, reschedule, cancel, flake handling and replacement. | 32.12 |
 | Feedback | Post-meeting factual then subjective questions, edge updates, reliability evidence, second-encounter candidates. | 32.13 |
 | Safety and privacy | Privacy scopes, explanation provenance, leak checks on every outbound message, block and report by text, safety holds, high-risk exclusions, PII scrubbing for reviewers and logs. | 17, 32.14 |
 | Events | Monthly all-member gathering per city: invitations, RSVPs, reminders, seating/grouping suggestions, follow-ups. | 32.16 |
 | Member web | "What the Network knows about me" review and edit, states and preferences, connected sources, invites, history, export and delete. | 32.17 |
-| Admin and analytics | Member 360, conversation viewer, member-perspective timeline, social-graph explorer, opportunity pipeline, matching-run inspector, review queue, safety queue, metrics dashboards, audit log. | 35 |
-| Testing | Unit/contract/policy tests per subsystem, simulated world with persona agents, virtual clock, scenario library, LLM judges, privacy canaries, load and chaos tests. | 34 |
+| Admin and analytics | The admin console, first built as the Observatory (packages/observatory). It has: review queue with SLA; member 360; member-perspective timeline (messages plus system decisions); social-graph explorer; opportunity pipeline; matching-run inspector with shadow runs; safety console; requests and demand; growth; metrics and health alerts; audit log; simulation lab. Staff sign in with SSO and a second factor and have roles. Views are PII-scrubbed by default, and every reveal and staff read is logged. The console reads a read-only replica; staff actions go through the Network admin API. | 35 |
+| Testing | Simulations only: bun run sim, the single validation command, with blocking and tracked gates per block (evals corpora, The Network, slop, peon, friends) and the conformance rules for every pack; shadow mode on real data. The security suite is pending a founder decision (34). | 34 |
 | Network capital (internal) | Private ledger built from events the MVP already records (vouches, attendance, feedback, confirmed help, organizing). Drives agent effort tiers, vouch capacity, and organizing reach; private "what you've built" view. Never visible to others, never used in anyone else's ranking, no cash value. | 39.2 |
 | App memberships and keyword routing | One person per verified phone with a membership per app (ntwrk, slop, friends, peon). One Blooio iMessage line for every app; the first message is routed by keyword; with no keyword the person joins The Network and the agent enrolls them in the apps they want. Members 13+ may join every app; matching is 18+. Cross-app privacy and blocks across apps. | 40.3 |
 | App packs | One engine with a pack per app (ontology, filters, scoring, consent, geo, oracle, sims). Core invariants no pack can loosen; networkPack byte-identical to today; shared conformance suite. | 40.4 |
 | slop.date pack and sim | Stated preferences as filters, reciprocal scoring with congestion and exposure caps, probe first then a booked first date, radius or city geo with distance bands, safety basics; sim world with adversaries and launch gates. | 40.5, 40.8 |
 | Admin app switcher | One admin panel with an app switcher, per-app roles and review queues, and an audited cross-app person view for safety only. | 35, 40.3 |
-| Home page and app sites | ntwrk.love is the home page for the whole concept; slop.date has its own landing page and agent persona. | 40.1 |
+| Home page and app sites | All four sites (ntwrk.love, slop.date, peon.biz, friends.help) are on Cloudflare Pages. ntwrk.love is the home page for the whole concept; each app has its own landing page and agent persona, and the landing pages are agent-first (Agent-first onboarding row). | 40.1 |
+| Agent-first onboarding (MCP and skills) | Each site gives the person one prompt for their own AI (ChatGPT, Claude, Grok, Perplexity and others): read the site's SKILL.md and sign me up. The agent collects the profile in conversation, hands the person one link to confirm their own phone (the agent never sees the code), then submits the profile through the MCP server on the backend (packages/mcp; hosted assistants use OAuth with a phone sign-in, 11.5). Joining by text works too. | 11, 40.3 |
+| Web account page | Each app's site has a settings page: phone login with a text-message code, membership state, export of this app's data, stop messages for this app, leave this app, and delete everything (typed confirmation). A login on one domain is not a login on another. | 40.3 |
 
 
 ## 28.4 Explicitly not in MVP (and what it builds on)
@@ -916,7 +926,7 @@ An invite-only Network in San Francisco and New York for about 150-300 members (
 |---|---|---|
 | Native app Network tab, push notifications, location sharing, "around tonight" presence, map | Messaging covers the MVP loop; location needs privacy validation (20.3). | Presence model, Capacitor app, native location plugin |
 | Bluetooth/proximity discovery at events | Needs app and safety design. | Presence, events program |
-| ChatGPT / Claude / Grok / Muse connectors (five-tool MCP surface at mcp.ntwrk.love) | Needs phone-verified agent keys for MCP clients (Section 11.5); OAuth only if a host requires it (Section 30). | ask/tell_network_agent = the same agent turn; share_profile_with_network = enrichment pipeline |
+| Hosted-assistant connectors beyond onboarding (the full five-tool MCP surface for updates, asks and responses) | Onboarding through MCP and the site skills is in the MVP (28.3); the rest of the connector surface follows the pilot. Hosted assistants sign in with OAuth and a phone code (11.5). | ask/tell_network_agent = the same agent turn; share_profile_with_network = enrichment pipeline |
 | Telegram, WhatsApp, Signal channels; agent in existing group chats | Telegram and WhatsApp adapters exist in the cloud gateway, so these are fast follows; Signal has no connector. | Channel gateway, identity linking |
 | Forwarding opportunities to non-members via private links | Validation gate in 20.3 (forwarding and privacy expectations). | Invitations, consent workflow |
 | Gmail, Instagram, and broader data import | Sensitive; prove value with lighter sources first. | Enrichment pipeline with provenance |
@@ -929,22 +939,23 @@ An invite-only Network in San Francisco and New York for about 150-300 members (
 | Learned ranking models and learned joint embeddings | Need labeled outcomes from MVP first. | Review labels, outcome data, matching logs |
 | Graph topology optimization, capability-coverage modeling | Need scale. | Graph analytics in admin |
 | Private progression, roles, gamification | Validation gate (20.3). | Feedback and edge history |
-| Cities beyond SF and NYC for The Network's own matching (slop.date markets: Section 40.5) | Expansion gates (25.6). | Multi-city presence model |
+| Cities beyond New York City, San Francisco included (slop.date markets: Section 40.5) | Expansion gates (25.6). | Multi-city presence model |
 | Spendable network capital (time-bank style requests between members) | Needs the internal ledger, fairness and gaming results, and legal review first (39.2). | Network capital ledger, effort tiers |
 | Borrowing, lending, rental, and a marketplace | Goods changing hands need custody, disputes, and safety design (39.3). | Opportunity object, reliability evidence |
 | Group purchases and collective buying | Needs payments and money custody (18, 39.3). | Intents, small-group composition |
-| Public deploys of peon.biz and friends.help | slop.date launches first; the other two run locally only until their packs pass their sim gates and the founder approves (40.6). | App packs, shared platform, local sim worlds |
+| Live matching and sends for peon.biz and friends.help | slop.date launches first. Their sites are on Pages, but their matching and sends run locally until the founder approves; their packs already pass their sim gates (40.6). | App packs, shared platform, local sim worlds |
 | Legal and compliance backlog (NYC LL144 bias audit, dating-safety notices, 10DLC registration and others) | Not a launch blocker for now (founder decision 2026-10-08); the safety guards stay (40.7). | Audit log, consent ledger, relay log |
 
 
 ## 28.5 MVP launch gates (go/no-go)
-- All MVP flows in Section 29 pass end-to-end in the simulated world for 30 simulated days at accelerated time, with no privacy-canary leaks and no state-machine invariant violations.
-- Every proactive message path goes through the review queue and outbound leak check; this is enforced in code, not by convention.
-- STOP/HELP, block, and report work on every channel; safety escalation runbook rehearsed.
-- Messaging compliance complete: Twilio A2P 10DLC or toll-free verification approved (superseded by Section 40.7: registration is in the deferred compliance backlog, not a launch gate); Blooio sending limits understood; opt-in language recorded.
-- Admin console can show any member's full experience (their messages, what the engine considered for them, and why) within two clicks.
-- Seed cohort recruited: at least 40 committed members per city before proactive matching is enabled in that city.
-- Terms, privacy policy, and community guidelines published (36.2); safety on-call staffed with response targets (36.3); reviewers trained and calibrated on the rubric (36.7); cost alerts live (36.4); backup restore tested (36.9).
+- bun run sim passes every blocking gate on the pinned seeds (152 on 2026-10-08), with no privacy-canary leaks and no invariant violations. Tracked gates are printed and reviewed; any waiver is written by the founder (34.1, 40.8).
+- Every proactive proposal and every member-initiated request goes through the review queue before the first member contact, the anonymous probe included. Every outbound message goes through the leak check. Code enforces both, and a simulator invariant checks that no probe goes out without a prior approval. A proposal that misses its review SLA expires.
+- STOP/HELP, block, and report work on the live line, with one system owning STOP/HELP on the shared line; the safety escalation runbook is rehearsed.
+- Messaging: Blooio deliverability measured on test phones (daily cap per line, attachments, no account flag; prototype P3, 37.2) and the opt-in wording recorded. 10DLC registration is in the deferred backlog (40.7), not a gate.
+- The admin console (the Observatory) can show any member's full experience within two clicks: their messages, what the engine considered for them, why each item was or was not sent, review decisions and leak-check results. Staff sign in with SSO and a second factor and have roles. Views are PII-scrubbed by default. Every PII reveal and every staff read of member data is in the audit log. The console is not reachable without sign-in.
+- Seed cohort recruited: at least 40 committed adults in New York City before proactive matching is enabled for an app, after at least two weeks of shadow mode with every proposal reviewed (34.6). Only an admin can switch matching on in the console, and the switch is logged.
+- Safety on-call staffed with response targets (36.3); reviewers trained and calibrated on the rubric (36.7); cost alerts live (36.4); backup restore tested (36.9). Published terms and policies are in the deferred backlog (40.7).
+- Age policy: under-13s are declined at join with nothing stored beyond the decline. Simulated runs show 0 minor contacts. The safety console lists members aged 13-17 and confirms none is in a multi-person opportunity.
 # 29. User flows and interactions: MVP and later
 Each flow lists the trigger, the steps, the systems involved, and the main edge cases. Flows marked MVP must work at launch. Later flows are designed to reuse the same objects and state machine.
 ## 29.1 Flow index
@@ -1136,6 +1147,7 @@ Soulmates is an elizaOS WhatsApp dating matchmaker ("Ori") with a separate batch
 - Pitfalls to avoid (observed in their code): a completed match permanently blocking a user from further matching; blocks stored in one ID space and compared in another; negative-feedback cooldowns that stop working once feedback is processed; profile syncs wiping learned engine state; a cached zero score that never expires after one noisy LLM verdict; an LLM score that silently replaces reliability and safety signals; configured minimum-score thresholds that are never applied; stated dealbreakers not enforced as hard filters; whole-database in-memory snapshots every tick; no fake clock (timestamps were back-dated in tests); a benchmark that tested code paths production did not use; and eight monkey patches around agent-framework behavior. Each of these becomes an explicit requirement or test in Sections 33 and 34.
 - Related prior art: lalalune/loveofyourlife (LoveGPT, love-match-api on Cloudflare Workers with D1 and Vectorize) is an assistant-skill-based matchmaking design in which the user's own AI assistant builds the profile and the server enforces reciprocal eligibility and mutual introductions. It is a useful reference for the later assistant-connector flow (L1).
 # 31. MVP system architecture
+Status (2026-10-08): superseded for the pilot where it differs. As built, one Bun service (deploy/backend/server.ts, wrapping packages/network/service) runs on Railway at api.ntwrk.love with Railway Postgres. It serves the platform API, the signed Blooio webhook for the one shared line, keyword routing, the MCP server for agent-first onboarding, and a private staff API for review, safety and the matching switch. The engine runs inside the service's one-minute tick. The four sites are Cloudflare Pages projects whose router forwards /api, /mcp and the OAuth paths to the backend. The admin console is the Observatory on Railway behind Cloudflare Access. Eliza Cloud, the Eliza shared agent and the Twilio SMS path are not on the live path; whether the conversation moves to the Eliza agent is an open founder decision (27). The principles below still hold.
 ## 31.1 Architectural principles
 - Build on Eliza, add a Network module. Network code lives in the Eliza monorepo as a Network plugin (agent side), a Network service package (domain logic, schema, jobs), routes in Eliza Cloud, and an admin app. No forked infrastructure. (Default; the monorepo versus dedicated-repository decision is confirmed in M0, Section 36.10.)
 - Conversation is synchronous; the Network is asynchronous. The agent answers members in real time. Everything that involves more than one member (matching, invitations, scheduling across people, reminders, feedback) is driven by jobs over Postgres and results in messages the agent sends.
@@ -1166,14 +1178,14 @@ Soulmates is an elizaOS WhatsApp dating matchmaker ("Ori") with a separate batch
 - Commitment loop: accepted opportunities drive scheduling, reminders, day-of check-ins, attendance, and feedback jobs on the Clock.
 - Learning loop: feedback, attendance, review decisions, and declines update edges, reliability evidence, intent status, and offline evaluation sets.
 ## 31.4 Data flow and storage boundaries
-- Network tables live in a dedicated network schema in the Eliza Cloud Postgres (separate migrations, separate roles), keeping Network data isolated from generic Eliza tables and easy to export or move.
+- Network tables live in a dedicated network schema in the Eliza Cloud Postgres (separate migrations, separate roles), keeping Network data isolated from generic Eliza tables and easy to export or move. Schema changes are numbered SQL migrations with a ledger table and an advisory lock (bun run db:migrate). A migration runs once. Production migrations run as a role that row-level security does not filter.
 - The shared agent's conversation history remains in the Durable Object and its Postgres mirror; the Network keeps its own message log for relay threads and outreach (needed for admin views, feedback, and safety evidence).
 - Embeddings live next to facets and intents (pgvector HNSW). Geography uses H3 cells at several resolutions plus lat/lng; travel times come from the maps service with caching.
 - Analytics reads from a replica or a nightly export (Postgres to Parquet in R2, queried with DuckDB or a hosted warehouse), never from the primary during peak.
 ## 31.5 Environments
 - Local: PGlite or Docker Postgres, mocked channels, virtual clock, deterministic model plugin for unit tests.
 - Staging: eliza-cloud-api-staging, staging Postgres, test phone numbers, simulated world runs at accelerated time.
-- Production: dedicated Network sender numbers (per city or one national number, decided in M0 after Blooio and 10DLC capacity checks, Section 32.2; superseded by Section 40.3: one Blooio line for every app, routed by keyword), production Postgres, review queue enforced, sim traffic forbidden.
+- Production: dedicated Network sender numbers (per city or one national number, decided in M0 after Blooio and 10DLC capacity checks, Section 32.2; superseded by Section 40.3: one Blooio line for every app, routed by keyword), production Postgres, review queue enforced, sim traffic forbidden. The admin console reads a read replica through a read-only login (network_observatory, no access to channel_identities) and one database role per app with row-level security (40.3). Game and simulation controls are off in production.
 - Shadow mode (pre-launch): the engine runs on real seed-member data and writes proposals to the review queue only, never sending, to measure precision.
 # 32. Subsystem specifications
 Each subsystem lists purpose, what is reused from Eliza, what is new, key data, key logic, interfaces, and MVP scope.
@@ -1187,9 +1199,9 @@ Each subsystem lists purpose, what is reused from Eliza, what is new, key data, 
 - Purpose: receive and send messages on every supported channel reliably and compliantly.
 - Reuse: Blooio and Twilio adapters, gateway-webhook, outbound send utilities, Twilio voice bridge, group bindings.
 - New: Network sender numbers (one iMessage/SMS identity per city or one national number; decide after Blooio and 10DLC capacity checks; superseded by Section 40.3: one Blooio line for every app, routed by keyword); network.outbound_messages (idempotency key, channel, template/brief id, status, provider id, delivered/read timestamps); STOP/HELP/START keyword handling verified for Network numbers; per-recipient and per-number rate limits; quiet-hours enforcement in the member's local time; delivery failure fallback (iMessage to SMS).
-- MVP scope: iMessage and SMS, optional voice, web chat. Telegram and WhatsApp are a fast follow because adapters exist.
+- MVP scope (2026-10-08): one Blooio iMessage line for every app (40.3); Twilio only for web login codes; SMS fallback, voice and web chat later; Telegram is the first channel after launch (27). Each live send needs BLOOIO_ALLOW_SEND=1, the founder's live approval (NTWRK_LIVE_APPROVED=1) and the founder's approval for that app (<APP>_LIVE_APPROVED=1). The person-level cap (40.3) is checked at send time.
 ## 32.3 Network agent (Eliza shared agent)
-- Purpose: the voice of the Network for every member conversation. Each app has its own persona on this agent (Section 40.3).
+- Purpose: the voice of the Network for every member conversation. Each app has its own persona on this agent (Section 40.3). Status (2026-10-08): the Network service owns every member message on the shared line today, with deterministic asks; packages/plugin-network is not connected to the line. Whether the conversation runs in this agent or in the service is an open founder decision (27).
 - Reuse: shared runtime per turn, message service, web search, reminders, memory, voice session.
 - New: Network character (observant, concise, non-needy; style rules in 12.4 as testable rules); Network plugin with:
 - Providers: MEMBER_CONTEXT (shareable profile summary, states, preferences), ACTIVE_ITEMS (pending invitations, upcoming commitments, open relay threads, outstanding questions), CITY_CONTEXT (events this week, presence).
@@ -1217,14 +1229,14 @@ Specified in detail in Section 33.
 ## 32.8 Review queue and human-in-the-loop
 - Purpose: keep early precision very high and produce training labels.
 - New: review_items (proposal, priority, SLA, assignee, decision, edits, reason codes, time spent), reviewer rubric, reason-code taxonomy (weak reason, privacy risk, capacity concern, wrong timing, safety, tone, duplicate), re-roll with reviewer note, sampling of auto-approvable categories after the precision gate.
-- Policy: every proactive proposal is reviewed for the whole MVP and while the network is under 1,000 members. After that, a category may move to sampled review only once it has held the precision gate for 4 consecutive weeks. Member-initiated requests (a member asking for an intro) also pass review at launch; whether they can skip review is decided after the pilot. All outbound messages always pass the leak checker. Precision gate (proposed default, confirm before M6): reviewer approval without edits at least 80%, recipient opt-in at least 40%, and worthwhile-interruption rate at least 70% for the category. Review SLA: standard proposals within 12 hours, same-day proposals within 1 hour, with reviewer coverage hours set per city; a proposal that misses its SLA expires instead of being sent late.
+- Policy: every proactive proposal is reviewed for the whole MVP and while the network is under 1,000 members. After that, a category may move to sampled review only once it has held the precision gate for 4 consecutive weeks. Member-initiated requests (a member asking for an intro) also pass review at launch; whether they can skip review is decided after the pilot. All outbound messages always pass the leak checker. Precision gate (proposed default, confirm before M6): reviewer approval without edits at least 80%, recipient opt-in at least 40%, and worthwhile-interruption rate at least 70% for the category. Review SLA: standard proposals within 12 hours, same-day proposals within 1 hour, with reviewer coverage hours set per city; a proposal that misses its SLA expires instead of being sent late. Review happens before the first member contact, the consent-first anonymous probe included. The Network reads the live member count from the database. Approving a proposal re-checks age, block, pause and hold status for every participant. A simulated reviewer ('auto') is allowed only in the simulator.
 ## 32.9 Outreach and interruption control
 - Purpose: decide whether, when, and how to contact a member.
 - Inputs: participation state, per-category preferences, quiet hours, interruption budget (default Normal: at most 2 proactive messages per week; Open: 4; Quiet: 1 per month; Receiving: support-only; Paused: none), unanswered count, current commitments, local time. Budget counts proactive messages the member did not ask for (invitations, F6 questions, unsolicited recommendations); replies to the member and messages inside an accepted opportunity do not count. Budgets reset weekly in member local time.
 - Logic: priority ordering when several items compete; bundling into one message when appropriate; deferral to the next allowed window; the two-unanswered rule; all decisions logged with reasons.
 - Notifications (decided October 8, 2026): one inbox for every app and surface, and an item seen on any surface is seen everywhere. Each person gets at most one message per send across all apps on the shared line: requested reminders at once, urgent items after about 5 minutes, everything else in a digest, inside the weekly cap and quiet hours. Just before sending, items are re-checked and the message is cancelled if they were already seen elsewhere. The message carries the update in the thread, or points at the member's chosen or most-used assistant with a fill-only prefilled link and a task token, which is a reference and never a credential. Implemented in packages/notify; detail in docs/research/2026-10-08-entry-flows.md.
 ## 32.10 Opportunity workflow and consent
-- States: DRAFT, PROPOSED (engine), IN_REVIEW, APPROVED, INVITING, PARTIALLY_ACCEPTED, QUORUM_MET or MUTUALLY_ACCEPTED, SCHEDULING, SCHEDULED, RESCHEDULE_REQUESTED, NEEDS_REPLACEMENT, IN_PROGRESS, COMPLETED, FEEDBACK_COLLECTED; side and terminal states REJECTED_IN_REVIEW, DECLINED, EXPIRED, QUORUM_FAILED, CANCELLED, SAFETY_HOLD, DISPUTED, ABANDONED.
+- States: DRAFT, PROPOSED (engine), IN_REVIEW, APPROVED, PROBING (anonymous availability check; no identities shared), INVITING (reveal and double opt-in to those who said yes), PARTIALLY_ACCEPTED, QUORUM_MET or MUTUALLY_ACCEPTED, SCHEDULING, SCHEDULED, RESCHEDULE_REQUESTED, NEEDS_REPLACEMENT, IN_PROGRESS, COMPLETED, FEEDBACK_COLLECTED; side and terminal states REJECTED_IN_REVIEW, EXPIRED_IN_REVIEW, DECLINED, EXPIRED, QUORUM_FAILED, CANCELLED, SAFETY_HOLD, DISPUTED, ABANDONED.
 - Participation states per member: invited, accepted, declined, expired, confirmed, attended, cancelled_with_notice, no_show, replaced.
 - Rules: transitions are idempotent, permission-checked, and logged as events; invitations are independent (no participant learns another's decline); quorum and alternates for groups; expiry timers on the Clock; database constraints prevent duplicate active opportunities for the same set of people and objective. The allowed transitions (from, to, trigger, actor, timer) are defined as a table in code and documented here before M4; any transition not in the table is rejected and raises an invariant alert.
 ## 32.11 Relay and contact exchange
@@ -1243,7 +1255,7 @@ Specified in detail in Section 33.
 ## 32.16 Events program
 - New: monthly all-member gathering per city: event records, priority invitation lists (newcomers, isolated members, pending second encounters), RSVP tracking, suggested conversation groupings, follow-up "who do you want to see again?" feeding second encounters.
 ## 32.17 Member web surface
-- New: pages on eliza.app: What the Network knows (facets by kind with source, scope, edit), Intents, States and preferences, Connected sources, Invites, History (opportunities and outcomes), Privacy and data (export, delete). Login by phone number and text-message code only. Mobile-first.
+- New: pages on each app's site (first: the settings page, 28.3): What the Network knows (facets by kind with source, scope, edit), Intents, States and preferences, Connected sources, Invites, History (opportunities and outcomes), Privacy and data (export, delete). Login by phone number and text-message code only. Mobile-first.
 ## 32.18 Jobs, scheduling, and the Clock
 - New: network.jobs (type, payload, due_at, attempts, lease, idempotency key, status), job runner invoked by cron fan-out every minute and by the matcher service; Clock interface (now, sleep-until semantics via due_at) with RealClock and SimClock; all timers expressed as due_at rows so a simulation can advance time and drain due jobs deterministically.
 ## 32.19 Data platform and event log
@@ -1334,46 +1346,27 @@ If no proposal for a member's intent clears the bar for a set period (default 10
 | ME-012 | Exposure-concentration and fairness metrics are produced for every nightly run. |
 
 
-# 34. Testing strategy and the simulated world
-The Network is a social system, so most failures are not crashes. They are a bad introduction, a message at the wrong time, a leaked detail, a group that never forms, or a member who gets nothing for a month. Testing must therefore cover the code, the agent's behavior, the engine's judgment, and whole-network dynamics over time. Every MVP flow in Section 29 must be testable in four modes: unit, scenario, simulated world, and shadow on real data.
-## 34.1 Test layers
+# 34. Validation: simulations only
+Status (2026-10-08): simulations only. The founder decided that the only tests the repository keeps are simulations, so the unit, contract, property, golden and end-to-end test files were deleted (docs/CLEANUP-REPORT.md). The Network is a social system, so most failures are not crashes: a bad introduction, a message at the wrong time, a leaked detail, a group that never forms. Simulated worlds catch those, and shadow mode on real data (34.6) checks the engine before members see it. The world simulator design in 34.3-34.5 still describes what the simulations do.
+## 34.1 bun run sim
+bun run sim (scripts/sim.ts) is the single validation command. It clears the provider keys, needs no Postgres, runs in CI on every push, and exits 1 on any blocking gate failure. Tracked gates are printed and never fail. Flags: --only <block>, --quick (fewer seeds; quality gates become tracked), --json <file>, and --nightly (adds the capital block).
 
-| Layer | What it covers | Tools |
-|---|---|---|
-| Unit and property tests | Pure logic: state machine transitions, budgets, quiet hours, scoring functions, filters, privacy scope checks, slot proposal, quorum logic, ID handling | Vitest or Bun test; property-based tests (fast-check) for invariants |
-| Contract tests | Network API schemas, agent action inputs and outputs, channel adapter payloads (Blooio, Twilio), job payloads | Typed schemas; recorded provider fixtures; Mockoon mocks already used by Eliza Cloud |
-| Database tests | Migrations, constraints (no duplicate active opportunities), advisory locks, job leasing, deletion propagation | PGlite and Docker Postgres |
-| Extraction and judge golden sets | Facet and intent extraction precision, contradiction handling, judge calibration, explanation shareability | Labeled conversation snippets and pairs; regression thresholds |
-| Agent scenario tests | Single-member conversations through the real agent turn: onboarding, asks, state changes, STOP, block, relay commands | Eliza scenario runner with LLM-simulated users, deterministic style rules, LLM judges |
-| Multi-member scenarios | Two to eight members through intros, groups, scheduling, flakes, feedback | Eliza multi-agent arena extended with Network seats and private facts |
-| Simulated world | Hundreds of persona agents living for weeks of simulated time | Network World Simulator (34.3) |
-| Shadow mode | Engine runs on real seed data and only writes proposals for review | Production data, no sends |
-| Load and chaos | Throughput, latency, duplicate webhooks, provider outages, slow LLMs, job runner crashes | k6 or Artillery; fault injection in channel and model adapters |
-| Security and red team | Prompt injection, privacy extraction attempts, impersonation, harassment, scams, minors | Adversarial personas, canary facts, manual review |
+| Block | Pinned run | Blocking gates | Tracked (never fail) |
+|---|---|---|---|
+| evals | The corpora in evals/ | Every corpus gate (24): replies, opt-out, the leak guard, the MCP output leak gate | None |
+| network | Invariants on seed 3 for 10 days; consent against push on seeds 1-3 for 21 days; every NYC scenario | 61, including networkPack conformance and the attention and plans invariants | Run fingerprints |
+| slop | Seeds 13-16, 4 weeks, 300 per city; photo in the probe and the rater on | 0 declared-minor contacts, 0 stated-filter violations, scammer median reach at most 1, 0 leaks and no rating text, the quality gates that pass on the pinned seeds, slop conformance | Dates per member-month at least 0.9x random (0.82), age-liar contact cut at least 90% (82%), adversary-contact cut at least 90% (47%), smallest gender or orientation group at least 0.7x (0.33), harm-event cut at least 90% (87%) |
+| peon | Seeds 13-16, 8 weeks | The official gate set (10), sealed-attribute invariance, the four-fifths negative control, conformance | Run fingerprint |
+| friends | Seeds 5-8, 8 weeks | The official gate set (8), harness caps, conformance (no romance, no minors in plans) | Undetected-adversary harm (1.67x against 0.5x), run fingerprint |
 
 
-## 34.2 Subsystem test plans
+On 2026-10-08 the full run passed 152 of 152 blocking gates, with 7 tracked gates off target. Conformance (scripts/sim/conformance.ts) runs the core rules for every pack on its own worlds: minors in no role, blocks win, consent before reveal, the member-facing leak gate, and the judge cannot undo a hard filter.
 
-| Subsystem | How it is tested |
-|---|---|
-| Identity and membership | Invite token lifecycle; duplicate and merged identities; phone change preserving history; under-13 decline; under-18 single-player gating; soft-approval flags; role-based access to admin endpoints. |
-| Channel gateway | Inbound webhook signature checks and dedupe; outbound idempotency (same key sent twice delivers once); STOP/HELP/START keywords per channel; quiet hours across time zones; iMessage to SMS fallback; delivery-failure retries; rate limits. |
-| Network agent | Scenario suite per action with simulated users of different styles (terse, chatty, sarcastic, non-native English, voice transcripts); style rules (concise, no guilt, no over-flattery); tool-call correctness; refusal of out-of-scope or high-risk requests; prompt-injection attempts in member text. |
-| Profile model | Merge rules (said beats inferred), confidence decay, contradiction questions, revision bumps, deletion removing embeddings, engine-learned state surviving profile syncs. |
-| Extraction and enrichment | Golden sets with precision and recall targets per field; English normalization; additive-only enrichment; LinkedIn/X and AI-memory parsers on varied inputs; nothing stored without required confirmation. |
-| World knowledge | Ingestion parsers per source with recorded fixtures; dedupe; freshness rules; no stale real-time claims in agent replies. |
-| Matching engine | Hard-constraint property tests on every proposal (ME-001 to ME-012); retrieval recall against simulated ground truth; score component unit tests; judge calibration on labeled pairs; group composition tests (floors, roles, warm ties); fairness and concentration metrics; reproducibility from logs; Soulmates-pitfall regression tests (completed matches do not block, blocks effective, cooldowns persist, caches expire, thresholds applied). |
-| Review queue | Every proactive path lands in review; approve, edit, swap, re-roll, reject work; labels recorded; SLA alerts. |
-| Outreach control | Budget enforcement under concurrent jobs; two-unanswered pause; per-category preferences; bundling; deferral to allowed windows. |
-| Consent workflow | Exhaustive state-machine transition tests; independent invitations (no decline leakage); quorum and alternates; expiry on the Clock; idempotent replays. |
-| Relay | Prefixing and fan-out; contact swap requires both; moderation hold; thread persistence; leaving a thread. |
-| Scheduling | Slot proposals across availability types; calendar free/busy; time zones and DST; reschedule chains needing everyone; reminders and check-ins at the right virtual times; replacement on drop. |
-| Feedback and reliability | Declines never affect reliability; one forgiven no-show; rater-bias weighting; negative feedback only affects the pair; second-encounter generation. |
-| Privacy and safety | Canary facts (agent-private) seeded into personas must never appear in any outbound message, explanation, reviewer view, or log; inference-leak scenarios (for example, timing that reveals a private disclosure); block and report from every channel; safety holds stop all outreach; minor-isolation (zero minor contacts) and high-risk filters. |
-| Invitations and events | Allowances; vouch capture; monthly event invitations, RSVPs, reminders, groupings, and follow-ups. |
-| Member web | Edit and delete flows, privacy scope changes reflected in the engine, export completeness, phone + text-code login, agent key issue, expiry, and revocation. |
-| Jobs and Clock | Due jobs run exactly once under concurrency; lease expiry recovery; SimClock advancing drains jobs in time order; no code path reads the system clock directly (lint rule). |
-
+## 34.2 Evals, the security suite and what is still missing
+- Corpora are evals: the replies, opt-out and leak-guard rows that used to be unit tests live in evals/ and run as the evals block.
+- The security suite (bun run security: database, API security, OAuth and backend tests; six files; needs Postgres) runs as a non-blocking CI job. Keeping or deleting it is an open founder decision (27).
+- Still missing before the slop.date pilot (docs/mvp-gaps.md section 4): a world that runs the real message pipeline end to end (signed Blooio webhook in, the Blooio adapter out with a fake provider, the persisted queue, Postgres, the simulated clock) for 30 simulated days; LLM persona agents sending free text through the platform, where a no read as a yes must be 0; adversarial scenarios against the live agent (scammer in relay, harasser after the reveal, age liar, catfish, prompt injection for a number or a rating, ban evader, bot farm) with 0 rating or contact leaks and scammer reach at most 1; the real photo rater interface with a fake Workers AI; and a two-app persona through the real routing.
+- The live pilot gates and rollback triggers are in 37.3.
 
 ## 34.3 The Network World Simulator
 A simulated city of persona agents that use The Network exactly as real members would: they send and receive real messages through the same webhook ingress and outbound send paths (using a simulated channel adapter, or real test phone numbers in a staging smoke run), and they live their lives in simulated time.
@@ -1397,40 +1390,41 @@ A simulated city of persona agents that use The Network exactly as real members 
 ## 34.5 Judges and rubrics
 - Deterministic rules first (length, one question at a time, no contact details, opt-out language present, no banned phrases).
 - LLM judges with written rubrics for tone, clarity, explanation quality, appropriateness of timing, and privacy; judges use a different model family than the agent (during prototyping: OpenAI gpt-6-luna for judges; Cerebras qwen-3.8-27b for the engine, agent, and simulated personas); judge agreement is spot-checked by humans weekly.
-- Reports in JSONL and an admin dashboard; CI runs a fast subset on every change touching Network code and the full world nightly.
+- Reports in JSONL and an admin dashboard; CI runs bun run sim on every push; --quick is the fast subset and --nightly adds the capital block.
 ## 34.6 Shadow mode and pilot evaluation
-Before proactive matching is switched on in a city, the engine runs in shadow mode on real seed data for at least two weeks. Reviewers label proposals as if they were to be sent; this sets the precision baseline required by Section 20.3. During the pilot, a share of review decisions is double-reviewed to measure reviewer agreement.
+Before proactive matching is switched on in a city, the engine runs in shadow mode on real seed data for at least two weeks. Reviewers label proposals as if they were to be sent; this sets the precision baseline required by Section 20.3. During the pilot, a share of review decisions is double-reviewed to measure reviewer agreement. Shadow proposals appear in the console review queue with a 'shadow' tag and are never sent. The Observatory's 'Run engine (shadow)' builds the snapshot from the read replica and writes nothing.
 # 35. Admin console, backend tools, and data analysis
-The team must be able to see everything happening in the Network, from any member's point of view, and understand why the system did what it did. These tools are MVP scope, not polish. They are also how reviewers do their jobs and how the simulator is inspected.
+The team must be able to see everything happening in the Network, from any member's point of view, and understand why the system did what it did. These tools are MVP scope, not polish. They are also how reviewers do their jobs and how the simulator is inspected. The console serves every app (Section 40.3): an app switcher, roles per app and a reason-gated, audited cross-app person view.
 ## 35.1 Principles
-- Role-based access (admin, reviewer, safety, analyst, engineer), PII-scrubbed views by default, explicit and logged "reveal" for raw PII, and a full audit log of staff reads of sensitive data.
+- Staff sign in with SSO and a second factor; there are no shared accounts. The API and the live-update channel reject requests without a staff session and check Host and Origin. Role-based access (admin, reviewer, safety, analyst, engineer, cross_app_safety; per app or for all apps, 40.3), checked on the server. PII-scrubbed views by default. Message text that may hold a private disclosure is hidden until revealed. A PII reveal is per member, needs a written reason, lasts 15 minutes, and is only for admin and safety roles. Every reveal and every staff read of member data is written to the audit log. The console never writes to the database directly; staff actions go through the Network admin API.
 - Every object links to every related object: member to opportunities to threads to messages to matching runs to review decisions.
 - The same console works on production and on simulated worlds (with a clear environment banner).
 ## 35.2 Console modules
 
 | Module | What it shows and does |
 |---|---|
-| Home / health | Live counts (members by state and city, opportunities by state, messages today), alerts (matcher heartbeat, job backlog, send failures, stuck states, invariant violations, safety cases), review queue depth and SLA. |
-| Review queue | Proposal cards with participants (scrubbed), score components, confidence, explanation per participant, draft messages, alternates, and history between these people. Actions: approve, edit, swap, re-roll with note, reject with reason. Keyboard-driven for speed. Reviewer metrics: throughput, agreement, time per item. Reviewers and admins can also create a proposal manually; it passes the same policy filters, leak check and outreach control, and is tagged as human-composed so it can be compared with engine proposals (21.4). |
+| Home / health | Live counts (members by state and city, opportunities by state, messages today), alerts (matcher heartbeat, job backlog, send failures, stuck states, invariant violations, safety cases), review queue depth and SLA. Also: review SLA misses, daily LLM spend against the cost alert, and the safety counters that must stay 0 (canary leaks, minor contacts, invariant violations). |
+| Review queue | Proposal cards with participants (scrubbed), score components, confidence, explanation per participant, draft messages, alternates, and history between these people. Actions: approve, edit, swap, re-roll with note, reject with reason. Keyboard-driven for speed. Reviewer metrics: throughput, agreement, time per item. Reviewers and admins can also create a proposal manually; it passes the same policy filters, leak check and outreach control, and is tagged as human-composed so it can be compared with engine proposals (21.4). Shows the origin (engine, member request, plans, second encounter, newcomer welcome), the probe text and the reveal text each member will get, and an SLA countdown. A proposal that misses its SLA expires. Eligibility is re-checked on approve. |
 | Member 360 | Profile facets with provenance, confidence, scope, and history; intents; presence and routine; preferences and budgets; edges; invitation lineage (who vouched, with what); opportunities and outcomes; reliability evidence (context-level); safety history; connected sources; audit of staff access. |
-| Member perspective timeline | The whole experience exactly as a member lived it: every message they sent and received on every channel, in order, interleaved with what the system did behind the scenes at each moment (proposals considered for them, why they were or were not contacted, review decisions, budget state). Supports "replay this week" for both real members and simulated personas. |
+| Member perspective timeline | The whole experience exactly as a member lived it: every message they sent and received on every channel, in order, interleaved with what the system did behind the scenes at each moment (proposals considered for them, why they were or were not contacted, review decisions, budget state). Supports "replay this week" for both real members and simulated personas. Also: probes and their answers, skipped engine proposals and why, the leak-check result per outbound message, quiet-hours and budget deferrals, and trust changes. |
 | Conversation explorer | Search all conversations and relay threads by member, opportunity, keyword, date, channel, sentiment, or safety flag; view the agent's trajectory for any turn (context, actions, tool calls, model, latency, cost). |
 | Social graph explorer | Interactive graph per city: nodes are members (sized by activity, colored by cohort, neighborhood, or state), edges by type (invited, met, helped, would-meet-again, blocked) and recency. Filters by time, edge type, cluster, neighborhood. Highlights isolated members, bridges, dense cliques, overused connectors, and invite trees. Time slider to watch the graph grow. Click any edge to see the interactions behind it. |
 | Opportunity pipeline | Kanban and table of opportunities by state, generator, category, and city; ageing; drop-off funnel (proposed, reviewed, invited, accepted, scheduled, completed, positive); drill into any opportunity's full event history. |
 | Matching run inspector | For each run: inputs, candidate counts after each filter, retrieval channel contributions, score component distributions, judge outputs, chosen proposals, and why top alternatives lost. Diff two runs or two engine versions on the same snapshot. |
-| Intents and demand | Open intents by category and city, time open, match attempts, why unmatched (which constraint or density gap), supply vs demand per category, suggested growth asks. |
+| Requests and demand | Open intents by category and city, time open, match attempts, why unmatched (which constraint or density gap), supply vs demand per category, suggested growth asks. Member requests (people and plans) with outcome (probing, fulfilled, still looking), retries, and why unfulfilled. |
 | Metrics dashboards | North-star scorecard (Section 21): worthwhile-interruption rate, opt-in, completion, repeat edges, direct continuation, time to first value, attention burden, contribution concentration, bridge rate, life-expansion rate; plus cohort retention, invite activation, flake and replacement rates, review precision, LLM cost per member. Segment by city, cohort, generator, and exploration vs exploitation. |
 | Fairness and network health | Exposure distribution (Lorenz curve, top-10% share), newcomer exposure, members who got nothing in 14/30 days, cluster dominance, helper load. |
-| Safety console | Reports and cases, evidence, holds, decisions, appeals, repeat-target and repeat-offender views, block patterns, moderation holds on relay messages. |
+| Safety console | Reports and cases, evidence, holds, decisions, appeals, repeat-target and repeat-offender views, block patterns, moderation holds on relay messages. Also: members on watch and hold with the events that caused it; hold and lift actions; an urgent-first queue with the 36.3 response targets; a minor-safety view (members aged 13-17, none in a multi-person opportunity). |
 | Events | Monthly gatherings per city: invite lists, RSVPs, attendance, suggested groupings, follow-up outcomes. |
-| Simulation lab | Configure and launch world runs (persona mix, size, duration, time mode, seed, engine version), watch progress, compare runs, open any simulated member in the perspective timeline, view judge and canary results. |
+| Simulation lab | Configure and launch world runs (persona mix, size, duration, time mode, seed, engine version), watch progress, compare runs, open any simulated member in the perspective timeline, view judge and canary results. It is the same app as the production console (the Observatory's game mode), with a SIMULATION banner. Scenario levels, the truth lens and persona takeover exist only here. A simulated reviewer is allowed only here. |
 | Data and notebooks | Saved SQL queries, CSV/Parquet export of scrubbed data, links to notebooks (DuckDB over the nightly export) for ad hoc analysis. |
 | Configuration | Engine weights and thresholds, budgets, quiet hours defaults, category settings, feature flags per city, with change history and who changed what. |
 | Audit log | Every admin action, data reveal, configuration change, and override. |
+| Growth | Invites per member, invite trees, invitee activation compared with seed members, growth asks sent, inviters who lost invites after an invitee went on hold. |
 
 
 ## 35.3 Implementation notes
-- Built as an admin area in the eliza.app web app (React, existing UI kit and AdminGate) backed by /api/network/admin routes with role checks; graph rendering with a WebGL graph library (for example, Sigma.js or Cytoscape.js) on precomputed layouts for large graphs.
+- The first implementation is the Observatory (packages/observatory): a Bun server with a React UI, one view model for simulated worlds and the real database, and a Canvas force graph. For production it runs behind SSO, reads a read replica through the read-only login network_observatory, and sends staff actions to /api/network/admin routes with role checks. Moving it into the eliza.app admin area is decided after the pilot.
 - Analytics queries run against a read replica or the nightly Parquet export, not the primary.
 - The perspective timeline is assembled from the event log, outbound and inbound message logs, agent trajectories, and matching-run logs, keyed by member and time.
 # 36. Launch requirements we were missing
@@ -1450,7 +1444,7 @@ The team must be able to see everything happening in the Network, from any membe
 ## 36.4 Cost model and budgets
 - Per-member monthly cost drivers: agent turns (LLM tokens), extraction and enrichment, matching judge calls, SMS and iMessage fees, voice minutes, embeddings, infrastructure. Target an all-in cost per active member per month that the team tracks weekly in the admin console; set alerts on per-member and per-day spend. Use cheaper models for pre-screening and extraction and stronger models only for final judgments and member-facing phrasing. Measured LLM cost (2026-10-07, gpt-6-luna on Surplus): about $3 a month for 300 members sending 5 messages a day each, at the billed rate (9-21% of list, from prompt caching and Surplus pricing). At list price ($0.10 per million input tokens, $0.50 per million output tokens, the same on Surplus and OpenAI) with no caching, it is about $27 a month including the outbound leak check. Set a numeric target cost per active member per month and a monthly pilot budget per city before M6, including monthly gathering costs (venue, food) and how they are covered in the MVP (team-funded or members self-pay).
 ## 36.5 Seed and density plan
-- Each city: a founding seed of 40-75 members recruited through the founders' and early members' vouches, deliberately spanning several clusters (not one industry), concentrated in a few adjacent neighborhoods (for example, Mission/SoMa/Hayes Valley in SF; Lower Manhattan and north Brooklyn in NYC; final choice by where the seed lives).
+- New York City: a founding seed of 40-75 members recruited through the founders' and early members' vouches, deliberately spanning several clusters (not one industry), concentrated in a few adjacent neighborhoods (for example, Lower Manhattan and north Brooklyn; the final choice depends on where the seed lives). San Francisco follows only after the expansion gates (25.6).
 - First monthly gathering in each city within two weeks of opening.
 - Invitation allowances tuned weekly to grow density without diluting quality.
 ## 36.6 Agent persona and voice
@@ -1462,27 +1456,27 @@ The team must be able to see everything happening in the Network, from any membe
 ## 36.9 Data, backup, and recovery
 - Network schema included in existing Postgres backups with point-in-time recovery; tested restore; nightly export to R2; disaster-recovery runbook.
 ## 36.10 Repository and ownership
-- Decided (2026-10-07): Network code lives in the thenetwork repository, including the Network plugin (packages/plugin-network). Eliza is included as a git submodule until its packages are published. Eliza Cloud keeps only the integration glue: identity scoping, the invite gate, STOP/HELP, the Twilio path, capability flags, network migrations, the Postgres store and per-turn wiring. Name an owner for each subsystem in Section 32. Prototypes, research, and test harnesses live in https://github.com/lalalune/thenetwork (private). The product domain is ntwrk.love (the home page for every app, Section 40; ntwrk.club belongs to someone else); the assistant connector is served at https://mcp.ntwrk.love/mcp.
+- Decided (2026-10-07): Network code lives in the thenetwork repository, including the Network plugin (packages/plugin-network). Eliza is included as a git submodule until its packages are published. Eliza Cloud keeps only the integration glue: identity scoping, the invite gate, STOP/HELP, the Twilio path, capability flags, network migrations, the Postgres store and per-turn wiring. Name an owner for each subsystem in Section 32. The repository is https://github.com/eliza-research/thenetwork (public since 2026-10-08). The 2026-10-08 cleanup deleted the prototypes and the unit and e2e tests; only simulations remain (34). The product domain is ntwrk.love (the home page for every app, Section 40; ntwrk.club belongs to someone else); the assistant connector is served at https://mcp.ntwrk.love/mcp.
 # 37. MVP build plan and milestones
-Indicative sequence assuming a small team (2-3 engineers, 1 product/community lead, part-time design, contract reviewers). Each milestone ends with simulated-world tests passing for the flows it delivers. The milestone table is the v0.2 plan; the multi-app phases after it (2026-10-08, Section 40) are current and supersede it where they differ.
+Indicative sequence assuming a small team (2-3 engineers, 1 product/community lead, part-time design, contract reviewers). Each milestone ends with simulated-world tests passing for the flows it delivers. The milestone table is the v0.2 plan, kept as history. The multi-app phases after it (2026-10-08, Section 40) and the critical path, prototypes and gates in 37.1-37.3 are current.
 
 | Milestone | Weeks | Deliverables | Exit criteria |
 |---|---|---|---|
-| M0. Foundations | 1-2 | Repository and package layout; network schema v1 and migrations; Clock abstraction and job table; event log; admin shell with auth and roles; staging environment; Network phone numbers ordered and 10DLC filed (superseded by Section 40: one shared Blooio line; 10DLC is in the deferred backlog, 40.7). | Schema migrated on staging; job runner and SimClock pass tests. |
-| M1. Member conversation | 2-5 | Network character and plugin; invite, vouch, acceptance, onboarding (SMS/iMessage, optional voice); extraction; profile web pages; states and preferences; STOP/block/report; concierge search with event ingestion for both cities. Also: export and delete (F24); phone change and channel linking (F25); safety queue intake (F23). | Seed members can be onboarded end to end on staging; scenario suite green. |
-| M2. Simulator v1 | 3-6 (parallel) | Persona generator, persona agents, simulated channel adapter, SimClock-driven world runner, judges, canaries, run storage, simulation lab in admin. | 100 personas run 14 simulated days through onboarding and concierge flows. |
-| M3. Engine v1 and review | 5-9 | Generators, retrieval, scoring, judge, group composer, load and fairness controls, proposals, review queue, matching run inspector. Also: outreach controller (budgets, quiet hours, two-unanswered rule); outbound leak checker and PII scrubber; empty-state items (F21). | Engine passes ME-001 to ME-012 in simulation; precision against ground truth above target. |
+| M0. Foundations | 1-2 | Repository and package layout; network schema v1 and migrations; Clock abstraction and job table; event log; the Observatory with staff sign-in, roles and the audit log; staging environment. | Schema migrated on staging; job runner and SimClock pass tests. |
+| M1. Member conversation | 2-5 | Network character and plugin; invite, vouch, acceptance, onboarding (SMS/iMessage, optional voice); extraction; profile web pages; states and preferences; STOP/block/report; concierge search with event ingestion for New York City. Also: export and delete (F24); phone change and channel linking (F25); safety queue intake (F23). | Seed members can be onboarded end to end on staging; scenario suite green. |
+| M2. Simulator v1 | 3-6 (parallel) | Persona generator, persona agents, simulated channel adapter, SimClock-driven world runner, judges, canaries, run storage, simulation lab (the Observatory's game mode). | 100 personas run 14 simulated days through onboarding and concierge flows. |
+| M3. Engine v1 and review | 5-9 | Generators, retrieval, scoring, judge, group composer, load and fairness controls, proposals, review queue in the Observatory (with SLA expiry, a review stage in the Network before any probe, and a simulator invariant 'no probe without approval'), matching run inspector. Also: outreach controller (budgets, quiet hours, two-unanswered rule); outbound leak checker and PII scrubber; empty-state items (F21). | Engine passes ME-001 to ME-012 in simulation; precision against ground truth above target. |
 | M4. Coordination | 7-11 | Consent workflow, relay, contact swap, scheduling, reminders, check-ins, flakes and replacement, feedback, second encounters, monthly events. | Full lifecycle flows F11-F29 pass for 300 personas over 60 simulated days with zero invariant violations and zero canary leaks. |
 | M5. Admin and analytics complete | 8-12 | Member 360, perspective timeline, conversation explorer, graph explorer, pipeline, metrics, fairness, safety console. | Team can answer "what happened to member X this month and why" in under two minutes. |
-| M6. Private pilot | 12-14 | Onboard seed cohorts in SF and NYC; concierge only plus shadow-mode engine; first monthly gatherings. (Superseded by Phases 1-2 below and Section 40: the first pilot is slop.date.) | Launch gates in 28.5 met; shadow precision baseline established. |
-| M7. Proactive matching on | 14+ | Reviewed proactive proposals per city; weekly metric reviews; tuning. | MVP success criteria in 28.2 tracked weekly; decide on fast follows (Telegram/WhatsApp, connector, app features). |
+| M6. Private pilot | 12-14 | Onboard the NYC seed cohort; concierge only plus shadow-mode engine; first monthly gatherings. (Superseded by Phases 1-2 below and Section 40: the first pilot is slop.date.) | Launch gates in 28.5 met; shadow precision baseline established. |
+| M7. Proactive matching on | 14+ | Reviewed proactive proposals in NYC; weekly metric reviews; tuning. | MVP success criteria in 28.2 tracked weekly; decide on fast follows (Telegram/WhatsApp, connector, app features). |
 
 
 Current plan (2026-10-08, multi-app; Section 40). Two workstreams: engine and packs, and platform. The milestones above still describe the work inside each phase; M6 and M7 are superseded by Phases 1-2 for the first pilot.
 
 | Phase | Scope | Owner | Exit criteria |
 |---|---|---|---|
-| Phase 0. App packs core | AppPack interface; open core types; networkPack as a facade, then threaded through the engine one module at a time; geo seam; SimPack; one conformance suite for every pack. | Engine and packs | Golden replays (engine, attention, plans, capital, judge, network) byte-identical under networkPack on a pinned clean commit; conformance suite green for networkPack. |
+| Phase 0. App packs core | AppPack interface; open core types; networkPack as a facade, then threaded through the engine one module at a time; geo seam; one conformance suite for every pack. | Engine and packs | Golden replays (engine, attention, plans, capital, judge, network) byte-identical under networkPack on a pinned clean commit; conformance suite green for networkPack. |
 | Phase 1. slop.date pack, sim and local pilot readiness | slopPack: mutual hard filters, radius geo, reciprocal scoring with congestion and exposure caps, probe first then a booked first date, dating judge rubric, safety basics (40.5); dater personas, oracle, adversaries and scenarios. | Engine and packs | Conformance green; slop.date sim gates (40.8) pass over several seeds; end to end on local Postgres with test phones and dry-run sends; reviewers trained; shadow mode with human review of every intro. |
 | Phase 2. Platform backend (in parallel) | Migration runner; platform schema (people, phone identities, memberships, consent events, share grants, blocks, staff roles, audit); app id on engine tables; one line with keyword routing and no-keyword enrollment; phone login; per-app personas; admin app switcher and per-app roles. | Platform | A test phone joins two apps by keyword and one through no-keyword enrollment; STOP and leaving one app work; export and delete per app; the ntwrk 21-day sim gives the same results after migration; cross_app_leak = 0. |
 | Phase 3. friends.help pack and sim (local) | friendsPack: groups first, quorum, plans and crews, neighborhood geo, affinity tables; personas and oracle. | Engine and packs | Conformance green; friends.help sim gates (40.8); runs locally only. |
@@ -1490,7 +1484,66 @@ Current plan (2026-10-08, multi-app; Section 40). Two workstreams: engine and pa
 | Phase 5. Attention, plans and capital across apps | Person-level cap across apps; attention budget, plan allowance and crews per pack; network capital per app or shared (to decide). | Engine and packs, with platform | No send over any per-app or person-level cap in a multi-app sim; the network capital fairness gate (39.2) holds per app. |
 
 
-slop.date goes live when Phases 0-2 meet their exit criteria and the founder approves live sends. peon.biz and friends.help get public deploys only by a later founder decision (28.4).
+Phases 0-4 are built and pass their sim gates in bun run sim (since the cleanup, run fingerprints replace the golden files). slop.date goes live after the critical path in 37.1, two weeks of shadow and the founder's approval of live sends. The peon.biz and friends.help sites are on Pages; their matching and sends go live only by a later founder decision (28.4).
+## 37.1 Critical path to the slop.date pilot (2026-10-08)
+Owners: E is engine and packs (packages/core, engine, sim, capital); P is platform (packages/network, platform, blooio, mcp, observatory, deploy, sites). Estimates are engineer-days for one agent-assisted engineer. Detail: docs/mvp-gaps.md.
+
+| # | Piece | Owner | Days | Needs | What is missing |
+|---|---|---|---|---|---|
+| 0 | Founder decisions | Founder | 1 | none | STOP/HELP owner on the shared line; where the conversation runs; join mode for peon and friends; ban evasion; the security suite; Clef weight fitting (27). |
+| 1 | Backend deploy, staging then production | P | 2 | 0 | Railway project, Postgres and logins, secrets, api.ntwrk.love DNS, a private staff port, logins per app role. |
+| 2 | Migrations on Railway | P | 1 | 1 | A reviewed migration path for a non-local host; backups on and one restore tested. |
+| 3 | Blooio in and out on the live line | P | 3 | 1, 2 | Point the webhook at the backend; persist the outbound queue, counters and rate limits; test phones with the live-send approvals. Routing is done. |
+| 4 | slop onboarding conversation | P, E | 4 | 3 | Wire the LLM reader for free text and the age hook; read back the profile; ask adults for photos; the same fields from MCP; a dating persona style guide. |
+| 5 | Photo upload and Clef rating | P, E | 4 | 2, 4 | Upload on the slop.date settings page and from MMS; pass the Clef rater to the service; fitted weights (prototype P2); a weekly bias monitor job. |
+| 6 | Review queue for slop | P | 2 | 1 | slop in the console's pack list; the reviewer of record is the person; a slop rubric; SLA alerts; shadow runs with the slop pack. |
+| 7 | Photo probe and relay | E, P | 6 | 3, 5, 6 | The photo in the probe copy and leak guard; relay after a mutual yes with consent per item ("send them my number", photos), the appearance-leak check, a scam check and a relay log. |
+| 8 | Feedback, report and ban on the live path | P | 1 | 7 | The relay log for ban notices; a ban check on photo intake. |
+| 9 | STOP/HELP live | P | 1 | 3 | One owner; live checks of STOP, STOP ALL, START, HELP and "leave slop.date" on iMessage. |
+| 10 | Console deploy | P | 2 | 1, 6 | The Observatory on Railway behind Cloudflare Access; bias-monitor and cost panels. |
+| 11 | Monitoring | P | 2 | 1 | Uptime and heartbeat checks; alerts on send failures, SLA misses, invariant violations and urgent safety reports. |
+| 12 | Cost alerts | P | 1.5 | 4, 5, 11 | LLM, Workers AI and Blooio spend per day and month, with an alert at 80% of budget (36.4). |
+| 12b | Audit findings | P | 4 | none | Check the P0 and slop-relevant P1 findings for network, platform, observatory and sites, and record the result. |
+| 13 | Shadow, then live | Founder, reviewers | 14 calendar | 1-12 | At least two weeks of shadow with every proposal reviewed; at least 40 committed NYC adults before matching is switched on. |
+
+
+Total: about 35 engineer-days plus the two-week shadow. Items 1-3, 6 and 12b run alongside items 4-5 and the engine half of item 7.
+## 37.2 Prototypes still needed
+Build each small, learn from it, then commit.
+
+| # | Prototype | Question | Pass to commit | Owner, time |
+|---|---|---|---|---|
+| P1 | Concierge pilot | Do 20-30 NYC adults answer probes, say yes, show up and want a second date, with human-composed probes on the real line and the engine in shadow? | Mutual yes at least 25%, at least 60% of booked dates happen, at least 20% want a second date | Founder and one reviewer, 2-3 weeks |
+| P2 | Clef weight fitting | Do Clef ratings plus the decision model predict real mutual interest better than nothing, without group bias? | Held-out AUC above the placeholder; bias monitor at least 0.85x by quintile and group | E, 1 week plus labelling |
+| P3 | Blooio deliverability | Per-line throughput, new-conversation limits, receipts, attachments, ban risk on a shared line | A measured daily cap with margin; attachments arrive; no account flag | P, 3 days |
+| P4 | Onboarding quality | Can the line fill the slop hard fields from natural text? Rules only against rules plus the LLM reader | At least 80% complete in 24 hours, at most 12 turns, 0 wrong gender or seeking parses | P and E, 1 week |
+| P5 | Photo in the probe | Does a photo raise mutual yes and second dates, or cut dates per member? A/B inside P1 | Choose the arm; code and sim agree | E, inside P1 |
+| P6 | First-date venues | Are the suggested places good for a first date? Do people want reservations? | At least 80% rated a good place; booking links or partner reservations decided | Founder or ops, 1 week |
+| P7 | Relay UX | Is relaying through the agent acceptable? Hand-run relay inside P1 | Relay scope chosen: one-shot number swap or a persistent thread | P, inside P1 |
+| P8 | Age-liar signals without ID | Which cheap signals help (language, photo age estimate never stored as a score, reports)? | The age-liar gate is fixed or accepted as a known risk | E, 3 days |
+
+
+## 37.3 Pilot validation gates
+Blocking before any live send: every blocking gate in bun run sim passes (34.1); each tracked slop gate is fixed or waived in writing by the founder; P3 is measured; the STOP/HELP owner is decided; two weeks of shadow with every proposal reviewed and a precision baseline; at least 40 committed NYC adults; a backup restore tested; cost alerts and safety on-call live (28.5).
+Weekly during the pilot (40.5, 28.2):
+
+| Metric | Gate | Pause or roll back if |
+|---|---|---|
+| Mutual yes per probe | At least 25% | Under 15% for 2 weeks |
+| Dates held per mutual yes | At least 60% |  |
+| Second-date rate | At least 20% |  |
+| Time to first date | At most 14 days median |  |
+| Worthwhile interruption | At least 70% | Under 50% |
+| Mute, STOP or complaint rate | Under 5% | Over 10% |
+| Safety reports per 1,000 dates | Tracked; urgent answered within 1 hour | Any harm to a minor; any rating or contact leak |
+| Minor contacts | 0 | Any |
+| Bias monitor by rating quintile and group | At least 0.85x | Under 0.8x |
+| Probes received, top-10% share | At most 20% |  |
+| Reviewer minutes per sent proposal | At most 2 |  |
+| Cost per active member per month | Within the founder's target | Over budget |
+| Blooio delivery failures | Under 2% | An account flag |
+
+
 # 38. Review decisions and comment resolution log
 This section records the decisions made while resolving the October 4-5, 2026 review comments, so the reasoning survives after the comment threads are closed.
 
@@ -1546,7 +1599,7 @@ This section records the decisions made while resolving the October 4-5, 2026 re
 | App names and ids (2026-10-08) | peon.biz (peon), friends.help (friends; renamed from buddies.nyc), slop.date (slop). The Network itself (ntwrk) is the umbrella. | 40.2 |
 | One iMessage line (2026-10-08) | One Blooio line for every app. The first message is routed by keyword ("join slop.date", "peon", "friends"). With no keyword the person joins The Network; the agent asks what they are looking for and enrolls them in the matching apps. | 27, 31.5, 32.2, 36.1, 40.3 |
 | Home page (2026-10-08) | ntwrk.love is the home page for the whole concept. ntwrk.club belongs to someone else. | 36.10, 40.1 |
-| Launch order (2026-10-08) | slop.date launches first. peon.biz and friends.help run locally only for now (no deploys). | 1.3, 28.1, 28.4, 37, 40.9 |
+| Launch order (2026-10-08) | slop.date launches first. The peon.biz and friends.help sites are on Pages, but their matching and sends run locally only for now. | 1.3, 28.1, 28.4, 37, 40.9 |
 | Ages across apps (2026-10-08) | Minimum age 13. Members aged 13-17 may join every app but are never matched or connected to anyone. Matching is 18+ everywhere. | 28.3, 40.3 |
 | Compliance (2026-10-08) | Not a launch blocker for now. The existing safety guards stay. Legal and compliance items (for example NYC LL144, dating-safety notices, 10DLC) are a deferred backlog, not gates. | 28.5, 36.1, 36.2, 40.7 |
 | Cross-app privacy (2026-10-08) | Dating membership and data are never visible to the other apps by default. Only a base profile crosses apps, with consent. Blocks apply across every app. | 40.3 |
@@ -1555,6 +1608,14 @@ This section records the decisions made while resolving the October 4-5, 2026 re
 | Photos in the probe (2026-10-08) | The first anonymous probe can include a photo (quality over volume). Name and contact stay hidden until both say yes. | 40.5, 40.9 |
 | Exchange through the agent (2026-10-08) | After a match, messages, numbers and photos pass only through the agent ("send them my number"), with consent per item. Each side learns only what the agent tells them: the other's first name and what they chose to share. | 40.5 |
 | slop.date verification (2026-10-08) | No ID or liveness check for now; phone login is the identity check. Harassment and lying are caught through post-date feedback, then report, then hold or ban by phone and person. "Not single" is not a harm. | 27, 28.4, 40.5 |
+| Multi-app platform (2026-10-08) | Approved by the founder. Four apps on one backend: the platform schema, phone login, memberships per app, one service for every network, the four sites and the admin app switcher. Sites on Pages; backend not yet deployed. | 40 |
+| Simulations only (2026-10-08) | The only tests kept are simulations: bun run sim, with blocking and tracked gates per block; corpora are evals; the security suite is pending a founder decision. Unit, golden and e2e tests were deleted. | 28.3, 28.5, 34 |
+| Agent-first onboarding (2026-10-08) | Sites hand the person a prompt for their own AI, which reads SKILL.md and submits the profile through MCP. MCP onboarding is MVP; the wider connector surface comes later. | 28.3, 28.4 |
+| Hosting (2026-10-08) | All four sites on Cloudflare Pages; the shared backend on Railway (api.ntwrk.love), not inside Eliza Cloud. peon.biz and friends.help matching and sends stay local. | 22, 31, 40.1, 40.6 |
+| Repository (2026-10-08) | github.com/eliza-research/thenetwork, public. The cleanup deleted the prototypes and tests and promoted packages/blooio. | 36.10 |
+| Critical path to the slop.date pilot (2026-10-08) | About 35 engineer-days plus two weeks of shadow: deploy, the live line, the onboarding conversation, photos and Clef, review for slop, the photo probe and relay, monitoring, cost alerts and audit fixes. | 37.1 |
+| Remaining prototypes (2026-10-08) | P1 concierge pilot, P2 Clef weight fitting, P3 Blooio deliverability, P4 onboarding quality, P5 photo in the probe, P6 venues, P7 relay UX, P8 age-liar signals. | 37.2 |
+| Experience design (2026-10-08) | The 2026-10-07 experience design is now Section 41, reconciled with 40.4. | 41 |
 
 
 Comments that were agreement or emphasis (for example on contraction, activation energy, silence as a valid state, anti-metrics, examples, and LGTMs) were acknowledged and closed without changes; the text they endorsed is unchanged.
@@ -1681,7 +1742,7 @@ The Network is the umbrella: one network of people, one engine, one database, on
 - A person can join one app or several. A second app adds a membership, not a second person.
 - The Network itself (app id ntwrk) is the umbrella membership. Someone who joins without naming an app joins The Network, and the agent asks what they are looking for and enrolls them in the matching apps.
 - ntwrk.love is the home page for the whole concept. ntwrk.club belongs to someone else.
-- slop.date launches first. peon.biz and friends.help run locally only, with no deploys.
+- slop.date launches first. All four sites are on Cloudflare Pages; peon.biz and friends.help matching and sends run locally only for now, and their join mode is a founder decision (27).
 - Everything earlier stays and applies in every app unless this section says otherwise (40.4).
 ## 40.2 The apps
 
@@ -1692,13 +1753,19 @@ The Network is the umbrella: one network of people, one engine, one database, on
 | Goal | Two adults who would each say yes meet safely for a first date and want a second. | People keep seeing the same few people: repeat meetups and small crews near home. | Qualified candidates and verified employers reach an interview quickly; hires stick. | The general network of Sections 1-39. |
 | Matching style | Reciprocal pairs (harmonic mean or minimum of both directions) with congestion and exposure caps. | Groups first (3-6, least misery plus social-energy balance); activity partners second. | Reciprocal but asymmetric; employers see small unranked slates checked against stated must-haves. | Today's engine, as networkPack. |
 | Consent flow | Probe first, then mutual yes, then a booked first date the agent plans. | Activity-first probe, quorum, then names and a group thread; private "see again?" after. | Candidate-first probe; the employer sees only a summary the candidate approved. | Probe first; the reveal is the booked plan. |
-| Geo model | One city, several cities, or within X miles of a zip code; distance bands only. | Neighborhoods and transit minutes; the venue minimizes the group's longest trip. | Commute tolerance set by the candidate, remote and hybrid; never ranked by home zip. | City and neighborhood presence (SF, NYC). |
+| Geo model | One city, several cities, or within X miles of a zip code; distance bands only. | Neighborhoods and transit minutes; the venue minimizes the group's longest trip. | Commute tolerance set by the candidate, remote and hybrid; never ranked by home zip. | City and neighborhood presence (NYC first; SF after the expansion gates). |
 | Success metrics | Mutual-yes rate, dates held, second-date rate, time to first date. | Repeat-meetup rate within 30 days, crews formed, V14. | Intro-to-interview, interview-to-offer, hires, 90-day retention. | Sections 21 and 28.2. |
-| Launch status | First public launch (pilot). | Local only, no deploys. | Local only, no deploys. | Home page live; no-keyword joins on the shared line. |
+| Launch status | First public launch (pilot). | Site on Pages; matching and sends local only. | Site on Pages; matching and sends local only. | Home page live; no-keyword joins on the shared line. |
+| Network id | slop:nyc | friends:nyc | peon:nyc | ntwrk:nyc (later ntwrk:sf) |
+| Join mode (default; a setting) | Open | Open (founder to decide, 27) | Open with waitlist copy (founder to decide, 27) | Invite |
+| Join age / match age | 13 / 18 | 13 / 18 | 13 / 18 | 13 / 18 |
+| Matching today | Off by the stored switch until shadow and the founder's approval | Off; local only | Off; local only | Off until the founder turns it on |
 
 
 ## 40.3 Shared platform
 Identity by phone. One person per verified phone number, proven by texting the line or by a web code. Login stays phone plus text-message code everywhere (9.1, 11.5). Age is a person-level fact: the lowest age the person ever stated on any app, failing closed.
+Web login. A person types a US number (+1 only) on an app's site and gets a six-digit code by text. The answer to "send me a code" is the same, after the same minimum time, whether or not the number is known. Limits: 3 codes per number per hour, 10 per IP address per hour, 30 seconds between codes to one number, 10 minutes to use a code, 5 wrong tries, one use per code. A bot check (Cloudflare Turnstile) can sit in front of the send step. A session is a random token in a first-party cookie for that app's domain only (HttpOnly and SameSite=Lax; Secure in production), kept 30 days, and replaced at each login and after one day. The server stores only a hash of the token. Phones, IP addresses and codes are stored as keyed hashes where the full value is not needed.
+Recycled numbers. A number not seen for 12 months waits for staff review before a new membership attaches to the old person. A carrier lookup (VoIP, landline, recent port or SIM change) is planned, not built.
 Memberships. A membership per app (ntwrk, slop, friends, peon), each with its own state, profile, facets, intents, agent memory and member ID. A member ID belongs to one app, so engine data is separated by construction (composite keys, an app argument in every query, row-level security on console roles).
 Ages. The minimum age is 13 on every app. Members aged 13-17 may join every app and get the personal agent, but are never matched, probed, introduced, placed in a plan, group or slate, or connected to anyone. Matching is 18+ everywhere.
 Cross-app privacy.
@@ -1707,14 +1774,19 @@ Cross-app privacy.
 - Blocks are person to person and apply in every app. A safety removal holds the person everywhere; other apps see only "account restricted".
 - No flow reveals that a number belongs to a member of another app.
 - New simulator invariant: cross_app_leak = 0 (canaries planted in one app must never reach another).
+How the code keeps apps apart. Each app-scoped table has the app id, and keys join on the app, so a row that links two apps is a database error. The engine snapshot for one network reads only that app's rows; person-to-person blocks are the only cross-app input. The admin console reads each app through its own database role, with row-level security. A shared base profile is a grant (first name, city, age band and interests) and copies nothing; the share choice is hidden on the sites until the founders approve its copy. "Delete everything" removes every membership and the phone; a tombstone and a hashed suppression entry stay, so a STOP is never forgotten. The export is per app and holds only that app's data.
 One line, keyword routing. One Blooio iMessage line serves every app, with SMS fallback (32.2).
 - The first message is routed by keyword: "join slop.date", "slop", "peon", "friends" or an app's domain starts that app's onboarding.
 - With no keyword, the person joins The Network: the same onboarding, but the agent asks what they are looking for (friends, dating, work) and enrolls them in the matching app memberships.
 - A known person who names another app later gets a new membership after the age rule and a short notice that the apps are kept separate, with an offer to share their base profile.
 - Every proactive message names its app, replies attach to the app of the open item, and each app keeps its own agent memory.
 - STOP stops every app on the line, because carriers see one sender; "leave slop.date" stops one app.
-Agent personas. One shared Eliza agent with a persona, copy and STOP/HELP text per app. The host sets the app from routing, never from model output.
-Admin panel. One admin panel (Section 35) with an app switcher (ntwrk, slop, friends, peon, all) and per-app roles, so a hiring reviewer never sees dating items. A cross-app person view is limited to safety and admin roles, needs a typed reason and is audited. One append-only audit log carries the app on every row.
+- STOP, STOP ALL, START and HELP are recorded per app in one consent ledger, with the exact opt-in wording the person agreed to. STOP on the shared line stops every app. "leave <app>" or the site's leave button stops one app and deletes that app's data; other memberships stay. START on the line resumes the app of the line.
+- Routing tables per line may stay as data. If an app ever gets its own line, STOP on that line stops that app only, unless a setting (PLATFORM_STOP_SCOPE=global) makes it stop every app.
+- A person-level cap: at most 3 proactive messages a day to one person across all apps, checked when a message is sent.
+- Live sends per app need the founder's approval for that app (<APP>_LIVE_APPROVED), in addition to the existing live-send approval.
+Agent personas. One shared Eliza agent with a persona, copy and STOP/HELP text per app. The host sets the app from routing, never from model output. Today the Network service speaks for every app with these personas (32.3).
+Admin panel. One admin panel (Section 35) with an app switcher (ntwrk, slop, friends, peon, all). Every view and action is for one app. Staff roles are per app (reviewer@slop) or for all apps (reviewer@*), so a hiring reviewer never sees dating items. New roles: engineer (simulated worlds only, never real data) and cross_app_safety (the cross-app person view only). Each app has its own review reasons and review deadline: slop adds 'preference mismatch' and 'safety concern' (6 hours); peon adds 'not qualified' and 'role closed' (24 hours); The Network and friends keep the Section 32.8 list (12 hours); the founder is to confirm these (27). The cross-app person view shows memberships, states, holds and blocks, never a phone or a name. Only cross_app_safety and admins of all apps can open it. Each app's panel opens only with a typed reason, and the audit row is written before any data is read. The reviewer of record is the signed-in person. One append-only audit log carries the app on every row.
 ## 40.4 The engine with app packs
 One engine runs every app; each app is a pack the engine loads. The core owns invariants and packs own policy.
 Core invariants no pack can loosen (a pack may only tighten them):
@@ -1728,25 +1800,25 @@ Core invariants no pack can loosen (a pack may only tighten them):
 Per pack: ontology (entities, roles, lanes, opportunity kinds, typed constraints, never-used attributes), hard filters, generators and retrieval, scoring and selection, consent flow, attention settings and copy, judge rubric and explanations, geo model, plans and capital settings, and a sim pack (personas with hidden truth, oracle, adversaries, scenarios, launch gates).
 networkPack is today's engine behind the pack interface, with byte-identical golden replays of engine, attention, plans, capital and judge results.
 Conformance suite. Every pack passes one shared suite before it runs anywhere: age, blocks and holds, consent order, leaks with canaries, protected-attribute invariance, determinism, judge cannot undo filters, attention caps and quiet hours, geo (mutual radius, bucketed distances, no coordinates) and cross_app_leak = 0. Each pack must also pass its own simulation launch gates (40.8).
-Carried over to every app. The attention budget: rolling sends at a learned send time (default lunchtime, 12:00 local, then learned from replies); always probe first; only initial invites count against the cap (2 per 7 days in Normal); the reveal is the booked plan. Plans with a separate plan allowance (1 initial plan invite per 7 days); crews after one great plan; network capital MVP-lite; post-MVP member ownership (39). Proposed on top: at most 3 proactive messages a day to one number across all apps.
+Carried over to every app. The attention budget: rolling sends at a learned send time (default lunchtime, 12:00 local, then learned from replies); always probe first; only initial invites count against the cap (2 per 7 days in Normal); the reveal is the booked plan. Plans with a separate plan allowance (1 initial plan invite per 7 days); crews after one great plan; network capital MVP-lite; post-MVP member ownership (39). A person-level cap of at most 3 proactive messages a day across all apps is built (40.3).
 ## 40.5 slop.date MVP
 Preferences. Stated preferences are hard filters only: gender and seeking, age range, radius or cities, intent and named dealbreakers. Profiles do not predict pair chemistry, so the engine learns from probe answers and post-date feedback, and never markets "compatibility science".
 Gender and orientation. Matching gender, an optional identity description and the seeking set are stored separately. Both members must be in each other's seeking set, and selection works for non-bipartite pools. Orientation is asked neutrally, never inferred.
 No race filters. No race or ethnicity field, filter or inference. Shared culture, language or faith may be a stated preference, soft unless marked a dealbreaker. Never used: inferred orientation, health status, immigration status, anything from another app.
 Photos and attractiveness. Members upload photos. An attractiveness rater (Cloudflare Workers AI "Clef" plus a learned, jevector-style scoring layer) rates face, body, overall and body type. The scores feed matching as a soft similarity term plus body-type preference. They are never shared with anyone: never shown, never in member-facing text, never in logs. Adults only: with no ID check, adult means the person's lowest stated age is 18 or older, and an unknown age is treated as a minor (fail closed, 40.3). Members are rated only when the lowest stated age is 18+; members aged 13-17 and unknown ages are never rated. A weekly bias monitor reports outcome ratios by group.
-Scoring. Reciprocal: harmonic mean or minimum of both directions. Congestion caps limit incoming probes per member per week; exposure floors give every verified member probes; the Gini of probes received is tracked. No paid boosts.
+Scoring. Reciprocal: harmonic mean or minimum of both directions. Congestion caps limit incoming probes per member per week; exposure floors give every adult member probes; the Gini of probes received is tracked. No paid boosts.
 Flow. Probe first: an anonymous description (age band, area band, intent, one shareable fact) that can include a photo; name and contact stay hidden until both say yes. On a yes, the other person gets the same. On mutual yes, the agent plans a booked first date: 2-3 time options at a public venue, short by default (about an hour). After a match, members exchange messages, numbers and photos only through the agent ("send them my number"), with consent per item. Each side learns only what the agent tells them: the other's first name and what they chose to share. Probes and scheduling each expire after 24 hours. One first date is scheduled at a time, and no new probe goes out while a mutual yes waits on the member.
 Geo. One city, several cities, or within X miles of a zip code (minimum 2; options 5, 10, 25, 50, 100), holding both ways. Zip centroids snap to coarse cells, GPS is never used for matching, and distances appear only as bands ("about 5 miles"). Travel windows expire automatically.
 Safety basics.
 - No ID or liveness check for now: phone login is the identity check.
 - Harassment and lying are caught through post-date feedback, then report, then a hold or ban by phone and person, not by account. "Not single" is not a harm.
-- Public venues only; share-my-date with a trusted contact; a check-in text after the date.
+- Public venues only; a share-my-date tip (send the plan to a trusted contact); a check-in text after the date.
 - A scam classifier on relay messages (money, crypto, gift cards, moving off-platform fast).
 - Report and block by text, human triage, and a relay log so past contacts can be told about a ban.
 Metrics. Mutual-yes rate, dates held, second-date rate, time to first date; safety reports per 1,000 dates.
 Anti-metrics. Messages, swipes, time in app and probes sent; exposure concentration; ghosting after mutual yes, late cancellations and no-shows; unsafe reports. Pausing because they met someone counts as success, not churn.
 ## 40.6 peon.biz and friends.help: local pilot scope
-Both run locally only: local dev database, dry-run or test lines, simulated worlds, no deploys.
+Both sites are on Cloudflare Pages (2026-10-08), but matching and sends run locally only: local dev database, dry-run or test lines, simulated worlds. Their join mode on production is a founder decision (27).
 friends.help.
 - Groups of 3-6 at public venues: activity-first probe, quorum, then names and a group thread.
 - Optimize for repeat meetups of the same group near home (a friend takes about 90 hours together); crews after one great plan, handed to their own chat after three sessions.
@@ -1778,10 +1850,11 @@ Founder decision (2026-10-08): compliance is not a launch blocker for now. The s
 
 ## 40.8 Simulation and testing per app
 Each pack ships a simulated world (personas with hidden truth, an oracle the engine cannot see, adversaries, scenarios) and blocking gates over several seeds, in memory or in a Postgres schema per world, never in production.
-- slop.date. Hidden desirability hierarchy, taste, true versus stated intent, flakiness; the oracle adds large pair-specific chemistry noise. Adversaries: romance scammer, catfish, underage applicant, harasser, ban evader, bot farm. Gates: 0 hard-constraint violations; 0 intros involving anyone under 18 or unverified; 0 private-field or cross-app leaks; scammer median reach at most 1; same-face ban-evasion catch at least 95%; mutual yes at least 25% of probes; probes-received Gini under threshold at twice the cold-start pool. Then shadow mode with human review of every intro.
+- slop.date. Hidden desirability hierarchy, taste, true versus stated intent, flakiness, body types and a catfish share; the oracle adds large pair-specific chemistry noise. Adversaries: romance scammer, catfish, age liar, harasser, ban evader, bot farm. Blocking gates in bun run sim (pinned seeds 13-16, 4 weeks, photo in the probe and the rater on): 0 declared-minor contacts, 0 stated-filter violations, scammer median reach at most 1, 0 private-field, rating or cross-app leaks, the second-date and fairness gates that pass on the pinned seeds, and slop conformance. Tracked (failing today; each is fixed or waived in writing): dates per member-month at least 0.9x random, age-liar contact cut at least 90%, adversary-contact cut at least 90%, smallest gender or orientation group at least 0.7x, harm-event cut at least 90%. Mutual yes per probe and the probes-received Gini are live pilot gates (37.3); same-face ban evasion is a founder decision (27). Then shadow mode with human review of every intro.
 - friends.help. Friendships form when a pair's hours together cross thresholds. Gates: repeat rate at least 30% of groups within 30 days; more friendships than a one-off-dinner baseline; no trip over tolerance; 0 affinity or age violations; V14 at least 85%.
 - peon.biz. Latent skills, over-claiming, fake jobs; protected attributes exist only in the simulator. Gates: impact ratios at least 0.8 at every automated stage; 0 protected or proxy mentions in judge reasoning; 0 jobs without pay ranges; 0 unverified employers reaching candidates; 100% of discriminatory requests refused.
 - Across apps. cross_app_leak = 0 with two-app personas, and networkPack golden replays byte-identical.
+- Admin simulation lab. The lab runs every app on The Network's NYC world with that app's copy and join age; these runs check safety only. The packs are wired, so the lab should run slop and peon with their own packs (docs/mvp-gaps.md, critical path item 6).
 ## 40.9 Phased plan
 Two workstreams, engine and packs, and platform. Section 37 has owners and exit criteria.
 - Phase 0: app packs core, networkPack byte-identical, conformance suite.
@@ -1790,7 +1863,43 @@ Two workstreams, engine and packs, and platform. Section 37 has owners and exit 
 - Phase 3: friends.help pack and sim, local.
 - Phase 4: peon.biz pack and sim, local.
 - Phase 5: attention, plans and capital across apps.
-slop.date goes live when Phases 0-2 meet their exit criteria and the founder approves live sends. Open: join mode per app (invite, open or waitlist) and when The Network's own SF and NYC matching opens.
+slop.date goes live when Phases 0-2 meet their exit criteria and the founder approves live sends. Phases 0-4 are built and pass their sim gates; the critical path, the remaining prototypes and the pilot gates are in 37.1-37.3. Open: the join mode for peon.biz and friends.help, and when The Network's own NYC matching opens (San Francisco only after the expansion gates, 25.6).
+# 41. Experience design: attention budget, plans and continuous conversation
+Status (2026-10-08): the experience design of 2026-10-07 (docs/design/2026-10-07-experience-design.md), reconciled with Section 40.4. It amends 7.2, 8.2, 9.3, 12.3, 29 (F6, F11, F12, F20, F21, F28), 32.9, 33.3-33.4 and 33.10. Where it differs from 40.4, 40.4 wins: sends go at a learned send time (default 12:00 local), not in a fixed Thursday digest; only initial invites count against the cap; the reveal is the booked plan; plans have their own allowance (1 initial plan invite per 7 days); and crews form after one great plan. For slop.date a probe may include one photo (40.5).
+## 41.1 Principles
+- The scarce resource is the member's attention. Budget interruptions, not proposals, and measure value delivered, not messages sent.
+- The conversation is the product, so onboarding never ends.
+- Every existing rule holds: consent, privacy, minors, human review, quiet hours.
+## 41.2 Attention budget
+An interruption is any message the Network starts that the member did not ask for. The caps are unchanged: Open 4 per 7 days, Normal 2 per 7 days, Quiet 1 per 30 days, Receiving support only, Paused none.
+- One interruption can carry a menu of up to three items.
+- Pricing: an item's value is its calibrated chance of being worthwhile times the square root of its chance of a yes. The Network sends only if the total value exceeds the member's price of attention times the cost of the message.
+- Learned signals can only make the Network quieter; only the member can ask for more.
+- No filler. A hold queue keeps up to 10 items per member, each with an expiry, and re-checks them before sending.
+## 41.3 Consent-first probes
+- The Network asks about the activity before revealing the person: at most one shareable fact, never a name (slop.date may add one photo).
+- The member with the live want is asked first. The match is reviewed before the first probe.
+## 41.4 Messaging limits
+Blooio allows three unanswered messages per conversation and one re-engagement after 14 days. The Network sends an interruption only when at most one message is unanswered, uses the single re-engagement at most once (after 30 or more days, for a high-value item), and keeps new conversations under 20 per line per day.
+## 41.5 V14: value every 14 days
+V14 is the share of active members (tenure 14 days or more, not paused) who had at least one value event in the last 14 days. Targets: 85% in the simulator and 70% in the pilot. The 28.2 first-value bar becomes V14 at day 14. When a member has nothing, the engine logs why, and the cause sets the remedy:
+
+| Cause | Remedy |
+|---|---|
+| Too little data | One guess-and-confirm question in the next send; offer a calendar or the member's own AI summary; meanwhile outside-world items from what is known |
+| No live want | A re-confirmation item ("still looking for a running group?") or a short want menu; plans need only availability |
+| No good one-to-one partner | Switch format before giving up: an event anchor, a theme group, a plan or advice routing; then outside-world; then an honest "nothing yet" with a growth ask |
+| Travel or a thin network | Outside-world first; travel intros to members who opted in to visitors; a targeted growth ask for the gap |
+| Budget or busy | Add the item to a menu instead of a new interruption; the hold queue; a partner with budget left |
+
+
+## 41.6 Plans and introduction types
+- Plans: availability capture; a planner that builds an activity, a venue and 2-6 free members; least-misery group scoring; anonymous probes with a quorum (normally 3) and a deadline; alternates; the reveal is the booked plan; reminders and fallbacks; recurring crews with a rotating host after one great plan. Members aged 13-17 get solo plans to public, age-appropriate events only. Plans are never framed as romance.
+- New introduction types join the engine's generators: plans, recurring crews, hosted dinners at public venues, skill swaps, mentorship, accountability partners, travel, reconnects, introducer-routed intros, advice routing and outside-world suggestions. Each needs a simulator coverage gate before it ships.
+## 41.7 The conversation is the product
+- Inbound messages are routed in a fixed order; claims are classified for privacy at extraction (sensitive topics, minors and third parties are agent_private).
+- An evidence ledger keeps each fact's source, confidence and decay; wants are re-confirmed every 60 days; at most one question per interaction.
+- Rollout: the attention budget, menus and hold queue; then plans and simulator availability; then coverage scenarios; then the extraction eval. Offline replay and two weeks of shadow come before live sends, one app at a time (37.1).
 # Appendix A. Example experiences and conversations
 ## A.1 The surprising birthday
 Agent -> Member: "I thought of you for something slightly ridiculous. Someone one connection away is turning 30 tonight and their plans fell apart. You are four blocks away, you told me you love singing, and three members are already going. They need someone willing to show up around 9:15 and sing an unnecessarily dramatic Happy Birthday. About 20 minutes unless you want to stay. Interested?"
@@ -1861,6 +1970,8 @@ Post-MVP. Scopes are attached to the agent key issued by phone verification (11.
 
 
 
+## B.4 Platform schema
+Platform schema (one per deployment, shared by every app): apps, cities, networks (app and city, matching switch), people (lowest age, tombstone), phone identities (the only place a phone lives), memberships (app, person, member id, state), consent events (phone, app or all, state, source, wording, time), share grants, person blocks, staff roles (role, app), audit (append-only, with the app), app lines, OTP challenges, sessions (hashed), rate limits, suppression (hashed). The engine tables carry the app id on every row. Schema changes are numbered SQL migrations (31.4).
 # Appendix C. Validation experiment matrix
 Experiments on Commons transport, partner capacity, and the assistant connector are post-MVP (Section 28.4). The others can run during the MVP pilot.
 | Experiment | Setup | Success signal | Failure interpretation / next move |
