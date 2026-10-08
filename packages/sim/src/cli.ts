@@ -39,6 +39,7 @@ const { values: a } = parseArgs({
     "stable-decisions": { type: "boolean", default: false },
     logistics: { type: "boolean", default: false },
     "quality-churn": { type: "boolean", default: false },
+    "trip-clock": { type: "boolean", default: false },
     judge: { type: "string" },
     scenario: { type: "string" },
     k: { type: "string", default: "1" },
@@ -69,6 +70,7 @@ if (a.help) {
   --logistics         oracle: travel and meeting time change show-up (default off)
   --quality-churn     policy personas lose trust after unsafe or poor intros and bad meetings,
                       and may STOP (default off: churn only from message volume)
+  --trip-clock        travellers reply on the trip city's clock (default off: home-city clock)
   --judge N           after the run, LLM-judge N sent proactive messages (quality + privacy audit)
                       with the judge model judgeLLM() (JUDGE_PROVIDER/JUDGE_MODEL, default surplus gpt-6-luna)
   --scenario PATH     run a scenario file instead of a random world; --k N for pass^k
@@ -96,7 +98,7 @@ async function loadEngine(): Promise<Engine | undefined> {
 
 const engine = await loadEngine();
 const llm = a.llm || a["llm-personas"] ? defaultLLM() : undefined;
-const agent = a.llm && llm ? new LLMPersonaAgent(llm, DEFAULT_START) : a["quality-churn"] ? new PolicyPersonaAgent(DEFAULT_START, { qualityChurn: true }) : undefined;
+const agent = a.llm && llm ? new LLMPersonaAgent(llm, DEFAULT_START) : a["quality-churn"] || a["trip-clock"] ? new PolicyPersonaAgent(DEFAULT_START, { qualityChurn: a["quality-churn"], tripClock: a["trip-clock"] }) : undefined;
 
 if (a.scenario) {
   const s = await loadScenario(a.scenario);

@@ -90,6 +90,12 @@ export interface PolicyOptions {
    * 1.2 x (0.5 - trust). Without it, personas churn only from message volume.
    */
   qualityChurn?: boolean;
+  /**
+   * sim-worlds-19: a traveller replies on the trip city's clock (replyDelay with worldStart).
+   * Off by default: reply timing moves every downstream draw, and the packages/network
+   * single-seed gates ("consent-first beats push", newcomer_wave) do not survive that noise yet.
+   */
+  tripClock?: boolean;
 }
 const UNSAFE_FOR_ME = ["ex_partners", "romance_mismatch", "adversarial_participant"];
 const loseTrust = (mem: PersonaContext["memory"], x: number) => { mem.trust = Math.max(0, Math.min(1, (mem.trust ?? 1) - x)); };
@@ -110,11 +116,11 @@ export function decide(ctx: PersonaContext, msg: SimMessage, worldStart: number,
   const recent = mem.proactiveReceived.filter(t => now - t < WEEK).length;
   const tolerance = 3 + Math.round(4 * p.hidden.capacity);
   if (proactive && !silent && !p.hidden.adversarial && p.archetype !== "never_replies" && recent > tolerance) {
-    return { ...base, intent: "opt_out", worthwhile: false, delayMs: replyDelay(p, now, rng, 2, worldStart) };
+    return { ...base, intent: "opt_out", worthwhile: false, delayMs: replyDelay(p, now, rng, 2, opts.tripClock ? worldStart : undefined) };
   }
   // Quality churn (opt-in): a member who stopped trusting the Network leaves when it texts again.
   if (opts.qualityChurn && proactive && !silent && !p.hidden.adversarial && (mem.trust ?? 1) < 0.5 && rng.bool(1.2 * (0.5 - (mem.trust ?? 1)))) {
-    return { ...base, intent: "opt_out", worthwhile: false, delayMs: replyDelay(p, now, rng, 2, worldStart) };
+    return { ...base, intent: "opt_out", worthwhile: false, delayMs: replyDelay(p, now, rng, 2, opts.tripClock ? worldStart : undefined) };
   }
 
   let d: PolicyDecision = base;
@@ -188,7 +194,7 @@ export function decide(ctx: PersonaContext, msg: SimMessage, worldStart: number,
   if (silent) d = { ...d, intent: "ignore" };
   // Only a yes the persona actually sends primes them.
   if (d.intent === "probe_yes" && meta.probe) (mem.signals ??= []).push({ category: meta.probe.category, at: now, source: "probe", key: meta.probe.key });
-  if (d.intent !== "ignore") d.delayMs = replyDelay(p, now, rng, inFlight ? 1.5 : 1, worldStart);
+  if (d.intent !== "ignore") d.delayMs = replyDelay(p, now, rng, inFlight ? 1.5 : 1, opts.tripClock ? worldStart : undefined);
   if (!proactive) delete d.worthwhile;
   return d;
 }
