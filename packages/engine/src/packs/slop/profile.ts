@@ -76,7 +76,9 @@ export interface SlopProfile {
   /** Age verification: true = passed, false = failed, undefined = no check recorded. */
   ageVerified?: boolean;
   /** Appearance rating (iteration 3), read only for adults whose age is not known to be unverified. */
-  appearance?: { face: number; body: number; overall: number; confidence: number; bodyType?: string; bodyTypeConfidence?: number };
+  appearance?: { face: number; body: number; overall: number; confidence: number; bodyType?: string; bodyTypeConfidence?: number;
+    /** Iteration 5: rank of `overall` among the rated members in this input, 0 (lowest) .. 1. Internal only. */
+    quantile?: number };
   /**
    * Hard-filter questions asked at least `silentAfterDays` ago and never answered (age_range,
    * distance, orientation): the pack proposes on a narrow fallback instead of locking them out.
@@ -189,6 +191,9 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
       history: hist.get(m.id) ?? emptyHistory(),
     });
   }
+  // Iteration 5: each rating's quantile among the rated members of this input (ties by id).
+  const ratedP = [...out.values()].filter(p => p.appearance).sort((x, y) => (x.appearance!.overall - y.appearance!.overall) || (x.id < y.id ? -1 : 1));
+  ratedP.forEach((p, i) => { p.appearance!.quantile = ratedP.length > 1 ? i / (ratedP.length - 1) : 0.5; });
   // Revealed taste: the self-descriptions of the people a member rated, with the rating.
   for (const p of out.values()) {
     p.history.rated.sort((x, y) => (x.about < y.about ? -1 : x.about > y.about ? 1 : x.v - y.v));

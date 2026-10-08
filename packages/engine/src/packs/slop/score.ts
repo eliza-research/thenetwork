@@ -149,16 +149,20 @@ export function directional(a: SlopProfile, b: SlopProfile, o: SlopPackOptions, 
 export function appearanceGap(a: SlopProfile, b: SlopProfile, o: SlopPackOptions): number | undefined {
   const x = a.appearance, y = b.appearance, A = o.appearance;
   if (!x || !y || x.confidence < A.minConfidence || y.confidence < A.minConfidence) return undefined;
+  // Iteration 5: a pair with a bottom-rated member is never scored or filtered on similarity.
+  if (A.protectBelow > 0 && ((x.quantile ?? 1) < A.protectBelow || (y.quantile ?? 1) < A.protectBelow)) return undefined;
   const W = A.dims ?? { face: 0, body: 0, overall: 1 };
   const tot = W.face + W.body + W.overall;
   if (!(tot > 0)) return Math.abs(x.overall - y.overall);
   return Math.sqrt((W.face * (x.face - y.face) ** 2 + W.body * (x.body - y.body) ** 2 + W.overall * (x.overall - y.overall) ** 2) / tot);
 }
-/** Soft assortative term: exp(-w x gap^2), 1 when off or unusable. */
+/** Soft assortative term: exp(-w x max(0, gap - gapFree)^2), 1 when not soft or unusable. */
 export function appearanceFactor(a: SlopProfile, b: SlopProfile, o: SlopPackOptions): number {
   if (o.appearance.mode !== "soft") return 1;
   const d = appearanceGap(a, b, o);
-  return d === undefined ? 1 : Math.exp(-o.appearance.softWeight * d * d);
+  if (d === undefined) return 1;
+  const x = Math.max(0, d - (o.appearance.gapFree ?? 0));
+  return Math.exp(-o.appearance.softWeight * x * x);
 }
 
 /**
