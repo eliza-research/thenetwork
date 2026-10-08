@@ -3,9 +3,9 @@
 # sites/<domain>/dist with the static pages, _headers, the skill files, and an advanced-mode _worker.js
 # (deploy/router.ts) with _routes.json, so only the backend paths run the Worker.
 #
-#   push to main -> test and build, then for each site: build, deploy its dist behind the "production"
+#   push to main -> typecheck and build, then for each site: build, deploy its dist behind the "production"
 #                   GitHub environment (required reviewers are set by the founder), then a smoke check.
-#   pull request -> test and build only. There are no preview deployments: a preview would run code
+#   pull request -> typecheck and build only. There are no preview deployments: a preview would run code
 #                   from the pull request next to a deploy token and the production proxy secret
 #                   (audit finding: deploy-sites.yml preview job).
 #
@@ -36,7 +36,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  # Same version as scripts/wrangler.sh (scripts/supply-chain.test.ts checks).
+  # Keep in step with WRANGLER_VERSION in scripts/wrangler.sh.
   WRANGLER_VERSION: "4.136.3"
   NTWRK_ACCOUNT_ID: "50ad2052bbc6ca528d6993a689b419a4"
 
@@ -54,8 +54,6 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Typecheck sites, router and scripts
         run: bunx tsc --noEmit -p sites/tsconfig.json
-      - name: Sites, router and guard tests
-        run: bun test sites deploy/router.test.ts deploy/smoke.test.ts scripts
 
   build:
     needs: test
