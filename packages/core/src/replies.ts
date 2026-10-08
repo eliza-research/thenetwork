@@ -284,6 +284,9 @@ export function parseOptOut(text: string, o: { apps?: readonly string[] } = {}):
   if (EXACT_EN.test(t) || EXACT_ES.test(t)) return { match: "exact", scope: "all", lang };
   // Reported speech and how-to questions do not opt out.
   if (/\b(?:said|says|told|asked) (?:me )?(?:to )?["']?stop\b/.test(t) || /\bhow (?:do|can) i (?:stop|unsubscribe|opt out)\b/.test(t)) return { match: "none", scope: "all", lang };
+  // "don't stop", "can't stop laughing", "stop by later", "stop it, I love this": not opt-outs.
+  if (/\b(?:don't|dont|do not|never|won't|wont|can't|cant|cannot|not)\s+stop\b/.test(t) || /\bstop (?:by|at|in|over|for|on by)\b/.test(t)
+    || /^stop (?:it|this)\b.*\b(?:love|lol|haha|lmao|omg|amazing|cute|funny|so good|too good)\b/.test(t)) return { match: "none", scope: "all", lang };
   // "leave slop" / "stop slop": one app only (when the caller names its apps).
   const app = t.match(/^(?:leave|stop|quit|salir de|dejar) ([a-z0-9.]+)$/)?.[1];
   if (app && o.apps?.some(a => a.toLowerCase() === app || a.toLowerCase().split(".")[0] === app.split(".")[0])) return { match: "likely", scope: "app", lang };

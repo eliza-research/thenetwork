@@ -103,6 +103,7 @@ describe("parseOptOut", () => {
     ["no quiero mensajes", "likely"], ["número equivocado", "likely"],
     ["how do I stop these?", "none"], ["my friend said stop by", "none"], ["can't stop thinking about the hike!", "none"],
     ["yes", "none"], ["no thanks", "none"], ["the bus stop on 5th", "none"],
+    ["don't stop", "none"], ["dont stop", "none"], ["stop by later", "none"], ["Stop it, I love this", "none"], ["I'll stop at the store", "none"],
   ];
   for (const [t, want] of cases) test(JSON.stringify(t), () => expect(parseOptOut(t).match).toBe(want));
   test("leave <app> is app-scoped when the app is known", () => {
