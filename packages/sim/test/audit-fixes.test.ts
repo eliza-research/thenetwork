@@ -2,7 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import { DAY, HOUR, type Proposal } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/judge";
-import { DEFAULT_START, networkStateFromRecords } from "../src/index.ts";
+import { DEFAULT_START, generatePersonas, networkStateFromRecords, Oracle, PRIMED_MODEL } from "../src/index.ts";
 
 const T0 = DEFAULT_START + 2 * DAY;
 const prop = (id: string, participants: string[]): Proposal => ({
@@ -51,5 +51,23 @@ describe("sim-worlds-1: the Network's own state carries no hidden decisions", ()
     ];
     const s = networkStateFromRecords(records, T0 + 3 * DAY);
     expect(s.feedback.map(f => [f.from, f.about, f.sentiment, f.wouldMeetAgain])).toEqual([["a", "b", "negative", false]]);
+  });
+});
+
+describe("matching-e2e-4: a probe-primed yes still depends on who the others are", () => {
+  test("with identityFit set, primed accept is PRIMED_MODEL.identity for a good fit and much lower for a poor fit", () => {
+    const ps = generatePersonas({ n: 60, seed: 3, minorShare: 0 }).filter(p => !p.hidden.adversarial && p.homeCity === "sf");
+    const o = new Oracle(ps, 3, DEFAULT_START);
+    const a = ps[0]!;
+    const at = DEFAULT_START + DAY;
+    const prop = (b: string) => ({ id: `p:${b}`, kind: "intro" as const, participants: [a.id, b], city: "sf" as const, window: { start: at, end: at }, category: "social" as const });
+    const others = ps.slice(1).filter(b => !a.relationships.some(r => r.to === b.id))
+      .map(b => ({ b, acc: o.evaluate(prop(b.id)).participants[a.id]!.acceptProb })).sort((x, y) => x.acc - y.acc);
+    PRIMED_MODEL.identityFit = 0.55;
+    const poor = o.evaluatePrimed(prop(others[0]!.b.id), { [a.id]: "probe" }).participants[a.id]!.acceptProb;
+    const good = o.evaluatePrimed(prop(others.at(-1)!.b.id), { [a.id]: "probe" }).participants[a.id]!.acceptProb;
+    delete PRIMED_MODEL.identityFit;
+    expect(good).toBeCloseTo(PRIMED_MODEL.identity, 2);
+    expect(poor).toBeLessThan(0.6 * PRIMED_MODEL.identity);
   });
 });
