@@ -23,8 +23,8 @@ set -euo pipefail
 WRANGLER_VERSION="4.136.3"
 
 export XDG_CONFIG_HOME="$HOME/.config/wrangler-ntwrk"
-# The Eliza Labs Cloudflare account id comes from the environment (.env or the shell); no default here.
-if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then echo "wrangler.sh: set CLOUDFLARE_ACCOUNT_ID (the Eliza Labs Cloudflare account id)" >&2; exit 2; fi
+# The ntwrk.love Cloudflare account id comes from the environment (.env or the shell); no default here.
+if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then echo "wrangler.sh: set CLOUDFLARE_ACCOUNT_ID (the ntwrk.love Cloudflare account id)" >&2; exit 2; fi
 export CLOUDFLARE_ACCOUNT_ID
 
 # Flags that take the next word as their value, and switches that never do. A flag on neither list is

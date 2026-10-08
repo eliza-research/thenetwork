@@ -7,7 +7,7 @@
 # Deploys: CI (.github/workflows/deploy-sites.yml, behind the "production" GitHub environment), or by hand
 # only with founder approval:
 #   bun run sites/sites.ts slop && NTWRK_ALLOW_DEPLOY=1 scripts/wrangler.sh pages deploy sites/slop.date/dist --project-name slop-date --branch main
-# The account comes from CLOUDFLARE_ACCOUNT_ID in the environment (the Eliza Labs Cloudflare account,
+# The account comes from CLOUDFLARE_ACCOUNT_ID in the environment (the ntwrk.love Cloudflare account,
 # which holds all four Pages projects); it is never written here.
 name = "slop-date"
 pages_build_output_dir = "./dist"

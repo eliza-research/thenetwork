@@ -14,7 +14,7 @@
 # Secrets (environment "production"): CLOUDFLARE_API_TOKEN (a token scoped to Cloudflare Pages: Edit in
 # the account below). PLATFORM_PROXY_SECRET is set once per Pages project by the coordinator
 # (scripts/wrangler.sh pages secret put), never in CI.
-# Variables: CLOUDFLARE_ACCOUNT_ID (required: the Eliza Labs Cloudflare account, which holds all four
+# Variables: CLOUDFLARE_ACCOUNT_ID (required: the ntwrk.love Cloudflare account, which holds all four
 # projects; no default in the repo), BACKEND_ORIGIN (default https://api.ntwrk.love), MCP_URL (a template with
 # {domain}; leave unset), TURNSTILE_SITE_KEY, BACKEND_LIVE ("true" adds /api/app to the smoke check).
 name: deploy-sites

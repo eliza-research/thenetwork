@@ -91,6 +91,6 @@ forwards those paths to `BACKEND_ORIGIN` with signed `x-network-proxy-*` headers
 from `main` behind the `production` GitHub environment (`.github/workflows/deploy-sites.yml`,
 `wrangler pages deploy <dist> --project-name <name> --branch main`); there are no PR previews. By
 hand, deploys need founder approval and go through `scripts/wrangler.sh` with `NTWRK_ALLOW_DEPLOY=1`.
-All four projects are in the Eliza Labs Cloudflare account (its id is `CLOUDFLARE_ACCOUNT_ID`, from
+All four projects are in the ntwrk.love Cloudflare account (its id is `CLOUDFLARE_ACCOUNT_ID`, from
 the environment or the CI variable). Each answers on `<project>.pages.dev`, which the backend accepts as that app's host; slop.date
 and friends.help DNS (another account) point there. Details: [docs/deploy.md](../docs/deploy.md).
