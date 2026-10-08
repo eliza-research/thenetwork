@@ -601,14 +601,37 @@ export function checkPlanDeadline(run: PlanRun, now: number): { run: PlanRun; ac
 
 export type Fallback =
   /**
-   * `partnerPlan`: the yes-sayers of a GROUP plan are only two. They said yes to a group, not to a
-   * one-to-one meeting, so the pair is a fresh partner plan with one-to-one rules (probe the first,
-   * then the partner), never booked directly (engine-attention-plans-10).
+   * A smaller plan of the yes-sayers. Three or more: a smaller GROUP, booked like the original (they
+   * said yes to a group). Exactly two: they said yes to a group, not to a one-to-one meeting, so the
+   * pair is NEVER booked directly: `partnerPlan` is a fresh activity-partner plan with one-to-one
+   * rules and consent (each of the two gets a new probe: the first, then the partner after a yes),
+   * engine-attention-plans-10. `partnerPlan` is always set when `members` has two entries.
    */
   | { kind: "smaller"; members: MemberId[]; partnerPlan?: Plan }
   | { kind: "solo_event"; members: MemberId[]; eventId: string }
   | { kind: "next_week"; members: MemberId[] }
   | { kind: "none" };
+
+/**
+ * A plan that came down to two people (a group plan's two yes-sayers, or a booking that shrank to
+ * two) becomes a fresh activity-partner plan: same activity, place and time, one-to-one rules
+ * (partner plan, quorum 2, no host, no alternates, not a crew session), a new id and probe deadline.
+ * Run it with startPlanRun: the first member is probed, then the partner after a yes; it is booked
+ * only on both yeses. Never book the pair directly.
+ */
+export function partnerPlanFor(p: Plan, pair: [MemberId, MemberId], now: number, pcfg: PlansConfig = DEFAULT_PLANS): Plan {
+  const ids: MemberId[] = [...pair];
+  const plan: Plan = {
+    ...p, id: `plan_${sha256(`${p.id}|smaller|${now}`).slice(0, 16)}`, invited: ids, alternates: [], partner: true,
+    size: { min: 2, target: 2, max: 2 }, quorum: pcfg.quorum.partner,
+    probeDeadline: Math.min(p.window.start - pcfg.deadlineBeforeStartHours * HOUR, now + pcfg.probeWindowHours * HOUR),
+    u: Object.fromEntries(ids.map(id => [id, p.u[id] ?? 0])), familiar: Object.fromEntries(ids.map(id => [id, (p.familiar[id] ?? []).filter(x => ids.includes(x))])), createdAt: now,
+  };
+  // One-to-one: no host, and not a crew session (the crew frame would skip the partner probe copy).
+  delete plan.hostId;
+  delete plan.crewId;
+  return plan;
+}
 
 /**
  * Fallbacks, in order (4.6): (1) a smaller plan of the yes-sayers when >= 2 said yes and the
@@ -623,16 +646,7 @@ export function planFallback(run: PlanRun, now: number, events: readonly Network
   const carry = pcfg.fallback.nextWeek ? yes.map(memberId => ({ memberId, activityId: p.activityId, until: now + pcfg.fallback.carryDays * DAY })) : [];
   if (!yes.length) return { fallback: { kind: "none" }, carry };
   if (pcfg.fallback.smaller && yes.length >= 2 && a.groupSize[0] <= 2 && p.window.start - now > pcfg.lateJoinHours * HOUR) {
-    if (yes.length === 2 && !p.partner) {
-      const partnerPlan: Plan = {
-        ...p, id: `plan_${sha256(`${p.id}|smaller|${now}`).slice(0, 16)}`, invited: [...yes], alternates: [], partner: true, hostId: undefined,
-        size: { min: 2, target: 2, max: 2 }, quorum: pcfg.quorum.partner,
-        probeDeadline: Math.min(p.window.start - pcfg.deadlineBeforeStartHours * HOUR, now + pcfg.probeWindowHours * HOUR),
-        u: Object.fromEntries(yes.map(id => [id, p.u[id] ?? 0])), familiar: Object.fromEntries(yes.map(id => [id, (p.familiar[id] ?? []).filter(x => yes.includes(x))])), createdAt: now,
-      };
-      delete partnerPlan.hostId;
-      return { fallback: { kind: "smaller", members: yes, partnerPlan }, carry: [] };
-    }
+    if (yes.length === 2) return { fallback: { kind: "smaller", members: yes, partnerPlan: partnerPlanFor(p, [yes[0]!, yes[1]!], now, pcfg) }, carry: [] };
     return { fallback: { kind: "smaller", members: yes }, carry: [] };
   }
   if (pcfg.fallback.soloEvent) {

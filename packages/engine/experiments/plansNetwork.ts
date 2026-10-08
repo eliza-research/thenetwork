@@ -384,6 +384,14 @@ export class PlanNetwork extends AttentionNetwork {
     const clash = going.filter(id => this.conflict(id, plan.window.start, plan.id));
     if (clash.length) { this.planStats.conflictsAvoided += clash.length; going = going.filter(id => !clash.includes(id)); }
     if (going.length < 2) { l.run = { ...l.run, stage: "closed" }; const fl = this.flows.get(plan.id) as any; if (fl) fl.stage = "closed"; this.planStats.fallbacks.none = (this.planStats.fallbacks.none ?? 0) + 1; return; }
+    if (going.length === 2 && !plan.partner) {
+      // A group plan down to two: they said yes to a group, not to a one-to-one meeting. A fresh
+      // partner plan with one-to-one consent instead of booking the pair (engine-attention-plans-10).
+      l.run = { ...l.run, stage: "closed" }; const fl = this.flows.get(plan.id) as any; if (fl) fl.stage = "closed";
+      this.planStats.fallbacks.smaller = (this.planStats.fallbacks.smaller ?? 0) + 1;
+      this.submitPlan(P.partnerPlanFor(plan, [going[0]!, going[1]!], now, this.pcfg), now);
+      return;
+    }
     l.bookedAt = now; l.going = [...going];
     this.planStats.booked++;
     const fl = this.flows.get(plan.id) as any;
@@ -451,7 +459,7 @@ export class PlanNetwork extends AttentionNetwork {
       return;
     }
     if (fallback.kind === "smaller") {
-      // A smaller plan of the yes-sayers (the activity allows 2): booked like the original.
+      // A smaller GROUP of the yes-sayers (three or more; two always come with a partner plan): booked like the original.
       l.run = { ...l.run, stage: "booked" };
       this.planStats.bookedSmaller++;
       this.book(l, fallback.members, now);
