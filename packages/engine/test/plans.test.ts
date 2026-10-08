@@ -350,7 +350,7 @@ describe("the plan allowance (founder decision 2026-10-08)", () => {
   test("1 plan invite per 7 days, separate from the intro cap; one plan per message (outside-world companions allowed); no break-ins", () => {
     const acfg = P.planAllowanceConfig();
     expect(acfg.caps.normal).toEqual({ limit: 1, periodDays: 7 });
-    expect(acfg.caps.quiet).toEqual({ limit: 1, periodDays: 7 });
+    expect(acfg.caps.quiet).toEqual({ limit: 1, periodDays: 30 }); // Quiet keeps its stricter state rate (audit engine-attention-plans-9)
     expect(acfg.caps.paused.limit).toBe(0);
     expect(acfg.maxMemberItems).toBe(1);
     // The intro cap itself is unchanged.
@@ -444,5 +444,35 @@ describe("audit 2026-10-08 (engine-attention-plans-2, -4, -10, -12, -13)", () =>
     expect(ps.some(p => p.eventId === "rom")).toBe(false);
     expect(ps.some(p => p.eventId === "small")).toBe(true);
     for (const p of ps.filter(p => p.eventId === "small")) expect(p.invited.length).toBeLessThanOrEqual(2);
+  });
+});
+
+describe("audit 2026-10-08 (engine-attention-plans-9, -11, -17, -21)", () => {
+  test("plans-9: the plan allowance never loosens a Quiet member's cap", () => {
+    const c = P.planAllowanceConfig();
+    const q = c.caps.quiet, base = A.capFor({ memberId: "a", state: "quiet", age: 30, tz: TZ, quietHours: [22, 8], onlyWhenAsked: false, prefs: A.defaultCadence("quiet") });
+    expect(q.limit / q.periodDays).toBeLessThanOrEqual(base.limit / base.periodDays);
+    expect(c.caps.normal).toEqual({ limit: DEFAULT_PLANS.allowance.limit, periodDays: DEFAULT_PLANS.allowance.periodDays });
+  });
+  test("plans-11: a yes too late to join is stored as late, not yes", () => {
+    let r = P.startPlanRun(plan({ invited: ["a", "b", "c", "d"], quorum: 3 }));
+    for (const id of ["a", "b", "c"]) r = P.recordPlanAnswer(r, id, true, NOW).run;
+    const late = P.recordPlanAnswer(r, "d", true, SAT - HOUR);
+    expect(late.action.kind).toBe("none");
+    expect(late.run.answers.d).toBe("late");
+    expect(P.yesOf(late.run)).not.toContain("d");
+  });
+  test("plans-17: a wall-clock time in the spring-forward gap maps to the first instant after it", () => {
+    const NY = "America/New_York";
+    const t = fromLocal(2026, 3, 8, 2, NY);
+    expect(localPartsOf(t, NY).hour).toBe(3);
+    expect(localPartsOf(fromLocal(2026, 3, 8, 12, NY), NY).hour).toBe(12);
+  });
+  test("plans-21: a venue that closes after midnight is open in the evening", () => {
+    const ids = ["ana", "ben", "cy", "dee", "eve"];
+    const night: Venue = { ...VENUE, id: "v2", hours: { weekday: [18, 2], weekend: [18, 2] } };
+    const ps = P.planProposals(mkWorld(climbers(ids)), { now: NOW, city: "sf", tz: TZ, evidence: evidence(ids), venues: [night] });
+    expect(ps.length).toBe(1);
+    expect(ps[0]!.venueId).toBe("v2");
   });
 });

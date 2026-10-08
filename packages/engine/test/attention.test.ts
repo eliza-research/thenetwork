@@ -729,3 +729,29 @@ describe("audit 2026-10-08 (engine-attention-plans-7)", () => {
     expect(A.itemGate(member({ categoriesOptIn: ["romance", "social"] }), rom, T)).toBeNull();
   });
 });
+
+describe("audit 2026-10-08 (engine-attention-plans-16, -19, -22)", () => {
+  test("plans-19: digestText only takes 1-3 lines", () => {
+    expect(() => A.digestText(["1", "2", "3", "4"])).toThrow();
+    expect(() => A.digestText([])).toThrow();
+  });
+  test("plans-22: attention metrics count only the window", () => {
+    const start = NOW, end = NOW + 14 * DAY;
+    const ledger = [entry("old", NOW - 30 * DAY), entry("in", NOW + DAY)];
+    const m = A.attentionMetrics({ ledger, members: [{ id: "a", joinedAt: NOW - 60 * DAY, adult: true }], values: [], autoPauses: [{ memberId: "a", at: NOW - 20 * DAY }], stops: [], start, end });
+    expect(m.interruptions).toBe(1);
+    expect(m.memberWeeks).toBeCloseTo(2, 6);
+    expect(m.autoPausePer100MemberMonths).toBe(0);
+  });
+  test("plans-16: a probe for tomorrow morning does not say 'later today'", () => {
+    const inp = emptyInput(NOW);
+    inp.members.push(baseMember("a"), baseMember("b"));
+    inp.facets.push(facet("b", 0, "interest", "sailing on the bay", ["sailing"]));
+    const w = mkWorld(inp);
+    const late = Date.UTC(2026, 9, 6, 4); // Monday 21:00 PDT
+    const spec = { proposalId: "p", kind: "intro" as const, category: "social" as const, objective: "Intro: sailing", tz: LA, window: { start: late + 11 * HOUR, end: late + 13 * HOUR } }; // Tuesday 08:00
+    const pr = A.buildProbe(w, spec as never, "a", ["b"], late);
+    expect(pr).not.toBeNull();
+    expect(pr!.text).not.toContain("later today");
+  });
+});

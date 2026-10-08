@@ -875,8 +875,10 @@ function whenPhrase(window: { start: number; end: number } | undefined, now: num
   // An availability window that is already open says nothing about a day: keep it general.
   if (!window || window.start <= now) return "in the next week or so";
   const days = (window.start - now) / DAY;
-  const wd = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][localParts(window.start, tz).weekday]!;
-  if (days < 0.5) return "later today";
+  const at = localParts(window.start, tz), today = localParts(now, tz);
+  const wd = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][at.weekday]!;
+  // "later today" only on the same local calendar day (engine-attention-plans-16).
+  if (at.year === today.year && at.month === today.month && at.day === today.day) return "later today";
   if (days < 6) return `on ${wd}`;
   return "in the next week or so";
 }
@@ -947,6 +949,8 @@ export function buildProbe(w: World, spec: ProbeSpec, recipient: MemberId, other
 
 /** The digest message text: a numbered menu with the reply grammar (1.4). */
 export function digestText(lines: string[]): string {
+  // The head names the count, so only 1-3 lines are valid (engine-attention-plans-19).
+  if (lines.length < 1 || lines.length > 3) throw new Error(`digestText takes 1-3 lines, got ${lines.length}`);
   if (lines.length === 1) return lines[0]!;
   const head = lines.length === 2 ? "Two things for this week" : "Three things for this week";
   return `${head}, reply with a number (or "none"):\n${lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}`;
@@ -1166,28 +1170,31 @@ export function attentionMetrics(inp: {
 }): AttentionMetrics {
   const cfg = inp.cfg ?? DEFAULT_ATTENTION;
   const msgs = new Map<string, AttentionLedgerEntry>();
-  for (const e of inp.ledger) if (e.countsAgainstCap && e.at <= inp.end) {
+  // Only the metric window [start, end] counts (engine-attention-plans-22).
+  for (const e of inp.ledger) if (e.countsAgainstCap && e.at >= inp.start && e.at <= inp.end) {
     const cur = msgs.get(e.messageId);
     if (!cur) msgs.set(e.messageId, { ...e, itemIds: [...e.itemIds] });
     else { cur.itemIds.push(...e.itemIds); if (e.repliedAt !== undefined && (cur.repliedAt === undefined || e.repliedAt < cur.repliedAt)) cur.repliedAt = e.repliedAt; }
   }
   const ints = [...msgs.values()];
-  const memberWeeks = inp.members.reduce((s, m) => s + Math.max(0, inp.end - m.joinedAt) / (7 * DAY), 0);
+  const memberWeeks = inp.members.reduce((s, m) => s + Math.max(0, inp.end - Math.max(m.joinedAt, inp.start)) / (7 * DAY), 0);
   const counted = ints.filter(e => e.at + cfg.annoyance.unansweredHours * HOUR <= inp.end);
   const unanswered = counted.filter(e => e.repliedAt === undefined || e.repliedAt > e.at + cfg.annoyance.unansweredHours * HOUR).length;
   const items = ints.reduce((s, e) => s + Math.max(1, new Set(e.itemIds).size), 0);
   const first = new Map<MemberId, number>();
-  for (const v of inp.values) first.set(v.memberId, Math.min(first.get(v.memberId) ?? Infinity, v.at));
+  const inWin = (t: number) => t >= inp.start && t <= inp.end;
+  const values = inp.values.filter(v => inWin(v.at));
+  for (const v of values) first.set(v.memberId, Math.min(first.get(v.memberId) ?? Infinity, v.at));
   const join = new Map(inp.members.map(m => [m.id, m.joinedAt]));
   const ttv = [...first].filter(([id]) => join.has(id)).map(([id, t]) => (t - join.get(id)!) / DAY).sort((a, b) => a - b);
   const safe = (a: number, b: number) => (b ? a / b : 0);
   return {
     interruptions: ints.length, memberWeeks, interruptionsPerMemberWeek: safe(ints.length, memberWeeks),
     unansweredRate: safe(unanswered, counted.length),
-    autoPausePer100MemberMonths: safe(new Set(inp.autoPauses.map(a => a.memberId)).size * 100, memberWeeks / (30 / 7)),
-    stopPer1000: safe(inp.stops.length * 1000, ints.length),
+    autoPausePer100MemberMonths: safe(new Set(inp.autoPauses.filter(a => inWin(a.at)).map(a => a.memberId)).size * 100, memberWeeks / (30 / 7)),
+    stopPer1000: safe(inp.stops.filter(x => inWin(x.at)).length * 1000, ints.length),
     itemsDelivered: items, itemsPerInterruption: safe(items, ints.length),
-    valueEvents: inp.values.length, valuePerInterruption: safe(inp.values.length, ints.length),
+    valueEvents: values.length, valuePerInterruption: safe(values.length, ints.length),
     timeToValueDaysMedian: ttv.length ? quantile(ttv, 0.5) : null,
     v14: v14(inp.values, inp.members, inp.start, inp.end, cfg).mean,
   };

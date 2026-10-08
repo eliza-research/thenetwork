@@ -112,9 +112,11 @@ export function planAllowanceEligible(ev: PlanEvidence | undefined, checkInOptIn
  */
 export function planAllowanceConfig(att: AttentionConfig = DEFAULT_ATTENTION, pcfg: PlansConfig = DEFAULT_PLANS): AttentionConfig {
   const cap = { limit: pcfg.allowance.limit, periodDays: pcfg.allowance.periodDays };
+  // A state whose own cap is stricter than the allowance keeps it (Quiet: 1 per 30 days, engine-attention-plans-9).
+  const stricter = (st: { limit: number; periodDays: number }) => (st.limit / st.periodDays < cap.limit / cap.periodDays ? { ...st } : cap);
   // One plan per message (the member answers one plan at a time); outside-world items (events,
   // places) may ride along as companions, as in any message.
-  return { ...att, maxMemberItems: 1, caps: { open: cap, normal: cap, quiet: cap, receiving: cap, paused: { limit: 0, periodDays: cap.periodDays } }, breakIns: { open: { ...cap, limit: 0 }, normal: { ...cap, limit: 0 }, quiet: { ...cap, limit: 0 }, receiving: { ...cap, limit: 0 }, paused: { ...cap, limit: 0 } } };
+  return { ...att, maxMemberItems: 1, caps: { open: stricter(att.caps.open), normal: stricter(att.caps.normal), quiet: stricter(att.caps.quiet), receiving: stricter(att.caps.receiving), paused: { limit: 0, periodDays: cap.periodDays } }, breakIns: { open: { ...cap, limit: 0 }, normal: { ...cap, limit: 0 }, quiet: { ...cap, limit: 0 }, receiving: { ...cap, limit: 0 }, paused: { ...cap, limit: 0 } } };
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -233,7 +235,10 @@ export interface PlannerInput {
 const openAt = (v: Venue, slot: TimeSlot, durMin: number, tz: string, att: AttentionConfig) => {
   const lp = localParts(slot.start, tz);
   const [o, c] = att.sendTime.weekendDays.includes((lp.weekday + 1) % 7) ? v.hours.weekend : v.hours.weekday;
-  return lp.hour >= o && lp.hour + durMin / 60 <= c;
+  const end = lp.hour + lp.minute / 60 + durMin / 60;
+  if (c > o) return lp.hour >= o && end <= c;
+  // Closes after midnight (e.g. 18-2, engine-attention-plans-21): open from o to c the next day.
+  return (lp.hour >= o && end <= c + 24) || (lp.hour < c && end <= c);
 };
 
 interface Cand { plan: Plan; rank: number }
@@ -515,7 +520,8 @@ export function buildPlanProbe(w: World, plan: Plan, recipient: MemberId, now: n
 // ------------------------------------------------------------------------------------------------
 // Quorum, backfill and fallbacks (4.6)
 
-export type PlanAnswer = "pending" | "yes" | "no";
+/** "late": a yes after booking that came too late to join (kept apart from yes, engine-attention-plans-11). */
+export type PlanAnswer = "pending" | "yes" | "no" | "late";
 export interface PlanRun {
   plan: Plan;
   answers: Record<MemberId, PlanAnswer>;
@@ -546,7 +552,11 @@ export function recordPlanAnswer(run: PlanRun, member: MemberId, yes: boolean, n
   const r: PlanRun = { ...run, answers: { ...run.answers, [member]: yes ? "yes" : "no" }, bench: [...run.bench] };
   const p = r.plan;
   if (yes) {
-    if (r.stage === "booked") return { run: r, action: now <= p.window.start - pcfg.lateJoinHours * HOUR ? { kind: "join", member } : { kind: "none" } };
+    if (r.stage === "booked") {
+      if (now <= p.window.start - pcfg.lateJoinHours * HOUR) return { run: r, action: { kind: "join", member } };
+      r.answers[member] = "late";
+      return { run: r, action: { kind: "none" } };
+    }
     const y = yesOf(r);
     if (y.length >= p.quorum) { r.stage = "booked"; return { run: r, action: { kind: "book", going: y } }; }
     if (p.partner && r.bench.length && now < p.probeDeadline) { const nx = r.bench.shift()!; r.answers[nx] = "pending"; return { run: r, action: { kind: "probe_partner", member: nx } }; }
