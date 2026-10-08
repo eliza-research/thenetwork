@@ -222,3 +222,27 @@ describe("engine-pipeline-17: output does not depend on input row order", () => 
     }
   }, 60_000);
 });
+
+describe("engine-pipeline-2 / -9: duplicate member ids; help alternates", () => {
+  test("duplicate member ids are rejected", () => {
+    const inp = emptyInput(NOW);
+    inp.members.push(baseMember("a", { age: 30 }), baseMember("a", { age: 15 }));
+    expect(() => mkWorld(inp)).toThrow("duplicate member id");
+  });
+  test("a help request's alternates have no pair rule with the chosen helpers", async () => {
+    const inp = emptyInput(NOW);
+    for (const id of ["req", "h1", "h2", "h3"]) {
+      inp.members.push(baseMember(id));
+      inp.presence.push({ memberId: id, city: "sf", type: "home", areas: ["mission"] });
+    }
+    for (const id of ["h1", "h2", "h3"]) inp.facets.push(facet(id, 0, "offer", "help fixing bikes and bike repair", ["bike_repair"]));
+    inp.intents.push(intent("req", "help fixing my bike chain", "help"));
+    inp.edges.push({ from: "h2", to: "h1", type: "blocked", strength: 1, explicit: true, createdAt: NOW - DAY }, { from: "h3", to: "h1", type: "blocked", strength: 1, explicit: true, createdAt: NOW - DAY });
+    const r = await runEngine(inp, { seed: 1 });
+    const w = mkWorld(inp);
+    for (const p of r.proposals.filter(p => p.generator === "help_request")) {
+      for (const alt of p.alternates) for (const h of p.participants.slice(1)) expect(w.blocked.has([alt, h].sort().join("|"))).toBe(false);
+    }
+    expect(r.proposals.some(p => p.generator === "help_request")).toBe(true);
+  });
+});
