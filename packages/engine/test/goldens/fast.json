@@ -1775,93 +1775,93 @@
   ]
  },
  "capital": {
-  "sha": "dc48dcb88a69fb7704ae3401c9fcd9daa2bf063b910a7ee64a5dde93331acaee",
+  "sha": "734855fc9534a5ddc6c0e7737774f7a8c1a3b4ac3dcf355b911fb62ae2787ad3",
   "gates": {
    "A default (all levers, detection on)": {
-    "ratio": 0.5389898989898989,
-    "worstSeedRatio": 0.5389898989898989,
+    "ratio": 0.44743733632622523,
+    "worstSeedRatio": 0.44743733632622523,
     "healthTargetMet": false,
     "gainShare": {
-     "adv_vouch_ring": -2.0241247425713444,
-     "adv_staged": -1.8958627047170733,
-     "adv_help_farm": -2.0241247425713444
+     "adv_vouch_ring": -1.7507287917528451,
+     "adv_staged": -1.7507287917528451,
+     "adv_help_farm": -1.6951139738014966
     },
     "gamingOk": true
    },
    "Z all NC levers off (paired comparator for the primary fairness gate)": {
-    "ratio": 0.5471537807986407,
-    "worstSeedRatio": 0.5471537807986407,
+    "ratio": 0.5129566694987256,
+    "worstSeedRatio": 0.5129566694987256,
     "healthTargetMet": false,
     "gainShare": {
-     "adv_vouch_ring": -1.9571030323718495,
-     "adv_staged": -1.8330879368872195,
-     "adv_help_farm": -1.9571030323718495
+     "adv_vouch_ring": -1.6563146997929603,
+     "adv_staged": -1.7016931847187946,
+     "adv_help_farm": -1.6476360645508945
     },
     "gamingOk": true
    },
    "B effort lever off (counterfactual: everyone at the floor)": {
-    "ratio": 0.5389898989898989,
-    "worstSeedRatio": 0.5389898989898989,
+    "ratio": 0.44743733632622523,
+    "worstSeedRatio": 0.44743733632622523,
     "healthTargetMet": false,
     "gainShare": {
-     "adv_vouch_ring": -2.0241247425713444,
-     "adv_staged": -1.8958627047170733,
-     "adv_help_farm": -2.0241247425713444
+     "adv_vouch_ring": -1.7507287917528451,
+     "adv_staged": -1.7507287917528451,
+     "adv_help_farm": -1.6951139738014966
     },
     "gamingOk": true
    },
    "C effort effect x2.5 (sensitivity: effortGain 1.0)": {
-    "ratio": 0.5389898989898989,
-    "worstSeedRatio": 0.5389898989898989,
+    "ratio": 0.44743733632622523,
+    "worstSeedRatio": 0.44743733632622523,
     "healthTargetMet": false,
     "gainShare": {
-     "adv_vouch_ring": -2.0241247425713444,
-     "adv_staged": -1.8958627047170733,
-     "adv_help_farm": -2.0241247425713444
+     "adv_vouch_ring": -1.7507287917528451,
+     "adv_staged": -1.7507287917528451,
+     "adv_help_farm": -1.6951139738014966
     },
     "gamingOk": true
    },
    "C0 all NC levers off, effortGain 1.0 (pair for C)": {
-    "ratio": 0.5471537807986407,
-    "worstSeedRatio": 0.5471537807986407,
+    "ratio": 0.5129566694987256,
+    "worstSeedRatio": 0.5129566694987256,
     "healthTargetMet": false,
     "gainShare": {
-     "adv_vouch_ring": -1.9571030323718495,
-     "adv_staged": -1.8330879368872195,
-     "adv_help_farm": -1.9571030323718495
+     "adv_vouch_ring": -1.6563146997929603,
+     "adv_staged": -1.7016931847187946,
+     "adv_help_farm": -1.6476360645508945
     },
     "gamingOk": true
    },
    "D detection off (anti-gaming = decay + cap only)": {
-    "ratio": 0.6709633649932157,
-    "worstSeedRatio": 0.6709633649932157,
+    "ratio": 0.6241519674355496,
+    "worstSeedRatio": 0.6241519674355496,
     "healthTargetMet": false,
     "gainShare": {
-     "adv_vouch_ring": 2.7618146439662232,
-     "adv_staged": 0.8016648847390462,
-     "adv_help_farm": 1.7757561982864114
+     "adv_vouch_ring": 2.1982933521889514,
+     "adv_staged": 0.7618158979118204,
+     "adv_help_farm": 1.5380567463075516
     },
     "gamingOk": false
    },
    "E no anti-gaming decay or cap (detection on)": {
-    "ratio": 0.5389898989898989,
-    "worstSeedRatio": 0.5389898989898989,
+    "ratio": 0.4942148760330579,
+    "worstSeedRatio": 0.4942148760330579,
     "healthTargetMet": false,
     "gainShare": {
-     "adv_vouch_ring": -1.7768595041322313,
-     "adv_staged": -1.5103305785123966,
-     "adv_help_farm": -1.7768595041322313
+     "adv_vouch_ring": -1.3902360168121561,
+     "adv_staged": -1.3902360168121561,
+     "adv_help_farm": -1.1817006142903328
     },
     "gamingOk": true
    },
    "F vouch-capacity lever off (fixed 3 invites / 30 days)": {
-    "ratio": 0.5666949872557351,
-    "worstSeedRatio": 0.5666949872557351,
+    "ratio": 0.53249787595582,
+    "worstSeedRatio": 0.53249787595582,
     "healthTargetMet": false,
     "gainShare": {
-     "adv_vouch_ring": -1.9462781955738013,
-     "adv_staged": -1.8229490339142744,
-     "adv_help_farm": -1.9462781955738013
+     "adv_vouch_ring": -1.648161602796466,
+     "adv_staged": -1.6933167152018487,
+     "adv_help_farm": -1.6395256875489366
     },
     "gamingOk": true
    }
