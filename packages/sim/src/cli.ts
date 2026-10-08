@@ -13,6 +13,7 @@ import { resolve } from "node:path";
 import { defaultLLM, judgeLLM } from "@thenetwork/core";
 import { formatMetrics, judgeMessageQuality, privacyAudit, type RunRecord } from "@thenetwork/judge";
 import { LLMPersonaAgent } from "./agent/llmAgent.ts";
+import { PolicyPersonaAgent } from "./agent/policy.ts";
 import { generatePersonas } from "./generator.ts";
 import { generateLLMPersonas } from "./llmGenerator.ts";
 import type { Engine, NetworkUnderTest } from "./network.ts";
@@ -37,6 +38,7 @@ const { values: a } = parseArgs({
     richness: { type: "boolean", default: false },
     "stable-decisions": { type: "boolean", default: false },
     logistics: { type: "boolean", default: false },
+    "quality-churn": { type: "boolean", default: false },
     judge: { type: "string" },
     scenario: { type: "string" },
     k: { type: "string", default: "1" },
@@ -65,6 +67,8 @@ if (a.help) {
   --stable-decisions  oracle: re-asking the same people for the same thing in a week is the same
                       answer, and personas remember declines (default off)
   --logistics         oracle: travel and meeting time change show-up (default off)
+  --quality-churn     policy personas lose trust after unsafe or poor intros and bad meetings,
+                      and may STOP (default off: churn only from message volume)
   --judge N           after the run, LLM-judge N sent proactive messages (quality + privacy audit)
                       with the judge model judgeLLM() (JUDGE_PROVIDER/JUDGE_MODEL, default surplus gpt-6-luna)
   --scenario PATH     run a scenario file instead of a random world; --k N for pass^k
@@ -92,7 +96,7 @@ async function loadEngine(): Promise<Engine | undefined> {
 
 const engine = await loadEngine();
 const llm = a.llm || a["llm-personas"] ? defaultLLM() : undefined;
-const agent = a.llm && llm ? new LLMPersonaAgent(llm, DEFAULT_START) : undefined;
+const agent = a.llm && llm ? new LLMPersonaAgent(llm, DEFAULT_START) : a["quality-churn"] ? new PolicyPersonaAgent(DEFAULT_START, { qualityChurn: true }) : undefined;
 
 if (a.scenario) {
   const s = await loadScenario(a.scenario);

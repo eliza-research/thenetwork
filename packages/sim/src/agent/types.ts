@@ -41,6 +41,8 @@ export interface PersonaMemory {
   signals?: { category: import("@thenetwork/core").Category; at: number; source: "ask" | "probe"; key?: string }[];
   /** Friends this persona has invited (growth). */
   invited?: string[];
+  /** Trust in the Network, 1 = full (PolicyOptions.qualityChurn only). Bad or unsafe intros lower it. */
+  trust?: number;
 }
 
 export const newMemory = (): PersonaMemory => ({

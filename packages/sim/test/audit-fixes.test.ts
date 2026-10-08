@@ -182,3 +182,25 @@ describe("scenario grading (sim-worlds-10, sim-worlds-12, sim-worlds-M3)", () =>
     expect(r.pass).toBe(false);
   });
 });
+
+describe("sim-worlds-13: unsafe intros cost trust and members churn (PolicyOptions.qualityChurn)", () => {
+  test("after two intros to their ex, a member opts out on a later proactive message; without the option they stay", () => {
+    const ps = generatePersonas({ n: 120, seed: 9, minorShare: 0, adversarialRate: 0 });
+    const a = ps.find(p => p.relationships.some(r => r.type === "ex") && p.archetype !== "never_replies")!;
+    const ex = a.relationships.find(r => r.type === "ex")!.to;
+    const o = new Oracle(ps, 9, DEFAULT_START);
+    const run = (qualityChurn: boolean) => {
+      const memory = newMemory();
+      const props = new Map<string, Proposal>([1, 2].map(i => [`x${i}`, { ...prop(`x${i}`, [a.id, ex]), city: a.homeCity }]));
+      const ctx = (now: number, salt: number) => ({ persona: a, memory, now, rng: new Rng(salt), oracle: o, history: [], lookupProposal: (id: string) => props.get(id), personaById: (id: string) => ps.find(p => p.id === id), personasMentioned: () => [] });
+      const msg = (id: string, ts: number, type: "proposal" | "question", proposalId?: string) => ({ id, ts, direction: "outbound" as const, channel: "sms" as const, from: "network", to: a.id, memberId: a.id, body: "Hi", status: "delivered" as const, meta: { type, proposalId, proactive: true } });
+      decide(ctx(T0, 1), msg("m1", T0, "proposal", "x1"), DEFAULT_START, { qualityChurn });
+      decide(ctx(T0 + 8 * DAY, 2), msg("m2", T0 + 8 * DAY, "proposal", "x2"), DEFAULT_START, { qualityChurn });
+      let optOuts = 0;
+      for (let i = 0; i < 6; i++) if (decide(ctx(T0 + (16 + 3 * i) * DAY, 10 + i), msg(`q${i}`, T0 + (16 + 3 * i) * DAY, "question"), DEFAULT_START, { qualityChurn }).intent === "opt_out") optOuts++;
+      return optOuts;
+    };
+    expect(run(true)).toBeGreaterThan(0);
+    expect(run(false)).toBe(0);
+  });
+});

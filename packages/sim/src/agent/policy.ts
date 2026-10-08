@@ -76,7 +76,20 @@ const WEEK = 7 * DAY;
 /** With OracleOptions.stableDecisions, a persona turns down the same people for the same thing again for this long. */
 export const DECLINE_MEMORY_DAYS = 28;
 
-export function decide(ctx: PersonaContext, msg: SimMessage, worldStart: number): PolicyDecision {
+/** Opt-in persona behaviour (audit 2026-10-08). Off by default so existing runs and goldens are unchanged. */
+export interface PolicyOptions {
+  /**
+   * sim-worlds-13: quality-driven trust and churn. An unsafe intro (ex, romance mismatch, a bad
+   * actor) costs 0.35 trust, a poor-fit intro 0.1, a bad meeting 0.2; a good meeting gives 0.1
+   * back. Below 0.5 trust, each proactive message makes the persona STOP with probability
+   * 1.2 x (0.5 - trust). Without it, personas churn only from message volume.
+   */
+  qualityChurn?: boolean;
+}
+const UNSAFE_FOR_ME = ["ex_partners", "romance_mismatch", "adversarial_participant"];
+const loseTrust = (mem: PersonaContext["memory"], x: number) => { mem.trust = Math.max(0, Math.min(1, (mem.trust ?? 1) - x)); };
+
+export function decide(ctx: PersonaContext, msg: SimMessage, worldStart: number, opts: PolicyOptions = {}): PolicyDecision {
   const { persona: p, memory: mem, rng, now } = ctx;
   const meta = msg.meta ?? {};
   const type: MessageType = msg.system ? "system" : meta.type ?? classifyMessage(msg.body);
@@ -94,6 +107,10 @@ export function decide(ctx: PersonaContext, msg: SimMessage, worldStart: number)
   if (proactive && !silent && !p.hidden.adversarial && p.archetype !== "never_replies" && recent > tolerance) {
     return { ...base, intent: "opt_out", worthwhile: false, delayMs: replyDelay(p, now, rng, 2) };
   }
+  // Quality churn (opt-in): a member who stopped trusting the Network leaves when it texts again.
+  if (opts.qualityChurn && proactive && !silent && !p.hidden.adversarial && (mem.trust ?? 1) < 0.5 && rng.bool(1.2 * (0.5 - (mem.trust ?? 1)))) {
+    return { ...base, intent: "opt_out", worthwhile: false, delayMs: replyDelay(p, now, rng, 2) };
+  }
 
   let d: PolicyDecision = base;
   switch (type) {
@@ -107,7 +124,7 @@ export function decide(ctx: PersonaContext, msg: SimMessage, worldStart: number)
       };
       break;
     }
-    case "proposal": d = decideProposal(ctx, msg, worldStart, base); break;
+    case "proposal": d = decideProposal(ctx, msg, worldStart, base, opts); break;
     case "scheduling": {
       const pid = meta.proposalId;
       const pr = pid ? mem.proposals[pid] : undefined;
@@ -135,6 +152,7 @@ export function decide(ctx: PersonaContext, msg: SimMessage, worldStart: number)
       };
       if (p.hidden.adversarial === "block_abuser" && m) { d.feedback!.enjoyment = 0.05; d.feedback!.wouldMeetAgain = false; d.block = m.others; }
       else if (m && m.showed && m.enjoyment < 0.2 && m.othersShowed.length) d.block = m.others; // genuinely bad experience
+      if (opts.qualityChurn && m?.showed && m.othersShowed.length) loseTrust(mem, m.enjoyment < 0.35 ? 0.2 : m.enjoyment >= 0.6 ? -0.1 : 0);
       break;
     }
     case "relay": d = { ...base, intent: rng.bool(0.6) ? "relay_reply" : "ignore" }; break;
@@ -174,7 +192,7 @@ function latestMeetingId(mem: PersonaContext["memory"]): string | undefined {
   return Object.entries(mem.meetings).sort((a, b) => b[1].at - a[1].at)[0]?.[0];
 }
 
-function decideProposal(ctx: PersonaContext, msg: SimMessage, worldStart: number, base: PolicyDecision): PolicyDecision {
+function decideProposal(ctx: PersonaContext, msg: SimMessage, worldStart: number, base: PolicyDecision, opts: PolicyOptions = {}): PolicyDecision {
   const { persona: p, memory: mem, rng } = ctx;
   const meta = msg.meta ?? {};
   const prop = meta.proposalId ? ctx.lookupProposal(meta.proposalId) : undefined;
@@ -202,6 +220,7 @@ function decideProposal(ctx: PersonaContext, msg: SimMessage, worldStart: number
     : ctx.oracle.evaluate(oprop, { recentAsks: { [p.id]: recentAsks } });
   const mine = verdict.participants[p.id]!;
   const others = participants.filter(x => x !== p.id);
+  if (opts.qualityChurn) loseTrust(mem, verdict.flags.some(f => UNSAFE_FOR_ME.includes(f)) ? 0.35 : mine.enjoyment < 0.35 ? 0.1 : 0);
   let decision: "accept" | "decline" | "counter" = mine.wouldAccept ? "accept" : "decline";
   if (others.some(o => mem.blocked.includes(o))) decision = "decline";
   // Decline memory (stable decisions): asking again for the same people and the same thing gets the same no.
@@ -380,9 +399,9 @@ export function policyInitiative(ctx: PersonaContext, worldStart: number): Initi
 /** Fully deterministic persona agent: policy decisions + template voice. */
 export class PolicyPersonaAgent implements PersonaAgent {
   readonly mode = "policy" as const;
-  constructor(private worldStart: number) {}
+  constructor(private worldStart: number, private opts: PolicyOptions = {}) {}
   async respond(ctx: PersonaContext, msg: SimMessage): Promise<AgentReply> {
-    const d = decide(ctx, msg, this.worldStart);
+    const d = decide(ctx, msg, this.worldStart, this.opts);
     if (d.intent === "ignore") return { ...d, action: "ignore" };
     const text = templateText(ctx, d);
     if (d.intent === "answer_question") ctx.memory.questionsAnswered++;
