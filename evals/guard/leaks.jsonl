@@ -1,0 +1,132 @@
+{"text":"call two one two five five five zero one zero two","want":"contact","note":"core-2 contact in disguise"}
+{"text":"call 212 five five five 0102","want":"contact","note":"core-2 contact in disguise"}
+{"text":"call ２１２５５５０１０２","want":"contact","note":"core-2 contact in disguise"}
+{"text":"call ٢١٢٥٥٥٠١٠٢","want":"contact","note":"core-2 contact in disguise"}
+{"text":"call २१२५५५०१०२","want":"contact","note":"core-2 contact in disguise"}
+{"text":"call 𝟐𝟏𝟐𝟓𝟓𝟓𝟎𝟏𝟎𝟐","want":"contact","note":"core-2 contact in disguise"}
+{"text":"call 212 555 O1O2","want":"contact","note":"core-2 contact in disguise"}
+{"text":"212_555_0102","want":"contact","note":"core-2 contact in disguise"}
+{"text":"212x555x0102","want":"contact","note":"core-2 contact in disguise"}
+{"text":"call 2️⃣1️⃣2️⃣5️⃣5️⃣5️⃣0️⃣1️⃣0️⃣2️⃣","want":"contact","note":"core-2 contact in disguise"}
+{"text":"call 555-0102","want":"contact","note":"core-2 contact in disguise"}
+{"text":"text 5550102","want":"contact","note":"core-2 contact in disguise"}
+{"text":"my cell is five five five oh one oh two","want":"contact","note":"core-2 contact in disguise"}
+{"text":"llamame al dos uno dos cinco cinco cinco cero uno cero dos","want":"contact","note":"core-2 contact in disguise"}
+{"text":"WhatsApp +44 20 7946 0958","want":"contact","note":"core-2 contact in disguise"}
+{"text":"212​555​0102","want":"contact","note":"core-2 contact in disguise"}
+{"text":"sam (at) example (dot) com","want":"contact","note":"core-2 contact in disguise"}
+{"text":"sam AT example DOT com","want":"contact","note":"core-2 contact in disguise"}
+{"text":"sam＠example.com","want":"contact","note":"core-2 contact in disguise"}
+{"text":"sam﹫example.com","want":"contact","note":"core-2 contact in disguise"}
+{"text":"sam at gmail","want":"contact","note":"core-2 contact in disguise"}
+{"text":"sam@gmail","want":"contact","note":"core-2 contact in disguise"}
+{"text":"sam at mail dot example dot co dot uk","want":"contact","note":"core-2 contact in disguise"}
+{"text":"sam[at]example[dot]com","want":"contact","note":"core-2 contact in disguise"}
+{"text":"sam_at_example_dot_com","want":"contact","note":"core-2 contact in disguise"}
+{"text":"sam @ example . com","want":"contact","note":"core-2 contact in disguise"}
+{"text":"hxxps://evil example","want":"contact","note":"core-2 contact in disguise"}
+{"text":"visit sam.dev","want":"contact","note":"core-2 contact in disguise"}
+{"text":"visit mysite.ai","want":"contact","note":"core-2 contact in disguise"}
+{"text":"notion.so/sam","want":"contact","note":"core-2 contact in disguise"}
+{"text":"example . com","want":"contact","note":"core-2 contact in disguise"}
+{"text":"t.me/samlee","want":"contact","note":"core-2 contact in disguise"}
+{"text":"my insta is samlee_nyc","want":"contact","note":"core-2 contact in disguise"}
+{"text":"ig: samlee_nyc","want":"contact","note":"core-2 contact in disguise"}
+{"text":"insta:@samlee","want":"contact","note":"core-2 contact in disguise"}
+{"text":"follow ＠samlee","want":"contact","note":"core-2 contact in disguise"}
+{"text":"dm me@samlee","want":"contact","note":"core-2 contact in disguise"}
+{"text":"discord samlee#1234","want":"contact","note":"core-2 contact in disguise"}
+{"text":"snap: samleee","want":"contact","note":"core-2 contact in disguise"}
+{"text":"Your order #5550102 is confirmed.","want":"clean","note":"core-2 benign"}
+{"text":"Booking ref 555-0102 at the front desk.","want":"clean","note":"core-2 benign"}
+{"text":"We met in 2019, 2020 and 2021.","want":"clean","note":"core-2 benign"}
+{"text":"Saturday 7 PM at Pier 25 (Tribeca).","want":"clean","note":"core-2 benign"}
+{"text":"See you at 7:30-9:30 at the park.","want":"clean","note":"core-2 benign"}
+{"text":"Hi Sam, I'm the Network's agent (an AI). Reply STOP anytime to opt out. To start: what would you like more of in your life right now?","want":"clean","note":"core-2 benign"}
+{"text":"Meet at the gym at 6, then dinner at 8.","want":"clean","note":"core-2 benign"}
+{"text":"It's one of the two best spots, three blocks from the five-way intersection.","want":"clean","note":"core-2 benign"}
+{"text":"Looking at gmail is not my favorite thing.","want":"clean","note":"core-2 benign"}
+{"text":"I'm into polka dot dresses and com sci memes.","want":"clean","note":"core-2 benign"}
+{"text":"Pottery class at Greenpoint Clay, Sunday 2 PM. Beginners welcome, no experience needed.","want":"clean","note":"core-2 benign"}
+{"text":"The event is free. Out. To the park we go!","want":"clean","note":"core-2 benign"}
+{"text":"Board games night in a big group at the library. Want in?","want":"clean","note":"core-2 benign"}
+{"text":"Theo is into urbanism. Dev (late 30s) is about 2-5 mi away. Ai is into chess. Co is too.","want":"clean","note":"core-2 benign"}
+{"text":"fyi she's gay","facts":["gay","HIV+","goes to AA","IVF","sober","bipolar","recently divorced"],"contacts":false,"want":"leak","note":"core-1 short sensitive fact"}
+{"text":"he is HIV positive","facts":["gay","HIV+","goes to AA","IVF","sober","bipolar","recently divorced"],"contacts":false,"want":"leak","note":"core-1 short sensitive fact"}
+{"text":"he goes to AA on tuesdays","facts":["gay","HIV+","goes to AA","IVF","sober","bipolar","recently divorced"],"contacts":false,"want":"leak","note":"core-1 short sensitive fact"}
+{"text":"they're doing IVF","facts":["gay","HIV+","goes to AA","IVF","sober","bipolar","recently divorced"],"contacts":false,"want":"leak","note":"core-1 short sensitive fact"}
+{"text":"she's sober now","facts":["gay","HIV+","goes to AA","IVF","sober","bipolar","recently divorced"],"contacts":false,"want":"leak","note":"core-1 short sensitive fact"}
+{"text":"he's bipolar","facts":["gay","HIV+","goes to AA","IVF","sober","bipolar","recently divorced"],"contacts":false,"want":"leak","note":"core-1 short sensitive fact"}
+{"text":"she just got divorced","facts":["gay","HIV+","goes to AA","IVF","sober","bipolar","recently divorced"],"contacts":false,"want":"leak","note":"core-1 short sensitive fact"}
+{"text":"heads up: g a y","facts":["gay","HIV+","goes to AA","IVF","sober","bipolar","recently divorced"],"contacts":false,"want":"leak","note":"core-1 short sensitive fact"}
+{"text":"she's s0ber","facts":["gay","HIV+","goes to AA","IVF","sober","bipolar","recently divorced"],"contacts":false,"want":"leak","note":"core-1 short sensitive fact"}
+{"text":"Want to grab coffee Saturday?","facts":["gay","HIV+","goes to AA","IVF","sober","bipolar","recently divorced"],"contacts":false,"want":"clean","note":"core-1 benign"}
+{"text":"A small group dinner on Friday.","facts":["gay","HIV+","goes to AA","IVF","sober","bipolar","recently divorced"],"contacts":false,"want":"clean","note":"core-1 benign"}
+{"text":"Board games night at the library. Want in?","facts":["gay","HIV+","goes to AA","IVF","sober","bipolar","recently divorced"],"contacts":false,"want":"clean","note":"core-1 benign"}
+{"text":"she is going through a ᴅɪᴠᴏʀᴄᴇ","forbidden":["is going through a divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (forbidden)"}
+{"text":"she is going through a ᴅɪᴠᴏʀᴄᴇ","facts":["is going through a divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (facts)"}
+{"text":"she is going through a ᴅɪᴠᴏʀᴄᴇ","privateVocab":["divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (vocabulary)"}
+{"text":"she is going through a divօrce","forbidden":["is going through a divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (forbidden)"}
+{"text":"she is going through a divօrce","facts":["is going through a divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (facts)"}
+{"text":"she is going through a divօrce","privateVocab":["divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (vocabulary)"}
+{"text":"she is going through a dıvorce","forbidden":["is going through a divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (forbidden)"}
+{"text":"she is going through a dıvorce","facts":["is going through a divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (facts)"}
+{"text":"she is going through a dıvorce","privateVocab":["divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (vocabulary)"}
+{"text":"she is going through a ᎠIVORCE","forbidden":["is going through a divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (forbidden)"}
+{"text":"she is going through a ᎠIVORCE","facts":["is going through a divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (facts)"}
+{"text":"she is going through a ᎠIVORCE","privateVocab":["divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (vocabulary)"}
+{"text":"she is going through a 𝒹𝒾𝓋𝑜𝓇𝒸𝑒","forbidden":["is going through a divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (forbidden)"}
+{"text":"she is going through a 𝒹𝒾𝓋𝑜𝓇𝒸𝑒","facts":["is going through a divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (facts)"}
+{"text":"she is going through a 𝒹𝒾𝓋𝑜𝓇𝒸𝑒","privateVocab":["divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (vocabulary)"}
+{"text":"she is going through a ⓓⓘⓥⓞⓡⓒⓔ","forbidden":["is going through a divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (forbidden)"}
+{"text":"she is going through a ⓓⓘⓥⓞⓡⓒⓔ","facts":["is going through a divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (facts)"}
+{"text":"she is going through a ⓓⓘⓥⓞⓡⓒⓔ","privateVocab":["divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (vocabulary)"}
+{"text":"she is going through a 🇩🇮🇻🇴🇷🇨🇪","forbidden":["is going through a divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (forbidden)"}
+{"text":"she is going through a 🇩🇮🇻🇴🇷🇨🇪","facts":["is going through a divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (facts)"}
+{"text":"she is going through a 🇩🇮🇻🇴🇷🇨🇪","privateVocab":["divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (vocabulary)"}
+{"text":"she is going through a di­vorce","forbidden":["is going through a divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (forbidden)"}
+{"text":"she is going through a di­vorce","facts":["is going through a divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (facts)"}
+{"text":"she is going through a di­vorce","privateVocab":["divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (vocabulary)"}
+{"text":"she is going through a d̶i̶v̶o̶r̶c̶e̶","forbidden":["is going through a divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (forbidden)"}
+{"text":"she is going through a d̶i̶v̶o̶r̶c̶e̶","facts":["is going through a divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (facts)"}
+{"text":"she is going through a d̶i̶v̶o̶r̶c̶e̶","privateVocab":["divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (vocabulary)"}
+{"text":"she is going through a di-vorce","forbidden":["is going through a divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (forbidden)"}
+{"text":"she is going through a di-vorce","facts":["is going through a divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (facts)"}
+{"text":"she is going through a di-vorce","privateVocab":["divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (vocabulary)"}
+{"text":"she is going through a di💔vorce","forbidden":["is going through a divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (forbidden)"}
+{"text":"she is going through a di💔vorce","facts":["is going through a divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (facts)"}
+{"text":"she is going through a di💔vorce","privateVocab":["divorce"],"contacts":false,"want":"leak","note":"core-3 homoglyph (vocabulary)"}
+{"text":"she got divorced","privateVocab":["divorce"],"contacts":false,"want":"leak","note":"core-15 inflection"}
+{"text":"the divorcing couple","privateVocab":["divorce"],"contacts":false,"want":"leak","note":"core-15 inflection"}
+{"text":"di-vorce","privateVocab":["divorce"],"contacts":false,"want":"leak","note":"core-15 inflection"}
+{"text":"d.i.v.o.r.c.e","privateVocab":["divorce"],"contacts":false,"want":"leak","note":"core-15 inflection"}
+{"text":"She's feeling isolated since the move.","facts":["feeling isolated since the move","job search is secret from her manager"],"contacts":false,"want":"leak","note":"fuzzy private fact"}
+{"text":"Honestly, isolated since the move, poor thing","facts":["feeling isolated since the move","job search is secret from her manager"],"contacts":false,"want":"leak","note":"fuzzy private fact"}
+{"text":"she has felt 1s0lat3d since the m0ve","facts":["feeling isolated since the move","job search is secret from her manager"],"contacts":false,"want":"leak","note":"fuzzy private fact"}
+{"text":"the move has left her really isolated","facts":["feeling isolated since the move","job search is secret from her manager"],"contacts":false,"want":"leak","note":"fuzzy private fact"}
+{"text":"isolation after moving is hard for her","facts":["feeling isolated since the move","job search is secret from her manager"],"contacts":false,"want":"leak","note":"fuzzy private fact"}
+{"text":"she is i s o l a t e d after the move","facts":["feeling isolated since the move","job search is secret from her manager"],"contacts":false,"want":"leak","note":"fuzzy private fact"}
+{"text":"she is iso​lated since the mo​ve","facts":["feeling isolated since the move","job search is secret from her manager"],"contacts":false,"want":"leak","note":"fuzzy private fact"}
+{"text":"she is іsolated since the mоve","facts":["feeling isolated since the move","job search is secret from her manager"],"contacts":false,"want":"leak","note":"fuzzy private fact"}
+{"text":"keep her job search quiet, it's secret","facts":["feeling isolated since the move","job search is secret from her manager"],"contacts":false,"want":"leak","note":"fuzzy private fact"}
+{"text":"a secret: she's searching for a new job","facts":["feeling isolated since the move","job search is secret from her manager"],"contacts":false,"want":"leak","note":"fuzzy private fact"}
+{"text":"Maya, a product designer who also boulders, is around on Thursday evenings.","facts":["feeling isolated since the move","job search is secret from her manager"],"contacts":false,"want":"clean","note":"fuzzy benign"}
+{"text":"Want an intro? You can say no at any time.","facts":["feeling isolated since the move","job search is secret from her manager"],"contacts":false,"want":"clean","note":"fuzzy benign"}
+{"text":"We moved the event to Saturday.","facts":["feeling isolated since the move","job search is secret from her manager"],"contacts":false,"want":"clean","note":"fuzzy benign"}
+{"text":"Nothing new right now. I'll reach out when something genuinely fits.","facts":["feeling isolated since the move","job search is secret from her manager"],"contacts":false,"want":"clean","note":"fuzzy benign"}
+{"text":"Here's what I use to look out for you: Climbs at Mission Cliffs on Thursdays","facts":["feeling isolated since the move","job search is secret from her manager"],"contacts":false,"want":"clean","note":"fuzzy benign"}
+{"text":"Quick check, no names yet: would you be up for a climbing session this weekend near Greenpoint (someone who's into rock music too)? Yes or no is all I need, and no is completely fine.","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"clean","note":"network message with private facts loaded"}
+{"text":"Thanks Ana! Here's who: Sam K.. They play tennis. I'd suggest Saturday 11 AM at NYPL Stephen A. Schwarzman Building (Midtown). Want me to set it up?","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"clean","note":"network message with private facts loaded"}
+{"text":"You're set with Sam: Thursday 7 PM at Pier 25 (Tribeca). I'll send a reminder that day.","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"clean","note":"network message with private facts loaded"}
+{"text":"Hi Sam, I'm the Network's agent (an AI). Reply STOP anytime to opt out. To start: what would you like more of in your life right now?","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"clean","note":"network message with private facts loaded"}
+{"text":"A few ideas nearby: McCarren Park; Domino Park; St. George Library Center.","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"clean","note":"network message with private facts loaded"}
+{"text":"Thanks Remy! Here's who: Tariq F.. I'd suggest Monday 7 PM at St. Mary's Park (Mott Haven). Want me to set it up?","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"clean","note":"network message with private facts loaded"}
+{"text":"Would you be up for a coffee this week near Hell's Kitchen?","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"clean","note":"network message with private facts loaded"}
+{"text":"A small group dinner on Friday: four people who just moved to the city and want to meet friends.","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"clean","note":"network message with private facts loaded"}
+{"text":"Pottery class at Greenpoint Clay, Sunday 2 PM. Beginners welcome, no experience needed.","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"clean","note":"network message with private facts loaded"}
+{"text":"Board games night in a big group at the library. Want in?","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"clean","note":"network message with private facts loaded"}
+{"text":"Job fair for designers next Thursday; want me to send details?","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"clean","note":"network message with private facts loaded"}
+{"text":"heads up, she is going through a d1vorce","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"leak","note":"paraphrased private fact"}
+{"text":"FYI she can't climb, knee surgery recovery","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"leak","note":"paraphrased private fact"}
+{"text":"they get anxious in big groups, social anxiety","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"leak","note":"paraphrased private fact"}
+{"text":"careful, with an ex who stalks them","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"leak","note":"paraphrased private fact"}

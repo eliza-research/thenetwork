@@ -397,8 +397,9 @@ if (import.meta.main) {
   const only = process.argv[2];
   for (const s of SCENARIOS.filter(x => !only || x.id === only)) {
     const r = await runScenario(s);
+    if (!r.pass) process.exitCode = 1;
     console.log(`${r.pass ? "PASS" : "FAIL"} ${s.id}`);
     for (const ch of r.checks) console.log(`   ${ch.pass ? "ok  " : "FAIL"} ${ch.name}${ch.detail ? `: ${ch.detail}` : ""}`);
   }
-  process.exit(0);
+  process.exit(process.exitCode ?? 0);
 }

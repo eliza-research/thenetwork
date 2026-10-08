@@ -262,6 +262,7 @@ async function main() {
   console.log(`Gaming: each strategy's mean net gain <= ${GAMING_BOUND_SHARE * 100}% of a regular's NC: ${Object.entries(lg.gaming.gainShare).map(([k, v]) => `${k} ${f(v * 100, 0)}%`).join(", ")} -> ${lg.gaming.pass ? "PASS" : "FAIL"}`);
   console.log(`(b) TRACKED, non-blocking health target: absolute ratio >= ${HEALTH_TARGET_RATIO}: ${f(h.ratio)} (worst seed ${f(h.worstSeedRatio)}; levers off ${f(gates(gZ).ratio)}) -> ${h.met ? "met" : "not met"}. Participation gap: bottom NC decile ${f(h.participationBottom)} vs top ${f(h.participationTop)} acts per week (${f(h.participationBottom / h.participationTop * 100, 0)}%). Addressed by plans and asks, not NC.`);
   console.log(`Blocking gates overall: ${lg.pass ? "PASS" : "FAIL"}`);
+  if (!lg.pass) process.exitCode = 1;
   results.launchGates = { seeds: gs, ...lg, byLever: comp };
   results.launchGatesSensitivity = lgC;
   const ji = args.indexOf("--json");

@@ -495,7 +495,10 @@ if (import.meta.main) {
   const random = results.find(r => r.arm === "random");
   if (random) for (const r of results.filter(x => x.arm !== "random")) {
     console.log(`\nGates: ${r.arm}`);
-    for (const g of (argv.includes("--gates3") ? gates3 : gates)(r, random)) console.log(`  ${g.pass ? "PASS" : "FAIL"}  ${g.name}: ${g.name.includes("cut") ? (g.value * 100).toFixed(1) + "%" : g.value.toFixed(3)} (${g.target})`);
+    const gs = (argv.includes("--gates3") ? gates3 : gates)(r, random);
+    for (const g of gs) console.log(`  ${g.pass ? "PASS" : "FAIL"}  ${g.name}: ${g.name.includes("cut") ? (g.value * 100).toFixed(1) + "%" : g.value.toFixed(3)} (${g.target})`);
+    // The official arm is "slop" (the default pack): exit 1 when one of its gates fails (bun run sim splits blocking and tracked).
+    if (r.arm === "slop" && gs.some(g => !g.pass)) process.exitCode = 1;
   }
   if (argv.includes("--groups")) for (const r of results) {
     const f = fairnessRatios(r);

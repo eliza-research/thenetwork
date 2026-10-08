@@ -1,0 +1,40 @@
+{"text":"STOP","match":"exact"}
+{"text":"stop","match":"exact"}
+{"text":"Stop.","match":"exact"}
+{"text":"UNSUBSCRIBE","match":"exact"}
+{"text":"cancel","match":"exact"}
+{"text":"quit","match":"exact"}
+{"text":"stop all","match":"exact"}
+{"text":"para","match":"exact"}
+{"text":"PARAR","match":"exact"}
+{"text":"baja","match":"exact"}
+{"text":"no más","match":"exact"}
+{"text":"please stop texting me","match":"likely"}
+{"text":"Stop messaging me","match":"likely"}
+{"text":"don't text me again","match":"likely"}
+{"text":"take me off this list","match":"likely"}
+{"text":"remove me","match":"likely"}
+{"text":"no more texts please","match":"likely"}
+{"text":"leave me alone","match":"likely"}
+{"text":"wrong number","match":"likely"}
+{"text":"pls stop","match":"likely"}
+{"text":"STOP!!!","match":"exact"}
+{"text":"stop it","match":"likely"}
+{"text":"ok stop","match":"likely"}
+{"text":"unsubscribe me pls","match":"likely"}
+{"text":"no me escribas más","match":"likely"}
+{"text":"deja de mandarme mensajes","match":"likely"}
+{"text":"quiero darme de baja","match":"likely"}
+{"text":"no quiero mensajes","match":"likely"}
+{"text":"número equivocado","match":"likely"}
+{"text":"how do I stop these?","match":"none"}
+{"text":"my friend said stop by","match":"none"}
+{"text":"can't stop thinking about the hike!","match":"none"}
+{"text":"yes","match":"none"}
+{"text":"no thanks","match":"none"}
+{"text":"the bus stop on 5th","match":"none"}
+{"text":"don't stop","match":"none"}
+{"text":"dont stop","match":"none"}
+{"text":"stop by later","match":"none"}
+{"text":"Stop it, I love this","match":"none"}
+{"text":"I'll stop at the store","match":"none"}
