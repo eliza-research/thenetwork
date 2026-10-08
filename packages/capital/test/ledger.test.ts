@@ -489,3 +489,32 @@ describe("age updates (capital-4)", () => {
     expect(L.balance("k")).toBe(3);
   });
 });
+
+describe("feedback credit (capital-7)", () => {
+  test("giving feedback never lowers NC", () => {
+    const ms: Record<string, number> = { a: 30 };
+    for (let i = 0; i < 12; i++) ms[`x${i}`] = 30;
+    const run = (fb: boolean) => {
+      const L = world(ms);
+      for (let i = 0; i < 12; i++) {
+        attend(L, "a", `p${i}`, T0 + i * 2 * DAY, [`x${i}`]);
+        if (fb) L.record(ev({ type: "feedback_given", t: T0 + i * 2 * DAY + DAY + 1, member: "a", planId: `p${i}` }));
+      }
+      return L.balance("a");
+    };
+    expect(run(true)).toBeGreaterThan(run(false));
+  });
+
+  test("fraud claws back the feedback on a staged plan along with the attendance", () => {
+    const L = world();
+    for (let i = 0; i < 3; i++) {
+      attend(L, "a", `s${i}`, T0 + i * 2 * DAY, ["b"], { origin: "member", verifiedBy: ["counterpart"] });
+      L.record(ev({ type: "feedback_given", t: T0 + i * 2 * DAY + DAY + 1, member: "a", planId: `s${i}` }));
+    }
+    L.record(ev({ type: "fraud_confirmed", t: T0 + 10 * DAY, members: ["a", "b"] }));
+    const fb = L.internalEntries("a").filter(e => e.provenance.eventType === "feedback_given");
+    expect(fb.length).toBe(3);
+    expect(fb.every(e => L.isReversed(e.id))).toBe(true);
+    expect(L.balance("a")).toBe(-10);
+  });
+});

@@ -258,8 +258,10 @@ export class CapitalLedger {
         if (!p || !p.attendedEntry || p.feedback) break;
         p.feedback = true;
         // No counterparts: feedback must not speed up the pair decay for the next real meeting.
-        // Feedback inherits the attendance's anti-gaming multiplier, so repeat staged plans can't farm it.
-        this.credit(ev.member, "attendance", c.credit.feedback * p.attendedEntry.multiplier, ev, [], [], "gave feedback", out, { planId: ev.planId });
+        // Its own category (capital-7): as "attendance" it sped up the attendance decay, so giving
+        // feedback lowered total NC. Feedback inherits the attendance's anti-gaming multiplier, so
+        // repeat staged plans can't farm it, and it is reversed with the attendance (`basis`).
+        this.credit(ev.member, "feedback", c.credit.feedback * p.attendedEntry.multiplier, ev, [], [], "gave feedback", out, { planId: ev.planId, basis: p.attendedEntry.id });
         break;
       }
       case "help_given": {
@@ -300,7 +302,9 @@ export class CapitalLedger {
           for (const e of [...(this.byMember.get(m) ?? [])]) {
             if (e.sign !== 1 || e.amount <= 0 || this.reversed.has(e.id)) continue;
             const involved = [...e.provenance.counterparts, ...e.provenance.confirmedBy].some(x => set.has(x));
-            if (involved) this.reverse(m, e.id, ev, "clawback: credit found to be fraudulent", out);
+            // A credit that exists only because of a reversed credit (feedback on a staged plan) goes too.
+            const dependent = e.provenance.basis !== undefined && this.reversed.has(e.provenance.basis);
+            if (involved || dependent) this.reverse(m, e.id, ev, "clawback: credit found to be fraudulent", out);
           }
           // One fraud penalty per member per period: several review cases about the same ring only claw back.
           const recentFraud = (this.byMember.get(m) ?? []).some(e => e.category === "fraud" && ev.t - e.t < c.antiGaming.periodDays * DAY);
