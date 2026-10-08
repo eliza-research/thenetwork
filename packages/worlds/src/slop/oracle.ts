@@ -48,6 +48,11 @@ export interface ProbeContext {
   probesThisWeek?: number;
   /** The probe's one shareable fact matches an interest of this member. */
   sharedFactMatch?: boolean;
+  /**
+   * Sensitivity arm (PRD open question "photos in probes?"): the probe shows the other person's
+   * photo, so the answer depends on a noisy view of this member's attraction to them.
+   */
+  photo?: { of: MemberId; noiseSd: number };
 }
 
 export interface DateOutcome { ea: number; eb: number; quality: number; good: boolean; wantsSecondA: boolean; wantsSecondB: boolean; bothWantSecond: boolean }
@@ -185,9 +190,21 @@ export class SlopOracle {
     y *= Math.pow(P.fatigue, Math.max(0, c.probesThisWeek ?? 0));
     if (!H.activities.includes(c.activity)) y *= P.activityMiss;
     if (c.sharedFactMatch) y *= P.sharedFactLift;
+    if (c.photo) y *= this.photoFactor(id, c.photo.of, c.photo.noiseSd);
     if (c.asked) y = Math.min(0.95, y * P.askPrimed);
     if (!this.presentIn(p, c.city, c.week)) y *= P.notPresent;
     return clamp01(y);
+  }
+
+  /**
+   * Photo in the probe: the member's first impression of b = their attraction latent plus a noise
+   * term fixed per (member, other) pair (SD `noiseSd`). The yes multiplier 0.25 + 2.5 x sigmoid(...)
+   * averages about 1 over the population, so photos re-sort yeses toward attraction without changing
+   * the overall yes rate much.
+   */
+  photoFactor(a: MemberId, b: MemberId, noiseSd: number): number {
+    const eps = new Rng(hash32(this.seed, "photo", a, b)).normal(0, noiseSd);
+    return 0.25 + 2.5 * sigmoid(this.latent(this.p(a), this.p(b)) + eps);
   }
 
   /** Is the persona truly free in slot `s` of `week` (hidden availability, seeded per week)? */

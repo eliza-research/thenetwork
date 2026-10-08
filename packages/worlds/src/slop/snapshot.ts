@@ -41,7 +41,7 @@ export interface SlopSnapshot extends WorldSnapshot {
 }
 
 /** Fields an agent can ask a member about (world.ts SlopAsk): the hard filters; the basics (goal, dealbreakers, lifestyle); their type and how they describe themselves. */
-export type SlopAskField = "orientation" | "age_range" | "distance" | "basics" | "type";
+export type SlopAskField = "orientation" | "age_range" | "distance" | "basics" | "type" | "widen";
 /** A question the agent asked, and when the member answered (visible to the Network). */
 export interface SlopAskRecord { memberId: MemberId; field: SlopAskField; at: number; answeredAt?: number }
 
@@ -75,6 +75,36 @@ export function verificationFacets(p: SlopPersona, joinedAt: number, v: Verifica
   return [mk(0, "liveness", !liveFail), mk(1, "age", !ageFail)];
 }
 
+/**
+ * OPTIONAL platform features (iteration 2), all off by default so the baselines are unchanged. The
+ * rates are ASSUMPTIONS for sensitivity analysis, not measurements:
+ *  - photos: the probe shows the other person's photo (PRD open question); answers then depend on a
+ *    noisy view of attraction (oracle.photoFactor) and back-outs at the reveal shrink accordingly;
+ *  - relay: a classifier on relayed messages flags scam scripts (money, moving off-platform) and
+ *    hostile language; a flagged message is blocked (its harm does not happen) and the sender is put
+ *    on a safety hold; honest members are flagged at `falsePositive` per revealed contact;
+ *  - review: a human reviewer looks at every member held on a safety cue, a failed verification
+ *    check or a classifier flag within `days`: honest members are cleared with p = clearHonest,
+ *    adversaries are confirmed with p = catchAdversary (else cleared by mistake);
+ *  - widen: a member asked "would you consider people up to <miles> mi?" agrees with p = agree.
+ */
+export interface PlatformModel {
+  photos?: { noiseSd: number };
+  relay?: { scamRecall: number; hostileRecall: number; falsePositive: number };
+  review?: { days: number; clearHonest: number; catchAdversary: number };
+  widen?: { agree: number; miles: number };
+}
+export const RELAY_DEFAULTS = { scamRecall: 0.85, hostileRecall: 0.7, falsePositive: 0.005 };
+export const REVIEW_DEFAULTS = { days: 3, clearHonest: 0.95, catchAdversary: 0.8 };
+export const WIDEN_DEFAULTS = { agree: 0.5, miles: 25 };
+
+/** The reviewer's decision on a member held for a cue or a failed check (deterministic per member). */
+export function reviewDecision(p: SlopPersona, review: NonNullable<PlatformModel["review"]>): "cleared" | "confirmed" {
+  const r = new Rng(hash32("slop-review", p.id)).next();
+  const bad = !!p.hidden.adversary;
+  return bad ? (r < review.catchAdversary ? "confirmed" : "cleared") : (r < review.clearHonest ? "cleared" : "confirmed");
+}
+
 /** What the Network recorded so far (harness-maintained; all of it is visible to the Network). */
 export interface SlopNetworkState {
   now: number; week: number;
@@ -92,6 +122,8 @@ export interface SlopNetworkState {
   learned?: Map<MemberId, Set<SlopAskField>>;
   /** Optional verification before the first intro (VerificationModel); absent = not modelled. */
   verification?: VerificationModel;
+  /** Optional platform features (iteration 2); absent = not modelled. */
+  platform?: PlatformModel;
 }
 
 /** Which stated fields the agent learned in onboarding, by richness tier. */
@@ -213,6 +245,15 @@ export function buildSlopSnapshot(personas: readonly SlopPersona[], state: SlopN
     const learned = state.learned?.get(p.id);
     facets.push(...slopFacetsOf(p, joinedAt, learned));
     if (state.verification) facets.push(...verificationFacets(p, joinedAt, state.verification));
+    // Human review of a cue or a failed check, visible once `days` have passed since the member joined.
+    const rv = state.platform?.review;
+    if (rv && state.now >= joinedAt + rv.days * DAY) {
+      const flagged = facets.some(f => f.memberId === p.id && f.tags.some(t => t.startsWith("safety:") || (t.startsWith("verify:") && t.endsWith(":fail"))));
+      if (flagged) {
+        const d = reviewDecision(p, rv);
+        facets.push({ id: `${p.id}:review`, memberId: p.id, kind: "fact", value: `safety review ${d}`, tags: [`review:${d}`], scope: "agent_private", provenance: "vouched", confidence: 0.95, validFrom: joinedAt + rv.days * DAY, source: "chat", observedAt: joinedAt + rv.days * DAY, inferred: false, confirmedByMember: false });
+      }
+    }
     const S = p.stated, city = zipInfo.get(S.homeZip)!.city;
     const K = knowsWith(KNOWS[p.hidden.richness], learned);
     if (canBeMatched(S.claimedAge)) {

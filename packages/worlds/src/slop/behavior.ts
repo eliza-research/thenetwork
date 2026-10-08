@@ -59,10 +59,26 @@ export class SlopBehavior {
    * if you can't make it."). Silence = in. `statedOk`: the other person is inside this member's
    * stated filters; a matcher that guessed wrong gets a back-out with p = 0.9.
    */
-  backsOut(a: MemberId, b: MemberId, flowKey: string, statedOk: boolean): boolean {
+  backsOut(a: MemberId, b: MemberId, flowKey: string, statedOk: boolean, photoNoiseSd?: number): boolean {
     const r = this.r("reveal", flowKey, a);
     if (!statedOk) return r.bool(0.9);
-    return r.bool(this.oracle.backoutProb(this.oracle.p(a), this.oracle.p(b)));
+    // Photo already seen in the probe: only the part of the impression the photo did not show is
+    // still a surprise at the reveal (1 - rho^2 of it, rho = corr(photo impression, attraction)).
+    const left = photoNoiseSd === undefined ? 1 : 1 - 1 / (1 + photoNoiseSd ** 2);
+    return r.bool(this.oracle.backoutProb(this.oracle.p(a), this.oracle.p(b)) * left);
+  }
+
+  /** The relay classifier sees an adversary's scripted message (scam or hostile) and flags it. */
+  relayDetects(offender: MemberId, flowKey: string, recall: number): boolean {
+    return this.r("relay", flowKey, offender).bool(recall);
+  }
+  /** False positive of the relay classifier on an honest member's messages in one revealed flow. */
+  relayFalsePositive(id: MemberId, flowKey: string, rate: number): boolean {
+    return this.r("relay-fp", flowKey, id).bool(rate);
+  }
+  /** A member asked "would you consider people up to 25 mi?" agrees (when they answer). */
+  agreesToWiden(id: MemberId, week: number, p: number): boolean {
+    return this.r("widen", id, week).bool(p);
   }
 
   /** Shows up to the booked date. `free`: really free at that slot. */

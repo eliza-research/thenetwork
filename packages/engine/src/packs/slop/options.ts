@@ -87,6 +87,23 @@ export interface SlopPackOptions {
   pacing: { likedDateDays: number };
   /** Mutual radius safety margin in miles (cells are coarse; a pair must be inside both radii by this margin). */
   radiusMargin: number;
+  /**
+   * Iteration 2: online revealed-preference model of attraction (learn.ts) from probe answers,
+   * back-outs and ratings: partner effect (itemWeight), per-member revealed taste over
+   * self-descriptions (tasteWeight), collaborative signal (cfWeight). Its score multiplies each
+   * side's directional value by exp(score).
+   */
+  attraction: {
+    enabled: boolean; itemWeight: number; tasteWeight: number; cfWeight: number;
+    probeWeight: number; backoutWeight: number; feedbackWeight: number; shrink: number; ridge: number; cfShrink: number;
+  };
+  /** Iteration 2: each question is asked at most this many times (then the agent waits for the member). */
+  maxAsksPerField: number;
+  /**
+   * Iteration 2: members with at most `maxDegree` eligible partners whose distance limit is under
+   * `miles` are asked once "would you consider people up to <miles> mi?" (small pools).
+   */
+  widen: { enabled: boolean; maxDegree: number; miles: number };
   /** Pairs below this reciprocal value are not proposed (a dud first date costs both people an evening). */
   minValue: number;
 }
@@ -118,6 +135,11 @@ export const SLOP_DEFAULT_OPTIONS: SlopPackOptions = {
   pacing: { likedDateDays: 10 },
   radiusMargin: 0.9,
   minValue: 0,
+  // Off by default: with anonymous probes (no photo) a probe answer says nothing about the person and
+  // the model measured no gain (iteration 2). Turn it on when probes show a photo.
+  attraction: { enabled: false, itemWeight: 1, tasteWeight: 1, cfWeight: 1, probeWeight: 1, backoutWeight: 2, feedbackWeight: 1.5, shrink: 4, ridge: 4, cfShrink: 0.5 },
+  maxAsksPerField: 2,
+  widen: { enabled: true, maxDegree: 2, miles: 25 },
 };
 
 /** Deep-merge partial options over the defaults. */

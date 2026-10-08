@@ -15,8 +15,13 @@ import type { SlopPackOptions } from "./options.ts";
 import { datingMarkets, slopProfiles, type SlopProfile } from "./profile.ts";
 import { SLOP_LANE } from "./rules.ts";
 import { aggregate, dateActivity, directional, logistics, responsiveness } from "./score.ts";
+import { attractionModel } from "./learn.ts";
+import type { World } from "../../world.ts";
 
 export const SLOP_GENERATOR = "slop_reciprocal";
+
+/** Eligible-partner counts of the last generator run per World (read by the widen ask). */
+export const runDegree = new WeakMap<World, Map<MemberId, number>>();
 
 /** The member probed first: the one with the live want (asked most recently), then the more responsive one. */
 export function firstOf(a: SlopProfile, b: SlopProfile, now: number): [SlopProfile, SlopProfile] {
@@ -29,10 +34,10 @@ export function firstOf(a: SlopProfile, b: SlopProfile, now: number): [SlopProfi
 }
 
 /** Reciprocal value of a pair and each side's directional value (both include the pair's logistics). */
-export function pairValue(a: SlopProfile, b: SlopProfile, o: SlopPackOptions): { value: number; va: number; vb: number; activity: string } {
+export function pairValue(a: SlopProfile, b: SlopProfile, o: SlopPackOptions, attrAB = 0, attrBA = 0): { value: number; va: number; vb: number; activity: string } {
   const activity = dateActivity(a, b);
   const lg = logistics(a, b, o);
-  const va = directional(a, b, o, activity) * lg, vb = directional(b, a, o, activity) * lg;
+  const va = directional(a, b, o, activity, attrAB) * lg, vb = directional(b, a, o, activity, attrBA) * lg;
   return { value: aggregate([va, vb], o.aggregate), va, vb, activity };
 }
 
@@ -43,6 +48,7 @@ export function slopGenerators(o: SlopPackOptions): GeneratorSpec[] {
       const w = ctx.w;
       const P = slopProfiles(w.input, w.canonical);
       const markets = w.pack.geo.markets(w.cfg);
+      const model = attractionModel(w.input, P, w.canonical, o);
       // Members who can be matched at all this run.
       const ok: SlopProfile[] = [];
       for (const id of w.ids) {
@@ -65,11 +71,16 @@ export function slopGenerators(o: SlopPackOptions): GeneratorSpec[] {
           if (pairReason(w, a.id, b.id, SLOP_LANE)) continue;
           const mm = mutualMarkets(a, b, o, markets);
           if (!mm.length) continue;
-          const pv = pairValue(a, b, o);
+          const pv = pairValue(a, b, o, model.score(a.id, b.id), model.score(b.id, a.id));
           pairs.set(k, { a, b, ...pv, market: mm[0]!.market });
           for (const [m, v] of [[a.id, pv.value], [b.id, pv.value]] as const) { const l = best.get(m) ?? []; l.push({ k, v }); best.set(m, l); }
         }
       }
+      // Eligible partners per member (before top-K): the widen ask targets members with very few.
+      const deg = new Map<MemberId, number>();
+      for (const [m, l] of best) deg.set(m, l.length);
+      for (const p of ok) if (!deg.has(p.id)) deg.set(p.id, 0);
+      runDegree.set(w, deg);
       const keep = new Set<string>();
       for (const [, l] of best) for (const e of l.sort((x, y) => (y.v - x.v) || (x.k < y.k ? -1 : 1)).slice(0, o.congestion.topK)) keep.add(e.k);
       const out: Candidate[] = [];

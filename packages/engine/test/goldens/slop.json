@@ -1,10 +1,10 @@
 {
- "packVersion": "slop-pack-1.0.0",
+ "packVersion": "slop-pack-1.1.0",
  "engine.seed1": {
   "configHash": "26f1209f2b1fcbf3",
   "runId": "afad226016d22bc4",
   "proposals": 44,
-  "asks": 204,
+  "asks": 236,
   "funnel": {
    "generated": 216,
    "byGenerator": {
@@ -68,15 +68,15 @@
   ],
   "sha": {
    "proposals": "630d34b3b9bd0d3f4cae0183a167483b8d13eb0a6afbfbe1f604bfb1fe66556e",
-   "asks": "5268d1a4725173bd6b5422492717e5608bd382c60fede71b2ecf641cbbbfb049",
-   "runLog": "cc2afcb665b2c43c5e43305d1b4bc9c9b542736230e5a2a9f01e55729851ccc2"
+   "asks": "764806acf2339352f57e28ae75e6bd13440ab655ec13b7368c5993d4d0461805",
+   "runLog": "302a385e37cf1bbcd52f7f9bb7864ab245b0c258045f49b5fdd1f5df23069c70"
   }
  },
  "engine.seed2": {
   "configHash": "5c91ed4ebf64087a",
   "runId": "0d831fd46d71b5ef",
   "proposals": 33,
-  "asks": 206,
+  "asks": 247,
   "funnel": {
    "generated": 188,
    "byGenerator": {
@@ -129,8 +129,8 @@
   ],
   "sha": {
    "proposals": "0a856ad4ae69f8801482e2cf096f1adf04e4645b14dbc9bd936e662d4b42299d",
-   "asks": "e8c02202166b3f97d432f828d6a13325bef946767fd35a36227988d8da50c73f",
-   "runLog": "603fb471c7c94ae98e94eba09048ed42a89c405ef7cecde9bcb57a26d71ac146"
+   "asks": "543c9dea3e753a016224d09d7cd8169aca03c4ba31e813045baac90900cc7f33",
+   "runLog": "ea731c0ba02e61764df36ed4653dca1df7a276bef4b159b1e90ffa8cfc3cc4e2"
   }
  },
  "harness.seed1": {
@@ -140,11 +140,12 @@
   "secondDateRate": 0.25,
   "minorContacts": 0,
   "asks": {
-   "sent": 273,
-   "answered": 223,
+   "sent": 323,
+   "answered": 262,
    "byField": {
     "basics": 107,
     "type": 107,
+    "widen": 50,
     "age_range": 31,
     "distance": 28
    }

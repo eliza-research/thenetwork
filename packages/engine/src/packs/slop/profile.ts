@@ -75,6 +75,10 @@ export interface SlopProfile {
   silentAsks: string[];
   /** Questions asked less than 7 days ago and not answered yet (reason minus "slop_"). */
   openAsks: string[];
+  /** How many times each question (reason) was asked (re-ask cap). */
+  askCounts: Record<string, number>;
+  /** Human review of a safety hold: cleared (a false positive) or confirmed. */
+  review?: "cleared" | "confirmed";
   /** Markets this member is visiting in the coming days (an announced trip in progress at now + 2 days). */
   visiting: City[];
   /** Facet ids by role, for evidence (only shareable ones ever reach member-facing text). */
@@ -112,6 +116,8 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
   const answeredAny = new Map<string, boolean>();
   for (const a of input.recentAsks ?? []) { const k = `${C(a.memberId)}|${a.reason}`; answeredAny.set(k, (answeredAny.get(k) ?? false) || (a.answeredAt !== undefined && a.answeredAt <= now)); }
   const open = new Map<MemberId, string[]>();
+  const counts = new Map<MemberId, Record<string, number>>();
+  for (const a of input.recentAsks ?? []) { const c = counts.get(C(a.memberId)) ?? {}; c[a.reason] = (c[a.reason] ?? 0) + 1; counts.set(C(a.memberId), c); }
   for (const a of input.recentAsks ?? []) {
     const id = C(a.memberId), k = `${id}|${a.reason}`;
     if (a.reason.startsWith("slop_") && !answeredAny.get(k) && now - a.at < SILENT_AFTER_DAYS * DAY) { const l = open.get(id) ?? []; if (!l.includes(a.reason.slice(5))) l.push(a.reason.slice(5)); open.set(id, l.sort()); }
@@ -164,7 +170,8 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
       identity: one("slop:identity:"), orientation: one("slop:orientation:"),
       safety: [...new Set(tags.filter(x => x.t.startsWith("safety:")).map(x => x.t))].sort(),
       verification: [...new Set(tags.filter(x => x.t.startsWith("verify:")).map(x => x.t))].sort(),
-      visiting, interestFacet, silentAsks: silent.get(m.id) ?? [], openAsks: open.get(m.id) ?? [],
+      visiting, interestFacet, silentAsks: silent.get(m.id) ?? [], openAsks: open.get(m.id) ?? [], askCounts: counts.get(m.id) ?? {},
+      review: tags.some(x => x.t === "review:confirmed") ? "confirmed" : tags.some(x => x.t === "review:cleared") ? "cleared" : undefined,
       history: hist.get(m.id) ?? emptyHistory(),
     });
   }

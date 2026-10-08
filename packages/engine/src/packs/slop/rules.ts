@@ -41,9 +41,12 @@ export function needsBasics(p: SlopProfile): boolean {
 
 /** Why a member is held for review (safety cue or the Network's own records), or null. */
 export function reviewReason(p: SlopProfile, o: SlopPackOptions): string | null {
-  if (p.verification.some(t => t.endsWith(":fail"))) return "verification_failed";
+  // Human review: a confirmed hold stays; a cleared one (a false positive) lifts the cue / check hold.
+  if (p.review === "confirmed") return "review_confirmed";
+  const cleared = p.review === "cleared";
+  if (!cleared && p.verification.some(t => t.endsWith(":fail"))) return "verification_failed";
   if (o.verification.required && !(p.verification.includes("verify:liveness:pass") && p.verification.includes("verify:age:pass"))) return "unverified";
-  if (o.safetyGate && p.safety.some(t => o.safetyCues.includes(t))) return "safety_review";
+  if (!cleared && o.safetyGate && p.safety.some(t => o.safetyCues.includes(t))) return "safety_review";
   const T = o.trust;
   if (T.enabled) {
     const h = p.history;

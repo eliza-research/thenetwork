@@ -150,3 +150,42 @@ describe("baselines", () => {
     expect(greedy!.droppedForCap).toBeGreaterThan(0);
   });
 });
+
+describe("platform features (iteration 2; all off by default)", () => {
+  test("photos re-sort probe answers toward attraction and shrink back-outs", () => {
+    const w = createSlopWorld({ seed: 4, perCity: 120 });
+    const O = w.oracle, safe = w.personas.filter(isSafe);
+    const a = safe[0]!;
+    const others = safe.slice(1, 80);
+    const ctx = { week: 0, city: a.hidden.homeCity, activity: "coffee" as const };
+    const base = O.probeYesProb(a.id, ctx);
+    const withPhoto = others.map(b => ({ att: O.latent(a, b), y: O.probeYesProb(a.id, { ...ctx, photo: { of: b.id, noiseSd: 0.25 } }) }));
+    expect(withPhoto.some(x => x.y !== base)).toBe(true);
+    const sorted = [...withPhoto].sort((x, y) => x.att - y.att);
+    const lo = sorted.slice(0, 20).reduce((s, x) => s + x.y, 0), hi = sorted.slice(-20).reduce((s, x) => s + x.y, 0);
+    expect(hi).toBeGreaterThan(lo);
+  });
+
+  test("the relay classifier blocks flagged scripts, holds the sender, and changes nothing when off", () => {
+    const off = runSlopWorld({ seed: 3, perCity: 120, weeks: 2, matcher: BASELINES.random as any });
+    const again = runSlopWorld({ seed: 3, perCity: 120, weeks: 2, matcher: BASELINES.random as any, platform: {} });
+    expect(JSON.stringify(slopMetrics(again))).toBe(JSON.stringify(slopMetrics(off)));
+    const on = runSlopWorld({ seed: 3, perCity: 120, weeks: 2, matcher: BASELINES.random as any, platform: { relay: { scamRecall: 1, hostileRecall: 1, falsePositive: 0 } } });
+    expect(on.relay!.truePositive).toBeGreaterThan(0);
+    expect(on.relay!.falsePositive).toBe(0);
+    const relayHarms = (r: typeof on) => r.flows.flatMap(f => f.harms).filter(h => ["offplatform_move", "money_ask", "financial_loss", "harassment"].includes(h.kind)).length;
+    expect(relayHarms(on)).toBe(0);
+    expect(relayHarms(off)).toBeGreaterThan(0);
+    expect(on.world.state.safetyHolds.some(h => h.reason?.startsWith("relay"))).toBe(true);
+  });
+
+  test("human review: flagged members get a cleared / confirmed fact after the review delay", () => {
+    const ps = generateSlopPersonas({ seed: 6, perCity: 150 });
+    const st = { ...emptyState(), platform: { review: { days: 3, clearHonest: 1, catchAdversary: 1 } } };
+    expect(JSON.stringify(buildSlopSnapshot(ps, st)).includes("review:")).toBe(false); // day 0: not yet
+    const later = buildSlopSnapshot(ps, { ...st, now: SLOP_WORLD_START + 4 * 86_400_000 });
+    const rv = later.facets.filter(f => f.tags.some(t => t.startsWith("review:")));
+    expect(rv.length).toBeGreaterThan(0);
+    for (const f of rv) expect(f.tags[0]).toBe(ps.find(p => p.id === f.memberId)!.hidden.adversary ? "review:confirmed" : "review:cleared");
+  });
+});
