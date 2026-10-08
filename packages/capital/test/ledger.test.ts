@@ -17,6 +17,13 @@ function attend(L: CapitalLedger, member: string, planId: string, t: number, cou
   L.record(ev({ type: "plan_confirmed", t: t + DAY / 2, member, planId }));
   return L.record(ev({ type: "plan_attended", t: t + DAY, member, planId, counterparts, verifiedBy: o.verifiedBy ?? ["checkin"], origin: o.origin ?? "engine", publicVenue: true }));
 }
+/** Everyone in `who` accepts, confirms and attends the same plan; each lists the others (plus `extra`) as counterparts. */
+function together(L: CapitalLedger, who: string[], planId: string, t: number, o: { origin?: "engine" | "member" | "organizer"; verifiedBy?: ("counterpart" | "checkin")[]; extra?: string[] } = {}) {
+  for (const m of who) L.record(ev({ type: "plan_accepted", t, member: m, planId, kind: "plan", startsAt: t + DAY }));
+  for (const m of who) L.record(ev({ type: "plan_confirmed", t: t + DAY / 2, member: m, planId }));
+  return who.flatMap(m => L.record(ev({ type: "plan_attended", t: t + DAY, member: m, planId, counterparts: [...who.filter(x => x !== m), ...(o.extra ?? [])],
+    verifiedBy: o.verifiedBy ?? ["counterpart"], origin: o.origin ?? "member", publicVenue: true })));
+}
 function plan(L: CapitalLedger, member: string, planId: string, t: number, startsAt = t + DAY, confirm = true) {
   L.record(ev({ type: "plan_accepted", t, member, planId, kind: "intro", startsAt }));
   if (confirm) L.record(ev({ type: "plan_confirmed", t: t + 1, member, planId }));
@@ -244,12 +251,9 @@ describe("anti-gaming", () => {
 
   test("staged meetups are flagged; checked-in engine plans with the same people are not", () => {
     const L = world();
-    for (let i = 0; i < 3; i++) {
-      const b = T0 + i * 8 * DAY;
-      attend(L, "a", `s${i}`, b, ["b"], { origin: "member", verifiedBy: ["counterpart"] });
-      attend(L, "b", `s${i}`, b + 2 * DAY, ["a"], { origin: "member", verifiedBy: ["counterpart"] });
-      attend(L, "c", `e${i}`, b + 4 * DAY, ["d"]);
-      attend(L, "d", `e${i}`, b + 6 * DAY, ["c"]);
+    for (let i = 0; i < 6; i++) {
+      together(L, ["a", "b"], `s${i}`, T0 + i * 4 * DAY);
+      together(L, ["c", "d"], `e${i}`, T0 + i * 4 * DAY + 2 * DAY, { origin: "engine", verifiedBy: ["checkin"] });
     }
     const flags = detectGaming(L.all(), T0 + 25 * DAY).filter(f => f.kind === "staged_meetup");
     expect(flags.map(f => f.members)).toEqual([["a", "b"]]);
@@ -516,5 +520,55 @@ describe("feedback credit (capital-7)", () => {
     expect(fb.length).toBe(3);
     expect(fb.every(e => L.isReversed(e.id))).toBe(true);
     expect(L.balance("a")).toBe(-10);
+  });
+});
+
+describe("rotating fillers, large rings, organizer staging, honest friends (capital-8, capital-11)", () => {
+  const people = (n: number, p = "x") => Object.fromEntries(Array.from({ length: n }, (_, i) => [`${p}${i}`, 30]));
+  /** a and b attend a plan they chose, each verified only by the other, with optional extra people. */
+  const staged = (L: CapitalLedger, i: number, t: number, extra: string[] = [], origin: "member" | "organizer" = "member") =>
+    together(L, ["a", "b"], `s${i}`, t, { origin, extra }).find(e => e.member === "a")?.amount ?? 0;
+
+  test("two fresh fillers per staged meetup do not reset the pair decay", () => {
+    const L1 = world({ a: 30, b: 30, ...people(20) }), L2 = world({ a: 30, b: 30, ...people(20) });
+    let alone = 0, rotated = 0;
+    for (let i = 0; i < 8; i++) {
+      alone += staged(L1, i, T0 + i * 3 * DAY);
+      rotated += staged(L2, i, T0 + i * 3 * DAY, [`x${2 * i}`, `x${2 * i + 1}`]);
+    }
+    expect(rotated).toBeLessThanOrEqual(alone + 1e-9);
+  });
+
+  test("the recurring core pair is flagged even when the others rotate", () => {
+    const L = world({ a: 30, b: 30, ...people(20) });
+    for (let i = 0; i < 6; i++) staged(L, i, T0 + i * 3 * DAY, [`x${i}`]);
+    const f = detectGaming(L.all(), T0 + 20 * DAY).filter(f => f.kind === "staged_meetup");
+    expect(f.length).toBe(1);
+    expect(f[0]!.members).toContain("a");
+    expect(f[0]!.members).toContain("b");
+  });
+
+  test("organizer-started plans verified only by the attendees are staging too", () => {
+    const L = world();
+    for (let i = 0; i < 6; i++) staged(L, i, T0 + i * 3 * DAY, [], "organizer");
+    expect(detectGaming(L.all(), T0 + 20 * DAY).filter(f => f.kind === "staged_meetup").map(f => f.members)).toEqual([["a", "b"]]);
+  });
+
+  test("honest friends who meet weekly are not flagged", () => {
+    const L = world();
+    for (let i = 0; i < 5; i++) staged(L, i, T0 + i * 7 * DAY);
+    expect(detectGaming(L.all(), T0 + 30 * DAY)).toEqual([]);
+  });
+
+  for (const n of [8, 12]) test(`a help ring of ${n} members is flagged`, () => {
+    const L = world(people(n, "r"));
+    let t = T0;
+    for (let k = 0; k < 4; k++) for (let i = 0; i < n; i++) for (const d of [1, 2]) {
+      const id = `rh${++seq}`; t += HOUR;
+      L.record(ev({ type: "help_given", t, helper: `r${i}`, recipient: `r${(i + d) % n}`, helpId: id }));
+      L.record(ev({ type: "help_confirmed", t, helpId: id, recipient: `r${(i + d) % n}`, useful: true }));
+    }
+    const ring = detectGaming(L.all(), t).filter(f => f.kind === "reciprocal_ring");
+    expect(new Set(ring.flatMap(f => f.members)).size).toBe(n);
   });
 });

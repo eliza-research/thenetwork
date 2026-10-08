@@ -13,7 +13,7 @@
 import { DAY, HOUR } from "../../core/src/clock.ts";
 import { isMinor } from "../../core/src/policy.ts";
 import { resolveCapital, type CapitalConfig, type CapitalConfigInput } from "./config.ts";
-import type { CapitalEvent, EarnCategory, EntryCategory, LedgerEntry, LoseCategory, MemberId, Viewer } from "./types.ts";
+import type { CapitalEvent, EarnCategory, EntryCategory, LedgerEntry, LoseCategory, MemberId, PlanOrigin, Verification, Viewer } from "./types.ts";
 import { CapitalEventRejected, validateCapitalEvent } from "./validate.ts";
 import type { CapitalStore } from "./store.ts";
 
@@ -375,10 +375,14 @@ export class CapitalLedger {
     let pairMult = 1;
     if (counterparts.length) {
       // Credits the pair chose themselves (help, needs, member-started plans) decay over a longer window.
-      const controlled = cat === "help" || cat === "needs_answered" || (cat === "attendance" && extra.origin === "member");
+      const controlled = cat === "help" || cat === "needs_answered" || (cat === "attendance" && pairChosen(extra.origin, extra.verification));
       const window = (controlled ? ag.controlledPairWindowDays : ag.pairWindowDays) * DAY;
       const inPair = earned.filter(e => ev.t - e.t < window && e.base > 0);
-      pairMult = counterparts.reduce((s, cp) => s + ag.pairDecay ** inPair.filter(e => e.provenance.counterparts.includes(cp)).length, 0) / counterparts.length;
+      const decays = counterparts.map(cp => ag.pairDecay ** inPair.filter(e => e.provenance.counterparts.includes(cp)).length);
+      // A plan the members chose decays on its most repeated counterpart (the recurring core):
+      // with the mean, two fresh "fillers" per staged meetup cancelled the decay (capital-8).
+      // Engine- and organizer-made groups keep the mean (the pair did not choose each other).
+      pairMult = controlled ? Math.min(...decays) : decays.reduce((s, x) => s + x, 0) / decays.length;
     }
     // Per category and period.
     const nCat = earned.filter(e => e.category === cat && ev.t - e.t < ag.periodDays * DAY && e.base > 0).length;
@@ -421,11 +425,16 @@ export class CapitalLedger {
 }
 
 /**
- * Credits whose occurrence the members themselves chose: help, needs answered, and member-started
- * plans. Engine- and organizer-made matches are not chosen by the pair, so they cannot be staged.
+ * True when the attendees chose each other: a member-started plan, or an organizer-started one that
+ * nobody but the attendees verified (an "organizer" can stage a crew as easily as a member can stage
+ * a meetup, capital-11). Engine-made matches, and checked-in crews, are not chosen by the pair.
  */
+export const pairChosen = (origin: PlanOrigin | undefined, verification: readonly Verification[] | undefined) =>
+  origin === "member" || (origin === "organizer" && !!verification?.length && verification.every(v => v === "counterpart"));
+
+/** Credits whose occurrence the members themselves chose: help, needs answered, and pair-chosen plans. */
 export const memberControlled = (e: LedgerEntry) =>
-  e.category === "help" || e.category === "needs_answered" || (e.category === "attendance" && e.provenance.origin === "member");
+  e.category === "help" || e.category === "needs_answered" || (e.category === "attendance" && pairChosen(e.provenance.origin, e.provenance.verification));
 
 const planKey = (m: MemberId, p: string) => `${m}|${p}`;
 const uniq = <T>(xs: T[]) => [...new Set(xs)];

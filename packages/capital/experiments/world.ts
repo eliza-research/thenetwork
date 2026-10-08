@@ -12,6 +12,9 @@
 //  A2 Life-driven flakiness (illness, caregiving) is mostly cancellation before the cutoff plus an
 //     occasional no-show; it is independent of how much the member wants to take part.
 //  A3 Adversaries also behave like regular members; their gaming is on top.
+//  A5 Honest friends (capital-11): some regulars have one close friend they meet about weekly
+//     through plans they start themselves, verified only by each other. They are honest and must
+//     rarely be flagged.
 //  A4 The reviewer confirms a flag that contains a true adversary with p 0.9 after a 2-day delay,
 //     wrongly confirms an all-honest flag with p 0.02, and never re-reviews the same set within 14 days.
 import { CapitalLedger } from "../src/ledger.ts";
@@ -56,6 +59,8 @@ interface Persona {
   accept: number; cancel: number; noShow: number; ghost: number; helpRate: number; vouchPerMonth: number; inviteeQuality: number;
   activity: number; active: boolean; activateDay?: number; removed: boolean; group?: number; steward?: boolean;
   invitedBy?: string; vouchTimes: number[]; gamingStopped: boolean;
+  /** Honest close friend (A5). */
+  friend?: string;
 }
 
 export interface SimOptions {
@@ -67,6 +72,8 @@ export interface SimOptions {
   /** Organizing reach above the base goes to members with the least recent participation (default true). */
   reachExtraToLowExposure?: boolean;
   detection?: boolean;
+  /** Pairs of honest regulars who meet weekly through plans they start themselves (A5). Default 8. */
+  honestFriendPairs?: number;
 }
 
 export interface SimResult {
@@ -78,6 +85,8 @@ export interface SimResult {
   gamingEvents: Set<string>;
   firstGaming: Map<string, number>; detectedAt: Map<string, number>;
   falseConfirmed: string[]; flagsRaised: number; honestFlagged: Set<string>;
+  /** Honest friends (A5) who were ever in a flag. */
+  friendsFlagged: Set<string>; friends: string[];
   invites: { voucher: string; invitee: string; day: number; quality: "good" | "mediocre" | "bad"; joined: boolean }[];
   safetyFlagDay: Map<string, number>;
   days: number;
@@ -100,7 +109,7 @@ export function simulate(o: SimOptions): SimResult {
   const gamingEvents = new Set<string>();
   const firstGaming = new Map<string, number>(), detectedAt = new Map<string, number>();
   const falseConfirmed: string[] = [];
-  const honestFlagged = new Set<string>();
+  const honestFlagged = new Set<string>(), friendsFlagged = new Set<string>();
   const invites: SimResult["invites"] = [];
   const safetyFlagDay = new Map<string, number>();
   let flagsRaised = 0;
@@ -146,6 +155,13 @@ export function simulate(o: SimOptions): SimResult {
   let k = 0;
   for (const [type, share] of mix) for (let i = 0; i < Math.round(share * N); i++) mk(`m${k++}`, type, 0);
   for (let i = 0; i < 4; i++) P.get(`m${i}`)!.steward = true;
+  const regulars = [...P.values()].filter(p => p.type === "regular");
+  const friendPairs: [Persona, Persona][] = [];
+  for (let i = 0; i < (o.honestFriendPairs ?? 8) && 2 * i + 1 < regulars.length; i++) {
+    const [a, b] = [regulars[regulars.length - 1 - 2 * i]!, regulars[regulars.length - 2 - 2 * i]!];
+    a.friend = b.id; b.friend = a.id;
+    friendPairs.push([a, b]);
+  }
   for (let i = 0; i < 12; i++) mk(`minor${i}`, "minor", K.int(30, "minorjoin", i));
   // adversaries: 2 vouch rings x 3, 3 staged pairs, 2 help-farm trios (18 = 7% of adults)
   for (let g = 0; g < 2; g++) for (let i = 0; i < 3; i++) mk(`ring${g}_${i}`, "adv_vouch_ring", 0, { group: g });
@@ -313,6 +329,23 @@ export function simulate(o: SimOptions): SimResult {
       }
     }
 
+    // --- honest friends (A5): about weekly, a plan one of them starts, verified by each other
+    friendPairs.forEach(([a, b], i) => {
+      if ((day + i) % 7 !== 0 || !K.chance(0.8, "friends", day, a.id)) return;
+      const planId = `f${++planSeq}`, st = T0 + day * DAY + 19 * HOUR;
+      for (const [x, y] of [[a, b], [b, a]] as const) {
+        emit({ type: "plan_accepted", t: t9, member: x.id, planId, kind: "plan", startsAt: st });
+        took(x.id, day);
+        emit({ type: "plan_confirmed", t: t9 + HOUR, member: x.id, planId });
+        emit({ type: "plan_attended", t: st + 2 * HOUR, member: x.id, planId, counterparts: [y.id], verifiedBy: ["counterpart"], origin: "member", publicVenue: true });
+        if (K.chance(0.6, "ffb", planId, x.id)) emit({ type: "feedback_given", t: st + 3 * HOUR, member: x.id, planId });
+        if (K.chance(BASE_Q, "fval", planId, x.id)) {
+          addValue(x.id, day);
+          emit({ type: "value_received", t: st + 3 * HOUR, member: x.id, with: [y.id], confirmedBy: [y.id], verifiedBy: ["counterpart"] });
+        }
+      }
+    });
+
     // --- adversaries (on top of their honest behaviour above)
     for (let g = 0; g < 2; g++) {
       const ring = groupOf("adv_vouch_ring", g).filter(p => !p.gamingStopped);
@@ -394,7 +427,7 @@ export function simulate(o: SimOptions): SimResult {
         reviewed.set(key, day);
         flagsRaised++;
         reviewQ.push({ day: day + 2, members: f.members });
-        for (const m of f.members) if (!isBad(P.get(m)!.type)) honestFlagged.add(m);
+        for (const m of f.members) if (!isBad(P.get(m)!.type)) { honestFlagged.add(m); if (P.get(m)!.friend) friendsFlagged.add(m); }
       }
       for (const r of reviewQ.filter(r => r.day === day)) {
         const bad = r.members.filter(m => isBad(P.get(m)!.type));
@@ -411,7 +444,7 @@ export function simulate(o: SimOptions): SimResult {
       }
     }
   }
-  return { seed: o.seed, personas: [...P.values()], ledger: L, values, participation, gamingEvents, firstGaming, detectedAt, falseConfirmed, flagsRaised, honestFlagged, invites, safetyFlagDay, days };
+  return { seed: o.seed, personas: [...P.values()], ledger: L, values, participation, gamingEvents, firstGaming, detectedAt, falseConfirmed, flagsRaised, honestFlagged, friendsFlagged, friends: friendPairs.flat().map(p => p.id), invites, safetyFlagDay, days };
 }
 
 export const isBad = (t: PType) => (ADVERSARY as readonly string[]).includes(t) || t === "sybil";

@@ -28,6 +28,8 @@ export interface Metrics {
   flaky: { nc: number; regularNC: number; penalizedShare: number; meanPenalty: number; tierBelowRegularShare: number; netPenaltyGt3Share: number };
   vouch: { invites: number; qualityAll: number; byType: Record<string, { invites: number; quality: number }>; badAdmitted: number };
   honestFlaggedShare: number; falseConfirmed: number; flagsRaised: number;
+  /** Share of honest friends (A5) ever flagged. */
+  friendsFlaggedShare: number;
   tiers: number[];
 }
 
@@ -108,7 +110,7 @@ export function measure(r: SimResult): Metrics {
   return {
     gini, giniHonest, v14Bottom, v14Top, v14Ratio: v14Bottom / v14Top, v14All: mean(ranked.map(x => x.v)), deciles, partDeciles, partBottom: partDeciles[0]!, partTop: partDeciles[9]!,
     regularNC, gaming, flaky: flakyM, vouch,
-    honestFlaggedShare: r.honestFlagged.size / Math.max(1, honest.length), falseConfirmed: r.falseConfirmed.length, flagsRaised: r.flagsRaised, tiers,
+    honestFlaggedShare: r.honestFlagged.size / Math.max(1, honest.length), friendsFlaggedShare: r.friendsFlagged.size / Math.max(1, r.friends.length), falseConfirmed: r.falseConfirmed.length, flagsRaised: r.flagsRaised, tiers,
   };
 }
 
@@ -173,7 +175,7 @@ function report(arm: { name: string; per: Metrics[] }) {
     lines.push(`  ${s}: n ${x[0]!.n}, net gaming gain ${ms(x.map(y => y.netGain), 1)} NC = ${f(mean(x.map(y => y.netGainShare)) * 100, 0)}% of a regular's NC; total NC ${ms(x.map(y => y.ncTotal), 1)}; detected ${f(mean(x.map(y => y.detected)) * 100, 0)}%; median time to detection ${ttd.length ? f(median(ttd), 1) : "n/a"} d`);
   }
   lines.push(`Gaming GATE (each strategy's mean net gain <= ${GAMING_BOUND_SHARE * 100}% of a regular's NC): ${g.gamingOk ? "PASS" : "FAIL"}`);
-  lines.push(`Flags raised/seed ${ms(p.map(m => m.flagsRaised), 1)}; honest members ever flagged ${f(mean(p.map(m => m.honestFlaggedShare)) * 100, 1)}%; honest wrongly confirmed (members, total over seeds) ${p.reduce((s, m) => s + m.falseConfirmed, 0)}`);
+  lines.push(`Flags raised/seed ${ms(p.map(m => m.flagsRaised), 1)}; honest members ever flagged ${f(mean(p.map(m => m.honestFlaggedShare)) * 100, 1)}% (honest weekly friends ${f(mean(p.map(m => m.friendsFlaggedShare)) * 100, 1)}%); honest wrongly confirmed (members, total over seeds) ${p.reduce((s, m) => s + m.falseConfirmed, 0)}`);
   const fl = p.map(m => m.flaky);
   lines.push(`Flaky (legit): NC ${ms(fl.map(x => x.nc), 1)} vs regular ${ms(fl.map(x => x.regularNC), 1)}; any penalty ${f(mean(fl.map(x => x.penalizedShare)) * 100, 0)}%; mean penalty ${ms(fl.map(x => x.meanPenalty), 2)}; penalty > 3 NC ${f(mean(fl.map(x => x.netPenaltyGt3Share)) * 100, 0)}%; effort tier below the regular median ${f(mean(fl.map(x => x.tierBelowRegularShare)) * 100, 0)}%`);
   const types = [...new Set(p.flatMap(m => Object.keys(m.vouch.byType)))].sort();

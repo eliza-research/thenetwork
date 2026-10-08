@@ -43,7 +43,9 @@ export interface CapitalConfig {
     ringShare: number;
     /** ... and that reciprocal set no larger than this. */
     ringMaxSize: number;
-    /** Staged meetup: this many member-started plans with the same people, verified only by each other. */
+    /** Large rings: a strongly connected set of repeat confirmations up to this size is checked as one ring. */
+    ringMaxMembers: number;
+    /** Staged meetup: this many pair-chosen plans with the same pair inside the window, verified only by each other. */
     stagedRepeat: number;
   };
   levers: {
@@ -65,7 +67,7 @@ export const DEFAULT_CAPITAL: CapitalConfig = {
     categorySoftN: { vouch: 3, attendance: 8, feedback: 8, help: 6, organizing: 6, needs_answered: 4, review: 20 },
     periodDays: 30, periodCap: 40,
   },
-  detection: { windowDays: 30, ringMinCredits: 5, ringShare: 0.6, ringMaxSize: 6, stagedRepeat: 3 },
+  detection: { windowDays: 30, ringMinCredits: 5, ringShare: 0.6, ringMaxSize: 6, ringMaxMembers: 12, stagedRepeat: 6 },
   levers: {
     effortThresholds: [15, 45, 120],
     vouch: { base: 2, perGood: 1, maxBonus: 3, perLost: 2, max: 5, periodDays: 30, abuseLockDays: 90 },
@@ -115,6 +117,7 @@ export function capitalConfigProblems(c: CapitalConfig): string[] {
   check("detection.ringMinCredits", d.ringMinCredits, n => int(n) && n >= 1, "an integer >= 1");
   check("detection.ringShare", d.ringShare, n => n >= 0 && n <= 1, "in [0, 1]");
   check("detection.ringMaxSize", d.ringMaxSize, n => int(n) && n >= 1, "an integer >= 1");
+  check("detection.ringMaxMembers", d.ringMaxMembers, n => int(n) && n >= 3, "an integer >= 3");
   check("detection.stagedRepeat", d.stagedRepeat, n => int(n) && n >= 2, "an integer >= 2");
   const th = c.levers.effortThresholds;
   if (!Array.isArray(th) || th.length !== 3) bad.push("levers.effortThresholds must have 3 numbers");
