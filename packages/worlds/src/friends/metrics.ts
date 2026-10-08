@@ -44,6 +44,8 @@ export interface FriendsMetrics {
     hiddenMinorContacts: number; adversaryContacts: number; knownAdversaryContacts: number;
     adversaryContactsByKind: Partial<Record<string, number>>; adversariesReached: number; medianReachPerAdversary: number;
     harms: Partial<Record<HarmKind, number>>; harmsReported: number;
+    /** Harm events whose offender showed no visible red flag (cue, unpassed check, hold) when the proposal was made. */
+    harmsUndetected: number;
   };
   selfHangouts: number;
 }
@@ -163,7 +165,8 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
   }
   const harms: Partial<Record<HarmKind, number>> = {};
   let reported = 0;
-  for (const f of flows) for (const h of f.harms) { harms[h.kind] = (harms[h.kind] ?? 0) + 1; if (h.reported) reported++; }
+  let undetected = 0;
+  for (const f of flows) for (const h of f.harms) { harms[h.kind] = (harms[h.kind] ?? 0) + 1; if (h.reported) reported++; if (!known(h.offender, f.week * 7)) undetected++; }
   const advIds = world.personas.filter(p => p.hidden.adversary && p.hidden.adversary !== "age_liar").map(p => p.id);
   const meetCount = real.map(p => (valueDays.get(p.id) ?? []).length);
 
@@ -184,7 +187,7 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
     safety: {
       declaredMinorProposals: flows.filter(f => f.declaredMinor).length, declaredMinorContacts: decl, hiddenMinorContacts: hidMinor,
       adversaryContacts: adv, knownAdversaryContacts: knownAdv, adversaryContactsByKind: byAdvKind, adversariesReached: reach.size,
-      medianReachPerAdversary: median(advIds.map(id => reach.get(id)?.size ?? 0)) ?? 0, harms, harmsReported: reported,
+      medianReachPerAdversary: median(advIds.map(id => reach.get(id)?.size ?? 0)) ?? 0, harms, harmsReported: reported, harmsUndetected: undetected,
     },
     selfHangouts: world.selfHangouts,
   };

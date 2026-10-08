@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { canBeMatched } from "@thenetwork/core";
 import { NEIGHBORHOODS, transitMinutes, chooseVenue, hood } from "@thenetwork/engine/src/packs/friends/index.ts";
 import {
-  BASELINES, FRIENDS_WORLD_START, buildFriendsSnapshot, createFriendsWorld, emptyFriendsState, friendsMetrics, friendsPackMatcher,
+  BASELINES, FRIENDS_WORLD_START, historicalGates, officialGates, buildFriendsSnapshot, createFriendsWorld, emptyFriendsState, friendsMetrics, friendsPackMatcher,
   generateFriendsPersonas, isReal, runFriendsWorld, slotIndexOf, slotTime, verifyAt, visibleProfiles, visibleRedFlag, VENUES,
   type FriendsPersona,
 } from "../src/friends/index.ts";
@@ -150,6 +150,15 @@ describe("harness and baselines", () => {
     // Plan invites: count probes per member per week from the harness ledger (lastPlannedAt is set once per probe).
     const m = friendsMetrics(pack);
     expect(m.capDrops).toBeGreaterThanOrEqual(0);
+  });
+
+  test("official and historical gate sets compute on the same seeds", () => {
+    const [random, , oracle] = runs.map(friendsMetrics);
+    const og = officialGates([friendsMetrics(pack)], [random!], [oracle!]);
+    expect(og.map(g => g.id)).toEqual(["repeat", "v14", "friendship", "travel", "borough30", "minors", "known_adversary", "undetected_harm"]);
+    expect(og.find(g => g.id === "minors")!.pass).toBe(true);
+    expect(og.find(g => g.id === "known_adversary")!.pass).toBe(true);
+    expect(historicalGates([friendsMetrics(pack)], [random!]).length).toBe(7);
   });
 
   test("the oracle never meets an adversary or a minor; random does (it ignores verification)", () => {
