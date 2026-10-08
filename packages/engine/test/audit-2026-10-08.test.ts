@@ -5,9 +5,14 @@ import { DEFAULT_CONFIG, resolveConfig } from "../src/config.ts";
 import { cosine, localEmbed, tokenize } from "../src/embed.ts";
 import { runEngine } from "../src/engine.ts";
 import { passCacheKey, prob } from "../src/judgeCommon.ts";
+import { screenSnapshot } from "../src/judgeScreen.ts";
+import { buildPublicView, screenConfigOf } from "../src/packs/network/judgeContext.ts";
+import { networkConstraints } from "../src/packs/network/ontology.ts";
 import { Rng } from "../src/rng.ts";
 import { MatcherScheduler, MemoryProposalStore } from "../src/tick.ts";
-import { eligibilityFor, isHomeEntry, riskTerms } from "../src/filters.ts";
+import { eligibilityFor, isHomeEntry, pairReason, riskTerms } from "../src/filters.ts";
+import { networkPack } from "../src/packs/network/index.ts";
+import { World } from "../src/world.ts";
 import { randomWorld } from "../src/testkit.ts";
 import { DAY, HOUR } from "@thenetwork/core";
 import { baseMember, cand, emptyInput, facet, FakeLLM, intent, mkWorld, NOW } from "./helpers.ts";
@@ -266,5 +271,44 @@ describe("engine-pipeline-19 / -23: judge cache key and probability parsing", ()
     expect(prob("0.4")).toBe(0.4);
     expect(prob(1)).toBe(1);
     expect(prob(101)).toBeUndefined();
+  });
+});
+
+describe("engine-pipeline-18: romance preference parsing is strict", () => {
+  const f = (tags: string[]) => ({ ...facet("x", 1, "preference", "x", tags), scope: "matchable" as const });
+  test("bad ages admit nobody; tags are case-insensitive; values keep colons", () => {
+    expect(networkConstraints([f(["romance:age:30"])]).romance!.ageMax).toBe(-Infinity);
+    expect(networkConstraints([f(["romance:age:abc-40"])]).romance!.ageMin).toBe(Infinity);
+    expect(networkConstraints([f(["romance:age:16-40"])]).romance!.ageMin).toBe(Infinity);
+    expect(networkConstraints([f(["romance:age:25-40"])]).romance).toMatchObject({ ageMin: 25, ageMax: 40 });
+    expect(networkConstraints([f(["Romance:Seeks:Woman"])]).romance!.seeks).toEqual(["woman"]);
+    expect(networkConstraints([f(["romance:seeks:a:b"])]).romance!.seeks).toEqual(["a:b"]);
+  });
+});
+
+describe("engine-pipeline-24: pass 1 reads live intents and canonical ids", () => {
+  test("the screen view drops expired intents and keeps an aliased member's facts", () => {
+    const inp = emptyInput(NOW);
+    inp.members.push(baseMember("a"), baseMember("b"));
+    inp.idAliases = { old_b: "b" };
+    inp.facets.push(facet("old_b", 0, "interest", "sailing on the bay", ["sailing"]));
+    inp.intents.push(intent("a", "learn sailing this season", "hobby"), intent("a", "find a tennis partner", "hobby", { id: "gone", createdAt: NOW - 90 * DAY, horizonDays: 30 }));
+    const w = mkWorld(inp);
+    const view = buildPublicView(screenSnapshot(w), screenConfigOf(w, cand(["a", "b"])));
+    const [pa, pb] = view.people;
+    expect(pa!.intents.map(i => i.objective)).toEqual(["learn sailing this season"]);
+    expect(pb!.shareable.length).toBe(1);
+  });
+});
+
+describe("engine-pipeline-16: pack pair rules never get an unknown member", () => {
+  test("pairReason returns unknown_member before any pack rule runs", () => {
+    const inp = emptyInput(NOW);
+    inp.members.push(baseMember("a"));
+    const seen: unknown[] = [];
+    const pack = { ...networkPack, eligibility: { ...networkPack.eligibility, pairRules: [{ id: "spy", check: (_w: unknown, _a: string, _b: string, _l: string, ma: unknown, mb: unknown) => { seen.push(ma, mb); return null; } }] } };
+    const w = new World(inp, resolveConfig({}), localEmbed, pack as never);
+    expect(pairReason(w, "a", "ghost", "social")).toBe("unknown_member");
+    expect(seen).toEqual([]);
   });
 });

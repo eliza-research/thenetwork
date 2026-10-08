@@ -71,12 +71,13 @@ export function pairReason(w: World, a: MemberId, b: MemberId, category: Categor
   // Core prefix: blocks win (either direction).
   if (w.blocked.has(pairKey(a, b))) return "blocked";
   const ma = w.get(a), mb = w.get(b);
+  // Pack rules always get two known members (engine-pipeline-16): an unknown id ends here.
+  if (!ma || !mb) return "unknown_member";
   // Pack rules in order (networkPack: cooldowns, active duplicate, known members, romance, dealbreakers).
   for (const r of w.pack.eligibility.pairRules) {
-    const reason = r.check(w, a, b, category, ma!, mb!);
+    const reason = r.check(w, a, b, category, ma, mb);
     if (reason) return reason;
   }
-  if (!ma || !mb) return "unknown_member";
   // Optional geo hard filter (radius packs: mutual radius). Absent for networkPack.
   return w.pack.geo.pairReason?.(w, a, b) ?? null;
 }
