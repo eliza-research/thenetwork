@@ -78,7 +78,7 @@ describe("surface-profile bypasses", () => {
     for (const s of ["Bouldering at the barbecue place", "Updating your profile", "Barcelona trip planning", "Robotics lab, ages 10 to 17", "Sat 1–4pm, all ages"])
       expect(profileViolation(s, teen)).toBeNull();
     // Claude's profile still blocks disguised romance
-    expect(profileViolation("d a t i n g night", PROFILES.general_assistant)).not.toBeNull();
+    expect(profileViolation("d a t i n g night", PROFILES.general_assistant, 30)).not.toBeNull();
   });
 
   test("an item whose category is clean but whose TEXT is out of profile is hidden on ChatGPT (and the list still works)", async () => {
@@ -399,6 +399,17 @@ describe("leak-guard gaps", () => {
     const { call } = await connect(w.net, principal(w, w.ava));
     expect((await call("get_network_updates", {})).isError).toBe(false);
     expect((await call("ask_network_agent", { question: "anything new?" })).isError).toBe(false);
+  });
+
+  test("a committed write whose reply is blocked is not reported as 'nothing saved' (plugin-prototypes-25)", async () => {
+    const w = world();
+    w.maya.facets.push({ value: "Switch to Quiet", scope: "agent_private" }); // collides with the pause summary
+    const { call } = await connect(w.net, principal(w, w.ava));
+    const r = await call("tell_network_agent", { instruction: "please pause for a while", idempotency_key: key() });
+    expect(r.isError).toBe(true);
+    expect(r.text).not.toMatch(/nothing (new )?was saved/i);
+    expect(r.text).toContain("got your request");
+    expect(r.meta["network/receipt"]).toMatchObject({ replayed: false });
   });
 
   test("internal ids in any case, and ISO timestamps, are blocked", async () => {

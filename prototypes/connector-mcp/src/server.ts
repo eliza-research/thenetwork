@@ -25,6 +25,8 @@ export const SERVER_VERSION = "0.2.0";
 export const MAX_TEXT = 8000; // ~8 KB of model-visible text per result (§2.2)
 const PRIVACY_FALLBACK = "I can't share that here; text me and I'll explain.";
 const PROFILE_FALLBACK = "That's something I can only help with by text.";
+/** A write was committed but its reply can't be shown: say so truthfully (audit plugin-prototypes-25). */
+const COMMITTED_FALLBACK = "The Network got your request, but I can't show the reply here. Text me or open The Network to see it.";
 
 export interface ServerOptions {
   cfg?: NetworkConfig;
@@ -197,13 +199,17 @@ export function createMcpServer(net: FakeNetwork, principal: ConnectorPrincipal,
 
   function pipeline(def: ToolDefinition, args: Record<string, unknown>, outcome: Outcome<unknown>): CallToolResult {
     const structured = outcome.result as Record<string, unknown>;
+    const meta: Record<string, unknown> = outcome.receipt ? { "network/receipt": outcome.receipt } : {};
+    // With a receipt the write already happened: never tell the host "nothing was saved", and keep the
+    // receipt so a retry is recognized as a replay.
+    const blocked = (code: ToolErrorCode, message: string, retryable = false) =>
+      outcome.receipt ? toolError(code, COMMITTED_FALLBACK, meta) : toolError(code, message, {}, retryable);
     const out = validate(def.outputSchema, structured);
     if (!out.valid) {
       audit(def.name, `output_schema_violation:${out.errors[0]}`);
-      return toolError("temporarily_unavailable", "The Network couldn't answer that right now. Nothing new was saved.", {}, true);
+      return blocked("temporarily_unavailable", "The Network couldn't answer that right now. Nothing new was saved.", true);
     }
     let text = renderText(def.name, structured);
-    const meta: Record<string, unknown> = outcome.receipt ? { "network/receipt": outcome.receipt } : {};
 
     if (guardOn) {
       // Raw string leaves, not JSON: JSON escapes newlines and quotes, which hid "the\nbar" from a
@@ -214,11 +220,11 @@ export function createMcpServer(net: FakeNetwork, principal: ConnectorPrincipal,
       const metaLeak = findLeaks(maskEchoes(stringLeaves(meta).join("\n"), stringLeaves(args)), forbidden, { facts: factsIn(forbidden) }).filter((l) => l.startsWith("forbidden:"));
       if (hit?.kind === "leak" || metaLeak.length) {
         audit(def.name, `leak_block:${[hit?.detail, ...metaLeak].filter(Boolean).join(",")}`);
-        return toolError("temporarily_unavailable", PRIVACY_FALLBACK);
+        return metaLeak.length ? toolError("temporarily_unavailable", PRIVACY_FALLBACK) : blocked("temporarily_unavailable", PRIVACY_FALLBACK);
       }
       if (hit?.kind === "profile") {
         audit(def.name, `profile_block:${hit.detail}`);
-        return toolError("not_available_on_this_assistant", PROFILE_FALLBACK);
+        return blocked("not_available_on_this_assistant", PROFILE_FALLBACK);
       }
     }
     if (text.length > MAX_TEXT) text = `${text.slice(0, MAX_TEXT - 1)}…`;
