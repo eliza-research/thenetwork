@@ -39,6 +39,12 @@ describe("checkPolicy (deterministic)", () => {
     // Not first person, or not an age: no violation from the age rule.
     expect(rules("Ravi plays chess on Saturdays. Want an intro?", [P("Jamie", "recipient", 39, false), P("Ravi", "introduced", 27, false)], "Jamie said: 'I'm 15 minutes away; my kid is 16'").verdict).not.toBe("violation");
   });
+  test("a class year signals a minor only while it is still in the future (Clock-relative)", () => {
+    const ctx = (notes: string, now?: number) => checkPolicy("Kai climbs too. Want an intro?", { people: [P("Jo", "recipient", 19, false), P("Kai", "introduced", 30, false)], notes, now });
+    expect(ctx("profile: class of 2028").verdict).toBe("escalate");
+    expect(ctx("profile: class of 2028", Date.UTC(2031, 0, 1)).verdict).toBe("clear");
+    expect(ctx("profile: class of 2033", Date.UTC(2031, 0, 1)).verdict).toBe("escalate");
+  });
   test("ordinary adult friendship intros are clear; 'single-player' and 'not a singles thing' are not romance", () => {
     expect(rules("Kai also boulders on weekday mornings. Want an intro? No pressure.", [P("Lena", "recipient", 34, false), P("Kai", "introduced", 33, false)]).verdict).toBe("clear");
     expect(rules("Ken runs a board game night that's explicitly not a singles thing. Want an intro?", [P("Ola", "recipient", 30, false), P("Ken", "introduced", 32, false)]).verdict).toBe("clear");
