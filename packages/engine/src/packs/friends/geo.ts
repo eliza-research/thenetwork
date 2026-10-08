@@ -1,7 +1,7 @@
 // friends.help geography: New York City neighborhoods, a transit-time estimate and venue choice.
 //
 // Location unit. NYC has 262 Neighborhood Tabulation Areas (NTAs, 2020; docs/research/
-// 2026-10-08-domain-research.md C2 "NYC specifics"). This table is a hand-entered subset of 92
+// 2026-10-08-domain-research.md C2 "NYC specifics"). This table is a hand-entered subset of 93
 // NTA-level neighborhoods (approximate centroids, WGS84) that covers all five boroughs; each carries
 // a planning zone (a cluster of nearby neighborhoods the planner pools within) and a subway access
 // overhead in minutes (walk to a station plus the wait; larger in transit deserts). A production

@@ -32,7 +32,9 @@ export interface FriendsMetrics {
   /** Share of real members with >= 1 pair past 50 hours. */
   casualFriendShare: number;
   timeToFirstMeetup: { medianDays: number | null; shareWithMeetup: number };
-  v14: number; v14ByBorough: Record<string, { n: number; v14: number }>; boroughRatioMin: number;
+  v14: number; v14ByBorough: Record<string, { n: number; v14: number }>;
+  /** Min over boroughs with >= 10 real members of V14(borough) / V14; and over boroughs with >= 30 (Staten Island has about 9-10 at 400 personas). */
+  boroughRatioMin: number; boroughRatioMin30: number;
   /** V14 counting only meetups the Network arranged (excludes handed-off crews meeting on their own). */
   v14Arranged: number;
   travel: { medianGroupMax: number; meanSeat: number; overTolerance: number };
@@ -80,13 +82,15 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
   const booked = flows.reduce((s, f) => s + f.booked.length, 0), attended = flows.reduce((s, f) => s + f.attended.length, 0);
   const realE = held.flatMap(m => m.attendees.filter(id => realIds.has(id)).map(id => m.enjoy[id]!));
 
-  // Repeat: did >= 2 (or >= 3) of this meetup's attendees meet again together within 30 days?
+  // Repeat: did >= 2 (or >= 3) of this meetup's attendees meet again together within 30 days? Base:
+  // meetups the Network arranged by day D-30; "again" includes a handed-off crew meeting on its own
+  // (the same group met again; graduation is a success), not pairs' private hangouts.
   const allMeet = meetups.filter(m => m.kind !== "crew_self");
   let rep = 0, repG = 0, base = 0;
   for (const m of allMeet) {
     if (m.day > days - 30) continue;
     base++;
-    const later = allMeet.filter(x => x.day > m.day && x.day <= m.day + 30);
+    const later = meetups.filter(x => x.day > m.day && x.day <= m.day + 30);
     const overlap = later.map(x => x.attendees.filter(id => m.attendees.includes(id)).length);
     if (overlap.some(c => c >= 2)) rep++;
     if (overlap.some(c => c >= Math.min(3, m.attendees.length))) repG++;
@@ -121,6 +125,7 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
     byB[b] = { n: ids.length, v14: v14Of(ids, valueDays, days) };
   }
   const ratios = Object.values(byB).filter(x => x.n >= 10 && Number.isFinite(x.v14)).map(x => div(x.v14, v14));
+  const ratios30 = Object.values(byB).filter(x => x.n >= 30 && Number.isFinite(x.v14)).map(x => div(x.v14, v14));
 
   // Travel: per held group meetup (>= 3), the longest true trip; per seat, the trip; seats over the member's true tolerance.
   const groupMax = held.filter(m => m.attendees.length >= 3).map(m => Math.max(...m.attendees.map(id => m.travel[id]!)));
@@ -173,7 +178,7 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
     hoursPerMember: div(real.reduce((s, p) => s + (perMember.get(p.id) ?? 0), 0), real.length), topPairHours: div(real.reduce((s, p) => s + (top.get(p.id) ?? 0), 0), real.length),
     casualFriendPairs: casualPairs, friendPairs, friendshipTrackShare: div(real.filter(p => track.has(p.id)).length, real.length), hallPaceShare: div(real.filter(p => pace.has(p.id)).length, real.length), casualFriendShare: div(real.filter(p => casual.has(p.id)).length, real.length),
     timeToFirstMeetup: { medianDays: median(firsts), shareWithMeetup: div(firsts.length, real.length) },
-    v14, v14ByBorough: byB, boroughRatioMin: ratios.length ? Math.min(...ratios) : NaN, v14Arranged: v14Of(real.map(p => p.id), arranged, days),
+    v14, v14ByBorough: byB, boroughRatioMin: ratios.length ? Math.min(...ratios) : NaN, boroughRatioMin30: ratios30.length ? Math.min(...ratios30) : NaN, v14Arranged: v14Of(real.map(p => p.id), arranged, days),
     travel: { medianGroupMax: median(groupMax) ?? NaN, meanSeat: div(seats.reduce((s, x) => s + x.t, 0), seats.length), overTolerance: div(seats.filter(x => x.t > x.tol).length, seats.length) },
     giniMeetups: gini(meetCount), zeroMeetupShare: div(meetCount.filter(x => x === 0).length, real.length),
     safety: {
