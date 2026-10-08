@@ -2,7 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import { DAY, HOUR, type Proposal } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/judge";
-import { DEFAULT_START, generatePersonas, networkStateFromRecords, Oracle, PRIMED_MODEL } from "../src/index.ts";
+import { DEFAULT_START, generatePersonas, networkStateFromRecords, Oracle, PRIMED_MODEL, runWorld, StubNetwork } from "../src/index.ts";
 
 const T0 = DEFAULT_START + 2 * DAY;
 const prop = (id: string, participants: string[]): Proposal => ({
@@ -69,5 +69,26 @@ describe("matching-e2e-4: a probe-primed yes still depends on who the others are
     delete PRIMED_MODEL.identityFit;
     expect(good).toBeCloseTo(PRIMED_MODEL.identity, 2);
     expect(poor).toBeLessThan(0.6 * PRIMED_MODEL.identity);
+  });
+});
+
+describe("sim-worlds-11: the world's oracle sees the proposal category", () => {
+  test("a romance-category proposal with a neutral objective between incompatible members is flagged unsafe", async () => {
+    const personas = generatePersonas({ n: 24, seed: 2, adversarialRate: 0, minorShare: 0, cityWeights: { sf: 1, nyc: 0 }, joinSpreadDays: 1 });
+    const [a, b] = personas.filter(p => !p.hidden.romance.optIn);
+    let sent = false;
+    const engine = {
+      name: "one-romance-proposal",
+      propose(snap: any, o?: { city?: string }) {
+        if (sent || o?.city !== "sf") return [];
+        sent = true;
+        return [{ id: "r1", kind: "intro", category: "romance", participants: [a!.id, b!.id], alternates: [], objective: "coffee", city: "sf",
+          score: 1, components: {} as any, exploration: false, explanations: {}, generator: "test", createdAt: snap.now }];
+      },
+    };
+    const r = await runWorld({ seed: 2, personas, days: 2, network: new StubNetwork({ seed: 2, randomIntros: false }), engine: engine as any, writeLog: false });
+    const rec = r.records.find(x => x.type === "proposal" && x.proposal.id === "r1");
+    expect(rec?.type === "proposal" && rec.oracle.flags).toContain("romance_mismatch");
+    expect(rec?.type === "proposal" && rec.oracle.unsafe).toBe(true);
   });
 });

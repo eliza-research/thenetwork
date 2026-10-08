@@ -153,7 +153,7 @@ export class World {
       }),
       recordProposal: (p, source = "network") => {
         this.proposals.set(p.id, p);
-        const v = this.oracle.evaluate({ id: p.id, kind: p.kind, participants: p.participants, city: p.city, window: p.window, objective: p.objective });
+        const v = this.oracle.evaluate({ id: p.id, kind: p.kind, participants: p.participants, city: p.city, window: p.window, category: p.category, objective: p.objective });
         this.rec({ type: "proposal", source, proposal: p, oracle: summarize(v) });
       },
       recordMeeting: m => this.scheduleMeeting(m),
@@ -437,7 +437,7 @@ export class World {
       if (s) showed.push(id);
     }
     if (showed.length >= 2) {
-      const v = this.oracle.evaluate({ id: `${m.proposalId}:actual`, kind: prop?.kind ?? "intro", participants: showed, city: m.city, window: { start: m.at, end: m.at }, objective: prop?.objective });
+      const v = this.oracle.evaluate({ id: `${m.proposalId}:actual`, kind: prop?.kind ?? "intro", participants: showed, city: m.city, window: { start: m.at, end: m.at }, category: prop?.category, objective: prop?.objective });
       for (const id of showed) attendance[id]!.enjoyment = v.participants[id]?.enjoyment ?? 0;
     }
     for (const id of m.participants) {
