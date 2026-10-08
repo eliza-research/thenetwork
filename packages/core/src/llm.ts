@@ -42,11 +42,17 @@ export type LLMErrorCode =
  */
 export class LLMError extends Error {
   override name = "LLMError";
+  /** First 300 chars of the provider's error body, for an HTTP failure. It may echo request text, so it is never in `message`; do not log it by default. */
+  declare readonly body?: string;
   constructor(
     readonly code: LLMErrorCode,
     message: string,
     readonly detail: { host?: string; status?: number; length?: number; retries?: number } = {},
-  ) { super(message); }
+    body?: string,
+  ) {
+    super(message);
+    if (body !== undefined) Object.defineProperty(this, "body", { value: body, enumerable: false });
+  }
 }
 
 /** What `onResponse` receives for every HTTP attempt (including retries and failures). Never contains the API key. */
@@ -73,7 +79,7 @@ export interface ResponseInfo {
   costKnown: boolean;
   finishReason?: string;
   headers?: Headers;
-  /** Short code and lengths only (e.g. "http 503 (body 120 chars)"); safe to log. */
+  /** Short code and lengths (e.g. "http 503 (body 120 chars)"); for a network failure also the transport's message. */
   error?: string;
   /** First 300 chars of a provider error body. May echo request text: do not log it by default. */
   errorBody?: string;
@@ -255,7 +261,7 @@ async function chatCompletions(
     hooks.budget?.take(host);
     const body = { model, messages, ...bodyFor(opts), ...(hooks.seed !== undefined ? { seed: hooks.seed } : {}), ...(hooks.extraBody ?? {}) };
     // Retryable failure: try the next endpoint, else back off on the last one, else give up.
-    const retry = async (code: LLMErrorCode, why: string, status?: number, retryAfterMs?: number) => {
+    const retry = async (code: LLMErrorCode, why: string, status?: number, retryAfterMs?: number, errorBody?: string) => {
       if (e < eps.length - 1) {
         const to = new URL(eps[e + 1]!.baseUrl).host;
         console.warn(`[llm] ${host} failed (${why}); falling back to ${to}`);
@@ -263,7 +269,7 @@ async function chatCompletions(
         e++;
         return;
       }
-      if (retries >= maxRetries) throw new LLMError(code, `${host} ${why} (after ${retries} retries)`, { host, status, retries });
+      if (retries >= maxRetries) throw new LLMError(code, `${host} ${why} (after ${retries} retries)`, { host, status, retries }, errorBody);
       const wait = backoffMs(retries, hooks.retryBaseMs ?? 1000, retryAfterMs, hooks.rand);
       if (wait >= remaining()) throw deadlineError(host, `${why}; next retry in ${Math.round(wait)} ms`);
       retries++;
@@ -286,7 +292,8 @@ async function chatCompletions(
     } catch (err) {
       const name = String((err as Error)?.name ?? "Error"), errno = (err as { code?: unknown })?.code;
       const why = name === "TimeoutError" ? "timeout" : `network error (${name}${typeof errno === "string" ? ` ${errno}` : ""})`;
-      failed(0, why);
+      // The transport's own message (e.g. "socket hang up") goes to observers only, never to thrown errors or logs.
+      failed(0, `${why}: ${String((err as Error)?.message ?? err).slice(0, 200)}`);
       if (signal?.aborted) throw new LLMError("aborted", `${host} call aborted by caller`, { host, retries });
       if (remaining() <= 0) throw deadlineError(host, why);
       await retry(name === "TimeoutError" ? "timeout" : "network", why);
@@ -294,9 +301,10 @@ async function chatCompletions(
     }
     if (!res.ok) {
       const why = `http ${res.status} (body ${text.length} chars)`;
-      failed(res.status, why, { headers: res.headers, errorBody: text.slice(0, 300) });
-      if (!RETRYABLE_STATUS(res.status)) throw new LLMError("http", `${host} ${why}`, { host, status: res.status, length: text.length });
-      await retry("http", why, res.status, retryAfterOf(clock, res.headers));
+      const errorBody = text.slice(0, 300);
+      failed(res.status, why, { headers: res.headers, errorBody });
+      if (!RETRYABLE_STATUS(res.status)) throw new LLMError("http", `${host} ${why}`, { host, status: res.status, length: text.length }, errorBody);
+      await retry("http", why, res.status, retryAfterOf(clock, res.headers), errorBody);
       continue;
     }
     let data: any;

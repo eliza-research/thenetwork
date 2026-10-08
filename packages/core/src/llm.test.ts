@@ -144,7 +144,8 @@ test("a hung request times out and retries are bounded", async () => {
     return new Promise<Response>((_, reject) => init.signal?.addEventListener("abort", () => reject(new Error("The operation timed out."))));
   };
   const t0 = Date.now();
-  await expect(new OpenAILLM("k", "m", "https://x.invalid/v1", { fetch: hang, timeoutMs: 20, maxRetries: 2, retryBaseMs: 1 }).chat([{ role: "user", content: "x" }]))
+  // deadlineMs: 0 isolates the retry bound (the default deadline, 3x the timeout, would end this call first under load).
+  await expect(new OpenAILLM("k", "m", "https://x.invalid/v1", { fetch: hang, timeoutMs: 20, deadlineMs: 0, maxRetries: 2, retryBaseMs: 1 }).chat([{ role: "user", content: "x" }]))
     .rejects.toThrow("after 2 retries");
   expect(n).toBe(3);
   expect(Date.now() - t0).toBeLessThan(2_000);
@@ -341,6 +342,8 @@ test("errors and logs carry codes and lengths, not provider bodies or prompts (c
     ];
     for (const e of errs) { expect(e).toBeInstanceOf(LLMError); expect(String(e)).not.toContain(CANARY); }
     expect(errs[0].detail.status).toBe(400);
+    // The provider body is kept off the message, for callers that choose to inspect it.
+    expect(errs[0].body).toContain(CANARY);
     expect(warnings.length).toBeGreaterThan(0);
     for (const w of warnings) expect(w).not.toContain(CANARY);
   } finally {
