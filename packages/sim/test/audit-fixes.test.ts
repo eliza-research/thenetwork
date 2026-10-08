@@ -248,3 +248,16 @@ describe("judge-evals-M4: duplicate sends are logged", () => {
     expect(w.records.filter(r => r.type === "network_log" && r.kind === "duplicate_send").length).toBe(1);
   });
 });
+
+describe("judge-evals-20: the CLI audit fails loudly when the judge errors", () => {
+  test("--judge with an unreachable judge endpoint exits non-zero", async () => {
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !/API_KEY|LIVE_TESTS|BASE_URL/.test(k)) env[k] = v;
+    // A dummy key and a closed local port: every judge call fails fast, nothing leaves the machine.
+    Object.assign(env, { SURPLUS_API_KEY: "dummy-not-a-key", SURPLUS_BASE_URL: "http://127.0.0.1:9/v1", JUDGE_PROVIDER: "surplus", LLM_MAX_RETRIES: "0", LLM_TIMEOUT_MS: "2000" });
+    const p = Bun.spawn(["bun", `${import.meta.dir}/../src/cli.ts`, "--personas", "8", "--days", "2", "--no-log", "--judge", "2"], { env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
+    expect(stdout).toContain("privacyLeaks=n/a");
+    expect(code).not.toBe(0);
+  }, 60_000);
+});

@@ -133,22 +133,35 @@ else {
 }
 if (a.judge) await judgeRun(res.records, Number(a.judge));
 
-/** LLM judges over a deterministic, evenly spaced sample of delivered proactive messages. */
+/**
+ * LLM judges over a deterministic, evenly spaced sample of every delivered Network message (not only
+ * proactive ones), and a privacy audit of that sample against every private fact (in batches of 40).
+ * A judge error is reported and the CLI exits non-zero, so an outage never reads as a clean audit.
+ */
 async function judgeRun(records: RunRecord[], k: number) {
   const judge = judgeLLM(); // judge model per JUDGE_PROVIDER / JUDGE_MODEL
-  const sent = records.flatMap(r => (r.type === "message" && r.msg.direction === "outbound" && !r.msg.system && r.msg.status === "delivered" && r.msg.meta?.proactive ? [r.msg] : []));
+  const sent = records.flatMap(r => (r.type === "message" && r.msg.direction === "outbound" && !r.msg.system && r.msg.status === "delivered" ? [r.msg] : []));
   const step = Math.max(1, Math.floor(sent.length / Math.max(1, k)));
   const sample = sent.filter((_, i) => i % step === 0).slice(0, k);
-  const quality = await Promise.all(sample.map(m => judgeMessageQuality(judge, { message: m.body }).catch(e => ({ pass: false, score: 0, issues: [String(e)], reasoning: "" }))));
+  const errors: string[] = [];
+  const quality = await Promise.all(sample.map(m => judgeMessageQuality(judge, { message: m.body }).catch(e => { errors.push(String(e)); return { pass: false, score: 0, issues: [String(e)], reasoning: "" }; })));
   const facts = records.flatMap(r => (r.type === "persona" && r.persona.privateFact ? [{ owner: r.persona.id, fact: r.persona.privateFact }] : []));
-  const audit = facts.length && sample.length ? await privacyAudit(judge, { privateFacts: facts.slice(0, 40), messages: sample.map(m => ({ to: m.memberId, text: m.body })) }).catch(() => null) : null;
+  let leaks = 0;
+  for (let i = 0; sample.length && i < facts.length; i += 40) {
+    const audit = await privacyAudit(judge, { privateFacts: facts.slice(i, i + 40), messages: sample.map(m => ({ to: m.memberId, text: m.body })) }).catch(e => { errors.push(String(e)); return null; });
+    leaks += audit?.leaks.length ?? 0;
+  }
   const passN = quality.filter(q => q.pass).length;
   const out = {
     judge: `${process.env.JUDGE_PROVIDER ?? "surplus"}/${process.env.JUDGE_MODEL ?? "gpt-6-luna"}`,
     sampled: sample.length, qualityPass: passN, qualityPassRate: sample.length ? Math.round((passN / sample.length) * 1000) / 1000 : 0,
     meanScore: sample.length ? Math.round((quality.reduce((s, q) => s + q.score, 0) / sample.length) * 100) / 100 : 0,
-    privacyLeaks: audit ? audit.leaks.length : null,
+    privacyLeaks: errors.length ? null : leaks, factsAudited: facts.length, errors: errors.length,
   };
   if (a.json) console.log(JSON.stringify({ llmJudges: out }, null, 2));
-  else console.log(`LLM judges (${out.judge}): sampled=${out.sampled} quality pass=${out.qualityPass} (${(out.qualityPassRate * 100).toFixed(1)}%) mean=${out.meanScore} privacyLeaks=${out.privacyLeaks ?? "n/a"}`);
+  else console.log(`LLM judges (${out.judge}): sampled=${out.sampled} quality pass=${out.qualityPass} (${(out.qualityPassRate * 100).toFixed(1)}%) mean=${out.meanScore} privacyLeaks=${out.privacyLeaks ?? "n/a"} facts=${out.factsAudited}`);
+  if (errors.length) {
+    console.error(`LLM judge errors: ${errors.length} (first: ${errors[0]})`);
+    process.exit(1);
+  }
 }
