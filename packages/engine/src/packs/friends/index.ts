@@ -34,7 +34,7 @@ export const FRIENDS_PACK_VERSION = "friends-pack-0.1.0";
 export const friendsGeo: GeoModel = {
   kind: "city",
   markets: cfg => cfg.cities.filter(c => c === "nyc"),
-  tz: (market, cfg) => cfg.timezones[market],
+  tz: (market, cfg) => cfg.timezones[market] ?? "America/New_York",
   location: (w, id, start, end) => cityBucketGeo.location(w, id, start, end),
   overlap: (w, ids, start, end) => {
     const o = cityBucketGeo.overlap(w, ids, start, end, "nyc");
