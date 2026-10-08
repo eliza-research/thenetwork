@@ -83,7 +83,10 @@ jobs:
       - name: Offline tests
         run: |
           if [ -n "${LIVE_TESTS:-}" ]; then echo "LIVE_TESTS must be unset in CI"; exit 1; fi
-          bun test --conditions eliza-source packages prototypes sites deploy scripts ./tests/e2e --timeout 120000
+          # packages/plugin-network runs in its own job against the eliza submodule (below).
+          pkgs=()
+          for d in packages/*/; do [ "$d" = "packages/plugin-network/" ] || pkgs+=("$d"); done
+          bun test --conditions eliza-source "${pkgs[@]}" prototypes sites deploy scripts ./tests/e2e --timeout 120000
         timeout-minutes: 20
       - name: Production build of the four sites (refuses draft legal text and unfilled placeholders)
         run: bun run sites/sites.ts
@@ -106,5 +109,13 @@ jobs:
           bun-version: 1.4.2
       - name: Install
         run: bun install --frozen-lockfile
+      - name: Install Eliza (its own install, never a workspace of this repo)
+        run: bun install
+        working-directory: eliza
+        timeout-minutes: 10
       - name: Typecheck plugin-network
         run: bun run --cwd packages/plugin-network typecheck
+      - name: Test plugin-network
+        # From the package directory so its tsconfig paths resolve @elizaos/* to the submodule.
+        run: bun test --conditions eliza-source --timeout 120000
+        working-directory: packages/plugin-network
