@@ -37,7 +37,7 @@ bun run packages/sim/src/cli.ts --engine ./my-engine.ts                     # mo
 bun test packages/sim packages/judge                                         # live tests need SURPLUS_API_KEY or OPENAI_API_KEY
 ```
 
-The other flags are `--mode accelerated --speed 1440` (one sim day per wall minute), `--mode realtime`, `--llm-personas` (LLM-enriched bios), `--adversarial-rate`, `--minor-share` (default 0.05), `--judge N` (LLM-judge N sent proactive messages with `judgeLLM()`), `--no-log` and `--json`. Models: persona agents and persona bios use `defaultLLM()` (`DEFAULT_LLM_PROVIDER`/`DEFAULT_LLM_MODEL`). Any judging uses `judgeLLM()` (`JUDGE_PROVIDER`/`JUDGE_MODEL`). Both default to Surplus `gpt-6-luna`, with OpenAI as the fallback.
+The other flags are `--mode accelerated --speed 1440` (one sim day per wall minute), `--mode realtime`, `--llm-personas` (LLM-enriched bios), `--adversarial-rate`, `--minor-share` (default 0.05), `--richness` (snapshot from richness tiers instead of perfect onboarding), `--stable-decisions` and `--logistics` (opt-in oracle refinements: no fresh coin flip when the same people are asked again, and travel and time in show-up), `--quality-churn` (personas lose trust after unsafe or poor intros), `--judge N` (LLM-judge N sent proactive messages with `judgeLLM()`), `--no-log` and `--json`. Models: persona agents and persona bios use `defaultLLM()` (`DEFAULT_LLM_PROVIDER`/`DEFAULT_LLM_MODEL`). Any judging uses `judgeLLM()` (`JUDGE_PROVIDER`/`JUDGE_MODEL`). Both default to Surplus `gpt-6-luna`, with OpenAI as the fallback.
 
 Each run writes `runs/<runId>/events.jsonl`, `personas.json` (which includes hidden truth, so keep it for analysis only) and `metrics.json`. The `runs/` directory is gitignored.
 
@@ -205,7 +205,7 @@ sim events=869 wall=27ms
 
 Read this as the **random-intro baseline**. Precision is about 6%, the oracle gap ratio is about 5%, and almost nobody gets value in two weeks. A real engine should beat these numbers by a wide margin. The one scheduled meeting falls after the 14-day horizon, so it shows as not held.
 
-At scale: 300 personas over 60 days runs in about 1.2 s wall time. That run gave 1,357 proposals, 8.5% precision, 33 meetings held, 501 adversarial attempts, 0 leaks and 0 invariant violations. 2,000 personas over 30 days runs in about 7 s.
+At scale (stub network, seed 1, measured 2026-10-08 on a laptop; wall time depends on the machine): 300 personas over 60 days runs in about 4.7 s wall time. That run gave 1,314 proposals, 8.8% precision, 40 meetings held, 498 adversarial attempts, 0 leaks and 0 invariant violations. 2,000 personas over 30 days runs in about 73 s.
 
 ### LLM run
 
