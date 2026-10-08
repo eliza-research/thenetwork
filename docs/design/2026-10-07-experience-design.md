@@ -3,14 +3,14 @@
 Status: design proposal, for founder review. Section 1 (Phase 1) is implemented in `packages/engine/src/attention.ts` and measured in `docs/results/2026-10-07-attention-budget.md` (iterations 1-4). Section 4 (Phase 2, plans) is implemented in `packages/engine/src/plans.ts` and `activities.ts` and measured in `docs/results/2026-10-08-plans.md`; section 4.11 records what was built and the measured defaults. The founder's decisions of 2026-10-07 replace D2, D4 and D5 (section 9) and are written into section 1 below; section 1.11 (availability capture) is new. No LLM calls were made to write it.
 
 Builds on:
-- `docs/research/2026-10-07-match-failures-and-diversity.md` ("the match report")
+- `docs/research/2026-10-07-match-failures-and-diversity.md` ("the match report"; summarized in `docs/results/SUMMARY.md`, full text in git history at 16cde70)
 - `docs/results/2026-10-07-engine-v1.2.md` ("the v1.2 results")
-- `docs/results/2026-10-06-luna-error-analysis.md` ("the error analysis")
-- `docs/research/2026-10-07-audit.md` ("the audit")
-- `docs/research/2026-10-07-prompt-optimization.md`
-- `docs/data-model-sources.md`
+- `docs/results/2026-10-06-luna-error-analysis.md` ("the error analysis"; summarized in `docs/results/SUMMARY.md`, full text in git history at 16cde70)
+- `docs/research/2026-10-07-audit.md` ("the audit"; in git history at 16cde70)
+- `docs/research/2026-10-07-prompt-optimization.md` (summarized in `docs/results/SUMMARY.md`, full text in git history at 16cde70)
+- `data/synthetic/README.md` ("Data model: profile richness and connected sources")
 - `packages/engine/src/{config,outreach,generators}.ts` at `engine-v1.2.0`
-- `prototypes/messaging-blooio/README.md`
+- `packages/blooio/README.md`
 - PRD sections 7.2, 8.2, 9, 12.2-12.3, 28-29, 32.4-32.16, 33, 34
 
 ## 0. Summary
@@ -253,7 +253,7 @@ Blooio enforces, per conversation, at most 3 unanswered outbound messages, then 
 | | Hold waste | Held items expired unsent with V above the send bar | Tracked; high = cap too tight |
 | | Probe yield | Probes that led to a mutual yes / probes sent | ≥ 25% |
 
-All of these are computed from the attention ledger and the event log (32.19), in the simulator and in production, by the same code in `packages/judge/src/metrics.ts`.
+All of these are computed from the attention ledger and the event log (32.19), in the simulator and in production, by the same code in `packages/sim/src/judge/metrics.ts`.
 
 ### 1.11 Availability capture (founder decision 4)
 
@@ -373,7 +373,7 @@ Legend for requirements: EC event calendar, VN venues, IH interaction history fe
 | 21 | expertise facets | "Which climbing gym for beginners near Dolores?" | Answer in ≤ 24h in 70%; answerer load within budget |
 | 22 | EC, VN | Every member, every week | Every adult and minor gets ≥ 1 eligible outside-world item per 14 days |
 
-**Global gates for every scenario:** 0 minor contacts, 0 canary leaks, 0 invariant violations, 0 over-cap sends, 0 quiet-hour sends, 0 probes without prior review approval. These run in `packages/judge/src/metrics.ts` against every simulated run.
+**Global gates for every scenario:** 0 minor contacts, 0 canary leaks, 0 invariant violations, 0 over-cap sends, 0 quiet-hour sends, 0 probes without prior review approval. These run in `packages/sim/src/judge/metrics.ts` against every simulated run.
 
 ---
 
@@ -545,7 +545,7 @@ For each city and window w with at least `size.min` available members:
 
 - A crew is proposed when ≥ 3 members attended ≥ 2 plans together with mutual positive feedback, or when a member states a recurring intent ("weekly run club").
 - Each session is opt-in by reply. The host role rotates among members with the host tag. Hosts use the contribution budget.
-- After 3 sessions, the Network offers to hand the crew off to its own group chat, with each member's consent, and recedes (PRD 8.3.7). Handed-off crews still count as value for V14 when members report sessions (D14).
+- After 3 sessions, the Network offers to hand the crew off to its own group chat, with each member's consent, and recedes (PRD 8.3). Handed-off crews still count as value for V14 when members report sessions (D14).
 
 ### 4.8 Feedback and second encounter
 
@@ -831,7 +831,7 @@ Today the simulator snapshot is built from the persona's known profile, not from
 
 ## 8. Build plan
 
-Package owners follow the audit's tags: [engine] = `packages/engine`, `packages/core`; [sim] = `packages/sim` (persona, oracle, snapshot); [other] = `packages/network`, `packages/observatory`, sim agent/world (another session); [msg] = `prototypes/messaging-blooio`; [evals] = `packages/evals`; [judge] = `packages/judge`.
+Package owners follow the audit's tags: [engine] = `packages/engine`, `packages/core`; [sim] = `packages/sim` (persona, oracle, snapshot); [other] = `packages/network`, `packages/observatory`, sim agent/world (another session); [msg] = `packages/blooio`; [evals] = `packages/evals`; [judge] = `packages/sim/src/judge`.
 
 ### Phase 1: attention budget, menu message, hold queue
 

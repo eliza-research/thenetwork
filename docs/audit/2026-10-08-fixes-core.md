@@ -3,7 +3,7 @@
 This file records what this session did with each finding of the 2026-10-08 adversarial audit in the packages it owns. The findings and evidence are in `docs/audit/2026-10-08-weaknesses.md` (other worktree). Each row is keyed by finding id.
 
 - **Branch:** `fix/audit` (from `origin/main` 70c988b). Not pushed, not merged.
-- **Scope:** packages/core, packages/engine (not packs/slop, packs/peon, packs/friends), packages/judge, packages/evals, packages/sim, packages/capital, packages/plugin-network, prototypes/messaging-blooio, prototypes/connector-mcp.
+- **Scope:** packages/core, packages/engine (not packs/slop, packs/peon, packs/friends), packages/sim/src/judge, packages/evals, packages/sim, packages/capital, packages/plugin-network, packages/blooio, prototypes/connector-mcp.
 - **Status words.** fixed: the defect is closed and has a regression test. partly fixed: the part in our packages is done; the rest is named. not fixed: the reason is given. belongs-elsewhere: the fix is in a package this session does not own; the change is listed in "Items for the network/platform session".
 - **opt-in:** the fix is behind a flag because turning it on by default moves network test results that gate on single-seed accept rates (see item 8 below).
 
@@ -150,7 +150,7 @@ Only `"yes"` is consent. Negations ("absolutely not", "ok no", "yeah no", "I'm n
 | judge-evals-15 | P3 | fixed | rules.ts: impersonation variants, international phones, at/dot emails, handles. Venue false positive remains. |
 | judge-evals-19 | P3 | not fixed | Sealing a new test split needs new data and live runs. |
 | judge-evals-20 | P3 | fixed | sim cli.ts --judge samples every delivered message, audits all facts in batches of 40, exits 1 on judge errors. |
-| judge-evals-21 | P3 | not fixed | Drift is in docs/test-plan.md; a coverage-map test is not trivial. |
+| judge-evals-21 | P3 | not fixed | Drift is in docs/test-plan.md (git history, 16cde70); a coverage-map test is not trivial. |
 | judge-evals-22 | P3 | partly fixed | Vacuous datasetV2 assertion replaced; tests for the new metric rules. |
 | judge-evals-24 | P3 | fixed | SpendGuard reserves in-flight calls at the most expensive call seen. |
 | judge-evals-25 | P3 | fixed | Combined name matcher; "class of YYYY" relative to the Clock year. |
@@ -168,18 +168,18 @@ Only `"yes"` is consent. Negations ("absolutely not", "ok no", "yeah no", "I'm n
 | sim-worlds-12 | P2 | partly fixed | Sim part: post-match-harassment.json scenario and `blocked_pair_kept_apart` check. The slop harness part belongs to the worlds agents. |
 | sim-worlds-13 | P2 | fixed (opt-in) | `PolicyOptions.qualityChurn` / `--quality-churn`: trust drops after unsafe or poor intros and bad meetings; low trust leads to STOP. |
 | sim-worlds-14 | P2 | partly fixed | `--richness` CLI flag. Default stays perfect onboarding (changing it moves every golden): meetings 32/36/31 default vs 19/22/17 with richness on seeds 1-3. |
-| sim-worlds-16 | P2 | belongs-elsewhere | packages/worlds/src/slop (worlds agents). |
-| sim-worlds-4 | P2 | belongs-elsewhere | packages/worlds/src/slop (worlds agents). |
-| sim-worlds-6 | P2 | belongs-elsewhere | packages/worlds/src/slop (worlds agents). |
-| sim-worlds-7 | P2 | belongs-elsewhere | packages/worlds/src/slop (worlds agents). |
+| sim-worlds-16 | P2 | belongs-elsewhere | packages/sim/src/apps/slop (worlds agents). |
+| sim-worlds-4 | P2 | belongs-elsewhere | packages/sim/src/apps/slop (worlds agents). |
+| sim-worlds-6 | P2 | belongs-elsewhere | packages/sim/src/apps/slop (worlds agents). |
+| sim-worlds-7 | P2 | belongs-elsewhere | packages/sim/src/apps/slop (worlds agents). |
 | sim-worlds-8 | P2 | not fixed | packages/sim/src/plans.ts does not exist on main; the sim imports the engine only as a type. The audit line refers to the console branch. |
 | sim-worlds-9 | P2 | fixed | New scenario lying-minor-seeks-romance.json, `no_romance_proposal` check, scenario `claimedAge`. |
 | sim-worlds-17 | P3 | fixed | generator.ts: minor-adult links are siblings (gap ≤ 12) or family friends only; RNG draws unchanged. |
-| sim-worlds-18 | P3 | belongs-elsewhere | packages/worlds/src/slop (worlds agents). |
+| sim-worlds-18 | P3 | belongs-elsewhere | packages/sim/src/apps/slop (worlds agents). |
 | sim-worlds-19 | P3 | fixed (opt-in) | `PolicyOptions.tripClock` / `--trip-clock`. Opt-in because on by default it moves the single-seed network test. |
 | sim-worlds-20 | P3 | not fixed | Plausible only; not trivial. |
 | sim-worlds-21 | P3 | fixed | Name index rebuilt on spawn. |
-| sim-worlds-22 | P3 | belongs-elsewhere | packages/worlds/src/slop (worlds agents). |
+| sim-worlds-22 | P3 | belongs-elsewhere | packages/sim/src/apps/slop (worlds agents). |
 | sim-worlds-23 | P3 | fixed | README performance numbers re-measured (≈4.7 s and ≈73 s). |
 | sim-worlds-M3 | P3 | fixed | A scenario whose expectations are all skipped reports `vacuous` and fails. |
 | sim-worlds-M4 | P3 | not fixed | Needs an incremental snapshot accumulator. |
@@ -274,12 +274,12 @@ These need changes in files this session does not own (packages/network, package
 3. **PRD PH-003 pause path.** The judge now checks a pause path on every proactive message (`pause_path_missing`). Network probes ("no pressure either way", "no is completely fine") have none: 264 hits per 10-day NYC run. Use engine `withPausePath` (packages/engine/src/attention.ts) or add one to `copy.probe` and `copy.probeForRequest`.
 4. **Outreach controller.** "Good news: I may have found someone" and `requestNoneYet` info messages skip the controller, sometimes at night: 27 `proactive_mislabeled`, 7 `quiet_hours`, 15 `over_budget`, 4 `two_unanswered` per 10-day run. Mark them proactive or send them only within 48 h of the member's ask.
 5. **Minors.** `copy.plans` reaches minors and offers "Want me to see if anyone else is up for one of them?": 27 minor contacts per 10-day NYC run under the new judge (judge-evals-1).
-6. **Budget test (judge-evals-M1).** `packages/network/test/network.test.ts:58` grades at 4/week. Import `PRD_BUDGETS` (and `LANE_BUDGETS` for plan invites and check-ins) from `@thenetwork/judge`.
+6. **Budget test (judge-evals-M1).** `packages/network/test/network.test.ts:58` grades at 4/week. Import `PRD_BUDGETS` (and `LANE_BUDGETS` for plan invites and check-ins) from `@thenetwork/sim (src/judge)`.
 7. **Review gate.** `unreviewed_contact` now counts probe messages too: 742 per 10-day run (known P0-1).
 8. **"Consent beats push" test (matching-e2e-4).** Stop gating on `inviteAcceptRate > 0.75` and `proposalAllYesRate > 0.75` (it fails today at 0.704, as it did at baseline). Gate on outcomes over 3+ seeds: `consent.unsafe < push.unsafe / 4` on every seed, mean meetings held consent > push, `falseFlags == 0`. Use `packages/sim/experiments/primed-sweep.ts`. Then turn on `PRIMED_MODEL.identityFit` (0.55) by default. Add `--identity-fit` to `packages/network/src/experiment.ts`.
 9. **classify.ts `feedbackOf`.** "Honestly not great" reads as positive (`/great/` before `/not great/`). Test negatives first, as sim `feedbackReading` does.
 10. **matching-e2e-7.** Record an oracle verdict for every `probe_started` opportunity so precision covers started opportunities; mark "fulfilled" only after attendance.
-11. **matching-e2e-16.** Import `GOOD_MEETING_ENJOYMENT` from `@thenetwork/judge` in the harness.
+11. **matching-e2e-16.** Import `GOOD_MEETING_ENJOYMENT` from `@thenetwork/sim (src/judge)` in the harness.
 
 ### Engine wiring in the network runtime
 12. **engine-attention-plans-7.** `view()` in network.ts must set `categoriesOptIn: member.prefs.categoriesOptIn` on MemberAttention. Without it, romance items are now always blocked (fail closed).
@@ -312,7 +312,7 @@ These need changes in files this session does not own (packages/network, package
 33. **plugin-prototypes-13, -14.** Hosts that build the Blooio queue must pass `groupParticipants` (group sends are suppressed without it). Callers that enqueue `kind: "reply"` with no inbound in the last hour (onboarding openers, invites) must use `proactive` or `transactional`.
 34. **plugin-prototypes-M1.** CI must install the eliza deps for packages/plugin-network and fail when its suites do not load.
 35. **plugin-prototypes-26.** One SKILL.md per published site, same backend URL, linted against each site's terms (sites session).
-36. **sim-worlds-5** and the worlds-only items (sim-worlds-4, -6, -7, -16, -18, -22) belong to the agents working in packages/worlds/src/slop.
+36. **sim-worlds-5** and the worlds-only items (sim-worlds-4, -6, -7, -16, -18, -22) belong to the agents working in packages/sim/src/apps/slop.
 37. **slop goldens.** `packages/engine/test/goldens/slop.json` was re-captured here (run ids only; engine-pipeline-17). The slop agents should re-capture after merging.
 
 ## Golden changes

@@ -5,9 +5,9 @@ This is how The Network goes online. Read it with [runbook-platform.md](runbook-
 **User decisions this round (2026-10-08).**
 
 - All four sites are deployed: ntwrk.love, slop.date, peon.biz and friends.help.
-- **Hosting (founder decision 8, AGENTS.md; it supersedes "Workers static assets").** Each site is a classic Cloudflare Pages project in account `50ad2052bbc6ca528d6993a689b419a4`: `ntwrk-love`, `slop-date`, `peon-biz`, `friends-help` (production branch `main`, served on `<project>.pages.dev`). The forwarding of `/api/*`, `/mcp`, `/oauth/*` and `/.well-known/oauth-*` to the shared backend is an advanced-mode `_worker.js` that the build makes from `deploy/router.ts`, with `_routes.json` so only those paths run it.
+- **Hosting (founder decision 8, AGENTS.md; it supersedes "Workers static assets").** Each site is a classic Cloudflare Pages project in the ntwrk.love Cloudflare account (`CLOUDFLARE_ACCOUNT_ID`): `ntwrk-love`, `slop-date`, `peon-biz`, `friends-help` (production branch `main`, served on `<project>.pages.dev`). The forwarding of `/api/*`, `/mcp`, `/oauth/*` and `/.well-known/oauth-*` to the shared backend is an advanced-mode `_worker.js` that the build makes from `deploy/router.ts`, with `_routes.json` so only those paths run it.
 - The shared backend is one process on Railway: `https://api.ntwrk.love`.
-- slop.date and friends.help stay in the developer@elizalabs.ai Cloudflare account for 10 days; their DNS points at the `slop-date.pages.dev` and `friends-help.pages.dev` projects. Every config takes the account id from the environment (`CLOUDFLARE_ACCOUNT_ID`), default the ntwrk.love account.
+- slop.date and friends.help stay in the Eliza Labs Cloudflare account for 10 days; their DNS points at the `slop-date.pages.dev` and `friends-help.pages.dev` projects. Every config takes the account id from the environment (`CLOUDFLARE_ACCOUNT_ID`), default the ntwrk.love account.
 - The backend treats each project's production name (`<project>.pages.dev`) as a host of its app (packages/platform `siteHosts`): the Origin check and Turnstile accept it, so a site works there before its own domain points at it. Preview deployments (`<hash>.<project>.pages.dev`) are not hosts.
 
 ## 1. What runs where
@@ -145,7 +145,7 @@ Values used in local smoke runs (`ACfake`, `fake-turnstile`, `+1 555 01xx` numbe
 ### 2.5 Custom domain `api.ntwrk.love` (Cloudflare DNS)
 
 1. Railway: open service `backend` → **Settings → Networking → Custom Domain**. Enter `api.ntwrk.love` with target port `8790`. Railway shows a CNAME target (`<something>.up.railway.app`), and it may also show a TXT verification record.
-2. Cloudflare (account `50ad2052...`, zone ntwrk.love) → DNS:
+2. Cloudflare (the ntwrk.love account, zone ntwrk.love) → DNS:
    - `CNAME api → <target>.up.railway.app`;
    - the TXT record, if Railway asked for one.
 3. Proxy status:
@@ -238,9 +238,9 @@ Each site is one Pages project (founder decision 8):
 | Site | Pages project | Served on | Its own domain |
 |---|---|---|---|
 | ntwrk.love | `ntwrk-love` | `ntwrk-love.pages.dev` | `ntwrk.love`, `www.ntwrk.love`: add them as Pages custom domains. They are on the `ntwrk-love-site` **Worker** today: remove the Worker's custom domains first, in the same quiet hour (10DLC pages). |
-| slop.date | `slop-date` | `slop-date.pages.dev` | DNS in the developer@elizalabs.ai account points at `slop-date.pages.dev` (10 days) |
+| slop.date | `slop-date` | `slop-date.pages.dev` | DNS in the Eliza Labs Cloudflare account points at `slop-date.pages.dev` (10 days) |
 | peon.biz | `peon-biz` | `peon-biz.pages.dev` | Pages custom domain `peon.biz` |
-| friends.help | `friends-help` | `friends-help.pages.dev` | DNS in the developer@elizalabs.ai account points at `friends-help.pages.dev` |
+| friends.help | `friends-help` | `friends-help.pages.dev` | DNS in the Eliza Labs Cloudflare account points at `friends-help.pages.dev` |
 
 ### 3.1 By hand (founder approval only)
 
@@ -281,8 +281,8 @@ curl -s https://api.ntwrk.love/api/app                      # 421 edge_required:
 
    | Name | Environment | Value |
    |---|---|---|
-   | `CLOUDFLARE_API_TOKEN` (secret) | production | Account-owned token for account `50ad2052...`: Account → Cloudflare Pages → Edit. TTL 90 days. The only Cloudflare secret `deploy-sites.yml` reads, and only in its deploy step. |
-   | `CLOUDFLARE_ACCOUNT_ID` (variable) | production | Leave unset for `50ad2052bbc6ca528d6993a689b419a4` (all four projects). Set it only to deploy to another account. |
+   | `CLOUDFLARE_API_TOKEN` (secret) | production | Account-owned token for the ntwrk.love account: Account → Cloudflare Pages → Edit. TTL 90 days. The only Cloudflare secret `deploy-sites.yml` reads, and only in its deploy step. |
+   | `CLOUDFLARE_ACCOUNT_ID` (variable) | production | Required: the ntwrk.love account id (all four projects). It is not in the repo. |
    | `BACKEND_ORIGIN`, `TURNSTILE_SITE_KEY`, `BACKEND_LIVE` (variables) | production | `https://api.ntwrk.love`, the public widget key, `true` once the API is live |
 
    There are no PR preview deployments: they ran pull-request code next to the deploy token and the production proxy secret (audit). `PLATFORM_PROXY_SECRET` is never a GitHub secret: it is set once per Pages project (3.1).
@@ -301,7 +301,7 @@ curl -s https://api.ntwrk.love/api/app                      # 421 edge_required:
 3. `PLATFORM_PROXY_SECRET` set in each Pages project. Deploy slop.date first (decision 4), then ntwrk.love, peon.biz and friends.help (3.1 or `deploy-sites.yml`). Each answers on `<project>.pages.dev` at once.
 4. Run the checks in 3.3 on every host.
 5. Optional: the observatory console behind Access (2.6).
-6. DNS: slop.date and friends.help (developer@elizalabs.ai account) point at their `pages.dev` names; ntwrk.love and peon.biz move to Pages custom domains (3). The MCP server is on once `TURNSTILE_SITE_KEY` is set on the backend.
+6. DNS: slop.date and friends.help (Eliza Labs Cloudflare account) point at their `pages.dev` names; ntwrk.love and peon.biz move to Pages custom domains (3). The MCP server is on once `TURNSTILE_SITE_KEY` is set on the backend.
 
 ## 6. Go-live checklist (live sends stay off)
 

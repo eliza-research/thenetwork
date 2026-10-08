@@ -4,7 +4,7 @@ Status: built and tested in the simulator, 2026-10-07. Updated 2026-10-08: netwo
 
 This document describes how the Network turns engine output and member requests into meetings. It also lists the rules the code enforces, the encounter types, the simulator assumptions behind the results, and a review of the prompts.
 
-Results: [results/2026-10-07-network-consent.md](results/2026-10-07-network-consent.md); the attention v1.2 send defaults: [results/2026-10-07-network-send-defaults.md](results/2026-10-07-network-send-defaults.md); NC events and plans v1.1: [results/2026-10-08-network-capital-plans.md](results/2026-10-08-network-capital-plans.md). Runbooks: [runbook-simulation.md](runbook-simulation.md), [runbook-real.md](runbook-real.md) and [runbook-platform.md](runbook-platform.md) (the four apps in local dev).
+Results: [results/2026-10-07-network-consent.md](results/2026-10-07-network-consent.md); the attention v1.2 send defaults: [results/SUMMARY.md](results/SUMMARY.md) ("ConsentNetwork send defaults"); NC events and plans v1.1: [results/SUMMARY.md](results/SUMMARY.md) ("Network capital events and plans v1.1"). Runbooks: [runbook-simulation.md](runbook-simulation.md), [runbook-real.md](runbook-real.md) and [runbook-platform.md](runbook-platform.md) (the four apps in local dev).
 
 ## 1. What it is
 
@@ -319,7 +319,7 @@ Members aged 13-17 get the venue list only. A people request from a minor is ans
 
 ### 5.3 Plans v1.1: the planner and the plan lane
 
-The engine's planner (`plans`, `DEFAULT_PLANS`, plans-v1.1.0 in `packages/engine`) proposes group plans at public places. The Network runs it, reviews each plan, probes members on a separate lane, and books a plan when enough people say yes. Option `plans` (default true) turns it on; `plansConfig` overrides the engine defaults. Measured in [results/2026-10-08-network-capital-plans.md](results/2026-10-08-network-capital-plans.md).
+The engine's planner (`plans`, `DEFAULT_PLANS`, plans-v1.1.0 in `packages/engine`) proposes group plans at public places. The Network runs it, reviews each plan, probes members on a separate lane, and books a plan when enough people say yes. Option `plans` (default true) turns it on; `plansConfig` overrides the engine defaults. Measured in [results/SUMMARY.md](results/SUMMARY.md) ("Network capital events and plans v1.1").
 
 | Step | What happens |
 |---|---|
@@ -437,7 +437,7 @@ The policy comes from `packages/core/src/policy.ts` (`MIN_MEMBER_AGE = 13`, `ADU
 4. **Timing** (6.4). A deferred send runs every check again when it can go out. A probe is not queued: it is composed again (with fresh time options) when the member's window opens.
 5. **Leak guard** (`LeakGuard` in `packages/core/src/guard.ts`). It checks the text against other members' agent-private facts (whole, or any run of 4 or more of their words), every canary, and contact patterns (phones, emails, addresses, URLs, handles). The Network's own place and interest names are removed from the private facts first, so "near Hell's Kitchen" does not block messages. On a hit, the Network sends a generic fallback text, or nothing, and logs `guard_blocked` without the text.
 
-Adapters for the Blooio outbound queue (`prototypes/messaging-blooio/src/outbound-queue.ts`):
+Adapters for the Blooio outbound queue (`packages/blooio/src/outbound-queue.ts`):
 
 - `blooioRecipientPolicy(net, memberOf)` applies the recipient checks through the queue's `recipientPolicy` hook.
 - `forbiddenProvider(net, memberOf?)` supplies the queue's leak lists (`LeakSources`) through its `forbiddenProvider` hook. For one recipient: every other member's agent-private values (multi-word values also as facts, matched fuzzily) and every canary except the recipient's own. For a group chat ("chat:<opportunity id>", or `memberOf` returning several ids) or an unknown address: everyone's, so every participant is covered. The Network's own place and interest names are public phrases. A test plugs it into the queue: another member's fact or canary parks the message for leak review; the recipient's own fact and ordinary Network text go out.
@@ -472,7 +472,7 @@ The inviter hears when the invitee joins.
 
 ### 7.1 Network capital (NC) events
 
-The Network reports what members do for each other to the NC ledger (`packages/capital`, PRD 39.2). It also reads the NC levers back. Both are optional: without them the Network behaves as before. Design: [results/2026-10-08-network-capital-plans.md](results/2026-10-08-network-capital-plans.md) section 2.1.
+The Network reports what members do for each other to the NC ledger (`packages/capital`, PRD 39.2). It also reads the NC levers back. Both are optional: without them the Network behaves as before. Design: `docs/results/2026-10-08-network-capital-plans.md` section 2.1, in git history (16cde70); summary in [results/SUMMARY.md](results/SUMMARY.md).
 
 **Events.** `NetworkOptions.onLedger(e)` gets every ledger event, in time order, with a stable id (`<type>:<key>`, so a replay after a restart is idempotent) and the Clock time. `capitalWiring()` connects a `CapitalLedger` and counts events the ledger refuses.
 
@@ -603,12 +603,12 @@ Copy changes are UI changes. A PR that changes `copy.ts` needs the videos in CON
 ## 11. Known gaps
 
 - **Production service built, not deployed** (section 1.2). It runs the tick, the inbound webhook and the staff API on Postgres. The Observatory's real mode calls the staff API (runbook-real 4.4). The service records its token, not the signed-in person, as the reviewer of record; the Observatory sends the person in `X-Network-Staff-Id`, which the service does not read yet (admin-console gap 1).
-- **The judge and the re-engagement.** `packages/judge/src/metrics.ts` counts a re-engagement as a `two_unanswered` violation. With D6 (30 days plus a held top-quartile item) it cannot fire in runs shorter than 30 days. The message carries `meta.reengagement: true`; the judge should exempt one per silence.
+- **The judge and the re-engagement.** `packages/sim/src/judge/metrics.ts` counts a re-engagement as a `two_unanswered` violation. With D6 (30 days plus a held top-quartile item) it cannot fire in runs shorter than 30 days. The message carries `meta.reengagement: true`; the judge should exempt one per silence.
 - **Blooio queue wired, never live.** The service's `BlooioAdapter` gives the queue `forbiddenProvider` and `blooioRecipientPolicy` (6.5). It is tested with a fake provider only. No live send has been made.
 - **Fixed 2026-10-07: a missing age read as 0.** The Observatory's snapshot builder (now `service/snapshot.ts`) turned a missing age into 0. The age 0 is valid and under 13, so the Network would decline that member and delete their data at their first message. It now stays unknown (6.3). The service test checks it.
 - **No calendar source.** CALENDAR records consent to free/busy only (4.2). `AvailabilityEvidence.calendar` stays empty until a free/busy integration exists.
 - **Employer rule copied.** The probe check for employer-like values (4.1) copies two regular expressions from the engine's `buildProbe`, because the engine does not export them. The engine owner should export them.
-- **Booked plans are often cancelled in the time-aware simulator** (120 of 235, about half; [results/2026-10-07-network-send-defaults.md](results/2026-10-07-network-send-defaults.md)). Pilot data must say how often real members cancel.
+- **Booked plans are often cancelled in the time-aware simulator** (120 of 235, about half; [results/SUMMARY.md](results/SUMMARY.md)). Pilot data must say how often real members cancel.
 - **A bare "CANCEL" is STOP.** The simulator channel and the service (`detectKeyword`) treat it as an opt-out from all messages. The booked-plan text invites a reply about cancelling (4.2). The founder must decide the STOP, START and HELP owner before any live send (service README, rule 1).
 - **Weekly opt-ins in the simulator depend on an assumption.** With the simulator's plans option on (the default in `harness/experiment.ts` since 2026-10-08), personas answer the WEEKLY offer at the plans harness rate (0.25 + 0.35 x social energy): 55 of about 270 members opted in over 21 days (seed 1). Window priming (a stated window raises the probe yes rate) is also a harness assumption, not a measurement. No persona replies CALENDAR.
 - **Opt-out hours not exported.** `OPT_OUT_HOURS` (48) is private to `network.ts`. The Observatory's real mode copies the value (`BOOKED_OPT_OUT_HOURS`); game mode reads it from `SimMeta.booked`.
@@ -622,7 +622,7 @@ Copy changes are UI changes. A PR that changes `copy.ts` needs the videos in CON
 - **Fixed 2026-10-07:** unknown age no longer declines (6.3); approval runs the gates again (2.2); reviewer edit and re-roll are built (2.3); state can be stored (1.1).
 - **Engine: plan probes dropped by the leak gate.** `buildPlanProbe` returned null for about a third of plan probe attempts (40 of about 120 in one 21-day run). In every case checked, the only blocked word was "free" from the cost line "Free.", which matched another invitee's private words. A null probe is not sent and counts as a no. The engine owner should exempt the cost words, as the activity and place words already are.
 - **Engine copy: crew probes.** Crew session probes read "Your an easy group run crew is on again" (the activity label already has an article). Engine owner.
-- **Fixed 2026-10-08: check-in answers were over-read.** `availabilityTags` crossed every named day with every named daypart, so "Tuesday evening and Saturday afternoon" also gave Tuesday afternoon and Saturday evening, and the planner could book them. A part of the day now goes with its own days only (`test/units.test.ts`). The plans results in docs/results/2026-10-08-network-capital-plans.md were measured before this fix.
+- **Fixed 2026-10-08: check-in answers were over-read.** `availabilityTags` crossed every named day with every named daypart, so "Tuesday evening and Saturday afternoon" also gave Tuesday afternoon and Saturday evening, and the planner could book them. A part of the day now goes with its own days only (`test/units.test.ts`). The plans results summarized in docs/results/SUMMARY.md ("Network capital events and plans v1.1") were measured before this fix.
 - **Plans book few plans in the simulator** (8 booked in 3 seeds x 21 days, no crews). A cold plan probe gets a yes about 1 time in 4, and a plan needs 3 yes. The weekly check-in is offered only once, in a member's first booked plan. Founder decision: also offer it at onboarding.
 - **Fraud detection precision is not measured.** The NYC world has no adversarial rings. Only `test/flows.test.ts` exercises fraud items.
 - **NC organizing reach applies to crew sessions only.** Planner plans invite at most 6 members, so the "seats above 8" rule never applies to them. The NC owner should confirm this reading.

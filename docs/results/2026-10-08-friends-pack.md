@@ -1,27 +1,27 @@
 # friends.help on the shared engine: the NYC world, friendsPack and the simulation (2026-10-08)
 
-friends.help (app id `friends`, renamed from buddies.nyc) is the friendship app on The Network's shared engine, NYC first. This report covers the simulated NYC world (`packages/worlds/src/friends/`), the app pack (`packages/engine/src/packs/friends/`), the oracle calibration, the design, the tuning trail, the held-out results, the ablations and the gate table.
+friends.help (app id `friends`, renamed from buddies.nyc) is the friendship app on The Network's shared engine, NYC first. This report covers the simulated NYC world (`packages/sim/src/apps/friends/`), the app pack (`packages/engine/src/packs/friends/`), the oracle calibration, the design, the tuning trail, the held-out results, the ablations and the gate table.
 
-- **Branch:** `engine/friends`, worktree `/Users/shawwalters/thenetwork-friends`. Earlier versions were merged to main (`67f9d77`, `4d20c96`); this update is rebased onto `origin/main`. Not pushed.
+- **Branch:** `engine/friends`, worktree the `thenetwork-friends` worktree. Earlier versions were merged to main (`67f9d77`, `4d20c96`); this update is rebased onto `origin/main`. Not pushed.
 - **LLM use:** none. Tests and runs used empty keys and no `LIVE_TESTS`. Persona text is templated, and friendsPack has no judge.
 - **Core and engine changes:** none outside `packages/engine/src/packs/friends/`. The `AppPack` contract, `conformance.ts`, `plans.ts`, `attention.ts` and the core types are unchanged. The only edit made after the rebase is inside the pack: a `tz` fallback, because core `timezones` is now `Partial<Record<City, string>>`.
 - **Checks:**
   - networkPack goldens are byte-identical (`golden.test.ts`, fast tier).
   - `bunx tsc --noEmit -p .` is clean.
-  - `bun test --conditions eliza-source ./packages/engine ./packages/worlds`: 451 pass, 2 skip, 0 fail. This includes `runConformance(friendsPack)` and the friends-specific checks.
+  - `bun test --conditions eliza-source ./packages/engine ./packages/sim/src/apps`: 451 pass, 2 skip, 0 fail. This includes `runConformance(friendsPack)` and the friends-specific checks.
 
 ## Official gates (adopted 2026-10-08) and the held-out check
 
 The founder adopted the replacement gates. For the harm gate, the coordinator chose **total harm ≤ 0.5× random**. Harm from undetected adversaries and the 12-week repeat rate are **tracked, non-blocking** metrics. In the 12-week tracked repeat rate, a crew that moved to its own chat counts as a repeat: graduation is a success, not a drop.
 
 Where these live:
-- **Code:** `packages/worlds/src/friends/gates.ts` holds `officialGates`, `trackedMetrics` and `historicalGates`.
+- **Code:** `packages/sim/src/apps/friends/gates.ts` holds `officialGates`, `trackedMetrics` and `historicalGates`.
 - **Pack:** `friendsPack.metrics.gates` holds the official set; the tracked ones are listed with `blocking: false`.
 - **CLI:** `cli.ts` prints all three sets whenever the pack, random and oracle arms run on the same seeds.
 
 Metrics are pooled over seeds (the mean of each metric). The borough gate also shows the worst seed.
 
-Held-out seeds 5-8, 400 personas (`bun run packages/worlds/src/friends/cli.ts --seeds 5-8 --weeks 8`, and `--weeks 12`):
+Held-out seeds 5-8, 400 personas (`bun run packages/sim/src/apps/friends/cli.ts --seeds 5-8 --weeks 8`, and `--weeks 12`):
 
 | Official gate | 8 weeks | Pass |
 |---|---|---|
@@ -83,7 +83,7 @@ Held-out seeds 5-8, 400 personas, 8 weeks; mean ± SE over seeds.
   - 0 contacts with declared minors or with any adversary the Network could see.
 - **The residual risk is undetected adversaries at their first table.** It is tracked, not gated: mainly romance seekers, who show a cue only 30-65% of the time.
 
-## 1. The world (`packages/worlds/src/friends/`)
+## 1. The world (`packages/sim/src/apps/friends/`)
 
 | File | What |
 |---|---|
@@ -169,9 +169,9 @@ A proposal naming a claimed minor is dropped and counted.
 - **Transit** (`packs/friends/geo.ts`):
   - The agent sees access overheads + 4 min wait + 2.2 min/km + a borough-crossing penalty (Staten Island ferry +25).
   - The truth is that estimate × a fixed per-route log-normal error (SD 0.15).
-  - NYC has 262 NTAs; this table is a 93-neighborhood subset. `prototypes/poc-travel-time` validated the cell heuristics for walking, cycling and driving, not for transit.
+  - NYC has 262 NTAs; this table is a 93-neighborhood subset. `prototypes/poc-travel-time` (summary in [SUMMARY.md](SUMMARY.md)) validated the cell heuristics for walking, cycling and driving, not for transit.
 
-**Calibration** (8 weeks, seeds 1-4; `bun run packages/worlds/src/friends/calibrate.ts`):
+**Calibration** (8 weeks, seeds 1-4; `bun run packages/sim/src/apps/friends/calibrate.ts`):
 
 | Measure | random (reshuffled) | friendsPack | oracle | Anchor |
 |---|---:|---:|---:|---|
@@ -255,7 +255,7 @@ Final tuning-seed result (seeds 1-4): V14 36.5% ± 2.3, repeat 35.8% ± 2.3, fri
 
 ### Full held-out comparison
 
-Seeds 5-8, 8 weeks (`bun run packages/worlds/src/friends/cli.ts --seeds 5-8 --weeks 8`):
+Seeds 5-8, 8 weeks (`bun run packages/sim/src/apps/friends/cli.ts --seeds 5-8 --weeks 8`):
 
 | Metric | pack | random-within-area | greedy-popular | oracle |
 |---|---:|---:|---:|---:|
@@ -313,7 +313,7 @@ Every arm already sends at most one new-plan invite per member per week, so the 
 
 ## 8. Conformance and tests
 
-**`packages/worlds/test/friends-conformance.test.ts`** runs `runConformance(friendsPack)` on four friends worlds. Each world is a snapshot after 3 weeks of friendsPack meetups, with:
+**`packages/sim/src/apps/test/friends-conformance.test.ts`** runs `runConformance(friendsPack)` on four friends worlds. Each world is a snapshot after 3 weeks of friendsPack meetups, with:
 - 160 personas, including 13-17 year olds and age liars;
 - adversaries and canaries;
 - holds and blocks from reports;
@@ -338,7 +338,7 @@ The friends-specific checks:
 - **Members with an uncleared cue, an unpassed check or a hold** are in no runEngine proposal and no planner plan.
 - **In the simulator** (2 seeds × 8 weeks): 0 declared-minor proposals and contacts, 0 known-adversary contacts.
 
-**`packages/worlds/test/friends.test.ts`** (15 tests) covers:
+**`packages/sim/src/apps/test/friends.test.ts`** (15 tests) covers:
 - determinism;
 - hidden-truth invariance of the snapshot;
 - canary scope;
@@ -374,12 +374,12 @@ The friends-specific checks:
 
 ```bash
 export OPENAI_API_KEY= SURPLUS_API_KEY= CEREBRAS_API_KEY=
-bun run packages/worlds/src/friends/cli.ts --seeds 5-8 --weeks 8 --only pack,random,greedy,oracle   # held-out table
-bun run packages/worlds/src/friends/cli.ts --seeds 5-8 --weeks 12                                   # 12 weeks
-bun run packages/worlds/src/friends/cli.ts --seeds 1-8 --only pack,pack-no-crews,pack-no-repeat,pack-no-universal,pack-planner-only,pack-no-zones,pack-no-minmax,pack-no-partner,pack-spread,pack-fairness,pack-options3
-bun run packages/worlds/src/friends/cli.ts --seeds 5-8 --n 1200 --only pack,random,oracle          # density
-bun run packages/worlds/src/friends/calibrate.ts --seeds 1-4
-bun test --conditions eliza-source ./packages/worlds ./packages/engine
+bun run packages/sim/src/apps/friends/cli.ts --seeds 5-8 --weeks 8 --only pack,random,greedy,oracle   # held-out table
+bun run packages/sim/src/apps/friends/cli.ts --seeds 5-8 --weeks 12                                   # 12 weeks
+bun run packages/sim/src/apps/friends/cli.ts --seeds 1-8 --only pack,pack-no-crews,pack-no-repeat,pack-no-universal,pack-planner-only,pack-no-zones,pack-no-minmax,pack-no-partner,pack-spread,pack-fairness,pack-options3
+bun run packages/sim/src/apps/friends/cli.ts --seeds 5-8 --n 1200 --only pack,random,oracle          # density
+bun run packages/sim/src/apps/friends/calibrate.ts --seeds 1-4
+bun test --conditions eliza-source ./packages/sim/src/apps ./packages/engine
 ```
 
 Runtime: one pack run (400 personas, 8 weeks) takes about 3.5 s.

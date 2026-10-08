@@ -1,5 +1,7 @@
 # Skills, plugins and deploys for the four sites
 
+> **Superseded names (2026-10-08 cleanup note).** This is a dated research record. Since it was written: buddies.nyc was renamed friends.help (AppId `friends`, `friendsPack`); ntwrk.club belongs to someone else and is not used (ntwrk.love is the home page); `packages/worlds` moved to `packages/sim/src/apps`; the prototypes were deleted or promoted (`packages/blooio`). Current decisions: AGENTS.md "Platform decisions" and docs/mvp-plan.md.
+
 Status: research and design, 2026-10-08 (UTC). Nothing here is built or deployed. A Claude agent wrote it from the sources listed in section 0 and from reading the repos. Items marked **verify** could not be confirmed on a primary page.
 
 Scope: four sites on one shared backend.
@@ -55,8 +57,8 @@ Repo files read:
 - `scripts/wrangler.sh`
 - `.github/workflows/ci.yml`
 - `packages/platform` (README, `src/apps.ts`, `src/api.ts`)
-- `/Users/shawwalters/thenetwork-audit/prototypes/connector-mcp` (wrangler.toml, SKILL.md, CHATGPT-APPS-SDK.md)
-- `/Users/shawwalters/thenetwork-audit/docs/research/2026-10-08-platform-architecture.md`
+- `prototypes/connector-mcp` (in the thenetwork-audit worktree) (wrangler.toml, SKILL.md, CHATGPT-APPS-SDK.md)
+- `docs/research/2026-10-08-platform-architecture.md` (in the thenetwork-audit worktree)
 
 Live checks, run 2026-10-08 03:11 UTC:
 
@@ -82,7 +84,7 @@ Live checks, run 2026-10-08 03:11 UTC:
    - slop.date and friends.help use `jessica`/`matt.ns.cloudflare.com`.
    - Cloudflare normally gives one nameserver pair to every zone in an account (**verify** in the dashboard).
    - An apex custom domain on Pages must be a zone in the same account as the Pages project (S17), and a Workers custom domain needs a zone you own (S21).
-   - Fix: either move both zones into account `50ad2052bbc6ca528d6993a689b419a4`, or create those two projects in the other account with their own token and account id. Every `wrangler.toml` today hard-codes the ntwrk.love account.
+   - Fix: either move both zones into the ntwrk.love account, or create those two projects in the other account with their own token and account id. Every `wrangler.toml` today hard-codes the ntwrk.love account.
 4. **The rename to friends.help is not in the code.** `APPS.buddies.domain` is `buddies.nyc`, along with the host map, `sites.ts`, the `sites/buddies.nyc/` folder, the brand texts and `help@buddies.nyc`. Deploying friends.help needs the rename first, or the backend's Host map will not recognize `friends.help` and every `/api/*` call fails.
 5. **Cloudflare now says "Start new projects with Workers"** (S14). It says Workers "supports most Pages use cases and offers a broader feature set". ntwrk.love is already a Worker with static assets. See section 4.1 for the recommendation.
 6. **The site build does not ship non-HTML files.** `sites.ts` builds only `*.html` entry points into `dist/` and deletes `dist/` first. `SKILL.md`, `_headers`, `_redirects`, `.well-known/*`, `robots.txt` and `llms.txt` would never reach the deploy. A copy step is required (section 4.4).
@@ -832,7 +834,7 @@ jobs:
 | Name | Kind | Value |
 |---|---|---|
 | `CLOUDFLARE_API_TOKEN` | Environment secret (preview and production) | Pages: Custom Token with **Account → Cloudflare Pages → Edit** only (S13), limited to the one account, with a TTL of 90 days or less and an IP filter if wanted. Workers: see 4.3. |
-| `CLOUDFLARE_ACCOUNT_ID` | Secret | `50ad2052bbc6ca528d6993a689b419a4` (and a second pair if finding 3 holds) |
+| `CLOUDFLARE_ACCOUNT_ID` | Secret | the ntwrk.love account id, from the environment (and a second pair if finding 3 holds) |
 | `NETWORK_BACKEND`, `NETWORK_MCP_URL`, `NETWORK_LINE` | Variables per environment | Placeholders above |
 
 How the founder creates the token:

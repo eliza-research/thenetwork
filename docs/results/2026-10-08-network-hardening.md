@@ -1,6 +1,6 @@
 # Network hardening: member-text understanding, consent and safety order
 
-Date: 2026-10-08. Worktree `/Users/shawwalters/thenetwork-console`, branch `obs/network-console`, base `f270286`. Tests and runs used no API keys and no `LIVE_TESTS`. Every simulated run used the simulated reviewer (`review: "auto"`).
+Date: 2026-10-08. Worktree the `thenetwork-console` worktree, branch `obs/network-console`, base `f270286`. Tests and runs used no API keys and no `LIVE_TESTS`. Every simulated run used the simulated reviewer (`review: "auto"`).
 
 This work fixes the `packages/network` findings in [the audit](../audit/2026-10-08-weaknesses.md): the six P0 findings, the P1 network findings and the cheap P2 and P3 ones. Section 5 lists what is still open.
 

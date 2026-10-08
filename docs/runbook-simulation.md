@@ -16,7 +16,7 @@ Every command below was run on 2026-10-07 from the repository root, unless the s
 | Oracle | `packages/sim/src/oracle.ts` | The hidden answer key: who would accept, show up and enjoy a meeting |
 | Network | `packages/network` | The ConsentNetwork under test ([network.md](network.md)) |
 | Engine | `packages/engine` | engine-v1, called by the Network once a day |
-| Judge | `packages/judge` | Counts invariant violations, canary leaks, minor contacts and other metrics from run records |
+| Judge | `packages/sim/src/judge` | Counts invariant violations, canary leaks, minor contacts and other metrics from run records |
 
 The Network never reads hidden truth. Only `packages/sim`, the oracle, the judge and `packages/network/harness` read it.
 
@@ -128,7 +128,7 @@ Each arm took 3-8 seconds for 21 days on a laptop on 2026-10-07, and up to about
 
 The JSON also reports the plan counters (plans proposed, probes, yes, booked, crews) and the plan safety checks (names before booking, minors in plans, reveals before quorum, the most plan and intro invites per member in 7 days). Checked on 2026-10-08: `--only consent --days 1 --seed 1 --capital` and `--plans off --sim-plans on` both ran with 0 canary leaks and 0 minor contacts.
 
-The metrics are defined in the results doc, section 2. Every arm also reports `judge` (invariant violations by rule, canary leaks, minor contacts, from `computeMetrics`) and `scorecard` (PRD 28.2 proxies: worthwhile interruptions, opt-in, completion, first good meeting within 14 days). The Observatory lab can call `experiment.ts` directly. On a booked plan, the everyone-yes and accept rates count each member's own decision (silence is a yes). Latest numbers: [results/2026-10-07-network-send-defaults.md](results/2026-10-07-network-send-defaults.md) (before and after the send path) and [results/2026-10-07-network-consent.md](results/2026-10-07-network-consent.md) section 12 (all three arms on the current code).
+The metrics are defined in the results doc, section 2. Every arm also reports `judge` (invariant violations by rule, canary leaks, minor contacts, from `computeMetrics`) and `scorecard` (PRD 28.2 proxies: worthwhile interruptions, opt-in, completion, first good meeting within 14 days). The Observatory lab can call `experiment.ts` directly. On a booked plan, the everyone-yes and accept rates count each member's own decision (silence is a yes). Latest numbers: [results/SUMMARY.md](results/SUMMARY.md) ("ConsentNetwork send defaults", before and after the send path) and [results/2026-10-07-network-consent.md](results/2026-10-07-network-consent.md) section 12 (all three arms on the current code).
 
 ### 3.2 The simulation lab (background runs)
 
@@ -163,7 +163,7 @@ It plays the game world headless and prints JSON: the review gate counts, the ju
 ### 3.4 The simulator CLI (StubNetwork)
 
 ```bash
-bun run packages/sim/src/cli.ts --personas 150 --days 30 --mode discrete --seed 1 --network stub --engine ./packages/sim/engines/engine-v1.ts
+bun run packages/sim/src/cli.ts --personas 150 --days 30 --mode discrete --seed 1 --network stub --engine ./packages/sim/src/engineAdapter.ts
 bun run packages/sim/src/cli.ts --scenario packages/sim/scenarios/stop-keyword.json --k 4
 ```
 
@@ -184,7 +184,7 @@ Checked on 2026-10-08 (2 days, seed 1): `{"arm":"consent","judge":{"invariants":
 
 What does not exist yet:
 
-- Per-app simulated worlds (slop daters, peon candidates and employers, friends crews) and their oracles. The engine session owns the app packs and their sim packs (PRD 40.8). The slop world is on `origin/main` (`@thenetwork/worlds`); this worktree does not have it yet.
+- Per-app simulated worlds (slop daters, peon candidates and employers, friends crews) and their oracles. The engine session owns the app packs and their sim packs (PRD 40.8). The slop world is on `origin/main` (`packages/sim/src/apps`); this worktree does not have it yet.
 - The `cross_app_leak` judge invariant. `packages/network/test/crossapp.test.ts` checks one two-app world (ntwrk and friends) in a test.
 - STOP versus STOP ALL and person-to-person blocks in the simulator. The simulator runs one network.
 
@@ -379,23 +379,21 @@ Do this when the Network, the engine, the oracle, the personas or the dataset ch
 
 The runs are CPU-heavy. On 2026-10-07 one arm took about 7-8 seconds on a quiet machine, and 70-110 seconds on a heavily loaded one.
 
-## 8. Tests to run before a PR
+## 8. Checks to run before a PR
 
-Run the suites for what you changed, then the typecheck.
+The simulations are the validation layer (2026-10-08: the unit and golden tests were deleted). Run the blocks for what you changed, then the whole run and the typecheck.
 
 | Changed | Command |
 |---|---|
-| `packages/network` | `cd packages/network && bun test --timeout 300000` (runs every scenario and a 21-day experiment; 3-8 minutes, depending on machine load) |
-| `packages/network` stored state | `cd packages/network && bun test test/store.test.ts --timeout 300000` (the `PgStore` tests need a local Postgres install) |
-| `packages/observatory` | `cd packages/observatory && bun test --timeout 300000` (the Postgres tests need a local Postgres install) |
-| `packages/sim` | `cd packages/sim && bun test` |
-| `packages/platform` | `bun test packages/platform` (the Postgres tests need a local Postgres install) |
-| `sites/` | `bun test sites` and `node_modules/.bin/tsc -p sites/tsconfig.json` (the root typecheck does not include `sites/`) |
-| The four apps end to end | `bun test packages/network/test/service-apps.test.ts packages/network/test/crossapp.test.ts` ([runbook-platform.md](runbook-platform.md)) |
-| `packages/core` | `cd packages/core && bun test` |
-| Any TypeScript | `bunx tsc --noEmit -p .` and `bunx tsc --noEmit -p packages/observatory` |
-| Before you mark the PR ready | `bun run test` and `bun run typecheck` |
+| `packages/network`, `packages/sim` | `bun run sim --only network` (the invariant run, consent vs push on seeds 1-3, every NYC scenario, the sim scenarios at pass^3; about 4-10 minutes depending on machine load) |
+| An app pack or world | `bun run sim --only slop` (or `peon`, `friends`) |
+| Parsers, corpora, the leak guard, opt-out | `bun run sim --only evals` |
+| `packages/capital` | `bun run sim --only capital` (32 paired seeds; slow) |
+| Platform, MCP or backend security | `bun run security` (the suite pending the founder's decision; needs the dev Postgres) |
+| `sites/` | `DEPLOY_TARGET=production bun run sites/sites.ts` and `bunx tsc --noEmit -p sites/tsconfig.json` |
+| Any TypeScript | `bun run typecheck` |
+| Before you mark the PR ready | `bun run sim` and `bun run typecheck` |
 
-Paste the commands and their pass and fail counts in the PR. Do not quote a fixed test count in docs; it changes.
+Paste the commands and the gate summary line in the PR.
 
-The safety gates are 0 canary leaks, 0 minor contacts and 0 invariant violations. The network tests check them on a 10-day run, and on the 21-day consent runs for seeds 1-3 (with pooled floors: everyone-yes 0.80 or more, 140 meetings or more). Runs of 30 days or more can show a `two_unanswered` violation from the one allowed re-engagement (D6). That is a known judge issue ([network.md](network.md) section 11); any other violation is a real failure. The 42-day seed-1 run on 2026-10-07 sent no re-engagement and had 0 violations.
+The safety gates are 0 canary leaks, 0 minor contacts and 0 invariant violations. `bun run sim` checks them on a 10-day run, and on the 21-day consent runs for seeds 1-3 (with pooled floors: everyone-yes 0.73 or more, 140 meetings or more). Runs of 30 days or more can show a `two_unanswered` violation from the one allowed re-engagement (D6). That is a known judge issue ([network.md](network.md) section 11); any other violation is a real failure. The 42-day seed-1 run on 2026-10-07 sent no re-engagement and had 0 violations.

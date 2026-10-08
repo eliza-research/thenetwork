@@ -272,7 +272,7 @@ Today shadow proposals are not sent to a review queue. To label them, a reviewer
 
 **Caution:** do not call `onInbound()`, `tick()` or a staff action on the Network directly in production. Use `runTick()` or `runStored()`. A change made outside them is not saved, and the next stored unit of work loads over it.
 
-Tested: `packages/network/test/store.test.ts` runs save, load, row counts, row deletion, participations after a re-roll and after an under-13 decline, the lock (a second holder gets nothing), `runTick`, and two Networks on one store (a STOP survives the other's tick) against a per-process database on the :54339 cluster. Run it with `cd packages/network && bun test test/store.test.ts --timeout 300000` (it needs the local Postgres install).
+Tested (until 2026-10-08, when the unit tests were deleted; git history at 16cde70): `packages/network/test/store.test.ts` ran save, load, row counts, row deletion, participations after a re-roll and after an under-13 decline, the lock (a second holder gets nothing), `runTick`, and two Networks on one store (a STOP survives the other's tick) against a per-process database on the :54339 cluster. Run it with `cd packages/network && bun test test/store.test.ts --timeout 300000` (it needs the local Postgres install).
 
 ### 6.3 How a reviewer works in production
 
@@ -298,7 +298,7 @@ An item that nobody decides expires at its SLA (12 hours, or 1 hour for a same-d
 1. Built: the production matcher process and the Network admin API (6.5).
 2. Built: the Observatory calls the admin API (4.4). Missing: the service must record the signed-in person, not its token, as the reviewer of record (it can take `X-Network-Staff-Id` from the console's token only).
 3. Built: JWT verification for Cloudflare Access (4.1). Missing: a fresh sign-in before a PII reveal.
-4. **One owner for STOP, START and HELP** on the Blooio line **[FOUNDER]** (6.5, and the warning in `prototypes/messaging-blooio/README.md`). With one shared line for every app (PRD 40.3), the owner must also route the first message by keyword.
+4. **One owner for STOP, START and HELP** on the Blooio line **[FOUNDER]** (6.5, and the warning in `packages/blooio/README.md`). With one shared line for every app (PRD 40.3), the owner must also route the first message by keyword.
 
 Until these exist, do not connect the ConsentNetwork to a real channel.
 
@@ -388,7 +388,7 @@ Decision first **[FOUNDER]**: PRD 31 says the Network is built inside Eliza Clou
 | 2 | A production entry point for the matcher: `runTick()` on a schedule, and `runStored()` for inbound messages and staff actions | `packages/network` | Built: `packages/network/service/main.ts` (6.5). Not deployed. |
 | 3 | A migration runner and a ledger (section 1.2). The service checks the tables at start and does not migrate. | schema | Built: `bun run db:migrate` (local hosts only). A reviewed way to run it against staging and production is missing. |
 | 4 | The Network admin API for review decisions, the matching switch and safety actions, with staff auth and an audit row (section 6.4) | `packages/network/service` | Built (6.5), with the Observatory's role tokens and `network.staff_audit`. The Observatory's real mode calls it (4.4). |
-| 5 | Leak check on the Blooio send path. The queue runs the leak guard; pass `forbiddenProvider(net, memberOf)` from `@thenetwork/network` as its `forbiddenProvider` and `blooioRecipientPolicy(net, memberOf)` as its `recipientPolicy` ([network.md](network.md) 6.5). | `prototypes/messaging-blooio`, the entry point | Wired in the service's `BlooioAdapter` (6.5). Tested with a fake provider only. |
+| 5 | Leak check on the Blooio send path. The queue runs the leak guard; pass `forbiddenProvider(net, memberOf)` from `@thenetwork/network` as its `forbiddenProvider` and `blooioRecipientPolicy(net, memberOf)` as its `recipientPolicy` ([network.md](network.md) 6.5). | `packages/blooio`, the entry point | Wired in the service's `BlooioAdapter` (6.5). Tested with a fake provider only. |
 | 6 | A server flag that turns off game mode in the Observatory | `packages/observatory` | Built: `OBSERVATORY_REAL_ONLY=1` (4.3) |
 | 7 | Age at join. A member with no age is no longer declined: the Network asks once and treats them as a minor until they answer ([network.md](network.md) section 6.3). An age at join still avoids that. | onboarding | Open |
 | 8 | JWT verification for Cloudflare Access (4.1) | `packages/observatory` | Built |

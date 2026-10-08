@@ -1,9 +1,9 @@
 # ChatGPT: delta research for The Network (friends.help / slop.date / peon.biz)
 
 Research date: 2026-10-07/08. Baseline docs read first:
-- `~/thenetwork/docs/research/connectors/chatgpt.md` (2026-10-05)
-- `~/thenetwork/docs/research/connectors-and-loveofyourlife.md` Sec 2.2
-- PRD 11.5 in `~/thenetwork/docs/prd-snapshot.md`
+- `docs/research/connectors/chatgpt.md` (2026-10-05)
+- `docs/research/connectors-and-loveofyourlife.md` Sec 2.2 (git history, 16cde70)
+- PRD 11.5 in `docs/prd-snapshot.md`
 
 This file covers only what is new, changed, or answers the six questions. Source tags [S#] map to Section 9. Confidence: **H** = read on an official OpenAI page or tested directly. **M** = official but indirect, or several consistent secondary sources. **L** = a single secondary source or inference.
 
@@ -220,7 +220,7 @@ Optional idea (M): ChatGPT sends a stable anonymized `openai/subject` on every c
 4. **connectors/chatgpt.md "Recommendation: pilot through developer mode":** only workspace members can use it, not consumers.
 5. **The baseline is missing:** MCP Events, plugin extensions (onboarding skill, settings, deep links, rich forms), scheduled-task sharing, GPT retirement, the `openai/subject` meta field, the install-page memory disclosure, and "main pages only if selected."
 6. **PRD 11.5:** in-chat OTP plus a key in conversation isn't acceptable for a listed ChatGPT plugin (Sec 6).
-7. **connectors-and-loveofyourlife.md Sec 2.2:** "EEA/UK/CH availability has been limited [possibly outdated]." The developer-mode FAQ says "Are there geo restrictions? No" [S19]. Consumer plugin regional availability is still unverified, and dots exclude EEA/UK/CH [S26].
+7. **connectors-and-loveofyourlife.md Sec 2.2 (git history, 16cde70):** "EEA/UK/CH availability has been limited [possibly outdated]." The developer-mode FAQ says "Are there geo restrictions? No" [S19]. Consumer plugin regional availability is still unverified, and dots exclude EEA/UK/CH [S26].
 
 ## 8. Could not verify
 - Whether `?q=` auto-sends for logged-in users and in the iOS/Android apps, and whether `@Plugin` in `?q=` invokes the plugin.

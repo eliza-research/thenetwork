@@ -1,6 +1,6 @@
 # Claude and Grok/X entry points: delta research
 
-Research date: 2026-10-07/08. Scope: answers the questions in the brief that the existing docs don't cover, and corrects them where needed. The existing docs are `docs/research/connectors/claude.md` (2026-10-05), `docs/research/connectors/grok.md` (2026-10-05), and `connectors-and-loveofyourlife.md` §2.3–2.4. Everything already covered there is left out.
+Research date: 2026-10-07/08. Scope: answers the questions in the brief that the existing docs don't cover, and corrects them where needed. The existing docs are `docs/research/connectors/claude.md` (2026-10-05), `docs/research/connectors/grok.md` (2026-10-05), and `connectors-and-loveofyourlife.md` §2.3–2.4 (git history, 16cde70). Everything already covered there is left out.
 
 Confidence: **H** = official doc or first-party artifact read directly; **M** = official doc that is ambiguous, or an inference from official artifacts; **L** = secondary source or untested.
 "Tested" means I observed the behaviour myself in a browser on 2026-10-07.

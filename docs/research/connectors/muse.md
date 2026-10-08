@@ -9,7 +9,7 @@ Research date: 2026-10-05. Scope: PRD Section 11 (four-tool connector: `network.
 | Candidate | What it is | Can it host third-party connectors? |
 |---|---|---|
 | **Meta Muse (personal AI agent)** | Meta's consumer personal agent. Announced 2026-09-08. Runs on iOS, Android, and the web at muse.ai, and works inside WhatsApp. US-only at launch [S1][S2]. Each user gets a cloud VM ("Muse Secure VM") with its own browser [S1][S5]. Pricing is a free tier plus $20 and $100 per month plans [S1][S3]. | **Yes.** A developer Connector Platform opened 2026-09-18 at muse.ai/platform [S4][S6][S7]. |
-| Meta Muse Spark (model family) | The LLM family from Meta Superintelligence Labs. The first model shipped 2026-04-08 and powers the Meta AI app and meta.ai [S8][S9]. Muse the agent runs on Muse models [S3]. | No. It is a model, not a host. The Meta AI app has a separate connector preview, covered in other-assistants.md. |
+| Meta Muse Spark (model family) | The LLM family from Meta Superintelligence Labs. The first model shipped 2026-04-08 and powers the Meta AI app and meta.ai [S8][S9]. Muse the agent runs on Muse models [S3]. | No. It is a model, not a host. The Meta AI app has a separate connector preview, covered in other-assistants.md (git history, 16cde70). |
 | Meta Muse Code | Meta's coding agent. It supports MCP servers through stdio and streamable HTTP config [S10] **(secondary)**. | Developer tool only. Not a consumer channel. |
 | Microsoft Muse (WHAM) | A Microsoft Research generative model of gameplay (World and Human Action Model), built with Ninja Theory [S11]. | No. |
 | Sudowrite Muse | A fiction-writing LLM available only inside Sudowrite [S12]. | No. |

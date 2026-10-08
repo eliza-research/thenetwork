@@ -3,7 +3,7 @@
 Status: research complete. The API key was verified with read-only calls. No message has been sent and no
 configuration was changed. Date: 2026-10-05.
 PRD: 32.2 (channel gateway and messaging), 36.1 (messaging compliance and deliverability).
-Prototype: [prototypes/messaging-blooio](../../prototypes/messaging-blooio/README.md).
+Prototype: [packages/blooio](../../packages/blooio/README.md).
 
 ## TL;DR
 
@@ -182,14 +182,14 @@ chat and event listings were not recorded.
 | Check | Result |
 |---|---|
 | Key valid | Yes: `auth_type: api_key`, `valid: true` |
-| Org | `developer` (`org_OMe-gdjjgdCpaL6WpRcOb`), US, created 2026-01-27; key label `thenetwork` |
+| Org | `developer` (org id redacted), US, created 2026-01-27; key label `thenetwork` |
 | Lines owned by this key | **`+18087881821`**: dedicated, active, not suspended, last active 2026-10-04 |
 | Usage on this key | 190 inbound / 162 outbound messages |
 | Default priority | none (`data: null`), so sends use the key's implicit Blooio pool |
-| All Blooio channels in the org | `+18087881821` (`ch_019fe466…`, created 2026-08-09); `+12692921765` (`ch_01a04fcc…`, 2026-08-29); `+17409790022` (`ch_01a04fc5…`, 2026-08-29). All active, with protocols imessage/sms/rcs, actions typing/read/profile, and interactive effects/polls/rich_links |
+| All Blooio channels in the org | `+18087881821` (created 2026-08-09) and two other lines (numbers redacted; created 2026-08-29). All active, with protocols imessage/sms/rcs, actions typing/read/profile, and interactive effects/polls/rich_links |
 | Line settings (`+18087881821`) | `auto_mark_read: false`, `auto_share_contact: false`; both can be enabled |
 | Contact card (`+18087881821`) | Not set (no name or photo; sharing disabled) |
-| Webhooks | `wh_01a0500f…` **active**, scoped to a *different* key in the org, pointing to `ovh-eliza.tail4e11f5.ts.net/api/imessage/webhook/blooio`, version 2026-09-01. `wh_019ffb30…` **disabled**, org-wide, pointing to `api.eliza.app/api/eliza-app/webhook/blooio`, version 2026-09-01 |
+| Webhooks | one **active**, scoped to a *different* key in the org, pointing to an internal Eliza host (hostname redacted) at `/api/imessage/webhook/blooio`, version 2026-09-01. One **disabled**, org-wide, pointing to `api.eliza.app/api/eliza-app/webhook/blooio`, version 2026-09-01 |
 | Webhook payload versions | `2026-10-01` (latest), `2026-09-01` |
 | Number Purchase API | `403 feature_not_enabled` (needs KYC plus an access request) |
 | Safety events | none (`/events?type=safety.*` is empty) |
@@ -278,7 +278,7 @@ First real send on the Network line +18087881821, to the founder's phone, via `s
 - **Delivery:** the API accepted it (status `queued`, protocol `pending`), and it was `delivered` over **iMessage** within 5 seconds.
 - **Webhooks:** a second, channel-scoped webhook on payload version `2026-10-01`, pointing at a temporary tunnel to `src/main.ts`, received `message.sent`, `message.queued` and `message.delivered`. All three passed HMAC verification.
 - **Ordering:** **`sent` arrived before `queued`**, so status webhooks really do arrive out of order. The outbound queue already never regresses a status.
-- **Fixtures:** the payloads are saved, with the phone number replaced and signatures stripped, in `prototypes/messaging-blooio/tests/fixtures/live-2026-10-07/`, with tests in `tests/live-fixtures.test.ts`. `BLOOIO_CAPTURE_DIR` makes the receiver save future payloads the same way.
+- **Fixtures:** the payloads are saved, with the phone number replaced and signatures stripped, in `prototypes/messaging-blooio/tests/fixtures/live-2026-10-07/` (deleted 2026-10-08 with the prototype tests; in git history at 16cde70). `BLOOIO_CAPTURE_DIR` makes the receiver save future payloads the same way.
 - **Inbound:** our receiver got a real inbound iMessage (`message.received`, verified), but it came from **another person** texting the line. The line is shared with live Eliza users, whose agent replied through its own webhook. Our receiver only logged the message (non-keyword; nothing was sent), and that capture was deleted without being committed.
-- **Pending:** the founder's HELP/STOP/START replies were not received before the 2-hour test window closed. The temporary webhook (`wh_01a117b9…`) and tunnel were removed afterwards; the existing Eliza webhooks were left untouched.
+- **Pending:** the founder's HELP/STOP/START replies were not received before the 2-hour test window closed. The temporary webhook and tunnel were removed afterwards; the existing Eliza webhooks were left untouched.
 - **Recommendation:** before the pilot, give the Network its **own Blooio line**, or move Eliza's users off this one. Otherwise both agents and both STOP/HELP handlers see every inbound message on the line, and Network webhooks receive Eliza users' messages.

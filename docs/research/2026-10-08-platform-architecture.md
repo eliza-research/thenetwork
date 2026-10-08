@@ -1,18 +1,20 @@
 # One platform, four apps: architecture plan
 
+> **Superseded names (2026-10-08 cleanup note).** This is a dated research record. Since it was written: buddies.nyc was renamed friends.help (AppId `friends`, `friendsPack`); ntwrk.club belongs to someone else and is not used (ntwrk.love is the home page); `packages/worlds` moved to `packages/sim/src/apps`; the prototypes were deleted or promoted (`packages/blooio`). Current decisions: AGENTS.md "Platform decisions" and docs/mvp-plan.md.
+
 Status: research and plan, 2026-10-08. Nothing in this document is built or deployed. A Claude agent wrote it by hand from code reading and web research. Web prices and rules were fetched on 2026-10-07 and 2026-10-08 (UTC); each one names its source. Items marked **unverified** could not be confirmed on a primary page.
 
 **Scope warning.** A multi-app platform is not in PRD Section 28.3, and AGENTS.md says not to build anything outside 28.3 without founder approval. This document is a plan for the founders to decide on. No code is to be written from it until the founders approve it and add it to the PRD.
 
 Code read:
 
-- `packages/network` (ConsentNetwork, `PgStore`, `service/`): the worktree `/Users/shawwalters/thenetwork-console` (branch `obs/network-console`, read-only).
+- `packages/network` (ConsentNetwork, `PgStore`, `service/`): the worktree the `thenetwork-console` worktree (branch `obs/network-console`, read-only).
 - `packages/observatory` (`db/schema.sql`, `db/dev-pg.ts`, `db/seed.ts`, `db/writer.ts`, `src/staff.ts`, `src/types.ts`).
 - `packages/plugin-network`.
 - `packages/core/src/policy.ts` and `types.ts`.
 - `packages/sim` (README, generator, taxonomy).
 - `sites/ntwrk.love`.
-- `prototypes/messaging-blooio` and `prototypes/connector-mcp`.
+- `packages/blooio` and `prototypes/connector-mcp`.
 - `scripts/wrangler.sh`.
 
 Documents read:
@@ -20,7 +22,7 @@ Documents read:
 - `docs/admin-console.md`, `docs/observatory.md`, `docs/network.md` and `docs/runbook-real.md`.
 - `docs/research/eliza-integration.md` and `docs/research/blooio.md`.
 - PRD sections 28 and 31-32 in `docs/prd-snapshot.md` on `origin/main`.
-- The Steward auth code in the elizaOS monorepo at `/Users/shawwalters/v3/packages/auth`.
+- The Steward auth code in the elizaOS monorepo at `packages/auth` in the elizaOS monorepo.
 
 Names used here:
 
@@ -64,7 +66,7 @@ Other terms:
 | `packages/core/src/types.ts` | `City = "sf" \| "nyc"`, `Category` includes `romance` and `professional`, 12 edge types, 9 opportunity kinds | One ontology. Hiring needs roles and companies. Dating needs reciprocal preferences. |
 | Observatory (`packages/observatory`) | Game mode, real mode (read-only), staff roles `admin/reviewer/safety/analyst`, Cloudflare Access JWT, PII reveal, audit, simulation lab | No app dimension in any route, role or view |
 | `packages/plugin-network` | Eliza plugin with no state of its own: member context, `SET_STATE`, signals. The host injects the store and the authority (`memberId`) | No app in `NetworkTurnAuthority`. One character in Eliza Cloud (eliza-integration 3a). |
-| `prototypes/messaging-blooio` | Signed webhook, keyword ledger (E.164), `FileConsentStore`, outbound queue with pre-send checks, one line (`BLOOIO_FROM`) | One line. The consent ledger is keyed by address only, so a STOP on one app would stop all apps. |
+| `packages/blooio` | Signed webhook, keyword ledger (E.164), `FileConsentStore`, outbound queue with pre-send checks, one line (`BLOOIO_FROM`) | One line. The consent ledger is keyed by address only, so a STOP on one app would stop all apps. |
 | `prototypes/connector-mcp` | OAuth discovery, surface profiles (`teen_safe_directory`, `general_assistant`, `enterprise_professional`) with category lists | Not in MVP. Its surface-profile idea is the right shape for app packs. |
 | `sites/ntwrk.love` | Static Worker (assets only): landing page, privacy, terms with the SMS program | One site. No onboarding form; joining is invite-only by text. |
 | `scripts/wrangler.sh` | Refuses changing commands without `NTWRK_ALLOW_DEPLOY=1` | Generic logic. The messages name only ntwrk.love. The account id is fixed. |
@@ -549,7 +551,7 @@ Owners are packages. "Founder" marks a decision or a credential only the founder
 | `platform` schema; `app_id` and composite keys in `network`; migrate ntwrk | schema |
 | `AppId`, `canJoin(age, app)`, `canBeMatched(age, app)`, cities table | `packages/core` |
 | Service with many networks, app-filtered snapshot, `<app>:<city>` ids, no hard-coded `"nyc"` | `packages/network` |
-| `cross_app_leak` invariant and two-app personas | `packages/sim`, `packages/judge` |
+| `cross_app_leak` invariant and two-app personas | `packages/sim`, `packages/sim/src/judge` |
 
 Milestone: the ntwrk 21-day run (seed 1) gives the same results, with 0 leaks, 0 violations and 0 minor contacts. A two-app sim world shows 0 cross-app leaks.
 
@@ -557,7 +559,7 @@ Milestone: the ntwrk 21-day run (seed 1) gives the same results, with 0 leaks, 0
 
 | Work | Owner |
 |---|---|
-| `platform.consent_events` ledger, STOP per app and STOP ALL, line-to-app routing, per-app webhooks | `prototypes/messaging-blooio` (then `packages/network/service`) |
+| `platform.consent_events` ledger, STOP per app and STOP ALL, line-to-app routing, per-app webhooks | `packages/blooio` (then `packages/network/service`) |
 | Steward phone OTP with Twilio Verify, Turnstile, rate limits, `+1` only, per-domain sessions | Eliza `packages/auth` and Cloud routes (eliza-integration 3b, 3f) |
 | Text to join, join by line, link notice, age check per app | `packages/network/service`, `packages/plugin-network` |
 | Buy lines; 10DLC brand; campaigns for ntwrk and buddies | Founder (credentials) |
@@ -616,7 +618,7 @@ Milestone: the audit summary is published before any NYC role is matched.
 | Blooio lines | $975-1,445 | 5 dedicated lines, Enterprise or Commercial (4.1) |
 | Web OTP | about $15-60 | $0.058 per Twilio Verify login. Most joins are by text (free). 250-1,000 web logins a month. |
 | Twilio A2P SMS fallback | about $40 + usage | 4 campaigns × $10/mo; SMS about $0.0083 + carrier fee about $0.003-0.0045 per segment; setup about $46 + $15 per campaign attempt |
-| Inference (gpt-6-luna) | about $20/mo billed, up to about $180 at list price | $3/mo billed (up to $27 worst case) per 300 members, measured in `docs/results/2026-10-06-poc-validation.md`; scaled linearly to 2,000 |
+| Inference (gpt-6-luna) | about $20/mo billed, up to about $180 at list price | $3/mo billed (up to $27 worst case) per 300 members, measured in the PoC validation (summary in `docs/results/SUMMARY.md`); scaled linearly to 2,000 |
 | Hosting | about $60-150 | Railway Pro $20 + Postgres and 2 Bun services (about $10-30 each); Cloudflare Workers Paid $5; Neon or Fly as alternatives (Fly Postgres from $38) |
 | Domains | under $10/mo | Renewals |
 | One-time | Bias audit for peon: an outside auditor (cost **not researched**); counsel; $75 per custom area code | — |

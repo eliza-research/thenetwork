@@ -2,7 +2,7 @@
 
 Status: gap analysis, 2026-10-07. Updated the same day three times: after the review gate, the server auth and the real-mode PII rules were built; after the server gaps in section 6 were closed in `packages/network` and `packages/observatory`; and after the Observatory's real mode started to act through the Network service, verify the Cloudflare Access JWT and show the attention v1.2 send path. Updated 2026-10-08 for the four apps on one backend (ntwrk, slop, peon, friends): the app switcher, roles per app, per-app review reasons and SLAs, and the cross-app person view (section 4.6). Updated again on 2026-10-08 for the audit fixes in the console (docs/audit/2026-10-08-weaknesses.md), the per-app Member 360 panels (3.3.1) and the post-date report queue (3.7.1). Hand-written by a Claude agent from code reading. Each status was checked against the code and, where it says so, against a running server.
 
-Sources: PRD sections 28, 31.5, 32.8, 32.9, 32.14, 32.19, 32.20, 34.6, 35, 36 and 37 ([prd-snapshot.md](prd-snapshot.md)); the [2026-10-07 audit](research/2026-10-07-audit.md); [observatory.md](observatory.md); `packages/observatory` and `packages/network/src/network.ts`.
+Sources: PRD sections 28, 31.5, 32.8, 32.9, 32.14, 32.19, 32.20, 34.6, 35, 36 and 37 ([prd-snapshot.md](prd-snapshot.md)); the 2026-10-07 audit (`docs/research/2026-10-07-audit.md`, in git history at 16cde70); [observatory.md](observatory.md); `packages/observatory` and `packages/network/src/network.ts`.
 
 The admin console is the backend dashboard that the team uses to run the Network. The Observatory (`packages/observatory`) is its first implementation. This document says what the console must do before launch, what exists today, and what is missing.
 
@@ -216,7 +216,7 @@ A 404 without a `reason` means that the service has no such route yet: the conso
 - **MUST**: run the same console on a simulated world, with a clear banner; pick seed, size, days, engine; run scenarios; show canary leaks, minor contacts and invariant violations; open any persona in the perspective timeline. Simulated reviewers ("auto" review mode) are allowed only here.
 - **SHOULD**: start long runs in the background and watch progress; compare two runs side by side; show judge results.
 - **LATER**: 2,000-persona load runs from the console.
-- **Data**: the simulator (`packages/sim`), run logs (`packages/judge/src/runlog.ts`), `report.ts` output.
+- **Data**: the simulator (`packages/sim`), run logs (`packages/core/src/runlog.ts`), `report.ts` output.
 - **Status: built.** Game mode does the MUST list: seeds, sizes, engine choice, scenario levels, the truth lens (safety or admin, per staff member, audited: section 4.1), take over a persona, scoring against the oracle, and the judge counts in the Safety tab. The Lab tab (analyst) starts background runs of the experiment arms (`push_baseline`, `push_v2`, `consent`; 1-5 seeds; 1-60 days), at most 2 child processes of `packages/network/harness/experiment.ts` at a time. It shows everyone-yes, accept, meetings, judge invariants, canary leaks and minor contacts per arm and seed. Results are saved under `runs/lab`. The Runs tab compares two runs. 2,000-persona runs are LATER.
 
 ## 4. Roles and access

@@ -1,5 +1,7 @@
 # Engine generalization: one matching engine, four app packs
 
+> **Superseded names (2026-10-08 cleanup note).** This is a dated research record. Since it was written: buddies.nyc was renamed friends.help (AppId `friends`, `friendsPack`); ntwrk.club belongs to someone else and is not used (ntwrk.love is the home page); `packages/worlds` moved to `packages/sim/src/apps`; the prototypes were deleted or promoted (`packages/blooio`). Current decisions: AGENTS.md "Platform decisions" and docs/mvp-plan.md.
+
 Date: 2026-10-08. Read-only audit. No code was changed and no LLM calls were made.
 
 **Goal.** Turn the matching engine into a reusable package with a flexible interface. One unified engine serves four apps. Each app has its own matchmaking goals and opportunity types, and its own simulations, experiments and tests.
@@ -18,11 +20,11 @@ Date: 2026-10-08. Read-only audit. No code was changed and no LLM calls were mad
 The current results must reproduce byte-identically under `networkPack` for every refactor step.
 
 **Tree state when audited:**
-- **Checked-out branch.** The research ran in `/Users/shawwalters/thenetwork`, branch `docs/matching-research-compendium` @ `06f860e`.
+- **Checked-out branch.** The research ran in the repository checkout, branch `docs/matching-research-compendium` @ `06f860e`.
   - It has engine v1.2, attention v1.2, plans v1.1, judge v2/v3 and the capital ledger.
   - It is 5 commits ahead of `main` and 15 behind it.
 - **`main` @ `93feb51`.** It has none of capital, plans or judgeContext. It does have `packages/plugin-network`, which this branch does not.
-- **Uncommitted WIP in both worktrees.** The working tree and the `obs/network-console` worktree (`/Users/shawwalters/thenetwork-console`, HEAD = `main`) both carry large uncommitted changes:
+- **Uncommitted WIP in both worktrees.** The working tree and the `obs/network-console` worktree (the `thenetwork-console` worktree, HEAD = `main`) both carry large uncommitted changes:
   - `packages/network`: adds `service/`, `db/`, `harness/`, `store.ts`, `outreach.ts`;
   - `packages/observatory`;
   - `packages/sim`: `world.ts`, `agent/policy.ts`, `channel.ts`, `stubNetwork.ts`.
@@ -468,7 +470,7 @@ Every phase ends with the golden suite green: identical bytes for the network pa
   - `meetingSpot()`, which minimizes the worst participant trip (130-142).
 
   Members are located only by area name (`neighborhood()` falls back to Midtown).
-- **PoC: travel time** (`thenetwork-poc/prototypes/poc-travel-time`, branch `poc/validation` @ `4437bb7`).
+- **PoC: travel time** (`thenetwork-poc/prototypes/poc-travel-time`, branch `poc/validation` @ `4437bb7`; summary in `docs/results/SUMMARY.md`).
   - It stores members at **H3 res-8 cells** (SEC-004 precision) and fits `minutes = overhead + km × min/km` per city and mode against OSRM.
   - Within 25% of a router: walk 95-100%, bike 85-95%, car 60% (SF) / 95% (NYC).
   - Transit was not validated.

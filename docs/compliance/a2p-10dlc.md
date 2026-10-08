@@ -1,6 +1,6 @@
 # A2P 10DLC registration for The Network (Twilio)
 
-US carriers require every application-to-person SMS sent from a 10-digit long code to be registered: one **brand** (the company) and one **campaign** (what we send and how people opt in). Unregistered traffic is filtered or blocked. Approval typically takes 1-3 weeks; launch gate PRD 28.5 requires it before M6.
+US carriers require every application-to-person SMS sent from a 10-digit long code to be registered: one **brand** (the company) and one **campaign** (what we send and how people opt in). Unregistered traffic is filtered or blocked. Approval typically takes 1-3 weeks; launch gate PRD 28.5 requires it before the first live SMS sends (Section 37 marks the old M6 milestone superseded; iMessage on Blooio is P2P and not covered).
 
 Prerequisite done in this repo: [`sites/ntwrk.love`](../../sites/ntwrk.love/) is a site describing the program, with a privacy policy and SMS terms. Carriers check these URLs during vetting, so it must be **live before submitting the campaign**.
 
@@ -46,7 +46,7 @@ The founders fill these in; they must match IRS records exactly.
 
 ## Code alignment
 
-The keyword sets and replies above match `prototypes/messaging-blooio/src/keywords.ts`, the Eliza Cloud gateway STOP/HELP/START handling on branch `spike/network-plugin`, and the sample confirmations produced by `packages/plugin-network`. When registration is approved:
+The keyword sets and replies above match `packages/blooio/src/ledger.ts`, the Eliza Cloud gateway STOP/HELP/START handling on branch `spike/network-plugin`, and the sample confirmations produced by `packages/plugin-network`. When registration is approved:
 - set the HELP support contact (`defaultCopy(supportContact)`) to `help@ntwrk.love`;
 - attach the Twilio number to a Messaging Service tied to the campaign.
 

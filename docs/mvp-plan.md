@@ -31,18 +31,18 @@ Rules that hold in every app:
 
 ## Workstreams
 
-- **Engine and packs:** `packages/core`, `packages/engine`, `packages/sim`, `packages/judge`, `packages/evals`, `packages/capital`, and the new pack modules.
+- **Engine and packs:** `packages/core`, `packages/engine`, `packages/sim` (with the app worlds in `src/apps` and the judge in `src/judge`), `packages/capital`, and the pack modules. Validation: `bun run sim`.
 - **Platform:** the `platform` schema and migrations, `packages/network` service, messaging (Blooio line, keyword routing), login, `packages/plugin-network`, and the admin panel (`packages/observatory`).
 
 ## Phases
 
 | Phase | Scope | Owner | Exit criteria |
 |---|---|---|---|
-| 0. App packs core | `AppPack` interface, open core types, `networkPack` as a facade then threaded through the engine module by module, geo seam, `SimPack`, one conformance suite | Engine and packs | Golden replays byte-identical under `networkPack` on a pinned clean commit; conformance green for `networkPack` |
-| 1. slop.date pack, sim, local pilot readiness | Mutual hard filters, radius geo with distance bands, reciprocal scoring with congestion and exposure caps, probe first then a booked first date, dating judge rubric, safety basics; dater personas, oracle, adversaries | Engine and packs | Conformance green; slop sim gates pass over several seeds (below); end to end locally with test phones and dry-run sends; reviewers trained; shadow mode with human review of every intro |
+| 0. App packs core | `AppPack` interface, open core types, `networkPack` as a facade then threaded through the engine module by module, geo seam, one conformance suite | Engine and packs | Golden replays byte-identical under `networkPack` on a pinned clean commit; sim gates green for `networkPack` (`bun run sim --only network`) |
+| 1. slop.date pack, sim, local pilot readiness | Mutual hard filters, radius geo with distance bands, reciprocal scoring with congestion and exposure caps, probe first then a booked first date, dating judge rubric, safety basics; dater personas, oracle, adversaries | Engine and packs | Sim gates green (`bun run sim --only slop`: conformance rules and the slop gates on pinned seeds, below); end to end locally with test phones and dry-run sends; reviewers trained; shadow mode with human review of every intro |
 | 2. Platform backend (parallel) | Migration runner; `platform` schema (people, phone identities, memberships, consent events, share grants, blocks, staff roles, audit); `app_id` on engine tables; one line with keyword routing and no-keyword enrollment; phone login; per-app personas; admin app switcher and per-app roles | Platform | A test phone joins two apps by keyword and one by no-keyword enrollment; STOP and leaving one app work; export and delete per app; ntwrk 21-day sim unchanged after migration; `cross_app_leak = 0` |
-| 3. friends.help pack and sim | Groups first, quorum, plans and crews, neighborhood geo, affinity tables | Engine and packs | Conformance green; friends sim gates; local only |
-| 4. peon.biz pack and sim | Org and job entities, two-way retrieval, candidate-first consent, unranked slates, sealed protected attributes, proxy scrubbing | Engine and packs | Conformance incl. protected-attribute invariance; peon sim gates; local only |
+| 3. friends.help pack and sim | Groups first, quorum, plans and crews, neighborhood geo, affinity tables | Engine and packs | Sim gates green (`bun run sim --only friends`); local only |
+| 4. peon.biz pack and sim | Org and job entities, two-way retrieval, candidate-first consent, unranked slates, sealed protected attributes, proxy scrubbing | Engine and packs | Sim gates green (`bun run sim --only peon`, incl. protected-attribute invariance); local only |
 | 5. Attention, plans, capital across apps | Person-level cap across apps; attention budget, plan allowance and crews per pack; network capital per app or shared (to decide) | Engine and packs, with platform | No send over any per-app or person-level cap in a multi-app sim; NC fairness gate holds per app |
 
 Phases 0-1 and Phase 2 run in parallel. Phases 3-5 can start once Phase 0 is done.
@@ -52,7 +52,7 @@ Phases 0-1 and Phase 2 run in parallel. Phases 3-5 can start once Phase 0 is don
 - **slop.date:** 0 hard-constraint violations; 0 intros involving anyone under 18 or unverified; 0 private-field or cross-app leaks; scammer median reach at most 1; same-face ban-evasion catch at least 95%; mutual yes at least 25% of probes; probes-received Gini under threshold at twice the cold-start pool.
 - **friends.help:** repeat rate at least 30% of groups within 30 days; more simulated friendships than a one-off-dinner baseline; no trip over a member's tolerance; 0 affinity or age violations; V14 at least 85%.
 - **peon.biz:** impact ratios at least 0.8 at every automated stage; 0 protected or proxy mentions in judge reasoning; 0 jobs without pay ranges; 0 unverified employers reaching candidates; 100% of discriminatory requests refused.
-- **Every pack:** the shared conformance suite (age, blocks, consent order, leaks, protected-attribute invariance, determinism, judge cannot undo filters, attention caps, geo) and `cross_app_leak = 0`.
+- **Every pack:** the conformance rules in `bun run sim` (minors in no role, blocks, consent before reveal, the leak gate, the judge cannot undo filters; peon also protected-attribute invariance) and `cross_app_leak = 0`. The slop gates that block and the ones tracked are listed in scripts/sim/slop.ts.
 
 ## Local only
 

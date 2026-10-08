@@ -1,6 +1,6 @@
 # App packs, core: the AppPack contract and networkPack
 
-Date: 2026-10-08. Branch `engine/packs` (worktree `/Users/shawwalters/thenetwork-packs`), based on `origin/main` @ `976a39e`. No LLM calls; tests ran with API keys unset and no `LIVE_TESTS`.
+Date: 2026-10-08. Branch `engine/packs` (worktree the `thenetwork-packs` worktree), based on `origin/main` @ `976a39e`. No LLM calls; tests ran with API keys unset and no `LIVE_TESTS`.
 
 **Goal.** One engine with app packs powers four apps:
 

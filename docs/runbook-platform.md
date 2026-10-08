@@ -2,9 +2,9 @@
 
 This runbook starts the whole platform on your machine: the dev database, one Network service for every app, and the four sites. It then checks the main member flows with `curl`. It also lists the variables per app, what is gated, and what is not built.
 
-The platform is one backend, one admin panel and one database for four apps with different sites: The Network (`ntwrk`, ntwrk.love), slop (`slop`, slop.date, dating), peon (`peon`, peon.biz, hiring) and friends (`friends`, friends.help, NYC friends). A person can join one app or several. The plan is `docs/research/2026-10-08-platform-architecture.md`. The scope is PRD Section 40 (founder decisions of 2026-10-08). The proposed PRD changes for what was built are in [prd-edits-2026-10-08-platform.md](prd-edits-2026-10-08-platform.md). The production runbook is [runbook-real.md](runbook-real.md).
+The platform is one backend, one admin panel and one database for four apps with different sites: The Network (`ntwrk`, ntwrk.love), slop (`slop`, slop.date, dating), peon (`peon`, peon.biz, hiring) and friends (`friends`, friends.help, NYC friends). A person can join one app or several. The plan is `docs/research/2026-10-08-platform-architecture.md`. The scope is PRD Section 40 (founder decisions of 2026-10-08). The proposed PRD changes for what was built are in [prd-pending-edits.md](prd-pending-edits.md) (section 2). The production runbook is [runbook-real.md](runbook-real.md).
 
-The backend follows the founder decisions of 2026-10-08 (AGENTS.md): the app id is `friends` (friends.help; migration 0007 renames the old `buddies` rows), 13+ may join every app and matching stays 18+, one line serves every app, STOP stops every app and "leave <app>" leaves one. Section 3 lists today's answers; the flows are checked end to end by `bun run test:e2e` (tests/e2e: four built sites, the router, the backend, the MCP server and Postgres).
+The backend follows the founder decisions of 2026-10-08 (AGENTS.md): the app id is `friends` (friends.help; migration 0007 renames the old `buddies` rows), 13+ may join every app and matching stays 18+, one line serves every app, STOP stops every app and "leave <app>" leaves one. Section 3 lists today's answers; the flows were checked end to end by `tests/e2e` (deleted 2026-10-08; git history at 16cde70).
 
 **Warning: nothing here sends a text.** The service uses the dry-run adapter. It stores each message with status `dry_run`. The dev OTP provider prints the code to the service log. Use only the fictional 555-01xx numbers. Do not set `BLOOIO_ALLOW_SEND`, `NTWRK_LIVE_APPROVED` or any `<APP>_LIVE_APPROVED` flag.
 
@@ -32,7 +32,7 @@ The script refuses a database that is not on `localhost:54339`. It refuses to ru
 
 Run `bun run platform:dev --no-sites` to start the database and the backend only, and `--verbose` to log every request.
 
-The end-to-end tests start the same stack in one process (four built sites, the router code, the backend with the MCP server, a database of their own on `:54339`): `bun run test:e2e` (`tests/e2e`). They skip without Postgres; with `REQUIRE_PG=1` (CI) they fail instead.
+The end-to-end tests that started this stack in one process (`tests/e2e`) were deleted on 2026-10-08; they are in git history at 16cde70.
 
 To run the parts one at a time (each command was checked on 2026-10-08):
 
@@ -59,7 +59,7 @@ Each site keeps its own cookie (`sid_<app>` in dev), so use one cookie jar per s
 
 ### What you should see (2026-10-08)
 
-The transcript captured on 2026-10-07 is gone: it showed the old `buddies` id, an 18+ join age and a stop that paused one app, none of which is true now. `bun run test:e2e` (tests/e2e/platform.e2e.test.ts) runs these steps on every change, with four built sites, the router, the backend, the MCP server and Postgres. The table lists what the service answers today; each row is checked by the e2e, platform or service tests.
+The transcript captured on 2026-10-07 is gone: it showed the old `buddies` id, an 18+ join age and a stop that paused one app, none of which is true now. `tests/e2e/platform.e2e.test.ts` (deleted 2026-10-08; git history at 16cde70) ran these steps on every change, with four built sites, the router, the backend, the MCP server and Postgres. The table lists what the service answers today; each row is checked by the e2e, platform or service tests.
 
 | Request | Answer today |
 |---|---|
@@ -164,17 +164,18 @@ Known gaps:
 - Two networks can send to one person at the same moment; the cap counts committed rows, so it can refuse both rather than let both pass. A message held for quiet hours counts as sent.
 - `network.channel_identities` allows one member per phone, so platform members keep their phone in `platform.phone_identities` only. The console PII reveal reads `channel_identities` and does not see them.
 
-## 8. Tests
+## 8. Checks
+
+The unit and end-to-end tests were deleted on 2026-10-08 (founder decision: simulations only). What remains:
 
 ```bash
-bun test packages/platform                            # people, OTP, sessions, the public API (memory and Postgres), migrations, row-level security
-bun test sites                                        # the four sites build, required pages and text, the dev proxy
-bun test packages/network/test/service-apps.test.ts   # text joins, keywords per app, the person cap, live flags, staff roles, the public API
-bun test packages/network/test/crossapp.test.ts       # cross_app_leak = 0, and a block on one app holds on the other
-bun test packages/observatory/test/apps.test.ts       # the console: role@app, per-app worlds, review reasons, the cross-app view
+bun run security                                      # pending the founder's decision: platform RLS and composite keys, CSRF, enumeration and OTP limits, MCP OAuth PKCE, the backend "two logins" RLS check (dev Postgres)
+bun run sim --only evals                              # the opt-out corpus, keywords and per-app leave, the leak guard
+DEPLOY_TARGET=production bun run sites/sites.ts       # the four sites build (refuses draft legal text)
+bun run typecheck
 ```
 
-The Postgres tests make a database of their own on the dev cluster and drop it afterwards. `bun run test` now also runs `sites`. Results after the safety fixes (no API keys): `bun test packages/platform` 48 pass; `bun test sites` 35 pass; `bun test packages/network/test/service-apps.test.ts` 14 pass; `bunx tsc --noEmit -p .` clean.
+The security tests make a database of their own on the dev cluster and drop it afterwards. Coverage given up with the deleted tests: the full-stack e2e run, the site contract and 10DLC wording checks, the service and cross-app tests, and the console tests (git history at 16cde70).
 
 ## 9. Stop it
 

@@ -4,8 +4,8 @@ This report merges the adversarial audit of every package. Each dimension had a 
 
 Checkouts audited:
 
-- `/Users/shawwalters/thenetwork-audit` (main, d8d339c).
-- `/Users/shawwalters/thenetwork-console` (branch obs/network-console, uncommitted, changing during the audit).
+- the `thenetwork-audit` worktree (main, d8d339c).
+- the `thenetwork-console` worktree (branch obs/network-console, uncommitted, changing during the audit).
 
 Line numbers on the console branch can drift. Re-run the repro before you fix a finding.
 
@@ -72,13 +72,13 @@ The six P0 findings share one cause. The consent and understanding layer of `pac
 | engine-pipeline-4 | engine | packages/engine/src/config.ts:198 | Risk and home-entry filters miss childcare asks ("watch my 6 year old"), money and drug phrasings. | confirmed | Expand to a curated corpus with digit and abbreviation variants. Add a benign corpus. |
 | engine-pipeline-15 (also engine-pipeline-M1) | engine | packages/engine/src/packs/network/generators.ts:214 | Romance-category events produce 4-person romance groups. requireStatedPrefs is enforced only in one generator, so people with no stated orientation get romance proposals. | confirmed | Make romance pairs-only in the engine. Enforce stated prefs in the pair rule. |
 | attention-MISSED-1 | network | packages/network/src/plans.ts:81 | planLedger has no repliedAt, so the plan allowance stops for good after the second plan invite, even for members who said yes. | confirmed | Carry repliedAt from inbound replies, or clear the ledger on inbound. |
-| judge-evals-1 (also sim-worlds-15) | judge | packages/judge/src/metrics.ts:225 | minorContacts, the blocking minors gate, cannot see probes, plan probes, relays or growth asks to or about minors. | confirmed | Count meta.probe.participants, meta.plan, relayFrom, growth_ask and probe_started logs. |
-| judge-evals-2 | judge | packages/judge/src/metrics.ts:242 | Interruption invariants trust meta.proactive, system and reengagement flags set by the system under test. | confirmed | Derive proactive from timing. Add a mislabel detector. |
-| judge-evals-7 (also core-17, plugin-prototypes-5) | judge, core, plugin | packages/judge/src/runlog.ts:171 | No app field in run logs, core types or the plugin authority. cross_app_leak cannot be computed or enforced. | confirmed | Add app to core types, run logs and NetworkTurnAuthority. Add the cross_app_leak invariant. |
-| judge-evals-8 | judge | packages/judge/src/metrics.ts:225 | No invariants for names before reveal, decliner identity or contact details before a swap. | confirmed | Add name_before_reveal, decliner_exposed and contact_before_swap. |
+| judge-evals-1 (also sim-worlds-15) | judge | packages/sim/src/judge/metrics.ts:225 | minorContacts, the blocking minors gate, cannot see probes, plan probes, relays or growth asks to or about minors. | confirmed | Count meta.probe.participants, meta.plan, relayFrom, growth_ask and probe_started logs. |
+| judge-evals-2 | judge | packages/sim/src/judge/metrics.ts:242 | Interruption invariants trust meta.proactive, system and reengagement flags set by the system under test. | confirmed | Derive proactive from timing. Add a mislabel detector. |
+| judge-evals-7 (also core-17, plugin-prototypes-5) | judge, core, plugin | packages/core/src/runlog.ts:171 | No app field in run logs, core types or the plugin authority. cross_app_leak cannot be computed or enforced. | confirmed | Add app to core types, run logs and NetworkTurnAuthority. Add the cross_app_leak invariant. |
+| judge-evals-8 | judge | packages/sim/src/judge/metrics.ts:225 | No invariants for names before reveal, decliner identity or contact details before a swap. | confirmed | Add name_before_reveal, decliner_exposed and contact_before_swap. |
 | judge-evals-M1 | network, judge | packages/network/test/network.test.ts:39 | The budget check is graded against the network's own 4/week, not the PRD's 2/week in Normal. | confirmed | Judge owns a per-state budget table copied from the PRD. |
 | sim-worlds-1 (also sim-worlds-M5) | sim | packages/sim/src/snapshot.ts:282 | The console snapshot leaks hidden accept/decline for ignored invites and feedback built from hidden enjoyment. | confirmed | Build interactions from inbound replies only. Build feedback from answered requests. |
-| sim-worlds-5 | sim, worlds | packages/worlds/README.md:9 | PRD 40.8 worlds and adversaries are missing: ban evader, bot farm, two-app personas, cross_app_leak, lowest age across apps. | confirmed | Add slop adversaries and two-app personas first. friends and peon worlds are Phase 3-4 (P3 today). |
+| sim-worlds-5 | sim, worlds | packages/sim/src/apps/README.md:9 | PRD 40.8 worlds and adversaries are missing: ban evader, bot farm, two-app personas, cross_app_leak, lowest age across apps. | confirmed | Add slop adversaries and two-app personas first. friends and peon worlds are Phase 3-4 (P3 today). |
 | platform-1 (also sites-infra-3) | platform | packages/platform/src/accounts.ts:118 | An under-age refusal on a new phone stores nothing, so the same session can retry with age 25 and join. | confirmed | Record a keyed-hash age marker on every refusal. |
 | platform-2 | platform | packages/platform/src/store.ts:176 | Delete-everything resets lowest age and person id, laundering age and escaping blocks. | confirmed | Keep the lowest age and block identity on the phone hash. |
 | platform-3 | platform | packages/platform/src/api.ts:172 | A new owner of a recycled number logs in and reads, exports and deletes the old owner's data. | confirmed | Check recycling at login. Hold export and delete for review. |
@@ -89,7 +89,7 @@ The six P0 findings share one cause. The consent and understanding layer of `pac
 | platform-9 (also sites-infra-7) | platform, sites | packages/platform/src/consent.ts:33 | STOP defaults to one app and the sites say "STOP ALL". PRD 40.3 says STOP stops every app on the shared line. | confirmed | Default to global STOP. Add "leave <app>". Fix copy on all four sites. |
 | platform-10 | platform | packages/platform/src/accounts.ts:121 | Parallel joins run onJoin several times and orphan network members that delete never reaches. | confirmed | Join in one transaction with an advisory lock per (person, app). |
 | platform-M1 (also network-service-5, network-service-6) | platform, network/service | packages/network/service/service.ts:301 | Inbound STOP writes only network.members, web STOP writes only the platform ledger, and the send path reads neither consistently. | confirmed | One consent ledger read on every send. Record STOP before running the unit. |
-| plugin-prototypes-12 (also platform-29, network-consent-M3) | messaging-blooio, platform, network | prototypes/messaging-blooio/src/keywords.ts:31 | Only exact keywords opt out. "please stop texting me" and Spanish opt-outs are never honored. No per-app leave. | confirmed | Add a reasonable-means classifier with a confirm step. |
+| plugin-prototypes-12 (also platform-29, network-consent-M3) | messaging-blooio, platform, network | packages/blooio/src/ledger.ts:31 | Only exact keywords opt out. "please stop texting me" and Spanish opt-outs are never honored. No per-app leave. | confirmed | Add a reasonable-means classifier with a confirm step. |
 | observatory-1 | observatory | packages/observatory/web/map.ts:113 | Stored XSS: member name and area go into Leaflet tooltips as HTML. | confirmed | Build tooltip content as DOM nodes. Add a CSP. |
 | observatory-6 (also observatory-M1) | observatory | packages/observatory/src/server.ts:388 | WebSockets are authorized once. After a mode switch an engineer socket receives real minors' data. Expired or revoked grants keep streaming. | confirmed | Store identity on the socket. Re-check on mode switch, expiry and grant reload. Shape deltas per role. |
 | plugin-prototypes-1 | plugin-network | packages/plugin-network/src/actions/set-state.ts:118 | Planner SET_STATE runs no authz and stays registered in the Cloud default mode. Past dates are stored. | confirmed | Remove it in structured mode or run authorizeSetState in its handler. |
@@ -100,7 +100,7 @@ The six P0 findings share one cause. The consent and understanding layer of `pac
 | sites-infra-4 | scripts | scripts/wrangler.sh:17 | The deploy guard is bypassed by any flag with a value before the command, and it misses many mutating verbs. | confirmed | Use an allowlist of read-only commands. Parse flags with values. |
 | sites-infra-5 | ci | .github/workflows/ci.yml:44 | CI does not test or typecheck sites or plugin-network, and every Postgres suite skips silently. | confirmed | Add those steps. Fail when REQUIRE_PG=1 and Postgres is missing. |
 | sites-infra-6 | root | bun.lock:1 | bun.lock lacks packages/platform, so frozen install fails once the branch is committed. | confirmed | Regenerate bun.lock in the same commit. |
-| sites-infra-9 | sites, platform | sites/buddies.nyc/wrangler.toml:11 | buddies is not renamed to friends.help, and peon and buddies have production custom-domain configs although they are local-only. | confirmed | Rename everywhere. Remove production routes. Deploy allowlist is ntwrk and slop. |
+| sites-infra-9 | sites, platform | sites/buddies.nyc/wrangler.toml:11 | buddies is not renamed to friends.help, and peon and buddies have production custom-domain configs although they are local-only. | confirmed (resolved: renamed to friends.help, AppId `friends`, migration 0007) | Rename everywhere. Remove production routes. Deploy allowlist is ntwrk and slop. |
 | sites-infra-10 | sites | sites/sites.ts:40 | The build drops every non-HTML file, so _headers, SKILL.md and robots.txt can never ship. | confirmed | Copy public/ passthrough files into dist. |
 | sites-infra-13 (also sites-infra-M3, platform-31, platform-M3) | sites, platform | sites/ntwrk.love/wrangler.toml:6 | /api/* is not routed on any site. The API runs only as a Bun process. No deploy workflow exists. Deploying ntwrk now replaces the working 10DLC page with broken forms. | confirmed | Choose the API host. Route /api through one backend. Add a gated deploy workflow with a smoke test. |
 | sites-infra-14 | sites | sites/slop.date/public/terms.html:15 | slop, peon and buddies legal pages say "Draft. Not yet in effect." | confirmed | Block any production build that contains "Draft". |
@@ -109,7 +109,7 @@ The six P0 findings share one cause. The consent and understanding layer of `pac
 
 | ID | Package | File:line | Title | Verdict | Fix direction |
 |---|---|---|---|---|---|
-| core-4 (also core-m5, judge-evals-5) | judge, core | packages/judge/src/policy.ts:49 | The judge's isMinor treats undefined and NaN ages as adult. Explicit "I'm 16" notes are missed. judgePolicy has no production caller. | confirmed | Import core's fail-closed predicate. Fix the "production" header. |
+| core-4 (also core-m5, judge-evals-5) | judge, core | packages/sim/src/judge/policy.ts:49 | The judge's isMinor treats undefined and NaN ages as adult. Explicit "I'm 16" notes are missed. judgePolicy has no production caller. | confirmed | Import core's fail-closed predicate. Fix the "production" header. |
 | core-5 | core | packages/core/src/policy.ts:13 | validAge accepts 150 and 1e9. Member.age is required, so loaders cast undefined. No effectiveAge helper. | confirmed | Cap at 120. Make age optional. Export effectiveAge. |
 | core-7 | core | packages/core/src/guard.ts:100 | The email regex is quadratic and check() has no length cap. | confirmed | Rewrite the regex. Return too_long above a cap. |
 | core-8 | core | packages/core/src/chatJson.ts:40 | tryChatJson throws when hooks throw and discards a paid success. | confirmed | Wrap hooks. Never reject. |
@@ -120,7 +120,7 @@ The six P0 findings share one cause. The consent and understanding layer of `pac
 | core-13 | core | packages/core/src/guard.ts:207 | Stopword 4-grams and loose fuzzy facts block benign messages. The rate grows with facts. | confirmed | Drop grams with fewer than 2 content words. Gate on a measured FP rate. |
 | core-14 | core | packages/core/src/guard.ts:314 | The guard is per message, so split numbers and facts pass. | confirmed | Add checkThread over recent messages to the same recipient. |
 | core-15 | core | packages/core/src/guard.ts:331 | privateVocab misses inflections, splits and symbol leet. | confirmed | Stem and normalize separators and symbols. |
-| core-16 (also judge-evals-23) | core, judge | packages/judge/src/llmJudges.ts:56 | Untrusted text is fenced with """ that members can close. | plausible | Add fenceUntrusted with a nonce delimiter. |
+| core-16 (also judge-evals-23) | core, judge | packages/sim/src/judge/llmJudges.ts:56 | Untrusted text is fenced with """ that members can close. | plausible | Add fenceUntrusted with a nonce delimiter. |
 | core-m2 | network | packages/network/src/network.ts:~3185 | The network guard cache is keyed by facet ids only, so edited values use a stale guard. | plausible | Key the cache on ids and values. |
 | engine-pipeline-5 | engine | packages/engine/src/tick.ts:43 | Per-city ticks emit the same proposal id for cross-city pairs and double-spend budgets. Latent: production runs NYC only. | confirmed | Put the city in the id. Share budgets across markets. |
 | engine-pipeline-6 | engine | packages/engine/src/scoring.ts:190 | Exploration lowers every bar to 0.15, including Quiet members and romance. | confirmed | Respect Quiet and lane bars. Make exploration per member. |
@@ -141,30 +141,30 @@ The six P0 findings share one cause. The consent and understanding layer of `pac
 | engine-attention-plans-13 | engine | packages/engine/src/plans.ts:289 | Event-anchored plans ignore event category, age floor and capacity. | confirmed | Skip romance events. Add ageMin and capacity checks. |
 | engine-attention-plans-14 | engine | packages/engine/experiments/plansHarness.ts:86 | Plan experiments grade the planner with its own objective and ignore adversarial exposure. | plausible | Add an oracle-independence ablation and adversary exposure metrics. |
 | engine-attention-plans-15 | network | packages/network/src/network.ts:3094 | Runtime view treats unknown age as 18 and uses New York time for everyone. | confirmed | Unknown age is minor. Use the member's zone. |
-| judge-evals-3 | judge | packages/judge/src/llmJudges.ts:76 | LLM judges accept any JSON shape. String booleans and a missing leaks key read as pass. | confirmed | Validate shape and retry. Fail closed. |
+| judge-evals-3 | judge | packages/sim/src/judge/llmJudges.ts:76 | LLM judges accept any JSON shape. String booleans and a missing leaks key read as pass. | confirmed | Validate shape and retry. Fail closed. |
 | judge-evals-4 | evals, engine | packages/evals/src/runPasses.ts:257 | An all-failed pipeline counts as "yes" with prob 1 and 0 failures. | confirmed | Report stage failures. Never say yes with no successful pass. |
-| judge-evals-9 | judge | packages/judge/src/metrics.ts:128 | Minor name detection is case-sensitive and full-name only. Messages to minors naming adults are not counted. | confirmed | Case-insensitive, first-name and possessive matching. Count connection offers to minors. |
-| judge-evals-10 | judge | packages/judge/src/metrics.ts:259 | The canary scan misses system, failed and suppressed sends, case variants and logs. Self-echo counts as a leak. | confirmed | Normalize. Scan attempts and logs. Report selfEcho separately. |
-| judge-evals-11 | judge | packages/judge/src/metrics.ts:237 | START cannot be logged, and a same-tick send after STOP passes. | confirmed | Add opt_in records. Use <= consistently. |
-| judge-evals-12 | judge | packages/judge/src/metrics.ts:72 | Quiet hours use home city only. Any inbound resets the unanswered streak. The judge ignores participation state. | confirmed | Use current location, reply-to-proactive resets and per-state budgets. |
-| judge-evals-13 | judge | packages/judge/src/metrics.ts:261 | Opt-out wording is checked only on the first proactive message, and only as style. | confirmed | Make pause_path_missing an invariant on every proactive message. |
-| judge-evals-14 | judge | packages/judge/src/metrics.ts:215 | Romance checks ignore category. Blocks are not checked on alternates, meetings or relays. Review gating is off without logs. | confirmed | Check by category, everywhere, and fail closed when gating is configured. |
-| judge-evals-16 | judge | packages/judge/src/calibration.ts:2 | Calibration is pooled, has no policy items and never runs in CI, despite the comment. | confirmed | Per-judge floors. Offline cassette replay. |
+| judge-evals-9 | judge | packages/sim/src/judge/metrics.ts:128 | Minor name detection is case-sensitive and full-name only. Messages to minors naming adults are not counted. | confirmed | Case-insensitive, first-name and possessive matching. Count connection offers to minors. |
+| judge-evals-10 | judge | packages/sim/src/judge/metrics.ts:259 | The canary scan misses system, failed and suppressed sends, case variants and logs. Self-echo counts as a leak. | confirmed | Normalize. Scan attempts and logs. Report selfEcho separately. |
+| judge-evals-11 | judge | packages/sim/src/judge/metrics.ts:237 | START cannot be logged, and a same-tick send after STOP passes. | confirmed | Add opt_in records. Use <= consistently. |
+| judge-evals-12 | judge | packages/sim/src/judge/metrics.ts:72 | Quiet hours use home city only. Any inbound resets the unanswered streak. The judge ignores participation state. | confirmed | Use current location, reply-to-proactive resets and per-state budgets. |
+| judge-evals-13 | judge | packages/sim/src/judge/metrics.ts:261 | Opt-out wording is checked only on the first proactive message, and only as style. | confirmed | Make pause_path_missing an invariant on every proactive message. |
+| judge-evals-14 | judge | packages/sim/src/judge/metrics.ts:215 | Romance checks ignore category. Blocks are not checked on alternates, meetings or relays. Review gating is off without logs. | confirmed | Check by category, everywhere, and fail closed when gating is configured. |
+| judge-evals-16 | judge | packages/sim/src/judge/calibration.ts:2 | Calibration is pooled, has no policy items and never runs in CI, despite the comment. | confirmed | Per-judge floors. Offline cassette replay. |
 | judge-evals-17 | evals | packages/evals/src/judgeDataset.ts:233 | The production leak guard is never scored against the gold privacy items, and the rules baseline is meaningless on shareability. | confirmed | Score checkMemberFacing on gold items. Add items for new risk classes. |
 | judge-evals-18 | evals | packages/evals/src/recDataset.ts:96 | Recommender labels come from the sim's own utility. Hidden-risk strata are tiny. Thresholds are copied. | confirmed | Ablate the oracle. Raise stratum sizes. Export shared thresholds. |
 | judge-evals-M2 | network | packages/network/src/network.ts:~2643 | Engine ask texts say they use the budget but are sent proactive:false. | confirmed | Decide with the founder. Make code, comment and PRD agree. |
-| judge-evals-M3 | judge | packages/judge/src/metrics.ts | The judge ignores the network's own minor_signal and age logs. | confirmed | Treat a minor_signal or unresolved age_unknown as minor. |
-| sim-worlds-4 | worlds | packages/worlds/src/slop/persona.ts:313 | Occupation "student" identifies every age-lying minor with zero false positives. | confirmed | Give adults "student" at a realistic rate. |
-| sim-worlds-6 | worlds | packages/worlds/src/slop/snapshot.ts:75 | LA is cast into core City, so time zones are undefined and depend on the host. | confirmed | Add la to every tz table. Throw on unknown city. |
-| sim-worlds-7 | worlds | packages/worlds/src/slop/oracle.ts:203 | Backout at the booked reveal is capped at 12%, the assumption the reveal design rests on. | confirmed | Sweep backout. Calibrate or cite. |
+| judge-evals-M3 | judge | packages/sim/src/judge/metrics.ts | The judge ignores the network's own minor_signal and age logs. | confirmed | Treat a minor_signal or unresolved age_unknown as minor. |
+| sim-worlds-4 | worlds | packages/sim/src/apps/slop/persona.ts:313 | Occupation "student" identifies every age-lying minor with zero false positives. | confirmed | Give adults "student" at a realistic rate. |
+| sim-worlds-6 | worlds | packages/sim/src/apps/slop/snapshot.ts:75 | LA is cast into core City, so time zones are undefined and depend on the host. | confirmed | Add la to every tz table. Throw on unknown city. |
+| sim-worlds-7 | worlds | packages/sim/src/apps/slop/oracle.ts:203 | Backout at the booked reveal is capped at 12%, the assumption the reveal design rests on. | confirmed | Sweep backout. Calibrate or cite. |
 | sim-worlds-8 | sim | packages/sim/src/plans.ts:17 | The sim imports the engine and copies its plan and availability models. | confirmed | Remove runtime engine imports. Use an alternative availability model. |
 | sim-worlds-9 | sim | packages/sim/src/generator.ts:315 | The lying minor never seeks romance, so the most dangerous case is never exercised. | confirmed | Add a romance-seeking lying minor scenario. |
 | sim-worlds-10 | sim | packages/sim/src/scenario.ts:200 | Leak checks match only the exact canary token, so paraphrased leaks pass. | confirmed | Add a fact-level n-gram check. |
 | sim-worlds-11 (also matching-e2e-12) | sim | packages/sim/src/world.ts:156 | On main, the oracle is called without category, so category-only romance proposals are not flagged unsafe. | confirmed | Pass category (done on console, untested). |
-| sim-worlds-12 | worlds, sim | packages/worlds/src/slop/world.ts:111 | Harassment after a match is barely modelled. The slop harness neither enforces nor measures holds and blocks. | confirmed | Add held and blocked invariants and a post-match harassment scenario. |
+| sim-worlds-12 | worlds, sim | packages/sim/src/apps/slop/world.ts:111 | Harassment after a match is barely modelled. The slop harness neither enforces nor measures holds and blocks. | confirmed | Add held and blocked invariants and a post-match harassment scenario. |
 | sim-worlds-13 | sim | packages/sim/src/agent/policy.ts:98 | Personas churn only from volume. Bad or unsafe intros cost nothing. | confirmed | Add quality-driven trust and churn. |
 | sim-worlds-14 | sim | packages/sim/src/snapshot.ts:367 | The default snapshot has perfect onboarding: hidden boundaries and romance prefs are known. | confirmed | Default to richness tiers. Gate on richness-on numbers. |
-| sim-worlds-16 | worlds | packages/worlds/src/slop/world.ts:82 | slop has no arrivals, no verification step and duplicate names. Fairness ignores desirability. | confirmed | Add Poisson arrivals, unique names, desirability deciles. |
+| sim-worlds-16 | worlds | packages/sim/src/apps/slop/world.ts:82 | slop has no arrivals, no verification step and duplicate names. Fairness ignores desirability. | confirmed | Add Poisson arrivals, unique names, desirability deciles. |
 | capital-1 | capital | packages/capital/src/ledger.ts:110 | An invitee's own say-so earns the voucher the vouch credit, so sybil vouching pays and is never flagged. | confirmed | Require counterpart or verified confirmation. |
 | capital-3 | capital, network | packages/capital/src/ledger.ts:80 | NaN t disables time order, Infinity bricks the ledger, NaN amounts poison balances, and capitalWiring swallows the errors. | confirmed | Validate atomically. Log and fail the harness on rejects. |
 | capital-4 | capital | packages/capital/src/ledger.ts:87 | Age eligibility is frozen at first join. | confirmed | Add an age_updated event. |
@@ -209,11 +209,11 @@ The six P0 findings share one cause. The consent and understanding layer of `pac
 | plugin-prototypes-6 | plugin-network | packages/plugin-network/src/routing/authz.ts:35 | Quoted-text detection misses single quotes, "X said:" and forwarded blocks. | confirmed | Widen quote detection. |
 | plugin-prototypes-7 | plugin-network | packages/plugin-network/src/routing/dates.ts:20 | The date parser reads "may" as May and overrides the model. Past stated dates skip the past check. | confirmed | Handle homographs. Re-check after override. |
 | plugin-prototypes-10 | plugin-network, core | packages/plugin-network/src/types.ts:9 | State vocabulary differs across plugin, core and connector. | confirmed | One enum with a mapping table. |
-| plugin-prototypes-13 | messaging-blooio | prototypes/messaging-blooio/src/outbound-queue.ts:301 | Group sends check consent on the chat id, not the participants. | confirmed | Require a participant resolver. Fail closed without it. |
-| plugin-prototypes-14 | messaging-blooio | prototypes/messaging-blooio/src/outbound-queue.ts:48 | kind "reply" is caller-asserted and skips quiet hours and proactive consent. | confirmed | Require inReplyTo a recent inbound. |
-| plugin-prototypes-15 | messaging-blooio | prototypes/messaging-blooio/src/outbound-queue.ts:347 | reply_only lines still send proactive messages. Safety is ignored with no from. | confirmed | Hold all agent-initiated sends on reply_only. Fail closed with no line. |
-| plugin-prototypes-16 | messaging-blooio | prototypes/messaging-blooio/src/outbound-queue.ts:477 | A "blocked" result falls back to SMS, evading line protections. | confirmed | No fallback on policy blocks. Per-person caps across channels. |
-| plugin-prototypes-17 | messaging-blooio | prototypes/messaging-blooio/src/consent-store.ts:37 | A corrupt middle line forgets a STOP. Appends are not fsynced. | confirmed | Fail closed on corruption. fsync. |
+| plugin-prototypes-13 | messaging-blooio | packages/blooio/src/outbound-queue.ts:301 | Group sends check consent on the chat id, not the participants. | confirmed | Require a participant resolver. Fail closed without it. |
+| plugin-prototypes-14 | messaging-blooio | packages/blooio/src/outbound-queue.ts:48 | kind "reply" is caller-asserted and skips quiet hours and proactive consent. | confirmed | Require inReplyTo a recent inbound. |
+| plugin-prototypes-15 | messaging-blooio | packages/blooio/src/outbound-queue.ts:347 | reply_only lines still send proactive messages. Safety is ignored with no from. | confirmed | Hold all agent-initiated sends on reply_only. Fail closed with no line. |
+| plugin-prototypes-16 | messaging-blooio | packages/blooio/src/outbound-queue.ts:477 | A "blocked" result falls back to SMS, evading line protections. | confirmed | No fallback on policy blocks. Per-person caps across channels. |
+| plugin-prototypes-17 | messaging-blooio | packages/blooio/src/consent-store.ts:37 | A corrupt middle line forgets a STOP. Appends are not fsynced. | confirmed | Fail closed on corruption. fsync. |
 | plugin-prototypes-24 | connector-mcp | prototypes/connector-mcp/src/config.ts:83 | Any claude.ai path resolves as a verified client. | confirmed | Pin the CIMD path. |
 | plugin-prototypes-M1 | plugin-network, ci | packages/plugin-network/test/runtime-construction.test.ts | The plugin suite does not load on a fresh main checkout (missing eliza deps). | confirmed | Install eliza deps in CI. Assert the runtime tests ran. |
 | plugin-prototypes-M2 | plugin-network | packages/plugin-network/src/routing/structured-field.ts | An authorized change with no message.id falls through to the unguarded planner. | confirmed | Fail closed with a non-applied reply. |
@@ -273,21 +273,21 @@ The six P0 findings share one cause. The consent and understanding layer of `pac
 | engine-attention-plans-23 | engine | packages/engine/src/attention.ts:326 | Send-time learning reinforces its own default. | plausible | Add exploration sends. |
 | engine-attention-plans-24 | engine | packages/engine/src/plans.ts:514 | Partner backfill swaps the partner silently. | confirmed | Re-confirm the first member. |
 | attention-MISSED-2 | network | packages/network/src/network.ts:~2227 | bookPlan drops both members of a blocked pair and can collapse quorum. | confirmed | Drop only the later joiner. |
-| judge-evals-15 | judge | packages/judge/src/rules.ts:419 | checkMessage misses impersonation variants and contacts, flags venues. | confirmed | Expand tables. |
+| judge-evals-15 | judge | packages/sim/src/judge/rules.ts:419 | checkMessage misses impersonation variants and contacts, flags venues. | confirmed | Expand tables. |
 | judge-evals-19 | evals | packages/evals/src/runPasses.ts:89 | The test split was used for selection. | plausible | Seal a new split. |
 | judge-evals-20 | sim | packages/sim/src/cli.ts:125 | The CLI audit samples only proactive messages and 40 facts. Errors become n/a. | confirmed | Wider sampling. Exit non-zero on error. |
-| judge-evals-21 | judge, docs | docs/test-plan.md:273 | Test plan invariants and code drift. | plausible | Coverage map test. |
+| judge-evals-21 | judge, docs | docs/test-plan.md:273 (git history, 16cde70) | Test plan invariants and code drift. | plausible | Coverage map test. |
 | judge-evals-22 | evals, judge | packages/evals/test/datasetV2.test.ts:45 | Vacuous tests and untested metric rules. | confirmed | Replace and add tests. |
 | judge-evals-24 | evals | packages/evals/src/judgeV2.ts:454 | Spend guard can overshoot. Calibration ignores failures. | plausible | Bound and report coverage. |
-| judge-evals-25 | judge | packages/judge/src/metrics.ts:231 | Metrics scale as messages x minors x canaries. Class-year regex rots. | plausible | Combined matcher. Clock-relative year. |
+| judge-evals-25 | judge | packages/sim/src/judge/metrics.ts:231 | Metrics scale as messages x minors x canaries. Class-year regex rots. | plausible | Combined matcher. Clock-relative year. |
 | judge-evals-M4 | sim | packages/sim/src/world.ts:146 | Duplicate sends are dropped before the judge sees them. | confirmed | Log duplicates. |
-| judge-evals-M5 | judge | packages/judge/src/metrics.ts:199 | Unsent and self-addressed explanations count as canary leaks. | confirmed | Separate selfEcho and stored leaks. |
+| judge-evals-M5 | judge | packages/sim/src/judge/metrics.ts:199 | Unsent and self-addressed explanations count as canary leaks. | confirmed | Separate selfEcho and stored leaks. |
 | sim-worlds-17 | sim | packages/sim/src/generator.ts:356 | Minors are wired as exes and coworkers of adults. | confirmed | Age-plausible links only. |
-| sim-worlds-18 | worlds | packages/worlds/src/slop/world.ts:68 | slop slot times are UTC. | confirmed | Local times. |
+| sim-worlds-18 | worlds | packages/sim/src/apps/slop/world.ts:68 | slop slot times are UTC. | confirmed | Local times. |
 | sim-worlds-19 | sim | packages/sim/src/agent/policy.ts:63 | Travelers use home-city time. | confirmed | Use trip city. |
 | sim-worlds-20 | sim | packages/sim/src/oracle.ts:317 | Precision can be gamed by re-introducing friends. Ex flags are unknowable. | plausible | Exclude known pairs. Split knowable flags. |
 | sim-worlds-21 | sim | packages/sim/src/world.ts:244 | Spawned personas get an incomplete name index. | confirmed | Rebuild on spawn. |
-| sim-worlds-22 | worlds | packages/worlds/src/slop/metrics.ts:88 | goodDateRate includes unsafe dates. City is not validated. | confirmed | Safe-only metrics. Validate city. |
+| sim-worlds-22 | worlds | packages/sim/src/apps/slop/metrics.ts:88 | goodDateRate includes unsafe dates. City is not validated. | confirmed | Safe-only metrics. Validate city. |
 | sim-worlds-23 | sim | packages/sim/README.md:144 | Replay and performance claims drift. | confirmed | Fix claims or code. |
 | sim-worlds-M3 | sim | packages/sim/src/scenario.ts | Scenarios pass when every expectation is skipped. | confirmed | Report vacuous. |
 | sim-worlds-M4 | sim | packages/sim/src/snapshot.ts | The console snapshot rescans every record on each call. | confirmed | Incremental state. |
@@ -359,14 +359,14 @@ The six P0 findings share one cause. The consent and understanding layer of `pac
 | plugin-prototypes-8 | plugin-network | packages/plugin-network/src/evaluators/network-signals.ts:15 | Signals record false travel, safety and opt-out. | confirmed | Quote and negation handling. |
 | plugin-prototypes-9 | plugin-network | packages/plugin-network/src/routing/state-intent.ts:12 | Design-A trigger misses common pause phrasing. | confirmed | Larger labelled corpus. |
 | plugin-prototypes-11 | plugin-network | packages/plugin-network/src/routing/structured-field.ts:158 | Frozen "Today is", stateFrom not rendered. | plausible | Per-call now. Render windows. |
-| plugin-prototypes-18 | messaging-blooio | prototypes/messaging-blooio/src/keywords.ts:109 | Unlimited STOP confirmations. START from strangers grants consent. | confirmed | One confirmation per change. Restore only prior consent. |
-| plugin-prototypes-19 | messaging-blooio | prototypes/messaging-blooio/src/phone.ts:14 | Email and phone are separate consent keys. International numbers mis-normalize. | confirmed | Person-keyed consent. Strict E.164. |
-| plugin-prototypes-20 | messaging-blooio | prototypes/messaging-blooio/src/gateway.ts:50 | Multi-bubble replies hit the cap. Dedupe has no TTL. Copy drifts from Cloud. | plausible | Count turns. TTL. Shared copy. |
+| plugin-prototypes-18 | messaging-blooio | packages/blooio/src/ledger.ts:109 | Unlimited STOP confirmations. START from strangers grants consent. | confirmed | One confirmation per change. Restore only prior consent. |
+| plugin-prototypes-19 | messaging-blooio | packages/blooio/src/phone.ts:14 | Email and phone are separate consent keys. International numbers mis-normalize. | confirmed | Person-keyed consent. Strict E.164. |
+| plugin-prototypes-20 | messaging-blooio | packages/blooio/src/gateway.ts:50 | Multi-bubble replies hit the cap. Dedupe has no TTL. Copy drifts from Cloud. | plausible | Count turns. TTL. Shared copy. |
 | plugin-prototypes-23 | connector-mcp | prototypes/connector-mcp/src/profiles.ts:115 | Unknown age defaults to adult. | confirmed | Default to minor. |
 | plugin-prototypes-25 | connector-mcp | prototypes/connector-mcp/src/server.ts:175 | A committed write is reported as a failure. | confirmed | Truthful receipt. |
 | plugin-prototypes-27 | connector-mcp | prototypes/connector-mcp/src/policy.ts:63 | Unbounded maps, fixed windows, permissive dev server. | confirmed | Evict. Bind loopback. |
 | plugin-prototypes-M4 | plugin-network | packages/plugin-network/src/routing/authz.ts | Stated from and grace until can be in the past. | confirmed | Re-check after override. |
-| plugin-prototypes-M5 | messaging-blooio | prototypes/messaging-blooio/src/outbound-queue.ts | Fallback drops line attribution. | confirmed | Carry the line. |
+| plugin-prototypes-M5 | messaging-blooio | packages/blooio/src/outbound-queue.ts | Fallback drops line attribution. | confirmed | Carry the line. |
 | sites-infra-21 | sites | sites/peon.biz/public/join.html:1 | peon collects exact age and ZIP and hides the role in interests. | plausible | Typed role. Over-18 boolean only. |
 | sites-infra-23 | sites | sites/slop.date/public/index.html:1 | help@ addresses for slop, peon and buddies may not exist. | plausible | Check MX and routing before deploy. |
 | sites-infra-24 | sites | sites/ntwrk.love/public/join.html:10 | ntwrk accepts 13-17 in New York with no minors-specific notice. | plausible | Counsel review. Data minimization. |
@@ -395,11 +395,11 @@ The leak guard misses short sensitive words, non-Latin text, spaced or spelled c
 
 Exploration can select configurations the judge rejected and show the rejection text. The risk filter misses childcare asks. Romance can form groups and pair people with no stated orientation. The planner favours low-id members and books group yes-sayers as pairs.
 
-### packages/judge and packages/evals
+### packages/sim/src/judge and packages/evals
 
 The minors gate cannot see probes. Interruption checks trust flags the system sets about itself. There is no cross-app, name-before-reveal or contact-before-swap invariant. The LLM judges fail open on bad JSON. Calibration never runs in CI.
 
-### packages/sim and packages/worlds
+### packages/sim and packages/sim/src/apps
 
 The simulator grades the system with its own assumptions. PRIMED_MODEL decides the consent-first result. The oracle forgets declines. The console snapshot leaks hidden decisions. slop worlds give minors away through occupation. PRD 40.8 adversaries and the cross-app world are missing.
 

@@ -8,7 +8,7 @@ Status: adopted 2026-10-08 (founder: "do everything"; see section 9 for how each
 
 This doc builds on:
 - PRD 11 (Gateway) and 11.5 (phone verification and agent keys);
-- `connectors/*.md`, `mcp-server-design.md` and `blooio.md`;
+- `connectors/*.md`, `mcp-server-design.md` (git history, 16cde70) and `blooio.md`;
 - the multi-app decisions: one Blooio line with keyword routing; slop.date first; minors join every app but are never matched.
 
 Items that have not been tested on a real phone are marked **(unverified)**.

@@ -1,8 +1,8 @@
 # The Network on elizaOS v3: integration research
 
-Status: research draft, 2026-10-05. Sources: elizaOS monorepo at `/Users/shawwalters/v3` (branch `shaw/mega-refactor`, HEAD `6c6fddb6f65e`, working tree read as-is), the recovered homepage at `reference/eliza-homepage/` (see its `RECOVERED.md`), and PRD sections 22, 30, 31, 32 and 35 (`docs/prd-snapshot.md`).
+Status: research draft, 2026-10-05. Sources: elizaOS monorepo at a local elizaOS monorepo checkout (branch `shaw/mega-refactor`, HEAD `6c6fddb6f65e`, working tree read as-is), the recovered homepage at `reference/eliza-homepage/` (see its `RECOVERED.md`), and PRD sections 22, 30, 31, 32 and 35 (`docs/prd-snapshot.md`).
 
-Path convention: paths starting `cloud/` mean `/Users/shawwalters/v3/packages/cloud/`. Other monorepo paths are given from the repo root (`packages/...`, `plugins/...`).
+Path convention: paths starting `cloud/` mean `packages/cloud/` in the elizaOS monorepo. Other monorepo paths are given from the repo root (`packages/...`, `plugins/...`).
 
 ---
 
@@ -377,7 +377,7 @@ Key files:
 
 **Goal:** a text to a (simulated) Network number gets an answer from the Network character through the real shared runtime. The answer uses a `MEMBER_CONTEXT` from a stub Network API and can call one action (`UPDATE_PROFILE`) that writes to the stub. Everything runs locally, with PGlite and no real providers.
 
-Do the work on a branch in a separate git worktree of the eliza repo. The `/Users/shawwalters/v3` checkout has uncommitted changes and is read-only for this research.
+Do the work on a branch in a separate git worktree of the eliza repo. The a local elizaOS monorepo checkout checkout has uncommitted changes and is read-only for this research.
 
 1. **Stub Network API** (in this repo: `prototypes/network-stub/`, Bun + Hono, port 8790):
    - `GET /members/by-phone/:e164` returns `{memberId, name, city, facets[], activeItems[]}` from a JSON fixture.
@@ -447,8 +447,8 @@ Rough size: 1-2 days for steps 1-5.
 
 ## 7. Open questions
 
-1. **Repo location (PRD 36.10). Decided 2026-10-07:** `plugin-network` lives in this repo (`packages/plugin-network`). Eliza is a git submodule at `eliza/` until its packages are published; Cloud depends on the plugin through Eliza's `../packages/plugin-*` workspace glob. Cloud keeps only integration glue. See [results/2026-10-06-poc-validation.md](../results/2026-10-06-poc-validation.md).
-2. **Agent identity. Implemented in the spike:** separate conversation, keeping the `personal:` prefix with the project folded into the uuidv5 key (a new prefix would break about 20 prefix checks). See `prototypes/poc-eliza-fit/RESULTS.md`.
+1. **Repo location (PRD 36.10). Decided 2026-10-07:** `plugin-network` lives in this repo (`packages/plugin-network`). Eliza is a git submodule at `eliza/` until its packages are published; Cloud depends on the plugin through Eliza's `../packages/plugin-*` workspace glob. Cloud keeps only integration glue. See [results/SUMMARY.md](../results/SUMMARY.md) ("PoC validation").
+2. **Agent identity. Implemented in the spike:** separate conversation, keeping the `personal:` prefix with the project folded into the uuidv5 key (a new prefix would break about 20 prefix checks). See [results/SUMMARY.md](../results/SUMMARY.md) ("Prototypes", poc-eliza-fit); full text in git history (16cde70).
 3. **Inbound route.** Should inbound use a separate internal route (`/api/internal/network/messages`), or a branch in the personal-shared route? Separate is cleaner, but it duplicates about 2k lines of delivery and credit logic.
 4. **Funding.** Who pays for Network turns? Options are a Network org with pooled credits, a billing bypass, or per-member orgs.
 5. **Senders.** Which numbers send? Blooio iMessage vs Twilio SMS per city, and whether Blooio can host a second project and number (PRD 32.2 decision).
