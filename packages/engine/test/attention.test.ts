@@ -11,6 +11,7 @@ import { checkMemberFacing } from "../src/judgeCommon.ts";
 import { localParts } from "../src/outreach.ts";
 import { randomWorld } from "../src/testkit.ts";
 import type { AttentionItem, AttentionLedgerEntry, EngineProposal, HeldItem } from "../src/types.ts";
+import { networkPack } from "../src/packs/network/index.ts";
 import { baseMember, emptyInput, facet, mkWorld, NOW } from "./helpers.ts";
 
 // NOW = Monday 2026-10-05 16:00 UTC = 09:00 PDT.
@@ -685,5 +686,37 @@ describe("iteration 4: cheaper probe-first (parallel probes, warm mentions)", ()
     expect(pr.attribute).toBeUndefined(); // the connection is the one fact (D5)
     for (const bad of ["Zelda", "Quintana"]) expect(pr.text).not.toContain(bad);
     expect(A.buildProbe(w, spec, "seek", ["prov"], NOW)!.attribute).toBe("film photography");
+  });
+});
+
+describe("audit 2026-10-08 (engine-attention-plans-1, -5, -6, -8)", () => {
+  const its = [item("1", { enjoy: 0.8, accept: 0.8 })];
+  test("plans-1: a later inbound message lifts the two-unanswered pause", () => {
+    const ledger = [entry("m1", T - 9 * DAY, { repliedAt: undefined }), entry("m2", T - 8 * DAY, { repliedAt: undefined })];
+    expect(compose({ items: its, ledger }).reason).toBe("only_when_asked");
+    // The member wrote in two days ago (a late reply, or "resume"): the pause is over.
+    expect(compose({ items: its, ledger, conversation: { outboundSinceInbound: 0, lastInboundAt: T - 2 * DAY } }).send).toBe(true);
+    expect(A.unansweredInterruptions(ledger, "a", T, DEFAULT_ATTENTION, T - 2 * DAY)).toBe(0);
+  });
+  test("plans-5: a Quiet minor gets the stricter of the minors cap and the Quiet cap", () => {
+    const quietAdult = A.capFor(member({ state: "quiet" })), quietMinor = A.capFor(member({ state: "quiet", age: 15 }));
+    expect(quietMinor.limit / quietMinor.periodDays).toBeLessThanOrEqual(quietAdult.limit / quietAdult.periodDays);
+    expect(A.capFor(member({ age: 15 }))).toEqual(DEFAULT_ATTENTION.minors.cap);
+  });
+  test("plans-6: minors are never messaged overnight, weekends included, whatever their own quiet hours", () => {
+    const sat3am = Date.UTC(2026, 9, 10, 10); // Saturday 03:00 PDT (a Friday night: not a school night)
+    expect(A.inMemberQuietHours(member({ age: 15, quietHours: [0, 0] }), sat3am)).toBe(true);
+    expect(A.inMemberQuietHours(member({ age: 30, quietHours: [0, 0] }), sat3am)).toBe(false);
+  });
+  test("plans-8: re-engagement respects the Blooio streak and the caller's pack", () => {
+    const far = { expiresAt: NOW + 90 * DAY };
+    const base = {
+      member: member({ onlyWhenAsked: true }), autoPaused: true, optedOut: false, joinedAt: NOW - 60 * DAY,
+      conversation: { outboundSinceInbound: 2, lastInboundAt: NOW - 31 * DAY }, items: [item("hi", { enjoy: 0.9, accept: 0.9, urgency: far })], valueHistory: [0.1], now: T,
+    };
+    expect(A.reengagement(base).send).toBe(true);
+    expect(A.reengagement({ ...base, conversation: { ...base.conversation, outboundSinceInbound: 3 } }).reason).toBe("conversation_streak");
+    const pack = { ...networkPack, attention: { ...networkPack.attention, itemGate: () => "lane_closed" } };
+    expect(A.reengagement({ ...base, pack }).reason).toBe("nothing_eligible");
   });
 });

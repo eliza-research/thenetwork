@@ -106,7 +106,10 @@ export interface Cap { limit: number; periodDays: number }
 
 /** Interruption cap for the member: state cap (D1), minors 1/7d (D9), 0 when paused or only-when-asked. */
 export function capFor(m: MemberAttention, cfg: AttentionConfig = DEFAULT_ATTENTION): Cap {
-  const base = isMinor(m.age) ? cfg.minors.cap : cfg.caps[m.state];
+  // Minors take the stricter of the minors cap and their state's cap (a Quiet minor keeps Quiet's
+  // 1 per 30 days, engine-attention-plans-5).
+  const st = cfg.caps[m.state];
+  const base = isMinor(m.age) && cfg.minors.cap.limit / cfg.minors.cap.periodDays < st.limit / st.periodDays ? cfg.minors.cap : cfg.caps[m.state];
   if (m.state === "paused" || m.onlyWhenAsked || m.prefs.mode === "only_when_asked") return { limit: 0, periodDays: base.periodDays };
   // An explicit request can lower the cap, or restore it, but never exceed the state cap (D11).
   const limit = m.prefs.capOverride === undefined ? base.limit : Math.min(base.limit, Math.max(0, Math.floor(m.prefs.capOverride)));
@@ -132,9 +135,14 @@ export function breakInsUsed(ledger: readonly AttentionLedgerEntry[], memberId: 
   return uniqueIds(ledger.filter(e => e.memberId === memberId && e.kind === "break_in" && e.at <= now && e.at > now - periodDays * DAY));
 }
 
-/** Consecutive most-recent interruptions with no reply by their deadline (72h). Pending ones are skipped. */
-export function unansweredInterruptions(ledger: readonly AttentionLedgerEntry[], memberId: MemberId, now: number, cfg: AttentionConfig = DEFAULT_ATTENTION): number {
-  const mine = ledger.filter(e => e.memberId === memberId && e.countsAgainstCap && e.at <= now)
+/**
+ * Consecutive most-recent interruptions with no reply by their deadline (72h). Pending ones are
+ * skipped. `since` (the member's last inbound message, Conversation.lastInboundAt): interruptions
+ * sent at or before it do not count, so any later message from the member (a late reply, "resume")
+ * lifts the two-unanswered pause (engine-attention-plans-1).
+ */
+export function unansweredInterruptions(ledger: readonly AttentionLedgerEntry[], memberId: MemberId, now: number, cfg: AttentionConfig = DEFAULT_ATTENTION, since?: number): number {
+  const mine = ledger.filter(e => e.memberId === memberId && e.countsAgainstCap && e.at <= now && (since === undefined || since > now || e.at > since))
     .sort((a, b) => (b.at - a.at) || (a.messageId < b.messageId ? -1 : 1));
   const seen = new Set<string>();
   let n = 0;
@@ -200,7 +208,7 @@ export function attentionCost(items: readonly Pick<AttentionItem, "effort" | "en
 export function shadowPrice(m: Pick<MemberAttention, "state" | "age" | "newcomer">, used: number, cap: number, r: number, cfg: AttentionConfig = DEFAULT_ATTENTION): number {
   if (cap <= 0 || m.state === "paused") return Infinity;
   let base = cfg.lambda[m.state];
-  if (isMinor(m.age)) base = cfg.lambda.normal; // 1.7: members 13-17 price like Normal (0.25)
+  if (isMinor(m.age)) base = Math.max(cfg.lambda.normal, base); // 1.7: members 13-17 price like Normal (0.25), or stricter
   else if (m.newcomer && (m.state === "open" || m.state === "normal" || m.state === "receiving")) base = Math.min(base, cfg.newcomer.lambda);
   return base * Math.pow(1 + used / cap, 2) * r;
 }
@@ -250,10 +258,17 @@ export function annoyance(ledger: readonly AttentionLedgerEntry[], memberId: Mem
 
 const jsDay = (ts: number, tz: string) => (localParts(ts, tz).weekday + 1) % 7;
 
-/** Member quiet hours, plus 20:00-08:00 local on school nights for members aged 13-17 (D9). */
+/**
+ * Overnight hours (local) in which a member aged 13-17 is never messaged, on any day, whatever
+ * their own quiet hours say (engine-attention-plans-6). School nights extend it to cfg.minors.quietHours.
+ */
+export const MINOR_OVERNIGHT: [number, number] = [22, 7];
+
+/** Member quiet hours, plus 20:00-08:00 local on school nights for members aged 13-17 (D9) and MINOR_OVERNIGHT every night. */
 export function inMemberQuietHours(m: Pick<MemberAttention, "tz" | "quietHours" | "age">, t: number, cfg: AttentionConfig = DEFAULT_ATTENTION): boolean {
   if (inQuietHours(t, m.tz, m.quietHours)) return true;
   if (!isMinor(m.age)) return false;
+  if (inQuietHours(t, m.tz, MINOR_OVERNIGHT)) return true;
   const [s, e] = cfg.minors.quietHours;
   const h = localParts(t, m.tz).hour;
   const d = jsDay(t, m.tz);
@@ -460,7 +475,7 @@ export function composeMessage(inp: ComposeInput): ComposeResult {
   const no = (reason: string) => ({ ...res, reason });
   if (m.state === "paused") return no("paused");
   // The two-unanswered pause comes first (F28): the Network's own auto-pause always fires before Blooio's limit.
-  if (m.onlyWhenAsked || m.prefs.mode === "only_when_asked" || unansweredInterruptions(ledger, m.memberId, now, cfg) >= 2) return no("only_when_asked");
+  if (m.onlyWhenAsked || m.prefs.mode === "only_when_asked" || unansweredInterruptions(ledger, m.memberId, now, cfg, inp.conversation.lastInboundAt) >= 2) return no("only_when_asked");
   // Reserve Blooio's third unanswered slot for logistics and safety (1.9).
   if (inp.conversation.outboundSinceInbound > cfg.blooio.interruptMaxOutstanding) return no("conversation_streak");
   if (inMemberQuietHours(m, now, cfg)) return no("quiet_hours");
@@ -560,8 +575,11 @@ export const REENGAGE_SUFFIX = "Want me to keep sending these?";
 export function reengagement(inp: {
   member: MemberAttention; autoPaused: boolean; optedOut: boolean; conversation: Conversation; joinedAt: number;
   items: readonly AttentionItem[]; valueHistory: number[]; now: number; cfg?: AttentionConfig;
+  /** The app pack (default networkPack): its lane gates apply to the re-engagement item too. */
+  pack?: AppPack;
 }): { send: boolean; reason: string; item?: AttentionItem; value?: number } {
   const cfg = inp.cfg ?? DEFAULT_ATTENTION;
+  const P = inp.pack ?? networkPack;
   const { member: m, conversation: c, now } = inp;
   if (inp.optedOut) return { send: false, reason: "opted_out" };
   if (!inp.autoPaused || m.prefs.mode === "only_when_asked") return { send: false, reason: "not_auto_paused" };
@@ -570,7 +588,9 @@ export function reengagement(inp: {
   const silentSince = Math.max(c.lastInboundAt ?? inp.joinedAt, inp.joinedAt);
   if (now - silentSince < cfg.blooio.reengageAfterDays * DAY) return { send: false, reason: "too_soon" };
   if (inMemberQuietHours(m, now, cfg)) return { send: false, reason: "quiet_hours" };
-  const vals = inp.items.filter(it => !itemGate(m, it, now, cfg)).map(it => ({ it, v: itemValue(it, m.prefs, cfg) }))
+  // The Blooio streak (1.9): never past the outstanding limit that logistics may use (engine-attention-plans-8).
+  if (!canSendLogistics(c, cfg)) return { send: false, reason: "conversation_streak" };
+  const vals = inp.items.filter(it => !itemGate(m, it, now, cfg, P)).map(it => ({ it, v: itemValue(it, m.prefs, cfg) }))
     .sort((a, b) => (b.v - a.v) || (a.it.id < b.it.id ? -1 : 1));
   const best = vals[0];
   if (!best) return { send: false, reason: "nothing_eligible" };

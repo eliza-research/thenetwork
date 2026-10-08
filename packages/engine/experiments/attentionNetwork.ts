@@ -289,7 +289,7 @@ export class AttentionNetwork extends StubNetwork {
     }
     return {
       memberId: id, state, age: mem.age, tz, quietHours,
-      onlyWhenAsked: st.unanswered >= 2 || A.unansweredInterruptions(this.ledger, id, now, this.cfg) >= 2,
+      onlyWhenAsked: st.unanswered >= 2 || A.unansweredInterruptions(this.ledger, id, now, this.cfg, this.convOf(id).lastInboundAt) >= 2,
       newcomer: now - (mem.joinedAt ?? 0) < this.cfg.newcomer.days * DAY,
       prefs, categoriesOptIn: mem.prefs.categoriesOptIn,
     };
@@ -773,7 +773,7 @@ export class AttentionNetwork extends StubNetwork {
       m.unanswered++;
       this.stats.unanswered++;
       for (const it of pend.items) if (it.sourceProposalId && (it.stage === "partner" || it.others.length > 1 || it === pend.picked || this.isParallel(it.sourceProposalId))) this.answer(it.sourceProposalId, id, false, "unanswered");
-      if (!this.autoPaused.has(id) && (m.unanswered >= 2 || A.unansweredInterruptions(this.ledger, id, now, this.cfg) >= 2)) {
+      if (!this.autoPaused.has(id) && (m.unanswered >= 2 || A.unansweredInterruptions(this.ledger, id, now, this.cfg, this.convOf(id).lastInboundAt) >= 2)) {
         this.autoPaused.add(id);
         this.stats.autoPauses.push({ memberId: id, at: now });
       }
@@ -785,7 +785,7 @@ export class AttentionNetwork extends StubNetwork {
       if (m.awaiting?.kind === "reveal") m.awaiting = undefined;
       this.onReveal(r.pid, id, !!this.o.revealOptOut, now);
     }
-    if (this.autoPaused.size) for (const id of this.autoPaused) if (this.s.member(id).unanswered === 0 && A.unansweredInterruptions(this.ledger, id, now, this.cfg) < 2) this.autoPaused.delete(id);
+    if (this.autoPaused.size) for (const id of this.autoPaused) if (this.s.member(id).unanswered === 0 && A.unansweredInterruptions(this.ledger, id, now, this.cfg, this.convOf(id).lastInboundAt) < 2) this.autoPaused.delete(id);
   }
 
   /** D6: one re-engagement for auto-paused members after >= 30 days of silence, high-value item only. */
