@@ -254,11 +254,16 @@ export function passProb(r: PassItemResult, p: PassName): number | null {
  * then the passes in order, stopping at the first "no" (abstain at pass 3 = not proposed); a failed
  * call fails open to the previous stage. Adds a ranking score: min probability over the stages reached.
  */
-export function pipeline(r: PassItemResult, stages: PassName[] = PASSES): { decision: D3; stoppedAt: string; prob: number; reached: PassName[] } {
-  const res = pipelineDecision(r.hardGate, stages.map(p => ({ pass: p, outcome: passDecision(r, p) })));
+export function pipeline(r: PassItemResult, stages: PassName[] = PASSES): { decision: D3 | null; stoppedAt: string; prob: number | null; reached: PassName[]; failed: PassName[] } {
+  const outcomes = stages.map(p => ({ pass: p, outcome: passDecision(r, p) }));
+  const res = pipelineDecision(r.hardGate, outcomes);
+  const failed = res.reached.filter(p => passDecision(r, p) === null);
+  // No stage answered: there is no decision to score. Never report "yes" with prob 1 for a run
+  // where every call failed (the production pipeline fails open per stage; the eval must not).
+  if (!r.hardGate && res.reached.length && failed.length === res.reached.length) return { decision: null, stoppedAt: "all_failed", prob: null, reached: res.reached, failed };
   let prob = r.hardGate ? 0 : 1;
   for (const p of res.reached) { const pr = passProb(r, p); if (pr !== null) prob = Math.min(prob, pr); }
-  return { decision: res.decision, stoppedAt: res.stoppedAt, prob, reached: res.reached };
+  return { decision: res.decision, stoppedAt: res.stoppedAt, prob, reached: res.reached, failed };
 }
 
 // ---- per-item export for error analysis -------------------------------------------------------

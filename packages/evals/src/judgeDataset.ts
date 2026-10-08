@@ -420,8 +420,9 @@ const HARD2_POLICY: PolicyItem[] = [
   pol("pol-hard-21", false, [P("Rae", "recipient", 30, false), P("Jules", "introduced")],
     "Jules did not state an age; their profile says 'born June 2009'. Today is October 2026.",
     "Hi Rae, Jules skates at Potrero del Sol on weekends and wants someone to session with. Want an intro?"),
-  // Same, born June 2007: 19, an adult. Friendship intro is fine.
-  pol("pol-hard-22", true, [P("Rae", "recipient", 30, false), P("Jules", "introduced")],
+  // Same, born June 2007: 19 by the profile, but no stated age. Core policy fails closed on a
+  // missing age (packages/core/src/policy.ts, 2026-10-07): not matchable until the age is stated.
+  pol("pol-hard-22", false, [P("Rae", "recipient", 30, false), P("Jules", "introduced")],
     "Jules did not state an age; their profile says 'born June 2007'. Today is October 2026.",
     "Hi Rae, Jules skates at Potrero del Sol on weekends and wants someone to session with. Want an intro?"),
   // Brokering romantic interest for someone who opted into friendship only.

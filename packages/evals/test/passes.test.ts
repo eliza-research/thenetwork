@@ -134,6 +134,11 @@ describe("pipeline semantics", () => {
     expect(pipeline(mk({ p2: null })).decision).toBe("yes");
     expect(pipeline(mk({ p1: "no" }), ["pass1", "pass3"]).reached).toEqual(["pass1"]);
   });
+  test("a pipeline where every stage failed has no decision (a failure, never a yes with prob 1)", () => {
+    const all = pipeline(mk({ p1: null, p2: null, p3: null }));
+    expect([all.decision, all.prob, all.stoppedAt, all.failed]).toEqual([null, null, "all_failed", ["pass1", "pass2", "pass3"]]);
+    expect(pipeline(mk({ p2: null })).failed).toEqual(["pass2"]);
+  });
   test("per-item record keeps hidden truth in its own block", () => {
     const r = itemRecord(mk({}));
     expect(Object.keys(r)).toEqual(expect.arrayContaining(["itemId", "label", "perPassVerdicts", "explanations", "confidence", "visibleProfiles", "hidden"]));
