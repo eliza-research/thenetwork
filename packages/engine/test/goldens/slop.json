@@ -2,7 +2,7 @@
  "packVersion": "slop-pack-1.1.0",
  "engine.seed1": {
   "configHash": "26f1209f2b1fcbf3",
-  "runId": "afad226016d22bc4",
+  "runId": "2428d51e9b60755c",
   "proposals": 44,
   "asks": 236,
   "funnel": {
@@ -69,12 +69,12 @@
   "sha": {
    "proposals": "630d34b3b9bd0d3f4cae0183a167483b8d13eb0a6afbfbe1f604bfb1fe66556e",
    "asks": "764806acf2339352f57e28ae75e6bd13440ab655ec13b7368c5993d4d0461805",
-   "runLog": "302a385e37cf1bbcd52f7f9bb7864ab245b0c258045f49b5fdd1f5df23069c70"
+   "runLog": "74f94f9b1fa7f7e8ef85311b45f1783a08fb95c6b374086808bd70025205917a"
   }
  },
  "engine.seed2": {
   "configHash": "5c91ed4ebf64087a",
-  "runId": "0d831fd46d71b5ef",
+  "runId": "e3510f5cfad17d71",
   "proposals": 33,
   "asks": 247,
   "funnel": {
@@ -130,7 +130,7 @@
   "sha": {
    "proposals": "0a856ad4ae69f8801482e2cf096f1adf04e4645b14dbc9bd936e662d4b42299d",
    "asks": "543c9dea3e753a016224d09d7cd8169aca03c4ba31e813045baac90900cc7f33",
-   "runLog": "ea731c0ba02e61764df36ed4653dca1df7a276bef4b159b1e90ffa8cfc3cc4e2"
+   "runLog": "474e366fbc4ef77fa50d688347ae99c0cb09e9037f4edbb1b6880a24cb393164"
   }
  },
  "harness.seed1": {
