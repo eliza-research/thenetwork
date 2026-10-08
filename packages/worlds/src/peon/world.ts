@@ -168,6 +168,8 @@ export async function runPeonWorld(o: PeonRunOptions): Promise<PeonRunResult> {
   const { oracle, state, seed } = world;
   const R = o.realism ?? REALISM_V2;
   const S = R.screening, A = R.attention, TM = R.timing;
+  // Employers state a fill-by date at intake (domain research B6: "interview steps and timeline").
+  if (TM) state.deadlineWeeks = TM.deadlineWeeks;
   let recruiterHours = 0;
   const closed = { deadline: 0, external: 0 };
   // Channel trust per candidate (iteration 2): the track record of the roles this channel sent them.
