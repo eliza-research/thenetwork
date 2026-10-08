@@ -142,17 +142,50 @@ export function directional(a: SlopProfile, b: SlopProfile, o: SlopPackOptions, 
   return Math.max(1e-6, Math.min(1, v));
 }
 
-/** |overall_a - overall_b| when both ratings are usable (confidence >= min), else undefined. */
+/**
+ * Weighted RMS gap between two ratings over face / body / overall (o.appearance.dims) when both are
+ * usable (confidence >= min), else undefined. With dims = overall only it is |overall_a - overall_b|.
+ */
 export function appearanceGap(a: SlopProfile, b: SlopProfile, o: SlopPackOptions): number | undefined {
-  const x = a.appearance, y = b.appearance;
-  if (!x || !y || x.confidence < o.appearance.minConfidence || y.confidence < o.appearance.minConfidence) return undefined;
-  return Math.abs(x.overall - y.overall);
+  const x = a.appearance, y = b.appearance, A = o.appearance;
+  if (!x || !y || x.confidence < A.minConfidence || y.confidence < A.minConfidence) return undefined;
+  const W = A.dims ?? { face: 0, body: 0, overall: 1 };
+  const tot = W.face + W.body + W.overall;
+  if (!(tot > 0)) return Math.abs(x.overall - y.overall);
+  return Math.sqrt((W.face * (x.face - y.face) ** 2 + W.body * (x.body - y.body) ** 2 + W.overall * (x.overall - y.overall) ** 2) / tot);
 }
-/** Soft assortative term (iteration 3): exp(-w x gap^2), 1 when off or unusable. */
+/** Soft assortative term: exp(-w x gap^2), 1 when off or unusable. */
 export function appearanceFactor(a: SlopProfile, b: SlopProfile, o: SlopPackOptions): number {
   if (o.appearance.mode !== "soft") return 1;
   const d = appearanceGap(a, b, o);
   return d === undefined ? 1 : Math.exp(-o.appearance.softWeight * d * d);
+}
+
+/**
+ * a's revealed preference for a body type: mean (rating - a's mean rating) over the dates a rated
+ * whose partner had that (confident) body type, shrunk toward 0. undefined with no such ratings.
+ */
+export function revealedBodyPref(a: SlopProfile, type: string, shrinkN: number): number | undefined {
+  const rs = a.history.ratedBody;
+  if (!rs.length) return undefined;
+  const mean = rs.reduce((s, r) => s + r.v, 0) / rs.length;
+  const of = rs.filter(r => r.type === type);
+  if (!of.length) return undefined;
+  return of.reduce((s, r) => s + (r.v - mean), 0) / (of.length + shrinkN);
+}
+/**
+ * Body type (categorical), directional: a's value of b x exp(+statedWeight) when b's body type is in
+ * a's stated preferences, exp(-statedWeight) when not; with no stated preference, exp(revealedWeight
+ * x 2 x revealed preference); otherwise 1 (the similarity term is all that applies).
+ */
+export function bodyTypeFactor(a: SlopProfile, b: SlopProfile, o: SlopPackOptions): number {
+  const B = o.appearance.bodyType;
+  if (o.appearance.mode === "off" || !B?.enabled) return 1;
+  const t = b.appearance?.bodyType;
+  if (!t || (b.appearance!.bodyTypeConfidence ?? 0) < B.minConfidence || b.appearance!.confidence < o.appearance.minConfidence) return 1;
+  if (a.wantsBody.length) return Math.exp(a.wantsBody.includes(t) ? B.statedWeight : -B.statedWeight);
+  const r = revealedBodyPref(a, t, B.revealedShrink);
+  return r === undefined ? 1 : Math.exp(B.revealedWeight * 2 * r);
 }
 
 /** Booked-date logistics: a slot both said they are usually free (else an expected factor). */

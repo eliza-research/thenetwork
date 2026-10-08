@@ -15,6 +15,7 @@ import { canBeMatched, type MemberId } from "@thenetwork/core";
 import { Rng, hash32, clamp01 } from "@thenetwork/sim/src/rng.ts";
 import { zipMiles, zipInfo, type SlopCity } from "./geo.ts";
 import { SLOTS, citiesInWeek, violates, zipIn, type DateActivity, type SlopPersona } from "./persona.ts";
+import { bodyTerm, type BodyTypeModel } from "./bodyType.ts";
 
 export const ORACLE_PARAMS = {
   c0: -1.25, wDesire: 0.9, wTaste: 1.8, wSelect: 0.4, ageOutPerYear: 0.3,
@@ -59,7 +60,8 @@ export interface DateOutcome { ea: number; eb: number; quality: number; good: bo
 
 export class SlopOracle {
   readonly byId: Map<MemberId, SlopPersona>;
-  constructor(personas: readonly SlopPersona[], readonly seed: number | string) {
+  /** Iteration 4: body-type preferences in attraction (bodyType.ts); absent = not modelled. */
+  constructor(personas: readonly SlopPersona[], readonly seed: number | string, readonly bodyTypes?: BodyTypeModel) {
     this.byId = new Map(personas.map(p => [p.id, p]));
   }
   p(id: MemberId): SlopPersona {
@@ -103,7 +105,8 @@ export class SlopOracle {
     const age = b.stated.claimedAge; // what a believes; a lying minor looks their claimed age
     const out = age < A.ageRange[0] ? A.ageRange[0] - age : age > A.ageRange[1] ? age - A.ageRange[1] : 0;
     const genderOk = A.seeks.includes(B.matchGender) ? 0 : -4;
-    return P.c0 + A.warmth + P.wDesire * B.desirability + P.wTaste * taste - P.ageOutPerYear * out - P.wSelect * A.desirability + genderOk;
+    const body = this.bodyTypes ? bodyTerm(a.id, b.id, this.bodyTypes) : 0;
+    return P.c0 + A.warmth + P.wDesire * B.desirability + P.wTaste * taste - P.ageOutPerYear * out - P.wSelect * A.desirability + genderOk + body;
   }
   /** P(a likes b's profile) before meeting. */
   attraction(a: SlopPersona, b: SlopPersona): number { return sigmoid(this.latent(a, b)); }

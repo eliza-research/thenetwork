@@ -14,7 +14,7 @@ import { mutualMarkets } from "./geo.ts";
 import type { SlopPackOptions } from "./options.ts";
 import { datingMarkets, slopProfiles, type SlopProfile } from "./profile.ts";
 import { SLOP_LANE } from "./rules.ts";
-import { aggregate, appearanceFactor, dateActivity, directional, logistics, responsiveness } from "./score.ts";
+import { aggregate, appearanceFactor, bodyTypeFactor, dateActivity, directional, logistics, responsiveness } from "./score.ts";
 import { attractionModel } from "./learn.ts";
 import type { World } from "../../world.ts";
 
@@ -37,7 +37,7 @@ export function firstOf(a: SlopProfile, b: SlopProfile, now: number): [SlopProfi
 export function pairValue(a: SlopProfile, b: SlopProfile, o: SlopPackOptions, attrAB = 0, attrBA = 0): { value: number; va: number; vb: number; activity: string } {
   const activity = dateActivity(a, b);
   const lg = logistics(a, b, o) * appearanceFactor(a, b, o);
-  const va = directional(a, b, o, activity, attrAB) * lg, vb = directional(b, a, o, activity, attrBA) * lg;
+  const va = directional(a, b, o, activity, attrAB) * lg * bodyTypeFactor(a, b, o), vb = directional(b, a, o, activity, attrBA) * lg * bodyTypeFactor(b, a, o);
   return { value: aggregate([va, vb], o.aggregate), va, vb, activity };
 }
 

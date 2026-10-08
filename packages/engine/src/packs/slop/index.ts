@@ -4,7 +4,9 @@
 //   filters    mutual gender & orientation inclusion, age ranges both ways, stated dealbreakers,
 //              safety cues and records -> review hold; no race filter (no such field)
 //   retrieval  reciprocal candidates within geo and filters; stated preferences only filter
-//   scoring    compatibility signals + learned / revealed component, reciprocal (harmonic or min)
+//   scoring    compatibility signals + learned / revealed component, reciprocal (harmonic or min);
+//              appearance (iteration 4, ON): soft similarity on face / body / overall ratings and
+//              body type against stated / revealed preferences; ratings are NEVER shared (appearance.ts)
 //   selection  global assignment per tick (greedy or stable roommates), congestion caps, exposure
 //              fairness (selection.adjust), receptivity pacing, "your turn" limit
 //   consent    probe first (wanter first), then a booked first date the agent plans; romance ships alone
@@ -26,7 +28,7 @@ import { missingFields, needsBasics, reviewReason, SLOP_CANDIDATE_PRE_RULES, SLO
 import { aggregate } from "./score.ts";
 import { distanceBand } from "./zips.ts";
 
-export const SLOP_PACK_VERSION = "slop-pack-1.2.0";
+export const SLOP_PACK_VERSION = "slop-pack-1.3.0";
 
 /**
  * Engine config for slop.date runs (pass as runEngine's config; the pack travels in deps.pack).
@@ -211,5 +213,9 @@ export { planFirstDate, planFromInput, PUBLIC_VENUE, type DatePlan } from "./pla
 export { distanceBand, cellOfZip, ZIPS as SLOP_ZIPS, type DistanceBand } from "./zips.ts";
 export { ageBand, SLOP_ASK_QUESTIONS } from "./copy.ts";
 export { mutualMarkets } from "./geo.ts";
-export { adultsOnly, appearanceFacet, canRatePhotos, ClipAppearanceRater, parseAppearance, rateMember, VisionLlmAppearanceRater, VISION_RATER_SYSTEM, type AppearanceRater, type AppearanceScore, type PhotoRef, type RatingSubject, type VisionChat } from "./appearance.ts";
+export { adultsOnly, appearanceFacet, appearanceLeak, APPEARANCE_LEAK_PATTERNS, BODY_TYPES, canRatePhotos, ClipAppearanceRater, parseAppearance, rateMember, VisionLlmAppearanceRater, VISION_RATER_SYSTEM, type AppearanceRater, type AppearanceScore, type BodyType, type PhotoRef, type RatingSubject, type VisionChat } from "./appearance.ts";
+export { CLEF_FEATURES, CLEF_MODEL_IDS, CLEF_QUESTIONS, ClefError, clefFeatures, applyHead, makeClefRater, makeClefRaterFromEnv, WorkersAIClefRater, type ClefModel, type ClefRaterOptions } from "./clef.ts";
+export { DEFAULT_CLEF_WEIGHTS, loadClefWeights, validateClefWeights, type ClefWeights } from "./clefWeights.ts";
+export { calibrateClefWeights, fitClefWeights, fitPairwise, type LabelledPair } from "./fitClef.ts";
+export { biasMonitor, ratingQuintiles, type BiasReport, type MemberOutcome } from "./biasMonitor.ts";
 export { pairValue, firstOf, SLOP_GENERATOR } from "./generators.ts";

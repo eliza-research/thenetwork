@@ -105,12 +105,19 @@ export interface SlopPackOptions {
    */
   widen: { enabled: boolean; maxDegree: number; miles: number };
   /**
-   * Iteration 3 (founder decision): appearance ratings (appearance.ts) used ONLY as an assortative
-   * similarity term on `overall`: "band" = a hard pair filter |a - b| <= band; "soft" = each side's
-   * value x exp(-softWeight x (a - b)^2). Ratings below `minConfidence`, missing, or on anyone who is
-   * not a verified adult are ignored (the pair is neither filtered nor scored on them).
+   * Appearance ratings (appearance.ts; iteration 3 interface, iteration 4 founder decision: ON, used
+   * in matching, NEVER shared). Similarity on face / body / overall (weighted RMS gap, `dims`):
+   * "band" = a hard pair filter gap <= band; "soft" = each side's value x exp(-softWeight x gap^2).
+   * Body type is categorical: each side's value x exp(+-weight) by the other's body type against
+   * their STATED body-type preference, else their REVEALED one (post-date ratings by the rated
+   * person's body type), else nothing (similarity only). Ratings below `minConfidence`, missing, or
+   * on anyone who is not a verified adult are ignored (the pair is neither filtered nor scored on them).
    */
-  appearance: { mode: "off" | "band" | "soft"; band: number; softWeight: number; minConfidence: number };
+  appearance: {
+    mode: "off" | "band" | "soft"; band: number; softWeight: number; minConfidence: number;
+    dims: { face: number; body: number; overall: number };
+    bodyType: { enabled: boolean; statedWeight: number; revealedWeight: number; revealedShrink: number; minConfidence: number };
+  };
   /** Pairs below this reciprocal value are not proposed (a dud first date costs both people an evening). */
   minValue: number;
 }
@@ -146,7 +153,14 @@ export const SLOP_DEFAULT_OPTIONS: SlopPackOptions = {
   // the model measured no gain (iteration 2). Turn it on when probes show a photo.
   attraction: { enabled: false, itemWeight: 1, tasteWeight: 1, cfWeight: 1, probeWeight: 1, backoutWeight: 2, feedbackWeight: 1.5, shrink: 4, ridge: 4, cfShrink: 0.5 },
   maxAsksPerField: 2,
-  appearance: { mode: "off", band: 1, softWeight: 0.5, minConfidence: 0.3 },
+  // Iteration 4 (founder decision 2026-10-08): ON. Soft, not band: in iteration 3 with photos in the
+  // probe the band cut dates per member to 0.69-0.77x random and hurt small pools for no quality gain,
+  // while soft 0.1 tied photos alone on quality and kept volume (docs, I4).
+  appearance: {
+    mode: "soft", band: 1, softWeight: 0.1, minConfidence: 0.3,
+    dims: { face: 0.25, body: 0.25, overall: 0.5 },
+    bodyType: { enabled: true, statedWeight: 0.3, revealedWeight: 0.5, revealedShrink: 3, minConfidence: 0.4 },
+  },
   widen: { enabled: true, maxDegree: 2, miles: 25 },
 };
 

@@ -54,6 +54,8 @@ export interface History {
   rated: { about: MemberId; v: number }[];
   /** The same, joined with the rated person's self-description when known (filled after all profiles are parsed). */
   ratedSelf: { self: number[]; v: number }[];
+  /** The same, joined with the rated person's (confident) body type when rated (iteration 4; revealed body-type preference). */
+  ratedBody: { type: string; v: number }[];
 }
 
 export interface SlopProfile {
@@ -65,6 +67,8 @@ export interface SlopProfile {
   dealbreakers: string[];
   interests: string[]; shareableInterests: string[]; activities: string[]; free: Slot[];
   wants?: number[]; self?: number[];
+  /** Stated body-type preferences (slop:wants_body:<type>, appearance.ts BODY_TYPES); [] = none stated. Never shown. */
+  wantsBody: string[];
   identity?: string; orientation?: string;
   safety: string[];
   /** Verification results: verify:<check>:<pass|fail> tags. */
@@ -72,7 +76,7 @@ export interface SlopProfile {
   /** Age verification: true = passed, false = failed, undefined = no check recorded. */
   ageVerified?: boolean;
   /** Appearance rating (iteration 3), read only for adults whose age is not known to be unverified. */
-  appearance?: { face: number; body: number; overall: number; confidence: number };
+  appearance?: { face: number; body: number; overall: number; confidence: number; bodyType?: string; bodyTypeConfidence?: number };
   /**
    * Hard-filter questions asked at least `silentAfterDays` ago and never answered (age_range,
    * distance, orientation): the pack proposes on a narrow fallback instead of locking them out.
@@ -171,6 +175,7 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
       activities: [...new Set(has("slop:activity:"))].sort(),
       free: SLOTS.filter(s => has("slop:free:").includes(s)),
       wants: wants.length === 5 ? wants.map(num) : undefined,
+      wantsBody: [...new Set(has("slop:wants_body:"))].sort(),
       self: self.length === 5 ? self.map(num) : undefined,
       identity: one("slop:identity:"), orientation: one("slop:orientation:"),
       safety: [...new Set(tags.filter(x => x.t.startsWith("safety:")).map(x => x.t))].sort(),
@@ -187,12 +192,17 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
   // Revealed taste: the self-descriptions of the people a member rated, with the rating.
   for (const p of out.values()) {
     p.history.rated.sort((x, y) => (x.about < y.about ? -1 : x.about > y.about ? 1 : x.v - y.v));
-    for (const r of p.history.rated) { const self = out.get(r.about)?.self; if (self) p.history.ratedSelf.push({ self, v: r.v }); }
+    for (const r of p.history.rated) {
+      const q = out.get(r.about);
+      if (q?.self) p.history.ratedSelf.push({ self: q.self, v: r.v });
+      const ap = q?.appearance;
+      if (ap?.bodyType && (ap.bodyTypeConfidence ?? 0) >= 0.4) p.history.ratedBody.push({ type: ap.bodyType, v: r.v });
+    }
   }
   return out;
 }
 
-const emptyHistory = (): History => ({ yes: 0, no: 0, silent: 0, dates: 0, noShows: 0, backouts: 0, givenMean: 0, given: 0, receivedMean: 0, received: 0, negativeFrom: 0, blockedBy: 0, attendedSlots: [], rated: [], ratedSelf: [] });
+const emptyHistory = (): History => ({ yes: 0, no: 0, silent: 0, dates: 0, noShows: 0, backouts: 0, givenMean: 0, given: 0, receivedMean: 0, received: 0, negativeFrom: 0, blockedBy: 0, attendedSlots: [], rated: [], ratedSelf: [], ratedBody: [] });
 const SENT = { positive: 1, neutral: 0.5, negative: 0 } as const;
 
 /** Slot index of a timestamp in the dating week (the slop world's slots: weekday evenings 19:00, weekend 14:00 / 19:00 UTC). */

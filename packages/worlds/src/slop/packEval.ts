@@ -10,8 +10,11 @@ import { slopEngineMatcher } from "./enginePack.ts";
 import { slopMetrics, type SlopMetrics } from "./metrics.ts";
 import { isSafe } from "./oracle.ts";
 import { groupOf } from "./persona.ts";
-import { CHECKIN_DEFAULTS, RATER_DEFAULTS, demoGroupOf, RELAY_DEFAULTS, REVIEW_DEFAULTS, VERIFICATION_DEFAULTS, WIDEN_DEFAULTS, type PlatformModel, type VerificationModel } from "./snapshot.ts";
+import { biasMonitor, ratingQuintiles, type BiasReport } from "@thenetwork/engine/src/packs/slop/biasMonitor.ts";
+import { parseAppearance } from "@thenetwork/engine/src/packs/slop/appearance.ts";
+import { CHECKIN_DEFAULTS, RATER_DEFAULTS, demoGroupOf, raterFacet, RELAY_DEFAULTS, REVIEW_DEFAULTS, VERIFICATION_DEFAULTS, WIDEN_DEFAULTS, type PlatformModel, type VerificationModel } from "./snapshot.ts";
 import { runSlopWorld, runSlopWorldAsync, type SlopRunResult } from "./world.ts";
+import { BODY_TYPE_DEFAULTS, type BodyTypeModel } from "./bodyType.ts";
 
 export interface ArmResult { arm: string; seeds: number[]; metrics: SlopMetrics[]; extra: Extra[] }
 /** Metrics the world's slopMetrics does not compute. */
@@ -28,6 +31,8 @@ export interface Extra {
   contactsByKind: Record<string, number>; harmsByKind: Record<string, number>;
   /** Iteration 3: outcomes by the synthetic demographic group (rater bias test), real members only. */
   demo: Record<"A" | "B", { n: number; dates: number; second: number; memberMonths: number; proposals: number }>;
+  /** Iteration 4: per real member outcomes with their synthetic group and rating quintile (bias monitor input). */
+  outcomes: { demo: "A" | "B"; quintile?: string; memberMonths: number; proposals: number; dates: number; secondDates: number }[];
   /** Iteration 3: harassers' victims: offenders with any victim, total victims, victims after the offender's first report (max and total). */
   harassment: { offenders: number; victims: number; secondPlusVictims: number; afterReportMax: number; afterReportTotal: number };
   /** Iteration 3 gate inputs: scam harm events; core adversary contacts (scammers, harassers, age liars); harms other than deception. */
@@ -78,6 +83,13 @@ export function extraOf(res: SlopRunResult, m: SlopMetrics): Extra {
   const secOf = new Map<MemberId, number>(), propOf = new Map<MemberId, number>();
   for (const f of res.flows) for (const id of [f.first, f.partner]) { propOf.set(id, (propOf.get(id) ?? 0) + 1); if (f.secondDate) secOf.set(id, (secOf.get(id) ?? 0) + 1); }
   for (const p of real) { const g = demo[demoGroupOf(p.id, share)]; g.n++; g.dates += datesOf.get(p.id) ?? 0; g.second += secOf.get(p.id) ?? 0; g.memberMonths += months; g.proposals += propOf.get(p.id) ?? 0; }
+  // Iteration 4: rating quintile (of the RATED overall score, what an admin would see) for the bias monitor.
+  // Without a rater in the run (control arms), the same simulated rating is computed so the quintiles compare.
+  const rater = res.world.state.platform?.rater ?? { ...RATER_DEFAULTS, biasShare: share };
+  const rated = new Map<MemberId, number>();
+  if (rater) for (const p of real) { const f = raterFacet(p, 0, rater, false); const a = f && parseAppearance(f.tags); if (a) rated.set(p.id, a.overall); }
+  const qOf = ratingQuintiles(rated);
+  const outcomes: Extra["outcomes"] = real.map(p => ({ demo: demoGroupOf(p.id, share), ...(qOf.has(p.id) ? { quintile: qOf.get(p.id)! } : {}), memberMonths: months, proposals: propOf.get(p.id) ?? 0, dates: datesOf.get(p.id) ?? 0, secondDates: secOf.get(p.id) ?? 0 }));
   const har = new Map<MemberId, { victims: MemberId[]; reportedAt: number }>();
   res.flows.forEach((f, i) => { for (const h of f.harms) if (h.kind === "harassment") {
     const e = har.get(h.offender) ?? { victims: [], reportedAt: Infinity };
@@ -100,7 +112,7 @@ export function extraOf(res: SlopRunResult, m: SlopMetrics): Extra {
     scammerMedianReach: rs.length ? rs[Math.floor((rs.length - 1) / 2)]! : 0,
     groups, feasibleGroups, overall: { dates: m.datesPerMemberMonth * m.members * months, memberMonths: m.members * months },
     asksSent: res.asks?.sent ?? 0, asksAnswered: res.asks?.answered ?? 0,
-    contactsByKind, harmsByKind, demo, harassment, scamHarms, coreAdversaryContacts, harmsNoDeception,
+    contactsByKind, harmsByKind, demo, outcomes, harassment, scamHarms, coreAdversaryContacts, harmsNoDeception,
     widened: res.asks?.widened ?? 0, ...(res.relay ? { relay: res.relay } : {}),
   };
 }
@@ -110,8 +122,10 @@ export interface WorldSpec {
   verification?: boolean; photos?: number; relay?: boolean | Partial<NonNullable<PlatformModel["relay"]>>; review?: number; widen?: boolean;
   /** Iteration 3: appearance rater (noise, bias), post-date check-in reports, catfish share of the population. */
   rater?: boolean | Partial<NonNullable<PlatformModel["rater"]>>; checkin?: boolean; catfish?: number;
+  /** Iteration 4: body types and body-type preferences in the world (bodyType.ts). */
+  bodyTypes?: boolean | Partial<BodyTypeModel>;
 }
-export function worldOptions(w: WorldSpec = {}): { verification?: VerificationModel; platform?: PlatformModel; adversaryShares?: { catfish: number } } {
+export function worldOptions(w: WorldSpec = {}): { verification?: VerificationModel; platform?: PlatformModel; adversaryShares?: { catfish: number }; bodyTypes?: BodyTypeModel } {
   const platform: PlatformModel = {};
   if (w.rater) platform.rater = { ...RATER_DEFAULTS, ...(typeof w.rater === "object" ? w.rater : {}) };
   if (w.checkin) platform.checkin = { ...CHECKIN_DEFAULTS };
@@ -119,7 +133,7 @@ export function worldOptions(w: WorldSpec = {}): { verification?: VerificationMo
   if (w.relay) platform.relay = { ...RELAY_DEFAULTS, ...(typeof w.relay === "object" ? w.relay : {}) };
   if (w.review !== undefined) platform.review = { ...REVIEW_DEFAULTS, days: w.review };
   if (w.widen) platform.widen = { ...WIDEN_DEFAULTS };
-  return { ...(w.verification ? { verification: VERIFICATION_DEFAULTS } : {}), ...(Object.keys(platform).length ? { platform } : {}), ...(w.catfish !== undefined ? { adversaryShares: { catfish: w.catfish } } : {}) };
+  return { ...(w.verification ? { verification: VERIFICATION_DEFAULTS } : {}), ...(Object.keys(platform).length ? { platform } : {}), ...(w.catfish !== undefined ? { adversaryShares: { catfish: w.catfish } } : {}), ...(w.bodyTypes ? { bodyTypes: { ...BODY_TYPE_DEFAULTS, ...(typeof w.bodyTypes === "object" ? w.bodyTypes : {}) } } : {}) };
 }
 
 /**
@@ -213,6 +227,31 @@ export const PRESETS: Record<string, [string, object][]> = {
     ["soft 0.25, bias 0.5", { $world: { rater: { bias: 0.5 } }, appearance: { mode: "soft", softWeight: 0.25 } }],
     ["soft 0.25, bias 1", { $world: { rater: { bias: 1 } }, appearance: { mode: "soft", softWeight: 0.25 } }],
   ],
+  // Iteration 4 (rater ON by default; founder wants photos in the probe). Run with
+  // --population '{"catfish":0.005,"bodyTypes":true}' --world STACK3 (+ checkin). Tuning seeds 1-12, held-out 13-16.
+  it4tune: [
+    ["photos 1, rater off", { $world: { photos: 1 } }],
+    ["photos 1 + it3 soft 0.1 (overall only)", { $world: { photos: 1, rater: true }, appearance: { dims: { face: 0, body: 0, overall: 1 }, bodyType: { enabled: false } } }],
+    ["photos 1 + soft 0.1 face/body/overall", { $world: { photos: 1, rater: true }, appearance: { bodyType: { enabled: false } } }],
+    ["photos 1 + body type only", { $world: { photos: 1, rater: true }, appearance: { softWeight: 0 } }],
+    ["photos 1 + soft 0.05 + body type", { $world: { photos: 1, rater: true }, appearance: { softWeight: 0.05 } }],
+    ["photos 1 + soft 0.1 + body type (default)", { $world: { photos: 1, rater: true } }],
+    ["photos 1 + soft 0.2 + body type", { $world: { photos: 1, rater: true }, appearance: { softWeight: 0.2 } }],
+    ["photos 1 + soft 0.1 + body type 0.6/1", { $world: { photos: 1, rater: true }, appearance: { bodyType: { statedWeight: 0.6, revealedWeight: 1 } } }],
+    ["photos 1 + band 1 + body type", { $world: { photos: 1, rater: true }, appearance: { mode: "band", band: 1 } }],
+    ["no photos + default", { $world: { rater: true } }],
+  ],
+  it4held: [
+    ["stack3, rater off", {}],
+    ["no photos + rater (default)", { $world: { rater: true } }],
+    ["photos 1, rater off", { $world: { photos: 1 } }],
+    ["photos 1 + it3 soft 0.1", { $world: { photos: 1, rater: true }, appearance: { dims: { face: 0, body: 0, overall: 1 }, bodyType: { enabled: false } } }],
+    ["photos 1 + band 1 + body type", { $world: { photos: 1, rater: true }, appearance: { mode: "band", band: 1 } }],
+    ["photos 1 + rater (DEFAULT)", { $world: { photos: 1, rater: true } }],
+    ["photos 1 + rater, bias 0.5", { $world: { photos: 1, rater: { bias: 0.5 } } }],
+    ["photos 1 + rater, bias 1", { $world: { photos: 1, rater: { bias: 1 } } }],
+    ["random + stack3", { $baseline: "random" }],
+  ],
   // Iteration 2 (held-out seeds 9-12). W = the safety stack: verification, relay classifier, 3-day review, widen answers.
   it2: [
     ["slop it1 (iteration-1 defaults)", { maxAsksPerField: 0, widen: { enabled: false } }],
@@ -257,6 +296,14 @@ export function fairnessRatios(a: ArmResult, feasible = false): { byGroup: Recor
   const elig = Object.entries(byGroup).filter(([, g]) => g.n >= 15);
   const [minGroup, minG] = elig.sort((x, y) => x[1].ratio - y[1].ratio)[0] ?? ["-", { ratio: 0 }];
   return { byGroup, min: minG.ratio, minGroup };
+}
+
+/** Iteration 4: the admin bias monitor, pooled over an arm's seeds, by synthetic group and by rating quintile. */
+export function armBias(a: ArmResult): { demo: BiasReport; quintile?: BiasReport } {
+  const rows = a.extra.flatMap(e => e.outcomes);
+  const demo = biasMonitor(rows.map(r => ({ ...r, group: r.demo })));
+  const q = rows.filter(r => r.quintile);
+  return { demo, ...(q.length ? { quintile: biasMonitor(q.map(r => ({ ...r, group: r.quintile! }))) } : {}) };
 }
 
 export interface Gate { name: string; value: number; target: string; pass: boolean }
@@ -384,6 +431,11 @@ if (import.meta.main) {
   if (argv.includes("--groups")) for (const r of results) {
     const f = fairnessRatios(r);
     console.log(`\nGroups ${r.arm}: ` + Object.entries(f.byGroup).map(([k, g]) => `${k} n${g.n.toFixed(0)} ${g.rate.toFixed(3)} (${g.ratio.toFixed(2)})`).join("; "));
+  }
+  if (argv.includes("--bias")) for (const r of results) {
+    const b = armBias(r);
+    const fmtR = (rep: BiasReport) => Object.entries(rep.groups).map(([k, g]) => `${k} n${g.n} dates ${g.ratio.dates.toFixed(2)} 2nd ${g.ratio.secondDates.toFixed(2)} prop ${g.ratio.proposals.toFixed(2)}`).join("; ");
+    console.log(`\nBias ${r.arm}: demo ${fmtR(b.demo)}${b.quintile ? ` | quintile ${fmtR(b.quintile)}` : ""}${[...b.demo.alerts, ...(b.quintile?.alerts ?? [])].length ? ` | ALERTS ${[...b.demo.alerts, ...(b.quintile?.alerts ?? [])].map(x => `${x.group}:${x.metric}=${x.ratio.toFixed(2)}`).join(", ")}` : ""}`);
   }
   const out = arg("json");
   if (out) await Bun.write(out, JSON.stringify(results.map(r => ({ arm: r.arm, seeds: r.seeds, metrics: r.metrics, extra: r.extra })), null, 1));
