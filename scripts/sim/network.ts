@@ -40,7 +40,8 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
   await run.w.advanceTo(run.w.end);
   await run.w.complete();
   const R = run.records;
-  b.track("fingerprint: invariant run (seed 3, 10 days) records", true, digest(R));
+  // Wall-clock fields (run_start's id, run_end's wallMs) and engine run ids (which carry the config hash) are left out.
+  b.track("fingerprint: invariant run (seed 3, 10 days) records", true, digest(R.filter(r => r.type !== "run_start" && r.type !== "run_end").map(r => JSON.stringify(r).replace(/"runId":"[^"]*"/g, ""))));
 
   await b.run("invariants (seed 3, 10 days): judge 0 invariant violations, minor contacts, canary leaks, errors", () => {
     expect(R.length).toBeGreaterThan(1000);
