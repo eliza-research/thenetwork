@@ -81,6 +81,35 @@ export function hasWindow(ev: PlanEvidence, slot: TimeSlot, now: number, pcfg: P
 }
 
 // ------------------------------------------------------------------------------------------------
+// The plan allowance (founder decision 2026-10-08)
+
+/**
+ * May this member's plan invites use the separate plan allowance? Only with a stated window this
+ * week, a standing window, a learned (accepted or attended) time, or the opt-in weekly check-in.
+ */
+export function planAllowanceEligible(ev: PlanEvidence | undefined, checkInOptIn: boolean, now: number): boolean {
+  if (checkInOptIn) return true;
+  if (!ev) return false;
+  return !!(ev.stated && ev.stated.until > now) || !!ev.standing?.length || !!ev.history?.some(h => h.outcome !== "declined_time" && h.at <= now);
+}
+
+/**
+ * The attention config for composing a plan-only message under the plan allowance: the same
+ * config with every state's cap replaced by the allowance (`limit` per `periodDays`). Pass it to
+ * attention.composeMessage with a ledger of the member's plan invites only (the intro cap and its
+ * ledger are untouched). Quiet hours, the conversation streak (Blooio) and the two-unanswered
+ * pause are checked by composeMessage as usual; the caller also passes the member's full
+ * only-when-asked state in the MemberAttention view, so unanswered intros still pause plan invites.
+ * Paused stays 0. Members 13-17 never get a plan item (itemGate).
+ */
+export function planAllowanceConfig(att: AttentionConfig = DEFAULT_ATTENTION, pcfg: PlansConfig = DEFAULT_PLANS): AttentionConfig {
+  const cap = { limit: pcfg.allowance.limit, periodDays: pcfg.allowance.periodDays };
+  // One plan per message (the member answers one plan at a time); outside-world items (events,
+  // places) may ride along as companions, as in any message.
+  return { ...att, maxMemberItems: 1, caps: { open: cap, normal: cap, quiet: cap, receiving: cap, paused: { limit: 0, periodDays: cap.periodDays } }, breakIns: { open: { ...cap, limit: 0 }, normal: { ...cap, limit: 0 }, quiet: { ...cap, limit: 0 }, receiving: { ...cap, limit: 0 }, paused: { ...cap, limit: 0 } } };
+}
+
+// ------------------------------------------------------------------------------------------------
 // Activity fit (engine-visible: matchable / shareable facet tags and live intents)
 
 /**
@@ -533,9 +562,11 @@ export interface Crew {
 }
 
 /**
- * A crew is proposed when >= minMembers attended >= minPlans plans of the same activity together
- * and all reported it positive, or after one such plan when one of them stated a recurring want
- * ("weekly", "regular", "club"). Members already in a crew for that activity are not re-grouped.
+ * A crew is proposed when >= minMembers attendees of one plan say they'd do it again (founder
+ * decision 2026-10-08, `crews.minPlans` 1, the default); with minPlans 2, when they did so at two
+ * plans of the same activity together, or at one plan if one of them stated a recurring want
+ * ("weekly", "regular", "club"). Each person then opts in (crewOptIn). Members already in a crew for
+ * that activity are not re-grouped.
  */
 export function detectCrews(history: readonly PlanOutcomeRecord[], existing: readonly Crew[], isHost: (id: MemberId) => boolean, pcfg: PlansConfig = DEFAULT_PLANS): Crew[] {
   if (!pcfg.crews.enabled) return [];
@@ -565,6 +596,17 @@ export function detectCrews(history: readonly PlanOutcomeRecord[], existing: rea
     }
   }
   return out;
+}
+
+/**
+ * Each person opts in to a proposed crew (founder decision 2026-10-08): the crew is the members who
+ * said yes; below minMembers there is no crew. Hosts rotate among the members who stayed.
+ */
+export function crewOptIn(crew: Crew, optedIn: readonly MemberId[], pcfg: PlansConfig = DEFAULT_PLANS): Crew | null {
+  const members = crew.members.filter(m => optedIn.includes(m));
+  if (members.length < pcfg.crews.minMembers) return null;
+  const hosts = crew.hostRotation.filter(m => members.includes(m));
+  return { ...crew, members, hostRotation: hosts.length ? hosts : members };
 }
 
 /** The crew's next session (same weekday and time, `cadenceDays` after the last), as a plan; each session is opt-in. Hosts rotate. */

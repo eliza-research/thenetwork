@@ -21,7 +21,7 @@ import { Rng as SimRng, hash32 } from "../../sim/src/rng.ts";
 import { SNAPSHOT_FEATURES } from "../../sim/src/snapshot.ts";
 import type { World as SimWorld } from "../../sim/src/world.ts";
 import { gini, mean, outcomes, pct, runSim, table } from "./lib.ts";
-import { DEFAULT_CAPTURE, checkInAnswer, hiddenAvailability, optsInToCheckIn, planEnjoyment, planYesProb, statedStanding, syntheticVenues, type CaptureModel } from "./plansHarness.ts";
+import { DEFAULT_CAPTURE, checkInAnswer, crewOptIn, hiddenAvailability, optsInToCheckIn, planEnjoyment, planYesProb, statedStanding, syntheticVenues, type CaptureModel } from "./plansHarness.ts";
 import { PlanNetwork } from "./plansNetwork.ts";
 
 const args = parseArgs({ options: { only: { type: "string" }, seeds: { type: "string", default: "1,2,3,4,5,6,7,8" }, json: { type: "string" }, days: { type: "string", default: "30" } } }).values;
@@ -37,7 +37,7 @@ const QC = {
 const SUPPLY = engineSupplyBudgets(resolveAttention());
 export const VARIANTS: Variant[] = [
   { name: "B HQ-c baseline: v1.2 engine + attention v1.2 (c), fixes 1-3", fixes: true, plans: false },
-  { name: "P HQ-c + planner (check-in + standing capture)", fixes: true, plans: {} },
+  { name: "P HQ-c + planner, founder defaults (plan allowance 1/7d, crews after one great plan)", fixes: true, plans: {} },
   { name: "P-std P, standing availability only (no weekly check-in)", fixes: true, plans: {}, capture: { checkIn: { base: 0, slope: 0 } } },
   { name: "P-low P, low capture (check-in 10-25%, standing 25%)", fixes: true, plans: {}, capture: { checkIn: { base: 0.1, slope: 0.15 }, standing: 0.25 } },
   { name: "P-nofb P without fallbacks", fixes: true, plans: { fallback: { smaller: false, soloEvent: false, nextWeek: false } } },
@@ -48,7 +48,8 @@ export const VARIANTS: Variant[] = [
   { name: "P-hold P, a yes holds the member until quorum", fixes: true, plans: { yesHolds: true } },
   { name: "P-np P without window priming (plan probes answered cold)", fixes: true, plans: {}, noWindowPriming: true },
   { name: "P-un P, plans only for members no intro is serving", fixes: true, plans: { unservedOnly: true } },
-  { name: "P-crew1 P, crew offered after one plan with >= 3 positive", fixes: true, plans: { crews: { minPlans: 1 } } },
+  { name: "P-crew2 P, crews only after 2 plans together (previous rule)", fixes: true, plans: { crews: { minPlans: 2 } } },
+  { name: "P-shared P without the plan allowance (plan invites on the intro cap, as plans-v1.0.0)", fixes: true, plans: { allowance: { enabled: false } } },
   { name: "B0 Q-c baseline without fixes", fixes: false, plans: false },
   { name: "P0 Q-c + planner, without fixes", fixes: false, plans: {} },
 ];
@@ -98,7 +99,7 @@ export interface SeedRow {
   valueEvents: number; v14: number; noValueShare: number; giniValue: number; giniDelivered: number;
   firstValueFromPlan: number; membersWithValue: number;
   plans: number; probedPlans: number; booked: number; quorumRate: number; confirmedSeats: number; attendedSeats: number; planMeetings: number; planGood: number;
-  minors: number; minorsInPlans: number; undisclosedMinorsInPlans: number; leaks: number; nameLeaks: number; overStateCap: number; quietHours: number; checkInQuiet: number; doubleBooked: number; blooio4th: number; streakInterrupt: number; invariants: number; byRule: Record<string, number>;
+  minors: number; minorsInPlans: number; undisclosedMinorsInPlans: number; leaks: number; nameLeaks: number; overStateCap: number; quietHours: number; checkInQuiet: number; doubleBooked: number; overPlanAllowance: number; blooio4th: number; streakInterrupt: number; invariants: number; byRule: Record<string, number>;
   stats?: Record<string, unknown>;
 }
 
@@ -140,6 +141,7 @@ export async function runSeed(v: Variant, seed: number): Promise<SeedRow> {
       checkInOptIn: (id: MemberId) => optsInToCheckIn(world.oracle, seed, id, capture),
       checkInAnswer: (id: MemberId, slots: A.TimeSlot[]) => checkInAnswer(seed, id, slots, free, capture),
       standing: (id: MemberId, at: number) => statedStanding(world.oracle, seed, id, at, capture),
+      crewOptIn: (id: MemberId, crew) => crewOptIn(world.oracle, seed, id, crew.id),
       planFeedback: (plan, going) => {
         const W = world as any;
         const attended = going.filter(id => W.memories.get(id)?.meetings?.[plan.id]?.showed);
@@ -231,11 +233,15 @@ export async function runSeed(v: Variant, seed: number): Promise<SeedRow> {
   }
   const withValue = adults.filter(id => first.has(id));
   // Invariants.
-  let overStateCap = 0;
+  // Caps: the intro cap (state cap) over every interruption except plan invites sent under the plan
+  // allowance; the plan allowance (1 per 7 days) over those.
+  let overStateCap = 0, overPlanAllowance = 0;
+  const pa = resolvePlans(v.plans || {}).allowance;
   for (const [id, es] of byMember) {
     const cap = personas.get(id)?.archetype === "busy_parent" ? DEFAULT_ATTENTION.caps.quiet : DEFAULT_ATTENTION.caps.normal;
-    const ts = es.map(e => e.at).sort((a, b) => a - b);
-    for (let i = 0; i < ts.length; i++) if (ts.filter(t => t <= ts[i]! && t > ts[i]! - cap.periodDays * DAY).length > cap.limit) overStateCap++;
+    const over = (ts: number[], lim: number, days: number) => { ts.sort((a, b) => a - b); let n = 0; for (let i = 0; i < ts.length; i++) if (ts.filter(t => t <= ts[i]! && t > ts[i]! - days * DAY).length > lim) n++; return n; };
+    overStateCap += over(es.filter(e => !net.planInviteIds.has(e.messageId)).map(e => e.at), cap.limit, cap.periodDays);
+    overPlanAllowance += over(es.filter(e => net.planInviteIds.has(e.messageId)).map(e => e.at), pa.limit, pa.periodDays);
   }
   let streakInterrupt = 0, blooio4th = 0;
   const outstanding = new Map<MemberId, number>();
@@ -276,7 +282,7 @@ export async function runSeed(v: Variant, seed: number): Promise<SeedRow> {
     plans: ps.plans, probedPlans: ps.probedPlans.size, booked: ps.booked, quorumRate: ps.probedPlans.size ? ps.booked / ps.probedPlans.size : 0,
     confirmedSeats: ps.confirmedSeats, attendedSeats, planMeetings, planGood,
     minors: m.safety.minorContacts, minorsInPlans, undisclosedMinorsInPlans, leaks: m.privacy.canaryLeaks, nameLeaks: ps.probeNameLeaks, overStateCap, quietHours: m.invariants.byRule.quiet_hours ?? 0,
-    checkInQuiet: ps.checkInQuiet, doubleBooked, blooio4th, streakInterrupt, invariants: m.invariants.total, byRule: m.invariants.byRule,
+    checkInQuiet: ps.checkInQuiet, doubleBooked, overPlanAllowance, blooio4th, streakInterrupt, invariants: m.invariants.total, byRule: m.invariants.byRule,
     stats: {
       ...Object.fromEntries(Object.entries(ps).map(([k, x]) => [k, x instanceof Set ? x.size : x])), crews: net.crews.length, crewSessions: ps.crewSessions,
       invariantExamples: m.invariants.examples,
@@ -319,7 +325,7 @@ export function summaryTables(rows: VariantRow[]): string {
       `${fb("smaller")} / ${fb("solo_event")} / ${fb("next_week")} / ${fb("none")}`, st(r.seeds, "backouts").toFixed(1),
       `${st(r.seeds, "checkInsSent").toFixed(0)} / ${st(r.seeds, "checkInAnswers").toFixed(0)}`, `${st(r.seeds, "standingMembers").toFixed(0)} / ${st(r.seeds, "statedMembers").toFixed(0)} / ${st(r.seeds, "demandMembers").toFixed(0)} / ${st(r.seeds, "plannedMembers").toFixed(0)}`];
   });
-  const inv = rows.map(r => [r.name, sum(r.seeds, "minors"), `${sum(r.seeds, "minorsInPlans")} / ${sum(r.seeds, "undisclosedMinorsInPlans")}`, `${sum(r.seeds, "leaks")} / ${sum(r.seeds, "nameLeaks")}`, sum(r.seeds, "overStateCap"),
+  const inv = rows.map(r => [r.name, sum(r.seeds, "minors"), `${sum(r.seeds, "minorsInPlans")} / ${sum(r.seeds, "undisclosedMinorsInPlans")}`, `${sum(r.seeds, "leaks")} / ${sum(r.seeds, "nameLeaks")}`, `${sum(r.seeds, "overStateCap")} / ${sum(r.seeds, "overPlanAllowance")}`,
     `${sum(r.seeds, "quietHours")} / ${sum(r.seeds, "checkInQuiet")}`, sum(r.seeds, "streakInterrupt"), sum(r.seeds, "blooio4th"), sum(r.seeds, "doubleBooked"),
     `${sum(r.seeds, "invariants")} ${JSON.stringify(r.seeds.reduce((o, s) => { for (const [k, x] of Object.entries(s.byRule)) o[k] = (o[k] ?? 0) + (x as number); return o; }, {} as Record<string, number>))}`]);
   return [
@@ -330,7 +336,7 @@ export function summaryTables(rows: VariantRow[]): string {
     "\n### Plan funnel and capture (per seed)\n",
     table(["variant", "probe yes", "probe no or silent", "of which can't make the time", "backfills", "late joins", "fallbacks smaller / solo event / next week / none", "back-outs after reveal", "check-ins sent / answered", "members: standing / stated / with a window / planned"], flow),
     "\n### Invariants (summed over seeds)\n",
-    table(["variant", "minor contacts", "declared minors in plans (any role) / age-lying minors (informational)", "canary leaks / names in plan probes", "over state cap", "quiet-hour sends (judge / check-ins)", "interruptions with >= 2 outstanding", "outbound with >= 3 outstanding", "double-booked seats (< 3h apart)", "judge invariants"], inv),
+    table(["variant", "minor contacts", "declared minors in plans (any role) / age-lying minors (informational)", "canary leaks / names in plan probes", "over intro (state) cap / over plan allowance", "quiet-hour sends (judge / check-ins)", "interruptions with >= 2 outstanding", "outbound with >= 3 outstanding", "double-booked seats (< 3h apart)", "judge invariants"], inv),
   ].join("\n");
 }
 

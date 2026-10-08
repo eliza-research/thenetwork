@@ -266,15 +266,27 @@ describe("plan items and probe content (D5)", () => {
 describe("crews (4.7)", () => {
   const rec = (planId: string, at: number, positive: string[], recurringWant: string[] = []): P.PlanOutcomeRecord =>
     ({ planId, activityId: "bouldering", venueId: "v1", city: "sf", at, attended: positive, positive, recurringWant });
-  test("three members positive at two plans together form a crew; one plan is not enough without a recurring want", () => {
-    expect(P.detectCrews([rec("p1", NOW, ["a", "b", "c", "d"])], [], () => false)).toEqual([]);
-    const crews = P.detectCrews([rec("p1", NOW, ["a", "b", "c", "d"]), rec("p2", NOW + 7 * DAY, ["a", "b", "c", "e"])], [], id => id === "b");
+  test("founder default: one great plan (>= 3 would do it again) proposes a crew; each person opts in", () => {
+    const c = P.detectCrews([rec("p1", NOW, ["a", "b", "c", "d"])], [], id => id === "d");
+    expect(c.length).toBe(1);
+    expect(c[0]!.members).toEqual(["a", "b", "c", "d"]);
+    expect(P.detectCrews([rec("p1", NOW, ["a", "b"])], [], () => false)).toEqual([]);
+    const joined = P.crewOptIn(c[0]!, ["a", "b", "c"])!;
+    expect(joined.members).toEqual(["a", "b", "c"]);
+    expect(joined.hostRotation).toEqual(["a", "b", "c"]); // the only host-tagged member did not opt in
+    expect(P.crewOptIn(c[0]!, ["a", "b"])).toBeNull();
+    expect(P.crewOptIn(c[0]!, ["a", "b", "x", "y"])).toBeNull(); // only proposed members can join
+  });
+  test("previous rule (minPlans 2): three members positive at two plans together; one plan is not enough without a recurring want", () => {
+    const two = resolvePlans({ crews: { minPlans: 2 } });
+    expect(P.detectCrews([rec("p1", NOW, ["a", "b", "c", "d"])], [], () => false, two)).toEqual([]);
+    const crews = P.detectCrews([rec("p1", NOW, ["a", "b", "c", "d"]), rec("p2", NOW + 7 * DAY, ["a", "b", "c", "e"])], [], id => id === "b", two);
     expect(crews.length).toBe(1);
     expect(crews[0]!.members).toEqual(["a", "b", "c"]);
     expect(crews[0]!.hostRotation).toEqual(["b"]);
-    expect(P.detectCrews([rec("p1", NOW, ["a", "b", "c"], ["a"])], [], () => false).length).toBe(1);
+    expect(P.detectCrews([rec("p1", NOW, ["a", "b", "c"], ["a"])], [], () => false, two).length).toBe(1);
     // Not re-grouped once in a crew.
-    expect(P.detectCrews([rec("p1", NOW, ["a", "b", "c", "d"]), rec("p2", NOW + 7 * DAY, ["a", "b", "c"])], crews, () => false)).toEqual([]);
+    expect(P.detectCrews([rec("p1", NOW, ["a", "b", "c", "d"]), rec("p2", NOW + 7 * DAY, ["a", "b", "c"])], crews, () => false, two)).toEqual([]);
   });
   test("crew sessions repeat weekly at the same time and place, rotate the host, and stop at hand-off", () => {
     const crew = P.detectCrews([rec("p1", SAT - 7 * DAY, ["a", "b", "c"], ["a"])], [], () => true)[0]!;
@@ -289,10 +301,59 @@ describe("crews (4.7)", () => {
   });
 });
 
+describe("the plan allowance (founder decision 2026-10-08)", () => {
+  const view = (o: Partial<A.MemberAttention> = {}): A.MemberAttention => ({ memberId: "a", state: "normal", age: 30, tz: TZ, quietHours: [22, 8], onlyWhenAsked: false, newcomer: false, prefs: A.defaultCadence("normal"), ...o });
+  // Monday 12:30 in San Francisco: inside the default send window, outside quiet hours.
+  const T = fromLocal(2026, 10, 5, 12, TZ) + 30 * 60_000;
+  const item = (id = "plan_x") => ({ ...P.planItem(plan({ id }), "a", { now: T - DAY, reviewState: "approved" }), urgency: { expiresAt: T + 3 * DAY } });
+  const entry = (at: number, id = "m1", repliedAt?: number): import("../src/types.ts").AttentionLedgerEntry => ({ messageId: id, memberId: "a", at, kind: "digest", itemIds: [], countsAgainstCap: true, ...(repliedAt ? { repliedAt } : {}) });
+  test("only members with a stated, standing or learned window, or the weekly check-in, use it", () => {
+    expect(P.planAllowanceEligible(undefined, false, NOW)).toBe(false);
+    expect(P.planAllowanceEligible({ memberId: "a", tz: TZ }, false, NOW)).toBe(false);
+    expect(P.planAllowanceEligible(undefined, true, NOW)).toBe(true);
+    expect(P.planAllowanceEligible(stated("a"), false, NOW)).toBe(true);
+    expect(P.planAllowanceEligible({ ...stated("a"), stated: { windows: [], at: NOW - 9 * DAY, until: NOW - 2 * DAY } }, false, NOW)).toBe(false);
+    expect(P.planAllowanceEligible({ memberId: "a", tz: TZ, standing: [{ byDay: [6], startHour: 17, endHour: 22, source: "onboarding", statedAt: NOW }] }, false, NOW)).toBe(true);
+    expect(P.planAllowanceEligible({ memberId: "a", tz: TZ, history: [{ at: NOW - DAY, outcome: "attended" }] }, false, NOW)).toBe(true);
+    expect(P.planAllowanceEligible({ memberId: "a", tz: TZ, history: [{ at: NOW - DAY, outcome: "declined_time" }] }, false, NOW)).toBe(false);
+  });
+  test("1 plan invite per 7 days, separate from the intro cap; one plan per message (outside-world companions allowed); no break-ins", () => {
+    const acfg = P.planAllowanceConfig();
+    expect(acfg.caps.normal).toEqual({ limit: 1, periodDays: 7 });
+    expect(acfg.caps.quiet).toEqual({ limit: 1, periodDays: 7 });
+    expect(acfg.caps.paused.limit).toBe(0);
+    expect(acfg.maxMemberItems).toBe(1);
+    // The intro cap itself is unchanged.
+    expect(A.capFor(view())).toEqual({ limit: 2, periodDays: 7 });
+    const conv = { outboundSinceInbound: 0 };
+    // The plan lane passes only the member's plan invites as the ledger, so intros already sent this
+    // week (the intro cap used up) do not block a plan invite.
+    const ok = A.composeMessage({ member: view(), items: [item()], ledger: [], conversation: conv, now: T, mode: "digest", cfg: acfg });
+    expect(ok.send).toBe(true);
+    expect(ok.countsAgainstCap).toBe(true);
+    // A plan invite already this week: the allowance is spent.
+    expect(A.composeMessage({ member: view(), items: [item("plan_y")], ledger: [entry(T - 2 * DAY, "p1", T - 2 * DAY + HOUR)], conversation: conv, now: T, mode: "digest", cfg: acfg }).reason).toBe("cap");
+    // Two plans held: one per message.
+    expect(A.composeMessage({ member: view(), items: [item("plan_a"), item("plan_b")], ledger: [], conversation: conv, now: T, mode: "digest", cfg: acfg }).items.length).toBe(1);
+  });
+  test("quiet hours, the two-unanswered pause and the Blooio streak still apply", () => {
+    const acfg = P.planAllowanceConfig();
+    const conv = { outboundSinceInbound: 0 };
+    expect(A.composeMessage({ member: view({ quietHours: [12, 13] }), items: [item()], ledger: [], conversation: conv, now: T, mode: "digest", cfg: acfg }).reason).toBe("quiet_hours");
+    expect(A.composeMessage({ member: view({ onlyWhenAsked: true }), items: [item()], ledger: [], conversation: conv, now: T, mode: "digest", cfg: acfg }).reason).toBe("only_when_asked");
+    expect(A.composeMessage({ member: view(), items: [item()], ledger: [], conversation: { outboundSinceInbound: 2 }, now: T, mode: "digest", cfg: acfg }).reason).toBe("conversation_streak");
+    expect(A.composeMessage({ member: view({ state: "paused" }), items: [item()], ledger: [], conversation: conv, now: T, mode: "digest", cfg: acfg }).send).toBe(false);
+    expect(A.composeMessage({ member: view({ age: 16 }), items: [item()], ledger: [], conversation: conv, now: T, mode: "digest", cfg: acfg }).send).toBe(false);
+  });
+});
+
 describe("config", () => {
   test("group plans are 3-6 and partner plans 2 (D15)", () => {
     expect(() => resolvePlans({ size: { max: 7 } })).toThrow();
     expect(() => resolvePlans({ size: { partner: 3 } })).toThrow();
     expect(resolvePlans().quorum.group).toBe(3);
+    expect(resolvePlans().allowance).toEqual({ enabled: true, limit: 1, periodDays: 7 });
+    expect(resolvePlans().crews.minPlans).toBe(1);
+    expect(() => resolvePlans({ crews: { minPlans: 3 } })).toThrow();
   });
 });

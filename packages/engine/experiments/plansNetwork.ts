@@ -14,12 +14,13 @@ import type { InboundMessage } from "../../sim/src/network.ts";
 import { fmtLocal } from "../../sim/src/time.ts";
 import { activityById, type Venue } from "../src/activities.ts";
 import * as A from "../src/attention.ts";
-import { resolveConfig, resolvePlans, type PlansConfig, type PlansConfigInput } from "../src/config.ts";
+import { resolveConfig, resolvePlans, type AttentionConfig, type PlansConfig, type PlansConfigInput } from "../src/config.ts";
 import { localEmbed } from "../src/embed.ts";
+import { eligibilityFor } from "../src/filters.ts";
 import { localParts } from "../src/outreach.ts";
 import * as P from "../src/plans.ts";
 import { objectivesFor } from "../src/taxonomy.ts";
-import type { AttentionItem, EngineInput, EngineProposal } from "../src/types.ts";
+import type { AttentionItem, AttentionLedgerEntry, EngineInput, EngineProposal, HeldItem } from "../src/types.ts";
 import { World } from "../src/world.ts";
 import { AttentionNetwork, type AttentionNetOptions } from "./attentionNetwork.ts";
 
@@ -32,6 +33,8 @@ export interface PlanNetOptions extends AttentionNetOptions {
   standing?: (id: MemberId, at: number) => A.StandingAvailability[];
   /** HARNESS: the post-plan factual answer and "anyone you'd do this again with?" (who came, who was positive). */
   planFeedback?: (plan: P.Plan, going: MemberId[]) => { attended: MemberId[]; positive: MemberId[] };
+  /** HARNESS: does this member opt in to a proposed crew (offered in the reply to their post-plan answer)? */
+  crewOptIn?: (id: MemberId, crew: P.Crew) => boolean;
 }
 
 const TZ: Record<City, string> = { sf: "America/Los_Angeles", nyc: "America/New_York" };
@@ -53,11 +56,16 @@ export class PlanNetwork extends AttentionNetwork {
   private carry: { memberId: MemberId; activityId: string; until: number }[] = [];
   private lastRun = new Map<City, string>();
   private lastPlannedAt = new Map<MemberId, number>();
+  /** The plan allowance (founder decision 2026-10-08): plan items held and sent in their own lane, and the plan invites sent. */
+  readonly planHold = new Map<MemberId, HeldItem[]>();
+  readonly planInviteIds = new Set<string>();
+  private offeredCrews = new Set<string>();
+  private planServed = new Map<MemberId, string>();
   readonly planStats = {
     runs: 0, plans: 0, partnerPlans: 0, eventPlans: 0, crewSessions: 0, crewsFormed: 0, probesSent: 0, planYes: 0, planNo: 0, cantMakeTime: 0,
     booked: 0, bookedSmaller: 0, joins: 0, backfills: 0, fallbacks: { smaller: 0, solo_event: 0, next_week: 0, none: 0 } as Record<string, number>,
     confirmedSeats: 0, backouts: 0, cancelled: 0, checkInsSent: 0, checkInAnswers: 0, checkInQuiet: 0, statedMembers: new Set<MemberId>(), standingMembers: 0,
-    minorsInPlans: 0, probeNameLeaks: 0, conflictsAvoided: 0, probedPlans: new Set<string>(), demandMembers: new Set<MemberId>(), plannedMembers: new Set<MemberId>(),
+    minorsInPlans: 0, probeNameLeaks: 0, conflictsAvoided: 0, allowanceInvites: 0, introLanePlanItems: 0, crewOffers: 0, crewOptIns: 0, crewsDeclined: 0, probedPlans: new Set<string>(), demandMembers: new Set<MemberId>(), plannedMembers: new Set<MemberId>(),
   };
 
   constructor(private po: PlanNetOptions) {
@@ -89,6 +97,19 @@ export class PlanNetwork extends AttentionNetwork {
       if (fl.times && !this.planIds.has(fl.p.id)) fl.times = fl.times.filter((t: A.TimeSlot) => !going.some(id => this.conflict(id, t.start, fl.p.id)));
       return scheduleFlow(fl, going, now, notify);
     };
+    // The plan allowance: plan invites sent in the plan lane never count against the intro cap. The intro
+    // composer sees the ledger without them (its cap is unchanged); the member's two-unanswered state
+    // (view().onlyWhenAsked, from the full ledger and the stub's unanswered count) still includes them.
+    if (this.pcfg.allowance.enabled) {
+      const attempt = self.attempt.bind(self);
+      self.attempt = (...args: unknown[]) => {
+        const full = self.ledger as AttentionLedgerEntry[];
+        const view = full.filter(e => !this.planInviteIds.has(e.messageId));
+        const n = view.length;
+        self.ledger = view;
+        try { return attempt(...args); } finally { self.ledger = full; for (const e of view.slice(n)) full.push(e); }
+      };
+    }
     // A plan does not need every invitee: another invitee being busy never holds back this member's probe.
     const busy = self.busy.bind(self);
     self.busy = (id: MemberId, except?: string) => (except && isPlan(except) ? false : busy(id, except));
@@ -100,6 +121,7 @@ export class PlanNetwork extends AttentionNetwork {
     if (!this.pcfg) return;
     this.captureTick(now);
     for (const [pid, l] of this.live) this.liveTick(pid, l, now);
+    if (this.pcfg.allowance.enabled) this.planLane(now);
     for (const city of ["sf", "nyc"] as City[]) {
       const lp = localParts(now, TZ[city]);
       const key = `${lp.year}-${lp.month}-${lp.day}`;
@@ -239,7 +261,68 @@ export class PlanNetwork extends AttentionNetwork {
     // Simulated reviewer: the proposal (primary group and alternates) was reviewed before the first probe.
     const it = P.planItem(l.plan, id, { now, reviewState: "approved", stage, pcfg: this.pcfg, att: this.cfg });
     it.others = Object.keys(l.run.answers).filter(x => x !== id && l.run.answers[x] !== "no");
+    if (this.pcfg!.allowance.enabled && this.allowanceEligible(id, now)) {
+      const r = A.addToHold(this.planHold.get(id) ?? [], it, A.defaultCadence("normal", this.cfg), now, { cfg: this.cfg });
+      this.planHold.set(id, r.queue);
+      for (const e of r.evicted) if (e.key !== it.key) this.planAnswer(e.sourceProposalId!, e.memberId, false, "evicted");
+      if (!r.added) this.planAnswer(l.plan.id, id, false, "not_held");
+      return;
+    }
+    this.planStats.introLanePlanItems++;
     if (!this.x.addHeld(it, now)) this.planAnswer(l.plan.id, id, false, "not_held");
+  }
+
+  /** Allowance eligibility: a stated (this week), standing or learned window, or the opt-in weekly check-in. */
+  private allowanceEligible(id: MemberId, now: number): boolean {
+    const ev: P.PlanEvidence = { memberId: id, tz: "UTC", standing: this.standing.get(id) ?? [], history: this.x.availHistory.get(id) ?? [], ...(this.stated.get(id) ? { stated: this.stated.get(id)! } : {}) };
+    return P.planAllowanceEligible(ev, !!this.po.checkInOptIn?.(id), now);
+  }
+
+  /**
+   * The plan lane: once per member per day, inside their send window, one plan item per message under
+   * the plan allowance (1 per 7 days). Same gates as every interruption: paused, only-when-asked and the
+   * two-unanswered pause, the Blooio conversation streak, quiet hours, review, minors, revalidation.
+   */
+  private planLane(now: number) {
+    const acfg = P.planAllowanceConfig(this.o0(), this.pcfg);
+    for (const [id, q0] of this.planHold) {
+      if (!q0.length) continue;
+      // Expiry and send-time eligibility (age, holds, paused, blocks) before anything else.
+      const w = this.x.world(now) as World;
+      const rv = A.revalidateHold(q0, now, eligibilityFor(w, (x: MemberId) => this.x.member(x).optedOut), undefined, this.cfg);
+      this.planHold.set(id, rv.kept);
+      for (const d of rv.dropped) { this.x.bump(this.x.stats.dropped, `plan:${d.reason.split(":")[0]}`); this.planAnswer(d.item.sourceProposalId!, id, false, d.reason); }
+      const q = this.planHold.get(id) ?? [];
+      if (!q.length) continue;
+      const v = this.x.view(id, now) as A.MemberAttention | undefined;
+      if (!v || !A.inSendWindow(v, now, this.cfg)) continue;
+      const lp = localParts(now, v.tz), day = `${lp.year}-${lp.month}-${lp.day}`;
+      if (this.planServed.get(id) === day) continue;
+      if (this.x.member(id).optedOut || this.x.busy(id)) continue;
+      // Outside-world items held for this member may ride along as companions (never alone here).
+      const companions = ((this.x.hold.get(id) ?? []) as HeldItem[]).filter(it => it.kind === "event_suggestion" || it.kind === "place_suggestion");
+      const texts = new Map<string, string>();
+      for (const it of [...q, ...companions]) { const t = this.x.itemText(w, it, now); if (t) texts.set(it.id, t); }
+      const ledger = (this.ledger as AttentionLedgerEntry[]).filter(e => e.memberId === id && this.planInviteIds.has(e.messageId));
+      const res = A.composeMessage({ member: v, items: [...q, ...companions].filter(it => texts.has(it.id)), ledger, conversation: this.x.convOf(id), now, mode: "digest", cfg: acfg });
+      if (!res.send || !res.items.some(it => it.kind === "plan_probe")) { if (!["quiet_hours", "conversation_streak"].includes(res.reason)) this.planServed.set(id, day); continue; }
+      this.planServed.set(id, day);
+      // Send through the shared path; the ledger entry goes to the plan allowance, not the intro cap.
+      const full = this.ledger as AttentionLedgerEntry[];
+      const tmp: AttentionLedgerEntry[] = [];
+      this.x.ledger = tmp;
+      try { this.x.sendItems(id, v, res.items, res.values, "digest", texts, now); } finally { this.x.ledger = full; }
+      for (const e of tmp) { full.push(e); this.planInviteIds.add(e.messageId); }
+      this.planStats.allowanceInvites++;
+      const sent = new Set(res.items.map(x => x.id));
+      this.planHold.set(id, q.filter(x => !sent.has(x.id)));
+    }
+  }
+  /** The attention config with the harness's price setting (lambdaScale), as the intro lane uses it. */
+  private o0(): AttentionConfig {
+    const k = this.po.lambdaScale;
+    if (k === undefined) return this.cfg;
+    return { ...this.cfg, lambda: { ...this.cfg.lambda, open: this.cfg.lambda.open * k, normal: this.cfg.lambda.normal * k, quiet: this.cfg.lambda.quiet * k, receiving: this.cfg.lambda.receiving * k } };
   }
 
   private planProbeText(w: World, it: AttentionItem, now: number): string | null {
@@ -354,6 +437,7 @@ export class PlanNetwork extends AttentionNetwork {
     if (fl) fl.stage = "closed";
     // Drop anyone's still-held probe for this plan.
     for (const [mid, q] of this.x.hold as Map<MemberId, any[]>) this.x.hold.set(mid, q.filter((x: any) => x.sourceProposalId !== l.plan.id));
+    for (const [mid, q] of this.planHold) this.planHold.set(mid, q.filter(x => x.sourceProposalId !== l.plan.id));
     const events = (this.x.ctx.snapshot().events ?? []) as any[];
     const { fallback, carry } = P.planFallback(l.run, now, events, this.pcfg);
     this.carry.push(...carry);
@@ -402,7 +486,17 @@ export class PlanNetwork extends AttentionNetwork {
       this.history.push({ planId: pid, activityId: l.plan.activityId, ...(l.plan.venueId ? { venueId: l.plan.venueId } : {}), city: l.plan.city, at: l.plan.window.start, attended: fb.attended, positive: fb.positive, recurringWant: recurring });
       if (l.plan.crewId) return;
       const fresh = P.detectCrews(this.history, this.crews, id => !!this.x.world(now).get(id)?.isHost, this.pcfg);
-      for (const c of fresh) { this.crews.push(c); this.planStats.crewsFormed++; }
+      for (const c of fresh) {
+        // Each proposed crew is offered once; a crew nobody (or too few) joined is not offered again.
+        if (this.offeredCrews.has(c.id)) continue;
+        this.offeredCrews.add(c.id);
+        // Offered in the reply to each member's post-plan answer ("want to make this a weekly thing?"); each person opts in.
+        this.planStats.crewOffers += c.members.length;
+        const yes = c.members.filter(id => this.po.crewOptIn?.(id, c) ?? true);
+        this.planStats.crewOptIns += yes.length;
+        const crew = P.crewOptIn(c, yes, this.pcfg);
+        if (crew) { this.crews.push(crew); this.planStats.crewsFormed++; } else this.planStats.crewsDeclined++;
+      }
     }
   }
 
