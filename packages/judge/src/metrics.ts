@@ -32,6 +32,16 @@ export interface MetricsOptions {
 export const PRD_BUDGETS: Record<ParticipationState, { n: number; days: number }> = {
   open: { n: 4, days: 7 }, normal: { n: 2, days: 7 }, quiet: { n: 1, days: 30 }, receiving: { n: 0, days: 7 }, paused: { n: 0, days: 7 },
 };
+/**
+ * Lanes outside the state budget (founder decisions 2026-10-08): plan invites have their own
+ * allowance (1 per 7 days), and the opt-in weekly availability check-in is not an interruption
+ * (1 per 7 days). A message is in a lane when its meta says so (`lane: "plan"`, `checkIn: true`);
+ * each lane is capped here, so a mislabeled message gains at most that lane's allowance. Members
+ * whose state budget is 0 (receiving, paused) get nothing in any lane.
+ */
+export const LANE_BUDGETS: Record<"plan" | "check_in", { n: number; days: number }> = {
+  plan: { n: 1, days: 7 }, check_in: { n: 1, days: 7 },
+};
 
 export interface Metrics {
   run: { runId: string; seed: number | string; days: number; personas: number; joined: number; adversarial: number; minors: number; network: string; agent: string };
@@ -253,13 +263,13 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
   // Per-member timeline state (records are in time order).
   interface Line {
     lastIn?: number; outSince: number; lastOut?: number; lastOutProactive: boolean;
-    askAt?: number; askUsed: number; streak: number; reengageUsed: boolean; proactive: number[];
+    askAt?: number; askUsed: number; streak: number; reengageUsed: boolean; proactive: number[]; laneTs: Record<string, number[]>;
     optedOut: boolean; state: ParticipationState; city?: string; recent: { body: string; ts: number }[]; lastOpp?: string;
   }
   const lines = new Map<MemberId, Line>();
   const line = (id: MemberId): Line => {
     let l = lines.get(id);
-    if (!l) { l = { outSince: 0, lastOutProactive: false, askUsed: 0, streak: 0, reengageUsed: false, proactive: [], optedOut: false, recent: [], state: personas.get(id)?.state ?? "normal" }; lines.set(id, l); }
+    if (!l) { l = { outSince: 0, lastOutProactive: false, askUsed: 0, streak: 0, reengageUsed: false, proactive: [], laneTs: {}, optedOut: false, recent: [], state: personas.get(id)?.state ?? "normal" }; lines.set(id, l); }
     return l;
   };
 
@@ -526,10 +536,15 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
     const persona = personas.get(to);
     if (proactive) {
       proactiveCount++;
-      if (meta.proactive !== true) violate("proactive_mislabeled", `${m.id} to ${to} (${String(meta.type ?? "?")}) is not a reply or part of an accepted opportunity but is not marked proactive`);
-      const b = PRD_BUDGETS[l.state] ?? PRD_BUDGETS.normal;
-      l.proactive = [...l.proactive, m.ts].filter(t => m.ts - t < b.days * DAY);
-      if (l.proactive.length > b.n) violate("over_budget", `${to} (${l.state}): ${l.proactive.length} proactive in ${b.days}d, budget ${b.n}`);
+      const lane = meta.checkIn === true ? "check_in" : meta.lane === "plan" ? "plan" : undefined;
+      if (meta.proactive !== true && lane !== "check_in") violate("proactive_mislabeled", `${m.id} to ${to} (${String(meta.type ?? "?")}) is not a reply or part of an accepted opportunity but is not marked proactive`);
+      const sb = PRD_BUDGETS[l.state] ?? PRD_BUDGETS.normal;
+      const b = lane && sb.n > 0 ? LANE_BUDGETS[lane] : sb;
+      const key = lane ?? "state";
+      const ts = [...(l.laneTs[key] ?? []), m.ts].filter(t => m.ts - t < b.days * DAY);
+      l.laneTs[key] = ts;
+      if (!lane) l.proactive = ts;
+      if (ts.length > b.n) violate("over_budget", `${to} (${l.state}${lane ? `, ${lane} lane` : ""}): ${ts.length} proactive in ${b.days}d, budget ${b.n}`);
       if (persona && inWindow(localHour(m.ts, l.city ?? persona.homeCity), persona.quietHours)) violate("quiet_hours", `${m.id} to ${to}`);
       if (!hasPausePath(m.body)) violate("pause_path_missing", `${m.id} to ${to}`);
       // The single re-engagement after an auto-pause (design D6, meta.reengagement) may pass the

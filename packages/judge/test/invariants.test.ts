@@ -77,6 +77,16 @@ describe("interruption invariants come from timing, not the network's flags (jud
     expect(rule([persona("o", "Oli Park", { state: "open" }), ...three("o")], "over_budget")).toBe(0);
     expect(rule([{ t: at(0, 12), type: "participation_state", memberId: "b", state: "quiet" } as RunRecord, ...three("b")], "over_budget")).toBe(2);
   });
+  test("plan invites and the opt-in check-in have their own capped lanes (founder decisions 2026-10-08)", () => {
+    const two = [1, 2].map(i => out(at(i, 12), `s${i}`, "b", `idea ${i}. ${PAUSE}`, { proactive: true }));
+    const plan = (d: number, id: string) => out(at(d, 13), id, "b", `Bouldering Saturday? ${PAUSE}`, { proactive: true, lane: "plan" });
+    const checkIn = out(at(3, 17), "c1", "b", `What's your week like? ${PAUSE}`, { type: "question", proactive: false, checkIn: true });
+    expect(rule([...two, plan(3, "p1"), checkIn], "over_budget")).toBe(0);
+    expect(rule([...two, plan(3, "p1"), plan(4, "p2")], "over_budget")).toBe(1);
+    expect(rule([...two, checkIn], "proactive_mislabeled")).toBe(0);
+    // Paused members get nothing in any lane.
+    expect(rule([{ t: at(0, 12), type: "participation_state", memberId: "b", state: "paused" } as RunRecord, plan(3, "p1")], "over_budget")).toBe(1);
+  });
   test("a 'thx' to a reminder does not answer two unanswered asks; a real reply does", () => {
     const asks = [out(at(1, 12), "p1", "c", `idea 1. ${PAUSE}`, { proactive: true }), out(at(2, 12), "p2", "c", `idea 2. ${PAUSE}`, { proactive: true }), decision(at(0, 12), "c", "inv", "proposal", "accept", "accept", "p7"), out(at(2, 13), "rm", "c", "Reminder: dinner 7pm", { type: "reminder", proposalId: "p7" })];
     expect(rule([...asks, inb(at(2, 14), "i", "c", "thx"), out(at(3, 12), "p3", "c", `idea 3. ${PAUSE}`, { proactive: true })], "two_unanswered")).toBe(1);
