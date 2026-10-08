@@ -34,11 +34,13 @@ export interface SlopPackOptions {
   /** When asks are off: what to assume for unknown fields (the baselines' UNKNOWN_DEFAULTS). */
   unknownDefaults: { ageSpread: number; maxMiles: number };
   /**
-   * When a hard-filter question went unanswered for 7 days (profile.ts SILENT_AFTER_DAYS), propose on
-   * a NARROW guess instead (silence must not lock a member out): claimed age +- ageSpread, within
-   * maxMiles. Narrow enough to sit inside almost everyone's stated range and the smallest radius option.
+   * When a hard-filter question went unanswered for 7 days (profile.ts SILENT_AFTER_DAYS): with
+   * `enabled`, propose on a NARROW guess (claimed age +- ageSpread, within maxMiles); without it
+   * (default, the founder's ask-first rule), keep asking weekly and never propose on a guess. The
+   * guess measured 1-3 stated-filter violations per seed (some members' stated range excludes
+   * their own age), so it is off.
    */
-  silentFallback: { ageSpread: number; maxMiles: number };
+  silentFallback: { enabled: boolean; ageSpread: number; maxMiles: number };
   /**
    * Re-probe a pair whose earlier probe ended BEFORE any reveal (a "no" or silence to an anonymous
    * probe is about the week and the plan, not the person) after this many days; 0 = never. A pair
@@ -101,7 +103,7 @@ export const SLOP_DEFAULT_OPTIONS: SlopPackOptions = {
   typeAsk: true,
   holdForBasics: false,
   unknownDefaults: { ageSpread: 7, maxMiles: 25 },
-  silentFallback: { ageSpread: 0, maxMiles: 5 },
+  silentFallback: { enabled: false, ageSpread: 0, maxMiles: 5 },
   reprobeAfterDays: 7,
   learned: { enabled: true, positivity: 0.6, appeal: 0.6, taste: 1, prior: 0.5, strength: 2 },
   compat: {

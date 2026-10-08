@@ -83,7 +83,7 @@ export interface SlopProfile {
 }
 
 const cache = new WeakMap<EngineInput, Map<MemberId, SlopProfile>>();
-/** An unanswered question older than this counts as silence (SlopPackOptions.silentFallback.afterDays default). */
+/** An unanswered question older than this counts as silence (SlopPackOptions.silentFallback). */
 export const SILENT_AFTER_DAYS = 7;
 
 /** Typed dating profiles for every member of an engine input (cached per input object). */

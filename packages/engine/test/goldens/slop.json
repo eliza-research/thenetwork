@@ -134,24 +134,24 @@
   }
  },
  "harness.seed1": {
-  "proposals": 94,
-  "dates": 6,
-  "mutualYesRate": 0.14893617021276595,
-  "secondDateRate": 0.16666666666666666,
+  "proposals": 90,
+  "dates": 4,
+  "mutualYesRate": 0.1,
+  "secondDateRate": 0.25,
   "minorContacts": 0,
   "asks": {
-   "sent": 282,
-   "answered": 233,
+   "sent": 273,
+   "answered": 223,
    "byField": {
-    "basics": 117,
-    "type": 117,
-    "age_range": 24,
-    "distance": 24
+    "basics": 107,
+    "type": 107,
+    "age_range": 31,
+    "distance": 28
    }
   },
   "sha": {
-   "flows": "85258e9f997ae9247c85e703373daf4068b808c862ad53e120a7b431c9c9c53c",
-   "metrics": "8f797400fcc7be19adcf25befb2dbb85af5d9dc2300f5cd842f00aa0c1bc6693"
+   "flows": "ff9061d186b60cd39843cff6bc57cce3f61d94ddabf1a4943d086ac1ac22b559",
+   "metrics": "3dd1be530725fcfca04e4937aec24ceb175b9a0e14611e5f2f788b53c56fd3f6"
   }
  }
 }

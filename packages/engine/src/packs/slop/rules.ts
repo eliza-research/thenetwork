@@ -21,13 +21,13 @@ const prof = (w: World) => slopProfiles(w.input, w.canonical);
 export function ageRangeOf(p: SlopProfile, o: SlopPackOptions): [number, number] | undefined {
   if (p.ageRange) return p.ageRange;
   if (!o.asks) return [Math.max(18, p.age - o.unknownDefaults.ageSpread), p.age + o.unknownDefaults.ageSpread];
-  return p.silentAsks.includes("age_range") ? [Math.max(18, p.age - o.silentFallback.ageSpread), p.age + o.silentFallback.ageSpread] : undefined;
+  return o.silentFallback.enabled && p.silentAsks.includes("age_range") ? [Math.max(18, p.age - o.silentFallback.ageSpread), p.age + o.silentFallback.ageSpread] : undefined;
 }
 
 /** Hard-filter fields that are missing (ask instead of proposing; one message asks them all). */
 export function missingFields(p: SlopProfile, o: SlopPackOptions): ("orientation" | "age_range" | "distance")[] {
   const out: ("orientation" | "age_range" | "distance")[] = [];
-  if ((!p.is || !p.seeks.length) && !(o.asks && p.silentAsks.includes("orientation"))) out.push("orientation");
+  if (!p.is || !p.seeks.length) out.push("orientation");
   if (!o.asks) return out;
   if (!ageRangeOf(p, o)) out.push("age_range");
   if (limitMiles(p, o) === undefined) out.push("distance");

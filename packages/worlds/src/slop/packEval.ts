@@ -80,6 +80,41 @@ export async function runArm(arm: string, seeds: number[], weeks: number, perCit
   return out;
 }
 
+/** The tuning trail (cumulative steps; run on seeds 1-4) and the ablations (each component off; held-out 5-8). */
+const OFF = { safetyGate: false, trust: { enabled: false }, asks: false, compatAsks: false, typeAsk: false, learned: { enabled: false }, reprobeAfterDays: 0, congestion: { scarceDegree: 0 } };
+export const PRESETS: Record<string, [string, object][]> = {
+  trail: [
+    ["t1 filters+compat", OFF],
+    ["t2 +safety holds", { ...OFF, safetyGate: true, trust: { enabled: true } }],
+    ["t3 +hard-field asks", { ...OFF, safetyGate: true, trust: { enabled: true }, asks: true }],
+    ["t4 +basics ask", { ...OFF, safetyGate: true, trust: { enabled: true }, asks: true, compatAsks: true }],
+    ["t5 +type ask", { ...OFF, safetyGate: true, trust: { enabled: true }, asks: true, compatAsks: true, typeAsk: true }],
+    ["t6 +learned", { ...OFF, safetyGate: true, trust: { enabled: true }, asks: true, compatAsks: true, typeAsk: true, learned: { enabled: true } }],
+    ["t7 +re-probe", { congestion: { scarceDegree: 0 } }],
+    ["t8 +scarce first (final)", {}],
+  ],
+  rejected: [
+    ["x stable roommates", { assignment: "stable" }],
+    ["x min aggregate", { aggregate: "min" }],
+    ["x backup round", { congestion: { perMemberPerTick: 2 } }],
+    ["x minValue 0.4", { minValue: 0.4 }],
+    ["x hold for basics", { holdForBasics: true }],
+    ["x typeWeight 0.3", { compat: { typeWeight: 0.3 } }],
+    ["x scarce 4", { congestion: { scarceDegree: 4 } }],
+    ["x guess after a silent ask", { silentFallback: { enabled: true } }],
+  ],
+  ablations: [
+    ["- stable instead of greedy", { assignment: "stable" }],
+    ["- no scarce-first", { congestion: { scarceDegree: 0 } }],
+    ["- backup round (2/tick)", { congestion: { perMemberPerTick: 2 } }],
+    ["- no safety gating", { safetyGate: false, trust: { enabled: false } }],
+    ["- no asks (guess)", { asks: false, compatAsks: false }],
+    ["- no compat asks", { compatAsks: false }],
+    ["- no learned", { learned: { enabled: false } }],
+    ["- no compat model", { compat: { goalClash: 1, goalUnsure: 1, goalUnknown: 1, lifestyleMismatch: 1, politicsClash: 1, religionGap: 1, kidsClash: 1, unknownField: 1, hiddenDealbreaker: 0, sharedInterest: [1, 1, 1], activityMiss: 1, typeWeight: 0 } }],
+  ],
+};
+
 export const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length);
 export const se = (xs: number[]) => { const m = mean(xs); return Math.sqrt(xs.reduce((a, b) => a + (b - m) ** 2, 0) / Math.max(1, xs.length - 1) / Math.max(1, xs.length)); };
 const harms = (m: SlopMetrics) => Object.values(m.safety.harms).reduce((a, b) => a + (b ?? 0), 0);
@@ -184,6 +219,7 @@ if (import.meta.main) {
   const weeks = Number(arg("weeks", "4")), perCity = Number(arg("per-city", "300"));
   const arms = arg("arms", "random,greedy,oracle,slop")!.split(",").filter(Boolean);
   const variants = all("variant"), names = all("variant-name");
+  for (const p of all("preset")) for (const [n, v] of PRESETS[p] ?? []) { variants.push(JSON.stringify(v)); names.push(n); }
   // --verification: the world models PRD 40.5 verification for the slop arms (variants) only; the
   // baselines stay the world-doc baselines (no verification), so "cut vs random" is vs today's floor.
   const verification = argv.includes("--verification") ? VERIFICATION_DEFAULTS : undefined;

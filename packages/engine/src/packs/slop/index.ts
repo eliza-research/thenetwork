@@ -121,7 +121,7 @@ export function makeSlopPack(over: DeepPartial<SlopPackOptions> = {}): AppPack &
         const intent = w.get(id)!.intents.find(i => i.category === SLOP_LANE);
         const fs = missingFields(p, o);
         if (fs.length) {
-          // One message asks every missing hard-filter field; re-asked at most weekly, never after silence (fallback).
+          // One message asks every missing hard-filter field; re-asked at most weekly until answered.
           for (const f of fs) if (w.now - lastAsk([`slop_${f}`]) >= 7 * DAY) add(`slop_${f}`, intent?.id);
           return;
         }

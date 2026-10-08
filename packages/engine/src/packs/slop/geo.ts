@@ -17,7 +17,7 @@ export function limitMiles(p: SlopProfile, o: SlopPackOptions): number | undefin
   if (p.scope?.mode === "radius") return p.scope.miles;
   if (p.maxMiles !== undefined) return p.maxMiles;
   if (!o.asks) return o.unknownDefaults.maxMiles;
-  return p.silentAsks.includes("distance") ? o.silentFallback.maxMiles : undefined;
+  return o.silentFallback.enabled && p.silentAsks.includes("distance") ? o.silentFallback.maxMiles : undefined;
 }
 
 /** Markets where a and b can meet inside both radii, best (closest) first, with the cell distance. */
