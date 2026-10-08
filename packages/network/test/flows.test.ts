@@ -8,6 +8,8 @@ import { OutboundQueue, type RecipientPolicy } from "../../../prototypes/messagi
 import { world as blooioWorld } from "../../../prototypes/messaging-blooio/tests/helpers.ts";
 import { blooioRecipientPolicy, copy, forbiddenProvider, OUTREACH, VENUES } from "../src/index.ts";
 import { capitalWiring, FLOOR_EFFORT, type CapitalEvent, type CapitalReader, type GamingFlag } from "../src/capital.ts";
+import { feedbackOf as feedbackOfText } from "../src/classify.ts";
+import { APPS } from "../../platform/src/apps.ts";
 import { Mini, type Spec } from "./mini.ts";
 
 const climber = (id: string, name: string, more: Partial<Spec> = {}): Spec => ({ id, name, age: 30, area: "Greenpoint", interests: ["climbing"], ...more });
@@ -88,10 +90,14 @@ describe("privacy of the run log (P3)", () => {
 
 describe("under 13: declined, and nothing kept", () => {
   test("every opportunity, alternate slot, question and name that refers to them is gone", async () => {
+    // No age on the record: kid1 first says they are 25 (an adult), then "I am 12 years old". An
+    // explicit under-13 statement with no adult record declines; with an adult record it is held for
+    // staff instead (network-service-1, tested in network.test.ts).
     const w = new Mini([
-      climber("kid1", "Ana Diaz", { age: 25 }), climber("b", "Ben Ito"), climber("c", "Cy Moss"), climber("d", "Dee Park"),
+      climber("kid1", "Ana Diaz", { age: undefined }), climber("b", "Ben Ito"), climber("c", "Cy Moss"), climber("d", "Dee Park"),
     ], { review: "human", engine: { ask: { enabled: true } } });
-    await w.onboard("kid1", "b", "c", "d");
+    for (const a of ["hi!", "25", "More time outdoors.", "Weekends, mostly.", "One-on-one is good."]) await w.say("kid1", a);
+    await w.onboard("b", "c", "d");
     w.propose(["kid1", "b"]);
     w.propose(["c", "d"], { alternates: ["kid1"], objective: "climb with Ana Diaz's crew" });
     await w.run(2 * HOUR);
@@ -184,7 +190,8 @@ describe("re-engagement", () => {
     expect(w.to("a", t)).toEqual([]);
     for (const m of w.net.memberList()) m.heldHighAt = w.clock.now();
     await w.run(2 * DAY);
-    expect(w.to("a", t).map(s => s.body)).toEqual([copy.reengage]);
+    // Unsolicited: it carries the pause path (PRD PH-003).
+    expect(w.to("a", t).map(s => s.body)).toEqual([`${copy.reengage} Reply STOP anytime to opt out.`]);
     expect(w.to("m", t)).toEqual([]);
   });
 });
@@ -255,6 +262,8 @@ describe("Blooio outbound queue hook (prototypes/messaging-blooio)", () => {
     expect(q.queue).toBeInstanceOf(OutboundQueue);
     const send = (key: string, to: string, kind: "reply" | "proactive" | "transactional", briefId?: string) =>
       q.queue.enqueue({ idempotencyKey: key, channel: "sim", to, text: "hello", kind, timeZone: "America/New_York", briefId }).record;
+    // A reply answers something the person sent (the queue's reply window, plugin-prototypes-13).
+    for (const to of ["+15550100003", "+15550100009"]) q.queue.onRecipientEngaged("sim", to);
     const recs = [
       send("adult-intro", "+15550100001", "transactional", opp),
       send("minor-intro", "+15550100003", "transactional", opp),
@@ -432,7 +441,7 @@ describe("sequential probes with time options, then the booked plan (attention v
     await w.say("m", "weekly");
     expect(w.to("m").some(s => s.body === copy.weeklyOptIn)).toBe(false);
     await w.run(8 * DAY);
-    const checkins = w.to("a").filter(s => s.body === copy.weeklyCheckin);
+    const checkins = w.to("a").filter(s => s.body.startsWith(copy.weeklyCheckin));
     expect(checkins.length).toBe(1);
     const p = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", hour: "numeric", hourCycle: "h23" }).formatToParts(checkins[0]!.t);
     expect(p.find(x => x.type === "weekday")!.value).toBe("Sun");
@@ -440,7 +449,7 @@ describe("sequential probes with time options, then the booked plan (attention v
     expect(checkins[0]!.meta.proactive).toBe(false);
     await w.say("a", "Tue and Thu evenings are good");
     expect(w.log("availability_stated").map(l => l.detail.tags)).toEqual([["evening:Tue", "evening:Thu"]]);
-    expect(w.to("m").filter(s => s.body === copy.weeklyCheckin)).toEqual([]);
+    expect(w.to("m").filter(s => s.body.startsWith(copy.weeklyCheckin))).toEqual([]);
   });
 });
 
@@ -477,7 +486,9 @@ describe("Blooio outbound queue leak lists (forbiddenProvider)", () => {
     priv("a", "recovering from a knee surgery this spring");
     await w.onboard("a", "b", "c");
     const phones: Record<string, string> = { "+15550100001": "a", "+15550100002": "b", "+15550100003": "c" };
-    const q = blooioWorld({ forbiddenProvider: forbiddenProvider(w.net, to => (to.startsWith("chat:") ? ["a", "b", "c"] : phones[to])) });
+    // Group sends need the participant resolver, and replies a recent inbound (plugin-prototypes-13, -14).
+    const q = blooioWorld({ forbiddenProvider: forbiddenProvider(w.net, to => (to.startsWith("chat:") ? ["a", "b", "c"] : phones[to])), groupParticipants: () => Object.keys(phones) });
+    for (const to of [...Object.keys(phones), "chat:g1"]) q.queue.onRecipientEngaged("sim", to);
     const send = (key: string, to: string, text: string) => q.queue.enqueue({ idempotencyKey: key, channel: "sim", to, text, kind: "reply", timeZone: "America/New_York" }).record;
     const recs = [
       send("fact-to-other", "+15550100001", "Heads up: Ben is going through a divorce and sleeping badly."),
@@ -631,7 +642,7 @@ describe("plans v1.1: the planner, the plan lane and crews", () => {
     expect(reveals.length).toBe(5);
     // Names only after booking: every message naming another invitee comes at or after plan_booked.
     for (const s of w.sent.filter(s => s.to !== "k" && named(s.body).some(n => !names.slice(ADULTS.indexOf(s.to) * 2, ADULTS.indexOf(s.to) * 2 + 2).includes(n)))) expect(s.t).toBeGreaterThanOrEqual(booked[0]!.t);
-    for (const r of reveals) expect(r.body).toMatch(/^(Great, thanks\. )?You're in: an easy group run, .* Everyone pays their own way\. Reply if you can't make it\./);
+    for (const r of reveals) expect(r.body).toMatch(/^(Great, thanks\. )?You're in: an easy group run, .* Everyone pays their own way\. Reply if your plans change\./);
     expect(w.meetings.map(m => m.participants.length)).toEqual([3, 1, 1]);
     // After the plan: four would do it again (>= 3): a crew is offered once, to them only.
     await w.runUntil(() => w.sent.some(s => s.meta.type === "feedback_request"), 7 * DAY);
@@ -660,5 +671,296 @@ describe("plans v1.1: the planner, the plan lane and crews", () => {
     // The plan's ledger events: accepted and attended for all five (mutual check-in), confirmed by silence.
     expect(events.filter(e => e.type === "plan_accepted").length).toBe(5);
     expect(events.filter(e => e.type === "plan_attended" && e.planId === planId).length).toBe(5);
+  });
+});
+
+// ---------------------------------------------------------------- audit 2026-10-08 (network)
+describe("audit 2026-10-08: refusals, minors and reports (P0)", () => {
+  test("NET-05: 'No. Saturday I'm at a wedding' never books, never reveals, and marks the pair declined", async () => {
+    for (const refusal of ["No. Saturday I'm at a wedding", "Thursday? lol no", "absolutely not", "sure, but only with a woman"]) {
+      const w = new Mini([climber("a", "Ana Diaz", { wants: [CLIMB_WANT] }), climber("b", "Ben Ito", { wants: [CLIMB_WANT] })]);
+      await w.onboard("a", "b");
+      w.propose(["a", "b"]);
+      expect(await w.runUntil(() => w.probed("a"))).toBe(true);
+      await w.say("a", "yes, any of them");
+      expect(await w.runUntil(() => w.probed("b"))).toBe(true);
+      const t = w.mark();
+      await w.say("b", refusal);
+      await w.run(2 * DAY);
+      expect([refusal, w.meetings.length]).toEqual([refusal, 0]);
+      expect(w.sent.slice(t).filter(s => s.meta.booked)).toEqual([]);
+      expect(w.sent.slice(t).map(s => s.body).join(" ")).not.toMatch(/Ana|Ben/);
+    }
+  });
+
+  test("NET-07: an explicit under-13 statement after a booked meeting keeps an id-only case on the adult that survives the delete", async () => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito", { age: undefined })]);
+    await w.onboard("a");
+    for (const x of ["hi!", "25", "More time outdoors.", "Weekends, mostly.", "One-on-one is good."]) await w.say("b", x);
+    await meet(w, "a", "b");
+    await w.say("b", "I am 12 years old");
+    expect(w.net.isDeclined("b")).toBe(true);
+    expect(w.log("minor_after_contact").map(l => l.detail.members)).toEqual([["a"]]);
+    const cases = w.net.safetyCases();
+    const onA = cases.find(c => c.memberId === "a")!;
+    expect(onA.events.map(e => e.kind)).toContain("contact_with_minor");
+    expect(JSON.stringify(cases)).not.toMatch(/"b"|Ben/);
+  });
+
+  test("NET-08: on an 18+ app an under-age statement after a meeting opens the adult's case, and the member gets no teen copy", async () => {
+    // Every app joins at 13 today (founder 2026-10-08); an app configured 18+ still must never send teen copy.
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { app: { ...APPS.slop, minJoinAge: 18 }, allowedCategories: ["hobby"] });
+    await w.onboard("a", "b");
+    await meet(w, "a", "b");
+    const t = w.mark();
+    await w.say("b", "I am 16 years old");
+    expect(w.log("minor_after_contact").map(l => l.detail)).toEqual([{ memberId: "b", members: ["a"] }]);
+    expect(w.net.safetyCases().find(c => c.memberId === "a")!.events.map(e => e.kind)).toContain("contact_with_minor");
+    // NET-52: staff review, and no teen copy ("Since you're under 18 ...") on an 18+ app.
+    expect(w.net.safetyCases().find(c => c.memberId === "b")!.events.map(e => e.kind)).toEqual(expect.arrayContaining(["minor_after_contact"]));
+    expect(w.to("b", t).map(s => s.body).join(" ")).not.toMatch(/under 18/);
+  });
+
+  test("NET-09: reporters are never punished for what they report; the pair is blocked and a case opens on the target", async () => {
+    for (const text of ["report Ben Ito, he asked me to venmo him $50", "block Ben Ito he keeps asking for my phone number", "report Ben Ito, he said I know where she lives"]) {
+      const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")]);
+      await w.onboard("a", "b");
+      await meet(w, "a", "b");
+      await w.say("a", text);
+      expect([text, w.net.trust.get("a").score, w.net.trust.level("a")]).toEqual([text, 0, "ok"]);
+      expect(w.net.recipientPolicy("a", "reveal", { about: ["a", "b"] })).toEqual({ ok: false, reason: "blocked_pair" });
+      if (text.startsWith("report")) expect(w.net.safetyCases().some(c => c.memberId === "b" && c.events.some(e => e.kind === "report_received"))).toBe(true);
+    }
+  });
+
+  test("NET-11 / NET-31: one uncorroborated report opens a staff case (ids only); a stranger's report adds no points and claims nothing", async () => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("s", "Sal Mora")]);
+    await w.onboard("a", "b", "s");
+    await meet(w, "a", "b");
+    let t = w.mark();
+    await w.say("a", "report Ben Ito, he was rude to me");
+    const c = w.net.safetyCases().find(x => x.memberId === "b")!;
+    expect(c.events.map(e => [e.kind, e.points, e.by])).toEqual([["report_received", 0, "a"]]);
+    expect(JSON.stringify(w.log("report").map(l => l.detail))).not.toMatch(/rude/);
+    expect(w.to("a", t).map(s => s.body)).toEqual([copy.reported]);
+    t = w.mark();
+    await w.say("s", "report Ben Ito");
+    expect(w.net.trust.get("b").score).toBe(0);
+    expect(w.to("s", t).map(s => s.body)).toEqual([copy.reportUnmatched]);
+    expect(w.net.safetyCases().find(x => x.memberId === "b")!.events.filter(e => e.kind === "report_received").length).toBe(2);
+  });
+
+  test("NET-13: money words keep the request and never hold; no single message from a fresh member reaches hold", async () => {
+    const w = new Mini([climber("r", "Rae Kim")]);
+    await w.onboard("r");
+    await w.say("r", "help moving a couch, I'll pay $50");
+    expect(w.log("request").map(l => l.detail.desireId)).toEqual(["moving_help"]);
+    expect(w.net.trust.level("r")).toBe("ok");
+    const abuse = (await Bun.file(`${import.meta.dir}/fixtures/abuse.jsonl`).text()).trim().split("\n").map(l => JSON.parse(l).text as string);
+    for (const text of abuse) {
+      const x = new Mini([climber("x", "Xan Lee")]);
+      await x.onboard("x");
+      await x.say("x", text);
+      expect([text, x.net.trust.level("x")]).not.toEqual([text, "hold"]);
+    }
+  });
+
+  test("NET-15: 'report Ben, he's only 15' takes Ben out of matching, lists who he met, and does not touch the reporter", async () => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), climber("c", "Cy Moss")]);
+    await w.onboard("a", "b", "c");
+    await meet(w, "a", "b");
+    await w.say("c", "report Ben Ito, he's only 15");
+    const ben = w.net.memberList().find(m => m.id === "b")!;
+    expect(ben.minor).toBe(true);
+    expect(w.net.eligible("b")).toBe(false);
+    const cs = w.net.safetyCases().find(x => x.memberId === "b")!;
+    expect(cs.events.filter(e => e.kind === "minor_after_contact").map(e => e.by)).toEqual(["a"]);
+    expect(cs.events.some(e => e.kind === "minor_reported" && e.by === "c")).toBe(true);
+    expect([w.net.trust.get("c").score, w.net.trust.level("c")]).toEqual([0, "ok"]);
+  });
+
+  test("NET-17: staff clear a minor signal only when the record and every stated age are adult, with an audit row", async () => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("t", "Tam Ruiz", { age: 16 }), climber("s", "Sol Park")]);
+    await w.onboard("a", "s");
+    await w.say("a", "my mom says I have to be home by 10 on school nights");
+    expect(w.net.memberList().find(m => m.id === "a")!.minor).toBe(true);
+    expect(w.net.clearMinorSignal("a", "")).toEqual({ ok: false, reason: "actor_required" });
+    expect(w.net.clearMinorSignal("a", "staff:jo", "she's a teacher")).toEqual({ ok: true });
+    expect(w.net.memberList().find(m => m.id === "a")!.minor).toBe(false);
+    expect(w.log("safety_action").at(-1)!.detail).toMatchObject({ action: "clear_minor_signal", memberId: "a", actor: "staff:jo" });
+    await w.say("t", "hi!");
+    expect(w.net.clearMinorSignal("t", "staff:jo")).toEqual({ ok: false, reason: "record_minor" });
+    await w.say("s", "I'm 16 lol");
+    expect(w.net.clearMinorSignal("s", "staff:jo")).toEqual({ ok: false, reason: "stated_minor" });
+  });
+});
+
+describe("audit 2026-10-08: facets, negation, pair history, attendance (P1-P3)", () => {
+  test("NET-18: a matchable skill is never quoted to the requester; a shareable one is", async () => {
+    for (const shareable of [false, true]) {
+      const w = new Mini([climber("r", "Rae Kim", { wants: [] }), climber("b", "Ben Ito", { skills: ["climbing_belay"], shareable })]);
+      await w.onboard("r", "b");
+      const t = w.mark();
+      await w.say("r", "Anyone around who'd want to find a regular climbing partner? I'm near Greenpoint.");
+      await w.run(DAY);
+      const bodies = w.sent.slice(t).map(s => s.body).join(" ");
+      expect([shareable, /experienced climber/.test(bodies)]).toEqual([shareable, shareable]);
+    }
+  });
+
+  test("NET-22: a negated want starts no request and sends no probe", async () => {
+    const w = new Mini([climber("r", "Rae Kim"), climber("b", "Ben Ito", { interests: ["startups"], wants: [{ objective: "meet other founders", category: "professional" }] })]);
+    await w.onboard("r", "b");
+    const t = w.mark();
+    await w.say("r", "I don't want to meet other founders");
+    await w.run(DAY);
+    expect(w.log("request")).toEqual([]);
+    expect(w.sent.slice(t).filter(s => s.meta.type === "probe")).toEqual([]);
+  });
+
+  test("NET-26 / NET-27: after a partner's no, the same partner is never probed again for that requester; a second requester no closes the request", async () => {
+    const w = new Mini([climber("r", "Rae Kim", { wants: [] }), climber("b", "Ben Ito", { wants: [CLIMB_WANT] })]);
+    await w.onboard("r", "b");
+    await w.say("r", "Anyone around who'd want to find a regular climbing partner? I'm near Greenpoint.");
+    expect(await w.runUntil(() => w.probed("r") || w.probed("b"), 2 * DAY)).toBe(true);
+    if (w.probed("r")) await w.say("r", "yes, any of them");
+    expect(await w.runUntil(() => w.probed("b"), 2 * DAY)).toBe(true);
+    await w.say("b", "no thanks");
+    for (let d = 0; d < 30; d++) { await w.run(DAY); await w.say("r", "Still hoping to find a regular climbing partner."); }
+    expect(w.to("b").filter(s => s.meta.type === "probe").length).toBe(1);
+  });
+
+  test("NET-40 / NET-39: a request is fulfilled only after the requester and the other attended; reveal decisions add up", async () => {
+    const w = new Mini([climber("r", "Rae Kim", { wants: [] }), climber("b", "Ben Ito", { wants: [CLIMB_WANT] })]);
+    await w.onboard("r", "b");
+    await w.say("r", "Anyone around who'd want to find a regular climbing partner? I'm near Greenpoint.");
+    await w.answerProbes(["r", "b"], () => "yes, any of them");
+    expect(w.meetings.length).toBe(1);
+    expect(w.net.requests[0]!.outcome).toBe("booked");
+    expect(w.net.counters.requestsFulfilled).toBe(0);
+    await w.run(w.meetings[0]!.at + 4 * HOUR - w.clock.now());
+    await w.say("r", "It was great, we really clicked. Would do it again.");
+    await w.say("b", "It was great, easy to talk to.");
+    await w.run(HOUR);
+    expect(w.net.requests[0]!.outcome).toBe("fulfilled");
+    expect(w.net.counters.requestsFulfilled).toBe(1);
+    const k = w.net.counters;
+    expect(k.revealYes + k.revealNo + k.revealExpired).toBe(k.reveals);
+  });
+
+  test("NET-47: blocking a never-met member and a name that matches nobody give the same reply; 'report back when ...' is not a report", async () => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("g", "Grace Hu")]);
+    await w.onboard("a", "g");
+    let t = w.mark();
+    await w.say("a", "block Grace Hu");
+    const one = w.to("a", t).map(s => s.body);
+    await w.run(20 * MINUTE); // past the duplicate-text window
+    t = w.mark();
+    await w.say("a", "block Nobody Atall");
+    expect(w.to("a", t).map(s => s.body)).toEqual(one);
+    await w.say("a", "report back when Grace is free");
+    expect(w.log("report")).toEqual([]);
+  });
+
+  test("NET-48: probes never carry another participant's name, even a two-letter one", async () => {
+    const w = new Mini([climber("a", "Bo Li", { wants: [CLIMB_WANT] }), climber("b", "Al Wu", { wants: [CLIMB_WANT] })]);
+    await w.onboard("a", "b");
+    w.propose(["a", "b"], { objective: "climb with Bo and Al" });
+    await w.answerProbes(["a", "b"], () => "yes, any of them");
+    for (const s of w.sent.filter(s => s.meta.type === "probe")) {
+      const other = s.to === "a" ? ["al", "wu"] : ["bo", "li"];
+      expect(other.filter(n => new RegExp(`\\b${n}\\b`, "i").test(s.body))).toEqual([]);
+    }
+  });
+
+  test("NET-50: one 'he never showed' penalizes nobody until the other is asked and silent; 'didn't show me her art' is not a no-show", async () => {
+    expect(feedbackOfText("didn't show me her art but it was great")).toMatchObject({ otherNoShow: false, sentiment: "positive" });
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")]);
+    await w.onboard("a", "b");
+    const at = await meet(w, "a", "b");
+    await w.run(at + 4 * HOUR - w.clock.now());
+    await w.say("a", "he never showed up");
+    expect(w.net.memberList().find(m => m.id === "b")!.noShows).toBe(0);
+    await w.run(5 * DAY);
+    expect(w.net.memberList().find(m => m.id === "b")!.noShows).toBe(1);
+  });
+
+  test("NET-51: a block after booking sends the other member one neutral cancellation", async () => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")]);
+    await w.onboard("a", "b");
+    await meet(w, "a", "b");
+    const t = w.mark();
+    await w.say("a", "block Ben Ito");
+    const toB = w.to("b", t);
+    expect(toB.length).toBe(1);
+    expect(toB[0]!.body).not.toMatch(/block|Ana/i);
+    expect(w.log("meeting_cancelled").length).toBe(1);
+  });
+
+  test("NET-60: a member on watch gets one honest reply to a request and nobody is probed", async () => {
+    const w = new Mini([climber("r", "Rae Kim"), climber("b", "Ben Ito", { wants: [CLIMB_WANT] })]);
+    await w.onboard("r", "b");
+    w.net.trust.add("r", w.clock.now(), "sales_spam", 3);
+    const t = w.mark();
+    await w.say("r", "Anyone around who'd want to find a regular climbing partner?");
+    await w.run(DAY);
+    expect(w.to("r", t).map(s => s.body)).toEqual([copy.requestOnWatch]);
+    expect(w.sent.slice(t).filter(s => s.meta.type === "probe")).toEqual([]);
+  });
+
+  test("NET-66: an agent-started send about an unknown opportunity is refused", async () => {
+    const w = new Mini([climber("a", "Ana Diaz")]);
+    await w.onboard("a");
+    const policy = blooioRecipientPolicy(w.net, () => "a");
+    expect(policy("+15550100001", { kind: "transactional", briefId: "nw-gone", agentInitiated: true })).toEqual({ ok: false, reason: "unknown_brief" });
+    expect(policy("+15550100001", { kind: "reply", agentInitiated: false })).toEqual({ ok: true });
+  });
+
+  test("NET-44: exposure debt survives a restart and goes back to the engine", async () => {
+    const w = new Mini([climber("a", "Ana Diaz")]);
+    const st = w.net.exportState();
+    st.exposureDebt = { a: 2 };
+    w.net.importState(st);
+    w.restart();
+    expect(w.net.engineInput(w.clock.now()).exposureDebt).toEqual({ a: 2 });
+  });
+});
+
+describe("audit 2026-10-08: app category scope and romance (matching-e2e-2, -M2)", () => {
+  test("NET-24: a Network for an app never starts an opportunity outside its categories (property over 60 random proposals)", async () => {
+    const cats = ["social", "professional", "romance", "hobby", "help", "events", "growth"] as const;
+    for (const app of ["peon", "slop"] as const) {
+      const w = new Mini(["a", "b", "c", "d"].map(id => climber(id, `${id.toUpperCase()}x Y${id}`)), { app, allowedCategories: undefined });
+      await w.onboard("a", "b", "c", "d");
+      const allowed = new Set(w.net.allowedCategories);
+      let seed = 7;
+      for (let i = 0; i < 30; i++) { seed = (seed * 48271) % 2147483647; w.propose(i % 2 ? ["a", "b"] : ["c", "d"], { category: cats[seed % cats.length]! }); }
+      await w.run(2 * DAY);
+      for (const l of w.log("probe_started")) expect([app, allowed.has((l.detail.proposal as { category: never }).category)]).toEqual([app, true]);
+      for (const l of w.log("review_queued")) expect([app, allowed.has((l.detail.proposal as { category: never }).category)]).toEqual([app, true]);
+    }
+  });
+
+  test("NET-25: the judge is on only when an engine LLM is wired, and the config says so", () => {
+    const off = new Mini([]).net.effectiveEngineConfig();
+    expect(off.judge?.enabled).toBe(false);
+    const on = new Mini([], { engineLLM: { chat: async () => "{}" } }).net.effectiveEngineConfig();
+    expect(on.judge?.enabled).toBe(true);
+  });
+
+  test("NET-23: on slop, two opted-in adults with matching stated preferences are probed; a mismatch or a non-opted member never is", async () => {
+    const date = { objective: "meet someone to date", category: "romance" as const };
+    const w = new Mini([
+      climber("a", "Ana Diaz", { wants: [date], romance: { is: "woman", seeks: ["man"] } }),
+      climber("b", "Ben Ito", { wants: [date], romance: { is: "man", seeks: ["woman"] } }),
+      climber("c", "Cy Moss", { wants: [date], romance: { is: "man", seeks: ["man"] } }),
+      climber("d", "Dee Park", { wants: [date] }),
+    ], { app: "slop", maxNewPerDay: 5 });
+    await w.onboard("a", "b", "c", "d");
+    await w.run(2 * DAY);
+    const started = w.log("probe_started").map(l => (l.detail.proposal as { participants: string[]; category: string }));
+    expect(started.some(p => p.category === "romance" && [...p.participants].sort().join() === "a,b")).toBe(true);
+    for (const p of started) { expect(p.participants).not.toContain("d"); expect(p.participants.length).toBe(2); }
+    expect(started.some(p => p.participants.includes("c") && p.participants.includes("a"))).toBe(false);
   });
 });

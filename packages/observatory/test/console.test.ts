@@ -124,7 +124,7 @@ describe("admin console (game mode)", () => {
     const inbound = g.world.channel.all().filter(m => m.direction === "inbound").map(m => m.body);
     expect(s.requests!.length).toBe(g.consent!.requests.length);
     if (s.requests!.length) {
-      expect(s.requests!.every(r => r.label && r.ageHours >= 0 && ["probing", "fulfilled", "none", "answered", "open"].includes(r.outcome))).toBe(true);
+      expect(s.requests!.every(r => r.label && r.ageHours >= 0 && ["probing", "fulfilled", "booked", "none", "answered", "open"].includes(r.outcome))).toBe(true);
       const json = JSON.stringify(s.requests);
       for (const b of inbound) if (b.length > 25) expect(json.includes(b)).toBe(false);
     }

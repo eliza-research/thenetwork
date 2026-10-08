@@ -1,16 +1,22 @@
 // The production runtime of the Network for every app (README.md in this folder; platform plan 4.4, 6.1).
 //  - One process holds one NetworkRuntime per row of platform.networks ('<app>:<city>'). Each runtime
 //    ticks and handles units of work under its own PgStore advisory lock (runtime.ts).
-//  - Inbound (Blooio webhooks, signed): /webhooks/blooio/:app is one app's line (its own secret,
-//    <APP>_BLOOIO_WEBHOOK_SECRET). /webhooks/blooio is the shared line (BLOOIO_WEBHOOK_SECRET): a row in
-//    platform.app_lines for the receiving line names the app; otherwise the first message routes by
-//    keyword ("slop", "slop.date", ...), a known member's app, or The Network.
-//  - Phone -> person -> membership -> member id. Someone who is not a member of the app: on an open app
-//    the text starts that app's join (first name and age; nothing is stored until the age check
-//    passes); on an invite-only app one short invite-only reply, nothing stored. Responses never say
-//    whether the phone uses another app.
-//  - STOP, STOP ALL, START and HELP go through the platform consent ledger (PLATFORM_STOP_SCOPE; on
-//    the shared line STOP stops every app). "leave <app>" leaves that app only (the forget path).
+//  - Inbound (Blooio webhooks, signed): /webhooks/blooio is the one line for every app
+//    (BLOOIO_WEBHOOK_SECRET; founder decision 2): a row in platform.app_lines for the receiving line
+//    names the app; otherwise the whole first message routes by keyword ("slop", "slop.date",
+//    "friends.help", ...), then a member's open item, then the app that wrote last. With no keyword a
+//    stranger joins The Network: first name and age, then "what are you looking for?" (friends,
+//    dating, work), which enrolls them in the matching apps, each age-checked.
+//    /webhooks/blooio/:app is an app's own line, if one ever gets one (<APP>_BLOOIO_WEBHOOK_SECRET).
+//  - Phone -> person -> membership -> member id. Joins are 13+ on every app; minors are never matched.
+//    Nothing is stored until the age check passes (a refused age goes to the phone's age floor only).
+//    Responses never say whether the phone uses another app.
+//  - Text flows that wait for the person's next message (a join, "what are you looking for?", the
+//    SHARE offer) are in platform.pending_texts, so a restart or a second instance keeps them.
+//  - STOP (and the reasonable-means phrasings) stops every app on the line; "leave <app>" leaves that
+//    app only (the forget path). Both go through the platform consent ledger, once per message.
+//  - An age the person states in chat lowers the person's age on every app: a minor anywhere is a
+//    minor everywhere, and under 13 removes every membership.
 //  - The platform public API (packages/platform createPublicApi) with hooks into the networks:
 //    publicFetch, served on PLATFORM_API_PORT (main.ts).
 //  - Staff API: role tokens per app ("reviewer@slop:<t>"; NETWORK_SERVICE_TOKENS), ?app= or
@@ -22,21 +28,24 @@ import { SQL } from "bun";
 import { DAY, RealClock, type Clock, type MemberId } from "@thenetwork/core";
 import type { ActionResult, NetworkOptions, ReviewDecision, ReviewOptions } from "../src/network.ts";
 import { brandOf, copy as ntwrkCopy, copyFor, type Copy } from "../src/copy.ts";
+import { isMinor } from "@thenetwork/core";
 import { ageAnswer, agesStated } from "../src/classify.ts";
 import { NetworkRuntime, type RuntimeHost } from "./runtime.ts";
 import type { ChannelAdapter, Outbound } from "./channel.ts";
-import { APPS, isAppId, type AppId, type AppInfo } from "../../platform/src/apps.ts";
+import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { Accounts, type AccountHooks, type JoinHookContext, type MemberHookContext } from "../../platform/src/accounts.ts";
 import { joinAgeCheck } from "../../platform/src/age.ts";
-import { detectKeyword as platformKeyword, keywordEvent, resolveConsent, stopScope, type StopScope } from "../../platform/src/consent.ts";
+import { detectKeyword as platformKeyword, keywordEvent, leaveTarget, resolveConsent, stopScope, type StopScope } from "../../platform/src/consent.ts";
 import { devShortcutsAllowed, isProduction, platformEnv, type Env } from "../../platform/src/env.ts";
 import { keyedHash, maskPhone, normalizePhone } from "../../platform/src/phone.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
-import type { Membership, PeopleStore, Person } from "../../platform/src/store.ts";
+import type { Membership, PeopleStore, PendingText, Person } from "../../platform/src/store.ts";
 import { createPublicApi, type PublicApi, type PublicApiOptions } from "../../platform/src/api.ts";
 import { otpProviderFromEnv } from "../../platform/src/otp.ts";
 import { turnstileFromEnv } from "../../platform/src/turnstile.ts";
 import type { PeerInfo } from "../../platform/src/api.ts";
+import { PgPhotoStore, PhotoService, photoStorageFromEnv, type PhotoRater, type PhotoScores, type PhotoStorage } from "../../platform/src/photos.ts";
+import type { Ban } from "../../platform/src/store.ts";
 import { parseBlooioWebhook, SIGNATURE_HEADER, verifyBlooioSignature } from "../../../prototypes/messaging-blooio/src/blooio/webhook.ts";
 import { normalizeAddress } from "../../../prototypes/messaging-blooio/src/phone.ts";
 import type { ChannelEvent } from "../../../prototypes/messaging-blooio/src/types.ts";
@@ -57,8 +66,29 @@ const REQUIRED_TABLES = [
 const DEV_HASH_KEY = "dev-only-platform-hash-key";
 /** Proactive messages one person gets a day, across every app (PRD 40.3). */
 export const PERSON_DAILY_CAP = 3;
-/** A pending text join (asked for first name and age) is forgotten after a day. */
+/** A pending text flow (a join, "what are you looking for?", a SHARE offer) is forgotten after a day. */
 const PENDING_MS = DAY;
+/**
+ * The SMS disclosure in the question whose answer opts the person in to more apps (audit: the
+ * looking-for consent stored a question with no frequency, rates or STOP; the web join needs them).
+ */
+const LOOKING_FOR_DISCLOSURE = "Each app you pick will text you about it. Message frequency varies. Message and data rates may apply. Reply STOP to stop, HELP for help.";
+/** The Network's question after a join with no keyword (founder decision 2). */
+export const LOOKING_FOR_ASK = `What are you looking for: friends, dating, work, or all of these? You can pick more than one. ${LOOKING_FOR_DISCLOSURE} ${POWERED_BY}`;
+/** The same question to a member aged 13-17: dating is never offered (slop is never enrolled from it). */
+export const LOOKING_FOR_ASK_MINOR = `What are you looking for: friends, work, or both? ${LOOKING_FOR_DISCLOSURE} ${POWERED_BY}`;
+/** The question for an age: minors never see dating. */
+export const lookingForAsk = (age: number | undefined) => (age === undefined || age < 18 ? LOOKING_FOR_ASK_MINOR : LOOKING_FOR_ASK);
+const listApps = (apps: AppInfo[]) => apps.map(a => a.domain).join(apps.length === 2 ? " and " : ", ");
+/** The Network's answer after it enrolled the person in the apps they named. */
+export const enrolledText = (apps: AppInfo[]) =>
+  `Done: you're in ${listApps(apps)}. Text an app's name (like ${apps[0]!.domain}) to talk to it, or "leave ${apps[0]!.domain}" to leave one. ${POWERED_BY}`;
+/** Safety on every app (safety@* or admin@*): what a hold on other apps and a ban need. */
+const crossAppSafety = (u: StaffUser) => hasEverywhere(u, "safety") || hasEverywhere(u, "admin");
+/** Staff review actions the API takes, and the reason codes (PRD 32.8 and the per-app lists). */
+const DECISIONS = new Set(["approve", "reject", "edit", "reroll"]);
+/** A reviewer's time on one item is clamped to an hour (audit observatory-10). */
+const MAX_REVIEW_SECONDS = 3600;
 
 /** One network the service runs: platform.networks.id ('<app>:<city>') and whether matching may run. */
 export interface NetworkSpec { id: string; matchingEnabled?: boolean }
@@ -102,6 +132,17 @@ export interface ServiceOptions {
   publicApi?: Partial<Pick<PublicApiOptions, "otp" | "turnstile" | "hostMap" | "trustForwardedHost" | "minStartMs" | "minVerifyMs" | "otpLimits" | "demo" | "ipOf">>;
   /** PLATFORM_STOP_SCOPE, PLATFORM_HASH_KEY, NODE_ENV/PLATFORM_ENV. Default process.env. */
   env?: Env;
+  /** Photo storage (platform photos.ts). Default: PHOTO_STORAGE from the environment; null turns photos off. */
+  photoStorage?: PhotoStorage | null;
+  /** The photo rater (default "none": nothing is rated). */
+  photoRater?: PhotoRater;
+  /** The origin staff photo links use (PHOTO_VIEW_BASE_URL). Default: https://<the app's domain>, which the site router forwards to /api/*. */
+  photoBaseUrl?: string;
+  /**
+   * Networks whose stored matching switch starts ON when no state is stored yet (dev only; refused
+   * outside PLATFORM_ENV=dev). Production starts every network off: an admin turns it on in the console.
+   */
+  devMatching?: string[];
   log?: (line: string) => void;
 }
 
@@ -110,7 +151,6 @@ export type InboundOutcome =
   | "invite_only" | "join_asked" | "joined" | "under_age" | "stopped" | "left" | "no_network" | "held";
 
 interface Route { app: AppId; shared: boolean }
-interface PendingJoin { app: AppId; at: number; age?: number; name?: string }
 
 const lower = (s: string) => s.normalize("NFKC").toLowerCase();
 /** Words that are never a first name in a join answer. */
@@ -166,10 +206,10 @@ export class NetworkService implements RuntimeHost {
   private readonly apiOptions: ServiceOptions["publicApi"];
   private api?: PublicApi;
   private readonly copies = new Map<AppId, Copy>();
-  /** Text joins waiting for a first name or an age, by keyed phone hash. In memory only: a restart asks again. */
-  private pending = new Map<string, PendingJoin>();
-  /** Members who got the link notice and may answer SHARE (keyed phone hash + app). */
-  private linkOffers = new Set<string>();
+  private readonly forgetListeners: Array<(ctx: MemberHookContext) => Promise<unknown> | unknown> = [];
+  /** Private member photos (slop; verified adults only). */
+  readonly photos: PhotoService;
+  private readonly photoBaseUrl?: string;
 
   constructor(o: ServiceOptions) {
     if (o.network?.review && o.network.review !== "human") throw new Error(`review mode "${o.network.review}" is refused: production review is "human" only (runbook-real 7.4)`);
@@ -196,8 +236,19 @@ export class NetworkService implements RuntimeHost {
       const id = spec.id.includes(":") ? spec.id : `ntwrk:${spec.id}`;
       const [app, city] = id.split(":") as [string, string];
       if (!isAppId(app) || !this.apps[app]) throw new Error(`network ${id}: unknown app "${app}"`);
-      this.runtimes.set(id, new NetworkRuntime(this, { id, app: this.apps[app], city, matchingAllowed: spec.matchingEnabled ?? true, network: o.network, adapter: o.adapter }));
+      // Dev only: the stored switch of these networks starts on (a new state); production always starts off.
+      const devOn = (o.devMatching ?? []).includes(id);
+      if (devOn && !devShortcutsAllowed(this.env)) throw new Error("devMatching is for PLATFORM_ENV=dev only: production matching is turned on by an admin in the console");
+      this.runtimes.set(id, new NetworkRuntime(this, { id, app: this.apps[app], city, matchingAllowed: spec.matchingEnabled ?? true, network: devOn ? { ...o.network, matchingEnabled: true } : o.network, adapter: o.adapter }));
     }
+    this.photoBaseUrl = o.photoBaseUrl ?? this.env.PHOTO_VIEW_BASE_URL ?? undefined;
+    this.photos = new PhotoService({
+      people: this.people, meta: new PgPhotoStore(this.sql), storage: o.photoStorage === null ? undefined : o.photoStorage ?? photoStorageFromEnv(this.env),
+      signingKey: key, now: () => this.clock.now(), rater: o.photoRater, log: this.log,
+      eligible: (personId, app) => this.verifiedAdult(personId, app),
+      onRating: (personId, app, photoId, scores) => this.writeRating(personId, app, photoId, scores),
+      onRemoved: (personId, app, photoId) => this.dropRatings(personId, app, photoId),
+    });
     this.audit = o.audit ?? new PgAudit(o.auditUrl ?? o.url);
   }
 
@@ -258,7 +309,15 @@ export class NetworkService implements RuntimeHost {
   async tick(): Promise<boolean> {
     let any = false;
     for (const rt of this.runtimes.values()) any = (await rt.tick()) || any;
+    await this.purge();
     return any;
+  }
+
+  /** Retention (audit platform-18): expired OTP challenges and sessions, old rate windows and stale text flows. */
+  async purge() {
+    const n = await this.people.purge(this.clock.now() - 2 * DAY).catch(e => { this.log(`[purge] failed: ${(e as Error).message}`); return 0; });
+    if (n) this.log(`[purge] removed ${n} expired platform row(s)`);
+    return n;
   }
 
   /** A unit of work on The Network (the first network). */
@@ -267,28 +326,27 @@ export class NetworkService implements RuntimeHost {
   // ------------------------------------------------------------------ the person cap (RuntimeHost)
   /**
    * The proactive sends of a batch that would take a person over the daily cap across every app
-   * (PRD 40.3), counted at send time from network.messages of the last 24 hours. Members the platform
-   * does not know (no person_id) have only their app's own limits. The read spans apps, so it goes
-   * through platform.person_cap_counts (SECURITY DEFINER, migration 0006): under the network_service
-   * role a direct query sees one app only and would count 0. It returns ids and counts only.
+   * (PRD 40.3), checked at send time. The count is a platform counter (platform.person_sends) taken by
+   * platform.person_cap_take (SECURITY DEFINER, migration 0007) under one lock for every app: two
+   * networks that deliver at once cannot both pass the cap, and the network_service role (one app per
+   * transaction) still counts every app. It returns the refused ids only. Members the platform does
+   * not know (no person_id) have only their app's own limits.
    */
   async capRefused(rt: NetworkRuntime, batch: Outbound[]): Promise<Set<string>> {
-    const out = new Set<string>();
     const pro = batch.filter(b => b.proactive || b.kind === "proactive");
-    if (!this.cap || !pro.length) return out;
-    const ids = [...new Set(pro.map(b => b.memberId))];
-    const rows = await this.sql`select member_id, person_id, n from platform.person_cap_counts(${rt.app.id}, ${this.sql.array(ids, "TEXT")}, ${new Date(this.clock.now() - DAY)}, ${this.sql.array(batch.map(b => b.id), "TEXT")})`;
-    if (!rows.length) return out;
-    const personOf = new Map((rows as any[]).map(r => [r.member_id as string, r.person_id as string]));
-    const n = new Map((rows as any[]).map(r => [r.person_id as string, r.n as number]));
-    for (const b of pro) {
-      const p = personOf.get(b.memberId);
-      if (!p) continue;
-      const k = n.get(p) ?? 0;
-      if (k >= this.cap) { out.add(b.id); this.log(`[cap] person cap (${this.cap}/day) holds a proactive send to ${b.memberId} (${rt.id})`); }
-      else n.set(p, k + 1);
-    }
+    if (!this.cap || !pro.length) return new Set();
+    const now = this.clock.now();
+    const sends = pro.map(b => ({ id: b.id, member: b.memberId }));
+    const rows = await this.sql`select * from platform.person_cap_take(${rt.app.id}, ${sends}::jsonb, ${new Date(now - DAY)}, ${new Date(now)}, ${this.cap}) as id`;
+    const out = new Set((rows as any[]).map(r => r.id as string));
+    for (const id of out) this.log(`[cap] person cap (${this.cap}/day) holds a proactive send ${id} (${rt.id})`);
     return out;
+  }
+
+  /** Release the cap slots of sends the adapter refused (migration 0012). */
+  async capRelease(ids: string[]): Promise<void> {
+    if (!this.cap || !ids.length) return;
+    await this.sql`select platform.person_cap_release(${this.sql.array(ids, "TEXT")})`.catch(e => this.log(`[cap] release failed: ${(e as Error).message}`));
   }
 
   /**
@@ -306,7 +364,9 @@ export class NetworkService implements RuntimeHost {
       if (e164) byPhone.set(e164, [...(byPhone.get(e164) ?? []), b]);
     }
     for (const [e164, sends] of byPhone) {
-      if (resolveConsent(await this.people.lastConsent(e164, rt.app.id)) !== "opted_out") continue;
+      // A number that deleted everything stays suppressed until the person opts in again (platform-15).
+      const suppressed = await this.people.isSuppressed(this.phoneKey(e164));
+      if (!suppressed && resolveConsent(await this.people.lastConsent(e164, rt.app.id)) !== "opted_out") continue;
       for (const b of sends) out.add(b.id);
       this.log(`[consent] ${sends.length} send(s) to an opted-out number refused (${rt.id})`);
     }
@@ -319,9 +379,10 @@ export class NetworkService implements RuntimeHost {
    * first name, age) and what the person gave at join (neighborhood, interests). The phone stays in
    * platform.phone_identities. Written with app.app_id set (migration 0004).
    */
-  async createMember(rt: NetworkRuntime, m: Membership, info: { age: number; firstName: string; neighborhood?: string; interests?: string[] }) {
+  async createMember(rt: NetworkRuntime, m: Membership, info: { age: number; firstName: string; neighborhood?: string; interests?: string[]; zip?: string }) {
     const now = new Date(this.clock.now());
-    const prefs = { categoriesOptIn: ["social", "hobby", "professional", "events", "growth", "help"], quietHours: [21, 9], romanceOptIn: false, formats: ["one_to_one", "small_group", "event"], maxTravelMinutes: 45, onlyWhenAsked: false };
+    // The app's categories (packs.ts): slop is dating and only for adults; peon is work; friends is social and hobby.
+    const prefs = { ...rt.wiring.prefs(info.age), quietHours: [21, 9], formats: ["one_to_one", "small_group", "event"], maxTravelMinutes: 45, onlyWhenAsked: false };
     await this.sql.begin(async tx => {
       await tx`select set_config('app.app_id', ${rt.app.id}, true)`;
       await tx`insert into network.members (app_id, id, person_id, name, home_city, home_area, account_status, age, prefs, joined_at)
@@ -329,6 +390,12 @@ export class NetworkService implements RuntimeHost {
         on conflict (id) do update set person_id = excluded.person_id, name = excluded.name, home_city = excluded.home_city, home_area = excluded.home_area,
           account_status = 'active', age = excluded.age, joined_at = excluded.joined_at, opted_out = false`;
       if (info.neighborhood) await tx`insert into network.presence (app_id, member_id, city, type, areas) values (${rt.app.id}, ${m.memberId}, ${rt.city}, 'home', ${tx.array([info.neighborhood], "TEXT")})`;
+      // slop dates by distance from a zip (a coarse cell; agent_private, never shown).
+      if (info.zip && rt.app.id === "slop") {
+        await tx`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, source, confidence, status, valid_from)
+          values (${rt.app.id}, ${`${m.memberId}:join:zip`}, ${m.memberId}, 'fact', ${info.zip}, ${tx.array([`slop:zip:${info.zip}`], "TEXT")}, 'agent_private', 'said', 'web_join', 0.9, 'confirmed', ${now})
+          on conflict (id) do nothing`;
+      }
       for (const tag of info.interests ?? []) {
         await tx`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, source, confidence, status, valid_from)
           values (${rt.app.id}, ${`${m.memberId}:join:${tag}`}, ${m.memberId}, 'interest', ${tag}, ${tx.array([tag], "TEXT")}, 'matchable', 'said', 'web_join', 0.8, 'confirmed', ${now})
@@ -342,9 +409,33 @@ export class NetworkService implements RuntimeHost {
     return {
       onJoin: (ctx: JoinHookContext) => this.joined(ctx),
       onStop: ctx => this.stopped(ctx.app, ctx.personId, ctx.scope),
-      onForget: (ctx: MemberHookContext) => this.forget(ctx.app, ctx.memberId),
+      onForget: async (ctx: MemberHookContext) => {
+        // The app's photos go first (leave, delete everything, a new owner of the number).
+        await this.photos.deleteFor(ctx.personId, ctx.app.id);
+        await this.forget(ctx.app, ctx.memberId);
+        // Other parts of the backend that hold data about the person in this app (the MCP server's OAuth grants).
+        for (const f of this.forgetListeners) {
+          try { await f(ctx); } catch (e) { this.log(`[forget] listener failed for ${ctx.app.id}: ${(e as Error).message}`); }
+        }
+      },
       onExport: (ctx: MemberHookContext) => this.exportMember(ctx.app, ctx.memberId),
+      onAgeLowered: ctx => this.ageLowered(ctx.personId, ctx.age),
     };
+  }
+
+  /**
+   * The person's lowest age went down (an age stated on any app, in chat or on a web form): every app's
+   * member follows, so a minor anywhere is single-player everywhere (founder decision 1).
+   */
+  private async ageLowered(personId: string, age: number) {
+    // Photos and any rating of looks are for adults only: a person who is now under 18 on any app loses
+    // every photo and every rating, on every app (also ratings whose photo is already gone).
+    if (age < 18) { await this.photos.deleteFor(personId); await this.dropRatings(personId); }
+    for (const m of await this.people.memberships(personId)) {
+      const rt = this.runtimeFor(m.app);
+      if (!rt || m.state === "removed") continue;
+      await rt.scoped(tx => tx`update network.members set age = least(coalesce(age, ${age}), ${age}) where app_id = ${m.app} and id = ${m.memberId}`);
+    }
   }
 
   /** A web join (POST /api/join): the member row, then the welcome through the normal send path. */
@@ -352,7 +443,7 @@ export class NetworkService implements RuntimeHost {
     const rt = this.runtimeFor(ctx.app.id);
     if (!rt) throw new Error(`no network runs for ${ctx.app.id}`);
     if (ctx.membership.state !== "active") return; // waitlist or a recycled number: staff first
-    await this.createMember(rt, ctx.membership, { age: ctx.age, firstName: ctx.input.firstName, neighborhood: ctx.input.neighborhood, interests: ctx.input.interests });
+    await this.createMember(rt, ctx.membership, { age: ctx.age, firstName: ctx.input.firstName, neighborhood: ctx.input.neighborhood, interests: ctx.input.interests, zip: ctx.input.zip });
     await rt.unitOfWork(n => { n.welcomeJoined(ctx.membership.memberId); });
   }
 
@@ -374,6 +465,12 @@ export class NetworkService implements RuntimeHost {
     }
   }
 
+  /**
+   * Run `fn` after a person leaves an app or deletes everything (once per app), with the person's phone.
+   * The backend uses it to revoke the MCP server's OAuth grants of that app (packages/mcp revokeAllFor).
+   */
+  onForget(fn: (ctx: MemberHookContext) => Promise<unknown> | unknown) { this.forgetListeners.push(fn); }
+
   /** Leave one app: the Network forgets the member, then the save deletes every row that names them (the forget path). */
   private async forget(app: AppInfo, memberId: MemberId) {
     const rt = this.runtimeFor(app.id);
@@ -384,14 +481,16 @@ export class NetworkService implements RuntimeHost {
   /** This app's own data about the member: what they told it, their own messages, and their opportunities (kind and state only). */
   private async exportMember(app: AppInfo, memberId: MemberId) {
     const a = app.id;
-    const [member, facets, intents, presence, messages, opps] = await Promise.all([
-      this.sql`select id, name, home_city, home_area, age, account_status, opted_out, joined_at from network.members where app_id = ${a} and id = ${memberId}`,
-      this.sql`select kind, value, tags, provenance, status, valid_from from network.facets where app_id = ${a} and member_id = ${memberId} and privacy_scope <> 'agent_private'`,
-      this.sql`select objective, category, status, created_at from network.intents where app_id = ${a} and member_id = ${memberId}`,
-      this.sql`select city, type, areas from network.presence where app_id = ${a} and member_id = ${memberId}`,
-      this.sql`select direction, body, ts from network.messages where app_id = ${a} and member_id = ${memberId} order by ts`,
-      this.sql`select o.id, o.kind, o.state, o.created_at, o.meeting_at, p.role from network.participations p join network.opportunities o on o.app_id = p.app_id and o.id = p.opportunity_id
-        where p.app_id = ${a} and p.member_id = ${memberId} order by o.created_at`,
+    const rt = this.runtimeFor(a);
+    if (!rt) return null;
+    const [member, facets, intents, presence, messages, opps] = await rt.scoped(async tx => [
+      await tx`select id, name, home_city, home_area, age, account_status, opted_out, joined_at from network.members where app_id = ${a} and id = ${memberId}`,
+      await tx`select kind, value, tags, provenance, status, valid_from from network.facets where app_id = ${a} and member_id = ${memberId} and privacy_scope <> 'agent_private' order by id`,
+      await tx`select objective, category, status, created_at from network.intents where app_id = ${a} and member_id = ${memberId} order by created_at, id`,
+      await tx`select city, type, areas from network.presence where app_id = ${a} and member_id = ${memberId}`,
+      await tx`select direction, body, ts from network.messages where app_id = ${a} and member_id = ${memberId} order by ts, id`,
+      await tx`select o.id, o.kind, o.state, o.created_at, o.meeting_at, p.role from network.participations p join network.opportunities o on o.app_id = p.app_id and o.id = p.opportunity_id
+        where p.app_id = ${a} and p.member_id = ${memberId} order by o.created_at, o.id`,
     ]);
     return { member: member[0] ?? null, facets: [...facets], intents: [...intents], presence: [...presence], messages: [...messages], opportunities: [...opps] };
   }
@@ -404,7 +503,7 @@ export class NetworkService implements RuntimeHost {
     this.api ??= createPublicApi({
       store: this.people, otp: this.apiOptions?.otp ?? otpProviderFromEnv(this.env), turnstile: this.apiOptions?.turnstile ?? turnstileFromEnv(this.env),
       hashKey: this.hashKey, apps: this.apps, env: this.env,
-      now: () => this.clock.now(), log: this.log, ...this.apiOptions, ...this.hooks(),
+      now: () => this.clock.now(), log: this.log, ...this.apiOptions, ...this.hooks(), photos: this.photos,
     });
     return this.api;
   }
@@ -412,15 +511,15 @@ export class NetworkService implements RuntimeHost {
   publicFetch = async (req: Request, server?: PeerInfo): Promise<Response> => (await this.publicApi.fetch(req, server)) ?? Response.json({ ok: false, error: "not_found" }, { status: 404 });
 
   // ------------------------------------------------------------------ inbound
-  /** The app of an inbound message (platform plan 4.4, founder decision 2026-10-08 on one shared line). */
   /**
-   * The app of an inbound message on the shared line (platform plan 4.4, founder decision 2026-10-08):
+   * The app of an inbound message on the shared line (platform plan 4.4, founder decision 2):
    *  1. a per-app webhook path or a line in platform.app_lines names the app;
-   *  2. the whole message is an app's word ("slop", "slop.date", "join slop"): that app;
+   *  2. the whole message is an app's word ("slop", "slop.date", "join friends.help"): that app;
    *  3. a join the person started (they sent the app's word) takes the answer that follows, if the
    *     answer reads as a join answer or the person is not a member anywhere;
-   *  4. a member: their app (several: the app that wrote to them last);
-   *  5. otherwise The Network.
+   *  4. a member: the app with the newest open item (a probe, a plan they have not answered), else the
+   *     app that wrote to them last;
+   *  5. otherwise The Network (a stranger joins it).
    * An app's name inside a sentence ("my ex is on slop.date") never routes a member's message.
    */
   private async route(ev: Extract<ChannelEvent, { kind: "message" }>, forced?: AppId): Promise<Route> {
@@ -434,10 +533,12 @@ export class NetworkService implements RuntimeHost {
     if (named) return { app: named, shared: true };
     const mine = (await this.memberApps(ev.from)).filter(x => this.runtimeFor(x.app));
     const e164 = normalizePhone(ev.from);
-    const pending = e164 ? this.pending.get(this.phoneKey(e164)) : undefined;
-    if (pending && this.clock.now() - pending.at < PENDING_MS && !mine.some(x => x.app === pending.app)
+    const pending = e164 ? await this.pendingOf(e164, "join") : undefined;
+    if (pending && !mine.some(x => x.app === pending.app)
       && (!mine.length || parseJoinText(ev.text, this.appWords(), true).age !== undefined)) return { app: pending.app, shared: true };
     if (mine.length) {
+      const open = mine.filter(x => x.lastItem !== null).sort((a, b) => b.lastItem! - a.lastItem!)[0];
+      if (open) return { app: open.app, shared: true };
       // Several apps: the reply goes to the app that wrote to this person last.
       const last = [...mine].sort((a, b) => (b.lastOut ?? 0) - (a.lastOut ?? 0))[0]!;
       return { app: last.app, shared: true };
@@ -445,30 +546,23 @@ export class NetworkService implements RuntimeHost {
     return { app: "ntwrk", shared: true };
   }
 
-  /** The apps this address is a joined member of, across apps (platform.member_apps, migration 0006: ids and times only). */
-  async memberApps(address: string): Promise<{ app: AppId; memberId: MemberId; lastOut: number | null }[]> {
-    const rows = await this.sql`select app_id, member_id, last_out from platform.member_apps(${normalizeAddress(address)})`;
-    return (rows as any[]).filter(r => isAppId(r.app_id)).map(r => ({ app: r.app_id as AppId, memberId: r.member_id, lastOut: r.last_out ? new Date(r.last_out).getTime() : null }));
+  /** The apps this address is a joined member of, across apps (platform.member_apps: ids and times only). */
+  async memberApps(address: string): Promise<{ app: AppId; memberId: MemberId; lastOut: number | null; lastItem: number | null }[]> {
+    const rows = await this.sql`select app_id, member_id, last_out, last_item from platform.member_apps(${normalizeAddress(address)})`;
+    return (rows as any[]).filter(r => isAppId(r.app_id)).map(r => ({
+      app: r.app_id as AppId, memberId: r.member_id, lastOut: r.last_out ? new Date(r.last_out).getTime() : null, lastItem: r.last_item ? new Date(r.last_item).getTime() : null,
+    }));
   }
 
   private appWords() { return Object.values(this.apps).flatMap(a => [a.id, ...a.domain.split(".")]); }
 
   /** "slop", "slop.date", "www.slop.date" or "join slop": the whole message names the app. Never a word inside a sentence. */
-  namedApp(text: string): AppId | undefined {
-    const t = lower(text).replace(/[^\p{L}\p{N}. ]+/gu, " ").replace(/\s+/g, " ").trim().replace(/\.$/, "");
-    const bare = t.replace(/^join /, "");
-    for (const a of Object.values(this.apps)) {
-      if (bare === a.id || bare === a.domain || bare === `www.${a.domain}`) return a.id;
-    }
-    return undefined;
-  }
+  namedApp(text: string): AppId | undefined { return keywordApp(text, this.apps); }
 
-  /** "leave slop", "leave slop.date": that app only. */
-  private leaveTarget(text: string): AppInfo | undefined {
-    const m = /^leave (.+)$/.exec(lower(text).replace(/[^\p{L}\p{N}. ]+/gu, " ").replace(/\s+/g, " ").trim().replace(/\.$/, ""));
-    if (!m) return undefined;
-    const x = m[1]!.replace(/^the /, "");
-    return Object.values(this.apps).find(a => x === a.id || x === a.domain || x === lower(a.name).replace(/^the /, ""));
+  /** A pending text flow of this phone that is not older than a day. */
+  private async pendingOf(e164: string, kind: PendingText["kind"], app?: AppId): Promise<PendingText | undefined> {
+    const p = await this.people.getPending(this.phoneKey(e164), kind, app);
+    return p && this.clock.now() - p.at < PENDING_MS ? p : undefined;
   }
 
   /** A verified, parsed channel event (Blooio webhook). `app`: the per-app webhook path. */
@@ -505,14 +599,14 @@ export class NetworkService implements RuntimeHost {
     const kw = platformKeyword(ev.text);
     const line = ev.to ? normalizeAddress(ev.to) : undefined;
 
-    // STOP / STOP ALL: the consent ledger first (with or without a membership), then every member it covers.
+    // STOP / STOP ALL: the consent ledger first (with or without a membership; once per message), then every member it covers.
     if (kw === "stop" || kw === "stop_all") {
       const scope: StopScope = kw === "stop_all" || route.shared ? "global" : stopScope(this.env);
-      const { event, reply } = keywordEvent(kw, e164 ?? ev.from, app, t, { line, scope });
+      const { event, reply } = keywordEvent(kw, e164 ?? ev.from, app, t, { line, scope, ref: rowId });
       if (e164 && event) await this.accounts.recordConsent(event);
       // The adapters in the STOP's scope only (the send path also reads the consent ledger).
       for (const r of this.runtimes.values()) if (scope === "global" || r === rt) r.adapter.optedOut?.(ev.from, true);
-      if (e164) this.pending.delete(this.phoneKey(e164));
+      if (e164) await this.people.deletePending(this.phoneKey(e164));
       if (memberId) await this.memberMessage(rt, memberId, ev, rowId, kw, reply);
       else await this.direct(rt, ev.from, reply, `sys:${rowId}`);
       const person = e164 ? await this.accounts.personFor(e164) : undefined;
@@ -537,7 +631,8 @@ export class NetworkService implements RuntimeHost {
     }
 
     // "leave <app>": that app only, on any line.
-    const leaving = this.leaveTarget(ev.text);
+    const leavingId = leaveTarget(ev.text, this.apps);
+    const leaving = leavingId ? this.apps[leavingId] : undefined;
     if (leaving && e164) {
       const lrt = this.runtimeFor(leaving.id);
       if (lrt && lrt !== rt) await lrt.identities();
@@ -545,7 +640,7 @@ export class NetworkService implements RuntimeHost {
       if (lrt && lid) {
         const person = await this.accounts.personFor(e164);
         if (person) await this.accounts.leave(leaving, { e164, personId: person.id });
-        else { await this.accounts.recordConsent({ e164, app: leaving.id, line, state: "opted_out", source: "leave", at: t }); await this.forget(leaving, lid); }
+        else { await this.accounts.recordConsent({ e164, app: leaving.id, line, state: "opted_out", source: "leave", ref: rowId, at: t }); await this.forget(leaving, lid); }
         await this.direct(lrt, ev.from, this.copyOf(leaving).leftApp, `sys:${rowId}`);
         return "left";
       }
@@ -554,22 +649,48 @@ export class NetworkService implements RuntimeHost {
     if (memberId) {
       rt.adapter.engaged?.(ev.from);
       if (kw === "start" && e164) {
-        await this.accounts.recordConsent({ e164, app: app.id, line, state: "opted_in", source: "keyword:start", wording: "START keyword", at: t });
+        await this.accounts.recordConsent({ e164, app: app.id, line, state: "opted_in", source: "keyword:start", wording: "START keyword", ref: rowId, at: t });
         const person = await this.accounts.personFor(e164);
         const m = person && (await this.people.getMembership(person.id, app.id));
         if (m?.state === "paused") await this.people.putMembership({ ...m, state: "active" });
       }
       const reply = kw === "help" ? app.brand.help : undefined;
-      if (!kw && e164 && /^\s*share\W*$/i.test(ev.text) && this.linkOffers.has(`${app.id}:${this.phoneKey(e164)}`)) return this.share(rt, app, memberId, e164, ev, rowId);
+      if (!kw && e164 && /^\s*share\W*$/i.test(ev.text) && (await this.pendingOf(e164, "share", app.id))) return this.share(rt, app, memberId, e164, ev, rowId);
+      // The answer to The Network's "what are you looking for?": enroll in the apps they named.
+      if (!kw && e164 && app.id === "ntwrk" && (await this.pendingOf(e164, "looking_for"))) {
+        const wants = lookingFor(ev.text).filter(a => a !== "ntwrk" && this.runtimeFor(a));
+        if (wants.length) return this.enroll(rt, memberId, e164, wants, ev, rowId);
+      }
       const out = await this.memberMessage(rt, memberId, ev, rowId, kw, reply);
-      if (e164 && rt.net.isDeclined(memberId)) await this.declined(app, e164, ev.text);
+      if (e164) await this.statedAge(app, rt, memberId, e164);
       return out;
     }
 
-    // Not a member of this app. Nothing is stored about them unless they join (open app, age check passed).
+    // Not a member of this app. Nothing is stored about them unless they join (age check passed).
     if (!e164) { this.log(`[inbound] unknown sender (not a phone), ${ev.text.length} chars, not stored`); return "unknown_sender"; }
     if (kw === "help") { await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`); return "handled"; }
-    return this.join(rt, app, e164, ev, rowId);
+    // One text join per phone at a time (the same lock as a web join).
+    return this.people.withLock(`join:${e164}`, () => this.join(rt, app, e164, ev, rowId, route));
+  }
+
+  /**
+   * The profile a person gave their own AI agent, sent through the MCP server's submit_profile
+   * (founder decision 10): delivered to their member on this app as if they had texted it, so the
+   * Network reads it with the same rules (wants, interests, availability, an age that can only lower,
+   * minors and abuse). Only for a live membership; it never creates a member. The text is the member's.
+   */
+  async submitProfile(personId: string, appId: AppId, e164: string, text: string): Promise<"accepted" | "not_member"> {
+    const m = await this.people.getMembership(personId, appId);
+    const rt = this.runtimeFor(appId);
+    if (!m || !rt || !["active", "onboarding"].includes(m.state)) return "not_member";
+    if (await this.accounts.banned(e164)) return "not_member";
+    const t = this.clock.now(), rowId = `agent_${randomUUID()}`;
+    const ev: Extract<ChannelEvent, { kind: "message" }> = {
+      kind: "message", channel: "imessage" as never, messageId: rowId, from: e164, to: null, chatId: e164, isGroup: false, text, mediaUrls: [], transport: "imessage" as never, receivedAt: t,
+    };
+    await this.memberMessage(rt, m.memberId as MemberId, ev, rowId, undefined);
+    await this.statedAge(this.apps[appId], rt, m.memberId as MemberId, e164);
+    return "accepted";
   }
 
   /** A member's message (or keyword) as one unit of work on their app's network. */
@@ -577,7 +698,7 @@ export class NetworkService implements RuntimeHost {
     const keyword = kw === "stop" || kw === "stop_all" ? "STOP" : kw === "start" ? "START" : kw === "help" ? "HELP" : undefined;
     return rt.unitOfWork(async n => {
       // Under the lock, so a provider retry or a second subscription is handled once.
-      if ((await this.sql`select 1 from network.messages where id = ${rowId}`).length) return "duplicate" as const;
+      if ((await rt.scoped(tx => tx`select 1 from network.messages where app_id = ${rt.app.id} and id = ${rowId}`)).length) return "duplicate" as const;
       if (n.isDeclined(memberId)) return "handled" as const; // declined at join: never answered, nothing stored
       const t = this.clock.now();
       const channel = ev.transport === "sms" ? "sms" : "imessage";
@@ -598,17 +719,29 @@ export class NetworkService implements RuntimeHost {
   }
 
   /**
-   * The Network declined a member under the app's join age (they stated it after joining). The
-   * platform follows: the person keeps the lowest age (on every app), and the membership is forgotten.
+   * An age the member stated in chat (the Network's classifier: first person, present tense; it calls
+   * onAgeStated, runtime.ts). The person keeps the lowest age on every app (Accounts.recordAge ->
+   * ageLowered): an explicit age, a minor's age, or the age the Network declined them for. The phone's
+   * age floor too, so a member from before the platform (no person) cannot join again older. When the
+   * Network declined them (under 13), every membership goes: under 13 cannot use any app.
    */
-  private async declined(app: AppInfo, e164: string, text: string) {
+  private async statedAge(app: AppInfo, rt: NetworkRuntime, memberId: MemberId, e164: string) {
+    const ages = rt.takeAges(memberId).filter(a => a.explicit || a.declined || isMinor(a.age));
+    if (!ages.length) return;
     const person = await this.accounts.personFor(e164);
-    if (!person) return;
-    const stated = agesStated(text);
-    const age = stated.explicit ?? stated.age ?? ageAnswer(text);
-    if (age !== undefined && age > 0 && age < 120) await this.accounts.recordAge(e164, person, age);
-    await this.people.forgetMembership(person.id, app.id, this.clock.now());
-    await this.accounts.recordConsent({ e164, app: app.id, state: "opted_out", source: "join_declined", at: this.clock.now() });
+    // An under-13 statement the Network did not decline for (an attested adult: it holds them for
+    // staff, audit network-service-1) is recorded as 13: a minor on every app, never matched, but no
+    // other app deletes the person's data before staff decide.
+    const recorded = ages.map(a => (a.declined ? a.age : Math.max(a.age, app.minJoinAge)));
+    await this.accounts.recordAge(e164, person, Math.min(...recorded));
+    if (!person || !ages.some(a => a.declined)) return;
+    const at = this.clock.now();
+    for (const m of await this.people.memberships(person.id)) {
+      if (m.state === "removed") continue;
+      if (m.app !== app.id) await this.forget(this.apps[m.app], m.memberId as MemberId);
+      await this.people.forgetMembership(person.id, m.app, at);
+      await this.accounts.recordConsent({ e164, app: m.app, state: "opted_out", source: "join_declined", at });
+    }
   }
 
   /** One fixed text to someone who is not a member here. Nothing is stored. */
@@ -617,32 +750,36 @@ export class NetworkService implements RuntimeHost {
   }
 
   /**
-   * Someone who is not a member of this app wrote to it. Invite-only app: one short reply a day,
-   * nothing stored. Open app: ask for first name and age; when both came and the age check passes,
-   * the person (if new), the membership, the consent event and the network member are created, and
-   * the Network welcomes them. Under the join age: the kind decline, nothing stored for this app.
+   * Someone who is not a member of this app wrote to it. An invite-only app on its own site or line:
+   * one short reply a day, nothing stored. Otherwise (every app on the shared line, The Network
+   * included when no keyword named an app): ask for first name and age; when both came and the age
+   * check passes, the person (if new), the membership, the consent event and the network member are
+   * created, and the Network welcomes them. A join to The Network with no keyword then asks what they
+   * are looking for. Under the join age: the kind decline, nothing stored for this app.
    */
-  private async join(rt: NetworkRuntime, app: AppInfo, e164: string, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string): Promise<InboundOutcome> {
+  private async join(rt: NetworkRuntime, app: AppInfo, e164: string, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, route: Route): Promise<InboundOutcome> {
     const key = this.phoneKey(e164);
     const t = this.clock.now();
     const c = this.copyOf(app);
     const person = await this.accounts.personFor(e164);
+    // A banned number or person never joins any app; nothing is stored and nothing is answered.
+    if (await this.accounts.banned(e164, person)) { this.log(`[inbound] a banned number wrote to ${app.id}: not joined, not stored`); return "held"; }
     const existing = person ? await this.people.getMembership(person.id, app.id) : undefined;
     const invited = existing?.state === "invited";
-    if (app.joinMode === "invite" && !invited) {
+    if (app.joinMode === "invite" && !invited && !(route.shared && app.id === "ntwrk")) {
       // The same answer whether or not the number uses another app; at most once a day per number.
       const { count } = await this.people.hit(`invite_only:${app.id}:${key}`, DAY, t);
       if (count === 1) await this.direct(rt, ev.from, app.brand.inviteOnly, `sys:${rowId}`);
       this.log(`[inbound] not a member of invite-only ${app.id}: ${count === 1 ? "invite-only reply" : "no reply (sent today)"}, not stored`);
       return "invite_only";
     }
-    let p = this.pending.get(key);
-    if (p && (p.app !== app.id || t - p.at >= PENDING_MS)) p = undefined;
+    let p = await this.pendingOf(e164, "join");
+    if (p && p.app !== app.id) p = undefined;
     const said = parseJoinText(ev.text, this.appWords(), !!p);
-    const age = said.age ?? p?.age, name = said.name ?? p?.name;
+    const age = said.age ?? p?.age ?? undefined, name = said.name ?? p?.name ?? undefined;
     const ask = invited ? c.invited(app.minJoinAge) : c.joinAsk(app.minJoinAge);
     if (age === undefined) {
-      this.pending.set(key, { app: app.id, at: t, ...(name ? { name } : {}) });
+      await this.people.putPending({ phoneHash: key, kind: "join", app: app.id, name: name ?? null, age: null, at: t });
       const { count } = await this.people.hit(`join_ask:${app.id}:${key}`, DAY, t);
       if (count <= 3) await this.direct(rt, ev.from, ask, `sys:${rowId}`);
       return "join_asked";
@@ -652,45 +789,88 @@ export class NetworkService implements RuntimeHost {
       // Nothing is stored for this app: only the age, on the phone's age floor (and the person, if any),
       // so a second try with an older age is refused too.
       await this.accounts.recordAge(e164, person, age);
-      this.pending.delete(key);
+      await this.people.deletePending(key, "join");
       await this.direct(rt, ev.from, app.brand.underAge, `sys:${rowId}`);
       this.log(`[inbound] under the join age for ${app.id}: declined, nothing stored`);
       return "under_age";
     }
     if (!name) {
-      this.pending.set(key, { app: app.id, at: t, age });
+      await this.people.putPending({ phoneHash: key, kind: "join", app: app.id, name: null, age, at: t });
       await this.direct(rt, ev.from, c.joinNeedName, `sys:${rowId}`);
       return "join_asked";
     }
-    this.pending.delete(key);
+    await this.people.deletePending(key, "join");
     // Join: the person (new or known), the membership, the opt-in (with the words they answered), then the member and the welcome.
-    const who: Person = person ?? (await this.people.createPerson({ id: randomUUID(), e164, method: "inbound_message", at: t, lowestAge: age }));
+    const who: Person = person ?? (await this.accounts.createPerson(e164, "inbound_message", check.effective ?? age));
     await this.accounts.recordAge(e164, who, age);
     // Their answer is a new opt-in: a delete of everything no longer suppresses the number.
-    await this.people.unsuppress(this.phoneKey(e164));
+    await this.people.unsuppress(key);
     const others = (await this.people.memberships(who.id)).filter(m => m.app !== app.id && m.state !== "removed" && m.state !== "invited");
     const membership: Membership = {
       app: app.id, personId: who.id, memberId: existing?.state === "invited" ? existing.memberId : `${app.id}_${randomUUID()}`,
       state: app.joinMode === "waitlist" ? "onboarding" : "active", review: null, firstName: name, profile: {}, joinedAt: t, leftAt: null,
     };
     await this.people.putMembership(membership);
-    await this.accounts.recordConsent({ e164, app: app.id, line: ev.to ? normalizeAddress(ev.to) : null, state: "opted_in", source: "inbound_message", wording: ask, at: t });
+    await this.accounts.recordConsent({ e164, app: app.id, line: ev.to ? normalizeAddress(ev.to) : null, state: "opted_in", source: "inbound_message", wording: ask, ref: rowId, at: t });
     if (membership.state !== "active") return "joined";
-    await this.createMember(rt, membership, { age, firstName: name });
+    await this.createMember(rt, membership, { age: Math.min(age, check.effective ?? age), firstName: name });
     // Their answer is their first message: the Network welcomes them as a reply to it.
     await this.memberMessage(rt, membership.memberId, ev, rowId, undefined);
     // A person who uses another app with this number: the link notice (never names the other app).
     if (others.length) {
       await rt.unitOfWork(() => { rt.system(membership.memberId, `link:${rowId}`, c.linkNotice, "transactional", "info"); });
-      this.linkOffers.add(`${app.id}:${key}`);
+      await this.people.putPending({ phoneHash: key, kind: "share", app: app.id, name: null, age: null, at: t });
+    } else if (app.id === "ntwrk" && route.shared && !invited) {
+      // No keyword: The Network asks what they are looking for, then enrolls them (founder decision 2).
+      const askText = lookingForAsk(Math.min(age, check.effective ?? age));
+      await rt.unitOfWork(() => { rt.system(membership.memberId, `ask:${rowId}`, askText, "transactional", "info"); });
+      await this.people.putPending({ phoneHash: key, kind: "looking_for", app: "ntwrk", name: null, age: null, at: t });
     }
     return "joined";
+  }
+
+  /**
+   * The answer to "what are you looking for?": a membership in each app they named, each with the
+   * app's own join age check (13+ everywhere today), its own opt-in and its own member. The Network
+   * confirms in one text. Apps the age check refuses are left out without saying why.
+   */
+  private async enroll(rt: NetworkRuntime, memberId: MemberId, e164: string, wants: AppId[], ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string): Promise<InboundOutcome> {
+    const key = this.phoneKey(e164), t = this.clock.now();
+    const person = await this.accounts.personFor(e164);
+    const ntwrk = person && (await this.people.getMembership(person.id, "ntwrk"));
+    const joined: AppInfo[] = [];
+    if (person && ntwrk && !(await this.accounts.banned(e164, person))) {
+      const lowest = await this.accounts.lowestAge(e164, person);
+      const asked = lookingForAsk(lowest);
+      // A member under 18 (or of unknown age) is never enrolled in slop.date from this question; they may
+      // still join it on its own site (founder decision 1), where matching and photos stay 18+.
+      for (const id of wants.filter(a => a !== "slop" || (lowest !== undefined && lowest >= 18))) {
+        const app = this.apps[id], art = this.runtimeFor(id)!;
+        const existing = await this.people.getMembership(person.id, id);
+        if (existing && existing.state !== "removed" && existing.state !== "invited") { joined.push(app); continue; }
+        if (lowest === undefined || !joinAgeCheck(lowest, lowest, app).ok) continue;
+        const m: Membership = {
+          app: id, personId: person.id, memberId: existing?.state === "invited" ? existing.memberId : `${id}_${randomUUID()}`,
+          state: app.joinMode === "waitlist" ? "onboarding" : "active", review: null, firstName: ntwrk.firstName, profile: {}, joinedAt: t, leftAt: null,
+        };
+        await this.people.putMembership(m);
+        await this.accounts.recordConsent({ e164, app: id, state: "opted_in", source: "looking_for", wording: asked, ref: `${rowId}:${id}`, at: t });
+        if (m.state === "active") await this.createMember(art, m, { age: lowest, firstName: ntwrk.firstName ?? "there" });
+        joined.push(app);
+      }
+    }
+    await this.people.deletePending(key, "looking_for");
+    return rt.unitOfWork(async () => {
+      rt.unit.inbound = { id: rowId, member_id: memberId, direction: "inbound", channel: ev.transport === "sms" ? "sms" : "imessage", body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
+      if (joined.length) rt.system(memberId, `sys:${rowId}`, enrolledText(joined), "reply", "info");
+      return "handled" as const;
+    });
   }
 
   /** SHARE after the link notice: base-profile grants from the person's other apps (a grant copies nothing). */
   private async share(rt: NetworkRuntime, app: AppInfo, memberId: MemberId, e164: string, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string): Promise<InboundOutcome> {
     const person = await this.accounts.personFor(e164);
-    this.linkOffers.delete(`${app.id}:${this.phoneKey(e164)}`);
+    await this.people.deletePending(this.phoneKey(e164), "share", app.id);
     if (person) for (const m of await this.people.memberships(person.id)) {
       if (m.app !== app.id && m.state !== "removed" && m.state !== "invited") await this.accounts.share(app, { e164, personId: person.id }, m.app, ["first_name", "city", "interests"]);
     }
@@ -716,7 +896,9 @@ export class NetworkService implements RuntimeHost {
   reviewQueue(rt = this.main) { return rt.reviewQueue(); }
 
   review(user: StaffUser, oppId: string, decision: ReviewDecision, o: Omit<ReviewOptions, "reviewer">, rt = this.main) {
-    const opts: ReviewOptions = { ...o, reviewer: user.id };
+    // The reviewer of record is the signed-in person (reviewerOfRecord), never a body field; time on the item is clamped.
+    const secondsSpent = typeof o.secondsSpent === "number" && Number.isFinite(o.secondsSpent) ? Math.min(Math.max(0, o.secondsSpent), MAX_REVIEW_SECONDS) : undefined;
+    const opts: ReviewOptions = { ...o, secondsSpent, reviewer: user.id };
     const detail = { decision, reason: o.reason ?? null, ...(o.swapOut ? { swapOut: o.swapOut } : {}), ...(o.explanations || o.objective ? { edited: [...Object.keys(o.explanations ?? {}).map(k => `explanation:${k}`), ...(o.objective !== undefined ? ["objective"] : [])] } : {}) };
     return this.staffAction(rt, user, "review", { type: "opportunity", id: oppId }, detail, n => n.decide(oppId, decision, opts));
   }
@@ -744,6 +926,185 @@ export class NetworkService implements RuntimeHost {
     await this.audit.write({ actor: user.id, roles: user.roles, action: "invite", targetType: target.type, targetId: target.id, mode: "real", app: rt.app.id, at: this.clock.now(), ok: r.ok, detail: { network: rt.id, phase: "result", ...(r.ok ? {} : { reason: r.reason }) } })
       .catch(e => this.log(`[audit] result row failed: ${(e as Error).message}`));
     return r;
+  }
+
+  // ------------------------------------------------------------------ verification, photos, reports, holds and bans
+  /** The person of a member of this app (network.members.person_id), if the member came through the platform. */
+  async personOfMember(rt: NetworkRuntime, memberId: MemberId): Promise<string | undefined> {
+    const [r] = await rt.scoped(tx => tx`select person_id from network.members where app_id = ${rt.app.id} and id = ${memberId}`);
+    return (r?.person_id as string | null) ?? undefined;
+  }
+
+  /**
+   * An adult on this app, for photos and ratings: a live membership, a member age of 18 or more (the
+   * person's lowest age is checked by PhotoService), and no failed age check recorded by staff
+   * (verify:age:fail). Founder decision 9: no ID check, a stated age is enough.
+   */
+  private async verifiedAdult(personId: string, app: AppId): Promise<boolean> {
+    const m = await this.people.getMembership(personId, app);
+    const rt = this.runtimeFor(app);
+    if (!m || !rt || !["active", "paused", "onboarding"].includes(m.state)) return false;
+    const rows = await rt.scoped(tx => tx`select m.age, f.tags, f.valid_from from network.members m left join network.facets f on f.app_id = m.app_id and f.member_id = m.id and f.status <> 'rejected'
+      and exists (select 1 from unnest(f.tags) t where t like 'verify:age:%') where m.app_id = ${app} and m.id = ${m.memberId} order by f.valid_from desc nulls last, f.id desc`) as any[];
+    if (!rows.length || !(rows[0].age >= 18)) return false;
+    // Founder decision 9 (AGENTS.md): no ID check; the stated age (18+ on the person and the member) is
+    // enough. A staff-recorded failed age check still refuses.
+    const last = rows.find(r => r.tags)?.tags as string[] | undefined;
+    return !last?.includes("verify:age:fail");
+  }
+
+  /** Delete rating facets: one photo's, or every rating of the person on every app. */
+  private async dropRatings(personId: string, app?: AppId, photoId?: string) {
+    for (const m of await this.people.memberships(personId)) {
+      if (app && m.app !== app) continue;
+      const rt = this.runtimeFor(m.app);
+      if (!rt) continue;
+      const like = photoId ? `${m.memberId}:photo:${photoId}` : `${m.memberId}:photo:%`;
+      await rt.scoped(tx => tx`delete from network.facets where app_id = ${m.app} and member_id = ${m.memberId} and id like ${like}`);
+    }
+  }
+
+  /** The rater's scores: agent_private facets on the member (never shown to anyone, not in the member's export). */
+  private async writeRating(personId: string, app: AppId, photoId: string, s: PhotoScores) {
+    const m = await this.people.getMembership(personId, app);
+    const rt = this.runtimeFor(app);
+    if (!m || !rt) return;
+    const now = new Date(this.clock.now());
+    await rt.scoped(tx => tx`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, source, confidence, status, valid_from)
+      values (${app}, ${`${m.memberId}:photo:${photoId}`}, ${m.memberId}, 'trait', 'photo rating', ${tx.array([`${app}:rating:face=${s.face}`, `${app}:rating:body=${s.body}`, `${app}:rating:overall=${s.overall}`], "TEXT")},
+        'agent_private', 'inferred', 'photo_rater', 0.5, 'confirmed', ${now})
+      on conflict (id) do update set tags = excluded.tags, valid_from = excluded.valid_from`);
+  }
+
+  /**
+   * Staff record a verification result (PRD 40.5: liveness and age, until a vendor writes them):
+   * verify:<check>:<pass|fail> on the member, agent_private, provenance "vouched". Audited before and after.
+   */
+  async verify(user: StaffUser, rt: NetworkRuntime, memberId: MemberId, check: "age" | "liveness", result: "pass" | "fail", note: string): Promise<ActionResult> {
+    const base = { actor: user.id, roles: user.roles, action: "safety", targetType: "member" as const, targetId: memberId, mode: "real" as const, app: rt.app.id };
+    await this.audit.write({ ...base, at: this.clock.now(), ok: true, detail: { safety: "verify", check, result, note, phase: "requested" } });
+    const now = new Date(this.clock.now());
+    const n = await rt.scoped(async tx => {
+      const [m] = await tx`select age from network.members where app_id = ${rt.app.id} and id = ${memberId} and account_status not in ('invited', 'removed')`;
+      if (!m) return 0;
+      await tx`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, source, confidence, status, valid_from)
+        values (${rt.app.id}, ${`${memberId}:verify:${check}`}, ${memberId}, 'fact', ${`${check} check ${result === "pass" ? "passed" : "failed"}`}, ${tx.array([`verify:${check}:${result}`], "TEXT")},
+          'agent_private', 'vouched', 'staff', 0.95, 'confirmed', ${now})
+        on conflict (id) do update set tags = excluded.tags, value = excluded.value, valid_from = excluded.valid_from`;
+      return 1;
+    });
+    const r: ActionResult = n ? { ok: true } : { ok: false, reason: "unknown_member" };
+    // A failed age check: no rating of looks may stay on this app (adults only, decision 9).
+    if (n && check === "age" && result === "fail") { const pid = await this.personOfMember(rt, memberId); if (pid) await this.dropRatings(pid, rt.app.id); }
+    await this.audit.write({ ...base, at: this.clock.now(), ok: r.ok, detail: { safety: "verify", check, result, phase: "result", ...(r.ok ? {} : { reason: r.reason }) } }).catch(e => this.log(`[audit] result row failed: ${(e as Error).message}`));
+    return r;
+  }
+
+  /** Reports about this app's members (the console's "Reports after a date"), newest first. Never the reporter's words. */
+  safetyReports(rt: NetworkRuntime) { return rt.readState(n => n.safetyReports()); }
+
+  /** The runtimes and member ids of a person, on every app (live memberships). A member from before the platform: this app only. */
+  private async membersOfPerson(rt: NetworkRuntime, memberId: MemberId): Promise<{ personId?: string; members: { rt: NetworkRuntime; memberId: MemberId }[] }> {
+    const personId = await this.personOfMember(rt, memberId);
+    if (!personId) return { members: [{ rt, memberId }] };
+    const members: { rt: NetworkRuntime; memberId: MemberId }[] = [];
+    for (const m of await this.people.memberships(personId)) {
+      const r = this.runtimeFor(m.app);
+      if (r && m.state !== "removed" && m.state !== "invited") members.push({ rt: r, memberId: m.memberId as MemberId });
+    }
+    if (!members.some(x => x.rt === rt && x.memberId === memberId)) members.push({ rt, memberId });
+    return { personId, members };
+  }
+
+  /**
+   * Hold a person on every app until a review (docs/admin-console.md 3.7.1): each app's Network holds
+   * the member (nothing new starts, open items stop, one hold notice). Audited before and after.
+   */
+  async hold(user: StaffUser, rt: NetworkRuntime, memberId: MemberId, note: string, reportId?: string): Promise<ActionResult> {
+    // Staff with safety on this app only hold here; the hold on every other app needs safety@* (or admin@*),
+    // and the audit row never says how many apps the person uses (a slop membership never shows across apps).
+    const all = await this.membersOfPerson(rt, memberId);
+    const members = crossAppSafety(user) ? all.members : all.members.filter(x => x.rt === rt);
+    return this.audited(rt, user, { type: "member", id: memberId }, { safety: "hold", reportId: reportId ?? null, scope: members.length > 1 ? "every_app" : "this_app" }, async () => {
+      const r = await rt.unitOfWork(n => n.holdMember(memberId, user.id, note, reportId));
+      if (!r.ok) return r;
+      // One network at a time (never one unit inside another: no lock order to get wrong).
+      for (const x of members) if (!(x.rt === rt && x.memberId === memberId)) await x.rt.unitOfWork(o => o.holdMember(x.memberId, user.id, note));
+      return r;
+    });
+  }
+
+  /** Dismiss a report: it no longer keeps the member out of matching. */
+  dismissReport(user: StaffUser, rt: NetworkRuntime, reportId: string, note: string) {
+    return this.staffAction(rt, user, "safety", { type: "case", id: reportId }, { safety: "dismiss_report" }, n => n.dismissReport(reportId, user.id, note));
+  }
+
+  /**
+   * Ban by phone or by person (PRD 40.5 "ban by person, not by account"):
+   *  - phone: the person's number(s) (keyed hashes) can never join any app again;
+   *  - person: the person, on every app, and every phone they have now.
+   * Then every live membership is restricted, every app's Network holds the member (never matched or
+   * texted again but for safety notices), and the numbers are suppressed. Audited before and after.
+   */
+  async ban(user: StaffUser, rt: NetworkRuntime, memberId: MemberId, by: "phone" | "person", note: string, reportId?: string): Promise<ActionResult> {
+    const { personId, members } = await this.membersOfPerson(rt, memberId);
+    const target = { type: "member" as const, id: memberId };
+    // A ban stops the number on every app: only safety@* (or admin@*) may do it. Staff of one app hold.
+    if (!crossAppSafety(user)) return this.refused(user, rt, "ban", target, "needs_safety_everywhere");
+    if (!personId) return this.refused(user, rt, "ban", target, "no_person");
+    const hashes = await this.people.phoneHashesOf(personId);
+    if (by === "phone" && !hashes.length) return this.refused(user, rt, "ban", target, "no_phone");
+    const already = by === "person" ? await this.people.isBanned("", personId) : (await Promise.all(hashes.map(h => this.people.isBanned(h)))).every(Boolean);
+    if (already) return this.refused(user, rt, "ban", target, "already_banned");
+    return this.audited(rt, user, target, { safety: "ban", by, reportId: reportId ?? null }, async () => {
+      const at = this.clock.now();
+      const rows: Ban[] = by === "person"
+        ? [{ id: `ban_${randomUUID()}`, scope: "person", personId, phoneHash: hashes[0] ?? null, reason: note, reportId: reportId ?? null, bannedBy: user.id, at },
+          ...hashes.slice(1).map(h => ({ id: `ban_${randomUUID()}`, scope: "person" as const, personId, phoneHash: h, reason: note, reportId: reportId ?? null, bannedBy: user.id, at }))]
+        : hashes.map(h => ({ id: `ban_${randomUUID()}`, scope: "phone" as const, personId, phoneHash: h, reason: note, reportId: reportId ?? null, bannedBy: user.id, at }));
+      for (const b of rows) await this.people.ban(b);
+      for (const h of hashes) await this.people.suppress(h, "banned", at);
+      for (const m of await this.people.memberships(personId)) if (m.state !== "removed" && m.state !== "invited") await this.people.putMembership({ ...m, state: "restricted" });
+      let out: ActionResult = { ok: true };
+      for (const x of members) {
+        await x.rt.scoped(tx => tx`update network.members set account_status = 'restricted' where app_id = ${x.rt.app.id} and id = ${x.memberId}`);
+        const mine = x.rt === rt && x.memberId === memberId;
+        const r = await x.rt.unitOfWork(o => o.markBanned(x.memberId, user.id, note, mine ? reportId : undefined));
+        if (mine) out = r;
+      }
+      return out;
+    });
+  }
+
+  /** A safety action that spans networks: the audit row first (no row, no action), then `fn`, then a result row. */
+  private async audited(rt: NetworkRuntime, user: StaffUser, target: { type: NonNullable<AuditEntry["targetType"]>; id: string }, detail: Row, fn: () => Promise<ActionResult>): Promise<ActionResult> {
+    const base = { actor: user.id, roles: user.roles, action: "safety", targetType: target.type, targetId: target.id, mode: "real" as const, app: rt.app.id };
+    await this.audit.write({ ...base, at: this.clock.now(), ok: true, detail: { ...detail, network: rt.id, phase: "requested" } });
+    const r = await fn();
+    await this.audit.write({ ...base, at: this.clock.now(), ok: r.ok, detail: { ...detail, network: rt.id, phase: "result", ...(r.ok ? {} : { reason: r.reason }) } })
+      .catch(e => this.log(`[audit] result row failed: ${(e as Error).message}`));
+    return r;
+  }
+
+  /** A refused staff action, audited (requested and result rows) without running anything. */
+  private async refused(user: StaffUser, rt: NetworkRuntime, safety: string, target: { type: NonNullable<AuditEntry["targetType"]>; id: string }, reason: string): Promise<ActionResult> {
+    const base = { actor: user.id, roles: user.roles, action: "safety", targetType: target.type, targetId: target.id, mode: "real" as const, app: rt.app.id };
+    await this.audit.write({ ...base, at: this.clock.now(), ok: false, detail: { safety, network: rt.id, phase: "refused", reason } });
+    return { ok: false, reason };
+  }
+
+  /**
+   * Staff read a member's photos (GET /members/:id/photos, X-Network-Reason): admin or safety, a typed
+   * reason, verified adults only (checked again here and in PhotoService). The audit row is written
+   * before any link is made; refusals are audited too. Links work for 5 minutes and go through the backend.
+   */
+  async staffPhotos(user: StaffUser, rt: NetworkRuntime, memberId: MemberId, reason: string): Promise<{ ok: true; photos: { id: string; url: string; expiresAt: number }[] } | { ok: false; reason: string }> {
+    const base = { actor: user.id, roles: user.roles, action: "read_photos", targetType: "member" as const, targetId: memberId, mode: "real" as const, app: rt.app.id };
+    await this.audit.write({ ...base, at: this.clock.now(), ok: true, detail: { reason, phase: "requested" } });
+    const personId = await this.personOfMember(rt, memberId);
+    const r = personId ? await this.photos.staffLinks(personId, rt.app.id, this.photoBaseUrl ?? `https://${rt.app.domain}`) : { ok: false as const, reason: "adults_only" as const };
+    await this.audit.write({ ...base, at: this.clock.now(), ok: r.ok, detail: { phase: "result", ...(r.ok ? { photos: r.value.length } : { reason: r.reason }) } }).catch(e => this.log(`[audit] result row failed: ${(e as Error).message}`));
+    return r.ok ? { ok: true, photos: r.value } : { ok: false, reason: r.reason };
   }
 
   /** The matching switch of one network. A network whose registry row does not allow matching (slop and peon until their packs ship) refuses "on". */
@@ -822,21 +1183,69 @@ export class NetworkService implements RuntimeHost {
         const ok = await this.accounts.clearHold(e164, b.decision);
         return result(ok ? { ok: true } : { ok: false, reason: "not_held" });
       }
+      if (req.method === "GET" && path === "/safety/reports") {
+        const no = need(["safety"]); if (no) return no;
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_safety_reports", mode: "real", ok: true, app: rt.app.id });
+        return json({ ok: true, network: rt.id, reports: await this.safetyReports(rt) });
+      }
+      const photoPath = path.match(/^\/members\/([^/]+)\/photos$/);
+      if (req.method === "GET" && photoPath) {
+        const no = need(["safety"]); if (no) return no;
+        let id: string;
+        try { id = decodeURIComponent(photoPath[1]!); } catch { return json({ ok: false, error: "invalid_id" }, 400); }
+        const reason = req.headers.get("x-network-reason")?.trim() ?? "";
+        if (reason.length < 5 || reason.length > 500 || id.length > 200) return json({ ok: false, reason: "reason_required" }, 400);
+        const r = await this.staffPhotos(user, rt, id, reason);
+        return r.ok ? json(r) : json({ ok: false, reason: r.reason }, r.reason === "photos_off" ? 503 : 403);
+      }
       if (req.method !== "POST") return json({ ok: false, error: "not_found" }, 404);
       const m = path.match(/^\/review\/([^/]+)$/);
       if (m) {
         const no = need(["reviewer"]); if (no) return no;
+        let oppId: string;
+        try { oppId = decodeURIComponent(m[1]!); } catch { return json({ ok: false, error: "invalid_id" }, 400); }
         const b = await body(req);
         if (!b) return json({ ok: false, error: "invalid_json" }, 400);
         const { decision, reason, note, secondsSpent, explanations, objective, swapOut } = b as Record<string, any>;
-        return result(await this.review(user, decodeURIComponent(m[1]!), decision, { reason, note, secondsSpent, explanations, objective, swapOut }, rt));
+        const str = (v: unknown, max: number) => v === undefined || (typeof v === "string" && v.length <= max);
+        if (!DECISIONS.has(decision) || oppId.length > 200 || !str(reason, 64) || !str(note, 2000) || !str(objective, 500) || !str(swapOut, 200)
+          || (secondsSpent !== undefined && typeof secondsSpent !== "number")
+          || (explanations !== undefined && (typeof explanations !== "object" || explanations === null || Array.isArray(explanations) || Object.values(explanations).some(v => typeof v !== "string" || v.length > 500)))) {
+          return json({ ok: false, error: "invalid_review" }, 400);
+        }
+        return result(await this.review(user, oppId, decision, { reason, note, secondsSpent, explanations, objective, swapOut }, rt));
       }
       if (path === "/safety/lift" || path === "/safety/close") {
         const no = need(["safety"]); if (no) return no;
         const b = await body(req) as Record<string, any> | undefined;
         if (!b) return json({ ok: false, error: "invalid_json" }, 400);
-        if (path === "/safety/lift") return typeof b.memberId === "string" ? result(await this.liftHold(user, b.memberId, b.note, rt)) : json({ ok: false, error: "memberId_required" }, 400);
-        return typeof b.caseId === "string" ? result(await this.closeCase(user, b.caseId, b.note, rt)) : json({ ok: false, error: "caseId_required" }, 400);
+        if (b.note !== undefined && (typeof b.note !== "string" || b.note.length > 2000)) return json({ ok: false, error: "invalid_note" }, 400);
+        if (path === "/safety/lift") return typeof b.memberId === "string" && b.memberId.length <= 200 ? result(await this.liftHold(user, b.memberId, b.note, rt)) : json({ ok: false, error: "memberId_required" }, 400);
+        return typeof b.caseId === "string" && b.caseId.length <= 200 ? result(await this.closeCase(user, b.caseId, b.note, rt)) : json({ ok: false, error: "caseId_required" }, 400);
+      }
+      if (path === "/safety/hold" || path === "/safety/ban" || path === "/safety/dismiss") {
+        const no = need(["safety"]); if (no) return no;
+        const b = await body(req) as Record<string, any> | undefined;
+        if (!b) return json({ ok: false, error: "invalid_json" }, 400);
+        // A decision note of 5 or more characters (docs/admin-console.md 3.7.1).
+        if (typeof b.note !== "string" || b.note.trim().length < 5 || b.note.length > 2000) return json({ ok: false, error: "note_required" }, 400);
+        if (b.reportId !== undefined && (typeof b.reportId !== "string" || b.reportId.length > 200)) return json({ ok: false, error: "invalid_report" }, 400);
+        if (path === "/safety/dismiss") return typeof b.reportId === "string" ? result(await this.dismissReport(user, rt, b.reportId, b.note)) : json({ ok: false, error: "reportId_required" }, 400);
+        if (typeof b.memberId !== "string" || !b.memberId || b.memberId.length > 200) return json({ ok: false, error: "memberId_required" }, 400);
+        if (path === "/safety/hold") return result(await this.hold(user, rt, b.memberId, b.note, b.reportId));
+        if (b.by !== "phone" && b.by !== "person") return json({ ok: false, error: "by_required" }, 400);
+        return result(await this.ban(user, rt, b.memberId, b.by, b.note, b.reportId));
+      }
+      const verifyPath = path.match(/^\/members\/([^/]+)\/verify$/);
+      if (verifyPath) {
+        const no = need(["safety"]); if (no) return no;
+        const b = await body(req) as Record<string, any> | undefined;
+        let id: string;
+        try { id = decodeURIComponent(verifyPath[1]!); } catch { return json({ ok: false, error: "invalid_id" }, 400); }
+        if (!b || (b.check !== "age" && b.check !== "liveness") || (b.result !== "pass" && b.result !== "fail") || typeof b.note !== "string" || b.note.trim().length < 5 || b.note.length > 2000 || id.length > 200) {
+          return json({ ok: false, error: "invalid_verify" }, 400);
+        }
+        return result(await this.verify(user, rt, id, b.check, b.result, b.note));
       }
       if (path === "/invite") {
         // A staff invite to this app (an invite-only app: the person's reply with name and age is the join).

@@ -40,25 +40,30 @@ export interface SnapshotScope { app: string; city?: string }
  * replies and safety notices. Blocks are person to person: a block made on any app is a "blocked"
  * edge here when both people are members of this app (it says nothing about the other app).
  * Without a scope: The Network (ntwrk), every city (the Observatory's shadow runs).
+ * Facets, intents and presence of members who are not joined (invited, removed) are left out too. Every
+ * query has an ORDER BY, so the same rows give the same snapshot and the same engine run id
+ * (audit engine-pipeline-17). The service calls it inside one app-scoped transaction (runtime.ts), so
+ * a concurrent write is either fully in or fully out.
  */
 export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope = { app: "ntwrk" }): Promise<WorldSnapshot> {
   const app = scope.app;
   const [members, facets, intents, presence, edges, recent, parts, personBlocks] = await Promise.all([
-    sql`select * from network.members where app_id = ${app} and account_status not in ('invited', 'removed')`,
-    sql`select * from network.facets where app_id = ${app} and status <> 'rejected'`,
-    sql`select * from network.intents where app_id = ${app}`,
-    sql`select * from network.presence where app_id = ${app}`,
-    sql`select * from network.edges where app_id = ${app}`,
-    sql`select * from network.opportunities where app_id = ${app} and created_at >= ${new Date(now - 30 * DAY)}`,
-    sql`select opportunity_id, member_id, role from network.participations where app_id = ${app}`,
+    sql`select * from network.members where app_id = ${app} and account_status not in ('invited', 'removed') order by id`,
+    sql`select * from network.facets where app_id = ${app} and status <> 'rejected' order by member_id, id`,
+    sql`select * from network.intents where app_id = ${app} order by member_id, id`,
+    sql`select * from network.presence where app_id = ${app} order by member_id, city, type`,
+    sql`select * from network.edges where app_id = ${app} order by from_id, to_id, type`,
+    sql`select * from network.opportunities where app_id = ${app} and created_at >= ${new Date(now - 30 * DAY)} order by created_at, id`,
+    sql`select opportunity_id, member_id, role from network.participations where app_id = ${app} order by opportunity_id, member_id, role`,
     sql`select f.id as from_id, t.id as to_id, pb.at as created_at from platform.person_blocks pb
       join network.members f on f.person_id = pb.from_person and f.app_id = ${app}
-      join network.members t on t.person_id = pb.to_person and t.app_id = ${app}`,
+      join network.members t on t.person_id = pb.to_person and t.app_id = ${app} order by f.id, t.id`,
   ]);
   // The city: members who live there, or have presence there.
+  const joined = new Set((members as any[]).map(r => r.id as string));
   const inCity = (scope.city === undefined ? undefined
     : new Set([...(members as any[]).filter(r => r.home_city === scope.city).map(r => r.id as string), ...(presence as any[]).filter(r => r.city === scope.city).map(r => r.member_id as string)]));
-  const keep = (id: string) => !inCity || inCity.has(id);
+  const keep = (id: string) => joined.has(id) && (!inCity || inCity.has(id));
   const partsBy = new Map<string, any[]>();
   for (const p of parts as any[]) { if (!partsBy.has(p.opportunity_id)) partsBy.set(p.opportunity_id, []); partsBy.get(p.opportunity_id)!.push(p); }
   return {

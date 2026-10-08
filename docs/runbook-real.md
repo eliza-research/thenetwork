@@ -8,7 +8,7 @@ Steps marked **[FOUNDER]** need the founder's approval before anyone does them. 
 
 Related: [runbook-simulation.md](runbook-simulation.md), [runbook-platform.md](runbook-platform.md) (the four apps in local dev), [observatory.md](observatory.md), [network.md](network.md), [admin-console.md](admin-console.md). PRD anchors: 31 (architecture and environments), 32.8 (review), 34.6 (shadow mode), 35 (admin console), 40 (the multi-app platform).
 
-**Four apps, one backend.** Since 2026-10-08 the same database, service and console serve four apps: `ntwrk` (The Network), `slop`, `peon` and `buddies` (to be renamed `friends`, PRD 40.2). A network id is `<app>:<city>` (`ntwrk:nyc`). Every app-scoped table has `app_id`. A person (one verified phone) can hold a membership in several apps; a member id belongs to one app.
+**Four apps, one backend.** Since 2026-10-08 the same database, service and console serve four apps: `ntwrk` (The Network), `slop`, `peon` and `friends` (friends.help; migration 0007 renamed the old `buddies` rows, PRD 40.2). Anyone 13 or older may join any app; matching is 18+ everywhere. A network id is `<app>:<city>` (`ntwrk:nyc`). Every app-scoped table has `app_id`. A person (one verified phone) can hold a membership in several apps; a member id belongs to one app.
 
 Every command below was run on 2026-10-07 against the local development database, unless the step is marked. The migration runner, the per-app roles and the service with several networks were checked on 2026-10-08 on scratch databases.
 
@@ -48,7 +48,7 @@ bun run db:migrate -- --url postgres://$USER@localhost:54339/<db>    # another l
 
 The runner (`packages/observatory/db/migrate.ts`) keeps a ledger in `public.__migrations` with a checksum per migration. It runs every pending migration in one transaction, under the advisory lock `hashtext('thenetwork-migrate')`. A numbered migration runs once. A baseline (0001, 0002) runs again only when its text changes; both only create what is missing. The runner refuses a host that is not local.
 
-Checked on 2026-10-08 on a scratch database: the first run printed `applied 0001_network_schema` to `applied 0005_console_apps`; the second run printed `"applied":[]`. `platform.networks` held `buddies:nyc`, `ntwrk:nyc`, `peon:nyc` and `slop:nyc`, with `matching_enabled` false for slop and peon. `platform.apps` held ntwrk `invite`, 13; the others `open`, 18.
+Checked on 2026-10-08 on a scratch database: the first run printed `applied 0001_network_schema` to `applied 0005_console_apps`; the second run printed `"applied":[]`. `platform.networks` held `buddies:nyc`, `ntwrk:nyc`, `peon:nyc` and `slop:nyc`, with `matching_enabled` false for slop and peon. `platform.apps` held ntwrk `invite`, 13; the others `open`, 18. (History: since migration 0007 the ids are `friends` and every join age is 13; migration 0011 lets an admin turn slop and peon matching on.)
 
 The old way still works for the two baselines (code and tests that apply them directly):
 
@@ -89,7 +89,7 @@ The Observatory also sets `default_transaction_read_only = on` for each session,
 
 | Role | Reads or writes |
 |---|---|
-| `network_observatory_<app>` (`_ntwrk`, `_slop`, `_peon`, `_buddies`) | Reads that app's rows only, and its own state view `network.network_state_console_<app>`. Give each app's console login this role (`OBSERVATORY_DATABASE_URL_<APP>`). |
+| `network_observatory_<app>` (`_ntwrk`, `_slop`, `_peon`, `_friends`) | Reads that app's rows only, and its own state view `network.network_state_console_<app>`. Give each app's console login this role (`OBSERVATORY_DATABASE_URL_<APP>`). |
 | `network_observatory` | The original console role. Its row policies allow ntwrk only, but it can still read the shared view `network.network_state_console` for every app. Do not use it in production. |
 | `network_observatory_cross_app` | The cross-app person view: memberships, blocks and the per-member facts the view shows, never a phone (`OBSERVATORY_PLATFORM_DATABASE_URL`). |
 | `network_service` | The Network service: reads and writes only the app named in `set local app.app_id` for the unit of work. |
@@ -180,7 +180,7 @@ Checked locally: without the token `/api/state` returns 401; with it, real mode 
 Roles: `admin` (everything for its app), `reviewer`, `safety`, `analyst`, `engineer` (simulated worlds only) and `cross_app_safety` (the cross-app person view only). Each role holds for one app (`reviewer@slop`) or for every app (`reviewer@*`). What each role can do: [observatory.md](observatory.md) section 9 and [admin-console.md](admin-console.md) sections 4.1 and 4.6.
 
 1. **[CREDENTIALS]** Make one random token per role and app. Keep them in the secret store.
-2. Start the server with `OBSERVATORY_TOKENS="admin@*:<t>,reviewer@slop:<t>,reviewer@buddies:<t>,safety@*:<t>,analyst@*:<t>"`.
+2. Start the server with `OBSERVATORY_TOKENS="admin@*:<t>,reviewer@slop:<t>,reviewer@friends:<t>,safety@*:<t>,analyst@*:<t>"`.
 3. Give each person only the token of their role and app. A hiring reviewer never gets a slop token.
 
 A token is a shared secret, not a personal account. The audit log shows `token:<role>#<hash>`, not a person. For named staff, use Cloudflare Access:
@@ -304,7 +304,7 @@ Until these exist, do not connect the ConsentNetwork to a real channel.
 
 ### 6.5 The production service
 
-`packages/network/service/` ([README](../packages/network/service/README.md)). Nothing is deployed. One process runs one network per row of `platform.networks` (`ntwrk:nyc`, `slop:nyc`, `peon:nyc`, `buddies:nyc`) and serves the public API for the four sites. Local dev for everything at once: [runbook-platform.md](runbook-platform.md).
+`packages/network/service/` ([README](../packages/network/service/README.md)). Nothing is deployed. One process runs one network per row of `platform.networks` (`ntwrk:nyc`, `slop:nyc`, `peon:nyc`, `friends:nyc`) and serves the public API for the four sites. The deployable entry point is `deploy/backend/server.ts` ([deploy.md](deploy.md)). Local dev for everything at once: [runbook-platform.md](runbook-platform.md).
 
 **Caution:** run it only against a database you may write to. It writes `network.network_state`, the console tables, `network.messages`, `network.events`, `network.staff_audit` and the `platform` tables (people, memberships, consent events, sessions). Do not point it at the shared dev database `network` while other work uses it. Use a database of your own on the :54339 cluster.
 
@@ -323,7 +323,7 @@ curl -H "Authorization: Bearer <any token>" 'http://127.0.0.1:4848/health?app=sl
 
 The service checks that the schemas exist at start. It does not migrate. It reads `platform.networks` and `platform.apps` at start. Options: `--once` (one tick of every network, deliver, exit), `--dry-run` (always the dry-run adapter), `--port N`, `--host H`, `--api-port N`. Without `--once` each network ticks every minute (fixed) and the service serves HTTP.
 
-Checked on 2026-10-08 on a migrated scratch database: `--once --dry-run` printed one line per network (`network slop:nyc: sends dry-run, review "human", matching not allowed (platform.networks)`; ntwrk and buddies `matching allowed (the admin switch decides)`), warned that `NETWORK_SERVICE_TOKENS` and `BLOOIO_WEBHOOK_SECRET` were not set, and printed `tick done` for all four networks.
+Checked on 2026-10-08 on a migrated scratch database: `--once --dry-run` printed one line per network (`network slop:nyc: sends dry-run, review "human", matching not allowed (platform.networks)`; ntwrk and friends (then `buddies`) `matching allowed (the admin switch decides)`), warned that `NETWORK_SERVICE_TOKENS` and `BLOOIO_WEBHOOK_SECRET` were not set, and printed `tick done` for all four networks.
 
 | Variable | Default | What it does |
 |---|---|---|
@@ -395,7 +395,7 @@ Decision first **[FOUNDER]**: PRD 31 says the Network is built inside Eliza Clou
 | 9 | The service records the signed-in person as the reviewer of record (it reads `X-Network-Staff-Id` from the console's token only) | `packages/network/service` | Missing (6.4 item 2) |
 | 10 | One owner for STOP, START and HELP on the Blooio line (6.4 item 4) | service, Eliza Cloud | **[FOUNDER]** Open |
 | 11 | The four apps: the `platform` schema, `app_id` and row-level security, one service for every network, the public API, the four sites ([runbook-platform.md](runbook-platform.md)) | platform, service, sites, schema | Built, local only. Not deployed. |
-| 12 | Rename `buddies` to `friends` and allow 13+ to join every app (PRD 40.2, 40.3) | platform, schema, sites, obs | Missing |
+| 12 | Rename `buddies` to `friends` and allow 13+ to join every app (PRD 40.2, 40.3) | platform, schema, sites, obs | Done (migration 0007, 2026-10-08) |
 | 13 | Route `/api/*` on each app domain to the shared API (a zone route, or a service binding with `run_worker_first`) | sites, ops | **[FOUNDER]** Missing |
 | 14 | Logins for the per-app roles (`network_observatory_<app>`, `network_observatory_cross_app`, `network_service`, `platform_service`) | ops | **[CREDENTIALS]** Missing |
 
@@ -451,7 +451,7 @@ Use `scripts/wrangler.sh` for every Wrangler command. It runs as the ntwrk.love 
    - `observatory.ntwrk.love`: a proxied CNAME to the Observatory service's Railway target (Railway custom domain). Proxied, so Access applies.
    - `api.ntwrk.love`: a Worker custom domain or route, through `scripts/wrangler.sh` (the guard refuses it without `NTWRK_ALLOW_DEPLOY=1`).
    - Do not touch `mcp.ntwrk.love`. Connectors are not in the MVP (PRD 28.4).
-5. **The app sites.** **[FOUNDER]** Each site (`sites/<domain>`) has an assets-only `wrangler.toml` with a `[build]` step. Check a build with `bun run sites/sites.ts` (it writes `sites/<domain>/dist`). PRD 40.1: slop.date deploys first; peon.biz and buddies.nyc (friends.help) stay local. `/api/*` on each domain must reach the shared API before join and settings work (7.1 item 13). Confirm that each domain is a zone in the ntwrk.love Cloudflare account.
+5. **The app sites.** **[FOUNDER]** Each site (`sites/<domain>`) is a Cloudflare Pages project (founder decision 8: `ntwrk-love`, `slop-date`, `peon-biz`, `friends-help`). Check a build with `bun run sites/sites.ts` (it writes `sites/<domain>/dist` with `_worker.js` and `_routes.json`). slop.date deploys first; all four are deployed this round by the coordinator ([deploy.md](deploy.md) section 3). `/api/*` on each site reaches the shared API through the signed router.
 
 ### 7.4 Go-live checks
 

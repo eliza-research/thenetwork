@@ -3,7 +3,7 @@
 // has only the old schema files (as every dev database has today).
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { SQL } from "bun";
-import { migrate } from "../../observatory/db/migrate.ts";
+import { migrate, migrations } from "../../observatory/db/migrate.ts";
 import { dropDb, emptyDb, migratedDb, pgAvailable } from "./pg.ts";
 
 const T = 120_000;
@@ -17,15 +17,18 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
   test("apply twice cleanly on a fresh database; the second run applies nothing", async () => {
     const url = await emptyDb("twice"); urls.push(url);
     const first = await migrate(url);
-    expect(first.applied).toEqual(["0001_network_schema", "0002_network_state", "0003_platform", "0004_network_apps", "0005_console_apps", "0006_platform_safety"]);
+    // The list comes from the migrations folder (platform-M4): a new file needs no test change.
+    expect(first.applied).toEqual(migrations().map(m => m.id));
+    expect(first.applied).toContain("0007_friends_platform_safety");
     const second = await migrate(url);
     expect(second.applied).toEqual([]);
     const sql = new SQL({ url, max: 1 });
     try {
       const apps = await sql`select id, join_mode, min_join_age, min_match_age from platform.apps order by id`;
-      expect(apps.map((a: any) => `${a.id}:${a.join_mode}:${a.min_join_age}:${a.min_match_age}`)).toEqual(["buddies:open:18:18", "ntwrk:invite:13:18", "peon:open:18:18", "slop:open:18:18"]);
+      expect(apps.map((a: any) => `${a.id}:${a.join_mode}:${a.min_join_age}:${a.min_match_age}`)).toEqual(["friends:open:13:18", "ntwrk:invite:13:18", "peon:open:13:18", "slop:open:13:18"]);
+      // Migration 0011: the slop and peon packs are wired, so an admin may switch their matching on (the stored switch still starts off).
       const nets = await sql`select id, matching_enabled from platform.networks order by id`;
-      expect(nets.map((n: any) => `${n.id}:${n.matching_enabled}`)).toEqual(["buddies:nyc:true", "ntwrk:nyc:true", "peon:nyc:false", "slop:nyc:false"]);
+      expect(nets.map((n: any) => `${n.id}:${n.matching_enabled}`)).toEqual(["friends:nyc:true", "ntwrk:nyc:true", "peon:nyc:true", "slop:nyc:true"]);
       // A write with no app.app_id lands in the legacy app (ntwrk) until that setting is removed; then it fails.
       await sql`insert into network.members (id, name, home_city) values ('legacy', 'L', 'nyc')`;
       expect((await sql`select app_id from network.members where id = 'legacy'`)[0].app_id).toBe("ntwrk");
@@ -56,6 +59,53 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
       expect(pa).toMatchObject({ lowest_age: 34, e164: "+12125550177", state: "active", first_name: "A" });
       expect((await sql`select person_id from network.members where id = 'b'`)[0].person_id).toBeNull();
     } finally { await sql.close(); }
+  }, T);
+
+  test("a database migrated before the rename keeps its rows: buddies becomes friends everywhere (0007)", async () => {
+    const url = await emptyDb("rename"); urls.push(url);
+    const all = migrations();
+    const upTo = all.findIndex(m => m.id === "0007_friends_platform_safety");
+    // Apply 0001-0006 by hand, as a dev database had them before 0007.
+    const sql = new SQL({ url, max: 1 });
+    try {
+      for (const m of all.slice(0, upTo)) await sql.unsafe(await Bun.file(m.file).text());
+      await sql`create table if not exists public.__migrations (id text primary key, checksum text not null, repeatable boolean not null default false, applied_at timestamptz not null default now())`;
+      for (const m of all.slice(0, upTo)) await sql`insert into public.__migrations (id, checksum, repeatable) values (${m.id}, 'old', ${m.repeatable})`;
+      const [p] = await sql`insert into platform.people (id) values (gen_random_uuid()) returning id`;
+      await sql`insert into platform.phone_identities (e164, person_id, verified_at, method) values ('+12125550161', ${p.id}, now(), 'otp_sms')`;
+      await sql`insert into platform.memberships (app_id, person_id, member_id, state, first_name) values ('buddies', ${p.id}, 'buddies_m1', 'active', 'Bea')`;
+      await sql`insert into platform.consent_events (e164, app_id, state, source, at) values ('+12125550161', 'buddies', 'opted_in', 'web_form', now())`;
+      await sql`insert into platform.audit (app_id, actor, action) values ('buddies', 'staff@x', 'read')`;
+      await sql.begin(async tx => {
+        await tx`select set_config('app.app_id', 'buddies', true)`;
+        await tx`insert into network.members (id, app_id, name, home_city, person_id) values ('buddies_m1', 'buddies', 'Bea', 'nyc', ${p.id})`;
+        await tx`insert into network.facets (id, app_id, member_id, kind, value, privacy_scope, provenance) values ('f1', 'buddies', 'buddies_m1', 'interest', 'chess', 'matchable', 'said')`;
+      });
+      await sql`insert into network.network_state (id, version, state) values ('buddies:nyc', 1, '{}'::jsonb)`;
+      await sql`insert into network.staff_audit (actor, action, app_id) values ('staff@x', 'review', 'buddies')`;
+    } finally { await sql.close(); }
+    const r = await migrate(url);
+    expect(r.applied).toContain("0007_friends_platform_safety");
+    const db = new SQL({ url, max: 1 });
+    try {
+      const appIds = async (q: Promise<any[]>) => [...new Set((await q).map((x: any) => x.app_id))];
+      expect(await appIds(db`select app_id from platform.memberships`)).toEqual(["friends"]);
+      expect(await appIds(db`select app_id from platform.consent_events`)).toEqual(["friends"]);
+      expect(await appIds(db`select app_id from platform.audit`)).toEqual(["friends"]);
+      expect(await appIds(db`select app_id from network.members`)).toEqual(["friends"]);
+      expect(await appIds(db`select app_id from network.facets`)).toEqual(["friends"]);
+      expect(await appIds(db`select app_id from network.staff_audit`)).toEqual(["friends"]);
+      expect((await db`select id, app_id from network.network_state`).map((x: any) => `${x.id}/${x.app_id}`)).toEqual(["friends:nyc/friends"]);
+      expect((await db`select id from platform.apps order by id`).map((x: any) => x.id)).toEqual(["friends", "ntwrk", "peon", "slop"]);
+      expect((await db`select id from platform.networks where app_id = 'friends'`).map((x: any) => x.id)).toEqual(["friends:nyc"]);
+      // Nothing in the catalog of this database still names buddies: roles' grants, policies, views.
+      const left = await db`select 'policy ' || policyname as x from pg_policies where policyname like '%buddies%'
+        union all select 'view ' || viewname from pg_views where viewname like '%buddies%'
+        union all select 'grant ' || grantee || ' ' || table_name from information_schema.role_table_grants where grantee like '%buddies%'`;
+      expect(left).toEqual([]);
+      // The composite keys are back: a friends facet still needs its friends member.
+      expect(await db`insert into network.facets (id, app_id, member_id, kind, value, privacy_scope, provenance) values ('f2', 'friends', 'nobody', 'k', 'v', 'matchable', 'said')`.then(() => "ok", e => String(e.message))).toContain("foreign key");
+    } finally { await db.close(); }
   }, T);
 
   describe("guards", () => {
@@ -111,6 +161,34 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
       } finally {
         await sql`update platform.settings set value = 'dev' where key = 'environment'`;
       }
+    });
+
+    test("PLAT-11 channel identities are per app: one phone in two apps, and the service role sees its app's phones only", async () => {
+      await sql`insert into network.channel_identities (app_id, member_id, channel, address) values ('ntwrk', 'n1', 'sms', '+12125550171'), ('slop', 's1', 'sms', '+12125550171')`;
+      const seen = await sql.begin(async tx => {
+        await tx`set local role network_service`;
+        await tx`select set_config('app.app_id', 'slop', true)`;
+        return tx`select app_id, member_id from network.channel_identities`;
+      });
+      expect(seen.map((r: any) => `${r.app_id}:${r.member_id}`)).toEqual(["slop:s1"]);
+      expect(await sql`insert into network.channel_identities (app_id, member_id, channel, address) values ('slop', 'n1', 'sms', '+12125550172')`.then(() => "ok", e => String(e.message))).toContain("foreign key");
+    });
+
+    test("PLAT-22 platform_service may not change apps, networks, lines, settings or staff roles, nor edit a consent event", async () => {
+      const as = (q: (tx: SQL) => Promise<unknown>) => sql.begin(async tx => { await tx`set local role platform_service`; await q(tx); }).then(() => "ok", e => String(e.message));
+      expect(await as(tx => tx`update platform.apps set min_join_age = 18`)).toContain("permission denied");
+      expect(await as(tx => tx`insert into platform.staff_roles (email, role, granted_by) values ('x@y', 'admin', 'me')`)).toContain("permission denied");
+      expect(await as(tx => tx`update platform.settings set value = 'dev'`)).toContain("permission denied");
+      expect(await as(tx => tx`delete from platform.networks`)).toContain("permission denied");
+      expect(await as(tx => tx`insert into platform.app_lines (line_e164, app_id, provider, env) values ('+12125550173', 'slop', 'blooio', 'dev')`)).toContain("permission denied");
+      await sql`insert into platform.consent_events (e164, app_id, state, source, at) values ('+12125550174', 'slop', 'opted_out', 'keyword:stop', now())`;
+      expect(await as(tx => tx`update platform.consent_events set state = 'opted_in' where e164 = '+12125550174'`)).toContain("permission denied");
+      expect(await as(tx => tx`insert into platform.consent_events (e164, app_id, state, source, at) values ('+12125550174', 'slop', 'opted_in', 'web_form', now())`)).toBe("ok");
+      // A retried message writes one event (the ref is unique per phone).
+      await sql`insert into platform.consent_events (e164, app_id, state, source, ref, at) values ('+12125550175', null, 'opted_out', 'keyword:stop', 'in:1', now())`;
+      expect(await sql`insert into platform.consent_events (e164, app_id, state, source, ref, at) values ('+12125550175', null, 'opted_out', 'keyword:stop', 'in:1', now())`.then(() => "ok", e => String(e.message))).toContain("duplicate");
+      // The service role is the platform's text channel too: it inherits platform_service.
+      expect(await sql.begin(async tx => { await tx`set local role network_service`; return tx`select count(*)::int as n from platform.phone_identities`; }).then(() => "ok", e => String(e.message))).toBe("ok");
     });
 
     test("platform.audit is append-only", async () => {

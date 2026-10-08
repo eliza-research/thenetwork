@@ -130,3 +130,20 @@ dialog h2 { font-size: 28px; margin: 0 0 8px; }
 .go-again { margin-top: 24px; }
 [tabindex="-1"]:focus { outline: none; }
 .page .audit h2 { margin-top: 0; }
+
+/* Support page */
+.support dt { font-weight: 700; margin-top: 18px; }
+.support dd { margin: 4px 0 0; }
+
+/* Turnstile check on the phone step: empty (no height) when there is no site key. */
+.human:not(:empty) { margin: 12px 0; min-height: 65px; }
+
+/* The agent-first landing page (index.html; sites/shared/landing.css has the layout): this site's tokens,
+   from its design canvas (AGENTS.md decision 10). */
+body.landing {
+  --l-bg: #ffffff; --l-ink: #1f2a44; --l-h1: #1f2a44; --l-muted: #4a5470;
+  --l-accent: #f28c28; --l-accent-ink: #1a1306;
+  --l-panel: #1f2a44; --l-panel-ink: #ffffff; --l-panel-rule: #3a4666; --l-panel-button: #2a3654;
+  --l-pill-bg: #1a1306; --l-pill-ink: #ffffff; --l-radius: 6px; --l-pill: 4px; --l-focus: #1f2a44;
+  --l-font: Barlow, system-ui, -apple-system, 'Segoe UI', sans-serif; --l-display: 'Barlow Condensed', 'Arial Narrow', 'Roboto Condensed', system-ui, sans-serif;
+}

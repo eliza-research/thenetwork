@@ -35,8 +35,8 @@ describe("ConsentNetwork invariants (NYC, 10 days, simulated reviewer)", () => {
   }, T);
 
   test("judge: zero invariant violations, zero minor contacts, zero canary leaks", () => {
-    // The judge's weekly cap is the Network's own (outreach.ts), so both count the same thing (P2-13).
-    const m = computeMetrics(run.records, { weeklyBudget: OUTREACH.maxPerWeek });
+    // The judge uses the PRD budgets per participation state (judge PRD_BUDGETS) and requires review before contact.
+    const m = computeMetrics(run.records, { requireReview: true });
     expect(m.invariants).toMatchObject({ total: 0 });
     expect(m.safety.minorContacts).toBe(0);
     expect(m.privacy.canaryLeaks).toBe(0);
@@ -62,7 +62,8 @@ describe("ConsentNetwork invariants (NYC, 10 days, simulated reviewer)", () => {
     for (const m of outbound(run.records).filter(m => m.msg.meta?.type === "probe")) for (const n of names) expect(m.msg.body.includes(n)).toBe(false);
     for (const o of run.net.opps.values()) {
       if (!o.recorded) continue;
-      for (const p of o.participants) {
+      // A plan reveals only to the members it booked (status yes); invitees who said no or never answered hear nothing.
+      for (const p of o.plan ? o.participants.filter(x => o.status.get(x) === "yes") : o.participants) {
         const said = logs(run.records, "probe_answer").some(r => r.detail.oppId === o.id && r.detail.memberId === p && r.detail.yes === true);
         expect([o.id, p, said || o.primed.has(p)]).toEqual([o.id, p, true]);
       }
@@ -142,7 +143,7 @@ describe("ConsentNetwork invariants (NYC, 10 days, simulated reviewer)", () => {
     for (const m of booked) {
       expect(m.msg.meta?.proactive).toBe(false);
       expect(m.msg.meta?.type).toBe("proposal");
-      expect(m.msg.body).toMatch(/Reply if you can't make it\./);
+      expect(m.msg.body).toMatch(/Reply if your plans change\./);
     }
     // No separate "you're all set": the only scheduling messages ask for times, before anything is booked.
     expect(outbound(run.records).filter(m => m.msg.meta?.type === "scheduling" && (m.msg.meta?.meetingAt || !m.msg.meta?.timeOptions))).toEqual([]);
@@ -151,7 +152,10 @@ describe("ConsentNetwork invariants (NYC, 10 days, simulated reviewer)", () => {
   test("each member's own cap on initial invites (PRD 32.9, founder decision 3), and the Blooio streak", () => {
     const state = new Map(run.w.snapshot().members.map(m => [m.id, m.state]));
     const by = new Map<MemberId, number[]>(), plan = new Map<MemberId, number[]>();
-    for (const m of outbound(run.records).filter(m => m.msg.meta?.proactive && m.msg.status === "delivered")) {
+    // Initial invites only (probes, plan probes, the re-engagement): other unsolicited sends are also
+    // marked proactive now, and the judge grades all of them on the PRD budgets (zero invariants above).
+    const invite = (m: { msg: { meta?: Record<string, unknown> } }) => m.msg.meta?.unsolicited !== true && (["probe", "plan_probe"].includes(String(m.msg.meta?.type)) || m.msg.meta?.reengagement === true);
+    for (const m of outbound(run.records).filter(m => m.msg.meta?.proactive && m.msg.status === "delivered" && invite(m))) {
       // Plan invites under the plan allowance have their own cap (1 per 7 days) and never count on the intro cap.
       const map = m.msg.meta?.planInvite ? plan : by;
       if (!map.has(m.msg.memberId)) map.set(m.msg.memberId, []);
@@ -247,7 +251,8 @@ describe("human review gate (PRD 32.8)", () => {
     expect(about(b!.oppId)).toEqual([]);
     const expired = new Set(logs(records, "review_expired").map(l => String(l.detail.oppId)));
     for (const id of left) {
-      expect([id, expired.has(id)]).toEqual([id, true]);
+      // Expired at its SLA, or closed in review first (a participant went on watch): either way, never sent.
+      expect([id, expired.has(id) || net.opps.get(id)?.closedFrom === "review"]).toEqual([id, true]);
       expect([id, about(id)]).toEqual([id, []]);
     }
     // Nothing was ever sent about an opportunity a reviewer did not approve.
@@ -269,7 +274,7 @@ describe("human review gate (PRD 32.8)", () => {
 });
 
 describe("age policy (core policy.ts) on inbound messages", () => {
-  test("an adult's ordinary phrases never decline them; a conflicting stated age fails closed to minor; an explicit under-13 age declines", async () => {
+  test("an adult's ordinary phrases never decline them; a conflicting stated age fails closed to minor and goes to staff, never a delete", async () => {
     const { w, net, records, start } = await world(1, 3, { review: "human" });
     await w.advanceTo(start + 6 * HOUR);
     const ages = new Map(w.snapshot().members.map(m => [m.id, m.age]));
@@ -283,8 +288,13 @@ describe("age policy (core policy.ts) on inbound messages", () => {
     expect(net.memberList().find(m => m.id === sober)!.minor).toBe(false);
     expect(net.isDeclined(teacher!)).toBe(false);
     expect(net.memberList().find(m => m.id === teacher)!.minor).toBe(true);
-    expect(logs(records, "age_conflict").map(l => l.detail.memberId)).toEqual([teacher]);
-    expect(net.isDeclined(kid!)).toBe(true);
+    // An attested adult who writes "I am 12 years old" is held for staff, not deleted (network-service-1):
+    // out of matching (minor), an age_conflict log and a staff case. The explicit under-13 decline of a
+    // member with no adult record is in flows.test.ts.
+    expect(logs(records, "age_conflict").map(l => l.detail.memberId).sort()).toEqual([teacher!, kid!].sort());
+    expect(net.isDeclined(kid!)).toBe(false);
+    expect(net.memberList().find(m => m.id === kid)!.minor).toBe(true);
+    expect(net.safetyCases().some(c => c.memberId === kid && c.events.some(e => e.kind === "age_conflict"))).toBe(true);
   }, T);
 });
 
@@ -328,5 +338,10 @@ describe("NYC scenarios", () => {
 // is a no). One seed is one sample: a 10-point swing on ~80 plans is inside run-to-run noise, so the
 // floors are pooled over the three seeds and sit at the pooled CI lower bound (0.80) and about 80%
 // of the measured meetings. Lower them only after a pooled re-run shows the drop is real.
-const ALL_YES_MIN = 0.8;
+// 2026-10-08 (docs/results/2026-10-08-network-hardening.md): a probe "no" now marks the pair declined
+// (audit network-consent-5), so a pair is no longer probed again until one side says yes. Pooled
+// everyone-yes went from 225/280 = 0.804 to 208/264 = 0.788 (Wilson 95% CI 0.735-0.83); an A/B on
+// seed 1 with that one rule off gives 72/90 = 0.80 against 56/76 = 0.74. The drop is real and is the
+// price of the consent fix; meetings 161 (floor 140). The floor sits at the new CI lower bound.
+const ALL_YES_MIN = 0.73;
 const MEETINGS_MIN = 140;

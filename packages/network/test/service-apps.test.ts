@@ -25,7 +25,7 @@ const URL_ = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PO
 async function admin(q: string) { const sql = new SQL({ url: ADMIN_URL, max: 1 }); try { await sql.unsafe("set lock_timeout = '5s'"); await sql.unsafe(q); } finally { await sql.close(); } }
 
 /** The NYC friends app (the registry's id; it was renamed once, so the test reads it). */
-const FR = APP_IDS.find(a => a === ("friends" as string) || a === "buddies")! as AppId;
+const FR: AppId = "friends";
 const SECRET = "whsec_shared", APP_SECRET = "whsec_app";
 const LINE = "+12125550150";
 let phoneSeq = 0;
@@ -137,33 +137,33 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(await text(s, clock, sam, "More time outdoors.", { app: FR })).toBe("handled");
     expect((await outbound(m.id)).length).toBe(2);
 
-    // Under the app's join age (18): the kind decline, nothing stored.
+    // Under the join age (13 on every app): the kind decline, nothing stored.
     const kid = newPhone();
     expect(await text(s, clock, kid, "hey", { app: FR })).toBe("join_asked");
-    expect(await text(s, clock, kid, "Kim 16", { app: FR })).toBe("under_age");
+    expect(await text(s, clock, kid, "Kim 12", { app: FR })).toBe("under_age");
     expect(directs.at(-1)!.body).toBe(APPS[FR].brand.underAge);
     expect(await count(sql`select count(*)::int as n from platform.phone_identities where e164 = ${kid}`)).toBe(0);
     expect(await count(sql`select count(*)::int as n from network.members where app_id = ${FR}`)).toBe(1);
 
-    // A member who says after joining that they are under the app's join age: the kind decline, the
-    // Network keeps only the id, the membership is forgotten, and the person keeps the lower age on every app.
+    // A member who says after joining that they are under 13 (first person, present tense): the kind
+    // decline, the Network keeps only the id, the membership is forgotten, and the person keeps the age.
     const teen = newPhone();
-    expect(await text(s, clock, teen, "Lee 25", { app: FR })).toBe("joined");
+    expect(await text(s, clock, teen, "Lee 15", { app: FR })).toBe("joined");
     const tm = (await memberOf(FR, teen))!;
-    expect(await text(s, clock, teen, "I am 16 years old", { app: FR })).toBe("handled");
+    expect(await text(s, clock, teen, "I am 12 years old", { app: FR })).toBe("handled");
     expect((await sql`select account_status, name from network.members where id = ${tm.id}`)[0]).toEqual({ account_status: "removed", name: null });
     expect(await count(sql`select count(*)::int as n from network.messages where member_id = ${tm.id}`)).toBe(0);
     expect((await sql`select state from platform.memberships where member_id = ${tm.id}`)[0].state).toBe("removed");
-    expect((await sql`select p.lowest_age from platform.people p join platform.phone_identities ph on ph.person_id = p.id where ph.e164 = ${teen}`)[0].lowest_age).toBe(16);
+    expect((await sql`select p.lowest_age from platform.people p join platform.phone_identities ph on ph.person_id = p.id where ph.e164 = ${teen}`)[0].lowest_age).toBe(12);
     expect(await text(s, clock, teen, "slop")).toBe("join_asked");
     expect(await text(s, clock, teen, "Lee 25")).toBe("under_age");
 
-    // The shared line, no keyword, a stranger: The Network is invite-only. One reply a day, nothing stored.
+    // The shared line, no keyword, a stranger: they join The Network (founder decision 2). Nothing is stored before the age check.
     const ann = newPhone();
-    expect(await text(s, clock, ann, "hello")).toBe("invite_only");
-    expect(await text(s, clock, ann, "hello?")).toBe("invite_only");
-    expect(directs.filter(d => d.to === ann).map(d => d.body)).toEqual([APPS.ntwrk.brand.inviteOnly]);
-    // "slop.date" on the shared line joins slop; the answer that follows goes to slop too.
+    expect(await text(s, clock, ann, "hello")).toBe("join_asked");
+    expect(directs.at(-1)).toEqual({ app: "ntwrk", to: ann, body: copyFor(brandOf(APPS.ntwrk)).joinAsk(13) });
+    expect(await count(sql`select count(*)::int as n from platform.phone_identities where e164 = ${ann}`)).toBe(0);
+    // "slop.date" on the shared line joins slop instead; the answer that follows goes to slop too.
     expect(await text(s, clock, ann, "slop.date")).toBe("join_asked");
     expect(directs.at(-1)!.app).toBe("slop");
     expect(await text(s, clock, ann, "I'm Ann and I'm 31")).toBe("joined");
@@ -193,9 +193,10 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(await text(s, clock, p, "SHARE")).toBe("handled");
     expect((await sql`select from_app, to_app, fields from platform.share_grants`)[0]).toEqual({ from_app: FR, to_app: "slop", fields: ["first_name", "city", "interests"] });
 
-    // STOP on the friends app's own line (PLATFORM_STOP_SCOPE=app): that app only.
-    expect(await text(s, clock, p, "STOP", { app: FR })).toBe("handled");
-    expect((await outbound(fr.id)).at(-1)).toMatchObject({ system: true, body: APPS[FR].brand.stop });
+    // STOP on the friends app's own line with PLATFORM_STOP_SCOPE=app: that app only.
+    const { s: own } = service(clock, { env: { PLATFORM_ENV: "dev", PLATFORM_STOP_SCOPE: "app" } });
+    expect(await text(own, clock, p, "STOP", { app: FR })).toBe("handled");
+    expect((await outbound(fr.id)).at(-1)).toMatchObject({ system: true, body: APPS[FR].brand.stopApp });
     expect((await memberOf(FR, p))!.opted_out).toBe(true);
     expect((await memberOf("slop", p))!.opted_out).toBe(false);
     expect(await consentOf(p, FR)).toBe("opted_out");
@@ -203,7 +204,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     const states = async () => (await sql`select m.app_id, m.state from platform.memberships m join platform.phone_identities ph on ph.person_id = m.person_id where ph.e164 = ${p} order by app_id`).map((r: any) => `${r.app_id}:${r.state}`);
     expect(await states()).toEqual([`${FR}:paused`, "slop:active"].sort());
     // START on that line: that app again.
-    expect(await text(s, clock, p, "START", { app: FR })).toBe("handled");
+    expect(await text(own, clock, p, "START", { app: FR })).toBe("handled");
     expect((await memberOf(FR, p))!.opted_out).toBe(false);
     expect(await consentOf(p, FR)).toBe("opted_in");
     expect(await states()).toEqual([`${FR}:active`, "slop:active"].sort());
@@ -229,7 +230,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(await count(sql`select count(*)::int as n from network.messages msg join network.members m on m.id = msg.member_id where m.app_id = 'slop' and m.account_status = 'removed'`)).toBe(0);
   }, T);
 
-  test("the person cap: at most 3 proactive messages a day across every app, counted at send time", async () => {
+  test("the person cap: at most 3 proactive messages a day across every app, counted at send time; two networks at once cannot pass it", async () => {
     await applySchema(URL_, { reset: true, lockTimeout: "5s" });
     const clock = new SimClock(START);
     const { s } = service(clock);
@@ -238,15 +239,27 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     await text(s, clock, p, "slop");
     await text(s, clock, p, "Sam 29");
     const fr = (await memberOf(FR, p))!, sl = (await memberOf("slop", p))!;
-    const row = (app: string, member: string, id: string, ago: number, status = "dry_run") =>
-      sql`insert into network.messages (app_id, id, member_id, direction, channel, body, status, proactive, system, ts) values (${app}, ${id}, ${member}, 'outbound', 'imessage', 'x', ${status}, true, false, ${new Date(clock.now() - ago)})`;
-    await row(FR, fr.id, "p1", 2 * HOUR);
-    await row("slop", sl.id, "p2", 5 * HOUR);
-    await row("slop", sl.id, "p3", 30 * HOUR); // older than a day: not counted
-    await row(FR, fr.id, "p4", HOUR, "refused_not_approved"); // never sent: not counted
     const out = (id: string, memberId: string, proactive = true): Outbound => ({ id, memberId, body: "x", kind: proactive ? "proactive" : "transactional", proactive, system: false, ts: clock.now() });
-    const refused = await s.capRefused(s.runtimeFor(FR)!, [out("n1", fr.id), out("n2", fr.id, false), out("n3", fr.id)]);
-    expect([...refused]).toEqual(["n3"]); // two sent today + n1 = 3; n3 is the fourth; a reply never counts
+    // A proactive send 30 hours ago does not count today.
+    const person = (await sql`select person_id from network.members where id = ${fr.id}`)[0].person_id;
+    await sql`insert into platform.person_sends (msg_id, person_id, app_id, at) values ('old', ${person}, 'slop', ${new Date(clock.now() - 30 * HOUR)})`;
+    expect([...(await s.capRefused(s.runtimeFor("slop")!, [out("s1", sl.id)]))]).toEqual([]);
+    expect([...(await s.capRefused(s.runtimeFor(FR)!, [out("n1", fr.id), out("n2", fr.id, false), out("n3", fr.id), out("n4", fr.id)]))]).toEqual(["n4"]);
+    // The same id handed over again (a redelivery) is not counted twice.
+    expect([...(await s.capRefused(s.runtimeFor(FR)!, [out("n1", fr.id)]))]).toEqual([]);
+    // A send the adapter refused (the per-app live flag, a suppressed number) never went out: its slot
+    // comes back (before the fix it used one of the person's 3 for the day).
+    await s.capRelease(["n3"]);
+    expect([...(await s.capRefused(s.runtimeFor(FR)!, [out("n5", fr.id), out("n6", fr.id)]))]).toEqual(["n6"]);
+    // Two networks deliver at the same moment for another person with 2 sends today: only one more goes.
+    const q = newPhone();
+    await text(s, clock, q, "Quinn 40", { app: FR });
+    await text(s, clock, q, "slop");
+    await text(s, clock, q, "Quinn 40");
+    const qf = (await memberOf(FR, q))!, qs = (await memberOf("slop", q))!;
+    await s.capRefused(s.runtimeFor(FR)!, [out("q1", qf.id), out("q2", qf.id)]);
+    const [a, b] = await Promise.all([s.capRefused(s.runtimeFor(FR)!, [out("q3", qf.id)]), s.capRefused(s.runtimeFor("slop")!, [out("q4", qs.id)])]);
+    expect(a.size + b.size).toBe(1);
   }, T);
 
   test("per-app live flags; per-app staff roles; the matching switch refuses a network the registry keeps off", async () => {
@@ -324,13 +337,13 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     const { s } = service(clock);
     const kid = newPhone();
     expect(await text(s, clock, kid, "hi", { app: FR })).toBe("join_asked");
-    expect(await text(s, clock, kid, "Kid, 15", { app: FR })).toBe("under_age");
+    expect(await text(s, clock, kid, "Kid, 12", { app: FR })).toBe("under_age");
     expect(await text(s, clock, kid, "hi", { app: FR })).toBe("join_asked");
     expect(await text(s, clock, kid, "Kid, 19", { app: FR })).toBe("under_age");
     expect(await count(sql`select count(*)::int as n from platform.phone_identities where e164 = ${kid}`)).toBe(0);
-    expect(await count(sql`select count(*)::int as n from platform.age_floor where lowest_age = 15`)).toBe(1);
+    expect(await count(sql`select count(*)::int as n from platform.age_floor where lowest_age = 12`)).toBe(1);
     // The web join with the same phone is refused too.
-    expect((await s.accounts.join(APPS[FR], { e164: kid, personId: null }, { firstName: "Kid", age: 30, consent: { sms: true, wording: "ok" } }))).toEqual({ ok: false, error: "under_age" });
+    expect((await s.accounts.join(APPS[FR], { e164: kid, personId: null }, { firstName: "Kid", age: 30, consent: { sms: true, version: APPS[FR].consent.version } }))).toEqual({ ok: false, error: "under_age" });
   }, T);
 
   test("STOP on one app's line leaves the other app's adapter sending; the consent ledger refuses sends after a restart", async () => {
@@ -340,7 +353,8 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     const sent: SendRequest[] = [];
     const provider = { kind: "blooio" as const, send: async (r: SendRequest) => { sent.push(r); return { providerMessageId: `p${sent.length}`, status: "queued" as const }; } };
     const live = { adapter: (net: any, rt: any) => new BlooioAdapter({ net, provider, clock, memberOf: rt.memberOf, env: flags, app: rt.app.id, log: () => {} }) };
-    const { s } = service(clock, live);
+    const appScope = { env: { PLATFORM_ENV: "dev", PLATFORM_STOP_SCOPE: "app" } };
+    const { s } = service(clock, { ...live, ...appScope });
     clock.set(START + 14 * HOUR); // inside the send window (quiet hours hold proactive sends only)
     const p = newPhone();
     expect(await text(s, clock, p, "Sam 29", { app: FR })).toBe("joined");
@@ -352,7 +366,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(sent.length).toBeGreaterThan(n);
     expect(sent.at(-1)!.to).toBe(p);
     // A new process (fresh adapters, no memory of the STOP): the ledger still refuses slop sends.
-    const { s: s2 } = service(clock, live);
+    const { s: s2 } = service(clock, { ...live, ...appScope });
     const slop = s2.runtimeFor("slop")!, fr = s2.runtimeFor(FR)!;
     await slop.identities(); await fr.identities();
     const sl = (await memberOf("slop", p))!, frm = (await memberOf(FR, p))!;
@@ -377,8 +391,10 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     // A direct query as network_service sees only its own app (what the cap read before the fix).
     const direct = await asService(tx => tx`select count(*)::int as n from network.messages where id in ('q1', 'q2', 'q3')`);
     expect(direct[0].n).toBe(1);
-    const viaFn = await asService(tx => tx`select n from platform.person_cap_counts(${FR}, ${sql.array([fr.id], "TEXT")}, ${new Date(clock.now() - 24 * HOUR)}, ${sql.array(["none"], "TEXT")})`);
-    expect(viaFn[0].n).toBe(3);
+    // The cap counter spans apps under the RLS role: two sends counted on slop, the third (friends) passes, the fourth is refused.
+    const take = (ids: string[]) => asService(tx => tx`select * from platform.person_cap_take(${FR}, ${ids.map(id => ({ id, member: fr.id }))}::jsonb, ${new Date(clock.now() - 24 * HOUR)}, ${new Date(clock.now())}, 3) as id`);
+    await sql`insert into platform.person_sends (msg_id, person_id, app_id, at) select x, person_id, 'slop', now() from network.members, unnest(array['c1', 'c2']) x where id = ${sl.id}`;
+    expect((await take(["c3", "c4"])).map((r: any) => r.id)).toEqual(["c4"]);
     const apps = await asService(tx => tx`select app_id from platform.member_apps(${p}) order by app_id`);
     expect(apps.map((r: any) => r.app_id)).toEqual([FR, "slop"].sort());
   }, T);
@@ -459,12 +475,12 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
       expect((await call(app, "POST", "/api/auth/otp/start", { phone })).status).toBe(200);
       expect((await call(app, "POST", "/api/auth/otp/verify", { phone, code: otp.codes.get(phone) })).status).toBe(200);
     };
-    const consent = { sms: true, wording: "I agree to get texts. Reply STOP to stop." };
+    const consent = (app: AppId) => ({ sms: true, wording: APPS[app].consent.text });
     const p = newPhone();
     for (const app of ["slop", FR] as AppId[]) {
       await login(app, p);
       expect((await call(app, "GET", "/api/me")).body).toMatchObject({ app, membership: null, canJoin: true });
-      const j = await call(app, "POST", "/api/join", { firstName: "Rae", age: 30, neighborhood: "Greenpoint", interests: ["climbing"], consent });
+      const j = await call(app, "POST", "/api/join", { firstName: "Rae", age: 30, neighborhood: "Greenpoint", interests: ["climbing"], consent: consent(app) });
       expect(j.status).toBe(200);
       const m = (await memberOf(app, p))!;
       expect(m.account_status).toBe("active");
@@ -478,12 +494,12 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
       const other = app === "slop" ? FR : "slop";
       for (const w of [other, APPS[other].domain]) expect(JSON.stringify(me.body)).not.toContain(w);
     }
-    // Stop on slop: slop's member is opted out; the friends app stays active.
+    // Stop on slop's site: every app on the number stops (PRD 40.3: one line, carriers see one sender).
     expect((await call("slop", "POST", "/api/me/stop", {})).status).toBe(200);
     expect((await call("slop", "GET", "/api/me")).body.membership.state).toBe("paused");
-    expect((await call(FR, "GET", "/api/me")).body.membership.state).toBe("active");
+    expect((await call(FR, "GET", "/api/me")).body.membership.state).toBe("paused");
     expect((await memberOf("slop", p))!.opted_out).toBe(true);
-    expect((await memberOf(FR, p))!.opted_out).toBe(false);
+    expect((await memberOf(FR, p))!.opted_out).toBe(true);
     // Export: this app's own data only.
     const ex = await call(FR, "GET", "/api/me/export");
     expect(ex.body.app).toBe(FR);
@@ -496,13 +512,13 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(gone).toEqual({ account_status: "removed", name: null, person_id: null });
     expect(await count(sql`select count(*)::int as n from network.messages where app_id = ${FR}`)).toBe(0);
     expect((await call("slop", "GET", "/api/me")).body.membership.state).toBe("paused");
-    // An under-age web join on an 18+ app stores nothing; The Network is invite-only on the web too.
+    // An under-13 web join stores nothing; The Network is invite-only on the web.
     const kid = newPhone();
     await login("slop", kid);
-    expect((await call("slop", "POST", "/api/join", { firstName: "Kim", age: 16, consent })).body.error).toBe("under_age");
+    expect((await call("slop", "POST", "/api/join", { firstName: "Kim", age: 12, consent: consent("slop") })).body.error).toBe("under_age");
     expect(await count(sql`select count(*)::int as n from platform.phone_identities where e164 = ${kid}`)).toBe(0);
-    await login("ntwrk", kid);
-    expect((await call("ntwrk", "POST", "/api/join", { firstName: "Kim", age: 30, consent })).body.error).toBe("invite_only");
+    await login("ntwrk", newPhone());
+    expect((await call("ntwrk", "POST", "/api/join", { firstName: "Kim", age: 30, consent: consent("ntwrk") })).body.error).toBe("invite_only");
     // Delete everything (from slop): every membership's network member is forgotten, the phone is gone, a suppression hash stays.
     clock.advance(MINUTE);
     await login("slop", p);

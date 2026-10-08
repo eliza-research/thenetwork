@@ -129,7 +129,10 @@ describe.skipIf(!pgAvailable)("real mode: admin-console data from Postgres", () 
     try {
       const as = <T>(q: (tx: SQL) => Promise<T>) => sql.begin(async tx => { await tx`set local role network_observatory`; return q(tx); }).then(v => ({ v }), e => ({ e: String((e as Error).message) }));
       expect(await as(tx => tx`select state from network.network_state`)).toMatchObject({ e: expect.stringContaining("permission denied") });
-      const row = await as(tx => tx`select * from network.network_state_console`) as { v: any[] };
+      // The console view of every app is closed to it (audit platform-7): only The Network's own view.
+      expect(await as(tx => tx`select * from network.network_state_console`)).toMatchObject({ e: expect.stringContaining("permission denied") });
+      expect(await as(tx => tx`select * from network.network_state_console_slop`)).toMatchObject({ e: expect.stringContaining("permission denied") });
+      const row = await as(tx => tx`select * from network.network_state_console_ntwrk`) as { v: any[] };
       expect(row.v).toHaveLength(1);
       const v = row.v[0];
       expect(Object.keys(v).sort()).toEqual(["cases", "counters", "deferred", "deferred_sends", "gate_reasons", "id", "matching_enabled", "members", "saved_at", "trust"]);

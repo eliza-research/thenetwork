@@ -3,7 +3,7 @@
 // audit log), the simulation lab and run diff. Each one checks the role before it shows a control;
 // the server checks it again.
 import { useEffect, useState, type ReactNode } from "react";
-import type { AuditEntry, ConfigInfo, DiffNum, EngineRunSummary, LabArm, LabRun, ObsRequest, ObsSafetyCase, RunDiff, SafetyInfo, ScoreMetric } from "../src/types.ts";
+import type { AuditEntry, ConfigInfo, DiffNum, EngineRunSummary, LabArm, LabRun, ObsRequest, ObsSafetyCase, RunDiff, SafetyAction, SafetyInfo, SafetyReport, ScoreMetric } from "../src/types.ts";
 import { store, useStore } from "./store.ts";
 import { Badge, Countdown, dur, humanize, Kpi, MemberLink, num, OppLink, pct, Section, stamp } from "./ui.tsx";
 
@@ -37,8 +37,15 @@ export function SafetyCases() {
     .filter(c => f?.kind !== "member" || c.memberId === f.id)
     .filter(c => { const m = s.members.get(c.memberId); return !m || s.inBorough(m); });
   const minors = info.minors;
+  const reports = (info.reports ?? []).filter(x => show === "all" || x.status === "open").filter(x => f?.kind !== "member" || x.subjectId === f.id || x.reporterId === f.id);
   return (
     <div className="run-grid">
+      {info.reports && (
+        <Section title={`Reports after a date (${reports.length})`}>
+          {reports.length ? reports.slice(0, 80).map(x => <ReportRow key={x.id} r={x} canBan={!!info.canBan} onDone={r.reload} />) : <div className="muted small">{s.nothing()}</div>}
+          {!info.canBan && <div className="muted small">Hold and ban by phone or person go to the Network service (real mode with NETWORK_SERVICE_URL).</div>}
+        </Section>
+      )}
       <Section title={`Cases (${cases.length})`} right={
         <div className="seg" role="radiogroup" aria-label="Cases">
           <button className={show === "open" ? "active" : ""} onClick={() => setShow("open")}>Open</button>
@@ -110,9 +117,50 @@ function CaseRow({ c, canAct, onDone }: { c: ObsSafetyCase; canAct: boolean; onD
   );
 }
 
+/** One post-date report: what kind, who reported whom, after which date; hold or ban the person (by phone or by person), or dismiss. */
+function ReportRow({ r, canBan, onDone }: { r: SafetyReport; canBan: boolean; onDone(): void }) {
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const s = useStore();
+  const act = async (a: SafetyAction, done: string) => {
+    setBusy(true);
+    const res = await store.safetyAction(a);
+    setBusy(false);
+    if (res.data?.ok) { store.toast(done, "good"); setNote(""); onDone(); } else store.toast(res.data?.error ?? res.error ?? "refused", "bad");
+  };
+  const n = note.trim(), ok = n.length >= 5 && !busy;
+  return (
+    <div className={`case ${open ? "open" : ""}`}>
+      <button type="button" className="case-head" onClick={() => setOpen(!open)}>
+        {r.urgent && r.status === "open" && <Badge tone="bad" title="Harassment, unsafe, scam or a minor: 1-hour target">urgent</Badge>}
+        <Badge tone={r.kind === "harassment" || r.kind === "unsafe" ? "bad" : "warn"}>{humanize(r.kind)}</Badge>
+        <span className="case-name">{s.members.get(r.subjectId)?.name ?? r.subjectId}</span>
+        <span className="muted small">{r.status} · {stamp(r.at)}{r.priorReports ? ` · ${r.priorReports} earlier report${r.priorReports > 1 ? "s" : ""}` : ""}</span>
+        <span className="spacer" />
+        {r.status === "open" && (r.overdue ? <span className="countdown bad">overdue</span> : <Countdown deadline={r.dueAt} prefix="due in " />)}
+      </button>
+      {open && (
+        <div className="case-body">
+          <div className="small">Reported <MemberLink id={r.subjectId} /> · by <MemberLink id={r.reporterId} />{r.opportunityId && <> · after {s.opps.has(r.opportunityId) ? <OppLink o={s.opps.get(r.opportunityId)!} /> : r.opportunityId}</>}</div>
+          {canBan && store.can("safety") && r.status === "open" && (
+            <div className="review-actions">
+              <input className="input grow" placeholder="Decision note (logged, at least 5 characters)" value={note} onChange={e => setNote(e.target.value)} />
+              <button className="btn" disabled={!ok} title="Hold the person on every app until a review" onClick={() => act({ action: "hold", memberId: r.subjectId, note: n, reportId: r.id }, "Person held on every app")}>Hold</button>
+              <button className="btn" disabled={!ok} title="This phone number can never join again" onClick={() => act({ action: "ban", memberId: r.subjectId, by: "phone", note: n, reportId: r.id }, "Banned by phone")}>Ban phone</button>
+              <button className="btn" disabled={!ok} title="Every phone of this person, on every app" onClick={() => act({ action: "ban", memberId: r.subjectId, by: "person", note: n, reportId: r.id }, "Banned by person")}>Ban person</button>
+              <button className="btn ghost" disabled={!ok} onClick={() => act({ action: "dismiss", reportId: r.id, note: n }, "Report dismissed")}>Dismiss</button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- requests (gap 13)
 type ReqSeg = "all" | "open" | "fulfilled" | "none" | "answered";
-const OUTCOME_TONE: Record<ObsRequest["outcome"], string> = { probing: "info", open: "warn", fulfilled: "good", none: "neutral", answered: "good" };
+const OUTCOME_TONE: Record<ObsRequest["outcome"], string> = { probing: "info", open: "warn", fulfilled: "good", booked: "good", none: "neutral", answered: "good" };
 /** Member requests: what was asked for (never the member's words), the outcome, tries and age. */
 export function Requests() {
   const s = useStore();

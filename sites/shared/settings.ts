@@ -4,7 +4,7 @@
 // Actions: button[data-action="export|stop|leave|delete-all|logout"].
 // Confirms: dialog[data-confirm="stop|leave|delete-all"] holding form[method=dialog] with a
 // button value="confirm". The delete-all dialog also holds input[name=confirmText] that must
-// equal its data-word attribute.
+// equal its data-word attribute. A page without the dialog cannot run the action (fail closed).
 import { api, type Me } from "./api.ts";
 import { mountAuth } from "./auth.ts";
 import { $, fill, formatDate, message, ready, showStep, when } from "./ui.ts";
@@ -57,8 +57,12 @@ async function refresh(root: HTMLElement): Promise<void> {
   if (me.error !== "unauthorized") flowError(root, message(root, me.error));
 }
 
-/** Opens a confirm dialog. Resolves true only when the person pressed the confirm button. */
-function confirmWith(dialog: HTMLDialogElement): Promise<boolean> {
+/**
+ * Opens a confirm dialog. Resolves true only when the person pressed the confirm button. No dialog,
+ * or a browser without showModal: false, so a destructive action never runs unconfirmed.
+ */
+export function confirmWith(dialog: HTMLDialogElement | null): Promise<boolean> {
+  if (!dialog || typeof dialog.showModal !== "function") return Promise.resolve(false);
   const word = dialog.dataset.word;
   const input = dialog.querySelector<HTMLInputElement>('input[name="confirmText"]');
   const ok = dialog.querySelector<HTMLButtonElement>('button[value="confirm"]');
@@ -117,8 +121,7 @@ export async function mountSettings(root: HTMLElement): Promise<void> {
   });
 
   act("stop", async () => {
-    const d = dialog("stop");
-    if (d && !(await confirmWith(d))) return;
+    if (!(await confirmWith(dialog("stop")))) return;
     const res = await api.stop();
     if (!res.ok) return status(root, message(root, res.error));
     await refresh(root);
@@ -126,8 +129,7 @@ export async function mountSettings(root: HTMLElement): Promise<void> {
   });
 
   act("leave", async () => {
-    const d = dialog("leave");
-    if (d && !(await confirmWith(d))) return;
+    if (!(await confirmWith(dialog("leave")))) return;
     const res = await api.remove("app");
     if (!res.ok) return status(root, message(root, res.error));
     status(root, "");
@@ -136,8 +138,7 @@ export async function mountSettings(root: HTMLElement): Promise<void> {
   });
 
   act("delete-all", async () => {
-    const d = dialog("delete-all");
-    if (d && !(await confirmWith(d))) return;
+    if (!(await confirmWith(dialog("delete-all")))) return;
     const res = await api.remove("all");
     if (!res.ok) return status(root, message(root, res.error));
     status(root, "");
@@ -146,7 +147,9 @@ export async function mountSettings(root: HTMLElement): Promise<void> {
   });
 
   act("logout", async () => {
-    await api.logout();
+    // Show the logged-out screen only after the server ended the session.
+    const res = await api.logout();
+    if (!res.ok) return status(root, message(root, res.error));
     status(root, "");
     showStep(root, "phone");
   });

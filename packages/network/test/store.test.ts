@@ -271,6 +271,9 @@ describe.skipIf(!pgAvailable)("PgStore", () => {
     await store.save(w.net.exportState());
     expect(await have()).toEqual(want());
     const alt = w.net.reviewQueue()[0]!.proposal.alternates[0]!;
+    // The record now says 12 (the platform's lowest stated age): an under-13 record declines.
+    w.members.find(m => m.id === alt)!.age = 12;
+    w.net.importState(w.net.exportState());
     await w.say(alt, "I am 12 years old");
     expect(w.net.isDeclined(alt)).toBe(true);
     await store.save(w.net.exportState());

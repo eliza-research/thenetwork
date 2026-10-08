@@ -14,6 +14,7 @@ import { dropTestDb, pgAvailable, testDb } from "./pg.ts";
 
 const T = 300_000;
 const SERVICE_TOKEN = "svc-console-7f2a";
+const REVIEWER = "rev@example.org";
 
 describe.skipIf(!pgAvailable)("real mode: staff actions through the Network service", () => {
   let url: string;
@@ -31,7 +32,8 @@ describe.skipIf(!pgAvailable)("real mode: staff actions through the Network serv
     await writeRows(sql, rowsFromGame(g), { truncate: true });
     await sql.close();
     await g.dispose();
-    svc = new NetworkService({ url, clock: new SimClock(Date.now()), tokens: `admin:${SERVICE_TOKEN}`, log: () => {} });
+    // The console's own token: only it may name the reviewer of record (X-Network-Staff-Id).
+    svc = new NetworkService({ url, clock: new SimClock(Date.now()), tokens: `admin:${SERVICE_TOKEN}`, consoleToken: SERVICE_TOKEN, log: () => {} });
     http = Bun.serve({
       port: 0, hostname: "127.0.0.1",
       async fetch(req) {
@@ -57,7 +59,12 @@ describe.skipIf(!pgAvailable)("real mode: staff actions through the Network serv
     const after = real.state().opportunities.find(o => o.id === item.id)!;
     expect(after.state).not.toBe("IN_REVIEW");
     expect(after.review).toMatchObject({ decision: "reject", reason: "tone", secondsSpent: 25 });
-    expect(after.review!.reviewer).toMatch(/^token:admin#/); // the service's reviewer of record today (admin-console 3.2)
+    // OBS-10: the reviewer of record is the person, not the console's service token.
+    expect(after.review!.reviewer).toBe(REVIEWER);
+    // OBS-10: time on one item counts at most 30 minutes.
+    const next = real.state().opportunities.find(o => o.state === "IN_REVIEW")!;
+    expect(await real.control({ type: "review", oppId: next.id, decision: "reject", reason: "tone", secondsSpent: 99_999 }, REVIEWER)).toEqual({ ok: true });
+    expect(real.state().opportunities.find(o => o.id === next.id)!.review).toMatchObject({ reviewer: REVIEWER, secondsSpent: 1800 });
     // Again: the item no longer waits.
     expect(await real.control({ type: "review", oppId: item.id, decision: "approve" }, "rev@example.org")).toMatchObject({ ok: false, code: "not_in_review", error: "that opportunity is not waiting for review" });
     // The connection itself still cannot write.

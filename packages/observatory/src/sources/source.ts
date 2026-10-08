@@ -1,6 +1,6 @@
 // A data source feeds the observatory: the simulated world (game mode) or Postgres (real mode).
 import type {
-  ConfigInfo, ControlCommand, ControlResult, MemberDetail, MemberTimeline, Mode, ObsDelta, ObsState, OpportunityDetail, SafetyAction,
+  ConfigInfo, ControlCommand, ControlResult, MemberDetail, MemberPhoto, MemberTimeline, Mode, ObsDelta, ObsState, OpportunityDetail, SafetyAction,
   SafetyInfo, SearchHit,
 } from "../types.ts";
 
@@ -26,6 +26,11 @@ export interface DataSource {
   safety(): Promise<SafetyInfo>;
   safetyAction(a: SafetyAction, actor: string): Promise<ControlResult>;
   config(): Promise<ConfigInfo>;
+  /**
+   * slop photos of one member (real mode: the Network service, GET /members/:id/photos). The server
+   * checks the role, the reason, the member's age and writes the audit row first. Absent: no photos.
+   */
+  photos?(memberId: string, actor: string, reason: string): Promise<{ ok: true; photos: MemberPhoto[] } | ControlResult>;
   /** Outbound agent messages and system events only; never what a member wrote (gap 18). */
   search(q: string, limit?: number): Promise<SearchHit[]>;
   /** Deltas pushed as the source changes (about 4 per second while anything changes). */
@@ -75,5 +80,7 @@ export const REVIEW_BLOCK_ERRORS: Record<string, string> = {
 /** Why a safety action was refused. */
 export const SAFETY_ERRORS: Record<string, string> = {
   not_on_hold: "that member is not on hold", unknown_case: "no such case", already_closed: "that case is already closed",
-  actor_required: "a staff name is required", unknown_action: "action must be lift or close",
+  actor_required: "a staff name is required", unknown_action: "action must be lift, close, hold, ban or dismiss",
+  service_only: "hold, ban and dismiss go to the Network service: real mode with NETWORK_SERVICE_URL",
+  unknown_member: "no such member", unknown_report: "no such report", already_banned: "that person is already banned",
 };

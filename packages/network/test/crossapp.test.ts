@@ -27,7 +27,7 @@ const ADMIN_URL = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_
 const URL_ = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/${DB}`;
 async function admin(q: string) { const sql = new SQL({ url: ADMIN_URL, max: 1 }); try { await sql.unsafe("set lock_timeout = '5s'"); await sql.unsafe(q); } finally { await sql.close(); } }
 
-const FR = APP_IDS.find(a => a === ("friends" as string) || a === "buddies")! as AppId;
+const FR: AppId = "friends";
 const APPS_RUN: AppId[] = ["ntwrk", FR];
 const SECRET = "whsec_crossapp";
 const CANARY: Record<string, string> = { ntwrk: "zqntwrkcanary", [FR]: "zqfriendscanary" };

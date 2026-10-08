@@ -118,6 +118,27 @@ describe("GameSource", () => {
     expect(inbound).toContain("Yes, I'm in!");
   }, T);
 
+  test("play as a member: \"sure, not this week though\" is a decline (the Network's reader, not the simulator's)", async () => {
+    const g = await game({ seed: 5, personas: 60, days: 20, engine: "off" });
+    await g.control({ type: "step", ms: 7 * DAY });
+    const [x, y] = freeAdults(g, g.state(), "sf");
+    await g.control({ type: "takeover", memberId: x!.id, on: true });
+    const r = await g.control({ type: "propose", participants: [x!.id, y!.id], why: "you both like climbing" });
+    const id = (r.data as { id: string }).id;
+    const stepping = g.control({ type: "step", ms: 2 * DAY });
+    let prompt;
+    for (let i = 0; i < 200 && !prompt; i++) {
+      await Bun.sleep(20);
+      prompt = g.state().game!.prompts.find(p => p.memberId === x!.id && p.proposalId === id);
+    }
+    expect(prompt).toBeDefined();
+    // Before the fix the simulator's parseYesNo read this as a yes (an accept).
+    const reply = await g.control({ type: "reply", promptId: prompt!.id, text: "sure, not this week though" });
+    expect((reply.data as { decision: string }).decision).toBe("decline");
+    const auto = setInterval(() => { for (const p of g.state().game!.prompts) g.control({ type: "reply", promptId: p.id, auto: true }); }, 10);
+    try { await stepping; } finally { clearInterval(auto); }
+  }, T);
+
   test("truth lens, oracle peek cost, god actions, reset", async () => {
     const g = await game({ seed: 2, personas: 40, days: 10, engine: "off" });
     await g.control({ type: "step", ms: 6 * DAY });

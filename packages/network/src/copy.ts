@@ -47,17 +47,17 @@ export function copyFor(b: CopyBrand) {
    * Consent-first probe: no names, just the shape of the opportunity, an area and at most one fact
    * about the other person (`why`). With time options (founder decision 4) it asks which time works.
    */
-  probe: (category: Category, detail: string, when: string, area: string, why?: string, times?: string) =>
-    `Quick check, no names yet: would you be up for ${detail || ACTIVITY[category]}${times ? "" : ` ${when}`} near ${area}${why ? ` (${why})` : ""}?${tail(times)}`,
+  probe: (category: Category, detail: string, when: string, area: string | undefined, why?: string, times?: string) =>
+    `Quick check, no names yet: would you be up for ${detail || ACTIVITY[category]}${times ? "" : ` ${when}`} ${area ? `near ${area}` : "nearby"}${why ? ` (${why})` : ""}?${tail(times)}`,
   /** Plans buddy: asking for plans is not consent to meet a stranger, so both people are asked first. */
-  plansBuddyProbe: (venue: string, when: string, area: string, times?: string) =>
-    `Quick check, no names yet: someone near ${area} is also looking for plans${times ? "" : ` ${when}`}. Would you be up for going to ${venue} together?${tail(times)}`,
+  plansBuddyProbe: (venue: string, when: string, area: string | undefined, times?: string) =>
+    `Quick check, no names yet: someone ${area ? `near ${area}` : "nearby"} is also looking for plans${times ? "" : ` ${when}`}. Would you be up for going to ${venue} together?${tail(times)}`,
   /** The one re-engagement after 14 days of silence (F28). */
   reengage: "It's been a while, so I've kept quiet. Something came up that looks like a real fit for you. Want me to keep sending these?",
   requestConfirm: (why: string, when: string, times?: string) => times
     ? `Closest match I found so far: someone nearby, and ${why}. Want me to check if they're up for it? I could do ${times}; tell me which works, or no.`
     : `Closest match I found so far: someone nearby, and ${why}. Want me to check if they're up for it ${when}?`,
-  growthGap: (area: string, what: string) => `A few people near ${area} are looking for ${what}. Know anyone who'd be into it? Reply with their first name and I'll send you an invite to pass on.`,
+  growthGap: (area: string | undefined, what: string) => `A few people ${area ? `near ${area}` : "nearby"} are looking for ${what}. Know anyone who'd be into it? Reply with their first name and I'll send you an invite to pass on.`,
   growthPlain: `Who else should be here? If a friend would enjoy ${b.name}, reply with their first name and I'll send you an invite to pass on.`,
   /**
    * The requester asked for this and the fit is strong, so there is no yes or no to ask: only when.
@@ -76,8 +76,10 @@ export function copyFor(b: CopyBrand) {
    * `offer`: the one-time calendar and weekly check-in offer in a member's first plan.
    */
   booked: (others: string[], why: string, venue: string, when: string, offer = false) =>
-    `${others.length === 1 ? `You're both in: meet ${others[0]}` : `You're all in: ${others.join(", ")}`}, ${when} at ${venue}. ${why}. Reply if you can't make it.${offer ? ` ${OFFER}` : ""}`,
+    `${others.length === 1 ? `You're both in: meet ${others[0]}` : `You're all in: ${others.join(", ")}`}, ${when} at ${venue}. ${why}. Reply if your plans change.${offer ? ` ${OFFER}` : ""}`,
   bookedThanks: "Great, see you there.",
+  /** A probe reply that was neither a clear yes nor a clear no (a condition, a maybe): asked once more. */
+  probeClarify: "Just to check: is that a yes or a no? Either is fine.",
   /** The member opted in to calendar free/busy (founder decision 4c); free/busy only, never event details. */
   calendarOptIn: "Thanks. I'll only use free/busy from your calendar, never what's in it. Reply CALENDAR OFF anytime to stop.",
   calendarOff: "Done, I won't use your calendar.",
@@ -85,6 +87,10 @@ export function copyFor(b: CopyBrand) {
   weeklyOptIn: "Done. Once a week I'll ask what your week looks like. Reply WEEKLY OFF anytime to stop.",
   weeklyOff: "Done, no more weekly check-ins.",
   weeklyCheckin: "What's your week like? A couple of evenings or times you're free is plenty.",
+  /** A request in a category this app does not cover (slop is dating only, peon is work only). */
+  requestOutOfScope: "That's not something I can help with here, so I won't look for it. Ask me anytime about something else.",
+  /** A member on watch asked for an introduction: nothing starts until a person has looked. */
+  requestOnWatch: "I can't start new introductions for you right now. A person on our team will look at your account first.",
   requestAck: "On it. I'll check with a couple of people and get back to you within a day.",
   /** Matching is paused (the admin switch): the request waits as a standing request. */
   requestWaiting: "Got it. I'm not starting new introductions right now, but I'll keep your request open and look again soon.",
@@ -93,11 +99,14 @@ export function copyFor(b: CopyBrand) {
   requestNoneYet: (what: string) =>
     `I couldn't find someone for ${what} this time. I'll keep an eye out. If you know someone who'd be great for it, reply with their first name and I'll send you an invite to pass on.`,
   plans: (lines: string[]) => `A few ideas nearby: ${lines.join("; ")}. Want me to see if anyone else is up for one of them?`,
+  /** The same ideas with no offer to find company: for minors, members who cannot be matched, and while matching is off. */
+  plansNoOffer: (lines: string[]) => `A few ideas nearby: ${lines.join("; ")}. Happy to suggest more anytime.`,
   declinedQuiet: "That one didn't come together this time. No action needed; I'll keep an eye out.",
   reminder: (when: string, venue: string) => `Reminder: ${when} at ${venue}. Have fun! If something comes up, just tell me.`,
-  dropNotice: (first: string, keep: boolean) => keep
-    ? `Quick update: ${first} can't make it, sorry. The rest of you are still on.`
-    : `Quick update: ${first} can't make it, so I'm calling this one off. Sorry about that; I'll look for another time.`,
+  /** Someone dropped out of a booked plan. Never says who: the plan's change is the news, not the person (judge decliner_exposed). */
+  dropNotice: (_first: string, keep: boolean) => keep
+    ? `Quick update: one person can't make it now, sorry. The rest of you are still on.`
+    : `Quick update: this one is off now, sorry about that. I'll look for another time.`,
   feedbackAsk: (others: string) => `How did it go with ${others}?`,
   feedbackThanks: "Thanks, that's really helpful.",
   growthAsk: `Glad that went well. If you know someone who'd enjoy ${b.name}, reply with their first name and I'll send you an invite link to pass on.`,
@@ -111,6 +120,8 @@ export function copyFor(b: CopyBrand) {
   noInjection: "I can't help with that.",
   giveSpace: "I won't pass that along. If someone hasn't replied, please give them space.",
   blocked: "Done. You won't be matched with them, and they won't be told.",
+  /** A report about someone the member did not meet through the Network, or a name that matches nobody: no claim about who they are. */
+  reportUnmatched: "Thanks for telling me. I couldn't match that name to someone you met through me. If you're ever in danger, call 911 first.",
   reported: "Thanks for telling me. I've blocked them for you and flagged this for the safety team. If you're ever in danger, call 911 first.",
   hold: "Your account is paused while our team takes a look. You'll hear from a person soon.",
   minorNotice: "Thanks for telling me. Since you're under 18, I won't introduce you to other members, but I'm happy to suggest public places and events.",
@@ -119,7 +130,7 @@ export function copyFor(b: CopyBrand) {
   // Plans (plans v1.1). The probe itself is the engine's buildPlanProbe (no names, leak-checked).
   /** The booked plan, sent only once enough people said yes: names, time, public place, own way. Silence for 48 hours = in. */
   planBooked: (activity: string, others: string[], venue: string, when: string, offer = false) =>
-    `You're in: ${activity}, ${when} at ${venue}, with ${others.join(", ").replace(/\.$/, "")}. Everyone pays their own way. Reply if you can't make it.${offer ? ` ${OFFER}` : ""}`,
+    `You're in: ${activity}, ${when} at ${venue}, with ${others.join(", ").replace(/\.$/, "")}. Everyone pays their own way. Reply if your plans change.${offer ? ` ${OFFER}` : ""}`,
   /** The post-plan question: how it went, and whether they would do it again with this group (crews, would_interact_again). */
   planFeedbackAsk: (activity: string) => `How was ${activity}, and would you do it again with this group?`,
   /** A plan that did not come together; folded into the member's next message. Never says who declined. */

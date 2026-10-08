@@ -32,7 +32,8 @@ export interface CapitalReader {
 
 /** A reader over a CapitalLedger (the levers are pure functions of the member's own entries). */
 export function ledgerReader(ledger: CapitalLedger, cfg?: CapitalConfigInput): CapitalReader {
-  const conf = resolveCapital(cfg);
+  // The ledger's own config unless one is passed: thresholds must agree with what the ledger credits (capital-m1).
+  const conf = cfg ? resolveCapital(cfg) : ledger.cfg;
   return {
     vouchCapacity: (m, now) => vouchCapacity(ledger.internalEntries(m), now, conf),
     organizingReach: (m, now) => organizingReach(ledger.internalEntries(m), now, conf),
@@ -49,9 +50,11 @@ export function ledgerReader(ledger: CapitalLedger, cfg?: CapitalConfigInput): C
 export function capitalWiring(ledger = new CapitalLedger(), o: { reader?: boolean } = {}) {
   const counts: Record<string, number> = {};
   let rejected = 0;
+  const rejects: { id: string; reason: string }[] = [];
   const onLedger = (e: CapitalEvent) => {
     counts[e.type] = (counts[e.type] ?? 0) + 1;
-    try { ledger.record(e); } catch { rejected++; }
+    // A rejected event is kept with its id and reason (capital-3): the harness fails on any.
+    try { ledger.record(e); } catch (err) { rejected++; rejects.push({ id: e.id, reason: err instanceof Error ? err.message.slice(0, 120) : "rejected" }); }
   };
-  return { ledger, onLedger, counts, rejected: () => rejected, ...(o.reader === false ? {} : { capital: ledgerReader(ledger) }) };
+  return { ledger, onLedger, counts, rejected: () => rejected, rejects: () => [...rejects], ...(o.reader === false ? {} : { capital: ledgerReader(ledger) }) };
 }

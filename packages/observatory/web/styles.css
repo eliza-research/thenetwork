@@ -403,3 +403,5 @@ kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line-
 .person-app-head { display: flex; gap: 10px; align-items: center; width: 100%; background: none; border: 0; padding: 10px 12px; cursor: pointer; text-align: left; }
 .person-reason, .person-panel { padding: 0 12px 12px; }
 .person-panel { display: flex; flex-direction: column; gap: 4px; }
+.photos { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.photos img { width: 96px; height: 96px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); }

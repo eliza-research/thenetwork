@@ -1,0 +1,22 @@
+# friends.help public site: friends and plans in NYC by text.
+# Cloudflare Pages project "friends-help" (founder decision 8, AGENTS.md), production branch main, served on
+# friends-help.pages.dev and, once DNS points there, on friends.help. The build (bun run sites/sites.ts friends) writes
+# ./dist with the static pages and an advanced-mode _worker.js (deploy/router.ts) plus _routes.json:
+# only /api, /api/*, /mcp, /mcp/*, /oauth/* and /.well-known/oauth-* run the Worker, which forwards them
+# to the shared backend with signed proxy headers. Every other path is a static file.
+# Deploys: CI (.github/workflows/deploy-sites.yml, behind the "production" GitHub environment), or by hand
+# only with founder approval:
+#   bun run sites/sites.ts friends && NTWRK_ALLOW_DEPLOY=1 scripts/wrangler.sh pages deploy sites/friends.help/dist --project-name friends-help --branch main
+# The account comes from CLOUDFLARE_ACCOUNT_ID (default 50ad2052bbc6ca528d6993a689b419a4, the ntwrk.love
+# account, which holds all four Pages projects); a different account can be set there, never here.
+name = "friends-help"
+pages_build_output_dir = "./dist"
+compatibility_date = "2026-09-15"
+
+[vars]
+APP_ID = "friends"
+SITE_HOST = "friends.help"
+# The one shared backend (sites/skills.config.ts BACKEND_ORIGIN).
+BACKEND_ORIGIN = "https://api.ntwrk.love"
+# Secret, set once per project (never here): PLATFORM_PROXY_SECRET, the HMAC key the backend checks.
+#   NTWRK_ALLOW_DEPLOY=1 scripts/wrangler.sh pages secret put PLATFORM_PROXY_SECRET --project-name friends-help

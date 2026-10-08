@@ -1,6 +1,6 @@
 # Runbook: the simulation
 
-This runbook tells you how to run the simulated world, read its results, and change it. It covers the Observatory game mode, headless experiments, per-app runs for the four apps (ntwrk, slop, peon, buddies), scenarios, the synthetic dataset, and the tests to run before a PR.
+This runbook tells you how to run the simulated world, read its results, and change it. It covers the Observatory game mode, headless experiments, per-app runs for the four apps (ntwrk, slop, peon, friends), scenarios, the synthetic dataset, and the tests to run before a PR.
 
 Design: [network.md](network.md) (the ConsentNetwork), [observatory.md](observatory.md) (the Observatory). Latest numbers: [results/2026-10-07-network-consent.md](results/2026-10-07-network-consent.md). The real (non-simulated) side: [runbook-real.md](runbook-real.md).
 
@@ -34,14 +34,14 @@ bun run observatory
 The server prints one line:
 
 ```
-The Network Observatory → http://127.0.0.1:4747/?token=<random token>  (mode: game)
+The Network Observatory → http://127.0.0.1:4747/#token=<random token>  (mode: game)
 ```
 
 1. Open that URL. The page keeps the token for the browser session and removes it from the address bar.
 2. If the page shows "Token required", paste the token from the terminal.
 3. To keep the same token across restarts, set it: `OBSERVATORY_TOKEN=<your token> bun run observatory`.
 
-The server listens on 127.0.0.1 only. Every `/api/*` route and the `/ws` WebSocket need the token. The printed token is an admin token, so you see every tab. To see what another role sees, start the server with role tokens: `OBSERVATORY_TOKENS="admin:a1,reviewer:r1,safety:s1,analyst:n1" bun run observatory`, then open `http://127.0.0.1:4747/?token=r1`. See [observatory.md](observatory.md) sections 8 and 9 for the access rules.
+The server listens on 127.0.0.1 only. Every `/api/*` route and the `/ws` WebSocket need the token. The printed token is an admin token, so you see every tab. To see what another role sees, start the server with role tokens: `OBSERVATORY_TOKENS="admin:<32+ chars>,reviewer:<32+ chars>,..." bun run observatory` (every token needs 32 or more characters), then open `http://127.0.0.1:4747/#token=<the reviewer token>`. `?token=` is refused. See [observatory.md](observatory.md) sections 8 and 9 for the access rules.
 
 The server writes an audit row for each member, timeline or opportunity read and each staff action, to `runs/audit/audit.jsonl` (`OBSERVATORY_AUDIT_DIR` changes the folder).
 
@@ -77,14 +77,14 @@ Pass options after the script name: `bun run observatory --review human --port 4
 
 ### 2.3.1 One world per app
 
-The Observatory has an app switcher (ntwrk, slop, peon, buddies, all). Each app has its own simulated world, started when someone first opens that app. Open an app with the switcher or the URL hash, for example `http://127.0.0.1:4747/#a=slop`. Every `/api` request carries `?app=` (default ntwrk).
+The Observatory has an app switcher (ntwrk, slop, peon, friends, all). Each app has its own simulated world, started when someone first opens that app. Open an app with the switcher or the URL hash, for example `http://127.0.0.1:4747/#a=slop`. Every `/api` request carries `?app=` (default ntwrk).
 
 - Every app's world uses the NYC synthetic members and The Network's engine, with that app's brand words and join age.
-- In slop, peon and buddies, personas whose stated age is under 18 never join (the app's join age; a persona that lies about its age can still join, and the Network's age rules then apply). In ntwrk, personas under 13 try to join and the Network declines them.
+- In every app, personas whose stated age is under 13 never join (13+ may join every app; matching is 18+). Before 2026-10-08 slop, peon and friends had a join age of 18, and personas whose stated age was under 18 never joined (the app's join age; a persona that lies about its age can still join, and the Network's age rules then apply). In ntwrk, personas under 13 try to join and the Network declines them.
 - slop and peon run with matching off ("matching off until pack"). Joins, onboarding and safety still run. The matching switch answers 409 `matching_locked`.
 - "all" shows one line per app (members, review backlog, SLA misses, send failures, matching). It does not start a world.
 - The levels (2.4) are ntwrk scenarios. In other apps, the join-age filter can remove part of a level's cast.
-- To see one app only, start the server with a per-app token: `OBSERVATORY_TOKENS="admin@*:a1,reviewer@slop:r1" bun run observatory`, then open `http://127.0.0.1:4747/?token=r1`. The slop reviewer sees slop only.
+- To see one app only, start the server with a per-app token: `OBSERVATORY_TOKENS="admin@*:<32+ chars>,reviewer@slop:<32+ chars>" bun run observatory`, then open `http://127.0.0.1:4747/#token=<the slop reviewer token>`. The slop reviewer sees slop only.
 
 Checked on 2026-10-08: with a `reviewer@slop` token, `/api/me?app=slop` listed `apps: ["slop"]`, `/api/state?app=ntwrk` gave 403, `?app=foo` gave 400, and the matching switch on slop gave 409 `matching_locked`.
 
@@ -175,7 +175,7 @@ The CLI runs only the `StubNetwork`. Use the harness (3.1, section 4) or the lab
 
 ```ts
 import { runArm } from "/path/to/repo/packages/network/harness/experiment.ts";
-const r = await runArm("consent", { days: 2, seed: 1, network: { app: "buddies" } });
+const r = await runArm("consent", { days: 2, seed: 1, network: { app: "friends" } });
 console.log(JSON.stringify({ arm: r.arm, judge: r.judge }));
 process.exit(0);
 ```
@@ -184,8 +184,8 @@ Checked on 2026-10-08 (2 days, seed 1): `{"arm":"consent","judge":{"invariants":
 
 What does not exist yet:
 
-- Per-app simulated worlds (slop daters, peon candidates and employers, buddies crews) and their oracles. The engine session owns the app packs and their sim packs (PRD 40.8). The slop world is on `origin/main` (`@thenetwork/worlds`); this worktree does not have it yet.
-- The `cross_app_leak` judge invariant. `packages/network/test/crossapp.test.ts` checks one two-app world (ntwrk and buddies) in a test.
+- Per-app simulated worlds (slop daters, peon candidates and employers, friends crews) and their oracles. The engine session owns the app packs and their sim packs (PRD 40.8). The slop world is on `origin/main` (`@thenetwork/worlds`); this worktree does not have it yet.
+- The `cross_app_leak` judge invariant. `packages/network/test/crossapp.test.ts` checks one two-app world (ntwrk and friends) in a test.
 - STOP versus STOP ALL and person-to-person blocks in the simulator. The simulator runs one network.
 
 ## 4. Scenarios

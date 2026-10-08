@@ -43,7 +43,7 @@ export interface EnvInfo {
   realOnly?: boolean;
   /** Real mode: the Network service that takes staff actions (its URL). */
   service?: string;
-  /** The app this view shows (ntwrk, slop, peon, buddies). */
+  /** The app this view shows (ntwrk, slop, peon, friends). */
   app?: string;
   /** Proactive matching cannot run for this app yet (its engine pack has not shipped). */
   matchingLocked?: boolean;
@@ -311,7 +311,8 @@ export interface ObsRequest {
   id: string; memberId: MemberId; kind: "people" | "plans"; category: string;
   /** The want as the Network phrases it ("find a weekend tennis partner"), or "a social request". */
   label: string;
-  outcome: "probing" | "fulfilled" | "none" | "answered" | "open";
+  /** "booked": the request became a booked plan (the Network's outcome since 2026-10-08). */
+  outcome: "probing" | "fulfilled" | "booked" | "none" | "answered" | "open";
   tries: number; openedAt: number; ageHours: number;
   fulfilledAt?: number; hoursToFulfil?: number; opportunityId?: string;
 }
@@ -437,6 +438,8 @@ export interface StaffUser {
   /** The roles with their app. A grant without an app ("email:role") is "role@*". */
   grants: RoleGrant[];
   via: "token" | "sso";
+  /** SSO: when the Cloudflare Access token expires (ms). Sockets close then (they are re-checked on a timer too). */
+  expiresAt?: number;
 }
 
 export interface AuditEntry {
@@ -445,9 +448,9 @@ export interface AuditEntry {
   at: number;
   actor: string;
   roles: StaffRole[];
-  /** read_member, read_timeline, read_opportunity, reveal, review, safety, config, control, search, lab_run, read_audit, mode, read_person, open_person_app. */
+  /** read_member, read_timeline, read_member_app, read_photos, read_opportunity, reveal, reveal_revoke, review, safety_*, config, control, search, lab_run, read_audit, mode, read_person, open_person_app. */
   action: string;
-  targetType?: "member" | "opportunity" | "case" | "config" | "run" | "search" | "mode" | "person";
+  targetType?: "member" | "opportunity" | "case" | "config" | "run" | "search" | "mode" | "person" | "report";
   /** The app the request was about (network.staff_audit.app_id). Absent: no app (a mode switch). */
   app?: string;
   targetId?: string;
@@ -483,10 +486,41 @@ export interface SafetyInfo {
   minors: { members: MemberId[]; unknownAge: MemberId[]; inOpportunities: { opportunityId: string; memberId: MemberId; state: string }[] };
   /** Actions are possible (game mode with the consent Network). Real mode is read-only. */
   canAct: boolean;
+  /**
+   * Reports a member made about someone they met (post-date reports: harassment, lying, ...), urgent
+   * first. Real mode: the Network service's GET /safety/reports (docs/admin-console.md 3.7.1). Game
+   * mode: report_received trust events between two members who met.
+   */
+  reports?: SafetyReport[];
+  /** Hold and ban by phone or person need the Network service (real mode). */
+  canBan?: boolean;
+}
+/** What a post-date report says happened. "other" when the reporter's words did not fit a kind. */
+export type ReportKind = "harassment" | "lying" | "no_show" | "unsafe" | "scam" | "minor" | "other";
+export interface SafetyReport {
+  id: string;
+  kind: ReportKind;
+  /** The member who reported, and the member reported (this app's member ids). Never the reporter's words. */
+  reporterId: MemberId; subjectId: MemberId;
+  /** The date (opportunity) the report is about, when known. */
+  opportunityId?: string;
+  at: number;
+  status: "open" | "held" | "banned" | "dismissed";
+  /** Harassment, unsafe, scam and minor reports are urgent (1 hour target); others 24 hours (PRD 36.3). */
+  urgent: boolean;
+  dueAt: number;
+  overdue: boolean;
+  /** Earlier reports about the same subject (any reporter). */
+  priorReports: number;
 }
 export type SafetyAction =
   | { action: "lift"; memberId: MemberId; note?: string }
-  | { action: "close"; caseId: string; note?: string };
+  | { action: "close"; caseId: string; note?: string }
+  /** Hold the person behind this member on every app (PRD 40.3: a safety removal holds the person everywhere). */
+  | { action: "hold"; memberId: MemberId; note: string; reportId?: string }
+  /** Ban by phone (the number can never join again) or by person (every phone of the person). PRD 40.5: ban by person, not by account. */
+  | { action: "ban"; memberId: MemberId; by: "phone" | "person"; note: string; reportId?: string }
+  | { action: "dismiss"; reportId: string; note: string };
 
 // ---------------------------------------------------------------- configuration (gaps 10, 17)
 export interface ConfigChange {
@@ -597,6 +631,39 @@ export interface ControlResult {
   code?: string;
 }
 
+// ---------------------------------------------------------------- per-app Member 360 (admin-console 3.3.1)
+/** A slop dating preference as staff see it after a reveal. Never a score or rating of the member. */
+export interface SlopPrefs {
+  is?: string; seeks: string[]; ageRange?: [number, number];
+  scope?: string; maxMiles?: number; goal?: string;
+  values: Record<string, string>; dealbreakers: string[]; activities: string[]; free: string[];
+  /** Verification results (verify:<check>:<pass|fail>). */
+  verification: string[];
+  /** Safety cues the agent noticed (safety:<cue>). */
+  safety: string[];
+}
+export interface SlopProfile360 {
+  app: "slop";
+  /** Treated as an adult: a valid age of 18 or more, not flagged under 18 by the Network. */
+  adult: boolean;
+  /** Age verified (verify:age:pass). Photos need adult and verified. */
+  ageVerified: boolean;
+  /** Dating preferences are hidden until a safety or admin reveal for this member (audited). */
+  prefs: { hidden: true; count: number } | { hidden: false; prefs: SlopPrefs };
+  /** Who may see photos: never for members under 18; admin or safety with a typed reason for verified adults. */
+  photos: "never_minor" | "needs_verification" | "reason_required";
+}
+export interface PeonProfile360 {
+  app: "peon";
+  entity: "candidate" | "job" | "unknown";
+  /** Job seats: the role (title, family, seniority, pay range, work mode, market, openings, employer verified). Candidates: the families and modes they want. */
+  roles: { title?: string; family?: string; seniority?: number; pay?: string; mode?: string; market?: string; openings?: number; verified?: boolean }[];
+  /** Introductions (applications): one row per opportunity the member is in. */
+  applications: { opportunityId: string; state: string; status?: string; at: number }[];
+}
+export type AppProfile360 = SlopProfile360 | PeonProfile360 | { app: string; none: true };
+export interface MemberPhoto { id: string; url: string; expiresAt?: number }
+
 // ---------------------------------------------------------------- four apps (platform plan section 5)
 /** Health of one app for the "all" view: review backlog, SLA misses and send failures (last 24 h). */
 export interface AppHealth {
@@ -622,9 +689,18 @@ export interface PersonSummary {
   createdAt: number;
   deletedAt?: number;
   memberships: { app: string; state: string; joinedAt?: number; leftAt?: number; review?: string; hold: boolean }[];
-  /** A hold on any app holds the person everywhere (plan 2.4 rule 5); here with the app that set it. */
+  /**
+   * A hold on any app holds the person everywhere (plan 2.4 rule 5); here with the app that set it. A
+   * hold from a private app (slop) shows as app "*" and level "restricted" only (PRD 40.3).
+   */
   holds: { app: string; level: "hold" | "restricted" | "recycled_number" }[];
+  /** Blocks; the origin app of a block made in a private app shows as "*". */
   blocks: { made: { person: string; originApp: string; at: number }[]; received: { person: string; originApp: string; at: number }[] };
+  /**
+   * Apps left out of `memberships` whatever the person's state (dating): open their panel with a typed
+   * reason to learn whether there is a membership. The same list for every person, so it reveals nothing.
+   */
+  privateApps: string[];
 }
 
 /** One app's panel in the cross-app view: opened with a typed reason, audited before it is read. */

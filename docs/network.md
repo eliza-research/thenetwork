@@ -59,7 +59,7 @@ The store tests check that a Network restarted from JSON gives the same messages
 
 ### 1.2 The production service
 
-`packages/network/service/` runs one Network for each row of `platform.networks` (`ntwrk:nyc`, `slop:nyc`, `peon:nyc`, `buddies:nyc`) against Postgres. Details and the boundary with `packages/plugin-network` are in its [README](../packages/network/service/README.md). How to run it, its variables, the live-send flags and the staff API: [runbook-real.md](runbook-real.md) section 6.5. The four apps in local dev: [runbook-platform.md](runbook-platform.md). It is not deployed.
+`packages/network/service/` runs one Network for each row of `platform.networks` (`ntwrk:nyc`, `slop:nyc`, `peon:nyc`, `friends:nyc`) against Postgres. Details and the boundary with `packages/plugin-network` are in its [README](../packages/network/service/README.md). How to run it, its variables, the live-send flags and the staff API: [runbook-real.md](runbook-real.md) section 6.5. The four apps in local dev: [runbook-platform.md](runbook-platform.md). It is not deployed.
 
 ```bash
 NETWORK_DATABASE_URL=... bun run packages/network/service/main.ts [--once] [--dry-run]
@@ -80,17 +80,17 @@ Tests (local Postgres, a database per test process):
 
 - `test/service.test.ts`: dry-run replies to signed webhooks, retries and strangers, STOP and HELP, an under-13 decline, review through the API after a restart and the next tick's probe, two instances that never tick at once, and no Blooio send without the live flags.
 - `test/service-apps.test.ts`: per-app copy, joins by text, under-age and invite-only answers, keyword routing and `platform.app_lines`, the link notice and SHARE, STOP, STOP ALL and START, leave, the person cap, the per-app live flags, staff roles per app, and the public API (join two apps, stop, export, leave, delete everything).
-- `test/crossapp.test.ts`: a two-app world (ntwrk and buddies) with shared people and planted canaries. No canary or member id of one app reaches the other app's messages, review queue, opportunities, events, snapshot or health. A block made on ntwrk keeps the pair apart on buddies.
+- `test/crossapp.test.ts`: a two-app world (ntwrk and friends) with shared people and planted canaries. No canary or member id of one app reaches the other app's messages, review queue, opportunities, events, snapshot or health. A block made on ntwrk keeps the pair apart on buddies.
 
 ### 1.3 Apps (the `app` option)
 
-One `ConsentNetwork` serves one app (`NetworkOptions.app`, default `"ntwrk"`). The app list, names and join ages come from `packages/platform/src/apps.ts` (`APPS`). The four app ids are `ntwrk`, `slop`, `peon` and `buddies`; the network id is `<app>:<city>` (`ntwrk:nyc`). Founder decision 2026-10-08 renames `buddies` to `friends` (friends.help); the code does not have the rename yet (section 11).
+One `ConsentNetwork` serves one app (`NetworkOptions.app`, default `"ntwrk"`). The app list, names and join ages come from `packages/platform/src/apps.ts` (`APPS`). The four app ids are `ntwrk`, `slop`, `peon` and `friends` (friends.help; migration 0007 renamed `buddies`); the network id is `<app>:<city>` (`ntwrk:nyc`).
 
 | What the app changes | How |
 |---|---|
 | Member-facing words | `copyFor(brandOf(app))` (`src/copy.ts`). The six texts that named "the Network" use the app's name and agent name. `copy` is still The Network's copy, word for word. |
-| The join age | The app's `minJoinAge` (ntwrk 13; slop, peon and buddies 18 in the code today). A stated or record age under it gets the app's kind decline, and the Network forgets the member. Matching stays 18+ in every app. |
-| Ids | Opportunity, request and run ids of the other apps carry the app as a prefix (`buddies.nw-1-4`). The `network.opportunities`, `requests`, `review_items` and `matching_runs` tables key on `id` alone, so two apps could otherwise write the same id. |
+| The join age | The app's `minJoinAge` (13 for every app since 2026-10-08). A stated or record age under it gets the app's kind decline, and the Network forgets the member. Matching stays 18+ in every app. |
+| Ids | Opportunity, request and run ids of the other apps carry the app as a prefix (`friends.nw-1-4`). The `network.opportunities`, `requests`, `review_items` and `matching_runs` tables key on `id` alone, so two apps could otherwise write the same id. |
 | Blocks | `blocked()` also reads "blocked" edges from the snapshot, so a person-to-person block from another app keeps the pair apart. |
 
 New methods for the service:
@@ -100,7 +100,7 @@ New methods for the service:
 
 New texts for joins by text: `joinAsk`, `joinNeedName`, `linkNotice`, `shareDone` and `leftApp`. A new style rule, `asks_cancel`, flags any text that asks a member to reply "cancel" (a bare "cancel" is a STOP keyword). A test runs every app's texts through the style rules.
 
-Proof that ntwrk did not change: a 21-day, seed-1 NYC run hashed every run record before and after the change (same hash, 17,598 records, 62 meetings held). The same run with `app: "buddies"` sent 0 texts that name the Network and declined 25 people under 18, with 0 judge invariants, canary leaks and minor contacts.
+Proof that ntwrk did not change: a 21-day, seed-1 NYC run hashed every run record before and after the change (same hash, 17,598 records, 62 meetings held). The same run with `app: "buddies"` (now `friends`) sent 0 texts that name the Network and declined 25 people under 18, with 0 judge invariants, canary leaks and minor contacts.
 
 Limits:
 
@@ -627,6 +627,6 @@ Copy changes are UI changes. A PR that changes `copy.ts` needs the videos in CON
 - **Fraud detection precision is not measured.** The NYC world has no adversarial rings. Only `test/flows.test.ts` exercises fraud items.
 - **NC organizing reach applies to crew sessions only.** Planner plans invite at most 6 members, so the "seats above 8" rule never applies to them. The NC owner should confirm this reading.
 - **`NetworkState` is still version 1.** The new fields (plans, fraud items) are optional. An older stored state loads with them empty.
-- **Apps: the rename and the ages are not in the code.** The founder decisions of 2026-10-08 (AGENTS.md, PRD 40) rename `buddies` to `friends` and allow 13+ to join every app (matching stays 18+). The code still has `buddies` and an 18+ join age for slop, peon and buddies (`packages/platform/src/apps.ts`, migration 0003). The Network reads both from the registry, so the change is in one place plus a migration.
+- **Apps: the rename and the ages are done** (2026-10-08): `friends` everywhere, 13+ may join every app, matching stays 18+ (`packages/platform/src/apps.ts`, migration 0007).
 - **Apps: one NYC engine for all.** Every app runs The Network's engine, NYC places and copy structure (1.3). The slop, peon and friends engine packs come from the engine session.
 - **Fixed 2026-10-07:** `feedbackOf()` now checks negations first ("not great" is negative), and duplicate replies are gone (feedback is taken only for a meeting that happened; the same text never goes to one member twice within 10 minutes; venue suggestions rotate). The judge finds 0 `duplicate_send` on seeds 1-3.

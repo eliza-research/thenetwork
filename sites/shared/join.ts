@@ -1,15 +1,15 @@
-// /join flow: (safety notice) -> phone -> code -> short profile -> done.
+// /join flow: phone -> code -> short profile -> done. Notices on the page (slop.date's safety notice)
+// are information next to the flow, never a step that blocks joining (PRD 40.7).
 // Root: [data-join]. Optional attributes on the root:
-//   data-first-step="safety"   show [data-step="safety"] before the phone step (slop.date)
 //   data-join-mode="invite"     the page's default when /api/app cannot be read
-//   data-min-age="18"           the page's default when /api/app cannot be read
-// Steps: loading, safety, invite, phone, code, profile, member, blocked, done.
+//   data-min-age="13"           the page's default when /api/app cannot be read
+// Steps: loading, invite, phone, code, profile, member, blocked, done.
 import { api, type ApiError, type Me } from "./api.ts";
 import { mountAuth } from "./auth.ts";
 import { $, busy, fill, formatDate, message, plainText, ready, setError, showStep, when } from "./ui.ts";
 
 function start(root: HTMLElement): void {
-  showStep(root, root.dataset.firstStep ?? "phone");
+  showStep(root, "phone");
 }
 
 function flowError(root: HTMLElement, text: string): void {
@@ -20,7 +20,7 @@ function flowError(root: HTMLElement, text: string): void {
 }
 
 function block(root: HTMLElement, reason: string): void {
-  const known: ApiError[] = ["under_age", "invite_only", "invalid"];
+  const known: ApiError[] = ["under_age", "invite_only", "invalid", "review"];
   const key = (known as string[]).includes(reason) ? (reason as ApiError) : "unknown";
   fill(root, { blockedReason: message(root, key) });
   when(root, "blocked-invite", key === "invite_only");
@@ -55,7 +55,6 @@ export async function mountJoin(root: HTMLElement): Promise<void> {
   }
   ready(root);
 
-  root.querySelector('[data-action="ack-safety"]')?.addEventListener("click", () => showStep(root, "phone"));
   root.querySelectorAll('[data-action="restart"]').forEach((b) => b.addEventListener("click", () => start(root)));
 
   mountAuth(root, async () => {
@@ -108,7 +107,7 @@ export async function mountJoin(root: HTMLElement): Promise<void> {
     if (res.ok) {
       fill(root, { firstName: res.data.membership?.firstName ?? firstName });
       showStep(root, "done");
-    } else if (res.error === "under_age" || res.error === "invite_only") {
+    } else if (res.error === "under_age" || res.error === "invite_only" || res.error === "review") {
       block(root, res.error);
     } else if (res.error === "unauthorized") {
       start(root);

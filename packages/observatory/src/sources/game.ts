@@ -15,7 +15,8 @@ import { ConsentNetwork, OUTREACH, SIM_AUTO_REVIEWER, type ReviewOptions } from 
 import { appBanner, APPS, DEFAULT_APP, MATCHING_OFF_TEXT, matchingAllowed, slaHours, type AppId } from "../apps.ts";
 import { friendFactory, SCENARIOS, ScriptedJoinAgent } from "@thenetwork/network/harness";
 import { describe, eventOf, onTimeline, requestLabel, toMs, type EventRow } from "../events.ts";
-import { ALERT_WINDOW, growthStats, healthAlerts, hours, safetyInfo, scorecard } from "../health.ts";
+import { memberFacets } from "../appProfile.ts";
+import { ALERT_WINDOW, growthStats, healthAlerts, hours, reportsFromCases, safetyInfo, scorecard } from "../health.ts";
 import { Projector } from "../projector.ts";
 import { evaluateMissions, POINTS, scoreboard } from "../scoring.ts";
 import { emptyCounters, Store } from "../store.ts";
@@ -392,7 +393,7 @@ export class GameSource implements DataSource {
     if (live && performance.now() - this.judgeWall < 2000) return;
     this.judgeHour = hour;
     this.judgeWall = performance.now();
-    const m = computeMetrics(this.records, this.consent ? { weeklyBudget: OUTREACH.maxPerWeek } : {});
+    const m = computeMetrics(this.records, this.consent ? { requireReview: true } : {});
     this.store.judge = { invariants: m.invariants.total, canaryLeaks: m.privacy.canaryLeaks, minorContacts: m.safety.minorContacts, byRule: m.invariants.byRule, at: now };
   }
 
@@ -470,7 +471,7 @@ export class GameSource implements DataSource {
       member: m,
       profile: { bio: prof?.bio ?? p.public.bio, occupation: prof?.occupation, neighborhood: prof?.neighborhood ?? p.routine.homeArea, pronouns: prof?.pronouns, availability: prof?.availability },
       // Agent-private facets (private disclosures and their canaries) only under the truth lens.
-      facets: snap.facets.filter(f => f.memberId === id).map(f => (lens || f.scope !== "agent_private" ? f : { ...f, value: "[private]", tags: [] })),
+      facets: memberFacets(this.app, snap.facets.filter(f => f.memberId === id), lens || !!opts.reveal).map(f => (lens || f.scope !== "agent_private" ? f : { ...f, value: "[private]", tags: [] })),
       intents: snap.intents.filter(i => i.memberId === id),
       presence: snap.presence.filter(x => x.memberId === id),
       edges: [...this.store.edges.values()].filter(e => e.from === id || e.to === id),
@@ -550,9 +551,12 @@ export class GameSource implements DataSource {
   async safety(): Promise<SafetyInfo> {
     const n = this.consent;
     const trust = n ? [...n.trust.all()] : [];
+    const cases = n?.safetyCases() ?? [], opps = [...this.store.opps.values()];
     return safetyInfo({
-      now: this.world.clock.now(), cases: n?.safetyCases() ?? [], members: [...this.store.members.values()], opps: [...this.store.opps.values()],
+      now: this.world.clock.now(), cases, members: [...this.store.members.values()], opps,
       watch: trust.filter(([, t]) => t.level === "watch").map(([id]) => id), hold: trust.filter(([, t]) => t.level === "hold").map(([id]) => id), canAct: !!n,
+      // Hold and ban by phone or person act on the platform's people: the simulated world has none.
+      reports: reportsFromCases(cases, opps), canBan: false,
     });
   }
 
@@ -561,7 +565,8 @@ export class GameSource implements DataSource {
     const n = this.consent;
     if (!n) return { ok: false, error: "safety actions need the consent Network", code: "no_consent_network" };
     const note = a.note?.trim() || undefined;
-    const r = a.action === "lift" ? n.liftHold(String(a.memberId ?? ""), actor, note) : a.action === "close" ? n.closeCase(String(a.caseId ?? ""), actor, note) : { ok: false as const, reason: "unknown_action" };
+    if (a.action !== "lift" && a.action !== "close") return { ok: false, error: SAFETY_ERRORS.service_only, code: "service_only" };
+    const r = a.action === "lift" ? n.liftHold(String(a.memberId ?? ""), actor, note) : n.closeCase(String(a.caseId ?? ""), actor, note);
     if (!r.ok) return { ok: false, error: SAFETY_ERRORS[r.reason] ?? r.reason, code: r.reason };
     await this.settle();
     this.push();

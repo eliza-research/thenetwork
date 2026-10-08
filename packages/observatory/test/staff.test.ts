@@ -7,14 +7,18 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DAY } from "@thenetwork/core";
-import { Lab, resultsOf, validateLab } from "../src/lab.ts";
-import { createServer, type ObservatoryServer } from "../src/server.ts";
-import { AccessVerifier } from "../src/staff.ts";
+import { SQL } from "bun";
+import { Lab, LAB_LIMITS, labEnv, resultsOf, validateLab } from "../src/lab.ts";
+import { createServer, WS_EXPIRED, WS_FORBIDDEN, type ObservatoryServer } from "../src/server.ts";
+import { AccessVerifier, parseTokenGrants } from "../src/staff.ts";
+import { dropTestDb, pgAvailable, testDb } from "./pg.ts";
 import { HIDDEN_MESSAGE } from "../src/sources/real.ts";
 import type { AuditEntry, ConfigInfo, LabRun, MemberDetail, MemberTimeline, ObsState, OpportunityDetail, SafetyInfo, StaffUser } from "../src/types.ts";
 
 const T = 300_000;
-const TOK = { admin: "adm-7c1e", reviewer: "rev-2b9d", safety: "saf-55aa", analyst: "ana-0f3c", legacy: "old-admin-9911" };
+/** Staff tokens are at least 32 characters (the server refuses shorter ones). */
+const long = (t: string) => t.padEnd(32, "-0123456789abcdef");
+const TOK = { admin: long("adm-7c1e"), reviewer: long("rev-2b9d"), safety: long("saf-55aa"), analyst: long("ana-0f3c"), legacy: long("old-admin-9911") };
 let dir: string;
 let obs: ObservatoryServer;
 let base: string;
@@ -202,8 +206,16 @@ describe("staff roles, audit and PII reveal", () => {
       const read = async (tok: string) => (await (await as(tok, `/api/opportunity/${encodeURIComponent(o.id)}`)).json()) as OpportunityDetail;
       const saf = (await read(TOK.safety)).messages.filter(m => m.direction === "inbound" && !m.system);
       if (!saf.length) continue;
-      const ana = (await read(TOK.analyst)).messages.filter(m => m.direction === "inbound" && !m.system);
-      expect(ana.map(m => [m.body, m.hiddenLength])).toEqual(saf.map(m => [HIDDEN_MESSAGE, m.body.length]));
+      // A reviewer may open only members in an open review item: past items show the length, not the words.
+      const rev = await read(TOK.reviewer);
+      const open = new Set((await state(TOK.analyst)).opportunities.filter(x => x.state === "IN_REVIEW").flatMap(x => x.participants));
+      const hidden = rev.messages.filter(m => m.direction === "inbound" && !m.system && !open.has(m.memberId));
+      expect(hidden.map(m => m.body)).toEqual(hidden.map(() => HIDDEN_MESSAGE));
+      // The analyst gets the opportunity's shape only: no messages, no names (audit observatory-18).
+      const ana = await read(TOK.analyst);
+      expect(ana.messages).toEqual([]);
+      expect(ana.members.every(m => m.name.startsWith("Member ") && m.age === undefined)).toBe(true);
+      expect(saf.length).toBeGreaterThan(0);
       if (++checked >= 3) break;
     }
     expect(checked).toBeGreaterThan(0);
@@ -218,7 +230,7 @@ describe("SSO and the production switch", () => {
     // Unit: each check refuses on its own; the keys are fetched once and cached.
     const v = new AccessVerifier({ team: "ntwrk", aud: AUD, fetch: k.fetch });
     expect(v.certsUrl).toBe("https://ntwrk.cloudflareaccess.com/cdn-cgi/access/certs");
-    expect(await v.verify(await k.sign(claims("Rev@Example.org")))).toEqual({ email: "rev@example.org" });
+    expect(await v.verify(await k.sign(claims("Rev@Example.org")))).toEqual({ email: "rev@example.org", exp: (now + 3600) * 1000 });
     expect(await v.verify(await k.sign(claims("rev@example.org", { aud: ["other-app"] })))).toEqual({ error: "wrong audience" });
     expect(await v.verify(await k.sign(claims("rev@example.org", { iss: "https://evil.cloudflareaccess.com" })))).toEqual({ error: "wrong issuer" });
     expect(await v.verify(await k.sign(claims("rev@example.org", { exp: now - 120 })))).toEqual({ error: "expired" });
@@ -263,9 +275,9 @@ describe("SSO and the production switch", () => {
   }, T);
 
   test("OBSERVATORY_REAL_ONLY: no game mode, no game controls, no lab", async () => {
-    const prod = await createServer({ port: 0, development: false, realOnly: true, token: "prod-admin", audit: { dir: join(dir, "audit-prod") }, lab: { dir: join(dir, "lab-prod") }, real: { url: undefined, pollMs: 3_600_000 } });
+    const prod = await createServer({ port: 0, development: false, realOnly: true, token: long("prod-admin"), audit: { dir: join(dir, "audit-prod") }, lab: { dir: join(dir, "lab-prod") }, real: { url: undefined, pollMs: 3_600_000 } });
     try {
-      const h = { authorization: "Bearer prod-admin", "content-type": "application/json" };
+      const h = { authorization: `Bearer ${long("prod-admin")}`, "content-type": "application/json" };
       expect(prod.mode()).toBe("real");
       const st = (await (await fetch(prod.url + "/api/state", { headers: h })).json()) as ObsState;
       expect(st.env).toMatchObject({ mode: "real", realOnly: true });
@@ -327,4 +339,110 @@ describe("simulation lab", () => {
     expect(r.meetings).not.toBeNull();
     expect(r.accept).not.toBeNull();
   }, T);
+});
+
+/** A socket opened with these headers: its messages, and how it closed. */
+function openSocket(url: string, headers: Record<string, string>) {
+  const ws = new WebSocket(url, { headers } as never);
+  const msgs: any[] = [];
+  let closed: number | undefined;
+  ws.onmessage = e => msgs.push(JSON.parse(e.data as string));
+  const done = new Promise<number>(ok => { ws.onclose = e => { closed = e.code; ok(e.code); }; });
+  const open = new Promise<void>((ok, no) => { ws.onopen = () => ok(); ws.onerror = () => no(new Error("refused")); });
+  return { ws, msgs, open, done, closed: () => closed };
+}
+const within = <X>(p: Promise<X>, ms: number) => Promise.race([p, Bun.sleep(ms).then(() => "timeout" as const)]);
+
+describe("live sockets are authorized again (OBS-04, OBS-05)", () => {
+  test("OBS-04: after a switch to real mode an engineer's socket is closed (4403) and gets no member; an admin's stays", async () => {
+    const eng = long("eng-socket"), adm = long("adm-socket");
+    const srv = await createServer({ port: 0, development: false, tokens: `engineer:${eng},admin:${adm}`, audit: { dir: join(dir, "audit-ws") }, lab: { dir: join(dir, "lab-ws") }, game: { seed: 1, review: "auto", pushMs: 50, tickMs: 3_600_000 }, real: { url: undefined, pollMs: 3_600_000, pushMs: 50, service: false } });
+    try {
+      const wsUrl = `${srv.url.replace("http", "ws")}/ws`;
+      const e = openSocket(wsUrl, { authorization: `Bearer ${eng}` }), a = openSocket(wsUrl, { authorization: `Bearer ${adm}` });
+      await Promise.all([e.open, a.open]);
+      const sw = await fetch(`${srv.url}/api/mode`, { method: "POST", headers: { authorization: `Bearer ${adm}`, "content-type": "application/json" }, body: JSON.stringify({ mode: "real" }) });
+      expect(sw.status).toBe(200);
+      expect(await within(e.done, 3000)).toBe(WS_FORBIDDEN);
+      const n = e.msgs.length;
+      await Bun.sleep(300);
+      expect(e.msgs.length).toBe(n);
+      expect(e.msgs.some(m => m.type === "delta" && m.mode === "real")).toBe(false);
+      expect(a.closed()).toBeUndefined();
+      // A new socket for the engineer is refused in real mode.
+      expect((await fetch(`${srv.url}/ws`, { headers: { authorization: `Bearer ${eng}`, upgrade: "websocket", connection: "upgrade", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==", "sec-websocket-version": "13" } })).status).toBe(403);
+      a.ws.close();
+    } finally { await srv.stop(); }
+  }, T);
+
+  test("OBS-05: an SSO socket closes when the Access token expires (4401); tokens are refused when SSO is on", async () => {
+    const k = await accessKeys();
+    const now = Math.floor(Date.now() / 1000);
+    const jwt = (email: string, exp: number) => k.sign({ aud: [AUD], iss: ISS, email, iat: now - 30, exp, type: "app" });
+    const srv = await createServer({ port: 0, development: false, trustCfAccess: true, tokens: `admin:${long("static-admin")}`, roles: "ana@example.org:admin", cfAccess: { team: "ntwrk", aud: AUD, fetch: k.fetch }, audit: { dir: join(dir, "audit-ws2") }, lab: { dir: join(dir, "lab-ws2") }, game: { seed: 1, pushMs: 50, tickMs: 3_600_000 }, socketCheckMs: 100 });
+    try {
+      // A static token is refused while single sign-on is on (audit observatory-8).
+      expect((await fetch(`${srv.url}/api/me`, { headers: { authorization: `Bearer ${long("static-admin")}` } })).status).toBe(401);
+      const s = openSocket(`${srv.url.replace("http", "ws")}/ws`, { "cf-access-jwt-assertion": await jwt("ana@example.org", now + 2) });
+      await s.open;
+      expect(await within(s.done, 5000)).toBe(WS_EXPIRED);
+    } finally { await srv.stop(); }
+  }, T);
+
+  test.skipIf(!pgAvailable)("OBS-05: an SSO socket closes when its role is taken away in platform.staff_roles (4403)", async () => {
+    const url = await testDb();
+    const sql = new SQL(url);
+    const k = await accessKeys();
+    const now = Math.floor(Date.now() / 1000);
+    await sql`insert into platform.staff_roles (email, role, app_id, granted_by) values ('rev@example.org', 'reviewer', null, 'test')`;
+    const srv = await createServer({ port: 0, development: false, trustCfAccess: true, roles: "", cfAccess: { team: "ntwrk", aud: AUD, fetch: k.fetch }, staffRolesUrl: url, staffRolesEveryMs: 100, socketCheckMs: 100, audit: { dir: join(dir, "audit-ws3") }, lab: { dir: join(dir, "lab-ws3") }, game: { seed: 1, pushMs: 50, tickMs: 3_600_000 } });
+    try {
+      const s = openSocket(`${srv.url.replace("http", "ws")}/ws`, { "cf-access-jwt-assertion": await k.sign({ aud: [AUD], iss: ISS, email: "rev@example.org", iat: now - 30, exp: now + 3600 }) });
+      await s.open;
+      await Bun.sleep(300);
+      expect(s.closed()).toBeUndefined();
+      await sql`delete from platform.staff_roles where email = 'rev@example.org'`;
+      expect(await within(s.done, 5000)).toBe(WS_FORBIDDEN);
+    } finally { await srv.stop(); await sql.close(); await dropTestDb(); }
+  }, T);
+});
+
+describe("tokens, Access keys and the lab (OBS-11)", () => {
+  test("staff tokens are at least 32 characters on a server", async () => {
+    expect(() => parseTokenGrants("admin:short", { minLength: 32 })).toThrow("shorter than 32");
+    expect(parseTokenGrants(`admin:${long("x")}`, { minLength: 32 }).size).toBe(1);
+    await expect(createServer({ port: 0, development: false, tokens: "admin:short-token", audit: { dir: join(dir, "audit-short") }, lab: { dir: join(dir, "lab-short") }, game: { seed: 1, pushMs: 3_600_000, tickMs: 3_600_000 } })).rejects.toThrow("shorter than 32");
+  });
+
+  test("Access certs: a hung request fails within the timeout; a failed refetch keeps the last keys for a while (stale grace)", async () => {
+    const k = await accessKeys();
+    const now0 = Math.floor(Date.now() / 1000);
+    const claims = { aud: [AUD], iss: ISS, email: "ana@example.org", iat: now0 - 30, exp: now0 + 3600 };
+    const hung = new AccessVerifier({ team: "ntwrk", aud: AUD, timeoutMs: 200, fetch: () => new Promise<Response>(() => {}) });
+    const t0 = Date.now();
+    expect(await hung.verify(await k.sign(claims))).toEqual({ error: expect.stringContaining("timed out") });
+    expect(Date.now() - t0).toBeLessThan(2000);
+    let clock = Date.now(), up = true;
+    const v = new AccessVerifier({ team: "ntwrk", aud: AUD, cacheMs: 60_000, staleMs: 600_000, now: () => clock, fetch: async u => { if (!up) throw new Error("down"); return k.fetch(u); } });
+    expect(await v.verify(await k.sign(claims))).toMatchObject({ email: "ana@example.org" });
+    up = false;
+    clock += 120_000; // past the cache: the refetch fails, the old keys still verify
+    expect(await v.verify(await k.sign(claims))).toMatchObject({ email: "ana@example.org" });
+    clock += 3_600_000; // past the grace: refused
+    expect(await v.verify(await k.sign(claims))).toEqual({ error: expect.stringContaining("signing keys unavailable") });
+  });
+
+  test("lab: children get no secrets; the queue is capped", async () => {
+    const env = labEnv({ PATH: "/bin", HOME: "/h", OPENAI_API_KEY: "sk-x", SURPLUS_API_KEY: "y", DATABASE_URL: "postgres://x", OBSERVATORY_TOKENS: "admin:z", LIVE_TESTS: "1", NETWORK_SERVICE_TOKEN: "t" });
+    expect(env).toEqual({ PATH: "/bin", HOME: "/h" });
+    const script = join(dir, "slow-arm.ts");
+    await writeFile(script, "await Bun.sleep(5000); console.log(JSON.stringify({ results: [] }));");
+    const lab = new Lab({ dir: join(dir, "lab-cap"), script, concurrency: 1 });
+    try {
+      for (let i = 0; i < LAB_LIMITS.maxQueued / 5; i++) await lab.start({ arms: ["consent"], seeds: [1, 2, 3, 4, 5], days: 1 }, "tester");
+      expect(lab.queued).toBe(LAB_LIMITS.maxQueued - 1); // one is running
+      await lab.start({ arms: ["consent"], seeds: [1], days: 1 }, "tester");
+      await expect(lab.start({ arms: ["consent"], seeds: [1], days: 1 }, "tester")).rejects.toThrow("queue is full");
+    } finally { lab.dispose(); }
+  });
 });

@@ -7,13 +7,13 @@ import { useSyncExternalStore } from "react";
 import { NEIGHBORHOOD, type Borough } from "@thenetwork/network/geo"; // geo only: the package root pulls server code into the browser bundle
 import type { ConsoleApp } from "../src/apps.ts";
 import type {
-  AppHealth, AuditEntry, ClockInfo, ConfigInfo, ControlCommand, ControlResult, EngineRunSummary, EnvInfo, GameState, LabRequest, LabRun, MemberDetail, MemberTimeline,
+  AppHealth, AppProfile360, AuditEntry, ClockInfo, ConfigInfo, ControlCommand, ControlResult, EngineRunSummary, EnvInfo, GameState, LabRequest, LabRun, MemberDetail, MemberTimeline,
   MemberTruth, Mode, NetworkInfo, ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsOpportunity, ObsRequest, ObsState, ObsStats, OpportunityDetail,
-  PersonAppPanel, PersonSummary, RevealGrant, ReviewDecision, ReviewReason, RunDiff, SafetyAction, SafetyInfo, SearchHit, StaffRole, StaffUser,
+  MemberPhoto, PersonAppPanel, PersonSummary, RevealGrant, ReviewDecision, ReviewReason, RunDiff, SafetyAction, SafetyInfo, SearchHit, StaffRole, StaffUser,
 } from "../src/types.ts";
 
 /** The app ids, in switcher order (the server's list in /api/me replaces it). Kept here so the browser bundle does not pull server code. */
-export const APP_ORDER = ["ntwrk", "slop", "peon", "buddies"];
+export const APP_ORDER = ["ntwrk", "slop", "peon", "friends"];
 /** What the switcher shows: one app, "all" (health of every app) or the cross-app person view. */
 export type Page = { kind: "app" } | { kind: "all" } | { kind: "person"; id: string };
 export type Me = StaffUser & { realOnly?: boolean; apps?: string[]; crossApp?: boolean; appInfo?: ConsoleApp[] };
@@ -171,16 +171,22 @@ export interface DecideOpts { reason?: ReviewReason; note?: string; explanations
 const REVIEW_SECONDS_CAP = 30 * 60;
 /** Review codes for an action that was refused before anything was recorded (the item still waits). */
 const REFUSED = new Set(["in_flight", "not_in_review", "note_required", "participant_minor", "participant_declined", "matching_paused", "nothing_to_edit", "not_a_participant", "edit_leak", "cannot_swap", "unknown_decision", "unknown_reason", "forbidden", ""]);
-/** Reads ?token= once (then removes it from the address bar), else the token kept for this tab. */
+/**
+ * Reads #token= once (the server prints the page URL with the token in the fragment, which the browser
+ * never sends to a server or in a Referer), then removes it from the address bar and the history entry;
+ * else the token kept for this tab. A ?token= in an old link is removed the same way.
+ */
 function initialToken(): string {
   let t: string | null = null;
   try {
     const u = new URL(location.href);
-    t = u.searchParams.get("token");
+    const h = new URLSearchParams(u.hash.slice(1));
+    t = h.get("token") ?? u.searchParams.get("token");
     if (t) {
       try { sessionStorage.setItem(TOKEN_KEY, t); } catch { /* keep it in memory only */ }
-      u.searchParams.delete("token");
-      history.replaceState(history.state, "", u.pathname + u.search + u.hash);
+      u.searchParams.delete("token"); h.delete("token");
+      const rest = h.toString();
+      history.replaceState(history.state, "", u.pathname + u.search + (rest ? `#${rest}` : ""));
     }
   } catch { /* no URL access */ }
   if (!t) { try { t = sessionStorage.getItem(TOKEN_KEY); } catch { t = null; } }
@@ -279,6 +285,8 @@ class ObsStore {
   private async api(path: string, init: RequestInit = {}): Promise<Response> {
     const headers = new Headers(init.headers);
     if (this.token) headers.set("authorization", `Bearer ${this.token}`);
+    // The mode this page shows: the server refuses a change meant for the other mode (409 mode_changed).
+    headers.set("x-observatory-mode", this.mode);
     const r = await fetch(this.withApp(path), { ...init, headers });
     if (r.status === 401) {
       if (!this.authNeeded) { this.authNeeded = true; this.notify(); }
@@ -384,16 +392,28 @@ class ObsStore {
     this.notify();
   }
 
-  connect() {
+  /**
+   * Open the live socket. A browser WebSocket cannot send the token header, so the page first asks for
+   * a one-use ticket (POST /api/ws-ticket, 30 s) and opens /ws?ticket=. The token never goes in a URL.
+   */
+  async connect() {
     const gen = ++this.wsGen;
     this.ws?.close();
+    const t = await this.fetch<{ ticket: string }>("/api/ws-ticket", {});
+    if (gen !== this.wsGen) return;
+    if (!t.data) {
+      if (t.status !== 401 && t.status !== 403) setTimeout(() => { if (gen === this.wsGen && !this.authNeeded) this.connect(); }, 3000);
+      return;
+    }
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${proto}://${location.host}/ws?app=${encodeURIComponent(this.app)}${this.token ? `&token=${encodeURIComponent(this.token)}` : ""}`);
+    const ws = new WebSocket(`${proto}://${location.host}/ws?app=${encodeURIComponent(this.app)}&ticket=${encodeURIComponent(t.data.ticket)}`);
     this.ws = ws;
     ws.onopen = () => { if (gen === this.wsGen) { this.connected = true; this.notify(); } };
-    ws.onclose = () => {
+    ws.onclose = ev => {
       if (gen !== this.wsGen) return;
       this.connected = false; this.notify();
+      // 4401: the sign-in ended; 4403: no role for this app any more. Load again (it shows why) instead of reconnecting in a loop.
+      if (ev.code === 4401 || ev.code === 4403) { this.toast(ev.code === 4401 ? "Signed out: sign in again" : `No role for ${this.app} any more`, "bad"); this.load(); return; }
       setTimeout(() => { if (gen === this.wsGen && !this.authNeeded) { this.connect(); this.load(); } }, 1500);
     };
     ws.onmessage = ev => {
@@ -431,6 +451,10 @@ class ObsStore {
 
   member(id: string) { return this.fetch<MemberDetail>(`/api/member/${encodeURIComponent(id)}`); }
   timeline(id: string) { return this.fetch<MemberTimeline>(`/api/member/${encodeURIComponent(id)}/timeline`); }
+  /** The app's own Member 360 panel (slop dating preferences behind a reveal; peon roles and applications). */
+  memberApp(id: string) { return this.fetch<AppProfile360>(`/api/member/${encodeURIComponent(id)}/app`); }
+  /** slop photos: admin or safety, a typed reason, verified adults only. */
+  photos(id: string, reason: string) { return this.fetch<{ ok: boolean; photos?: MemberPhoto[]; error?: string }>(`/api/member/${encodeURIComponent(id)}/photos`, { reason }); }
   opportunity(id: string) { return this.fetch<OpportunityDetail>(`/api/opportunity/${encodeURIComponent(id)}`); }
   safety() { return this.fetch<SafetyInfo>("/api/safety"); }
   safetyAction(a: SafetyAction) { return this.fetch<ControlResult>("/api/safety", a); }
@@ -505,6 +529,12 @@ class ObsStore {
     this.notify();
   }
   revealFor(memberId: string): RevealGrant | undefined { return this.reveals.find(g => g.memberId === memberId && g.until > Date.now()); }
+  /** End a reveal before its time (audited). */
+  async unreveal(memberId: string): Promise<void> {
+    try { await this.api(`/api/reveal?memberId=${encodeURIComponent(memberId)}`, { method: "DELETE" }); } catch { /* the 401 prompt shows */ }
+    this.reveals = this.reveals.filter(g => g.memberId !== memberId);
+    this.notify();
+  }
   async reveal(memberId: string, reason: string, minutes: number): Promise<boolean> {
     const r = await this.fetch<RevealGrant & { ok: boolean }>("/api/reveal", { memberId, reason, minutes });
     if (!r.data) { this.toast(r.error, "bad"); return false; }

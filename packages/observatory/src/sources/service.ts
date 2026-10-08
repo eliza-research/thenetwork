@@ -14,8 +14,15 @@
 //                       from any other token. Without it, the token's own id is the actor.
 //   ?app=<app> and X-Network-App: the app ("ntwrk", "slop", ...) whose network the action is for
 //                       (the service routes on ?app=; the header repeats it for its logs).
-// The service side is not built yet: today it records its token's id as the reviewer of record.
-import type { ControlCommand, ControlResult, HealthAlert, SafetyAction } from "../types.ts";
+// Safety reports, hold, ban and photos (docs/admin-console.md 3.7.1 is the contract; the console side
+// is built against it, the service side comes from the platform work):
+//   GET  /safety/reports                -> { ok, reports: [{ id, kind, reporterId, subjectId, opportunityId?, at, status, priorReports? }] }
+//   POST /safety/hold    { memberId, note, reportId? }            hold the person on every app
+//   POST /safety/ban     { memberId, by: "phone"|"person", note, reportId? }
+//   POST /safety/dismiss { reportId, note }
+//   GET  /members/<id>/photos  (X-Network-Reason: the typed reason) -> { ok, photos: [{ id, url, expiresAt? }] }
+// 409 { reason } is a refusal with the Network's reason; 404 means the service has no such route yet.
+import type { ControlCommand, ControlResult, HealthAlert, MemberPhoto, ReportKind, SafetyAction, SafetyReport } from "../types.ts";
 import { REVIEW_BLOCK_ERRORS, SAFETY_ERRORS } from "./source.ts";
 
 export interface ServiceConfig {
@@ -49,18 +56,23 @@ export function serviceFromEnv(env: Record<string, string | undefined> = process
 export const STAFF_HEADER = "x-network-staff-id";
 /** The app the action is for. */
 export const APP_HEADER = "x-network-app";
+/** The typed reason for a photo read (the service writes it to its own audit). */
+export const REASON_HEADER = "x-network-reason";
+const REPORT_KINDS = new Set<ReportKind>(["harassment", "lying", "no_show", "unsafe", "scam", "minor", "other"]);
+/** A report row as the service sends it, before the console adds urgency and due times. */
+export type ServiceReport = Pick<SafetyReport, "id" | "kind" | "reporterId" | "subjectId" | "opportunityId" | "at" | "status"> & { priorReports?: number };
 
 export class ServiceClient {
   readonly url: string;
   constructor(private c: ServiceConfig) { this.url = c.url.replace(/\/+$/, ""); }
 
-  private async call(method: "GET" | "POST", path: string, staff?: string, body?: unknown): Promise<{ status: number; json: Record<string, any> }> {
+  private async call(method: "GET" | "POST", path: string, staff?: string, body?: unknown, extra: Record<string, string> = {}): Promise<{ status: number; json: Record<string, any> }> {
     // The service picks the app's network from ?app= (packages/network/service/service.ts fetch).
     const r = await fetch(this.url + path + (this.c.app ? `${path.includes("?") ? "&" : "?"}app=${encodeURIComponent(this.c.app)}` : ""), {
       method, signal: AbortSignal.timeout(this.c.timeoutMs ?? 15_000),
       headers: {
         authorization: `Bearer ${this.c.token}`, ...(body !== undefined ? { "content-type": "application/json" } : {}),
-        ...(staff ? { [STAFF_HEADER]: staff } : {}), ...(this.c.app ? { [APP_HEADER]: this.c.app } : {}),
+        ...(staff ? { [STAFF_HEADER]: staff } : {}), ...(this.c.app ? { [APP_HEADER]: this.c.app } : {}), ...extra,
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
@@ -77,18 +89,56 @@ export class ServiceClient {
     if (status === 200 && json.ok) return { ok: true };
     if (status === 409) { const why = String(json.reason ?? "refused"); return { ok: false, code: why, error: errors[why] ?? `refused: ${why.replace(/_/g, " ")}` }; }
     if (status === 401 || status === 403) return { ok: false, code: "service_auth", error: `the Network service refused the console's token (${json.error ?? status})` };
+    if (status === 404 && !json.reason) return { ok: false, code: "service_missing", error: `the Network service has no ${path} yet` };
     return { ok: false, code: "service_error", error: `the Network service answered ${status}${json.error ? `: ${json.error}` : ""}` };
   }
 
   review(staff: string, cmd: Extract<ControlCommand, { type: "review" }>): Promise<ControlResult> {
-    const { decision, reason, note, secondsSpent, explanations, objective, swapOut } = cmd;
+    const { decision, reason, note, explanations, objective, swapOut } = cmd;
+    // Time on one item counts at most 30 minutes (a card left open is not review work; audit observatory-10).
+    const secondsSpent = cmd.secondsSpent === undefined ? undefined : Math.min(1800, Math.max(0, Number(cmd.secondsSpent) || 0));
     return this.act(`/review/${encodeURIComponent(cmd.oppId)}`, staff, { decision, reason, note, secondsSpent, explanations, objective, swapOut }, REVIEW_BLOCK_ERRORS);
   }
 
   safety(staff: string, a: SafetyAction): Promise<ControlResult> {
-    return a.action === "lift"
-      ? this.act("/safety/lift", staff, { memberId: a.memberId, note: a.note }, SAFETY_ERRORS)
-      : this.act("/safety/close", staff, { caseId: a.caseId, note: a.note }, SAFETY_ERRORS);
+    switch (a.action) {
+      case "lift": return this.act("/safety/lift", staff, { memberId: a.memberId, note: a.note }, SAFETY_ERRORS);
+      case "close": return this.act("/safety/close", staff, { caseId: a.caseId, note: a.note }, SAFETY_ERRORS);
+      case "hold": return this.act("/safety/hold", staff, { memberId: a.memberId, note: a.note, reportId: a.reportId }, SAFETY_ERRORS);
+      case "ban": return this.act("/safety/ban", staff, { memberId: a.memberId, by: a.by, note: a.note, reportId: a.reportId }, SAFETY_ERRORS);
+      case "dismiss": return this.act("/safety/dismiss", staff, { reportId: a.reportId, note: a.note }, SAFETY_ERRORS);
+    }
+  }
+
+  /** Post-date reports (GET /safety/reports). Rows the console cannot read are dropped. */
+  async reports(): Promise<ServiceReport[] | { error: string }> {
+    try {
+      const { status, json } = await this.call("GET", "/safety/reports");
+      if (status !== 200 || !json.ok || !Array.isArray(json.reports)) return { error: String(json.error ?? `HTTP ${status}`) };
+      const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
+      return (json.reports as Record<string, unknown>[]).flatMap((r): ServiceReport[] => {
+        const id = str(r.id), reporterId = str(r.reporterId), subjectId = str(r.subjectId), at = Number(r.at);
+        if (!id || !reporterId || !subjectId || !Number.isFinite(at)) return [];
+        const kind = REPORT_KINDS.has(r.kind as ReportKind) ? r.kind as ReportKind : "other";
+        const status = ["open", "held", "banned", "dismissed"].includes(String(r.status)) ? r.status as SafetyReport["status"] : "open";
+        return [{ id, kind, reporterId, subjectId, at, status, ...(str(r.opportunityId) ? { opportunityId: str(r.opportunityId) } : {}), ...(Number.isFinite(Number(r.priorReports)) ? { priorReports: Number(r.priorReports) } : {}) }];
+      });
+    } catch (e) { return { error: (e as Error).message }; }
+  }
+
+  /** One member's photos (slop). The reason goes in X-Network-Reason; the service checks age and role again. */
+  async photos(staff: string, memberId: string, reason: string): Promise<{ ok: true; photos: MemberPhoto[] } | ControlResult> {
+    let res: { status: number; json: Record<string, any> };
+    try { res = await this.call("GET", `/members/${encodeURIComponent(memberId)}/photos`, staff, undefined, { [REASON_HEADER]: reason.replace(/[\r\n]+/g, " ").slice(0, 500) }); } catch (e) {
+      return { ok: false, code: "service_unavailable", error: `the Network service did not answer: ${(e as Error).message}` };
+    }
+    const { status, json } = res;
+    if (status === 200 && json.ok && Array.isArray(json.photos)) {
+      return { ok: true, photos: (json.photos as Record<string, unknown>[]).filter(p => typeof p.id === "string" && typeof p.url === "string" && /^https:\/\//.test(p.url as string))
+        .map(p => ({ id: p.id as string, url: p.url as string, ...(Number.isFinite(Number(p.expiresAt)) ? { expiresAt: Number(p.expiresAt) } : {}) })) };
+    }
+    if (status === 404 && !json.reason) return { ok: false, code: "service_missing", error: "the Network service has no photo route yet" };
+    return { ok: false, code: String(json.reason ?? "service_error"), error: String(json.error ?? `the Network service answered ${status}`) };
   }
 
   matching(staff: string, on: boolean): Promise<ControlResult> { return this.act("/matching", staff, { on }, {}); }

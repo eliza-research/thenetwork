@@ -12,7 +12,7 @@ import type { MemberDetail, ObsState } from "../src/types.ts";
 import { dropTestDb, pgAvailable, testDb } from "./pg.ts";
 
 const T = 120_000;
-const TOKEN = "test-token-7f3a";
+const TOKEN = "test-token-7f3a-0123456789abcdef0123";
 const AUTH = { authorization: `Bearer ${TOKEN}` };
 let obs: ObservatoryServer;
 let base: string;
@@ -50,7 +50,8 @@ describe("observatory server", () => {
 
   test("the API needs the token; the page does not", async () => {
     expect(base).toStartWith("http://127.0.0.1:");
-    expect(obs.openUrl).toBe(`${base}/?token=${TOKEN}`);
+    // The page URL carries the token in the #fragment: a browser never sends it to a server or in a Referer.
+    expect(obs.openUrl).toBe(`${base}/#token=${TOKEN}`);
     expect((await fetch(base + "/")).status).toBe(200);
     for (const path of ["/api/state", "/api/health", "/api/levels", "/api/mode", "/api/member/x", "/api/nope"]) {
       expect([path, (await fetch(base + path)).status]).toEqual([path, 401]);
@@ -60,7 +61,15 @@ describe("observatory server", () => {
     const ok = await fetch(base + "/api/state", { headers: AUTH });
     expect(ok.status).toBe(200);
     expect(((await ok.json()) as ObsState).env.authRequired).toBe(true);
-    expect((await fetch(`${base}/api/health?token=${TOKEN}`)).status).toBe(200);
+    // A token in the URL is refused (it would stay in the history, in logs and in Referer headers).
+    expect((await fetch(`${base}/api/health?token=${TOKEN}`)).status).toBe(401);
+    // Every answer carries the security headers.
+    expect(Object.fromEntries(["x-frame-options", "x-content-type-options", "referrer-policy"].map(h => [h, ok.headers.get(h)]))).toEqual({ "x-frame-options": "DENY", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" });
+    expect(ok.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    // The page sets its own policy: no script from elsewhere, no Referer.
+    const html = await fetch(base + "/").then(r => r.text());
+    expect(html).toContain("script-src 'self'");
+    expect(html).toContain('<meta name="referrer" content="no-referrer"');
   });
 
   test("Host and Origin checks: DNS rebinding and cross-site requests are refused", async () => {
@@ -72,17 +81,22 @@ describe("observatory server", () => {
     expect((await fetch(base + "/api/state", { headers: { ...AUTH, host: `localhost:${obs.server.port}` } })).status).toBe(200);
   });
 
-  test("the WebSocket upgrade needs the token and a same-site Origin", async () => {
+  test("the WebSocket upgrade needs a one-use ticket (or the header) and a same-site Origin", async () => {
     const ws = base.replace("http", "ws") + "/ws";
+    const ticket = async () => ((await (await post("/api/ws-ticket", {})).json()) as { ticket: string }).ticket;
     expect(await connect(ws)).toBe("refused");
-    expect(await connect(`${ws}?token=wrong`)).toBe("refused");
-    expect(await connect(`${ws}?token=${TOKEN}`, { headers: { origin: "http://evil.example" } })).toBe("refused");
-    expect(await connect(`${ws}?token=${TOKEN}`)).toBe("open");
+    expect(await connect(`${ws}?token=${TOKEN}`)).toBe("refused"); // never a token in the URL
+    expect(await connect(`${ws}?ticket=wrong`)).toBe("refused");
+    expect(await connect(`${ws}?ticket=${await ticket()}`, { headers: { origin: "http://evil.example" } })).toBe("refused");
+    const t = await ticket();
+    expect(await connect(`${ws}?ticket=${t}`)).toBe("open");
+    expect(await connect(`${ws}?ticket=${t}`)).toBe("refused"); // one use
+    expect(await connect(`${ws}?app=slop&ticket=${await ticket()}`)).toBe("refused"); // a ticket is for its app (ntwrk)
     expect(await connect(ws, { headers: AUTH })).toBe("open");
   });
 
   test("game state, member detail, controls and WebSocket deltas", async () => {
-    const ws = new WebSocket(`${base.replace("http", "ws")}/ws?token=${TOKEN}`);
+    const ws = new WebSocket(`${base.replace("http", "ws")}/ws`, { headers: AUTH } as never);
     const msgs: any[] = [];
     ws.onmessage = e => msgs.push(JSON.parse(e.data as string));
     await new Promise(r => (ws.onopen = r));

@@ -139,13 +139,13 @@ All times are New York time. Controls follow the staff role (section 9): a contr
 | Config tab | The matching switch (admin; a second click confirms; game mode, and real mode through the service), the review mode, the change history, Network options and outreach numbers (read-only). Admin also sees the audit log. |
 | Search | `/` searches members, neighborhoods and ids. Safety and admin can also search conversations (Shift+Enter): the Network's own messages and system events, never member text. Each search is audited. |
 | Minors | "Pick for intro" is disabled on a member under 18, and Propose is disabled while one is picked. |
-| Token | The page reads `?token=` once, keeps it for the browser session and removes it from the address bar. Without a valid token it shows "Token required". Behind Cloudflare Access no token is needed. |
+| Token | The page reads `#token=` (the URL fragment, never sent to a server) once, keeps it for the browser session and removes it from the address bar. `?token=` is refused. The WebSocket uses a one-use 30 s ticket (`POST /api/ws-ticket`). Without a valid token it shows "Token required". Behind Cloudflare Access no token is needed. |
 
 ## 8. Running it
 
 ```bash
 bun install
-bun run observatory                                        # prints http://127.0.0.1:4747/?token=... (game mode)
+bun run observatory                                        # prints http://127.0.0.1:4747/#token=... (game mode)
 bun run observatory --review human                         # you are the reviewer (default: a simulated reviewer)
 bun run observatory --level under_13_join                  # play a scenario as a level
 bun run observatory --time-aware                           # personas answer offered times from a hidden week (runbook-simulation 6.1.2)
@@ -165,7 +165,7 @@ bun run packages/observatory/src/report.ts --days 14       # headless findings (
 cd packages/observatory && bun test --timeout 300000       # Postgres tests need a local postgres install
 ```
 
-Access: the server listens on 127.0.0.1 only (`OBSERVATORY_HOST` changes it). Every `/api/*` route and the `/ws` WebSocket need a staff identity (section 9). With no settings, the server makes a random admin token and prints it at startup. Send a token as `Authorization: Bearer <token>` or `?token=<token>`. The page `/` is public. The server refuses a `Host` other than localhost and an `Origin` other than its own, unless `OBSERVATORY_ALLOWED_ORIGINS` (comma-separated) lists it.
+Access: the server listens on 127.0.0.1 only (`OBSERVATORY_HOST` changes it). Every `/api/*` route and the `/ws` WebSocket need a staff identity (section 9). With no settings, the server makes a random admin token and prints it at startup. Send a token as `Authorization: Bearer <token>` only (`?token=` is refused; tokens need 32 or more characters). The page `/` is public. The server refuses a `Host` other than localhost and an `Origin` other than its own, unless `OBSERVATORY_ALLOWED_ORIGINS` (comma-separated) lists it.
 
 Controls: space plays or pauses; `n` steps an hour, `d` a day; `/` searches; `?` shows help; `g` switches map and graph; Esc steps back one level (popover, search, picks, focus). Shift-click picks people; double-click fits the graph.
 

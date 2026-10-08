@@ -6,7 +6,7 @@ import type { AppHealth, PersonAppPanel, PersonSummary } from "../src/types.ts";
 import { store, useStore } from "./store.ts";
 import { ago, Badge, humanize, localDate } from "./ui.tsx";
 
-/** ntwrk / slop / peon / buddies / All. "All" shows only when the person holds roles for more than one app. */
+/** ntwrk / slop / peon / friends / All. "All" shows only when the person holds roles for more than one app. */
 export function AppSwitcher() {
   const s = useStore();
   const apps = s.apps();
@@ -124,24 +124,26 @@ function PersonView({ id }: { id: string }) {
           </div>
           {p.holds.length > 0 && (
             <div className="callout bad small">
-              Hold on every app: {p.holds.map(h => `${humanize(h.level)} (${h.app})`).join(", ")}
+              Hold on every app: {p.holds.map(h => (h.app === "*" ? "account restricted (on an app not shown)" : `${humanize(h.level)} (${h.app})`)).join(", ")}
             </div>
           )}
           <div className="small">
             Blocks made {p.blocks.made.length} · received {p.blocks.received.length}
             {p.blocks.made.concat(p.blocks.received).length > 0 && (
-              <span className="muted"> · {[...p.blocks.made.map(b => `→ ${b.person.slice(0, 8)} (${b.originApp})`), ...p.blocks.received.map(b => `← ${b.person.slice(0, 8)} (${b.originApp})`)].join(", ")}</span>
+              <span className="muted"> · {[...p.blocks.made.map(b => `→ ${b.person.slice(0, 8)}${b.originApp === "*" ? "" : ` (${b.originApp})`}`), ...p.blocks.received.map(b => `← ${b.person.slice(0, 8)}${b.originApp === "*" ? "" : ` (${b.originApp})`}`)].join(", ")}</span>
             )}
           </div>
           {p.memberships.map(m => <AppPanel key={m.app} personId={p.personId} m={m} />)}
-          {!p.memberships.length && <div className="muted">No memberships.</div>}
+          {!p.memberships.length && <div className="muted">No memberships shown.</div>}
+          {/* Dating (slop) is never listed: the same closed row for every person, opened only with a reason (PRD 40.3). */}
+          {(p.privateApps ?? []).map(app => <AppPanel key={app} personId={p.personId} m={{ app, state: "", hold: false }} hidden />)}
         </>
       )}
     </div>
   );
 }
 
-function AppPanel({ personId, m }: { personId: string; m: PersonSummary["memberships"][number] }) {
+function AppPanel({ personId, m, hidden }: { personId: string; m: PersonSummary["memberships"][number]; hidden?: boolean }) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [panel, setPanel] = useState<PersonAppPanel | null>(null);
@@ -154,7 +156,9 @@ function AppPanel({ personId, m }: { personId: string; m: PersonSummary["members
     <div className="person-app">
       <button className="person-app-head" aria-expanded={open} onClick={() => setOpen(v => !v)}>
         <b>{m.app}</b>
-        <span className="muted">{humanize(m.state)}{m.joinedAt ? ` · joined ${localDate(m.joinedAt)}` : ""}{m.leftAt ? ` · left ${localDate(m.leftAt)}` : ""}</span>
+        {hidden
+          ? <span className="muted">private app: membership not shown · open with a reason</span>
+          : <span className="muted">{humanize(m.state)}{m.joinedAt ? ` · joined ${localDate(m.joinedAt)}` : ""}{m.leftAt ? ` · left ${localDate(m.leftAt)}` : ""}</span>}
         {m.hold && <Badge tone="bad">hold</Badge>}
         {m.review && <Badge tone="warn">{humanize(m.review)}</Badge>}
       </button>

@@ -1,0 +1,15 @@
+# Build context: the repository root. Everything is excluded, then the image's inputs are allowed back.
+*
+!package.json
+!bun.lock
+!tsconfig.json
+!packages/
+!prototypes/
+!deploy/
+**/node_modules
+**/.env
+**/.env.*
+**/*.log
+**/dist
+**/runs
+**/test-results

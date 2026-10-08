@@ -106,8 +106,8 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     // A provider retry of the same delivery is handled once.
     expect((await (await s.fetch(hi.req())).json()).result).toBe("duplicate");
     expect((await outbound("a")).length).toBe(1);
-    // Someone who is not a member of The Network (invite-only): one short invite-only reply, nothing stored.
-    expect((await (await s.fetch(signed(clock, "+19175550199", "hello?").req())).json()).result).toBe("invite_only");
+    // Someone who is not a member, with no keyword on the shared line: The Network's join asks for name and age; nothing stored.
+    expect((await (await s.fetch(signed(clock, "+19175550199", "hello?").req())).json()).result).toBe("join_asked");
     expect((await sql`select count(*)::int as n from network.messages`)[0].n).toBe(2);
 
     // The next answer continues onboarding (state was saved and loaded again).
@@ -123,9 +123,9 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     expect((await sql`select opted_out from network.members where id = 'b'`)[0].opted_out).toBe(true);
     await say(s, clock, "c", "HELP");
     expect((await outbound("c")).at(-1)).toMatchObject({ system: true, type: "system" });
-    // Invited but not joined (the invite gate has not let them in): not a member here.
+    // Invited but not joined (the invite gate has not let them in): not a member here; the join asks for name and age.
     await sql`update network.members set account_status = 'invited' where id = 'r'`;
-    expect(await say(s, clock, "r", "hi!")).toBe("invite_only");
+    expect(await say(s, clock, "r", "hi!")).toBe("join_asked");
     expect((await sql`select count(*)::int as n from network.messages where member_id = 'r'`)[0].n).toBe(0);
   }, T);
 
@@ -151,8 +151,10 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     expect((await sql`select count(*)::int as n from network.events where actor_id = 'u' or object_id = 'u' or payload::text like '%"u"%'`)[0].n).toBe(0);
     expect((await sql`select count(*)::int as n from network.events where payload->>'oppId' = 'o2'`)[0].n).toBe(1);
     expect(s.net.isDeclined("u")).toBe(true);
-    // Their phone is gone too: a later text is from a stranger (The Network is invite-only).
-    expect(await say(s, clock, "u", "hello?")).toBe("invite_only");
+    // Their phone is gone too: a later text is from a stranger. The age stays on the phone's age floor,
+    // so a join that now says 25 is refused (NET-35).
+    expect(await say(s, clock, "u", "hello?")).toBe("join_asked");
+    expect(await say(s, clock, "u", "Uma, 25")).toBe("under_age");
   }, T);
 
   test("staff API: roles, the matching switch, review through the API after a restart, then the next tick contacts the members", async () => {
@@ -189,7 +191,7 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     expect((await sql`select decision from network.review_items where opportunity_id = ${oppId}`)[0].decision).toBeNull();
 
     // An unknown decision is refused; approve works; the reviewer of record is the staff id.
-    expect((await staff(b, "rev-tok", "POST", `/review/${oppId}`, { decision: "maybe" })).status).toBe(409);
+    expect((await staff(b, "rev-tok", "POST", `/review/${oppId}`, { decision: "maybe" })).status).toBe(400);
     clock.set(START + 90 * MINUTE); // 14:30 New York: every member's send window is open
     const ok = await staff(b, "rev-tok", "POST", `/review/${oppId}`, { decision: "approve", secondsSpent: 40, reviewer: "someone-else" });
     expect(await ok.json()).toEqual({ ok: true });
@@ -205,10 +207,11 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     expect(await b.tick()).toBe(true);
     const partner = (item.proposal.participants as string[]).find(p => p !== "r")!;
     expect((await outbound(partner)).filter(m => m.opportunity_id === oppId).map(m => m.type)).toEqual(["probe"]);
-    expect(await aboutOpp()).toBe(1);
+    // The requester's time question and the partner's probe (the time question names its opportunity).
+    expect(await aboutOpp()).toBe(2);
     // Every staff action is in network.staff_audit (requested, then the result) and in the Network's logs.
     const audit = await sql`select action, actor, ok, detail->>'phase' as phase from network.staff_audit where action in ('review', 'config') order by id`;
-    expect(audit.map((r: any) => `${r.action}:${r.phase}:${r.ok}`)).toEqual(["config:requested:true", "config:result:true", "review:requested:true", "review:result:false", "review:requested:true", "review:result:true"]);
+    expect(audit.map((r: any) => `${r.action}:${r.phase}:${r.ok}`)).toEqual(["config:requested:true", "config:result:true", "review:requested:true", "review:result:true"]); // malformed input: 400 and no audit row (SVC-21)
     expect((await sql`select count(*)::int as n from network.events where type = 'review_decision' and actor_type = 'reviewer' and actor_id like 'token:reviewer#%'`)[0].n).toBe(1);
     expect((await sql`select count(*)::int as n from network.events where type = 'matching_switch' and actor_id like 'token:admin#%'`)[0].n).toBe(1);
     const h = await (await staff(b, "ana-tok", "GET", "/health")).json();

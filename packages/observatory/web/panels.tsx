@@ -3,7 +3,7 @@
 // moves the one focus.
 import { CrossAppButton } from "./apps.tsx";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { BookedPlan, HealthAlert, MemberDetail, MemberTimeline, ObsFeedItem, ObsMember, ObsMessage, OpportunityDetail, SystemEvent, TimeChoice } from "../src/types.ts";
+import type { AppProfile360, BookedPlan, HealthAlert, MemberDetail, MemberPhoto, PeonProfile360, SlopProfile360, MemberTimeline, ObsFeedItem, ObsMember, ObsMessage, OpportunityDetail, SystemEvent, TimeChoice } from "../src/types.ts";
 import { STATE_COLOR } from "./graph.ts";
 import { historyBetween, isBusyElsewhere, ReviewActions, reviewLine, VenueLink, wantsOf } from "./review.tsx";
 import { isMemberActive, OPEN, originLabel, originOf, store, useStore, type DrawerTab, type Fetched, type Opp } from "./store.ts";
@@ -306,6 +306,7 @@ function MemberPanel({ id }: { id: string }) {
           {past.length > 0 && <Disclosure name="past-opps" summary={`Past opportunities (${past.length})`}><OppList opps={past} me={id} /></Disclosure>}
           <Disclosure name="connections" summary={`Connections (${d.edges.length})`}><Connections d={d} id={id} /></Disclosure>
           <Disclosure name="profile" summary="Profile"><Profile d={d} /></Disclosure>
+          <AppSection id={id} />
           <Disclosure name="facts" summary={`Known facts (${d.facets.length})`}><Facts d={d} /></Disclosure>
           {s.truth && d.truth && <Disclosure name="truth" summary="Hidden truth"><Truth d={d} /></Disclosure>}
           {d.staffAccess && (
@@ -538,7 +539,7 @@ function RevealControl({ id }: { id: string }) {
   const [minutes, setMinutes] = useState(15);
   if (!s.can("safety") || s.env?.capabilities.hiddenTruth || s.env?.piiRevealed) return null;
   const g = s.revealFor(id);
-  if (g) return <Badge tone="warn" title={`Revealed: ${g.reason}`}>Revealed · <WallLeft until={g.until} /></Badge>;
+  if (g) return <><Badge tone="warn" title={`Revealed: ${g.reason}`}>Revealed · <WallLeft until={g.until} /></Badge><button className="btn small-btn" title="End the reveal now (logged)" onClick={() => store.unreveal(id)}>End</button></>;
   if (!open) return <button className="btn small-btn" title="Show names and this member's own words for up to 15 minutes. Logged." onClick={() => setOpen(true)}>Reveal</button>;
   const submit = async () => { if (reason.trim().length >= 5 && await store.reveal(id, reason.trim(), minutes)) { setOpen(false); setReason(""); } };
   return (
@@ -548,6 +549,86 @@ function RevealControl({ id }: { id: string }) {
       <button className="btn primary" type="submit" disabled={reason.trim().length < 5} title="At least 5 characters">Reveal</button>
       <button className="btn ghost" type="button" onClick={() => setOpen(false)}>Cancel</button>
     </form>
+  );
+}
+
+// ---------------------------------------------------------------- per-app Member 360 (admin-console 3.3.1)
+/** The app's own panel: slop (dating preferences behind a reveal, the photo rule) or peon (roles, applications). */
+function AppSection({ id }: { id: string }) {
+  const s = useStore();
+  const grant = s.revealFor(id);
+  const has = s.app === "slop" || s.app === "peon";
+  // Only the apps with a panel ask (each ask is an audited read).
+  const r = useLive<AppProfile360>(() => (has ? store.memberApp(id) : Promise.resolve({ status: 200 as const, data: { app: s.app, none: true as const } })), memberKey(id), [id, s.mode, s.app, grant?.until]);
+  const p = r?.data;
+  if (!has || !p || "none" in p) return null;
+  return p.app === "slop"
+    ? <Disclosure name="app-slop" summary="Dating (slop)"><SlopPanel id={id} p={p} /></Disclosure>
+    : <Disclosure name="app-peon" summary={`Hiring (peon) · ${(p as PeonProfile360).applications.length} introductions`}><PeonPanel p={p as PeonProfile360} /></Disclosure>;
+}
+
+const PHOTO_TEXT: Record<SlopProfile360["photos"], string> = {
+  never_minor: "No photos: this member is under 18 or has no verified age. Photos and ratings are for verified adults only.",
+  needs_verification: "No photos until the member's age (18+) is verified.",
+  reason_required: "Photos: admin or safety, with a reason (logged).",
+};
+
+function SlopPanel({ id, p }: { id: string; p: SlopProfile360 }) {
+  const s = useStore();
+  const [reason, setReason] = useState("");
+  const [photos, setPhotos] = useState<MemberPhoto[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const show = async () => {
+    const r = await store.photos(id, reason.trim());
+    if (r.data?.photos) { setPhotos(r.data.photos); setError(null); } else setError(r.error ?? r.data?.error ?? "refused");
+  };
+  return (
+    <>
+      <div className="small">{p.adult ? "Adult" : "Under 18 or age unknown: never matched"} · age {p.ageVerified ? "verified" : "not verified"}</div>
+      {p.prefs.hidden
+        ? <div className="muted small">Dating preferences hidden ({p.prefs.count} facts). {s.env?.capabilities.hiddenTruth ? "Simulated world: the truth lens shows hidden facts." : s.can("safety") ? "Reveal this member (logged) to see them." : "Safety or admin only."}</div>
+        : <SlopPrefsView prefs={p.prefs.prefs} />}
+      <div className="muted small">{PHOTO_TEXT[p.photos]} Scores and ratings are never shown.</div>
+      {p.photos === "reason_required" && s.can("safety") && !photos && (
+        <form className="person-reason" onSubmit={e => { e.preventDefault(); if (reason.trim().length >= 5) show(); }}>
+          <input className="input grow" placeholder="Reason (logged)" value={reason} onChange={e => setReason(e.target.value)} aria-label="Reason to see photos" />
+          <button className="btn" type="submit" disabled={reason.trim().length < 5}>Show photos</button>
+          {error && <span className="bad small" role="alert">{error}</span>}
+        </form>
+      )}
+      {photos && (photos.length
+        ? <div className="photos">{photos.map(ph => <img key={ph.id} src={ph.url} alt="Member photo" referrerPolicy="no-referrer" loading="lazy" />)}</div>
+        : <div className="muted small">No photos.</div>)}
+    </>
+  );
+}
+
+function SlopPrefsView({ prefs }: { prefs: NonNullable<Extract<SlopProfile360["prefs"], { hidden: false }>["prefs"]> }) {
+  const rows: [string, string | undefined][] = [
+    ["Is", prefs.is], ["Seeks", prefs.seeks.join(", ") || undefined], ["Age range", prefs.ageRange?.join("-")],
+    ["Where", [prefs.scope, prefs.maxMiles !== undefined ? `${prefs.maxMiles} mi` : undefined].filter(Boolean).join(" · ") || undefined], ["Goal", prefs.goal],
+    ["Values", Object.entries(prefs.values).map(([k, v]) => `${humanize(k)}: ${v}`).join(" · ") || undefined],
+    ["Dealbreakers", prefs.dealbreakers.map(humanize).join(", ") || undefined], ["First dates", prefs.activities.map(humanize).join(", ") || undefined],
+    ["Usually free", prefs.free.join(", ") || undefined], ["Verification", prefs.verification.join(", ") || undefined], ["Safety cues", prefs.safety.join(", ") || undefined],
+  ];
+  return <>{rows.filter(([, v]) => v).map(([k, v]) => <div className="small" key={k}><span className="muted">{k}</span> {v}</div>)}</>;
+}
+
+function PeonPanel({ p }: { p: PeonProfile360 }) {
+  const s = useStore();
+  return (
+    <>
+      <div className="small">{p.entity === "job" ? "Job seat (hiring manager)" : p.entity === "candidate" ? "Candidate" : "Not set up yet"}</div>
+      {p.roles.map((r, i) => (
+        <div className="small" key={i}>
+          <b>{r.title ?? humanize(r.family ?? "role")}</b>
+          <span className="muted">{[r.family && r.title ? humanize(r.family) : undefined, r.seniority !== undefined ? `level ${r.seniority}` : undefined, r.pay, r.mode, r.market?.toUpperCase(), r.openings !== undefined ? `${r.openings} open` : undefined, r.verified === undefined ? undefined : r.verified ? "employer verified" : "employer not verified"].filter(Boolean).map(x => ` · ${x}`).join("")}</span>
+        </div>
+      ))}
+      {p.applications.length
+        ? p.applications.map(a => <div className="small" key={a.opportunityId}>{s.opps.has(a.opportunityId) ? <OppLink o={s.opps.get(a.opportunityId)!} /> : a.opportunityId} <span className="muted">· {humanize(a.state)}{a.status ? ` · ${humanize(a.status)}` : ""}</span></div>)
+        : <div className="muted small">No introductions yet.</div>}
+    </>
   );
 }
 

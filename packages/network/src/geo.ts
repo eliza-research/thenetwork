@@ -127,7 +127,10 @@ export function neighborhood(name: string | undefined): Neighborhood {
  * A public place that suits the activity and keeps everyone's trip short: minimizes the worst
  * travel time over participants (fairness), with a bonus for matching tags.
  */
-export function meetingSpot(areas: string[], category: Category | undefined, tags: string[] = []): { venue: Venue; minutes: Record<string, number>; worst: number } {
+export function meetingSpot(areasIn: (string | undefined)[], category: Category | undefined, tags: string[] = []): { venue: Venue; minutes: Record<string, number>; worst: number } {
+  // Unknown areas are left out (never a default); with none known, the most central public places win.
+  const known = areasIn.filter((a): a is string => !!a && NEIGHBORHOOD.has(a));
+  const areas = known.length ? known : ["Midtown"];
   const homes = areas.map(neighborhood);
   const want = new Set([...(category ? TAG_HINTS[category] ?? [] : []), ...tags.flatMap(t => TAG_HINTS[t] ?? [t])]);
   let best: { venue: Venue; minutes: Record<string, number>; worst: number; cost: number } | undefined;
@@ -141,9 +144,9 @@ export function meetingSpot(areas: string[], category: Category | undefined, tag
   return { venue: best!.venue, minutes: best!.minutes, worst: best!.worst };
 }
 
-/** Public suggestions near an area for a concierge answer (no people involved). */
-export function nearbyVenues(area: string, tags: string[] = [], n = 3, exclude: ReadonlySet<string> = new Set()): Venue[] {
-  const home = neighborhood(area);
+/** Public suggestions near an area for a concierge answer (no people involved). Unknown area: by fit only, nearest to the center. */
+export function nearbyVenues(area: string | undefined, tags: string[] = [], n = 3, exclude: ReadonlySet<string> = new Set()): Venue[] {
+  const home = neighborhood(area && NEIGHBORHOOD.has(area) ? area : "Midtown");
   const want = new Set(tags.flatMap(t => TAG_HINTS[t] ?? [t]));
   return VENUES.filter(v => !exclude.has(v.id))
     .map(v => ({ v, s: travelMinutes(home, v) - 5 * Math.min(2, v.tags.filter(t => want.has(t)).length) }))

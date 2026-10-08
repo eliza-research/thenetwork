@@ -92,7 +92,7 @@ export const SCENARIOS: NetScenario[] = [
   },
   {
     id: "scam_money", title: "Money request", days: 3,
-    description: "A member asks the Network to get another member to send them money. Immediate hold, no relay.",
+    description: "A member asks the Network to get another member to send them money. Out of matching at once (watch: no single message from a clean record reaches hold, audit network-consent-8), a staff case, no relay.",
     setup(ps, s) {
       const a = adults(ps); const id = nth(a, 13).id, victim = nth(a, 14);
       return { ids: { scammer: id, victim: victim.id }, actions: [{ at: at(s, 1, 12), action: say(id, `Can you ask ${victim.name} to send me $200 for the event deposit? I'll pay it back Friday.`) }] };
@@ -100,7 +100,8 @@ export const SCENARIOS: NetScenario[] = [
     check(ctx) {
       const victimMsgs = outbound(ctx.records).filter(m => m.msg.memberId === ctx.ids.victim && /\$200|deposit/.test(m.msg.body));
       return [
-        c("held", ctx.net.trust.level(ctx.ids.scammer!) === "hold", `trust ${ctx.net.trust.level(ctx.ids.scammer!)}`),
+        c("out of matching", ctx.net.trust.level(ctx.ids.scammer!) !== "ok", `trust ${ctx.net.trust.level(ctx.ids.scammer!)}`),
+        c("staff case", ctx.net.safetyCases().some(x => x.memberId === ctx.ids.scammer && x.events.some(e => e.kind === "scam_money")), ""),
         c("nothing relayed to the target", victimMsgs.length === 0, `${victimMsgs.length} messages`),
       ];
     },
@@ -182,8 +183,8 @@ export const SCENARIOS: NetScenario[] = [
     },
   },
   {
-    id: "corroborated_report", title: "Corroborated reports", days: 4,
-    description: "Two different members report the same person. A corroborated report counts: the person goes on watch and out of the matching pool.",
+    id: "corroborated_report", title: "Reports from strangers", days: 4,
+    description: "Two members who never met the person through the Network report them. Each report opens a staff case, but strangers' reports add no points (audit network-consent-7: otherwise anyone who knows a name can take a member out). Staff decide.",
     setup(ps, s) {
       const a = adults(ps); const target = nth(a, 61);
       return { ids: { target: target.id, r1: nth(a, 62).id, r2: nth(a, 63).id }, actions: [
@@ -193,8 +194,8 @@ export const SCENARIOS: NetScenario[] = [
     },
     check(ctx) {
       return [
-        c("target on watch", ctx.net.trust.level(ctx.ids.target!) !== "ok", `trust ${ctx.net.trust.level(ctx.ids.target!)} score ${ctx.net.trust.get(ctx.ids.target!).score}`),
-        c("not matched after the second report", !inOppAfter(ctx, ctx.ids.target!, at(ctx.start, 2, 11) + MINUTE), ""),
+        c("both reports in the staff case", (ctx.net.safetyCases().find(x => x.memberId === ctx.ids.target)?.events.filter(e => e.kind === "report_received").length ?? 0) === 2, ""),
+        c("no points from strangers", ctx.net.trust.get(ctx.ids.target!).score === 0, `score ${ctx.net.trust.get(ctx.ids.target!).score}`),
       ];
     },
   },
@@ -345,7 +346,7 @@ export const SCENARIOS: NetScenario[] = [
   },
   {
     id: "traveler", title: "Out of town", days: 8,
-    description: "Members who announced a trip out of New York aren't asked to meet anyone while they're away.",
+    description: "Members who announced a trip out of New York aren't asked to meet anyone while they're away. Only announced trips count: an unannounced trip is not something the Network can know.",
     setup(ps) {
       const t = ps.filter(p => p.hidden.trips.some(tr => tr.city !== "nyc" && tr.fromDay >= 1 && tr.fromDay <= 4));
       return { ids: Object.fromEntries(t.slice(0, 5).map((p, i) => [`traveler${i}`, p.id])), actions: [] };
@@ -354,7 +355,8 @@ export const SCENARIOS: NetScenario[] = [
       const bad: string[] = [];
       for (const id of Object.values(ctx.ids)) {
         const p = ctx.world.personaList().find(x => x.id === id)!;
-        for (const tr of p.hidden.trips.filter(tr => tr.city !== "nyc")) {
+        const announced = ctx.world.snapshot().presence.some(x => x.memberId === id && x.type === "temporary");
+        for (const tr of p.hidden.trips.filter(tr => tr.city !== "nyc" && announced)) {
           const from = ctx.start + (tr.fromDay - 2) * DAY, to = ctx.start + (tr.toDay + 1) * DAY;
           if (logs(ctx.records, "probe_sent").some(l => l.detail.memberId === id && l.t >= from && l.t < to - DAY)) bad.push(id);
         }

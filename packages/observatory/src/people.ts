@@ -3,9 +3,11 @@
 // reads the platform schema through a read-only login: OBSERVATORY_PLATFORM_DATABASE_URL (grant it
 // network_observatory_cross_app, migration 0005), else the real-mode database URL (local use). It
 // never reads a phone number, a name or a message text. Each app's panel is read only after the
-// server has written the audit row for it.
+// server has written the audit row for it. A private app (slop, dating; PRD 40.3) is left out of the
+// summary: no membership row, its holds show only as "restricted" and its blocks without the app.
+// Its panel opens like any other, with a typed reason (that answer says whether there is a membership).
 import { SQL } from "bun";
-import { APP_IDS, isAppId, type AppId } from "./apps.ts";
+import { APP_IDS, isAppId, isPrivateApp, PRIVATE_APPS, type AppId } from "./apps.ts";
 import type { PersonAppPanel, PersonSummary } from "./types.ts";
 
 const ms = (d: Date | string | null | undefined) => (d ? new Date(d).getTime() : undefined);
@@ -31,12 +33,16 @@ export class PeopleView {
   /** The newest console row of every app's Network state: member id -> trust level, and the cases. */
   private async states(): Promise<Map<AppId, { trust: Map<string, string>; cases: any[] }>> {
     const out = new Map<AppId, { trust: Map<string, string>; cases: any[] }>();
-    const rows = await this.sql`select distinct on (app) app, trust, cases from (
-        select case when position(':' in id) > 0 then split_part(id, ':', 1) else 'ntwrk' end as app, saved_at, trust, cases from network.network_state_console) s
-      order by app, saved_at desc`.catch(() => []);
+    // The cross-app role reads only trust levels and cases (network_state_console_cross_app, migration 0010);
+    // a local login without it reads the shared view. Every city of an app counts.
+    const rows = await this.sql`select app, trust, cases from network.network_state_console_cross_app`.catch(() =>
+      this.sql`select case when position(':' in id) > 0 then split_part(id, ':', 1) else 'ntwrk' end as app, trust, cases from network.network_state_console`.catch(() => []));
     for (const r of rows as any[]) {
       if (!isAppId(r.app)) continue;
-      out.set(r.app, { trust: new Map((json<any[]>(r.trust) ?? []).map(t => [String(t.id), String(t.level)])), cases: json<any[]>(r.cases) ?? [] });
+      const cur = out.get(r.app) ?? { trust: new Map<string, string>(), cases: [] as any[] };
+      for (const t of json<any[]>(r.trust) ?? []) cur.trust.set(String(t.id), String(t.level));
+      cur.cases.push(...(json<any[]>(r.cases) ?? []));
+      out.set(r.app, cur);
     }
     return out;
   }
@@ -54,20 +60,25 @@ export class PeopleView {
     if (!p) return undefined;
     const ms_ = (memberships as any[]).filter(m => isAppId(m.app_id)).sort((a, b) => APP_IDS.indexOf(a.app_id) - APP_IDS.indexOf(b.app_id));
     const holds: PersonSummary["holds"] = [];
-    const list = ms_.map(m => {
+    const restricted = () => { if (!holds.some(h => h.app === "*")) holds.push({ app: "*", level: "restricted" }); };
+    const list = ms_.flatMap(m => {
       const hold = states.get(m.app_id)?.trust.get(m.member_id) === "hold";
+      // A private app: no row; a hold or restriction there shows as "restricted" on an app not named.
+      if (isPrivateApp(m.app_id)) { if (hold || m.state === "restricted") restricted(); return []; }
       if (hold) holds.push({ app: m.app_id, level: "hold" });
       if (m.state === "restricted") holds.push({ app: m.app_id, level: "restricted" });
       if (m.review === "recycled_number") holds.push({ app: m.app_id, level: "recycled_number" });
-      return { app: m.app_id as string, state: m.state as string, joinedAt: ms(m.joined_at), leftAt: ms(m.left_at), ...(m.review ? { review: m.review } : {}), hold };
+      return [{ app: m.app_id as string, state: m.state as string, joinedAt: ms(m.joined_at), leftAt: ms(m.left_at), ...(m.review ? { review: m.review } : {}), hold }];
     });
+    const origin = (a: string) => (isPrivateApp(a) ? "*" : a);
     return {
       personId: p.id, lowestAge: p.lowest_age ?? null, createdAt: ms(p.created_at) ?? 0, ...(p.deleted_at ? { deletedAt: ms(p.deleted_at) } : {}),
       memberships: list, holds,
       blocks: {
-        made: (made as any[]).map(b => ({ person: b.to_person, originApp: b.origin_app, at: ms(b.at) ?? 0 })),
-        received: (received as any[]).map(b => ({ person: b.from_person, originApp: b.origin_app, at: ms(b.at) ?? 0 })),
+        made: (made as any[]).map(b => ({ person: b.to_person, originApp: origin(b.origin_app), at: ms(b.at) ?? 0 })),
+        received: (received as any[]).map(b => ({ person: b.from_person, originApp: origin(b.origin_app), at: ms(b.at) ?? 0 })),
       },
+      privateApps: [...PRIVATE_APPS].filter(isAppId),
     };
   }
 

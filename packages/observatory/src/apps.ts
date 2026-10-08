@@ -17,7 +17,7 @@ export const DEFAULT_APP: AppId = "ntwrk";
  * Apps whose engine pack has shipped: matching may run. The others still simulate joins, onboarding and
  * safety, with matching off (founder direction 2026-10-08: the engine session owns the packs).
  */
-export const PACK_READY: ReadonlySet<AppId> = new Set<AppId>(APP_IDS.filter(a => a === "ntwrk" || a === "buddies"));
+export const PACK_READY: ReadonlySet<AppId> = new Set<AppId>(APP_IDS.filter(a => a !== "slop" && a !== "peon"));
 export const matchingAllowed = (app: AppId) => PACK_READY.has(app);
 export const MATCHING_OFF_TEXT = "matching off until pack";
 
@@ -34,7 +34,7 @@ const PRD: Record<ReviewReason, string> = {
 };
 const prd = (code: ReviewReason): AppReason => ({ code, label: PRD[code], base: code });
 
-/** Reason codes per app, in key order (1-8 in the review queue). ntwrk and buddies keep the PRD 32.8 list. */
+/** Reason codes per app, in key order (1-8 in the review queue). ntwrk and friends keep the PRD 32.8 list. */
 export const APP_REASONS: Record<AppId, AppReason[]> = Object.fromEntries(APP_IDS.map(a => [a, REVIEW_REASONS.map(prd)])) as Record<AppId, AppReason[]>;
 APP_REASONS.slop = [
   prd("weak_reason"), { code: "preference_mismatch", label: "Preference mismatch", base: "weak_reason" },
@@ -75,6 +75,15 @@ export function slaHours(spec = process.env.OBSERVATORY_REVIEW_SLA_HOURS): Recor
   }
   return out;
 }
+
+/**
+ * Apps whose membership is private to the app (PRD 40.3 "Cross-app privacy": dating membership and
+ * dating data are never visible to the other apps or their default admin views). The cross-app person
+ * view leaves them out of its summary; they show only in their own app's views, or after a typed
+ * reason opens their panel (audited).
+ */
+export const PRIVATE_APPS: ReadonlySet<string> = new Set(["slop"]);
+export const isPrivateApp = (app: string) => PRIVATE_APPS.has(app);
 
 /** The app's short banner name: "SLOP", "NTWRK". */
 export const appBanner = (app: AppId) => app.toUpperCase();

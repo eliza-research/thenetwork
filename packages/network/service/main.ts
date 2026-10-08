@@ -12,7 +12,7 @@ import { RealClock } from "@thenetwork/core";
 import { BlooioClient } from "../../../prototypes/messaging-blooio/src/blooio/client.ts";
 import { BlooioAdapter as ProviderAdapter } from "../../../prototypes/messaging-blooio/src/adapters/blooio-adapter.ts";
 import { resolveSenderLine } from "../../../prototypes/messaging-blooio/src/line.ts";
-import { requirePlatformEnv } from "../../platform/src/env.ts";
+import { assertBootConfig } from "../../platform/src/env.ts";
 import { BlooioAdapter, liveFlag, liveSendAllowed } from "./channel.ts";
 import { serveService, startTicks } from "./serve.ts";
 import { NetworkService, webhookSecretsFromEnv } from "./service.ts";
@@ -23,14 +23,10 @@ function arg(name: string): string | undefined {
 }
 
 async function main() {
-  // Fail closed: the environment must be declared. Only PLATFORM_ENV=dev gets the dev shortcuts
-  // (console OTP codes, the Turnstile bypass, the dev hash key, X-Forwarded-Host from the site proxy).
-  const env = requirePlatformEnv();
-  if (env !== "dev") {
-    const missing = ["PLATFORM_HASH_KEY", "TURNSTILE_SECRET_KEY"].filter(k => !process.env[k]);
-    if (process.env.OTP_PROVIDER !== "twilio") missing.push("OTP_PROVIDER=twilio");
-    if (missing.length) throw new Error(`PLATFORM_ENV=${env} needs ${missing.join(", ")}`);
-  }
+  // Fail closed: the environment must be declared, and production (or staging) refuses to start
+  // without Twilio, Turnstile, the proxy secret, the hash key, the session secret, a database and
+  // review mode "human" (env.ts bootConfigProblems). Only PLATFORM_ENV=dev gets the dev shortcuts.
+  const env = assertBootConfig();
   const once = process.argv.includes("--once");
   const dryRun = process.argv.includes("--dry-run");
   const url = process.env.NETWORK_DATABASE_URL ?? process.env.DATABASE_URL;
@@ -73,7 +69,7 @@ async function main() {
   const servers = serveService(svc, { host, port, apiPort });
   const ticks = startTicks(svc);
   await ticks.first;
-  const stop = async () => { ticks.stop(); servers.stop(); await svc.close(); process.exit(0); };
+  const stop = async () => { await ticks.stop(); servers.stop(); await svc.close(); process.exit(0); };
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
 }

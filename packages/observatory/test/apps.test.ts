@@ -23,8 +23,12 @@ import type { AppHealth, AuditEntry, ObsState, PersonAppPanel, PersonSummary, St
 import { dropTestDb, pgAvailable, testDb } from "./pg.ts";
 
 const T = 300_000;
+/** Staff tokens are at least 32 characters on a server; the short names in these tests are padded to that. */
+const long = (t: string) => t.padEnd(32, "-0123456789abcdef");
+/** A token spec ("role@app:name,...") with every token made long. */
+const spec = (s: string) => s.split(",").map(p => { const i = p.lastIndexOf(":"); return `${p.slice(0, i)}:${long(p.slice(i + 1))}`; }).join(",");
 const user = (tokens: string, tok: string): StaffUser => {
-  const a = authenticate(new Request(`http://x/?token=${tok}`), { tokens: parseTokenGrants(tokens) });
+  const a = authenticate(new Request("http://x/", { headers: { authorization: `Bearer ${tok}` } }), { tokens: parseTokenGrants(tokens) });
   if (!("user" in a)) throw new Error(a.error);
   return a.user;
 };
@@ -86,15 +90,15 @@ describe("roles per app", () => {
 
   test("lab runs for slop and peon start no new opportunities", () => {
     expect(labArgs({ arms: ["consent"], seeds: [1], days: 3, app: "slop" }, 1)).toContain("--max-new");
-    expect(labArgs({ arms: ["consent"], seeds: [1], days: 3, app: "buddies" }, 1)).not.toContain("--max-new");
+    expect(labArgs({ arms: ["consent"], seeds: [1], days: 3, app: "friends" }, 1)).not.toContain("--max-new");
   });
 });
 
 describe("the console for four apps (game mode)", () => {
   let dir: string;
   let obs: ObservatoryServer;
-  const TOK = "admin:adm,reviewer@slop:rev-slop,admin@slop:adm-slop,engineer:eng,analyst@ntwrk:ana";
-  const as = (tok: string, path: string, init: RequestInit = {}) => fetch(obs.url + path, { ...init, headers: { authorization: `Bearer ${tok}`, "content-type": "application/json" } });
+  const TOK = spec("admin:adm,reviewer@slop:rev-slop,admin@slop:adm-slop,engineer:eng,analyst@ntwrk:ana");
+  const as = (tok: string, path: string, init: RequestInit = {}) => fetch(obs.url + path, { ...init, headers: { authorization: `Bearer ${long(tok)}`, "content-type": "application/json" } });
   const post = (tok: string, path: string, body: unknown) => as(tok, path, { method: "POST", body: JSON.stringify(body) });
   beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), "obs-apps-"));
@@ -118,10 +122,10 @@ describe("the console for four apps (game mode)", () => {
     expect((await as("ana", "/api/config?app=ntwrk")).status).toBe(200);
     expect((await as("ana", "/api/config?app=slop")).status).toBe(403);
     // The WebSocket needs a role for its app too.
-    expect((await fetch(`${obs.url}/ws?app=ntwrk&token=rev-slop`, { headers: { upgrade: "websocket", connection: "upgrade", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==", "sec-websocket-version": "13" } })).status).toBe(403);
+    expect((await fetch(`${obs.url}/ws?app=ntwrk`, { headers: { authorization: `Bearer ${long("rev-slop")}`, upgrade: "websocket", connection: "upgrade", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==", "sec-websocket-version": "13" } })).status).toBe(403);
   }, T);
 
-  test("slop: the join age (18) holds in its world, matching is off until its pack, and the banner says so", async () => {
+  test("slop: members aged 13+ join and carry the minor flag, matching is off until its pack, and the banner says so", async () => {
     const slop = await (await as("adm", "/api/state?app=slop")).json() as ObsState;
     const ntwrk = await (await as("adm", "/api/state?app=ntwrk")).json() as ObsState;
     expect(slop.env).toMatchObject({ app: "slop", matchingLocked: true });
@@ -129,14 +133,21 @@ describe("the console for four apps (game mode)", () => {
     expect(slop.env.label).toContain("matching off until pack");
     expect(ntwrk.env.app).toBe("ntwrk");
     expect(ntwrk.env.matchingLocked).toBeUndefined();
-    expect(Math.min(...slop.members.map(m => m.age ?? 0))).toBeGreaterThanOrEqual(18);
-    expect(ntwrk.members.some(m => (m.age ?? 99) < 18)).toBe(true);
-    expect(slop.members.length).toBeLessThan(ntwrk.members.length);
+    // AGENTS.md decision 1: 13+ may join every app; members aged 13-17 show with the minor flag and are never matched.
+    const teens = slop.members.filter(m => m.age !== undefined && m.age >= 13 && m.age < 18);
+    expect(teens.length).toBeGreaterThan(0);
+    expect(teens.every(m => m.minor)).toBe(true);
+
     // Joins and onboarding still run; no opportunity is composed.
     expect((await post("adm", "/api/control?app=slop", { type: "step", ms: 2 * DAY })).status).toBe(200);
     const after = await (await as("adm", "/api/state?app=slop")).json() as ObsState;
     expect(after.members.filter(m => m.joined).length).toBeGreaterThan(0);
     expect(after.opportunities.filter(o => o.source !== "shadow")).toHaveLength(0);
+    // A joined teen is never introduced, even by staff.
+    const teen = after.members.find(m => m.joined && m.minor && !m.declined), adult = after.members.find(m => m.joined && !m.minor);
+    expect(teen && adult).toBeTruthy();
+    const pick = await post("adm", "/api/control?app=slop", { type: "propose", participants: [teen!.id, adult!.id] });
+    expect([pick.status, (await pick.json()).error]).toEqual([409, expect.stringContaining("under 18")]);
     expect(after.network?.matchingEnabled).toBe(false);
     const on = await post("adm", "/api/control?app=slop", { type: "matching", on: true });
     expect([on.status, (await on.json()).code]).toEqual([409, "matching_locked"]);
@@ -161,7 +172,7 @@ describe("the console for four apps (game mode)", () => {
     expect(h.apps.map(a => a.app)).toEqual(["slop"]);
     expect(h.apps[0]).toMatchObject({ app: "slop", available: true, slaHours: 6, matching: "locked" });
     const all = await (await as("adm", "/api/apps/health")).json() as { apps: AppHealth[] };
-    expect(all.apps.map(a => a.app)).toEqual(["ntwrk", "slop", "peon", "buddies"]);
+    expect(all.apps.map(a => a.app)).toEqual(["ntwrk", "slop", "peon", "friends"]);
     expect(all.apps.find(a => a.app === "peon")?.available).toBe(false); // its world was never opened
   }, T);
 });
@@ -280,10 +291,10 @@ describe.skipIf(!pgAvailable)("real mode for four apps (Postgres)", () => {
     PeopleView.prototype.summary = function (...a) { log.push("read:summary"); return summary.apply(this, a); };
     const dir = await mkdtemp(join(tmpdir(), "obs-cross-"));
     const obs = await createServer({
-      port: 0, development: false, mode: "real", tokens: "admin:ad,cross_app_safety@*:cx,reviewer:rv,admin@slop:as,safety:sf",
+      port: 0, development: false, mode: "real", tokens: spec("admin:ad,cross_app_safety@*:cx,reviewer:rv,admin@slop:as,safety:sf"),
       audit: sink, lab: { dir: join(dir, "lab") }, real: { url, pollMs: 3_600_000, pushMs: 3_600_000, service: false }, peopleUrl: url,
     });
-    const as = (tok: string, path: string, init: RequestInit = {}) => fetch(obs.url + path, { ...init, headers: { authorization: `Bearer ${tok}`, "content-type": "application/json" } });
+    const as = (tok: string, path: string, init: RequestInit = {}) => fetch(obs.url + path, { ...init, headers: { authorization: `Bearer ${long(tok)}`, "content-type": "application/json" } });
     const post = (tok: string, path: string, body: unknown) => as(tok, path, { method: "POST", body: JSON.stringify(body) });
     try {
       // Reviewers, per-app admins and app safety staff never reach it.
@@ -298,10 +309,18 @@ describe.skipIf(!pgAvailable)("real mode for four apps (Postgres)", () => {
       const found = await (await as("cx", `/api/person/lookup?app=ntwrk&member=${encodeURIComponent(ntwrkMember)}`)).json() as { personId: string };
       expect(found.personId).toBe(P1);
       const p = await (await as("cx", `/api/person/${P1}`)).json() as PersonSummary;
-      expect(p.memberships.map(m => [m.app, m.state, m.hold])).toEqual([["ntwrk", "active", false], ["slop", "active", true]]);
-      expect(p.holds).toEqual([{ app: "slop", level: "hold" }]);
-      expect(p.blocks.made).toMatchObject([{ person: P2, originApp: "slop" }]);
+      // Dating (slop) is not in the summary (PRD 40.3): its membership is not listed, its hold shows as
+      // "restricted" on an app not named, and a block made there has no app.
+      expect(p.memberships.map(m => [m.app, m.state, m.hold])).toEqual([["ntwrk", "active", false]]);
+      expect(p.holds).toEqual([{ app: "*", level: "restricted" }]);
+      expect(p.blocks.made).toMatchObject([{ person: P2, originApp: "*" }]);
+      expect(p.privateApps).toEqual(["slop"]);
+      expect(JSON.stringify({ ...p, privateApps: [] })).not.toContain("slop");
       expect(JSON.stringify(p)).not.toContain("Sam");
+      // A person with no slop membership gets the same summary shape: the same closed slop row, nothing that differs.
+      const p2 = await (await as("cx", `/api/person/${P2}`)).json() as PersonSummary;
+      expect([p2.privateApps, p2.holds]).toEqual([["slop"], []]);
+      expect((await post("cx", `/api/person/${P2}/open`, { app: "slop", reason: "safety report 42" })).status).toBe(404);
       // A panel needs a typed reason; nothing is read without one.
       const before = log.length;
       expect((await post("cx", `/api/person/${P1}/open`, { app: "slop", reason: "hm" })).status).toBe(400);

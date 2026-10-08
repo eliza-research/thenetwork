@@ -1,23 +1,22 @@
-# ntwrk.love public site: what The Network is, the SMS/iMessage program, privacy policy and terms.
-# Required for A2P 10DLC registration (carriers review the opt-in description, privacy policy and SMS terms).
-# Deploy only with founder approval:  NTWRK_ALLOW_DEPLOY=1 ../../scripts/wrangler.sh deploy
-# Pages are built from ./public into ./dist by Bun's HTML bundler ([build] below runs it before deploy).
-# Route note: /api/* is NOT served by this Worker. It belongs to the shared platform API, on the same
-# origin. Before /join and /settings can work in production, send "ntwrk.love/api/*" to that API:
-# either a zone route on the API Worker, or a service binding plus run_worker_first = ["/api/*"] here.
-# Check which one Cloudflare applies first with a custom domain before choosing. Not set up yet.
-name = "ntwrk-love-site"
-compatibility_date = "2026-10-01"
-account_id = "50ad2052bbc6ca528d6993a689b419a4"
-routes = [
-  { pattern = "ntwrk.love", custom_domain = true },
-  { pattern = "www.ntwrk.love", custom_domain = true },
-]
+# The Network's home page and the hub for every app.
+# Cloudflare Pages project "ntwrk-love" (founder decision 8, AGENTS.md), production branch main, served on
+# ntwrk-love.pages.dev and, once DNS points there, on ntwrk.love. The build (bun run sites/sites.ts ntwrk) writes
+# ./dist with the static pages and an advanced-mode _worker.js (deploy/router.ts) plus _routes.json:
+# only /api, /api/*, /mcp, /mcp/*, /oauth/* and /.well-known/oauth-* run the Worker, which forwards them
+# to the shared backend with signed proxy headers. Every other path is a static file.
+# Deploys: CI (.github/workflows/deploy-sites.yml, behind the "production" GitHub environment), or by hand
+# only with founder approval:
+#   bun run sites/sites.ts ntwrk && NTWRK_ALLOW_DEPLOY=1 scripts/wrangler.sh pages deploy sites/ntwrk.love/dist --project-name ntwrk-love --branch main
+# The account comes from CLOUDFLARE_ACCOUNT_ID (default 50ad2052bbc6ca528d6993a689b419a4, the ntwrk.love
+# account, which holds all four Pages projects); a different account can be set there, never here.
+name = "ntwrk-love"
+pages_build_output_dir = "./dist"
+compatibility_date = "2026-09-15"
 
-[build]
-command = "bun run ../sites.ts ntwrk"
-
-[assets]
-directory = "./dist"
-html_handling = "drop-trailing-slash"
-not_found_handling = "404-page"
+[vars]
+APP_ID = "ntwrk"
+SITE_HOST = "ntwrk.love"
+# The one shared backend (sites/skills.config.ts BACKEND_ORIGIN).
+BACKEND_ORIGIN = "https://api.ntwrk.love"
+# Secret, set once per project (never here): PLATFORM_PROXY_SECRET, the HMAC key the backend checks.
+#   NTWRK_ALLOW_DEPLOY=1 scripts/wrangler.sh pages secret put PLATFORM_PROXY_SECRET --project-name ntwrk-love

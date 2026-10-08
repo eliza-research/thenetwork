@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { DAY } from "@thenetwork/core";
-import { DESIRES, parseYesNo, SKILLS, timeAnswerText, Rng } from "@thenetwork/sim";
-import { ageAnswer, availabilityTags, classify, extractProfile, feedbackOf, parseProbeReply, statedAge } from "../src/classify.ts";
+import { DESIRES, SKILLS, timeAnswerText, Rng } from "@thenetwork/sim";
+import { ageAnswer, availabilityTags, classify, consentOf, extractProfile, feedbackOf, parseProbeReply, parseYesNo, statedAge } from "../src/classify.ts";
+import { planLedger } from "../src/plans.ts";
 import { copy, styleViolations } from "../src/copy.ts";
 import { meetingSpot, NEIGHBORHOOD, NEIGHBORHOODS, nearbyVenues, travelMinutes, VENUES } from "../src/geo.ts";
 import { theySkill } from "../src/network.ts";
@@ -26,7 +27,8 @@ describe("classify", () => {
   test("age signals", () => {
     expect(classify("can we do something after school? i have a math test tmrw").minorSignal).toBe(true);
     expect(classify("my mom says i have to be home by 10 on school nights").minorSignal).toBe(true);
-    expect(classify("I went to high school in Ohio, now I teach").minorSignal).toBe(true); // fail closed; staff can clear it
+    // A teacher's or a parent's sentence about school is not a sign the sender is a minor (network-consent-10).
+    expect(classify("I went to high school in Ohio, now I teach").minorSignal).toBe(false);
     expect(classify("I'm 34 and into climbing").minorSignal).toBe(false);
     expect(classify("I'm 15 minutes away, see you soon").minorSignal).toBe(false);
   });
@@ -92,13 +94,13 @@ describe("trust", () => {
   });
   test("reports need corroboration; serial reporters are flagged", () => {
     const t = new Trust();
-    t.report("x", "r1", 0);
+    t.report("x", "r1", 0, { met: true });
     expect(t.level("x")).toBe("ok");
-    t.report("x", "r2", 1);
+    t.report("x", "r2", 1, { met: true });
     expect(t.level("x")).toBe("watch");
     for (const id of ["p", "q", "s"]) t.block("abuser", 10);
     expect(t.get("abuser").events.some(e => e.kind === "block_abuse")).toBe(true);
-    t.report("y", "abuser", 11); t.report("y", "abuser2", 12);
+    t.report("y", "abuser", 11, { met: true }); t.report("y", "abuser2", 12, { met: true });
     expect(t.level("y")).toBe("ok"); // the abuser's report doesn't count; one credible report isn't enough
   });
 });
@@ -107,7 +109,7 @@ describe("probe answers with time options (network-sim contract)", () => {
   const opts = [
     { key: "a", start: 1, end: 2, label: "Thursday 7pm" }, { key: "b", start: 3, end: 4, label: "Saturday 10am" }, { key: "c", start: 5, end: 6, label: "Sunday 2pm" },
   ];
-  const parse = (t: string, o = opts) => parseProbeReply(t, o, parseYesNo);
+  const parse = (t: string, o = opts) => { const r = parseProbeReply(t, o); return { answer: r.answer, keys: r.keys }; };
   test("free-text answers become the picked keys (empty = yes, but none of those times)", () => {
     const cases: [string, "yes" | "no" | "unclear", string[]][] = [
       ["Thursday", "yes", ["a"]], ["thursday works lol", "yes", ["a"]], ["Sat 10am works for me", "yes", ["b"]], ["the first one works.", "yes", ["a"]],
@@ -133,8 +135,11 @@ describe("probe answers with time options (network-sim contract)", () => {
       ["Sunday is out but saturday works", "yes", ["b"]], ["can't do thursday or saturday, sunday works", "yes", ["c"]], ["I'm busy Thursday but free Saturday", "yes", ["b"]],
       ["the first one doesn't work but the second does", "yes", ["b"]], ["Thursday doesn't work", "unclear", []],
       // "Sun" and "sat" are days only in a day context; "no problem" and "no plans" are not refusals.
-      ["sure, if the sun's out", "yes", ["a", "b", "c"]], ["sat down and thought, sunday works", "yes", ["c"]], ["sat 11am", "yes", ["b"]],
-      ["No problem, either works", "yes", ["a", "b", "c"]], ["no plans Thursday, so Thursday works", "yes", ["a"]], ["no, Saturday works", "yes", ["b"]],
+      // A condition is not a yes (network-consent-1): asked again.
+      ["sure, if the sun's out", "unclear", []], ["sat down and thought, sunday works", "yes", ["c"]], ["sat 11am", "yes", ["b"]],
+      ["No problem, either works", "yes", ["a", "b", "c"]], ["no plans Thursday, so Thursday works", "yes", ["a"]],
+      // A refusal and then a pick is mixed: asked again, never booked (network-consent-1).
+      ["no, Saturday works", "unclear", []],
     ];
     for (const [t, answer, keys] of cases) expect([t, parse(t, o)]).toEqual([t, { answer, keys }]);
   });
@@ -199,6 +204,7 @@ describe("copy", () => {
       copy.requestConfirm("they're into tennis", "this weekend", TIMES), copy.plansBuddyProbe("McCarren Park", "this weekend", "Greenpoint", TIMES),
       copy.requestTimes("they want to find a regular climbing partner too", TIMES), copy.timesRetry(TIMES),
       copy.welcomeAskAge("Sam"), copy.welcomeAfterAge, copy.requestWaiting,
+      copy.probeClarify, copy.requestOutOfScope, copy.requestOnWatch, copy.reportUnmatched, copy.probe("social", "", "this week", undefined), copy.growthGap(undefined, "a weekend tennis partner"),
     ];
     for (const t of all) expect([t, styleViolations(t)]).toEqual([t, []]);
     expect(styleViolations(copy.welcome("Sam"), { firstContact: true })).toEqual([]);
@@ -221,5 +227,120 @@ describe("copy", () => {
     expect(styleViolations("Closest match I found so far: someone nearby, and they works in climate policy.")).toEqual(["grammar"]);
     expect(styleViolations("Someone near Chelsea asked me for meet people working in climate.")).toEqual(["grammar"]);
     expect(styleViolations("would you be up for climate_tech near Astoria?")).toEqual(["raw_tag"]);
+  });
+});
+
+// ---------------------------------------------------------------- audit 2026-10-08 (network)
+describe("consent: refusals first, conditionals and hedges unclear (network-consent-1, -2)", () => {
+  const o = [{ key: "a", start: 1, end: 2, label: "Thursday 7pm" }, { key: "b", start: 3, end: 4, label: "Saturday 11am" }, { key: "c", start: 5, end: 6, label: "Sunday 2pm" }];
+  test("NET-01: refusals that name a day are never a yes; conditional and hedged replies are unclear", () => {
+    for (const t of ["No. Saturday I'm at a wedding", "Thursday? lol no", "no, sunday is my mom's birthday", "Nope. Thursday I work late"]) expect([t, parseProbeReply(t, o).answer]).toEqual([t, "no"]);
+    for (const t of ["sure, but only with a woman", "who is it? thursday maybe", "maybe saturday", "only if it's after 7"]) expect([t, parseProbeReply(t, o).answer]).toEqual([t, "unclear"]);
+  });
+  test("NET-02: any refusal lead, any separator, any offered time phrase is never a yes (property, 200 cases)", () => {
+    const leads = ["no", "nope", "nah", "no thanks", "not this week", "can't", "sorry, no", "absolutely not", "definitely not", "I'll pass", "pass", "not for me", "not interested", "I'm good, thanks", "rather not", "hard pass", "no way", "can't make it", "count me out", "not really"];
+    const seps = [". ", ", ", "! ", " - ", "... ", "\n", " "];
+    const times = ["Saturday I'm at a wedding", "Thursday?", "sunday is my only free day", "the first one", "7pm", "a or b", "any of them", "either", "Saturday works for my friend", "thursday 7pm"];
+    const rng = new Rng("net-02");
+    for (let i = 0; i < 200; i++) {
+      const lead = rng.pick(leads), sep = rng.pick(seps), time = rng.pick(times);
+      const t = rng.bool(0.5) ? `${lead}${sep}${time}` : `${time}${sep}${lead}`;
+      expect([t, parseProbeReply(t, o).answer === "yes", parseProbeReply(t).answer === "yes"]).toEqual([t, false, false]);
+    }
+  });
+  test("NET-04: negated affirmatives are never a yes", () => {
+    for (const t of ["absolutely not", "definitely not", "not sure", "not ok", "ok no", "ok wait no", "feeling down today", "not down", "never ok"]) expect([t, parseYesNo(t) === "yes"]).toEqual([t, false]);
+    expect(parseYesNo("not sure")).toBe("unclear");
+    expect(parseYesNo("absolutely not")).toBe("no");
+    expect(consentOf("sure, but only with a woman")).toEqual({ answer: "unclear", why: "conditional" });
+    expect(consentOf("no... ok fine yes")).toEqual({ answer: "unclear", why: "mixed" });
+  });
+});
+
+describe("classify: abuse, disclosures, minors, invites (network-consent-4, -8, -10, -23)", () => {
+  test("NET-10: third-person disclosure is not sender abuse", () => {
+    for (const t of ["Someone asked me to send them $200", "he asked me to venmo him $50", "she keeps asking for my phone number", "he said I know where she lives"]) {
+      const c = classify(t);
+      expect([t, c.abuse]).toEqual([t, []]);
+    }
+    // Money asked for the sender is theirs, even inside a story.
+    expect(classify("he asked me to venmo him $50 and send me $100 too").abuse).toEqual(["scam_money"]);
+    expect(classify("Someone asked me to send them $200").disclosure ?? []).toEqual([]);
+    expect(classify("he says he can get me 30% monthly returns").disclosure).toEqual(["scam_money"]);
+  });
+  test("network-consent-8: my startup, I'll pay $50, print, they're cute are not abuse", () => {
+    for (const t of ["I work at my startup", "help moving a couch, I'll pay $50", "can you print the list of events?", "they're cute dogs"]) expect([t, classify(t).abuse]).toEqual([t, []]);
+  });
+  test("NET-16: teacher and parent phrasing is not a minor signal; a first-person student one still is", () => {
+    for (const t of ["I teach high school", "I coach after school", "my kid has homework", "I'm a middle school teacher"]) expect([t, classify(t).minorSignal]).toEqual([t, false]);
+    expect(classify("math test tmrw").minorSignal).toBe(true);
+    expect(classify("I'm only 15").statedAge).toBe(15);
+    expect(classify("15f here").statedAge).toBe(15);
+  });
+  test("network-service-1: only first-person present-tense ages count", () => {
+    for (const t of ["I act like I am 12 years old", "when I was 12 years old I moved here", "she said I'm 12 lol", "I feel like I'm 16 again"]) expect([t, statedAge(t)]).toEqual([t, undefined]);
+  });
+  test("NET-54: invites need explicit intent", () => {
+    expect(classify("My friend Sam and I want a climbing partner").kind).toBe("people_request");
+    expect(classify("I want to invite my friend Sam")).toMatchObject({ kind: "invite_friend", friendName: "Sam" });
+    expect(classify("report back when Grace is free").kind).not.toBe("report");
+  });
+  test("NET-21: an unparsed home leaves the area unset with a flag (never Midtown)", () => {
+    expect(extractProfile("I live in Jersey City")).toMatchObject({ areaUnknown: true });
+    expect(extractProfile("I live in Jersey City").area).toBeUndefined();
+    expect(extractProfile("I'm in Brooklyn").area).toBeUndefined();
+    expect(extractProfile("based in bed stuy").area).toBe("Bed-Stuy");
+  });
+});
+
+describe("trust: corroboration and block abuse (network-consent-7, -14, -27)", () => {
+  test("NET-30: five reports from one reporter raise a score-2 target by at most 3, never to hold", () => {
+    const t = new Trust();
+    t.add("x", 0, "sales_spam", 2);
+    for (let i = 0; i < 5; i++) t.report("x", "r1", i, { met: true });
+    expect(t.get("x").score).toBeLessThanOrEqual(5);
+    expect(t.level("x")).not.toBe("hold");
+  });
+  test("NET-31 (unit): a report with no shared interaction adds no points", () => {
+    const t = new Trust();
+    expect(t.report("x", "r1", 0, { met: false })).toBe(0);
+    expect(t.report("x", "r2", 1, { met: false })).toBe(0);
+    expect(t.level("x")).toBe("ok");
+  });
+  test("NET-32: a staff lift resets corroboration", () => {
+    const t = new Trust();
+    t.add("x", 0, "scam_money", HOLD);
+    t.report("x", "r1", 1, { met: true });
+    expect(t.lift("x", 2)).toBe(true);
+    expect(t.get("x").reportsFrom.size).toBe(0);
+    t.report("x", "r2", 3, { met: true });
+    expect(t.level("x")).toBe("ok");
+  });
+  test("NET-46: blocking prior counterparts adds nothing; repeat blocks count once; reports are not blocks", () => {
+    const t = new Trust();
+    for (const target of ["p", "q", "s"]) t.block("victim", 10, { target, met: true });
+    expect(t.get("victim").score).toBe(0);
+    for (let i = 0; i < 5; i++) t.block("b", 10 + i, { target: "same", met: false });
+    expect(t.get("b").events.some(e => e.kind === "block_abuse")).toBe(false);
+    for (let i = 0; i < 3; i++) t.report(`t${i}`, "reporter", 20, { met: true });
+    expect(t.get("reporter").events.some(e => e.kind === "block_abuse")).toBe(false);
+  });
+  test("NET-63: watch lasts until the score decays below 3, as documented (14 days from 3, 28 from 4, 42 from 5)", () => {
+    for (const [score, days] of [[3, 14], [4, 28], [5, 42]] as const) {
+      const t = new Trust();
+      t.add("x", 0, "sales_spam", score);
+      t.decay((days - 1) * DAY);
+      expect([score, t.level("x")]).toEqual([score, "watch"]);
+      t.decay(days * DAY);
+      expect([score, t.level("x")]).toEqual([score, "ok"]);
+    }
+  });
+});
+
+describe("plan allowance ledger (attention-MISSED-1)", () => {
+  test("planLedger carries repliedAt from the member's next message", () => {
+    const l = planLedger("m", [100, 500], [50, 200, 900]);
+    expect(l.map(e => e.repliedAt)).toEqual([200, 900]);
+    expect(planLedger("m", [100], [])[0]!.repliedAt).toBeUndefined();
   });
 });

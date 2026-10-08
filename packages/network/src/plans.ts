@@ -77,9 +77,14 @@ export function activityHints(interests: readonly string[]): string[] {
  * The plan-only ledger (founder decision 2026-10-08, the plan allowance): one entry per plan invite
  * sent to this member. Passed to attention.composeMessage with plans.planAllowanceConfig, so the
  * allowance (1 per 7 days) is counted on plan invites only and the intro cap never sees them.
+ * Each entry carries `repliedAt`: the member's first message after it (attention-MISSED-1). Without
+ * it every invite read as unanswered, and the allowance stopped for good after the second one.
  */
-export function planLedger(memberId: MemberId, sentAt: readonly number[]): AttentionLedgerEntry[] {
-  return sentAt.map((at, i) => ({ messageId: `plan:${memberId}:${i}`, memberId, at, kind: "digest", itemIds: [], countsAgainstCap: true }));
+export function planLedger(memberId: MemberId, sentAt: readonly number[], replies: readonly number[] = []): AttentionLedgerEntry[] {
+  return sentAt.map((at, i) => {
+    const repliedAt = replies.find(t => t > at);
+    return { messageId: `plan:${memberId}:${i}`, memberId, at, kind: "digest", itemIds: [], countsAgainstCap: true, ...(repliedAt !== undefined ? { repliedAt } : {}) };
+  });
 }
 
 /** A booked meeting blocks this long on each side for the booking-conflict check (plans ask 5). */

@@ -4,6 +4,9 @@
 //    cross_app_safety (the cross-app person view; "@*" only).
 //  - Static tokens: OBSERVATORY_TOKENS="admin:<tok>,reviewer@slop:<tok>,<tok>:safety@peon" (role@app:token
 //    or token:role@app; a token listed twice holds both grants). OBSERVATORY_TOKEN is an admin@* token.
+//    A token is sent only as "Authorization: Bearer <token>", never in a URL (it would stay in the
+//    history, in logs and in Referer headers), and the server refuses tokens shorter than 32
+//    characters. With SSO on, tokens are refused: every person signs in as themselves.
 //  - SSO: OBSERVATORY_TRUST_CF_ACCESS=1 takes the staff email from Cloudflare Access, and maps emails
 //    to roles with OBSERVATORY_ROLES="email:role@app,..." and, in real mode, platform.staff_roles. The email is trusted only from a verified
 //    Cf-Access-Jwt-Assertion: RS256 against the team's keys (https://<team>.cloudflareaccess.com/cdn-cgi/access/certs,
@@ -46,8 +49,9 @@ const addGrant = <K>(out: Map<K, RoleGrant[]>, k: K, g: RoleGrant) => {
  * OBSERVATORY_TOKENS -> token -> grants. Each entry is "role[@app]:token" (the old "role:token" is
  * "role@*:token") or "token:role[@app]". A token listed twice holds both grants.
  */
-export function parseTokenGrants(spec: string | undefined, o: { explicitApp?: boolean } = {}): Map<string, RoleGrant[]> {
+export function parseTokenGrants(spec: string | undefined, o: { explicitApp?: boolean; minLength?: number } = {}): Map<string, RoleGrant[]> {
   const out = new Map<string, RoleGrant[]>();
+  const short = (tok: string) => { if (o.minLength && tok.length < o.minLength) throw new Error(`OBSERVATORY_TOKENS: a token is shorter than ${o.minLength} characters (use a random token, for example openssl rand -base64 32)`); return tok; };
   for (const part of (spec ?? "").split(",").map(x => x.trim()).filter(Boolean)) {
     const i = part.indexOf(":"), j = part.lastIndexOf(":");
     const bad = () => new Error(`OBSERVATORY_TOKENS: bad entry "${part.slice(0, Math.max(i, 0))}:..." (use role@app:token or token:role@app; role one of ${STAFF_ROLES.join(", ")})`);
@@ -58,8 +62,8 @@ export function parseTokenGrants(spec: string | undefined, o: { explicitApp?: bo
     if (o.explicitApp && ((isGrant(left) && !left.includes("@")) || (isGrant(right) && !right.includes("@") && !isGrant(left)))) {
       throw new Error(`OBSERVATORY_TOKENS: "${isGrant(left) ? left : right}" names no app; in production write role@app or role@*`);
     }
-    if (isGrant(left) && part.slice(i + 1).trim()) addGrant(out, part.slice(i + 1).trim(), parseGrant(left, "OBSERVATORY_TOKENS"));
-    else if (isGrant(right) && part.slice(0, j).trim()) addGrant(out, part.slice(0, j).trim(), parseGrant(right, "OBSERVATORY_TOKENS"));
+    if (isGrant(left) && part.slice(i + 1).trim()) addGrant(out, short(part.slice(i + 1).trim()), parseGrant(left, "OBSERVATORY_TOKENS"));
+    else if (isGrant(right) && part.slice(0, j).trim()) addGrant(out, short(part.slice(0, j).trim()), parseGrant(right, "OBSERVATORY_TOKENS"));
     // A role with an app that is wrong ("reviewer@tinder"): say what is wrong with it.
     else if (left.includes("@")) parseGrant(left, "OBSERVATORY_TOKENS");
     else if (right.includes("@")) parseGrant(right, "OBSERVATORY_TOKENS");
@@ -123,16 +127,24 @@ export interface StaffAuthOptions {
   stored?: StaffRoleSource;
 }
 
+/** An SSO user's grants now: OBSERVATORY_ROLES and platform.staff_roles (re-read every minute). */
+export function ssoGrants(email: string, o: Pick<StaffAuthOptions, "roles" | "stored">): RoleGrant[] {
+  const grants = [...(o.roles.get(email) ?? [])];
+  for (const g of o.stored?.grants(email) ?? []) if (!grants.some(x => x.role === g.role && x.app === g.app)) grants.push(g);
+  return grants;
+}
+
 export type AuthResult = { user: StaffUser } | { status: 401 | 403; error: string };
 
 const ACCESS_HEADERS = ["cf-access-jwt-assertion", "cf-access-authenticated-user-email"];
 
 /**
- * Who is calling: Cloudflare Access when trusted (the JWT is verified first), else a bearer token or
- * ?token=. A request that carries Access headers is never taken on its token.
+ * Who is calling: Cloudflare Access when trusted (the JWT is verified first), else a bearer token
+ * (Authorization header only). With SSO on, a token is refused: each person signs in as themselves.
  */
 export async function authenticateStaff(req: Request, o: StaffAuthOptions): Promise<AuthResult> {
-  if (o.trustCfAccess && ACCESS_HEADERS.some(h => req.headers.has(h))) {
+  if (o.trustCfAccess && !ACCESS_HEADERS.some(h => req.headers.has(h))) return { status: 401, error: "sign in through Cloudflare Access (staff tokens are off when single sign-on is on)" };
+  if (o.trustCfAccess) {
     const jwt = req.headers.get("cf-access-jwt-assertion")?.trim();
     // Cloudflare Access sends the assertion with every request it lets through; the email header alone proves nothing.
     if (!jwt) return { status: 401, error: "missing Cloudflare Access assertion" };
@@ -141,18 +153,17 @@ export async function authenticateStaff(req: Request, o: StaffAuthOptions): Prom
     if ("error" in v) return { status: 401, error: `Cloudflare Access token refused: ${v.error}` };
     const header = req.headers.get("cf-access-authenticated-user-email")?.trim().toLowerCase();
     if (header && header !== v.email) return { status: 401, error: "Cloudflare Access email does not match the token" };
-    const grants = [...(o.roles.get(v.email) ?? [])];
-    for (const g of o.stored?.grants(v.email) ?? []) if (!grants.some(x => x.role === g.role && x.app === g.app)) grants.push(g);
+    const grants = ssoGrants(v.email, o);
     if (!grants.length) return { status: 403, error: "no staff role for this account" };
-    return { user: staffUser(v.email, grants, "sso") };
+    return { user: { ...staffUser(v.email, grants, "sso"), expiresAt: v.exp } };
   }
   return authenticate(req, o);
 }
 
-/** A bearer token or ?token= (role tokens only; Cloudflare Access goes through authenticateStaff). */
+/** A bearer token in the Authorization header (role tokens only; Cloudflare Access goes through authenticateStaff). Never ?token=. */
 export function authenticate(req: Request, o: Pick<StaffAuthOptions, "tokens"> & Partial<StaffAuthOptions>): AuthResult {
   const auth = req.headers.get("authorization");
-  const given = auth?.startsWith("Bearer ") ? auth.slice(7).trim() : new URL(req.url).searchParams.get("token") ?? "";
+  const given = auth?.startsWith("Bearer ") ? auth.slice(7).trim() : "";
   if (given) for (const [tok, held] of o.tokens) {
     if (!sameToken(given, tok)) continue;
     const grants = held instanceof Set ? [...held].map(role => ({ role, app: "*" })) : held;
@@ -228,6 +239,10 @@ export interface AccessConfig {
   certsUrl?: string;
   /** How long fetched keys are used before they are fetched again (default 1 hour). */
   cacheMs?: number;
+  /** A certs request that takes longer fails (default 5 s). */
+  timeoutMs?: number;
+  /** When a refetch fails, keys this old are still used (default 24 hours after they were fetched): Cloudflare keeps old keys valid for days. */
+  staleMs?: number;
   /** Tests: the certs request and the clock. */
   fetch?: (url: string) => Promise<Response>;
   now?: () => number;
@@ -264,13 +279,23 @@ export class AccessVerifier {
     const age = this.now() - this.fetchedAt;
     if (age > (this.c.cacheMs ?? 3_600_000) || (!this.keys.has(kid) && age > ACCESS_REFETCH_MS)) {
       this.loading ??= this.load().finally(() => { this.loading = undefined; });
-      await this.loading;
+      try { await this.loading; } catch (e) {
+        // A failed refetch keeps the last good keys for a while (stale grace), so a Cloudflare blip does not sign everyone out.
+        if (!this.keys.size || age > (this.c.cacheMs ?? 3_600_000) + (this.c.staleMs ?? 86_400_000)) throw e;
+        if (!this.staleWarned) { this.staleWarned = true; console.warn(`Observatory: Access certs refetch failed (${(e as Error).message}); using the keys fetched ${Math.round(age / 60_000)} min ago`); }
+      }
     }
     return this.keys.get(kid);
   }
+  private staleWarned = false;
 
   private async load() {
-    const r = await (this.c.fetch ?? fetch)(this.certsUrl);
+    const ms = this.c.timeoutMs ?? 5_000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const r = await Promise.race([
+      (this.c.fetch ?? ((u: string) => fetch(u, { signal: AbortSignal.timeout(ms) })))(this.certsUrl),
+      new Promise<never>((_, no) => { timer = setTimeout(() => no(new Error(`certs request timed out after ${ms} ms`)), ms); }),
+    ]).finally(() => clearTimeout(timer));
     if (!r.ok) throw new Error(`certs request failed: HTTP ${r.status}`);
     const body = await r.json() as { keys?: (JsonWebKey & { kid?: string; alg?: string })[] };
     const keys = new Map<string, CryptoKey>();
@@ -280,9 +305,10 @@ export class AccessVerifier {
     }
     this.keys = keys;
     this.fetchedAt = this.now();
+    this.staleWarned = false;
   }
 
-  async verify(token: string): Promise<{ email: string } | { error: string }> {
+  async verify(token: string): Promise<{ email: string; exp: number } | { error: string }> {
     const parts = token.split(".");
     if (parts.length !== 3) return { error: "malformed token" };
     let header: { alg?: string; kid?: string }, claims: Record<string, unknown>;
@@ -303,7 +329,7 @@ export class AccessVerifier {
     if (nbf !== undefined && nbf > now + ACCESS_SKEW_MS) return { error: "not valid yet" };
     // A service token (no email) is not a person: staff sign in as themselves (runbook-real 7.3).
     if (typeof claims.email !== "string" || !claims.email.includes("@")) return { error: "no email in the token" };
-    return { email: claims.email.trim().toLowerCase() };
+    return { email: claims.email.trim().toLowerCase(), exp };
   }
 }
 
@@ -333,7 +359,12 @@ export class FileAudit implements AuditSink {
   async list(q: Parameters<AuditSink["list"]>[0] = {}): Promise<AuditEntry[]> {
     await this.chain;
     const text = await readFile(this.file, "utf8").catch(() => "");
-    const rows = text.split("\n").filter(Boolean).map((l, i) => ({ id: i + 1, ...(JSON.parse(l) as AuditEntry) }));
+    // One bad line (a crash in the middle of a write, a hand edit) must not hide the rest of the log.
+    const rows: AuditEntry[] = [];
+    text.split("\n").forEach((l, i) => {
+      if (!l.trim()) return;
+      try { const e = JSON.parse(l) as AuditEntry; if (e && typeof e === "object" && typeof e.action === "string") rows.push({ ...e, id: i + 1 }); } catch { /* skipped: not a row */ }
+    });
     return rows.filter(e => match(e, q)).reverse().slice(0, q.limit ?? 200);
   }
   async close() { await this.chain; }

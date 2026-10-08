@@ -2,6 +2,7 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Join the waitlist · peon.biz</title><meta name="description" content="Join peon.biz.">
 <meta name="theme-color" content="#f08a24">
+<meta name="turnstile-sitekey" content="{{TURNSTILE_SITE_KEY}}">
 <link rel="stylesheet" href="./styles.css"><script type="module" src="../../shared/join.ts"></script></head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -11,14 +12,15 @@
 </div>
 <main id="main" class="narrow page">
 <h1>Join the waitlist</h1>
-<p class="lede">peon.biz is not making introductions yet. Join the waitlist and we will text you when it opens. You must be 18 or older.</p>
+<p class="lede">peon.biz is not making introductions yet. Join the waitlist and we will text you when it opens.</p>
+<p class="small">You can join at 13 or older. Only adults 18 and older are matched. If you are under 18, peon.biz never matches you or introduces you to anyone.</p>
 <div class="audit"><h2>How we handle hiring decisions</h2>
-<p>We do not use automated ranking for jobs in New York City until an independent bias audit is done and its summary is published on this site. A person on our team reviews every introduction before we send it. peon.biz does not decide who gets hired.</p></div>
-<div class="flow" data-join data-min-age="18"
-  data-msg-under-age="peon.biz is for people 18 and older. We did not save your details."
+<p>Software only suggests possible fits. A person on our team reviews every introduction before we send it, and the team that hires makes every hiring decision. peon.biz does not decide who gets hired.</p></div>
+<div class="flow" data-join data-min-age="13"
+  data-msg-under-age="You must be 13 or older to join peon.biz. We did not save your details."
   data-msg-invite-only="peon.biz is not open to new members right now. Please try again later.">
   <p class="notice" data-flow-error role="alert" hidden></p>
-  <noscript><p class="notice">Joining needs JavaScript. You can also email <a href="mailto:help@peon.biz">help@peon.biz</a>.</p></noscript>
+  <noscript><p class="notice">Joining needs JavaScript. You can also email <a href="mailto:help@ntwrk.love">help@ntwrk.love</a>.</p></noscript>
   <section data-step="loading" hidden><p aria-live="polite">Loading…</p></section>
 
   <section data-step="phone" hidden>
@@ -28,6 +30,7 @@
       <div class="field"><label for="phone">Mobile number</label>
         <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="(212) 555-0123" required aria-describedby="phone-hint">
         <p class="hint" id="phone-hint">US numbers only. Message and data rates may apply.</p></div>
+      <div class="human" data-turnstile></div>
       <p class="error" data-error role="alert" hidden></p>
       <button class="btn" type="submit" data-busy="Sending…">Text me a code</button>
     </form>
@@ -51,7 +54,7 @@
     <form data-form="profile" novalidate>
       <div class="field"><label for="firstName">First name</label><input id="firstName" name="firstName" type="text" autocomplete="given-name" required data-focus></div>
       <div class="field"><label for="age">Age</label><input id="age" name="age" type="number" inputmode="numeric" min="1" max="120" required aria-describedby="age-hint">
-        <p class="hint" id="age-hint">You must be <span data-slot="minJoinAge">18</span> or older.</p></div>
+        <p class="hint" id="age-hint">You must be <span data-slot="minJoinAge">13</span> or older to join. Only adults 18 and older are matched.</p></div>
 
       <fieldset><legend>I am</legend><div class="choice">
         <label><input type="radio" name="interests" value="looking-for-work" required>Looking for work</label>
@@ -71,7 +74,7 @@
 
   <section data-step="done" hidden>
     <h2>You're on the waitlist, <span data-slot="firstName"></span>.</h2>
-    <p>We will text you when peon.biz opens. Until then, we send only waitlist updates. Reply STOP at any time to stop.</p>
+    <p>We will text you when peon.biz opens. Until then, we send only waitlist updates. Text STOP at any time to stop all texts, or "leave peon.biz" to stop peon.biz only.</p>
     <p><a href="/settings">Settings</a></p>
   </section>
 
@@ -88,7 +91,7 @@
 </div>
 </main>
 <footer class="foot"><div class="wrap">
-  <p>peon.biz is operated by Eliza Research Corporation. Questions: <a href="mailto:help@peon.biz">help@peon.biz</a>. Message and data rates may apply. Reply STOP to stop and HELP for help.</p>
-  <nav aria-label="Legal"><a href="/guidelines">Community guidelines</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/sms-terms">Text messaging terms</a><a href="/settings">Your data</a></nav>
+  <p>peon.biz is powered by <a href="https://ntwrk.love">The Network</a> and operated by Eliza Research Corporation. Help: <a href="/support">support</a> or <a href="mailto:help@ntwrk.love">help@ntwrk.love</a>. Message and data rates may apply. Text STOP to stop all texts from us, or "leave peon.biz" to stop peon.biz only. Text HELP for help.</p>
+  <nav aria-label="Legal"><a href="/guidelines">Community guidelines</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/sms-terms">Text messaging terms</a><a href="/settings">Your data</a><a href="/support">Support</a></nav>
 </div></footer>
 </body></html>

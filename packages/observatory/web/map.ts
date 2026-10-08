@@ -8,6 +8,7 @@ import "leaflet/dist/leaflet.css";
 import { memberPoint, NEIGHBORHOOD, VENUES } from "@thenetwork/network/geo"; // geo only: the package root pulls server code into the browser bundle
 import type { ObsMember } from "../src/types.ts";
 import { EDGE_STYLE, memberColor, OPP_COLOR } from "./graph.ts";
+import { memberTooltipText, textNode } from "./safe.ts";
 import { focusKey, OPEN, store } from "./store.ts";
 
 const NYC: L.LatLngExpression = [40.73, -73.95];
@@ -39,7 +40,7 @@ export class MapView {
     this.edgeLayer.addTo(this.map); this.oppLayer.addTo(this.map); this.meetLayer.addTo(this.map); this.venueLayer.addTo(this.map);
     for (const v of VENUES) {
       L.circleMarker([v.lat, v.lng], { renderer: this.renderer, radius: 3.5, color: "#ffd45c", weight: 1, fillColor: "#ffd45c", fillOpacity: 0.25 })
-        .bindTooltip(`${v.name} · ${v.neighborhood}`, { direction: "top" }).addTo(this.venueLayer);
+        .bindTooltip(textNode(`${v.name} · ${v.neighborhood}`), { direction: "top" }).addTo(this.venueLayer);
     }
     if (store.pendingFly) { this.map.setView([store.pendingFly.lat, store.pendingFly.lng], 15); store.pendingFly = null; this.lastFocusKey = focusKey(store.ui.focus); }
     this.raf = requestAnimationFrame(this.frame);
@@ -110,10 +111,7 @@ export class MapView {
       if (!mk) {
         mk = L.circleMarker(this.point(m), { renderer: this.renderer, radius: 4 });
         mk.on("click", e => { if ((e.originalEvent as MouseEvent).shiftKey) store.togglePick(m.id); else store.focus({ kind: "member", id: m.id }); });
-        mk.bindTooltip(() => {
-          const cur = store.members.get(m.id) ?? m;
-          return `${cur.name} · ${cur.area ?? ""}${cur.minor ? " · Under 18" : ""}${cur.trust === "hold" ? " · hold" : cur.trust === "watch" ? " · watch" : ""}`;
-        }, { direction: "top" });
+        mk.bindTooltip(() => textNode(memberTooltipText(store.members.get(m.id) ?? m)), { direction: "top" });
         mk.addTo(this.map);
         this.members.set(m.id, mk);
       }
@@ -172,7 +170,7 @@ export class MapView {
       }
       for (const v of meetings.values()) {
         const mk = L.circleMarker([v.lat, v.lng], { renderer: this.renderer, radius: 6 + Math.min(10, v.n * 1.5), color: "#3dff9a", weight: 2, fillColor: "#3dff9a", fillOpacity: v.upcoming ? 0.45 : 0.18 })
-          .bindTooltip(`${v.name}: ${v.n} meeting${v.n > 1 ? "s" : ""}${v.upcoming ? ` (${v.upcoming} upcoming)` : ""}`, { direction: "top" });
+          .bindTooltip(textNode(`${v.name}: ${v.n} meeting${v.n > 1 ? "s" : ""}${v.upcoming ? ` (${v.upcoming} upcoming)` : ""}`), { direction: "top" });
         mk.on("click", () => {
           if (v.opps.length === 1) { store.focus({ kind: "opportunity", id: v.opps[0]! }); return; }
           const venue = VENUES.find(x => x.name === v.name);

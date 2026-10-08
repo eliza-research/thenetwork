@@ -3,7 +3,7 @@
 import { SQL } from "bun";
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
-import type { Membership, OtpChallenge, PeopleStore, Person, PhoneHold, PhoneIdentity, PhoneMethod, Session, ShareGrant } from "./store.ts";
+import type { Ban, HitResult, HitRule, Membership, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneHold, PhoneIdentity, PhoneMethod, Session, ShareGrant } from "./store.ts";
 
 type Row = Record<string, any>;
 const ms = (v: unknown): number | null => (v === null || v === undefined ? null : new Date(v as string | Date).getTime());
@@ -16,13 +16,17 @@ const membership = (r: Row): Membership => ({
   app: r.app_id, personId: r.person_id, memberId: r.member_id, state: r.state, review: r.review ?? null, firstName: r.first_name ?? null,
   profile: json<Record<string, unknown>>(r.profile) ?? {}, joinedAt: ms(r.joined_at), leftAt: ms(r.left_at),
 });
-const consent = (r: Row): ConsentEvent => ({ e164: r.e164, app: r.app_id ?? null, line: r.line ?? null, state: r.state, source: r.source, wording: r.wording ?? null, at: ms(r.at)! });
+const consent = (r: Row): ConsentEvent => ({
+  e164: r.e164, app: r.app_id ?? null, line: r.line ?? null, state: r.state, source: r.source, wording: r.wording ?? null,
+  wordingVersion: r.wording_version ?? null, ref: r.ref ?? null, at: ms(r.at)!,
+});
+const pendingRow = (r: Row): PendingText => ({ phoneHash: r.phone_hash, kind: r.kind, app: r.app_id, name: r.name ?? null, age: r.age ?? null, at: ms(r.at)! });
 const challenge = (r: Row): OtpChallenge => ({
-  id: String(r.id), app: r.app_id, e164: r.e164, provider: r.provider, codeHash: r.code_hash ?? null, attempts: r.attempts,
+  id: String(r.id), app: r.app_id, e164: r.e164, provider: r.provider, providerRef: r.provider_ref ?? null, codeHash: r.code_hash ?? null, attempts: r.attempts,
   createdAt: ms(r.created_at)!, expiresAt: ms(r.expires_at)!, consumedAt: ms(r.consumed_at),
 });
 const session = (r: Row): Session => ({
-  tokenHash: r.token_hash, app: r.app_id, e164: r.e164, personId: r.person_id ?? null, createdAt: ms(r.created_at)!, expiresAt: ms(r.expires_at)!,
+  tokenHash: r.token_hash, app: r.app_id, e164: r.e164, personId: r.person_id ?? null, createdAt: ms(r.created_at)!, startedAt: ms(r.started_at ?? r.created_at)!, expiresAt: ms(r.expires_at)!,
   rotatedFrom: r.rotated_from ?? null, revokedAt: ms(r.revoked_at),
 });
 
@@ -39,14 +43,25 @@ export class PgPeopleStore implements PeopleStore {
     const [r] = await this.sql`select * from platform.phone_identities where e164 = ${e164}`;
     return r ? phone(r) : undefined;
   }
+  async detachPhoneHash(personId: string) {
+    await this.sql`update platform.people set phone_hash = null where id = ${personId}::uuid`;
+  }
+  async findPhoneByHash(phoneHash: string) {
+    const [r] = await this.sql`select ph.* from platform.people p join platform.phone_identities ph on ph.person_id = p.id
+      where p.phone_hash = ${phoneHash} and p.deleted_at is null order by ph.verified_at desc limit 1`;
+    return r ? phone(r) : undefined;
+  }
   async getPerson(id: string) {
     const [r] = await this.sql`select * from platform.people where id = ${id}`;
     return r ? person(r) : undefined;
   }
-  async createPerson(p: { id: string; e164: string; method: PhoneMethod; at: number; lowestAge: number | null }) {
+  async createPerson(p: { id: string; e164: string; method: PhoneMethod; at: number; lowestAge: number | null; phoneHash?: string }) {
     return this.sql.begin(async tx => {
-      const [r] = await tx`insert into platform.people (id, lowest_age, created_at) values (${p.id}, ${p.lowestAge}, ${ts(p.at)}) returning *`;
-      await tx`insert into platform.phone_identities (e164, person_id, verified_at, method, last_seen_at) values (${p.e164}, ${p.id}, ${ts(p.at)}, ${p.method}, ${ts(p.at)})`;
+      // A tombstone with this phone's keyed hash: the same person again (blocks against them still hold).
+      const [back] = p.phoneHash ? await tx`update platform.people set deleted_at = null, lowest_age = ${p.lowestAge}
+        where id = (select id from platform.people where phone_hash = ${p.phoneHash} and deleted_at is not null order by deleted_at desc limit 1) returning *` : [];
+      const [r] = back ? [back] : await tx`insert into platform.people (id, lowest_age, created_at, phone_hash) values (${p.id}, ${p.lowestAge}, ${ts(p.at)}, ${p.phoneHash ?? null}) returning *`;
+      await tx`insert into platform.phone_identities (e164, person_id, verified_at, method, last_seen_at) values (${p.e164}, ${r!.id}, ${ts(p.at)}, ${p.method}, ${ts(p.at)})`;
       return person(r!);
     });
   }
@@ -94,8 +109,10 @@ export class PgPeopleStore implements PeopleStore {
   }
 
   async addConsent(e: ConsentEvent) {
-    await this.sql`insert into platform.consent_events (e164, app_id, line, state, source, wording, at)
-      values (${e.e164}, ${e.app}, ${e.line ?? null}, ${e.state}, ${e.source}, ${e.wording ?? null}, ${ts(e.at)})`;
+    const r = await this.sql`insert into platform.consent_events (e164, app_id, line, state, source, wording, wording_version, ref, at)
+      values (${e.e164}, ${e.app}, ${e.line ?? null}, ${e.state}, ${e.source}, ${e.wording ?? null}, ${e.wordingVersion ?? null}, ${e.ref ?? null}, ${ts(e.at)})
+      on conflict (e164, ref) where ref is not null do nothing returning id`;
+    return r.length > 0;
   }
   async lastConsent(e164: string, app: AppId): Promise<ConsentLast> {
     const rows = await this.sql`
@@ -129,6 +146,20 @@ export class PgPeopleStore implements PeopleStore {
     return !!r?.x;
   }
 
+  async ban(b: Ban) {
+    await this.sql`insert into platform.bans (id, scope, person_id, phone_hash, reason, report_id, banned_by, at)
+      values (${b.id}, ${b.scope}, ${b.personId}, ${b.phoneHash}, ${b.reason}, ${b.reportId}, ${b.bannedBy}, ${ts(b.at)}) on conflict (id) do nothing`;
+  }
+  async isBanned(phoneHash: string, personId?: string | null) {
+    const [r] = await this.sql`select 1 from platform.bans where phone_hash = ${phoneHash} or (scope = 'person' and ${personId ?? null}::uuid is not null and person_id = ${personId ?? null}::uuid) limit 1`;
+    return !!r;
+  }
+  async phoneHashesOf(personId: string) {
+    // The person's keyed phone hash (people.phone_hash, set at createPerson). One verified phone per person today.
+    const rows = await this.sql`select phone_hash from platform.people where id = ${personId}::uuid and phone_hash is not null`;
+    return (rows as Row[]).map(r => r.phone_hash as string);
+  }
+
   async suppress(phoneHash: string, reason: string, at: number) {
     await this.sql`insert into platform.suppression (phone_hash, reason, at) values (${phoneHash}, ${reason}, ${ts(at)}) on conflict do nothing`;
   }
@@ -142,8 +173,8 @@ export class PgPeopleStore implements PeopleStore {
   }
 
   async putChallenge(c: Omit<OtpChallenge, "id">) {
-    const [r] = await this.sql`insert into platform.otp_challenges (app_id, e164, provider, code_hash, attempts, created_at, expires_at, consumed_at)
-      values (${c.app}, ${c.e164}, ${c.provider}, ${c.codeHash}, ${c.attempts}, ${ts(c.createdAt)}, ${ts(c.expiresAt)}, ${ts(c.consumedAt)}) returning id`;
+    const [r] = await this.sql`insert into platform.otp_challenges (app_id, e164, provider, provider_ref, code_hash, attempts, created_at, expires_at, consumed_at)
+      values (${c.app}, ${c.e164}, ${c.provider}, ${c.providerRef}, ${c.codeHash}, ${c.attempts}, ${ts(c.createdAt)}, ${ts(c.expiresAt)}, ${ts(c.consumedAt)}) returning id`;
     return String(r!.id);
   }
   async latestChallenge(app: AppId, e164: string) {
@@ -161,8 +192,8 @@ export class PgPeopleStore implements PeopleStore {
   }
 
   async putSession(s: Session) {
-    await this.sql`insert into platform.sessions (token_hash, app_id, e164, person_id, created_at, expires_at, rotated_from, revoked_at)
-      values (${s.tokenHash}, ${s.app}, ${s.e164}, ${s.personId}, ${ts(s.createdAt)}, ${ts(s.expiresAt)}, ${s.rotatedFrom}, ${ts(s.revokedAt)})`;
+    await this.sql`insert into platform.sessions (token_hash, app_id, e164, person_id, created_at, started_at, expires_at, rotated_from, revoked_at)
+      values (${s.tokenHash}, ${s.app}, ${s.e164}, ${s.personId}, ${ts(s.createdAt)}, ${ts(s.startedAt)}, ${ts(s.expiresAt)}, ${s.rotatedFrom}, ${ts(s.revokedAt)})`;
   }
   async getSession(tokenHash: string) {
     const [r] = await this.sql`select * from platform.sessions where token_hash = ${tokenHash}`;
@@ -175,15 +206,66 @@ export class PgPeopleStore implements PeopleStore {
     await this.sql`update platform.sessions set person_id = ${personId} where e164 = ${e164} and person_id is null`;
   }
 
-  async hit(bucket: string, windowMs: number, at: number) {
+  async hit(bucket: string, windowMs: number, at: number, rule: HitRule = {}): Promise<HitResult> {
     const start = new Date(at - (at % windowMs));
     return this.sql.begin(async tx => {
-      const [prev] = await tx`select max(last_at) as last_at from platform.rate_limits where bucket = ${bucket}`;
+      // One writer per bucket at a time: parallel requests see each other's hits (one SMS for 20 parallel starts).
+      await tx`select pg_advisory_xact_lock(hashtext(${`rate:${bucket}`}))`;
+      const [prev] = await tx`select max(last_at) as last_at, coalesce(sum(count) filter (where window_start = ${start}), 0)::int as n from platform.rate_limits where bucket = ${bucket}`;
+      const prevAt = ms(prev?.last_at), n = (prev?.n as number) ?? 0;
+      if ((rule.limit !== undefined && n >= rule.limit) || (rule.minGapMs !== undefined && prevAt !== null && at - prevAt < rule.minGapMs)) return { count: n + 1, prevAt, ok: false };
       const [r] = await tx`insert into platform.rate_limits (bucket, window_start, count, last_at) values (${bucket}, ${start}, 1, ${ts(at)})
         on conflict (bucket, window_start) do update set count = platform.rate_limits.count + 1, last_at = excluded.last_at returning count`;
       // Old windows are not needed after the next one starts.
       await tx`delete from platform.rate_limits where bucket = ${bucket} and window_start < ${new Date(start.getTime() - windowMs)}`;
-      return { count: r!.count as number, prevAt: ms(prev?.last_at) };
+      return { count: r!.count as number, prevAt, ok: true };
+    });
+  }
+
+  /**
+   * One holder at a time in this process (so a waiter never holds a pooled connection that the holder
+   * needs), and a session advisory lock on `key` across processes.
+   */
+  private lockTail: Promise<unknown> = Promise.resolve();
+  withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const run = this.lockTail.then(() => this.advisory(key, fn), () => this.advisory(key, fn));
+    this.lockTail = run.catch(() => {});
+    return run;
+  }
+  private async advisory<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const conn = await this.sql.reserve();
+    try {
+      await conn`select pg_advisory_lock(hashtext(${`platform:${key}`}))`;
+      try { return await fn(); } finally { await conn`select pg_advisory_unlock(hashtext(${`platform:${key}`}))`; }
+    } finally { conn.release(); }
+  }
+
+  async getPending(phoneHash: string, kind: PendingKind, app?: AppId) {
+    const [r] = app
+      ? await this.sql`select * from platform.pending_texts where phone_hash = ${phoneHash} and kind = ${kind} and app_id = ${app} order by at desc limit 1`
+      : await this.sql`select * from platform.pending_texts where phone_hash = ${phoneHash} and kind = ${kind} order by at desc limit 1`;
+    return r ? pendingRow(r) : undefined;
+  }
+  async putPending(p: PendingText) {
+    await this.sql.begin(async tx => {
+      if (p.kind !== "share") await tx`delete from platform.pending_texts where phone_hash = ${p.phoneHash} and kind = ${p.kind}`;
+      await tx`insert into platform.pending_texts (phone_hash, kind, app_id, name, age, at) values (${p.phoneHash}, ${p.kind}, ${p.app}, ${p.name}, ${p.age}, ${ts(p.at)})
+        on conflict (phone_hash, kind, app_id) do update set name = excluded.name, age = excluded.age, at = excluded.at`;
+    });
+  }
+  async deletePending(phoneHash: string, kind?: PendingKind, app?: AppId) {
+    await this.sql`delete from platform.pending_texts where phone_hash = ${phoneHash} and (${kind ?? null}::text is null or kind = ${kind ?? null}) and (${app ?? null}::text is null or app_id = ${app ?? null})`;
+  }
+
+  async purge(before: number) {
+    const b = ts(before);
+    return this.sql.begin(async tx => {
+      let n = 0;
+      n += (await tx`delete from platform.otp_challenges where expires_at < ${b} returning 1`).length;
+      n += (await tx`delete from platform.sessions where expires_at < ${b} or revoked_at < ${b} returning 1`).length;
+      n += (await tx`delete from platform.rate_limits where last_at < ${b} returning 1`).length;
+      n += (await tx`delete from platform.pending_texts where at < ${b} returning 1`).length;
+      return n;
     });
   }
 
@@ -204,11 +286,12 @@ export class PgPeopleStore implements PeopleStore {
       if (personId) {
         await tx`delete from platform.memberships where person_id = ${personId}`;
         await tx`delete from platform.share_grants where person_id = ${personId}`;
-        await tx`delete from platform.person_blocks where from_person = ${personId}`;
+        // Blocks stay (a safety fact): the tombstone keeps them, and a new join by this phone revives it.
         await tx`delete from platform.phone_identities where person_id = ${personId}`;
         await tx`update platform.people set lowest_age = null, age_verified_at = null, deleted_at = ${ts(at)} where id = ${personId}`;
       }
       await tx`delete from platform.phone_identities where e164 = ${e164}`;
+      await tx`delete from platform.pending_texts where phone_hash = ${phoneHash}`;
     });
   }
 }

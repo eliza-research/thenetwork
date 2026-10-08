@@ -4,7 +4,7 @@
 import { DAY, HOUR, type MemberId } from "@thenetwork/core";
 import { ENJOYED } from "./projector.ts";
 import { matchingAllowed, type AppId } from "./apps.ts";
-import type { AppHealth, CohortActivation, GrowthStats, HealthAlert, ObsMember, ObsOpportunity, ObsRequest, ObsSafetyCase, ObsState, SafetyInfo, ScoreMetric } from "./types.ts";
+import type { AppHealth, CohortActivation, GrowthStats, HealthAlert, ObsMember, ObsOpportunity, ObsRequest, ObsSafetyCase, ObsState, ReportKind, SafetyInfo, SafetyReport, ScoreMetric } from "./types.ts";
 
 /** Alerts look at the last 24 hours (sim time in game mode) unless they say otherwise. */
 export const ALERT_WINDOW = DAY;
@@ -231,6 +231,54 @@ export interface SafetyInput {
   members: ObsMember[]; opps: ObsOpportunity[];
   watch: MemberId[]; hold: MemberId[];
   canAct: boolean;
+  /** Post-date reports (before urgency and due times), when the source has them. */
+  reports?: Pick<SafetyReport, "id" | "kind" | "reporterId" | "subjectId" | "opportunityId" | "at" | "status">[];
+  /** Hold and ban by phone or person can be sent (real mode with the Network service). */
+  canBan?: boolean;
+}
+
+/** Report kinds with a 1-hour target (PRD 36.3: harassment, money scams and minors are urgent). */
+export const URGENT_REPORTS: ReadonlySet<ReportKind> = new Set(["harassment", "unsafe", "scam", "minor"]);
+
+/**
+ * Post-date reports from the Network's safety cases, when no report store answers (game mode, or real
+ * mode without the service): each report_received event whose reporter and subject were both in an
+ * opportunity that reached a meeting time (they had a date). The kind comes from the case's other
+ * events (harassment, money scam), else "other".
+ */
+export function reportsFromCases(cases: SafetyInput["cases"], opps: ObsOpportunity[]): NonNullable<SafetyInput["reports"]> {
+  const met = new Set<string>();
+  const dateOf = new Map<string, string>();
+  for (const o of opps) {
+    if (o.source === "shadow" || o.meetingAt === undefined) continue;
+    for (const a of o.participants) for (const b of o.participants) if (a !== b) { met.add(`${a}|${b}`); dateOf.set(`${a}|${b}`, o.id); }
+  }
+  const out: NonNullable<SafetyInput["reports"]> = [];
+  for (const c of cases) {
+    const kinds = new Set(c.events.map(e => e.kind));
+    const kind: ReportKind = kinds.has("harassment") ? "harassment" : kinds.has("scam_money") ? "scam" : "other";
+    for (const e of c.events) {
+      if (e.kind !== "report_received" || !e.by || !met.has(`${e.by}|${c.memberId}`)) continue;
+      const opp = dateOf.get(`${e.by}|${c.memberId}`);
+      out.push({
+        id: `${c.id}:${e.by}:${e.at}`, kind, reporterId: e.by, subjectId: c.memberId, at: e.at, ...(opp ? { opportunityId: opp } : {}),
+        status: c.status === "closed" ? "dismissed" : c.level === "hold" || c.status === "held" ? "held" : "open",
+      });
+    }
+  }
+  return out;
+}
+
+/** Post-date reports with urgency, due time and earlier reports about the same subject; open ones first (urgent, then oldest). */
+export function reportQueue(now: number, rows: NonNullable<SafetyInput["reports"]>): SafetyReport[] {
+  const out = rows.map((r): SafetyReport => {
+    const urgent = URGENT_REPORTS.has(r.kind);
+    const dueAt = r.at + (urgent ? HOUR : DAY);
+    const priorReports = rows.filter(x => x.subjectId === r.subjectId && x.id !== r.id && x.at < r.at).length;
+    return { ...r, urgent, dueAt, overdue: r.status === "open" && now > dueAt, priorReports };
+  });
+  const rank = (r: SafetyReport) => (r.status !== "open" ? 2 : r.urgent ? 0 : 1);
+  return out.sort((a, b) => rank(a) - rank(b) || a.at - b.at);
 }
 
 export function safetyInfo(x: SafetyInput): SafetyInfo {
@@ -253,7 +301,10 @@ export function safetyInfo(x: SafetyInput): SafetyInfo {
   const inOpportunities = x.opps
     .filter(o => o.source !== "shadow" && !CLOSED_OPP.has(o.state) && o.participants.length >= 2)
     .flatMap(o => o.participants.filter(id => minorSet.has(id)).map(id => ({ opportunityId: o.id, memberId: id, state: o.state })));
-  return { cases, watch: x.watch, hold: x.hold, minors: { members: minors, unknownAge, inOpportunities }, canAct: x.canAct };
+  return {
+    cases, watch: x.watch, hold: x.hold, minors: { members: minors, unknownAge, inOpportunities }, canAct: x.canAct,
+    ...(x.reports ? { reports: reportQueue(x.now, x.reports) } : {}), ...(x.canBan !== undefined ? { canBan: x.canBan } : {}),
+  };
 }
 
 /**

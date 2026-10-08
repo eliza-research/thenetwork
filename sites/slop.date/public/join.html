@@ -2,6 +2,7 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Join · slop.date</title><meta name="description" content="Join slop.date.">
 <meta name="theme-color" content="#20231a">
+<meta name="turnstile-sitekey" content="{{TURNSTILE_SITE_KEY}}">
 <link rel="stylesheet" href="./styles.css"><script type="module" src="../../shared/join.ts"></script></head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -11,26 +12,15 @@
 </div>
 <main id="main" class="narrow page">
 <h1>Join slop.date</h1>
-<p class="lede">Three short steps: your number, a code, and a few details. You must be 18 or older.</p>
-<div class="flow" data-join data-first-step="safety" data-min-age="18"
-  data-msg-under-age="slop.date is for people 18 and older. We did not save your details."
+<p class="lede">Three short steps: your number, a code, and a few details.</p>
+<p class="small">Matching is for adults 18 and older only. You can join at 13 or older, but if you are under 18, slop.date never matches you, never introduces you to anyone and never asks you for photos.</p>
+<div class="flow" data-join data-min-age="13"
+  data-msg-under-age="You must be 13 or older to join slop.date. We did not save your details."
   data-msg-invite-only="slop.date is not open to new members right now. Please try again later.">
   <p class="notice" data-flow-error role="alert" hidden></p>
-  <noscript><p class="notice">Joining needs JavaScript. You can also email <a href="mailto:help@slop.date">help@slop.date</a>.</p></noscript>
+  <noscript><p class="notice">Joining needs JavaScript. You can also email <a href="mailto:help@ntwrk.love">help@ntwrk.love</a>.</p></noscript>
   <section data-step="loading" hidden><p aria-live="polite">Loading…</p></section>
 
-  <section data-step="safety" class="safety">
-    <h2>Read this before you join</h2>
-    <p><strong>slop.date does not run criminal background checks or identity checks on members.</strong> We cannot promise that a person is who they say they are, or that they have no criminal record.</p>
-    <ul>
-      <li>Meet in a busy public place. Get there and home on your own.</li>
-      <li>Tell a friend where you are going and who you are meeting.</li>
-      <li>Keep your home address, workplace and money details to yourself.</li>
-      <li>Leave whenever you want. Text us to block or report anyone.</li>
-    </ul>
-    <p>Read the <a href="/safety">full safety notice</a>.</p>
-    <div class="row"><button class="btn" type="button" data-action="ack-safety">I have read this. Continue</button></div>
-  </section>
 
   <section data-step="phone" hidden>
     <h2>Your phone number</h2>
@@ -39,6 +29,7 @@
       <div class="field"><label for="phone">Mobile number</label>
         <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="(212) 555-0123" required aria-describedby="phone-hint">
         <p class="hint" id="phone-hint">US numbers only. Message and data rates may apply.</p></div>
+      <div class="human" data-turnstile></div>
       <p class="error" data-error role="alert" hidden></p>
       <button class="btn" type="submit" data-busy="Sending…">Text me a code</button>
     </form>
@@ -62,7 +53,7 @@
     <form data-form="profile" novalidate>
       <div class="field"><label for="firstName">First name</label><input id="firstName" name="firstName" type="text" autocomplete="given-name" required data-focus></div>
       <div class="field"><label for="age">Age</label><input id="age" name="age" type="number" inputmode="numeric" min="1" max="120" required aria-describedby="age-hint">
-        <p class="hint" id="age-hint">You must be <span data-slot="minJoinAge">18</span> or older.</p></div>
+        <p class="hint" id="age-hint">You must be <span data-slot="minJoinAge">13</span> or older to join. Only adults 18 and older are matched.</p></div>
 
       <div class="field"><label for="zip">ZIP code</label><input id="zip" name="zip" type="text" inputmode="numeric" autocomplete="postal-code" maxlength="5" pattern="[0-9]{5}" aria-describedby="zip-hint">
         <p class="hint" id="zip-hint">We use it to suggest places near you. Other people see only your neighbourhood.</p></div>
@@ -80,7 +71,7 @@
 
   <section data-step="done" hidden>
     <h2>You're on the list, <span data-slot="firstName"></span>.</h2>
-    <p>We are not sending introductions yet. The matchmaker will text you when they start. Reply STOP at any time to stop.</p>
+    <p>We are not sending introductions yet. The matchmaker will text you when they start. Text STOP at any time to stop all texts, or "leave slop.date" to stop slop.date only.</p>
     <p><a href="/safety">Read the safety notice again</a> · <a href="/settings">Settings</a></p>
   </section>
 
@@ -95,9 +86,20 @@
     <p><a href="/">Back to slop.date</a></p>
   </section>
 </div>
+  <aside class="safety after" aria-labelledby="safety-title">
+    <h2 id="safety-title">Good to know before you meet anyone</h2>
+    <p><strong>slop.date does not run criminal background checks or identity checks on members.</strong> We cannot promise that a person is who they say they are, or that they have no criminal record.</p>
+    <ul>
+      <li>Meet in a busy public place. Get there and home on your own.</li>
+      <li>Tell a friend where you are going and who you are meeting.</li>
+      <li>Keep your home address, workplace and money details to yourself.</li>
+      <li>Leave whenever you want. Text us to block or report anyone.</li>
+    </ul>
+    <p>Read the <a href="/safety">full safety notice</a>.</p>
+  </aside>
 </main>
 <footer class="foot"><div class="wrap">
-  <p>slop.date is operated by Eliza Research Corporation. Questions: <a href="mailto:help@slop.date">help@slop.date</a>. Message and data rates may apply. Reply STOP to stop and HELP for help.</p>
-  <nav aria-label="Legal"><a href="/safety">Safety notice</a><a href="/guidelines">Community guidelines</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/sms-terms">Text messaging terms</a><a href="/settings">Your data</a></nav>
+  <p>slop.date is powered by <a href="https://ntwrk.love">The Network</a> and operated by Eliza Research Corporation. Help: <a href="/support">support</a> or <a href="mailto:help@ntwrk.love">help@ntwrk.love</a>. Message and data rates may apply. Text STOP to stop all texts from us, or "leave slop.date" to stop slop.date only. Text HELP for help.</p>
+  <nav aria-label="Legal"><a href="/safety">Safety notice</a><a href="/guidelines">Community guidelines</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/sms-terms">Text messaging terms</a><a href="/settings">Your data</a><a href="/support">Support</a></nav>
 </div></footer>
 </body></html>

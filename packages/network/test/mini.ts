@@ -14,6 +14,10 @@ export interface Spec {
   /** Live wants (objective = a DESIRES text). */
   wants?: { objective: string; category: Category }[];
   state?: ParticipationState; quietHours?: [number, number];
+  /** Interest and skill facets the member allowed others to see (scope "shareable"); default "matchable". */
+  shareable?: boolean;
+  /** Opted in to romance, with stated preferences (romance:is / seeks tags, agent_private, as the sim does). */
+  romance?: { is: string; seeks: string[] };
 }
 
 export class Mini {
@@ -50,15 +54,16 @@ export class Mini {
     const now = this.clock.now();
     this.members.push({
       id: s.id, name: s.name, homeCity: "nyc", state: s.state ?? "normal", joinedAt: now, age: s.age as number, unansweredProactive: 0, // a missing age is allowed here (6.3)
-      prefs: { categoriesOptIn: ["social", "hobby", "professional", "events", "growth", "help"], quietHours: s.quietHours ?? [21, 9], romanceOptIn: false, formats: ["one_to_one", "small_group", "event"], maxTravelMinutes: 45, onlyWhenAsked: false },
+      prefs: { categoriesOptIn: ["social", "hobby", "professional", "events", "growth", "help", ...(s.romance ? ["romance" as const] : [])], quietHours: s.quietHours ?? [21, 9], romanceOptIn: !!s.romance, formats: ["one_to_one", "small_group", "event"], maxTravelMinutes: 45, onlyWhenAsked: false },
     });
     this.presence.push({ memberId: s.id, city: "nyc", type: "home", areas: [s.area ?? "Williamsburg"] });
     const facet = (kind: Facet["kind"], tag: string): Facet => ({
-      id: `${s.id}:${kind}:${tag}`, memberId: s.id, kind, value: tag.replace(/_/g, " "), tags: [tag], scope: "matchable", provenance: "said", confidence: 0.9,
+      id: `${s.id}:${kind}:${tag}`, memberId: s.id, kind, value: tag.replace(/_/g, " "), tags: [tag], scope: s.shareable ? "shareable" : "matchable", provenance: "said", confidence: 0.9,
       validFrom: now, source: "chat", observedAt: now, inferred: false, confirmedByMember: true,
     });
     for (const t of s.interests ?? []) this.facets.push(facet("interest", t));
     for (const t of s.skills ?? []) this.facets.push(facet("skill", t));
+    if (s.romance) this.facets.push({ ...facet("boundary", "romance"), value: "romance preferences", scope: "agent_private", tags: [`romance:is:${s.romance.is}`, ...s.romance.seeks.map(g => `romance:seeks:${g}`), "romance:age:18-99"] });
     for (const [i, w] of (s.wants ?? []).entries()) this.intents.push({ id: `${s.id}:want:${i}`, memberId: s.id, objective: w.objective, category: w.category, horizonDays: 60, status: "active", createdAt: now });
   }
 

@@ -3,7 +3,9 @@
 //   push baseline : StubNetwork + engine-v1 (what we had)
 //   push v2       : ConsentNetwork with probes and gates off
 //   consent       : ConsentNetwork (probes, selective gates, requests, safety, growth)
-//   bun run packages/network/harness/experiment.ts --days 21 --seed 1 [--only consent] [--live-asks] [--time-aware] [--primed-met 0.96 --primed-partial 0.82]
+//   bun run packages/network/harness/experiment.ts --days 21 --seed 1 [--only consent] [--live-asks] [--time-aware] [--paraphrase] [--primed-met 0.96 --primed-partial 0.82]
+// --paraphrase: personas say the same things in other words (harness/paraphrase.ts), so the Network's
+// text understanding is not graded on the simulator's own sentences (audit matching-e2e-1).
 // Consent arms use the simulated reviewer (review "auto"): every opportunity is still queued and
 // approved before any member is contacted, so the run log shows the review step.
 // --live-asks: personas ask only for wants that are still live in hidden truth (sim PolicyOptions).
@@ -25,6 +27,7 @@ import { friendFactory } from "./growth.ts";
 import { ConsentNetwork, type NetworkOptions } from "../src/network.ts";
 import { capitalWiring } from "../src/capital.ts";
 import { OUTREACH } from "../src/outreach.ts";
+import { ParaphraseAgent } from "./paraphrase.ts";
 
 export interface ArmResult {
   arm: string; days: number; members: number; joinedEnd: number;
@@ -44,20 +47,55 @@ export interface ArmResult {
   /** Network capital: ledger events emitted by type, and (with --capital) the ledger's entries and rejected events. */
   capital?: { events: Record<string, number>; entries?: number; rejected?: number; members?: number; fraudQueued?: number };
   /** The judge on the same records (computeMetrics): safety gates that must stay 0. */
-  judge: { invariants: number; byRule: Record<string, number>; canaryLeaks: number; minorContacts: number };
+  judge: { invariants: number; byRule: Record<string, number>; canaryLeaks: number; minorContacts: number; examples?: { rule: string; detail: string }[] };
   /**
    * PRD 28.2 scorecard proxies from the simulated run: worthwhile-interruption rate (persona-judged
    * initial invites), opt-in (probe yes rate), completion (show rate of booked seats), and the share
    * of members who joined in the first week with a first good meeting within 14 days of joining.
    */
   scorecard: { worthwhile: number; optIn: number | null; completion: number; firstOutcome14d: number };
+  /**
+   * Consent arms (matching-e2e-7): oracle-good over EVERY probed opportunity (precisionStarted), next
+   * to the share over revealed ones (precisionRevealed, the old "precision"). Probes that never reveal
+   * still cost members an interruption, so the started number is the honest one.
+   */
+  precisionStarted?: number; precisionRevealed?: number; probedOpps?: number;
+  /**
+   * Fairness over honest adults who joined (matching-e2e-5): share with no revealed proposal, share
+   * with no meeting, the Gini of meetings per member and the top 10% share of meetings.
+   */
+  fairness?: { population: number; zeroProposalShare: number; zeroMeetingShare: number; meetingGini: number; top10Share: number };
+  /** Personas spoke in paraphrases (ParaphraseAgent), not the taxonomy's own sentences. */
+  paraphrase?: boolean;
+}
+
+/** Gini coefficient of non-negative counts (0 = equal, 1 = one member has everything). */
+export function gini(xs: readonly number[]): number {
+  const v = [...xs].sort((a, b) => a - b), n = v.length, sum = v.reduce((a, b) => a + b, 0);
+  if (!n || !sum) return 0;
+  return v.reduce((acc, x, i) => acc + (2 * (i + 1) - n - 1) * x, 0) / (n * sum);
+}
+
+/** Fairness fields (NET-41): from per-member proposal and meeting counts over the population. */
+export function fairnessOf(population: readonly string[], proposals: ReadonlyMap<string, number>, meetings: ReadonlyMap<string, number>): NonNullable<ArmResult["fairness"]> {
+  const r3 = (x: number) => Math.round(x * 1000) / 1000;
+  const n = Math.max(1, population.length);
+  const m = population.map(id => meetings.get(id) ?? 0);
+  const total = m.reduce((a, b) => a + b, 0);
+  const top = [...m].sort((a, b) => b - a).slice(0, Math.max(1, Math.ceil(population.length / 10))).reduce((a, b) => a + b, 0);
+  return {
+    population: population.length,
+    zeroProposalShare: r3(population.filter(id => !(proposals.get(id) ?? 0)).length / n),
+    zeroMeetingShare: r3(m.filter(x => !x).length / n),
+    meetingGini: r3(gini(m)), top10Share: r3(total ? top / total : 0),
+  };
 }
 
 export async function nycPersonas(dir = DATA_DIR): Promise<Persona[]> {
   return (await loadPersonas(dir)).filter(p => p.homeCity === "nyc");
 }
 
-export async function runArm(arm: "push_baseline" | "push_v2" | "consent", o: { days: number; seed: number; network?: NetworkOptions; liveAsks?: boolean; timeAware?: boolean; simPlans?: boolean; capital?: boolean }): Promise<ArmResult> {
+export async function runArm(arm: "push_baseline" | "push_v2" | "consent", o: { days: number; seed: number; network?: NetworkOptions; liveAsks?: boolean; timeAware?: boolean; simPlans?: boolean; capital?: boolean; paraphrase?: boolean; onRecords?: (records: RunRecord[]) => void }): Promise<ArmResult> {
   const personas = await nycPersonas();
   const manifest = await Bun.file(`${DATA_DIR}/manifest.json`).json();
   const start = manifest.snapshotNow as number;
@@ -70,7 +108,7 @@ export async function runArm(arm: "push_baseline" | "push_v2" | "consent", o: { 
   const network: NetworkUnderTest = consent ?? new StubNetwork({ seed: o.seed, randomIntros: false });
   const records: RunRecord[] = [];
   const w = new World({
-    seed: o.seed, personas, days: o.days, start, writeLog: false, network, agent: new PolicyPersonaAgent(start, { liveAsksOnly: o.liveAsks ?? false, ...(o.timeAware ? { timeAware: true } : {}), ...(simPlans ? { plans: true } : {}) }),
+    seed: o.seed, personas, days: o.days, start, writeLog: false, network, agent: (a => (o.paraphrase ? new ParaphraseAgent(a) : a))(new PolicyPersonaAgent(start, { liveAsksOnly: o.liveAsks ?? false, ...(o.timeAware ? { timeAware: true } : {}), ...(simPlans ? { plans: true } : {}) })),
     ...(o.timeAware ? { timeAware: true } : {}), ...(simPlans ? { plans: true } : {}),
     engine: consent ? undefined : wrapNycOnly(createEngine()), spawnFriend: friendFactory({ seed: o.seed }), onRecord: r => records.push(r),
   });
@@ -78,6 +116,8 @@ export async function runArm(arm: "push_baseline" | "push_v2" | "consent", o: { 
   await w.advanceTo(w.end);
   await w.complete();
   const res = summarize(arm, o.days, records, w, consent);
+  o.onRecords?.(records);
+  if (o.paraphrase) res.paraphrase = true;
   if (consent) res.capital = { events: { ...consent.ledgerCounts }, ...(cap ? { entries: cap.ledger.all().length, rejected: cap.rejected(), fraudQueued: consent.fraudItems().length } : {}) };
   return res;
 }
@@ -138,8 +178,8 @@ export function summarize(arm: string, days: number, records: RunRecord[], w: Wo
     proactivePerMemberWeek: r3(proactive / Math.max(1, joined) / (days / 7)), optOuts, newMembersJoined: newJoined,
     judge: { invariants: 0, byRule: {}, canaryLeaks: 0, minorContacts: 0 }, scorecard: { worthwhile: 0, optIn: null, completion: 0, firstOutcome14d: 0 },
   };
-  const jm = computeMetrics(records, consent ? { weeklyBudget: OUTREACH.maxPerWeek } : {});
-  res.judge = { invariants: jm.invariants.total, byRule: jm.invariants.byRule, canaryLeaks: jm.privacy.canaryLeaks, minorContacts: jm.safety.minorContacts };
+  const jm = computeMetrics(records, consent ? { requireReview: true } : {});
+  res.judge = { invariants: jm.invariants.total, byRule: jm.invariants.byRule, canaryLeaks: jm.privacy.canaryLeaks, minorContacts: jm.safety.minorContacts, examples: jm.invariants.examples };
   const joinAt = new Map(records.filter((r): r is Extract<RunRecord, { type: "join" }> => r.type === "join").map(r => [r.memberId, r.t]));
   const runStart = records.find(r => r.type === "run_start")?.t ?? 0;
   const firstGood = new Map<string, number>();
@@ -149,7 +189,19 @@ export function summarize(arm: string, days: number, records: RunRecord[], w: Wo
     worthwhile: jm.experience.worthwhileRate, optIn: null, completion: jm.meetings.showRate,
     firstOutcome14d: r3(early.filter(([id, t]) => (firstGood.get(id) ?? Infinity) - t <= 14 * DAY).length / Math.max(1, early.length)),
   };
+  // Fairness over honest adults who joined (matching-e2e-5).
+  const honest = [...personas.values()].filter(p => !p.hidden.adversarial && p.hidden.trueAge >= 18 && p.public.claimedAge >= 18 && joinAt.has(p.id)).map(p => p.id);
+  const propCount = new Map<string, number>(), meetCount = new Map<string, number>();
+  for (const p of props) for (const id of p.proposal.participants) propCount.set(id, (propCount.get(id) ?? 0) + 1);
+  for (const o of outcomes) { const showed = Object.entries(o.attendance).filter(([, a]) => a.showed); if (showed.length >= 2) for (const [id] of showed) meetCount.set(id, (meetCount.get(id) ?? 0) + 1); }
+  res.fairness = fairnessOf(honest, propCount, meetCount);
   if (consent) {
+    // Precision over every probed opportunity (matching-e2e-7), judged by the same oracle.
+    const probed = [...consent.opps.values()].filter(o => o.contacted.size > 0 && !o.plan);
+    const good = probed.filter(o => w.oracle.evaluate({ id: `${o.id}:started`, kind: o.kind, participants: o.participants, city: "nyc", window: { start: o.meetingAt ?? o.createdAt + DAY, end: (o.meetingAt ?? o.createdAt + DAY) + 4 * DAY }, category: o.category, objective: o.objective }).compatible).length;
+    res.probedOpps = probed.length;
+    res.precisionStarted = r3(good / Math.max(1, probed.length));
+    res.precisionRevealed = res.precision;
     const c = consent.counters;
     const fulfilled = consent.requests.filter(r => r.kind === "people" && r.outcome === "fulfilled");
     const hours = fulfilled.map(r => (r.fulfilledAt! - r.at) / 3_600_000).sort((a, b) => a - b);
@@ -219,6 +271,7 @@ if (import.meta.main) {
     "live-asks": { type: "boolean", default: false }, "time-aware": { type: "boolean", default: false },
     "primed-met": { type: "string" }, "primed-partial": { type: "string" }, "primed-identity": { type: "string" }, "max-new": { type: "string" },
     plans: { type: "string", default: "on" }, "sim-plans": { type: "string" }, capital: { type: "boolean", default: false },
+    paraphrase: { type: "boolean", default: false },
   } });
   if (a["primed-met"]) PRIMED_MODEL.met = Number(a["primed-met"]);
   if (a["primed-partial"]) PRIMED_MODEL.partial = Number(a["primed-partial"]);
@@ -229,7 +282,7 @@ if (import.meta.main) {
     const t0 = performance.now();
     const network: NetworkOptions = { ...(a["max-new"] ? { maxNewPerDay: Number(a["max-new"]) } : {}), ...(a.plans === "off" ? { plans: false } : {}) };
     const r = await runArm(arm, {
-      days: Number(a.days), seed: Number(a.seed), liveAsks: a["live-asks"], timeAware: a["time-aware"], network, capital: a.capital,
+      days: Number(a.days), seed: Number(a.seed), liveAsks: a["live-asks"], timeAware: a["time-aware"], network, capital: a.capital, paraphrase: a.paraphrase,
       ...(a["sim-plans"] ? { simPlans: a["sim-plans"] === "on" } : {}),
     });
     out.push(r);

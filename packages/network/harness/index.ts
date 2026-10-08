@@ -3,3 +3,4 @@
 export * from "./experiment.ts";
 export * from "./scenarios.ts";
 export * from "./growth.ts";
+export * from "./paraphrase.ts";

@@ -10,7 +10,19 @@ import { REPO } from "./staff.ts";
 import type { LabArm, LabArmResult, LabRequest, LabRun } from "./types.ts";
 
 export const LAB_ARMS: readonly LabArm[] = ["push_baseline", "push_v2", "consent"];
-export const LAB_LIMITS = { maxSeeds: 5, maxDays: 60, concurrency: 2 } as const;
+/** maxQueued: seeds that may wait at once (a full queue answers 429; audit observatory-14). */
+export const LAB_LIMITS = { maxSeeds: 5, maxDays: 60, concurrency: 2, maxQueued: 20 } as const;
+
+/**
+ * The child's environment: what Bun needs to run, nothing else. API keys, database URLs and tokens
+ * stay in the server (a run is offline and deterministic; LIVE_TESTS is never passed).
+ */
+export const LAB_ENV_KEYS = ["PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "TZ", "USER", "SHELL", "BUN_INSTALL", "NODE_ENV"] as const;
+export function labEnv(env: Record<string, string | undefined> = process.env): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const k of LAB_ENV_KEYS) if (env[k] !== undefined) out[k] = env[k]!;
+  return out;
+}
 
 export interface LabOptions {
   /** Where results are saved (default runs/lab). */
@@ -109,6 +121,7 @@ export class Lab {
   /** Queue a run: one child per seed. */
   async start(req: LabRequest, requestedBy: string): Promise<LabRun> {
     await this.loaded;
+    if (this.queue.length + req.seeds.length > LAB_LIMITS.maxQueued) throw new Error(`the lab queue is full (${LAB_LIMITS.maxQueued} seeds)`);
     const now = Date.now();
     const id = `lab-${new Date(now).toISOString().replace(/[-:]/g, "").replace(/\..*/, "")}-${++this.seq}`;
     const run: LabRun = {
@@ -124,6 +137,8 @@ export class Lab {
 
   /** Children running now. */
   get running() { return this.active; }
+  /** Seeds waiting for a child. */
+  get queued() { return this.queue.length; }
 
   private pump() {
     while (this.active < this.concurrency && this.queue.length) {
@@ -138,7 +153,7 @@ export class Lab {
     const r = run.request;
     try {
       const child = Bun.spawn([process.execPath, "run", this.script, ...labArgs(r, seed)], {
-        cwd: REPO, stdout: "pipe", stderr: "pipe", env: { ...process.env, LIVE_TESTS: "" },
+        cwd: REPO, stdout: "pipe", stderr: "pipe", env: labEnv(),
       });
       this.children.add(child);
       const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);

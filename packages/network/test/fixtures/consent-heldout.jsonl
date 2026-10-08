@@ -1,0 +1,75 @@
+{"text":"yeah go ahead","label":"yes"}
+{"text":"sure thing, sounds lovely","label":"yes"}
+{"text":"ok cool","label":"yes"}
+{"text":"yes!! finally","label":"yes"}
+{"text":"I'm totally in","label":"yes"}
+{"text":"I would love that","label":"yes"}
+{"text":"absolutely, thanks!","label":"yes"}
+{"text":"for sure, let me know details","label":"yes"}
+{"text":"yes that sounds perfect","label":"yes"}
+{"text":"yeah why not","label":"yes"}
+{"text":"okay let's do it","label":"yes"}
+{"text":"sounds good to me!","label":"yes"}
+{"text":"happy to meet them","label":"yes"}
+{"text":"definitely interested","label":"yes"}
+{"text":"yes sunday works","label":"yes","keys":["c"]}
+{"text":"saturday at 11 works","label":"yes","keys":["b"]}
+{"text":"thursday 7 is perfect","label":"yes","keys":["a"]}
+{"text":"the second","label":"yes","keys":["b"]}
+{"text":"either sat or sun","label":"yes","keys":["b","c"]}
+{"text":"any of them","label":"yes","keys":["a","b","c"]}
+{"text":"sure! thursday please","label":"yes","keys":["a"]}
+{"text":"im down for sunday","label":"yes","keys":["c"]}
+{"text":"yes but saturday is bad","label":"yes","keys":["a","c"]}
+{"text":"love it, count me in","label":"yes"}
+{"text":"yea im in","label":"yes"}
+{"text":"nope sorry","label":"no"}
+{"text":"no I'm good thanks","label":"no"}
+{"text":"nah, pass","label":"no"}
+{"text":"I'll pass on this one","label":"no"}
+{"text":"not for me thanks","label":"no"}
+{"text":"no thank you!","label":"no"}
+{"text":"sorry can't do it","label":"no"}
+{"text":"I can't this week","label":"no"}
+{"text":"not this weekend sorry","label":"no"}
+{"text":"too busy right now","label":"no"}
+{"text":"not interested sorry","label":"no"}
+{"text":"no. sunday I'm with family","label":"no"}
+{"text":"thursday? nah","label":"no"}
+{"text":"definitely not, sorry","label":"no"}
+{"text":"absolutely not lol","label":"no"}
+{"text":"I'd rather skip it","label":"no"}
+{"text":"nope, not my thing","label":"no"}
+{"text":"no can't make any of those","label":"no"}
+{"text":"I don't think I can","label":"no"}
+{"text":"not up for it this week","label":"no"}
+{"text":"I'm out this time","label":"no"}
+{"text":"can't, traveling","label":"no"}
+{"text":"no sat I'm busy","label":"no"}
+{"text":"ok no actually","label":"no"}
+{"text":"thanks but I'm not interested","label":"no"}
+{"text":"sure, but only if it's not a date","label":"unclear"}
+{"text":"maybe, who is it?","label":"unclear"}
+{"text":"only if they're a woman","label":"unclear"}
+{"text":"if it's close by, sure","label":"unclear"}
+{"text":"depends what time","label":"unclear"}
+{"text":"probably? let me check","label":"unclear"}
+{"text":"not sure, can I tell you tomorrow","label":"unclear"}
+{"text":"hmm maybe","label":"unclear"}
+{"text":"perhaps sunday","label":"unclear"}
+{"text":"idk maybe","label":"unclear"}
+{"text":"what kind of person are they?","label":"unclear"}
+{"text":"is it a group or just one person?","label":"unclear"}
+{"text":"who else is going?","label":"unclear"}
+{"text":"sure as long as it's daytime","label":"unclear"}
+{"text":"yes if they don't mind dogs","label":"unclear"}
+{"text":"I might be free","label":"unclear"}
+{"text":"could work, not sure yet","label":"unclear"}
+{"text":"let me see how the week goes","label":"unclear"}
+{"text":"no... well maybe yes","label":"unclear"}
+{"text":"wait who is this","label":"unclear"}
+{"text":"what?","label":"unclear"}
+{"text":"I'm at the gym, text later","label":"unclear"}
+{"text":"I'll think about it","label":"unclear"}
+{"text":"on the fence honestly","label":"unclear"}
+{"text":"maybe if work isn't crazy","label":"unclear"}

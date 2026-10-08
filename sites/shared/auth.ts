@@ -1,11 +1,13 @@
-// Phone -> code login, shared by /join and /settings.
+// Phone -> code login, shared by /join and /settings. The person types their own number and the code
+// that we text them; nothing else (no agent, no other page) can enter it for them.
 // Markup contract inside the flow root:
-//   [data-step="phone"]  form[data-form="phone"] with input[name=phone]
+//   [data-step="phone"]  form[data-form="phone"] with input[name=phone] and an empty [data-turnstile]
 //   [data-step="code"]   form[data-form="code"] with input[name=code],
 //                        [data-slot="phoneShown"], button[data-action="resend"], button[data-action="change-number"]
 // The server answers otp/start the same way for every number, so this code shows the same
 // screen for every number too.
 import { api, toE164 } from "./api.ts";
+import { mountTurnstile } from "./turnstile.ts";
 import { $, busy, fill, message, setError, showStep } from "./ui.ts";
 
 export function maskPhone(e164: string): string {
@@ -17,6 +19,7 @@ export function mountAuth(root: HTMLElement, onSignedIn: () => Promise<void> | v
   const codeForm = $(root, 'form[data-form="code"]') as HTMLFormElement | null;
   if (!phoneForm || !codeForm) return;
   let phone = "";
+  const human = mountTurnstile(phoneForm);
 
   phoneForm.addEventListener("submit", async (ev) => {
     ev.preventDefault();
@@ -29,8 +32,14 @@ export function mountAuth(root: HTMLElement, onSignedIn: () => Promise<void> | v
       return;
     }
     input.removeAttribute("aria-invalid");
+    const token = human?.token();
+    if (human && !token) {
+      setError(phoneForm, root.getAttribute("data-msg-turnstile-wait") ?? "Wait for the check above to finish, then try again.");
+      return;
+    }
     setError(phoneForm, "");
-    const res = await busy(phoneForm, () => api.otpStart(e164));
+    const res = await busy(phoneForm, () => api.otpStart(e164, token));
+    human?.reset();
     if (!res.ok) {
       setError(phoneForm, message(root, res.error));
       return;
@@ -65,6 +74,11 @@ export function mountAuth(root: HTMLElement, onSignedIn: () => Promise<void> | v
 
   root.querySelector('[data-action="resend"]')?.addEventListener("click", async () => {
     if (!phone) return showStep(root, "phone");
+    // With Turnstile on, a new code needs a new check: go back to the phone step, number kept.
+    if (human) {
+      setError(phoneForm, "Confirm the check, then send a new code.");
+      return showStep(root, "phone");
+    }
     const res = await busy(codeForm, () => api.otpStart(phone));
     setError(codeForm, res.ok ? "We sent a new code." : message(root, res.error));
   });

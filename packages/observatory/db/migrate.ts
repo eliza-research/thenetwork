@@ -9,6 +9,7 @@
 //   0001 packages/observatory/db/schema.sql       (baseline, repeatable)
 //   0002 packages/network/db/network-state.sql    (baseline, repeatable; PgStore.migrate() also runs it)
 //   0003+ packages/observatory/db/migrations/NNNN_name.sql (each runs once)
+//   9001 packages/mcp/db/oauth.sql                 (the MCP OAuth schema; repeatable, last)
 // A repeatable baseline runs again when its text changes: both files only create what is missing,
 // so they keep working for the code and tests that apply them directly. New changes go in a new
 // numbered file in migrations/, never in a baseline.
@@ -31,6 +32,9 @@ export function migrations(): Migration[] {
     { id: "0001_network_schema", file: join(import.meta.dir, "schema.sql"), repeatable: true },
     { id: "0002_network_state", file: join(REPO, "packages", "network", "db", "network-state.sql"), repeatable: true },
     ...numbered,
+    // The MCP server's OAuth schema (packages/mcp/db/oauth.sql): repeatable, after the roles exist, so a
+    // deployed service login never needs CREATE rights (the service no longer creates it at boot there).
+    { id: "9001_oauth_schema", file: join(REPO, "packages", "mcp", "db", "oauth.sql"), repeatable: true },
   ];
 }
 
