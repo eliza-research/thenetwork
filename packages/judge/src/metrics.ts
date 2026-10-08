@@ -13,8 +13,11 @@ import { CONNECTION } from "./policy.ts";
 import { checkMessage, findContactDetails, hasPausePath, normalizeCanary } from "./rules.ts";
 import type { LoggedMessage, LoggedPersona, RunRecord } from "./runlog.ts";
 
+/** Enjoyment at or above which a held meeting counts as a good outcome. One constant for every metric and harness that grades meetings. */
+export const GOOD_MEETING_ENJOYMENT = 0.6;
+
 export interface MetricsOptions {
-  /** Enjoyment threshold for a "meaningful" outcome (time-to-first-value). Default 0.6. */
+  /** Enjoyment threshold for a "meaningful" outcome (time-to-first-value). Default GOOD_MEETING_ENJOYMENT. */
   valueThreshold?: number;
   /** Check review-before-contact even if the run logs no review events (fail closed when the network is configured with a review gate). */
   requireReview?: boolean;
@@ -199,7 +202,7 @@ function nameMatcher(personas: LoggedPersona[]) {
 }
 
 export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}): Metrics {
-  const valueT = opts.valueThreshold ?? 0.6;
+  const valueT = opts.valueThreshold ?? GOOD_MEETING_ENJOYMENT;
   const start = records.find(r => r.type === "run_start") as Extract<RunRecord, { type: "run_start" }> | undefined;
   const endRec = records.find(r => r.type === "run_end") as Extract<RunRecord, { type: "run_end" }> | undefined;
   const personas = new Map<MemberId, LoggedPersona>();
