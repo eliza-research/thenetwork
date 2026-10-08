@@ -41,7 +41,7 @@ export function createMemberContextProvider(
       const lines = [
         "# Network member",
         `Name: ${member.firstName} (${member.city})`,
-        `State: ${member.state}${member.stateUntil ? ` until ${member.stateUntil}` : ""}`,
+        `State: ${member.state}${member.stateFrom ? ` from ${member.stateFrom}` : ""}${member.stateUntil ? ` until ${member.stateUntil}` : ""}`,
       ];
       if (member.facets.length > 0) {
         lines.push(`About: ${member.facets.join("; ")}`);
@@ -59,6 +59,7 @@ export function createMemberContextProvider(
           member: {
             memberId: member.memberId,
             state: member.state,
+            stateFrom: member.stateFrom ?? null,
             stateUntil: member.stateUntil,
             city: member.city,
           },

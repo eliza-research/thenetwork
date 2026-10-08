@@ -85,7 +85,7 @@ describe("ported authz", () => {
       authorizeSetState({ state: "paused", until: "2026-10-20", evidence: "pause my intros" }, text, NOW),
     ).toEqual({ allowed: true, state: "paused", from: null, until: "2026-10-20T00:00:00.000Z" });
     expect(
-      authorizeSetState({ state: "open", until: "2026-10-20", evidence: "pause my intros" }, text, NOW),
+      authorizeSetState({ state: "open", until: "2026-10-20", evidence: "open to intros again" }, "I'm back, open to intros again", NOW),
     ).toMatchObject({ allowed: true, until: null });
   });
 });

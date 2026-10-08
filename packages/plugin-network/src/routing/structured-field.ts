@@ -16,8 +16,9 @@ import type {
   ResponseHandlerFieldEvaluator,
   ResponseHandlerFieldHandleContext,
 } from "@elizaos/core";
-import type { NetworkStore, NetworkTurnAuthority, SetStateExecution } from "../types.js";
+import { setStateIdempotencyKey, type NetworkStore, type NetworkTurnAuthority, type SetStateExecution } from "../types.js";
 import { authorizeSetState, sanitize } from "./authz.js";
+import { zonedNow } from "./dates.js";
 
 export const NETWORK_ACTION_FIELD = "networkAction";
 
@@ -155,7 +156,11 @@ export function createNetworkActionFieldEvaluator(
   const now = options.now ?? (() => new Date());
   return {
     name: NETWORK_ACTION_FIELD,
-    description: description(now().toISOString().slice(0, 10)),
+    // Read per call, in the member's zone: a long-lived agent must not keep the day it started
+    // (audit plugin-prototypes-11).
+    get description() {
+      return description(zonedNow(now(), options.authority.timeZone).toISOString().slice(0, 10));
+    },
     priority: 30,
     schema: SCHEMA,
     parse: (value) => parseNetworkActionProposal(value),
@@ -163,7 +168,7 @@ export function createNetworkActionFieldEvaluator(
       const proposal = ctx.value;
       if (proposal.action !== "SET_STATE") return undefined;
       const memberText = sanitize(String(ctx.message.content?.text ?? ""));
-      const decision = authorizeSetState(proposal, memberText, now());
+      const decision = authorizeSetState(proposal, memberText, now(), { timeZone: options.authority.timeZone });
       if (!decision.allowed) {
         return {
           mutateResult: (result) => {
@@ -176,14 +181,25 @@ export function createNetworkActionFieldEvaluator(
         };
       }
       const origin = typeof ctx.message.id === "string" ? ctx.message.id : null;
-      if (!origin) return undefined;
+      if (!origin) {
+        // Fail closed (audit plugin-prototypes-M2): falling through would hand the change to the planner.
+        return {
+          mutateResult: (result) => {
+            settle(result);
+            result.replyText = "I couldn't change your Network availability just now. Please send that again.";
+            result.replyEffectStatus = "non_applied";
+          },
+          preempt: { mode: "direct-reply", reason: "network.set_state denied: message has no stable id" },
+          debug: ["denied:missing_message_id"],
+        };
+      }
       const exec = await options.store.setState({
         memberId: options.authority.memberId,
         state: decision.state,
         from: decision.from,
         until: decision.until,
         note: null,
-        idempotencyKey: `network:set_state:v1:${origin}:0`,
+        idempotencyKey: setStateIdempotencyKey(options.authority, origin, 0),
       });
       // A replay re-reports a change that is already in effect; only a true no-op is non_applied.
       const applied = !exec.unchanged;
