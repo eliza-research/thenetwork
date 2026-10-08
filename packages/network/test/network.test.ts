@@ -45,6 +45,8 @@ describe("ConsentNetwork invariants (NYC, 10 days)", () => {
     const minors = new Set([...run.personas.values()].filter(p => p.public.claimedAge < 18 || p.hidden.trueAge < 18 && p.public.claimedAge < 18).map(p => p.id));
     for (const r of run.records) {
       if (r.type === "proposal") expect(r.proposal.participants.some(id => minors.has(id))).toBe(false);
+      // Nor as an alternate (a possible backfill), whoever proposed the opportunity.
+      if (r.type === "network_log" && r.kind === "probe_started") expect(((r.detail.proposal as { alternates?: string[] }).alternates ?? []).some(id => minors.has(id))).toBe(false);
       if (r.type === "message" && r.msg.direction === "outbound" && minors.has(r.msg.memberId)) expect(["probe", "proposal", "growth_ask"]).not.toContain(r.msg.meta?.type);
     }
   });

@@ -351,6 +351,7 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
       for (const id of pool2.filter(x => !primary.includes(x))
         .sort((x, y) => (fits.get(y)!.get(a.id)! * avail.get(y)! - fits.get(x)!.get(a.id)! * avail.get(x)!) || byTie(x, y))) {
         if (alternates.length >= (partner ? 1 : pcfg.alternates)) break;
+        if (isMinor(w, id)) continue; // never a minor or unknown age as an alternate (pool is adults already)
         if ([...primary, ...alternates].every(p => compat(p, id) !== -Infinity)) alternates.push(id);
       }
       const host = partner ? undefined : primary.find(id => w.get(id)!.isHost && !planMemberReason(w, id, "host"));
@@ -533,10 +534,29 @@ export type PlanAction =
   | { kind: "none" } | { kind: "book"; going: MemberId[] } | { kind: "join"; member: MemberId }
   | { kind: "probe_partner"; member: MemberId } | { kind: "backfill"; member: MemberId } | { kind: "fallback" };
 
-export function startPlanRun(plan: Plan): PlanRun {
+/**
+ * Age gate for the bench (backfills and the partner of a partner plan). `canMatch(id)` false means
+ * the member may never be probed: a minor or an unknown age (core canBeMatched, fail closed), also
+ * one the Network learned about after the plan was made. Build one from a World with `canMatchIn`.
+ * Without it the run acts on ids only (the planner already excludes minors).
+ */
+export interface PlanRunOpts { canMatch?: (id: MemberId) => boolean }
+/** A PlanRunOpts age gate over a World: a known member who is not a minor (unknown age fails closed). */
+export const canMatchIn = (w: World) => (id: MemberId): boolean => !!w.get(id) && !isMinor(w, id);
+
+export function startPlanRun(plan: Plan, opts: PlanRunOpts = {}): PlanRun {
   // Partner plans follow one-to-one rules: the second member is probed only after the first said yes.
   const first = plan.partner ? plan.invited.slice(0, 1) : plan.invited;
-  return { plan, answers: Object.fromEntries(first.map(id => [id, "pending" as PlanAnswer])), bench: [...(plan.partner ? plan.invited.slice(1) : []), ...plan.alternates], stage: "probing" };
+  const bench = [...(plan.partner ? plan.invited.slice(1) : []), ...plan.alternates].filter(id => opts.canMatch?.(id) ?? true);
+  return { plan, answers: Object.fromEntries(first.map(id => [id, "pending" as PlanAnswer])), bench, stage: "probing" };
+}
+/** The next bench member who may be probed (minors and unknown ages are dropped, never probed). */
+function nextOnBench(r: PlanRun, opts: PlanRunOpts): MemberId | undefined {
+  while (r.bench.length) {
+    const id = r.bench.shift()!;
+    if (opts.canMatch?.(id) ?? true) return id;
+  }
+  return undefined;
 }
 export const yesOf = (r: PlanRun) => Object.keys(r.answers).filter(x => r.answers[x] === "yes");
 export const pendingOf = (r: PlanRun) => Object.keys(r.answers).filter(x => r.answers[x] === "pending");
@@ -547,7 +567,7 @@ export const pendingOf = (r: PlanRun) => Object.keys(r.answers).filter(x => r.an
  * -> "probe_partner". No (or silence): the next alternate -> "backfill" while before the deadline;
  * when nobody is pending and quorum can no longer be reached -> "fallback". Never says who declined.
  */
-export function recordPlanAnswer(run: PlanRun, member: MemberId, yes: boolean, now: number, pcfg: PlansConfig = DEFAULT_PLANS): { run: PlanRun; action: PlanAction } {
+export function recordPlanAnswer(run: PlanRun, member: MemberId, yes: boolean, now: number, pcfg: PlansConfig = DEFAULT_PLANS, opts: PlanRunOpts = {}): { run: PlanRun; action: PlanAction } {
   if (run.stage === "closed" || run.answers[member] !== "pending") return { run, action: { kind: "none" } };
   const r: PlanRun = { ...run, answers: { ...run.answers, [member]: yes ? "yes" : "no" }, bench: [...run.bench] };
   const p = r.plan;
@@ -559,16 +579,15 @@ export function recordPlanAnswer(run: PlanRun, member: MemberId, yes: boolean, n
     }
     const y = yesOf(r);
     if (y.length >= p.quorum) { r.stage = "booked"; return { run: r, action: { kind: "book", going: y } }; }
-    if (p.partner && r.bench.length && now < p.probeDeadline) { const nx = r.bench.shift()!; r.answers[nx] = "pending"; return { run: r, action: { kind: "probe_partner", member: nx } }; }
+    if (p.partner && now < p.probeDeadline) { const nx = nextOnBench(r, opts); if (nx) { r.answers[nx] = "pending"; return { run: r, action: { kind: "probe_partner", member: nx } }; } }
     return { run: r, action: { kind: "none" } };
   }
   if (r.stage === "booked") return { run: r, action: { kind: "none" } };
   // Partner plan: a no from the first ends it (one-to-one rules: no swap without re-review); a no from the partner tries the next.
   if (p.partner && member === p.invited[0]) { r.stage = "closed"; return { run: r, action: { kind: "fallback" } }; }
-  if (r.bench.length && now < p.probeDeadline) {
-    const nx = r.bench.shift()!;
-    r.answers[nx] = "pending";
-    return { run: r, action: { kind: "backfill", member: nx } };
+  if (now < p.probeDeadline) {
+    const nx = nextOnBench(r, opts);
+    if (nx) { r.answers[nx] = "pending"; return { run: r, action: { kind: "backfill", member: nx } }; }
   }
   if (!pendingOf(r).length && yesOf(r).length < p.quorum) { r.stage = "closed"; return { run: r, action: { kind: "fallback" } }; }
   return { run: r, action: { kind: "none" } };
