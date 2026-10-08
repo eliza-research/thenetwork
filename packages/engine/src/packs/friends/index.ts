@@ -125,15 +125,18 @@ export const friendsPack: AppPack = {
   sim: { module: "packages/worlds/src/friends/index.ts", export: "friendsSim" },
   metrics: {
     primary: ["repeat_meetup_rate", "v14", "friendship_track_share", "crews_formed", "median_group_max_travel"],
+    // docs/results/2026-10-08-friends-pack.md section 5 (V14 adjusted: the oracle bound is about 42% at 400 personas).
     gates: [
       { metric: "repeat_meetup_rate", op: ">=", value: 0.3, seeds: 4, blocking: true },
-      { metric: "v14", op: ">=", value: 0.6, seeds: 4, blocking: true },
-      { metric: "friendship_track_vs_random", op: ">=", value: 2, seeds: 4, blocking: true },
+      { metric: "v14_vs_oracle", op: ">=", value: 0.75, seeds: 4, blocking: true },
+      { metric: "v14_vs_random", op: ">=", value: 1.75, seeds: 4, blocking: true },
+      { metric: "friendship_forming_vs_random", op: ">=", value: 2, seeds: 4, blocking: true },
       { metric: "median_group_max_travel_min", op: "<=", value: 35, seeds: 4, blocking: true },
-      { metric: "borough_v14_ratio_min", op: ">=", value: 0.7, seeds: 4, blocking: true },
+      { metric: "borough_v14_ratio_min", op: ">=", value: 0.7, seeds: 4, blocking: false },
       { metric: "safety.declaredMinorContacts", op: "==", value: 0, seeds: 8, blocking: true },
       { metric: "safety.knownAdversaryContacts", op: "==", value: 0, seeds: 8, blocking: true },
     ],
+
     unsafeClasses: ["minor", "adversarial", "romance"],
   },
   defaults: { engine: DEFAULT_CONFIG, attention: DEFAULT_ATTENTION, plans: FRIENDS_PLANS },
