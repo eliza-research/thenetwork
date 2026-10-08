@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Join the waitlist · peon.biz</title><meta name="description" content="Join peon.biz.">
+<meta name="theme-color" content="#f08a24">
+<link rel="stylesheet" href="./styles.css"><script type="module" src="../../shared/join.ts"></script></head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="wrap top">
+  <a class="mark" href="/">peon<b>.biz</b></a>
+  <nav aria-label="Main"><a href="/join" aria-current="page">Join the waitlist</a><a href="/settings">Settings</a><a href="/privacy">Privacy</a></nav>
+</div>
+<main id="main" class="narrow page">
+<h1>Join the waitlist</h1>
+<p class="lede">peon.biz is not making introductions yet. Join the waitlist and we will text you when it opens. You must be 18 or older.</p>
+<div class="audit"><h2>How we handle hiring decisions</h2>
+<p>We do not use automated ranking for jobs in New York City until an independent bias audit is done and its summary is published on this site. A person on our team reviews every introduction before we send it. peon.biz does not decide who gets hired.</p></div>
+<div class="flow" data-join data-min-age="18"
+  data-msg-under-age="peon.biz is for people 18 and older. We did not save your details."
+  data-msg-invite-only="peon.biz is not open to new members right now. Please try again later.">
+  <p class="notice" data-flow-error role="alert" hidden></p>
+  <noscript><p class="notice">Joining needs JavaScript. You can also email <a href="mailto:help@peon.biz">help@peon.biz</a>.</p></noscript>
+  <section data-step="loading" hidden><p aria-live="polite">Loading…</p></section>
+
+  <section data-step="phone" hidden>
+    <h2>Your phone number</h2>
+    <p>We text you a code to check that the number is yours.</p>
+    <form data-form="phone" novalidate>
+      <div class="field"><label for="phone">Mobile number</label>
+        <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="(212) 555-0123" required aria-describedby="phone-hint">
+        <p class="hint" id="phone-hint">US numbers only. Message and data rates may apply.</p></div>
+      <p class="error" data-error role="alert" hidden></p>
+      <button class="btn" type="submit" data-busy="Sending…">Text me a code</button>
+    </form>
+  </section>
+
+  <section data-step="code" hidden>
+    <h2>Enter the code</h2>
+    <p>We sent a code to <strong data-slot="phoneShown"></strong>. It can take a minute to arrive.</p>
+    <form data-form="code" novalidate>
+      <div class="field"><label for="code">Code</label>
+        <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" required data-focus></div>
+      <p class="error" data-error role="alert" hidden></p>
+      <div class="row"><button class="btn" type="submit" data-busy="Checking…">Continue</button>
+        <button class="linkish" type="button" data-action="resend">Send a new code</button>
+        <button class="linkish" type="button" data-action="change-number">Use a different number</button></div>
+    </form>
+  </section>
+
+  <section data-step="profile" hidden>
+    <h2>A little about you</h2>
+    <form data-form="profile" novalidate>
+      <div class="field"><label for="firstName">First name</label><input id="firstName" name="firstName" type="text" autocomplete="given-name" required data-focus></div>
+      <div class="field"><label for="age">Age</label><input id="age" name="age" type="number" inputmode="numeric" min="1" max="120" required aria-describedby="age-hint">
+        <p class="hint" id="age-hint">You must be <span data-slot="minJoinAge">18</span> or older.</p></div>
+
+      <fieldset><legend>I am</legend><div class="choice">
+        <label><input type="radio" name="interests" value="looking-for-work" required>Looking for work</label>
+        <label><input type="radio" name="interests" value="hiring">Hiring for a team</label></div></fieldset>
+      <div class="field"><label for="neighborhood">Borough or neighbourhood <span class="hint">(optional)</span></label><input id="neighborhood" name="neighborhood" type="text" autocomplete="off" placeholder="Queens"></div>
+      <div class="field"><label for="zip">ZIP code <span class="hint">(optional)</span></label><input id="zip" name="zip" type="text" inputmode="numeric" autocomplete="postal-code" maxlength="5" pattern="[0-9]{5}"></div>
+      <fieldset><legend>Kind of work <span class="hint">(optional)</span></legend><div class="chips"><label><input type="checkbox" name="interests" value="food-service">Food and hospitality</label><label><input type="checkbox" name="interests" value="retail">Retail</label><label><input type="checkbox" name="interests" value="trades">Trades</label><label><input type="checkbox" name="interests" value="office">Office and admin</label><label><input type="checkbox" name="interests" value="care">Care work</label><label><input type="checkbox" name="interests" value="tech">Tech</label><label><input type="checkbox" name="interests" value="creative">Creative</label><label><input type="checkbox" name="interests" value="delivery">Delivery and driving</label></div></fieldset>
+      <div class="field"><label for="about">One line: the work you want, or the role you are filling <span class="hint">(optional)</span></label><input id="about" name="about" type="text" maxlength="200" placeholder="Line cook, nights, Astoria or close by"></div>
+      <p class="hint">Do not send your race, religion, health, or immigration status. We do not need them, and we do not use them.</p>
+      <label class="consent"><input type="checkbox" name="consent" required>
+        <span data-consent-wording>I agree to receive recurring text messages from peon.biz at this number: questions about work or hiring, waitlist updates, introductions I agree to, and scheduling reminders. Message frequency varies. Message and data rates may apply. Reply STOP to stop and HELP for help. Consent is not a condition of any purchase.</span></label>
+      <p class="hint">See the <a href="/sms-terms">text messaging terms</a>, <a href="/terms">terms</a> and <a href="/privacy">privacy policy</a>.</p>
+      <p class="error" data-error role="alert" hidden></p>
+      <div class="row"><button class="btn" type="submit" data-busy="Saving…">Join</button></div>
+    </form>
+  </section>
+
+  <section data-step="done" hidden>
+    <h2>You're on the waitlist, <span data-slot="firstName"></span>.</h2>
+    <p>We will text you when peon.biz opens. Until then, we send only waitlist updates. Reply STOP at any time to stop.</p>
+    <p><a href="/settings">Settings</a></p>
+  </section>
+
+  <section data-step="member" hidden>
+    <h2>You're already in.</h2>
+    <p>You joined on <span data-slot="joinedAt"></span>. <a href="/settings">Go to settings</a> to see or change your membership.</p>
+  </section>
+
+  <section data-step="blocked" hidden>
+    <h2>We can't add you</h2>
+    <p data-slot="blockedReason"></p>
+    <p><a href="/">Back to peon.biz</a></p>
+  </section>
+</div>
+</main>
+<footer class="foot"><div class="wrap">
+  <p>peon.biz is operated by Eliza Research Corporation. Questions: <a href="mailto:help@peon.biz">help@peon.biz</a>. Message and data rates may apply. Reply STOP to stop and HELP for help.</p>
+  <nav aria-label="Legal"><a href="/guidelines">Community guidelines</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/sms-terms">Text messaging terms</a><a href="/settings">Your data</a></nav>
+</div></footer>
+</body></html>

@@ -1,12 +1,12 @@
-// Social graph renderer: d3-force layout (clustered by city, then community) drawn on a Canvas2D.
+// Social graph renderer: d3-force layout (clustered by community) drawn on a Canvas2D.
 // Members are nodes; known and learned edges are lines; open opportunities are animated arcs;
-// feed events pulse on the members involved. Pan (drag), zoom (wheel), click to select, shift-click
-// to pick people for an intro.
+// feed events pulse on the members involved. Pan (drag), zoom (wheel), click to focus, shift-click
+// to pick people for an intro. Filters and focus come from the store (matchMember, matchOpp, focusSet).
 import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY, type Simulation, type SimulationLinkDatum, type SimulationNodeDatum } from "d3-force";
 import type { ObsMember, ObsOpportunity } from "../src/types.ts";
 import { OPEN, store, type ColorLens } from "./store.ts";
 
-interface Node extends SimulationNodeDatum { id: string; city: string; community: string; ax: number; ay: number; r: number }
+interface Node extends SimulationNodeDatum { id: string; community: string; ax: number; ay: number; r: number }
 interface Link extends SimulationLinkDatum<Node> { type: string }
 
 export const EDGE_STYLE: Record<string, { color: string; alpha: number; width: number; dash?: number[] }> = {
@@ -21,19 +21,16 @@ export const EDGE_STYLE: Record<string, { color: string; alpha: number; width: n
   blocked: { color: "#ff5468", alpha: 0.65, width: 1, dash: [2, 2] },
 };
 export const OPP_COLOR: Record<string, string> = {
-  PROPOSED: "#a3a9e6", INVITING: "#ffb85c", PARTIALLY_ACCEPTED: "#58c4ff", MUTUALLY_ACCEPTED: "#2fd9e8", QUORUM_MET: "#2fd9e8", SCHEDULED: "#3dff9a",
+  PROPOSED: "#a3a9e6", IN_REVIEW: "#c9a3ff", INVITING: "#ffb85c", PARTIALLY_ACCEPTED: "#58c4ff", MUTUALLY_ACCEPTED: "#2fd9e8", QUORUM_MET: "#2fd9e8", SCHEDULED: "#3dff9a",
 };
 export const STATE_COLOR: Record<string, string> = {
   open: "#4fd1c5", normal: "#7aa2ff", quiet: "#a08cff", receiving: "#f6ad55", paused: "#7c8799", opted_out: "#ff5468", not_joined: "#3a4356",
 };
-const CITY_COLOR: Record<string, string> = { sf: "#ff9a6b", nyc: "#6bb8ff" };
 const PULSE_COLOR = { good: "#5cf0a4", bad: "#ff5468", warn: "#ffb85c", info: "#9cc8ff" } as const;
 const ARCHETYPE_COLOR: Record<string, string> = {
   regular: "#7aa2ff", busy_parent: "#a08cff", newcomer: "#4fd1c5", connector: "#ffd45c", introvert: "#8e9bb5",
   very_active: "#ff9a6b", never_replies: "#4a5468", traveler: "#d59be8",
 };
-const CITY_X: Record<string, number> = { sf: -560, nyc: 560 };
-const CITY_NAME: Record<string, string> = { sf: "San Francisco", nyc: "New York" };
 
 export function hashHue(s: string): number { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return ((h >>> 0) % 360); }
 export function communityColor(c: string) { return `hsl(${hashHue(c)}, 62%, 66%)`; }
@@ -42,7 +39,6 @@ export function memberColor(m: ObsMember, lens: ColorLens): string {
   if (!m.joined && lens === "state") return STATE_COLOR.not_joined!;
   switch (lens) {
     case "state": return STATE_COLOR[m.state] ?? "#7aa2ff";
-    case "city": return CITY_COLOR[m.city] ?? "#ccc";
     case "activity": {
       const a = Math.min(1, (m.counters.meetings * 2 + m.counters.accepted + m.counters.proposals * 0.15) / 8);
       return `hsl(${220 - a * 175}, ${55 + a * 40}%, ${42 + a * 26}%)`;
@@ -72,7 +68,8 @@ export class GraphView {
   private drag: { sx: number; sy: number; vx: number; vy: number; moved: boolean } | null = null;
   private pulses: Pulse[] = [];
   private raf = 0;
-  private lastCity = "all";
+  private lastBorough = "all";
+  private lastFocus = "";
   private ro: ResizeObserver;
   onHover?: (id: string | null, x: number, y: number) => void;
 
@@ -106,27 +103,19 @@ export class GraphView {
   private syncGraph() {
     if (this.graphTick === store.graphTick) return;
     this.graphTick = store.graphTick;
-    const byCity = new Map<string, string[]>();
-    for (const m of store.members.values()) {
-      const c = m.community ?? m.city;
-      if (!byCity.has(m.city)) byCity.set(m.city, []);
-      const list = byCity.get(m.city)!;
-      if (!list.includes(c)) list.push(c);
-    }
+    const comms = [...new Set([...store.members.values()].map(m => m.community ?? m.city))].sort();
     const anchor = new Map<string, [number, number]>();
-    for (const [city, comms] of byCity) {
-      comms.sort();
-      comms.forEach((c, i) => {
-        const a = (i / comms.length) * Math.PI * 2 - Math.PI / 2, rad = comms.length > 1 ? 250 : 0;
-        anchor.set(`${city}|${c}`, [(CITY_X[city] ?? 0) + Math.cos(a) * rad, Math.sin(a) * rad]);
-      });
-    }
+    comms.forEach((c, i) => {
+      const a = (i / comms.length) * Math.PI * 2 - Math.PI / 2, rad = comms.length > 1 ? 250 : 0;
+      anchor.set(c, [Math.cos(a) * rad, Math.sin(a) * rad]);
+    });
     const next = new Map<string, Node>();
     for (const m of store.members.values()) {
-      const [ax, ay] = anchor.get(`${m.city}|${m.community ?? m.city}`) ?? [CITY_X[m.city] ?? 0, 0];
+      const community = m.community ?? m.city;
+      const [ax, ay] = anchor.get(community) ?? [0, 0];
       const prev = this.nodes.get(m.id);
       const r = nodeRadius(m);
-      next.set(m.id, prev ? Object.assign(prev, { ax, ay, r, community: m.community ?? m.city }) : { id: m.id, city: m.city, community: m.community ?? m.city, ax, ay, r, x: ax + (Math.random() - 0.5) * 80, y: ay + (Math.random() - 0.5) * 80 });
+      next.set(m.id, prev ? Object.assign(prev, { ax, ay, r, community }) : { id: m.id, community, ax, ay, r, x: ax + (Math.random() - 0.5) * 80, y: ay + (Math.random() - 0.5) * 80 });
     }
     const fresh = this.nodes.size === 0;
     this.nodes = next;
@@ -141,13 +130,14 @@ export class GraphView {
     else this.sim.alpha(Math.max(this.sim.alpha(), 0.12));
   }
 
-  fit() {
-    const city = store.ui.city;
-    const ns = [...this.nodes.values()].filter(n => city === "all" || n.city === city);
+  /** Fit the view to the given members (default: every member the filters show). */
+  fit(ids?: Iterable<string>) {
+    const want = ids ? new Set(ids) : null;
+    const ns = [...this.nodes.values()].filter(n => (want ? want.has(n.id) : this.visible(n.id)));
     if (!ns.length || !this.w) return;
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const n of ns) { x0 = Math.min(x0, n.x!); y0 = Math.min(y0, n.y!); x1 = Math.max(x1, n.x!); y1 = Math.max(y1, n.y!); }
-    const k = Math.min(this.w / (x1 - x0 + 120), this.h / (y1 - y0 + 120), 2.5);
+    const k = Math.min(this.w / (x1 - x0 + 120), this.h / (y1 - y0 + 120), want ? 2 : 2.5);
     this.view = { k, x: this.w / 2 - ((x0 + x1) / 2) * k, y: this.h / 2 - ((y0 + y1) / 2) * k };
   }
 
@@ -158,15 +148,19 @@ export class GraphView {
     this.view = { k, x: this.w / 2 - n.x! * k, y: this.h / 2 - n.y! * k };
   }
 
+  /** Shown under the borough filter (the focus and the picks always are). */
+  private visible(id: string) { const m = store.members.get(id); return !!m && this.nodes.has(id) && (store.inBorough(m) || !!this.fs?.has(id)); }
+  /** The store's focus set, read once per frame. */
+  private fs: Set<string> | null = null;
+
   private toWorld(px: number, py: number) { return { x: (px - this.view.x) / this.view.k, y: (py - this.view.y) / this.view.k }; }
 
   private pick(px: number, py: number): string | null {
     const p = this.toWorld(px, py);
-    const city = store.ui.city;
     const tol = 9 / this.view.k;
     let best: string | null = null, bd = Infinity;
     for (const n of this.nodes.values()) {
-      if (city !== "all" && n.city !== city) continue;
+      if (!this.visible(n.id)) continue;
       const d = Math.hypot(n.x! - p.x, n.y! - p.y);
       if (d <= Math.max(tol, n.r + 2) && d < bd) { best = n.id; bd = d; }
     }
@@ -194,9 +188,9 @@ export class GraphView {
       const d = this.drag; this.drag = null;
       if (d?.moved) return;
       const id = this.pick(e.offsetX, e.offsetY);
-      if (!id) { if (!e.shiftKey) store.select(null); return; }
+      if (!id) return;
       if (e.shiftKey || e.metaKey) store.togglePick(id);
-      else store.select({ kind: "member", id });
+      else store.focus({ kind: "member", id });
     });
     c.addEventListener("pointerleave", () => { this.hover = null; this.onHover?.(null, 0, 0); });
     c.addEventListener("wheel", e => {
@@ -224,7 +218,15 @@ export class GraphView {
   private frame = (now: number) => {
     this.raf = requestAnimationFrame(this.frame);
     this.syncGraph();
-    if (store.ui.city !== this.lastCity) { this.lastCity = store.ui.city; this.fit(); }
+    this.fs = store.focusSet();
+    if (store.ui.filters.borough !== this.lastBorough) { this.lastBorough = store.ui.filters.borough; this.fit(); }
+    const fk = store.ui.focus ? `${store.ui.focus.kind}:${store.ui.focus.id}` : "";
+    if (fk !== this.lastFocus) {
+      this.lastFocus = fk;
+      const f = store.ui.focus;
+      if (f?.kind === "member") this.focus(f.id);
+      else if (f) { const set = store.focusSet(); if (set?.size) this.fit(set); }
+    }
     if (this.sim.alpha() > 0.02) this.sim.tick();
     this.takePulses(now);
     this.draw(now);
@@ -235,21 +237,14 @@ export class GraphView {
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.clearRect(0, 0, this.w, this.h);
     ctx.setTransform(this.dpr * k, 0, 0, this.dpr * k, this.dpr * x, this.dpr * y);
-    const city = ui.city;
-    const visible = (id: string) => { const n = this.nodes.get(id); return !!n && (city === "all" || n.city === city); };
-    const sel = ui.selection?.kind === "member" ? ui.selection.id : null;
-    const selOpp = ui.selection?.kind === "opportunity" ? store.opps.get(ui.selection.id) : undefined;
-    const focusSet = new Set<string>();
-    if (sel) { focusSet.add(sel); for (const e of store.edges.values()) { if (e.from === sel) focusSet.add(e.to); if (e.to === sel) focusSet.add(e.from); } }
-    if (selOpp) for (const id of selOpp.participants) focusSet.add(id);
-    for (const id of ui.picks) focusSet.add(id);
+    const visible = (id: string) => this.visible(id);
+    const f = ui.focus;
+    const sel = f?.kind === "member" ? f.id : null;
+    const selOpp = f?.kind === "opportunity" ? store.opps.get(f.id) : undefined;
+    const area = f?.kind === "neighborhood" ? f.id : null;
+    const focusSet = this.fs ?? new Set<string>();
     const dimmed = focusSet.size > 0;
-
-    // City labels.
-    ctx.textAlign = "center";
-    ctx.font = `600 ${Math.max(14, 26 / Math.sqrt(k))}px ui-sans-serif, system-ui`;
-    ctx.fillStyle = "rgba(170,190,230,0.10)";
-    for (const [c, cx] of Object.entries(CITY_X)) if (city === "all" || city === c) ctx.fillText(CITY_NAME[c]!.toUpperCase(), cx, -330);
+    const bright = (m: ObsMember) => (!dimmed || focusSet.has(m.id)) && store.matchMemberFilter(m);
 
     // Edges, batched per type.
     for (const [type, st] of Object.entries(EDGE_STYLE)) {
@@ -258,7 +253,9 @@ export class GraphView {
       let any = false;
       for (const e of store.edges.values()) {
         if (e.type !== type || !visible(e.from) || !visible(e.to)) continue;
-        if (dimmed && !(focusSet.has(e.from) && focusSet.has(e.to)) && !(sel && (e.from === sel || e.to === sel))) continue;
+        if (sel && e.from !== sel && e.to !== sel) continue;
+        if (area && (store.members.get(e.from)?.area !== area || store.members.get(e.to)?.area !== area)) continue;
+        if (dimmed && !sel && !area && !(focusSet.has(e.from) && focusSet.has(e.to))) continue;
         const a = this.nodes.get(e.from)!, b = this.nodes.get(e.to)!;
         ctx.moveTo(a.x!, a.y!); ctx.lineTo(b.x!, b.y!); any = true;
       }
@@ -278,7 +275,7 @@ export class GraphView {
       for (const o of store.opps.values()) {
         const shadow = o.source === "shadow";
         if (!shadow && !OPEN.has(o.state)) continue;
-        if (!o.participants.every(visible)) continue;
+        if (!o.participants.every(visible) || !store.matchOpp(o)) continue;
         if (dimmed && !o.participants.some(id => focusSet.has(id)) && selOpp?.id !== o.id) continue;
         this.drawOpp(ctx, o, t, k, selOpp?.id === o.id);
       }
@@ -289,9 +286,9 @@ export class GraphView {
     const controlled = new Set(store.game?.controlled ?? []);
     for (const m of store.members.values()) {
       const n = this.nodes.get(m.id);
-      if (!n || (city !== "all" && n.city !== city)) continue;
-      const faded = dimmed && !focusSet.has(m.id);
-      ctx.globalAlpha = faded ? 0.18 : m.joined ? 1 : 0.35;
+      if (!n || !this.visible(m.id)) continue;
+      const faded = !bright(m);
+      ctx.globalAlpha = faded ? 0.15 : m.joined ? 1 : 0.35;
       const r = n.r;
       ctx.fillStyle = memberColor(m, ui.colorBy);
       ctx.beginPath();
@@ -350,7 +347,7 @@ export class GraphView {
     ctx.strokeStyle = color;
     ctx.globalAlpha = selected ? 1 : shadow ? 0.5 : o.source === "player" ? 0.95 : 0.65;
     ctx.lineWidth = (selected ? 2.6 : o.source === "player" ? 1.8 : 1.1) / Math.sqrt(k);
-    ctx.setLineDash(shadow ? [1.5 / k, 3 / k] : [5 / k, 4 / k]);
+    ctx.setLineDash(shadow ? [1.5 / k, 3 / k] : o.state === "IN_REVIEW" ? [1 / k, 4 / k] : [5 / k, 4 / k]);
     ctx.lineDashOffset = -t * 18 / k;
     ctx.beginPath();
     if (ps.length === 2) {

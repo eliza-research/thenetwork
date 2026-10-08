@@ -6,9 +6,9 @@ import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DAY, HOUR, MINUTE, SimClock, type MemberId, type Proposal } from "@thenetwork/core";
 import { computeMetrics, type Metrics, type RunRecord, type RunRecordInput, type OracleSummary } from "@thenetwork/judge";
-import { PolicyPersonaAgent, templateText } from "./agent/policy.ts";
+import { PolicyPersonaAgent, templateText, timeConflict, type PolicyOptions } from "./agent/policy.ts";
 import { newMemory, type PersonaAgent, type PersonaContext, type PersonaMemory } from "./agent/types.ts";
-import { SimChannel, type SimMessage } from "./channel.ts";
+import { SimChannel, type Reaction, type SimMessage } from "./channel.ts";
 import type { Engine, InboundMessage, MeetingReport, NetworkContext, NetworkUnderTest } from "./network.ts";
 import { Oracle, type OracleVerdict } from "./oracle.ts";
 import type { Persona } from "./persona.ts";
@@ -16,6 +16,7 @@ import { Rng, hash32 } from "./rng.ts";
 import { Scheduler, type RunMode } from "./scheduler.ts";
 import { buildSnapshot, quietHoursOf } from "./snapshot.ts";
 import { nextLocalHour } from "./time.ts";
+import { planEnjoyment, type PlanAgentOptions } from "./plans.ts";
 
 /** A scripted world action (compiled from a scenario file). */
 export type WorldAction =
@@ -35,6 +36,26 @@ export interface WorldOptions {
   /** Optional matching engine; called nightly per city, proposals handed to network.submitProposal. */
   engine?: Engine;
   agent?: PersonaAgent;
+  /** Options for the default PolicyPersonaAgent (ignored when `agent` is given). Default: none. */
+  policy?: PolicyOptions;
+  /**
+   * Time-dependent attendance (default false). A participant booked at a time that clashes with its
+   * hidden week (agent/availability.ts timeConflict: not free, p = 0.7 it does not rearrange) does not
+   * come, and gives notice on the meeting morning with p = 0.8 (other flakers: 0.45). A meeting at a
+   * time that fits is decided as before. Also turns on PolicyOptions.timeAware for the default persona
+   * agent (unless `policy.timeAware` says otherwise). Off by default so baselines do not move.
+   */
+  timeAware?: boolean;
+  /**
+   * Plans v1.1 (default off). Turns on PolicyOptions.plans for the default persona agent (unless
+   * `policy.plans` says otherwise); scores plan meetings with the plan oracle (plans.ts planEnjoyment:
+   * activity fit x group chemistry x logistics) instead of the pair model; and puts members' answers to
+   * "Would you do this again?" into the snapshot as would_interact_again edges. A plan meeting is one
+   * whose proposal has generator "plan", whose MeetingReport.kind is "plan", or that a participant was
+   * probed for (SimMeta.plan). Time-dependent attendance (timeAware) applies to plan meetings as to any.
+   * Off by default so baselines do not move.
+   */
+  plans?: boolean | PlanAgentOptions;
   /** Simulation start (UTC ms). Default: Mon 2026-10-05 00:00 PDT. */
   start?: number;
   mode?: RunMode;
@@ -106,7 +127,9 @@ export class World {
     this.personas = new Map(opts.personas.map(p => [p.id, p]));
     this.oracle = new Oracle(opts.personas, opts.seed, this.start);
     this.scheduler = new Scheduler(this.clock, { mode: opts.mode ?? "discrete", speed: opts.speed });
-    this.agent = opts.agent ?? new PolicyPersonaAgent(this.start);
+    this.agent = opts.agent ?? new PolicyPersonaAgent(this.start, opts.timeAware || opts.plans
+      ? { ...(opts.timeAware ? { timeAware: true } : {}), ...(opts.plans ? { plans: opts.plans } : {}), ...opts.policy }
+      : opts.policy);
     this.rng = new Rng(hash32("world", opts.seed));
     this.runId = opts.runId ?? `run-${new Date().toISOString().replace(/[:.]/g, "-")}-s${opts.seed}-${opts.network.name}`;
     this.end = this.start + opts.days * DAY;
@@ -150,10 +173,13 @@ export class World {
       snapshot: () => buildSnapshot([...this.personas.values()], {
         now: this.clock.now(), worldStart: this.start, joined: this.joined, optedOut: this.optedOut,
         blocks: this.blocks, unanswered: this.unanswered, recentProposals: [...this.proposals.values()],
+        // The Network's own history (interactions, feedback, open opportunities, unsent proposals).
+        records: this.records,
+        ...(this.opts.plans ? { features: { planAgainEdges: true } } : {}),
       }),
       recordProposal: (p, source = "network") => {
         this.proposals.set(p.id, p);
-        const v = this.oracle.evaluate({ id: p.id, kind: p.kind, participants: p.participants, city: p.city, window: p.window, objective: p.objective });
+        const v = this.oracle.evaluate({ id: p.id, kind: p.kind, participants: p.participants, city: p.city, window: p.window, category: p.category, objective: p.objective });
         this.rec({ type: "proposal", source, proposal: p, oracle: summarize(v) });
       },
       recordMeeting: m => this.scheduleMeeting(m),
@@ -199,7 +225,7 @@ export class World {
   // ------------------------------------------------------------------ persona context
   private personaCtx(p: Persona, salt: string | number): PersonaContext {
     return {
-      persona: p, memory: this.memories.get(p.id)!, now: this.clock.now(),
+      persona: p, memory: this.memories.get(p.id)!, now: this.clock.now(), seed: this.opts.seed,
       rng: this.rng.fork("persona", p.id, salt), oracle: this.oracle,
       history: this.channel.messagesFor(p.id),
       lookupProposal: id => this.proposals.get(id),
@@ -209,10 +235,11 @@ export class World {
   }
 
   /** Persona sends a message to the Network (via the channel, so keywords apply). */
-  private personaSend(p: Persona, text: string): SimMessage | undefined {
+  private personaSend(p: Persona, text: string, reaction?: Reaction): SimMessage | undefined {
     const mem = this.memories.get(p.id)!;
     if (mem.optedOut && text.trim().toUpperCase() !== "START") return undefined;
-    const m = this.channel.receive(p.id, text);
+    // A tapback is an inbound message too: it answers the Network (resets `unanswered` below).
+    const m = this.channel.receive(p.id, text, reaction ? { reaction } : {});
     this.logMessage(m);
     this.unanswered.set(p.id, 0);
     if (m.keyword === "STOP") { mem.optedOut = true; this.optedOut.add(p.id); this.rec({ type: "opt_out", memberId: p.id }); }
@@ -272,10 +299,11 @@ export class World {
 
     s.on<{ personaId: MemberId }>("join", ev => this.onJoin(ev.data.personaId));
     s.on<{ msg: SimMessage }>("deliver", ev => this.onDeliver(ev.data.msg));
-    s.on<{ personaId: MemberId; text: string }>("persona_send", ev => { this.personaSend(this.personas.get(ev.data.personaId)!, ev.data.text); });
+    s.on<{ personaId: MemberId; text: string; reaction?: Reaction }>("persona_send", ev => { this.personaSend(this.personas.get(ev.data.personaId)!, ev.data.text, ev.data.reaction); });
     s.on<{ msg: SimMessage }>("network_inbound", async ev => {
       const m = ev.data.msg;
       const inbound: InboundMessage = { id: m.id, memberId: m.memberId, body: m.body, ts: m.ts, channel: m.channel, keyword: m.keyword };
+      if (m.meta?.reaction) inbound.reaction = m.meta.reaction;
       try { await network.onInbound(inbound); } catch (e) { this.rec({ type: "network_error", error: String((e as Error)?.stack ?? e) }); }
     });
     const tickMs = (this.opts.tickMinutes ?? 60) * MINUTE;
@@ -373,9 +401,12 @@ export class World {
     const reply = await this.agent.respond(pctx, msg);
     this.rec({ type: "decision", memberId: p.id, messageId: msg.id, messageType: reply.messageType, intent: reply.intent, decision: reply.decision, proposalId: reply.proposalId, delayMs: reply.delayMs });
     if (reply.worthwhile !== undefined) this.rec({ type: "judgment", memberId: p.id, messageId: msg.id, worthwhile: reply.worthwhile, source: this.agent.mode });
-    if (reply.intent === "flake_notice" && reply.proposalId) this.notices.add(`${reply.proposalId}|${p.id}`);
+    // A flake notice, or "can't make it" to a booked or scheduled time (timeAware), cancels with notice.
+    if ((reply.intent === "flake_notice" || reply.intent === "booked_cancel") && reply.proposalId) this.notices.add(`${reply.proposalId}|${p.id}`);
+    // Messages the persona sends on its own after this one (plans: "WEEKLY" to the check-in offer).
+    for (const f of reply.followUps ?? []) this.scheduler.after(f.delayMs, "persona_send", { personaId: p.id, text: f.text });
     if (reply.action === "reply" && reply.text) {
-      this.scheduler.after(reply.delayMs, "persona_send", { personaId: p.id, text: reply.text });
+      this.scheduler.after(reply.delayMs, "persona_send", { personaId: p.id, text: reply.text, ...(reply.reaction ? { reaction: reply.reaction } : {}) });
       if (reply.block?.length) {
         for (const b of reply.block) {
           const other = this.personas.get(b);
@@ -413,14 +444,21 @@ export class World {
     if (!m || !p || !mem || mem.optedOut) return;
     const pr = mem.proposals[m.proposalId];
     const key = `${m.proposalId}|${personaId}`;
-    if (!pr || pr.plannedShow || this.notices.has(key)) return;
+    // Time-aware: a participant booked at a time that clashes with its week drops out (and says so more often).
+    const clash = this.clashes(m, p);
+    if (this.notices.has(key) || (!clash && (!pr || pr.plannedShow))) return;
     const r = this.rng.fork("flake", meetingId, personaId);
-    if (mem.forceFlake === "notice" || (!mem.forceFlake && r.bool(0.45))) {
+    if (mem.forceFlake === "notice" || (!mem.forceFlake && r.bool(clash ? 0.8 : 0.45))) {
       this.notices.add(key);
       const text = templateText(this.personaCtx(p, `flake${meetingId}`), { intent: "flake_notice", messageType: "reminder", decision: "none", delayMs: 0 });
       this.personaSend(p, text);
     }
     if (mem.forceFlake) mem.forceFlake = undefined; // one-shot
+  }
+
+  /** WorldOptions.timeAware: the meeting's time clashes with the participant's hidden week. */
+  private clashes(m: MeetingReport, p: Persona): boolean {
+    return !!this.opts.timeAware && timeConflict(p, m.proposalId, m.at, m.city, this.opts.seed, this.oracle);
   }
 
   private onMeeting(meetingId: string) {
@@ -432,12 +470,17 @@ export class World {
       const mem = this.memories.get(id)!;
       const pr = mem.proposals[m.proposalId];
       const notice = this.notices.has(`${m.proposalId}|${id}`);
-      const s = !!pr && pr.decision !== "decline" && pr.plannedShow && !notice && !mem.optedOut;
+      const s = !!pr && pr.decision !== "decline" && pr.plannedShow && !notice && !mem.optedOut && !this.clashes(m, this.personas.get(id)!);
       attendance[id] = { showed: s, cancelledWithNotice: notice, enjoyment: 0 };
       if (s) showed.push(id);
     }
-    if (showed.length >= 2) {
-      const v = this.oracle.evaluate({ id: `${m.proposalId}:actual`, kind: prop?.kind ?? "intro", participants: showed, city: m.city, window: { start: m.at, end: m.at }, objective: prop?.objective });
+    const plan = this.opts.plans ? this.planOf(m, prop) : undefined;
+    if (plan && showed.length >= 2) {
+      // The plan oracle: activity fit x group chemistry x logistics (plans.ts).
+      const e = planEnjoyment(this.oracle, this.opts.seed, { id: m.proposalId, ...plan }, showed);
+      for (const id of showed) attendance[id]!.enjoyment = e[id] ?? 0;
+    } else if (showed.length >= 2) {
+      const v = this.oracle.evaluate({ id: `${m.proposalId}:actual`, kind: prop?.kind ?? "intro", participants: showed, city: m.city, window: { start: m.at, end: m.at }, category: prop?.category, objective: prop?.objective });
       for (const id of showed) attendance[id]!.enjoyment = v.participants[id]?.enjoyment ?? 0;
     }
     for (const id of m.participants) {
@@ -449,6 +492,18 @@ export class World {
       };
     }
     this.rec({ type: "outcome", meetingId, proposalId: m.proposalId, at: m.at, attendance });
+  }
+
+  /**
+   * WorldOptions.plans: is this meeting a plan, and its activity and area? From the proposal (generator
+   * "plan", anchor or "plan: <label>" objective), the report's kind, or a participant's probe (SimMeta.plan).
+   */
+  private planOf(m: MeetingReport, prop: Proposal | undefined): { activity?: string; area?: string } | undefined {
+    const probed = m.participants.map(id => this.memories.get(id)?.plans?.[m.proposalId]).find(x => !!x);
+    if (!probed && prop?.generator !== "plan" && m.kind !== "plan") return undefined;
+    const anchor = (prop as { anchor?: { type: string; id: string } } | undefined)?.anchor;
+    const activity = probed?.activity ?? (anchor?.type === "interest" ? anchor.id : prop?.objective?.replace(/^plan:\s*/i, ""));
+    return { ...(activity ? { activity } : {}), ...(probed?.area ? { area: probed.area } : {}) };
   }
 
   private async onAction(a: WorldAction, ctx: NetworkContext) {

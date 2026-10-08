@@ -1,10 +1,11 @@
 // Event-sourced projection: simulator run records (packages/judge/src/runlog.ts) -> observatory
 // state. Opportunities follow the PRD 32.10 state machine as far as the records reveal it; the
 // edges the Network learns follow PRD 32.13 (introduced, met, enjoyed, would_interact_again, avoid).
-import type { MemberId } from "@thenetwork/core";
+import { UNDER_MIN_AGE_DECLINE, type MemberId, type Proposal } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/judge";
+import { requestLabel } from "./events.ts";
 import { emptyCounters, type Store } from "./store.ts";
-import type { MemberStatus, ObsOpportunity, OppSource, OppState, ParticipantStatus } from "./types.ts";
+import type { MemberStatus, ObsOpportunity, OppSource, OppState, ParticipantStatus, ReviewInfo, ReviewReason, TimeChoice } from "./types.ts";
 
 export const ENJOYED = 0.6, WOULD_AGAIN = 0.75, AVOID = 0.2;
 const TERMINAL: ReadonlySet<OppState> = new Set<OppState>([
@@ -19,10 +20,20 @@ export interface ProjectorOptions {
   runOf?: (proposalId: string) => string | undefined;
   /** Called after an opportunity changes (game scoring, missions). */
   onOpp?: (o: ObsOpportunity, rec: RunRecord) => void;
+  /** True when a simulated reviewer approves everything (review "auto"): no feed item per queued opportunity. */
+  quietReview?: () => boolean;
 }
 
 export class Projector {
   private meetings = new Map<string, string>(); // meetingId -> proposalId
+  /** The member who last received the under-13 decline (join_declined itself carries no member id). */
+  private declineTo?: MemberId;
+  /** Opportunities already counted in their participants' proposal counters. */
+  private counted = new Set<string>();
+  /** Booked-plan messages (SimMeta.booked): the plan is booked when it reaches the member; only a typed "can't" or no undoes it. */
+  private booked = new Set<string>();
+  /** The last times offered to each member (a requester's time question names no opportunity; its answer does). */
+  private lastOptions = new Map<MemberId, TimeChoice[]>();
   constructor(private store: Store, private opts: ProjectorOptions = {}) {}
 
   private name(id: MemberId) { return this.store.member(id)?.name.split(" ")[0] ?? id; }
@@ -36,10 +47,22 @@ export class Projector {
     this.store.touchMember(id);
     return m.counters;
   }
+  /** State each opportunity was in when last seen (time in state). */
+  private lastState = new Map<string, OppState>();
   private changed(o: ObsOpportunity, rec: RunRecord) {
     o.updatedAt = rec.t;
+    if (this.lastState.get(o.id) !== o.state) { this.lastState.set(o.id, o.state); o.stateSince = rec.t; }
     this.store.touchOpp(o.id);
     this.opts.onOpp?.(o, rec);
+  }
+  /**
+   * Proposal counters: an opportunity counts for its participants once, when it can reach them. One
+   * that waits for review (PRD 32.8) counts only when a reviewer approves it.
+   */
+  private count(o: { id: string; participants: MemberId[] }, delta: 1 | -1 = 1) {
+    if ((delta === 1) === this.counted.has(o.id)) return;
+    if (delta === 1) this.counted.add(o.id); else this.counted.delete(o.id);
+    for (const id of o.participants) { const k = this.counters(id); if (k) k.proposals += delta; }
   }
   private setState(o: ObsOpportunity, s: OppState, reason?: string) {
     if (o.state === s) return;
@@ -67,7 +90,10 @@ export class Projector {
         if (msg.direction === "inbound") { c.inbound++; if (k) k.msgsIn++; return; }
         c.outbound++;
         if (k) k.msgsOut++;
+        if (msg.body === UNDER_MIN_AGE_DECLINE) this.declineTo = msg.memberId;
         if (msg.meta?.proactive && msg.status === "delivered") { c.proactive++; if (k) k.proactive++; }
+        if (msg.meta?.booked) this.booked.add(msg.id);
+        this.timesAndBooking(msg, r);
         const pid = msg.meta?.proposalId;
         const o = pid ? s.opps.get(pid) : undefined;
         if (!o) return;
@@ -88,7 +114,7 @@ export class Projector {
         const source = r.source as OppSource;
         const prev = s.opps.get(p.id);
         const o: ObsOpportunity = {
-          origin: prev?.origin, venue: prev?.venue,
+          origin: prev?.origin, venue: prev?.venue, review: prev?.review, ...(prev?.times ? { times: prev.times } : {}), ...(prev?.booked ? { booked: prev.booked } : {}),
           id: p.id, kind: p.kind, source, generator: p.generator, category: p.category, city: p.city,
           objective: p.objective, score: p.score, components: p.components, explanations: p.explanations ?? {},
           exploration: p.exploration, participants: [...p.participants], alternates: [...(p.alternates ?? [])],
@@ -96,7 +122,7 @@ export class Projector {
           enjoyment: {}, createdAt: prev?.createdAt ?? r.t, updatedAt: r.t, oracle: r.oracle, runId: prev?.runId ?? this.opts.runOf?.(p.id),
         };
         s.upsertOpp(o);
-        if (!prev) for (const id of p.participants) { const k = this.counters(id); if (k) k.proposals++; }
+        if (!prev) this.count(o);
         this.opts.onOpp?.(o, r);
         if (source === "player" || source === "scenario") {
           s.pushFeed({ t: r.t, kind: "proposal", text: `${source === "player" ? "You proposed" : "Scenario proposed"} ${p.kind.replace(/_/g, " ")}: ${this.names(p.participants)}`, members: p.participants, opportunityId: p.id });
@@ -107,18 +133,22 @@ export class Projector {
         const o = r.proposalId ? s.opps.get(r.proposalId) : undefined;
         if (!o || !(r.memberId in o.status)) return;
         let st: ParticipantStatus | undefined;
+        // A booked plan (the reveal with an opt-out) is a yes when it arrives (below); only a typed no or "can't" changes it.
+        const bookedMsg = this.booked.has(r.messageId);
+        if (bookedMsg && r.intent !== "decline" && r.intent !== "booked_cancel") return;
+        const said = bookedMsg ? "decline" : r.intent;
         if (r.messageType === "proposal") {
-          if (r.intent === "accept") st = "accepted";
-          else if (r.intent === "decline") st = "declined";
-          else if (r.intent === "counter") st = "countered";
-          else if (r.intent === "ignore") st = "ignored";
+          if (said === "accept") st = "accepted";
+          else if (said === "decline") st = "declined";
+          else if (said === "counter") st = "countered";
+          else if (said === "ignore" || said === "ack" || said === "none") st = "ignored";
         } else if (r.intent === "flake_notice") st = "cancelled_with_notice";
         if (!st || isTerminal(o.state) && st !== "cancelled_with_notice") return;
         const prev = o.status[r.memberId];
         if (prev === st) return;
         o.status[r.memberId] = st;
         if (st === "accepted" || st === "countered") { c.accepts++; const k = this.counters(r.memberId); if (k) k.accepted++; }
-        if (st === "declined") c.declines++;
+        if (st === "declined") { c.declines++; if (prev === "accepted" || prev === "countered" || prev === "confirmed") c.accepts--; }
         if (st === "accepted" || st === "declined") {
           s.pushFeed({ t: r.t, kind: st === "accepted" ? "accept" : "decline", text: `${this.name(r.memberId)} ${st === "accepted" ? "said yes to" : "passed on"} ${o.participants.length > 2 ? "a group" : "meeting " + this.names(o.participants.filter(x => x !== r.memberId))}`, members: [r.memberId], opportunityId: o.id, severity: st === "accepted" ? "good" : undefined });
         }
@@ -132,7 +162,12 @@ export class Projector {
         if (!o) return;
         this.setState(o, "SCHEDULED");
         o.meetingAt = r.at;
-        for (const id of r.participants) if (o.status[id] !== "cancelled_with_notice") o.status[id] = "confirmed";
+        for (const id of r.participants) {
+          // A booked plan (attention v1.2) is booked before anyone is told: a member who had not said yes in
+          // words is in by default (silence = in), so they count as a yes here.
+          if (o.status[id] !== "accepted" && o.status[id] !== "countered" && o.status[id] !== "cancelled_with_notice") { c.accepts++; const k = this.counters(id); if (k) k.accepted++; }
+          if (o.status[id] !== "cancelled_with_notice") o.status[id] = "confirmed";
+        }
         for (const [id, st] of Object.entries(o.status)) if (st === "pending" || st === "invited" || st === "ignored") o.status[id] = "dropped";
         this.changed(o, r);
         s.pushFeed({ t: r.t, kind: "meeting", text: `Meeting set: ${this.names(r.participants)}`, members: r.participants, opportunityId: o.id, severity: "good" });
@@ -142,6 +177,8 @@ export class Projector {
         const o = s.opps.get(r.proposalId);
         const showed = Object.entries(r.attendance).filter(([, a]) => a.showed).map(([id]) => id);
         for (const [id, a] of Object.entries(r.attendance)) {
+          // A member who said no to a booked plan was not expected: not a no-show (the plan is booked first).
+          if (!a.showed && o?.status[id] === "declined") continue;
           if (a.showed) c.attended++; else if (a.cancelledWithNotice) c.cancelledWithNotice++; else c.noShows++;
           if (o) {
             o.status[id] = a.showed ? "attended" : a.cancelledWithNotice ? "cancelled_with_notice" : "no_show";
@@ -232,27 +269,136 @@ export class Projector {
   private consentLog(r: Extract<RunRecord, { type: "network_log" }>): boolean {
     const s = this.store, d = r.detail as Record<string, any>;
     switch (r.kind) {
+      case "review_queued": {
+        // PRD 32.8: the opportunity waits for a reviewer; no member has heard about it yet.
+        const p = d.proposal as Proposal;
+        const prev = s.opps.get(p.id);
+        if (prev && d.rerolled && prev.state === "IN_REVIEW") {
+          // A re-roll: a participant was swapped for an alternate; it waits again with a new deadline.
+          prev.participants = [...p.participants]; prev.alternates = [...(p.alternates ?? [])];
+          prev.explanations = { ...(p.explanations ?? {}) };
+          prev.status = Object.fromEntries(p.participants.map(id => [id, "pending" as ParticipantStatus]));
+          prev.review = { ...prev.review!, deadline: Number(d.deadline) };
+          this.changed(prev, r);
+          return true;
+        }
+        if (prev && (prev.review || prev.state !== "PROPOSED")) return true;
+        // A staff-composed or scenario proposal is already on the board (its "proposal" record); it waits too.
+        const o = prev ? { ...prev, origin: String(d.origin ?? "player") } : this.consentOpp(p, String(d.origin ?? "network"), r.t, d.runId);
+        o.state = "IN_REVIEW"; o.reason = "waiting for review (nobody contacted)";
+        o.status = Object.fromEntries(p.participants.map(id => [id, "pending" as ParticipantStatus]));
+        o.review = { queuedAt: r.t, deadline: Number(d.deadline) };
+        o.stateSince = r.t; this.lastState.set(o.id, o.state);
+        s.upsertOpp(o);
+        // Not a proposal to anyone yet: it counts when a reviewer approves it (a staff-composed one
+        // counted at its "proposal" record is taken back until then).
+        this.count(o, -1);
+        if (!this.opts.quietReview?.()) s.pushFeed({ t: r.t, kind: "review", text: `In review: ${originLabel(o.origin!).toLowerCase()} for ${this.names(p.participants)}`, members: p.participants, opportunityId: p.id });
+        return true;
+      }
+      case "review_decision": {
+        const o = s.opps.get(d.oppId);
+        if (!o) return true;
+        const rv: ReviewInfo = { ...(o.review ?? { queuedAt: r.t, deadline: r.t }) };
+        if (typeof d.secondsSpent === "number") rv.secondsSpent = (rv.secondsSpent ?? 0) + d.secondsSpent;
+        if (d.decision === "reroll") {
+          // The item stays in review (a "review_queued" with rerolled follows) or closes back to the engine.
+          rv.rerolls = (rv.rerolls ?? 0) + 1;
+          o.review = rv;
+          if (d.next === "engine" && !isTerminal(o.state)) this.setState(o, "SKIPPED", "re-rolled in review (no alternate; back to the engine)");
+          this.changed(o, r);
+          s.pushFeed({ t: r.t, kind: "review", text: `Review: re-rolled ${this.names(o.participants)}${d.in ? ` (${this.name(d.out)} → ${this.name(d.in)})` : " (no alternate)"}${d.reviewer ? ` (${d.reviewer})` : ""}`, members: o.participants, opportunityId: o.id });
+          return true;
+        }
+        const decision = d.decision === "reject" ? "reject" : "approve";
+        Object.assign(rv, { decision, reason: (d.reason ?? undefined) as ReviewReason | undefined, note: d.note ?? undefined, reviewer: d.reviewer ?? undefined, decidedAt: r.t });
+        for (const k of ["reason", "note", "reviewer"] as const) if (rv[k] === undefined) delete rv[k];
+        if (Array.isArray(d.edited) && d.edited.length) rv.edits = [...(rv.edits ?? []), ...d.edited];
+        o.review = rv;
+        if (decision === "reject" && !isTerminal(o.state)) this.setState(o, "SKIPPED", `rejected in review${d.reason ? ` (${String(d.reason).replace(/_/g, " ")})` : ""}`);
+        if (decision === "approve") this.count(o);
+        this.changed(o, r);
+        if (!this.opts.quietReview?.() || decision === "reject") s.pushFeed({ t: r.t, kind: "review", text: `Review: ${decision === "approve" ? (rv.edits?.length ? "edited and approved" : "approved") : "rejected"} ${this.names(o.participants)}${d.reviewer ? ` (${d.reviewer})` : ""}`, members: o.participants, opportunityId: o.id, severity: decision === "approve" ? "good" : "warn" });
+        return true;
+      }
+      case "review_invalidated": {
+        // Approved, but a gate failed on the re-check: nobody was contacted.
+        const o = s.opps.get(d.oppId);
+        if (!o) return true;
+        o.review = { ...(o.review ?? { queuedAt: r.t, deadline: r.t }), invalidated: String(d.reason) };
+        this.count(o, -1);
+        if (!isTerminal(o.state)) this.setState(o, "SKIPPED", `approved, then stopped on the re-check (${String(d.reason).replace(/_/g, " ")})`);
+        this.changed(o, r);
+        s.pushFeed({ t: r.t, kind: "review", text: `Approval stopped on the re-check: ${this.names(o.participants)} (${String(d.reason).replace(/_/g, " ")}); nobody contacted`, members: o.participants, opportunityId: o.id, severity: "warn" });
+        return true;
+      }
+      case "review_refused": return true;
+      case "matching_switch":
+        s.pushFeed({ t: r.t, kind: "config", text: `Proactive matching turned ${d.on ? "ON" : "OFF"}${d.actor ? ` by ${d.actor}` : ""}`, severity: d.on ? "info" : "warn" });
+        return true;
+      case "safety_action":
+        s.pushFeed({ t: r.t, kind: "trust", text: `Staff ${String(d.action).replace(/_/g, " ")}: ${this.name(d.memberId)}${d.actor ? ` (${d.actor})` : ""}`, members: d.memberId ? [d.memberId] : undefined });
+        return true;
+      case "age_unknown": {
+        // No valid age: treated as a minor until they say.
+        const m = s.member(d.memberId);
+        if (m && (!m.minor || !m.ageUnknown)) { m.minor = true; m.ageUnknown = true; s.touchMember(m.id); }
+        s.pushFeed({ t: r.t, kind: "trust", text: `${this.name(d.memberId)}: no valid age, treated as under 18 until they say`, members: [d.memberId], severity: "warn" });
+        return true;
+      }
+      case "age_resolved": {
+        const m = s.member(d.memberId);
+        if (m && (m.minor !== !!d.minor || m.ageUnknown)) { m.minor = !!d.minor; delete m.ageUnknown; s.touchMember(m.id); }
+        s.pushFeed({ t: r.t, kind: "trust", text: `${this.name(d.memberId)} gave their age: ${d.minor ? "under 18 (single-player only)" : "18 or over"}`, members: [d.memberId] });
+        return true;
+      }
+      case "review_expired": {
+        const o = s.opps.get(d.oppId);
+        if (!o) return true;
+        o.review = { ...(o.review ?? { queuedAt: r.t, deadline: r.t }), decision: "expired", decidedAt: r.t };
+        if (!isTerminal(o.state)) this.setState(o, "SKIPPED", "review expired (never sent)");
+        this.changed(o, r);
+        s.pushFeed({ t: r.t, kind: "review", text: `Review expired: ${this.names(o.participants)} (never sent)`, members: o.participants, opportunityId: o.id, severity: "warn" });
+        return true;
+      }
+      case "review_mode":
+        s.pushFeed({ t: r.t, kind: "review", text: `Review mode: ${d.mode}` });
+        return true;
       case "probe_started": {
-        const p = d.proposal as import("@thenetwork/core").Proposal;
-        if (s.opps.has(p.id)) return true;
+        const p = d.proposal as Proposal;
         const primed = new Set<string>(d.primed ?? []);
         const origin = String(d.origin ?? "network");
-        const o: ObsOpportunity = {
-          id: p.id, kind: p.kind, source: origin === "engine" ? "engine" : origin === "player" ? "player" : "network", origin,
-          generator: p.generator, category: p.category, city: p.city, objective: p.objective, score: p.score, components: p.components,
-          explanations: p.explanations ?? {}, exploration: p.exploration, participants: [...p.participants], alternates: [...(p.alternates ?? [])],
-          state: "PROPOSED", reason: "checking availability (no names yet)",
-          status: Object.fromEntries(p.participants.map(id => [id, (primed.has(id) ? "available" : "checking") as ParticipantStatus])),
-          enjoyment: {}, createdAt: r.t, updatedAt: r.t, runId: d.runId ?? undefined,
-        };
+        const prev = s.opps.get(p.id);
+        if (prev && prev.state !== "IN_REVIEW") return true;
+        const o = this.consentOpp(p, origin, prev?.createdAt ?? r.t, d.runId);
+        o.review = prev?.review; o.updatedAt = r.t;
+        // Keep what the "proposal" record set for staff-composed and scenario proposals (source, oracle verdict).
+        if (prev) { o.source = prev.source; o.oracle = prev.oracle; o.runId = prev.runId ?? o.runId; }
+        o.state = "PROPOSED"; o.reason = "checking availability (no names yet)";
+        o.status = Object.fromEntries(p.participants.map(id => [id, (primed.has(id) ? "available" : "checking") as ParticipantStatus]));
         s.upsertOpp(o);
-        for (const id of p.participants) { const k = this.counters(id); if (k) k.proposals++; }
+        if (!prev) this.count(o);
         if (origin !== "engine") s.pushFeed({ t: r.t, kind: "probe", text: `${originLabel(origin)}: checking with ${this.names(p.participants.filter(id => !primed.has(id)))} (no names yet)`, members: p.participants, opportunityId: p.id });
         return true;
       }
-      case "probe_answer": {
+      case "probe_answer": case "time_answer": {
         const o = s.opps.get(d.oppId);
-        if (o && o.state === "PROPOSED") { o.status[d.memberId] = d.yes ? "available" : "unavailable"; this.changed(o, r); }
+        if (!o) return true;
+        if (r.kind === "probe_answer" && o.state === "PROPOSED") o.status[d.memberId] = d.yes ? "available" : "unavailable";
+        // The keys they picked from the times offered (empty: none fit).
+        if (Array.isArray(d.picked)) o.times = { ...o.times, [d.memberId]: { offered: o.times?.[d.memberId]?.offered ?? this.lastOptions.get(d.memberId) ?? [], picked: [...d.picked] } };
+        this.changed(o, r);
+        return true;
+      }
+      case "booked_cancelled": {
+        const o = s.opps.get(d.oppId);
+        if (o?.booked) { o.booked = { ...o.booked, cancelled: { ...o.booked.cancelled, [d.memberId]: { at: r.t, told: !!d.told } } }; this.changed(o, r); }
+        s.pushFeed({ t: r.t, kind: "decline", text: `${this.name(d.memberId)} called off a booked plan${d.told ? "" : " (silently)"}`, members: [d.memberId], opportunityId: d.oppId, severity: "warn" });
+        return true;
+      }
+      case "calendar_consent": case "weekly_checkin_consent": {
+        const m = s.member(d.memberId);
+        if (m) { if (r.kind === "calendar_consent") m.calendar = d.on !== false; else m.weekly = d.on !== false; s.touchMember(m.id); }
         return true;
       }
       case "probe_replaced": {
@@ -260,6 +406,8 @@ export class Projector {
         if (!o) return true;
         o.participants = o.participants.map(x => (x === d.out ? d.in : x));
         delete o.status[d.out]; o.status[d.in] = "checking";
+        // The Network rebuilds every reason after a swap; show the new ones.
+        if (d.proposal?.explanations) o.explanations = { ...d.proposal.explanations };
         this.changed(o, r);
         return true;
       }
@@ -274,7 +422,8 @@ export class Projector {
         return true;
       }
       case "request":
-        s.pushFeed({ t: r.t, kind: "request", text: `${this.name(d.memberId)} asked: ${d.kind === "plans" ? "plans nearby" : `"${String(d.text ?? d.desireId ?? "").slice(0, 80)}"`}`, members: [d.memberId] });
+        // What was asked for (the want or the category), never the member's own words.
+        s.pushFeed({ t: r.t, kind: "request", text: `${this.name(d.memberId)} asked: ${requestLabel(d)}`, members: [d.memberId] });
         return true;
       case "request_result":
         if (d.outcome === "fulfilled") s.pushFeed({ t: r.t, kind: "request", text: `Request fulfilled for ${this.name(d.memberId)} in ${d.hours}h`, members: [d.memberId], severity: "good" });
@@ -290,17 +439,70 @@ export class Projector {
         return true;
       }
       case "invite":
-        s.pushFeed({ t: r.t, kind: "growth", text: `${this.name(d.from)} invited ${d.friendName}${d.newMemberId ? "" : " (they didn't join)"}`, members: [d.from], severity: "good" });
+        s.pushFeed({ t: r.t, kind: "growth", text: `${this.name(d.from)} invited ${d.newMemberId ? this.name(d.newMemberId) : "a friend (they didn't join)"}`, members: [d.from], severity: "good" });
         return true;
       case "growth_ask":
         s.pushFeed({ t: r.t, kind: "growth", text: `Growth ask to ${this.name(d.memberId)} (${d.kind})`, members: [d.memberId] });
         return true;
-      case "minor_signal":
-        s.pushFeed({ t: r.t, kind: "trust", text: `${this.name(d.memberId)} mentioned being under 18: single-player only`, members: [d.memberId], severity: "warn" });
+      case "minor_signal": {
+        const m = s.member(d.memberId);
+        if (m && !m.minor) { m.minor = true; s.touchMember(m.id); }
+        s.pushFeed({ t: r.t, kind: "trust", text: `${this.name(d.memberId)} is under 18: single-player only, never introduced`, members: [d.memberId], severity: "warn" });
+        return true;
+      }
+      case "age_conflict": {
+        // A looser statement under 13 (no explicit age): never a decline. Treated as a minor until staff check it.
+        const m = s.member(d.memberId);
+        if (m && !m.minor) { m.minor = true; s.touchMember(m.id); }
+        const why = d.attestedAge === undefined ? "said an age under 13, not as an explicit age" : "stated age conflicts with the age on record";
+        s.pushFeed({ t: r.t, kind: "trust", text: `${this.name(d.memberId)}: ${why}. Treated as under 18; staff to check`, members: [d.memberId], severity: "warn" });
+        return true;
+      }
+      case "join_declined": {
+        // Under 13: declined once, nothing kept. The feed item names nobody.
+        const m = this.declineTo ? s.member(this.declineTo) : undefined;
+        if (m) { m.minor = true; m.declined = true; s.touchMember(m.id); }
+        this.declineTo = undefined;
+        s.pushFeed({ t: r.t, kind: "trust", text: "Someone under 13 tried to join: declined kindly, nothing kept", severity: "warn" });
+        return true;
+      }
+      case "guard_blocked":
+        // The leak guard stopped a message. The text is never logged or shown.
+        s.pushFeed({ t: r.t, kind: "guard", text: `Leak guard stopped a ${String(d.kind ?? "message").replace(/_/g, " ")} to ${this.name(d.memberId)}${d.fallback ? " (sent a generic version)" : " (nothing sent)"}`, members: d.memberId ? [d.memberId] : undefined, severity: "warn" });
         return true;
       case "learned": case "feedback": return r.kind === "learned";
       default: return false;
     }
+  }
+
+  /**
+   * Times a message offered (attention v1.2: a probe, the requester's time question, other times after
+   * "neither") and the booked plan it carries (SimMeta.timeOptions, SimMeta.booked).
+   */
+  private timesAndBooking(msg: Extract<RunRecord, { type: "message" }>["msg"], r: RunRecord) {
+    const meta = (msg.meta ?? {}) as { timeOptions?: { key: string; label: string; start: number }[]; probe?: { key?: string }; proposalId?: string; booked?: { proposalId: string; at: number; optOutHours: number } };
+    if (meta.timeOptions?.length) {
+      const offered = meta.timeOptions.map(x => ({ key: x.key, label: x.label, start: x.start }));
+      this.lastOptions.set(msg.memberId, offered);
+      const o = this.store.opps.get(meta.probe?.key ?? meta.proposalId ?? "");
+      if (o) { o.times = { ...o.times, [msg.memberId]: { offered } }; this.changed(o, r); }
+    }
+    const b = meta.booked;
+    const o = b ? this.store.opps.get(b.proposalId) : undefined;
+    if (b && o) {
+      o.booked = { at: b.at, optOutHours: b.optOutHours, told: { ...o.booked?.told, [msg.memberId]: msg.ts }, cancelled: { ...o.booked?.cancelled } };
+      this.changed(o, r);
+    }
+  }
+
+  /** A consent-network opportunity from its proposal (state and statuses set by the caller). */
+  private consentOpp(p: Proposal, origin: string, createdAt: number, runId: unknown): ObsOpportunity {
+    return {
+      id: p.id, kind: p.kind, source: origin === "engine" ? "engine" : origin === "player" ? "player" : "network", origin,
+      generator: p.generator, category: p.category, city: p.city, objective: p.objective, score: p.score, components: p.components,
+      explanations: p.explanations ?? {}, exploration: p.exploration, participants: [...p.participants], alternates: [...(p.alternates ?? [])],
+      state: "PROPOSED", status: {}, enjoyment: {}, createdAt, updatedAt: createdAt, runId: typeof runId === "string" ? runId : undefined,
+    };
   }
 
   /** Consent state from per-participant statuses (pairs need both; groups need a quorum). */

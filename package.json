@@ -7,10 +7,13 @@
     "prototypes/*"
   ],
   "scripts": {
-    "test": "bun test --conditions eliza-source ./packages ./prototypes",
+    "test": "bun test --conditions eliza-source ./packages ./prototypes ./sites",
     "typecheck": "tsc --noEmit -p . && bun run --cwd packages/plugin-network typecheck",
     "observatory": "bun run packages/observatory/src/server.ts",
-    "observatory:db": "bun run packages/observatory/db/dev-pg.ts up && bun run packages/observatory/db/seed.ts --from-sim --days 14"
+    "observatory:db": "bun run packages/observatory/db/dev-pg.ts up && bun run packages/observatory/db/seed.ts --from-sim --days 14",
+    "db:migrate": "bun run packages/observatory/db/migrate.ts",
+    "sites:dev": "bun run scripts/sites-dev.ts",
+    "platform:dev": "bun run scripts/platform-dev.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",

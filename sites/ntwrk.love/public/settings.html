@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings · The Network</title><meta name="description" content="See your membership, export your data, stop messages, or delete your data.">
+<link rel="stylesheet" href="./styles.css"><script type="module" src="../../shared/settings.ts"></script></head>
+<body><main>
+<header><a class="brand" href="/">The Network</a><nav aria-label="Main"><a href="/join">Join</a><a href="/settings" aria-current="page">Settings</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a></nav></header>
+<h1>Settings</h1>
+
+<div class="flow" data-settings data-export-name="the-network-my-data"
+  data-msg-stopped="Messages from The Network are stopped. Text START to The Network to turn them back on."
+  data-gone-app="You left The Network. We deleted your profile and messages for The Network."
+  data-gone-all="We deleted everything tied to your phone number. We keep only a scrambled copy of the number, so that we never text it again.">
+  <p class="notice" data-flow-error role="alert" hidden></p>
+  <noscript><p class="box">Settings need JavaScript. You can also text The Network, or email <a href="mailto:help@ntwrk.love">help@ntwrk.love</a>.</p></noscript>
+
+  <section data-step="loading" hidden><p aria-live="polite">Loading…</p></section>
+
+  <section data-step="phone" hidden>
+    <p class="lede">Log in with your phone number to see and change your membership.</p>
+    <form data-form="phone" novalidate>
+      <div class="field"><label for="phone">Mobile number</label>
+        <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="(212) 555-0123" required aria-describedby="phone-hint">
+        <p class="hint" id="phone-hint">We text you a code. US numbers only. Message and data rates may apply.</p></div>
+      <p class="error" data-error role="alert" hidden></p>
+      <button class="btn" type="submit" data-busy="Sending…">Text me a code</button>
+    </form>
+  </section>
+
+  <section data-step="code" hidden>
+    <h2>Enter the code</h2>
+    <p>We sent a code to <strong data-slot="phoneShown"></strong>. It can take a minute to arrive.</p>
+    <form data-form="code" novalidate>
+      <div class="field"><label for="code">Code</label>
+        <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" required data-focus></div>
+      <p class="error" data-error role="alert" hidden></p>
+      <div class="row"><button class="btn" type="submit" data-busy="Checking…">Log in</button>
+        <button class="linkish" type="button" data-action="resend">Send a new code</button>
+        <button class="linkish" type="button" data-action="change-number">Use a different number</button></div>
+    </form>
+  </section>
+
+  <section data-step="account" hidden>
+    <h2>Your membership</h2>
+    <dl class="facts">
+      <dt>Phone</dt><dd data-slot="phoneMasked"></dd>
+      <dt data-when="has-membership">Name</dt><dd data-when="has-membership" data-slot="firstName"></dd>
+      <dt data-when="has-membership">Status</dt><dd data-when="has-membership" data-slot="state"></dd>
+      <dt data-when="has-membership">Joined</dt><dd data-when="has-membership" data-slot="joinedAt"></dd>
+    </dl>
+    <p data-when="no-membership" hidden>This number is not a member of The Network. The Network is invite-only; <a href="/join">here is how joining works</a>.</p>
+    <p class="status" data-status aria-live="polite"></p>
+    <div class="actions" data-when="has-membership">
+      <div><h3>Export my data</h3><p>Download a file with what The Network holds about you.</p><button class="btn quiet" type="button" data-action="export">Export my data</button></div>
+      <div data-when="not-stopped"><h3>Stop messages</h3><p>The Network stops texting you. Your membership stays. Text START to turn messages back on.</p><button class="btn quiet" type="button" data-action="stop">Stop messages</button></div>
+      <div data-when="stopped" hidden><h3>Messages are stopped</h3><p>Text START to The Network to turn them back on.</p></div>
+      <div><h3>Leave The Network</h3><p>We delete your profile, messages and matching data for The Network.</p><button class="btn quiet" type="button" data-action="leave">Leave The Network</button></div>
+    </div>
+    <div class="actions">
+      <div><h3>Delete everything</h3><p>We delete all data tied to this phone number, everywhere Eliza Research Corporation holds it, and log you out. This cannot be undone.</p><button class="btn danger" type="button" data-action="delete-all">Delete everything</button></div>
+      <div><button class="linkish" type="button" data-action="logout">Log out</button></div>
+    </div>
+
+    <dialog data-confirm="stop" aria-labelledby="d-stop"><form method="dialog">
+      <h2 id="d-stop">Stop messages from The Network?</h2><p>You will get no more texts from The Network until you text START.</p>
+      <div class="row"><button class="btn" value="confirm">Stop messages</button><button class="btn quiet" value="cancel">Cancel</button></div></form></dialog>
+    <dialog data-confirm="leave" aria-labelledby="d-leave"><form method="dialog">
+      <h2 id="d-leave">Leave The Network?</h2><p>We delete your profile, messages and matching data for The Network. To come back, you need a new invitation.</p>
+      <div class="row"><button class="btn danger" value="confirm">Leave</button><button class="btn quiet" value="cancel">Cancel</button></div></form></dialog>
+    <dialog data-confirm="delete-all" data-word="DELETE" aria-labelledby="d-all"><form method="dialog">
+      <h2 id="d-all">Delete everything?</h2><p>We delete all data tied to this phone number, everywhere we hold it. This cannot be undone.</p>
+      <div class="field"><label for="confirmText">Type DELETE to confirm</label><input id="confirmText" name="confirmText" type="text" autocomplete="off" autocapitalize="characters"></div>
+      <div class="row"><button class="btn danger" value="confirm">Delete everything</button><button class="btn quiet" value="cancel">Cancel</button></div></form></dialog>
+  </section>
+
+  <section data-step="gone" hidden>
+    <h2>Done</h2>
+    <p data-slot="goneText"></p>
+    <p><a href="/">Back to The Network</a></p>
+  </section>
+</div>
+
+<footer><p>The Network is operated by Eliza Research Corporation. Questions: <a href="mailto:help@ntwrk.love">help@ntwrk.love</a>.</p>
+<nav class="legal" aria-label="Legal"><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/terms#sms">Text messaging terms</a><a href="/guidelines">Community guidelines</a><a href="/settings">Your data</a></nav></footer>
+</main></body></html>

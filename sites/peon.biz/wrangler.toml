@@ -1,0 +1,25 @@
+# peon.biz public site: hiring waitlist; AEDT note, privacy, terms, SMS terms.
+# Modeled on ../ntwrk.love/wrangler.toml. Assets only: no Worker code runs here.
+# Not deployed. Deploy only with founder approval, through ../../scripts/wrangler.sh (it refuses
+# deploys unless NTWRK_ALLOW_DEPLOY=1). The account id below is the ntwrk.love account; confirm
+# that peon.biz is a zone in that account before any deploy.
+# Pages are built from ./public into ./dist by Bun's HTML bundler ([build] below runs it).
+# Route note: /api/* is NOT served by this Worker. It belongs to the shared platform API, on the same
+# origin. Before /join and /settings can work in production, send "peon.biz/api/*" to that API:
+# either a zone route on the API Worker, or a service binding plus run_worker_first = ["/api/*"] here.
+# Check which one Cloudflare applies first with a custom domain before choosing. Not set up yet.
+name = "peon-biz-site"
+compatibility_date = "2026-10-01"
+account_id = "50ad2052bbc6ca528d6993a689b419a4"
+routes = [
+  { pattern = "peon.biz", custom_domain = true },
+  { pattern = "www.peon.biz", custom_domain = true },
+]
+
+[build]
+command = "bun run ../sites.ts peon"
+
+[assets]
+directory = "./dist"
+html_handling = "drop-trailing-slash"
+not_found_handling = "404-page"

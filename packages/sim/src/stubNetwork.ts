@@ -6,12 +6,14 @@
 // Minors policy (PRD 17.4 as amended 2026-10-05): even as a baseline it never connects a member
 // under 18 to anyone (no random intros, and any proposal involving one is refused at dispatch);
 // minors get single-player value only: onboarding plus concierge answers and public suggestions.
-import { DAY, HOUR, type City, type MemberId, type Proposal, type ScoreComponents, type WorldSnapshot } from "@thenetwork/core";
+import { DAY, HOUR, MINUTE, type City, type MemberId, type Proposal, type ScoreComponents, type WorldSnapshot } from "@thenetwork/core";
+// Engine availability helpers (pure; their import chain does not reach the simulator, so no cycle).
+import { availabilityProb, candidateSlots, standingFromFacets, type AvailabilityEvidence, type TimeSlot } from "../../engine/src/attention.ts";
 import { parseYesNo } from "./agent/policy.ts";
 import type { SimMeta } from "./channel.ts";
 import type { InboundMessage, NetworkContext, NetworkUnderTest } from "./network.ts";
-import { Rng } from "./rng.ts";
-import { fmtLocal, localHour, localParts, nextLocalHour } from "./time.ts";
+import { Rng, hash32 } from "./rng.ts";
+import { CITY_TZ, fmtLocal, localHour, localParts, nextLocalHour } from "./time.ts";
 
 export interface StubOptions {
   seed?: number | string;
@@ -25,6 +27,15 @@ export interface StubOptions {
   runHour?: number;
   /** TEST ONLY: quote members' onboarding answers in intros (leaks private disclosures). */
   leakyExplanations?: boolean;
+  /**
+   * Meeting times from availability (default false: every meeting at 19:00 two days after the last yes).
+   * The meeting goes at the candidate slot (engine availability.templates: weekday 19:00, weekend 10:00,
+   * 14:00, 19:00; from 24 hours ahead) inside the proposal window with the best joint chance that every
+   * member is free, from what the members told the Network (availability_pattern facets, trips away,
+   * quiet hours) and the engine's priors. Slots within 80% of the best are spread by proposal id.
+   * Off by default so baselines (the push arm, the attention experiment's R) do not move.
+   */
+  timeAware?: boolean;
 }
 
 interface MemberState {
@@ -47,6 +58,7 @@ const ZERO: ScoreComponents = {
 };
 const ALLOWED: [number, number] = [9, 20]; // local hours when proactive texts may go out
 const INVITE_TTL = 48 * HOUR;
+const ACK_DEDUP_MS = 10 * MINUTE;
 
 export class StubNetwork implements NetworkUnderTest {
   readonly name = "stub";
@@ -58,6 +70,8 @@ export class StubNetwork implements NetworkUnderTest {
   private blocks = new Set<string>();
   private pairsTried = new Set<string>();
   private deferred: { memberId: MemberId; pid: string }[] = [];
+  /** Last text sent to each member (acknowledgement de-duplication). */
+  private lastSent = new Map<MemberId, { body: string; at: number }>();
   private rng: Rng;
   private seq = 0;
   private pseq = 0;
@@ -282,7 +296,7 @@ export class StubNetwork implements NetworkUnderTest {
     const going = [...opp.invites].filter(([, i]) => i.status === "yes").map(([id]) => id);
     opp.stage = "scheduled";
     for (const [id, inv] of opp.invites) if (inv.status === "pending") inv.status = "dropped";
-    const at = nextLocalHour(now + 2 * DAY, opp.p.city, 19);
+    const at = this.opts.timeAware ? this.pickSlot(opp.p, going, now) : nextLocalHour(now + 2 * DAY, opp.p.city, 19);
     opp.meetingAt = at;
     const area = this.member(going[0]!).area;
     this.ctx.recordMeeting({ proposalId: opp.p.id, participants: going, at, city: opp.p.city, kind: opp.p.kind });
@@ -324,7 +338,7 @@ export class StubNetwork implements NetworkUnderTest {
       if (!opp.reminded && now >= opp.meetingAt - 4 * HOUR && now < opp.meetingAt) {
         opp.reminded = true;
         for (const [id, inv] of opp.invites) if (inv.status === "yes")
-          this.send(this.member(id), `Reminder: today at ${Math.round(localHour(opp.meetingAt, opp.p.city)) - 12}pm. Have fun!`, { type: "reminder", proposalId: opp.p.id });
+          this.send(this.member(id), `Reminder: today at ${hourText(localHour(opp.meetingAt, opp.p.city))}. Have fun!`, { type: "reminder", proposalId: opp.p.id });
       }
       if (!opp.feedbackSent && now >= opp.meetingAt + 3 * HOUR && localHour(now, opp.p.city) >= ALLOWED[0] && localHour(now, opp.p.city) < 21) {
         opp.feedbackSent = true; opp.stage = "done";
@@ -372,6 +386,29 @@ export class StubNetwork implements NetworkUnderTest {
   }
 
   // ------------------------------------------------------------------ helpers
+  /** StubOptions.timeAware: the meeting slot from the members' stated availability (see StubOptions). */
+  private pickSlot(p: Proposal, going: MemberId[], now: number): number {
+    const tz = CITY_TZ[p.city];
+    const snap = this.ctx.snapshot();
+    const ev = going.map(id => this.statedAvailability(snap, id, p.city, tz, now));
+    let cands: TimeSlot[] = p.window ? candidateSlots(tz, now, { window: p.window }) : [];
+    if (!cands.length) cands = candidateSlots(tz, now);
+    const scored = cands.map(slot => ({ slot, joint: ev.reduce((acc, e) => acc * availabilityProb(e, slot, now), 1) }));
+    const best = Math.max(0, ...scored.map(x => x.joint));
+    const near = scored.filter(x => x.joint > 0 && x.joint >= 0.8 * best);
+    if (!near.length) return nextLocalHour(now + 2 * DAY, p.city, 19);
+    return near[hash32(p.id) % near.length]!.slot.start;
+  }
+
+  /** What the Network was told about when a member is free (never hidden truth). */
+  private statedAvailability(snap: WorldSnapshot, id: MemberId, city: City, tz: string, now: number): AvailabilityEvidence {
+    // Day tags go as the sim emits them ("evening:tue"); the engine parses them case-insensitively.
+    const facets = snap.facets.filter(f => f.memberId === id && f.kind === "availability_pattern");
+    const away = snap.presence.filter(x => x.memberId === id && x.type === "temporary" && x.city !== city && x.from !== undefined && x.to !== undefined)
+      .map(x => ({ start: x.from!, end: x.to! }));
+    return { memberId: id, tz, quietHours: this.member(id).quietHours, standing: standingFromFacets(facets, now), away };
+  }
+
   private canPropose(m: MemberState, now: number) {
     if (m.minor) return false;
     if (m.stage !== "onboarded" || m.optedOut || m.unanswered >= 2 || m.awaiting) return false;
@@ -421,8 +458,20 @@ export class StubNetwork implements NetworkUnderTest {
   }
 
   private send(m: MemberState, body: string, meta: SimMeta) {
+    // Never repeat an acknowledgement: the same info/concierge text to the same member within
+    // 10 minutes (e.g. two quick messages both answered "Thanks, noted...") is sent once.
+    const now = this.ctx.clock.now();
+    const last = this.lastSent.get(m.id);
+    if ((meta.type === "info" || meta.type === "concierge") && last && last.body === body && now - last.at < ACK_DEDUP_MS) return;
+    this.lastSent.set(m.id, { body, at: now });
     return this.ctx.send(m.id, body, { meta, idempotencyKey: `${m.id}:${++this.seq}` });
   }
+}
+
+/** 19 -> "7pm", 10 -> "10am", 12.5 -> "12:30pm". */
+function hourText(h: number): string {
+  const hh = Math.floor(h), mm = Math.round((h - hh) * 60);
+  return `${hh % 12 === 0 ? 12 : hh % 12}${mm ? `:${String(mm).padStart(2, "0")}` : ""}${hh < 12 ? "am" : "pm"}`;
 }
 
 const key = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);

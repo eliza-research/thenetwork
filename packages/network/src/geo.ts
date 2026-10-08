@@ -142,10 +142,10 @@ export function meetingSpot(areas: string[], category: Category | undefined, tag
 }
 
 /** Public suggestions near an area for a concierge answer (no people involved). */
-export function nearbyVenues(area: string, tags: string[] = [], n = 3): Venue[] {
+export function nearbyVenues(area: string, tags: string[] = [], n = 3, exclude: ReadonlySet<string> = new Set()): Venue[] {
   const home = neighborhood(area);
   const want = new Set(tags.flatMap(t => TAG_HINTS[t] ?? [t]));
-  return [...VENUES]
+  return VENUES.filter(v => !exclude.has(v.id))
     .map(v => ({ v, s: travelMinutes(home, v) - 5 * Math.min(2, v.tags.filter(t => want.has(t)).length) }))
     .sort((a, b) => a.s - b.s).slice(0, n).map(x => x.v);
 }

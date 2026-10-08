@@ -1,7 +1,7 @@
 // Projection of simulator records into observatory state: the opportunity state machine,
 // per-participant statuses, learned edges (PRD 32.13) and counters.
 import { describe, expect, test } from "bun:test";
-import type { Proposal } from "@thenetwork/core";
+import { UNDER_MIN_AGE_DECLINE, type Proposal } from "@thenetwork/core";
 import type { OracleSummary, RunRecord } from "@thenetwork/judge";
 import { Projector } from "../src/projector.ts";
 import { edgeId, emptyCounters, Store } from "../src/store.ts";
@@ -103,6 +103,57 @@ describe("Projector", () => {
     expect(store.stats().noShows).toBe(1);
   });
 
+  test("consent logs: review queue and decisions, the leak guard (no text), age signals", () => {
+    const { store, p } = setup();
+    const log = (t: number, kind: string, detail: Record<string, unknown>): RunRecord => ({ t, type: "network_log", kind, detail });
+    p.apply(log(1, "review_queued", { proposal: proposal("r1", ["a", "b"]), origin: "engine", deadline: 50 }));
+    p.apply(log(1, "review_queued", { proposal: proposal("r2", ["c", "d"]), origin: "request", deadline: 50 }));
+    expect(store.opps.get("r1")).toMatchObject({ state: "IN_REVIEW", review: { queuedAt: 1, deadline: 50 }, status: { a: "pending", b: "pending" } });
+    expect(store.member("a")!.counters.proposals).toBe(0); // waiting for review: not a proposal to anyone yet
+    p.apply(log(2, "review_decision", { oppId: "r1", decision: "approve", reason: null, note: null, reviewer: "player" }));
+    p.apply(log(2, "probe_started", { proposal: proposal("r1", ["a", "b"]), origin: "engine", primed: [] }));
+    expect(store.opps.get("r1")).toMatchObject({ state: "PROPOSED", status: { a: "checking", b: "checking" }, review: { decision: "approve", reviewer: "player", decidedAt: 2 } });
+    expect(store.member("a")!.counters.proposals).toBe(1); // counted once, at approval
+    p.apply(log(3, "review_decision", { oppId: "r2", decision: "reject", reason: "privacy_risk", note: "too personal", reviewer: "player" }));
+    p.apply(log(3, "probe_closed", { proposalId: "r2", reason: "not sent: rejected in review" }));
+    expect(store.opps.get("r2")).toMatchObject({ state: "SKIPPED", reason: "rejected in review (privacy risk)", review: { decision: "reject", reason: "privacy_risk" } });
+    expect([store.member("c")!.counters.proposals, store.member("d")!.counters.proposals]).toEqual([0, 0]); // rejected: never counted
+    p.apply(log(4, "guard_blocked", { memberId: "a", kind: "reveal", reasons: ["canary"], fallback: false }));
+    const guard = store.feed.find(f => f.kind === "guard")!;
+    expect(guard.text).toContain("nothing sent");
+    expect(guard.text).not.toContain("canary");
+    p.apply(log(5, "minor_signal", { memberId: "c" }));
+    expect(store.member("c")!.minor).toBe(true);
+    p.apply({ t: 6, type: "message", msg: { id: "m6", ts: 6, direction: "outbound", memberId: "d", body: UNDER_MIN_AGE_DECLINE, status: "delivered", meta: { type: "info" } } });
+    p.apply(log(6, "join_declined", { reason: "under_min_age" }));
+    expect(store.member("d")).toMatchObject({ minor: true, declined: true });
+    expect(store.feed[store.feed.length - 1]!.members).toBeUndefined();
+  });
+
+  test("a staff-composed intro counts for its members only once a reviewer approves it", () => {
+    const { store, p } = setup();
+    const log = (t: number, kind: string, detail: Record<string, unknown>): RunRecord => ({ t, type: "network_log", kind, detail });
+    p.apply({ t: 1, type: "proposal", source: "player", proposal: proposal("x1", ["a", "b"]), oracle });
+    p.apply(log(2, "review_queued", { proposal: proposal("x1", ["a", "b"]), origin: "player", deadline: 50 }));
+    expect(store.member("a")!.counters.proposals).toBe(0);
+    p.apply(log(3, "review_decision", { oppId: "x1", decision: "approve", reason: null, note: null, reviewer: "player" }));
+    p.apply(log(3, "probe_started", { proposal: proposal("x1", ["a", "b"]), origin: "player", primed: [] }));
+    p.apply({ t: 9, type: "proposal", source: "player", proposal: proposal("x1", ["a", "b"]), oracle }); // recorded again at the reveal
+    expect([store.member("a")!.counters.proposals, store.member("b")!.counters.proposals]).toEqual([1, 1]);
+    // An engine proposal under the StubNetwork (no review) still counts at once.
+    p.apply({ t: 10, type: "proposal", source: "engine", proposal: proposal("x2", ["c", "d"]), oracle });
+    expect(store.member("c")!.counters.proposals).toBe(1);
+  });
+
+  test("request and invite feed items name the want, never the member's words", () => {
+    const { store, p } = setup();
+    const log = (t: number, kind: string, detail: Record<string, unknown>): RunRecord => ({ t, type: "network_log", kind, detail });
+    p.apply(log(1, "request", { requestId: "q1", memberId: "a", kind: "people", category: "hobby", desireId: "tennis_partner", tags: ["tennis"] }));
+    p.apply(log(2, "request", { requestId: "q2", memberId: "b", kind: "people", category: "social", tags: [] }));
+    p.apply(log(3, "invite", { from: "a", newMemberId: "c" }));
+    expect(store.feed.map(f => f.text)).toEqual(["Ana asked: find a weekend tennis partner", "Ben asked: a social request", "Ana invited Cy"]);
+  });
+
   test("deltas carry only what changed", () => {
     const { store, p } = setup();
     store.takeDelta();
@@ -113,5 +164,28 @@ describe("Projector", () => {
     const empty = store.takeDelta();
     expect(empty.members).toBeUndefined();
     expect(empty.version).toBe(d.version);
+  });
+  test("review: a re-roll is not an approval (the item waits again with the swapped participant); an approval stopped on the re-check is uncounted and closed", () => {
+    const { store, p } = setup();
+    for (const id of ["a", "b", "c"]) p.apply({ t: 1, type: "join", memberId: id });
+    const log = (t: number, kind: string, detail: Record<string, unknown>): RunRecord => ({ t, type: "network_log", kind, detail });
+    p.apply(log(2, "review_queued", { proposal: { ...proposal("r1", ["a", "b"]), alternates: ["c"] }, origin: "engine", deadline: 50 }));
+    expect(store.opps.get("r1")!.state).toBe("IN_REVIEW");
+    p.apply(log(3, "review_decision", { oppId: "r1", decision: "reroll", out: "b", in: "c", next: "review", reviewer: "rev@x", secondsSpent: 20 }));
+    p.apply(log(3, "review_queued", { proposal: proposal("r1", ["a", "c"]), origin: "engine", deadline: 60, rerolled: true }));
+    let o = store.opps.get("r1")!;
+    expect([o.state, o.participants, o.review?.decision, o.review?.rerolls, o.review?.secondsSpent, o.review?.deadline]).toEqual(["IN_REVIEW", ["a", "c"], undefined, 1, 20, 60]);
+    expect(store.member("a")!.counters.proposals).toBe(0);
+    p.apply(log(4, "review_decision", { oppId: "r1", decision: "approve", reviewer: "rev@x", edited: ["objective"], secondsSpent: 10 }));
+    expect(store.member("c")!.counters.proposals).toBe(1);
+    p.apply(log(4, "review_invalidated", { oppId: "r1", reason: "busy_elsewhere" }));
+    o = store.opps.get("r1")!;
+    expect([o.state, o.review?.decision, o.review?.invalidated, o.review?.edits, o.review?.secondsSpent]).toEqual(["SKIPPED", "approve", "busy_elsewhere", ["objective"], 30]);
+    expect(store.member("c")!.counters.proposals).toBe(0);
+    // No alternate: the re-roll closes the item back to the engine.
+    p.apply(log(5, "review_queued", { proposal: proposal("r2", ["a", "b"]), origin: "engine", deadline: 70 }));
+    p.apply(log(6, "review_decision", { oppId: "r2", decision: "reroll", out: null, in: null, next: "engine", reviewer: "rev@x" }));
+    expect(store.opps.get("r2")!.state).toBe("SKIPPED");
+    expect(store.opps.get("r2")!.review?.decision).toBeUndefined();
   });
 });

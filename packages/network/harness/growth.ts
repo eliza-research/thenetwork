@@ -4,7 +4,7 @@
 // Not every invitee joins, and a small share are bad actors, so vouch accountability is exercised.
 import { DAY, HOUR } from "@thenetwork/core";
 import { generatePersonas, hash32, Rng, type Persona } from "@thenetwork/sim";
-import { NEIGHBORHOODS, travelMinutes, neighborhood } from "./geo.ts";
+import { NEIGHBORHOODS, travelMinutes, neighborhood } from "../src/geo.ts";
 
 export interface FriendFactoryOptions {
   seed?: number;

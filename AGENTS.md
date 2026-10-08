@@ -6,7 +6,19 @@ Instructions for AI coding agents (Claude Code, Codex, Cursor, Eliza sub-agents,
 
 1. Read [CONTRIBUTING.md](CONTRIBUTING.md). It defines what an acceptable issue and PR is.
 2. Read PRD Section 28 (MVP definition) in [docs/prd-snapshot.md](docs/prd-snapshot.md). The canonical PRD is the [Google Doc](https://docs.google.com/document/d/1lLQAZNAMSC_yHCkUBVbp1CCwvyR17PuvV7TnpfuY8Xc/edit). If the two disagree, the Google Doc is correct.
-3. Read the README of the package you change (`packages/engine/README.md`, `packages/sim/README.md`) and the newest report for it in [docs/results/](docs/results/).
+3. Read the README or design doc of the package you change (`packages/engine/README.md`, `packages/sim/README.md`, [docs/network.md](docs/network.md), [docs/observatory.md](docs/observatory.md)) and the newest report for it in [docs/results/](docs/results/).
+
+## Platform decisions (founder, 2026-10-08)
+
+These replace any earlier defaults in task prompts or in docs/research/2026-10-08-platform-architecture.md:
+
+1. **Age.** People aged 13+ may join every app (ntwrk, slop, peon, friends). Minors (13-17) are never matched or connected to anyone, in any app. Matching is 18+ everywhere. Age is a person-level fact (the lowest age ever stated or recorded wins).
+2. **One line.** One Blooio line serves every app. The first message routes by keyword: "slop" or "slop.date" joins slop; "peon" or "peon.biz" joins peon; "friends" or "friends.help" joins friends. With no keyword, the person joins The Network as a whole: the same onboarding, and the agent asks what they are looking for (friends, dating, work) and enrolls them in the matching app memberships. Copy says: "All of these apps are powered by The Network." Per-line routing tables may stay as data, but the default is one line for all apps.
+3. **Compliance is not a launch blocker for now.** Do not build compliance gating (no bias-audit gate, no dating-notice gate). Keep every existing safety guard (minors, leak guard, review gate, consent, blocks, STOP).
+4. **Order.** slop.date first. ntwrk.love is the home page for the whole concept and links to the apps. peon.biz and friends.help run locally only (no deploys).
+5. **Engine packs** come from the engine session: `import { type AppPack, networkPack, slopPack } from "@thenetwork/engine"` (packages/engine/src/pack.ts). Until they land, leave `deps.pack` unset and keep slop and peon matching off.
+6. **Rename: buddies.nyc is now friends.help.** AppId `friends` (never `buddies`), network ids like `friends:nyc`, join keyword "friends" or "friends.help", site folder `sites/friends.help`, engine pack `friendsPack`. Local only, no deploy. Still NYC friend-finding. Any `buddies` id, folder or string written earlier in this round must be renamed.
+7. **STOP and caps (PRD 40.3).** On the shared line, STOP stops every app (STOP ALL behaviour). "leave slop.date" (or "leave <app>", or the site's leave button) stops one app only. A person-level cap of 3 proactive messages a day across all apps, checked at send time. AppPack is on origin/main (fb9431c+): `import { type AppPack, networkPack, validatePack, cityBucketGeo } from "@thenetwork/engine"`; the slop world is `@thenetwork/worlds` (src/slop; field mapping in docs/results/2026-10-08-slop-world.md). The worktree merges main after this round's workflow, so do not depend on them yet.
 
 ## Hard rules
 
@@ -25,10 +37,10 @@ Do not break these. They are checked in tests and in every simulated run.
 
 - Network code reads time only from `Clock` (`packages/core`). No `Date.now()`, no `new Date()` without an argument, no `Math.random()`. Randomness comes from the seeded RNG.
 - Network code never reads hidden persona truth (`Persona.hidden`, the oracle, `hidden_truth.jsonl`). Only `packages/sim` and the judges that run inside the simulator can read it.
-- Every proactive proposal must go through human review before any member is contacted (founder decision, below about 1,000 members). **Status:** the engine state machine has the `IN_REVIEW` → `approve` states, but `packages/network` does not use them yet: its proposals go straight to member probes (audit 2026-10-07 P0-1). Do not claim review happens in a run until that is wired.
-- Every outbound message must go through the leak check. **Status:** the connector prototype checks every output; the ConsentNetwork and Blooio send paths do not run an inline leak check yet.
+- Every proactive proposal, and every member-initiated request, must go through human review before any member is contacted (founder decision, below 1,000 members). **Status:** the ConsentNetwork (`packages/network`) enforces it: every opportunity, whatever its origin, waits in a review queue (default mode `human`; the member count never turns review off), and an item past its SLA expires unsent. Simulator runs use a simulated reviewer (`review: "auto"`); say so when you report a run. The simulator's `StubNetwork` has no review. Review state can be stored in Postgres (`PgStore`), but no production process runs the Network and there is no production reviewer API yet ([docs/network.md](docs/network.md) sections 1.1 and 11).
+- Every outbound message must go through the leak check. **Status:** the ConsentNetwork send path runs the leak guard (`packages/core/src/guard.ts`) on every message, and the connector prototype checks every output. The Blooio outbound queue and the simulator's `StubNetwork` have no leak check.
 - Age policy (`packages/core/src/policy.ts`): under 13 cannot join and is declined kindly with nothing stored; members aged 13-17 can use the agent for themselves (chat, events, things to do) but are never matched or connected to other members. Use `canJoin`, `isMinor` and `canBeMatched`; do not hard-code ages.
-- Canary leaks, invariant violations, and minor contacts are always 0. A change that makes any of them non-zero is wrong, whatever else it improves.
+- Canary leaks, invariant violations, and minor contacts are always 0. A change that makes any of them non-zero is wrong, whatever else it improves. One known judge issue: the single allowed 14-day re-engagement message shows as a `two_unanswered` violation in runs longer than about 14 days ([docs/network.md](docs/network.md) section 11). Any other violation is real.
 
 ## LLMs
 
@@ -56,9 +68,20 @@ bun run packages/sim/src/cli.ts --scenario packages/sim/scenarios/stop-keyword.j
 bun run packages/evals/src/cli.ts --suite recommender,judge
 bun run packages/evals/src/cli.ts --suite passes
 
-# Observatory (http://localhost:4747)
+# ConsentNetwork on the NYC world (docs/runbook-simulation.md)
+bun run packages/network/harness/experiment.ts --days 21 --seed 1
+bun run packages/network/harness/scenarios.ts [scenario_id]
+
+# Observatory (prints http://127.0.0.1:4747/?token=...)
 bun run observatory
+bun run observatory --review human
 bun run observatory:db       # local Postgres on :54339 with a 14-day simulated run
+
+# The four apps on one backend (docs/runbook-platform.md): dry-run sends only
+bun run db:migrate           # migrations 0001-0005 (network and platform schemas), local hosts only
+NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/<your db> bun run platform:dev   # service :4848, API :8790, sites :5101-5104
+bun run sites:dev            # the four sites only, /api/* proxied to :8790
+bun test packages/platform sites   # `bun run test` covers packages/platform but not sites/
 ```
 
 ## Environment
