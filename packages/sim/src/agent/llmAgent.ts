@@ -9,14 +9,24 @@ import { chatJson } from "../llmGenerator.ts";
 import type { SimMessage } from "../channel.ts";
 import type { Persona } from "../persona.ts";
 import { INTERESTS, SKILLS } from "../taxonomy.ts";
-import { decide, firstPerson, policyInitiative, templateText, PolicyPersonaAgent } from "./policy.ts";
+import { decide, firstPerson, policyInitiative, templateText, PolicyPersonaAgent, type PolicyOptions } from "./policy.ts";
 import type { AgentReply, Initiative, PersonaAgent, PersonaContext, PolicyDecision } from "./types.ts";
 
 export interface LLMAgentOptions {
   maxHistory?: number; maxTokens?: number; temperature?: number;
   /** Let the model override the choice model's accept/decline (default false). */
   llmDecides?: boolean;
+  /** Options for the choice model (policy.ts PolicyOptions; e.g. timeAware, reactions). Default none. */
+  policy?: PolicyOptions;
 }
+
+/**
+ * Intents whose reply must be exact, so the template text is sent without a model call: a menu answer
+ * is the option key or "none", and a tapback is an emoji (SimMeta.reaction).
+ */
+const TEMPLATE_ONLY = new Set<PolicyDecision["intent"]>(["menu_pick", "menu_none", "react",
+  // Plans (PolicyOptions.plans): option keys, stated windows and crew answers a Network must parse.
+  "plan_pick", "plan_none", "plan_cant", "checkin_answer", "crew_yes", "crew_no"]);
 
 const label = (t: string) => INTERESTS.find(i => i.tag === t)?.label ?? t;
 const skill = (t: string) => SKILLS.find(s => s.tag === t)?.label ?? t;
@@ -54,7 +64,20 @@ function adversarialGoal(p: Persona): string {
 }
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 
+/** What to say about offered times (PolicyDecision.timeAnswer), or "" when no times were offered. */
+function timeSituation(d: PolicyDecision): string {
+  const ta = d.timeAnswer;
+  if (!ta) return "";
+  const offered = ta.options.map(o => `(${o.key}) ${o.label}`).join(", ");
+  const fits = ta.options.filter(o => ta.picks.includes(o.key));
+  if (!fits.length) return `The agent offered these times: ${offered}. None of them work for you. Say clearly that ${ta.options.length === 2 ? "neither" : "none of those"} works this week (use the word "${ta.options.length === 2 ? "neither" : "none"}"); do not suggest another time.`;
+  if (fits.length === ta.options.length) return `The agent offered these times: ${offered}. All of them work for you. Say that either works (use the word "either").`;
+  return `The agent offered these times: ${offered}. Only ${fits.map(o => o.label).join(" and ")} work${fits.length === 1 ? "s" : ""} for you. Name ${fits.length === 1 ? "that day" : "those days"} (for example "${fits.map(o => o.label.split(/\s+/)[0]).join(" or ")} works") and do not name the others.`;
+}
+
 function situation(ctx: PersonaContext, d: PolicyDecision, llmDecides: boolean): string {
+  const times = timeSituation(d);
+  if (times) return `${d.intent === "probe_yes" ? "You'd be up for what the agent asks about. " : ""}${times} Keep it short.`;
   switch (d.intent) {
     case "answer_question":
       return `Answer the agent's question honestly and in character. ${d.disclose ? "This time, also privately mention your private situation (with its reference code)." : "Do not mention your private situation."}`;
@@ -68,6 +91,9 @@ function situation(ctx: PersonaContext, d: PolicyDecision, llmDecides: boolean):
       return `The agent is proposing something. Your gut: ${gut}; you are leaning "${d.decision}". Make the final call in character (accept, decline, or counter with a different time).`;
     }
     case "confirm_schedule": return "Confirm the proposed time works (briefly).";
+    case "probe_yes": return "The agent asks if you'd be up for something (nobody is named yet). Say yes, briefly.";
+    case "probe_no": return "The agent asks if you'd be up for something (nobody is named yet). Politely say no, briefly.";
+    case "booked_cancel": return `The agent booked a plan for you, or told you its time. You can't make it. Say so briefly and use the words "can't make it". Do not give a long reason.`;
     case "flake_notice": return "You can't make it to today's plan. Cancel apologetically (briefly; you may invent a mundane reason).";
     case "feedback": {
       const f = d.feedback!;
@@ -86,13 +112,17 @@ export class LLMPersonaAgent implements PersonaAgent {
   private fallback: PolicyPersonaAgent;
   calls = 0; failures = 0;
   constructor(private llm: LLM, private worldStart: number, private opts: LLMAgentOptions = {}) {
-    this.fallback = new PolicyPersonaAgent(worldStart);
+    this.fallback = new PolicyPersonaAgent(worldStart, opts.policy);
   }
 
   async respond(ctx: PersonaContext, msg: SimMessage): Promise<AgentReply> {
-    const d = decide(ctx, msg, this.worldStart);
+    const d = decide(ctx, msg, this.worldStart, this.opts.policy);
     if (d.intent === "ignore") return { ...d, action: "ignore" };
     if (d.intent === "opt_out") return { ...d, action: "reply", text: "STOP" };
+    if (TEMPLATE_ONLY.has(d.intent) || d.feedback?.plan) {
+      const text = templateText(ctx, d);
+      return { ...d, action: text ? "reply" : "ignore", text };
+    }
     const history = ctx.history.filter(m => !m.system).slice(-(this.opts.maxHistory ?? 10))
       .map(m => `${m.direction === "outbound" ? "Network agent" : "You"}: ${m.body}`).join("\n");
     const system = `${personaCard(ctx.persona)}
@@ -134,7 +164,7 @@ Return ONLY JSON: {"text": string, "decision": "accept"|"decline"|"counter"|"non
   }
 
   async initiative(ctx: PersonaContext): Promise<Initiative | undefined> {
-    const ini = policyInitiative(ctx, this.worldStart);
+    const ini = policyInitiative(ctx, this.worldStart, this.opts.policy);
     if (!ini || (ini.kind !== "ask" && ini.kind !== "travel")) return ini; // keep attack payloads verbatim
     try {
       this.calls++;

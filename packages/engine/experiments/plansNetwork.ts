@@ -61,6 +61,8 @@ export class PlanNetwork extends AttentionNetwork {
   readonly planInviteIds = new Set<string>();
   private offeredCrews = new Set<string>();
   private planServed = new Map<MemberId, string>();
+  /** Age gate for the plan bench: a member the Network now knows is a minor (or of unknown age) is never backfilled. */
+  private readonly runOpts: P.PlanRunOpts = { canMatch: id => !this.x.member(id).minor };
   readonly planStats = {
     runs: 0, plans: 0, partnerPlans: 0, eventPlans: 0, crewSessions: 0, crewsFormed: 0, probesSent: 0, planYes: 0, planNo: 0, cantMakeTime: 0,
     booked: 0, bookedSmaller: 0, joins: 0, backfills: 0, fallbacks: { smaller: 0, solo_event: 0, next_week: 0, none: 0 } as Record<string, number>,
@@ -243,7 +245,7 @@ export class PlanNetwork extends AttentionNetwork {
     const p = P.planToProposal(plan, this.pcfg);
     this.proposals.set(plan.id, p);
     this.planIds.add(plan.id);
-    const run = P.startPlanRun(plan);
+    const run = P.startPlanRun(plan, this.runOpts);
     this.flows.set(plan.id, { p, f: { ...A.startProbeFlow(p), answers: { ...run.answers }, quorum: plan.quorum }, stage: "probing", reveal: new Map() } as any);
     const l: Live = { run, plan, probed: new Set(), going: [] };
     this.live.set(plan.id, l);
@@ -353,7 +355,7 @@ export class PlanNetwork extends AttentionNetwork {
       this.x.availHistory.set(id, h);
     }
     const prev = l.run;
-    const r = P.recordPlanAnswer(l.run, id, yes, now, this.pcfg);
+    const r = P.recordPlanAnswer(l.run, id, yes, now, this.pcfg, this.runOpts);
     l.run = r.run;
     if (r.run !== prev) { if (yes) this.planStats.planYes++; else this.planStats.planNo++; }
     const fl = this.flows.get(pid) as any;
@@ -382,6 +384,14 @@ export class PlanNetwork extends AttentionNetwork {
     const clash = going.filter(id => this.conflict(id, plan.window.start, plan.id));
     if (clash.length) { this.planStats.conflictsAvoided += clash.length; going = going.filter(id => !clash.includes(id)); }
     if (going.length < 2) { l.run = { ...l.run, stage: "closed" }; const fl = this.flows.get(plan.id) as any; if (fl) fl.stage = "closed"; this.planStats.fallbacks.none = (this.planStats.fallbacks.none ?? 0) + 1; return; }
+    if (going.length === 2 && !plan.partner) {
+      // A group plan down to two: they said yes to a group, not to a one-to-one meeting. A fresh
+      // partner plan with one-to-one consent instead of booking the pair (engine-attention-plans-10).
+      l.run = { ...l.run, stage: "closed" }; const fl = this.flows.get(plan.id) as any; if (fl) fl.stage = "closed";
+      this.planStats.fallbacks.smaller = (this.planStats.fallbacks.smaller ?? 0) + 1;
+      this.submitPlan(P.partnerPlanFor(plan, [going[0]!, going[1]!], now, this.pcfg), now);
+      return;
+    }
     l.bookedAt = now; l.going = [...going];
     this.planStats.booked++;
     const fl = this.flows.get(plan.id) as any;
@@ -449,7 +459,7 @@ export class PlanNetwork extends AttentionNetwork {
       return;
     }
     if (fallback.kind === "smaller") {
-      // A smaller plan of the yes-sayers (the activity allows 2): booked like the original.
+      // A smaller GROUP of the yes-sayers (three or more; two always come with a partner plan): booked like the original.
       l.run = { ...l.run, stage: "booked" };
       this.planStats.bookedSmaller++;
       this.book(l, fallback.members, now);

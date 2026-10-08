@@ -1,5 +1,6 @@
-# Offline CI: install, typecheck, and every offline test. No secrets are given to CI, and LIVE_TESTS
-# is never set, so no paid LLM call, Blooio call or Cloudflare deploy can happen here.
+# Offline CI: install, typecheck, and every offline test, with a real Postgres. No secrets are given to
+# CI, and LIVE_TESTS is never set, so no paid LLM call, Blooio or Twilio call, or Cloudflare deploy can
+# happen here. Deploys live in deploy-sites.yml. Actions and the Postgres image are pinned by digest.
 name: ci
 
 on:
@@ -14,35 +15,107 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Blank every provider key and leave LIVE_TESTS unset: live tests skip themselves.
+  SURPLUS_API_KEY: ""
+  OPENAI_API_KEY: ""
+  CEREBRAS_API_KEY: ""
+  BLOOIO_API_KEY: ""
+  BLOOIO_LIVE_TEST: ""
+  TWILIO_AUTH_TOKEN: ""
+  TURNSTILE_SECRET_KEY: ""
+  CLOUDFLARE_API_TOKEN: ""
+  NTWRK_ALLOW_DEPLOY: ""
+  LLM_ALLOW_OPENAI_FALLBACK: ""
+  # Any accidental LLM call fails fast instead of hanging.
+  LLM_TIMEOUT_MS: "10000"
+  LLM_MAX_RETRIES: "0"
+
 jobs:
   offline:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      # The dev Postgres port (54339). The test helpers create one database per test process.
+      postgres:
+        image: postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d
+        env:
+          POSTGRES_USER: runner
+          POSTGRES_DB: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 54339:5432
+        options: >-
+          --health-cmd "pg_isready -U runner"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     env:
-      # Blank every provider key and leave LIVE_TESTS unset: live tests skip themselves.
-      SURPLUS_API_KEY: ""
-      OPENAI_API_KEY: ""
-      CEREBRAS_API_KEY: ""
-      BLOOIO_API_KEY: ""
-      BLOOIO_LIVE_TEST: ""
-      NTWRK_ALLOW_DEPLOY: ""
-      LLM_ALLOW_OPENAI_FALLBACK: ""
-      # Any accidental LLM call fails fast instead of hanging.
-      LLM_TIMEOUT_MS: "10000"
-      LLM_MAX_RETRIES: "0"
+      # Postgres suites must run, not skip: the check step below fails the job without Postgres.
+      REQUIRE_PG: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - name: Put the Postgres client tools on PATH
+        # The test helpers call initdb, pg_isready and pg_ctl (packages/observatory/db/dev-pg.ts).
+        run: |
+          bin="$(find /usr/lib/postgresql -mindepth 2 -maxdepth 2 -type d -name bin | sort -V | tail -n 1)"
+          test -x "$bin/pg_ctl"
+          echo "$bin" >> "$GITHUB_PATH"
+      - name: Install
+        run: bun install --frozen-lockfile
+        timeout-minutes: 5
+      - name: Typecheck (packages, prototypes, deploy)
+        run: bunx tsc --noEmit -p .
+        timeout-minutes: 5
+      - name: Typecheck (sites, scripts)
+        run: bunx tsc --noEmit -p sites/tsconfig.json
+        timeout-minutes: 5
+      - name: Require Postgres
+        # REQUIRE_PG=1: a missing Postgres fails here, so no Postgres suite can skip silently.
+        run: |
+          pg_isready -h localhost -p 54339
+          bun run scripts/require-pg.ts
+      - name: Offline tests
+        run: |
+          if [ -n "${LIVE_TESTS:-}" ]; then echo "LIVE_TESTS must be unset in CI"; exit 1; fi
+          # packages/plugin-network runs in its own job against the eliza submodule (below).
+          pkgs=()
+          for d in packages/*/; do [ "$d" = "packages/plugin-network/" ] || pkgs+=("$d"); done
+          bun test --conditions eliza-source "${pkgs[@]}" prototypes sites deploy scripts ./tests/e2e --timeout 120000
+        timeout-minutes: 20
+      - name: Production build of the four sites (refuses draft legal text and unfilled placeholders)
+        run: bun run sites/sites.ts
+        env:
+          DEPLOY_TARGET: production
+
+  plugin-network:
+    # The Eliza plugin typechecks against the eliza submodule. Non-blocking until its imports resolve
+    # in CI (@elizaos/plugin-assistant, @elizaos/plugin-sqlite/portable): see the engine session.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          submodules: true
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.2
       - name: Install
         run: bun install --frozen-lockfile
-        timeout-minutes: 5
-      - name: Typecheck
-        run: bunx tsc --noEmit -p .
-        timeout-minutes: 5
-      - name: Offline tests
-        run: |
-          if [ -n "${LIVE_TESTS:-}" ]; then echo "LIVE_TESTS must be unset in CI"; exit 1; fi
-          bun test packages prototypes --timeout 120000
-        timeout-minutes: 12
+      - name: Install Eliza (its own install, never a workspace of this repo)
+        run: bun install
+        working-directory: eliza
+        timeout-minutes: 10
+      - name: Typecheck plugin-network
+        run: bun run --cwd packages/plugin-network typecheck
+      - name: Test plugin-network
+        # From the package directory so its tsconfig paths resolve @elizaos/* to the submodule.
+        run: bun test --conditions eliza-source --timeout 120000
+        working-directory: packages/plugin-network

@@ -1,18 +1,18 @@
 #!/usr/bin/env bun
 // Local development Postgres for the observatory's real-world mode (never production).
-//   bun run packages/observatory/db/dev-pg.ts up      # init (once), start on :54339, create db + schema
-//   bun run packages/observatory/db/dev-pg.ts reset   # drop and recreate the network schema
+//   bun run packages/observatory/db/dev-pg.ts up      # init (once), start on :54339, create db, run the migrations
+//   bun run packages/observatory/db/dev-pg.ts reset   # drop and recreate the network and platform schemas
 //   bun run packages/observatory/db/dev-pg.ts down    # stop
 //   bun run packages/observatory/db/dev-pg.ts url     # print the connection URL
 import { existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { SQL } from "bun";
+import { migrate } from "./migrate.ts";
 
 const REPO = resolve(import.meta.dir, "../../..");
 export const DEV_PG_DIR = process.env.OBSERVATORY_PG_DIR ?? join(REPO, "runs", "pg");
 export const DEV_PG_PORT = Number(process.env.OBSERVATORY_PG_PORT ?? 54339);
 export const DEV_PG_URL = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/network`;
-const SCHEMA = join(import.meta.dir, "schema.sql");
 
 function pgBin(name: string): string {
   for (const v of ["16", "17", "18"]) {
@@ -30,6 +30,7 @@ async function sh(cmd: string[], quiet = false) {
   return p.exited;
 }
 
+/** Start the dev cluster and create the `network` database. It does not migrate it: `up`, seed.ts and db:migrate do. */
 export async function devPgUp(): Promise<string> {
   if (!existsSync(join(DEV_PG_DIR, "PG_VERSION"))) {
     mkdirSync(DEV_PG_DIR, { recursive: true });
@@ -45,15 +46,16 @@ export async function devPgUp(): Promise<string> {
   const exists = await admin`select 1 from pg_database where datname = 'network'`;
   if (!exists.length) await admin.unsafe("create database network");
   await admin.close();
-  await applySchema(DEV_PG_URL);
   return DEV_PG_URL;
 }
 
-export async function applySchema(url: string, opts: { reset?: boolean } = {}) {
-  const sql = new SQL(url);
-  if (opts.reset) await sql.unsafe("drop schema if exists network cascade");
-  await sql.unsafe(await Bun.file(SCHEMA).text());
-  await sql.close();
+/**
+ * Bring a database to the current schema with the migration runner (db/migrate.ts): schema.sql,
+ * packages/network/db/network-state.sql, then db/migrations/*. `reset` drops the network and
+ * platform schemas and the ledger first.
+ */
+export async function applySchema(url: string, opts: { reset?: boolean; lockTimeout?: string } = {}) {
+  await migrate(url, opts);
 }
 
 export async function devPgDown() {
@@ -62,7 +64,7 @@ export async function devPgDown() {
 
 if (import.meta.main) {
   const cmd = process.argv[2] ?? "up";
-  if (cmd === "up") console.log(await devPgUp());
+  if (cmd === "up") { await applySchema(await devPgUp()); console.log(DEV_PG_URL); }
   else if (cmd === "reset") { await devPgUp(); await applySchema(DEV_PG_URL, { reset: true }); console.log("schema reset"); }
   else if (cmd === "down") { await devPgDown(); console.log("stopped"); }
   else if (cmd === "url") console.log(DEV_PG_URL);

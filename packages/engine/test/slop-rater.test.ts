@@ -243,3 +243,29 @@ test.skipIf(!live)("LIVE: one Clef call on a blank image returns answers for eve
   for (const id of Object.keys(CLEF_QUESTIONS)) expect(res.answers[id]).toBeDefined();
   expect(clefFeatures(res.answers).x["gate.one_adult"]).toBeLessThan(0.5);
 }, 30_000);
+
+describe("iteration 5: rating-quintile fairness options", () => {
+  const prof = (id: string, overall: number, dates = 0) =>
+    ({ id, appearance: { face: overall, body: overall, overall, confidence: 0.8 }, wantsBody: [], history: { ratedBody: [], dates } } as unknown as SlopProfile);
+  test("gapFree: no penalty up to the threshold, the soft penalty on the excess above it", async () => {
+    const { appearanceFactor } = await import("../src/packs/slop/score.ts");
+    const o = slopOptions({ appearance: { gapFree: 1, softWeight: 0.2 } });
+    expect(appearanceFactor(prof("a", 0), prof("b", 0.9), o)).toBe(1);
+    expect(appearanceFactor(prof("a", 0), prof("b", 2), o)).toBeCloseTo(Math.exp(-0.2), 6);
+    expect(appearanceFactor(prof("a", 0), prof("b", 2), slopOptions({ appearance: { mode: "tiebreak" } }))).toBe(1); // tiebreak never lowers a value
+  });
+});
+
+describe("iteration 5: bottom-rated protection (the default)", () => {
+  const prof = (id: string, overall: number, quantile: number) =>
+    ({ id, appearance: { face: overall, body: overall, overall, confidence: 0.8, quantile }, wantsBody: [], history: { ratedBody: [], dates: 0 } } as unknown as SlopProfile);
+  test("no similarity term for a pair with a member in the bottom 40%; unchanged above it", async () => {
+    const { appearanceFactor } = await import("../src/packs/slop/score.ts");
+    const o = slopOptions();
+    expect(o.appearance.protectBelow).toBe(0.4);
+    expect(appearanceGap(prof("a", -2, 0.1), prof("b", 2, 0.9), o)).toBeUndefined();
+    expect(appearanceFactor(prof("a", -2, 0.39), prof("b", 2, 0.9), o)).toBe(1);
+    expect(appearanceFactor(prof("a", 0, 0.5), prof("b", 2, 0.9), o)).toBeLessThan(1);
+    expect(appearanceGap(prof("a", -2, 0.1), prof("b", 2, 0.9), slopOptions({ appearance: { protectBelow: 0 } }))).toBeCloseTo(4, 6);
+  });
+});

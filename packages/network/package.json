@@ -4,7 +4,16 @@
   "private": true,
   "type": "module",
   "main": "src/index.ts",
-  "scripts": { "test": "bun test" },
+  "exports": {
+    ".": "./src/index.ts",
+    "./geo": "./src/geo.ts",
+    "./harness": "./harness/index.ts",
+    "./service/snapshot": "./service/snapshot.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "service": "bun run service/main.ts"
+  },
   "dependencies": {
     "@thenetwork/core": "workspace:*",
     "@thenetwork/engine": "workspace:*",

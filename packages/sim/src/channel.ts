@@ -23,7 +23,13 @@ export interface SimMeta {
     /** Anonymous availability/interest check before any person is revealed (consent-first). */
     | "probe"
     /** Ask to invite someone (growth). */
-    | "growth_ask";
+    | "growth_ask"
+    /** Anonymous, time-specific plan probe (SimMeta.plan; plans v1.1). Personas read it with PolicyOptions.plans. */
+    | "plan_probe"
+    /** The weekly "What's your week like?" check-in (also recognised by its text on a "question"). */
+    | "checkin"
+    /** "Want to make this a weekly thing?" after a plan (SimMeta.crew). */
+    | "crew_offer";
   proposalId?: string;
   participants?: MemberId[];
   /** Counts toward the interruption budget / two-unanswered rule. */
@@ -36,8 +42,61 @@ export interface SimMeta {
   relayFrom?: MemberId;
   /** For probes: the category and a stable key for the opportunity being checked. */
   probe?: { key: string; category: import("@thenetwork/core").Category; participants?: MemberId[]; kind?: import("@thenetwork/core").OpportunityKind; window?: { start: number; end: number } };
+  /**
+   * Outbound only. Outside-world items the message offers (events, places), usually on a "concierge"
+   * or "info" message. `tags` are interest tags (taxonomy INTERESTS); persona agents with reactions on
+   * (PolicyOptions.reactions) judge their interest in the message from them. Nobody else is involved.
+   */
+  items?: SimItem[];
+  /**
+   * Outbound only. A numbered choice ("Reply 1, 2 or none"). The persona answers with the `key` of the
+   * option it prefers, "none", or ignores the message. An option with a `proposalId` is a named
+   * invitation: the persona judges it with the oracle as it judges a proposal, and picking it is a yes
+   * to that proposal. Persona agents read a menu whenever it is present (no option needed).
+   */
+  menu?: { options: MenuOption[] };
+  /**
+   * Inbound only (set by the channel). This inbound message is a tapback on outbound message `to`, not
+   * typed text. The body still carries an emoji ("👍", "❤️"), so a Network that reads only the body
+   * sees a short acknowledgement. Either way, it is an answer: the member engaged.
+   */
+  reaction?: Reaction;
+  /**
+   * Outbound only. Concrete times the message offers (2-3 options, keys "a", "b", "c"; label in the
+   * member's local time, e.g. "Thursday 7pm"). The member answers in free text ("Thursday works", "the
+   * first", "either", "a or b", "neither works this week"); the Network parses the answer into the set of
+   * picked keys (empty = neither). Personas read it only with PolicyOptions.timeAware.
+   */
+  timeOptions?: TimeOption[];
+  /**
+   * Outbound only. This message is a booked-plan reveal: the meeting is booked at `at`, and silence for
+   * `optOutHours` (48) counts as confirmed. A reply with "can't" or "cancel" cancels it. Personas read it
+   * only with PolicyOptions.timeAware.
+   */
+  booked?: { proposalId: string; at: number; optOutHours: number };
+  /**
+   * Outbound only, on a "plan_probe" (and optionally on the plan's "feedback_request"). The plan the
+   * probe describes: activity, time window, size, area, and numbered options ("Reply 1, 2 or both").
+   * The persona answers with the keys it picks ("1 and 2", "the first two"), "none", or "can't make that
+   * time". Personas read it only with PolicyOptions.plans.
+   */
+  plan?: import("./plans.ts").PlanMeta;
+  /** Outbound only, on a "crew_offer": the crew being offered. The persona opts in ("yes") or out. */
+  crew?: { crewId: string; activity?: string };
   [k: string]: unknown;
 }
+
+/** One concrete time a message offers (SimMeta.timeOptions). */
+export interface TimeOption { key: string; start: number; end: number; label: string }
+
+/** An outside-world item (event or place) carried by an outbound message (SimMeta.items). */
+export interface SimItem { key: string; label?: string; category?: import("@thenetwork/core").Category; tags?: string[] }
+/** One option of a menu (SimMeta.menu). */
+export interface MenuOption { key: string; label: string; category?: import("@thenetwork/core").Category; proposalId?: string }
+/** A tapback (iMessage reaction; Blooio "+love"/"+like") on an outbound message. */
+export interface Reaction { kind: "love" | "like"; to: string }
+/** Body text the channel delivers for a tapback. */
+export const REACTION_TEXT: Record<Reaction["kind"], string> = { love: "❤️", like: "👍" };
 
 export interface SimMessage {
   id: string; ts: number; direction: Direction; channel: ChannelKind;
@@ -116,13 +175,17 @@ export class SimChannel {
     return m;
   }
 
-  /** Member -> network. Handles carrier keywords before forwarding to the webhook. */
-  receive(from: MemberId, body: string): SimMessage {
-    const keyword = detectKeyword(body);
+  /**
+   * Member -> network. Handles carrier keywords before forwarding to the webhook. With `reaction`, the
+   * message is a tapback: it carries meta.reaction and is never a keyword.
+   */
+  receive(from: MemberId, body: string, opts: { reaction?: Reaction } = {}): SimMessage {
+    const keyword = opts.reaction ? undefined : detectKeyword(body);
     const m: SimMessage = {
       id: this.nextId("i"), ts: this.clock.now(), direction: "inbound", channel: this.kinds.get(from) ?? "imessage",
       from, to: "network", memberId: from, body, status: "delivered", keyword,
     };
+    if (opts.reaction) m.meta = { reaction: opts.reaction };
     this.record(m);
     if (keyword === "STOP") {
       this.optedOut.add(from);

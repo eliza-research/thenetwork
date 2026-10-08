@@ -6,7 +6,7 @@
 // Facet tag schema (docs/results/2026-10-08-slop-world.md "Snapshot mapping"; the platform writes
 // the same tags from the onboarding chat):
 //   preference  romance:is:<g> romance:seeks:<g> romance:age:<lo>-<hi>
-//   fact        slop:zip:<zip>
+//   fact        slop:zip:<zip>; slop:area:<neighborhood> (used when the zip is not in the table)
 //   preference  slop:scope:city | slop:scope:radius:<mi> | slop:scope:multi:<c1>,<c2>; slop:max_miles:<mi>
 //   goal        slop:goal:<casual|long_term|unsure>
 //   fact        slop:smoking:* slop:drinking:* slop:has_kids:* slop:wants_kids:* slop:religion:*
@@ -20,7 +20,7 @@
 import type { City, Facet, MemberId } from "@thenetwork/core";
 import { canBeMatched, DAY } from "@thenetwork/core";
 import type { EngineInput } from "../../types.ts";
-import { cellOfZip, MARKET_ANCHOR_ZIP, type Cell } from "./zips.ts";
+import { cellOfZip, isKnownZip, MARKET_ANCHOR_ZIP, normalizeZip, zipForArea, type Cell } from "./zips.ts";
 import { APPEARANCE_PREFIX, canRatePhotos, parseAppearance } from "./appearance.ts";
 
 export type Gender = "woman" | "man" | "nonbinary";
@@ -61,6 +61,12 @@ export interface History {
 export interface SlopProfile {
   id: MemberId; age: number; adult: boolean; optedIn: boolean; paused: boolean;
   zip?: string; homeMarket: City; cell?: Cell;
+  /**
+   * The member gave a zip that is not in the table and no neighborhood we could place: slopPack asks
+   * for a nearby zip or neighborhood (ask "slop_zip") instead of failing. Until then `cell` is unset
+   * and the market's anchor cell stands in (cellIn), once the ask has gone unanswered for a week.
+   */
+  zipUnknown: boolean;
   is?: Gender; seeks: Gender[];
   ageRange?: [number, number]; scope?: Scope; maxMiles?: number; goal?: Goal;
   values: { smoking?: string; drinking?: string; hasKids?: string; wantsKids?: string; religion?: string; religionImportance?: number; politics?: string };
@@ -76,7 +82,9 @@ export interface SlopProfile {
   /** Age verification: true = passed, false = failed, undefined = no check recorded. */
   ageVerified?: boolean;
   /** Appearance rating (iteration 3), read only for adults whose age is not known to be unverified. */
-  appearance?: { face: number; body: number; overall: number; confidence: number; bodyType?: string; bodyTypeConfidence?: number };
+  appearance?: { face: number; body: number; overall: number; confidence: number; bodyType?: string; bodyTypeConfidence?: number;
+    /** Iteration 5: rank of `overall` among the rated members in this input, 0 (lowest) .. 1. Internal only. */
+    quantile?: number };
   /**
    * Hard-filter questions asked at least `silentAfterDays` ago and never answered (age_range,
    * distance, orientation): the pack proposes on a narrow fallback instead of locking them out.
@@ -142,7 +150,12 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
     const tags = fs.flatMap(f => f.tags.filter(t => !NEVER_USED.test(t)).map(t => ({ t, f })));
     const has = (prefix: string) => tags.filter(x => x.t.startsWith(prefix)).map(x => x.t.slice(prefix.length));
     const one = (prefix: string) => has(prefix)[0];
-    const zip = one("slop:zip:");
+    // The first zip we know (a member may have corrected an unknown one), else the first given.
+    const zips = has("slop:zip:");
+    const zip = zips.find(isKnownZip) ?? zips[0];
+    // An unknown zip falls back to a neighborhood the member named, in their home market.
+    const area = zip && isKnownZip(zip) ? undefined : has("slop:area:").map(a => zipForArea(a.replace(/_/g, " "), m.homeCity)).find(Boolean);
+    const cell = zip && isKnownZip(zip) ? cellOfZip(zip) : area ? cellOfZip(area.zip) : undefined;
     const age = one("romance:age:");
     const sc = one("slop:scope:");
     const scope: Scope | undefined = !sc ? undefined : sc === "city" ? { mode: "city" }
@@ -160,7 +173,7 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
     const visiting = [...new Set(input.presence.filter(p => C(p.memberId) === m.id && p.type === "temporary" && (p.from ?? -Infinity) <= now + 2 * DAY && now + 2 * DAY < (p.to ?? Infinity) && p.city !== m.homeCity).map(p => p.city))].sort();
     out.set(m.id, {
       id: m.id, age: m.age, adult: canBeMatched(m.age), optedIn: m.prefs.romanceOptIn && m.prefs.categoriesOptIn.includes("romance"), paused: m.state === "paused",
-      zip, homeMarket: m.homeCity, cell: zip ? cellOfZip(zip) : undefined,
+      zip: zip && isKnownZip(zip) ? normalizeZip(zip) : zip, homeMarket: m.homeCity, cell, zipUnknown: !!zip && !cell,
       is, seeks,
       ageRange: age ? (age.split("-").map(Number) as [number, number]) : undefined,
       scope, maxMiles: mm !== undefined ? Number(mm) : undefined,
@@ -189,6 +202,9 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
       history: hist.get(m.id) ?? emptyHistory(),
     });
   }
+  // Iteration 5: each rating's quantile among the rated members of this input (ties by id).
+  const ratedP = [...out.values()].filter(p => p.appearance).sort((x, y) => (x.appearance!.overall - y.appearance!.overall) || (x.id < y.id ? -1 : 1));
+  ratedP.forEach((p, i) => { p.appearance!.quantile = ratedP.length > 1 ? i / (ratedP.length - 1) : 0.5; });
   // Revealed taste: the self-descriptions of the people a member rated, with the rating.
   for (const p of out.values()) {
     p.history.rated.sort((x, y) => (x.about < y.about ? -1 : x.about > y.about ? 1 : x.v - y.v));

@@ -69,7 +69,7 @@ describe("GameSource", () => {
     expect(me.proposals).toBe(1);
   }, T);
 
-  test("minors policy: proposing a member under 18 is a safety strike and is never dispatched", async () => {
+  test("minors policy: the observatory refuses to propose a known member under 18 (nothing sent, no spark, no strike)", async () => {
     const g = await game({ seed: 11, personas: 120, days: 20, engine: "off" });
     await g.control({ type: "step", ms: 7 * DAY });
     const s = g.state();
@@ -77,18 +77,15 @@ describe("GameSource", () => {
     expect(minor).toBeDefined();
     const adult = freeAdults(g, s, minor.city as "sf" | "nyc")[0]!;
     const r = await g.control({ type: "propose", participants: [minor.id, adult.id] });
-    const id = (r.data as { id: string }).id;
-    let gs = g.state();
-    expect(gs.opportunities.find(o => o.id === id)!.oracle!.unsafe).toBe(true);
-    expect(gs.game!.strikes).toBe(1);
-    expect(gs.game!.scores.find(x => x.source === "player")!.points).toBeLessThanOrEqual(-150);
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("under 18");
     await g.control({ type: "step", ms: 2 * DAY });
-    gs = g.state();
-    const o = gs.opportunities.find(o => o.id === id)!;
-    expect(o.state).toBe("SKIPPED");
-    expect(o.reason).toBe("minors_policy");
+    const gs = g.state();
+    expect(gs.opportunities.some(o => o.source === "player")).toBe(false);
+    expect(gs.game!.strikes).toBe(0);
+    expect(gs.game!.sparksLeft).toBe(gs.game!.sparksPerDay);
     const md = await g.member(minor.id);
-    expect(md!.messages.some(m => m.proposalId === id)).toBe(false);
+    expect(md!.messages.some(m => m.type === "proposal" && m.direction === "outbound" && !!m.proposalId?.startsWith("player-"))).toBe(false);
   }, T);
 
   test("play as a member: the world waits for the player's reply, and a yes is an accept", async () => {
@@ -114,12 +111,32 @@ describe("GameSource", () => {
     expect((reply.data as { decision: string }).decision).toBe("accept");
     // Later prompts (e.g. scheduling) are answered by the persona's own policy.
     const auto = setInterval(() => { for (const p of g.state().game!.prompts) g.control({ type: "reply", promptId: p.id, auto: true }); }, 10);
-    await stepping;
-    clearInterval(auto);
+    try { await stepping; } finally { clearInterval(auto); }
     const o = g.state().opportunities.find(o => o.id === id)!;
     expect(["accepted", "confirmed", "attended", "cancelled_with_notice", "no_show"]).toContain(o.status[x!.id]);
     const inbound = (await g.member(x!.id))!.messages.filter(m => m.direction === "inbound").map(m => m.body);
     expect(inbound).toContain("Yes, I'm in!");
+  }, T);
+
+  test("play as a member: \"sure, not this week though\" is a decline (the Network's reader, not the simulator's)", async () => {
+    const g = await game({ seed: 5, personas: 60, days: 20, engine: "off" });
+    await g.control({ type: "step", ms: 7 * DAY });
+    const [x, y] = freeAdults(g, g.state(), "sf");
+    await g.control({ type: "takeover", memberId: x!.id, on: true });
+    const r = await g.control({ type: "propose", participants: [x!.id, y!.id], why: "you both like climbing" });
+    const id = (r.data as { id: string }).id;
+    const stepping = g.control({ type: "step", ms: 2 * DAY });
+    let prompt;
+    for (let i = 0; i < 200 && !prompt; i++) {
+      await Bun.sleep(20);
+      prompt = g.state().game!.prompts.find(p => p.memberId === x!.id && p.proposalId === id);
+    }
+    expect(prompt).toBeDefined();
+    // Before the fix the simulator's parseYesNo read this as a yes (an accept).
+    const reply = await g.control({ type: "reply", promptId: prompt!.id, text: "sure, not this week though" });
+    expect((reply.data as { decision: string }).decision).toBe("decline");
+    const auto = setInterval(() => { for (const p of g.state().game!.prompts) g.control({ type: "reply", promptId: p.id, auto: true }); }, 10);
+    try { await stepping; } finally { clearInterval(auto); }
   }, T);
 
   test("truth lens, oracle peek cost, god actions, reset", async () => {
@@ -129,8 +146,11 @@ describe("GameSource", () => {
     const [x, y] = freeAdults(g, s, "sf");
     expect((await g.member(x!.id))!.truth).toBeUndefined();
     await g.control({ type: "lens", on: true });
-    expect(g.state().truth?.[x!.id]).toBeDefined();
-    expect((await g.member(x!.id))!.truth?.archetype).toBeDefined();
+    // The lens is per staff member: the source shows truth only to a view that asks for it.
+    expect(g.state().truth).toBeUndefined();
+    expect(g.state({ truth: true }).truth?.[x!.id]).toBeDefined();
+    expect((await g.member(x!.id))!.truth).toBeUndefined();
+    expect((await g.member(x!.id, { truth: true }))!.truth?.archetype).toBeDefined();
     expect(g.state().game!.lensUsed).toBe(true);
     const peek = await g.control({ type: "peek", participants: [x!.id, y!.id] });
     expect(peek.ok).toBe(true);

@@ -1,9 +1,10 @@
 // In-memory observatory state with change tracking. Both data sources write into a Store; the
 // server sends the full state once and then deltas (only what changed since the last take).
 import type { MemberId } from "@thenetwork/core";
+import { HOUR } from "@thenetwork/core";
 import type {
-  ClockInfo, EngineRunSummary, EnvInfo, GameState, MemberTruth, ObsDelta, ObsEdge, ObsFeedItem, ObsMember,
-  ObsOpportunity, ObsState, ObsStats,
+  ClockInfo, EngineRunSummary, EnvInfo, GameState, GrowthStats, HealthAlert, JudgeStats, MemberTruth, ObsDelta, ObsEdge, ObsFeedItem, ObsMember,
+  ObsOpportunity, ObsRequest, ObsState, ObsStats, ScoreMetric,
 } from "./types.ts";
 
 export const FEED_LIMIT = 400;
@@ -26,6 +27,13 @@ export interface RunningCounts {
   enjoymentSum: number; enjoymentN: number; blocks: number; optOuts: number; adversarialAttempts: number;
   invariantViolations: number; errors: number;
 }
+const CLOSED_STATES = new Set(["COMPLETED", "FEEDBACK_COLLECTED", "DECLINED", "EXPIRED", "CANCELLED", "SKIPPED", "ABANDONED", "QUORUM_FAILED"]);
+/** An opportunity with its age (hours since created; for a closed one, from creation to its last change). */
+export function withAge(o: ObsOpportunity, now: number): ObsOpportunity {
+  const end = CLOSED_STATES.has(o.state) ? o.updatedAt : now;
+  return { ...o, ageHours: Math.round(((end - o.createdAt) / HOUR) * 10) / 10 };
+}
+
 export const zeroCounts = (): RunningCounts => ({
   messages: 0, inbound: 0, outbound: 0, proactive: 0, invites: 0, accepts: 0, declines: 0, meetingsScheduled: 0,
   meetingsHeld: 0, attended: 0, noShows: 0, cancelledWithNotice: 0, enjoymentSum: 0, enjoymentN: 0, blocks: 0,
@@ -40,6 +48,13 @@ export class Store {
   feed: ObsFeedItem[] = [];
   truth?: Record<MemberId, MemberTruth>;
   counts: RunningCounts = zeroCounts();
+  /** Game only: the judge scorer's counts (set by GameSource). */
+  judge?: JudgeStats;
+  /** Health alerts, the PRD 28.2 scorecard and growth (set by the source). */
+  health?: { alerts: HealthAlert[]; scorecard: ScoreMetric[]; growth: GrowthStats };
+  /** Member requests, newest first (set by the source). */
+  requests: ObsRequest[] = [];
+  private requestsDirty = false;
   version = 0;
   private feedSeq = 0;
   private dirtyMembers = new Set<MemberId>();
@@ -82,6 +97,16 @@ export class Store {
     this.newFeed.push(full);
   }
 
+  setRequests(list: ObsRequest[]) {
+    if (JSON.stringify(list) === JSON.stringify(this.requests)) return;
+    this.requests = list; this.requestsDirty = true;
+  }
+  setHealth(h: NonNullable<Store["health"]>) {
+    if (JSON.stringify(h) === JSON.stringify(this.health)) return;
+    this.health = h; this.healthDirty = true;
+  }
+  private healthDirty = false;
+
   addRun(r: EngineRunSummary) { this.runs.push(r); if (this.runs.length > 60) this.runs.shift(); this.runsDirty = true; }
 
   stats(): ObsStats {
@@ -112,20 +137,23 @@ export class Store {
       meetingsScheduled: c.meetingsScheduled, meetingsHeld: c.meetingsHeld, attended: c.attended, noShows: c.noShows,
       cancelledWithNotice: c.cancelledWithNotice, enjoymentSum: c.enjoymentSum, enjoymentN: c.enjoymentN,
       blocks: c.blocks, optOuts: c.optOuts, adversarialAttempts: c.adversarialAttempts,
-      invariantViolations: c.invariantViolations, errors: c.errors, compatible, unsafe, oracleJudged, edgesByType,
+      // Game mode: the judge's invariant count. Real mode: invariant_violation events.
+      invariantViolations: this.judge?.invariants ?? c.invariantViolations, errors: c.errors, compatible, unsafe, oracleJudged, edgesByType,
+      ...(this.judge ? { judge: this.judge } : {}),
+      ...(this.health ? { alerts: this.health.alerts, scorecard: this.health.scorecard, growth: this.health.growth } : {}),
     };
   }
 
   snapshot(game?: GameState): ObsState {
     return {
       env: this.env, clock: this.clock, members: [...this.members.values()], edges: [...this.edges.values()],
-      opportunities: [...this.opps.values()], feed: this.feed.slice(-FEED_LIMIT), stats: this.stats(),
-      engineRuns: this.runs, game, truth: this.truth, version: this.version,
+      opportunities: [...this.opps.values()].map(o => withAge(o, this.clock.now)), feed: this.feed.slice(-FEED_LIMIT), stats: this.stats(),
+      engineRuns: this.runs, game, truth: this.truth, requests: this.requests, version: this.version,
     };
   }
 
   hasChanges() {
-    return this.dirtyMembers.size + this.dirtyEdges.size + this.dirtyOpps.size + this.removedOpps.size + this.newFeed.length > 0 || this.runsDirty || this.envDirty;
+    return this.dirtyMembers.size + this.dirtyEdges.size + this.dirtyOpps.size + this.removedOpps.size + this.newFeed.length > 0 || this.runsDirty || this.envDirty || this.requestsDirty || this.healthDirty;
   }
 
   /** Everything that changed since the last call (and bump the version). */
@@ -136,13 +164,14 @@ export class Store {
     if (this.envDirty) d.env = this.env;
     if (this.dirtyMembers.size) d.members = [...this.dirtyMembers].map(id => this.members.get(id)!).filter(Boolean);
     if (this.dirtyEdges.size) d.edges = [...this.dirtyEdges].map(id => this.edges.get(id)!).filter(Boolean);
-    if (this.dirtyOpps.size) d.opportunities = [...this.dirtyOpps].map(id => this.opps.get(id)!).filter(Boolean);
+    if (this.dirtyOpps.size) d.opportunities = [...this.dirtyOpps].map(id => this.opps.get(id)!).filter(Boolean).map(o => withAge(o, this.clock.now));
     if (this.removedOpps.size) d.removedOpportunities = [...this.removedOpps];
     if (this.newFeed.length) d.feed = this.newFeed;
     if (this.runsDirty) d.engineRuns = this.runs;
+    if (this.requestsDirty) d.requests = this.requests;
     if (changed) d.stats = this.stats();
     this.dirtyMembers.clear(); this.dirtyEdges.clear(); this.dirtyOpps.clear(); this.removedOpps.clear(); this.newFeed = [];
-    this.runsDirty = false; this.envDirty = false;
+    this.runsDirty = false; this.envDirty = false; this.requestsDirty = false; this.healthDirty = false;
     return d;
   }
 }

@@ -1,0 +1,18 @@
+# OPTIONAL. Railway config as code for the observatory console (docs/deploy.md, section 2.5).
+# Same image as the backend, another start command. Real data only (OBSERVATORY_REAL_ONLY=1), staff
+# sign-in through Cloudflare Access (OBSERVATORY_TRUST_CF_ACCESS=1 with the team and audience set),
+# and it reaches the backend's staff API over Railway's private network (NETWORK_SERVICE_URL).
+# In the service settings, set "Config-as-code path" to /deploy/backend/observatory.railway.toml.
+# Do not generate a *.up.railway.app domain for this service: it is reached only through Access.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "deploy/backend/Dockerfile"
+watchPatterns = ["packages/**", "deploy/backend/**", "package.json", "bun.lock"]
+
+[deploy]
+startCommand = "bun run packages/observatory/src/server.ts --mode real"
+# The console has no unauthenticated health route yet; Railway then only checks that the process stays up.
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+drainingSeconds = 10

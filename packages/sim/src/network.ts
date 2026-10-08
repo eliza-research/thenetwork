@@ -3,11 +3,13 @@
 // may only reach members through ctx.send (the simulated channel) and may only read the
 // public snapshot; it never sees personas' hidden truth.
 import type { Clock, MemberId, Proposal, WorldSnapshot, City } from "@thenetwork/core";
-import type { ChannelKind, Keyword, SimMessage, SimMeta } from "./channel.ts";
+import type { ChannelKind, Keyword, Reaction, SimMessage, SimMeta } from "./channel.ts";
 
 /** An inbound webhook payload as the Network sees it. */
 export interface InboundMessage {
   id: string; memberId: MemberId; body: string; ts: number; channel: ChannelKind; keyword?: Keyword;
+  /** A tapback on an outbound message (SimMeta.reaction); `body` then carries the emoji. Never a keyword. */
+  reaction?: Reaction;
 }
 
 export interface MeetingReport {
@@ -16,8 +18,12 @@ export interface MeetingReport {
 
 export interface NetworkContext {
   clock: Clock;
-  /** Send an outbound message to a member through the simulated channel. */
-  send(memberId: MemberId, body: string, opts?: { meta?: SimMeta; idempotencyKey?: string }): SimMessage;
+  /**
+   * Send an outbound message to a member through the simulated channel. `reply`: the Network sends
+   * it as a direct answer to the member's own message (a delivery queue may send it at once, past
+   * quiet hours and conversation caps). The Network decides this; a context never guesses it.
+   */
+  send(memberId: MemberId, body: string, opts?: { meta?: SimMeta; idempotencyKey?: string; reply?: boolean }): SimMessage;
   /**
    * Public view of joined members in core types, as a perfect onboarding/extraction would
    * capture it (stated interests, intents, presence, boundaries and private disclosures

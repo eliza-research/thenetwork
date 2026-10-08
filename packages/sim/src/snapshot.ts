@@ -8,6 +8,7 @@ import { intentHorizonDays, intentRecordTiming, type Persona } from "./persona.t
 import { hash32 } from "./rng.ts";
 import { desireById, SKILLS } from "./taxonomy.ts";
 import { VAGUE_INTENT, type Knowledge } from "./sources.ts";
+import { PLAN_AGAIN_RE, planAgainAnswer } from "./plans.ts";
 
 /**
  * What the snapshot exposes beyond the legacy public profile (2026-10-07, engine v1.2). Each is
@@ -26,6 +27,12 @@ export interface SnapshotFeatures {
   hostTags: boolean;
   /** Members opted in to romance stated who they hope to meet (romance:is / seeks / age tags, agent_private). */
   romancePrefs: boolean;
+  /**
+   * Plans v1.1 (default off; WorldOptions.plans turns it on): a member's answer to "Would you do this
+   * again?" after a plan becomes would_interact_again edges to the others who came (planAgainEdges).
+   * Needs SnapshotState.records.
+   */
+  planAgainEdges?: boolean;
 }
 /** Default since engine v1.2 (docs/results/2026-10-07-engine-v1.2.md). */
 export const SNAPSHOT_FEATURES: SnapshotFeatures = { eventsPerWeek: 6, shareInterests: true, hostTags: true, romancePrefs: true };
@@ -197,6 +204,7 @@ export function buildSnapshot(personas: Persona[], s: SnapshotState): SimSnapsho
   const snap: SimSnapshot = { now: s.now, members, facets, intents, presence, edges, recentProposals: s.recentProposals.filter(p => p.createdAt >= since && p.createdAt <= s.now) };
   if (feat.eventsPerWeek > 0) snap.events = publicEvents(snap, feat.eventsPerWeek);
   if (s.records) Object.assign(snap, networkStateFromRecords(s.records, s.now));
+  if (feat.planAgainEdges && s.records) snap.edges.push(...planAgainEdges(s.records, s.now).filter(e => ids.has(e.from) && ids.has(e.to)));
   return snap;
 }
 
@@ -329,6 +337,48 @@ export function networkStateFromRecords(records: readonly RunRecord[], now: numb
     for (const b of others) feedback.push({ id: `fb:${f.pid}:${f.from}:${b}`, from: f.from, about: b, opportunityId: f.pid, at: f.at, sentiment: r.sentiment, wouldMeetAgain: r.again });
   }
   return { interactions, feedback, openOpportunities, unsentProposalIds: [...skipped] };
+}
+
+/**
+ * would_interact_again edges from what members answered to "Would you do this again?" after a plan
+ * (a feedback_request with SimMeta.plan or that wording; the member's next message within 3 days, read
+ * with plans.ts planAgainAnswer). A yes from a member who came gives an edge from them to each other
+ * member who came (the plan's outcome record). The latest answer per member and plan wins; a no removes
+ * the edges. Only what the Network sees: its own question, the member's reply and attendance.
+ */
+export function planAgainEdges(records: readonly RunRecord[], now: number): Edge[] {
+  const asked = new Map<MemberId, { pid?: string; at: number }>();
+  const lastOutcome = new Map<MemberId, string>();
+  const showedBy = new Map<string, MemberId[]>();
+  const answers = new Map<string, { member: MemberId; pid: string; yes: boolean; at: number }>();
+  for (const r of records) {
+    if (r.t > now) break;
+    if (r.type === "outcome") {
+      const shows = Object.entries(r.attendance).filter(([, a]) => a.showed).map(([id]) => id);
+      showedBy.set(r.proposalId, shows);
+      for (const id of Object.keys(r.attendance)) lastOutcome.set(id, r.proposalId);
+    } else if (r.type === "message" && !r.msg.system) {
+      const m = r.msg;
+      const meta = (m.meta ?? {}) as { type?: string; proposalId?: string; plan?: { planId?: string } };
+      if (m.direction === "outbound" && meta.type === "feedback_request" && (meta.plan || PLAN_AGAIN_RE.test(m.body))) {
+        asked.set(m.memberId, { pid: meta.proposalId ?? meta.plan?.planId ?? lastOutcome.get(m.memberId), at: m.ts });
+      } else if (m.direction === "inbound") {
+        const q = asked.get(m.memberId);
+        if (!q || m.ts - q.at > 3 * DAY) continue;
+        const a = planAgainAnswer(m.body);
+        if (a === "unclear") continue;
+        asked.delete(m.memberId);
+        if (q.pid) answers.set(`${m.memberId}|${q.pid}`, { member: m.memberId, pid: q.pid, yes: a === "yes", at: m.ts });
+      }
+    }
+  }
+  const edges: Edge[] = [];
+  for (const a of answers.values()) {
+    const shows = showedBy.get(a.pid) ?? [];
+    if (!a.yes || !shows.includes(a.member)) continue;
+    for (const to of shows) if (to !== a.member) edges.push({ from: a.member, to, type: "would_interact_again", strength: 0.8, explicit: true, createdAt: a.at });
+  }
+  return edges;
 }
 
 /** A member's reply to an invite, read the way the Network reads it (shared parser): a counter is a yes to meeting. */

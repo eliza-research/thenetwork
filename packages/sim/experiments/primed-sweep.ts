@@ -13,7 +13,7 @@
 // HARNESS ONLY: imports the Network experiment (packages/network) and mutates the oracle's model.
 import { parseArgs } from "node:util";
 import { PRIMED_MODEL } from "../src/oracle.ts";
-import { runArm, type ArmResult } from "../../network/src/experiment.ts";
+import { runArm, type ArmResult } from "../../network/harness/experiment.ts";
 
 const { values: a } = parseArgs({ options: {
   param: { type: "string", default: "identity" }, values: { type: "string", default: "0.6,0.8,0.95" },

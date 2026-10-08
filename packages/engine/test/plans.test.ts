@@ -425,6 +425,40 @@ describe("audit 2026-10-08 (engine-attention-plans-2, -4, -10, -12, -13)", () =>
     // One-to-one rules: only the first member is probed at the start.
     expect(Object.keys(P.startPlanRun(pp!).answers)).toEqual(["a"]);
   });
+  test("plans-10: a plan down to two is never booked without a fresh one-to-one yes from each", () => {
+    const two = (o: Partial<P.Plan>) => ({ ...P.startPlanRun(plan(o)), answers: { a: "yes", b: "yes", c: "no", d: "no" } as Record<string, P.PlanAnswer>, stage: "closed" as const });
+    // Whatever the plan was (group, crew session, even a partner plan), two yes-sayers always get a partner plan.
+    for (const o of [{}, { crewId: "crew_1", hostId: "a" }, { invited: ["a", "b"], partner: true, quorum: 3 }] as Partial<P.Plan>[]) {
+      const f = P.planFallback(two(o), NOW, []).fallback;
+      expect(f.kind).toBe("smaller");
+      const pp = f.kind === "smaller" ? f.partnerPlan : undefined;
+      expect(pp).toBeDefined();
+      expect(pp!).toMatchObject({ partner: true, invited: ["a", "b"], alternates: [], quorum: 2, size: { min: 2, target: 2, max: 2 } });
+      expect(pp!.hostId).toBeUndefined();
+      expect(pp!.crewId).toBeUndefined(); // one-to-one copy, not the crew frame
+    }
+    // Three yes-sayers stay a (smaller) group: they all said yes to a group.
+    const three = { ...two({}), answers: { a: "yes", b: "yes", c: "yes", d: "no" } as Record<string, P.PlanAnswer> };
+    expect(P.planFallback(three, NOW, []).fallback).toEqual({ kind: "smaller", members: ["a", "b", "c"] });
+
+    // The partner plan runs one-to-one: a new probe to the first, then to the partner only after a
+    // yes; it is booked only when both say yes, and a no from either never books.
+    const pp = P.partnerPlanFor(plan({ crewId: "crew_1", hostId: "a" }), ["a", "b"], NOW);
+    let r = P.startPlanRun(pp);
+    expect(P.pendingOf(r)).toEqual(["a"]);
+    const y1 = P.recordPlanAnswer(r, "a", true, NOW);
+    expect(y1.action).toEqual({ kind: "probe_partner", member: "b" });
+    r = y1.run;
+    expect(P.recordPlanAnswer(r, "b", true, NOW).action).toEqual({ kind: "book", going: ["a", "b"] });
+    expect(P.recordPlanAnswer(r, "b", false, NOW).action.kind).toBe("fallback");
+    expect(P.recordPlanAnswer(P.startPlanRun(pp), "a", false, NOW).action.kind).toBe("fallback");
+    // The probe is the one-to-one copy ("with someone", names only if both say yes), not the crew or group copy.
+    const w = mkWorld(climbers(["a", "b"]));
+    const text = P.buildPlanProbe(w, pp, "a", NOW, TZ)!;
+    expect(text).toMatch(/with someone/);
+    expect(text).toMatch(/if you both say yes/);
+    expect(text).not.toMatch(/crew|others/);
+  });
   test("plans-12: equal members do not lose every plan to the lowest ids", () => {
     const ids = Array.from({ length: 12 }, (_, i) => `m${String(i).padStart(2, "0")}`);
     const w = mkWorld(climbers(ids));

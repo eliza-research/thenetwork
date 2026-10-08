@@ -1,16 +1,25 @@
 #!/usr/bin/env bun
 // Reproducible observatory findings: run the 500-member synthetic world headless for N days and
 // print what the observatory shows (funnel, outcomes vs ground truth, unsafe proposals by cause,
-// dispatch skips, fairness over time, the graph the Network learned).
+// dispatch skips, fairness over time, the graph the Network learned, the review gate, and the
+// judge scorer's invariant, canary-leak and minor-contact counts).
 //   bun run packages/observatory/src/report.ts --days 14 --seed 1 [--engine engine-v1|random]
+//       [--network consent|stub] [--review auto|human]
+// With --review human nobody reviews, so every queued opportunity expires unsent (a check of the gate).
 import { parseArgs } from "node:util";
 import { DAY } from "@thenetwork/core";
 import { scoreboard } from "./scoring.ts";
 import { GameSource } from "./sources/game.ts";
 
-const { values: a } = parseArgs({ options: { days: { type: "string", default: "14" }, seed: { type: "string", default: "1" }, engine: { type: "string", default: "engine-v1" }, personas: { type: "string", default: "0" } } });
+const { values: a } = parseArgs({ options: {
+  days: { type: "string", default: "14" }, seed: { type: "string", default: "1" }, engine: { type: "string", default: "engine-v1" }, personas: { type: "string", default: "0" },
+  network: { type: "string", default: "consent" }, review: { type: "string", default: "auto" },
+} });
 const days = Number(a.days);
-const g = new GameSource({ seed: Number(a.seed), days, engine: a.engine as "engine-v1" | "random", personas: Number(a.personas), pushMs: 3_600_000, tickMs: 3_600_000 });
+const g = new GameSource({
+  seed: Number(a.seed), days, engine: a.engine as "engine-v1" | "random", personas: Number(a.personas), pushMs: 3_600_000, tickMs: 3_600_000,
+  network: a.network as "consent" | "stub", review: a.review as "auto" | "human",
+});
 const t0 = performance.now();
 await g.init();
 await g.control({ type: "step", ms: days * DAY });
@@ -22,7 +31,9 @@ const opps = s.opportunities.filter(o => o.source !== "shadow");
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
 const unsafe = opps.filter(o => o.oracle?.unsafe);
 const report = {
-  world: { seed: Number(a.seed), days, engine: a.engine, members: s.members.length, wallMs: Math.round(performance.now() - t0) },
+  world: { seed: Number(a.seed), days, engine: a.engine, network: a.network, members: s.members.length, wallMs: Math.round(performance.now() - t0) },
+  review: s.network?.review,
+  judge: s.stats.judge,
   proposals: {
     total: opps.length, byState: s.stats.oppsByState,
     skippedAtDispatch: { count: s.stats.oppsByState.SKIPPED ?? 0, share: r3((s.stats.oppsByState.SKIPPED ?? 0) / Math.max(1, opps.length)), reasons: count(opps.filter(o => o.state === "SKIPPED"), o => o.reason) },

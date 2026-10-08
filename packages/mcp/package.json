@@ -1,0 +1,14 @@
+{
+  "name": "@thenetwork/mcp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "bun test",
+    "dev": "bun run src/dev-server.ts"
+  },
+  "dependencies": {
+    "@thenetwork/platform": "workspace:*"
+  }
+}

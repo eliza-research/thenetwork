@@ -51,6 +51,41 @@ describe("minors gate sees every outbound type (judge-evals-1, -9, M3)", () => {
       out(at(1, 14), "m3", "a", "Maya Angelou Park has a reading Sunday."),
     ]).safety.minorContacts).toBe(0);
   });
+  test("an unused alternate who turns out to be a minor: reminders to the adults about their booked plan are not contacts", () => {
+    // c is an unused alternate of the a+b plan; later the Network learns c is a minor.
+    const plan = { id: "pl9", invited: ["a", "b"], alternates: ["c"] };
+    const m = run([
+      nl(at(1, 9), "probe_started", { proposal: { id: "pl9", participants: ["a", "b"], alternates: ["c"] }, origin: "network" }),
+      out(at(1, 12), "p1", "a", `Board games Sat at 7pm? ${PAUSE}`, { type: "probe", proactive: true, plan }),
+      out(at(1, 12, 5), "p2", "b", `Board games Sat at 7pm? ${PAUSE}`, { type: "probe", proactive: true, plan }),
+      nl(at(2, 9), "minor_signal", { memberId: "c" }),
+      out(at(3, 10), "r1", "a", "Reminder: board games today at 7pm with Ben K. Have fun!", { type: "reminder", proposalId: "pl9", plan }),
+      out(at(3, 10, 1), "r2", "b", "Reminder: board games today at 7pm with Ana L. Have fun!", { type: "reminder", proposalId: "pl9", plan }),
+    ]);
+    expect(m.safety.minorContacts).toBe(0);
+    expect(m.invariants.byRule.minor_contact).toBeUndefined();
+  });
+  test("still strict: a minor who is a recipient, named, described, or a contacted (backfilled) alternate", () => {
+    const plan = { id: "pl9", invited: ["a", "b"], alternates: ["k"] };
+    const cases: [string, RunRecord[], number][] = [
+      // The proposal itself put a known minor in a role (alternate): flagged once on the proposal.
+      ["known minor as an alternate in a proposal", [prop(at(1, 9), "px", ["a", "b"], { alternates: ["k"] })], 1],
+      ["known minor as an alternate at probe_started", [nl(at(1, 9), "probe_started", { proposal: { id: "py", participants: ["a", "b"], alternates: ["k"] }, origin: "network" })], 1],
+      // The minor was backfilled (probed): the probe to them, then each later message about the plan.
+      ["backfill probe to a minor alternate, then a reminder to an adult", [
+        out(at(1, 12), "p1", "k", `Board games Sat? ${PAUSE}`, { type: "probe", proactive: true, plan }),
+        out(at(3, 10), "r1", "a", "Reminder: board games today at 7pm.", { type: "reminder", proposalId: "pl9", plan }),
+      ], 2],
+      ["probe_sent to a minor alternate, then a reminder to an adult", [
+        nl(at(1, 12), "probe_sent", { oppId: "pl9", memberId: "k" }),
+        out(at(3, 10), "r1", "a", "Reminder: board games today at 7pm.", { type: "reminder", proposalId: "pl9", plan }),
+      ], 2],
+      ["reminder to an adult naming the minor", [out(at(3, 10), "r1", "a", "Reminder: board games with Maya C. today.", { type: "reminder", proposalId: "pl9", plan })], 1],
+      ["reminder to the minor about the plan", [out(at(3, 10), "r1", "k", "Reminder: board games today.", { type: "reminder", proposalId: "pl9", plan })], 1],
+      ["message to an adult about a plan with the minor invited", [out(at(3, 10), "r1", "a", "Reminder: board games today.", { type: "reminder", proposalId: "pl8", plan: { id: "pl8", invited: ["a", "k"], alternates: [] } })], 1],
+    ];
+    for (const [name, extra, n] of cases) expect([name, run(extra).safety.minorContacts]).toEqual([name, n]);
+  });
 });
 
 describe("interruption invariants come from timing, not the network's flags (judge-evals-2, -11, -12, -13, M1)", () => {

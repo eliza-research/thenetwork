@@ -28,7 +28,7 @@ import { missingFields, needsBasics, reviewReason, SLOP_CANDIDATE_PRE_RULES, SLO
 import { aggregate } from "./score.ts";
 import { distanceBand } from "./zips.ts";
 
-export const SLOP_PACK_VERSION = "slop-pack-1.3.0";
+export const SLOP_PACK_VERSION = "slop-pack-1.4.0";
 
 /**
  * Engine config for slop.date runs (pass as runEngine's config; the pack travels in deps.pack).

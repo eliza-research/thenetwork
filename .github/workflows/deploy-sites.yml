@@ -1,0 +1,129 @@
+# Build, test and deploy the four sites as Cloudflare Pages projects (founder decision 8, AGENTS.md):
+# ntwrk-love, slop-date, peon-biz and friends-help, production branch main. Each build writes
+# sites/<domain>/dist with the static pages, _headers, the skill files, and an advanced-mode _worker.js
+# (deploy/router.ts) with _routes.json, so only the backend paths run the Worker.
+#
+#   push to main -> test and build, then for each site: build, deploy its dist behind the "production"
+#                   GitHub environment (required reviewers are set by the founder), then a smoke check.
+#   pull request -> test and build only. There are no preview deployments: a preview would run code
+#                   from the pull request next to a deploy token and the production proxy secret
+#                   (audit finding: deploy-sites.yml preview job).
+#
+# Only code on main (reviewed, behind the production environment) ever runs next to the token, and only
+# the deploy step has it in its environment; Pages has no build command. wrangler is the pinned CLI (bunx).
+# Secrets (environment "production"): CLOUDFLARE_API_TOKEN (a token scoped to Cloudflare Pages: Edit in
+# the account below). PLATFORM_PROXY_SECRET is set once per Pages project by the coordinator
+# (scripts/wrangler.sh pages secret put), never in CI.
+# Variables: CLOUDFLARE_ACCOUNT_ID (default: the ntwrk.love account, which holds all four projects; set it
+# to use another account), BACKEND_ORIGIN (default https://api.ntwrk.love), MCP_URL (a template with
+# {domain}; leave unset), TURNSTILE_SITE_KEY, BACKEND_LIVE ("true" adds /api/app to the smoke check).
+name: deploy-sites
+
+on:
+  push:
+    branches: [main]
+    paths: ["sites/**", "deploy/router.ts", "deploy/smoke.ts", "packages/platform/src/proxy.ts", "packages/platform/src/apps.ts", ".github/workflows/deploy-sites.yml"]
+  pull_request:
+    paths: ["sites/**", "deploy/router.ts", "deploy/smoke.ts", "packages/platform/src/proxy.ts", "packages/platform/src/apps.ts", ".github/workflows/deploy-sites.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-sites-${{ github.ref }}
+  # Never cancel a production deploy halfway.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Same version as scripts/wrangler.sh (scripts/supply-chain.test.ts checks).
+  WRANGLER_VERSION: "4.136.3"
+  NTWRK_ACCOUNT_ID: "50ad2052bbc6ca528d6993a689b419a4"
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - name: Typecheck sites, router and scripts
+        run: bunx tsc --noEmit -p sites/tsconfig.json
+      - name: Sites, router and guard tests
+        run: bun test sites deploy/router.test.ts deploy/smoke.test.ts scripts
+
+  build:
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - name: Production build (refuses draft legal text and unfilled placeholders)
+        run: bun run sites/sites.ts
+        env:
+          DEPLOY_TARGET: production
+          BACKEND_ORIGIN: ${{ vars.BACKEND_ORIGIN }}
+          MCP_URL: ${{ vars.MCP_URL }}
+          TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY }}
+
+  production:
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # The founder sets required reviewers on this environment (Settings > Environments > production).
+    environment: production
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - { app: slop, dir: slop.date, project: slop-date }
+          - { app: ntwrk, dir: ntwrk.love, project: ntwrk-love }
+          - { app: peon, dir: peon.biz, project: peon-biz }
+          - { app: friends, dir: friends.help, project: friends-help }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      # The build has no Cloudflare token in its environment; only the deploy step below gets it.
+      - name: Production build
+        run: bun run sites/sites.ts ${{ matrix.app }}
+        env:
+          DEPLOY_TARGET: production
+          BACKEND_ORIGIN: ${{ vars.BACKEND_ORIGIN }}
+          MCP_URL: ${{ vars.MCP_URL }}
+          TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY }}
+      - name: Deploy to Cloudflare Pages
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || env.NTWRK_ACCOUNT_ID }}
+          PROJECT: ${{ matrix.project }}
+          DIR: sites/${{ matrix.dir }}/dist
+        run: |
+          test -f "$DIR/_worker.js" && test -f "$DIR/_routes.json" || { echo "missing _worker.js or _routes.json in $DIR"; exit 1; }
+          bunx "wrangler@${WRANGLER_VERSION}" pages deploy "$DIR" --project-name "$PROJECT" --branch main --commit-hash "$GITHUB_SHA" --commit-dirty=false
+      - name: Smoke check
+        env:
+          SITE_URL: https://${{ matrix.project }}.pages.dev
+          APP: ${{ matrix.app }}
+          API_FLAG: ${{ vars.BACKEND_LIVE == 'true' && '--api' || '' }}
+        run: |
+          args=("$SITE_URL" "$APP")
+          if [ -n "$API_FLAG" ]; then args+=("$API_FLAG"); fi
+          bun run deploy/smoke.ts "${args[@]}"

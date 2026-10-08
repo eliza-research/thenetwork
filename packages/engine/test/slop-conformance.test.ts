@@ -309,7 +309,7 @@ describe("conformance: photo processing and appearance ratings are adults-only (
     const ps = genPersonas({ seed: 3, perCity: 60, minorShare: 0.15 });
     const snap = buildSnap(ps, { ...emptySlopState(), platform: { rater: { noise: 0.3, bias: 0, biasShare: 0.3 } } });
     const input: EngineInput = { ...snap };
-    const pack = makeSlopPack({ appearance: { mode: "band", band: 0.75 } });
+    const pack = makeSlopPack({ appearance: { mode: "band", band: 0.75, protectBelow: 0 } }); // band semantics without the iteration-5 bottom-rated exemption
     const r = await runEngine(input, cfg(3), { pack });
     expect(r.proposals.length).toBeGreaterThan(0);
     const out = JSON.stringify({ p: r.proposals, a: r.asks, l: { ...r.runLog, timingsMs: undefined } });
@@ -328,6 +328,7 @@ describe("conformance: photo processing and appearance ratings are adults-only (
 // shared. Members only learn what the agent tells them (first name, the plan) through the relay.
 import { appearanceLeak, APPEARANCE_PREFIX } from "../src/packs/slop/appearance.ts";
 import { appearanceFactor, bodyTypeFactor } from "../src/packs/slop/score.ts";
+import { ratingFloorLift } from "../src/packs/slop/assign.ts";
 import { slopEngineInput, slopEngineMatcher } from "../../worlds/src/slop/enginePack.ts";
 import { runSlopWorldAsync } from "../../worlds/src/slop/world.ts";
 import { BODY_TYPE_DEFAULTS } from "../../worlds/src/slop/bodyType.ts";
@@ -405,12 +406,30 @@ describe("conformance: appearance scores are used in matching and never shared",
   test("no score, tag, rank or appearance vocabulary in proposals or run logs (soft and band modes)", async () => {
     const { input, r, scoreTags } = await setup;
     const band = await runEngine(input, cfg(5), { pack: makeSlopPack({ appearance: { mode: "band", band: 0.75 } }) });
-    for (const x of [r, band]) {
+    const tie = await runEngine(input, cfg(5), { pack: makeSlopPack({ appearance: { mode: "tiebreak" }, congestion: { ratingFloor: { weight: 0.3 } } }) });
+    expect(tie.proposals.length).toBeGreaterThan(0);
+    for (const x of [r, band, tie]) {
       const out = JSON.stringify({ p: x.proposals, a: x.asks, l: { ...x.runLog, timingsMs: undefined } });
       for (const t of scoreTags) expect(out.includes(t)).toBe(false);
       expect(out).not.toMatch(ASPECTS);
       expect(appearanceLeak(out)).toBeNull();
     }
+  });
+
+  test("iteration 5: the rating-quintile exposure floor lifts only members of quintiles below the floor", async () => {
+    const { input } = await setup;
+    const o = slopPack.options; // the default floor: 1.0, weight 0.3, smooth 0.05
+    expect(o.congestion.ratingFloor.weight).toBeGreaterThan(0);
+    const w = worldOf(input, 5);
+    const lift = ratingFloorLift(o, w, input.members.map(m => m.id));
+    expect(lift.size).toBeGreaterThan(0);
+    const P = slopProfiles(input);
+    const rated = [...P.values()].filter(p => p.appearance && p.appearance.confidence >= o.appearance.minConfidence);
+    const mean = rated.reduce((s, p) => s + p.history.dates, 0) / rated.length;
+    for (const [id, l] of lift) { expect(l).toBeGreaterThan(0); expect(l).toBeLessThanOrEqual(0.3); expect(P.get(id)!.appearance).toBeDefined(); }
+    const liftedMean = [...lift.keys()].reduce((s, id) => s + P.get(id)!.history.dates, 0) / lift.size;
+    expect(liftedMean).toBeLessThan(mean);
+    expect(ratingFloorLift(makeSlopPack({ congestion: { ratingFloor: { weight: 0 } } }).options, w, input.members.map(m => m.id)).size).toBe(0);
   });
 
   test("minors are never rated and never get a body-type preference, even with body types on", async () => {

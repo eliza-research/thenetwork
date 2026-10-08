@@ -3,6 +3,9 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Audit observatory-20 and -M2: no script from anywhere else, no inline script, no Referer (a token never leaves in one). -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' ws: wss:; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'" />
+    <meta name="referrer" content="no-referrer" />
     <title>Network Observatory</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='12' fill='none' stroke='%237aa2ff' stroke-width='3'/><circle cx='16' cy='16' r='4' fill='%23ffd45c'/></svg>" />
     <link rel="stylesheet" href="./styles.css" />
