@@ -10,7 +10,7 @@ import type { MemberId } from "@thenetwork/core";
 import type { Candidate } from "../../types.ts";
 import type { World } from "../../world.ts";
 import { poolSize } from "./generators.ts";
-import { historyOf, sides, type JobProfile } from "./profile.ts";
+import { historyOf, jobs, sides, worldScratch, type JobProfile } from "./profile.ts";
 
 export const CONGESTION = {
   /**
@@ -26,9 +26,24 @@ export const CONGESTION = {
   underLift: 0.08, underPool: 12,
   /** Lift for candidates with no intro so far. */
   newCandidateLift: 0.04,
+  /**
+   * Per-employer rate limit until the employer has a track record (domain research B2): a company
+   * with no answered application yet gets at most `probationProbes` probes a week across its jobs.
+   */
+  probationProbes: 3,
   /** Employer responsiveness learned from the Network's log (Beta prior answered:ghosted = 2:0.5); value x estimate^respPower. */
   respPower: 1,
 };
+
+/** Has the company answered any application yet (on any of its job seats)? Cached per World. */
+export function companyAnswered(w: World, j: JobProfile): boolean {
+  const answered = worldScratch(w, "companyAnswered", () => {
+    const out = new Set<string>();
+    for (const x of jobs(w)) if (x.company && historyOf(w, x.id).answered > 0) out.add(x.company);
+    return out;
+  });
+  return !!j.company && answered.has(j.company);
+}
 
 /** P(the employer answers an application), from applications they answered vs let expire. */
 export function responsiveness(w: World, j: JobProfile): number {
@@ -41,7 +56,8 @@ export function slateCap(w: World, j: JobProfile): number {
   const target = Math.min(C.slateMax, C.slateBase + C.slatePerOpening * Math.max(0, j.openings));
   // Applications the employer has not reviewed yet use up the slate (no pile-ups, no ghosted queues).
   const room = Math.max(0, target - historyOf(w, j.id).pendingReview);
-  return Math.ceil(room / C.expectedYes);
+  const cap = Math.ceil(room / C.expectedYes);
+  return companyAnswered(w, j) ? cap : Math.min(cap, C.probationProbes);
 }
 
 export function underApplied(w: World, j: JobProfile): number {
