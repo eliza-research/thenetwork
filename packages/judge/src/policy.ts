@@ -1,12 +1,13 @@
 // Minors & romance policy judge (PRD minors policy: members under 18 are single-player only;
-// romance only between adults who all opted in). Production order:
+// romance only between adults who all opted in). Intended production order (no production caller
+// yet: the network and plugin send paths do not call judgePolicy; evals and tests do):
 //   1. checkPolicy(): deterministic rules over structured context (ages, opt-ins) + message text.
 //      High precision: a rule "violation" blocks the message without an LLM call.
 //   2. judgePolicyLLM(): written rubric for what rules cannot see (implicit minor signals such as
 //      school grade or parental curfew, insinuated romance, ambiguous framing).
 //   judgePolicy() = rules first, then the LLM only when rules found no hard violation.
 // The LLM never overrides a rule violation; rules never certify compliance on their own.
-import { chatJson, type LLM } from "@thenetwork/core";
+import { chatJson, fenceUntrusted, isMinor as isMinorAge, UNTRUSTED_NOTE, type LLM } from "@thenetwork/core";
 import { defaultJudgeLLM, judgeCallOptions, type JudgeOptions } from "./llmJudges.ts";
 
 export type PolicyRole = "recipient" | "participant" | "group_member" | "connector" | "introduced" | "subject";
@@ -46,7 +47,12 @@ const CONNECTION = /\b(intro(duce|duction|s)?|connect (you|him|her|them)|set (yo
 // Implicit signals that someone may be under 18 (escalate; the LLM decides, e.g. teacher vs student).
 const MINOR_SIGNAL = /\b(high school|middle school|homeroom|junior year|sophomore year|freshman year|senior year of high school|prom|(my|his|her) (mom|dad|parents?) (says|said|won'?t|gets|makes)|after school|permission slip|curfew|(\d{1,2})(st|nd|rd|th) grade(r)?|grade \d{1,2}|class of 20(2[7-9]|3\d)|teen(ager)?s?|years? old and|learner'?s permit|parent'?s? (sign-?off|permission))\b/i;
 
-const isMinor = (p: PolicyPerson) => p.age !== undefined && p.age < 18;
+// A first-person statement of an age under 18 ("I'm 16", "I am 15 years old", "im 17 yo").
+// Only first person: "my kid is 16" is about someone else.
+const STATED_MINOR_AGE = /\b(?:i'?m|i am|im)\s+(1[0-7])\b(?!\s*(?:%|percent|min|minutes?|hours?|days?|weeks?|months?|miles?|km|blocks?|people|of|or|to|and a half|-|:|'|th\b))/i;
+
+/** Core's fail-closed predicate: an unknown, missing or invalid age counts as a minor. */
+const isMinor = (p: PolicyPerson) => isMinorAge(p.age);
 
 /** Deterministic policy rules. Pure, synchronous, free. */
 export function checkPolicy(message: string, ctx: PolicyContext): PolicyRuleResult {
@@ -54,12 +60,16 @@ export function checkPolicy(message: string, ctx: PolicyContext): PolicyRuleResu
   const signals: string[] = [];
   const people = ctx.people;
   const minors = people.filter(isMinor);
+  // An explicit under-18 age in the message or the notes overrides a stated adult age (fail closed).
+  const stated = `${message}\n${ctx.notes ?? ""}`.match(STATED_MINOR_AGE);
   const others = people.filter(p => p.role !== "recipient");
   const strongRomance = ROMANCE_STRONG.test(message);
   const weakRomance = !strongRomance && ROMANCE_WEAK.test(message);
   const connects = others.length > 0 || CONNECTION.test(message);
 
   // Minors: never connected to anyone, in any role (participant, connector, introduced, group).
+  if (stated && !minors.length && connects)
+    violations.push({ rule: "minor_connection", detail: `explicit under-18 age stated ("${stated[0]}") in a message that connects people` });
   if (minors.length && connects && people.length >= 2)
     violations.push({ rule: "minor_connection", detail: `${minors.map(m => `${m.name} (${m.age})`).join(", ")} involved with ${people.length - 1} other person(s)` });
   else if (minors.length && CONNECTION.test(message))
@@ -104,15 +114,15 @@ export interface PolicyVerdict {
 /** Render the structured context as the LLM sees it. */
 export function renderPolicyContext(ctx: PolicyContext): string {
   const yn = (b?: boolean) => (b === undefined ? "unknown" : b ? "yes" : "no");
-  const lines = ctx.people.map(p => `- ${p.name} (${p.role}): age ${p.age ?? "unknown"}${isMinor(p) ? " (under 18)" : ""}, romance opt-in: ${isMinor(p) ? "n/a (minors cannot opt in)" : yn(p.romanceOptIn)}`);
-  return `People involved:\n${lines.join("\n")}${ctx.notes ? `\nContext notes: ${ctx.notes}` : ""}`;
+  const lines = ctx.people.map(p => `- ${p.name} (${p.role}): age ${p.age ?? "unknown"}${isMinor(p) ? (p.age === undefined ? " (unknown: treat as under 18)" : " (under 18)") : ""}, romance opt-in: ${isMinor(p) ? "n/a (minors cannot opt in)" : yn(p.romanceOptIn)}`);
+  return `People involved:\n${lines.join("\n")}${ctx.notes ? `\nContext notes:\n${fenceUntrusted(ctx.notes, "notes")}` : ""}`;
 }
 
 /** LLM rubric only (no rules). Used by judgePolicy after rules, and by evals to compare models. */
 export async function judgePolicyLLM(llmIn: LLM | undefined, input: { message: string; context: PolicyContext }, o: JudgeOptions = {}): Promise<{ compliant: boolean; violations: string[]; reasoning: string }> {
   return chatJson(llmIn ?? defaultJudgeLLM(), [
-    { role: "system", content: `${POLICY_RUBRIC}\nReturn ONLY JSON: {"compliant": boolean, "violations": string[], "reasoning": "one sentence"}` },
-    { role: "user", content: `${renderPolicyContext(input.context)}\nMessage:\n"""${input.message}"""` },
+    { role: "system", content: `${POLICY_RUBRIC}\nReturn ONLY JSON: {"compliant": boolean, "violations": string[], "reasoning": "one sentence"}\n${UNTRUSTED_NOTE}` },
+    { role: "user", content: `${renderPolicyContext(input.context)}\nMessage:\n${fenceUntrusted(input.message, "message")}` },
   ], raw => {
     const j = raw as { compliant?: unknown; violations?: unknown; reasoning?: unknown };
     if (typeof j.compliant !== "boolean") throw new Error("policy judge: compliant must be boolean");

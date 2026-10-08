@@ -30,7 +30,14 @@ describe("checkPolicy (deterministic)", () => {
     const r = rules("Ravi plays chess on Saturdays. Want an intro?", [P("Jamie", "recipient", 19, false), P("Ravi", "introduced", 27, false)], "Jamie said: 'junior year is killing me'");
     expect(r.verdict).toBe("escalate");
     expect(r.signals.join(" ")).toContain("junior year");
-    expect(rules("Kira is open to dating. Coffee date?", [P("Max", "recipient", 28, true), P("Kira", "introduced", undefined, true)], "profile: class of 2028").verdict).toBe("escalate");
+  });
+  test("unknown or invalid ages fail closed (core isMinor), and a first-person under-18 age in the notes blocks a connection", () => {
+    expect(rules("Kira is open to dating. Coffee date?", [P("Max", "recipient", 28, true), P("Kira", "introduced", undefined, true)], "profile: class of 2028").verdict).toBe("violation");
+    expect(rules("Want to meet Ezra for chess Saturday?", [P("Theo", "recipient", Number.NaN), P("Ezra", "introduced", 34, false)]).violations[0]!.rule).toBe("minor_connection");
+    const r = rules("Ravi plays chess on Saturdays. Want an intro?", [P("Jamie", "recipient", 19, false), P("Ravi", "introduced", 27, false)], "Jamie said: 'I'm 16 and love chess'");
+    expect(r.verdict).toBe("violation");
+    // Not first person, or not an age: no violation from the age rule.
+    expect(rules("Ravi plays chess on Saturdays. Want an intro?", [P("Jamie", "recipient", 39, false), P("Ravi", "introduced", 27, false)], "Jamie said: 'I'm 15 minutes away; my kid is 16'").verdict).not.toBe("violation");
   });
   test("ordinary adult friendship intros are clear; 'single-player' and 'not a singles thing' are not romance", () => {
     expect(rules("Kai also boulders on weekday mornings. Want an intro? No pressure.", [P("Lena", "recipient", 34, false), P("Kai", "introduced", 33, false)]).verdict).toBe("clear");
