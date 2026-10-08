@@ -473,7 +473,7 @@ for (const [k, v] of knows) {
 }
 
 // ----------------------------------------------------------------------------------------------
-// 6. Enrichment: Cerebras (cached) with template fallback.
+// 6. Enrichment: cached LLM responses (the v1 text, from the original generation run) with a template fallback.
 // ----------------------------------------------------------------------------------------------
 interface Enriched {
   occupation: string; bio: string; voiceSamples: string[]; routine: string; availability: string;

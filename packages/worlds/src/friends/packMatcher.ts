@@ -7,7 +7,7 @@ import type { MemberId } from "@thenetwork/core";
 import { DAY } from "@thenetwork/core";
 import { resolveConfig } from "@thenetwork/engine/src/config.ts";
 import { localEmbed } from "@thenetwork/engine/src/embed.ts";
-import { localParts } from "@thenetwork/engine/src/outreach.ts";
+import { localParts } from "@thenetwork/core";
 import {
   DEFAULT_FRIENDS_POLICY, FRIENDS_PLANS, SLOT_TIME, friendsInfo, friendsPack, hood, planFriendsWeek,
   type FriendsPlan, type FriendsPolicy,

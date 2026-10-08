@@ -36,8 +36,6 @@ export interface SnapshotFeatures {
 }
 /** Default since engine v1.2 (docs/results/2026-10-07-engine-v1.2.md). */
 export const SNAPSHOT_FEATURES: SnapshotFeatures = { eventsPerWeek: 6, shareInterests: true, hostTags: true, romancePrefs: true };
-/** The snapshot before 2026-10-07 (pass as `features` to reproduce older runs and eval worlds). */
-export const LEGACY_SNAPSHOT_FEATURES: SnapshotFeatures = { eventsPerWeek: 0, shareInterests: false, hostTags: false, romancePrefs: false };
 /** Share of stated interests a member agrees to have mentioned (synthetic dataset: 0.6). */
 export const SHARE_CONSENT = 0.6;
 

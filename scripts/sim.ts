@@ -44,7 +44,7 @@ const run = only.length ? only : [...DEFAULT, ...(argv.includes("--with-capital"
 const opts: Opts = { quick: argv.includes("--quick") };
 
 // Simulations never call a model: fail fast if any code path tries.
-for (const k of ["OPENAI_API_KEY", "SURPLUS_API_KEY", "CEREBRAS_API_KEY", "CLOUDFLARE_AI_TOKEN"]) delete process.env[k];
+for (const k of ["OPENAI_API_KEY", "SURPLUS_API_KEY", "CLOUDFLARE_AI_TOKEN"]) delete process.env[k];
 
 const all: Gate[] = [];
 const timings: Record<string, number> = {};

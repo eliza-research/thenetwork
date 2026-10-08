@@ -27,7 +27,7 @@ import { DAY, HOUR } from "@thenetwork/core";
 import { candidateSlots, type TimeSlot } from "../../attention.ts";
 import { DEFAULT_ATTENTION, DEFAULT_PLANS, type AttentionConfig, type PlansConfig } from "../../config.ts";
 import { isMinor, memberReason } from "../../filters.ts";
-import { localParts } from "../../outreach.ts";
+import { localParts } from "@thenetwork/core";
 import {
   activityFit, crewSessionPlan, daypartOf, detectCrews, hasWindow, planFreeProb, planMemberReason, planProposals, scorePlanGroup,
   type Crew, type Plan, type PlanEvidence, type PlanMemberInput, type PlanOutcomeRecord,

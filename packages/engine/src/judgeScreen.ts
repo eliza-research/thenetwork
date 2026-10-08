@@ -11,7 +11,7 @@
 import type { ChatMessage, LLM, MemberId } from "@thenetwork/core";
 import { DAY } from "@thenetwork/core";
 import { attendingRefs, passMessages, ReplyFields, runPass, str, type CitedFact, type PassVerdict } from "./judgeCommon.ts";
-import { buildPublicView, screenConfigOf, type PublicView } from "./judgeContext.ts";
+import { buildPublicView, screenConfigOf, type PublicView } from "./packs/network/judgeContext.ts";
 import type { Candidate } from "./types.ts";
 import { judgePackOf } from "./pack.ts";
 import { SCREEN_SYSTEM } from "./packs/network/prompts.ts";

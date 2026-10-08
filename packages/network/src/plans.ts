@@ -6,8 +6,8 @@
 // MVP light touch (growth doc section 3): public places only (parks, libraries, plazas, markets,
 // museums, courts), never a member's home, and no money through the Network (everyone pays their
 // own way). Volunteer shifts are activities at public parks.
-import { DAY, HOUR, type MemberId } from "@thenetwork/core";
-import { outreach as engineOutreach, plans, type AttentionLedgerEntry } from "@thenetwork/engine";
+import { DAY, fromLocal, HOUR, localParts, type MemberId } from "@thenetwork/core";
+import { plans, type AttentionLedgerEntry } from "@thenetwork/engine";
 import { VENUES, type Venue as GeoVenue } from "./geo.ts";
 import { NY } from "./outreach.ts";
 
@@ -50,7 +50,7 @@ const DAYS3 = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
  * expanded over the next 7 days. Matchable, never shareable. Undefined when no window was named.
  */
 export function statedWindows(tags: readonly string[], now: number, tz = NY): plans.StatedWindows | undefined {
-  const lp = engineOutreach.localParts(now, tz);
+  const lp = localParts(now, tz);
   const windows: { start: number; end: number }[] = [];
   for (let k = 0; k <= 7; k++) {
     const d = new Date(Date.UTC(lp.year, lp.month - 1, lp.day + k));
@@ -59,8 +59,8 @@ export function statedWindows(tags: readonly string[], now: number, tz = NY): pl
       const [part, dd] = t.split(":");
       const h = PARTS[part ?? ""];
       if (!h || dd !== day) continue;
-      const start = engineOutreach.fromLocal(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), h[0], tz);
-      const end = engineOutreach.fromLocal(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), h[1], tz);
+      const start = fromLocal(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), h[0], tz);
+      const end = fromLocal(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), h[1], tz);
       if (end > now) windows.push({ start: Math.max(start, now), end });
     }
   }

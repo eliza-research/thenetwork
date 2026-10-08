@@ -66,6 +66,3 @@ export function parseRunLog(text: string): RunRecord[] {
   return text.split("\n").filter(l => l.trim()).map(l => JSON.parse(l) as RunRecord);
 }
 
-export async function readRunLog(path: string): Promise<RunRecord[]> {
-  return parseRunLog(await Bun.file(path).text());
-}

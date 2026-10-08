@@ -14,7 +14,7 @@
 // - "Would you do this again?": "Yes, I'd do it again" / "Probably not" (planAgainAnswer);
 // - the check-in: day names and dayparts ("Free Tuesday evening and Saturday afternoon.").
 import { DAY, HOUR, type City, type MemberId } from "@thenetwork/core";
-import { ACTIVITIES, activityById, type ActivityType } from "../../engine/src/activities.ts";
+import { ACTIVITIES, activityById, type ActivityType } from "../../engine/src/packs/network/activities.ts";
 import { candidateSlots, type TimeSlot } from "../../engine/src/attention.ts";
 import { PAIR_CHEMISTRY_SD, type Oracle } from "./oracle.ts";
 import type { Persona } from "./persona.ts";

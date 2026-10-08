@@ -20,7 +20,7 @@ import {
   attendingRefs, checkMemberFacing, passMessages, ReplyFields, runPass, str,
   type CitedFact, type PassVerdict,
 } from "./judgeCommon.ts";
-import type { DeepContext } from "./judgeContext.ts";
+import type { DeepContext } from "./packs/network/judgeContext.ts";
 import type { Candidate } from "./types.ts";
 import { judgePackOf } from "./pack.ts";
 import { pairKey, type World } from "./world.ts";

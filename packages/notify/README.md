@@ -17,7 +17,7 @@ The single inbox and the notification scheduler from `docs/research/2026-10-08-e
 | `links.ts` | Fill-only assistant links (`chatgpt.com/?prompt=`, `claude.ai/new?q=`, `grok.com/?q=`), the `ntwrk.love/t/<token>` button page, and URL checks |
 | `tokens.ts` | Task tokens `T-XXXXXX`. They are references, not credentials |
 | `compose.ts` | Message text. Links never carry the item summary or an app brand |
-| `wiring.ts` | Adapters: `queueSink` and `queuePolicy` for the outbound queue, `connectorInbox` for the MCP connector, `threadHooks` for the text agent and the plugin |
+| `wiring.ts` | Adapters: `queueSink` and `queuePolicy` for the outbound queue, `threadHooks` for the text agent and the plugin |
 
 ## Where it is wired
 
@@ -32,7 +32,6 @@ The single inbox and the notification scheduler from `docs/research/2026-10-08-e
 
 **Prototypes and the plugin:**
 - **Outbound queue** (`packages/blooio`). Use `queueSink(queue, providerFor)` and `recipientPolicy: queuePolicy(notifier, existing)`.
-- **Connector prototype** (`prototypes/connector-mcp`). Pass `inbox: connectorInbox(notifier, now)`.
 - **`packages/plugin-network`.** Set `NetworkStore.readUpdates = threadHooks(notifier, now).readUpdates` to register `GET_UPDATES`.
 
 **Tests:**

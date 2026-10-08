@@ -4,9 +4,7 @@
 // penalty and an amortized exposure-debt lift; an exposure-floor pass first; then a seeded
 // 10-15% exploration slice, logged with selection probabilities for off-policy evaluation.
 import type { City, MemberId } from "@thenetwork/core";
-import { DAY } from "@thenetwork/core";
-import { profileOf } from "./complementarity.ts";
-import { isMinor, memberReason } from "./filters.ts";
+import { isMinor } from "./filters.ts";
 import { sha256 } from "./rng.ts";
 import type { Rng } from "./rng.ts";
 import { explorationBar, type Scored } from "./scoring.ts";
@@ -31,30 +29,23 @@ export const ASK_QUESTIONS: Record<AskReason, string> = NETWORK_ASK_QUESTIONS;
 export interface AskPlan { asks: EngineAsk[]; exclude: Set<MemberId>; extraProactive: Map<MemberId, number> }
 
 /**
- * v1.2 "ask before proposing" (config.ask, config.romance.requireStatedPrefs). An ask is a
- * proactive message, so it needs the same availability and budget as an invitation.
- * - Adults the engine cannot match well (no structured want, or fewer than ask.minFacets
- *   matchable facets) get one question and are not proposed while it is open (asked within
- *   ask.cooldownDays). If they never answer, they are proposed again after the cooldown, and not
- *   re-asked: silence must not lock a member out.
- * - Members with a live romance intent but no stated preferences are asked for them; romance
- *   proposals wait for the answer (generators.ts romanceIntros), other proposals do not.
+ * Pack asks (selection.extraAsks): networkPack asks members with a live romance intent but no
+ * stated preferences for them (config.romance.requireStatedPrefs); romance proposals wait for the
+ * answer (generators.ts romanceIntros), other proposals do not. slopPack asks for an age range or a
+ * distance. An ask is a proactive message, so it needs the same availability and budget as an invitation.
  */
 export function planAsks(w: World, input: EngineInput): AskPlan {
   const cfg = w.cfg;
   const plan: AskPlan = { asks: [], exclude: new Set(), extraProactive: new Map() };
   const S = w.pack.selection;
   const extra = S.extraAsksEnabled?.(cfg) ?? false;
-  if (!cfg.ask.enabled && !extra) return plan;
+  if (!extra) return plan;
   const lastAsk = new Map<string, number>();
-  const answered = new Set<string>();
   for (const a of input.recentAsks ?? []) {
     const k = `${w.canonical(a.memberId)}|${a.reason}`;
     lastAsk.set(k, Math.max(lastAsk.get(k) ?? -Infinity, a.at));
-    if (a.answeredAt !== undefined && a.answeredAt <= w.now) answered.add(w.canonical(a.memberId));
   }
   const anyAsk = (id: MemberId, reasons: AskReason[]) => Math.max(-Infinity, ...reasons.map(r => lastAsk.get(`${id}|${r}`) ?? -Infinity));
-  const cooldown = cfg.ask.cooldownDays * DAY;
   const add = (id: MemberId, reason: AskReason, intentId?: string) => {
     plan.asks.push({ kind: "ask", id: `a_${sha256(`${id}|${reason}|${w.now}`).slice(0, 16)}`, memberId: id, reason, question: S.askQuestions[reason]!, createdAt: w.now, ...(intentId ? { intentId } : {}) });
     plan.extraProactive.set(id, (plan.extraProactive.get(id) ?? 0) + 1);
@@ -62,31 +53,12 @@ export function planAsks(w: World, input: EngineInput): AskPlan {
   for (const id of w.ids) {
     const mi = w.get(id)!;
     if (isMinor(w, id) || !w.pack.geo.markets(cfg).includes(mi.m.homeCity)) continue;
-    if (cfg.ask.enabled) {
-      const reason: AskReason | undefined = profileOf(w, id).wants.length === 0 ? "no_structured_want" : mi.match.length < cfg.ask.minFacets ? "few_facets" : undefined;
-      if (reason && !answered.has(id)) {
-        // Held back while the question is open: always for too-thin profiles (the engine cannot
-        // judge fit); for "no structured want" only with ask.holdNoWant (they still serve as
-        // providers and peers for other members' wants).
-        const hold = reason === "few_facets" || cfg.ask.holdNoWant;
-        const last = anyAsk(id, ["no_structured_want", "few_facets"]);
-        if (w.now - last < cooldown) { if (hold) { plan.exclude.add(id); continue; } }
-        else if (last === -Infinity && !memberReason(w, id, { category: w.pack.ontology.funnelProbe.lane, role: w.pack.ontology.funnelProbe.role, format: "one_to_one", timeSensitive: false })) {
-          add(id, reason);
-          if (hold) { plan.exclude.add(id); continue; }
-        }
-      }
-    }
     // Pack asks (networkPack: the romance-preferences ask, config.romance.requireStatedPrefs).
     if (extra) S.extraAsks?.(w, id, mi, reasons => anyAsk(id, reasons as AskReason[]), (reason, intentId) => add(id, reason as AskReason, intentId));
   }
   return plan;
 }
 
-/** v1.2: product of the participants' estimated acceptance (world.ts acceptanceOf). */
-export function mutualAcceptance(w: World, ids: MemberId[]): number {
-  return ids.reduce((p, id) => p * (w.get(id)?.acceptance ?? 1), 1);
-}
 
 export function selectProposals(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId, number>, opts: SelectOptions = {}): SelectionResult {
   // A pack's own global assignment (slopPack: stable matching). Absent for networkPack.
@@ -207,20 +179,15 @@ function selectOnce(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId,
     while (idx < avail.length - 1 && r >= weights[idx]!) { r -= weights[idx]!; idx++; }
     take(avail[idx]!, true, weights[idx]! / total);
   }
-  // 3. Greedy global selection with in-run load penalty and exposure-debt lift. v1.2: with
-  //    acceptance.exponent > 0 the order (not the bar) is adjusted x P(all accept)^exponent.
+  // 3. Greedy global selection with in-run load penalty and exposure-debt lift.
   const remaining = main.filter(x => !taken.has(x.c.key));
-  const accExp = cfg.acceptance.exponent;
-  const accept = new Map<string, number>();
-  if (accExp > 0) for (const x of remaining) accept.set(x.c.key, Math.pow(mutualAcceptance(w, x.c.participants), accExp));
   while (true) {
     let best: Scored | undefined; let bestV = -Infinity;
     for (const x of remaining) {
       if (taken.has(x.c.key)) continue;
       const v = adjusted(x);
       if (v < x.threshold) continue; // the adjusted score must still clear the bar
-      const key = accExp > 0 ? v * accept.get(x.c.key)! : v;
-      if (key > bestV && canTake(x)) { best = x; bestV = key; }
+      if (v > bestV && canTake(x)) { best = x; bestV = v; }
     }
     if (!best) break;
     take(best, false, 1);

@@ -259,9 +259,6 @@ export function checkMemberFacing(text: string, privateVocab: Set<string>, extra
   return { ok: reasons.length === 0, reasons };
 }
 
-/** Calibration-friendly decision rule shared by passes: a "yes" verdict without a dealbreaker. */
-export const isYes = (v: PassVerdict | undefined, dealbreaker = false) => v === "yes" && !dealbreaker;
-
 /** Normalise a verdict string ("Yes", "insufficient info", ...) or undefined. */
 export function parsePassVerdict(x: unknown, allowInsufficient: boolean): PassVerdict | undefined {
   if (typeof x === "boolean") return x ? "yes" : "no";

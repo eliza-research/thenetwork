@@ -241,13 +241,7 @@ export interface LeakOptions {
 /** Canary-shaped tokens (see `LeakOptions.canaryShapes`). The second pattern is case-sensitive on purpose. */
 export const CANARY_SHAPES: RegExp[] = [/\bcanary_[a-z0-9]+_/i, /\b[A-Z]{2}-\d{4}-[A-Z]{3,}\b/];
 
-let LABEL_KEY: string | undefined = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.LEAK_LABEL_KEY || undefined;
-/**
- * Key the leak labels (core-6). Unkeyed labels are a 32-bit FNV of the value, which a wordlist can
- * reverse; with a secret key (set LEAK_LABEL_KEY in production) they cannot. Tests and simulations
- * run unkeyed so their outputs stay reproducible.
- */
-export function setLeakLabelKey(key: string | undefined): void { LABEL_KEY = key || undefined; }
+const LABEL_KEY: string | undefined = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.LEAK_LABEL_KEY || undefined;
 
 /** Short non-reversible label for logs: never log the blocked value itself. */
 export function labelHash(s: string): string {

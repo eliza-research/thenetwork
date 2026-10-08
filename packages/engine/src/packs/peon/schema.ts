@@ -69,6 +69,3 @@ export const JOB_INTENT = "peon:job";
 export type PeonMode = "onsite" | "hybrid" | "remote";
 export const MODES: readonly PeonMode[] = ["onsite", "hybrid", "remote"];
 
-/** Attributes that are never used for matching (documentation + tests). */
-export const SEALED_ATTRIBUTES = ["sex", "race_ethnicity", "age", "disability", "caregiver"] as const;
-export const PROXY_KINDS = ["zip", "grad_year", "gap_months", "name"] as const;

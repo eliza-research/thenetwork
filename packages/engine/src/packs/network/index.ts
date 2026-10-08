@@ -113,7 +113,6 @@ export const networkPack: AppPack = {
     lose: ["vouch_stake", "no_show", "ghosting", "abuse", "clawback", "fraud"],
     minorsExcluded: true,
   },
-  sim: { module: "packages/sim/src/pack.ts", export: "networkSimPack" },
   metrics: {
     primary: ["met_worthwhile_per_seed", "precision", "worthwhile_rate", "v14"],
     gates: [

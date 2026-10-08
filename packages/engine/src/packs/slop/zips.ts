@@ -436,8 +436,6 @@ export function cellOfZip(zip: string): Cell | undefined {
   const i = Math.floor(z.lat / CELL_DEG), j = Math.floor(z.lon / CELL_DEG);
   return { id: `cell:${i}:${j}`, lat: (i + 0.5) * CELL_DEG, lon: (j + 0.5) * CELL_DEG };
 }
-/** Worst-case error of a cell-to-cell distance against the centroid distance, in miles (two half-diagonals). */
-export const CELL_ERROR_MILES = 2 * 0.5 * Math.hypot(CELL_DEG * 69.0, CELL_DEG * 69.0 * Math.cos((34 * Math.PI) / 180));
 
 /** Great-circle miles between two cells (Infinity when either is unknown). */
 export function cellMiles(a: Cell | undefined, b: Cell | undefined): number {

@@ -16,7 +16,7 @@
 // Engine-visible inputs only. Nothing here reads hidden truth.
 import type { Category, City, MemberId, ScoreComponents } from "@thenetwork/core";
 import { DAY, HOUR } from "@thenetwork/core";
-import { activitiesForTags, activityById, type ActivityType, type Daypart, type Venue } from "./activities.ts";
+import { activitiesForTags, activityById, type ActivityType, type Daypart, type Venue } from "./packs/network/activities.ts";
 import { availabilityProb, candidateSlots, timeOptionsPhrase, type AvailabilityEvidence, type TimeSlot } from "./attention.ts";
 import { DEFAULT_ATTENTION, DEFAULT_CONFIG, DEFAULT_PLANS, type AttentionConfig, type PlansConfig } from "./config.ts";
 import { tokenize } from "./embed.ts";
@@ -24,17 +24,14 @@ import { privateVocabulary } from "./explain.ts";
 import { isMinor, memberReason, pairReason } from "./filters.ts";
 import { makeCompat } from "./group.ts";
 import { checkMemberFacing } from "./judgeCommon.ts";
-import { fromLocal, localParts } from "./outreach.ts";
+import { fromLocal, localParts } from "@thenetwork/core";
 import { sha256 } from "./rng.ts";
 import type { AttentionItem, EngineProposal, NetworkEvent, Role } from "./types.ts";
 import type { AppPack, PlansPack } from "./pack.ts";
 import { networkPack } from "./packs/network/index.ts";
 import type { World } from "./world.ts";
 
-export { ACTIVITIES, activityById, type ActivityType, type Venue } from "./activities.ts";
-
-/** Plans are social, never romance (D15, 2.2 row 12). networkPack.plans.lane; the planner reads the World's pack. */
-export const PLAN_CATEGORY: Category = "social";
+export { ACTIVITIES, activityById, type ActivityType, type Venue } from "./packs/network/activities.ts";
 
 /** The plans part of a World's pack (throws if the pack has no planner). */
 export function plansOf(w: World): PlansPack {

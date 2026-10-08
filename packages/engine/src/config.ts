@@ -42,14 +42,10 @@ export interface EngineConfig {
     /** Category floors: the effective threshold is max(state, category). */
     byCategory: Partial<Record<Category, number>>;
     /**
-     * v1.2: category thresholds that replace the state threshold, so they can LOWER it as well as
-     * raise it. A participant in a stricter-than-Normal state (Quiet, Paused) still keeps their
-     * stricter bar. Takes precedence over `byCategory` for that category. Applied only when
-     * `useCategoryOverride` is true.
+     * v1.2: per-generator thresholds that replace the state threshold, so they can LOWER it as well
+     * as raise it. A participant in a stricter-than-Normal state (Quiet, Paused) still keeps their
+     * stricter bar. Takes precedence over `byCategory`. Applied only when `useByGenerator`.
      */
-    categoryOverride: Partial<Record<Category, number>>;
-    useCategoryOverride: boolean;
-    /** v1.2: per-generator thresholds, same override rule; applied only when `useByGenerator`. */
     byGenerator: Partial<Record<GeneratorName, number>>;
     useByGenerator: boolean;
     exploration: number;
@@ -61,10 +57,9 @@ export interface EngineConfig {
    * Structured needs -> offers complementarity (complementarity.ts). `weight` blends it into
    * fit and each side's benefit: x' = (1 - weight) x + weight * structured; 0 turns it off.
    * `overlap` / `need` / `give` weigh a side's benefit (interest overlap; the other member meets
-   * my want; I meet theirs). `retrievalChannel` adds members whose skills / offers / pools meet
-   * an intent (satisfaction >= `channelMin`) to that intent's candidates, even below minSim.
+   * my want; I meet theirs).
    */
-  complementarity: { weight: number; overlap: number; need: number; give: number; retrievalChannel: boolean; channelMin: number };
+  complementarity: { weight: number; overlap: number; need: number; give: number };
   generators: Record<GeneratorName, boolean>;
   /**
    * v1.2 dispatch awareness. `skipOpenOpportunities`: members in an opportunity that was sent and
@@ -81,17 +76,9 @@ export interface EngineConfig {
   personalGrowthAsHobby: boolean;
   /**
    * v1.2 acceptance estimate (world.ts acceptanceOf): P(member says yes) from engine-visible data
-   * only. Selection orders eligible candidates by adjusted score x (product of P)^exponent; the
-   * threshold still applies to the score itself. exponent 0 = off.
+   * only, logged with each proposal.
    */
-  acceptance: { exponent: number; prior: number; strength: number; signals: boolean };
-  /**
-   * v1.2 "ask before proposing": adults the engine cannot match well yet (no structured want, or
-   * fewer than `minFacets` matchable facets) get an EngineAsk; thin profiles are held back from
-   * proposals while the question is open (`cooldownDays`, input.recentAsks), members with no
-   * structured want too with `holdNoWant`.
-   */
-  ask: { enabled: boolean; minFacets: number; cooldownDays: number; holdNoWant: boolean };
+  acceptance: { prior: number; strength: number };
   /** v1.2: romance proposals only when both members stated romance preferences (else ask for them). */
   romance: { requireStatedPrefs: boolean };
   maxPerIntent: number;
@@ -144,10 +131,7 @@ export const DEFAULT_CONFIG: EngineConfig = {
   thresholds: {
     byState: { open: 0.22, normal: 0.3, quiet: 0.42, receiving: 0.3, paused: Infinity },
     byCategory: { romance: 0.35, help: 0.25, growth: 0.2 },
-    // Values from docs/research/2026-10-07-match-failures-and-diversity.md (score calibration by
-    // category; per-generator thresholds for the structural levers).
-    categoryOverride: { professional: 0.38, romance: 0.45, hobby: 0.26 },
-    useCategoryOverride: false,
+    // Per-generator thresholds for the structural levers (match-failures research, 2026-10-07; summarized in docs/results/SUMMARY.md).
     byGenerator: { event_anchor: 0.4, group_composer: 0.4 },
     // On in v1.2: with events and shareable interests in the snapshot, event pairs and theme
     // groups at the state threshold ran at 29.7% precision (8 sim seeds); at 0.40, 38.2%.
@@ -175,7 +159,7 @@ export const DEFAULT_CONFIG: EngineConfig = {
   // for members with no structured profile. Side weights: what I get (need 0.55) dominates, then
   // shared interests (0.35), then the pleasure of helping (0.1), the same ordering as the reasons
   // members give for a good intro. Sensitivity: weights 0.25-0.75 in the results doc.
-  complementarity: { weight: 0.5, overlap: 0.35, need: 0.55, give: 0.1, retrievalChannel: false, channelMin: 0.85 },
+  complementarity: { weight: 0.5, overlap: 0.35, need: 0.55, give: 0.1 },
   generators: Object.fromEntries(GENERATOR_NAMES.map(g => [g, true])) as Record<GeneratorName, boolean>,
   // v1.2 defaults (docs/results/2026-10-07-engine-v1.2.md, 8 sim seeds, history fed). On: dispatch
   // awareness (met + worthwhile +5.1 per seed on the v1.2 snapshot), personal growth as hobby
@@ -185,9 +169,7 @@ export const DEFAULT_CONFIG: EngineConfig = {
   // send asks and report answers), and Normal 3/week (over-budget sends; PRD 32.9 says 2).
   dispatch: { skipOpenOpportunities: true, billOnlySent: true },
   personalGrowthAsHobby: true,
-  acceptance: { exponent: 0, prior: 0.45, strength: 2, signals: false },
-  // holdNoWant true: synthetic tick-1 precision 41.1% vs 34.2% when no-want members stay matchable.
-  ask: { enabled: false, minFacets: 3, cooldownDays: 14, holdNoWant: true },
+  acceptance: { prior: 0.45, strength: 2 },
   romance: { requireStatedPrefs: true },
   maxPerIntent: 4,
   group: { minSize: 3, maxSize: 6, beamWidth: 8, poolSize: 24, minPairwise: 0.05, maxAnchorsPerCity: 8, alternates: 3, minThemeMembers: 4 },
@@ -227,25 +209,6 @@ export const DEFAULT_CONFIG: EngineConfig = {
   homeEntryTerms: ["home", "apartment", "house", "move", "moving", "couch", "furniture", "my place"],
 };
 
-/**
- * Named configurations measured in docs/results/2026-10-07-engine-v1.2.md.
- * - `v1_1`: engine-v1.1.0 behaviour (every v1.2 flag off).
- * - `comboD`: COMBO D of docs/research/2026-10-07-match-failures-and-diversity.md: dispatch-aware,
- *   Normal 3/week, category overrides, personal growth as hobby, romance preference gate. Not the
- *   default: Normal 3/week produced over-budget sends (3+ proactive messages in 7 days) in the
- *   simulator, because invitations go out after the proposal is created; PRD 32.9 says 2/week.
- */
-export const PRESETS: Record<"v1_1" | "comboD", EngineConfigInput> = {
-  v1_1: {
-    dispatch: { skipOpenOpportunities: false, billOnlySent: false }, personalGrowthAsHobby: false,
-    thresholds: { useCategoryOverride: false, useByGenerator: false }, acceptance: { exponent: 0 },
-    ask: { enabled: false }, romance: { requireStatedPrefs: false },
-  },
-  comboD: {
-    dispatch: { skipOpenOpportunities: true, billOnlySent: true }, personalGrowthAsHobby: true,
-    thresholds: { useCategoryOverride: true }, budgets: { normal: { limit: 3, periodDays: 7 } }, romance: { requireStatedPrefs: true },
-  },
-};
 
 // ------------------------------------------------------------------------------------------------
 // Attention budget (docs/design/2026-10-07-experience-design.md section 1, Phase 1; founder

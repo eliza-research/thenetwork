@@ -122,7 +122,6 @@ export const friendsPack: AppPack = {
     lose: ["no_show", "ghosting", "abuse", "fraud"],
     minorsExcluded: true,
   },
-  sim: { module: "packages/worlds/src/friends/index.ts", export: "friendsSim" },
   metrics: {
     primary: ["repeat_meetup_rate", "v14", "friendship_track_share", "crews_formed", "median_group_max_travel"],
     // Official gates, adopted by the founder 2026-10-08 (packages/worlds/src/friends/gates.ts computes
@@ -142,7 +141,6 @@ export const friendsPack: AppPack = {
       { metric: "undetected_harm_vs_random", op: "<=", value: 0.5, seeds: 4, blocking: false },
       { metric: "repeat_rate_with_handoff_12w", op: ">=", value: 0.3, seeds: 4, blocking: false },
     ],
-
 
     unsafeClasses: ["minor", "adversarial", "romance"],
   },

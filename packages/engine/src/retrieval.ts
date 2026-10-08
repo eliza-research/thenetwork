@@ -75,7 +75,6 @@ export function retrieveForIntent(ctx: RetrievalCtx, intent: Intent, pool: Membe
     if (tagHit) channels.add("tag");
     if (hop.has(id) && sim >= cfg.warmMinSim) channels.add("graph");
     const need = structured ? intentSatisfaction(w, intent, id) : 0;
-    if (cc.retrievalChannel && structured && need >= cc.channelMin) channels.add("need");
     if (sim < minSim && !channels.has("graph") && !channels.has("need")) continue;
     scored.push({ id, sim, facet, channels, floor: false, rank: sim + cc.weight * need });
   }

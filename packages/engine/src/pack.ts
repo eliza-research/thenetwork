@@ -73,8 +73,6 @@ export interface AppPack {
   explain: ExplainPack;
   plans?: PlansPack;
   capital?: CapitalPack;
-  /** Where the pack's simulator lives (personas, snapshot, oracle, metrics, gates). Harness only. */
-  sim?: SimPackRef;
   metrics: MetricsPack;
   /** Pack defaults. Shapes are the shared config types, so configHash is unchanged for networkPack. */
   defaults: { engine: EngineConfig; attention: AttentionConfig; plans?: PlansConfig };
@@ -318,21 +316,6 @@ export interface CapitalPack {
   lose: readonly string[];
   /** Core: minors never accrue capital. */
   minorsExcluded: true;
-}
-
-// ---------------------------------------------------------------------------------------- simulation
-/** Pointer to the pack's simulator (the sim lives outside the engine; the oracle is never importable from engine code). */
-export interface SimPackRef { module: string; export: string }
-/**
- * The simulator side of a pack (implemented in packages/sim; harness only). P = persona, S = snapshot, O = oracle.
- */
-export interface SimPack<P = unknown, S = unknown, O = unknown> {
-  appId: AppId;
-  personas: { generate(opts: { n: number; seed: number | string; markets?: Record<MarketId, number>; minorShare?: number }): P[] };
-  snapshot(personas: P[], state: unknown): S;
-  oracle(personas: P[], seed: number | string, start: number): O;
-  metrics: MetricsPack;
-  adversarial: { kinds: readonly string[]; rate: number };
 }
 
 // ---------------------------------------------------------------------------------------- metrics & gates

@@ -39,13 +39,12 @@ export const SLOP_ENGINE_CONFIG: EngineConfigInput = {
   timezones: { sf: "America/Los_Angeles", nyc: "America/New_York", la: "America/Los_Angeles" },
   windowDays: 7, minOverlapHours: 3, ageMin: 18,
   budgets: { normal: { limit: 2, periodDays: 7 }, open: { limit: 2, periodDays: 7 }, receiving: { limit: 2, periodDays: 7 } },
-  thresholds: { byState: { open: 0, normal: 0, quiet: 0, receiving: 0 }, byCategory: { romance: 0, help: 0, growth: 0 }, useByGenerator: false, useCategoryOverride: false, exploration: 0 },
+  thresholds: { byState: { open: 0, normal: 0, quiet: 0, receiving: 0 }, byCategory: { romance: 0, help: 0, growth: 0 }, useByGenerator: false, exploration: 0 },
   floors: { fit: 0, mutualBenefit: 0, confidence: 0, maxSocialRisk: 1, judgeDimension: 0 },
   weights: { fit: 0, mutualBenefit: 1, warmPath: 0, novelty: 0, timingFit: 0, activationCost: 0, interruptionCost: 0, load: 0, repetition: 0, socialRisk: 0 },
   complementarity: { weight: 0 },
   generators: Object.fromEntries(GENERATOR_NAMES.map(g => [g, false])) as Record<(typeof GENERATOR_NAMES)[number], boolean>,
   exploration: { rate: 0, maxShare: 0.15 },
-  ask: { enabled: false },
   romance: { requireStatedPrefs: true },
   dispatch: { skipOpenOpportunities: true, billOnlySent: true },
   personalGrowthAsHobby: false,
@@ -186,7 +185,6 @@ export function makeSlopPack(over: DeepPartial<SlopPackOptions> = {}): AppPack &
       lose: ["no_show", "ghosting", "abuse", "fraud"],
       minorsExcluded: true,
     },
-    sim: { module: "packages/worlds/src/slop/enginePack.ts", export: "slopEngineMatcher" },
     metrics: {
       primary: ["secondDateRate", "secondDatesPerSeed", "datesPerMemberMonth", "mutualYesRate"],
       gates: [
@@ -216,6 +214,5 @@ export { mutualMarkets } from "./geo.ts";
 export { adultsOnly, appearanceFacet, appearanceLeak, APPEARANCE_LEAK_PATTERNS, BODY_TYPES, canRatePhotos, ClipAppearanceRater, parseAppearance, rateMember, VisionLlmAppearanceRater, VISION_RATER_SYSTEM, type AppearanceRater, type AppearanceScore, type BodyType, type PhotoRef, type RatingSubject, type VisionChat } from "./appearance.ts";
 export { CLEF_FEATURES, CLEF_MODEL_IDS, CLEF_QUESTIONS, ClefError, clefFeatures, applyHead, makeClefRater, makeClefRaterFromEnv, WorkersAIClefRater, type ClefModel, type ClefRaterOptions } from "./clef.ts";
 export { DEFAULT_CLEF_WEIGHTS, loadClefWeights, validateClefWeights, type ClefWeights } from "./clefWeights.ts";
-export { calibrateClefWeights, fitClefWeights, fitPairwise, type LabelledPair } from "./fitClef.ts";
 export { biasMonitor, ratingQuintiles, type BiasReport, type MemberOutcome } from "./biasMonitor.ts";
 export { pairValue, firstOf, SLOP_GENERATOR } from "./generators.ts";

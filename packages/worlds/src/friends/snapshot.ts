@@ -22,7 +22,7 @@ import { DAY, canBeMatched, type Edge, type Facet, type Intent, type Member, typ
 import type { FeedbackRecord, InteractionRecord, SafetyHold } from "@thenetwork/engine/src/types.ts";
 import { activityById } from "@thenetwork/engine/src/packs/network/activities.ts";
 import type { Crew, PlanOutcomeRecord } from "@thenetwork/engine/src/plans.ts";
-import { fromLocal } from "@thenetwork/engine/src/outreach.ts";
+import { fromLocal } from "@thenetwork/core";
 import { Rng, hash32 } from "@thenetwork/sim/src/rng.ts";
 import { SLOT_TIME } from "@thenetwork/engine/src/packs/friends/index.ts";
 import { SLOTS, h01, hoodOf, type FriendsPersona, type FriendsSlot, type RichnessTier } from "./persona.ts";

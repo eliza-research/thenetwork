@@ -398,24 +398,11 @@ export function responseHistory(interactions: InteractionRecord[], now: number):
 /**
  * v1.2 acceptance estimate: P(member says yes to the next invite), from engine-visible data only
  * (no oracle, no hidden truth). A Beta-smoothed share of the invites the member said yes to,
- * with prior `acceptance.prior` and weight `acceptance.strength`. With `acceptance.signals` the
- * prior also moves with participation state, unanswered proactive messages (responsiveness),
- * recent proactive load (capacity) and whether the member stated a want in the last week
- * (intent freshness).
+ * with prior `acceptance.prior` and weight `acceptance.strength`.
  */
 export function acceptanceOf(cfg: EngineConfig, m: Member, intents: Intent[], hist: { yes: number; n: number } | undefined, recentProactive: number, now: number): number {
   const A = cfg.acceptance;
-  let prior = A.prior;
-  if (A.signals) {
-    prior += m.state === "open" ? 0.1 : m.state === "quiet" ? -0.1 : m.state === "receiving" ? -0.05 : 0;
-    prior -= 0.1 * Math.min(2, m.unansweredProactive ?? 0);
-    if (m.prefs.onlyWhenAsked) prior -= 0.1;
-    const limit = cfg.budgets[m.state].limit;
-    if (limit > 0 && recentProactive >= limit - 1) prior -= 0.05;
-    if (intents.some(i => now - i.createdAt < 7 * DAY)) prior += 0.1;
-    prior = Math.max(0.05, Math.min(0.95, prior));
-  }
-  return ((hist?.yes ?? 0) + prior * A.strength) / ((hist?.n ?? 0) + A.strength);
+  return ((hist?.yes ?? 0) + A.prior * A.strength) / ((hist?.n ?? 0) + A.strength);
 }
 
 export function intentText(i: Intent): string {

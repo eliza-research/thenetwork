@@ -27,11 +27,11 @@
 //  - Network capital. Every NC ledger event goes to one typed emitter (onLedger); the levers are read
 //    through an optional reader (capital.ts); gaming flags wait in the review queue as "fraud" items.
 import {
-  canJoin, DAY, HOUR, isMinor, LeakGuard, MINUTE, UNDER_MIN_AGE_DECLINE, validAge,
+  canJoin, DAY, HOUR, isMinor, localParts, LeakGuard, MINUTE, UNDER_MIN_AGE_DECLINE, validAge,
   type Category, type Facet, type Intent, type LeakOptions, type LLM, type MemberId, type ParticipationState, type Proposal, type ScoreComponents, type WorldSnapshot,
 } from "@thenetwork/core";
 import {
-  attention, buildWorld, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, localEmbed, outreach as engineOutreach, plans, resolveConfig, resolvePlans, runEngine,
+  attention, buildWorld, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, localEmbed, plans, resolveConfig, resolvePlans, runEngine,
   type AskRecord, type EngineAsk, type EngineConfigInput, type EngineInput, type EngineProposal, type FeedbackRecord, type InteractionRecord, type MatchingRunLog,
   type AppPack, type PlansConfig, type PlansConfigInput, type World as EngineWorld,
 } from "@thenetwork/engine";
@@ -2623,7 +2623,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    */
   private runPlanner(now: number) {
     const p = nyParts(now);
-    const jsDay = (engineOutreach.localParts(now, NY).weekday + 1) % 7;
+    const jsDay = (localParts(now, NY).weekday + 1) % 7;
     if (!this.pcfg.runDays.includes(jsDay) || p.hour < this.opts.runHour || p.hour >= ENGINE_RUN_UNTIL || this.lastPlanRunDay === p.day) return;
     this.lastPlanRunDay = p.day;
     const w = this.planWorld(now, true);
@@ -3035,7 +3035,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    * on the cap, held by the one-question rule, never for members aged 13-17.
    */
   private weeklyCheckins(now: number) {
-    const day = (engineOutreach.localParts(now, NY).weekday + 1) % 7; // JS weekday (Sunday = 0)
+    const day = (localParts(now, NY).weekday + 1) % 7; // JS weekday (Sunday = 0)
     if (day !== DEFAULT_ATTENTION.availability.weeklyCheckIn.day) return;
     for (const m of this.members.values()) {
       if (!m.weekly || m.minor || m.optedOut || m.onlyWhenAsked || (m.lastCheckinAt !== undefined && now - m.lastCheckinAt < 5 * DAY)) continue;

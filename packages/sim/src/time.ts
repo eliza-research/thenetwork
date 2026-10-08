@@ -34,8 +34,6 @@ export function localHour(t: number, city: City): number {
   return p.hour + p.minute / 60;
 }
 
-export const isWeekend = (t: number, city: City) => { const w = localParts(t, city).weekday; return w === 0 || w === 6; };
-
 /** True if local hour h is inside [start, end) with wrap-around past midnight. */
 export function inHourWindow(h: number, [start, end]: readonly [number, number]): boolean {
   return start <= end ? h >= start && h < end : h >= start || h < end;
@@ -55,12 +53,6 @@ export function nextLocalHour(t: number, city: City, hour: number): number {
   }
   // Never return an instant before t (localHour drops seconds, so flooring can step back).
   return guess < t ? guess + DAY : Math.max(t, Math.floor(guess / MINUTE) * MINUTE);
-}
-
-/** Push t forward to the end of a [start,end) local-hour window if it falls inside it. */
-export function deferOutOf(t: number, city: City, window: readonly [number, number]): number {
-  const h = localHour(t, city);
-  return inHourWindow(h, window) ? nextLocalHour(t, city, window[1]) : t;
 }
 
 export function fmtLocal(t: number, city: City): string {

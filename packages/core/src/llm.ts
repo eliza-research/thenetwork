@@ -1,10 +1,10 @@
-// Minimal OpenAI-compatible chat clients (Surplus Intelligence, OpenAI, Cerebras).
+// Minimal OpenAI-compatible chat clients (Surplus Intelligence, OpenAI).
 // Default for every use is Surplus Intelligence gpt-6-luna (founder decision 2026-10-05); see
 // defaultLLM() / judgeLLM() / recommenderLLM(). Provider "surplus" falls back to OpenAI (same model
 // IDs) when SURPLUS_API_KEY is unset or Surplus fails with 408 / 429 / 5xx / timeout / a non-JSON
 // body; every fallback logs a warning and calls ClientOptions.onFallback. `fallback: false` (per
 // call or per client) keeps a call on the first provider. If neither key is set, a warning is
-// logged when this module loads. Cerebras is optional and legacy.
+// logged when this module loads.
 // Every request has a timeout (default 60 s, LLM_TIMEOUT_MS or ClientOptions.timeoutMs) and
 // retries are bounded (default 4, with capped, jittered exponential backoff). Each chat() call also
 // has a total deadline over all attempts (default 3x the timeout, LLM_DEADLINE_MS or deadlineMs),
@@ -343,22 +343,6 @@ const sleep = (ms: number, signal: AbortSignal | undefined, host: string) => new
   signal?.addEventListener("abort", onAbort, { once: true });
 });
 
-/** Optional, legacy provider (not used by default since 2026-10-05). The qwen default is kept for old runs only. */
-export class CerebrasLLM implements LLM {
-  constructor(
-    private apiKey = process.env.CEREBRAS_API_KEY ?? "",
-    private model = process.env.CEREBRAS_MODEL ?? "qwen-3.8-27b",
-    private baseUrl = process.env.CEREBRAS_BASE_URL ?? "https://api.cerebras.ai/v1",
-    private hooks: ClientOptions = {},
-  ) { if (!this.apiKey) throw new Error("CEREBRAS_API_KEY missing (see .env.example)"); }
-  chat(messages: ChatMessage[], opts: ChatOptions = {}) {
-    return chatCompletions([{ baseUrl: this.baseUrl, apiKey: this.apiKey }], this.model, messages, opts, o => ({
-      max_tokens: o.maxTokens ?? 2048, temperature: o.temperature ?? 0.7,
-      ...(o.json ? { response_format: { type: "json_object" } } : {}),
-    }), 2048, 16384, this.hooks);
-  }
-}
-
 /**
  * Parse the JSON value out of a model reply. A ```json fenced block wins; otherwise <think> blocks
  * are dropped and the first balanced `{...}` that parses is returned (else the first balanced
@@ -437,8 +421,8 @@ export class OpenAILLM implements LLM {
   }
 }
 
-export type Provider = "cerebras" | "openai" | "surplus";
-export const PROVIDERS: readonly Provider[] = ["surplus", "openai", "cerebras"];
+export type Provider = "openai" | "surplus";
+export const PROVIDERS: readonly Provider[] = ["surplus", "openai"];
 
 /** Validate a provider name case-insensitively ("Surplus" -> "surplus"). Throws on anything unknown. */
 export function parseProvider(name: string | undefined | null): Provider {
@@ -466,8 +450,7 @@ export function endpointsFor(providerName: Provider | string): Endpoint[] {
   const env = process.env;
   const surplus = { baseUrl: env.SURPLUS_BASE_URL ?? "https://api.surplusintelligence.ai/v1", apiKey: env.SURPLUS_API_KEY ?? "" };
   const openai = { baseUrl: env.OPENAI_BASE_URL ?? "https://api.openai.com/v1", apiKey: env.OPENAI_API_KEY ?? "" };
-  const cerebras = { baseUrl: env.CEREBRAS_BASE_URL ?? "https://api.cerebras.ai/v1", apiKey: env.CEREBRAS_API_KEY ?? "" };
-  const order = provider === "surplus" ? [surplus, openai] : provider === "openai" ? [openai] : [cerebras];
+  const order = provider === "surplus" ? [surplus, openai] : [openai];
   return order.filter(e => e.apiKey);
 }
 
@@ -480,7 +463,6 @@ export function llmFor(providerName: Provider | string, model: string, hooks: Cl
       ? "SURPLUS_API_KEY or OPENAI_API_KEY missing (see .env.example)"
       : `${provider.toUpperCase()}_API_KEY missing (see .env.example)`);
   }
-  if (provider === "cerebras") return new CerebrasLLM(first.apiKey, model, first.baseUrl, hooks);
   return new OpenAILLM(first.apiKey, model, first.baseUrl, hooks, fallbacks);
 }
 
@@ -499,8 +481,3 @@ export function recommenderLLM(hooks: ClientOptions = {}): LLM {
   return llmFor(parseProvider(process.env.RECOMMENDER_PROVIDER || DEFAULT_PROVIDER), process.env.RECOMMENDER_MODEL ?? DEFAULT_MODEL, hooks);
 }
 
-/**
- * Live (paid, networked) tests run only with an explicit opt-in: LIVE_TESTS=1. A key in .env is
- * not enough, because Bun auto-loads the repo-root .env (audit P1-15).
- */
-export const liveTestsEnabled = (): boolean => /^(1|true|yes)$/i.test(process.env.LIVE_TESTS ?? "");

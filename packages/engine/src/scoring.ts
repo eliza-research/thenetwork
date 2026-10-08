@@ -47,8 +47,7 @@ export function thresholdFor(w: World, c: Candidate): number {
   const T = w.cfg.thresholds;
   let t = 0;
   for (const id of c.participants) t = Math.max(t, T.byState[w.get(id)!.m.state]);
-  const over = (T.useByGenerator ? T.byGenerator[c.generator as keyof typeof T.byGenerator] : undefined)
-    ?? (T.useCategoryOverride ? T.categoryOverride[c.category] : undefined);
+  const over = T.useByGenerator ? T.byGenerator[c.generator as keyof typeof T.byGenerator] : undefined;
   if (over !== undefined) return t > T.byState.normal ? Math.max(t, over) : over;
   const cat = T.byCategory[c.category];
   if (cat !== undefined) t = Math.max(t, cat);

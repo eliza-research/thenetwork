@@ -2,7 +2,7 @@
 // this package: each target declares a small structural interface and these functions fill it.
 
 import type { Notifier } from "./scheduler.ts";
-import type { Assistant, Channel, Surface } from "./types.ts";
+import type { Channel } from "./types.ts";
 
 type Check = { ok: true } | { ok: false; reason: string };
 
@@ -38,19 +38,6 @@ export function queueSink<K extends string>(
   };
 }
 
-/** Host keys the connector knows, mapped to notify surfaces. Unknown hosts count as web. */
-export function surfaceForHost(hostKey: string): Surface {
-  const known: Record<string, Assistant> = { chatgpt: "chatgpt", claude: "claude", grok: "grok" };
-  return known[hostKey] ?? "web";
-}
-
-/** The inbox bridge prototypes/connector-mcp FakeNetwork accepts as `opts.inbox`. */
-export function connectorInbox(notifier: Pick<Notifier, "redeemSubjects" | "shownSubjects">, now: () => number) {
-  return {
-    redeem: (memberId: string, hostKey: string, token: string) => notifier.redeemSubjects(memberId, surfaceForHost(hostKey), token, now()),
-    shown: async (memberId: string, hostKey: string, itemIds: string[]) => { await notifier.shownSubjects(memberId, surfaceForHost(hostKey), itemIds, now()); },
-  };
-}
 
 /** For the iMessage/SMS agent and plugin-network's NetworkStore.readUpdates. */
 export function threadHooks(notifier: Pick<Notifier, "threadReply" | "readUpdates">, now: () => number) {

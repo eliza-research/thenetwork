@@ -28,7 +28,6 @@ export type Goal = "casual" | "long_term" | "unsure";
 export type Scope = { mode: "city" } | { mode: "radius"; miles: number } | { mode: "multi"; markets: City[] };
 export const SLOTS = ["mon_eve", "tue_eve", "wed_eve", "thu_eve", "fri_eve", "sat_day", "sat_eve", "sun_day", "sun_eve"] as const;
 export type Slot = (typeof SLOTS)[number];
-export const SAFETY_CUES = ["safety:scam_pattern", "safety:age_signal", "safety:photo_mismatch", "safety:hostile_language", "safety:relationship_signal"] as const;
 
 /** Tags never read for matching (no race / ethnicity field, filter or inference). */
 const NEVER_USED = /^(race|ethnicity|skin|nationality|immigration|hiv|sti|health|income)\b|:(race|ethnicity)\b/i;

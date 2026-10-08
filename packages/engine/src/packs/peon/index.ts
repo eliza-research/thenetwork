@@ -37,7 +37,7 @@ export const PEON_ENGINE_CONFIG: EngineConfigInput = {
     receiving: { limit: 3, periodDays: 7 }, paused: { limit: 0, periodDays: 7 },
   },
   contribution: { limit: 1000, periodDays: 7 },
-  thresholds: { byState: { open: 0.12, normal: 0.12, quiet: 0.25, receiving: 0.12, paused: Infinity }, useByGenerator: false, useCategoryOverride: false, exploration: 0.12 },
+  thresholds: { byState: { open: 0.12, normal: 0.12, quiet: 0.25, receiving: 0.12, paused: Infinity }, useByGenerator: false, exploration: 0.12 },
   floors: { fit: 0.2, mutualBenefit: 0.1, confidence: 0.3, maxSocialRisk: 0.8, judgeDimension: 0.25 },
   weights: { fit: 1, mutualBenefit: 1, warmPath: 0, novelty: 0, timingFit: 0, activationCost: 0, interruptionCost: 0, load: 0, repetition: 0, socialRisk: 0.2 },
   complementarity: { weight: 0 },
@@ -45,7 +45,6 @@ export const PEON_ENGINE_CONFIG: EngineConfigInput = {
   selection: { maxProposalsPerCity: 5000, runLoadPenalty: 0, exposureFloorShare: 0, exposureDebtWeight: 0.03, exposureDebtCap: 3 },
   dispatch: { skipOpenOpportunities: false, billOnlySent: true },
   romance: { requireStatedPrefs: false },
-  ask: { enabled: false },
   windowDays: 7,
   inviteTtlMs: 5 * DAY,
 };
@@ -121,7 +120,6 @@ export const peonPack: AppPack = {
     lose: ["employer_ghosting", "interview_no_show", "scam_report", "fraud"],
     minorsExcluded: true,
   },
-  sim: { module: "packages/worlds/src/peon/index.ts", export: "peonSimPack" },
   metrics: {
     primary: ["hires", "interviews_per_hire", "retention_90d", "time_to_fill_days", "under_applied_filled"],
     // Official gates (adopted 2026-10-08; evaluated against the keyword job board and the oracle on

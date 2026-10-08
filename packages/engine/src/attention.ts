@@ -22,17 +22,18 @@
 // no LLM calls). The Network runtime owns the state (hold queues, ledger, conversation streaks)
 // and calls these functions; see docs/results/2026-10-07-attention-budget.md for the integration note.
 import type { Category, MemberId, ParticipationState } from "@thenetwork/core";
-import { canBeMatched, DAY, HOUR, MINUTE } from "@thenetwork/core";
+import { canBeMatched, DAY, fromLocal, HOUR, inQuietHours, localParts, MINUTE } from "@thenetwork/core";
 import { DEFAULT_ATTENTION, type AttentionConfig } from "./config.ts";
 import { tokenize } from "./embed.ts";
 import { privateVocabulary } from "./explain.ts";
 import { checkMemberFacing } from "./judgeCommon.ts";
-import type { EligibilityCheck } from "./opportunity.ts";
-import { fromLocal, inQuietHours, localParts } from "./outreach.ts";
 import type {
   AttentionItem, AttentionLedgerEntry, CadencePrefs, Effort, EngineProposal, HeldItem, HoldReason, ItemKind, LedgerKind, Role,
 } from "./types.ts";
 import { CONTRIBUTOR_ROLES } from "./types.ts";
+
+/** A send-time eligibility re-check (filters.ts): a reason the member cannot be contacted now, or null. `lane`: the item's category, when known. */
+export type EligibilityCheck = (memberId: MemberId, others: MemberId[], lane?: Category) => string | null;
 import type { AppPack } from "./pack.ts";
 import { DEFAULT_ENJOY_BY_CATEGORY, DEFAULT_ENJOY_KNOTS } from "./packs/network/calibrator.ts";
 import { GENERIC_ACTIVITY as NETWORK_GENERIC_ACTIVITY } from "./packs/network/copy.ts";
@@ -1120,9 +1121,6 @@ export function standingFromFacets(facets: readonly { kind: string; tags: string
   }
   return out;
 }
-
-/** Standing windows due for re-confirmation ("still free Tuesday evenings?"), a profiling ask, never an invite. */
-export const needsReconfirm = (w: StandingAvailability, now: number, cfg: AttentionConfig = DEFAULT_ATTENTION) => now - (w.confirmedAt ?? w.statedAt) >= cfg.availability.standing.reconfirmDays * DAY;
 
 // ------------------------------------------------------------------------------------------------
 // Metrics (1.10, 3.3)

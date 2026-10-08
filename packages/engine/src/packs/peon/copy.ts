@@ -57,20 +57,6 @@ export function candidateSummary(cand: CandidateProfile, job: JobProfile): strin
 }
 
 export interface SlateEntry { candidate: MemberId; checks: { skill: string; status: "met" | "partial" | "missing" }[]; summary: string }
-/**
- * The employer's weekly slate for one job: the candidates who opted in, in RANDOM order (seeded),
- * each with criteria checkmarks against the stated must-haves. Unranked and unscored: the human
- * chooses (domain research B4; NYC LL144 posture (a)).
- */
-export function buildSlate(w: World, job: JobProfile, candidateIds: MemberId[], rng: Rng): SlateEntry[] {
-  const out: SlateEntry[] = [];
-  for (const id of rng.shuffle([...candidateIds].sort())) {
-    const cand = candidateOf(w, id);
-    if (!cand) continue;
-    out.push({ candidate: id, checks: mustChecks(cand, job, true), summary: candidateSummary(cand, job) });
-  }
-  return out;
-}
 
 export const PEON_ASK_QUESTIONS: Record<string, string> = {
   no_structured_want: "What kind of work are you looking for next, and what's the lowest pay you'd take? I'll only suggest roles with a posted pay range.",
