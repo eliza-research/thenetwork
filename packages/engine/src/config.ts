@@ -511,14 +511,21 @@ export interface PlansConfig {
   stated: { confidence: number; inside: number; outsideFactor: number };
   /** Fallbacks (4.6): a smaller group of 2 if the activity allows it, a solo public event, the demand carried to next week (bonus on the same activity). */
   fallback: { smaller: boolean; soloEvent: boolean; nextWeek: boolean; carryBonus: number; carryDays: number };
-  /** Recurring crews (4.7): >= minMembers attended >= minPlans plans together, all reporting positive; or 1 plan with a recurring ("weekly", "regular", "club") want. */
+  /**
+   * Founder decision (2026-10-08): plan invites have their own allowance, `limit` initial plan
+   * invites per member per `periodDays`, on top of attention's intro cap (which is unchanged). Only
+   * for members with a stated, standing or learned window or the opt-in weekly check-in; others'
+   * plan invites use the intro cap. Quiet hours, the unanswered rules and Blooio limits still apply.
+   */
+  allowance: { enabled: boolean; limit: number; periodDays: number };
+  /** Recurring crews (4.7): >= minMembers attendees of one plan (minPlans 1, default) or of the same two plans (minPlans 2) say they'd do it again, or 1 plan with a recurring want; then each person opts in. */
   crews: { enabled: boolean; minMembers: number; minPlans: number; cadenceDays: number; handOffAfterSessions: number };
   /** Calibrated E for a plan item (attention.ts): Ê = clamp(enjoyIntercept + enjoySlope x U). */
   enjoyIntercept: number; enjoySlope: number;
 }
 
 export const DEFAULT_PLANS: PlansConfig = {
-  version: "plans-v1.0.0",
+  version: "plans-v1.1.0",
   minLeadHours: 72, horizonDays: 7,
   deadlineBeforeStartHours: 30, probeWindowHours: 96, memberCooldownDays: 5, unservedOnly: false, lateJoinHours: 6,
   size: { min: 3, max: 6, target: 6, partner: 2 },
@@ -535,7 +542,9 @@ export const DEFAULT_PLANS: PlansConfig = {
   maxPlansPerCityRun: 6,
   stated: { confidence: 0.8, inside: 0.85, outsideFactor: 0.5 },
   fallback: { smaller: true, soloEvent: true, nextWeek: true, carryBonus: 0.1, carryDays: 10 },
-  crews: { enabled: true, minMembers: 3, minPlans: 2, cadenceDays: 7, handOffAfterSessions: 3 },
+  allowance: { enabled: true, limit: 1, periodDays: 7 },
+  // Founder decision (2026-10-08): a crew is offered after ONE great plan (>= 3 attendees would do it again); each person opts in.
+  crews: { enabled: true, minMembers: 3, minPlans: 1, cadenceDays: 7, handOffAfterSessions: 3 },
   enjoyIntercept: 0.1, enjoySlope: 1,
 };
 

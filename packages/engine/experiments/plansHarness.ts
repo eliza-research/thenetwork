@@ -152,6 +152,12 @@ export const optsInToCheckIn = (oracle: Oracle, seed: number, id: MemberId, m: C
   return !!p && new SimRng(hash32(seed, "checkin-optin", id)).next() < m.checkIn.base + m.checkIn.slope * p.hidden.socialEnergy;
 };
 
+/** HARNESS: a persona offered a crew after a plan they would do again opts in with p = 0.7 x (1 - ignore probability). */
+export function crewOptIn(oracle: Oracle, seed: number, id: MemberId, crewId: string): boolean {
+  const p = oracle.persona(id);
+  return !!p && new SimRng(hash32(seed, "crew-optin", crewId, id)).next() < 0.7 * (1 - p.hidden.responsiveness.ignoreProb);
+}
+
 /** Standing availability a persona states at onboarding: their free evenings, and weekend days (each with p 0.6), from their routine. */
 export function statedStanding(oracle: Oracle, seed: number, id: MemberId, at: number, m: CaptureModel): StandingAvailability[] {
   const p = oracle.persona(id);

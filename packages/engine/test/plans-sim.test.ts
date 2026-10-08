@@ -41,6 +41,17 @@ describe("planner in the simulator (attention v1.2 (c) + plans)", () => {
     expect(net.stats.selfQuiet).toBe(0);
     expect(net.planStats.checkInQuiet).toBe(0);
     expect(net.planStats.minorsInPlans).toBe(0);
+    // The plan allowance: plan invites in their own lane, at most 1 per member per 7 days; the intro cap (2/7d) holds without them.
+    expect(net.planStats.allowanceInvites).toBeGreaterThan(0);
+    const byMember = new Map<string, { plan: number[]; intro: number[] }>();
+    for (const e of net.ledger) {
+      if (!e.countsAgainstCap) continue;
+      const x = byMember.get(e.memberId) ?? { plan: [], intro: [] };
+      (net.planInviteIds.has(e.messageId) ? x.plan : x.intro).push(e.at);
+      byMember.set(e.memberId, x);
+    }
+    const maxIn7 = (ts: number[]) => Math.max(0, ...ts.map(t => ts.filter(u => u <= t && u > t - 7 * 86_400_000).length));
+    for (const x of byMember.values()) { expect(maxIn7(x.plan)).toBeLessThanOrEqual(1); expect(maxIn7(x.intro)).toBeLessThanOrEqual(2); }
     expect(net.planStats.probeNameLeaks).toBe(0);
     const declared = new Map(res.personas.map(p => [p.id, p.public.claimedAge]));
     for (const l of net.live.values()) {
