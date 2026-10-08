@@ -36,6 +36,11 @@ export class SlopBehavior {
     return this.r("ask", id, week).bool(this.oracle.weekAppetite(p, week) * ASK_RATE);
   }
 
+  /** Answers a question from the agent (orientation, age range, distance, basics) within the week: p = reply probability. */
+  answersAsk(id: MemberId, week: number, field: string): boolean {
+    return this.r("ask-answer", id, week, field).bool(this.oracle.p(id).hidden.replyProb);
+  }
+
   /** Answer an anonymous probe with 2-3 time options. */
   answerProbe(id: MemberId, flowKey: string, c: ProbeContext, options: readonly number[]): ProbeAnswer {
     const p = this.oracle.p(id), r = this.r("probe", flowKey, id);

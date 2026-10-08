@@ -6,7 +6,7 @@
 // Field mapping (also in docs/results/2026-10-08-slop-world.md "Snapshot mapping"). Dating fields
 // go into facet tags with the prefixes below, so the core types stay unchanged:
 //   Member.age = claimed age; Member.prefs.romanceOptIn = canBeMatched(claimed age);
-//   Member.homeCity = city of the home zip ("la" is cast: core City is "sf" | "nyc", see doc);
+//   Member.homeCity = city of the home zip (core City includes "la" since the slop pack);
 //   preference  romance:is:<g> romance:seeks:<g> romance:age:<lo>-<hi>   (agent_private; existing engine tags)
 //   fact        slop:zip:<zip>                                            (agent_private; zip centroid only)
 //   preference  slop:scope:city | slop:scope:radius:<mi> | slop:scope:multi:<c1>,<c2>; slop:max_miles:<mi>
@@ -36,6 +36,43 @@ export interface SlopSnapshot extends WorldSnapshot {
   feedback: FeedbackRecord[];
   safetyHolds: SafetyHold[];
   inboundAsks: InboundAsk[];
+  /** Questions the agent asked and their answer times (empty for matchers that never ask). */
+  asks: SlopAskRecord[];
+}
+
+/** Fields an agent can ask a member about (world.ts SlopAsk): the hard filters; the basics (goal, dealbreakers, lifestyle); their type and how they describe themselves. */
+export type SlopAskField = "orientation" | "age_range" | "distance" | "basics" | "type";
+/** A question the agent asked, and when the member answered (visible to the Network). */
+export interface SlopAskRecord { memberId: MemberId; field: SlopAskField; at: number; answeredAt?: number }
+
+/**
+ * OPTIONAL verification before a member's first intro (PRD 40.5 safety basics: selfie liveness and
+ * age assurance, with an ID fallback near the age line). Off by default (the baselines and the world
+ * doc run without it). The rates are ASSUMPTIONS, not measurements: P(fail) by adversary kind; honest
+ * members fail with `falseFail` (age: only claimed 18-20). Harassers and members who are not single
+ * pass: verification sees faces and ages, not intent or relationship status.
+ */
+export interface VerificationModel {
+  liveness: { catfish: number; romance_scammer: number; falseFail: number };
+  age: { age_liar: number; falseFailYoung: number };
+}
+export const VERIFICATION_DEFAULTS: VerificationModel = {
+  liveness: { catfish: 0.9, romance_scammer: 0.7, falseFail: 0.005 },
+  age: { age_liar: 0.85, falseFailYoung: 0.01 },
+};
+
+/** Verification facts for one persona (agent_private; deterministic per persona). */
+export function verificationFacets(p: SlopPersona, joinedAt: number, v: VerificationModel): Facet[] {
+  if (!canBeMatched(p.stated.claimedAge)) return [];
+  const r = new Rng(hash32("slop-verify", p.id));
+  const adv = p.hidden.adversary;
+  const liveFail = r.next() < (adv === "catfish" ? v.liveness.catfish : adv === "romance_scammer" ? v.liveness.romance_scammer : v.liveness.falseFail);
+  const ageFail = r.next() < (adv === "age_liar" ? v.age.age_liar : p.stated.claimedAge <= 20 ? v.age.falseFailYoung : 0);
+  const mk = (i: number, kind: string, ok: boolean): Facet => ({
+    id: `${p.id}:verify:${i}`, memberId: p.id, kind: "fact", value: `${kind} check ${ok ? "passed" : "failed"}`, tags: [`verify:${kind}:${ok ? "pass" : "fail"}`],
+    scope: "agent_private", provenance: "connected_source", confidence: 0.95, validFrom: joinedAt, source: "chat", observedAt: joinedAt, inferred: false, confirmedByMember: true,
+  });
+  return [mk(0, "liveness", !liveFail), mk(1, "age", !ageFail)];
 }
 
 /** What the Network recorded so far (harness-maintained; all of it is visible to the Network). */
@@ -49,6 +86,12 @@ export interface SlopNetworkState {
   edges: Edge[];
   /** Members who paused (e.g. started seeing someone). */
   paused: Set<MemberId>;
+  /** Questions the agent asked (optional: older callers build a state without them). */
+  asks?: SlopAskRecord[];
+  /** Stated fields a member told the agent in answer to a question (shown from the next snapshot on). */
+  learned?: Map<MemberId, Set<SlopAskField>>;
+  /** Optional verification before the first intro (VerificationModel); absent = not modelled. */
+  verification?: VerificationModel;
 }
 
 /** Which stated fields the agent learned in onboarding, by richness tier. */
@@ -59,6 +102,20 @@ export const KNOWS: Record<RichnessTier, { ageRange: boolean; scope: boolean; go
   rich:      { ageRange: true,  scope: true,  goal: true,  basicValues: true,  allValues: true,  dealbreakers: true,  interests: 0.8, activities: true,  availability: 0.9, type: true,  identity: true,  occupation: true },
   very_rich: { ageRange: true,  scope: true,  goal: true,  basicValues: true,  allValues: true,  dealbreakers: true,  interests: 1,   activities: true,  availability: 1,   type: true,  identity: true,  occupation: true },
 };
+
+/** What the agent knows after the member answered questions: the tier's knowledge plus the answered fields. */
+export function knowsWith(k: (typeof KNOWS)[RichnessTier], learned?: ReadonlySet<SlopAskField>): (typeof KNOWS)[RichnessTier] {
+  if (!learned?.size) return k;
+  const basics = learned.has("basics");
+  return {
+    ...k,
+    ageRange: k.ageRange || learned.has("age_range"),
+    scope: k.scope || learned.has("distance"),
+    identity: k.identity || learned.has("orientation"),
+    type: k.type || learned.has("type"),
+    goal: k.goal || basics, basicValues: k.basicValues || basics, allValues: k.allValues || basics, dealbreakers: k.dealbreakers || basics,
+  };
+}
 
 /** P(the agent noticed a safety cue in the onboarding chat), by adversary kind and richness. */
 export const SIGNAL_RATES: Record<string, { tag: string; byTier: Record<RichnessTier, number> }> = {
@@ -71,14 +128,14 @@ export const SIGNAL_RATES: Record<string, { tag: string; byTier: Record<Richness
 /** False-positive rate of each cue on an honest adult (an 18-19 year old is more often age-flagged). */
 export const SIGNAL_FALSE_POSITIVE = 0.01, AGE_SIGNAL_FALSE_POSITIVE_YOUNG = 0.06;
 
-/** Core City is "sf" | "nyc"; slop adds "la". Cast at the boundary (proposed core change in the doc). */
+/** SlopCity -> core City (identical since core City gained "la" with the slop pack; kept as the one boundary). */
 export const asCoreCity = (c: SlopCity): City => c as unknown as City;
 
 const tag = (dim: string, x: number) => `${dim}=${x >= 0 ? "+" : ""}${x.toFixed(2)}`;
 
 /** Facets the agent extracted for one persona (deterministic per persona; no hidden truth). */
-export function slopFacetsOf(p: SlopPersona, joinedAt: number): Facet[] {
-  const S = p.stated, tier = p.hidden.richness, K = KNOWS[tier];
+export function slopFacetsOf(p: SlopPersona, joinedAt: number, learned?: ReadonlySet<SlopAskField>): Facet[] {
+  const S = p.stated, tier = p.hidden.richness, K = knowsWith(KNOWS[tier], learned);
   const minor = !canBeMatched(S.claimedAge);
   const r = new Rng(hash32("slop-knows", p.id));
   const out: Facet[] = [];
@@ -153,18 +210,21 @@ export function buildSlopSnapshot(personas: readonly SlopPersona[], state: SlopN
   const joinedAt = SLOP_WORLD_START;
   for (const p of personas) {
     members.push(slopMemberOf(p, joinedAt, state));
-    facets.push(...slopFacetsOf(p, joinedAt));
+    const learned = state.learned?.get(p.id);
+    facets.push(...slopFacetsOf(p, joinedAt, learned));
+    if (state.verification) facets.push(...verificationFacets(p, joinedAt, state.verification));
     const S = p.stated, city = zipInfo.get(S.homeZip)!.city;
+    const K = knowsWith(KNOWS[p.hidden.richness], learned);
     if (canBeMatched(S.claimedAge)) {
       const lastAsk = state.inboundAsks.filter(a => a.memberId === p.id).reduce((m, a) => Math.max(m, a.at), joinedAt);
       intents.push({
         id: `${p.id}:date`, memberId: p.id, category: "romance", horizonDays: 90, createdAt: lastAsk,
-        objective: "go on dates", details: KNOWS[p.hidden.richness].goal ? `goal: ${S.goal}` : undefined,
+        objective: "go on dates", details: K.goal ? `goal: ${S.goal}` : undefined,
         status: state.paused.has(p.id) ? "paused" : "active",
       });
     }
     presence.push({ memberId: p.id, city: asCoreCity(city), type: "home", areas: [`zip:${S.homeZip}`] });
-    if (KNOWS[p.hidden.richness].scope && S.scope.mode === "multi_city")
+    if (K.scope && S.scope.mode === "multi_city")
       for (const c of S.scope.cities) if (c !== city) presence.push({ memberId: p.id, city: asCoreCity(c), type: "routine", areas: [] });
     // Trips are told to the agent: visible for the week they happen (announced the week before).
     if (S.scope.mode !== "multi_city") for (const pr of p.hidden.presence) if (pr.city !== city) for (const w of pr.weeks)
@@ -174,5 +234,6 @@ export function buildSlopSnapshot(personas: readonly SlopPersona[], state: SlopN
     now: state.now, members, facets, intents, presence, edges: state.edges.map(e => ({ ...e })), recentProposals: [],
     interactions: state.interactions.map(i => ({ ...i })), feedback: state.feedback.map(f => ({ ...f })),
     safetyHolds: state.safetyHolds.map(h => ({ ...h })), inboundAsks: state.inboundAsks.map(a => ({ ...a })),
+    asks: (state.asks ?? []).map(a => ({ ...a })),
   };
 }

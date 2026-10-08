@@ -17,7 +17,7 @@ import { SlopBehavior, type HarmEvent } from "./behavior.ts";
 import type { SlopCity } from "./geo.ts";
 import { SlopOracle, type DateOutcome } from "./oracle.ts";
 import { SLOTS, SLOT_DAY, generateSlopPersonas, type DateActivity, type SlopGenOptions, type SlopPersona } from "./persona.ts";
-import { SLOP_WORLD_START, buildSlopSnapshot, type SlopNetworkState, type SlopSnapshot } from "./snapshot.ts";
+import { SLOP_WORLD_START, buildSlopSnapshot, type SlopAskField, type SlopNetworkState, type SlopSnapshot, type VerificationModel } from "./snapshot.ts";
 import { visibleProfiles, type VisibleProfile } from "./visible.ts";
 
 /** One date proposal from a matcher. `options`: slot indices into SLOTS (2-3). */
@@ -31,7 +31,17 @@ export interface MatcherContext {
   /** Seeded per run and week. */
   rng: Rng; capPerWeek: number;
 }
-export interface SlopMatcher { name: string; propose(ctx: MatcherContext): SlopProposal[] }
+/**
+ * A question the matcher sends a member instead of (or before) proposing (engine "ask"). The member
+ * answers with p = their reply probability; an answer is visible from the next week's snapshot.
+ *   orientation / age_range / distance: the hard-filter fields; basics: goal, dealbreakers, lifestyle;
+ *   type: their stated type and how they describe themselves (the 5 trait dimensions).
+ */
+export type { SlopAskField };
+export interface SlopAsk { memberId: MemberId; field: SlopAskField }
+/** What a matcher returns: proposals (in priority order) and optional asks. */
+export type MatcherOutput = SlopProposal[] | { proposals: SlopProposal[]; asks?: SlopAsk[] };
+export interface SlopMatcher { name: string; propose(ctx: MatcherContext): MatcherOutput | Promise<MatcherOutput> }
 
 /** Harness-side record of one proposal and everything that happened to it (includes hidden truth). */
 export interface FlowRecord {
@@ -55,6 +65,8 @@ export interface SlopRunOptions extends Omit<SlopGenOptions, "seed"> {
   /** A matcher, or a factory that gets the world (oracle baselines need hidden truth). */
   matcher: SlopMatcher | ((w: SlopWorld) => SlopMatcher);
   personas?: SlopPersona[];
+  /** Model PRD 40.5 verification before the first intro (snapshot.ts VerificationModel); off by default. */
+  verification?: VerificationModel;
 }
 
 export interface SlopWorld {
@@ -62,7 +74,11 @@ export interface SlopWorld {
   state: SlopNetworkState;
 }
 
-export interface SlopRunResult { world: SlopWorld; flows: FlowRecord[]; matcher: string }
+export interface SlopRunResult {
+  world: SlopWorld; flows: FlowRecord[]; matcher: string;
+  /** Asks sent and answered (matchers that ask before proposing). */
+  asks?: { sent: number; answered: number; byField: Partial<Record<SlopAskField, number>> };
+}
 
 const SLOT_HOUR: Record<string, number> = { day: 14, eve: 19 };
 export const slotTime = (week: number, slot: number) =>
@@ -74,99 +90,146 @@ export function createSlopWorld(o: Omit<SlopRunOptions, "matcher">): SlopWorld {
   const oracle = new SlopOracle(personas, o.seed);
   return {
     seed: o.seed, weeks, personas, oracle, behavior: new SlopBehavior(oracle, o.seed),
-    state: { now: SLOP_WORLD_START, week: 0, interactions: [], feedback: [], safetyHolds: [], inboundAsks: [], edges: [], paused: new Set() },
+    state: { now: SLOP_WORLD_START, week: 0, interactions: [], feedback: [], safetyHolds: [], inboundAsks: [], edges: [], paused: new Set(), asks: [], learned: new Map(), ...(o.verification ? { verification: o.verification } : {}) },
   };
+}
+
+interface RunCtx {
+  world: SlopWorld; cap: number; flows: FlowRecord[]; likedWeek: Map<MemberId, number>;
+  asks: NonNullable<SlopRunResult["asks"]>;
+}
+
+/** Start of week `week`: inbound asks, then the snapshot the matcher sees. */
+function beginWeek(rc: RunCtx, week: number, seed: number): { ctx: MatcherContext; askedNow: Set<MemberId> } {
+  const { world } = rc, { behavior, state } = world;
+  state.week = week;
+  state.now = SLOP_WORLD_START + week * 7 * DAY;
+  const askedNow = new Set<MemberId>();
+  for (const p of world.personas) {
+    if (!canBeMatched(p.stated.claimedAge) || state.paused.has(p.id)) continue;
+    if (behavior.asksThisWeek(p.id, week)) { askedNow.add(p.id); state.inboundAsks.push({ memberId: p.id, at: state.now + 9 * HOUR }); }
+  }
+  state.now += 12 * HOUR; // the matcher runs Monday noon UTC, after the morning asks
+  const snapshot = buildSlopSnapshot(world.personas, state);
+  const profiles = visibleProfiles(snapshot);
+  return { ctx: { week, snapshot, profiles, rng: new Rng(hash32(seed, "matcher", week)), capPerWeek: rc.cap }, askedNow };
 }
 
 export function runSlopWorld(o: SlopRunOptions): SlopRunResult {
   const world = createSlopWorld(o);
   const matcher = typeof o.matcher === "function" ? o.matcher(world) : o.matcher;
-  const cap = o.capPerWeek ?? 2;
-  const { oracle, behavior, state } = world;
-  const flows: FlowRecord[] = [];
-  const likedWeek = new Map<MemberId, number>();
+  const rc: RunCtx = { world, cap: o.capPerWeek ?? 2, flows: [], likedWeek: new Map(), asks: { sent: 0, answered: 0, byField: {} } };
   for (let week = 0; week < world.weeks; week++) {
-    state.week = week;
-    state.now = SLOP_WORLD_START + week * 7 * DAY;
-    const askedNow = new Set<MemberId>();
-    for (const p of world.personas) {
-      if (!canBeMatched(p.stated.claimedAge) || state.paused.has(p.id)) continue;
-      if (behavior.asksThisWeek(p.id, week)) { askedNow.add(p.id); state.inboundAsks.push({ memberId: p.id, at: state.now + 9 * HOUR }); }
-    }
-    state.now += 12 * HOUR; // the matcher runs Monday noon UTC, after the morning asks
-    const snapshot = buildSlopSnapshot(world.personas, state);
-    const profiles = visibleProfiles(snapshot);
-    const proposals = matcher.propose({ week, snapshot, profiles, rng: new Rng(hash32(o.seed, "matcher", week)), capPerWeek: cap });
-    const invites = new Map<MemberId, number>(), booked = new Set<MemberId>();
-    const inc = (id: MemberId) => invites.set(id, (invites.get(id) ?? 0) + 1);
-    proposals.forEach((pr, i) => {
-      const key = `w${week}:${i}:${pr.first}:${pr.partner}`;
-      const a = oracle.byId.get(pr.first), b = oracle.byId.get(pr.partner);
-      const f: FlowRecord = { key, week, first: pr.first, partner: pr.partner, city: pr.city, activity: pr.activity, options: [...pr.options],
-        stage: "dropped_policy", mutualYes: false, revealed: false, filterViolation: false, harms: [], declaredMinor: false };
-      flows.push(f);
-      if (!a || !b || a.id === b.id) return;
-      f.filterViolation = !oracle.statedMutual(a, b, week);
-      if (!canBeMatched(a.stated.claimedAge) || !canBeMatched(b.stated.claimedAge)) { f.declaredMinor = true; return; }
-      if (state.paused.has(a.id) || state.paused.has(b.id)) return;
-      const interaction: InteractionRecord = { id: key, kind: "intro", category: "romance", participants: [a.id, b.id], at: state.now, outcome: "pending" };
-      const done = (outcome: InteractionRecord["outcome"], extra: Partial<InteractionRecord> = {}) => state.interactions.push({ ...interaction, outcome, ...extra });
-      const ctx = (id: MemberId) => ({
-        week, city: pr.city, activity: pr.activity, asked: askedNow.has(id),
-        recentLikedDate: likedWeek.has(id) && week - likedWeek.get(id)! <= 2,
-        probesThisWeek: invites.get(id) ?? 0,
-        sharedFactMatch: !!pr.sharedFact && oracle.p(id).hidden.interests.includes(pr.sharedFact),
-      });
-      // 1. first probe
-      if ((invites.get(a.id) ?? 0) >= cap || booked.has(a.id)) { f.stage = "dropped_first_cap"; return; }
-      const c1 = ctx(a.id); inc(a.id);
-      const ans1 = behavior.answerProbe(a.id, key, c1, pr.options);
-      f.firstYes = ans1.yes;
-      if (!ans1.replied) { f.stage = "first_silent"; done("expired", { noResponse: [a.id] }); return; }
-      if (!ans1.yes) { f.stage = "first_no"; done("declined", { declinedBy: [a.id] }); return; }
-      // 2. partner probe, offered the first member's picks (or the original options)
-      if ((invites.get(b.id) ?? 0) >= cap || booked.has(b.id)) { f.stage = "dropped_partner_cap"; done("expired", { acceptedBy: [a.id] }); return; }
-      const opts2 = ans1.picks.length ? ans1.picks : pr.options;
-      const c2 = ctx(b.id); inc(b.id);
-      const ans2 = behavior.answerProbe(b.id, key, c2, opts2);
-      f.partnerYes = ans2.yes;
-      if (!ans2.replied) { f.stage = "partner_silent"; done("expired", { acceptedBy: [a.id], noResponse: [b.id] }); return; }
-      if (!ans2.yes) { f.stage = "partner_no"; done("declined", { acceptedBy: [a.id], declinedBy: [b.id] }); return; }
-      f.mutualYes = true;
-      // 3. reveal = booked plan, at a slot both picked, else the agent's best guess (first option offered)
-      const both = ans1.picks.filter(s => ans2.picks.includes(s));
-      const slot = both[0] ?? opts2[0]!;
-      f.slot = slot; f.revealed = true; f.day = week * 7 + SLOT_DAY[SLOTS[slot]!];
-      f.harms.push(...behavior.harms(a.id, b.id, key, "reveal"));
-      const outA = behavior.backsOut(a.id, b.id, key, oracle.statedAccepts(a, b, week));
-      const outB = behavior.backsOut(b.id, a.id, key, oracle.statedAccepts(b, a, week));
-      if (outA || outB) { f.stage = "backout"; done("cancelled", { acceptedBy: [a.id, b.id], declinedBy: [...(outA ? [a.id] : []), ...(outB ? [b.id] : [])] }); applyHarms(world, f.harms); return; }
-      booked.add(a.id); booked.add(b.id);
-      // 4. the date
-      const freeA = !!a.hidden.adversary || oracle.free(a.id, week, slot), freeB = !!b.hidden.adversary || oracle.free(b.id, week, slot);
-      f.seatsNotFree = (freeA ? 0 : 1) + (freeB ? 0 : 1);
-      const showA = behavior.attends(a.id, key, freeA), showB = behavior.attends(b.id, key, freeB);
-      const at = slotTime(week, slot);
-      if (!showA || !showB) {
-        f.stage = "no_show"; done("no_show", { acceptedBy: [a.id, b.id], at }); applyHarms(world, f.harms); return;
-      }
-      f.stage = "date";
-      const o2 = oracle.dateOutcome(a.id, b.id, pr.activity);
-      f.outcome = o2; f.good = o2.good;
-      f.harms.push(...behavior.harms(a.id, b.id, key, "date"));
-      done("completed", { acceptedBy: [a.id, b.id], at });
-      state.edges.push({ from: a.id, to: b.id, type: "met", strength: 1, explicit: true, createdAt: at });
-      for (const [id, other, side] of [[a.id, b.id, "a"], [b.id, a.id, "b"]] as const) {
-        const fb = behavior.feedback(id, key, o2, side);
-        if (fb.replied) state.feedback.push({ id: `fb:${key}:${id}`, from: id, about: other, opportunityId: key, at: at + 20 * HOUR, sentiment: fb.sentiment, wouldMeetAgain: fb.wouldMeetAgain });
-        if ((side === "a" ? o2.wantsSecondA : o2.wantsSecondB)) likedWeek.set(id, week);
-      }
-      f.secondDate = behavior.secondDate(key, o2);
-      if (f.secondDate) for (const id of [a.id, b.id]) if (behavior.pausesAfterSecond(id, key)) state.paused.add(id);
-      applyHarms(world, f.harms);
-    });
+    const { ctx, askedNow } = beginWeek(rc, week, o.seed);
+    const out = matcher.propose(ctx);
+    if (out instanceof Promise) throw new Error(`matcher ${matcher.name} is async: use runSlopWorldAsync`);
+    resolveWeek(rc, week, out, askedNow);
   }
-  return { world, flows, matcher: matcher.name };
+  return { world, flows: rc.flows, matcher: matcher.name, ...(rc.asks.sent ? { asks: rc.asks } : {}) };
+}
+
+/** Same as runSlopWorld for matchers whose propose is async (the engine-backed slop pack). */
+export async function runSlopWorldAsync(o: SlopRunOptions): Promise<SlopRunResult> {
+  const world = createSlopWorld(o);
+  const matcher = typeof o.matcher === "function" ? o.matcher(world) : o.matcher;
+  const rc: RunCtx = { world, cap: o.capPerWeek ?? 2, flows: [], likedWeek: new Map(), asks: { sent: 0, answered: 0, byField: {} } };
+  for (let week = 0; week < world.weeks; week++) {
+    const { ctx, askedNow } = beginWeek(rc, week, o.seed);
+    resolveWeek(rc, week, await matcher.propose(ctx), askedNow);
+  }
+  return { world, flows: rc.flows, matcher: matcher.name, ...(rc.asks.sent ? { asks: rc.asks } : {}) };
+}
+
+/** The week's asks (answered or not) and the probe-first flows for the week's proposals. */
+function resolveWeek(rc: RunCtx, week: number, out: MatcherOutput, askedNow: Set<MemberId>) {
+  const { world, cap, flows, likedWeek } = rc;
+  const { oracle, behavior, state } = world;
+  const proposals = Array.isArray(out) ? out : out.proposals;
+  const asks = Array.isArray(out) ? [] : out.asks ?? [];
+  for (const a of asks) {
+    const p = oracle.byId.get(a.memberId);
+    if (!p || !canBeMatched(p.stated.claimedAge)) continue;
+    rc.asks.sent++;
+    rc.asks.byField[a.field] = (rc.asks.byField[a.field] ?? 0) + 1;
+    const answered = behavior.answersAsk(a.memberId, week, a.field);
+    const rec = { memberId: a.memberId, field: a.field, at: state.now, ...(answered ? { answeredAt: state.now + 6 * HOUR } : {}) };
+    (state.asks ??= []).push(rec);
+    if (answered) {
+      rc.asks.answered++;
+      const learned = (state.learned ??= new Map());
+      const set = learned.get(a.memberId) ?? new Set();
+      set.add(a.field);
+      learned.set(a.memberId, set);
+    }
+  }
+  const invites = new Map<MemberId, number>(), booked = new Set<MemberId>();
+  const inc = (id: MemberId) => invites.set(id, (invites.get(id) ?? 0) + 1);
+  proposals.forEach((pr, i) => {
+    const key = `w${week}:${i}:${pr.first}:${pr.partner}`;
+    const a = oracle.byId.get(pr.first), b = oracle.byId.get(pr.partner);
+    const f: FlowRecord = { key, week, first: pr.first, partner: pr.partner, city: pr.city, activity: pr.activity, options: [...pr.options],
+      stage: "dropped_policy", mutualYes: false, revealed: false, filterViolation: false, harms: [], declaredMinor: false };
+    flows.push(f);
+    if (!a || !b || a.id === b.id) return;
+    f.filterViolation = !oracle.statedMutual(a, b, week);
+    if (!canBeMatched(a.stated.claimedAge) || !canBeMatched(b.stated.claimedAge)) { f.declaredMinor = true; return; }
+    if (state.paused.has(a.id) || state.paused.has(b.id)) return;
+    const interaction: InteractionRecord = { id: key, kind: "intro", category: "romance", participants: [a.id, b.id], at: state.now, outcome: "pending" };
+    const done = (outcome: InteractionRecord["outcome"], extra: Partial<InteractionRecord> = {}) => state.interactions.push({ ...interaction, outcome, ...extra });
+    const ctx = (id: MemberId) => ({
+      week, city: pr.city, activity: pr.activity, asked: askedNow.has(id),
+      recentLikedDate: likedWeek.has(id) && week - likedWeek.get(id)! <= 2,
+      probesThisWeek: invites.get(id) ?? 0,
+      sharedFactMatch: !!pr.sharedFact && oracle.p(id).hidden.interests.includes(pr.sharedFact),
+    });
+    // 1. first probe
+    if ((invites.get(a.id) ?? 0) >= cap || booked.has(a.id)) { f.stage = "dropped_first_cap"; return; }
+    const c1 = ctx(a.id); inc(a.id);
+    const ans1 = behavior.answerProbe(a.id, key, c1, pr.options);
+    f.firstYes = ans1.yes;
+    if (!ans1.replied) { f.stage = "first_silent"; done("expired", { noResponse: [a.id] }); return; }
+    if (!ans1.yes) { f.stage = "first_no"; done("declined", { declinedBy: [a.id] }); return; }
+    // 2. partner probe, offered the first member's picks (or the original options)
+    if ((invites.get(b.id) ?? 0) >= cap || booked.has(b.id)) { f.stage = "dropped_partner_cap"; done("expired", { acceptedBy: [a.id] }); return; }
+    const opts2 = ans1.picks.length ? ans1.picks : pr.options;
+    const c2 = ctx(b.id); inc(b.id);
+    const ans2 = behavior.answerProbe(b.id, key, c2, opts2);
+    f.partnerYes = ans2.yes;
+    if (!ans2.replied) { f.stage = "partner_silent"; done("expired", { acceptedBy: [a.id], noResponse: [b.id] }); return; }
+    if (!ans2.yes) { f.stage = "partner_no"; done("declined", { acceptedBy: [a.id], declinedBy: [b.id] }); return; }
+    f.mutualYes = true;
+    // 3. reveal = booked plan, at a slot both picked, else the agent's best guess (first option offered)
+    const both = ans1.picks.filter(s => ans2.picks.includes(s));
+    const slot = both[0] ?? opts2[0]!;
+    f.slot = slot; f.revealed = true; f.day = week * 7 + SLOT_DAY[SLOTS[slot]!];
+    f.harms.push(...behavior.harms(a.id, b.id, key, "reveal"));
+    const outA = behavior.backsOut(a.id, b.id, key, oracle.statedAccepts(a, b, week));
+    const outB = behavior.backsOut(b.id, a.id, key, oracle.statedAccepts(b, a, week));
+    if (outA || outB) { f.stage = "backout"; done("cancelled", { acceptedBy: [a.id, b.id], declinedBy: [...(outA ? [a.id] : []), ...(outB ? [b.id] : [])] }); applyHarms(world, f.harms); return; }
+    booked.add(a.id); booked.add(b.id);
+    // 4. the date
+    const freeA = !!a.hidden.adversary || oracle.free(a.id, week, slot), freeB = !!b.hidden.adversary || oracle.free(b.id, week, slot);
+    f.seatsNotFree = (freeA ? 0 : 1) + (freeB ? 0 : 1);
+    const showA = behavior.attends(a.id, key, freeA), showB = behavior.attends(b.id, key, freeB);
+    const at = slotTime(week, slot);
+    if (!showA || !showB) {
+      f.stage = "no_show"; done("no_show", { acceptedBy: [a.id, b.id], at }); applyHarms(world, f.harms); return;
+    }
+    f.stage = "date";
+    const o2 = oracle.dateOutcome(a.id, b.id, pr.activity);
+    f.outcome = o2; f.good = o2.good;
+    f.harms.push(...behavior.harms(a.id, b.id, key, "date"));
+    done("completed", { acceptedBy: [a.id, b.id], at });
+    state.edges.push({ from: a.id, to: b.id, type: "met", strength: 1, explicit: true, createdAt: at });
+    for (const [id, other, side] of [[a.id, b.id, "a"], [b.id, a.id, "b"]] as const) {
+      const fb = behavior.feedback(id, key, o2, side);
+      if (fb.replied) state.feedback.push({ id: `fb:${key}:${id}`, from: id, about: other, opportunityId: key, at: at + 20 * HOUR, sentiment: fb.sentiment, wouldMeetAgain: fb.wouldMeetAgain });
+      if ((side === "a" ? o2.wantsSecondA : o2.wantsSecondB)) likedWeek.set(id, week);
+    }
+    f.secondDate = behavior.secondDate(key, o2);
+    if (f.secondDate) for (const id of [a.id, b.id]) if (behavior.pausesAfterSecond(id, key)) state.paused.add(id);
+    applyHarms(world, f.harms);
+  });
 }
 
 /** Reported harms: the offender goes on a safety hold, the victim blocks them (both visible). */
