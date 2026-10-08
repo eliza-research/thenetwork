@@ -4,12 +4,13 @@ import { describe, expect, test } from "bun:test";
 import { DEFAULT_CONFIG, resolveConfig } from "../src/config.ts";
 import { cosine, localEmbed, tokenize } from "../src/embed.ts";
 import { runEngine } from "../src/engine.ts";
+import { passCacheKey, prob } from "../src/judgeCommon.ts";
 import { Rng } from "../src/rng.ts";
 import { MatcherScheduler, MemoryProposalStore } from "../src/tick.ts";
 import { eligibilityFor, isHomeEntry, riskTerms } from "../src/filters.ts";
 import { randomWorld } from "../src/testkit.ts";
 import { DAY, HOUR } from "@thenetwork/core";
-import { baseMember, emptyInput, facet, FakeLLM, intent, mkWorld, NOW } from "./helpers.ts";
+import { baseMember, cand, emptyInput, facet, FakeLLM, intent, mkWorld, NOW } from "./helpers.ts";
 
 describe("engine-pipeline-1: exploration never selects judge-rejected configurations", () => {
   test("a judge that says no to everything: no selected proposal carries a rejection reason or the 'no' text", async () => {
@@ -244,5 +245,26 @@ describe("engine-pipeline-2 / -9: duplicate member ids; help alternates", () => 
       for (const alt of p.alternates) for (const h of p.participants.slice(1)) expect(w.blocked.has([alt, h].sort().join("|"))).toBe(false);
     }
     expect(r.proposals.some(p => p.generator === "help_request")).toBe(true);
+  });
+});
+
+describe("engine-pipeline-19 / -23: judge cache key and probability parsing", () => {
+  test("the cache key changes with the connector, a fixed window and the pass-2 context", () => {
+    const inp = emptyInput(NOW);
+    inp.members.push(baseMember("a"), baseMember("b"), baseMember("v"));
+    const w = mkWorld(inp), w2 = mkWorld(inp, { judge: { pass2Context: "compact" } });
+    const base = cand(["a", "b"]);
+    const k = passCacheKey(w, base, "v1");
+    expect(passCacheKey(w, cand(["a", "b"], { via: "v" }), "v1")).not.toBe(k);
+    expect(passCacheKey(w, cand(["a", "b"], { fixedWindow: { start: NOW + DAY, end: NOW + DAY + HOUR } }), "v1")).not.toBe(k);
+    expect(passCacheKey(w2, base, "v1")).not.toBe(k);
+    expect(passCacheKey(w, cand(["a", "b"]), "v1")).toBe(k);
+  });
+  test("prob: 1.5 is rejected, percents from 2 up are read as percents", () => {
+    expect(prob(1.5)).toBeUndefined();
+    expect(prob(70)).toBe(0.7);
+    expect(prob("0.4")).toBe(0.4);
+    expect(prob(1)).toBe(1);
+    expect(prob(101)).toBeUndefined();
   });
 });
