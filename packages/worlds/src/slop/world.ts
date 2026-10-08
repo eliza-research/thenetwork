@@ -19,6 +19,7 @@ import { SlopOracle, type DateOutcome } from "./oracle.ts";
 import { SLOTS, SLOT_DAY, generateSlopPersonas, type DateActivity, type SlopGenOptions, type SlopPersona } from "./persona.ts";
 import { SLOP_WORLD_START, buildSlopSnapshot, reviewDecision, type PlatformModel, type SlopAskField, type SlopNetworkState, type SlopSnapshot, type VerificationModel } from "./snapshot.ts";
 import { visibleProfiles, type VisibleProfile } from "./visible.ts";
+import type { BodyTypeModel } from "./bodyType.ts";
 
 /** One date proposal from a matcher. `options`: slot indices into SLOTS (2-3). */
 export interface SlopProposal {
@@ -69,6 +70,8 @@ export interface SlopRunOptions extends Omit<SlopGenOptions, "seed"> {
   verification?: VerificationModel;
   /** Optional platform features (photos in probes, relay classifier, human review, widen asks); off by default. */
   platform?: PlatformModel;
+  /** Iteration 4: body types and body-type preferences (bodyType.ts); off by default. */
+  bodyTypes?: BodyTypeModel;
 }
 
 export interface SlopWorld {
@@ -91,10 +94,10 @@ export const slotTime = (week: number, slot: number) =>
 export function createSlopWorld(o: Omit<SlopRunOptions, "matcher">): SlopWorld {
   const weeks = o.weeks ?? 4;
   const personas = o.personas ?? generateSlopPersonas({ ...o, seed: o.seed, weeks });
-  const oracle = new SlopOracle(personas, o.seed);
+  const oracle = new SlopOracle(personas, o.seed, o.bodyTypes);
   return {
     seed: o.seed, weeks, personas, oracle, behavior: new SlopBehavior(oracle, o.seed),
-    state: { now: SLOP_WORLD_START, week: 0, interactions: [], feedback: [], safetyHolds: [], inboundAsks: [], edges: [], paused: new Set(), asks: [], learned: new Map(), ...(o.verification ? { verification: o.verification } : {}), ...(o.platform ? { platform: o.platform } : {}) },
+    state: { now: SLOP_WORLD_START, week: 0, interactions: [], feedback: [], safetyHolds: [], inboundAsks: [], edges: [], paused: new Set(), asks: [], learned: new Map(), ...(o.verification ? { verification: o.verification } : {}), ...(o.platform ? { platform: o.platform } : {}), ...(o.bodyTypes ? { bodyTypes: o.bodyTypes } : {}) },
   };
 }
 

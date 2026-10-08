@@ -1,26 +1,37 @@
-// Iteration 3 (founder decision 2026-10-08): appearance ratings from photos, used ONLY for an
-// assortative-similarity term ("match people whose ratings are close"). A pluggable
-// `AppearanceRater` returns { face, body, overall } on a z-like scale (0 = typical, about 1 = one SD)
-// with a confidence. Ratings are computed when photos are uploaded (outside the engine run) and
-// stored as agent_private facets (`appearanceFacets`); the pack reads them from the snapshot.
+// Appearance ratings from photos (iteration 3 interface; iteration 4, founder decision 2026-10-08:
+// ON in matching, NEVER shared). A pluggable `AppearanceRater` returns { face, body, overall } on a
+// z-like scale (0 = typical, about 1 = one SD) with a confidence, plus a categorical body type. The
+// production rater is `WorkersAIClefRater` (clef.ts: Cloudflare Workers AI Clef decision model,
+// jevector-style feature vector, learned head). Ratings are computed when photos are uploaded
+// (outside the engine run) and stored as agent_private facets (`appearanceFacet`); the pack reads
+// them from the snapshot and uses them ONLY inside matching (an assortative-similarity term on
+// face / body / overall, and body type against stated or revealed body-type preferences).
 //
 // Rules (enforced here and tested):
 //  - ADULTS ONLY (hard rule): photo processing, photo-in-probe and appearance ratings are for verified
 //    18+ members. Every rater refuses a subject who is not `canBeMatched` (13-17, or age unknown or
 //    invalid) or whose age is not verified, BEFORE touching a photo (no embedding, no model call);
 //    `appearanceFacet` throws for such a subject and the pack ignores any rating on one;
-//  - agent_private only: never shown, never in member-facing text (the leak gate treats the facet as
-//    private vocabulary), never written in plain text to run logs (the run log carries no facets;
-//    a test greps the whole result for the score strings);
-//  - KNOWN RISK: published attractiveness models carry racial, age, body-size and disability bias.
-//    The slop world measures the outcome gap with a configurable rater bias (docs, iteration 3).
-//    PRD 40.5 currently says "never used: photo attractiveness scores"; this needs a PRD change.
+//  - NEVER SHARED: agent_private only; no score, rank, bucket, body type or derived phrase ("you're
+//    both attractive", "similar looks") in any member-facing text, probe, reveal, explanation, ask,
+//    proposal or run log (`appearanceLeak` below; conformance tests grep all of them). Members talk
+//    through the agent relay and learn only what the agent tells them (first name, the plan);
+//  - KNOWN RISK: attractiveness models carry racial, age, body-size and disability bias. The slop
+//    world measures the outcome gap under a configurable rater bias, and `biasMonitor.ts` reports
+//    outcome ratios by group for admin (docs/results/2026-10-08-slop-pack.md, iterations 3-4).
 import type { Facet, MemberId } from "@thenetwork/core";
 import { canBeMatched } from "@thenetwork/core";
+
+/** Categorical body type (a matching attribute, never shown). "unclear" ratings carry no body type. */
+export const BODY_TYPES = ["slim", "athletic", "average", "curvy", "plus_size"] as const;
+export type BodyType = (typeof BODY_TYPES)[number];
+export const isBodyType = (x: unknown): x is BodyType => typeof x === "string" && (BODY_TYPES as readonly string[]).includes(x);
 
 export interface AppearanceScore {
   /** z-like scores: 0 = typical, positive = rated more attractive. */
   face: number; body: number; overall: number;
+  /** Categorical body type when the photos show it clearly (else undefined), with its own confidence 0..1. */
+  bodyType?: BodyType; bodyTypeConfidence?: number;
   /** 0..1: how much to trust the rating (photo quality, agreement, number of photos). */
   confidence: number;
   /** Rater id and version (provenance; never shown). */
@@ -135,14 +146,41 @@ export function appearanceFacet(memberId: MemberId, subject: RatingSubject, s: A
   const f = (x: number) => x.toFixed(2);
   return {
     id: `${memberId}:appearance`, memberId, kind: "fact", value: "photo rating (internal)",
-    tags: [`${APPEARANCE_PREFIX}face=${f(s.face)}`, `${APPEARANCE_PREFIX}body=${f(s.body)}`, `${APPEARANCE_PREFIX}overall=${f(s.overall)}`, `${APPEARANCE_PREFIX}conf=${f(s.confidence)}`],
+    tags: [`${APPEARANCE_PREFIX}face=${f(s.face)}`, `${APPEARANCE_PREFIX}body=${f(s.body)}`, `${APPEARANCE_PREFIX}overall=${f(s.overall)}`, `${APPEARANCE_PREFIX}conf=${f(s.confidence)}`,
+      ...(s.bodyType ? [`${APPEARANCE_PREFIX}bodyType=${s.bodyType}`, `${APPEARANCE_PREFIX}bodyTypeConf=${f(s.bodyTypeConfidence ?? s.confidence)}`] : [])],
     scope: "agent_private", provenance: "inferred", confidence: s.confidence, validFrom: at, observedAt: at, inferred: true, confirmedByMember: false,
   };
 }
-/** Read a rating back from tags (undefined when absent or malformed). */
-export function parseAppearance(tags: readonly string[]): Omit<AppearanceScore, "model"> | undefined {
+/** Read a rating back from tags (undefined when absent or malformed). Body type is optional (iteration-3 facets have none). */
+export function parseAppearance(tags: readonly string[]): (Omit<AppearanceScore, "model">) | undefined {
   const v: Record<string, number> = {};
-  for (const t of tags) if (t.startsWith(APPEARANCE_PREFIX)) { const [k, x] = t.slice(APPEARANCE_PREFIX.length).split("="); v[k!] = Number(x); }
+  let bodyType: BodyType | undefined;
+  for (const t of tags) if (t.startsWith(APPEARANCE_PREFIX)) {
+    const [k, x] = t.slice(APPEARANCE_PREFIX.length).split("=");
+    if (k === "bodyType") { if (isBodyType(x)) bodyType = x; } else v[k!] = Number(x);
+  }
   if (![v.face, v.body, v.overall, v.conf].every(x => Number.isFinite(x))) return undefined;
-  return { face: v.face!, body: v.body!, overall: v.overall!, confidence: v.conf! };
+  return { face: v.face!, body: v.body!, overall: v.overall!, confidence: v.conf!, ...(bodyType ? { bodyType, bodyTypeConfidence: Number.isFinite(v.bodyTypeConf) ? v.bodyTypeConf! : v.conf! } : {}) };
+}
+
+/**
+ * Words and phrases that would disclose an appearance rating, or that it is used, to a member
+ * ("you're both attractive", "similar looks", "rated", "your score", body-type labels...). Checked on
+ * every member-facing string, proposal and run log in the conformance tests; the platform's relay
+ * should run `appearanceLeak` on agent-authored text about the other person too.
+ */
+export const APPEARANCE_LEAK_PATTERNS: readonly RegExp[] = [
+  /\battractive(ness)?\b/i, /\bunattractive\b/i, /\bgood[- ]looking\b/i, /\b(cute|pretty|handsome|beautiful|gorgeous|sexy)\b/i,
+  /\b(similar|same|matching|compatible)\s+(looks|attractiveness|appearance|level)\b/i, /\blooks?\s+(match|similar|alike|level|rating|score)\b/i,
+  /\bout of your league\b/i, /\bin your league\b/i,
+  /\b(appearance|beauty|looks|face|body|photo|selfie|picture)\s*(rating|score|rank|ranking|bucket|tier|percentile|band)s?\b/i,
+  /\b(rating|score|rank|ranking|bucket|tier|percentile)\s+(of|for)\s+(your|their|his|her)\s+(looks|face|body|photos?|appearance)\b/i,
+  /\bappearance\b/i, /\bbody[- ]?type\b/i, /\b(slim|athletic|curvy|plus[- ]size[d]?|heavyset|overweight|skinny|petite|chubby)\b/i,
+  /\bappearance:/i, /\bclef\b/i, /\bphoto rating\b/i, /\btop\s+\d+\s*%/i, /\b\d+(st|nd|rd|th)\s+percentile\b/i,
+];
+/** The first appearance-disclosing pattern in `text` (or an exact stored score tag), else null. */
+export function appearanceLeak(text: string, scoreTags: readonly string[] = []): string | null {
+  for (const re of APPEARANCE_LEAK_PATTERNS) { const m = re.exec(text); if (m) return m[0]; }
+  for (const t of scoreTags) if (t && text.includes(t)) return t;
+  return null;
 }

@@ -15,11 +15,35 @@ import type { Scored } from "../../scoring.ts";
 import type { Candidate } from "../../types.ts";
 import { pairKey, type World } from "../../world.ts";
 import type { SlopPackOptions } from "./options.ts";
+import { slopProfiles } from "./profile.ts";
+import { appearanceGap } from "./score.ts";
 
 interface Edge { s: Scored; a: MemberId; b: MemberId; v: number }
 
 /** Per-run context for selection.adjust (degree = eligible partners, demand = how many rank you top-5). */
-const runStats = new WeakMap<World, { degree: Map<MemberId, number>; demand: Map<MemberId, number>; maxDemand: number }>();
+const runStats = new WeakMap<World, { degree: Map<MemberId, number>; demand: Map<MemberId, number>; maxDemand: number; floorLift: Map<MemberId, number> }>();
+
+/**
+ * Iteration 5 exposure floor by rating quintile: lift per member (0 for most). Quintiles over the
+ * members in this run with a usable rating; a quintile's mean dates so far is compared with the
+ * rated mean (both + `smooth`, so no history = no lift). Internal only; nothing is shown or logged.
+ */
+export function ratingFloorLift(o: SlopPackOptions, w: World, ids: Iterable<MemberId>): Map<MemberId, number> {
+  const F = o.congestion.ratingFloor, out = new Map<MemberId, number>();
+  if (!F?.weight || o.appearance.mode === "off" || !w.input) return out;
+  const P = slopProfiles(w.input, w.canonical);
+  const rated = [...new Set(ids)].map(id => P.get(id)).filter(p => p?.appearance && p.appearance.confidence >= o.appearance.minConfidence)
+    .sort((x, y) => (x!.appearance!.overall - y!.appearance!.overall) || (x!.id < y!.id ? -1 : 1));
+  if (rated.length < 10) return out;
+  const mean = rated.reduce((s, p) => s + p!.history.dates, 0) / rated.length;
+  for (let q = 0; q < 5; q++) {
+    const grp = rated.slice(Math.floor((q * rated.length) / 5), Math.floor(((q + 1) * rated.length) / 5));
+    const m = grp.reduce((s, p) => s + p!.history.dates, 0) / Math.max(1, grp.length);
+    const ratio = (m + F.smooth) / (mean + F.smooth);
+    if (ratio < F.floor) for (const p of grp) out.set(p!.id, F.weight * (F.floor - ratio) / F.floor);
+  }
+  return out;
+}
 
 /** selection.adjust: exposure debt lift, scarce-pool lift, popularity penalty. Pure in (w, c, value). */
 export function slopAdjust(o: SlopPackOptions, w: World, c: Candidate, value: number, debt: Readonly<Record<MemberId, number>> = {}): number {
@@ -29,6 +53,7 @@ export function slopAdjust(o: SlopPackOptions, w: World, c: Candidate, value: nu
   if (C.debtWeight) v += C.debtWeight * ids.reduce((s, id) => s + Math.min(C.debtCap, Math.max(0, debt[id] ?? 0)), 0) / ids.length;
   if (st && C.scarcityWeight) v += C.scarcityWeight * Math.max(...ids.map(id => 1 / Math.sqrt(Math.max(1, st.degree.get(id) ?? 1))));
   if (st && C.popularityPenalty && st.maxDemand > 0) v -= C.popularityPenalty * Math.max(...ids.map(id => (st.demand.get(id) ?? 0) / st.maxDemand));
+  if (st && st.floorLift.size) v += Math.max(0, ...ids.map(id => st.floorLift.get(id) ?? 0));
   return v;
 }
 
@@ -46,7 +71,7 @@ export function slopAssign(o: SlopPackOptions, w: World, scored: readonly Scored
   }
   const demand = new Map<MemberId, number>();
   for (const [, l] of ranked) for (const e of l.sort((p, q) => (q.v - p.v) || (p.other < q.other ? -1 : 1)).slice(0, 5)) demand.set(e.other, (demand.get(e.other) ?? 0) + 1);
-  runStats.set(w, { degree, demand, maxDemand: Math.max(0, ...demand.values()) });
+  runStats.set(w, { degree, demand, maxDemand: Math.max(0, ...demand.values()), floorLift: ratingFloorLift(o, w, degree.keys()) });
 
   const usable = (id: MemberId) => !ctx.exclude?.has(id) && !w.get(id)!.inOpenOpportunity;
   const edges: Edge[] = [];
@@ -60,7 +85,14 @@ export function slopAssign(o: SlopPackOptions, w: World, scored: readonly Scored
   // Scarce pools first (tier 0), then by adjusted value.
   const C = o.congestion;
   const tier = (e: Edge) => (C.scarceDegree > 0 && Math.min(degree.get(e.a) ?? 0, degree.get(e.b) ?? 0) <= C.scarceDegree ? 0 : 1);
-  edges.sort((p, q) => (tier(p) - tier(q)) || (q.v - p.v) || (p.s.c.key < q.s.c.key ? -1 : 1));
+  if (o.appearance.mode === "tiebreak") {
+    // Iteration 5: compatibility first; the rating gap only orders pairs whose adjusted value is
+    // equal within tieBucket (relative, log buckets), then value, then key. Never lowers a value.
+    const P = slopProfiles(w.input, w.canonical);
+    const bucket = (v: number) => (v > 0 ? Math.floor(Math.log(v) / Math.log1p(o.appearance.tieBucket)) : -Infinity);
+    const gap = (e: Edge) => appearanceGap(P.get(e.a)!, P.get(e.b)!, o) ?? 0;
+    edges.sort((p, q) => (tier(p) - tier(q)) || (bucket(q.v) - bucket(p.v)) || (gap(p) - gap(q)) || (q.v - p.v) || (p.s.c.key < q.s.c.key ? -1 : 1));
+  } else edges.sort((p, q) => (tier(p) - tier(q)) || (q.v - p.v) || (p.s.c.key < q.s.c.key ? -1 : 1));
 
   const count = new Map<MemberId, number>();
   const used = new Set<string>();

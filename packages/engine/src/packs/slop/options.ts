@@ -82,6 +82,12 @@ export interface SlopPackOptions {
     scarceDegree: number;
     /** A backup proposal (round 2) only for members with at most this many eligible partners; 0 = none. */
     backupMaxDegree: number;
+    /**
+     * Iteration 5: exposure floor by rating quintile. Each run, members with a usable rating are split
+     * into quintiles; a quintile whose mean dates so far (smoothed) is under `floor` x the rated mean
+     * lifts its members' pairs by weight x (floor - ratio) / floor in selection.adjust. weight 0 = off.
+     */
+    ratingFloor: { floor: number; weight: number; smooth: number };
   };
   /** Receptivity pacing: no new probe for this many days after a date the member liked; never while a mutual yes is open. */
   pacing: { likedDateDays: number };
@@ -105,12 +111,33 @@ export interface SlopPackOptions {
    */
   widen: { enabled: boolean; maxDegree: number; miles: number };
   /**
-   * Iteration 3 (founder decision): appearance ratings (appearance.ts) used ONLY as an assortative
-   * similarity term on `overall`: "band" = a hard pair filter |a - b| <= band; "soft" = each side's
-   * value x exp(-softWeight x (a - b)^2). Ratings below `minConfidence`, missing, or on anyone who is
-   * not a verified adult are ignored (the pair is neither filtered nor scored on them).
+   * Appearance ratings (appearance.ts; iteration 3 interface, iteration 4 founder decision: ON, used
+   * in matching, NEVER shared). Similarity on face / body / overall (weighted RMS gap, `dims`):
+   * "band" = a hard pair filter gap <= band; "soft" = each side's value x exp(-softWeight x gap^2).
+   * Body type is categorical: each side's value x exp(+-weight) by the other's body type against
+   * their STATED body-type preference, else their REVEALED one (post-date ratings by the rated
+   * person's body type), else nothing (similarity only). Ratings below `minConfidence`, missing, or
+   * on anyone who is not a verified adult are ignored (the pair is neither filtered nor scored on them).
    */
-  appearance: { mode: "off" | "band" | "soft"; band: number; softWeight: number; minConfidence: number };
+  appearance: {
+    /**
+     * Iteration 5: "tiebreak" = the rating gap only orders pairs whose value is equal within
+     * `tieBucket` (relative), compatibility first; it never lowers a pair's value.
+     */
+    mode: "off" | "band" | "soft" | "tiebreak"; band: number; softWeight: number; minConfidence: number;
+    /** Iteration 5 (soft mode): no penalty for a gap up to `gapFree`; exp(-softWeight x (gap - gapFree)^2) above it. */
+    gapFree: number;
+    /** Iteration 5 (tiebreak mode): values within this relative bucket count as compatibility-equivalent. */
+    tieBucket: number;
+    /**
+     * Iteration 5: the similarity term (soft, band or tiebreak) never applies to a pair with a member
+     * rated in the bottom `protectBelow` share of this input (0 = off). Removes the push of low-rated
+     * members toward each other; body type still applies.
+     */
+    protectBelow: number;
+    dims: { face: number; body: number; overall: number };
+    bodyType: { enabled: boolean; statedWeight: number; revealedWeight: number; revealedShrink: number; minConfidence: number };
+  };
   /** Pairs below this reciprocal value are not proposed (a dud first date costs both people an evening). */
   minValue: number;
 }
@@ -138,7 +165,7 @@ export const SLOP_DEFAULT_OPTIONS: SlopPackOptions = {
     activityMiss: 0.92, typeWeight: 0.1,
   },
   logistics: { noCommonSlot: 0.75, unknownSlots: 0.9 },
-  congestion: { perMemberPerTick: 1, topK: 40, debtWeight: 0.02, debtCap: 3, scarcityWeight: 0, popularityPenalty: 0, scarceDegree: 6, backupMaxDegree: 0 },
+  congestion: { perMemberPerTick: 1, topK: 40, debtWeight: 0.02, debtCap: 3, scarcityWeight: 0, popularityPenalty: 0, scarceDegree: 6, backupMaxDegree: 0, ratingFloor: { floor: 1, weight: 0.3, smooth: 0.05 } },
   pacing: { likedDateDays: 10 },
   radiusMargin: 0.9,
   minValue: 0,
@@ -146,7 +173,19 @@ export const SLOP_DEFAULT_OPTIONS: SlopPackOptions = {
   // the model measured no gain (iteration 2). Turn it on when probes show a photo.
   attraction: { enabled: false, itemWeight: 1, tasteWeight: 1, cfWeight: 1, probeWeight: 1, backoutWeight: 2, feedbackWeight: 1.5, shrink: 4, ridge: 4, cfShrink: 0.5 },
   maxAsksPerField: 2,
-  appearance: { mode: "off", band: 1, softWeight: 0.5, minConfidence: 0.3 },
+  // Iteration 4 (founder decision 2026-10-08): ON. Soft, not band: in iteration 3 with photos in the
+  // probe the band cut dates per member to 0.69-0.77x random and hurt small pools for no quality gain,
+  // while soft 0.1 tied photos alone on quality and kept volume. Iteration-4 tuning (seeds 1-12, photos
+  // in the probe, body types in the world): soft 0.05 + body type had the best realized second-date
+  // rate and feasible-group fairness among rater-on arms; every rater-on arm tied rater-off within noise.
+  // Iteration 5: the similarity term skips any pair with a member rated in the bottom 40% (the
+  // rating-quintile fairness fix: low-rated members are no longer pushed toward each other), and the
+  // rating-quintile exposure floor (congestion.ratingFloor) is on.
+  appearance: {
+    mode: "soft", band: 1, softWeight: 0.05, minConfidence: 0.3, gapFree: 0, tieBucket: 0.02, protectBelow: 0.4,
+    dims: { face: 0.25, body: 0.25, overall: 0.5 },
+    bodyType: { enabled: true, statedWeight: 0.3, revealedWeight: 0.5, revealedShrink: 3, minConfidence: 0.4 },
+  },
   widen: { enabled: true, maxDegree: 2, miles: 25 },
 };
 

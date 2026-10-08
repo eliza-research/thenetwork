@@ -278,6 +278,7 @@ Vocabulary reused from the PRD and the experience design:
 - Disability, unless the member chooses to share it.
 - Anything from peon.biz or buddies.nyc.
 - Attractiveness scores derived from photos. A learned "desirability" can exist internally only for congestion control, never shown and never used to sort exposure downward.
+  - **Superseded for slop.date (founder decision 2026-10-08):** photo ratings (face, body, overall, body type) are now used in matching, as a soft similarity term and against stated or revealed body-type preferences, and are never shared with members. Exposure is still never sorted downward by them (the congestion and exposure-debt controls are unchanged). See docs/results/2026-10-08-slop-pack.md, iteration 4.
 
 ## A4. Matching specifics (slop.date)
 

@@ -25,6 +25,7 @@ import { Rng, hash32 } from "@thenetwork/sim/src/rng.ts";
 import { zipInfo, type SlopCity } from "./geo.ts";
 import { appearanceFacet, canRatePhotos } from "@thenetwork/engine/src/packs/slop/appearance.ts";
 import { SLOTS, TASTE_DIMS, type RichnessTier, type SlopPersona } from "./persona.ts";
+import { bodyPref, bodyPrefStated, ratedBodyType, type BodyTypeModel } from "./bodyType.ts";
 
 /** Monday 2026-10-12 00:00 UTC: week 0 of every slop run. */
 export const SLOP_WORLD_START = Date.UTC(2026, 9, 12);
@@ -117,13 +118,14 @@ export function trueAppearance(p: SlopPersona): { face: number; body: number; ov
   return { face, body, overall: (face + body) / 2 };
 }
 /** The simulated rater's facet for a persona (adults only; skipped when an age check failed). */
-export function raterFacet(p: SlopPersona, joinedAt: number, m: NonNullable<PlatformModel["rater"]>, ageFailed: boolean): Facet | null {
+export function raterFacet(p: SlopPersona, joinedAt: number, m: NonNullable<PlatformModel["rater"]>, ageFailed: boolean, bt?: BodyTypeModel): Facet | null {
   const subject = { age: p.stated.claimedAge, ageVerified: ageFailed ? false : undefined };
   if (!canRatePhotos(subject)) return null;
   const t = trueAppearance(p), r = new Rng(hash32("slop-rater", p.id));
   const shift = demoGroupOf(p.id, m.biasShare) === "B" ? -m.bias : 0;
   const face = t.face + r.normal(0, m.noise) + shift, body = t.body + r.normal(0, m.noise) + shift;
-  return appearanceFacet(p.id, subject, { face, body, overall: (face + body) / 2, confidence: 1 / (1 + m.noise * m.noise), model: "sim-rater" }, joinedAt);
+  const conf = 1 / (1 + m.noise * m.noise);
+  return appearanceFacet(p.id, subject, { face, body, overall: (face + body) / 2, confidence: conf, model: "sim-rater", ...(bt ? { bodyType: ratedBodyType(p.id, bt), bodyTypeConfidence: bt.raterAccuracy } : {}) }, joinedAt);
 }
 
 export const RELAY_DEFAULTS = { scamRecall: 0.85, hostileRecall: 0.7, falsePositive: 0.005 };
@@ -156,6 +158,8 @@ export interface SlopNetworkState {
   verification?: VerificationModel;
   /** Optional platform features (iteration 2); absent = not modelled. */
   platform?: PlatformModel;
+  /** Iteration 4: body types (bodyType.ts): stated body-type preferences and the rater's body type. */
+  bodyTypes?: BodyTypeModel;
 }
 
 /** Which stated fields the agent learned in onboarding, by richness tier. */
@@ -277,9 +281,15 @@ export function buildSlopSnapshot(personas: readonly SlopPersona[], state: SlopN
     const learned = state.learned?.get(p.id);
     facets.push(...slopFacetsOf(p, joinedAt, learned));
     if (state.verification) facets.push(...verificationFacets(p, joinedAt, state.verification));
+    // Iteration 4: a stated body-type preference (agent_private; adults only, like everything romantic).
+    const bpref = state.bodyTypes && canBeMatched(p.stated.claimedAge) ? bodyPref(p.id, state.bodyTypes) : undefined;
+    if (bpref && bodyPrefStated(p.id, state.bodyTypes!)) facets.push({
+      id: `${p.id}:wants_body`, memberId: p.id, kind: "preference", value: "partner preference (stated)", tags: bpref.map(t => `slop:wants_body:${t}`),
+      scope: "agent_private", provenance: "said", confidence: 0.9, validFrom: joinedAt, source: "chat", observedAt: joinedAt, inferred: false, confirmedByMember: true,
+    });
     if (state.platform?.rater) {
       const ageFailed = facets.some(f => f.memberId === p.id && f.tags.includes("verify:age:fail"));
-      const rf = raterFacet(p, joinedAt, state.platform.rater, ageFailed);
+      const rf = raterFacet(p, joinedAt, state.platform.rater, ageFailed, state.bodyTypes);
       if (rf) facets.push(rf);
     }
     // Human review of a cue or a failed check, visible once `days` have passed since the member joined.

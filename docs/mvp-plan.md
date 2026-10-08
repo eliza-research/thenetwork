@@ -21,6 +21,7 @@ Rules that hold in every app:
 - **Ages.** Minimum age 13. Members aged 13-17 may join every app but are never matched or connected to anyone. Matching is 18+ everywhere.
 - **Cross-app privacy.** Dating membership and data are never visible to the other apps by default. Only a base profile crosses apps, with consent. Blocks apply in every app.
 - **Compliance is not a launch blocker for now.** The safety guards stay (age rules, consent, STOP/HELP, quiet hours, leak guard, human review, report and block, bans by person). Legal items (NYC LL144, dating-safety notices, 10DLC and others) are a deferred backlog (PRD 40.7).
+- **slop.date appearance ratings (founder decision 2026-10-08; changes PRD 40.5 "never used: photo attractiveness scores").** Photo ratings (face, body, overall and body type, from Cloudflare's Clef model) are now **used in matching but never shared**. They are stored as agent_private facts, are never in any member-facing text, probe, reveal, explanation, proposal or run log, and are rated for verified adults only (never 13-17, never an unknown or unverified age). Matched members talk and exchange photos through the agent and learn only what it tells them (first name, the plan). An admin bias monitor reports outcome ratios by group. See docs/results/2026-10-08-slop-pack.md, iteration 4.
 - **Everything earlier stays:** the attention budget (lunchtime learned send times, always probe first, only initial invites count against the cap, booked-plan reveal), plans with a separate plan allowance, crews after one great plan, network capital MVP-lite and post-MVP member ownership.
 
 ## Launch order
@@ -62,6 +63,6 @@ Phases 0-1 and Phase 2 run in parallel. Phases 3-5 can start once Phase 0 is don
 ## Open decisions
 
 - Join mode per app (invite, open or waitlist).
-- Whether slop.date probes include a photo.
+- ~~Whether slop.date probes include a photo.~~ Founder direction 2026-10-08: yes, adults only (the slop sim runs with photos in the probe). This reverses experience-design D5 / F2 ("never a photo until both say yes") for slop.date; the PRD text still needs the edit.
 - When The Network's own SF and NYC matching opens relative to slop.date.
 - Network capital per app or shared.
