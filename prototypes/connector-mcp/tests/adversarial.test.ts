@@ -31,6 +31,13 @@ describe("surface-profile bypasses", () => {
       expect(resolveClient(id)).toMatchObject({ hostKey: "chatgpt", profile: "teen_safe_directory", trustTier: "verified" });
   });
 
+  test("client identity: only Claude's /oauth/ documents are Claude, not any claude.ai path (plugin-prototypes-24)", () => {
+    for (const id of ["https://claude.ai/public/artifacts/abc/client.json", "https://claude.com/u/attacker.json", "https://claude.ai/oauth/x/../../share/y.json"])
+      expect(resolveClient(id)).toMatchObject({ hostKey: "unknown", trustTier: "unverified" });
+    for (const id of ["https://claude.ai/oauth/mcp-client-metadata.json", "https://claude.ai/oauth/claude-code-client-metadata"])
+      expect(resolveClient(id)).toMatchObject({ hostKey: "claude", trustTier: "verified" });
+  });
+
   test("DCR: Claude's claude.ai + claude.com callbacks stay verified Claude; mixing hosts is unverified", () => {
     expect(resolveClient("dcr_x", ["https://claude.ai/api/mcp/auth_callback", "https://claude.com/api/mcp/auth_callback"]))
       .toMatchObject({ hostKey: "claude", trustTier: "verified" });
