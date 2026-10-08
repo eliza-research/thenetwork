@@ -12,7 +12,7 @@
 // decision 3) and at most one booked date a week. Proposals past a cap are dropped and counted.
 import { DAY, HOUR, canBeMatched, type MemberId } from "@thenetwork/core";
 import type { InteractionRecord } from "@thenetwork/engine/src/types.ts";
-import { Rng, hash32 } from "@thenetwork/sim/src/rng.ts";
+import { Rng, hash32 } from "@thenetwork/core";
 import { SlopBehavior, type HarmEvent } from "./behavior.ts";
 import type { SlopCity } from "./geo.ts";
 import { SlopOracle, type DateOutcome } from "./oracle.ts";

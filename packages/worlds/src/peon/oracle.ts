@@ -12,7 +12,7 @@
 // get offers and 11-17 interviews per hire on job-board matching (Gem / Ashby 2026), offer
 // acceptance about 73-84%, median time-to-fill about 44 days (SHRM 2025).
 import type { MemberId } from "@thenetwork/core";
-import { hash32 } from "@thenetwork/sim/src/rng.ts";
+import { hash32 } from "@thenetwork/core";
 import type { Candidate, Company, Job, PeonPopulation, Sealed } from "./persona.ts";
 
 export const ORACLE_PARAMS = {

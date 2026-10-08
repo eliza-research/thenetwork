@@ -33,7 +33,8 @@ import {
   type Crew, type Plan, type PlanEvidence, type PlanMemberInput, type PlanOutcomeRecord,
 } from "../../plans.ts";
 import { makeCompat } from "../../group.ts";
-import { fnv1a, Rng, sha256 } from "../../rng.ts";
+import { fnv1a, EngineRng as Rng } from "@thenetwork/core";
+import { sha256 } from "../../hash.ts";
 import { activityPartner } from "./generators.ts";
 import type { World } from "../../world.ts";
 import { activityById, type Venue } from "../network/activities.ts";

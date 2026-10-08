@@ -2,7 +2,7 @@
 // and fully reproducible from (seed, options). The LLM generator (llmGenerator.ts) can
 // enrich these with realistic bios and voices afterwards.
 import type { City } from "@thenetwork/core";
-import { Rng, clamp01 } from "./rng.ts";
+import { Rng, clamp01 } from "@thenetwork/core";
 import {
   BOUNDARIES, DESIRES, FIRST_NAMES, INTERESTS, LAST_NAMES, NEIGHBORHOODS, PRIVATE_DISCLOSURES,
   SKILLS, STYLES, desireById, type WritingStyle,

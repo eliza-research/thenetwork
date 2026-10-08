@@ -10,7 +10,7 @@
 import type { ChatMessage, LLM, MemberId } from "@thenetwork/core";
 import { chatJson, labelHash, LeakGuard, textVariants } from "@thenetwork/core";
 import { tokenize } from "./embed.ts";
-import { sha256 } from "./rng.ts";
+import { sha256 } from "./hash.ts";
 import type { Candidate, JudgeVerdict } from "./types.ts";
 import type { World } from "./world.ts";
 

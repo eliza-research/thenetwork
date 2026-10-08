@@ -12,7 +12,7 @@ import { SimChannel, type Reaction, type SimMessage } from "./channel.ts";
 import type { Engine, InboundMessage, MeetingReport, NetworkContext, NetworkUnderTest } from "./network.ts";
 import { Oracle, type OracleOptions, type OracleVerdict } from "./oracle.ts";
 import type { Persona } from "./persona.ts";
-import { Rng, hash32 } from "./rng.ts";
+import { Rng, hash32 } from "@thenetwork/core";
 import { Scheduler, type RunMode } from "./scheduler.ts";
 import { buildSnapshot, quietHoursOf } from "./snapshot.ts";
 import { nextLocalHour } from "./time.ts";

@@ -8,7 +8,7 @@
 // network sets (proposalId, probe, participants, relayFrom) are used only to find MORE contacts
 // (minors, blocks, names), or to exempt a message that belongs to an opportunity the member
 // really accepted (a simulator decision record).
-import { classifyYesNo, isMinor as isMinorAge, type AppId, type MemberId, type ParticipationState } from "@thenetwork/core";
+import { classifyYesNo, DAY, HOUR, isMinor as isMinorAge, type AppId, type MemberId, type ParticipationState } from "@thenetwork/core";
 import { CONNECTION } from "./policy.ts";
 import { checkMessage, findContactDetails, hasPausePath, normalizeCanary } from "./rules.ts";
 import type { LoggedMessage, LoggedPersona, RunRecord } from "./runlog.ts";
@@ -95,8 +95,6 @@ export interface Metrics {
   errors: number;
 }
 
-const DAY = 86_400_000;
-const HOUR = 3_600_000;
 /** An outbound message this soon after the member's own message (or join) is a reply. */
 const REPLY_WINDOW = 15 * 60_000;
 /** At most this many outbound messages count as the reply to one inbound message. */

@@ -5,8 +5,8 @@
 // 10-15% exploration slice, logged with selection probabilities for off-policy evaluation.
 import type { City, MemberId } from "@thenetwork/core";
 import { isMinor } from "./filters.ts";
-import { sha256 } from "./rng.ts";
-import type { Rng } from "./rng.ts";
+import { sha256 } from "./hash.ts";
+import type { EngineRng as Rng } from "@thenetwork/core";
 import { explorationBar, type Scored } from "./scoring.ts";
 import type { AskReason, EngineAsk, EngineInput, FairnessMetrics } from "./types.ts";
 import { ASK_QUESTIONS as NETWORK_ASK_QUESTIONS } from "./packs/network/copy.ts";

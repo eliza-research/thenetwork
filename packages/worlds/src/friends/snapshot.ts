@@ -23,7 +23,7 @@ import type { FeedbackRecord, InteractionRecord, SafetyHold } from "@thenetwork/
 import { activityById } from "@thenetwork/engine/src/packs/network/activities.ts";
 import type { Crew, PlanOutcomeRecord } from "@thenetwork/engine/src/plans.ts";
 import { fromLocal } from "@thenetwork/core";
-import { Rng, hash32 } from "@thenetwork/sim/src/rng.ts";
+import { Rng, hash32 } from "@thenetwork/core";
 import { SLOT_TIME } from "@thenetwork/engine/src/packs/friends/index.ts";
 import { SLOTS, h01, hoodOf, type FriendsPersona, type FriendsSlot, type RichnessTier } from "./persona.ts";
 

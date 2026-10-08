@@ -36,6 +36,7 @@
 import { DEFAULT_QUIET, isQuietAt, isValidTimeZone, nextAllowedAt, resolveTimeZone, type QuietWindow } from "./quiet-hours.ts";
 import type { ConsentLedger } from "./ledger.ts";
 import { normalizeAddress } from "./phone.ts";
+import { DAY, HOUR } from "../../core/src/clock.ts";
 import { LeakGuard } from "../../core/src/guard.ts";
 import {
   ChannelSendError, type ChannelAdapter, type ChannelKind, type Clock, type DeliveryStatus, type StatusUpdate, type Transport,
@@ -199,7 +200,6 @@ export interface QueueOptions {
   onAlert?: (rec: OutboundRecord, reason: string) => void;
 }
 
-const HOUR = 3_600_000, DAY = 24 * HOUR;
 
 export const DEFAULT_MAX_UNANSWERED = 3;
 export const DEFAULT_REENGAGE_AFTER_MS = 14 * DAY;

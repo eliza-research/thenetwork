@@ -21,7 +21,7 @@
 //   Intent      category "romance", details "goal: <goal>"; Presence areas ["zip:<zip>"]
 import { DAY, canBeMatched, type City, type Edge, type Facet, type Intent, type Member, type MemberId, type Presence, type WorldSnapshot } from "@thenetwork/core";
 import type { FeedbackRecord, InteractionRecord, SafetyHold } from "@thenetwork/engine/src/types.ts";
-import { Rng, hash32 } from "@thenetwork/sim/src/rng.ts";
+import { Rng, hash32 } from "@thenetwork/core";
 import { zipInfo, type SlopCity } from "./geo.ts";
 import { appearanceFacet, canRatePhotos } from "@thenetwork/engine/src/packs/slop/appearance.ts";
 import { SLOTS, TASTE_DIMS, type RichnessTier, type SlopPersona } from "./persona.ts";

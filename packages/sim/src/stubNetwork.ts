@@ -12,7 +12,7 @@ import { availabilityProb, candidateSlots, standingFromFacets, type Availability
 import { parseYesNo } from "./agent/policy.ts";
 import type { SimMeta } from "./channel.ts";
 import type { InboundMessage, NetworkContext, NetworkUnderTest } from "./network.ts";
-import { Rng, hash32 } from "./rng.ts";
+import { Rng, hash32 } from "@thenetwork/core";
 import { CITY_TZ, fmtLocal, localHour, localParts, nextLocalHour } from "./time.ts";
 
 export interface StubOptions {

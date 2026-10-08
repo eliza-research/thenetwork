@@ -12,7 +12,7 @@
 // Soft labels pGood / pSecond: Monte Carlo over the chemistry draw, as judge v2's pGood
 // (packages/evals/src/recDataset.ts). Everything else in the label is deterministic.
 import { canBeMatched, type MemberId } from "@thenetwork/core";
-import { Rng, hash32, clamp01 } from "@thenetwork/sim/src/rng.ts";
+import { Rng, hash32, clamp01 } from "@thenetwork/core";
 import { zipMiles, zipInfo, type SlopCity } from "./geo.ts";
 import { SLOTS, citiesInWeek, violates, zipIn, type DateActivity, type SlopPersona } from "./persona.ts";
 import { bodyTerm, type BodyTypeModel } from "./bodyType.ts";

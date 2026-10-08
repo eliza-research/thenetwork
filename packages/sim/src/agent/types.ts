@@ -6,7 +6,7 @@ import type { MemberId, Proposal } from "@thenetwork/core";
 import type { Reaction, SimMessage, SimMeta, TimeOption } from "../channel.ts";
 import type { Oracle } from "../oracle.ts";
 import type { Persona } from "../persona.ts";
-import type { Rng } from "../rng.ts";
+import type { Rng } from "@thenetwork/core";
 
 export type Decision = "accept" | "decline" | "counter" | "none";
 export type MessageType = NonNullable<SimMeta["type"]>;

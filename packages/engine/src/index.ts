@@ -8,7 +8,7 @@ export { composeGroup } from "./group.ts";
 export { gini, lorenz } from "./policy.ts";
 export { harmonic, mutualBenefit, netValue } from "./scoring.ts";
 export { World, buildWorld } from "./world.ts";
-export { Rng } from "./rng.ts";
+export { EngineRng as Rng } from "@thenetwork/core";
 export * as attention from "./attention.ts";
 export { DEFAULT_ATTENTION, resolveAttention, attentionConfigHash, type AttentionConfig, type AttentionConfigInput } from "./config.ts";
 export * as plans from "./plans.ts";

@@ -2,7 +2,7 @@
 // are INVENTED by joining morphemes from unrelated traditions (e.g. "Hokuthorne", "Vasalund"),
 // so full names are fictional. Any resemblance to a real person is coincidental.
 import type { Gender } from "../../packages/sim/src/persona.ts";
-import type { Rng } from "../../packages/sim/src/rng.ts";
+import type { Rng } from "../../packages/core/src/index.ts";
 
 const WOMEN = [
   "Adaeze", "Aiko", "Alma", "Amara", "Anahi", "Anika", "Ayesha", "Beatriz", "Bao", "Camila", "Chiara", "Dalia",

@@ -5,7 +5,7 @@
 import type { Facet, Intent } from "@thenetwork/core";
 import { cosine } from "./embed.ts";
 import type { RetrievalCtx } from "./retrieval.ts";
-import type { Rng } from "./rng.ts";
+import type { EngineRng as Rng } from "@thenetwork/core";
 import type { Candidate, Format, NetworkEvent } from "./types.ts";
 import { intentText, type MemberIndex, type World } from "./world.ts";
 

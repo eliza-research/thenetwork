@@ -42,10 +42,6 @@ export function privateVocabulary(w: World, ids: MemberId[]): Set<string> {
   return priv;
 }
 
-/** Leak gate for explanation text: the shared core guard plus the engine's canary/vocabulary checks (judgeCommon.ts). */
-export function leaks(text: string, vocab: Set<string>): boolean {
-  return leaksMemberFacing(text, vocab);
-}
 
 function phrase(w: World, name: string, f: Facet): string {
   const p = w.pack.explain.facetPhrase[f.kind];
@@ -54,7 +50,7 @@ function phrase(w: World, name: string, f: Facet): string {
 
 export function explain(w: World, c: Candidate, verdict?: JudgeVerdict | null, deepWhy?: Record<MemberId, string>): { explanations: Record<MemberId, string>; objective: string } {
   const vocab = privateVocabulary(w, c.participants);
-  const objective = leaks(c.objective, vocab) ? `Proposed ${c.kind.replace(/_/g, " ")}` : c.objective;
+  const objective = leaksMemberFacing(c.objective, vocab) ? `Proposed ${c.kind.replace(/_/g, " ")}` : c.objective;
   const out: Record<MemberId, string> = {};
   const event = c.anchor?.type === "event" ? w.events.find(e => e.id === c.anchor!.id) : undefined;
   for (const me of c.participants) {
@@ -68,7 +64,7 @@ export function explain(w: World, c: Candidate, verdict?: JudgeVerdict | null, d
       if (c.anchor?.type === "intent" && w.intentById.get(c.anchor.id)?.memberId === me) bits.push("This connects to something you asked about.");
       // Member- or source-written inserts are leak-gated, not assumed safe (engine-pipeline-21): an
       // event title or a facet value that carries another participant's private word is dropped.
-      if (event && !leaks(event.title, vocab)) bits.push(`It is built around ${event.title}.`);
+      if (event && !leaksMemberFacing(event.title, vocab)) bits.push(`It is built around ${event.title}.`);
       if (E.kindBits) bits.push(...E.kindBits(w, c, me));
       for (const o of others.slice(0, 3)) {
         const mo = w.get(o)!;
@@ -81,7 +77,7 @@ export function explain(w: World, c: Candidate, verdict?: JudgeVerdict | null, d
         const f = ev[0] ?? fallback;
         // The other person's own shareable words are theirs to show; anyone else's private words are not.
         const ownWords = new Set(mo.share.flatMap(x => tokenize(`${x.value} ${x.tags.join(" ")}`)));
-        const safe = f && !leaks(f.value, new Set([...vocab].filter(t => !ownWords.has(t))));
+        const safe = f && !leaksMemberFacing(f.value, new Set([...vocab].filter(t => !ownWords.has(t))));
         bits.push(safe ? phrase(w, mo.m.name, f) : `${mo.m.name} could be a good fit.`);
       }
       if (others.length > 3) bits.push(`Plus ${others.length - 3} more.`);
@@ -92,7 +88,7 @@ export function explain(w: World, c: Candidate, verdict?: JudgeVerdict | null, d
     let text = bits.join(" ");
     // Pass-3 text (already leak-gated) wins over pass-2 text; both are re-checked here.
     const why = deepWhy?.[me] || verdict?.why?.[me];
-    if (why && !leaks(why, vocab)) text = `${why} ${bits.filter(b => b.startsWith("Part of the reason")).join(" ")}`.trim();
+    if (why && !leaksMemberFacing(why, vocab)) text = `${why} ${bits.filter(b => b.startsWith("Part of the reason")).join(" ")}`.trim();
     if (/canary/i.test(text)) text = E.safeFallback;
     // An exploration pick is always labelled, whatever path built the text (engine-pipeline-21).
     if (c.exploration && !text.includes(EXPLORATION_LABEL)) text = `${text} ${EXPLORATION_LABEL}`.trim();

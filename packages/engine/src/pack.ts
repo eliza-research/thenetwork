@@ -29,7 +29,7 @@ import type { GenCtx } from "./genkit.ts";
 import type { Candidate, CadencePrefs, Format, Role } from "./types.ts";
 import type { Interval, MemberIndex, RomanceProfile, World } from "./world.ts";
 import type { SelectionResult } from "./policy.ts";
-import type { Rng } from "./rng.ts";
+import type { EngineRng as Rng } from "@thenetwork/core";
 import type { Scored } from "./scoring.ts";
 
 /** What a pack's global assignment sees besides the scored configurations (policy.ts selectProposals). */

@@ -1,7 +1,7 @@
 // Deterministic local embedding (Section 33.5): signed feature hashing of word unigrams,
 // bigrams and character trigrams, L2-normalised. Works offline so tests are hermetic; a real
 // embedding model can be plugged in through `deps.embed`.
-import { fnv1a } from "./rng.ts";
+import { fnv1a } from "@thenetwork/core";
 
 export type EmbedFn = (text: string) => number[];
 export const EMBED_DIM = 256;

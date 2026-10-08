@@ -1,7 +1,7 @@
 // Persona model: a synthetic member with HIDDEN ground truth (what the Network can never
 // read directly) and a PUBLIC side (what they will reveal in conversation). PRD 34.3.
 import { DAY, type Category, type City, type MemberId } from "@thenetwork/core";
-import { Rng, hash32 } from "./rng.ts";
+import { Rng, hash32 } from "@thenetwork/core";
 import type { WritingStyle } from "./taxonomy.ts";
 import type { Knowledge, RichnessTier } from "./sources.ts";
 

@@ -4,7 +4,7 @@
 // hard constraint.
 import type { Category, City, Edge, Facet, Intent, Member, Preferences, Presence, Proposal } from "@thenetwork/core";
 import { DAY, HOUR } from "@thenetwork/core";
-import { Rng } from "./rng.ts";
+import { EngineRng as Rng } from "@thenetwork/core";
 import type { EngineInput, FeedbackRecord, InteractionRecord, NetworkEvent, SafetyHold } from "./types.ts";
 
 interface Theme {

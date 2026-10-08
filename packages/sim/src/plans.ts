@@ -18,7 +18,7 @@ import { ACTIVITIES, activityById, type ActivityType } from "../../engine/src/pa
 import { candidateSlots, type TimeSlot } from "../../engine/src/attention.ts";
 import { PAIR_CHEMISTRY_SD, type Oracle } from "./oracle.ts";
 import type { Persona } from "./persona.ts";
-import { Rng, clamp01, hash32 } from "./rng.ts";
+import { Rng, clamp01, hash32 } from "@thenetwork/core";
 import { desireById, INTERESTS } from "./taxonomy.ts";
 import { CITY_TZ, localParts } from "./time.ts";
 

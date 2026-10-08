@@ -91,7 +91,8 @@ const GROUP_OF = new Map<string, StateGroup>(STATE_GROUPS.flatMap(([g, , sts]) =
 export const stateGroupOf = (state: string): StateGroup => GROUP_OF.get(state) ?? "open";
 /** Open (not yet resolved) states. A member in one is busy: the Network does not double-book them. */
 export const OPEN = new Set(["PROPOSED", "IN_REVIEW", "INVITING", "PARTIALLY_ACCEPTED", "MUTUALLY_ACCEPTED", "QUORUM_MET", "SCHEDULED"]);
-export const HOUR = 3_600_000, DAY = 24 * HOUR;
+import { DAY, HOUR } from "../../core/src/clock.ts";
+export { DAY, HOUR };
 export const DEFAULT_FILTERS: Filters = { range: "7d", borough: "all", members: "all", origin: "all", stateGroup: "all" };
 
 // ---------------------------------------------------------------- small helpers

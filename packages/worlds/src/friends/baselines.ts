@@ -14,7 +14,7 @@ import type { MemberId } from "@thenetwork/core";
 import { activityById } from "@thenetwork/engine/src/packs/network/activities.ts";
 import { daypartOf } from "@thenetwork/engine/src/plans.ts";
 import { hood, transitMinutes, type Neighborhood } from "@thenetwork/engine/src/packs/friends/index.ts";
-import type { Rng } from "@thenetwork/sim/src/rng.ts";
+import type { Rng } from "@thenetwork/core";
 import { FRIEND_ACTIVITIES, SLOTS, hoodOf, isReal } from "./persona.ts";
 import { NYC_TZ, slotTime } from "./snapshot.ts";
 import { visibleProfiles, type VisibleProfile } from "./visible.ts";

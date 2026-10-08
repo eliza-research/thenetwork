@@ -25,7 +25,7 @@ import { isMinor, memberReason, pairReason } from "./filters.ts";
 import { makeCompat } from "./group.ts";
 import { checkMemberFacing } from "./judgeCommon.ts";
 import { fromLocal, localParts } from "@thenetwork/core";
-import { sha256 } from "./rng.ts";
+import { sha256 } from "./hash.ts";
 import type { AttentionItem, EngineProposal, NetworkEvent, Role } from "./types.ts";
 import type { AppPack, PlansPack } from "./pack.ts";
 import { networkPack } from "./packs/network/index.ts";

@@ -8,7 +8,7 @@
 // choice, not a claim about real people (docs, iteration 4). Deterministic per persona id.
 import type { MemberId } from "@thenetwork/core";
 import { BODY_TYPES, type BodyType } from "@thenetwork/engine/src/packs/slop/appearance.ts";
-import { Rng, hash32 } from "@thenetwork/sim/src/rng.ts";
+import { Rng, hash32 } from "@thenetwork/core";
 
 export interface BodyTypeModel { prefShare: number; weight: number; statedShare: number; raterAccuracy: number }
 export const BODY_TYPE_DEFAULTS: BodyTypeModel = { prefShare: 0.5, weight: 0.6, statedShare: 0.5, raterAccuracy: 0.8 };

@@ -20,7 +20,7 @@ import type { Crew } from "@thenetwork/engine/src/plans.ts";
 import type { InteractionRecord } from "@thenetwork/engine/src/types.ts";
 import { activityById } from "@thenetwork/engine/src/packs/network/activities.ts";
 import { hood, nycVenues } from "@thenetwork/engine/src/packs/friends/index.ts";
-import { Rng, hash32 } from "@thenetwork/sim/src/rng.ts";
+import { Rng, hash32 } from "@thenetwork/core";
 import { FriendsOracle, ORACLE_PARAMS, type HarmEvent, type OracleParams } from "./oracle.ts";
 import { FRIEND_ACTIVITIES, SLOTS, generateFriendsPersonas, isReal, type FriendsGenOptions, type FriendsPersona } from "./persona.ts";
 import { buildFriendsSnapshot, emptyFriendsState, slotDay, slotTime, weekTime, type CrewState, type FriendsNetworkState, type FriendsSnapshot } from "./snapshot.ts";

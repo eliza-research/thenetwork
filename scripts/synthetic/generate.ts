@@ -20,10 +20,10 @@ import { mkdirSync, existsSync, readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { DAY, DEFAULT_MODEL, DEFAULT_PROVIDER, HOUR, defaultLLM, type City, type LLM } from "../../packages/core/src/index.ts";
 import { generatePersonas } from "../../packages/sim/src/generator.ts";
-import { chatJson, mapLimit } from "../../packages/sim/src/llmGenerator.ts";
+import { anyJson, mapLimit, SIM_JSON_GROW } from "../../packages/sim/src/llmGenerator.ts";
 import type { AdversarialKind, Archetype, Desire, Persona, Relationship, RelationshipType } from "../../packages/sim/src/persona.ts";
 import { drawLapse, intentHorizonDays, intentRecordTiming } from "../../packages/sim/src/persona.ts";
-import { Rng, clamp01 } from "../../packages/sim/src/rng.ts";
+import { chatJson, Rng, clamp01 } from "../../packages/core/src/index.ts";
 import { DESIRES, INTERESTS, SKILLS, desireById } from "../../packages/sim/src/taxonomy.ts";
 import { DEFAULT_RICHNESS_MIX, VAGUE_INTENT, assignRichness, inferredRole, simulateKnowledge, type Knowledge } from "../../packages/sim/src/sources.ts";
 import {
@@ -644,7 +644,7 @@ const freshIds: string[] = [];
     let lastErr = "";
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const out = await chatJson<any>(llm!, [{ role: "user", content: prompt }], { maxTokens: 4000, temperature: 0.9, retries: 1 });
+        const out = await chatJson(llm!, [{ role: "user", content: prompt }], anyJson<any>, { attempts: 2, maxTokens: 4000, temperature: 0.9, grow: SIM_JSON_GROW });
         if (!out || typeof out.bio !== "string") throw new Error("missing bio");
         await Bun.write(`${CACHE_DIR}/${p.id}.json`, JSON.stringify({ key: keyFor(MODEL, prompt), model: MODEL, provider: PROVIDER, out }));
         const n = normalize(p, out, fb);

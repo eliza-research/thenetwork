@@ -4,7 +4,7 @@
 // range, excluded companies, blocks, holds, canaries, id aliases and agent_private proxies.
 import type { City, Edge, Facet, Intent, Member, Presence } from "@thenetwork/core";
 import { DAY } from "@thenetwork/core";
-import { Rng } from "../../rng.ts";
+import { EngineRng as Rng } from "@thenetwork/core";
 import type { EngineInput, SafetyHold } from "../../types.ts";
 import { JOB_INTENT, SAFETY, SEARCH_INTENT, T, type PeonMode } from "./schema.ts";
 

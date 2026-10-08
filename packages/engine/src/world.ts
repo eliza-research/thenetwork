@@ -5,7 +5,7 @@ import type { Category, City, Edge, EdgeType, Facet, FacetKind, Intent, Member, 
 import { canBeMatched, DAY, HOUR } from "@thenetwork/core";
 import type { EngineConfig } from "./config.ts";
 import { centroid, cosine, tokenize, type EmbedFn } from "./embed.ts";
-import { sha256, stableStringify } from "./rng.ts";
+import { sha256, stableStringify } from "./hash.ts";
 import type { AppPack } from "./pack.ts";
 import { networkPack } from "./packs/network/index.ts";
 import type { EngineInput, FeedbackRecord, InteractionRecord, NetworkEvent, ReliabilityEvidence, Role } from "./types.ts";

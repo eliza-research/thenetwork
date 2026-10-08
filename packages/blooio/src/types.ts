@@ -2,7 +2,7 @@
 // so the gateway, queue, and tests never depend on a specific provider.
 
 /** Minimal clock contract; structurally compatible with @thenetwork/core Clock/SimClock. */
-export interface Clock { now(): number }
+export type { Clock } from "../../core/src/clock.ts";
 
 export type ChannelKind = "blooio" | "sim" | "twilio";
 export type Transport = "imessage" | "sms" | "rcs" | "pending" | "unknown" | "sim";

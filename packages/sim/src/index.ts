@@ -1,4 +1,4 @@
-export * from "./rng.ts";
+export { clamp01, hash32, Rng } from "@thenetwork/core";
 export * from "./time.ts";
 export * from "./taxonomy.ts";
 export * from "./persona.ts";

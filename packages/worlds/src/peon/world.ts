@@ -27,7 +27,7 @@
 //     deadline (8 / 6 / 4 weeks by urgency) or are filled through another channel (4% a week).
 import { DAY, canBeMatched, type MemberId } from "@thenetwork/core";
 import type { InteractionRecord } from "@thenetwork/engine/src/types.ts";
-import { Rng, hash32 } from "@thenetwork/sim/src/rng.ts";
+import { Rng, hash32 } from "@thenetwork/core";
 import { auditCompanies, type AuditFlag } from "./audit.ts";
 import { PeonOracle, n01, u01 } from "./oracle.ts";
 import { generatePeonPopulation, type Candidate, type Job, type PeonGenOptions, type PeonPopulation } from "./persona.ts";

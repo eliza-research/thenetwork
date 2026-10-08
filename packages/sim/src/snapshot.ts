@@ -5,7 +5,7 @@
 import { DAY, HOUR, parseReply, type Category, type City, type Edge, type Facet, type Intent, type Member, type MemberId, type OpportunityKind, type Presence, type Proposal, type WorldSnapshot } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/judge";
 import { intentHorizonDays, intentRecordTiming, type Persona } from "./persona.ts";
-import { hash32 } from "./rng.ts";
+import { hash32 } from "@thenetwork/core";
 import { desireById, SKILLS } from "./taxonomy.ts";
 import { VAGUE_INTENT, type Knowledge } from "./sources.ts";
 import { PLAN_AGAIN_RE, planAgainAnswer } from "./plans.ts";

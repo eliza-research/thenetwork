@@ -18,7 +18,7 @@ import type { AppPack } from "@thenetwork/engine/src/pack.ts";
 import { PEON_ENGINE_CONFIG, peonPack } from "@thenetwork/engine/src/packs/peon/index.ts";
 import { candidates, jobs, type CandidateProfile, type JobProfile } from "@thenetwork/engine/src/packs/peon/profile.ts";
 import { pairKey, World } from "@thenetwork/engine/src/world.ts";
-import { hash32 } from "@thenetwork/sim/src/rng.ts";
+import { hash32 } from "@thenetwork/core";
 import { u01 } from "./oracle.ts";
 import type { PeonSnapshot } from "./snapshot.ts";
 import { CAND_CAP, JOB_BOARD_WEEKLY, type Intro, type PeonMatcher, type PeonWorld } from "./world.ts";

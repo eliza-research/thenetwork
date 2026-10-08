@@ -5,7 +5,7 @@
 // plus presence: a persona away on a trip is not free for a meeting in its home city.
 import type { City } from "@thenetwork/core";
 import type { Persona } from "../persona.ts";
-import { Rng, hash32 } from "../rng.ts";
+import { Rng, hash32 } from "@thenetwork/core";
 import { localParts } from "../time.ts";
 
 /**

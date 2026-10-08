@@ -5,7 +5,8 @@
 // unrealistically agreeable people (docs/research/matching-and-graphs.md). Set
 // `llmDecides: true` only for experiments comparing the two. PRD 34.3 "Persona agents".
 import type { LLM } from "@thenetwork/core";
-import { chatJson } from "../llmGenerator.ts";
+import { chatJson } from "@thenetwork/core";
+import { anyJson, SIM_JSON_GROW } from "../llmGenerator.ts";
 import type { SimMessage } from "../channel.ts";
 import type { Persona } from "../persona.ts";
 import { INTERESTS, SKILLS } from "../taxonomy.ts";
@@ -135,9 +136,9 @@ Return ONLY JSON: {"text": string, "decision": "accept"|"decline"|"counter"|"non
     const user = `Conversation so far:\n${history || "(none)"}\n\nNew message from the Network agent:\n"${msg.body}"\n\nSituation: ${situation(ctx, d, !!this.opts.llmDecides)}`;
     try {
       this.calls++;
-      const j = await chatJson<{ text?: string; decision?: string; worthwhile?: boolean }>(this.llm,
-        [{ role: "system", content: system }, { role: "user", content: user }],
-        { maxTokens: this.opts.maxTokens ?? 3000, temperature: this.opts.temperature ?? 0.8, retries: 1 });
+      const j = await chatJson(this.llm,
+        [{ role: "system", content: system }, { role: "user", content: user }], anyJson<{ text?: string; decision?: string; worthwhile?: boolean }>,
+        { attempts: 2, maxTokens: this.opts.maxTokens ?? 3000, temperature: this.opts.temperature ?? 0.8, grow: SIM_JSON_GROW });
       const text = String(j.text ?? "").trim();
       if (!text) throw new Error("empty text");
       const reply: AgentReply = { ...d, action: "reply", text };
@@ -168,10 +169,10 @@ Return ONLY JSON: {"text": string, "decision": "accept"|"decline"|"counter"|"non
     if (!ini || (ini.kind !== "ask" && ini.kind !== "travel")) return ini; // keep attack payloads verbatim
     try {
       this.calls++;
-      const j = await chatJson<{ text?: string }>(this.llm, [
+      const j = await chatJson(this.llm, [
         { role: "system", content: `${personaCard(ctx.persona)}\nReturn ONLY JSON {"text": string}.` },
         { role: "user", content: `Rewrite this text message to the Network agent in your own voice, same meaning, as an SMS: "${ini.text}"` },
-      ], { maxTokens: 3000, temperature: 0.8, retries: 1 });
+      ], anyJson<{ text?: string }>, { attempts: 2, maxTokens: 3000, temperature: 0.8, grow: SIM_JSON_GROW });
       const text = String(j.text ?? "").trim();
       return text ? { ...ini, text } : ini;
     } catch { this.failures++; return ini; }

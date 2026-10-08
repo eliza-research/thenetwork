@@ -26,7 +26,8 @@ import { effortOverlay, organizingReach, vouchCapacity, balanceOf } from "../src
 import type { CapitalConfigInput } from "../src/config.ts";
 import type { CapitalEvent, CapitalEventInput as NoId } from "../src/types.ts";
 
-export const DAY = 86_400_000, HOUR = 3_600_000;
+import { DAY, HOUR } from "../../core/src/clock.ts";
+export { DAY, HOUR };
 export const T0 = Date.UTC(2026, 9, 5, 0);
 
 /**

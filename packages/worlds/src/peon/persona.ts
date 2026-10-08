@@ -14,7 +14,7 @@
 //     and some of those show a scam cue), discriminatory employers (reject a sealed group when they
 //     can see it), ghosting employers, fake candidates (inflated claims, low true skills).
 import type { City, MemberId } from "@thenetwork/core";
-import { Rng, hash32 } from "@thenetwork/sim/src/rng.ts";
+import { Rng, hash32 } from "@thenetwork/core";
 import { AREAS, FAMILIES, FAMILY, ZIPS, payMid } from "./skills.ts";
 
 export type PeonMode = "onsite" | "hybrid" | "remote";

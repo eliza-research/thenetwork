@@ -13,7 +13,7 @@
 // Nothing here ever describes a non-member: every source has subject "self", and found profiles
 // that turn out to be someone else (namesakes) keep no data at all.
 import { DAY, type ConnectedSourceSummary, type Facet, type FacetKind, type PrivacyScope, type SensitiveCategory, type SourceKind, type SourceLink } from "@thenetwork/core";
-import type { Rng } from "./rng.ts";
+import type { Rng } from "@thenetwork/core";
 import type { AdversarialKind, Archetype, Persona } from "./persona.ts";
 import { INTERESTS, SKILLS, desireById } from "./taxonomy.ts";
 

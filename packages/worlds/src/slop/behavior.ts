@@ -3,7 +3,7 @@
 // and how adversaries act (scam scripts, harassment, catfishing, ghosting). Every draw is seeded by
 // (world seed, flow key, member), so a run is replayable. Probabilities come from the oracle.
 import type { MemberId } from "@thenetwork/core";
-import { Rng, hash32 } from "@thenetwork/sim/src/rng.ts";
+import { Rng, hash32 } from "@thenetwork/core";
 import { ORACLE_PARAMS, type DateOutcome, type HarmKind, type ProbeContext, type SlopOracle } from "./oracle.ts";
 
 export interface ProbeAnswer {

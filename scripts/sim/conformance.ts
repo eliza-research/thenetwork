@@ -19,7 +19,7 @@ import type { GenCtx } from "../../packages/engine/src/genkit.ts";
 import { checkMemberFacing } from "../../packages/engine/src/judgeCommon.ts";
 import { hardGate } from "../../packages/engine/src/judgeDeep.ts";
 import { validatePack, type AppPack } from "../../packages/engine/src/pack.ts";
-import { Rng } from "../../packages/engine/src/rng.ts";
+import { EngineRng as Rng } from "../../packages/core/src/index.ts";
 import { randomWorld } from "../../packages/engine/src/testkit.ts";
 import type { AttentionItem, EngineInput, EngineProposal } from "../../packages/engine/src/types.ts";
 import { pairKey, World } from "../../packages/engine/src/world.ts";

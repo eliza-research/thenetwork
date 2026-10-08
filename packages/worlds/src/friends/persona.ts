@@ -5,7 +5,7 @@
 import type { MemberId } from "@thenetwork/core";
 import { ACTIVITIES } from "@thenetwork/engine/src/packs/network/activities.ts";
 import { FRIENDS_EXCLUDED_ACTIVITIES, FRIENDS_SLOTS, NEIGHBORHOODS, type FriendsSlot, type Neighborhood } from "@thenetwork/engine/src/packs/friends/index.ts";
-import { Rng, clamp01, hash32 } from "@thenetwork/sim/src/rng.ts";
+import { Rng, clamp01, hash32 } from "@thenetwork/core";
 import { FIRST_NAMES, LAST_NAMES } from "@thenetwork/sim/src/taxonomy.ts";
 import type { RichnessTier } from "@thenetwork/sim/src/sources.ts";
 

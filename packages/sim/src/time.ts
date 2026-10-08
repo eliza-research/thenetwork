@@ -1,31 +1,16 @@
-// Local-time helpers for SF and NYC (DST-correct via Intl). Simulated time is always a
-// UTC epoch millisecond value read from a Clock; these helpers only interpret it.
-import { DAY, HOUR, MINUTE, type City } from "@thenetwork/core";
+// Local-time helpers for the simulated cities (DST-correct via Intl). Simulated time is always a UTC
+// epoch millisecond value read from a Clock; these helpers only interpret it. The zone table and the
+// local-time parts are core's (packages/core/src/time.ts); this module keys them by city.
+import { CITY_TZ, DAY, HOUR, localParts as zoneParts, MINUTE, type City } from "@thenetwork/core";
 
-export const CITY_TZ: Record<City, string> = { sf: "America/Los_Angeles", nyc: "America/New_York", la: "America/Los_Angeles" };
+export { CITY_TZ };
 
-const fmtCache = new Map<string, Intl.DateTimeFormat>();
-function fmt(tz: string) {
-  let f = fmtCache.get(tz);
-  if (!f) {
-    f = new Intl.DateTimeFormat("en-US", {
-      timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit",
-      hour: "2-digit", minute: "2-digit", weekday: "short",
-    });
-    fmtCache.set(tz, f);
-  }
-  return f;
-}
-
+/** Local parts in a city. Unlike core's, `weekday` is JavaScript's: Sunday = 0 ... Saturday = 6. */
 export interface LocalParts { year: number; month: number; day: number; hour: number; minute: number; weekday: number }
-const WD: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 
 export function localParts(t: number, city: City): LocalParts {
-  const parts = Object.fromEntries(fmt(CITY_TZ[city]).formatToParts(new Date(t)).map(p => [p.type, p.value]));
-  return {
-    year: +parts.year!, month: +parts.month!, day: +parts.day!,
-    hour: +parts.hour! % 24, minute: +parts.minute!, weekday: WD[parts.weekday!] ?? 0,
-  };
+  const p = zoneParts(t, CITY_TZ[city]);
+  return { ...p, weekday: (p.weekday + 1) % 7 };
 }
 
 /** Fractional local hour, e.g. 13.5 for 1:30pm. */

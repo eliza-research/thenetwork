@@ -11,7 +11,7 @@ import {
   planAgainText, planPicksText, planYesDraw, planYesProb, resolvePlanOptions, windowCovers, type PlanAgentOptions, type PlanMeta, type PlanOption,
 } from "../plans.ts";
 import { desireLive, type Persona } from "../persona.ts";
-import { Rng as RngCtor, clamp01, hash32, type Rng } from "../rng.ts";
+import { Rng as RngCtor, clamp01, hash32, type Rng } from "@thenetwork/core";
 import { FIRST_NAMES, INTERESTS, NEIGHBORHOODS, SKILLS } from "../taxonomy.ts";
 import { inHourWindow, localHour, localParts, fmtLocal } from "../time.ts";
 import type {

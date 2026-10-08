@@ -1,7 +1,7 @@
 // LLM-enriched persona generator: starts from the deterministic generator (so hidden truth
 // stays structured and oracle-scorable) and asks the default LLM (defaultLLM()) for a realistic public bio and
 // voice sample consistent with that truth. Private disclosures never enter public fields.
-import { parseJson, type ChatMessage, type LLM } from "@thenetwork/core";
+import { chatJson, type LLM } from "@thenetwork/core";
 import { generatePersonas, type GeneratorOptions } from "./generator.ts";
 import type { Persona } from "./persona.ts";
 import { INTERESTS, SKILLS } from "./taxonomy.ts";
@@ -20,7 +20,7 @@ Facts (must stay consistent):
 - Texting style: ${h.style}; verbosity ${Math.round(h.verbosity * 100)}%
 Return ONLY JSON: {"bio": "2-3 sentence third-person bio with a concrete, specific detail or two (job, a favorite spot)", "voiceSample": "one example text message they'd send, in their style", "occupation": "short job title"}
 Do not include phone numbers, emails, addresses, or health/financial/relationship-status details.`;
-  const j = await chatJson<{ bio?: string; voiceSample?: string; occupation?: string }>(llm, [{ role: "user", content: prompt }], { maxTokens: 4000, temperature: 0.9 });
+  const j = await chatJson(llm, [{ role: "user", content: prompt }], anyJson<{ bio?: string; voiceSample?: string; occupation?: string }>, { attempts: 3, maxTokens: 4000, temperature: 0.9, grow: SIM_JSON_GROW });
   const scrub = (s: string | undefined) => {
     let t = String(s ?? "").trim();
     if (h.privateDisclosure) t = t.split(h.privateDisclosure.canary).join("");
@@ -50,16 +50,9 @@ export async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T, i: nu
 }
 
 /**
- * JSON chat with retries: a reasoning model occasionally spends its
- * whole budget thinking (empty or truncated content), so retry with a larger budget.
+ * Retry budget for the simulator's JSON calls (core chatJson): a reasoning model occasionally spends
+ * its whole budget thinking (empty or truncated content), so each retry gets 1.5x the budget, up to 8000.
  */
-export async function chatJson<T>(llm: LLM, messages: ChatMessage[], opts: { maxTokens?: number; temperature?: number; retries?: number } = {}): Promise<T> {
-  let lastErr: unknown;
-  let maxTokens = opts.maxTokens ?? 3000;
-  for (let i = 0; i <= (opts.retries ?? 2); i++) {
-    try {
-      return parseJson<T>(await llm.chat(messages, { maxTokens, temperature: opts.temperature, json: true }));
-    } catch (e) { lastErr = e; maxTokens = Math.min(8000, Math.round(maxTokens * 1.5)); }
-  }
-  throw lastErr;
-}
+export const SIM_JSON_GROW = (maxTokens: number) => Math.min(8000, Math.round(maxTokens * 1.5));
+/** Any JSON value (the callers validate the fields they read). */
+export const anyJson = <T>(raw: unknown) => raw as T;

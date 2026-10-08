@@ -27,7 +27,7 @@ import { makeSlopPack, mutualMarkets, planFromInput, SLOP_ASK_QUESTIONS, SLOP_EN
 import { ageRangeOf } from "../../packages/engine/src/packs/slop/rules.ts";
 import { statedDealbreaker } from "../../packages/engine/src/packs/slop/score.ts";
 import { cellMiles } from "../../packages/engine/src/packs/slop/zips.ts";
-import { Rng } from "../../packages/engine/src/rng.ts";
+import { EngineRng as Rng } from "../../packages/core/src/index.ts";
 import type { EngineInput, EngineProposal } from "../../packages/engine/src/types.ts";
 import { World } from "../../packages/engine/src/world.ts";
 import { BODY_TYPE_DEFAULTS } from "../../packages/worlds/src/slop/bodyType.ts";

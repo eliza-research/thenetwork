@@ -10,7 +10,7 @@
 //                          An UPPER BOUND, not something network code may do.
 // Random and greedy read only the snapshot (via visible.ts) for filters and planning.
 import type { MemberId } from "@thenetwork/core";
-import type { Rng } from "@thenetwork/sim/src/rng.ts";
+import type { Rng } from "@thenetwork/core";
 import type { SlopCity } from "./geo.ts";
 import { isSafe } from "./oracle.ts";
 import { SLOTS, type DateActivity } from "./persona.ts";

@@ -4,7 +4,7 @@
 // under test never sees this; metrics compare its proposals against it.
 import { DAY, type City, type MemberId, type OpportunityKind } from "@thenetwork/core";
 import type { Category } from "@thenetwork/core";
-import { Rng, clamp01, hash32 } from "./rng.ts";
+import { Rng, clamp01, hash32 } from "@thenetwork/core";
 import { desireById } from "./taxonomy.ts";
 import { withLiveDesires, type Persona } from "./persona.ts";
 import { inHourWindow, localParts } from "./time.ts";

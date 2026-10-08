@@ -3,7 +3,7 @@
 // STOP/START/HELP keywords, outbound idempotency, seeded delivery failures, and a
 // per-recipient log. The Network under test talks to members only through this.
 import { HELP_TEXT, KEYWORDS, keywordKey, STOP_CONFIRMATION, type Clock, type MemberId } from "@thenetwork/core";
-import { Rng } from "./rng.ts";
+import { Rng } from "@thenetwork/core";
 
 export type ChannelKind = "imessage" | "sms";
 export type Direction = "outbound" | "inbound";

@@ -2,7 +2,7 @@
 // Criteria-based only: never a score, a rank or a percentile; never a candidate's name before the
 // employer said yes; never anything sealed or a proxy. Every string still passes the core leak gate.
 import type { MemberId } from "@thenetwork/core";
-import type { Rng } from "../../rng.ts";
+import type { EngineRng as Rng } from "@thenetwork/core";
 import type { Candidate } from "../../types.ts";
 import type { World } from "../../world.ts";
 import { privateVocabulary } from "../../explain.ts";

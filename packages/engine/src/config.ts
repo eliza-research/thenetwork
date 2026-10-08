@@ -2,7 +2,7 @@
 // covered by the config hash logged with each run (ME-004). Thresholds are applied (ME-009).
 import type { Category, City, ParticipationState } from "@thenetwork/core";
 import { DAY, HOUR } from "@thenetwork/core";
-import { sha256, stableStringify } from "./rng.ts";
+import { sha256, stableStringify } from "./hash.ts";
 import type { Effort, ItemKind } from "./types.ts";
 
 export const ENGINE_VERSION = "engine-v1.2.0";

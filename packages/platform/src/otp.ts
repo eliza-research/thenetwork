@@ -7,6 +7,7 @@
 //    10 per number and 30 per IP per hour, across every app.
 //  - Every limit is the same whether or not the number is known (no enumeration).
 import { randomInt } from "node:crypto";
+import { DAY, HOUR } from "../../core/src/clock.ts";
 import type { AppId, AppInfo } from "./apps.ts";
 import { devShortcutsAllowed, type Env } from "./env.ts";
 import { keyedHash, maskPhone, safeEqual } from "./phone.ts";
@@ -97,8 +98,6 @@ export const OTP_LIMITS: OtpLimits = {
   ttlMs: 10 * 60_000, maxAttempts: 5, perPhonePerHour: 3, perPhonePerDay: 6, perIpPerHour: 10, minGapMs: 30_000,
   globalPerHour: 500, verifyPerPhonePerHour: 10, verifyPerIpPerHour: 30,
 };
-const HOUR = 3_600_000;
-const DAY = 24 * HOUR;
 
 /**
  * The rate-limit bucket of a client address: an IPv4 address as it is, an IPv6 address by its /64

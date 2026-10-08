@@ -14,7 +14,7 @@ import type { AppPack } from "@thenetwork/engine/src/pack.ts";
 import { makeSlopPack, planFromInput, SLOP_ENGINE_CONFIG, slopProfiles, type SlopPackOptions } from "@thenetwork/engine/src/packs/slop/index.ts";
 import type { DeepPartial } from "@thenetwork/engine/src/packs/slop/options.ts";
 import type { AskRecord, EngineInput } from "@thenetwork/engine/src/types.ts";
-import { hash32 } from "@thenetwork/sim/src/rng.ts";
+import { hash32 } from "@thenetwork/core";
 import type { SlopCity } from "./geo.ts";
 import type { DateActivity } from "./persona.ts";
 import type { SlopAskField, SlopSnapshot } from "./snapshot.ts";
