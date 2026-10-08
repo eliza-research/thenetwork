@@ -1,3 +1,4 @@
+export { createGetUpdatesAction } from "./actions/get-updates.js";
 export { createSetStateAction } from "./actions/set-state.js";
 export { createNetworkEdgePlugin, NETWORK_EDGE_COMPATIBILITY } from "./edge.js";
 export type { NetworkEdgePluginOptions, NetworkRouting } from "./edge.js";

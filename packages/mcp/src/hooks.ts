@@ -16,6 +16,12 @@ export interface SignedIn {
   setCookie?: string;
 }
 
+/** The assistant behind an OAuth client, by its redirect hosts (handler.ts assistantOf). */
+export type AssistantKind = "chatgpt" | "claude" | "grok" | "web";
+
+/** One update for the person's assistant: a member-safe line from the inbox (packages/notify). */
+export interface PublicUpdate { summary: string; at: string; kind: string }
+
 export interface PlatformHooks {
   /** E.164 for a typed number, or undefined (the platform accepts +1 only). */
   normalizePhone(input: unknown): string | undefined;
@@ -40,6 +46,13 @@ export interface PlatformHooks {
    * had texted it (the Network reads it with the same rules). Undefined: the platform does not take profiles.
    */
   submitProfile?(personId: string, app: McpAppId, phoneKey: string, text: string): Promise<"accepted" | "not_member">;
+  /**
+   * The person's own unseen updates in this app from the single inbox, marked seen on every surface.
+   * Undefined: the platform has no inbox (get_updates answers "not available").
+   */
+  updates?(personId: string, app: McpAppId, assistant: AssistantKind, token?: string): Promise<PublicUpdate[]>;
+  /** An assistant was connected (consent granted) or disconnected (grant revoked) for a person. */
+  assistantLinked?(personId: string, assistant: AssistantKind, active: boolean): Promise<void>;
   /** The person already signed in on this site (the site's session cookie), if any. */
   session?(app: McpAppId, req: Request): Promise<SignedIn | undefined>;
   /** Start a site session after a verified code, so the person is signed in on the site too. Returns a Set-Cookie value. */
@@ -75,6 +88,10 @@ export interface PlatformParts {
   secureCookie?: boolean;
   /** The service's profile intake (NetworkService.submitProfile). Without it, submit_profile answers "not available". */
   submitProfile?: (personId: string, app: McpAppId, e164: string, text: string) => Promise<"accepted" | "not_member">;
+  /** The single inbox (NetworkService.updatesFor). Without it, get_updates answers "not available". */
+  updates?: PlatformHooks["updates"];
+  /** Surface signals for the inbox (NetworkService.assistantLinked). */
+  assistantLinked?: PlatformHooks["assistantLinked"];
 }
 
 function cookieValue(header: string | null, name: string): string | undefined {
@@ -125,6 +142,8 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
         return who && who.person.id === personId ? p.submitProfile!(personId, id, who.e164, text) : "not_member";
       },
     } : {}),
+    ...(p.updates ? { updates: p.updates } : {}),
+    ...(p.assistantLinked ? { assistantLinked: p.assistantLinked } : {}),
     async status(personId, id) {
       const app = p.app(id);
       if (!app) return "not_joined";

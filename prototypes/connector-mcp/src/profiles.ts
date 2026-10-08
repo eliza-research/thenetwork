@@ -28,7 +28,7 @@ export interface SurfaceProfile {
 const BASE_INSTRUCTIONS =
   "The Network is the member's private, invite-only network agent for introductions, help, and things to do nearby. " +
   "Use ask_network_agent for questions and tell_network_agent when the member wants the Network to do or remember something. " +
-  "Use get_network_updates only when the member asks what's new from The Network. " +
+  "Use get_network_updates only when the member asks what's new from The Network, or their message has an update code like T-7F3K9Q (pass it as update_token). " +
   "Do search and plan on your own first; the Network involves other people only when that is worth it. " +
   "Don't paste other people's personal details into these tools. The Network asks the member to confirm consequential actions itself.";
 

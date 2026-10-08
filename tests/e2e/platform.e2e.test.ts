@@ -228,9 +228,10 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       const r = toolData(await rpc(st, "peon", "/mcp", "tools/call", { name: "start_signup", arguments: { app: "peon", phone: "+12125550188" } }));
       expect(r.error).toBeString();
       const tools = (await rpc(st, "peon", "/mcp", "tools/list")).body!.result.tools as { name: string; inputSchema: { properties: Record<string, unknown> } }[];
-      // submit_profile also takes the person's own approved text ("about"), which refuses phone numbers and codes.
-      for (const t of tools) expect(Object.keys(t.inputSchema.properties ?? {})).toEqual(t.name === "submit_profile" ? ["app", "about"] : ["app"]);
-      expect(tools.map(t => t.name).sort()).toEqual(["app_info", "check_status", "start_signup", "submit_profile"]);
+      // submit_profile also takes the person's own approved text ("about"), which refuses phone numbers and codes;
+      // get_updates takes an update reference (T-XXXXXX), never a verification code.
+      for (const t of tools) expect(Object.keys(t.inputSchema.properties ?? {})).toEqual(t.name === "submit_profile" ? ["app", "about"] : t.name === "get_updates" ? ["app", "update_token"] : ["app"]);
+      expect(tools.map(t => t.name).sort()).toEqual(["app_info", "check_status", "get_updates", "start_signup", "submit_profile"]);
     });
   });
 

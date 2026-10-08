@@ -1,11 +1,14 @@
 /** Worker-safe Network plugin bound to host-owned stores and turn authority. */
 import type { Plugin } from "@elizaos/core";
+import { createGetUpdatesAction } from "./actions/get-updates.js";
 import { createSetStateAction } from "./actions/set-state.js";
 import { createNetworkSignalsEvaluator } from "./evaluators/network-signals.js";
 import { createMemberContextProvider } from "./providers/member-context.js";
 import { NETWORK_CONTEXT_DEFINITION } from "./routing/context.js";
 import { createNetworkActionFieldEvaluator } from "./routing/structured-field.js";
 import type { NetworkStore, NetworkTurnAuthority } from "./types.js";
+
+type GetUpdatesStore = NetworkStore & Required<Pick<NetworkStore, "readUpdates">>;
 
 export const NETWORK_EDGE_COMPATIBILITY = {
   target: "edge",
@@ -65,8 +68,16 @@ export function createNetworkEdgePlugin(options: NetworkEdgePluginOptions): Plug
     ],
     // In structured mode the field evaluator is the only path to a state change: a planner
     // SET_STATE there would bypass its authz (audit plugin-prototypes-1).
-    actions: actionsEnabled && routing === "planner"
-      ? [createSetStateAction({ store: options.store, authority: options.authority, now: options.now })]
+    // GET_UPDATES only reads (and marks seen), so it is offered in both routing modes.
+    actions: actionsEnabled
+      ? [
+          ...(routing === "planner"
+            ? [createSetStateAction({ store: options.store, authority: options.authority, now: options.now })]
+            : []),
+          ...(options.store.readUpdates
+            ? [createGetUpdatesAction({ store: options.store as GetUpdatesStore, authority: options.authority })]
+            : []),
+        ]
       : [],
     evaluators: [
       createNetworkSignalsEvaluator({

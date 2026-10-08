@@ -18,7 +18,7 @@ describe("Streamable HTTP, 2026-07-28", () => {
     expect(d.body!.result._meta["io.modelcontextprotocol/serverInfo"].name).toBe("the-network");
 
     const l = await rpc(env, NTWRK, "tools/list");
-    expect(l.body!.result.tools.map((t: any) => t.name)).toEqual(["app_info", "start_signup", "check_status", "submit_profile"]);
+    expect(l.body!.result.tools.map((t: any) => t.name)).toEqual(["app_info", "start_signup", "check_status", "submit_profile", "get_updates"]);
     for (const t of l.body!.result.tools) {
       // Every tool but submit_profile only reads; submit_profile adds to the person's own profile (never destructive).
       const ro = t.name !== "submit_profile";
@@ -82,7 +82,7 @@ describe("Streamable HTTP, 2026-07-28", () => {
     const future = await rpc(env, NTWRK, "initialize", { protocolVersion: "2030-01-01", capabilities: {} }, { modern: false });
     expect(future.body!.result.protocolVersion).toBe("2025-11-25");
     const list = await rpc(env, NTWRK, "tools/list", {}, { modern: false, headers: { "mcp-protocol-version": "2025-06-18" } });
-    expect(list.body!.result.tools).toHaveLength(4);
+    expect(list.body!.result.tools).toHaveLength(5);
     const tool = await call(env, NTWRK, "app_info", {}, { modern: false });
     expect(tool.body!.result.structuredContent.apps.map((a: any) => a.id)).toEqual(["ntwrk", "slop", "peon", "friends"]);
   });
@@ -141,12 +141,12 @@ describe("surface=openai hides slop", () => {
 });
 
 describe("no tool accepts a phone number or a code", () => {
-  test("every input schema has only `app` (and submit_profile's `about`), and extra fields are refused, not ignored", async () => {
+  test("every input schema has only `app` (and submit_profile's `about`, get_updates' `update_token`), and extra fields are refused, not ignored", async () => {
     const env = setup();
     await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);
     for (const url of [NTWRK, OPENAI, `${origin("slop.date")}/mcp`]) {
       for (const t of (await rpc(env, url, "tools/list")).body!.result.tools) {
-        expect(Object.keys(t.inputSchema.properties)).toEqual(t.name === "submit_profile" ? ["app", "about"] : ["app"]);
+        expect(Object.keys(t.inputSchema.properties)).toEqual(t.name === "submit_profile" ? ["app", "about"] : t.name === "get_updates" ? ["app", "update_token"] : ["app"]);
         expect(JSON.stringify(t.inputSchema)).not.toMatch(/phone|code|otp|name|age|birth/i);
       }
     }
