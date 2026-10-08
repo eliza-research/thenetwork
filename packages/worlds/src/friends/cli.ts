@@ -2,7 +2,7 @@
 // No LLM calls.
 //   bun run packages/worlds/src/friends/cli.ts --seeds 1-4 --n 400 --weeks 8 [--only pack,random,greedy,oracle] [--json out.json]
 import { BASELINES } from "./baselines.ts";
-import { historicalGates, officialGates, printGates } from "./gates.ts";
+import { historicalGates, officialGates, printGates, trackedMetrics } from "./gates.ts";
 import { friendsMetrics, type FriendsMetrics } from "./metrics.ts";
 import { friendsPackMatcher } from "./packMatcher.ts";
 import { runFriendsWorld, type FriendsMatcher, type FriendsWorld } from "./world.ts";
@@ -55,6 +55,7 @@ const rows: [string, (m: FriendsMetrics) => number, boolean, number?][] = [
   ["Mean enjoyment (real attendees)", m => m.meanEnjoy, false, 3],
   ["**Repeat-meetup rate (>= 2 again within 30 d)**", m => m.repeatRate, true],
   ["Repeat, same group (>= 3 again)", m => m.repeatGroupRate, true],
+  ["Repeat, counting crew handoffs", m => m.repeatRateWithHandoff, true],
   ["Crews formed / seed", m => m.crewsFormed, false, 1],
   ["Crews handed off / seed", m => m.crewsHandedOff, false, 1],
   ["Hours with members, per real member", m => m.hoursPerMember, false, 1],
@@ -92,6 +93,7 @@ console.log("\nAdversary contacts by kind:");
 for (const k of only) console.log(`  ${k}: ` + ["romance_seeker", "mlm", "bot", "harasser"].map(a => `${a} ${mean(all[k]!.map(m => m.safety.adversaryContactsByKind[a] ?? 0)).toFixed(1)}`).join("; "));
 if (all.pack && all.random) {
   if (all.oracle) console.log("\n" + printGates("OFFICIAL gates (adopted 2026-10-08), friendsPack vs random-within-area and oracle on the same seeds:", officialGates(all.pack, all.random, all.oracle)));
+  console.log("\n" + printGates("TRACKED metrics (non-blocking):", trackedMetrics(all.pack, all.random), true));
   console.log("\n" + printGates("HISTORICAL gates (first proposed; not the launch criteria):", historicalGates(all.pack, all.random)));
 }
 const out = arg("json");

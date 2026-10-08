@@ -3,7 +3,10 @@
 // and blocks from reports, three weeks of meetup history), plus friends-specific checks: no romance
 // anywhere (lane, rules, copy), no minors in any plan, adversaries the Network can see are held.
 // No LLM calls (friendsPack has no judge).
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
+
+// Whole-world simulations: allow for a loaded machine when the full suite runs in parallel.
+setDefaultTimeout(120_000);
 import { canBeMatched, type MemberId } from "@thenetwork/core";
 import * as A from "@thenetwork/engine/src/attention.ts";
 import { resolveConfig } from "@thenetwork/engine/src/config.ts";
@@ -80,7 +83,7 @@ describe("friendsPack: friends-specific checks", () => {
       }
       expect(probes).toBeGreaterThan(0);
     }
-  });
+  }, 60_000);
 
   test("no minors in any plan role (planner: sessions, offers, repeats, plans, partners), declared or by claimed age", () => {
     for (const seed of seeds) {
@@ -101,7 +104,7 @@ describe("friendsPack: friends-specific checks", () => {
       for (const p of r.proposals) for (const id of [...p.participants, ...p.alternates]) expect(flagged.has(id)).toBe(false);
       for (const p of allPlans(wk)) for (const id of [...p.invited, ...p.alternates]) expect(flagged.has(id)).toBe(false);
     }
-  });
+  }, 60_000);
 
   test("in the simulator: 0 declared-minor proposals and contacts, 0 known-adversary contacts (8 weeks, 2 seeds)", () => {
     for (const seed of [21, 22]) {

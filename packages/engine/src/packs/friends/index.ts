@@ -137,7 +137,10 @@ export const friendsPack: AppPack = {
       { metric: "borough_v14_ratio_min_30", op: ">=", value: 0.7, seeds: 4, blocking: true },
       { metric: "safety.declaredMinorContacts", op: "==", value: 0, seeds: 8, blocking: true },
       { metric: "safety.knownAdversaryContacts", op: "==", value: 0, seeds: 8, blocking: true },
-      { metric: "undetected_harm_vs_random", op: "<=", value: 0.5, seeds: 4, blocking: true },
+      { metric: "total_harm_vs_random", op: "<=", value: 0.5, seeds: 4, blocking: true },
+      // Tracked, non-blocking.
+      { metric: "undetected_harm_vs_random", op: "<=", value: 0.5, seeds: 4, blocking: false },
+      { metric: "repeat_rate_with_handoff_12w", op: ">=", value: 0.3, seeds: 4, blocking: false },
     ],
 
 

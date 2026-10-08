@@ -2,7 +2,7 @@
 
 friends.help (app id `friends`, renamed from buddies.nyc) is the friendship app on The Network's shared engine, NYC first. This report covers the simulated NYC world (`packages/worlds/src/friends/`), the app pack (`packages/engine/src/packs/friends/`), the oracle calibration, the design, the tuning trail, the held-out results, the ablations and the gate table.
 
-- **Branch:** `engine/friends`, worktree `/Users/shawwalters/thenetwork-friends`. The first version was merged to main as `67f9d77`; this update is rebased onto `origin/main` @ `a69a231`. Not pushed.
+- **Branch:** `engine/friends`, worktree `/Users/shawwalters/thenetwork-friends`. Earlier versions were merged to main (`67f9d77`, `4d20c96`); this update is rebased onto `origin/main`. Not pushed.
 - **LLM use:** none. Tests and runs used empty keys and no `LIVE_TESTS`. Persona text is templated, and friendsPack has no judge.
 - **Core and engine changes:** none outside `packages/engine/src/packs/friends/`. The `AppPack` contract, `conformance.ts`, `plans.ts`, `attention.ts` and the core types are unchanged. The only edit made after the rebase is inside the pack: a `tz` fallback, because core `timezones` is now `Partial<Record<City, string>>`.
 - **Checks:**
@@ -10,33 +10,49 @@ friends.help (app id `friends`, renamed from buddies.nyc) is the friendship app 
   - `bunx tsc --noEmit -p .` is clean.
   - `bun test --conditions eliza-source ./packages/engine ./packages/worlds`: 451 pass, 2 skip, 0 fail. This includes `runConformance(friendsPack)` and the friends-specific checks.
 
-## Official gates (adopted by the founder 2026-10-08) and the held-out check
+## Official gates (adopted 2026-10-08) and the held-out check
 
-The founder adopted the replacement gates proposed in the first version of this report. They are code in `packages/worlds/src/friends/gates.ts` (`officialGates`, with `historicalGates` kept for the record) and in `friendsPack.metrics.gates`. `cli.ts` prints both sets whenever the pack, random and oracle arms run on the same seeds. Metrics are pooled over seeds (the mean of each metric); the borough gate also shows the worst seed.
+The founder adopted the replacement gates. For the harm gate, the coordinator chose **total harm ≤ 0.5× random**. Harm from undetected adversaries and the 12-week repeat rate are **tracked, non-blocking** metrics. In the 12-week tracked repeat rate, a crew that moved to its own chat counts as a repeat: graduation is a success, not a drop.
+
+Where these live:
+- **Code:** `packages/worlds/src/friends/gates.ts` holds `officialGates`, `trackedMetrics` and `historicalGates`.
+- **Pack:** `friendsPack.metrics.gates` holds the official set; the tracked ones are listed with `blocking: false`.
+- **CLI:** `cli.ts` prints all three sets whenever the pack, random and oracle arms run on the same seeds.
+
+Metrics are pooled over seeds (the mean of each metric). The borough gate also shows the worst seed.
 
 Held-out seeds 5-8, 400 personas (`bun run packages/worlds/src/friends/cli.ts --seeds 5-8 --weeks 8`, and `--weeks 12`):
 
-| Official gate | 8 weeks | Pass | 12 weeks | Pass |
-|---|---|---|---|---|
-| Repeat-meetup rate ≥ 30% | 33.7% | pass | 27.4% | **FAIL** |
-| V14 ≥ 0.75× oracle and ≥ 1.75× random | 34.7%: 0.83× oracle (42.1%), 2.05× random (17.0%) | pass | 34.5%: 0.83×, 2.07× | pass |
-| Members with a friendship forming ≥ 2× random | 9.4% vs 2.4% (3.9×) | pass | 17.1% vs 7.0% (2.5×) | pass |
-| Median group max travel ≤ 35 min | 26.9 min | pass | 27.0 min | pass |
-| No borough with ≥ 30 members below 0.7× V14 | 0.71, Bronx (worst seed 0.56) | pass | 0.80, Bronx (worst seed 0.67) | pass |
-| Declared-minor proposals and contacts = 0, every seed | 0 | pass | 0 | pass |
-| Known-adversary contacts = 0, every seed | 0 | pass | 0 | pass |
-| Harm from undetected adversaries ≤ 0.5× random | 17.5 vs 10.5 per seed (1.67×) | **FAIL** | 21.0 vs 15.8 (1.33×) | **FAIL** |
+| Official gate | 8 weeks | Pass |
+|---|---|---|
+| Repeat-meetup rate ≥ 30% (8 weeks) | 33.7% | pass |
+| V14 ≥ 0.75× oracle and ≥ 1.75× random | 34.7%: 0.83× oracle (42.1%), 2.05× random (17.0%) | pass |
+| Members with a friendship forming ≥ 2× random | 9.4% vs 2.4% (3.9×) | pass |
+| Median group max travel ≤ 35 min | 26.9 min | pass |
+| No borough with ≥ 30 members below 0.7× V14 | 0.71, Bronx (worst seed 0.56) | pass |
+| Declared-minor proposals and contacts = 0, every seed | 0 | pass |
+| Known-adversary contacts = 0, every seed | 0 | pass |
+| Total harm events ≤ 0.5× random | 17.5 vs 41.5 per seed (0.42×) | pass |
 
-**The pack passes 7 of 8 official gates at 8 weeks.** Two gates fail:
+**friendsPack passes all 8 official gates on the held-out seeds at 8 weeks.**
 
-1. **Harm from undetected adversaries (≤ 0.5× random): fails at both 8 and 12 weeks.**
-   - **What the gate counts.** It counts harm events whose offender showed no visible red flag (an uncleared cue, an unpassed check, or a hold) when the proposal was made, which is the gate as worded.
-   - **Total harm is cut, but not undetected harm.** The pack cuts total harm to 0.42× random (17.5 vs 41.5 per seed). The reason is that it never matches a known adversary: random's harm comes mostly from bots and flagged members, which the pack holds.
-   - **Undetected harm is higher because the pack holds twice as many meetups.** It holds 191 meetups per seed against random's 99, so the adversaries the Network cannot see are seated more often. Per meetup, undetected harm is only about 13% lower (0.092 vs 0.106).
-   - **Most of it happens at the adversary's first meetup.** 57 of 70 pack harm events (seeds 5-8) are there, before any report or feedback exists: romance seekers 35, MLM 22, harassers 12.
-   - **Matching cannot close the gap.** The only lever that does is detection before the first table. Options: a dating-intent check at onboarding, veteran-hosted first tables, or a relay-message classifier. Feedback-only flagging was tried and rejected (precision 10 adversaries vs 66 honest members; tuning trail step 8).
-   - **This needs a decision.** Either the gate is read as total harm (it passes, 0.42×), or the 50% cut is held as a detection target for onboarding and is not met by this world's cue rates.
-2. **Repeat-meetup rate at 12 weeks (27.4%).** The 8-week target passes. Over 12 weeks, crews hand off to their own chats and the steady flow of new tables dilutes the rate.
+At 12 weeks the gates that do not depend on the horizon still pass:
+- V14 is 0.83× oracle and 2.07× random;
+- friendships forming are 2.5× random;
+- travel is 27.0 min;
+- the borough ratio is 0.80;
+- declared-minor and known-adversary contacts are 0;
+- total harm is 0.40× random (21.0 vs 52.3).
+
+| Tracked metric (non-blocking) | 8 weeks | 12 weeks | On target |
+|---|---|---|---|
+| Harm from undetected adversaries vs random (target ≤ 0.5×) | 17.5 vs 10.5 (1.67×) | 21.0 vs 15.8 (1.33×) | no |
+| Repeat rate counting crew handoffs (target ≥ 30%) | 34.3% (33.7% without) | 28.8% (27.4% without) | 8 weeks yes, 12 weeks no |
+
+Reading the tracked metrics:
+
+- **Undetected-adversary harm.** The pack never matches a known adversary, so its total harm is less than half of random's. But it holds about twice as many meetups (191 vs 99 per seed), so the adversaries nobody can see are seated more often. 57 of its 70 harm events (seeds 5-8) happen at the adversary's first meetup, before any report or feedback exists: romance seekers 35, MLM 22, harassers 12. Only detection before the first table can cut this: a dating-intent check at onboarding, veteran-hosted first tables, or a relay-message classifier.
+- **12-week repeat.** Counting handoffs adds only 1.4 points. There are about 3.5 handoffs per seed, and a handed-off crew's own sessions already counted when they fell within 30 days. The fall from 8 to 12 weeks comes from the larger number of new tables formed in weeks 4-8, not from crews leaving the Network.
 
 **Historical gates (first proposed; not the launch criteria), held-out 8 weeks:**
 
@@ -50,7 +66,7 @@ Held-out seeds 5-8, 400 personas (`bun run packages/worlds/src/friends/cli.ts --
 | 0 minor contacts, declared and hidden | 0 | pass (2 hidden at 12 weeks) |
 | 0 adversary contacts | 50.5 pairs | fail |
 
-Why V14 and the all-boroughs gate were replaced:
+Why the V14, all-boroughs and adversary-contact gates were replaced:
 - **V14 ≥ 60% is beyond reach in this world.** Even the hidden-truth oracle reaches only about 42% at 400 personas. Doubling the plan allowance changes nothing: no arm sends a member more than one new-plan invite a week.
 - **The all-boroughs gate is decided by Staten Island.** It has about 9-10 real members at 400 personas, 30-50 transit minutes apart. At 1,200 personas it reaches 15%.
 
@@ -65,7 +81,7 @@ Held-out seeds 5-8, 400 personas, 8 weeks; mean ± SE over seeds.
   - V14 34.7% (random 17.0%; oracle 42.1%);
   - median of each group's longest trip 26.9 min;
   - 0 contacts with declared minors or with any adversary the Network could see.
-- **The residual risk is undetected adversaries at their first table.** The tables above cover it; mainly romance seekers, who show a cue only 30-65% of the time.
+- **The residual risk is undetected adversaries at their first table.** It is tracked, not gated: mainly romance seekers, who show a cue only 30-65% of the time.
 
 ## 1. The world (`packages/worlds/src/friends/`)
 

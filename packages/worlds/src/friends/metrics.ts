@@ -16,6 +16,12 @@ export interface FriendsMetrics {
   repeatRate: number;
   /** Stricter: >= 3 of the attendees (or both of a pair) met again together within 30 days. */
   repeatGroupRate: number;
+  /**
+   * Repeat rate that also counts a crew handoff as a repeat: a meetup counts when >= 2 of its
+   * attendees met again within 30 days OR are members of a crew that moved to its own chat
+   * (graduation is a success, not a drop). Tracked, not a gate.
+   */
+  repeatRateWithHandoff: number;
   crewsFormed: number; crewSessions: number; crewsHandedOff: number;
   /** Mean over real members of total hours with other members, and of the hours with their top person. */
   hoursPerMember: number; topPairHours: number;
@@ -88,13 +94,15 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
   // meetups the Network arranged by day D-30; "again" includes a handed-off crew meeting on its own
   // (the same group met again; graduation is a success), not pairs' private hangouts.
   const allMeet = meetups.filter(m => m.kind !== "crew_self");
-  let rep = 0, repG = 0, base = 0;
+  let rep = 0, repG = 0, repH = 0, base = 0;
+  const handed = world.state.crews.filter(c => c.handedOff).map(c => new Set(c.members));
   for (const m of allMeet) {
     if (m.day > days - 30) continue;
     base++;
     const later = meetups.filter(x => x.day > m.day && x.day <= m.day + 30);
     const overlap = later.map(x => x.attendees.filter(id => m.attendees.includes(id)).length);
     if (overlap.some(c => c >= 2)) rep++;
+    if (overlap.some(c => c >= 2) || handed.some(cm => m.attendees.filter(id => cm.has(id)).length >= 2)) repH++;
     if (overlap.some(c => c >= Math.min(3, m.attendees.length))) repG++;
   }
 
@@ -176,7 +184,7 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
     quorumRate: div(flows.filter(f => f.going.length > 0 && f.stage !== "no_quorum").length, flows.filter(f => f.probed > 0).length), capDrops: flows.reduce((s, f) => s + f.capDrops, 0),
     meetups: held.length, meetupsByKind: byKind, attendance: div(attended, booked), meanGroupSize: div(held.reduce((s, m) => s + m.attendees.length, 0), held.length),
     goodRate: div(held.filter(m => m.good).length, held.length), meanEnjoy: div(realE.reduce((s, x) => s + x, 0), realE.length),
-    repeatRate: div(rep, base), repeatGroupRate: div(repG, base),
+    repeatRate: div(rep, base), repeatGroupRate: div(repG, base), repeatRateWithHandoff: div(repH, base),
     crewsFormed: world.state.crews.length, crewSessions: meetups.filter(m => m.crewId && m.kind !== "crew_self").length, crewsHandedOff: world.state.crews.filter(c => c.handedOff).length,
     hoursPerMember: div(real.reduce((s, p) => s + (perMember.get(p.id) ?? 0), 0), real.length), topPairHours: div(real.reduce((s, p) => s + (top.get(p.id) ?? 0), 0), real.length),
     casualFriendPairs: casualPairs, friendPairs, friendshipTrackShare: div(real.filter(p => track.has(p.id)).length, real.length), hallPaceShare: div(real.filter(p => pace.has(p.id)).length, real.length), casualFriendShare: div(real.filter(p => casual.has(p.id)).length, real.length),
