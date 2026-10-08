@@ -17,6 +17,9 @@
 //     rarely be flagged.
 //  A4 The reviewer confirms a flag that contains a true adversary with p 0.9 after a 2-day delay,
 //     wrongly confirms an all-honest flag with p 0.02, and never re-reviews the same set within 14 days.
+//     The product's review confirms the whole flagged set (capital-12), so by default the simulated
+//     reviewer does too: an honest member inside a flag with an adversary is clawed back with them.
+//     `reviewer: "per_member"` is the old oracle reviewer that confirmed only the true adversaries.
 import { CapitalLedger } from "../src/ledger.ts";
 import { detectGaming } from "../src/detect.ts";
 import { effortOverlay, organizingReach, vouchCapacity, balanceOf } from "../src/levers.ts";
@@ -72,6 +75,8 @@ export interface SimOptions {
   /** Organizing reach above the base goes to members with the least recent participation (default true). */
   reachExtraToLowExposure?: boolean;
   detection?: boolean;
+  /** How the simulated reviewer decides a flag (A4). Default "whole_set", as in the product. */
+  reviewer?: "whole_set" | "per_member";
   /** Pairs of honest regulars who meet weekly through plans they start themselves (A5). Default 8. */
   honestFriendPairs?: number;
 }
@@ -432,8 +437,9 @@ export function simulate(o: SimOptions): SimResult {
       for (const r of reviewQ.filter(r => r.day === day)) {
         const bad = r.members.filter(m => isBad(P.get(m)!.type));
         let confirm: string[] = [];
-        if (bad.length) { if (K.chance(0.9, "rev", day, r.members.join(","))) confirm = bad; }
-        else if (K.chance(0.02, "rev", day, r.members.join(","))) { confirm = r.members; falseConfirmed.push(...r.members); }
+        if (bad.length) { if (K.chance(0.9, "rev", day, r.members.join(","))) confirm = o.reviewer === "per_member" ? bad : r.members; }
+        else if (K.chance(0.02, "rev", day, r.members.join(","))) confirm = r.members;
+        falseConfirmed.push(...confirm.filter(m => !isBad(P.get(m)!.type)));
         if (!confirm.length) continue;
         L.record({ id: `fraud${++seq}`, t: dayEnd - 1, type: "fraud_confirmed", members: confirm });
         for (const m of confirm) {
