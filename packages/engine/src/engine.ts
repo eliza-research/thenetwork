@@ -219,7 +219,9 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   // 6. Proposals with shareable-only explanations.
   const proposals: EngineProposal[] = selected.map(sel => {
     const { c, components, score, threshold, verdict } = sel.s;
-    const { explanations, objective } = explain(w, c, verdict as JudgeVerdict | null | undefined, sel.s.memberWhy);
+    // Member-facing text never comes from a pass-2 "no" verdict (its "why" argues for a match the judge rejected).
+    const v = verdict as JudgeVerdict | null | undefined;
+    const { explanations, objective } = explain(w, c, v?.verdict === "no" ? null : v, sel.s.memberWhy);
     const sameDay = c.window ? c.window.start - w.now < 24 * 3_600_000 : false;
     return {
       id: `p_${sha256(`${c.key}|${w.now}`).slice(0, 16)}`,
