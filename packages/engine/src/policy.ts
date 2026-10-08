@@ -89,6 +89,9 @@ export function mutualAcceptance(w: World, ids: MemberId[]): number {
 }
 
 export function selectProposals(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId, number>, opts: SelectOptions = {}): SelectionResult {
+  // A pack's own global assignment (slopPack: stable matching). Absent for networkPack.
+  const assign = w.pack.selection.assign;
+  if (assign) return assign(w, scored, { rng, debt, exclude: opts.exclude, extraProactive: opts.extraProactive });
   // Dry run without exploration sizes the slice; the real run reserves exploration capacity
   // before the greedy pass so exploration picks are not starved of member budget.
   const dry = selectOnce(w, scored, rng, debt, 0, opts);

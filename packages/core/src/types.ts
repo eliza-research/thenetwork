@@ -1,6 +1,9 @@
 // Shared domain contract (PRD Sections 13.1, 32.4, 32.10, 33). Keep small and generic.
 export type MemberId = string;
-export type City = "sf" | "nyc";
+/** Market ids. "la" added for slop.date (additive: networkPack still runs on cfg.cities = ["sf", "nyc"]). */
+export type City = "sf" | "nyc" | "la";
+/** The Network's own markets (its data tables, synthetic snapshots and simulators cover these two). */
+export type NetworkCity = "sf" | "nyc";
 export type ParticipationState = "open" | "normal" | "quiet" | "receiving" | "paused";
 export type PrivacyScope = "agent_private" | "matchable" | "shareable" | "opportunity_specific";
 export type Provenance = "said" | "connected_source" | "inferred" | "vouched";

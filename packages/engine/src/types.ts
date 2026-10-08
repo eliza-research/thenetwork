@@ -39,7 +39,8 @@ export interface AskRecord {
   /** When the member replied. An answered question is closed: the member is proposed normally again. */
   answeredAt?: number;
 }
-export type AskReason = "no_structured_want" | "few_facets" | "romance_prefs";
+/** Ask reasons: the core / networkPack ones, plus any reason a pack's `selection.extraAsks` emits (slopPack: slop_*). */
+export type AskReason = "no_structured_want" | "few_facets" | "romance_prefs" | (string & {});
 /**
  * Engine output "ask": a question to send to a member before proposing anyone to them, because
  * the engine cannot yet match them well (no structured want, too few matchable facets, or no

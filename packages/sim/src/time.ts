@@ -2,7 +2,7 @@
 // UTC epoch millisecond value read from a Clock; these helpers only interpret it.
 import { DAY, HOUR, MINUTE, type City } from "@thenetwork/core";
 
-export const CITY_TZ: Record<City, string> = { sf: "America/Los_Angeles", nyc: "America/New_York" };
+export const CITY_TZ: Record<City, string> = { sf: "America/Los_Angeles", nyc: "America/New_York", la: "America/Los_Angeles" };
 
 const fmtCache = new Map<string, Intl.DateTimeFormat>();
 function fmt(tz: string) {

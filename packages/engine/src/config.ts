@@ -22,7 +22,8 @@ export interface Weights {
 export interface EngineConfig {
   seed: number;
   cities: City[];
-  timezones: Record<City, string>;
+  /** Time zone per run market. Partial: a market without an entry is not runnable (networkPack covers sf / nyc). */
+  timezones: Partial<Record<City, string>>;
   windowDays: number;
   minOverlapHours: number;
   ageMin: number;

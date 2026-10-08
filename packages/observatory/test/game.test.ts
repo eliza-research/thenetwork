@@ -75,7 +75,7 @@ describe("GameSource", () => {
     const s = g.state();
     const minor = s.members.find(m => m.minor && m.joined)!;
     expect(minor).toBeDefined();
-    const adult = freeAdults(g, s, minor.city)[0]!;
+    const adult = freeAdults(g, s, minor.city as "sf" | "nyc")[0]!;
     const r = await g.control({ type: "propose", participants: [minor.id, adult.id] });
     const id = (r.data as { id: string }).id;
     let gs = g.state();

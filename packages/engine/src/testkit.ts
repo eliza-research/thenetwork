@@ -39,6 +39,7 @@ const HELP_OFFERS: [string, string][] = [
 const AREAS: Record<City, string[]> = {
   sf: ["mission", "soma", "noe", "richmond", "sunset", "dogpatch"],
   nyc: ["williamsburg", "bushwick", "les", "harlem", "astoria", "park-slope"],
+  la: [], // the testkit generates sf / nyc members only
 };
 const NAMES = ["Maya", "Theo", "Ava", "Leo", "Iris", "Noah", "Zoe", "Eli", "Nina", "Omar", "Ruby", "Sam", "Tara", "Jon", "Lena", "Max", "Ivy", "Ben", "Cleo", "Dev"];
 const CATS: Category[] = ["social", "professional", "romance", "hobby", "help", "events", "growth"];

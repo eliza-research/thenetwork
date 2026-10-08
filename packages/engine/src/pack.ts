@@ -28,6 +28,20 @@ import type { AttentionConfig, EngineConfig, PlansConfig } from "./config.ts";
 import type { GenCtx } from "./genkit.ts";
 import type { Candidate, CadencePrefs, Format, Role } from "./types.ts";
 import type { Interval, MemberIndex, RomanceProfile, World } from "./world.ts";
+import type { SelectionResult } from "./policy.ts";
+import type { Rng } from "./rng.ts";
+import type { Scored } from "./scoring.ts";
+
+/** What a pack's global assignment sees besides the scored configurations (policy.ts selectProposals). */
+export interface AssignContext {
+  rng: Rng;
+  /** Exposure debt carried between runs (input.exposureDebt, canonical ids). */
+  debt: Readonly<Record<MemberId, number>>;
+  /** Members held back this run (asked a question first). */
+  exclude?: ReadonlySet<MemberId>;
+  /** Proactive messages already planned this run outside selection (asks), per member. */
+  extraProactive?: ReadonlyMap<MemberId, number>;
+}
 
 // ---------------------------------------------------------------------------------------- ids
 /** App ids (platform.apps). */
@@ -204,6 +218,13 @@ export interface SelectionPolicy {
    * popularity penalty). Absent for networkPack, so the greedy arithmetic is unchanged.
    */
   adjust?(w: World, c: Candidate, value: number, timesSelectedInRun: (id: MemberId) => number): number;
+  /**
+   * Optional global assignment that replaces the core greedy selection (slopPack: stable matching per
+   * tick, or a pack greedy with inbound caps). It receives the scored configurations after every
+   * hard filter and must only choose among `eligible` ones; the core minors guard still runs on its
+   * output (engine.ts). Absent for networkPack, so the core greedy (and its bytes) are unchanged.
+   */
+  assign?(w: World, scored: readonly Scored[], ctx: AssignContext): SelectionResult;
   /** Ask-before-proposing questions by reason (policy.ts planAsks). */
   askQuestions: Readonly<Record<string, string>>;
   /** Whether the pack's extra asks are on under this config (networkPack: cfg.romance.requireStatedPrefs). */
@@ -276,6 +297,12 @@ export interface ExplainPack {
   kindBits?(w: World, c: Candidate, me: MemberId): string[];
   /** Used when a text still carries a canary after every gate. */
   safeFallback: string;
+  /**
+   * Generic lane words that are never private for this pack even though they occur in its private
+   * facet templates (slopPack: "date" in "first date idea: coffee"). Removed from the leak gate's
+   * private vocabulary; keep it to words that say nothing about a member. Absent for networkPack.
+   */
+  publicWords?: readonly string[];
 }
 
 // ---------------------------------------------------------------------------------------- plans / capital

@@ -23,6 +23,8 @@ export function privateVocabulary(w: World, ids: MemberId[]): Set<string> {
   }
   for (const e of w.events) for (const t of tokenize(`${e.title} ${e.tags.join(" ")}`)) shareable.add(t);
   for (const t of [...priv]) if (shareable.has(t) || t.length < 4) priv.delete(t);
+  // Pack vocabulary that is never private (slopPack: "date", "dating", pronouns from its facet templates). Absent for networkPack.
+  for (const t of w.pack.explain.publicWords ?? []) priv.delete(t);
   return priv;
 }
 

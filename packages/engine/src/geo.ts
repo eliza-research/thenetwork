@@ -12,7 +12,7 @@ import type { World } from "./world.ts";
 export const cityBucketGeo: GeoModel = {
   kind: "city",
   markets: cfg => cfg.cities,
-  tz: (market, cfg) => cfg.timezones[market],
+  tz: (market, cfg) => cfg.timezones[market] ?? "UTC",
 
   /** Where a member is during [start,end): city -> intervals. Temporary presence overrides home (ME-011). */
   location(w: World, id: MemberId, start: number, end: number): Map<City, Interval[]> {

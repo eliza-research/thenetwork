@@ -107,6 +107,7 @@ export const desireById = new Map(DESIRES.map(d => [d.id, d]));
 export const NEIGHBORHOODS: Record<City, string[]> = {
   sf: ["Mission", "Dolores Park", "SoMa", "Hayes Valley", "Noe Valley", "Sunset", "Richmond", "North Beach", "Castro", "Potrero Hill", "Bernal Heights", "Marina"],
   nyc: ["Williamsburg", "Bushwick", "East Village", "West Village", "Lower East Side", "Park Slope", "Greenpoint", "Harlem", "Astoria", "Chelsea", "Fort Greene", "Crown Heights"],
+  la: [], // the Network simulator generates sf / nyc personas only
 };
 
 export const FIRST_NAMES = [

@@ -64,7 +64,7 @@ export const BUDGETS: Record<ParticipationState, Budget> = {
 };
 export const UNANSWERED_WINDOW = 72 * HOUR;
 
-export const CITY_TZ: Record<City, string> = { sf: "America/Los_Angeles", nyc: "America/New_York" };
+export const CITY_TZ: Record<City, string> = { sf: "America/Los_Angeles", nyc: "America/New_York", la: "America/Los_Angeles" };
 
 export interface LocalParts { year: number; month: number; day: number; hour: number; minute: number; weekday: number }
 const fmtCache = new Map<string, Intl.DateTimeFormat>();
