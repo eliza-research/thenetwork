@@ -2,6 +2,7 @@
 // finding id and failed before the fix.
 import { describe, expect, test } from "bun:test";
 import { DEFAULT_CONFIG, resolveConfig } from "../src/config.ts";
+import { cosine, localEmbed, tokenize } from "../src/embed.ts";
 import { runEngine } from "../src/engine.ts";
 import { MatcherScheduler, MemoryProposalStore } from "../src/tick.ts";
 import { eligibilityFor, isHomeEntry, riskTerms } from "../src/filters.ts";
@@ -192,4 +193,15 @@ describe("engine-pipeline-12: complementarity is neutral for wants outside the t
       expect(on).toBe(off!);
     });
   }
+});
+
+describe("engine-pipeline-13: tokenizer and retrieval for non-Latin and accented text", () => {
+  test("non-Latin text gets tokens and a non-zero embedding; diacritics fold; ASCII unchanged", () => {
+    expect(tokenize("我喜欢爬山 и походы в горы").length).toBeGreaterThan(0);
+    expect(tokenize("हिंदी संगीत")).toEqual(["हिंदी", "संगीत"]);
+    expect(tokenize("Café crème")).toEqual(tokenize("cafe creme"));
+    expect(tokenize("Teaches sailing to beginners")).toEqual(["teache", "sailing", "beginner"]);
+    expect(localEmbed("походы в горы").some(x => x !== 0)).toBe(true);
+    expect(cosine(localEmbed("походы в горы по выходным"), localEmbed("люблю походы в горы"))).toBeGreaterThan(0.3);
+  });
 });
