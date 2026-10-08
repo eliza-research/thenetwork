@@ -179,7 +179,10 @@ function selectOnce(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId,
   for (const id of floorMembers) {
     if (floorTaken >= floorCap) break;
     if (selected.some(s => s.s.c.participants.includes(id))) continue;
-    const best = main.find(x => x.c.participants.includes(id) && canTake(x));
+    // A pack's selection hook (caps, lifts) applies here too: the adjusted value must clear the
+    // bar, as in the greedy pass. networkPack has no hook, so this pass is unchanged for it.
+    const hooked = !!w.pack.selection.adjust;
+    const best = main.find(x => x.c.participants.includes(id) && canTake(x) && (!hooked || adjusted(x) >= x.threshold));
     if (best) { take(best, false, 1); floorTaken++; }
   }
 
