@@ -84,6 +84,8 @@ export interface FriendsWorld {
   disliked: Set<string>;
   lastEnjoy: Map<MemberId, number>;
   selfHangouts: number;
+  /** Hangouts a pair arranged on its own (hidden). */
+  selfTogether: Map<string, number>;
 }
 export interface FriendsRunResult { world: FriendsWorld; flows: FlowRecord[]; meetups: MeetupRecord[]; contacts: Contact[]; matcher: string; valueDays: Map<MemberId, number[]> }
 
@@ -95,7 +97,7 @@ export function createFriendsWorld(o: Omit<FriendsRunOptions, "matcher">): Frien
   const personas = o.personas ?? generateFriendsPersonas({ ...o, seed: o.seed });
   return {
     seed: o.seed, weeks, personas, oracle: new FriendsOracle(personas, o.seed, { ...ORACLE_PARAMS, ...(o.params ?? {}) }), state: emptyFriendsState(),
-    hours: new Map(), hoursByWeek: new Map(), meetupsTogether: new Map(), bond: new Map(), mutual: new Set(), disliked: new Set(), lastEnjoy: new Map(), selfHangouts: 0,
+    hours: new Map(), hoursByWeek: new Map(), meetupsTogether: new Map(), bond: new Map(), mutual: new Set(), disliked: new Set(), lastEnjoy: new Map(), selfHangouts: 0, selfTogether: new Map(),
   };
 }
 
@@ -272,7 +274,7 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
     // Hidden hangouts between pairs who both want more.
     for (const k of [...world.mutual].sort()) {
       const [a, b] = k.split("|") as [MemberId, MemberId];
-      if (oracle.selfHangout(a, b, week, world.meetupsTogether.get(k) ?? 0)) { addHours(a, b, P.selfHours, week); world.selfHangouts++; }
+      if (oracle.selfHangout(a, b, week, world.meetupsTogether.get(k) ?? 0)) { addHours(a, b, P.selfHours, week); world.selfHangouts++; world.selfTogether.set(k, (world.selfTogether.get(k) ?? 0) + 1); }
     }
   }
   return { world, flows, meetups, contacts, matcher: matcher.name, valueDays };

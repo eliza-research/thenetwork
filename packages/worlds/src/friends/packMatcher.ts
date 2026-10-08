@@ -83,7 +83,7 @@ export function friendsPackMatcher(o: { policy?: Partial<FriendsPolicy>; pcfg?: 
         const x = planToProposal(p);
         if (!x) continue;
         // Open table: the alternates are asked at the same time; the first yes-sayers fill the seats.
-        if (pol.openTable && !p.partner) out.push({ ...x, invited: [...x.invited, ...x.alternates], alternates: [], maxSeats: p.size.max, split: true });
+        if (pol.openTable && !p.partner) out.push({ ...x, invited: [...x.invited, ...x.alternates], alternates: [], maxSeats: p.size.max, split: pol.split });
         else out.push(x);
       }
       for (const p of week.partners) { const x = planToProposal(p); if (x) out.push(x); }

@@ -47,7 +47,7 @@ export const FRIENDS_PLANS: PlansConfig = {
   // The weekly run (Monday 09:00 local) plans Tuesday evening through Sunday.
   minLeadHours: 30, horizonDays: 6.5, memberCooldownDays: 6,
   size: { min: 3, max: 6, target: 6, partner: 2 },
-  minInvite: 4, poolSize: 18, alternates: 4,
+  minInvite: 4, poolSize: 18, alternates: 6,
   // Many zones, so a generous per-run cap; one plan per member per run still holds.
   maxPlansPerCityRun: 60,
   // Repeat bias: one familiar face who enjoyed meeting you is a plus; two are not a "clique" penalty here.
@@ -84,6 +84,12 @@ export interface FriendsPolicy {
   tables: boolean;
   /** Run the table builder before the single-slot planner passes. */
   tablesFirst: boolean;
+  /** Yes-sayers beyond one table form a second table at another option (else they hear "it filled up"). */
+  split: boolean;
+  /** Time options per table (1-3). */
+  tableOptions: number;
+  /** Also run the shared planner's single-time passes (planProposals) after the tables. */
+  singleSlot: boolean;
   /** Count an attendee as "would do it again" when a "see again" was mutual with another attendee. */
   mutualPositive: boolean;
   /** Invitees per open table (seats stay 3-6 per table; more yes-sayers form a second table at another option). */
@@ -97,12 +103,31 @@ export interface FriendsPolicy {
   partnerIntros: number;
   /** Last: dinner / coffee tables open to any unplanned member nearby (with its own floor). */
   universal: boolean; universalFloor: number;
+  /** Activity fit assumed for dinner / coffee when not stated; run the universal tables FIRST (Timeleft-style dinners as the base layer). */
+  universalFit: number; universalFirst: boolean;
+  /** Zones with fewer than `sparseZone` members with evidence: dinner / coffee tables with as few as `sparseMinInvite` invitees, within 45 minutes. */
+  sparseMinInvite: number; sparseZone: number;
+  /** Exposure floor: members without a meetup in 14 days seed tables first (and get `starvedBonus` when tables are built). */
+  fairness: boolean; starvedBonus: number;
+  /** Crew sessions also carry up to two other times (else the same weekday and time only). */
+  crewOptions: boolean;
+  /** Table building: bonus for adding someone a member already said they'd see again (repeat bias). */
+  regroupBonus: number;
   /** A last pass for unplanned members: family-level activity fit and lower floors. */
   loosePass: boolean; looseFloor: number;
 }
+/** Tuned on seeds 1-4 (docs/results/2026-10-08-friends-pack.md, tuning trail). */
 export const DEFAULT_FRIENDS_POLICY: FriendsPolicy = {
-  zones: true, venueMinMax: true, repeat: true, crews: true, timeOptions: true, partnerFallback: true,
-  toleranceSlack: 1.15, spreadNew: true, repeatWindowDays: 10, loosePass: true, looseFloor: 0.25, openTable: true, tables: true, tablesFirst: true, tableMinInvite: 6, tableInvite: 12, mutualPositive: true, universal: true, universalFloor: 0.15, partnerIntros: 1,
+  // Geography and venues
+  zones: true, venueMinMax: true, toleranceSlack: 1.15,
+  // Repetition: same table again, crews after one great plan, regrouping people who said "see again"
+  repeat: true, crews: true, mutualPositive: true, repeatWindowDays: 10, regroupBonus: 0.2, crewOptions: false,
+  // New plans: dinner / coffee tables near home first, then activity tables, then the shared planner's single-time passes
+  universal: true, universalFirst: true, universalFit: 0.75, universalFloor: 0.15,
+  tables: true, tablesFirst: true, openTable: true, tableInvite: 12, tableMinInvite: 6, tableOptions: 1, split: false,
+  singleSlot: true, timeOptions: true, partnerFallback: true, loosePass: true, looseFloor: 0.25,
+  // Seats and one-to-one
+  spreadNew: false, fairness: false, starvedBonus: 0.15, partnerIntros: 1, sparseMinInvite: 6, sparseZone: 15,
 };
 
 /** Activities open to anyone who wants to meet people (most people enjoy a dinner or a coffee with others). */
@@ -194,7 +219,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       ...(venue ? { venueId: venue.id, place: { name: venue.name, area: venue.area } } : {}),
       quorum: p.partner ? 2 : Math.min(p.quorum, invited.length),
     };
-    if (pol.timeOptions && source !== "crew_session") plan.options = timeOptions(plan, venue);
+    if (pol.timeOptions && (source !== "crew_session" || pol.crewOptions)) plan.options = timeOptions(plan, venue);
     return plan;
   };
 
@@ -280,6 +305,15 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
     }
   }
 
+  // Exposure floor: members with no meetup in the last 14 days are seeded first, and planning zones
+  // with the largest share of them go first (they get first pick of shared neighbours).
+  const lastMet = new Map<MemberId, number>();
+  for (const r of w.interactions) if (r.outcome === "completed") for (const id of r.participants) lastMet.set(id, Math.max(lastMet.get(id) ?? -Infinity, r.at));
+  const starved = new Set(w.ids.filter(id => now - (lastMet.get(id) ?? -Infinity) > 14 * DAY));
+  const zoneOrder = pol.fairness ? [...ZONES].sort((x, y) => {
+    const share = (z: string) => { const m = [...inp.evidence.keys()].filter(id => homeOf(id)?.zone === z); return m.length ? m.filter(id => starved.has(id)).length / m.length : 0; };
+    return (share(y) - share(x)) || (x < y ? -1 : 1);
+  }) : ZONES;
   const busy = pol.spreadNew ? taken : new Set<MemberId>();
   const used = new Set<MemberId>();
   // Activity-first table builder (multi-slot pools), scored by the shared planner's least misery.
@@ -287,20 +321,20 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
   const familiar = (a: MemberId, b: MemberId) => w.isWarm(a, b);
   const slotsAll = candidateSlots(tz, now, { window: { start: now + pcfg.minLeadHours * HOUR, end: now + pcfg.horizonDays * DAY } }, att);
   const dayKey = (t: number) => { const lp = localParts(t, tz); return `${lp.month}-${lp.day}`; };
-  const tables = (members: MemberId[], cfg: PlansConfig, universal = false) => {
+  const tables = (members: MemberId[], cfg: PlansConfig, universal = false, minInvite = pol.tableMinInvite) => {
     const pool = members.filter(id => !busy.has(id) && !used.has(id) && inp.evidence.has(id) && eligible(id) && now - (inp.lastPlannedAt?.get(id) ?? -Infinity) >= cfg.memberCooldownDays * DAY);
     if (pool.length < cfg.size.min) return;
     const fits = new Map(pool.map(id => {
       const f = activityFit(w, id, cfg);
       // Universal pass: dinner and coffee are open to anyone who wants to meet people (fit = family level).
-      if (universal) for (const a of FRIENDS_UNIVERSAL) f.set(a, Math.max(f.get(a) ?? 0, cfg.familyFit));
+      if (universal) for (const a of FRIENDS_UNIVERSAL) f.set(a, Math.max(f.get(a) ?? 0, pol.universalFit));
       return [id, f] as const;
     }));
     const acts = [...(w.pack.plans?.activities ?? [])].map(a => ({ a, n: pool.filter(id => (fits.get(id)!.get(a.id) ?? 0) >= cfg.minFit).length }))
-      .filter(x => x.n >= pol.tableMinInvite).sort((x, y) => (y.n - x.n) || (x.a.id < y.a.id ? -1 : 1));
+      .filter(x => x.n >= minInvite).sort((x, y) => (y.n - x.n) || (x.a.id < y.a.id ? -1 : 1));
     for (const { a } of acts) {
       const cand = pool.filter(id => !used.has(id) && (fits.get(id)!.get(a.id) ?? 0) >= cfg.minFit && (w.get(id)!.m.age ?? 0) >= a.ageMin);
-      if (cand.length < pol.tableMinInvite) continue;
+      if (cand.length < minInvite) continue;
       const slots = slotsAll.filter(sl => (a.dayparts as string[]).includes(daypartOf(sl.start, tz, att)));
       const pf = new Map(cand.map(id => [id, slots.map(sl => hasWindow(inp.evidence.get(id)!, sl, now, cfg, att))] as const));
       // Up to 3 options on distinct days where the MOST candidates are free (yes-sayers must agree on
@@ -308,16 +342,17 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       const ranked = slots.map((sl, i) => ({ i, n: cand.filter(id => pf.get(id)![i]! > 0).length })).sort((x, y) => (y.n - x.n) || (slots[x.i]!.start - slots[y.i]!.start));
       const chosen: number[] = [];
       for (const r of ranked) {
-        if (chosen.length >= 3 || r.n < Math.max(3, (ranked[0]?.n ?? 0) * 0.5)) break;
+        if (chosen.length >= pol.tableOptions || r.n < Math.max(3, (ranked[0]?.n ?? 0) * 0.5)) break;
         if (chosen.some(c => dayKey(slots[c]!.start) === dayKey(slots[r.i]!.start))) continue;
         chosen.push(r.i);
       }
       const covered = new Set(cand.filter(id => chosen.some(i => pf.get(id)![i]! > 0)));
       const free = cand.filter(id => covered.has(id));
-      if (free.length < pol.tableMinInvite || !chosen.length) continue;
+      if (free.length < minInvite || !chosen.length) continue;
       const input = (id: MemberId): PlanMemberInput => ({ id, fit: fits.get(id)!.get(a.id)!, venueFit: 1, timeFit: Math.max(...chosen.map(i => pf.get(id)![i]!)) });
       // Greedy least-misery build up to size.max + alternates, seeded by the strongest fit x availability.
-      const order = [...free].sort((x, y) => ((input(y).fit * input(y).timeFit) - (input(x).fit * input(x).timeFit)) || (x < y ? -1 : 1));
+      const pri = (id: MemberId) => input(id).fit * input(id).timeFit + (pol.fairness && starved.has(id) ? 0.3 : 0);
+      const order = [...free].sort((x, y) => (pri(y) - pri(x)) || (x < y ? -1 : 1));
       const g: MemberId[] = [order[0]!];
       const want = pol.openTable ? Math.max(cfg.size.max, pol.tableInvite) : cfg.size.max;
       while (g.length < want) {
@@ -326,13 +361,15 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
           if (g.includes(id)) continue;
           const sc = scorePlanGroup([...g, id].map(input), compat, familiar, cfg);
           if (!sc || sc.min < cfg.minMemberU) continue;
-          if (!best || sc.score > best.s) best = { id, s: sc.score };
+          // Repeat bias ("same table again"): someone a member here said they'd see again.
+          const v = sc.score + (pol.repeat && g.some(x => familiar(x, id)) ? pol.regroupBonus : 0) + (pol.fairness && starved.has(id) ? pol.starvedBonus : 0);
+          if (!best || v > best.s) best = { id, s: v };
         }
         if (!best) break;
         g.push(best.id);
       }
       const sc = scorePlanGroup(g.map(input), compat, familiar, cfg);
-      if (g.length < pol.tableMinInvite || !sc || sc.score < cfg.threshold) continue;
+      if (g.length < minInvite || !sc || sc.score < cfg.threshold) continue;
       const opts = chosen.map(i => slots[i]!).sort((x, y) => x.start - y.start);
       const best = chosen.map(i => ({ i, n: g.filter(id => pf.get(id)![i]! > 0).length })).sort((x, y) => (y.n - x.n) || (x.i - y.i))[0]!;
       const start = slots[best.i]!.start;
@@ -373,13 +410,17 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
   const ids = [...inp.evidence.keys()].sort();
   const near = (z: string, radius: number) => { const hub = zoneHub(z); return ids.filter(id => { const h = homeOf(id); return !!h && (h.zone === z || transitMinutes(h, hub) <= radius); }); };
   if (pol.zones) {
+    if (pol.universalFirst && pol.tables) {
+      const uni: PlansConfig = { ...pcfgNew, minFit: Math.min(pcfgNew.minFit, pol.universalFit), minMemberU: pol.universalFloor, threshold: pol.universalFloor };
+      for (const radius of [25, 35]) for (const z of zoneOrder) tables(near(z, radius), uni, true);
+    }
     if (pol.tablesFirst && pol.tables) {
       // Activity-first tables among neighbours (within 25, then 35 minutes of each zone hub), then
       // the shared planner (one time) for whoever is left, then the borough.
-      for (const radius of [25, 35]) for (const z of ZONES) tables(near(z, radius), pcfgNew);
-      for (const z of ZONES) run(ids.filter(id => homeOf(id)?.zone === z));
-      for (const z of ZONES) run(near(z, 35));
-      for (const b of BOROUGHS) { const xs = ids.filter(id => homeOf(id)?.borough === b); tables(xs, pcfgNew); run(xs); }
+      for (const radius of [25, 35]) for (const z of zoneOrder) tables(near(z, radius), pcfgNew);
+      if (pol.singleSlot) for (const z of ZONES) run(ids.filter(id => homeOf(id)?.zone === z));
+      if (pol.singleSlot) for (const z of ZONES) run(near(z, 35));
+      for (const b of BOROUGHS) { const xs = ids.filter(id => homeOf(id)?.borough === b); tables(xs, pcfgNew); if (pol.singleSlot) run(xs); }
     } else {
       // Neighbours first: the planning zone (one time, the shared planner), then activity-first tables
       // among everyone within 25 and 35 minutes of each zone hub, then the borough.
@@ -392,12 +433,17 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
     // Whoever is still unplanned: an activity in a family they like counts (family fit), lower floors;
     // then dinner or coffee tables open to anyone nearby who wants to meet people.
     const loose: PlansConfig = { ...pcfgNew, minFit: pcfgNew.familyFit, minMemberU: pol.looseFloor, threshold: pol.looseFloor };
-    if (pol.zones) for (const z of ZONES) { if (pol.tables) tables(near(z, 35), loose); run(near(z, 35), loose); }
-    for (const b of BOROUGHS) { const xs = ids.filter(id => homeOf(id)?.borough === b); if (pol.tables) tables(xs, loose); run(xs, loose); }
+    if (pol.zones) for (const z of ZONES) { if (pol.tables) tables(near(z, 35), loose); if (pol.singleSlot || !pol.tables) run(near(z, 35), loose); }
+    for (const b of BOROUGHS) { const xs = ids.filter(id => homeOf(id)?.borough === b); if (pol.tables) tables(xs, loose); if (pol.singleSlot || !pol.tables) run(xs, loose); }
     if (pol.tables && pol.universal) {
       const uni: PlansConfig = { ...loose, minMemberU: pol.universalFloor, threshold: pol.universalFloor };
       if (pol.zones) for (const z of ZONES) tables(near(z, 35), uni, true);
       for (const b of BOROUGHS) tables(ids.filter(id => homeOf(id)?.borough === b), uni, true);
+      // Sparse areas (few members within reach, e.g. Staten Island): smaller invite lists still form a table of 3.
+      if (pol.sparseMinInvite < pol.tableMinInvite) for (const z of ZONES) {
+        const xs = ids.filter(id => homeOf(id)?.zone === z);
+        if (xs.length < pol.sparseZone) tables(near(z, 45), uni, true, pol.sparseMinInvite);
+      }
     }
   }
   // 5. activity partners (one-to-one, intro cap), from the engine generator; groups first.

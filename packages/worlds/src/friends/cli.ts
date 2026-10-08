@@ -5,23 +5,26 @@ import { BASELINES } from "./baselines.ts";
 import { friendsMetrics, type FriendsMetrics } from "./metrics.ts";
 import { friendsPackMatcher } from "./packMatcher.ts";
 import { runFriendsWorld, type FriendsMatcher, type FriendsWorld } from "./world.ts";
-import type { FriendsPolicy } from "@thenetwork/engine/src/packs/friends/index.ts";
 
 const arg = (k: string, d?: string) => { const i = process.argv.indexOf(`--${k}`); return i >= 0 ? process.argv[i + 1]! : d; };
 const parseSeeds = (s: string) => s.split(",").flatMap(r => { const [a, b] = r.split("-").map(Number); return Array.from({ length: (b ?? a!) - a! + 1 }, (_, i) => a! + i); });
 const seeds = parseSeeds(arg("seeds", "1-4")!);
-const n = Number(arg("n", "400")), weeks = Number(arg("weeks", "8"));
+const n = Number(arg("n", "400")), weeks = Number(arg("weeks", "8")), planCap = Number(arg("plan-cap", "1"));
 
+const packOverride = arg("pack");
 export const ARMS: Record<string, FriendsMatcher | ((w: FriendsWorld) => FriendsMatcher)> = {
-  pack: friendsPackMatcher(),
+  pack: friendsPackMatcher(packOverride ? JSON.parse(packOverride) : {}),
   random: BASELINES.random, greedy: BASELINES.greedy, oracle: BASELINES.oracle,
   "pack-no-crews": friendsPackMatcher({ name: "pack-no-crews", policy: { crews: false } }),
   "pack-no-repeat": friendsPackMatcher({ name: "pack-no-repeat", policy: { crews: false, repeat: false } }),
+  "pack-no-universal": friendsPackMatcher({ name: "pack-no-universal", policy: { universal: false, universalFirst: false } }),
+  "pack-planner-only": friendsPackMatcher({ name: "pack-planner-only", policy: { tables: false, universal: false, universalFirst: false } }),
   "pack-no-zones": friendsPackMatcher({ name: "pack-no-zones", policy: { zones: false } }),
   "pack-no-minmax": friendsPackMatcher({ name: "pack-no-minmax", policy: { venueMinMax: false } }),
-  "pack-no-options": friendsPackMatcher({ name: "pack-no-options", policy: { timeOptions: false } }),
-  "pack-no-partner": friendsPackMatcher({ name: "pack-no-partner", policy: { partnerFallback: false } }),
-  "pack-no-spread": friendsPackMatcher({ name: "pack-no-spread", policy: { spreadNew: false } as Partial<FriendsPolicy> }),
+  "pack-no-partner": friendsPackMatcher({ name: "pack-no-partner", policy: { partnerIntros: 0, partnerFallback: false } }),
+  "pack-spread": friendsPackMatcher({ name: "pack-spread", policy: { spreadNew: true } }),
+  "pack-fairness": friendsPackMatcher({ name: "pack-fairness", policy: { fairness: true } }),
+  "pack-options3": friendsPackMatcher({ name: "pack-options3", policy: { tableOptions: 3, split: true } }),
 };
 const only = (arg("only", "pack,random,greedy,oracle")!).split(",");
 
@@ -30,7 +33,7 @@ for (const name of only) {
   all[name] = [];
   for (const seed of seeds) {
     const t = performance.now();
-    const m = friendsMetrics(runFriendsWorld({ seed, n, weeks, matcher: ARMS[name]! }));
+    const m = friendsMetrics(runFriendsWorld({ seed, n, weeks, planCap, matcher: ARMS[name]! }));
     all[name]!.push(m);
     console.error(`${name} seed ${seed}: meetups ${m.meetups}, repeat ${(m.repeatRate * 100).toFixed(0)}%, V14 ${(m.v14 * 100).toFixed(0)}%, track ${(m.friendshipTrackShare * 100).toFixed(1)}%, travel ${m.travel.medianGroupMax.toFixed(0)}m, boroughMin ${m.boroughRatioMin.toFixed(2)}, adv ${m.safety.adversaryContacts}/${m.safety.knownAdversaryContacts}, minor ${m.safety.declaredMinorContacts}/${m.safety.hiddenMinorContacts} (${((performance.now() - t) / 1000).toFixed(1)}s)`);
   }
@@ -55,7 +58,8 @@ const rows: [string, (m: FriendsMetrics) => number, boolean, number?][] = [
   ["Crews handed off / seed", m => m.crewsHandedOff, false, 1],
   ["Hours with members, per real member", m => m.hoursPerMember, false, 1],
   ["Hours with top person, per real member", m => m.topPairHours, false, 1],
-  ["**Members on a friendship track**", m => m.friendshipTrackShare, true],
+  ["**Members with a friendship forming (pair met 3+ times, mutual see-again)**", m => m.friendshipTrackShare, true],
+  ["Members on Hall pace (>= 12 h, on pace for 50 h by month 6)", m => m.hallPaceShare, true],
   ["Members with a pair past 50 h (casual friend)", m => m.casualFriendShare, true],
   ["Pairs past 50 h / seed", m => m.casualFriendPairs, false, 1],
   ["Pairs past 90 h / seed", m => m.friendPairs, false, 1],
@@ -76,7 +80,7 @@ const rows: [string, (m: FriendsMetrics) => number, boolean, number?][] = [
   ["Adversaries who reached anyone", m => m.safety.adversariesReached, false, 1],
   ["Harm events / seed", m => Object.values(m.safety.harms).reduce((a, b) => a + (b ?? 0), 0), false, 1],
 ];
-console.log(`| Metric (mean ± SE, seeds ${seeds.join(",")}; ${n} personas; ${weeks} weeks) | ${only.join(" | ")} |`);
+console.log(`| Metric (mean ± SE, seeds ${seeds.join(",")}; ${n} personas; ${weeks} weeks${planCap !== 1 ? `; plan allowance ${planCap}/wk` : ""}) | ${only.join(" | ")} |`);
 console.log(`|---|${only.map(() => "---:").join("|")}|`);
 for (const [label, f, pct, d] of rows) console.log(`| ${label} | ${only.map(k => fmt(all[k]!.map(f), pct, d)).join(" | ")} |`);
 console.log("\nV14 by borough (n averaged):");

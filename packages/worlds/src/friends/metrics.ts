@@ -21,8 +21,14 @@ export interface FriendsMetrics {
   hoursPerMember: number; topPairHours: number;
   /** Pairs past Hall's thresholds (50 casual, 90 friend). */
   casualFriendPairs: number; friendPairs: number;
-  /** Share of real members with >= 1 pair on a friendship track (definition in the doc). */
+  /**
+   * Share of real members with >= 1 friendship forming: a pair who met 3+ times (Network meetups or
+   * their own hangouts) and both said they'd see each other again (domain research C1 "friends who
+   * met 3+ times").
+   */
   friendshipTrackShare: number;
+  /** Stricter (Hall pace): >= 12 hours together and, at the last 4 weeks' pace, >= 50 hours by month six. */
+  hallPaceShare: number;
   /** Share of real members with >= 1 pair past 50 hours. */
   casualFriendShare: number;
   timeToFirstMeetup: { medianDays: number | null; shareWithMeetup: number };
@@ -87,7 +93,7 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
   }
 
   // Hours and friendship tracks.
-  const perMember = new Map<MemberId, number>(), top = new Map<MemberId, number>(), track = new Set<MemberId>(), casual = new Set<MemberId>();
+  const perMember = new Map<MemberId, number>(), top = new Map<MemberId, number>(), track = new Set<MemberId>(), pace = new Set<MemberId>(), casual = new Set<MemberId>();
   let casualPairs = 0, friendPairs = 0;
   const W = world.weeks;
   for (const [k, h] of world.hours) {
@@ -99,7 +105,8 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
     // On track: >= 12 hours so far and, at the last 4 weeks' pace, >= 50 hours by week 26 (six months).
     const wk = world.hoursByWeek.get(k) ?? [];
     const recent = wk.slice(Math.max(0, W - 4)).reduce((s, x) => s + x, 0) / Math.min(4, W);
-    if (h >= P.hall.casual || (h >= 12 && h + recent * Math.max(0, 26 - W) >= P.hall.casual)) { track.add(a); track.add(b); }
+    if (h >= P.hall.casual || (h >= 12 && h + recent * Math.max(0, 26 - W) >= P.hall.casual)) { pace.add(a); pace.add(b); }
+    if (world.mutual.has(k) && (world.meetupsTogether.get(k) ?? 0) + (world.selfTogether.get(k) ?? 0) >= 3) { track.add(a); track.add(b); }
   }
   // Time to first meetup.
   const firsts = real.map(p => (valueDays.get(p.id) ?? []).length ? Math.min(...valueDays.get(p.id)!) : null).filter((x): x is number => x !== null);
@@ -128,13 +135,17 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
     const h = holdAt(id);
     return visibleRedFlag(O.p(id), week) || (!!h && h.from <= weekTime(week, 0, 9));
   };
+  // Contacts are distinct (offender, real member) pairs: a second meetup with the same person is not a new contact.
   let adv = 0, knownAdv = 0, hidMinor = 0, decl = 0;
+  const seenC = new Set<string>();
   const reach = new Map<MemberId, Set<MemberId>>();
   const byAdvKind: Record<string, number> = {};
   for (const c of contacts) {
     for (const [x, y] of [[c.a, c.b], [c.b, c.a]] as const) {
       const px = O.p(x), py = O.p(y);
       if (!realIds.has(y)) continue;
+      if (seenC.has(`${x}>${y}`)) continue;
+      seenC.add(`${x}>${y}`);
       if (!canBeMatched(px.stated.claimedAge)) decl++;
       if (px.hidden.isMinor) hidMinor++;
       if (px.hidden.adversary && px.hidden.adversary !== "age_liar") {
@@ -160,7 +171,7 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
     repeatRate: div(rep, base), repeatGroupRate: div(repG, base),
     crewsFormed: world.state.crews.length, crewSessions: meetups.filter(m => m.crewId && m.kind !== "crew_self").length, crewsHandedOff: world.state.crews.filter(c => c.handedOff).length,
     hoursPerMember: div(real.reduce((s, p) => s + (perMember.get(p.id) ?? 0), 0), real.length), topPairHours: div(real.reduce((s, p) => s + (top.get(p.id) ?? 0), 0), real.length),
-    casualFriendPairs: casualPairs, friendPairs, friendshipTrackShare: div(real.filter(p => track.has(p.id)).length, real.length), casualFriendShare: div(real.filter(p => casual.has(p.id)).length, real.length),
+    casualFriendPairs: casualPairs, friendPairs, friendshipTrackShare: div(real.filter(p => track.has(p.id)).length, real.length), hallPaceShare: div(real.filter(p => pace.has(p.id)).length, real.length), casualFriendShare: div(real.filter(p => casual.has(p.id)).length, real.length),
     timeToFirstMeetup: { medianDays: median(firsts), shareWithMeetup: div(firsts.length, real.length) },
     v14, v14ByBorough: byB, boroughRatioMin: ratios.length ? Math.min(...ratios) : NaN, v14Arranged: v14Of(real.map(p => p.id), arranged, days),
     travel: { medianGroupMax: median(groupMax) ?? NaN, meanSeat: div(seats.reduce((s, x) => s + x.t, 0), seats.length), overTolerance: div(seats.filter(x => x.t > x.tol).length, seats.length) },
