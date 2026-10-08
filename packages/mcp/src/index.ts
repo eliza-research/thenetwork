@@ -4,3 +4,4 @@ export * from "./pg-store.ts";
 export * from "./hooks.ts";
 export * from "./tools.ts";
 export * from "./handler.ts";
+export * from "./leaks.ts";

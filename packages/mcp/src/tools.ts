@@ -5,6 +5,7 @@
 import { appsOn, type McpApp, type McpAppId, type Surface } from "./apps.ts";
 import type { AssistantKind, PlatformHooks, PublicStatus } from "./hooks.ts";
 import type { Grant, Scope } from "./store.ts";
+import { outputLeaks } from "./leaks.ts";
 
 export const TOOL_NAMES = ["app_info", "start_signup", "check_status", "submit_profile", "get_updates"] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -234,7 +235,8 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       const a = c.apps[g.app];
       if (!c.hooks.updates) return { kind: "error", message: "Updates are not available here yet." };
       // Someone else's reference, an unknown one or an expired one reads as "nothing new", like an empty inbox.
-      const updates = now === null ? [] : await c.hooks.updates(now, g.app, c.assistant ?? "web", chk.token);
+      // The output leak gate: a summary with a phone, email, internal id or timestamp is withheld (leaks.ts).
+      const updates = now === null ? [] : (await c.hooks.updates(now, g.app, c.assistant ?? "web", chk.token)).filter(u => outputLeaks(u.summary).length === 0);
       return { kind: "ok", data: { app: a.id, updates, next_step: updates.length ? "Tell the person briefly. They answer by replying to the text." : `Nothing new from ${a.name}.` } };
     }
   }
