@@ -24,7 +24,7 @@ export interface PersonaMemory {
   optedOut: boolean;
   disclosed: boolean;
   questionsAnswered: number;
-  proposals: Record<string, { decision: Decision; plannedShow: boolean; enjoyment: number; others: MemberId[]; at?: number }>;
+  proposals: Record<string, { decision: Decision; plannedShow: boolean; enjoyment: number; others: MemberId[]; at?: number; category?: import("@thenetwork/core").Category; decidedAt?: number }>;
   meetings: Record<string, { at: number; showed: boolean; enjoyment: number; others: MemberId[]; cancelledWithNotice: boolean; othersShowed: MemberId[] }>;
   proactiveReceived: number[];
   blocked: MemberId[];

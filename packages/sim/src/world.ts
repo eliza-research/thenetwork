@@ -10,7 +10,7 @@ import { PolicyPersonaAgent, templateText } from "./agent/policy.ts";
 import { newMemory, type PersonaAgent, type PersonaContext, type PersonaMemory } from "./agent/types.ts";
 import { SimChannel, type SimMessage } from "./channel.ts";
 import type { Engine, InboundMessage, MeetingReport, NetworkContext, NetworkUnderTest } from "./network.ts";
-import { Oracle, type OracleVerdict } from "./oracle.ts";
+import { Oracle, type OracleOptions, type OracleVerdict } from "./oracle.ts";
 import type { Persona } from "./persona.ts";
 import { Rng, hash32 } from "./rng.ts";
 import { Scheduler, type RunMode } from "./scheduler.ts";
@@ -51,6 +51,8 @@ export interface WorldOptions {
   actions?: { at: number; action: WorldAction }[];
   /** Channel delivery failure rate (default 0). */
   failureRate?: number;
+  /** Opt-in oracle refinements (stable decisions, logistics); default off. */
+  oracle?: OracleOptions;
   /** Compute latent opportunities for recall (O(n^2)); skipped above this many members (default 1500). */
   maxLatentMembers?: number;
   /** Progress callback (sim day finished). */
@@ -104,7 +106,7 @@ export class World {
     this.clock = new SimClock(this.start);
     this.channel = new SimChannel(this.clock, { seed: opts.seed, failureRate: opts.failureRate });
     this.personas = new Map(opts.personas.map(p => [p.id, p]));
-    this.oracle = new Oracle(opts.personas, opts.seed, this.start);
+    this.oracle = new Oracle(opts.personas, opts.seed, this.start, opts.oracle);
     this.scheduler = new Scheduler(this.clock, { mode: opts.mode ?? "discrete", speed: opts.speed });
     this.agent = opts.agent ?? new PolicyPersonaAgent(this.start);
     this.rng = new Rng(hash32("world", opts.seed));

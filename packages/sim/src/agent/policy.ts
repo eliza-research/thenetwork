@@ -73,6 +73,8 @@ export function replyDelay(p: Persona, now: number, rng: Rng, urgency = 1): numb
 // ---------------------------------------------------------------- decisions
 
 const WEEK = 7 * DAY;
+/** With OracleOptions.stableDecisions, a persona turns down the same people for the same thing again for this long. */
+export const DECLINE_MEMORY_DAYS = 28;
 
 export function decide(ctx: PersonaContext, msg: SimMessage, worldStart: number): PolicyDecision {
   const { persona: p, memory: mem, rng, now } = ctx;
@@ -202,11 +204,16 @@ function decideProposal(ctx: PersonaContext, msg: SimMessage, worldStart: number
   const others = participants.filter(x => x !== p.id);
   let decision: "accept" | "decline" | "counter" = mine.wouldAccept ? "accept" : "decline";
   if (others.some(o => mem.blocked.includes(o))) decision = "decline";
+  // Decline memory (stable decisions): asking again for the same people and the same thing gets the same no.
+  if (ctx.oracle.options.stableDecisions) {
+    const same = (xs: MemberId[]) => xs.length === others.length && xs.every(x => others.includes(x));
+    if (Object.values(mem.proposals).some(x => x.decision === "decline" && x.category === category && x.decidedAt !== undefined && ctx.now - x.decidedAt < DECLINE_MEMORY_DAYS * DAY && same(x.others))) decision = "decline";
+  }
   if (decision === "accept" && p.hidden.capacity < 0.4 && rng.bool(0.15)) decision = "counter";
   // Scenario hook: a forced flaker says yes now and cancels later.
   if (mem.forceFlake) decision = "accept";
   const plannedShow = decision !== "decline" && mine.wouldShow && !mem.forceFlake;
-  mem.proposals[pid] = { decision, plannedShow, enjoyment: mine.enjoyment, others, at: prop?.window?.start };
+  mem.proposals[pid] = { decision, plannedShow, enjoyment: mine.enjoyment, others, at: prop?.window?.start, category, decidedAt: ctx.now };
   mem.recentMatches = [...others, ...mem.recentMatches].slice(0, 5);
   return {
     ...base, intent: decision, decision, proposalId: pid, participants,

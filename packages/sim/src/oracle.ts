@@ -7,6 +7,7 @@ import type { Category } from "@thenetwork/core";
 import { Rng, clamp01, hash32 } from "./rng.ts";
 import { desireById } from "./taxonomy.ts";
 import { withLiveDesires, type Persona } from "./persona.ts";
+import { inHourWindow, localParts } from "./time.ts";
 
 export interface OracleProposal {
   id: string; kind: OpportunityKind; participants: MemberId[]; city: City;
@@ -53,9 +54,26 @@ export const PAIR_CHEMISTRY_SD = 0.13;
 export const PRIMED_MODEL: { met: number; partial: number; identity: number; identityFit?: number } = { met: 0.96, partial: 0.82, identity: 0.95 };
 const GOOD_PAIR = 0.55, GOOD_GROUP_MEAN = 0.55, GOOD_GROUP_MIN = 0.4;
 
+/** Opt-in oracle refinements (audit 2026-10-08). Off by default so existing runs and goldens are unchanged. */
+export interface OracleOptions {
+  /**
+   * matching-e2e-8: a persona's accept/show draw is keyed by who is in it, the category and the
+   * week, not by the proposal id, so asking the same people for the same thing again in the same
+   * week gets the same answer (re-asking is not a fresh coin flip). The policy persona also
+   * remembers a decline of the same people and category for DECLINE_MEMORY_DAYS (policy.ts).
+   */
+  stableDecisions?: boolean;
+  /**
+   * matching-e2e-9: show-up depends on logistics. Travel: nobody else lives or works in the
+   * persona's area. Time: when the window is a specific time (6 hours or less), a slot in the
+   * persona's sleep, a weekday busy block, or a weekday evening they are not free.
+   */
+  logistics?: boolean;
+}
+
 export class Oracle {
   private byId: Map<MemberId, Persona>;
-  constructor(personas: Persona[], private seed: number | string, private worldStart: number) {
+  constructor(personas: Persona[], private seed: number | string, private worldStart: number, readonly options: OracleOptions = {}) {
     this.byId = new Map(personas.map(p => [p.id, p]));
   }
   persona(id: MemberId) { return this.byId.get(id); }
@@ -183,7 +201,7 @@ export class Oracle {
       if (!present) flags.add("city_mismatch");
       const enjoyment = clamp01(e);
 
-      const r = new Rng(hash32(this.seed, "decide", prop.id, a.id));
+      const r = new Rng(this.decisionKey("decide", prop, a.id, category, at));
       // People judge an invitation from what they can see (the systematic part + noise),
       // not from the chemistry they'll only discover by meeting.
       const perceived = perceivedBy[a.id] = enjoyment - chemMean + r.normal(0, 0.1);
@@ -194,7 +212,8 @@ export class Oracle {
       if (a.hidden.adversarial && ["spammer", "scammer", "harasser"].includes(a.hidden.adversarial)) acceptProb = 0.95;
       acceptProb = clamp01(acceptProb);
       const wouldAccept = r.next() < acceptProb;
-      const showProb = clamp01((1 - a.hidden.flakiness * (groupSize > 2 ? 1.3 : 1)) * (present ? 1 : 0.1));
+      const logistics = this.options.logistics ? this.logistics(a, others, prop) : 1;
+      const showProb = clamp01((1 - a.hidden.flakiness * (groupSize > 2 ? 1.3 : 1)) * (present ? 1 : 0.1) * logistics);
       const wouldShow = wouldAccept && r.next() < showProb;
       out[a.id] = {
         acceptProb: round3(acceptProb), wouldAccept, showProb: round3(showProb), wouldShow,
@@ -210,6 +229,28 @@ export class Oracle {
       ? minEnjoyment >= GOOD_PAIR
       : quality >= GOOD_GROUP_MEAN && minEnjoyment >= GOOD_GROUP_MIN);
     return { verdict: { proposalId: prop.id, participants: out, compatible, unsafe, quality: round3(quality), minEnjoyment: round3(minEnjoyment), flags: [...flags] }, perceived: perceivedBy };
+  }
+
+  /** Seed for one persona's draw on a proposal: per proposal id, or (stableDecisions) per people, category and week. */
+  private decisionKey(kind: string, prop: OracleProposal, who: MemberId, category: Category | undefined, at: number): number {
+    if (!this.options.stableDecisions) return hash32(this.seed, kind, prop.id, who);
+    const week = Math.floor((at - this.worldStart) / (7 * DAY));
+    return hash32(this.seed, kind, [...prop.participants].sort().join(","), category ?? "-", week, who);
+  }
+
+  /** Show-up multiplier from travel and the meeting time (OracleOptions.logistics). */
+  private logistics(a: Persona, others: Persona[], prop: OracleProposal): number {
+    const near = others.some(o => [o.routine.homeArea, o.routine.workArea].some(x => x === a.routine.homeArea || x === a.routine.workArea));
+    let f = near ? 1 : a.archetype === "busy_parent" ? 0.85 : 0.93;
+    const w = prop.window;
+    if (w && w.end - w.start <= 6 * 60 * 60 * 1000) {
+      const lp = localParts(w.start, prop.city);
+      const weekday = lp.weekday >= 1 && lp.weekday <= 5;
+      if (!inHourWindow(lp.hour, [a.routine.wake, a.routine.sleep])) f *= 0.3;
+      else if (weekday && a.routine.busyBlocks.some(b => lp.hour >= b[0] && lp.hour < b[1])) f *= 0.6;
+      else if (weekday && lp.hour >= 17 && !a.routine.freeEvenings.includes(lp.weekday)) f *= 0.75;
+    }
+    return f;
   }
 
   // ---------------------------------------------------------------- consent-first (additive)
@@ -319,7 +360,7 @@ export class Oracle {
       else if (met >= 0.45) pr = PRIMED_MODEL.partial;
       else pr = sigmoid((out.enjoyment - 0.5) * 7) * 0.9;
       if (v.flags.includes("city_mismatch") && !this.presentIn(a, prop.city, prop.window?.start ?? this.worldStart)) pr *= 0.15;
-      const r = new Rng(hash32(this.seed, "primed", prop.id, a.id));
+      const r = new Rng(this.decisionKey("primed", prop, a.id, category, prop.window?.start ?? this.worldStart));
       out.acceptProb = round3(pr);
       out.wouldAccept = r.next() < pr;
       out.wouldShow = out.wouldAccept && r.next() < out.showProb;

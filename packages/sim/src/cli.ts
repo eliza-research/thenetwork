@@ -34,6 +34,9 @@ const { values: a } = parseArgs({
     "llm-personas": { type: "boolean", default: false },
     "adversarial-rate": { type: "string" },
     "minor-share": { type: "string" },
+    richness: { type: "boolean", default: false },
+    "stable-decisions": { type: "boolean", default: false },
+    logistics: { type: "boolean", default: false },
     judge: { type: "string" },
     scenario: { type: "string" },
     k: { type: "string", default: "1" },
@@ -57,6 +60,11 @@ if (a.help) {
   --llm-personas      also enrich persona bios via defaultLLM()
   --adversarial-rate  share of adversarial personas (default 0.06)
   --minor-share       share of honest members aged 13-17 (default 0.05; never connected to anyone)
+  --richness          profile richness tiers: the snapshot holds only what members told the agent
+                      (default off: perfect onboarding, every boundary and romance preference known)
+  --stable-decisions  oracle: re-asking the same people for the same thing in a week is the same
+                      answer, and personas remember declines (default off)
+  --logistics         oracle: travel and meeting time change show-up (default off)
   --judge N           after the run, LLM-judge N sent proactive messages (quality + privacy audit)
                       with the judge model judgeLLM() (JUDGE_PROVIDER/JUDGE_MODEL, default surplus gpt-6-luna)
   --scenario PATH     run a scenario file instead of a random world; --k N for pass^k
@@ -102,12 +110,14 @@ const n = Number(a.personas), days = Number(a.days);
 const genOpts = {
   n, seed, adversarialRate: a["adversarial-rate"] ? Number(a["adversarial-rate"]) : undefined,
   minorShare: a["minor-share"] !== undefined ? Number(a["minor-share"]) : undefined, joinSpreadDays: Math.min(7, days),
+  ...(a.richness ? { richness: true } : {}),
 };
 const personas = a["llm-personas"] && llm ? await generateLLMPersonas({ ...genOpts, llm }) : generatePersonas(genOpts);
 
 const res = await runWorld({
   seed, personas, days, mode, speed: Number(a.speed), network: makeNetwork(engine), engine, agent,
   writeLog: !a["no-log"],
+  ...(a["stable-decisions"] || a.logistics ? { oracle: { stableDecisions: a["stable-decisions"], logistics: a.logistics } } : {}),
   onDay: d => { if (!a.json) process.stderr.write(`  day ${d}/${days}\r`); },
 });
 if (!a.json) process.stderr.write("\n");

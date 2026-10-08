@@ -2,7 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import { DAY, HOUR, type Proposal } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/judge";
-import { DEFAULT_START, generatePersonas, networkStateFromRecords, Oracle, PRIMED_MODEL, runWorld, StubNetwork } from "../src/index.ts";
+import { decide, DEFAULT_START, generatePersonas, networkStateFromRecords, newMemory, nextLocalHour, Oracle, PRIMED_MODEL, Rng, runWorld, StubNetwork } from "../src/index.ts";
 
 const T0 = DEFAULT_START + 2 * DAY;
 const prop = (id: string, participants: string[]): Proposal => ({
@@ -90,5 +90,58 @@ describe("sim-worlds-11: the world's oracle sees the proposal category", () => {
     const rec = r.records.find(x => x.type === "proposal" && x.proposal.id === "r1");
     expect(rec?.type === "proposal" && rec.oracle.flags).toContain("romance_mismatch");
     expect(rec?.type === "proposal" && rec.oracle.unsafe).toBe(true);
+  });
+});
+
+describe("matching-e2e-8: stable decisions and decline memory (OracleOptions.stableDecisions)", () => {
+  const ps = generatePersonas({ n: 80, seed: 4, minorShare: 0, adversarialRate: 0, cityWeights: { sf: 1, nyc: 0 } });
+  const at = DEFAULT_START + DAY;
+  const ask = (o: Oracle, id: string, a: string, b: string, t = at) =>
+    o.evaluate({ id, kind: "intro", participants: [a, b], city: "sf", window: { start: t, end: t + 3 * DAY }, category: "social" });
+
+  test("re-asking the same people for the same thing in the same week is the same answer, not a fresh draw", () => {
+    const flat = new Oracle(ps, 4, DEFAULT_START), stable = new Oracle(ps, 4, DEFAULT_START, { stableDecisions: true });
+    let flips = 0;
+    for (let i = 0; i + 1 < ps.length; i += 2) {
+      const [a, b] = [ps[i]!.id, ps[i + 1]!.id];
+      const s1 = ask(stable, "x1", a, b).participants[a]!, s2 = ask(stable, "x2", a, b, at + HOUR).participants[a]!;
+      expect(s2.wouldAccept).toBe(s1.wouldAccept);
+      if (ask(flat, "x1", a, b).participants[a]!.wouldAccept !== ask(flat, "x2", a, b).participants[a]!.wouldAccept) flips++;
+    }
+    expect(flips).toBeGreaterThan(0); // the default model does re-draw per proposal id
+  });
+
+  test("a persona who declined the same people and category declines a new ask a week later", () => {
+    const o = new Oracle(ps, 4, DEFAULT_START, { stableDecisions: true });
+    // A pair whose first ask is a no and whose fresh ask next week would be a yes.
+    let pair: [string, string] | undefined;
+    for (let i = 0; i < ps.length && !pair; i++) for (let j = 0; j < ps.length && !pair; j++) {
+      if (i === j) continue;
+      const [a, b] = [ps[i]!.id, ps[j]!.id];
+      if (!ask(o, "w1", a, b).participants[a]!.wouldAccept && ask(o, "w2", a, b, at + 7 * DAY).participants[a]!.wouldAccept) pair = [a, b];
+    }
+    expect(pair).toBeDefined();
+    const [a, b] = pair!;
+    const persona = ps.find(p => p.id === a)!;
+    const memory = newMemory();
+    const props = new Map<string, Proposal>([["w1", { ...prop("w1", [a, b]), category: "social", window: { start: at, end: at + 3 * DAY } }], ["w2", { ...prop("w2", [a, b]), category: "social", window: { start: at + 7 * DAY, end: at + 10 * DAY } }]]);
+    const ctx = (now: number) => ({ persona, memory, now, rng: new Rng(1), oracle: o, history: [], lookupProposal: (id: string) => props.get(id), personaById: (id: string) => ps.find(p => p.id === id), personasMentioned: () => [] });
+    const msg = (pid: string, ts: number) => ({ id: pid, ts, direction: "outbound" as const, channel: "sms" as const, from: "network", to: a, memberId: a, body: "Want to meet?", status: "delivered" as const, meta: { type: "proposal" as const, proposalId: pid } });
+    expect(decide(ctx(at), msg("w1", at), DEFAULT_START).decision).toBe("decline");
+    expect(decide(ctx(at + 7 * DAY), msg("w2", at + 7 * DAY), DEFAULT_START).decision).toBe("decline");
+  });
+});
+
+describe("matching-e2e-9: travel and meeting time change show-up (OracleOptions.logistics)", () => {
+  test("a 3am slot or a slot in a weekday busy block lowers showProb; the default model ignores time", () => {
+    const ps = generatePersonas({ n: 40, seed: 6, minorShare: 0, adversarialRate: 0, cityWeights: { sf: 1, nyc: 0 } });
+    const a = ps.find(p => p.routine.busyBlocks.length && p.hidden.flakiness < 0.5)!, b = ps.find(p => p !== a)!;
+    const slot = (hour: number) => nextLocalHour(DEFAULT_START + 2 * DAY, "sf", hour); // Wednesday
+    const show = (o: Oracle, t: number) => o.evaluate({ id: "t", kind: "intro", participants: [a.id, b.id], city: "sf", window: { start: t, end: t + HOUR } }).participants[a.id]!.showProb;
+    const on = new Oracle(ps, 6, DEFAULT_START, { logistics: true }), off = new Oracle(ps, 6, DEFAULT_START);
+    const busy = a.routine.busyBlocks[0]![0];
+    expect(show(on, slot(3))).toBeLessThan(0.5 * show(on, slot(busy)));
+    expect(show(on, slot(busy))).toBeLessThan(show(off, slot(busy)));
+    expect(show(off, slot(3))).toBe(show(off, slot(busy)));
   });
 });
