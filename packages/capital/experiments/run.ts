@@ -132,12 +132,16 @@ const ms = (xs: number[], d = 2) => `${f(mean(xs), d)} ± ${f(se(xs), d)}`;
 /**
  * Fairness gate (coordinator decision, 2026-10-08):
  *  (a) PRIMARY, blocking: NC levers must not lower the bottom/top-decile V14 ratio by more than
- *      0.02 against the same seeds with every NC lever off (paired). See `attributable`.
+ *      0.02 against the same seeds with every NC lever off (paired). See `attributable`. The gate
+ *      reads the lower end of the 95% confidence interval, not the mean, and needs at least
+ *      GATE_MIN_SEEDS paired seeds (capital-13): a mean of -0.013 with a CI down to -0.062 is not
+ *      evidence that the drop is at most 0.02.
  *  (b) TRACKED, non-blocking network-health target: the absolute ratio is at least 0.80. It reflects
  *      the participation gap and is addressed by other levers (plans, asks), not NC.
  * Gaming gate (blocking): each strategy's mean net gain <= GAMING_BOUND_SHARE of a regular's NC.
  */
 export const FAIRNESS_MAX_DROP = 0.02;
+export const GATE_MIN_SEEDS = 32;
 export const HEALTH_TARGET_RATIO = 0.8;
 
 export function gates(per: Metrics[]) {
@@ -206,7 +210,8 @@ function mulberry(seed: number) { let a = seed >>> 0 || 1; return () => { a = (a
 export function attributable(on: Metrics[], off: Metrics[]) {
   const d = on.map((m, i) => m.v14Ratio - off[i]!.v14Ratio);
   const top = on.map((m, i) => m.v14Top - off[i]!.v14Top), bottom = on.map((m, i) => m.v14Bottom - off[i]!.v14Bottom);
-  return { diff: mean(d), se: se(d), topGain: mean(top), bottomGain: mean(bottom), ok: mean(d) >= -FAIRNESS_MAX_DROP };
+  const lower = mean(d) - 1.96 * se(d);
+  return { diff: mean(d), se: se(d), lower, seeds: d.length, topGain: mean(top), bottomGain: mean(bottom), ok: d.length >= GATE_MIN_SEEDS && lower >= -FAIRNESS_MAX_DROP };
 }
 
 if (import.meta.main) {
@@ -250,7 +255,7 @@ async function main() {
   const h = lg.healthTarget;
   const ci = (a: { diff: number; se: number }) => `${f(a.diff, 3)} (95% CI ${f(a.diff - 1.96 * a.se, 3)} to ${f(a.diff + 1.96 * a.se, 3)})`;
   console.log(`\n## LAUNCH GATES (default config, arm A vs all levers off Z, ${gs} paired seeds, ${DAYS} days)`);
-  console.log(`(a) PRIMARY fairness: NC levers lower the bottom/top V14 ratio by <= ${FAIRNESS_MAX_DROP}: change ${ci(lg.primaryFairness)} -> ${lg.primaryFairness.pass ? "PASS" : "FAIL"}`);
+  console.log(`(a) PRIMARY fairness: NC levers lower the bottom/top V14 ratio by <= ${FAIRNESS_MAX_DROP} (95% CI lower bound, >= ${GATE_MIN_SEEDS} seeds): change ${ci(lg.primaryFairness)} -> ${lg.primaryFairness.pass ? "PASS" : "FAIL"}`);
   console.log(`    by lever (A minus A with that lever off): ${Object.entries(comp).map(([k, a]) => `${k} ${f(a.diff, 3)} ± ${f(a.se, 3)}`).join(", ")}`);
   console.log(`    sensitivity, effect x2.5 (C vs C0): ${ci(lgC.primaryFairness)} -> ${lgC.primaryFairness.pass ? "pass" : "fail"} (not a gate)`);
   console.log(`    V14 all eligible: levers on ${f(mean(gA.map(m => m.v14All)), 3)} vs off ${f(mean(gZ.map(m => m.v14All)), 3)}; bottom decile ${f(lg.primaryFairness.bottomGain, 3)}, top decile ${f(lg.primaryFairness.topGain, 3)}`);
