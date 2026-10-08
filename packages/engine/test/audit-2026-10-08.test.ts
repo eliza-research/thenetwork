@@ -1,8 +1,9 @@
 // Regression tests for the 2026-10-08 adversarial audit (engine findings). Each test names its
 // finding id and failed before the fix.
 import { describe, expect, test } from "bun:test";
-import { resolveConfig } from "../src/config.ts";
+import { DEFAULT_CONFIG, resolveConfig } from "../src/config.ts";
 import { runEngine } from "../src/engine.ts";
+import { MatcherScheduler, MemoryProposalStore } from "../src/tick.ts";
 import { isHomeEntry, riskTerms } from "../src/filters.ts";
 import { randomWorld } from "../src/testkit.ts";
 import { DAY, HOUR } from "@thenetwork/core";
@@ -97,5 +98,32 @@ describe("engine-pipeline-15: romance is pairs-only and needs stated preferences
   test("no romance proposal for members without stated preferences (any generator)", async () => {
     const r = await runEngine(world(false), { seed: 1, thresholds: { byGenerator: { event_anchor: 0.1 } } });
     expect(r.proposals.filter(p => p.category === "romance")).toEqual([]);
+  });
+});
+
+describe("engine-pipeline-5 / -22: per-city ticks share budgets and ids; the tick id covers the config", () => {
+  test("sf then nyc tick: no crash on a duplicate id, no member over budget across both ticks", async () => {
+    let over = 0;
+    for (let seed = 1; seed <= 6; seed++) {
+      const inp = randomWorld({ members: 200, seed });
+      const sch = new MatcherScheduler(new MemoryProposalStore());
+      const a = await sch.tick("sf", inp, { seed });
+      const b = await sch.tick("nyc", inp, { seed });
+      const cnt = new Map<string, number>();
+      for (const p of [...a.proposals, ...b.proposals]) for (const id of p.participants) cnt.set(id, (cnt.get(id) ?? 0) + 1);
+      for (const m of inp.members) {
+        const recent = (inp.recentProposals ?? []).filter(p => p.participants.includes(m.id) && inp.now - p.createdAt < DEFAULT_CONFIG.budgets[m.state].periodDays * DAY).length;
+        if ((cnt.get(m.id) ?? 0) > 0 && recent + cnt.get(m.id)! > DEFAULT_CONFIG.budgets[m.state].limit) over++;
+      }
+    }
+    expect(over).toBe(0);
+  }, 60_000);
+  test("a re-run with a different config is a new tick", async () => {
+    const inp = randomWorld({ members: 60, seed: 3 });
+    const sch = new MatcherScheduler(new MemoryProposalStore());
+    const a = await sch.tick("sf", inp, { seed: 1 });
+    const b = await sch.tick("sf", inp, { seed: 1, exploration: { rate: 0 } });
+    expect(a.status).toBe("ran");
+    expect(b.status).toBe("ran");
   });
 });
