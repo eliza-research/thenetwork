@@ -635,6 +635,8 @@ describe("iteration 3: founder decisions 1-4 (send time, initial invites, availa
     expect(A.timeOptionsPhrase(r.slots.map(x => x.slot), LA)).toMatch(/^(Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day \d+(am|pm)/);
     // Standing availability from availability_pattern facets.
     expect(A.standingFromFacets([{ kind: "availability_pattern", tags: ["evening:Tue", "evening:Thu"], inferred: true }], now)).toEqual([{ byDay: [2, 4], startHour: 17, endHour: 22, source: "calendar_pattern", statedAt: now, inferred: true }]);
+    // Lowercase day tags (as sim sources.ts emits them) parse the same.
+    expect(A.standingFromFacets([{ kind: "availability_pattern", tags: ["evening:tue", "evening:thu"], inferred: true }], now)).toEqual([{ byDay: [2, 4], startHour: 17, endHour: 22, source: "calendar_pattern", statedAt: now, inferred: true }]);
   });
 });
 

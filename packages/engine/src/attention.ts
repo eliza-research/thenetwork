@@ -1067,8 +1067,10 @@ export function standingFromFacets(facets: readonly { kind: string; tags: string
     if (f.kind !== "availability_pattern") continue;
     const by = new Map<string, number[]>();
     for (const t of f.tags) {
-      const [part, d] = t.split(":");
-      const i = DAYS3.indexOf(d ?? "");
+      const [rawPart, rawDay] = t.split(":");
+      const part = rawPart?.toLowerCase();
+      // Day tags arrive as "Tue" or "tue" depending on the source (sim sources.ts emits lowercase).
+      const i = DAYS3.findIndex(d => d.toLowerCase() === (rawDay ?? "").slice(0, 3).toLowerCase());
       if (!part || !PARTS[part] || i < 0) continue;
       by.set(part, [...(by.get(part) ?? []), i]);
     }
