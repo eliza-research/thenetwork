@@ -16,14 +16,16 @@
 #     pages project/deployment take one more noun first)
 #
 # The four sites are Cloudflare Pages projects in this account (founder decision 8): ntwrk-love,
-# slop-date, peon-biz, friends-help. To work in another account, set CLOUDFLARE_ACCOUNT_ID first.
+# slop-date, peon-biz, friends-help. CLOUDFLARE_ACCOUNT_ID selects the account (required).
 set -euo pipefail
 
 # Pinned: the same version as WRANGLER_VERSION in .github/workflows/deploy-sites.yml (a test checks).
 WRANGLER_VERSION="4.136.3"
 
 export XDG_CONFIG_HOME="$HOME/.config/wrangler-ntwrk"
-export CLOUDFLARE_ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-50ad2052bbc6ca528d6993a689b419a4}"
+# The Eliza Labs Cloudflare account id comes from the environment (.env or the shell); no default here.
+if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then echo "wrangler.sh: set CLOUDFLARE_ACCOUNT_ID (the Eliza Labs Cloudflare account id)" >&2; exit 2; fi
+export CLOUDFLARE_ACCOUNT_ID
 
 # Flags that take the next word as their value, and switches that never do. A flag on neither list is
 # read both ways, and the command runs only if both readings are on the read-only list (fail closed:

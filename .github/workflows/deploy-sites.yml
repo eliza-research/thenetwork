@@ -14,8 +14,8 @@
 # Secrets (environment "production"): CLOUDFLARE_API_TOKEN (a token scoped to Cloudflare Pages: Edit in
 # the account below). PLATFORM_PROXY_SECRET is set once per Pages project by the coordinator
 # (scripts/wrangler.sh pages secret put), never in CI.
-# Variables: CLOUDFLARE_ACCOUNT_ID (default: the ntwrk.love account, which holds all four projects; set it
-# to use another account), BACKEND_ORIGIN (default https://api.ntwrk.love), MCP_URL (a template with
+# Variables: CLOUDFLARE_ACCOUNT_ID (required: the Eliza Labs Cloudflare account, which holds all four
+# projects; no default in the repo), BACKEND_ORIGIN (default https://api.ntwrk.love), MCP_URL (a template with
 # {domain}; leave unset), TURNSTILE_SITE_KEY, BACKEND_LIVE ("true" adds /api/app to the smoke check).
 name: deploy-sites
 
@@ -38,7 +38,6 @@ concurrency:
 env:
   # Keep in step with WRANGLER_VERSION in scripts/wrangler.sh.
   WRANGLER_VERSION: "4.136.3"
-  NTWRK_ACCOUNT_ID: "50ad2052bbc6ca528d6993a689b419a4"
 
 jobs:
   test:
@@ -110,7 +109,7 @@ jobs:
       - name: Deploy to Cloudflare Pages
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || env.NTWRK_ACCOUNT_ID }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           PROJECT: ${{ matrix.project }}
           DIR: sites/${{ matrix.dir }}/dist
         run: |
