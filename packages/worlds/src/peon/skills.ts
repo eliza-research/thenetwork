@@ -34,7 +34,7 @@ export const FAMILY = new Map(FAMILIES.map(f => [f.id, f]));
 
 export const LEVEL_TITLE = ["", "Associate", "", "Senior", "Lead", "Principal"];
 export const SENIORITY_PAY = [0, 0.72, 0.86, 1, 1.22, 1.45];
-export const MARKET_PAY: Record<City, number> = { sf: 1.12, nyc: 1.06 };
+export const MARKET_PAY: Record<City, number> = { sf: 1.12, nyc: 1.06, la: 1.08 }; // la: not modelled by the hiring world yet
 export const REMOTE_PAY = 1.0;
 
 /** Median pay ($k) for a family, seniority and market (remote = undefined). */
@@ -62,6 +62,7 @@ export const AREAS: Record<City, { id: string; jobWeight: number; neighbours: st
     { id: "peninsula", jobWeight: 0.12, neighbours: ["san_francisco", "south_bay"] },
     { id: "south_bay", jobWeight: 0.13, neighbours: ["peninsula"] },
   ],
+  la: [], // the hiring world does not model LA yet
 };
 
 /** Zip codes per area (proxies only; never in a matchable or shareable facet). */

@@ -103,6 +103,7 @@ const AREA_BY_RACE: Record<City, Record<RaceGroup, Record<string, number>>> = {
     c: { san_francisco: 0.15, oakland: 0.2, east_bay: 0.2, peninsula: 0.1, south_bay: 0.35 },
     d: { san_francisco: 0.3, oakland: 0.1, east_bay: 0.1, peninsula: 0.2, south_bay: 0.3 },
   },
+  la: { a: {}, b: {}, c: {}, d: {} }, // the hiring world does not model LA yet
 };
 const FIRST: Record<Sex, Record<RaceGroup, string[]>> = {
   f: { a: ["Emily", "Hannah", "Claire", "Megan"], b: ["Aaliyah", "Imani", "Keisha", "Nia"], c: ["Maria", "Lucia", "Valeria", "Ximena"], d: ["Mei", "Priya", "Yuna", "Linh"] },

@@ -13,7 +13,7 @@ const FAMILIES: Record<string, string[]> = {
   software_engineer: ["javascript", "python", "sql", "cloud", "testing"],
   accountant: ["gaap", "excel", "reconciliation", "tax", "audit"],
 };
-const AREAS: Record<City, string[]> = { nyc: ["manhattan", "brooklyn", "queens"], sf: ["san_francisco", "oakland", "peninsula"] };
+const AREAS: Record<City, string[]> = { nyc: ["manhattan", "brooklyn", "queens"], sf: ["san_francisco", "oakland", "peninsula"], la: [] };
 const FIRST = ["Avery", "Jordan", "Riley", "Casey", "Morgan", "Quinn", "Rowan", "Sasha", "Taylor", "Emery"];
 const LAST = ["Okafor", "Lindqvist", "Moreau", "Tanaka", "Haddad", "Novak", "Reyes", "Abbott", "Kowalski", "Mensah"];
 

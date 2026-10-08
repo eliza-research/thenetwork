@@ -99,7 +99,7 @@ function marketsOf(w: World, id: MemberId): City[] {
 export const peonGeo: GeoModel = {
   kind: "multi_market",
   markets: cfg => cfg.cities,
-  tz: (market, cfg) => cfg.timezones[market],
+  tz: (market, cfg) => cfg.timezones[market] ?? "UTC",
   location(w, id, start, end) {
     const out = new Map<City, Interval[]>();
     for (const m of marketsOf(w, id)) out.set(m, [[start, end]]);
