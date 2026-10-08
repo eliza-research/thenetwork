@@ -472,3 +472,20 @@ describe("vouch credit needs more than the invitee's say-so (capital-1, -9, -17)
     expect(L.record(ev({ type: "plan_attended", t: T0 + DAY, member: "a", planId: "p", counterparts: ["teen"], verifiedBy: ["counterpart"], origin: "engine", publicVenue: true }))).toEqual([]);
   });
 });
+
+describe("age updates (capital-4)", () => {
+  test("a member found to be a minor stops accruing and drops to the floor; turning 18 starts accrual from then", () => {
+    const L = world({ liar: 25, k: 17, b: 30 });
+    for (let i = 0; i < 10; i++) L.record(ev({ type: "need_answered", t: T0 + i, member: "liar", needId: `n${i}`, confirmedBy: "staff" }));
+    expect(effortOverlay(L.internalEntries("liar"), T0 + DAY).tier).toBe(1);
+    L.record(ev({ type: "age_updated", t: T0 + DAY, member: "liar", age: 15 }));
+    expect(L.isEligible("liar")).toBe(false);
+    expect(L.record(ev({ type: "need_answered", t: T0 + 2 * DAY, member: "liar", needId: "late", confirmedBy: "staff" }))).toEqual([]);
+    expect(effortOverlay(L.internalEntries("liar"), T0 + 2 * DAY).tier).toBe(0);
+
+    expect(L.record(ev({ type: "need_answered", t: T0 + 2 * DAY, member: "k", needId: "k0", confirmedBy: "staff" }))).toEqual([]);
+    L.record(ev({ type: "age_updated", t: T0 + 300 * DAY, member: "k", age: 18 }));
+    expect(L.record(ev({ type: "need_answered", t: T0 + 301 * DAY, member: "k", needId: "k1", confirmedBy: "staff" }))).toHaveLength(1);
+    expect(L.balance("k")).toBe(3);
+  });
+});

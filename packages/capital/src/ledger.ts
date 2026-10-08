@@ -64,8 +64,14 @@ export class CapitalLedger {
     return this.byMember.get(member) ?? [];
   }
 
-  /** Internal read for the Network's own levers and detection (never exposed to other members). */
-  internalEntries(member: MemberId): readonly LedgerEntry[] { return this.byMember.get(member) ?? []; }
+  /**
+   * Internal read for the Network's own levers (never exposed to other members). Empty for a member
+   * who is not eligible now (a minor or an unknown age), so their levers sit at the floor.
+   */
+  internalEntries(member: MemberId): readonly LedgerEntry[] {
+    const m = this.members.get(member);
+    return m && !m.eligible ? [] : this.byMember.get(member) ?? [];
+  }
 
   /** All entries, for detection and audit. */
   all(): readonly LedgerEntry[] { return this.log; }
@@ -108,6 +114,13 @@ export class CapitalLedger {
           joinedAt: ev.t, eligible: !isMinor(ev.age), vouchedBy: ev.vouchedBy === ev.member ? undefined : ev.vouchedBy,
           activated: false, valueInWindow: false, valueProviders: [], safetyFlagged: false, stakeTaken: false, removed: false,
         });
+        break;
+      }
+      case "age_updated": {
+        // Eligibility follows the current age (capital-4): a member found to be a minor stops
+        // accruing now; a member who turns 18 starts accruing from now (nothing is back-filled).
+        const m = this.members.get(ev.member);
+        if (m) m.eligible = !isMinor(ev.age);
         break;
       }
       case "member_activated": {
