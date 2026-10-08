@@ -7,7 +7,7 @@ import { leaksMemberFacing } from "./judgeCommon.ts";
 import type { Candidate, JudgeVerdict } from "./types.ts";
 import type { World } from "./world.ts";
 
-const KIND_PHRASE: Partial<Record<Facet["kind"], string>> = { interest: "is into", goal: "is working toward" };
+// The Network's phrases moved verbatim to packs/network/copy.ts (networkPack.explain).
 
 /** Words that appear only in non-shareable facets of the participants (the leak vocabulary). */
 export function privateVocabulary(w: World, ids: MemberId[]): Set<string> {
@@ -23,6 +23,8 @@ export function privateVocabulary(w: World, ids: MemberId[]): Set<string> {
   }
   for (const e of w.events) for (const t of tokenize(`${e.title} ${e.tags.join(" ")}`)) shareable.add(t);
   for (const t of [...priv]) if (shareable.has(t) || t.length < 4) priv.delete(t);
+  // Pack vocabulary that is never private (slopPack: "date", "dating", pronouns from its facet templates). Absent for networkPack.
+  for (const t of w.pack.explain.publicWords ?? []) priv.delete(t);
   return priv;
 }
 
@@ -31,8 +33,8 @@ export function leaks(text: string, vocab: Set<string>): boolean {
   return leaksMemberFacing(text, vocab);
 }
 
-function phrase(name: string, f: Facet): string {
-  const p = KIND_PHRASE[f.kind];
+function phrase(w: World, name: string, f: Facet): string {
+  const p = w.pack.explain.facetPhrase[f.kind];
   return p ? `${name} ${p} ${f.value}.` : `${name}: ${f.value}.`;
 }
 
@@ -44,13 +46,14 @@ export function explain(w: World, c: Candidate, verdict?: JudgeVerdict | null, d
   for (const me of c.participants) {
     const others = c.participants.filter(o => o !== me);
     const bits: string[] = [];
-    if (c.kind === "network_growth") {
-      bits.push(`You know a lot of people here, and the Network is looking for ${c.anchor?.label ?? "someone new"}.`);
+    const E = w.pack.explain;
+    const lead = E.leadBits?.(w, c, me);
+    if (lead) {
+      bits.push(...lead);
     } else {
       if (c.anchor?.type === "intent" && w.intentById.get(c.anchor.id)?.memberId === me) bits.push("This connects to something you asked about.");
       if (event) bits.push(`It is built around ${event.title}.`);
-      if (c.kind === "newcomer_welcome") bits.push(c.roles[me] === "newcomer" ? "A low-key way to meet a few friendly members in your first weeks." : "A newer member could use a warm welcome.");
-      if (c.kind === "second_encounter") bits.push("You both enjoyed meeting last time.");
+      if (E.kindBits) bits.push(...E.kindBits(w, c, me));
       for (const o of others.slice(0, 3)) {
         const mo = w.get(o)!;
         const ev = (c.evidence[o] ?? []).map(fid => mo.share.find(f => f.id === fid)).filter((f): f is Facet => !!f);
@@ -60,7 +63,7 @@ export function explain(w: World, c: Candidate, verdict?: JudgeVerdict | null, d
           .map(f => ({ f, s: cosine(q, mo.facetEmb.get(f.id) ?? []) }))
           .sort((a, b) => (b.s - a.s) || (a.f.id < b.f.id ? -1 : 1))[0]?.f;
         const f = ev[0] ?? fallback;
-        bits.push(f ? phrase(mo.m.name, f) : `${mo.m.name} could be a good fit.`);
+        bits.push(f ? phrase(w, mo.m.name, f) : `${mo.m.name} could be a good fit.`);
       }
       if (others.length > 3) bits.push(`Plus ${others.length - 3} more.`);
       if (c.exploration) bits.push("Part of the reason is novelty: it is a bit outside your usual pattern.");
@@ -71,7 +74,7 @@ export function explain(w: World, c: Candidate, verdict?: JudgeVerdict | null, d
     // Pass-3 text (already leak-gated) wins over pass-2 text; both are re-checked here.
     const why = deepWhy?.[me] || verdict?.why?.[me];
     if (why && !leaks(why, vocab)) text = `${why} ${bits.filter(b => b.startsWith("Part of the reason")).join(" ")}`.trim();
-    if (/canary/i.test(text)) text = "The Network thinks this could be a good fit for you.";
+    if (/canary/i.test(text)) text = E.safeFallback;
     out[me] = text;
   }
   return { explanations: out, objective };

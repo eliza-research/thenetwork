@@ -3,7 +3,7 @@
 THE NETWORK
 Product Requirements Document
 The Network is an intelligence for discovering and activating the latent potential between people. It creates the conditions for useful, surprising, meaningful things to happen - without requiring people to spend more of their lives managing social coordination.
-Version 0.2 (October 5, 2026). This revision resolves every review comment, adds a precise MVP definition (Section 28), all user flows (29), an Eliza platform gap analysis (30), MVP architecture and subsystem specs (31-33), the testing and simulation strategy (34), the admin and analytics console (35), the remaining launch requirements (36), the MVP build plan (37), and the review decision log (38). Sections 18-19 (business model and Commons) are explicitly deferred until after MVP.
+Version 0.2 (October 5, 2026). This revision resolves every review comment, adds a precise MVP definition (Section 28), all user flows (29), an Eliza platform gap analysis (30), MVP architecture and subsystem specs (31-33), the testing and simulation strategy (34), the admin and analytics console (35), the remaining launch requirements (36), the MVP build plan (37), and the review decision log (38). Sections 18-19 (business model and Commons) are explicitly deferred until after MVP. Section 40 (October 8, 2026) adds the multi-app platform: three apps for work, friendship and love, powered by The Network.
 
 # Contents
 1. Executive summary and pitch
@@ -45,6 +45,7 @@ Version 0.2 (October 5, 2026). This revision resolves every review comment, adds
 37. MVP build plan and milestones
 38. Review decisions and comment resolution log
 39. Growth, network capital, and member ownership
+40. Work, friendship, love: the multi-app platform
 Appendix A. Example experiences and conversations
 Appendix B. Core data objects and tool contracts
 Appendix C. Validation experiment matrix
@@ -53,9 +54,9 @@ Appendix D. Research and standards notes
 # 1. Executive summary and pitch
 The Network is a real-world social intelligence layer. It learns what people care about, what they need, what they can offer, whom they know, where they spend time, what kinds of interaction they enjoy, and how much capacity they currently have. It then looks for moments when bringing the right people, resources, places, timing, and context together could create unusual value.
 Core thesis: Most people are surrounded by far more friendship, knowledge, help, opportunity, love, adventure, generosity, space, tools, and useful human capacity than they can currently access. The problem is not only scarcity. It is coordination.
-The Network is not primarily a dating product, friendship product, services marketplace, professional network, volunteer app, event platform, or mutual-aid marketplace. It must be general enough to produce all of those outcomes without defining itself by any one of them. Its unit of value is an opportunity: a plausible configuration of people and circumstances that can make a life larger, easier, more connected, more useful, more surprising, or more meaningful.
+The Network is not primarily a dating product, friendship product, services marketplace, professional network, volunteer app, event platform, or mutual-aid marketplace. It must be general enough to produce all of those outcomes without defining itself by any one of them. The three apps in Section 40 are lenses on the same network, not a narrowing of it. Its unit of value is an opportunity: a plausible configuration of people and circumstances that can make a life larger, easier, more connected, more useful, more surprising, or more meaningful.
 The product should feel like engineered synchronicity. The member does not receive a stream of assigned tasks. Instead, the agent occasionally notices that something interesting has become possible: someone nearby needs exactly the kind of help the member likes giving; two people have a reason to meet; a friend-of-a-friend has a capability that could unlock a problem; an underused room plus an organizer plus six curious people could become a dinner; a business has unused capacity that can become a community experience; a person is already going somewhere and someone else would enjoy joining.
-The Network is valuable when it increases the reachable possibility of a person's life while decreasing the effort required to coordinate it. It should create surface area, not screen time. It should make people more capable outside the product, not more dependent on it. The goal is to grow the network's capability: more people, skills, knowledge, trust, and warm paths within reach. Members build the Network and, after the MVP, will own it (Section 39); introductions are one output among several.
+The Network is valuable when it increases the reachable possibility of a person's life while decreasing the effort required to coordinate it. It should create surface area, not screen time. It should make people more capable outside the product, not more dependent on it. The goal is to grow the network's capability: more people, skills, knowledge, trust, and warm paths within reach. Members build the Network and, after the MVP, will own it (Section 39); introductions are one output among several. The Network powers three apps that share one engine, one database, one admin panel and one phone login: work (peon.biz), friendship (friends.help) and love (slop.date). slop.date launches first, with ntwrk.love as the home page (Section 40).
 Network effects matter: by Metcalfe's law, a network's value grows roughly with the square of its connected members, which is why density within each city matters more than total size (Section 25.1).
 ## 1.1 Product promise
 You have more possible life around you than you can currently see. The Network helps the right possibilities become real.
@@ -74,7 +75,7 @@ You have more possible life around you than you can currently see. The Network h
 8. It must work through ordinary channels - especially phone and existing AI assistants - rather than requiring constant app engagement. It must not build profiles of people who have not joined: no scraped or shadow profiles. Growth comes from a carefully invited seed of high-quality members, and early value comes from single-player concierge help (events, places, plans) until the graph is dense enough for high-conviction introductions.
 9. Its economic model must not let money buy social rank, preferential access to people, or algorithmic favoritism.
 ## 1.3 MVP at a glance
-The MVP is an invite-only, messaging-first Network in two dense cities (San Francisco and New York) for roughly 150-300 members. Members talk to one Network agent by iMessage or SMS (optional voice call and web). The agent is built on Eliza Cloud's shared agent and stores everything in Postgres. A new, asynchronous matching and opportunity engine runs over that data, proposes introductions, small groups, event co-attendance, and help requests, and passes them through a human review queue. Approved proposals become double opt-in invitations sent by the agent. The agent then relays messages, schedules, reminds, handles flakes, and collects feedback. Admin, social-graph, and analytics tools, plus a simulated world of persona agents for testing, ship as part of the MVP. Payments, the Commons, partner inventory, the native-app map/location features, and third-party assistant connectors come after the MVP. Full definition: Section 28.
+The MVP is an invite-only, messaging-first Network in two dense cities (San Francisco and New York) for roughly 150-300 members. Members talk to one Network agent by iMessage or SMS (optional voice call and web). The agent is built on Eliza Cloud's shared agent and stores everything in Postgres. A new, asynchronous matching and opportunity engine runs over that data, proposes introductions, small groups, event co-attendance, and help requests, and passes them through a human review queue. Approved proposals become double opt-in invitations sent by the agent. The agent then relays messages, schedules, reminds, handles flakes, and collects feedback. Admin, social-graph, and analytics tools, plus a simulated world of persona agents for testing, ship as part of the MVP. Payments, the Commons, partner inventory, the native-app map/location features, and third-party assistant connectors come after the MVP. Full definition: Section 28. Updated 2026-10-08 (Section 40): the MVP launches slop.date first on the shared platform, each app has its own agent persona on one shared iMessage line, and peon.biz and friends.help run locally only. The two-city and one-agent wording above is superseded in part by Section 40.
 # 2. Problem: why lives contract
 The enemy is not simply loneliness. It is contraction. Over time, many people develop less social and experiential surface area: fewer places they go repeatedly, fewer weak ties, fewer people they might call, fewer unfamiliar situations, fewer opportunities to be useful, fewer chances to discover a new interest, and fewer spontaneous reasons to be in a room with someone outside their existing pattern.
 People often say they do not have time. Clock time is real, especially during demanding life stages, but the product must recognize that lack of time usually bundles several distinct frictions.
@@ -236,7 +237,7 @@ Most members arrive wanting a few concrete things: career colleagues and collabo
 |---|---|
 | Birthday | "Someone one connection away had plans fall through tonight. You are nearby, you love singing, and three people are already going. Want to show up for one song?" |
 | Moving | "Two people are already helping Priya move Saturday. You are 12 minutes away and said you enjoy practical group tasks. Want details?" |
-| Dating indirectly | Rather than assigning a date, create a dinner or shared context; later ask trusted participants if they know someone a member might enjoy meeting. |
+| Dating indirectly | Rather than assigning a date, create a dinner or shared context; later ask trusted participants if they know someone a member might enjoy meeting. (slop.date plans a first date directly after a mutual yes; Section 40.5.) |
 | Career | Use search and AI first; if lived experience would materially help, ask one qualified member who opted into that kind of conversation. |
 | Creative expansion | "You said you miss performing. A small dinner one warm connection away has a piano. They are open to someone new joining." |
 | Extended network | "You once mentioned your cousin knows theatrical production. Would you be comfortable forwarding a 30-minute advice request?" |
@@ -245,7 +246,7 @@ Most members arrive wanting a few concrete things: career colleagues and collabo
 # 9. Phone-first onboarding and progressive profiling
 Phone onboarding should be a first-class product, not a fallback. The initial experience can happen through an AI voice conversation or SMS thread tied to a verified phone number. The native app should deepen the relationship later rather than gate it. (v0.2: the MVP has no native app surface; see Sections 28.4 and 32.17.)
 ## 9.1 Identity model
-- A phone number is an authentication and communication channel, not the permanent identity key. Every member has a stable internal member ID.
+- A phone number is an authentication and communication channel, not the permanent identity key. Every member has a stable internal member ID. (Section 40.3: one person per verified phone, with a member ID per app.)
 - All login, on every surface, is by phone number and a text-message code; there are no passwords, email logins, or magic links. Invitation token + phone verification establishes the first account session.
 - Passkeys can be added later as an optional second factor on top of phone verification, never as a replacement for it.
 - Changing a phone number must not create a new identity or break relationship history.
@@ -401,7 +402,7 @@ Standing intents: overt, durable wants ("start a rock band," "find a doubles par
 ## 12.3 Interruption budget
 Every member has a dynamic interruption budget influenced by explicit preference, recent accepted opportunities, recent proactive contacts, current participation state, response pattern, and life context. A highly helpful member should not become the default target merely because they say yes. Overuse is a matching failure.
 ## 12.4 Agent voice
-The agent should sound observant, concise, and non-needy. It should not guilt, flatter excessively, imply moral obligation, or anthropomorphize itself into a controlling authority. It may be playful when the context supports it. It should be comfortable acknowledging uncertainty: "This may be too random, but I have a reason for asking."
+The agent should sound observant, concise, and non-needy. It should not guilt, flatter excessively, imply moral obligation, or anthropomorphize itself into a controlling authority. It may be playful when the context supports it. It should be comfortable acknowledging uncertainty: "This may be too random, but I have a reason for asking." Each app (Section 40) has its own persona within this voice.
 # 13. Social graph and data model
 The social graph is a core defensible asset, but it must model context rather than reducing every relationship to "friend." Most edges are directional and permissioned.
 ## 13.1 Core entities
@@ -660,6 +661,7 @@ This is not a single perfect number. The product should use a balanced scorecard
 | Vouch quality | Share of vouched members who activate, get value, and have no safety flags within 90 days. |
 | Member-created opportunities | Share of opportunities started by members (asks, crews, member intros, missions) rather than the engine. |
 | Network capital fairness | Outcome gap between NC deciles and NC Gini; gaming detection rate and time (39.2). |
+| Per-app success metrics | slop.date: mutual-yes rate, dates held, second-date rate, time to first date. friends.help: repeat-meetup rate, crews formed. peon.biz: intro-to-interview, hires, 90-day retention. Anti-metrics and launch gates per app: Section 40. |
 
 
 ## 21.3 Anti-metrics
@@ -782,7 +784,7 @@ The Network is unusually powerful because it sits between people, relationships,
 
 # 25. Launch plan and staged roadmap
 ## 25.1 City strategy
-Launch one city first, not two. NYC and San Francisco are both plausible, but the key variable is local density and founder/operator reach. A network of 100 people spread across two cities is often weaker than 75 people concentrated within a small set of adjacent neighborhoods. Superseded (v0.2): launch two cities, San Francisco and New York, each concentrated in a small set of adjacent neighborhoods. Two cities from day one prove the system works multi-city and serve the many members who live between both. The density risk is managed with per-city thresholds: each city needs its own dense seed (40-75 members, Section 36.5) and at least 40 committed members before proactive matching is switched on there (Section 28.5); the MVP target is 75-150 active members per city (Section 28.1).
+Launch one city first, not two. NYC and San Francisco are both plausible, but the key variable is local density and founder/operator reach. A network of 100 people spread across two cities is often weaker than 75 people concentrated within a small set of adjacent neighborhoods. Superseded (v0.2): launch two cities, San Francisco and New York, each concentrated in a small set of adjacent neighborhoods. Two cities from day one prove the system works multi-city and serve the many members who live between both. The density risk is managed with per-city thresholds: each city needs its own dense seed (40-75 members, Section 36.5) and at least 40 committed members before proactive matching is switched on there (Section 28.5); the MVP target is 75-150 active members per city (Section 28.1). Superseded in part by Section 40 (2026-10-08): slop.date launches first, matched within one city, several cities, or a radius from a zip code; SF and NYC remain The Network's own cities.
 ## 25.2 Stage 0 - Concierge prototype (0-8 weeks)
 - 30-50 invite-only members in one dense geography. Revised (v0.2): 30-50 in each of two dense geographies (SF and NYC). In the v0.2 plan the seed is 40-75 per city (Section 36.5), and Stage 0 corresponds to milestone M6 (private pilot, about weeks 12-14 of the build, Section 37), not weeks 0-8.
 - Phone/SMS onboarding; human stewards use an internal profile template. Channels: iMessage via Blooio and SMS via Twilio to start; later Signal, Telegram, and WhatsApp.
@@ -839,7 +841,7 @@ A purely technical founding plan is insufficient. The product is a social system
 # 27. Open questions and decision log
 | Question | Current PRD position | When to decide |
 |---|---|---|
-| NYC or San Francisco first? | Decided (v0.2): both, each with a dense neighborhood seed and its own activation threshold. | Decided. |
+| NYC or San Francisco first? | Decided (v0.2): both, each with a dense neighborhood seed and its own activation threshold. (Superseded in part by Section 40: slop.date launches first.) | Decided. |
 | Should the product use XP/levels? | Only private, optional, role-based progression; no universal hierarchy. | After qualitative pilot proves motivation need. |
 | How many invites does each member get? | MVP default: 3 per member per month, adjustable by network need (Section 32.15); not a recruiting reward. | Tune weekly during pilot (Section 36.5). |
 | Should there be any member-visible "capital" view? | Show inventories/capabilities and collective growth, not a score, and only when the member opts in. Never show scores directly. | Design prototype. |
@@ -851,10 +853,10 @@ A purely technical founding plan is insufficient. The product is a social system
 | How should model vendors be selected? | Task-based evaluation; vendor-neutral gateway. | Implementation. |
 | Voluntary paid governance membership? (earlier idea, superseded by 39.4) | Was under discussion: belonging stays free; a paid governance membership could fund inference and the Commons and confer voice, never social priority. | Before any monetization (post-MVP). |
 | No-show consequences | MVP: one forgiven no-show, then held from group and time-sensitive opportunities until a lower-stakes commitment is completed. Refundable deposits are a post-MVP experiment. | Revisit after first 100 completed meetups. |
-| ID verification | Not required for MVP members (vouch + phone + age attestation (13+); under-18 members are single-player only). Required for hosts of home-based events when that ships. | Before home hosting. |
+| ID verification | Not required for MVP members (vouch + phone + age attestation (13+); under-18 members are single-player only). Required for hosts of home-based events when that ships. (Superseded in part by Section 40.5: slop.date requires a selfie liveness and age check before a member's first intro.) | Before home hosting. |
 | Profiles of non-members | No. No scraped or third-party profiles; growth is invite and vouch only. | Decided. |
 | Proactive outreach to unresponsive members | Stop after two unanswered proactive messages; resume on re-engagement. | Decided; tune with data. |
-| Sender numbers per city or one national? | Open; decide after Blooio and 10DLC checks (32.2, 36.1). | M0. |
+| Sender numbers per city or one national? | Open; decide after Blooio and 10DLC checks (32.2, 36.1). (Superseded by Section 40.3: one Blooio line for every app, routed by keyword.) | M0. |
 | Monorepo or dedicated repository? | Default monorepo (31.1). | M0. |
 | Precision gate and review SLA values | Proposed defaults in 32.8. | Before M6. |
 | Home-entry help requests in MVP? | Allowed only under the F14 rule. | Before M6. |
@@ -864,7 +866,7 @@ A purely technical founding plan is insufficient. The product is a social system
 # 28. MVP definition: what ships first and what does not
 Sections 1-27 describe the full product direction. This section defines the first version precisely. Anything not listed as MVP here is not built for launch, even if an earlier section describes it.
 ## 28.1 The MVP in one paragraph
-An invite-only Network in San Francisco and New York for about 150-300 members (target 75-150 active per city). Members join through a vouch from an existing member or the founding team, and talk to one Network agent over iMessage (Blooio) or SMS (Twilio), with an optional voice call for onboarding and a web page for reviewing what the Network knows. The agent is the Eliza Cloud shared agent with a Network character and a Network plugin; all state lives in Postgres. A new asynchronous matching and opportunity engine runs over that data and produces proposals: one-to-one introductions, small groups (3-6), event co-attendance, bounded help requests, and network-growth asks. While the network is under 1,000 members, every proactive proposal is reviewed by a human before it is sent. Approved proposals become double opt-in invitations sent by the agent; once accepted, the agent relays messages, schedules, reminds, checks in on the day, handles cancellations and flakes, and collects feedback that updates the graph. Each city has a monthly all-member gathering. The team operates the Network through an admin console with full conversation, social-graph, member-perspective, and analytics views, and tests it with a simulated world of persona agents that send real messages through the same pipeline. (A committed member has completed onboarding and opted into proactive messages. An active member has exchanged a message with the agent or taken part in an opportunity in the last 30 days.)
+An invite-only Network in San Francisco and New York for about 150-300 members (target 75-150 active per city). Members join through a vouch from an existing member or the founding team, and talk to one Network agent over iMessage (Blooio) or SMS (Twilio), with an optional voice call for onboarding and a web page for reviewing what the Network knows. The agent is the Eliza Cloud shared agent with a Network character and a Network plugin; all state lives in Postgres. A new asynchronous matching and opportunity engine runs over that data and produces proposals: one-to-one introductions, small groups (3-6), event co-attendance, bounded help requests, and network-growth asks. While the network is under 1,000 members, every proactive proposal is reviewed by a human before it is sent. Approved proposals become double opt-in invitations sent by the agent; once accepted, the agent relays messages, schedules, reminds, checks in on the day, handles cancellations and flakes, and collects feedback that updates the graph. Each city has a monthly all-member gathering. The team operates the Network through an admin console with full conversation, social-graph, member-perspective, and analytics views, and tests it with a simulated world of persona agents that send real messages through the same pipeline. (A committed member has completed onboarding and opted into proactive messages. An active member has exchanged a message with the agent or taken part in an opportunity in the last 30 days.) Update (2026-10-08, Section 40): the MVP now launches slop.date first on the shared multi-app platform, with ntwrk.love as the home page and one iMessage line with keyword routing; peon.biz and friends.help run locally only. The San Francisco and New York pilot described above is superseded in part by Section 40.
 ## 28.2 What the MVP must prove
 - Members find unexpected messages from the Network worth receiving (worthwhile-interruption rate at least 70%, mute/complaint rate under 5%).
 - High-conviction opportunities get accepted and happen (opt-in rate at least 40% of sent proposals; completion at least 70% of mutually accepted).
@@ -876,9 +878,9 @@ An invite-only Network in San Francisco and New York for about 150-300 members (
 
 | Area | MVP scope | Where specified |
 |---|---|---|
-| Membership | Invite and vouch flow, founding-team seed invites, automatic soft approval with flagged-case review, age attestation (13+; under-18 members are single-player only), phone verification, SF/NYC home city with multi-city presence. | 8.1, 32.1, 32.15 |
+| Membership | Invite and vouch flow, founding-team seed invites, automatic soft approval with flagged-case review, age attestation (13+; under-18 members are single-player only), phone verification, SF/NYC home city with multi-city presence. Updated 2026-10-08 (Section 40.3): members aged 13 and up may join every app; matching is 18+ in every app; slop.date locates members by city, several cities, or a radius from a zip code. | 8.1, 32.1, 32.15 |
 | Channels | iMessage via Blooio, SMS via Twilio, optional inbound/outbound voice call for onboarding, web chat on eliza.app. STOP/HELP compliance. | 32.2 |
-| Agent | Eliza shared agent with Network character, Network plugin (actions, providers, evaluators), progressive profiling, concierge search for events and places. | 32.3 |
+| Agent | Eliza shared agent with Network character, Network plugin (actions, providers, evaluators), progressive profiling, concierge search for events and places. One persona per app on the shared agent (40.3). | 32.3 |
 | Profile model | Members, facets, intents, presence, edges, consent, provenance and confidence, privacy scopes. | 13.1, 32.4 |
 | Enrichment | Conversation extraction; inviter vouch notes; optional Google Calendar connection; public LinkedIn/X profile from a URL the member gives; pasted memory summary from the member's AI assistant. LinkedIn's terms prohibit automated fetching, so for LinkedIn the member pastes their profile text; this is the main path, not a fallback. An X bio may be read from the URL where the terms allow. | 32.5 |
 | World knowledge | Curated per-city event ingestion from sources whose terms allow it (Cerebral Valley, Luma calendar feeds, open-data and venue calendars; Eventbrite, Meetup and Partiful only through partnerships) plus web search and maps. | 32.6 |
@@ -895,6 +897,11 @@ An invite-only Network in San Francisco and New York for about 150-300 members (
 | Admin and analytics | Member 360, conversation viewer, member-perspective timeline, social-graph explorer, opportunity pipeline, matching-run inspector, review queue, safety queue, metrics dashboards, audit log. | 35 |
 | Testing | Unit/contract/policy tests per subsystem, simulated world with persona agents, virtual clock, scenario library, LLM judges, privacy canaries, load and chaos tests. | 34 |
 | Network capital (internal) | Private ledger built from events the MVP already records (vouches, attendance, feedback, confirmed help, organizing). Drives agent effort tiers, vouch capacity, and organizing reach; private "what you've built" view. Never visible to others, never used in anyone else's ranking, no cash value. | 39.2 |
+| App memberships and keyword routing | One person per verified phone with a membership per app (ntwrk, slop, friends, peon). One Blooio iMessage line for every app; the first message is routed by keyword; with no keyword the person joins The Network and the agent enrolls them in the apps they want. Members 13+ may join every app; matching is 18+. Cross-app privacy and blocks across apps. | 40.3 |
+| App packs | One engine with a pack per app (ontology, filters, scoring, consent, geo, oracle, sims). Core invariants no pack can loosen; networkPack byte-identical to today; shared conformance suite. | 40.4 |
+| slop.date pack and sim | Stated preferences as filters, reciprocal scoring with congestion and exposure caps, probe first then a booked first date, radius or city geo with distance bands, safety basics; sim world with adversaries and launch gates. | 40.5, 40.8 |
+| Admin app switcher | One admin panel with an app switcher, per-app roles and review queues, and an audited cross-app person view for safety only. | 35, 40.3 |
+| Home page and app sites | ntwrk.love is the home page for the whole concept; slop.date has its own landing page and agent persona. | 40.1 |
 
 
 ## 28.4 Explicitly not in MVP (and what it builds on)
@@ -911,22 +918,24 @@ An invite-only Network in San Francisco and New York for about 150-300 members (
 | Refundable no-show deposits | Needs payments and careful testing. | Reliability evidence, attendance records |
 | Network Commons, sponsorship, partner inventory, institutional contracts | Deferred (18-19). | Opportunity object, world knowledge |
 | Governance, paid governance membership, member ownership, protocol tokens, and decision-market governance | Decide after product-market fit; needs legal review and token design first (39.4). | Admin metrics, audit log, network capital ledger |
-| ID verification | MVP relies on vouch, phone, and age attestation (13+). Needed first for home hosting. | Safety subsystem |
+| ID verification | MVP relies on vouch, phone, and age attestation (13+). Needed first for home hosting. slop.date adds a selfie liveness and age check before a member's first intro (superseded in part by Section 40.5). | Safety subsystem |
 | Home-hosted events, childcare, money custody, regulated services | High risk (17.5). Home hosting comes after light-touch opportunities prove out (39.3). | Safety classes |
 | Learned ranking models and learned joint embeddings | Need labeled outcomes from MVP first. | Review labels, outcome data, matching logs |
 | Graph topology optimization, capability-coverage modeling | Need scale. | Graph analytics in admin |
 | Private progression, roles, gamification | Validation gate (20.3). | Feedback and edge history |
-| Cities beyond SF and NYC | Expansion gates (25.6). | Multi-city presence model |
+| Cities beyond SF and NYC for The Network's own matching (slop.date markets: Section 40.5) | Expansion gates (25.6). | Multi-city presence model |
 | Spendable network capital (time-bank style requests between members) | Needs the internal ledger, fairness and gaming results, and legal review first (39.2). | Network capital ledger, effort tiers |
 | Borrowing, lending, rental, and a marketplace | Goods changing hands need custody, disputes, and safety design (39.3). | Opportunity object, reliability evidence |
 | Group purchases and collective buying | Needs payments and money custody (18, 39.3). | Intents, small-group composition |
+| Public deploys of peon.biz and friends.help | slop.date launches first; the other two run locally only until their packs pass their sim gates and the founder approves (40.6). | App packs, shared platform, local sim worlds |
+| Legal and compliance backlog (NYC LL144 bias audit, dating-safety notices, 10DLC registration and others) | Not a launch blocker for now (founder decision 2026-10-08); the safety guards stay (40.7). | Audit log, consent ledger, relay log |
 
 
 ## 28.5 MVP launch gates (go/no-go)
 - All MVP flows in Section 29 pass end-to-end in the simulated world for 30 simulated days at accelerated time, with no privacy-canary leaks and no state-machine invariant violations.
 - Every proactive message path goes through the review queue and outbound leak check; this is enforced in code, not by convention.
 - STOP/HELP, block, and report work on every channel; safety escalation runbook rehearsed.
-- Messaging compliance complete: Twilio A2P 10DLC or toll-free verification approved; Blooio sending limits understood; opt-in language recorded.
+- Messaging compliance complete: Twilio A2P 10DLC or toll-free verification approved (superseded by Section 40.7: registration is in the deferred compliance backlog, not a launch gate); Blooio sending limits understood; opt-in language recorded.
 - Admin console can show any member's full experience (their messages, what the engine considered for them, and why) within two clicks.
 - Seed cohort recruited: at least 40 committed members per city before proactive matching is enabled in that city.
 - Terms, privacy policy, and community guidelines published (36.2); safety on-call staffed with response targets (36.3); reviewers trained and calibrated on the rubric (36.7); cost alerts live (36.4); backup restore tested (36.9).
@@ -1070,7 +1079,7 @@ This analysis is based on a review of the elizaOS v3 monorepo (github.com/elizaO
 | Need | What exists in Eliza | Status | Work for MVP |
 |---|---|---|---|
 | Member conversation agent | Shared agent on Workers + Durable Object history | Exists | Network character, Network plugin, context providers; add Network tables to per-turn context |
-| iMessage / SMS in and out | Blooio and Twilio adapters, gateway, outbound send | Exists | Dedicated Network numbers; A2P 10DLC/toll-free registration; STOP/HELP handling verified; per-channel rate limits |
+| iMessage / SMS in and out | Blooio and Twilio adapters, gateway, outbound send | Exists | Dedicated Network numbers (one shared line for every app, Section 40.3); A2P 10DLC/toll-free registration (deferred backlog, Section 40.7); STOP/HELP handling verified; per-channel rate limits |
 | Proactive outbound from backend jobs | Gateway internal delivery (Blooio, Telegram); core sendMessageToTarget | Partial | Network outbound service: budget, quiet hours, idempotency, delivery receipts, Twilio SMS path for proactive sends |
 | Voice onboarding | Twilio voice to realtime session | Exists | Network voice prompt; recording consent; transcript to extraction |
 | Identity and login | Steward auth, identity links, phone verification | Exists | Member table linked to Cloud user; invite tokens; age attestation (13+) and minor flag |
@@ -1158,12 +1167,12 @@ Soulmates is an elizaOS WhatsApp dating matchmaker ("Ori") with a separate batch
 ## 31.5 Environments
 - Local: PGlite or Docker Postgres, mocked channels, virtual clock, deterministic model plugin for unit tests.
 - Staging: eliza-cloud-api-staging, staging Postgres, test phone numbers, simulated world runs at accelerated time.
-- Production: dedicated Network sender numbers (per city or one national number, decided in M0 after Blooio and 10DLC capacity checks, Section 32.2), production Postgres, review queue enforced, sim traffic forbidden.
+- Production: dedicated Network sender numbers (per city or one national number, decided in M0 after Blooio and 10DLC capacity checks, Section 32.2; superseded by Section 40.3: one Blooio line for every app, routed by keyword), production Postgres, review queue enforced, sim traffic forbidden.
 - Shadow mode (pre-launch): the engine runs on real seed-member data and writes proposals to the review queue only, never sending, to measure precision.
 # 32. Subsystem specifications
 Each subsystem lists purpose, what is reused from Eliza, what is new, key data, key logic, interfaces, and MVP scope.
 ## 32.1 Identity, membership, and access
-- Purpose: one stable member identity across channels, cities, and number changes; roles and permissions.
+- Purpose: one stable member identity across channels, cities, and number changes; roles and permissions. Updated 2026-10-08 (Section 40.3): one person per verified phone, with a membership per app.
 - Reuse: Eliza Cloud users and Steward auth; identity-link codes; phone verification.
 - New: network.members (member_id, cloud_user_id, status, roles, home areas, states, invite lineage, age attestation, created_at), network.channel_identities (channel, address, verified_at, primary), network.agent_keys (key_id, member_id, key_hash, verified_phone, client_label, scopes, created_at, last_used_at, expires_at, revoked_at), network.roles (member, connector, host, steward; staff roles admin, reviewer, safety, analyst, engineer per Section 35.1).
 - Logic: invite token or verified inbound number creates a member; soft-approval score; account states (invited, onboarding, active, paused, restricted, removed); role-based admin access with audit. (The account state 'paused' is distinct from the participation state Paused (7.2) and from the 'only when I ask' outreach setting applied by the two-unanswered rule (F28).)
@@ -1171,15 +1180,15 @@ Each subsystem lists purpose, what is reused from Eliza, what is new, key data, 
 ## 32.2 Channel gateway and messaging
 - Purpose: receive and send messages on every supported channel reliably and compliantly.
 - Reuse: Blooio and Twilio adapters, gateway-webhook, outbound send utilities, Twilio voice bridge, group bindings.
-- New: Network sender numbers (one iMessage/SMS identity per city or one national number; decide after Blooio and 10DLC capacity checks); network.outbound_messages (idempotency key, channel, template/brief id, status, provider id, delivered/read timestamps); STOP/HELP/START keyword handling verified for Network numbers; per-recipient and per-number rate limits; quiet-hours enforcement in the member's local time; delivery failure fallback (iMessage to SMS).
+- New: Network sender numbers (one iMessage/SMS identity per city or one national number; decide after Blooio and 10DLC capacity checks; superseded by Section 40.3: one Blooio line for every app, routed by keyword); network.outbound_messages (idempotency key, channel, template/brief id, status, provider id, delivered/read timestamps); STOP/HELP/START keyword handling verified for Network numbers; per-recipient and per-number rate limits; quiet-hours enforcement in the member's local time; delivery failure fallback (iMessage to SMS).
 - MVP scope: iMessage and SMS, optional voice, web chat. Telegram and WhatsApp are a fast follow because adapters exist.
 ## 32.3 Network agent (Eliza shared agent)
-- Purpose: the voice of the Network for every member conversation.
+- Purpose: the voice of the Network for every member conversation. Each app has its own persona on this agent (Section 40.3).
 - Reuse: shared runtime per turn, message service, web search, reminders, memory, voice session.
 - New: Network character (observant, concise, non-needy; style rules in 12.4 as testable rules); Network plugin with:
 - Providers: MEMBER_CONTEXT (shareable profile summary, states, preferences), ACTIVE_ITEMS (pending invitations, upcoming commitments, open relay threads, outstanding questions), CITY_CONTEXT (events this week, presence).
 - Actions: UPDATE_PROFILE, MANAGE_INTENT, ASK_NETWORK (classify and route requests), RESPOND_TO_OPPORTUNITY, RELAY_MESSAGE, SHARE_CONTACT, SCHEDULE (availability, confirm, reschedule, cancel), SET_STATE, INVITE_PERSON, BLOCK_OR_REPORT, GIVE_FEEDBACK, CONCIERGE_SEARCH.
-- Evaluators: facet/intent extraction, sentiment and safety signals, unanswered-question tracking. Validated (2026-10-06): state changes use one structured decision on the first model call, not the multi-step planner. The model proposes, deterministic code authorizes and executes, and the member sees a confirmation built from what actually executed. With gpt-6-luna the planner committed SET_STATE in 1 of 20 turns; the structured decision committed 38 of 40 with one model call (estimated p95 4.5-6.9 s against the 8 s target).
+- Evaluators: facet/intent extraction, sentiment and safety signals, unanswered-question tracking. Validated (2026-10-06): state changes use one structured decision on the first model call, not the multi-step planner. The model proposes, deterministic code authorizes and executes, and the member sees a confirmation built from what actually executed. With gpt-6-luna the planner committed SET_STATE in 1 of 20 turns. The structured decision committed 58 of 60 with the correct state and exact dates and 0 of 30 false commits, using one model call (measured p95 6.7 s against the 8 s target). Dates the member states are resolved in code rather than trusted from the model, state changes can have a start date (presence windows), and no state is written without the end date the member gave.
 - Logic: state-changing actions call the Network API, never write tables directly; deterministic handlers decide state, the LLM phrases replies from a brief; any message about another member is built only from fields the privacy policy allows.
 - MVP scope: all of the above. A dedicated (non-shared) agent tier is not needed.
 ## 32.4 Profile and knowledge model
@@ -1418,26 +1427,26 @@ The team must be able to see everything happening in the Network, from any membe
 - The perspective timeline is assembled from the event log, outbound and inbound message logs, agent trajectories, and matching-run logs, keyed by member and time.
 # 36. Launch requirements we were missing
 ## 36.1 Messaging compliance and deliverability
-- US SMS requires A2P 10DLC brand and campaign registration or toll-free verification; budget several weeks. Record consent wording at invite acceptance; honor STOP/HELP/START; no proactive messages without consent; quiet hours in the recipient's time zone.
+- US SMS requires A2P 10DLC brand and campaign registration or toll-free verification; budget several weeks. (Registration is in the deferred compliance backlog, Section 40.7; not a launch gate for now.) Record consent wording at invite acceptance; honor STOP/HELP/START; no proactive messages without consent; quiet hours in the recipient's time zone.
 - iMessage via Blooio: confirm per-number throughput, group messaging support, and reliability for proactive sends; keep SMS as fallback.
-- Number strategy: dedicated Network numbers (per city or one national), memorable sender identity, contact card (vCard) sent at onboarding so members save the Network as a contact. Prototyping uses the existing Blooio line +1 (808) 788-1821; dedicated per-city lines follow.
+- Number strategy: dedicated Network numbers (per city or one national), memorable sender identity, contact card (vCard) sent at onboarding so members save the Network as a contact. Prototyping uses the existing Blooio line +1 (808) 788-1821; dedicated per-city lines follow. (Superseded by Section 40.3: one Blooio line serves every app, with keyword routing on the first message.)
 - Voice: two-party recording consent (California) announced at the start of any recorded call.
 ## 36.2 Legal and policy
 - Terms of service, privacy policy, community guidelines, and a short "how the Network uses what you tell it" explainer written in plain language.
-- Minimum age 13 (COPPA); members 13-17 are single-player only (personal agent: chat, events, things to do) and are never matched or connected; parental-consent and state-law review before launch; meetups in public places by default for first meetings; liability language for in-person meetings.
+- Minimum age 13 (COPPA); members 13-17 are single-player only (personal agent: chat, events, things to do) and are never matched or connected; parental-consent and state-law review before launch (superseded by Section 40.7: a deferred backlog item, not a launch gate); meetups in public places by default for first meetings; liability language for in-person meetings.
 - Data rights: export and deletion (CCPA/CPRA in California; New York SHIELD Act security requirements), data retention schedule, breach response plan.
 - Respect terms of service of event sources and profile sources used for enrichment.
 ## 36.3 Trust and safety operations
 - Safety runbook: emergencies (direct to 911 first), harassment, stalking, scams, impersonation, minors; escalation contacts; evidence preservation; appeals.
 - On-call rotation for safety reports during pilot hours; response targets (urgent within 1 hour, others within 24 hours). Outside covered hours, urgent reports get an immediate automated reply directing the member to emergency services, plus an automatic safety hold on the reported member's opportunities until reviewed.
 ## 36.4 Cost model and budgets
-- Per-member monthly cost drivers: agent turns (LLM tokens), extraction and enrichment, matching judge calls, SMS and iMessage fees, voice minutes, embeddings, infrastructure. Target an all-in cost per active member per month that the team tracks weekly in the admin console; set alerts on per-member and per-day spend. Use cheaper models for pre-screening and extraction and stronger models only for final judgments and member-facing phrasing. Measured LLM cost (2026-10-06, gpt-6-luna on Surplus): about $3 a month for 300 members sending 5 messages a day each, or about $260 at list prices, so confirm provider pricing before budgeting. Set a numeric target cost per active member per month and a monthly pilot budget per city before M6, including monthly gathering costs (venue, food) and how they are covered in the MVP (team-funded or members self-pay).
+- Per-member monthly cost drivers: agent turns (LLM tokens), extraction and enrichment, matching judge calls, SMS and iMessage fees, voice minutes, embeddings, infrastructure. Target an all-in cost per active member per month that the team tracks weekly in the admin console; set alerts on per-member and per-day spend. Use cheaper models for pre-screening and extraction and stronger models only for final judgments and member-facing phrasing. Measured LLM cost (2026-10-07, gpt-6-luna on Surplus): about $3 a month for 300 members sending 5 messages a day each, at the billed rate (9-21% of list, from prompt caching and Surplus pricing). At list price ($0.10 per million input tokens, $0.50 per million output tokens, the same on Surplus and OpenAI) with no caching, it is about $27 a month including the outbound leak check. Set a numeric target cost per active member per month and a monthly pilot budget per city before M6, including monthly gathering costs (venue, food) and how they are covered in the MVP (team-funded or members self-pay).
 ## 36.5 Seed and density plan
 - Each city: a founding seed of 40-75 members recruited through the founders' and early members' vouches, deliberately spanning several clusters (not one industry), concentrated in a few adjacent neighborhoods (for example, Mission/SoMa/Hayes Valley in SF; Lower Manhattan and north Brooklyn in NYC; final choice by where the seed lives).
 - First monthly gathering in each city within two weeks of opening.
 - Invitation allowances tuned weekly to grow density without diluting quality.
 ## 36.6 Agent persona and voice
-- Name, tone guide, and a library of example messages for every flow; tested as style rules (Section 34.5). The agent never pretends to be human; it is clear about when it is relaying another member's words.
+- Name, tone guide, and a library of example messages for every flow, per app persona (Section 40.3); tested as style rules (Section 34.5). The agent never pretends to be human; it is clear about when it is relaying another member's words.
 ## 36.7 Reviewer operations
 - Rubric and training for reviewers (including contractors), calibration sessions, double-review sampling, privacy training, confidentiality agreements, and least-privilege access to scrubbed data.
 ## 36.8 Accessibility and inclusivity
@@ -1445,22 +1454,35 @@ The team must be able to see everything happening in the Network, from any membe
 ## 36.9 Data, backup, and recovery
 - Network schema included in existing Postgres backups with point-in-time recovery; tested restore; nightly export to R2; disaster-recovery runbook.
 ## 36.10 Repository and ownership
-- Decided (2026-10-07): Network code lives in the thenetwork repository, including the Network plugin (packages/plugin-network). Eliza is included as a git submodule until its packages are published. Eliza Cloud keeps only the integration glue: identity scoping, the invite gate, STOP/HELP, the Twilio path, capability flags, network migrations, the Postgres store and per-turn wiring. Name an owner for each subsystem in Section 32. Prototypes, research, and test harnesses live in https://github.com/lalalune/thenetwork (private). The product domain is ntwrk.love; the assistant connector is served at https://mcp.ntwrk.love/mcp.
+- Decided (2026-10-07): Network code lives in the thenetwork repository, including the Network plugin (packages/plugin-network). Eliza is included as a git submodule until its packages are published. Eliza Cloud keeps only the integration glue: identity scoping, the invite gate, STOP/HELP, the Twilio path, capability flags, network migrations, the Postgres store and per-turn wiring. Name an owner for each subsystem in Section 32. Prototypes, research, and test harnesses live in https://github.com/lalalune/thenetwork (private). The product domain is ntwrk.love (the home page for every app, Section 40; ntwrk.club belongs to someone else); the assistant connector is served at https://mcp.ntwrk.love/mcp.
 # 37. MVP build plan and milestones
-Indicative sequence assuming a small team (2-3 engineers, 1 product/community lead, part-time design, contract reviewers). Each milestone ends with simulated-world tests passing for the flows it delivers.
+Indicative sequence assuming a small team (2-3 engineers, 1 product/community lead, part-time design, contract reviewers). Each milestone ends with simulated-world tests passing for the flows it delivers. The milestone table is the v0.2 plan; the multi-app phases after it (2026-10-08, Section 40) are current and supersede it where they differ.
 
 | Milestone | Weeks | Deliverables | Exit criteria |
 |---|---|---|---|
-| M0. Foundations | 1-2 | Repository and package layout; network schema v1 and migrations; Clock abstraction and job table; event log; admin shell with auth and roles; staging environment; Network phone numbers ordered and 10DLC filed. | Schema migrated on staging; job runner and SimClock pass tests. |
+| M0. Foundations | 1-2 | Repository and package layout; network schema v1 and migrations; Clock abstraction and job table; event log; admin shell with auth and roles; staging environment; Network phone numbers ordered and 10DLC filed (superseded by Section 40: one shared Blooio line; 10DLC is in the deferred backlog, 40.7). | Schema migrated on staging; job runner and SimClock pass tests. |
 | M1. Member conversation | 2-5 | Network character and plugin; invite, vouch, acceptance, onboarding (SMS/iMessage, optional voice); extraction; profile web pages; states and preferences; STOP/block/report; concierge search with event ingestion for both cities. Also: export and delete (F24); phone change and channel linking (F25); safety queue intake (F23). | Seed members can be onboarded end to end on staging; scenario suite green. |
 | M2. Simulator v1 | 3-6 (parallel) | Persona generator, persona agents, simulated channel adapter, SimClock-driven world runner, judges, canaries, run storage, simulation lab in admin. | 100 personas run 14 simulated days through onboarding and concierge flows. |
 | M3. Engine v1 and review | 5-9 | Generators, retrieval, scoring, judge, group composer, load and fairness controls, proposals, review queue, matching run inspector. Also: outreach controller (budgets, quiet hours, two-unanswered rule); outbound leak checker and PII scrubber; empty-state items (F21). | Engine passes ME-001 to ME-012 in simulation; precision against ground truth above target. |
 | M4. Coordination | 7-11 | Consent workflow, relay, contact swap, scheduling, reminders, check-ins, flakes and replacement, feedback, second encounters, monthly events. | Full lifecycle flows F11-F29 pass for 300 personas over 60 simulated days with zero invariant violations and zero canary leaks. |
 | M5. Admin and analytics complete | 8-12 | Member 360, perspective timeline, conversation explorer, graph explorer, pipeline, metrics, fairness, safety console. | Team can answer "what happened to member X this month and why" in under two minutes. |
-| M6. Private pilot | 12-14 | Onboard seed cohorts in SF and NYC; concierge only plus shadow-mode engine; first monthly gatherings. | Launch gates in 28.5 met; shadow precision baseline established. |
+| M6. Private pilot | 12-14 | Onboard seed cohorts in SF and NYC; concierge only plus shadow-mode engine; first monthly gatherings. (Superseded by Phases 1-2 below and Section 40: the first pilot is slop.date.) | Launch gates in 28.5 met; shadow precision baseline established. |
 | M7. Proactive matching on | 14+ | Reviewed proactive proposals per city; weekly metric reviews; tuning. | MVP success criteria in 28.2 tracked weekly; decide on fast follows (Telegram/WhatsApp, connector, app features). |
 
 
+Current plan (2026-10-08, multi-app; Section 40). Two workstreams: engine and packs, and platform. The milestones above still describe the work inside each phase; M6 and M7 are superseded by Phases 1-2 for the first pilot.
+
+| Phase | Scope | Owner | Exit criteria |
+|---|---|---|---|
+| Phase 0. App packs core | AppPack interface; open core types; networkPack as a facade, then threaded through the engine one module at a time; geo seam; SimPack; one conformance suite for every pack. | Engine and packs | Golden replays (engine, attention, plans, capital, judge, network) byte-identical under networkPack on a pinned clean commit; conformance suite green for networkPack. |
+| Phase 1. slop.date pack, sim and local pilot readiness | slopPack: mutual hard filters, radius geo, reciprocal scoring with congestion and exposure caps, probe first then a booked first date, dating judge rubric, safety basics (40.5); dater personas, oracle, adversaries and scenarios. | Engine and packs | Conformance green; slop.date sim gates (40.8) pass over several seeds; end to end on local Postgres with test phones and dry-run sends; reviewers trained; shadow mode with human review of every intro. |
+| Phase 2. Platform backend (in parallel) | Migration runner; platform schema (people, phone identities, memberships, consent events, share grants, blocks, staff roles, audit); app id on engine tables; one line with keyword routing and no-keyword enrollment; phone login; per-app personas; admin app switcher and per-app roles. | Platform | A test phone joins two apps by keyword and one through no-keyword enrollment; STOP and leaving one app work; export and delete per app; the ntwrk 21-day sim gives the same results after migration; cross_app_leak = 0. |
+| Phase 3. friends.help pack and sim (local) | friendsPack: groups first, quorum, plans and crews, neighborhood geo, affinity tables; personas and oracle. | Engine and packs | Conformance green; friends.help sim gates (40.8); runs locally only. |
+| Phase 4. peon.biz pack and sim (local) | peonPack: org and job entities with capacity, two-way retrieval, candidate-first consent, unranked slates, sealed protected attributes, proxy scrubbing; hiring personas and oracle. | Engine and packs | Conformance including protected-attribute invariance; peon.biz sim gates (40.8); runs locally only. |
+| Phase 5. Attention, plans and capital across apps | Person-level cap across apps; attention budget, plan allowance and crews per pack; network capital per app or shared (to decide). | Engine and packs, with platform | No send over any per-app or person-level cap in a multi-app sim; the network capital fairness gate (39.2) holds per app. |
+
+
+slop.date goes live when Phases 0-2 meet their exit criteria and the founder approves live sends. peon.biz and friends.help get public deploys only by a later founder decision (28.4).
 # 38. Review decisions and comment resolution log
 This section records the decisions made while resolving the October 4-5, 2026 review comments, so the reasoning survives after the comment threads are closed.
 
@@ -1485,7 +1507,7 @@ This section records the decisions made while resolving the October 4-5, 2026 re
 | Commercial mode | Not MVP; MVP opportunities are gift or self-pay. | B.1 |
 | No-shows | One forgiven no-show, then held from group and time-sensitive opportunities until a lower-stakes commitment is completed; the flaked-on person is supported. Deposits paid to those affected are a post-MVP experiment. | 15.2, 27 |
 | Internal caste risk | Exposure floors, exploration, fairness audits, no composite member score. | 24, 33.8 |
-| Cities | Launch SF and NYC together, each with a dense seed and its own activation threshold. | 25, 27, 36.5 |
+| Cities | Launch SF and NYC together, each with a dense seed and its own activation threshold. (Superseded in part by Section 40: slop.date launches first.) | 25, 27, 36.5 |
 | Ads | No targeted ads; an opt-in labeled offers category is a possible later feature. | 18.3 |
 | Scheduling and flaking | Scheduling is first-class: calendar connection, proposals, confirmations, reminders, day-of check-ins, replacement without blame. | 2.1, 6.2, 32.12 |
 | Frictionless data collection | Progressive, mostly passive, single-player valuable; connected sources; guess-and-confirm. Tokens/XP not in MVP. | 3.2, 9.3, 32.5 |
@@ -1512,6 +1534,15 @@ This section records the decisions made while resolving the October 4-5, 2026 re
 | Founders are members | Everyone, including the founders, is just a member. No founding cohort or special status. Invites are vouches. | 8.1, 39 |
 | Network capital | MVP-lite: internal ledger, effort tiers, vouch capacity, and a private "what you've built" view. No visible score, no cash value, no promised conversion. A spendable currency comes later. | 28.3, 28.4, 39.2 |
 | MVP opportunity mix | Favor light-touch opportunities: asks, work intros, light help, public-venue groups, plans and crews, events, and information missions. Home hosting, borrowing, rental, marketplace, and group buying come later. | 28.4, 39.3 |
+| Three apps on one network (2026-10-08) | Work, friendship and love: peon.biz, friends.help and slop.date, all powered by The Network. One engine with app packs, one database, one admin panel, phone-verified login. Each app has its own onboarding, ontology, landing page and agent persona. A person can join one app or several. | 1, 28, 40.1-40.4 |
+| App names and ids (2026-10-08) | peon.biz (peon), friends.help (friends; renamed from buddies.nyc), slop.date (slop). The Network itself (ntwrk) is the umbrella. | 40.2 |
+| One iMessage line (2026-10-08) | One Blooio line for every app. The first message is routed by keyword ("join slop.date", "peon", "friends"). With no keyword the person joins The Network; the agent asks what they are looking for and enrolls them in the matching apps. | 27, 31.5, 32.2, 36.1, 40.3 |
+| Home page (2026-10-08) | ntwrk.love is the home page for the whole concept. ntwrk.club belongs to someone else. | 36.10, 40.1 |
+| Launch order (2026-10-08) | slop.date launches first. peon.biz and friends.help run locally only for now (no deploys). | 1.3, 28.1, 28.4, 37, 40.9 |
+| Ages across apps (2026-10-08) | Minimum age 13. Members aged 13-17 may join every app but are never matched or connected to anyone. Matching is 18+ everywhere. | 28.3, 40.3 |
+| Compliance (2026-10-08) | Not a launch blocker for now. The existing safety guards stay. Legal and compliance items (for example NYC LL144, dating-safety notices, 10DLC) are a deferred backlog, not gates. | 28.5, 36.1, 36.2, 40.7 |
+| Cross-app privacy (2026-10-08) | Dating membership and data are never visible to the other apps by default. Only a base profile crosses apps, with consent. Blocks apply across every app. | 40.3 |
+| Earlier decisions stay (2026-10-08) | The attention budget (lunchtime learned send times, always probe first, only initial invites count against the cap, booked-plan reveal), plans with a separate plan allowance, crews after one great plan, network capital MVP-lite and post-MVP ownership apply in every app. | 39, 40.4 |
 
 
 Comments that were agreement or emphasis (for example on contraction, activation energy, silence as a valid state, anti-metrics, examples, and LGTMs) were acknowledged and closed without changes; the text they endorsed is unchanged.
@@ -1631,6 +1662,121 @@ Added to Section 21.2:
 - Vouch quality: share of vouched members who activate, get value, and have no safety flags within 90 days.
 - Member-created opportunities: share of opportunities started by members (asks, crews, member intros, missions) rather than the engine.
 - NC fairness: outcome gap between NC deciles, NC Gini, and gaming detection rate and time.
+# 40. Work, friendship, love: the multi-app platform
+Status (2026-10-08): founder decisions. Where this section differs from an earlier one, this section wins, and the earlier text is marked as superseded or points here. Research: docs/research/2026-10-08-domain-research.md, 2026-10-08-platform-architecture.md and 2026-10-08-engine-generalization.md.
+## 40.1 Framing
+The Network is the umbrella: one network of people, one engine, one database, one admin panel and one phone-verified login. Three apps are lenses on it, each "powered by The Network": work (peon.biz), friendship (friends.help) and love (slop.date). Each has its own onboarding, ontology, landing page and agent persona, and asks the network a narrower question: who should I work with, who could become a friend, who should I date.
+- A person can join one app or several. A second app adds a membership, not a second person.
+- The Network itself (app id ntwrk) is the umbrella membership. Someone who joins without naming an app joins The Network, and the agent asks what they are looking for and enrolls them in the matching apps.
+- ntwrk.love is the home page for the whole concept. ntwrk.club belongs to someone else.
+- slop.date launches first. peon.biz and friends.help run locally only, with no deploys.
+- Everything earlier stays and applies in every app unless this section says otherwise (40.4).
+## 40.2 The apps
+
+| Attribute | slop.date (love) | friends.help (friendship) | peon.biz (work) | The Network (umbrella) |
+|---|---|---|---|---|
+| App id | slop | friends | peon | ntwrk |
+| Domain | slop.date | friends.help (renamed from buddies.nyc) | peon.biz | ntwrk.love (home page for all apps) |
+| Goal | Two adults who would each say yes meet safely for a first date and want a second. | People keep seeing the same few people: repeat meetups and small crews near home. | Qualified candidates and verified employers reach an interview quickly; hires stick. | The general network of Sections 1-39. |
+| Matching style | Reciprocal pairs (harmonic mean or minimum of both directions) with congestion and exposure caps. | Groups first (3-6, least misery plus social-energy balance); activity partners second. | Reciprocal but asymmetric; employers see small unranked slates checked against stated must-haves. | Today's engine, as networkPack. |
+| Consent flow | Probe first, then mutual yes, then a booked first date the agent plans. | Activity-first probe, quorum, then names and a group thread; private "see again?" after. | Candidate-first probe; the employer sees only a summary the candidate approved. | Probe first; the reveal is the booked plan. |
+| Geo model | One city, several cities, or within X miles of a zip code; distance bands only. | Neighborhoods and transit minutes; the venue minimizes the group's longest trip. | Commute tolerance set by the candidate, remote and hybrid; never ranked by home zip. | City and neighborhood presence (SF, NYC). |
+| Success metrics | Mutual-yes rate, dates held, second-date rate, time to first date. | Repeat-meetup rate within 30 days, crews formed, V14. | Intro-to-interview, interview-to-offer, hires, 90-day retention. | Sections 21 and 28.2. |
+| Launch status | First public launch (pilot). | Local only, no deploys. | Local only, no deploys. | Home page live; no-keyword joins on the shared line. |
+
+
+## 40.3 Shared platform
+Identity by phone. One person per verified phone number, proven by texting the line or by a web code. Login stays phone plus text-message code everywhere (9.1, 11.5). Age is a person-level fact: the lowest age the person ever stated on any app, failing closed.
+Memberships. A membership per app (ntwrk, slop, friends, peon), each with its own state, profile, facets, intents, agent memory and member ID. A member ID belongs to one app, so engine data is separated by construction (composite keys, an app argument in every query, row-level security on console roles).
+Ages. The minimum age is 13 on every app. Members aged 13-17 may join every app and get the personal agent, but are never matched, probed, introduced, placed in a plan, group or slate, or connected to anyone. Matching is 18+ everywhere.
+Cross-app privacy.
+- Nothing crosses apps by default. Dating membership and dating data are never visible to the other apps, their agents, their matching or their default admin views.
+- Only a base profile (first name, city, age band, optionally interests) crosses apps, and only with explicit consent per direction, logged and revocable. Dating preferences, orientation, safety notes and hiring self-ID data never cross, even with consent.
+- Blocks are person to person and apply in every app. A safety removal holds the person everywhere; other apps see only "account restricted".
+- No flow reveals that a number belongs to a member of another app.
+- New simulator invariant: cross_app_leak = 0 (canaries planted in one app must never reach another).
+One line, keyword routing. One Blooio iMessage line serves every app, with SMS fallback (32.2).
+- The first message is routed by keyword: "join slop.date", "slop", "peon", "friends" or an app's domain starts that app's onboarding.
+- With no keyword, the person joins The Network: the same onboarding, but the agent asks what they are looking for (friends, dating, work) and enrolls them in the matching app memberships.
+- A known person who names another app later gets a new membership after the age rule and a short notice that the apps are kept separate, with an offer to share their base profile.
+- Every proactive message names its app, replies attach to the app of the open item, and each app keeps its own agent memory.
+- STOP stops every app on the line, because carriers see one sender; "leave slop.date" stops one app.
+Agent personas. One shared Eliza agent with a persona, copy and STOP/HELP text per app. The host sets the app from routing, never from model output.
+Admin panel. One admin panel (Section 35) with an app switcher (ntwrk, slop, friends, peon, all) and per-app roles, so a hiring reviewer never sees dating items. A cross-app person view is limited to safety and admin roles, needs a typed reason and is audited. One append-only audit log carries the app on every row.
+## 40.4 The engine with app packs
+One engine runs every app; each app is a pack the engine loads. The core owns invariants and packs own policy.
+Core invariants no pack can loosen (a pack may only tighten them):
+- matching 18+ only, unknown age failing closed, minors re-checked in every layer;
+- blocks and safety holds win;
+- hard filters before scoring, and the LLM judge can only remove candidates;
+- the leak guard on every member-facing string;
+- consent before any reveal;
+- quiet hours, the two-unanswered rule, and human review of proactive matches under ~1,000 members per app;
+- determinism (seeded, stable ordering, no clock reads).
+Per pack: ontology (entities, roles, lanes, opportunity kinds, typed constraints, never-used attributes), hard filters, generators and retrieval, scoring and selection, consent flow, attention settings and copy, judge rubric and explanations, geo model, plans and capital settings, and a sim pack (personas with hidden truth, oracle, adversaries, scenarios, launch gates).
+networkPack is today's engine behind the pack interface, with byte-identical golden replays of engine, attention, plans, capital and judge results.
+Conformance suite. Every pack passes one shared suite before it runs anywhere: age, blocks and holds, consent order, leaks with canaries, protected-attribute invariance, determinism, judge cannot undo filters, attention caps and quiet hours, geo (mutual radius, bucketed distances, no coordinates) and cross_app_leak = 0. Each pack must also pass its own simulation launch gates (40.8).
+Carried over to every app. The attention budget: rolling sends at a learned send time (default lunchtime, 12:00 local, then learned from replies); always probe first; only initial invites count against the cap (2 per 7 days in Normal); the reveal is the booked plan. Plans with a separate plan allowance (1 initial plan invite per 7 days); crews after one great plan; network capital MVP-lite; post-MVP member ownership (39). Proposed on top: at most 3 proactive messages a day to one number across all apps.
+## 40.5 slop.date MVP
+Preferences. Stated preferences are hard filters only: gender and seeking, age range, radius or cities, intent and named dealbreakers. Profiles do not predict pair chemistry, so the engine learns from probe answers and post-date feedback, and never markets "compatibility science".
+Gender and orientation. Matching gender, an optional identity description and the seeking set are stored separately. Both members must be in each other's seeking set, and selection works for non-bipartite pools. Orientation is asked neutrally, never inferred.
+No race filters. No race or ethnicity field, filter or inference. Shared culture, language or faith may be a stated preference, soft unless marked a dealbreaker. Never used: inferred orientation, health status, immigration status, photo attractiveness scores, anything from another app.
+Scoring. Reciprocal: harmonic mean or minimum of both directions. Congestion caps limit incoming probes per member per week; exposure floors give every verified member probes; the Gini of probes received is tracked. No paid boosts.
+Flow. Probe first: an anonymous description (age band, area band, intent, one shareable fact). On a yes, the other person gets the same. On mutual yes, the agent plans a booked first date: 2-3 time options at a public venue, short by default (about an hour). Members talk through the relay; numbers swap only when both ask. Probes and scheduling each expire after 24 hours. One first date is scheduled at a time, and no new probe goes out while a mutual yes waits on the member.
+Geo. One city, several cities, or within X miles of a zip code (minimum 2; options 5, 10, 25, 50, 100), holding both ways. Zip centroids snap to coarse cells, GPS is never used for matching, and distances appear only as bands ("about 5 miles"). Travel windows expire automatically.
+Safety basics.
+- Selfie liveness and age assurance before a member's first intro, with an ID fallback near the age line.
+- Ban by person (phone, face match, device), not by account.
+- Public venues only; share-my-date with a trusted contact; a check-in text after the date.
+- A scam classifier on relay messages (money, crypto, gift cards, moving off-platform fast).
+- Report and block by text, human triage, and a relay log so past contacts can be told about a ban.
+Metrics. Mutual-yes rate, dates held, second-date rate, time to first date; safety reports per 1,000 dates.
+Anti-metrics. Messages, swipes, time in app and probes sent; exposure concentration; ghosting after mutual yes, late cancellations and no-shows; unsafe reports. Pausing because they met someone counts as success, not churn.
+## 40.6 peon.biz and friends.help: local pilot scope
+Both run locally only: local dev database, dry-run or test lines, simulated worlds, no deploys.
+friends.help.
+- Groups of 3-6 at public venues: activity-first probe, quorum, then names and a group thread.
+- Optimize for repeat meetups of the same group near home (a friend takes about 90 hours together); crews after one great plan, handed to their own chat after three sessions.
+- Opt-in affinity tables (for example women-only), 21+ for alcohol venues, and a "friends, not dates" norm.
+- Metrics: repeat-meetup rate, crews formed, V14 by neighborhood. Anti-metrics: one-off meetups, concentration, romantic advances.
+peon.biz.
+- An intro and logistics service; a human recruiter or hiring manager makes every decision.
+- Candidate-first consent, unranked slates of 3-5 with must-have checkmarks, no scores to employers, redacted judge input.
+- Pay range on every job, verified employers, current-employer blocking, an employer scam check.
+- Protected attributes and proxies (zip, graduation year, gaps, names, photos) never reach matching.
+- Metrics: intro-to-interview, interview-to-offer, hires, 90-day retention. Anti-metrics: volume, ghosting, adverse impact.
+## 40.7 Deferred compliance backlog
+Founder decision (2026-10-08): compliance is not a launch blocker for now. The safety guards stay (age rules, consent, STOP/HELP, quiet hours, leak guard, human review, report and block, bans by person). These items are recorded, not gated. None of this is legal advice.
+
+| Item | App | Note |
+|---|---|---|
+| NYC Local Law 144 bias audit, public summary and candidate notice | peon | Before automated ranking touches NYC roles; also Illinois HB 3773, California FEHA, Colorado SB 26-189. |
+| Employment-agency licensing and hiring record retention | peon | Ask counsel if any placement fee is charged. |
+| Dating-safety notices and background-check disclosures (NY, NJ, CO, IL, TX, UT) | slop | Published safety policy and notices. |
+| A2P 10DLC registration; dating content (Twilio error 30953) | all | May need a separate brand or entity for slop.date. |
+| Apple and Blooio ban risk on the shared line | all | A ban affects every app; stay within per-line limits. |
+| TCPA revoke-all rule (January 2027), state quiet hours | all | STOP is already global on one line. |
+| Sensitive-data consent (orientation, sex life); zero-retention LLM endpoints | slop | Opt-in logged with exact wording. |
+| Romance Scam Prevention Act ban notices | slop | Relay log built now. |
+| Members 13-17 on dating and hiring apps | all | Never matched; counsel to review joining itself. |
+| Terms, privacy and SMS terms per app | all | ntwrk.love pages are the template. |
+
+
+## 40.8 Simulation and testing per app
+Each pack ships a simulated world (personas with hidden truth, an oracle the engine cannot see, adversaries, scenarios) and blocking gates over several seeds, in memory or in a Postgres schema per world, never in production.
+- slop.date. Hidden desirability hierarchy, taste, true versus stated intent, flakiness; the oracle adds large pair-specific chemistry noise. Adversaries: romance scammer, catfish, underage applicant, harasser, ban evader, bot farm. Gates: 0 hard-constraint violations; 0 intros involving anyone under 18 or unverified; 0 private-field or cross-app leaks; scammer median reach at most 1; same-face ban-evasion catch at least 95%; mutual yes at least 25% of probes; probes-received Gini under threshold at twice the cold-start pool. Then shadow mode with human review of every intro.
+- friends.help. Friendships form when a pair's hours together cross thresholds. Gates: repeat rate at least 30% of groups within 30 days; more friendships than a one-off-dinner baseline; no trip over tolerance; 0 affinity or age violations; V14 at least 85%.
+- peon.biz. Latent skills, over-claiming, fake jobs; protected attributes exist only in the simulator. Gates: impact ratios at least 0.8 at every automated stage; 0 protected or proxy mentions in judge reasoning; 0 jobs without pay ranges; 0 unverified employers reaching candidates; 100% of discriminatory requests refused.
+- Across apps. cross_app_leak = 0 with two-app personas, and networkPack golden replays byte-identical.
+## 40.9 Phased plan
+Two workstreams, engine and packs, and platform. Section 37 has owners and exit criteria.
+- Phase 0: app packs core, networkPack byte-identical, conformance suite.
+- Phase 1: slop.date pack, sim world and launch gates, then local pilot readiness.
+- Phase 2 (parallel): platform backend (people, memberships, keyword routing, login, admin app switcher).
+- Phase 3: friends.help pack and sim, local.
+- Phase 4: peon.biz pack and sim, local.
+- Phase 5: attention, plans and capital across apps.
+slop.date goes live when Phases 0-2 meet their exit criteria and the founder approves live sends. Open: join mode per app (invite, open or waitlist), photos in slop.date probes, and when The Network's own SF and NYC matching opens.
 # Appendix A. Example experiences and conversations
 ## A.1 The surprising birthday
 Agent -> Member: "I thought of you for something slightly ridiculous. Someone one connection away is turning 30 tonight and their plans fell apart. You are four blocks away, you told me you love singing, and three members are already going. They need someone willing to show up around 9:15 and sing an unnecessarily dramatic Happy Birthday. About 20 minutes unless you want to stay. Interested?"

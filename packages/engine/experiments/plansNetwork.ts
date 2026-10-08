@@ -37,7 +37,7 @@ export interface PlanNetOptions extends AttentionNetOptions {
   crewOptIn?: (id: MemberId, crew: P.Crew) => boolean;
 }
 
-const TZ: Record<City, string> = { sf: "America/Los_Angeles", nyc: "America/New_York" };
+const TZ: Record<City, string> = { sf: "America/Los_Angeles", nyc: "America/New_York", la: "America/Los_Angeles" };
 const ENGINE_CFG = resolveConfig({});
 const CHECKIN_TEXT = "Quick one: what's your week like? Tell me when you're free and what you're up for, and I'll try to put a small plan together. Skip it anytime.";
 

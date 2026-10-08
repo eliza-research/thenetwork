@@ -1,7 +1,7 @@
 // Shared constants and record types for the synthetic member dataset (data/synthetic/).
 // Every record is SYNTHETIC: invented people, invented names, fictional contact details.
 import type {
-  Category, City, Edge, EdgeType, Facet, FacetKind, Intent, Member, ParticipationState, Presence,
+  Category, City, NetworkCity, Edge, EdgeType, Facet, FacetKind, Intent, Member, ParticipationState, Presence,
   PrivacyScope, Provenance,
 } from "../../packages/core/src/index.ts";
 import type {
@@ -45,15 +45,17 @@ export const NEIGHBORHOODS: Record<City, { name: string; borough?: string }[]> =
     ...["Mott Haven", "Riverdale"].map(name => ({ name, borough: "Bronx" })),
     { name: "St. George", borough: "Staten Island" },
   ],
+  la: [], // the synthetic dataset covers the Network's markets (sf / nyc) only
 };
 export const BUSINESS_AREAS: Record<City, string[]> = {
   sf: ["SoMa", "Financial District", "Mission Bay", "Dogpatch", "Mission", "Hayes Valley"],
   nyc: ["Midtown", "Flatiron", "Financial District", "DUMBO", "Long Island City", "Chelsea", "SoHo"],
+  la: [],
 };
 export const neighborhoodSet = (c: City) => new Set(NEIGHBORHOODS[c].map(n => n.name));
 
 /** Fictional phone area codes; local numbers are always 555-0100..555-0199 (reserved for fiction). */
-export const AREA_CODES: Record<City, string[]> = { sf: ["415", "628", "510"], nyc: ["212", "646", "917", "718", "347"] };
+export const AREA_CODES: Record<City, string[]> = { sf: ["415", "628", "510"], nyc: ["212", "646", "917", "718", "347"], la: [] };
 export const PHONE_RE = /^\+1-(\d{3})-555-01\d{2}$/;
 
 export type Segment = "adult" | "minor";
@@ -137,7 +139,7 @@ export interface Manifest {
 // ---- enumerations tied to core types at compile time (validate.ts uses them) ----------------
 type Exhaustive<U, L extends readonly U[]> = [Exclude<U, L[number]>] extends [never] ? L : never;
 const tuple = <U>() => <L extends readonly U[]>(l: Exhaustive<U, L>) => l;
-export const CITIES = tuple<City>()(["sf", "nyc"] as const);
+export const CITIES = tuple<NetworkCity>()(["sf", "nyc"] as const);
 export const STATES = tuple<ParticipationState>()(["open", "normal", "quiet", "receiving", "paused"] as const);
 export const SCOPES = tuple<PrivacyScope>()(["agent_private", "matchable", "shareable", "opportunity_specific"] as const);
 export const PROVENANCES = tuple<Provenance>()(["said", "connected_source", "inferred", "vouched"] as const);

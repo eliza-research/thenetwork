@@ -5,7 +5,6 @@
 import type { Facet, MemberId, ScoreComponents } from "@thenetwork/core";
 import { DAY, HOUR } from "@thenetwork/core";
 import type { Candidate, JudgeVerdict } from "./types.ts";
-import { CONTRIBUTOR_ROLES } from "./types.ts";
 import { complementarity } from "./complementarity.ts";
 import { pairKey, provenanceWeight, type World } from "./world.ts";
 
@@ -63,7 +62,8 @@ export function computeComponents(w: World, c: Candidate, verdict?: JudgeVerdict
   for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) pairs.push([ids[i]!, ids[j]!]);
 
   let fit = clamp(c.fit);
-  let mb = mutualBenefit(ids.map(id => c.benefit[id] ?? 0));
+  const S = w.pack.scoring;
+  let mb = S.aggregate(ids.map(id => c.benefit[id] ?? 0));
   // Structured complementarity (complementarity.ts): blended into fit and into each side's
   // benefit before the reciprocal (harmonic / without-misery) aggregation. Not applied when a
   // participant has no structured profile (neutral, not a penalty).
@@ -71,7 +71,7 @@ export function computeComponents(w: World, c: Candidate, verdict?: JudgeVerdict
   const comp = cw > 0 ? complementarity(w, ids) : undefined;
   if (comp) {
     fit = clamp((1 - cw) * fit + cw * comp.pair);
-    mb = mutualBenefit(ids.map(id => (1 - cw) * clamp(c.benefit[id] ?? 0) + cw * comp.benefit[id]!));
+    mb = S.aggregate(ids.map(id => (1 - cw) * clamp(c.benefit[id] ?? 0) + cw * comp.benefit[id]!));
   }
   let warmPath = clamp(c.warm);
   if (!warmPath && pairs.some(([a, b]) => w.isWarm(a, b))) warmPath = ids.length > 2 ? 0.5 : 0.3;
@@ -80,8 +80,8 @@ export function computeComponents(w: World, c: Candidate, verdict?: JudgeVerdict
   let novelty = pairs.length
     ? pairs.reduce((s, [a, b]) => s + (w.isWarm(a, b) ? 0.3 : 1) * (w.get(a)!.cluster !== w.get(b)!.cluster ? 1 : 0.6), 0) / pairs.length
     : 0.3;
-  if (c.kind === "expansion") novelty = Math.max(novelty, 0.9);
-  if (c.kind === "second_encounter") novelty = 0.4;
+  // Pack hook at the same point (networkPack: expansion >= 0.9, second encounter = 0.4).
+  if (S.novelty) novelty = S.novelty(c, novelty);
 
   // Timing fit: usable overlap in the window; events too soon are harder.
   let timingFit = 0.5;
@@ -94,9 +94,7 @@ export function computeComponents(w: World, c: Candidate, verdict?: JudgeVerdict
   }
 
   // Activation cost: distance (shared area), group coordination, short lead time, travel limits.
-  const areasOf = (id: MemberId) => new Set(w.get(id)!.presence.filter(p => p.city === c.city).flatMap(p => p.areas));
-  const areaSets = ids.map(areasOf);
-  const shareArea = areaSets.length > 1 && [...areaSets[0]!].some(a => areaSets.every(s => s.has(a)));
+  const shareArea = w.pack.geo.sharesArea(w, ids, c.city);
   let activationCost = ids.length === 1 ? 0.05 : shareArea ? 0.1 : 0.3;
   activationCost += 0.05 * Math.max(0, ids.length - 2);
   if (c.window && c.window.start - w.now < 12 * HOUR) activationCost += 0.15;
@@ -115,7 +113,7 @@ export function computeComponents(w: World, c: Candidate, verdict?: JudgeVerdict
   for (const id of ids) {
     const mi = w.get(id)!;
     const role = c.roles[id];
-    if (role && CONTRIBUTOR_ROLES.has(role)) load = Math.max(load, (mi.recentContribution + 1) / (cfg.contribution.limit + 1));
+    if (role && w.pack.ontology.contributorRoles.has(role)) load = Math.max(load, (mi.recentContribution + 1) / (cfg.contribution.limit + 1));
     load = Math.max(load, mi.recentExposure30 / 10);
   }
   load = clamp(load);
@@ -140,7 +138,8 @@ export function computeComponents(w: World, c: Candidate, verdict?: JudgeVerdict
   let socialRisk = 0.5 * mismatch;
   if (ids.length > 2 && !pairs.some(([a, b]) => w.isWarm(a, b))) socialRisk += 0.1;
   if (c.safetyClass === "medium") socialRisk += 0.2;
-  if (c.category === "romance") socialRisk += 0.1;
+  // Pack hook after the safety-class bump (byte-identity rule 4; networkPack: romance +0.1).
+  if (S.socialRisk) socialRisk = S.socialRisk(c, socialRisk);
 
   // Confidence: evidence quality x retrieval agreement (x judge certainty).
   const evFacets: Facet[] = ids.flatMap(id => (c.evidence[id] ?? []).map(fid => w.get(id)!.match.find(f => f.id === fid)).filter((f): f is Facet => !!f));
