@@ -127,6 +127,7 @@ export class World {
   }
 
   private buildNameIndex() {
+    this.nameIndex = [];
     const firstCount = new Map<string, number>();
     for (const p of this.personas.values()) { const f = p.name.split(" ")[0]!; firstCount.set(f, (firstCount.get(f) ?? 0) + 1); }
     const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -145,7 +146,9 @@ export class World {
       clock: this.clock,
       send: (memberId, body, o = {}) => {
         const m = this.channel.send(memberId, body, o);
+        // A duplicate is not delivered again, but the attempt is logged so judges and audits see it (judge-evals-M4).
         if (m.status !== "duplicate") this.logMessage(m);
+        else this.rec({ type: "network_log", kind: "duplicate_send", detail: { memberId, messageId: m.id, idempotencyKey: o.idempotencyKey, body } });
         if (o.meta?.proactive && m.status === "delivered") this.unanswered.set(memberId, (this.unanswered.get(memberId) ?? 0) + 1);
         return m;
       },
@@ -241,9 +244,9 @@ export class World {
     this.personas.set(p.id, p);
     this.memories.set(p.id, newMemory());
     this.oracle.addPersona(p);
-    const [first, last] = p.name.split(" ");
-    const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    this.nameIndex.push({ re: new RegExp(`\\b(${[esc(p.name), ...(last ? [`${esc(first!)} ${esc(last[0]!)}\\.`] : [])].join("|")})\\b`), id: p.id });
+    // Rebuild: the newcomer gets the unique-first-name pattern too, and a first name they now
+    // share stops resolving to the older persona alone (sim-worlds-21).
+    this.buildNameIndex();
     this.rec({ type: "persona", persona: {
       id: p.id, name: p.name, archetype: p.archetype, adversarial: p.hidden.adversarial, homeCity: p.homeCity,
       joinDay: Math.floor((joinAt - this.start) / DAY), trueAge: p.hidden.trueAge, claimedAge: p.public.claimedAge, quietHours: quietHoursOf(p),

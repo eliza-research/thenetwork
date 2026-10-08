@@ -2,7 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import { DAY, HOUR, type Proposal } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/judge";
-import { decide, DEFAULT_START, evaluateExpectations, factLeaked, generatePersonas, networkStateFromRecords, newMemory, nextLocalHour, Oracle, PRIMED_MODEL, Rng, runScenario, runWorld, StubNetwork, type Expectation, type Scenario, type WorldResult } from "../src/index.ts";
+import { decide, DEFAULT_START, evaluateExpectations, factLeaked, generatePersonas, networkStateFromRecords, newMemory, nextLocalHour, Oracle, PRIMED_MODEL, replyDelay, Rng, runScenario, runWorld, StubNetwork, World, type Expectation, type NetworkContext, type NetworkUnderTest, type Scenario, type WorldResult } from "../src/index.ts";
 
 const T0 = DEFAULT_START + 2 * DAY;
 const prop = (id: string, participants: string[]): Proposal => ({
@@ -202,5 +202,49 @@ describe("sim-worlds-13: unsafe intros cost trust and members churn (PolicyOptio
     };
     expect(run(true)).toBeGreaterThan(0);
     expect(run(false)).toBe(0);
+  });
+});
+
+describe("P3 persona fixes", () => {
+  test("sim-worlds-17: no member under 18 is an adult's ex, coworker or roommate", () => {
+    const ps = generatePersonas({ n: 400, seed: 11, minorShare: 0.1 });
+    const age = new Map(ps.map(p => [p.id, p.hidden.trueAge]));
+    const bad = ps.flatMap(p => p.relationships.filter(r => ["ex", "coworker", "roommate"].includes(r.type) && (p.hidden.trueAge < 18) !== (age.get(r.to)! < 18)));
+    expect(ps.some(p => p.hidden.trueAge < 18 && p.relationships.length)).toBe(true);
+    expect(bad).toEqual([]);
+  });
+
+  test("sim-worlds-19: a traveller replies on the trip city's clock", () => {
+    const p = structuredClone(generatePersonas({ n: 1, seed: 12, minorShare: 0, adversarialRate: 0, cityWeights: { sf: 1, nyc: 0 } })[0]!);
+    p.routine.wake = 7; p.routine.sleep = 23; p.routine.busyBlocks = [];
+    p.hidden.responsiveness = { ...p.hidden.responsiveness, latencyMedianMin: 2, latencySigma: 0.1 };
+    p.hidden.trips = [{ city: "nyc", fromDay: 0, toDay: 5 }];
+    const now = nextLocalHour(DEFAULT_START + DAY, "nyc", 8); // 8am in New York, 5am at home in SF
+    expect(replyDelay(p, now, new Rng(1), 1, DEFAULT_START)).toBeLessThan(HOUR);
+    expect(replyDelay(p, now, new Rng(1))).toBeGreaterThan(HOUR); // home-city clock: still asleep
+  });
+
+  test("sim-worlds-21: a spawned persona is found by a unique first name", () => {
+    const ps = generatePersonas({ n: 10, seed: 13, minorShare: 0, adversarialRate: 0 });
+    const w = new World({ seed: 13, personas: ps, days: 1, network: new StubNetwork({ seed: 13 }), writeLog: false });
+    const friend = structuredClone(ps[0]!);
+    friend.id = "spawned1"; friend.name = "Zebulon Quist"; friend.relationships = [];
+    w.spawn(friend, DEFAULT_START + HOUR);
+    const ctx = (w as any).personaCtx(ps[1]!, "t");
+    expect(ctx.personasMentioned("you should meet Zebulon this week").map((p: { id: string }) => p.id)).toEqual(["spawned1"]);
+  });
+});
+
+describe("judge-evals-M4: duplicate sends are logged", () => {
+  test("a second send with the same idempotency key leaves a duplicate_send record", async () => {
+    const ps = generatePersonas({ n: 2, seed: 14, minorShare: 0, adversarialRate: 0 });
+    const net: NetworkUnderTest = { name: "dup", init: c => { (net as any).ctx = c; }, onInbound: () => {}, tick: () => {} };
+    const w = new World({ seed: 14, personas: ps, days: 1, network: net, writeLog: false });
+    await w.begin();
+    await w.advanceTo(DEFAULT_START + 23 * HOUR);
+    const ctx = (net as any).ctx as NetworkContext;
+    ctx.send(ps[0]!.id, "Hi there", { idempotencyKey: "k1" });
+    ctx.send(ps[0]!.id, "Hi there", { idempotencyKey: "k1" });
+    expect(w.records.filter(r => r.type === "network_log" && r.kind === "duplicate_send").length).toBe(1);
   });
 });

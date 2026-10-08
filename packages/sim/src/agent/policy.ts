@@ -51,18 +51,23 @@ export function currentCity(p: Persona, now: number, worldStart: number) {
   return p.hidden.trips.find(t => day >= t.fromDay && day <= t.toDay)?.city ?? p.homeCity;
 }
 
-/** Reply latency drawn from the persona's distribution, pushed out of sleep and (often) busy blocks. */
-export function replyDelay(p: Persona, now: number, rng: Rng, urgency = 1): number {
+/**
+ * Reply latency drawn from the persona's distribution, pushed out of sleep and (often) busy blocks.
+ * Local time is where the persona is: with `worldStart`, a traveller keeps their routine in the
+ * trip city's time zone (sim-worlds-19); without it, home-city time.
+ */
+export function replyDelay(p: Persona, now: number, rng: Rng, urgency = 1, worldStart?: number): number {
   const r = p.hidden.responsiveness;
   let t = now + Math.max(0.5, rng.logNormal(r.latencyMedianMin / urgency, r.latencySigma)) * MINUTE;
   for (let i = 0; i < 3; i++) {
-    const h = localHour(t, p.homeCity);
+    const city = worldStart === undefined ? p.homeCity : currentCity(p, t, worldStart);
+    const h = localHour(t, city);
     if (!awake(p, h)) {
       const wakeIn = ((p.routine.wake - h + 24) % 24) * HOUR;
       t += wakeIn + rng.range(5, 60) * MINUTE;
       continue;
     }
-    const wd = localParts(t, p.homeCity).weekday;
+    const wd = localParts(t, city).weekday;
     const block = wd >= 1 && wd <= 5 ? p.routine.busyBlocks.find(b => h >= b[0] && h < b[1]) : undefined;
     if (block && rng.bool(0.6)) { t += (block[1] - h) * HOUR + rng.range(1, 30) * MINUTE; continue; }
     break;
@@ -105,11 +110,11 @@ export function decide(ctx: PersonaContext, msg: SimMessage, worldStart: number,
   const recent = mem.proactiveReceived.filter(t => now - t < WEEK).length;
   const tolerance = 3 + Math.round(4 * p.hidden.capacity);
   if (proactive && !silent && !p.hidden.adversarial && p.archetype !== "never_replies" && recent > tolerance) {
-    return { ...base, intent: "opt_out", worthwhile: false, delayMs: replyDelay(p, now, rng, 2) };
+    return { ...base, intent: "opt_out", worthwhile: false, delayMs: replyDelay(p, now, rng, 2, worldStart) };
   }
   // Quality churn (opt-in): a member who stopped trusting the Network leaves when it texts again.
   if (opts.qualityChurn && proactive && !silent && !p.hidden.adversarial && (mem.trust ?? 1) < 0.5 && rng.bool(1.2 * (0.5 - (mem.trust ?? 1)))) {
-    return { ...base, intent: "opt_out", worthwhile: false, delayMs: replyDelay(p, now, rng, 2) };
+    return { ...base, intent: "opt_out", worthwhile: false, delayMs: replyDelay(p, now, rng, 2, worldStart) };
   }
 
   let d: PolicyDecision = base;
@@ -183,7 +188,7 @@ export function decide(ctx: PersonaContext, msg: SimMessage, worldStart: number,
   if (silent) d = { ...d, intent: "ignore" };
   // Only a yes the persona actually sends primes them.
   if (d.intent === "probe_yes" && meta.probe) (mem.signals ??= []).push({ category: meta.probe.category, at: now, source: "probe", key: meta.probe.key });
-  if (d.intent !== "ignore") d.delayMs = replyDelay(p, now, rng, inFlight ? 1.5 : 1);
+  if (d.intent !== "ignore") d.delayMs = replyDelay(p, now, rng, inFlight ? 1.5 : 1, worldStart);
   if (!proactive) delete d.worthwhile;
   return d;
 }
