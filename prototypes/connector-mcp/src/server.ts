@@ -185,7 +185,7 @@ export function createMcpServer(net: FakeNetwork, principal: ConnectorPrincipal,
         name === TOOL_NAMES.ask ? net.ask(principal, a)
         : name === TOOL_NAMES.tell ? net.tell(principal, a)
         : name === TOOL_NAMES.share ? net.shareProfile(principal, a)
-        : name === TOOL_NAMES.updates ? net.getUpdates(principal, a)
+        : name === TOOL_NAMES.updates ? await net.getUpdates(principal, a)
         : net.respond(principal, a);
     } catch (err) {
       if (err instanceof NetworkError) {

@@ -23,8 +23,6 @@ export interface TaskToken {
   redeemedOn?: Surface;
 }
 
-export type Redeemed = { ok: true; itemIds: string[]; firstUse: boolean } | { ok: false };
-
 export function newToken(rand: (max: number) => number = randomInt): string {
   let s = "";
   for (let i = 0; i < TOKEN_LENGTH; i++) s += ALPHABET[rand(ALPHABET.length)];
@@ -35,37 +33,4 @@ export function newToken(rand: (max: number) => number = randomInt): string {
 export function findToken(text: string): string | undefined {
   const m = text.toUpperCase().match(/\bT-[2-9A-HJKMNP-TV-Z]{6}\b/);
   return m?.[0];
-}
-
-export class TaskTokens {
-  private readonly tokens = new Map<string, TaskToken>();
-  constructor(private readonly rand: (max: number) => number = randomInt, private readonly ttlMs = TOKEN_TTL_MS) {}
-
-  issue(personId: string, itemIds: string[], now: number): TaskToken {
-    if (itemIds.length === 0) throw new Error("a task token must point at an item");
-    let token = newToken(this.rand);
-    for (let tries = 0; this.tokens.has(token); tries++) {
-      if (tries > 20) throw new Error("token space exhausted");
-      token = newToken(this.rand);
-    }
-    const t: TaskToken = { token, personId, itemIds: [...itemIds], issuedAt: now, expiresAt: now + this.ttlMs };
-    this.tokens.set(token, t);
-    return t;
-  }
-
-  /** `callerPersonId` must come from the authenticated grant, never from the request body. */
-  redeem(raw: string, callerPersonId: string, surface: Surface, now: number): Redeemed {
-    const t = this.tokens.get(raw.trim().toUpperCase());
-    if (!t || t.personId !== callerPersonId || t.expiresAt <= now) return { ok: false };
-    const firstUse = t.redeemedAt === undefined;
-    if (firstUse) {
-      t.redeemedAt = now;
-      t.redeemedOn = surface;
-    }
-    return { ok: true, itemIds: [...t.itemIds], firstUse };
-  }
-
-  get(token: string) {
-    return this.tokens.get(token);
-  }
 }

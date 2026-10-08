@@ -265,7 +265,7 @@ The last line is the consent marker: we accept a paste only if it is present and
 | 1 | PRD 11.5 | **Adopted.** Listed hosted assistants (ChatGPT, Claude directory, Grok) use OAuth 2.1, and our sign-in page asks for the phone number and SMS code. Code-in-chat stays only for local agents and unlisted custom connectors. PRD 11.5 and the decision log are updated |
 | 2 | Dating and the ChatGPT listing | **Adopted.** The ChatGPT plugin is The Network (friends, help, work) with a teen-safe profile. slop.date's AI entry is the paste prompt plus iMessage (3.2) |
 | 3 | Enrichment sources | **Adopted** as ranked in 3.1. No Gmail scopes. No scraping of any kind without legal sign-off, and never LinkedIn or non-members |
-| 4 | Single inbox and scheduler | **Built** as `packages/notify` (pure logic plus tests, branch `platform/notify`). Wiring into the platform is listed in its README |
+| 4 | Single inbox and scheduler | **Built and wired** as `packages/notify` (branch `platform/notify`): Postgres store and schema, outbound-queue sink and suppression, `update_token` on `get_network_updates`, and a `GET_UPDATES` plugin action. The platform migration, gateway hook and cron remain for the platform owner (see the package README) |
 | 5 | Device test day | **Started.** Desktop web column filled in. The phone columns need real devices: `docs/runbook-deeplink-test.md` |
 | 6 | X bot | **Not in MVP.** Revisit after launch as distribution only (3.5). Phone verification always happens by iMessage |
 | 7 | Channels | **Telegram** is the first channel added after launch. **WhatsApp is out** while its AI-assistant ban stands |

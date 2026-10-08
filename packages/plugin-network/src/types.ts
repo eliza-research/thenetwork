@@ -72,8 +72,19 @@ export interface NetworkSignal {
   evidence: string;
 }
 
+/**
+ * Unseen updates from the single inbox (packages/notify). Reading them marks them seen on every
+ * surface, so no text follows for them. Summaries are member-safe lines already leak-checked by
+ * the producer.
+ */
+export interface NetworkUpdatesRead {
+  items: Array<{ summary: string }>;
+}
+
 export interface NetworkStore {
   getMemberContext(memberId: string): Promise<NetworkMemberContext | null>;
+  /** Optional: hosts wired to the single inbox implement it, and GET_UPDATES is registered only then. */
+  readUpdates?(memberId: string): Promise<NetworkUpdatesRead>;
   setState(input: SetStateInput): Promise<SetStateExecution>;
   recordSignals(input: {
     memberId: string;

@@ -565,13 +565,14 @@ Server-side handling:
 {
   "name": "get_network_updates",
   "title": "Get Network updates",
-  "description": "List items The Network has already cleared for this member: opportunities, questions for the member, and reminders. Use when the member asks what's new from The Network. Read-only.",
+  "description": "List items The Network has already cleared for this member: opportunities, questions for the member, and reminders. Use when the member asks what's new from The Network, or when their message has an update code like T-7F3K9Q (pass it as update_token). Read-only.",
   "inputSchema": {
     "type": "object", "additionalProperties": false,
     "properties": {
       "kinds": {"type": "array", "uniqueItems": true, "maxItems": 4, "items": {"type": "string", "enum": ["opportunity", "question", "reminder", "notice"]}},
       "limit": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
-      "cursor": {"type": "string", "maxLength": 200}
+      "cursor": {"type": "string", "maxLength": 200},
+      "update_token": {"type": "string", "pattern": "^T-[2-9A-HJKMNP-TV-Z]{6}$", "description": "The update code from a Network text (like T-7F3K9Q), if the member's message has one. Shows only that update."}
     }
   },
   "outputSchema": {
@@ -606,6 +607,7 @@ Server-side handling:
 - Other people appear only as cleared descriptors: first name or pseudonym, plus shared context. Never contact details, exact addresses, or "who declined".
 - `item_id` is an HMAC-derived handle per `(grant_id, item)`. Handles differ across grants, so two hosts can't correlate them, and a handle leaked from one host is useless in another.
 - Reading updates **doesn't count as delivery** for the interruption budget. It does mark items "seen via <host>" so the outreach controller can skip a redundant text.
+- `update_token` (added 2026-10-08, entry-flows doc §5.4) is the code printed in a Network text's prefilled prompt. It limits the result to the items that text was about. It is a pointer, not a credential: the member comes from the grant, and someone else's code, an unknown code or an expired one returns an empty list, the same as an empty inbox. The single inbox is `packages/notify`, bridged through `connectorInbox`.
 
 ### 5.7 `respond_to_network_item`
 

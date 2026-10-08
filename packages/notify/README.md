@@ -1,6 +1,6 @@
 # @thenetwork/notify
 
-The single inbox and the notification scheduler from `docs/research/2026-10-08-entry-flows.md`, sections 4 and 5. Pure logic with in-memory stores, the same pattern as `prototypes/messaging-blooio`.
+The single inbox and the notification scheduler from `docs/research/2026-10-08-entry-flows.md`, sections 4 and 5.
 
 **The flow:**
 - Every event becomes one inbox item.
@@ -10,23 +10,32 @@ The single inbox and the notification scheduler from `docs/research/2026-10-08-e
 
 | Module | What it does |
 |---|---|
-| `inbox.ts` | One item per (person, app, event type, subject). Seen on any surface means seen everywhere |
-| `scheduler.ts` | `Notifier`: due rules (requested now, urgent after 5 min, normal after 4 h), quiet hours, a weekly cap of 2, a re-check before enqueue, `stillNeeded` for the queue, and `readUpdates` for assistants |
+| `store.ts` | The `NotifyStore` interface (inbox, deliveries, task tokens, surface signals) and `MemoryNotifyStore` |
+| `pg-store.ts` | `PgNotifyStore` on Postgres with Bun's SQL client, schema in `db/schema.sql`. Import it directly: it is not exported from `index.ts`, so the connector's Workers build never pulls in `bun` |
+| `scheduler.ts` | `Notifier`: due rules (requested at once, urgent after 5 min, normal after 4 h), quiet hours, a weekly cap of 2, a re-check before enqueue, `stillNeeded`, `readUpdates`, `redeemSubjects`, `shownSubjects`, `threadReply` and `sweep` (unanswered links become "ignored") |
 | `surface.ts` | `resolveDelivery`: explicit choice, then score, then thread. Links unused twice fall back to the thread |
-| `signals.ts` | Acted and ignored counts per surface, which feed `resolveDelivery` |
-| `links.ts` | Fill-only assistant links (`chatgpt.com/?prompt=`, `claude.ai/new?q=`, `grok.com/?q=`), the `ntwrk.love/t/<token>` button page, and URL checks (https, allowed hosts, no shorteners, max 160 characters) |
-| `tokens.ts` | Task tokens `T-XXXXXX`. They are references, not credentials. They are bound to a person, expire after 7 days, and return a generic miss for anyone else |
+| `links.ts` | Fill-only assistant links (`chatgpt.com/?prompt=`, `claude.ai/new?q=`, `grok.com/?q=`), the `ntwrk.love/t/<token>` button page, and URL checks |
+| `tokens.ts` | Task tokens `T-XXXXXX`. They are references, not credentials |
 | `compose.ts` | Message text. Links never carry the item summary or an app brand |
+| `wiring.ts` | Adapters: `queueSink` and `queuePolicy` for the outbound queue, `connectorInbox` for the MCP connector, `threadHooks` for the text agent and the plugin |
 
-## Wiring it into the platform (not done here)
+## Where it is wired
 
-1. **Outbound.** Pass the `prototypes/messaging-blooio` `OutboundQueue` as the `OutboundSink`. `briefId` is the delivery id. In the queue's `recipientPolicy`, return `{ ok: false, reason: "seen_elsewhere" }` when `notifier.stillNeeded(ctx.briefId)` is false.
-2. **Assistants.** `get_network_updates` calls `notifier.readUpdates(personIdFromGrant, surface, now, text, findToken(text))`. The person id must come from the OAuth grant or agent key, never from tool arguments.
-3. **Thread.** An inbound message from the member calls `notifier.threadReply(...)`. "updates" in the thread is `readUpdates(..., "imessage")`.
-4. **Grants.** `signals.setActive(person, "chatgpt" | "claude" | "grok", true/false)` on grant issue and revoke.
-5. **Producers.** The engine, plans and reminders call `inbox.add`. Each gives a member-safe `summary` that has already been through the leak guard.
-6. **Storage.** Postgres tables `notify.inbox_items` (unique `dedupe_key`), `notify.task_tokens`, `notify.surface_signals` and `notify.deliveries`. The interfaces here are the contract.
-7. **Button page.** `ntwrk.love/t/<token>` renders `buttonPageButtons`. It needs no login and shows nothing personal.
+| Target | How | Test |
+|---|---|---|
+| `prototypes/messaging-blooio` OutboundQueue | `queueSink(queue, providerFor)` as the sink. `recipientPolicy: queuePolicy(notifier, existingPolicy)` suppresses a queued message whose items were seen elsewhere (`seen_elsewhere`) | `test/wiring.test.ts` |
+| `prototypes/connector-mcp` `get_network_updates` | `new FakeNetwork(clock, { inbox: connectorInbox(notifier, now) })`. The new optional `update_token` input limits the result to that text's items. Items shown are marked seen. Foreign or unknown codes return an empty list | `prototypes/connector-mcp/tests/notify-bridge.test.ts` |
+| `packages/plugin-network` | `NetworkStore.readUpdates = threadHooks(notifier, now).readUpdates` registers the `GET_UPDATES` action ("updates", "what's new") | `packages/plugin-network/test/get-updates.test.ts` |
+| Postgres | `db/schema.sql` (schema `notify`). Same contract as the memory store | `test/store-contract.test.ts` (runs on the dev cluster at :54339, skipped without Postgres) |
+
+## Left for the platform owner
+
+1. **Migration.** Add `db/schema.sql` as the next migration after `0006_platform_safety.sql` on `obs/network-console`, and grant the platform service role.
+2. **Text gateway.** On every inbound member message, call `threadHooks(...).inbound(personId, channel)`.
+3. **Cron.** Run `notifier.dispatch(now, sink)` and `notifier.sweep(now)` every minute or so.
+4. **Grants.** On OAuth grant issue and revoke, call `notifier.setActive(person, "chatgpt" | "claude" | "grok", true/false)`.
+5. **Producers.** The engine, plans and reminders call `notifier.add(...)` with a member-safe `summary` that has already been through the leak guard.
+6. **Button page.** `ntwrk.love/t/<token>` renders `buttonPageButtons`. It needs no login and shows nothing personal.
 
 ## Device test
 
