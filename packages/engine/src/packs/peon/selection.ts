@@ -6,7 +6,7 @@
 //   - per candidate: at most CANDIDATE_WEEKLY roles a week (also the member budget);
 //   - a spreading penalty as a job's slate fills, a lift for under-applied jobs (small hard-filtered
 //     pool, few applications so far; Horton 2017) and for candidates who have had no intro yet.
-import type { MemberId } from "@thenetwork/core";
+import { DAY, type MemberId } from "@thenetwork/core";
 import type { Candidate } from "../../types.ts";
 import type { World } from "../../world.ts";
 import { poolSize } from "./generators.ts";
@@ -39,6 +39,19 @@ export const CONGESTION = {
    */
   probationProbes: 3,
   probationUntil: "answered" as "interview" | "answered",
+  /**
+   * Deadline-aware pacing (iteration 3). closeness = 1 - weeks left before the stated fill-by date /
+   * pacingWeeks, clamped to [0, 1] (0 with no stated date). A role close to its date gets a larger
+   * slate (target yeses x (1 + pacingSlate x closeness), max raised by pacingExtraMax x closeness)
+   * and is probed sooner (+pacingLift x closeness on the selection value, so it wins candidates'
+   * weekly slots). Urgent roles (urgency >= urgentMinUrgency) from VERIFIED employers on probation
+   * get `probationUrgentProbes` a week instead of `probationProbes`.
+   */
+  // Tuned on seeds 1-12 (docs/results/2026-10-08-peon-pack.md, Iteration 3): a window of 8 weeks
+  // (pipelines take 2-3), slates up to 2x (+4 max) at the date; urgent verified roles 10 probes a
+  // week on probation. The selection lift did not help and stays 0.
+  pacingWeeks: 8, pacingSlate: 1, pacingExtraMax: 4, pacingLift: 0,
+  probationUrgentProbes: 10, urgentMinUrgency: 3,
   /** Employer responsiveness learned from the Network's log (Beta prior answered:ghosted = 2:0.5); value x estimate^respPower. */
   respPower: 1,
 };
@@ -72,13 +85,23 @@ export function responsiveness(w: World, j: JobProfile): number {
   return (h.answered + 2) / (h.answered + h.ghosted + 2.5);
 }
 
+/** How close a role is to its stated fill-by date (0 = far or no date, 1 = at the date). */
+export function closeness(w: World, j: JobProfile): number {
+  if (j.fillBy === undefined) return 0;
+  const weeksLeft = (j.fillBy - w.now) / (7 * DAY);
+  return Math.max(0, Math.min(1, 1 - weeksLeft / CONGESTION.pacingWeeks));
+}
+
 export function slateCap(w: World, j: JobProfile): number {
   const C = CONGESTION;
-  const target = Math.min(C.slateMax, C.slateBase + C.slatePerOpening * Math.max(0, j.openings));
+  const cl = closeness(w, j);
+  const target = Math.min(C.slateMax + C.pacingExtraMax * cl, (C.slateBase + C.slatePerOpening * Math.max(0, j.openings)) * (1 + C.pacingSlate * cl));
   // Applications the employer has not reviewed yet use up the slate (no pile-ups, no ghosted queues).
   const room = Math.max(0, target - historyOf(w, j.id).pendingReview);
   const cap = Math.ceil(room / C.expectedYes);
-  return companyTrusted(w, j) ? cap : Math.min(cap, Math.ceil(C.probationProbes / seatsOf(w, j.company)));
+  if (companyTrusted(w, j)) return cap;
+  const probation = j.verified && j.urgency >= C.urgentMinUrgency ? C.probationUrgentProbes : C.probationProbes;
+  return Math.min(cap, Math.ceil(probation / seatsOf(w, j.company)));
 }
 
 export function underApplied(w: World, j: JobProfile): number {
@@ -102,5 +125,6 @@ export function peonAdjust(w: World, c: Candidate, value: number, times: (id: Me
   v += C.underLift * underApplied(w, s.job);
   if (historyOf(w, s.cand.id).intros === 0) v += C.newCandidateLift;
   v += C.urgencyLift * Math.max(0, s.job.urgency - 1) / 2 + C.staleLift * Math.min(1, daysOpen(w, s.job) / 42);
+  v += C.pacingLift * closeness(w, s.job);
   return v;
 }

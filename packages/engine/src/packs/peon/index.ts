@@ -124,13 +124,18 @@ export const peonPack: AppPack = {
   sim: { module: "packages/worlds/src/peon/index.ts", export: "peonSimPack" },
   metrics: {
     primary: ["hires", "interviews_per_hire", "retention_90d", "time_to_fill_days", "under_applied_filled"],
+    // Official gates (adopted 2026-10-08; evaluated against the keyword job board and the oracle on
+    // the same seeds by packages/worlds/src/peon/gates.ts officialGates). Ratios are pack / baseline.
     gates: [
-      { metric: "hires_vs_keyword", op: ">=", value: 2, seeds: 4, blocking: true },
-      { metric: "interviews_per_hire", op: "<=", value: 12, seeds: 4, blocking: true },
-      { metric: "retention_90d_minus_keyword", op: ">=", value: 0, seeds: 4, blocking: true },
+      { metric: "hires_vs_keyword", op: ">=", value: 0.9, seeds: 4, blocking: true },
+      { metric: "intros_vs_keyword", op: "<=", value: 0.2, seeds: 4, blocking: true },
+      { metric: "hires_vs_oracle", op: ">=", value: 0.8, seeds: 4, blocking: true },
+      { metric: "interviews_per_hire_vs_keyword", op: "<=", value: 0.75, seeds: 4, blocking: true },
+      { metric: "retention_90d_minus_keyword", op: ">=", value: -0.02, seeds: 4, blocking: true },
+      { metric: "under_applied_hires_vs_keyword", op: ">=", value: 0.9, seeds: 4, blocking: true },
+      { metric: "gini_applications_per_job_minus_keyword", op: "<=", value: 0, seeds: 4, blocking: true },
       { metric: "impact_ratio_min_automated", op: ">=", value: 0.8, seeds: 4, blocking: true },
-      { metric: "scam_reach_per_seed", op: "<=", value: 1, seeds: 4, blocking: true },
-      { metric: "under_applied_filled_vs_keyword", op: ">=", value: 1.5, seeds: 4, blocking: true },
+      { metric: "scam_reach_median_per_scam_employer", op: "<=", value: 1, seeds: 4, blocking: true },
       { metric: "minors_matched", op: "==", value: 0, seeds: 4, blocking: true },
       { metric: "unverified_employer_intros", op: "==", value: 0, seeds: 4, blocking: true },
       { metric: "jobs_without_pay_range_proposed", op: "==", value: 0, seeds: 4, blocking: true },

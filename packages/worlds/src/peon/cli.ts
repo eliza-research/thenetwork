@@ -1,6 +1,7 @@
 // Run peon.biz arms over seeds and print the tables in docs/results/2026-10-08-peon-pack.md. No LLM calls.
 //   bun run packages/worlds/src/peon/cli.ts --seeds 1-4 [--arms keyword,pack,...] [--per-city 400] [--jobs 80] [--weeks 8] [--json out.json] [--impact]
 import { ARMS } from "./arms.ts";
+import { historicalGates, officialGates, type GateResult } from "./gates.ts";
 import { peonMetrics, poolImpact, STAGES, type PeonMetrics } from "./metrics.ts";
 import { REALISM_V1, REALISM_V2, runPeonWorld } from "./world.ts";
 
@@ -77,34 +78,12 @@ for (const [label, f, pct, d] of rows) console.log(`| ${label} | ${arms.map(a =>
 // ---- gates (the pack against keyword on the same seeds) -----------------------------------------
 const gateArm = arg("gate-arm", "pack")!;
 if (all[gateArm] && all.keyword) {
-  const p = all[gateArm]!, k = all.keyword;
-  const pooled = poolImpact(p.map(m => m.impact));
-  const o = all.oracle;
-  const M = (xs: PeonMetrics[], f: (m: PeonMetrics) => number) => mean(xs.map(f));
-  const hiresX = M(p, m => m.hires) / M(k, m => m.hires);
-  const uaX = M(p, m => m.underApplied.hires) / Math.max(1e-9, M(k, m => m.underApplied.hires));
-  const introsX = M(p, m => m.probesDelivered) / M(k, m => m.probesDelivered);
-  const ivX = M(p, m => m.interviewsPerHire) / M(k, m => m.interviewsPerHire);
-  const retD = M(p, m => m.retention90) - M(k, m => m.retention90);
-  const scamWorst = Math.max(...p.map(m => m.safety.scamReach));
-  const gates: [string, string, boolean][] = [
-    ["[original] Hires >= 2x keyword", `${hiresX.toFixed(2)}x`, hiresX >= 2],
-    ["[original] Interviews per hire <= 12", M(p, m => m.interviewsPerHire).toFixed(1), M(p, m => m.interviewsPerHire) <= 12],
-    ["[original] 90-day retention >= keyword", `${(M(p, m => m.retention90) * 100).toFixed(1)}% vs ${(M(k, m => m.retention90) * 100).toFixed(1)}%`, retD >= 0],
-    ["[original] Impact ratio >= 0.8, every sealed group (automated stage; pooled / worst seed)", `${pooled.minAutomated.toFixed(2)} / ${Math.min(...p.map(m => m.impact.minAutomated)).toFixed(2)}`, pooled.minAutomated >= 0.8],
-    ["[original] Scam reach <= 1 per seed (worst seed)", String(scamWorst), scamWorst <= 1],
-    ["[original] Under-applied roles filled >= 1.5x keyword (hires)", `${uaX.toFixed(2)}x`, uaX >= 1.5],
-    ["[original] Minors matched = 0 (all seeds)", String(p.reduce((s, m) => s + m.safety.minorsMatched, 0)), p.every(m => m.safety.minorsMatched === 0)],
-    ["[replacement] Hires >= 0.9x keyword with <= 1/5 of its intros", `${hiresX.toFixed(2)}x, intros ${introsX.toFixed(2)}x`, hiresX >= 0.9 && introsX <= 0.2],
-    ...(o ? [["[replacement] Hires >= 0.8x oracle", `${(M(p, m => m.hires) / M(o, m => m.hires)).toFixed(2)}x`, M(p, m => m.hires) >= 0.8 * M(o, m => m.hires)] as [string, string, boolean]] : []),
-    ["[replacement] Interviews per hire <= 0.75x keyword", `${ivX.toFixed(2)}x`, ivX <= 0.75],
-    ["[replacement] 90-day retention within 2 points of keyword", `${(retD * 100).toFixed(1)} pt`, retD >= -0.02],
-    ["[replacement] Under-applied hires >= 0.9x keyword and Gini of applications per job below keyword's", `${uaX.toFixed(2)}x; Gini ${M(p, m => m.congestion.giniApplicationsPerJob).toFixed(2)} vs ${M(k, m => m.congestion.giniApplicationsPerJob).toFixed(2)}`, uaX >= 0.9 && M(p, m => m.congestion.giniApplicationsPerJob) < M(k, m => m.congestion.giniApplicationsPerJob)],
-    ["Unverified-employer intros = 0", String(p.reduce((s, m) => s + m.safety.unverifiedIntros, 0)), p.every(m => m.safety.unverifiedIntros === 0)],
-    ["No-pay-range intros = 0", String(p.reduce((s, m) => s + m.safety.noRangeIntros, 0)), p.every(m => m.safety.noRangeIntros === 0)],
-  ];
-  console.log(`\n| Gate | ${ARMS[gateArm]!.name} | pass |\n|---|---:|---|`);
-  for (const [g, v, ok] of gates) console.log(`| ${g} | ${v} | ${ok ? "pass" : "FAIL"} |`);
+  const show = (title: string, gs: GateResult[]) => {
+    console.log(`\n| ${title} | ${ARMS[gateArm]!.name} | pass |\n|---|---:|---|`);
+    for (const g of gs) console.log(`| ${g.gate} | ${g.value} | ${g.pass ? "pass" : "FAIL"} |`);
+  };
+  show("Official gate (adopted 2026-10-08)", officialGates(all[gateArm]!, all.keyword, all.oracle));
+  show("Historical gate (first proposal)", historicalGates(all[gateArm]!, all.keyword));
 }
 
 if (process.argv.includes("--impact")) {

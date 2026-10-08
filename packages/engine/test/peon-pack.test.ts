@@ -137,8 +137,27 @@ describe("peonPack", () => {
       for (const p of r.proposals) { const s = sides(w, p.participants)!; perJob.set(s.job.id, (perJob.get(s.job.id) ?? 0) + 1); }
       const seats = new Map<string, number>();
       for (const id of w.ids) { const j = jobOf(w, id); if (j?.open && j.company) seats.set(j.company, (seats.get(j.company) ?? 0) + 1); }
-      for (const [j, n] of perJob) expect(n).toBeLessThanOrEqual(Math.ceil(CONGESTION.probationProbes / seats.get(jobOf(w, j)!.company!)!));
+      for (const [j, n] of perJob) {
+        const job = jobOf(w, j)!;
+        const limit = job.verified && job.urgency >= CONGESTION.urgentMinUrgency ? CONGESTION.probationUrgentProbes : CONGESTION.probationProbes;
+        expect(n).toBeLessThanOrEqual(Math.ceil(limit / seats.get(job.company!)!));
+      }
     }
+  });
+
+  test("deadline pacing: a role's slate grows as its stated fill-by date nears; urgent verified roles get a larger probation allowance", () => {
+    const input = worldOf(1);
+    const jid = input.members.find(m => m.id.startsWith("j"))!.id;
+    const withDate = (days: number, urgency: number): EngineInput => ({
+      ...input,
+      facets: [...input.facets.map(f => (f.memberId === jid && f.tags.some(t => t.startsWith(T.urgency)) ? { ...f, tags: f.tags.map(t => (t.startsWith(T.urgency) ? `${T.urgency}${urgency}` : t)) } : f)),
+        { id: `${jid}-fz`, memberId: jid, kind: "fact", value: "Fill-by date", tags: [`${T.fillBy}${Math.round((input.now + days * 86_400_000) / 86_400_000)}`], scope: "matchable", provenance: "said", confidence: 0.9 }],
+      feedback: [{ id: "x", from: jid, about: "c0000", at: input.now - 86_400_000, sentiment: "neutral" }], // past probation
+      interactions: [{ id: "i", kind: "intro", category: "professional", participants: ["c0001", jid], at: input.now - 86_400_000, outcome: "declined", acceptedBy: ["c0001"], declinedBy: [jid] }],
+    });
+    const cap = (days: number) => { const w = W(withDate(days, 1), 1); return slateCap(w, jobOf(w, jid)!); };
+    expect(cap(7)).toBeGreaterThan(cap(70));
+    expect(cap(70)).toBeGreaterThan(0);
   });
 
   test("slates are unranked: seeded random order, must-have checkmarks, no names or scores", async () => {

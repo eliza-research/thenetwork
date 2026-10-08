@@ -29,6 +29,8 @@ export interface PeonNetworkState {
   hired: Set<MemberId>; exited: Set<MemberId>;
   /** Remaining openings per job seat (0 once filled, closed at the deadline or filled elsewhere). */
   openings: Map<MemberId, number>;
+  /** Role deadlines in weeks by urgency 1-3 (iteration 2 timing); written as the stated fill-by date. */
+  deadlineWeeks?: [number, number, number];
   /** Interview records from employers (a real interview happened): FeedbackRecord from the job seat. */
   feedback: FeedbackRecord[];
 }
@@ -65,6 +67,10 @@ export function buildPeonSnapshot(pop: PeonPopulation, state: PeonNetworkState):
     for (const m of j.must) add("skill", `Must have: ${human(m.skill)} (level ${m.min})`, [`${T.must}${m.skill}:${m.min}`, m.skill], "shareable");
     for (const s of j.nice) add("skill", `Nice to have: ${human(s)}`, [`${T.nice}${s}`, s], "shareable");
     add("fact", "Headcount", [`${T.openings}${left}`, `${T.urgency}${j.urgency}`, `${T.sponsors}${j.sponsors ? "yes" : "no"}`], "matchable");
+    if (state.deadlineWeeks) {
+      const by = Math.round((posted + state.deadlineWeeks[Math.min(2, Math.max(0, j.urgency - 1))]! * 7 * DAY) / DAY);
+      add("fact", "Fill-by date", [`${T.fillBy}${by}`], "matchable");
+    }
     if (j.credRequired) add("fact", `Requires licence: ${j.credRequired}`, [`${T.credRequired}${j.credRequired}`], "shareable");
     if (co.scamCue) add("fact", "Intake flags: moved to WhatsApp, asked about bank details", [SAFETY.scam], "agent_private", "inferred");
     if (co.discriminatoryRequest) add("fact", "Intake: asked to filter by a protected trait (refused, logged)", [SAFETY.discriminatoryRequest], "agent_private", "inferred");
