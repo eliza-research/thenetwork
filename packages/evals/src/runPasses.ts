@@ -31,12 +31,29 @@ import type { RecItem } from "./types.ts";
 export type { PassName };
 export const PASSES: PassName[] = ["pass1", "pass2", "pass3"];
 
-/** Fresh-spend guard shared by every call in a run (USD micro). Calls stop once it is exceeded. */
+/**
+ * Fresh-spend guard shared by every call in a run (USD micro). A call may start only if the spend
+ * so far plus every call already in flight (each priced at the most expensive call seen) stays
+ * within the limit, so concurrent workers cannot overshoot by a whole batch. `check` starts a call,
+ * `settle` ends it; `add` books records from elsewhere (a baseline run).
+ */
 export class SpendGuard {
   fresh = 0;
+  inFlight = 0;
+  maxCallMicro = 0;
   constructor(public limitMicro: number) {}
   add(records: HttpRecord[]) { for (const r of records) if (!r.cached) this.fresh += r.costMicro; }
-  check() { if (this.fresh >= this.limitMicro) throw new Error(`spend limit reached ($${(this.fresh / 1e6).toFixed(2)})`); }
+  check() {
+    if (this.fresh + (this.inFlight + 1) * this.maxCallMicro > this.limitMicro || this.fresh >= this.limitMicro)
+      throw new Error(`spend limit reached ($${(this.fresh / 1e6).toFixed(2)} spent, ${this.inFlight} calls in flight)`);
+    this.inFlight++;
+  }
+  settle(records: HttpRecord[]) {
+    const cost = records.filter(r => !r.cached).reduce((s, r) => s + r.costMicro, 0);
+    this.fresh += cost;
+    this.maxCallMicro = Math.max(this.maxCallMicro, cost);
+    this.inFlight = Math.max(0, this.inFlight - 1);
+  }
 }
 
 export interface PassRun<V> {
@@ -139,7 +156,7 @@ async function call<V>(model: string, o: PassRunOptions, maxTokens: number, mess
   const r = await tryChatJson(scopes.llm, messages, parse, {
     attempts: 2, maxTokens,
     beforeAttempt: () => o.guard?.check(),
-    afterAttempt: () => { const rs = scopes.records(); records.push(...rs); o.guard?.add(rs); },
+    afterAttempt: () => { const rs = scopes.records(); records.push(...rs); o.guard?.settle(rs); },
   });
   if (r.ok) return { ok: true, verdict: r.value, attempts: r.attempts, records, visible };
   return { ok: false, error: r.stopped ? String((r.error as Error).message) : errorText(r.error), verdict: null, attempts: r.attempts, records, visible };
