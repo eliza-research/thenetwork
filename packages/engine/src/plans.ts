@@ -435,6 +435,21 @@ export function planItem(plan: Plan, member: MemberId, o: { now: number; reviewS
 // Probe content (D5)
 
 const COST = ["Free.", "About $10-20 each; everyone pays their own way.", "About $20-40 each; everyone pays their own way.", "About $40+ each; everyone pays their own way."];
+/** The probe frames' fixed words (see `frame` in buildPlanProbe). Keep in sync with the frames. */
+const FRAME_COPY = [
+  "Your crew for is on again: In?",
+  "Up for with someone who are into at near? I'll only share who it is if you both say yes.",
+  "with others who are into. Want in? I'll share who's coming once enough people say yes.",
+];
+/**
+ * Public phrase allowlist for plan probes: every word of the fixed copy (cost lines and frames).
+ * These are ordinary words the Network writes, not facts about any member, so another invitee's
+ * private value that happens to use one ("free on weekends") must not drop the probe (audit: about
+ * a third of probes were dropped because "Free." matched a private word). Words of the member's
+ * private facts that are not in this fixed copy still block, and the copy never contains a
+ * sensitive term (tested against core SENSITIVE_TERMS).
+ */
+export const PLAN_COPY_PUBLIC: ReadonlySet<string> = new Set(tokenize([...COST, ...FRAME_COPY].join(" ")).map(t => t.toLowerCase()));
 
 /**
  * The anonymous plan probe (D5, founder decision 2). It shows the activity, the time (the plan's
@@ -458,7 +473,7 @@ export function buildPlanProbe(w: World, plan: Plan, recipient: MemberId, now: n
   const frame = (withInto: boolean, withArea: boolean) => {
     const near = withArea && plan.place.area ? ` near ${plan.place.area}` : "";
     const i = withInto ? into : "";
-    if (plan.crewId) return `Your ${a.label} crew is on again: ${when}, ${plan.place.name}${near}. In? ${cost}`;
+    if (plan.crewId) return `Your crew for ${a.label} is on again: ${when}, ${plan.place.name}${near}. In? ${cost}`;
     if (plan.partner) return `Up for ${a.label} with someone${i}, ${when} at ${plan.place.name}${near}? ${cost} I'll only share who it is if you both say yes.`;
     return `${when}: ${a.label} at ${plan.place.name}${near} with ${others.length} others${i}. ${cost} Want in? I'll share who's coming once enough people say yes.`;
   };
@@ -466,7 +481,8 @@ export function buildPlanProbe(w: World, plan: Plan, recipient: MemberId, now: n
   // The plan's own public content (taxonomy activity label and tags, the public place) is what the
   // probe is about, not a fact about any member, so its words are not private vocabulary here. Any
   // other private word of the others (canaries, agent_private values, matchable facets) still blocks.
-  const own = new Set(tokenize(`${a.label} ${a.tags.join(" ")} ${plan.place.name} ${plan.place.area ?? ""}`).map(t => t.toLowerCase()));
+  // The fixed copy (PLAN_COPY_PUBLIC) and the time phrase are the Network's own words, also allowed.
+  const own = new Set([...tokenize(`${a.label} ${a.tags.join(" ")} ${plan.place.name} ${plan.place.area ?? ""} ${when}`).map(t => t.toLowerCase()), ...PLAN_COPY_PUBLIC]);
   const vocab = new Set([...privateVocabulary(w, others)].filter(t => !own.has(t.toLowerCase())));
   for (const [i, ar] of [[true, true], [false, true], [false, false]] as const) {
     if (i && !into) continue;

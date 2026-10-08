@@ -2,7 +2,7 @@
 // backfill and fallbacks, crews, and the probe content rules (D5). Deterministic, no LLM calls.
 import { describe, expect, test } from "bun:test";
 import { DAY, HOUR } from "@thenetwork/core";
-import type { Venue } from "../src/activities.ts";
+import { ACTIVITIES, type Venue } from "../src/activities.ts";
 import * as A from "../src/attention.ts";
 import { DEFAULT_PLANS, resolvePlans } from "../src/config.ts";
 import { fromLocal } from "../src/outreach.ts";
@@ -258,8 +258,35 @@ describe("plan items and probe content (D5)", () => {
   test("partner and crew probes; partner probes promise no reveal before both say yes", () => {
     const w = mkWorld(climbers(["ana", "ben"]));
     expect(P.buildPlanProbe(w, plan({ invited: ["ana", "ben"], partner: true }), "ana", NOW, TZ)).toContain("if you both say yes");
-    expect(P.buildPlanProbe(w, plan({ invited: ["ana", "ben"], crewId: "crew_1" }), "ana", NOW, TZ)).toContain("crew is on again");
+    expect(P.buildPlanProbe(w, plan({ invited: ["ana", "ben"], crewId: "crew_1" }), "ana", NOW, TZ)).toContain("Your crew for bouldering is on again");
     expect(P.buildPlanProbe(w, plan({ invited: ["ana", "ben"] }), "zed", NOW, TZ)).toBeNull();
+  });
+  test("ordinary words of the fixed copy in another invitee's private facts do not drop the probe; their private words still never appear", () => {
+    // Network build report: about 1/3 of plan probes were null because "Free." matched another invitee's private words.
+    const ids = ["ana", "ben", "cy", "dee"];
+    const inp = climbers(ids, (id, x) => {
+      x.facets.push(facet(id, 1, "fact", "free most evenings since the divorce, only wants people who share recovery goals", ["sensitive"], "agent_private"));
+    });
+    const w = mkWorld(inp);
+    for (const p of [plan({ invited: ids, activityId: "group_run" }), plan({ invited: ids }), plan({ invited: ["ana", "ben"], partner: true, activityId: "group_run" }), plan({ invited: ids, crewId: "crew_1", activityId: "group_run" })]) {
+      const text = P.buildPlanProbe(w, p, "ana", NOW, TZ);
+      expect(text).not.toBeNull();
+      expect(text!).not.toMatch(/divorce|recovery|evenings|goals/i);
+    }
+    expect(P.buildPlanProbe(w, plan({ invited: ids, activityId: "group_run" }), "ana", NOW, TZ)).toContain("Free.");
+  });
+  test("crew, partner and group probe copy reads as English for every activity", () => {
+    const w = mkWorld(climbers(["ana", "ben", "cy"]));
+    for (const a of ACTIVITIES) {
+      const crew = P.buildPlanProbe(w, plan({ invited: ["ana", "ben", "cy"], crewId: "crew_1", activityId: a.id }), "ana", NOW, TZ);
+      if (!crew) continue;
+      expect(crew).toStartWith(`Your crew for ${a.label} is on again: `);
+      expect(crew).not.toMatch(/\bYour (a|an|the) /);
+      const partner = P.buildPlanProbe(w, plan({ invited: ["ana", "ben"], partner: true, activityId: a.id }), "ana", NOW, TZ)!;
+      expect(partner).toStartWith(`Up for ${a.label} with someone`);
+      expect(partner).not.toMatch(/\b(a|an) (a|an)\b|  |\.\./);
+    }
+    expect(P.buildPlanProbe(w, plan({ invited: ["ana", "ben", "cy"], crewId: "crew_1", activityId: "group_run" }), "ana", NOW, TZ)).toStartWith("Your crew for an easy group run is on again: ");
   });
 });
 
