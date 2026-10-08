@@ -41,6 +41,9 @@ export class CapitalLedger {
   readonly cfg: CapitalConfig;
   private readonly log: LedgerEntry[] = [];
   private readonly byMember = new Map<MemberId, LedgerEntry[]>();
+  private readonly byId = new Map<string, LedgerEntry>();
+  /** Logical events already credited (organizer+plan, member+need): a new event id for the same act earns nothing (capital-6). */
+  private readonly credited = new Set<string>();
   private readonly members = new Map<MemberId, MemberRec>();
   private readonly plans = new Map<string, PlanRec>();
   private readonly helps = new Map<string, HelpRec>();
@@ -84,8 +87,12 @@ export class CapitalLedger {
       const r: StaffRead = { t: this.lastT, staff: viewer.staff, role: viewer.role, reason: viewer.reason, member };
       this.store?.appendRead(r);
       this.staffReads.push(r);
+      return [...(this.byMember.get(member) ?? [])];
     }
-    return this.byMember.get(member) ?? [];
+    // A member sees who confirmed their own credits, but not who their invitee met (capital-10).
+    return (this.byMember.get(member) ?? []).map(e => (e.category === "vouch" && e.provenance.confirmedBy.length
+      ? Object.freeze({ ...e, provenance: Object.freeze({ ...e.provenance, confirmedBy: [] }) })
+      : e));
   }
 
   /**
@@ -94,14 +101,14 @@ export class CapitalLedger {
    */
   internalEntries(member: MemberId): readonly LedgerEntry[] {
     const m = this.members.get(member);
-    return m && !m.eligible ? [] : this.byMember.get(member) ?? [];
+    return m && !m.eligible ? [] : [...(this.byMember.get(member) ?? [])];
   }
 
   /** All entries, for detection and audit. */
-  all(): readonly LedgerEntry[] { return this.log; }
+  all(): readonly LedgerEntry[] { return [...this.log]; }
 
-  /** Audit trail of staff reads. */
-  audit(): readonly StaffRead[] { return this.staffReads; }
+  /** Audit trail of staff reads (a copy: callers cannot erase it). Reads return copies so the ledger's own lists cannot be changed. */
+  audit(): readonly StaffRead[] { return this.staffReads.map(r => ({ ...r })); }
 
   /** Sum of entry amounts up to and including `at`. Internal only: never shown to anyone. */
   balance(member: MemberId, at = Infinity): number {
@@ -113,7 +120,7 @@ export class CapitalLedger {
   isEligible(member: MemberId): boolean { return this.members.get(member)?.eligible ?? false; }
 
   /** Events this ledger refused, in order. The service should log each one and a harness should fail on any. */
-  rejected(): readonly Rejection[] { return this.rejects; }
+  rejected(): readonly Rejection[] { return this.rejects.map(r => ({ ...r })); }
 
   // ---------------------------------------------------------------------------------------------- writes
 
@@ -279,15 +286,18 @@ export class CapitalLedger {
       }
       case "organized": {
         if (!ev.publicVenue) break; // organizing credit is for public venues only (MVP)
+        if (this.credited.has(`organized|${ev.organizer}|${ev.planId}`)) break;
         const attendees = uniq(ev.attendees.filter(a => a !== ev.organizer && this.isEligible(a)));
         if (attendees.length < c.organizing.minAttendees) break;
-        this.credit(ev.organizer, "organizing", c.credit.organizing, ev, attendees, [],
-          ev.recurring ? "led a recurring crew session" : "organized a plan", out, { planId: ev.planId, label: ev.label });
+        if (this.credit(ev.organizer, "organizing", c.credit.organizing, ev, attendees, [],
+          ev.recurring ? "led a recurring crew session" : "organized a plan", out, { planId: ev.planId, label: ev.label })) this.credited.add(`organized|${ev.organizer}|${ev.planId}`);
         break;
       }
       case "need_answered": {
         const by = ev.confirmedBy === "staff" ? [] : [ev.confirmedBy];
         if (by[0] === ev.member || (by.length && !this.isEligible(by[0]!))) break;
+        if (this.credited.has(`need|${ev.member}|${ev.needId}`)) break;
+        this.credited.add(`need|${ev.member}|${ev.needId}`);
         this.credit(ev.member, "needs_answered", c.credit.needs_answered, ev, by, by, "answered a Network need", out, { label: ev.label });
         break;
       }
@@ -369,26 +379,32 @@ export class CapitalLedger {
     outcome: string, out: LedgerEntry[], extra: Partial<Prov> = {}): LedgerEntry | undefined {
     if (!this.isEligible(member) || this.members.get(member)!.removed || base <= 0) return undefined;
     const ag = this.cfg.antiGaming;
-    const prior = this.byMember.get(member) ?? [];
-    const earned = prior.filter(e => e.sign === 1);
-    // Per counterpart pair.
-    let pairMult = 1;
-    if (counterparts.length) {
-      // Credits the pair chose themselves (help, needs, member-started plans) decay over a longer window.
-      const controlled = cat === "help" || cat === "needs_answered" || (cat === "attendance" && pairChosen(extra.origin, extra.verification));
-      const window = (controlled ? ag.controlledPairWindowDays : ag.pairWindowDays) * DAY;
-      const inPair = earned.filter(e => ev.t - e.t < window && e.base > 0);
-      const decays = counterparts.map(cp => ag.pairDecay ** inPair.filter(e => e.provenance.counterparts.includes(cp)).length);
-      // A plan the members chose decays on its most repeated counterpart (the recurring core):
-      // with the mean, two fresh "fillers" per staged meetup cancelled the decay (capital-8).
-      // Engine- and organizer-made groups keep the mean (the pair did not choose each other).
-      pairMult = controlled ? Math.min(...decays) : decays.reduce((s, x) => s + x, 0) / decays.length;
+    // Credits the pair chose themselves (help, needs, member-started plans) decay over a longer window.
+    const controlled = cat === "help" || cat === "needs_answered" || (cat === "attendance" && pairChosen(extra.origin, extra.verification));
+    const pairWindow = (controlled ? ag.controlledPairWindowDays : ag.pairWindowDays) * DAY, period = ag.periodDays * DAY;
+    const want = new Set(counterparts), seenWith = new Map<MemberId, number>();
+    let nCat = 0, inPeriod = 0;
+    // One pass back through this member's entries (time order), only as far as the longest window
+    // (capital-20): no copies, so cost is linear in the member's recent entries.
+    const all = this.byMember.get(member) ?? [];
+    for (let i = all.length - 1; i >= 0; i--) {
+      const e = all[i]!, age = ev.t - e.t;
+      if (age >= pairWindow && age >= period) break;
+      if (e.sign === 1 && e.base > 0) {
+        if (age < pairWindow && want.size) for (const x of e.provenance.counterparts) if (want.has(x)) seenWith.set(x, (seenWith.get(x) ?? 0) + 1);
+        if (age < period && e.category === cat) nCat++;
+      }
+      // Per period cap on positive NC, net of clawbacks of credits inside the period. A clawback of
+      // an older credit does not make room (capital-2): that credit never used this period's cap.
+      if (age < period && (e.sign === 1 || (e.category === "clawback" && ev.t - (this.byId.get(e.provenance.reverses!)?.t ?? -Infinity) < period))) inPeriod += e.amount;
     }
+    // Per counterpart pair. A plan the members chose decays on its most repeated counterpart (the
+    // recurring core): with the mean, two fresh "fillers" per staged meetup cancelled the decay
+    // (capital-8). Engine- and organizer-made groups keep the mean (the pair did not choose each other).
+    const decays = counterparts.map(cp => ag.pairDecay ** (seenWith.get(cp) ?? 0));
+    const pairMult = !decays.length ? 1 : controlled ? Math.min(...decays) : decays.reduce((s, x) => s + x, 0) / decays.length;
     // Per category and period.
-    const nCat = earned.filter(e => e.category === cat && ev.t - e.t < ag.periodDays * DAY && e.base > 0).length;
     const catMult = 1 / (1 + nCat / ag.categorySoftN[cat]);
-    // Per period cap on positive NC (net of clawbacks of credits inside the period).
-    const inPeriod = prior.filter(e => ev.t - e.t < ag.periodDays * DAY && (e.sign === 1 || e.category === "clawback")).reduce((s, e) => s + e.amount, 0);
     const room = Math.max(0, ag.periodCap - inPeriod);
     const amount = round(Math.min(base * pairMult * catMult, room));
     return this.write(member, cat, 1, amount, base, base > 0 ? amount / base : 0, ev, { counterparts, confirmedBy, outcome, ...extra }, out);
@@ -399,8 +415,8 @@ export class CapitalLedger {
   }
 
   private reverse(member: MemberId, entryId: string, ev: CapitalEvent, outcome: string, out: LedgerEntry[]) {
-    const orig = (this.byMember.get(member) ?? []).find(e => e.id === entryId);
-    if (!orig || this.reversed.has(entryId)) return;
+    const orig = this.byId.get(entryId);
+    if (!orig || orig.member !== member || this.reversed.has(entryId)) return;
     this.reversed.add(entryId);
     this.write(member, "clawback", -1, -orig.amount, orig.amount, 1, ev,
       { counterparts: orig.provenance.counterparts, confirmedBy: [], outcome, reverses: entryId, label: orig.provenance.label }, out);
@@ -409,11 +425,15 @@ export class CapitalLedger {
   private write(member: MemberId, category: EntryCategory, sign: 1 | -1, amount: number, base: number, multiplier: number, ev: CapitalEvent,
     p: Omit<Prov, "eventId" | "eventType">, out: LedgerEntry[]): LedgerEntry {
     const list = this.byMember.get(member) ?? [];
+    // Private copies of the provenance lists, so a caller's array cannot change an entry later.
     const e: LedgerEntry = Object.freeze({
-      id: `${ev.id}:${member}:${out.length}`, member, t: ev.t, category, sign, amount: amount === 0 ? 0 : amount, base, multiplier,
-      provenance: Object.freeze({ eventId: ev.id, eventType: ev.type, ...p }),
+      // The log position makes the id unique (event ids and member ids may contain ":", capital-22).
+      id: `${this.log.length}:${ev.id}:${member}`, member, t: ev.t, category, sign, amount: amount === 0 ? 0 : amount, base, multiplier,
+      provenance: Object.freeze({ eventId: ev.id, eventType: ev.type, ...p, counterparts: [...p.counterparts], confirmedBy: [...p.confirmedBy],
+        ...(p.verification ? { verification: [...p.verification] } : {}) }),
     }) as LedgerEntry;
     list.push(e);
+    this.byId.set(e.id, e);
     this.byMember.set(member, list);
     this.log.push(e);
     out.push(e);

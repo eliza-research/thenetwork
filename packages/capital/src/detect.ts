@@ -22,7 +22,9 @@ import { memberControlled } from "./ledger.ts";
 
 export function detectGaming(entries: readonly LedgerEntry[], now: number, cfg: CapitalConfig = DEFAULT_CAPITAL): GamingFlag[] {
   const d = cfg.detection;
-  const recent = entries.filter(e => e.sign === 1 && e.base > 0 && e.t <= now && now - e.t < d.windowDays * DAY);
+  // Clawed-back credits are settled: they must not raise the same flag again (capital-m3).
+  const reversed = new Set(entries.flatMap(e => (e.provenance.reverses && e.t <= now ? [e.provenance.reverses] : [])));
+  const recent = entries.filter(e => e.sign === 1 && e.base > 0 && e.t <= now && now - e.t < d.windowDays * DAY && !reversed.has(e.id));
   const flags = new Map<string, GamingFlag>();
   const add = (f: GamingFlag) => {
     const key = `${f.kind}|${[...f.members].sort().join(",")}`;

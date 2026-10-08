@@ -85,7 +85,7 @@ export type CapitalEventType = CapitalEvent["type"];
 // (`clawback`) that reference the entry they reverse.
 
 export interface LedgerEntry {
-  /** `${eventId}:${member}:${n}` */
+  /** `${logIndex}:${eventId}:${member}`, unique within the ledger and the same on replay. */
   id: string;
   member: MemberId;
   t: number;
