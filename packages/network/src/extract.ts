@@ -11,7 +11,7 @@
 //  - An age the LLM reads can only make the member younger (a minor), never decline them: a
 //    decline deletes data, so it needs the offline explicit form.
 import { tryChatJson, type ChatMessage, type LLM } from "@thenetwork/core";
-import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/sim";
+import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import type { ConsentWhy, TimeOption } from "./classify.ts";
 import { NEIGHBORHOODS } from "./geo.ts";
 

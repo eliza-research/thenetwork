@@ -23,20 +23,7 @@ import { desireById, INTERESTS } from "./taxonomy.ts";
 import { CITY_TZ, localParts } from "./time.ts";
 
 /** One choice in a plan probe (SimMeta.plan.options). `start`/`activity`/`proposalId` override the plan's. */
-export interface PlanOption { key: string; label: string; start?: number; end?: number; activity?: string; proposalId?: string }
-
-/** What a plan probe carries (SimMeta.plan). Names nobody: activity, time, place, size. */
-export interface PlanMeta {
-  planId: string;
-  /** Activity id (engine activities.ts, e.g. "bouldering") or its label ("an easy group run"). */
-  activity: string;
-  options?: PlanOption[];
-  window?: { start: number; end: number };
-  /** Number of people in the plan (the probe says "with 3 others"). Default 4. */
-  size?: number;
-  /** Neighbourhood of the public place. */
-  area?: string;
-}
+export type { PlanMeta, PlanOption } from "@thenetwork/core";
 
 /**
  * Plan behaviour of the persona agent (PolicyOptions.plans). Everything defaults to on once plans

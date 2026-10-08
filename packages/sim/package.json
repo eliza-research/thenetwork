@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@thenetwork/core": "workspace:*",
+    "@thenetwork/engine": "workspace:*",
     "@thenetwork/judge": "workspace:*"
   }
 }

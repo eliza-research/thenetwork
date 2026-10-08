@@ -8,7 +8,8 @@
 // The rules were rebuilt against hand-written corpora (test/fixtures), not the simulator's own
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
 import { parseReply, type Category } from "@thenetwork/core";
-import { DESIRES, INTERESTS, SKILLS, type TimeOption } from "@thenetwork/sim";
+import type { TimeOption } from "@thenetwork/core";
+import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { NEIGHBORHOODS } from "./geo.ts";
 
 export type Abuse = "sales_spam" | "scam_money" | "contact_extraction" | "prompt_injection" | "harassment" | "mass_recruit";

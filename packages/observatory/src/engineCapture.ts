@@ -3,7 +3,7 @@
 // top configurations and why they lost) and each proposal is linked to its run.
 import type { City, MemberId, WorldSnapshot } from "@thenetwork/core";
 import { runEngine, type EngineProposal, type MatchingRunLog } from "@thenetwork/engine";
-import type { Engine } from "@thenetwork/sim";
+import type { Engine } from "@thenetwork/core";
 import type { EngineRunSummary } from "./types.ts";
 
 const TOP_N = 30;

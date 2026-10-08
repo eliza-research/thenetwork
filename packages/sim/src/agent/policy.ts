@@ -514,19 +514,8 @@ function decideCrew(ctx: PersonaContext, crewId: string, base: PolicyDecision): 
 // ---------------------------------------------------------------- template voice
 
 const label = (tag: string) => INTERESTS.find(i => i.tag === tag)?.label ?? tag.replace(/_/g, " ");
-const skillLabel = (tag: string) => SKILLS.find(s => s.tag === tag)?.label ?? tag;
-
-/** "plays guitar" -> "I play guitar"; "ML engineer" -> "I'm an ML engineer". */
-export function skillFirstPerson(tag: string): string {
-  const l = skillLabel(tag);
-  const [verb, ...rest] = l.split(" ");
-  const verbs: Record<string, string> = {
-    plays: "play", teaches: "teach", has: "have", loves: "love", gives: "give", does: "do", cooks: "cook",
-    throws: "throw", shoots: "shoot", sings: "sing", edits: "edit", works: "work",
-  };
-  if (verbs[verb!]) return `I ${verbs[verb!]} ${rest.join(" ")}`.trim();
-  return `I'm ${/^[aeiouAEIOU]|^ML/.test(l) ? "an" : "a"} ${l}`;
-}
+import { skillFirstPerson } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
+export { skillFirstPerson };
 
 /** "is going through X and doesn't..." -> "I'm going through X and don't..." */
 export function firstPerson(fact: string): string {

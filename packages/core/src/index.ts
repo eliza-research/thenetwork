@@ -8,3 +8,4 @@ export * from "./replies.ts";
 export * from "./fence.ts";
 export * from "./time.ts";
 export * from "./rng.ts";
+export * from "./network.ts";

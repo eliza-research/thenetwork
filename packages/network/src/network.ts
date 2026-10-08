@@ -35,10 +35,8 @@ import {
   type AskRecord, type EngineAsk, type EngineConfigInput, type EngineInput, type EngineProposal, type FeedbackRecord, type InteractionRecord, type MatchingRunLog,
   type AppPack, type PlansConfig, type PlansConfigInput, type World as EngineWorld,
 } from "@thenetwork/engine";
-import {
-  DESIRES, desireById, HELP_TEXT, INTERESTS, skillFirstPerson, SKILLS, STOP_CONFIRMATION,
-  type InboundMessage, type NetworkContext, type NetworkUnderTest, type SimMeta,
-} from "@thenetwork/sim";
+import { HELP_TEXT, STOP_CONFIRMATION, type InboundMessage, type NetworkContext, type NetworkUnderTest, type SimMeta } from "@thenetwork/core";
+import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { ageAnswer, availabilityTags, checkinTags, classify, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, type Classified, type TimeOption } from "./classify.ts";
 import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import { brandOf, copy, copyFor, type Copy, whenPhrase } from "./copy.ts";
