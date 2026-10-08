@@ -9,7 +9,7 @@
 // Sends are dry-run unless NETWORK_CHANNEL=blooio, BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1, and each
 // app other than ntwrk also has its own <APP>_LIVE_APPROVED=1 (founder approval).
 import { SQL } from "bun";
-import { captureConsole, createBackend, ipOf, jsonLogger, loadConfig, MAX_PUBLIC_BODY_BYTES, serviceLoginProblem } from "./backend.ts";
+import { captureConsole, createBackend, ensureServiceLogin, ipOf, jsonLogger, loadConfig, MAX_PUBLIC_BODY_BYTES, serviceLoginProblem } from "./backend.ts";
 
 // Structured, redacted logs from the first line: the rest is imported after console is captured.
 const log = jsonLogger(undefined, { svc: "backend" });
@@ -40,6 +40,10 @@ async function main() {
     try {
       const r = await sql`update platform.settings set value = ${c.env} where key = 'environment' and value = 'dev' returning value`;
       log.info("database environment", { set: r.length ? c.env : "unchanged" });
+      // The service login (docs/deploy.md 2.1): created once, from NETWORK_DATABASE_URL, so nobody types
+      // its password into a console. An existing role is never changed.
+      const made = await ensureServiceLogin(q => sql.unsafe(q), c.databaseUrl);
+      log.info("service login", { role: made.role, created: made.created });
     } finally { await sql.close(); }
   }
 

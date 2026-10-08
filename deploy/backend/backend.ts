@@ -339,3 +339,24 @@ export function createBackend(d: BackendDeps) {
 
   return { publicFetch, staffFetch, tickAll, startTicks, shutdown, get draining() { return draining; }, get inFlight() { return inFlight.size; } };
 }
+
+/**
+ * Create the deployed service login named in `serviceUrl` when it does not exist yet (first deploy only,
+ * run as the migration owner): LOGIN, NOSUPERUSER, NOBYPASSRLS, NOCREATEROLE, NOCREATEDB, member of
+ * network_service, CONNECT on this database. An existing role is left exactly as it is.
+ */
+export async function ensureServiceLogin(query: (q: string) => Promise<Record<string, unknown>[]>, serviceUrl: string): Promise<{ role: string; created: boolean }> {
+  const u = new URL(serviceUrl);
+  const role = decodeURIComponent(u.username);
+  const password = decodeURIComponent(u.password);
+  if (!/^[a-z_][a-z0-9_]{0,62}$/.test(role)) throw new Error("service login name must be a plain lower-case identifier");
+  if (role === "postgres") throw new Error("the service login must not be the postgres superuser");
+  const [exists] = await query(`select 1 as x from pg_roles where rolname = '${role}'`);
+  if (exists) return { role, created: false };
+  if (password.length < 24) throw new Error("the service login password must be at least 24 characters");
+  const lit = `'${password.replace(/'/g, "''")}'`;
+  await query(`create role ${role} login password ${lit} nosuperuser nobypassrls nocreaterole nocreatedb`);
+  await query(`grant network_service to ${role}`);
+  await query(`do $$ begin execute format('grant connect on database %I to ${role}', current_database()); end $$`);
+  return { role, created: true };
+}

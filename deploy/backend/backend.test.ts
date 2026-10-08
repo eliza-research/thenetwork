@@ -403,3 +403,24 @@ describe.skipIf(!pgAvailable)("boot (dev Postgres, a database of its own)", () =
     expect(logs).not.toMatch(/"sends":"live"/);
   }, 30_000);
 });
+
+describe("ensureServiceLogin (first deploy)", () => {
+  test("creates the login once, escapes the password, and refuses unsafe names", async () => {
+    const { ensureServiceLogin } = await import("./backend.ts");
+    const qs: string[] = [];
+    let exists = false;
+    const q = async (s: string) => { qs.push(s); return s.startsWith("select") && exists ? [{ x: 1 }] : []; };
+    const url = "postgres://network_backend:" + encodeURIComponent("a'b" + "x".repeat(30)) + "@h:5432/railway";
+    expect(await ensureServiceLogin(q, url)).toEqual({ role: "network_backend", created: true });
+    expect(qs[1]).toContain("password 'a''b");
+    expect(qs[1]).toContain("nosuperuser nobypassrls");
+    expect(qs[2]).toBe("grant network_service to network_backend");
+    exists = true; qs.length = 0;
+    expect(await ensureServiceLogin(q, url)).toEqual({ role: "network_backend", created: false });
+    expect(qs.length).toBe(1);
+    await expect(ensureServiceLogin(q, "postgres://postgres:" + "x".repeat(30) + "@h/db")).rejects.toThrow();
+    await expect(ensureServiceLogin(q, "postgres://bad-name:" + "x".repeat(30) + "@h/db")).rejects.toThrow();
+    exists = false;
+    await expect(ensureServiceLogin(q, "postgres://svc:short@h/db")).rejects.toThrow();
+  });
+});
