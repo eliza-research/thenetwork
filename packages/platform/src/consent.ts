@@ -4,6 +4,7 @@
 // PLATFORM_STOP_SCOPE=app stops that app alone. "leave <app>" (and the site's leave button) leaves one
 // app. START opts in to one app. The ledger reads the last event per (e164, app) and per (e164, null);
 // a global opt-out wins over an older app opt-in, and a newer app opt-in (START, a new join) wins over it.
+import { foldKeywordText as fold, KEYWORDS, keywordKey, optOutPhrase as coreOptOutPhrase } from "../../core/src/replies.ts";
 import { type AppId, type AppInfo, APPS } from "./apps.ts";
 
 export type ConsentState = "opted_in" | "opted_out";
@@ -52,22 +53,17 @@ export function lastEvents(events: readonly ConsentEvent[], e164: string, app: A
   return out;
 }
 
-// Keywords (CTIA conventions; same lists as packages/blooio/src/keywords.ts).
-const STOP_ALL_WORDS = new Set(["STOP ALL", "STOPALL"]);
-const STOP_WORDS = new Set(["STOP", "UNSUBSCRIBE", "CANCEL", "END", "QUIT", "REVOKE", "OPTOUT", "OPT OUT", "STOP PLEASE", "PLEASE STOP"]);
-const START_WORDS = new Set(["START", "UNSTOP", "SUBSCRIBE", "RESUME"]);
-const HELP_WORDS = new Set(["HELP", "INFO"]);
-// Spanish whole-message opt-outs (accents folded).
-const SPANISH_STOP_WORDS = new Set(["PARA", "PARAR", "ALTO", "BASTA", "BAJA", "CANCELAR", "DETENER", "NO MAS", "NO MAS MENSAJES"]);
+// Keywords: the one table and the free-text opt-out reading live in packages/core/src/replies.ts.
+const STOP_ALL_WORDS = new Set<string>(KEYWORDS.stopAll);
+const STOP_WORDS = new Set<string>([...KEYWORDS.stop, ...KEYWORDS.stopPolite]);
+const START_WORDS = new Set<string>(KEYWORDS.start);
+const HELP_WORDS = new Set<string>(KEYWORDS.help);
+const SPANISH_STOP_WORDS = new Set<string>(KEYWORDS.stopEs);
 
 export type Keyword = "stop" | "stop_all" | "start" | "help";
 
-/** NFKC, no zero-width characters, no accents, straight apostrophes. */
-const fold = (text: string) =>
-  text.normalize("NFKC").replace(/[​-‍﻿]/g, "").normalize("NFD").replace(/\p{M}+/gu, "").replace(/[‘’ʼ]/g, "'");
-
 export function detectKeyword(text: string): Keyword | undefined {
-  const k = fold(text).replace(/[^\p{L}\p{N} ]+/gu, " ").replace(/\s+/g, " ").trim().toUpperCase();
+  const k = keywordKey(text);
   if (STOP_ALL_WORDS.has(k)) return "stop_all";
   // "STOPP", "STOOOP": a misspelt STOP is still a STOP.
   if (STOP_WORDS.has(k) || SPANISH_STOP_WORDS.has(k) || /^S+T+O+P+$/.test(k) || optOutPhrase(text)) return "stop";
@@ -76,47 +72,9 @@ export function detectKeyword(text: string): Keyword | undefined {
   return undefined;
 }
 
-// Reasonable means (TCPA): a person may opt out in their own words, in English or Spanish. A short
-// message that clearly asks the sender to stop texting is a STOP. A sentence about something else
-// ("cancel the date", "can you stop by at 7", "don't stop texting me") is not. The STOP reply is the
-// confirmation, and START undoes it.
-const ME = "(?:me|us|this number|my number)";
-const MSGS = "(?:texts?|texting|messages?|messaging|msgs?|sms|notifications?|spam)";
-const OPT_OUT_EN: RegExp[] = [
-  new RegExp(`\\b(?:stop|quit|cease) (?:texting|messaging|contacting|sending|bothering|spamming|writing to|emailing|calling) ${ME}\\b`),
-  new RegExp(`\\bstop (?:sending (?:me |us |these |the |your |all )?|the |these |your |all |all the |all these |all of these )${MSGS}\\b`),
-  new RegExp(`\\b(?:stop|no more|enough) ${MSGS}\\b`),
-  /\bunsubscribe\b/,
-  /\bopt (?:me )?out\b/,
-  new RegExp(`\\b(?:remove|take) ${ME} (?:off|from) (?:your|this|the|all|every|ur) (?:list|lists|texts?|messages|contacts)\\b`),
-  /\b(?:remove|delete|lose) my (?:number|phone number|info|contact)\b/,
-  new RegExp(`\\b(?:don't|do not|dont|pls don't|please don't|never) (?:text|message|contact|msg|sms|write to|email) ${ME}\\b`),
-  new RegExp(`\\bi (?:don't|do not|dont) want (?:these|your|any|any more|anymore|more|the) ${MSGS}\\b`),
-  /\bleave me alone\b/,
-  /\bwrong number\b/,
-  // "remove me", "take me off", "take me off the list" on their own.
-  /^(?:please |pls )?(?:remove|take) me(?: off| out)?(?: (?:the|your|this) list)?(?: please| pls)?$/,
-];
-const OPT_OUT_ES: RegExp[] = [
-  /\b(?:deja|dejen|deje) de (?:enviarme|mandarme|escribirme|textearme|contactarme)\b/,
-  /\bno (?:me )?(?:envies|envien|mandes|manden|escribas|escriban|contactes) mas\b/,
-  /\bno (?:me )?(?:envies|envien|mandes|manden) (?:mas )?mensajes\b/,
-  /\bno quiero (?:recibir )?(?:mas )?mensajes\b/,
-  /\b(?:darme|dame|dar|denme) de baja\b/,
-  /\b(?:eliminame|borrame|sacame|quitame|eliminen mi numero|borren mi numero)\b/,
-  /\bya no me (?:escribas|escriban|envies|mandes)\b/,
-  /\bno mas mensajes\b/,
-  /\bnumero equivocado\b/,
-];
-const NOT_OPT_OUT = /\b(?:don't|do not|dont|never|please don't) (?:stop|unsubscribe|remove|opt)\b|\bstop by\b|\bcan'?t stop\b|\bstop (?:at|on) \d/;
-
-/** True when a short message asks, in the person's own words, to stop getting texts. */
+/** True when a short message asks, in the person's own words, to stop getting texts (core optOutPhrase; a per-app leave is not one). */
 export function optOutPhrase(text: string): boolean {
-  const t = fold(text).toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, " ").replace(/\s+/g, " ").trim();
-  if (!t || t.length > 160 || NOT_OPT_OUT.test(t)) return false;
-  // "unsubscribe from peon", "stop slop": a leave of that app only (leaveTarget), never a stop of every app.
-  if (leaveTarget(text)) return false;
-  return OPT_OUT_EN.some(r => r.test(t)) || OPT_OUT_ES.some(r => r.test(t));
+  return coreOptOutPhrase(text, t => leaveTarget(t) !== undefined);
 }
 
 /** "leave slop", "leave slop.date", "stop slop", "quit peon", "leave the network": the app to leave (that app only), or undefined. */

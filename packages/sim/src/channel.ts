@@ -2,7 +2,7 @@
 // gateway (PRD 32.2, 34.2 "Channel gateway"): timestamps from the Clock, carrier-level
 // STOP/START/HELP keywords, outbound idempotency, seeded delivery failures, and a
 // per-recipient log. The Network under test talks to members only through this.
-import type { Clock, MemberId } from "@thenetwork/core";
+import { HELP_TEXT, KEYWORDS, keywordKey, STOP_CONFIRMATION, type Clock, type MemberId } from "@thenetwork/core";
 import { Rng } from "./rng.ts";
 
 export type ChannelKind = "imessage" | "sms";
@@ -110,15 +110,15 @@ export interface SimMessage {
 
 export interface ChannelOptions { failureRate?: number; seed?: number | string }
 
-const STOP_WORDS = new Set(["STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"]);
-const START_WORDS = new Set(["START", "UNSTOP", "YES START"]);
-const HELP_WORDS = new Set(["HELP", "INFO"]);
+// The keyword table and the compliance copy are core's (packages/core/src/replies.ts).
+const STOP_WORDS = new Set<string>([...KEYWORDS.stop, ...KEYWORDS.stopAll]);
+const START_WORDS = new Set<string>(KEYWORDS.start);
+const HELP_WORDS = new Set<string>(KEYWORDS.help);
 
-export const STOP_CONFIRMATION = "You're unsubscribed from The Network and won't get more messages here. Reply START to resume.";
-export const HELP_TEXT = "The Network: an invite-only AI that connects you with people. Reply STOP to opt out. Msg&data rates may apply.";
+export { HELP_TEXT, STOP_CONFIRMATION };
 
 export function detectKeyword(body: string): Keyword | undefined {
-  const t = body.trim().toUpperCase().replace(/[.!]+$/, "");
+  const t = keywordKey(body);
   if (STOP_WORDS.has(t)) return "STOP";
   if (START_WORDS.has(t)) return "START";
   if (HELP_WORDS.has(t)) return "HELP";

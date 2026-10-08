@@ -294,3 +294,80 @@ export function parseOptOut(text: string, o: { apps?: readonly string[] } = {}):
   if ((/^(?:stop|unsubscribe|para|basta)\b/.test(t) || /\b(?:stop|unsubscribe)$/.test(t)) && !/\?\s*$/.test(text.trim())) return { match: "likely", scope: "all", lang };
   return { match: "none", scope: "all", lang };
 }
+
+// ------------------------------------------------------------------------------------ carrier keywords
+
+/**
+ * The one STOP / HELP / START keyword table (CTIA conventions). Every consumer reads it: the platform
+ * consent ledger (platform/src/consent.ts detectKeyword, which adds the polite and Spanish stops and
+ * the free-text reading below) and the simulated channel (sim/src/channel.ts). "YES" is deliberately
+ * not an opt-in keyword: members answer "yes" to opportunities all the time.
+ */
+export const KEYWORDS = {
+  stopAll: ["STOP ALL", "STOPALL"],
+  stop: ["STOP", "UNSUBSCRIBE", "CANCEL", "END", "QUIT", "REVOKE", "OPTOUT", "OPT OUT"],
+  /** "STOP PLEASE", "PLEASE STOP": a stop with a courtesy word (the platform ledger). */
+  stopPolite: ["STOP PLEASE", "PLEASE STOP"],
+  /** Spanish whole-message opt-outs, accents folded. */
+  stopEs: ["PARA", "PARAR", "ALTO", "BASTA", "BAJA", "CANCELAR", "DETENER", "NO MAS", "NO MAS MENSAJES"],
+  start: ["START", "UNSTOP", "SUBSCRIBE", "RESUME"],
+  help: ["HELP", "INFO"],
+} as const;
+
+/** The carrier compliance copy for STOP and HELP on the Network's line. */
+export const STOP_CONFIRMATION = "You're unsubscribed from The Network and won't get more messages here. Reply START to resume.";
+export const HELP_TEXT = "The Network: an invite-only AI that connects you with people. Reply STOP to opt out. Msg&data rates may apply.";
+
+/** NFKC, no zero-width characters, no accents, straight apostrophes. */
+export const foldKeywordText = (text: string) =>
+  text.normalize("NFKC").replace(/[​-‍﻿]/g, "").normalize("NFD").replace(/\p{M}+/gu, "").replace(/[‘’ʼ]/g, "'");
+
+/** A whole message as a keyword key: folded, punctuation and emoji dropped, spaces collapsed, upper case ("Stop." -> "STOP"). */
+export const keywordKey = (text: string) => foldKeywordText(text).replace(/[^\p{L}\p{N} ]+/gu, " ").replace(/\s+/g, " ").trim().toUpperCase();
+
+// Reasonable means (TCPA): a person may opt out in their own words, in English or Spanish. A short
+// message that clearly asks the sender to stop texting is a STOP. A sentence about something else
+// ("cancel the date", "can you stop by at 7", "don't stop texting me") is not. This is the strict
+// reading the consent ledger acts on; `parseOptOut` above is the conversational reading (it also
+// reports "likely" for looser phrasings the agent should confirm).
+const ME = "(?:me|us|this number|my number)";
+const MSGS = "(?:texts?|texting|messages?|messaging|msgs?|sms|notifications?|spam)";
+const OPT_OUT_EN: RegExp[] = [
+  new RegExp(`\\b(?:stop|quit|cease) (?:texting|messaging|contacting|sending|bothering|spamming|writing to|emailing|calling) ${ME}\\b`),
+  new RegExp(`\\bstop (?:sending (?:me |us |these |the |your |all )?|the |these |your |all |all the |all these |all of these )${MSGS}\\b`),
+  new RegExp(`\\b(?:stop|no more|enough) ${MSGS}\\b`),
+  /\bunsubscribe\b/,
+  /\bopt (?:me )?out\b/,
+  new RegExp(`\\b(?:remove|take) ${ME} (?:off|from) (?:your|this|the|all|every|ur) (?:list|lists|texts?|messages|contacts)\\b`),
+  /\b(?:remove|delete|lose) my (?:number|phone number|info|contact)\b/,
+  new RegExp(`\\b(?:don't|do not|dont|pls don't|please don't|never) (?:text|message|contact|msg|sms|write to|email) ${ME}\\b`),
+  new RegExp(`\\bi (?:don't|do not|dont) want (?:these|your|any|any more|anymore|more|the) ${MSGS}\\b`),
+  /\bleave me alone\b/,
+  /\bwrong number\b/,
+  // "remove me", "take me off", "take me off the list" on their own.
+  /^(?:please |pls )?(?:remove|take) me(?: off| out)?(?: (?:the|your|this) list)?(?: please| pls)?$/,
+];
+const OPT_OUT_ES: RegExp[] = [
+  /\b(?:deja|dejen|deje) de (?:enviarme|mandarme|escribirme|textearme|contactarme)\b/,
+  /\bno (?:me )?(?:envies|envien|mandes|manden|escribas|escriban|contactes) mas\b/,
+  /\bno (?:me )?(?:envies|envien|mandes|manden) (?:mas )?mensajes\b/,
+  /\bno quiero (?:recibir )?(?:mas )?mensajes\b/,
+  /\b(?:darme|dame|dar|denme) de baja\b/,
+  /\b(?:eliminame|borrame|sacame|quitame|eliminen mi numero|borren mi numero)\b/,
+  /\bya no me (?:escribas|escriban|envies|mandes)\b/,
+  /\bno mas mensajes\b/,
+  /\bnumero equivocado\b/,
+];
+const NOT_OPT_OUT = /\b(?:don't|do not|dont|never|please don't) (?:stop|unsubscribe|remove|opt)\b|\bstop by\b|\bcan'?t stop\b|\bstop (?:at|on) \d/;
+
+/**
+ * True when a short message asks, in the person's own words, to stop getting texts. `isLeave`: a
+ * caller's per-app leave reading ("unsubscribe from peon", "stop slop"), which is a leave of that app
+ * only, never a stop of everything.
+ */
+export function optOutPhrase(text: string, isLeave: (text: string) => boolean = () => false): boolean {
+  const t = foldKeywordText(text).toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, " ").replace(/\s+/g, " ").trim();
+  if (!t || t.length > 160 || NOT_OPT_OUT.test(t)) return false;
+  if (isLeave(text)) return false;
+  return OPT_OUT_EN.some(r => r.test(t)) || OPT_OUT_ES.some(r => r.test(t));
+}

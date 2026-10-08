@@ -9,7 +9,7 @@
 //    refused ("refused_not_approved") and the provider is never called.
 import type { MemberId } from "@thenetwork/core";
 import { blooioRecipientPolicy, forbiddenProvider, type ConsentNetwork } from "../src/network.ts";
-import { ConsentLedger } from "../../blooio/src/keywords.ts";
+import { ConsentLedger } from "../../blooio/src/ledger.ts";
 import { OutboundQueue, type MessageKind } from "../../blooio/src/outbound-queue.ts";
 import type { Clock, ChannelAdapter as ProviderAdapter, StatusUpdate } from "../../blooio/src/types.ts";
 

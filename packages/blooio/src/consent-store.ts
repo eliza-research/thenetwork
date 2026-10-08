@@ -7,7 +7,7 @@
 
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, truncateSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
-import type { ConsentEntry } from "./keywords.ts";
+import type { ConsentEntry } from "./ledger.ts";
 
 export interface ConsentStore {
   /** Every entry ever recorded, oldest first. Called once when the ledger starts. */

@@ -16,7 +16,7 @@ scripts and the tests were dropped (they remain in git history).
 | `src/types.ts` | Channel-agnostic `ChannelAdapter`, `ChannelEvent` (message, status, typing, reaction, safety), `ChannelSendError` with a failure class the queue acts on |
 | `src/blooio/client.ts` | Typed Blooio v4 client: read-only calls (`/me`, `/me/numbers`, `/channels`, `/webhooks`, status) and `send` (always sends `Idempotency-Key`). Classifies errors: 5xx/network are retryable; `429 conversation_*` means wait for the recipient; `403 safety_*` means blocked. The API key is never logged or serialized. |
 | `src/blooio/webhook.ts` | `X-Blooio-Signature` HMAC verification (raw body, 300 s window), parsing for payload versions 2026-10-01, 2026-09-01, and legacy v2 flat bodies, media host allowlist, dedupe keys |
-| `src/keywords.ts` | The consent ledger (E.164-keyed; optional durable store) and STOP/HELP/START handling on the keyword table in `packages/core/src/replies.ts` |
+| `src/ledger.ts` | The consent ledger (E.164-keyed; optional durable store). STOP/HELP/START are read by the platform consent ledger on the keyword table in `packages/core/src/replies.ts`. |
 | `src/consent-store.ts` | `ConsentStore` interface, `InMemoryConsentStore`, and `FileConsentStore` (append-only JSONL) |
 | `src/phone.ts` | `toE164` / `normalizeAddress`: international E.164 normalization. Queue, ledger, caps and line safety all key on it. |
 | `src/line.ts` | `resolveSenderLine()`: reads `BLOOIO_FROM` (canonical) or `BLOOIO_FROM_NUMBER` (alias), E.164-normalized; throws if both are set and differ |

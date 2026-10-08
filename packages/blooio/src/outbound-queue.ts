@@ -34,7 +34,7 @@
 // SKIP LOCKED for dispatch; this in-memory version keeps the same state machine.
 
 import { DEFAULT_QUIET, isQuietAt, isValidTimeZone, nextAllowedAt, resolveTimeZone, type QuietWindow } from "./quiet-hours.ts";
-import type { ConsentLedger } from "./keywords.ts";
+import type { ConsentLedger } from "./ledger.ts";
 import { normalizeAddress } from "./phone.ts";
 import { LeakGuard } from "../../core/src/guard.ts";
 import {
