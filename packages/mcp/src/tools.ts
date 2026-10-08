@@ -1,14 +1,16 @@
-// The three tools. app_info and start_signup need no sign-in and return public facts only.
-// check_status needs membership:read and returns only the signed-in person's own state in the one
-// app the client is bound to. No tool takes a phone number, a code, a name or an age, and every
+// The tools. app_info and start_signup need no sign-in and return public facts only.
+// check_status and get_updates need membership:read and return only the signed-in person's own state
+// or updates in the one app the client is bound to. No tool takes a phone number, a code, a name or an age, and every
 // input schema refuses properties it does not list.
 import { appsOn, type McpApp, type McpAppId, type Surface } from "./apps.ts";
-import type { PlatformHooks, PublicStatus } from "./hooks.ts";
+import type { AssistantKind, PlatformHooks, PublicStatus } from "./hooks.ts";
 import type { Grant, Scope } from "./store.ts";
 
-export const TOOL_NAMES = ["app_info", "start_signup", "check_status", "submit_profile"] as const;
+export const TOOL_NAMES = ["app_info", "start_signup", "check_status", "submit_profile", "get_updates"] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
-export const TOOL_SCOPE: Record<ToolName, Scope | null> = { app_info: null, start_signup: null, check_status: "membership:read", submit_profile: "profile:write" };
+export const TOOL_SCOPE: Record<ToolName, Scope | null> = { app_info: null, start_signup: null, check_status: "membership:read", submit_profile: "profile:write", get_updates: "membership:read" };
+/** An update reference from a Network text (packages/notify task tokens): a pointer, never a credential. */
+export const UPDATE_TOKEN = /^T-[2-9A-HJKMNP-TV-Z]{6}$/;
 /** The longest profile text the assistant may submit (a few short paragraphs). */
 export const PROFILE_MAX_CHARS = 1200;
 
@@ -69,6 +71,22 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
       securitySchemes: [{ type: "oauth2", scopes: ["profile:write"] }],
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["profile:write"] }] },
     },
+    {
+      name: "get_updates",
+      title: `My ${host.name} updates`,
+      description: `After the person signs in on ${host.domain} and allows access, returns their own new updates from ${host.name} (introductions, plans, reminders, questions) and marks them seen. Use when they ask what's new, or when their message has an update reference from a text like T-7F3K9Q (pass it as update_token). It is not a password: never ask for it. Never returns anything about other apps.`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          app: { type: "string", enum: [host.id], description: `Optional. Always ${host.id}.` },
+          update_token: { type: "string", pattern: UPDATE_TOKEN.source, description: "Optional. The update reference from a text, like T-7F3K9Q. Shows only that update." },
+        },
+        additionalProperties: false,
+      },
+      annotations: annotations(`My ${host.name} updates`),
+      securitySchemes: oauth,
+      _meta: { securitySchemes: oauth },
+    },
   ];
 }
 
@@ -84,11 +102,11 @@ const NOT_AVAILABLE = "That app is not available here.";
 /** A phone number, an email address or a verification code in the profile text: refused, never stored. */
 const CONTACT_OR_CODE = /\+?\d[\d\s().-]{6,}\d|[\w.+-]+@[\w-]+\.[\w.]+|(?<![\w])\d{4,10}(?![\w])/;
 
-export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host: McpApp): { ok: true; app?: string; about?: string } | { ok: false; message: string } {
+export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host: McpApp): { ok: true; app?: string; about?: string; token?: string } | { ok: false; message: string } {
   if (args === undefined || args === null) args = {};
   if (typeof args !== "object" || Array.isArray(args)) return { ok: false, message: "Arguments must be an object." };
   const a = args as Record<string, unknown>;
-  const extra = Object.keys(a).filter(k => k !== "app" && !(name === "submit_profile" && k === "about"));
+  const extra = Object.keys(a).filter(k => k !== "app" && !(name === "submit_profile" && k === "about") && !(name === "get_updates" && k === "update_token"));
   // Refuse, never ignore: a phone, a code, a name or an age is never accepted by any tool.
   if (extra.length) return { ok: false, message: `This tool does not take ${extra.map(k => `"${k.slice(0, 40)}"`).join(", ")}. It never takes phone numbers, codes or personal details.` };
   if (name === "submit_profile") {
@@ -97,6 +115,12 @@ export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host
     if (CONTACT_OR_CODE.test(about)) return { ok: false, message: "Leave out phone numbers, codes and email addresses: the app never takes them from an assistant." };
     if (a.app !== undefined && a.app !== host.id) return { ok: false, message: `This connection covers ${host.name} only.` };
     return { ok: true, app: host.id, about };
+  }
+  if (name === "get_updates") {
+    if (a.app !== undefined && a.app !== host.id) return { ok: false, message: `This connection covers ${host.name} only.` };
+    if (a.update_token !== undefined && (typeof a.update_token !== "string" || !UPDATE_TOKEN.test(a.update_token.trim().toUpperCase())))
+      return { ok: false, message: "update_token must look like T-7F3K9Q." };
+    return { ok: true, app: host.id, ...(typeof a.update_token === "string" ? { token: a.update_token.trim().toUpperCase() } : {}) };
   }
   if (a.app === undefined) return name === "start_signup" ? { ok: false, message: "Say which app: " + enumIds.join(", ") + "." } : { ok: true };
   if (typeof a.app !== "string") return { ok: false, message: "app must be a string." };
@@ -144,6 +168,8 @@ export interface CallContext {
   host: McpApp;
   hooks: PlatformHooks;
   grant: Grant | null;
+  /** Which assistant the OAuth client is (by its redirect hosts): chatgpt, claude, grok, or web. */
+  assistant?: AssistantKind;
 }
 
 /**
@@ -199,6 +225,17 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       const r = await c.hooks.submitProfile(now, g.app, g.phoneKey, chk.about!);
       if (r !== "accepted") return { kind: "ok", data: { app: a.id, submitted: false, status: "not_joined", next_step: NEXT.not_joined(a) } };
       return { kind: "ok", data: { app: a.id, submitted: true, next_step: `${a.name} has it. It may text the person a short question or two.` } };
+    }
+    case "get_updates": {
+      const g = c.grant;
+      if (!g) return { kind: "invalid_grant" };
+      const now = await c.hooks.personForKey(g.phoneKey);
+      if (!grantStillTheirs(g.personId, now)) return { kind: "invalid_grant" };
+      const a = c.apps[g.app];
+      if (!c.hooks.updates) return { kind: "error", message: "Updates are not available here yet." };
+      // Someone else's reference, an unknown one or an expired one reads as "nothing new", like an empty inbox.
+      const updates = now === null ? [] : await c.hooks.updates(now, g.app, c.assistant ?? "web", chk.token);
+      return { kind: "ok", data: { app: a.id, updates, next_step: updates.length ? "Tell the person briefly. They answer by replying to the text." : `Nothing new from ${a.name}.` } };
     }
   }
 }

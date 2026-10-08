@@ -67,6 +67,8 @@ export interface RuntimeHost {
   capRelease?(ids: string[]): Promise<void>;
   /** Sends of this batch to a number the platform consent ledger has opted out of this app (ids). Called before delivery. */
   consentRefused?(rt: NetworkRuntime, batch: Outbound[]): Promise<Set<string>>;
+  /** The sends the adapter took (not refused or failed), after their statuses are stored. Errors are logged, never retried. */
+  delivered?(rt: NetworkRuntime, sent: Outbound[]): Promise<void>;
 }
 
 export interface RuntimeOptions {
@@ -368,6 +370,11 @@ export class NetworkRuntime {
       // A send the adapter refused did not go out: its person-cap slot goes back (dry-run counts as sent).
       const notSent = ds.filter(d => NOT_SENT.test(d.status)).map(d => d.id);
       if (notSent.length) await this.host.capRelease?.(notSent);
+      if (this.host.delivered) {
+        const no = new Set(notSent);
+        const sent = go.filter(b => !no.has(b.id));
+        if (sent.length) await this.host.delivered(this, sent).catch(e => this.host.log(`[deliver] delivered hook failed (${this.id}): ${(e as Error).message}`));
+      }
     } catch (e) {
       this.host.log(`[deliver] ${go.length} send(s) wait for the next tick (${this.id}): ${(e as Error).message}`);
       this.retry.push(...go);

@@ -219,13 +219,14 @@ const UPDATES: ToolDefinition = {
   name: "get_network_updates",
   title: "Get Network updates",
   description:
-    "List items The Network has already cleared for this member: opportunities, questions for the member, and reminders. Use when the member asks what's new from The Network. Read-only.",
+    "List items The Network has already cleared for this member: opportunities, questions for the member, and reminders. Use when the member asks what's new from The Network, or when their message has an update code like T-7F3K9Q (pass it as update_token). Read-only.",
   inputSchema: {
     type: "object", additionalProperties: false,
     properties: {
       kinds: { type: "array", uniqueItems: true, maxItems: 4, items: { type: "string", enum: [...ITEM_KINDS] } },
       limit: { type: "integer", minimum: 1, maximum: 10, default: 5 },
       cursor: { type: "string", maxLength: 200 },
+      update_token: { type: "string", pattern: "^T-[2-9A-HJKMNP-TV-Z]{6}$", description: "The update code from a Network text (like T-7F3K9Q), if the member's message has one. Shows only that update." },
     },
   },
   outputSchema: {
@@ -342,7 +343,7 @@ export interface ShareOut {
   rejected: { field: string; index?: number; reason: ShareRejectReason }[]; next_step: string;
 }
 
-export interface UpdatesIn { kinds?: ItemKind[]; limit?: number; cursor?: string }
+export interface UpdatesIn { kinds?: ItemKind[]; limit?: number; cursor?: string; update_token?: string }
 export interface ItemOut {
   item_id: string; kind: ItemKind; title: string; summary: string;
   when?: string; where?: string; expires?: string; allowed_responses: ResponseValue[];

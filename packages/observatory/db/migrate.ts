@@ -35,6 +35,8 @@ export function migrations(): Migration[] {
     // The MCP server's OAuth schema (packages/mcp/db/oauth.sql): repeatable, after the roles exist, so a
     // deployed service login never needs CREATE rights (the service no longer creates it at boot there).
     { id: "9001_oauth_schema", file: join(REPO, "packages", "mcp", "db", "oauth.sql"), repeatable: true },
+    // The single inbox (packages/notify/db/schema.sql): repeatable and idempotent, grants to network_service.
+    { id: "9002_notify_schema", file: join(REPO, "packages", "notify", "db", "schema.sql"), repeatable: true },
   ];
 }
 
@@ -53,7 +55,7 @@ export async function migrate(url: string, opts: { reset?: boolean; lockTimeout?
       // Fail fast instead of waiting forever when another process holds a lock on the schema.
       if (opts.lockTimeout) await tx.unsafe(`set local lock_timeout = '${opts.lockTimeout.replace(/[^0-9a-z]/gi, "")}'`);
       await tx`select pg_advisory_xact_lock(hashtext('thenetwork-migrate'))`;
-      if (opts.reset) await tx.unsafe("drop schema if exists network cascade; drop schema if exists platform cascade; drop table if exists public.__migrations");
+      if (opts.reset) await tx.unsafe("drop schema if exists network cascade; drop schema if exists platform cascade; drop schema if exists notify cascade; drop table if exists public.__migrations");
       await tx.unsafe(`create table if not exists public.__migrations (
         id text primary key, checksum text not null, repeatable boolean not null default false, applied_at timestamptz not null default now())`);
       const done = new Map<string, string>();

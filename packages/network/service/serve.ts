@@ -55,6 +55,11 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
       cookieName: id => (dev ? `sid_${id}` : "__Host-sid"), secureCookie: !dev,
       // submit_profile: the person's own profile, from their own agent, to their own member (decision 10).
       submitProfile: (personId, app, e164, text) => (isAppId(app) ? svc.submitProfile(personId, app, e164, text) : Promise.resolve("not_member" as const)),
+      // get_updates and the inbox's surface signals (packages/notify; entry-flows doc 5).
+      ...(svc.notify ? {
+        updates: (personId, app, assistant, token) => (isAppId(app) ? svc.updatesFor(personId, app, assistant, token) : Promise.resolve([])),
+        assistantLinked: (personId, assistant, active) => svc.assistantLinked(personId, assistant, active),
+      } : {}),
     }),
     store, issuer, hostMap, env, proxySecret: o.proxySecret, log, now: o.now ?? (() => svc.clock.now()),
     // The token's hostname must be one of that site's hosts (as on the platform API), never another site.
@@ -93,6 +98,7 @@ export function startTicks(svc: NetworkService, log: (s: string) => void = conso
       finally { busy.delete(rt.id); }
     }));
     await svc.purge();
+    try { await svc.notifyTick(); } catch (e) { log(`notify: tick failed: ${(e as Error).message}`); }
   };
   let running: Promise<void> = loop();
   const first = running;

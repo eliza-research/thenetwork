@@ -80,6 +80,16 @@ export class NetworkError extends Error {
 
 export interface Outcome<T> { result: T; receipt?: Receipt }
 
+/**
+ * The single inbox (packages/notify, connectorInbox). Item ids here are inbox subject ids. `redeem`
+ * resolves an update code from a Network text to the items it points at, or null for an unknown,
+ * expired or foreign code; `shown` marks items seen on every surface so no text follows for them.
+ */
+export interface InboxBridge {
+  redeem(memberId: string, hostKey: string, token: string): Promise<string[] | null>;
+  shown(memberId: string, hostKey: string, itemIds: string[]): Promise<void>;
+}
+
 const NOT_AVAILABLE = "That isn't available.";
 const TEXT_ONLY = "That's something I can only help with by text.";
 /** Safety/report intent. Checked before any eligibility filter so minors can always report. */
@@ -111,10 +121,12 @@ export class FakeNetwork {
   private consequentialGrants = new Set<string>();
   private seq = 0;
   private limiter: RateLimiter;
+  private readonly inbox?: InboxBridge;
 
   private handleKey: string;
   private assistantsUrl: string;
-  constructor(public clock: Clock, opts: { handleKey?: string; assistantsUrl?: string } = {}) {
+  constructor(public clock: Clock, opts: { handleKey?: string; assistantsUrl?: string; inbox?: InboxBridge } = {}) {
+    this.inbox = opts.inbox;
     this.limiter = new RateLimiter(clock);
     this.handleKey = opts.handleKey ?? "prototype-item-handle-key";
     this.assistantsUrl = opts.assistantsUrl ?? "ntwrk.love/assistants";
@@ -544,12 +556,18 @@ export class FakeNetwork {
   }
 
   // ------------------------------------------------------------------------ get_network_updates
-  getUpdates(p: ConnectorPrincipal, input: UpdatesIn): Outcome<UpdatesOut> {
+  async getUpdates(p: ConnectorPrincipal, input: UpdatesIn): Promise<Outcome<UpdatesOut>> {
     const me = this.member(p, TOOL_NAMES.updates, SCOPES.readBasic);
     const limit = input.limit ?? 5;
     const offset = input.cursor && /^c[0-9a-z]+$/.test(input.cursor) ? Number.parseInt(input.cursor.slice(1), 36) : 0;
-    const all = this.visibleItems(p, me).filter((i) => !input.kinds || input.kinds.includes(i.kind));
+    let all = this.visibleItems(p, me).filter((i) => !input.kinds || input.kinds.includes(i.kind));
+    if (input.update_token) {
+      // An unknown, expired or foreign code reads as "nothing here", like an empty inbox (no oracle).
+      const wanted = new Set((await this.inbox?.redeem(me.id, p.hostKey, input.update_token.toUpperCase())) ?? []);
+      all = all.filter((i) => wanted.has(i.internalId));
+    }
     const page = all.slice(offset, offset + limit);
+    await this.inbox?.shown(me.id, p.hostKey, page.map((i) => i.internalId));
     this.logRead(p, TOOL_NAMES.updates, `Read ${page.length} update(s).`); // seen-via, not delivery (§5.6)
     return {
       result: {

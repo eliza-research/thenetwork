@@ -48,6 +48,9 @@ import { PgPhotoStore, PhotoService, photoStorageFromEnv, type PhotoRater, type 
 import type { Ban } from "../../platform/src/store.ts";
 import { parseBlooioWebhook, SIGNATURE_HEADER, verifyBlooioSignature } from "../../../prototypes/messaging-blooio/src/blooio/webhook.ts";
 import { normalizeAddress } from "../../../prototypes/messaging-blooio/src/phone.ts";
+import { resolveTimeZone } from "../../../prototypes/messaging-blooio/src/quiet-hours.ts";
+import { Notifier, type InboxItem, type NotifyStore, type OutboundSink, type Recipient, type Surface } from "../../notify/src/index.ts";
+import { PgNotifyStore } from "../../notify/src/pg-store.ts";
 import type { ChannelEvent } from "../../../prototypes/messaging-blooio/src/types.ts";
 // The Observatory's staff auth (per-app role grants) and audit sink, so the console and the service agree.
 import { allowed, authenticate, hasEverywhere, parseTokenGrants, PgAudit, type AuditSink } from "../../observatory/src/staff.ts";
@@ -143,8 +146,18 @@ export interface ServiceOptions {
    * outside PLATFORM_ENV=dev). Production starts every network off: an admin turns it on in the console.
    */
   devMatching?: string[];
+  /**
+   * The single inbox (packages/notify; entry-flows doc 5). Default: PgNotifyStore on `url` (schema
+   * `notify`, migration 9002). false turns it off. Every member-facing send that went out is recorded
+   * (already delivered, never texted again); assistants read it through the MCP get_updates tool.
+   */
+  notify?: NotifyStore | false;
   log?: (line: string) => void;
 }
+
+/** Member-facing Network sends that become inbox items (meta.type of ConsentNetwork.send). */
+const NOTIFY_TYPES = new Set(["probe", "plan_probe", "proposal", "reminder", "feedback_request", "cancellation", "scheduling"]);
+const NOTIFY_SUMMARY_MAX = 500;
 
 export type InboundOutcome =
   | "handled" | "duplicate" | "unknown_sender" | "ignored" | "ignored_group" | "status" | "reaction" | "safety"
@@ -193,6 +206,10 @@ export class NetworkService implements RuntimeHost {
   readonly apps: Record<AppId, AppInfo>;
   readonly people: PeopleStore;
   readonly accounts: Accounts;
+  /** The single inbox and notification scheduler; undefined when turned off. */
+  readonly notify?: Notifier;
+  /** Address to (runtime, member) for the notify sink, filled by the notify directory. */
+  private readonly notifyTargets = new Map<string, { rt: NetworkRuntime; memberId: MemberId }>();
   /** One runtime per network, in platform.networks order (ntwrk first). */
   readonly runtimes = new Map<string, NetworkRuntime>();
   readonly log: (line: string) => void;
@@ -232,6 +249,7 @@ export class NetworkService implements RuntimeHost {
     this.sql = new SQL({ url: o.url, max: Math.max(8, 2 * specs.length + 4), connection: { application_name: `network-service:${this.instance}` } });
     this.people = o.people ?? new PgPeopleStore(this.sql);
     this.accounts = new Accounts(this.people, { hashKey: this.hashKey, now: () => this.clock.now(), env: this.env, apps: id => this.apps[id], hooks: this.hooks() });
+    if (o.notify !== false) this.notify = new Notifier(o.notify ?? new PgNotifyStore(this.sql), { get: personId => this.notifyRecipient(personId) });
     for (const spec of specs) {
       const id = spec.id.includes(":") ? spec.id : `ntwrk:${spec.id}`;
       const [app, city] = id.split(":") as [string, string];
@@ -347,6 +365,82 @@ export class NetworkService implements RuntimeHost {
   async capRelease(ids: string[]): Promise<void> {
     if (!this.cap || !ids.length) return;
     await this.sql`select platform.person_cap_release(${this.sql.array(ids, "TEXT")})`.catch(e => this.log(`[cap] release failed: ${(e as Error).message}`));
+  }
+
+  // ------------------------------------------------------------------ the single inbox (packages/notify)
+  /**
+   * RuntimeHost.delivered: the member-facing sends that went out become inbox items, already
+   * delivered, so the person's assistant can show them (MCP get_updates) and nothing texts them again.
+   * Members with no person (from before the platform) are skipped.
+   */
+  async delivered(rt: NetworkRuntime, sent: Outbound[]): Promise<void> {
+    if (!this.notify) return;
+    const items = sent.filter(b => !b.system && b.type && NOTIFY_TYPES.has(b.type));
+    if (!items.length) return;
+    const ids = [...new Set(items.map(b => b.memberId))];
+    const rows = await rt.scoped(tx => tx`select id, person_id from network.members where app_id = ${rt.app.id} and person_id is not null and id in ${tx(ids)}`);
+    const person = new Map((rows as any[]).map(r => [r.id as string, r.person_id as string]));
+    for (const b of items) {
+      const personId = person.get(b.memberId);
+      if (!personId) continue;
+      await this.notify.recordSent(
+        { personId, app: rt.app.id, eventType: b.type!, subjectId: b.oppId ?? b.id, urgency: b.proactive ? "normal" : "requested", summary: b.body.trim().slice(0, NOTIFY_SUMMARY_MAX) || "An update from the Network." },
+        { deliveryId: `net:${b.id}`, channel: "imessage", countsTowardCap: b.proactive || b.kind === "proactive", sentAt: b.ts },
+      );
+    }
+  }
+
+  /**
+   * The person's own unseen updates in one app, for their assistant (MCP get_updates). Reading them
+   * marks them seen on every surface. An update code limits the result to that text's items; someone
+   * else's code, an unknown one or an expired one returns nothing.
+   */
+  async updatesFor(personId: string, app: AppId, surface: Surface, token?: string): Promise<Array<{ summary: string; at: string; kind: string }>> {
+    if (!this.notify) return [];
+    const items: InboxItem[] = await this.notify.readUpdates(personId, surface, this.clock.now(), token, { app });
+    return items.map(i => ({ summary: i.summary, at: new Date(i.createdAt).toISOString(), kind: i.eventType }));
+  }
+
+  /** An assistant connected (OAuth grant) or disconnected (revoked) for a person: the surface signal. */
+  async assistantLinked(personId: string, surface: Surface, active: boolean): Promise<void> {
+    await this.notify?.setActive(personId, surface, active);
+  }
+
+  /** The notify recipient of a person: their first live member with an address on a running network (The Network first). */
+  private async notifyRecipient(personId: string): Promise<Recipient | undefined> {
+    const rts = [...this.runtimes.values()].sort((a, b) => Number(b.app.id === "ntwrk") - Number(a.app.id === "ntwrk"));
+    for (const rt of rts) {
+      const rows = await rt.scoped(tx => tx`select id from network.members where app_id = ${rt.app.id} and person_id = ${personId} and not opted_out`);
+      for (const r of rows as any[]) {
+        const to = rt.addressOf(r.id);
+        if (!to) continue;
+        this.notifyTargets.set(normalizeAddress(to), { rt, memberId: r.id });
+        return { personId, to, timeZone: resolveTimeZone(undefined, rt.city) ?? "America/New_York", prefs: { channel: "imessage" }, proactiveAllowed: true };
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * The notify scheduler's own texts go out as a unit of work on the member's network, so delivery
+   * applies the platform consent ledger, the member's opt-out and the person cap like every other send.
+   */
+  private notifySink(): OutboundSink {
+    return {
+      enqueue: async x => {
+        const target = this.notifyTargets.get(normalizeAddress(x.to));
+        if (!target) { this.log(`[notify] no network member for a delivery (${x.idempotencyKey}): not sent`); return; }
+        await target.rt.unitOfWork(() => target.rt.system(target.memberId, x.idempotencyKey, x.text, x.kind, "notify"));
+      },
+    };
+  }
+
+  /** Once per tick: close stale delivery outcomes, then send what the inbox has due. */
+  async notifyTick(): Promise<void> {
+    if (!this.notify) return;
+    const now = this.clock.now();
+    await this.notify.sweep(now);
+    await this.notify.dispatch(now, this.notifySink());
   }
 
   /**
@@ -688,13 +782,23 @@ export class NetworkService implements RuntimeHost {
     const ev: Extract<ChannelEvent, { kind: "message" }> = {
       kind: "message", channel: "imessage" as never, messageId: rowId, from: e164, to: null, chatId: e164, isGroup: false, text, mediaUrls: [], transport: "imessage" as never, receivedAt: t,
     };
-    await this.memberMessage(rt, m.memberId as MemberId, ev, rowId, undefined);
+    await this.memberMessage(rt, m.memberId as MemberId, ev, rowId, undefined, undefined, false);
     await this.statedAge(this.apps[appId], rt, m.memberId as MemberId, e164);
     return "accepted";
   }
 
   /** A member's message (or keyword) as one unit of work on their app's network. */
-  private memberMessage(rt: NetworkRuntime, memberId: MemberId, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, kw: ReturnType<typeof platformKeyword>, systemReply?: string): Promise<InboundOutcome> {
+  private async memberMessage(rt: NetworkRuntime, memberId: MemberId, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, kw: ReturnType<typeof platformKeyword>, systemReply?: string, fromThread = true): Promise<InboundOutcome> {
+    const out = await this.memberUnit(rt, memberId, ev, rowId, kw, systemReply);
+    // The member wrote in the thread: pending notify deliveries count as acted on (an assistant's submit_profile does not).
+    if (out === "handled" && fromThread && this.notify && kw !== "stop" && kw !== "stop_all") {
+      const personId = await this.personOfMember(rt, memberId);
+      if (personId) await this.notify.threadReply(personId, ev.transport === "sms" ? "sms" : "imessage", this.clock.now()).catch(e => this.log(`[notify] thread reply not recorded: ${(e as Error).message}`));
+    }
+    return out;
+  }
+
+  private memberUnit(rt: NetworkRuntime, memberId: MemberId, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, kw: ReturnType<typeof platformKeyword>, systemReply?: string): Promise<InboundOutcome> {
     const keyword = kw === "stop" || kw === "stop_all" ? "STOP" : kw === "start" ? "START" : kw === "help" ? "HELP" : undefined;
     return rt.unitOfWork(async n => {
       // Under the lock, so a provider retry or a second subscription is handled once.

@@ -58,6 +58,10 @@
         "@thenetwork/sim": "workspace:*",
       },
     },
+    "packages/notify": {
+      "name": "@thenetwork/notify",
+      "version": "0.0.0",
+    },
     "packages/observatory": {
       "name": "@thenetwork/observatory",
       "version": "0.0.0",
@@ -192,6 +196,8 @@
     "@thenetwork/messaging-blooio": ["@thenetwork/messaging-blooio@workspace:prototypes/messaging-blooio"],
 
     "@thenetwork/network": ["@thenetwork/network@workspace:packages/network"],
+
+    "@thenetwork/notify": ["@thenetwork/notify@workspace:packages/notify"],
 
     "@thenetwork/observatory": ["@thenetwork/observatory@workspace:packages/observatory"],
 
