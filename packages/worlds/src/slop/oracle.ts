@@ -280,7 +280,7 @@ export const isSafe = (p: SlopPersona) => !p.hidden.isMinor && !p.hidden.adversa
  * location in that city inside both radius limits.
  */
 export function sharedCities(a: SlopPersona, b: SlopPersona, week?: number, side: "both" | "a" = "both"): SlopCity[] {
-  const cityOf = (p: SlopPersona) => zipInfo.get(p.stated.homeZip)!.city;
+  const cityOf = (p: SlopPersona) => zipInfo.get(p.stated.homeZip)?.city ?? p.hidden.homeCity;
   const datesIn = (p: SlopPersona): SlopCity[] => {
     if (p.stated.scope.mode === "multi_city") return p.stated.scope.cities;
     const trips = week === undefined ? [] : p.hidden.presence.filter(x => x.city !== cityOf(p) && x.weeks.includes(week)).map(x => x.city);

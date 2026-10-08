@@ -15,6 +15,7 @@ export const SLOP_ASK_QUESTIONS: Record<string, string> = {
   slop_age_range: "What age range feels right for the people I suggest?",
   slop_distance: "How far would you go for a first date? Just your city, or within 2, 5, 10, 25, 50 or 100 miles of your zip?",
   slop_basics: "Quick one so I don't waste your evenings: anything that's a dealbreaker for you (smoking, kids, faith, politics), and what are you looking for right now, casual or something longer?",
+  slop_zip: "I don't recognize that zip code yet. What's a nearby zip, or which neighborhood are you in? It's only used to work out rough distances.",
   slop_widen: "Not many people match your distance right now. Would you consider people up to 25 miles away?",
   slop_type: "And what's your type? Describe the kind of person you click with, and how your friends would describe you.",
   // networkPack's reason, kept so a shared ask record from the platform always has a text.
