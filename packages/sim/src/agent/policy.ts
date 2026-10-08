@@ -2,7 +2,7 @@
 // decisions (reply? accept? flake? worthwhile?), and a template voice that renders those
 // decisions as text in the persona's writing style. Used for fast tests and big worlds;
 // the LLM agent reuses the same policy for decisions and timing.
-import { DAY, HOUR, MINUTE, type MemberId } from "@thenetwork/core";
+import { DAY, HOUR, MINUTE, parseReply, type MemberId } from "@thenetwork/core";
 import type { SimMessage } from "../channel.ts";
 import type { OracleProposal } from "../oracle.ts";
 import type { Persona } from "../persona.ts";
@@ -27,24 +27,17 @@ export function classifyMessage(body: string): MessageType {
   return "info";
 }
 
-const YES_RE = /\b(yes|yeah|yep|yup|sure|ok|okay|sounds (good|great|fun|lovely)|i'?m in|count me in|down|absolutely|love to|let'?s do it|happy to|definitely|works for me|i'?d like that)\b/;
-const NO_RE = /\b(no|nope|nah|not (right now|interested|for me|this time)|pass|can'?t|cannot|don'?t think so|i'?ll pass|no thanks)\b/;
-
-/** Parse a member's free-text reply into yes/no/counter (shared with the stub Network). */
+/**
+ * Parse a member's free-text reply into yes/no/counter/unclear. Thin adapter over the shared,
+ * negation-aware parser in packages/core (`parseReply`, audit network-consent-2): the simulator no
+ * longer grades the system with its own parser. "unclear" covers hedges, conditions and conflicts,
+ * so the caller asks again; "counter" is a request for another day or time (not a yes).
+ */
 export function parseYesNo(body: string): "yes" | "no" | "counter" | "unclear" {
-  const t = body.toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'");
-  const yes = YES_RE.test(t);
-  const no = NO_RE.test(t);
-  const counter = /\b(different (day|time)|next week|another time|later in the week|reschedule|instead)\b/.test(t);
-  if (counter && !no) return "counter";
-  if (yes && !no) return "yes";
-  if (no && !yes) return "no";
-  if (yes && no) {
-    // Both present ("yes! no heavy networking though"): the earlier one usually carries the answer.
-    const yi = t.search(YES_RE), ni = t.search(NO_RE);
-    return yi <= ni ? "yes" : "no";
-  }
-  return "unclear";
+  const r = parseReply(body);
+  if (r.answer === "no") return "no";
+  if (r.counter) return "counter";
+  return r.answer === "yes" ? "yes" : "unclear";
 }
 
 // ---------------------------------------------------------------- timing
