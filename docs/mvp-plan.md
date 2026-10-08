@@ -1,68 +1,88 @@
-# MVP plan: work, friendship, love
+# MVP plan: slop.date first, in New York
 
-Status: 2026-10-08, from the founder decisions of that day. The canonical source is the PRD Google Doc, Sections 28, 37 and 40 (snapshot: `docs/prd-snapshot.md`). Edit the PRD first; this file is a short working summary.
+Status: 2026-10-08, after the cleanup (`origin/main` b2bb4d6). The canonical source is the PRD Google Doc: Sections 28 (MVP), 37 (build plan, critical path, prototypes, gates) and 40 (the multi-app platform). The snapshot is `docs/prd-snapshot.md`. The detail behind this page, including the status matrix, is in [mvp-gaps.md](mvp-gaps.md). Edit the PRD first; this page is the working summary.
 
-## The apps
+## The apps and where they stand
 
-The Network is the umbrella. Three apps are lenses on it, all "powered by The Network", sharing one engine (app packs), one database, one admin panel and phone-verified login. Each app has its own onboarding, ontology, landing page and agent persona. A person can join one app or several.
+One network, one engine with a pack per app, one Postgres, one admin console (the Observatory), one phone-verified login and one Blooio iMessage line routed by keyword. Members aged 13-17 may join every app but are never matched or connected. Adult means the lowest stated age is 18 or more; an unknown age fails closed. There is no ID check, and compliance is a deferred backlog (PRD 40.7).
 
-| App id | Domain | Vertical | Status |
+| App | Site (Cloudflare Pages) | Backend and matching | Next step |
 |---|---|---|---|
-| `ntwrk` | ntwrk.love (home page for everything) | The Network, umbrella | Home page live; no-keyword joins |
-| `slop` | slop.date | Love: dating in one city, several cities, or within X miles of a zip code | **Launches first** |
-| `friends` | friends.help (renamed from buddies.nyc) | Friendship | Local only, no deploys |
-| `peon` | peon.biz | Work: hiring | Local only, no deploys |
+| slop.date (`slop`) | On Pages | Pack wired (`slop-pack-1.4.0`); matching off by the stored switch; no live send yet | **The first pilot: NYC, about 40-75 adults** |
+| ntwrk.love (`ntwrk`) | On Pages; home page for every app | Invite-only; no-keyword joins enrol people in the apps they ask for | Its own NYC matching opens after slop |
+| friends.help (`friends`) | On Pages | Pack passes its sim gates; matching off; runs locally only | Join mode to decide |
+| peon.biz (`peon`) | On Pages | Pack passes its sim gates; matching off; runs locally only | Join mode to decide |
 
-ntwrk.club belongs to someone else and is not used.
+All four sites are Cloudflare Pages projects; the shared backend (`deploy/backend/server.ts`) goes to Railway at `api.ntwrk.love`. Onboarding is agent-first: each site hands the person a prompt for their own AI, which reads the site's `SKILL.md` and submits the profile through the MCP server on the backend. Joining by text ("slop") works too.
 
-Rules that hold in every app:
+## Critical path
 
-- **One Blooio iMessage line.** The first message is routed by keyword ("join slop.date", "slop", "peon", "friends"). With no keyword, the person joins The Network: the same flow, but the agent asks what they want (friends, dating, work) and enrolls them in those apps.
-- **Ages.** Minimum age 13. Members aged 13-17 may join every app but are never matched or connected to anyone. Matching is 18+ everywhere.
-- **Cross-app privacy.** Dating membership and data are never visible to the other apps by default. Only a base profile crosses apps, with consent. Blocks apply in every app.
-- **Compliance is not a launch blocker for now.** The safety guards stay (age rules, consent, STOP/HELP, quiet hours, leak guard, human review, report and block, bans by person). Legal items (NYC LL144, dating-safety notices, 10DLC and others) are a deferred backlog (PRD 40.7).
-- **slop.date appearance ratings (founder decision 2026-10-08; changes PRD 40.5 "never used: photo attractiveness scores").** Photo ratings (face, body, overall and body type, from Cloudflare's Clef model) are now **used in matching but never shared**. They are stored as agent_private facts, are never in any member-facing text, probe, reveal, explanation, proposal or run log, and are rated for verified adults only (never 13-17, never an unknown or unverified age). Matched members talk and exchange photos through the agent and learn only what it tells them (first name, the plan). An admin bias monitor reports outcome ratios by group. See docs/results/2026-10-08-slop-pack.md, iteration 4.
-- **Everything earlier stays:** the attention budget (lunchtime learned send times, always probe first, only initial invites count against the cap, booked-plan reveal), plans with a separate plan allowance, crews after one great plan, network capital MVP-lite and post-MVP member ownership.
+Owners: **E** is engine and packs (`packages/core`, `engine`, `sim`, `capital`); **P** is platform (`packages/network`, `platform`, `blooio`, `mcp`, `observatory`, `deploy`, `sites`). Estimates are engineer-days for one agent-assisted engineer.
 
-## Launch order
+| # | Piece | Owner | Days | Needs |
+|---|---|---|---|---|
+| 0 | Founder decisions (below) | Founder | 1 | |
+| 1 | Backend deploy to Railway, staging then production | P | 2 | 0 |
+| 2 | Migrations on Railway; backups on and one restore tested | P | 1 | 1 |
+| 3 | Blooio in and out on the live line; persisted outbound queue | P | 3 | 1, 2 |
+| 4 | slop onboarding conversation: free-text understanding, read-back, photo ask for adults | P, E | 4 | 3 |
+| 5 | Photo upload (site and MMS) and Clef rating wired in `server.ts`; weekly bias monitor | P, E | 4 | 2, 4 |
+| 6 | Review queue for slop: slop in `PACK_READY`, reviewer of record is the person, slop rubric, SLA alerts | P | 2 | 1 |
+| 7 | Photo in the probe; relay through the agent with consent per item, scam check, relay log | E, P | 6 | 3, 5, 6 |
+| 8 | Post-date feedback, report and ban on the live path, ban check on photo intake | P | 1 | 7 |
+| 9 | STOP/HELP live on iMessage with one owner | P | 1 | 3 |
+| 10 | Console on Railway behind Cloudflare Access, bias and cost panels | P | 2 | 1, 6 |
+| 11 | Monitoring and alerts (uptime, heartbeat, send failures, SLA misses, safety) | P | 2 | 1 |
+| 12 | Cost tracking and budget alerts | P | 1.5 | 4, 5, 11 |
+| 12b | Close the P0 and slop-relevant P1 audit findings for network, platform, observatory and sites | P | 4 | none |
+| 13 | Shadow mode with every proposal reviewed, then live | Founder, reviewers | 14 calendar | 1-12 |
 
-1. slop.date, after Phases 0-2 below meet their exit criteria and the founder approves live sends.
-2. friends.help and peon.biz stay local until their packs pass their sim gates and the founder decides to deploy them.
+About 35 engineer-days plus the two-week shadow. Items 1-3, 6 and 12b can run alongside 4-5 and the engine half of 7.
 
-## Workstreams
+## Prototypes still needed
 
-- **Engine and packs:** `packages/core`, `packages/engine`, `packages/sim` (with the app worlds in `src/apps` and the judge in `src/judge`), `packages/capital`, and the pack modules. Validation: `bun run sim`.
-- **Platform:** the `platform` schema and migrations, `packages/network` service, messaging (Blooio line, keyword routing), login, `packages/plugin-network`, and the admin panel (`packages/observatory`).
+| # | Prototype | Decides |
+|---|---|---|
+| P1 | Concierge pilot: 20-30 NYC adults, human-composed probes on the real line, engine in shadow | Whether people say yes, show up and want a second date |
+| P2 | Clef weight fitting from labelled pairs, with a bias audit | Whether ratings help at all; replaces the placeholder weights |
+| P3 | Blooio deliverability on 10-20 test phones for 3 days | The daily cap per line, attachments, ban risk |
+| P4 | Onboarding quality, rules only against rules plus the LLM reader | At least 80% of hard fields filled in 24 hours, 0 wrong gender or seeking parses |
+| P5 | Photo in the probe, A/B inside P1 | Confirms the arm; code and sim must agree |
+| P6 | 50-100 curated NYC first-date venues | Booking links only or partner reservations |
+| P7 | Hand-run relay inside P1 | One-shot number swap or a persistent thread |
+| P8 | Age-liar and catfish signals without ID | Whether the age-liar gate is an accepted risk |
 
-## Phases
+## Validation plan
 
-| Phase | Scope | Owner | Exit criteria |
-|---|---|---|---|
-| 0. App packs core | `AppPack` interface, open core types, `networkPack` as a facade then threaded through the engine module by module, geo seam, one conformance suite | Engine and packs | Golden replays byte-identical under `networkPack` on a pinned clean commit; sim gates green for `networkPack` (`bun run sim --only network`) |
-| 1. slop.date pack, sim, local pilot readiness | Mutual hard filters, radius geo with distance bands, reciprocal scoring with congestion and exposure caps, probe first then a booked first date, dating judge rubric, safety basics; dater personas, oracle, adversaries | Engine and packs | Sim gates green (`bun run sim --only slop`: conformance rules and the slop gates on pinned seeds, below); end to end locally with test phones and dry-run sends; reviewers trained; shadow mode with human review of every intro |
-| 2. Platform backend (parallel) | Migration runner; `platform` schema (people, phone identities, memberships, consent events, share grants, blocks, staff roles, audit); `app_id` on engine tables; one line with keyword routing and no-keyword enrollment; phone login; per-app personas; admin app switcher and per-app roles | Platform | A test phone joins two apps by keyword and one by no-keyword enrollment; STOP and leaving one app work; export and delete per app; ntwrk 21-day sim unchanged after migration; `cross_app_leak = 0` |
-| 3. friends.help pack and sim | Groups first, quorum, plans and crews, neighborhood geo, affinity tables | Engine and packs | Sim gates green (`bun run sim --only friends`); local only |
-| 4. peon.biz pack and sim | Org and job entities, two-way retrieval, candidate-first consent, unranked slates, sealed protected attributes, proxy scrubbing | Engine and packs | Sim gates green (`bun run sim --only peon`, incl. protected-attribute invariance); local only |
-| 5. Attention, plans, capital across apps | Person-level cap across apps; attention budget, plan allowance and crews per pack; network capital per app or shared (to decide) | Engine and packs, with platform | No send over any per-app or person-level cap in a multi-app sim; NC fairness gate holds per app |
+**Simulations only.** `bun run sim` is the single validation command and runs in CI. It fails on any blocking gate. Tracked gates are printed and never fail.
 
-Phases 0-1 and Phase 2 run in parallel. Phases 3-5 can start once Phase 0 is done.
+- **Blocking (152 gates today, all passing):** the corpora in `evals/`; The Network's invariants and scenarios; the slop safety gates (0 declared-minor contacts, 0 stated-filter violations, scammer median reach at most 1, 0 leaks, no rating text), the slop quality gates that pass on the pinned seeds (13-16, 4 weeks), and slop conformance; the peon and friends official gate sets and conformance.
+- **Tracked (slop, failing today):** dates per member-month at least 0.9x random (0.82), age-liar contact cut at least 90% (82%), adversary-contact cut at least 90% (47%), smallest gender or orientation group at least 0.7x (0.33), harm-event cut at least 90% (87%). Each is fixed, waived in writing by the founder, or carried as a known risk into the pilot.
+- **Still missing in sim:** the real message pipeline end to end (signed webhook in, Blooio adapter out, persisted queue, Postgres, simulated clock); LLM personas sending free text through the platform; adversarial scenarios against the live agent (scammer in relay, "how hot did you rate me?", ban evader, prompt injection for a number). Gates: 0 rating or contact leaks, scammer reach at most 1.
 
-### Simulation gates per pack (blocking)
+**Live pilot go/no-go:** every blocking gate passes; P3 measured; STOP owner decided; two weeks of shadow with a precision baseline; 40 committed NYC adults; restore tested; cost alerts and safety on-call live.
 
-- **slop.date:** 0 hard-constraint violations; 0 intros involving anyone under 18 or unverified; 0 private-field or cross-app leaks; scammer median reach at most 1; same-face ban-evasion catch at least 95%; mutual yes at least 25% of probes; probes-received Gini under threshold at twice the cold-start pool.
-- **friends.help:** repeat rate at least 30% of groups within 30 days; more simulated friendships than a one-off-dinner baseline; no trip over a member's tolerance; 0 affinity or age violations; V14 at least 85%.
-- **peon.biz:** impact ratios at least 0.8 at every automated stage; 0 protected or proxy mentions in judge reasoning; 0 jobs without pay ranges; 0 unverified employers reaching candidates; 100% of discriminatory requests refused.
-- **Every pack:** the conformance rules in `bun run sim` (minors in no role, blocks, consent before reveal, the leak gate, the judge cannot undo filters; peon also protected-attribute invariance) and `cross_app_leak = 0`. The slop gates that block and the ones tracked are listed in scripts/sim/slop.ts.
+**Weekly during the pilot:**
 
-## Local only
+| Metric | Gate | Roll back or pause if |
+|---|---|---|
+| Mutual yes per probe | 25% or more | under 15% for 2 weeks |
+| Dates held per mutual yes | 60% or more | |
+| Second-date rate | 20% or more | |
+| Worthwhile interruption | 70% or more | under 50% |
+| Mute, STOP or complaint rate | under 5% | over 10% |
+| Minor contacts; rating or contact leaks | 0 | any |
+| Bias monitor by rating quintile and group | 0.85x or more | under 0.8x |
+| Blooio delivery failures | under 2% | an account flag |
+| Cost per active member | within the founder's target | over budget |
 
-- peon.biz and friends.help: local dev Postgres (port 54339), sim worlds as their own schemas, dry-run or test lines, no site or service deploys.
-- slop.date stays local through Phase 1. Its first live sends need Phases 0-2 done, `BLOOIO_ALLOW_SEND=1` plus the founder's live approval, and human review of every proactive intro.
-- No production database ever holds sim data.
+## Open founder decisions
 
-## Open decisions
+1. **STOP/HELP owner on the shared line:** this service or the Eliza Cloud gateway. One system only, before any live send.
+2. **Where the conversation runs:** the service's own LLM reader (`understand`, gpt-6-luna) or the Eliza agent (`packages/plugin-network`). Today the service owns every message and the plugin is not on the line.
+3. **Join mode for peon and friends** on production (invite, open or waitlist). The code default is open.
+4. **Ban evasion:** build a same-face check, or drop that gate and rely on phone and person bans.
+5. **The security suite** (`bun run security`, six files, CI job pending): keep it or delete it.
+6. **Clef weight fitting:** the fitter was deleted in the cleanup and the shipped weights are a placeholder. Rebuild the fitter for P2, or launch with ratings off until it exists.
 
-- Join mode per app (invite, open or waitlist).
-- ~~Whether slop.date probes include a photo.~~ Founder direction 2026-10-08: yes, adults only (the slop sim runs with photos in the probe). This reverses experience-design D5 / F2 ("never a photo until both say yes") for slop.date; the PRD text still needs the edit.
-- When The Network's own SF and NYC matching opens relative to slop.date.
-- Network capital per app or shared.
+Other open platform questions (legal entity per app, a second line, recycled numbers, hash-key rotation and more) are listed in [mvp-gaps.md](mvp-gaps.md) section 5.
