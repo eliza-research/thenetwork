@@ -160,7 +160,14 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
     }
     const toJudge = pickTop(pool, cfg.judge.topK, cfg.judge.groupTopK).map(s => s.c);
     const verdicts = await judgeCandidates(w, toJudge, llm, deps.judgeCache ?? new JudgeCache(cfg.judge.ttlMs), runLog.judge, runLog.judge.verdicts);
-    scored = scored.map(s => (verdicts.has(s.c.key) && verdicts.get(s.c.key) ? scoreCandidate(w, s.c, verdicts.get(s.c.key)) : s));
+    // Pass 2 can only remove (engine-pipeline-7): a configuration that was below its bar before the
+    // judge stays ineligible even if the blended score now clears it.
+    scored = scored.map(s => {
+      const v = verdicts.get(s.c.key);
+      if (!v) return s;
+      const r = scoreCandidate(w, s.c, v);
+      return s.eligible || !r.eligible ? r : { ...r, eligible: false, reason: s.reason ?? "below_threshold" };
+    });
     t = lap("judge", t);
     if (cfg.judge.deep.enabled && cfg.judge.deep.topK > 0 && J.deep) {
       const dc = cfg.judge.deep;
@@ -214,6 +221,11 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   f.budgetSkips = budgetSkips;
   f.selected = selected.length;
   f.exploration = selected.filter(s => s.exploration).length;
+  // Judge coverage (engine-pipeline-8): pass 2 sees only its top K, so most selected configurations
+  // can be unjudged. Reported whenever a judge ran, so a run with low coverage is visible.
+  if (runLog.judge.calls + runLog.judge.cacheHits + runLog.judge.failures > 0) {
+    runLog.judge.coverage = { selected: selected.length, judged: selected.filter(s => !!s.s.verdict).length };
+  }
   t = lap("select", t);
 
   // 6. Proposals with shareable-only explanations.

@@ -146,3 +146,26 @@ describe("engine-pipeline-10: send-time re-check covers withdrawn lane consent a
   });
 });
 
+describe("engine-pipeline-7 / -8: pass 2 can only remove; judge coverage is reported", () => {
+  test("an all-yes judge never turns a below-threshold configuration eligible", async () => {
+    const llm = new FakeLLM(msgs => {
+      const ctx = JSON.parse(msgs[1]!.content);
+      const refs = (ctx.people ?? ctx.participants ?? []).filter((p: { attending?: boolean }) => p.attending !== false).map((p: { ref: string }) => p.ref);
+      return JSON.stringify({ reasoning: "P1 and P2 fit.", cited_facts: [], verdict: "yes", match_probability: 0.95,
+        fit: 5, mutual_value: 5, capacity_realism: 5, timing: 5, social_comfort: 5, red_flags: 1, certainty: 5, dealbreaker: false, dealbreaker_reason: "",
+        why: Object.fromEntries(refs.map((r: string) => [r, "You two would get along."])) });
+    });
+    let promoted = 0, coverageSeen = 0;
+    for (let seed = 1; seed <= 6; seed++) {
+      const inp = randomWorld({ members: 40, seed });
+      const base = await runEngine(inp, { seed });
+      const baseReason = new Map(base.runLog.scored.map(s => [s.key, s.reason]));
+      const r = await runEngine(inp, { seed }, { llm });
+      for (const s of r.runLog.scored) if (s.eligible && s.judged && baseReason.get(s.key) === "below_threshold") promoted++;
+      const cov = r.runLog.judge.coverage;
+      if (cov) { coverageSeen++; expect(cov.selected).toBe(r.proposals.length); expect(cov.judged).toBe(r.proposals.filter(p => p.judged).length); }
+    }
+    expect(promoted).toBe(0);
+    expect(coverageSeen).toBeGreaterThan(0);
+  }, 60_000);
+});
