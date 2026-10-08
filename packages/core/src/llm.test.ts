@@ -1,7 +1,7 @@
 // Offline unit tests for the core client hooks (no network, no keys, no global fetch patching).
 import { afterEach, expect, test } from "bun:test";
 import {
-  backoffMs, CerebrasLLM, DEFAULT_TIMEOUT_MS, defaultLLM, endpointsFor, judgeLLM, llmFor, OpenAILLM, parseProvider, recommenderLLM,
+  backoffMs, CerebrasLLM, DEFAULT_TIMEOUT_MS, defaultLLM, endpointsFor, judgeLLM, llmFor, LLMError, OpenAILLM, parseJson, parseProvider, recommenderLLM,
   timeoutFor, usageOf, type ResponseInfo,
 } from "./llm.ts";
 
@@ -165,4 +165,33 @@ test("cost: provider-reported cost wins; OpenAI responses are priced from OPENAI
   const u = usageOf({ model: "gpt-6-luna", usage: { prompt_tokens: 1000, completion_tokens: 2000, prompt_tokens_details: { cached_tokens: 200, cache_write_tokens: 100 } } });
   expect(u.costMicro).toBeCloseTo(1084.5, 6);
   expect(usageOf({ model: "unknown-model", usage: { prompt_tokens: 10, completion_tokens: 10 } }).costMicro).toBe(0);
+});
+
+test("parseJson returns the first balanced value that parses and prefers a ```json block (core-9)", () => {
+  const cases: [string, unknown][] = [
+    ['{"verdict":"ok"}\nNote: I used {placeholders}.', { verdict: "ok" }],
+    ['Here is [my answer]: {"verdict":"ok"}', { verdict: "ok" }],
+    ['<think>maybe {"verdict":"bad"}</think>{"verdict":"ok"}', { verdict: "ok" }],
+    ['{"a":1} {"b":2}', { a: 1 }],
+    ['Sure! [1,2] then {"verdict":"ok"}', { verdict: "ok" }],
+    ['{"verdict":"ok","why":"she said \\"} {\\""}', { verdict: "ok", why: 'she said "} {"' }],
+    ['Draft: {"verdict":"bad"}\n```json\n{"verdict":"ok"}\n```', { verdict: "ok" }],
+    ['```json\n[{"id":1}]\n```', [{ id: 1 }]],
+    ["[1, 2, 3]", [1, 2, 3]],
+  ];
+  for (const [text, want] of cases) expect(parseJson(text)).toEqual(want);
+  // Many unmatched brackets stay fast.
+  const t0 = performance.now();
+  expect(() => parseJson("{".repeat(50_000))).toThrow("no JSON");
+  expect(performance.now() - t0).toBeLessThan(2_000);
+});
+
+test("parseJson errors carry the reply length, never the reply text (core-12)", () => {
+  const reply = "Sam is going through a divorce, so no.";
+  let err: unknown;
+  try { parseJson(reply); } catch (e) { err = e; }
+  expect(err).toBeInstanceOf(LLMError);
+  expect((err as LLMError).code).toBe("no_json");
+  expect(String(err)).toContain(String(reply.length));
+  expect(String(err)).not.toContain("divorce");
 });

@@ -16,6 +16,23 @@ export interface LLM {
   chat(messages: ChatMessage[], opts?: ChatOptions): Promise<string>;
 }
 
+/** Machine-readable reason a call failed. */
+export type LLMErrorCode =
+  | "http" | "network" | "timeout" | "deadline" | "aborted" | "budget" | "bad_response" | "truncated" | "no_json";
+
+/**
+ * Error thrown by the core client and parseJson. The message carries hosts, status codes, codes and
+ * lengths only: never prompt text, model output or provider error bodies (core-12).
+ */
+export class LLMError extends Error {
+  override name = "LLMError";
+  constructor(
+    readonly code: LLMErrorCode,
+    message: string,
+    readonly detail: { host?: string; status?: number; length?: number; retries?: number } = {},
+  ) { super(message); }
+}
+
 /** What `onResponse` receives for every HTTP attempt (including retries and failures). Never contains the API key. */
 export interface ResponseInfo {
   model: string;
@@ -192,11 +209,62 @@ export class CerebrasLLM implements LLM {
   }
 }
 
-/** Parse a JSON object out of a model reply (tolerates code fences / prose). */
+/**
+ * Parse the JSON value out of a model reply. A ```json fenced block wins; otherwise <think> blocks
+ * are dropped and the first balanced `{...}` that parses is returned (else the first balanced
+ * `[...]` that parses). Prose around it, `{placeholders}` and later values are ignored. Errors carry
+ * only the reply length, never its text (core-9, core-12).
+ */
 export function parseJson<T = any>(text: string): T {
-  const m = text.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
-  if (!m) throw new Error(`no JSON in model output: ${text.slice(0, 200)}`);
-  return JSON.parse(m[0]);
+  for (const m of text.matchAll(/```json[ \t]*\r?\n?([\s\S]*?)```/gi)) {
+    const v = firstJsonValue(m[1]!);
+    if (v !== NO_JSON) return v as T;
+  }
+  const v = firstJsonValue(text.replace(/<think>[\s\S]*?<\/think>/gi, " "));
+  if (v === NO_JSON) throw new LLMError("no_json", `no JSON value in model output (${text.length} chars)`, { length: text.length });
+  return v as T;
+}
+
+const NO_JSON = Symbol("no-json");
+/** Bounds the work on adversarial replies (many unmatched brackets). */
+const MAX_JSON_CANDIDATES = 64;
+
+/** Index of the bracket closing the one at `start`, skipping string contents; -1 if unbalanced. */
+function closingIndex(s: string, start: number): number {
+  const stack: string[] = [];
+  let inString = false;
+  for (let i = start; i < s.length; i++) {
+    const c = s[i]!;
+    if (inString) {
+      if (c === "\\") i++;
+      else if (c === '"') inString = false;
+    } else if (c === '"') inString = true;
+    else if (c === "{" || c === "[") stack.push(c === "{" ? "}" : "]");
+    else if (c === "}" || c === "]") {
+      if (stack.pop() !== c) return -1;
+      if (stack.length === 0) return i;
+    }
+  }
+  return -1;
+}
+
+/** First parsing object in `s`, else first parsing array, else NO_JSON. */
+function firstJsonValue(s: string): unknown {
+  let firstArray: unknown = NO_JSON;
+  let tried = 0;
+  for (let i = 0; i < s.length && tried < MAX_JSON_CANDIDATES; i++) {
+    const c = s[i];
+    if (c !== "{" && c !== "[") continue;
+    tried++;
+    const end = closingIndex(s, i);
+    if (end < 0) continue;
+    let v: unknown;
+    try { v = JSON.parse(s.slice(i, end + 1)); } catch { continue; }
+    if (c === "{") return v;
+    if (firstArray === NO_JSON) firstArray = v;
+    i = end; // values inside a parsed array are not top-level candidates
+  }
+  return firstArray;
 }
 
 /**
