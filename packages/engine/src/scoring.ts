@@ -79,7 +79,8 @@ export function computeComponents(w: World, c: Candidate, verdict?: JudgeVerdict
   // benefit before the reciprocal (harmonic / without-misery) aggregation. Not applied when a
   // participant has no structured profile (neutral, not a penalty).
   const cw = cfg.complementarity.weight;
-  const comp = cw > 0 ? complementarity(w, ids) : undefined;
+  const anchor = c.anchor?.type === "intent" ? w.intentById.get(c.anchor.id) : undefined;
+  const comp = cw > 0 ? complementarity(w, ids, anchor) : undefined;
   if (comp) {
     fit = clamp((1 - cw) * fit + cw * comp.pair);
     mb = S.aggregate(ids.map(id => (1 - cw) * clamp(c.benefit[id] ?? 0) + cw * comp.benefit[id]!));
@@ -201,7 +202,7 @@ export function scoreCandidate(w: World, c: Candidate, verdict?: JudgeVerdict | 
   const threshold = thresholdFor(w, c);
   const fv = floorViolation(w, components, verdict);
   const thr = c.exploration ? explorationBar(w, c, threshold) : threshold;
-  const comp = w.cfg.complementarity.weight > 0 ? complementarity(w, c.participants) : undefined;
+  const comp = w.cfg.complementarity.weight > 0 ? complementarity(w, c.participants, c.anchor?.type === "intent" ? w.intentById.get(c.anchor.id) : undefined) : undefined;
   return {
     c, components, score, threshold: thr, verdict, ...(comp ? { complementarity: comp.pair } : {}),
     eligible: !fv && score >= thr,
