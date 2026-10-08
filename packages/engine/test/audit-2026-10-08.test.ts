@@ -7,7 +7,7 @@ import { MatcherScheduler, MemoryProposalStore } from "../src/tick.ts";
 import { eligibilityFor, isHomeEntry, riskTerms } from "../src/filters.ts";
 import { randomWorld } from "../src/testkit.ts";
 import { DAY, HOUR } from "@thenetwork/core";
-import { baseMember, emptyInput, facet, FakeLLM, mkWorld, NOW } from "./helpers.ts";
+import { baseMember, emptyInput, facet, FakeLLM, intent, mkWorld, NOW } from "./helpers.ts";
 
 describe("engine-pipeline-1: exploration never selects judge-rejected configurations", () => {
   test("a judge that says no to everything: no selected proposal carries a rejection reason or the 'no' text", async () => {
@@ -168,4 +168,28 @@ describe("engine-pipeline-7 / -8: pass 2 can only remove; judge coverage is repo
     expect(promoted).toBe(0);
     expect(coverageSeen).toBeGreaterThan(0);
   }, 60_000);
+});
+
+describe("engine-pipeline-12: complementarity is neutral for wants outside the taxonomy", () => {
+  const pair = (want: string, aTags: string[], bOffer: string, bTags: string[]) => {
+    const inp = emptyInput(NOW);
+    inp.members.push(baseMember("a"), baseMember("b"));
+    inp.presence.push({ memberId: "a", city: "sf", type: "home", areas: ["mission"] }, { memberId: "b", city: "sf", type: "home", areas: ["mission"] });
+    inp.facets.push(facet("a", 0, "interest", aTags.join(" "), aTags), facet("b", 0, "offer", bOffer, bTags), facet("b", 1, "interest", bTags.join(" "), bTags));
+    inp.intents.push(intent("a", want, "hobby"));
+    return inp;
+  };
+  for (const [want, at, bo, bt] of [
+    ["learn to speak spanish this season", ["spanish"], "teaches spanish conversation to beginners", ["spanish"]],
+    ["find a book club to read novels with", ["books"], "runs a monthly book club for novels", ["books"]],
+    ["learn to knit sweaters", ["knitting"], "teaches knitting sweaters to beginners", ["knitting"]],
+  ] as const) {
+    test(`off-taxonomy want scores the same with or without complementarity: ${want}`, async () => {
+      const score = async (weight?: number) => (await runEngine(pair(want, [...at], bo, [...bt]), { seed: 1, ...(weight === undefined ? {} : { complementarity: { weight } }) }))
+        .runLog.scored.find(s => s.generator === "intent_to_capability")?.score;
+      const on = await score(), off = await score(0);
+      expect(on).toBeDefined();
+      expect(on).toBe(off!);
+    });
+  }
 });

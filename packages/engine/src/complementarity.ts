@@ -25,6 +25,12 @@ export interface StructuredProfile {
   pools: Set<string>;
   /** False when nothing structured is known: complementarity is then not applied (neutral). */
   known: boolean;
+  /**
+   * True when a live intent maps to no objective (a want outside the taxonomy). Complementarity is
+   * then not applied either: the taxonomy cannot score that want, so it must not count as unmet
+   * (engine-pipeline-12; the taxonomy is the simulator oracle's own vocabulary).
+   */
+  offTaxonomy: boolean;
 }
 
 /** Goal / desire facets are weaker evidence of a current want than a live intent. */
@@ -54,10 +60,15 @@ export function buildProfile(mi: MemberIndex, O: Pick<Ontology, "objectivesFor">
     const cur = wants.find(x => x.def.id === def.id);
     if (!cur) wants.push({ def, weight }); else cur.weight = Math.max(cur.weight, weight);
   };
-  for (const i of mi.intents) for (const def of O.objectivesFor(i.objective, i.details, i.category)) add(def, 1);
+  let offTaxonomy = false;
+  for (const i of mi.intents) {
+    const defs = O.objectivesFor(i.objective, i.details, i.category);
+    if (!defs.length) offTaxonomy = true;
+    for (const def of defs) add(def, 1);
+  }
   for (const f of mi.match) if (f.kind === "goal" || f.kind === "desire") for (const def of O.objectivesFor(f.value.replace(/^wants to /i, ""))) add(def, GOAL_WEIGHT);
   const pools = new Set(wants.flatMap(x => (x.def.pool ? [x.def.pool] : [])));
-  return { interests, caps, wants, pools, known: interests.size + caps.size + wants.length > 0 };
+  return { interests, caps, wants, pools, known: interests.size + caps.size + wants.length > 0, offTaxonomy };
 }
 
 /** Both members' romance preferences admit each other (opt-in, stated orientation, age range). */
@@ -118,11 +129,12 @@ export interface Complementarity {
 
 /**
  * Structured complementarity of a configuration, or undefined when it does not apply (fewer than
- * two participants, or a participant with no structured profile at all: unknown is neutral, so
- * low-data members are not pushed down for what the Network has not asked them yet).
+ * two participants, a participant with no structured profile at all, or one with a live want the
+ * taxonomy cannot read: unknown is neutral, so low-data members and off-taxonomy wants are not
+ * pushed down for what the taxonomy does not cover).
  */
 export function complementarity(w: World, ids: MemberId[]): Complementarity | undefined {
-  if (ids.length < 2 || ids.some(id => !w.get(id) || !profileOf(w, id).known)) return undefined;
+  if (ids.length < 2 || ids.some(id => !w.get(id) || !profileOf(w, id).known || profileOf(w, id).offTaxonomy)) return undefined;
   const benefit: Record<MemberId, number> = {};
   let pairSum = 0, pairs = 0;
   for (const a of ids) {
