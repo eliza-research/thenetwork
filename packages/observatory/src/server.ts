@@ -42,7 +42,9 @@ import {
   AccessVerifier, allowed, appsFor, authenticateStaff, canCrossApp, createAudit, hasEverywhere, parseRoles, parseTokenGrants, PgStaffRoles, rolesFor, ssoGrants, staffUser,
   type AccessConfig, type AuditSink,
 } from "./staff.ts";
-import { GameSource, type GameOptions } from "./sources/game.ts";
+// Game mode is imported only when used: it reads the synthetic data in scripts/synthetic, which the
+// deployed image (real mode only) does not contain.
+import type { GameOptions } from "./sources/game.ts";
 import { HIDDEN_MESSAGE, RealSource, type RealOptions } from "./sources/real.ts";
 import type { DataSource } from "./sources/source.ts";
 import type { AppHealth, AuditEntry, ControlCommand, EnvInfo, Mode, ObsDelta, ObsMember, RevealGrant, SafetyAction, StaffRole, StaffUser } from "./types.ts";
@@ -196,7 +198,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
     if (have) return have;
     if (!starting.has(k)) starting.set(k, (async () => {
       const s: DataSource = m === "game"
-        ? new GameSource({ ...opts.game, app })
+        ? new (await import("./sources/game.ts")).GameSource({ ...opts.game, app })
         : new RealSource({ ...opts.real, app, ...(opts.real?.appUrls?.[app] ? { appUrl: opts.real.appUrls[app] } : {}) });
       await s.init();
       known.set(k, new Map(s.state().members.map(x => [x.id, x])));

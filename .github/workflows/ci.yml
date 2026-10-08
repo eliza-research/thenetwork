@@ -88,6 +88,8 @@ jobs:
           for d in packages/*/; do [ "$d" = "packages/plugin-network/" ] || pkgs+=("$d"); done
           bun test --conditions eliza-source "${pkgs[@]}" prototypes sites deploy scripts ./tests/e2e --timeout 120000
         timeout-minutes: 20
+      - name: Plugin packages match their sources (OpenAI and Claude manifests, SKILL.md snapshots)
+        run: bun run plugins/build.ts --check
       - name: Production build of the four sites (refuses draft legal text and unfilled placeholders)
         run: bun run sites/sites.ts
         env:
