@@ -8,3 +8,4 @@ export * from "./world.ts";
 export * from "./metrics.ts";
 export * from "./baselines.ts";
 export * from "./packMatcher.ts";
+export * from "./gates.ts";
