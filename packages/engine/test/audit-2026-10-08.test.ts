@@ -5,7 +5,8 @@ import { resolveConfig } from "../src/config.ts";
 import { runEngine } from "../src/engine.ts";
 import { isHomeEntry, riskTerms } from "../src/filters.ts";
 import { randomWorld } from "../src/testkit.ts";
-import { FakeLLM } from "./helpers.ts";
+import { DAY, HOUR } from "@thenetwork/core";
+import { baseMember, emptyInput, facet, FakeLLM, NOW } from "./helpers.ts";
 
 describe("engine-pipeline-1: exploration never selects judge-rejected configurations", () => {
   test("a judge that says no to everything: no selected proposal carries a rejection reason or the 'no' text", async () => {
@@ -73,4 +74,28 @@ describe("engine-pipeline-4: curated risk and home-entry corpus", () => {
   ];
   for (const t of home) test(`home entry: ${t}`, () => expect(isHomeEntry(cfg, t)).toBe(true));
   test("not home entry: a park cleanup", () => expect(isHomeEntry(cfg, "help with a park cleanup on Saturday")).toBe(false));
+});
+
+describe("engine-pipeline-15: romance is pairs-only and needs stated preferences everywhere", () => {
+  const world = (withPrefs: boolean) => {
+    const inp = emptyInput(NOW);
+    for (const id of ["a", "b", "c", "d", "e"]) {
+      inp.members.push(baseMember(id, { prefs: { romanceOptIn: true, categoriesOptIn: ["romance", "social"] } as never }));
+      inp.presence.push({ memberId: id, city: "sf", type: "home", areas: ["mission"] });
+      inp.facets.push(facet(id, 0, "interest", "salsa dancing nights", ["salsa"]));
+      if (withPrefs) inp.facets.push({ ...facet(id, 1, "preference", "x", ["romance:is:q", "romance:seeks:q"]), scope: "matchable" });
+    }
+    inp.events.push({ id: "ev1", title: "Salsa dancing singles night", description: "salsa dancing", tags: ["salsa"], category: "romance", city: "sf", start: NOW + 2 * DAY, end: NOW + 2 * DAY + 3 * HOUR });
+    return inp;
+  };
+  test("a romance-category event never yields a romance configuration of more than two people", async () => {
+    const r = await runEngine(world(true), { seed: 1, thresholds: { byGenerator: { event_anchor: 0.1 } } });
+    expect(r.runLog.scored.filter(s => s.key.includes(":ev1:") && s.participants.length > 2).length).toBe(0);
+    expect(r.runLog.funnel.rejectedBy.romance_group).toBe(1);
+    expect(r.proposals.filter(p => p.category === "romance" && p.participants.length !== 2)).toEqual([]);
+  });
+  test("no romance proposal for members without stated preferences (any generator)", async () => {
+    const r = await runEngine(world(false), { seed: 1, thresholds: { byGenerator: { event_anchor: 0.1 } } });
+    expect(r.proposals.filter(p => p.category === "romance")).toEqual([]);
+  });
 });

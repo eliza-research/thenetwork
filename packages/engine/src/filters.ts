@@ -17,7 +17,7 @@ export type FilterReason =
   | "contribution_budget" | "category_quota" | "category_cooldown" | "reliability_holdout"
   | "blocked" | "negative_feedback_cooldown" | "pair_cooldown" | "active_duplicate"
   | "romance_incompatible" | "dealbreaker" | "high_risk" | "home_entry_rule"
-  | "no_presence_overlap" | "group_size" | "duplicate_participant" | (string & {});
+  | "no_presence_overlap" | "group_size" | "romance_group" | "duplicate_participant" | (string & {});
 
 import type { MemberCheck } from "./pack.ts";
 export type { MemberCheck };
