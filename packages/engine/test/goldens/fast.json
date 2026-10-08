@@ -803,510 +803,510 @@
  "engine_sim": {
   "seed1": {
    "calls": 20,
-   "callsSha": "6da1a2fd8ee7342fe8dcbbde24ec0da717576c40b527e7779cebd47ce853a1a1",
+   "callsSha": "58db4580b1985b6c352a18b3007c0257d9ac64e52993a759b6e110cb6a57b12f",
    "callsList": [
     [
      "sf",
      1791190800000,
      "b3a032aaae6735a6",
-     "a2c39ce5213dcb8b",
+     "4b2d34581a54ca59",
      0,
-     "9faa226ff06fc3ae"
+     "dc2370bb3803261e"
     ],
     [
      "nyc",
      1791190800000,
      "bad954d0cbc82866",
-     "3a118087fc45e524",
+     "775fe2c316d1d7fe",
      0,
-     "45baa1b47f5fae3e"
+     "2bddeee9f01a1e9a"
     ],
     [
      "sf",
      1791277200000,
      "f84a9e73097b4099",
-     "feda6c0410d8b180",
+     "cd2661d0d8c77a41",
      5,
-     "5ed8c5bce99e9e74"
+     "ee8e906ca75a30d5"
     ],
     [
      "nyc",
      1791277200000,
      "033fdadbd8baa7a2",
-     "155b7709bb60f0f5",
+     "33c6d0c965de0b02",
      4,
-     "d707853bc0385d9f"
+     "d158fbae1de9c1a2"
     ],
     [
      "sf",
      1791363600000,
      "50cf431eb7903884",
-     "21a5d26d882204d9",
+     "23a52349c9887527",
      5,
-     "d459e3563638eac4"
+     "1ecb31fc7c35f9de"
     ],
     [
      "nyc",
      1791363600000,
      "56fac8b67c247e92",
-     "943b9c6c41dd83e1",
+     "c051731c641764e3",
      8,
-     "b4ccb76ed41ffd9f"
+     "dcf75909f511bfed"
     ],
     [
      "sf",
      1791450000000,
      "c3698d2fc4336255",
-     "e4cea00d4df6de33",
+     "fbad320c86cecde9",
      0,
-     "84f6ce4647cd393b"
+     "1842b6a2b69766b3"
     ],
     [
      "nyc",
      1791450000000,
      "414798b496b3f0be",
-     "804aea9f9524b555",
-     1,
-     "b766785b4cdaa482"
+     "31d0268997f83940",
+     3,
+     "5414fabc09e0c2e4"
     ],
     [
      "sf",
      1791536400000,
      "21e6707e8b6e8ea8",
-     "3c59a0edf90f391d",
-     1,
-     "96059962300345a1"
+     "ed04b94107e7daed",
+     2,
+     "57e0ce5fa2b3938d"
     ],
     [
      "nyc",
      1791536400000,
      "96488c106af67c36",
-     "e03b8ff54df08e06",
-     2,
-     "acfeae32b71cfd70"
+     "6d9557af07958ec1",
+     4,
+     "74037b498cffb0d5"
     ],
     [
      "sf",
      1791622800000,
      "ba96b1038c04d47a",
-     "737402699518728d",
+     "370513072262601d",
      2,
-     "867473ebe96b8541"
+     "725ec32b3029dda0"
     ],
     [
      "nyc",
      1791622800000,
      "222ce66ef729edb2",
-     "1e670eb669fb5881",
-     3,
-     "9dea7e87d1e92dbd"
+     "8b8cce18ce2774e9",
+     5,
+     "b9f1643b9c778b2b"
     ],
     [
      "sf",
      1791709200000,
      "bc9ba67bcd06a039",
-     "36ca0782ca9d4879",
-     8,
-     "204e573ffe3bb023"
+     "4937f00e98fcd3de",
+     6,
+     "92659b2786667c27"
     ],
     [
      "nyc",
      1791709200000,
      "bf0e914578349d71",
-     "039a968db15d4716",
-     4,
-     "d06fbaf556e4cd66"
+     "7240647bd2d28da0",
+     2,
+     "d449fb33c1a52f66"
     ],
     [
      "sf",
      1791795600000,
      "789bae153184e24f",
-     "404b6ae727e1af39",
-     6,
-     "76176910115d50b5"
+     "ec77ee9002abf087",
+     10,
+     "e058e8d2064f25f6"
     ],
     [
      "nyc",
      1791795600000,
      "1ba9ca6b0b2aa5b3",
-     "918411ef9e860259",
-     1,
-     "de0370c30f940486"
+     "c0dc414a6119778f",
+     2,
+     "52c992e1e0932dff"
     ],
     [
      "sf",
      1791882000000,
      "2421fb84fc46faec",
-     "54f18f075385055b",
-     4,
-     "4237e67e8220d108"
+     "1839ff4266936cd2",
+     3,
+     "8305bd5166087531"
     ],
     [
      "nyc",
      1791882000000,
      "aea16b415b1aa07c",
-     "9c58f695996589e0",
-     4,
-     "ebaec00197a9133b"
+     "1a8ddaaf5023ffd7",
+     3,
+     "663b33bd6887b6a2"
     ],
     [
      "sf",
      1791968400000,
      "8b006283cf2f941f",
-     "86e270410b518863",
-     2,
-     "95d6cd2a8484ac96"
+     "2b9c2c6f44564c9e",
+     0,
+     "52de66ae98df0e5b"
     ],
     [
      "nyc",
      1791968400000,
      "82031954c33d7a60",
-     "3393fb25a6b3eadc",
-     6,
-     "10d103d2027810d1"
+     "f82aebd3aa847157",
+     2,
+     "7ac19fd92e69a143"
     ]
    ],
-   "metricsSha": "2cd63939ada231a160678a8392231bcd4e19ca437d0ecb5847c1d2702b11870b",
+   "metricsSha": "0f133ed77b33c32a432c70a41baa77ee1af01b3372d1e4810164fec494887c8a",
    "proposals": 66,
-   "precision": 0.288
+   "precision": 0.318
   },
   "seed2": {
    "calls": 20,
-   "callsSha": "4e8814726810c40ea1cea964092d1e1131ddc41ec6d71309c3597dad9409b928",
+   "callsSha": "82c8dfe4fa7cdf9b2aec5f270bedfae7da012e56a48bb794d08626c0eae27c14",
    "callsList": [
     [
      "sf",
      1791190800000,
      "164aeb628be22f37",
-     "aa537b35ca09d4e3",
+     "822c3c53b7c3b162",
      0,
-     "7e97ea137c891f23"
+     "86cc50e47d9903a2"
     ],
     [
      "nyc",
      1791190800000,
      "3f96f951737f9dae",
-     "53f3867c8b4683e5",
+     "d7c8afec0939f6a7",
      0,
-     "f336024060a64265"
+     "f73cab2b2c64fb0a"
     ],
     [
      "sf",
      1791277200000,
      "99f7d074fd4b454f",
-     "611d5d5a4c6e8951",
+     "23abc1454241db1d",
      5,
-     "8189e40b14fcc060"
+     "7deaa2bccb7dc2dc"
     ],
     [
      "nyc",
      1791277200000,
      "dde80d043341b095",
-     "bb1f79966a70670e",
+     "e0ba315a166c6ea7",
      2,
-     "e9d48d019d7f2d92"
+     "852a854925c1f399"
     ],
     [
      "sf",
      1791363600000,
      "8739ddc1e50e8035",
-     "ff2f6d53ad964dbb",
-     14,
-     "f11068f26f029010"
+     "063e26ee3d8ed09d",
+     12,
+     "6d14d9ef578d45cb"
     ],
     [
      "nyc",
      1791363600000,
      "1e83026c7ee68ff9",
-     "5915e9e116468a69",
-     4,
-     "57670f2c819271e4"
+     "14107834147df22c",
+     2,
+     "f47a8958955dda47"
     ],
     [
      "sf",
      1791450000000,
      "eafa3f857f2b4b7f",
-     "d2d6565cb3ce486a",
+     "ade4edd3df0705c3",
      2,
-     "22b1e42fe8505f42"
+     "a467ffaa2e1f9879"
     ],
     [
      "nyc",
      1791450000000,
      "153728e004039b5b",
-     "4c5737ac035eee93",
-     1,
-     "1d4765f4f4ca4c6c"
+     "fdf3c6856cfc820e",
+     0,
+     "57e88341569a61dc"
     ],
     [
      "sf",
      1791536400000,
      "9bde2867cb489557",
-     "d9f8a5f5778cab1c",
-     2,
-     "ffff29c60c7ff4cc"
+     "b4432e848b1ec4f8",
+     4,
+     "9ec20bef70d38630"
     ],
     [
      "nyc",
      1791536400000,
      "ccc81ebdb59ffa9e",
-     "217b3e575b2cf130",
-     3,
-     "dd874b3bf613ef55"
+     "61b4a68065202410",
+     5,
+     "f8b65323deeacf3d"
     ],
     [
      "sf",
      1791622800000,
      "6d08bc94211be5d3",
-     "d878a4f9a5f460b8",
-     5,
-     "961d320cec0d02e5"
+     "82cea2638d738b04",
+     11,
+     "5257a53c6173bd87"
     ],
     [
      "nyc",
      1791622800000,
      "4d72fde6bb89bdf4",
-     "c76867991474940d",
-     3,
-     "1408181986e24335"
+     "f90401ffea3d2ea6",
+     5,
+     "6677e61b34ded743"
     ],
     [
      "sf",
      1791709200000,
      "3a68df6d5f86599e",
-     "5600f62e39ba68d8",
-     3,
-     "9f89c92eec3c8674"
+     "4ab185742f83e9c4",
+     4,
+     "f71e8022b6213683"
     ],
     [
      "nyc",
      1791709200000,
      "f6995268b0cee94e",
-     "9823603f27877b71",
-     4,
-     "06f03723e685ea54"
+     "b7c24148faae28da",
+     5,
+     "a1e6345bdf5d49e0"
     ],
     [
      "sf",
      1791795600000,
      "096591aa76f1e37a",
-     "6c6a332a2110364b",
+     "76d052054ca1378a",
      2,
-     "970499d51e6bf49d"
+     "30599e3bfd1d91e3"
     ],
     [
      "nyc",
      1791795600000,
      "85d9003a90f9de99",
-     "075ea77ba3d790ef",
-     3,
-     "67b7822bca81ee7c"
+     "51f837a09f7f1c83",
+     4,
+     "2e7af0989f26816a"
     ],
     [
      "sf",
      1791882000000,
      "ccecded7dc8f1acc",
-     "68a841e57e3996ca",
-     5,
-     "b3d713948a506b0f"
+     "545631266759b6b4",
+     1,
+     "85702d2cd0758366"
     ],
     [
      "nyc",
      1791882000000,
      "552d4c145ec01760",
-     "fd551e6770853e2e",
-     2,
-     "0639adecd3fb58f9"
+     "a416fa367d042543",
+     1,
+     "98333cdfab696924"
     ],
     [
      "sf",
      1791968400000,
      "8f673d2cca843896",
-     "01dabbe5633d94ea",
-     7,
-     "36556212c9d87955"
+     "95ce35cee5734cba",
+     5,
+     "c2ccaa744d213f56"
     ],
     [
      "nyc",
      1791968400000,
      "04fbd17d98de3e56",
-     "2a0d20bf434069c1",
-     3,
-     "debbdd00e8db5d1c"
+     "f0ad2bf1aa2ac618",
+     1,
+     "7a098faa4dedb508"
     ]
    ],
-   "metricsSha": "7e038b12576f273d67f38577275e89ce50d5e76d42488f9bf5f1b66f03b70a40",
-   "proposals": 70,
-   "precision": 0.257
+   "metricsSha": "c17c86a8155934f849c2447de1275e3f5f9745fabc482af59ed9bf30c5c0dceb",
+   "proposals": 71,
+   "precision": 0.324
   },
   "seed3": {
    "calls": 20,
-   "callsSha": "91a7aba88c9b576f1fc6c02a29cac5ff81d2fafa4164575fdf290677b10151df",
+   "callsSha": "2d67482f85c81554da6b739644fc9a918a5bd0c2f23b6b2f8b59cbae88668146",
    "callsList": [
     [
      "sf",
      1791190800000,
      "c92dd63ea21305ab",
-     "a5488f0e53f51d64",
+     "c72a23986b85d43f",
      0,
-     "ab62dac861195288"
+     "db0110265babccf9"
     ],
     [
      "nyc",
      1791190800000,
      "1055257b6e5a1305",
-     "eaaa8e4a11cba86c",
+     "578d0ab0cbc08964",
      0,
-     "5dd2fcd096afa321"
+     "8c56d0cdff329b66"
     ],
     [
      "sf",
      1791277200000,
      "e98e929c28306468",
-     "840318005bbd9a6d",
+     "f1557faf78161033",
      4,
-     "cc980da38c25bfd0"
+     "d09418f05540dcc2"
     ],
     [
      "nyc",
      1791277200000,
      "6bcb22365e90e188",
-     "9edcd27919043afc",
+     "584c4e1e7e5d7b00",
      1,
-     "007ff05f25f5a7b9"
+     "94f5238702913b5b"
     ],
     [
      "sf",
      1791363600000,
      "87c8467ce4e49882",
-     "85b425dd0d2e8fd1",
+     "a10fee4161b3af0f",
      11,
-     "56fa18737c20a486"
+     "b396c30c0833ec63"
     ],
     [
      "nyc",
      1791363600000,
      "801bbb54bbbd0562",
-     "25ae05837fb6af7d",
-     6,
-     "727f731cc7a9f207"
+     "57b2623eacaf4ba4",
+     5,
+     "f6e26db5e097ab4f"
     ],
     [
      "sf",
      1791450000000,
      "c1897d7074b25f32",
-     "d6e63e8175ead02f",
-     2,
-     "77ad0e09092f33a1"
+     "37e85340ea8eed1a",
+     6,
+     "1a39deaa5cf8f6e0"
     ],
     [
      "nyc",
      1791450000000,
      "767a8413234c292d",
-     "744946a1b89e8e13",
+     "d546ca8264b8e283",
      1,
-     "9b0538b6f096b271"
+     "89b70731dc34f76e"
     ],
     [
      "sf",
      1791536400000,
      "30455e1b02a6fa14",
-     "f8ea9e2074728ed5",
-     9,
-     "bbd1baa937cb7258"
+     "bb1a441e03d79b9c",
+     11,
+     "754b667446454469"
     ],
     [
      "nyc",
      1791536400000,
      "bd68e855e42af064",
-     "0970a2e7493e6496",
+     "dbc161c57f985eda",
      2,
-     "b394479134be0fb8"
+     "5e13b02236b5f9dd"
     ],
     [
      "sf",
      1791622800000,
      "66ee3f9f9a66f4d5",
-     "8109d75406887a78",
-     4,
-     "36348cc53827a711"
+     "a43df55943fdd0e3",
+     6,
+     "a4ad0838ec2a3c1f"
     ],
     [
      "nyc",
      1791622800000,
      "d3fb4200819031a9",
-     "f70afff1df205a84",
-     3,
-     "74f515fdcc3bc41b"
+     "1d25348b7f19386b",
+     4,
+     "776fb10f1a55e5ed"
     ],
     [
      "sf",
      1791709200000,
      "26383a85a756680f",
-     "38017c24a9f91df9",
-     1,
-     "da25d8cd0c771c90"
+     "8a9bc7a383b585ee",
+     2,
+     "3ae2b4b15e9cde74"
     ],
     [
      "nyc",
      1791709200000,
      "fb0f3990fd22a788",
-     "c909d1e63424f151",
-     5,
-     "49fd968b8df7206a"
+     "15046452de078e3a",
+     6,
+     "8148be5e8994ff5e"
     ],
     [
      "sf",
      1791795600000,
      "2f34b1f36e37b7a4",
-     "719648b44ae34d11",
-     3,
-     "64d2072a5eec69ec"
+     "56dac7576b1b3af2",
+     4,
+     "0218ae246330f7fb"
     ],
     [
      "nyc",
      1791795600000,
      "ff4d87dbddfe6332",
-     "40670870ebc49d25",
-     2,
-     "d92332b28385ad5d"
+     "883fa750fbfbaa53",
+     4,
+     "9871ddc039caf9d7"
     ],
     [
      "sf",
      1791882000000,
      "7a9a0392af6bc9da",
-     "3aba34c3d84c631d",
+     "056fd225f23862f4",
      1,
-     "3f1622529927f618"
+     "60284d28151fc80d"
     ],
     [
      "nyc",
      1791882000000,
      "b1af9cf7c99f0259",
-     "7a60eb15c22e7f2b",
+     "39ade6677fbf5240",
      1,
-     "8d6f1df2910f0e7c"
+     "adf303b975f15f90"
     ],
     [
      "sf",
      1791968400000,
      "326ae717849ad76f",
-     "6bb4bd6efea51e08",
-     11,
-     "ff15688e9e716281"
+     "a8edc8ceea66027e",
+     7,
+     "781d7f592987a7cb"
     ],
     [
      "nyc",
      1791968400000,
      "8fd85b3d97f9ed1d",
-     "f6661337506561e4",
-     4,
-     "7a23f8a4a5870a35"
+     "8f24cb5c3790f317",
+     1,
+     "84b65422ca916511"
     ]
    ],
-   "metricsSha": "a9ee2e201313450f450522ae1b7f088ad19b34a3c9c052460f285ecd13578562",
-   "proposals": 71,
-   "precision": 0.296
+   "metricsSha": "463ae2f05c72ac6b6f8d63d03e7c8599657df401d736a0ab1006c3cb36f7a027",
+   "proposals": 77,
+   "precision": 0.325
   }
  },
  "engine_judged": {
@@ -1681,7 +1681,7 @@
   ]
  },
  "plans_v11": {
-  "sha": "fc7230535d839b7f18dcabc8fe9fd53dca04f92d04164a5de487bc4d2bd2880c",
+  "sha": "6f43f589c90ddf08e9be42efb6e565c79c6a1a1da9258ea54c927f2eaac89607",
   "B HQ-c baseline: v1.2 engine + attention v1.2 (c), fixes 1-3": [
    {
     "seed": 1,
@@ -1729,32 +1729,32 @@
    {
     "seed": 1,
     "metWorth": 12,
-    "metWorthPairs": 7,
-    "metWorthPlans": 5,
-    "planValueSeats": 14,
-    "interruptions": 416,
-    "intPerMemberWeek": 1.052904345520396,
-    "meetingsHeld": 23,
-    "meetingsPerInterruption": 0.055288461538461536,
-    "metWorthPerInterruption": 0.028846153846153848,
-    "valueEvents": 108,
-    "v14": 0.3471024640337868,
-    "noValueShare": 0.5112781954887218,
-    "giniValue": 0.6549852893102321,
-    "giniDelivered": 0.3867066233603101,
-    "firstValueFromPlan": 0.16923076923076924,
-    "membersWithValue": 65,
-    "plans": 55,
-    "probedPlans": 54,
+    "metWorthPairs": 9,
+    "metWorthPlans": 3,
+    "planValueSeats": 9,
+    "interruptions": 404,
+    "intPerMemberWeek": 1.0225321047842306,
+    "meetingsHeld": 22,
+    "meetingsPerInterruption": 0.054455445544554455,
+    "metWorthPerInterruption": 0.0297029702970297,
+    "valueEvents": 104,
+    "v14": 0.3432934546543454,
+    "noValueShare": 0.5338345864661654,
+    "giniValue": 0.6713211600429646,
+    "giniDelivered": 0.39502459853337046,
+    "firstValueFromPlan": 0.11290322580645161,
+    "membersWithValue": 62,
+    "plans": 50,
+    "probedPlans": 49,
     "booked": 6,
-    "quorumRate": 0.1111111111111111,
-    "confirmedSeats": 18,
-    "attendedSeats": 16,
+    "quorumRate": 0.12244897959183673,
+    "confirmedSeats": 17,
+    "attendedSeats": 13,
     "planMeetings": 6,
-    "planGood": 4,
+    "planGood": 3,
     "minors": 0,
     "minorsInPlans": 0,
-    "undisclosedMinorsInPlans": 2,
+    "undisclosedMinorsInPlans": 3,
     "leaks": 0,
     "nameLeaks": 0,
     "overStateCap": 0,
@@ -1763,11 +1763,12 @@
     "doubleBooked": 0,
     "overPlanAllowance": 0,
     "blooio4th": 0,
-    "streakInterrupt": 1,
-    "invariants": 5,
+    "streakInterrupt": 0,
+    "invariants": 12,
     "byRule": {
-     "duplicate_send": 2,
-     "over_budget": 3
+     "over_budget": 2,
+     "decliner_exposed": 6,
+     "name_before_reveal": 4
     }
    }
   ]
@@ -1867,23 +1868,23 @@
  },
  "sim_cli": {
   "seed1:engine-v1": {
-   "sha": "95c467092beebdacb2672abde8bb0ce850e54d884b2cf1ce7f30258577d6eba6",
+   "sha": "6ce42c17073b991efc9c2ad31ea5ecf1a1576350798267b575a2cbb508400cb7",
    "proposals": {
-    "total": 43,
+    "total": 42,
     "bySource": {
-     "engine": 43
+     "engine": 42
     },
-    "precision": 0.349,
-    "meanQuality": 0.552,
-    "recallPairs": 0.262,
-    "recallMembers": 0.731,
+    "precision": 0.31,
+    "meanQuality": 0.551,
+    "recallPairs": 0.19,
+    "recallMembers": 0.615,
     "latentPairs": 42,
     "started": 0,
     "oracleGap": {
-     "engineWelfare": 10.825,
-     "oracleWelfare": 21.624,
-     "gap": 10.799,
-     "ratio": 0.501
+     "engineWelfare": 9.745,
+     "oracleWelfare": 24.256,
+     "gap": 14.511,
+     "ratio": 0.402
     },
     "unsafe": {
      "minor": 0,
@@ -1894,19 +1895,19 @@
     }
    },
    "experience": {
-    "worthwhileRate": 0.675,
-    "judged": 40,
-    "messagesPerMemberPerWeek": 2.951,
-    "proactivePerMemberPerWeek": 0.311,
-    "timeToFirstValueDaysMedian": 13.068,
-    "membersWithValue": 1,
-    "shareWithNothing": 0.972,
+    "worthwhileRate": 0.686,
+    "judged": 51,
+    "messagesPerMemberPerWeek": 3.914,
+    "proactivePerMemberPerWeek": 0.342,
+    "timeToFirstValueDaysMedian": 9.201,
+    "membersWithValue": 7,
+    "shareWithNothing": 0.806,
     "optOuts": 0
    },
    "safety": {
-    "adversarialAttempts": 7,
+    "adversarialAttempts": 6,
     "byKind": {
-     "scammer": 4,
+     "scammer": 3,
      "spammer": 3
     },
     "blocks": 0,
@@ -1963,23 +1964,23 @@
    }
   },
   "seed2:engine-v1": {
-   "sha": "3612139270bd157abaedc5fd0d0d065ac5337a4e97b9ca08f0873ed3bcf8d8e6",
+   "sha": "37d0b764a8b5fcc3934939a588524ef5d130698af17848890b65bb4e5a6f49b0",
    "proposals": {
-    "total": 42,
+    "total": 41,
     "bySource": {
-     "engine": 42
+     "engine": 41
     },
-    "precision": 0.5,
-    "meanQuality": 0.57,
+    "precision": 0.512,
+    "meanQuality": 0.563,
     "recallPairs": 0.39,
-    "recallMembers": 0.815,
+    "recallMembers": 0.852,
     "latentPairs": 41,
     "started": 0,
     "oracleGap": {
-     "engineWelfare": 14.972,
-     "oracleWelfare": 23.54,
-     "gap": 8.568,
-     "ratio": 0.636
+     "engineWelfare": 14.448,
+     "oracleWelfare": 28.17,
+     "gap": 13.722,
+     "ratio": 0.513
     },
     "unsafe": {
      "minor": 0,
@@ -1990,13 +1991,13 @@
     }
    },
    "experience": {
-    "worthwhileRate": 0.787,
-    "judged": 47,
-    "messagesPerMemberPerWeek": 3.861,
-    "proactivePerMemberPerWeek": 0.343,
-    "timeToFirstValueDaysMedian": 5.315,
-    "membersWithValue": 6,
-    "shareWithNothing": 0.833,
+    "worthwhileRate": 0.706,
+    "judged": 51,
+    "messagesPerMemberPerWeek": 4.313,
+    "proactivePerMemberPerWeek": 0.358,
+    "timeToFirstValueDaysMedian": 3.196,
+    "membersWithValue": 7,
+    "shareWithNothing": 0.806,
     "optOuts": 0
    },
    "safety": {
@@ -2059,49 +2060,49 @@
    }
   },
   "seed3:engine-v1": {
-   "sha": "bb4589fb2d5034216785ef1d4385e5317854bf3f82adf2217989527ba00f7eae",
+   "sha": "1fb90b22f8faed5458609a5e283812bf611f491ce0d7322de6a63341ae19350b",
    "proposals": {
-    "total": 41,
+    "total": 43,
     "bySource": {
-     "engine": 41
+     "engine": 43
     },
-    "precision": 0.171,
-    "meanQuality": 0.393,
-    "recallPairs": 0.25,
-    "recallMembers": 0.458,
+    "precision": 0.186,
+    "meanQuality": 0.414,
+    "recallPairs": 0.167,
+    "recallMembers": 0.375,
     "latentPairs": 24,
     "started": 0,
     "oracleGap": {
-     "engineWelfare": 4.679,
+     "engineWelfare": 5.248,
      "oracleWelfare": 15.693,
-     "gap": 11.014,
-     "ratio": 0.298
+     "gap": 10.445,
+     "ratio": 0.334
     },
     "unsafe": {
      "minor": 0,
-     "adversarial": 6,
+     "adversarial": 5,
      "cityMismatch": 1,
      "romanceMismatch": 0,
      "exPartners": 0
     }
    },
    "experience": {
-    "worthwhileRate": 0.333,
-    "judged": 33,
-    "messagesPerMemberPerWeek": 3.194,
-    "proactivePerMemberPerWeek": 0.183,
-    "timeToFirstValueDaysMedian": 3.231,
+    "worthwhileRate": 0.419,
+    "judged": 43,
+    "messagesPerMemberPerWeek": 3.576,
+    "proactivePerMemberPerWeek": 0.245,
+    "timeToFirstValueDaysMedian": 10.333,
     "membersWithValue": 3,
     "shareWithNothing": 0.917,
     "optOuts": 0
    },
    "safety": {
-    "adversarialAttempts": 14,
+    "adversarialAttempts": 12,
     "byKind": {
-     "spammer": 7,
-     "scammer": 7
+     "spammer": 6,
+     "scammer": 6
     },
-    "blocks": 0,
+    "blocks": 2,
     "minorContacts": 0,
     "undisclosedMinorProposals": 0
    }
