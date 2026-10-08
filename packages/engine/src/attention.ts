@@ -33,6 +33,10 @@ import type {
   AttentionItem, AttentionLedgerEntry, CadencePrefs, Effort, EngineProposal, HeldItem, HoldReason, ItemKind, LedgerKind, Role,
 } from "./types.ts";
 import { CONTRIBUTOR_ROLES } from "./types.ts";
+import type { AppPack } from "./pack.ts";
+import { DEFAULT_ENJOY_BY_CATEGORY, DEFAULT_ENJOY_KNOTS } from "./packs/network/calibrator.ts";
+import { GENERIC_ACTIVITY as NETWORK_GENERIC_ACTIVITY } from "./packs/network/copy.ts";
+import { networkPack } from "./packs/network/index.ts";
 import type { World } from "./world.ts";
 
 // ------------------------------------------------------------------------------------------------
@@ -158,13 +162,8 @@ export type Calibrator = (score: number, category: Category) => number;
  * (score, P(worthwhile)); linear in between, flat outside. Per-category knots where n >= 100. A
  * prior to be replaced by the weekly per-category refit on production labels (5.3).
  */
-export const DEFAULT_ENJOY_KNOTS: [number, number][] = [[0.3, 0.424], [0.382, 0.539], [0.427, 0.545], [0.443, 0.673], [0.488, 0.764]];
-export const DEFAULT_ENJOY_BY_CATEGORY: Partial<Record<Category, [number, number][]>> = {
-  social: [[0.299, 0.486], [0.384, 0.497], [0.43, 0.532], [0.472, 0.723]],
-  romance: [[0.386, 0.714], [0.489, 0.809]],
-  hobby: [[0.355, 0.57], [0.426, 0.721], [0.504, 0.927]],
-  professional: [[0.335, 0.174], [0.393, 0.391], [0.455, 0.489]],
-};
+// The knots are networkPack data (fitted on Network sim labels), moved verbatim to packs/network/calibrator.ts.
+export { DEFAULT_ENJOY_BY_CATEGORY, DEFAULT_ENJOY_KNOTS } from "./packs/network/calibrator.ts";
 export function knotCalibrator(knots: [number, number][] = DEFAULT_ENJOY_KNOTS, byCategory: Partial<Record<Category, [number, number][]>> = DEFAULT_ENJOY_BY_CATEGORY): Calibrator {
   return (score, category) => interpolate(byCategory[category] ?? knots, score);
 }
@@ -385,6 +384,8 @@ export interface ComposeInput {
   /** Median V of the member's past digest items (break-in bar); cfg.breakIn.defaultMedianValue if none. */
   medianDigestValue?: number;
   cfg?: AttentionConfig;
+  /** The app pack (default networkPack): lane gates and the ships-alone lane. */
+  pack?: AppPack;
 }
 export interface ComposeResult {
   send: boolean; reason: string; kind?: LedgerKind;
@@ -411,7 +412,7 @@ export const countsAgainstCap = (items: readonly Pick<AttentionItem, "kind">[], 
 const MINOR_SAFE = (it: AttentionItem, cfg: AttentionConfig) => cfg.minors.allowedKinds.includes(it.kind) && it.others.length === 0 && !it.involvesMember;
 
 /** Why an item may not go to this member at all right now (null = eligible). */
-export function itemGate(m: MemberAttention, it: AttentionItem, now: number, cfg: AttentionConfig = DEFAULT_ATTENTION): string | null {
+export function itemGate(m: MemberAttention, it: AttentionItem, now: number, cfg: AttentionConfig = DEFAULT_ATTENTION, pack: AppPack = networkPack): string | null {
   if (it.memberId !== m.memberId) return "wrong_member";
   if (it.urgency.expiresAt <= now) return "expired";
   if (it.reviewState === "rejected") return "review_rejected";
@@ -420,7 +421,9 @@ export function itemGate(m: MemberAttention, it: AttentionItem, now: number, cfg
     // D9: events, places and solo plans only; never anything that involves another member.
     if (!MINOR_SAFE(it, cfg)) return "minor_restricted";
   }
-  if (it.category === "romance" && (isMinor(m.age) || !(m.categoriesOptIn ?? ["romance"]).includes("romance"))) return "romance_not_allowed";
+  // Pack lane gate (networkPack: romance only for opted-in adults, "romance_not_allowed").
+  const laneGate = pack.attention.itemGate?.(m, it);
+  if (laneGate) return laneGate;
   if (m.categoriesOptIn && !m.categoriesOptIn.includes(it.category) && it.involvesMember) return "category_opt_out";
   if ((m.prefs.categoryWeight[it.category] ?? 1) <= 0) return "category_off";
   if (m.state === "receiving" && it.effort === "contribute") return "receiving_no_contribute";
@@ -449,6 +452,7 @@ export function maxItemsFor(m: MemberAttention, cfg: AttentionConfig = DEFAULT_A
  */
 export function composeMessage(inp: ComposeInput): ComposeResult {
   const cfg = inp.cfg ?? DEFAULT_ATTENTION;
+  const P = inp.pack ?? networkPack;
   const { member: m, now, ledger } = inp;
   const cap = capFor(m, cfg);
   const used = interruptionsUsed(ledger, m.memberId, now, cap.periodDays);
@@ -474,7 +478,7 @@ export function composeMessage(inp: ComposeInput): ComposeResult {
   const next = nextDigestSlot(m, now, cfg);
   const eligible: { it: AttentionItem; v: number }[] = [];
   for (const it of inp.items) {
-    const why = atCap && isInitialInvite(it, cfg) ? "cap" : itemGate(m, it, now, cfg);
+    const why = atCap && isInitialInvite(it, cfg) ? "cap" : itemGate(m, it, now, cfg, P);
     if (why) { res.skipped.push({ itemId: it.id, reason: why }); continue; }
     eligible.push({ it, v: itemValue(it, m.prefs, cfg, next) });
   }
@@ -508,9 +512,11 @@ export function composeMessage(inp: ComposeInput): ComposeResult {
     const urgent = eligible.filter(x => x.it.urgency.expiresAt < next && x.v >= bar);
     if (urgent.length) options.push(evaluate([urgent[0]!]));
   } else {
-    const romanceAlone = !(m.prefs.romanceInDigest);
-    const rom = eligible.filter(x => x.it.category === "romance");
-    const rest = romanceAlone ? eligible.filter(x => x.it.category !== "romance") : eligible;
+    // The pack's ships-alone lane (networkPack: romance, D10) unless the member allows it in a digest.
+    const lane = P.attention.shipsAloneLane;
+    const romanceAlone = lane !== undefined && !(m.prefs.romanceInDigest);
+    const rom = eligible.filter(x => x.it.category === lane);
+    const rest = romanceAlone ? eligible.filter(x => x.it.category !== lane) : eligible;
     if (rest.length) options.push(evaluate(pack(rest, maxItems)));
     if (romanceAlone && rom.length) options.push(evaluate([rom[0]!]));
   }
@@ -762,6 +768,17 @@ export function startProbeFlow(p: Pick<EngineProposal, "id" | "participants" | "
     ...(parallel ? { parallel: true } : {}),
   };
 }
+/**
+ * The probe flow the pack's consent policy prescribes for a proposal (AppPack.consent). probe_first
+ * "parallel" and double_opt_in probe both sides blind at once and reveal only on mutual yes;
+ * group_rsvp and groups reveal at quorum; everything else probes the wanter first. Nobody is
+ * named before the flow reaches "revealed" (core invariant: consent before reveal).
+ */
+export function startProbeFlowFor(p: Pick<EngineProposal, "id" | "participants" | "roles" | "kind">, pack: AppPack = networkPack): ProbeFlow {
+  const flow = pack.consent.byKind[p.kind] ?? pack.consent.default;
+  const parallel = (flow.kind === "probe_first" && flow.order === "parallel") || flow.kind === "double_opt_in";
+  return startProbeFlow(p, { parallel });
+}
 /** Who should be probed now (members with no answer whose turn it is). */
 export function toProbe(f: ProbeFlow): MemberId[] {
   if (f.stage === "probing_first") return f.answers[f.first] === "pending" ? [f.first] : [];
@@ -805,7 +822,7 @@ const ATTRIBUTE_KINDS = new Set(["interest", "skill", "goal"]);
  * mutual's first name only. Returns the first name or null.
  */
 export function warmMention(w: World, via: MemberId | undefined, recipient: MemberId, others: readonly MemberId[], consented: (id: MemberId) => boolean, category: Category, cfg: AttentionConfig = DEFAULT_ATTENTION): string | null {
-  if (!via || others.length !== 1 || category === "romance") return null;
+  if (!via || others.length !== 1 || w.pack.attention.noWarmMentionLanes.includes(category)) return null;
   const mv = w.get(via);
   if (!mv || isMinor(mv.m.age) || mv.m.state === "paused" || w.holds.has(via)) return null;
   if (!consented(via) || !consented(others[0]!)) return null;
@@ -827,10 +844,8 @@ export interface ProbeSpec {
 }
 export interface Probe { text: string; attribute?: string; area?: string; mutual?: string }
 
-const GENERIC_ACTIVITY: Record<Category, string> = {
-  social: "meeting new people", hobby: "a shared hobby", professional: "work and career", romance: "dating",
-  help: "something you asked for help with", events: "an event nearby", growth: "growing the Network",
-};
+/** The Network's generic activity phrases (moved verbatim to packs/network/copy.ts; buildProbe reads the pack's). */
+export const GENERIC_ACTIVITY: Record<Category, string> = NETWORK_GENERIC_ACTIVITY;
 function activityOf(objective: string): string {
   const s = objective.replace(/^(intro|small group|go together|help with|friend-of-a-friend intro|try something new|small crew for|another meetup|see each other again at)\s*:?\s*/i, "").trim();
   return s.length > 60 ? s.slice(0, 60).replace(/\s+\S*$/, "") : s;
@@ -881,20 +896,15 @@ function shareableAttribute(w: World, other: MemberId, recipient: MemberId): str
 export function buildProbe(w: World, spec: ProbeSpec, recipient: MemberId, others: MemberId[], now: number): Probe | null {
   const ids = [recipient, ...others];
   if (ids.some(id => !w.get(id) || isMinor(w.get(id)!.m.age))) return null;
-  if (spec.category === "romance" && others.length !== 1) return null;
+  const AP = w.pack.attention;
+  if (AP.probeAllowed && !AP.probeAllowed(spec.category, others.length)) return null;
   const when = spec.options?.length ? timeOptionsPhrase(spec.options, spec.tz) : whenPhrase(spec.window, now, spec.tz);
   const area = w.get(recipient)!.presence.find(p => p.type === "home")?.areas?.[0] ?? w.get(recipient)!.presence[0]?.areas?.[0];
   const attr = others.length === 1 && !spec.mutual ? shareableAttribute(w, others[0]!, recipient) : undefined;
-  const contributor = spec.role && CONTRIBUTOR_ROLES.has(spec.role);
-  const frame = (activity: string, a?: string, ar?: string) => {
-    const near = ar ? ` near ${ar}` : "";
-    const also = a ? ` They're into ${a.replace(/[.\s]+$/, "")}.` : "";
-    if (spec.category === "romance") return `There's someone you might like to go on a date with, ${when}${near}.${also} Want me to check if they're up for it? I'll only share who it is if you both say yes.`;
-    if (spec.kind === "network_growth") return `Know someone who'd be great for ${activity}? No pressure either way.`;
-    if (contributor) return `Someone nearby could use a hand with ${activity}, ${when}${near}. Would you be up for helping? An easy no is fine.${also}`;
-    if (others.length > 1) return `A few people are getting together around ${activity}, ${when}${near}. Want in? I'll share who's coming once enough people say yes.`;
-    return `Up for meeting ${mutual ? `a friend of ${mutual}` : "someone"} around ${activity}, ${when}${near}?${also} I'll only share who it is if you both say yes.`;
-  };
+  const contributor = spec.role && w.pack.ontology.contributorRoles.has(spec.role);
+  // The probe copy is the pack's (networkPack: packs/network/copy.ts networkProbeText, moved verbatim).
+  const frame = (activity: string, a?: string, ar?: string) =>
+    AP.probeText({ lane: spec.category, kind: spec.kind, when, othersCount: others.length, contributor: !!contributor, mutual }, activity, a, ar);
   let mutual: string | undefined = spec.mutual;
   const vocab = privateVocabulary(w, others);
   const names = nameTokens(w, others);
@@ -904,7 +914,7 @@ export function buildProbe(w: World, spec: ProbeSpec, recipient: MemberId, other
   // then a generic phrase for the category is used instead.
   for (const m of mutual ? [mutual, undefined] : [undefined]) {
     mutual = m;
-    for (const activity of [...new Set([activityOf(spec.objective), GENERIC_ACTIVITY[spec.category], "meeting new people"])]) {
+    for (const activity of [...new Set([activityOf(spec.objective), AP.laneActivity[spec.category], "meeting new people"])]) {
       for (const [a, ar] of [[attr, area], [attr, undefined], [undefined, area], [undefined, undefined]] as const) {
         const text = frame(activity, a, ar);
         if (ok(text)) return { text, ...(a ? { attribute: a } : {}), ...(ar ? { area: ar } : {}), ...(m ? { mutual: m } : {}) };

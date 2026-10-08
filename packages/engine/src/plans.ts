@@ -16,7 +16,7 @@
 // Engine-visible inputs only. Nothing here reads hidden truth.
 import type { Category, City, MemberId, ScoreComponents } from "@thenetwork/core";
 import { DAY, HOUR } from "@thenetwork/core";
-import { ACTIVITIES, activitiesForTags, activityById, type ActivityType, type Daypart, type Venue } from "./activities.ts";
+import { activitiesForTags, activityById, type ActivityType, type Daypart, type Venue } from "./activities.ts";
 import { availabilityProb, candidateSlots, timeOptionsPhrase, type AvailabilityEvidence, type TimeSlot } from "./attention.ts";
 import { DEFAULT_ATTENTION, DEFAULT_PLANS, type AttentionConfig, type PlansConfig } from "./config.ts";
 import { tokenize } from "./embed.ts";
@@ -26,14 +26,22 @@ import { makeCompat } from "./group.ts";
 import { checkMemberFacing } from "./judgeCommon.ts";
 import { localParts } from "./outreach.ts";
 import { sha256 } from "./rng.ts";
-import { objectivesFor } from "./taxonomy.ts";
 import type { AttentionItem, EngineProposal, NetworkEvent, Role } from "./types.ts";
+import type { AppPack, PlansPack } from "./pack.ts";
+import { networkPack } from "./packs/network/index.ts";
 import type { World } from "./world.ts";
 
 export { ACTIVITIES, activityById, type ActivityType, type Venue } from "./activities.ts";
 
-/** Plans are social, never romance (D15, 2.2 row 12). */
+/** Plans are social, never romance (D15, 2.2 row 12). networkPack.plans.lane; the planner reads the World's pack. */
 export const PLAN_CATEGORY: Category = "social";
+
+/** The plans part of a World's pack (throws if the pack has no planner). */
+export function plansOf(w: World): PlansPack {
+  const p = w.pack.plans;
+  if (!p) throw new Error(`pack ${w.pack.id} has no planner`);
+  return p;
+}
 
 // ------------------------------------------------------------------------------------------------
 // Availability windows (1.11, 4.2)
@@ -121,8 +129,9 @@ export function activityFit(w: World, id: MemberId, pcfg: PlansConfig = DEFAULT_
   const mi = w.get(id);
   const out = new Map<string, number>();
   if (!mi) return out;
-  const objs = new Set(mi.intents.flatMap(i => objectivesFor(i.objective, i.details, i.category).map(o => o.id)));
+  const objs = new Set(mi.intents.flatMap(i => w.pack.ontology.objectivesFor(i.objective, i.details, i.category).map(o => o.id)));
   const fams = new Set<string>();
+  const ACTIVITIES = plansOf(w).activities;
   for (const a of ACTIVITIES) {
     if (a.tags.some(t => mi.tags.has(t)) || a.objectives.some(o => objs.has(o)) || hints.includes(a.id)) { out.set(a.id, 1); fams.add(a.family); }
   }
@@ -136,7 +145,7 @@ export function activityFit(w: World, id: MemberId, pcfg: PlansConfig = DEFAULT_
  * holds, category opt-out, only-when-asked and the reliability hold-out all exclude.
  */
 export function planMemberReason(w: World, id: MemberId, role: Role = "guest"): string | null {
-  const r = memberReason(w, id, { category: PLAN_CATEGORY, role, format: "small_group", timeSensitive: true });
+  const r = memberReason(w, id, { category: plansOf(w).lane, role, format: "small_group", timeSensitive: true });
   return r === "interruption_budget" || (r === "contribution_budget" && role !== "host") ? null : r;
 }
 
@@ -239,7 +248,9 @@ interface Cand { plan: Plan; rank: number }
  */
 export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = DEFAULT_PLANS, att: AttentionConfig = DEFAULT_ATTENTION): Plan[] {
   const { now, city, tz } = inp;
-  const compat = makeCompat(w, PLAN_CATEGORY);
+  const PP = plansOf(w);
+  const ACTIVITIES = PP.activities;
+  const compat = makeCompat(w, PP.lane);
   const familiar = (a: MemberId, b: MemberId) => w.isWarm(a, b);
   // Eligible members with evidence.
   const people: MemberId[] = [];
@@ -333,7 +344,7 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
           quorum: partner ? pcfg.quorum.partner : Math.min(primary.length, Math.max(minG, pcfg.quorum.group)),
           probeDeadline: Math.min(start - pcfg.deadlineBeforeStartHours * HOUR, now + pcfg.probeWindowHours * HOUR),
           score: round(best.s.score), u: Object.fromEntries(Object.entries(best.s.u).map(([k, v]) => [k, round(v)])), familiar: best.s.familiar,
-          createdAt: now, category: PLAN_CATEGORY,
+          createdAt: now, category: PP.lane,
         },
       });
     }
@@ -436,7 +447,7 @@ const COST = ["Free.", "About $10-20 each; everyone pays their own way.", "About
  */
 export function buildPlanProbe(w: World, plan: Plan, recipient: MemberId, now: number, tz: string): string | null {
   const others = plan.invited.filter(x => x !== recipient);
-  if (!plan.invited.includes(recipient) || plan.category === "romance") return null;
+  if (!plan.invited.includes(recipient) || w.pack.ontology.lanes.some(l => l.neverInPlans && l.id === plan.category)) return null;
   if ([recipient, ...others].some(id => !w.get(id) || isMinor(w, id))) return null;
   const a = activityById.get(plan.activityId);
   if (!a) return null;
@@ -610,7 +621,7 @@ export function crewOptIn(crew: Crew, optedIn: readonly MemberId[], pcfg: PlansC
 }
 
 /** The crew's next session (same weekday and time, `cadenceDays` after the last), as a plan; each session is opt-in. Hosts rotate. */
-export function crewSessionPlan(crew: Crew, now: number, place: Plan["place"], pcfg: PlansConfig = DEFAULT_PLANS): Plan | null {
+export function crewSessionPlan(crew: Crew, now: number, place: Plan["place"], pcfg: PlansConfig = DEFAULT_PLANS, pack: AppPack = networkPack): Plan | null {
   if (crew.handedOff) return null;
   let start = crew.slot.start;
   while (start < now + pcfg.minLeadHours * HOUR) start += crew.cadenceDays * DAY;
@@ -621,7 +632,7 @@ export function crewSessionPlan(crew: Crew, now: number, place: Plan["place"], p
     id: `plan_${sha256(`${crew.id}|${start}`).slice(0, 16)}`, city: crew.city, activityId: crew.activityId, ...(crew.venueId ? { venueId: crew.venueId } : {}),
     place, window: { start, end: start + a.durationMin * 60_000 }, invited: [...crew.members], alternates: [], ...(host ? { hostId: host } : {}), crewId: crew.id,
     partner: false, size: { min: Math.min(3, n), target: n, max: Math.max(n, 3) }, quorum: Math.min(pcfg.quorum.group, n),
-    probeDeadline: Math.min(start - pcfg.deadlineBeforeStartHours * HOUR, now + pcfg.probeWindowHours * HOUR), score: 0.6, u: {}, familiar: {}, createdAt: now, category: PLAN_CATEGORY,
+    probeDeadline: Math.min(start - pcfg.deadlineBeforeStartHours * HOUR, now + pcfg.probeWindowHours * HOUR), score: 0.6, u: {}, familiar: {}, createdAt: now, category: pack.plans!.lane,
   };
 }
 

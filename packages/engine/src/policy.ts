@@ -11,7 +11,7 @@ import { sha256 } from "./rng.ts";
 import type { Rng } from "./rng.ts";
 import type { Scored } from "./scoring.ts";
 import type { AskReason, EngineAsk, EngineInput, FairnessMetrics } from "./types.ts";
-import { CONTRIBUTOR_ROLES } from "./types.ts";
+import { ASK_QUESTIONS as NETWORK_ASK_QUESTIONS } from "./packs/network/copy.ts";
 import { pairKey, type World } from "./world.ts";
 
 export interface Selected { s: Scored; exploration: boolean; rank: number; probability: number }
@@ -25,11 +25,8 @@ export interface SelectOptions {
   extraProactive?: ReadonlyMap<MemberId, number>;
 }
 
-export const ASK_QUESTIONS: Record<AskReason, string> = {
-  no_structured_want: "What would you most like to do or find in the next few weeks? Something specific, like an activity, a skill to learn or the kind of people you'd like to meet, helps me find the right person.",
-  few_facets: "Tell me a bit more about you: two or three things you enjoy or are good at help me find people you'd actually like to meet.",
-  romance_prefs: "Before I suggest anyone to date: who are you hoping to meet, and what age range feels right?",
-};
+/** The Network's ask texts (moved verbatim to packs/network/copy.ts; the engine reads the pack's selection.askQuestions). */
+export const ASK_QUESTIONS: Record<AskReason, string> = NETWORK_ASK_QUESTIONS;
 
 export interface AskPlan { asks: EngineAsk[]; exclude: Set<MemberId>; extraProactive: Map<MemberId, number> }
 
@@ -46,7 +43,9 @@ export interface AskPlan { asks: EngineAsk[]; exclude: Set<MemberId>; extraProac
 export function planAsks(w: World, input: EngineInput): AskPlan {
   const cfg = w.cfg;
   const plan: AskPlan = { asks: [], exclude: new Set(), extraProactive: new Map() };
-  if (!cfg.ask.enabled && !cfg.romance.requireStatedPrefs) return plan;
+  const S = w.pack.selection;
+  const extra = S.extraAsksEnabled?.(cfg) ?? false;
+  if (!cfg.ask.enabled && !extra) return plan;
   const lastAsk = new Map<string, number>();
   const answered = new Set<string>();
   for (const a of input.recentAsks ?? []) {
@@ -57,12 +56,12 @@ export function planAsks(w: World, input: EngineInput): AskPlan {
   const anyAsk = (id: MemberId, reasons: AskReason[]) => Math.max(-Infinity, ...reasons.map(r => lastAsk.get(`${id}|${r}`) ?? -Infinity));
   const cooldown = cfg.ask.cooldownDays * DAY;
   const add = (id: MemberId, reason: AskReason, intentId?: string) => {
-    plan.asks.push({ kind: "ask", id: `a_${sha256(`${id}|${reason}|${w.now}`).slice(0, 16)}`, memberId: id, reason, question: ASK_QUESTIONS[reason], createdAt: w.now, ...(intentId ? { intentId } : {}) });
+    plan.asks.push({ kind: "ask", id: `a_${sha256(`${id}|${reason}|${w.now}`).slice(0, 16)}`, memberId: id, reason, question: S.askQuestions[reason]!, createdAt: w.now, ...(intentId ? { intentId } : {}) });
     plan.extraProactive.set(id, (plan.extraProactive.get(id) ?? 0) + 1);
   };
   for (const id of w.ids) {
     const mi = w.get(id)!;
-    if (isMinor(w, id) || !cfg.cities.includes(mi.m.homeCity)) continue;
+    if (isMinor(w, id) || !w.pack.geo.markets(cfg).includes(mi.m.homeCity)) continue;
     if (cfg.ask.enabled) {
       const reason: AskReason | undefined = profileOf(w, id).wants.length === 0 ? "no_structured_want" : mi.match.length < cfg.ask.minFacets ? "few_facets" : undefined;
       if (reason && !answered.has(id)) {
@@ -72,16 +71,14 @@ export function planAsks(w: World, input: EngineInput): AskPlan {
         const hold = reason === "few_facets" || cfg.ask.holdNoWant;
         const last = anyAsk(id, ["no_structured_want", "few_facets"]);
         if (w.now - last < cooldown) { if (hold) { plan.exclude.add(id); continue; } }
-        else if (last === -Infinity && !memberReason(w, id, { category: "social", role: "peer", format: "one_to_one", timeSensitive: false })) {
+        else if (last === -Infinity && !memberReason(w, id, { category: w.pack.ontology.funnelProbe.lane, role: w.pack.ontology.funnelProbe.role, format: "one_to_one", timeSensitive: false })) {
           add(id, reason);
           if (hold) { plan.exclude.add(id); continue; }
         }
       }
     }
-    if (cfg.romance.requireStatedPrefs && !mi.romance?.seeks.length) {
-      const it = mi.intents.find(i => i.category === "romance");
-      if (it && anyAsk(id, ["romance_prefs"]) === -Infinity && !memberReason(w, id, { category: "romance", role: "peer", format: "one_to_one", timeSensitive: false, ownIntentCreatedAt: it.createdAt })) add(id, "romance_prefs", it.id);
-    }
+    // Pack asks (networkPack: the romance-preferences ask, config.romance.requireStatedPrefs).
+    if (extra) S.extraAsks?.(w, id, mi, reasons => anyAsk(id, reasons as AskReason[]), (reason, intentId) => add(id, reason as AskReason, intentId));
   }
   return plan;
 }
@@ -127,7 +124,7 @@ function selectOnce(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId,
       // skip it) or someone the engine is asking a question first.
       if (mi.inOpenOpportunity || opts.exclude?.has(id)) return false;
       const role = c.roles[id];
-      if (role && CONTRIBUTOR_ROLES.has(role) && mi.recentContribution + (contribution.get(id) ?? 0) + 1 > cfg.contribution.limit) return false;
+      if (role && w.pack.ontology.contributorRoles.has(role) && mi.recentContribution + (contribution.get(id) ?? 0) + 1 > cfg.contribution.limit) return false;
       if (c.fixedWindow && c.window) {
         for (const [s, e] of fixedSlots.get(id) ?? []) if (c.window.start < e && s < c.window.end) return false;
       }
@@ -145,7 +142,7 @@ function selectOnce(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId,
       proactive.set(id, (proactive.get(id) ?? 0) + 1);
       timesSelected.set(id, (timesSelected.get(id) ?? 0) + 1);
       const role = c.roles[id];
-      if (role && CONTRIBUTOR_ROLES.has(role)) contribution.set(id, (contribution.get(id) ?? 0) + 1);
+      if (role && w.pack.ontology.contributorRoles.has(role)) contribution.set(id, (contribution.get(id) ?? 0) + 1);
       if (c.fixedWindow && c.window) {
         if (!fixedSlots.has(id)) fixedSlots.set(id, []);
         fixedSlots.get(id)!.push([c.window.start, c.window.end]);
@@ -162,7 +159,10 @@ function selectOnce(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId,
   const adjusted = (x: Scored) => {
     const ids = x.c.participants;
     const load = ids.reduce((s, id) => s + (timesSelected.get(id) ?? 0), 0) / ids.length;
-    return x.score - cfg.selection.runLoadPenalty * load + debtLift(x);
+    const v = x.score - cfg.selection.runLoadPenalty * load + debtLift(x);
+    // Pack lift (slopPack: exposure fairness). Absent for networkPack: the value is unchanged.
+    const adjust = w.pack.selection.adjust;
+    return adjust ? adjust(w, x.c, v, id => timesSelected.get(id) ?? 0) : v;
   };
 
   const main = scored.filter(x => x.eligible && !x.c.exploration)
@@ -171,7 +171,7 @@ function selectOnce(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId,
   // 1. Exposure floor: low-exposure / newcomer / low-data members get their best viable option first.
   const floorMembers = w.ids.filter(id => { const mi = w.get(id)!; return mi.lowExposure && (mi.newcomer || mi.lowData || mi.recentExposure30 === 0); });
   rng.fork("floor").shuffle(floorMembers);
-  const floorCap = Math.ceil(cfg.selection.exposureFloorShare * cfg.selection.maxProposalsPerCity * cfg.cities.length);
+  const floorCap = Math.ceil(cfg.selection.exposureFloorShare * cfg.selection.maxProposalsPerCity * w.pack.geo.markets(cfg).length);
   let floorTaken = 0;
   for (const id of floorMembers) {
     if (floorTaken >= floorCap) break;
