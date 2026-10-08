@@ -99,7 +99,7 @@ Two parts of the product talk to members. They have different jobs.
 
 Rules for the boundary:
 
-1. **One owner per inbound message.** Today the service handles every inbound message it gets, and STOP, START and HELP. If Eliza Cloud also gets the same webhook (the line already has an Eliza webhook; see the warning in `prototypes/messaging-blooio/README.md`), decide which one answers keywords before any live send **[FOUNDER]**. Two systems must not both confirm a STOP.
+1. **One owner per inbound message.** Today the service handles every inbound message it gets, and STOP, START and HELP. If Eliza Cloud also gets the same webhook (the line already has an Eliza webhook; see the warning in `packages/blooio/README.md`), decide which one answers keywords before any live send **[FOUNDER]**. Two systems must not both confirm a STOP.
 2. **Only this service proposes or contacts members about other members.** The plugin must not send probes, introductions or booked plans. It can read what the Network knows through its own store.
 3. **Joining is a membership.** The platform creates members: a web join (`POST /api/join`) or a join by text on an open app makes the person, the membership and the `network.members` row. For The Network, Cloud's invite gate still creates the `network.members` and `network.channel_identities` rows. An `invited` member is not a member here.
 4. **No shared process state.** The two talk only through Postgres (the `network` schema) and the channel gateway. Nothing here imports Eliza, and the plugin does not import this service.

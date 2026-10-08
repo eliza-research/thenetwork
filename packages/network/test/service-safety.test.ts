@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SQL } from "bun";
 import { MINUTE, SimClock } from "@thenetwork/core";
-import { signBlooioPayload } from "../../../prototypes/messaging-blooio/src/blooio/webhook.ts";
+import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { APPS, type AppId } from "../../platform/src/apps.ts";
 import type { OtpProvider } from "../../platform/src/otp.ts";

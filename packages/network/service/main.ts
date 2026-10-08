@@ -9,9 +9,9 @@
 // exits. Sends are dry-run unless NETWORK_CHANNEL=blooio; the Blooio adapter still refuses every send
 // unless BLOOIO_ALLOW_SEND=1, NTWRK_LIVE_APPROVED=1 and the app's <APP>_LIVE_APPROVED=1 (founder approval).
 import { RealClock } from "@thenetwork/core";
-import { BlooioClient } from "../../../prototypes/messaging-blooio/src/blooio/client.ts";
-import { BlooioAdapter as ProviderAdapter } from "../../../prototypes/messaging-blooio/src/adapters/blooio-adapter.ts";
-import { resolveSenderLine } from "../../../prototypes/messaging-blooio/src/line.ts";
+import { BlooioClient } from "../../blooio/src/blooio/client.ts";
+import { BlooioAdapter as ProviderAdapter } from "../../blooio/src/adapters/blooio-adapter.ts";
+import { resolveSenderLine } from "../../blooio/src/line.ts";
 import { assertBootConfig } from "../../platform/src/env.ts";
 import { BlooioAdapter, liveFlag, liveSendAllowed } from "./channel.ts";
 import { serveService, startTicks } from "./serve.ts";

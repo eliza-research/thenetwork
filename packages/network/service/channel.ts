@@ -2,16 +2,16 @@
 // a ChannelAdapter only delivers what the Network already decided to send.
 //  - DryRunAdapter (the default): nothing leaves the machine. The service stores each send in
 //    network.messages with status "dry_run", and the adapter logs one line (no message text).
-//  - BlooioAdapter: the prototype's OutboundQueue (prototypes/messaging-blooio) with the Network's
+//  - BlooioAdapter: the OutboundQueue (packages/blooio) with the Network's
 //    send-time recipient checks (blooioRecipientPolicy) and leak lists (forbiddenProvider). It sends
 //    only when BLOOIO_ALLOW_SEND=1, NTWRK_LIVE_APPROVED=1 and the app's own <APP>_LIVE_APPROVED=1
 //    (founder approval per app; for ntwrk the last two are the same flag). Otherwise every message is
 //    refused ("refused_not_approved") and the provider is never called.
 import type { MemberId } from "@thenetwork/core";
 import { blooioRecipientPolicy, forbiddenProvider, type ConsentNetwork } from "../src/network.ts";
-import { ConsentLedger } from "../../../prototypes/messaging-blooio/src/keywords.ts";
-import { OutboundQueue, type MessageKind } from "../../../prototypes/messaging-blooio/src/outbound-queue.ts";
-import type { Clock, ChannelAdapter as ProviderAdapter, StatusUpdate } from "../../../prototypes/messaging-blooio/src/types.ts";
+import { ConsentLedger } from "../../blooio/src/keywords.ts";
+import { OutboundQueue, type MessageKind } from "../../blooio/src/outbound-queue.ts";
+import type { Clock, ChannelAdapter as ProviderAdapter, StatusUpdate } from "../../blooio/src/types.ts";
 
 /** One message the Network sent in a unit of work. `id` is the Network's idempotency key and the network.messages id. */
 export interface Outbound {
@@ -88,7 +88,7 @@ export class DryRunAdapter implements ChannelAdapter {
 
 export interface BlooioAdapterOptions {
   net: ConsentNetwork;
-  /** The provider (prototypes/messaging-blooio BlooioAdapter over a BlooioClient). Tests pass a fake. */
+  /** The provider (packages/blooio BlooioAdapter over a BlooioClient). Tests pass a fake. */
   provider: ProviderAdapter;
   clock: Clock;
   /** Address (as the queue normalizes it) to member id, from network.channel_identities. */

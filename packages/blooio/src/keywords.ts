@@ -11,7 +11,7 @@
 //    (docs/research/blooio.md), so the Network owns this ledger for every channel.
 
 import type { ConsentStore } from "./consent-store.ts";
-import { parseOptOut } from "../../../packages/core/src/replies.ts";
+import { parseOptOut } from "../../core/src/replies.ts";
 import { normalizeAddress } from "./phone.ts";
 import type { ChannelKind, Clock } from "./types.ts";
 

@@ -4,8 +4,8 @@
 // plan lane, quorum booking, crews, organizing reach). Each test drives one flow through the real Network.
 import { describe, expect, test } from "bun:test";
 import { DAY, HOUR, MINUTE, UNDER_MIN_AGE_DECLINE } from "@thenetwork/core";
-import { OutboundQueue, type RecipientPolicy } from "../../../prototypes/messaging-blooio/src/outbound-queue.ts";
-import { world as blooioWorld } from "../../../prototypes/messaging-blooio/tests/helpers.ts";
+import { OutboundQueue, type RecipientPolicy } from "../../blooio/src/outbound-queue.ts";
+import { world as blooioWorld } from "../../blooio/tests/helpers.ts";
 import { blooioRecipientPolicy, copy, forbiddenProvider, OUTREACH, VENUES } from "../src/index.ts";
 import { capitalWiring, FLOOR_EFFORT, type CapitalEvent, type CapitalReader, type GamingFlag } from "../src/capital.ts";
 import { feedbackOf as feedbackOfText } from "../src/classify.ts";
@@ -248,7 +248,7 @@ describe("interruption cap at send time (founder decision 3)", () => {
   });
 });
 
-describe("Blooio outbound queue hook (prototypes/messaging-blooio)", () => {
+describe("Blooio outbound queue hook (packages/blooio)", () => {
   test("blooioRecipientPolicy plugs into the queue's recipientPolicy and applies the Network's send-time checks", async () => {
     const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito"), { id: "m", name: "Mia Teen", age: 15 }], { review: "human" });
     await w.onboard("a", "b");

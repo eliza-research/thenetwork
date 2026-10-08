@@ -46,12 +46,12 @@ import { turnstileFromEnv } from "../../platform/src/turnstile.ts";
 import type { PeerInfo } from "../../platform/src/api.ts";
 import { PgPhotoStore, PhotoService, photoStorageFromEnv, type PhotoRater, type PhotoScores, type PhotoStorage } from "../../platform/src/photos.ts";
 import type { Ban } from "../../platform/src/store.ts";
-import { parseBlooioWebhook, SIGNATURE_HEADER, verifyBlooioSignature } from "../../../prototypes/messaging-blooio/src/blooio/webhook.ts";
-import { normalizeAddress } from "../../../prototypes/messaging-blooio/src/phone.ts";
-import { resolveTimeZone } from "../../../prototypes/messaging-blooio/src/quiet-hours.ts";
+import { parseBlooioWebhook, SIGNATURE_HEADER, verifyBlooioSignature } from "../../blooio/src/blooio/webhook.ts";
+import { normalizeAddress } from "../../blooio/src/phone.ts";
+import { resolveTimeZone } from "../../blooio/src/quiet-hours.ts";
 import { Notifier, type InboxItem, type NotifyStore, type OutboundSink, type Recipient, type Surface } from "../../notify/src/index.ts";
 import { PgNotifyStore } from "../../notify/src/pg-store.ts";
-import type { ChannelEvent } from "../../../prototypes/messaging-blooio/src/types.ts";
+import type { ChannelEvent } from "../../blooio/src/types.ts";
 // The Observatory's staff auth (per-app role grants) and audit sink, so the console and the service agree.
 import { allowed, authenticate, hasEverywhere, parseTokenGrants, PgAudit, type AuditSink } from "../../observatory/src/staff.ts";
 import type { AuditEntry, RoleGrant, StaffRole, StaffUser } from "../../observatory/src/types.ts";

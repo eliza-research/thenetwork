@@ -20,7 +20,7 @@ import { type AppId, type AppInfo, DEFAULT_HOST_MAP } from "../../packages/platf
 import type { OtpProvider } from "../../packages/platform/src/otp.ts";
 import { LocalDiskPhotoStorage } from "../../packages/platform/src/photos.ts";
 import { dropDb, migratedDb, pgAvailable } from "../../packages/platform/test/pg.ts";
-import { signBlooioPayload } from "../../prototypes/messaging-blooio/src/blooio/webhook.ts";
+import { signBlooioPayload } from "../../packages/blooio/src/blooio/webhook.ts";
 import { serveSite } from "../../scripts/sites-dev.ts";
 import { buildSite, SITES, type Site } from "../../sites/sites.ts";
 

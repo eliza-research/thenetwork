@@ -3,8 +3,7 @@
   "private": true,
   "type": "module",
   "workspaces": [
-    "packages/*",
-    "prototypes/*"
+    "packages/*"
   ],
   "scripts": {
     "test": "bun test --conditions eliza-source ./packages ./prototypes ./sites ./deploy ./scripts ./tests/e2e",

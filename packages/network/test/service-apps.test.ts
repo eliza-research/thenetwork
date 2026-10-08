@@ -6,8 +6,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test
 import { existsSync } from "node:fs";
 import { SQL } from "bun";
 import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
-import { signBlooioPayload } from "../../../prototypes/messaging-blooio/src/blooio/webhook.ts";
-import type { SendRequest } from "../../../prototypes/messaging-blooio/src/types.ts";
+import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
+import type { SendRequest } from "../../blooio/src/types.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { APP_IDS, APPS, type AppId } from "../../platform/src/apps.ts";
 import { lastEvents, resolveConsent } from "../../platform/src/consent.ts";

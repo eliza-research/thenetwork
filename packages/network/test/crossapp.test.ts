@@ -12,7 +12,7 @@ import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { SQL } from "bun";
 import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
-import { signBlooioPayload } from "../../../prototypes/messaging-blooio/src/blooio/webhook.ts";
+import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { APP_IDS, APPS, type AppId } from "../../platform/src/apps.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";

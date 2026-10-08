@@ -4291,7 +4291,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 }
 
 /**
- * Adapter for the Blooio outbound queue's `recipientPolicy` hook (prototypes/messaging-blooio
+ * Adapter for the Blooio outbound queue's `recipientPolicy` hook (packages/blooio
  * outbound-queue.ts): `(to, { kind, briefId, agentInitiated }) => { ok } | { ok: false, reason }`.
  * `memberOf` maps the E.164 address to a member id; `briefId`, when it names an opportunity, gives
  * the other people the message is about.
@@ -4309,7 +4309,7 @@ export function blooioRecipientPolicy(net: ConsentNetwork, memberOf: (to: string
   };
 }
 
-/** What must not appear in a message to a recipient: the Blooio outbound queue's LeakSources (prototypes/messaging-blooio/src/outbound-queue.ts). */
+/** What must not appear in a message to a recipient: the Blooio outbound queue's LeakSources (packages/blooio/src/outbound-queue.ts). */
 export type LeakSources = Pick<LeakOptions, "forbidden" | "facts" | "canaries" | "publicPhrases">;
 
 /**

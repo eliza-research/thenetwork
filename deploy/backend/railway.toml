@@ -6,7 +6,7 @@
 builder = "DOCKERFILE"
 dockerfilePath = "deploy/backend/Dockerfile"
 # Redeploy only when something the image contains changes.
-watchPatterns = ["packages/**", "prototypes/**", "deploy/backend/**", "package.json", "bun.lock", "tsconfig.json"]
+watchPatterns = ["packages/**", "deploy/backend/**", "package.json", "bun.lock", "tsconfig.json"]
 
 [deploy]
 # The Dockerfile's CMD runs deploy/backend/server.ts; migrations run on boot under the advisory lock.

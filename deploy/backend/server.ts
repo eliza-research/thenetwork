@@ -15,9 +15,9 @@ import { captureConsole, createBackend, ensureServiceLogin, ipOf, jsonLogger, lo
 const log = jsonLogger(undefined, { svc: "backend" });
 captureConsole(log);
 const { RealClock } = await import("../../packages/core/src/clock.ts");
-const { BlooioClient } = await import("../../prototypes/messaging-blooio/src/blooio/client.ts");
-const { BlooioAdapter: ProviderAdapter } = await import("../../prototypes/messaging-blooio/src/adapters/blooio-adapter.ts");
-const { resolveSenderLine } = await import("../../prototypes/messaging-blooio/src/line.ts");
+const { BlooioClient } = await import("../../packages/blooio/src/blooio/client.ts");
+const { BlooioAdapter: ProviderAdapter } = await import("../../packages/blooio/src/adapters/blooio-adapter.ts");
+const { resolveSenderLine } = await import("../../packages/blooio/src/line.ts");
 const { migrate } = await import("../../packages/observatory/db/migrate.ts");
 const { BlooioAdapter, liveFlag, liveSendAllowed } = await import("../../packages/network/service/channel.ts");
 const { NetworkService, webhookSecretsFromEnv } = await import("../../packages/network/service/service.ts");

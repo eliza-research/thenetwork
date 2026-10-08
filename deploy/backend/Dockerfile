@@ -12,7 +12,6 @@ WORKDIR /app
 # Only what the processes run: the workspaces, the lockfile and the deploy entry (Dockerfile.dockerignore keeps the rest out).
 COPY package.json bun.lock tsconfig.json ./
 COPY packages ./packages
-COPY prototypes ./prototypes
 COPY deploy ./deploy
 # The runtime has no npm dependencies of its own: this links the workspaces. No lifecycle scripts run.
 RUN bun install --frozen-lockfile --production --ignore-scripts

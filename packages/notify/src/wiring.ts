@@ -7,7 +7,7 @@ import type { Assistant, Channel, Surface } from "./types.ts";
 type Check = { ok: true } | { ok: false; reason: string };
 
 /**
- * For prototypes/messaging-blooio OutboundQueue `recipientPolicy`. Notifier deliveries use their
+ * For packages/blooio OutboundQueue `recipientPolicy`. Notifier deliveries use their
  * delivery id as briefId; once every item in one was seen on another surface, a message still
  * waiting in the queue (quiet hours, conversation limits) is not sent. Other briefs pass through
  * to `next`, which keeps the existing member checks.

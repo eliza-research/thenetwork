@@ -1,8 +1,0 @@
-{
-  "id": "evt_reaction_0010",
-  "type": "message.reaction",
-  "api_version": "2026-10-01",
-  "created_at": 1791216001000,
-  "organization_id": "org_test",
-  "data": { "message_id": "msg_out_0001", "chat_id": "chat_abc", "direction": "inbound", "reaction": "+love", "sender": "+15551234567" }
-}

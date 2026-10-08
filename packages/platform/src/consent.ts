@@ -52,7 +52,7 @@ export function lastEvents(events: readonly ConsentEvent[], e164: string, app: A
   return out;
 }
 
-// Keywords (CTIA conventions; same lists as prototypes/messaging-blooio/src/keywords.ts).
+// Keywords (CTIA conventions; same lists as packages/blooio/src/keywords.ts).
 const STOP_ALL_WORDS = new Set(["STOP ALL", "STOPALL"]);
 const STOP_WORDS = new Set(["STOP", "UNSUBSCRIBE", "CANCEL", "END", "QUIT", "REVOKE", "OPTOUT", "OPT OUT", "STOP PLEASE", "PLEASE STOP"]);
 const START_WORDS = new Set(["START", "UNSTOP", "SUBSCRIBE", "RESUME"]);

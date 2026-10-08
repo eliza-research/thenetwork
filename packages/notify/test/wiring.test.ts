@@ -1,6 +1,6 @@
-// Notifier wired to the real outbound queue (prototypes/messaging-blooio) on the simulated channel.
+// Notifier wired to the real outbound queue (packages/blooio) on the simulated channel.
 import { describe, expect, test } from "bun:test";
-import { world } from "../../../prototypes/messaging-blooio/tests/helpers.ts";
+import { world } from "../../blooio/tests/helpers.ts";
 import { MemoryNotifyStore, Notifier, connectorInbox, queuePolicy, queueSink, threadHooks, type Recipient } from "../src/index.ts";
 
 const ALICE = "+15550100001";

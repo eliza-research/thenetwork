@@ -13,7 +13,7 @@
 //    with neither after OUTCOME_WINDOW_MS is "ignored" (`sweep`).
 
 import { createHash, randomInt } from "node:crypto";
-import { isQuietAt } from "../../../prototypes/messaging-blooio/src/quiet-hours.ts";
+import { isQuietAt } from "../../blooio/src/quiet-hours.ts";
 import { composeText } from "./compose.ts";
 import type { NotifyStore } from "./store.ts";
 import { resolveDelivery, type Delivery, type SurfacePrefs } from "./surface.ts";
@@ -34,7 +34,7 @@ export interface RecipientDirectory {
   get(personId: string): Recipient | undefined | Promise<Recipient | undefined>;
 }
 
-/** Structurally compatible with prototypes/messaging-blooio OutboundQueue.enqueue (through queueSink). */
+/** Structurally compatible with packages/blooio OutboundQueue.enqueue (through queueSink). */
 export interface OutboundSink {
   enqueue(input: {
     idempotencyKey: string; channel: Channel; to: string; text: string;

@@ -26,7 +26,7 @@ import type { AppInfo } from "../../platform/src/apps.ts";
 import { loadSnapshot } from "./snapshot.ts";
 import { appWiring, type AppWiring } from "./packs.ts";
 import { DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, type Delivery, type Outbound } from "./channel.ts";
-import { normalizeAddress } from "../../../prototypes/messaging-blooio/src/phone.ts";
+import { normalizeAddress } from "../../blooio/src/phone.ts";
 // The Observatory's event shape and run summaries, so the console reads what this writes.
 import { eventOf, membersOf, type EventRow } from "../../observatory/src/events.ts";
 

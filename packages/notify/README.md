@@ -31,7 +31,7 @@ The single inbox and the notification scheduler from `docs/research/2026-10-08-e
 - **Migrations.** `packages/observatory/db/migrate.ts` applies `db/schema.sql` as the repeatable `9002_notify_schema`, with grants to `network_service`.
 
 **Prototypes and the plugin:**
-- **Outbound queue** (`prototypes/messaging-blooio`). Use `queueSink(queue, providerFor)` and `recipientPolicy: queuePolicy(notifier, existing)`.
+- **Outbound queue** (`packages/blooio`). Use `queueSink(queue, providerFor)` and `recipientPolicy: queuePolicy(notifier, existing)`.
 - **Connector prototype** (`prototypes/connector-mcp`). Pass `inbox: connectorInbox(notifier, now)`.
 - **`packages/plugin-network`.** Set `NetworkStore.readUpdates = threadHooks(notifier, now).readUpdates` to register `GET_UPDATES`.
 

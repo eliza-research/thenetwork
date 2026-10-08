@@ -1,8 +1,0 @@
-{
-  "id": "evt_status_0005",
-  "type": "message.delivered",
-  "api_version": "2026-10-01",
-  "created_at": 1791216005000,
-  "organization_id": "org_test",
-  "data": { "message_id": "msg_out_0001", "chat_id": "chat_abc", "status": "delivered", "direction": "outbound", "protocol": "imessage", "channel_type": "blooio" }
-}

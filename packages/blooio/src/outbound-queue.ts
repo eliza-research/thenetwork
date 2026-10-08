@@ -36,7 +36,7 @@
 import { DEFAULT_QUIET, isQuietAt, isValidTimeZone, nextAllowedAt, resolveTimeZone, type QuietWindow } from "./quiet-hours.ts";
 import type { ConsentLedger } from "./keywords.ts";
 import { normalizeAddress } from "./phone.ts";
-import { LeakGuard } from "../../../packages/core/src/guard.ts";
+import { LeakGuard } from "../../core/src/guard.ts";
 import {
   ChannelSendError, type ChannelAdapter, type ChannelKind, type Clock, type DeliveryStatus, type StatusUpdate, type Transport,
 } from "./types.ts";
