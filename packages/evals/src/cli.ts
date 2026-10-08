@@ -26,7 +26,7 @@ import { buildJudgeDataset } from "./judgeDataset.ts";
 import { buildRecDataset, datasetComposition } from "./recDataset.ts";
 import { renderReport } from "./report.ts";
 import { constantBaseline, engineBaseline, runRecommender, scoreRec, type RecResult } from "./runRec.ts";
-import { productionPolicy, rulesBaseline, runJudgeSuite, scoreJudge, type JudgeResult } from "./runJudge.ts";
+import { leakGuardBaseline, productionPolicy, rulesBaseline, runJudgeSuite, scoreJudge, type JudgeResult } from "./runJudge.ts";
 import type { RequestSettings } from "./transport.ts";
 import { DEFAULT_WORLDS } from "./worlds.ts";
 import { DEFAULT_MODEL, endpointsFor } from "../../core/src/index.ts";
@@ -92,18 +92,19 @@ async function main() {
   const recBaselines = recDs ? [scoreRec("engine-v1 (deterministic)", recDs.items, engineBaseline(recDs)), scoreRec("always-no", recDs.items, constantBaseline(recDs, false))] : [];
   const judgeScores = judgeItems ? models.map(m => scoreJudge(m, judgeItems, judgeResults.get(m)!)) : [];
   const rules = judgeItems ? scoreJudge("rules", judgeItems, rulesBaseline(judgeItems), { skipUnscored: true }) : undefined;
+  const leakGuard = judgeItems ? scoreJudge("leak-guard (checkMemberFacing)", judgeItems, leakGuardBaseline(judgeItems), { skipUnscored: true }) : undefined;
   const production = judgeItems ? models.map(m => scoreJudge(`${m} + rules`, judgeItems, productionPolicy(judgeItems, judgeResults.get(m)!, `${m} + rules`))) : [];
 
   for (const s of recScores.concat(recBaselines)) {
     console.log(`REC  ${s.name.padEnd(28)} acc ${(s.accuracy * 100).toFixed(1)}%  P ${(s.precision * 100).toFixed(1)}% R ${(s.recall * 100).toFixed(1)}% F1 ${s.f1.toFixed(3)} AUC ${s.auc.toFixed(3)} unsafe ${s.unsafeRejected}/${s.unsafeN} fail ${s.failures} cost $${(s.costMicro / 1e6).toFixed(4)} (fresh $${(s.freshCostMicro / 1e6).toFixed(4)})`);
   }
-  for (const s of judgeScores.concat(rules ? [rules] : [], production)) {
+  for (const s of judgeScores.concat(rules ? [rules] : [], leakGuard ? [leakGuard] : [], production)) {
     console.log(`JUDGE ${s.name.padEnd(27)} agree ${(s.agreement * 100).toFixed(1)}% hard ${(s.hardAccuracy * 100).toFixed(1)}% kappa ${s.kappa.toFixed(3)} privFN ${(s.privacyFnRate * 100).toFixed(1)}% policy ${((s.byCategory.policy?.accuracy ?? NaN) * 100).toFixed(1)}% fail ${s.failures} cost $${(s.costMicro / 1e6).toFixed(4)} (fresh $${(s.freshCostMicro / 1e6).toFixed(4)})`);
   }
 
   const strip = <T extends { correct: boolean[] }>(x: T) => ({ ...x, correct: undefined });
   writeFileSync(join(resultsDir, "summary.json"), JSON.stringify({
-    models, settings, maxTokens, rec: recScores.concat(recBaselines).map(strip), judge: judgeScores.concat(rules ? [rules] : [], production).map(strip),
+    models, settings, maxTokens, rec: recScores.concat(recBaselines).map(strip), judge: judgeScores.concat(rules ? [rules] : [], leakGuard ? [leakGuard] : [], production).map(strip),
   }, null, 1));
 
   if (limit) { console.log("--limit set: not writing the report"); return; }

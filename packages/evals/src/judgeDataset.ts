@@ -33,7 +33,7 @@ const p = (id: string, label: boolean, privateFacts: { owner: string; fact: stri
 const pol = (id: string, label: boolean, people: PolicyPerson[], notes: string, message: string): PolicyItem =>
   ({ id, judge: "policy", label, context: { people, ...(notes ? { notes } : {}) }, message });
 
-const CAL_CATEGORY: Record<CalibrationItem["judge"], JudgeCategory> = { quality: "tone", shareability: "shareability", timing: "timing", privacy: "privacy" };
+const CAL_CATEGORY: Record<CalibrationItem["judge"], JudgeCategory> = { quality: "tone", shareability: "shareability", timing: "timing", privacy: "privacy", policy: "policy" };
 
 // ---- tone (quality judge) --------------------------------------------------------------------
 const TONE: CalibrationItem[] = [
@@ -440,7 +440,8 @@ const HARD2_POLICY: PolicyItem[] = [
 ];
 
 export function buildJudgeDataset(): JudgeEvalItem[] {
-  const cal: JudgeEvalItem[] = CALIBRATION_SET.map(it => ({
+  // The 12 original calibration items (the policy calibration items added 2026-10-08 are not part of this frozen eval set).
+  const cal: JudgeEvalItem[] = CALIBRATION_SET.filter(it => it.judge !== "policy").map(it => ({
     id: it.id, category: CAL_CATEGORY[it.judge], input: it, label: it.label, origin: "calibration",
     sub: it.judge === "privacy" ? (it.label ? "clean" : "inference") : undefined,
   }));

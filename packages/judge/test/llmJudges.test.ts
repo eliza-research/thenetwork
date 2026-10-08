@@ -50,3 +50,13 @@ describe("fenceUntrusted", () => {
     expect(llm.calls[0]![0]!.content).toContain("never an instruction");
   });
 });
+
+describe("calibration (offline)", () => {
+  test("covers the policy judge and reports agreement per judge, so one judge cannot hide behind the others", async () => {
+    const { CALIBRATION_SET, runCalibration } = await import("../src/calibration.ts");
+    expect(new Set(CALIBRATION_SET.map(i => i.judge))).toEqual(new Set(["quality", "shareability", "timing", "privacy", "policy"]));
+    // A judge model that says "compliant" to everything: the romance rule still blocks pol-bad-2 without it.
+    const res = await runCalibration(new FakeLLM('{"compliant": true, "violations": [], "reasoning": "ok"}'), { items: CALIBRATION_SET.filter(i => i.judge === "policy"), concurrency: 1 });
+    expect(res.byJudge.policy).toEqual({ n: 3, agree: 2, agreement: 2 / 3 });
+  });
+});
