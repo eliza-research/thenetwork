@@ -16,3 +16,7 @@ export * as attention from "./attention.ts";
 export { DEFAULT_ATTENTION, resolveAttention, attentionConfigHash, type AttentionConfig, type AttentionConfigInput } from "./config.ts";
 export * as plans from "./plans.ts";
 export { DEFAULT_PLANS, resolvePlans, plansConfigHash, type PlansConfig, type PlansConfigInput } from "./config.ts";
+// App packs (docs/results/2026-10-08-app-packs-core.md): the contract, the core geo model and networkPack.
+export * from "./pack.ts";
+export { cityBucketGeo } from "./geo.ts";
+export { networkPack, NETWORK_PACK_VERSION } from "./packs/network/index.ts";

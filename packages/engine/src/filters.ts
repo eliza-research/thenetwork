@@ -4,24 +4,23 @@ import type { Category, MemberId } from "@thenetwork/core";
 import { ADULT_AGE as CORE_ADULT_AGE, canBeMatched, DAY, HOUR } from "@thenetwork/core";
 import type { EngineConfig } from "./config.ts";
 import type { Candidate, Format, Role } from "./types.ts";
-import { CONTRIBUTOR_ROLES } from "./types.ts";
 import { pairKey, type World } from "./world.ts";
 
+/**
+ * Funnel reasons. The core reasons (unknown_member, underage, safety_hold, state_paused, blocked,
+ * duplicate_participant, no_presence_overlap) plus networkPack's; other packs' rules may return
+ * their own reason strings (the `string & {}` arm keeps autocomplete for the known ones).
+ */
 export type FilterReason =
   | "unknown_member" | "underage" | "safety_hold" | "state_paused" | "state_receiving_contributor"
   | "category_opt_out" | "romance_opt_out" | "only_when_asked" | "interruption_budget"
   | "contribution_budget" | "category_quota" | "category_cooldown" | "reliability_holdout"
   | "blocked" | "negative_feedback_cooldown" | "pair_cooldown" | "active_duplicate"
   | "romance_incompatible" | "dealbreaker" | "high_risk" | "home_entry_rule"
-  | "no_presence_overlap" | "group_size" | "duplicate_participant";
+  | "no_presence_overlap" | "group_size" | "duplicate_participant" | (string & {});
 
-export interface MemberCheck {
-  category: Category; role: Role; format: Format; timeSensitive: boolean;
-  /** Extra already-planned asks this run (load accounting inside the run). */
-  extraProactive?: number; extraContribution?: number;
-  /** Intent that the member themselves raised (for 'only when I ask'). */
-  ownIntentCreatedAt?: number;
-}
+import type { MemberCheck } from "./pack.ts";
+export type { MemberCheck };
 
 /**
  * Minors policy (founder decisions 2026-10-05 and 2026-10-07; `packages/core/src/policy.ts`):
@@ -53,55 +52,33 @@ export function memberReason(w: World, id: MemberId, c: MemberCheck): FilterReas
   const mi = w.get(id);
   if (!mi) return "unknown_member";
   const m = mi.m;
-  if (isMinorAge(m.age) || !(m.age >= cfg.ageMin)) return "underage";
+  // Core prefix (cannot be overridden or reordered by a pack): minors / age floor, holds, pause.
+  if (isMinorAge(m.age) || !(m.age >= cfg.ageMin) || !(m.age >= w.pack.eligibility.minMatchAge)) return "underage";
   if (w.holds.has(id)) return "safety_hold";
   if (m.state === "paused") return "state_paused";
-  if (m.state === "receiving" && CONTRIBUTOR_ROLES.has(c.role)) return "state_receiving_contributor";
-  if (!m.prefs.categoriesOptIn.includes(c.category)) return "category_opt_out";
-  if (c.category === "romance" && !m.prefs.romanceOptIn) return "romance_opt_out";
-  const askedRecently = c.ownIntentCreatedAt !== undefined && w.now - c.ownIntentCreatedAt <= cfg.askedRecencyDays * DAY;
-  if ((m.prefs.onlyWhenAsked || m.unansweredProactive >= 2) && !askedRecently) return "only_when_asked";
-  const budget = cfg.budgets[m.state];
-  if (mi.recentProactive + (c.extraProactive ?? 0) >= budget.limit) return "interruption_budget";
-  if (CONTRIBUTOR_ROLES.has(c.role) && mi.recentContribution + (c.extraContribution ?? 0) >= cfg.contribution.limit) return "contribution_budget";
-  const quota = w.quotas[id]?.[c.category];
-  if (quota !== undefined && (mi.categoryCount30.get(c.category) ?? 0) >= quota) return "category_quota";
-  const declinedAt = w.memberCategoryDeclines.get(id)?.get(c.category);
-  if (declinedAt !== undefined && w.now - declinedAt < cfg.cooldowns.categoryDeclineDays * DAY) return "category_cooldown";
-  const rel = w.reliability[id];
-  if (rel && rel.noShows >= 2 && rel.completedSinceLastNoShow === 0 && (c.format !== "one_to_one" || c.timeSensitive)) return "reliability_holdout";
+  // Pack rules in order (networkPack: packs/network/rules.ts, the pre-refactor order).
+  for (const r of w.pack.eligibility.memberRules) {
+    const reason = r.check(w, id, mi, c);
+    if (reason) return reason;
+  }
   return null;
 }
 
 /** Pair-level hard constraints. Completed / positive history never blocks (ME-005). */
 export function pairReason(w: World, a: MemberId, b: MemberId, category: Category): FilterReason | null {
-  const cfg = w.cfg;
   if (a === b) return "duplicate_participant";
   if (isMinor(w, a) || isMinor(w, b)) return "underage"; // minors are never paired with anyone
-  const k = pairKey(a, b);
-  if (w.blocked.has(k)) return "blocked";
-  const neg = w.negativeFeedback.get(k);
-  if (neg !== undefined && w.now - neg < cfg.cooldowns.negativeFeedbackDays * DAY) return "negative_feedback_cooldown";
-  for (const r of w.pairInteractions.get(k) ?? []) {
-    if ((r.outcome === "declined" || r.outcome === "expired" || r.outcome === "cancelled") && w.now - r.at < cfg.cooldowns.pairDeclinedDays * DAY) return "pair_cooldown";
-  }
-  if (w.activePairs.has(k)) return "active_duplicate";
+  // Core prefix: blocks win (either direction).
+  if (w.blocked.has(pairKey(a, b))) return "blocked";
   const ma = w.get(a), mb = w.get(b);
-  if (!ma || !mb) return "unknown_member";
-  if (category === "romance") {
-    if (!ma.m.prefs.romanceOptIn || !mb.m.prefs.romanceOptIn) return "romance_incompatible";
-    if (!romanceCompatible(ma, mb) || !romanceCompatible(mb, ma)) return "romance_incompatible";
+  // Pack rules in order (networkPack: cooldowns, active duplicate, known members, romance, dealbreakers).
+  for (const r of w.pack.eligibility.pairRules) {
+    const reason = r.check(w, a, b, category, ma!, mb!);
+    if (reason) return reason;
   }
-  if (ma.dealbreakers.some(d => mb.tags.has(d)) || mb.dealbreakers.some(d => ma.tags.has(d))) return "dealbreaker";
-  return null;
-}
-
-function romanceCompatible(seeker: NonNullable<ReturnType<World["get"]>>, other: NonNullable<ReturnType<World["get"]>>): boolean {
-  const r = seeker.romance;
-  if (!r) return true; // opted in with no stated constraints
-  if (other.m.age < r.ageMin || other.m.age > r.ageMax) return false;
-  if (r.seeks.length && !r.seeks.some(s => other.romance?.is.includes(s))) return false;
-  return true;
+  if (!ma || !mb) return "unknown_member";
+  // Optional geo hard filter (radius packs: mutual radius). Absent for networkPack.
+  return w.pack.geo.pairReason?.(w, a, b) ?? null;
 }
 
 const riskCache = new WeakMap<EngineConfig, RegExp[]>();
@@ -146,10 +123,11 @@ export interface RunUsage { proactive: Map<MemberId, number>; contribution: Map<
 export function candidateReason(w: World, c: Candidate, usage?: RunUsage): FilterReason | null {
   const cfg = w.cfg;
   if (new Set(c.participants).size !== c.participants.length) return "duplicate_participant";
-  if (c.kind === "group" || c.kind === "newcomer_welcome") {
-    if (c.participants.length < cfg.group.minSize || c.participants.length > cfg.group.maxSize) return "group_size";
+  // Pack rules that run before the core participant checks (networkPack: group_size, high_risk).
+  for (const r of w.pack.eligibility.candidatePreRules) {
+    const reason = r.check(w, c);
+    if (reason) return reason;
   }
-  if (c.riskFlags?.length || riskTerms(cfg, c.riskText).length) return "high_risk";
   // Minors policy: no one under 18 in any role (participant, alternate, via/connector).
   if (involvesMinor(w, c)) return "underage";
   // The warm-path intermediary is named to both sides and asked to vouch: never someone on a
@@ -174,15 +152,12 @@ export function candidateReason(w: World, c: Candidate, usage?: RunUsage): Filte
     const r = pairReason(w, c.participants[i]!, c.participants[j]!, c.category);
     if (r) return r;
   }
-  // F14: help that enters a home needs 2+ helpers or helpers who already met the requester.
-  if (c.kind === "help" && isHomeEntry(cfg, c.riskText)) {
-    const requester = c.participants[0]!;
-    const helpers = c.participants.slice(1);
-    const acquainted = helpers.every(h => w.edgeHas(requester, h, "met") || w.edgeHas(requester, h, "knows") || w.edgeHas(requester, h, "helped"));
-    if (helpers.length < 2 && !acquainted) return "home_entry_rule";
-    c.safetyClass = "medium";
+  // Pack rules after the member / pair checks (networkPack: the F14 home-entry rule).
+  for (const r of w.pack.eligibility.candidatePostRules) {
+    const reason = r.check(w, c);
+    if (reason) return reason;
   }
-  // Presence / availability overlap in the opportunity window (ME-011).
+  // Presence / availability overlap in the opportunity window (ME-011): the core geo filter.
   const start = c.fixedWindow?.start ?? w.now;
   const end = c.fixedWindow?.end ?? w.now + cfg.windowDays * DAY;
   if (end <= w.now) return "no_presence_overlap";
