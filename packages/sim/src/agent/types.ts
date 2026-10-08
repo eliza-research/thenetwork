@@ -24,7 +24,7 @@ export interface PersonaMemory {
   optedOut: boolean;
   disclosed: boolean;
   questionsAnswered: number;
-  proposals: Record<string, { decision: Decision; plannedShow: boolean; enjoyment: number; others: MemberId[]; at?: number }>;
+  proposals: Record<string, { decision: Decision; plannedShow: boolean; enjoyment: number; others: MemberId[]; at?: number; category?: import("@thenetwork/core").Category; decidedAt?: number }>;
   meetings: Record<string, { at: number; showed: boolean; enjoyment: number; others: MemberId[]; cancelledWithNotice: boolean; othersShowed: MemberId[] }>;
   proactiveReceived: number[];
   blocked: MemberId[];
@@ -41,6 +41,8 @@ export interface PersonaMemory {
   signals?: { category: import("@thenetwork/core").Category; at: number; source: "ask" | "probe"; key?: string }[];
   /** Friends this persona has invited (growth). */
   invited?: string[];
+  /** Trust in the Network, 1 = full (PolicyOptions.qualityChurn only). Bad or unsafe intros lower it. */
+  trust?: number;
 }
 
 export const newMemory = (): PersonaMemory => ({

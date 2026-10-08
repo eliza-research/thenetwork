@@ -289,7 +289,7 @@ export class AttentionNetwork extends StubNetwork {
     }
     return {
       memberId: id, state, age: mem.age, tz, quietHours,
-      onlyWhenAsked: st.unanswered >= 2 || A.unansweredInterruptions(this.ledger, id, now, this.cfg) >= 2,
+      onlyWhenAsked: st.unanswered >= 2 || A.unansweredInterruptions(this.ledger, id, now, this.cfg, this.convOf(id).lastInboundAt) >= 2,
       newcomer: now - (mem.joinedAt ?? 0) < this.cfg.newcomer.days * DAY,
       prefs, categoriesOptIn: mem.prefs.categoriesOptIn,
     };
@@ -490,6 +490,7 @@ export class AttentionNetwork extends StubNetwork {
     const p = picked ? this.proposals.get(picked.sourceProposalId!)! : undefined;
     let body = A.digestText(items.map(it => texts.get(it.id) ?? ""));
     if (kind === "reengage") body = `${body} ${A.REENGAGE_SUFFIX}`;
+    body = A.withPausePath(body); // PRD PH-003 (judge pause_path_missing)
     const note = this.notes.get(id);
     if (note) { body = `${note}\n\n${body}`; this.notes.delete(id); }
     const attention = { kind, items: items.map(x => x.sourceProposalId ?? x.key), picked: picked?.sourceProposalId };
@@ -497,6 +498,8 @@ export class AttentionNetwork extends StubNetwork {
       : this.o.probes
         ? { type: "probe", proactive: true, probe: { key: p.id, category: p.category, participants: [...p.participants], kind: p.kind, window: p.window }, attention }
         : { type: "proposal", proposalId: p.id, participants: p.participants, proactive: true, attention };
+    // Plan invites go in their own lane (founder decision 2026-10-08: plan allowance, judge LANE_BUDGETS).
+    if (memberItems.length && memberItems.every(x => x.kind === "plan_probe")) meta.lane = "plan";
     if (!p) this.stats.eventOnlyMessages++;
     for (const it of items) if (it.kind === "event_suggestion") {
       this.stats.eventsShown++;
@@ -773,7 +776,7 @@ export class AttentionNetwork extends StubNetwork {
       m.unanswered++;
       this.stats.unanswered++;
       for (const it of pend.items) if (it.sourceProposalId && (it.stage === "partner" || it.others.length > 1 || it === pend.picked || this.isParallel(it.sourceProposalId))) this.answer(it.sourceProposalId, id, false, "unanswered");
-      if (!this.autoPaused.has(id) && (m.unanswered >= 2 || A.unansweredInterruptions(this.ledger, id, now, this.cfg) >= 2)) {
+      if (!this.autoPaused.has(id) && (m.unanswered >= 2 || A.unansweredInterruptions(this.ledger, id, now, this.cfg, this.convOf(id).lastInboundAt) >= 2)) {
         this.autoPaused.add(id);
         this.stats.autoPauses.push({ memberId: id, at: now });
       }
@@ -785,7 +788,7 @@ export class AttentionNetwork extends StubNetwork {
       if (m.awaiting?.kind === "reveal") m.awaiting = undefined;
       this.onReveal(r.pid, id, !!this.o.revealOptOut, now);
     }
-    if (this.autoPaused.size) for (const id of this.autoPaused) if (this.s.member(id).unanswered === 0 && A.unansweredInterruptions(this.ledger, id, now, this.cfg) < 2) this.autoPaused.delete(id);
+    if (this.autoPaused.size) for (const id of this.autoPaused) if (this.s.member(id).unanswered === 0 && A.unansweredInterruptions(this.ledger, id, now, this.cfg, this.convOf(id).lastInboundAt) < 2) this.autoPaused.delete(id);
   }
 
   /** D6: one re-engagement for auto-paused members after >= 30 days of silence, high-value item only. */

@@ -1,0 +1,65 @@
+# LLMs: https://cerebralvalley.ai/llms.txt
+# LLMs (full text): https://cerebralvalley.ai/llms-full.txt
+
+User-Agent: *
+Allow: /
+Allow: /api/e/og/
+Allow: /api/r/og/
+Allow: /api/og/
+Disallow: /auth/
+Disallow: /api/
+Disallow: /profile/create
+Disallow: /events/~/
+Disallow: /showcase/~/
+Disallow: /*.json$
+Disallow: /*?*autoMessage=
+Disallow: /*?*invitation=
+Disallow: /*?*invitationId=
+Disallow: /*?*applicationId=
+Disallow: /*?*preview=
+Disallow: /*?*teamId=
+Disallow: /*?*modalCloseUrl=
+Disallow: /*?*backUrl=
+
+User-Agent: Googlebot
+User-Agent: Bingbot
+Allow: /
+Allow: /api/e/og/
+Allow: /api/r/og/
+Allow: /api/og/
+Disallow: /auth/
+Disallow: /api/
+Disallow: /profile/create
+Disallow: /events/~/
+Disallow: /showcase/~/
+Disallow: /*.json$
+Disallow: /*?*autoMessage=
+Disallow: /*?*invitation=
+Disallow: /*?*invitationId=
+Disallow: /*?*applicationId=
+Disallow: /*?*preview=
+Disallow: /*?*teamId=
+Disallow: /*?*modalCloseUrl=
+Disallow: /*?*backUrl=
+
+User-Agent: facebookexternalhit
+User-Agent: LinkedInBot
+User-Agent: WhatsApp
+Allow: /
+Allow: /api/e/og/
+Allow: /api/r/og/
+Allow: /api/og/
+Disallow: /auth/
+Disallow: /api/
+Disallow: /profile/create
+
+User-Agent: Twitterbot
+Allow: /api/e/og/*
+Allow: /api/r/og/*
+Allow: /api/og/*
+Disallow: /auth/
+Disallow: /profile/create
+
+Host: https://cerebralvalley.ai
+Sitemap: https://cerebralvalley.ai/sitemap.xml
+Sitemap: https://cerebralvalley.ai/sitemap-md.xml

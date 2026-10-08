@@ -39,7 +39,8 @@ export interface AskRecord {
   /** When the member replied. An answered question is closed: the member is proposed normally again. */
   answeredAt?: number;
 }
-export type AskReason = "no_structured_want" | "few_facets" | "romance_prefs";
+/** Ask reasons: the core / networkPack ones, plus any reason a pack's `selection.extraAsks` emits (slopPack: slop_*). */
+export type AskReason = "no_structured_want" | "few_facets" | "romance_prefs" | (string & {});
 /**
  * Engine output "ask": a question to send to a member before proposing anyone to them, because
  * the engine cannot yet match them well (no structured want, too few matchable facets, or no
@@ -168,6 +169,8 @@ export interface MatchingRunLog {
   judge: {
     calls: number; cacheHits: number; failures: number; verdicts: { key: string; cacheKey: string; verdict: JudgeVerdict | null; cached: boolean }[];
     screen?: { calls: number; cacheHits: number; failures: number; verdicts: { key: string; cacheKey: string; verdict: unknown; cached: boolean }[] };
+    /** Selected configurations and how many of them a pass-2 verdict scored (absent when no judge ran). */
+    coverage?: { selected: number; judged: number };
     deep?: {
       calls: number; cacheHits: number; failures: number;
       verdicts: {

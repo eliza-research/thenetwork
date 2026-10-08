@@ -31,6 +31,13 @@ describe("surface-profile bypasses", () => {
       expect(resolveClient(id)).toMatchObject({ hostKey: "chatgpt", profile: "teen_safe_directory", trustTier: "verified" });
   });
 
+  test("client identity: only Claude's /oauth/ documents are Claude, not any claude.ai path (plugin-prototypes-24)", () => {
+    for (const id of ["https://claude.ai/public/artifacts/abc/client.json", "https://claude.com/u/attacker.json", "https://claude.ai/oauth/x/../../share/y.json"])
+      expect(resolveClient(id)).toMatchObject({ hostKey: "unknown", trustTier: "unverified" });
+    for (const id of ["https://claude.ai/oauth/mcp-client-metadata.json", "https://claude.ai/oauth/claude-code-client-metadata"])
+      expect(resolveClient(id)).toMatchObject({ hostKey: "claude", trustTier: "verified" });
+  });
+
   test("DCR: Claude's claude.ai + claude.com callbacks stay verified Claude; mixing hosts is unverified", () => {
     expect(resolveClient("dcr_x", ["https://claude.ai/api/mcp/auth_callback", "https://claude.com/api/mcp/auth_callback"]))
       .toMatchObject({ hostKey: "claude", trustTier: "verified" });
@@ -71,7 +78,7 @@ describe("surface-profile bypasses", () => {
     for (const s of ["Bouldering at the barbecue place", "Updating your profile", "Barcelona trip planning", "Robotics lab, ages 10 to 17", "Sat 1–4pm, all ages"])
       expect(profileViolation(s, teen)).toBeNull();
     // Claude's profile still blocks disguised romance
-    expect(profileViolation("d a t i n g night", PROFILES.general_assistant)).not.toBeNull();
+    expect(profileViolation("d a t i n g night", PROFILES.general_assistant, 30)).not.toBeNull();
   });
 
   test("an item whose category is clean but whose TEXT is out of profile is hidden on ChatGPT (and the list still works)", async () => {
@@ -347,8 +354,9 @@ describe("leak-guard gaps", () => {
 
   test("forbidden strings match regardless of case, Unicode form, punctuation or JSON-escaped characters", async () => {
     const w0 = world();
-    const theoPrivate = w0.theo.facets[0]!.value;
-    for (const v of [theoPrivate.toUpperCase(), theoPrivate.replace(/_/g, " "), theoPrivate.replace("salary", "ｓａｌａｒｙ")]) {
+    // Maya is the other person in Ava's intro, so her private facets are guarded for Ava.
+    const mayaPrivate = w0.maya.facets.find((f) => f.scope === "agent_private")!.value;
+    for (const v of [mayaPrivate.toUpperCase(), mayaPrivate.replace(/_/g, " "), mayaPrivate.replace("search", "ｓｅａｒｃｈ")]) {
       const { r } = await leakyAnswer(`FYI ${v}`);
       expect(r.text).toBe(PRIVACY_FALLBACK);
     }
@@ -361,17 +369,47 @@ describe("leak-guard gaps", () => {
     expect((await call("ask_network_agent", { question: "hi" })).text).toBe(PRIVACY_FALLBACK);
   });
 
-  test("no oracle: supplying another member's private fact in the question doesn't exempt it from the guard", async () => {
+  test("no oracle: the guard's verdict does not depend on whether the caller guessed a private fact (plugin-prototypes-21)", async () => {
     const w0 = world();
     const fact = w0.maya.facets.find((f) => f.scope === "matchable")!.value;
-    const { r } = await leakyAnswer(`Yes, ${fact}.`, { question: `Is it true that ${fact}?` });
-    expect(r.text).toBe(PRIVACY_FALLBACK);
+    // The Network echoes the member's own words: a real fact and a wrong guess get the same answer.
+    const tellEcho = async (probe: string) => {
+      const w = world();
+      const { call } = await connect(w.net, principal(w, w.ava));
+      const r = await call("tell_network_agent", { instruction: `I'm looking for someone whose ${probe}`, idempotency_key: key() });
+      return { isError: r.isError, status: r.data?.status };
+    };
+    expect(await tellEcho(fact)).toEqual(await tellEcho("CANARY_MAYA_MATCHABLE_recently married"));
+    expect(await tellEcho("job search is secret")).toEqual(await tellEcho("job search is public"));
+    expect((await tellEcho("job search is secret")).isError).toBe(false);
+    // A leak the Network adds itself (words the caller did not send) is still blocked.
+    expect((await leakyAnswer(`FYI ${fact}.`, { question: "anything about Maya?" })).r.text).toBe(PRIVACY_FALLBACK);
+    expect((await leakyAnswer(`Yes: divorced, recently.`, { question: `Is it true that ${fact}?` })).r.text).toBe(PRIVACY_FALLBACK);
     // the member's OWN private note may be echoed when the member supplied it (§8.2 step 3)
     const own = w0.ava.facets.find((f) => f.scope === "agent_private")!.value;
     const mine = await leakyAnswer(`Noted: ${own}`, { question: `remember ${own}` });
     expect(mine.r.isError).toBe(false);
     // ...but not when they didn't
     expect((await leakyAnswer(`Noted: ${own}`)).r.text).toBe(PRIVACY_FALLBACK);
+  });
+
+  test("a member who is not my counterpart cannot break my connector with a private facet (plugin-prototypes-21)", async () => {
+    const w = world();
+    w.theo.facets.push({ value: "Thursday evenings", scope: "agent_private" }, { value: "the network", scope: "agent_private" });
+    const { call } = await connect(w.net, principal(w, w.ava));
+    expect((await call("get_network_updates", {})).isError).toBe(false);
+    expect((await call("ask_network_agent", { question: "anything new?" })).isError).toBe(false);
+  });
+
+  test("a committed write whose reply is blocked is not reported as 'nothing saved' (plugin-prototypes-25)", async () => {
+    const w = world();
+    w.maya.facets.push({ value: "Switch to Quiet", scope: "agent_private" }); // collides with the pause summary
+    const { call } = await connect(w.net, principal(w, w.ava));
+    const r = await call("tell_network_agent", { instruction: "please pause for a while", idempotency_key: key() });
+    expect(r.isError).toBe(true);
+    expect(r.text).not.toMatch(/nothing (new )?was saved/i);
+    expect(r.text).toContain("got your request");
+    expect(r.meta["network/receipt"]).toMatchObject({ replayed: false });
   });
 
   test("internal ids in any case, and ISO timestamps, are blocked", async () => {

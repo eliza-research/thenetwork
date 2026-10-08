@@ -72,6 +72,9 @@ export function buildEvalWorld(spec: WorldSpec): EvalWorld {
     cityWeights: spec.city === "sf" ? { sf: 1, nyc: 0 } : { sf: 0, nyc: 1 },
     // Everyone has joined by EVAL_NOW so the whole population is matchable.
     joinSpreadDays: 3,
+    // The recorded judge runs (test/fixtures) replay only if prompts are byte-identical, so the eval
+    // worlds keep the pre-sim-worlds-17 link wiring. Eval items are adult pairs; minors are excluded.
+    legacyLinks: true,
     ...(spec.richness ? { richness: true } : {}),
   });
   const byId = new Map(personas.map(p => [p.id, p]));

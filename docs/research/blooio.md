@@ -271,3 +271,14 @@ The prototype's `bun run scripts/verify-readonly.ts` reproduces this table. `BLO
 - iMessage automation guide (consent, throughput, P2P vs A2P): https://blooio.com/guides/imessage-automation
 - Eliza code (read-only): `v3/plugins/plugin-imessage/src/{blooio-transport,blooio-readiness,service}.ts`,
   `v3/packages/cloud/shared/src/lib/utils/blooio-api.ts`, `v3/packages/cloud/services/gateway-webhook/src/adapters/blooio.ts`
+
+## Live verification (2026-10-07)
+
+First real send on the Network line +18087881821, to the founder's phone, via `scripts/first-send.ts`:
+- **Delivery:** the API accepted it (status `queued`, protocol `pending`), and it was `delivered` over **iMessage** within 5 seconds.
+- **Webhooks:** a second, channel-scoped webhook on payload version `2026-10-01`, pointing at a temporary tunnel to `src/main.ts`, received `message.sent`, `message.queued` and `message.delivered`. All three passed HMAC verification.
+- **Ordering:** **`sent` arrived before `queued`**, so status webhooks really do arrive out of order. The outbound queue already never regresses a status.
+- **Fixtures:** the payloads are saved, with the phone number replaced and signatures stripped, in `prototypes/messaging-blooio/tests/fixtures/live-2026-10-07/`, with tests in `tests/live-fixtures.test.ts`. `BLOOIO_CAPTURE_DIR` makes the receiver save future payloads the same way.
+- **Inbound:** our receiver got a real inbound iMessage (`message.received`, verified), but it came from **another person** texting the line. The line is shared with live Eliza users, whose agent replied through its own webhook. Our receiver only logged the message (non-keyword; nothing was sent), and that capture was deleted without being committed.
+- **Pending:** the founder's HELP/STOP/START replies were not received before the 2-hour test window closed. The temporary webhook (`wh_01a117b9…`) and tunnel were removed afterwards; the existing Eliza webhooks were left untouched.
+- **Recommendation:** before the pilot, give the Network its **own Blooio line**, or move Eliza's users off this one. Otherwise both agents and both STOP/HELP handlers see every inbound message on the line, and Network webhooks receive Eliza users' messages.

@@ -14,6 +14,12 @@ import { sha256 } from "./rng.ts";
 import type { Candidate, JudgeVerdict } from "./types.ts";
 import type { World } from "./world.ts";
 
+// Moved: prompt-independent constants live in judgeConstants.ts; The Network's judging guidance moved
+// verbatim to packs/network/prompts.ts. Re-exported here so every existing import keeps working.
+export { CITATION_RULES, HYPOTHESIS_CONFIDENCE, STALE_DAYS } from "./judgeConstants.ts";
+export { CODE_ENFORCED_V3, JUDGING_NOTES, JUDGING_NOTES_V3 } from "./packs/network/prompts.ts";
+import { HYPOTHESIS_CONFIDENCE, STALE_DAYS } from "./judgeConstants.ts";
+
 // ---- runner, cache, pass loop ---------------------------------------------------------------------
 
 /** System prompt + the context object as the user message (the prompt bytes every pass sends). */
@@ -40,10 +46,17 @@ export class JudgeCache<V = JudgeVerdict> {
   clear() { this.m.clear(); }
 }
 
-/** Cache key: prompt version, configuration shape and every participant's profile revision. */
+/**
+ * Cache key: prompt version, configuration shape, every participant's profile revision, and what
+ * else the judge sees (engine-pipeline-19): the connector (via) and their revision, the city, a
+ * fixed time window, and the pass-2 context setting.
+ */
 export function passCacheKey(w: World, c: Candidate, version: string): string {
   const parts = [...c.participants].sort().map(id => `${id}@${w.get(id)?.revision ?? "?"}`);
-  return sha256(`${version}|${c.kind}|${c.category}|${c.anchor?.type}:${c.anchor?.id}|${parts.join(",")}`).slice(0, 24);
+  const via = c.via ? `${c.via}@${w.get(c.via)?.revision ?? "?"}` : "-";
+  // Only a fixed time is part of the key: an open window starts at "now" and would never hit.
+  const when = `${c.city ?? "-"}:${c.fixedWindow ? `${c.window?.start ?? c.fixedWindow.start}-${c.window?.end ?? c.fixedWindow.end}` : "-"}`;
+  return sha256(`${version}|${c.kind}|${c.category}|${c.anchor?.type}:${c.anchor?.id}|${parts.join(",")}|${via}|${when}|${w.cfg.judge.pass2Context}`).slice(0, 24);
 }
 
 export interface JudgeRunStats { calls: number; cacheHits: number; failures: number }
@@ -134,8 +147,9 @@ export type PassVerdict = "yes" | "no" | "insufficient_information";
 export function prob(x: unknown): number | undefined {
   const n = typeof x === "string" ? Number(x) : x;
   if (typeof n !== "number" || !Number.isFinite(n)) return undefined;
-  const v = n > 1 && n <= 100 ? n / 100 : n;
-  return v < 0 || v > 1 ? undefined : v;
+  // A percent only from 2 up (engine-pipeline-23): 1.5 is ambiguous (150%? 1.5%?) and is rejected.
+  const v = n > 1 ? (n >= 2 && n <= 100 ? n / 100 : NaN) : n;
+  return !(v >= 0 && v <= 1) ? undefined : v;
 }
 
 export const str = (x: unknown, max = 4000): string => (typeof x === "string" ? x.trim().slice(0, max) : "");
@@ -259,24 +273,7 @@ export function parsePassVerdict(x: unknown, allowInsufficient: boolean): PassVe
   return undefined;
 }
 
-/** Shared wording: how to cite facts and what stays internal. Embedded in every pass prompt. */
-export const CITATION_RULES = `Cite facts by field using the person's ref and the field path exactly as it appears in the input (for example P1.intents[0], P2.matchable_do_not_quote[1], P1.preferences.formats, P2.presence[0], relationships[0]). Quote or closely paraphrase the actual value you rely on; do not cite fields that do not exist.`;
-
-/**
- * Shared judging guidance for passes 2 and 3 (added after the v1 error analysis: both passes
- * rejected most good intros over format wording and over opt-ins that code already enforces).
- */
-export const JUDGING_NOTES = `Judging notes:
-- Opt-ins (categories_opted_in, romance_opt_in), ages, blocks, holds and budgets are enforced by code before you see a candidate. Do not reject or lower scores because of them; judge fit.
-- An introduction is a first step. A pair intro anchored on a group-shaped intent (a dinner group, a running crew, a small-group format in the intent details) still serves that intent: people often find a group through one person. Treat format only as a soft signal, and as a real problem only when a person's own preferences.formats excludes it or a boundary says so.
-- A shared, current intent or a clear skill-for-need match is real mutual value even when the rest of the profile is thin. Thin evidence lowers your confidence; it is not by itself a reason to say no.`;
-
 // ---- v3 additions (2026-10-07, docs/results/2026-10-07-judge-v2.md) ---------------------------
-
-/** Facts older than this are flagged as possibly stale in every pass. */
-export const STALE_DAYS = 180;
-/** An unconfirmed inferred/observed fact below this confidence is a hypothesis (never a sole anchor). */
-export const HYPOTHESIS_CONFIDENCE = 0.65;
 
 type FacetProvenance = { source?: string; observedAt?: number; inferred?: boolean; confirmedByMember?: boolean; provenance: string; validFrom?: number; confidence: number };
 
@@ -338,22 +335,3 @@ export function boundaryRelevance(boundaries: string[], cfg: { category: string;
   return [...out].sort();
 }
 
-/**
- * Shared judging guidance for every v3 pass (from the luna error analysis, 2026-10-06, recs 3-5).
- * The label the passes are scored against is "would each attending person enjoy and benefit from
- * meeting if it happens", so the notes target that question, not acceptance.
- */
-export const JUDGING_NOTES_V3 = `What "good" means, and how to judge it:
-- The question is whether every attending person would ENJOY AND BENEFIT FROM meeting if it happens, not whether they would accept today. Busy schedules, capacity and acceptance are reported separately (accept_probability); they do not decide the verdict.
-- Each attending person's gain must map to one of their OWN live intents, or to a stated skill or offer they want to use. Name it for each person. If one person gains and the other has no intent or offer this serves, the fit is one-sided: say no. A shared interest alone, when neither person's intent is about it, is usually not enough.
-- A shared or complementary stated intent IS sufficient grounds by itself: both want to make new friends, both want a climbing partner, both want to meet other parents, or one needs a skill the other has. Do not also require a shared hobby or a "hook". Calibrate it, though: two people with the same broad intent and nothing else in common go well only a little more often than not (match_probability about 0.55-0.6); shared interests, area or life stage raise it; a specific need met by a specific skill raises it most.
-- Dating is the exception. The Network does not know who each person wants to date (gender, age range), and most pairs of people who both want to date are not a match. Two dating intents alone are NOT sufficient: unless the listed facts show that each is looking for someone like the other, say no with match_probability about 0.25-0.3.
-- Groups: judge the group as a whole. Say yes when every member gets something from one of their own intents or clearly shares the group's anchor, and nobody is left with nothing. One member without the identical wording of the intent is fine; a member whose intents and interests are unrelated to the group makes it a no. Bigger groups of strangers (4-5) need a stronger common purpose than a pair.
-- Most candidates are NOT good. If you find yourself saying yes to nearly everything, you are being too lenient.
-- Unknown or unlisted schedules are normal (most members never list them). Reject on logistics only when presence or overlap makes meeting in the window impossible.
-- Evidence: every fact shows its basis (stated, confirmed, observed, inferred, vouched), source, confidence and age. Stated and confirmed facts are strong. An inferred or observed fact that is unconfirmed with confidence below ${HYPOTHESIS_CONFIDENCE} is a HYPOTHESIS (it may be a gift, a partner's account, a friend's hobby): never anchor an intro on a single such fact. Facts older than ${STALE_DAYS} days may be stale (an old job, an old goal).
-- Private boundaries are penalties, not vetoes. A format boundary (e.g. preferring groups to one-to-one with strangers) or a topic boundary lowers the fit; it vetoes only when it is a hard dealbreaker for THIS intro (e.g. "no romantic setups" on a romantic intro for someone with no dating intent).
-- Format is a soft signal: a pair intro can be the first step toward a group-shaped intent.`;
-
-/** Passes 2-3 only (pass 1 keeps its own hard-policy list, so its model-only verdict is policy-safe). */
-export const CODE_ENFORCED_V3 = `- Opt-ins (categories_opted_in, romance_opt_in), ages, blocks, holds and budgets are enforced by code before and after you. Do not reject or lower scores because of them; judge fit.`;

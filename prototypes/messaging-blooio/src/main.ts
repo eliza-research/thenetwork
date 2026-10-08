@@ -47,6 +47,21 @@ const gateway = new Gateway({
 });
 
 const port = Number(process.env.PORT ?? 8787);
-Bun.serve({ port, fetch: createWebhookHandler({ secret, clock, gateway, log: console.log }) });
+const handler = createWebhookHandler({ secret, clock, gateway, log: console.log });
+// BLOOIO_CAPTURE_DIR: save each raw webhook (body + non-secret headers) as a fixture for offline tests.
+const captureDir = process.env.BLOOIO_CAPTURE_DIR;
+let captured = 0;
+Bun.serve({
+  port,
+  fetch: async (req) => {
+    if (captureDir && req.method === "POST") {
+      const body = await req.clone().text();
+      const headers = Object.fromEntries([...req.headers].filter(([k]) => !/signature|authorization|cookie/i.test(k)));
+      await Bun.write(`${captureDir}/${String(++captured).padStart(3, "0")}-${Date.now()}.json`,
+        JSON.stringify({ headers, body: JSON.parse(body || "null") }, null, 2));
+    }
+    return handler(req);
+  },
+});
 setInterval(() => void queue.drain(), 5_000);
 console.log(`Blooio receiver on http://localhost:${port}${WEBHOOK_PATH} (sends ${allowSend && real ? "LIVE" : "dry-run"})`);

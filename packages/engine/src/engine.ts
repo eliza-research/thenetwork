@@ -7,15 +7,17 @@ import { configHash, ENGINE_VERSION, resolveConfig, type EngineConfigInput } fro
 import { localEmbed, type EmbedFn } from "./embed.ts";
 import { explain, privateVocabulary } from "./explain.ts";
 import { candidateReason, involvesMinor, memberReason } from "./filters.ts";
-import { GENERATORS, type GenCtx } from "./generators.ts";
+import type { GenCtx } from "./genkit.ts";
 import { JudgeCache, judgeCandidates, runCachedPass } from "./judge.ts";
 import { checkMemberFacing, redactPrivate } from "./judgeCommon.ts";
-import { DEEP_PROMPT_VERSION, deepReviewOne, gateMemberFacing, hardGate, type DeepVerdict } from "./judgeDeep.ts";
-import { SCREEN_PROMPT_VERSION, screenDecision, screenOne, type ScreenVerdict } from "./judgeScreen.ts";
+import { deepReviewOne, gateMemberFacing, hardGate, type DeepVerdict } from "./judgeDeep.ts";
+import { screenDecision, screenOne, type ScreenVerdict } from "./judgeScreen.ts";
 import { blockingPairs, fairnessMetrics, planAsks, selectProposals, updateExposureDebt } from "./policy.ts";
 import { Rng, sha256, stableStringify } from "./rng.ts";
 import { scoreCandidate, type Scored } from "./scoring.ts";
 import type { Candidate, EngineAsk, EngineInput, EngineProposal, JudgeVerdict, MatchingRunLog } from "./types.ts";
+import type { AppPack } from "./pack.ts";
+import { networkPack } from "./packs/network/index.ts";
 import { World } from "./world.ts";
 
 export interface EngineDeps {
@@ -29,6 +31,11 @@ export interface EngineDeps {
   /** Identifier of the embedding model for the run log (ME-004). */
   embedModel?: string;
   judgeModel?: string;
+  /**
+   * The app pack (default networkPack). Identity travels here, beside the config, never inside it:
+   * the config hash, run id and run log are unchanged for networkPack (byte-identity rules 1-2).
+   */
+  pack?: AppPack;
 }
 
 /**
@@ -42,15 +49,37 @@ function hashInput(input: EngineInput): string {
   return sha256(stableStringify(strip(input))).slice(0, 16);
 }
 
+/**
+ * The input with every top-level list in a canonical order (by id, else by content), so the
+ * output, the input hash and the run id do not depend on the row order of the snapshot
+ * (engine-pipeline-17: the snapshot loader has no ORDER BY). Nested lists keep their order
+ * (participants[0] is the requester).
+ */
+export function canonicalInput(input: EngineInput): EngineInput {
+  const keyOf = (x: unknown): string => {
+    const id = (x as { id?: unknown }).id;
+    return typeof id === "string" ? `0|${id}` : `1|${stableStringify(JSON.parse(JSON.stringify(x, (k, v) => (k === "embedding" ? undefined : v))))}`;
+  };
+  const out: Record<string, unknown> = { ...input };
+  for (const [k, v] of Object.entries(input)) {
+    if (!Array.isArray(v)) continue;
+    const keyed = v.map(x => ({ x, k: typeof x === "string" ? x : keyOf(x) }));
+    keyed.sort((a, b) => (a.k < b.k ? -1 : a.k > b.k ? 1 : 0));
+    out[k] = keyed.map(e => e.x);
+  }
+  return out as unknown as EngineInput;
+}
+
 export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: EngineConfigInput = {}, deps: EngineDeps = {}): Promise<EngineResult> {
   const t0 = performance.now();
   const timings: Record<string, number> = {};
   const lap = (name: string, since: number) => { timings[name] = Math.round((performance.now() - since) * 100) / 100; return performance.now(); };
-  const input = snapshot as EngineInput;
+  const input = canonicalInput(snapshot as EngineInput);
   const cfg = resolveConfig(cfgIn);
   const rng = new Rng(cfg.seed);
   const embed = deps.embed ?? localEmbed;
-  const w = new World(input, cfg, embed);
+  const pack = deps.pack ?? networkPack;
+  const w = new World(input, cfg, embed, pack);
   let t = lap("index", t0);
 
   const runLog: MatchingRunLog = {
@@ -70,7 +99,7 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   // 0. Member funnel (one generic check per member, for the run report).
   f.memberFunnel.total = w.ids.length;
   for (const id of w.ids) {
-    const r = memberReason(w, id, { category: "social", role: "peer", format: "one_to_one", timeSensitive: false });
+    const r = memberReason(w, id, { category: pack.ontology.funnelProbe.lane, role: pack.ontology.funnelProbe.role, format: "one_to_one", timeSensitive: false });
     const k = r ?? "available";
     f.memberFunnel[k] = (f.memberFunnel[k] ?? 0) + 1;
   }
@@ -78,8 +107,11 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   // 1. Generators (retrieval + member-level hard filters inside).
   const ctx: GenCtx = { w, memberExclusions: f.memberExclusions, rng: rng.fork("gen"), unmatchedIntents: new Set() };
   const cands: Candidate[] = [];
-  for (const g of GENERATORS) {
-    if (!cfg.generators[g.name]) continue;
+  // The pack's generators, in the pack's order. A generator the config switches off is skipped
+  // (networkPack: the GENERATOR_NAMES flags; a name the config does not know runs).
+  const gate = cfg.generators as Record<string, boolean | undefined>;
+  for (const g of pack.generators) {
+    if (g.name in gate && !gate[g.name]) continue;
     const ts = performance.now();
     const got = g.run(ctx);
     f.byGenerator[g.name] = got.length;
@@ -103,7 +135,7 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
       }
       continue;
     }
-    if (!cfg.cities.includes(c.city!)) { f.rejectedBy.city_not_in_run = (f.rejectedBy.city_not_in_run ?? 0) + 1; continue; }
+    if (!pack.geo.markets(cfg).includes(c.city!)) { f.rejectedBy.city_not_in_run = (f.rejectedBy.city_not_in_run ?? 0) + 1; continue; }
     passed.push(c);
   }
   f.passedHardFilters = passed.length;
@@ -127,17 +159,18 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   //    Pass 2 (rubric judge): dimension scores blended into the score; dealbreaker / "no" => ineligible.
   //    Pass 3 (deep review, optional): richer context on the best survivors; "no" => deep_reject,
   //    "insufficient_information" => deep_insufficient (with the question to ask), "yes" keeps it.
-  if (deps.llm && cfg.judge.enabled && cfg.judge.topK > 0) {
+  const J = pack.judge;
+  if (deps.llm && cfg.judge.enabled && cfg.judge.topK > 0 && J) {
     const llm = deps.llm;
     const byScore = (xs: Scored[]) => [...xs].sort((a, b) => (b.score - a.score) || (a.c.key < b.c.key ? -1 : 1));
     const pickTop = (xs: Scored[], k: number, gk: number) => [...xs.filter(s => s.c.participants.length <= 2).slice(0, k), ...xs.filter(s => s.c.participants.length > 2).slice(0, gk)];
     let pool = byScore(scored.filter(s => !s.reason || s.reason === "below_threshold"));
-    if (cfg.judge.screen.enabled && cfg.judge.screen.topK > 0) {
+    if (cfg.judge.screen.enabled && cfg.judge.screen.topK > 0 && J.screen) {
       const sc = cfg.judge.screen;
       const toScreen = pickTop(pool, sc.topK, sc.groupTopK).map(s => s.c);
       const screenStats = { calls: 0, cacheHits: 0, failures: 0 };
       const screenLog: { key: string; cacheKey: string; verdict: ScreenVerdict | null; cached: boolean }[] = [];
-      const res = await runCachedPass(w, toScreen, SCREEN_PROMPT_VERSION, deps.screenCache ?? new JudgeCache<ScreenVerdict>(cfg.judge.ttlMs),
+      const res = await runCachedPass(w, toScreen, J.screen.version, deps.screenCache ?? new JudgeCache<ScreenVerdict>(cfg.judge.ttlMs),
         screenStats, c => screenOne(w, c, llm, sc.maxTokens).then(r => r.verdict), screenLog);
       runLog.judge.screen = { ...screenStats, verdicts: screenLog };
       const rejected = new Set([...res].filter(([, v]) => v && !screenDecision(v)).map(([k]) => k));
@@ -148,14 +181,21 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
     }
     const toJudge = pickTop(pool, cfg.judge.topK, cfg.judge.groupTopK).map(s => s.c);
     const verdicts = await judgeCandidates(w, toJudge, llm, deps.judgeCache ?? new JudgeCache(cfg.judge.ttlMs), runLog.judge, runLog.judge.verdicts);
-    scored = scored.map(s => (verdicts.has(s.c.key) && verdicts.get(s.c.key) ? scoreCandidate(w, s.c, verdicts.get(s.c.key)) : s));
+    // Pass 2 can only remove (engine-pipeline-7): a configuration that was below its bar before the
+    // judge stays ineligible even if the blended score now clears it.
+    scored = scored.map(s => {
+      const v = verdicts.get(s.c.key);
+      if (!v) return s;
+      const r = scoreCandidate(w, s.c, v);
+      return s.eligible || !r.eligible ? r : { ...r, eligible: false, reason: s.reason ?? "below_threshold" };
+    });
     t = lap("judge", t);
-    if (cfg.judge.deep.enabled && cfg.judge.deep.topK > 0) {
+    if (cfg.judge.deep.enabled && cfg.judge.deep.topK > 0 && J.deep) {
       const dc = cfg.judge.deep;
       const survivors = byScore(scored.filter(s => s.eligible && s.verdict && s.verdict.verdict !== "no")).slice(0, dc.topK);
       const deepLog: { key: string; cacheKey: string; verdict: { verdict: DeepVerdict; refs: Record<MemberId, string> } | null; cached: boolean }[] = [];
       const stats = { calls: 0, cacheHits: 0, failures: 0 };
-      const res = await runCachedPass(w, survivors.map(s => s.c), DEEP_PROMPT_VERSION, deps.deepCache ?? new JudgeCache<{ verdict: DeepVerdict; refs: Record<MemberId, string> }>(cfg.judge.ttlMs),
+      const res = await runCachedPass(w, survivors.map(s => s.c), J.deep.version, deps.deepCache ?? new JudgeCache<{ verdict: DeepVerdict; refs: Record<MemberId, string> }>(cfg.judge.ttlMs),
         stats, c => deepReviewOne(w, c, llm, dc.maxTokens), deepLog);
       runLog.judge.deep = { ...stats, verdicts: [] };
       scored = scored.map(s => {
@@ -202,12 +242,19 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   f.budgetSkips = budgetSkips;
   f.selected = selected.length;
   f.exploration = selected.filter(s => s.exploration).length;
+  // Judge coverage (engine-pipeline-8): pass 2 sees only its top K, so most selected configurations
+  // can be unjudged. Reported whenever a judge ran, so a run with low coverage is visible.
+  if (runLog.judge.calls + runLog.judge.cacheHits + runLog.judge.failures > 0) {
+    runLog.judge.coverage = { selected: selected.length, judged: selected.filter(s => !!s.s.verdict).length };
+  }
   t = lap("select", t);
 
   // 6. Proposals with shareable-only explanations.
   const proposals: EngineProposal[] = selected.map(sel => {
     const { c, components, score, threshold, verdict } = sel.s;
-    const { explanations, objective } = explain(w, c, verdict as JudgeVerdict | null | undefined, sel.s.memberWhy);
+    // Member-facing text never comes from a pass-2 "no" verdict (its "why" argues for a match the judge rejected).
+    const v = verdict as JudgeVerdict | null | undefined;
+    const { explanations, objective } = explain(w, c, v?.verdict === "no" ? null : v, sel.s.memberWhy);
     const sameDay = c.window ? c.window.start - w.now < 24 * 3_600_000 : false;
     return {
       id: `p_${sha256(`${c.key}|${w.now}`).slice(0, 16)}`,

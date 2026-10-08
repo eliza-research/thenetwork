@@ -6,16 +6,14 @@ import { canBeMatched, DAY, HOUR } from "@thenetwork/core";
 import type { EngineConfig } from "./config.ts";
 import { centroid, cosine, tokenize, type EmbedFn } from "./embed.ts";
 import { sha256, stableStringify } from "./rng.ts";
-import { isPersonalGrowth } from "./taxonomy.ts";
+import type { AppPack } from "./pack.ts";
+import { networkPack } from "./packs/network/index.ts";
 import type { EngineInput, FeedbackRecord, InteractionRecord, NetworkEvent, ReliabilityEvidence, Role } from "./types.ts";
-import { CONTRIBUTOR_ROLES } from "./types.ts";
 
-export type Interval = [number, number];
+import { intersect, subtract, union, type Interval } from "./interval.ts";
+export type { Interval };
 export const pairKey = (a: MemberId, b: MemberId) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
-const POSITIVE_EDGES: ReadonlySet<EdgeType> = new Set<EdgeType>([
-  "invited_by", "vouched_for", "knows", "met", "introduced", "helped", "hosted", "enjoyed", "would_interact_again",
-]);
 const BLOCKING_EDGES: ReadonlySet<EdgeType> = new Set<EdgeType>(["blocked", "avoid"]);
 const CAP_KINDS: ReadonlySet<FacetKind> = new Set<FacetKind>(["skill", "offer", "resource"]);
 const DESIRE_KINDS: ReadonlySet<FacetKind> = new Set<FacetKind>(["interest", "desire", "goal"]);
@@ -75,7 +73,11 @@ export class World {
   readonly dim: number;
   readonly canonical: (id: MemberId) => MemberId;
 
-  constructor(readonly input: EngineInput, readonly cfg: EngineConfig, embed: EmbedFn) {
+  /** The app pack (default networkPack). Identity travels beside the config, never inside it (byte-identity rule 1). */
+  readonly pack: AppPack;
+
+  constructor(readonly input: EngineInput, readonly cfg: EngineConfig, embed: EmbedFn, pack: AppPack = networkPack) {
+    this.pack = pack;
     this.now = input.now;
     this.embed = embed;
     const aliases = input.idAliases ?? {};
@@ -90,6 +92,12 @@ export class World {
     this.dim = embed("dimension probe").length;
     const now = this.now;
 
+    // Duplicate member ids would decide age, state and consent by row order (engine-pipeline-2): reject them.
+    if (memberIds.size !== input.members.length) {
+      const seen = new Set<MemberId>();
+      const dup = input.members.find(m => (seen.has(m.id) ? true : (seen.add(m.id), false)));
+      throw new Error(`duplicate member id in engine input: ${dup?.id}`);
+    }
     // Minors are identified before anything else so no derived structure can route through them.
     for (const m of input.members) if (!canBeMatched(m.age)) this.minors.add(m.id);
 
@@ -103,7 +111,7 @@ export class World {
       if (BLOCKING_EDGES.has(e.type)) this.blocked.add(k);
       // Minors policy: a minor is never a warm tie, a two-hop intermediary (`via`), or a source of
       // degree / "friendliness" for anyone. Their edges stay out of the warm graph entirely.
-      if (POSITIVE_EDGES.has(e.type) && !this.minors.has(e.from) && !this.minors.has(e.to)) {
+      if (pack.ontology.warmEdges.has(e.type) && !this.minors.has(e.from) && !this.minors.has(e.to)) {
         for (const [a, b] of [[e.from, e.to], [e.to, e.from]] as const) {
           if (!this.positive.has(a)) this.positive.set(a, new Map());
           const cur = this.positive.get(a)!.get(b) ?? 0;
@@ -189,15 +197,16 @@ export class World {
       facetsBy.get(id)!.push({ ...f, memberId: id });
     }
     const intentsBy = new Map<MemberId, Intent[]>();
-    // v1.2: personal-growth wants are matched as hobby; stating one opts the member in to hobby.
-    const growthAsHobby = new Set<MemberId>();
+    // v1.2: personal-growth wants are matched as hobby; stating one opts the member in to hobby
+    // (networkPack.ontology.relabelIntent). Member -> lanes the member is opted in to by relabelling.
+    const growthAsHobby = new Map<MemberId, Category[]>();
     for (const it of input.intents) {
       const id = C(it.memberId);
-      const personal = cfg.personalGrowthAsHobby && isPersonalGrowth(it);
-      if (personal) growthAsHobby.add(id);
+      const relabel = pack.ontology.relabelIntent?.(it, cfg);
+      if (relabel) { if (!growthAsHobby.has(id)) growthAsHobby.set(id, []); if (!growthAsHobby.get(id)!.includes(relabel)) growthAsHobby.get(id)!.push(relabel); }
       const live = it.status === "active" && it.createdAt + it.horizonDays * DAY > now;
       if (!live) continue;
-      const intent: Intent = { ...it, memberId: id, ...(personal ? { category: "hobby" as const } : {}) };
+      const intent: Intent = { ...it, memberId: id, ...(relabel ? { category: relabel } : {}) };
       if (!intentsBy.has(id)) intentsBy.set(id, []);
       intentsBy.get(id)!.push(intent);
       this.intentById.set(intent.id, intent);
@@ -225,7 +234,7 @@ export class World {
         const period = cfg.budgets[st].periodDays * DAY;
         if (age < period) proactive.set(id, (proactive.get(id) ?? 0) + 1);
         const role = roles?.[raw] ?? roles?.[id];
-        const isContrib = role ? CONTRIBUTOR_ROLES.has(role) : (p.kind === "help" && p.participants[0] !== raw);
+        const isContrib = role ? pack.ontology.contributorRoles.has(role) : (p.kind === "help" && p.participants[0] !== raw);
         if (isContrib && age < cfg.contribution.periodDays * DAY) contrib.set(id, (contrib.get(id) ?? 0) + 1);
         if (age < 30 * DAY) {
           exposure30.set(id, (exposure30.get(id) ?? 0) + 1);
@@ -244,8 +253,9 @@ export class World {
     const tagCount = new Map<string, number>();
     const response = responseHistory(this.interactions, now);
     for (const raw of [...input.members].sort((a, b) => (a.id < b.id ? -1 : 1))) {
-      const m: Member = growthAsHobby.has(raw.id) && !raw.prefs.categoriesOptIn.includes("hobby")
-        ? { ...raw, prefs: { ...raw.prefs, categoriesOptIn: [...raw.prefs.categoriesOptIn, "hobby"] } } : raw;
+      const addLanes = (growthAsHobby.get(raw.id) ?? []).filter(l => !raw.prefs.categoriesOptIn.includes(l));
+      const m: Member = addLanes.length
+        ? { ...raw, prefs: { ...raw.prefs, categoriesOptIn: [...raw.prefs.categoriesOptIn, ...addLanes] } } : raw;
       const all = facetsBy.get(m.id) ?? [];
       const match = all.filter(f => (f.scope === "matchable" || f.scope === "shareable") && MATCH_KINDS.has(f.kind));
       const share = all.filter(f => f.scope === "shareable");
@@ -263,18 +273,7 @@ export class World {
       const cluster = [...tc.entries()].sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : 1))[0]?.[0] ?? "none";
       for (const t of tags) tagCount.set(t, (tagCount.get(t) ?? 0) + 1);
       const boundaries = all.filter(f => f.kind === "boundary" || f.kind === "preference");
-      const dealbreakers = boundaries.flatMap(f => f.tags.filter(t => t.startsWith("dealbreaker:")).map(t => t.slice(12).toLowerCase()));
-      const romanceTags = boundaries.flatMap(f => f.tags).filter(t => t.startsWith("romance:"));
-      let romance: RomanceProfile | undefined;
-      if (romanceTags.length) {
-        romance = { is: [], seeks: [], ageMin: 18, ageMax: 120 };
-        for (const t of romanceTags) {
-          const [, key, val] = t.split(":");
-          if (key === "is" && val) romance.is.push(val);
-          if (key === "seeks" && val) romance.seeks.push(val);
-          if (key === "age" && val) { const [lo, hi] = val.split("-").map(Number); romance.ageMin = lo ?? 18; romance.ageMax = hi ?? 120; }
-        }
-      }
+      const { dealbreakers, romance } = pack.ontology.constraints(boundaries);
       const revision = sha256(stableStringify({
         f: all.map(f => [f.id, f.value, f.scope, f.tags, f.confidence]).sort(),
         i: (intentsBy.get(m.id) ?? []).map(i => [i.id, i.objective, i.details ?? "", i.status]).sort(),
@@ -296,7 +295,7 @@ export class World {
         lowExposure: exp30 <= cfg.retrieval.lowExposureMax,
         newcomer, lowData: match.length < 3,
         dealbreakers, romance,
-        isHost: match.some(f => f.tags.some(t => t.toLowerCase() === "host")),
+        isHost: pack.ontology.isHost(match),
         degree: this.positive.get(m.id)?.size ?? 0,
         inviterRoot: "",
         presence: presenceBy.get(m.id) ?? [],
@@ -320,31 +319,14 @@ export class World {
 
   get(id: MemberId): MemberIndex | undefined { return this.members.get(id); }
 
-  /** Where a member is during [start,end): city -> intervals. Temporary presence overrides home (ME-011). */
+  /** Where a member is during [start,end): city -> intervals. Temporary presence overrides home (ME-011). Delegates to the pack's geo model. */
   location(id: MemberId, start: number, end: number): Map<City, Interval[]> {
-    const mi = this.members.get(id);
-    const out = new Map<City, Interval[]>();
-    if (!mi) return out;
-    const base = new Set<City>([mi.m.homeCity]);
-    const dated: Presence[] = [];
-    for (const p of mi.presence) {
-      if (p.from === undefined && p.to === undefined && p.type !== "temporary") base.add(p.city);
-      else dated.push(p);
-    }
-    for (const c of base) out.set(c, [[start, end]]);
-    for (const p of dated) {
-      const s = Math.max(start, p.from ?? start), e = Math.min(end, p.to ?? end);
-      if (e <= s) continue;
-      for (const [c, ivs] of out) if (c !== p.city) out.set(c, subtract(ivs, [s, e]));
-      out.set(p.city, union([...(out.get(p.city) ?? []), [s, e]]));
-    }
-    for (const [c, ivs] of out) if (!ivs.length) out.delete(c);
-    return out;
+    return this.pack.geo.location(this, id, start, end);
   }
 
   private locCache = new Map<string, Map<City, Interval[]>>();
   /** Memoised `location` (the world is immutable, so a member's whereabouts for a window never change). */
-  private locationCached(id: MemberId, start: number, end: number): Map<City, Interval[]> {
+  locationCached(id: MemberId, start: number, end: number): Map<City, Interval[]> {
     const k = `${id}|${start}|${end}`;
     let v = this.locCache.get(k);
     if (!v) { v = this.location(id, start, end); this.locCache.set(k, v); }
@@ -363,27 +345,16 @@ export class World {
     if (v === undefined) {
       // Fast path: no run city in common at all (the common case across SF/NYC).
       const la = this.locationCached(ids[0]!, start, end), lb = this.locationCached(ids[1]!, start, end);
-      v = this.cfg.cities.some(c => la.has(c) && lb.has(c)) && this.overlap(ids, start, end) !== null;
+      v = this.pack.geo.markets(this.cfg).some(c => la.has(c) && lb.has(c)) && this.overlap(ids, start, end) !== null;
       this.meetCache.set(k, v);
     }
     return v;
   }
   private meetCache = new Map<string, boolean>();
 
-  /** Common availability of all members in one city (prefers `preferred`, else largest overlap). */
+  /** Common availability of all members in one city (prefers `preferred`, else largest overlap). The pack's geo model decides. */
   overlap(ids: MemberId[], start: number, end: number, preferred?: City): { city: City; intervals: Interval[]; hours: number } | null {
-    const locs = ids.map(id => this.locationCached(id, start, end));
-    let best: { city: City; intervals: Interval[]; hours: number } | null = null;
-    for (const city of this.cfg.cities) {
-      let ivs: Interval[] = [[start, end]];
-      for (const l of locs) { ivs = intersect(ivs, l.get(city) ?? []); if (!ivs.length) break; }
-      const hours = ivs.reduce((s, [a, b]) => s + (b - a), 0) / HOUR;
-      const required = Math.min(this.cfg.minOverlapHours, ((end - start) / HOUR) * 0.99);
-      if (hours <= 0 || hours < required) continue;
-      const bonus = city === preferred ? 1e6 : 0;
-      if (!best || hours + bonus > best.hours + (best.city === preferred ? 1e6 : 0)) best = { city, intervals: ivs, hours };
-    }
-    return best;
+    return this.pack.geo.overlap(this, ids, start, end, preferred);
   }
 
   /** Best matching facet of `member` for a query embedding among `facets`. */
@@ -456,33 +427,8 @@ export function provenanceWeight(f: Facet): number {
   return p * (0.6 + 0.4 * Math.max(0, Math.min(1, f.confidence)));
 }
 
-// ---- interval helpers ----
-export function union(ivs: Interval[]): Interval[] {
-  const s = [...ivs].sort((a, b) => a[0] - b[0]);
-  const out: Interval[] = [];
-  for (const iv of s) {
-    const last = out[out.length - 1];
-    if (last && iv[0] <= last[1]) last[1] = Math.max(last[1], iv[1]); else out.push([iv[0], iv[1]]);
-  }
-  return out;
-}
-export function intersect(a: Interval[], b: Interval[]): Interval[] {
-  const out: Interval[] = [];
-  for (const [s1, e1] of a) for (const [s2, e2] of b) {
-    const s = Math.max(s1, s2), e = Math.min(e1, e2);
-    if (e > s) out.push([s, e]);
-  }
-  return union(out);
-}
-export function subtract(a: Interval[], [s, e]: Interval): Interval[] {
-  const out: Interval[] = [];
-  for (const [s1, e1] of a) {
-    if (e <= s1 || s >= e1) { out.push([s1, e1]); continue; }
-    if (s > s1) out.push([s1, s]);
-    if (e < e1) out.push([e, e1]);
-  }
-  return out;
-}
+// ---- interval helpers (moved to interval.ts, a leaf module the geo models share) ----
+export { intersect, subtract, union } from "./interval.ts";
 
 export function buildWorld(input: EngineInput, cfg: EngineConfig, embed: EmbedFn): World {
   return new World(input, cfg, embed);

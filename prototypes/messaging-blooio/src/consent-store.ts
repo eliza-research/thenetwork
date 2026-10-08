@@ -5,7 +5,7 @@
 // is on disk before the STOP confirmation is queued. Production should use Postgres
 // (network.consent_events with a unique (address, at, state) index); the interface is the same.
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, truncateSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
 import type { ConsentEntry } from "./keywords.ts";
 
@@ -22,25 +22,44 @@ export class InMemoryConsentStore implements ConsentStore {
   append(entry: ConsentEntry): void { this.entries.push({ ...entry }); }
 }
 
-/** Append-only JSONL file. Corrupt lines (e.g. a torn final write) are skipped, never fatal. */
+/**
+ * Append-only JSONL file. Only a torn FINAL line (a crash during the last append, before it returned) is skipped.
+ * The torn bytes are truncated on load. A corrupt line anywhere else throws: the ledger must not start and silently forget a STOP (audit
+ * plugin-prototypes-17). An operator repairs the file. Each append is fsynced before it returns.
+ */
 export class FileConsentStore implements ConsentStore {
   constructor(readonly path: string) {}
 
   load(): ConsentEntry[] {
     if (!existsSync(this.path)) return [];
     const out: ConsentEntry[] = [];
-    for (const line of readFileSync(this.path, "utf8").split("\n")) {
+    const lines = readFileSync(this.path, "utf8").split("\n");
+    let last = lines.length - 1;
+    while (last >= 0 && !lines[last]!.trim()) last--;
+    for (let i = 0; i <= last; i++) {
+      const line = lines[i]!;
       if (!line.trim()) continue;
-      try {
-        const e = JSON.parse(line) as ConsentEntry;
-        if (e && typeof e.address === "string" && (e.state === "opted_in" || e.state === "opted_out")) out.push(e);
-      } catch { /* torn write; skip */ }
+      let e: ConsentEntry | undefined;
+      try { e = JSON.parse(line) as ConsentEntry; } catch { /* checked below */ }
+      if (e && typeof e.address === "string" && (e.state === "opted_in" || e.state === "opted_out")) { out.push(e); continue; }
+      if (i === last) {
+        // Torn final write: that append never returned. Cut it off so the next append starts a clean line.
+        truncateSync(this.path, Buffer.byteLength(lines.slice(0, last).join("\n")) + (last > 0 ? 1 : 0));
+        continue;
+      }
+      throw new Error(`consent store ${this.path}: corrupt entry on line ${i + 1}; refusing to load (repair the file)`);
     }
     return out;
   }
 
   append(entry: ConsentEntry): void {
     mkdirSync(dirname(this.path), { recursive: true });
-    appendFileSync(this.path, `${JSON.stringify(entry)}\n`, { encoding: "utf8", mode: 0o600 });
+    const fd = openSync(this.path, "a", 0o600);
+    try {
+      writeSync(fd, `${JSON.stringify(entry)}\n`);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
   }
 }

@@ -1,11 +1,11 @@
 // Plans (src/plans.ts): planner scoring and least misery, the minors and romance exclusions, quorum,
 // backfill and fallbacks, crews, and the probe content rules (D5). Deterministic, no LLM calls.
 import { describe, expect, test } from "bun:test";
-import { DAY, HOUR } from "@thenetwork/core";
-import type { Venue } from "../src/activities.ts";
+import { DAY, HOUR, isSensitiveTerm } from "@thenetwork/core";
+import { ACTIVITIES, type Venue } from "../src/activities.ts";
 import * as A from "../src/attention.ts";
 import { DEFAULT_PLANS, resolvePlans } from "../src/config.ts";
-import { fromLocal } from "../src/outreach.ts";
+import { fromLocal, localParts as localPartsOf } from "../src/outreach.ts";
 import * as P from "../src/plans.ts";
 import type { EngineInput, NetworkEvent } from "../src/types.ts";
 import { NOW, baseMember, emptyInput, facet, mkWorld } from "./helpers.ts";
@@ -197,7 +197,7 @@ describe("quorum, backfill and fallbacks (4.6)", () => {
   test("fallback order: smaller group (activity allows 2), else a solo public event, else next week (demand carried)", () => {
     const ev: NetworkEvent = { id: "ev1", title: "climbing night", city: "sf", start: NOW + 3 * DAY, end: NOW + 3 * DAY + 3 * HOUR, tags: ["climbing"], category: "social" };
     const two = { ...P.startPlanRun(plan()), answers: { a: "yes", b: "yes", c: "no", d: "no" } as Record<string, P.PlanAnswer>, stage: "closed" as const };
-    expect(P.planFallback(two, NOW, [ev]).fallback).toEqual({ kind: "smaller", members: ["a", "b"] });
+    expect(P.planFallback(two, NOW, [ev]).fallback).toMatchObject({ kind: "smaller", members: ["a", "b"] });
     const noPair = { ...two, plan: plan({ activityId: "restaurant_dinner" }) };
     expect(P.planFallback(noPair, NOW, [ev]).fallback.kind).toBe("next_week");
     const one = { ...two, answers: { a: "yes", b: "no", c: "no", d: "no" } as Record<string, P.PlanAnswer> };
@@ -258,8 +258,38 @@ describe("plan items and probe content (D5)", () => {
   test("partner and crew probes; partner probes promise no reveal before both say yes", () => {
     const w = mkWorld(climbers(["ana", "ben"]));
     expect(P.buildPlanProbe(w, plan({ invited: ["ana", "ben"], partner: true }), "ana", NOW, TZ)).toContain("if you both say yes");
-    expect(P.buildPlanProbe(w, plan({ invited: ["ana", "ben"], crewId: "crew_1" }), "ana", NOW, TZ)).toContain("crew is on again");
+    expect(P.buildPlanProbe(w, plan({ invited: ["ana", "ben"], crewId: "crew_1" }), "ana", NOW, TZ)).toContain("Your crew for bouldering is on again");
     expect(P.buildPlanProbe(w, plan({ invited: ["ana", "ben"] }), "zed", NOW, TZ)).toBeNull();
+  });
+  test("ordinary words of the fixed copy in another invitee's private facts do not drop the probe; their private words still never appear", () => {
+    // Network build report: about 1/3 of plan probes were null because "Free." matched another invitee's private words.
+    const ids = ["ana", "ben", "cy", "dee"];
+    const inp = climbers(ids, (id, x) => {
+      x.facets.push(facet(id, 1, "fact", "free most evenings since the divorce, only wants people who share recovery goals", ["sensitive"], "agent_private"));
+    });
+    const w = mkWorld(inp);
+    for (const p of [plan({ invited: ids, activityId: "group_run" }), plan({ invited: ids }), plan({ invited: ["ana", "ben"], partner: true, activityId: "group_run" }), plan({ invited: ids, crewId: "crew_1", activityId: "group_run" })]) {
+      const text = P.buildPlanProbe(w, p, "ana", NOW, TZ);
+      expect(text).not.toBeNull();
+      expect(text!).not.toMatch(/divorce|recovery|evenings|goals/i);
+    }
+    expect(P.buildPlanProbe(w, plan({ invited: ids, activityId: "group_run" }), "ana", NOW, TZ)).toContain("Free.");
+  });
+  test("the probe copy allowlist never contains a sensitive term", () => {
+    for (const t of P.PLAN_COPY_PUBLIC) expect(isSensitiveTerm(t)).toBe(false);
+  });
+  test("crew, partner and group probe copy reads as English for every activity", () => {
+    const w = mkWorld(climbers(["ana", "ben", "cy"]));
+    for (const a of ACTIVITIES) {
+      const crew = P.buildPlanProbe(w, plan({ invited: ["ana", "ben", "cy"], crewId: "crew_1", activityId: a.id }), "ana", NOW, TZ);
+      if (!crew) continue;
+      expect(crew).toStartWith(`Your crew for ${a.label} is on again: `);
+      expect(crew).not.toMatch(/\bYour (a|an|the) /);
+      const partner = P.buildPlanProbe(w, plan({ invited: ["ana", "ben"], partner: true, activityId: a.id }), "ana", NOW, TZ)!;
+      expect(partner).toStartWith(`Up for ${a.label} with someone`);
+      expect(partner).not.toMatch(/\b(a|an) (a|an)\b|  |\.\./);
+    }
+    expect(P.buildPlanProbe(w, plan({ invited: ["ana", "ben", "cy"], crewId: "crew_1", activityId: "group_run" }), "ana", NOW, TZ)).toStartWith("Your crew for an easy group run is on again: ");
   });
 });
 
@@ -320,7 +350,7 @@ describe("the plan allowance (founder decision 2026-10-08)", () => {
   test("1 plan invite per 7 days, separate from the intro cap; one plan per message (outside-world companions allowed); no break-ins", () => {
     const acfg = P.planAllowanceConfig();
     expect(acfg.caps.normal).toEqual({ limit: 1, periodDays: 7 });
-    expect(acfg.caps.quiet).toEqual({ limit: 1, periodDays: 7 });
+    expect(acfg.caps.quiet).toEqual({ limit: 1, periodDays: 30 }); // Quiet keeps its stricter state rate (audit engine-attention-plans-9)
     expect(acfg.caps.paused.limit).toBe(0);
     expect(acfg.maxMemberItems).toBe(1);
     // The intro cap itself is unchanged.
@@ -355,5 +385,94 @@ describe("config", () => {
     expect(resolvePlans().allowance).toEqual({ enabled: true, limit: 1, periodDays: 7 });
     expect(resolvePlans().crews.minPlans).toBe(1);
     expect(() => resolvePlans({ crews: { minPlans: 3 } })).toThrow();
+  });
+});
+
+describe("audit 2026-10-08 (engine-attention-plans-2, -4, -10, -12, -13)", () => {
+  test("plans-2: alternates are pairwise compatible with each other", () => {
+    const ids = ["ana", "ben", "cy", "dee", "eve", "fay", "gus", "hal"];
+    const inp = climbers(ids);
+    // The would-be alternates block each other: at most one of them may be an alternate.
+    for (const [a, b] of [["fay", "gus"], ["fay", "hal"], ["gus", "hal"]]) inp.edges.push({ from: a!, to: b!, type: "blocked", strength: 1, explicit: true, createdAt: NOW - DAY });
+    const w = mkWorld(inp);
+    // fay, gus and hal are less sure they are free: they are the alternates, never the primary group.
+    const ev = new Map(ids.map(id => [id, ["fay", "gus", "hal"].includes(id) ? { ...stated(id), stated: { ...stated(id).stated!, confidence: 0.3 } } : stated(id)]));
+    const ps = P.planProposals(w, { now: NOW, city: "sf", tz: TZ, evidence: ev, venues: [VENUE] });
+    expect(ps.some(p => p.alternates.length > 0)).toBe(true);
+    for (const p of ps) {
+      const all = [...p.invited, ...p.alternates];
+      for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) expect(w.blocked.has([all[i]!, all[j]!].sort().join("|"))).toBe(false);
+    }
+  });
+  test("plans-4: crew sessions keep the local time across a DST change", () => {
+    const NY = "America/New_York";
+    const first = fromLocal(2026, 10, 24, 19, NY); // Saturday 19:00 EDT, before the 1 November change
+    const crew: P.Crew = { id: "c", activityId: "bouldering", city: "nyc", members: ["a", "b", "c"], cadenceDays: 7, hostRotation: ["a"], sessions: [], handedOff: false, slot: { start: first } };
+    const s = P.crewSessionPlan(crew, fromLocal(2026, 10, 27, 9, NY), { name: "x" })!;
+    const lp = localPartsOf(s.window.start, NY);
+    expect([lp.day, lp.hour]).toEqual([31, 19]);
+    const after = P.crewSessionPlan(crew, fromLocal(2026, 11, 3, 9, NY), { name: "x" })!;
+    expect(localPartsOf(after.window.start, NY).hour).toBe(19);
+  });
+  test("plans-10: two yes-sayers of a group plan get a fresh partner probe, not a booking", () => {
+    const two = { ...P.startPlanRun(plan()), answers: { a: "yes", b: "yes", c: "no", d: "no" } as Record<string, P.PlanAnswer>, stage: "closed" as const };
+    const f = P.planFallback(two, NOW, []).fallback;
+    expect(f.kind).toBe("smaller");
+    const pp = f.kind === "smaller" ? f.partnerPlan! : undefined;
+    expect(pp?.partner).toBe(true);
+    expect(pp?.invited).toEqual(["a", "b"]);
+    expect(pp?.id).not.toBe("plan_x");
+    // One-to-one rules: only the first member is probed at the start.
+    expect(Object.keys(P.startPlanRun(pp!).answers)).toEqual(["a"]);
+  });
+  test("plans-12: equal members do not lose every plan to the lowest ids", () => {
+    const ids = Array.from({ length: 12 }, (_, i) => `m${String(i).padStart(2, "0")}`);
+    const w = mkWorld(climbers(ids));
+    const ps = P.planProposals(w, { now: NOW, city: "sf", tz: TZ, evidence: evidence(ids), venues: [VENUE] });
+    const invited = new Set(ps.flatMap(p => p.invited));
+    expect(ps.length).toBeGreaterThan(1);
+    expect(invited.size).toBeGreaterThan(6);
+  });
+  test("plans-13: no plan at a romance event, and event capacity bounds the group", () => {
+    const ids = ["ana", "ben", "cy", "dee", "eve"];
+    const inp = climbers(ids);
+    const ev = (id: string, category: NetworkEvent["category"], capacity?: number): NetworkEvent =>
+      ({ id, title: `climbing ${id}`, city: "sf", area: "mission", start: SAT, end: SAT + 2 * HOUR, tags: ["climbing"], category, ...(capacity ? { capacity } : {}) });
+    inp.events = [ev("rom", "romance"), ev("small", "social", 2)];
+    const w = mkWorld(inp);
+    const ps = P.planProposals(w, { now: NOW, city: "sf", tz: TZ, evidence: evidence(ids), venues: [] });
+    expect(ps.some(p => p.eventId === "rom")).toBe(false);
+    expect(ps.some(p => p.eventId === "small")).toBe(true);
+    for (const p of ps.filter(p => p.eventId === "small")) expect(p.invited.length).toBeLessThanOrEqual(2);
+  });
+});
+
+describe("audit 2026-10-08 (engine-attention-plans-9, -11, -17, -21)", () => {
+  test("plans-9: the plan allowance never loosens a Quiet member's cap", () => {
+    const c = P.planAllowanceConfig();
+    const q = c.caps.quiet, base = A.capFor({ memberId: "a", state: "quiet", age: 30, tz: TZ, quietHours: [22, 8], onlyWhenAsked: false, prefs: A.defaultCadence("quiet") });
+    expect(q.limit / q.periodDays).toBeLessThanOrEqual(base.limit / base.periodDays);
+    expect(c.caps.normal).toEqual({ limit: DEFAULT_PLANS.allowance.limit, periodDays: DEFAULT_PLANS.allowance.periodDays });
+  });
+  test("plans-11: a yes too late to join is stored as late, not yes", () => {
+    let r = P.startPlanRun(plan({ invited: ["a", "b", "c", "d"], quorum: 3 }));
+    for (const id of ["a", "b", "c"]) r = P.recordPlanAnswer(r, id, true, NOW).run;
+    const late = P.recordPlanAnswer(r, "d", true, SAT - HOUR);
+    expect(late.action.kind).toBe("none");
+    expect(late.run.answers.d).toBe("late");
+    expect(P.yesOf(late.run)).not.toContain("d");
+  });
+  test("plans-17: a wall-clock time in the spring-forward gap maps to the first instant after it", () => {
+    const NY = "America/New_York";
+    const t = fromLocal(2026, 3, 8, 2, NY);
+    expect(localPartsOf(t, NY).hour).toBe(3);
+    expect(localPartsOf(fromLocal(2026, 3, 8, 12, NY), NY).hour).toBe(12);
+  });
+  test("plans-21: a venue that closes after midnight is open in the evening", () => {
+    const ids = ["ana", "ben", "cy", "dee", "eve"];
+    const night: Venue = { ...VENUE, id: "v2", hours: { weekday: [18, 2], weekend: [18, 2] } };
+    const ps = P.planProposals(mkWorld(climbers(ids)), { now: NOW, city: "sf", tz: TZ, evidence: evidence(ids), venues: [night] });
+    expect(ps.length).toBe(1);
+    expect(ps[0]!.venueId).toBe("v2");
   });
 });

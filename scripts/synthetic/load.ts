@@ -46,7 +46,7 @@ const toPresence = ({ synthetic: _s, ...p }: PresenceRecord): Presence => ({ ...
 const toEdge = ({ synthetic: _s, relation: _r, ...e }: EdgeRecord): Edge => e;
 
 export function toSnapshot(d: PublicData, opts: { now?: number; cities?: ("sf" | "nyc")[] } = {}): WorldSnapshot {
-  const keep = new Set(d.members.filter(m => !opts.cities || opts.cities.includes(m.homeCity)).map(m => m.id));
+  const keep = new Set(d.members.filter(m => !opts.cities || opts.cities.includes(m.homeCity as "sf" | "nyc")).map(m => m.id));
   return {
     now: opts.now ?? d.manifest.snapshotNow,
     members: d.members.filter(m => keep.has(m.id)).map(toMember),

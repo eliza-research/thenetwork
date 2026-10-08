@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CapitalLedger, type CapitalEventInput, detectGaming, effortOverlay, effortTier, organizingReach, vouchCapacity, whatYouBuilt, EFFORT_TABLE, OVERLAY_ENGINE_KEYS, DEFAULT_CAPITAL, type CapitalEvent } from "../src/index.ts";
+import { CapitalLedger, CapitalEventRejected, resolveCapital, type CapitalEventInput, type LedgerEntry, type StaffRead, detectGaming, effortOverlay, effortTier, organizingReach, vouchCapacity, whatYouBuilt, EFFORT_TABLE, OVERLAY_ENGINE_KEYS, DEFAULT_CAPITAL, type CapitalEvent } from "../src/index.ts";
 
 const DAY = 86_400_000, HOUR = 3_600_000;
 const T0 = Date.UTC(2026, 9, 5, 16);
@@ -17,6 +17,13 @@ function attend(L: CapitalLedger, member: string, planId: string, t: number, cou
   L.record(ev({ type: "plan_confirmed", t: t + DAY / 2, member, planId }));
   return L.record(ev({ type: "plan_attended", t: t + DAY, member, planId, counterparts, verifiedBy: o.verifiedBy ?? ["checkin"], origin: o.origin ?? "engine", publicVenue: true }));
 }
+/** Everyone in `who` accepts, confirms and attends the same plan; each lists the others (plus `extra`) as counterparts. */
+function together(L: CapitalLedger, who: string[], planId: string, t: number, o: { origin?: "engine" | "member" | "organizer"; verifiedBy?: ("counterpart" | "checkin")[]; extra?: string[] } = {}) {
+  for (const m of who) L.record(ev({ type: "plan_accepted", t, member: m, planId, kind: "plan", startsAt: t + DAY }));
+  for (const m of who) L.record(ev({ type: "plan_confirmed", t: t + DAY / 2, member: m, planId }));
+  return who.flatMap(m => L.record(ev({ type: "plan_attended", t: t + DAY, member: m, planId, counterparts: [...who.filter(x => x !== m), ...(o.extra ?? [])],
+    verifiedBy: o.verifiedBy ?? ["counterpart"], origin: o.origin ?? "member", publicVenue: true })));
+}
 function plan(L: CapitalLedger, member: string, planId: string, t: number, startsAt = t + DAY, confirm = true) {
   L.record(ev({ type: "plan_accepted", t, member, planId, kind: "intro", startsAt }));
   if (confirm) L.record(ev({ type: "plan_confirmed", t: t + 1, member, planId }));
@@ -29,13 +36,13 @@ describe("vouch", () => {
     const L = world(); invite(L);
     expect(L.record(ev({ type: "member_activated", t: T0 + DAY, member: "inv" }))).toEqual([]);
     expect(L.record(ev({ type: "value_received", t: T0 + 2 * DAY, member: "inv", with: ["a"] }))).toEqual([]); // voucher only
-    const out = L.record(ev({ type: "value_received", t: T0 + 3 * DAY, member: "inv", with: ["b"] }));
+    const out = L.record(ev({ type: "value_received", t: T0 + 3 * DAY, member: "inv", with: ["b"], confirmedBy: ["b"] }));
     expect(out).toHaveLength(1);
     expect(out[0]!.category).toBe("vouch");
     expect(out[0]!.member).toBe("a");
     expect(out[0]!.amount).toBe(10);
     // only once
-    expect(L.record(ev({ type: "value_received", t: T0 + 4 * DAY, member: "inv", with: ["c"] }))).toEqual([]);
+    expect(L.record(ev({ type: "value_received", t: T0 + 4 * DAY, member: "inv", with: ["c"], confirmedBy: ["c"] }))).toEqual([]);
   });
 
   test("value after 30 days earns nothing", () => {
@@ -48,11 +55,11 @@ describe("vouch", () => {
     const L = world(); invite(L);
     L.record(ev({ type: "safety_flag", t: T0 + DAY, member: "inv", serious: false }));
     L.record(ev({ type: "member_activated", t: T0 + DAY, member: "inv" }));
-    expect(L.record(ev({ type: "value_received", t: T0 + 2 * DAY, member: "inv", with: [] }))).toEqual([]);
+    expect(L.record(ev({ type: "value_received", t: T0 + 2 * DAY, member: "inv", with: ["b"], confirmedBy: ["b"] }))).toEqual([]);
 
     const L2 = world(); invite(L2);
     L2.record(ev({ type: "member_activated", t: T0 + DAY, member: "inv" }));
-    L2.record(ev({ type: "value_received", t: T0 + 2 * DAY, member: "inv", with: [] }));
+    L2.record(ev({ type: "value_received", t: T0 + 2 * DAY, member: "inv", with: ["b"], confirmedBy: ["b"] }));
     expect(L2.record(ev({ type: "safety_flag", t: T0 + 3 * DAY, member: "inv", serious: false }))).toEqual([]);
     expect(L2.balance("a")).toBe(10);
   });
@@ -60,7 +67,7 @@ describe("vouch", () => {
   test("stake is lost only for removal for serious abuse within 90 days; credit is reversed", () => {
     const L = world(); invite(L);
     L.record(ev({ type: "member_activated", t: T0 + DAY, member: "inv" }));
-    L.record(ev({ type: "value_received", t: T0 + 2 * DAY, member: "inv", with: [] }));
+    L.record(ev({ type: "value_received", t: T0 + 2 * DAY, member: "inv", with: ["b"], confirmedBy: ["b"] }));
     const out = L.record(ev({ type: "member_removed", t: T0 + 40 * DAY, member: "inv", reason: "serious_abuse" }));
     expect(out.map(e => e.category).sort()).toEqual(["clawback", "vouch_stake"]);
     expect(L.balance("a")).toBe(-10);
@@ -244,12 +251,9 @@ describe("anti-gaming", () => {
 
   test("staged meetups are flagged; checked-in engine plans with the same people are not", () => {
     const L = world();
-    for (let i = 0; i < 3; i++) {
-      const b = T0 + i * 8 * DAY;
-      attend(L, "a", `s${i}`, b, ["b"], { origin: "member", verifiedBy: ["counterpart"] });
-      attend(L, "b", `s${i}`, b + 2 * DAY, ["a"], { origin: "member", verifiedBy: ["counterpart"] });
-      attend(L, "c", `e${i}`, b + 4 * DAY, ["d"]);
-      attend(L, "d", `e${i}`, b + 6 * DAY, ["c"]);
+    for (let i = 0; i < 6; i++) {
+      together(L, ["a", "b"], `s${i}`, T0 + i * 4 * DAY);
+      together(L, ["c", "d"], `e${i}`, T0 + i * 4 * DAY + 2 * DAY, { origin: "engine", verifiedBy: ["checkin"] });
     }
     const flags = detectGaming(L.all(), T0 + 25 * DAY).filter(f => f.kind === "staged_meetup");
     expect(flags.map(f => f.members)).toEqual([["a", "b"]]);
@@ -267,12 +271,12 @@ describe("anti-gaming", () => {
     helpPair(T0);
     L.record(ev({ type: "member_joined", t: T0 + 1, member: "syb", age: 25, vouchedBy: "a" }));
     L.record(ev({ type: "member_activated", t: T0 + 2, member: "syb" }));
-    expect(L.record(ev({ type: "value_received", t: T0 + 3, member: "syb", with: ["b"] }))).toEqual([]);
+    expect(L.record(ev({ type: "value_received", t: T0 + 3, member: "syb", with: ["b"], confirmedBy: ["b"] }))).toEqual([]);
 
     const L2 = world();
     L2.record(ev({ type: "member_joined", t: T0 + 1, member: "syb", age: 25, vouchedBy: "a" }));
     L2.record(ev({ type: "member_activated", t: T0 + 2, member: "syb" }));
-    expect(L2.record(ev({ type: "value_received", t: T0 + 3, member: "syb", with: ["b"] }))[0]!.category).toBe("vouch");
+    expect(L2.record(ev({ type: "value_received", t: T0 + 3, member: "syb", with: ["b"], confirmedBy: ["b"] }))[0]!.category).toBe("vouch");
     for (const [x, y] of [["a", "b"], ["b", "a"]]) {
       const id = `w${++seq}`;
       L2.record(ev({ type: "help_given", t: T0 + 4, helper: x!, recipient: y!, helpId: id }));
@@ -308,7 +312,7 @@ describe("levers", () => {
   });
 
   test("overlay is the floor for a member with no entries and only touches effort knobs", () => {
-    const o = effortOverlay([]);
+    const o = effortOverlay([], T0);
     expect(o.tier).toBe(0);
     expect(o.engine).toEqual({ judge: { topK: 10, groupTopK: 3, deep: { enabled: false } } });
     expect(o.network.intentReSearchDays).toBe(3);
@@ -320,27 +324,27 @@ describe("levers", () => {
 
   test("vouch capacity grows with good vouches, shrinks with lost stakes, locks after abuse", () => {
     const L = world();
-    expect(vouchCapacity(L.internalEntries("a"))).toBe(2);
+    expect(vouchCapacity(L.internalEntries("a"), T0 + DAY)).toBe(2);
     for (let i = 0; i < 2; i++) {
       L.record(ev({ type: "member_joined", t: T0 + i, member: `g${i}`, age: 30, vouchedBy: "a" }));
       L.record(ev({ type: "member_activated", t: T0 + i, member: `g${i}` }));
-      L.record(ev({ type: "value_received", t: T0 + i, member: `g${i}`, with: [] }));
+      L.record(ev({ type: "value_received", t: T0 + i, member: `g${i}`, with: ["b"], confirmedBy: ["b"] }));
     }
-    expect(vouchCapacity(L.internalEntries("a"))).toBe(4);
+    expect(vouchCapacity(L.internalEntries("a"), T0 + DAY)).toBe(4);
     L.record(ev({ type: "member_joined", t: T0 + 5, member: "bad", age: 30, vouchedBy: "a" }));
     L.record(ev({ type: "member_removed", t: T0 + 6, member: "bad", reason: "serious_abuse" }));
-    expect(vouchCapacity(L.internalEntries("a"))).toBe(2);
+    expect(vouchCapacity(L.internalEntries("a"), T0 + DAY)).toBe(2);
     L.record(ev({ type: "abuse_confirmed", t: T0 + 7, member: "a", kind: "spam" }));
-    expect(vouchCapacity(L.internalEntries("a"))).toBe(0);
+    expect(vouchCapacity(L.internalEntries("a"), T0 + DAY)).toBe(0);
   });
 
   test("organizing reach grows with sessions, capped, extra slots reserved for low exposure, reduced after abuse", () => {
     const L = world({ a: 30, ...Object.fromEntries(Array.from({ length: 80 }, (_, i) => [`m${i}`, 30])) });
-    expect(organizingReach(L.internalEntries("a"))).toEqual({ max: 8, reservedForLowExposure: 0 });
+    expect(organizingReach(L.internalEntries("a"), T0 + 42 * DAY)).toEqual({ max: 8, reservedForLowExposure: 0 });
     for (let i = 0; i < 40; i++) L.record(ev({ type: "organized", t: T0 + i * DAY, organizer: "a", planId: `o${i}`, publicVenue: true, recurring: true, attendees: [`m${2 * i}`, `m${2 * i + 1}`], label: "run club" }));
-    expect(organizingReach(L.internalEntries("a"))).toEqual({ max: 16, reservedForLowExposure: 8 });
+    expect(organizingReach(L.internalEntries("a"), T0 + 42 * DAY)).toEqual({ max: 16, reservedForLowExposure: 8 });
     L.record(ev({ type: "abuse_confirmed", t: T0 + 41 * DAY, member: "a", kind: "policy" }));
-    expect(organizingReach(L.internalEntries("a"))).toEqual({ max: 4, reservedForLowExposure: 0 });
+    expect(organizingReach(L.internalEntries("a"), T0 + 42 * DAY)).toEqual({ max: 4, reservedForLowExposure: 0 });
   });
 });
 
@@ -349,7 +353,7 @@ describe("what you've built", () => {
     const L = world();
     L.record(ev({ type: "member_joined", t: T0, member: "inv", age: 30, vouchedBy: "a" }));
     L.record(ev({ type: "member_activated", t: T0, member: "inv" }));
-    L.record(ev({ type: "value_received", t: T0, member: "inv", with: [] }));
+    L.record(ev({ type: "value_received", t: T0, member: "inv", with: ["d"], confirmedBy: ["d"] }));
     for (const r of ["b", "c"]) {
       L.record(ev({ type: "help_given", t: T0, helper: "a", recipient: r, helpId: `hh${r}` }));
       L.record(ev({ type: "help_confirmed", t: T0, helpId: `hh${r}`, recipient: r, useful: true }));
@@ -366,5 +370,270 @@ describe("what you've built", () => {
 
   test("empty history", () => {
     expect(whatYouBuilt([])).toMatch(/^Nothing here yet/);
+  });
+});
+
+describe("input validation (capital-3, capital-m2)", () => {
+  test("a NaN or Infinity time, or a NaN count, is rejected and changes nothing", () => {
+    const L = world();
+    const before = L.all().length;
+    expect(() => L.record(ev({ type: "declined", t: NaN, member: "a" }))).toThrow(CapitalEventRejected);
+    // NaN no longer turns off the time-order check
+    L.record(ev({ type: "need_answered", t: T0 + DAY, member: "a", needId: "n1", confirmedBy: "staff" }));
+    expect(() => L.record(ev({ type: "need_answered", t: T0, member: "a", needId: "n0", confirmedBy: "staff" }))).toThrow(CapitalEventRejected);
+    // Infinity no longer locks the ledger
+    expect(() => L.record(ev({ type: "declined", t: Infinity, member: "a" }))).toThrow(CapitalEventRejected);
+    expect(L.record(ev({ type: "need_answered", t: T0 + 2 * DAY, member: "a", needId: "n2", confirmedBy: "staff" }))).toHaveLength(1);
+    // a NaN count no longer poisons the balance
+    expect(() => L.record(ev({ type: "review_completed", t: T0 + 2 * DAY, member: "b", items: NaN }))).toThrow(CapitalEventRejected);
+    expect(() => L.record(ev({ type: "plan_accepted", t: T0 + 2 * DAY, member: "b", planId: "p", kind: "intro", startsAt: NaN }))).toThrow(CapitalEventRejected);
+    expect(Number.isFinite(L.balance("b"))).toBe(true);
+    expect(L.all().length).toBe(before + 2);
+    expect(L.rejected().map(r => r.reason.split(" ")[0])).toEqual(["t", "events", "t", "items", "startsAt"]);
+  });
+
+  test("a malformed event is rejected before it is marked seen, so the fixed event with the same id is taken", () => {
+    const L = world();
+    const bad = { id: "v1", type: "value_received", t: T0, member: "a" } as unknown as CapitalEvent; // no `with`
+    expect(() => L.record(bad)).toThrow(CapitalEventRejected);
+    expect(L.record({ id: "v1", type: "need_answered", t: T0, member: "a", needId: "n", confirmedBy: "staff" })).toHaveLength(1);
+  });
+
+  test("invalid config is refused", () => {
+    expect(() => resolveCapital({ antiGaming: { pairDecay: 0 } })).toThrow(/pairDecay/);
+    expect(() => resolveCapital({ credit: { help: NaN } })).toThrow(/credit.help/);
+    expect(() => resolveCapital({ levers: { effortThresholds: [45, 15, 120] } })).toThrow(/increase/);
+    expect(() => resolveCapital({ antiGaming: { periodCapp: 3 } } as never)).toThrow(/unknown key antiGaming.periodCapp/);
+    expect(() => new CapitalLedger({ detection: { ringShare: 2 } })).toThrow(/ringShare/);
+    expect(resolveCapital({ antiGaming: { periodCap: 60 } }).antiGaming.periodCap).toBe(60);
+  });
+});
+
+describe("vouch credit needs more than the invitee's say-so (capital-1, -9, -17)", () => {
+  let clock = T0;
+  const tick = () => (clock += 10);
+  const join = (L: CapitalLedger, member: string, age: number | null, vouchedBy = "a") => {
+    L.record(ev({ type: "member_joined", t: tick(), member, age, vouchedBy }));
+    L.record(ev({ type: "member_activated", t: tick(), member }));
+  };
+
+  test("self-reported value, agent-only value, or value from a minor gives no vouch credit", () => {
+    const L = world({ a: 30, b: 30, teen: 15 });
+    join(L, "s1", 30);
+    expect(L.record(ev({ type: "value_received", t: tick(), member: "s1", with: ["b"] }))).toEqual([]); // b never confirmed
+    expect(L.record(ev({ type: "value_received", t: tick(), member: "s1", with: [] }))).toEqual([]); // agent only
+    expect(L.record(ev({ type: "value_received", t: tick(), member: "s1", with: ["teen"], confirmedBy: ["teen"] }))).toEqual([]);
+    expect(L.record(ev({ type: "value_received", t: tick(), member: "s1", with: ["ghost"], confirmedBy: ["ghost"] }))).toEqual([]);
+    expect(L.balance("a")).toBe(0);
+    expect(vouchCapacity(L.internalEntries("a"), T0 + DAY)).toBe(2);
+    // the provider's own confirmation, or an independent check-in, does count
+    expect(L.record(ev({ type: "value_received", t: tick(), member: "s1", with: ["b"], confirmedBy: ["b"] }))[0]!.category).toBe("vouch");
+    join(L, "s2", 30);
+    expect(L.record(ev({ type: "value_received", t: tick(), member: "s2", with: ["c"], verifiedBy: ["checkin"] }))).toEqual([]); // c is not a member here
+    join(L, "s3", 30);
+    L.record(ev({ type: "member_joined", t: tick(), member: "c", age: 40 }));
+    expect(L.record(ev({ type: "value_received", t: tick(), member: "s3", with: ["c"], verifiedBy: ["checkin"] }))[0]!.category).toBe("vouch");
+  });
+
+  test("recruiting a minor or an unknown age earns nothing; nor does vouching for yourself", () => {
+    const L = world({ a: 30, b: 30 });
+    join(L, "kid", 13); join(L, "unk", null);
+    for (const m of ["kid", "unk"]) expect(L.record(ev({ type: "value_received", t: tick(), member: m, with: ["b"], confirmedBy: ["b"] }))).toEqual([]);
+    join(L, "self", 30, "self");
+    expect(L.record(ev({ type: "value_received", t: tick(), member: "self", with: ["b"], confirmedBy: ["b"] }))).toEqual([]);
+    expect(L.all().filter(e => e.category === "vouch")).toEqual([]);
+  });
+
+  test("one accomplice confirming value for two of a voucher's invitees is flagged", () => {
+    const L = world({ a: 30, b: 30 });
+    for (const s of ["s1", "s2"]) {
+      join(L, s, 30);
+      L.record(ev({ type: "value_received", t: tick(), member: s, with: ["b"], confirmedBy: ["b"] }));
+    }
+    const f = detectGaming(L.all(), T0 + DAY).filter(f => f.kind === "vouch_ring");
+    expect(f.map(x => x.members)).toEqual([["a", "b", "s1", "s2"]]);
+  });
+
+  test("a removed member earns nothing more; the stake window runs to the confirmed abuse", () => {
+    const L = world();
+    L.record(ev({ type: "member_removed", t: T0 + 1, member: "a", reason: "left" }));
+    expect(L.record(ev({ type: "need_answered", t: T0 + 2, member: "a", needId: "n", confirmedBy: "staff" }))).toEqual([]);
+    const L2 = world();
+    L2.record(ev({ type: "member_joined", t: T0, member: "i", age: 30, vouchedBy: "b" }));
+    L2.record(ev({ type: "abuse_confirmed", t: T0 + 80 * DAY, member: "i", kind: "harassment" }));
+    const out = L2.record(ev({ type: "member_removed", t: T0 + 95 * DAY, member: "i", reason: "serious_abuse" }));
+    expect(out.map(e => [e.member, e.category])).toEqual([["b", "vouch_stake"]]);
+  });
+
+  test("help to a minor or a non-member, and needs confirmed by a non-member, earn nothing", () => {
+    const L = world({ a: 30, teen: 15 });
+    for (const r of ["teen", "ghost"]) {
+      L.record(ev({ type: "help_given", t: T0, helper: "a", recipient: r, helpId: `h${r}` }));
+      expect(L.record(ev({ type: "help_confirmed", t: T0, helpId: `h${r}`, recipient: r, useful: true }))).toEqual([]);
+    }
+    expect(L.record(ev({ type: "need_answered", t: T0, member: "a", needId: "z", confirmedBy: "ghost" }))).toEqual([]);
+    L.record(ev({ type: "plan_accepted", t: T0, member: "a", planId: "p", kind: "intro", startsAt: T0 + DAY }));
+    expect(L.record(ev({ type: "plan_attended", t: T0 + DAY, member: "a", planId: "p", counterparts: ["teen"], verifiedBy: ["counterpart"], origin: "engine", publicVenue: true }))).toEqual([]);
+  });
+});
+
+describe("age updates (capital-4)", () => {
+  test("a member found to be a minor stops accruing and drops to the floor; turning 18 starts accrual from then", () => {
+    const L = world({ liar: 25, k: 17, b: 30 });
+    for (let i = 0; i < 10; i++) L.record(ev({ type: "need_answered", t: T0 + i, member: "liar", needId: `n${i}`, confirmedBy: "staff" }));
+    expect(effortOverlay(L.internalEntries("liar"), T0 + DAY).tier).toBe(1);
+    L.record(ev({ type: "age_updated", t: T0 + DAY, member: "liar", age: 15 }));
+    expect(L.isEligible("liar")).toBe(false);
+    expect(L.record(ev({ type: "need_answered", t: T0 + 2 * DAY, member: "liar", needId: "late", confirmedBy: "staff" }))).toEqual([]);
+    expect(effortOverlay(L.internalEntries("liar"), T0 + 2 * DAY).tier).toBe(0);
+
+    expect(L.record(ev({ type: "need_answered", t: T0 + 2 * DAY, member: "k", needId: "k0", confirmedBy: "staff" }))).toEqual([]);
+    L.record(ev({ type: "age_updated", t: T0 + 300 * DAY, member: "k", age: 18 }));
+    expect(L.record(ev({ type: "need_answered", t: T0 + 301 * DAY, member: "k", needId: "k1", confirmedBy: "staff" }))).toHaveLength(1);
+    expect(L.balance("k")).toBe(3);
+  });
+});
+
+describe("feedback credit (capital-7)", () => {
+  test("giving feedback never lowers NC", () => {
+    const ms: Record<string, number> = { a: 30 };
+    for (let i = 0; i < 12; i++) ms[`x${i}`] = 30;
+    const run = (fb: boolean) => {
+      const L = world(ms);
+      for (let i = 0; i < 12; i++) {
+        attend(L, "a", `p${i}`, T0 + i * 2 * DAY, [`x${i}`]);
+        if (fb) L.record(ev({ type: "feedback_given", t: T0 + i * 2 * DAY + DAY + 1, member: "a", planId: `p${i}` }));
+      }
+      return L.balance("a");
+    };
+    expect(run(true)).toBeGreaterThan(run(false));
+  });
+
+  test("fraud claws back the feedback on a staged plan along with the attendance", () => {
+    const L = world();
+    for (let i = 0; i < 3; i++) {
+      attend(L, "a", `s${i}`, T0 + i * 2 * DAY, ["b"], { origin: "member", verifiedBy: ["counterpart"] });
+      L.record(ev({ type: "feedback_given", t: T0 + i * 2 * DAY + DAY + 1, member: "a", planId: `s${i}` }));
+    }
+    L.record(ev({ type: "fraud_confirmed", t: T0 + 10 * DAY, members: ["a", "b"] }));
+    const fb = L.internalEntries("a").filter(e => e.provenance.eventType === "feedback_given");
+    expect(fb.length).toBe(3);
+    expect(fb.every(e => L.isReversed(e.id))).toBe(true);
+    expect(L.balance("a")).toBe(-10);
+  });
+});
+
+describe("rotating fillers, large rings, organizer staging, honest friends (capital-8, capital-11)", () => {
+  const people = (n: number, p = "x") => Object.fromEntries(Array.from({ length: n }, (_, i) => [`${p}${i}`, 30]));
+  /** a and b attend a plan they chose, each verified only by the other, with optional extra people. */
+  const staged = (L: CapitalLedger, i: number, t: number, extra: string[] = [], origin: "member" | "organizer" = "member") =>
+    together(L, ["a", "b"], `s${i}`, t, { origin, extra }).find(e => e.member === "a")?.amount ?? 0;
+
+  test("two fresh fillers per staged meetup do not reset the pair decay", () => {
+    const L1 = world({ a: 30, b: 30, ...people(20) }), L2 = world({ a: 30, b: 30, ...people(20) });
+    let alone = 0, rotated = 0;
+    for (let i = 0; i < 8; i++) {
+      alone += staged(L1, i, T0 + i * 3 * DAY);
+      rotated += staged(L2, i, T0 + i * 3 * DAY, [`x${2 * i}`, `x${2 * i + 1}`]);
+    }
+    expect(rotated).toBeLessThanOrEqual(alone + 1e-9);
+  });
+
+  test("the recurring core pair is flagged even when the others rotate", () => {
+    const L = world({ a: 30, b: 30, ...people(20) });
+    for (let i = 0; i < 6; i++) staged(L, i, T0 + i * 3 * DAY, [`x${i}`]);
+    const f = detectGaming(L.all(), T0 + 20 * DAY).filter(f => f.kind === "staged_meetup");
+    expect(f.length).toBe(1);
+    expect(f[0]!.members).toContain("a");
+    expect(f[0]!.members).toContain("b");
+  });
+
+  test("organizer-started plans verified only by the attendees are staging too", () => {
+    const L = world();
+    for (let i = 0; i < 6; i++) staged(L, i, T0 + i * 3 * DAY, [], "organizer");
+    expect(detectGaming(L.all(), T0 + 20 * DAY).filter(f => f.kind === "staged_meetup").map(f => f.members)).toEqual([["a", "b"]]);
+  });
+
+  test("honest friends who meet weekly are not flagged", () => {
+    const L = world();
+    for (let i = 0; i < 5; i++) staged(L, i, T0 + i * 7 * DAY);
+    expect(detectGaming(L.all(), T0 + 30 * DAY)).toEqual([]);
+  });
+
+  for (const n of [8, 12]) test(`a help ring of ${n} members is flagged`, () => {
+    const L = world(people(n, "r"));
+    let t = T0;
+    for (let k = 0; k < 4; k++) for (let i = 0; i < n; i++) for (const d of [1, 2]) {
+      const id = `rh${++seq}`; t += HOUR;
+      L.record(ev({ type: "help_given", t, helper: `r${i}`, recipient: `r${(i + d) % n}`, helpId: id }));
+      L.record(ev({ type: "help_confirmed", t, helpId: id, recipient: `r${(i + d) % n}`, useful: true }));
+    }
+    const ring = detectGaming(L.all(), t).filter(f => f.kind === "reciprocal_ring");
+    expect(new Set(ring.flatMap(f => f.members)).size).toBe(n);
+  });
+});
+
+describe("small fixes (capital-2, -6, -10, -18, -22, capital-m3)", () => {
+  test("clawing back last period's credits makes no room under this period's cap", () => {
+    const ms: Record<string, number> = { a: 30 };
+    for (let i = 0; i < 80; i++) ms[`m${i}`] = 30;
+    const L = world(ms, { antiGaming: { periodCap: 20 } });
+    const help = (t: number, r: string) => {
+      L.record(ev({ type: "help_given", t, helper: "a", recipient: r, helpId: `h${r}` }));
+      return L.record(ev({ type: "help_confirmed", t, helpId: `h${r}`, recipient: r, useful: true })).reduce((s, e) => s + e.amount, 0);
+    };
+    for (let i = 0; i < 40; i++) help(T0 + i * HOUR, `m${i}`);
+    L.record(ev({ type: "fraud_confirmed", t: T0 + 31 * DAY, members: ["a", ...Array.from({ length: 40 }, (_, i) => `m${i}`)] }));
+    let earned = 0;
+    for (let i = 40; i < 80; i++) earned += help(T0 + 31 * DAY + (i - 39) * HOUR, `m${i}`);
+    expect(earned).toBeLessThanOrEqual(20 + 1e-9);
+  });
+
+  test("the same plan organized twice, or the same need answered twice, earns once", () => {
+    const L = world();
+    expect(L.record(ev({ type: "organized", t: T0, organizer: "a", planId: "o1", publicVenue: true, recurring: true, attendees: ["b", "c"], label: "x" }))).toHaveLength(1);
+    expect(L.record(ev({ type: "organized", t: T0 + 1, organizer: "a", planId: "o1", publicVenue: true, recurring: true, attendees: ["b", "c"], label: "x" }))).toEqual([]);
+    expect(L.record(ev({ type: "need_answered", t: T0 + 2, member: "a", needId: "n1", confirmedBy: "b" }))).toHaveLength(1);
+    expect(L.record(ev({ type: "need_answered", t: T0 + 3, member: "a", needId: "n1", confirmedBy: "b" }))).toEqual([]);
+  });
+
+  test("a voucher does not see who their invitee met; reads cannot change the log or the audit trail", () => {
+    const L = world({ v: 30, x: 30 });
+    L.record(ev({ type: "member_joined", t: T0, member: "inv", age: 30, vouchedBy: "v" }));
+    L.record(ev({ type: "member_activated", t: T0, member: "inv" }));
+    L.record(ev({ type: "value_received", t: T0, member: "inv", with: ["x"], confirmedBy: ["x"] }));
+    expect(L.entriesFor({ member: "v" }, "v").map(e => e.provenance.confirmedBy)).toEqual([[]]);
+    expect(L.entriesFor({ staff: "s", role: "audit", reason: "r" }, "v").map(e => e.provenance.confirmedBy)).toEqual([["x"]]);
+    (L.audit() as StaffRead[]).length = 0;
+    (L.all() as LedgerEntry[]).length = 0;
+    (L.internalEntries("v") as LedgerEntry[]).length = 0;
+    expect(L.audit()).toHaveLength(1);
+    expect(L.all().length).toBeGreaterThan(0);
+    expect(L.internalEntries("v")).toHaveLength(1);
+  });
+
+  test("levers read the caller's time: an abuse lock ends even if the member has no newer entries", () => {
+    const L = world();
+    L.record(ev({ type: "abuse_confirmed", t: T0, member: "a", kind: "spam" }));
+    expect(vouchCapacity(L.internalEntries("a"), T0 + DAY)).toBe(0);
+    expect(vouchCapacity(L.internalEntries("a"), T0 + 365 * DAY)).toBe(2);
+  });
+
+  test("entry ids are unique even when event and member ids contain ':'", () => {
+    const L = world({ "y:z": 30, z: 30, y: 30, b: 30 });
+    L.record({ id: "x:y", type: "need_answered", t: T0, member: "z", needId: "n0", confirmedBy: "staff" });
+    L.record({ id: "x:y", type: "need_answered", t: T0, member: "y", needId: "n0", confirmedBy: "staff" }); // duplicate id: ignored
+    L.record({ id: "x", type: "need_answered", t: T0, member: "y:z", needId: "n1", confirmedBy: "staff" });
+    L.record({ id: "x:y:z", type: "need_answered", t: T0, member: "b", needId: "n2", confirmedBy: "staff" });
+    const ids = L.all().map(e => e.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  test("clawed-back credits do not raise the same flag again", () => {
+    const L = world();
+    for (let i = 0; i < 6; i++) together(L, ["a", "b"], `s${i}`, T0 + i * 2 * DAY);
+    expect(detectGaming(L.all(), T0 + 13 * DAY).length).toBeGreaterThan(0);
+    L.record(ev({ type: "fraud_confirmed", t: T0 + 13 * DAY, members: ["a", "b"] }));
+    expect(detectGaming(L.all(), T0 + 14 * DAY)).toEqual([]);
   });
 });

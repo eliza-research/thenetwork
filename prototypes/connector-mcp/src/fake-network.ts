@@ -10,7 +10,7 @@ import {
   ACTION_TIER, confirmationTtlMs, effectiveTier, looksAboutSomeoneElse, looksLikeContact, looksLikeCredential, looksLikePhoneOrEmail,
   looksLikeStreetAddress, looksNightlife, looksRomantic, looksSensitive, matchFolded, RateLimiter, statedAge, type ActionKind, type LimitName, type Tier,
 } from "./policy.ts";
-import { canJoin, UNDER_MIN_AGE_DECLINE } from "@thenetwork/core/src/policy.ts";
+import { canJoin, isMinor, UNDER_MIN_AGE_DECLINE } from "@thenetwork/core/src/policy.ts";
 import { ADULT_AGE, PROFILES, profileViolation, visibility, type ContentFacts, type SurfaceProfileName } from "./profiles.ts";
 import {
   SCOPES, TOOL_NAMES, type AskIn, type AskOut, type ChangeKind, type ItemKind, type ItemOut, type PendingConfirmationOut,
@@ -103,6 +103,10 @@ export class FakeNetwork {
   effects: Effect[] = [];
   /** Messages the Network sent the member on its OWN channel (iMessage/SMS), e.g. tier-2/3 confirmations. */
   channelMessages: { memberId: string; text: string; confirmationId?: string }[] = [];
+  /** Members suspended by the connector (a stated age under 13). Every tool refuses them until staff act. */
+  suspended = new Set<string>();
+  /** Cases for the staff queue. No member text is stored, only the reason and the stated age. */
+  staffEscalations: { memberId: string; reason: "stated_under_min_age" | "stated_minor_age"; statedAge: number; at: number }[] = [];
   private idem = new Map<string, { argsHash: string; result: unknown; receipt?: Receipt; at: number }>();
   private consequentialGrants = new Set<string>();
   private seq = 0;
@@ -124,10 +128,30 @@ export class FakeNetwork {
     this.members.set(m.id, m);
     return m;
   }
-  /** The member's own statement of an age under 13 anywhere in `texts` (they can't be a member). */
-  private statesUnderMinAge(texts: string[]): boolean {
+  /**
+   * Act on an age the member states about themselves (audit plugin-prototypes-22). The account's age
+   * is a claim; a lower self-stated age wins. Under 13: suspend the member and escalate to staff (they
+   * can't be a member). 13-17 on an older account: lower the effective age at once (they are never
+   * matched from now on) and send it to staff to verify. Returns true for under 13.
+   */
+  private noteStatedAge(p: ConnectorPrincipal, me: FakeMember, texts: string[]): boolean {
     const year = new Date(this.clock.now()).getUTCFullYear();
-    return texts.some((t) => { const a = statedAge(t, year); return a !== null && !canJoin(a); });
+    const ages = texts.map((t) => statedAge(t, year)).filter((a): a is number => a !== null);
+    if (!ages.length) return false;
+    const age = Math.min(...ages);
+    const at = this.clock.now();
+    if (!canJoin(age)) {
+      this.suspended.add(me.id);
+      this.staffEscalations.push({ memberId: me.id, reason: "stated_under_min_age", statedAge: age, at });
+      this.audit.push({ memberId: me.id, grantId: p.grantId, hostKey: p.hostKey, tool: "age_policy", summary: "Stated an age under 13: suspended and sent to staff.", at });
+      return true;
+    }
+    if (isMinor(age) && age < me.age) {
+      me.age = age;
+      this.staffEscalations.push({ memberId: me.id, reason: "stated_minor_age", statedAge: age, at });
+      this.audit.push({ memberId: me.id, grantId: p.grantId, hostKey: p.hostKey, tool: "age_policy", summary: `Stated age ${age}: treated as under 18 from now on.`, at });
+    }
+    return false;
   }
   /** The engine clears an item for one viewer; text must already be shareable-only. */
   addItem(viewerId: string, item: Omit<StoredItem, "internalId" | "viewerId" | "status" | "details"> & { details?: string }) {
@@ -148,21 +172,32 @@ export class FakeNetwork {
   }
 
   /**
-   * Strings that must never appear in any output to this principal: other members' ids, contact
-   * details and non-shareable facets; every internal opportunity id; other members' item text; and
-   * the text of this member's items that are hidden by profile or eligibility ("excluded items aren't
-   * mentioned", §7.1). Used by the outbound guard and by the tests.
+   * The members this principal's items are about (the other person in an intro, a swap, a relay).
+   * Only their private facets can reach this member's output, so only theirs are guarded
+   * (audit plugin-prototypes-21): guarding every member's facets let one member break another's
+   * connector with a common phrase, and turned the guard into a probe for anyone's private facts.
+   */
+  private counterpartsOf(memberId: string): Set<string> {
+    return new Set(this.items.filter((i) => i.viewerId === memberId && i.counterpartId).map((i) => i.counterpartId!));
+  }
+
+  /**
+   * Strings that must never appear in any output to this principal: other members' ids and contact
+   * details; the non-shareable facets of this member's counterparts; every internal opportunity id;
+   * other members' item text; and the text of this member's items that are hidden by profile or
+   * eligibility ("excluded items aren't mentioned", §7.1). Used by the outbound guard and by the tests.
    */
   forbiddenFor(p: ConnectorPrincipal): string[] {
     const out: string[] = [];
     const viewer = this.members.get(p.memberId);
+    const counterparts = this.counterpartsOf(p.memberId);
     for (const m of this.members.values()) {
       if (m.id === p.memberId) {
         for (const f of m.facets) if (f.scope === "agent_private") out.push(f.value); // connector egress policy (§8.2.3)
         continue;
       }
       out.push(m.id, m.phone, m.email);
-      for (const f of m.facets) if (f.scope !== "shareable") out.push(f.value);
+      if (counterparts.has(m.id)) for (const f of m.facets) if (f.scope !== "shareable") out.push(f.value);
     }
     for (const i of this.items) {
       out.push(i.internalId);
@@ -173,14 +208,15 @@ export class FakeNetwork {
   }
 
   /**
-   * Facet values in forbiddenFor() (other members' non-shareable facets and this member's own
+   * Facet values in forbiddenFor() (counterparts' non-shareable facets and this member's own
    * agent-private ones). The guard matches these fuzzily (fragments, leetspeak, reordering).
    */
   privateFactsFor(p: ConnectorPrincipal): string[] {
     const out: string[] = [];
+    const counterparts = this.counterpartsOf(p.memberId);
     for (const m of this.members.values()) {
       for (const f of m.facets) {
-        if (m.id === p.memberId ? f.scope === "agent_private" : f.scope !== "shareable") out.push(f.value);
+        if (m.id === p.memberId ? f.scope === "agent_private" : counterparts.has(m.id) && f.scope !== "shareable") out.push(f.value);
       }
     }
     return out;
@@ -206,7 +242,7 @@ export class FakeNetwork {
   // ------------------------------------------------------------------------------- plumbing
   private member(p: ConnectorPrincipal, tool: ToolName, scope: string): FakeMember {
     const m = this.members.get(p.memberId);
-    if (!m) throw new NetworkError("not_member", "This connection isn't linked to an active Network member.");
+    if (!m || this.suspended.has(m.id)) throw new NetworkError("not_member", "This connection isn't linked to an active Network member.");
     if (!p.scopes.includes(scope)) throw new NetworkError("needs_scope", `This assistant isn't allowed to do that yet (needs ${scope}).`);
     const checks: [LimitName, string][] = [["grant_minute", p.grantId], ["grant_day", p.grantId]];
     if (tool === TOOL_NAMES.ask || tool === TOOL_NAMES.tell) checks.push(["agent_turns", p.memberId]);
@@ -348,6 +384,10 @@ export class FakeNetwork {
   ask(p: ConnectorPrincipal, input: AskIn): Outcome<AskOut> {
     const me = this.member(p, TOOL_NAMES.ask, SCOPES.readBasic);
     const q = input.question;
+    if (this.noteStatedAge(p, me, [q])) {
+      this.logRead(p, TOOL_NAMES.ask, "Answered a question.");
+      return { result: { answer: UNDER_MIN_AGE_DECLINE, related_items: [], suggested_tool: "none" } };
+    }
     const visible = this.visibleItems(p, me);
     const related = (items: StoredItem[]) => items.slice(0, 5).map((i) => ({ item_id: this.itemHandle(p.grantId, i), title: i.title }));
     let out: AskOut;
@@ -398,12 +438,14 @@ export class FakeNetwork {
       // Without the safety scope, still point to the Network's own channel and an emergency resource.
       const needsSafetyScope = () => !p.scopes.includes(SCOPES.sensitiveSafety) ? done(SAFETY_FALLBACK, "not_available_here") : null;
 
+      // A stated age is acted on first, so every later branch sees the effective age.
+      const underMin = this.noteStatedAge(p, me, [t]);
       // Safety reports come before every eligibility/profile filter: a minor saying "someone is harassing me"
       // (or anyone whose report mentions dating or a bar) must always reach the safety team (audit P1-6).
       if (SAFETY_REPORT.test(t))
         return needsSafetyScope() ?? pending(this.pend(p, "safety_report", "Start a private safety report with The Network's safety team.", {}), "I'll start a safety report.");
       // Under 13 can't be a member: decline kindly, store nothing (founder decision 2026-10-07).
-      if (!canJoin(me.age) || this.statesUnderMinAge([t])) return done(UNDER_MIN_AGE_DECLINE, "not_available_here");
+      if (!canJoin(me.age) || underMin) return done(UNDER_MIN_AGE_DECLINE, "not_available_here");
       // Eligibility and profile next, so no later branch can be reached with an out-of-bounds request.
       const blocked = this.outOfBounds(p, me, t);
       if (blocked) return done(blocked, "not_available_here");
@@ -452,7 +494,7 @@ export class FakeNetwork {
       // Under 13 can't be a member: decline kindly and store nothing at all (founder decision 2026-10-07).
       const texts = [...(input.interests ?? []), ...(input.skills_offered ?? []), ...(input.goals ?? []), ...(input.languages ?? []),
         input.availability_note ?? "", input.home_area?.city ?? "", input.home_area?.neighborhood ?? ""];
-      if (!canJoin(me.age) || this.statesUnderMinAge(texts)) {
+      if (!canJoin(me.age) || this.noteStatedAge(p, me, texts)) {
         return {
           result: { status: "proposed_for_member_review", accepted_count: 0, rejected: [{ field: "member", reason: "not_available_here" }], next_step: UNDER_MIN_AGE_DECLINE },
           receipt: this.receipt(p, TOOL_NAMES.share, "Nothing was saved.", 0),

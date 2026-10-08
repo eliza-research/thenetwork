@@ -1,0 +1,15 @@
+# ntwrk.love public site: what The Network is, the SMS/iMessage program, privacy policy and terms.
+# Required for A2P 10DLC registration (carriers review the opt-in description, privacy policy and SMS terms).
+# Deploy only with founder approval:  NTWRK_ALLOW_DEPLOY=1 ../../scripts/wrangler.sh deploy
+name = "ntwrk-love-site"
+compatibility_date = "2026-10-01"
+account_id = "50ad2052bbc6ca528d6993a689b419a4"
+routes = [
+  { pattern = "ntwrk.love", custom_domain = true },
+  { pattern = "www.ntwrk.love", custom_domain = true },
+]
+
+[assets]
+directory = "./public"
+html_handling = "drop-trailing-slash"
+not_found_handling = "404-page"

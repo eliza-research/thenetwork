@@ -33,6 +33,10 @@ import type {
   AttentionItem, AttentionLedgerEntry, CadencePrefs, Effort, EngineProposal, HeldItem, HoldReason, ItemKind, LedgerKind, Role,
 } from "./types.ts";
 import { CONTRIBUTOR_ROLES } from "./types.ts";
+import type { AppPack } from "./pack.ts";
+import { DEFAULT_ENJOY_BY_CATEGORY, DEFAULT_ENJOY_KNOTS } from "./packs/network/calibrator.ts";
+import { GENERIC_ACTIVITY as NETWORK_GENERIC_ACTIVITY } from "./packs/network/copy.ts";
+import { networkPack } from "./packs/network/index.ts";
 import type { World } from "./world.ts";
 
 // ------------------------------------------------------------------------------------------------
@@ -102,7 +106,10 @@ export interface Cap { limit: number; periodDays: number }
 
 /** Interruption cap for the member: state cap (D1), minors 1/7d (D9), 0 when paused or only-when-asked. */
 export function capFor(m: MemberAttention, cfg: AttentionConfig = DEFAULT_ATTENTION): Cap {
-  const base = isMinor(m.age) ? cfg.minors.cap : cfg.caps[m.state];
+  // Minors take the stricter of the minors cap and their state's cap (a Quiet minor keeps Quiet's
+  // 1 per 30 days, engine-attention-plans-5).
+  const st = cfg.caps[m.state];
+  const base = isMinor(m.age) && cfg.minors.cap.limit / cfg.minors.cap.periodDays < st.limit / st.periodDays ? cfg.minors.cap : cfg.caps[m.state];
   if (m.state === "paused" || m.onlyWhenAsked || m.prefs.mode === "only_when_asked") return { limit: 0, periodDays: base.periodDays };
   // An explicit request can lower the cap, or restore it, but never exceed the state cap (D11).
   const limit = m.prefs.capOverride === undefined ? base.limit : Math.min(base.limit, Math.max(0, Math.floor(m.prefs.capOverride)));
@@ -128,9 +135,14 @@ export function breakInsUsed(ledger: readonly AttentionLedgerEntry[], memberId: 
   return uniqueIds(ledger.filter(e => e.memberId === memberId && e.kind === "break_in" && e.at <= now && e.at > now - periodDays * DAY));
 }
 
-/** Consecutive most-recent interruptions with no reply by their deadline (72h). Pending ones are skipped. */
-export function unansweredInterruptions(ledger: readonly AttentionLedgerEntry[], memberId: MemberId, now: number, cfg: AttentionConfig = DEFAULT_ATTENTION): number {
-  const mine = ledger.filter(e => e.memberId === memberId && e.countsAgainstCap && e.at <= now)
+/**
+ * Consecutive most-recent interruptions with no reply by their deadline (72h). Pending ones are
+ * skipped. `since` (the member's last inbound message, Conversation.lastInboundAt): interruptions
+ * sent at or before it do not count, so any later message from the member (a late reply, "resume")
+ * lifts the two-unanswered pause (engine-attention-plans-1).
+ */
+export function unansweredInterruptions(ledger: readonly AttentionLedgerEntry[], memberId: MemberId, now: number, cfg: AttentionConfig = DEFAULT_ATTENTION, since?: number): number {
+  const mine = ledger.filter(e => e.memberId === memberId && e.countsAgainstCap && e.at <= now && (since === undefined || since > now || e.at > since))
     .sort((a, b) => (b.at - a.at) || (a.messageId < b.messageId ? -1 : 1));
   const seen = new Set<string>();
   let n = 0;
@@ -158,13 +170,8 @@ export type Calibrator = (score: number, category: Category) => number;
  * (score, P(worthwhile)); linear in between, flat outside. Per-category knots where n >= 100. A
  * prior to be replaced by the weekly per-category refit on production labels (5.3).
  */
-export const DEFAULT_ENJOY_KNOTS: [number, number][] = [[0.3, 0.424], [0.382, 0.539], [0.427, 0.545], [0.443, 0.673], [0.488, 0.764]];
-export const DEFAULT_ENJOY_BY_CATEGORY: Partial<Record<Category, [number, number][]>> = {
-  social: [[0.299, 0.486], [0.384, 0.497], [0.43, 0.532], [0.472, 0.723]],
-  romance: [[0.386, 0.714], [0.489, 0.809]],
-  hobby: [[0.355, 0.57], [0.426, 0.721], [0.504, 0.927]],
-  professional: [[0.335, 0.174], [0.393, 0.391], [0.455, 0.489]],
-};
+// The knots are networkPack data (fitted on Network sim labels), moved verbatim to packs/network/calibrator.ts.
+export { DEFAULT_ENJOY_BY_CATEGORY, DEFAULT_ENJOY_KNOTS } from "./packs/network/calibrator.ts";
 export function knotCalibrator(knots: [number, number][] = DEFAULT_ENJOY_KNOTS, byCategory: Partial<Record<Category, [number, number][]>> = DEFAULT_ENJOY_BY_CATEGORY): Calibrator {
   return (score, category) => interpolate(byCategory[category] ?? knots, score);
 }
@@ -201,7 +208,7 @@ export function attentionCost(items: readonly Pick<AttentionItem, "effort" | "en
 export function shadowPrice(m: Pick<MemberAttention, "state" | "age" | "newcomer">, used: number, cap: number, r: number, cfg: AttentionConfig = DEFAULT_ATTENTION): number {
   if (cap <= 0 || m.state === "paused") return Infinity;
   let base = cfg.lambda[m.state];
-  if (isMinor(m.age)) base = cfg.lambda.normal; // 1.7: members 13-17 price like Normal (0.25)
+  if (isMinor(m.age)) base = Math.max(cfg.lambda.normal, base); // 1.7: members 13-17 price like Normal (0.25), or stricter
   else if (m.newcomer && (m.state === "open" || m.state === "normal" || m.state === "receiving")) base = Math.min(base, cfg.newcomer.lambda);
   return base * Math.pow(1 + used / cap, 2) * r;
 }
@@ -251,10 +258,17 @@ export function annoyance(ledger: readonly AttentionLedgerEntry[], memberId: Mem
 
 const jsDay = (ts: number, tz: string) => (localParts(ts, tz).weekday + 1) % 7;
 
-/** Member quiet hours, plus 20:00-08:00 local on school nights for members aged 13-17 (D9). */
+/**
+ * Overnight hours (local) in which a member aged 13-17 is never messaged, on any day, whatever
+ * their own quiet hours say (engine-attention-plans-6). School nights extend it to cfg.minors.quietHours.
+ */
+export const MINOR_OVERNIGHT: [number, number] = [22, 7];
+
+/** Member quiet hours, plus 20:00-08:00 local on school nights for members aged 13-17 (D9) and MINOR_OVERNIGHT every night. */
 export function inMemberQuietHours(m: Pick<MemberAttention, "tz" | "quietHours" | "age">, t: number, cfg: AttentionConfig = DEFAULT_ATTENTION): boolean {
   if (inQuietHours(t, m.tz, m.quietHours)) return true;
   if (!isMinor(m.age)) return false;
+  if (inQuietHours(t, m.tz, MINOR_OVERNIGHT)) return true;
   const [s, e] = cfg.minors.quietHours;
   const h = localParts(t, m.tz).hour;
   const d = jsDay(t, m.tz);
@@ -385,6 +399,8 @@ export interface ComposeInput {
   /** Median V of the member's past digest items (break-in bar); cfg.breakIn.defaultMedianValue if none. */
   medianDigestValue?: number;
   cfg?: AttentionConfig;
+  /** The app pack (default networkPack): lane gates and the ships-alone lane. */
+  pack?: AppPack;
 }
 export interface ComposeResult {
   send: boolean; reason: string; kind?: LedgerKind;
@@ -411,7 +427,7 @@ export const countsAgainstCap = (items: readonly Pick<AttentionItem, "kind">[], 
 const MINOR_SAFE = (it: AttentionItem, cfg: AttentionConfig) => cfg.minors.allowedKinds.includes(it.kind) && it.others.length === 0 && !it.involvesMember;
 
 /** Why an item may not go to this member at all right now (null = eligible). */
-export function itemGate(m: MemberAttention, it: AttentionItem, now: number, cfg: AttentionConfig = DEFAULT_ATTENTION): string | null {
+export function itemGate(m: MemberAttention, it: AttentionItem, now: number, cfg: AttentionConfig = DEFAULT_ATTENTION, pack: AppPack = networkPack): string | null {
   if (it.memberId !== m.memberId) return "wrong_member";
   if (it.urgency.expiresAt <= now) return "expired";
   if (it.reviewState === "rejected") return "review_rejected";
@@ -420,7 +436,9 @@ export function itemGate(m: MemberAttention, it: AttentionItem, now: number, cfg
     // D9: events, places and solo plans only; never anything that involves another member.
     if (!MINOR_SAFE(it, cfg)) return "minor_restricted";
   }
-  if (it.category === "romance" && (isMinor(m.age) || !(m.categoriesOptIn ?? ["romance"]).includes("romance"))) return "romance_not_allowed";
+  // Pack lane gate (networkPack: romance only for opted-in adults, "romance_not_allowed").
+  const laneGate = pack.attention.itemGate?.(m, it);
+  if (laneGate) return laneGate;
   if (m.categoriesOptIn && !m.categoriesOptIn.includes(it.category) && it.involvesMember) return "category_opt_out";
   if ((m.prefs.categoryWeight[it.category] ?? 1) <= 0) return "category_off";
   if (m.state === "receiving" && it.effort === "contribute") return "receiving_no_contribute";
@@ -449,6 +467,7 @@ export function maxItemsFor(m: MemberAttention, cfg: AttentionConfig = DEFAULT_A
  */
 export function composeMessage(inp: ComposeInput): ComposeResult {
   const cfg = inp.cfg ?? DEFAULT_ATTENTION;
+  const P = inp.pack ?? networkPack;
   const { member: m, now, ledger } = inp;
   const cap = capFor(m, cfg);
   const used = interruptionsUsed(ledger, m.memberId, now, cap.periodDays);
@@ -456,7 +475,7 @@ export function composeMessage(inp: ComposeInput): ComposeResult {
   const no = (reason: string) => ({ ...res, reason });
   if (m.state === "paused") return no("paused");
   // The two-unanswered pause comes first (F28): the Network's own auto-pause always fires before Blooio's limit.
-  if (m.onlyWhenAsked || m.prefs.mode === "only_when_asked" || unansweredInterruptions(ledger, m.memberId, now, cfg) >= 2) return no("only_when_asked");
+  if (m.onlyWhenAsked || m.prefs.mode === "only_when_asked" || unansweredInterruptions(ledger, m.memberId, now, cfg, inp.conversation.lastInboundAt) >= 2) return no("only_when_asked");
   // Reserve Blooio's third unanswered slot for logistics and safety (1.9).
   if (inp.conversation.outboundSinceInbound > cfg.blooio.interruptMaxOutstanding) return no("conversation_streak");
   if (inMemberQuietHours(m, now, cfg)) return no("quiet_hours");
@@ -474,7 +493,7 @@ export function composeMessage(inp: ComposeInput): ComposeResult {
   const next = nextDigestSlot(m, now, cfg);
   const eligible: { it: AttentionItem; v: number }[] = [];
   for (const it of inp.items) {
-    const why = atCap && isInitialInvite(it, cfg) ? "cap" : itemGate(m, it, now, cfg);
+    const why = atCap && isInitialInvite(it, cfg) ? "cap" : itemGate(m, it, now, cfg, P);
     if (why) { res.skipped.push({ itemId: it.id, reason: why }); continue; }
     eligible.push({ it, v: itemValue(it, m.prefs, cfg, next) });
   }
@@ -508,9 +527,11 @@ export function composeMessage(inp: ComposeInput): ComposeResult {
     const urgent = eligible.filter(x => x.it.urgency.expiresAt < next && x.v >= bar);
     if (urgent.length) options.push(evaluate([urgent[0]!]));
   } else {
-    const romanceAlone = !(m.prefs.romanceInDigest);
-    const rom = eligible.filter(x => x.it.category === "romance");
-    const rest = romanceAlone ? eligible.filter(x => x.it.category !== "romance") : eligible;
+    // The pack's ships-alone lane (networkPack: romance, D10) unless the member allows it in a digest.
+    const lane = P.attention.shipsAloneLane;
+    const romanceAlone = lane !== undefined && !(m.prefs.romanceInDigest);
+    const rom = eligible.filter(x => x.it.category === lane);
+    const rest = romanceAlone ? eligible.filter(x => x.it.category !== lane) : eligible;
     if (rest.length) options.push(evaluate(pack(rest, maxItems)));
     if (romanceAlone && rom.length) options.push(evaluate([rom[0]!]));
   }
@@ -554,8 +575,11 @@ export const REENGAGE_SUFFIX = "Want me to keep sending these?";
 export function reengagement(inp: {
   member: MemberAttention; autoPaused: boolean; optedOut: boolean; conversation: Conversation; joinedAt: number;
   items: readonly AttentionItem[]; valueHistory: number[]; now: number; cfg?: AttentionConfig;
+  /** The app pack (default networkPack): its lane gates apply to the re-engagement item too. */
+  pack?: AppPack;
 }): { send: boolean; reason: string; item?: AttentionItem; value?: number } {
   const cfg = inp.cfg ?? DEFAULT_ATTENTION;
+  const P = inp.pack ?? networkPack;
   const { member: m, conversation: c, now } = inp;
   if (inp.optedOut) return { send: false, reason: "opted_out" };
   if (!inp.autoPaused || m.prefs.mode === "only_when_asked") return { send: false, reason: "not_auto_paused" };
@@ -564,7 +588,9 @@ export function reengagement(inp: {
   const silentSince = Math.max(c.lastInboundAt ?? inp.joinedAt, inp.joinedAt);
   if (now - silentSince < cfg.blooio.reengageAfterDays * DAY) return { send: false, reason: "too_soon" };
   if (inMemberQuietHours(m, now, cfg)) return { send: false, reason: "quiet_hours" };
-  const vals = inp.items.filter(it => !itemGate(m, it, now, cfg)).map(it => ({ it, v: itemValue(it, m.prefs, cfg) }))
+  // The Blooio streak (1.9): never past the outstanding limit that logistics may use (engine-attention-plans-8).
+  if (!canSendLogistics(c, cfg)) return { send: false, reason: "conversation_streak" };
+  const vals = inp.items.filter(it => !itemGate(m, it, now, cfg, P)).map(it => ({ it, v: itemValue(it, m.prefs, cfg) }))
     .sort((a, b) => (b.v - a.v) || (a.it.id < b.it.id ? -1 : 1));
   const best = vals[0];
   if (!best) return { send: false, reason: "nothing_eligible" };
@@ -643,13 +669,14 @@ export function revalidateHold(queue: readonly HeldItem[], now: number, eligible
     if (it.urgency.expiresAt <= now) reason = "expired";
     else if (it.reviewState === "rejected") reason = "review_rejected";
     if (!reason && eligible) {
-      const why = eligible(it.memberId, it.others);
       // The send-time check is about meeting people: "underage" does not apply to an item that involves
       // no other member (D9: members 13-17 do get events, places and solo plans; itemGate enforces that).
+      // Member items re-check the lane opt-ins too (engine-pipeline-10).
       const solo = it.others.length === 0 && !it.involvesMember;
+      const why = eligible(it.memberId, it.others, solo ? undefined : it.category);
       if (why && !(solo && why === "underage")) reason = `ineligible:${why}`;
       else for (const o of it.others) {
-        const w = eligible(o, [it.memberId, ...it.others.filter(x => x !== o)]);
+        const w = eligible(o, [it.memberId, ...it.others.filter(x => x !== o)], solo ? undefined : it.category);
         if (w) { reason = `partner_ineligible:${w}`; break; }
       }
     }
@@ -762,6 +789,17 @@ export function startProbeFlow(p: Pick<EngineProposal, "id" | "participants" | "
     ...(parallel ? { parallel: true } : {}),
   };
 }
+/**
+ * The probe flow the pack's consent policy prescribes for a proposal (AppPack.consent). probe_first
+ * "parallel" and double_opt_in probe both sides blind at once and reveal only on mutual yes;
+ * group_rsvp and groups reveal at quorum; everything else probes the wanter first. Nobody is
+ * named before the flow reaches "revealed" (core invariant: consent before reveal).
+ */
+export function startProbeFlowFor(p: Pick<EngineProposal, "id" | "participants" | "roles" | "kind">, pack: AppPack = networkPack): ProbeFlow {
+  const flow = pack.consent.byKind[p.kind] ?? pack.consent.default;
+  const parallel = (flow.kind === "probe_first" && flow.order === "parallel") || flow.kind === "double_opt_in";
+  return startProbeFlow(p, { parallel });
+}
 /** Who should be probed now (members with no answer whose turn it is). */
 export function toProbe(f: ProbeFlow): MemberId[] {
   if (f.stage === "probing_first") return f.answers[f.first] === "pending" ? [f.first] : [];
@@ -805,7 +843,7 @@ const ATTRIBUTE_KINDS = new Set(["interest", "skill", "goal"]);
  * mutual's first name only. Returns the first name or null.
  */
 export function warmMention(w: World, via: MemberId | undefined, recipient: MemberId, others: readonly MemberId[], consented: (id: MemberId) => boolean, category: Category, cfg: AttentionConfig = DEFAULT_ATTENTION): string | null {
-  if (!via || others.length !== 1 || category === "romance") return null;
+  if (!via || others.length !== 1 || w.pack.attention.noWarmMentionLanes.includes(category)) return null;
   const mv = w.get(via);
   if (!mv || isMinor(mv.m.age) || mv.m.state === "paused" || w.holds.has(via)) return null;
   if (!consented(via) || !consented(others[0]!)) return null;
@@ -827,10 +865,8 @@ export interface ProbeSpec {
 }
 export interface Probe { text: string; attribute?: string; area?: string; mutual?: string }
 
-const GENERIC_ACTIVITY: Record<Category, string> = {
-  social: "meeting new people", hobby: "a shared hobby", professional: "work and career", romance: "dating",
-  help: "something you asked for help with", events: "an event nearby", growth: "growing the Network",
-};
+/** The Network's generic activity phrases (moved verbatim to packs/network/copy.ts; buildProbe reads the pack's). */
+export const GENERIC_ACTIVITY: Record<Category, string> = NETWORK_GENERIC_ACTIVITY;
 function activityOf(objective: string): string {
   const s = objective.replace(/^(intro|small group|go together|help with|friend-of-a-friend intro|try something new|small crew for|another meetup|see each other again at)\s*:?\s*/i, "").trim();
   return s.length > 60 ? s.slice(0, 60).replace(/\s+\S*$/, "") : s;
@@ -839,8 +875,10 @@ function whenPhrase(window: { start: number; end: number } | undefined, now: num
   // An availability window that is already open says nothing about a day: keep it general.
   if (!window || window.start <= now) return "in the next week or so";
   const days = (window.start - now) / DAY;
-  const wd = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][localParts(window.start, tz).weekday]!;
-  if (days < 0.5) return "later today";
+  const at = localParts(window.start, tz), today = localParts(now, tz);
+  const wd = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][at.weekday]!;
+  // "later today" only on the same local calendar day (engine-attention-plans-16).
+  if (at.year === today.year && at.month === today.month && at.day === today.day) return "later today";
   if (days < 6) return `on ${wd}`;
   return "in the next week or so";
 }
@@ -881,20 +919,15 @@ function shareableAttribute(w: World, other: MemberId, recipient: MemberId): str
 export function buildProbe(w: World, spec: ProbeSpec, recipient: MemberId, others: MemberId[], now: number): Probe | null {
   const ids = [recipient, ...others];
   if (ids.some(id => !w.get(id) || isMinor(w.get(id)!.m.age))) return null;
-  if (spec.category === "romance" && others.length !== 1) return null;
+  const AP = w.pack.attention;
+  if (AP.probeAllowed && !AP.probeAllowed(spec.category, others.length)) return null;
   const when = spec.options?.length ? timeOptionsPhrase(spec.options, spec.tz) : whenPhrase(spec.window, now, spec.tz);
   const area = w.get(recipient)!.presence.find(p => p.type === "home")?.areas?.[0] ?? w.get(recipient)!.presence[0]?.areas?.[0];
   const attr = others.length === 1 && !spec.mutual ? shareableAttribute(w, others[0]!, recipient) : undefined;
-  const contributor = spec.role && CONTRIBUTOR_ROLES.has(spec.role);
-  const frame = (activity: string, a?: string, ar?: string) => {
-    const near = ar ? ` near ${ar}` : "";
-    const also = a ? ` They're into ${a.replace(/[.\s]+$/, "")}.` : "";
-    if (spec.category === "romance") return `There's someone you might like to go on a date with, ${when}${near}.${also} Want me to check if they're up for it? I'll only share who it is if you both say yes.`;
-    if (spec.kind === "network_growth") return `Know someone who'd be great for ${activity}? No pressure either way.`;
-    if (contributor) return `Someone nearby could use a hand with ${activity}, ${when}${near}. Would you be up for helping? An easy no is fine.${also}`;
-    if (others.length > 1) return `A few people are getting together around ${activity}, ${when}${near}. Want in? I'll share who's coming once enough people say yes.`;
-    return `Up for meeting ${mutual ? `a friend of ${mutual}` : "someone"} around ${activity}, ${when}${near}?${also} I'll only share who it is if you both say yes.`;
-  };
+  const contributor = spec.role && w.pack.ontology.contributorRoles.has(spec.role);
+  // The probe copy is the pack's (networkPack: packs/network/copy.ts networkProbeText, moved verbatim).
+  const frame = (activity: string, a?: string, ar?: string) =>
+    AP.probeText({ lane: spec.category, kind: spec.kind, when, othersCount: others.length, contributor: !!contributor, mutual }, activity, a, ar);
   let mutual: string | undefined = spec.mutual;
   const vocab = privateVocabulary(w, others);
   const names = nameTokens(w, others);
@@ -904,7 +937,7 @@ export function buildProbe(w: World, spec: ProbeSpec, recipient: MemberId, other
   // then a generic phrase for the category is used instead.
   for (const m of mutual ? [mutual, undefined] : [undefined]) {
     mutual = m;
-    for (const activity of [...new Set([activityOf(spec.objective), GENERIC_ACTIVITY[spec.category], "meeting new people"])]) {
+    for (const activity of [...new Set([activityOf(spec.objective), AP.laneActivity[spec.category], "meeting new people"])]) {
       for (const [a, ar] of [[attr, area], [attr, undefined], [undefined, area], [undefined, undefined]] as const) {
         const text = frame(activity, a, ar);
         if (ok(text)) return { text, ...(a ? { attribute: a } : {}), ...(ar ? { area: ar } : {}), ...(m ? { mutual: m } : {}) };
@@ -915,7 +948,16 @@ export function buildProbe(w: World, spec: ProbeSpec, recipient: MemberId, other
 }
 
 /** The digest message text: a numbered menu with the reply grammar (1.4). */
+/** PRD PH-003: every proactive message includes a simple path to silence or pause future outreach. */
+export const PAUSE_PATH = "Reply STOP anytime to opt out.";
+/** The message body with the pause path appended once (PH-003), unless it already has one. */
+export function withPausePath(body: string): string {
+  return /\breply stop\b|\bstop to opt out\b|\bopt[- ]out\b/i.test(body) ? body : `${body}${/\n/.test(body) ? "\n" : " "}${PAUSE_PATH}`;
+}
+
 export function digestText(lines: string[]): string {
+  // The head names the count, so only 1-3 lines are valid (engine-attention-plans-19).
+  if (lines.length < 1 || lines.length > 3) throw new Error(`digestText takes 1-3 lines, got ${lines.length}`);
   if (lines.length === 1) return lines[0]!;
   const head = lines.length === 2 ? "Two things for this week" : "Three things for this week";
   return `${head}, reply with a number (or "none"):\n${lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}`;
@@ -1135,28 +1177,31 @@ export function attentionMetrics(inp: {
 }): AttentionMetrics {
   const cfg = inp.cfg ?? DEFAULT_ATTENTION;
   const msgs = new Map<string, AttentionLedgerEntry>();
-  for (const e of inp.ledger) if (e.countsAgainstCap && e.at <= inp.end) {
+  // Only the metric window [start, end] counts (engine-attention-plans-22).
+  for (const e of inp.ledger) if (e.countsAgainstCap && e.at >= inp.start && e.at <= inp.end) {
     const cur = msgs.get(e.messageId);
     if (!cur) msgs.set(e.messageId, { ...e, itemIds: [...e.itemIds] });
     else { cur.itemIds.push(...e.itemIds); if (e.repliedAt !== undefined && (cur.repliedAt === undefined || e.repliedAt < cur.repliedAt)) cur.repliedAt = e.repliedAt; }
   }
   const ints = [...msgs.values()];
-  const memberWeeks = inp.members.reduce((s, m) => s + Math.max(0, inp.end - m.joinedAt) / (7 * DAY), 0);
+  const memberWeeks = inp.members.reduce((s, m) => s + Math.max(0, inp.end - Math.max(m.joinedAt, inp.start)) / (7 * DAY), 0);
   const counted = ints.filter(e => e.at + cfg.annoyance.unansweredHours * HOUR <= inp.end);
   const unanswered = counted.filter(e => e.repliedAt === undefined || e.repliedAt > e.at + cfg.annoyance.unansweredHours * HOUR).length;
   const items = ints.reduce((s, e) => s + Math.max(1, new Set(e.itemIds).size), 0);
   const first = new Map<MemberId, number>();
-  for (const v of inp.values) first.set(v.memberId, Math.min(first.get(v.memberId) ?? Infinity, v.at));
+  const inWin = (t: number) => t >= inp.start && t <= inp.end;
+  const values = inp.values.filter(v => inWin(v.at));
+  for (const v of values) first.set(v.memberId, Math.min(first.get(v.memberId) ?? Infinity, v.at));
   const join = new Map(inp.members.map(m => [m.id, m.joinedAt]));
   const ttv = [...first].filter(([id]) => join.has(id)).map(([id, t]) => (t - join.get(id)!) / DAY).sort((a, b) => a - b);
   const safe = (a: number, b: number) => (b ? a / b : 0);
   return {
     interruptions: ints.length, memberWeeks, interruptionsPerMemberWeek: safe(ints.length, memberWeeks),
     unansweredRate: safe(unanswered, counted.length),
-    autoPausePer100MemberMonths: safe(new Set(inp.autoPauses.map(a => a.memberId)).size * 100, memberWeeks / (30 / 7)),
-    stopPer1000: safe(inp.stops.length * 1000, ints.length),
+    autoPausePer100MemberMonths: safe(new Set(inp.autoPauses.filter(a => inWin(a.at)).map(a => a.memberId)).size * 100, memberWeeks / (30 / 7)),
+    stopPer1000: safe(inp.stops.filter(x => inWin(x.at)).length * 1000, ints.length),
     itemsDelivered: items, itemsPerInterruption: safe(items, ints.length),
-    valueEvents: inp.values.length, valuePerInterruption: safe(inp.values.length, ints.length),
+    valueEvents: values.length, valuePerInterruption: safe(values.length, ints.length),
     timeToValueDaysMedian: ttv.length ? quantile(ttv, 0.5) : null,
     v14: v14(inp.values, inp.members, inp.start, inp.end, cfg).mean,
   };

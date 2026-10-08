@@ -37,7 +37,7 @@ export interface PlanNetOptions extends AttentionNetOptions {
   crewOptIn?: (id: MemberId, crew: P.Crew) => boolean;
 }
 
-const TZ: Record<City, string> = { sf: "America/Los_Angeles", nyc: "America/New_York" };
+const TZ: Record<City, string> = { sf: "America/Los_Angeles", nyc: "America/New_York", la: "America/Los_Angeles" };
 const ENGINE_CFG = resolveConfig({});
 const CHECKIN_TEXT = "Quick one: what's your week like? Tell me when you're free and what you're up for, and I'll try to put a small plan together. Skip it anytime.";
 
@@ -154,7 +154,8 @@ export class PlanNetwork extends AttentionNetwork {
       // A profiling ask: not an interruption (decision 3), but it needs the Blooio reservation like one.
       if (!A.canInterrupt(this.x.convOf(id), this.cfg)) continue;
       this.checkInWeek.set(id, week);
-      const msg = this.x.send(m, CHECKIN_TEXT, { type: "question", proactive: false, checkIn: true });
+      // An opt-in profiling ask, not an interruption (founder decision 3); still carries a pause path (PRD PH-003).
+      const msg = this.x.send(m, A.withPausePath(CHECKIN_TEXT), { type: "question", proactive: false, checkIn: true });
       if (!msg || msg.status !== "delivered") continue;
       if (A.inMemberQuietHours(v, now, this.cfg)) this.planStats.checkInQuiet++;
       this.ledger.push({ messageId: msg.id, memberId: id, at: now, kind: "question", itemIds: [], countsAgainstCap: false });
@@ -219,7 +220,7 @@ export class PlanNetwork extends AttentionNetwork {
     for (const [pid, fl] of this.flows as Map<string, any>) if (!this.planIds.has(pid) && fl.stage !== "closed") for (const id of fl.p.participants) served.add(id);
     const plans = P.planProposals(w, { now, city, tz, evidence, served, venues: this.po.venues ?? [], busyAt, exclude: busyIds, carry: this.carry, lastPlannedAt: this.lastPlannedAt }, this.pcfg!, this.cfg);
     for (const id of evidence.keys()) this.planStats.demandMembers.add(id);
-    for (const plan of plans) this.submitPlan(plan, w, now);
+    for (const plan of plans) this.submitPlan(plan, now);
   }
 
   private maybeCrewSession(crew: P.Crew, w: World, now: number, busyIds: Set<MemberId>) {
@@ -233,10 +234,10 @@ export class PlanNetwork extends AttentionNetwork {
     if (plan.invited.length < plan.quorum) return;
     crew.sessions.push(plan.id);
     this.planStats.crewSessions++;
-    this.submitPlan(plan, w, now);
+    this.submitPlan(plan, now);
   }
 
-  private submitPlan(plan: P.Plan, w: World, now: number) {
+  private submitPlan(plan: P.Plan, now: number) {
     // Hard rule, re-checked: no member under 18 in any role.
     if ([...plan.invited, ...plan.alternates, ...(plan.hostId ? [plan.hostId] : [])].some(id => this.x.member(id).minor)) { this.planStats.minorsInPlans++; return; }
     const p = P.planToProposal(plan, this.pcfg);
@@ -251,7 +252,6 @@ export class PlanNetwork extends AttentionNetwork {
     if (plan.eventId) this.planStats.eventPlans++;
     for (const id of plan.invited) { this.planStats.plannedMembers.add(id); this.lastPlannedAt.set(id, now); }
     for (const id of P.pendingOf(run)) this.probe(l, id, now, "first");
-    void w;
   }
 
   private probe(l: Live, id: MemberId, now: number, stage: "first" | "partner") {
@@ -443,6 +443,11 @@ export class PlanNetwork extends AttentionNetwork {
     this.carry.push(...carry);
     l.fallback = fallback.kind;
     this.planStats.fallbacks[fallback.kind] = (this.planStats.fallbacks[fallback.kind] ?? 0) + 1;
+    if (fallback.kind === "smaller" && fallback.partnerPlan) {
+      // Two yes-sayers of a group plan: a fresh partner plan with one-to-one consent (engine-attention-plans-10).
+      this.submitPlan(fallback.partnerPlan, now);
+      return;
+    }
     if (fallback.kind === "smaller") {
       // A smaller plan of the yes-sayers (the activity allows 2): booked like the original.
       l.run = { ...l.run, stage: "booked" };

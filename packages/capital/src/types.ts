@@ -6,7 +6,7 @@ import type { MemberId } from "../../core/src/types.ts";
 export type { MemberId };
 
 /** Ledger categories (design 2.4). Penalty categories are separate so the view can tell them apart. */
-export type EarnCategory = "vouch" | "attendance" | "help" | "organizing" | "needs_answered" | "review";
+export type EarnCategory = "vouch" | "attendance" | "feedback" | "help" | "organizing" | "needs_answered" | "review";
 export type LoseCategory = "vouch_stake" | "no_show" | "ghosting" | "abuse" | "clawback" | "fraud";
 export type EntryCategory = EarnCategory | LoseCategory;
 
@@ -21,7 +21,9 @@ export type PlanKind = "intro" | "group" | "plan" | "event" | "crew";
 // ------------------------------------------------------------------------------------------------
 // Input events. The Network emits these from records it already keeps (design 2.7, "built from
 // events the MVP already records"). Every event has a unique id (idempotent) and a time `t` (ms,
-// from the Network's Clock). Events must be recorded in non-decreasing time order.
+// from the Network's Clock). Events must be recorded in non-decreasing time order. `record` checks
+// every event (`validateCapitalEvent`) before it changes anything and rejects a bad one with a
+// `CapitalEventRejected` error.
 
 interface Base { id: string; t: number }
 
@@ -30,8 +32,14 @@ export type CapitalEvent =
   | Base & { type: "member_joined"; member: MemberId; age: number | null; vouchedBy?: MemberId }
   /** First real engagement after joining (completed onboarding and replied / accepted something). */
   | Base & { type: "member_activated"; member: MemberId }
-  /** A value event (V14 sense: met + worthwhile, useful help received, acted-on recommendation). `with` = the other members who provided it (empty = the agent or the outside world). */
-  | Base & { type: "value_received"; member: MemberId; with: MemberId[] }
+  /**
+   * A value event (V14 sense: met + worthwhile, useful help received, acted-on recommendation). `with` = the other members who provided it (empty = the agent or the outside world).
+   * The member's own say-so is not proof for a vouch credit: `confirmedBy` lists the providers in `with` who confirmed the interaction
+   * themselves (their own check-in or feedback), and `verifiedBy` how else it was verified (check-in, organizer, reviewer).
+   */
+  | Base & { type: "value_received"; member: MemberId; with: MemberId[]; confirmedBy?: MemberId[]; verifiedBy?: Verification[] }
+  /** The member's age changed (birthday, or a correction). Drives eligibility from now on: a minor or unknown age stops accrual. */
+  | Base & { type: "age_updated"; member: MemberId; age: number | null }
   /** A safety flag on a member. `serious` = spam, harassment, scam or a serious policy violation under review or confirmed. */
   | Base & { type: "safety_flag"; member: MemberId; serious: boolean }
   /** Removal of a member. Only `serious_abuse` (confirmed) costs the voucher's stake. */
@@ -77,7 +85,7 @@ export type CapitalEventType = CapitalEvent["type"];
 // (`clawback`) that reference the entry they reverse.
 
 export interface LedgerEntry {
-  /** `${eventId}:${member}:${n}` */
+  /** `${logIndex}:${eventId}:${member}`, unique within the ledger and the same on replay. */
   id: string;
   member: MemberId;
   t: number;
@@ -106,6 +114,8 @@ export interface LedgerEntry {
     label?: string;
     /** Clawback / stake entries: the entry being reversed. */
     reverses?: string;
+    /** Credits that exist only because of another credit (feedback on an attended plan): that entry. Reversed with it. */
+    basis?: string;
     /** Penalty forgiven (the one forgiven no-show): amount is 0 and this is true. */
     forgiven?: boolean;
   };

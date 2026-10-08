@@ -9,7 +9,7 @@ import { canariesOf } from "../../sim/src/persona.ts";
 import { abstentionMetrics, ece, pairedBootstrap, reliability } from "../src/metrics.ts";
 import { buildRecDataset, type RecDataset } from "../src/recDataset.ts";
 import { itemTier } from "../src/richness.ts";
-import { candidateOf, engineWorlds, itemRecord, pipeline, type PassItemResult } from "../src/runPasses.ts";
+import { candidateOf, engineWorlds, itemRecord, pipeline, SpendGuard, type PassItemResult } from "../src/runPasses.ts";
 import type { World } from "../../engine/src/world.ts";
 
 let ds: RecDataset;
@@ -134,9 +134,28 @@ describe("pipeline semantics", () => {
     expect(pipeline(mk({ p2: null })).decision).toBe("yes");
     expect(pipeline(mk({ p1: "no" }), ["pass1", "pass3"]).reached).toEqual(["pass1"]);
   });
+  test("a pipeline where every stage failed has no decision (a failure, never a yes with prob 1)", () => {
+    const all = pipeline(mk({ p1: null, p2: null, p3: null }));
+    expect([all.decision, all.prob, all.stoppedAt, all.failed]).toEqual([null, null, "all_failed", ["pass1", "pass2", "pass3"]]);
+    expect(pipeline(mk({ p2: null })).failed).toEqual(["pass2"]);
+  });
   test("per-item record keeps hidden truth in its own block", () => {
     const r = itemRecord(mk({}));
     expect(Object.keys(r)).toEqual(expect.arrayContaining(["itemId", "label", "perPassVerdicts", "explanations", "confidence", "visibleProfiles", "hidden"]));
     expect(r.perPassVerdicts.pipeline).toBe("yes");
+  });
+});
+
+describe("spend guard", () => {
+  test("concurrent calls cannot overshoot the limit by a batch: in-flight calls are reserved at the max call cost", () => {
+    const rec = (costMicro: number) => [{ cached: false, costMicro } as any];
+    const g = new SpendGuard(1000);
+    g.check(); g.settle(rec(300)); // learn the call cost
+    let started = 0;
+    for (let i = 0; i < 8; i++) { try { g.check(); started++; } catch { break; } } // 8 concurrent workers
+    expect(started).toBe(2); // 300 spent + 2 x 300 in flight <= 1000; a third would pass it
+    for (let i = 0; i < started; i++) g.settle(rec(300));
+    expect(g.fresh).toBeLessThanOrEqual(1000);
+    expect(() => g.check()).toThrow();
   });
 });

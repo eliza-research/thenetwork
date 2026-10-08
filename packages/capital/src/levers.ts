@@ -49,20 +49,21 @@ export function effortTier(balance: number, cfg: CapitalConfig = DEFAULT_CAPITAL
   return balance >= c ? 3 : balance >= b ? 2 : balance >= a ? 1 : 0;
 }
 
-export function effortOverlay(entries: readonly LedgerEntry[], at = Infinity, cfg: CapitalConfig = DEFAULT_CAPITAL): EffortOverlay {
+export function effortOverlay(entries: readonly LedgerEntry[], at: number, cfg: CapitalConfig = DEFAULT_CAPITAL): EffortOverlay {
   const tier = effortTier(balanceOf(entries, at), cfg);
   const row = EFFORT_TABLE[tier];
   return { tier, effortIndex: row.effortIndex, engine: structuredClone(row.engine), network: { ...row.network } };
 }
 
-/** `at` = Infinity means "now" = the latest entry. */
-const recentPenalty = (entries: readonly LedgerEntry[], at: number, days: number) => {
-  const now = Number.isFinite(at) ? at : entries.reduce((m, e) => Math.max(m, e.t), -Infinity);
-  return entries.some(e => (e.category === "abuse" || e.category === "fraud") && e.t <= now && now - e.t < days * DAY);
-};
+/**
+ * `at` is the caller's Clock time and is required (capital-18): with no time, "now" used to be the
+ * member's latest entry, so a member who went quiet after a penalty stayed locked forever.
+ */
+const recentPenalty = (entries: readonly LedgerEntry[], at: number, days: number) =>
+  entries.some(e => (e.category === "abuse" || e.category === "fraud") && e.t <= at && at - e.t < days * DAY);
 
 /** Invites per rolling period. Grows with vouches that worked out, shrinks after lost stakes, 0 after abuse or fraud. */
-export function vouchCapacity(entries: readonly LedgerEntry[], at = Infinity, cfg: CapitalConfig = DEFAULT_CAPITAL): number {
+export function vouchCapacity(entries: readonly LedgerEntry[], at: number, cfg: CapitalConfig = DEFAULT_CAPITAL): number {
   const v = cfg.levers.vouch;
   if (recentPenalty(entries, at, v.abuseLockDays)) return 0;
   const reversed = new Set(entries.filter(e => e.provenance.reverses && e.t <= at).map(e => e.provenance.reverses!));
@@ -83,7 +84,7 @@ export interface OrganizingReach {
   reservedForLowExposure: number;
 }
 
-export function organizingReach(entries: readonly LedgerEntry[], at = Infinity, cfg: CapitalConfig = DEFAULT_CAPITAL): OrganizingReach {
+export function organizingReach(entries: readonly LedgerEntry[], at: number, cfg: CapitalConfig = DEFAULT_CAPITAL): OrganizingReach {
   const r = cfg.levers.reach;
   if (recentPenalty(entries, at, r.abuseLockDays)) return { max: r.afterAbuse, reservedForLowExposure: 0 };
   const reversed = new Set(entries.filter(e => e.provenance.reverses && e.t <= at).map(e => e.provenance.reverses!));

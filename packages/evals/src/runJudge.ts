@@ -7,6 +7,8 @@ import type { LLM } from "../../core/src/index.ts";
 import { checkMessage } from "../../judge/src/rules.ts";
 import { judgeExplanationShareability, judgeMessageQuality, judgeTiming, privacyAudit } from "../../judge/src/llmJudges.ts";
 import { checkPolicy, judgePolicyLLM } from "../../judge/src/policy.ts";
+import { tokenize } from "../../engine/src/embed.ts";
+import { checkMemberFacing } from "../../engine/src/judgeCommon.ts";
 import type { JudgeEvalItem, JudgeCategory } from "./judgeDataset.ts";
 import { classification, cohensKappa, percentile } from "./metrics.ts";
 import { pmap, withScope, type HttpRecord } from "./transport.ts";
@@ -43,12 +45,37 @@ export function rulesBaseline(items: JudgeEvalItem[]): JudgeResult[] {
     const it = item.input;
     let predicted: boolean | null = null;
     if (it.judge === "quality") predicted = checkMessage(it.message).pass;
-    else if (it.judge === "shareability") predicted = checkMessage(it.explanation).pass;
+    // checkMessage cannot see private facts, so it says nothing about shareability: use the leak guard.
+    else if (it.judge === "shareability") predicted = leakGuardPasses(it.explanation, it.privateFacts);
     else if (it.judge === "policy") {
       const v = checkPolicy(it.message, it.context).verdict;
       predicted = v === "violation" ? false : v === "clear" ? true : null;
     }
     return { itemId: item.id, model: "rules", predicted, records: [] };
+  });
+}
+
+/**
+ * The production deterministic leak guard (engine checkMemberFacing, the gate every member-facing
+ * text passes) as a rater on the gold privacy and shareability items. Its private vocabulary is the
+ * words of the listed private facts (what explain.ts privateVocabulary would hold), minus words of
+ * 3 letters or fewer. It catches direct leaks; inference leaks are what the LLM judge is for.
+ */
+export function leakGuardPasses(text: string, privateFacts: string[]): boolean {
+  const vocab = new Set(privateFacts.flatMap(f => tokenize(f)).filter(t => t.length >= 4));
+  return checkMemberFacing(text, vocab).ok;
+}
+
+export function leakGuardBaseline(items: JudgeEvalItem[]): JudgeResult[] {
+  return items.map(item => {
+    const it = item.input;
+    let predicted: boolean | null = null;
+    if (it.judge === "shareability") predicted = leakGuardPasses(it.explanation, it.privateFacts);
+    else if (it.judge === "privacy") {
+      // Facts are checked only against messages to members other than their owner.
+      predicted = it.messages.every(m => leakGuardPasses(m.text, it.privateFacts.filter(f => f.owner !== m.to).map(f => f.fact)));
+    }
+    return { itemId: item.id, model: "leak-guard", predicted, records: [] };
   });
 }
 

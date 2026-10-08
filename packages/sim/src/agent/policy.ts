@@ -2,7 +2,7 @@
 // decisions (reply? accept? flake? worthwhile?), and a template voice that renders those
 // decisions as text in the persona's writing style. Used for fast tests and big worlds;
 // the LLM agent reuses the same policy for decisions and timing.
-import { DAY, HOUR, MINUTE, type MemberId } from "@thenetwork/core";
+import { DAY, HOUR, MINUTE, parseReply, type MemberId } from "@thenetwork/core";
 import type { SimMessage } from "../channel.ts";
 import type { OracleProposal } from "../oracle.ts";
 import type { Persona } from "../persona.ts";
@@ -27,24 +27,17 @@ export function classifyMessage(body: string): MessageType {
   return "info";
 }
 
-const YES_RE = /\b(yes|yeah|yep|yup|sure|ok|okay|sounds (good|great|fun|lovely)|i'?m in|count me in|down|absolutely|love to|let'?s do it|happy to|definitely|works for me|i'?d like that)\b/;
-const NO_RE = /\b(no|nope|nah|not (right now|interested|for me|this time)|pass|can'?t|cannot|don'?t think so|i'?ll pass|no thanks)\b/;
-
-/** Parse a member's free-text reply into yes/no/counter (shared with the stub Network). */
+/**
+ * Parse a member's free-text reply into yes/no/counter/unclear. Thin adapter over the shared,
+ * negation-aware parser in packages/core (`parseReply`, audit network-consent-2): the simulator no
+ * longer grades the system with its own parser. "unclear" covers hedges, conditions and conflicts,
+ * so the caller asks again; "counter" is a request for another day or time (not a yes).
+ */
 export function parseYesNo(body: string): "yes" | "no" | "counter" | "unclear" {
-  const t = body.toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'");
-  const yes = YES_RE.test(t);
-  const no = NO_RE.test(t);
-  const counter = /\b(different (day|time)|next week|another time|later in the week|reschedule|instead)\b/.test(t);
-  if (counter && !no) return "counter";
-  if (yes && !no) return "yes";
-  if (no && !yes) return "no";
-  if (yes && no) {
-    // Both present ("yes! no heavy networking though"): the earlier one usually carries the answer.
-    const yi = t.search(YES_RE), ni = t.search(NO_RE);
-    return yi <= ni ? "yes" : "no";
-  }
-  return "unclear";
+  const r = parseReply(body);
+  if (r.answer === "no") return "no";
+  if (r.counter) return "counter";
+  return r.answer === "yes" ? "yes" : "unclear";
 }
 
 // ---------------------------------------------------------------- timing
@@ -58,18 +51,23 @@ export function currentCity(p: Persona, now: number, worldStart: number) {
   return p.hidden.trips.find(t => day >= t.fromDay && day <= t.toDay)?.city ?? p.homeCity;
 }
 
-/** Reply latency drawn from the persona's distribution, pushed out of sleep and (often) busy blocks. */
-export function replyDelay(p: Persona, now: number, rng: Rng, urgency = 1): number {
+/**
+ * Reply latency drawn from the persona's distribution, pushed out of sleep and (often) busy blocks.
+ * Local time is where the persona is: with `worldStart`, a traveller keeps their routine in the
+ * trip city's time zone (sim-worlds-19); without it, home-city time.
+ */
+export function replyDelay(p: Persona, now: number, rng: Rng, urgency = 1, worldStart?: number): number {
   const r = p.hidden.responsiveness;
   let t = now + Math.max(0.5, rng.logNormal(r.latencyMedianMin / urgency, r.latencySigma)) * MINUTE;
   for (let i = 0; i < 3; i++) {
-    const h = localHour(t, p.homeCity);
+    const city = worldStart === undefined ? p.homeCity : currentCity(p, t, worldStart);
+    const h = localHour(t, city);
     if (!awake(p, h)) {
       const wakeIn = ((p.routine.wake - h + 24) % 24) * HOUR;
       t += wakeIn + rng.range(5, 60) * MINUTE;
       continue;
     }
-    const wd = localParts(t, p.homeCity).weekday;
+    const wd = localParts(t, city).weekday;
     const block = wd >= 1 && wd <= 5 ? p.routine.busyBlocks.find(b => h >= b[0] && h < b[1]) : undefined;
     if (block && rng.bool(0.6)) { t += (block[1] - h) * HOUR + rng.range(1, 30) * MINUTE; continue; }
     break;
@@ -80,8 +78,29 @@ export function replyDelay(p: Persona, now: number, rng: Rng, urgency = 1): numb
 // ---------------------------------------------------------------- decisions
 
 const WEEK = 7 * DAY;
+/** With OracleOptions.stableDecisions, a persona turns down the same people for the same thing again for this long. */
+export const DECLINE_MEMORY_DAYS = 28;
 
-export function decide(ctx: PersonaContext, msg: SimMessage, worldStart: number): PolicyDecision {
+/** Opt-in persona behaviour (audit 2026-10-08). Off by default so existing runs and goldens are unchanged. */
+export interface PolicyOptions {
+  /**
+   * sim-worlds-13: quality-driven trust and churn. An unsafe intro (ex, romance mismatch, a bad
+   * actor) costs 0.35 trust, a poor-fit intro 0.1, a bad meeting 0.2; a good meeting gives 0.1
+   * back. Below 0.5 trust, each proactive message makes the persona STOP with probability
+   * 1.2 x (0.5 - trust). Without it, personas churn only from message volume.
+   */
+  qualityChurn?: boolean;
+  /**
+   * sim-worlds-19: a traveller replies on the trip city's clock (replyDelay with worldStart).
+   * Off by default: reply timing moves every downstream draw, and the packages/network
+   * single-seed gates ("consent-first beats push", newcomer_wave) do not survive that noise yet.
+   */
+  tripClock?: boolean;
+}
+const UNSAFE_FOR_ME = ["ex_partners", "romance_mismatch", "adversarial_participant"];
+const loseTrust = (mem: PersonaContext["memory"], x: number) => { mem.trust = Math.max(0, Math.min(1, (mem.trust ?? 1) - x)); };
+
+export function decide(ctx: PersonaContext, msg: SimMessage, worldStart: number, opts: PolicyOptions = {}): PolicyDecision {
   const { persona: p, memory: mem, rng, now } = ctx;
   const meta = msg.meta ?? {};
   const type: MessageType = msg.system ? "system" : meta.type ?? classifyMessage(msg.body);
@@ -97,7 +116,11 @@ export function decide(ctx: PersonaContext, msg: SimMessage, worldStart: number)
   const recent = mem.proactiveReceived.filter(t => now - t < WEEK).length;
   const tolerance = 3 + Math.round(4 * p.hidden.capacity);
   if (proactive && !silent && !p.hidden.adversarial && p.archetype !== "never_replies" && recent > tolerance) {
-    return { ...base, intent: "opt_out", worthwhile: false, delayMs: replyDelay(p, now, rng, 2) };
+    return { ...base, intent: "opt_out", worthwhile: false, delayMs: replyDelay(p, now, rng, 2, opts.tripClock ? worldStart : undefined) };
+  }
+  // Quality churn (opt-in): a member who stopped trusting the Network leaves when it texts again.
+  if (opts.qualityChurn && proactive && !silent && !p.hidden.adversarial && (mem.trust ?? 1) < 0.5 && rng.bool(1.2 * (0.5 - (mem.trust ?? 1)))) {
+    return { ...base, intent: "opt_out", worthwhile: false, delayMs: replyDelay(p, now, rng, 2, opts.tripClock ? worldStart : undefined) };
   }
 
   let d: PolicyDecision = base;
@@ -112,7 +135,7 @@ export function decide(ctx: PersonaContext, msg: SimMessage, worldStart: number)
       };
       break;
     }
-    case "proposal": d = decideProposal(ctx, msg, worldStart, base); break;
+    case "proposal": d = decideProposal(ctx, msg, worldStart, base, opts); break;
     case "scheduling": {
       const pid = meta.proposalId;
       const pr = pid ? mem.proposals[pid] : undefined;
@@ -140,6 +163,7 @@ export function decide(ctx: PersonaContext, msg: SimMessage, worldStart: number)
       };
       if (p.hidden.adversarial === "block_abuser" && m) { d.feedback!.enjoyment = 0.05; d.feedback!.wouldMeetAgain = false; d.block = m.others; }
       else if (m && m.showed && m.enjoyment < 0.2 && m.othersShowed.length) d.block = m.others; // genuinely bad experience
+      if (opts.qualityChurn && m?.showed && m.othersShowed.length) loseTrust(mem, m.enjoyment < 0.35 ? 0.2 : m.enjoyment >= 0.6 ? -0.1 : 0);
       break;
     }
     case "relay": d = { ...base, intent: rng.bool(0.6) ? "relay_reply" : "ignore" }; break;
@@ -170,7 +194,7 @@ export function decide(ctx: PersonaContext, msg: SimMessage, worldStart: number)
   if (silent) d = { ...d, intent: "ignore" };
   // Only a yes the persona actually sends primes them.
   if (d.intent === "probe_yes" && meta.probe) (mem.signals ??= []).push({ category: meta.probe.category, at: now, source: "probe", key: meta.probe.key });
-  if (d.intent !== "ignore") d.delayMs = replyDelay(p, now, rng, inFlight ? 1.5 : 1);
+  if (d.intent !== "ignore") d.delayMs = replyDelay(p, now, rng, inFlight ? 1.5 : 1, opts.tripClock ? worldStart : undefined);
   if (!proactive) delete d.worthwhile;
   return d;
 }
@@ -179,7 +203,7 @@ function latestMeetingId(mem: PersonaContext["memory"]): string | undefined {
   return Object.entries(mem.meetings).sort((a, b) => b[1].at - a[1].at)[0]?.[0];
 }
 
-function decideProposal(ctx: PersonaContext, msg: SimMessage, worldStart: number, base: PolicyDecision): PolicyDecision {
+function decideProposal(ctx: PersonaContext, msg: SimMessage, worldStart: number, base: PolicyDecision, opts: PolicyOptions = {}): PolicyDecision {
   const { persona: p, memory: mem, rng } = ctx;
   const meta = msg.meta ?? {};
   const prop = meta.proposalId ? ctx.lookupProposal(meta.proposalId) : undefined;
@@ -207,13 +231,19 @@ function decideProposal(ctx: PersonaContext, msg: SimMessage, worldStart: number
     : ctx.oracle.evaluate(oprop, { recentAsks: { [p.id]: recentAsks } });
   const mine = verdict.participants[p.id]!;
   const others = participants.filter(x => x !== p.id);
+  if (opts.qualityChurn) loseTrust(mem, verdict.flags.some(f => UNSAFE_FOR_ME.includes(f)) ? 0.35 : mine.enjoyment < 0.35 ? 0.1 : 0);
   let decision: "accept" | "decline" | "counter" = mine.wouldAccept ? "accept" : "decline";
   if (others.some(o => mem.blocked.includes(o))) decision = "decline";
+  // Decline memory (stable decisions): asking again for the same people and the same thing gets the same no.
+  if (ctx.oracle.options.stableDecisions) {
+    const same = (xs: MemberId[]) => xs.length === others.length && xs.every(x => others.includes(x));
+    if (Object.values(mem.proposals).some(x => x.decision === "decline" && x.category === category && x.decidedAt !== undefined && ctx.now - x.decidedAt < DECLINE_MEMORY_DAYS * DAY && same(x.others))) decision = "decline";
+  }
   if (decision === "accept" && p.hidden.capacity < 0.4 && rng.bool(0.15)) decision = "counter";
   // Scenario hook: a forced flaker says yes now and cancels later.
   if (mem.forceFlake) decision = "accept";
   const plannedShow = decision !== "decline" && mine.wouldShow && !mem.forceFlake;
-  mem.proposals[pid] = { decision, plannedShow, enjoyment: mine.enjoyment, others, at: prop?.window?.start };
+  mem.proposals[pid] = { decision, plannedShow, enjoyment: mine.enjoyment, others, at: prop?.window?.start, category, decidedAt: ctx.now };
   mem.recentMatches = [...others, ...mem.recentMatches].slice(0, 5);
   return {
     ...base, intent: decision, decision, proposalId: pid, participants,
@@ -380,9 +410,9 @@ export function policyInitiative(ctx: PersonaContext, worldStart: number): Initi
 /** Fully deterministic persona agent: policy decisions + template voice. */
 export class PolicyPersonaAgent implements PersonaAgent {
   readonly mode = "policy" as const;
-  constructor(private worldStart: number) {}
+  constructor(private worldStart: number, private opts: PolicyOptions = {}) {}
   async respond(ctx: PersonaContext, msg: SimMessage): Promise<AgentReply> {
-    const d = decide(ctx, msg, this.worldStart);
+    const d = decide(ctx, msg, this.worldStart, this.opts);
     if (d.intent === "ignore") return { ...d, action: "ignore" };
     const text = templateText(ctx, d);
     if (d.intent === "answer_question") ctx.memory.questionsAnswered++;

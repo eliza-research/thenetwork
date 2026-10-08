@@ -88,6 +88,7 @@ describe("webhook receiver (Blooio payloads, mocked HTTP)", () => {
 
   test("delivery receipts update the outbound record", async () => {
     const s = blooioStack();
+    s.queue.onRecipientEngaged("blooio", "+15551234567"); // the member texted first
     s.queue.enqueue({ idempotencyKey: "k", channel: "blooio", to: "+15551234567", text: "hi", kind: "reply" });
     await s.queue.drain();
     expect(s.queue.get("k")?.providerMessageId).toBe("msg_out_1");

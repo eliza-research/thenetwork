@@ -1,0 +1,684 @@
+{
+  "env": {
+    "postgres": {
+      "v": "PostgreSQL 16.11 (Homebrew) on aarch64-apple-darwin25.2.0, compiled by Apple clang version 17.0.0 (clang-1700.6.3.2), 64-bit",
+      "pgvector": "0.8.2"
+    },
+    "pglite": {
+      "v": "PostgreSQL 18.3 (PGlite 0.5.8) on wasm32-unknown-emscripten, compiled by emcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 3.1.74 (1092ec30a3fb1d46b1782ff1b4db5094d3d06ae5), 32-bit",
+      "pgvector": "0.8.1"
+    },
+    "cpus": 16,
+    "bun": "1.4.2"
+  },
+  "schema": {
+    "migrationSha": "5dca1fee0d8e4b7b",
+    "pgMigrateMs": 44,
+    "pgliteMigrateMs": 35,
+    "catalogEntries": 160,
+    "onlyPostgres": [],
+    "onlyPglite": [],
+    "identical": true
+  },
+  "jobs": {
+    "pgClean": {
+      "jobs": 10000,
+      "workers": 8,
+      "batch": 1,
+      "leaseMs": 500,
+      "crashRate": 0,
+      "zombieRate": 0,
+      "seed": 7,
+      "executions": 10000,
+      "completed": 10000,
+      "crashes": 0,
+      "zombies": 0,
+      "fenced": 0,
+      "reaped": 0,
+      "reconnects": 0,
+      "done": 10000,
+      "effects": 10000,
+      "distinct_jobs": 10000,
+      "max_per_job": 1,
+      "reclaimed": 0,
+      "workers_used": 8,
+      "secs": 1.53,
+      "jobsPerSec": 6521,
+      "exactlyOnce": true
+    },
+    "pgCrashes": {
+      "jobs": 10000,
+      "workers": 8,
+      "batch": 1,
+      "leaseMs": 500,
+      "crashRate": 0.01,
+      "zombieRate": 0.005,
+      "seed": 7,
+      "executions": 10151,
+      "completed": 10000,
+      "crashes": 102,
+      "zombies": 49,
+      "fenced": 49,
+      "reaped": 126,
+      "reconnects": 102,
+      "done": 10000,
+      "effects": 10000,
+      "distinct_jobs": 10000,
+      "max_per_job": 1,
+      "reclaimed": 150,
+      "workers_used": 8,
+      "secs": 5.76,
+      "jobsPerSec": 1736,
+      "exactlyOnce": true
+    },
+    "pgBatch10Crashes": {
+      "jobs": 10000,
+      "workers": 8,
+      "batch": 10,
+      "leaseMs": 500,
+      "crashRate": 0.01,
+      "zombieRate": 0.005,
+      "seed": 7,
+      "executions": 10363,
+      "completed": 10000,
+      "crashes": 102,
+      "zombies": 53,
+      "fenced": 261,
+      "reaped": 630,
+      "reconnects": 102,
+      "done": 10000,
+      "effects": 10000,
+      "distinct_jobs": 10000,
+      "max_per_job": 1,
+      "reclaimed": 796,
+      "workers_used": 8,
+      "secs": 6.08,
+      "jobsPerSec": 1645,
+      "exactlyOnce": true
+    },
+    "pgliteCrashes": {
+      "jobs": 10000,
+      "workers": 8,
+      "batch": 1,
+      "leaseMs": 500,
+      "crashRate": 0.01,
+      "zombieRate": 0.005,
+      "seed": 7,
+      "executions": 10152,
+      "completed": 10000,
+      "crashes": 101,
+      "zombies": 51,
+      "fenced": 51,
+      "reaped": 152,
+      "reconnects": 0,
+      "done": 10000,
+      "effects": 10000,
+      "distinct_jobs": 10000,
+      "max_per_job": 1,
+      "reclaimed": 149,
+      "workers_used": 8,
+      "secs": 6.59,
+      "jobsPerSec": 1518,
+      "exactlyOnce": true
+    }
+  },
+  "unique": {
+    "pg": {
+      "rounds": 500,
+      "racers": 8,
+      "perfectRounds": 500,
+      "wins": 500,
+      "dupRejects": 3500,
+      "otherErrors": 0,
+      "checks": {
+        "first": "ok",
+        "reorderedDuplicate": "23505",
+        "otherObjective": "ok",
+        "afterDecline": "ok",
+        "terminalDuplicatesAllowed": "ok"
+      },
+      "pass": true
+    },
+    "pglite": {
+      "rounds": 100,
+      "racers": 8,
+      "perfectRounds": 100,
+      "wins": 100,
+      "dupRejects": 700,
+      "otherErrors": 0,
+      "checks": {
+        "first": "ok",
+        "reorderedDuplicate": "23505",
+        "otherObjective": "ok",
+        "afterDecline": "ok",
+        "terminalDuplicatesAllowed": "ok"
+      },
+      "pass": true
+    }
+  },
+  "pgliteErrorLimit": {
+    "uniqueViolationsSurvived": 2978,
+    "failingCode": "54001",
+    "nextQuery": "54001"
+  },
+  "lock": {
+    "pg": {
+      "rounds": 200,
+      "exclusiveRounds": 200,
+      "otherCityProceeded": 200,
+      "overlaps": 0,
+      "releasedOnCrash": true,
+      "pass": true
+    },
+    "pglite": {
+      "rounds": 20,
+      "exclusiveRounds": 0,
+      "otherCityProceeded": 20,
+      "overlaps": 0,
+      "releasedOnCrash": null,
+      "pass": false
+    }
+  },
+  "delete": {
+    "pg": {
+      "tablesScanned": 11,
+      "before": {
+        "hits": {
+          "edges": 2,
+          "events": 2,
+          "facets": 2,
+          "intents": 1,
+          "jobs": 1,
+          "members": 21,
+          "opportunities": 1,
+          "outbound_messages": 2,
+          "participations": 1
+        },
+        "embeddings": 3
+      },
+      "erased": {
+        "jobs_redacted": 1,
+        "events_redacted": 2,
+        "members_deleted": 1,
+        "messages_redacted": 1,
+        "opportunities_scrubbed": 1
+      },
+      "after": {
+        "hits": {},
+        "embeddings": 0
+      },
+      "survivors": {
+        "members": 20,
+        "facets": 1,
+        "edges": 1,
+        "erasure_log": 1
+      },
+      "appendOnly": {
+        "delete": "P0001",
+        "update": "P0001"
+      },
+      "physical": {
+        "afterDelete": [
+          "network.members:name",
+          "network.facets_embedding_hnsw:normalizedEmbedding",
+          "network.events:name",
+          "network.outbound_messages:name",
+          "facets toast:embedding"
+        ],
+        "afterVacuum": [
+          "facets toast:embedding"
+        ],
+        "afterVacuumFull": []
+      },
+      "pass": true
+    },
+    "pglite": {
+      "tablesScanned": 11,
+      "before": {
+        "hits": {
+          "edges": 2,
+          "events": 2,
+          "facets": 2,
+          "intents": 1,
+          "jobs": 1,
+          "members": 21,
+          "opportunities": 1,
+          "outbound_messages": 2,
+          "participations": 1
+        },
+        "embeddings": 3
+      },
+      "erased": {
+        "jobs_redacted": 1,
+        "events_redacted": 2,
+        "members_deleted": 1,
+        "messages_redacted": 1,
+        "opportunities_scrubbed": 1
+      },
+      "after": {
+        "hits": {},
+        "embeddings": 0
+      },
+      "survivors": {
+        "members": 20,
+        "facets": 1,
+        "edges": 1,
+        "erasure_log": 1
+      },
+      "appendOnly": {
+        "delete": "P0001",
+        "update": "P0001"
+      },
+      "physical": null,
+      "pass": true
+    }
+  },
+  "vectors": [
+    {
+      "engine": "postgres16",
+      "members": 300,
+      "dist": "uniform",
+      "queries": 100,
+      "loadSecs": 0.02,
+      "indexSecs": 0.05,
+      "rows": [
+        {
+          "config": "exact scan",
+          "p50": 0.47,
+          "p95": 1.02,
+          "recall": 1,
+          "avgRows": 50,
+          "usesHnsw": false
+        },
+        {
+          "config": "planner default (pgvector defaults)",
+          "p50": 0.47,
+          "p95": 1.28,
+          "recall": 1,
+          "avgRows": 50,
+          "usesHnsw": false
+        },
+        {
+          "config": "hnsw default (ef_search=40, no iterative)",
+          "p50": 0.73,
+          "p95": 2.19,
+          "recall": 0.39,
+          "avgRows": 19.56,
+          "usesHnsw": true
+        },
+        {
+          "config": "hnsw ef_search=100 iterative",
+          "p50": 0.45,
+          "p95": 0.74,
+          "recall": 1,
+          "avgRows": 50,
+          "usesHnsw": true
+        },
+        {
+          "config": "hnsw ef_search=200 iterative",
+          "p50": 0.58,
+          "p95": 2.3,
+          "recall": 1,
+          "avgRows": 50,
+          "usesHnsw": true
+        },
+        {
+          "config": "hnsw ef_search=400 iterative",
+          "p50": 0.75,
+          "p95": 2.87,
+          "recall": 1,
+          "avgRows": 50,
+          "usesHnsw": true
+        }
+      ]
+    },
+    {
+      "engine": "postgres16",
+      "members": 5000,
+      "dist": "uniform",
+      "queries": 100,
+      "loadSecs": 0.4,
+      "indexSecs": 3.23,
+      "rows": [
+        {
+          "config": "exact scan",
+          "p50": 4.16,
+          "p95": 4.73,
+          "recall": 1,
+          "avgRows": 50,
+          "usesHnsw": false
+        },
+        {
+          "config": "planner default (pgvector defaults)",
+          "p50": 4.15,
+          "p95": 4.78,
+          "recall": 1,
+          "avgRows": 50,
+          "usesHnsw": false
+        },
+        {
+          "config": "hnsw default (ef_search=40, no iterative)",
+          "p50": 0.73,
+          "p95": 0.94,
+          "recall": 0.4,
+          "avgRows": 19.98,
+          "usesHnsw": true
+        },
+        {
+          "config": "hnsw ef_search=100 iterative",
+          "p50": 2.14,
+          "p95": 3.05,
+          "recall": 0.73,
+          "avgRows": 50,
+          "usesHnsw": true
+        },
+        {
+          "config": "hnsw ef_search=200 iterative",
+          "p50": 2.41,
+          "p95": 3.56,
+          "recall": 0.85,
+          "avgRows": 50,
+          "usesHnsw": true
+        },
+        {
+          "config": "hnsw ef_search=400 iterative",
+          "p50": 3.45,
+          "p95": 4.1,
+          "recall": 0.96,
+          "avgRows": 50,
+          "usesHnsw": true
+        }
+      ]
+    },
+    {
+      "engine": "postgres16",
+      "members": 50000,
+      "dist": "uniform",
+      "queries": 100,
+      "loadSecs": 4.12,
+      "indexSecs": 59.02,
+      "rows": [
+        {
+          "config": "exact scan",
+          "p50": 46.54,
+          "p95": 51.59,
+          "recall": 1,
+          "avgRows": 50,
+          "usesHnsw": false
+        },
+        {
+          "config": "planner default (pgvector defaults)",
+          "p50": 47.28,
+          "p95": 55.14,
+          "recall": 1,
+          "avgRows": 50,
+          "usesHnsw": false
+        },
+        {
+          "config": "hnsw default (ef_search=40, no iterative)",
+          "p50": 1.54,
+          "p95": 2.28,
+          "recall": 0.14,
+          "avgRows": 19.81,
+          "usesHnsw": true
+        },
+        {
+          "config": "hnsw ef_search=100 iterative",
+          "p50": 3.76,
+          "p95": 6.4,
+          "recall": 0.21,
+          "avgRows": 50,
+          "usesHnsw": true
+        },
+        {
+          "config": "hnsw ef_search=200 iterative",
+          "p50": 5.42,
+          "p95": 6.41,
+          "recall": 0.26,
+          "avgRows": 50,
+          "usesHnsw": true
+        },
+        {
+          "config": "hnsw ef_search=400 iterative",
+          "p50": 9.64,
+          "p95": 10.6,
+          "recall": 0.37,
+          "avgRows": 50,
+          "usesHnsw": true
+        }
+      ]
+    },
+    {
+      "engine": "postgres16",
+      "members": 50000,
+      "dist": "clustered",
+      "queries": 100,
+      "loadSecs": 84.66,
+      "indexSecs": 11.69,
+      "rows": [
+        {
+          "config": "exact scan",
+          "p50": 40.92,
+          "p95": 45.22,
+          "recall": 1,
+          "avgRows": 50,
+          "usesHnsw": false
+        },
+        {
+          "config": "planner default (pgvector defaults)",
+          "p50": 40.52,
+          "p95": 43.02,
+          "recall": 1,
+          "avgRows": 50,
+          "usesHnsw": false
+        },
+        {
+          "config": "hnsw default (ef_search=40, no iterative)",
+          "p50": 0.38,
+          "p95": 0.57,
+          "recall": 0.38,
+          "avgRows": 20.42,
+          "usesHnsw": true
+        },
+        {
+          "config": "hnsw ef_search=100 iterative",
+          "p50": 0.63,
+          "p95": 0.9,
+          "recall": 0.96,
+          "avgRows": 50,
+          "usesHnsw": true
+        },
+        {
+          "config": "hnsw ef_search=200 iterative",
+          "p50": 0.63,
+          "p95": 0.96,
+          "recall": 0.97,
+          "avgRows": 50,
+          "usesHnsw": true
+        },
+        {
+          "config": "hnsw ef_search=400 iterative",
+          "p50": 1.45,
+          "p95": 1.99,
+          "recall": 0.97,
+          "avgRows": 50,
+          "usesHnsw": true
+        }
+      ]
+    },
+    {
+      "engine": "pglite",
+      "members": 300,
+      "dist": "uniform",
+      "queries": 100,
+      "loadSecs": 0.05,
+      "indexSecs": 0.29,
+      "rows": [
+        {
+          "config": "exact scan",
+          "p50": 2.01,
+          "p95": 2.29,
+          "recall": 1,
+          "avgRows": 50,
+          "usesHnsw": false
+        },
+        {
+          "config": "planner default (pgvector defaults)",
+          "p50": 1.94,
+          "p95": 2.13,
+          "recall": 1,
+          "avgRows": 50,
+          "usesHnsw": false
+        },
+        {
+          "config": "hnsw default (ef_search=40, no iterative)",
+          "p50": 1.91,
+          "p95": 2.1,
+          "recall": 0.39,
+          "avgRows": 19.56,
+          "usesHnsw": true
+        },
+        {
+          "config": "hnsw ef_search=100 iterative",
+          "p50": 2.08,
+          "p95": 2.23,
+          "recall": 1,
+          "avgRows": 50,
+          "usesHnsw": true
+        },
+        {
+          "config": "hnsw ef_search=200 iterative",
+          "p50": 2.09,
+          "p95": 2.33,
+          "recall": 1,
+          "avgRows": 50,
+          "usesHnsw": true
+        },
+        {
+          "config": "hnsw ef_search=400 iterative",
+          "p50": 2.15,
+          "p95": 2.33,
+          "recall": 1,
+          "avgRows": 50,
+          "usesHnsw": true
+        }
+      ]
+    },
+    {
+      "engine": "pglite",
+      "members": 5000,
+      "dist": "uniform",
+      "queries": 100,
+      "loadSecs": 0.83,
+      "indexSecs": 15.22,
+      "rows": [
+        {
+          "config": "exact scan",
+          "p50": 9.56,
+          "p95": 10.51,
+          "recall": 1,
+          "avgRows": 50,
+          "usesHnsw": false
+        },
+        {
+          "config": "planner default (pgvector defaults)",
+          "p50": 9.63,
+          "p95": 10.47,
+          "recall": 1,
+          "avgRows": 50,
+          "usesHnsw": false
+        },
+        {
+          "config": "hnsw default (ef_search=40, no iterative)",
+          "p50": 3.18,
+          "p95": 3.78,
+          "recall": 0.39,
+          "avgRows": 19.77,
+          "usesHnsw": true
+        },
+        {
+          "config": "hnsw ef_search=100 iterative",
+          "p50": 6.44,
+          "p95": 7.43,
+          "recall": 0.74,
+          "avgRows": 50,
+          "usesHnsw": true
+        },
+        {
+          "config": "hnsw ef_search=200 iterative",
+          "p50": 6.42,
+          "p95": 6.96,
+          "recall": 0.85,
+          "avgRows": 50,
+          "usesHnsw": true
+        },
+        {
+          "config": "hnsw ef_search=400 iterative",
+          "p50": 8.16,
+          "p95": 10,
+          "recall": 0.96,
+          "avgRows": 50,
+          "usesHnsw": true
+        }
+      ]
+    },
+    {
+      "engine": "pglite",
+      "members": 50000,
+      "dist": "uniform",
+      "queries": 100,
+      "loadSecs": 7.98,
+      "indexSecs": 875.56,
+      "rows": [
+        {
+          "config": "exact scan",
+          "p50": 123.27,
+          "p95": 148.64,
+          "recall": 1,
+          "avgRows": 50,
+          "usesHnsw": false
+        },
+        {
+          "config": "planner default (pgvector defaults)",
+          "p50": 118.36,
+          "p95": 142.72,
+          "recall": 1,
+          "avgRows": 50,
+          "usesHnsw": false
+        },
+        {
+          "config": "hnsw default (ef_search=40, no iterative)",
+          "p50": 5.58,
+          "p95": 7.57,
+          "recall": 0.14,
+          "avgRows": 19.57,
+          "usesHnsw": true
+        },
+        {
+          "config": "hnsw ef_search=100 iterative",
+          "p50": 16.12,
+          "p95": 18.27,
+          "recall": 0.22,
+          "avgRows": 50,
+          "usesHnsw": true
+        },
+        {
+          "config": "hnsw ef_search=200 iterative",
+          "p50": 16.88,
+          "p95": 21.39,
+          "recall": 0.26,
+          "avgRows": 50,
+          "usesHnsw": true
+        },
+        {
+          "config": "hnsw ef_search=400 iterative",
+          "p50": 29.05,
+          "p95": 31.62,
+          "recall": 0.38,
+          "avgRows": 50,
+          "usesHnsw": true
+        }
+      ]
+    }
+  ]
+}
