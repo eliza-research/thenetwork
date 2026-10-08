@@ -29,13 +29,13 @@ describe("vouch", () => {
     const L = world(); invite(L);
     expect(L.record(ev({ type: "member_activated", t: T0 + DAY, member: "inv" }))).toEqual([]);
     expect(L.record(ev({ type: "value_received", t: T0 + 2 * DAY, member: "inv", with: ["a"] }))).toEqual([]); // voucher only
-    const out = L.record(ev({ type: "value_received", t: T0 + 3 * DAY, member: "inv", with: ["b"] }));
+    const out = L.record(ev({ type: "value_received", t: T0 + 3 * DAY, member: "inv", with: ["b"], confirmedBy: ["b"] }));
     expect(out).toHaveLength(1);
     expect(out[0]!.category).toBe("vouch");
     expect(out[0]!.member).toBe("a");
     expect(out[0]!.amount).toBe(10);
     // only once
-    expect(L.record(ev({ type: "value_received", t: T0 + 4 * DAY, member: "inv", with: ["c"] }))).toEqual([]);
+    expect(L.record(ev({ type: "value_received", t: T0 + 4 * DAY, member: "inv", with: ["c"], confirmedBy: ["c"] }))).toEqual([]);
   });
 
   test("value after 30 days earns nothing", () => {
@@ -48,11 +48,11 @@ describe("vouch", () => {
     const L = world(); invite(L);
     L.record(ev({ type: "safety_flag", t: T0 + DAY, member: "inv", serious: false }));
     L.record(ev({ type: "member_activated", t: T0 + DAY, member: "inv" }));
-    expect(L.record(ev({ type: "value_received", t: T0 + 2 * DAY, member: "inv", with: [] }))).toEqual([]);
+    expect(L.record(ev({ type: "value_received", t: T0 + 2 * DAY, member: "inv", with: ["b"], confirmedBy: ["b"] }))).toEqual([]);
 
     const L2 = world(); invite(L2);
     L2.record(ev({ type: "member_activated", t: T0 + DAY, member: "inv" }));
-    L2.record(ev({ type: "value_received", t: T0 + 2 * DAY, member: "inv", with: [] }));
+    L2.record(ev({ type: "value_received", t: T0 + 2 * DAY, member: "inv", with: ["b"], confirmedBy: ["b"] }));
     expect(L2.record(ev({ type: "safety_flag", t: T0 + 3 * DAY, member: "inv", serious: false }))).toEqual([]);
     expect(L2.balance("a")).toBe(10);
   });
@@ -60,7 +60,7 @@ describe("vouch", () => {
   test("stake is lost only for removal for serious abuse within 90 days; credit is reversed", () => {
     const L = world(); invite(L);
     L.record(ev({ type: "member_activated", t: T0 + DAY, member: "inv" }));
-    L.record(ev({ type: "value_received", t: T0 + 2 * DAY, member: "inv", with: [] }));
+    L.record(ev({ type: "value_received", t: T0 + 2 * DAY, member: "inv", with: ["b"], confirmedBy: ["b"] }));
     const out = L.record(ev({ type: "member_removed", t: T0 + 40 * DAY, member: "inv", reason: "serious_abuse" }));
     expect(out.map(e => e.category).sort()).toEqual(["clawback", "vouch_stake"]);
     expect(L.balance("a")).toBe(-10);
@@ -267,12 +267,12 @@ describe("anti-gaming", () => {
     helpPair(T0);
     L.record(ev({ type: "member_joined", t: T0 + 1, member: "syb", age: 25, vouchedBy: "a" }));
     L.record(ev({ type: "member_activated", t: T0 + 2, member: "syb" }));
-    expect(L.record(ev({ type: "value_received", t: T0 + 3, member: "syb", with: ["b"] }))).toEqual([]);
+    expect(L.record(ev({ type: "value_received", t: T0 + 3, member: "syb", with: ["b"], confirmedBy: ["b"] }))).toEqual([]);
 
     const L2 = world();
     L2.record(ev({ type: "member_joined", t: T0 + 1, member: "syb", age: 25, vouchedBy: "a" }));
     L2.record(ev({ type: "member_activated", t: T0 + 2, member: "syb" }));
-    expect(L2.record(ev({ type: "value_received", t: T0 + 3, member: "syb", with: ["b"] }))[0]!.category).toBe("vouch");
+    expect(L2.record(ev({ type: "value_received", t: T0 + 3, member: "syb", with: ["b"], confirmedBy: ["b"] }))[0]!.category).toBe("vouch");
     for (const [x, y] of [["a", "b"], ["b", "a"]]) {
       const id = `w${++seq}`;
       L2.record(ev({ type: "help_given", t: T0 + 4, helper: x!, recipient: y!, helpId: id }));
@@ -324,7 +324,7 @@ describe("levers", () => {
     for (let i = 0; i < 2; i++) {
       L.record(ev({ type: "member_joined", t: T0 + i, member: `g${i}`, age: 30, vouchedBy: "a" }));
       L.record(ev({ type: "member_activated", t: T0 + i, member: `g${i}` }));
-      L.record(ev({ type: "value_received", t: T0 + i, member: `g${i}`, with: [] }));
+      L.record(ev({ type: "value_received", t: T0 + i, member: `g${i}`, with: ["b"], confirmedBy: ["b"] }));
     }
     expect(vouchCapacity(L.internalEntries("a"))).toBe(4);
     L.record(ev({ type: "member_joined", t: T0 + 5, member: "bad", age: 30, vouchedBy: "a" }));
@@ -349,7 +349,7 @@ describe("what you've built", () => {
     const L = world();
     L.record(ev({ type: "member_joined", t: T0, member: "inv", age: 30, vouchedBy: "a" }));
     L.record(ev({ type: "member_activated", t: T0, member: "inv" }));
-    L.record(ev({ type: "value_received", t: T0, member: "inv", with: [] }));
+    L.record(ev({ type: "value_received", t: T0, member: "inv", with: ["d"], confirmedBy: ["d"] }));
     for (const r of ["b", "c"]) {
       L.record(ev({ type: "help_given", t: T0, helper: "a", recipient: r, helpId: `hh${r}` }));
       L.record(ev({ type: "help_confirmed", t: T0, helpId: `hh${r}`, recipient: r, useful: true }));
@@ -402,5 +402,73 @@ describe("input validation (capital-3, capital-m2)", () => {
     expect(() => resolveCapital({ antiGaming: { periodCapp: 3 } } as never)).toThrow(/unknown key antiGaming.periodCapp/);
     expect(() => new CapitalLedger({ detection: { ringShare: 2 } })).toThrow(/ringShare/);
     expect(resolveCapital({ antiGaming: { periodCap: 60 } }).antiGaming.periodCap).toBe(60);
+  });
+});
+
+describe("vouch credit needs more than the invitee's say-so (capital-1, -9, -17)", () => {
+  let clock = T0;
+  const tick = () => (clock += 10);
+  const join = (L: CapitalLedger, member: string, age: number | null, vouchedBy = "a") => {
+    L.record(ev({ type: "member_joined", t: tick(), member, age, vouchedBy }));
+    L.record(ev({ type: "member_activated", t: tick(), member }));
+  };
+
+  test("self-reported value, agent-only value, or value from a minor gives no vouch credit", () => {
+    const L = world({ a: 30, b: 30, teen: 15 });
+    join(L, "s1", 30);
+    expect(L.record(ev({ type: "value_received", t: tick(), member: "s1", with: ["b"] }))).toEqual([]); // b never confirmed
+    expect(L.record(ev({ type: "value_received", t: tick(), member: "s1", with: [] }))).toEqual([]); // agent only
+    expect(L.record(ev({ type: "value_received", t: tick(), member: "s1", with: ["teen"], confirmedBy: ["teen"] }))).toEqual([]);
+    expect(L.record(ev({ type: "value_received", t: tick(), member: "s1", with: ["ghost"], confirmedBy: ["ghost"] }))).toEqual([]);
+    expect(L.balance("a")).toBe(0);
+    expect(vouchCapacity(L.internalEntries("a"), T0 + DAY)).toBe(2);
+    // the provider's own confirmation, or an independent check-in, does count
+    expect(L.record(ev({ type: "value_received", t: tick(), member: "s1", with: ["b"], confirmedBy: ["b"] }))[0]!.category).toBe("vouch");
+    join(L, "s2", 30);
+    expect(L.record(ev({ type: "value_received", t: tick(), member: "s2", with: ["c"], verifiedBy: ["checkin"] }))).toEqual([]); // c is not a member here
+    join(L, "s3", 30);
+    L.record(ev({ type: "member_joined", t: tick(), member: "c", age: 40 }));
+    expect(L.record(ev({ type: "value_received", t: tick(), member: "s3", with: ["c"], verifiedBy: ["checkin"] }))[0]!.category).toBe("vouch");
+  });
+
+  test("recruiting a minor or an unknown age earns nothing; nor does vouching for yourself", () => {
+    const L = world({ a: 30, b: 30 });
+    join(L, "kid", 13); join(L, "unk", null);
+    for (const m of ["kid", "unk"]) expect(L.record(ev({ type: "value_received", t: tick(), member: m, with: ["b"], confirmedBy: ["b"] }))).toEqual([]);
+    join(L, "self", 30, "self");
+    expect(L.record(ev({ type: "value_received", t: tick(), member: "self", with: ["b"], confirmedBy: ["b"] }))).toEqual([]);
+    expect(L.all().filter(e => e.category === "vouch")).toEqual([]);
+  });
+
+  test("one accomplice confirming value for two of a voucher's invitees is flagged", () => {
+    const L = world({ a: 30, b: 30 });
+    for (const s of ["s1", "s2"]) {
+      join(L, s, 30);
+      L.record(ev({ type: "value_received", t: tick(), member: s, with: ["b"], confirmedBy: ["b"] }));
+    }
+    const f = detectGaming(L.all(), T0 + DAY).filter(f => f.kind === "vouch_ring");
+    expect(f.map(x => x.members)).toEqual([["a", "b", "s1", "s2"]]);
+  });
+
+  test("a removed member earns nothing more; the stake window runs to the confirmed abuse", () => {
+    const L = world();
+    L.record(ev({ type: "member_removed", t: T0 + 1, member: "a", reason: "left" }));
+    expect(L.record(ev({ type: "need_answered", t: T0 + 2, member: "a", needId: "n", confirmedBy: "staff" }))).toEqual([]);
+    const L2 = world();
+    L2.record(ev({ type: "member_joined", t: T0, member: "i", age: 30, vouchedBy: "b" }));
+    L2.record(ev({ type: "abuse_confirmed", t: T0 + 80 * DAY, member: "i", kind: "harassment" }));
+    const out = L2.record(ev({ type: "member_removed", t: T0 + 95 * DAY, member: "i", reason: "serious_abuse" }));
+    expect(out.map(e => [e.member, e.category])).toEqual([["b", "vouch_stake"]]);
+  });
+
+  test("help to a minor or a non-member, and needs confirmed by a non-member, earn nothing", () => {
+    const L = world({ a: 30, teen: 15 });
+    for (const r of ["teen", "ghost"]) {
+      L.record(ev({ type: "help_given", t: T0, helper: "a", recipient: r, helpId: `h${r}` }));
+      expect(L.record(ev({ type: "help_confirmed", t: T0, helpId: `h${r}`, recipient: r, useful: true }))).toEqual([]);
+    }
+    expect(L.record(ev({ type: "need_answered", t: T0, member: "a", needId: "z", confirmedBy: "ghost" }))).toEqual([]);
+    L.record(ev({ type: "plan_accepted", t: T0, member: "a", planId: "p", kind: "intro", startsAt: T0 + DAY }));
+    expect(L.record(ev({ type: "plan_attended", t: T0 + DAY, member: "a", planId: "p", counterparts: ["teen"], verifiedBy: ["counterpart"], origin: "engine", publicVenue: true }))).toEqual([]);
   });
 });

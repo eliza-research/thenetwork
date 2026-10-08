@@ -9,7 +9,8 @@
 // - staged_meetup: the same set of people attends member-started plans again and again, with
 //   attendance verified only by each other (no check-in, organizer or reviewer).
 // - vouch_ring: a vouch credit whose invitee's value came only from members with a two-way
-//   confirmation tie to the voucher.
+//   confirmation tie to the voucher; or one provider who confirmed the value of two or more of the
+//   same voucher's invitees (sybil vouching with one accomplice, capital-1).
 import { DAY } from "../../core/src/clock.ts";
 import { DEFAULT_CAPITAL, type CapitalConfig } from "./config.ts";
 import type { GamingFlag, LedgerEntry, MemberId } from "./types.ts";
@@ -84,12 +85,22 @@ export function detectGaming(entries: readonly LedgerEntry[], now: number, cfg: 
   }
 
   // vouch_ring
+  const byProvider = new Map<string, { voucher: MemberId; provider: MemberId; invitees: Set<MemberId> }>();
   for (const e of recent) {
     if (e.category !== "vouch") continue;
     const providers = e.provenance.confirmedBy;
     if (providers.length && providers.every(p => mutual(p, e.member))) {
       add({ kind: "vouch_ring", members: [e.member, ...e.provenance.counterparts, ...providers], t: now, evidence: { providers: providers.length } });
     }
+    for (const p of providers) {
+      const k = `${e.member}|${p}`;
+      const x = byProvider.get(k) ?? { voucher: e.member, provider: p, invitees: new Set<MemberId>() };
+      e.provenance.counterparts.forEach(i => x.invitees.add(i));
+      byProvider.set(k, x);
+    }
+  }
+  for (const x of byProvider.values()) {
+    if (x.invitees.size >= 2) add({ kind: "vouch_ring", members: [x.voucher, x.provider, ...x.invitees], t: now, evidence: { sharedProviderInvitees: x.invitees.size } });
   }
   return [...flags.values()];
 }

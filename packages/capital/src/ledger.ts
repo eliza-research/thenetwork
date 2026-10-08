@@ -19,7 +19,13 @@ import { CapitalEventRejected, validateCapitalEvent } from "./validate.ts";
 interface MemberRec {
   joinedAt: number; eligible: boolean; vouchedBy?: MemberId;
   activated: boolean; valueInWindow: boolean; safetyFlagged: boolean;
+  /** Providers who confirmed the invitee's first creditable value (vouch provenance). */
+  valueProviders: MemberId[];
   vouchCreditId?: string; stakeTaken: boolean;
+  /** Removed for any reason: earns nothing more. */
+  removed: boolean;
+  /** First confirmed abuse: the vouch stake window is measured to this time, not to the removal. */
+  abuseAt?: number;
 }
 interface PlanRec { accepted: boolean; startsAt: number; confirmed: boolean; resolved: boolean; attendedEntry?: LedgerEntry; feedback: boolean }
 interface HelpRec { helper: MemberId; recipient: MemberId; resolved: boolean }
@@ -98,8 +104,9 @@ export class CapitalLedger {
       case "member_joined": {
         if (this.members.has(ev.member)) break;
         this.members.set(ev.member, {
-          joinedAt: ev.t, eligible: !isMinor(ev.age), vouchedBy: ev.vouchedBy,
-          activated: false, valueInWindow: false, safetyFlagged: false, stakeTaken: false,
+          // A member cannot vouch for themself (capital-17).
+          joinedAt: ev.t, eligible: !isMinor(ev.age), vouchedBy: ev.vouchedBy === ev.member ? undefined : ev.vouchedBy,
+          activated: false, valueInWindow: false, valueProviders: [], safetyFlagged: false, stakeTaken: false, removed: false,
         });
         break;
       }
@@ -107,22 +114,29 @@ export class CapitalLedger {
         const m = this.members.get(ev.member);
         if (!m) break;
         m.activated = true;
-        this.tryVouchCredit(ev, ev.member, [], out);
+        this.tryVouchCredit(ev, ev.member, out);
         break;
       }
       case "value_received": {
         const m = this.members.get(ev.member);
         if (!m || !m.vouchedBy) break;
         if (ev.t - m.joinedAt > c.vouch.valueWindowDays * DAY) break;
-        // Value only counts toward the vouch when someone other than the voucher provided it
-        // (or the agent / outside world did): a voucher cannot manufacture their invitee's value.
-        // Nor can the voucher's close circle: providers tied to the voucher by member-controlled
-        // credits (help, needs, member-started plans) inside the pair window do not count.
+        if (m.valueInWindow) break;
+        // Value only counts toward the vouch when an eligible adult member other than the voucher
+        // provided it: a voucher cannot manufacture their invitee's value. Nor can the voucher's
+        // close circle: providers tied to the voucher by member-controlled credits (help, needs,
+        // member-started plans) inside the pair window do not count.
         const ties = this.tiesOf(m.vouchedBy, ev.t);
-        const others = ev.with.filter(w => w !== m.vouchedBy && w !== ev.member && !ties.has(w));
-        if (ev.with.length && !others.length) break;
+        const others = uniq(ev.with.filter(w => w !== m.vouchedBy && w !== ev.member && !ties.has(w) && this.isEligible(w)));
+        // The invitee's own say-so is not proof (capital-1): a sybil can say "it was great" about
+        // anything. A provider must confirm the interaction, or a check-in, organizer or reviewer
+        // must verify it. Value from the agent alone (no provider) does not count.
+        const confirmed = others.filter(w => (ev.confirmedBy ?? []).includes(w));
+        const verified = (ev.verifiedBy ?? []).some(v => v !== "counterpart");
+        if (!others.length || (!confirmed.length && !verified)) break;
         m.valueInWindow = true;
-        this.tryVouchCredit(ev, ev.member, others, out);
+        m.valueProviders = confirmed;
+        this.tryVouchCredit(ev, ev.member, out);
         break;
       }
       case "safety_flag": {
@@ -132,8 +146,11 @@ export class CapitalLedger {
       }
       case "member_removed": {
         const m = this.members.get(ev.member);
-        if (!m || ev.reason !== "serious_abuse" || !m.vouchedBy || m.stakeTaken) break;
-        if (ev.t - m.joinedAt > c.vouch.stakeWindowDays * DAY) break;
+        if (!m) break;
+        m.removed = true;
+        if (ev.reason !== "serious_abuse" || !m.vouchedBy || m.stakeTaken) break;
+        // The window runs to the confirmed abuse, so a slow removal process does not save the stake.
+        if (Math.min(m.abuseAt ?? ev.t, ev.t) - m.joinedAt > c.vouch.stakeWindowDays * DAY) break;
         m.stakeTaken = true;
         const v = m.vouchedBy;
         if (!this.isEligible(v)) break;
@@ -142,6 +159,8 @@ export class CapitalLedger {
         break;
       }
       case "abuse_confirmed": {
+        const m = this.members.get(ev.member);
+        if (m && m.abuseAt === undefined) m.abuseAt = ev.t;
         if (!this.isEligible(ev.member)) break;
         this.penalize(ev.member, "abuse", c.penalty.abuse, ev, [], `confirmed ${ev.kind}`, out);
         break;
@@ -186,8 +205,11 @@ export class CapitalLedger {
         if (!p || !p.accepted || p.resolved) break;
         p.resolved = true;
         if (!ev.verifiedBy.length) break;
-        const counterparts = uniq(ev.counterparts.filter(x => x !== ev.member && this.members.has(x)));
-        const confirmedBy = uniq((ev.confirmers ?? (ev.verifiedBy.includes("counterpart") ? counterparts : [])).filter(x => x !== ev.member));
+        // Only eligible adult members count as counterparts or confirmers (capital-9).
+        const counterparts = uniq(ev.counterparts.filter(x => x !== ev.member && this.isEligible(x)));
+        const confirmedBy = uniq((ev.confirmers ?? (ev.verifiedBy.includes("counterpart") ? counterparts : [])).filter(x => x !== ev.member && this.isEligible(x)));
+        // Verified only by counterparts, and none of them counts: nobody verified it.
+        if (ev.verifiedBy.every(v => v === "counterpart") && !confirmedBy.length) break;
         const e = this.credit(ev.member, "attendance", c.credit.attendance, ev, counterparts, confirmedBy, "attended",
           out, { planId: ev.planId, origin: ev.origin, verification: [...ev.verifiedBy] });
         if (e) p.attendedEntry = e;
@@ -211,7 +233,7 @@ export class CapitalLedger {
         const h = this.helps.get(ev.helpId);
         if (!h || h.resolved || h.recipient !== ev.recipient) break;
         h.resolved = true;
-        if (!ev.useful) break;
+        if (!ev.useful || !this.isEligible(h.recipient)) break;
         this.credit(h.helper, "help", c.credit.help, ev, [h.recipient], [h.recipient], "help confirmed useful by the recipient", out);
         break;
       }
@@ -225,7 +247,7 @@ export class CapitalLedger {
       }
       case "need_answered": {
         const by = ev.confirmedBy === "staff" ? [] : [ev.confirmedBy];
-        if (by[0] === ev.member) break;
+        if (by[0] === ev.member || (by.length && !this.isEligible(by[0]!))) break;
         this.credit(ev.member, "needs_answered", c.credit.needs_answered, ev, by, by, "answered a Network need", out, { label: ev.label });
         break;
       }
@@ -279,12 +301,13 @@ export class CapitalLedger {
     return ties;
   }
 
-  private tryVouchCredit(ev: CapitalEvent, invitee: MemberId, confirmedBy: MemberId[], out: LedgerEntry[]) {
+  private tryVouchCredit(ev: CapitalEvent, invitee: MemberId, out: LedgerEntry[]) {
     const m = this.members.get(invitee)!;
     if (!m.vouchedBy || m.vouchCreditId || m.stakeTaken) return;
-    if (!m.activated || !m.valueInWindow || m.safetyFlagged) return;
+    // Recruiting a minor, or someone whose age is unknown, earns nothing (capital-9).
+    if (!m.eligible || !m.activated || !m.valueInWindow || m.safetyFlagged || m.removed) return;
     if (ev.t - m.joinedAt > this.cfg.vouch.valueWindowDays * DAY) return;
-    const e = this.credit(m.vouchedBy, "vouch", this.cfg.credit.vouch, ev, [invitee], confirmedBy, "vouch: invitee active and got value", out);
+    const e = this.credit(m.vouchedBy, "vouch", this.cfg.credit.vouch, ev, [invitee], m.valueProviders, "vouch: invitee active and got value", out);
     if (e) m.vouchCreditId = e.id;
   }
 
@@ -302,7 +325,7 @@ export class CapitalLedger {
   /** Earn entry with anti-gaming multipliers. Returns undefined for excluded members. */
   private credit(member: MemberId, cat: EarnCategory, base: number, ev: CapitalEvent, counterparts: MemberId[], confirmedBy: MemberId[],
     outcome: string, out: LedgerEntry[], extra: Partial<Prov> = {}): LedgerEntry | undefined {
-    if (!this.isEligible(member) || base <= 0) return undefined;
+    if (!this.isEligible(member) || this.members.get(member)!.removed || base <= 0) return undefined;
     const ag = this.cfg.antiGaming;
     const prior = this.byMember.get(member) ?? [];
     const earned = prior.filter(e => e.sign === 1);

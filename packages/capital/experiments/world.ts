@@ -194,7 +194,9 @@ export function simulate(o: SimOptions): SimResult {
       const u = K.u(pk, m, "out");
       if (attended.includes(m) && everyone.length >= 2 && u < Math.min(0.95, q * boost(served))) {
         addValue(m, day + 2);
-        emit({ type: "value_received", t: startsAt + 21 * HOUR, member: m, with: everyone.filter(x => x !== m) });
+        // The other attendees' own check-ins confirm the meeting (crews are checked in at the venue).
+        const others = everyone.filter(x => x !== m);
+        emit({ type: "value_received", t: startsAt + 21 * HOUR, member: m, with: others, confirmedBy: others, verifiedBy: kind === "crew" ? ["checkin"] : ["counterpart"] });
       }
     }
     if (organizer) {
@@ -243,7 +245,7 @@ export function simulate(o: SimOptions): SimResult {
       took(h.id, day);
       const u = K.u("useful", day, p.id);
       const useful = u < Math.min(0.95, HELP_USEFUL * boost(p.id));
-      if (useful) { addValue(p.id, day); emit({ type: "value_received", t: t9 + 5 * HOUR, member: p.id, with: [h.id] }); }
+      if (useful) { addValue(p.id, day); emit({ type: "value_received", t: t9 + 5 * HOUR, member: p.id, with: [h.id], confirmedBy: [h.id] }); }
       if (K.chance(0.85, "hconf", day, p.id)) emit({ type: "help_confirmed", t: t9 + 6 * HOUR, helpId, recipient: p.id, useful });
     }
 
@@ -326,16 +328,19 @@ export function simulate(o: SimOptions): SimResult {
             invites.push({ voucher: p.id, invitee: sid, day, quality: "bad", joined: true });
             emit({ type: "member_joined", t: T0 + (day + 1) * DAY, member: sid, age: 30, vouchedBy: p.id }, [p.id]);
             emit({ type: "member_activated", t: T0 + (day + 2) * DAY, member: sid }, [p.id]);
-            // staged "value": a member-started meetup with another ring member, mutually confirmed
+            // Half the sybils only say they got value (the agent's tip, no provider): the invitee's
+            // own say-so (capital-1). The other half get staged "value": a member-started meetup
+            // with another ring member, mutually confirmed.
             const other = ring.find(x => x.id !== p.id);
-            if (other) {
+            if (K.chance(0.5, "selfval", sid)) emit({ type: "value_received", t: T0 + (day + 4) * DAY, member: sid, with: [] }, [p.id]);
+            else if (other) {
               const planId = `sp${++planSeq}`, st = T0 + (day + 4) * DAY;
               for (const [a, b] of [[sid, other.id], [other.id, sid]] as const) {
                 emit({ type: "plan_accepted", t: T0 + (day + 3) * DAY, member: a, planId, kind: "intro", startsAt: st }, [p.id]);
                 emit({ type: "plan_confirmed", t: st - 12 * HOUR, member: a, planId }, [p.id]);
                 emit({ type: "plan_attended", t: st + HOUR, member: a, planId, counterparts: [b], verifiedBy: ["counterpart"], origin: "member", publicVenue: true }, [other.id]);
               }
-              emit({ type: "value_received", t: st + 2 * HOUR, member: sid, with: [other.id] }, [p.id]);
+              emit({ type: "value_received", t: st + 2 * HOUR, member: sid, with: [other.id], confirmedBy: [other.id] }, [p.id]);
             }
           }
         }
