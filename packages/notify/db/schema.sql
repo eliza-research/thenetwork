@@ -1,8 +1,8 @@
 -- Single inbox, deliveries, task tokens and surface signals (packages/notify).
--- Idempotent. When merging with obs/network-console, add this as the next numbered migration in
--- packages/observatory/db/migrations (after 0006_platform_safety.sql) and grant the platform
--- service role select/insert/update on these tables.
--- person_id is platform.person.id (text); no foreign key here so this file applies on its own.
+-- Applied by packages/observatory/db/migrate.ts as the repeatable 9002_notify_schema (idempotent),
+-- after the roles exist, so the deployed service login never needs CREATE rights.
+-- person_id is platform.people.id (uuid, kept as text); no foreign key so this file also applies on
+-- its own (packages/notify tests).
 
 create schema if not exists notify;
 
@@ -60,3 +60,15 @@ create table if not exists notify.surface_signals (
   ignored_streak integer not null default 0,
   primary key (person_id, surface)
 );
+
+-- Least privilege: only the service login reads or writes the inbox (it names people and what they were sent).
+revoke all on schema notify from public;
+revoke all on all tables in schema notify from public;
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'network_service') then
+    grant usage on schema notify to network_service;
+    grant select, insert, update, delete on all tables in schema notify to network_service;
+    grant usage, select on all sequences in schema notify to network_service;
+  end if;
+end $$;

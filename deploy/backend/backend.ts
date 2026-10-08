@@ -217,6 +217,8 @@ export interface ServiceLike {
   fetch(req: Request): Promise<Response>;
   publicFetch(req: Request, server?: { requestIP(req: Request): { address: string } | null }): Promise<Response>;
   runtimes: Map<string, { id: string; tick(): Promise<boolean> }>;
+  /** The single inbox's tick (packages/notify): outcome sweep, then due notifications. Optional. */
+  notifyTick?(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -313,7 +315,16 @@ export function createBackend(d: BackendDeps) {
     try { if (!(await track(rt.tick()))) log.info("tick skipped: another instance holds the lock", { network: rt.id }); }
     catch (e) { log.error("tick failed", { network: rt.id, error: (e as Error).message }); }
     finally { busy.delete(rt.id); }
-  }));
+  })).then(() => notifyTick());
+  // The inbox ticks once per round, after the networks (their sends are recorded by then). Replicas may overlap: a delivery id is recorded once
+  // (notify.deliveries primary key), so a second replica cancels instead of sending again.
+  const notifyTick = async () => {
+    if (draining || !svc.notifyTick || busy.has("notify")) return;
+    busy.add("notify");
+    try { await track(svc.notifyTick()); }
+    catch (e) { log.error("notify tick failed", { error: (e as Error).message }); }
+    finally { busy.delete("notify"); }
+  };
   const startTicks = () => { const first = tickAll(); timer = setInterval(tickAll, c.tickMs); return first; };
 
   /**

@@ -10,7 +10,7 @@ import { devShortcutsAllowed, ipBucket, type Env } from "@thenetwork/platform";
 import { verifyProxyHeaders } from "@thenetwork/platform/src/proxy.ts";
 import { readCappedText } from "@thenetwork/platform/src/body.ts";
 import { defaultApps, defaultHostMap, type McpApp, type McpAppId, type Surface } from "./apps.ts";
-import type { PlatformHooks, SignedIn } from "./hooks.ts";
+import type { AssistantKind, PlatformHooks, SignedIn } from "./hooks.ts";
 import { codePage, consentPage, consentsPage, messagePage, phonePage } from "./pages.ts";
 import { MemoryOAuthStore, type AuthCode, type ClientAuthMethod, type Grant, type OAuthClient, type OAuthStore, type Scope, SCOPES, type Token } from "./store.ts";
 import { callTool, checkArgs, INSTRUCTIONS, TOOL_NAMES, TOOL_SCOPE, type ToolName, toolDefs } from "./tools.ts";
@@ -127,6 +127,22 @@ export function redirectUriAllowed(raw: unknown): raw is string {
 
 const isOpenAiHost = (host: string) => OPENAI_REDIRECT_HOSTS.some(h => host === h || host.endsWith(`.${h}`));
 
+/** Redirect hosts per assistant, for the inbox's surface signals (packages/notify). Unknown clients are "web". */
+export const ASSISTANT_REDIRECT_HOSTS: Record<Exclude<AssistantKind, "web">, string[]> = {
+  chatgpt: OPENAI_REDIRECT_HOSTS,
+  claude: ["claude.ai", "claude.com", "anthropic.com"],
+  grok: ["grok.com", "x.ai"],
+};
+
+/** Which assistant an OAuth client is, from its redirect URIs. */
+export function assistantOf(client: Pick<OAuthClient, "redirectUris" | "surface">): AssistantKind {
+  if (client.surface === "openai") return "chatgpt";
+  const hosts = client.redirectUris.flatMap(u => { try { return [new URL(u).hostname]; } catch { return []; } });
+  for (const [kind, list] of Object.entries(ASSISTANT_REDIRECT_HOSTS) as [Exclude<AssistantKind, "web">, string[]][])
+    if (hosts.some(h => list.some(d => h === d || h.endsWith(`.${d}`)))) return kind;
+  return "web";
+}
+
 export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   const env = o.env ?? process.env;
   const apps = o.apps ?? defaultApps();
@@ -135,6 +151,18 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   const ttl = { ...TTL, ...o.ttl };
   const lim = { ...LIMITS, ...o.limits };
   const log = o.log ?? (s => console.log(s));
+  /** Tell the inbox an assistant was connected or disconnected for the grant's person (never blocks OAuth). */
+  async function linked(grant: Grant | undefined, active: boolean) {
+    if (!grant?.personId || !o.platform.assistantLinked) return;
+    const client = await store.getClient(grant.clientId);
+    await o.platform.assistantLinked(grant.personId, client ? assistantOf(client) : "web", active).catch(e => log(`[mcp] assistant ${active ? "link" : "unlink"} not recorded: ${(e as Error).message}`));
+  }
+  /** Every revocation goes through here, so the inbox always hears about it. */
+  async function revokeGrant(id: string, at: number) {
+    const ok = await store.revokeGrant(id, at);
+    if (ok) await linked(await store.getGrant(id), false);
+    return ok;
+  }
   const hostMap = o.hostMap ?? defaultHostMap(apps);
   const dev = devShortcutsAllowed(env);
   if (o.trustForwardedHost && !dev) throw new Error("trustForwardedHost is for the dev site proxy only (PLATFORM_ENV=dev)");
@@ -401,6 +429,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const at = now();
     const grant: Grant = { id: `grant_${randomId()}`, clientId: client.id, app: c.app.id, phoneKey: o.platform.phoneKey(r.e164), personId: r.personId, scopes: r.scopes, resource: r.resource, createdAt: at, expiresAt: at + ttl.grantMs, revokedAt: null };
     await store.putGrant(grant);
+    await linked(grant, true);
     const code = randomToken("ntwc_");
     const ac: AuthCode = { hash: sha256hex(code), grantId: grant.id, clientId: client.id, redirectUri: r.redirectUri, codeChallenge: r.codeChallenge, resource: r.resource, scopes: r.scopes, createdAt: at, expiresAt: at + ttl.codeMs, usedAt: null };
     await store.putCode(ac);
@@ -438,7 +467,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       if (!ac || ac.clientId !== client.id) return bad("invalid_grant");
       if (ac.usedAt !== null) {
         // OAuth 2.1 4.1.3: a second use of a code revokes what the first use issued.
-        await store.revokeGrant(ac.grantId, at);
+        await revokeGrant(ac.grantId, at);
         await store.audit({ at, kind: "code_replay", clientId: client.id, grantId: ac.grantId, app: c.app.id, detail: "grant revoked" });
         return bad("invalid_grant");
       }
@@ -467,7 +496,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       if (res && canonicalResource(res, c.issuer) !== t.resource) return bad("invalid_target");
       if (t.rotatedAt !== null || !(await store.rotateRefresh(t.hash, at))) {
         // A refresh token used twice: someone else has a copy. End the whole grant.
-        await store.revokeGrant(t.grantId, at);
+        await revokeGrant(t.grantId, at);
         await store.audit({ at, kind: "refresh_replay", clientId: client.id, grantId: t.grantId, app: c.app.id, detail: "grant revoked" });
         return bad("invalid_grant");
       }
@@ -490,7 +519,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     // RFC 7009 2.2: the same 200 for an unknown token.
     if (t && t.clientId === client.id) {
       const at = now();
-      if (t.kind === "refresh") await store.revokeGrant(t.grantId, at);
+      if (t.kind === "refresh") await revokeGrant(t.grantId, at);
       else await store.revokeToken(t.hash, at);
       await store.audit({ at, kind: "token_revoked", clientId: client.id, grantId: t.grantId, app: c.app.id, detail: t.kind === "refresh" ? "refresh: grant revoked" : "access" });
     }
@@ -509,7 +538,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       if (!originOk(c) || (c.req.headers.get("origin") === null && c.req.headers.get("sec-fetch-site") !== "same-origin")) return messagePage(c.app, "Not allowed", "This form must be sent from this site.", 403);
       const form = await readForm(c.req);
       const g = form?.get("grant") ? await store.getGrant(form.get("grant")!) : undefined;
-      if (g && g.phoneKey === o.platform.phoneKey(who.e164) && g.app === c.app.id && (await store.revokeGrant(g.id, now()))) {
+      if (g && g.phoneKey === o.platform.phoneKey(who.e164) && g.app === c.app.id && (await revokeGrant(g.id, now()))) {
         await store.audit({ at: now(), kind: "consent_revoked", clientId: g.clientId, grantId: g.id, app: c.app.id, detail: "by the person" });
         notice = "Access removed.";
       }
@@ -655,10 +684,10 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
           // Only a well-formed profile counts (a refused one never reaches the app).
           if (tool === "submit_profile" && checkArgs(tool, params.arguments, [], host).ok && (await limited(`profile:grant:${auth.grant.id}`, PROFILES_PER_GRANT_DAY, 86_400_000))) return out(429, rpcError(id, -31029, "Too many profiles today"), { "retry-after": "3600" });
         }
-        const r = await callTool(tool, params.arguments, { apps, surface, host, hooks: o.platform, grant: auth?.grant ?? null });
+        const r = await callTool(tool, params.arguments, { apps, surface, host, hooks: o.platform, grant: auth?.grant ?? null, assistant: auth ? assistantOf(auth.client) : undefined });
         log(`[mcp] ${host.id} ${surface} ${tool} ${r.kind}${auth ? ` grant=${auth.grant.id}` : ""}`);
         if (r.kind === "invalid_grant") {
-          if (auth) await store.revokeGrant(auth.grant.id, now());
+          if (auth) await revokeGrant(auth.grant.id, now());
           return out(401, rpcError(id, -31401, "The access token is not valid here"), { "www-authenticate": challenge(resource, { error: "invalid_token" }) });
         }
         if (r.kind === "error") return result({ content: [{ type: "text", text: r.message }], isError: true });
@@ -731,7 +760,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       let n = 0;
       for (const id of app ? [app] : (Object.keys(apps) as McpAppId[])) {
         for (const g of await store.grantsFor(key, id, at)) {
-          if (await store.revokeGrant(g.id, at)) {
+          if (await revokeGrant(g.id, at)) {
             n++;
             await store.audit({ at, kind: "consent_revoked", clientId: g.clientId, grantId: g.id, app: id, detail: "account change" });
           }

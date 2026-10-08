@@ -21,21 +21,35 @@ The single inbox and the notification scheduler from `docs/research/2026-10-08-e
 
 ## Where it is wired
 
-| Target | How | Test |
-|---|---|---|
-| `prototypes/messaging-blooio` OutboundQueue | `queueSink(queue, providerFor)` as the sink. `recipientPolicy: queuePolicy(notifier, existingPolicy)` suppresses a queued message whose items were seen elsewhere (`seen_elsewhere`) | `test/wiring.test.ts` |
-| `prototypes/connector-mcp` `get_network_updates` | `new FakeNetwork(clock, { inbox: connectorInbox(notifier, now) })`. The new optional `update_token` input limits the result to that text's items. Items shown are marked seen. Foreign or unknown codes return an empty list | `prototypes/connector-mcp/tests/notify-bridge.test.ts` |
-| `packages/plugin-network` | `NetworkStore.readUpdates = threadHooks(notifier, now).readUpdates` registers the `GET_UPDATES` action ("updates", "what's new") | `packages/plugin-network/test/get-updates.test.ts` |
-| Postgres | `db/schema.sql` (schema `notify`). Same contract as the memory store | `test/store-contract.test.ts` (runs on the dev cluster at :54339, skipped without Postgres) |
+**Production:**
+- **Service.** `packages/network/service/service.ts` builds `NetworkService.notify` with `PgNotifyStore` on the service database by default. `notify: false` turns it off.
+  - **`delivered` hook.** After the adapter takes them (`runtime.ts` `RuntimeHost.delivered`), every member-facing Network send (probe, plan_probe, proposal, reminder, feedback_request, cancellation, scheduling) is recorded with `recordSent`. It is stored as already delivered, so nothing texts it again.
+  - **Thread.** Every member text from the thread calls `threadReply`. An assistant's `submit_profile` does not, and neither does STOP.
+  - **`notifyTick`.** Runs the outcome sweep, then `dispatch`. The inbox's own sends go out as a unit of work on the member's network (`runtime.system(..., type "notify")`), so the platform consent ledger, the member's opt-out and the person cap apply, as for every other send.
+- **MCP.** `packages/mcp` has the tool `get_updates` (scope `membership:read`, the grant's own app only, optional `update_token`). Its hooks `updates` and `assistantLinked` are wired in `serve.ts`. The assistant is identified by the client's redirect hosts (`assistantOf`). Consent marks the assistant active, and every revocation path marks it inactive.
+- **Ticks.** `deploy/backend/backend.ts` runs `svc.notifyTick()` once per round, after the networks. The standalone `serve.ts` does the same. Replicas may overlap safely: a delivery id is recorded once.
+- **Migrations.** `packages/observatory/db/migrate.ts` applies `db/schema.sql` as the repeatable `9002_notify_schema`, with grants to `network_service`.
 
-## Left for the platform owner
+**Prototypes and the plugin:**
+- **Outbound queue** (`prototypes/messaging-blooio`). Use `queueSink(queue, providerFor)` and `recipientPolicy: queuePolicy(notifier, existing)`.
+- **Connector prototype** (`prototypes/connector-mcp`). Pass `inbox: connectorInbox(notifier, now)`.
+- **`packages/plugin-network`.** Set `NetworkStore.readUpdates = threadHooks(notifier, now).readUpdates` to register `GET_UPDATES`.
 
-1. **Migration.** Add `db/schema.sql` as the next migration after `0006_platform_safety.sql` on `obs/network-console`, and grant the platform service role.
-2. **Text gateway.** On every inbound member message, call `threadHooks(...).inbound(personId, channel)`.
-3. **Cron.** Run `notifier.dispatch(now, sink)` and `notifier.sweep(now)` every minute or so.
-4. **Grants.** On OAuth grant issue and revoke, call `notifier.setActive(person, "chatgpt" | "claude" | "grok", true/false)`.
-5. **Producers.** The engine, plans and reminders call `notifier.add(...)` with a member-safe `summary` that has already been through the leak guard.
-6. **Button page.** `ntwrk.love/t/<token>` renders `buttonPageButtons`. It needs no login and shows nothing personal.
+**Tests:**
+
+| Test | What it covers |
+|---|---|
+| `test/*.ts` | Unit tests, plus the store contract run against both memory and Postgres |
+| `packages/mcp/test/updates.test.ts` | `get_updates` and the assistant signals |
+| `tests/e2e/notify.e2e.test.ts` | The whole stack |
+| `prototypes/connector-mcp/tests/notify-bridge.test.ts` | The connector prototype bridge |
+| `packages/plugin-network/test/get-updates.test.ts` | The plugin's `GET_UPDATES` |
+
+## Not yet
+
+- **Producers that don't already text.** Today every update is texted by the Network itself and only recorded here. Moving a member to "updates by link in my assistant" means having the engine add the item to the inbox instead of texting it, then letting `dispatch` choose the surface.
+- **Member settings.** There is no setting for a preferred surface yet ("send my updates to Claude"). `Recipient.prefs.explicit` is ready for one.
+- **Button page.** The `ntwrk.love/t/<token>` page is not built yet.
 
 ## Device test
 

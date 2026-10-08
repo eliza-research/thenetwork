@@ -39,7 +39,7 @@ export interface OutboundSink {
   enqueue(input: {
     idempotencyKey: string; channel: Channel; to: string; text: string;
     kind: "proactive" | "transactional"; timeZone: string; briefId: string;
-  }): unknown;
+  }): unknown | Promise<unknown>;
 }
 
 export interface SchedulerConfig {
@@ -95,6 +95,19 @@ export class Notifier {
   add(input: InboxItemInput, now: number) {
     if (!input.summary.trim()) throw new Error("inbox item needs a summary");
     return this.store.addItem(input, now);
+  }
+
+  /**
+   * A message another sender already delivered (the Network's own consent-checked send path): the
+   * item goes in the inbox already notified, so assistants can show it and the scheduler never
+   * texts it again. `deliveryId` must not start with "ntf_" (those are the scheduler's own).
+   */
+  async recordSent(input: InboxItemInput, d: { deliveryId: string; channel: Channel; countsTowardCap: boolean; sentAt: number }) {
+    if (d.deliveryId.startsWith("ntf_")) throw new Error("ntf_ delivery ids belong to the scheduler");
+    const r = await this.add(input, d.sentAt);
+    if (r.item.notifiedAt === undefined)
+      await this.store.recordDelivery({ deliveryId: d.deliveryId, personId: input.personId, itemIds: [r.item.id], target: d.channel, countsTowardCap: d.countsTowardCap, sentAt: d.sentAt });
+    return r;
   }
 
   private dueAt(i: InboxItem): number {
@@ -175,7 +188,7 @@ export class Notifier {
         countsTowardCap: final.countsTowardCap, sentAt: now,
       });
       if (!recorded) { cancelled.push(final.deliveryId); continue; }
-      sink.enqueue({
+      await sink.enqueue({
         idempotencyKey: final.deliveryId,
         channel: final.channel,
         to: final.to,
@@ -216,11 +229,12 @@ export class Notifier {
   /**
    * An assistant called get_network_updates, or the member typed "updates" in the thread.
    * `callerPersonId` comes from the OAuth grant or the channel binding. With a token, only its
-   * items; without, every unseen item. Everything returned is marked seen.
+   * items; without, every unseen item; with `app`, only that app's. Everything returned is marked seen.
    */
-  async readUpdates(callerPersonId: string, surface: Surface, now: number, token?: string): Promise<InboxItem[]> {
+  async readUpdates(callerPersonId: string, surface: Surface, now: number, token?: string, opts: { app?: string } = {}): Promise<InboxItem[]> {
     await this.store.touch(callerPersonId, surface, now);
-    let items = await this.store.unseen(callerPersonId, now);
+    // A surface bound to one app (an MCP grant) never sees another app's items: cross-app privacy.
+    let items = (await this.store.unseen(callerPersonId, now)).filter(i => opts.app === undefined || i.app === opts.app);
     if (token) {
       const own = await this.redeem(token, callerPersonId, surface, now);
       if (!own) return [];
