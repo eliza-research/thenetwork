@@ -21,7 +21,7 @@ export * from "./pack.ts";
 export { cityBucketGeo } from "./geo.ts";
 export { networkPack, NETWORK_PACK_VERSION } from "./packs/network/index.ts";
 // slopPack (docs/results/2026-10-08-slop-pack.md): slop.date on the shared engine.
-export { slopPack, makeSlopPack, SLOP_PACK_VERSION, SLOP_ENGINE_CONFIG, SLOP_ENGINE_DEFAULTS, slopOptions, SLOP_DEFAULT_OPTIONS, planFirstDate, planFromInput, slopProfiles, distanceBand, type SlopPackOptions, type DatePlan, type SlopProfile } from "./packs/slop/index.ts";
+export { slopPack, makeSlopPack, SLOP_PACK_VERSION, SLOP_ENGINE_CONFIG, SLOP_ENGINE_DEFAULTS, slopOptions, SLOP_DEFAULT_OPTIONS, planFirstDate, planFromInput, slopProfiles, distanceBand, canRatePhotos, adultsOnly, rateMember, appearanceFacet, ClipAppearanceRater, VisionLlmAppearanceRater, type AppearanceRater, type AppearanceScore, type RatingSubject, type SlopPackOptions, type DatePlan, type SlopProfile } from "./packs/slop/index.ts";
 // friendsPack (docs/results/2026-10-08-friends-pack.md): friends.help on the shared engine.
 export { friendsPack, friendsGeo, FRIENDS_PACK_VERSION, FRIENDS_PLANS, DEFAULT_FRIENDS_POLICY, planFriendsWeek, nextSameSlot, friendsProbeText, ROMANCE_FRAMING, attendedGroup, type FriendsPolicy, type FriendsPlan, type FriendsWeek, type FriendsWeekInput } from "./packs/friends/index.ts";
 export * as friendsKit from "./packs/friends/index.ts";

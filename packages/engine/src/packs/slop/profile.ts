@@ -21,6 +21,7 @@ import type { City, Facet, MemberId } from "@thenetwork/core";
 import { canBeMatched, DAY } from "@thenetwork/core";
 import type { EngineInput } from "../../types.ts";
 import { cellOfZip, MARKET_ANCHOR_ZIP, type Cell } from "./zips.ts";
+import { APPEARANCE_PREFIX, canRatePhotos, parseAppearance } from "./appearance.ts";
 
 export type Gender = "woman" | "man" | "nonbinary";
 export type Goal = "casual" | "long_term" | "unsure";
@@ -68,6 +69,10 @@ export interface SlopProfile {
   safety: string[];
   /** Verification results: verify:<check>:<pass|fail> tags. */
   verification: string[];
+  /** Age verification: true = passed, false = failed, undefined = no check recorded. */
+  ageVerified?: boolean;
+  /** Appearance rating (iteration 3), read only for adults whose age is not known to be unverified. */
+  appearance?: { face: number; body: number; overall: number; confidence: number };
   /**
    * Hard-filter questions asked at least `silentAfterDays` ago and never answered (age_range,
    * distance, orientation): the pack proposes on a narrow fallback instead of locking them out.
@@ -170,6 +175,10 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
       identity: one("slop:identity:"), orientation: one("slop:orientation:"),
       safety: [...new Set(tags.filter(x => x.t.startsWith("safety:")).map(x => x.t))].sort(),
       verification: [...new Set(tags.filter(x => x.t.startsWith("verify:")).map(x => x.t))].sort(),
+      ageVerified: tags.some(x => x.t === "verify:age:pass") ? true : tags.some(x => x.t === "verify:age:fail") ? false : undefined,
+      // Adults only: a rating on anyone else is ignored, whatever the snapshot says.
+      appearance: canRatePhotos({ age: m.age, ageVerified: tags.some(x => x.t === "verify:age:fail") ? false : undefined })
+        ? parseAppearance(fs.filter(f => f.tags.some(t => t.startsWith(APPEARANCE_PREFIX))).flatMap(f => f.tags)) : undefined,
       visiting, interestFacet, silentAsks: silent.get(m.id) ?? [], openAsks: open.get(m.id) ?? [], askCounts: counts.get(m.id) ?? {},
       review: tags.some(x => x.t === "review:confirmed") ? "confirmed" : tags.some(x => x.t === "review:cleared") ? "cleared" : undefined,
       history: hist.get(m.id) ?? emptyHistory(),

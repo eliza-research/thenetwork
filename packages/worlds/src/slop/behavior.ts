@@ -12,7 +12,7 @@ export interface ProbeAnswer {
   picks: number[]; latencyMin: number;
 }
 export interface Feedback { replied: boolean; sentiment: "positive" | "neutral" | "negative"; wouldMeetAgain: boolean; rating: number }
-export interface HarmEvent { kind: HarmKind; victim: MemberId; offender: MemberId; reported: boolean }
+export interface HarmEvent { kind: HarmKind; victim: MemberId; offender: MemberId; reported: boolean; /** Reported through the post-date check-in (iteration 3). */ via?: "checkin" }
 
 /** P(member asks the agent for a date in a given week) = appetite x ASK_RATE (ask priming). */
 export const ASK_RATE = 0.35;
@@ -75,6 +75,11 @@ export class SlopBehavior {
   /** False positive of the relay classifier on an honest member's messages in one revealed flow. */
   relayFalsePositive(id: MemberId, flowKey: string, rate: number): boolean {
     return this.r("relay-fp", flowKey, id).bool(rate);
+  }
+  /** The victim answers the post-date check-in (p = reply probability) and reports the harm (p). */
+  checkinReports(victim: MemberId, flowKey: string, kind: string, p: number): boolean {
+    const r = this.r("checkin", flowKey, victim, kind);
+    return r.bool(this.oracle.p(victim).hidden.replyProb) && r.bool(p);
   }
   /** A member asked "would you consider people up to 25 mi?" agrees (when they answer). */
   agreesToWiden(id: MemberId, week: number, p: number): boolean {

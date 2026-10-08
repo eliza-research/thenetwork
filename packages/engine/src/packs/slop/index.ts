@@ -26,7 +26,7 @@ import { missingFields, needsBasics, reviewReason, SLOP_CANDIDATE_PRE_RULES, SLO
 import { aggregate } from "./score.ts";
 import { distanceBand } from "./zips.ts";
 
-export const SLOP_PACK_VERSION = "slop-pack-1.1.0";
+export const SLOP_PACK_VERSION = "slop-pack-1.2.0";
 
 /**
  * Engine config for slop.date runs (pass as runEngine's config; the pack travels in deps.pack).
@@ -211,4 +211,5 @@ export { planFirstDate, planFromInput, PUBLIC_VENUE, type DatePlan } from "./pla
 export { distanceBand, cellOfZip, ZIPS as SLOP_ZIPS, type DistanceBand } from "./zips.ts";
 export { ageBand, SLOP_ASK_QUESTIONS } from "./copy.ts";
 export { mutualMarkets } from "./geo.ts";
+export { adultsOnly, appearanceFacet, canRatePhotos, ClipAppearanceRater, parseAppearance, rateMember, VisionLlmAppearanceRater, VISION_RATER_SYSTEM, type AppearanceRater, type AppearanceScore, type PhotoRef, type RatingSubject, type VisionChat } from "./appearance.ts";
 export { pairValue, firstOf, SLOP_GENERATOR } from "./generators.ts";

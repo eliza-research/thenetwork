@@ -244,7 +244,7 @@ function resolveWeek(rc: RunCtx, week: number, out: MatcherOutput, askedNow: Set
     } else f.harms.push(...revealHarms);
     const outA = behavior.backsOut(a.id, b.id, key, oracle.statedAccepts(a, b, week), photos?.noiseSd);
     const outB = behavior.backsOut(b.id, a.id, key, oracle.statedAccepts(b, a, week), photos?.noiseSd);
-    if (outA || outB) { f.stage = "backout"; done("cancelled", { acceptedBy: [a.id, b.id], declinedBy: [...(outA ? [a.id] : []), ...(outB ? [b.id] : [])] }); applyHarms(world, f.harms); return; }
+    if (outA || outB) { f.stage = "backout"; done("cancelled", { acceptedBy: [a.id, b.id], declinedBy: [...(outA ? [a.id] : []), ...(outB ? [b.id] : [])] }); applyHarms(world, f.harms, key); return; }
     booked.add(a.id); booked.add(b.id);
     // 4. the date
     const freeA = !!a.hidden.adversary || oracle.free(a.id, week, slot), freeB = !!b.hidden.adversary || oracle.free(b.id, week, slot);
@@ -252,7 +252,7 @@ function resolveWeek(rc: RunCtx, week: number, out: MatcherOutput, askedNow: Set
     const showA = behavior.attends(a.id, key, freeA), showB = behavior.attends(b.id, key, freeB);
     const at = slotTime(week, slot);
     if (!showA || !showB) {
-      f.stage = "no_show"; done("no_show", { acceptedBy: [a.id, b.id], at }); applyHarms(world, f.harms); return;
+      f.stage = "no_show"; done("no_show", { acceptedBy: [a.id, b.id], at }); applyHarms(world, f.harms, key); return;
     }
     f.stage = "date";
     const o2 = oracle.dateOutcome(a.id, b.id, pr.activity);
@@ -267,17 +267,21 @@ function resolveWeek(rc: RunCtx, week: number, out: MatcherOutput, askedNow: Set
     }
     f.secondDate = behavior.secondDate(key, o2);
     if (f.secondDate) for (const id of [a.id, b.id]) if (behavior.pausesAfterSecond(id, key)) state.paused.add(id);
-    applyHarms(world, f.harms);
+    applyHarms(world, f.harms, key);
   });
 }
 
 /** Reported harms: the offender goes on a safety hold, the victim blocks them (both visible). */
-function applyHarms(w: SlopWorld, harms: HarmEvent[]) {
+function applyHarms(w: SlopWorld, harms: HarmEvent[], flowKey: string) {
+  // Iteration 3: the post-date / post-reveal check-in ("how did it go? anything we should know?").
+  // A victim who answers it reports an unreported harm with p = checkin[kind].
+  const ci = w.state.platform?.checkin;
+  if (ci) for (const h of harms) if (!h.reported && w.behavior.checkinReports(h.victim, flowKey, h.kind, ci[h.kind] ?? 0)) { h.reported = true; h.via = "checkin"; }
   for (const h of harms) {
     if (!h.reported) continue;
     // A reported minor contact ("they seemed underage") holds the minor, not the reporter.
     const held = h.kind === "minor_contact" ? h.victim : h.offender;
-    if (!w.state.safetyHolds.some(x => x.memberId === held)) w.state.safetyHolds.push({ memberId: held, from: w.state.now, reason: `reported: ${h.kind}` });
+    if (!w.state.safetyHolds.some(x => x.memberId === held && (x.to === undefined || x.to > w.state.now))) w.state.safetyHolds.push({ memberId: held, from: w.state.now, reason: `reported: ${h.kind}` });
     if (h.kind !== "minor_contact") w.state.edges.push({ from: h.victim, to: h.offender, type: "blocked", strength: 1, explicit: true, createdAt: w.state.now });
   }
 }

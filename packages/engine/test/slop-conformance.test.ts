@@ -245,3 +245,81 @@ describe("slopPack: stable roommates assignment", () => {
     expect(r2.selected.map(s => s.s.c.participants.join())).toEqual(["p,q", "r,s"]);
   });
 });
+
+// ---- Iteration 3 hard rule: photos and appearance ratings are for verified adults only -------------
+import { adultsOnly, appearanceFacet, canRatePhotos, ClipAppearanceRater, rateMember, VisionLlmAppearanceRater, type AppearanceRater } from "../src/packs/slop/appearance.ts";
+import { buildSlopSnapshot as buildSnap } from "../../worlds/src/slop/snapshot.ts";
+import { generateSlopPersonas as genPersonas } from "../../worlds/src/slop/persona.ts";
+import { createSlopWorld } from "../../worlds/src/slop/world.ts";
+import { emptySlopState } from "./slopkit.ts";
+
+describe("conformance: photo processing and appearance ratings are adults-only (verified 18+)", () => {
+  const notAdults = [{ age: 13 }, { age: 16 }, { age: 17 }, { age: NaN }, { age: undefined as unknown as number }, { age: 25, ageVerified: false }];
+  const spyRater = () => {
+    let calls = 0;
+    const clip = new ClipAppearanceRater({ embedImage: async () => { calls++; return [1, 0, 0, 1]; }, embedText: async t => (/unattractive/.test(t) ? [0, 1, 1, 0] : [1, 0, 0, 1]) });
+    const vlm = new VisionLlmAppearanceRater({ chat: async () => { calls++; return JSON.stringify({ face: 1, body: 0.5, overall: 0.8, confidence: 0.9 }); } });
+    return { clip, vlm, calls: () => calls };
+  };
+  const photo = [{ id: "p1", url: "https://example.invalid/p1.jpg" }];
+
+  test("every rater refuses a minor, an unknown age or an unverified age before touching a photo", async () => {
+    const s = spyRater();
+    for (const subj of notAdults) {
+      expect(canRatePhotos(subj)).toBe(false);
+      expect(await s.clip.rate(subj, photo)).toBeNull();
+      expect(await s.vlm.rate(subj, photo)).toBeNull();
+    }
+    expect(s.calls()).toBe(0);
+    expect(await s.clip.rate({ age: 30 }, photo)).not.toBeNull();
+    expect(await s.vlm.rate({ age: 30, ageVerified: true }, photo)).not.toBeNull();
+    expect(s.calls()).toBe(2);
+  });
+
+  test("the adultsOnly guard (and rateMember) protects a third-party rater that forgot the check", async () => {
+    let calls = 0;
+    const naive: AppearanceRater = { id: "naive", rate: async () => { calls++; return { face: 0, body: 0, overall: 0, confidence: 1, model: "naive" }; } };
+    for (const subj of notAdults) { expect(await adultsOnly(naive).rate(subj, photo)).toBeNull(); expect(await rateMember(naive, subj, photo)).toBeNull(); }
+    expect(calls).toBe(0);
+  });
+
+  test("a rating facet cannot be built for a non-adult, and the pack ignores one on a minor or a failed age check", () => {
+    for (const subj of notAdults) expect(() => appearanceFacet("m", subj, { face: 1, body: 1, overall: 1, confidence: 1, model: "x" }, 0)).toThrow();
+    const input = slopWorld(1, { perCity: 40, extras: false });
+    const minor = input.members.find(m => !canBeMatched(m.age))!, adult = input.members.find(m => canBeMatched(m.age))!;
+    const tags = ["appearance:face=1.00", "appearance:body=1.00", "appearance:overall=1.00", "appearance:conf=0.90"];
+    const forged = (id: string): Facet => ({ id: `${id}:forged`, memberId: id, kind: "fact", value: "photo rating (internal)", tags, scope: "agent_private", provenance: "inferred", confidence: 0.9 });
+    const P = slopProfiles({ ...input, facets: [...input.facets, forged(minor.id), forged(adult.id), { ...forged(adult.id), id: "v", tags: ["verify:age:fail"] }] });
+    expect(P.get(minor.id)!.appearance).toBeUndefined();
+    expect(P.get(adult.id)!.appearance).toBeUndefined(); // failed age check: ignored
+  });
+
+  test("the slop world never rates or shows a photo of anyone under 18 (claimed age)", () => {
+    const ps = genPersonas({ seed: 2, perCity: 120, minorShare: 0.15 });
+    const snap = buildSnap(ps, { ...emptySlopState(), platform: { rater: { noise: 0.5, bias: 0, biasShare: 0.3 } } });
+    const rated = new Set(snap.facets.filter(f => f.tags.some(t => t.startsWith("appearance:"))).map(f => f.memberId));
+    for (const p of ps) expect(rated.has(p.id)).toBe(canBeMatched(p.stated.claimedAge));
+    const w = createSlopWorld({ seed: 2, perCity: 120, minorShare: 0.15 });
+    const minorP = w.personas.find(p => !canBeMatched(p.stated.claimedAge))!, adultP = w.personas.find(p => canBeMatched(p.stated.claimedAge))!;
+    const ctx = { week: 0, city: adultP.hidden.homeCity, activity: "coffee" as const };
+    expect(w.oracle.probeYesProb(adultP.id, { ...ctx, photo: { of: minorP.id, noiseSd: 0.5 } })).toBe(w.oracle.probeYesProb(adultP.id, ctx));
+  });
+
+  test("ratings never appear in run logs, proposals, asks or member-facing text; the band filter holds", async () => {
+    const ps = genPersonas({ seed: 3, perCity: 60, minorShare: 0.15 });
+    const snap = buildSnap(ps, { ...emptySlopState(), platform: { rater: { noise: 0.3, bias: 0, biasShare: 0.3 } } });
+    const input: EngineInput = { ...snap };
+    const pack = makeSlopPack({ appearance: { mode: "band", band: 0.75 } });
+    const r = await runEngine(input, cfg(3), { pack });
+    expect(r.proposals.length).toBeGreaterThan(0);
+    const out = JSON.stringify({ p: r.proposals, a: r.asks, l: { ...r.runLog, timingsMs: undefined } });
+    const scores = snap.facets.filter(f => f.tags.some(t => t.startsWith("appearance:"))).flatMap(f => f.tags);
+    for (const t of scores) expect(out.includes(t)).toBe(false);
+    expect(/appearance|attractive|photo rating/i.test(JSON.stringify(r.proposals.map(p => p.explanations)))).toBe(false);
+    const P = slopProfiles(input);
+    for (const p of r.proposals) {
+      const [a, b] = p.participants.map(id => P.get(id)!.appearance);
+      if (a && b) expect(Math.abs(a.overall - b.overall)).toBeLessThanOrEqual(0.75);
+    }
+  });
+});
