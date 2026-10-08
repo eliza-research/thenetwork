@@ -133,8 +133,9 @@ export function dateActivity(a: SlopProfile, b: SlopProfile): string {
 }
 
 /** a's estimated enjoyment of a first date with b (0..1]: the directional value. */
-export function directional(a: SlopProfile, b: SlopProfile, o: SlopPackOptions, activity = dateActivity(a, b)): number {
+export function directional(a: SlopProfile, b: SlopProfile, o: SlopPackOptions, activity = dateActivity(a, b), attraction = 0): number {
   let v = compatEstimate(a, b, o);
+  if (attraction) v *= Math.exp(attraction);
   if (a.activities.length && !a.activities.includes(activity)) v *= o.compat.activityMiss;
   v *= Math.exp(o.compat.typeWeight * typeMatch(a, b));
   v *= learnedFactor(a, b, o);

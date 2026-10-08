@@ -10,7 +10,7 @@ import { slopEngineMatcher } from "./enginePack.ts";
 import { slopMetrics, type SlopMetrics } from "./metrics.ts";
 import { isSafe } from "./oracle.ts";
 import { groupOf } from "./persona.ts";
-import { VERIFICATION_DEFAULTS, type VerificationModel } from "./snapshot.ts";
+import { RELAY_DEFAULTS, REVIEW_DEFAULTS, VERIFICATION_DEFAULTS, WIDEN_DEFAULTS, type PlatformModel, type VerificationModel } from "./snapshot.ts";
 import { runSlopWorld, runSlopWorldAsync, type SlopRunResult } from "./world.ts";
 
 export interface ArmResult { arm: string; seeds: number[]; metrics: SlopMetrics[]; extra: Extra[] }
@@ -24,6 +24,10 @@ export interface Extra {
   feasibleGroups: Record<string, { dates: number; memberMonths: number }>;
   overall: { dates: number; memberMonths: number };
   asksSent: number; asksAnswered: number;
+  /** Adversary contacts (per side) and harm events by kind. */
+  contactsByKind: Record<string, number>; harmsByKind: Record<string, number>;
+  /** Iteration 2: members who widened their radius when asked; relay classifier stats. */
+  widened: number; relay?: NonNullable<SlopRunResult["relay"]>;
   /**
    * Low-variance companions of the realized rates (for tuning; the gates use the realized ones):
    * mean oracle soft label over the dates that happened (pSecond, 32 chemistry draws; 0 with an
@@ -57,6 +61,11 @@ export function extraOf(res: SlopRunResult, m: SlopMetrics): Extra {
     const g = (feasibleGroups[groupOf(p)] ??= { dates: 0, memberMonths: 0 });
     g.dates += datesOf.get(p.id) ?? 0; g.memberMonths += months;
   }
+  const contactsByKind: Record<string, number> = {}, harmsByKind: Record<string, number> = {};
+  for (const f of res.flows) {
+    if (f.revealed) for (const id of [f.first, f.partner]) { const k = O.p(id).hidden.adversary; if (k) contactsByKind[k] = (contactsByKind[k] ?? 0) + 1; }
+    for (const h of f.harms) harmsByKind[h.kind] = (harmsByKind[h.kind] ?? 0) + 1;
+  }
   let soft = 0, nd = 0;
   for (const f of res.flows) if (f.stage === "date") { nd++; soft += res.world.oracle.softLabel(f.first, f.partner, f.activity, 32).pSecond; }
   return {
@@ -64,15 +73,36 @@ export function extraOf(res: SlopRunResult, m: SlopMetrics): Extra {
     scammerMedianReach: rs.length ? rs[Math.floor((rs.length - 1) / 2)]! : 0,
     groups, feasibleGroups, overall: { dates: m.datesPerMemberMonth * m.members * months, memberMonths: m.members * months },
     asksSent: res.asks?.sent ?? 0, asksAnswered: res.asks?.answered ?? 0,
+    contactsByKind, harmsByKind,
+    widened: res.asks?.widened ?? 0, ...(res.relay ? { relay: res.relay } : {}),
   };
 }
 
-export async function runArm(arm: string, seeds: number[], weeks: number, perCity: number, options?: object, verification?: VerificationModel): Promise<ArmResult> {
+/** A world spec for an arm: verification and the iteration-2 platform features (snapshot.ts PlatformModel). */
+export interface WorldSpec { verification?: boolean; photos?: number; relay?: boolean | Partial<NonNullable<PlatformModel["relay"]>>; review?: number; widen?: boolean }
+export function worldOptions(w: WorldSpec = {}): { verification?: VerificationModel; platform?: PlatformModel } {
+  const platform: PlatformModel = {};
+  if (w.photos !== undefined) platform.photos = { noiseSd: w.photos };
+  if (w.relay) platform.relay = { ...RELAY_DEFAULTS, ...(typeof w.relay === "object" ? w.relay : {}) };
+  if (w.review !== undefined) platform.review = { ...REVIEW_DEFAULTS, days: w.review };
+  if (w.widen) platform.widen = { ...WIDEN_DEFAULTS };
+  return { ...(w.verification ? { verification: VERIFICATION_DEFAULTS } : {}), ...(Object.keys(platform).length ? { platform } : {}) };
+}
+
+/**
+ * Run one arm over seeds. A baseline name runs that baseline; anything else runs slopPack with
+ * `options`. In `options`, "$world" sets the arm's world (WorldSpec) and "$baseline" runs a baseline
+ * in that world instead of the pack.
+ */
+export async function runArm(arm: string, seeds: number[], weeks: number, perCity: number, options?: Record<string, unknown>, world: WorldSpec = {}): Promise<ArmResult> {
   const out: ArmResult = { arm, seeds, metrics: [], extra: [] };
+  const { $world, $baseline, ...packOpts } = (options ?? {}) as { $world?: WorldSpec; $baseline?: string };
+  const wo = worldOptions({ ...world, ...($world ?? {}) });
+  const base = $baseline ?? (arm in BASELINES && !options ? arm : undefined);
   for (const seed of seeds) {
-    const res = arm in BASELINES && !options
-      ? runSlopWorld({ seed, perCity, weeks, matcher: BASELINES[arm as keyof typeof BASELINES] as never, ...(verification ? { verification } : {}) })
-      : await runSlopWorldAsync({ seed, perCity, weeks, matcher: slopEngineMatcher({ name: arm, options: options ?? {}, seed }), ...(verification ? { verification } : {}) });
+    const res = base
+      ? runSlopWorld({ seed, perCity, weeks, matcher: BASELINES[base as keyof typeof BASELINES] as never, ...wo })
+      : await runSlopWorldAsync({ seed, perCity, weeks, matcher: slopEngineMatcher({ name: arm, options: packOpts, seed }), ...wo });
     const m = slopMetrics(res);
     out.metrics.push(m);
     out.extra.push(extraOf(res, m));
@@ -80,6 +110,7 @@ export async function runArm(arm: string, seeds: number[], weeks: number, perCit
   return out;
 }
 
+const STACK = { verification: true, relay: true, review: 3, widen: true };
 /** The tuning trail (cumulative steps; run on seeds 1-4) and the ablations (each component off; held-out 5-8). */
 const OFF = { safetyGate: false, trust: { enabled: false }, asks: false, compatAsks: false, typeAsk: false, learned: { enabled: false }, reprobeAfterDays: 0, congestion: { scarceDegree: 0 } };
 export const PRESETS: Record<string, [string, object][]> = {
@@ -113,8 +144,26 @@ export const PRESETS: Record<string, [string, object][]> = {
     ["- no learned", { learned: { enabled: false } }],
     ["- no compat model", { compat: { goalClash: 1, goalUnsure: 1, goalUnknown: 1, lifestyleMismatch: 1, politicsClash: 1, religionGap: 1, kidsClash: 1, unknownField: 1, hiddenDealbreaker: 0, sharedInterest: [1, 1, 1], activityMiss: 1, typeWeight: 0 } }],
   ],
+  // Iteration 2 (held-out seeds 9-12). W = the safety stack: verification, relay classifier, 3-day review, widen answers.
+  it2: [
+    ["slop it1 (iteration-1 defaults)", { maxAsksPerField: 0, widen: { enabled: false } }],
+    ["slop it2, pack only", { $world: { widen: true } }],
+    ["slop it2 + stack", { $world: STACK }],
+    ["stack + photos sd 0.5", { $world: { ...STACK, photos: 0.5 }, attraction: { enabled: true } }],
+    ["stack + photos sd 1", { $world: { ...STACK, photos: 1 }, attraction: { enabled: true } }],
+    ["stack + photos sd 2", { $world: { ...STACK, photos: 2 }, attraction: { enabled: true } }],
+    ["stack + photos sd 1, no learning", { $world: { ...STACK, photos: 1 } }],
+    ["stack + learning, no photos", { $world: STACK, attraction: { enabled: true, probeWeight: 0 } }],
+    ["stack + 2 proposals/tick", { $world: STACK, congestion: { perMemberPerTick: 2 } }],
+    ["stack - relay classifier", { $world: { ...STACK, relay: false } }],
+    ["stack - human review", { $world: { verification: true, relay: true, widen: true } }],
+    ["stack - verification", { $world: { relay: true, review: 3, widen: true } }],
+    ["stack - widen ask", { $world: STACK, widen: { enabled: false } }],
+    ["stack, relay recall 0.6 / 0.5", { $world: { ...STACK, relay: { scamRecall: 0.6, hostileRecall: 0.5 } } }],
+    ["random + stack", { $baseline: "random", $world: STACK }],
+    ["random + photos sd 1", { $baseline: "random", $world: { photos: 1 } }],
+  ],
 };
-
 export const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length);
 export const se = (xs: number[]) => { const m = mean(xs); return Math.sqrt(xs.reduce((a, b) => a + (b - m) ** 2, 0) / Math.max(1, xs.length - 1) / Math.max(1, xs.length)); };
 const harms = (m: SlopMetrics) => Object.values(m.safety.harms).reduce((a, b) => a + (b ?? 0), 0);
@@ -220,12 +269,12 @@ if (import.meta.main) {
   const arms = arg("arms", "random,greedy,oracle,slop")!.split(",").filter(Boolean);
   const variants = all("variant"), names = all("variant-name");
   for (const p of all("preset")) for (const [n, v] of PRESETS[p] ?? []) { variants.push(JSON.stringify(v)); names.push(n); }
-  // --verification: the world models PRD 40.5 verification for the slop arms (variants) only; the
-  // baselines stay the world-doc baselines (no verification), so "cut vs random" is vs today's floor.
-  const verification = argv.includes("--verification") ? VERIFICATION_DEFAULTS : undefined;
+  // --verification / --world '<WorldSpec>': the world of the slop arms (and variants); the baselines
+  // stay the world-doc baselines unless a variant runs one with "$baseline" (so "cut vs random" is vs today's floor).
+  const world: WorldSpec = { ...JSON.parse(arg("world", "{}")!), ...(argv.includes("--verification") ? { verification: true } : {}) };
   const results: ArmResult[] = [];
-  for (const a of arms) { const t = performance.now(); results.push(await runArm(a, seeds, weeks, perCity, a === "slop" ? {} : undefined, a === "slop" ? verification : undefined)); console.error(`${a}: ${((performance.now() - t) / 1000).toFixed(1)}s`); }
-  for (let i = 0; i < variants.length; i++) { const t = performance.now(); results.push(await runArm(names[i] ?? `v${i}`, seeds, weeks, perCity, JSON.parse(variants[i]!), verification)); console.error(`${names[i] ?? `v${i}`}: ${((performance.now() - t) / 1000).toFixed(1)}s`); }
+  for (const a of arms) { const t = performance.now(); results.push(await runArm(a, seeds, weeks, perCity, a === "slop" ? {} : undefined, a === "slop" ? world : {})); console.error(`${a}: ${((performance.now() - t) / 1000).toFixed(1)}s`); }
+  for (let i = 0; i < variants.length; i++) { const t = performance.now(); results.push(await runArm(names[i] ?? `v${i}`, seeds, weeks, perCity, JSON.parse(variants[i]!), world)); console.error(`${names[i] ?? `v${i}`}: ${((performance.now() - t) / 1000).toFixed(1)}s`); }
   console.log(table(results));
   const random = results.find(r => r.arm === "random");
   if (random) for (const r of results.filter(x => x.arm !== "random")) {

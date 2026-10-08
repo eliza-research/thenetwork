@@ -17,7 +17,7 @@ import { SlopBehavior, type HarmEvent } from "./behavior.ts";
 import type { SlopCity } from "./geo.ts";
 import { SlopOracle, type DateOutcome } from "./oracle.ts";
 import { SLOTS, SLOT_DAY, generateSlopPersonas, type DateActivity, type SlopGenOptions, type SlopPersona } from "./persona.ts";
-import { SLOP_WORLD_START, buildSlopSnapshot, type SlopAskField, type SlopNetworkState, type SlopSnapshot, type VerificationModel } from "./snapshot.ts";
+import { SLOP_WORLD_START, buildSlopSnapshot, reviewDecision, type PlatformModel, type SlopAskField, type SlopNetworkState, type SlopSnapshot, type VerificationModel } from "./snapshot.ts";
 import { visibleProfiles, type VisibleProfile } from "./visible.ts";
 
 /** One date proposal from a matcher. `options`: slot indices into SLOTS (2-3). */
@@ -67,6 +67,8 @@ export interface SlopRunOptions extends Omit<SlopGenOptions, "seed"> {
   personas?: SlopPersona[];
   /** Model PRD 40.5 verification before the first intro (snapshot.ts VerificationModel); off by default. */
   verification?: VerificationModel;
+  /** Optional platform features (photos in probes, relay classifier, human review, widen asks); off by default. */
+  platform?: PlatformModel;
 }
 
 export interface SlopWorld {
@@ -77,7 +79,9 @@ export interface SlopWorld {
 export interface SlopRunResult {
   world: SlopWorld; flows: FlowRecord[]; matcher: string;
   /** Asks sent and answered (matchers that ask before proposing). */
-  asks?: { sent: number; answered: number; byField: Partial<Record<SlopAskField, number>> };
+  asks?: { sent: number; answered: number; byField: Partial<Record<SlopAskField, number>>; widened?: number };
+  /** Relay classifier (platform.relay): holds placed, true / false positives, harms prevented. */
+  relay?: { holds: number; truePositive: number; falsePositive: number; prevented: number };
 }
 
 const SLOT_HOUR: Record<string, number> = { day: 14, eve: 19 };
@@ -90,13 +94,14 @@ export function createSlopWorld(o: Omit<SlopRunOptions, "matcher">): SlopWorld {
   const oracle = new SlopOracle(personas, o.seed);
   return {
     seed: o.seed, weeks, personas, oracle, behavior: new SlopBehavior(oracle, o.seed),
-    state: { now: SLOP_WORLD_START, week: 0, interactions: [], feedback: [], safetyHolds: [], inboundAsks: [], edges: [], paused: new Set(), asks: [], learned: new Map(), ...(o.verification ? { verification: o.verification } : {}) },
+    state: { now: SLOP_WORLD_START, week: 0, interactions: [], feedback: [], safetyHolds: [], inboundAsks: [], edges: [], paused: new Set(), asks: [], learned: new Map(), ...(o.verification ? { verification: o.verification } : {}), ...(o.platform ? { platform: o.platform } : {}) },
   };
 }
 
 interface RunCtx {
   world: SlopWorld; cap: number; flows: FlowRecord[]; likedWeek: Map<MemberId, number>;
   asks: NonNullable<SlopRunResult["asks"]>;
+  relay: NonNullable<SlopRunResult["relay"]>;
 }
 
 /** Start of week `week`: inbound asks, then the snapshot the matcher sees. */
@@ -118,26 +123,26 @@ function beginWeek(rc: RunCtx, week: number, seed: number): { ctx: MatcherContex
 export function runSlopWorld(o: SlopRunOptions): SlopRunResult {
   const world = createSlopWorld(o);
   const matcher = typeof o.matcher === "function" ? o.matcher(world) : o.matcher;
-  const rc: RunCtx = { world, cap: o.capPerWeek ?? 2, flows: [], likedWeek: new Map(), asks: { sent: 0, answered: 0, byField: {} } };
+  const rc: RunCtx = { world, cap: o.capPerWeek ?? 2, flows: [], likedWeek: new Map(), asks: { sent: 0, answered: 0, byField: {} }, relay: { holds: 0, truePositive: 0, falsePositive: 0, prevented: 0 } };
   for (let week = 0; week < world.weeks; week++) {
     const { ctx, askedNow } = beginWeek(rc, week, o.seed);
     const out = matcher.propose(ctx);
     if (out instanceof Promise) throw new Error(`matcher ${matcher.name} is async: use runSlopWorldAsync`);
     resolveWeek(rc, week, out, askedNow);
   }
-  return { world, flows: rc.flows, matcher: matcher.name, ...(rc.asks.sent ? { asks: rc.asks } : {}) };
+  return { world, flows: rc.flows, matcher: matcher.name, ...(rc.asks.sent ? { asks: rc.asks } : {}), ...(world.state.platform?.relay ? { relay: rc.relay } : {}) };
 }
 
 /** Same as runSlopWorld for matchers whose propose is async (the engine-backed slop pack). */
 export async function runSlopWorldAsync(o: SlopRunOptions): Promise<SlopRunResult> {
   const world = createSlopWorld(o);
   const matcher = typeof o.matcher === "function" ? o.matcher(world) : o.matcher;
-  const rc: RunCtx = { world, cap: o.capPerWeek ?? 2, flows: [], likedWeek: new Map(), asks: { sent: 0, answered: 0, byField: {} } };
+  const rc: RunCtx = { world, cap: o.capPerWeek ?? 2, flows: [], likedWeek: new Map(), asks: { sent: 0, answered: 0, byField: {} }, relay: { holds: 0, truePositive: 0, falsePositive: 0, prevented: 0 } };
   for (let week = 0; week < world.weeks; week++) {
     const { ctx, askedNow } = beginWeek(rc, week, o.seed);
     resolveWeek(rc, week, await matcher.propose(ctx), askedNow);
   }
-  return { world, flows: rc.flows, matcher: matcher.name, ...(rc.asks.sent ? { asks: rc.asks } : {}) };
+  return { world, flows: rc.flows, matcher: matcher.name, ...(rc.asks.sent ? { asks: rc.asks } : {}), ...(world.state.platform?.relay ? { relay: rc.relay } : {}) };
 }
 
 /** The week's asks (answered or not) and the probe-first flows for the week's proposals. */
@@ -159,10 +164,20 @@ function resolveWeek(rc: RunCtx, week: number, out: MatcherOutput, askedNow: Set
       const learned = (state.learned ??= new Map());
       const set = learned.get(a.memberId) ?? new Set();
       set.add(a.field);
+      // "Would you consider people up to N mi?": on a yes the member's stated limit really widens.
+      const wd = state.platform?.widen;
+      if (a.field === "widen" && wd && behavior.agreesToWiden(a.memberId, week, wd.agree)) {
+        const S = p.stated;
+        if (S.scope.mode === "radius") S.scope = { ...S.scope, miles: Math.max(S.scope.miles, wd.miles) };
+        S.maxMiles = Math.max(S.maxMiles, wd.miles);
+        set.add("distance");
+        rc.asks.widened = (rc.asks.widened ?? 0) + 1;
+      }
       learned.set(a.memberId, set);
     }
   }
   const invites = new Map<MemberId, number>(), booked = new Set<MemberId>();
+  const photos = state.platform?.photos, relay = state.platform?.relay, review = state.platform?.review;
   const inc = (id: MemberId) => invites.set(id, (invites.get(id) ?? 0) + 1);
   proposals.forEach((pr, i) => {
     const key = `w${week}:${i}:${pr.first}:${pr.partner}`;
@@ -181,6 +196,7 @@ function resolveWeek(rc: RunCtx, week: number, out: MatcherOutput, askedNow: Set
       recentLikedDate: likedWeek.has(id) && week - likedWeek.get(id)! <= 2,
       probesThisWeek: invites.get(id) ?? 0,
       sharedFactMatch: !!pr.sharedFact && oracle.p(id).hidden.interests.includes(pr.sharedFact),
+      ...(photos ? { photo: { of: id === a.id ? b.id : a.id, noiseSd: photos.noiseSd } } : {}),
     });
     // 1. first probe
     if ((invites.get(a.id) ?? 0) >= cap || booked.has(a.id)) { f.stage = "dropped_first_cap"; return; }
@@ -202,9 +218,32 @@ function resolveWeek(rc: RunCtx, week: number, out: MatcherOutput, askedNow: Set
     const both = ans1.picks.filter(s => ans2.picks.includes(s));
     const slot = both[0] ?? opts2[0]!;
     f.slot = slot; f.revealed = true; f.day = week * 7 + SLOT_DAY[SLOTS[slot]!];
-    f.harms.push(...behavior.harms(a.id, b.id, key, "reveal"));
-    const outA = behavior.backsOut(a.id, b.id, key, oracle.statedAccepts(a, b, week));
-    const outB = behavior.backsOut(b.id, a.id, key, oracle.statedAccepts(b, a, week));
+    const revealHarms = behavior.harms(a.id, b.id, key, "reveal");
+    if (relay) {
+      // Relay classifier: an adversary's scripted message is flagged with p = recall; the message is
+      // blocked (its harm does not happen) and the sender is held. Honest members: false positives.
+      const flagged = new Set<MemberId>();
+      for (const x of [a, b]) {
+        const adv = x.hidden.adversary;
+        const recall = adv === "romance_scammer" ? relay.scamRecall : adv === "harasser" ? relay.hostileRecall : 0;
+        const scripts = revealHarms.some(h => h.offender === x.id && h.kind !== "minor_contact");
+        if (recall && scripts && behavior.relayDetects(x.id, key, recall)) { flagged.add(x.id); rc.relay.truePositive++; }
+        else if (!adv && behavior.relayFalsePositive(x.id, key, relay.falsePositive)) { flagged.add(x.id); rc.relay.falsePositive++; }
+      }
+      for (const id of flagged) {
+        rc.relay.holds++;
+        const honest = !oracle.p(id).hidden.adversary;
+        // A reviewer clears an honest member's hold within `days` (p = clearHonest); adversaries stay held.
+        const cleared = honest && review && reviewDecision(oracle.p(id), review) === "cleared";
+        if (!state.safetyHolds.some(h => h.memberId === id && (h.to === undefined || h.to > state.now)))
+          state.safetyHolds.push({ memberId: id, from: state.now, reason: honest ? "relay: flagged (false positive)" : "relay: flagged", ...(cleared ? { to: state.now + review!.days * DAY } : {}) });
+      }
+      const kept = revealHarms.filter(h => !(flagged.has(h.offender) && h.kind !== "minor_contact"));
+      rc.relay.prevented += revealHarms.length - kept.length;
+      f.harms.push(...kept);
+    } else f.harms.push(...revealHarms);
+    const outA = behavior.backsOut(a.id, b.id, key, oracle.statedAccepts(a, b, week), photos?.noiseSd);
+    const outB = behavior.backsOut(b.id, a.id, key, oracle.statedAccepts(b, a, week), photos?.noiseSd);
     if (outA || outB) { f.stage = "backout"; done("cancelled", { acceptedBy: [a.id, b.id], declinedBy: [...(outA ? [a.id] : []), ...(outB ? [b.id] : [])] }); applyHarms(world, f.harms); return; }
     booked.add(a.id); booked.add(b.id);
     // 4. the date

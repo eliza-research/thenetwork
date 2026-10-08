@@ -18,14 +18,15 @@ import type { World } from "../../world.ts";
 import { slopAdjust, slopAssign } from "./assign.ts";
 import { ageBand, distancePhrase, SLOP_ASK_QUESTIONS, SLOP_FACET_PHRASE, SLOP_LANE_ACTIVITY, SLOP_LANE_LABEL, SLOP_SAFE_FALLBACK, slopProbeText } from "./copy.ts";
 import { makeRadiusGeo, mutualMarkets } from "./geo.ts";
-import { slopGenerators } from "./generators.ts";
+import { runDegree, slopGenerators } from "./generators.ts";
+import { limitMiles } from "./geo.ts";
 import { slopOptions, type DeepPartial, type SlopPackOptions } from "./options.ts";
 import { slopProfiles } from "./profile.ts";
 import { missingFields, needsBasics, reviewReason, SLOP_CANDIDATE_PRE_RULES, SLOP_LANE, slopMemberRules, slopPairRules } from "./rules.ts";
 import { aggregate } from "./score.ts";
 import { distanceBand } from "./zips.ts";
 
-export const SLOP_PACK_VERSION = "slop-pack-1.0.0";
+export const SLOP_PACK_VERSION = "slop-pack-1.1.0";
 
 /**
  * Engine config for slop.date runs (pass as runEngine's config; the pack travels in deps.pack).
@@ -120,11 +121,15 @@ export function makeSlopPack(over: DeepPartial<SlopPackOptions> = {}): AppPack &
         if (!p || !p.adult || !p.optedIn || p.paused || w.holds.has(id) || reviewReason(p, o)) return;
         const intent = w.get(id)!.intents.find(i => i.category === SLOP_LANE);
         const fs = missingFields(p, o);
+        // Iteration 2: each question at most `maxAsksPerField` times (0 = no cap), then wait for the member.
+        const capped = (reason: string) => o.maxAsksPerField > 0 && (p.askCounts[reason] ?? 0) >= o.maxAsksPerField;
         if (fs.length) {
           // One message asks every missing hard-filter field; re-asked at most weekly until answered.
-          for (const f of fs) if (w.now - lastAsk([`slop_${f}`]) >= 7 * DAY) add(`slop_${f}`, intent?.id);
+          for (const f of fs) if (w.now - lastAsk([`slop_${f}`]) >= 7 * DAY && !capped(`slop_${f}`)) add(`slop_${f}`, intent?.id);
           return;
         }
+        // Iteration 2: a small pool -> ask once whether they would consider a wider radius.
+        if (o.widen.enabled && (runDegree.get(w)?.get(id) ?? Infinity) <= o.widen.maxDegree && (limitMiles(p, o) ?? Infinity) < o.widen.miles && !(p.askCounts.slop_widen ?? 0)) add("slop_widen", intent?.id);
         // Compatibility questions (one message; never re-asked within 3 weeks): basics, then type.
         if (!o.compatAsks) return;
         if (needsBasics(p) && w.now - lastAsk(["slop_basics"]) >= 21 * DAY) add("slop_basics", intent?.id);

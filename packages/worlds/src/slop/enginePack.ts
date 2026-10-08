@@ -32,8 +32,8 @@ export interface SlopEngineMatcherOptions {
   onRun?: (week: number, r: Awaited<ReturnType<typeof runEngine>>) => void;
 }
 
-const FIELD: Record<string, SlopAskField> = { slop_orientation: "orientation", slop_age_range: "age_range", slop_distance: "distance", slop_basics: "basics", slop_type: "type" };
-const REASON: Record<SlopAskField, string> = { orientation: "slop_orientation", age_range: "slop_age_range", distance: "slop_distance", basics: "slop_basics", type: "slop_type" };
+const FIELD: Record<string, SlopAskField> = { slop_orientation: "orientation", slop_age_range: "age_range", slop_distance: "distance", slop_basics: "basics", slop_type: "type", slop_widen: "widen" };
+const REASON: Record<SlopAskField, string> = { orientation: "slop_orientation", age_range: "slop_age_range", distance: "slop_distance", basics: "slop_basics", type: "slop_type", widen: "slop_widen" };
 
 /** The engine input for a slop snapshot (what the platform builds from Postgres for slop:<market>). */
 export function slopEngineInput(s: SlopSnapshot, exposureDebt: Record<MemberId, number> = {}): EngineInput {
