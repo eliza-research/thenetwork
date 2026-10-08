@@ -2,7 +2,7 @@
 // capture). This is what an Engine receives; it never includes hidden truth, except that
 // private disclosures are present as agent_private facets (that is realistic: members tell
 // the agent things in confidence) so engines can be tested for privacy leaks.
-import { DAY, HOUR, type Category, type City, type Edge, type Facet, type Intent, type Member, type MemberId, type OpportunityKind, type Presence, type Proposal, type WorldSnapshot } from "@thenetwork/core";
+import { DAY, HOUR, parseReply, type Category, type City, type Edge, type Facet, type Intent, type Member, type MemberId, type OpportunityKind, type Presence, type Proposal, type WorldSnapshot } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/judge";
 import { intentHorizonDays, intentRecordTiming, type Persona } from "./persona.ts";
 import { hash32 } from "./rng.ts";
@@ -262,28 +262,44 @@ export function publicEvents(snap: Pick<WorldSnapshot, "now" | "members" | "face
 /**
  * What the Network itself recorded, rebuilt from the run's records up to `now`: interactions
  * (with who said yes, who declined and who never answered), meeting feedback, opportunities still
- * open (invite pending or meeting ahead) and proposals it never sent. No hidden truth: decisions,
- * attendance and the enjoyment members report after a meeting are all things the Network sees.
+ * open (invite pending or meeting ahead) and proposals it never sent. No hidden truth: a member's
+ * answer is read from the reply they actually sent (an ignored invite is "no response", never the
+ * persona's private decision), and feedback comes only from feedback requests a member answered,
+ * read from their words (never from the oracle's enjoyment). Attendance comes from the outcome.
  */
 export function networkStateFromRecords(records: readonly RunRecord[], now: number): Required<Pick<SimSnapshot, "interactions" | "feedback" | "openOpportunities" | "unsentProposalIds">> {
   const props = new Map<string, Proposal>();
   const skipped = new Set<string>();
   const declines = new Map<string, MemberId[]>(), yes = new Map<string, Set<MemberId>>(), invited = new Map<string, Map<MemberId, number>>();
-  const scheduled = new Map<string, number>();
+  const scheduled = new Map<string, { at: number; participants: MemberId[] }>();
   const outcome = new Map<string, Extract<RunRecord, { type: "outcome" }>>();
-  const decided = new Set<string>();
+  const answered = new Set<string>();
+  // The open thread per member: the last delivered Network message that expects an answer.
+  const thread = new Map<MemberId, { type?: string; proposalId?: string }>();
+  const said: { from: MemberId; pid: string; at: number; text: string }[] = [];
   for (const r of records) {
     if (r.t > now) break;
     if (r.type === "proposal") props.set(r.proposal.id, r.proposal);
     else if (r.type === "network_log" && r.kind === "proposal_skipped") skipped.add(String(r.detail.proposalId));
-    else if (r.type === "message" && r.msg.meta?.type === "proposal" && r.msg.meta.proposalId) {
-      const pid = r.msg.meta.proposalId; if (!invited.has(pid)) invited.set(pid, new Map()); invited.get(pid)!.set(r.msg.memberId, r.msg.ts);
-    } else if (r.type === "decision" && r.messageType === "proposal" && r.proposalId) {
-      decided.add(`${r.proposalId}|${r.memberId}`);
-      if (r.decision === "decline") { if (!declines.has(r.proposalId)) declines.set(r.proposalId, []); declines.get(r.proposalId)!.push(r.memberId); }
-      else if (r.decision === "accept" || r.decision === "counter") { if (!yes.has(r.proposalId)) yes.set(r.proposalId, new Set()); yes.get(r.proposalId)!.add(r.memberId); }
-    } else if (r.type === "meeting_scheduled") scheduled.set(r.proposalId, r.at);
+    else if (r.type === "message" && !r.msg.system) {
+      const m = r.msg;
+      if (m.direction === "outbound") {
+        const pid = m.meta?.proposalId;
+        if (m.meta?.type === "proposal" && pid) { if (!invited.has(pid)) invited.set(pid, new Map()); invited.get(pid)!.set(m.memberId, m.ts); }
+        if (m.status === "delivered" && m.meta?.type && !["info", "confirmation"].includes(m.meta.type)) thread.set(m.memberId, { type: m.meta.type, proposalId: pid });
+      } else if (!m.keyword) {
+        const th = thread.get(m.memberId);
+        const key = `${th?.proposalId}|${m.memberId}`;
+        if (th?.type !== "proposal" || !th.proposalId || answered.has(key)) continue;
+        const a = inviteAnswer(m.body);
+        if (!a) continue;
+        answered.add(key);
+        if (a === "no") { if (!declines.has(th.proposalId)) declines.set(th.proposalId, []); declines.get(th.proposalId)!.push(m.memberId); }
+        else { if (!yes.has(th.proposalId)) yes.set(th.proposalId, new Set()); yes.get(th.proposalId)!.add(m.memberId); }
+      }
+    } else if (r.type === "meeting_scheduled") scheduled.set(r.proposalId, { at: r.at, participants: r.participants });
     else if (r.type === "outcome") outcome.set(r.proposalId, r);
+    else if (r.type === "feedback" && r.proposalId) said.push({ from: r.memberId, pid: r.proposalId, at: r.t, text: r.text });
   }
   const interactions: SimInteraction[] = [];
   const feedback: SimFeedback[] = [];
@@ -292,30 +308,33 @@ export function networkStateFromRecords(records: readonly RunRecord[], now: numb
     if (skipped.has(pid)) continue;
     const acceptedBy: MemberId[] = [], noResponse: MemberId[] = [];
     for (const [id, ts] of invited.get(pid) ?? new Map<MemberId, number>()) {
-      if (decided.has(`${pid}|${id}`)) { if (yes.get(pid)?.has(id)) acceptedBy.push(id); else if (!declines.get(pid)?.includes(id)) noResponse.push(id); }
+      if (answered.has(`${pid}|${id}`)) { if (yes.get(pid)?.has(id)) acceptedBy.push(id); }
       else if (now - ts > 48 * HOUR) noResponse.push(id); // an expired invite is an implicit no
     }
     let out: SimInteraction["outcome"] = "pending";
     let at = p.createdAt;
     const dec = declines.get(pid);
     const o = outcome.get(pid);
+    const sched = scheduled.get(pid);
     if (dec?.length) out = "declined";
     else if (o) {
-      const shows = Object.entries(o.attendance).filter(([, a]) => a.showed);
-      out = shows.length >= 2 ? "completed" : "no_show"; at = o.at;
-      if (shows.length >= 2) for (const [a, x] of shows) for (const [b] of shows) if (a !== b) {
-        const e = x.enjoyment;
-        feedback.push({ id: `fb:${pid}:${a}:${b}`, from: a, about: b, opportunityId: pid, at: o.at + 3 * HOUR, sentiment: e >= 0.6 ? "positive" : e < 0.4 ? "negative" : "neutral", wouldMeetAgain: e >= 0.6 });
-      }
-    } else if (scheduled.has(pid)) {
+      const shows = Object.values(o.attendance).filter(a => a.showed).length;
+      out = shows >= 2 ? "completed" : "no_show"; at = o.at;
+    } else if (sched) {
       out = "accepted";
-      if (scheduled.get(pid)! > now) openOpportunities.push({ id: pid, participants: [...p.participants], stage: "scheduled", until: scheduled.get(pid)! });
+      if (sched.at > now) openOpportunities.push({ id: pid, participants: [...p.participants], stage: "scheduled", until: sched.at });
     } else if (now - p.createdAt > 3 * DAY) out = "expired";
     else openOpportunities.push({ id: pid, participants: [...p.participants], stage: "inviting", until: p.createdAt + 3 * DAY });
     interactions.push({
       id: pid, kind: p.kind, category: p.category ?? "social", participants: [...p.participants], at, outcome: out,
       ...(dec?.length ? { declinedBy: dec } : {}), ...(acceptedBy.length ? { acceptedBy } : {}), ...(noResponse.length ? { noResponse } : {}),
     });
+  }
+  for (const f of said) {
+    const r = feedbackReading(f.text);
+    if (!r || !props.has(f.pid)) continue;
+    const others = (scheduled.get(f.pid)?.participants ?? props.get(f.pid)!.participants).filter(x => x !== f.from);
+    for (const b of others) feedback.push({ id: `fb:${f.pid}:${f.from}:${b}`, from: f.from, about: b, opportunityId: f.pid, at: f.at, sentiment: r.sentiment, wouldMeetAgain: r.again });
   }
   return { interactions, feedback, openOpportunities, unsentProposalIds: [...skipped] };
 }
@@ -360,4 +379,23 @@ export function planAgainEdges(records: readonly RunRecord[], now: number): Edge
     for (const to of shows) if (to !== a.member) edges.push({ from: a.member, to, type: "would_interact_again", strength: 0.8, explicit: true, createdAt: a.at });
   }
   return edges;
+}
+
+/** A member's reply to an invite, read the way the Network reads it (shared parser): a counter is a yes to meeting. */
+function inviteAnswer(body: string): "yes" | "no" | undefined {
+  const r = parseReply(body);
+  if (r.answer === "no") return "no";
+  return r.answer === "yes" || r.counter ? "yes" : undefined;
+}
+
+/**
+ * Sentiment of a feedback answer, from the member's words. Undefined when the member did not go
+ * (nothing to say about the others). Negatives are checked first ("not great" is not "great").
+ */
+export function feedbackReading(text: string): { sentiment: SimFeedback["sentiment"]; again: boolean } | undefined {
+  const t = text.toLowerCase();
+  if (/couldn'?t make it|didn'?t make it|had to bail|can'?t make it/.test(t)) return undefined;
+  if (/never showed|didn'?t show|no[- ]show|not great|terrible|rude|creepy|bummer|didn'?t have much|awful|block/.test(t)) return { sentiment: "negative", again: false };
+  if (/great|clicked|loved|amazing|nice|easy to talk|fun|again/.test(t)) return { sentiment: "positive", again: /again|clicked/.test(t) };
+  return { sentiment: "neutral", again: false };
 }

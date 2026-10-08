@@ -2,6 +2,7 @@
 // No LLM calls.
 //   bun run packages/worlds/src/friends/cli.ts --seeds 1-4 --n 400 --weeks 8 [--only pack,random,greedy,oracle] [--json out.json]
 import { BASELINES } from "./baselines.ts";
+import { historicalGates, officialGates, printGates, trackedMetrics } from "./gates.ts";
 import { friendsMetrics, type FriendsMetrics } from "./metrics.ts";
 import { friendsPackMatcher } from "./packMatcher.ts";
 import { runFriendsWorld, type FriendsMatcher, type FriendsWorld } from "./world.ts";
@@ -54,6 +55,7 @@ const rows: [string, (m: FriendsMetrics) => number, boolean, number?][] = [
   ["Mean enjoyment (real attendees)", m => m.meanEnjoy, false, 3],
   ["**Repeat-meetup rate (>= 2 again within 30 d)**", m => m.repeatRate, true],
   ["Repeat, same group (>= 3 again)", m => m.repeatGroupRate, true],
+  ["Repeat, counting crew handoffs", m => m.repeatRateWithHandoff, true],
   ["Crews formed / seed", m => m.crewsFormed, false, 1],
   ["Crews handed off / seed", m => m.crewsHandedOff, false, 1],
   ["Hours with members, per real member", m => m.hoursPerMember, false, 1],
@@ -79,6 +81,7 @@ const rows: [string, (m: FriendsMetrics) => number, boolean, number?][] = [
   ["**Known-adversary contacts (must be 0)**", m => m.safety.knownAdversaryContacts, false, 1],
   ["Adversary contacts (all, member-pairs)", m => m.safety.adversaryContacts, false, 1],
   ["Adversaries who reached anyone", m => m.safety.adversariesReached, false, 1],
+  ["Harm events from undetected adversaries / seed", m => m.safety.harmsUndetected, false, 1],
   ["Harm events / seed", m => Object.values(m.safety.harms).reduce((a, b) => a + (b ?? 0), 0), false, 1],
 ];
 console.log(`| Metric (mean ± SE, seeds ${seeds.join(",")}; ${n} personas; ${weeks} weeks${planCap !== 1 ? `; plan allowance ${planCap}/wk` : ""}) | ${only.join(" | ")} |`);
@@ -88,5 +91,10 @@ console.log("\nV14 by borough (n averaged):");
 for (const k of only) console.log(`  ${k}: ` + Object.keys(all[k]![0]!.v14ByBorough).map(b => `${b} (n≈${Math.round(mean(all[k]!.map(m => m.v14ByBorough[b]!.n)))}) ${(mean(all[k]!.map(m => m.v14ByBorough[b]!.v14).filter(Number.isFinite)) * 100).toFixed(1)}%`).join("; "));
 console.log("\nAdversary contacts by kind:");
 for (const k of only) console.log(`  ${k}: ` + ["romance_seeker", "mlm", "bot", "harasser"].map(a => `${a} ${mean(all[k]!.map(m => m.safety.adversaryContactsByKind[a] ?? 0)).toFixed(1)}`).join("; "));
+if (all.pack && all.random) {
+  if (all.oracle) console.log("\n" + printGates("OFFICIAL gates (adopted 2026-10-08), friendsPack vs random-within-area and oracle on the same seeds:", officialGates(all.pack, all.random, all.oracle)));
+  console.log("\n" + printGates("TRACKED metrics (non-blocking):", trackedMetrics(all.pack, all.random), true));
+  console.log("\n" + printGates("HISTORICAL gates (first proposed; not the launch criteria):", historicalGates(all.pack, all.random)));
+}
 const out = arg("json");
 if (out) await Bun.write(out, JSON.stringify(all, null, 1));

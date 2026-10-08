@@ -6,6 +6,7 @@ import type { MemberId } from "@thenetwork/core";
 import { DAY, HOUR } from "@thenetwork/core";
 import type { EngineInput, FeedbackRecord, InteractionRecord, NetworkEvent } from "../src/types.ts";
 import type { RunRecord } from "../../judge/src/index.ts";
+import { networkStateFromRecords } from "../../sim/src/snapshot.ts";
 
 export interface History {
   interactions: InteractionRecord[];
@@ -18,56 +19,24 @@ export interface History {
   accept: Map<MemberId, { yes: number; n: number }>;
 }
 
+/**
+ * What the Network itself knows from the run records: invite answers read from the members' replies,
+ * feedback read from answered feedback requests (sim snapshot `networkStateFromRecords`). It no longer
+ * reads persona decisions or hidden meeting enjoyment (audit sim-worlds-1: the same leak was here).
+ */
 export function historyFromRecords(records: RunRecord[], now: number): History {
-  const props = new Map<string, any>();
-  const skipped = new Set<string>();
-  const declines = new Map<string, MemberId[]>(), yes = new Map<string, Set<MemberId>>(), invited = new Map<string, Map<MemberId, number>>();
-  const scheduled = new Map<string, number>();
-  const outcome = new Map<string, any>();
-  const decided = new Set<string>();
-  for (const r of records as any[]) {
-    if (r.t > now) break;
-    if (r.type === "proposal") props.set(r.proposal.id, r.proposal);
-    else if (r.type === "network_log" && r.kind === "proposal_skipped") skipped.add(r.detail.proposalId);
-    else if (r.type === "message" && r.msg.meta?.type === "proposal" && r.msg.meta.proposalId) {
-      const pid = r.msg.meta.proposalId; if (!invited.has(pid)) invited.set(pid, new Map()); invited.get(pid)!.set(r.msg.memberId, r.msg.ts);
-    } else if (r.type === "decision" && r.messageType === "proposal" && r.proposalId) {
-      decided.add(`${r.proposalId}|${r.memberId}`);
-      if (r.decision === "decline") { if (!declines.has(r.proposalId)) declines.set(r.proposalId, []); declines.get(r.proposalId)!.push(r.memberId); }
-      else if (r.decision === "accept" || r.decision === "counter") { if (!yes.has(r.proposalId)) yes.set(r.proposalId, new Set()); yes.get(r.proposalId)!.add(r.memberId); }
-    } else if (r.type === "meeting_scheduled") scheduled.set(r.proposalId, r.at);
-    else if (r.type === "outcome") outcome.set(r.proposalId, r);
-  }
-  const interactions: InteractionRecord[] = [];
-  const feedback: FeedbackRecord[] = [];
-  const busy = new Set<MemberId>();
+  let end = records.length;
+  for (let i = 0; i < records.length; i++) if ((records[i] as { t: number }).t > now) { end = i; break; }
+  const st = networkStateFromRecords(records.slice(0, end), now);
+  const busy = new Set<MemberId>(st.openOpportunities.flatMap(o => o.participants));
   const accept = new Map<MemberId, { yes: number; n: number }>();
   const bump = (id: MemberId, ok: boolean) => { const a = accept.get(id) ?? { yes: 0, n: 0 }; a.n++; if (ok) a.yes++; accept.set(id, a); };
-  for (const [pid, p] of props) {
-    if (skipped.has(pid)) continue;
-    const inv = invited.get(pid) ?? new Map();
-    for (const [id, ts] of inv) {
-      if (decided.has(`${pid}|${id}`)) bump(id, yes.get(pid)?.has(id) ?? false);
-      else if (now - ts > 48 * HOUR) bump(id, false); // expired invite = an implicit no
-    }
-    let out: InteractionRecord["outcome"] = "pending";
-    let at = p.createdAt;
-    const dec = declines.get(pid);
-    const o = outcome.get(pid);
-    if (dec?.length) out = "declined";
-    else if (o) {
-      const shows = Object.entries(o.attendance as Record<string, any>).filter(([, a]) => a.showed);
-      out = shows.length >= 2 ? "completed" : "no_show"; at = o.at;
-      if (shows.length >= 2) for (const [a, x] of shows) for (const [b] of shows) if (a !== b) {
-        const e = x.enjoyment as number;
-        feedback.push({ id: `fb:${pid}:${a}:${b}`, from: a, about: b, opportunityId: pid, at: o.at + 3 * HOUR, sentiment: e >= 0.6 ? "positive" : e < 0.4 ? "negative" : "neutral", wouldMeetAgain: e >= 0.6 });
-      }
-    } else if (scheduled.has(pid)) { out = "accepted"; if (scheduled.get(pid)! > now) p.participants.forEach((id: MemberId) => busy.add(id)); }
-    else if (now - p.createdAt > 3 * DAY) out = "expired";
-    else p.participants.forEach((id: MemberId) => busy.add(id));
-    interactions.push({ id: pid, kind: p.kind, category: p.category ?? "social", participants: p.participants, at, outcome: out, ...(dec?.length ? { declinedBy: dec } : {}) });
+  for (const i of st.interactions) {
+    for (const id of i.acceptedBy ?? []) bump(id, true);
+    for (const id of i.declinedBy ?? []) bump(id, false);
+    for (const id of i.noResponse ?? []) bump(id, false);
   }
-  return { interactions, feedback, busy, skipped, accept };
+  return { interactions: st.interactions as InteractionRecord[], feedback: st.feedback as FeedbackRecord[], busy, skipped: new Set(st.unsentProposalIds), accept };
 }
 
 export interface AugmentOpts {

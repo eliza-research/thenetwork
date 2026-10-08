@@ -10,7 +10,7 @@ import { slopEngineMatcher } from "./enginePack.ts";
 import { slopMetrics, type SlopMetrics } from "./metrics.ts";
 import { isSafe } from "./oracle.ts";
 import { groupOf } from "./persona.ts";
-import { RELAY_DEFAULTS, REVIEW_DEFAULTS, VERIFICATION_DEFAULTS, WIDEN_DEFAULTS, type PlatformModel, type VerificationModel } from "./snapshot.ts";
+import { CHECKIN_DEFAULTS, RATER_DEFAULTS, demoGroupOf, RELAY_DEFAULTS, REVIEW_DEFAULTS, VERIFICATION_DEFAULTS, WIDEN_DEFAULTS, type PlatformModel, type VerificationModel } from "./snapshot.ts";
 import { runSlopWorld, runSlopWorldAsync, type SlopRunResult } from "./world.ts";
 
 export interface ArmResult { arm: string; seeds: number[]; metrics: SlopMetrics[]; extra: Extra[] }
@@ -26,6 +26,12 @@ export interface Extra {
   asksSent: number; asksAnswered: number;
   /** Adversary contacts (per side) and harm events by kind. */
   contactsByKind: Record<string, number>; harmsByKind: Record<string, number>;
+  /** Iteration 3: outcomes by the synthetic demographic group (rater bias test), real members only. */
+  demo: Record<"A" | "B", { n: number; dates: number; second: number; memberMonths: number; proposals: number }>;
+  /** Iteration 3: harassers' victims: offenders with any victim, total victims, victims after the offender's first report (max and total). */
+  harassment: { offenders: number; victims: number; secondPlusVictims: number; afterReportMax: number; afterReportTotal: number };
+  /** Iteration 3 gate inputs: scam harm events; core adversary contacts (scammers, harassers, age liars); harms other than deception. */
+  scamHarms: number; coreAdversaryContacts: number; harmsNoDeception: number;
   /** Iteration 2: members who widened their radius when asked; relay classifier stats. */
   widened: number; relay?: NonNullable<SlopRunResult["relay"]>;
   /**
@@ -66,6 +72,27 @@ export function extraOf(res: SlopRunResult, m: SlopMetrics): Extra {
     if (f.revealed) for (const id of [f.first, f.partner]) { const k = O.p(id).hidden.adversary; if (k) contactsByKind[k] = (contactsByKind[k] ?? 0) + 1; }
     for (const h of f.harms) harmsByKind[h.kind] = (harmsByKind[h.kind] ?? 0) + 1;
   }
+  // Iteration 3 metrics.
+  const demo: Extra["demo"] = { A: { n: 0, dates: 0, second: 0, memberMonths: 0, proposals: 0 }, B: { n: 0, dates: 0, second: 0, memberMonths: 0, proposals: 0 } };
+  const share = res.world.state.platform?.rater?.biasShare ?? RATER_DEFAULTS.biasShare;
+  const secOf = new Map<MemberId, number>(), propOf = new Map<MemberId, number>();
+  for (const f of res.flows) for (const id of [f.first, f.partner]) { propOf.set(id, (propOf.get(id) ?? 0) + 1); if (f.secondDate) secOf.set(id, (secOf.get(id) ?? 0) + 1); }
+  for (const p of real) { const g = demo[demoGroupOf(p.id, share)]; g.n++; g.dates += datesOf.get(p.id) ?? 0; g.second += secOf.get(p.id) ?? 0; g.memberMonths += months; g.proposals += propOf.get(p.id) ?? 0; }
+  const har = new Map<MemberId, { victims: MemberId[]; reportedAt: number }>();
+  res.flows.forEach((f, i) => { for (const h of f.harms) if (h.kind === "harassment") {
+    const e = har.get(h.offender) ?? { victims: [], reportedAt: Infinity };
+    if (i > e.reportedAt && !e.victims.includes(h.victim)) (e as { after?: number }).after = ((e as { after?: number }).after ?? 0) + 1;
+    if (!e.victims.includes(h.victim)) e.victims.push(h.victim);
+    if (h.reported) e.reportedAt = Math.min(e.reportedAt, i);
+    har.set(h.offender, e);
+  } });
+  const after = [...har.values()].map(e => (e as { after?: number }).after ?? 0);
+  const harassment = { offenders: har.size, victims: [...har.values()].reduce((s, e) => s + e.victims.length, 0), secondPlusVictims: [...har.values()].reduce((s, e) => s + Math.max(0, e.victims.length - 1), 0), afterReportMax: Math.max(0, ...after), afterReportTotal: after.reduce((s, x) => s + x, 0) };
+  let scamHarms = 0, harmsNoDeception = 0, coreAdversaryContacts = 0;
+  for (const f of res.flows) {
+    for (const h of f.harms) { if (["offplatform_move", "money_ask", "financial_loss"].includes(h.kind)) scamHarms++; if (h.kind !== "deception") harmsNoDeception++; }
+    if (f.revealed && [f.first, f.partner].some(id => ["romance_scammer", "harasser", "age_liar"].includes(O.p(id).hidden.adversary ?? ""))) coreAdversaryContacts++;
+  }
   let soft = 0, nd = 0;
   for (const f of res.flows) if (f.stage === "date") { nd++; soft += res.world.oracle.softLabel(f.first, f.partner, f.activity, 32).pSecond; }
   return {
@@ -73,20 +100,26 @@ export function extraOf(res: SlopRunResult, m: SlopMetrics): Extra {
     scammerMedianReach: rs.length ? rs[Math.floor((rs.length - 1) / 2)]! : 0,
     groups, feasibleGroups, overall: { dates: m.datesPerMemberMonth * m.members * months, memberMonths: m.members * months },
     asksSent: res.asks?.sent ?? 0, asksAnswered: res.asks?.answered ?? 0,
-    contactsByKind, harmsByKind,
+    contactsByKind, harmsByKind, demo, harassment, scamHarms, coreAdversaryContacts, harmsNoDeception,
     widened: res.asks?.widened ?? 0, ...(res.relay ? { relay: res.relay } : {}),
   };
 }
 
 /** A world spec for an arm: verification and the iteration-2 platform features (snapshot.ts PlatformModel). */
-export interface WorldSpec { verification?: boolean; photos?: number; relay?: boolean | Partial<NonNullable<PlatformModel["relay"]>>; review?: number; widen?: boolean }
-export function worldOptions(w: WorldSpec = {}): { verification?: VerificationModel; platform?: PlatformModel } {
+export interface WorldSpec {
+  verification?: boolean; photos?: number; relay?: boolean | Partial<NonNullable<PlatformModel["relay"]>>; review?: number; widen?: boolean;
+  /** Iteration 3: appearance rater (noise, bias), post-date check-in reports, catfish share of the population. */
+  rater?: boolean | Partial<NonNullable<PlatformModel["rater"]>>; checkin?: boolean; catfish?: number;
+}
+export function worldOptions(w: WorldSpec = {}): { verification?: VerificationModel; platform?: PlatformModel; adversaryShares?: { catfish: number } } {
   const platform: PlatformModel = {};
+  if (w.rater) platform.rater = { ...RATER_DEFAULTS, ...(typeof w.rater === "object" ? w.rater : {}) };
+  if (w.checkin) platform.checkin = { ...CHECKIN_DEFAULTS };
   if (w.photos !== undefined) platform.photos = { noiseSd: w.photos };
   if (w.relay) platform.relay = { ...RELAY_DEFAULTS, ...(typeof w.relay === "object" ? w.relay : {}) };
   if (w.review !== undefined) platform.review = { ...REVIEW_DEFAULTS, days: w.review };
   if (w.widen) platform.widen = { ...WIDEN_DEFAULTS };
-  return { ...(w.verification ? { verification: VERIFICATION_DEFAULTS } : {}), ...(Object.keys(platform).length ? { platform } : {}) };
+  return { ...(w.verification ? { verification: VERIFICATION_DEFAULTS } : {}), ...(Object.keys(platform).length ? { platform } : {}), ...(w.catfish !== undefined ? { adversaryShares: { catfish: w.catfish } } : {}) };
 }
 
 /**
@@ -143,6 +176,42 @@ export const PRESETS: Record<string, [string, object][]> = {
     ["- no compat asks", { compatAsks: false }],
     ["- no learned", { learned: { enabled: false } }],
     ["- no compat model", { compat: { goalClash: 1, goalUnsure: 1, goalUnknown: 1, lifestyleMismatch: 1, politicsClash: 1, religionGap: 1, kidsClash: 1, unknownField: 1, hiddenDealbreaker: 0, sharedInterest: [1, 1, 1], activityMiss: 1, typeWeight: 0 } }],
+  ],
+  // Iteration 3 (tuning seeds 1-12, held-out 13-16), all with --population '{"catfish":0.005}' --world STACK3.
+  it3tune: [
+    ["stack3", {}],
+    ["soft 0.1", { $world: { rater: true }, appearance: { mode: "soft", softWeight: 0.1 } }],
+    ["soft 0.25", { $world: { rater: true }, appearance: { mode: "soft", softWeight: 0.25 } }],
+    ["soft 0.5", { $world: { rater: true }, appearance: { mode: "soft", softWeight: 0.5 } }],
+    ["band 1", { $world: { rater: true }, appearance: { mode: "band", band: 1 } }],
+    ["band 1.5", { $world: { rater: true }, appearance: { mode: "band", band: 1.5 } }],
+    ["photos 1", { $world: { photos: 1 } }],
+    ["photos 1 + learning", { $world: { photos: 1 }, attraction: { enabled: true } }],
+    ["photos 1 + soft 0.25", { $world: { photos: 1, rater: true }, appearance: { mode: "soft", softWeight: 0.25 } }],
+    ["photos 1 + band 1", { $world: { photos: 1, rater: true }, appearance: { mode: "band", band: 1 } }],
+  ],
+  it3held: [
+    ["stack3", {}],
+    ["stack3 + soft 0.1", { $world: { rater: true }, appearance: { mode: "soft", softWeight: 0.1 } }],
+    ["stack3 + band 1", { $world: { rater: true }, appearance: { mode: "band", band: 1 } }],
+    ["photos 1", { $world: { photos: 1 } }],
+    ["photos 1 + learning", { $world: { photos: 1 }, attraction: { enabled: true } }],
+    ["photos 1 + soft 0.1", { $world: { photos: 1, rater: true }, appearance: { mode: "soft", softWeight: 0.1 } }],
+    ["photos 1 + band 1", { $world: { photos: 1, rater: true }, appearance: { mode: "band", band: 1 } }],
+    ["soft 0.1, bias 0.5", { $world: { rater: { bias: 0.5 } }, appearance: { mode: "soft", softWeight: 0.1 } }],
+    ["soft 0.1, bias 1", { $world: { rater: { bias: 1 } }, appearance: { mode: "soft", softWeight: 0.1 } }],
+    ["band 1, bias 0.5", { $world: { rater: { bias: 0.5 } }, appearance: { mode: "band", band: 1 } }],
+    ["band 1, bias 1", { $world: { rater: { bias: 1 } }, appearance: { mode: "band", band: 1 } }],
+    ["photos 1 + band 1, bias 1", { $world: { photos: 1, rater: { bias: 1 } }, appearance: { mode: "band", band: 1 } }],
+    ["random + stack3", { $baseline: "random" }],
+  ],
+  it3bias: [
+    ["band 1, bias 0", { $world: { rater: { bias: 0 } }, appearance: { mode: "band", band: 1 } }],
+    ["band 1, bias 0.5", { $world: { rater: { bias: 0.5 } }, appearance: { mode: "band", band: 1 } }],
+    ["band 1, bias 1", { $world: { rater: { bias: 1 } }, appearance: { mode: "band", band: 1 } }],
+    ["soft 0.25, bias 0", { $world: { rater: { bias: 0 } }, appearance: { mode: "soft", softWeight: 0.25 } }],
+    ["soft 0.25, bias 0.5", { $world: { rater: { bias: 0.5 } }, appearance: { mode: "soft", softWeight: 0.25 } }],
+    ["soft 0.25, bias 1", { $world: { rater: { bias: 1 } }, appearance: { mode: "soft", softWeight: 0.25 } }],
   ],
   // Iteration 2 (held-out seeds 9-12). W = the safety stack: verification, relay classifier, 3-day review, widen answers.
   it2: [
@@ -216,6 +285,35 @@ export function gates(a: ArmResult, random: ArmResult): Gate[] {
   ];
 }
 
+/** Iteration 3 gates (founder safety model 2026-10-08): not being single is not a harm; catfish not gated pre-contact. */
+export function gates3(a: ArmResult, random: ArmResult): Gate[] {
+  const M = (f: (m: SlopMetrics) => number, r = a) => mean(r.metrics.map(f));
+  const X = (f: (e: Extra) => number, r = a) => mean(r.extra.map(f));
+  const cut = (f: (e: Extra) => number) => 1 - X(f) / Math.max(1e-9, X(f, random));
+  const cutM = (f: (m: SlopMetrics) => number) => 1 - M(f) / Math.max(1e-9, M(f, random));
+  const sdr = M(m => m.secondDateRate), sdrR = M(m => m.secondDateRate, random);
+  const sec = M(m => m.secondDateRate * m.dates), secR = M(m => m.secondDateRate * m.dates, random);
+  const fair = fairnessRatios(a), fairF = fairnessRatios(a, true);
+  const rep = Math.max(...a.extra.map(e => e.harassment.afterReportMax));
+  return [
+    { name: "Declared-minor contacts", value: M(m => m.safety.minorContacts), target: "= 0", pass: a.metrics.every(m => m.safety.minorContacts === 0) },
+    { name: "Stated-filter violations", value: M(m => m.filterViolations), target: "= 0", pass: a.metrics.every(m => m.filterViolations === 0) },
+    { name: "Scam harm events cut vs random", value: cut(e => e.scamHarms), target: ">= 90%", pass: cut(e => e.scamHarms) >= 0.9 },
+    { name: "Minor contacts (age liars) cut vs random", value: cutM(m => m.safety.undisclosedMinorContacts), target: ">= 90%", pass: cutM(m => m.safety.undisclosedMinorContacts) >= 0.9 },
+    { name: "Repeat harassment victims per offender after the first report (max)", value: rep, target: "<= 1", pass: rep <= 1 },
+    { name: "Adversary contacts cut (scammers, harassers, age liars)", value: cut(e => e.coreAdversaryContacts), target: ">= 90%", pass: cut(e => e.coreAdversaryContacts) >= 0.9 },
+    { name: "Harm events cut (not counting 'not single')", value: cut(e => e.harmsNoDeception), target: ">= 90%", pass: cut(e => e.harmsNoDeception) >= 0.9 },
+    { name: "Scammer median reach", value: X(e => e.scammerMedianReach), target: "<= 1", pass: X(e => e.scammerMedianReach) <= 1 },
+    { name: "Second-date rate vs random (and >= 20%)", value: sdr / sdrR, target: ">= 2.5x", pass: sdr / sdrR >= 2.5 && sdr >= 0.2 },
+    { name: "Second dates per seed vs random", value: sec / secR, target: ">= 2x", pass: sec / secR >= 2 },
+    { name: "Top-10% share of proposals", value: M(m => m.congestion.top10ProposalShare), target: "<= 20%", pass: M(m => m.congestion.top10ProposalShare) <= 0.2 },
+    { name: `Lowest group vs overall (${fair.minGroup})`, value: fair.min, target: ">= 0.7x", pass: fair.min >= 0.7 },
+    { name: `Same, feasible members (${fairF.minGroup})`, value: fairF.min, target: ">= 0.7x", pass: fairF.min >= 0.7 },
+    { name: "Back-outs at reveal", value: M(m => m.backoutRate), target: "< 10%", pass: M(m => m.backoutRate) < 0.1 },
+    { name: "Dates per member-month vs random", value: M(m => m.datesPerMemberMonth) / M(m => m.datesPerMemberMonth, random), target: ">= 0.9x", pass: M(m => m.datesPerMemberMonth) / M(m => m.datesPerMemberMonth, random) >= 0.9 },
+  ];
+}
+
 export const ROWS: [string, (m: SlopMetrics) => number, boolean, number?][] = [
   ["Proposals / seed", m => m.proposals, false, 0],
   ["Probes delivered / seed", m => m.probesDelivered, false, 0],
@@ -271,15 +369,17 @@ if (import.meta.main) {
   for (const p of all("preset")) for (const [n, v] of PRESETS[p] ?? []) { variants.push(JSON.stringify(v)); names.push(n); }
   // --verification / --world '<WorldSpec>': the world of the slop arms (and variants); the baselines
   // stay the world-doc baselines unless a variant runs one with "$baseline" (so "cut vs random" is vs today's floor).
-  const world: WorldSpec = { ...JSON.parse(arg("world", "{}")!), ...(argv.includes("--verification") ? { verification: true } : {}) };
+  // --population '<WorldSpec>' (e.g. {"catfish":0.005}) applies to EVERY arm, baselines included.
+  const pop: WorldSpec = JSON.parse(arg("population", "{}")!);
+  const world: WorldSpec = { ...pop, ...JSON.parse(arg("world", "{}")!), ...(argv.includes("--verification") ? { verification: true } : {}) };
   const results: ArmResult[] = [];
-  for (const a of arms) { const t = performance.now(); results.push(await runArm(a, seeds, weeks, perCity, a === "slop" ? {} : undefined, a === "slop" ? world : {})); console.error(`${a}: ${((performance.now() - t) / 1000).toFixed(1)}s`); }
+  for (const a of arms) { const t = performance.now(); results.push(await runArm(a, seeds, weeks, perCity, a === "slop" ? {} : undefined, a === "slop" ? world : pop)); console.error(`${a}: ${((performance.now() - t) / 1000).toFixed(1)}s`); }
   for (let i = 0; i < variants.length; i++) { const t = performance.now(); results.push(await runArm(names[i] ?? `v${i}`, seeds, weeks, perCity, JSON.parse(variants[i]!), world)); console.error(`${names[i] ?? `v${i}`}: ${((performance.now() - t) / 1000).toFixed(1)}s`); }
   console.log(table(results));
   const random = results.find(r => r.arm === "random");
   if (random) for (const r of results.filter(x => x.arm !== "random")) {
     console.log(`\nGates: ${r.arm}`);
-    for (const g of gates(r, random)) console.log(`  ${g.pass ? "PASS" : "FAIL"}  ${g.name}: ${g.name.includes("cut") ? (g.value * 100).toFixed(1) + "%" : g.value.toFixed(3)} (${g.target})`);
+    for (const g of (argv.includes("--gates3") ? gates3 : gates)(r, random)) console.log(`  ${g.pass ? "PASS" : "FAIL"}  ${g.name}: ${g.name.includes("cut") ? (g.value * 100).toFixed(1) + "%" : g.value.toFixed(3)} (${g.target})`);
   }
   if (argv.includes("--groups")) for (const r of results) {
     const f = fairnessRatios(r);

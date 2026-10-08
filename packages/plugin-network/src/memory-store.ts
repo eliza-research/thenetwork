@@ -11,7 +11,7 @@ export class InMemoryNetworkStore implements NetworkStore {
   readonly members = new Map<string, NetworkMemberContext>();
   readonly events: Array<{ id: string; type: string; memberId: string; payload: unknown }> = [];
   readonly signals: Array<{ memberId: string; messageId: string; signal: NetworkSignal }> = [];
-  private readonly ledger = new Map<string, SetStateExecution>();
+  private readonly ledger = new Map<string, { exec: SetStateExecution; payload: string }>();
   private seq = 0;
 
   constructor(
@@ -27,8 +27,14 @@ export class InMemoryNetworkStore implements NetworkStore {
   }
 
   async setState(input: SetStateInput): Promise<SetStateExecution> {
+    // Same key + different payload is a conflict, never a replay of someone else's change
+    // (audit plugin-prototypes-4). Cloud's store must do the same.
+    const payload = JSON.stringify([input.memberId, input.state, input.from ?? null, input.until ?? null]);
     const prior = this.ledger.get(input.idempotencyKey);
-    if (prior) return { ...prior, replayed: true };
+    if (prior) {
+      if (prior.payload !== payload) throw new Error(`idempotency key reused with a different payload: ${input.idempotencyKey}`);
+      return { ...prior.exec, replayed: true };
+    }
     const member = this.members.get(input.memberId);
     if (!member) throw new Error(`unknown member ${input.memberId}`);
     const previous = member.state;
@@ -38,7 +44,7 @@ export class InMemoryNetworkStore implements NetworkStore {
         eventId: null, previous, current: previous, from, until: input.until,
         committedAt: this.now(), replayed: false, unchanged: true,
       };
-      this.ledger.set(input.idempotencyKey, noop);
+      this.ledger.set(input.idempotencyKey, { exec: noop, payload });
       return noop;
     }
     member.state = input.state;
@@ -62,7 +68,7 @@ export class InMemoryNetworkStore implements NetworkStore {
       replayed: false,
       unchanged: false,
     };
-    this.ledger.set(input.idempotencyKey, exec);
+    this.ledger.set(input.idempotencyKey, { exec, payload });
     return exec;
   }
 

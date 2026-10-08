@@ -13,6 +13,7 @@ import { resolve } from "node:path";
 import { defaultLLM, judgeLLM } from "@thenetwork/core";
 import { formatMetrics, judgeMessageQuality, privacyAudit, type RunRecord } from "@thenetwork/judge";
 import { LLMPersonaAgent } from "./agent/llmAgent.ts";
+import { PolicyPersonaAgent } from "./agent/policy.ts";
 import { generatePersonas } from "./generator.ts";
 import { generateLLMPersonas } from "./llmGenerator.ts";
 import type { Engine, NetworkUnderTest } from "./network.ts";
@@ -34,6 +35,11 @@ const { values: a } = parseArgs({
     "llm-personas": { type: "boolean", default: false },
     "adversarial-rate": { type: "string" },
     "minor-share": { type: "string" },
+    richness: { type: "boolean", default: false },
+    "stable-decisions": { type: "boolean", default: false },
+    logistics: { type: "boolean", default: false },
+    "quality-churn": { type: "boolean", default: false },
+    "trip-clock": { type: "boolean", default: false },
     judge: { type: "string" },
     scenario: { type: "string" },
     k: { type: "string", default: "1" },
@@ -57,6 +63,14 @@ if (a.help) {
   --llm-personas      also enrich persona bios via defaultLLM()
   --adversarial-rate  share of adversarial personas (default 0.06)
   --minor-share       share of honest members aged 13-17 (default 0.05; never connected to anyone)
+  --richness          profile richness tiers: the snapshot holds only what members told the agent
+                      (default off: perfect onboarding, every boundary and romance preference known)
+  --stable-decisions  oracle: re-asking the same people for the same thing in a week is the same
+                      answer, and personas remember declines (default off)
+  --logistics         oracle: travel and meeting time change show-up (default off)
+  --quality-churn     policy personas lose trust after unsafe or poor intros and bad meetings,
+                      and may STOP (default off: churn only from message volume)
+  --trip-clock        travellers reply on the trip city's clock (default off: home-city clock)
   --judge N           after the run, LLM-judge N sent proactive messages (quality + privacy audit)
                       with the judge model judgeLLM() (JUDGE_PROVIDER/JUDGE_MODEL, default surplus gpt-6-luna)
   --scenario PATH     run a scenario file instead of a random world; --k N for pass^k
@@ -84,7 +98,7 @@ async function loadEngine(): Promise<Engine | undefined> {
 
 const engine = await loadEngine();
 const llm = a.llm || a["llm-personas"] ? defaultLLM() : undefined;
-const agent = a.llm && llm ? new LLMPersonaAgent(llm, DEFAULT_START) : undefined;
+const agent = a.llm && llm ? new LLMPersonaAgent(llm, DEFAULT_START) : a["quality-churn"] || a["trip-clock"] ? new PolicyPersonaAgent(DEFAULT_START, { qualityChurn: a["quality-churn"], tripClock: a["trip-clock"] }) : undefined;
 
 if (a.scenario) {
   const s = await loadScenario(a.scenario);
@@ -102,12 +116,14 @@ const n = Number(a.personas), days = Number(a.days);
 const genOpts = {
   n, seed, adversarialRate: a["adversarial-rate"] ? Number(a["adversarial-rate"]) : undefined,
   minorShare: a["minor-share"] !== undefined ? Number(a["minor-share"]) : undefined, joinSpreadDays: Math.min(7, days),
+  ...(a.richness ? { richness: true } : {}),
 };
 const personas = a["llm-personas"] && llm ? await generateLLMPersonas({ ...genOpts, llm }) : generatePersonas(genOpts);
 
 const res = await runWorld({
   seed, personas, days, mode, speed: Number(a.speed), network: makeNetwork(engine), engine, agent,
   writeLog: !a["no-log"],
+  ...(a["stable-decisions"] || a.logistics ? { oracle: { stableDecisions: a["stable-decisions"], logistics: a.logistics } } : {}),
   onDay: d => { if (!a.json) process.stderr.write(`  day ${d}/${days}\r`); },
 });
 if (!a.json) process.stderr.write("\n");
@@ -119,22 +135,35 @@ else {
 }
 if (a.judge) await judgeRun(res.records, Number(a.judge));
 
-/** LLM judges over a deterministic, evenly spaced sample of delivered proactive messages. */
+/**
+ * LLM judges over a deterministic, evenly spaced sample of every delivered Network message (not only
+ * proactive ones), and a privacy audit of that sample against every private fact (in batches of 40).
+ * A judge error is reported and the CLI exits non-zero, so an outage never reads as a clean audit.
+ */
 async function judgeRun(records: RunRecord[], k: number) {
   const judge = judgeLLM(); // judge model per JUDGE_PROVIDER / JUDGE_MODEL
-  const sent = records.flatMap(r => (r.type === "message" && r.msg.direction === "outbound" && !r.msg.system && r.msg.status === "delivered" && r.msg.meta?.proactive ? [r.msg] : []));
+  const sent = records.flatMap(r => (r.type === "message" && r.msg.direction === "outbound" && !r.msg.system && r.msg.status === "delivered" ? [r.msg] : []));
   const step = Math.max(1, Math.floor(sent.length / Math.max(1, k)));
   const sample = sent.filter((_, i) => i % step === 0).slice(0, k);
-  const quality = await Promise.all(sample.map(m => judgeMessageQuality(judge, { message: m.body }).catch(e => ({ pass: false, score: 0, issues: [String(e)], reasoning: "" }))));
+  const errors: string[] = [];
+  const quality = await Promise.all(sample.map(m => judgeMessageQuality(judge, { message: m.body }).catch(e => { errors.push(String(e)); return { pass: false, score: 0, issues: [String(e)], reasoning: "" }; })));
   const facts = records.flatMap(r => (r.type === "persona" && r.persona.privateFact ? [{ owner: r.persona.id, fact: r.persona.privateFact }] : []));
-  const audit = facts.length && sample.length ? await privacyAudit(judge, { privateFacts: facts.slice(0, 40), messages: sample.map(m => ({ to: m.memberId, text: m.body })) }).catch(() => null) : null;
+  let leaks = 0;
+  for (let i = 0; sample.length && i < facts.length; i += 40) {
+    const audit = await privacyAudit(judge, { privateFacts: facts.slice(i, i + 40), messages: sample.map(m => ({ to: m.memberId, text: m.body })) }).catch(e => { errors.push(String(e)); return null; });
+    leaks += audit?.leaks.length ?? 0;
+  }
   const passN = quality.filter(q => q.pass).length;
   const out = {
     judge: `${process.env.JUDGE_PROVIDER ?? "surplus"}/${process.env.JUDGE_MODEL ?? "gpt-6-luna"}`,
     sampled: sample.length, qualityPass: passN, qualityPassRate: sample.length ? Math.round((passN / sample.length) * 1000) / 1000 : 0,
     meanScore: sample.length ? Math.round((quality.reduce((s, q) => s + q.score, 0) / sample.length) * 100) / 100 : 0,
-    privacyLeaks: audit ? audit.leaks.length : null,
+    privacyLeaks: errors.length ? null : leaks, factsAudited: facts.length, errors: errors.length,
   };
   if (a.json) console.log(JSON.stringify({ llmJudges: out }, null, 2));
-  else console.log(`LLM judges (${out.judge}): sampled=${out.sampled} quality pass=${out.qualityPass} (${(out.qualityPassRate * 100).toFixed(1)}%) mean=${out.meanScore} privacyLeaks=${out.privacyLeaks ?? "n/a"}`);
+  else console.log(`LLM judges (${out.judge}): sampled=${out.sampled} quality pass=${out.qualityPass} (${(out.qualityPassRate * 100).toFixed(1)}%) mean=${out.meanScore} privacyLeaks=${out.privacyLeaks ?? "n/a"} facts=${out.factsAudited}`);
+  if (errors.length) {
+    console.error(`LLM judge errors: ${errors.length} (first: ${errors[0]})`);
+    process.exit(1);
+  }
 }

@@ -8,8 +8,21 @@
 export const MIN_MEMBER_AGE = 13;
 export const ADULT_AGE = 18;
 
-/** True for a usable age: a finite number, 0 or more. Anything else is treated as unknown (fail closed). */
-export const validAge = (age: unknown): age is number => typeof age === "number" && Number.isFinite(age) && age >= 0;
+/** Oldest plausible human age. Anything above is a data error, treated as unknown (fail closed). */
+export const MAX_AGE = 120;
+
+/** True for a usable age: a finite number from 0 to MAX_AGE. Anything else is treated as unknown (fail closed). */
+export const validAge = (age: unknown): age is number => typeof age === "number" && Number.isFinite(age) && age >= 0 && age <= MAX_AGE;
+
+/**
+ * The age to apply when several sources disagree (record age, ages stated in chat, ages from other
+ * apps): the lowest valid one, so a stated "I'm 15" always wins over a record that says 25.
+ * Undefined when no source is valid (callers then fail closed through isMinor/canJoin).
+ */
+export function effectiveAge(...ages: unknown[]): number | undefined {
+  const ok = ages.filter(validAge);
+  return ok.length ? Math.min(...ok) : undefined;
+}
 
 /** True if someone of this age may join The Network (13 or older). */
 export const canJoin = (age: unknown): boolean => validAge(age) && age >= MIN_MEMBER_AGE;

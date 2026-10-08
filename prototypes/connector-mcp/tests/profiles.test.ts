@@ -137,7 +137,8 @@ describe("profile and eligibility rules", () => {
     expect(PROFILES.teen_safe_directory.instructions.length).toBeGreaterThan(100);
     expect(PROFILES.teen_safe_directory.instructions).not.toMatch(TEEN_UNSAFE);
     expect(profileViolation("Trivia at a cocktail bar", PROFILES.teen_safe_directory)).toBe("cocktail");
-    expect(profileViolation("Trivia at a cocktail bar", PROFILES.general_assistant)).toBeNull();
+    expect(profileViolation("Trivia at a cocktail bar", PROFILES.general_assistant, 30)).toBeNull();
+    expect(profileViolation("Trivia at a cocktail bar", PROFILES.general_assistant)).toBe("cocktail"); // unknown age is a minor (plugin-prototypes-23)
     expect(profileViolation("Trivia at a cocktail bar", PROFILES.general_assistant, 16)).toBe("cocktail");
     expect(profileViolation("Bouldering on Thursday at the barbecue place", PROFILES.teen_safe_directory)).toBeNull();
   });

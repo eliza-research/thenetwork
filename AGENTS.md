@@ -48,7 +48,7 @@ Do not break these. They are checked in tests and in every simulated run.
 ## LLMs
 
 - Use `defaultLLM()`, `judgeLLM()` or `recommenderLLM()` from `packages/core/src/llm.ts`. Every use is `gpt-6-luna` on Surplus Intelligence. OpenAI (same model IDs) is used when there is no `SURPLUS_API_KEY`, and as the fallback when Surplus returns 429 / 5xx / a timeout. Cerebras is optional and legacy. Use `endpointsFor(provider)` to check whether a provider has a key. Do not add a new LLM client or provider.
-- Requests time out after 60 s by default (`LLM_TIMEOUT_MS`) and retry at most 4 times (`LLM_MAX_RETRIES`).
+- Requests time out after 60 s by default (`LLM_TIMEOUT_MS`) and retry at most 4 times (`LLM_MAX_RETRIES`). One call, retries included, stops at `LLM_DEADLINE_MS` (default 3x the timeout; 0 disables). Pass `fallback: false` to a call or client to turn off the OpenAI fallback; every fallback is logged and reported to `onFallback`.
 - Live (paid, networked) tests run only with `LIVE_TESTS=1`. A key in `.env` is not enough. Gate any new live test with `liveTestsEnabled()` from `packages/core`.
 - Judge prompts write the explanation before the verdict.
 - Recommendations and judges use the same model (`gpt-6-luna`) with a different prompt or pass. Use a different judge model for audits only, and a cross-family audit needs founder approval (it sends data to another provider).

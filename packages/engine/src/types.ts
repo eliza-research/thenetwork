@@ -169,6 +169,8 @@ export interface MatchingRunLog {
   judge: {
     calls: number; cacheHits: number; failures: number; verdicts: { key: string; cacheKey: string; verdict: JudgeVerdict | null; cached: boolean }[];
     screen?: { calls: number; cacheHits: number; failures: number; verdicts: { key: string; cacheKey: string; verdict: unknown; cached: boolean }[] };
+    /** Selected configurations and how many of them a pass-2 verdict scored (absent when no judge ran). */
+    coverage?: { selected: number; judged: number };
     deep?: {
       calls: number; cacheHits: number; failures: number;
       verdicts: {

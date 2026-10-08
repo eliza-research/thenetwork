@@ -6,7 +6,7 @@ import { canBeMatched } from "@thenetwork/core";
 import { PEON_ENGINE_CONFIG, peonPack } from "@thenetwork/engine/src/packs/peon/index.ts";
 import { runConformance } from "../../engine/test/conformance.ts";
 import {
-  ARMS, PEON_WORLD_START, REALISM_V1, buildPeonSnapshot, createPeonWorld, generatePeonPopulation, keywordMatcher, packMatcher, peonMetrics, runPeonWorld,
+  ARMS, PEON_WORLD_START, REALISM_V1, historicalGates, officialGates, buildPeonSnapshot, createPeonWorld, generatePeonPopulation, keywordMatcher, packMatcher, peonMetrics, runPeonWorld,
   type PeonNetworkState, type PeonPopulation,
 } from "../src/peon/index.ts";
 
@@ -115,6 +115,15 @@ describe("harness", () => {
     expect(v1.recruiterHours).toBe(0);
     expect(m1.closedDeadline + m1.closedExternal).toBe(0);
     expect(m1.replyRate).toBeGreaterThan(m10.replyRate);
+  }, 60_000);
+
+  test("official gates: the adopted replacement set is evaluated against keyword and the oracle; historical gates are kept", async () => {
+    const run = async (m: Parameters<typeof runPeonWorld>[0]["matcher"]) => peonMetrics(await runPeonWorld({ seed: 2, weeks: 4, matcher: m }));
+    const p = [await run(packMatcher())], k = [await run(keywordMatcher)], o = [await run(ARMS.oracle!.matcher)];
+    const off = officialGates(p, k, o), hist = historicalGates(p, k);
+    expect(off.map(g => g.id)).toEqual(["hires_vs_keyword", "hires_vs_oracle", "interviews_per_hire", "retention_90d", "under_applied", "impact_ratio", "scam_reach", "minors", "unverified", "pay_range"]);
+    expect(hist.map(g => g.id)).toContain("h_hires_2x");
+    for (const id of ["minors", "unverified", "pay_range"]) expect(off.find(g => g.id === id)!.pass).toBe(true);
   }, 60_000);
 
   test("oracle sanity: qualified pairs pass more often; scam jobs never hire; fake candidates rarely pass", () => {

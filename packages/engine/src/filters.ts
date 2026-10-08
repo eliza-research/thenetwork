@@ -17,7 +17,7 @@ export type FilterReason =
   | "contribution_budget" | "category_quota" | "category_cooldown" | "reliability_holdout"
   | "blocked" | "negative_feedback_cooldown" | "pair_cooldown" | "active_duplicate"
   | "romance_incompatible" | "dealbreaker" | "high_risk" | "home_entry_rule"
-  | "no_presence_overlap" | "group_size" | "duplicate_participant" | (string & {});
+  | "no_presence_overlap" | "group_size" | "romance_group" | "duplicate_participant" | (string & {});
 
 import type { MemberCheck } from "./pack.ts";
 export type { MemberCheck };
@@ -71,15 +71,53 @@ export function pairReason(w: World, a: MemberId, b: MemberId, category: Categor
   // Core prefix: blocks win (either direction).
   if (w.blocked.has(pairKey(a, b))) return "blocked";
   const ma = w.get(a), mb = w.get(b);
+  // Pack rules always get two known members (engine-pipeline-16): an unknown id ends here.
+  if (!ma || !mb) return "unknown_member";
   // Pack rules in order (networkPack: cooldowns, active duplicate, known members, romance, dealbreakers).
   for (const r of w.pack.eligibility.pairRules) {
-    const reason = r.check(w, a, b, category, ma!, mb!);
+    const reason = r.check(w, a, b, category, ma, mb);
     if (reason) return reason;
   }
-  if (!ma || !mb) return "unknown_member";
   // Optional geo hard filter (radius packs: mutual radius). Absent for networkPack.
   return w.pack.geo.pairReason?.(w, a, b) ?? null;
 }
+
+/**
+ * Curated safety corpus (audit engine-pipeline-4), applied on top of config.highRiskTerms /
+ * highRiskPatterns and not part of the config: a safety floor that tuning cannot switch off.
+ * Each rule names who would be put at risk, so benign mentions ("parents with young kids",
+ * "a 5 year old startup", "dog sitter", "diet coke", "mushroom foraging") pass. Checked against
+ * a risky and a benign corpus in test/audit-2026-10-08.test.ts.
+ */
+const CHILD = "(kids?|child|children|minors?|teens?|teenagers?|toddlers?|bab(?:y|ies)|sons?|daughters?|little ones?|(?:1[0-7]|[1-9]|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\\s?-?\\s?(?:yo|y\\/?o|yrs?(?:\\s|-)?olds?|years?(?:\\s|-)?olds?))";
+export const SAFETY_RISK_PATTERNS: readonly string[] = [
+  // Care, transport or time alone with someone's child; a child's age may be written as digits or
+  // words ("my 6 year old", "my 8yo", "15 y/o", "twelve-year-old").
+  `\\b(watch(ing)?|sit(ting)?|mind(ing)?|look(ing)? after|care for|caring for|stay with|hang out with|pick(ing)? up|drop(ping)? off|tutor\\w*|mentor\\w*|teach\\w*|coach\\w*|alone with)\\b(\\W+\\w+){0,3}?\\W+(my|our|your|their|his|her)\\s+${CHILD}`,
+  `\\b(my|our|your|their)\\s+${CHILD}\\b(\\W+\\w+){0,4}?\\W+(a )?(ride|lift|sitter|nanny|tutor|mentor|coach)\\b`,
+  `\\b(ride|rides|lift|sitter|nanny)\\s+(for|to)\\s+(my|our|your|their)\\s+${CHILD}`,
+  "\\bbaby[\\s-]?sit", "(?<!(dog|pet|cat|plant|house|bird)[\\s-]?)\\bsitters?\\b",
+  "\\b(school|daycare|day care|preschool|kindergarten)[\\s-]?(pick[\\s-]?ups?|drop[\\s-]?offs?|run)\\b",
+  "\\bfrom (school|daycare|day care|preschool|kindergarten)\\b",
+  // Money asks and transactional dating.
+  "\\b(spot|front|venmo|zelle|cash ?app|paypal|wire|send|loan|lend|give)\\s+(me|us)\\b(\\W+\\w+){0,2}?\\W*(\\$\\s?\\d|\\d+\\s?(k|bucks|dollars|usd)\\b|money|cash|rent|funds?)",
+  "\\b\\d+\\s?(bucks|dollars)\\b(\\W+\\w+){0,3}?\\W+(till|until|by) (friday|payday|next week|the \\d+)",
+  "\\b(sugar (daddy|daddies|mommy|mommies|mama|baby|babies)|pay ?pig|findom|allowance arrangement)\\b",
+  "\\b(guaranteed returns?|crypto (signals|opportunity)|forex (signals|opportunity)|investment opportunity)\\b",
+  // Drugs (named substances; "diet coke", "mushroom foraging" and "joint venture" pass).
+  "\\b(edibles?|molly|mdma|ecstasy|ketamine|shrooms|magic mushrooms?|psilocybin|lsd|adderall|xanax|oxy(codone|contin)?|percocet|opioids?|meth|heroin|fentanyl|thc|dabs?|blunts?|420|psychedelics?)\\b",
+  "(?<!diet |cherry |vanilla )\\b(coke|cocaine)\\b", "\\b(my|your|his|her|their) (meds|pills)\\b",
+  // Medical escort / care.
+  "\\b(ride|rides|lift|drive|take me|go with me|come with me|accompany me)\\b(\\W+\\w+){0,4}?\\W+(clinic|hospital|surgery|procedure|chemo|chemotherapy|dialysis)\\b",
+  "\\bafter (my|the) (procedure|surgery|operation)\\b",
+];
+/** Home entry (F14), on top of config.homeEntryTerms: rooms, dwellings with a possessive, and in-home jobs. */
+export const HOME_ENTRY_PATTERNS: readonly string[] = [
+  "\\b(home|house|apartment|apt|condo|walk-?up|bedroom|living room|kitchen|bathroom|basement|attic|garage|backyard)\\b",
+  "\\b(my|our|their|his|her|the|new) (place|flat|studio|room|unit|loft|building|floor)\\b",
+  "\\b(plumbing|sink|toilet|faucet|ikea|dresser|bed ?frame|shelves|furniture|couch|sofa|mattress)\\b",
+  "\\b(move|moving|movers?)\\b", "\\bcome over\\b",
+];
 
 const riskCache = new WeakMap<EngineConfig, RegExp[]>();
 const escapeRe = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -90,6 +128,7 @@ function riskMatchers(cfg: EngineConfig): RegExp[] {
       // Whole words / phrases only (plural allowed; "-" or "_" may stand for a space).
       ...cfg.highRiskTerms.map(t => new RegExp(`\\b${escapeRe(t.toLowerCase().replace(/_/g, " ")).replace(/ /g, "[\\s-]+")}(s|es)?\\b`)),
       ...(cfg.highRiskPatterns ?? []).map(p => new RegExp(p)),
+      ...SAFETY_RISK_PATTERNS.map(p => new RegExp(p)),
     ];
     riskCache.set(cfg, rs);
   }
@@ -109,9 +148,11 @@ export function riskTerms(cfg: EngineConfig, text: string): string[] {
   }
   return out;
 }
+const HOME_RES = HOME_ENTRY_PATTERNS.map(p => new RegExp(p));
 export function isHomeEntry(cfg: EngineConfig, text: string): boolean {
-  const low = ` ${text.toLowerCase()} `;
-  return cfg.homeEntryTerms.some(t => low.includes(` ${t} `) || low.includes(` ${t}.`) || low.includes(` ${t},`));
+  const low = ` ${text.toLowerCase().replace(/_/g, " ").replace(/[\u2018\u2019]/g, "'")} `;
+  if (cfg.homeEntryTerms.some(t => low.includes(` ${t} `) || low.includes(` ${t}.`) || low.includes(` ${t},`))) return true;
+  return HOME_RES.some(re => re.test(low));
 }
 
 export interface RunUsage { proactive: Map<MemberId, number>; contribution: Map<MemberId, number> }
@@ -185,17 +226,26 @@ export function candidateReason(w: World, c: Candidate, usage?: RunUsage): Filte
  *  - a block (either direction) with anyone else still in the opportunity.
  * `optedOut` lets the caller add channel-level opt-outs (STOP) that the World doesn't model.
  */
-export function sendTimeReason(w: World, id: MemberId, others: MemberId[] = [], optedOut?: (id: MemberId) => boolean): FilterReason | "opted_out" | null {
+export function sendTimeReason(w: World, id: MemberId, others: MemberId[] = [], optedOut?: (id: MemberId) => boolean, lane?: Category): FilterReason | "opted_out" | null {
   const mi = w.get(id);
   if (!mi) return "unknown_member";
-  if (isMinorAge(mi.m.age)) return "underage";
+  // The effective match age (config ageMin and the pack's floor), not only the 18 policy floor.
+  if (isMinorAge(mi.m.age) || !(mi.m.age >= w.cfg.ageMin) || !(mi.m.age >= w.pack.eligibility.minMatchAge)) return "underage";
   if (w.holds.has(id)) return "safety_hold";
   if (mi.m.state === "paused") return "state_paused";
   if (optedOut?.(id)) return "opted_out";
+  // With the lane: a lane opt-in withdrawn after the proposal (engine-pipeline-10), romance included.
+  if (lane !== undefined) {
+    if (!mi.m.prefs.categoriesOptIn.includes(lane)) return "category_opt_out";
+    if (lane === "romance" && !mi.m.prefs.romanceOptIn) return "romance_opt_out";
+  }
   for (const o of others) if (o !== id && w.blocked.has(pairKey(id, o))) return "blocked";
   return null;
 }
 
-/** An opportunity.ts `EligibilityCheck` over a World snapshot. */
-export const eligibilityFor = (w: World, optedOut?: (id: MemberId) => boolean) =>
-  (id: MemberId, others: MemberId[]): string | null => sendTimeReason(w, id, others, optedOut);
+/**
+ * An opportunity.ts `EligibilityCheck` over a World snapshot. `lane` (the opportunity's category)
+ * re-checks lane opt-ins; a caller may also pass the lane per call (attention.ts revalidateHold).
+ */
+export const eligibilityFor = (w: World, optedOut?: (id: MemberId) => boolean, lane?: Category) =>
+  (id: MemberId, others: MemberId[], itemLane?: Category): string | null => sendTimeReason(w, id, others, optedOut, itemLane ?? lane);

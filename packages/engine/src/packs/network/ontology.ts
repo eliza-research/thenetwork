@@ -21,15 +21,22 @@ const ROLES: Role[] = ["initiator", "seeker", "provider", "peer", "helper", "hos
 /** Dealbreaker and romance preference tags on boundary / preference facets (was world.ts). */
 export function networkConstraints(boundaries: readonly Facet[]): MemberConstraints {
   const dealbreakers = boundaries.flatMap(f => f.tags.filter(t => t.startsWith("dealbreaker:")).map(t => t.slice(12).toLowerCase()));
-  const romanceTags = boundaries.flatMap(f => f.tags).filter(t => t.startsWith("romance:"));
+  // Strict parsing (engine-pipeline-18): case-insensitive, values keep any further ":", and an
+  // age range that does not parse as "lo-hi" with 18 <= lo <= hi admits nobody (fail closed).
+  const romanceTags = boundaries.flatMap(f => f.tags).map(t => t.trim().toLowerCase()).filter(t => t.startsWith("romance:"));
   let romance: RomanceProfile | undefined;
   if (romanceTags.length) {
     romance = { is: [], seeks: [], ageMin: 18, ageMax: 120 };
     for (const t of romanceTags) {
-      const [, key, val] = t.split(":");
+      const [, key, ...rest] = t.split(":");
+      const val = rest.join(":").trim();
       if (key === "is" && val) romance.is.push(val);
       if (key === "seeks" && val) romance.seeks.push(val);
-      if (key === "age" && val) { const [lo, hi] = val.split("-").map(Number); romance.ageMin = lo ?? 18; romance.ageMax = hi ?? 120; }
+      if (key === "age") {
+        const m = /^(\d{2,3})\s*-\s*(\d{2,3})$/.exec(val);
+        const lo = m ? Number(m[1]) : NaN, hi = m ? Number(m[2]) : NaN;
+        if (lo >= 18 && hi >= lo) { romance.ageMin = lo; romance.ageMax = hi; } else { romance.ageMin = Infinity; romance.ageMax = -Infinity; }
+      }
     }
   }
   return { dealbreakers, romance };

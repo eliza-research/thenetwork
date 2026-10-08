@@ -84,6 +84,10 @@ export function fromLocal(y: number, mo: number, d: number, h: number, tz: strin
   const off = (ts: number) => { const p = localParts(ts, tz); return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - Math.floor(ts / MINUTE) * MINUTE; };
   let ts = guess - off(guess);
   ts = guess - off(ts);
+  // A wall-clock time inside a spring-forward gap does not exist: use the first instant after the
+  // gap (02:30 -> 03:00), not an hour early (engine-attention-plans-17).
+  const local = (t: number) => { const p = localParts(t, tz); return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute); };
+  for (let i = 0; i < 12 && local(ts) < guess; i++) ts = Math.floor(ts / (15 * MINUTE)) * 15 * MINUTE + 15 * MINUTE;
   return ts;
 }
 /** Start of the current budget window in member local time (Monday 00:00 or the 1st 00:00). */

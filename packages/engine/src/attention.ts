@@ -106,7 +106,10 @@ export interface Cap { limit: number; periodDays: number }
 
 /** Interruption cap for the member: state cap (D1), minors 1/7d (D9), 0 when paused or only-when-asked. */
 export function capFor(m: MemberAttention, cfg: AttentionConfig = DEFAULT_ATTENTION): Cap {
-  const base = isMinor(m.age) ? cfg.minors.cap : cfg.caps[m.state];
+  // Minors take the stricter of the minors cap and their state's cap (a Quiet minor keeps Quiet's
+  // 1 per 30 days, engine-attention-plans-5).
+  const st = cfg.caps[m.state];
+  const base = isMinor(m.age) && cfg.minors.cap.limit / cfg.minors.cap.periodDays < st.limit / st.periodDays ? cfg.minors.cap : cfg.caps[m.state];
   if (m.state === "paused" || m.onlyWhenAsked || m.prefs.mode === "only_when_asked") return { limit: 0, periodDays: base.periodDays };
   // An explicit request can lower the cap, or restore it, but never exceed the state cap (D11).
   const limit = m.prefs.capOverride === undefined ? base.limit : Math.min(base.limit, Math.max(0, Math.floor(m.prefs.capOverride)));
@@ -132,9 +135,14 @@ export function breakInsUsed(ledger: readonly AttentionLedgerEntry[], memberId: 
   return uniqueIds(ledger.filter(e => e.memberId === memberId && e.kind === "break_in" && e.at <= now && e.at > now - periodDays * DAY));
 }
 
-/** Consecutive most-recent interruptions with no reply by their deadline (72h). Pending ones are skipped. */
-export function unansweredInterruptions(ledger: readonly AttentionLedgerEntry[], memberId: MemberId, now: number, cfg: AttentionConfig = DEFAULT_ATTENTION): number {
-  const mine = ledger.filter(e => e.memberId === memberId && e.countsAgainstCap && e.at <= now)
+/**
+ * Consecutive most-recent interruptions with no reply by their deadline (72h). Pending ones are
+ * skipped. `since` (the member's last inbound message, Conversation.lastInboundAt): interruptions
+ * sent at or before it do not count, so any later message from the member (a late reply, "resume")
+ * lifts the two-unanswered pause (engine-attention-plans-1).
+ */
+export function unansweredInterruptions(ledger: readonly AttentionLedgerEntry[], memberId: MemberId, now: number, cfg: AttentionConfig = DEFAULT_ATTENTION, since?: number): number {
+  const mine = ledger.filter(e => e.memberId === memberId && e.countsAgainstCap && e.at <= now && (since === undefined || since > now || e.at > since))
     .sort((a, b) => (b.at - a.at) || (a.messageId < b.messageId ? -1 : 1));
   const seen = new Set<string>();
   let n = 0;
@@ -200,7 +208,7 @@ export function attentionCost(items: readonly Pick<AttentionItem, "effort" | "en
 export function shadowPrice(m: Pick<MemberAttention, "state" | "age" | "newcomer">, used: number, cap: number, r: number, cfg: AttentionConfig = DEFAULT_ATTENTION): number {
   if (cap <= 0 || m.state === "paused") return Infinity;
   let base = cfg.lambda[m.state];
-  if (isMinor(m.age)) base = cfg.lambda.normal; // 1.7: members 13-17 price like Normal (0.25)
+  if (isMinor(m.age)) base = Math.max(cfg.lambda.normal, base); // 1.7: members 13-17 price like Normal (0.25), or stricter
   else if (m.newcomer && (m.state === "open" || m.state === "normal" || m.state === "receiving")) base = Math.min(base, cfg.newcomer.lambda);
   return base * Math.pow(1 + used / cap, 2) * r;
 }
@@ -250,10 +258,17 @@ export function annoyance(ledger: readonly AttentionLedgerEntry[], memberId: Mem
 
 const jsDay = (ts: number, tz: string) => (localParts(ts, tz).weekday + 1) % 7;
 
-/** Member quiet hours, plus 20:00-08:00 local on school nights for members aged 13-17 (D9). */
+/**
+ * Overnight hours (local) in which a member aged 13-17 is never messaged, on any day, whatever
+ * their own quiet hours say (engine-attention-plans-6). School nights extend it to cfg.minors.quietHours.
+ */
+export const MINOR_OVERNIGHT: [number, number] = [22, 7];
+
+/** Member quiet hours, plus 20:00-08:00 local on school nights for members aged 13-17 (D9) and MINOR_OVERNIGHT every night. */
 export function inMemberQuietHours(m: Pick<MemberAttention, "tz" | "quietHours" | "age">, t: number, cfg: AttentionConfig = DEFAULT_ATTENTION): boolean {
   if (inQuietHours(t, m.tz, m.quietHours)) return true;
   if (!isMinor(m.age)) return false;
+  if (inQuietHours(t, m.tz, MINOR_OVERNIGHT)) return true;
   const [s, e] = cfg.minors.quietHours;
   const h = localParts(t, m.tz).hour;
   const d = jsDay(t, m.tz);
@@ -460,7 +475,7 @@ export function composeMessage(inp: ComposeInput): ComposeResult {
   const no = (reason: string) => ({ ...res, reason });
   if (m.state === "paused") return no("paused");
   // The two-unanswered pause comes first (F28): the Network's own auto-pause always fires before Blooio's limit.
-  if (m.onlyWhenAsked || m.prefs.mode === "only_when_asked" || unansweredInterruptions(ledger, m.memberId, now, cfg) >= 2) return no("only_when_asked");
+  if (m.onlyWhenAsked || m.prefs.mode === "only_when_asked" || unansweredInterruptions(ledger, m.memberId, now, cfg, inp.conversation.lastInboundAt) >= 2) return no("only_when_asked");
   // Reserve Blooio's third unanswered slot for logistics and safety (1.9).
   if (inp.conversation.outboundSinceInbound > cfg.blooio.interruptMaxOutstanding) return no("conversation_streak");
   if (inMemberQuietHours(m, now, cfg)) return no("quiet_hours");
@@ -560,8 +575,11 @@ export const REENGAGE_SUFFIX = "Want me to keep sending these?";
 export function reengagement(inp: {
   member: MemberAttention; autoPaused: boolean; optedOut: boolean; conversation: Conversation; joinedAt: number;
   items: readonly AttentionItem[]; valueHistory: number[]; now: number; cfg?: AttentionConfig;
+  /** The app pack (default networkPack): its lane gates apply to the re-engagement item too. */
+  pack?: AppPack;
 }): { send: boolean; reason: string; item?: AttentionItem; value?: number } {
   const cfg = inp.cfg ?? DEFAULT_ATTENTION;
+  const P = inp.pack ?? networkPack;
   const { member: m, conversation: c, now } = inp;
   if (inp.optedOut) return { send: false, reason: "opted_out" };
   if (!inp.autoPaused || m.prefs.mode === "only_when_asked") return { send: false, reason: "not_auto_paused" };
@@ -570,7 +588,9 @@ export function reengagement(inp: {
   const silentSince = Math.max(c.lastInboundAt ?? inp.joinedAt, inp.joinedAt);
   if (now - silentSince < cfg.blooio.reengageAfterDays * DAY) return { send: false, reason: "too_soon" };
   if (inMemberQuietHours(m, now, cfg)) return { send: false, reason: "quiet_hours" };
-  const vals = inp.items.filter(it => !itemGate(m, it, now, cfg)).map(it => ({ it, v: itemValue(it, m.prefs, cfg) }))
+  // The Blooio streak (1.9): never past the outstanding limit that logistics may use (engine-attention-plans-8).
+  if (!canSendLogistics(c, cfg)) return { send: false, reason: "conversation_streak" };
+  const vals = inp.items.filter(it => !itemGate(m, it, now, cfg, P)).map(it => ({ it, v: itemValue(it, m.prefs, cfg) }))
     .sort((a, b) => (b.v - a.v) || (a.it.id < b.it.id ? -1 : 1));
   const best = vals[0];
   if (!best) return { send: false, reason: "nothing_eligible" };
@@ -649,13 +669,14 @@ export function revalidateHold(queue: readonly HeldItem[], now: number, eligible
     if (it.urgency.expiresAt <= now) reason = "expired";
     else if (it.reviewState === "rejected") reason = "review_rejected";
     if (!reason && eligible) {
-      const why = eligible(it.memberId, it.others);
       // The send-time check is about meeting people: "underage" does not apply to an item that involves
       // no other member (D9: members 13-17 do get events, places and solo plans; itemGate enforces that).
+      // Member items re-check the lane opt-ins too (engine-pipeline-10).
       const solo = it.others.length === 0 && !it.involvesMember;
+      const why = eligible(it.memberId, it.others, solo ? undefined : it.category);
       if (why && !(solo && why === "underage")) reason = `ineligible:${why}`;
       else for (const o of it.others) {
-        const w = eligible(o, [it.memberId, ...it.others.filter(x => x !== o)]);
+        const w = eligible(o, [it.memberId, ...it.others.filter(x => x !== o)], solo ? undefined : it.category);
         if (w) { reason = `partner_ineligible:${w}`; break; }
       }
     }
@@ -854,8 +875,10 @@ function whenPhrase(window: { start: number; end: number } | undefined, now: num
   // An availability window that is already open says nothing about a day: keep it general.
   if (!window || window.start <= now) return "in the next week or so";
   const days = (window.start - now) / DAY;
-  const wd = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][localParts(window.start, tz).weekday]!;
-  if (days < 0.5) return "later today";
+  const at = localParts(window.start, tz), today = localParts(now, tz);
+  const wd = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][at.weekday]!;
+  // "later today" only on the same local calendar day (engine-attention-plans-16).
+  if (at.year === today.year && at.month === today.month && at.day === today.day) return "later today";
   if (days < 6) return `on ${wd}`;
   return "in the next week or so";
 }
@@ -925,7 +948,16 @@ export function buildProbe(w: World, spec: ProbeSpec, recipient: MemberId, other
 }
 
 /** The digest message text: a numbered menu with the reply grammar (1.4). */
+/** PRD PH-003: every proactive message includes a simple path to silence or pause future outreach. */
+export const PAUSE_PATH = "Reply STOP anytime to opt out.";
+/** The message body with the pause path appended once (PH-003), unless it already has one. */
+export function withPausePath(body: string): string {
+  return /\breply stop\b|\bstop to opt out\b|\bopt[- ]out\b/i.test(body) ? body : `${body}${/\n/.test(body) ? "\n" : " "}${PAUSE_PATH}`;
+}
+
 export function digestText(lines: string[]): string {
+  // The head names the count, so only 1-3 lines are valid (engine-attention-plans-19).
+  if (lines.length < 1 || lines.length > 3) throw new Error(`digestText takes 1-3 lines, got ${lines.length}`);
   if (lines.length === 1) return lines[0]!;
   const head = lines.length === 2 ? "Two things for this week" : "Three things for this week";
   return `${head}, reply with a number (or "none"):\n${lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}`;
@@ -1145,28 +1177,31 @@ export function attentionMetrics(inp: {
 }): AttentionMetrics {
   const cfg = inp.cfg ?? DEFAULT_ATTENTION;
   const msgs = new Map<string, AttentionLedgerEntry>();
-  for (const e of inp.ledger) if (e.countsAgainstCap && e.at <= inp.end) {
+  // Only the metric window [start, end] counts (engine-attention-plans-22).
+  for (const e of inp.ledger) if (e.countsAgainstCap && e.at >= inp.start && e.at <= inp.end) {
     const cur = msgs.get(e.messageId);
     if (!cur) msgs.set(e.messageId, { ...e, itemIds: [...e.itemIds] });
     else { cur.itemIds.push(...e.itemIds); if (e.repliedAt !== undefined && (cur.repliedAt === undefined || e.repliedAt < cur.repliedAt)) cur.repliedAt = e.repliedAt; }
   }
   const ints = [...msgs.values()];
-  const memberWeeks = inp.members.reduce((s, m) => s + Math.max(0, inp.end - m.joinedAt) / (7 * DAY), 0);
+  const memberWeeks = inp.members.reduce((s, m) => s + Math.max(0, inp.end - Math.max(m.joinedAt, inp.start)) / (7 * DAY), 0);
   const counted = ints.filter(e => e.at + cfg.annoyance.unansweredHours * HOUR <= inp.end);
   const unanswered = counted.filter(e => e.repliedAt === undefined || e.repliedAt > e.at + cfg.annoyance.unansweredHours * HOUR).length;
   const items = ints.reduce((s, e) => s + Math.max(1, new Set(e.itemIds).size), 0);
   const first = new Map<MemberId, number>();
-  for (const v of inp.values) first.set(v.memberId, Math.min(first.get(v.memberId) ?? Infinity, v.at));
+  const inWin = (t: number) => t >= inp.start && t <= inp.end;
+  const values = inp.values.filter(v => inWin(v.at));
+  for (const v of values) first.set(v.memberId, Math.min(first.get(v.memberId) ?? Infinity, v.at));
   const join = new Map(inp.members.map(m => [m.id, m.joinedAt]));
   const ttv = [...first].filter(([id]) => join.has(id)).map(([id, t]) => (t - join.get(id)!) / DAY).sort((a, b) => a - b);
   const safe = (a: number, b: number) => (b ? a / b : 0);
   return {
     interruptions: ints.length, memberWeeks, interruptionsPerMemberWeek: safe(ints.length, memberWeeks),
     unansweredRate: safe(unanswered, counted.length),
-    autoPausePer100MemberMonths: safe(new Set(inp.autoPauses.map(a => a.memberId)).size * 100, memberWeeks / (30 / 7)),
-    stopPer1000: safe(inp.stops.length * 1000, ints.length),
+    autoPausePer100MemberMonths: safe(new Set(inp.autoPauses.filter(a => inWin(a.at)).map(a => a.memberId)).size * 100, memberWeeks / (30 / 7)),
+    stopPer1000: safe(inp.stops.filter(x => inWin(x.at)).length * 1000, ints.length),
     itemsDelivered: items, itemsPerInterruption: safe(items, ints.length),
-    valueEvents: inp.values.length, valuePerInterruption: safe(inp.values.length, ints.length),
+    valueEvents: values.length, valuePerInterruption: safe(values.length, ints.length),
     timeToValueDaysMedian: ttv.length ? quantile(ttv, 0.5) : null,
     v14: v14(inp.values, inp.members, inp.start, inp.end, cfg).mean,
   };

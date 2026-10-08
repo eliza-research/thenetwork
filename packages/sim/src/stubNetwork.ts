@@ -242,10 +242,10 @@ export class StubNetwork implements NetworkUnderTest {
     const why = opp.p.explanations[m.id] ?? "it seemed like a good fit";
     let body: string;
     if (others.length === 1) {
-      body = `Hi ${m.first}, I think you'd enjoy meeting ${others[0]!.display}: ${why}. Want an intro? An easy no is totally fine.`;
+      body = `Hi ${m.first}, I think you'd enjoy meeting ${others[0]!.display}: ${why}. Want an intro? An easy no is totally fine. Reply STOP anytime to opt out.`;
       if (this.opts.leakyExplanations && others[0]!.answers.length) body += ` They told me: "${others[0]!.answers.join(" ")}"`;
     } else {
-      body = `Hi ${m.first}, I'm putting together a small ${opp.p.objective} with ${others.length} others (${why}). Want in? No pressure either way.`;
+      body = `Hi ${m.first}, I'm putting together a small ${opp.p.objective} with ${others.length} others (${why}). Want in? No pressure either way. Reply STOP anytime to opt out.`;
     }
     opp.invites.set(m.id, { status: "pending", sentAt: now });
     m.awaiting = { kind: "invite", pid: opp.p.id };

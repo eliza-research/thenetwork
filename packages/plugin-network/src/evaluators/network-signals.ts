@@ -11,6 +11,7 @@ import type {
   NetworkStore,
   NetworkTurnAuthority,
 } from "../types.js";
+import { ownWords } from "../routing/authz.js";
 
 const PATTERNS: Array<{ kind: NetworkSignal["kind"]; re: RegExp }> = [
   { kind: "opt_out", re: /\b(stop texting|unsubscribe|leave (?:the )?network|remove me)\b/i },
@@ -18,11 +19,19 @@ const PATTERNS: Array<{ kind: NetworkSignal["kind"]; re: RegExp }> = [
   { kind: "safety_concern", re: /\b(made me uncomfortable|felt unsafe|harass\w*|creep(?:y|ed))\b/i },
 ];
 
+const NEGATED = /\b(?:not|never|don'?t|do not|didn'?t|won'?t|wasn'?t|isn'?t|no)\s+(?:\w+\s+)?$/i;
+
+/**
+ * Signals from the member's own words only (audit plugin-prototypes-8): quoted, reported and
+ * forwarded text is removed first, and a negated match ("he wasn't creepy", "don't remove me")
+ * is not a signal.
+ */
 export function detectNetworkSignals(text: string): NetworkSignal[] {
+  const own = ownWords(text);
   const out: NetworkSignal[] = [];
   for (const { kind, re } of PATTERNS) {
-    const m = re.exec(text);
-    if (m) out.push({ kind, evidence: m[0].slice(0, 120) });
+    const m = re.exec(own);
+    if (m && !NEGATED.test(own.slice(0, m.index))) out.push({ kind, evidence: m[0].slice(0, 120) });
   }
   return out;
 }

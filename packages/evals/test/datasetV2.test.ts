@@ -40,10 +40,13 @@ describe("dataset v2 labels", () => {
   });
   test("selection is on fit: good items are not good by a lucky draw more often than bad items are bad by an unlucky one", () => {
     const good = ds.items.filter(i => i.truth.good), bad = ds.items.filter(i => !i.truth.good && !i.truth.unsafe);
-    const lucky = good.filter(i => i.truth.pGood! < 0.5).length; // impossible by definition
-    expect(lucky).toBe(0);
-    // The single draw still disagrees sometimes, in both directions.
-    expect(good.filter(i => !i.truth.drawnGood).length + bad.filter(i => i.truth.drawnGood).length).toBeGreaterThan(0);
+    // The single oracle draw disagrees with the label about as often as pGood predicts (within 4 sigma):
+    // labels follow fit (pGood), not the luck of one draw.
+    const p = [...good.map(i => 1 - i.truth.pGood!), ...bad.map(i => i.truth.pGood!)];
+    const expected = p.reduce((a, x) => a + x, 0), sd = Math.sqrt(p.reduce((a, x) => a + x * (1 - x), 0));
+    const observed = good.filter(i => !i.truth.drawnGood).length + bad.filter(i => i.truth.drawnGood).length;
+    expect(observed).toBeGreaterThan(0);
+    expect(Math.abs(observed - expected)).toBeLessThan(4 * sd + 1);
   });
   test("opt-in consistency: the hard gate never rejects a non-policy item for an opt-out, and nothing good violates policy", () => {
     for (const i of ds.items) {

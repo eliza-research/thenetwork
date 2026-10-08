@@ -23,6 +23,7 @@ import { DAY, canBeMatched, type City, type Edge, type Facet, type Intent, type 
 import type { FeedbackRecord, InteractionRecord, SafetyHold } from "@thenetwork/engine/src/types.ts";
 import { Rng, hash32 } from "@thenetwork/sim/src/rng.ts";
 import { zipInfo, type SlopCity } from "./geo.ts";
+import { appearanceFacet, canRatePhotos } from "@thenetwork/engine/src/packs/slop/appearance.ts";
 import { SLOTS, TASTE_DIMS, type RichnessTier, type SlopPersona } from "./persona.ts";
 
 /** Monday 2026-10-12 00:00 UTC: week 0 of every slop run. */
@@ -90,10 +91,41 @@ export function verificationFacets(p: SlopPersona, joinedAt: number, v: Verifica
  */
 export interface PlatformModel {
   photos?: { noiseSd: number };
+  /**
+   * Iteration 3: appearance ratings from photos (adults only), derived from hidden appearance
+   * (desirability + per-person face / body terms) plus rater noise (SD `noise`) and a demographic
+   * bias: members of the synthetic group "B" (`biasShare` of people, assigned by hash, unrelated to
+   * any other trait) are rated `bias` SD lower. Stored as agent_private facets (appearanceFacet).
+   */
+  rater?: { noise: number; bias: number; biasShare: number };
+  /** Iteration 3: post-date check-in reports, P(report | the victim answers) by harm kind. */
+  checkin?: Partial<Record<string, number>>;
   relay?: { scamRecall: number; hostileRecall: number; falsePositive: number };
   review?: { days: number; clearHonest: number; catchAdversary: number };
   widen?: { agree: number; miles: number };
 }
+export const RATER_DEFAULTS = { noise: 0.5, bias: 0, biasShare: 0.3 };
+export const CHECKIN_DEFAULTS: Partial<Record<string, number>> = { harassment: 0.85, deception: 0.6, catfish_reveal: 0.85, money_ask: 0.7, offplatform_move: 0.4, minor_contact: 0.5 };
+
+/** The synthetic demographic group used ONLY to test rater bias: hash-assigned, independent of everything. */
+export const demoGroupOf = (id: MemberId, share = RATER_DEFAULTS.biasShare): "A" | "B" => ((hash32("slop-demo", id) % 1000) / 1000 < share ? "B" : "A");
+
+/** Hidden appearance: desirability plus fixed per-person face and body terms (never in the snapshot). */
+export function trueAppearance(p: SlopPersona): { face: number; body: number; overall: number } {
+  const r = new Rng(hash32("slop-appearance", p.id));
+  const face = p.hidden.desirability + r.normal(0, 0.5), body = p.hidden.desirability + r.normal(0, 0.7);
+  return { face, body, overall: (face + body) / 2 };
+}
+/** The simulated rater's facet for a persona (adults only; skipped when an age check failed). */
+export function raterFacet(p: SlopPersona, joinedAt: number, m: NonNullable<PlatformModel["rater"]>, ageFailed: boolean): Facet | null {
+  const subject = { age: p.stated.claimedAge, ageVerified: ageFailed ? false : undefined };
+  if (!canRatePhotos(subject)) return null;
+  const t = trueAppearance(p), r = new Rng(hash32("slop-rater", p.id));
+  const shift = demoGroupOf(p.id, m.biasShare) === "B" ? -m.bias : 0;
+  const face = t.face + r.normal(0, m.noise) + shift, body = t.body + r.normal(0, m.noise) + shift;
+  return appearanceFacet(p.id, subject, { face, body, overall: (face + body) / 2, confidence: 1 / (1 + m.noise * m.noise), model: "sim-rater" }, joinedAt);
+}
+
 export const RELAY_DEFAULTS = { scamRecall: 0.85, hostileRecall: 0.7, falsePositive: 0.005 };
 export const REVIEW_DEFAULTS = { days: 3, clearHonest: 0.95, catchAdversary: 0.8 };
 export const WIDEN_DEFAULTS = { agree: 0.5, miles: 25 };
@@ -245,6 +277,11 @@ export function buildSlopSnapshot(personas: readonly SlopPersona[], state: SlopN
     const learned = state.learned?.get(p.id);
     facets.push(...slopFacetsOf(p, joinedAt, learned));
     if (state.verification) facets.push(...verificationFacets(p, joinedAt, state.verification));
+    if (state.platform?.rater) {
+      const ageFailed = facets.some(f => f.memberId === p.id && f.tags.includes("verify:age:fail"));
+      const rf = raterFacet(p, joinedAt, state.platform.rater, ageFailed);
+      if (rf) facets.push(rf);
+    }
     // Human review of a cue or a failed check, visible once `days` have passed since the member joined.
     const rv = state.platform?.review;
     if (rv && state.now >= joinedAt + rv.days * DAY) {

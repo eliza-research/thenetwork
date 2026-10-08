@@ -47,7 +47,9 @@ export class Gateway {
   async #route(ev: Exclude<ChannelEvent, { kind: "ignored" }>): Promise<GatewayResult> {
     switch (ev.kind) {
       case "message": {
-        const released = this.d.queue.onRecipientEngaged(ev.channel, ev.from);
+        let released = this.d.queue.onRecipientEngaged(ev.channel, ev.from);
+        // A group message is also an inbound on the group target, so the agent can reply into the chat.
+        if (ev.isGroup && ev.chatId) released += this.d.queue.onRecipientEngaged(ev.channel, `chat:${ev.chatId}`);
         const kw = handleKeyword(this.d.consent, this.d.copy, ev);
         if (kw) {
           if (kw.reply) {

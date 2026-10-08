@@ -3,7 +3,7 @@ import { buildRecDataset, datasetComposition, publicPolicyViolation, type RecDat
 import { buildJudgeDataset } from "../src/judgeDataset.ts";
 import { CALIBRATION_SET } from "../../judge/src/calibration.ts";
 import { constantBaseline, engineBaseline, scoreRec } from "../src/runRec.ts";
-import { rulesBaseline, scoreJudge } from "../src/runJudge.ts";
+import { leakGuardBaseline, rulesBaseline, scoreJudge } from "../src/runJudge.ts";
 
 let ds: RecDataset;
 beforeAll(async () => { ds = await buildRecDataset(); }, 120_000);
@@ -68,7 +68,7 @@ describe("judge dataset", () => {
     expect(items.length).toBe(183);
     expect(items.filter(i => i.sub === "hard").length).toBe(62);
     expect(new Set(items.map(i => i.id)).size).toBe(items.length);
-    for (const c of CALIBRATION_SET) expect(items.find(i => i.id === c.id)?.input).toBe(c);
+    for (const c of CALIBRATION_SET.filter(c => c.judge !== "policy")) expect(items.find(i => i.id === c.id)?.input).toBe(c);
   });
   test("every category has both pass and fail gold labels", () => {
     for (const cat of ["tone", "one_question", "privacy", "shareability", "timing", "policy"]) {
@@ -100,6 +100,15 @@ describe("judge dataset", () => {
     expect(f.privacyFnRate).toBe(1);
     const rules = scoreJudge("rules", items, rulesBaseline(items), { skipUnscored: true });
     expect(rules.scored).toBeLessThan(items.length);
+  });
+  test("the production leak guard is scored on the gold privacy and shareability items", () => {
+    const g = scoreJudge("leak-guard", items, leakGuardBaseline(items), { skipUnscored: true });
+    const n = items.filter(i => i.category === "privacy" || i.category === "shareability").length;
+    expect(g.scored).toBe(n);
+    // It catches at least the direct leaks and never blocks a clean calibration item.
+    expect(g.privacyFnRate).toBeLessThan(1);
+    const pred = new Map(leakGuardBaseline(items).map(r => [r.itemId, r.predicted]));
+    expect([pred.get("s-good-1"), pred.get("p-clean-1")]).toEqual([true, true]);
   });
   test("hard items: every category has both labels; ids marked *-hard-*", () => {
     for (const cat of ["tone", "privacy", "shareability", "timing", "policy"]) {

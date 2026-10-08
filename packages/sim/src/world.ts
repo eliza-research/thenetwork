@@ -10,7 +10,7 @@ import { PolicyPersonaAgent, templateText, timeConflict, type PolicyOptions } fr
 import { newMemory, type PersonaAgent, type PersonaContext, type PersonaMemory } from "./agent/types.ts";
 import { SimChannel, type Reaction, type SimMessage } from "./channel.ts";
 import type { Engine, InboundMessage, MeetingReport, NetworkContext, NetworkUnderTest } from "./network.ts";
-import { Oracle, type OracleVerdict } from "./oracle.ts";
+import { Oracle, type OracleOptions, type OracleVerdict } from "./oracle.ts";
 import type { Persona } from "./persona.ts";
 import { Rng, hash32 } from "./rng.ts";
 import { Scheduler, type RunMode } from "./scheduler.ts";
@@ -72,6 +72,8 @@ export interface WorldOptions {
   actions?: { at: number; action: WorldAction }[];
   /** Channel delivery failure rate (default 0). */
   failureRate?: number;
+  /** Opt-in oracle refinements (stable decisions, logistics); default off. */
+  oracle?: OracleOptions;
   /** Compute latent opportunities for recall (O(n^2)); skipped above this many members (default 1500). */
   maxLatentMembers?: number;
   /** Progress callback (sim day finished). */
@@ -125,7 +127,7 @@ export class World {
     this.clock = new SimClock(this.start);
     this.channel = new SimChannel(this.clock, { seed: opts.seed, failureRate: opts.failureRate });
     this.personas = new Map(opts.personas.map(p => [p.id, p]));
-    this.oracle = new Oracle(opts.personas, opts.seed, this.start);
+    this.oracle = new Oracle(opts.personas, opts.seed, this.start, opts.oracle);
     this.scheduler = new Scheduler(this.clock, { mode: opts.mode ?? "discrete", speed: opts.speed });
     this.agent = opts.agent ?? new PolicyPersonaAgent(this.start, opts.timeAware || opts.plans
       ? { ...(opts.timeAware ? { timeAware: true } : {}), ...(opts.plans ? { plans: opts.plans } : {}), ...opts.policy }
@@ -148,6 +150,7 @@ export class World {
   }
 
   private buildNameIndex() {
+    this.nameIndex = [];
     const firstCount = new Map<string, number>();
     for (const p of this.personas.values()) { const f = p.name.split(" ")[0]!; firstCount.set(f, (firstCount.get(f) ?? 0) + 1); }
     const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -166,7 +169,9 @@ export class World {
       clock: this.clock,
       send: (memberId, body, o = {}) => {
         const m = this.channel.send(memberId, body, o);
+        // A duplicate is not delivered again, but the attempt is logged so judges and audits see it (judge-evals-M4).
         if (m.status !== "duplicate") this.logMessage(m);
+        else this.rec({ type: "network_log", kind: "duplicate_send", detail: { memberId, messageId: m.id, idempotencyKey: o.idempotencyKey, body } });
         if (o.meta?.proactive && m.status === "delivered") this.unanswered.set(memberId, (this.unanswered.get(memberId) ?? 0) + 1);
         return m;
       },
@@ -266,9 +271,9 @@ export class World {
     this.personas.set(p.id, p);
     this.memories.set(p.id, newMemory());
     this.oracle.addPersona(p);
-    const [first, last] = p.name.split(" ");
-    const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    this.nameIndex.push({ re: new RegExp(`\\b(${[esc(p.name), ...(last ? [`${esc(first!)} ${esc(last[0]!)}\\.`] : [])].join("|")})\\b`), id: p.id });
+    // Rebuild: the newcomer gets the unique-first-name pattern too, and a first name they now
+    // share stops resolving to the older persona alone (sim-worlds-21).
+    this.buildNameIndex();
     this.rec({ type: "persona", persona: {
       id: p.id, name: p.name, archetype: p.archetype, adversarial: p.hidden.adversarial, homeCity: p.homeCity,
       joinDay: Math.floor((joinAt - this.start) / DAY), trueAge: p.hidden.trueAge, claimedAge: p.public.claimedAge, quietHours: quietHoursOf(p),

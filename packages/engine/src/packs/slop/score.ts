@@ -142,6 +142,19 @@ export function directional(a: SlopProfile, b: SlopProfile, o: SlopPackOptions, 
   return Math.max(1e-6, Math.min(1, v));
 }
 
+/** |overall_a - overall_b| when both ratings are usable (confidence >= min), else undefined. */
+export function appearanceGap(a: SlopProfile, b: SlopProfile, o: SlopPackOptions): number | undefined {
+  const x = a.appearance, y = b.appearance;
+  if (!x || !y || x.confidence < o.appearance.minConfidence || y.confidence < o.appearance.minConfidence) return undefined;
+  return Math.abs(x.overall - y.overall);
+}
+/** Soft assortative term (iteration 3): exp(-w x gap^2), 1 when off or unusable. */
+export function appearanceFactor(a: SlopProfile, b: SlopProfile, o: SlopPackOptions): number {
+  if (o.appearance.mode !== "soft") return 1;
+  const d = appearanceGap(a, b, o);
+  return d === undefined ? 1 : Math.exp(-o.appearance.softWeight * d * d);
+}
+
 /** Booked-date logistics: a slot both said they are usually free (else an expected factor). */
 export function logistics(a: SlopProfile, b: SlopProfile, o: SlopPackOptions): number {
   if (!a.free.length || !b.free.length) return o.logistics.unknownSlots;

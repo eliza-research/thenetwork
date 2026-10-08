@@ -53,5 +53,7 @@ export const ARMS: Record<string, Arm> = {
   "probation-interview": { name: "pack: probation until first interview", about: "new-employer limit lasts until the company's first real interview", matcher: packMatcher({ name: "pack-probation-interview" }), setup: tune(CONGESTION, { probationUntil: "interview" }) },
   "no-probation": { name: "pack: no new-employer limit", about: "no per-employer rate limit", matcher: packMatcher({ name: "pack-no-probation" }), setup: tune(CONGESTION, { probationProbes: 1000 }) },
   "floor-on": { name: "pack: exposure floor on", about: "core exposure floor (now calls the pack hook) at 25%", matcher: packMatcher({ name: "pack-floor-on", cfg: { selection: { exposureFloorShare: 0.25 } } as never }) },
+  "no-pacing": { name: "pack: no deadline pacing", about: "iteration 2's pack: fixed slates, no urgent relaxation of the new-employer limit", matcher: packMatcher({ name: "pack-no-pacing" }), setup: tune(CONGESTION, { pacingSlate: 0, pacingExtraMax: 0, pacingLift: 0, probationUrgentProbes: 3 }) },
+  "pacing-slates-only": { name: "pack: pacing slates only", about: "deadline-scaled slates, new-employer limit not relaxed for urgent roles", matcher: packMatcher({ name: "pack-pacing-slates" }), setup: tune(CONGESTION, { probationUrgentProbes: 3 }) },
   "proxy-leak": { name: "pack + proxy screen", about: "honours 'young only' requests via graduation year (what the firewall forbids)", matcher: packMatcher({ name: "pack-proxy-leak", post: proxyLeak }) },
 };

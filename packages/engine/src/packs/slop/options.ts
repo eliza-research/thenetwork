@@ -104,6 +104,13 @@ export interface SlopPackOptions {
    * `miles` are asked once "would you consider people up to <miles> mi?" (small pools).
    */
   widen: { enabled: boolean; maxDegree: number; miles: number };
+  /**
+   * Iteration 3 (founder decision): appearance ratings (appearance.ts) used ONLY as an assortative
+   * similarity term on `overall`: "band" = a hard pair filter |a - b| <= band; "soft" = each side's
+   * value x exp(-softWeight x (a - b)^2). Ratings below `minConfidence`, missing, or on anyone who is
+   * not a verified adult are ignored (the pair is neither filtered nor scored on them).
+   */
+  appearance: { mode: "off" | "band" | "soft"; band: number; softWeight: number; minConfidence: number };
   /** Pairs below this reciprocal value are not proposed (a dud first date costs both people an evening). */
   minValue: number;
 }
@@ -139,6 +146,7 @@ export const SLOP_DEFAULT_OPTIONS: SlopPackOptions = {
   // the model measured no gain (iteration 2). Turn it on when probes show a photo.
   attraction: { enabled: false, itemWeight: 1, tasteWeight: 1, cfWeight: 1, probeWeight: 1, backoutWeight: 2, feedbackWeight: 1.5, shrink: 4, ridge: 4, cfShrink: 0.5 },
   maxAsksPerField: 2,
+  appearance: { mode: "off", band: 1, softWeight: 0.5, minConfidence: 0.3 },
   widen: { enabled: true, maxDegree: 2, miles: 25 },
 };
 

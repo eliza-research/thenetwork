@@ -5,7 +5,27 @@
  * member states it ("I'm traveling to New York until November 3"). Code resolves the
  * common English patterns itself; the model's dates are used only when this finds none.
  * Dates are calendar days at 00:00 UTC (the member store has no time-of-day semantics).
+ * "Today" is the member's local calendar day: callers pass `zonedNow(now, timeZone)`
+ * (audit plugin-prototypes-3: at 7pm in California it is already tomorrow in UTC, so
+ * "the 7th" resolved to next month).
  */
+
+/**
+ * `now` shifted so that its UTC fields read as the wall-clock time in `timeZone`.
+ * No zone (or an unknown one) keeps UTC.
+ */
+export function zonedNow(now: Date, timeZone?: string | null): Date {
+  if (!timeZone) return now;
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
+    }).formatToParts(now);
+    const get = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+    return new Date(Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second")));
+  } catch {
+    return now;
+  }
+}
 
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 const WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
@@ -17,7 +37,7 @@ const MONTH = String.raw`(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|j
 const WEEKDAY = String.raw`(sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat)(?:day|nesday|sday|urday|rsday)?`;
 const DAY = String.raw`(\d{1,2})(?:st|nd|rd|th)?`;
 const DATE_EXPR = new RegExp(
-  String.raw`\b(?:${MONTH}\s+${DAY}|${DAY}\s+(?:of\s+)?${MONTH}|the\s+${DAY}(?:st|nd|rd|th)?|(\d{1,2})(?:st|nd|rd|th)|(next\s+)?${WEEKDAY}|tomorrow|${MONTH}|after\s+new\s*year'?s?|(\d{1,2})\/(\d{1,2}))\b`,
+  String.raw`\b(?:${MONTH}\s+${DAY}|${DAY}\s+(?:of\s+)?${MONTH}|the\s+${DAY}(?:st|nd|rd|th)?|(\d{1,2})(?:st|nd|rd|th)|(next\s+)?${WEEKDAY}|tomorrow|(?!may\b)${MONTH}|after\s+new\s*year'?s?|(\d{1,2})\/(\d{1,2}))\b`,
   "i",
 );
 
@@ -58,6 +78,9 @@ function nextWeekday(w: number, today: Date, nextWeek: boolean): Date {
 /** Parses one date expression (already isolated) relative to today. */
 export function parseDateExpr(expr: string, now: Date): Date | null {
   const today = startOfDay(now);
+  // "may" alone is a month only where a date must start ("until may"); "I may be away" is not May
+  // (audit plugin-prototypes-7).
+  if (/^\s*may\b(?!\s*\d)/i.test(expr)) return nextMonthDay(4, 1, today);
   const m = DATE_EXPR.exec(expr);
   if (!m) return null;
   const s = m[0].toLowerCase();

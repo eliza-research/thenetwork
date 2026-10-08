@@ -190,7 +190,8 @@ export class SlopOracle {
     y *= Math.pow(P.fatigue, Math.max(0, c.probesThisWeek ?? 0));
     if (!H.activities.includes(c.activity)) y *= P.activityMiss;
     if (c.sharedFactMatch) y *= P.sharedFactLift;
-    if (c.photo) y *= this.photoFactor(id, c.photo.of, c.photo.noiseSd);
+    // Adults only: a photo is never shown to or of anyone under 18 (claimed age).
+    if (c.photo && canBeMatched(p.stated.claimedAge) && canBeMatched(this.p(c.photo.of).stated.claimedAge)) y *= this.photoFactor(id, c.photo.of, c.photo.noiseSd);
     if (c.asked) y = Math.min(0.95, y * P.askPrimed);
     if (!this.presentIn(p, c.city, c.week)) y *= P.notPresent;
     return clamp01(y);

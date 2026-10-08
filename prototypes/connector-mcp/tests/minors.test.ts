@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { connect, key, principal, visible, world, type ClientName } from "./helpers.ts";
+import { UNDER_MIN_AGE_DECLINE } from "@thenetwork/core/src/policy.ts";
 
 // Founder decision 3: members under 18 can join but are never connected to other people. Tool
 // outputs for a minor never include intros, groups, relay or contact items, any attempt to accept
@@ -177,5 +178,31 @@ describe("under-13: declined kindly, nothing stored", () => {
     const w = world();
     expect(() => w.net.addMember({ ...w.kai, id: "mem_kid_0001", age: 12 })).toThrow("at least 13");
     expect(w.net.members.has("mem_kid_0001")).toBe(false);
+  });
+});
+
+describe("a self-stated age on an older account (plugin-prototypes-22)", () => {
+  test("\"I'm 15\" from an adult account lowers the effective age at once and goes to staff", async () => {
+    const w = world();
+    const { call } = await connect(w.net, principal(w, w.ava));
+    const r = await call("tell_network_agent", { instruction: "I'm 15 and looking for people to hang out with", idempotency_key: key() });
+    expect(r.data).toMatchObject({ status: "not_available_here", pending_confirmation: null });
+    expect(w.net.members.get(w.ava.id)!.age).toBe(15);
+    // From now on Ava is treated as a minor: no intro items, no people-seeking requests.
+    const updates = await call("get_network_updates", { limit: 10 });
+    expect(updates.data.items.map((i: any) => i.title)).not.toContain(w.intro.title);
+    expect(w.net.staffEscalations).toMatchObject([{ memberId: w.ava.id, reason: "stated_minor_age", statedAge: 15 }]);
+  });
+
+  test("\"I'm 12\" suspends the member and escalates to staff, not only one declined request", async () => {
+    const w = world();
+    const { call } = await connect(w.net, principal(w, w.ava));
+    const r = await call("tell_network_agent", { instruction: "I'm 12 and need help finding friends", idempotency_key: key() });
+    expect(r.data.reply).toBe(UNDER_MIN_AGE_DECLINE);
+    expect(w.net.suspended.has(w.ava.id)).toBe(true);
+    expect(w.net.staffEscalations).toMatchObject([{ memberId: w.ava.id, reason: "stated_under_min_age" }]);
+    const next = await call("get_network_updates", { limit: 10 });
+    expect(next.isError).toBe(true);
+    expect(next.meta["network/error"].code).toBe("not_member");
   });
 });

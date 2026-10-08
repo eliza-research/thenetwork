@@ -49,11 +49,32 @@ function hashInput(input: EngineInput): string {
   return sha256(stableStringify(strip(input))).slice(0, 16);
 }
 
+/**
+ * The input with every top-level list in a canonical order (by id, else by content), so the
+ * output, the input hash and the run id do not depend on the row order of the snapshot
+ * (engine-pipeline-17: the snapshot loader has no ORDER BY). Nested lists keep their order
+ * (participants[0] is the requester).
+ */
+export function canonicalInput(input: EngineInput): EngineInput {
+  const keyOf = (x: unknown): string => {
+    const id = (x as { id?: unknown }).id;
+    return typeof id === "string" ? `0|${id}` : `1|${stableStringify(JSON.parse(JSON.stringify(x, (k, v) => (k === "embedding" ? undefined : v))))}`;
+  };
+  const out: Record<string, unknown> = { ...input };
+  for (const [k, v] of Object.entries(input)) {
+    if (!Array.isArray(v)) continue;
+    const keyed = v.map(x => ({ x, k: typeof x === "string" ? x : keyOf(x) }));
+    keyed.sort((a, b) => (a.k < b.k ? -1 : a.k > b.k ? 1 : 0));
+    out[k] = keyed.map(e => e.x);
+  }
+  return out as unknown as EngineInput;
+}
+
 export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: EngineConfigInput = {}, deps: EngineDeps = {}): Promise<EngineResult> {
   const t0 = performance.now();
   const timings: Record<string, number> = {};
   const lap = (name: string, since: number) => { timings[name] = Math.round((performance.now() - since) * 100) / 100; return performance.now(); };
-  const input = snapshot as EngineInput;
+  const input = canonicalInput(snapshot as EngineInput);
   const cfg = resolveConfig(cfgIn);
   const rng = new Rng(cfg.seed);
   const embed = deps.embed ?? localEmbed;
@@ -160,7 +181,14 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
     }
     const toJudge = pickTop(pool, cfg.judge.topK, cfg.judge.groupTopK).map(s => s.c);
     const verdicts = await judgeCandidates(w, toJudge, llm, deps.judgeCache ?? new JudgeCache(cfg.judge.ttlMs), runLog.judge, runLog.judge.verdicts);
-    scored = scored.map(s => (verdicts.has(s.c.key) && verdicts.get(s.c.key) ? scoreCandidate(w, s.c, verdicts.get(s.c.key)) : s));
+    // Pass 2 can only remove (engine-pipeline-7): a configuration that was below its bar before the
+    // judge stays ineligible even if the blended score now clears it.
+    scored = scored.map(s => {
+      const v = verdicts.get(s.c.key);
+      if (!v) return s;
+      const r = scoreCandidate(w, s.c, v);
+      return s.eligible || !r.eligible ? r : { ...r, eligible: false, reason: s.reason ?? "below_threshold" };
+    });
     t = lap("judge", t);
     if (cfg.judge.deep.enabled && cfg.judge.deep.topK > 0 && J.deep) {
       const dc = cfg.judge.deep;
@@ -214,12 +242,19 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   f.budgetSkips = budgetSkips;
   f.selected = selected.length;
   f.exploration = selected.filter(s => s.exploration).length;
+  // Judge coverage (engine-pipeline-8): pass 2 sees only its top K, so most selected configurations
+  // can be unjudged. Reported whenever a judge ran, so a run with low coverage is visible.
+  if (runLog.judge.calls + runLog.judge.cacheHits + runLog.judge.failures > 0) {
+    runLog.judge.coverage = { selected: selected.length, judged: selected.filter(s => !!s.s.verdict).length };
+  }
   t = lap("select", t);
 
   // 6. Proposals with shareable-only explanations.
   const proposals: EngineProposal[] = selected.map(sel => {
     const { c, components, score, threshold, verdict } = sel.s;
-    const { explanations, objective } = explain(w, c, verdict as JudgeVerdict | null | undefined, sel.s.memberWhy);
+    // Member-facing text never comes from a pass-2 "no" verdict (its "why" argues for a match the judge rejected).
+    const v = verdict as JudgeVerdict | null | undefined;
+    const { explanations, objective } = explain(w, c, v?.verdict === "no" ? null : v, sel.s.memberWhy);
     const sameDay = c.window ? c.window.start - w.now < 24 * 3_600_000 : false;
     return {
       id: `p_${sha256(`${c.key}|${w.now}`).slice(0, 16)}`,

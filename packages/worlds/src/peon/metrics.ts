@@ -48,7 +48,9 @@ export interface PeonMetrics {
   safety: {
     minorsMatched: number; minorsProposed: number; scamIntros: number; scamReach: number;
     /** Largest number of real candidates one scam employer reached (the research gate: median reach per scam employer <= 1). */
-    scamReachMaxPerEmployer: number; unverifiedIntros: number; noRangeIntros: number;
+    scamReachMaxPerEmployer: number;
+    /** Real candidates reached, per scam employer that got at least one intro delivered (the official scam gate's input). */
+    scamReachByEmployer: number[]; unverifiedIntros: number; noRangeIntros: number;
     fakeReachedEmployer: number; fakeHires: number;
   };
   discrimination: { employers: number; detected: number; falseFlags: number; requests: number; requestsApplied: number };
@@ -111,6 +113,8 @@ export function peonMetrics(r: PeonRunResult, o: { requestsApplied?: number } = 
       minorsMatched: flows.filter(f => f.minor).length, minorsProposed: flows.filter(f => f.minor).length,
       scamIntros: delivered.filter(f => f.scam).length,
       scamReach: new Set(delivered.filter(f => f.scamContact && realIds.has(f.cand)).map(f => f.cand)).size,
+      scamReachByEmployer: [...new Set(delivered.filter(f => f.scam).map(f => oracle.job.get(f.job)!.company))].sort().map(co =>
+        new Set(delivered.filter(f => f.scamContact && realIds.has(f.cand) && oracle.job.get(f.job)!.company === co).map(f => f.cand)).size),
       scamReachMaxPerEmployer: Math.max(0, ...[...delivered.filter(f => f.scamContact && realIds.has(f.cand)).reduce((m, f) => {
         const co = oracle.job.get(f.job)!.company; if (!m.has(co)) m.set(co, new Set<MemberId>()); m.get(co)!.add(f.cand); return m;
       }, new Map<string, Set<MemberId>>()).values()].map(x => x.size)),

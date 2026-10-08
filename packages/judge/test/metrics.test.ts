@@ -75,7 +75,8 @@ describe("metrics", () => {
     ];
     const m = computeMetrics([...base.slice(0, -1), ...extra, base[base.length - 1]!]);
     expect(m.invariants.byRule.blocked_pair_proposed).toBe(1);
-    expect(m.invariants.byRule.over_budget).toBe(1);
+    // PRD Normal budget is 2 proactive per 7 days: the 3rd and 4th ping are over.
+    expect(m.invariants.byRule.over_budget).toBe(2);
     expect(m.invariants.byRule.two_unanswered).toBe(2);
   });
 

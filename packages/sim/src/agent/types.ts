@@ -36,6 +36,7 @@ export interface PersonaMemory {
     decision: Decision; plannedShow: boolean; enjoyment: number; others: MemberId[]; at?: number;
     /** The persona learned the meeting time and it clashes with its week (PolicyOptions.timeAware). */
     timeConflict?: boolean;
+    category?: import("@thenetwork/core").Category; decidedAt?: number;
   }>;
   meetings: Record<string, { at: number; showed: boolean; enjoyment: number; others: MemberId[]; cancelledWithNotice: boolean; othersShowed: MemberId[] }>;
   proactiveReceived: number[];
@@ -61,6 +62,8 @@ export interface PersonaMemory {
   weekly?: { offeredAt: number; on: boolean };
   /** Crew offers answered (crewId -> opted in). */
   crews?: Record<string, boolean>;
+  /** Trust in the Network, 1 = full (PolicyOptions.qualityChurn only). Bad or unsafe intros lower it. */
+  trust?: number;
 }
 
 export const newMemory = (): PersonaMemory => ({

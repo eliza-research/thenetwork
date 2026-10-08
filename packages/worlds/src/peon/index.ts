@@ -10,3 +10,4 @@ export * from "./world.ts";
 export * from "./metrics.ts";
 export * from "./baselines.ts";
 export * from "./arms.ts";
+export * from "./gates.ts";

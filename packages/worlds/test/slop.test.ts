@@ -189,3 +189,22 @@ describe("platform features (iteration 2; all off by default)", () => {
     for (const f of rv) expect(f.tags[0]).toBe(ps.find(p => p.id === f.memberId)!.hidden.adversary ? "review:confirmed" : "review:cleared");
   });
 });
+
+describe("iteration 3: post-date check-in reports and the ban loop", () => {
+  test("a check-in report holds the offender (ban by person): no new harassment victim after the first report", () => {
+    const r = runSlopWorld({ seed: 5, perCity: 200, weeks: 4, matcher: BASELINES.random as any, platform: { checkin: { harassment: 1, deception: 1 } } });
+    const firstReport = new Map<string, number>();
+    let viaCheckin = 0;
+    r.flows.forEach((f, i) => {
+      for (const h of f.harms) {
+        if (h.kind !== "harassment") continue;
+        const fr = firstReport.get(h.offender);
+        if (fr !== undefined && i > fr) throw new Error(`victim after report: ${h.offender}`);
+        if (h.reported && fr === undefined) firstReport.set(h.offender, i);
+        if (h.via === "checkin") viaCheckin++;
+      }
+    });
+    expect(viaCheckin).toBeGreaterThan(0);
+    for (const id of firstReport.keys()) expect(r.world.state.safetyHolds.some(x => x.memberId === id)).toBe(true);
+  });
+});

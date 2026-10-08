@@ -9,7 +9,7 @@ import { profileOf } from "./complementarity.ts";
 import { isMinor, memberReason } from "./filters.ts";
 import { sha256 } from "./rng.ts";
 import type { Rng } from "./rng.ts";
-import type { Scored } from "./scoring.ts";
+import { explorationBar, type Scored } from "./scoring.ts";
 import type { AskReason, EngineAsk, EngineInput, FairnessMetrics } from "./types.ts";
 import { ASK_QUESTIONS as NETWORK_ASK_QUESTIONS } from "./packs/network/copy.ts";
 import { pairKey, type World } from "./world.ts";
@@ -189,7 +189,11 @@ function selectOnce(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId,
   // 2. Exploration slice (10-15% of the total), weighted by novelty x score, seeded; expansion picks favoured.
   const slots = explorationSlots;
   const explore = rng.fork("explore");
-  const pool = scored.filter(x => !taken.has(x.c.key) && !x.reason?.match(/floor|dealbreaker|ceiling/) && x.score >= Math.min(x.threshold, cfg.thresholds.exploration))
+  // Allow-list: only eligible or merely below-threshold configurations. Anything a judge pass,
+  // a floor, a dealbreaker or a hard gate rejected (judge_reject, screen_reject, deep_reject,
+  // deep_insufficient, hard_gate:*) never enters the slice, nor does any pass-2 "no" verdict.
+  const pool = scored.filter(x => !taken.has(x.c.key) && (!x.reason || x.reason === "below_threshold") && x.verdict?.verdict !== "no"
+    && x.score >= explorationBar(w, x.c, x.threshold))
     .sort((a, b) => (a.c.key < b.c.key ? -1 : 1));
   for (let k = 0; k < slots; k++) {
     let avail = pool.filter(x => !taken.has(x.c.key) && canTake(x));

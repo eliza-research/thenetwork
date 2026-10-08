@@ -77,11 +77,16 @@ export interface KnownHost {
   scopeChallenge: AuthChallengeStyle;
 }
 
+const CLAUDE_CIMD_PATH = /^\/oauth\/[A-Za-z0-9_-]+(?:\.json)?$/;
+
 export const KNOWN_HOSTS: Record<string, KnownHost> = {
   // OpenAI documents exactly two CIMD forms: /oauth/client.json and /oauth/{callback_id}/client.json [O5].
   "chatgpt.com": { hostKey: "chatgpt", displayName: "ChatGPT", profile: "teen_safe_directory", scopeChallenge: "tool_meta", cimdPath: /^\/oauth\/(?:[A-Za-z0-9_-]+\/)?client\.json$/ },
-  "claude.ai": { hostKey: "claude", displayName: "Claude", profile: "general_assistant", scopeChallenge: "http" },
-  "claude.com": { hostKey: "claude", displayName: "Claude", profile: "general_assistant", scopeChallenge: "http" },
+  // Claude's CIMD documents live directly under /oauth/ (audit plugin-prototypes-24: any path, such as
+  // /public/artifacts/..., is user content Anthropic serves, not its client). Confirm the exact
+  // document names with Anthropic before launch and narrow this further.
+  "claude.ai": { hostKey: "claude", displayName: "Claude", profile: "general_assistant", scopeChallenge: "http", cimdPath: CLAUDE_CIMD_PATH },
+  "claude.com": { hostKey: "claude", displayName: "Claude", profile: "general_assistant", scopeChallenge: "http", cimdPath: CLAUDE_CIMD_PATH },
   "vertexaisearch.cloud.google.com": { hostKey: "gemini_enterprise", displayName: "Gemini Enterprise", profile: "enterprise_professional", scopeChallenge: "http" },
 };
 

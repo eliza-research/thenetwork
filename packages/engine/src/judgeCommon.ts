@@ -46,10 +46,17 @@ export class JudgeCache<V = JudgeVerdict> {
   clear() { this.m.clear(); }
 }
 
-/** Cache key: prompt version, configuration shape and every participant's profile revision. */
+/**
+ * Cache key: prompt version, configuration shape, every participant's profile revision, and what
+ * else the judge sees (engine-pipeline-19): the connector (via) and their revision, the city, a
+ * fixed time window, and the pass-2 context setting.
+ */
 export function passCacheKey(w: World, c: Candidate, version: string): string {
   const parts = [...c.participants].sort().map(id => `${id}@${w.get(id)?.revision ?? "?"}`);
-  return sha256(`${version}|${c.kind}|${c.category}|${c.anchor?.type}:${c.anchor?.id}|${parts.join(",")}`).slice(0, 24);
+  const via = c.via ? `${c.via}@${w.get(c.via)?.revision ?? "?"}` : "-";
+  // Only a fixed time is part of the key: an open window starts at "now" and would never hit.
+  const when = `${c.city ?? "-"}:${c.fixedWindow ? `${c.window?.start ?? c.fixedWindow.start}-${c.window?.end ?? c.fixedWindow.end}` : "-"}`;
+  return sha256(`${version}|${c.kind}|${c.category}|${c.anchor?.type}:${c.anchor?.id}|${parts.join(",")}|${via}|${when}|${w.cfg.judge.pass2Context}`).slice(0, 24);
 }
 
 export interface JudgeRunStats { calls: number; cacheHits: number; failures: number }
@@ -140,8 +147,9 @@ export type PassVerdict = "yes" | "no" | "insufficient_information";
 export function prob(x: unknown): number | undefined {
   const n = typeof x === "string" ? Number(x) : x;
   if (typeof n !== "number" || !Number.isFinite(n)) return undefined;
-  const v = n > 1 && n <= 100 ? n / 100 : n;
-  return v < 0 || v > 1 ? undefined : v;
+  // A percent only from 2 up (engine-pipeline-23): 1.5 is ambiguous (150%? 1.5%?) and is rejected.
+  const v = n > 1 ? (n >= 2 && n <= 100 ? n / 100 : NaN) : n;
+  return !(v >= 0 && v <= 1) ? undefined : v;
 }
 
 export const str = (x: unknown, max = 4000): string => (typeof x === "string" ? x.trim().slice(0, max) : "");

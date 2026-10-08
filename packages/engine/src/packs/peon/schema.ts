@@ -51,6 +51,7 @@ export const T = {
   verified: "peon:verified",       // job: employer verified (domain, registry / EIN, a human call)
   openings: "peon:openings:",      // job: open headcount
   urgency: "peon:urgency:",        // job: 1-3
+  fillBy: "peon:fill_by:",         // job: the fill-by date the employer stated at intake (epoch day)
   start: "peon:start_weeks:",      // candidate: can start in N weeks
   proxy: "peon:proxy:",            // NEVER READ: zip, grad_year, gap_months (agent_private)
 } as const;

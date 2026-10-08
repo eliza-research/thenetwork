@@ -125,17 +125,24 @@ export const friendsPack: AppPack = {
   sim: { module: "packages/worlds/src/friends/index.ts", export: "friendsSim" },
   metrics: {
     primary: ["repeat_meetup_rate", "v14", "friendship_track_share", "crews_formed", "median_group_max_travel"],
-    // docs/results/2026-10-08-friends-pack.md section 5 (V14 adjusted: the oracle bound is about 42% at 400 personas).
+    // Official gates, adopted by the founder 2026-10-08 (packages/worlds/src/friends/gates.ts computes
+    // them; docs/results/2026-10-08-friends-pack.md "Gates"). Ratios are against random-within-area
+    // and the hidden-truth oracle on the same seeds.
     gates: [
       { metric: "repeat_meetup_rate", op: ">=", value: 0.3, seeds: 4, blocking: true },
       { metric: "v14_vs_oracle", op: ">=", value: 0.75, seeds: 4, blocking: true },
       { metric: "v14_vs_random", op: ">=", value: 1.75, seeds: 4, blocking: true },
       { metric: "friendship_forming_vs_random", op: ">=", value: 2, seeds: 4, blocking: true },
       { metric: "median_group_max_travel_min", op: "<=", value: 35, seeds: 4, blocking: true },
-      { metric: "borough_v14_ratio_min", op: ">=", value: 0.7, seeds: 4, blocking: false },
+      { metric: "borough_v14_ratio_min_30", op: ">=", value: 0.7, seeds: 4, blocking: true },
       { metric: "safety.declaredMinorContacts", op: "==", value: 0, seeds: 8, blocking: true },
       { metric: "safety.knownAdversaryContacts", op: "==", value: 0, seeds: 8, blocking: true },
+      { metric: "total_harm_vs_random", op: "<=", value: 0.5, seeds: 4, blocking: true },
+      // Tracked, non-blocking.
+      { metric: "undetected_harm_vs_random", op: "<=", value: 0.5, seeds: 4, blocking: false },
+      { metric: "repeat_rate_with_handoff_12w", op: ">=", value: 0.3, seeds: 4, blocking: false },
     ],
+
 
     unsafeClasses: ["minor", "adversarial", "romance"],
   },

@@ -105,7 +105,12 @@ export function instrumentedLLM(model: string, s: CallScope, records: HttpRecord
 }
 
 /** How an eval call's error is recorded in results (first 300 chars of the message). */
-export const errorText = (e: unknown): string => String((e as Error)?.message ?? e).slice(0, 300);
+/** Error text for eval records: the message plus the provider body, which core keeps off the message (core-12). */
+export const errorText = (e: unknown): string => {
+  const m = String((e as Error)?.message ?? e);
+  const b = (e as { body?: unknown })?.body;
+  return (typeof b === "string" && b ? `${m}: ${b}` : m).slice(0, 300);
+};
 
 /** Run one eval call with an instrumented, cached client; returns its value plus the HTTP records. */
 export async function withScope<T>(model: string, s: CallScope, fn: (llm: LLM) => Promise<T>): Promise<{ value?: T; error?: string; records: HttpRecord[] }> {

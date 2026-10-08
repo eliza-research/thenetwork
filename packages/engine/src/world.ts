@@ -92,6 +92,12 @@ export class World {
     this.dim = embed("dimension probe").length;
     const now = this.now;
 
+    // Duplicate member ids would decide age, state and consent by row order (engine-pipeline-2): reject them.
+    if (memberIds.size !== input.members.length) {
+      const seen = new Set<MemberId>();
+      const dup = input.members.find(m => (seen.has(m.id) ? true : (seen.add(m.id), false)));
+      throw new Error(`duplicate member id in engine input: ${dup?.id}`);
+    }
     // Minors are identified before anything else so no derived structure can route through them.
     for (const m of input.members) if (!canBeMatched(m.age)) this.minors.add(m.id);
 

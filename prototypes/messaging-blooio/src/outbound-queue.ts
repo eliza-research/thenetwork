@@ -19,6 +19,13 @@
 //  - Blooio conversation limits (429 conversation_*) hold the message until the recipient engages; they are
 //    never retried on a timer (docs: messaging-safety).
 //  - Terminal failure on the primary channel can fall back to another adapter (e.g. Twilio SMS) when allowed.
+//    A policy block ("blocked": line safety, opted out, emergency number) never falls back (plugin-prototypes-16).
+//  - A "reply" must answer an inbound from that person within `replyWindowMs`; otherwise it is not sent, because
+//    the caller's word alone must not skip quiet hours and proactive consent (plugin-prototypes-14).
+//  - A `chat:<id>` group send checks every participant's opt-out and consent through `groupParticipants`; with
+//    no resolver it is not sent (plugin-prototypes-13).
+//  - A reply_only line holds every agent-initiated send; a record with no sender line gets the strictest safety
+//    action of any line (plugin-prototypes-15).
 //  - The shared leak guard (packages/core/src/guard.ts findLeaks) runs right before every provider send (PRD
 //    28.5, 32.14). An injectable `forbiddenProvider` supplies the recipient-specific lists (other members'
 //    private facts, private vocabulary, canaries); without one, contact patterns and canary shapes are still
@@ -178,6 +185,13 @@ export interface QueueOptions {
   recipientPolicy?: RecipientPolicy;
   /** Recipient-specific leak lists (other members' private facts, vocabulary, canaries). Strongly recommended for live use. */
   forbiddenProvider?: ForbiddenProvider;
+  /**
+   * Participants of a `chat:<id>` group target (normalized or raw addresses). Group sends other than compliance
+   * are suppressed without it, and when it throws or returns no one.
+   */
+  groupParticipants?: (chatTarget: string) => string[] | Promise<string[]>;
+  /** A "reply" must follow an inbound from the same person within this window. Default 1 hour. */
+  replyWindowMs?: number;
   /** Text the Network may include verbatim (its own HELP/STOP copy); removed before the contact-pattern checks. */
   leakAllow?: string[];
   maxAttempts?: number;
@@ -203,14 +217,15 @@ export class OutboundQueue {
   #knownContacts = new Set<string>(); // channel:address that have engaged or been messaged
   #contacts = new Map<string, ContactState>(); // channel:address -> unanswered/re-engagement counters
   #lineSafety = new Map<string, string>(); // line -> Blooio safety action
+  #lastInbound = new Map<string, number>(); // normalized address (any channel) -> last inbound time
   #seq = 0;
   #draining = false;
-  readonly o: Required<Omit<QueueOptions, "onAlert" | "adapters" | "consent" | "clock" | "quiet" | "defaultFrom" | "recipientPolicy" | "forbiddenProvider" | "leakAllow">> & QueueOptions;
+  readonly o: Required<Omit<QueueOptions, "onAlert" | "adapters" | "consent" | "clock" | "quiet" | "defaultFrom" | "recipientPolicy" | "forbiddenProvider" | "leakAllow" | "groupParticipants">> & QueueOptions;
 
   constructor(opts: QueueOptions) {
     this.o = {
       requireConsentForProactive: true, perRecipientPerHour: 10, newChatsPerLinePerDay: 20, maxAttempts: 6, baseBackoffMs: 30_000,
-      maxUnansweredPerConversation: DEFAULT_MAX_UNANSWERED, reengageAfterMs: DEFAULT_REENGAGE_AFTER_MS,
+      maxUnansweredPerConversation: DEFAULT_MAX_UNANSWERED, reengageAfterMs: DEFAULT_REENGAGE_AFTER_MS, replyWindowMs: HOUR,
       ...opts,
     };
   }
@@ -297,12 +312,30 @@ export class OutboundQueue {
     const contactKey = this.#contactKey(rec.channel, rec.to);
     const agent = isAgentInitiated(rec.kind);
 
-    // 1. Consent (checked at dispatch so a STOP received while waiting wins).
-    if (rec.kind !== "compliance" && this.o.consent.isOptedOut(rec.channel, rec.to)) {
-      return this.#set(rec, "suppressed_opt_out");
+    // 1. Consent (checked at dispatch so a STOP received while waiting wins). A group is checked per participant.
+    let people = [rec.to];
+    if (rec.kind !== "compliance" && rec.to.startsWith("chat:")) {
+      if (!this.o.groupParticipants) return this.#set(rec, "suppressed_ineligible", "group send without a participant resolver");
+      try {
+        people = (await this.o.groupParticipants(rec.to)).map(normalizeAddress);
+      } catch (err) {
+        return this.#set(rec, "suppressed_ineligible", `participant resolver error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      if (!people.length) return this.#set(rec, "suppressed_ineligible", "group has no known participants");
     }
-    if (rec.kind === "proactive" && this.o.requireConsentForProactive && !this.o.consent.hasConsent(rec.channel, rec.to)) {
+    if (rec.kind !== "compliance" && people.some((p) => this.o.consent.isOptedOut(rec.channel, p))) {
+      return this.#set(rec, "suppressed_opt_out", people.length > 1 ? "a group participant opted out" : undefined);
+    }
+    if (rec.kind === "proactive" && this.o.requireConsentForProactive && !people.every((p) => this.o.consent.hasConsent(rec.channel, p))) {
       return this.#set(rec, "suppressed_no_consent");
+    }
+    // A reply must answer something the person (or the group) sent recently.
+    if (rec.kind === "reply") {
+      const last = this.#lastInbound.get(rec.to);
+      if (last === undefined || now - last > this.o.replyWindowMs) {
+        this.o.onAlert?.(rec, "reply_without_recent_inbound");
+        return this.#set(rec, "suppressed_ineligible", "reply without a recent inbound");
+      }
     }
 
     // 2. Recipient eligibility at send time (paused, blocked, held, minor, opted out in the member store).
@@ -344,10 +377,11 @@ export class OutboundQueue {
     }
 
     // 5. Line safety state (from Blooio safety.state_changed webhooks).
+    // With no sender line the provider picks one, so the strictest action of any line applies (fail closed).
     const line = rec.from ?? `${rec.channel}:default`;
-    const lineAction = this.#lineSafety.get(line);
+    const lineAction = rec.from ? this.#lineSafety.get(line) : this.#strictestLineAction();
     const isNewChat = !this.#knownContacts.has(contactKey);
-    if (lineAction === "review" || (lineAction && ["pause_new", "reply_only"].includes(lineAction) && isNewChat)) {
+    if (lineAction === "review" || (lineAction === "reply_only" && (agent || isNewChat)) || (lineAction === "pause_new" && isNewChat)) {
       rec.nextAttemptAt = now + HOUR;
       this.#set(rec, "retry_scheduled", `line safety action ${lineAction}`);
       this.o.onAlert?.(rec, `line_safety_${lineAction}`);
@@ -355,8 +389,9 @@ export class OutboundQueue {
     }
 
     // 6. Rate limits.
+    // Per person across channels, so a fallback channel cannot double the cap.
     this.#sendLog = this.#sendLog.filter((e) => e.at > now - HOUR);
-    if (rec.kind !== "compliance" && this.#sendLog.filter((e) => e.to === contactKey).length >= this.o.perRecipientPerHour) {
+    if (rec.kind !== "compliance" && this.#sendLog.filter((e) => e.to === rec.to).length >= this.o.perRecipientPerHour) {
       rec.nextAttemptAt = now + 5 * 60_000;
       return this.#set(rec, "retry_scheduled", "per-recipient rate limit");
     }
@@ -391,7 +426,7 @@ export class OutboundQueue {
       rec.transport = receipt.transport;
       rec.sentAt = this.#now;
       this.#byProviderId.set(receipt.providerMessageId, rec);
-      this.#sendLog.push({ to: contactKey, at: this.#now });
+      this.#sendLog.push({ to: rec.to, at: this.#now });
       if (isNewChat) this.#newChatLog.push({ line, at: this.#now });
       this.#knownContacts.add(contactKey);
       if (rec.kind !== "compliance") {
@@ -414,8 +449,8 @@ export class OutboundQueue {
         case "await_recipient":
           return this.#set(rec, "held_awaiting_reply", e.code);
         case "blocked":
+          // A policy block must not be routed around on another channel.
           this.o.onAlert?.(rec, e.code ?? "blocked");
-          if (this.#fallback(rec)) return;
           return this.#set(rec, "blocked", e.code);
         default:
           return this.#fail(rec, rec.lastError);
@@ -517,6 +552,7 @@ export class OutboundQueue {
     const to = normalizeAddress(address);
     const key = `${channel}:${to}`;
     this.#knownContacts.add(key);
+    this.#lastInbound.set(to, this.#now);
     const c = this.#contact(key);
     c.unanswered = 0;
     c.reengagementUsed = false;
@@ -530,6 +566,11 @@ export class OutboundQueue {
       }
     }
     return released;
+  }
+
+  #strictestLineAction(): string | undefined {
+    const actions = new Set(this.#lineSafety.values());
+    return ["review", "reply_only", "pause_new"].find((a) => actions.has(a)) ?? [...actions][0];
   }
 
   setLineSafety(line: string, action: string | undefined) {

@@ -4,6 +4,7 @@
  * only decides that the planner MUST call SET_STATE (which then validates and
  * may clarify); it never changes state by itself.
  */
+import { ownWords } from "./authz.js";
 
 /** Where the message starts, or after a first-person subject. */
 const SELF = String.raw`(?:^|[.!?,;]\s*|\b(?:i'?m|i am|i'?ll be|i will be|i'?ve been|im)\s+)`;
@@ -48,17 +49,9 @@ const NOT_STATE: readonly RegExp[] = [
   /\b(?:gym|membership|subscription|spotify|netflix|music|song|podcast|video)\b/i,
 ];
 
-/** Quoted or forwarded third-party text never triggers the requirement. */
-function withoutQuotedText(text: string): string {
-  return text
-    .replace(/"[^"]*"|“[^”]*”/g, " ")
-    .split("\n")
-    .filter((line) => !line.trim().startsWith(">"))
-    .join("\n");
-}
-
 export function isNetworkStateIntent(text: string): boolean {
-  const value = withoutQuotedText(text).trim();
+  // Quoted, reported or forwarded third-party text never triggers the requirement.
+  const value = ownWords(text).trim();
   if (!value) return false;
   if (NOT_STATE.some((pattern) => pattern.test(value))) return false;
   return STATE_PATTERNS.some((pattern) => pattern.test(value));

@@ -36,6 +36,8 @@ export interface JobProfile {
   mode?: PeonMode; market?: City; area?: string;
   must: { skill: string; min: number }[]; nice: string[];
   openings: number; urgency: number; sponsors: boolean; credRequired?: string;
+  /** Fill-by date stated at intake (ms), if any. */
+  fillBy?: number;
   open: boolean; scamCue: boolean; discriminatoryRequest: boolean;
   postedAt?: number;
   /** Facet ids of the job's shareable facets (titles, must-haves), for explanations. */
@@ -172,6 +174,7 @@ function build(w: World): Cache {
           else if (t.startsWith(T.nice)) { const v = t.slice(T.nice.length); if (!p.nice.includes(v)) p.nice.push(v); }
           else if (t.startsWith(T.openings)) p.openings = Number(t.slice(T.openings.length));
           else if (t.startsWith(T.urgency)) p.urgency = Number(t.slice(T.urgency.length));
+          else if (t.startsWith(T.fillBy)) p.fillBy = Number(t.slice(T.fillBy.length)) * DAY;
           else if (t.startsWith(T.sponsors)) p.sponsors = t.slice(T.sponsors.length) === "yes";
           else if (t.startsWith(T.credRequired)) p.credRequired = t.slice(T.credRequired.length);
           else if (t === SAFETY.scam) p.scamCue = true;

@@ -28,6 +28,11 @@ export interface GeneratorOptions {
   /** Share of personas in each city (default 50/50 SF/NYC). */
   cityWeights?: Partial<Record<City, number>>;
   archetypeMix?: Partial<Record<Archetype, number>>;
+  /**
+   * Wire links as before sim-worlds-17 (minors can be adults' exes, coworkers, roommates). Only for
+   * datasets whose recorded LLM responses must replay byte for byte (packages/evals worlds). Default false.
+   */
+  legacyLinks?: boolean;
   /** Share of adversarial personas (default 0.06; at least one of each kind once n >= 60). */
   adversarialRate?: number;
   /**
@@ -119,7 +124,7 @@ export function generatePersonas(opts: GeneratorOptions): Persona[] {
     if (minor && archetype === "busy_parent") archetype = "regular";
     personas.push(buildPersona(r, { id, archetype, homeCity, adversarial, disclosureRate, spread, usedNames, minor }));
   }
-  wireRelationships(root.fork("relationships"), personas);
+  wireRelationships(root.fork("relationships"), personas, opts.legacyLinks);
   if (opts.intentLapse) {
     const o = opts.intentLapse === true ? {} : opts.intentLapse;
     const start = o.start ?? KNOWLEDGE_NOW_DEFAULT, mean = o.meanDays ?? 365, lr = root.fork("lapse");
@@ -338,7 +343,19 @@ function voiceSample(style: WritingStyle, interests: string[]): string {
   }
 }
 
-function wireRelationships(r: Rng, personas: Persona[]) {
+/**
+ * Age-plausible link types (sim-worlds-17): a member under 18 (true age) is never an adult's ex,
+ * coworker or roommate (a sibling when the gap is 12 years or less, else a family friend), and
+ * two minors are friends rather than coworkers or roommates. Same RNG draws as before.
+ */
+function agePlausible(type: RelationshipType, a: Persona, b: Persona): RelationshipType {
+  const minors = (a.hidden.trueAge < 18 ? 1 : 0) + (b.hidden.trueAge < 18 ? 1 : 0);
+  if (!minors || type === "friend" || type === "sibling") return type;
+  if (minors === 2) return type === "ex" ? "ex" : "friend";
+  return Math.abs(a.hidden.trueAge - b.hidden.trueAge) <= 12 ? "sibling" : "friend";
+}
+
+function wireRelationships(r: Rng, personas: Persona[], legacyLinks = false) {
   const byCity = new Map<string, Persona[]>();
   for (const p of personas) byCity.set(p.homeCity, [...(byCity.get(p.homeCity) ?? []), p]);
   const add = (a: Persona, b: Persona, type: RelationshipType, closeness: number) => {
@@ -353,7 +370,7 @@ function wireRelationships(r: Rng, personas: Persona[]) {
     for (const other of r.sample(pool, want + 1)) {
       if (p.relationships.length >= want) break;
       const type = r.weighted<RelationshipType>([["friend", 0.6], ["coworker", 0.22], ["ex", 0.1], ["roommate", 0.04], ["sibling", 0.04]]);
-      add(p, other, type, Number(r.range(0.2, 1).toFixed(2)));
+      add(p, other, legacyLinks ? type : agePlausible(type, p, other), Number(r.range(0.2, 1).toFixed(2)));
     }
   }
   // Invite chains: a persona is invited by a friend/coworker who joins no later than them.
