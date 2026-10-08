@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { SimClock } from "../../../packages/core/src/clock.ts";
 import { ConsentLedger, defaultCopy, detectKeyword, handleKeyword } from "../src/keywords.ts";
 import { isQuietAt, nextAllowedAt } from "../src/quiet-hours.ts";
+import { world } from "./helpers.ts";
 
 describe("keyword detection", () => {
   test.each(["STOP", "stop", " Stop. ", "STOP!!", "unsubscribe", "Cancel", "end", "quit", "opt out", "OPT-OUT", "stopall", "revoke", "stop 🛑"])("%p -> opt_out", (t) => {
@@ -21,7 +22,7 @@ describe("consent ledger and keyword outcomes", () => {
     l.record("blooio", "+15551234567", "opted_in", "invite_acceptance", "I agree to receive messages from The Network");
     const copy = defaultCopy();
     const out = handleKeyword(l, copy, { channel: "blooio", from: "+15551234567", text: "stop", isGroup: false });
-    expect(out).toEqual({ action: "opt_out", reply: copy.optOut });
+    expect(out).toEqual({ action: "opt_out", reply: copy.optOut, via: "keyword" });
     expect(l.isOptedOut("blooio", "+15551234567")).toBe(true);
     expect(l.isOptedOut("twilio", "+15551234567")).toBe(true); // address-scoped: SMS fallback also stops
     expect(l.get("blooio", "+15551234567")?.source).toBe("keyword:STOP");
@@ -31,8 +32,47 @@ describe("consent ledger and keyword outcomes", () => {
   });
   test("in a group, STOP applies to the sender but posts nothing to the group", () => {
     const l = new ConsentLedger(new SimClock());
-    expect(handleKeyword(l, defaultCopy(), { channel: "blooio", from: "+1555", text: "STOP", isGroup: true })).toEqual({ action: "opt_out", reply: null });
+    expect(handleKeyword(l, defaultCopy(), { channel: "blooio", from: "+1555", text: "STOP", isGroup: true })).toEqual({ action: "opt_out", reply: null, via: "keyword" });
     expect(l.isOptedOut("blooio", "+1555")).toBe(true);
+  });
+});
+
+describe("free-text and Spanish opt-outs (plugin-prototypes-12)", () => {
+  test.each([
+    ["please stop texting me", "en"],
+    ["Can you take me off this list", "en"],
+    ["no me escribas más", "es"],
+    ["PARA", "es"],
+  ])("%p opts out, skips the agent and gets one confirmation (%s)", async (text, lang) => {
+    const w = world();
+    const P = "+15558880001";
+    w.consent.record("sim", P, "opted_in", "invite_acceptance");
+    await w.bus.inbound(P, text);
+    expect(w.consent.isOptedOut("sim", P)).toBe(true);
+    expect(w.agentInbox).toEqual([]);
+    const sent = w.bus.inbox.get(P) ?? [];
+    expect(sent.length).toBe(1);
+    expect(sent[0]!.text).toBe(lang === "es" ? defaultCopy().optOutEs! : defaultCopy().optOut);
+  });
+  test.each(["my friend said stop", "how do I stop these?", "the end of the week works"])("%p is not an opt-out", async (text) => {
+    const w = world();
+    await w.bus.inbound("+15558880002", text);
+    expect(w.consent.isOptedOut("sim", "+15558880002")).toBe(false);
+    expect(w.agentInbox.length).toBe(1);
+  });
+});
+
+describe("one confirmation per change; START restores only prior consent (plugin-prototypes-18)", () => {
+  test("repeated STOPs get one confirmation", async () => {
+    const w = world();
+    for (let i = 0; i < 5; i++) await w.bus.inbound("+15558880003", "STOP");
+    expect(w.bus.inbox.get("+15558880003")?.length).toBe(1);
+  });
+  test("START from a number that never opted in does not grant proactive consent", () => {
+    const l = new ConsentLedger(new SimClock());
+    handleKeyword(l, defaultCopy(), { channel: "blooio", from: "+15558880004", text: "START", isGroup: false });
+    expect(l.isOptedOut("blooio", "+15558880004")).toBe(false);
+    expect(l.hasConsent("blooio", "+15558880004")).toBe(false);
   });
 });
 

@@ -1,14 +1,17 @@
 // STOP / HELP / START handling and the consent ledger (PRD 32.2, 36.1; CTIA keyword conventions).
 //
 // Rules:
-//  - Exact-match only after normalization ("stop", "STOP!", " Stop. " match; "stop by later" does not), so
-//    ordinary conversation is never misread as an opt-out.
+//  - Keywords match exactly after normalization ("stop", "STOP!", " Stop. " match; "stop by later?" does not).
+//  - Free-text and Spanish opt-outs ("please stop texting me", "no me escribas más") are honored too (TCPA
+//    "reasonable means", audit plugin-prototypes-12). The shared parser `parseOptOut` in packages/core reads them,
+//    so the Network and this handler agree. The member gets one confirmation, in Spanish for a Spanish opt-out.
 //  - Opt-out is effective immediately on that channel+address and is recorded with time and source keyword.
 //  - "YES" is deliberately NOT an opt-in keyword: members answer "yes" to opportunities all the time.
 //  - Blooio iMessage is P2P (not A2P 10DLC), and Blooio does not run a global suppression list for us
 //    (docs/research/blooio.md), so the Network owns this ledger for every channel.
 
 import type { ConsentStore } from "./consent-store.ts";
+import { parseOptOut } from "../../../packages/core/src/replies.ts";
 import { normalizeAddress } from "./phone.ts";
 import type { ChannelKind, Clock } from "./types.ts";
 
@@ -37,11 +40,12 @@ export function detectKeyword(text: string): KeywordAction | null {
   return null;
 }
 
-export interface KeywordCopy { optOut: string; optIn: string; help: string }
+export interface KeywordCopy { optOut: string; optIn: string; help: string; /** Confirmation for a Spanish opt-out. */ optOutEs?: string }
 
 export function defaultCopy(supportContact = "help@ntwrk.love"): KeywordCopy {
   return {
     optOut: "You're unsubscribed from The Network and won't get more messages here. Reply START to resume.",
+    optOutEs: "Ya no recibirás mensajes de The Network aquí. Responde START para volver.",
     optIn: "You're back on The Network. Reply STOP anytime to opt out, HELP for help.",
     help: `The Network: invite-only messages about people, plans, and events you asked for. Message frequency varies. Reply STOP to opt out. Help: ${supportContact}`,
   };
@@ -90,8 +94,14 @@ export class ConsentLedger {
     return this.#current.get(this.#key(channel, address))?.state === "opted_out";
   }
 
+  /**
+   * Proactive consent. A START keyword only restores consent the member gave before (invite acceptance, admin):
+   * a START from a number that never opted in clears nothing more than its opt-out (audit plugin-prototypes-18).
+   */
   hasConsent(channel: ChannelKind, address: string): boolean {
-    return this.#current.get(this.#key(channel, address))?.state === "opted_in";
+    const key = this.#key(channel, address);
+    if (this.#current.get(key)?.state !== "opted_in") return false;
+    return this.history.some((e) => e.state === "opted_in" && !e.source.startsWith("keyword:") && this.#key(e.channel, e.address) === key);
   }
 
   get(channel: ChannelKind, address: string): ConsentEntry | undefined {
@@ -99,7 +109,12 @@ export class ConsentLedger {
   }
 }
 
-export interface KeywordOutcome { action: KeywordAction; reply: string | null }
+export interface KeywordOutcome {
+  action: KeywordAction;
+  reply: string | null;
+  /** For an opt-out: "keyword" (exact carrier keyword) or "free_text" (a request in the member's own words). */
+  via?: "keyword" | "free_text";
+}
 
 /**
  * Apply a keyword. Returns null for non-keyword text (pass to the agent).
@@ -112,15 +127,26 @@ export function handleKeyword(
   msg: { channel: ChannelKind; from: string; text: string; isGroup: boolean },
 ): KeywordOutcome | null {
   const action = detectKeyword(msg.text);
-  if (!action) return null;
   const word = normalizeKeyword(msg.text);
+  // One confirmation per change: a repeated STOP (or START) is recorded but not answered again (plugin-prototypes-18).
+  const wasOut = ledger.isOptedOut(msg.channel, msg.from);
   if (action === "opt_out") {
     ledger.record(msg.channel, msg.from, "opted_out", `keyword:${word}`);
-    return { action, reply: msg.isGroup ? null : copy.optOut };
+    return { action, reply: msg.isGroup || wasOut ? null : copy.optOut, via: "keyword" };
+  }
+  if (!action) {
+    // Spanish keywords ("PARA", "BAJA") and free-text requests ("please stop texting me").
+    const r = parseOptOut(msg.text);
+    if (r.match === "none") return null;
+    const via = r.match === "exact" ? "keyword" : "free_text";
+    ledger.record(msg.channel, msg.from, "opted_out", via === "keyword" ? `keyword:${word}` : `free_text:${r.lang}`);
+    const reply = r.lang === "es" ? copy.optOutEs ?? copy.optOut : copy.optOut;
+    return { action: "opt_out", reply: msg.isGroup || wasOut ? null : reply, via };
   }
   if (action === "opt_in") {
+    const wasIn = ledger.get(msg.channel, msg.from)?.state === "opted_in";
     ledger.record(msg.channel, msg.from, "opted_in", `keyword:${word}`, "START keyword");
-    return { action, reply: msg.isGroup ? null : copy.optIn };
+    return { action, reply: msg.isGroup || wasIn ? null : copy.optIn };
   }
   return { action, reply: msg.isGroup ? null : copy.help };
 }
