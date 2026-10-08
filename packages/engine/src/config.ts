@@ -151,7 +151,7 @@ export const DEFAULT_CONFIG: EngineConfig = {
     activationCost: 0.25, interruptionCost: 0.2, load: 0.4, repetition: 0.4, socialRisk: 0.4,
   },
   retrieval: { topK: 50, exposureFloorK: 10, lowExposureMax: 1, minSim: 0.2, warmMinSim: 0.15, poolSim: 0.4 },
-  // Complementarity (2026-10-06, docs/results/2026-10-06-liveness-complementarity.md). Inside the
+  // Complementarity (2026-10-06, docs/results/SUMMARY.md, "Liveness and complementarity"). Inside the
   // engine's own candidate set the embedding-based score picked good pairs at 24-28% against a 22%
   // base rate, while a structured needs -> offers score reached 46-47% (PoC). weight 0.5 gives the
   // structured evidence the same say as the semantic evidence rather than replacing it: semantic
@@ -174,7 +174,7 @@ export const DEFAULT_CONFIG: EngineConfig = {
   maxPerIntent: 4,
   group: { minSize: 3, maxSize: 6, beamWidth: 8, poolSize: 24, minPairwise: 0.05, maxAnchorsPerCity: 8, alternates: 3, minThemeMembers: 4 },
   exploration: { rate: 0.125, maxShare: 0.15 },
-  // Passes 1 and 3 are off by default (evaluated in docs/results/2026-10-06-judge-passes.md);
+  // Passes 1 and 3 are off by default (evaluated 2026-10-06: docs/results/SUMMARY.md, "Judge passes");
   // turning them on changes which candidates survive and adds LLM calls. Pass 2 reads pass 3's
   // context ("deep", judge-v3) since 2026-10-07: on the held-out test split it beat the compact
   // input by +8.6 pp accuracy with the hard gate (p < 0.001) and had lower Brier

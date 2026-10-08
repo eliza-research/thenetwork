@@ -71,13 +71,9 @@ The app comes from the host a site router signed (`src/proxy.ts`, `PLATFORM_PROX
 - The dev OTP console, the Turnstile bypass, the dev hash key and the trusted `X-Forwarded-Host` run only with `PLATFORM_ENV=dev`.
 - Nothing is sent in tests. The Twilio adapter runs only with `OTP_PROVIDER=twilio` and its credentials.
 
-## Tests
+## Validation
 
-```bash
-bun test packages/platform
-```
-
-After the founder decisions and the audit fixes (2026-10-08): `bun test packages/platform` 88 pass, 0 fail (memory and Postgres).
+The platform's unit tests were deleted on 2026-10-08 (founder decision: simulations only). Kept, pending the founder's decision: the security suite (`test/db.test.ts`: composite foreign keys, per-app RLS, platform_service limits, append-only audit; `test/api-security.test.ts`: CSRF, no phone-number enumeration, OTP limits), run with `bun run security` against the dev Postgres and in CI as "security (pending)". The opt-out corpus is scored by `bun run sim` (evals/opt-out.jsonl).
 
 ## Known gaps
 

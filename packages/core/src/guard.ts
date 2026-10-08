@@ -1,7 +1,7 @@
 // Outbound leak and contact guard (PRD 28.5, 32.14: "leak checks on every outbound message").
 // Deterministic, no model. Every message the Network sends goes through `LeakGuard.check` (or
 // `findLeaks`) right before it leaves; a violation means the message is not sent as written.
-// This is the one shared guard (docs/research/2026-10-07-consolidation.md §1.5): the engine's
+// This is the one shared guard (the 2026-10-07 consolidation review, summarized in docs/results/SUMMARY.md): the engine's
 // member-facing gates, the MCP connector's output guard and the Blooio outbound queue all call it.
 //
 // What it catches:

@@ -6,9 +6,8 @@
 // The vocabulary (skill / interest / pool tags) is the facet tag vocabulary the onboarding agent
 // writes. In production the agent (an LLM extraction pass per profile update) would map free text
 // into these ids; here a keyword pass stands in for it. CAVEAT: the synthetic personas and the
-// simulator oracle use the same taxonomy (packages/sim/src/taxonomy.ts DESIRES), so on synthetic
-// data this mapping is unusually clean; test/complementarity.test.ts pins the two together so
-// they cannot drift silently.
+// simulator oracle use the same vocabulary (packs/network/vocabulary.ts DESIRES), so on synthetic
+// data this mapping is unusually clean.
 
 /** The objective shape is part of the AppPack contract (pack.ts ObjectiveDef). */
 import type { ObjectiveDef } from "../../pack.ts";
@@ -63,7 +62,7 @@ export function objectivesFor(text: string, details?: string, category?: string)
  * generator: asking a member to bring in someone who fills a gap). Members, and the simulator,
  * use "growth" for personal growth: "learn to sail", "try ceramics", "join a writing group".
  * Every intent generator skipped "growth" intents, so those wants were never matched
- * (docs/research/2026-10-07-match-failures-and-diversity.md, finding 4). A member intent is
+ * (match-failures research 2026-10-07, finding 4: docs/results/SUMMARY.md). A member intent is
  * personal growth unless its text is about growing the Network itself.
  */
 const NETWORK_GROWTH_TEXT = /\b(invite|bring|grow|recruit|introduce)\b.*\b(network|community|members?|friends to (join|the network))\b/i;

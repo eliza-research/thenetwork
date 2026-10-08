@@ -6,7 +6,7 @@
 //   anything else                                               -> env.ASSETS (dist/, with _headers)
 //
 // dist/_routes.json lists the same paths, so Cloudflare runs this Worker only for them
-// (deploy/router.test.ts checks that the lists match).
+// (keep the two lists the same; the router test that checked it was removed on 2026-10-08).
 //
 // Proxy headers. The backend sees the Worker, not the visitor, so the Worker tells it who the visitor
 // is, and signs what it says. There is one contract: packages/platform/src/proxy.ts (signProxyHeaders,

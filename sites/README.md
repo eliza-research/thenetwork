@@ -48,7 +48,6 @@ bun run sites:dev                 # all four sites; backend paths proxied to PLA
 bun run sites:dev slop            # one site
 bun run sites/sites.ts            # build every site into sites/<domain>/dist
 DEPLOY_TARGET=production TURNSTILE_SITE_KEY=... bun run sites/sites.ts   # production build: refuses draft legal text
-bun test sites deploy scripts     # build, copy, skills, contract, router and guard checks (offline)
 bunx tsc --noEmit -p sites/tsconfig.json   # typecheck (the root tsconfig does not include sites/)
 ```
 
@@ -92,6 +91,6 @@ forwards those paths to `BACKEND_ORIGIN` with signed `x-network-proxy-*` headers
 from `main` behind the `production` GitHub environment (`.github/workflows/deploy-sites.yml`,
 `wrangler pages deploy <dist> --project-name <name> --branch main`); there are no PR previews. By
 hand, deploys need founder approval and go through `scripts/wrangler.sh` with `NTWRK_ALLOW_DEPLOY=1`.
-All four projects are in account `50ad2052bbc6ca528d6993a689b419a4` (`CLOUDFLARE_ACCOUNT_ID` changes
-it). Each answers on `<project>.pages.dev`, which the backend accepts as that app's host; slop.date
+All four projects are in the Eliza Labs Cloudflare account (its id is `CLOUDFLARE_ACCOUNT_ID`, from
+the environment or the CI variable). Each answers on `<project>.pages.dev`, which the backend accepts as that app's host; slop.date
 and friends.help DNS (another account) point there. Details: [docs/deploy.md](../docs/deploy.md).

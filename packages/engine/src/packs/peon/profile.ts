@@ -1,7 +1,7 @@
 // The ONE place peonPack reads member data (the protected-attribute firewall). Typed candidate and
 // job profiles are parsed from facet tags (schema.ts) and intents, once per World.
 //
-// Firewall rules (tested in test/peon-firewall.test.ts):
+// Firewall rules (bun run sim checks sealed-attribute invariance end to end):
 //   - only matchable / shareable facets, plus two kinds of agent_private facet the pack needs:
 //     the candidate's company exclusions (a boundary: never show me to my employer) and the
 //     agent's safety cues (scam, fake identity, discriminatory request);

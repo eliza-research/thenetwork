@@ -1,7 +1,7 @@
 // peon.biz judge (pass 2 only): a job-fit rubric on a REDACTED context. Not run in the simulator
 // (no LLM calls); the conformance suite exercises it with a fake model. The context is built from
 // profile.ts fields only, so it carries no name, age, zip, graduation year, gap, photo, pronoun or
-// sealed attribute (tested in test/peon-firewall.test.ts).
+// sealed attribute (bun run sim checks sealed-attribute invariance end to end).
 import type { MemberId } from "@thenetwork/core";
 import type { JudgePack } from "../../pack.ts";
 import type { Candidate } from "../../types.ts";

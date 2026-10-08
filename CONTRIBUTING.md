@@ -7,7 +7,7 @@ Read this document before you open an issue or a pull request (PR). Maintainers 
 The scope of this repository is the MVP. Two documents define the MVP:
 
 - The PRD: [Google Doc (canonical)](https://docs.google.com/document/d/1lLQAZNAMSC_yHCkUBVbp1CCwvyR17PuvV7TnpfuY8Xc/edit), with a local copy in [docs/prd-snapshot.md](docs/prd-snapshot.md). Section 28 is the MVP definition. Section 29 lists the MVP flows. Section 37 is the build plan.
-- The prototype and test plans: [docs/prototypes.md](docs/prototypes.md) and [docs/test-plan.md](docs/test-plan.md).
+- The MVP plan: [docs/mvp-plan.md](docs/mvp-plan.md). Results so far: [docs/results/SUMMARY.md](docs/results/SUMMARY.md).
 
 If a capability is not in PRD Section 28.3, it is not in the MVP. PRD Section 28.4 lists capabilities that are explicitly not in the MVP. Do not build them.
 
@@ -95,25 +95,19 @@ In the PR description:
 3. Explain why your implementation is better than each of them. Give the trade-offs.
 4. Give the research that supports the decision: PRD sections, docs in [docs/research/](docs/research/), earlier results, or external sources.
 
-### 3.4 A PR must show end-to-end test validation
+### 3.4 A PR must show end-to-end validation in the simulations
 
-We want tests that run the real system. We do not want unit tests that only test mocks, or tests that pass when the feature is broken.
+The simulations are the only validation layer (founder decision, 2026-10-08). There are no unit tests. Do not add any.
 
-- Run an end-to-end check that uses the real code path. Use one or more of these:
-  - A simulated world: `bun run packages/sim/src/cli.ts --personas 150 --days 30 --mode discrete --seed 1 --network stub --engine ./packages/sim/engines/engine-v1.ts`
+- Run `bun run sim`. It runs every simulation block (the eval corpora, the Network in the NYC world, slop.date, peon.biz, friends.help) on pinned seeds and exits 1 when a blocking gate fails. It must pass. Use `--only <block>` while you work and the full run before you open the PR.
+- For a deeper check, run the real code path directly and give the command, the seed and the numbers before and after:
+  - A simulated world: `bun run packages/sim/src/cli.ts --personas 150 --days 30 --mode discrete --seed 1 --network stub --engine ./packages/sim/src/engineAdapter.ts`
   - A scenario with pass^k: `bun run packages/sim/src/cli.ts --scenario packages/sim/scenarios/<name>.json --k 4`
-  - The model evals: `bun run packages/evals/src/cli.ts --suite recommender,judge` or `--suite passes`
+  - The ConsentNetwork arms and scenarios: `bun run packages/network/harness/experiment.ts --days 21 --seed 1`
+  - An app world: `bun run packages/sim/src/apps/<slop|peon|friends>/...` (AGENTS.md has the commands)
   - The Observatory, for UI and data changes: `bun run observatory`
-- Paste the result into the PR: the command, the seed, and the output numbers. Show the result before and after the change.
-- If you fix a bug, add one test or one scenario that fails before the fix and passes after it. That is enough. Do not add more.
-- Run `bun run test` and `bun run typecheck`. Both must pass. If a test fails for a reason that is not related to your change, say so in the PR.
-
-Do not add these tests:
-
-- Tests that only check that a mock was called.
-- Tests that repeat the implementation.
-- Tests for getters, constants, or types.
-- Tests for conditions that cannot occur.
+- If you fix a bug, add one gate to `scripts/sim/`, one scenario, or one row to a corpus in `evals/` that fails before the fix and passes after it. That is enough. Do not add more.
+- Run `bun run typecheck`. It must pass.
 
 ### 3.5 PRs that change the UI
 
@@ -154,7 +148,7 @@ The trade-offs. The research or PRD text that supports it.
 Lines added and removed. Types, functions, or files that this PR removes or merges. New types or files, and why each one is necessary.
 
 ## End-to-end validation
-The commands you ran and their output. `bun run test` and `bun run typecheck` results.
+The commands you ran and their output. `bun run sim` and `bun run typecheck` results.
 
 ## How to test (UI changes: required)
 1. Step.
@@ -198,19 +192,19 @@ These numbers measure real progress. A change to them is evidence. A change to l
 | Members with a first outcome in 14 days | Simulated world run; pilot | 60% or more (PRD 28.2) |
 | Pair recall and member recall | Simulated world run | Higher is better |
 | Exposure fairness (Gini, members with no proposal) | Simulated world run | Lower is better |
-| Recommender and judge accuracy, precision, recall, ECE | `packages/evals` | Higher accuracy and precision; lower ECE |
+| Gate values per app (second dates, hires, repeat meetups, ...) | `bun run sim` | The blocking gates pass; tracked gates move toward target |
 | Canary leaks, invariant violations, minor contacts | Every simulated run | Always 0 |
 
 Safety scores are gates. A PR that increases canary leaks, invariant violations, or minor contacts is not accepted, even if other scores improve.
 
 ## 6. Development rules
 
-- Use Bun. Run `bun install`, then `bun run test` and `bun run typecheck`. These are offline. Live tests (paid LLM or network calls) run only with `LIVE_TESTS=1`. CI (`.github/workflows/ci.yml`) runs the offline suite with no keys.
-- Network code reads time only from `Clock`. Do not use `Date.now()`, `new Date()` with no argument, or `Math.random()` in Network code (test plan 3.2).
-- Network code never reads the hidden persona truth. Only the simulator and the oracle can read it (test plan 3.3).
-- Every outbound message must go through the leak check, and every proactive proposal and member request must go through human review (PRD 28.5, 32.8). Today the ConsentNetwork (`packages/network`) does both: every opportunity it composes waits for review before any member is contacted, and every message it sends passes the leak guard (`packages/core/src/guard.ts`). The connector prototype checks every output. The Blooio outbound queue and the simulator's `StubNetwork` have neither. Simulator runs use a simulated reviewer (`review: "auto"`). Say so in a PR or a results doc, and do not claim review or a leak check for the other paths.
-- Members under 18 are never connected to other members (test plan 6.6).
-- The LLM for every use is `gpt-6-luna` on Surplus Intelligence, through `defaultLLM()`, `judgeLLM()` and `recommenderLLM()` in `packages/core/src/llm.ts`. If Surplus has no key, or returns 429, 5xx or a timeout, the same call goes to OpenAI. If neither key is set, a warning is shown at startup. Cerebras is optional and legacy. Requests time out after 60 s and retry at most 4 times. Do not add a new LLM client.
+- Use Bun. Run `bun install`, then `bun run sim` and `bun run typecheck`. Both are offline: `bun run sim` never calls a model. CI (`.github/workflows/ci.yml`) runs them with no keys, plus the security suite pending the founder's decision (`bun run security`, with Postgres).
+- Network code reads time only from `Clock`. Do not use `Date.now()`, `new Date()` with no argument, or `Math.random()` in Network code (PRD 31.1).
+- Network code never reads the hidden persona truth. Only the simulator and the oracle can read it.
+- Every outbound message must go through the leak check, and every proactive proposal and member request must go through human review (PRD 28.5, 32.8). Today the ConsentNetwork (`packages/network`) does both: every opportunity it composes waits for review before any member is contacted, and every message it sends passes the leak guard (`packages/core/src/guard.ts`). The Blooio outbound queue also runs the leak guard; the MCP server withholds any update that fails its output gate. The simulator's `StubNetwork` (the push baseline) has neither. Simulator runs use a simulated reviewer (`review: "auto"`). Say so in a PR or a results doc, and do not claim review or a leak check for the other paths.
+- Members under 18 are never connected to other members.
+- The LLM for every use is `gpt-6-luna` on Surplus Intelligence, through `defaultLLM()`, `judgeLLM()` and `recommenderLLM()` in `packages/core/src/llm.ts`. If Surplus has no key, or returns 429, 5xx or a timeout, the same call goes to OpenAI. If neither key is set, a warning is shown at startup. Requests time out after 60 s and retry at most 4 times. Do not add a new LLM client.
 - Deploys to ntwrk.love go through `scripts/wrangler.sh`, which refuses them unless `NTWRK_ALLOW_DEPLOY=1`. Set it only with founder approval.
 - Write results to [docs/results/](docs/results/) with the date, the command, the seed, the model, and the sample size, so that someone can run it again.
 - Do not commit `.env`, `runs/`, or real member data.

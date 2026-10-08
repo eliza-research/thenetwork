@@ -1,7 +1,7 @@
 // networkPack: The Network (ntwrk) as an AppPack. Every value here is the pre-refactor behaviour,
 // moved verbatim behind the contract (docs/results/2026-10-08-app-packs-core.md lists what moved).
-// The goldens (test/golden.test.ts) prove the engine, attention, plans, judge and sim outputs are
-// byte-identical with this pack.
+// The goldens at the time proved the engine, attention, plans, judge and sim outputs byte-identical
+// with this pack; bun run sim now checks its conformance rules and the Network sims.
 //
 // Import-cycle safety: this module is imported by world.ts, engine.ts, attention.ts and plans.ts
 // for their default `pack` argument (evaluated at call time). Its top level therefore reads only

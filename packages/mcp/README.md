@@ -48,12 +48,12 @@ Every input schema has `app` only (`submit_profile`: `app` and `about`) and `add
 
 - Outside dev it needs `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` and a database. Without them it stays off (404 `mcp_not_enabled`).
 - When a person leaves an app or deletes everything (the platform's forget path), every OAuth grant of that app is revoked (`revokeAllFor`).
-- The end-to-end tests in `tests/e2e` run the OAuth dance through the site router.
+- The OAuth checks (PKCE S256 only, code reuse revokes, no open redirect, refresh rotation, cross-app isolation) are in `test/oauth.test.ts`, part of the security suite kept pending the founder's decision (`bun run security`).
 
 ## 5. Run and test
 
 ```bash
-bun test packages/mcp                                          # 43 tests; Postgres tests use mcp_test_<pid> on :54339
+bun run security                                               # the pending security suite (MCP OAuth with platform and backend checks)
 PLATFORM_ENV=dev bun run packages/mcp/src/dev-server.ts        # http://127.0.0.1:4849/mcp, memory stores, codes print to the log
 bun run plugins/build.ts --check                               # the plugin skill snapshots equal sites/skills
 ```

@@ -34,15 +34,7 @@ The single inbox and the notification scheduler from `docs/research/2026-10-08-e
 - **Outbound queue** (`packages/blooio`). Use `queueSink(queue, providerFor)` and `recipientPolicy: queuePolicy(notifier, existing)`.
 - **`packages/plugin-network`.** Set `NetworkStore.readUpdates = threadHooks(notifier, now).readUpdates` to register `GET_UPDATES`.
 
-**Tests:**
-
-| Test | What it covers |
-|---|---|
-| `test/*.ts` | Unit tests, plus the store contract run against both memory and Postgres |
-| `packages/mcp/test/updates.test.ts` | `get_updates` and the assistant signals |
-| `tests/e2e/notify.e2e.test.ts` | The whole stack |
-| `prototypes/connector-mcp/tests/notify-bridge.test.ts` | The connector prototype bridge |
-| `packages/plugin-network/test/get-updates.test.ts` | The plugin's `GET_UPDATES` |
+**Validation:** the notifier's unit and end-to-end tests were deleted on 2026-10-08 (simulations only; in git history at 16cde70).
 
 ## Not yet
 

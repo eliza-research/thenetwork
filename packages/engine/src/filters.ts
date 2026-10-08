@@ -87,7 +87,7 @@ export function pairReason(w: World, a: MemberId, b: MemberId, category: Categor
  * highRiskPatterns and not part of the config: a safety floor that tuning cannot switch off.
  * Each rule names who would be put at risk, so benign mentions ("parents with young kids",
  * "a 5 year old startup", "dog sitter", "diet coke", "mushroom foraging") pass. Checked against
- * a risky and a benign corpus in test/audit-2026-10-08.test.ts.
+ * a risky and a benign corpus (the 2026-10-08 audit; in git history at 16cde70).
  */
 const CHILD = "(kids?|child|children|minors?|teens?|teenagers?|toddlers?|bab(?:y|ies)|sons?|daughters?|little ones?|(?:1[0-7]|[1-9]|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\\s?-?\\s?(?:yo|y\\/?o|yrs?(?:\\s|-)?olds?|years?(?:\\s|-)?olds?))";
 export const SAFETY_RISK_PATTERNS: readonly string[] = [

@@ -1,14 +1,13 @@
 # @thenetwork/sim: the Network World Simulator
 
-This package is the test and simulation harness from PRD Section 34. It creates synthetic SF and NYC members whose ground truth is hidden from the Network. It then runs them through any Network implementation in simulated time and scores the result against an oracle that has the full hidden information. Run logs are written as JSONL so a run can be replayed.
+This package is the simulation harness from PRD Section 34, and the repo's validation layer (`bun run sim`, scripts/sim.ts). It creates synthetic SF and NYC members whose ground truth is hidden from the Network. It then runs them through any Network implementation in simulated time and scores the result against an oracle that has the full hidden information. Run logs are written as JSONL so a run can be replayed.
 
-The companion package [`@thenetwork/judge`](../judge) holds the deterministic style and safety rules, the LLM judges with their calibration set, and the metrics computed from run logs.
+The judge lives in `src/judge/`: the deterministic style and safety rules, the LLM graders, and the metrics computed from run logs (`computeMetrics`). The run-log schema is `packages/core/src/runlog.ts`. The per-app worlds (slop.date, peon.biz, friends.help) are in `src/apps/` ([README](src/apps/README.md)).
 
 ```
 packages/sim/src/
-  rng.ts            seeded, splittable PRNG (everything random flows from the run seed)
-  time.ts           DST-correct SF/NYC local-time helpers (interpret Clock time; never read the system clock)
-  taxonomy.ts       interests, skills, desires, neighborhoods, private disclosures, writing styles
+  time.ts           SF/NYC local-time helpers over core/time.ts (interpret Clock time; never read the system clock)
+  taxonomy.ts       names, private disclosures, writing styles (+ the member vocabulary from engine packs/network/vocabulary.ts)
   persona.ts        Persona = HIDDEN truth + PUBLIC profile
   generator.ts      deterministic seeded generator (archetypes + adversaries, relationships, invite chains)
   llmGenerator.ts   LLM enrichment (defaultLLM()): realistic bio + voice sample consistent with hidden truth
@@ -17,7 +16,10 @@ packages/sim/src/
   agent/llmAgent.ts LLM persona agent (defaultLLM() writes the words; the choice model decides)
   channel.ts        in-memory SMS/iMessage bus: STOP/START/HELP, idempotency, failures, per-recipient logs
   scheduler.ts      discrete-event queue over SimClock; discrete | accelerated | realtime
-  network.ts        NetworkUnderTest + Engine interfaces (dependency injection; engine not imported)
+  network.ts        re-exports the NetworkUnderTest / Engine contract (core/src/network.ts)
+  engineAdapter.ts  the engine as an Engine (`--engine ./packages/sim/src/engineAdapter.ts`)
+  judge/            rules, metrics, LLM graders
+  apps/             the slop, peon and friends worlds
   snapshot.ts       public WorldSnapshot (core types) built from what members have revealed
   stubNetwork.ts    simple Network: onboard, ask one question, random intros, consent/schedule/remind/feedback
   world.ts          the runner: events, outcomes, JSONL run log -> runs/<runId>/
@@ -34,7 +36,7 @@ bun run packages/sim/src/cli.ts --personas 40 --days 14 --mode discrete --seed 1
 bun run packages/sim/src/cli.ts --personas 6 --days 3 --seed 2 --llm        # LLM persona voices (defaultLLM())
 bun run packages/sim/src/cli.ts --scenario packages/sim/scenarios/group-flake-morning-of.json --k 4
 bun run packages/sim/src/cli.ts --engine ./my-engine.ts                     # module exporting createEngine()
-bun test packages/sim packages/judge                                         # live tests need SURPLUS_API_KEY or OPENAI_API_KEY
+bun run sim                                                                  # the gates (scenarios at pass^3, the Network sims, the app worlds)
 ```
 
 The other flags are `--mode accelerated --speed 1440` (one sim day per wall minute), `--mode realtime`, `--llm-personas` (LLM-enriched bios), `--adversarial-rate`, `--minor-share` (default 0.05), `--richness` (snapshot from richness tiers instead of perfect onboarding), `--stable-decisions` and `--logistics` (opt-in oracle refinements: no fresh coin flip when the same people are asked again, and travel and time in show-up), `--quality-churn` (personas lose trust after unsafe or poor intros), `--trip-clock` (travellers reply on the trip city's clock), `--judge N` (LLM-judge N sent proactive messages with `judgeLLM()`), `--no-log` and `--json`. Models: persona agents and persona bios use `defaultLLM()` (`DEFAULT_LLM_PROVIDER`/`DEFAULT_LLM_MODEL`). Any judging uses `judgeLLM()` (`JUDGE_PROVIDER`/`JUDGE_MODEL`). Both default to Surplus `gpt-6-luna`, with OpenAI as the fallback.
@@ -143,7 +145,7 @@ The oracle gap compares the engine's proposals with a selector that has the full
 
 Seeded runs are bit-for-bit replayable. A test diffs two runs, and the CLI metrics hash matches across runs once the runId is excluded.
 
-## Metrics (`@thenetwork/judge` `computeMetrics`)
+## Metrics (`src/judge/metrics.ts` `computeMetrics`)
 
 - **Matching vs the oracle:** precision and recall over pairs and over members, oracle gap, and unsafe proposals (minor, adversary, city mismatch, romance mismatch, exes).
 - **Responses:** accept, decline, counter and ignore counts.
@@ -167,14 +169,9 @@ Seeded runs are bit-for-bit replayable. A test diffs two runs, and the CLI metri
 
 All results were recorded on 2026-10-05 with Bun 1.4.2.
 
-### Tests
+### Validation
 
-`bun test packages/sim packages/judge`: **53 pass, 0 fail**, 8 s including the live tests.
-- **Deterministic tests:** generator determinism and coverage, oracle, channel adapter, discrete-event ordering, SimClock monotonicity, accelerated-mode pacing, world replay, snapshot isolation, a leaky-network negative control, Engine injection, run-folder output, all scenarios, pass^3, rules, and metrics.
-- **Live tests (`gpt-6-luna` on Surplus; run only with `LIVE_TESTS=1` and `SURPLUS_API_KEY`):**
-  - 3 LLM-enriched personas
-  - a 2-persona conversation through LLM persona agents and the stub network
-  - judge calibration at 12/12 = 100% agreement (threshold 80%)
+The bun:test suite recorded here on 2026-10-05 was deleted on 2026-10-08 (simulations only). Its scenario checks (every scenario passes against the stub, pass^3, the leaky-network negative control) run in `bun run sim`, block "network".
 
 ### Deterministic run
 
