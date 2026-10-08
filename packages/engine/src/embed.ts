@@ -10,8 +10,16 @@ const STOP = new Set(("a an the and or of to in on for with at by from is are wa
   "it its this that these those who what want wants like likes love loves into about some someone people " +
   "person get got have has do does just more most also very really can could would will need needs").split(" "));
 
+/**
+ * Letters and digits of any script (engine-pipeline-13: the ASCII-only tokenizer gave non-Latin
+ * profiles zero vectors). NFKC first (full-width forms, ligatures), then diacritics are folded so
+ * "café" and "cafe" are one token. ASCII text tokenizes exactly as before.
+ */
 export function tokenize(text: string): string[] {
-  return (text.toLowerCase().match(/[a-z0-9]+/g) ?? [])
+  // Only the Latin / Greek / Cyrillic combining diacritics (U+0300-U+036F) are folded; marks that
+  // are part of a script's letters (Devanagari vowel signs, Thai, Arabic) stay inside the token.
+  const folded = text.normalize("NFKC").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]+/g, "").normalize("NFC");
+  return (folded.match(/[\p{L}\p{M}\p{N}]+/gu) ?? [])
     .filter(w => w.length > 1 && !STOP.has(w))
     .map(w => (w.length > 4 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w));
 }

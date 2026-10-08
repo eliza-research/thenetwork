@@ -55,6 +55,17 @@ export function thresholdFor(w: World, c: Candidate): number {
   return t;
 }
 
+/**
+ * The bar an exploration pick must clear: the exploration threshold, except that a participant in
+ * a stricter-than-Normal state (Quiet) and the romance lane keep their full bar (exploration must
+ * never lower what a Quiet member or a romance proposal has to clear).
+ */
+export function explorationBar(w: World, c: Candidate, threshold: number): number {
+  const T = w.cfg.thresholds;
+  if (c.category === "romance" || c.participants.some(id => T.byState[w.get(id)!.m.state] > T.byState.normal)) return threshold;
+  return Math.min(threshold, T.exploration);
+}
+
 export function computeComponents(w: World, c: Candidate, verdict?: JudgeVerdict | null): ScoreComponents {
   const cfg = w.cfg;
   const ids = c.participants;
@@ -68,7 +79,8 @@ export function computeComponents(w: World, c: Candidate, verdict?: JudgeVerdict
   // benefit before the reciprocal (harmonic / without-misery) aggregation. Not applied when a
   // participant has no structured profile (neutral, not a penalty).
   const cw = cfg.complementarity.weight;
-  const comp = cw > 0 ? complementarity(w, ids) : undefined;
+  const anchor = c.anchor?.type === "intent" ? w.intentById.get(c.anchor.id) : undefined;
+  const comp = cw > 0 ? complementarity(w, ids, anchor) : undefined;
   if (comp) {
     fit = clamp((1 - cw) * fit + cw * comp.pair);
     mb = S.aggregate(ids.map(id => (1 - cw) * clamp(c.benefit[id] ?? 0) + cw * comp.benefit[id]!));
@@ -189,8 +201,8 @@ export function scoreCandidate(w: World, c: Candidate, verdict?: JudgeVerdict | 
   const score = netValue(w, components);
   const threshold = thresholdFor(w, c);
   const fv = floorViolation(w, components, verdict);
-  const thr = c.exploration ? Math.min(threshold, w.cfg.thresholds.exploration) : threshold;
-  const comp = w.cfg.complementarity.weight > 0 ? complementarity(w, c.participants) : undefined;
+  const thr = c.exploration ? explorationBar(w, c, threshold) : threshold;
+  const comp = w.cfg.complementarity.weight > 0 ? complementarity(w, c.participants, c.anchor?.type === "intent" ? w.intentById.get(c.anchor.id) : undefined) : undefined;
   return {
     c, components, score, threshold: thr, verdict, ...(comp ? { complementarity: comp.pair } : {}),
     eligible: !fv && score >= thr,

@@ -15,6 +15,7 @@ const provider = (calls: [string, LeakCheckMessage][] = []): ForbiddenProvider =
 };
 
 const send = async (w: ReturnType<typeof world>, text: string, o: { to?: string; kind?: "reply" | "transactional" | "compliance"; key?: string } = {}) => {
+  if ((o.kind ?? "reply") === "reply") w.queue.onRecipientEngaged("sim", o.to ?? ALICE); // a reply answers an inbound
   const { record } = w.queue.enqueue({ idempotencyKey: o.key ?? "k", channel: "sim", to: o.to ?? ALICE, text, kind: o.kind ?? "reply", timeZone: LA });
   await w.queue.drain();
   return record;
@@ -61,7 +62,7 @@ describe("leak guard in dispatch", () => {
     const w = world({ forbiddenProvider: provider() });
     const a = await send(w, "she is going through a divorce", { key: "a" });
     const b = await send(w, "going through a divorce, keep it quiet", { key: "b" });
-    w.clock.advance(HOURS(2));
+    w.clock.advance(HOURS(0.5)); // inside the reply window (a reply older than that is not sent)
     await w.queue.drain();
     expect([a.status, b.status]).toEqual(["parked_leak_review", "parked_leak_review"]);
     expect(w.queue.resolveLeakReview("a", "drop", "ops@network")).toBe(true);

@@ -18,7 +18,11 @@ describe("persona policy helpers", () => {
     expect(parseYesNo("I'll pass this time")).toBe("no");
     expect(parseYesNo("Interested, but could we do a different day?")).toBe("counter");
     expect(parseYesNo("hmm")).toBe("unclear");
-    expect(parseYesNo("Fine, intro me. If she\u2019s into cooking, I\u2019m in. And no, it\u2019s not a therapy group.")).toBe("yes");
+    // A conditional yes followed by a "no" is not consent: ask again (audit network-consent-2).
+    expect(parseYesNo("Fine, intro me. If she\u2019s into cooking, I\u2019m in. And no, it\u2019s not a therapy group.")).toBe("unclear");
+    expect(parseYesNo("absolutely not")).toBe("no");
+    expect(parseYesNo("not sure")).toBe("unclear");
+    expect(parseYesNo("ok no")).toBe("no");
     expect(parseYesNo("omg yes intro!! no heavy networking vibes lol")).toBe("yes");
   });
 

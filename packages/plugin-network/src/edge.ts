@@ -35,6 +35,8 @@ export interface NetworkEdgePluginOptions {
    *   through the store and preempts the planner with a direct reply.
    */
   routing?: NetworkRouting;
+  /** Clock for date resolution (tests and the simulator). Default: wall clock. */
+  now?: () => Date;
 }
 
 export function createNetworkEdgePlugin(options: NetworkEdgePluginOptions): Plugin {
@@ -53,6 +55,7 @@ export function createNetworkEdgePlugin(options: NetworkEdgePluginOptions): Plug
             createNetworkActionFieldEvaluator({
               store: options.store,
               authority: options.authority,
+              now: options.now,
             }),
           ],
         }
@@ -60,8 +63,10 @@ export function createNetworkEdgePlugin(options: NetworkEdgePluginOptions): Plug
     providers: [
       createMemberContextProvider({ store: options.store, authority: options.authority }),
     ],
-    actions: actionsEnabled
-      ? [createSetStateAction({ store: options.store, authority: options.authority })]
+    // In structured mode the field evaluator is the only path to a state change: a planner
+    // SET_STATE there would bypass its authz (audit plugin-prototypes-1).
+    actions: actionsEnabled && routing === "planner"
+      ? [createSetStateAction({ store: options.store, authority: options.authority, now: options.now })]
       : [],
     evaluators: [
       createNetworkSignalsEvaluator({

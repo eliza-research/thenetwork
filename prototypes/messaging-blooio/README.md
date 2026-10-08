@@ -14,7 +14,7 @@ or starts the receiver with `BLOOIO_ALLOW_SEND=1`.
 | `src/blooio/client.ts` | Typed Blooio v4 client: read-only calls (`/me`, `/me/numbers`, `/channels`, `/webhooks`, status) and `send` (always sends `Idempotency-Key`). Classifies errors: 5xx/network are retryable; `429 conversation_*` means wait for the recipient; `403 safety_*` means blocked. The API key is never logged or serialized. |
 | `src/blooio/webhook.ts` | `X-Blooio-Signature` HMAC verification (raw body, 300 s window), parsing for payload versions 2026-10-01, 2026-09-01, and legacy v2 flat bodies, media host allowlist, dedupe keys |
 | `src/dedupe.ts` | Claim/commit/release dedupe store (envelope id + message id; 7-day TTL) |
-| `src/keywords.ts` | STOP/HELP/START detection (exact match after normalization) and the consent ledger (E.164-keyed; optional durable store) |
+| `src/keywords.ts` | STOP/HELP/START detection (exact match after normalization), free-text and Spanish opt-outs (shared `parseOptOut` from packages/core), and the consent ledger (E.164-keyed; optional durable store) |
 | `src/consent-store.ts` | `ConsentStore` interface, `InMemoryConsentStore`, and `FileConsentStore` (append-only JSONL) so opt-outs survive restarts. Production: Postgres. |
 | `src/phone.ts` | `toE164` / `normalizeAddress`: the one place addresses are normalized. Queue, ledger, caps and line safety all key on it. |
 | `src/line.ts` | `resolveSenderLine()`: reads `BLOOIO_FROM` (canonical) or `BLOOIO_FROM_NUMBER` (alias), E.164-normalized; throws if both are set and differ |

@@ -118,11 +118,15 @@ export interface Complementarity {
 
 /**
  * Structured complementarity of a configuration, or undefined when it does not apply (fewer than
- * two participants, or a participant with no structured profile at all: unknown is neutral, so
- * low-data members are not pushed down for what the Network has not asked them yet).
+ * two participants, a participant with no structured profile at all, or an anchoring intent the
+ * taxonomy cannot read: unknown is neutral, so low-data members and off-taxonomy wants are not
+ * pushed down for what the taxonomy does not cover).
  */
-export function complementarity(w: World, ids: MemberId[]): Complementarity | undefined {
+export function complementarity(w: World, ids: MemberId[], anchor?: Intent): Complementarity | undefined {
   if (ids.length < 2 || ids.some(id => !w.get(id) || !profileOf(w, id).known)) return undefined;
+  // The want this configuration is about lies outside the taxonomy: the taxonomy cannot score it,
+  // so it must not count as unmet (engine-pipeline-12; the taxonomy is the sim oracle's vocabulary).
+  if (anchor && !w.pack.ontology.objectivesFor(anchor.objective, anchor.details, anchor.category).length) return undefined;
   const benefit: Record<MemberId, number> = {};
   let pairSum = 0, pairs = 0;
   for (const a of ids) {

@@ -5,6 +5,12 @@ export type City = "sf" | "nyc" | "la";
 /** The Network's own markets (its data tables, synthetic snapshots and simulators cover these two). */
 export type NetworkCity = "sf" | "nyc";
 export type ParticipationState = "open" | "normal" | "quiet" | "receiving" | "paused";
+/**
+ * The app a membership, fact or opportunity belongs to (PRD 40.3: one person, a membership per app).
+ * Optional everywhere: absent means the single-app Network ("ntwrk"). Facts, names and contact
+ * details learned in one app must never reach a message sent in another (judge: cross_app_leak).
+ */
+export type AppId = "ntwrk" | "slop" | "peon" | "friends";
 export type PrivacyScope = "agent_private" | "matchable" | "shareable" | "opportunity_specific";
 export type Provenance = "said" | "connected_source" | "inferred" | "vouched";
 export type FacetKind =
@@ -39,6 +45,8 @@ export interface Facet {
   confirmedByMember?: boolean;
   /** Set on sensitive inferences; such facets are always scope agent_private. */
   sensitive?: SensitiveCategory;
+  /** App the facet was learned in (absent = "ntwrk"). */
+  app?: AppId;
 }
 export interface Intent {
   id: string; memberId: MemberId; objective: string; category: Category;
@@ -80,6 +88,8 @@ export interface Member {
   unansweredProactive: number; // two-unanswered rule (F28)
   /** Consented sources (additive; absent on older data). */
   connectedSources?: ConnectedSourceSummary[];
+  /** Apps this person has a membership in (absent = ["ntwrk"]). */
+  apps?: AppId[];
 }
 export type EdgeType =
   | "invited_by" | "vouched_for" | "knows" | "met" | "introduced" | "helped" | "hosted"
@@ -102,6 +112,8 @@ export interface Proposal {
   score: number; components: ScoreComponents; exploration: boolean;
   explanations: Record<MemberId, string>; // shareable reasons only
   generator: string; createdAt: number;
+  /** App the opportunity belongs to (absent = "ntwrk"). */
+  app?: AppId;
 }
 export type OpportunityState =
   | "DRAFT" | "PROPOSED" | "IN_REVIEW" | "APPROVED" | "INVITING" | "PARTIALLY_ACCEPTED"

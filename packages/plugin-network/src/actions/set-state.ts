@@ -1,8 +1,10 @@
 /**
  * SET_STATE: change the member's availability state (open, busy, traveling,
  * paused). Member identity comes from host authority, never from parameters.
- * Writes are idempotent per (message, ordinal) and return an effect receipt so
- * the shared runtime's reply-grounding review can bind the confirmation.
+ * Writes are idempotent per (app, member, message, ordinal) and return an effect
+ * receipt so the shared runtime's reply-grounding review can bind the confirmation.
+ * The planner only proposes: the handler runs the same deterministic authz as the
+ * structured route (audit plugin-prototypes-1), against the member's own message.
  */
 import type {
   Action,
@@ -14,19 +16,24 @@ import type {
   Memory,
   State,
 } from "@elizaos/core";
+import { authorizeSetState, sanitize } from "../routing/authz.js";
+import { clarificationFor } from "../routing/structured-field.js";
 import {
   NETWORK_CONTEXTS,
   NETWORK_MEMBER_STATES,
   type NetworkMemberState,
   type NetworkStore,
   type NetworkTurnAuthority,
+  setStateIdempotencyKey,
 } from "../types.js";
 
 export interface SetStateActionOptions {
   store: NetworkStore;
   authority: NetworkTurnAuthority;
   roleGate?: Action["roleGate"];
+  now?: () => Date;
 }
+
 
 function isState(value: unknown): value is NetworkMemberState {
   return (
@@ -43,6 +50,7 @@ function readIsoDate(value: unknown): string | null | "invalid" {
 }
 
 function idempotencyKeyFor(
+  authority: NetworkTurnAuthority,
   message: Memory,
   options: HandlerOptions | undefined,
 ): string | null {
@@ -57,7 +65,7 @@ function idempotencyKeyFor(
     options?.actionContext?.previousResults.filter(
       (r) => r.data?.actionName === "SET_STATE",
     ).length ?? 0;
-  return `network:set_state:v1:${origin}:${ordinal}`;
+  return setStateIdempotencyKey(authority, origin, ordinal);
 }
 
 function failure(code: string, text: string): ActionResult {
@@ -109,6 +117,12 @@ export function createSetStateAction(options: SetStateActionOptions): Action {
         schema: { type: "string" as const },
       },
       {
+        name: "evidence",
+        description: "Exact quote from the member's own message that asks for this change.",
+        required: false,
+        schema: { type: "string" as const },
+      },
+      {
         name: "note",
         description: "Optional short reason in the member's words.",
         required: false,
@@ -142,15 +156,28 @@ export function createSetStateAction(options: SetStateActionOptions): Action {
         typeof params.note === "string" && params.note.trim()
           ? params.note.trim().slice(0, 280)
           : null;
-      const idempotencyKey = idempotencyKeyFor(message, handlerOptions);
+      // Same authz as the structured route: the member's own words must ask for this state, and
+      // dates must be theirs and not in the past. Without an evidence quote, the whole message is it.
+      const memberText = sanitize(String(message.content?.text ?? ""));
+      const evidence = typeof params.evidence === "string" && params.evidence.trim() ? params.evidence : memberText;
+      const decision = authorizeSetState(
+        { state: params.state, from, until, evidence },
+        memberText,
+        (options.now ?? (() => new Date()))(),
+        { timeZone: options.authority.timeZone },
+      );
+      if (!decision.allowed) {
+        return { ...failure("not_authorized", clarificationFor(decision.reason, params.state)), continueChain: false };
+      }
+      const idempotencyKey = idempotencyKeyFor(options.authority, message, handlerOptions);
       if (!idempotencyKey) {
         return { ...failure("missing_idempotency", "message has no stable id"), continueChain: false };
       }
       const exec = await options.store.setState({
         memberId: options.authority.memberId,
-        state: params.state,
-        from,
-        until,
+        state: decision.state,
+        from: decision.from,
+        until: decision.until,
         note,
         idempotencyKey,
       });

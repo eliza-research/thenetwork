@@ -73,9 +73,12 @@ export const NETWORK_PAIR_RULES: readonly PairRule[] = [
   { id: "active_duplicate", check: (w, a, b) => (w.activePairs.has(pairKey(a, b)) ? "active_duplicate" : null) },
   { id: "unknown_member", check: (_w, _a, _b, _lane, ma, mb) => (!ma || !mb ? "unknown_member" : null) },
   {
-    id: "romance_incompatible", check: (_w, _a, _b, lane, ma, mb) => {
+    id: "romance_incompatible", check: (w, _a, _b, lane, ma, mb) => {
       if (lane !== "romance") return null;
       if (!ma.m.prefs.romanceOptIn || !mb.m.prefs.romanceOptIn) return "romance_incompatible";
+      // config.romance.requireStatedPrefs holds for EVERY romance configuration (event pairs,
+      // groups, second encounters...), not only the romance-intro generator (engine-pipeline-15).
+      if (w.cfg.romance.requireStatedPrefs && (!ma.romance?.seeks.length || !mb.romance?.seeks.length)) return "romance_incompatible";
       if (!romanceCompatible(ma, mb) || !romanceCompatible(mb, ma)) return "romance_incompatible";
       return null;
     },
@@ -92,6 +95,8 @@ export const NETWORK_CANDIDATE_PRE_RULES: readonly CandidateRule[] = [
       return null;
     },
   },
+  // Romance is pairs-only (engine-pipeline-15): a romance-category event or theme never becomes a romance group.
+  { id: "romance_group", check: (_w, c) => (c.category === "romance" && c.participants.length !== 2 ? "romance_group" : null) },
   { id: "high_risk", check: (w, c) => (c.riskFlags?.length || riskTerms(w.cfg, c.riskText).length ? "high_risk" : null) },
 ];
 

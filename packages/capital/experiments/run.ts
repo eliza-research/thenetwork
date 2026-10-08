@@ -28,6 +28,10 @@ export interface Metrics {
   flaky: { nc: number; regularNC: number; penalizedShare: number; meanPenalty: number; tierBelowRegularShare: number; netPenaltyGt3Share: number };
   vouch: { invites: number; qualityAll: number; byType: Record<string, { invites: number; quality: number }>; badAdmitted: number };
   honestFlaggedShare: number; falseConfirmed: number; flagsRaised: number;
+  /** Share of honest friends (A5) ever flagged. */
+  friendsFlaggedShare: number;
+  /** NC honest members lost to review (clawbacks and fraud penalties), total per seed (capital-12). */
+  honestNcLost: number;
   tiers: number[];
 }
 
@@ -108,7 +112,9 @@ export function measure(r: SimResult): Metrics {
   return {
     gini, giniHonest, v14Bottom, v14Top, v14Ratio: v14Bottom / v14Top, v14All: mean(ranked.map(x => x.v)), deciles, partDeciles, partBottom: partDeciles[0]!, partTop: partDeciles[9]!,
     regularNC, gaming, flaky: flakyM, vouch,
-    honestFlaggedShare: r.honestFlagged.size / Math.max(1, honest.length), falseConfirmed: r.falseConfirmed.length, flagsRaised: r.flagsRaised, tiers,
+    honestFlaggedShare: r.honestFlagged.size / Math.max(1, honest.length), friendsFlaggedShare: r.friendsFlagged.size / Math.max(1, r.friends.length),
+    honestNcLost: -honest.reduce((s, p) => s + L.internalEntries(p.id).filter(e => e.provenance.eventType === "fraud_confirmed").reduce((a, e) => a + e.amount, 0), 0),
+    falseConfirmed: r.falseConfirmed.length, flagsRaised: r.flagsRaised, tiers,
   };
 }
 
@@ -126,12 +132,16 @@ const ms = (xs: number[], d = 2) => `${f(mean(xs), d)} ± ${f(se(xs), d)}`;
 /**
  * Fairness gate (coordinator decision, 2026-10-08):
  *  (a) PRIMARY, blocking: NC levers must not lower the bottom/top-decile V14 ratio by more than
- *      0.02 against the same seeds with every NC lever off (paired). See `attributable`.
+ *      0.02 against the same seeds with every NC lever off (paired). See `attributable`. The gate
+ *      reads the lower end of the 95% confidence interval, not the mean, and needs at least
+ *      GATE_MIN_SEEDS paired seeds (capital-13): a mean of -0.013 with a CI down to -0.062 is not
+ *      evidence that the drop is at most 0.02.
  *  (b) TRACKED, non-blocking network-health target: the absolute ratio is at least 0.80. It reflects
  *      the participation gap and is addressed by other levers (plans, asks), not NC.
  * Gaming gate (blocking): each strategy's mean net gain <= GAMING_BOUND_SHARE of a regular's NC.
  */
 export const FAIRNESS_MAX_DROP = 0.02;
+export const GATE_MIN_SEEDS = 32;
 export const HEALTH_TARGET_RATIO = 0.8;
 
 export function gates(per: Metrics[]) {
@@ -173,7 +183,7 @@ function report(arm: { name: string; per: Metrics[] }) {
     lines.push(`  ${s}: n ${x[0]!.n}, net gaming gain ${ms(x.map(y => y.netGain), 1)} NC = ${f(mean(x.map(y => y.netGainShare)) * 100, 0)}% of a regular's NC; total NC ${ms(x.map(y => y.ncTotal), 1)}; detected ${f(mean(x.map(y => y.detected)) * 100, 0)}%; median time to detection ${ttd.length ? f(median(ttd), 1) : "n/a"} d`);
   }
   lines.push(`Gaming GATE (each strategy's mean net gain <= ${GAMING_BOUND_SHARE * 100}% of a regular's NC): ${g.gamingOk ? "PASS" : "FAIL"}`);
-  lines.push(`Flags raised/seed ${ms(p.map(m => m.flagsRaised), 1)}; honest members ever flagged ${f(mean(p.map(m => m.honestFlaggedShare)) * 100, 1)}%; honest wrongly confirmed (members, total over seeds) ${p.reduce((s, m) => s + m.falseConfirmed, 0)}`);
+  lines.push(`Flags raised/seed ${ms(p.map(m => m.flagsRaised), 1)}; honest members ever flagged ${f(mean(p.map(m => m.honestFlaggedShare)) * 100, 1)}% (honest weekly friends ${f(mean(p.map(m => m.friendsFlaggedShare)) * 100, 1)}%); honest wrongly confirmed (members, total over seeds) ${p.reduce((s, m) => s + m.falseConfirmed, 0)}; honest NC lost to review per seed ${ms(p.map(m => m.honestNcLost), 1)}`);
   const fl = p.map(m => m.flaky);
   lines.push(`Flaky (legit): NC ${ms(fl.map(x => x.nc), 1)} vs regular ${ms(fl.map(x => x.regularNC), 1)}; any penalty ${f(mean(fl.map(x => x.penalizedShare)) * 100, 0)}%; mean penalty ${ms(fl.map(x => x.meanPenalty), 2)}; penalty > 3 NC ${f(mean(fl.map(x => x.netPenaltyGt3Share)) * 100, 0)}%; effort tier below the regular median ${f(mean(fl.map(x => x.tierBelowRegularShare)) * 100, 0)}%`);
   const types = [...new Set(p.flatMap(m => Object.keys(m.vouch.byType)))].sort();
@@ -200,7 +210,8 @@ function mulberry(seed: number) { let a = seed >>> 0 || 1; return () => { a = (a
 export function attributable(on: Metrics[], off: Metrics[]) {
   const d = on.map((m, i) => m.v14Ratio - off[i]!.v14Ratio);
   const top = on.map((m, i) => m.v14Top - off[i]!.v14Top), bottom = on.map((m, i) => m.v14Bottom - off[i]!.v14Bottom);
-  return { diff: mean(d), se: se(d), topGain: mean(top), bottomGain: mean(bottom), ok: mean(d) >= -FAIRNESS_MAX_DROP };
+  const lower = mean(d) - 1.96 * se(d);
+  return { diff: mean(d), se: se(d), lower, seeds: d.length, topGain: mean(top), bottomGain: mean(bottom), ok: d.length >= GATE_MIN_SEEDS && lower >= -FAIRNESS_MAX_DROP };
 }
 
 if (import.meta.main) {
@@ -244,7 +255,7 @@ async function main() {
   const h = lg.healthTarget;
   const ci = (a: { diff: number; se: number }) => `${f(a.diff, 3)} (95% CI ${f(a.diff - 1.96 * a.se, 3)} to ${f(a.diff + 1.96 * a.se, 3)})`;
   console.log(`\n## LAUNCH GATES (default config, arm A vs all levers off Z, ${gs} paired seeds, ${DAYS} days)`);
-  console.log(`(a) PRIMARY fairness: NC levers lower the bottom/top V14 ratio by <= ${FAIRNESS_MAX_DROP}: change ${ci(lg.primaryFairness)} -> ${lg.primaryFairness.pass ? "PASS" : "FAIL"}`);
+  console.log(`(a) PRIMARY fairness: NC levers lower the bottom/top V14 ratio by <= ${FAIRNESS_MAX_DROP} (95% CI lower bound, >= ${GATE_MIN_SEEDS} seeds): change ${ci(lg.primaryFairness)} -> ${lg.primaryFairness.pass ? "PASS" : "FAIL"}`);
   console.log(`    by lever (A minus A with that lever off): ${Object.entries(comp).map(([k, a]) => `${k} ${f(a.diff, 3)} ± ${f(a.se, 3)}`).join(", ")}`);
   console.log(`    sensitivity, effect x2.5 (C vs C0): ${ci(lgC.primaryFairness)} -> ${lgC.primaryFairness.pass ? "pass" : "fail"} (not a gate)`);
   console.log(`    V14 all eligible: levers on ${f(mean(gA.map(m => m.v14All)), 3)} vs off ${f(mean(gZ.map(m => m.v14All)), 3)}; bottom decile ${f(lg.primaryFairness.bottomGain, 3)}, top decile ${f(lg.primaryFairness.topGain, 3)}`);

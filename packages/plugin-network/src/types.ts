@@ -3,6 +3,7 @@
  * through a host-injected NetworkStore (in Cloud: the network domain services
  * over Hyperdrive; in the simulator: an in-memory store).
  */
+import type { ParticipationState } from "../../core/src/types.js";
 
 export const NETWORK_CONTEXTS = ["network", "social", "settings"] as const;
 
@@ -13,6 +14,20 @@ export const NETWORK_MEMBER_STATES = [
   "paused",
 ] as const;
 export type NetworkMemberState = (typeof NETWORK_MEMBER_STATES)[number];
+
+/**
+ * The plugin's member states mapped to the PRD 7.2 participation states in packages/core
+ * (audit plugin-prototypes-10: the plugin, core and the connector used different words).
+ * busy is "life is full right now" (Quiet). traveling holds intros for a window, so it is Paused
+ * with from/until (PRD 16.1 presence windows). open ("back, send intros") is the default, Normal.
+ * Stores translate with this table; nothing else may hard-code the mapping.
+ */
+export const NETWORK_STATE_TO_PARTICIPATION = {
+  open: "normal",
+  busy: "quiet",
+  traveling: "paused",
+  paused: "paused",
+} as const satisfies Record<NetworkMemberState, ParticipationState>;
 
 export interface NetworkMemberContext {
   memberId: string;
@@ -70,4 +85,20 @@ export interface NetworkStore {
 /** Host-supplied, trusted turn authority. Never derived from model output. */
 export interface NetworkTurnAuthority {
   memberId: string;
+  /**
+   * The app (site) this turn runs in, e.g. "ntwrk.love" (audit judge-evals-7). Idempotency keys are
+   * scoped by it, and stores and judges use it for cross-app checks. Hosts should always set it.
+   */
+  app?: string;
+  /** The member's IANA time zone; dates in the member's words resolve on their local day. */
+  timeZone?: string;
+}
+
+/**
+ * Idempotency key for one state change. Scoped by app and member (audit plugin-prototypes-4):
+ * a message id or client message id alone can repeat across members, and the store would
+ * replay another member's change.
+ */
+export function setStateIdempotencyKey(authority: NetworkTurnAuthority, origin: string, ordinal: number): string {
+  return `network:set_state:v2:${authority.app ?? "default"}:${authority.memberId}:${origin}:${ordinal}`;
 }

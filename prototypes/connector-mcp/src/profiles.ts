@@ -79,7 +79,7 @@ export const PROFILES: Record<SurfaceProfileName, SurfaceProfile> = {
 
 // Age policy lives in packages/core/src/policy.ts (13 to join, 18 to be matched). Deep import keeps the Worker bundle small.
 export { ADULT_AGE } from "@thenetwork/core/src/policy.ts";
-import { ADULT_AGE } from "@thenetwork/core/src/policy.ts";
+import { ADULT_AGE, isMinor } from "@thenetwork/core/src/policy.ts";
 
 /** Network-side eligibility for content shown to (or acted on by) a member, independent of host. */
 export interface ContentFacts {
@@ -96,8 +96,8 @@ export type Visibility = "visible" | "profile_excluded" | "not_eligible";
 
 export function visibility(facts: ContentFacts, memberAge: number, profile: SurfaceProfile): Visibility {
   // Member eligibility first (applies on every surface).
-  if (memberAge < ADULT_AGE && facts.connection !== null) return "not_eligible"; // minors are never connected to people
-  if (facts.category === "romance" && memberAge < ADULT_AGE) return "not_eligible"; // romance is adult-only
+  if (isMinor(memberAge) && facts.connection !== null) return "not_eligible"; // minors are never connected to people
+  if (facts.category === "romance" && isMinor(memberAge)) return "not_eligible"; // romance is adult-only
   if (facts.venueMinAge > memberAge) return "not_eligible";
   // Then the surface profile.
   if (facts.category === "romance") return "profile_excluded"; // never on any connector surface (P0–P2)
@@ -110,9 +110,10 @@ export function visibility(facts: ContentFacts, memberAge: number, profile: Surf
 
 /**
  * Returns the offending phrase if a model-visible string is out of profile, else null. Output for a
- * member under 18 is held to the teen-safe vocabulary on every surface.
+ * member under 18, or of unknown age, is held to the teen-safe vocabulary on every surface.
  */
-export function profileViolation(text: string, profile: SurfaceProfile, memberAge: number = ADULT_AGE): string | null {
-  const block = memberAge < ADULT_AGE ? TEEN_BLOCK : profile.outputBlocklist;
+export function profileViolation(text: string, profile: SurfaceProfile, memberAge?: number): string | null {
+  // An unknown age is treated as a minor (audit plugin-prototypes-23), via core isMinor.
+  const block = isMinor(memberAge) ? TEEN_BLOCK : profile.outputBlocklist;
   return block ? matchFolded(block, text) : null;
 }

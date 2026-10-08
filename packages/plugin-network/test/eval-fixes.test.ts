@@ -227,27 +227,27 @@ describe("date guards", () => {
 
 describe("stated dates are resolved in code", () => {
   const NOW2 = new Date("2026-10-07T15:00:00.000Z"); // a Wednesday
-  const cases: Array<[string, string | null, string]> = [
-    ["pause my network intros until oct 20, work is insane", null, "2026-10-20"],
-    ["can you put everything on hold for two weeks", null, "2026-10-21"],
-    ["taking a break from the network until december", null, "2026-12-01"],
-    ["stop the intros until after new years", null, "2027-01-02"],
-    ["in austin till the 25th", null, "2026-10-25"],
-    ["I'll be in London from next monday until the 15th", "2026-10-12", "2026-10-15"],
-    ["out of town for work all next week", "2026-10-12", "2026-10-18"],
-    ["slammed with a launch until friday, fewer messages pls", null, "2026-10-09"],
-    ["super busy this week, hold off on new intros", null, "2026-10-11"],
-    ["heading to Lisbon for a couple weeks, back on the 12th", null, "2026-10-12"],
-    ["busy through next tuesday", null, "2026-10-13"],
-    ["I'm traveling to New York until November 3", null, "2026-11-03"],
-    ["on vacation thru 11/2", null, "2026-11-02"],
+  const cases: Array<[string, string | null, string, string]> = [
+    ["pause my network intros until oct 20, work is insane", null, "2026-10-20", "paused"],
+    ["can you put everything on hold for two weeks", null, "2026-10-21", "paused"],
+    ["taking a break from the network until december", null, "2026-12-01", "paused"],
+    ["stop the intros until after new years", null, "2027-01-02", "paused"],
+    ["in austin till the 25th", null, "2026-10-25", "traveling"],
+    ["I'll be in London from next monday until the 15th", "2026-10-12", "2026-10-15", "traveling"],
+    ["out of town for work all next week", "2026-10-12", "2026-10-18", "traveling"],
+    ["slammed with a launch until friday, fewer messages pls", null, "2026-10-09", "busy"],
+    ["super busy this week, hold off on new intros", null, "2026-10-11", "busy"],
+    ["heading to Lisbon for a couple weeks, back on the 12th", null, "2026-10-12", "traveling"],
+    ["busy through next tuesday", null, "2026-10-13", "busy"],
+    ["I'm traveling to New York until November 3", null, "2026-11-03", "traveling"],
+    ["on vacation thru 11/2", null, "2026-11-02", "traveling"],
   ];
   it("resolves every eval phrasing, regardless of what the model proposed", () => {
-    for (const [text, from, until] of cases) {
+    for (const [text, from, until, state] of cases) {
       const w = resolveWindow(text, NOW2);
       expect({ text, from: w.from?.slice(0, 10) ?? null, until: w.until?.slice(0, 10) ?? null }).toEqual({ text, from, until });
       // A model proposal with no dates still commits the stated window.
-      const d = authorizeSetState({ state: "traveling", from: null, until: null, evidence: text.slice(0, 12) }, text, NOW2);
+      const d = authorizeSetState({ state, from: null, until: null, evidence: text }, text, NOW2);
       expect(d).toMatchObject({ allowed: true, until: `${until}T00:00:00.000Z` });
     }
   });

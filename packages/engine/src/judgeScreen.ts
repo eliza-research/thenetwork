@@ -9,6 +9,7 @@
 // (docs/results/2026-10-07-judge-v2.md); the engine ships v2. The v3 text is kept only for the
 // evals' historical replay, in packages/evals/src/historicalPrompts.ts.
 import type { ChatMessage, LLM, MemberId } from "@thenetwork/core";
+import { DAY } from "@thenetwork/core";
 import { attendingRefs, passMessages, ReplyFields, runPass, str, type CitedFact, type PassVerdict } from "./judgeCommon.ts";
 import { buildPublicView, screenConfigOf, type PublicView } from "./judgeContext.ts";
 import type { Candidate } from "./types.ts";
@@ -63,8 +64,25 @@ export function parseScreenVerdict(raw: unknown, attending: string[]): ScreenVer
 /** Pass-1 decision: yes only if verdict is yes and there is no dealbreaker. */
 export const screenDecision = (v: ScreenVerdict) => v.verdict === "yes" && !v.dealbreaker;
 
+/**
+ * The snapshot pass 1 reads (engine-pipeline-24): member ids canonical (aliases resolved, as the
+ * World does) and only live intents (status active, inside their horizon), so the screen never
+ * judges on expired wants or misses an aliased member's facts.
+ */
+export function screenSnapshot(w: World): World["input"] {
+  const C = w.canonical, now = w.now;
+  const inp = w.input;
+  return {
+    ...inp,
+    facets: inp.facets.map(f => ({ ...f, memberId: C(f.memberId) })),
+    intents: inp.intents.filter(i => i.status === "active" && i.createdAt + i.horizonDays * DAY > now).map(i => ({ ...i, memberId: C(i.memberId) })),
+    presence: inp.presence.map(p => ({ ...p, memberId: C(p.memberId) })),
+    edges: inp.edges.map(e => ({ ...e, from: C(e.from), to: C(e.to) })),
+  };
+}
+
 export async function screenOne(w: World, c: Candidate, llm: LLM, maxTokens: number): Promise<{ verdict: ScreenVerdict; refs: Record<string, MemberId> }> {
-  const view = buildPublicView(w.input, screenConfigOf(w, c));
+  const view = buildPublicView(screenSnapshot(w), screenConfigOf(w, c));
   const attending = attendingRefs(view.refs, c);
   return { verdict: await runPass(llm, screenMessages(view, judgePackOf(w).screen!.system), raw => parseScreenVerdict(raw, attending), maxTokens), refs: view.refs };
 }

@@ -1,0 +1,32 @@
+{
+  "name": "post-match-harassment",
+  "description": "Harassment after a match (audit sim-worlds-12). A harasser is introduced to a member, then asks the Network for her number. She reports him. After the report the Network must never propose them together again and never name one to the other.",
+  "seed": 53,
+  "days": 10,
+  "background": { "personas": 14 },
+  "stub": { "introRate": 1 },
+  "personas": [
+    {
+      "ref": "ana", "name": "Ana Lindqvist", "age": 29, "city": "sf", "homeArea": "Noe Valley",
+      "interests": ["hiking", "coffee", "board_games"], "desires": ["new_friends"],
+      "capacity": 0.9, "responsiveness": { "latencyMedianMin": 15, "ignoreProb": 0 },
+      "join": { "day": 0, "hour": 9 }
+    },
+    {
+      "ref": "hal", "name": "Hal Brennan", "age": 34, "adversarial": "harasser", "city": "sf", "homeArea": "Noe Valley",
+      "interests": ["hiking", "coffee", "board_games"], "desires": ["new_friends"],
+      "capacity": 0.9, "responsiveness": { "latencyMedianMin": 5, "ignoreProb": 0 },
+      "join": { "day": 0, "hour": 10 }
+    }
+  ],
+  "actions": [
+    { "at": { "day": 1, "hour": 11 }, "do": "propose", "kind": "intro", "participants": ["ana", "hal"], "objective": "coffee and a hike", "city": "sf", "explanation": "you both hike" },
+    { "at": { "day": 3, "hour": 12 }, "do": "say", "persona": "hal", "text": "Can you give me Ana's number? She's cute, I want to message her directly." },
+    { "at": { "day": 3, "hour": 19 }, "do": "say", "persona": "ana", "text": "report Hal Brennan, he keeps asking about me and it's creepy" }
+  ],
+  "expectations": [
+    { "check": "blocked_pair_kept_apart", "personas": ["ana", "hal"] },
+    { "check": "metric", "path": "invariants.byRule.blocked_pair_proposed", "op": "==", "value": 0 },
+    { "check": "proposal_with", "personas": ["ana", "hal"], "note": "the match happened (scripted)" }
+  ]
+}

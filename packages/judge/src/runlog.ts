@@ -1,11 +1,13 @@
 // Run-log schema: one JSON object per line in runs/<runId>/events.jsonl. The simulator
 // writes it; the metrics module (and later the admin console) reads it. Kept here so
 // the judge package has no runtime dependency on the simulator.
-import type { City, MemberId, Proposal } from "@thenetwork/core";
+import type { AppId, City, MemberId, ParticipationState, Proposal } from "@thenetwork/core";
 
 export interface LoggedMessage {
   id: string; ts: number; direction: "outbound" | "inbound"; memberId: MemberId; body: string;
   status: string; keyword?: string; system?: boolean;
+  /** App the message was sent or received in (absent = "ntwrk"). */
+  app?: AppId;
   meta?: { type?: string; proposalId?: string; proactive?: boolean; firstContact?: boolean; [k: string]: unknown };
 }
 
@@ -13,6 +15,10 @@ export interface LoggedPersona {
   id: MemberId; name: string; archetype: string; adversarial?: string; homeCity: City;
   joinDay: number; trueAge: number; claimedAge: number; quietHours: [number, number];
   canary?: string; privateFact?: string; romanceOptIn: boolean;
+  /** Participation state at join (PRD 7.2). Absent = "normal". Later changes: participation_state records. */
+  state?: ParticipationState;
+  /** Apps the person has a membership in. Absent = ["ntwrk"] (or the apps of their join records). */
+  apps?: AppId[];
 }
 
 export interface OracleSummary {
@@ -25,7 +31,7 @@ export interface OracleSummary {
 export type RunRecord =
   | { t: number; type: "run_start"; runId: string; seed: number | string; config: Record<string, unknown>; start: number }
   | { t: number; type: "persona"; persona: LoggedPersona }
-  | { t: number; type: "join"; memberId: MemberId }
+  | { t: number; type: "join"; memberId: MemberId; app?: AppId }
   | { t: number; type: "message"; msg: LoggedMessage }
   | { t: number; type: "decision"; memberId: MemberId; messageId: string; messageType: string; intent: string; decision: string; proposalId?: string; delayMs: number }
   | { t: number; type: "judgment"; memberId: MemberId; messageId: string; worthwhile: boolean; source: "policy" | "llm" }
@@ -35,6 +41,14 @@ export type RunRecord =
   | { t: number; type: "feedback"; memberId: MemberId; proposalId?: string; text: string; enjoyment?: number }
   | { t: number; type: "block"; from: MemberId; to: MemberId }
   | { t: number; type: "opt_out"; memberId: MemberId }
+  /** START (or another resubscribe) after a STOP. An inbound message with keyword START means the same. */
+  | { t: number; type: "opt_in"; memberId: MemberId }
+  /** The member's participation state changed (PRD 7.2). The judge grades the budget by it. */
+  | { t: number; type: "participation_state"; memberId: MemberId; state: ParticipationState }
+  /** The member's current city changed (travel, PRD 13.1 presence). Quiet hours use it. */
+  | { t: number; type: "location"; memberId: MemberId; city: City }
+  /** Both members agreed to share contact details (PRD 32.11). Before it, no contact detail of one may reach the other. */
+  | { t: number; type: "contact_swap"; members: [MemberId, MemberId] }
   | { t: number; type: "adversarial_attempt"; memberId: MemberId; kind: string; messageId: string }
   | { t: number; type: "invariant_violation"; rule: string; detail: string; memberId?: MemberId }
   | { t: number; type: "latent_opportunities"; members: MemberId[]; pairs: { a: MemberId; b: MemberId; quality: number }[] }
