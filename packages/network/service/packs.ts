@@ -21,6 +21,7 @@ import { ZIPS } from "@thenetwork/engine/src/packs/slop/zips.ts";
 import type { AppHooks, AppTag, HookOpp, HookVenue } from "../src/apphooks.ts";
 import { km, NEIGHBORHOOD, VENUES } from "../src/geo.ts";
 import { nextAt } from "../src/outreach.ts";
+import { eveningVenues } from "./venues-nyc.ts";
 import type { AppId } from "../../platform/src/apps.ts";
 
 /** What one app's network gets: its pack, the engine config the pack was tuned with, plans config and hooks. */
@@ -179,20 +180,10 @@ const ACTIVITY_TAGS: Record<string, string[]> = {
   live_music: ["music"], comedy: ["social", "arts"], climbing: ["sports"], cooking_class: ["cooking", "food"], hike: ["hiking", "walk"],
 };
 /**
- * Busy, lit, indoor or plaza places for a date after dark (approximate coordinates; real public
- * places, open in the evening). A venue database replaces this list later. Parks, waterfronts and the
- * open-air greenmarkets (geo.ts) are for daytime dates only.
+ * Places for a date after dark: indoor and open in the evening (venues-nyc.ts). Parks, plazas,
+ * waterfronts and the open-air greenmarkets (geo.ts) are for daytime dates only.
  */
-const EVENING_VENUES: HookVenue[] = [
-  { id: "chelsea-market", name: "Chelsea Market", neighborhood: "Chelsea", lat: 40.7424, lng: -74.006 },
-  { id: "bryant-park", name: "Bryant Park", neighborhood: "Midtown", lat: 40.7536, lng: -73.9832 },
-  { id: "urbanspace-vanderbilt", name: "Urbanspace Vanderbilt", neighborhood: "Midtown", lat: 40.7537, lng: -73.9767 },
-  { id: "lincoln-center-plaza", name: "Lincoln Center Plaza", neighborhood: "Upper West Side", lat: 40.7725, lng: -73.9835 },
-  { id: "essex-market", name: "Essex Market", neighborhood: "Lower East Side", lat: 40.7188, lng: -73.9883 },
-  { id: "time-out-market", name: "Time Out Market", neighborhood: "DUMBO", lat: 40.7033, lng: -73.9903 },
-  { id: "dekalb-market-hall", name: "DeKalb Market Hall", neighborhood: "Fort Greene", lat: 40.6905, lng: -73.9835 },
-  { id: "industry-city", name: "Industry City food hall", neighborhood: "Sunset Park", lat: 40.6553, lng: -74.0076 },
-];
+const EVENING_VENUES: HookVenue[] = eveningVenues().map(v => ({ id: v.id, name: v.name, neighborhood: v.neighborhood, lat: v.lat, lng: v.lon }));
 /** When each slot of the dating week starts, New York time. */
 const SLOT_TIME: Record<string, { day: string; hour: number }> = {
   mon_eve: { day: "Mon", hour: 19 }, tue_eve: { day: "Tue", hour: 19 }, wed_eve: { day: "Wed", hour: 19 }, thu_eve: { day: "Thu", hour: 19 }, fri_eve: { day: "Fri", hour: 19 },
@@ -327,7 +318,8 @@ export function slopHooks(options: Parameters<typeof planFromInput>[4]): AppHook
     },
     checkIn(o, _id, others) {
       if (o.category !== "romance") return undefined;
-      return `How did your date with ${others} go? If anything felt wrong (they were rude, didn't show, or weren't who they said), tell me and I'll pass it to our safety team. If you ever feel unsafe, call 911 first.`;
+      // "Would you see them again?": a yes from both becomes a second-date proposal (human review first).
+      return `How did your date with ${others} go, and would you see them again? If anything felt wrong (they were rude, didn't show, or weren't who they said), tell me and I'll pass it to our safety team. If you ever feel unsafe, call 911 first.`;
     },
     postDateReports: true,
   };

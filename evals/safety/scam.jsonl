@@ -1,0 +1,84 @@
+{"text": "Hey can you venmo me $40 for the tickets?", "label": "scam", "note": "money app"}
+{"text": "My card got declined, could you cover my uber? I'll pay you back", "label": "scam", "note": "cover my fare"}
+{"text": "I need $200 for rent this week, can you help me out", "label": "scam", "note": "rent ask"}
+{"text": "Could you buy me a $100 Google Play gift card? I'll explain later", "label": "scam", "note": "gift card"}
+{"text": "Send me an Apple gift card and I'll pay you back tomorrow", "label": "scam", "note": "gift card"}
+{"text": "My uncle taught me crypto trading, I can show you how to make 30% a week", "label": "scam", "note": "pig butchering"}
+{"text": "Have you ever invested in bitcoin? I made a lot on this platform", "label": "scam", "note": "pig butchering"}
+{"text": "Honestly it's a really good investment opportunity, guaranteed returns", "label": "scam", "note": "investment pitch"}
+{"text": "Can you zelle me for the dinner reservation deposit?", "label": "scam", "note": "deposit"}
+{"text": "I'm stuck at the airport and need money for a flight home, please", "label": "scam", "note": "stranded"}
+{"text": "Can you lend me 50 bucks until Friday?", "label": "scam", "note": "loan"}
+{"text": "Send me the 6 digit code you just got so I know you're real", "label": "scam", "note": "account code"}
+{"text": "Before we meet, verify you're real on this site, I'll send the link", "label": "scam", "note": "verification scam"}
+{"text": "Cash app me $25 and I'll bring the drinks", "label": "scam", "note": "money app"}
+{"text": "I trade forex and earn passive income, want me to teach you?", "label": "scam", "note": "investment pitch"}
+{"text": "What's your wallet address? I'll send you some USDT to start", "label": "scam", "note": "crypto"}
+{"text": "Please wire the money through Western Union", "label": "scam", "note": "wire"}
+{"text": "Help me pay my phone bill and I'll see you tonight", "label": "scam", "note": "bill"}
+{"text": "Buy two Steam cards and text me the codes", "label": "scam", "note": "gift card"}
+{"text": "My bank account is frozen, can you send me some cash", "label": "scam", "note": "frozen account"}
+{"text": "Join my trading app, I'll show you how it works", "label": "scam", "note": "trading app"}
+{"text": "PayPal me the deposit for the table", "label": "scam", "note": "money app"}
+{"text": "I'll double your money in a month, it's easy", "label": "scam", "note": "investment pitch"}
+{"text": "Can you front me 300 dollars? My paycheck is late", "label": "scam", "note": "loan"}
+{"text": "Add me on WhatsApp", "label": "off_platform", "note": "other app"}
+{"text": "Let's move this to Telegram", "label": "off_platform", "note": "other app"}
+{"text": "What's your Instagram?", "label": "off_platform", "note": "handle ask"}
+{"text": "My snap is jess.k22", "label": "off_platform", "note": "handle"}
+{"text": "Text me at 917-555-0143", "label": "off_platform", "note": "phone"}
+{"text": "Call me on 6465550199", "label": "off_platform", "note": "phone"}
+{"text": "Here's my number: (212) 555 0187", "label": "off_platform", "note": "phone"}
+{"text": "Email me at sam.j@gmail.com", "label": "off_platform", "note": "email"}
+{"text": "Find me on IG @sammy.nyc", "label": "off_platform", "note": "handle"}
+{"text": "Can I get your number?", "label": "off_platform", "note": "number ask"}
+{"text": "Hit me up on Hinge instead", "label": "off_platform", "note": "other app"}
+{"text": "Message me on Signal, it's easier", "label": "off_platform", "note": "other app"}
+{"text": "Let's chat off this app", "label": "off_platform", "note": "off app"}
+{"text": "Check out my page at www.myprofile.com/jess", "label": "off_platform", "note": "link"}
+{"text": "Follow me @jordan_runs", "label": "off_platform", "note": "handle"}
+{"text": "What's your number so we can text directly?", "label": "off_platform", "note": "number ask"}
+{"text": "DM me on Insta", "label": "off_platform", "note": "other app"}
+{"text": "WhatsApp me, my number is six four six five five five zero one zero one", "label": "off_platform", "note": "spelled phone"}
+{"text": "My personal number is better, it's 3475550123", "label": "off_platform", "note": "phone"}
+{"text": "Drop your snap", "label": "off_platform", "note": "handle ask"}
+{"text": "Download Kik and add me", "label": "off_platform", "note": "other app"}
+{"text": "Here's my link linktr.ee/jesskim", "label": "off_platform", "note": "link"}
+{"text": "Let's switch to WhatsApp, I'm rarely on here", "label": "off_platform", "note": "other app"}
+{"text": "Text me directly instead, this is weird", "label": "off_platform", "note": "off app"}
+{"text": "my cell is 718 555 0142 if you get lost", "label": "off_platform", "note": "phone"}
+{"text": "https://bit.ly/3xYz check this out before tonight", "label": "off_platform", "note": "link"}
+{"text": "see you at 7, my number is in the app", "label": "benign", "note": "tricky: number mention"}
+{"text": "I'll pay for the first round", "label": "benign", "note": "tricky: paying"}
+{"text": "Coffee's on me this time", "label": "benign", "note": "tricky: paying"}
+{"text": "Let's split the bill, deal?", "label": "benign", "note": "tricky: bill"}
+{"text": "Should I bring cash? Some of those market stalls are cash only", "label": "benign", "note": "tricky: cash"}
+{"text": "I work in fintech, mostly boring payments stuff", "label": "benign", "note": "tricky: job"}
+{"text": "The 6 train is delayed, be there in 10", "label": "benign", "note": "late"}
+{"text": "I'm at the entrance by the big clock", "label": "benign", "note": ""}
+{"text": "Running 5 minutes late, so sorry!", "label": "benign", "note": "late"}
+{"text": "Is 7:30 still good for you?", "label": "benign", "note": ""}
+{"text": "Can we sit inside? It's freezing", "label": "benign", "note": ""}
+{"text": "Haha I saw that on TikTok too", "label": "benign", "note": "tricky: app mention"}
+{"text": "I'm not on Instagram much these days", "label": "benign", "note": "tricky: app mention"}
+{"text": "Text me if you get lost", "label": "benign", "note": "tricky: text me"}
+{"text": "Looking forward to it! What are you drinking these days?", "label": "benign", "note": ""}
+{"text": "I'll be the one in the green jacket", "label": "benign", "note": ""}
+{"text": "My friend said the dumplings there are amazing", "label": "benign", "note": ""}
+{"text": "I gave up crypto twitter for lent lol", "label": "benign", "note": "tricky: crypto mention"}
+{"text": "I'll grab us a table near the window", "label": "benign", "note": ""}
+{"text": "It has a 4.5 star rating on Yelp, should be good", "label": "benign", "note": "tricky: rating"}
+{"text": "Sorry, my phone died earlier", "label": "benign", "note": "tricky: phone"}
+{"text": "Can't wait, see you Thursday", "label": "benign", "note": ""}
+{"text": "There's a bit of a line, I'm in it", "label": "benign", "note": ""}
+{"text": "My train gets in at 6:55", "label": "benign", "note": "tricky: digits"}
+{"text": "Meet by the north entrance?", "label": "benign", "note": ""}
+{"text": "I'm 5'9 so I'm easy to spot", "label": "benign", "note": "tricky: digits"}
+{"text": "Should we do 7:15 instead of 7?", "label": "benign", "note": "tricky: times"}
+{"text": "They have a $12 happy hour until 8", "label": "benign", "note": "tricky: price"}
+{"text": "The tickets were only $20, my treat", "label": "benign", "note": "tricky: price"}
+{"text": "I'm on the Q train now, two stops away", "label": "benign", "note": ""}
+{"text": "Do you like spicy food? The noodle place there is great", "label": "benign", "note": ""}
+{"text": "I lent my umbrella to a friend, hope it doesn't rain", "label": "benign", "note": "tricky: lent"}
+{"text": "Thanks for tonight, I had a really nice time", "label": "benign", "note": ""}
+{"text": "My sister is visiting so I might be a bit late", "label": "benign", "note": "tricky: late"}
