@@ -7,14 +7,14 @@
 // reference, an age, and ageVerified === true, passing `canRatePhotos`. Photos a rater flagged in the
 // labelling tool are skipped too. The rater's own `features()` repeats the adults-only check.
 import { canRatePhotos, type RatingSubject } from "../appearance.ts";
-import { CLEF_MODEL_IDS, type ClefModel } from "../clef.ts";
+import { CLEF_MODEL_IDS, CLEF_PRICE_PER_M_INPUT, type ClefModel } from "../clef.ts";
 
 /** One consent-manifest row (JSONL), kept by the operator next to the signed releases. */
 export interface ManifestRow { photo: string; subject: string; age: number; ageVerified: boolean; consent: string }
 export interface FeatureCacheRow { id: string; sha256: string; model: string; x: Record<string, number>; confidence: number; extractedAt: string }
 
-/** Clef pricing and token sizes (Cloudflare's published figures, docs/results/2026-10-08-slop-pack.md I4.1). */
-export const CLEF_PRICE_PER_M_INPUT: Record<ClefModel, number> = { clef: 0.24, "clef-flash": 0.09 };
+/** Clef token sizes per photo (Cloudflare's published figures, docs/results/2026-10-08-slop-pack.md I4.1); prices live in clef.ts. */
+export { CLEF_PRICE_PER_M_INPUT };
 export const CLEF_TOKENS_PER_PHOTO = { image: [1000, 1300] as const, questions: 500 };
 
 export function estimateCost(photos: number, model: ClefModel): { photos: number; tokens: [number, number]; usd: [number, number]; model: string } {
