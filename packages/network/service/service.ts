@@ -1246,7 +1246,10 @@ export class NetworkService implements RuntimeHost {
     let path = url.pathname.replace(/\/+$/, "") || "/";
     const agentRoute = path === "/agent/route";
     const agentRequest = agentRoute || /^(?:\/apps\/[^/]+)?\/agent\/(?:membership|context)$/.test(path);
-    const json = (data: unknown, status = 200) => Response.json(data, { status, ...(agentRequest ? { headers: { "cache-control": "no-store" } } : {}) });
+    const authorization = req.headers.get("authorization");
+    const given = authorization?.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
+    const agentCredential = !!this.agentToken && safeEqual(given, this.agentToken);
+    const json = (data: unknown, status = 200) => Response.json(data, { status, ...(agentRequest || agentCredential ? { headers: { "cache-control": "no-store" } } : {}) });
     try {
       if (agentRequest) {
         if (!this.agentToken) return json({ ok: false, error: "unavailable" }, 503);
@@ -1275,10 +1278,11 @@ export class NetworkService implements RuntimeHost {
       if (!rt) return json({ ok: false, error: "no_network" }, 404);
       const auth = this.tokens.size ? authenticate(req, { tokens: this.tokens }) : { status: 401 as const, error: "no staff tokens configured (NETWORK_SERVICE_TOKENS)" };
       if (!("user" in auth)) return json({ ok: false, error: auth.error }, auth.status);
+      // The role grants scope for agent reads; designation restricts this credential to those reads.
+      if (agentCredential && !agentRequest) return json({ ok: false, error: "forbidden" }, 403);
       const user = this.reviewerOfRecord(req, auth.user);
       if (agentRequest) {
-        const given = req.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1]?.trim() ?? "";
-        if (!this.agentToken || !safeEqual(given, this.agentToken)) return json({ ok: false, error: "forbidden" }, 403);
+        if (!agentCredential) return json({ ok: false, error: "forbidden" }, 403);
         if (!agentRoute && !allowed(auth.user, ["admin"], rt.app.id, "real")) return json({ ok: false, error: "forbidden" }, 403);
         if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
         if (Number(req.headers.get("content-length") ?? "0") > MAX_BODY_BYTES) return json({ ok: false, error: "payload_too_large" }, 413);

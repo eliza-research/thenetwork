@@ -34,6 +34,7 @@ It is absent from `publicFetch`. This source change does not configure an enviro
 The host must explicitly set `ServiceOptions.agentToken` to a dedicated server credential.
 The same credential must hold `admin@<app>` in `ServiceOptions.tokens` (`NETWORK_SERVICE_TOKENS`).
 The designation grants no role or app access. Other staff tokens cannot call this endpoint, including global admins.
+The designated credential is restricted to these agent read endpoints; it cannot call the staff API or change matching.
 The console token cannot be the agent token. Missing designation disables the endpoint, including in development.
 Keep the credential on the trusted server. Never give it to a browser, model, plugin client, or member.
 

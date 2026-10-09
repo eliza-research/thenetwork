@@ -460,6 +460,10 @@ describe.skipIf(!pgAvailable)("Cloud host membership lookup (isolated Postgres, 
       expect((await call("/agent/membership?app=slop", serverToken, {e164, personId: "forged"})).status).toBe(400);
       expect((await call("/agent/membership?app=slop", serverToken, {e164: "2125550181"})).status).toBe(400);
       expect((await call("/agent/membership?app=slop", serverToken, {}, "GET")).status).toBe(405);
+      // The designated agent reader must not inherit staff mutation authority.
+      expect((await svc.fetch(request("/matching?app=slop", serverToken, {on: true}))).status).toBe(403);
+      expect((await svc.fetch(request("/health?app=slop", serverToken, {}, "GET"))).status).toBe(403);
+      expect((await svc.fetch(request("/health?app=slop", staffToken, {}, "GET"))).status).toBe(200);
       const response = await call("/apps/slop/agent/membership");
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({app: "slop", personId, memberId});
