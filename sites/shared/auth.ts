@@ -15,6 +15,36 @@ export function maskPhone(e164: string): string {
 }
 
 export function mountAuth(root: HTMLElement, onSignedIn: () => Promise<void> | void): void {
+  void api.authMode().then(mode => {
+    if (!mode.ok) {
+      // Older, unconfigured backends keep the existing phone-code flow.
+      if (mode.status === 404) mountOtpAuth(root, onSignedIn);
+      else setError(root, "Sign-in is unavailable. Try again.");
+      return;
+    }
+    if (mode.data.mode !== "cloud") { mountOtpAuth(root, onSignedIn); return; }
+    const form = root.querySelector<HTMLFormElement>('form[data-form="phone"]');
+    if (!form) return;
+    const explanation = form.parentElement?.querySelector(":scope > p");
+    explanation?.remove();
+    const error = form.querySelector<HTMLElement>("[data-error]");
+    const button = document.createElement("button");
+    button.type = "submit";
+    button.className = "btn";
+    button.dataset.busy = "Opening…";
+    button.textContent = "Continue with your phone";
+    form.replaceChildren(button);
+    if (error) form.append(error);
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      const result = await busy(form, () => api.cloudAuthStart(location.pathname));
+      if (!result.ok) { setError(form, "Sign-in is unavailable. Try again."); return; }
+      location.assign(result.data.url);
+    });
+  });
+}
+
+function mountOtpAuth(root: HTMLElement, onSignedIn: () => Promise<void> | void): void {
   const phoneForm = $(root, 'form[data-form="phone"]') as HTMLFormElement | null;
   const codeForm = $(root, 'form[data-form="code"]') as HTMLFormElement | null;
   if (!phoneForm || !codeForm) return;

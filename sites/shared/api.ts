@@ -113,6 +113,8 @@ export async function call<T>(method: "GET" | "POST", path: string, body?: unkno
 }
 
 export const api = {
+  authMode: () => call<{mode: "otp" | "cloud"}>("GET", "/api/auth/mode"),
+  cloudAuthStart: (returnPath: string) => call<{url: string}>("POST", "/api/auth/cloud/start", {returnPath}),
   app: () => call<AppInfo>("GET", "/api/app"),
   me: () => call<Me>("GET", "/api/me"),
   otpStart: (phone: string, turnstileToken?: string) =>
