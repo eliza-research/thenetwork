@@ -214,19 +214,21 @@ export function Requests() {
 
 // ---------------------------------------------------------------- scorecard and growth (gaps 14, 16)
 function fmtMetric(unit: ScoreMetric["unit"], v: number): string {
-  return unit === "share" ? pct(v, v > 0 && v < 0.1 ? 1 : 0) : unit === "per_member_week" ? v.toFixed(2) : unit === "minutes" ? `${v.toFixed(1)} min` : num(v);
+  return unit === "share" ? pct(v, v > 0 && v < 0.1 ? 1 : 0) : unit === "per_member_week" ? v.toFixed(2) : unit === "minutes" ? `${v.toFixed(1)} min`
+    : unit === "days" ? `${v.toFixed(1)} d` : unit === "usd" ? `$${v.toFixed(2)}` : unit === "per_1000" ? v.toFixed(1) : num(v);
 }
-/** PRD 28.2 scorecard: value, target, met. The definition is in each row's tooltip. */
+/** PRD 28.2 scorecard and the 37.3 pilot gates: value, target, met, pause. The definition is in each row's tooltip. */
 export function Scorecard({ rows }: { rows: ScoreMetric[] }) {
   return (
     <table className="table score">
-      <thead><tr><th>Measure</th><th className="r">Value</th><th className="r">Target</th><th className="r">n</th></tr></thead>
+      <thead><tr><th>Measure</th><th className="r">Value</th><th className="r">Target</th><th className="r">Pause if</th><th className="r">n</th></tr></thead>
       <tbody>
         {rows.map(m => (
           <tr key={m.key} title={m.how}>
             <td>{m.label}</td>
             <td className={`r ${m.met === true ? "good-text" : m.met === false ? "bad" : ""}`}>{m.value === null ? "–" : fmtMetric(m.unit, m.value)}{m.met === true ? " ✓" : m.met === false ? " ✗" : ""}</td>
             <td className="r muted">{m.target ? `${m.target.op} ${fmtMetric(m.unit, m.target.value)}` : ""}</td>
+            <td className={`r ${m.paused ? "bad" : "muted"}`}>{m.pause ? `${m.pause.op} ${fmtMetric(m.unit, m.pause.value)}${m.paused ? " ⚠" : ""}` : ""}</td>
             <td className="r muted">{num(m.n)}</td>
           </tr>
         ))}

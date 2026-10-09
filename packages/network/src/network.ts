@@ -205,8 +205,11 @@ export interface NetworkOptions {
   shadow?: boolean;
   /** Share of decided review items that get a blind second review (default 0.1; 0 turns it off). The second decision changes nothing. */
   doubleReviewShare?: number;
-  /** Called with every engine run (observatory capture). `shadow`: a shadow run (nothing it proposes is sent). */
-  onEngineRun?: (log: MatchingRunLog, proposals: EngineProposal[], at: number, o?: { shadow?: boolean }) => void;
+  /**
+   * Called with every engine run (observatory capture); `run` is what the engine read, for a replay
+   * (ME-004). `shadow`: a shadow run (nothing it proposes is sent).
+   */
+  onEngineRun?: (log: MatchingRunLog, proposals: EngineProposal[], at: number, run?: { input: EngineInput; config: EngineConfigInput; shadow?: boolean }) => void;
   /**
    * Proactive matching in NYC (default true). Off: no engine run and no new opportunities the
    * Network composes; requests are acknowledged and wait. Items already approved continue.
@@ -533,13 +536,13 @@ function seededTie(seed: number, a: string, b: string): number {
  * Hell's Kitchen" or a minor's private interest "AI and machine learning" don't block every message
  * that names the neighborhood or the interest.
  */
-const PUBLIC_PHRASES = [
+export const PUBLIC_PHRASES = [
   ...NEIGHBORHOODS.map(n => n.name), ...VENUES.map(v => v.name),
   ...INTERESTS.flatMap(i => [i.label, i.tag.replace(/_/g, " ")]), ...SKILLS.flatMap(s => [s.label, s.tag.replace(/_/g, " ")]),
   ...DESIRES.map(d => d.text),
 ];
 /** A canary token inside a private value: "(ref QX-4821-ORCHID)". */
-const CANARY_RE = /\(ref ([A-Za-z0-9-]{6,})\)/g;
+export const CANARY_RE = /\(ref ([A-Za-z0-9-]{6,})\)/g;
 /** The judge's duplicate_send window: the same text never goes to one member twice inside it. */
 const DUPLICATE_WINDOW = 10 * MINUTE;
 /** A venue suggested to a member is not suggested again for this long (vary, or say nothing). */
@@ -3897,12 +3900,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const p of queued) this.fromProposal(p, "player", now);
     const input = this.packInput(now);
     const deps = { ...(this.opts.engineLLM ? { llm: this.opts.engineLLM } : {}), ...(this.opts.pack ? { pack: this.opts.pack } : {}) };
-    const { proposals, asks, runLog } = await runEngine(input, this.effectiveEngineConfig(), deps);
+    const config = this.effectiveEngineConfig();
+    const { proposals, asks, runLog } = await runEngine(input, config, deps);
     // Exposure debt carries to the next run (matching-e2e-6).
     this.exposureDebt = { ...(runLog.exposureDebt ?? {}) };
     this.counters.engineRuns++; this.counters.engineProposals += proposals.length;
     this.currentRunId = this.sid(`${runLog.runId}-nyc`);
-    this.opts.onEngineRun?.(runLog, proposals, now);
+    this.opts.onEngineRun?.(runLog, proposals, now, { input, config });
     // A want that found nothing for 10+ days: one honest note (33.10).
     this.texts.emptyStates(runLog.emptyStates ?? [], now);
     let started = 0;
@@ -3931,10 +3935,11 @@ export class ConsentNetwork implements NetworkUnderTest {
   async shadowRun(now: number) {
     const input = this.packInput(now);
     const deps = { ...(this.opts.engineLLM ? { llm: this.opts.engineLLM } : {}), ...(this.opts.pack ? { pack: this.opts.pack } : {}) };
-    const { proposals, runLog } = await runEngine(input, this.effectiveEngineConfig(), deps);
+    const config = this.effectiveEngineConfig();
+    const { proposals, runLog } = await runEngine(input, config, deps);
     this.counters.shadowRuns++;
     this.currentRunId = this.sid(`shadow-${runLog.runId}-nyc`);
-    this.opts.onEngineRun?.(runLog, proposals, now, { shadow: true });
+    this.opts.onEngineRun?.(runLog, proposals, now, { input, config, shadow: true });
     this.queueShadow(proposals, now);
     this.currentRunId = undefined;
   }

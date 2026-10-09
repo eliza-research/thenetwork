@@ -4,6 +4,7 @@
 // migration twice.
 //   bun run db:migrate                  # the local dev database (starts the dev cluster)
 //   bun run db:migrate -- --url <url>   # another database (local hosts only, as seed.ts)
+//   bun run db:migrate -- --plan        # list what would run (pending, changed baselines, edited migrations); applies nothing
 //
 // Order:
 //   0001 packages/observatory/db/schema.sql       (baseline, repeatable)
@@ -42,6 +43,39 @@ export function migrations(): Migration[] {
 
 const checksum = (text: string) => createHash("sha256").update(text).digest("hex");
 
+export interface MigratePlan {
+  /** Never applied: they run next, in this order. */
+  pending: string[];
+  /** Repeatable baselines whose text changed since they ran: they run again. */
+  changedBaselines: string[];
+  /** Numbered migrations edited after they ran: never run again (add a new migration instead). */
+  edited: string[];
+  /** Applied and unchanged. */
+  upToDate: string[];
+}
+
+/** What migrate() would do on this database, without applying anything (read-only; no lock). */
+export async function plan(url: string): Promise<MigratePlan> {
+  const list = migrations();
+  const texts = await Promise.all(list.map(m => Bun.file(m.file).text()));
+  const sql = new SQL({ url, max: 1 });
+  try {
+    const [t] = await sql`select to_regclass('public.__migrations') as t`;
+    const done = new Map<string, string>();
+    if (t?.t) for (const r of await sql`select id, checksum from public.__migrations`) done.set(r.id, r.checksum);
+    const out: MigratePlan = { pending: [], changedBaselines: [], edited: [], upToDate: [] };
+    list.forEach((m, i) => {
+      const prev = done.get(m.id), sum = checksum(texts[i]!);
+      if (prev === undefined) out.pending.push(m.id);
+      else if (prev === sum) out.upToDate.push(m.id);
+      else (m.repeatable ? out.changedBaselines : out.edited).push(m.id);
+    });
+    return out;
+  } finally {
+    await sql.close();
+  }
+}
+
 export interface MigrateResult { applied: string[]; skipped: string[] }
 
 /** Apply every pending migration in order, in one transaction under an advisory lock. */
@@ -68,6 +102,8 @@ export async function migrate(url: string, opts: { reset?: boolean; lockTimeout?
           out.skipped.push(m.id);
           continue;
         }
+        // A baseline edited in place runs again (it only creates what is missing); say so in the log.
+        if (prev !== undefined) opts.log?.(`re-running ${m.id}: its text changed since it ran`);
         await tx.unsafe(texts[i]);
         await tx`insert into public.__migrations (id, checksum, repeatable) values (${m.id}, ${sum}, ${m.repeatable})
           on conflict (id) do update set checksum = excluded.checksum, applied_at = now()`;
@@ -83,12 +119,20 @@ export async function migrate(url: string, opts: { reset?: boolean; lockTimeout?
 
 if (import.meta.main) {
   const { parseArgs } = await import("node:util");
-  const { values: a } = parseArgs({ options: { url: { type: "string" }, reset: { type: "boolean", default: false } } });
+  const { values: a } = parseArgs({ options: { url: { type: "string" }, reset: { type: "boolean", default: false }, plan: { type: "boolean", default: false } } });
   const { DEV_PG_URL, devPgUp } = await import("./dev-pg.ts");
   const isLocalUrl = (u: string) => { try { return ["localhost", "127.0.0.1", "::1", "[::1]"].includes(new URL(u).hostname); } catch { return false; } };
   let url = a.url ?? process.env.NETWORK_DATABASE_URL;
   if (!url) { await devPgUp(); url = DEV_PG_URL; }
   if (!isLocalUrl(url)) { console.error(`refusing to migrate non-local database ${new URL(url).hostname}`); process.exit(1); }
+  if (a.plan) {
+    const p = await plan(url);
+    for (const id of p.pending) console.log(`pending   ${id}`);
+    for (const id of p.changedBaselines) console.log(`changed   ${id} (baseline: runs again)`);
+    for (const id of p.edited) console.log(`edited    ${id} (already ran: will NOT run again; add a new migration)`);
+    console.log(JSON.stringify({ pending: p.pending.length, changedBaselines: p.changedBaselines.length, edited: p.edited.length, upToDate: p.upToDate.length }));
+    process.exit(0);
+  }
   const r = await migrate(url, { reset: a.reset, log: s => console.log(s) });
   console.log(JSON.stringify(r));
   process.exit(0);

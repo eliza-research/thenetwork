@@ -131,6 +131,10 @@ Set these in **Variables**. Mark each **secret** row as a sealed variable. Never
 | `SLOP_PROBE_PHOTO` | no | **leave unset** | `1` lets a slop probe carry one approved photo of the other person (PRD 37.2 P5). Off by default. |
 | `SURPLUS_API_KEY` | **yes** | Only when an LLM path is turned on | gpt-6-luna through core's `chatJson`. Without it, LLM paths fail closed. |
 | `NETWORK_CHANNEL`, `BLOOIO_API_KEY`, `BLOOIO_FROM`, `BLOOIO_ALLOW_SEND`, `NTWRK_LIVE_APPROVED`, `<APP>_LIVE_APPROVED` | key: **yes** | **leave all unset** | Live sends. **[FOUNDER]** only. Section 6. |
+| `MONITOR` | no | `1` | The alert monitor every 5 minutes ([runbook-dr.md](runbook-dr.md) section 6). |
+| `ALERT_WEBHOOK_URL` | **yes** | An https incoming webhook **[FOUNDER]** | Where alerts go besides the log. Never SMS. `ALERT_FILE` (a path) and `ALERT_REALERT_MS` (default 6 hours) are optional. |
+| `COST_BUDGET_DAILY_USD`, `COST_BUDGET_MONTHLY_USD`, `COST_TARGET_PER_MEMBER_USD` | no | **[FOUNDER]** numbers | Unset: no cost alert. 80% warns, 100% is bad ([runbook-dr.md](runbook-dr.md) section 7). |
+| `BLOOIO_COST_PER_MESSAGE_USD`, `WORKERS_AI_COST_PER_CALL_USD` | no | Unit prices | Unset: that kind counts as $0 in the cost ledger. |
 
 Values used in local smoke runs (`ACfake`, `fake-turnstile`, `+1 555 01xx` numbers) must never reach Railway.
 
@@ -190,7 +194,7 @@ The console is the same image with another start command. Real data only, and st
 
 - **Code.** Railway → service → **Deployments**. Pick the last good deployment, open its menu, and choose **Redeploy** (Railway calls it a rollback). The old image starts. Overlap and draining handle the switch.
 - **Schema.** Migrations only go forward. Each numbered migration must be additive (add columns and tables; never drop or rename something the previous build reads in the same release). Then the previous image still runs on the newer schema. A migration that cannot meet this rule needs a two-step release, written down in its PR.
-- **Data.** Restore from the Postgres volume backup (Railway → Postgres → Backups) into a **new** database first. Compare, then switch `NETWORK_DATABASE_URL` and `MIGRATION_DATABASE_URL`. Never restore over the live volume.
+- **Data.** Restore from the Postgres volume backup (Railway → Postgres → Backups) into a **new** database first. Compare, then switch `NETWORK_DATABASE_URL` and `MIGRATION_DATABASE_URL`. Never restore over the live volume. The full steps, the RPO and RTO targets and the restore drill are in [runbook-dr.md](runbook-dr.md).
 - **Sites.** In the Cloudflare dashboard, Pages → the project → Deployments → an earlier production deployment → **Rollback** (section 3.2), or redeploy the previous commit.
 - Write each rollback down in the incident log, with the build ids (`x-network-build`) before and after.
 
@@ -320,8 +324,8 @@ Do every item on each deploy to production until the founder turns sends on in w
 - [ ] The boot log has no `refusing to start` line, and `select rolsuper, rolbypassrls from pg_roles where rolname = '<service login>'` is `f, f`.
 - [ ] No `*.up.railway.app` domain on either service.
 - [ ] The logs of the last hour contain no phone number, message text, code or token. Search Railway's log view for `+1`, `555` and `"text"`.
-- [ ] Matching is off where `platform.networks.matching_enabled` is false (slop and peon until their packs land). The boot log shows `"matching":"off"` for them.
-- [ ] The Postgres backup ran at least once.
+- [ ] Matching is off by each network's stored switch until an admin turns it on (`POST /matching`) after shadow mode and the founder's approval. `GET /health` shows `"matchingEnabled": false` for every network.
+- [ ] The Postgres backup ran at least once, and one restore was tested ([runbook-dr.md](runbook-dr.md) section 3).
 - [ ] Twilio Verify is the only provider that can send anything (codes only). Blooio has no key on the service.
 
 Turning sends on is a separate, written founder decision (runbook-real.md). It is not part of a deploy.

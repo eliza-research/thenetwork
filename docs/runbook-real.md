@@ -296,7 +296,7 @@ An item that nobody decides expires at its SLA (12 hours, or 1 hour for a same-d
 ### 6.4 What is missing before review can work on real members
 
 1. Built: the production matcher process and the Network admin API (6.5).
-2. Built: the Observatory calls the admin API (4.4). Missing: the service must record the signed-in person, not its token, as the reviewer of record (it can take `X-Network-Staff-Id` from the console's token only).
+2. Built: the Observatory calls the admin API (4.4), and the reviewer of record is the signed-in person (`service.ts` `review()` stores `user.id`, never a body field).
 3. Built: JWT verification for Cloudflare Access (4.1). Missing: a fresh sign-in before a PII reveal.
 4. **One owner for STOP, START and HELP** on the Blooio line **[FOUNDER]** (6.5, and the warning in `packages/blooio/README.md`). With one shared line for every app (PRD 40.3), the owner must also route the first message by keyword.
 
@@ -409,7 +409,7 @@ Decision first **[FOUNDER]**: PRD 31 says the Network is built inside Eliza Clou
    - `network_rw` for the matcher worker, in roles `network_service` and `platform_service` (section 2);
    - one console login per app, in role `network_observatory_<app>`, and one in `network_observatory_cross_app` (section 2);
    - an admin login (superuser or `BYPASSRLS`) for migrations only.
-6. Turn on daily backups. **[FOUNDER]** Test one restore before launch (PRD 28.5 gate: "backup restore tested").
+6. Turn on daily backups. **[FOUNDER]** Test one restore before launch (PRD 28.5 gate: "backup restore tested"): [runbook-dr.md](runbook-dr.md) section 3 (`scripts/restore-drill.ts`).
 7. Add a read replica if the plan allows it. Point the Observatory at the replica (PRD 31.4: analytics never read the primary at peak).
 8. **Matcher worker service (`network-matcher`).**
    - Build from this repository with Bun.
@@ -419,9 +419,10 @@ Decision first **[FOUNDER]**: PRD 31 says the Network is built inside Eliza Clou
    - Run one replica. The Blooio queue's state is in Postgres, but each replica dispatches its own queue for the line.
    - Sends stay dry-run. Live Blooio sends need `NETWORK_CHANNEL=blooio`, `BLOOIO_ALLOW_SEND=1` and the app's `<APP>_LIVE_APPROVED=1`, and the founder's approval **[FOUNDER]** (6.5).
    - The platform variables: `PLATFORM_HASH_KEY` (required with `NODE_ENV=production`), `OTP_PROVIDER=twilio` with the Twilio Verify credentials, `TURNSTILE_SECRET_KEY`, `PLATFORM_STOP_SCOPE` **[CREDENTIALS]** ([runbook-platform.md](runbook-platform.md) section 5).
-   - Variables (6.5): `NETWORK_DATABASE_URL` (the `network_rw` login), `NETWORK_SERVICE_TOKENS` (one token per role, plus the console token with the admin role) **[CREDENTIALS]**, `NETWORK_SERVICE_AUDIT_DATABASE_URL` (optional), `BLOOIO_WEBHOOK_SECRET`, `BLOOIO_API_KEY` and `BLOOIO_FROM` **[CREDENTIALS]**, `SURPLUS_API_KEY` and `OPENAI_API_KEY` **[CREDENTIALS]** (gpt-6-luna for every LLM use; the Network calls the engine without an LLM today).
+   - Variables (6.5): `NETWORK_DATABASE_URL` (the `network_rw` login), `NETWORK_SERVICE_TOKENS` (one token per role, plus the console token with the admin role) **[CREDENTIALS]**, `NETWORK_SERVICE_AUDIT_DATABASE_URL` (optional), `BLOOIO_WEBHOOK_SECRET`, `BLOOIO_API_KEY` and `BLOOIO_FROM` **[CREDENTIALS]**, `SURPLUS_API_KEY` and `OPENAI_API_KEY` **[CREDENTIALS]** (gpt-6-luna for every LLM use; the engine runs without its LLM judge today). Every LLM call the backend makes is recorded in `network.llm_usage` (cost ledger, [runbook-dr.md](runbook-dr.md) section 7).
    - Review mode stays `"human"` (the default). Never set `"auto"` outside the simulator.
    - `/health` reports the last tick, the lock holder, the backlog and the refusals, for the heartbeat alert (PRD 35.2). It needs a staff token.
+   - `MONITOR=1` runs the alert monitor in the backend every 5 minutes (tick staleness, backlog, send failures, review SLA, safety reports, invariants, bias reports, spend, pilot pause thresholds). Alerts go to the log, `ALERT_FILE` and `ALERT_WEBHOOK_URL`, never by SMS ([runbook-dr.md](runbook-dr.md) section 6).
 9. **Observatory service.**
    - Start command: `bun run packages/observatory/src/server.ts --mode real`, with `OBSERVATORY_REAL_ONLY=1` (4.3).
    - Variables: `NETWORK_DATABASE_URL` (a read login on the replica), `OBSERVATORY_DATABASE_URL_<APP>` (each app's read login) and `OBSERVATORY_PLATFORM_DATABASE_URL` (the cross-app login), `NETWORK_SERVICE_URL` (the matcher service's private address) and `NETWORK_SERVICE_TOKEN` (4.4) **[CREDENTIALS]**, `OBSERVATORY_TOKENS` with one token per role **[CREDENTIALS]**, `OBSERVATORY_AUDIT_DATABASE_URL` (the `observatory_audit_writer` login on the primary, section 2) **[CREDENTIALS]**, `OBSERVATORY_HOST=0.0.0.0` (the container must listen on all interfaces; it is safe only behind Access, step 7.3.3), `OBSERVATORY_ALLOWED_ORIGINS=https://observatory.ntwrk.love`, `OBSERVATORY_ENV_LABEL=STAGING` in staging, `NODE_ENV=production`.
@@ -465,11 +466,11 @@ Do these in staging, then in production. Each one is a PRD 28.5 launch gate or f
 6. Simulated traffic is forbidden in production (PRD 31.5). The production service refuses `review: "auto"` at start and does not expose the review mode (6.5). The Observatory runs with `OBSERVATORY_REAL_ONLY=1`.
 7. The audit log is on Postgres (`network.staff_audit`), and an admin can read it.
 8. For check 5, start the Network with matching off (the service's default for a new stored state). Turn matching on only after the founder approves **[FOUNDER]**.
-9. Per app: the app's `<APP>_LIVE_APPROVED` stays unset until the founder approves that app's launch. slop and peon matching stays off (`platform.networks`) until their engine packs pass their gates (PRD 40.8).
+9. Per app: the app's `<APP>_LIVE_APPROVED` stays unset until the founder approves that app's launch. The slop and peon packs are wired (migration 0011 allows matching in `platform.networks`); matching stays off by each network's stored switch until an admin turns it on with `POST /matching` after shadow mode and the founder's approval (PRD 37.3).
 10. A test phone joins two apps; STOP on the shared line stops both; leaving one app keeps the other; export and delete work per app ([runbook-platform.md](runbook-platform.md) section 3).
 
 ### 7.5 Roll back
 
 - Matcher: stop the Railway service. Nothing is sent while it is stopped. Queued items expire at their SLA instead of being sent late.
 - Worker: **[FOUNDER]** `NTWRK_ALLOW_DEPLOY=1 scripts/wrangler.sh rollback`.
-- Database: restore the last backup into a new database, then repoint the services. Never restore over the primary.
+- Database: restore the last backup into a new database, then repoint the services. Never restore over the primary. Steps, targets and the drill: [runbook-dr.md](runbook-dr.md).

@@ -143,6 +143,24 @@ export interface ClientOptions {
   clock?: Clock;
   /** Jitter source for backoff, in [0, 1) (default Math.random). */
   rand?: () => number;
+  /** What the calls are for ("onboarding", "judge"...), passed to the process usage observer (cost ledger). */
+  purpose?: string;
+  /** The app the calls are for, passed to the process usage observer. */
+  app?: string;
+}
+
+/**
+ * One process-wide observer of every HTTP attempt of every client (the backend's cost ledger,
+ * packages/network/service/costs.ts). Unset by default: nothing changes. It runs after the client's own
+ * onResponse; its errors are ignored like onResponse's.
+ */
+export type UsageObserver = (info: ResponseInfo, ctx: { purpose?: string; app?: string }) => void;
+let usageObserver: UsageObserver | undefined;
+/** Set (or clear, with undefined) the process usage observer. Returns the previous one. */
+export function setUsageObserver(fn: UsageObserver | undefined): UsageObserver | undefined {
+  const prev = usageObserver;
+  usageObserver = fn;
+  return prev;
 }
 
 /**
@@ -248,7 +266,10 @@ async function chatCompletions(
   const callerSignals = [opts.signal, hooks.signal].filter((s): s is AbortSignal => !!s);
   const signal = callerSignals.length > 1 ? AbortSignal.any(callerSignals) : callerSignals[0];
   const eps = (opts.fallback ?? hooks.fallback ?? true) ? endpoints : endpoints.slice(0, 1);
-  const emit = (info: ResponseInfo) => { try { hooks.onResponse?.(info); } catch { /* observer errors never break calls */ } };
+  const emit = (info: ResponseInfo) => {
+    try { hooks.onResponse?.(info); } catch { /* observer errors never break calls */ }
+    try { usageObserver?.(info, { purpose: hooks.purpose, app: hooks.app }); } catch { /* same */ }
+  };
   const remaining = () => deadlineAt - clock.now();
   const deadlineError = (host: string, why: string) =>
     new LLMError("deadline", `${host} ${why}: call deadline of ${deadlineMs} ms reached (after ${retries} retries)`, { host, retries });

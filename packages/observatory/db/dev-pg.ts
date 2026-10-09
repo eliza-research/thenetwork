@@ -14,7 +14,7 @@ export const DEV_PG_DIR = process.env.OBSERVATORY_PG_DIR ?? join(REPO, "runs", "
 export const DEV_PG_PORT = Number(process.env.OBSERVATORY_PG_PORT ?? 54339);
 export const DEV_PG_URL = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/network`;
 
-function pgBin(name: string): string {
+export function pgBin(name: string): string {
   for (const v of ["16", "17", "18"]) {
     const p = `/opt/homebrew/opt/postgresql@${v}/bin/${name}`;
     if (existsSync(p)) return p;
