@@ -14,6 +14,16 @@
       "eliza-source": "./src/index.ts",
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./svc-auth": {
+      "eliza-source": "./src/backend/svc-auth.ts",
+      "types": "./src/backend/svc-auth.ts",
+      "default": "./src/backend/svc-auth.ts"
+    },
+    "./contract": {
+      "eliza-source": "./src/backend/contract.ts",
+      "types": "./src/backend/contract.ts",
+      "default": "./src/backend/contract.ts"
     }
   },
   "description": "The Network edge plugin for the Eliza shared agent: MEMBER_CONTEXT provider, SET_STATE action, NETWORK_SIGNALS evaluator, Network routing (state intent, structured action field, authz). Bound to an injected NetworkStore; Eliza Cloud supplies the Postgres store.",

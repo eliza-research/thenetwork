@@ -22,3 +22,6 @@ export {
 export type { NetworkActionProposal } from "./routing/structured-field.js";
 export { isNetworkStateIntent } from "./routing/state-intent.js";
 export { parseDateExpr, resolveWindow, zonedNow, type DateWindow } from "./routing/dates.js";
+export * from "./backend/contract.js";
+export * from "./backend/svc-auth.js";
+export { NetworkServiceClient, NetworkServiceError, type NetworkServiceClientOptions } from "./backend/client.js";
