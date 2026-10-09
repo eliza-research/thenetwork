@@ -28,7 +28,10 @@ export const SLOP_ASK_QUESTIONS: Record<string, string> = {
  * the time options, and at most one shareable fact about the other person. It can carry one photo of
  * the other person (founder decision 2026-10-08; `slopProbeMessage` and plan.ts `probePhotoRefs`),
  * but never their name, contact, employer, area code or zip (the core passes the recipient's own
- * area; slop never prints it). Name and contact stay hidden until both say yes.
+ * area; slop never prints it). Name and contact stay hidden until both say yes. On the live path the
+ * photo is optional and off by default: only with SLOP_PROBE_PHOTO=1 does the service attach one
+ * approved photo as media, after its send-time checks (adults, not held or banned, still approved,
+ * consent to show it, the caption passes the leak guard and appearanceLeak).
  */
 export function slopProbeText(ctx: { when: string }, activity: string, attribute?: string): string {
   const also = attribute ? ` They're into ${attribute.replace(/[.\s]+$/, "")}.` : "";

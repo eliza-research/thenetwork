@@ -4,7 +4,8 @@
 //   slop     makeSlopPack({ verification: { required: false } }) (founder decision 9) with SLOP_ENGINE_CONFIG on nyc, and the
 //            slop hooks below: verified adults only, the hard-field asks in one message (each asked at
 //            most twice by the pack), answers parsed into the pack's tags, the anonymous date probe
-//            with an age band and a distance band, a public place near the midpoint, the booked
+//            with an age band and a distance band (and, with SLOP_PROBE_PHOTO=1 only, one approved photo
+//            of the other person, checked again at send time), a public place near the midpoint, the booked
 //            date with the share-my-date tip, and the check-in that can file a report.
 //   peon     peonPack with PEON_ENGINE_CONFIG on nyc.
 //   friends  friendsPack with its plans config (FRIENDS_PLANS).
@@ -37,14 +38,14 @@ export interface AppWiring {
 
 const NTWRK_CATEGORIES = ["social", "hobby", "professional", "events", "growth", "help"];
 
-/** The wiring for one app. A new instance each time (packs hold no state, but options are per network). */
-export function appWiring(app: AppId): AppWiring {
+/** The wiring for one app. A new instance each time (packs hold no state, but options are per network). `env`: SLOP_PROBE_PHOTO. */
+export function appWiring(app: AppId, env: Record<string, string | undefined> = process.env): AppWiring {
   switch (app) {
     case "slop": {
       // Founder decision 9: no ID check (phone login is the identity check; a stated age is enough).
       const pack = makeSlopPack({ verification: { required: false } });
       return {
-        pack, engine: { ...SLOP_ENGINE_CONFIG, cities: ["nyc"] }, hooks: slopHooks(pack.options), plans: false,
+        pack, engine: { ...SLOP_ENGINE_CONFIG, cities: ["nyc"] }, hooks: slopHooks(pack.options, { probePhoto: env.SLOP_PROBE_PHOTO === "1" }), plans: false,
         // Dating only, and only for adults: a member under 18 never opts in to romance (core invariant 1).
         prefs: age => ({ categoriesOptIn: age >= 18 ? ["romance"] : [], romanceOptIn: age >= 18 }),
       };
@@ -225,8 +226,9 @@ export function slopVenue(cells: { lat: number; lon: number }[], activity: strin
   return best && { id: best.v.id, name: best.v.name, neighborhood: best.v.neighborhood, lat: best.v.lat, lng: best.v.lng };
 }
 
-/** The slop hooks (exported for tests). */
-export function slopHooks(options: Parameters<typeof planFromInput>[4]): AppHooks {
+/** The slop hooks (exported for tests). `probePhoto`: SLOP_PROBE_PHOTO=1 (off by default; PRD 37.2 P5 decides the arm). */
+export function slopHooks(options: Parameters<typeof planFromInput>[4], flags: { probePhoto?: boolean } = {}): AppHooks {
+  const probePhotoOn = flags.probePhoto === true;
   const plan = (o: HookOpp, input: EngineInput) => {
     const [a, b] = o.participants as [MemberId, MemberId];
     const first = o.first && o.participants.includes(o.first) ? o.first : a;
@@ -313,6 +315,15 @@ export function slopHooks(options: Parameters<typeof planFromInput>[4]): AppHook
       const about = [age !== undefined && age >= 18 ? `in their ${ageBand(age)}` : undefined, p ? `${p.distance.startsWith("under") ? p.distance : `about ${p.distance}`} away` : undefined].filter(Boolean).join(", ");
       const facts = [about ? `They're ${about}.` : "", fact ? `They're into ${fact.replace(/_/g, " ")}.` : ""].filter(Boolean).join(" ");
       return `There's someone I think you might like to go on a date with: ${activity}, ${when}. ${facts}${facts ? " " : ""}Want me to check if they're up for it? I'll only tell you who it is if you both say yes.${ctx.times ? " Tell me which time works, or no." : ""}`;
+    },
+    probePhoto(o, id, ctx) {
+      // Off unless the flag is on. One photo of the other person, both adults in the pack's input
+      // (minors never are); the service checks both people, the photo and the caption again at send time.
+      if (!probePhotoOn) return undefined;
+      if (o.category !== "romance" || o.participants.length !== 2) return undefined;
+      const other = o.participants.find(x => x !== id);
+      const ages = ctx.input().members.filter(m => m.id === id || m.id === other).map(m => m.age);
+      return other && ages.length === 2 && ages.every(a => a >= 18) ? other : undefined;
     },
     venue(o, input) {
       const inp = input();

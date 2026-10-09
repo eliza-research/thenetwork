@@ -27,6 +27,10 @@ export interface Outbound {
   proactive: boolean;
   system: boolean;
   ts: number;
+  /** A photo of this member may ride on the send (a slop probe, SLOP_PROBE_PHOTO): the service checks it and sets mediaUrls, or drops it. */
+  photoOf?: MemberId;
+  /** Media to send with the text: at most one short-lived signed link to an approved photo. Not stored with the message. */
+  mediaUrls?: string[];
 }
 
 /** Queue statuses that are not final: after a restart the service hands these rows to the adapter again (the provider key stops a second send). */
@@ -76,7 +80,7 @@ export class DryRunAdapter implements ChannelAdapter {
   constructor(private log: (line: string) => void = console.log) {}
   async deliver(msgs: Outbound[]): Promise<Delivery[]> {
     // The text is in network.messages; the log line never holds it.
-    for (const m of msgs) this.log(`[dry-run] ${m.kind} ${m.type ?? "message"} to ${m.memberId}${m.oppId ? ` (${m.oppId})` : ""}, ${m.body.length} chars, id ${m.id}`);
+    for (const m of msgs) this.log(`[dry-run] ${m.kind} ${m.type ?? "message"} to ${m.memberId}${m.oppId ? ` (${m.oppId})` : ""}, ${m.body.length} chars${m.mediaUrls?.length ? `, ${m.mediaUrls.length} photo` : ""}, id ${m.id}`);
     return msgs.map(m => ({ id: m.id, status: "dry_run" }));
   }
   async flush(): Promise<Delivery[]> { return []; }
@@ -161,7 +165,7 @@ export class BlooioAdapter implements ChannelAdapter {
     const out: Delivery[] = [];
     for (const m of msgs) {
       if (!m.to) { out.push({ id: m.id, status: "failed_no_address" }); continue; }
-      this.queue.enqueue({ idempotencyKey: m.id, channel: "blooio", to: m.to, text: m.body, kind: m.kind, city: this.city, ...(m.oppId ? { briefId: m.oppId } : {}) });
+      this.queue.enqueue({ idempotencyKey: m.id, channel: "blooio", to: m.to, text: m.body, kind: m.kind, city: this.city, ...(m.oppId ? { briefId: m.oppId } : {}), ...(m.mediaUrls?.length ? { mediaUrls: m.mediaUrls } : {}) });
     }
     await this.queue.drain();
     for (const m of msgs) if (m.to) out.push({ id: m.id, status: this.queue.get(m.id)?.status ?? "failed" });

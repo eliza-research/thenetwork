@@ -23,9 +23,13 @@
 //    /apps/:app/..., each action audited. The review mode is never exposed: production is "human" only.
 //  - Sends: each app's adapter (dry-run by default; Blooio needs the per-app live flag too) after a
 //    person-level cap of proactive messages across apps (default 3 a day).
+//  - Photos (slop; adults only): the web upload and photos sent by text go through the same checks;
+//    every photo waits for staff moderation; ratings are one agent_private facet per member, retried
+//    on each tick; a probe carries a photo only with SLOP_PROBE_PHOTO=1 (photoRating.ts). The weekly
+//    bias monitor runs on the tick and pauses slop matching under 0.8x (biasJob.ts).
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { SQL } from "bun";
-import { DAY, RealClock, type Clock, type MemberId } from "@thenetwork/core";
+import { DAY, LeakGuard, RealClock, type Clock, type MemberId } from "@thenetwork/core";
 import type { ActionResult, NetworkOptions, ReviewDecision, ReviewOptions } from "../src/network.ts";
 import { brandOf, copy as ntwrkCopy, copyFor, type Copy } from "../src/copy.ts";
 import { isMinor } from "@thenetwork/core";
@@ -44,7 +48,10 @@ import { createPublicApi, type PublicApi, type PublicApiOptions } from "../../pl
 import { otpProviderFromEnv } from "../../platform/src/otp.ts";
 import { turnstileFromEnv } from "../../platform/src/turnstile.ts";
 import type { PeerInfo } from "../../platform/src/api.ts";
-import { PgPhotoStore, PhotoService, photoStorageFromEnv, type PhotoRater, type PhotoScores, type PhotoStorage } from "../../platform/src/photos.ts";
+import { PgPhotoStore, PHOTO_APPS, PHOTO_MAX_BYTES, PHOTO_MAX_PER_PERSON, PhotoService, photoStorageFromEnv, type PhotoClassifier, type PhotoRater, type PhotoScores, type PhotoStorage } from "../../platform/src/photos.ts";
+import { readCapped } from "../../platform/src/body.ts";
+import { appearanceFacetId, appearanceRatingFacet, legacyRatingLike, probePhotoCheck, probePhotoOn } from "./photoRating.ts";
+import { biasDue, runBiasJob, type BiasSummary } from "./biasJob.ts";
 import type { Ban } from "../../platform/src/store.ts";
 import { parseBlooioWebhook, SIGNATURE_HEADER, verifyBlooioSignature } from "../../blooio/src/blooio/webhook.ts";
 import { normalizeAddress } from "../../blooio/src/phone.ts";
@@ -88,6 +95,8 @@ export const enrolledText = (apps: AppInfo[]) =>
   `Done: you're in ${listApps(apps)}. Text an app's name (like ${apps[0]!.domain}) to talk to it, or "leave ${apps[0]!.domain}" to leave one. ${POWERED_BY}`;
 /** Safety on every app (safety@* or admin@*): what a hold on other apps and a ban need. */
 const crossAppSafety = (u: StaffUser) => hasEverywhere(u, "safety") || hasEverywhere(u, "admin");
+/** The actor of record when the bias monitor pauses matching (biasJob.ts). */
+const BIAS_MONITOR: StaffUser = { id: "system:bias-monitor", roles: ["admin"], grants: [], via: "token" };
 /** Staff review actions the API takes, and the reason codes (PRD 32.8 and the per-app lists). */
 const DECISIONS = new Set(["approve", "reject", "edit", "reroll"]);
 /** A reviewer's time on one item is clamped to an hour (audit observatory-10). */
@@ -137,8 +146,12 @@ export interface ServiceOptions {
   env?: Env;
   /** Photo storage (platform photos.ts). Default: PHOTO_STORAGE from the environment; null turns photos off. */
   photoStorage?: PhotoStorage | null;
-  /** The photo rater (default "none": nothing is rated). */
+  /** The photo rater (default "none": nothing is rated). server.ts passes the Clef rater only when its environment is set (photoRating.ts). */
   photoRater?: PhotoRater;
+  /** An automatic photo check that may only reject (none is wired). */
+  photoClassifier?: PhotoClassifier;
+  /** Download a photo a member sent by text (an allowed https media URL; webhook.ts checks the host). Default: fetch with a size cap and a timeout. */
+  fetchMedia?: (url: string) => Promise<Uint8Array | undefined>;
   /** The origin staff photo links use (PHOTO_VIEW_BASE_URL). Default: https://<the app's domain>, which the site router forwards to /api/*. */
   photoBaseUrl?: string;
   /**
@@ -227,6 +240,7 @@ export class NetworkService implements RuntimeHost {
   /** Private member photos (slop; verified adults only). */
   readonly photos: PhotoService;
   private readonly photoBaseUrl?: string;
+  private readonly fetchMedia: (url: string) => Promise<Uint8Array | undefined>;
 
   constructor(o: ServiceOptions) {
     if (o.network?.review && o.network.review !== "human") throw new Error(`review mode "${o.network.review}" is refused: production review is "human" only (runbook-real 7.4)`);
@@ -257,16 +271,17 @@ export class NetworkService implements RuntimeHost {
       // Dev only: the stored switch of these networks starts on (a new state); production always starts off.
       const devOn = (o.devMatching ?? []).includes(id);
       if (devOn && !devShortcutsAllowed(this.env)) throw new Error("devMatching is for PLATFORM_ENV=dev only: production matching is turned on by an admin in the console");
-      this.runtimes.set(id, new NetworkRuntime(this, { id, app: this.apps[app], city, matchingAllowed: spec.matchingEnabled ?? true, network: devOn ? { ...o.network, matchingEnabled: true } : o.network, adapter: o.adapter }));
+      this.runtimes.set(id, new NetworkRuntime(this, { id, app: this.apps[app], city, matchingAllowed: spec.matchingEnabled ?? true, network: devOn ? { ...o.network, matchingEnabled: true } : o.network, adapter: o.adapter, env: this.env }));
     }
     this.photoBaseUrl = o.photoBaseUrl ?? this.env.PHOTO_VIEW_BASE_URL ?? undefined;
     this.photos = new PhotoService({
       people: this.people, meta: new PgPhotoStore(this.sql), storage: o.photoStorage === null ? undefined : o.photoStorage ?? photoStorageFromEnv(this.env),
-      signingKey: key, now: () => this.clock.now(), rater: o.photoRater, log: this.log,
+      signingKey: key, now: () => this.clock.now(), rater: o.photoRater, classifier: o.photoClassifier, log: this.log,
       eligible: (personId, app) => this.verifiedAdult(personId, app),
-      onRating: (personId, app, photoId, scores) => this.writeRating(personId, app, photoId, scores),
-      onRemoved: (personId, app, photoId) => this.dropRatings(personId, app, photoId),
+      onRating: (personId, app, scores) => this.writeRating(personId, app, scores),
+      onRemoved: (personId, app) => this.dropRatings(personId, app),
     });
+    this.fetchMedia = o.fetchMedia ?? fetchMediaBytes;
     this.audit = o.audit ?? new PgAudit(o.auditUrl ?? o.url);
   }
 
@@ -328,7 +343,22 @@ export class NetworkService implements RuntimeHost {
     let any = false;
     for (const rt of this.runtimes.values()) any = (await rt.tick()) || any;
     await this.purge();
+    await this.photoTick();
     return any;
+  }
+
+  /**
+   * Photo work on every tick: ratings that failed or were skipped are tried again (backoff, at most
+   * 5 tries), and the weekly bias monitor runs on each slop network that is due. Errors are logged.
+   */
+  async photoTick() {
+    await this.photos.retryDue().catch(e => this.log(`[photos] rating retry failed: ${(e as Error).message}`));
+    for (const rt of this.runtimes.values()) {
+      if (!PHOTO_APPS.includes(rt.app.id)) continue;
+      try {
+        if (await biasDue({ app: rt.app.id, scoped: fn => rt.scoped(fn), now: () => this.clock.now() })) await this.biasReport(rt);
+      } catch (e) { this.log(`[bias] ${rt.id} failed: ${(e as Error).message}`); }
+    }
   }
 
   /** Retention (audit platform-18): expired OTP challenges and sessions, old rate windows and stale text flows. */
@@ -757,6 +787,8 @@ export class NetworkService implements RuntimeHost {
       }
       const out = await this.memberMessage(rt, memberId, ev, rowId, kw, reply);
       if (e164) await this.statedAge(app, rt, memberId, e164);
+      // Photos sent by text (after an age stated in the same message is recorded).
+      if (out === "handled" && e164 && ev.mediaUrls?.length) await this.photoIntake(rt, app, memberId, e164, ev, rowId).catch(e => this.log(`[photos] text photo failed: ${(e as Error).message}`));
       return out;
     }
 
@@ -785,6 +817,31 @@ export class NetworkService implements RuntimeHost {
     await this.memberMessage(rt, m.memberId as MemberId, ev, rowId, undefined, undefined, false);
     await this.statedAge(this.apps[appId], rt, m.memberId as MemberId, e164);
     return "accepted";
+  }
+
+  /**
+   * Photos a member sent by text (MMS or iMessage attachments) get the upload's checks: an app that
+   * takes photos, not banned, a verified adult, and the current photo consent recorded. Otherwise the
+   * media is dropped unread; only a missing consent gets a reply (the settings link). A minor's photo
+   * is never downloaded, stored or rated, and the minor is never asked for one.
+   */
+  private async photoIntake(rt: NetworkRuntime, app: AppInfo, memberId: MemberId, e164: string, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string) {
+    if (!PHOTO_APPS.includes(app.id)) return;
+    const person = await this.accounts.personFor(e164);
+    const no = !person || (await this.accounts.banned(e164, person)) ? "adults_only" : await this.photos.intakeRefusal(person.id, app.id);
+    if (no || !person) {
+      this.log(`[photos] ${ev.mediaUrls.length} text attachment(s) on ${app.id} dropped (${no})`);
+      if (no === "consent_required") await rt.unitOfWork(() => { rt.system(memberId, `photo:${rowId}`, photoConsentAsk(app.domain), "reply", "info"); });
+      return;
+    }
+    let kept = 0;
+    for (const url of ev.mediaUrls.slice(0, PHOTO_MAX_PER_PERSON)) {
+      const bytes = await this.fetchMedia(url).catch(() => undefined);
+      if (!bytes) { this.log(`[photos] a text attachment on ${app.id} could not be read`); continue; }
+      const r = await this.photos.intake(person.id, app.id, bytes);
+      if (r.ok) kept++; else this.log(`[photos] a text attachment on ${app.id} was not kept (${r.reason})`);
+    }
+    if (kept) await rt.unitOfWork(() => { rt.system(memberId, `photo:${rowId}`, photoKept(app.domain), "reply", "info"); });
   }
 
   /** A member's message (or keyword) as one unit of work on their app's network. */
@@ -1040,14 +1097,15 @@ export class NetworkService implements RuntimeHost {
   }
 
   /**
-   * An adult on this app, for photos and ratings: a live membership, a member age of 18 or more (the
-   * person's lowest age is checked by PhotoService), and no failed age check recorded by staff
-   * (verify:age:fail). Founder decision 9: no ID check, a stated age is enough.
+   * An adult on this app, for photos and ratings: a live membership, not banned, a member age of 18
+   * or more (the person's lowest age is checked by PhotoService), and no failed age check recorded by
+   * staff (verify:age:fail). Founder decision 9: no ID check, a stated age is enough.
    */
   private async verifiedAdult(personId: string, app: AppId): Promise<boolean> {
     const m = await this.people.getMembership(personId, app);
     const rt = this.runtimeFor(app);
     if (!m || !rt || !["active", "paused", "onboarding"].includes(m.state)) return false;
+    if (await this.people.isBanned("", personId)) return false;
     const rows = await rt.scoped(tx => tx`select m.age, f.tags, f.valid_from from network.members m left join network.facets f on f.app_id = m.app_id and f.member_id = m.id and f.status <> 'rejected'
       and exists (select 1 from unnest(f.tags) t where t like 'verify:age:%') where m.app_id = ${app} and m.id = ${m.memberId} order by f.valid_from desc nulls last, f.id desc`) as any[];
     if (!rows.length || !(rows[0].age >= 18)) return false;
@@ -1057,27 +1115,91 @@ export class NetworkService implements RuntimeHost {
     return !last?.includes("verify:age:fail");
   }
 
-  /** Delete rating facets: one photo's, or every rating of the person on every app. */
-  private async dropRatings(personId: string, app?: AppId, photoId?: string) {
+  /**
+   * Delete the person's rating facets (on one app, or every app): the member's '<member>:appearance'
+   * facet and any per-photo facet of the first rater. A photo removed or rejected drops the rating; the
+   * service's retry makes it again from the photos that are left.
+   */
+  private async dropRatings(personId: string, app?: AppId) {
     for (const m of await this.people.memberships(personId)) {
       if (app && m.app !== app) continue;
       const rt = this.runtimeFor(m.app);
       if (!rt) continue;
-      const like = photoId ? `${m.memberId}:photo:${photoId}` : `${m.memberId}:photo:%`;
-      await rt.scoped(tx => tx`delete from network.facets where app_id = ${m.app} and member_id = ${m.memberId} and id like ${like}`);
+      await rt.scoped(tx => tx`delete from network.facets where app_id = ${m.app} and member_id = ${m.memberId} and (id = ${appearanceFacetId(m.memberId as MemberId)} or id like ${legacyRatingLike(m.memberId as MemberId)})`);
     }
   }
 
-  /** The rater's scores: agent_private facets on the member (never shown to anyone, not in the member's export). */
-  private async writeRating(personId: string, app: AppId, photoId: string, s: PhotoScores) {
+  /**
+   * The rater's scores: one agent_private facet on the member with the slop pack's appearance:* tags
+   * (photoRating.ts; never shown to anyone, not in the member's export). Adults only, checked again here.
+   */
+  private async writeRating(personId: string, app: AppId, s: PhotoScores) {
     const m = await this.people.getMembership(personId, app);
     const rt = this.runtimeFor(app);
-    if (!m || !rt) return;
-    const now = new Date(this.clock.now());
+    const age = (await this.people.getPerson(personId))?.lowestAge;
+    if (!m || !rt || age === null || age === undefined || !(await this.verifiedAdult(personId, app))) return;
+    const f = appearanceRatingFacet(m.memberId as MemberId, age, s, this.clock.now());
+    const at = new Date(f.validFrom ?? this.clock.now());
     await rt.scoped(tx => tx`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, source, confidence, status, valid_from)
-      values (${app}, ${`${m.memberId}:photo:${photoId}`}, ${m.memberId}, 'trait', 'photo rating', ${tx.array([`${app}:rating:face=${s.face}`, `${app}:rating:body=${s.body}`, `${app}:rating:overall=${s.overall}`], "TEXT")},
-        'agent_private', 'inferred', 'photo_rater', 0.5, 'confirmed', ${now})
-      on conflict (id) do update set tags = excluded.tags, valid_from = excluded.valid_from`);
+      values (${app}, ${f.id}, ${m.memberId}, ${f.kind}, ${f.value}, ${tx.array(f.tags, "TEXT")}, 'agent_private', 'inferred', 'photo_rater', ${f.confidence}, 'confirmed', ${at})
+      on conflict (id) do update set tags = excluded.tags, value = excluded.value, confidence = excluded.confidence, valid_from = excluded.valid_from`);
+  }
+
+  /**
+   * Staff moderate one photo (POST /photos/:id/moderate): safety or admin on the photo's app, a reason,
+   * audited before and after. Only an approved photo may ever be shown to anyone (a probe, behind its flag).
+   */
+  async moderatePhoto(user: StaffUser, rt: NetworkRuntime, photoId: string, decision: "approve" | "reject", reason: string): Promise<ActionResult> {
+    const base = { actor: user.id, roles: user.roles, action: "safety", targetType: "member" as const, targetId: photoId, mode: "real" as const, app: rt.app.id };
+    await this.audit.write({ ...base, at: this.clock.now(), ok: true, detail: { safety: "photo_moderation", decision, reason, phase: "requested" } });
+    const row = await this.photos.row(photoId);
+    const r = !row || row.app !== rt.app.id ? { ok: false as const, reason: "not_found" as const } : await this.photos.moderate(photoId, decision, user.id, reason);
+    const out: ActionResult = r.ok ? { ok: true } : { ok: false, reason: r.reason };
+    await this.audit.write({ ...base, at: this.clock.now(), ok: out.ok, detail: { safety: "photo_moderation", decision, phase: "result", ...(out.ok ? {} : { reason: out.reason }) } })
+      .catch(e => this.log(`[audit] result row failed: ${(e as Error).message}`));
+    return out;
+  }
+
+  /**
+   * RuntimeHost.attachMedia: a probe that names a photo (SLOP_PROBE_PHOTO=1, the slop hook) gets one
+   * short-lived link to the other person's newest approved photo, after the send-time checks
+   * (photoRating.ts probePhotoCheck). Anything that fails sends the text alone; the log names the reason only.
+   */
+  async attachMedia(rt: NetworkRuntime, batch: Outbound[]): Promise<void> {
+    for (const b of batch) {
+      if (!b.photoOf) continue;
+      const subject = b.photoOf;
+      const [rp, sp] = [await this.personOfMember(rt, b.memberId), await this.personOfMember(rt, subject)];
+      const side = async (pid: string | undefined) => {
+        const age = pid ? (await this.people.getPerson(pid))?.lowestAge ?? null : null;
+        return { age, verified: !!pid && (await this.verifiedAdult(pid, rt.app.id)), banned: !pid || (await this.people.isBanned("", pid)) };
+      };
+      const photo = sp ? await this.photos.probePhoto(sp, rt.app.id) : undefined;
+      const [scores] = await rt.scoped(tx => tx`select tags from network.facets where app_id = ${rt.app.id} and id = ${appearanceFacetId(subject)}`) as any[];
+      const ok = probePhotoCheck({
+        flag: probePhotoOn(this.env), app: rt.app.id, recipient: await side(rp), subject: await side(sp),
+        policy: rt.net.recipientPolicy(b.memberId, "probe", { about: [b.memberId, subject] }),
+        ...(photo ? { photo: { id: photo.id, moderation: photo.moderation ?? "pending" } } : {}),
+        caption: b.body, guard: new LeakGuard(rt.net.leakSources([b.memberId])).check(b.body), scoreTags: scores?.tags ?? [],
+      });
+      if (!ok.ok || !photo) { delete b.mediaUrls; this.log(`[probe-photo] text only for ${b.id} (${ok.ok ? "no_photo" : ok.reason})`); continue; }
+      b.mediaUrls = [this.photos.mediaLink(photo.id, this.photoBaseUrl ?? `https://${rt.app.domain}`).url];
+      this.log(`[probe-photo] one approved photo rides on ${b.id}`);
+    }
+  }
+
+  /**
+   * The bias monitor for one network now (the weekly tick, or GET /bias): the report is stored with a
+   * bias_report event, and under 0.8x the network's matching is paused through the matching switch
+   * (audited, reason "bias monitor").
+   */
+  async biasReport(rt: NetworkRuntime, o: { outcomes?: Parameters<typeof runBiasJob>[0]["outcomes"]; minN?: number } = {}): Promise<BiasSummary> {
+    return runBiasJob({
+      app: rt.app.id, now: () => this.clock.now(), scoped: fn => rt.scoped(fn), log: this.log, ...o,
+      pause: async reason => {
+        await this.staffAction(rt, BIAS_MONITOR, "config", { type: "config", id: `matching_${rt.id}` }, { matching: false, reason }, n => { n.setMatchingEnabled(false, reason); return { ok: true }; });
+      },
+    });
   }
 
   /**
@@ -1302,7 +1424,21 @@ export class NetworkService implements RuntimeHost {
         const r = await this.staffPhotos(user, rt, id, reason);
         return r.ok ? json(r) : json({ ok: false, reason: r.reason }, r.reason === "photos_off" ? 503 : 403);
       }
+      if (req.method === "GET" && path === "/bias") {
+        // The bias monitor now (it also runs weekly on the tick): aggregates only, audited.
+        const no = need(["admin", "analyst"]); if (no) return no;
+        if (!PHOTO_APPS.includes(rt.app.id)) return json({ ok: false, error: "no_ratings" }, 404);
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "control", targetType: "run", targetId: `bias_${rt.id}`, mode: "real", ok: true, app: rt.app.id, detail: { bias: "run" } });
+        return json({ ok: true, network: rt.id, report: await this.biasReport(rt) });
+      }
       if (req.method !== "POST") return json({ ok: false, error: "not_found" }, 404);
+      const moderate = path.match(/^\/photos\/(ph_[a-f0-9]{24})\/moderate$/);
+      if (moderate) {
+        const no = need(["safety", "admin"]); if (no) return no;
+        const b = await body(req) as Record<string, any> | undefined;
+        if (!b || (b.decision !== "approve" && b.decision !== "reject") || typeof b.reason !== "string" || b.reason.trim().length < 3 || b.reason.length > 500) return json({ ok: false, error: "invalid_moderation" }, 400);
+        return result(await this.moderatePhoto(user, rt, moderate[1]!, b.decision, b.reason.trim()));
+      }
       const m = path.match(/^\/review\/([^/]+)$/);
       if (m) {
         const no = need(["reviewer"]); if (no) return no;
@@ -1412,6 +1548,22 @@ export function webhookSecretsFromEnv(env: Env = process.env): Partial<Record<Ap
   const out: Partial<Record<AppId, string>> = {};
   for (const a of Object.keys(APPS) as AppId[]) { const s = env[`${a.toUpperCase()}_BLOOIO_WEBHOOK_SECRET`]; if (s) out[a] = s; }
   return out;
+}
+
+/** The reply to a photo sent by text without the current photo consent: the media was not kept. */
+export const photoConsentAsk = (domain: string) => `I didn't keep that photo. Before you send photos, please read and agree to how we keep them at https://${domain}/settings, then send it again.`;
+/** The reply after a photo sent by text was kept. Never a word about ratings or scores. */
+export const photoKept = (domain: string) => `Got it. Your photo is saved privately. You can see or delete your photos at https://${domain}/settings.`;
+
+/** The bytes behind an attachment URL (https only, no redirects, at most PHOTO_MAX_BYTES, 15 s). Undefined when it cannot be read. */
+async function fetchMediaBytes(url: string): Promise<Uint8Array | undefined> {
+  let u: URL;
+  try { u = new URL(url); } catch { return undefined; }
+  if (u.protocol !== "https:") return undefined;
+  const res = await fetch(u, { redirect: "error", signal: AbortSignal.timeout(15_000) });
+  if (!res.ok) return undefined;
+  const b = await readCapped(res as unknown as Request, PHOTO_MAX_BYTES);
+  return b === "too_large" ? undefined : b;
 }
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });

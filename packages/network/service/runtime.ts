@@ -67,6 +67,11 @@ export interface RuntimeHost {
   capRelease?(ids: string[]): Promise<void>;
   /** Sends of this batch to a number the platform consent ledger has opted out of this app (ids). Called before delivery. */
   consentRefused?(rt: NetworkRuntime, batch: Outbound[]): Promise<Set<string>>;
+  /**
+   * Media for the sends that name a photo (Outbound.photoOf): set mediaUrls after the send-time checks,
+   * or leave the text alone. Called just before the adapter. Without it no send carries media.
+   */
+  attachMedia?(rt: NetworkRuntime, batch: Outbound[]): Promise<void>;
   /** The sends the adapter took (not refused or failed), after their statuses are stored. Errors are logged, never retried. */
   delivered?(rt: NetworkRuntime, sent: Outbound[]): Promise<void>;
 }
@@ -80,6 +85,8 @@ export interface RuntimeOptions {
   matchingAllowed: boolean;
   network?: Omit<NetworkOptions, "store" | "onEngineRun" | "app">;
   adapter?: ChannelAdapter | ((net: ConsentNetwork, rt: NetworkRuntime) => ChannelAdapter);
+  /** The app wiring's flags (SLOP_PROBE_PHOTO). Default process.env. */
+  env?: Record<string, string | undefined>;
 }
 
 export class NetworkRuntime {
@@ -122,7 +129,7 @@ export class NetworkRuntime {
     this.id = o.id; this.app = o.app; this.city = o.city; this.matchingAllowed = o.matchingAllowed;
     this.pg = new PgStore(host.sql, o.id);
     this.store = this.serviceStore();
-    this.wiring = appWiring(o.app.id);
+    this.wiring = appWiring(o.app.id, o.env);
     const w = this.wiring;
     this.net = new ConsentNetwork({
       matchingEnabled: false,
@@ -265,6 +272,7 @@ export class NetworkRuntime {
           kind: o?.reply && this.replyingTo === memberId ? "reply" : meta.proactive ? "proactive" : "transactional",
           // A probe names its opportunity only in meta.probe (anonymous to the member); the row links it either way.
           type: meta.type, oppId: meta.proposalId ?? meta.probe?.key, proactive: !!meta.proactive, system: false, ts: t,
+          ...(meta.photoOf ? { photoOf: meta.photoOf } : {}),
         });
         return { id, ts: t, direction: "outbound", channel: "imessage", from: "network", to: memberId, memberId, body, status: "delivered", meta } satisfies SimMessage;
       },
@@ -364,6 +372,11 @@ export class NetworkRuntime {
     await this.storeStatuses([...stopped].map(id => ({ id, status: "refused_opted_out" })));
     await this.storeStatuses([...capped].map(id => ({ id, status: "refused_person_cap" })));
     if (!go.length) return;
+    // A photo rides only after the service's send-time checks; any error sends the text alone.
+    if (go.some(b => b.photoOf)) {
+      if (this.host.attachMedia) await this.host.attachMedia(this, go).catch(e => { this.host.log(`[deliver] photo check failed (${this.id}): ${(e as Error).message}`); for (const b of go) delete b.mediaUrls; });
+      for (const b of go) delete b.photoOf;
+    }
     try {
       const ds = await this.adapter.deliver(go);
       await this.storeStatuses(ds, new Set(go.map(b => b.id)));

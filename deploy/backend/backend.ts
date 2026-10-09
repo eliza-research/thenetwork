@@ -219,6 +219,8 @@ export interface ServiceLike {
   runtimes: Map<string, { id: string; tick(): Promise<boolean> }>;
   /** The single inbox's tick (packages/notify): outcome sweep, then due notifications. Optional. */
   notifyTick?(): Promise<void>;
+  /** Photo work (rating retries) and the weekly bias monitor (packages/network/service). Optional. */
+  photoTick?(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -315,7 +317,7 @@ export function createBackend(d: BackendDeps) {
     try { if (!(await track(rt.tick()))) log.info("tick skipped: another instance holds the lock", { network: rt.id }); }
     catch (e) { log.error("tick failed", { network: rt.id, error: (e as Error).message }); }
     finally { busy.delete(rt.id); }
-  })).then(() => notifyTick());
+  })).then(() => notifyTick()).then(() => photoTick());
   // The inbox ticks once per round, after the networks (their sends are recorded by then). Replicas may overlap: a delivery id is recorded once
   // (notify.deliveries primary key), so a second replica cancels instead of sending again.
   const notifyTick = async () => {
@@ -324,6 +326,14 @@ export function createBackend(d: BackendDeps) {
     try { await track(svc.notifyTick()); }
     catch (e) { log.error("notify tick failed", { error: (e as Error).message }); }
     finally { busy.delete("notify"); }
+  };
+  // Rating retries and the weekly bias monitor, once per round after the networks.
+  const photoTick = async () => {
+    if (draining || !svc.photoTick || busy.has("photos")) return;
+    busy.add("photos");
+    try { await track(svc.photoTick()); }
+    catch (e) { log.error("photo tick failed", { error: (e as Error).message }); }
+    finally { busy.delete("photos"); }
   };
   const startTicks = () => { const first = tickAll(); timer = setInterval(tickAll, c.tickMs); return first; };
 
