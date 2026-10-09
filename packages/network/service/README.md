@@ -80,6 +80,11 @@ Send `Authorization: Bearer <token>`. Tokens are per app: `reviewer@slop:<t>` is
 | `POST /safety/dismiss` | safety | `{ reportId, note }`; 409 `unknown_report`, `already_<status>` |
 | `POST /members/:id/verify` | safety | `{ check: "age" \| "liveness", result: "pass" \| "fail", note }`: `verify:<check>:<result>` on the member (PRD 40.5), until a vendor writes it |
 | `GET /members/:id/photos` | safety | `X-Network-Reason: <5+ characters>`. Verified adults only (403 `adults_only`); the audit row is written before any link |
+| `POST /invite` | admin | `{ phone }`: an invite to this app (one text). A number on The Network's waitlist is let in at once (active, welcomed). An invite nobody answers ends after 30 days. |
+| `GET /flags` | safety | Soft approval (PRD 28.3): joins a rule flagged, by member id, oldest first. A flagged member onboards but is never matched. |
+| `POST /flags/:memberId` | safety | `{ decision: "clear" \| "keep" }`. `clear` lets the Network match them; `keep` keeps them out (hold or ban as well if needed). 409 `no_open_flag` |
+| `POST /people/:id/phone-change` | admin@\* or support@\* | `{ newPhone }` (`:id` is a person id or a member id of this app): a code goes to the new number. 409 `number_in_use`, `not_allowed`, `rate_limited`, `no_person` |
+| `POST /people/:id/phone-change/confirm` | admin@\* or support@\* | `{ code }` (the code the person read from the new number, within 30 minutes): the phone, the consent history, the age floor and the OAuth grants move to it; the old phone identity and its sessions end. 409 `invalid_code`, `no_pending_change` |
 | `POST /matching` | admin | `{ on: true \| false }`. Refused (`matching_not_allowed`) for a network the registry keeps off. Migration 0011 allows slop and peon; their stored switch still starts off. |
 | `/review-mode` | none | Always 404. Production review is "human" only (PRD 32.8). The service refuses any other mode at start. |
 

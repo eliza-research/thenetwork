@@ -76,10 +76,19 @@ export const LIMITS = {
   statusPerGrantMinute: 30,
 };
 
+/** One connected assistant of a person in one app, as the person sees it (texts, export). */
+export interface ConnectedAssistant { id: string; name: string; scopes: Scope[]; createdAt: number }
+
 export interface McpHandler {
   /** The answer for an MCP or OAuth path, or undefined for any other path. Pass the Bun server for the socket address. */
   fetch(req: Request, server?: { requestIP(req: Request): { address: string } | null }): Promise<Response | undefined>;
   store: OAuthStore;
+  /** The live grants of a phone in one app, newest first, with the assistant's name. */
+  assistantsOf(e164: string, app: McpAppId): Promise<ConnectedAssistant[]>;
+  /** Revoke one grant of this phone in this app (the person texted DISCONNECT). False when it is not theirs or not live. */
+  disconnect(e164: string, app: McpAppId, grantId: string): Promise<boolean>;
+  /** A person moved to a new number (F25): their grants keep working under the new number. */
+  rekeyPhone(oldE164: string, newE164: string): Promise<number>;
   /** Revoke every consent of a phone (one app, or all). Call it when the person leaves an app or deletes everything. */
   /**
    * Revoke every grant of a phone (of one app, or of all). With `forget`, the grants and sign-in requests
@@ -134,6 +143,15 @@ export const ASSISTANT_REDIRECT_HOSTS: Record<Exclude<AssistantKind, "web">, str
   grok: ["grok.com", "x.ai"],
 };
 
+/** The name an assistant goes by in a text: the known assistants by name, others by their registered name (letters and digits only). */
+export function assistantName(client: Pick<OAuthClient, "redirectUris" | "surface" | "name"> | undefined): string {
+  if (!client) return "An assistant";
+  const kind = assistantOf(client);
+  if (kind !== "web") return { chatgpt: "ChatGPT", claude: "Claude", grok: "Grok" }[kind];
+  const name = (client.name ?? "").normalize("NFKC").replace(/[^\p{L}\p{N} .-]+/gu, "").replace(/\s+/g, " ").trim().slice(0, 30);
+  return name || "An assistant";
+}
+
 /** Which assistant an OAuth client is, from its redirect URIs. */
 export function assistantOf(client: Pick<OAuthClient, "redirectUris" | "surface">): AssistantKind {
   if (client.surface === "openai") return "chatgpt";
@@ -166,6 +184,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   const hostMap = o.hostMap ?? defaultHostMap(apps);
   const dev = devShortcutsAllowed(env);
   if (o.trustForwardedHost && !dev) throw new Error("trustForwardedHost is for the dev site proxy only (PLATFORM_ENV=dev)");
+  // The sign-in page texts a code, so it gets the bot check the join page has (as the platform API).
+  if (!o.turnstile && !dev) throw new Error("a Turnstile verifier is required for the MCP sign-in outside PLATFORM_ENV=dev (TURNSTILE_SECRET_KEY)");
   const issuerOf = (a: McpApp) => (typeof o.issuer === "function" ? o.issuer(a) : o.issuer ?? `https://${a.domain}`).replace(/\/+$/, "");
   for (const a of Object.values(apps)) {
     const u = new URL(issuerOf(a));
@@ -430,6 +450,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const grant: Grant = { id: `grant_${randomId()}`, clientId: client.id, app: c.app.id, phoneKey: o.platform.phoneKey(r.e164), personId: r.personId, scopes: r.scopes, resource: r.resource, createdAt: at, expiresAt: at + ttl.grantMs, revokedAt: null };
     await store.putGrant(grant);
     await linked(grant, true);
+    // The person hears about it in their own thread, with the way out (PRD 11.5).
+    if (grant.personId && o.platform.assistantConnected) await o.platform.assistantConnected(grant.personId, c.app.id, assistantName(client)).catch(e => log(`[mcp] connected text not sent: ${(e as Error).message}`));
     const code = randomToken("ntwc_");
     const ac: AuthCode = { hash: sha256hex(code), grantId: grant.id, clientId: client.id, redirectUri: r.redirectUri, codeChallenge: r.codeChallenge, resource: r.resource, scopes: r.scopes, createdAt: at, expiresAt: at + ttl.codeMs, usedAt: null };
     await store.putCode(ac);
@@ -754,6 +776,20 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
   return {
     store,
+    async assistantsOf(e164, app) {
+      const grants = await store.grantsFor(o.platform.phoneKey(e164), app, now());
+      const out = await Promise.all(grants.map(async g => ({ id: g.id, name: assistantName(await store.getClient(g.clientId)), scopes: g.scopes, createdAt: g.createdAt })));
+      return out.sort((a, b) => b.createdAt - a.createdAt);
+    },
+    async disconnect(e164, app, grantId) {
+      const g = await store.getGrant(grantId);
+      if (!g || g.phoneKey !== o.platform.phoneKey(e164) || g.app !== app || !(await revokeGrant(g.id, now()))) return false;
+      await store.audit({ at: now(), kind: "consent_revoked", clientId: g.clientId, grantId: g.id, app, detail: "by the person (text)" });
+      return true;
+    },
+    async rekeyPhone(oldE164, newE164) {
+      return store.rekeyPhone(o.platform.phoneKey(oldE164), o.platform.phoneKey(newE164));
+    },
     async revokeAllFor(e164, app, ro = {}) {
       const at = now();
       const key = o.platform.phoneKey(e164);

@@ -7,7 +7,7 @@ import { normalizePhone } from "@thenetwork/platform";
 import type { McpAppId } from "./apps.ts";
 
 /** A membership state as the person's own agent may see it. No age, no member id, nothing about others. */
-export type PublicStatus = "not_joined" | "invited" | "onboarding" | "active" | "stopped" | "on_hold";
+export type PublicStatus = "not_joined" | "invited" | "waitlisted" | "onboarding" | "active" | "stopped" | "on_hold";
 
 export interface SignedIn {
   e164: string;
@@ -25,7 +25,10 @@ export interface PublicUpdate { summary: string; at: string; kind: string }
 export interface PlatformHooks {
   /** E.164 for a typed number, or undefined (the platform accepts +1 only). */
   normalizePhone(input: unknown): string | undefined;
-  /** Send a code. The same answer whether or not the number is known. */
+  /**
+   * Send a code, only to a number with a membership or an invite on some app (anyone else: the same
+   * answer and nothing is sent). The same answer whether or not the number is known.
+   */
   startOtp(app: McpAppId, e164: string, ip: string): Promise<{ ok: true } | { ok: false; error: "rate_limited" | "unavailable" }>;
   verifyOtp(app: McpAppId, e164: string, code: string, ip: string): Promise<boolean>;
   /** After a verified code: the person of the number, or "held" when staff must look at the number first. */
@@ -53,6 +56,8 @@ export interface PlatformHooks {
   updates?(personId: string, app: McpAppId, assistant: AssistantKind, token?: string): Promise<PublicUpdate[]>;
   /** An assistant was connected (consent granted) or disconnected (grant revoked) for a person. */
   assistantLinked?(personId: string, assistant: AssistantKind, active: boolean): Promise<void>;
+  /** A new consent: tell the person in their own thread on this app ("Claude is now connected ... Reply DISCONNECT"). */
+  assistantConnected?(personId: string, app: McpAppId, assistant: string): Promise<void>;
   /** The person already signed in on this site (the site's session cookie), if any. */
   session?(app: McpAppId, req: Request): Promise<SignedIn | undefined>;
   /** Start a site session after a verified code, so the person is signed in on the site too. Returns a Set-Cookie value. */
@@ -65,6 +70,7 @@ export function publicStatus(state: MembershipState | undefined, review: string 
   switch (state) {
     case undefined: case "removed": return "not_joined";
     case "invited": return "invited";
+    case "waitlist": return "waitlisted";
     case "onboarding": return "onboarding";
     case "active": return "active";
     case "paused": return "stopped";
@@ -92,6 +98,8 @@ export interface PlatformParts {
   updates?: PlatformHooks["updates"];
   /** Surface signals for the inbox (NetworkService.assistantLinked). */
   assistantLinked?: PlatformHooks["assistantLinked"];
+  /** The "now connected" text in the person's thread (NetworkService.assistantConnected). */
+  assistantConnected?: PlatformHooks["assistantConnected"];
 }
 
 function cookieValue(header: string | null, name: string): string | undefined {
@@ -117,6 +125,10 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       if (!app) return { ok: false, error: "unavailable" };
       // A banned number gets the same answer as any other, and no code is sent (no sign-in, no grant).
       if (await p.accounts.banned(e164)) return { ok: true };
+      // Nor does a number with no membership and no invite: connecting an assistant needs an account
+      // first, and nobody can make us text a stranger from this page (audit: OTP to any +1 number).
+      const ph = await p.store.findPhone(e164);
+      if (!ph || !(await p.store.memberships(ph.personId)).some(m => m.state !== "removed")) return { ok: true };
       const r = await p.otp.start(app, e164, ip);
       return r.ok ? { ok: true } : { ok: false, error: "rate_limited" };
     },
@@ -144,6 +156,7 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
     } : {}),
     ...(p.updates ? { updates: p.updates } : {}),
     ...(p.assistantLinked ? { assistantLinked: p.assistantLinked } : {}),
+    ...(p.assistantConnected ? { assistantConnected: p.assistantConnected } : {}),
     async status(personId, id) {
       const app = p.app(id);
       if (!app) return "not_joined";

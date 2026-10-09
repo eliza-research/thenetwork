@@ -18,15 +18,17 @@ const ACTIVITY: Record<Category, string> = {
  * Network's agent"); `name` is the app's name inside a sentence ("the Network"). They come from the
  * platform app registry (packages/platform/src/apps.ts, brandOf below).
  */
-export interface CopyBrand { agent: string; name: string }
+export interface CopyBrand { agent: string; name: string; /** The site (terms and privacy links in the text-join opt-in). */ domain?: string }
 /** The Network (ntwrk): the copy every earlier run used, word for word. */
-export const NTWRK_BRAND: CopyBrand = { agent: "the Network's agent", name: "the Network" };
+export const NTWRK_BRAND: CopyBrand = { agent: "the Network's agent", name: "the Network", domain: "ntwrk.love" };
 /** The copy brand of an app in the registry: "The Network" reads "the Network" inside a sentence. */
-export const brandOf = (app: { name: string; brand: { agentName: string } }): CopyBrand => ({ agent: app.brand.agentName, name: app.name.replace(/^The /, "the ") });
+export const brandOf = (app: { name: string; domain?: string; brand: { agentName: string } }): CopyBrand => ({ agent: app.brand.agentName, name: app.name.replace(/^The /, "the "), ...(app.domain ? { domain: app.domain } : {}) });
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** Every member-facing text for one app. No text asks a member to reply "cancel" (a bare CANCEL is STOP). */
 export function copyFor(b: CopyBrand) {
+  // The text-join opt-in (CTIA): how often, rates, HELP and STOP, and the app's terms and privacy pages.
+  const optIn = `Up to a few texts a week. Msg & data rates may apply. Reply HELP for help, STOP to opt out.${b.domain ? ` Terms: ${b.domain}/terms Privacy: ${b.domain}/privacy` : ""}`;
   return {
   welcome: (first: string, inviter?: string) =>
     `Hi ${first}, I'm ${b.agent} (an AI)${inviter ? `; ${inviter} invited you` : ""}. Now and then I'll suggest a person or plan that seems worth your time, and you can always ask me for something. Reply STOP anytime to opt out. To start: what would you like more of in your life right now?`,
@@ -143,10 +145,20 @@ export function copyFor(b: CopyBrand) {
   crewFormed: (activity: string) => `Your weekly ${activity} crew is on. I'll check before each session, and you can skip any week.`,
   crewNotFormed: "Not enough people for a weekly crew this time. I'll keep you in mind for the next plan.",
   // Joining by text (the platform service, before a member record exists). Nothing is stored until the age check passes.
-  /** First message from someone who is not a member of an open app. */
-  joinAsk: (minAge: number) => `Hi, I'm ${b.agent} (an AI). To join ${b.name}, reply with your first name and your age. You need to be ${minAge} or older. Reply STOP anytime to opt out.`,
+  /** First message from someone who is not a member of an open app. Its words are the opt-in the ledger stores (TEXT_OPT_IN_VERSION). */
+  joinAsk: (minAge: number) => `Hi, I'm ${b.agent} (an AI). To join ${b.name}, reply with your first name and your age (${minAge}+). ${optIn}`,
   /** A staff invite (invite-only apps): the person's reply with name and age is the join and the opt-in. */
-  invited: (minAge: number) => `Hi, I'm ${b.agent} (an AI). You're invited to join ${b.name}. To accept, reply with your first name and your age. You need to be ${minAge} or older. Reply STOP anytime to opt out.`,
+  invited: (minAge: number) => `Hi, I'm ${b.agent} (an AI). You're invited to join ${b.name}. To accept, reply with your first name and your age (${minAge}+). ${optIn}`,
+  /** "no thanks" to an invite or a join question: the one answer, then nothing more. */
+  joinDeclined: "OK, I won't text again. If you change your mind, just text us.",
+  /** A join with no keyword while The Network is invite-only: a waitlist, and the open apps by keyword (`open`: "slop (dating), peon (work) or friends (friends and plans)"). */
+  waitlisted: (first: string, open: string) => `Thanks, ${first}. ${cap(b.name)} is invite-only for now, so you're on the waitlist and I won't text you first. To join an open app now, text ${open}.`,
+  /** An assistant was connected with OAuth (PRD 11.5). `account`: "slop.date", "Network". */
+  assistantConnected: (assistant: string, account: string) => `${assistant} is now connected to your ${account} account. Reply DISCONNECT to remove it.`,
+  assistantsNone: "No assistants are connected to your account.",
+  assistantsList: (names: string) => `Connected: ${names}. Reply "disconnect" and a name to remove one.`,
+  assistantWhich: (names: string) => `Which one: ${names}? Reply "disconnect" and its name.`,
+  assistantRemoved: (assistant: string) => `Done. ${assistant} is no longer connected.`,
   /** An age came, but no first name. */
   joinNeedName: "Thanks. And your first name?",
   /** A person who already uses another app with this number joined this one. It never names the other app. */

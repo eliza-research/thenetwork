@@ -61,6 +61,7 @@ describe("authorization code with PKCE", () => {
 
   test("a wrong code_verifier is refused, and a second use of the code revokes what the first issued", async () => {
     const env = setup();
+    await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]); // the MCP sign-in texts only numbers with an account
     const reg = await register(env, PEON);
     const flow = await browserFlow(env, PEON, reg.body.client_id, PHONE_A);
     const code = new URL(flow.location!).searchParams.get("code")!;
@@ -105,6 +106,7 @@ describe("authorization code with PKCE", () => {
 
   test("the code expires after 5 minutes", async () => {
     const env = setup();
+    await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]); // the MCP sign-in texts only numbers with an account
     const reg = await register(env, PEON);
     const flow = await browserFlow(env, PEON, reg.body.client_id, PHONE_A);
     env.clock.t += 5 * 60_000 + 1;
@@ -192,6 +194,7 @@ describe("token expiry and refresh rotation", () => {
 
   test("another client cannot use the refresh token; revocation ends the grant", async () => {
     const env = setup();
+    await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]); // the MCP sign-in texts only numbers with an account
     const a = await connect(env, PEON, PHONE_A);
     const other = await register(env, PEON);
     expect((await tokenRequest(env, PEON, { grant_type: "refresh_token", refresh_token: a.token.refresh_token, client_id: other.body.client_id })).body.error).toBe("invalid_grant");
@@ -203,6 +206,7 @@ describe("token expiry and refresh rotation", () => {
 
   test("a confidential client must authenticate with its registered method", async () => {
     const env = setup();
+    await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]); // the MCP sign-in texts only numbers with an account
     const reg = await register(env, PEON, { token_endpoint_auth_method: "client_secret_basic" });
     expect(reg.body.client_secret).toMatch(/^ntws_/);
     const flow = await browserFlow(env, PEON, reg.body.client_id, PHONE_A);
@@ -221,6 +225,7 @@ describe("token expiry and refresh rotation", () => {
 describe("scopes", () => {
   test("apps:read only: check_status answers 403 insufficient_scope; refresh cannot widen", async () => {
     const env = setup();
+    await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]); // the MCP sign-in texts only numbers with an account
     const { client, token } = await connect(env, PEON, PHONE_A, { scope: "apps:read" });
     expect(token.scope).toBe("apps:read");
     const r = await call(env, `${origin(PEON)}/mcp`, "check_status", {}, { token: token.access_token });
@@ -269,7 +274,9 @@ describe("check_status isolation across apps", () => {
     const peon = await connect(env, PEON, PHONE_B);
     const r = await call(env, `${origin(PEON)}/mcp`, "check_status", {}, { token: peon.token.access_token });
     expect(r.body!.result.structuredContent.status).toBe("not_joined");
+    // A person in another app (friends) reads the same: nothing tells which other app (a number with no account gets no code).
     const none = setup();
+    await addMember(none, PHONE_B, [{ app: "friends", state: "active" }]);
     const peon2 = await connect(none, PEON, PHONE_B);
     const r2 = await call(none, `${origin(PEON)}/mcp`, "check_status", {}, { token: peon2.token.access_token });
     expect(JSON.stringify(r2.body!.result.structuredContent)).toBe(JSON.stringify(r.body!.result.structuredContent));
@@ -334,6 +341,7 @@ describe("the person's consent records", () => {
 
   test("a signed-in site session skips the code step; revokeAllFor ends every grant of a phone", async () => {
     const env = setup();
+    await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]); // the MCP sign-in texts only numbers with an account
     const c = await connect(env, PEON, PHONE_A);
     const site = /sid_peon=[^;]+/.exec(c.flow.siteCookie!)![0];
     const sends = env.provider.sent.length;
@@ -346,6 +354,8 @@ describe("the person's consent records", () => {
   test("leaving an app deletes the grants that keep the phone next to it; sweep deletes old grants and unused clients", async () => {
     const env = setup();
     const store = env.store as MemoryOAuthStore;
+    await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);
+    await addMember(env, PHONE_B, [{ app: "peon", state: "active" }]);
     await connect(env, PEON, PHONE_A);
     await connect(env, PEON, PHONE_B);
     const unused = await register(env, PEON);
@@ -422,6 +432,7 @@ describe("Client ID Metadata Documents", () => {
   test("an https client_id is fetched (fake fetch), checked, and works without registration", async () => {
     const seen: string[] = [];
     const env = setup({ cimdFetch: fakeFetch(doc, seen) });
+    await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);
     const meta = await (await env.fetch(new Request(`${origin(PEON)}/.well-known/oauth-authorization-server`))).json() as Record<string, any>;
     expect(meta.client_id_metadata_document_supported).toBe(true);
     const flow = await browserFlow(env, PEON, CID, PHONE_A);
@@ -450,15 +461,15 @@ describe("Client ID Metadata Documents", () => {
 });
 
 describe("a grant made before the number had a person (audit: null-person grant)", () => {
-  test("does not follow a person created later; that person connects again", async () => {
+  test("a number with no account gets no code, so no grant exists before a person; once a member, it connects", async () => {
     const env = setup();
-    const c = await connect(env, PEON, PHONE_A);
-    const before = await call(env, `${origin(PEON)}/mcp`, "check_status", {}, { token: c.token.access_token });
-    expect(before.body!.result.structuredContent.status).toBe("not_joined");
-    // Before the fix the same token then read the new person's status ("active").
+    // The sign-in texts only numbers with a membership or an invite (audit: codes to any +1 number).
+    const reg = await register(env, PEON);
+    const flow = await browserFlow(env, PEON, reg.body.client_id, PHONE_A);
+    expect(flow.location).toBeNull();
+    expect(env.provider.sent.filter(x => x.e164 === PHONE_A)).toEqual([]);
+    expect(env.store instanceof MemoryOAuthStore && (env.store as MemoryOAuthStore).grants.size).toBe(0);
     await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);
-    const after = await call(env, `${origin(PEON)}/mcp`, "check_status", {}, { token: c.token.access_token });
-    expect(after.res.status).toBe(401);
     const again = await connect(env, PEON, PHONE_A);
     const fresh = await call(env, `${origin(PEON)}/mcp`, "check_status", {}, { token: again.token.access_token });
     expect(fresh.body!.result.structuredContent.status).toBe("active");

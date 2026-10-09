@@ -6,7 +6,19 @@
 //    names the app; otherwise the whole first message routes by keyword ("slop", "slop.date",
 //    "friends.help", ...), then a member's open item, then the app that wrote last. With no keyword a
 //    stranger joins The Network: first name and age, then "what are you looking for?" (friends,
-//    dating, work), which enrolls them in the matching apps, each age-checked.
+//    dating, work), which enrolls them in the matching apps, each age-checked. While The Network is
+//    invite-only, such a stranger is put on its waitlist instead (a 'waitlist' membership, no network
+//    member: never matched, never texted first) and told the open apps' keywords; a staff invite of
+//    the same number lets them in.
+//  - A text join's opt-in is the exact ask that was sent (copy.ts joinAsk or invited, with frequency,
+//    rates, HELP, STOP, terms and privacy), stored with TEXT_OPT_IN_VERSION. "no thanks" to an ask or
+//    an invite ends it: one "OK, I won't text again", and no more asks until the person names the app.
+//  - Soft approval (platform approval.ts): a flagged join onboards normally but is never matched
+//    until staff clear it (GET /flags, POST /flags/:memberId).
+//  - Connected assistants (PRD 11.5): a new OAuth consent texts "<assistant> is now connected ...
+//    Reply DISCONNECT"; DISCONNECT, "disconnect <name>" and "which assistants are connected?" work by text.
+//  - A staff phone change (F25): POST /people/:id/phone-change sends a code to the new number; the
+//    confirm moves the person (phone, consent history, age floor, OAuth grants) to it.
 //    /webhooks/blooio/:app is an app's own line, if one ever gets one (<APP>_BLOOIO_WEBHOOK_SECRET).
 //  - Phone -> person -> membership -> member id. Joins are 13+ on every app; minors are never matched.
 //    Nothing is stored until the age check passes (a refused age goes to the phone's age floor only).
@@ -32,7 +44,7 @@ import { isMinor } from "@thenetwork/core";
 import { ageAnswer, agesStated } from "../src/classify.ts";
 import { NetworkRuntime, type RuntimeHost } from "./runtime.ts";
 import type { ChannelAdapter, Outbound } from "./channel.ts";
-import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, type AppId, type AppInfo } from "../../platform/src/apps.ts";
+import { APP_IDS, APPS, isAppId, keywordApp, lookingFor, POWERED_BY, TEXT_OPT_IN_VERSION, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { Accounts, type AccountHooks, type JoinHookContext, type MemberHookContext } from "../../platform/src/accounts.ts";
 import { joinAgeCheck } from "../../platform/src/age.ts";
 import { detectKeyword as platformKeyword, keywordEvent, leaveTarget, resolveConsent, stopScope, type StopScope } from "../../platform/src/consent.ts";
@@ -161,7 +173,34 @@ const NOTIFY_SUMMARY_MAX = 500;
 
 export type InboundOutcome =
   | "handled" | "duplicate" | "unknown_sender" | "ignored" | "ignored_group" | "status" | "reaction" | "safety"
-  | "invite_only" | "join_asked" | "joined" | "under_age" | "stopped" | "left" | "no_network" | "held";
+  | "invite_only" | "join_asked" | "joined" | "under_age" | "stopped" | "left" | "no_network" | "held" | "waitlisted" | "declined";
+
+/** What the MCP server lends the service: a person's connected assistants (texts, export) and the phone move. */
+export interface AssistantDirectory {
+  list(e164: string, app: AppId): Promise<{ id: string; name: string; scopes: string[]; createdAt: number }[]>;
+  disconnect(e164: string, app: AppId, grantId: string): Promise<boolean>;
+  rekeyPhone(oldE164: string, newE164: string): Promise<number>;
+}
+
+/** "no", "no thanks", "not interested": a person turning down a join question or an invite. */
+export const isJoinDecline = (text: string) =>
+  /^(?:no|nope|nah|no thanks?|no thank you|no thx|nty|not interested|no,? i'?m good|i'?m not interested|not for me)[\s.!]*$/i.test(text.normalize("NFKC").replace(/[‘’]/g, "'").trim());
+
+/** A text about connected assistants (PRD 11.5): DISCONNECT, "disconnect Claude", "which assistants are connected?". */
+export function assistantCommand(text: string): { kind: "list" } | { kind: "disconnect"; name?: string } | undefined {
+  const t = text.normalize("NFKC").replace(/[‘’]/g, "'").trim().replace(/[.!?]+$/, "").trim();
+  if (/^(?:please )?(?:disconnect|unlink)$/i.test(t)) return { kind: "disconnect" };
+  const m = /^(?:please )?(?:disconnect|unlink)\s+(.{1,40})$/i.exec(t);
+  if (m) return { kind: "disconnect", name: m[1]!.replace(/^(?:my |the )/i, "").trim() };
+  if (/^(?:(?:which|what) (?:assistants?|ais?|agents?) (?:are |is )?(?:connected|linked)|(?:list |show )?(?:my )?(?:connected )?assistants)$/i.test(t)) return { kind: "list" };
+  return undefined;
+}
+
+/** How the "now connected" text names the account: "your Network account", "your slop.date account". */
+const accountName = (app: AppInfo) => (app.id === "ntwrk" ? "Network" : app.domain);
+/** A staff phone change waits this long for the code from the new number (the OTP lives 10 minutes). */
+const PHONE_CHANGE_MS = 30 * 60_000;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface Route { app: AppId; shared: boolean }
 
@@ -224,6 +263,8 @@ export class NetworkService implements RuntimeHost {
   private api?: PublicApi;
   private readonly copies = new Map<AppId, Copy>();
   private readonly forgetListeners: Array<(ctx: MemberHookContext) => Promise<unknown> | unknown> = [];
+  /** The MCP server's grants (createServiceMcp sets it); undefined when the MCP server is off. */
+  private assistants?: AssistantDirectory;
   /** Private member photos (slop; verified adults only). */
   readonly photos: PhotoService;
   private readonly photoBaseUrl?: string;
@@ -331,11 +372,13 @@ export class NetworkService implements RuntimeHost {
     return any;
   }
 
-  /** Retention (audit platform-18): expired OTP challenges and sessions, old rate windows and stale text flows. */
+  /** Retention (audit platform-18): expired OTP challenges and sessions, old rate windows and stale text flows; invites nobody answered in 30 days. */
   async purge() {
     const n = await this.people.purge(this.clock.now() - 2 * DAY).catch(e => { this.log(`[purge] failed: ${(e as Error).message}`); return 0; });
     if (n) this.log(`[purge] removed ${n} expired platform row(s)`);
-    return n;
+    const invites = await this.accounts.expireInvites().catch(e => { this.log(`[purge] invite expiry failed: ${(e as Error).message}`); return 0; });
+    if (invites) this.log(`[purge] ended ${invites} invite(s) nobody answered in 30 days`);
+    return n + invites;
   }
 
   /** A unit of work on The Network (the first network). */
@@ -404,6 +447,22 @@ export class NetworkService implements RuntimeHost {
   /** An assistant connected (OAuth grant) or disconnected (revoked) for a person: the surface signal. */
   async assistantLinked(personId: string, surface: Surface, active: boolean): Promise<void> {
     await this.notify?.setActive(personId, surface, active);
+  }
+
+  /** The MCP server's grants, for the DISCONNECT texts, the export and the phone change (createServiceMcp). */
+  useAssistants(d: AssistantDirectory) { this.assistants = d; }
+
+  /**
+   * A new OAuth consent (PRD 11.5): "<assistant> is now connected to your <app> account. Reply
+   * DISCONNECT to remove it." in the person's own thread on that app, as a system message. A person
+   * with no live membership there has no thread: nothing is sent.
+   */
+  async assistantConnected(personId: string, appId: AppId, assistant: string): Promise<void> {
+    const m = await this.people.getMembership(personId, appId);
+    const rt = this.runtimeFor(appId);
+    if (!m || !rt || !["active", "onboarding", "paused"].includes(m.state)) return;
+    const app = this.apps[appId];
+    await rt.unitOfWork(() => { rt.system(m.memberId as MemberId, `assistant:${randomUUID()}`, this.copyOf(app).assistantConnected(assistant, accountName(app)), "transactional", "info"); });
   }
 
   /** The notify recipient of a person: their first live member with an address on a running network (The Network first). */
@@ -477,12 +536,14 @@ export class NetworkService implements RuntimeHost {
     const now = new Date(this.clock.now());
     // The app's categories (packs.ts): slop is dating and only for adults; peon is work; friends is social and hobby.
     const prefs = { ...rt.wiring.prefs(info.age), quietHours: [21, 9], formats: ["one_to_one", "small_group", "event"], maxTravelMinutes: 45, onlyWhenAsked: false };
+    // Soft approval: a flagged join is a member like any other, but the Network never matches it until staff clear it.
+    const flagged = await this.accounts.flagged(rt.app.id, m.personId);
     await this.sql.begin(async tx => {
       await tx`select set_config('app.app_id', ${rt.app.id}, true)`;
-      await tx`insert into network.members (app_id, id, person_id, name, home_city, home_area, account_status, age, prefs, joined_at)
-        values (${rt.app.id}, ${m.memberId}, ${m.personId}, ${info.firstName}, ${rt.city}, ${info.neighborhood ?? null}, 'active', ${info.age}, ${prefs}::jsonb, ${now})
+      await tx`insert into network.members (app_id, id, person_id, name, home_city, home_area, account_status, age, prefs, joined_at, flagged)
+        values (${rt.app.id}, ${m.memberId}, ${m.personId}, ${info.firstName}, ${rt.city}, ${info.neighborhood ?? null}, 'active', ${info.age}, ${prefs}::jsonb, ${now}, ${flagged})
         on conflict (id) do update set person_id = excluded.person_id, name = excluded.name, home_city = excluded.home_city, home_area = excluded.home_area,
-          account_status = 'active', age = excluded.age, joined_at = excluded.joined_at, opted_out = false`;
+          account_status = 'active', age = excluded.age, joined_at = excluded.joined_at, opted_out = false, flagged = excluded.flagged`;
       if (info.neighborhood) await tx`insert into network.presence (app_id, member_id, city, type, areas) values (${rt.app.id}, ${m.memberId}, ${rt.city}, 'home', ${tx.array([info.neighborhood], "TEXT")})`;
       // slop dates by distance from a zip (a coarse cell; agent_private, never shown).
       if (info.zip && rt.app.id === "slop") {
@@ -513,6 +574,7 @@ export class NetworkService implements RuntimeHost {
         }
       },
       onExport: (ctx: MemberHookContext) => this.exportMember(ctx.app, ctx.memberId),
+      onExportAccount: (ctx: MemberHookContext) => this.exportAccount(ctx),
       onAgeLowered: ctx => this.ageLowered(ctx.personId, ctx.age),
     };
   }
@@ -547,7 +609,7 @@ export class NetworkService implements RuntimeHost {
    * drops the member from open opportunities.
    */
   private async stopped(app: AppInfo, personId: string, scope: StopScope, skip?: { rt: NetworkRuntime; memberId: MemberId }) {
-    const ms = (await this.people.memberships(personId)).filter(m => m.state !== "removed" && m.state !== "invited" && (scope === "global" || m.app === app.id));
+    const ms = (await this.people.memberships(personId)).filter(m => m.state !== "removed" && m.state !== "invited" && m.state !== "waitlist" && (scope === "global" || m.app === app.id));
     for (const m of ms) {
       if (m.state === "active") await this.people.putMembership({ ...m, state: "paused" });
       const rt = this.runtimeFor(m.app);
@@ -587,6 +649,16 @@ export class NetworkService implements RuntimeHost {
         where p.app_id = ${a} and p.member_id = ${memberId} order by o.created_at, o.id`,
     ]);
     return { member: member[0] ?? null, facets: [...facets], intents: [...intents], presence: [...presence], messages: [...messages], opportunities: [...opps] };
+  }
+
+  /**
+   * The person's own records for this app outside the network rows (F24): their photos (ids, types,
+   * sizes and times; never the bytes) and the assistants connected to this app (name, scopes, since).
+   */
+  private async exportAccount(ctx: MemberHookContext) {
+    const photos = (await this.photos.list(ctx.personId, ctx.app.id).catch(() => [])).map(p => ({ id: p.id, contentType: p.contentType, bytes: p.bytes, createdAt: new Date(p.createdAt).toISOString() }));
+    const assistants = this.assistants ? (await this.assistants.list(ctx.e164, ctx.app.id)).map(a => ({ name: a.name, scopes: a.scopes, connectedAt: new Date(a.createdAt).toISOString() })) : [];
+    return { photos, assistants };
   }
 
   /**
@@ -738,6 +810,14 @@ export class NetworkService implements RuntimeHost {
         await this.direct(lrt, ev.from, this.copyOf(leaving).leftApp, `sys:${rowId}`);
         return "left";
       }
+      // On The Network's waitlist (no network member): the membership goes, with an opt-out for the app.
+      const person = lrt ? await this.accounts.personFor(e164) : undefined;
+      if (lrt && person && (await this.people.getMembership(person.id, leaving.id))?.state === "waitlist") {
+        await this.accounts.recordConsent({ e164, app: leaving.id, line, state: "opted_out", source: "leave", ref: rowId, at: t });
+        await this.people.forgetMembership(person.id, leaving.id, t);
+        await this.direct(lrt, ev.from, this.copyOf(leaving).leftApp, `sys:${rowId}`);
+        return "left";
+      }
     }
 
     if (memberId) {
@@ -750,6 +830,8 @@ export class NetworkService implements RuntimeHost {
       }
       const reply = kw === "help" ? app.brand.help : undefined;
       if (!kw && e164 && /^\s*share\W*$/i.test(ev.text) && (await this.pendingOf(e164, "share", app.id))) return this.share(rt, app, memberId, e164, ev, rowId);
+      const assistantCmd = !kw && e164 && this.assistants ? assistantCommand(ev.text) : undefined;
+      if (assistantCmd && e164) return this.assistantsText(rt, app, memberId, e164, ev, rowId, assistantCmd);
       // The answer to The Network's "what are you looking for?": enroll in the apps they named.
       if (!kw && e164 && app.id === "ntwrk" && (await this.pendingOf(e164, "looking_for"))) {
         const wants = lookingFor(ev.text).filter(a => a !== "ntwrk" && this.runtimeFor(a));
@@ -870,6 +952,37 @@ export class NetworkService implements RuntimeHost {
     if (await this.accounts.banned(e164, person)) { this.log(`[inbound] a banned number wrote to ${app.id}: not joined, not stored`); return "held"; }
     const existing = person ? await this.people.getMembership(person.id, app.id) : undefined;
     const invited = existing?.state === "invited";
+    const line = ev.to ? normalizeAddress(ev.to) : null;
+    // On The Network's waitlist already: the same short answer, at most once a day. Nothing else is stored.
+    if (existing?.state === "waitlist") {
+      const { count } = await this.people.hit(`waitlist:${app.id}:${key}`, DAY, t);
+      if (count === 1) await this.direct(rt, ev.from, c.waitlisted(existing.firstName ?? "there", this.openApps(await this.accounts.lowestAge(e164, person))), `sys:${rowId}`);
+      return "waitlisted";
+    }
+    let p = await this.pendingOf(e164, "join");
+    if (p && p.app !== app.id) p = undefined;
+    // "no thanks" to the join question or to an invite: one answer, the invite ends, and no more asks.
+    if (isJoinDecline(ev.text) && (p || invited)) {
+      await this.people.deletePending(key, "join");
+      await this.accounts.recordConsent({ e164, app: app.id, line, state: "opted_out", source: "join_declined", ref: rowId, at: t });
+      if (invited) await this.accounts.endInvite(app, person!.id);
+      await this.direct(rt, ev.from, c.joinDeclined, `sys:${rowId}`);
+      this.log(`[inbound] a join or invite to ${app.id} was declined: no more asks`);
+      return "declined";
+    }
+    // After a "no thanks", nothing asks again until the person names an app themselves (on the shared
+    // line a message with no keyword would otherwise start The Network's ask).
+    const saidNo = async () => {
+      for (const id of route.shared ? APP_IDS : [app.id]) {
+        const last = (await this.people.lastConsent(e164, id)).app;
+        if (last?.state === "opted_out" && last.source === "join_declined") return true;
+      }
+      return false;
+    };
+    if (!invited && !p && !this.namedApp(ev.text) && (await saidNo())) {
+      this.log(`[inbound] a number that declined ${app.id} wrote again: not asked`);
+      return "declined";
+    }
     if (app.joinMode === "invite" && !invited && !(route.shared && app.id === "ntwrk")) {
       // The same answer whether or not the number uses another app; at most once a day per number.
       const { count } = await this.people.hit(`invite_only:${app.id}:${key}`, DAY, t);
@@ -877,8 +990,6 @@ export class NetworkService implements RuntimeHost {
       this.log(`[inbound] not a member of invite-only ${app.id}: ${count === 1 ? "invite-only reply" : "no reply (sent today)"}, not stored`);
       return "invite_only";
     }
-    let p = await this.pendingOf(e164, "join");
-    if (p && p.app !== app.id) p = undefined;
     const said = parseJoinText(ev.text, this.appWords(), !!p);
     const age = said.age ?? p?.age ?? undefined, name = said.name ?? p?.name ?? undefined;
     const ask = invited ? c.invited(app.minJoinAge) : c.joinAsk(app.minJoinAge);
@@ -891,8 +1002,10 @@ export class NetworkService implements RuntimeHost {
     const check = joinAgeCheck(age, await this.accounts.lowestAge(e164, person), app);
     if (!check.ok) {
       // Nothing is stored for this app: only the age, on the phone's age floor (and the person, if any),
-      // so a second try with an older age is refused too.
-      await this.accounts.recordAge(e164, person, age);
+      // so a second try with an older age is refused too. An invite ends here, and a person the staff
+      // invite made goes with it: no person, phone or membership is left (audit platform-25).
+      const left = invited ? await this.accounts.endInvite(app, person!.id) : { personDeleted: false };
+      await this.accounts.recordAge(e164, left.personDeleted ? undefined : person, age);
       await this.people.deletePending(key, "join");
       await this.direct(rt, ev.from, app.brand.underAge, `sys:${rowId}`);
       this.log(`[inbound] under the join age for ${app.id}: declined, nothing stored`);
@@ -900,7 +1013,8 @@ export class NetworkService implements RuntimeHost {
     }
     if (!name) {
       await this.people.putPending({ phoneHash: key, kind: "join", app: app.id, name: null, age, at: t });
-      await this.direct(rt, ev.from, c.joinNeedName, `sys:${rowId}`);
+      // The opt-in is the ask: a person who has not had it yet (no join under way, no invite) gets it now.
+      await this.direct(rt, ev.from, p || invited ? c.joinNeedName : ask, `sys:${rowId}`);
       return "join_asked";
     }
     await this.people.deletePending(key, "join");
@@ -909,13 +1023,22 @@ export class NetworkService implements RuntimeHost {
     await this.accounts.recordAge(e164, who, age);
     // Their answer is a new opt-in: a delete of everything no longer suppresses the number.
     await this.people.unsuppress(key);
-    const others = (await this.people.memberships(who.id)).filter(m => m.app !== app.id && m.state !== "removed" && m.state !== "invited");
+    const others = (await this.people.memberships(who.id)).filter(m => m.app !== app.id && m.state !== "removed" && m.state !== "invited" && m.state !== "waitlist");
+    // No keyword while The Network is invite-only: its waitlist (founder decision 2 holds once it opens).
+    const waitlist = app.joinMode === "invite" && !invited;
     const membership: Membership = {
       app: app.id, personId: who.id, memberId: existing?.state === "invited" ? existing.memberId : `${app.id}_${randomUUID()}`,
-      state: app.joinMode === "waitlist" ? "onboarding" : "active", review: null, firstName: name, profile: {}, joinedAt: t, leftAt: null,
+      state: waitlist ? "waitlist" : app.joinMode === "waitlist" ? "onboarding" : "active", review: null, firstName: name, profile: {}, joinedAt: t, leftAt: null,
     };
     await this.people.putMembership(membership);
-    await this.accounts.recordConsent({ e164, app: app.id, line: ev.to ? normalizeAddress(ev.to) : null, state: "opted_in", source: "inbound_message", wording: ask, ref: rowId, at: t });
+    // The opt-in is the exact text that was sent (the ask or the invite), with its version.
+    await this.accounts.recordConsent({ e164, app: app.id, line, state: "opted_in", source: "inbound_message", wording: ask, wordingVersion: TEXT_OPT_IN_VERSION, ref: rowId, at: t });
+    await this.accounts.flagJoin(app.id, who.id, { e164, text: ev.text });
+    if (waitlist) {
+      await this.direct(rt, ev.from, c.waitlisted(name, this.openApps(Math.min(age, check.effective ?? age))), `sys:${rowId}`);
+      await this.people.hit(`waitlist:${app.id}:${key}`, DAY, t);
+      return "waitlisted";
+    }
     if (membership.state !== "active") return "joined";
     await this.createMember(rt, membership, { age: Math.min(age, check.effective ?? age), firstName: name });
     // Their answer is their first message: the Network welcomes them as a reply to it.
@@ -925,12 +1048,43 @@ export class NetworkService implements RuntimeHost {
       await rt.unitOfWork(() => { rt.system(membership.memberId, `link:${rowId}`, c.linkNotice, "transactional", "info"); });
       await this.people.putPending({ phoneHash: key, kind: "share", app: app.id, name: null, age: null, at: t });
     } else if (app.id === "ntwrk" && route.shared && !invited) {
-      // No keyword: The Network asks what they are looking for, then enrolls them (founder decision 2).
+      // No keyword, once The Network is open: it asks what they are looking for, then enrolls them (founder decision 2).
       const askText = lookingForAsk(Math.min(age, check.effective ?? age));
       await rt.unitOfWork(() => { rt.system(membership.memberId, `ask:${rowId}`, askText, "transactional", "info"); });
       await this.people.putPending({ phoneHash: key, kind: "looking_for", app: "ntwrk", name: null, age: null, at: t });
     }
     return "joined";
+  }
+
+  /** The open apps a person can join by keyword now, for the waitlist text. Dating is never offered under 18. */
+  private openApps(age: number | undefined): string {
+    const what: Partial<Record<AppId, string>> = { slop: "dating", peon: "work", friends: "friends and plans" };
+    const open = APP_IDS.filter(a => this.apps[a].joinMode === "open" && this.runtimeFor(a) && what[a] && (a !== "slop" || (age !== undefined && age >= 18)));
+    const items = open.map(a => `${a} (${what[a]})`);
+    return items.length <= 1 ? (items[0] ?? "the name of an app") : `${items.slice(0, -1).join(", ")} or ${items.at(-1)}`;
+  }
+
+  /** DISCONNECT, "disconnect <name>" and "which assistants are connected?" in a member's thread (PRD 11.5): this app's grants only. */
+  private async assistantsText(rt: NetworkRuntime, app: AppInfo, memberId: MemberId, e164: string, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, cmd: NonNullable<ReturnType<typeof assistantCommand>>): Promise<InboundOutcome> {
+    const c = this.copyOf(app), t = this.clock.now();
+    const list = await this.assistants!.list(e164, app.id);
+    const names = (xs: typeof list) => [...new Set(xs.map(x => x.name))].join(", ");
+    let reply: string;
+    if (!list.length) reply = c.assistantsNone;
+    else if (cmd.kind === "list") reply = c.assistantsList(names(list));
+    else {
+      const want = cmd.name?.toLowerCase();
+      const hits = want ? list.filter(x => x.name.toLowerCase() === want || x.name.toLowerCase().startsWith(want)) : list;
+      // A bare DISCONNECT removes the only one, or the one just connected (a reply to its text); otherwise it asks which.
+      const target = want ? hits[0] : list.length === 1 || t - list[0]!.createdAt < DAY ? list[0] : undefined;
+      if (!target) reply = want ? c.assistantsList(names(list)) : c.assistantWhich(names(list));
+      else reply = (await this.assistants!.disconnect(e164, app.id, target.id)) ? c.assistantRemoved(target.name) : c.assistantsNone;
+    }
+    return rt.unitOfWork(async () => {
+      rt.unit.inbound = { id: rowId, member_id: memberId, direction: "inbound", channel: ev.transport === "sms" ? "sms" : "imessage", body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
+      rt.system(memberId, `sys:${rowId}`, reply, "reply", "info");
+      return "handled" as const;
+    });
   }
 
   /**
@@ -1025,11 +1179,109 @@ export class NetworkService implements RuntimeHost {
     const target = { type: "member" as const, id: key.slice(0, 16) };
     await this.audit.write({ actor: user.id, roles: user.roles, action: "invite", targetType: target.type, targetId: target.id, mode: "real", app: rt.app.id, at: this.clock.now(), ok: true, detail: { network: rt.id, phase: "requested" } });
     const m = await this.accounts.invite(rt.app, e164);
-    const r: ActionResult = !m ? { ok: false, reason: "not_invitable" } : m.state !== "invited" ? { ok: false, reason: "already_member" } : { ok: true };
-    if (r.ok) await this.direct(rt, e164, this.copyOf(rt.app).invited(rt.app.minJoinAge), `invite:${rt.app.id}:${key.slice(0, 16)}:${this.clock.now()}`);
+    const r: ActionResult = !m ? { ok: false, reason: "not_invitable" } : m.state !== "invited" && m.state !== "waitlist" ? { ok: false, reason: "already_member" } : { ok: true };
+    if (r.ok && m!.state === "waitlist") await this.admitWaitlisted(rt, m!, e164);
+    else if (r.ok) await this.direct(rt, e164, this.copyOf(rt.app).invited(rt.app.minJoinAge), `invite:${rt.app.id}:${key.slice(0, 16)}:${this.clock.now()}`);
     await this.audit.write({ actor: user.id, roles: user.roles, action: "invite", targetType: target.type, targetId: target.id, mode: "real", app: rt.app.id, at: this.clock.now(), ok: r.ok, detail: { network: rt.id, phase: "result", ...(r.ok ? {} : { reason: r.reason }) } })
       .catch(e => this.log(`[audit] result row failed: ${(e as Error).message}`));
     return r;
+  }
+
+  /**
+   * A staff invite of a number on The Network's waitlist: they already gave a name and an age and
+   * opted in, so the membership becomes active, the network member is created and the Network welcomes them.
+   */
+  private async admitWaitlisted(rt: NetworkRuntime, m: Membership, e164: string) {
+    const person = await this.people.getPerson(m.personId);
+    const age = await this.accounts.lowestAge(e164, person);
+    const active: Membership = { ...m, state: "active" };
+    await this.people.putMembership(active);
+    if (age === undefined) return; // never: the waitlist comes after the age check
+    await this.createMember(rt, active, { age, firstName: m.firstName ?? "there" });
+    await rt.unitOfWork(n => { n.welcomeJoined(active.memberId as MemberId); });
+  }
+
+  // ------------------------------------------------------------------ soft approval and phone changes
+  /** The flags staff have not decided on this app, oldest first, by member id (never the phone). */
+  async openFlags(rt: NetworkRuntime) {
+    const out = [];
+    for (const f of await this.people.openFlags(rt.app.id)) {
+      const m = await this.people.getMembership(f.personId, f.app);
+      if (!m || m.state === "removed") continue;
+      out.push({ memberId: m.memberId, state: m.state, reasons: f.reasons, flaggedAt: new Date(f.flaggedAt).toISOString() });
+    }
+    return out;
+  }
+
+  /** Staff decide a flag (POST /flags/:memberId): "clear" lets the Network match the member; "keep" keeps them out. Audited. */
+  async decideFlag(user: StaffUser, rt: NetworkRuntime, memberId: MemberId, decision: "clear" | "keep"): Promise<ActionResult> {
+    return this.audited(rt, user, { type: "member", id: memberId }, { safety: "flag", decision }, async () => {
+      const personId = await this.personOfMember(rt, memberId) ?? (await this.memberPerson(rt.app.id, memberId));
+      const f = personId ? await this.accounts.decideFlag(rt.app.id, personId, decision, user.id) : undefined;
+      if (!f) return { ok: false, reason: "no_open_flag" };
+      if (decision === "clear") await rt.scoped(tx => tx`update network.members set flagged = false where app_id = ${rt.app.id} and id = ${memberId}`);
+      return { ok: true };
+    });
+  }
+
+  /** The person of a membership by its member id (also memberships with no network member yet). */
+  private async memberPerson(app: AppId, memberId: string): Promise<string | undefined> {
+    const [r] = await this.sql`select person_id from platform.memberships where app_id = ${app} and member_id = ${memberId}`;
+    return (r?.person_id as string | undefined) ?? undefined;
+  }
+
+  /** A person id, or a member id of this app: the person. */
+  private async personOf(rt: NetworkRuntime, id: string): Promise<string | undefined> {
+    if (UUID.test(id)) return (await this.people.getPerson(id))?.deletedAt === null ? id : undefined;
+    return (await this.personOfMember(rt, id)) ?? (await this.memberPerson(rt.app.id, id));
+  }
+
+  /** The person's current verified number (one per person today). */
+  private async phoneOfPerson(personId: string): Promise<string | undefined> {
+    for (const h of await this.people.phoneHashesOf(personId)) {
+      const ph = await this.people.findPhoneByHash(h);
+      if (ph && ph.personId === personId) return ph.e164;
+    }
+    return undefined;
+  }
+
+  /**
+   * Staff start a phone change (F25; admin or support on every app): a code goes to the new number
+   * (the platform OTP, its limits too). Nothing moves until POST .../confirm with that code.
+   */
+  async phoneChangeStart(user: StaffUser, rt: NetworkRuntime, id: string, newE164: string): Promise<ActionResult> {
+    return this.audited(rt, user, { type: "member", id }, { safety: "phone_change", step: "start" }, async () => {
+      const personId = await this.personOf(rt, id);
+      if (!personId || !(await this.phoneOfPerson(personId))) return { ok: false, reason: "no_person" };
+      if (await this.people.findPhone(newE164)) return { ok: false, reason: "number_in_use" };
+      if (await this.accounts.banned(newE164)) return { ok: false, reason: "not_allowed" };
+      const live = (await this.people.memberships(personId)).find(m => m.state !== "removed");
+      const app = this.apps[live?.app ?? rt.app.id];
+      const sent = await this.publicApi.otp.start(app, newE164, `staff:${user.id}`);
+      if (!sent.ok) return { ok: false, reason: "rate_limited" };
+      await this.people.putPhoneChange({ id: randomUUID(), personId, app: app.id, newE164, requestedBy: user.id, requestedAt: this.clock.now(), confirmedAt: null });
+      return { ok: true };
+    });
+  }
+
+  /**
+   * The code from the new number: the person moves to it (phone, consent history, age floor, keyed
+   * hash, OAuth grants). The old phone identity is retired and its sessions end. Audited.
+   */
+  async phoneChangeConfirm(user: StaffUser, rt: NetworkRuntime, id: string, code: string): Promise<ActionResult> {
+    return this.audited(rt, user, { type: "member", id }, { safety: "phone_change", step: "confirm" }, async () => {
+      const personId = await this.personOf(rt, id);
+      const change = personId ? await this.people.pendingPhoneChange(personId) : undefined;
+      if (!personId || !change || this.clock.now() - change.requestedAt > PHONE_CHANGE_MS) return { ok: false, reason: "no_pending_change" };
+      if (!(await this.publicApi.otp.verify(change.app, change.newE164, code, `staff:${user.id}`))) return { ok: false, reason: "invalid_code" };
+      const old = await this.phoneOfPerson(personId);
+      if (!old) return { ok: false, reason: "no_person" };
+      const r = await this.accounts.movePhone(personId, change.id, old, change.newE164);
+      if (r !== "ok") return { ok: false, reason: r };
+      await this.assistants?.rekeyPhone(old, change.newE164).catch(e => this.log(`[phone] grants not moved: ${(e as Error).message}`));
+      for (const x of this.runtimes.values()) await x.identities();
+      return { ok: true };
+    });
   }
 
   // ------------------------------------------------------------------ verification, photos, reports, holds and bans
@@ -1114,7 +1366,7 @@ export class NetworkService implements RuntimeHost {
     const members: { rt: NetworkRuntime; memberId: MemberId }[] = [];
     for (const m of await this.people.memberships(personId)) {
       const r = this.runtimeFor(m.app);
-      if (r && m.state !== "removed" && m.state !== "invited") members.push({ rt: r, memberId: m.memberId as MemberId });
+      if (r && m.state !== "removed" && m.state !== "invited" && m.state !== "waitlist") members.push({ rt: r, memberId: m.memberId as MemberId });
     }
     if (!members.some(x => x.rt === rt && x.memberId === memberId)) members.push({ rt, memberId });
     return { personId, members };
@@ -1287,6 +1539,12 @@ export class NetworkService implements RuntimeHost {
         const ok = await this.accounts.clearHold(e164, b.decision);
         return result(ok ? { ok: true } : { ok: false, reason: "not_held" });
       }
+      if (req.method === "GET" && path === "/flags") {
+        // Soft approval: the joins a rule flagged, waiting for staff (PRD 28.3).
+        const no = need(["safety"]); if (no) return no;
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_flags", mode: "real", ok: true, app: rt.app.id });
+        return json({ ok: true, network: rt.id, flags: await this.openFlags(rt) });
+      }
       if (req.method === "GET" && path === "/safety/reports") {
         const no = need(["safety"]); if (no) return no;
         await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_safety_reports", mode: "real", ok: true, app: rt.app.id });
@@ -1339,6 +1597,30 @@ export class NetworkService implements RuntimeHost {
         if (path === "/safety/hold") return result(await this.hold(user, rt, b.memberId, b.note, b.reportId));
         if (b.by !== "phone" && b.by !== "person") return json({ ok: false, error: "by_required" }, 400);
         return result(await this.ban(user, rt, b.memberId, b.by, b.note, b.reportId));
+      }
+      const flagPath = path.match(/^\/flags\/([^/]+)$/);
+      if (flagPath) {
+        const no = need(["safety"]); if (no) return no;
+        let id: string;
+        try { id = decodeURIComponent(flagPath[1]!); } catch { return json({ ok: false, error: "invalid_id" }, 400); }
+        const b = await body(req) as Record<string, any> | undefined;
+        if ((b?.decision !== "clear" && b?.decision !== "keep") || id.length > 200) return json({ ok: false, error: "decision_required" }, 400);
+        return result(await this.decideFlag(user, rt, id, b.decision));
+      }
+      const phonePath = path.match(/^\/people\/([^/]+)\/phone-change(\/confirm)?$/);
+      if (phonePath) {
+        // A phone change moves a person on every app: admin or support for every app (admin@*, support@*).
+        if (!hasEverywhere(user, "admin") && !hasEverywhere(user, "support")) return json({ ok: false, code: "forbidden", error: "needs role admin@* or support@*" }, 403);
+        let id: string;
+        try { id = decodeURIComponent(phonePath[1]!); } catch { return json({ ok: false, error: "invalid_id" }, 400); }
+        const b = await body(req) as Record<string, any> | undefined;
+        if (id.length > 200) return json({ ok: false, error: "invalid_id" }, 400);
+        if (phonePath[2]) {
+          const code = typeof b?.code === "string" ? b.code.trim() : "";
+          return /^\d{4,10}$/.test(code) ? result(await this.phoneChangeConfirm(user, rt, id, code)) : json({ ok: false, error: "code_required" }, 400);
+        }
+        const e164 = normalizePhone(b?.newPhone);
+        return e164 ? result(await this.phoneChangeStart(user, rt, id, e164)) : json({ ok: false, error: "newPhone_required" }, 400);
       }
       const verifyPath = path.match(/^\/members\/([^/]+)\/verify$/);
       if (verifyPath) {

@@ -157,6 +157,7 @@ function publicInfo(a: McpApp, surface: Surface) {
 const NEXT: Record<PublicStatus, (a: McpApp) => string> = {
   not_joined: a => `Not joined. To join, open ${a.links.join} and sign up there.`,
   invited: a => `Invited. To accept, open ${a.links.join} or reply to the invitation text.`,
+  waitlisted: a => `On the waitlist: ${a.name} is invite-only for now. A member or the team can invite the person.`,
   onboarding: () => "Joining is not finished. Reply to the last text from the agent to finish.",
   active: () => "Active. Nothing to do. The agent texts when it has something worth the person's time.",
   stopped: a => `Messages are stopped. To start again, text START to the line or open ${a.links.settings}.`,

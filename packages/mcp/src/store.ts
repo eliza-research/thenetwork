@@ -129,6 +129,8 @@ export interface OAuthStore {
    * tokens, and its sign-in requests): the person left the app or deleted everything. Returns the grants deleted.
    */
   forgetPhone(phoneKey: string, e164: string, app?: McpAppId): Promise<number>;
+  /** A person moved to a new number (F25): every grant of the old number's key now names the new one. Returns the grants moved. */
+  rekeyPhone(oldKey: string, newKey: string): Promise<number>;
   /**
    * Delete expired requests, codes, tokens and rate-limit windows; grants revoked or expired more than
    * GRANT_KEEP_MS ago; and registered clients older than CLIENT_UNUSED_MS that never got a grant.
@@ -219,6 +221,12 @@ export class MemoryOAuthStore implements OAuthStore {
     let n = 0;
     for (const [k, g] of this.grants) if (g.phoneKey === phoneKey && (!app || g.app === app)) { this.dropGrant(k); n++; }
     for (const [k, r] of this.requests) if (r.e164 === e164 && (!app || r.app === app)) this.requests.delete(k);
+    return n;
+  }
+
+  async rekeyPhone(oldKey: string, newKey: string) {
+    let n = 0;
+    for (const g of this.grants.values()) if (g.phoneKey === oldKey) { g.phoneKey = newKey; n++; }
     return n;
   }
 
