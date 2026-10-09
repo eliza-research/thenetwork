@@ -128,11 +128,13 @@ export class NetworkRuntime {
       matchingEnabled: false,
       // The app's pack and the engine config it was tuned with (options may override single fields).
       ...(w.pack ? { pack: w.pack } : {}), ...(w.hooks ? { hooks: w.hooks } : {}), ...(w.plansConfig ? { plansConfig: w.plansConfig } : {}), ...(w.plans !== undefined ? { plans: w.plans } : {}),
+      // The app's review SLA (slop 6 h, peon 24 h, the others 12 h): the same numbers the console counts misses with.
+      reviewSlaHours: w.reviewSlaHours,
       ...o.network,
       ...(w.engine || o.network?.engine ? { engine: { ...w.engine, ...o.network?.engine } } : {}),
       app: o.app, review: "human", store: this.store,
-      onEngineRun: (log, proposals, at) => {
-        const s = summarizeRun(log, proposals, { at, city: this.city as City, wallMs: Math.round(log.timingsMs.total ?? 0) });
+      onEngineRun: (log, proposals, at, run) => {
+        const s = summarizeRun(log, proposals, { at, city: this.city as City, wallMs: Math.round(log.timingsMs.total ?? 0), shadow: run?.shadow });
         this.unit.runs.push({ id: this.app.id === "ntwrk" ? s.id : `${this.app.id}.${s.id}`, app_id: this.app.id, at: new Date(at), city: this.city, engine_version: s.engineVersion, proposals: s.proposals, wall_ms: s.wallMs, summary: s });
       },
       onLedger: e => { this.capital.onLedger(e); this.unit.capital.push(e); },
@@ -327,7 +329,7 @@ export class NetworkRuntime {
       await tx`delete from network.feedback where app_id = ${app} and (from_id = ${id} or about_id = ${id})`;
       // Every event that names them, by the same keys the writer reads (membersOf): actor, object and the payload.
       await tx`delete from network.events where app_id = ${app} and (actor_id = ${id} or object_id = ${id}
-        or payload->>'memberId' = ${id} or payload->>'from' = ${id} or payload->>'newMemberId' = ${id} or payload->>'out' = ${id} or payload->>'in' = ${id}
+        or payload->>'memberId' = ${id} or payload->>'from' = ${id} or payload->>'newMemberId' = ${id} or payload->>'out' = ${id} or payload->>'in' = ${id} or payload->>'target' = ${id}
         or coalesce(payload->'participants', '[]'::jsonb) @> to_jsonb(${id}::text) or coalesce(payload->'members', '[]'::jsonb) @> to_jsonb(${id}::text)
         or jsonb_exists(coalesce(payload->'attendance', '{}'::jsonb), ${id}))`;
       await tx`delete from network.capital_events where app_id = ${app} and (member_id = ${id} or position(${`"${id}"`} in event::text) > 0)`;
@@ -410,12 +412,12 @@ export class NetworkRuntime {
   }
 
   /** The review queue, oldest first, from the newest stored state. Read-only: nothing is saved (audit network-service-19). */
-  reviewQueue() {
+  reviewQueue(o: { drafts?: boolean } = {}) {
     return this.store.withLock(async () => {
       const s = await this.store.load();
       if (s) this.net.importState(s);
       this.unit = newUnit();
-      return this.net.reviewQueue();
+      return this.net.reviewQueue(o);
     });
   }
 
@@ -441,13 +443,16 @@ export class NetworkRuntime {
     ]);
     const state = await this.loadState();
     const now = this.clock.now();
-    const review = state?.opps.filter(o => o.stage === "review" && o.review) ?? [];
+    // Shadow items are labels, not sends: they are counted apart from the review backlog.
+    const inReview = state?.opps.filter(o => o.stage === "review" && o.review) ?? [];
+    const review = inReview.filter(o => !o.shadow);
     const byStatus = Object.fromEntries((statuses as any[]).map(r => [r.status, r.n]));
     const channel = Object.fromEntries(Object.entries(byStatus).filter(([s]) => /^(refused|suppressed|parked|blocked|failed|held|expired)/.test(s)));
     return {
       ok: true, instance: this.host.instance, network: this.id, app: this.app.id, city: this.city, channel: this.adapter.name, reviewMode: "human" as const,
       matchingAllowed: this.matchingAllowed,
       matchingEnabled: this.matchingAllowed && (state?.matchingEnabled ?? this.net.matchingEnabled()),
+      shadow: { enabled: state?.shadow ?? this.net.shadowEnabled(), waiting: inReview.length - review.length },
       lastTick: { thisInstance: this.lastTick ?? null, stored: state?.lastTick || null, savedAt: saved ? new Date((saved as any).saved_at).getTime() : null },
       lockHolder: holder ? { pid: holder.pid, application: holder.application_name } : null,
       backlog: {

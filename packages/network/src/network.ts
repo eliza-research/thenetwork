@@ -52,9 +52,13 @@ import type { NetworkStore } from "./store.ts";
 import { HOLD, Trust, type TrustEvent, type TrustLevel, type TrustState } from "./trust.ts";
 import type { AppHooks, AppTag, HookOpp } from "./apphooks.ts";
 import { checkInReport, reportKindOf, URGENT_REPORTS, type ReportKind, type SafetyReport } from "./reports.ts";
+import { appearanceLeak } from "@thenetwork/engine/src/packs/slop/appearance.ts";
 
-/** Where an opportunity came from. "planner": a plan from the engine planner, or a crew session (Opp.crewId). */
-export type Origin = "engine" | "request" | "plans" | "planner" | "second_encounter" | "newcomer_welcome" | "player";
+/**
+ * Where an opportunity came from. "planner": a plan from the engine planner, or a crew session (Opp.crewId).
+ * "human_composed": a reviewer wrote it in the console (compose()); it waits for review like any other item.
+ */
+export type Origin = "engine" | "request" | "plans" | "planner" | "second_encounter" | "newcomer_welcome" | "player" | "human_composed";
 
 /**
  * Review gate (PRD 32.8). "human" (the default): a person approves each opportunity before anyone
@@ -78,6 +82,19 @@ export interface ReviewItem {
   oppId: string; proposal: Proposal; origin: Origin | "fraud"; queuedAt: number; deadline: number; rerolls: number;
   kind?: "opportunity" | "fraud";
   fraud?: { flag: GamingFlag["kind"]; members: MemberId[]; evidence: Record<string, number> };
+  /** A shadow item (matching off, shadow on): a reviewer's approve or reject is a label only. Nobody is ever contacted. */
+  shadow?: true;
+  /**
+   * A blind second review of an item another reviewer already decided (doubleReviewShare). The first
+   * decision is not shown; the second is stored and changes nothing. `firstReviewer` may not take it.
+   */
+  second?: { firstReviewer: string };
+  /**
+   * The texts the app's pack would send (apps with a probe hook): the anonymous probe per participant
+   * (time options are added at send time) and the booked-plan reveal with placeholders for the place
+   * and the time. A reviewer's probe edit replaces that participant's probe.
+   */
+  drafts?: { probe: Record<MemberId, string>; reveal?: Record<MemberId, string>; edited?: MemberId[] };
 }
 /** A gaming flag in the human review queue (NC integration ask 4). */
 export interface FraudItem {
@@ -97,8 +114,18 @@ export interface ReviewOptions {
   explanations?: Record<MemberId, string>;
   /** "edit": a new objective (leak-checked). */
   objective?: string;
+  /**
+   * "edit": a new probe text per participant, sent instead of the pack's own probe (apps with a probe
+   * hook). Each is leak-checked for its recipient, and for slop checked for appearance words.
+   */
+  probes?: Record<MemberId, string>;
   /** "reroll": the participant to swap out. */
   swapOut?: MemberId;
+}
+/** A reviewer's own opportunity (compose): who, what for, and optionally what each person is told and their probe. */
+export interface ComposeInput {
+  participants: MemberId[]; objective: string; category?: Category;
+  explanations?: Record<MemberId, string>; probes?: Record<MemberId, string>; reviewer: string;
 }
 /** One step of a safety case. Never the member's words: only what happened and the points. */
 export interface SafetyCaseEvent { at: number; kind: string; points: number; by?: MemberId }
@@ -109,6 +136,8 @@ export interface SafetyCase {
   closedAt?: number; closedBy?: string;
 }
 const REVIEW_DECISIONS = new Set<string>(["approve", "reject", "edit", "reroll"]);
+/** A blind second review waits this long for another reviewer, then drops out of the queue. */
+const SECOND_REVIEW_DAYS = 7;
 /** The reviewer name logged for "auto" approvals. */
 export const SIM_AUTO_REVIEWER = "sim_auto_reviewer";
 
@@ -151,10 +180,19 @@ export interface NetworkOptions {
   onboardingRequests?: boolean;
   /** Review gate (default "human"; "auto" only in the simulator). */
   review?: ReviewMode;
-  /** Review SLA in hours (default 12; same-day opportunities get 1 hour). A queued item past it expires unsent. */
+  /** Review SLA in hours (default 12; same-day opportunities get 1 hour). A queued item past it expires unsent. The service sets it per app (packs.ts). */
   reviewSlaHours?: number;
-  /** Called with every engine run (observatory capture). */
-  onEngineRun?: (log: MatchingRunLog, proposals: EngineProposal[], at: number) => void;
+  /**
+   * Shadow mode (default false; the stored switch wins). While matching is off, the daily engine run
+   * still happens and its proposals wait in review as shadow items: a reviewer labels each one
+   * (approve or reject) and nobody is contacted. The labels give the precision baseline the launch
+   * gate needs (PRD 34.6, 37.3).
+   */
+  shadow?: boolean;
+  /** Share of decided review items that get a blind second review (default 0.1; 0 turns it off). The second decision changes nothing. */
+  doubleReviewShare?: number;
+  /** Called with every engine run (observatory capture). `shadow`: a shadow run (nothing it proposes is sent). */
+  onEngineRun?: (log: MatchingRunLog, proposals: EngineProposal[], at: number, o?: { shadow?: boolean }) => void;
   /**
    * Proactive matching in NYC (default true). Off: no engine run and no new opportunities the
    * Network composes; requests are acknowledged and wait. Items already approved continue.
@@ -327,7 +365,13 @@ interface Opp {
     secondsSpent?: number; edits?: string[]; rerolls?: { at: number; out?: MemberId; in?: MemberId; reviewer: string; note?: string }[];
     /** Approved, but a gate failed on the re-check, so nobody was contacted. */
     invalidated?: string;
+    /** A blind second review (doubleReviewShare): waiting, or decided (stored, no effect). */
+    second?: { status: "pending" | "done"; firstReviewer: string; at: number; decision?: "approve" | "reject"; reviewer?: string; reason?: string; decidedAt?: number };
   };
+  /** A shadow item (shadowRun): reviewed as a label only, never sent, never counted as busy. */
+  shadow?: boolean;
+  /** Probe texts a reviewer wrote (edit), sent instead of the pack's probe. */
+  probeText?: Record<MemberId, string>;
   /** Engine proposals only: what the gates need to run again at approval. */
   anchor?: EngineProposal["anchor"]; roles?: EngineProposal["roles"];
   /** The stage it was in when it closed, and why (console). */
@@ -496,6 +540,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     requests: 0, requestsFulfilled: 0, requestsNone: 0, requestRetries: 0, plansAnswered: 0, abuse: 0, holds: 0, watches: 0,
     invitesSent: 0, inviteesJoined: 0, growthAsks: 0, interviews: 0, engineRuns: 0, engineProposals: 0, gatedOut: 0,
     reviewQueued: 0, reviewApproved: 0, reviewRejected: 0, reviewExpired: 0, reviewInvalidated: 0, reviewEdited: 0, reviewRerolled: 0,
+    shadowRuns: 0, shadowQueued: 0, shadowApproved: 0, shadowRejected: 0, secondReviews: 0, secondAgreed: 0, composed: 0,
     joinDeclined: 0, withdrawnWant: 0, deferred: 0, sendRefused: 0, guardBlocked: 0, onlyWhenAsked: 0, reengagements: 0,
     asksSent: 0, asksAnswered: 0,
     probesWithOptions: 0, optionsNoneFit: 0, noCommonTime: 0, bookedCancelled: 0, calendarOptIns: 0, weeklyOptIns: 0, checkinsSent: 0,
@@ -532,6 +577,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       minScore: opts.minScore ?? 0, minKnowledge: opts.minKnowledge ?? 2, minWantMet: opts.minWantMet ?? 0.8, minResponsiveness: opts.minResponsiveness ?? 0.6, runHour: opts.runHour ?? 9, growth: opts.growth ?? true,
       invitesPerMonth: opts.invitesPerMonth ?? 3, maxGrowthAsksPerDay: opts.maxGrowthAsksPerDay ?? 8, onboardingRequests: opts.onboardingRequests ?? false,
       review: opts.review ?? "human", reviewSlaHours: opts.reviewSlaHours ?? 12, matchingEnabled: opts.matchingEnabled ?? true,
+      shadow: opts.shadow ?? false, doubleReviewShare: Math.min(1, Math.max(0, opts.doubleReviewShare ?? 0.1)),
       engine: opts.engine, onEngineRun: opts.onEngineRun, store: opts.store, onLedger: opts.onLedger, capital: opts.capital, plans: opts.plans ?? true,
       understand: opts.understand, onAgeStated: opts.onAgeStated, engineLLM: opts.engineLLM, pack: opts.pack, hooks: opts.hooks,
     };
@@ -1596,7 +1642,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.opts.review = mode;
     this.ctx?.log("review_mode", { mode, actor: actor ?? null });
     // The simulated reviewer never decides fraud items: confirming gaming needs a person (and the truth).
-    if (mode === "auto" && this.ctx) for (const item of this.reviewQueue()) if (item.kind !== "fraud") this.review(item.oppId, "approve", { reviewer: SIM_AUTO_REVIEWER });
+    if (mode === "auto" && this.ctx) for (const item of this.reviewQueue()) if (item.kind !== "fraud" && !item.shadow && !item.second) this.review(item.oppId, "approve", { reviewer: SIM_AUTO_REVIEWER });
   }
 
   /** Is proactive matching on (the NYC switch)? */
@@ -1612,12 +1658,62 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.ctx?.log("matching_switch", { on, actor });
   }
 
-  /** Items waiting for a reviewer, oldest first. */
-  reviewQueue(): ReviewItem[] {
-    return [...this.opps.values()].filter(o => o.stage === "review" && o.review)
-      .map((o): ReviewItem => ({ oppId: o.id, proposal: this.toProposal(o), origin: o.origin, queuedAt: o.review!.queuedAt, deadline: o.review!.deadline, rerolls: o.review!.rerolls?.length ?? 0 }))
-      .concat(this.fraud.filter(x => x.status === "review").map(x => this.fraudItem(x)))
+  /** Is shadow mode on (the daily engine run queues shadow items while matching is off)? */
+  shadowEnabled(): boolean { return this.opts.shadow; }
+
+  /** The admin switch for shadow mode (stored with the state). It does nothing while matching is on. */
+  setShadowEnabled(on: boolean, actor: string) {
+    this.opts.shadow = on;
+    this.ctx?.log("shadow_switch", { on, actor });
+  }
+
+  /**
+   * Items waiting for a reviewer, oldest first: opportunities (shadow items marked), fraud flags, and
+   * blind second reviews. With `drafts`, items of an app with a probe hook carry the texts the pack
+   * would send (the pack input is built once for the whole queue).
+   */
+  reviewQueue(o: { drafts?: boolean } = {}): ReviewItem[] {
+    const input = o.drafts && this.opts.hooks?.probe ? this.inputOnce() : undefined;
+    const now = this.now();
+    const items = [...this.opps.values()].filter(x => x.stage === "review" && x.review)
+      .map((x): ReviewItem => ({
+        oppId: x.id, proposal: this.toProposal(x), origin: x.origin, queuedAt: x.review!.queuedAt, deadline: x.review!.deadline, rerolls: x.review!.rerolls?.length ?? 0,
+        ...(x.shadow ? { shadow: true as const } : {}), ...(input ? this.draftsOf(x, input) : {}),
+      }));
+    // Blind second reviews: the item as it was decided, without the first decision. A week to take one.
+    for (const x of this.opps.values()) {
+      const sec = x.review?.second;
+      if (!sec || sec.status !== "pending" || now - sec.at > SECOND_REVIEW_DAYS * DAY) continue;
+      items.push({
+        oppId: x.id, proposal: this.toProposal(x), origin: x.origin, queuedAt: sec.at, deadline: sec.at + SECOND_REVIEW_DAYS * DAY, rerolls: 0,
+        second: { firstReviewer: sec.firstReviewer }, ...(x.shadow ? { shadow: true as const } : {}), ...(input ? this.draftsOf(x, input) : {}),
+      });
+    }
+    return items.concat(this.fraud.filter(x => x.status === "review").map(x => this.fraudItem(x)))
       .sort((a, b) => a.queuedAt - b.queuedAt);
+  }
+
+  /**
+   * What the pack would send for one opportunity (PRD 32.8, F27: the reviewer sees the real text):
+   * the probe per participant (a reviewer's edit when there is one) and the booked-plan reveal.
+   * Time options and the place are filled in at send time. Requests are not probed this way.
+   */
+  private draftsOf(o: Opp, input: () => EngineInput): Pick<ReviewItem, "drafts"> {
+    const hooks = this.opts.hooks;
+    if (!hooks?.probe || o.requester) return {};
+    const when = o.category === "hobby" || o.category === "events" ? "this weekend" : "this week";
+    const probe: Record<MemberId, string> = {}, reveal: Record<MemberId, string> = {};
+    const hop = this.hookOpp(o);
+    for (const id of o.participants) {
+      const text = o.probeText?.[id] ?? hooks.probe(hop, id, { when, input });
+      if (text) probe[id] = text;
+      const others = o.participants.filter(x => x !== id).map(x => this.members.get(x)?.display ?? x);
+      const r = hooks.booked?.(hop, id, { others, where: "[the place]", when: "[the time]" });
+      if (r) reveal[id] = r;
+    }
+    if (!Object.keys(probe).length) return {};
+    const edited = Object.keys(o.probeText ?? {});
+    return { drafts: { probe, ...(Object.keys(reveal).length ? { reveal } : {}), ...(edited.length ? { edited } : {}) } };
   }
 
   /** A reviewer's decision. True when it was applied; decide() also says why not. */
@@ -1638,9 +1734,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     const fi = this.fraud.find(x => x.id === oppId);
     if (fi) return this.decideFraud(fi, decision, opts);
     const o = this.opps.get(oppId);
+    if (o && o.stage !== "review" && o.review?.second?.status === "pending") return this.decideSecond(o, decision, opts);
     if (!o || o.stage !== "review" || !o.review) return { ok: false, reason: "not_in_review" };
     const refuse = (reason: string): ActionResult => { this.ctx.log("review_refused", { oppId, decision, reason }); return { ok: false, reason }; };
     if (!REVIEW_DECISIONS.has(decision)) return refuse("unknown_decision");
+    // A shadow item takes a label (approve or reject) and nothing else: there is nothing to send, so nothing to edit or swap.
+    if (o.shadow && decision !== "approve" && decision !== "reject") return refuse("shadow_label_only");
     const blocked = this.reviewBlock(oppId, decision, opts) ?? (decision === "edit" ? this.editBlock(o, opts) : undefined);
     if (blocked) return refuse(blocked);
     const now = this.now();
@@ -1657,12 +1756,20 @@ export class ConsentNetwork implements NetworkUnderTest {
       edited = [];
       for (const [id, text] of Object.entries(opts.explanations ?? {})) { o.explanations[id] = text.trim(); edited.push(`explanation:${id}`); }
       if (opts.objective !== undefined) { o.objective = opts.objective.trim(); edited.push("objective"); }
+      for (const [id, text] of Object.entries(opts.probes ?? {})) { o.probeText = { ...o.probeText, [id]: text.trim() }; edited.push(`probe:${id}`); }
       o.review.edits = [...(o.review.edits ?? []), ...edited];
       this.counters.reviewEdited++;
     }
     const stored = decision === "reject" ? "reject" : "approve";
     Object.assign(o.review, { decision: stored, reason: opts.reason, note: opts.note, reviewer, decidedAt: now });
-    this.ctx.log("review_decision", { ...logged, decision: stored, ...(edited ? { edited } : {}) });
+    this.ctx.log("review_decision", { ...logged, decision: stored, ...(edited ? { edited } : {}), ...(o.shadow ? { shadow: true } : {}) });
+    this.sampleSecond(o, reviewer, now);
+    if (o.shadow) {
+      // A label only: the item closes and nobody is contacted. A reject does not hold the pair back (nothing was proposed).
+      if (stored === "approve") this.counters.shadowApproved++; else this.counters.shadowRejected++;
+      this.close(o, `shadow ${stored === "approve" ? "approved" : "rejected"}`);
+      return { ok: true };
+    }
     if (stored === "approve") {
       const why = this.approvalCheck(o);
       if (why) {
@@ -1690,6 +1797,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     const o = this.opps.get(oppId);
     if (!o || o.stage !== "review" || !o.review) return "not_in_review";
     if (opts.reason === "other" && !opts.note?.trim()) return "note_required";
+    // A shadow label sends nothing: matching stays off, and a minor is never in a pack's input anyway.
+    if (o.shadow) return undefined;
     if (decision === "approve" || decision === "edit") {
       for (const id of o.participants) {
         if (this.declinedIds.has(id)) return "participant_declined";
@@ -1703,13 +1812,24 @@ export class ConsentNetwork implements NetworkUnderTest {
     return undefined;
   }
 
-  /** An edit is refused when it names someone outside the opportunity, or a text would leak a private fact or contact details. */
+  /**
+   * An edit is refused when it names someone outside the opportunity, or a text would leak a private
+   * fact or contact details. A probe edit needs an app with a probe hook; on slop it is also refused
+   * when it speaks of anyone's looks (appearanceLeak: ratings and scores are never shared).
+   */
   private editBlock(o: Opp, opts: ReviewOptions): string | undefined {
     const ex = Object.entries(opts.explanations ?? {});
-    if (!ex.length && opts.objective === undefined) return "nothing_to_edit";
+    const probes = Object.entries(opts.probes ?? {});
+    if (!ex.length && !probes.length && opts.objective === undefined) return "nothing_to_edit";
     for (const [id, text] of ex) {
       if (!o.participants.includes(id)) return "not_a_participant";
       if (!text.trim() || this.guardCheck(text, id).length) return "edit_leak";
+    }
+    if (probes.length && (!this.opts.hooks?.probe || o.requester)) return "no_probe_hook";
+    for (const [id, text] of probes) {
+      if (!o.participants.includes(id)) return "not_a_participant";
+      if (!text.trim() || text.length > 600 || this.guardCheck(text, id).length || this.probeNames(text, o.participants.filter(x => x !== id))) return "edit_leak";
+      if (this.app.id === "slop" && appearanceLeak(text)) return "appearance_leak";
     }
     if (opts.objective !== undefined && (!opts.objective.trim() || o.participants.some(id => this.guardCheck(opts.objective!, id).length))) return "edit_leak";
     return undefined;
@@ -1789,9 +1909,94 @@ export class ConsentNetwork implements NetworkUnderTest {
     o.stage = "review";
     o.review = { queuedAt: now, deadline: now + (o.sameDay ? 1 : this.opts.reviewSlaHours) * HOUR };
     for (const p of o.participants) o.status.set(p, "queued");
-    this.counters.reviewQueued++;
-    this.ctx.log("review_queued", { proposal: this.toProposal(o), origin: o.origin, deadline: o.review.deadline, runId: o.runId });
-    if (this.opts.review === "auto") this.review(o.id, "approve", { reviewer: SIM_AUTO_REVIEWER });
+    if (o.shadow) this.counters.shadowQueued++; else this.counters.reviewQueued++;
+    this.ctx.log("review_queued", { proposal: this.toProposal(o), origin: o.origin, deadline: o.review.deadline, runId: o.runId, ...(o.shadow ? { shadow: true } : {}) });
+    // The simulated reviewer never labels shadow items: a label is a person's judgment.
+    if (this.opts.review === "auto" && !o.shadow) this.review(o.id, "approve", { reviewer: SIM_AUTO_REVIEWER });
+  }
+
+  /**
+   * After a decision: a share of items (doubleReviewShare, a stable pick per item) waits for a blind
+   * second review by someone else. The simulated reviewer's decisions are not sampled.
+   */
+  private sampleSecond(o: Opp, reviewer: string, now: number) {
+    if (reviewer === SIM_AUTO_REVIEWER || o.review!.second || this.opts.doubleReviewShare <= 0) return;
+    if (seededTie(this.opts.seed, o.id, "second_review") >= this.opts.doubleReviewShare) return;
+    o.review!.second = { status: "pending", firstReviewer: reviewer, at: now };
+  }
+
+  /**
+   * A blind second review: approve (or edit) or reject, by anyone but the first reviewer. It is stored
+   * with the item and changes nothing: no one is contacted and the first decision stands.
+   */
+  private decideSecond(o: Opp, decision: ReviewDecision, opts: ReviewOptions): ActionResult {
+    const sec = o.review!.second!;
+    const reviewer = opts.reviewer ?? "reviewer";
+    const refuse = (reason: string): ActionResult => { this.ctx.log("review_refused", { oppId: o.id, decision, reason, second: true }); return { ok: false, reason }; };
+    if (decision === "reroll" || !REVIEW_DECISIONS.has(decision)) return refuse("not_applicable");
+    if (reviewer === sec.firstReviewer) return refuse("same_reviewer");
+    if (opts.reason === "other" && !opts.note?.trim()) return refuse("note_required");
+    const now = this.now(), d = decision === "reject" ? "reject" : "approve";
+    Object.assign(sec, { status: "done", decision: d, reviewer, reason: opts.reason, decidedAt: now });
+    const first = o.review!.decision === "reject" ? "reject" : o.review!.decision === "approve" ? "approve" : undefined;
+    this.counters.secondReviews++;
+    if (first === d) this.counters.secondAgreed++;
+    this.ctx.log("second_review", { oppId: o.id, decision: d, reviewer, reason: opts.reason ?? null, agreed: first === d });
+    return { ok: true };
+  }
+
+  /**
+   * A reviewer's own opportunity (PRD 35.2; the concierge prototype): the people, what for, and
+   * optionally what each is told and their probe. The same filters as any opportunity run first
+   * (minors, declined, unknown, opted out, holds and watch, blocks, busy, the caps and the outreach
+   * rules, and for dating the stated preferences both ways), then the texts' leak checks; then it waits for review like any other item. The
+   * reviewer of record is the composer; another reviewer should approve it.
+   */
+  compose(x: ComposeInput): ActionResult & { oppId?: string } {
+    const refuse = (reason: string) => { this.ctx.log("compose_refused", { reason, reviewer: x.reviewer, participants: [...x.participants] }); return { ok: false as const, reason }; };
+    const ids = [...new Set(x.participants)];
+    if (ids.length < 2 || ids.length !== x.participants.length || ids.length > 6) return refuse("bad_participants");
+    if (!this.opts.matchingEnabled) return refuse("matching_paused");
+    const category = x.category ?? [...this.allowedCategories][0]!;
+    if (!this.allowedCategories.has(category)) return refuse("category_not_allowed");
+    const objective = x.objective.trim();
+    if (!objective || objective.length > 300) return refuse("objective_required");
+    for (const id of ids) {
+      if (this.declinedIds.has(id)) return refuse("participant_declined");
+      const m = this.members.get(id);
+      if (!m) return refuse("unknown_member");
+      this.syncRecord(m);
+      const rec = this.snapshotCached().members.find(r => r.id === id)?.age;
+      if (m.minor || m.minorSignal || m.ageUnknown || m.ageConflict || m.minorReported || !validAge(rec) || isMinor(rec) || rec < this.app.minMatchAge) return refuse("participant_minor");
+      if (m.optedOut) return refuse("opted_out");
+      if (!this.trust.ok(id) || this.reportHeld(id)) return refuse("held");
+      if (!this.eligible(id)) return refuse(this.busy(id) ? "busy_elsewhere" : this.overBudget(m) ? "over_cap" : "not_eligible");
+    }
+    for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) if (this.blocked(ids[i]!, ids[j]!)) return refuse("blocked_pair");
+    // Dating: a pair, both opted in, and each one's stated preferences fit the other (the engine's own romance gate).
+    if (category === "romance") { const why = this.romanceGate(ids); if (why) return refuse(why); }
+    const explanations: Record<MemberId, string> = {};
+    for (const id of ids) {
+      const t = x.explanations?.[id]?.trim() || GOOD_FIT;
+      if (this.guardCheck(t, id).length || ids.some(other => other !== id && this.guardCheck(objective, other).length)) return refuse("edit_leak");
+      explanations[id] = t;
+    }
+    for (const [id, t] of Object.entries(x.probes ?? {})) {
+      if (!ids.includes(id)) return refuse("not_a_participant");
+      if (!this.opts.hooks?.probe) return refuse("no_probe_hook");
+      if (!t.trim() || t.length > 600 || this.guardCheck(t, id).length || this.probeNames(t, ids.filter(o => o !== id))) return refuse("edit_leak");
+      if (this.app.id === "slop" && appearanceLeak(t)) return refuse("appearance_leak");
+    }
+    const o = this.newOpp({
+      origin: "human_composed", kind: ids.length > 2 ? "group" : "intro", category, objective, detail: "", participants: ids, alternates: [], primed: [],
+      explanations, score: 0, generator: "human_composed", tags: [],
+    });
+    if (x.probes && Object.keys(x.probes).length) o.probeText = Object.fromEntries(Object.entries(x.probes).map(([k, v]) => [k, v.trim()]));
+    this.counters.composed++;
+    this.ctx.log("composed", { oppId: o.id, reviewer: x.reviewer, participants: ids, category });
+    this.submit(o);
+    if (o.stage !== "review") return { ok: false, reason: o.closedReason?.replace(/ /g, "_") ?? "not_queued" };
+    return { ok: true, oppId: o.id };
   }
 
   /** Start the consent flow for an approved opportunity: probe the member with the want first. */
@@ -1916,7 +2121,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     const others = o.participants.filter(x => x !== id);
     const timesOnly = o.requester === id && o.primed.has(id) && !!times;
     // The app's pack words the anonymous probe (slop: a date, an age band, a distance band); never for a requester's own confirm.
-    const packText = o.requester ? undefined : this.opts.hooks?.probe?.(this.hookOpp(o), id, { ...(times ? { times } : {}), when, input: this.inputOnce() });
+    // A reviewer's edit (or a composer's text) replaces it, with the time options added (F27: what the reviewer saw is what goes out).
+    const edited = o.requester ? undefined : o.probeText?.[id];
+    const packText = o.requester ? undefined : edited !== undefined ? `${edited}${times ? ` Times that could work: ${times}. Tell me which works, or no.` : ""}`
+      : this.opts.hooks?.probe?.(this.hookOpp(o), id, { ...(times ? { times } : {}), when, input: this.inputOnce() });
     const [body, fallback] = packText ? [packText, generic] : o.origin === "plans" && o.fixedVenue ? [copy.plansBuddyProbe(o.fixedVenue.name, when, area, times), generic]
       : timesOnly ? [copy.requestTimes(o.explanations[id] ?? "someone nearby", times!), copy.requestTimes(GOOD_FIT, times!)]
       : o.requester === id ? [copy.requestConfirm(o.explanations[id] ?? "someone nearby", when, times), copy.requestConfirm("it seemed like a good fit", when, times)]
@@ -3011,7 +3219,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       this.lastRunDay = p.day;
       this.trust.decay(now);
       // Matching off: no engine run and no new opportunities. Growth asks and re-engagement continue.
+      // With shadow on, the engine still runs and its proposals wait in review as labels only.
       if (this.opts.matchingEnabled) { this.retryRequests(now); await this.dailyRun(now); }
+      else if (this.opts.shadow) await this.shadowRun(now);
       this.localEncounters(now);
       this.reengage(now);
       this.queueFraudFlags(now);
@@ -3065,9 +3275,10 @@ export class ConsentNetwork implements NetworkUnderTest {
   private advance(o: Opp, now: number) {
     if (o.stage === "review" && o.review && now >= o.review.deadline) {
       // Missed its SLA: expires instead of being sent late (PRD 32.8).
+      // A shadow item that nobody labelled expires too, without counting as a missed SLA (nothing was waiting to be sent).
       o.review.decision = "expired"; o.review.decidedAt = now;
-      this.counters.reviewExpired++;
-      this.ctx.log("review_expired", { oppId: o.id });
+      if (!o.shadow) this.counters.reviewExpired++;
+      this.ctx.log("review_expired", { oppId: o.id, ...(o.shadow ? { shadow: true } : {}) });
       this.close(o, "review expired");
       return;
     }
@@ -3183,6 +3394,67 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     this.currentRunId = undefined;
     this.sendAsks(asks ?? [], now);
+  }
+
+  /**
+   * Shadow mode (PRD 34.6): the daily engine run while matching is off. Each proposal that passes the
+   * gates becomes a shadow review item, up to the daily cap; nothing is sent, no question is asked,
+   * and the exposure debt and pair history do not change. Shadow items never make anyone busy.
+   */
+  async shadowRun(now: number) {
+    const input = this.packInput(now);
+    const deps = { ...(this.opts.engineLLM ? { llm: this.opts.engineLLM } : {}), ...(this.opts.pack ? { pack: this.opts.pack } : {}) };
+    const { proposals, runLog } = await runEngine(input, this.effectiveEngineConfig(), deps);
+    this.counters.shadowRuns++;
+    this.currentRunId = this.sid(`shadow-${runLog.runId}-nyc`);
+    this.opts.onEngineRun?.(runLog, proposals, now, { shadow: true });
+    this.queueShadow(proposals, now);
+    this.currentRunId = undefined;
+  }
+
+  /** Engine proposals as shadow review items (shadowRun; tests pass their own). Returns how many were queued. */
+  queueShadow(proposals: EngineProposal[], now = this.now()): number {
+    let queued = 0;
+    for (const p of [...proposals].sort((a, b) => b.score - a.score || (a.id < b.id ? -1 : 1))) {
+      if (queued >= this.opts.maxNewPerDay) break;
+      if (this.gateReason(p)) continue;
+      if (this.fromProposal(p, "engine", now, true)?.stage === "review") queued++;
+    }
+    this.ctx.log("shadow_run", { proposals: proposals.length, queued, at: now });
+    return queued;
+  }
+
+  /**
+   * Members who count toward the launch gate (PRD 37.3): joined and active, a valid adult age, no
+   * minor signal of any kind, not opted out, not held; with `complete`, also the app's hard fields
+   * (slop: orientation, age range, distance and a zip or neighborhood) from what the Network learned.
+   */
+  committedAdults(complete?: (tags: readonly string[], area: string | undefined) => boolean): number {
+    let n = 0;
+    for (const m of this.members.values()) {
+      const rec = this.snapshotCached().members.find(r => r.id === m.id)?.age;
+      if (m.stage !== "active" || m.optedOut || m.account || m.minor || m.minorSignal || m.ageUnknown || m.ageConflict || m.minorReported || this.declinedIds.has(m.id)) continue;
+      if (!validAge(rec) || isMinor(rec) || !this.trust.ok(m.id)) continue;
+      if (complete && !complete((m.appTags ?? []).map(t => t.tag), m.area)) continue;
+      n++;
+    }
+    return n;
+  }
+
+  /**
+   * Shadow labels per New York day over the last `days` days (launch gate: at least one each day).
+   * Returns the number of days with at least one approve or reject on a shadow item.
+   */
+  shadowLabelDays(now: number, days = 14): { days: number; labels: number } {
+    const seen = new Set<string>();
+    let labels = 0;
+    for (const o of this.opps.values()) {
+      const r = o.review;
+      if (!o.shadow || !r?.decidedAt || (r.decision !== "approve" && r.decision !== "reject") || now - r.decidedAt > days * DAY) continue;
+      labels++;
+      seen.add(nyParts(r.decidedAt).day);
+    }
+    return { days: seen.size, labels };
   }
 
   /**
@@ -3379,7 +3651,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     return undefined;
   }
 
-  private fromProposal(p: Proposal, origin: Origin, now: number): Opp | undefined {
+  private fromProposal(p: Proposal, origin: Origin, now: number, shadow = false): Opp | undefined {
     if (p.participants.some(id => !this.eligible(id))) { if (origin === "player") this.ctx.log("proposal_skipped", { proposalId: p.id, reason: "participant unavailable" }); return undefined; }
     const tags = [...new Set(p.participants.flatMap(id => [...(this.knownProfiles().get(id)?.interests ?? [])]))].slice(0, 6);
     // Engine explanations may name the other person ("Sam K.: lives near..."); members only ever see
@@ -3399,6 +3671,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (o.anchor?.type === "event" && p.window) o.anchorWindow = { ...p.window };
     // Engine text can quote matchable facets: every member-facing reason is rebuilt from shareable facts (network-consent-11).
     if (origin === "engine") this.reexplain(o);
+    if (shadow) o.shadow = true;
     this.submit(o);
     return o;
   }
@@ -4076,7 +4349,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** In an open opportunity (other than `exceptOpp`) and not out of it. */
   busy(id: MemberId, exceptOpp?: string) {
     for (const o of this.openOpps()) {
-      if (o.id === exceptOpp || !o.participants.includes(id)) continue;
+      if (o.id === exceptOpp || o.shadow || !o.participants.includes(id)) continue;
       const st = o.status.get(id) ?? "";
       if (["unavailable", "no", "dropped"].includes(st)) continue;
       // A yes to a plan still waiting for quorum does not block other items (plans ask 6).
@@ -4176,7 +4449,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   exportState(): NetworkState {
     const askIndex = new Map(this.asks.map((a, i) => [a, i]));
     const state: NetworkState = {
-      version: NETWORK_STATE_VERSION, savedAt: this.ctx ? this.now() : this.lastTick, matchingEnabled: this.opts.matchingEnabled,
+      version: NETWORK_STATE_VERSION, savedAt: this.ctx ? this.now() : this.lastTick, matchingEnabled: this.opts.matchingEnabled, shadow: this.opts.shadow,
       members: [...this.members.values()].map(m => {
         const { learned, suggested, awaiting, ...rest } = m;
         const aw = awaiting && (() => { const { ask, ...a } = awaiting; return { ...a, ...(ask ? (askIndex.has(ask) ? { askIndex: askIndex.get(ask) } : { ask }) : {}) }; })();
@@ -4213,6 +4486,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (input?.version !== NETWORK_STATE_VERSION) throw new Error(`network state version ${input?.version} is not ${NETWORK_STATE_VERSION}`);
     const st = JSON.parse(JSON.stringify(input)) as NetworkState;
     this.opts.matchingEnabled = st.matchingEnabled;
+    this.opts.shadow = st.shadow ?? this.opts.shadow;
     this.asks = st.asks;
     this.members.clear(); this.fullNames.clear();
     for (const x of st.members) {
@@ -4346,6 +4620,8 @@ type OppJSON = Omit<Opp, "primed" | "status" | "contacted" | "reminded" | "feedb
 /** Everything a ConsentNetwork holds, as plain JSON (exportState / importState; store.ts keeps it). */
 export interface NetworkState {
   version: number; savedAt: number; matchingEnabled: boolean;
+  /** Shadow mode (added later; an older state keeps the option). */
+  shadow?: boolean;
   members: MemberJSON[]; opps: OppJSON[]; requests: Request[]; queued: Proposal[]; deferred: Deferred[];
   declinedIds: MemberId[]; blocks: string[]; avoid: string[]; declined: [string, number][]; again: [string, MemberId[]][];
   feedback: FeedbackRecord[]; interactions: InteractionRecord[]; asks: AskRecord[];
