@@ -132,7 +132,7 @@ describe("the probe photo (SLOP_PROBE_PHOTO)", () => {
   const ok: ProbePhotoFacts = {
     flag: true, app: "slop",
     recipient: { age: 31, verified: true, banned: false }, subject: { age: 29, verified: true, banned: false },
-    policy: { ok: true }, photo: { id: "ph_1", moderation: "approved" },
+    policy: { ok: true }, showConsent: true, photo: { id: "ph_1", moderation: "approved" },
     caption: "There's someone I think you might like to go on a date with: coffee, this week. Want me to check if they're up for it?", guard: [],
     scoreTags: ["appearance:overall=0.42"],
   };
@@ -141,7 +141,7 @@ describe("the probe photo (SLOP_PROBE_PHOTO)", () => {
     expect(probePhotoCheck(ok)).toEqual({ ok: true });
   });
 
-  test("never without the flag, never a minor or an unknown age, never banned or held, never unapproved", () => {
+  test("never without the flag, never a minor or an unknown age, never banned or held, never without consent to show it, never unapproved", () => {
     const no = (f: Partial<ProbePhotoFacts>) => { const r = probePhotoCheck({ ...ok, ...f }); return r.ok ? "ok" : r.reason; };
     expect(no({ flag: false })).toBe("flag_off");
     expect(no({ app: "peon" })).toBe("app");
@@ -151,6 +151,7 @@ describe("the probe photo (SLOP_PROBE_PHOTO)", () => {
     expect(no({ subject: { age: 29, verified: false, banned: false } })).toBe("subject_not_adult");
     expect(no({ subject: { age: 29, verified: true, banned: true } })).toBe("subject_banned");
     expect(no({ policy: { ok: false, reason: "held" } })).toBe("policy_held");
+    expect(no({ showConsent: false })).toBe("no_show_consent");
     expect(no({ photo: undefined })).toBe("no_photo");
     expect(no({ photo: { id: "ph_1", moderation: "pending" } })).toBe("not_approved");
     expect(no({ photo: { id: "ph_1", moderation: "rejected" } })).toBe("not_approved");

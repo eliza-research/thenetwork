@@ -72,6 +72,8 @@ const q = <T = any>(s: TemplateStringsArray, ...v: unknown[]) => svc.sql(s, ...v
 const staff = (token: string, path: string, init: RequestInit = {}) =>
   svc.fetch(new Request(`http://staff.local/apps/slop${path}`, { ...init, headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...(init.headers ?? {}) } }));
 
+let showConsent = false;
+
 beforeAll(async () => {
   if (skip) return;
   await devPgUp();
@@ -85,6 +87,8 @@ beforeAll(async () => {
     tokens: `admin@slop:${ADMIN},safety@slop:${SAFETY},reviewer@slop:${REVIEWER}`,
     photoStorage: new LocalDiskPhotoStorage(dir), photoRater: fakeRater,
     fetchMedia: async url => { fetched.push(url); return jpeg(fetched.length); },
+    // The show consent has no approved text yet (the service default is no); the test turns it on.
+    photoShowConsent: async () => showConsent,
     log: s => logs.push(s),
   });
   await svc.start();
@@ -216,11 +220,19 @@ describe.skipIf(skip)("photos on the live path", () => {
     const probe = (photoOf?: MemberId, body = "There's someone I think you might like to go on a date with: coffee, this week. Want me to check if they're up for it?"): Outbound =>
       ({ id: `p${++seq}`, memberId: a.memberId, body, kind: "proactive", type: "probe", proactive: true, system: false, ts: clock.t, ...(photoOf ? { photoOf } : {}) });
     // Pending: text only.
+    showConsent = true;
     let x = probe(b.memberId);
     await svc.attachMedia(slop, [x]);
     expect(x.mediaUrls).toBeUndefined();
     expect(logs.at(-1)).toMatch(/text only .*\(no_photo\)/); // only an approved photo is ever a candidate
     await svc.photos.moderate(up.value.id, "approve", "test@staff", "ok");
+    // Approved, but no consent to show it (the default until a consent text covers it): text only.
+    showConsent = false;
+    x = probe(b.memberId);
+    await svc.attachMedia(slop, [x]);
+    expect(x.mediaUrls).toBeUndefined();
+    expect(logs.at(-1)).toMatch(/text only .*\(no_show_consent\)/);
+    showConsent = true;
     // Approved: one signed link that works for an hour and serves the photo.
     x = probe(b.memberId);
     await svc.attachMedia(slop, [x]);

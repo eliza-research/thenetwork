@@ -150,6 +150,12 @@ export interface ServiceOptions {
   photoRater?: PhotoRater;
   /** An automatic photo check that may only reject (none is wired). */
   photoClassifier?: PhotoClassifier;
+  /**
+   * Whether the person agreed to have a photo shown to a proposed match (the probe photo). The current
+   * PHOTO_CONSENT says no other member sees the photos, so the default is no until Founder and Legal
+   * approve a consent text that covers it.
+   */
+  photoShowConsent?: (personId: string, app: AppId) => Promise<boolean>;
   /** Download a photo a member sent by text (an allowed https media URL; webhook.ts checks the host). Default: fetch with a size cap and a timeout. */
   fetchMedia?: (url: string) => Promise<Uint8Array | undefined>;
   /** The origin staff photo links use (PHOTO_VIEW_BASE_URL). Default: https://<the app's domain>, which the site router forwards to /api/*. */
@@ -241,6 +247,7 @@ export class NetworkService implements RuntimeHost {
   readonly photos: PhotoService;
   private readonly photoBaseUrl?: string;
   private readonly fetchMedia: (url: string) => Promise<Uint8Array | undefined>;
+  private readonly photoShowConsent: (personId: string, app: AppId) => Promise<boolean>;
 
   constructor(o: ServiceOptions) {
     if (o.network?.review && o.network.review !== "human") throw new Error(`review mode "${o.network.review}" is refused: production review is "human" only (runbook-real 7.4)`);
@@ -282,6 +289,7 @@ export class NetworkService implements RuntimeHost {
       onRemoved: (personId, app) => this.dropRatings(personId, app),
     });
     this.fetchMedia = o.fetchMedia ?? fetchMediaBytes;
+    this.photoShowConsent = o.photoShowConsent ?? (async () => false);
     this.audit = o.audit ?? new PgAudit(o.auditUrl ?? o.url);
   }
 
@@ -1179,6 +1187,7 @@ export class NetworkService implements RuntimeHost {
       const ok = probePhotoCheck({
         flag: probePhotoOn(this.env), app: rt.app.id, recipient: await side(rp), subject: await side(sp),
         policy: rt.net.recipientPolicy(b.memberId, "probe", { about: [b.memberId, subject] }),
+        showConsent: !!sp && (await this.photoShowConsent(sp, rt.app.id)),
         ...(photo ? { photo: { id: photo.id, moderation: photo.moderation ?? "pending" } } : {}),
         caption: b.body, guard: new LeakGuard(rt.net.leakSources([b.memberId])).check(b.body), scoreTags: scores?.tags ?? [],
       });

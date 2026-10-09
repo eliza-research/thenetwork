@@ -7,7 +7,10 @@
 //    by the engine's appearanceFacet. The pack reads it from the snapshot (profile.ts parseAppearance).
 //  - The probe photo check (SLOP_PROBE_PHOTO=1 only, off by default): at send time a probe may carry
 //    one approved photo of the other person when both are verified adults, neither is held or banned,
-//    the photo is still there and approved, and the caption passes the leak guard and appearanceLeak.
+//    the pictured person agreed to have it shown, the photo is still there and approved, and the
+//    caption passes the leak guard and appearanceLeak. The current PHOTO_CONSENT says no other member
+//    sees the photos, so that agreement needs its own text (Founder and Legal approve it; plan.ts
+//    ProbePhotoSubject.photoConsent). Until then the service's default answers no and nothing is shown.
 // Nothing here is member-facing: no score, body type or rating word ever reaches a member.
 import type { Facet, MemberId } from "@thenetwork/core";
 import { appearanceFacet, appearanceLeak, APPEARANCE_PREFIX, canRatePhotos, isBodyType, type AppearanceRater, type AppearanceScore } from "@thenetwork/engine/src/packs/slop/appearance.ts";
@@ -82,6 +85,8 @@ export interface ProbePhotoFacts {
   /** The recipient's and the pictured person's lowest ages (null: unknown), and whether each passes the app's adult check. */
   recipient: { age: number | null; verified: boolean; banned: boolean };
   subject: { age: number | null; verified: boolean; banned: boolean };
+  /** The pictured person agreed to have a photo shown to a proposed match (not the upload consent). */
+  showConsent: boolean;
   /** The Network's send-time recipient policy for this probe about the subject (held, watch, blocks, minors). */
   policy: { ok: boolean; reason?: string };
   /** The photo to attach: still stored and approved. */
@@ -104,6 +109,7 @@ export function probePhotoCheck(f: ProbePhotoFacts): { ok: true } | { ok: false;
     if (x.banned) return no(`${who}_banned`);
   }
   if (!f.policy.ok) return no(`policy_${f.policy.reason ?? "refused"}`);
+  if (!f.showConsent) return no("no_show_consent");
   if (!f.photo) return no("no_photo");
   if (f.photo.moderation !== "approved") return no("not_approved");
   if (f.guard.length) return no("leak_guard");
