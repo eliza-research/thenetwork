@@ -81,6 +81,7 @@ Send `Authorization: Bearer <token>`. Tokens are per app: `reviewer@slop:<t>` is
 | `POST /safety/hold` | safety | `{ memberId, note (5+ characters), reportId? }`: the person on every app |
 | `POST /safety/ban` | safety | `{ memberId, by: "phone" \| "person", note, reportId? }`; 409 `already_banned`, `no_person`, `no_phone` |
 | `POST /safety/dismiss` | safety | `{ reportId, note }`; 409 `unknown_report`, `already_<status>` |
+| `POST /safety/clear-person` | safety@* or admin@* | `{ memberId, note }`: clears the person's safety holds on every app (platform.person_safety, migration 0019); 409 `not_held`, `no_person`, `needs_safety_everywhere`. See docs/runbook-safety.md |
 | `POST /members/:id/verify` | safety | `{ check: "age" \| "liveness", result: "pass" \| "fail", note }`: `verify:<check>:<result>` on the member (PRD 40.5), until a vendor writes it |
 | `GET /members/:id/photos` | safety | `X-Network-Reason: <5+ characters>`. Verified adults only (403 `adults_only`); the audit row is written before any link |
 | `POST /matching` | admin | `{ on: true \| false }`. Refused (`matching_not_allowed`) for a network the registry keeps off. Migration 0011 allows slop and peon; their stored switch still starts off. |

@@ -11,3 +11,4 @@ export * from "./capital.ts";
 export * from "./plans.ts";
 export * from "./apphooks.ts";
 export * from "./reports.ts";
+export * from "./safety.ts";

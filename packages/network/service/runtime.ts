@@ -25,6 +25,7 @@ import { capitalWiring, type CapitalEvent } from "../src/capital.ts";
 import { llmUnderstand } from "../src/extract.ts";
 import type { MemberSettings } from "../src/intents.ts";
 import { CHAT_FACET, learnedFacetRows, sameRow, type LearnedFacetRow } from "../src/learned.ts";
+import { EVIDENCE_RETENTION_MS, type SafetySignal } from "../src/safety.ts";
 import type { AppInfo } from "../../platform/src/apps.ts";
 import { loadSnapshot } from "./snapshot.ts";
 import { appWiring, type AppWiring } from "./packs.ts";
@@ -57,8 +58,10 @@ export interface Unit {
   forget: Set<MemberId>;
   /** Settings members changed by text (pause, quiet hours, how often), for network.members. */
   settings: Map<MemberId, MemberSettings>;
+  /** Safety signals (safety.ts): evidence holds are written with the unit; holds and minor reports go to the service after it commits. */
+  safety: SafetySignal[];
 }
-const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), settings: new Map() });
+const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), settings: new Map(), safety: [] });
 
 /** What the service gives each runtime: the shared connection and clock, and the checks that span apps. */
 export interface RuntimeHost {
@@ -74,6 +77,8 @@ export interface RuntimeHost {
   consentRefused?(rt: NetworkRuntime, batch: Outbound[]): Promise<Set<string>>;
   /** The sends the adapter took (not refused or failed), after their statuses are stored. Errors are logged, never retried. */
   delivered?(rt: NetworkRuntime, sent: Outbound[]): Promise<void>;
+  /** Person-level safety after a unit committed (a hold on every app, a minor report). Errors are logged; the network's own hold already stands. */
+  safety?(rt: NetworkRuntime, signals: SafetySignal[]): Promise<void>;
 }
 
 export interface RuntimeOptions {
@@ -108,6 +113,8 @@ export class NetworkRuntime {
   unit = newUnit();
   /** Sends committed with their state, waiting to be delivered (in commit order). */
   private committed: Outbound[] = [];
+  /** Safety signals committed with their unit, for the service (RuntimeHost.safety). */
+  private committedSafety: SafetySignal[] = [];
   /** Ages members stated in the units since the service last took them (takeAges). */
   private statedAges: { memberId: MemberId; age: number; explicit: boolean; declined: boolean }[] = [];
   /** The ages this member stated (and whether the Network declined them), taken once. */
@@ -148,6 +155,8 @@ export class NetworkRuntime {
       // The LLM reader (gpt-6-luna via defaultLLM, OpenAI fallback) and the engine judge are off unless turned on.
       ...(process.env.NETWORK_LLM_READER === "1" ? { understand: llmUnderstand(defaultLLM(), { app: o.app.id }) } : {}),
       ...(process.env.NETWORK_ENGINE_JUDGE === "1" ? { engineLLM: defaultLLM() } : {}),
+      // Safety across apps (safety.ts): written with the unit (evidence) or applied by the service after it.
+      onSafety: s => { this.unit.safety.push(s); },
     });
     this.net.init(this.context());
     this.adapter = typeof o.adapter === "function" ? o.adapter(this.net, this) : o.adapter ?? new DryRunAdapter(host.log);
@@ -220,6 +229,7 @@ export class NetworkRuntime {
         // PgStore.save sets app.app_id for its own transaction; the unit's rows go in the same one.
         await this.pg.save(state, async tx => { await this.writeUnit(tx, u); await this.writeLearned(tx, state, u); });
         this.committed.push(...u.sends);
+        this.committedSafety.push(...u.safety.filter(x => x.t !== "evidence"));
         this.unit = newUnit();
       },
       withTickLock: fn => this.pg.withTickLock(fn),
@@ -337,15 +347,20 @@ export class NetworkRuntime {
       if (st.state) await tx`update network.members set participation_state = ${st.state} where app_id = ${app} and id = ${id}`;
       if (st.quietHours) await tx`update network.members set prefs = jsonb_set(coalesce(prefs, '{}'::jsonb), '{quietHours}', (${JSON.stringify(st.quietHours)}::text)::jsonb) where app_id = ${app} and id = ${id}`;
     }
-    // The forget path (an under-age decline, leaving the app, deleting everything): keep only the id. Nothing that names the member stays.
+    // Evidence holds (safety.ts): a report or a case keeps both people's messages, feedback and events
+    // for EVIDENCE_RETENTION_DAYS, even when they delete their data. Written before the forget below.
+    const until = new Date(this.clock.now() + EVIDENCE_RETENTION_MS);
+    for (const s of u.safety) if (s.t === "evidence") for (const id of new Set(s.memberIds)) {
+      await tx`insert into network.evidence_holds (app_id, member_id, case_id, until) values (${app}, ${id}, ${s.caseId ?? ""}, ${until})
+        on conflict (app_id, member_id, case_id) do update set until = greatest(network.evidence_holds.until, excluded.until)`;
+    }
+    const held = u.forget.size ? await this.evidenceHeld(tx) : new Set<string>();
+    // The forget path (an under-age decline, leaving the app, deleting everything): keep only the id. Nothing that names the member stays,
+    // except what an evidence hold keeps (their messages, feedback and events; the member row below is emptied either way).
     for (const id of u.forget) {
-      await tx`delete from network.messages where app_id = ${app} and member_id = ${id}`;
-      await tx`delete from network.feedback where app_id = ${app} and (from_id = ${id} or about_id = ${id})`;
-      // Every event that names them, by the same keys the writer reads (membersOf): actor, object and the payload.
-      await tx`delete from network.events where app_id = ${app} and (actor_id = ${id} or object_id = ${id}
-        or payload->>'memberId' = ${id} or payload->>'from' = ${id} or payload->>'newMemberId' = ${id} or payload->>'out' = ${id} or payload->>'in' = ${id}
-        or coalesce(payload->'participants', '[]'::jsonb) @> to_jsonb(${id}::text) or coalesce(payload->'members', '[]'::jsonb) @> to_jsonb(${id}::text)
-        or jsonb_exists(coalesce(payload->'attendance', '{}'::jsonb), ${id}))`;
+      // Declined under 13 while handling their own message (memberUnit): nothing of theirs is kept, evidence or not.
+      const declined = this.net.isDeclined(id) && u.inbound?.member_id === id;
+      await this.deleteMemberRows(tx, id, { keep: held.has(id) && !declined, heldAbout: [...held] });
       await tx`delete from network.capital_events where app_id = ${app} and (member_id = ${id} or position(${`"${id}"`} in event::text) > 0)`;
       await tx`delete from network.facets where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.intents where app_id = ${app} and member_id = ${id}`;
@@ -356,6 +371,53 @@ export class NetworkRuntime {
       await tx`update network.members set name = null, home_city = null, home_area = null, account_status = 'removed', opted_out = false, age = null, invited_by = null,
         community = null, occupation = null, bio = null, prefs = '{}'::jsonb, unanswered_proactive = 0, joined_at = null, person_id = null where app_id = ${app} and id = ${id}`;
     }
+  }
+
+  /** Members of this app with a live evidence hold. */
+  private async evidenceHeld(tx: SQL): Promise<Set<string>> {
+    const rows = await tx`select distinct member_id from network.evidence_holds where app_id = ${this.app.id} and until > ${new Date(this.clock.now())}`;
+    return new Set((rows as any[]).map(r => r.member_id as string));
+  }
+
+  /**
+   * The rows that hold what a member said and did here: messages, feedback and events. `keep`: the
+   * member is under an evidence hold, so they stay (staff only). Feedback about a held member is kept
+   * whoever wrote it: a reporter's feedback is never deleted while it is evidence.
+   */
+  private async deleteMemberRows(tx: SQL, id: string, o: { keep: boolean; heldAbout: string[] }) {
+    const app = this.app.id;
+    if (o.keep) return;
+    await tx`delete from network.messages where app_id = ${app} and member_id = ${id}`;
+    await tx`delete from network.feedback where app_id = ${app} and (from_id = ${id} or about_id = ${id}) and not (about_id = any(${tx.array(o.heldAbout, "TEXT")}))`;
+    // Every event that names them, by the same keys the writer reads (membersOf): actor, object and the payload.
+    await tx`delete from network.events where app_id = ${app} and (actor_id = ${id} or object_id = ${id}
+      or payload->>'memberId' = ${id} or payload->>'from' = ${id} or payload->>'newMemberId' = ${id} or payload->>'out' = ${id} or payload->>'in' = ${id}
+      or coalesce(payload->'participants', '[]'::jsonb) @> to_jsonb(${id}::text) or coalesce(payload->'members', '[]'::jsonb) @> to_jsonb(${id}::text)
+      or jsonb_exists(coalesce(payload->'attendance', '{}'::jsonb), ${id}))`;
+  }
+
+  /**
+   * Retention: evidence holds past their time. A member who left (account removed) and has no live
+   * hold left loses the messages, feedback and events the holds kept; then the expired rows go.
+   */
+  async purgeEvidence(): Promise<number> {
+    const now = new Date(this.clock.now());
+    return this.scoped(async tx => {
+      const expired = await tx`select distinct e.member_id from network.evidence_holds e join network.members m on m.app_id = e.app_id and m.id = e.member_id
+        where e.app_id = ${this.app.id} and e.until <= ${now} and m.account_status = 'removed'
+          and not exists (select 1 from network.evidence_holds x where x.app_id = e.app_id and x.member_id = e.member_id and x.until > ${now})`;
+      const held = [...await this.evidenceHeld(tx)];
+      for (const r of expired as any[]) await this.deleteMemberRows(tx, r.member_id, { keep: false, heldAbout: held });
+      const gone = await tx`delete from network.evidence_holds where app_id = ${this.app.id} and until <= ${now} returning member_id`;
+      return (gone as any[]).length;
+    });
+  }
+
+  /** Hand the committed safety signals to the service (after delivery; one network unit is never inside another). */
+  private async flushSafety() {
+    const s = this.committedSafety.splice(0);
+    if (!s.length || !this.host.safety) return;
+    await this.host.safety(this, s).catch(e => this.host.log(`[safety] person-level safety failed (${this.id}): ${(e as Error).message}`));
   }
 
   /**
@@ -448,6 +510,7 @@ export class NetworkRuntime {
     if (this.retry.length) this.committed.unshift(...this.retry.splice(0));
     await this.deliver();
     await this.storeStatuses(await this.adapter.flush());
+    await this.flushSafety();
     return ran;
   }
 
@@ -455,6 +518,7 @@ export class NetworkRuntime {
   async unitOfWork<T>(fn: (n: ConsentNetwork) => Promise<T> | T): Promise<T> {
     const out = await runStored(this.net, this.store, fn);
     await this.deliver();
+    await this.flushSafety();
     return out;
   }
 

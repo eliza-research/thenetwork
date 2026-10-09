@@ -229,6 +229,27 @@ export function copyFor(b: CopyBrand) {
   worthAsk: "Was that worth a text? yes or no",
   worthThanks: "Thanks, that helps.",
   nothingBooked: "You don't have anything booked with me right now, so there's nothing to cancel.",
+  // Safety on the text line (safety.ts; docs/runbook-safety.md). Emergencies come first, and no safety text carries matching content.
+  /** "block him" or a name two of their counterparts share: which one. Only names of people the member was introduced to. */
+  whoDoYouMean: (names: string[]) => names.length
+    ? `Who do you mean: ${names.join(" or ")}? Reply with the name and I'll take care of it.`
+    : "Who do you mean? Reply with their first name and I'll take care of it.",
+  /** The answer to "Who do you mean?" still named nobody they met: nothing was applied. */
+  whoUnresolved: "I couldn't tell who you mean, so nothing has changed yet. Reply block or report with their first name anytime.",
+  /** A block by a name that is not someone they met through the Network: the same words whether or not the name is a member's. */
+  blockUnmatched: "I couldn't match that name to someone you met through me. If they're a member, they won't be matched with you, and they won't be told.",
+  /** A report of something urgent about someone they met: 911 first, then what happened. */
+  reportedUrgent: "If you are in danger, call 911 now. Thanks for telling me. I've blocked them for you, paused them while we look, and a person on our safety team will follow up soon.",
+  /** The safety classifier read danger now (PRD 32.14 urgent). */
+  distressUrgent: "If you are in danger, call 911 now. I've told our safety team, and a person will follow up with you soon. If someone you met through me is involved, reply report and their first name.",
+  /** The safety classifier read harm told about someone else (PRD 32.14 flag). */
+  distressFlag: "I'm sorry that happened, and thanks for telling me. I've passed it to our safety team. To block or report someone, reply block or report and their first name.",
+  /** The other person did not show up: the Network's apology, and an easy way to look again. */
+  flakedOn: "I'm sorry they didn't show. That's not okay, and I've noted it. Ask me anytime and I'll look for someone else.",
+  /** The member missed a plan for the first time in 90 days (one forgiven no-show). */
+  flakeForgiven: "Looks like you missed your plan. It happens, and this one is forgiven. Next time, please tell me ahead so nobody is left waiting.",
+  /** A second missed plan in 90 days: it counts. */
+  flakeCounted: "That's a second missed plan in a few months, so I'll suggest fewer plans for a while. Please tell me ahead if something comes up.",
   };
 }
 export type Copy = ReturnType<typeof copyFor>;

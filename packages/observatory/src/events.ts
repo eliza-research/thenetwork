@@ -40,6 +40,9 @@ export const NETWORK_EVENT_KINDS: ReadonlySet<string> = new Set([
   // empty-state notes, closed asks and reconfirms. Ids, codes and counts only.
   "member_setting", "worth_a_text", "worth_a_text_asked", "empty_state_notice", "intent_closed", "intents_listed", "know_me",
   "profile_corrected", "want_reconfirm_sent", "want_reconfirmed", "delete_request", "invite_unavailable",
+  // Safety on the text line (packages/network safety.ts): urgent reports, distress, minor reports and
+  // risk cues, for the urgent-report alert (PRD 37.1 item 11). Ids, kinds and levels only.
+  "safety_alert", "safety_cue",
 ]);
 const STAFF_ACTOR: Record<string, EventRow["actor_type"]> = { review_decision: "reviewer", review_refused: "reviewer", review_mode: "admin", matching_switch: "admin", safety_action: "admin" };
 /** Payload keys that could hold text a member wrote. */

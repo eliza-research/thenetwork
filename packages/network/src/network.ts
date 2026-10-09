@@ -55,6 +55,7 @@ import { checkInReport, reportKindOf, URGENT_REPORTS, type ReportKind, type Safe
 import { MEMBER_ASK_KINDS } from "./asks.ts";
 import { MemberTextReplies, withOwnSettings, type MemberSettings, type MemberTexts, type TextsHost } from "./intents.ts";
 import { withoutChatFacets } from "./learned.ts";
+import { EVIDENCE_RETENTION_MS, NEVER_MIND, PRONOUN_TARGET, safetyCues, safetyOf, type SafetyRead, type SafetySignal } from "./safety.ts";
 
 /** Where an opportunity came from. "planner": a plan from the engine planner, or a crew session (Opp.crewId). */
 export type Origin = "engine" | "request" | "plans" | "planner" | "second_encounter" | "newcomer_welcome" | "player";
@@ -109,6 +110,12 @@ export interface SafetyCaseEvent { at: number; kind: string; points: number; by?
 export interface SafetyCase {
   id: string; memberId: MemberId; opened: number; level: TrustLevel; events: SafetyCaseEvent[];
   status: "open" | "held" | "lifted" | "closed";
+  /**
+   * What staff look at first (docs/runbook-safety.md): "urgent" (an urgent report about the member,
+   * or the member's own distress: 1-hour target), "minor" (reported as under 18), "distress" (the
+   * member told us about harm: the case is about what happened to them, not their conduct).
+   */
+  urgent?: boolean; kind?: "minor" | "distress";
   closedAt?: number; closedBy?: string;
 }
 const REVIEW_DECISIONS = new Set<string>(["approve", "reject", "edit", "reroll"]);
@@ -197,6 +204,12 @@ export interface NetworkOptions {
    * effectiveEngineConfig() says so (matching-e2e-M2): no run claims a judge it did not run.
    */
   engineLLM?: LLM;
+  /**
+   * Safety the platform applies across apps after the unit commits (safety.ts SafetySignal): a
+   * person-level hold, a minor report, and evidence to keep. The service writes platform.person_safety
+   * and network.evidence_holds. Optional: the simulator keeps holds inside the Network.
+   */
+  onSafety?: (s: SafetySignal) => void;
   /** The engine's app pack (default networkPack; slop passes slopPack). */
   pack?: AppPack;
   /** What the app's pack adds to the consent flow (apphooks.ts; packages/network/service/packs.ts). Default: none. */
@@ -230,6 +243,14 @@ interface MemberState {
   areaUnknown?: boolean;
   /** Another member reported them as under 18 (network-consent-9): out of matching until staff clear it. */
   minorReported?: boolean;
+  /** The person is on a safety hold (platform.person_safety, any app): never matched or contacted but for replies and safety notices. */
+  personHold?: boolean;
+  /** A block or report waiting for "Who do you mean?" (ids and kinds only, never their words). */
+  pendingSafety?: { verb: "block" | "report"; kind: ReportKind; at: number };
+  /** The member's own risk cues (safety.ts safetyCues), engine facets for the app's pack. Never shown. */
+  safetyCues?: { tag: string; at: number }[];
+  /** Late cancels counted as flakes (the cancel was within 2 hours of the meeting). */
+  lateCancels?: number;
   state: string;
   /** Age from the member record (attested at join) and the youngest age they stated in a message. */
   age?: number; statedAge?: number;
@@ -427,6 +448,8 @@ const ZERO: ScoreComponents = { fit: 0, mutualBenefit: 0, warmPath: 0, novelty: 
 const PROBE_TTL = 26 * HOUR, PROBE_WAIT = DEFAULT_ATTENTION.expiry.partnerProbeDays * DAY;
 /** The daily engine run happens at the first tick from runHour until this New York hour. */
 const ENGINE_RUN_UNTIL = 20;
+/** A cancel this close to the meeting is a late cancel (a flake; PRD 32.13). */
+const LATE_CANCEL_MS = 2 * HOUR;
 /** The booked plan's opt-out window: silence this long counts as confirmed (attention v1.2). */
 const OPT_OUT_HOURS = 48;
 /** The earliest a booked meeting may start after the last yes, and the earliest offered slot for a partner probe. */
@@ -532,8 +555,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** The app this Network serves, and its member-facing copy. */
   readonly app: AppInfo;
   private readonly copy: Copy;
-  private opts: Required<Omit<NetworkOptions, "app" | "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "plansConfig" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "allowedCategories" | "hooks" | "worthSample" | "onSettings">>
-    & Pick<NetworkOptions, "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "hooks">;
+  private opts: Required<Omit<NetworkOptions, "app" | "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "plansConfig" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "allowedCategories" | "hooks" | "worthSample" | "onSettings" | "onSafety">>
+    & Pick<NetworkOptions, "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "hooks" | "onSafety">;
   /** The categories this app may start opportunities in (ALLOWED_CATEGORIES). */
   readonly allowedCategories: ReadonlySet<Category>;
   private pcfg: PlansConfig;
@@ -548,12 +571,13 @@ export class ConsentNetwork implements NetworkUnderTest {
       invitesPerMonth: opts.invitesPerMonth ?? 3, maxGrowthAsksPerDay: opts.maxGrowthAsksPerDay ?? 8, onboardingRequests: opts.onboardingRequests ?? false,
       review: opts.review ?? "human", reviewSlaHours: opts.reviewSlaHours ?? 12, matchingEnabled: opts.matchingEnabled ?? true,
       engine: opts.engine, onEngineRun: opts.onEngineRun, store: opts.store, onLedger: opts.onLedger, capital: opts.capital, plans: opts.plans ?? true,
-      understand: opts.understand, onAgeStated: opts.onAgeStated, engineLLM: opts.engineLLM, pack: opts.pack, hooks: opts.hooks,
+      understand: opts.understand, onAgeStated: opts.onAgeStated, engineLLM: opts.engineLLM, pack: opts.pack, hooks: opts.hooks, onSafety: opts.onSafety,
     };
     this.allowedCategories = new Set(opts.allowedCategories ?? ALLOWED_CATEGORIES[this.app.id] ?? ALLOWED_CATEGORIES.ntwrk!);
     this.pcfg = resolvePlans(opts.plansConfig ?? {});
     this.trust.onChange = (id, from, to, why) => this.onTrustChange(id, from, to, why);
-    this.trust.onEvent = (id, e) => this.caseEvent(id, e);
+    // Flakes are reliability, not safety: they change the trust score but open no safety case.
+    this.trust.onEvent = (id, e) => { if (e.kind !== "flake") this.caseEvent(id, e); };
     this.textsHost = this.makeTextsHost(opts);
     this.texts = new MemberTextReplies(this.textsHost);
   }
@@ -704,6 +728,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       this.caseEvent(m.id, { at: now, kind: "age_conflict", points: 0 });
     }
     if (c.minorSignal && m.minor) m.minorSignal = true;
+    // The sender's own risk cues (never the words of a block or a report, which describe someone else).
+    if (c.kind !== "block" && c.kind !== "report") this.noteCues(m, c);
     if (known === undefined) {
       // Unknown age (6.3): treated as a minor (single-player, never matched) and asked once, early.
       if (!m.ageUnknown) { m.ageUnknown = true; this.ctx.log("age_unknown", { memberId: m.id }); }
@@ -736,6 +762,15 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Blocks and reports first: their words describe someone else, so they are never scored as the
     // sender's abuse, and a member on hold can still block (network-consent-4). A profile is never a report.
     if ((c.kind === "block" || c.kind === "report") && !mcp) return this.handleBlock(m, c);
+    // The answer to "Who do you mean?" (a block or report waiting for its target).
+    if (m.pendingSafety && !mcp && this.answerWho(m, body)) return;
+    // The inbound safety classifier (PRD 32.14), before anything else and for a member on hold too:
+    // danger gets "call 911" first and an urgent case; harm told about someone else gets a case.
+    // The answer to a date check-in that files reports (slop) is that path's, which replies the same way;
+    // any other answer to "how did it go?" is still feedback unless it reads as danger. A profile is never distress.
+    const feedbackAnswer = m.awaiting?.kind === "feedback";
+    const sr = mcp || (feedbackAnswer && this.opts.hooks?.postDateReports) ? undefined : safetyOf(body, c);
+    if (sr && (sr.level === "urgent" || (sr.level === "flag" && !feedbackAnswer))) return this.onDistress(m, sr);
     if (this.trust.level(m.id) === "hold") { if (c.abuse.length) this.trust.add(m.id, now, c.abuse[0]!, 0); return; }
     // "He asked me to venmo him $50": what someone else did, never the sender's abuse (ids and kinds only).
     if (c.disclosure?.length) this.ctx.log("abuse_disclosed", { memberId: m.id, kinds: c.disclosure });
@@ -901,14 +936,18 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.send(m, this.app.id === "ntwrk" ? UNDER_MIN_AGE_DECLINE : this.app.brand.underAge, { type: "info" }, "safety");
     this.counters.joinDeclined++;
     this.ctx.log("join_declined", { reason: "under_min_age" });
-    this.forget(m.id);
+    this.forget(m.id, { evidence: false });
   }
 
   /**
    * Delete everything the Network holds about a member; only the id stays, to never message them
    * again. Opportunities, requests, questions and every other record that names them go too.
    */
-  private forget(id: MemberId) {
+  private forget(id: MemberId, o: { evidence?: boolean } = {}) {
+    // Evidence first (F23, F24): a member in an open report or case keeps that case and the feedback
+    // about it, ids only, for EVIDENCE_RETENTION_DAYS (purged in tick); nothing member-facing reads them.
+    // An under-13 decline keeps nothing of theirs (the adults' own cases stay).
+    const evidence = o.evidence !== false && this.evidenceHeld(id);
     // Declined and their requests gone first, so closing their opportunities messages and logs nothing about them.
     this.declinedIds.add(id);
     for (let i = this.requests.length - 1; i >= 0; i--) if (this.requests[i]!.memberId === id) this.requests.splice(i, 1);
@@ -938,10 +977,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.asks = this.asks.filter(a => a.memberId !== id);
     for (const m of this.members.values()) if (m.awaiting?.oppId && !this.opps.has(m.awaiting.oppId)) m.awaiting = undefined;
     this.members.delete(id); this.fullNames.delete(id); this.trust.forget(id); this.vouchedSkills.delete(id); this.invitedIds.delete(id);
-    this.cases = this.cases.filter(c => c.memberId !== id);
-    for (const c of this.cases) for (const e of c.events) if (e.by === id) delete e.by;
-    // Reports about them stay (a safety record with ids only: leaving never escapes a ban); a reporter who left is not named.
-    for (const r of this.reports) if (r.reporterId === id) r.reporterId = "";
+    if (!evidence) {
+      this.cases = this.cases.filter(c => c.memberId !== id);
+      for (const c of this.cases) for (const e of c.events) if (e.by === id) delete e.by;
+    }
+    // Reports about them stay (a safety record with ids only: leaving never escapes a ban); a reporter who left
+    // is not named, unless the report is still open (evidence).
+    if (!evidence) for (const r of this.reports) if (r.reporterId === id) r.reporterId = "";
     this.deferred = this.deferred.filter(d => d.memberId !== id && !d.o.about?.includes(id));
     // Texts kept for other members (a deferred send, the last message, an acknowledgement still to fold in) never name them again.
     for (const d of this.deferred) d.body = scrub(d.body);
@@ -953,7 +995,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const s of [this.blocks, this.avoid]) for (const k of [...s]) if (mine(k)) s.delete(k);
     for (const k of [...this.declined.keys()]) if (mine(k)) this.declined.delete(k);
     for (const k of [...this.again.keys()]) if (mine(k)) this.again.delete(k);
-    this.feedback = this.feedback.filter(f => f.from !== id && f.about !== id);
+    // A reporter's feedback about someone else is never deleted while it is evidence.
+    this.feedback = this.feedback.filter(f => (f.from !== id && f.about !== id) || (o.evidence !== false && (f.about === id ? evidence : this.evidenceHeld(f.about))));
     this.interactions = this.interactions.filter(x => !x.participants.includes(id));
     for (const k of [...this.planAgain.keys()]) if (mine(k)) this.planAgain.delete(k);
     this.lastPlannedAt.delete(id);
@@ -962,6 +1005,20 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const c of this.crewOffers) { for (const k of ["offered", "yes", "no"] as const) c[k] = c[k].filter(x => x !== id); c.crew.members = c.crew.members.filter(x => x !== id); }
     this.fraud = this.fraud.filter(x => !x.flag.members.includes(id));
     this.dirty = true;
+  }
+
+  /** In an open report (either side) or an open case: their records are evidence (safety.ts). */
+  private evidenceHeld(id: MemberId): boolean {
+    return this.reports.some(r => (r.subjectId === id || r.reporterId === id) && r.status !== "dismissed")
+      || this.cases.some(c => c.memberId === id && c.status !== "closed");
+  }
+
+  /** Evidence kept for members who left is dropped after EVIDENCE_RETENTION_DAYS (safety.ts). */
+  private purgeEvidence(now: number) {
+    const gone = (x: MemberId) => this.declinedIds.has(x);
+    if (!this.feedback.some(f => gone(f.from) || gone(f.about)) && !this.cases.some(c => gone(c.memberId))) return;
+    this.feedback = this.feedback.filter(f => !(gone(f.from) || gone(f.about)) || now - f.at < EVIDENCE_RETENTION_MS);
+    this.cases = this.cases.filter(c => !gone(c.memberId) || now - Math.max(c.opened, ...c.events.map(e => e.at)) < EVIDENCE_RETENTION_MS);
   }
 
   /** A plan with one member taken out of every list (forget). */
@@ -1322,9 +1379,11 @@ export class ConsentNetwork implements NetworkUnderTest {
   // ------------------------------------------------------------------ reports (reports.ts; docs/admin-console.md 3.7.1)
   /**
    * A report about a member: a record with ids and a kind (never the words) and a staff case event.
-   * An urgent report (harassment, unsafe, scam, minor) at the check-in after a date takes the member
-   * out of matching until staff decide (hold, ban or dismiss). A "report X" message keeps the trust
-   * rules (trust.ts: points need two reporters who met them; a stranger only opens the case).
+   * An urgent report (harassment, unsafe, scam, minor) by someone who met them, by text or at the
+   * check-in after a date, holds the member until staff decide (hold, ban or dismiss): out of matching
+   * and probes here, and on every app through the person-level hold (PRD 36.3). A "report X" message
+   * keeps the trust rules (trust.ts: points need two reporters who met them; a stranger only opens
+   * the case). Both people's messages are kept as evidence (safety.ts EVIDENCE_RETENTION_DAYS).
    */
   private fileReport(reporter: MemberId, subject: MemberId, kind: ReportKind, o: { oppId?: string; source: SafetyReport["source"]; met: boolean; caseEvent?: boolean }) {
     const now = this.now();
@@ -1332,13 +1391,44 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.reports.push(r);
     if (o.caseEvent !== false) this.caseEvent(subject, { at: now, kind: `report:${kind}`, points: 0, by: reporter });
     this.ctx.log("report_received", { reportId: r.id, kind, memberId: reporter, target: subject, opportunityId: o.oppId ?? null, source: o.source, met: o.met });
+    const c = this.openCase(subject);
+    this.opts.onSafety?.({ t: "evidence", memberIds: [reporter, subject], ...(c ? { caseId: c.id } : {}) });
+    if (o.met && URGENT_REPORTS.has(kind)) {
+      // The automatic hold (36.3): staff clear it (dismiss, hold or ban); the case reads urgent (1-hour target).
+      if (c) c.urgent = true;
+      this.caseEvent(subject, { at: now, kind: "auto_hold", points: 0 });
+      this.ctx.log("safety_alert", { memberId: subject, kind: "urgent_report", reportKind: kind, reportId: r.id, caseId: c?.id ?? null });
+      if (kind !== "minor") this.opts.onSafety?.({ t: "hold", memberId: subject, reason: "urgent_report", ...(c ? { caseId: c.id } : {}) });
+    }
     if (this.reportHeld(subject)) this.dropMember(subject, "report under review");
     this.dirty = true;
   }
 
-  /** An urgent report at the check-in after a date is waiting for staff: out of matching. */
+  /** An urgent report by someone who met them (by text or at the check-in after a date) is waiting for staff: out of matching. */
   private reportHeld(id: MemberId): boolean {
-    return this.reports.some(r => r.subjectId === id && r.status === "open" && r.source === "check_in" && r.met && URGENT_REPORTS.has(r.kind));
+    return this.reports.some(r => r.subjectId === id && r.status === "open" && r.met && URGENT_REPORTS.has(r.kind));
+  }
+
+  /** On a safety hold of any kind: trust hold, an urgent report waiting for staff, or the person held on any app (platform.person_safety). */
+  isSafetyHeld(id: MemberId): boolean {
+    const m = this.members.get(id);
+    if (m) this.syncRecord(m);
+    return this.trust.level(id) === "hold" || this.reportHeld(id) || !!m?.personHold || !!this.record(id)?.safetyHold;
+  }
+
+  /**
+   * The platform held this person (on this app or another): out of every open opportunity now, never
+   * matched or contacted but for replies and safety notices until staff clear it. The snapshot keeps
+   * it (members' safetyHold) from the next unit on.
+   */
+  applyPersonHold(memberId: MemberId): boolean {
+    if (this.declinedIds.has(memberId)) return false;
+    if (!this.members.has(memberId) && !this.record(memberId)) return false;
+    const m = this.member(memberId);
+    if (!m.personHold) { m.personHold = true; this.ctx.log("safety_hold", { memberId }); }
+    this.dropMember(memberId, "safety hold");
+    this.dirty = true;
+    return true;
   }
 
   /** Reports for staff, newest first, each with how many earlier reports name the same member. Never the words. */
@@ -1435,22 +1525,42 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /**
-   * "block X" and "report X". Order and rules (network-consent-4, -6, -7, -13, -14, -18):
+   * "block X" and "report X". Order and rules (network-consent-4, -6, -7, -13, -14, -18; F23):
    *  - the reporter's words are never scored as the reporter's abuse (handled before abuse);
-   *  - a block stands whether or not they met, and the reply is the same for a member they never
-   *    met and a name that matches nobody (no membership oracle);
+   *  - the target is resolved among the member's counterparts first (resolveTarget): "him" is the one
+   *    open or most recent counterpart, and a name two counterparts share gets "Who do you mean?";
+   *  - a name that is no counterpart may still be a member they never met: the block stands, and the
+   *    reply is the same as for a name that matches nobody (no membership oracle, never a false "Done");
    *  - every report about a member opens a staff case; points need a shared interaction and
    *    corroboration (trust.ts); "reported" copy is sent only when that case exists and they met;
+   *  - an urgent report (harassment, unsafe, scam, minor) about someone they met holds that person on
+   *    every app until staff clear it (PRD 36.3), and the reply starts with 911;
    *  - a report that the member is under 18 takes them out of matching until staff review (-9);
    *  - a booked meeting between them is called off with a neutral note to the other member.
    */
   private handleBlock(m: MemberState, c: Classified) {
     const verb = c.kind as "block" | "report";
+    const kind: ReportKind = c.otherAge !== undefined && isMinor(c.otherAge) ? "minor" : reportKindOf(c.text ?? "");
+    m.pendingSafety = undefined;
+    const r = this.resolveTarget(m, c.target ?? "");
+    if (r.ask) {
+      // Ids and kinds only: what they said is not kept while we wait for the name.
+      m.pendingSafety = { verb, kind, at: this.now() };
+      this.ctx.log(`${verb}_ambiguous`, { memberId: m.id, options: r.ask.length });
+      this.send(m, copy.whoDoYouMean(this.namesFor(r.ask)), { type: "question", proactive: false }, "reply");
+      return;
+    }
+    this.applyBlock(m, verb, kind, r.target);
+  }
+
+  /** The block or report itself, once the target is known (undefined: the name matched nobody). */
+  private applyBlock(m: MemberState, verb: "block" | "report", kind: ReportKind, target: MemberState | undefined) {
     const now = this.now();
-    const target = this.findByName(c.target ?? "", m.id);
     if (!target) {
       this.ctx.log(`${verb}_unresolved`, { memberId: m.id });
-      this.send(m, verb === "block" ? copy.blocked : copy.reportUnmatched, { type: "info" }, "reply");
+      // An urgent report we cannot attach to anyone still reaches staff, as the member's own case.
+      if (verb === "report" && URGENT_REPORTS.has(kind)) this.distressCase(m, { level: "urgent", kind });
+      this.send(m, verb === "block" ? copy.blockUnmatched : copy.reportUnmatched, { type: "info" }, "reply");
       return;
     }
     const met = this.metBefore(m.id, target.id);
@@ -1460,10 +1570,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (verb === "report") {
       const points = this.trust.report(target.id, m.id, now, { met });
       if (!points) this.caseEvent(target.id, { at: now, kind: "report_received", points: 0, by: m.id });
-      // The staff queue's record (the case event above already counts it).
-      this.fileReport(m.id, target.id, c.otherAge !== undefined && isMinor(c.otherAge) ? "minor" : reportKindOf(c.text ?? ""), { source: "message", met, caseEvent: false });
+      // The staff queue's record (the case event above already counts it). An urgent one holds them (reportHeld).
+      this.fileReport(m.id, target.id, kind, { source: "message", met, caseEvent: false });
       this.ctx.log("report", { memberId: m.id, target: target.id, met, points });
-      if (c.otherAge !== undefined && isMinor(c.otherAge)) this.minorReported(target, m.id);
+      if (kind === "minor") this.minorReported(target, m.id);
     }
     for (const o of [...this.opps.values()]) {
       if (!OPEN_STAGES.has(o.stage) || !o.participants.includes(m.id) || !o.participants.includes(target.id)) continue;
@@ -1477,22 +1587,139 @@ export class ConsentNetwork implements NetworkUnderTest {
       }
       this.close(o, "blocked");
     }
-    this.send(m, verb === "block" ? copy.blocked : met ? copy.reported : copy.reportUnmatched, { type: "info" }, "reply");
+    const reply = verb === "block" ? (met ? copy.blocked : copy.blockUnmatched)
+      : !met ? copy.reportUnmatched : URGENT_REPORTS.has(kind) ? copy.reportedUrgent : copy.reported;
+    this.send(m, reply, { type: "info" }, "reply");
+  }
+
+  /**
+   * The people the Network introduced this member to, most recent first: the others in a booked or
+   * past meeting the member was told about, and recorded meetings. `open`: the meeting is still ahead.
+   */
+  private counterparts(id: MemberId): { m: MemberState; at: number; open: boolean }[] {
+    const by = new Map<MemberId, { at: number; open: boolean }>();
+    const add = (x: MemberId, at: number, open: boolean) => {
+      if (x === id || !this.members.has(x) || this.declinedIds.has(x)) return;
+      const p = by.get(x);
+      if (!p || at > p.at || (open && !p.open)) by.set(x, { at: Math.max(at, p?.at ?? at), open: open || !!p?.open });
+    };
+    for (const o of this.opps.values()) {
+      if (!o.participants.includes(id) || o.meetingAt === undefined || !(o.bookedTold?.includes(id) || o.contacted.has(id))) continue;
+      const open = o.stage === "scheduled";
+      for (const x of o.participants) if (o.contacted.has(x) && o.status.get(x) !== "no") add(x, o.meetingAt, open);
+    }
+    for (const x of this.interactions) {
+      if (!x.participants.includes(id) || (x.outcome !== "completed" && x.outcome !== "no_show")) continue;
+      for (const p of x.participants) add(p, x.at, false);
+    }
+    return [...by].map(([x, v]) => ({ m: this.members.get(x)!, ...v })).sort((a, b) => b.at - a.at || (a.m.id < b.m.id ? -1 : 1));
+  }
+
+  /**
+   * Who "block X" or "report X" is about (F23). Pronouns ("him", "her", "them", "my date") mean the
+   * one open counterpart, else the most recent one. A name is looked up among counterparts (full
+   * name, "First L.", first name); with none, among every member by full name or a unique first name
+   * (a member they never met: the block still stands). Two or more possible people, or a pronoun
+   * with no counterpart: `ask`, with the counterparts to choose from.
+   */
+  private resolveTarget(m: MemberState, raw: string): { target?: MemberState; ask?: MemberState[] } {
+    const text = raw.normalize("NFKC").replace(/[‘’]/g, "'").replace(/[.!?,;:]+\s*$/, "").trim();
+    const cps = this.counterparts(m.id);
+    if (!text || PRONOUN_TARGET.test(text)) {
+      const open = cps.filter(x => x.open);
+      if (open.length === 1) return { target: open[0]!.m };
+      if (open.length > 1) return { ask: open.map(x => x.m) };
+      const top = cps.filter(x => x.at === cps[0]?.at);
+      return top.length === 1 ? { target: top[0]!.m } : { ask: top.map(x => x.m) };
+    }
+    const t = text.toLowerCase().replace(/\s+/g, " ");
+    const word = (w: string) => new RegExp(`(^|[^\\p{L}])${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=$|[^\\p{L}])`, "u");
+    const named = (x: MemberState, k: "full" | "display" | "first") => {
+      const v = (k === "full" ? this.fullNames.get(x.id) ?? "" : k === "display" ? x.display : x.first).toLowerCase().replace(/\.$/, "");
+      return !!v && word(v).test(t);
+    };
+    for (const k of ["full", "display", "first"] as const) {
+      const hits = cps.filter(x => named(x.m, k)).map(x => x.m);
+      if (hits.length === 1) return { target: hits[0]! };
+      if (hits.length > 1) return { ask: hits };
+    }
+    return { target: this.findByName(text, m.id) };
+  }
+
+  /** First names for "Who do you mean?", or "First L." when two of them share a first name. */
+  private namesFor(list: MemberState[]): string[] {
+    const firsts = list.map(x => x.first);
+    return list.map(x => (firsts.filter(f => f === x.first).length > 1 ? x.display : x.first));
+  }
+
+  /**
+   * The member's answer to "Who do you mean?" (within a day). A name or pronoun that resolves applies
+   * the block or report; "never mind" drops it; a short answer that still names nobody gets one plain
+   * reply. False: the message is about something else (the question is dropped and it is handled as usual).
+   */
+  private answerWho(m: MemberState, body: string): boolean {
+    const p = m.pendingSafety!;
+    m.pendingSafety = undefined;
+    if (this.now() - p.at > DAY) return false;
+    const text = body.trim();
+    if (NEVER_MIND.test(text)) { this.ack(m, "Okay."); return true; }
+    const r = this.resolveTarget(m, text);
+    if (r.target && this.counterparts(m.id).some(x => x.m.id === r.target!.id)) { this.applyBlock(m, p.verb, p.kind, r.target); return true; }
+    if (text.split(/\s+/).length > 4) return false;
+    this.ctx.log(`${p.verb}_unresolved`, { memberId: m.id });
+    this.send(m, copy.whoUnresolved, { type: "info" }, "reply");
+    return true;
   }
 
   /**
    * Another member says this member is under 18 ("report Ben, he's only 15"). Out of matching at
-   * once and a staff case that lists who they met; nothing about the reporter changes. Staff clear
-   * it with clearMinorSignal when the record says adult.
+   * once and a staff case that lists who they met; nothing about the reporter changes. The platform
+   * hears it (SafetySignal "minor"): the person's age goes under 18 pending review on every app,
+   * their photos and ratings go, and they are held everywhere. Staff clear it with clearMinorSignal
+   * when the record says adult.
    */
   private minorReported(target: MemberState, by: MemberId) {
     const now = this.now();
     this.caseEvent(target.id, { at: now, kind: "minor_reported", points: 0, by });
+    const c = this.openCase(target.id);
+    if (c) { c.kind = "minor"; c.urgent = true; }
     this.ctx.log("minor_reported", { memberId: target.id, by });
+    this.ctx.log("safety_alert", { memberId: target.id, kind: "minor", caseId: c?.id ?? null });
+    this.opts.onSafety?.({ t: "minor", memberId: target.id, ...(c ? { caseId: c.id } : {}) });
     if (target.minor) return;
     target.minor = true; target.minorSignal = true; target.minorReported = true;
     this.minorAfterContact(target.id);
     this.dropMember(target.id, "minors policy");
+  }
+
+  /**
+   * The safety classifier read danger or harm in the member's own message (PRD 32.14, 36.3): a case
+   * (on the member, kind "distress"; urgent for danger), an alert, the member's messages kept as
+   * evidence, and one reply: 911 first for danger. Nothing else in the message is handled.
+   */
+  private onDistress(m: MemberState, s: SafetyRead) {
+    this.distressCase(m, s);
+    this.send(m, s.level === "urgent" ? copy.distressUrgent : copy.distressFlag, { type: "info", safety: true }, "safety");
+  }
+  private distressCase(m: MemberState, s: SafetyRead) {
+    const now = this.now();
+    this.caseEvent(m.id, { at: now, kind: `distress:${s.level}${s.kind ? `:${s.kind}` : ""}`, points: 0 });
+    const c = this.openCase(m.id)!;
+    c.kind ??= "distress";
+    if (s.level === "urgent") c.urgent = true;
+    this.ctx.log("safety_alert", { memberId: m.id, kind: "distress", level: s.level, reportKind: s.kind ?? null, caseId: c.id });
+    this.opts.onSafety?.({ t: "evidence", memberIds: [m.id], caseId: c.id });
+    this.dirty = true;
+  }
+
+  /** The member's own risk cues become safety:* facets for the app's pack (safety.ts). The newest of each tag is kept. */
+  private noteCues(m: MemberState, c: Classified) {
+    const tags = safetyCues(c);
+    if (!tags.length) return;
+    const at = this.now();
+    m.safetyCues = [...(m.safetyCues ?? []).filter(x => !tags.includes(x.tag)), ...tags.map(tag => ({ tag, at }))];
+    this.ctx.log("safety_cue", { memberId: m.id, tags });
+    this.dirty = true;
   }
 
   /**
@@ -1912,14 +2139,26 @@ export class ConsentNetwork implements NetworkUnderTest {
    * two. Engine proposals also pass gateReason() again. Undefined when all pass.
    */
   private approvalCheck(o: Opp): string | undefined {
+    const now = this.now();
     for (const id of o.participants) {
       if (this.declinedIds.has(id)) return "participant_declined";
       const m = this.members.get(id);
       if (!m) return "unknown_member";
+      this.syncRecord(m);
       if (m.optedOut) return "opted_out";
       const level = this.trust.level(id);
       if (level !== "ok") return level === "hold" ? "held" : "on_watch";
       if (m.minor) return "participant_minor";
+      // Every origin (member requests, second encounters, staff-composed items too; PRD 32.8): holds,
+      // a paused account or state, "only when I ask" (not the requester, who asked), and presence.
+      // Presence against the meeting time, when one is set. Engine proposals pass gateReason() below, a
+      // plan asks each invitee about its own window (planProbe), and every probe checks the next 6 days
+      // again and swaps in an alternate (probe), so an item without a time is not closed here for it.
+      if (m.personHold || this.reportHeld(id)) return "safety_hold";
+      if (m.account) return `account_${m.account}`;
+      if (m.state === "paused") return "paused";
+      if (m.onlyWhenAsked && id !== o.requester) return "only_when_asked";
+      if (o.origin !== "engine" && !o.plan && o.meetingAt !== undefined && !this.inNyc(id, o.meetingAt, o.meetingAt + HOUR)) return "away";
       if (this.busy(id, o.id)) return "busy_elsewhere";
     }
     for (let i = 0; i < o.participants.length; i++) for (let j = i + 1; j < o.participants.length; j++)
@@ -2084,13 +2323,15 @@ export class ConsentNetwork implements NetworkUnderTest {
     const timing: Timing = invite ? "slot" : "logistics";
     // One open question at a time: a probe waits (up to a day) while the member's answer to an ask
     // (growth, profiling, check-in) is still due, so "Sure, my friend Wren would love this" is never
-    // read as a yes to the probe.
-    const askOpen = this.askOpen(m, now);
+    // read as a yes to the probe. "How did it go?" is an open question too: "it was great, would do it
+    // again" is the answer to that, never a yes to a new probe.
+    const feedbackOpen = m.awaiting?.kind === "feedback" && m.awaiting.oppId !== o.id && now - m.awaiting.at < ASK_HOLD_MS ? m.awaiting.at : undefined;
+    const askOpen = this.askOpen(m, now) || feedbackOpen !== undefined;
     if (askOpen || !this.timingOk(m, timing, now)) {
       if (!o.deferLogged?.includes(id)) {
         o.deferLogged = [...(o.deferLogged ?? []), id];
         this.counters.deferred++;
-        this.ctx.log("send_deferred", { memberId: id, kind: "probe", oppId: o.id, until: askOpen ? m.openAskAt! + ASK_HOLD_MS : this.openAt(m, timing, now) });
+        this.ctx.log("send_deferred", { memberId: id, kind: "probe", oppId: o.id, until: askOpen ? Math.max(this.askOpen(m, now) ? m.openAskAt! : 0, feedbackOpen ?? 0) + ASK_HOLD_MS : this.openAt(m, timing, now) });
       }
       return;
     }
@@ -2426,11 +2667,15 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (o.bookedTold?.includes(m.id) && !(o.confirmed ?? []).includes(m.id) && o.status.get(m.id) === "yes") this.counters.revealNo++;
     o.status.set(m.id, "dropped");
     this.counters.bookedCancelled++;
-    // The member called it off (they told us, or opted out): plan_cancelled. Free with notice (NC flake rules).
-    if (o.bookedAt?.[m.id] !== undefined && (ack || m.optedOut)) this.emit({ type: "plan_cancelled", member: m.id, planId: o.id }, `${o.id}:${m.id}`);
+    // A cancel within 2 hours of the meeting is a late cancel: a flake (one forgiven in 90 days), not free with notice.
+    const now = this.now();
+    const late = ack && o.meetingAt !== undefined && o.meetingAt > now && o.meetingAt - now < LATE_CANCEL_MS;
+    // The member called it off (they told us, or opted out): plan_cancelled (`late` for a late cancel; NC flake rules).
+    if (o.bookedAt?.[m.id] !== undefined && (ack || m.optedOut)) this.emit({ type: "plan_cancelled", member: m.id, planId: o.id, ...(late ? { late: true } : {}) }, `${o.id}:${m.id}`);
     if (o.planRun) o.planRun = { ...o.planRun, answers: { ...o.planRun.answers, [m.id]: "no" } };
-    this.ctx.log("booked_cancelled", { oppId: o.id, memberId: m.id, told: ack });
-    if (ack) this.send(m, "No worries, thanks for the heads up.", { type: "info" }, "reply");
+    this.ctx.log("booked_cancelled", { oppId: o.id, memberId: m.id, told: ack, late });
+    if (late) { m.lateCancels = (m.lateCancels ?? 0) + 1; this.flake(m, "late_cancel", true); }
+    else if (ack) this.send(m, "No worries, thanks for the heads up.", { type: "info" }, "reply");
     if (m.awaiting?.oppId === o.id) m.awaiting = undefined;
     const still = o.participants.filter(p => o.status.get(p) === "yes");
     const keep = o.participants.length > 2 && still.length >= 2;
@@ -2438,6 +2683,21 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const id of still) if (o.bookedTold?.includes(id)) this.send(this.member(id), copy.dropNotice(m.first, keep), { type: "cancellation", proposalId: o.id }, "cancellation",
       { hook: { t: "drop_notice", oppId: o.id } });
     if (!keep) { this.expireReveals(o); o.closedFrom = o.stage; o.closedReason = "participant dropped"; o.stage = "closed"; this.ctx.log("opportunity_closed", { proposalId: o.id, reason: "participant dropped" }); }
+  }
+
+  /**
+   * A flake (PRD 32.13, Section 17): a corroborated no-show or a late cancel. The first in 90 days is
+   * forgiven with a plain note; a later one costs trust points (trust.ts flake). `reply`: the member
+   * just cancelled (the note is the answer). A no-show's note rides on the next message we send them
+   * (noteFor): no extra text about a missed plan, and the "how did it go?" reply stays as it was.
+   */
+  private flake(m: MemberState, why: "no_show" | "late_cancel", reply: boolean) {
+    const r = this.trust.flake(m.id, this.now());
+    this.ctx.log("flake", { memberId: m.id, why, counted: r === "counted" });
+    if (m.optedOut) return;
+    const text = r === "forgiven" ? copy.flakeForgiven : copy.flakeCounted;
+    if (reply) this.send(m, text, { type: "info" }, "reply");
+    else this.noteFor(m.id, text);
   }
 
   /** Members the booked plan reached who neither confirmed nor dropped before it closed: an expired reveal. */
@@ -2525,9 +2785,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     const good = !f.selfNoShow && !f.otherNoShow && (f.sentiment === "positive" || !!o.post?.[m.id]?.again);
     if (good) this.emit({ type: "value_received", member: m.id, with: others }, `${o.id}:${m.id}`);
     this.helpFeedback(m, o, f);
-    // The check-in after a date (AppHooks.postDateReports): harassment, lying, a no-show or an unsafe
-    // date is a report about the other person, a block between them, and a staff case.
-    const reportKind = this.opts.hooks?.postDateReports && !o.plan ? checkInReport(body) ?? (f.otherNoShow ? "no_show" : undefined) : undefined;
+    // The check-in after a date (AppHooks.postDateReports): harassment, lying or an unsafe date is a
+    // report about the other person, a block between them, and a staff case (urgent kinds: 911 first
+    // and a hold). A no-show alone is a flake, not a safety report (PRD 32.13): the Network apologises.
+    const said = this.opts.hooks?.postDateReports && !o.plan ? checkInReport(body) : undefined;
+    const reportKind = said === "no_show" ? undefined : said;
+    const flakedOn = !o.plan && others.length > 0 && (f.otherNoShow || said === "no_show");
     if (reportKind) {
       for (const other of others) {
         this.fileReport(m.id, other, reportKind, { oppId: o.id, source: "check_in", met: true });
@@ -2535,11 +2798,16 @@ export class ConsentNetwork implements NetworkUnderTest {
         this.ctx.recordBlock(m.id, other);
         if (reportKind === "minor") { const t = this.members.get(other); if (t) this.minorReported(t, m.id); }
       }
-      this.send(m, copy.reported, { type: "info" }, "reply");
+      this.send(m, URGENT_REPORTS.has(reportKind) ? copy.reportedUrgent : copy.reported, { type: "info" }, "reply");
+    } else if (flakedOn) {
+      this.ctx.log("flaked_on", { memberId: m.id, oppId: o.id });
+      this.send(m, copy.flakedOn, { type: "info" }, "reply");
     } else if (crewId) {
       const a = plans.activityById.get(o.plan!.activityId)!;
       this.send(m, `${copy.feedbackThanks} ${copy.crewOffer(a.label)}`, { type: "crew_offer", crew: { crewId, activity: a.id } }, "reply", { about: others, hook: { t: "crew_offer", crewId } });
     } else this.ack(m, copy.feedbackThanks);
+    // They missed it and said so: a flake (one forgiven in 90 days), its note on their next message.
+    if (f.selfNoShow && !o.plan && !reportKind && !flakedOn) this.flake(m, "no_show", false);
     if (f.selfNoShow) { m.noShows++; m.completedSinceNoShow = 0; }
     else m.completedSinceNoShow++;
     for (const other of others) {
@@ -2692,7 +2960,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     // not come, or they were asked how it went and stayed silent (finalize runs 4 days after).
     for (const p of going) {
       if (present.includes(p) || said(p)) continue;
-      if (going.some(x => x !== p && said(x)?.came && said(x)!.otherNoShow)) { const x = this.members.get(p); if (x) { x.noShows++; x.completedSinceNoShow = 0; } }
+      if (going.some(x => x !== p && said(x)?.came && said(x)!.otherNoShow)) {
+        const x = this.members.get(p);
+        if (x) { x.noShows++; x.completedSinceNoShow = 0; if (!o.plan) this.flake(x, "no_show", false); }
+      }
     }
     // A request is fulfilled only when the requester and someone else attended (matching-e2e-7).
     if (o.requester && present.includes(o.requester) && present.some(p => p !== o.requester)) {
@@ -3187,6 +3458,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.lastTick = now;
     // The member records can change between units (staff edits, the member's settings): read them again first.
     for (const m of [...this.members.values()]) this.syncMember(m);
+    this.purgeEvidence(now);
     // Deferred sends whose window may have come. Each one runs every send-time check again.
     const waiting = this.deferred; this.deferred = [];
     for (const d of waiting) {
@@ -3631,7 +3903,9 @@ export class ConsentNetwork implements NetworkUnderTest {
         intents.push({ id: `${m.id}:li:${d}`, memberId: m.id, objective: def.text, category: def.category, details: `format: ${def.format}; tags: ${[...def.needsInterests, ...def.needsSkills, def.pool ?? ""].filter(Boolean).join(",")}`, horizonDays: LEARNED_DESIRE_DAYS, status: "active", createdAt: statedAt });
       }
     }
-    const holds = [...this.members.values()].filter(m => !this.trust.ok(m.id) || m.minor || m.minorSignal || this.reportHeld(m.id)).map(m => ({ memberId: m.id, from: now - HOUR }));
+    const holds = [...this.members.values()].filter(m => !this.trust.ok(m.id) || m.minor || m.minorSignal || this.reportHeld(m.id) || m.personHold).map(m => ({ memberId: m.id, from: now - HOUR }));
+    // A person held on any app who has not written here yet (no member state): held too (platform.person_safety).
+    for (const x of snap.members as MemberRecord[]) if (x.safetyHold && nyc.has(x.id) && !this.members.has(x.id)) holds.push({ memberId: x.id, from: now - HOUR });
     const reliability = Object.fromEntries([...this.members.values()].filter(m => m.noShows > 0).map(m => [m.id, { noShows: m.noShows, completedSinceLastNoShow: m.completedSinceNoShow }]));
     const recent = [...this.opps.values()].filter(o => now - o.createdAt < 30 * DAY).map(o => this.toProposal(o));
     const engineInput: EngineInput = {
@@ -3650,7 +3924,8 @@ export class ConsentNetwork implements NetworkUnderTest {
         // Attendees of a plan who both said they'd do it again (plans ask 8).
         ...[...this.planAgain].map(([k, at]) => { const [a, b] = k.split("|") as [string, string]; return { from: a, to: b, type: "would_interact_again" as const, strength: 0.8, explicit: false, createdAt: at }; }),
       ],
-      recentProposals: recent, safetyHolds: holds, feedback: this.feedback, interactions: this.interactions, reliability,
+      // Feedback kept as evidence about someone who left (forget) is never engine input.
+      recentProposals: recent, safetyHolds: holds, feedback: this.feedback.some(f => this.declinedIds.has(f.from) || this.declinedIds.has(f.about)) ? this.feedback.filter(f => !this.declinedIds.has(f.from) && !this.declinedIds.has(f.about)) : this.feedback, interactions: this.interactions, reliability,
       recentAsks: this.asks.map(a => ({ ...a })),
       exposureDebt: { ...this.exposureDebt },
     };
@@ -3674,11 +3949,15 @@ export class ConsentNetwork implements NetworkUnderTest {
       const m = this.members.get(x.id);
       return validAge(x.age) && !isMinor(x.age) && x.age >= 18 && (!m || (!m.minor && !m.minorSignal && !m.ageConflict && !m.ageUnknown && !m.minorReported));
     }).map(x => x.id));
+    // Held people never enter a pack's input (the person-level hold and urgent reports; PRD 36.3, 40.3).
+    for (const x of input.members) if (this.isSafetyHeld(x.id)) adult.delete(x.id);
     const both = (a: MemberId, b: MemberId) => adult.has(a) && adult.has(b);
     const facets = input.facets.filter(f => adult.has(f.memberId));
     for (const m of this.members.values()) {
       if (!adult.has(m.id)) continue;
       for (const t of m.appTags ?? []) facets.push({ id: `${m.id}:app:${t.tag}`, memberId: m.id, kind: t.kind, value: t.tag, tags: [t.tag], scope: t.scope, provenance: t.provenance === "llm" ? "inferred" : "said", confidence: t.provenance === "llm" ? 0.7 : 0.9, validFrom: t.at, source: "chat", observedAt: t.at, inferred: false, confirmedByMember: true });
+      // Risk cues from the member's own messages (safety.ts): the slop pack sends them to safety_review, friends holds them.
+      for (const t of m.safetyCues ?? []) facets.push({ id: `${m.id}:cue:${t.tag}`, memberId: m.id, kind: "fact", value: t.tag, tags: [t.tag], scope: "agent_private", provenance: "inferred", confidence: 0.8, validFrom: t.at, source: "chat", observedAt: t.at, inferred: true, confirmedByMember: false });
     }
     const out: EngineInput = {
       ...input,
@@ -4147,6 +4426,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (m.optedOut) return no("opted_out");
     if (m.account && !o.reply && kind !== "safety") return no(`account_${m.account}`);
     if (!o.reply && kind !== "safety" && this.trust.level(id) === "hold") return no("held");
+    if (!o.reply && kind !== "safety" && (m.personHold || this.reportHeld(id))) return no("safety_hold");
     if (m.onlyWhenAsked && kind !== "reengage" && (o.proactive || (ASK_KINDS.has(kind) && !o.reply))) return no("only_when_asked");
     if (ABOUT_OTHERS.has(kind)) {
       if (m.minor) return no("minor");
@@ -4156,7 +4436,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (this.blocked(id, x)) return no("blocked_pair");
         const other = this.members.get(x);
         if (other) this.syncRecord(other);
-        if (!other || other.minor || other.account || this.declinedIds.has(x)) return no("other_not_matchable");
+        if (!other || other.minor || other.account || other.personHold || this.reportHeld(x) || this.declinedIds.has(x)) return no("other_not_matchable");
         if (!this.trust.ok(x)) return no("other_on_watch");
       }
     }
@@ -4278,7 +4558,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   eligible(id: MemberId, exceptOpp?: string, asked = false): boolean {
     const m = this.members.get(id);
     if (m) this.syncRecord(m);
-    if (!m || m.minor || m.account || m.optedOut || m.stage === "new" || !this.trust.ok(id) || m.onlyWhenAsked || this.reportHeld(id)) return false;
+    if (!m || m.minor || m.account || m.optedOut || m.stage === "new" || !this.trust.ok(id) || m.onlyWhenAsked || this.reportHeld(id) || m.personHold) return false;
     // Room on the Blooio streak for an interruption (at most 1 message unanswered), or logistics for a requester.
     const c = { outboundSinceInbound: m.outbound ?? 0 };
     if (!(asked ? attention.canSendLogistics(c) : attention.canInterrupt(c))) return false;
@@ -4343,13 +4623,15 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (acct !== m.account) { if (acct) m.account = acct; else delete m.account; }
       if (validAge(r.age) && r.age !== m.age) m.age = r.age;
       if (validAge(r.age) && isMinor(r.age) && !m.minor) { m.minor = true; this.ctx.log("minor_record", { memberId: m.id }); this.minorAfterContact(m.id); }
+      // The person-level safety hold (service/snapshot.ts): set and cleared by staff on the platform.
+      if (!!r.safetyHold !== !!m.personHold) { if (r.safetyHold) m.personHold = true; else delete m.personHold; }
     }
-    return m.minor || !!m.account;
+    return m.minor || !!m.account || !!m.personHold;
   }
 
   /** At the start of a unit: read the record again, and take a member the record now keeps out of matching out of every open opportunity. */
   private syncMember(m: MemberState) {
-    if (this.syncRecord(m) && this.busy(m.id)) this.dropMember(m.id, m.account ? `account ${m.account}` : "minors policy");
+    if (this.syncRecord(m) && this.busy(m.id)) this.dropMember(m.id, m.account ? `account ${m.account}` : m.minor ? "minors policy" : "safety hold");
   }
 
   member(id: MemberId): MemberState {
@@ -4579,7 +4861,7 @@ export interface NetworkState {
 }
 
 /** A member record as the snapshot gives it. The production snapshot also carries the account status (service/snapshot.ts). */
-type MemberRecord = WorldSnapshot["members"][number] & { accountStatus?: string };
+type MemberRecord = WorldSnapshot["members"][number] & { accountStatus?: string; safetyHold?: boolean };
 
 function interestLabel(tag: string) { return INTERESTS.find(i => i.tag === tag)?.label ?? tag.replace(/_/g, " "); }
 function skillLabel(tag: string) { const l = SKILLS.find(s => s.tag === tag)?.label ?? tag; return l; }

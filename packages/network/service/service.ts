@@ -31,6 +31,8 @@ import { brandOf, copy as ntwrkCopy, copyFor, type Copy } from "../src/copy.ts";
 import { isMinor } from "@thenetwork/core";
 import { ageAnswer, agesStated } from "../src/classify.ts";
 import { NetworkRuntime, type RuntimeHost } from "./runtime.ts";
+import type { SafetySignal } from "../src/safety.ts";
+import { clearPerson, holdPerson, openHolds } from "./person-safety.ts";
 import type { ChannelAdapter, Outbound } from "./channel.ts";
 import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { Accounts, type AccountHooks, type JoinHookContext, type MemberHookContext } from "../../platform/src/accounts.ts";
@@ -92,6 +94,12 @@ const crossAppSafety = (u: StaffUser) => hasEverywhere(u, "safety") || hasEveryw
 const DECISIONS = new Set(["approve", "reject", "edit", "reroll"]);
 /** A reviewer's time on one item is clamped to an hour (audit observatory-10). */
 const MAX_REVIEW_SECONDS = 3600;
+
+/** A person was banned (by phone or by person): their verified phones now. */
+export interface BanHookContext { personId: string; e164s: string[]; by: "phone" | "person" }
+
+/** The lowest age a minor report records (PRD 40.3: a person-level age, under 18 pending staff review). */
+export const MINOR_REPORT_AGE = 17;
 
 /** One network the service runs: platform.networks.id ('<app>:<city>') and whether matching may run. */
 export interface NetworkSpec { id: string; matchingEnabled?: boolean }
@@ -224,6 +232,7 @@ export class NetworkService implements RuntimeHost {
   private api?: PublicApi;
   private readonly copies = new Map<AppId, Copy>();
   private readonly forgetListeners: Array<(ctx: MemberHookContext) => Promise<unknown> | unknown> = [];
+  private readonly banListeners: Array<(ctx: BanHookContext) => Promise<unknown> | unknown> = [];
   /** Private member photos (slop; verified adults only). */
   readonly photos: PhotoService;
   private readonly photoBaseUrl?: string;
@@ -335,6 +344,11 @@ export class NetworkService implements RuntimeHost {
   async purge() {
     const n = await this.people.purge(this.clock.now() - 2 * DAY).catch(e => { this.log(`[purge] failed: ${(e as Error).message}`); return 0; });
     if (n) this.log(`[purge] removed ${n} expired platform row(s)`);
+    // Evidence past its retention (safety.ts EVIDENCE_RETENTION_DAYS): the rows it kept for members who left.
+    for (const rt of this.runtimes.values()) {
+      const e = await rt.purgeEvidence().catch(err => { this.log(`[purge] evidence failed (${rt.id}): ${(err as Error).message}`); return 0; });
+      if (e) this.log(`[purge] ${e} expired evidence hold(s) (${rt.id})`);
+    }
     return n;
   }
 
@@ -503,18 +517,21 @@ export class NetworkService implements RuntimeHost {
     return {
       onJoin: (ctx: JoinHookContext) => this.joined(ctx),
       onStop: ctx => this.stopped(ctx.app, ctx.personId, ctx.scope),
-      onForget: async (ctx: MemberHookContext) => {
-        // The app's photos go first (leave, delete everything, a new owner of the number).
-        await this.photos.deleteFor(ctx.personId, ctx.app.id);
-        await this.forget(ctx.app, ctx.memberId);
-        // Other parts of the backend that hold data about the person in this app (the MCP server's OAuth grants).
-        for (const f of this.forgetListeners) {
-          try { await f(ctx); } catch (e) { this.log(`[forget] listener failed for ${ctx.app.id}: ${(e as Error).message}`); }
-        }
-      },
+      onForget: (ctx: MemberHookContext) => this.forgetMembership(ctx),
       onExport: (ctx: MemberHookContext) => this.exportMember(ctx.app, ctx.memberId),
       onAgeLowered: ctx => this.ageLowered(ctx.personId, ctx.age),
     };
+  }
+
+  /** The forget path of one membership: the app's photos, the Network's rows, then every forget listener (OAuth grants). */
+  private async forgetMembership(ctx: MemberHookContext) {
+    // The app's photos go first (leave, delete everything, a new owner of the number, an under-13 decline).
+    await this.photos.deleteFor(ctx.personId, ctx.app.id);
+    await this.forget(ctx.app, ctx.memberId);
+    // Other parts of the backend that hold data about the person in this app (the MCP server's OAuth grants).
+    for (const f of this.forgetListeners) {
+      try { await f(ctx); } catch (e) { this.log(`[forget] listener failed for ${ctx.app.id}: ${(e as Error).message}`); }
+    }
   }
 
   /**
@@ -564,6 +581,66 @@ export class NetworkService implements RuntimeHost {
    * The backend uses it to revoke the MCP server's OAuth grants of that app (packages/mcp revokeAllFor).
    */
   onForget(fn: (ctx: MemberHookContext) => Promise<unknown> | unknown) { this.forgetListeners.push(fn); }
+
+  /** Run `fn` after a ban (PRD 11.5: a banned person keeps no agent access). The backend revokes every OAuth grant of the person's phones. */
+  onBan(fn: (ctx: BanHookContext) => Promise<unknown> | unknown) { this.banListeners.push(fn); }
+
+  /** The person's verified phones (E.164), for the ban listeners. */
+  private async phonesOf(personId: string): Promise<string[]> {
+    const rows = await this.sql`select e164 from platform.phone_identities where person_id = ${personId}::uuid order by e164`;
+    return (rows as any[]).map(r => r.e164 as string);
+  }
+
+  // ------------------------------------------------------------------ person-level safety (RuntimeHost.safety; migration 0019)
+  /**
+   * What a network's unit asked for across apps, after it committed (safety.ts SafetySignal):
+   *  - hold: the person is held on every app (platform.person_safety), and every other app's network
+   *    takes them out of what is open now;
+   *  - minor: the same hold, the person's lowest age goes to 17 pending review (every app's member
+   *    follows, ageLowered deletes photos and ratings), so they are never matched anywhere.
+   * A member from before the platform (no person) keeps the network's own hold only.
+   */
+  async safety(rt: NetworkRuntime, signals: SafetySignal[]): Promise<void> {
+    const at = this.clock.now();
+    for (const s of signals) {
+      if (s.t === "evidence") continue; // written with the unit (runtime.ts)
+      const { personId, members } = await this.membersOfPerson(rt, s.memberId);
+      if (!personId) continue;
+      const before = (await this.people.getPerson(personId))?.lowestAge ?? null;
+      const { created } = await holdPerson(this.sql, { personId, reason: s.t === "minor" ? "minor_report" : s.reason, originApp: rt.app.id, caseId: s.caseId, priorAge: before, at });
+      if (created) this.log(`[safety] person hold (${s.t === "minor" ? "minor_report" : s.reason}) from ${rt.id}`);
+      if (s.t === "minor") {
+        const after = await this.people.noteAge(personId, MINOR_REPORT_AGE);
+        // Photos and ratings go even when the age was already under 18 (a second report finds none).
+        if (before === null || after < before) await this.ageLowered(personId, after);
+        else { await this.photos.deleteFor(personId); await this.dropRatings(personId); }
+      }
+      // One network at a time, each in its own unit (never one unit inside another).
+      for (const x of members) if (!(x.rt === rt && x.memberId === s.memberId)) await x.rt.unitOfWork(n => { n.applyPersonHold(x.memberId); });
+    }
+  }
+
+  /**
+   * Staff clear a person's safety holds on every app (safety@* or admin@*). A minor report that staff
+   * found wrong gets the person's earlier age back (prior_age, when it was 18 or more); each app's
+   * Network still needs clearMinorSignal and the report dismissed there (docs/runbook-safety.md).
+   */
+  async clearPersonHold(user: StaffUser, rt: NetworkRuntime, memberId: MemberId, note: string): Promise<ActionResult> {
+    const target = { type: "member" as const, id: memberId };
+    if (!crossAppSafety(user)) return this.refused(user, rt, "clear_person_hold", target, "needs_safety_everywhere");
+    const { personId, members } = await this.membersOfPerson(rt, memberId);
+    if (!personId) return this.refused(user, rt, "clear_person_hold", target, "no_person");
+    return this.audited(rt, user, target, { safety: "clear_person_hold", note }, async () => {
+      const cleared = await clearPerson(this.sql, personId, user.id, this.clock.now());
+      if (!cleared.length) return { ok: false, reason: "not_held" };
+      const prior = cleared.find(h => h.reason === "minor_report")?.priorAge;
+      if (prior !== undefined && prior !== null && prior >= 18 && !(await openHolds(this.sql, personId)).some(h => h.reason === "minor_report")) {
+        await this.sql`update platform.people set lowest_age = ${prior} where id = ${personId}::uuid`;
+        for (const x of members) await x.rt.scoped(tx => tx`update network.members set age = ${prior} where app_id = ${x.rt.app.id} and id = ${x.memberId}`);
+      }
+      return { ok: true };
+    });
+  }
 
   /** Leave one app: the Network forgets the member, then the save deletes every row that names them (the forget path). */
   private async forget(app: AppInfo, memberId: MemberId) {
@@ -832,6 +909,8 @@ export class NetworkService implements RuntimeHost {
    * Network declined them (under 13), every membership goes: under 13 cannot use any app.
    */
   private async statedAge(app: AppInfo, rt: NetworkRuntime, memberId: MemberId, e164: string) {
+    // The decline removes every membership through the full forget path (photos, the network, and every
+    // forget listener: the MCP server's OAuth grants), not only the network's own forget (PRD 11.5).
     const ages = rt.takeAges(memberId).filter(a => a.explicit || a.declined || isMinor(a.age));
     if (!ages.length) return;
     const person = await this.accounts.personFor(e164);
@@ -844,7 +923,7 @@ export class NetworkService implements RuntimeHost {
     const at = this.clock.now();
     for (const m of await this.people.memberships(person.id)) {
       if (m.state === "removed") continue;
-      if (m.app !== app.id) await this.forget(this.apps[m.app], m.memberId as MemberId);
+      await this.forgetMembership({ app: this.apps[m.app], personId: person.id, memberId: m.memberId, e164 });
       await this.people.forgetMembership(person.id, m.app, at);
       await this.accounts.recordConsent({ e164, app: m.app, state: "opted_out", source: "join_declined", at });
     }
@@ -1050,6 +1129,8 @@ export class NetworkService implements RuntimeHost {
     const m = await this.people.getMembership(personId, app);
     const rt = this.runtimeFor(app);
     if (!m || !rt || !["active", "paused", "onboarding"].includes(m.state)) return false;
+    // Reported as under 18 and waiting for staff: no photos (the age is already under 18; this holds if staff raised it by hand).
+    if ((await openHolds(this.sql, personId)).some(h => h.reason === "minor_report")) return false;
     const rows = await rt.scoped(tx => tx`select m.age, f.tags, f.valid_from from network.members m left join network.facets f on f.app_id = m.app_id and f.member_id = m.id and f.status <> 'rejected'
       and exists (select 1 from unnest(f.tags) t where t like 'verify:age:%') where m.app_id = ${app} and m.id = ${m.memberId} order by f.valid_from desc nulls last, f.id desc`) as any[];
     if (!rows.length || !(rows[0].age >= 18)) return false;
@@ -1136,6 +1217,8 @@ export class NetworkService implements RuntimeHost {
       if (!r.ok) return r;
       // One network at a time (never one unit inside another: no lock order to get wrong).
       for (const x of members) if (!(x.rt === rt && x.memberId === memberId)) await x.rt.unitOfWork(o => o.holdMember(x.memberId, user.id, note));
+      // A hold on every app is a person-level hold: it survives leaving and joining again (platform.person_safety).
+      if (crossAppSafety(user) && all.personId) await holdPerson(this.sql, { personId: all.personId, reason: "staff_hold", originApp: rt.app.id, at: this.clock.now() });
       return r;
     });
   }
@@ -1177,6 +1260,11 @@ export class NetworkService implements RuntimeHost {
         const mine = x.rt === rt && x.memberId === memberId;
         const r = await x.rt.unitOfWork(o => o.markBanned(x.memberId, user.id, note, mine ? reportId : undefined));
         if (mine) out = r;
+      }
+      // Agent access ends with the ban (PRD 11.5): every listener (the MCP server revokes every OAuth grant of the person's phones).
+      const ctx: BanHookContext = { personId, e164s: await this.phonesOf(personId), by };
+      for (const f of this.banListeners) {
+        try { await f(ctx); } catch (e) { this.log(`[ban] listener failed: ${(e as Error).message}`); }
       }
       return out;
     });
@@ -1328,6 +1416,14 @@ export class NetworkService implements RuntimeHost {
         if (b.note !== undefined && (typeof b.note !== "string" || b.note.length > 2000)) return json({ ok: false, error: "invalid_note" }, 400);
         if (path === "/safety/lift") return typeof b.memberId === "string" && b.memberId.length <= 200 ? result(await this.liftHold(user, b.memberId, b.note, rt)) : json({ ok: false, error: "memberId_required" }, 400);
         return typeof b.caseId === "string" && b.caseId.length <= 200 ? result(await this.closeCase(user, b.caseId, b.note, rt)) : json({ ok: false, error: "caseId_required" }, 400);
+      }
+      if (path === "/safety/clear-person") {
+        // Clear a person's safety holds on every app (platform.person_safety): safety@* or admin@*.
+        const no = need(["safety"]); if (no) return no;
+        const b = await body(req) as Record<string, any> | undefined;
+        if (!b || typeof b.note !== "string" || b.note.trim().length < 5 || b.note.length > 2000) return json({ ok: false, error: "note_required" }, 400);
+        if (typeof b.memberId !== "string" || !b.memberId || b.memberId.length > 200) return json({ ok: false, error: "memberId_required" }, 400);
+        return result(await this.clearPersonHold(user, rt, b.memberId, b.note));
       }
       if (path === "/safety/hold" || path === "/safety/ban" || path === "/safety/dismiss") {
         const no = need(["safety"]); if (no) return no;

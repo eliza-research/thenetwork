@@ -1,6 +1,6 @@
 // The service's two HTTP servers, its tick loop, and the MCP server mounted on it. Shared by main.ts,
 // the shared backend (deploy/backend/server.ts) and scripts/platform-dev.ts (local dev).
-import { createMcpHandler, devHostMap, defaultApps, defaultHostMap, isMcpAppId, type McpApp, type McpAppId, type McpHandler, MemoryOAuthStore, PgOAuthStore, platformHooks } from "../../mcp/src/index.ts";
+import { createMcpHandler, devHostMap, defaultApps, defaultHostMap, isMcpAppId, type McpApp, type McpAppId, type McpHandler, MemoryOAuthStore, type OAuthStore, PgOAuthStore, platformHooks } from "../../mcp/src/index.ts";
 import { devShortcutsAllowed, type Env } from "../../platform/src/env.ts";
 import { CloudflareTurnstile } from "../../platform/src/turnstile.ts";
 import { isAppId, siteHosts } from "../../platform/src/apps.ts";
@@ -19,13 +19,16 @@ export interface ServiceMcpOptions {
   now?: () => number;
   /** false: the migration runner has applied the oauth schema (deployed: the service login cannot create it). */
   migrate?: boolean;
+  /** Tests: the OAuth store to use instead of one built from `databaseUrl`. */
+  store?: OAuthStore;
 }
 
 /**
  * The MCP server and its OAuth server (packages/mcp) on the service's own platform parts: the same
  * people store, OTP service, accounts and sessions as the sites' /api/*. So a person signed in on a
  * site is signed in on its authorize page too, and the same OTP limits apply. When a person leaves an
- * app or deletes everything, every OAuth grant of that app is revoked.
+ * app or deletes everything (an under-13 decline too), every OAuth grant of that app is revoked; a ban
+ * revokes every grant of the person's phones on every app (PRD 11.5).
  *
  * Outside dev it needs TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY (the authorize page sends a code, so
  * it gets the same bot check as the join page) and a database. Without them it returns undefined and
@@ -36,11 +39,11 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
   const log = o.log ?? console.log;
   const dev = devShortcutsAllowed(env);
   const siteKey = env.TURNSTILE_SITE_KEY?.trim();
-  if (!dev && (!siteKey || !env.TURNSTILE_SECRET_KEY || !o.databaseUrl)) {
+  if (!dev && (!siteKey || !env.TURNSTILE_SECRET_KEY || (!o.databaseUrl && !o.store))) {
     log("MCP server off: it needs TURNSTILE_SITE_KEY, TURNSTILE_SECRET_KEY and a database outside PLATFORM_ENV=dev");
     return undefined;
   }
-  const store = o.databaseUrl ? new PgOAuthStore(o.databaseUrl) : new MemoryOAuthStore();
+  const store = o.store ?? (o.databaseUrl ? new PgOAuthStore(o.databaseUrl) : new MemoryOAuthStore());
   // The migration runner applies the oauth schema (9001); a deployed service login has no CREATE right.
   if (store instanceof PgOAuthStore && o.migrate !== false) await store.migrate();
   const api = svc.publicApi;
@@ -68,6 +71,10 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
   svc.onForget(async ctx => {
     // Leaving an app (or deleting everything) also deletes the grants: no row keeps the phone next to the app.
     if (isMcpAppId(ctx.app.id)) await mcp.revokeAllFor(ctx.e164, ctx.app.id, { forget: true });
+  });
+  svc.onBan(async ctx => {
+    // A banned person keeps no agent access on any app. The grants stay as revoked records (no forget): a ban is a safety record.
+    for (const e164 of ctx.e164s) await mcp.revokeAllFor(e164);
   });
   return mcp;
 }
