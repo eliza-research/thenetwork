@@ -50,8 +50,8 @@ export type CapitalEvent =
   | Base & { type: "plan_accepted"; member: MemberId; planId: string; kind: PlanKind; startsAt: number }
   /** The member confirmed (day-before / morning-of check). A no-show only costs NC after this. */
   | Base & { type: "plan_confirmed"; member: MemberId; planId: string }
-  /** The member cancelled. Free when at least `cancelCutoffHours` before `startsAt`. */
-  | Base & { type: "plan_cancelled"; member: MemberId; planId: string }
+  /** The member cancelled. Free when at least `cancelCutoffHours` before `startsAt`. `late`: the Network counted it as a late cancel (within 2 hours). */
+  | Base & { type: "plan_cancelled"; member: MemberId; planId: string; late?: boolean }
   /** The member attended. `counterparts` = other attendees; `verifiedBy` lists how attendance was verified. */
   | Base & { type: "plan_attended"; member: MemberId; planId: string; counterparts: MemberId[]; verifiedBy: Verification[]; origin: PlanOrigin; publicVenue: boolean; confirmers?: MemberId[] }
   /** The member did not show up (and did not cancel). */

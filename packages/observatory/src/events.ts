@@ -35,6 +35,9 @@ export const NETWORK_EVENT_KINDS: ReadonlySet<string> = new Set([
   // An opportunity closed because the members' picked times had nothing in common left, and a member
   // record that now says under 18 (a staff age correction).
   "no_common_time", "minor_record", "minor_after_contact",
+  // Safety on the text line (packages/network safety.ts): urgent reports, distress, minor reports and
+  // risk cues, for the urgent-report alert (PRD 37.1 item 11). Ids, kinds and levels only.
+  "safety_alert", "safety_cue",
 ]);
 const STAFF_ACTOR: Record<string, EventRow["actor_type"]> = { review_decision: "reviewer", review_refused: "reviewer", review_mode: "admin", matching_switch: "admin", safety_action: "admin" };
 /** Payload keys that could hold text a member wrote. */

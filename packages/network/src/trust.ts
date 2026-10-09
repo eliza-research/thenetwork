@@ -12,21 +12,27 @@
 // blocks many people they never met in a short time is flagged as a block abuser; blocking people
 // you met (a harassment victim) and reports are not counted (network-consent-14). Inviters are
 // accountable: when someone they vouched for reaches hold, the inviter loses invites for 30 days.
+// Flakes (PRD 32.13, Section 17: one forgiven no-show): a no-show or a cancel within 2 hours of the
+// meeting. The first in 90 days is forgiven; each later one in that window adds FLAKE_POINTS.
 import { DAY, type MemberId } from "@thenetwork/core";
 import type { Abuse } from "./classify.ts";
 
 export type TrustLevel = "ok" | "watch" | "hold";
-export interface TrustEvent { at: number; kind: Abuse | "report_received" | "block_abuse" | "invitee_held" | "decay" | "hold_lifted" | "staff_hold"; points: number; by?: MemberId }
+export interface TrustEvent { at: number; kind: Abuse | "report_received" | "block_abuse" | "invitee_held" | "decay" | "hold_lifted" | "staff_hold" | "flake"; points: number; by?: MemberId }
 export interface TrustRecord {
   score: number; level: TrustLevel; events: TrustEvent[]; reportsFrom: Set<MemberId>; blocksMade: number[];
   /** Members this member blocked without having met them (block abuse counts these once each). */
   blockedStrangers?: Set<MemberId>;
+  /** When the member flaked (no-shows and late cancels), for the one-forgiven rule. */
+  flakes?: number[];
   heldAt?: number; lastDecay?: number;
 }
 
 export const WATCH = 3, HOLD = 6;
+/** One flake is forgiven per this many days; each further one in the window costs FLAKE_POINTS (two more reach watch). */
+export const FLAKE_WINDOW_DAYS = 90, FLAKE_POINTS = 2;
 /** A Trust as plain JSON (exportState). */
-export type TrustState = { id: MemberId; score: number; level: TrustLevel; events: TrustEvent[]; reportsFrom: MemberId[]; blocksMade: number[]; blockedStrangers?: MemberId[]; heldAt?: number; lastDecay?: number }[];
+export type TrustState = { id: MemberId; score: number; level: TrustLevel; events: TrustEvent[]; reportsFrom: MemberId[]; blocksMade: number[]; blockedStrangers?: MemberId[]; flakes?: number[]; heldAt?: number; lastDecay?: number }[];
 const DECAY_DAYS = 14;
 
 export class Trust {
@@ -74,10 +80,10 @@ export class Trust {
 
   /** Plain JSON for the Network's stored state (Sets become arrays). */
   exportState(): TrustState {
-    return [...this.recs].map(([id, r]) => ({ id, score: r.score, level: r.level, events: r.events.map(e => ({ ...e })), reportsFrom: [...r.reportsFrom], blocksMade: [...r.blocksMade], ...(r.blockedStrangers?.size ? { blockedStrangers: [...r.blockedStrangers] } : {}), heldAt: r.heldAt, lastDecay: r.lastDecay }));
+    return [...this.recs].map(([id, r]) => ({ id, score: r.score, level: r.level, events: r.events.map(e => ({ ...e })), reportsFrom: [...r.reportsFrom], blocksMade: [...r.blocksMade], ...(r.blockedStrangers?.size ? { blockedStrangers: [...r.blockedStrangers] } : {}), ...(r.flakes?.length ? { flakes: [...r.flakes] } : {}), heldAt: r.heldAt, lastDecay: r.lastDecay }));
   }
   importState(state: TrustState) {
-    this.recs = new Map(state.map(r => [r.id, { score: r.score, level: r.level, events: r.events.map(e => ({ ...e })), reportsFrom: new Set(r.reportsFrom), blocksMade: [...r.blocksMade], ...(r.blockedStrangers?.length ? { blockedStrangers: new Set(r.blockedStrangers) } : {}), heldAt: r.heldAt ?? undefined, lastDecay: r.lastDecay ?? undefined }]));
+    this.recs = new Map(state.map(r => [r.id, { score: r.score, level: r.level, events: r.events.map(e => ({ ...e })), reportsFrom: new Set(r.reportsFrom), blocksMade: [...r.blocksMade], ...(r.blockedStrangers?.length ? { blockedStrangers: new Set(r.blockedStrangers) } : {}), ...(r.flakes?.length ? { flakes: [...r.flakes] } : {}), heldAt: r.heldAt ?? undefined, lastDecay: r.lastDecay ?? undefined }]));
   }
 
   add(id: MemberId, now: number, kind: TrustEvent["kind"], points: number, by?: MemberId) {
@@ -118,6 +124,19 @@ export class Trust {
     r.reportsFrom.add(by);
     if (r.reportsFrom.size >= 2 || r.score > 0) { this.add(target, now, "report_received", 3, by); return 3; }
     return 0;
+  }
+
+  /**
+   * The member flaked: a no-show the other person reported and the member confirmed (or stayed silent
+   * about), or a cancel within 2 hours of the meeting. "forgiven" for the first in FLAKE_WINDOW_DAYS;
+   * "counted" adds FLAKE_POINTS (decays like any other point).
+   */
+  flake(id: MemberId, now: number): "forgiven" | "counted" {
+    const r = this.get(id);
+    r.flakes = [...(r.flakes ?? []).filter(t => now - t < FLAKE_WINDOW_DAYS * DAY), now];
+    if (r.flakes.length < 2) return "forgiven";
+    this.add(id, now, "flake", FLAKE_POINTS);
+    return "counted";
   }
 
   /** Clean time pays the score down one point per two weeks (never below zero). */
