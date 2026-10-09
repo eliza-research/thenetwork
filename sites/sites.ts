@@ -90,7 +90,7 @@ export function skillDescription(text: string): string {
 /** Files that may hold placeholders. Bundled JS and CSS never do (minified JS can contain "{{" legitimately). */
 const TEXT = /\.(html|md|txt|json|xml)$/;
 
-/** Placeholders that the build fills: {{BACKEND_ORIGIN}}, {{MCP_URL}} (this site's MCP endpoint) and {{TURNSTILE_SITE_KEY}}. */
+/** Placeholders that the build fills: {{BACKEND_ORIGIN}}, {{MCP_URL}} (this site's MCP endpoint), {{SMS_LINE}} (the shared line) and {{TURNSTILE_SITE_KEY}}. */
 export function fill(text: string, env: Record<string, string | undefined> = process.env, domain = "ntwrk.love"): string {
   const cfg = skillsConfig(env);
   const key = (env.TURNSTILE_SITE_KEY ?? "").trim();
@@ -98,6 +98,7 @@ export function fill(text: string, env: Record<string, string | undefined> = pro
   return text
     .replaceAll("{{BACKEND_ORIGIN}}", cfg.BACKEND_ORIGIN)
     .replaceAll("{{MCP_URL}}", mcpUrlFor(domain, env))
+    .replaceAll("{{SMS_LINE}}", cfg.SMS_LINE)
     .replaceAll("{{TURNSTILE_SITE_KEY}}", key);
 }
 

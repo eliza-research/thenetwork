@@ -18,6 +18,7 @@ body.landing { margin: 0; min-height: 100vh; display: flex; flex-direction: colu
 .landing .l-agents a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 16px; border-radius: var(--l-pill); background: var(--l-pill-bg); color: var(--l-pill-ink); font-weight: 800; font-size: 15px; text-decoration: none; }
 .landing .l-agents a:hover { text-decoration: underline; }
 .landing .l-line { margin: 0; font-size: 16px; color: var(--l-muted); }
+.landing .l-sms { margin: 0; font-size: 16px; }
 .landing .l-apps { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
 .landing .l-apps a { display: flex; flex-direction: column; gap: 6px; padding: 22px; border-radius: 16px; min-height: 110px; text-decoration: none; }
 .landing .l-apps strong { font-size: 24px; }

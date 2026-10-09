@@ -5,6 +5,8 @@
 // Confirms: dialog[data-confirm="stop|leave|delete-all"] holding form[method=dialog] with a
 // button value="confirm". The delete-all dialog also holds input[name=confirmText] that must
 // equal its data-word attribute. A page without the dialog cannot run the action (fail closed).
+// Connected assistants (PRD 11.5): every settings page links /oauth/consents, where the person sees
+// and removes the AI assistants they allowed. A page without its own [data-assistants] block gets one.
 import { api, type Me } from "./api.ts";
 import { mountAuth } from "./auth.ts";
 import { $, fill, formatDate, message, ready, showStep, when } from "./ui.ts";
@@ -34,6 +36,25 @@ function flowError(root: HTMLElement, text: string): void {
   el.hidden = text === "";
 }
 
+/** The link to the person's connected assistants (/oauth/consents on this site), added once to the actions. */
+function assistantsLink(root: HTMLElement): void {
+  if (root.querySelector("[data-assistants]")) return;
+  const actions = $(root, ".actions");
+  if (!actions) return;
+  const box = document.createElement("div");
+  box.dataset.assistants = "";
+  const h = document.createElement("h3");
+  h.textContent = "Connected assistants";
+  const p = document.createElement("p");
+  p.textContent = "See which AI assistants you allowed to check your status here, and remove any of them. You can also text DISCONNECT.";
+  const a = document.createElement("a");
+  a.className = "btn quiet";
+  a.href = "/oauth/consents";
+  a.textContent = "Connected assistants";
+  box.append(h, p, a);
+  actions.insertBefore(box, actions.children[1] ?? null);
+}
+
 function render(root: HTMLElement, me: Me): void {
   const m = me.membership;
   const stopped = m ? ["opted_out", "stopped"].includes(m.state) : false;
@@ -47,6 +68,7 @@ function render(root: HTMLElement, me: Me): void {
   when(root, "no-membership", !m);
   when(root, "stopped", stopped);
   when(root, "not-stopped", !!m && !stopped);
+  assistantsLink(root);
   showStep(root, "account");
 }
 
