@@ -10,6 +10,8 @@
 //   venue         the meeting place after everyone said yes (slop: a public place near the midpoint)
 //   booked        the booked-plan reveal (slop: share-my-date and the check-in)
 //   checkIn       the question after the meeting (slop: how it went, and how to report)
+//   onboarding    the app's own onboarding questions and read-back (slop: a dating conversation that
+//                 collects the hard fields, even while matching is off)
 // Every hook is optional. Without hooks (The Network) nothing changes.
 import type { Category, Facet, MemberId } from "@thenetwork/core";
 import type { EngineInput } from "@thenetwork/engine";
@@ -37,7 +39,7 @@ export interface AppHooks {
    * Tags learned from a member's message. `reasons`: the asks it answers ([] for any other message).
    * `replaces`: tag prefixes whose older tags the new ones replace ("romance:seeks:").
    */
-  learn?(body: string, reasons: readonly string[], ctx: { now: number }): { tags: AppTag[]; replaces: string[] };
+  learn?(body: string, reasons: readonly string[], ctx: { now: number; age?: number }): { tags: AppTag[]; replaces: string[] };
   /** The first member's time options; undefined: the Network's own (attention.chooseTimeOptions). */
   timeOptions?(o: HookOpp, now: number, input: () => EngineInput): { start: number; end: number }[] | undefined;
   /** The probe text; undefined: the Network's own. */
@@ -50,4 +52,41 @@ export interface AppHooks {
   checkIn?(o: HookOpp, id: MemberId, others: string): string | undefined;
   /** Answers to the check-in can file a report about the other person (slop: harassment, lying, a no-show, an unsafe date). */
   postDateReports?: boolean;
+  /** The app's own onboarding for adults; undefined: the Network's three questions. */
+  onboarding?: AppOnboarding;
+}
+
+/** What onboarding knows about one member: their app tags, the neighborhood, their lowest age, and each step's asks and answers. */
+export interface OnboardingState {
+  tags: readonly string[]; area?: string; age?: number;
+  asked: Readonly<Record<string, number>>; answered: readonly string[];
+}
+
+/** One onboarding question. `reasons`: the ask reasons its bare answer is read with (AppHooks.learn). */
+export interface OnboardingStep { id: string; text: string; reasons: readonly string[] }
+
+/**
+ * An app's onboarding (PRD F4): its questions in order, skipping what is already known, then one
+ * read-back of what was learned with a chance to correct it. Every text is the app's own words; the
+ * Network sends them with the usual checks (STOP on first contact, quiet hours for the one nudge).
+ */
+export interface AppOnboarding {
+  /** First contact for an adult: who the agent is (an AI), what it remembers and how to see or delete it, STOP, then `question`. */
+  welcome(first: string, question: string, inviter?: string): string;
+  /** After an adult answered "how old are you?": what it remembers, then `question`. */
+  afterAge(question: string): string;
+  /** The next question, or undefined when every question is known or was asked enough. Pure. */
+  next(s: OnboardingState): OnboardingStep | undefined;
+  /** What was learned in plain words (never scores, ratings or safety tags), ending in one question: anything wrong? */
+  readBack(s: OnboardingState): string;
+  /** The reasons a correction to the read-back is read with. */
+  readBackReasons: readonly string[];
+  /** The reasons a whole profile (from the member's own AI assistant) is read with. */
+  profileReasons: readonly string[];
+  /** The member said something is wrong, but nothing could be read from it. */
+  fixAsk: string;
+  /** The last message of onboarding; `photos`: add the one photo ask (adults only, once). */
+  done(photos: boolean): string;
+  /** The one nudge to a member silent for a day in the middle of onboarding (`step`: the open question, or "readback"). */
+  resume(step: string | undefined): string;
 }

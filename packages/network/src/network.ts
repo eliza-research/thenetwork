@@ -50,7 +50,7 @@ import { activityHints, BOOKING_GAP, PLAN_VENUES, planLedger, statedWindows } fr
 type LedgerInput = CapitalEventInput extends infer E ? (E extends CapitalEventInput ? Omit<E, "t"> : never) : never;
 import type { NetworkStore } from "./store.ts";
 import { HOLD, Trust, type TrustEvent, type TrustLevel, type TrustState } from "./trust.ts";
-import type { AppHooks, AppTag, HookOpp } from "./apphooks.ts";
+import type { AppHooks, AppTag, HookOpp, OnboardingState } from "./apphooks.ts";
 import { checkInReport, reportKindOf, URGENT_REPORTS, type ReportKind, type SafetyReport } from "./reports.ts";
 
 /** Where an opportunity came from. "planner": a plan from the engine planner, or a crew session (Opp.crewId). */
@@ -291,6 +291,12 @@ interface MemberState {
   /** Profile tags the app's pack learned from what the member said (AppHooks.learn): engine facets, never shown. */
   appTags?: AppTag[];
   /**
+   * The app's own onboarding (AppHooks.onboarding): the open question (`step`, "readback" for the
+   * read-back) and the reasons its answer is read with, asks and answers per question, correction
+   * rounds, and the one-time photo ask and resume nudge.
+   */
+  onboarding?: { step?: string; reasons?: readonly string[]; asked: Record<string, number>; answered: string[]; rounds?: number; photoAsked?: boolean; nudged?: boolean };
+  /**
    * Unsolicited sends (PRD 32.9, PH-003, F28): anything that is not a reply within 15 minutes, a
    * follow-up to the member's own ask, or part of an opportunity they said yes to. Times per lane
    * ("state", "plan", "check_in"), how many went out in a row with no answer, and whether the last
@@ -401,7 +407,7 @@ type SendHook =
   | { t: "probe"; oppId: string; id: MemberId } | { t: "reveal"; oppId: string; id: MemberId } | { t: "times"; oppId: string; id: MemberId }
   | { t: "drop_notice"; oppId: string } | { t: "feedback"; oppId: string }
   | { t: "growth"; kind: string } | { t: "reengage" } | { t: "ask"; reason: AskRecord["reason"]; also?: string[] } | { t: "checkin" }
-  | { t: "plan_probe"; oppId: string; id: MemberId } | { t: "crew_offer"; crewId: string };
+  | { t: "plan_probe"; oppId: string; id: MemberId } | { t: "crew_offer"; crewId: string } | { t: "resume"; at: number };
 interface HookFns { valid?: () => boolean; onSent?: () => void; onRefused?: () => void }
 interface Deferred { memberId: MemberId; body: string; meta: SimMeta; kind: SendKind; o: SendOpts; timing?: Timing }
 /** When a send may go out: at once (replies, safety), in the member's send slot (interruptions), or outside quiet hours (logistics). */
@@ -541,6 +547,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.trust.onEvent = (id, e) => this.caseEvent(id, e);
   }
 
+  /**
+   * The app's own settings links that member texts may name (the onboarding's "see or delete it" line
+   * and the photo ask): the leak guard lets these through, and nothing else that looks like a link.
+   */
+  get siteLinks(): string[] { return [`${this.app.domain}/settings#photos`, `${this.app.domain}/settings`]; }
+
   /** The store runTick() uses when none is passed. */
   get store(): NetworkStore | undefined { return this.opts.store; }
 
@@ -566,7 +578,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     m.lastInbound = nowIn; m.msgsIn++;
     this.outboundBefore = m.outbound ?? 0;
     // Answers to the Network teach the send time (founder decision 1); carrier keywords do not.
-    if (!msg.keyword) m.replies = [...(m.replies ?? []), this.now()].slice(-60);
+    if (!msg.keyword && msg.source !== "mcp") m.replies = [...(m.replies ?? []), this.now()].slice(-60);
     this.heardFrom(m);
     this.replyTo = m.id; this.understood = u;
     try { this.handleInbound(m, msg); } finally { this.replyTo = undefined; this.understood = undefined; }
@@ -680,16 +692,21 @@ export class ConsentNetwork implements NetworkUnderTest {
       }
       if (m.stage !== "new") { this.send(m, copy.minorNotice, { type: "info" }, "safety"); return; }
     }
+    // A profile from the member's AI assistant (InboundMessage.source "mcp") is learned before the welcome, so the welcome skips what it gave.
+    const mcp = msg.source === "mcp", profileLearned = mcp && (m.stage === "new" || m.stage === "age");
+    if (profileLearned) this.learnFrom(m, body, this.opts.hooks?.onboarding?.profileReasons ?? []);
     if (m.stage === "new") return this.welcome(m);
     if (m.stage === "age" && this.afterAgeQuestion(m, known !== undefined)) return;
 
     // Blocks and reports first: their words describe someone else, so they are never scored as the
-    // sender's abuse, and a member on hold can still block (network-consent-4).
-    if (c.kind === "block" || c.kind === "report") return this.handleBlock(m, c);
+    // sender's abuse, and a member on hold can still block (network-consent-4). A profile is never a report.
+    if ((c.kind === "block" || c.kind === "report") && !mcp) return this.handleBlock(m, c);
     if (this.trust.level(m.id) === "hold") { if (c.abuse.length) this.trust.add(m.id, now, c.abuse[0]!, 0); return; }
     // "He asked me to venmo him $50": what someone else did, never the sender's abuse (ids and kinds only).
     if (c.disclosure?.length) this.ctx.log("abuse_disclosed", { memberId: m.id, kinds: c.disclosure });
     if (c.abuse.length && !this.handleAbuse(m, c, body)) return;
+    // A profile never answers a probe, a booked plan, a consent or a report question: it is learned, nothing more.
+    if (mcp) return this.onProfileText(m, body, profileLearned);
 
     // Answers to what we asked.
     const aw = m.awaiting;
@@ -748,6 +765,12 @@ export class ConsentNetwork implements NetworkUnderTest {
       return;
     }
     if (aw?.kind === "interview" && aw.ask) return this.onAskAnswer(m, aw.ask, c, body);
+    // The app's own onboarding (AppHooks.onboarding): every message until it is done answers it. A
+    // member found to be under 18 stops onboarding (no dating questions) and carries on single-player.
+    if (this.opts.hooks?.onboarding && m.stage !== "active") {
+      if (!m.minor) return this.onOnboardingAnswer(m, body);
+      this.activate(m); m.awaiting = undefined; if (m.onboarding) m.onboarding.step = undefined;
+    }
     // A growth ask's answer can be just the friend's name ("My friend Maya!", "Maya").
     // A one-word answer is a name only when it is not an answer word: "Yes!" invites nobody called "Yes".
     const lone = /^\W*([A-Z][a-z]+)\W*$/.exec(body)?.[1];
@@ -917,7 +940,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     if (m.minor) { m.stage = "active"; this.send(m, this.copy.welcomeMinor(m.first), { type: "onboarding", proactive: false, firstContact: true }, "interview"); return; }
     m.stage = "q1";
-    this.send(m, this.copy.welcome(m.first, this.members.get(snapMember?.invitedBy ?? "")?.first), { type: "onboarding", proactive: false, firstContact: true }, "interview",
+    const inviter = this.members.get(snapMember?.invitedBy ?? "")?.first;
+    const onb = this.opts.hooks?.onboarding;
+    this.send(m, onb ? onb.welcome(m.first, this.onboardingQuestion(m), inviter) : this.copy.welcome(m.first, inviter), { type: "onboarding", proactive: false, firstContact: true }, "interview",
       { hook: { t: "interview" } });
     this.inviteeJoined(m);
   }
@@ -941,7 +966,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!resolved) return false;
     if (m.minor) { this.send(m, copy.minorNotice, { type: "info" }, "reply"); return true; }
     m.stage = "q1";
-    this.send(m, copy.welcomeAfterAge, { type: "onboarding", proactive: false }, "interview", { hook: { t: "interview" } });
+    const onb = this.opts.hooks?.onboarding;
+    this.send(m, onb ? onb.afterAge(this.onboardingQuestion(m)) : copy.welcomeAfterAge, { type: "onboarding", proactive: false }, "interview", { hook: { t: "interview" } });
     this.inviteeJoined(m);
     return true;
   }
@@ -981,13 +1007,132 @@ export class ConsentNetwork implements NetworkUnderTest {
   private learnAppTags(m: MemberState, body: string, reasons: readonly string[]) {
     const learn = this.opts.hooks?.learn;
     if (!learn || m.minor) return;
-    const r = learn(body, reasons, { now: this.now() });
+    const age = this.lowestAge(m);
+    const r = learn(body, reasons, { now: this.now(), ...(age !== undefined ? { age } : {}) });
     if (!r.tags.length) return;
     const keep = (m.appTags ?? []).filter(t => !r.replaces.some(p => t.tag.startsWith(p)) && !r.tags.some(n => n.tag === t.tag));
     m.appTags = [...keep, ...r.tags];
     this.dirty = true;
     // Ids and tag names only, never the member's words.
     this.ctx.log("app_tags_learned", { memberId: m.id, tags: r.tags.map(t => t.tag.split(":").slice(0, 2).join(":")) });
+  }
+
+  /** The lowest valid age on the record or stated by the member, or undefined. */
+  private lowestAge(m: MemberState): number | undefined {
+    const ages = [this.attestedAge(m), m.statedAge].filter((x): x is number => validAge(x));
+    return ages.length ? Math.min(...ages) : undefined;
+  }
+
+  /** What the app's onboarding knows about this member (AppHooks.onboarding). */
+  private onboardingState(m: MemberState): OnboardingState {
+    const o = m.onboarding;
+    const age = this.lowestAge(m);
+    return { tags: (m.appTags ?? []).map(t => t.tag), ...(m.area ? { area: m.area } : {}), ...(age !== undefined ? { age } : {}), asked: o?.asked ?? {}, answered: o?.answered ?? [] };
+  }
+
+  /**
+   * The app's next onboarding question, recorded as the open one; the read-back when no question is
+   * left. Skips what is already known (an earlier answer or a profile from the member's AI assistant).
+   */
+  private onboardingQuestion(m: MemberState): string {
+    const onb = this.opts.hooks!.onboarding!;
+    const o = (m.onboarding ??= { asked: {}, answered: [] });
+    const s = onb.next(this.onboardingState(m));
+    if (s) { o.step = s.id; o.reasons = s.reasons; o.asked[s.id] = (o.asked[s.id] ?? 0) + 1; return s.text; }
+    o.step = "readback"; o.reasons = onb.readBackReasons;
+    return onb.readBack(this.onboardingState(m));
+  }
+
+  /**
+   * An answer during the app's onboarding: learn from it with the open question's reasons, then the
+   * next question or the read-back. A request is learned the same way: onboarding finishes first.
+   */
+  private onOnboardingAnswer(m: MemberState, body: string) {
+    const onb = this.opts.hooks!.onboarding!;
+    const o = (m.onboarding ??= { asked: {}, answered: [] });
+    m.awaiting = undefined;
+    if (o.step === "readback") return this.onReadBackAnswer(m, body);
+    this.learnFrom(m, body, o.reasons ?? []);
+    if (o.step && !o.answered.includes(o.step)) o.answered.push(o.step);
+    // The engine sees these questions as asked and answered (recentAsks), so it does not ask them again soon.
+    const now = this.now();
+    for (const r of o.reasons ?? []) this.asks.push({ memberId: m.id, at: now, reason: r, answeredAt: now });
+    this.ctx.log("onboarding_answer", { memberId: m.id, step: o.step ?? null });
+    if (!o.step && !onb.next(this.onboardingState(m))) return this.finishOnboarding(m);
+    this.send(m, this.onboardingQuestion(m), { type: "question", proactive: false }, "interview", { hook: { t: "interview" } });
+  }
+
+  /**
+   * The answer to the read-back. A correction is learned and read back again (at most 2 rounds); "that's
+   * wrong" with nothing readable asks what to change; anything else ("yes", "looks good") finishes.
+   */
+  private onReadBackAnswer(m: MemberState, body: string) {
+    const onb = this.opts.hooks!.onboarding!;
+    const o = m.onboarding!;
+    const key = () => JSON.stringify([[...new Set((m.appTags ?? []).map(t => t.tag))].sort(), m.area ?? null]);
+    const before = key();
+    this.learnFrom(m, body, onb.readBackReasons);
+    const changed = key() !== before;
+    const wrong = !changed && /\b(wrong|not right|isn't right|incorrect|change|fix|mistake|not quite|missed|actually)\b/i.test(body);
+    if ((changed || wrong) && (o.rounds ?? 0) < 2) {
+      o.rounds = (o.rounds ?? 0) + 1;
+      this.ctx.log("onboarding_corrected", { memberId: m.id, round: o.rounds, changed });
+      this.send(m, changed ? onb.readBack(this.onboardingState(m)) : onb.fixAsk, { type: "question", proactive: false }, "interview", { hook: { t: "interview" } });
+      return;
+    }
+    this.finishOnboarding(m);
+  }
+
+  /** Onboarding is done: active, and one last message; the one photo ask only for an adult (lowest stated age 18+). */
+  private finishOnboarding(m: MemberState) {
+    const onb = this.opts.hooks!.onboarding!;
+    const o = (m.onboarding ??= { asked: {}, answered: [] });
+    o.step = undefined; o.reasons = undefined;
+    this.activate(m);
+    const photos = !o.photoAsked && this.photoAskOk(m);
+    if (photos) { o.photoAsked = true; this.ctx.log("photo_ask", { memberId: m.id }); }
+    this.ctx.log("onboarding_done", { memberId: m.id, rounds: o.rounds ?? 0 });
+    this.send(m, onb.done(photos), { type: "info" }, "reply");
+  }
+
+  /** Photos are for adults only (PRD 40.5): a lowest stated age of 18 or more, and nothing that reads like a minor. Unknown age: never. */
+  private photoAskOk(m: MemberState): boolean {
+    if (m.minor || m.minorSignal || m.ageUnknown || m.ageConflict || m.minorReported) return false;
+    const age = this.lowestAge(m);
+    return age !== undefined && age >= 18;
+  }
+
+  /**
+   * A profile the member's AI assistant sent (submit_profile, InboundMessage.source "mcp"): learned
+   * like their own words, but it answers no question. During the app's onboarding, an open question
+   * the profile already answered is replaced by the next one; nothing else is sent.
+   */
+  private onProfileText(m: MemberState, body: string, learned: boolean) {
+    const onb = this.opts.hooks?.onboarding;
+    if (!learned) this.learnFrom(m, body, onb?.profileReasons ?? []);
+    this.ctx.log("profile_learned", { memberId: m.id });
+    const o = m.onboarding;
+    if (!onb || m.stage === "active" || m.minor || !o?.step || o.step === "readback") return;
+    if (onb.next(this.onboardingState(m))?.id === o.step) return;
+    this.send(m, this.onboardingQuestion(m), { type: "question", proactive: false }, "interview", { hook: { t: "interview" } });
+  }
+
+  /**
+   * F4: a member who went quiet in the middle of the app's onboarding hears one nudge after a day,
+   * through every send check (quiet hours, STOP, the budgets), and never a second one.
+   */
+  private resumeOnboarding(now: number) {
+    const onb = this.opts.hooks?.onboarding;
+    if (!onb) return;
+    for (const m of this.members.values()) {
+      const o = m.onboarding;
+      // Only mid-way: after at least one answer (a member who never answered the welcome is not nudged).
+      if (!o?.step || o.nudged || !o.answered.length || m.stage === "active" || m.minor || m.optedOut) continue;
+      const last = Math.max(m.lastInbound, m.lastSent?.at ?? 0);
+      if (now - last < DAY || this.deferred.some(d => d.memberId === m.id && d.o.hook?.t === "resume")) continue;
+      const r = this.send(m, onb.resume(o.step), { type: "question", proactive: false }, "interview", { hook: { t: "resume", at: m.lastInbound } });
+      if (r !== "refused") { o.nudged = true; this.ctx.log("onboarding_resume", { memberId: m.id, step: o.step }); }
+    }
   }
 
   private onInterviewAnswer(m: MemberState, body: string) {
@@ -3007,6 +3152,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     const p = nyParts(now);
     this.weeklyCheckins(now);
+    this.resumeOnboarding(now);
     if (p.hour >= this.opts.runHour && p.hour < ENGINE_RUN_UNTIL && this.lastRunDay !== p.day) {
       this.lastRunDay = p.day;
       this.trust.decay(now);
@@ -3763,6 +3909,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     switch (h.t) {
       case "interview": return { onSent: () => { m.awaiting = { kind: "interview", at: now() }; } };
       case "age": return { onSent: () => { m.awaiting = { kind: "age", at: now() }; } };
+      // The onboarding nudge: only while the member is still silent and still onboarding.
+      case "resume": return { valid: () => m.lastInbound <= h.at && m.stage !== "active", onSent: () => { m.awaiting = { kind: "interview", at: now() }; } };
       case "suggested": return { onSent: () => this.suggested(m, h.venues) };
       case "retry_found": return { valid: () => !!o && OPEN_STAGES.has(o.stage) && o.stage !== "review" };
       case "probe": return {
@@ -3962,7 +4110,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       const guard = this.guardCache?.key === key ? this.guardCache.guard : new LeakGuard({
         forbidden: priv.map(f => ({ text: f.value, owner: f.memberId })),
         canaries: priv.flatMap(f => [...f.value.matchAll(CANARY_RE)].map(x => x[1]!)),
-        allow: [HELP_TEXT, STOP_CONFIRMATION], publicPhrases: PUBLIC_PHRASES,
+        allow: [HELP_TEXT, STOP_CONFIRMATION, ...this.siteLinks], publicPhrases: PUBLIC_PHRASES,
       });
       this.guardCache = { snap, key, guard };
     }

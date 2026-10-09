@@ -113,6 +113,12 @@ export interface InboundMessage {
   id: string; memberId: MemberId; body: string; ts: number; channel: ChannelKind; keyword?: Keyword;
   /** A tapback on an outbound message (SimMeta.reaction); `body` then carries the emoji. Never a keyword. */
   reaction?: Reaction;
+  /**
+   * Where the text came from: the member's own thread ("text", the default) or a profile their AI
+   * assistant sent through the MCP server's submit_profile ("mcp"). An "mcp" text is learned as a
+   * profile; it never answers a question the Network asked in the thread.
+   */
+  source?: "mcp" | "text";
 }
 
 export interface MeetingReport {

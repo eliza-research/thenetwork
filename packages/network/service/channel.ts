@@ -136,6 +136,8 @@ export class BlooioAdapter implements ChannelAdapter {
       ...(o.from ? { defaultFrom: { blooio: o.from } } : {}),
       recipientPolicy: (to, ctx) => (ctx.kind === "compliance" && this.strangers.has(to) ? { ok: true } : members(to, ctx)),
       forbiddenProvider: forbiddenProvider(o.net, ids),
+      // The app's own settings links (onboarding's "see or delete it" line and the photo ask).
+      leakAllow: o.net.siteLinks,
       onAlert: (r, why) => this.log(`[blooio] alert ${why} on ${r.idempotencyKey}`),
     });
   }
