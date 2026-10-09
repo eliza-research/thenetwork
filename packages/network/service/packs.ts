@@ -5,7 +5,8 @@
 //            slop hooks below: verified adults only, the hard-field asks in one message (each asked at
 //            most twice by the pack), answers parsed into the pack's tags, the anonymous date probe
 //            with an age band and a distance band, a public place near the midpoint, the booked
-//            date with the share-my-date tip, and the check-in that can file a report.
+//            date with the share-my-date tip, the check-in that can file a report, and the dating
+//            onboarding (slopOnboarding.ts) that collects the hard fields while matching is off.
 //   peon     peonPack with PEON_ENGINE_CONFIG on nyc.
 //   friends  friendsPack with its plans config (FRIENDS_PLANS).
 // Every pack stays behind the Network's human review gate. Matching is off until an admin turns it on
@@ -21,7 +22,10 @@ import { ZIPS } from "@thenetwork/engine/src/packs/slop/zips.ts";
 import type { AppHooks, AppTag, HookOpp, HookVenue } from "../src/apphooks.ts";
 import { km, NEIGHBORHOOD, VENUES } from "../src/geo.ts";
 import { nextAt } from "../src/outreach.ts";
-import type { AppId } from "../../platform/src/apps.ts";
+import { parseAgeRange, parseBasics, parseDistance, parseOrientation, parseZip, words } from "./slopParse.ts";
+import { slopOnboarding } from "./slopOnboarding.ts";
+import { brandOf, copyFor } from "../src/copy.ts";
+import { APPS, type AppId } from "../../platform/src/apps.ts";
 
 /** What one app's network gets: its pack, the engine config the pack was tuned with, plans config and hooks. */
 export interface AppWiring {
@@ -59,11 +63,10 @@ export function appWiring(app: AppId): AppWiring {
 }
 
 // ==================================================================================== slop
+// The parsers live in slopParse.ts (scored by evals/slop/); re-exported here for older imports.
+export { parseAgeRange, parseBasics, parseDistance, parseOrientation, parseZip } from "./slopParse.ts";
 const NYC_ZIPS = ZIPS.filter(z => z.market === "nyc");
 const ZIP_BY = new Map(ZIPS.map(z => [z.zip, z]));
-const GENDERS = ["woman", "man", "nonbinary"] as const;
-type Gender = (typeof GENDERS)[number];
-
 /** The nearest zip in the pack's table to a neighborhood the member named (a coarse cell, never an address). */
 export function zipForArea(area: string | undefined): string | undefined {
   const n = area ? NEIGHBORHOOD.get(area) : undefined;
@@ -74,100 +77,6 @@ export function zipForArea(area: string | undefined): string | undefined {
 }
 
 const tag = (t: string, kind: Facet["kind"], at: number): AppTag => ({ tag: t, kind, scope: "agent_private", at });
-const words = (s: string) => ` ${s.normalize("NFKC").toLowerCase().replace(/[‘’]/g, "'").replace(/[^\p{L}\p{N}' -]+/gu, " ").replace(/\s+/g, " ")} `;
-
-/** "woman", "a guy", "nb" ... -> the pack's gender id. */
-function genderOf(w: string): Gender | undefined {
-  if (/^(woman|women|girl|girls|female|females|lady|ladies|gal|gals|she|her)$/.test(w)) return "woman";
-  if (/^(man|men|guy|guys|male|males|dude|dudes|boy|boys|he|him)$/.test(w)) return "man";
-  if (/^(nonbinary|non-binary|nb|enby|enbies|genderqueer|they)$/.test(w)) return "nonbinary";
-  return undefined;
-}
-
-/**
- * Who the member is and who they seek, from their words. A label ("straight woman", "gay man",
- * "lesbian", "bi guy", "queer") gives both; "I'm a woman looking for men" gives both; "a mix",
- * "anyone" or "everyone" seeks all three. Nothing is guessed when the words do not say it.
- */
-export function parseOrientation(text: string, bare = false): { is?: Gender; seeks?: Gender[] } {
-  const t = words(text);
-  const out: { is?: Gender; seeks?: Gender[] } = {};
-  const self = /\b(?:i'm|im|i am|as|me) (?:a |an )?(?:(straight|gay|lesbian|bi|bisexual|pan|pansexual|queer|trans) )?(woman|man|guy|girl|gal|dude|female|male|nonbinary|non-binary|nb|enby|lady)\b/.exec(t)
-    ?? /^ (?:(straight|gay|lesbian|bi|bisexual|pan|pansexual|queer|trans) )?(woman|man|guy|girl|female|male|nonbinary|non-binary|nb|enby|lady)\b/.exec(t);
-  if (self) out.is = genderOf(self[2]!);
-  const label = self?.[1] ?? /\b(straight|gay|lesbian|bisexual|bi|pansexual|pan|queer)\b/.exec(t)?.[1];
-  const all: Gender[] = ["man", "nonbinary", "woman"];
-  const seekRe = /\b(?:looking for|into|seeking|interested in|date|dating|meet|meeting|like|prefer|want)\s+(?:a |an |only |just |mostly )?((?:(?:women|woman|men|man|guys|guy|girls|girl|ladies|lady|dudes|nonbinary|non-binary|nb|enbies|people|folks|everyone|anyone|all|both|either|any gender|all genders)(?:,| and| or| &| plus)?\s*)+)/g;
-  const seeks = new Set<Gender>();
-  for (const m of t.matchAll(seekRe)) {
-    for (const w of m[1]!.split(/[ ,&]+/)) { const g = genderOf(w); if (g) seeks.add(g); }
-    if (/\b(everyone|anyone|all|any gender|all genders|either|both)\b/.test(m[1]!)) {
-      if (/\b(both)\b/.test(m[1]!)) { seeks.add("man"); seeks.add("woman"); } else all.forEach(g => seeks.add(g));
-    }
-  }
-  if (/\b(a mix|open to (everyone|anyone|all)|all genders|any gender)\b/.test(t)) all.forEach(g => seeks.add(g));
-  if (!seeks.size && label && out.is) {
-    if (label === "straight") seeks.add(out.is === "woman" ? "man" : out.is === "man" ? "woman" : "man");
-    else if (label === "gay" || label === "lesbian") seeks.add(out.is);
-    else if (label === "bi" || label === "bisexual") { seeks.add("man"); seeks.add("woman"); }
-    else if (label === "pan" || label === "pansexual" || label === "queer") all.forEach(g => seeks.add(g));
-  }
-  if (!seeks.size && label === "lesbian") { out.is ??= "woman"; seeks.add("woman"); }
-  // A bare answer to "who are you hoping to meet?": plural words name who they seek ("women", "men and nonbinary people", "anyone").
-  if (!seeks.size && bare) {
-    const rest = t.replace(/\b(?:i'm|im|i am|as|me) (?:a |an )?\S+/, " ");
-    for (const w of rest.split(" ")) {
-      if (/^(women|girls|ladies|gals)$/.test(w)) seeks.add("woman");
-      else if (/^(men|guys|dudes|boys)$/.test(w)) seeks.add("man");
-      else if (/^(enbies|nonbinary|non-binary)$/.test(w) && /\b(nonbinary|non-binary) (people|folks)\b|enbies/.test(rest)) seeks.add("nonbinary");
-      else if (/^(anyone|everyone|either|all)$/.test(w)) all.forEach(g => seeks.add(g));
-    }
-  }
-  if (seeks.size) out.seeks = [...seeks].sort();
-  return out;
-}
-
-/** "25-35", "25 to 35", "between 25 and 35", "30s" (bare answer only) -> [lo, hi], with lo >= 18. */
-export function parseAgeRange(text: string, bare: boolean): [number, number] | undefined {
-  const t = words(text);
-  const m = /\b(\d{2})\s*(?:-|to|and|through|thru|–)\s*(\d{2})\b/.exec(t);
-  if (m) {
-    const lo = Number(m[1]), hi = Number(m[2]);
-    if (lo >= 18 && hi >= lo && hi <= 99) return [lo, hi];
-    if (hi >= 18 && hi >= lo && lo < 18) return [18, hi]; // never under 18
-    return undefined;
-  }
-  if (!bare) return undefined;
-  const d = /\b(?:my |their |late |early |mid )?(20|30|40|50|60)s\b/.exec(t);
-  if (d) { const lo = Number(d[1]); return [Math.max(18, lo), lo + 9]; }
-  return undefined;
-}
-
-/** "just the city", "within 5 miles", "10mi", "5" (a bare answer) -> the scope and limit tags. */
-export function parseDistance(text: string, bare: boolean): { miles?: number; city?: boolean } | undefined {
-  const t = words(text);
-  const m = /\b(\d{1,3})\s*(?:mi|mile|miles)\b/.exec(t) ?? (bare ? /^ (?:within |about |around |up to )?(\d{1,3}) $/.exec(t) : null);
-  if (m) { const n = Number(m[1]); return n > 0 && n <= 200 ? { miles: n } : undefined; }
-  if (/\b(just|only|anywhere in) (my|the) city\b|\b(the )?(whole|entire) city\b|\bcity( wide|wide)?\b|\ball (of )?(nyc|new york)\b|\banywhere in (nyc|new york)\b/.test(t)) return { city: true };
-  return undefined;
-}
-
-/** A 5-digit zip the member gave. */
-export const parseZip = (text: string): string | undefined => /(?:^|\D)(\d{5})(?:\D|$)/.exec(text)?.[1];
-
-/** The basics: what they are looking for right now, and a few stated dealbreakers. Unknown stays unknown. */
-export function parseBasics(text: string): { goal?: "casual" | "long_term" | "unsure"; dealbreakers: string[] } {
-  const t = words(text);
-  const goal = /\b(not sure|unsure|don't know|dont know|open to (either|both|anything)|see where it goes)\b/.test(t) ? "unsure"
-    : /\b(long[- ]term|serious|relationship|something (real|longer|lasting)|marriage|settle down|partner)\b/.test(t) ? "long_term"
-    : /\b(casual|nothing serious|fun|hookups?|keep it light)\b/.test(t) ? "casual" : undefined;
-  const dealbreakers: string[] = [];
-  if (/\b(no smok(ers|ing)|smok(ers|ing) (is|are) a dealbreaker|can't (date|stand) smokers|non[- ]?smokers? only)\b/.test(t)) dealbreakers.push("smoker");
-  if (/\b(no (heavy )?drinkers|sober|heavy drink(ers|ing) (is|are) a dealbreaker)\b/.test(t)) dealbreakers.push("heavy_drinker");
-  if (/\b(no kids ever|never want kids|don't want kids|dont want kids|childfree|child-free)\b/.test(t)) dealbreakers.push("wants_kids");
-  if (/\b(want(s)? kids|want(ing)? children)\b/.test(t) && !dealbreakers.includes("wants_kids")) dealbreakers.push("no_kids_ever");
-  return { ...(goal ? { goal } : {}), dealbreakers };
-}
 
 const ACTIVITY_PHRASE: Record<string, string> = {
   coffee: "coffee", drinks: "drinks", walk: "a walk", museum: "a museum visit", dinner: "dinner", live_music: "live music",
@@ -265,14 +174,14 @@ export function slopHooks(options: Parameters<typeof planFromInput>[4]): AppHook
       if (hard.includes("slop_distance")) parts.push("how far you'd go for a first date (just your city, or within 2, 5, 10 or 25 miles of your zip, and your zip)");
       return `Before I suggest anyone, a few quick ones: ${parts.join("; ")}.`;
     },
-    learn(body, reasons, { now }) {
+    learn(body, reasons, { now, age: statedAge }) {
       const tags: AppTag[] = [];
       const replaces: string[] = [];
       const asked = (r: string) => reasons.includes(r);
       const o = parseOrientation(body, asked("slop_orientation"));
       if (o.is) { tags.push(tag(`romance:is:${o.is}`, "preference", now)); replaces.push("romance:is:"); }
       if (o.seeks?.length) { for (const g of o.seeks) tags.push(tag(`romance:seeks:${g}`, "preference", now)); replaces.push("romance:seeks:"); }
-      const age = parseAgeRange(body, asked("slop_age_range"));
+      const age = parseAgeRange(body, asked("slop_age_range"), statedAge);
       if (age) { tags.push(tag(`romance:age:${age[0]}-${age[1]}`, "preference", now)); replaces.push("romance:age:"); }
       const d = parseDistance(body, asked("slop_distance"));
       const widen = asked("slop_widen") && /\b(yes|yeah|yep|sure|ok|okay|fine|why not)\b/.test(words(body));
@@ -330,5 +239,7 @@ export function slopHooks(options: Parameters<typeof planFromInput>[4]): AppHook
       return `How did your date with ${others} go? If anything felt wrong (they were rude, didn't show, or weren't who they said), tell me and I'll pass it to our safety team. If you ever feel unsafe, call 911 first.`;
     },
     postDateReports: true,
+    // The dating onboarding: the hard fields before matching is on (slopOnboarding.ts).
+    onboarding: slopOnboarding(copyFor(brandOf(APPS.slop)), APPS.slop.domain),
   };
 }

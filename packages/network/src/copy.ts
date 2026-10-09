@@ -154,6 +154,32 @@ export function copyFor(b: CopyBrand) {
   shareDone: "Done. I'll reuse those basics here. Nothing else is shared.",
   /** "leave <app>": this app only; the member's data in it is deleted. */
   leftApp: `Done. You've left ${b.name} and I deleted what you shared here. Other apps you use with this number are not affected.`,
+  /**
+   * Dating onboarding (slop; service/slopOnboarding.ts and docs/persona-style.md): what the agent
+   * remembers and how to see or delete it, one question at a time, a read-back, and the one photo ask.
+   * `site`: the app's domain ("slop.date"). Never a score, a rating or a safety tag.
+   */
+  dating: {
+    welcome: (first: string, question: string, site: string, inviter?: string) =>
+      `Hi ${first}, I'm ${b.agent} (an AI)${inviter ? `; ${inviter} invited you` : ""}. I use what you tell me only to find you dates, and nobody sees it without your yes; see or delete it at ${site}/settings. Reply STOP to opt out. ${question}`,
+    afterAge: (question: string, site: string) =>
+      `Thanks. I use what you tell me only to find you dates, and nobody sees it without your yes; see or delete it at ${site}/settings. ${question}`,
+    goal: "To start: what are you hoping to find right now, something serious, something casual, or not sure yet?",
+    who: "Who would you like to meet (women, men, nonbinary people, or a mix), how do you describe yourself, and what age range feels right?",
+    whoSeeks: "And who would you like to meet: women, men, nonbinary people, or a mix?",
+    whoIs: "And how do you describe yourself: woman, man, nonbinary, or something else?",
+    whoAge: "And what age range feels right, like 28-35?",
+    where: "Where are you based? A zip code or a neighborhood is plenty; I only use it for rough distances.",
+    radius: "How far would you go for a first date: your neighborhood, within 2, 5 or 10 miles, or anywhere in the city?",
+    dealbreakers: "Any dealbreakers I should know about, like smoking or kids? None is a fine answer too.",
+    weekend: "Last one: what does a typical weekend look like for you?",
+    readBack: (summary: string) => `Here's what I have: ${summary}. Anything I got wrong?`,
+    readBackEmpty: "I don't have much yet, and that's fine. Anything you'd like me to know before I start looking?",
+    fixAsk: "Sure. What should I change?",
+    done: "Thanks, you're all set. I'll only text when there's someone I think you'd like, and you can ask me for a date anytime.",
+    photoAsk: (site: string) => `If you'd like, add a couple of photos at ${site}/settings#photos.`,
+    resume: (question: string) => `No rush. When you have a minute, let's pick up where we left off: ${question}`,
+  },
   };
 }
 export type Copy = ReturnType<typeof copyFor>;
