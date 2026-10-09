@@ -18,6 +18,7 @@ import { facetOf, intentOf, loadSnapshot, presenceOf } from "@thenetwork/network
 import { runEngineSummarized } from "../engineCapture.ts";
 import { describe, onTimeline, requestLabel, type EventRow } from "../events.ts";
 import { ALERT_WINDOW, growthStats, healthAlerts, hours, reportsFromCases, safetyInfo, scorecard, type MsgMeta } from "../health.ts";
+import { appMonthCost, loadPilotInput, pilotAlerts, pilotMetrics } from "../pilot.ts";
 import { memberFacets } from "../appProfile.ts";
 import { displayName, scrubFacet, scrubText } from "../scrub.ts";
 import { emptyCounters, Store, zeroCounts } from "../store.ts";
@@ -477,7 +478,7 @@ export class RealSource implements DataSource {
     const s = this.store;
     const app = this.app;
     const now = this.store.clock.now, since = new Date(now - ALERT_WINDOW);
-    const [st, reqs, msgs, ev24, evAll, contacts, lastRun, expired, service] = await Promise.all([
+    const [st, reqs, msgs, ev24, evAll, contacts, lastRun, expired, service, reportRows] = await Promise.all([
       this.stateRow("saved_at, matching_enabled as matching, deferred, trust, counters, gate_reasons as gate"),
       sql`select id, member_id, kind, category, desire_id, outcome, tries, opportunity_id, created_at, fulfilled_at from network.requests where app_id = ${app} order by created_at desc`.catch(() => []),
       sql`select member_id, ts, direction, proactive, status from network.messages where app_id = ${app} and not system`,
@@ -492,6 +493,8 @@ export class RealSource implements DataSource {
       sql`select max(at) as at from network.matching_runs where app_id = ${app}`,
       sql`select count(*)::int as n from network.review_items where app_id = ${app} and decision = 'expired' and decided_at >= ${since}`.catch(() => [{ n: 0 }]),
       this.service?.health(),
+      // Post-date reports for the overdue alerts and the pilot scorecard (the service's report store).
+      this.service ? this.service.reports().then(r => ("error" in r ? undefined : r), () => undefined) : Promise.resolve(undefined),
     ]);
     // Network state (stored by the Network's PgStore).
     const row = (st as any[])[0];
@@ -543,6 +546,7 @@ export class RealSource implements DataSource {
       reviewExpired: (expired as any[])[0]?.n ?? 0, deferred: this.netState?.deferred ?? null, refusals, guardBlocked,
       lastEngineRun: ms((lastRun as any[])[0]?.at), expectEngine: !!this.netState || s.runs.some(r => !r.shadow), matchingEnabled: this.netState?.matchingEnabled ?? matchingAllowed(this.app),
       invariants: s.counts.invariantViolations, canaryLeaks: leaks, minorContacts,
+      ...(reportRows ? { reports: reportRows } : {}), opps: opps.map(o => ({ state: o.state, createdAt: o.createdAt, ...(o.meetingAt !== undefined ? { meetingAt: o.meetingAt } : {}), source: o.source })),
       extra: service ? serviceAlerts(service, Date.now()) : [],
     });
     // Scorecard and growth.
@@ -558,6 +562,12 @@ export class RealSource implements DataSource {
       reviewSeconds: opps.reduce((a, o) => a + (o.review?.secondsSpent ?? 0), 0), sentProposals: opps.filter(o => o.review?.decision === "approve" && !o.review.invalidated && o.review.reviewer !== SIM_AUTO_REVIEWER).length,
       inviters, minorContacts, leaks,
     });
+    // The pilot gates (PRD 37.3) over the last 7 days, with an alert per pause threshold crossed.
+    const pilot = pilotMetrics(await loadPilotInput(sql, app, now, {
+      ...(reportRows ? { reports: reportRows.map(r => ({ at: r.at, kind: r.kind })) } : {}), cost: await appMonthCost(sql, app, now),
+    }));
+    card.push(...pilot);
+    alerts.push(...pilotAlerts(app, pilot));
     const growth = growthStats({ members, opps, requests, invitees, invitesSent: inviteRows.length, growthAsks: all.filter(e => e.type === "growth_ask").length, inviters });
     s.setHealth({ alerts, scorecard: card, growth });
   }

@@ -238,17 +238,26 @@ export interface HealthAlert {
 
 export interface ScoreMetric {
   key: "worthwhile_interruption" | "opt_in" | "completion" | "repeat_edges" | "first_value_14d" | "attention_burden"
-    | "reviewer_minutes" | "opt_outs" | "invite_rate" | "minors_contacted" | "leaks";
+    | "reviewer_minutes" | "opt_outs" | "invite_rate" | "minors_contacted" | "leaks"
+    // The pilot gates (PRD 37.3; src/pilot.ts), over the last 7 days.
+    | "mutual_yes" | "dates_held" | "second_date" | "days_to_first_date" | "probes_top10" | "probes_gini" | "mute_stop_complaint"
+    | "reports_per_1000_dates" | "blooio_failures" | "worth_a_text" | "cost_per_active_member";
   label: string;
   /** null when there is nothing to measure yet. */
   value: number | null;
-  unit: "share" | "count" | "per_member_week" | "minutes";
+  unit: "share" | "count" | "per_member_week" | "minutes" | "days" | "usd" | "per_1000";
   /** Sample size (the denominator, or the count itself). */
   n: number;
   /** The PRD 28.2 target, when there is one. */
   target?: { op: ">=" | "<=" | "=="; value: number };
   /** value meets the target (undefined when there is no value or no target). */
   met?: boolean;
+  /** The PRD 37.3 pause or roll-back threshold, when there is one. */
+  pause?: { op: "<" | ">"; value: number };
+  /** true when the value is past the pause threshold with enough sample (src/pilot.ts PAUSE_MIN_N). */
+  paused?: boolean;
+  /** The counts behind the value (e.g. stop, mute, complaint). */
+  parts?: Record<string, number>;
   /** How it is measured, in one sentence. */
   how: string;
 }

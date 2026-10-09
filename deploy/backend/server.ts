@@ -6,6 +6,7 @@
 // 2. Applies pending migrations under the advisory lock (packages/observatory/db/migrate.ts). MIGRATE_ON_BOOT=0 skips.
 // 3. Starts every network in platform.networks, the public port (PORT) and the private staff port (STAFF_PORT).
 // 4. Ticks every network each minute. SIGTERM or SIGINT: finish the work in flight, release the locks, exit.
+// 5. Records every LLM call's cost (network.llm_usage). MONITOR=1 also runs the alert monitor every 5 minutes.
 // Sends are dry-run unless NETWORK_CHANNEL=blooio, BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1, and each
 // app other than ntwrk also has its own <APP>_LIVE_APPROVED=1 (founder approval).
 import { SQL } from "bun";
@@ -22,6 +23,7 @@ const { migrate } = await import("../../packages/observatory/db/migrate.ts");
 const { BlooioAdapter, liveFlag, liveSendAllowed } = await import("../../packages/network/service/channel.ts");
 const { NetworkService, webhookSecretsFromEnv } = await import("../../packages/network/service/service.ts");
 const { createServiceMcp } = await import("../../packages/network/service/serve.ts");
+const { startOps } = await import("../../packages/network/service/ops.ts");
 
 async function main() {
   const c = loadConfig(process.env, process.argv);
@@ -89,6 +91,10 @@ async function main() {
     ping: async () => { await pool`select 1`; return true; },
   });
 
+  // The cost ledger (always) and, with MONITOR=1, the alert monitor (packages/network/service/ops.ts).
+  const ops = startOps({ databaseUrl: c.databaseUrl, now: () => clock.now(), log: s => log.info(s), healthz: async () => { await pool`select 1`; return true; } });
+  log.info("ops", { monitor: !!ops.monitor });
+
   const servers: { stop(force?: boolean): unknown }[] = [];
   // Bodies past 9 MB (a photo is at most 8 MB) are refused before they are read (Bun's default is 128 MB).
   const pub = Bun.serve({ hostname: c.host, port: c.port, maxRequestBodySize: MAX_PUBLIC_BODY_BYTES, fetch: (req, server) => backend.publicFetch(req, server) });
@@ -103,6 +109,7 @@ async function main() {
   const stop = async (signal: string) => {
     log.info("shutdown", { signal });
     const { clean } = await backend.shutdown(servers);
+    await ops.stop().catch(() => {});
     await pool.close().catch(() => {});
     process.exit(clean ? 0 : 1);
   };

@@ -33,6 +33,7 @@ import { eventOf, membersOf, type EventRow } from "../../observatory/src/events.
 /** Delivery statuses of a send that did not go out (its person-cap slot is released). */
 const NOT_SENT = /^(refused|suppressed|blocked|parked|failed)/;
 import { summarizeRun } from "../../observatory/src/engineCapture.ts";
+import { runInputRow, writeRunInputs } from "./runInputs.ts";
 
 type Row = Record<string, unknown>;
 
@@ -49,11 +50,13 @@ export interface Unit {
   events: EventRow[];
   blocks: [MemberId, MemberId][];
   runs: Row[];
+  /** What each engine run read (migration 0016), for a replay. */
+  runInputs: Row[];
   capital: CapitalEvent[];
   optOut: Map<MemberId, boolean>;
   forget: Set<MemberId>;
 }
-const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set() });
+const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], runInputs: [], capital: [], optOut: new Map(), forget: new Set() });
 
 /** What the service gives each runtime: the shared connection and clock, and the checks that span apps. */
 export interface RuntimeHost {
@@ -131,9 +134,11 @@ export class NetworkRuntime {
       ...o.network,
       ...(w.engine || o.network?.engine ? { engine: { ...w.engine, ...o.network?.engine } } : {}),
       app: o.app, review: "human", store: this.store,
-      onEngineRun: (log, proposals, at) => {
+      onEngineRun: (log, proposals, at, run) => {
         const s = summarizeRun(log, proposals, { at, city: this.city as City, wallMs: Math.round(log.timingsMs.total ?? 0) });
-        this.unit.runs.push({ id: this.app.id === "ntwrk" ? s.id : `${this.app.id}.${s.id}`, app_id: this.app.id, at: new Date(at), city: this.city, engine_version: s.engineVersion, proposals: s.proposals, wall_ms: s.wallMs, summary: s });
+        const id = this.app.id === "ntwrk" ? s.id : `${this.app.id}.${s.id}`;
+        this.unit.runs.push({ id, app_id: this.app.id, at: new Date(at), city: this.city, engine_version: s.engineVersion, proposals: s.proposals, wall_ms: s.wallMs, summary: s });
+        if (run) this.unit.runInputs.push(runInputRow({ runId: id, app: this.app.id, city: this.city, at, log, proposals, input: run.input, config: run.config, pack: w.pack?.id ?? "ntwrk" }));
       },
       onLedger: e => { this.capital.onLedger(e); this.unit.capital.push(e); },
       // An age a member stated (network-consent-12): the service writes it to the person after the unit.
@@ -320,6 +325,7 @@ export class NetworkRuntime {
         on conflict do nothing`;
     }
     for (const r of u.runs) await tx`insert into network.matching_runs ${tx(r)} on conflict (id) do nothing`;
+    await writeRunInputs(tx, app, u.runInputs, this.clock.now());
     for (const [id, out] of u.optOut) if (ok(id)) await tx`update network.members set opted_out = ${out} where app_id = ${app} and id = ${id}`;
     // The forget path (an under-age decline, leaving the app, deleting everything): keep only the id. Nothing that names the member stays.
     for (const id of u.forget) {
@@ -331,6 +337,8 @@ export class NetworkRuntime {
         or coalesce(payload->'participants', '[]'::jsonb) @> to_jsonb(${id}::text) or coalesce(payload->'members', '[]'::jsonb) @> to_jsonb(${id}::text)
         or jsonb_exists(coalesce(payload->'attendance', '{}'::jsonb), ${id}))`;
       await tx`delete from network.capital_events where app_id = ${app} and (member_id = ${id} or position(${`"${id}"`} in event::text) > 0)`;
+      // A stored engine input that names them (0016) goes too: it holds their facets and intents.
+      await tx`delete from network.matching_run_inputs where app_id = ${app} and position(${`"${id}"`} in input::text) > 0`;
       await tx`delete from network.facets where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.intents where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.presence where app_id = ${app} and member_id = ${id}`;

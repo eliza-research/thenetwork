@@ -39,8 +39,37 @@ export interface AlertInput {
   /** When the world or the data starts (the heartbeat allows the first day to pass). */
   start: number;
   invariants: number | null; canaryLeaks: number | null; minorContacts: number | null;
+  /** Post-date safety reports (open ones past their target alert: urgent 1 h, others 24 h; a minor report at once). */
+  reports?: { kind: string; at: number; status: string }[];
+  /** Opportunities, to find the ones stuck in a state longer than expected. */
+  opps?: { state: string; createdAt: number; meetingAt?: number; source?: string }[];
   /** Alerts a source adds (real mode: the Network service's health). */
   extra?: HealthAlert[];
+}
+
+/** How long an opportunity may stay in a state (from creation, or after its meeting time) before it is stuck. */
+export const STUCK_AFTER = { PROPOSED: 7 * DAY, SCHEDULED_AFTER_MEETING: DAY } as const;
+
+/**
+ * Overdue safety reports (PRD 36.3: urgent within 1 hour, others within 24 hours; any minor report at
+ * once) and stuck opportunities: probing for more than 7 days, or still scheduled a day after the
+ * meeting time (the Network closes it 3 hours after). Shared with the monitor (packages/network/service/monitor.ts).
+ */
+export function safetyAlerts(now: number, reports: NonNullable<AlertInput["reports"]>, opps: NonNullable<AlertInput["opps"]> = []): HealthAlert[] {
+  const out: HealthAlert[] = [];
+  const open = reports.filter(r => r.status === "open");
+  const urgent = open.filter(r => URGENT_REPORTS.has(r.kind as ReportKind) && now - r.at > HOUR).length;
+  const other = open.filter(r => !URGENT_REPORTS.has(r.kind as ReportKind) && now - r.at > DAY).length;
+  const minor = open.filter(r => r.kind === "minor").length;
+  if (minor) out.push({ level: "bad", key: "report_minor_open", count: minor, text: `${minor} open report(s) about a minor: act now` });
+  if (urgent) out.push({ level: "bad", key: "report_urgent_overdue", count: urgent, text: `${urgent} urgent safety report(s) open longer than 1 hour` });
+  if (other) out.push({ level: "warn", key: "report_overdue", count: other, text: `${other} safety report(s) open longer than 24 hours` });
+  const live = opps.filter(o => o.source !== "shadow");
+  const probing = live.filter(o => o.state === "PROPOSED" && now - o.createdAt > STUCK_AFTER.PROPOSED).length;
+  const scheduled = live.filter(o => o.state === "SCHEDULED" && o.meetingAt !== undefined && now - o.meetingAt > STUCK_AFTER.SCHEDULED_AFTER_MEETING).length;
+  if (probing + scheduled) out.push({ level: "warn", key: "opportunities_stuck", count: probing + scheduled,
+    text: `${probing + scheduled} opportunit${probing + scheduled === 1 ? "y" : "ies"} stuck (${probing} probing over 7 days, ${scheduled} still scheduled a day after the meeting)` });
+  return out;
 }
 
 const LEVEL = { bad: 0, warn: 1, info: 2 } as const;
@@ -74,6 +103,7 @@ export function healthAlerts(x: AlertInput): HealthAlert[] {
   if (x.invariants) add("bad", "invariant_violations", x.invariants, `${x.invariants} invariant violation(s)`);
   if (x.canaryLeaks) add("bad", "canary_leaks", x.canaryLeaks, `${x.canaryLeaks} canary leak(s)`);
   if (x.minorContacts) add("bad", "minor_contacts", x.minorContacts, `${x.minorContacts} minor contact(s)`);
+  if (x.reports || x.opps) out.push(...safetyAlerts(x.now, x.reports ?? [], x.opps ?? []));
   out.push(...(x.extra ?? []));
   return out.sort((a, b) => LEVEL[a.level] - LEVEL[b.level]);
 }
