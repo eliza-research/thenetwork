@@ -62,7 +62,7 @@ Do not break these. `bun run sim` checks them in every simulated run.
 ```bash
 bun install
 bun run sim                  # the validation layer: evals, network, slop, peon, friends (pinned seeds; exits 1 on a blocking gate)
-bun run sim --only network   # one block (evals | network | slop | peon | friends | capital); repeatable
+bun run sim --only network   # one block (evals | onboard | network | slop | peon | friends | capital); repeatable
 bun run sim --quick          # fewer seeds, shorter runs; quality gates become tracked
 bun run sim --with-capital   # adds the network-capital block (32 paired seeds; nightly)
 bun run typecheck

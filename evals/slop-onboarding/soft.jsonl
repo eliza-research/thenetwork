@@ -1,0 +1,66 @@
+{"text":"looking for something serious","expect":{"goal":"long_term"}}
+{"text":"long term, ideally","asked":"goal","expect":{"goal":"long_term"}}
+{"text":"ltr","asked":"goal","expect":{"goal":"long_term"}}
+{"text":"i want a relationship, not a hookup","expect":{"goal":"long_term"}}
+{"text":"ready to settle down tbh","expect":{"goal":"long_term"}}
+{"text":"nothing serious rn","expect":{"goal":"casual"}}
+{"text":"not looking for anything serious","expect":{"goal":"casual"}}
+{"text":"casual","asked":"goal","expect":{"goal":"casual"}}
+{"text":"just for fun right now","expect":{"goal":"casual"}}
+{"text":"keep it light, see what happens","expect":{"goal":"casual"}}
+{"text":"not sure yet, see where it goes","asked":"goal","expect":{"goal":"unsure"}}
+{"text":"open to either","asked":"goal","expect":{"goal":"unsure"}}
+{"text":"idk yet honestly","asked":"goal","expect":{"goal":"unsure"}}
+{"text":"just got out of a relationship so idk","unset":["goal"]}
+{"text":"no smokers","expect":{"dealbreakers":["smoker"]}}
+{"text":"not into smokers","expect":{"dealbreakers":["smoker"]}}
+{"text":"smoking is a dealbreaker for me","expect":{"dealbreakers":["smoker"]}}
+{"text":"non smokers only please","expect":{"dealbreakers":["smoker"]}}
+{"text":"can't date smokers sorry","expect":{"dealbreakers":["smoker"]}}
+{"text":"dealbreakers: smoking, heavy drinking","expect":{"dealbreakers":["heavy_drinker","smoker"]}}
+{"text":"no trump supporters lol","expect":{"dealbreakers":["right_politics"]}}
+{"text":"no maga","expect":{"dealbreakers":["right_politics"]}}
+{"text":"won't date conservatives","expect":{"dealbreakers":["right_politics"]}}
+{"text":"not into very religious people","expect":{"dealbreakers":["religious"]}}
+{"text":"must want kids","expect":{"dealbreakers":["no_kids_ever"]}}
+{"text":"if you want kids we're not a match","expect":{"dealbreakers":["wants_kids"]}}
+{"text":"not dating single dads","expect":{"dealbreakers":["has_kids"]}}
+{"text":"no heavy drinkers","expect":{"dealbreakers":["heavy_drinker"]}}
+{"text":"need someone who shares my faith","expect":{"dealbreakers":["nonreligious"]}}
+{"text":"no real dealbreakers","asked":"dealbreakers","expect":{"noDealbreakers":true,"dealbreakers":[]}}
+{"text":"nothing really","asked":"dealbreakers","expect":{"noDealbreakers":true,"dealbreakers":[]}}
+{"text":"none!","asked":"dealbreakers","expect":{"noDealbreakers":true,"dealbreakers":[]}}
+{"text":"i don't smoke and no smokers please, looking for something long term","expect":{"dealbreakers":["smoker"],"goal":"long_term","values":{"smoking":"never"}}}
+{"text":"I don't smoke","expect":{"values":{"smoking":"never"},"dealbreakers":[]}}
+{"text":"social smoker tbh","expect":{"values":{"smoking":"sometimes"}}}
+{"text":"i'm sober","expect":{"values":{"drinking":"never"}}}
+{"text":"i drink socially","expect":{"values":{"drinking":"social"}}}
+{"text":"i have a 6 year old daughter","expect":{"values":{"hasKids":"yes"}}}
+{"text":"i don't have kids but want them someday","expect":{"values":{"hasKids":"no"}}}
+{"text":"childfree by choice","expect":{"values":{"wantsKids":"no"}}}
+{"text":"i want kids someday","expect":{"values":{"wantsKids":"yes"}}}
+{"text":"open to kids","expect":{"values":{"wantsKids":"open"}}}
+{"text":"faith is really important to me","expect":{"values":{"religionImportance":3}}}
+{"text":"im not religious","expect":{"values":{"religionImportance":0}}}
+{"text":"spiritual but not religious","expect":{"values":{"religionImportance":1}}}
+{"text":"into climbing, books, and techno","expect":{"interests":["books","climbing","electronic_music"]}}
+{"text":"i love hiking and my dog","expect":{"interests":["dogs","hiking"]}}
+{"text":"big on pottery and yoga","expect":{"interests":["ceramics","yoga"]}}
+{"text":"not into running at all, more of a reader","unset":["interests_running"]}
+{"text":"tennis, chess, cooking","asked":"interests","expect":{"interests":["chess","cooking","tennis"]}}
+{"text":"i play pickleball on weekends lol","expect":{"interests":["pickleball"]}}
+{"text":"movies and board games mostly","asked":"interests","expect":{"interests":["board_games","film"]}}
+{"text":"first date: coffee or a walk","expect":{"activities":["coffee","walk"]}}
+{"text":"drinks!","asked":"activities","expect":{"activities":["drinks"]}}
+{"text":"ideal first date is dinner then a comedy show","expect":{"activities":["comedy","dinner"]}}
+{"text":"museum date would be cute","asked":"activities","expect":{"activities":["museum"]}}
+{"text":"coffee, nothing fancy","asked":"activities","expect":{"activities":["coffee"]}}
+{"text":"a hike or climbing gym","asked":"activities","expect":{"activities":["climbing","hike"]}}
+{"text":"not drinks, maybe coffee","asked":"activities","expect":{"activities":["coffee"]}}
+{"text":"weeknights","asked":"free","expect":{"free":["mon_eve","tue_eve","wed_eve","thu_eve","fri_eve"]}}
+{"text":"weekends mostly","asked":"free","expect":{"free":["sat_day","sat_eve","sun_day","sun_eve"]}}
+{"text":"tues and thurs evenings","asked":"free","expect":{"free":["tue_eve","thu_eve"]}}
+{"text":"usually free fridays and sunday afternoons","expect":{"free":["fri_eve","sun_day"]}}
+{"text":"any night but monday","asked":"free","expect":{"free":["tue_eve","wed_eve","thu_eve","fri_eve","sat_eve","sun_eve"]}}
+{"text":"i work weekends so weeknights are best","expect":{"free":["mon_eve","tue_eve","wed_eve","thu_eve","fri_eve"]}}
+{"text":"saturday daytime","asked":"free","expect":{"free":["sat_day"]}}

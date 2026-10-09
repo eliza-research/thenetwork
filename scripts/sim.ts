@@ -7,6 +7,7 @@
 //   bun run sim --quick              fewer seeds and shorter runs; quality gates become tracked
 //   bun run sim --with-capital       also the network-capital block (slow: 32 paired seeds; nightly)
 //   bun run sim --json out.json      write every gate to a file
+//   bun run sim --only onboard --llm  also the onboarding LLM arm (keeps the provider keys; tracked only; never in CI)
 //
 // Blocks and pinned seeds (see each block's header in scripts/sim/):
 //   evals     evals/ corpora: consent replies, abuse, teen ages, wants, areas, negations, core replies, opt-out, leak guard
@@ -15,25 +16,28 @@
 //   slop      slop.date: seeds 13-16, 4 weeks, 300 per city; safety + passing quality gates block, known-failing gates tracked
 //   peon      peon.biz: seeds 13-16, 8 weeks; the official gates block
 //   friends   friends.help: seeds 5-8, 8 weeks, 400 personas; the official gates block
+//   onboard   slop.date onboarding: evals/slop-onboarding corpus gates (rules only) and the persona onboarding sim (seeds 13-14)
 //   capital   network capital: 32 paired seeds, 90 days (--with-capital or --only capital)
 import { capitalBlock } from "./sim/capital.ts";
 import { evalsBlock } from "./sim/evals.ts";
 import { friendsBlock } from "./sim/friends.ts";
 import { Block, type Gate } from "./sim/gate.ts";
+import { onboardBlock } from "./sim/onboard.ts";
 import { networkBlock } from "./sim/network.ts";
 import { peonBlock } from "./sim/peon.ts";
 import { slopBlock } from "./sim/slop.ts";
 
-type Opts = { quick: boolean };
+type Opts = { quick: boolean; llm: boolean };
 const BLOCKS: Record<string, (b: Block, o: Opts) => Promise<void>> = {
   evals: b => evalsBlock(b),
   network: networkBlock,
   slop: slopBlock,
+  onboard: onboardBlock,
   peon: peonBlock,
   friends: friendsBlock,
   capital: capitalBlock,
 };
-const DEFAULT = ["evals", "network", "slop", "peon", "friends"];
+const DEFAULT = ["evals", "onboard", "network", "slop", "peon", "friends"];
 
 const argv = process.argv.slice(2);
 const values = (k: string) => argv.flatMap((x, i) => (x === `--${k}` ? (argv[i + 1] ?? "").split(",") : x.startsWith(`--${k}=`) ? x.slice(k.length + 3).split(",") : [])).filter(Boolean);
@@ -41,10 +45,12 @@ const only = values("only");
 const unknown = only.filter(x => !BLOCKS[x]);
 if (unknown.length) { console.error(`unknown block: ${unknown.join(", ")}; known: ${Object.keys(BLOCKS).join(", ")}`); process.exit(2); }
 const run = only.length ? only : [...DEFAULT, ...(argv.includes("--with-capital") || argv.includes("--nightly") ? ["capital"] : [])];
-const opts: Opts = { quick: argv.includes("--quick") };
+const opts: Opts = { quick: argv.includes("--quick"), llm: argv.includes("--llm") };
 
-// Simulations never call a model: fail fast if any code path tries.
-for (const k of ["OPENAI_API_KEY", "SURPLUS_API_KEY", "CLOUDFLARE_AI_TOKEN"]) delete process.env[k];
+// Simulations never call a model: fail fast if any code path tries. The one exception is the
+// onboarding LLM arm, which runs only with --llm (and only in the onboard block).
+if (opts.llm) console.log("--llm: provider keys kept for the onboarding LLM arm (tracked gates only)");
+else for (const k of ["OPENAI_API_KEY", "SURPLUS_API_KEY", "CLOUDFLARE_AI_TOKEN"]) delete process.env[k];
 
 const all: Gate[] = [];
 const timings: Record<string, number> = {};
