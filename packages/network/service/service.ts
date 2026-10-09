@@ -37,7 +37,7 @@ import { Accounts, type AccountHooks, type JoinHookContext, type MemberHookConte
 import { joinAgeCheck } from "../../platform/src/age.ts";
 import { detectKeyword as platformKeyword, keywordEvent, leaveTarget, resolveConsent, stopScope, type StopScope } from "../../platform/src/consent.ts";
 import { devShortcutsAllowed, isProduction, platformEnv, type Env } from "../../platform/src/env.ts";
-import { keyedHash, maskPhone, normalizePhone } from "../../platform/src/phone.ts";
+import { keyedHash, maskPhone, normalizePhone, safeEqual } from "../../platform/src/phone.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
 import type { Membership, PeopleStore, PendingText, Person } from "../../platform/src/store.ts";
 import { createPublicApi, type PublicApi, type PublicApiOptions } from "../../platform/src/api.ts";
@@ -120,6 +120,8 @@ export interface ServiceOptions {
    * record in the audit and the review. The header from any other token is ignored.
    */
   consoleToken?: string;
+  /** Private server assertion credential. Also needs admin@app in `tokens`; never use the console token. No environment default. */
+  agentToken?: string;
   /** The shared line's webhook secret (BLOOIO_WEBHOOK_SECRET). Without it /webhooks/blooio answers 503. */
   webhookSecret?: string;
   /** One app's line: /webhooks/blooio/<app> with <APP>_BLOOIO_WEBHOOK_SECRET. Without a secret that path answers 503. */
@@ -216,6 +218,7 @@ export class NetworkService implements RuntimeHost {
   private readonly env: Env;
   private readonly tokens: Map<string, RoleGrant[]>;
   private readonly consoleToken?: string;
+  private readonly agentToken?: string;
   private readonly secret?: string;
   private readonly secrets: Partial<Record<AppId, string>>;
   private readonly hashKey: string;
@@ -236,6 +239,7 @@ export class NetworkService implements RuntimeHost {
     this.env = o.env ?? process.env;
     this.secret = o.webhookSecret;
     this.consoleToken = o.consoleToken || undefined;
+    this.agentToken = o.agentToken && (!this.consoleToken || !safeEqual(o.agentToken, this.consoleToken)) ? o.agentToken : undefined;
     this.secrets = o.webhookSecrets ?? {};
     this.cap = o.personDailyCap ?? PERSON_DAILY_CAP;
     this.apiOptions = o.publicApi;
@@ -1239,7 +1243,12 @@ export class NetworkService implements RuntimeHost {
   fetch = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
     let path = url.pathname.replace(/\/+$/, "") || "/";
+    const agentRequest = /^(?:\/apps\/[^/]+)?\/agent\/membership$/.test(path);
+    const json = (data: unknown, status = 200) => Response.json(data, { status, ...(agentRequest ? { headers: { "cache-control": "no-store" } } : {}) });
     try {
+      if (agentRequest) {
+        if (!this.agentToken) return json({ ok: false, error: "unavailable" }, 503);
+      }
       if (path === WEBHOOK_PATH || path.startsWith(`${WEBHOOK_PATH}/`)) {
         if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
         const appPart = path.slice(WEBHOOK_PATH.length + 1);
@@ -1253,6 +1262,7 @@ export class NetworkService implements RuntimeHost {
       let app: AppId = "ntwrk";
       const scoped = path.match(/^\/apps\/([^/]+)(\/.*)?$/);
       const named = scoped ? scoped[1]! : url.searchParams.get("app");
+      if (agentRequest && named === null) return json({ ok: false, error: "app_required" }, 400);
       if (named !== null) {
         if (!isAppId(named)) return json({ ok: false, error: "unknown_app" }, 404);
         app = named;
@@ -1265,6 +1275,21 @@ export class NetworkService implements RuntimeHost {
       const user = this.reviewerOfRecord(req, auth.user);
       // A role for this app (role@app or role@*); admin for the app passes every check.
       const need = (roles: StaffRole[]) => (allowed(user, roles, rt.app.id, "real") ? undefined : json({ ok: false, code: "forbidden", error: `needs role ${roles.map(r => `${r}@${rt.app.id}`).join(" or ")}` }, 403));
+      if (path === "/agent/membership") {
+        const given = req.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1]?.trim() ?? "";
+        if (!this.agentToken || !safeEqual(given, this.agentToken) || !allowed(auth.user, ["admin"], rt.app.id, "real")) return json({ ok: false, error: "forbidden" }, 403);
+        if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
+        if (Number(req.headers.get("content-length") ?? "0") > MAX_BODY_BYTES) return json({ ok: false, error: "payload_too_large" }, 413);
+        const raw = await req.text();
+        if (Buffer.byteLength(raw) > MAX_BODY_BYTES) return json({ ok: false, error: "payload_too_large" }, 413);
+        const b = await body(raw) as Row | undefined;
+        if (!b || Object.keys(b).length !== 1 || typeof b.e164 !== "string" || normalizePhone(b.e164) !== b.e164) return json({ ok: false, error: "invalid_request" }, 400);
+        // Only the designated server may assert this already verified phone. This read grants no action authority.
+        const binding = await this.accounts.activeMembership(rt.app, { e164: b.e164, personId: null });
+        if (!binding) return json({ ok: false, error: "unavailable" }, 404);
+        await this.audit.write({ at: this.clock.now(), actor: auth.user.id, roles: auth.user.roles, action: "read_agent_membership", targetType: "person", targetId: this.phoneKey(b.e164), mode: "real", ok: true, app: rt.app.id });
+        return json({ app: rt.app.id, personId: binding.person.id, memberId: binding.membership.memberId });
+      }
       if (req.method === "GET" && path === "/health") {
         const no = need(["admin", "reviewer", "safety", "analyst"]); if (no) return no;
         return json(await this.health(rt, user));
@@ -1416,6 +1441,6 @@ export function webhookSecretsFromEnv(env: Env = process.env): Partial<Record<Ap
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 const result = (r: ActionResult) => json(r, r.ok ? 200 : 409);
-async function body(req: Request): Promise<unknown> {
-  try { const b = await req.json(); return b && typeof b === "object" ? b : undefined; } catch { return undefined; }
+async function body(req: Request | string): Promise<unknown> {
+  try { const b = typeof req === "string" ? JSON.parse(req) : await req.json(); return b && typeof b === "object" ? b : undefined; } catch { return undefined; }
 }

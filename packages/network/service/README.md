@@ -25,6 +25,33 @@ PLATFORM_ENV=dev NETWORK_DATABASE_URL=... NETWORK_SERVICE_TOKENS="admin:<t>,revi
 
 The database must have the `network` and `platform` schemas (`bun run db:migrate`; runbook-real 1.1). The service checks the tables at start and does not migrate. It reads the networks and the app policy (`platform.networks`, `platform.apps`) at start.
 
+## Private agent membership lookup
+
+`POST /apps/<app>/agent/membership` uses the private service port. The existing `?app=<app>` routing also applies.
+An explicit app is required. There is no default app for this endpoint.
+It is absent from `publicFetch`. This source change does not configure an environment variable or enable a deployment.
+
+The host must explicitly set `ServiceOptions.agentToken` to a dedicated server credential.
+The same credential must hold `admin@<app>` in `ServiceOptions.tokens` (`NETWORK_SERVICE_TOKENS`).
+The designation grants no role or app access. Other staff tokens cannot call this endpoint, including global admins.
+The console token cannot be the agent token. Missing designation disables the endpoint, including in development.
+Keep the credential on the trusted server. Never give it to a browser, model, plugin client, or member.
+
+Send `Authorization: Bearer <credential>` and JSON with exactly one field: `{"e164":"+12125550101"}`.
+The phone must already use the platform's canonical E.164 form. Client-supplied person IDs and authorization fields are refused.
+The Cloud caller MUST independently verify the phone and its binding to the authenticated Cloud account before making this assertion.
+Possession of a phone string, or this lookup's answer, does not prove that binding.
+
+Success returns only `app`, `personId`, and `memberId` from the existing `Accounts.activeMembership` checks.
+Every membership refusal returns the same `404 unavailable`, including membership in another app only.
+Authentication and role failures use `401` and `403`. Disabled configuration returns `503 unavailable`.
+Every endpoint response uses `Cache-Control: no-store`. No profile, phone, or other membership is returned.
+Successful reads use the existing staff audit sink with a keyed phone hash, never the raw phone.
+
+This read neither creates a person nor joins an app. Its answer is not a durable grant.
+Recheck canonical authorization before each effect under the existing SQL and action locks.
+The Cloud backend and Shared agent keep their existing number and ingress path. This endpoint does not change provider routing.
+
 | Variable | Default | What it does |
 |---|---|---|
 | `NETWORK_DATABASE_URL` | `DATABASE_URL` | Postgres with the `network` schema. A login that can read and write it. |

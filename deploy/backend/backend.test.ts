@@ -3,6 +3,8 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { DEFAULT_HOST_MAP } from "../../packages/platform/src/apps.ts";
 import { SQL } from "bun";
+import { NetworkService } from "../../packages/network/service/service.ts";
+import { randomUUID } from "node:crypto";
 import { dropDb, emptyDb, pgAvailable } from "../../packages/platform/test/pg.ts";
 import { migrate } from "../../packages/observatory/db/migrate.ts";
 import { PROXY_MAX_SKEW_S, signProxyHeaders } from "../../packages/platform/src/proxy.ts";
@@ -423,4 +425,65 @@ describe("ensureServiceLogin (first deploy)", () => {
     exists = false;
     await expect(ensureServiceLogin(q, "postgres://svc:short@h/db")).rejects.toThrow();
   });
+});
+
+
+describe.skipIf(!pgAvailable)("Cloud host membership lookup (isolated Postgres, no sends)", () => {
+  test("requires designated app-scoped server authority and rechecks membership without exposing profiles", async () => {
+    const url = await emptyDb("agent_binding");
+    let svc: NetworkService | undefined;
+    const others: NetworkService[] = [];
+    try {
+      await migrate(url);
+      const now = Date.parse("2026-10-08T12:00:00Z");
+      const serverToken = "cloud-host-fixture-" + "m".repeat(40), staffToken = "human-staff-fixture-" + "h".repeat(40);
+      const options = {url, tokens: `admin@slop:${serverToken},admin@*:${staffToken}`, clock: {now: () => now}, env: {PLATFORM_ENV: "dev"}, notify: false as const, photoStorage: null, log: () => {}};
+      svc = await NetworkService.fromDatabase({...options, agentToken: serverToken});
+      const e164 = "+12125550181", personId = randomUUID(), memberId = "slop_server_fixture";
+      await svc.people.createPerson({id: personId, e164, method: "inbound_message", at: now, lowestAge: 25, phoneHash: svc.accounts.phoneHash(e164)});
+      await svc.people.putMembership({app: "slop", personId, memberId, state: "active", review: null, firstName: "Private fixture", profile: {canary: "DO_NOT_RETURN_PROFILE"}, joinedAt: now, leftAt: null});
+      await svc.people.addConsent({e164, app: "slop", state: "opted_in", source: "local-security-test", at: now});
+      const request = (path: string, token: string | null = serverToken, body: unknown = {e164}, method = "POST") => new Request(`http://127.0.0.1:4848${path}`, {
+        method, headers: {"content-type": "application/json", ...(token ? {authorization: `Bearer ${token}`} : {})},
+        ...(method === "POST" ? {body: JSON.stringify(body)} : {}),
+      });
+      const call = async (path: string, token: string | null = serverToken, body: unknown = {e164}, method = "POST") => {
+        const response = await svc!.fetch(request(path, token, body, method));
+        expect(response.headers.get("cache-control")).toBe("no-store");
+        return response;
+      };
+      expect((await call("/agent/membership?app=slop", null)).status).toBe(401);
+      expect((await call("/agent/membership?app=slop", staffToken)).status).toBe(403);
+      expect((await call("/agent/membership?app=friends")).status).toBe(403);
+      expect((await call("/agent/membership")).status).toBe(400);
+      expect((await call("/agent/membership?app=slop", serverToken, {e164, personId: "forged"})).status).toBe(400);
+      expect((await call("/agent/membership?app=slop", serverToken, {e164: "2125550181"})).status).toBe(400);
+      expect((await call("/agent/membership?app=slop", serverToken, {}, "GET")).status).toBe(405);
+      const response = await call("/apps/slop/agent/membership");
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({app: "slop", personId, memberId});
+      const [audit] = await svc.sql`select target_id, app_id, detail from network.staff_audit where action = 'read_agent_membership'`;
+      expect(audit.app_id).toBe("slop");
+      expect(audit.target_id).not.toBe(e164);
+      expect(JSON.stringify(audit)).not.toContain(e164);
+      expect(JSON.stringify(audit)).not.toContain("DO_NOT_RETURN_PROFILE");
+      // Even an otherwise valid server credential cannot expose the private route through publicFetch.
+      expect((await svc.publicFetch(request("/agent/membership?app=slop"))).status).toBe(404);
+      await svc.people.addConsent({e164, app: null, state: "opted_out", source: "local-stop-test", at: now+1});
+      const stopped = await call("/agent/membership?app=slop");
+      const absent = await call("/agent/membership?app=slop", serverToken, {e164: "+12125550182"});
+      expect(stopped.status).toBe(404); expect(absent.status).toBe(404);
+      expect(await stopped.json()).toEqual(await absent.json());
+      const disabled = await NetworkService.fromDatabase(options); others.push(disabled);
+      expect((await disabled.fetch(request("/agent/membership?app=slop"))).status).toBe(503);
+      const undesignated = await NetworkService.fromDatabase({...options, agentToken: "not-in-token-registry"}); others.push(undesignated);
+      expect((await undesignated.fetch(request("/agent/membership?app=slop", "not-in-token-registry"))).status).toBe(401);
+      const consoleOnly = await NetworkService.fromDatabase({...options, consoleToken: serverToken, agentToken: serverToken}); others.push(consoleOnly);
+      expect((await consoleOnly.fetch(request("/agent/membership?app=slop"))).status).toBe(503);
+    } finally {
+      for (const other of others) await other.close();
+      await svc?.close();
+      await dropDb(url);
+    }
+  }, 120_000);
 });
