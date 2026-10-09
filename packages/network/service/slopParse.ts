@@ -28,8 +28,8 @@ const ALL_WORDS = "everyone|everybody|anyone|anybody|all genders|any gender|all 
 /** "both" or "either" as an answer ("both", "either is fine"), never "both hiking and music". */
 const PAIR_WORDS = `(?:both|either)(?=\\s(?:$|\\d|${WOMAN}|${MAN}|genders|sexes|is |are |works|really|honestly|tbh|i guess|equally|ways|i think|please|i'm|im))`;
 const GROUP = `(?:${WOMAN}|${MAN}|${NB}|nonbinary people|nonbinary folks|${ALL_WORDS}|${PAIR_WORDS})`;
-/** A list of gender words: "women", "men and nonbinary people", "only women", "trans women or guys". */
-const LIST = `((?:(?:a|an|only|just|mostly|mainly|other|cis|trans|some|single|straight|queer|gay|bi)\\s+)*${GROUP}(?:\\s+(?:people|folks|ones))?(?:\\s*(?:,|and|or|&|plus|\\/)\\s*(?:(?:a|an|only|just|mostly|other|cis|trans|some)\\s+)*${GROUP}(?:\\s+(?:people|folks|ones))?)*)`;
+/** A list of gender words: "women", "men and nonbinary people", "only women", "trans women or guys". "only" starts a new list. */
+const LIST = `((?:(?:a|an|only|just|mostly|mainly|other|cis|trans|some|single|straight|queer|gay|bi)\\s+)*${GROUP}(?:\\s+(?:people|folks|ones))?(?:\\s*(?:,|and|or|&|plus|\\/)\\s*(?:(?:a|an|other|cis|trans|some)\\s+)*${GROUP}(?:\\s+(?:people|folks|ones))?)*)`;
 const VERB = "looking for|look for|looking to meet|looking to date|into|seeking|seek|interested in|date|dating|dates|dated|meet|meeting|like|likes|liking|prefer|prefers|want|wants|attracted to|open to|go for|fancy|love|loves";
 /** "not", "don't", "never", "no longer", with at most one word between it and the verb ("not really into"). */
 const NEG = "(?:not|never|don't|dont|do not|doesn't|doesnt|won't|wont|can't|cant|no longer|isn't|aren't)(?: (?:really|usually|ever|much|at all|so|interested|that))?";
@@ -68,7 +68,7 @@ export function parseOrientation(text: string, bare = false): { is?: Gender; see
   // Who they are: "I'm a (straight) woman", "as a guy", "woman here", a bare "gay man, 31", "29f", "m4w".
   const selfRe = new RegExp(`\\b(?:i'm|im|i am|as|me|i identify as|identify as)\\s+(?:a |an )?(?:(?:${LABELS})\\s+)?(?:(?:trans|cis)\\s+)?(${SINGULAR})\\b`);
   const self = selfRe.exec(t)
-    ?? new RegExp(`^ (?:(?:straight|gay|lesbian|bi|bisexual|pan|pansexual|queer|trans|cis)\\s+)*(${SINGULAR})\\b(?! (?:only|please))`).exec(t)
+    ?? new RegExp(`^ (?:(?:straight|gay|lesbian|bi|bisexual|pan|pansexual|queer|trans|cis)\\s+)*(${SINGULAR})\\b(?! (?:only|please|people|folks|ones))`).exec(t)
     ?? new RegExp(`\\b(${SINGULAR}) here\\b`).exec(t);
   if (self) out.is = genderOf(self[1]!);
   const short = /\b(?:\d{2}\s?)?([mfw])\s?4\s?([mfwa])\b/.exec(t) ?? /\b(?:1[89]|[2-9]\d)\s?([mf])\b/.exec(t);
@@ -97,10 +97,12 @@ export function parseOrientation(text: string, bare = false): { is?: Gender; see
   }
   for (const m of t.matchAll(new RegExp(`${LIST} (?:are|is) (?:a no|a hard no|not for me|not my thing|off the table)`, "g"))) { listGenders(m[1]!, true).forEach(g => neg.add(g)); mark(m); }
   // "only women", "just men", "women only", "strictly guys": just these.
-  for (const m of t.matchAll(new RegExp(`\\b(?:only|just|strictly|exclusively) ${LIST}|${LIST} only\\b`, "g"))) {
-    if (used.some(([a, b]) => m.index! >= a && m.index! < b)) continue;
-    const g = listGenders(m[1] ?? m[2]!);
-    only = new Set([...(only ?? []), ...g]); g.forEach(x => pos.add(x)); mark(m);
+  for (const re of [`\\b(?:only|just|strictly|exclusively) ${LIST}`, `${LIST} only\\b`]) {
+    for (const m of t.matchAll(new RegExp(re, "g"))) {
+      if (used.some(([a, b]) => m.index! >= a && m.index! < b)) continue;
+      const g = listGenders(m[1]!);
+      only = new Set([...(only ?? []), ...g]); g.forEach(x => pos.add(x)); mark(m);
+    }
   }
   // "looking for women", "into men and nonbinary people", "a man who likes men".
   for (const m of t.matchAll(new RegExp(`\\b(?:${VERB}) ${LIST}`, "g"))) {

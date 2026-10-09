@@ -1,0 +1,20 @@
+{"text": "within 5 miles", "bare": true, "miles": 5}
+{"text": "10mi", "bare": true, "miles": 10}
+{"text": "up to 25 miles", "bare": false, "miles": 25}
+{"text": "two miles", "bare": true, "miles": 2}
+{"text": "a couple of miles is fine, maybe 3 miles", "bare": true, "miles": 3}
+{"text": "8 km", "bare": true, "miles": 5}
+{"text": "within 15 kilometers", "bare": true, "miles": 9}
+{"text": "walking distance", "bare": true, "miles": 2}
+{"text": "my neighborhood ideally", "bare": true, "miles": 2}
+{"text": "same borough", "bare": true, "miles": 5}
+{"text": "stay in brooklyn", "bare": true, "miles": 5}
+{"text": "just the city", "bare": true, "city": true}
+{"text": "anywhere in nyc", "bare": true, "city": true}
+{"text": "all five boroughs", "bare": true, "city": true}
+{"text": "5", "bare": true, "miles": 5}
+{"text": "10 max", "bare": true, "miles": 10}
+{"text": "half a mile", "bare": true, "miles": 2}
+{"text": "5", "bare": false, "miles": null}
+{"text": "I ran a 5k today", "bare": true, "miles": null}
+{"text": "not sure", "bare": true, "miles": null}

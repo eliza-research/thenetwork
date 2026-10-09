@@ -5,10 +5,12 @@
 //   replies.jsonl  core parseReply (yes / no / unsure)
 //   opt-out*.jsonl the opt-out readers (core parseOptOut; the platform consent ledger's detectKeyword)
 //   guard/         the shared leak guard (contacts in disguise, private facts, homoglyphs, benign text)
+//   slop/          slop.date's onboarding parsers (orientation with negations, age ranges, distance, zip)
 import { classifyYesNo, findLeaks, parseOptOut, parseReply, type ReplyAnswer } from "../../packages/core/src/index.ts";
 import { classify, extractProfile, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
 import { detectKeyword, leaveTarget, optOutPhrase } from "../../packages/platform/src/consent.ts";
 import { outputLeaks } from "../../packages/mcp/src/leaks.ts";
+import { parseAgeRange, parseDistance, parseOrientation, parseZip } from "../../packages/network/service/slopParse.ts";
 import { Block, expect } from "./gate.ts";
 
 const ROOT = `${import.meta.dir}/../../evals`;
@@ -118,6 +120,28 @@ export async function evalsBlock(b: Block): Promise<void> {
     return want === "contact" ? !r.some(x => x.startsWith("contact:")) : want === "leak" ? r.length === 0 : r.length > 0;
   }).map(r => `${r.want}: ${JSON.stringify(r.text)} (${r.note})`);
   b.gate(`leak guard (n ${guard.length}): evasions caught, benign text clean`, guardMiss.length === 0, guardMiss.slice(0, 5).join("; "));
+
+  // ---- slop.date parsers (a wrong gender or seeking set would match the wrong people: zero allowed) ----
+  type O = { text: string; bare: boolean; is: string | null; seeks: string[] | null; negation?: boolean };
+  const orient = await jsonl<O>("slop/orientation.jsonl");
+  const orientMiss = orient.filter(l => { const r = parseOrientation(l.text, l.bare); return (r.is ?? null) !== l.is || JSON.stringify(r.seeks ?? null) !== JSON.stringify(l.seeks); })
+    .map(l => `${JSON.stringify(l.text)} -> ${JSON.stringify(parseOrientation(l.text, l.bare))}`);
+  b.gate(`slop orientation (n ${orient.length}, ${orient.filter(l => l.negation).length} negations): 0 wrong gender or seeking`,
+    orient.length >= 50 && orient.filter(l => l.negation).length >= 15 && orientMiss.length === 0, orientMiss.slice(0, 5).join("; "));
+  const ages = await jsonl<{ text: string; bare: boolean; age?: number; range: [number, number] | null }>("slop/age-range.jsonl");
+  const ageMiss = ages.filter(l => JSON.stringify(parseAgeRange(l.text, l.bare, l.age) ?? null) !== JSON.stringify(l.range)).map(l => `${JSON.stringify(l.text)} -> ${JSON.stringify(parseAgeRange(l.text, l.bare, l.age))}`);
+  b.gate(`slop age ranges (n ${ages.length}): every range exact`, ages.length >= 30 && ageMiss.length === 0, ageMiss.slice(0, 5).join("; "));
+  const dist = await jsonl<{ text: string; bare: boolean; miles?: number | null; city?: boolean }>("slop/distance.jsonl");
+  const distMiss = dist.filter(l => {
+    const r = parseDistance(l.text, l.bare);
+    if (l.city) return !r?.city;
+    if (l.miles === null || l.miles === undefined) return r !== undefined;
+    return r?.miles === undefined || Math.abs(r.miles - l.miles) > 1;
+  }).map(l => `${JSON.stringify(l.text)} -> ${JSON.stringify(parseDistance(l.text, l.bare))}`);
+  b.gate(`slop distance (n ${dist.length}): within 1 mile, the city read as the city`, dist.length >= 15 && distMiss.length === 0, distMiss.slice(0, 5).join("; "));
+  const zips = await jsonl<{ text: string; zip: string | null }>("slop/zip.jsonl");
+  const zipMiss = zips.filter(l => (parseZip(l.text) ?? null) !== l.zip).map(l => `${JSON.stringify(l.text)} -> ${parseZip(l.text)}`);
+  b.gate(`slop zip (n ${zips.length}): every zip exact, never part of a longer number`, zips.length >= 10 && zipMiss.length === 0, zipMiss.slice(0, 5).join("; "));
 
   await b.run("MCP output gate: update summaries with a phone, email, internal id or timestamp are withheld; plain ones pass", () => {
     for (const t of ["call me at (415) 555-0102", "maya [at] example [dot] test", "your match is mem_8f2k1", "meeting at 2026-10-08T19:30", "sam@example.com"]) expect(outputLeaks(t).length).toBeGreaterThan(0);

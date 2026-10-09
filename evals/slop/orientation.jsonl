@@ -1,0 +1,58 @@
+{"text": "I'm a woman, not into men, looking for women", "bare": false, "is": "woman", "seeks": ["woman"], "negation": true}
+{"text": "no women please, men only", "bare": true, "is": null, "seeks": ["man"], "negation": true}
+{"text": "I'm a man who likes men", "bare": false, "is": "man", "seeks": ["man"]}
+{"text": "I'm a woman looking for men", "bare": false, "is": "woman", "seeks": ["man"]}
+{"text": "straight guy", "bare": true, "is": "man", "seeks": ["woman"]}
+{"text": "straight woman, 31", "bare": true, "is": "woman", "seeks": ["man"]}
+{"text": "gay man", "bare": true, "is": "man", "seeks": ["man"]}
+{"text": "gay woman here", "bare": true, "is": "woman", "seeks": ["woman"]}
+{"text": "lesbian", "bare": true, "is": "woman", "seeks": ["woman"]}
+{"text": "I'm bi", "bare": true, "is": null, "seeks": ["man", "woman"]}
+{"text": "bi guy, into both", "bare": true, "is": "man", "seeks": ["man", "woman"]}
+{"text": "queer, open to anyone", "bare": true, "is": null, "seeks": ["man", "nonbinary", "woman"]}
+{"text": "women", "bare": true, "is": null, "seeks": ["woman"]}
+{"text": "men", "bare": true, "is": null, "seeks": ["man"]}
+{"text": "guys mostly", "bare": true, "is": null, "seeks": ["man"]}
+{"text": "Women and nonbinary people", "bare": true, "is": null, "seeks": ["nonbinary", "woman"]}
+{"text": "anyone really", "bare": true, "is": null, "seeks": ["man", "nonbinary", "woman"]}
+{"text": "a mix is good", "bare": true, "is": null, "seeks": ["man", "nonbinary", "woman"]}
+{"text": "both", "bare": true, "is": null, "seeks": ["man", "woman"]}
+{"text": "either is fine", "bare": true, "is": null, "seeks": ["man", "woman"]}
+{"text": "I'm nonbinary, into women and nonbinary people", "bare": true, "is": "nonbinary", "seeks": ["nonbinary", "woman"]}
+{"text": "I'm non-binary and I date men", "bare": false, "is": "nonbinary", "seeks": ["man"]}
+{"text": "I'm a trans woman into women", "bare": false, "is": "woman", "seeks": ["woman"]}
+{"text": "trans man looking for guys", "bare": true, "is": "man", "seeks": ["man"]}
+{"text": "m4w", "bare": true, "is": "man", "seeks": ["woman"]}
+{"text": "f4f", "bare": true, "is": "woman", "seeks": ["woman"]}
+{"text": "I'm a guy, looking for a woman to date", "bare": false, "is": "man", "seeks": ["woman"]}
+{"text": "As a woman I'm interested in men and women", "bare": false, "is": "woman", "seeks": ["man", "woman"]}
+{"text": "I am a man and I'm attracted to women", "bare": false, "is": "man", "seeks": ["woman"]}
+{"text": "only women", "bare": true, "is": null, "seeks": ["woman"]}
+{"text": "women only", "bare": true, "is": null, "seeks": ["woman"]}
+{"text": "just guys", "bare": true, "is": null, "seeks": ["man"]}
+{"text": "I'm into all kinds of music", "bare": false, "is": null, "seeks": null}
+{"text": "I like both hiking and going to shows", "bare": false, "is": null, "seeks": null}
+{"text": "yes all good", "bare": true, "is": null, "seeks": null}
+{"text": "I'd like someone kind and funny", "bare": false, "is": null, "seeks": null}
+{"text": "Looking for something serious", "bare": false, "is": null, "seeks": null}
+{"text": "my friends say I'm a lot of fun", "bare": false, "is": null, "seeks": null}
+{"text": "I want to meet people who love food", "bare": false, "is": null, "seeks": null}
+{"text": "not into men", "bare": true, "is": null, "seeks": null, "negation": true}
+{"text": "not men", "bare": true, "is": null, "seeks": null, "negation": true}
+{"text": "anyone but men", "bare": true, "is": null, "seeks": ["nonbinary", "woman"], "negation": true}
+{"text": "everyone except guys tbh", "bare": true, "is": null, "seeks": ["nonbinary", "woman"], "negation": true}
+{"text": "I'm a man, not into women, I date men", "bare": false, "is": "man", "seeks": ["man"], "negation": true}
+{"text": "I don't date men, only women", "bare": false, "is": null, "seeks": ["woman"], "negation": true}
+{"text": "I'm not really into guys, looking for women", "bare": false, "is": null, "seeks": ["woman"], "negation": true}
+{"text": "no guys, just women", "bare": true, "is": null, "seeks": ["woman"], "negation": true}
+{"text": "women, no men please", "bare": true, "is": null, "seeks": ["woman"], "negation": true}
+{"text": "men are a no for me, women and nonbinary folks yes", "bare": true, "is": null, "seeks": ["nonbinary", "woman"], "negation": true}
+{"text": "I'm a woman, never dated women, looking for men", "bare": false, "is": "woman", "seeks": ["man"], "negation": true}
+{"text": "not looking for men, I'm into women", "bare": false, "is": null, "seeks": ["woman"], "negation": true}
+{"text": "I'm a woman, not straight, into women", "bare": false, "is": "woman", "seeks": ["woman"], "negation": true}
+{"text": "not into anyone who smokes, looking for women", "bare": false, "is": null, "seeks": ["woman"], "negation": true}
+{"text": "no women, men only", "bare": true, "is": null, "seeks": ["man"], "negation": true}
+{"text": "I don't want to date guys anymore, women only", "bare": false, "is": null, "seeks": ["woman"], "negation": true}
+{"text": "I'm a guy and I'm not into dudes, looking for girls", "bare": false, "is": "man", "seeks": ["woman"], "negation": true}
+{"text": "nonbinary folks and women, not men", "bare": true, "is": null, "seeks": ["nonbinary", "woman"], "negation": true}
+{"text": "I'm not looking for women", "bare": false, "is": null, "seeks": null, "negation": true}
