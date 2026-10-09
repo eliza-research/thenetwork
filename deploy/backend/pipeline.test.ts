@@ -53,7 +53,7 @@ d("pipeline world: inbound, joins and keywords (shared line)", () => {
     expect((await post({ "x-blooio-signature": signBlooioPayload(TEST_WEBHOOK_SECRET, raw, at) }, raw.replace("slop", "peon"))).status).toBe(401);
     expect(await w.person(who)).toBeUndefined();
     expect(w.got(who)).toEqual([]);
-    // The same message with a good signature is handled; the provider's retry (same event id) is not handled twice.
+    // The same message with a good signature is handled.
     expect((await w.post(body)).result).toBe("join_asked");
     expect(w.got(who).length).toBe(1);
   });
@@ -62,7 +62,11 @@ d("pipeline world: inbound, joins and keywords (shared line)", () => {
     const who = phone();
     expect((await w.text(who, "slop")).result).toBe("join_asked");
     expect(w.got(who)).toEqual([expect.stringContaining("To join slop, reply with your first name and your age")] as never);
-    expect((await w.text(who, "Sam, 29")).result).toBe("joined");
+    expect((await w.text(who, "Sam, 29", { messageId: "join-answer-sam" })).result).toBe("joined");
+    // Blooio retries a webhook it did not see answered: the same message is handled once.
+    const mark = w.mark;
+    expect((await w.text(who, "Sam, 29", { messageId: "join-answer-sam" })).result).toBe("duplicate");
+    expect(w.since(mark, who)).toEqual([]);
     const p = (await w.person(who))!;
     expect(p.memberships.map(m => [m.app, m.state])).toEqual([["slop", "active"]]);
     const id = (await w.memberOf("slop", who))!;
