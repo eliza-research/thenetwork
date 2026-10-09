@@ -245,7 +245,10 @@ function resolveWeek(rc: RunCtx, week: number, out: MatcherOutput, askedNow: Set
         // Sim-only relay roles (contact fishers, rating probers) count as true positives, not honest members.
         const honest = relayRole(oracle.p(id), relay.roles) === "honest";
         if (honest) rc.relay.falsePositive++; else rc.relay.truePositive++;
-        const cleared = honest && review && reviewDecision(oracle.p(id), review) === "cleared";
+        // Review clears a non-adversary adult (honest, or a sim-only contact fisher or rating prober: a
+        // warning, not a ban) with p = clearHonest; never an age slip.
+        const q = oracle.p(id);
+        const cleared = !q.hidden.adversary && !q.hidden.isMinor && !ex.ageSignal.has(id) && review && reviewDecision(q, review) === "cleared";
         if (!heldNow(id)) state.safetyHolds.push({ memberId: id, from: state.now, reason: ex.ageSignal.has(id) ? "relay: age under 18 stated" : honest ? "relay: flagged (false positive)" : "relay: flagged", ...(cleared ? { to: state.now + review!.days * DAY } : {}) });
       }
       rc.relay.prevented += revealHarms.length - ex.kept.length;

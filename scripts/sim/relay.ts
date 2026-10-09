@@ -1,7 +1,8 @@
 // The relay block: the engine's relay policy (packages/engine/src/relay.ts) and the photo in the
 // probe (packs/slop/plan.ts probePhotoRefs, copy.ts slopProbeMessage), critical path item 7.
 //   corpus     evals/relay/: hand-written honest messages, scams, harassment, contact attempts and
-//              rating probes (relay.jsonl, relay-paraphrases.jsonl), member requests (requests.jsonl),
+//              rating probes (relay.jsonl, relay-paraphrases.jsonl, relay-heldout-1.jsonl: blocking;
+//              relay-heldout-2.jsonl: tracked, never tuned on), member requests (requests.jsonl),
 //              and the Network's benign adult phrasing as a second false-hold check
 //   scenarios  scripted items against the policy: minors, state, blocks, consent, photos, leaks,
 //              rate limits, the log, the LLM hook, and the photo-in-probe rule
@@ -11,7 +12,7 @@ import { findLeaks } from "../../packages/core/src/index.ts";
 import { appearanceLeak } from "../../packages/engine/src/packs/slop/appearance.ts";
 import { SLOP_PROBE_PHOTO_LINE, slopProbeMessage, slopProbeText } from "../../packages/engine/src/packs/slop/copy.ts";
 import { probePhotoRefs } from "../../packages/engine/src/packs/slop/plan.ts";
-import { parseRelayRequest, pastContacts, relayGuard, relayItem, relayItemAsync, RELAY_WORDING, threadMessage, type RelayContext, type RelayItem, type RelayRecord } from "../../packages/engine/src/relay.ts";
+import { parseRelayRequest, pastContacts, relayGuard, relayItem, relayItemAsync, relayItemFromRequest, RELAY_WORDING, threadMessage, type RelayContext, type RelayItem, type RelayRecord } from "../../packages/engine/src/relay.ts";
 import { Block, expect } from "./gate.ts";
 
 const ROOT = `${import.meta.dir}/../../evals`;
@@ -36,17 +37,21 @@ const photo = (over: Partial<RelayItem> = {}): RelayItem => ({ id: "p1", kind: "
 export async function relayBlock(b: Block): Promise<void> {
   // ---- corpus ---------------------------------------------------------------------------------------
   type Row = { text: string; class: "honest" | "scam" | "harassment" | "contact" | "rating"; want: "pass" | "stop" };
-  for (const file of ["relay/relay.jsonl", "relay/relay-paraphrases.jsonl"]) {
+  // relay.jsonl, relay-paraphrases.jsonl and relay-heldout-1.jsonl were used to tune the rules: their gates block.
+  // relay-heldout-2.jsonl was written after the tuning and scored once: its gates are tracked (the rules'
+  // expected recall on new wording; do not tune on it, write a new held-out file instead).
+  for (const file of ["relay/relay.jsonl", "relay/relay-paraphrases.jsonl", "relay/relay-heldout-1.jsonl", "relay/relay-heldout-2.jsonl"]) {
     const rows = await jsonl<Row>(file);
+    const blocking = !file.includes("heldout-2");
     const stopped = (t: string) => relayItem(text(t), baseCtx()).decision !== "pass";
     const by = (c: Row["class"]) => rows.filter(r => r.class === c);
     const recall = (c: Row["class"]) => { const xs = by(c); return { r: xs.filter(x => stopped(x.text)).length / Math.max(1, xs.length), n: xs.length, miss: xs.filter(x => !stopped(x.text)).map(x => x.text) }; };
     for (const [c, target] of [["scam", 0.9], ["harassment", 0.9], ["contact", 0.95], ["rating", 0.95]] as const) {
       const x = recall(c);
-      b.gate(`relay corpus ${file}: ${c} held or blocked >= ${target * 100}% (n ${x.n})`, x.n >= 10 && x.r >= target, `${pct(x.r)}${x.miss.length ? `; missed: ${x.miss.slice(0, 3).join(" | ")}` : ""}`);
+      b.gate(`relay corpus ${file}: ${c} held or blocked >= ${target * 100}% (n ${x.n})`, x.n >= 10 && x.r >= target, `${pct(x.r)}${x.miss.length ? `; missed: ${x.miss.slice(0, 3).join(" | ")}` : ""}`, blocking);
     }
     const honest = by("honest"), held = honest.filter(x => stopped(x.text)).map(x => x.text);
-    b.gate(`relay corpus ${file}: honest messages held <= 5% (n ${honest.length})`, honest.length >= 25 && held.length / honest.length <= 0.05, `${pct(held.length / honest.length)}${held.length ? `; held: ${held.slice(0, 3).join(" | ")}` : ""}`);
+    b.gate(`relay corpus ${file}: honest messages held <= 5% (n ${honest.length})`, honest.length >= 25 && held.length / honest.length <= 0.05, `${pct(held.length / honest.length)}${held.length ? `; held: ${held.slice(0, 3).join(" | ")}` : ""}`, blocking);
   }
   const benign = (await Bun.file(`${ROOT}/network/benign-adult.txt`).text()).trim().split("\n");
   const benignHeld = benign.filter(t => relayItem(text(t), baseCtx()).decision !== "pass");
@@ -155,6 +160,18 @@ export async function relayBlock(b: Block): Promise<void> {
     }
     expect(threadMessage(records[3]!).rendered).toBeNull();
     expect(pastContacts(records.map(r => r.record), "a")).toEqual(["b"]);
+  });
+
+  await b.run("relay: the plugin path (parseRelayRequest -> relayItemFromRequest -> relayItem) delivers only explicit requests", () => {
+    const at = NOW;
+    const mk = (t: string, id: string) => relayItemFromRequest(parseRelayRequest(t), { id, from: "a", to: "b", at, contact: { kind: "phone", value: "+12125550147" }, photoIds: ["ph_abcdefgh"] });
+    const num = mk("send them my number", "r1"), pic = mk("send her this photo", "r2"), msg = mk("tell them I'm running 10 min late", "r3");
+    expect([num?.kind, pic?.kind, msg?.kind]).toEqual(["contact_share", "photo", "text"]);
+    expect(relayItem(num!, baseCtx()).decision).toBe("pass");
+    expect(relayItem(pic!, baseCtx()).decision).toBe("pass");
+    expect(relayItem(msg!, baseCtx()).rendered).toBe('Sam says: "I\'m running 10 min late"');
+    for (const t of ["should I send them my number?", "don't send my number yet", "how are you?"]) expect([t, mk(t, "r4")]).toEqual([t, null]);
+    expect(relayItemFromRequest({ kind: "contact_share" }, { id: "r5", from: "a", to: "b", at })).toBeNull();
   });
 
   await b.run("relay: the LLM hook runs only on items the rules pass; a flag or an error holds", async () => {
