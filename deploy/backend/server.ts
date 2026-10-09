@@ -61,6 +61,7 @@ async function main() {
     url: c.databaseUrl, clock, instance: process.env.NETWORK_SERVICE_INSTANCE ?? process.env.RAILWAY_REPLICA_ID ?? `${process.pid}`,
     tokens: process.env.NETWORK_SERVICE_TOKENS, consoleToken: process.env.NETWORK_SERVICE_CONSOLE_TOKEN,
     webhookSecret: process.env.BLOOIO_WEBHOOK_SECRET, webhookSecrets: webhookSecretsFromEnv(),
+    agentToken: process.env.NETWORK_SERVICE_AGENT_TOKEN,
     auditUrl: process.env.NETWORK_SERVICE_AUDIT_DATABASE_URL,
     network: { seed: Number(process.env.NETWORK_SEED ?? 1) },
     // The backend decides the app and the client IP before the public API sees the request (backend.ts normalizeEdge).

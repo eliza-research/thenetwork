@@ -353,7 +353,7 @@ describe.skipIf(!pgAvailable)("boot (dev Postgres, a database of its own)", () =
   let url = "";
   afterAll(async () => { if (url) await dropDb(url); });
 
-  test("migrates on boot, serves /healthz and /api/app per site host, refuses spoofed edges, exits 0 on SIGTERM", async () => {
+  test("boots with private agent reads under the service login, refuses public reads and staff mutations, exits 0 on SIGTERM", async () => {
     url = await emptyDb("backend_boot");
     const port = 20000 + (process.pid % 20000), staff = port + 1;
     // The owner migrates; the service runs as a network_service login that RLS applies to (the boot check refuses the owner).
@@ -366,10 +366,28 @@ describe.skipIf(!pgAvailable)("boot (dev Postgres, a database of its own)", () =
       await owner.unsafe(`grant network_service to ${role}`);
       await owner.unsafe(`grant connect on database ${new URL(url).pathname.slice(1)} to ${role}`);
     } finally { await owner.close(); }
+    const now = Date.parse("2026-10-08T12:00:00Z");
+    const e164 = "+12125550189", personId = randomUUID(), memberId = "boot_agent_member";
+    const agentToken = "boot-agent-reader-" + "a".repeat(40), staffToken = "boot-human-staff-" + "h".repeat(40);
+    const fixture = await NetworkService.fromDatabase({url, clock: {now: () => now}, env: {PLATFORM_ENV: "dev", PLATFORM_HASH_KEY: DEPLOYED.PLATFORM_HASH_KEY}, notify: false, photoStorage: null, log: () => {}});
+    try {
+      await fixture.people.createPerson({id: personId, e164, method: "inbound_message", at: now, lowestAge: 25, phoneHash: fixture.accounts.phoneHash(e164)});
+      await fixture.people.putMembership({app: "slop", personId, memberId, state: "active", review: null, firstName: "Ada", profile: {canary: "BOOT_PRIVATE_PROFILE"}, joinedAt: now, leftAt: null});
+      await fixture.people.addConsent({e164, app: "slop", state: "opted_in", source: "local-boot-test", at: now});
+      await fixture.runtimeFor("slop")!.scoped(async tx => {
+        await tx`insert into network.members (app_id, id, name, home_city, age, person_id, account_status)
+          values ('slop', ${memberId}, 'Ada Lovelace', 'nyc', 25, ${personId}, 'active')`;
+        await tx`insert into network.facets (app_id, id, member_id, kind, value, privacy_scope, provenance, status)
+          values ('slop', 'boot_shared', ${memberId}, 'interest', 'plays chess', 'shareable', 'said', 'confirmed'),
+            ('slop', 'boot_private', ${memberId}, 'interest', 'BOOT_PRIVATE_FACET', 'agent_private', 'said', 'confirmed')`;
+      });
+    } finally { await fixture.close(); }
     const svcUrl = Object.assign(new URL(url), { username: role }).toString();
     const env: Record<string, string> = {
       ...process.env as Record<string, string>, ...DEPLOYED, DATABASE_URL: svcUrl, MIGRATION_DATABASE_URL: url, PORT: String(port), STAFF_PORT: String(staff), TICK_MS: "3600000",
       PLATFORM_DB_ENVIRONMENT_INIT: "1", BUILD_ID: "boot-test", NODE_ENV: "", NETWORK_CHANNEL: "", BLOOIO_ALLOW_SEND: "", NTWRK_LIVE_APPROVED: "",
+      NETWORK_DATABASE_URL: svcUrl, NETWORK_SERVICE_AUDIT_DATABASE_URL: svcUrl,
+      NETWORK_SERVICE_AGENT_TOKEN: agentToken, NETWORK_SERVICE_TOKENS: `admin@slop:${agentToken},admin@*:${staffToken}`, NETWORK_SERVICE_CONSOLE_TOKEN: "",
     };
     const proc = Bun.spawn(["bun", "run", `${import.meta.dir}/server.ts`], { env, stdout: "pipe", stderr: "pipe" });
     const out = new Response(proc.stdout).text();
@@ -394,6 +412,24 @@ describe.skipIf(!pgAvailable)("boot (dev Postgres, a database of its own)", () =
       expect([spoof.status, (await spoof.json()).error]).toEqual([421, "edge_required"]);
       expect((await fetch(`http://127.0.0.1:${port}/review`)).status).toBe(404);
       expect((await fetch(`http://127.0.0.1:${staff}/health`)).status).toBe(401);
+      const privateCall = (path: string, token = agentToken, body: unknown = {e164}, method = "POST", listener = staff) => fetch(`http://127.0.0.1:${listener}${path}`, {
+        method, headers: {authorization: `Bearer ${token}`, "content-type": "application/json"},
+        ...(method === "POST" ? {body: JSON.stringify(body)} : {}),
+      });
+      for (const endpoint of ["membership", "context"]) {
+        const path = `/apps/slop/agent/${endpoint}`;
+        expect((await privateCall(path, agentToken, {e164}, "POST", port)).status).toBe(404);
+        expect((await privateCall(path, staffToken)).status).toBe(403);
+        const response = await privateCall(path);
+        expect(response.status).toBe(200);
+        expect(response.headers.get("cache-control")).toBe("no-store");
+        expect(await response.json()).toEqual(endpoint === "membership" ? {app: "slop", personId, memberId}
+          : {app: "slop", memberId, firstName: "Ada", city: "nyc", state: "open", stateFrom: null, stateUntil: null, facets: ["plays chess"], activeItems: null});
+        expect((await privateCall(`/apps/friends/agent/${endpoint}`)).status).toBe(403);
+      }
+      expect((await privateCall("/matching?app=slop", agentToken, {on: true})).status).toBe(403);
+      expect((await privateCall("/health?app=slop", agentToken, {}, "GET")).status).toBe(403);
+      expect((await privateCall("/health?app=slop", staffToken, {}, "GET")).status).toBe(200);
     } finally {
       proc.kill("SIGTERM");
     }
@@ -404,6 +440,9 @@ describe.skipIf(!pgAvailable)("boot (dev Postgres, a database of its own)", () =
     expect(logs).toMatch(/"msg":"shutdown complete".*"clean":true/);
     expect(logs).toMatch(/"sends":"dry-run"/);
     expect(logs).not.toMatch(/"sends":"live"/);
+    expect(logs).not.toContain(agentToken);
+    expect(logs).not.toContain(staffToken);
+    expect(logs).not.toMatch(/BOOT_PRIVATE|12125550189/);
   }, 30_000);
 });
 

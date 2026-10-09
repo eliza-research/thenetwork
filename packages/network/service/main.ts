@@ -38,6 +38,7 @@ async function main() {
   const svc = await NetworkService.fromDatabase({
     url, clock, instance: process.env.NETWORK_SERVICE_INSTANCE ?? `${process.pid}`,
     tokens: process.env.NETWORK_SERVICE_TOKENS, consoleToken: process.env.NETWORK_SERVICE_CONSOLE_TOKEN, webhookSecret: process.env.BLOOIO_WEBHOOK_SECRET, webhookSecrets: webhookSecretsFromEnv(),
+    agentToken: process.env.NETWORK_SERVICE_AGENT_TOKEN,
     auditUrl: process.env.NETWORK_SERVICE_AUDIT_DATABASE_URL,
     network: { seed: Number(process.env.NETWORK_SEED ?? 1) },
     // The dev site proxy (scripts/sites-dev.ts) names the site in X-Forwarded-Host. Trust it only on a local, non-production bind.

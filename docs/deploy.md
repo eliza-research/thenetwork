@@ -116,6 +116,7 @@ Set these in **Variables**. Mark each **secret** row as a sealed variable. Never
 | `OTP_PROVIDER` | no | `twilio` | Required when deployed |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SERVICE_SID` | **yes** (all three) | Twilio Verify | Codes only. These send verification codes, not network messages. |
 | `NETWORK_SERVICE_TOKENS` | **yes** | `admin@*:<t>,reviewer@slop:<t>,...` | Staff tokens. Without them every staff route answers 401. |
+| `NETWORK_SERVICE_AGENT_TOKEN` | **yes** | **unset by default** | Optional private agent reader. Set a dedicated credential with `admin@<app>` in `NETWORK_SERVICE_TOKENS`. It cannot call staff routes. Never use the console token. |
 | `NETWORK_SERVICE_CONSOLE_TOKEN` | **yes** | One of the tokens above | Only if the observatory console runs |
 | `BLOOIO_WEBHOOK_SECRET` | **yes** | From Blooio | Without it `/webhooks/blooio` answers 503 |
 | `<APP>_BLOOIO_WEBHOOK_SECRET` | **yes** | Per-app lines only | Not needed with one shared line |

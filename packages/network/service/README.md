@@ -29,9 +29,10 @@ The database must have the `network` and `platform` schemas (`bun run db:migrate
 
 `POST /apps/<app>/agent/membership` uses the private service port. The existing `?app=<app>` routing also applies.
 An explicit app is required. There is no default app for this endpoint.
-It is absent from `publicFetch`. This source change does not configure an environment variable or enable a deployment.
+It is absent from `publicFetch`. The endpoints stay disabled unless the host explicitly configures the credential.
 
-The host must explicitly set `ServiceOptions.agentToken` to a dedicated server credential.
+Both entry points (`main.ts` and `deploy/backend/server.ts`) pass the optional `NETWORK_SERVICE_AGENT_TOKEN` to `ServiceOptions.agentToken`.
+There is no default. Leave it unset to keep the endpoints disabled. Set it only to a dedicated server credential.
 The same credential must hold `admin@<app>` in `ServiceOptions.tokens` (`NETWORK_SERVICE_TOKENS`).
 The designation grants no role or app access. Other staff tokens cannot call this endpoint, including global admins.
 The designated credential is restricted to these agent read endpoints; it cannot call the staff API or change matching.
@@ -76,6 +77,7 @@ it does not create a new conversation or change the member's history.
 |---|---|---|
 | `NETWORK_DATABASE_URL` | `DATABASE_URL` | Postgres with the `network` schema. A login that can read and write it. |
 | `NETWORK_SERVICE_TOKENS` | none | Staff role tokens, the Observatory's scheme. Without them, every staff route answers 401. |
+| `NETWORK_SERVICE_AGENT_TOKEN` | none | Optional private agent reader designation. Also requires `admin@<app>` for the same credential in `NETWORK_SERVICE_TOKENS`. |
 | `NETWORK_SERVICE_AUDIT_DATABASE_URL` | the database URL | The login that writes `network.staff_audit` |
 | `BLOOIO_WEBHOOK_SECRET` | none | Verifies the shared line's webhook (`/webhooks/blooio`). Without it, that webhook answers 503. |
 | `<APP>_BLOOIO_WEBHOOK_SECRET` | none | Verifies one app's line (`/webhooks/blooio/<app>`). Without it, that path answers 503. |
