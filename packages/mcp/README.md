@@ -48,7 +48,7 @@ Every input schema has `app` only (`submit_profile`: `app` and `about`) and `add
 
 - Outside dev it needs `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` and a database. Without them it stays off (404 `mcp_not_enabled`).
 - When a person leaves an app or deletes everything (the platform's forget path), every OAuth grant of that app is revoked (`revokeAllFor`).
-- The OAuth checks (PKCE S256 only, code reuse revokes, no open redirect, refresh rotation, cross-app isolation) are in `test/oauth.test.ts`, part of the security suite kept pending the founder's decision (`bun run security`).
+- The OAuth checks (PKCE S256 only, code reuse revokes, no open redirect, refresh rotation, cross-app isolation) are in `test/oauth.test.ts`, part of the security suite in the integration suite (`bun run test:integration`; `bun run security` for the subset). `test/mcp.test.ts`, `test/pg.test.ts` and `test/updates.test.ts` drive the server over HTTP and on Postgres.
 
 ## 5. Run and test
 

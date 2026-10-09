@@ -166,10 +166,11 @@ Known gaps:
 
 ## 8. Checks
 
-The unit and end-to-end tests were deleted on 2026-10-08 (founder decision: simulations only). What remains:
+Validation is simulations plus integration and e2e tests; unit and smoke tests are not kept ([tests-policy.md](tests-policy.md)). With the dev Postgres up:
 
 ```bash
-bun run security                                      # pending the founder's decision: platform RLS and composite keys, CSRF, enumeration and OTP limits, MCP OAuth PKCE, the backend "two logins" RLS check (dev Postgres)
+bun run test:integration                              # the platform API on memory and Postgres, photos, the trusted proxy, the service, MCP, the console, and the security suite (RLS, CSRF, OTP limits, OAuth PKCE, the backend "two logins" check)
+bun run test:e2e                                      # tests/e2e: the platform and notify through the running service
 bun run sim --only evals                              # the opt-out corpus, keywords and per-app leave, the leak guard
 DEPLOY_TARGET=production bun run sites/sites.ts       # the four sites build (refuses draft legal text)
 bun run typecheck

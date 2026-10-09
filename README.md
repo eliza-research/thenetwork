@@ -37,13 +37,15 @@ This repository builds the MVP defined in PRD Section 28: one Network agent over
 
 ## Validation
 
-The simulations are the validation layer. One command runs them all, offline and deterministic (no LLM, no Postgres), and exits non-zero on any blocking gate failure:
+The validation layer is the simulations plus integration and e2e tests; there are no unit or smoke tests ([docs/tests-policy.md](docs/tests-policy.md)). `bun run sim` runs every simulation, offline and deterministic (no LLM, no Postgres), and exits non-zero on any blocking gate failure. The integration and e2e suites need the dev Postgres (`bun run packages/observatory/db/dev-pg.ts up`, port 54339):
 
 ```bash
 bun install
 bun run sim                  # evals, network, slop, peon, friends on pinned seeds
 bun run sim --only slop      # one block; --quick for a short local run; --with-capital adds the slow capital block
 bun run typecheck
+bun run test:integration     # real Postgres, real HTTP servers, the full service; includes the security suite
+bun run test:e2e             # tests/e2e: the platform and notify end to end
 ```
 
 See [AGENTS.md](AGENTS.md) for every other command (the observatory, the four apps locally, the world CLIs) and the LLM settings.
