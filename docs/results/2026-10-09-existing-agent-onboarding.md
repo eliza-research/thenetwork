@@ -157,5 +157,7 @@ Private evidence directory: `test-results/existing-agents-20261009/`.
 It contains browser captures, local before/after images, runtime receipts, and validation logs.
 Raw browser captures may expose account information. Do not commit or attach them publicly.
 Show sanitized screenshots and the required walkthrough/before-after video to the user before public attachment.
-A 24-second captured-frame walkthrough (`walkthrough.mp4`) and captions (`captions.srt`) exist for local review only; neither is uploaded.
-Public UI evidence and PR links remain pending. Integration failures remain unresolved; final targeted MCP integration and audit passed.
+The 24-second captured-frame walkthrough was shown to the user before public attachment. Raw account captures remain private.
+[Walkthrough and before/after video](https://github.com/user-attachments/assets/cbd64c04-a151-40f9-8bf4-ac6343dbc77b). Captions also remain in the private evidence directory.
+[Draft PR #13](https://github.com/eliza-research/thenetwork/pull/13) contains the source, walkthrough, and review steps.
+Integration failures remain unresolved; final targeted MCP integration and audit passed. Hosted CI was queued at publication.
