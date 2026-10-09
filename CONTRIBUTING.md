@@ -29,7 +29,7 @@ Maintainers close these issues without discussion:
 
 - Features that are not in the MVP, or that PRD Section 28.4 excludes.
 - Pedantic issues: style preferences, naming opinions, comment wording, file order.
-- Requests for more unit tests, more coverage, or tests that do not test real behavior.
+- Requests for unit tests, smoke tests, more coverage, or tests that do not test real behavior.
 - Requests for defensive code, extra validation, extra null checks, input truncation, or error handling for conditions that cannot occur.
 - Refactors with no measured result and no bug.
 - Duplicates of an open issue. Search first.
@@ -95,9 +95,9 @@ In the PR description:
 3. Explain why your implementation is better than each of them. Give the trade-offs.
 4. Give the research that supports the decision: PRD sections, docs in [docs/research/](docs/research/), earlier results, or external sources.
 
-### 3.4 A PR must show end-to-end validation in the simulations
+### 3.4 A PR must show end-to-end validation: simulations, integration and e2e
 
-The simulations are the only validation layer (founder decision, 2026-10-08). There are no unit tests. Do not add any.
+The validation layer is the simulations plus integration and e2e tests (founder decision; [docs/tests-policy.md](docs/tests-policy.md)). There are no unit tests and no smoke tests. Do not add any. An integration test exercises real Postgres, a real HTTP server, several packages together or the full service; an e2e test drives the whole system from the outside (`tests/e2e`). A test of one function with fakes is a unit test.
 
 - Run `bun run sim`. It runs every simulation block (the eval corpora, the Network in the NYC world, slop.date, peon.biz, friends.help) on pinned seeds and exits 1 when a blocking gate fails. It must pass. Use `--only <block>` while you work and the full run before you open the PR.
 - For a deeper check, run the real code path directly and give the command, the seed and the numbers before and after:
@@ -106,7 +106,8 @@ The simulations are the only validation layer (founder decision, 2026-10-08). Th
   - The ConsentNetwork arms and scenarios: `bun run packages/network/harness/experiment.ts --days 21 --seed 1`
   - An app world: `bun run packages/sim/src/apps/<slop|peon|friends>/...` (AGENTS.md has the commands)
   - The Observatory, for UI and data changes: `bun run observatory`
-- If you fix a bug, add one gate to `scripts/sim/`, one scenario, or one row to a corpus in `evals/` that fails before the fix and passes after it. That is enough. Do not add more.
+- Run `bun run test:integration` and `bun run test:e2e` (both need the dev Postgres: `bun run packages/observatory/db/dev-pg.ts up`, port 54339). They must pass.
+- If you fix a bug, add one gate to `scripts/sim/`, one scenario, one row to a corpus in `evals/`, or one integration or e2e case that fails before the fix and passes after it. That is enough. Do not add more.
 - Run `bun run typecheck`. It must pass.
 
 ### 3.5 PRs that change the UI
@@ -199,7 +200,7 @@ Safety scores are gates. A PR that increases canary leaks, invariant violations,
 
 ## 6. Development rules
 
-- Use Bun. Run `bun install`, then `bun run sim` and `bun run typecheck`. Both are offline: `bun run sim` never calls a model. CI (`.github/workflows/ci.yml`) runs them with no keys, plus the security suite pending the founder's decision (`bun run security`, with Postgres).
+- Use Bun. Run `bun install`, then `bun run sim` and `bun run typecheck`. Both are offline: `bun run sim` never calls a model. CI (`.github/workflows/ci.yml`) runs them with no keys, plus the integration job (`bun run test:integration`, which includes the security suite, and `bun run test:e2e`, with Postgres).
 - Network code reads time only from `Clock`. Do not use `Date.now()`, `new Date()` with no argument, or `Math.random()` in Network code (PRD 31.1).
 - Network code never reads the hidden persona truth. Only the simulator and the oracle can read it.
 - Every outbound message must go through the leak check, and every proactive proposal and member request must go through human review (PRD 28.5, 32.8). Today the ConsentNetwork (`packages/network`) does both: every opportunity it composes waits for review before any member is contacted, and every message it sends passes the leak guard (`packages/core/src/guard.ts`). The Blooio outbound queue also runs the leak guard; the MCP server withholds any update that fails its output gate. The simulator's `StubNetwork` (the push baseline) has neither. Simulator runs use a simulated reviewer (`review: "auto"`). Say so in a PR or a results doc, and do not claim review or a leak check for the other paths.

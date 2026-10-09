@@ -6,8 +6,12 @@
     "packages/*"
   ],
   "scripts": {
+    "test:integration": "bun test --conditions eliza-source --timeout 120000 ./deploy ./packages ./sites",
+    "test:e2e": "bun test --conditions eliza-source --timeout 180000 ./tests/e2e",
     "security": "bun test --conditions eliza-source --timeout 120000 packages/platform/test/db.test.ts packages/platform/test/api-security.test.ts packages/mcp/test/oauth.test.ts deploy/backend/backend.test.ts",
     "sim": "bun run --conditions eliza-source scripts/sim.ts",
+    "clef": "bun run --conditions eliza-source scripts/clef-fit.ts",
+    "relay-eval": "bun run --conditions eliza-source scripts/relay-eval.ts",
     "typecheck": "tsc --noEmit -p . && tsc --noEmit -p sites/tsconfig.json && bun run --cwd packages/plugin-network typecheck",
     "observatory": "bun run packages/observatory/src/server.ts",
     "observatory:db": "bun run packages/observatory/db/dev-pg.ts up && bun run packages/observatory/db/seed.ts --from-sim --days 14",

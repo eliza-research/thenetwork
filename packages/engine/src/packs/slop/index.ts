@@ -207,12 +207,14 @@ export const slopPack = makeSlopPack();
 
 export { slopOptions, SLOP_DEFAULT_OPTIONS, type SlopPackOptions } from "./options.ts";
 export { slopProfiles, SLOTS, type SlopProfile, type Slot } from "./profile.ts";
-export { planFirstDate, planFromInput, PUBLIC_VENUE, type DatePlan } from "./plan.ts";
+export { planFirstDate, planFromInput, probePhotoRefs, PROBE_PHOTO_MAX, PUBLIC_VENUE, type DatePlan, type ProbePhotoRef, type ProbePhotoSubject } from "./plan.ts";
 export { distanceBand, cellOfZip, ZIPS as SLOP_ZIPS, type DistanceBand } from "./zips.ts";
-export { ageBand, SLOP_ASK_QUESTIONS } from "./copy.ts";
+export { ageBand, SLOP_ASK_QUESTIONS, SLOP_PROBE_PHOTO_LINE, slopProbeMessage, slopProbeText } from "./copy.ts";
 export { mutualMarkets } from "./geo.ts";
 export { adultsOnly, appearanceFacet, appearanceLeak, APPEARANCE_LEAK_PATTERNS, BODY_TYPES, canRatePhotos, ClipAppearanceRater, parseAppearance, rateMember, VisionLlmAppearanceRater, VISION_RATER_SYSTEM, type AppearanceRater, type AppearanceScore, type BodyType, type PhotoRef, type RatingSubject, type VisionChat } from "./appearance.ts";
-export { CLEF_FEATURES, CLEF_MODEL_IDS, CLEF_QUESTIONS, ClefError, clefFeatures, applyHead, makeClefRater, makeClefRaterFromEnv, WorkersAIClefRater, type ClefModel, type ClefRaterOptions } from "./clef.ts";
+export { CLEF_FEATURES, CLEF_MODEL_IDS, CLEF_PRICE_PER_M_INPUT, CLEF_QUESTIONS, ClefError, clefFeatures, clefFeatureRow, clefFeatureNames, clefRun, applyHead, makeClefRater, makeClefRaterFromEnv, WorkersAIClefRater, type ClefModel, type ClefRaterOptions, type ClefCallOptions, type ClefRequest, type ClefFetch } from "./clef.ts";
 export { DEFAULT_CLEF_WEIGHTS, loadClefWeights, validateClefWeights, type ClefWeights } from "./clefWeights.ts";
 export { biasMonitor, ratingQuintiles, type BiasReport, type MemberOutcome } from "./biasMonitor.ts";
 export { pairValue, firstOf, SLOP_GENERATOR } from "./generators.ts";
+export { extractSlopProfile, extractSlopProfileLLM, llmSlopReader, slopReaderPrompt, validateSlopReading, slopOnboardTags, readMessage, emptyOnboarding, hardFilled, hasField, coarsePlace, HARD_FIELDS, DEALBREAKER_IDS, DATE_ACTIVITY_IDS, LLM_FILL_BELOW, type SlopOnboarding, type OnboardField, type HardField, type Field, type Evidence, type Distance, type Location, type ExtractOptions, type SlopReader, type SlopTag, type Dealbreaker, type DateActivity } from "./extract.ts";
+export { readBack, readBackFacts, applyCorrection, nextQuestion, markAsked, hardComplete, SLOP_ONBOARD_QUESTIONS, READBACK_FIELDS, MAX_ASKS_PER_QUESTION, type ReadBackFact } from "./onboard.ts";

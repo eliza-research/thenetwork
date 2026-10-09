@@ -18,7 +18,7 @@ The frame (founder decisions):
 
 - **The backend is built and deployable, but never deployed.** `deploy/backend/server.ts` brings up the migrations, the four networks (`ntwrk:nyc`, `slop:nyc`, `peon:nyc`, `friends:nyc`), the platform API, the signed Blooio webhook, keyword routing, STOP/HELP/leave, the person cap, the staff review and safety API, notify and MCP. No live send has been made; the Blooio path has only run against a fake provider.
 - **The slop engine is mature in simulation** (`slop-pack-1.4.0`): every blocking gate passes, and five tracked gates fail on the pinned seeds (Section 4).
-- **Five founder decisions are not yet on the live path:** the Clef rater is not passed to the service (`server.ts` sets no `photoRater`); the probe copy still says "no photo" (`packages/engine/src/packs/slop/copy.ts`); exchange through the agent (relay) does not exist; photos sent by text are dropped and no site page calls `/api/photos`; the onboarding conversation is deterministic (no `understand` or engine LLM wired, and `packages/plugin-network` is not on the line).
+- **Five founder decisions are not yet on the live path:** the Clef rater is not passed to the service (`server.ts` sets no `photoRater`); the photo in the probe and the relay exist in the engine only (`probePhotoRefs`, `slopProbeMessage`, `relayItem`; docs/results/2026-10-09-relay.md) and no live path calls them; photos sent by text are dropped and no site page calls `/api/photos`; the onboarding conversation is deterministic (no `understand` or engine LLM wired, and `packages/plugin-network` is not on the line).
 - **Operations gaps:** no external alerting, heartbeat or cost tracking; backups are a manual Railway step; the reviewer of record is the service token, not the person; nobody owns STOP/HELP if Eliza Cloud also receives the line's webhook.
 - **Size:** about 35 engineer-days of build plus two weeks of shadow, for a reviewed, concierge-heavy NYC pilot of about 40-75 adults.
 
@@ -74,7 +74,7 @@ Status values: **Done** (in code, on the live path), **Partial**, **Missing**, *
 | F13 Event co-attendance | n/a for slop | | Deferred |
 | F14 Help request | n/a for slop | | Deferred |
 | F15 Member-initiated intro | Partial | Requests in `network.ts` | Deferred for slop |
-| F16 Relay and contact swap | **Missing** | Section 1.1 | Critical path item 7 |
+| F16 Relay and contact swap | **Engine done, not wired** | `packages/engine/src/relay.ts` (docs/results/2026-10-09-relay.md) | Critical path item 7: platform / plugin-network wiring |
 | F17 Scheduling | Partial | `plan.ts`, `slopVenue` | Confirm, cancel and one reschedule |
 | F18 Reminders, check-ins, flakes | Partial | Reminders and check-ins in `network.ts` (`weeklyCheckins`); the slop check-in after a date (`packs.ts`) | Day-of reminder, a "running late" relay (needs F16), a no-show record |
 | F19 Feedback and second encounter | Done | `onFeedback`, reports | (met) |
@@ -105,9 +105,9 @@ Status values: **Done** (in code, on the live path), **Partial**, **Missing**, *
 | 40.5 Clef rating, scores never shared | Partial | `clef.ts` `WorkersAIClefRater` was tested only with a fake fetch. `DEFAULT_CLEF_WEIGHTS` is `placeholder: true`. Not wired in `server.ts`. | `makeClefRaterFromEnv()` passed as `photoRater`; weights fitted (prototype P2); `appearanceLeak` on relay |
 | 40.5 Bias monitor weekly | Sim-only | `packages/engine/src/packs/slop/biasMonitor.ts`, used only in the slop sim | Weekly job plus console panel, alert under 0.85x |
 | 40.5 Reciprocal scoring, congestion, exposure | Done | `score.ts`, `assign.ts`, `options.ts` | (met) |
-| 40.5 Probe can include a photo | **Missing** | `copy.ts` ("no photo") | A probe with one photo from adults only; the copy and the leak guard are updated |
+| 40.5 Probe can include a photo | **Engine done, not wired** | `probePhotoRefs` (plan.ts), `slopProbeMessage` (copy.ts) | The probe send path calls them; a new photo-consent version |
 | 40.5 Mutual yes, then a booked first date at a public venue | Done (no real booking) | `plan.ts`, `slopVenue` | A curated venue list (prototype P6) |
-| 40.5 Exchange through the agent only, consent per item | **Missing** | Section 1.1 Relay | Critical path item 7 |
+| 40.5 Exchange through the agent only, consent per item | **Engine done, not wired** | `relayItem` (relay.ts) | Critical path item 7: platform / plugin-network wiring |
 | 40.5 Geo by zip and radius, distance bands | Done (51 zips) | `packages/engine/src/packs/slop/zips.ts` | Every NYC zip (about 180) |
 | 40.5 Safety: feedback, report, ban by phone and person, share-my-date, check-in | Done (no relay log) | `reports.ts`, `/safety/ban`, the share-my-date tip in `packs.ts` | Relay log for ban notices (needs F16) |
 | 40.5 Scam classifier on relay | **Missing** | Only assumed in the world (`packages/sim/src/apps/slop/world.ts`); the engine reads the `safety:scam_pattern` tag | A classifier on relayed text, with recall measured on a corpus |
@@ -122,7 +122,7 @@ The order is by dependency. Owner **P** is the platform session (`packages/netwo
 
 | # | Piece | Owner | Est. | Depends on | What is missing |
 |---|---|---|---|---|---|
-| 0 | **Founder decisions** | Founder | 1 | none | (a) Who owns STOP/HELP if Eliza Cloud also receives the line's webhook (runbook-real 7.1 #10). (b) Whether the conversation is the service's own LLM reader or the Eliza agent. (c) Join mode for peon and friends on production. (d) Whether to build same-face ban evasion or drop that gate. (e) Whether to keep the security suite. (f) How to fit the Clef weights (the fitter was deleted in the cleanup). Photos in the probe are decided (yes, adults only); the code still says "no photo" (item 7). |
+| 0 | **Founder decisions** | Founder | 1 | none | (a) Who owns STOP/HELP if Eliza Cloud also receives the line's webhook (runbook-real 7.1 #10). (b) Whether the conversation is the service's own LLM reader or the Eliza agent. (c) Join mode for peon and friends on production. (d) Whether to build same-face ban evasion or drop that gate. (e) Whether to keep the security suite. (f) How to fit the Clef weights (the fitter was deleted in the cleanup). Photos in the probe are decided (yes, adults only); the engine side is done (item 7). |
 | 1 | **Backend deploy (staging, then production)** | P | 2 | 0a | Railway project, Postgres, and the `network_backend` login (`docs/deploy.md` 2.1). Secrets. `api.ntwrk.love` DNS. Staff port private. Observatory behind Access. Logins per app role (runbook-real 7.1 #14). |
 | 2 | **DB migrations against Railway** | P | 1 | 1 | `migrate.ts` refuses non-local hosts (runbook-real 1.2): needs a reviewed path (`MIGRATE_ON_BOOT` in `server.ts` with `MIGRATION_DATABASE_URL`). `PLATFORM_DB_ENVIRONMENT_INIT=1` once. pgvector. Backups on, and one restore tested. |
 | 3 | **Blooio inbound and outbound with keyword routing** | P | 3 | 1, 2, 0a | Point the line's webhook at `/webhooks/blooio`. The queue and its counters are persisted (done, migration 0015; `bun run sim --only pipeline`). Fence the saves (audit network-service-8). Test phones with `BLOOIO_ALLOW_SEND=1`, `NTWRK_LIVE_APPROVED=1` and `SLOP_LIVE_APPROVED=1` **[FOUNDER]**. The routing code is done. |
@@ -159,7 +159,7 @@ Build each small, learn from it, then commit.
 
 ## 4. Simulation coverage still needed
 
-All validation is `bun run sim` (simulations only). This is what the simulations must still cover.
+Validation is `bun run sim` plus the integration and e2e suites (`bun run test:integration`, `bun run test:e2e`; no unit or smoke tests, [tests-policy.md](tests-policy.md)). This is what the simulations must still cover.
 
 ### 4.1 What each app's simulation must cover before launch
 
@@ -235,7 +235,7 @@ The gap analysis found 28 places where the PRD, the docs and the code disagreed.
 | 17 | PRD 32.3, 36.10: the Eliza plugin speaks on the line | 32.3 says the service owns every member message today; where the conversation runs is a founder decision. |
 | 18 | PRD 40.5 "share-my-date with a trusted contact" | Now "a share-my-date tip"; building it is not on the critical path. |
 | 19 | runbook-real 6.5 and 7: "Nothing is deployed" | Kept until the deploy, then updated with the real hosts. |
-| 20 | Code: `copy.ts` says "no photo" while the sim runs with a photo | Open (code): critical path item 7 and prototype P5. |
+| 20 | Code: `copy.ts` says "no photo" while the sim runs with a photo | Fixed in the engine (2026-10-09-relay.md); the live probe path still needs the wiring. |
 | 21 | mvp-plan, PRD 40.5 and 40.8, admin-console.md: "verified adults" | Now "adult by lowest stated age (18+), unknown fails closed". |
 | 22 | deploy.md against admin-console, runbook-real and the service README: what is live | deploy.md is the one place; the sites are on Pages and the backend is pending. |
 | 23 | `docs/compliance/a2p-10dlc.md`, the deleted prototypes and test-plan docs | a2p-10dlc carries a superseded note (PRD 40.7); the others were deleted in the cleanup. |

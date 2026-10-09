@@ -7,7 +7,7 @@
 // yes/no, choice, score = ordered levels) and returns answer PROBABILITIES; it returns no embedding.
 // As in jevector, the "vector" is the answers to a fixed question bank (CLEF_QUESTIONS). On top of it
 // sits a small learned decision model (clefWeights.ts): a linear head per dimension (face, body,
-// overall) fitted from labelled pairs (Bradley-Terry, fitClef.ts), a calibration to a z-like scale
+// overall) fitted from labelled pairs (Bradley-Terry, clef-fit/fit.ts), a calibration to a z-like scale
 // on the member population, and a categorical body type from Clef's choice probabilities.
 //
 // Flow, per member, when photos are uploaded (OUTSIDE the engine run; the engine stays pure):
@@ -25,6 +25,8 @@ import { DEFAULT_CLEF_WEIGHTS, validateClefWeights, type ClefWeights } from "./c
 
 export const CLEF_MODEL_IDS = { clef: "@cf/cloudflare/clef", "clef-flash": "@cf/cloudflare/clef-flash" } as const;
 export type ClefModel = keyof typeof CLEF_MODEL_IDS;
+/** USD per million input tokens (Clef is billed on input tokens; docs/results/2026-10-08-slop-pack.md I4.1). */
+export const CLEF_PRICE_PER_M_INPUT: Record<ClefModel, number> = { clef: 0.24, "clef-flash": 0.09 };
 export const WORKERS_AI_BASE = "https://api.cloudflare.com/client/v4";
 
 export type ClefQuestion =
@@ -63,8 +65,7 @@ export const CLEF_QUESTIONS: Record<string, ClefQuestion> = {
 export const CLEF_STATE = "A dating-profile photo, rated for an internal matching signal that is never shown to anyone. Judge only what is visible in the photo.";
 
 /** Feature names in a fixed order: one per noul / score question, one per choice option. */
-export const CLEF_FEATURES: readonly string[] = Object.entries(CLEF_QUESTIONS).flatMap(([id, q]) =>
-  q.type === "choice" ? Object.keys(q.criteria).map(k => `${id}=${k}`) : [id]);
+export const CLEF_FEATURES: readonly string[] = clefFeatureNames(CLEF_QUESTIONS);
 
 /** One Clef answer, as returned by the API (fields we read; tolerant of extras). */
 export interface ClefAnswer {
@@ -76,19 +77,28 @@ export interface ClefResult { model?: string; answers: Record<string, ClefAnswer
 const clamp01 = (x: number) => Math.max(0, Math.min(1, Number.isFinite(x) ? x : 0));
 const clampZ = (x: number) => Math.max(-3, Math.min(3, Number.isFinite(x) ? x : 0));
 
-/** Answers -> the feature row (0..1 per feature) and the mean Clef confidence of the rating questions. */
-export function clefFeatures(answers: Record<string, ClefAnswer>): { x: Record<string, number>; confidence: number } {
+/** Feature names for any question bank, in a fixed order: one per noul / score question, one per choice option. */
+export function clefFeatureNames(questions: Record<string, ClefQuestion>): string[] {
+  return Object.entries(questions).flatMap(([id, q]) => (q.type === "choice" ? Object.keys(q.criteria).map(k => `${id}=${k}`) : [id]));
+}
+
+/**
+ * Answers -> a feature row (0..1 per feature) for any question bank, and the mean Clef confidence of
+ * the questions `confidenceOf` selects (0.7 when none reported one). Missing answers read as 0.5
+ * (noul, score) or a uniform 0 (choice).
+ */
+export function clefFeatureRow(questions: Record<string, ClefQuestion>, answers: Record<string, ClefAnswer>, confidenceOf: (id: string) => boolean = () => true): { x: Record<string, number>; confidence: number } {
   const x: Record<string, number> = {};
   const confs: number[] = [];
-  for (const [id, q] of Object.entries(CLEF_QUESTIONS)) {
+  for (const [id, q] of Object.entries(questions)) {
     const a = answers[id];
+    if (confidenceOf(id) && Number.isFinite(Number(a?.confidence))) confs.push(clamp01(Number(a!.confidence)));
     if (q.type === "noul") { x[id] = clamp01(Number(a?.noul ?? 0.5)); continue; }
     if (q.type === "score") {
       // Expected level (0-based) over the ordered levels, scaled to 0..1; 0.5 when missing.
       let s = Number(a?.score);
       if (!Number.isFinite(s) && Array.isArray(a?.probabilities)) s = a!.probabilities.reduce((t, p, i) => t + p * i, 0);
       x[id] = Number.isFinite(s) ? clamp01(s / (q.criteria.length - 1)) : 0.5;
-      if (id.startsWith("rate.") && Number.isFinite(Number(a?.confidence))) confs.push(clamp01(Number(a!.confidence)));
       continue;
     }
     const keys = Object.keys(q.criteria);
@@ -98,6 +108,11 @@ export function clefFeatures(answers: Record<string, ClefAnswer>): { x: Record<s
     keys.forEach((k, i) => { x[`${id}=${k}`] = clamp01(probs[i]! / z); });
   }
   return { x, confidence: confs.length ? confs.reduce((s, c) => s + c, 0) / confs.length : 0.7 };
+}
+
+/** Answers -> the photo feature row and the mean Clef confidence of the rating questions. */
+export function clefFeatures(answers: Record<string, ClefAnswer>): { x: Record<string, number>; confidence: number } {
+  return clefFeatureRow(CLEF_QUESTIONS, answers, id => id.startsWith("rate."));
 }
 
 /** Apply the decision model to one feature row: calibrated z per dimension. */
@@ -111,22 +126,49 @@ export function applyHead(w: ClefWeights, x: Record<string, number>): { face: nu
   return { face: dim("face"), body: dim("body"), overall: dim("overall") };
 }
 
-export interface ClefRaterOptions {
+/** The fetch Clef calls go through (injected in the sim: a fake; nothing in the engine run calls this). */
+export type ClefFetch = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal }) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
+
+/** Who and where to call: shared by the photo rater and the relay classifier (relayClef.ts). */
+export interface ClefCallOptions {
   /** Cloudflare API token with Workers AI permission (env CLOUDFLARE_AI_TOKEN). */
   token: string;
   /** Cloudflare account id (env CLOUDFLARE_ACCOUNT_ID). */
   accountId: string;
+  /** "clef" (27B) or "clef-flash" (9B, cheaper, faster). */
+  model?: ClefModel;
+  fetch?: ClefFetch;
+  baseUrl?: string;
+}
+
+/** One request to Clef: a state (the text being judged, or a description of the images), the question bank, optional images. */
+export interface ClefRequest { state: string; questions: Record<string, ClefQuestion>; images?: string[] }
+
+/**
+ * The Workers AI REST call (the one HTTP layer for every Clef use). Throws ClefError on an HTTP or API
+ * error; the message carries the status and Cloudflare's error text, never the request body.
+ */
+export async function clefRun(o: ClefCallOptions, req: ClefRequest, signal?: AbortSignal): Promise<ClefResult> {
+  if (!o.token || !o.accountId) throw new ClefError("Clef needs CLOUDFLARE_AI_TOKEN and CLOUDFLARE_ACCOUNT_ID");
+  const model = o.model ?? "clef";
+  const url = `${o.baseUrl ?? WORKERS_AI_BASE}/accounts/${encodeURIComponent(o.accountId)}/ai/run/${CLEF_MODEL_IDS[model]}`;
+  const body = { model, state: req.state, questions: req.questions, ...(req.images?.length ? { images: req.images } : {}) };
+  const f = o.fetch ?? (globalThis.fetch as unknown as ClefFetch);
+  const res = await f(url, { method: "POST", headers: { Authorization: `Bearer ${o.token}`, "Content-Type": "application/json" }, body: JSON.stringify(body), ...(signal ? { signal } : {}) });
+  const j = (await res.json().catch(() => ({}))) as { success?: boolean; result?: ClefResult; errors?: { message?: string }[] };
+  if (!res.ok || j.success === false || !j.result?.answers) throw new ClefError(`Workers AI ${res.status}: ${j.errors?.map(e => e.message).join("; ") || "no answers"}`, res.status);
+  return j.result;
+}
+
+export interface ClefRaterOptions extends ClefCallOptions {
   /** "clef" (27B, default) or "clef-flash" (9B, cheaper, faster). */
   model?: ClefModel;
   /** The decision model (default: the documented placeholder, clefWeights.ts). */
   weights?: ClefWeights;
-  /** Injected fetch (tests use a fake; nothing in the engine run calls this). */
-  fetch?: (url: string, init: { method: string; headers: Record<string, string>; body: string }) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
   /** Read a photo's bytes when the ref carries only a storage URL (Clef accepts no remote URLs). */
   loadPhoto?: (p: PhotoRef) => Promise<{ bytes: Uint8Array; contentType?: string } | null>;
   /** Photos rated per member (one Clef call each; default 4). */
   maxPhotos?: number;
-  baseUrl?: string;
 }
 
 export class ClefError extends Error { constructor(msg: string, readonly status?: number) { super(msg); } }
@@ -157,14 +199,7 @@ export class WorkersAIClefRater implements AppearanceRater {
   /** One Clef call on one photo (raw answers). Exposed for feature extraction when fitting weights. */
   async ask(image: { bytes: Uint8Array; contentType?: string }): Promise<ClefResult> {
     if (image.bytes.byteLength > MAX_IMAGE_BYTES) throw new ClefError("photo over Clef's 4 MiB limit: resize before rating");
-    const model = this.o.model ?? "clef";
-    const url = `${this.o.baseUrl ?? WORKERS_AI_BASE}/accounts/${encodeURIComponent(this.o.accountId)}/ai/run/${CLEF_MODEL_IDS[model]}`;
-    const body = { model, state: CLEF_STATE, questions: CLEF_QUESTIONS, images: [`data:${image.contentType ?? sniffType(image.bytes)};base64,${b64(image.bytes)}`] };
-    const f = this.o.fetch ?? (globalThis.fetch as unknown as NonNullable<ClefRaterOptions["fetch"]>);
-    const res = await f(url, { method: "POST", headers: { Authorization: `Bearer ${this.o.token}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    const j = (await res.json().catch(() => ({}))) as { success?: boolean; result?: ClefResult; errors?: { message?: string }[] };
-    if (!res.ok || j.success === false || !j.result?.answers) throw new ClefError(`Workers AI ${res.status}: ${j.errors?.map(e => e.message).join("; ") || "no answers"}`, res.status);
-    return j.result;
+    return clefRun({ ...this.o, model: this.o.model ?? "clef" }, { state: CLEF_STATE, questions: CLEF_QUESTIONS, images: [`data:${image.contentType ?? sniffType(image.bytes)};base64,${b64(image.bytes)}`] });
   }
 
   /** Feature rows for a member's photos (adults only), for fitting and auditing the head. */

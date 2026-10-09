@@ -169,8 +169,9 @@ export const SLOP_DEFAULT_OPTIONS: SlopPackOptions = {
   pacing: { likedDateDays: 10 },
   radiusMargin: 0.9,
   minValue: 0,
-  // Off by default: with anonymous probes (no photo) a probe answer says nothing about the person and
-  // the model measured no gain (iteration 2). Turn it on when probes show a photo.
+  // Off by default: in iteration 2 (probes without a photo) a probe answer said nothing about the
+  // person and the model measured no gain. Probes can now carry a photo (probePhotoRefs); re-measure
+  // before turning it on.
   attraction: { enabled: false, itemWeight: 1, tasteWeight: 1, cfWeight: 1, probeWeight: 1, backoutWeight: 2, feedbackWeight: 1.5, shrink: 4, ridge: 4, cfShrink: 0.5 },
   maxAsksPerField: 2,
   // Iteration 4 (founder decision 2026-10-08): ON. Soft, not band: in iteration 3 with photos in the

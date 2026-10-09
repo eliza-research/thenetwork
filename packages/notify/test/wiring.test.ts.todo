@@ -1,0 +1,79 @@
+// TODO(issue): ported to the Postgres-backed OutboundQueue (packages/blooio/src/outbound-queue.ts) before re-enabling;
+// it targets the old in-memory queue (ConsentLedger, recipientPolicy). Renamed .todo so typecheck and CI run.
+// Integration: the Notifier wired to the real outbound queue (packages/blooio) on a recording "sim" adapter.
+import { describe, expect, test } from "bun:test";
+import { SimClock } from "../../core/src/clock.ts";
+import { ConsentLedger } from "../../blooio/src/ledger.ts";
+import { OutboundQueue, type QueueOptions } from "../../blooio/src/outbound-queue.ts";
+import type { ChannelAdapter, SendRequest } from "../../blooio/src/types.ts";
+import { MemoryNotifyStore, Notifier, queuePolicy, queueSink, threadHooks, type Recipient } from "../src/index.ts";
+
+/** The queue with the consent ledger and an adapter that records what it would have sent. */
+function world(opts: Partial<QueueOptions> = {}) {
+  const clock = new SimClock();
+  const consent = new ConsentLedger(clock);
+  const sent: SendRequest[] = [];
+  let n = 0;
+  const sim: ChannelAdapter = {
+    kind: "sim",
+    async send(req) { sent.push(req); return { providerMessageId: `sim_${++n}`, chatId: req.to, status: "sent", transport: "sim" }; },
+  };
+  const queue = new OutboundQueue({ clock, consent, adapters: { sim }, ...opts });
+  return { clock, consent, queue, sent };
+}
+
+const ALICE = "+15550100001";
+const NY = "America/New_York";
+
+function setup(prefs: Recipient["prefs"] = { channel: "imessage" }) {
+  let notifier!: Notifier;
+  const w = world({ recipientPolicy: queuePolicy<{ briefId?: string }>({ stillNeeded: id => notifier.stillNeeded(id) }) });
+  const now = () => w.clock.now();
+  const store = new MemoryNotifyStore();
+  const r: Recipient = { personId: "p1", to: ALICE, timeZone: NY, prefs, proactiveAllowed: true };
+  notifier = new Notifier(store, { get: id => (id === "p1" ? r : undefined) }, { isQuiet: () => false });
+  w.queue.onRecipientEngaged("sim", ALICE);
+  const sink = queueSink(w.queue, () => "sim" as const);
+  return { w, now, store, notifier, sink };
+}
+
+const req = (subjectId: string, summary = "Dinner at 7 is confirmed.") =>
+  ({ personId: "p1", app: "friends", eventType: "plan", subjectId, urgency: "requested" as const, summary });
+
+describe("notify + outbound queue", () => {
+  test("a delivery goes through the queue once, keyed by its delivery id", async () => {
+    const { w, now, notifier, sink } = setup();
+    await notifier.add(req("pl1"), now());
+    const { sent } = await notifier.dispatch(now(), sink);
+    await notifier.dispatch(now(), sink);
+    await w.queue.drain();
+    const recs = [...w.queue.records.values()];
+    expect(recs.length).toBe(1);
+    expect(recs[0]!.idempotencyKey).toBe(sent[0]!.deliveryId);
+    expect(recs[0]!.status).toBe("sent");
+  });
+
+  test("seen on another surface while waiting in the queue: suppressed", async () => {
+    const { w, now, store, notifier, sink } = setup();
+    const it = (await notifier.add(req("pl2", "Dinner moved to 8."), now())).item;
+    await notifier.dispatch(now(), sink);
+    await store.markSeen("p1", "claude", now(), [it.id]);
+    await w.queue.drain();
+    const rec = [...w.queue.records.values()][0]!;
+    expect(rec.status).toBe("suppressed_ineligible");
+    expect(rec.history.at(-1)?.note).toBe("seen_elsewhere");
+  });
+
+  test("thread hooks: readUpdates clears the inbox; an inbound message counts as acting", async () => {
+    const { now, store, notifier, sink } = setup();
+    await notifier.add(req("m1", "You have a new match."), now());
+    await notifier.dispatch(now(), sink);
+    await notifier.add({ ...req("m2", "Another one."), urgency: "normal" }, now());
+    const t = threadHooks(notifier, now);
+    // Everything unseen, including an item already texted: "updates" is the member asking to see it all.
+    expect(await t.readUpdates("p1")).toEqual({ items: [{ summary: "You have a new match." }, { summary: "Another one." }] });
+    expect((await store.unseen("p1", now())).length).toBe(0);
+    await t.inbound("p1", "imessage");
+    expect((await store.signals("p1")).find(s => s.surface === "imessage")).toMatchObject({ acted: 1 });
+  });
+});

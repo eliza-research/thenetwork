@@ -1,0 +1,37 @@
+{"text": "send them my number", "want": "contact_share"}
+{"text": "Please send Sam my number.", "want": "contact_share"}
+{"text": "yes send it", "want": "contact_share"}
+{"text": "Can you give her my number?", "want": "contact_share"}
+{"text": "share my number with him", "want": "contact_share"}
+{"text": "ok send them my number now", "want": "contact_share"}
+{"text": "Give Alex my digits", "want": "contact_share"}
+{"text": "pass my number to my match", "want": "contact_share"}
+{"text": "yeah, send them my phone number", "want": "contact_share"}
+{"text": "They can have my number.", "want": "contact_share"}
+{"text": "send my number to Jordan", "want": "contact_share"}
+{"text": "sure, share my contact info with them", "want": "contact_share"}
+{"text": "go ahead and send him my email", "want": "contact_share"}
+{"text": "send them this photo", "want": "photo"}
+{"text": "Share this pic with her", "want": "photo"}
+{"text": "forward this selfie to Sam", "want": "photo"}
+{"text": "send this picture to my date", "want": "photo"}
+{"text": "show them this photo", "want": "photo"}
+{"text": "should I send them my number?", "want": "none"}
+{"text": "don't send them my number", "want": "none"}
+{"text": "not yet, don't share my number", "want": "none"}
+{"text": "maybe send my number later", "want": "none"}
+{"text": "do you think I should share my number?", "want": "none"}
+{"text": "I'll send my number after the date", "want": "none"}
+{"text": "Is it ok to send them my number?", "want": "none"}
+{"text": "never give anyone my number", "want": "none"}
+{"text": "what's their number?", "want": "none"}
+{"text": "can I see their photo?", "want": "none"}
+{"text": "hold off on sending my number", "want": "none"}
+{"text": "wait before you send them my number", "want": "none"}
+{"text": "I don't want to send my photo", "want": "none"}
+{"text": "send me their number", "want": "none"}
+{"text": "stop, don't send that photo", "want": "none"}
+{"text": "tell them I'm running late", "want": "text"}
+{"text": "let Sam know I'll be there at 7", "want": "text"}
+{"text": "Tell her that I'm at the bar on the left", "want": "text"}
+{"text": "ask them if 6:30 works", "want": "text"}

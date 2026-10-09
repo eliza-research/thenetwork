@@ -1,0 +1,156 @@
+{"text":"hey! 29f, looking for men 28-38 within 5 miles of 11211","expect":{"gender":"woman","seeks":["man"],"ageRange":[28,38],"distance":{"mode":"radius","miles":5},"location":"11211"}}
+{"text":"I'm a woman looking for men between 30 and 40","expect":{"gender":"woman","seeks":["man"],"ageRange":[30,40]}}
+{"text":"im a guy into guys, 25-35","expect":{"gender":"man","seeks":["man"],"ageRange":[25,35]}}
+{"text":"straight woman, 34, looking for a man 32-42","expect":{"gender":"woman","seeks":["man"],"ageRange":[32,42]}}
+{"text":"I'm nonbinary and I date women and nonbinary people","expect":{"gender":"nonbinary","seeks":["nonbinary","woman"]}}
+{"text":"trans woman here, into men","expect":{"gender":"woman","seeks":["man"]}}
+{"text":"i'm a trans man looking for women 25 to 33","expect":{"gender":"man","seeks":["woman"],"ageRange":[25,33]}}
+{"text":"woman, 27, seeking women","expect":{"gender":"woman","seeks":["woman"]}}
+{"text":"31m looking for women in their 30s","expect":{"gender":"man","seeks":["woman"],"ageRange":[30,39]}}
+{"text":"m4w, 40, uws","expect":{"gender":"man","seeks":["woman"],"location":"Upper West Side"}}
+{"text":"w4w","expect":{"gender":"woman","seeks":["woman"]}}
+{"text":"m4m 28 bushwick","expect":{"gender":"man","seeks":["man"],"location":"Bushwick"}}
+{"text":"enby, into anyone tbh","expect":{"gender":"nonbinary","seeks":["man","nonbinary","woman"]}}
+{"text":"anyone 25-35","expect":{"seeks":["man","nonbinary","woman"],"ageRange":[25,35]}}
+{"text":"men and women, 26-36","expect":{"seeks":["man","woman"],"ageRange":[26,36]}}
+{"text":"I'm into men and women","expect":{"seeks":["man","woman"]}}
+{"text":"lookin for guys 30-45 lol","expect":{"seeks":["man"],"ageRange":[30,45]}}
+{"text":"looking for women, nonbinary folks too","expect":{"seeks":["nonbinary","woman"]}}
+{"text":"women only pls","expect":{"seeks":["woman"]}}
+{"text":"guys only","expect":{"seeks":["man"]}}
+{"text":"not into men. women only","expect":{"seeks":["woman"]}}
+{"text":"open to all genders","expect":{"seeks":["man","nonbinary","woman"]}}
+{"text":"gender doesn't matter to me","expect":{"seeks":["man","nonbinary","woman"]}}
+{"text":"interested in men, women, and nonbinary people","expect":{"seeks":["man","nonbinary","woman"]}}
+{"text":"I like girls 👀","expect":{"seeks":["woman"]}}
+{"text":"into dudes mostly 🙈","expect":{"seeks":["man"]}}
+{"text":"seeking a woman 35-45 within 10 miles","expect":{"seeks":["woman"],"ageRange":[35,45],"distance":{"mode":"radius","miles":10}}}
+{"text":"I'm a guy, looking for a girl","expect":{"gender":"man","seeks":["woman"]}}
+{"text":"im a girl looking for girls","expect":{"gender":"woman","seeks":["woman"]}}
+{"text":"girl, 24, looking for guys 24-30","expect":{"gender":"woman","seeks":["man"],"ageRange":[24,30]}}
+{"text":"I'm a man interested in men 40-55","expect":{"gender":"man","seeks":["man"],"ageRange":[40,55]}}
+{"text":"lesbian woman, looking for women in their late 20s to mid 30s","expect":{"gender":"woman","seeks":["woman"],"ageRange":[26,36]}}
+{"text":"gay man here, looking for men","expect":{"gender":"man","seeks":["man"]}}
+{"text":"i'm a genderqueer person into women","expect":{"gender":"nonbinary","seeks":["woman"]}}
+{"text":"agender, dating men and nonbinary people","expect":{"gender":"nonbinary","seeks":["man","nonbinary"]}}
+{"text":"I'm a woman. I'm looking for a man.","expect":{"gender":"woman","seeks":["man"]}}
+{"text":"im a dude lookin for a lady","expect":{"gender":"man","seeks":["woman"]}}
+{"text":"looking 4 men 27-35, within 5 mi","expect":{"seeks":["man"],"ageRange":[27,35],"distance":{"mode":"radius","miles":5}}}
+{"text":"im lookin for women 21-29 ✨","expect":{"seeks":["woman"],"ageRange":[21,29]}}
+{"text":"woman seeking man, 45-60","expect":{"gender":"woman","seeks":["man"],"ageRange":[45,60]}}
+{"text":"i'm a 33 year old woman looking for men","expect":{"gender":"woman","seeks":["man"]}}
+{"text":"25-35","asked":"ageRange","expect":{"ageRange":[25,35]}}
+{"text":"30s","asked":"ageRange","expect":{"ageRange":[30,39]}}
+{"text":"like 28 to 38?","asked":"ageRange","expect":{"ageRange":[28,38]}}
+{"text":"mid 20s to mid 30s","asked":"ageRange","expect":{"ageRange":[23,36]}}
+{"text":"between 30 and 42 i guess","asked":"ageRange","expect":{"ageRange":[30,42]}}
+{"text":"30+","asked":"ageRange","expect":{"ageRange":[30,99]}}
+{"text":"25 and up","asked":"ageRange","expect":{"ageRange":[25,99]}}
+{"text":"under 40 pls","asked":"ageRange","expect":{"ageRange":[18,39]}}
+{"text":"no one over 35","asked":"ageRange","expect":{"ageRange":[18,35]}}
+{"text":"at least 30 but no older than 45","asked":"ageRange","expect":{"ageRange":[30,45]}}
+{"text":"22-30 ish","asked":"ageRange","expect":{"ageRange":[22,30]}}
+{"text":"anywhere from 26 to 34","asked":"ageRange","expect":{"ageRange":[26,34]}}
+{"text":"40s","asked":"ageRange","expect":{"ageRange":[40,49]}}
+{"text":"late 20s","asked":"ageRange","expect":{"ageRange":[26,29]}}
+{"text":"25 35","asked":"ageRange","expect":{"ageRange":[25,35]}}
+{"text":"28–36","asked":"ageRange","expect":{"ageRange":[28,36]}}
+{"text":"guys in their 40s","expect":{"seeks":["man"],"ageRange":[40,49]}}
+{"text":"women 30-40 please","expect":{"seeks":["woman"],"ageRange":[30,40]}}
+{"text":"i'm 31 and looking for someone 29-37","expect":{"ageRange":[29,37]}}
+{"text":"within 5 miles","asked":"distance","expect":{"distance":{"mode":"radius","miles":5}}}
+{"text":"10","asked":"distance","expect":{"distance":{"mode":"radius","miles":10}}}
+{"text":"25 max","asked":"distance","expect":{"distance":{"mode":"radius","miles":25}}}
+{"text":"just the city","asked":"distance","expect":{"distance":{"mode":"city"}}}
+{"text":"anywhere in nyc is fine","expect":{"distance":{"mode":"city"}}}
+{"text":"the whole city honestly","asked":"distance","expect":{"distance":{"mode":"city"}}}
+{"text":"all 5 boroughs","asked":"distance","expect":{"distance":{"mode":"city"}}}
+{"text":"10 mi of 10003","expect":{"distance":{"mode":"radius","miles":10},"location":"10003"}}
+{"text":"within 2 miles of me, I'm in park slope","expect":{"distance":{"mode":"radius","miles":2},"location":"Park Slope"}}
+{"text":"5mi","asked":"distance","expect":{"distance":{"mode":"radius","miles":5}}}
+{"text":"like 10 miles?","asked":"distance","expect":{"distance":{"mode":"radius","miles":10}}}
+{"text":"distance doesn't really matter","asked":"distance","expect":{"distance":{"mode":"city"}}}
+{"text":"up to 25 miles","expect":{"distance":{"mode":"radius","miles":25}}}
+{"text":"no more than 10 miles away","expect":{"distance":{"mode":"radius","miles":10}}}
+{"text":"50 miles is fine, i drive","expect":{"distance":{"mode":"radius","miles":50}}}
+{"text":"i split time between nyc and la so both","expect":{"distance":{"mode":"multi","markets":["la","nyc"]}}}
+{"text":"sf and la","asked":"distance","expect":{"distance":{"mode":"multi","markets":["la","sf"]}}}
+{"text":"8 km max","asked":"distance","expect":{"distance":{"mode":"radius","miles":5}}}
+{"text":"city wide","asked":"distance","expect":{"distance":{"mode":"city"}}}
+{"text":"11211","asked":"location","expect":{"location":"11211"}}
+{"text":"zip is 10025","expect":{"location":"10025"}}
+{"text":"i live in astoria","expect":{"location":"Astoria"}}
+{"text":"bushwick","asked":"location","expect":{"location":"Bushwick"}}
+{"text":"im in wburg","expect":{"location":"Williamsburg"}}
+{"text":"based in crown heights","expect":{"location":"Crown Heights"}}
+{"text":"greenpoint!","asked":"location","expect":{"location":"Greenpoint"}}
+{"text":"LES","asked":"location","expect":{"location":"Lower East Side"}}
+{"text":"i'm in the east village","expect":{"location":"East Village"}}
+{"text":"10003","asked":"location","expect":{"location":"10003"}}
+{"text":"I live in bed stuy","expect":{"location":"Bed-Stuy"}}
+{"text":"uws","asked":"location","expect":{"location":"Upper West Side"}}
+{"text":"i'm in the mission","expect":{"location":"Mission"}}
+{"text":"silverlake","asked":"location","expect":{"location":"Silver Lake"}}
+{"text":"live in echo park","expect":{"location":"Echo Park"}}
+{"text":"94110","asked":"location","expect":{"location":"94110"}}
+{"text":"long island city","asked":"location","expect":{"location":"Long Island City"}}
+{"text":"harlem","asked":"location","expect":{"location":"Harlem"}}
+{"text":"i'm over in prospect heights","expect":{"location":"Prospect Heights"}}
+{"text":"jackson heights","asked":"location","expect":{"location":"Jackson Heights"}}
+{"text":"zip 11215","expect":{"location":"11215"}}
+{"text":"i'm 28, woman, live in astoria, looking for men 27-35 within 10 miles","expect":{"gender":"woman","seeks":["man"],"ageRange":[27,35],"distance":{"mode":"radius","miles":10},"location":"Astoria"}}
+{"text":"34 m, uws, looking for a woman 28-38, anywhere in the city","expect":{"gender":"man","seeks":["woman"],"ageRange":[28,38],"distance":{"mode":"city"},"location":"Upper West Side"}}
+{"text":"Hi! I'm a 26 year old nonbinary person in Greenpoint, into women and nb folks 24-32, within 5 miles","expect":{"gender":"nonbinary","seeks":["nonbinary","woman"],"ageRange":[24,32],"distance":{"mode":"radius","miles":5},"location":"Greenpoint"}}
+{"text":"hey im a guy lookin for guys 30-40 in bk, 11238","expect":{"gender":"man","seeks":["man"],"ageRange":[30,40],"location":"11238"}}
+{"text":"woman here 👋 into men + women, 30-40, 10 mi radius from 10014","expect":{"gender":"woman","seeks":["man","woman"],"ageRange":[30,40],"distance":{"mode":"radius","miles":10},"location":"10014"}}
+{"text":"im 25 f looking for guys 25-32 near williamsburg","expect":{"gender":"woman","seeks":["man"],"ageRange":[25,32],"location":"Williamsburg"}}
+{"text":"Man, 52. Seeking women 45-58. Within 25 miles of 11375.","expect":{"gender":"man","seeks":["woman"],"ageRange":[45,58],"distance":{"mode":"radius","miles":25},"location":"11375"}}
+{"text":"im a trans girl into girls and enbies 🏳️‍⚧️ 22-30 pls","expect":{"gender":"woman","seeks":["nonbinary","woman"],"ageRange":[22,30]}}
+{"text":"i'm nonbinary, looking for men only","expect":{"gender":"nonbinary","seeks":["man"]}}
+{"text":"female, looking for a male 35-50","expect":{"gender":"woman","seeks":["man"],"ageRange":[35,50]}}
+{"text":"i'm a woman and i'm into everyone","expect":{"gender":"woman","seeks":["man","nonbinary","woman"]}}
+{"text":"im a woman, i date women","expect":{"gender":"woman","seeks":["woman"]}}
+{"text":"guy here, into women and nonbinary people","expect":{"gender":"man","seeks":["nonbinary","woman"]}}
+{"text":"I'm a man","asked":"gender","expect":{"gender":"man"}}
+{"text":"nonbinary","asked":"gender","expect":{"gender":"nonbinary"}}
+{"text":"woman","asked":"gender","expect":{"gender":"woman"}}
+{"text":"women","asked":"seeks","expect":{"seeks":["woman"]}}
+{"text":"men lol","asked":"seeks","expect":{"seeks":["man"]}}
+{"text":"a guy","asked":"seeks","expect":{"seeks":["man"]}}
+{"text":"women and nonbinary people","asked":"seeks","expect":{"seeks":["nonbinary","woman"]}}
+{"text":"anyone really","asked":"seeks","expect":{"seeks":["man","nonbinary","woman"]}}
+{"text":"guys and girls","asked":"seeks","expect":{"seeks":["man","woman"]}}
+{"text":"men, women, nb, whoever","asked":"seeks","expect":{"seeks":["man","nonbinary","woman"]}}
+{"text":"im a woman into men","asked":"orientation","expect":{"gender":"woman","seeks":["man"]}}
+{"text":"guy, into girls","asked":"orientation","expect":{"gender":"man","seeks":["woman"]}}
+{"text":"woman looking for women","asked":"orientation","expect":{"gender":"woman","seeks":["woman"]}}
+{"text":"im a dude, lookin for dudes","asked":"orientation","expect":{"gender":"man","seeks":["man"]}}
+{"text":"im a woman and i'm interested in men and nonbinary people","asked":"orientation","expect":{"gender":"woman","seeks":["man","nonbinary"]}}
+{"text":"wmn lookin for men 30-40","expect":{"seeks":["man"],"ageRange":[30,40]}}
+{"text":"lookng for women 25-30","expect":{"seeks":["woman"],"ageRange":[25,30]}}
+{"text":"im a guyy looking for womn","expect":{"seeks":["woman"]}}
+{"text":"im a woman lookin for a man 30-38 within 10 miles of 10011!!","expect":{"gender":"woman","seeks":["man"],"ageRange":[30,38],"distance":{"mode":"radius","miles":10},"location":"10011"}}
+{"text":"28F into women, 25-34, 5 miles of 11216","expect":{"gender":"woman","seeks":["woman"],"ageRange":[25,34],"distance":{"mode":"radius","miles":5},"location":"11216"}}
+{"text":"M 35 into men 30-45","expect":{"gender":"man","seeks":["man"],"ageRange":[30,45]}}
+{"text":"im a single mom looking for a good man 35-45","expect":{"gender":"woman","seeks":["man"],"ageRange":[35,45]}}
+{"text":"single dad, into women 30-42","expect":{"gender":"man","seeks":["woman"],"ageRange":[30,42]}}
+{"text":"im a straight guy","expect":{"gender":"man","seeks":["woman"]}}
+{"text":"straight woman here","expect":{"gender":"woman","seeks":["man"]}}
+{"text":"looking for women. within 10mi of 94114","expect":{"seeks":["woman"],"distance":{"mode":"radius","miles":10},"location":"94114"}}
+{"text":"i live in koreatown, la. into men 25-35","expect":{"seeks":["man"],"ageRange":[25,35],"location":"Koreatown"}}
+{"text":"im in weho, looking for guys","expect":{"seeks":["man"],"location":"West Hollywood"}}
+{"text":"im a man in the marina looking for a woman 28-36","expect":{"gender":"man","seeks":["woman"],"ageRange":[28,36],"location":"Marina"}}
+{"text":"anywhere in sf","asked":"distance","expect":{"distance":{"mode":"city"}}}
+{"text":"tbh within 10 miles of my place in astoria","expect":{"distance":{"mode":"radius","miles":10},"location":"Astoria"}}
+{"text":"open to men and women 28-40 within 15 miles","expect":{"seeks":["man","woman"],"ageRange":[28,40],"distance":{"mode":"radius","miles":15}}}
+{"text":"im 30 and into guys 28-38","expect":{"seeks":["man"],"ageRange":[28,38]}}
+{"text":"i'm a guy interested in nonbinary people and men","expect":{"gender":"man","seeks":["man","nonbinary"]}}
+{"text":"looking for guys who like dogs lol, 25-33","expect":{"seeks":["man"],"ageRange":[25,33]}}
+{"text":"I'm a woman, looking for men aged 30 to 40, ideally within 10 miles of Park Slope","expect":{"gender":"woman","seeks":["man"],"ageRange":[30,40],"distance":{"mode":"radius","miles":10},"location":"Park Slope"}}
+{"text":"im a nb person looking for nb people","expect":{"gender":"nonbinary","seeks":["nonbinary"]}}
+{"text":"im a woman. into men. 29-39. 10 miles. 11222","expect":{"gender":"woman","seeks":["man"],"ageRange":[29,39],"distance":{"mode":"radius","miles":10},"location":"11222"}}
+{"text":"im a man seeking a man 21-30, i live in hell's kitchen","expect":{"gender":"man","seeks":["man"],"ageRange":[21,30],"location":"Hell's Kitchen"}}
+{"text":"40 m seeking women 35-48 within 25 mi","expect":{"gender":"man","seeks":["woman"],"ageRange":[35,48],"distance":{"mode":"radius","miles":25}}}
+{"text":"looking for men 18-25","expect":{"seeks":["man"],"ageRange":[18,25]}}
+{"text":"i date women, 18-24","expect":{"seeks":["woman"],"ageRange":[18,24]}}
+{"text":"women between 40 and 50 pls","expect":{"seeks":["woman"],"ageRange":[40,50]}}

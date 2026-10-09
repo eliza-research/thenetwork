@@ -1,0 +1,67 @@
+{"text":"both","asked":"seeks","unset":["seeks"]}
+{"text":"a mix i guess","asked":"seeks","unset":["seeks"]}
+{"text":"either","asked":"seeks","unset":["seeks"]}
+{"text":"idk yet","asked":"seeks","unset":["seeks","gender"]}
+{"text":"depends on the person","asked":"seeks","unset":["seeks"]}
+{"text":"i'm bi","unset":["seeks","gender"]}
+{"text":"bisexual btw","unset":["seeks","gender"]}
+{"text":"queer","asked":"orientation","unset":["seeks","gender"]}
+{"text":"im pan","unset":["seeks","gender"]}
+{"text":"i'm queer and looking for something real","unset":["seeks","gender"]}
+{"text":"she/her","unset":["gender","seeks"]}
+{"text":"pronouns are they/them","unset":["gender","seeks"]}
+{"text":"he/him 🙂","unset":["gender","seeks"]}
+{"text":"i'm trans","unset":["gender","seeks"]}
+{"text":"im a lesbian","unset":["gender"]}
+{"text":"I'm gay","unset":["gender","seeks"]}
+{"text":"what do you mean","asked":"orientation","unset":["gender","seeks"]}
+{"text":"lol why do you need to know","asked":"orientation","unset":["gender","seeks"]}
+{"text":"my friend said this app is for women looking for men","unset":["gender","seeks"]}
+{"text":"my sister is a woman who dates men, she told me about this","unset":["gender","seeks"]}
+{"text":"i have a lot of guy friends","unset":["seeks","gender"]}
+{"text":"i work with mostly women","unset":["seeks","gender"]}
+{"text":"man, this is a lot of questions","unset":["gender","seeks"]}
+{"text":"girl what","unset":["gender","seeks"]}
+{"text":"around my age","asked":"ageRange","unset":["ageRange"]}
+{"text":"similar age to me","asked":"ageRange","unset":["ageRange"]}
+{"text":"older than me","asked":"ageRange","unset":["ageRange"]}
+{"text":"not too young lol","asked":"ageRange","unset":["ageRange"]}
+{"text":"doesn't matter","asked":"ageRange","unset":["ageRange"]}
+{"text":"30","asked":"ageRange","unset":["ageRange"]}
+{"text":"i'm in my 30s","unset":["ageRange"]}
+{"text":"in my late 20s, just moved here","unset":["ageRange"]}
+{"text":"open to whatever age","asked":"ageRange","unset":["ageRange"]}
+{"text":"close by","asked":"distance","unset":["distance"]}
+{"text":"not too far","asked":"distance","unset":["distance"]}
+{"text":"walking distance ideally","asked":"distance","unset":["distance"]}
+{"text":"20 minutes on the train","asked":"distance","unset":["distance"]}
+{"text":"like half an hour away max","asked":"distance","unset":["distance"]}
+{"text":"nearby","asked":"distance","unset":["distance"]}
+{"text":"brooklyn only","asked":"distance","unset":["distance","location"]}
+{"text":"i'm in brooklyn","unset":["location"]}
+{"text":"queens","asked":"location","unset":["location"]}
+{"text":"manhattan","asked":"location","unset":["location"]}
+{"text":"bk","asked":"location","unset":["location"]}
+{"text":"i used to live in astoria","unset":["location"]}
+{"text":"i work in midtown","unset":["location"]}
+{"text":"grew up in park slope","unset":["location"]}
+{"text":"i'm 20 minutes from williamsburg","unset":["location"]}
+{"text":"went to a great dinner in the east village last week","unset":["location"]}
+{"text":"on a mission to find someone fun","unset":["location"]}
+{"text":"my number is 917 555 0142","unset":["location","ageRange"]}
+{"text":"i make like $85000","unset":["location"]}
+{"text":"the 5 train is my line","unset":["distance","location"]}
+{"text":"i'm 5'10","unset":["ageRange","distance"]}
+{"text":"i'm 6 ft tall","unset":["ageRange","distance"]}
+{"text":"been in nyc 7 years","unset":["ageRange","distance"]}
+{"text":"i run 10 miles on weekends","unset":["distance"]}
+{"text":"my commute is 5 miles","unset":["distance"]}
+{"text":"usually free 7-9pm","unset":["ageRange"]}
+{"text":"i have 2 kids ages 8 and 11","unset":["ageRange"]}
+{"text":"not sure","asked":"distance","unset":["distance"]}
+{"text":"anything","asked":"seeks","unset":["seeks"]}
+{"text":"hmm let me think","asked":"ageRange","unset":["ageRange"]}
+{"text":"what are my options","asked":"distance","unset":["distance"]}
+{"text":"surprise me","asked":"ageRange","unset":["ageRange"]}
+{"text":"no kids","unset":["dealbreakers"]}
+{"text":"kids","asked":"dealbreakers","unset":["dealbreakers"]}

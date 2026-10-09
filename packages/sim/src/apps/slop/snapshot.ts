@@ -91,7 +91,12 @@ export function verificationFacets(p: SlopPersona, joinedAt: number, v: Verifica
  *  - widen: a member asked "would you consider people up to <miles> mi?" agrees with p = agree.
  */
 export interface PlatformModel {
-  photos?: { noiseSd: number };
+  /**
+   * Photo in the probe: `consent` = share of adults who agreed to show their photo to a match
+   * (default 1). Whether a probe carries a photo is decided by the engine's `probePhotoRefs`, the
+   * function the platform calls (adults on both sides, consent, an opaque photo id).
+   */
+  photos?: { noiseSd: number; consent?: number };
   /**
    * Iteration 3: appearance ratings from photos (adults only), derived from hidden appearance
    * (desirability + per-person face / body terms) plus rater noise (SD `noise`) and a demographic
@@ -101,7 +106,13 @@ export interface PlatformModel {
   rater?: { noise: number; bias: number; biasShare: number };
   /** Iteration 3: post-date check-in reports, P(report | the victim answers) by harm kind. */
   checkin?: Partial<Record<string, number>>;
-  relay?: { scamRecall: number; hostileRecall: number; falsePositive: number };
+  /**
+   * Relay after the reveal. `engine: true` (critical path item 7): the pair exchange scripted items
+   * through the engine's `relayItem` (relay.ts in this folder); harms whose item is held or blocked do
+   * not happen, a sender held for scam / harassment / a minor signal goes on a safety hold. Without
+   * `engine`, the iteration-2 assumption: flagged with p = recall, honest members at `falsePositive`.
+   */
+  relay?: { scamRecall: number; hostileRecall: number; falsePositive: number; engine?: boolean; roles?: { contactFisher: number; ratingProber: number } };
   review?: { days: number; clearHonest: number; catchAdversary: number };
   widen?: { agree: number; miles: number };
 }

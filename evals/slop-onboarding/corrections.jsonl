@@ -1,0 +1,45 @@
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"no, 30-40","expect":{"ageRange":[30,40],"seeks":["man"]},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"actually women too","expect":{"seeks":["man","woman"]},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"yep","expect":{"seeks":["man"],"ageRange":[28,38]},"confirmed":true}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"yes that's right!","expect":{"ageRange":[28,38]},"confirmed":true}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"perfect 👍","expect":{"ageRange":[28,38]},"confirmed":true}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"no","expect":{"ageRange":[28,38]},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"not quite","expect":{"ageRange":[28,38]},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"10 miles not 5","expect":{"distance":{"mode":"radius","miles":10}},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"no 11222 not 11211","expect":{"location":"11222"},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"actually just the city is fine","expect":{"distance":{"mode":"city"}},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"oh and nonbinary people too","expect":{"seeks":["man","nonbinary"]},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"no i'm a man lol","expect":{"gender":"man","seeks":["man"]},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"nope, women not men","expect":{"seeks":["woman"]},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"make it 25-40","expect":{"ageRange":[25,40]},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"30s actually","asked":"ageRange","expect":{"ageRange":[30,39]},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"i live in greenpoint now","expect":{"location":"Greenpoint"},"confirmed":false}
+{"messages":["guy into women 25-35, 10 miles, astoria"],"correction":"no, 27-35","expect":{"ageRange":[27,35],"gender":"man"},"confirmed":false}
+{"messages":["guy into women 25-35, 10 miles, astoria"],"correction":"and men too","expect":{"seeks":["man","woman"]},"confirmed":false}
+{"messages":["guy into women 25-35, 10 miles, astoria"],"correction":"no men","expect":{"seeks":["woman"]},"confirmed":false}
+{"messages":["guy into women 25-35, 10 miles, astoria"],"correction":"yup","expect":{"seeks":["woman"]},"confirmed":true}
+{"messages":["guy into women 25-35, 10 miles, astoria"],"correction":"right","expect":{"seeks":["woman"]},"confirmed":true}
+{"messages":["guy into women 25-35, 10 miles, astoria"],"correction":"5 miles actually","expect":{"distance":{"mode":"radius","miles":5}},"confirmed":false}
+{"messages":["guy into women 25-35, 10 miles, astoria"],"correction":"anyone actually, not just women","expect":{"seeks":["man","nonbinary","woman"]},"confirmed":false}
+{"messages":["guy into women 25-35, 10 miles, astoria"],"correction":"im nonbinary not a guy","expect":{"gender":"nonbinary"},"confirmed":false}
+{"messages":["guy into women 25-35, 10 miles, astoria"],"correction":"no its 30+","expect":{"ageRange":[30,99]},"confirmed":false}
+{"messages":["guy into women 25-35, 10 miles, astoria"],"correction":"under 33","expect":{"ageRange":[18,32]},"confirmed":false}
+{"messages":["looking for something serious. no smokers"],"correction":"smoking's fine actually","expect":{"dealbreakers":[]},"confirmed":false}
+{"messages":["looking for something serious. no smokers"],"correction":"also no trump supporters","expect":{"dealbreakers":["right_politics","smoker"]},"confirmed":false}
+{"messages":["looking for something serious. no smokers"],"correction":"actually more casual for now","expect":{"goal":"casual"},"confirmed":false}
+{"messages":["looking for something serious. no smokers"],"correction":"drop the smoking thing","expect":{"dealbreakers":[]},"confirmed":false}
+{"messages":["looking for something serious. no smokers"],"correction":"that's it!","expect":{"goal":"long_term"},"confirmed":true}
+{"messages":["nonbinary, into women, 24-32, 5 mi, bushwick"],"correction":"and nonbinary folks too","expect":{"seeks":["nonbinary","woman"]},"confirmed":false}
+{"messages":["nonbinary, into women, 24-32, 5 mi, bushwick"],"correction":"24-34 sorry","expect":{"ageRange":[24,34]},"confirmed":false}
+{"messages":["nonbinary, into women, 24-32, 5 mi, bushwick"],"correction":"correct","expect":{"ageRange":[24,32]},"confirmed":true}
+{"messages":["nonbinary, into women, 24-32, 5 mi, bushwick"],"correction":"wait im in bed stuy","expect":{"location":"Bed-Stuy"},"confirmed":false}
+{"messages":["im 30, woman, into men 28-38"],"correction":"no im 17 actually","expect":{"age":17},"minor":true,"confirmed":false}
+{"messages":["im 30, woman, into men 28-38"],"correction":"im 35 not 30","expect":{"age":30},"confirmed":false}
+{"messages":["im 22, guy, into women"],"correction":"lol jk im 16","expect":{"age":16},"minor":true,"confirmed":false}
+{"messages":["woman into men","28-38","10 miles","11211"],"correction":"yes","expect":{"seeks":["man"],"ageRange":[28,38],"distance":{"mode":"radius","miles":10},"location":"11211"},"confirmed":true}
+{"messages":["woman into men","28-38","10 miles","11211"],"correction":"no women","expect":{"seeks":["man"]},"confirmed":false}
+{"messages":["woman into men","28-38","10 miles","11211"],"correction":"actually only women","expect":{"seeks":["woman"]},"confirmed":false}
+{"messages":["woman into men","28-38","10 miles","11211"],"correction":"sounds good","expect":{"seeks":["man"]},"confirmed":true}
+{"messages":["woman into men","28-38","10 miles","11211"],"correction":"exactly","expect":{"seeks":["man"]},"confirmed":true}
+{"messages":["woman into men","28-38","10 miles","11211"],"correction":"yes but 25 miles","expect":{"distance":{"mode":"radius","miles":25}},"confirmed":false}
+{"messages":["woman into men","28-38","10 miles","11211"],"correction":"almost, it's 11215","expect":{"location":"11215"},"confirmed":false}
