@@ -7,6 +7,7 @@
 //   learn         profile tags from a member's answer (slop: orientation, age range, distance, zip)
 //   timeOptions   the first member's time options (slop: the date plan's slots)
 //   probe         the anonymous probe text (slop: a date, an age band and a distance band)
+//   probePhoto    whose photo may ride on that probe (slop, SLOP_PROBE_PHOTO only; checked again at send time)
 //   venue         the meeting place after everyone said yes (slop: a public place near the midpoint)
 //   booked        the booked-plan reveal (slop: share-my-date and the check-in)
 //   checkIn       the question after the meeting (slop: how it went, and how to report)
@@ -53,6 +54,12 @@ export interface AppHooks {
   timeOptions?(o: HookOpp, now: number, input: () => EngineInput): { start: number; end: number }[] | undefined;
   /** The probe text; undefined: the Network's own. */
   probe?(o: HookOpp, id: MemberId, ctx: { times?: string; when: string; input: () => EngineInput }): string | undefined;
+  /**
+   * The member whose approved photo may ride on this member's probe (slop: the other person, behind
+   * SLOP_PROBE_PHOTO); undefined: text only. A reference, not a photo: the service checks both
+   * people, the photo and the caption at send time.
+   */
+  probePhoto?(o: HookOpp, id: MemberId, ctx: { input: () => EngineInput }): MemberId | undefined;
   /** The meeting place; undefined: the Network's own (geo.ts meetingSpot). */
   venue?(o: HookOpp, input: () => EngineInput): HookVenue | undefined;
   /** The booked-plan reveal; undefined: the Network's own. */

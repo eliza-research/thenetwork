@@ -124,6 +124,7 @@ fieldset { border: 0; margin: 20px 0; padding: 0; min-width: 0; }
 .actions h3 { font-size: 20px; }
 .actions p { margin: 0; color: var(--muted); font-size: 16px; }
 .actions .btn { justify-self: start; }
+.photo-list { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-family: var(--ui); }
 .actions .danger-zone { border-color: oklch(0.70 0.18 28 / 0.6); }
 .status { font: 700 15px var(--ui); min-height: 1.5em; color: var(--slop); }
 dialog { background: var(--surface); color: var(--ink); border: 1px solid var(--rule); border-radius: 20px; padding: 24px; max-width: min(460px, calc(100vw - 32px)); }

@@ -45,9 +45,19 @@ export const PLATFORM_ERRORS: Record<string, ApiError> = {
   method: "unknown",
   not_found: "unknown",
   api_unreachable: "api_unreachable",
+  // Photo refusals (packages/platform/src/photos.ts). The settings page words them itself (PHOTO_MESSAGES).
+  photos_off: "server",
+  app_not_allowed: "unknown",
+  consent_required: "invalid",
+  adults_only: "unknown",
+  not_verified: "unknown",
+  bad_type: "invalid",
+  bad_image: "invalid",
+  too_many: "invalid",
 };
 
-export type Result<T> = { ok: true; data: T } | { ok: false; error: ApiError; status: number };
+/** `code`: the platform's own error code, when it sent one (the photo section words some of them itself). */
+export type Result<T> = { ok: true; data: T } | { ok: false; error: ApiError; status: number; code?: string };
 
 export interface AppInfo {
   id: string;
@@ -71,6 +81,17 @@ export interface Me {
   reason?: string;
 }
 
+export interface PhotoConsent {
+  version: string;
+  text: string;
+}
+
+/** The member's own photos: ids, when, and whether a person approved each one yet. Never a score. */
+export interface PhotoList {
+  eligible: boolean;
+  photos: { id: string; createdAt: number; bytes: number; contentType: string; status: "pending" | "approved" | "rejected" }[];
+}
+
 export interface JoinBody {
   firstName: string;
   age: number;
@@ -81,15 +102,17 @@ export interface JoinBody {
   consent: { sms: true; wording: string };
 }
 
-export async function call<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<Result<T>> {
+export async function call<T>(method: "GET" | "POST", path: string, body?: unknown, raw?: { body: Blob; type: string; headers?: Record<string, string> }): Promise<Result<T>> {
   let res: Response;
   try {
     res = await fetch(path, {
       method,
       credentials: "same-origin",
       // Every POST is JSON, even with no fields: the API refuses any other POST with 415 (CSRF rule).
-      headers: method === "POST" ? { accept: "application/json", "content-type": "application/json" } : { accept: "application/json" },
-      body: method === "POST" ? JSON.stringify(body ?? {}) : undefined,
+      // The one exception is a photo upload: the image bytes with their image type (the API checks it).
+      headers: raw ? { accept: "application/json", "content-type": raw.type, ...raw.headers }
+        : method === "POST" ? { accept: "application/json", "content-type": "application/json" } : { accept: "application/json" },
+      body: raw ? raw.body : method === "POST" ? JSON.stringify(body ?? {}) : undefined,
     });
   } catch {
     return { ok: false, error: "api_unreachable", status: 0 };
@@ -106,7 +129,7 @@ export async function call<T>(method: "GET" | "POST", path: string, body?: unkno
   if (res.status === 401) return { ok: false, error: "unauthorized", status: 401 };
   if (res.status === 429) return { ok: false, error: "rate_limited", status: 429 };
   const named = isObject && typeof json.error === "string" ? PLATFORM_ERRORS[json.error as string] : undefined;
-  if (named) return { ok: false, error: named, status: res.status };
+  if (named) return { ok: false, error: named, status: res.status, code: json.error as string };
   // No JSON body: the edge or the dev proxy answered, so the API is not there.
   if (!isObject) return { ok: false, error: "api_unreachable", status: res.status };
   return { ok: false, error: res.status >= 500 ? "server" : "unknown", status: res.status };
@@ -124,6 +147,12 @@ export const api = {
   stop: () => call<unknown>("POST", "/api/me/stop"),
   remove: (scope: "app" | "all") => call<unknown>("POST", "/api/me/delete", { scope }),
   demo: () => call<unknown>("GET", "/api/demo"),
+  photoConsent: () => call<PhotoConsent>("GET", "/api/photos/consent"),
+  photos: () => call<PhotoList>("GET", "/api/photos"),
+  agreePhotos: (version: string) => call<{ ok: true; version: string }>("POST", "/api/photos/consent", { version }),
+  uploadPhoto: (file: Blob, consentVersion: string) =>
+    call<{ ok: true; id: string }>("POST", "/api/photos", undefined, { body: file, type: file.type, headers: { "x-photo-consent": consentVersion } }),
+  deletePhoto: (id: string) => call<{ ok: true }>("POST", "/api/photos/delete", { id }),
 };
 
 /** Normalizes a US number to E.164 (+1XXXXXXXXXX). Returns null for anything else. */

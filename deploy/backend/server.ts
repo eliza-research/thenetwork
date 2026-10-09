@@ -20,6 +20,7 @@ const { migrate } = await import("../../packages/observatory/db/migrate.ts");
 const { lineChannel } = await import("./line.ts");
 const { NetworkService, webhookSecretsFromEnv } = await import("../../packages/network/service/service.ts");
 const { createServiceMcp } = await import("../../packages/network/service/serve.ts");
+const { photoRaterFromEnv, probePhotoOn } = await import("../../packages/network/service/photoRating.ts");
 
 async function main() {
   const c = loadConfig(process.env, process.argv);
@@ -56,6 +57,9 @@ async function main() {
 
   const clock = new RealClock();
   const line = lineChannel(c, { clock, log: s => log.info(s) });
+  // The Clef photo rater only when its environment is set (CLOUDFLARE_AI_TOKEN, CLOUDFLARE_ACCOUNT_ID); otherwise nothing is rated.
+  const photoRater = photoRaterFromEnv(process.env);
+  log.info("photos", { rater: photoRater?.id ?? "none", probePhoto: probePhotoOn(process.env) ? "on" : "off" });
   const svc = await NetworkService.fromDatabase({
     url: c.databaseUrl, clock, instance: process.env.NETWORK_SERVICE_INSTANCE ?? process.env.RAILWAY_REPLICA_ID ?? `${process.pid}`,
     tokens: process.env.NETWORK_SERVICE_TOKENS, consoleToken: process.env.NETWORK_SERVICE_CONSOLE_TOKEN,
@@ -65,6 +69,7 @@ async function main() {
     // The backend decides the app and the client IP before the public API sees the request (backend.ts normalizeEdge).
     publicApi: { hostMap: c.hostMap, ipOf, trustForwardedHost: false },
     log: s => log.info(s),
+    ...(photoRater ? { photoRater } : {}),
     adapter: line.adapter,
   });
   // The queue's state (waiting messages, counters, line safety) loads before the networks deliver what waits.

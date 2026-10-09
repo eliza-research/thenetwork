@@ -12,9 +12,18 @@
 //  - Storage: object storage under a random key (R2 in production, a 0700 folder in dev). There is no
 //    public URL. Staff see a photo only through the backend: the service's audited photo route makes
 //    a signed link that works for 5 minutes (viewUrl / view).
-//  - Rating: an optional rater (`rate(photo) -> {face, body, overall}`), default "none". It runs only
-//    for a verified adult (checked again at rating time); its scores go to `onRating` (the service
-//    writes them as agent_private facets) and are never returned by any route.
+//  - Rating: an optional rater (photoRating.ts in the service adapts the engine's AppearanceRater),
+//    default "none". It rates the member from their photos that are not rejected, on the engine's
+//    z-like scale with a confidence and a body type. It runs only for a verified adult (checked again
+//    at rating time); its scores go to `onRating` (the service writes them as one agent_private
+//    facet) and are never returned by any route. A failed or skipped rating is retried by
+//    `retryDue` (the service's tick) with backoff, at most RATING_MAX_TRIES times (migration 0020).
+//  - Moderation: every new photo is "pending". Staff approve or reject it (the service's audited
+//    route); an automatic classifier may only reject (`classify`, none wired). Only an approved photo
+//    may ever be shown to anyone, through a signed link that works for an hour (`mediaLink`).
+//  - Photo consent: a web upload records the consent version the page showed (platform.photo_consents);
+//    POST /api/photos/consent records it without a photo. A photo sent by text (MMS) is kept only when
+//    the person's recorded consent is the current version (`intake`).
 //  - Delete: the member deletes one photo; leaving the app or deleting everything deletes them all;
 //    a person whose lowest age drops under 18 loses them all (deleteFor).
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
@@ -39,14 +48,49 @@ export const PHOTO_CONSENT = {
   text: "I agree that slop.date may store these photos privately. The matchmaker may use them, privately, to learn who I might like and who might like me. No other member sees them, no score from them is ever shown to anyone, and a person on the safety team looks at them only after a report. Photos are for adults (18+) only. I can delete them anytime.",
 } as const;
 
+/** A photo shown to someone (the probe) is reached only through a signed link that works this long. */
+export const PHOTO_MEDIA_TTL_MS = 60 * 60_000;
+/** A failed or skipped rating is tried at most this many times in all. */
+export const RATING_MAX_TRIES = 5;
+/** Wait before the next try after `attempts` tries: 10 minutes, then 4x each time (10 m, 40 m, 2.7 h, 10.7 h). */
+export const ratingBackoffMs = (attempts: number) => 10 * 60_000 * 4 ** Math.max(0, attempts - 1);
+/** The rater sees at most this many photos per member (newest first). */
+export const RATING_MAX_PHOTOS = 4;
+
+export type ModerationStatus = "pending" | "approved" | "rejected";
+/** pending: not tried yet (or a photo changed); rated; skipped: the rater could not rate; failed: an error; refused: not a verified adult. */
+export type RatingStatus = "pending" | "rated" | "skipped" | "failed" | "refused";
+export type PhotoSource = "web" | "mms";
+
 export interface PhotoRow {
   id: string; personId: string; app: AppId; storageKey: string; contentType: PhotoType; bytes: number; sha256: string;
   consentVersion: string; createdAt: number;
+  /** Migration 0020. Optional on input: a new row starts pending (moderation and rating). */
+  source?: PhotoSource;
+  moderation?: ModerationStatus; moderatedBy?: string | null; moderatedAt?: number | null; moderationReason?: string | null;
+  rating?: RatingStatus; ratingAttempts?: number; ratingError?: string | null; ratingNextAt?: number | null;
 }
-export interface PhotoScores { face: number; body: number; overall: number }
-/** An optional rater (the engine session builds the CLIP rater). "none" never rates. */
-export interface PhotoRater { id: string; rate(photo: { bytes: Uint8Array; contentType: PhotoType }): Promise<PhotoScores | undefined> }
+/** What a moderation or rating step changes on a row. */
+export type PhotoPatch = Partial<Pick<PhotoRow, "moderation" | "moderatedBy" | "moderatedAt" | "moderationReason" | "rating" | "ratingAttempts" | "ratingError" | "ratingNextAt">>;
+/**
+ * A member's rating on the engine's scale (packages/engine slop appearance.ts): z-like scores
+ * (0 = typical, clamped to -3..3), a confidence 0..1 and an optional body type. Never shown to anyone.
+ */
+export interface PhotoScores { face: number; body: number; overall: number; confidence: number; bodyType?: string; bodyTypeConfidence?: number; model: string }
+/** One photo the rater may read. */
+export interface RatablePhoto { id: string; bytes: Uint8Array; contentType: PhotoType }
+/**
+ * An optional rater: one member from their photos (the service adapts the engine's AppearanceRater,
+ * photoRating.ts). `subject.age` is the person's lowest age, already checked to be 18+. "none" never rates.
+ * Undefined: could not rate (no usable photo); a throw: an error (both are tried again later).
+ */
+export interface PhotoRater { id: string; rate(photos: readonly RatablePhoto[], subject: { age: number }): Promise<PhotoScores | undefined> }
 export const NO_RATER: PhotoRater = { id: "none", rate: async () => undefined };
+/**
+ * An automatic check before a person looks (nudity, a face that may be a minor's, text or handles in
+ * the image). It may only reject: approval is always a person. None is wired yet.
+ */
+export interface PhotoClassifier { id: string; check(photo: { bytes: Uint8Array; contentType: PhotoType }): Promise<{ reject: boolean; reason?: string }> }
 
 // ------------------------------------------------------------------------------------ bytes
 /** The image type from the first bytes (never from a header or a file name). */
@@ -228,24 +272,53 @@ export interface PhotoStore {
   get(id: string): Promise<PhotoRow | undefined>;
   list(personId: string, app?: AppId): Promise<PhotoRow[]>;
   delete(id: string): Promise<void>;
+  /** Moderation and rating state (migration 0020). */
+  update(id: string, patch: PhotoPatch): Promise<void>;
+  /** Photos whose rating is due again: pending, skipped or failed, under RATING_MAX_TRIES tries, next try at or before `now`. */
+  due(now: number, limit: number): Promise<PhotoRow[]>;
+  /** The newest photo consent version the person recorded for this app. */
+  consentOf(personId: string, app: AppId): Promise<string | undefined>;
+  recordConsent(personId: string, app: AppId, version: string, source: PhotoSource, at: number): Promise<void>;
+  /** Forget the person's photo consents (on one app, or every app): leave, delete everything, a minor age. */
+  forgetConsents(personId: string, app?: AppId): Promise<void>;
 }
+const withDefaults = (r: PhotoRow): PhotoRow => ({
+  source: "web", moderation: "pending", moderatedBy: null, moderatedAt: null, moderationReason: null, rating: "pending", ratingAttempts: 0, ratingError: null, ratingNextAt: null, ...r,
+});
+const isDue = (r: PhotoRow, now: number) => ["pending", "skipped", "failed"].includes(r.rating ?? "pending") && (r.ratingAttempts ?? 0) < RATING_MAX_TRIES && (r.ratingNextAt ?? 0) <= now;
 export class MemoryPhotoStore implements PhotoStore {
   readonly rows = new Map<string, PhotoRow>();
-  async put(r: PhotoRow) { this.rows.set(r.id, { ...r }); }
+  readonly consents: { personId: string; app: AppId; version: string; source: PhotoSource; at: number }[] = [];
+  async put(r: PhotoRow) { this.rows.set(r.id, withDefaults({ ...r })); }
   async get(id: string) { const r = this.rows.get(id); return r && { ...r }; }
   async list(personId: string, app?: AppId) { return [...this.rows.values()].filter(r => r.personId === personId && (!app || r.app === app)).sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1)).map(r => ({ ...r })); }
   async delete(id: string) { this.rows.delete(id); }
+  async update(id: string, patch: PhotoPatch) { const r = this.rows.get(id); if (r) this.rows.set(id, { ...r, ...patch }); }
+  async due(now: number, limit: number) { return [...this.rows.values()].filter(r => isDue(r, now)).sort((a, b) => a.createdAt - b.createdAt).slice(0, limit).map(r => ({ ...r })); }
+  async consentOf(personId: string, app: AppId) { return [...this.consents].reverse().find(c => c.personId === personId && c.app === app)?.version; }
+  async recordConsent(personId: string, app: AppId, version: string, source: PhotoSource, at: number) { this.consents.push({ personId, app, version, source, at }); }
+  async forgetConsents(personId: string, app?: AppId) {
+    for (let i = this.consents.length - 1; i >= 0; i--) if (this.consents[i]!.personId === personId && (!app || this.consents[i]!.app === app)) this.consents.splice(i, 1);
+  }
 }
+const ms = (v: unknown) => (v === null || v === undefined ? null : new Date(v as string).getTime());
 const photoRow = (r: Record<string, any>): PhotoRow => ({
   id: r.id, personId: r.person_id, app: r.app_id, storageKey: r.storage_key, contentType: r.content_type, bytes: r.bytes, sha256: r.sha256,
   consentVersion: r.consent_version, createdAt: new Date(r.created_at).getTime(),
+  source: r.source ?? "web", moderation: r.moderation_status ?? "pending", moderatedBy: r.moderated_by ?? null, moderatedAt: ms(r.moderated_at), moderationReason: r.moderation_reason ?? null,
+  rating: r.rating_status ?? "pending", ratingAttempts: r.rating_attempts ?? 0, ratingError: r.rating_last_error ?? null, ratingNextAt: ms(r.rating_next_at),
 });
-/** platform.photos (migration 0011). A deleted photo's row is removed (the bytes first). */
+const COLUMNS: Record<keyof PhotoPatch, string> = {
+  moderation: "moderation_status", moderatedBy: "moderated_by", moderatedAt: "moderated_at", moderationReason: "moderation_reason",
+  rating: "rating_status", ratingAttempts: "rating_attempts", ratingError: "rating_last_error", ratingNextAt: "rating_next_at",
+};
+/** platform.photos (migrations 0011, 0020) and platform.photo_consents (0020). A deleted photo's row is removed (the bytes first). */
 export class PgPhotoStore implements PhotoStore {
   constructor(private readonly sql: SQL) {}
   async put(r: PhotoRow) {
-    await this.sql`insert into platform.photos (id, person_id, app_id, storage_key, content_type, bytes, sha256, consent_version, created_at)
-      values (${r.id}, ${r.personId}, ${r.app}, ${r.storageKey}, ${r.contentType}, ${r.bytes}, ${r.sha256}, ${r.consentVersion}, ${new Date(r.createdAt)})`;
+    const x = withDefaults(r);
+    await this.sql`insert into platform.photos (id, person_id, app_id, storage_key, content_type, bytes, sha256, consent_version, created_at, source, moderation_status, rating_status)
+      values (${x.id}, ${x.personId}, ${x.app}, ${x.storageKey}, ${x.contentType}, ${x.bytes}, ${x.sha256}, ${x.consentVersion}, ${new Date(x.createdAt)}, ${x.source}, ${x.moderation}, ${x.rating})`;
   }
   async get(id: string) { const [r] = await this.sql`select * from platform.photos where id = ${id} and deleted_at is null`; return r ? photoRow(r) : undefined; }
   async list(personId: string, app?: AppId) {
@@ -255,6 +328,30 @@ export class PgPhotoStore implements PhotoStore {
     return (rows as Record<string, any>[]).map(photoRow);
   }
   async delete(id: string) { await this.sql`delete from platform.photos where id = ${id}`; }
+  async update(id: string, patch: PhotoPatch) {
+    const set: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(patch) as [keyof PhotoPatch, unknown][]) {
+      if (v === undefined) continue;
+      set[COLUMNS[k]] = (k === "moderatedAt" || k === "ratingNextAt") && typeof v === "number" ? new Date(v) : v;
+    }
+    if (Object.keys(set).length) await this.sql`update platform.photos set ${this.sql(set)} where id = ${id}`;
+  }
+  async due(now: number, limit: number) {
+    const rows = await this.sql`select * from platform.photos where deleted_at is null and rating_status in ('pending', 'skipped', 'failed')
+      and rating_attempts < ${RATING_MAX_TRIES} and (rating_next_at is null or rating_next_at <= ${new Date(now)}) order by created_at, id limit ${limit}`;
+    return (rows as Record<string, any>[]).map(photoRow);
+  }
+  async consentOf(personId: string, app: AppId) {
+    const [r] = await this.sql`select version from platform.photo_consents where person_id = ${personId}::uuid and app_id = ${app} order by at desc limit 1`;
+    return (r?.version as string | undefined) ?? undefined;
+  }
+  async recordConsent(personId: string, app: AppId, version: string, source: PhotoSource, at: number) {
+    await this.sql`insert into platform.photo_consents (person_id, app_id, version, source, at) values (${personId}, ${app}, ${version}, ${source}, ${new Date(at)})`;
+  }
+  async forgetConsents(personId: string, app?: AppId) {
+    if (app) await this.sql`delete from platform.photo_consents where person_id = ${personId}::uuid and app_id = ${app}`;
+    else await this.sql`delete from platform.photo_consents where person_id = ${personId}::uuid`;
+  }
 }
 
 // ------------------------------------------------------------------------------------ service
@@ -265,26 +362,35 @@ export interface PhotoServiceOptions {
   people: PeopleStore;
   meta: PhotoStore;
   storage?: PhotoStorage;
-  /** Key for the staff view links (derived from PLATFORM_HASH_KEY). */
+  /** Key for the staff view links and the probe media links (derived from PLATFORM_HASH_KEY). */
   signingKey: string;
   now?: () => number;
   rater?: PhotoRater;
+  /** An automatic check that may reject a new photo before a person looks (none is wired). */
+  classifier?: PhotoClassifier;
   /**
    * The app's own adult check for this person, beyond the lowest age (slop: the member's stated age
    * is 18+ and no staff age check failed; decision 9). The service reads the network rows. Default: refuse (fail closed).
    */
   eligible?: (personId: string, app: AppId) => Promise<boolean>;
-  /** The rater's scores for one photo: the service writes them as agent_private facets. Never returned by a route. */
-  onRating?: (personId: string, app: AppId, photoId: string, scores: PhotoScores) => Promise<void>;
-  /** A photo is gone (removed, left, deleted, a minor age): the service deletes its rating too. */
+  /** The rater's scores for the member: the service writes them as one agent_private facet. Never returned by a route. */
+  onRating?: (personId: string, app: AppId, scores: PhotoScores) => Promise<void>;
+  /** A photo is gone or rejected (removed, left, deleted, a minor age): the service deletes the member's rating (it is made again from the rest). */
   onRemoved?: (personId: string, app: AppId, photoId: string) => Promise<void>;
   log?: (s: string) => void;
 }
+
+const clampZ = (x: number) => Math.round(Math.max(-3, Math.min(3, Number.isFinite(x) ? x : 0)) * 100) / 100;
+const clamp01 = (x: number) => Math.round(Math.max(0, Math.min(1, Number.isFinite(x) ? x : 0)) * 100) / 100;
+/** An error's text for the row (never the photo, never a person). */
+const errorText = (e: unknown) => String((e as Error)?.message ?? e).replace(/\s+/g, " ").slice(0, 200);
 
 export class PhotoService {
   private readonly now: () => number;
   constructor(private readonly o: PhotoServiceOptions) { this.now = o.now ?? Date.now; }
   get enabled() { return !!this.o.storage; }
+  /** A rater other than "none" is configured. */
+  get rating() { return !!this.o.storage && (this.o.rater ?? NO_RATER).id !== "none"; }
 
   /** An adult on this app: lowest age 18+ (an unknown age fails) and the app's own check (slop: no failed staff age check). */
   async adult(personId: string, app: AppId): Promise<PhotoRefusal | undefined> {
@@ -294,7 +400,7 @@ export class PhotoService {
     return undefined;
   }
 
-  async upload(personId: string, app: AppId, input: Uint8Array, consentVersion: string | undefined): Promise<PhotoResult<{ id: string }>> {
+  async upload(personId: string, app: AppId, input: Uint8Array, consentVersion: string | undefined, source: PhotoSource = "web"): Promise<PhotoResult<{ id: string }>> {
     if (!this.o.storage) return { ok: false, reason: "photos_off" };
     if (!PHOTO_APPS.includes(app)) return { ok: false, reason: "app_not_allowed" };
     if (consentVersion !== PHOTO_CONSENT.version) return { ok: false, reason: "consent_required" };
@@ -309,33 +415,123 @@ export class PhotoService {
     const id = `ph_${randomBytes(12).toString("hex")}`;
     const key = randomBytes(24).toString("hex");
     await this.o.storage.put(key, bytes, type);
-    await this.o.meta.put({ id, personId, app, storageKey: key, contentType: type, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), consentVersion, createdAt: this.now() });
-    await this.rate(personId, app, id).catch(e => this.o.log?.(`[photos] rating failed: ${(e as Error).message}`));
+    await this.o.meta.put({
+      id, personId, app, storageKey: key, contentType: type, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), consentVersion, createdAt: this.now(),
+      source, moderation: "pending", rating: "pending", ratingAttempts: 0,
+    });
+    // The page showed the consent next to the button: the upload records it (a text photo needs it recorded first).
+    if (source === "web") await this.o.meta.recordConsent(personId, app, consentVersion, "web", this.now());
+    await this.classify(id, bytes, type);
+    await this.rate(personId, app);
     return { ok: true, value: { id } };
   }
 
-  /**
-   * Rate one photo with the configured rater. Refused (nothing rated, nothing written) for anyone who
-   * is not a verified adult now. The rater "none" never rates. Returns whether scores were written.
-   */
-  async rate(personId: string, app: AppId, photoId: string): Promise<{ rated: boolean; refused?: PhotoRefusal }> {
-    const rater = this.o.rater ?? NO_RATER;
-    if (rater.id === "none" || !this.o.storage) return { rated: false };
+  /** The person agrees to the current photo consent without a photo (the settings page), so a photo sent by text can be kept. */
+  async agree(personId: string, app: AppId, version: unknown): Promise<PhotoResult<{ version: string }>> {
+    if (!this.o.storage) return { ok: false, reason: "photos_off" };
+    if (!PHOTO_APPS.includes(app)) return { ok: false, reason: "app_not_allowed" };
+    if (version !== PHOTO_CONSENT.version) return { ok: false, reason: "consent_required" };
     const who = await this.adult(personId, app);
-    if (who) return { rated: false, refused: who };
-    const row = await this.o.meta.get(photoId);
-    if (!row || row.personId !== personId || row.app !== app) return { rated: false, refused: "not_found" };
-    const bytes = await this.o.storage.get(row.storageKey);
-    if (!bytes) return { rated: false, refused: "not_found" };
-    const s = await rater.rate({ bytes, contentType: row.contentType });
-    if (!s) return { rated: false };
-    const clamp = (x: number) => Math.round(Math.min(1, Math.max(0, x)) * 100) / 100;
-    await this.o.onRating?.(personId, app, photoId, { face: clamp(s.face), body: clamp(s.body), overall: clamp(s.overall) });
-    return { rated: true };
+    if (who) return { ok: false, reason: who };
+    await this.o.meta.recordConsent(personId, app, PHOTO_CONSENT.version, "web", this.now());
+    return { ok: true, value: { version: PHOTO_CONSENT.version } };
   }
 
-  /** The member's own photos (no bytes, no score). */
-  async list(personId: string, app: AppId) { return (await this.o.meta.list(personId, app)).map(r => ({ id: r.id, createdAt: r.createdAt, bytes: r.bytes, contentType: r.contentType })); }
+  /**
+   * Why a photo sent by text (MMS) would not be kept, checked before it is downloaded: photos off,
+   * not an app that takes photos, not a verified adult, or no recorded consent of the current version.
+   */
+  async intakeRefusal(personId: string, app: AppId): Promise<PhotoRefusal | undefined> {
+    if (!this.o.storage) return "photos_off";
+    if (!PHOTO_APPS.includes(app)) return "app_not_allowed";
+    const who = await this.adult(personId, app);
+    if (who) return who;
+    if ((await this.o.meta.consentOf(personId, app)) !== PHOTO_CONSENT.version) return "consent_required";
+    return undefined;
+  }
+
+  /** A photo sent by text: the same checks as an upload, with the person's recorded consent. */
+  async intake(personId: string, app: AppId, input: Uint8Array): Promise<PhotoResult<{ id: string }>> {
+    const no = await this.intakeRefusal(personId, app);
+    if (no) return { ok: false, reason: no };
+    return this.upload(personId, app, input, PHOTO_CONSENT.version, "mms");
+  }
+
+  /** The classifier hook: it may only reject. An error leaves the photo pending for a person. */
+  private async classify(id: string, bytes: Uint8Array, contentType: PhotoType) {
+    const c = this.o.classifier;
+    if (!c) return;
+    try {
+      const r = await c.check({ bytes, contentType });
+      if (r.reject) await this.o.meta.update(id, { moderation: "rejected", moderatedBy: `classifier:${c.id}`, moderatedAt: this.now(), moderationReason: (r.reason ?? "classifier").slice(0, 200) });
+    } catch (e) { this.o.log?.(`[photos] classifier failed: ${errorText(e)}`); }
+  }
+
+  /**
+   * Rate the member from their photos that are not rejected, with the configured rater. Refused
+   * (nothing rated, nothing written) for anyone who is not a verified adult now. The rater "none"
+   * never rates and changes nothing. A failure or a skip is tried again later (retryDue) with
+   * backoff; this never throws for a rater error.
+   */
+  async rate(personId: string, app: AppId): Promise<{ rated: boolean; refused?: PhotoRefusal; status?: RatingStatus }> {
+    const rater = this.o.rater ?? NO_RATER;
+    if (rater.id === "none" || !this.o.storage) return { rated: false };
+    const rows = (await this.o.meta.list(personId, app)).filter(r => r.moderation !== "rejected");
+    const who = await this.adult(personId, app);
+    if (who) {
+      for (const r of rows) await this.o.meta.update(r.id, { rating: "refused", ratingNextAt: null });
+      return { rated: false, refused: who, status: "refused" };
+    }
+    const age = (await this.o.people.getPerson(personId))?.lowestAge;
+    if (!rows.length || age === null || age === undefined) return { rated: false, refused: "not_found" };
+    const photos: RatablePhoto[] = [];
+    for (const r of [...rows].reverse().slice(0, RATING_MAX_PHOTOS)) {
+      const bytes = await this.o.storage.get(r.storageKey);
+      if (bytes) photos.push({ id: r.id, bytes, contentType: r.contentType });
+    }
+    if (!photos.length) return { rated: false, refused: "not_found" };
+    let s: PhotoScores | undefined;
+    try { s = await rater.rate(photos, { age }); } catch (e) {
+      this.o.log?.(`[photos] rating failed: ${errorText(e)}`);
+      await this.later(rows, "failed", errorText(e));
+      return { rated: false, status: "failed" };
+    }
+    if (!s) { await this.later(rows, "skipped", null); return { rated: false, status: "skipped" }; }
+    await this.o.onRating?.(personId, app, {
+      face: clampZ(s.face), body: clampZ(s.body), overall: clampZ(s.overall), confidence: clamp01(s.confidence), model: s.model || rater.id,
+      ...(s.bodyType ? { bodyType: s.bodyType, bodyTypeConfidence: clamp01(s.bodyTypeConfidence ?? s.confidence) } : {}),
+    });
+    for (const r of rows) await this.o.meta.update(r.id, { rating: "rated", ratingAttempts: (r.ratingAttempts ?? 0) + 1, ratingError: null, ratingNextAt: null });
+    return { rated: true, status: "rated" };
+  }
+
+  /** A failed or skipped try: one more attempt counted, the next one after the backoff. */
+  private async later(rows: PhotoRow[], status: "failed" | "skipped", error: string | null) {
+    for (const r of rows) {
+      const attempts = (r.ratingAttempts ?? 0) + 1;
+      await this.o.meta.update(r.id, { rating: status, ratingAttempts: attempts, ratingError: error, ratingNextAt: this.now() + ratingBackoffMs(attempts) });
+    }
+  }
+
+  /** The member's photos changed (one removed, rejected or approved again): their rating is made again from the rest. */
+  private async rerate(personId: string, app: AppId) {
+    for (const r of await this.o.meta.list(personId, app)) if (r.moderation !== "rejected") await this.o.meta.update(r.id, { rating: "pending", ratingAttempts: 0, ratingError: null, ratingNextAt: null });
+    await this.rate(personId, app);
+  }
+
+  /** The periodic retry (the service's tick): every member with a photo whose rating is due. Returns how many members were tried. */
+  async retryDue(limit = 50): Promise<number> {
+    if (!this.rating) return 0;
+    const due = await this.o.meta.due(this.now(), limit);
+    const people = [...new Map(due.map(r => [`${r.personId}|${r.app}`, r])).values()];
+    for (const r of people) await this.rate(r.personId, r.app);
+    return people.length;
+  }
+
+  /** The member's own photos (no bytes, no score): when each was added and whether a person approved it yet. */
+  async list(personId: string, app: AppId) {
+    return (await this.o.meta.list(personId, app)).map(r => ({ id: r.id, createdAt: r.createdAt, bytes: r.bytes, contentType: r.contentType, status: r.moderation ?? "pending" }));
+  }
 
   /** The member deletes one of their photos. */
   async remove(personId: string, app: AppId, id: string): Promise<boolean> {
@@ -344,39 +540,89 @@ export class PhotoService {
     await this.o.storage?.delete(r.storageKey);
     await this.o.meta.delete(id);
     await this.o.onRemoved?.(personId, r.app, id);
+    if (this.rating) await this.rerate(personId, app);
     return true;
   }
 
-  /** Every photo of a person (on one app, or every app): leave, delete everything, a minor age, a ban. Bytes first, then rows. */
+  /** Every photo of a person (on one app, or every app), and their photo consents: leave, delete everything, a minor age, a ban. Bytes first, then rows. */
   async deleteFor(personId: string, app?: AppId): Promise<number> {
     const rows = await this.o.meta.list(personId, app);
     for (const r of rows) { await this.o.storage?.delete(r.storageKey); await this.o.meta.delete(r.id); await this.o.onRemoved?.(personId, r.app, r.id); }
+    await this.o.meta.forgetConsents(personId, app);
     if (rows.length) this.o.log?.(`[photos] deleted ${rows.length} photo(s)${app ? ` on ${app}` : ""}`);
     return rows.length;
+  }
+
+  /**
+   * Staff moderation (the service's audited route): approve or reject one photo. Approval is for a
+   * verified adult only (checked again here). A change in what is rejected makes the rating again.
+   */
+  async moderate(id: string, decision: "approve" | "reject", by: string, reason: string): Promise<PhotoResult<{ personId: string; app: AppId; status: ModerationStatus }>> {
+    const r = await this.o.meta.get(id);
+    if (!r) return { ok: false, reason: "not_found" };
+    if (decision === "approve") { const who = await this.adult(r.personId, r.app); if (who) return { ok: false, reason: who }; }
+    const status: ModerationStatus = decision === "approve" ? "approved" : "rejected";
+    await this.o.meta.update(id, { moderation: status, moderatedBy: by, moderatedAt: this.now(), moderationReason: reason.slice(0, 500) });
+    if ((r.moderation === "rejected") !== (status === "rejected")) {
+      if (status === "rejected") await this.o.onRemoved?.(r.personId, r.app, id);
+      if (this.rating) await this.rerate(r.personId, r.app);
+    }
+    return { ok: true, value: { personId: r.personId, app: r.app, status } };
+  }
+
+  /** One photo's row (staff routes; never returned to a member). */
+  row(id: string) { return this.o.meta.get(id); }
+
+  /** The newest approved photo of a verified adult (the one a probe may carry), or undefined. */
+  async probePhoto(personId: string, app: AppId): Promise<PhotoRow | undefined> {
+    if (!this.o.storage || (await this.adult(personId, app))) return undefined;
+    return (await this.o.meta.list(personId, app)).filter(r => r.moderation === "approved").at(-1);
   }
 
   /**
    * Signed links for staff (the service's photo route, after its audit row): adults only, checked
    * again here. Each link works for PHOTO_VIEW_TTL_MS through GET /api/photos/view/<id>.
    */
-  async staffLinks(personId: string, app: AppId, base: string): Promise<PhotoResult<{ id: string; url: string; expiresAt: number }[]>> {
+  async staffLinks(personId: string, app: AppId, base: string): Promise<PhotoResult<{ id: string; url: string; expiresAt: number; status: ModerationStatus }[]>> {
     if (!this.o.storage) return { ok: false, reason: "photos_off" };
     const who = await this.adult(personId, app);
     if (who) return { ok: false, reason: "adults_only" };
     const exp = this.now() + PHOTO_VIEW_TTL_MS;
     const rows = await this.o.meta.list(personId, app);
-    return { ok: true, value: rows.map(r => ({ id: r.id, url: `${base.replace(/\/+$/, "")}/api/photos/view/${r.id}?exp=${exp}&sig=${this.sign(r.id, exp)}`, expiresAt: exp })) };
+    return { ok: true, value: rows.map(r => ({ id: r.id, url: `${base.replace(/\/+$/, "")}/api/photos/view/${r.id}?exp=${exp}&sig=${this.sign("view", r.id, exp)}`, expiresAt: exp, status: r.moderation ?? "pending" })) };
   }
 
-  private sign(id: string, exp: number) { return createHmac("sha256", `photo-view:${this.o.signingKey}`).update(`${id}.${exp}`).digest("base64url"); }
+  /**
+   * A short-lived link to one approved photo, for a probe's media (the provider fetches it once).
+   * It works for PHOTO_MEDIA_TTL_MS through GET /api/photos/media/<id>, and only while the photo is
+   * still approved and its person still a verified adult.
+   */
+  mediaLink(id: string, base: string): { url: string; expiresAt: number } {
+    const exp = this.now() + PHOTO_MEDIA_TTL_MS;
+    return { url: `${base.replace(/\/+$/, "")}/api/photos/media/${id}?exp=${exp}&sig=${this.sign("media", id, exp)}`, expiresAt: exp };
+  }
+
+  private sign(purpose: "view" | "media", id: string, exp: number) { return createHmac("sha256", `photo-${purpose}:${this.o.signingKey}`).update(`${id}.${exp}`).digest("base64url"); }
+  private signed(purpose: "view" | "media", id: string, exp: number, sig: string, ttl: number) {
+    if (!Number.isFinite(exp) || exp < this.now() || exp > this.now() + ttl) return false;
+    const want = Buffer.from(this.sign(purpose, id, exp)), got = Buffer.from(sig);
+    return want.length === got.length && timingSafeEqual(want, got);
+  }
 
   /** The bytes behind a signed staff link, or undefined (bad or old signature, deleted photo, or the person is no longer an adult). */
   async view(id: string, exp: number, sig: string): Promise<{ bytes: Uint8Array; contentType: PhotoType } | undefined> {
-    if (!this.o.storage || !Number.isFinite(exp) || exp < this.now() || exp > this.now() + PHOTO_VIEW_TTL_MS) return undefined;
-    const want = Buffer.from(this.sign(id, exp)), got = Buffer.from(sig);
-    if (want.length !== got.length || !timingSafeEqual(want, got)) return undefined;
+    if (!this.o.storage || !this.signed("view", id, exp, sig, PHOTO_VIEW_TTL_MS)) return undefined;
     const r = await this.o.meta.get(id);
     if (!r || (await this.adult(r.personId, r.app))) return undefined;
+    const bytes = await this.o.storage.get(r.storageKey);
+    return bytes && { bytes, contentType: r.contentType };
+  }
+
+  /** The bytes behind a media link: only an approved photo of a verified adult, within the hour. */
+  async media(id: string, exp: number, sig: string): Promise<{ bytes: Uint8Array; contentType: PhotoType } | undefined> {
+    if (!this.o.storage || !this.signed("media", id, exp, sig, PHOTO_MEDIA_TTL_MS)) return undefined;
+    const r = await this.o.meta.get(id);
+    if (!r || r.moderation !== "approved" || (await this.adult(r.personId, r.app))) return undefined;
     const bytes = await this.o.storage.get(r.storageKey);
     return bytes && { bytes, contentType: r.contentType };
   }
@@ -385,28 +631,34 @@ export class PhotoService {
    * The /api/photos routes, for the public API (api.ts). `personId` is the signed-in person (null:
    * not signed in, or no person yet). Undefined: not a photo route.
    *   GET  /api/photos/consent         the consent text and version
-   *   GET  /api/photos                 the member's own photos (ids only)
+   *   POST /api/photos/consent         {version}: record the consent without a photo
+   *   GET  /api/photos                 the member's own photos (ids and review status only) and whether they may add photos
    *   POST /api/photos                 the image bytes (Content-Type image/*), X-Photo-Consent: <version>
    *   POST /api/photos/delete          {id}
-   *   GET  /api/photos/view/<id>?exp=&sig=   a signed staff link
+   *   GET  /api/photos/view/<id>?exp=&sig=    a signed staff link
+   *   GET  /api/photos/media/<id>?exp=&sig=   a signed probe media link
    */
   async route(req: Request, path: string, app: AppId, who: () => Promise<string | null | "unauthorized">): Promise<Response | undefined> {
     if (path !== "/api/photos" && !path.startsWith("/api/photos/")) return undefined;
     const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" } });
     const refuse = (reason: PhotoRefusal) => json(reason === "photos_off" ? 503 : reason === "too_large" ? 413 : reason === "adults_only" || reason === "not_verified" ? 403 : reason === "not_found" ? 404 : 400, { ok: false, error: reason });
+    const image = (v: { bytes: Uint8Array; contentType: PhotoType }) => new Response(v.bytes as unknown as BodyInit, { status: 200, headers: { "content-type": v.contentType, "cache-control": "no-store, private", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'", "referrer-policy": "no-referrer", "content-disposition": "inline" } });
     if (req.method === "GET" && path === "/api/photos/consent") return json(200, { ...PHOTO_CONSENT, apps: PHOTO_APPS });
-    const view = /^\/api\/photos\/view\/(ph_[a-f0-9]{24})$/.exec(path);
-    if (view && req.method === "GET") {
+    const link = /^\/api\/photos\/(view|media)\/(ph_[a-f0-9]{24})$/.exec(path);
+    if (link && req.method === "GET") {
       const u = new URL(req.url);
-      const v = await this.view(view[1]!, Number(u.searchParams.get("exp")), u.searchParams.get("sig") ?? "");
-      if (!v) return json(404, { ok: false, error: "not_found" });
-      return new Response(v.bytes as unknown as BodyInit, { status: 200, headers: { "content-type": v.contentType, "cache-control": "no-store, private", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'", "referrer-policy": "no-referrer", "content-disposition": "inline" } });
+      const exp = Number(u.searchParams.get("exp")), sig = u.searchParams.get("sig") ?? "";
+      const v = link[1] === "view" ? await this.view(link[2]!, exp, sig) : await this.media(link[2]!, exp, sig);
+      return v ? image(v) : json(404, { ok: false, error: "not_found" });
     }
     if (!this.enabled) return refuse("photos_off");
     const person = await who();
     if (person === "unauthorized") return json(401, { ok: false, error: "unauthorized" });
     if (!person) return refuse("adults_only");
-    if (req.method === "GET" && path === "/api/photos") return json(200, { ok: true, photos: await this.list(person, app) });
+    if (req.method === "GET" && path === "/api/photos") {
+      const eligible = PHOTO_APPS.includes(app) && !(await this.adult(person, app));
+      return json(200, { ok: true, eligible, photos: eligible ? await this.list(person, app) : [] });
+    }
     if (req.method === "POST" && path === "/api/photos") {
       // Read with a cap: a chunked body (no Content-Length) is abandoned as soon as it passes the limit.
       const buf = await readCapped(req, PHOTO_MAX_BYTES);
@@ -414,9 +666,14 @@ export class PhotoService {
       const r = await this.upload(person, app, buf, req.headers.get("x-photo-consent") ?? undefined);
       return r.ok ? json(200, { ok: true, id: r.value.id }) : refuse(r.reason);
     }
-    if (req.method === "POST" && path === "/api/photos/delete") {
-      let id: unknown;
-      try { id = ((await req.json()) as Record<string, unknown>)?.id; } catch { /* not JSON */ }
+    if (req.method === "POST" && (path === "/api/photos/delete" || path === "/api/photos/consent")) {
+      let b: Record<string, unknown> | undefined;
+      try { b = (await req.json()) as Record<string, unknown>; } catch { /* not JSON */ }
+      if (path === "/api/photos/consent") {
+        const r = await this.agree(person, app, b?.version);
+        return r.ok ? json(200, { ok: true, version: r.value.version }) : refuse(r.reason);
+      }
+      const id = b?.id;
       if (typeof id !== "string" || !/^ph_[a-f0-9]{24}$/.test(id)) return json(400, { ok: false, error: "invalid" });
       return (await this.remove(person, app, id)) ? json(200, { ok: true }) : refuse("not_found");
     }

@@ -2387,13 +2387,15 @@ export class ConsentNetwork implements NetworkUnderTest {
       : [copy.probe(o.category, o.detail, when, area, this.probeReason(id, o), times), generic];
     // D5: a probe that would carry another member's name or employer falls back to the generic text.
     const text = second ?? (this.probeNames(body, others) ? (this.probeNames(fallback, others) ? copy.probe(o.category, "", when, area, undefined, times) : fallback) : body);
+    // The pack's probe may name whose photo rides on it (slop, behind its flag); never on a fallback text.
+    const photoOf = packText && text === packText ? this.opts.hooks?.probePhoto?.(this.hookOpp(o), id, { input: this.inputOnce() }) : undefined;
     o.offered = { ...o.offered, [id]: options };
     if (o.requester === id) { const r = this.requests.find(x => x.oppId === o.id && x.memberId === id); if (r) r.lastConfirmAt = now; }
     const window = options.length ? { start: options[0]!.start, end: options[options.length - 1]!.end } : { start: now + DAY, end: now + 5 * DAY };
     // The requester's time question is scheduling for what they asked for (not a probe of their interest).
     this.send(m, text, timesOnly ? { type: "scheduling", proactive: false, proposalId: o.id, ...(options.length ? { timeOptions: options } : {}) } : {
       type: "probe", proactive: invite, probe: { key: o.id, category: o.category, participants: [...o.participants], kind: o.kind, window },
-      ...(options.length ? { timeOptions: options } : {}),
+      ...(options.length ? { timeOptions: options } : {}), ...(photoOf && others.includes(photoOf) ? { photoOf } : {}),
     }, "probe", { about: o.participants, fallback, hook: { t: "probe", oppId: o.id, id }, noDefer: true });
   }
 

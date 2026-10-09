@@ -1,13 +1,17 @@
 // /settings: log in by phone, then see this app's membership, export it, stop messages,
 // leave this app, or delete everything tied to the phone number.
 // Root: [data-settings]. Steps: loading, phone, code, account, gone.
-// Actions: button[data-action="export|stop|leave|delete-all|logout"].
+// Actions: button[data-action="export|stop|leave|delete-all|logout|photo-agree"].
+// Photos (slop.date): [data-when="photos"] is shown only to a signed-in verified adult (GET /api/photos
+// says eligible; the API refuses everyone else too). It holds form[data-form="photos"] with the
+// current consent text ([data-slot="photoConsent"], from the API) and its checkbox, a file input, and
+// ul[data-photo-list] with a delete button per photo. No score or rating is ever shown.
 // Confirms: dialog[data-confirm="stop|leave|delete-all"] holding form[method=dialog] with a
 // button value="confirm". The delete-all dialog also holds input[name=confirmText] that must
 // equal its data-word attribute. A page without the dialog cannot run the action (fail closed).
-import { api, type Me } from "./api.ts";
+import { api, type Me, type PhotoList } from "./api.ts";
 import { mountAuth } from "./auth.ts";
-import { $, fill, formatDate, message, ready, showStep, when } from "./ui.ts";
+import { $, busy, fill, formatDate, message, ready, setError, showStep, when } from "./ui.ts";
 
 const STATE_LABELS: Record<string, string> = {
   active: "Active",
@@ -50,9 +54,61 @@ function render(root: HTMLElement, me: Me): void {
   showStep(root, "account");
 }
 
+/** Photo refusals in the page's words (the platform's codes, packages/platform/src/photos.ts). */
+const PHOTO_MESSAGES: Record<string, string> = {
+  consent_required: "Please tick the box to agree to how we keep your photos.",
+  too_large: "That photo is too large. The limit is 8 MB.",
+  bad_type: "Please choose a JPEG, PNG or WebP photo.",
+  bad_image: "We could not read that photo. Please try another one.",
+  too_many: "You already have 6 photos. Delete one to add another.",
+  photos_off: "Photos are not available right now.",
+};
+const STATUS_LABELS: Record<string, string> = { pending: "Waiting for a check", approved: "Checked", rejected: "Not used" };
+
+/** The consent version the page shows, set from the API. */
+let photoConsentVersion = "";
+
+function renderPhotos(root: HTMLElement, list: PhotoList): void {
+  when(root, "photos", list.eligible);
+  when(root, "no-photos", list.eligible && list.photos.length === 0);
+  const ul = $(root, "[data-photo-list]");
+  if (!ul) return;
+  ul.replaceChildren(
+    ...list.photos.map((p, i) => {
+      const li = document.createElement("li");
+      const label = document.createElement("span");
+      label.textContent = `Photo ${i + 1}, added ${formatDate(new Date(p.createdAt).toISOString())} (${STATUS_LABELS[p.status] ?? p.status})`;
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "linkish";
+      del.textContent = "Delete";
+      del.setAttribute("aria-label", `Delete photo ${i + 1}`);
+      del.addEventListener("click", async () => {
+        del.disabled = true;
+        const res = await api.deletePhoto(p.id);
+        if (!res.ok) { del.disabled = false; return status(root, message(root, res.error)); }
+        status(root, "Photo deleted.");
+        await refreshPhotos(root);
+      });
+      li.append(label, " ", del);
+      return li;
+    }),
+  );
+}
+
+/** Shows the photo section only to a verified adult; hides it on any refusal or error. */
+async function refreshPhotos(root: HTMLElement): Promise<void> {
+  if (!$(root, "[data-photos]")) return;
+  const [consent, list] = await Promise.all([api.photoConsent(), api.photos()]);
+  if (!consent.ok || !list.ok) return when(root, "photos", false);
+  photoConsentVersion = consent.data.version;
+  fill(root, { photoConsent: consent.data.text });
+  renderPhotos(root, list.data);
+}
+
 async function refresh(root: HTMLElement): Promise<void> {
   const me = await api.me();
-  if (me.ok) return render(root, me.data);
+  if (me.ok) { render(root, me.data); await refreshPhotos(root); return; }
   showStep(root, "phone");
   if (me.error !== "unauthorized") flowError(root, message(root, me.error));
 }
@@ -144,6 +200,30 @@ export async function mountSettings(root: HTMLElement): Promise<void> {
     status(root, "");
     fill(root, { goneText: root.dataset.goneAll ?? "Everything tied to your phone number is deleted." });
     showStep(root, "gone");
+  });
+
+  const photoForm = root.querySelector<HTMLFormElement>('form[data-form="photos"]');
+  photoForm?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const agreed = photoForm.querySelector<HTMLInputElement>('input[name="consent"]')?.checked ?? false;
+    const file = photoForm.querySelector<HTMLInputElement>('input[name="photo"]')?.files?.[0];
+    if (!agreed) return setError(photoForm, PHOTO_MESSAGES.consent_required!);
+    if (!file) return setError(photoForm, "Please choose a photo.");
+    setError(photoForm, "");
+    const res = await busy(photoForm, () => api.uploadPhoto(file, photoConsentVersion));
+    if (!res.ok) return setError(photoForm, (res.code && PHOTO_MESSAGES[res.code]) || message(root, res.error));
+    photoForm.reset();
+    status(root, "Photo added. Someone on our team checks it before it is used.");
+    await refreshPhotos(root);
+  });
+
+  act("photo-agree", async () => {
+    if (!photoForm) return;
+    if (!photoForm.querySelector<HTMLInputElement>('input[name="consent"]')?.checked) return setError(photoForm, PHOTO_MESSAGES.consent_required!);
+    setError(photoForm, "");
+    const res = await api.agreePhotos(photoConsentVersion);
+    if (!res.ok) return setError(photoForm, (res.code && PHOTO_MESSAGES[res.code]) || message(root, res.error));
+    status(root, "Thanks. You can now send your photos by text.");
   });
 
   act("logout", async () => {

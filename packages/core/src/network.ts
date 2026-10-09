@@ -40,6 +40,12 @@ export interface SimMeta {
   meetingAt?: number;
   /** For relay messages: the original sender. */
   relayFrom?: MemberId;
+  /**
+   * Outbound only. A photo of this member may ride on the message (a slop.date probe, behind
+   * SLOP_PROBE_PHOTO). Only a reference: the service checks both people and the photo at send time
+   * and attaches a short-lived link, or sends the text alone.
+   */
+  photoOf?: MemberId;
   /** For probes: the category and a stable key for the opportunity being checked. */
   probe?: { key: string; category: Category; participants?: MemberId[]; kind?: OpportunityKind; window?: { start: number; end: number } };
   /**
