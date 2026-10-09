@@ -63,10 +63,18 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
         updates: (personId, app, assistant, token) => (isAppId(app) ? svc.updatesFor(personId, app, assistant, token) : Promise.resolve([])),
         assistantLinked: (personId, assistant, active) => svc.assistantLinked(personId, assistant, active),
       } : {}),
+      // "<assistant> is now connected ... Reply DISCONNECT" in the person's thread on that app (PRD 11.5).
+      assistantConnected: (personId, app, assistant) => (isAppId(app) ? svc.assistantConnected(personId, app, assistant) : Promise.resolve()),
     }),
     store, issuer, hostMap, env, proxySecret: o.proxySecret, log, now: o.now ?? (() => svc.clock.now()),
     // The token's hostname must be one of that site's hosts (as on the platform API), never another site.
     turnstile: siteKey && env.TURNSTILE_SECRET_KEY ? { siteKey, verify: (t, ip, app) => new CloudflareTurnstile(env.TURNSTILE_SECRET_KEY!).verify(t, ip, dev ? undefined : app ? siteHosts(app) : []) } : undefined,
+  });
+  // DISCONNECT by text, the export's assistants, and a phone change that moves the grants (F25).
+  svc.useAssistants({
+    list: (e164, app) => (isMcpAppId(app) ? mcp.assistantsOf(e164, app) : Promise.resolve([])),
+    disconnect: (e164, app, grantId) => (isMcpAppId(app) ? mcp.disconnect(e164, app, grantId) : Promise.resolve(false)),
+    rekeyPhone: (oldE164, newE164) => mcp.rekeyPhone(oldE164, newE164),
   });
   svc.onForget(async ctx => {
     // Leaving an app (or deleting everything) also deletes the grants: no row keeps the phone next to the app.

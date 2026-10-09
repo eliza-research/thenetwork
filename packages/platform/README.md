@@ -19,7 +19,8 @@ This package holds what the apps share: people, verified phones, memberships per
 | `src/otp.ts` | `OtpService` (3 sends per number per hour, 10 per IP per hour, 30 s gap, 10 min expiry, 5 tries), `TwilioVerifyProvider`, `DevConsoleProvider` |
 | `src/turnstile.ts` | Cloudflare Turnstile check; a dev bypass that refuses production |
 | `src/sessions.ts` | Random 32-byte tokens, only a keyed hash is stored, one app each, 30 days, rotation after a day, 90 days at most from the login, step-up for delete everything |
-| `src/accounts.ts` | Join, invite, stop, leave one app, delete everything, export one app, share grants |
+| `src/accounts.ts` | Join, invite (and its end: under 13, a "no thanks", 30 days unanswered), stop, leave one app, delete everything, export one app, share grants, soft-approval flags, the staff phone move |
+| `src/approval.ts` | Soft approval at join: bursts from one IP /24 or one 1000-block of numbers, risk words |
 | `src/api.ts` | `createPublicApi(...)`: the `/api/*` routes the sites call |
 
 ## Database
@@ -67,6 +68,9 @@ The app comes from the host a site router signed (`src/proxy.ts`, `PLATFORM_PROX
 - A number not seen for 12 months is put on hold at its next login or message (`phone_identities.hold`). While it is held it has no person: `/api/me` says `reason: "review"`, and export, leave, delete and join are refused. Staff decide with `Accounts.clearHold` (the service's `/holds` route).
 - A delete of everything leaves a suppression hash. A staff invite to that number is refused; a new join by the person lifts it.
 - `/api/me/share` gives the same answer whether or not a grant was stored.
+- A staff invite names a number nobody has proved: its `verified_at` stays null until a message or a code comes from it. An under-13 answer or a "no thanks" ends the invite, and a person the invite made goes with it (only the age floor and the decline stay). An invite nobody answers ends after 30 days (the service's purge).
+- Soft approval (PRD 28.3): every join is let in. A join from a burst (5 from one IP /24 in 10 minutes, 3 from one 1000-block of numbers in an hour) or with risk words is flagged (`platform.membership_flags`); its member onboards but is never matched until staff clear it. A VoIP check needs the carrier lookup (not built).
+- Export (F24) also holds the base-profile grants into the app (fields and times, never the other app's name), photo metadata (no bytes) and the connected assistants (name, scopes, since).
 - OTP: 3 codes per number per hour across every app, 10 per IP, a 30 s gap, a global budget (500 an hour), and 10 code checks per number and 30 per IP an hour.
 - The dev OTP console, the Turnstile bypass, the dev hash key and the trusted `X-Forwarded-Host` run only with `PLATFORM_ENV=dev`.
 - Nothing is sent in tests. The Twilio adapter runs only with `OTP_PROVIDER=twilio` and its credentials.
@@ -77,5 +81,5 @@ The platform's unit tests were deleted on 2026-10-08 (founder decision: simulati
 
 ## Known gaps
 
-- Not built: the carrier lookup (VoIP, landline, recent port), Turnstile on the sites, the share UI, an engine view that reads share grants, the demo replay, and the app-specific tables (peon orgs, roles, applications; slop dating preferences; `facets.sensitive_class`).
+- Not built: the carrier lookup (VoIP, landline, recent port), the share UI, an engine view that reads share grants, the demo replay, and the app-specific tables (peon orgs, roles, applications; slop dating preferences; `facets.sensitive_class`).
 - Code imports `@thenetwork/platform` by relative path.

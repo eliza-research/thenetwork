@@ -424,10 +424,10 @@ export interface MemberTimeline {
 /**
  * Staff roles (admin-console 4.1, platform plan 5.1). Each is held for one app or for every app
  * ("role@app", "role@*"). engineer: simulated worlds only (game mode, the lab). cross_app_safety: the
- * cross-app person view only, and only for every app ("@*").
+ * cross-app person view only, and only for every app ("@*"). support: phone changes (F25), for every app.
  */
-export type StaffRole = "admin" | "reviewer" | "safety" | "analyst" | "engineer" | "cross_app_safety";
-export const STAFF_ROLES: readonly StaffRole[] = ["admin", "reviewer", "safety", "analyst", "engineer", "cross_app_safety"];
+export type StaffRole = "admin" | "reviewer" | "safety" | "analyst" | "engineer" | "cross_app_safety" | "support";
+export const STAFF_ROLES: readonly StaffRole[] = ["admin", "reviewer", "safety", "analyst", "engineer", "cross_app_safety", "support"];
 /** One role for one app ("ntwrk", "slop", ...) or for every app ("*"). */
 export interface RoleGrant { role: StaffRole; app: string }
 export interface StaffUser {

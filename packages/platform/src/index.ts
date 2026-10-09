@@ -13,3 +13,4 @@ export * from "./sessions.ts";
 export * from "./accounts.ts";
 export * from "./api.ts";
 export * from "./photos.ts";
+export * from "./approval.ts";

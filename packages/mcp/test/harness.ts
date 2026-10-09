@@ -22,7 +22,7 @@ export const PHONE_A = "+12125550142";
 export const PHONE_B = "+12125550143";
 export const HASH_KEY = "test-hash-key";
 
-export function setup(o: Partial<McpHandlerOptions> & { store?: OAuthStore; submitProfile?: PlatformParts["submitProfile"]; updates?: PlatformParts["updates"]; assistantLinked?: PlatformParts["assistantLinked"] } = {}) {
+export function setup(o: Partial<McpHandlerOptions> & { store?: OAuthStore; submitProfile?: PlatformParts["submitProfile"]; updates?: PlatformParts["updates"]; assistantLinked?: PlatformParts["assistantLinked"]; assistantConnected?: PlatformParts["assistantConnected"] } = {}) {
   const clock = { t: Date.UTC(2026, 9, 8, 12, 0, 0) };
   const now = () => clock.t;
   const people = new MemoryPeopleStore();
@@ -34,7 +34,7 @@ export function setup(o: Partial<McpHandlerOptions> & { store?: OAuthStore; subm
   const logs: string[] = [];
   const store = o.store ?? new MemoryOAuthStore();
   const handler = createMcpHandler({
-    platform: platformHooks({ store: people, otp, accounts, sessions, app: appOf, cookieName: id => `sid_${id}`, ...(o.submitProfile ? { submitProfile: o.submitProfile } : {}), ...(o.updates ? { updates: o.updates } : {}), ...(o.assistantLinked ? { assistantLinked: o.assistantLinked } : {}) }),
+    platform: platformHooks({ store: people, otp, accounts, sessions, app: appOf, cookieName: id => `sid_${id}`, ...(o.submitProfile ? { submitProfile: o.submitProfile } : {}), ...(o.updates ? { updates: o.updates } : {}), ...(o.assistantLinked ? { assistantLinked: o.assistantLinked } : {}), ...(o.assistantConnected ? { assistantConnected: o.assistantConnected } : {}) }),
     store, now, minOtpStartMs: 0, log: s => logs.push(s), ...o,
   });
   const fetch = async (req: Request) => (await handler.fetch(req)) ?? new Response("not mine", { status: 418 });

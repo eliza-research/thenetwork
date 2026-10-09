@@ -146,6 +146,10 @@ export class PgOAuthStore implements OAuthStore {
     await this.sql`delete from oauth.clients c where c.created_at <= ${ts(at - CLIENT_UNUSED_MS)} and not exists (select 1 from oauth.grants g where g.client_id = c.id)`;
   }
 
+  async rekeyPhone(oldKey: string, newKey: string) {
+    return (await this.sql`update oauth.grants set phone_key = ${newKey} where phone_key = ${oldKey} returning id`).length;
+  }
+
   async forgetPhone(phoneKey: string, e164: string, app?: McpAppId) {
     const rows = app
       ? await this.sql`delete from oauth.grants where phone_key = ${phoneKey} and app_id = ${app} returning id`

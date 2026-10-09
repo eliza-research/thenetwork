@@ -105,7 +105,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   const log = o.log ?? (s => console.log(s));
   const accounts = new Accounts(o.store, {
     hashKey, now, env, apps: id => apps[id],
-    hooks: { onJoin: o.onJoin, onStop: o.onStop, onForget: o.onForget, onExport: o.onExport, onAgeLowered: o.onAgeLowered },
+    hooks: { onJoin: o.onJoin, onStop: o.onStop, onForget: o.onForget, onExport: o.onExport, onAgeLowered: o.onAgeLowered, onExportAccount: o.onExportAccount },
   });
   const otp = new OtpService(o.store, o.otp, { hashKey, now, limits: o.otpLimits, log });
   const sessions = new SessionService(o.store, { now, secret: sessionSecret });
@@ -246,7 +246,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           const input = parseJoin(b);
           if (!input) return json(400, { ok: false, error: "invalid" });
           try {
-            const r = await accounts.join(app, who, input);
+            // The client IP feeds the soft-approval rules (approval.ts): a burst of joins from one place is flagged.
+            const r = await accounts.join(app, who, input, { ip });
             if (!r.ok) return json(400, { ok: false, error: r.error, ...(r.error === "invite_only" ? { message: app.brand.inviteOnly } : r.error === "under_age" ? { message: app.brand.underAge } : r.error === "review" ? { message: REVIEW_MESSAGE } : {}) });
             return json(200, { ok: true, membership: publicMembership(r.membership) });
           } catch (e) {

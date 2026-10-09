@@ -38,7 +38,7 @@ export interface SnapshotScope { app: string; city?: string }
  * join, or left) are left out. A missing age stays undefined, which the Network treats as unknown (a
  * minor until the member says otherwise). An opted-out member reads as "paused". Each member carries
  * `accountStatus`: the Network keeps a paused or restricted account out of matching and sends it only
- * replies and safety notices. Blocks are person to person: a block made on any app is a "blocked"
+ * replies and safety notices; a flagged one (soft approval) onboards but is never matched. Blocks are person to person: a block made on any app is a "blocked"
  * edge here when both people are members of this app (it says nothing about the other app).
  * A person on a safety hold on any app (platform.person_safety, read through platform.held_people:
  * ids only) carries `safetyHold`: the Network never matches or contacts them but for replies and
@@ -74,9 +74,11 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
   return {
     now,
     // The account status rides along (the Network reads it): a paused or restricted account is never matched or contacted.
-    members: (members as any[]).filter(r => keep(r.id)).map((r): Member & { accountStatus: string; safetyHold?: boolean } => ({
+    members: (members as any[]).filter(r => keep(r.id)).map((r): Member & { accountStatus: string; safetyHold?: boolean; flagged?: boolean } => ({
       id: r.id, name: r.name, homeCity: r.home_city, state: r.opted_out ? "paused" : r.participation_state, prefs: r.prefs, accountStatus: r.account_status,
       ...(r.person_id && held.has(r.person_id) ? { safetyHold: true } : {}),
+      // Soft approval: a flagged member is never matched until staff clear it (migration 0018).
+      ...(r.flagged ? { flagged: true } : {}),
       // A missing age stays missing (undefined), never 0: 0 is a valid age under 13, and the Network
       // would decline the member and delete their data. Missing means unknown: treated as a minor and asked (network.md 6.3).
       ...(r.invited_by ? { invitedBy: r.invited_by } : {}), joinedAt: ms(r.joined_at) ?? 0, age: r.age ?? (undefined as unknown as number), unansweredProactive: r.unanswered_proactive,

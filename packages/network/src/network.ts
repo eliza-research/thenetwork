@@ -272,6 +272,8 @@ interface MemberState {
   optedOut: boolean;
   /** The member record's account status when staff paused or restricted the account: never matched, only replies and safety notices. */
   account?: "paused" | "restricted";
+  /** Soft approval (platform approval.ts): a join a rule flagged. Onboards and gets replies, never matched until staff clear it. */
+  flagged?: boolean;
   /** Initial invites (and the re-engagement) sent since the member last wrote to us. */
   pendingAsks: { kind: SendKind; at: number }[];
   /** Of those, how many have waited 72 h or more (two-unanswered pause, on initial invites only). */
@@ -3127,7 +3129,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** May this member take a seat in a plan now: an active adult, reachable, not on hold, not in another open opportunity. */
   private planSeatOk(m: MemberState, exceptOpp?: string, o: { busyOk?: boolean } = {}): boolean {
     this.syncRecord(m);
-    return !m.minor && !m.account && !m.optedOut && m.stage === "active" && !m.onlyWhenAsked && this.trust.ok(m.id) && validAge(m.age ?? m.statedAge) && (!!o.busyOk || !this.busy(m.id, exceptOpp));
+    return !m.minor && !m.account && !m.flagged && !m.optedOut && m.stage === "active" && !m.onlyWhenAsked && this.trust.ok(m.id) && validAge(m.age ?? m.statedAge) && (!!o.busyOk || !this.busy(m.id, exceptOpp));
   }
 
   /**
@@ -3951,7 +3953,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         intents.push({ id: `${m.id}:li:${d}`, memberId: m.id, objective: def.text, category: def.category, details: `format: ${def.format}; tags: ${[...def.needsInterests, ...def.needsSkills, def.pool ?? ""].filter(Boolean).join(",")}`, horizonDays: LEARNED_DESIRE_DAYS, status: "active", createdAt: statedAt });
       }
     }
-    const holds = [...this.members.values()].filter(m => !this.trust.ok(m.id) || m.minor || m.minorSignal || this.reportHeld(m.id) || m.personHold).map(m => ({ memberId: m.id, from: now - HOUR }));
+    const holds = [...this.members.values()].filter(m => !this.trust.ok(m.id) || m.minor || m.minorSignal || m.flagged || !!this.record(m.id)?.flagged || this.reportHeld(m.id) || m.personHold).map(m => ({ memberId: m.id, from: now - HOUR }));
     // A person held on any app who has not written here yet (no member state): held too (platform.person_safety).
     for (const x of snap.members as MemberRecord[]) if (x.safetyHold && nyc.has(x.id) && !this.members.has(x.id)) holds.push({ memberId: x.id, from: now - HOUR });
     const reliability = Object.fromEntries([...this.members.values()].filter(m => m.noShows > 0).map(m => [m.id, { noShows: m.noShows, completedSinceLastNoShow: m.completedSinceNoShow }]));
@@ -4566,13 +4568,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (m.onlyWhenAsked && kind !== "reengage" && (o.proactive || (ASK_KINDS.has(kind) && !o.reply))) return no("only_when_asked");
     if (ABOUT_OTHERS.has(kind)) {
       if (m.minor) return no("minor");
+      if (m.flagged) return no("flagged");
       if (!this.trust.ok(id)) return no("on_watch");
       for (const x of o.about ?? []) {
         if (x === id) continue;
         if (this.blocked(id, x)) return no("blocked_pair");
         const other = this.members.get(x);
         if (other) this.syncRecord(other);
-        if (!other || other.minor || other.account || other.personHold || this.reportHeld(x) || this.declinedIds.has(x)) return no("other_not_matchable");
+        if (!other || other.minor || other.account || other.personHold || other.flagged || this.reportHeld(x) || this.declinedIds.has(x)) return no("other_not_matchable");
         if (!this.trust.ok(x)) return no("other_on_watch");
       }
     }
@@ -4709,7 +4712,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   eligible(id: MemberId, exceptOpp?: string, asked = false): boolean {
     const m = this.members.get(id);
     if (m) this.syncRecord(m);
-    if (!m || m.minor || m.account || m.optedOut || m.stage === "new" || !this.trust.ok(id) || m.onlyWhenAsked || this.reportHeld(id) || m.personHold) return false;
+    if (!m || m.minor || m.account || m.flagged || m.optedOut || m.stage === "new" || !this.trust.ok(id) || m.onlyWhenAsked || this.reportHeld(id) || m.personHold) return false;
     // Room on the Blooio streak for an interruption (at most 1 message unanswered), or logistics for a requester.
     const c = { outboundSinceInbound: m.outbound ?? 0 };
     if (!(asked ? attention.canSendLogistics(c) : attention.canInterrupt(c))) return false;
@@ -4772,17 +4775,18 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (r.invitedBy && r.invitedBy !== m.invitedBy) m.invitedBy = r.invitedBy;
       const acct = r.accountStatus === "paused" || r.accountStatus === "restricted" ? r.accountStatus : undefined;
       if (acct !== m.account) { if (acct) m.account = acct; else delete m.account; }
+      if (!!r.flagged !== !!m.flagged) { if (r.flagged) m.flagged = true; else delete m.flagged; }
       if (validAge(r.age) && r.age !== m.age) m.age = r.age;
       if (validAge(r.age) && isMinor(r.age) && !m.minor) { m.minor = true; this.ctx.log("minor_record", { memberId: m.id }); this.minorAfterContact(m.id); }
       // The person-level safety hold (service/snapshot.ts): set and cleared by staff on the platform.
       if (!!r.safetyHold !== !!m.personHold) { if (r.safetyHold) m.personHold = true; else delete m.personHold; }
     }
-    return m.minor || !!m.account || !!m.personHold;
+    return m.minor || !!m.account || !!m.personHold || !!m.flagged;
   }
 
   /** At the start of a unit: read the record again, and take a member the record now keeps out of matching out of every open opportunity. */
   private syncMember(m: MemberState) {
-    if (this.syncRecord(m) && this.busy(m.id)) this.dropMember(m.id, m.account ? `account ${m.account}` : m.minor ? "minors policy" : "safety hold");
+    if (this.syncRecord(m) && this.busy(m.id)) this.dropMember(m.id, m.account ? `account ${m.account}` : m.minor ? "minors policy" : m.flagged ? "flagged for review" : "safety hold");
   }
 
   member(id: MemberId): MemberState {
@@ -5016,7 +5020,7 @@ export interface NetworkState {
 }
 
 /** A member record as the snapshot gives it. The production snapshot also carries the account status (service/snapshot.ts). */
-type MemberRecord = WorldSnapshot["members"][number] & { accountStatus?: string; safetyHold?: boolean };
+type MemberRecord = WorldSnapshot["members"][number] & { accountStatus?: string; safetyHold?: boolean; flagged?: boolean };
 
 function interestLabel(tag: string) { return INTERESTS.find(i => i.tag === tag)?.label ?? tag.replace(/_/g, " "); }
 function skillLabel(tag: string) { const l = SKILLS.find(s => s.tag === tag)?.label ?? tag; return l; }
