@@ -15,6 +15,7 @@ export function createServiceNetworkStore(client: NetworkServiceClient, turn: Se
   return {
     async getMemberContext(): Promise<NetworkMemberContext | null> {
       return {
+        app: turn.app,
         memberId: turn.memberId,
         firstName: ctx.firstName ?? "",
         city: ctx.city ?? "",

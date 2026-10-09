@@ -96,3 +96,12 @@ No model or messaging provider ran. The fixture database was closed and dropped.
 
 Alternatives: probing the existing app route with empty text could choose an inactive fallback app; caching eligibility could retain revoked membership.
 The canonical phone-only read avoids both problems and adds no membership owner or cache.
+
+## Latest main alignment (2026-10-09)
+
+The branch now includes Network main `9e809e58`, including the service-backed plugin contract and relay work.
+The standalone plugin keeps its scope types inside the package. Its wire app IDs supply the scope check without importing the platform host. The service-backed context retains the server's canonical app so the provider can verify its member scope.
+
+Root, sites and plugin TypeScript pass. The backend HTTP suite passes 30 tests and 441 assertions; generated plugin skill snapshots match. The standalone plugin browser bundle builds with its declared Eliza core host dependency external. These local checks reuse the installed Eliza source/dependencies; current hosted CI must qualify the new main/submodule graph.
+
+The upstream go-live plan still requires the service's signed internal endpoints and Cloud delivery adapter. These are not supplied by this read-only PR. The separate Eliza takeover branch scopes Network to another Personal assistant/history; that must be reconciled with the intended continuous-chat behavior before activation.
