@@ -7,6 +7,7 @@
 // The SQL is in packages/network/db/network-state.sql.
 import { SQL } from "bun";
 import type { ConsentNetwork, NetworkState } from "./network.ts";
+import { relayRows } from "./relay.ts";
 
 export interface NetworkStore {
   load(): Promise<NetworkState | undefined>;
@@ -210,6 +211,18 @@ export class PgStore implements NetworkStore {
       for (let i = 0; i < rows.requests.length; i += 500) await tx`insert into network.requests ${tx(rows.requests.slice(i, i + 500))}
         on conflict (id) do update set outcome = excluded.outcome, tries = excluded.tries, opportunity_id = excluded.opportunity_id,
           fulfilled_at = excluded.fulfilled_at, updated_at = excluded.updated_at`;
+      // The relay tables (migration 0013), when the database has them. Rows are never deleted here: the
+      // relay log is a safety record (ids, statuses, hashes); a text is kept only while it is held.
+      const [{ relay }] = await tx`select to_regclass('network.relay_threads') is not null as relay`;
+      if (relay) {
+        const r = relayRows(state.relay, this.app);
+        for (let i = 0; i < r.relay_threads.length; i += 500) await tx`insert into network.relay_threads ${tx(r.relay_threads.slice(i, i + 500))}
+          on conflict (app_id, id) do update set members = excluded.members, closes_at = excluded.closes_at, closed_at = excluded.closed_at, closed_reason = excluded.closed_reason`;
+        for (let i = 0; i < r.relay_log.length; i += 500) await tx`insert into network.relay_log ${tx(r.relay_log.slice(i, i + 500))}
+          on conflict (app_id, id) do update set status = excluded.status, reason = excluded.reason, body = excluded.body, from_name = excluded.from_name`;
+        for (let i = 0; i < r.contact_shares.length; i += 500) await tx`insert into network.contact_shares ${tx(r.contact_shares.slice(i, i + 500))}
+          on conflict (app_id, id) do update set status = excluded.status, at = excluded.at`;
+      }
       if (also) await also(tx);
     });
   }

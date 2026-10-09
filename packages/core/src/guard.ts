@@ -16,7 +16,9 @@
 //    sliding window of the fact's content words; from prototypes/connector-mcp, audit P1-3);
 //  - exact strings (`exact`: ids, names, contact values): any substring, also with punctuation and
 //    spaces squashed out when 6+ characters long;
-//  - private vocabulary (single words or phrases that must never appear).
+//  - private vocabulary (single words or phrases that must never appear);
+//  - photo ratings (`ratings`: slop:rating:* and appearance:* facet tags): the tag, its key=value and
+//    its number never appear, and while any rating exists, rating and percentile phrases are refused.
 //  - sensitive terms (SENSITIVE_TERMS: health, sexuality, recovery, religion, legal, immigration...)
 //    inside any forbidden string or fact, matched as whole words on their own, however short the
 //    fact is ("gay", "HIV+", "AA", "IVF", "sober"; audit core-1). One- and two-word facts with no
@@ -234,8 +236,30 @@ export interface LeakOptions {
    * prefixes and simulator tokens like "QX-4821-ORCHID"), reported as `canary:shape`. Default false.
    */
   canaryShapes?: boolean;
+  /**
+   * Facet tags that carry a private photo rating (`isRatingTag`: "slop:rating:face=0.73",
+   * "appearance:overall=1.20"). The tag, its "key=value" and a decimal value never appear in a
+   * message; with any rating given, phrases that state a rating, a score or a percentile
+   * (`RATING_PATTERNS`) are refused too. Ratings are never shown to anyone, the rated member included.
+   */
+  ratings?: string[];
   /** Longest text checked (default 20,000 characters). Longer text is refused as `too_long` (core-7). */
   maxLength?: number;
+}
+
+/** A facet tag that carries a private photo rating: "<app>:rating:<key>=<value>" (the platform's rater) or "appearance:<key>=<value>" (the slop pack). */
+export function isRatingTag(tag: string): boolean { return /^(?:[a-z][a-z0-9_-]*:rating:|appearance:)/i.test(tag); }
+/** Phrases that state a rating, a score or a percentile about someone (refused while any rating exists: `LeakOptions.ratings`). */
+export const RATING_PATTERNS: readonly RegExp[] = [
+  /\b\d{1,3}(?:st|nd|rd|th)?\s+percentile\b/i, /\bpercentiles?\b/i, /\btop\s+\d{1,2}\s*(?:%|percent)/i,
+  /\b(?:rated|rating|scored?|scores)\s+(?:of\s+|a\s+|an\s+)?-?\d+(?:\.\d+)?\b/i, /\b\d+(?:\.\d+)?\s*(?:\/|out of)\s*10\b/i,
+  /\b(?:looks|attractiveness|appearance|face|body|photo)\s+(?:score|rating|rank)\b/i,
+];
+/** The exact strings a rating tag must never show: the tag, its key=value, and its value when it is a decimal number. */
+function ratingStrings(tag: string): string[] {
+  const kv = tag.replace(/^(?:[a-z][a-z0-9_-]*:rating:|appearance:)/i, "");
+  const v = kv.includes("=") ? kv.slice(kv.indexOf("=") + 1) : "";
+  return [tag, kv, ...(/^-?\d*\.\d{2,}$/.test(v) ? [v] : [])].filter(x => x.length >= 3);
 }
 
 /** Canary-shaped tokens (see `LeakOptions.canaryShapes`). The second pattern is case-sensitive on purpose. */
@@ -419,6 +443,8 @@ export class LeakGuard {
   private allow: string[];
   private contacts: boolean;
   private canaryShapes: boolean;
+  /** Any rating given: rating and percentile phrases are refused (`LeakOptions.ratings`). */
+  private ratingPhrases: boolean;
   private maxLength: number;
   /** Labels of inputs that compiled to nothing and can never match (core-m3): an empty canary, an empty exact string, an empty fact. */
   readonly dropped: string[] = [];
@@ -471,7 +497,9 @@ export class LeakGuard {
         for (const t of fact.want) { const l = this.fuzzyIndex.get(t); if (l) l.push(e); else this.fuzzyIndex.set(t, [e]); }
       }
     }
-    for (const f of o.exact ?? []) {
+    const ratings = (o.ratings ?? []).filter(isRatingTag);
+    this.ratingPhrases = ratings.length > 0;
+    for (const f of [...(o.exact ?? []), ...[...new Set(ratings.flatMap(ratingStrings))]]) {
       const text = textOf(f);
       const label = `forbidden:${labelHash(text ?? "")}`;
       const p = text ? plain(text) : "";
@@ -513,6 +541,10 @@ export class LeakGuard {
     const squashed = folded.map(squash);
     for (const c of this.canaries) {
       if (c.word ? folded.some(f => ` ${f} `.includes(` ${c.folded} `)) : squashed.some(s => s.includes(c.folded))) reasons.add(c.label);
+    }
+    if (this.ratingPhrases) {
+      const nfkc = text.normalize("NFKC");
+      if (RATING_PATTERNS.some(re => re.test(nfkc))) reasons.add("rating:phrase");
     }
     if (this.canaryShapes) {
       const nfkc = text.normalize("NFKC").replace(/\p{Cf}/gu, "");

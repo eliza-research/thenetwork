@@ -250,6 +250,33 @@ export function copyFor(b: CopyBrand) {
   flakeForgiven: "Looks like you missed your plan. It happens, and this one is forgiven. Next time, please tell me ahead so nobody is left waiting.",
   /** A second missed plan in 90 days: it counts. */
   flakeCounted: "That's a second missed plan in a few months, so I'll suggest fewer plans for a while. Please tell me ahead if something comes up.",
+  // Relay between matched members (relay.ts). Relayed texts themselves go out as "Name: text".
+  /** The first relayed text in a thread: the sender learns once how it works. */
+  relayFirst: (name: string) => `Sent to ${name}. Until a week after your plan, what you text me here goes to them with your first name. Start with "me:" to talk to me instead.`,
+  relayHeld: "I'm holding that message for a quick check by our team before it goes out. Please keep money, links and contact details out of messages here.",
+  relayNotSent: "I couldn't pass that on right now. They haven't answered your last messages yet, so let's give them a little time.",
+  contactAsk: (name: string) => `${name} would like to swap numbers with you. Want me to send them yours and you theirs? Yes or no, either is fine.`,
+  contactAsked: (name: string) => `I'll ask ${name} if they'd like to swap numbers and let you know.`,
+  contactPending: (name: string) => `I've asked ${name} about swapping numbers. I'll let you know.`,
+  contactAlready: (name: string) => `You and ${name} already have each other's numbers.`,
+  /** The same words for a no and for no answer in 72 hours: nobody learns which it was. */
+  contactNotNow: (name: string) => `No number swap with ${name} for now, so let's keep chatting through me. You can still message them here.`,
+  contactDeclinedAck: "No problem, I won't share your number.",
+  contactUnavailable: "I can't swap numbers right now, but you can keep messaging them through me.",
+  /** Sent once to each side after both said yes; the only message that carries another member's number. */
+  contactShared: (name: string, number: string) => `Here's ${name}'s number: ${number}. You both said yes to swapping. Stay safe and keep the first few meetups in public places.`,
+  rescheduleAsk: (name: string, oldWhen: string, times: string) => `${name} asked to move your plan (${oldWhen}). Could you do ${times} instead? Tell me which works, or no to keep the original time.`,
+  rescheduleAsked: (times: string) => `I'll ask them about ${times} instead. Until they say yes, the original plan stands.`,
+  rescheduleWaiting: "I've asked them about a new time and I'm waiting to hear back. The original plan stands until then.",
+  rescheduleNone: "I couldn't find another time soon that works for you both, so the original plan stands. If you can't make it, just tell me.",
+  rescheduled: (when: string, venue: string) => `Moved: you're now on for ${when} at ${venue}. Reply if your plans change.`,
+  rescheduleKept: (when: string) => `The new times don't work for them, so the original plan stands: ${when}. If you can't make it, just tell me.`,
+  rescheduleKeptAck: "Got it, the original plan stands.",
+  rescheduleRainCheck: "We already moved this plan once, so I've called it off and let them know, no blame. Consider it a rain check: if you both want to try again later, I can suggest it.",
+  /** To everyone who had a thread with a banned member: no name, no reason. */
+  banNotice: `A safety note from ${b.name}: someone you were matched with is no longer a member after a review. You don't need to do anything. If something about your plan with them worried you, reply and a person will follow up. If you're ever in danger, call 911.`,
+  /** The second-encounter ask with time options (both said they would meet again, so the other is named). */
+  secondEncounterTimes: (others: string, times: string) => `You and ${others} both said you'd meet again. I could do ${times}. Tell me which works, or no is completely fine.`,
   };
 }
 export type Copy = ReturnType<typeof copyFor>;

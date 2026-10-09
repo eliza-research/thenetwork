@@ -140,6 +140,8 @@ export class NetworkRuntime {
       matchingEnabled: false,
       // The app's pack and the engine config it was tuned with (options may override single fields).
       ...(w.pack ? { pack: w.pack } : {}), ...(w.hooks ? { hooks: w.hooks } : {}), ...(w.plansConfig ? { plansConfig: w.plansConfig } : {}), ...(w.plans !== undefined ? { plans: w.plans } : {}),
+      // A contact swap both members said yes to (relay.ts) sends each the other's phone number; never an Apple ID or email.
+      contactOf: id => { const a = this.addressOf(id); return a?.startsWith("+") ? a : undefined; },
       ...o.network,
       ...(w.engine || o.network?.engine ? { engine: { ...w.engine, ...o.network?.engine } } : {}),
       app: o.app, review: "human", store: this.store,

@@ -313,7 +313,17 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
       if (blocked.has(pairKey(ids[i]!, ids[j]!))) violate(rule, `${what}: ${pairKey(ids[i]!, ids[j]!)}`);
   };
 
+  // A persona's no counts from when its reply arrives (decision t + delayMs): the Network cannot hide
+  // a decline it has not heard yet, and a yes it gave in between (a booked plan) wins.
+  const pendingNo: { at: number; memberId: MemberId; opp: string }[] = [];
+  const decline = (m: MemberId, opp: string) => { if (!decliners.has(opp)) decliners.set(opp, new Set()); decliners.get(opp)!.add(m); };
   for (const r of records) {
+    for (let i = pendingNo.length - 1; i >= 0; i--) {
+      const p = pendingNo[i]!;
+      if (p.at > r.t) continue;
+      pendingNo.splice(i, 1);
+      if (!hasAccepted(p.memberId, p.opp)) decline(p.memberId, p.opp);
+    }
     if (r.type === "block") blocked.add(pairKey(r.from, r.to));
     if (r.type === "invariant_violation") violate(r.rule, r.detail);
     if (r.type === "join") { const l = line(r.memberId); l.lastIn = r.t; l.outSince = 0; addApp(r.memberId, r.app ?? (appsUsed && !personas.get(r.memberId)?.apps?.length ? "ntwrk" : undefined)); }
@@ -328,7 +338,7 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
         const yes = r.decision === "accept" || r.decision === "counter" || r.intent === "accept" || r.intent === "probe_yes" || r.intent === "confirm_schedule" && r.decision !== "decline";
         const no = r.decision === "decline" || r.intent === "decline" || r.intent === "probe_no";
         if (yes) accept(r.memberId, opp);
-        else if (no && !hasAccepted(r.memberId, opp)) { if (!decliners.has(opp)) decliners.set(opp, new Set()); decliners.get(opp)!.add(r.memberId); }
+        else if (no && !hasAccepted(r.memberId, opp)) pendingNo.push({ at: r.t + (r.delayMs ?? 0), memberId: r.memberId, opp });
       }
     }
     if (r.type === "network_log") {
