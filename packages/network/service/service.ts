@@ -1245,7 +1245,9 @@ export class NetworkService implements RuntimeHost {
     const url = new URL(req.url);
     let path = url.pathname.replace(/\/+$/, "") || "/";
     const agentRoute = path === "/agent/route";
-    const agentRequest = agentRoute || /^(?:\/apps\/[^/]+)?\/agent\/(?:membership|context)$/.test(path);
+    const agentMembershipStatus = path === "/agent/membership-status";
+    const agentUnscoped = agentRoute || agentMembershipStatus;
+    const agentRequest = agentUnscoped || /^(?:\/apps\/[^/]+)?\/agent\/(?:membership|context)$/.test(path);
     const authorization = req.headers.get("authorization");
     const given = authorization?.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
     const agentCredential = !!this.agentToken && safeEqual(given, this.agentToken);
@@ -1267,8 +1269,8 @@ export class NetworkService implements RuntimeHost {
       let app: AppId = "ntwrk";
       const scoped = path.match(/^\/apps\/([^/]+)(\/.*)?$/);
       const named = scoped ? scoped[1]! : url.searchParams.get("app");
-      if (agentRoute && (named !== null || url.searchParams.has("city"))) return json({ ok: false, error: "invalid_request" }, 400);
-      if (agentRequest && !agentRoute && named === null) return json({ ok: false, error: "app_required" }, 400);
+      if (agentUnscoped && (named !== null || url.searchParams.has("city"))) return json({ ok: false, error: "invalid_request" }, 400);
+      if (agentRequest && !agentUnscoped && named === null) return json({ ok: false, error: "app_required" }, 400);
       if (named !== null) {
         if (!isAppId(named)) return json({ ok: false, error: "unknown_app" }, 404);
         app = named;
@@ -1283,7 +1285,8 @@ export class NetworkService implements RuntimeHost {
       const user = this.reviewerOfRecord(req, auth.user);
       if (agentRequest) {
         if (!agentCredential) return json({ ok: false, error: "forbidden" }, 403);
-        if (!agentRoute && !allowed(auth.user, ["admin"], rt.app.id, "real")) return json({ ok: false, error: "forbidden" }, 403);
+        if ((!agentUnscoped && !allowed(auth.user, ["admin"], rt.app.id, "real"))
+          || (agentMembershipStatus && ![...this.runtimes.values()].some(candidate => allowed(auth.user, ["admin"], candidate.app.id, "real")))) return json({ ok: false, error: "forbidden" }, 403);
         if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
         if (Number(req.headers.get("content-length") ?? "0") > MAX_BODY_BYTES) return json({ ok: false, error: "payload_too_large" }, 413);
         const raw = await req.text();
@@ -1291,6 +1294,19 @@ export class NetworkService implements RuntimeHost {
         const b = await body(raw) as Row | undefined;
         if (!b || Object.keys(b).length !== (agentRoute ? 2 : 1) || typeof b.e164 !== "string" || normalizePhone(b.e164) !== b.e164
           || (agentRoute && typeof b.text !== "string")) return json({ ok: false, error: "invalid_request" }, 400);
+        if (agentMembershipStatus) {
+          // Eligibility is only a phone read. Keep Personal text out of this service
+          // until at least one canonical membership in an authorized app is active.
+          for (const member of await this.memberApps(b.e164)) {
+            const candidate = this.runtimeFor(member.app);
+            if (candidate && allowed(auth.user, ["admin"], candidate.app.id, "real")
+              && await this.accounts.activeMembership(candidate.app, { e164: b.e164, personId: null })) {
+              await this.audit.write({ at: this.clock.now(), actor: auth.user.id, roles: auth.user.roles, action: "read_agent_membership_status", targetType: "person", targetId: this.phoneKey(b.e164), mode: "real", ok: true, app: candidate.app.id });
+              return json({ active: true });
+            }
+          }
+          return json({ active: false });
+        }
         if (agentRoute) {
           const selected = await this.route({ from: b.e164, to: null, text: b.text as string });
           const selectedRuntime = this.runtimeFor(selected.app);

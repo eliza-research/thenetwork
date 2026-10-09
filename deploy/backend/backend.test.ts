@@ -428,6 +428,12 @@ describe.skipIf(!pgAvailable)("boot (dev Postgres, a database of its own)", () =
           : {app: "slop", memberId, firstName: "Ada", city: "nyc", state: "open", stateFrom: null, stateUntil: null, facets: ["plays chess"], activeItems: null});
         expect((await privateCall(`/apps/friends/agent/${endpoint}`)).status).toBe(403);
       }
+      const status = await privateCall("/agent/membership-status");
+      expect(status.status).toBe(200);
+      expect(status.headers.get("cache-control")).toBe("no-store");
+      expect(await status.json()).toEqual({active: true});
+      expect((await privateCall("/agent/membership-status", agentToken, {e164}, "POST", port)).status).toBe(404);
+      expect((await privateCall("/agent/membership-status", staffToken)).status).toBe(403);
       for (const text of ["slop", "hello"]) {
         const response = await privateCall("/agent/route", agentToken, {e164, text});
         expect(response.status).toBe(200);
@@ -724,6 +730,19 @@ describe.skipIf(!pgAvailable)("Cloud host canonical app route (isolated Postgres
         (select count(*)::int from platform.consent_events) as consent, (select count(*)::int from platform.memberships) as memberships,
         (select count(*)::int from platform.pending_texts) as pending`;
       const before = await counts();
+      const statusCall = (body: unknown = {e164}, token: string | null = serverToken, path = "/agent/membership-status", target = svc, method = "POST") => call("", token, path, body, target, method);
+      const active = await statusCall();
+      expect(active.status).toBe(200);
+      expect(await active.json()).toEqual({active: true});
+      expect((await statusCall({e164}, null)).status).toBe(401);
+      expect((await statusCall({e164}, staffToken)).status).toBe(403);
+      for (const path of ["/agent/membership-status?app=slop", "/agent/membership-status?city=nyc"]) expect((await statusCall({e164}, serverToken, path)).status).toBe(400);
+      for (const body of [{e164, text: "PRIVATE_PERSONAL_TEXT"}, {e164, app: "slop"}, {e164, personId}, {e164: "2125550186"}]) expect((await statusCall(body)).status).toBe(400);
+      expect((await statusCall({}, serverToken, "/agent/membership-status", svc, "GET")).status).toBe(405);
+      expect((await svc.publicFetch(request("", serverToken, "/agent/membership-status", {e164}))).status).toBe(404);
+      expect(await (await statusCall({e164: "+12125550187"})).json()).toEqual({active: false});
+      const disabled = await NetworkService.fromDatabase(options); services.push(disabled);
+      expect((await statusCall({e164}, serverToken, "/agent/membership-status", disabled)).status).toBe(503);
       for (const [text, app] of [["slop", "slop"], ["join slop.date", "slop"], ["friends", "friends"], ["join friends.help", "friends"], ["my ex is on slop.date", "friends"]] as const) {
         const response = await call(text);
         expect(response.status).toBe(200);
@@ -740,9 +759,18 @@ describe.skipIf(!pgAvailable)("Cloud host canonical app route (isolated Postgres
       expect((await call("slop", serverToken, "/agent/route", {}, svc, "GET")).status).toBe(405);
       expect((await svc.publicFetch(request())).status).toBe(404);
       const restricted = await NetworkService.fromDatabase({...options, agentToken: serverToken, tokens: `admin@slop:${serverToken}`}); services.push(restricted);
+      // The fallback routes to friends, but slop membership still permits sending
+      // text to the canonical router. Preflight must not use the fallback app.
+      expect(await (await statusCall({e164}, serverToken, "/agent/membership-status", restricted)).json()).toEqual({active: true});
       expect((await call("friends", serverToken, "/agent/route", {e164, text: "friends"}, restricted)).status).toBe(403);
       expect((await call("slop", serverToken, "/agent/route", {e164, text: "slop"}, restricted)).status).toBe(200);
+      const unauthorized = await NetworkService.fromDatabase({...options, agentToken: serverToken, tokens: `admin@peon:${serverToken}`}); services.push(unauthorized);
+      expect(await (await statusCall({e164}, serverToken, "/agent/membership-status", unauthorized)).json()).toEqual({active: false});
       expect(await counts()).toEqual(before);
+      const statusAudit = await svc.sql`select target_id, app_id, detail from network.staff_audit where action = 'read_agent_membership_status' order by id`;
+      expect(statusAudit.length).toBe(2);
+      expect(statusAudit.every((row: {target_id: string}) => row.target_id === svc.accounts.phoneHash(e164))).toBe(true);
+      expect(JSON.stringify(statusAudit)).not.toMatch(/1212555|PRIVATE_PERSONAL_TEXT|CANARY|Route Fixture/);
       const audit = await svc.sql`select target_id, app_id, detail from network.staff_audit where action = 'read_agent_route' order by id`;
       expect(audit.length).toBe(6);
       expect(new Set(audit.map((row: {app_id: string}) => row.app_id))).toEqual(new Set(["slop", "friends"]));
@@ -751,6 +779,7 @@ describe.skipIf(!pgAvailable)("Cloud host canonical app route (isolated Postgres
       const absent = await call("slop", serverToken, "/agent/route", {e164: "+12125550187", text: "slop"});
       expect(absent.status).toBe(404);
       await svc.people.addConsent({e164, app: null, state: "opted_out", source: "local-route-stop", at: now+1});
+      expect(await (await statusCall()).json()).toEqual({active: false});
       const stopped = await call("STOP");
       expect(stopped.status).toBe(404);
       expect(await stopped.json()).toEqual(await absent.json());

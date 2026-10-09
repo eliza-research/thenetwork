@@ -63,6 +63,16 @@ State windows and member-safe active item summaries have no canonical owner yet:
 and `activeItems` are `null`. A state that the plugin cannot represent is unavailable.
 This endpoint has no write capability. Successful context reads audit `read_agent_context`.
 
+`POST /agent/membership-status` accepts exactly `{"e164":"+12125550101"}`.
+It returns only `{"active":true}` or `{"active":false}`. It checks the existing shared-line membership
+list and `Accounts.activeMembership` for apps the designated reader can access. One active membership
+in an authorized app is enough, even when the conversation's fallback app differs.
+It refuses URL app and city overrides, is absent from `publicFetch`, and uses `Cache-Control: no-store`.
+It neither changes membership nor reads message text. Eligible reads use the existing audit sink with
+a keyed phone hash (`read_agent_membership_status`); raw phones and message text are not logged.
+Cloud calls this phone-only preflight before it sends any Personal text to `/agent/route`.
+The result grants no routing or action authority: the route still checks the selected app and membership.
+
 `POST /agent/route` accepts exactly `{"e164":"+12125550101","text":"friends"}`.
 It uses the existing shared-line app selector: whole-message keyword, pending join, newest open item,
 last outbound app, then The Network. An app name inside a sentence is not a keyword.

@@ -78,3 +78,21 @@ PRD 28.3 and 32.14 require app privacy and audited reads. This check does not de
 The new Slop extractor remains an engine module. Its conversation loop integration is described in the onboarding report.
 This change does not wire that loop, enable the LLM reader, configure a Cloud credential, or qualify a deployment.
 Full simulation and release checks remain separate from this local result.
+
+## Review follow-up: phone-only membership preflight
+
+Cloud formerly sent a complete Personal message to the private routing endpoint before it learned that the person was not a member.
+`POST /agent/membership-status` now checks the existing canonical membership owner with only the verified phone.
+A false result prevents the text-bearing routing request. A true result grants no permission to read another app; routing and context still recheck their own app grants and current membership.
+
+The existing backend HTTP suite failed before this endpoint existed (403 instead of the expected eligible response).
+After the change: 30 tests pass, with 441 assertions. Root, sites, and plugin TypeScript checks pass.
+The same synthetic PostgreSQL fixtures verify reader grants, exact request bodies, public-port refusal, no membership/message/state changes, hashed audit records, and STOP revocation.
+
+An additional local component check uses the actual current Cloud client, private Network handler, and a fresh migrated PostgreSQL database.
+All 13 checks pass, including phone-only preflight, no text forwarding for a non-member, and no text forwarding after global STOP.
+Cloud account projections are controlled fixtures. These checks do not prove hosted login, model inference, or iMessage delivery.
+No model or messaging provider ran. The fixture database was closed and dropped.
+
+Alternatives: probing the existing app route with empty text could choose an inactive fallback app; caching eligibility could retain revoked membership.
+The canonical phone-only read avoids both problems and adds no membership owner or cache.
