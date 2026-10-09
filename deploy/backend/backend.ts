@@ -3,8 +3,12 @@
 //
 //   PORT (public)          /api/*                 the platform public API, for the four sites' Worker routers
 //                          /webhooks/blooio[/app] the inbound line webhooks (signature checked by the service)
+//                          /consent/gateway       the STOP/HELP gateway's consent reports (STOP_HELP_OWNER=gateway; signed with
+//                                                 STOP_HELP_GATEWAY_SECRET, checked by the service; 409 when the service owns keywords)
 //                          /mcp, /oauth/*, /.well-known/oauth-*   the MCP server (packages/mcp, mounted by server.ts; 404 when off)
-//                          /healthz               liveness for the platform health check (no data, no auth)
+//                          /healthz               liveness for the platform health check and the external uptime monitor
+//                                                 (no data, no auth; 503 when the database is down or a network's tick is late)
+//                          /ops/metrics           queues, send outcomes, safety counts and today's cost (OPS_METRICS_TOKEN; 404 without it)
 //   STAFF_PORT (private)   everything the service's staff API answers (/health, /review, /safety/*, ...),
 //                          for the observatory console over the private network. Never on the public port.
 //
@@ -17,6 +21,8 @@
 import { appForHost, DEFAULT_HOST_MAP, isAppId, type AppId } from "../../packages/platform/src/apps.ts";
 import { requirePlatformEnv, type Env, type PlatformEnv } from "../../packages/platform/src/env.ts";
 import { PROXY_HEADERS, verifyProxyHeaders } from "../../packages/platform/src/proxy.ts";
+import { timingSafeEqual } from "node:crypto";
+import { opsConfigFromEnv, type OpsConfig } from "./ops.ts";
 
 export { PROXY_HEADERS };
 /** The visitor IP the public API reads (ipOf). Present only on a verified request. */
@@ -47,6 +53,10 @@ export interface BackendConfig {
   channel: "dry-run" | "blooio";
   shutdownGraceMs: number;
   tickMs: number;
+  /** /healthz answers 503 "tick_late" when a network's tick has not finished in this process for this long (TICK_LATE_MS). */
+  tickLateMs: number;
+  /** Monitoring, alerts and budgets (ops.ts; docs/deploy.md section 7). */
+  ops: OpsConfig;
   warnings: string[];
 }
 
@@ -111,16 +121,22 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   if (!e.NETWORK_SERVICE_TOKENS) warnings.push("NETWORK_SERVICE_TOKENS is not set: every staff route answers 401");
   if (!e.BLOOIO_WEBHOOK_SECRET) warnings.push("BLOOIO_WEBHOOK_SECRET is not set: the shared-line webhook answers 503");
   if (!deployed && !proxySecret) warnings.push("PLATFORM_PROXY_SECRET is not set: /api answers only for a Host the platform knows (local site ports)");
+  const build = (e.BUILD_ID || e.RAILWAY_GIT_COMMIT_SHA || "dev").slice(0, 40);
+  const tickMs = Number(e.TICK_MS ?? 60_000);
+  const ops = opsConfigFromEnv(e, { env, build, deployed });
+  if (deployed && !ops.webhookUrl) warnings.push("ALERT_WEBHOOK_URL is not set: alerts are log lines only (docs/deploy.md 7.2)");
 
   return {
     env, deployed, databaseUrl: databaseUrl!, migrationUrl: migrationUrl ?? databaseUrl!, host, port,
     staff: staffOff ? undefined : { host: staffHost, port: staffPort },
     proxySecret, hostMap,
-    build: (e.BUILD_ID || e.RAILWAY_GIT_COMMIT_SHA || "dev").slice(0, 40),
+    build,
     migrateOnBoot,
     channel,
     shutdownGraceMs: Number(e.SHUTDOWN_GRACE_MS ?? 25_000),
-    tickMs: Number(e.TICK_MS ?? 60_000),
+    tickMs,
+    tickLateMs: Number(e.TICK_LATE_MS ?? Math.max(15 * 60_000, 3 * tickMs)),
+    ops,
     warnings,
   };
 }
@@ -235,6 +251,8 @@ export interface BackendDeps {
   mcp?: (req: Request) => Promise<Response | undefined>;
   /** The time for the proxy signature check (default Date.now). The service's clock, so every check agrees. */
   now?: () => number;
+  /** Monitoring (ops.ts createOps): one round in each tick, and the snapshot for GET /ops/metrics. */
+  ops?: { tick(): Promise<unknown>; metrics(): Promise<unknown> };
 }
 
 const MCP_PATH = /^\/(mcp(\/.*)?|oauth\/.*|\.well-known\/oauth-[a-z-]+(\/.*)?)$/;
@@ -248,9 +266,26 @@ export function routeLabel(path: string): string {
   return path.length > 64 ? path.slice(0, 64) : path;
 }
 
+/** The bearer token matches (constant time). */
+function bearerIs(req: Request, token: string): boolean {
+  const given = Buffer.from(req.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "");
+  const want = Buffer.from(token);
+  return given.length === want.length && timingSafeEqual(given, want);
+}
+
 export function createBackend(d: BackendDeps) {
   const { svc, config: c, log } = d;
+  const now = () => (d.now ?? Date.now)();
   let draining = false;
+  /** When each network's tick last finished in this process (ran, or skipped because another instance holds its lock). */
+  const tickDone = new Map<string, number>();
+  let ticksFrom: number | undefined;
+  /** The networks whose tick has not finished for longer than tickLateMs (only once ticks have started). */
+  const lateTicks = () => {
+    if (ticksFrom === undefined) return [];
+    const t = now();
+    return [...svc.runtimes.values()].filter(rt => t - (tickDone.get(rt.id) ?? ticksFrom!) > c.tickLateMs).map(rt => rt.id);
+  };
   const inFlight = new Set<Promise<unknown>>();
   const track = <T>(p: Promise<T>): Promise<T> => { inFlight.add(p); p.finally(() => inFlight.delete(p)).catch(() => {}); return p; };
   const stamp = (res: Response) => {
@@ -269,7 +304,16 @@ export function createBackend(d: BackendDeps) {
     try {
       if (path === "/healthz") {
         if (draining) res = json(503, { ok: false, status: "draining", build: c.build });
-        else res = (await d.ping().catch(() => false)) ? json(200, { ok: true, build: c.build, env: c.env }) : json(503, { ok: false, status: "database", build: c.build });
+        else if (!(await d.ping().catch(() => false))) res = json(503, { ok: false, status: "database", build: c.build });
+        // A hung tick loop is down for the uptime monitor too (the ops alerts run inside the same process).
+        else res = lateTicks().length ? json(503, { ok: false, status: "tick_late", build: c.build }) : json(200, { ok: true, build: c.build, env: c.env });
+      } else if (path === "/ops/metrics") {
+        // Counts and network ids only. Without OPS_METRICS_TOKEN the route does not exist; a wrong token is 401.
+        const token = c.ops.metricsToken;
+        if (!token || !d.ops) res = json(404, { ok: false, error: "not_found" });
+        else if (!bearerIs(req, token)) res = json(401, { ok: false, error: "unauthorized" });
+        else if (req.method !== "GET") res = json(405, { ok: false, error: "method_not_allowed" });
+        else res = json(200, await track(d.ops.metrics()));
       } else if (draining) {
         res = json(503, { ok: false, error: "shutting_down" });
       } else if (path === "/api" || path.startsWith("/api/")) {
@@ -278,7 +322,7 @@ export function createBackend(d: BackendDeps) {
         // Deployed, only a request a site router signed may name a site (audit: a direct request with
         // Host: slop.date was served as slop.date, and every such request shared one socket IP).
         res = c.deployed && !n.edge ? json(421, { ok: false, error: "edge_required" }) : await track(svc.publicFetch(n.req, server));
-      } else if (path === "/webhooks/blooio" || path.startsWith("/webhooks/blooio/")) {
+      } else if (path === "/webhooks/blooio" || path.startsWith("/webhooks/blooio/") || path === "/consent/gateway") {
         res = await track(svc.fetch(req));
       } else if (MCP_PATH.test(path)) {
         // The MCP server sees the same normalized request as the public API: Host is the site's host only via a verified edge.
@@ -309,13 +353,25 @@ export function createBackend(d: BackendDeps) {
   // Every network ticks on its own; a running tick is tracked so that shutdown waits for it.
   const busy = new Set<string>();
   let timer: ReturnType<typeof setInterval> | undefined;
-  const tickAll = () => Promise.all([...svc.runtimes.values()].map(async rt => {
+  const networksThenNotify = () => Promise.all([...svc.runtimes.values()].map(async rt => {
     if (draining || busy.has(rt.id)) return;
     busy.add(rt.id);
-    try { if (!(await track(rt.tick()))) log.info("tick skipped: another instance holds the lock", { network: rt.id }); }
+    try {
+      if (!(await track(rt.tick()))) log.info("tick skipped: another instance holds the lock", { network: rt.id });
+      tickDone.set(rt.id, now());
+    }
     catch (e) { log.error("tick failed", { network: rt.id, error: (e as Error).message }); }
     finally { busy.delete(rt.id); }
   })).then(() => notifyTick());
+  // The ops round runs beside the networks, so a network tick that hangs does not stop its alert.
+  const opsTick = async () => {
+    if (draining || !d.ops || busy.has("ops")) return;
+    busy.add("ops");
+    try { await track(d.ops.tick()); }
+    catch (e) { log.error("ops tick failed", { error: (e as Error).message }); }
+    finally { busy.delete("ops"); }
+  };
+  const tickAll = () => Promise.all([networksThenNotify(), opsTick()]).then(() => undefined);
   // The inbox ticks once per round, after the networks (their sends are recorded by then). Replicas may overlap: a delivery id is recorded once
   // (notify.deliveries primary key), so a second replica cancels instead of sending again.
   const notifyTick = async () => {
@@ -325,7 +381,7 @@ export function createBackend(d: BackendDeps) {
     catch (e) { log.error("notify tick failed", { error: (e as Error).message }); }
     finally { busy.delete("notify"); }
   };
-  const startTicks = () => { const first = tickAll(); timer = setInterval(tickAll, c.tickMs); return first; };
+  const startTicks = () => { ticksFrom = now(); const first = tickAll(); timer = setInterval(tickAll, c.tickMs); return first; };
 
   /**
    * Graceful shutdown: /healthz answers 503, new work is refused, the listeners stop accepting, every

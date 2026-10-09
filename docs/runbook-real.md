@@ -212,7 +212,8 @@ Set `OBSERVATORY_REAL_ONLY=1` on every staging and production server.
 
 - The server starts in real mode and refuses game mode (`real_only`), the game commands and the lab. It lists no levels.
 - The UI hides the mode switch, the game controls and the Lab tab.
-- The game code is still in the bundle. The flag turns it off.
+- The server never loads game mode or the scenario list: both are imported only when game mode is asked for. The deployed image has no simulator package at all (`deploy/backend/Dockerfile`; `bun run sim`, block `ops`, checks it).
+- Under `PLATFORM_ENV=staging` or `production`, a real-only server refuses to start without Cloudflare Access sign-in ([deploy.md](deploy.md) 2.6). The token example below is for a local database only.
 
 ```bash
 OBSERVATORY_REAL_ONLY=1 OBSERVATORY_TOKENS="admin:<t>,reviewer:<t>,safety:<t>,analyst:<t>" \
@@ -397,7 +398,9 @@ Decision first **[FOUNDER]**: PRD 31 says the Network is built inside Eliza Clou
 | 11 | The four apps: the `platform` schema, `app_id` and row-level security, one service for every network, the public API, the four sites ([runbook-platform.md](runbook-platform.md)) | platform, service, sites, schema | Built, local only. Not deployed. |
 | 12 | Rename `buddies` to `friends` and allow 13+ to join every app (PRD 40.2, 40.3) | platform, schema, sites, obs | Done (migration 0007, 2026-10-08) |
 | 13 | Route `/api/*` on each app domain to the shared API (a zone route, or a service binding with `run_worker_first`) | sites, ops | **[FOUNDER]** Missing |
-| 14 | Logins for the per-app roles (`network_observatory_<app>`, `network_observatory_cross_app`, `network_service`, `platform_service`) | ops | **[CREDENTIALS]** Missing |
+| 14 | Logins for the per-app roles (`network_observatory_<app>`, `network_observatory_cross_app`, `network_service`, `platform_service`) | ops | **[CREDENTIALS]** The SQL is in [deploy.md](deploy.md) 2.1 (service) and 2.6 (console). Not created yet. |
+| 15 | Monitoring, alerts and a cost ledger with budgets | `deploy/backend/ops.ts`, `packages/network/service/cost.ts` | Built ([deploy.md](deploy.md) section 7). The webhook and the uptime monitor need an account **[CREDENTIALS]**. |
+| 16 | Daily dump to R2 and a restore drill | `deploy/backup/` | Built ([deploy.md](deploy.md) section 8, section 8 below). The bucket and the cron service are not created yet **[CREDENTIALS]**. |
 
 ### 7.2 Railway
 
@@ -409,7 +412,7 @@ Decision first **[FOUNDER]**: PRD 31 says the Network is built inside Eliza Clou
    - `network_rw` for the matcher worker, in roles `network_service` and `platform_service` (section 2);
    - one console login per app, in role `network_observatory_<app>`, and one in `network_observatory_cross_app` (section 2);
    - an admin login (superuser or `BYPASSRLS`) for migrations only.
-6. Turn on daily backups. **[FOUNDER]** Test one restore before launch (PRD 28.5 gate: "backup restore tested").
+6. Turn on daily backups: the Railway volume backups and the R2 dump ([deploy.md](deploy.md) section 8). **[FOUNDER]** Run the restore drill (section 8 below) before launch (PRD 28.5 gate: "backup restore tested").
 7. Add a read replica if the plan allows it. Point the Observatory at the replica (PRD 31.4: analytics never read the primary at peak).
 8. **Matcher worker service (`network-matcher`).**
    - Build from this repository with Bun.
@@ -472,4 +475,64 @@ Do these in staging, then in production. Each one is a PRD 28.5 launch gate or f
 
 - Matcher: stop the Railway service. Nothing is sent while it is stopped. Queued items expire at their SLA instead of being sent late.
 - Worker: **[FOUNDER]** `NTWRK_ALLOW_DEPLOY=1 scripts/wrangler.sh rollback`.
-- Database: restore the last backup into a new database, then repoint the services. Never restore over the primary.
+- Database: restore the last backup into a new database (section 8.3), then repoint the services. Never restore over the primary.
+
+## 8. Backups, the restore drill and alerts
+
+The jobs and their variables are in [deploy.md](deploy.md) sections 7 and 8. This section says what a person does.
+
+### 8.1 What is backed up
+
+| Backup | Where | How often | Kept |
+|---|---|---|---|
+| Railway volume backup | Railway → Postgres → Backups | Daily (Railway's schedule) | Railway's retention |
+| Logical dump (`deploy/backup/backup.ts`) | The private R2 bucket `ntwrk-backups`, `postgres/<env>/<UTC time>/` | Daily at 07:15 UTC (cron service `backup`) | 35 days (bucket lifecycle rule) |
+
+Each dump has `manifest.json`: the exact row count of every table, taken in the same snapshot as the dump.
+
+### 8.2 The restore drill (monthly, and before launch) **[CREDENTIALS]**
+
+Do this once before the first real member joins, then on the first working day of each month. Write the result in the incident log.
+
+**Caution:** the dump holds member data. Restore it only into a new scratch database on the Railway Postgres service (or a local cluster that only you can reach). Never into the live database. Never on a laptop that is not encrypted.
+
+1. Pick the newest backup. Railway → service `backup` → the last run's log shows `"msg":"backup uploaded"` with its `prefix`.
+   - The restore needs to reach the Postgres server. Either run it inside Railway (`railway ssh` into the `backup` service, which has the client tools), or turn on the Postgres TCP proxy for the drill and turn it off again after step 6 ([deploy.md](deploy.md) 2.1). Locally you need the Postgres client of the server's major version.
+2. Restore it into a new database with a dated name, and check the row counts:
+
+   ```bash
+   RESTORE_DATABASE_URL=<the owner URL, from Railway> BACKUP_R2_ACCOUNT_ID=... BACKUP_R2_BUCKET=ntwrk-backups \
+   BACKUP_R2_ACCESS_KEY_ID=... BACKUP_R2_SECRET_ACCESS_KEY=... BACKUP_PREFIX=postgres/production \
+     bun run deploy/backup/restore.ts --r2 latest --db restore_drill_$(date -u +%Y%m%d)
+   ```
+
+3. Pass: the last line is `"msg":"restore checked"` with `"mismatches":0`, and the exit code is 0. Write down the backup time, the tables, the rows and the time the restore took.
+4. Spot check in the scratch database: `select count(*) from platform.people;`, `select max(saved_at) from network.network_state;` (close to the backup time), `select id, applied_at from public.__migrations order by applied_at desc limit 3;` (the current migrations).
+5. Also restore the newest Railway volume backup once a quarter (Railway → Postgres → Backups → Restore, into a new service), and run the same spot checks.
+6. Drop the scratch database: `drop database restore_drill_<date>;`. Delete any downloaded file.
+7. Fail: open an incident. Until a drill passes, a new member wave waits **[FOUNDER]**.
+
+`bun run sim` (block `ops`) runs the same backup and restore against a seeded database on the dev Postgres (`:54339`) as a tracked gate, so a change that breaks the scripts shows up before a drill.
+
+### 8.3 Restore for real (data loss or corruption) **[FOUNDER]**
+
+1. Stop the backend's ticks: set the `backend` service's replicas to 0. Nothing is sent while it is stopped.
+2. Restore into a new database, as in 8.2 step 2, with `--db network_restored_<date>`. Pick the backup from before the problem (`--r2 postgres/production/<UTC time>`).
+3. Check: `"mismatches":0`, and the spot checks of 8.2 step 4.
+4. In the restored database, create the service and console logins again only if they do not exist on that server (the dump keeps the roles without passwords). Set new passwords and update the variables.
+5. Point `NETWORK_DATABASE_URL`, `MIGRATION_DATABASE_URL` and the console's URLs at the restored database. Start the backend (replicas 1). The boot log must show `applied: 0` (or only the migrations newer than the backup).
+6. Write down what was lost: everything after the backup time. Members who wrote in that window may need a reply by hand.
+
+### 8.4 When an alert arrives
+
+| Alert | First step |
+|---|---|
+| Uptime monitor down, or heartbeat missing | Railway → `backend` → Deployments and logs. A crash loop: roll back (deploy.md 2.7). A database error: Railway → Postgres. |
+| `tick_late:<network>` | The deploy log: `tick failed` lines, or `tick skipped: another instance holds the lock` with no tick stored (a stuck replica holds the lock: restart that replica). |
+| `send_failures:<network>` | `/ops/metrics` shows the outcomes. Check Blooio's status and the line's health. Over 2% for a day is a pause condition in the pilot (mvp-plan). |
+| `review_sla:<network>` | Open the console's Review tab for that app. Items past the SLA expire unsent; nobody was contacted. |
+| `safety_minor:<network>` or an urgent `safety_report` | The safety on-call opens the console's Safety tab now. Hold first, then decide (admin-console.md 3.7.1). |
+| `queue_outbound` or `queue_review` | Check the review staffing, and Blooio for held or deferred messages. |
+| Backup heartbeat missing (`BACKUP_HEARTBEAT_URL`) | Railway → `backup` → the last run's log: `"msg":"backup failed"` gives the step. Run the job again by hand (Railway → `backup` → Deploy). Two days without a backup: tell the founder. |
+| `budget:*` | The console's Metrics → Cost panel shows which kind grew. Tell the founder at 100%. |
+

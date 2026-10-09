@@ -1,22 +1,29 @@
 // Private member photos (slop.date only; founder decision 2026-10-08: photos and any rating from
-// them are for adults only (founder decision 9: the stated age, no ID check), never for members aged 13-17, and scores are agent_private and
-// never shown to anyone).
+// them are for adults only (founder decision 9: the stated age, no ID check), never for members aged
+// 13-17, and scores are agent_private and never shown to anyone).
 //
 // Rules, in the order they are checked:
 //  - Photos are off unless storage is configured (PHOTO_STORAGE): every route answers photos_off.
-//  - Upload: a signed-in member of an app that takes photos (PHOTO_APPS), with the photo consent of
-//    the current version (PHOTO_CONSENT), whose person is an adult (lowest age 18 or more, never
-//    unknown) and passes the app's own check (`eligible`: for slop, a member stated 18+ with no failed staff age check; decision 9). JPEG, PNG or
-//    WebP only (checked on the bytes, not the header), at most PHOTO_MAX_BYTES and PHOTO_MAX_PER_PERSON.
-//    Metadata (EXIF with GPS, XMP, comments, text chunks) is stripped before anything is stored.
+//  - Upload (the site, or a photo sent by text after the photo consent): a signed-in member of an app
+//    that takes photos (PHOTO_APPS), with the photo consent of the current version (PHOTO_CONSENT),
+//    not banned, whose person is an adult (lowest age 18 or more, never unknown) and passes the app's
+//    own check (`eligible`: for slop, a member stated 18+ with no failed staff age check; decision 9).
+//    JPEG, PNG or WebP only (checked on the bytes, not the header), at most PHOTO_MAX_BYTES and
+//    PHOTO_MAX_PER_PERSON. Metadata (EXIF with GPS, XMP, comments, text chunks) is stripped before
+//    anything is stored. A refused photo is never stored and never rated.
 //  - Storage: object storage under a random key (R2 in production, a 0700 folder in dev). There is no
 //    public URL. Staff see a photo only through the backend: the service's audited photo route makes
 //    a signed link that works for 5 minutes (viewUrl / view).
-//  - Rating: an optional rater (`rate(photo) -> {face, body, overall}`), default "none". It runs only
-//    for a verified adult (checked again at rating time); its scores go to `onRating` (the service
-//    writes them as agent_private facets) and are never returned by any route.
-//  - Delete: the member deletes one photo; leaving the app or deleting everything deletes them all;
-//    a person whose lowest age drops under 18 loses them all (deleteFor).
+//  - Rating: an optional engine AppearanceRater (production: makeClefRaterFromEnv, Cloudflare Workers
+//    AI Clef; AGENTS.md decision 12). It rates the MEMBER from their newest photos (at most 4, at most
+//    4 MiB each, bytes only, never a URL) after every upload or delete, only for a verified adult
+//    (checked again at rating time, before any byte is read: zero rater calls otherwise), with retries
+//    on API errors (withRetry). The score goes to `onRating` (the service stores it with the engine's
+//    appearanceFacet, agent_private) and is never returned by any route. No rater: ratings are off and
+//    everything else works.
+//  - Delete: the member deletes one photo (the rating is dropped, then made again from what is left);
+//    leaving the app or deleting everything deletes them all; a person whose lowest age drops under 18
+//    loses them all (deleteFor), and their rating with them.
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -24,6 +31,40 @@ import { S3Client, type SQL } from "bun";
 import type { AppId } from "./apps.ts";
 import { readCapped } from "./body.ts";
 import type { PeopleStore } from "./store.ts";
+import type { AppearanceRater, AppearanceScore, RatingSubject } from "../../engine/src/packs/slop/appearance.ts";
+import { makeClefRaterFromEnv, type ClefRaterOptions } from "../../engine/src/packs/slop/clef.ts";
+import { validateClefWeights, type ClefWeights } from "../../engine/src/packs/slop/clefWeights.ts";
+
+/** Why the rater is on or off (server.ts logs it at start). */
+export type RaterStatus = "on" | "off_flag" | "off_env" | "off_no_weights" | "refused_weights";
+
+/**
+ * The slop.date photo rater from the environment (AGENTS.md decision 12 and "Clef ratings", 2026-10-09).
+ * Ratings are OFF unless CLEF_RATINGS=on. When on, it needs CLOUDFLARE_AI_TOKEN, CLOUDFLARE_ACCOUNT_ID
+ * and CLEF_WEIGHTS_PATH: a fitted weights file with a version and a provenance record (what it was
+ * fitted on). The placeholder weights, or a file without version or provenance, are refused and ratings
+ * stay off: no real member is rated by an unfitted model. The rater is the engine's Clef behind its
+ * adults-only guard, with up to 3 tries on an API error. Off: photos still work, nothing is rated.
+ */
+export async function photoRaterFromEnv(
+  env: Record<string, string | undefined>,
+  o: { fetch?: ClefRaterOptions["fetch"]; sleep?: (ms: number) => Promise<void>; log?: (s: string) => void; readFile?: (path: string) => Promise<string> } = {},
+): Promise<{ rater?: AppearanceRater; status: RaterStatus; weights?: string; detail?: string }> {
+  if ((env.CLEF_RATINGS ?? "").trim().toLowerCase() !== "on") return { status: "off_flag" };
+  if (!env.CLOUDFLARE_AI_TOKEN || !env.CLOUDFLARE_ACCOUNT_ID) return { status: "off_env", detail: "CLOUDFLARE_AI_TOKEN and CLOUDFLARE_ACCOUNT_ID are required" };
+  if (!env.CLEF_WEIGHTS_PATH) return { status: "off_no_weights", detail: "CLEF_WEIGHTS_PATH is required (fitted weights with version and provenance)" };
+  let w: ClefWeights;
+  try {
+    const raw = JSON.parse(await (o.readFile ?? (p => Bun.file(p).text()))(env.CLEF_WEIGHTS_PATH)) as ClefWeights & { provenance?: unknown };
+    if (typeof raw.version !== "string" || !raw.version.trim()) return { status: "refused_weights", detail: "the weights file has no version" };
+    const prov = raw.provenance as { fitter?: unknown; fittedAt?: unknown } | undefined;
+    if (raw.placeholder !== false || !prov || typeof prov !== "object" || typeof prov.fitter !== "string" || typeof prov.fittedAt !== "string")
+      return { status: "refused_weights", detail: `weights ${raw.version} carry no provenance (fitter, fittedAt) or are a placeholder` };
+    w = validateClefWeights(raw);
+  } catch (e) { return { status: "refused_weights", detail: (e as Error).message }; }
+  const rater = withRetry(makeClefRaterFromEnv(env, { weights: w, ...(o.fetch ? { fetch: o.fetch } : {}) }), { attempts: 3, ...(o.sleep ? { sleep: o.sleep } : {}), ...(o.log ? { log: o.log } : {}) });
+  return { rater, status: "on", weights: w.version };
+}
 
 export type PhotoType = "image/jpeg" | "image/png" | "image/webp";
 export const PHOTO_TYPES: readonly PhotoType[] = ["image/jpeg", "image/png", "image/webp"];
@@ -43,10 +84,39 @@ export interface PhotoRow {
   id: string; personId: string; app: AppId; storageKey: string; contentType: PhotoType; bytes: number; sha256: string;
   consentVersion: string; createdAt: number;
 }
-export interface PhotoScores { face: number; body: number; overall: number }
-/** An optional rater (the engine session builds the CLIP rater). "none" never rates. */
-export interface PhotoRater { id: string; rate(photo: { bytes: Uint8Array; contentType: PhotoType }): Promise<PhotoScores | undefined> }
-export const NO_RATER: PhotoRater = { id: "none", rate: async () => undefined };
+/** The rater: the engine's member-level AppearanceRater (production: makeClefRaterFromEnv). */
+export type PhotoRater = AppearanceRater;
+/** Photos one rating reads (Clef takes at most 4 images, each at most 4 MiB, as base64). */
+export const RATER_MAX_PHOTOS = 4;
+export const RATER_MAX_BYTES = 4 * 1024 * 1024;
+
+/** An error worth another try: a network failure, a timeout, or an API answer of 429 or 5xx (ClefError carries the status). */
+export function retryable(e: unknown): boolean {
+  const status = (e as { status?: unknown })?.status;
+  if (typeof status === "number") return status === 408 || status === 429 || status >= 500;
+  // fetch failures are TypeErrors; a timeout is a TimeoutError or AbortError. Anything else (a photo too large, a bad answer) is not retried.
+  return e instanceof TypeError || (e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError"));
+}
+
+/**
+ * The rater with retries on API errors: up to `attempts` calls with a doubling wait (the wait goes
+ * through `sleep`, so a simulation never waits). A refusal (null) is an answer, never retried.
+ */
+export function withRetry(r: AppearanceRater, o: { attempts?: number; baseMs?: number; sleep?: (ms: number) => Promise<void>; log?: (s: string) => void } = {}): AppearanceRater {
+  const attempts = Math.max(1, o.attempts ?? 3), base = o.baseMs ?? 500, sleep = o.sleep ?? (ms => Bun.sleep(ms));
+  return {
+    id: r.id,
+    async rate(subject, photos) {
+      for (let i = 1; ; i++) {
+        try { return await r.rate(subject, photos); } catch (e) {
+          if (i >= attempts || !retryable(e)) throw e;
+          o.log?.(`[photos] rater error (try ${i} of ${attempts}): ${(e as Error).message}`);
+          await sleep(base * 2 ** (i - 1));
+        }
+      }
+    },
+  };
+}
 
 // ------------------------------------------------------------------------------------ bytes
 /** The image type from the first bytes (never from a header or a file name). */
@@ -258,7 +328,7 @@ export class PgPhotoStore implements PhotoStore {
 }
 
 // ------------------------------------------------------------------------------------ service
-export type PhotoRefusal = "photos_off" | "app_not_allowed" | "consent_required" | "adults_only" | "not_verified" | "too_large" | "bad_type" | "bad_image" | "too_many" | "not_found";
+export type PhotoRefusal = "photos_off" | "app_not_allowed" | "consent_required" | "adults_only" | "not_verified" | "banned" | "too_large" | "bad_type" | "bad_image" | "too_many" | "not_found";
 export type PhotoResult<T> = { ok: true; value: T } | { ok: false; reason: PhotoRefusal };
 
 export interface PhotoServiceOptions {
@@ -268,15 +338,18 @@ export interface PhotoServiceOptions {
   /** Key for the staff view links (derived from PLATFORM_HASH_KEY). */
   signingKey: string;
   now?: () => number;
+  /** The appearance rater (wrap it in withRetry). Undefined: ratings are off; uploads still work. */
   rater?: PhotoRater;
   /**
    * The app's own adult check for this person, beyond the lowest age (slop: the member's stated age
    * is 18+ and no staff age check failed; decision 9). The service reads the network rows. Default: refuse (fail closed).
    */
   eligible?: (personId: string, app: AppId) => Promise<boolean>;
-  /** The rater's scores for one photo: the service writes them as agent_private facets. Never returned by a route. */
-  onRating?: (personId: string, app: AppId, photoId: string, scores: PhotoScores) => Promise<void>;
-  /** A photo is gone (removed, left, deleted, a minor age): the service deletes its rating too. */
+  /** A staff ban on the person or any of their phones (platform.bans). A banned person's photo is never taken. Default: not banned. */
+  banned?: (personId: string) => Promise<boolean>;
+  /** The member's rating from their photos: the service stores it with appearanceFacet (agent_private). Never returned by a route. */
+  onRating?: (personId: string, app: AppId, score: AppearanceScore, subject: RatingSubject) => Promise<void>;
+  /** A photo is gone (removed, left, deleted, a minor age, a ban): the service deletes the member's rating. */
   onRemoved?: (personId: string, app: AppId, photoId: string) => Promise<void>;
   log?: (s: string) => void;
 }
@@ -285,6 +358,7 @@ export class PhotoService {
   private readonly now: () => number;
   constructor(private readonly o: PhotoServiceOptions) { this.now = o.now ?? Date.now; }
   get enabled() { return !!this.o.storage; }
+  get rating() { return !!this.o.rater; }
 
   /** An adult on this app: lowest age 18+ (an unknown age fails) and the app's own check (slop: no failed staff age check). */
   async adult(personId: string, app: AppId): Promise<PhotoRefusal | undefined> {
@@ -294,11 +368,22 @@ export class PhotoService {
     return undefined;
   }
 
+  /**
+   * Whether this person may give a photo to this app now: photos on, an app that takes photos, not
+   * banned, an adult. Checked before any byte is read (an MMS photo is not even fetched otherwise).
+   */
+  async mayTake(personId: string, app: AppId): Promise<PhotoRefusal | undefined> {
+    if (!this.o.storage) return "photos_off";
+    if (!PHOTO_APPS.includes(app)) return "app_not_allowed";
+    if (await (this.o.banned?.(personId) ?? Promise.resolve(false))) return "banned";
+    return this.adult(personId, app);
+  }
+
   async upload(personId: string, app: AppId, input: Uint8Array, consentVersion: string | undefined): Promise<PhotoResult<{ id: string }>> {
     if (!this.o.storage) return { ok: false, reason: "photos_off" };
     if (!PHOTO_APPS.includes(app)) return { ok: false, reason: "app_not_allowed" };
     if (consentVersion !== PHOTO_CONSENT.version) return { ok: false, reason: "consent_required" };
-    const who = await this.adult(personId, app);
+    const who = await this.mayTake(personId, app);
     if (who) return { ok: false, reason: who };
     if (input.length > PHOTO_MAX_BYTES) return { ok: false, reason: "too_large" };
     const type = sniffType(input);
@@ -310,40 +395,43 @@ export class PhotoService {
     const key = randomBytes(24).toString("hex");
     await this.o.storage.put(key, bytes, type);
     await this.o.meta.put({ id, personId, app, storageKey: key, contentType: type, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), consentVersion, createdAt: this.now() });
-    await this.rate(personId, app, id).catch(e => this.o.log?.(`[photos] rating failed: ${(e as Error).message}`));
+    await this.rate(personId, app).catch(e => this.o.log?.(`[photos] rating failed: ${(e as Error).message}`));
     return { ok: true, value: { id } };
   }
 
   /**
-   * Rate one photo with the configured rater. Refused (nothing rated, nothing written) for anyone who
-   * is not a verified adult now. The rater "none" never rates. Returns whether scores were written.
+   * Rate the member from their newest photos (at most RATER_MAX_PHOTOS, each at most RATER_MAX_BYTES)
+   * with the configured rater. Refused (no rater call, nothing written) for anyone who is not a
+   * verified adult now, or is banned. No rater: nothing happens. Returns whether a score was written.
    */
-  async rate(personId: string, app: AppId, photoId: string): Promise<{ rated: boolean; refused?: PhotoRefusal }> {
-    const rater = this.o.rater ?? NO_RATER;
-    if (rater.id === "none" || !this.o.storage) return { rated: false };
-    const who = await this.adult(personId, app);
+  async rate(personId: string, app: AppId): Promise<{ rated: boolean; refused?: PhotoRefusal }> {
+    const rater = this.o.rater;
+    if (!rater || !this.o.storage) return { rated: false };
+    const who = await this.mayTake(personId, app);
     if (who) return { rated: false, refused: who };
-    const row = await this.o.meta.get(photoId);
-    if (!row || row.personId !== personId || row.app !== app) return { rated: false, refused: "not_found" };
-    const bytes = await this.o.storage.get(row.storageKey);
-    if (!bytes) return { rated: false, refused: "not_found" };
-    const s = await rater.rate({ bytes, contentType: row.contentType });
+    const person = await this.o.people.getPerson(personId);
+    const subject: RatingSubject = { age: person!.lowestAge!, ageVerified: true };
+    const rows = (await this.o.meta.list(personId, app)).filter(r => r.bytes <= RATER_MAX_BYTES).slice(-RATER_MAX_PHOTOS);
+    const photos: { id: string; bytes: Uint8Array }[] = [];
+    for (const r of rows) { const bytes = await this.o.storage.get(r.storageKey); if (bytes) photos.push({ id: r.id, bytes }); }
+    if (!photos.length) return { rated: false, refused: "not_found" };
+    const s = await rater.rate(subject, photos);
     if (!s) return { rated: false };
-    const clamp = (x: number) => Math.round(Math.min(1, Math.max(0, x)) * 100) / 100;
-    await this.o.onRating?.(personId, app, photoId, { face: clamp(s.face), body: clamp(s.body), overall: clamp(s.overall) });
+    await this.o.onRating?.(personId, app, s, subject);
     return { rated: true };
   }
 
   /** The member's own photos (no bytes, no score). */
   async list(personId: string, app: AppId) { return (await this.o.meta.list(personId, app)).map(r => ({ id: r.id, createdAt: r.createdAt, bytes: r.bytes, contentType: r.contentType })); }
 
-  /** The member deletes one of their photos. */
+  /** The member deletes one of their photos: the rating goes with it and is made again from what is left. */
   async remove(personId: string, app: AppId, id: string): Promise<boolean> {
     const r = await this.o.meta.get(id);
     if (!r || r.personId !== personId || r.app !== app) return false;
     await this.o.storage?.delete(r.storageKey);
     await this.o.meta.delete(id);
     await this.o.onRemoved?.(personId, r.app, id);
+    await this.rate(personId, app).catch(e => this.o.log?.(`[photos] rating failed: ${(e as Error).message}`));
     return true;
   }
 
@@ -393,7 +481,8 @@ export class PhotoService {
   async route(req: Request, path: string, app: AppId, who: () => Promise<string | null | "unauthorized">): Promise<Response | undefined> {
     if (path !== "/api/photos" && !path.startsWith("/api/photos/")) return undefined;
     const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" } });
-    const refuse = (reason: PhotoRefusal) => json(reason === "photos_off" ? 503 : reason === "too_large" ? 413 : reason === "adults_only" || reason === "not_verified" ? 403 : reason === "not_found" ? 404 : 400, { ok: false, error: reason });
+    // A ban answers like a join refused for review: it never says "banned".
+    const refuse = (reason: PhotoRefusal) => json(reason === "photos_off" ? 503 : reason === "too_large" ? 413 : reason === "adults_only" || reason === "not_verified" || reason === "banned" ? 403 : reason === "not_found" ? 404 : 400, { ok: false, error: reason === "banned" ? "review" : reason });
     if (req.method === "GET" && path === "/api/photos/consent") return json(200, { ...PHOTO_CONSENT, apps: PHOTO_APPS });
     const view = /^\/api\/photos\/view\/(ph_[a-f0-9]{24})$/.exec(path);
     if (view && req.method === "GET") {

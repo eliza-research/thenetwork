@@ -6,5 +6,11 @@
   "main": "src/index.ts",
   "dependencies": {
     "@thenetwork/core": "workspace:*"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./apps": "./src/apps.ts",
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
   }
 }

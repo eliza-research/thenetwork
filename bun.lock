@@ -76,19 +76,6 @@
         "@thenetwork/core": "workspace:*",
       },
     },
-    "packages/plugin-network": {
-      "name": "@thenetwork/plugin-network",
-      "version": "0.1.0",
-      "devDependencies": {
-        "typescript": "^6.0.3",
-      },
-      "peerDependencies": {
-        "@elizaos/core": "*",
-      },
-      "optionalPeers": [
-        "@elizaos/core",
-      ],
-    },
     "packages/sim": {
       "name": "@thenetwork/sim",
       "version": "0.0.0",
@@ -116,8 +103,6 @@
     "@thenetwork/observatory": ["@thenetwork/observatory@workspace:packages/observatory"],
 
     "@thenetwork/platform": ["@thenetwork/platform@workspace:packages/platform"],
-
-    "@thenetwork/plugin-network": ["@thenetwork/plugin-network@workspace:packages/plugin-network"],
 
     "@thenetwork/sim": ["@thenetwork/sim@workspace:packages/sim"],
 
@@ -172,7 +157,5 @@
     "whatwg-mimetype": ["whatwg-mimetype@3.0.0", "", {}, "sha512-nt+N2dzIutVRxARx1nghPKGv1xHikU7HKdfafKkLNLindmPU/ch3U31NOCGGA/dmPcmb1VlofO0vnKAcsm0o/Q=="],
 
     "ws": ["ws@8.22.0", "", { "peerDependencies": { "bufferutil": "^4.0.1", "utf-8-validate": ">=5.0.2" }, "optionalPeers": ["bufferutil", "utf-8-validate"] }, "sha512-Ydggc987+RO0AnWtZ/7Wq9FtNvcrL1b/RO0ud9mWjUPgDrsAAwQSF51sm2hm1XofbU/4jkpGEsLFsZZxU+1DOg=="],
-
-    "@thenetwork/plugin-network/typescript": ["typescript@6.0.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
   }
 }

@@ -3,7 +3,7 @@
 // audit log), the simulation lab and run diff. Each one checks the role before it shows a control;
 // the server checks it again.
 import { useEffect, useState, type ReactNode } from "react";
-import type { AuditEntry, ConfigInfo, DiffNum, EngineRunSummary, LabArm, LabRun, ObsRequest, ObsSafetyCase, RunDiff, SafetyAction, SafetyInfo, SafetyReport, ScoreMetric } from "../src/types.ts";
+import type { AuditEntry, BiasReportView, ConfigInfo, DiffNum, EngineRunSummary, LabArm, LabRun, ObsRequest, ObsSafetyCase, RunDiff, SafetyAction, SafetyInfo, SafetyReport, ScoreMetric } from "../src/types.ts";
 import { store, useStore } from "./store.ts";
 import { Badge, Countdown, dur, humanize, Kpi, MemberLink, num, OppLink, pct, Section, stamp } from "./ui.tsx";
 
@@ -22,6 +22,36 @@ function useFetch<T>(load: () => Promise<{ data?: T; status: number; error?: str
 }
 const Err = ({ status, error }: { status?: number; error?: string }) =>
   status === undefined ? <div className="muted small">Loading…</div> : <div className="muted small">{status === 403 ? "Your role cannot see this." : error}</div>;
+
+// ---------------------------------------------------------------- bias monitor (critical path item 5)
+const BIAS_METRICS = [["proposals", "Proposals"], ["dates", "Dates"], ["secondDates", "Second dates"]] as const;
+/**
+ * The weekly bias monitor of the app's network (real mode, from the Network service): outcome ratio of
+ * each photo-rating quintile (q1 lowest) and "unrated" against everyone. Under 0.8x is an alert. Aggregates only.
+ */
+export function BiasMonitor() {
+  const s = useStore();
+  const r = useFetch<{ ok: boolean; reports?: BiasReportView[]; error?: string }>(() => store.bias(), `${s.mode}`, 60_000);
+  if (!r.data?.reports) return <Err status={r.status} error={r.status === 404 ? "The bias monitor runs on real data only (bun run sim measures it in simulation)." : r.error ?? r.data?.error} />;
+  const last = r.data.reports[0];
+  if (!last) return <div className="muted small">No report yet: the Network service writes one a week for each network that takes photos.</div>;
+  const groups = Object.entries(last.report.groups);
+  return (
+    <div className="small">
+      <div className="muted">{stamp(last.at)} · {num(last.members)} adult members · alert under 0.8x</div>
+      {last.report.alerts.length
+        ? last.report.alerts.map(a => <div className="attn bad" key={`${a.group}${a.metric}`}>{a.group}: {humanize(a.metric)} at {a.ratio.toFixed(2)}x</div>)
+        : <div className="good-text">No group under 0.8x.</div>}
+      <table className="table">
+        <thead><tr><th>Group</th><th>Members</th>{BIAS_METRICS.map(([k, l]) => <th key={k}>{l}</th>)}</tr></thead>
+        <tbody>{groups.map(([g, x]) => (
+          <tr key={g}><td>{g}</td><td>{num(x.n)}</td>{BIAS_METRICS.map(([k]) => <td key={k} className={x.ratio[k] < 0.8 ? "bad" : ""}>{x.ratio[k].toFixed(2)}x</td>)}</tr>
+        ))}</tbody>
+      </table>
+      {r.data.reports.length > 1 && <div className="muted">Earlier: {r.data.reports.slice(1).map(x => `${stamp(x.at)} (${x.report.alerts.length} alert${x.report.alerts.length === 1 ? "" : "s"})`).join(" · ")}</div>}
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------- safety console (gap 7)
 /** Cases (urgent first), evidence events and lift/close actions; the minor-safety view. Safety and admin only. */

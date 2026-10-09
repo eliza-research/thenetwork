@@ -6,7 +6,7 @@ Status: **agreed 2026-10-08** by the engine and platform owners. Owner of the El
 
 | Part | Owner | State |
 |---|---|---|
-| Wire contract and shared signing (`@thenetwork/plugin-network/contract`, `/svc-auth`, `/client`) | Eliza side | **Done** (import-free) |
+| Wire contract and shared signing (`@elizaos/plugin-network/contract`, `/svc-auth`, `/client`; mirrored in `packages/core/src/svc/`) | Eliza side | **Done** (import-free; plugin moved upstream 2026-10-09) |
 | Gateway takeover: service turn first, handled replies, consent mirror, open-turn context | Eliza side | **Done**, behind `NETWORK_TAKEOVER=1` (eliza `spike/network-plugin` d8d186d) |
 | Cloud route and runtime: service-backed Network store for open turns | Eliza side | **Done** |
 | Service `POST /internal/turn` (collecting adapter around `inbound`) | Platform | Pending |

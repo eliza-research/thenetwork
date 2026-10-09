@@ -22,7 +22,7 @@ import { memberFacets } from "../appProfile.ts";
 import { displayName, scrubFacet, scrubText } from "../scrub.ts";
 import { emptyCounters, Store, zeroCounts } from "../store.ts";
 import type {
-  BookedPlan, ConfigChange, ConfigInfo, ControlCommand, ControlResult, EngineRunSummary, EnvInfo, FeedKind, MemberDetail, MemberPhoto, MemberStatus, MemberTimeline, NetworkInfo,
+  BiasReportView, BookedPlan, ConfigChange, ConfigInfo, ControlCommand, ControlResult, EngineRunSummary, EnvInfo, FeedKind, MemberDetail, MemberPhoto, MemberStatus, MemberTimeline, NetworkInfo,
   ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsMessage, ObsOpportunity, ObsRequest, ObsState, OpportunityDetail, ParticipantStatus, ReviewInfo,
   SafetyAction, SafetyInfo, SearchHit, TimelineEntry,
 } from "../types.ts";
@@ -762,6 +762,12 @@ export class RealSource implements DataSource {
   async photos(memberId: string, actor: string, reason: string): Promise<{ ok: true; photos: MemberPhoto[] } | ControlResult> {
     if (!this.service) return { ok: false, code: "service_missing", error: "photos are kept by the Network service: set NETWORK_SERVICE_URL and NETWORK_SERVICE_TOKEN" };
     return this.service.photos(actor, memberId, reason);
+  }
+
+  /** The weekly bias monitor of this app's network, from the Network service (it writes the reports; this login only reads). */
+  async bias(actor: string): Promise<{ ok: true; reports: BiasReportView[] } | { ok: false; error: string }> {
+    if (!this.service) return { ok: false, error: "the bias monitor runs in the Network service: set NETWORK_SERVICE_URL and NETWORK_SERVICE_TOKEN" };
+    return this.service.bias(actor);
   }
 
   /** Through the Network service (its staff API), never this connection. Without it: refused. */

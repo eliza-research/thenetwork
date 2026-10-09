@@ -7,16 +7,19 @@
 //    (scoped()), so the service works under the network_service role, whose row-level security shows
 //    one app per transaction (audit network-service-M1). Every row also names its app explicitly.
 //  - What a unit produced (messages, events, blocks, engine runs, network capital events, opt-outs, a
-//    forget) is written in the same transaction as the Network state, then the channel adapter
-//    delivers it: the platform consent ledger, the member's opt-out and the person cap first.
-//  - After a restart the state is loaded first, then the rows that wait for delivery are delivered
-//    once; rows past their time (a probe after 24 h, anything after 3 days, an item that closed) are
-//    stored as expired and never sent (audit network-service-2).
+//    forget) is written in the same transaction as the Network state. With the Blooio adapter the sends
+//    go into the persisted queue (platform.outbound) in that transaction too, and the queue delivers
+//    after the commit, checking the platform consent ledger, the member's opt-out and the person cap
+//    at send time. The dry-run adapter checks them after the commit and stores "dry_run".
+//  - After a restart the state is loaded first, then the queue delivers what waits; rows a stopped
+//    worker held go out again with the same provider key; rows past their time (a probe after 24 h,
+//    anything after 3 days, an item that closed) are stored as expired and never sent (audit
+//    network-service-2).
 //  - Nothing here reads another app's rows; the person cap across apps (service.ts) goes through a
 //    SECURITY DEFINER function that returns ids only.
 import { randomUUID } from "node:crypto";
 import type { SQL } from "bun";
-import { DAY, type City, type Clock, type MemberId, type WorldSnapshot } from "@thenetwork/core";
+import type { City, Clock, MemberId, WorldSnapshot } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import type { NetworkContext, SimMessage } from "@thenetwork/core";
 import { ConsentNetwork, type NetworkOptions, type NetworkState } from "../src/network.ts";
@@ -35,12 +38,6 @@ const NOT_SENT = /^(refused|suppressed|blocked|parked|failed)/;
 import { summarizeRun } from "../../observatory/src/engineCapture.ts";
 
 type Row = Record<string, unknown>;
-
-/** A waiting row older than this is never sent after a restart (a probe or a proactive message: 24 h; anything else: 3 days). */
-export const WAITING_TTL_PROACTIVE_MS = DAY;
-export const WAITING_TTL_MS = 3 * DAY;
-/** Opportunity stages after which a message about it is stale. */
-const CLOSED_STAGES = new Set(["done", "closed"]);
 
 /** What one unit of work produced. Written in the save transaction, then delivered. */
 export interface Unit {
@@ -69,6 +66,8 @@ export interface RuntimeHost {
   consentRefused?(rt: NetworkRuntime, batch: Outbound[]): Promise<Set<string>>;
   /** The sends the adapter took (not refused or failed), after their statuses are stored. Errors are logged, never retried. */
   delivered?(rt: NetworkRuntime, sent: Outbound[]): Promise<void>;
+  /** After a tick that ran on this instance (the review SLA alerts, the weekly bias monitor). Errors are logged; the tick still counts. */
+  afterTick?(rt: NetworkRuntime): Promise<void>;
 }
 
 export interface RuntimeOptions {
@@ -141,10 +140,31 @@ export class NetworkRuntime {
     });
     this.net.init(this.context());
     this.adapter = typeof o.adapter === "function" ? o.adapter(this.net, this) : o.adapter ?? new DryRunAdapter(host.log);
+    this.adapter.attach?.(this);
   }
 
   private get sql() { return this.host.sql; }
   private get clock() { return this.host.clock; }
+  /** The service's connection pool (the persisted queue writes platform.outbound with it). */
+  get db(): SQL { return this.host.sql; }
+  /** This instance's name (the queue's lease owner). */
+  get instance(): string { return this.host.instance; }
+
+  // ------------------------------------------------------------------ send-time checks of the persisted queue
+  /** Consent at send time for one queued message: the platform consent ledger (and bans), then the member's own opt-out. */
+  async optedOut(id: string, memberId: MemberId | undefined, to: string): Promise<boolean> {
+    if (!memberId) return false;
+    const probe: Outbound = { id, memberId, to, body: "", kind: "transactional", proactive: false, system: false, ts: this.clock.now() };
+    if ((await this.host.consentRefused?.(this, [probe]))?.has(id)) return true;
+    const [r] = await this.scoped(tx => tx`select opted_out from network.members where app_id = ${this.app.id} and id = ${memberId}`);
+    return r?.opted_out === true;
+  }
+  /** The person cap at send time (a proactive message): true when the slot was taken. */
+  async capTake(id: string, memberId: MemberId): Promise<boolean> {
+    const probe: Outbound = { id, memberId, body: "", kind: "proactive", proactive: true, system: false, ts: this.clock.now() };
+    return !(await this.host.capRefused(this, [probe])).has(id);
+  }
+  async capRelease(id: string): Promise<void> { await this.host.capRelease?.([id]); }
 
   /** A transaction for this app: row-level security (network_service) shows and accepts this app's rows only. */
   scoped<T>(fn: (tx: SQL) => Promise<T>): Promise<T> {
@@ -162,35 +182,22 @@ export class NetworkRuntime {
   }
 
   /**
-   * After a restart: load the state first (the queue checks each recipient against it), then deliver
-   * what waits once. A row past its time, or about an opportunity that closed, is stored as expired.
+   * After a restart: the state loads first (the queue checks each recipient against it; audit
+   * network-service-2), then the queue delivers what waits. Rows a stopped worker held during a
+   * provider call go back to the queue first and are sent again with the same provider key. The queue
+   * itself expires a row past its time (a proactive message after 24 h, anything after 3 days) or
+   * about an opportunity that closed.
    */
   async start() {
     // The ledger starts from what is stored (events this process did not emit), oldest first.
     for (const r of await this.scoped(tx => tx`select event from network.capital_events where app_id = ${this.app.id} order by t, id`) as any[]) {
       try { this.capital.ledger.record(typeof r.event === "string" ? JSON.parse(r.event) : r.event); } catch { /* out of order: counted by the wiring only for new events */ }
     }
-    if (this.adapter.storedStatus === "dry_run") return;
-    await this.unitOfWork(async n => {
-      const rows = await this.scoped(tx => tx`select id, member_id, body, type, opportunity_id, proactive, system, ts from network.messages
-        where app_id = ${this.app.id} and direction = 'outbound' and status = any(${`{${WAITING_STATUSES.join(",")}}`}::text[]) order by ts, id`) as any[];
-      const now = this.clock.now();
-      const expired: string[] = [];
-      for (const r of rows) {
-        const age = now - new Date(r.ts).getTime();
-        const opp = r.opportunity_id ? n.opps.get(r.opportunity_id) : undefined;
-        const stale = age > WAITING_TTL_MS || (r.proactive && age > WAITING_TTL_PROACTIVE_MS) || (opp !== undefined && CLOSED_STAGES.has(opp.stage));
-        if (stale) { expired.push(r.id); continue; }
-        this.committed.push({
-          id: r.id, memberId: r.member_id, to: this.memberToAddr.get(r.member_id), body: r.body, kind: r.system ? "compliance" : r.proactive ? "proactive" : "transactional",
-          type: r.type ?? undefined, oppId: r.opportunity_id ?? undefined, proactive: r.proactive, system: r.system, ts: new Date(r.ts).getTime(),
-        });
-      }
-      if (expired.length) {
-        await this.storeStatuses(expired.map(id => ({ id, status: "expired" })));
-        this.host.log(`[restart] ${expired.length} waiting message(s) expired, not sent (${this.id})`);
-      }
-    });
+    if (!this.adapter.enqueue) return;
+    const recovered = (await this.adapter.recover?.()) ?? 0;
+    if (recovered) this.host.log(`[restart] ${recovered} message(s) a stopped worker held go out again with the same provider key (${this.id})`);
+    // One unit loads the state and the address book; its delivery drains the queue.
+    await this.unitOfWork(() => undefined);
   }
 
   // ------------------------------------------------------------------ units of work
@@ -278,8 +285,8 @@ export class NetworkRuntime {
   }
 
   /** A system send (keyword confirmations, the link notice) in the current unit. It does not go through the Network. */
-  system(memberId: MemberId, id: string, body: string, kind: Outbound["kind"] = "compliance", type = "system") {
-    this.unit.sends.push({ id, memberId, to: this.memberToAddr.get(memberId), body, kind, type, proactive: false, system: true, ts: this.clock.now() });
+  system(memberId: MemberId, id: string, body: string, kind: Outbound["kind"] = "compliance", type = "system", mediaUrls?: string[]) {
+    this.unit.sends.push({ id, memberId, to: this.memberToAddr.get(memberId), body, ...(mediaUrls?.length ? { mediaUrls } : {}), kind, type, proactive: false, system: true, ts: this.clock.now() });
   }
 
   /** Everything the unit produced, inside the save transaction (app.app_id is set). Rows that name a member not in this app's network.members are skipped. */
@@ -339,6 +346,18 @@ export class NetworkRuntime {
       await tx`update network.members set invited_by = null where app_id = ${app} and invited_by = ${id}`;
       await tx`update network.members set name = null, home_city = null, home_area = null, account_status = 'removed', opted_out = false, age = null, invited_by = null,
         community = null, occupation = null, bio = null, prefs = '{}'::jsonb, unanswered_proactive = 0, joined_at = null, person_id = null where app_id = ${app} and id = ${id}`;
+      // The persisted queue keeps no text or address of theirs; what still waits is never sent.
+      await tx`update platform.outbound set body = null, to_address = null, ended_at = coalesce(ended_at, ${new Date(this.clock.now())}),
+        status = case when status = any(${`{${WAITING_STATUSES.join(",")}}`}::text[]) then 'dropped_forgotten' else status end
+        where app_id = ${app} and member_id = ${id}`;
+    }
+    // The persisted queue: the unit's sends in this same transaction (delivered after the commit). The one
+    // decline to a member the unit forgets goes as a text to a non-member. Sends it does not queue (the live
+    // flags are off, no address) get their status here.
+    if (this.adapter.enqueue) {
+      const queued = u.sends.filter(s => ok(s.memberId) || u.forget.has(s.memberId));
+      const refused = await this.adapter.enqueue(tx, queued, u.forget);
+      for (const [id, status] of refused) await tx`update network.messages set status = ${status} where app_id = ${app} and id = ${id} and direction = 'outbound'`;
     }
   }
 
@@ -349,6 +368,8 @@ export class NetworkRuntime {
    */
   async deliver() {
     const batch = this.committed.splice(0);
+    // The persisted queue holds the sends already (written in the save): it delivers what is due.
+    if (this.adapter.enqueue) return this.drainQueue();
     if (!batch.length) return;
     // The platform consent ledger is the source of truth for STOP at send time (not an adapter's memory).
     const stopped = (await this.host.consentRefused?.(this, batch)) ?? new Set<string>();
@@ -383,6 +404,26 @@ export class NetworkRuntime {
   /** Sends the adapter could not take (an error after commit): handed over again on the next tick. */
   private retry: Outbound[] = [];
 
+  /**
+   * The persisted queue: deliver what is due for this app (consent, the person cap and every line rule
+   * are checked at send time inside the queue), store the new statuses, and give the sends that went
+   * out to the host (the inbox). An error leaves the rows in the queue for the next tick.
+   */
+  private async drainQueue() {
+    let ds: Delivery[];
+    try { ds = await this.adapter.deliver([]); } catch (e) { this.host.log(`[deliver] the queue waits for the next tick (${this.id}): ${(e as Error).message}`); return; }
+    const mine = ds.filter(d => d.memberId && (d.app ?? this.app.id) === this.app.id);
+    await this.storeStatuses(mine);
+    const went = mine.filter(d => /^(accepted|sent|delivered|read)$/.test(d.status)).map(d => d.id);
+    if (!went.length || !this.host.delivered) return;
+    const rows = await this.scoped(tx => tx`select id, member_id, body, type, opportunity_id, proactive, system, ts from network.messages where app_id = ${this.app.id} and id in ${tx(went)}`) as any[];
+    const sent: Outbound[] = rows.map(r => ({
+      id: r.id, memberId: r.member_id, body: r.body, kind: r.system ? "compliance" : r.proactive ? "proactive" : "transactional",
+      type: r.type ?? undefined, oppId: r.opportunity_id ?? undefined, proactive: r.proactive, system: r.system, ts: new Date(r.ts).getTime(),
+    }));
+    await this.host.delivered(this, sent).catch(e => this.host.log(`[deliver] delivered hook failed (${this.id}): ${(e as Error).message}`));
+  }
+
   async storeStatuses(ds: Delivery[], only?: Set<string>) {
     const rows = ds.filter(d => d.status !== this.adapter.storedStatus && (!only || only.has(d.id)));
     if (!rows.length) return;
@@ -399,6 +440,7 @@ export class NetworkRuntime {
     if (this.retry.length) this.committed.unshift(...this.retry.splice(0));
     await this.deliver();
     await this.storeStatuses(await this.adapter.flush());
+    if (ran && this.host.afterTick) await this.host.afterTick(this).catch(e => this.host.log(`[tick] after-tick work failed (${this.id}): ${(e as Error).message}`));
     return ran;
   }
 

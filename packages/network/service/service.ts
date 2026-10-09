@@ -31,6 +31,8 @@ import { brandOf, copy as ntwrkCopy, copyFor, type Copy } from "../src/copy.ts";
 import { isMinor } from "@thenetwork/core";
 import { ageAnswer, agesStated } from "../src/classify.ts";
 import { NetworkRuntime, type RuntimeHost } from "./runtime.ts";
+import { Inbox } from "./inbox.ts";
+import { CostLedger, costRatesFromEnv, PgCostSink } from "./cost.ts";
 import type { ChannelAdapter, Outbound } from "./channel.ts";
 import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { Accounts, type AccountHooks, type JoinHookContext, type MemberHookContext } from "../../platform/src/accounts.ts";
@@ -44,7 +46,11 @@ import { createPublicApi, type PublicApi, type PublicApiOptions } from "../../pl
 import { otpProviderFromEnv } from "../../platform/src/otp.ts";
 import { turnstileFromEnv } from "../../platform/src/turnstile.ts";
 import type { PeerInfo } from "../../platform/src/api.ts";
-import { PgPhotoStore, PhotoService, photoStorageFromEnv, type PhotoRater, type PhotoScores, type PhotoStorage } from "../../platform/src/photos.ts";
+import { PHOTO_APPS, PgPhotoStore, PhotoService, photoStorageFromEnv, type PhotoRater, type PhotoStorage } from "../../platform/src/photos.ts";
+import { appearanceFacet, type AppearanceScore, type RatingSubject } from "../../engine/src/packs/slop/appearance.ts";
+import { fetchMediaCapped, PhotoIntake, type PhotoIntakeDeps } from "./photoIntake.ts";
+import { BIAS_EVERY_MS, biasAlerts, biasReport, type BiasMember, type StoredBiasReport } from "./bias.ts";
+import { DEFAULT_SLA_HOURS } from "../../observatory/src/apps.ts";
 import type { Ban } from "../../platform/src/store.ts";
 import { parseBlooioWebhook, SIGNATURE_HEADER, verifyBlooioSignature } from "../../blooio/src/blooio/webhook.ts";
 import { normalizeAddress } from "../../blooio/src/phone.ts";
@@ -60,6 +66,18 @@ export { NetworkRuntime } from "./runtime.ts";
 type Row = Record<string, unknown>;
 const MAX_BODY_BYTES = 256 * 1024;
 export const WEBHOOK_PATH = "/webhooks/blooio";
+/** Where the keyword gateway reports the consent events it answered (STOP_HELP_OWNER=gateway). */
+export const GATEWAY_CONSENT_PATH = "/consent/gateway";
+export const GATEWAY_SIGNATURE_HEADER = "x-network-signature";
+/** Who answers STOP, HELP and START on the shared line: one system only (founder decision, docs/mvp-plan.md). */
+export type StopHelpOwner = "service" | "gateway";
+/** STOP_HELP_OWNER: "service" (the default) or "gateway". Any other value stops the start: two owners must never both answer. */
+export function stopHelpOwner(env: Record<string, string | undefined> = process.env): StopHelpOwner {
+  const v = env.STOP_HELP_OWNER?.trim();
+  if (!v || v === "service") return "service";
+  if (v === "gateway") return "gateway";
+  throw new Error(`STOP_HELP_OWNER must be "service" or "gateway", not ${JSON.stringify(v)}`);
+}
 /** The tables the service needs (bun run db:migrate). */
 const REQUIRED_TABLES = [
   ...["members", "channel_identities", "facets", "intents", "presence", "edges", "messages", "events", "matching_runs", "staff_audit", "network_state", "opportunities", "review_items", "requests"].map(t => `network.${t}`),
@@ -137,8 +155,10 @@ export interface ServiceOptions {
   env?: Env;
   /** Photo storage (platform photos.ts). Default: PHOTO_STORAGE from the environment; null turns photos off. */
   photoStorage?: PhotoStorage | null;
-  /** The photo rater (default "none": nothing is rated). */
+  /** The appearance rater (server.ts: makeClefRaterFromEnv behind withRetry). Undefined: ratings are off; photos still work. */
   photoRater?: PhotoRater;
+  /** Fetch one attachment of a photo sent by text (default: https only, capped; photoIntake.ts). The simulation passes a fake. */
+  fetchMedia?: PhotoIntakeDeps["fetchMedia"];
   /** The origin staff photo links use (PHOTO_VIEW_BASE_URL). Default: https://<the app's domain>, which the site router forwards to /api/*. */
   photoBaseUrl?: string;
   /**
@@ -219,6 +239,10 @@ export class NetworkService implements RuntimeHost {
   private readonly secret?: string;
   private readonly secrets: Partial<Record<AppId, string>>;
   private readonly hashKey: string;
+  /** Who answers STOP, HELP and START (STOP_HELP_OWNER). */
+  readonly stopHelpOwner: StopHelpOwner;
+  /** The inbound inbox: one row per provider message, handled once and in order per sender (inbox.ts). */
+  readonly inbox: Inbox;
   private readonly cap: number;
   private readonly apiOptions: ServiceOptions["publicApi"];
   private api?: PublicApi;
@@ -226,7 +250,13 @@ export class NetworkService implements RuntimeHost {
   private readonly forgetListeners: Array<(ctx: MemberHookContext) => Promise<unknown> | unknown> = [];
   /** Private member photos (slop; verified adults only). */
   readonly photos: PhotoService;
+  /** Photos sent by text (photoIntake.ts). */
+  readonly photoIntake: PhotoIntake;
+  /** Review items already alerted for passing their app's SLA (this instance). */
+  private readonly slaAlerted = new Set<string>();
   private readonly photoBaseUrl?: string;
+  /** Estimated cost per event, per app and per day (cost.ts, network.cost_ledger): OTP codes, photo ratings, LLM calls. */
+  readonly cost: CostLedger;
 
   constructor(o: ServiceOptions) {
     if (o.network?.review && o.network.review !== "human") throw new Error(`review mode "${o.network.review}" is refused: production review is "human" only (runbook-real 7.4)`);
@@ -238,6 +268,7 @@ export class NetworkService implements RuntimeHost {
     this.consoleToken = o.consoleToken || undefined;
     this.secrets = o.webhookSecrets ?? {};
     this.cap = o.personDailyCap ?? PERSON_DAILY_CAP;
+    this.stopHelpOwner = stopHelpOwner(this.env);
     this.apiOptions = o.publicApi;
     this.apps = o.apps ?? APPS;
     const key = this.env.PLATFORM_HASH_KEY ?? (devShortcutsAllowed(this.env) ? DEV_HASH_KEY : undefined);
@@ -248,6 +279,7 @@ export class NetworkService implements RuntimeHost {
     // Each network's tick holds one connection for its advisory lock and needs more inside it: size the pool from the network count.
     this.sql = new SQL({ url: o.url, max: Math.max(8, 2 * specs.length + 4), connection: { application_name: `network-service:${this.instance}` } });
     this.people = o.people ?? new PgPeopleStore(this.sql);
+    this.cost = new CostLedger({ sink: new PgCostSink(this.sql), clock: this.clock, rates: costRatesFromEnv(this.env), log: this.log });
     this.accounts = new Accounts(this.people, { hashKey: this.hashKey, now: () => this.clock.now(), env: this.env, apps: id => this.apps[id], hooks: this.hooks() });
     if (o.notify !== false) this.notify = new Notifier(o.notify ?? new PgNotifyStore(this.sql), { get: personId => this.notifyRecipient(personId) });
     for (const spec of specs) {
@@ -262,12 +294,19 @@ export class NetworkService implements RuntimeHost {
     this.photoBaseUrl = o.photoBaseUrl ?? this.env.PHOTO_VIEW_BASE_URL ?? undefined;
     this.photos = new PhotoService({
       people: this.people, meta: new PgPhotoStore(this.sql), storage: o.photoStorage === null ? undefined : o.photoStorage ?? photoStorageFromEnv(this.env),
-      signingKey: key, now: () => this.clock.now(), rater: o.photoRater, log: this.log,
+      signingKey: key, now: () => this.clock.now(), rater: o.photoRater && this.cost.meterRater(o.photoRater), log: this.log,
       eligible: (personId, app) => this.verifiedAdult(personId, app),
-      onRating: (personId, app, photoId, scores) => this.writeRating(personId, app, photoId, scores),
-      onRemoved: (personId, app, photoId) => this.dropRatings(personId, app, photoId),
+      banned: personId => this.personBanned(personId),
+      onRating: (personId, app, score, subject) => this.writeRating(personId, app, score, subject),
+      onRemoved: (personId, app) => this.dropRatings(personId, app),
+    });
+    this.photoIntake = new PhotoIntake({
+      people: this.people, accounts: this.accounts, photos: this.photos, phoneKey: e164 => this.phoneKey(e164), now: () => this.clock.now(),
+      fetchMedia: o.fetchMedia ?? fetchMediaCapped, log: this.log,
+      reply: async (e164, text, key) => { const rt = this.runtimeFor("slop"); if (rt) await this.direct(rt, e164, text, key); },
     });
     this.audit = o.audit ?? new PgAudit(o.auditUrl ?? o.url);
+    this.inbox = new Inbox({ sql: this.sql, clock: this.clock, log: this.log, handle: (ev, app) => this.inbound(ev, app && isAppId(app) ? { app } : {}) });
   }
 
   /** The service for every row of platform.networks, with the platform.apps policy rows. */
@@ -326,14 +365,57 @@ export class NetworkService implements RuntimeHost {
   /** One tick on every network, each under its own lock. True when any network ran (one network: whether it ran). */
   async tick(): Promise<boolean> {
     let any = false;
+    await this.inboxTick();
     for (const rt of this.runtimes.values()) any = (await rt.tick()) || any;
     await this.purge();
     return any;
   }
 
+  /**
+   * RuntimeHost.afterTick: after a tick that ran on this instance, the review SLA alerts and, once a
+   * week, the bias monitor of a network whose app takes photos. Each logs "[alert] ..." lines that the
+   * host's log alerts pick up (docs/deploy.md); a failure is logged and never stops the tick.
+   */
+  async afterTick(rt: NetworkRuntime): Promise<void> {
+    for (const line of slaAlerts(rt.id, rt.net.reviewQueue(), this.clock.now(), DEFAULT_SLA_HOURS[rt.app.id], this.slaAlerted)) this.log(line);
+    if (PHOTO_APPS.includes(rt.app.id)) await this.weeklyBias(rt);
+  }
+
+  /** The bias monitor of one network when its last stored report is a week old (or there is none). Returns the new report, if one was made. */
+  async weeklyBias(rt: NetworkRuntime, force = false): Promise<StoredBiasReport | undefined> {
+    const now = this.clock.now();
+    const [last] = await rt.scoped(tx => tx`select max(at) as at from network.bias_reports where app_id = ${rt.app.id} and network_id = ${rt.id}`);
+    if (!force && last?.at && now - new Date(last.at as string).getTime() < BIAS_EVERY_MS) return undefined;
+    const rows = await rt.scoped(tx => tx`select m.id, m.age, m.joined_at, coalesce(array_agg(t) filter (where t like 'appearance:%'), '{}') as tags
+      from network.members m left join network.facets f on f.app_id = m.app_id and f.member_id = m.id and f.status <> 'rejected' left join lateral unnest(f.tags) t on true
+      where m.app_id = ${rt.app.id} and m.account_status in ('active', 'paused', 'restricted') group by m.id, m.age, m.joined_at order by m.id`) as any[];
+    const members: BiasMember[] = rows.map(r => ({ id: r.id, age: r.age, joinedAt: r.joined_at ? new Date(r.joined_at).getTime() : null, tags: r.tags ?? [] }));
+    const r = biasReport(rt.id, rt.app.id, members, [...rt.net.opps.values()], now);
+    await rt.scoped(tx => tx`insert into network.bias_reports (app_id, id, network_id, at, members, alerts, report)
+      values (${rt.app.id}, ${`bias_${rt.id}_${now}`}, ${rt.id}, ${new Date(now)}, ${r.members}, ${r.report.alerts.length}, ${r.report as unknown as Row}::jsonb)`);
+    this.log(`[bias] ${rt.id}: ${r.members} adult member(s), ${r.report.alerts.length} alert(s)`);
+    for (const line of biasAlerts(r)) this.log(line);
+    return r;
+  }
+
+  /** The newest stored bias reports of a network (the console's bias panel). */
+  async biasReports(rt: NetworkRuntime, limit = 8): Promise<StoredBiasReport[]> {
+    const rows = await rt.scoped(tx => tx`select network_id, app_id, at, members, report from network.bias_reports where app_id = ${rt.app.id} and network_id = ${rt.id} order by at desc limit ${limit}`) as any[];
+    return rows.map(r => ({ network: r.network_id, app: r.app_id, at: new Date(r.at).getTime(), members: r.members, report: typeof r.report === "string" ? JSON.parse(r.report) : r.report }));
+  }
+
+  /** Inbound messages a crash or an error left waiting (platform.inbound): handled once, in order per sender. */
+  async inboxTick(): Promise<void> {
+    const n = await this.inbox.drain().catch(e => { this.log(`[inbound] inbox drain failed: ${(e as Error).message}`); return 0; });
+    if (n) this.log(`[inbound] ${n} waiting inbound message(s) handled`);
+  }
+
   /** Retention (audit platform-18): expired OTP challenges and sessions, old rate windows and stale text flows. */
   async purge() {
     const n = await this.people.purge(this.clock.now() - 2 * DAY).catch(e => { this.log(`[purge] failed: ${(e as Error).message}`); return 0; });
+    // The inbox keeps handled ids a week (dedupe); the line keeps no counters for an address that is nobody's phone.
+    await this.inbox.purge(this.clock.now() - 7 * DAY).catch(e => this.log(`[purge] inbox failed: ${(e as Error).message}`));
+    await this.lineAdapter()?.purge?.().catch(e => { this.log(`[purge] line counters failed: ${(e as Error).message}`); return 0; });
     if (n) this.log(`[purge] removed ${n} expired platform row(s)`);
     return n;
   }
@@ -460,6 +542,9 @@ export class NetworkService implements RuntimeHost {
     for (const [e164, sends] of byPhone) {
       // A number that deleted everything stays suppressed until the person opts in again (platform-15).
       const suppressed = await this.people.isSuppressed(this.phoneKey(e164));
+      // A banned number or person gets nothing but compliance texts, on every app (PRD 40.5).
+      const banned = !suppressed && (await this.people.isBanned(this.phoneKey(e164), (await this.people.findPhone(e164))?.personId ?? null));
+      if (banned) { for (const b of sends) out.add(b.id); this.log(`[ban] ${sends.length} send(s) to a banned number refused (${rt.id})`); continue; }
       if (!suppressed && resolveConsent(await this.people.lastConsent(e164, rt.app.id)) !== "opted_out") continue;
       for (const b of sends) out.add(b.id);
       this.log(`[consent] ${sends.length} send(s) to an opted-out number refused (${rt.id})`);
@@ -595,9 +680,11 @@ export class NetworkService implements RuntimeHost {
    */
   get publicApi(): PublicApi {
     this.api ??= createPublicApi({
-      store: this.people, otp: this.apiOptions?.otp ?? otpProviderFromEnv(this.env), turnstile: this.apiOptions?.turnstile ?? turnstileFromEnv(this.env),
+      store: this.people, turnstile: this.apiOptions?.turnstile ?? turnstileFromEnv(this.env),
       hashKey: this.hashKey, apps: this.apps, env: this.env,
       now: () => this.clock.now(), log: this.log, ...this.apiOptions, ...this.hooks(), photos: this.photos,
+      // Each code Twilio Verify sends is a cost row (cost.ts).
+      otp: this.cost.meterOtp(this.apiOptions?.otp ?? otpProviderFromEnv(this.env)),
     });
     return this.api;
   }
@@ -664,22 +751,24 @@ export class NetworkService implements RuntimeHost {
     switch (ev.kind) {
       case "ignored": case "typing": return "ignored";
       case "status": {
-        for (const rt of this.runtimes.values()) {
-          const d = rt.adapter.status?.(ev);
-          if (d) { await rt.storeStatuses([d]); break; }
-        }
+        // A receipt for any app's message on the line (the queue is shared): the row's own network stores it.
+        const d = await this.lineAdapter()?.status?.(ev);
+        const rt = d?.memberId && d.app && isAppId(d.app) ? this.runtimeFor(d.app) : undefined;
+        if (d && rt) await rt.storeStatuses([d]);
         return "status";
       }
       case "safety":
-        for (const rt of this.runtimes.values()) rt.adapter.lineSafety?.(ev.line ?? "", ev.type === "safety.number_banned" ? "review" : ev.action);
+        await this.lineAdapter()?.lineSafety?.(ev.type === "safety.number_banned" ? "review" : ev.action, ev.type);
         this.log(`[safety] ${ev.type} action=${ev.action ?? "-"}`);
         return "safety";
       case "reaction":
-        for (const rt of this.runtimes.values()) rt.adapter.engaged?.(ev.from);
+        await this.lineAdapter()?.engaged?.(ev.from);
         return "reaction";
       case "message": break;
     }
     if (ev.isGroup) return "ignored_group";
+    // Any message on the line is an answer in that conversation (Apple line safety: the streak resets, held messages may go).
+    await this.lineAdapter()?.engaged?.(ev.from);
     const route = await this.route(ev, o.app);
     const app = this.apps[route.app];
     const rt = this.runtimeFor(route.app);
@@ -696,32 +785,25 @@ export class NetworkService implements RuntimeHost {
     // STOP / STOP ALL: the consent ledger first (with or without a membership; once per message), then every member it covers.
     if (kw === "stop" || kw === "stop_all") {
       const scope: StopScope = kw === "stop_all" || route.shared ? "global" : stopScope(this.env);
-      const { event, reply } = keywordEvent(kw, e164 ?? ev.from, app, t, { line, scope, ref: rowId });
-      if (e164 && event) await this.accounts.recordConsent(event);
-      // The adapters in the STOP's scope only (the send path also reads the consent ledger).
-      for (const r of this.runtimes.values()) if (scope === "global" || r === rt) r.adapter.optedOut?.(ev.from, true);
-      if (e164) await this.people.deletePending(this.phoneKey(e164));
-      if (memberId) await this.memberMessage(rt, memberId, ev, rowId, kw, reply);
-      else await this.direct(rt, ev.from, reply, `sys:${rowId}`);
-      const person = e164 ? await this.accounts.personFor(e164) : undefined;
-      if (person) await this.stopped(app, person.id, scope, memberId ? { rt, memberId } : undefined);
-      else if (scope === "global") {
-        // A member from before the platform (no person): every app where this address is a member.
-        for (const other of this.runtimes.values()) {
-          if (other !== rt) await other.identities();
-          const id = other.memberOf(ev.from);
-          if (other !== rt && id) await other.unitOfWork(async n => { await n.onInbound({ id: `${rowId}:${other.id}`, memberId: id, body: ev.text, ts: t, channel: "imessage", keyword: "STOP" }); other.unit.optOut.set(id, true); });
-        }
-      }
-      return memberId ? "handled" : "stopped";
+      return this.stop(kw, ev.from, app, rt, scope, rowId, line, ev);
     }
 
     // A number not seen for 12 months may have a new owner: on hold for staff review. Nothing is
     // answered or stored until staff decide (STOP above always works; HELP still answers).
     if (e164 && (await this.accounts.seen(e164)) === "held") {
       this.log(`[inbound] a number on hold for review (${rt.id}): not handled`);
-      if (kw === "help") await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`);
+      if (kw === "help" && this.answersKeywords) await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`);
       return "held";
+    }
+
+    // Photos by text (photoIntake.ts): the answer to the photo consent ask, then any attachment. A photo
+    // from a minor, an unknown age, a banned person or a non-member of slop is dropped before it is fetched.
+    if (e164 && !kw && (await this.photoIntake.consentAnswer(e164, ev.text, rowId))) return "handled";
+    if (e164 && ev.mediaUrls?.length) {
+      // A provider retry of the same message takes no photo twice.
+      const first = (await this.people.hit(`photo_msg:${rowId}`, DAY, t)).count === 1;
+      const r = first ? await this.photoIntake.photosIn(e164, ev.mediaUrls, rowId) : { outcome: "duplicate" as const };
+      if (r.outcome !== "not_member" && !ev.text.trim()) return "handled";
     }
 
     // "leave <app>": that app only, on any line.
@@ -741,14 +823,13 @@ export class NetworkService implements RuntimeHost {
     }
 
     if (memberId) {
-      rt.adapter.engaged?.(ev.from);
       if (kw === "start" && e164) {
         await this.accounts.recordConsent({ e164, app: app.id, line, state: "opted_in", source: "keyword:start", wording: "START keyword", ref: rowId, at: t });
         const person = await this.accounts.personFor(e164);
         const m = person && (await this.people.getMembership(person.id, app.id));
         if (m?.state === "paused") await this.people.putMembership({ ...m, state: "active" });
       }
-      const reply = kw === "help" ? app.brand.help : undefined;
+      const reply = kw === "help" && this.answersKeywords ? app.brand.help : undefined;
       if (!kw && e164 && /^\s*share\W*$/i.test(ev.text) && (await this.pendingOf(e164, "share", app.id))) return this.share(rt, app, memberId, e164, ev, rowId);
       // The answer to The Network's "what are you looking for?": enroll in the apps they named.
       if (!kw && e164 && app.id === "ntwrk" && (await this.pendingOf(e164, "looking_for"))) {
@@ -762,7 +843,7 @@ export class NetworkService implements RuntimeHost {
 
     // Not a member of this app. Nothing is stored about them unless they join (age check passed).
     if (!e164) { this.log(`[inbound] unknown sender (not a phone), ${ev.text.length} chars, not stored`); return "unknown_sender"; }
-    if (kw === "help") { await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`); return "handled"; }
+    if (kw === "help") { if (this.answersKeywords) await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`); return "handled"; }
     // One text join per phone at a time (the same lock as a web join).
     return this.people.withLock(`join:${e164}`, () => this.join(rt, app, e164, ev, rowId, route));
   }
@@ -811,8 +892,12 @@ export class NetworkService implements RuntimeHost {
       try { await n.onInbound({ id: rowId, memberId, body: ev.text, ts: t, channel, ...(keyword ? { keyword } : {}) }); } finally { rt.replyingTo = undefined; }
       // Carrier keywords: the app's own confirmation (packages/platform apps.ts). START gets the Network's own welcome back.
       if (systemReply) rt.system(memberId, `sys:${rowId}`, systemReply);
-      if (keyword === "STOP") { rt.unit.optOut.set(memberId, true); rt.adapter.optedOut?.(ev.from, true); }
-      if (keyword === "START") { rt.unit.optOut.set(memberId, false); rt.adapter.optedOut?.(ev.from, false); }
+      if (keyword === "STOP") rt.unit.optOut.set(memberId, true);
+      if (keyword === "START") {
+        rt.unit.optOut.set(memberId, false);
+        // The gateway owns keyword answers: the Network's own welcome back is not sent.
+        if (!this.answersKeywords) rt.unit.sends = rt.unit.sends.filter(s => s.memberId !== memberId);
+      }
       if (n.isDeclined(memberId)) {
         // Under the join age: nothing is kept. The one kind decline still goes out, as a policy notice the queue does not hold back.
         rt.unit.forget.add(memberId);
@@ -846,6 +931,92 @@ export class NetworkService implements RuntimeHost {
       await this.people.forgetMembership(person.id, m.app, at);
       await this.accounts.recordConsent({ e164, app: m.app, state: "opted_out", source: "join_declined", at });
     }
+  }
+
+  /**
+   * STOP or STOP ALL from a number (the line, or the gateway's report): the consent event once per
+   * `ref`, then every member it covers stops (one app, or every app on the shared line). The
+   * confirmation goes only when this service owns keyword answers (STOP_HELP_OWNER). `ev`: the inbound
+   * message, when the STOP came on the line (the member's own unit stores it).
+   */
+  private async stop(kw: "stop" | "stop_all", from: string, app: AppInfo, rt: NetworkRuntime, scope: StopScope, ref: string, line: string | undefined,
+    ev?: Extract<ChannelEvent, { kind: "message" }>): Promise<InboundOutcome> {
+    const e164 = normalizePhone(from), t = this.clock.now();
+    await rt.identities();
+    const memberId = rt.memberOf(from);
+    const { event, reply: confirmation } = keywordEvent(kw, e164 ?? from, app, t, { line, scope, ref });
+    const reply = this.answersKeywords ? confirmation : undefined;
+    if (e164 && event) await this.accounts.recordConsent(event);
+    if (e164) await this.people.deletePending(this.phoneKey(e164));
+    if (memberId && ev) await this.memberMessage(rt, memberId, ev, ref, kw, reply);
+    else if (memberId) await rt.unitOfWork(async n => { await n.onInbound({ id: ref, memberId, body: "STOP", ts: t, channel: "imessage", keyword: "STOP" }); rt.unit.optOut.set(memberId, true); });
+    else if (reply) await this.direct(rt, from, reply, `sys:${ref}`);
+    const person = e164 ? await this.accounts.personFor(e164) : undefined;
+    if (person) await this.stopped(app, person.id, scope, memberId ? { rt, memberId } : undefined);
+    else if (scope === "global") {
+      // A member from before the platform (no person): every app where this address is a member.
+      for (const other of this.runtimes.values()) {
+        if (other === rt) continue;
+        await other.identities();
+        const id = other.memberOf(from);
+        if (id) await other.unitOfWork(async n => { await n.onInbound({ id: `${ref}:${other.id}`, memberId: id, body: "STOP", ts: t, channel: "imessage", keyword: "STOP" }); other.unit.optOut.set(id, true); });
+      }
+    }
+    return memberId ? "handled" : "stopped";
+  }
+
+  /** The adapter that speaks for the shared line (receipts, line safety, engagement): the queue tables are one per line. */
+  private lineAdapter(): ChannelAdapter | undefined {
+    for (const rt of this.runtimes.values()) if (rt.adapter.enqueue) return rt.adapter;
+    return undefined;
+  }
+
+  /** True when this service answers STOP, HELP and START (STOP_HELP_OWNER=service, the default). */
+  get answersKeywords(): boolean { return this.stopHelpOwner === "service"; }
+
+  /**
+   * POST /consent/gateway: the gateway that owns keyword answers (STOP_HELP_OWNER=gateway) reports a
+   * STOP, STOP ALL or START it answered. Signed like a Blooio webhook (X-Network-Signature, HMAC of the
+   * raw body with STOP_HELP_GATEWAY_SECRET, 300 s window). The service records the consent event (once
+   * per event id) and applies it on every app it covers. It never sends a text for it.
+   * Body: { id, phone, keyword: "stop" | "stop_all" | "start", app?, line? }.
+   */
+  private async gatewayConsent(req: Request): Promise<Response> {
+    if (this.answersKeywords) return json({ ok: false, error: "stop_help_owner_is_service" }, 409);
+    const secret = this.env.STOP_HELP_GATEWAY_SECRET;
+    if (!secret) return json({ ok: false, error: "gateway_secret_missing" }, 503);
+    const raw = await req.text();
+    if (raw.length > 16 * 1024) return json({ ok: false, error: "payload_too_large" }, 413);
+    const sig = verifyBlooioSignature(secret, req.headers.get(GATEWAY_SIGNATURE_HEADER), raw, Math.floor(this.clock.now() / 1000));
+    if (!sig.ok) return json({ ok: false, error: `signature_${sig.reason}` }, 401);
+    let b: Record<string, unknown>;
+    try { b = JSON.parse(raw); } catch { return json({ ok: false, error: "invalid_json" }, 400); }
+    const e164 = normalizePhone(b?.phone);
+    const kw = b?.keyword;
+    const appId = b?.app === undefined ? "ntwrk" : b.app;
+    if (!e164 || typeof b.id !== "string" || !b.id || b.id.length > 200 || (kw !== "stop" && kw !== "stop_all" && kw !== "start") || typeof appId !== "string" || !isAppId(appId)) {
+      return json({ ok: false, error: "invalid_consent_report" }, 400);
+    }
+    const app = this.apps[appId], rt = this.runtimeFor(appId) ?? this.main;
+    const ref = `gateway:${b.id}`, t = this.clock.now();
+    const line = typeof b.line === "string" ? normalizeAddress(b.line) : undefined;
+    if (kw === "start") {
+      // START on one app: the opt-in, the paused membership active again, the member's flag cleared. No welcome back.
+      await this.accounts.recordConsent({ e164, app: app.id, line, state: "opted_in", source: "gateway:start", wording: "START keyword", ref, at: t });
+      const person = await this.accounts.personFor(e164);
+      const m = person && (await this.people.getMembership(person.id, app.id));
+      if (m?.state === "paused") await this.people.putMembership({ ...m, state: "active" });
+      await rt.identities();
+      const memberId = rt.memberOf(e164);
+      if (memberId) await rt.unitOfWork(async n => {
+        await n.onInbound({ id: ref, memberId, body: "START", ts: t, channel: "imessage", keyword: "START" });
+        rt.unit.optOut.set(memberId, false);
+        rt.unit.sends = rt.unit.sends.filter(s => s.memberId !== memberId);
+      });
+      return json({ ok: true, result: "started" });
+    }
+    // The shared line: STOP stops every app (PRD 40.3).
+    return json({ ok: true, result: await this.stop(kw, e164, app, rt, "global", ref, line) });
   }
 
   /** One fixed text to someone who is not a member here. Nothing is stored. */
@@ -1057,27 +1228,42 @@ export class NetworkService implements RuntimeHost {
     return !last?.includes("verify:age:fail");
   }
 
-  /** Delete rating facets: one photo's, or every rating of the person on every app. */
-  private async dropRatings(personId: string, app?: AppId, photoId?: string) {
+  /**
+   * Delete the member's photo rating (the appearanceFacet row, and rows an older build wrote per photo):
+   * on one app, or on every app of the person (an age under 18, a ban).
+   */
+  private async dropRatings(personId: string, app?: AppId) {
     for (const m of await this.people.memberships(personId)) {
       if (app && m.app !== app) continue;
       const rt = this.runtimeFor(m.app);
       if (!rt) continue;
-      const like = photoId ? `${m.memberId}:photo:${photoId}` : `${m.memberId}:photo:%`;
-      await rt.scoped(tx => tx`delete from network.facets where app_id = ${m.app} and member_id = ${m.memberId} and id like ${like}`);
+      await rt.scoped(tx => tx`delete from network.facets where app_id = ${m.app} and member_id = ${m.memberId}
+        and (id = ${`${m.memberId}:appearance`} or (source = 'photo_rater' and privacy_scope = 'agent_private'))`);
     }
   }
 
-  /** The rater's scores: agent_private facets on the member (never shown to anyone, not in the member's export). */
-  private async writeRating(personId: string, app: AppId, photoId: string, s: PhotoScores) {
+  /**
+   * The rater's score for the member: the engine's appearanceFacet (it throws for anyone who is not a
+   * verified adult), stored agent_private. The slop pack reads it from the snapshot inside matching only;
+   * it is never shown to anyone and is not in the member's export.
+   */
+  private async writeRating(personId: string, app: AppId, s: AppearanceScore, subject: RatingSubject) {
     const m = await this.people.getMembership(personId, app);
     const rt = this.runtimeFor(app);
     if (!m || !rt) return;
-    const now = new Date(this.clock.now());
+    const f = appearanceFacet(m.memberId as MemberId, subject, s, this.clock.now());
+    const at = new Date(this.clock.now());
     await rt.scoped(tx => tx`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, source, confidence, status, valid_from)
-      values (${app}, ${`${m.memberId}:photo:${photoId}`}, ${m.memberId}, 'trait', 'photo rating', ${tx.array([`${app}:rating:face=${s.face}`, `${app}:rating:body=${s.body}`, `${app}:rating:overall=${s.overall}`], "TEXT")},
-        'agent_private', 'inferred', 'photo_rater', 0.5, 'confirmed', ${now})
-      on conflict (id) do update set tags = excluded.tags, valid_from = excluded.valid_from`);
+      values (${app}, ${f.id}, ${m.memberId}, ${f.kind}, ${f.value}, ${tx.array([...f.tags], "TEXT")}, 'agent_private', 'inferred', 'photo_rater', ${f.confidence}, 'confirmed', ${at})
+      on conflict (id) do update set tags = excluded.tags, confidence = excluded.confidence, valid_from = excluded.valid_from`);
+  }
+
+  /** A ban on the person, or on any phone they have (platform.bans). */
+  async personBanned(personId: string): Promise<boolean> {
+    const hashes = await this.people.phoneHashesOf(personId);
+    if (await this.people.isBanned(hashes[0] ?? "", personId)) return true;
+    for (const h of hashes.slice(1)) if (await this.people.isBanned(h)) return true;
+    return false;
   }
 
   /**
@@ -1168,6 +1354,8 @@ export class NetworkService implements RuntimeHost {
         : hashes.map(h => ({ id: `ban_${randomUUID()}`, scope: "phone" as const, personId, phoneHash: h, reason: note, reportId: reportId ?? null, bannedBy: user.id, at }));
       for (const b of rows) await this.people.ban(b);
       for (const h of hashes) await this.people.suppress(h, "banned", at);
+      // No rating of looks is kept for a banned person (they are never matched again). The photos stay for the safety team.
+      await this.dropRatings(personId);
       for (const m of await this.people.memberships(personId)) if (m.state !== "removed" && m.state !== "invited") await this.people.putMembership({ ...m, state: "restricted" });
       let out: ActionResult = { ok: true };
       for (const x of members) {
@@ -1247,6 +1435,7 @@ export class NetworkService implements RuntimeHost {
         if (!isAppId(appPart)) return json({ ok: false, error: "not_found" }, 404);
         return this.webhook(req, this.secrets[appPart], appPart);
       }
+      if (path === GATEWAY_CONSENT_PATH) return req.method === "POST" ? this.gatewayConsent(req) : json({ ok: false, error: "method_not_allowed" }, 405);
       // Production review is "human" only (PRD 32.8). The mode is not exposed here.
       if (path === "/review-mode" || path.endsWith("/review-mode")) return json({ ok: false, error: "not_exposed" }, 404);
       // The network: /apps/:app/... or ?app= (and ?city=); default The Network.
@@ -1291,6 +1480,12 @@ export class NetworkService implements RuntimeHost {
         const no = need(["safety"]); if (no) return no;
         await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_safety_reports", mode: "real", ok: true, app: rt.app.id });
         return json({ ok: true, network: rt.id, reports: await this.safetyReports(rt) });
+      }
+      if (req.method === "GET" && path === "/bias") {
+        // The weekly bias monitor (aggregates only): admin or analyst for this app.
+        const no = need(["admin", "analyst"]); if (no) return no;
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_bias_reports", mode: "real", ok: true, app: rt.app.id });
+        return json({ ok: true, network: rt.id, reports: await this.biasReports(rt) });
       }
       const photoPath = path.match(/^\/members\/([^/]+)\/photos$/);
       if (req.method === "GET" && photoPath) {
@@ -1373,15 +1568,7 @@ export class NetworkService implements RuntimeHost {
   };
 
   /** The console's token may name the signed-in staff member (X-Network-Staff-Id); any other token may not. */
-  private reviewerOfRecord(req: Request, user: StaffUser): StaffUser {
-    const named = req.headers.get("x-network-staff-id")?.trim();
-    if (!named || !this.consoleToken) return user;
-    const given = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "";
-    const a = Buffer.from(given), b = Buffer.from(this.consoleToken);
-    if (a.length !== b.length || !timingSafeEqual(a, b)) return user;
-    if (named.length > 200 || !/^([^\s@]+@[^\s@]+\.[^\s@]+|token:[a-z_+]+#[0-9a-f]{8})$/i.test(named)) return user;
-    return { ...user, id: named };
-  }
+  private reviewerOfRecord(req: Request, user: StaffUser): StaffUser { return reviewerOfRecord(req, user, this.consoleToken); }
 
   /** POST /webhooks/blooio[/:app]: verify the signature on the raw body (the prototype's rules), parse, handle. 401 never retries; 500 asks Blooio to retry. */
   private async webhook(req: Request, secret: string | undefined, app?: AppId): Promise<Response> {
@@ -1394,6 +1581,8 @@ export class NetworkService implements RuntimeHost {
     let ev: ChannelEvent;
     try { ev = parseBlooioWebhook(raw, this.clock.now()); } catch { return json({ ok: false, error: "invalid_json" }, 400); }
     try {
+      // A message goes through the inbox (stored first: once per provider id, in order per sender); 200 once it is stored.
+      if (ev.kind === "message" && !ev.isGroup) return json({ ok: true, result: await this.inbox.receive(ev, app) });
       return json({ ok: true, result: await this.inbound(ev, app ? { app } : {}) });
     } catch (e) {
       this.log(`[inbound] processing failed: ${(e as Error).message}`);
@@ -1405,6 +1594,38 @@ export class NetworkService implements RuntimeHost {
     await this.audit.close().catch(() => {});
     await this.sql.close();
   }
+}
+
+/**
+ * The reviewer of record (critical path item 6; docs/admin-console.md 4.6): the signed-in person the
+ * console names in X-Network-Staff-Id, taken only from a request that carries the console's own token
+ * (NETWORK_SERVICE_CONSOLE_TOKEN). From any other token the header is ignored and the token is the actor.
+ */
+export function reviewerOfRecord(req: Request, user: StaffUser, consoleToken: string | undefined): StaffUser {
+  const named = req.headers.get("x-network-staff-id")?.trim();
+  if (!named || !consoleToken) return user;
+  const given = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "";
+  const a = Buffer.from(given), b = Buffer.from(consoleToken);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return user;
+  if (named.length > 200 || !/^([^\s@]+@[^\s@]+\.[^\s@]+|token:[a-z_+]+#[0-9a-f]{8})$/i.test(named)) return user;
+  return { ...user, id: named };
+}
+
+/**
+ * Review items waiting longer than the app's SLA (slop 6 h, peon 24 h, the others 12 h;
+ * observatory apps.ts DEFAULT_SLA_HOURS): one "[alert] review SLA" line per item, once (`seen`).
+ */
+export function slaAlerts(network: string, queue: readonly { oppId: string; queuedAt: number; deadline: number }[], now: number, hours: number, seen: Set<string>): string[] {
+  const out: string[] = [];
+  const key = (id: string) => `${network}|${id}`;
+  // Items that left the queue are forgotten (the set holds only waiting items).
+  for (const k of seen) if (k.startsWith(`${network}|`) && !queue.some(q => key(q.oppId) === k)) seen.delete(k);
+  for (const q of queue) {
+    if (seen.has(key(q.oppId)) || now - q.queuedAt <= hours * 3_600_000) continue;
+    seen.add(key(q.oppId));
+    out.push(`[alert] review SLA ${network}: item ${q.oppId} waited ${Math.round((now - q.queuedAt) / 60_000)} min (SLA ${hours} h, expires unsent in ${Math.max(0, Math.round((q.deadline - now) / 60_000))} min)`);
+  }
+  return out;
 }
 
 /** Per-app webhook secrets from the environment: <APP>_BLOOIO_WEBHOOK_SECRET. */

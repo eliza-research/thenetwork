@@ -6,6 +6,12 @@
 //              and the Network's benign adult phrasing as a second false-hold check
 //   scenarios  scripted items against the policy: minors, state, blocks, consent, photos, leaks,
 //              rate limits, the log, the LLM hook, and the photo-in-probe rule
+//   clef       the Clef relay classifier (engine relayClef.ts) against a fake Workers AI fetch: the
+//              hook contract (raise only, never lower), clef-flash default, timeouts and failures fall
+//              back to the rules (high-risk cues held), no body in events or records; and the
+//              rules + Clef arm scored from RECORDED answers (evals/relay/clef-answers.jsonl) when that
+//              cache exists. No Clef call is ever made here; without the cache the arm is skipped
+//              and tracked. The rules-only gates above are unchanged.
 // The relay inside the slop world (adversary personas exchanging items after the reveal) is gated in
 // the slop block (scripts/sim/slop.ts, "relay world" gates), on the pinned seeds.
 import { findLeaks } from "../../packages/core/src/index.ts";
@@ -13,6 +19,10 @@ import { appearanceLeak } from "../../packages/engine/src/packs/slop/appearance.
 import { SLOP_PROBE_PHOTO_LINE, slopProbeMessage, slopProbeText } from "../../packages/engine/src/packs/slop/copy.ts";
 import { probePhotoRefs } from "../../packages/engine/src/packs/slop/plan.ts";
 import { parseRelayRequest, pastContacts, relayGuard, relayItem, relayItemAsync, relayItemFromRequest, RELAY_WORDING, threadMessage, type RelayContext, type RelayItem, type RelayRecord } from "../../packages/engine/src/relay.ts";
+import { clefRelayClassifier, DEFAULT_RELAY_CLEF_WEIGHTS, directRelayClefWeights, loadRelayClefWeights, RELAY_CLEF_QUESTIONS, type RelayClefEvent } from "../../packages/engine/src/relayClef.ts";
+import { scoreArm, type ArmRow, reasonCategories } from "../../packages/engine/src/relayClefFit.ts";
+import type { ClefFetch } from "../../packages/engine/src/packs/slop/clef.ts";
+import { cacheLookup, CLEF_CACHE, CLEF_WEIGHTS, HELDOUT_FILE, loadClefCache, loadCorpus, TUNING_FILES } from "../relay-clef-lib.ts";
 import { Block, expect } from "./gate.ts";
 
 const ROOT = `${import.meta.dir}/../../evals`;
@@ -185,6 +195,8 @@ export async function relayBlock(b: Block): Promise<void> {
     expect((await relayItemAsync(text("see you at 7"), baseCtx(), { hook: boom, failOpen: true })).decision).toBe("pass");
   });
 
+  await clefGates(b);
+
   await b.run("photo in the probe: adults on both sides, photo consent, an opaque id, at most one; name and contact stay hidden", async () => {
     const sub = { age: 30, photoConsent: true, photoIds: ["ph_abcdefgh", "ph_ijklmnop"] };
     expect(probePhotoRefs(sub, { age: 28 })).toEqual([{ id: "ph_abcdefgh" }]);
@@ -206,4 +218,140 @@ export async function relayBlock(b: Block): Promise<void> {
     const copy = await Bun.file(`${import.meta.dir}/../../packages/engine/src/packs/slop/copy.ts`).text();
     expect(copy).not.toMatch(/no photo/i);
   });
+}
+
+// ------------------------------------------------------------------------------------------- clef
+type FakeAnswers = { [k: string]: number | undefined };
+/** A fake Workers AI endpoint: answers from `pick(message)` (noul probabilities by question id); records calls. */
+function fakeClef(pick: (message: string) => FakeAnswers | "timeout" | "error") {
+  const calls: { url: string; state: string; questions: number }[] = [];
+  const fetch: ClefFetch = async (url, init) => {
+    const body = JSON.parse(init.body) as { state: string; questions: Record<string, unknown> };
+    calls.push({ url, state: body.state, questions: Object.keys(body.questions).length });
+    const msg = /<<<MESSAGE\n([\s\S]*)\nMESSAGE>>>/.exec(body.state)?.[1] ?? "";
+    const a = pick(msg);
+    if (a === "timeout") return new Promise((_, rej) => init.signal?.addEventListener("abort", () => rej(new Error("aborted"))));
+    if (a === "error") return { ok: false, status: 500, json: async () => ({ success: false, errors: [{ message: "internal" }] }) };
+    const answers = Object.fromEntries(Object.keys(RELAY_CLEF_QUESTIONS).map(id => [id, id === "harm" ? { score: (a.harm ?? 0) * 4, confidence: 0.9 } : { noul: a[id] ?? (id === "ordinary" ? 0.9 : 0.02), confidence: a.confidence ?? 0.9 }]));
+    return { ok: true, status: 200, json: async () => ({ success: true, result: { answers, usage: { input_tokens: 950 } } }) };
+  };
+  return { fetch, calls };
+}
+
+async function clefGates(b: Block): Promise<void> {
+  await b.run("relay + Clef: clef-flash by default, the full question bank (<= 64, with the 3 direct questions), thread context; it raises pass to hold or block", async () => {
+    const f = fakeClef(m => (/sister/.test(m) ? { direct_scam: 0.92, money: 0.9, sob_story: 0.9, harm: 0.75 } : /shame/.test(m) ? { direct_harassment: 0.95, threat: 0.97, harm: 1 } : {}));
+    const events: RelayClefEvent[] = [];
+    const hook = clefRelayClassifier({ token: "t", accountId: "acct", fetch: f.fetch, onEvent: e => events.push(e) });
+    const thread = ["Riley says: \"see you Saturday!\"", "Sam says: \"can't wait\"", "a", "b", "c", "d"];
+    const ok = await relayItemAsync(text("see you at 7 then"), baseCtx({ thread }), { hook });
+    expect(ok.decision).toBe("pass");
+    expect(f.calls[0]!.url).toMatch(/\/accounts\/acct\/ai\/run\/@cf\/cloudflare\/clef-flash$/);
+    expect(f.calls[0]!.questions).toBe(Object.keys(RELAY_CLEF_QUESTIONS).length);
+    expect(Object.keys(RELAY_CLEF_QUESTIONS).length).toBeLessThanOrEqual(64);
+    for (const q of ["direct_scam", "direct_harassment", "direct_contact"]) expect(Object.keys(RELAY_CLEF_QUESTIONS)).toContain(q);
+    expect(f.calls[0]!.state).toContain("- d");
+    expect(f.calls[0]!.state).not.toContain("Riley says"); // only the last 4 context messages
+    const scam = await relayItemAsync(text("my sister is in the hospital abroad and I'm so stressed"), baseCtx(), { hook });
+    expect([scam.decision, scam.reasons]).toEqual(["hold", ["clef:scam"]]);
+    const threat = await relayItemAsync(text("it would be a shame if something happened to your car"), baseCtx(), { hook });
+    expect(threat.decision).toBe("block");
+    expect(threat.reasons).toContain("clef_severe:harassment");
+    const big = clefRelayClassifier({ token: "t", accountId: "acct", fetch: f.fetch, model: "clef" });
+    await big({ text: "hello", kind: "text" });
+    expect(f.calls.at(-1)!.url).toMatch(/\/@cf\/cloudflare\/clef$/);
+  });
+
+  await b.run("relay + Clef: Clef never lowers the rules (blocked items never reach it; held stay held), and only escalateHeld lets it raise a hold to a block", async () => {
+    const f = fakeClef(() => ({ ordinary: 1 })); // Clef says everything is fine
+    const hook = clefRelayClassifier({ token: "t", accountId: "acct", fetch: f.fetch });
+    const blocked = await relayItemAsync(text("i know where you live"), baseCtx(), { hook, escalateHeld: true });
+    expect(blocked.decision).toBe("block");
+    const held = await relayItemAsync(text("venmo me 50 for the tickets"), baseCtx(), { hook, escalateHeld: true });
+    expect(held.decision).toBe("hold");
+    expect(f.calls.length).toBe(1); // the held item was escalated (asked); the blocked one never was
+    const g = fakeClef(() => ({ direct_harassment: 0.99, threat: 0.99, harm: 1 }));
+    const h2 = clefRelayClassifier({ token: "t", accountId: "acct", fetch: g.fetch });
+    expect((await relayItemAsync(text("venmo me 50 for the tickets"), baseCtx(), { hook: h2 })).decision).toBe("hold");
+    expect(g.calls.length).toBe(0); // default: Clef only sees items the rules pass
+    expect((await relayItemAsync(text("venmo me 50 for the tickets"), baseCtx(), { hook: h2, escalateHeld: true })).decision).toBe("block");
+    // Every corpus row: rules + Clef (Clef says yes to everything) is never less severe than the rules.
+    const yes = fakeClef(() => Object.fromEntries(Object.keys(RELAY_CLEF_QUESTIONS).map(k => [k, 0.99])));
+    const no = fakeClef(() => ({ ordinary: 1 }));
+    const sev = { pass: 0, hold: 1, block: 2 } as const;
+    for (const file of [...TUNING_FILES, HELDOUT_FILE]) for (const row of await loadCorpus(file)) {
+      const rules = relayItem(text(row.text), baseCtx()).decision;
+      for (const ff of [yes, no]) for (const escalateHeld of [false, true]) {
+        const r = await relayItemAsync(text(row.text), baseCtx(), { hook: clefRelayClassifier({ token: "t", accountId: "acct", fetch: ff.fetch }), escalateHeld });
+        if (sev[r.decision] < sev[rules]) throw new Error(`Clef lowered ${rules} to ${r.decision} (${file})`);
+      }
+    }
+  });
+
+  await b.run("relay + Clef: a timeout, an error or no answer falls back to the rules; high-risk cues hold (clef:unavailable); uncertain high-risk answers hold", async () => {
+    const events: RelayClefEvent[] = [];
+    const slow = fakeClef(() => "timeout"), down = fakeClef(() => "error");
+    for (const [name, hook] of [
+      ["timeout", clefRelayClassifier({ token: "t", accountId: "acct", fetch: slow.fetch, timeoutMs: 20, onEvent: e => events.push(e) })],
+      ["error", clefRelayClassifier({ token: "t", accountId: "acct", fetch: down.fetch, onEvent: e => events.push(e) })],
+      ["no token", clefRelayClassifier({ onEvent: e => events.push(e) })],
+      ["offline cache miss", clefRelayClassifier({ token: "t", accountId: "acct", fetch: down.fetch, offline: true, answers: () => undefined, onEvent: e => events.push(e) })],
+    ] as const) {
+      const plain = await relayItemAsync(text("see you at the corner at 7"), baseCtx(), { hook });
+      expect([name, plain.decision]).toEqual([name, "pass"]);
+      const risky = await relayItemAsync(text("thinking about investing more this year, any tips?"), baseCtx(), { hook });
+      expect([name, risky.decision, risky.reasons]).toEqual([name, "hold", ["clef:unavailable"]]);
+      const off = await relayItemAsync(text("thinking about investing more this year, any tips?"), baseCtx(), { hook: name === "no token" ? clefRelayClassifier({ holdOnUnavailable: false }) : hook });
+      if (name === "no token") expect(off.decision).toBe("pass");
+    }
+    expect(down.calls.length).toBe(3); // the error hook was asked 3 times; the offline hook never calls
+    expect(events.map(e => e.outcome)).toContain("timeout");
+    expect(events.map(e => e.outcome)).toContain("error");
+    expect(events.map(e => e.outcome)).toContain("miss");
+    const unsure = fakeClef(() => ({ direct_scam: 0.45, money: 0.3, confidence: 0.4, ordinary: 0.3 }));
+    const r = await relayItemAsync(text("would be nice to get dinner sometime"), baseCtx(), { hook: clefRelayClassifier({ token: "t", accountId: "acct", fetch: unsure.fetch, weights: directRelayClefWeights({ scam: 0.6 }) }) });
+    expect([r.decision, r.reasons]).toEqual(["hold", ["clef:uncertain"]]);
+  });
+
+  await b.run("relay + Clef: direct mode thresholds the direct answer alone; no body in events, records or reasons", async () => {
+    const f = fakeClef(m => (/crypto/.test(m) ? { direct_scam: 0.8 } : { money: 0.99, investment: 0.99 }));
+    const events: RelayClefEvent[] = [];
+    const hook = clefRelayClassifier({ token: "t", accountId: "acct", fetch: f.fetch, weights: directRelayClefWeights(), onEvent: e => events.push(e) });
+    const secret = "my uncle does crypto stuff, pretty wild";
+    const r1 = await relayItemAsync(text(secret), baseCtx({ thread: ["Riley says: \"thread-secret-xyz\""] }), { hook });
+    expect(r1.reasons).toEqual(["clef:scam"]);
+    expect((await relayItemAsync(text("lunch tomorrow?"), baseCtx(), { hook })).decision).toBe("pass"); // bank answers alone do not count in direct mode
+    const s = JSON.stringify([events, r1.record, threadMessage(r1)]);
+    for (const leak of ["uncle", "crypto", "thread-secret-xyz", "wild"]) expect(s).not.toContain(leak);
+    for (const reason of r1.record.reasons) expect(reason).toMatch(/^[a-z_]+:[a-z0-9_]+$/);
+    expect(events[0]).toMatchObject({ model: "clef-flash", outcome: "ok", inputTokens: 950 });
+  });
+
+  // ---- the rules + Clef arm from recorded answers (never live) ---------------------------------------
+  const cache = await loadClefCache(CLEF_CACHE);
+  if (!cache?.size) {
+    b.track("relay + Clef arm (recorded answers): skipped, no evals/relay/clef-answers.jsonl (fill it with `bun run relay-eval --live`)", false, "rules-only gates above still block");
+    return;
+  }
+  const weights = (await Bun.file(CLEF_WEIGHTS).exists()) ? await loadRelayClefWeights(CLEF_WEIGHTS) : DEFAULT_RELAY_CLEF_WEIGHTS;
+  const model = (weights.provenance?.model as "clef" | "clef-flash" | undefined) ?? "clef-flash";
+  for (const file of [...TUNING_FILES, HELDOUT_FILE]) {
+    const rows = await loadCorpus(file);
+    const events: RelayClefEvent[] = [];
+    const hook = clefRelayClassifier({ model, weights, offline: true, answers: cacheLookup(cache), onEvent: e => events.push(e) });
+    const arm: ArmRow[] = [];
+    let lowered = 0;
+    for (const row of rows) {
+      const rules = relayItem(text(row.text), baseCtx());
+      const r = await relayItemAsync(text(row.text), baseCtx(), { hook });
+      if (rules.decision !== "pass" && r.decision === "pass") lowered++;
+      arm.push({ cls: row.class, stopped: r.decision !== "pass", categories: [...reasonCategories(r.reasons)] });
+    }
+    const asked = events.length, missed = events.filter(e => e.outcome === "miss").length;
+    const s = scoreArm(arm), tracked = file === HELDOUT_FILE;
+    b.gate(`relay + Clef ${file}: never passes an item the rules stop`, lowered === 0, `${lowered} lowered`);
+    b.gate(`relay + Clef ${file}: recorded answers cover the rows Clef sees (weights ${weights.version})`, missed === 0, `${asked - missed}/${asked}`, !tracked);
+    b.gate(`relay + Clef ${file}: honest held <= 5% (n ${s.counts.honest})`, s.falseHold <= 0.05, pct(s.falseHold), !tracked);
+    b.track(`relay + Clef ${file}: recall scam ${pct(s.recall.scam)}, harassment ${pct(s.recall.harassment)}, contact ${pct(s.recall.contact)}, rating ${pct(s.recall.rating)}`, Math.min(s.recall.scam, s.recall.harassment) >= 0.9, tracked ? "heldout-2: never fitted on" : "tuning set");
+  }
 }

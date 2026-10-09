@@ -1,5 +1,0 @@
-[submodule "eliza"]
-	path = eliza
-	url = https://github.com/elizaOS/eliza
-	shallow = true
-	branch = develop

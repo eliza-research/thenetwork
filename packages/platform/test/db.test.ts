@@ -148,6 +148,44 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
       expect(await as("network_service", tx => tx`insert into network.members (id, name, home_city) values ('s2', 'S', 'nyc') returning app_id`, "slop")).toEqual([{ app_id: "slop" }]);
     });
 
+    test("platform-7 catalog: a console role selects only row-level-security tables, its own app's views and a fixed list; never network_state_console", async () => {
+      const rows = await sql`
+        select r.rolname as role, n.nspname || '.' || c.relname as rel, c.relkind as kind, c.relrowsecurity as rls
+        from pg_roles r cross join pg_class c join pg_namespace n on n.oid = c.relnamespace
+        where r.rolname like 'network\\_observatory%' and n.nspname in ('network', 'platform') and c.relkind in ('r', 'v', 'm', 'p', 'f')
+          and has_table_privilege(r.oid, c.oid, 'select')
+        order by 1, 2`;
+      const apps = (await sql`select id from platform.apps order by id`).map((r: any) => r.id as string);
+      expect(apps.length).toBeGreaterThanOrEqual(4);
+      // Readable without row-level security, on purpose: app configuration, each app's own views (they
+      // filter by app), the console's own ops and audit tables, and the cross-app safety role's person tables.
+      const allowed = (role: string, rel: string): boolean => {
+        if (["platform.apps", "platform.cities", "platform.networks"].includes(rel)) return true;
+        const app = role === "network_observatory" ? "ntwrk" : role.slice("network_observatory_".length);
+        if (apps.includes(app) && [`network.network_state_console_${app}`, `platform.person_blocks_${app}`].includes(rel)) return true;
+        if (role === "network_observatory") return ["network.staff_audit", "platform.staff_roles", "network.ops_alerts", "network.ops_alert_posts"].includes(rel);
+        if (role === "network_observatory_audit") return rel === "network.staff_audit";
+        if (role === "network_observatory_cross_app") return ["network.network_state_console_cross_app", "platform.memberships", "platform.people", "platform.person_blocks"].includes(rel);
+        return false;
+      };
+      const open = rows.filter((r: any) => !(r.kind === "r" && r.rls) && !allowed(r.role, r.rel)).map((r: any) => `${r.role} ${r.rel}`);
+      expect(open).toEqual([]);
+      expect(rows.filter((r: any) => r.rel === "network.network_state_console" || r.rel === "network.network_state")).toEqual([]);
+      // No console role gets around row-level security.
+      expect((await sql`select rolname from pg_roles where rolname like 'network\\_observatory%' and (rolsuper or rolbypassrls)`).map((r: any) => r.rolname)).toEqual([]);
+      // Each app's view shows that app's state only (one stored state per app here).
+      for (const app of apps) await sql`insert into network.network_state (id, version, state) values (${`${app}:catalog`}, 1, '{}'::jsonb) on conflict (id) do nothing`;
+      for (const app of apps) {
+        const seen = await sql.begin(async tx => {
+          await tx.unsafe(`set local role network_observatory_${app}`);
+          return tx.unsafe(`select id from network.network_state_console_${app} order by id`);
+        });
+        const mine = (await sql`select id from network.network_state where app_id = ${app} order by id`).map((r: any) => r.id);
+        expect([app, seen.map((r: any) => r.id)]).toEqual([app, mine]);
+        expect(mine).toContain(`${app}:catalog`);
+      }
+    });
+
     test("in production the synthetic 555-01xx numbers are refused", async () => {
       const add = (e164: string) => sql.begin(async tx => {
         const [p] = await tx`insert into platform.people (id) values (gen_random_uuid()) returning id`;

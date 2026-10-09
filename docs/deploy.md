@@ -17,13 +17,14 @@ This is how The Network goes online. Read it with [runbook-platform.md](runbook-
 | Sites (4 Pages projects) | Cloudflare Pages, one project per site, advanced-mode `_worker.js` | `sites/<domain>/wrangler.toml`, `deploy/router.ts`, `sites/sites.ts` | Yes, on `<project>.pages.dev` and each site's domain |
 | Shared backend | Railway service `backend` | `deploy/backend/` (`server.ts` wraps `packages/network/service`) | Port `PORT` on `api.ntwrk.love`. The staff port is private. |
 | Postgres | Railway Postgres | migrations in `packages/observatory/db/` | No (private network only) |
-| Observatory console (optional) | Railway service `observatory` | `packages/observatory`, `deploy/backend/observatory.railway.toml` | Only through Cloudflare Access |
+| Observatory console | Railway service `observatory` | `packages/observatory`, `deploy/backend/observatory.railway.toml` | Only through Cloudflare Access |
+| Backup job | Railway cron service `backup` (daily) | `deploy/backup/` | No. It writes to a private R2 bucket. |
 
 The backend process has two listeners:
 
 | Listener | Bind | Paths |
 |---|---|---|
-| Public, `PORT` (8790) | `0.0.0.0` when `PLATFORM_ENV` is `staging` or `production`; `127.0.0.1` otherwise | `/api/*` (the platform public API), `/webhooks/blooio[/<app>]` (Blooio, signature checked), `/mcp`, `/oauth/*`, `/.well-known/oauth-*` (the MCP server, packages/mcp, mounted by `server.ts`; 404 `mcp_not_enabled` when `TURNSTILE_SITE_KEY` is not set), `/healthz` |
+| Public, `PORT` (8790) | `0.0.0.0` when `PLATFORM_ENV` is `staging` or `production`; `127.0.0.1` otherwise | `/api/*` (the platform public API), `/webhooks/blooio[/<app>]` (Blooio, signature checked), `/consent/gateway` (the STOP/HELP gateway's signed consent reports; 409 unless `STOP_HELP_OWNER=gateway`), `/mcp`, `/oauth/*`, `/.well-known/oauth-*` (the MCP server, packages/mcp, mounted by `server.ts`; 404 `mcp_not_enabled` when `TURNSTILE_SITE_KEY` is not set), `/healthz` |
 | Staff, `STAFF_PORT` (4848) | `::` when deployed (Railway's private network may be IPv6 only); `127.0.0.1` otherwise | The staff API: `/health`, `/review`, `/safety/*`, `/matching`, `/holds`, `/invite`, `/apps/<app>/...`. Never on the public port. |
 
 How a site request reaches the backend:
@@ -50,7 +51,7 @@ How a site request reaches the backend:
      ```
 
      `NETWORK_DATABASE_URL` is that login. At boot, `server.ts` refuses to start when the service login is a superuser, has BYPASSRLS, or owns (or is a member of the owner of) a `platform` or `network` table.
-   - Turn on backups for the Postgres volume (Railway Pro). Do this before the first real member joins.
+   - Turn on backups for the Postgres volume (Railway Pro), and add the daily dump to R2 (section 8). Do both before the first real member joins, and run one restore drill (runbook-real.md section 8).
 3. Do not enable Postgres's public TCP proxy. If someone needs it for a one-off task, turn it on, do the task, and turn it off again.
 
 ### 2.2 The backend service
@@ -120,6 +121,9 @@ Set these in **Variables**. Mark each **secret** row as a sealed variable. Never
 | `BLOOIO_WEBHOOK_SECRET` | **yes** | From Blooio | Without it `/webhooks/blooio` answers 503 |
 | `<APP>_BLOOIO_WEBHOOK_SECRET` | **yes** | Per-app lines only | Not needed with one shared line |
 | `PLATFORM_STOP_SCOPE` | no | leave unset | PRD 40.3: on the shared line STOP stops every app anyway |
+| `STOP_HELP_OWNER` | no | leave unset (`service`) unless the founder picks `gateway` **[FOUNDER]** | One system answers STOP, HELP and START. `gateway`: the service answers no keyword and records what the gateway reports to `POST /consent/gateway`. Any other value stops the start. |
+| `STOP_HELP_GATEWAY_SECRET` | **yes** | Shared with the gateway | Only with `STOP_HELP_OWNER=gateway`. Without it `/consent/gateway` answers 503. |
+| `BLOOIO_LINE_DAILY_CAP`, `BLOOIO_LINE_NEW_CHATS_PER_DAY` | no | leave unset (200 and 20) until prototype P3 measures the line | The persisted queue's per-line caps on agent-started texts and new conversations in a rolling day. |
 | `BUILD_ID` | no | leave unset | Railway's `RAILWAY_GIT_COMMIT_SHA` is used. Every response carries it in `x-network-build`. |
 | `PLATFORM_DB_ENVIRONMENT_INIT` | no | `1` on the first deploy only, then delete it | Section 2.4 |
 | `BACKEND_EXTRA_HOSTS` | no | **unset in production** (refused there) | Staging only: `<host>=slop,...` for a staging site host. The Pages production names (`<project>.pages.dev`) are built in. |
@@ -127,8 +131,18 @@ Set these in **Variables**. Mark each **secret** row as a sealed variable. Never
 | `PHOTO_STORAGE` | no | `r2` (unset: photos are off) | slop.date photos (adults only). `local` is for dev only. |
 | `R2_ACCOUNT_ID` (or `R2_ENDPOINT`), `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | key: **yes** | A **private** bucket: no public access, no r2.dev URL | The R2 driver is not yet exercised in tests. |
 | `PHOTO_VIEW_BASE_URL` | no | `https://slop.date` | Staff photo links (5 minutes, signed) go through the backend there. |
+| `CLEF_RATINGS` | no | `off` (default). `on` only after fitted weights pass the rule in docs/results/2026-10-09-clef-fitting.md **[FOUNDER]** | The slop.date photo rater (Clef). Off: photos work, unrated. `server.ts` logs `photo rater` with its status at start. |
+| `CLEF_WEIGHTS_PATH` | no | Required when `CLEF_RATINGS=on`: a fitted weights file with a version and provenance. The placeholder, or a file without provenance, is refused (ratings stay off). | |
+| `CLOUDFLARE_AI_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | **yes** (token) | A Workers AI token, required when `CLEF_RATINGS=on` | Never set in CI or `bun run sim`. Each rating is a `photo_rating` row in the cost ledger (7.3). |
+| `CLEF_MODEL` | no | `clef` | `clef-flash` is cheaper. A refused weights file logs `photo rater` with `status: refused_weights`. |
 | `SURPLUS_API_KEY` | **yes** | Only when an LLM path is turned on | gpt-6-luna through core's `chatJson`. Without it, LLM paths fail closed. |
 | `NETWORK_CHANNEL`, `BLOOIO_API_KEY`, `BLOOIO_FROM`, `BLOOIO_ALLOW_SEND`, `NTWRK_LIVE_APPROVED`, `<APP>_LIVE_APPROVED` | key: **yes** | **leave all unset** | Live sends. **[FOUNDER]** only. Section 6. |
+| `ALERT_WEBHOOK_URL` | **yes** | A Slack incoming webhook (or any HTTPS endpoint that takes a JSON POST) | Section 7.2. Unset: alerts are log lines only, and the boot log warns. |
+| `ALERT_WEBHOOK_FORMAT` | no | `slack` for a Slack webhook, else leave unset (`json`) | `slack` sends `{ text }` only |
+| `OPS_METRICS_TOKEN` | **yes** | 32+ random characters | `GET /ops/metrics` with `Authorization: Bearer <token>`. Unset: the route answers 404. |
+| `OPS_HEARTBEAT_URL` | **yes** | The heartbeat URL of the uptime service (section 7.1) | A GET after each ops round (every minute) |
+| `COST_BUDGET_DAILY_USD`, `COST_BUDGET_DAILY_USD_<APP>` | no | The founder's daily budget, in US dollars | Section 7.3. An alert at 80% and at 100%. |
+| `COST_BLOOIO_LINE_MONTHLY_USD` | no | The line's monthly price from the Blooio contract | Unset: the line is not in the ledger. Other prices have defaults (7.3). |
 
 Values used in local smoke runs (`ACfake`, `fake-turnstile`, `+1 555 01xx` numbers) must never reach Railway.
 
@@ -153,42 +167,75 @@ Values used in local smoke runs (`ACfake`, `fake-turnstile`, `+1 555 01xx` numbe
    - Then switch to **Proxied** (orange cloud) and keep the zone's SSL/TLS mode at **Full (strict)**. Never use Flexible: it loops redirects and sends plain HTTP to the origin.
    - **Verify** after the switch that `curl -sI https://api.ntwrk.love/healthz` answers 200.
 4. Delete Railway's generated `*.up.railway.app` domain, or never generate one. Without it, Cloudflare is the only way in.
-5. Optional hardening: a WAF rule on `api.ntwrk.love` that blocks paths other than `/api/*`, `/webhooks/blooio*`, `/mcp*`, `/oauth/*`, `/.well-known/oauth-*` and `/healthz`.
+5. Optional hardening: a WAF rule on `api.ntwrk.love` that blocks paths other than `/api/*`, `/webhooks/blooio*`, `/consent/gateway`, `/mcp*`, `/oauth/*`, `/.well-known/oauth-*`, `/healthz` and `/ops/metrics`.
 
 Every Pages project calls `https://api.ntwrk.love` like any other client. Only the proxy secret makes the backend trust it.
 
-### 2.6 Observatory console (optional)
+### 2.6 Observatory console (staff, behind Cloudflare Access)
 
-The console is the same image with another start command. Real data only, and staff sign in through Cloudflare Access.
+The console is the same image with another start command (`deploy/backend/observatory.railway.toml`). It runs in real mode only (`OBSERVATORY_REAL_ONLY=1`): no game mode, no lab, and no simulator code. The image removes `packages/sim`, `judge`, `evals`, `worlds` and `plugin-network`, and the console imports game mode only on demand (`bun run sim` block `ops` checks both). Staff sign in through Cloudflare Access only. The console reads each app through that app's own read login. It changes nothing in the database: review, safety actions and the matching switch go to the backend's staff API over the private network.
+
+**Caution:** under `PLATFORM_ENV=production` or `staging`, the console refuses to start without Access (`OBSERVATORY_TRUST_CF_ACCESS=1` with the team and the audience). Without Access it would make an admin token and write it into the Railway log.
 
 1. **New → GitHub Repo →** the same repository. Name the service `observatory`.
-2. Set Config-as-code to `/deploy/backend/observatory.railway.toml`. It starts `bun run packages/observatory/src/server.ts --mode real`.
-3. Variables:
+2. Set Config-as-code to `/deploy/backend/observatory.railway.toml`. It starts `bun run packages/observatory/src/server.ts --mode real` and checks `/healthz` (no auth, no data).
+3. Create the read logins once, as the owner (Railway's database console), after the first migration. Use a new random password (24+ characters) for each:
+
+   ```sql
+   -- One read login per app: row-level security shows it that app's rows only (migrations 0004, 0010, 0020).
+   create role console_ntwrk   login password '<p1>' nosuperuser nobypassrls; grant network_observatory_ntwrk   to console_ntwrk;
+   create role console_slop    login password '<p2>' nosuperuser nobypassrls; grant network_observatory_slop    to console_slop;
+   create role console_peon    login password '<p3>' nosuperuser nobypassrls; grant network_observatory_peon    to console_peon;
+   create role console_friends login password '<p4>' nosuperuser nobypassrls; grant network_observatory_friends to console_friends;
+   -- The cross-app person view (counts and trust levels only), the staff roles and the audit log.
+   create role console_cross   login password '<p5>' nosuperuser nobypassrls; grant network_observatory_cross_app to console_cross;
+   create role console_shared  login password '<p6>' nosuperuser nobypassrls; grant network_observatory to console_shared;
+   create role console_audit   login password '<p7>' nosuperuser nobypassrls; grant network_observatory_audit to console_audit;
+   do $$ declare r text; begin
+     foreach r in array array['console_ntwrk','console_slop','console_peon','console_friends','console_cross','console_shared','console_audit'] loop
+       execute format('grant connect on database %I to %I', current_database(), r);
+     end loop; end $$;
+   ```
+
+4. Variables (`<host>` is `${{Postgres.PGHOST}}:${{Postgres.PGPORT}}/${{Postgres.PGDATABASE}}`):
 
    | Variable | Secret? | Value |
    |---|---|---|
    | `OBSERVATORY_REAL_ONLY` | no | `1` |
    | `PLATFORM_ENV` | no | `production` |
-   | `OBSERVATORY_HOST` | no | `0.0.0.0` |
+   | `NODE_ENV` | no | `production` (the page is bundled once, minified) |
+   | `OBSERVATORY_HOST` | no | `::` (Railway's network may be IPv6 only) |
    | `PORT` | no | `4747` |
-   | `NETWORK_DATABASE_URL` | yes | A **read-only** login on the same database (create it once; the console writes only through the backend's staff API) |
+   | `OBSERVATORY_ALLOWED_ORIGINS` | no | `https://console.ntwrk.love` (the console refuses any other Host or Origin) |
+   | `OBSERVATORY_DATABASE_URL_NTWRK`, `_SLOP`, `_PEON`, `_FRIENDS` | **yes** | `postgres://console_<app>:<p>@<host>`, one per app |
+   | `NETWORK_DATABASE_URL` | **yes** | `postgres://console_shared:<p6>@<host>` (staff roles from `platform.staff_roles`; the fallback read login) |
+   | `OBSERVATORY_PLATFORM_DATABASE_URL` | **yes** | `postgres://console_cross:<p5>@<host>` |
+   | `OBSERVATORY_AUDIT_DATABASE_URL` | **yes** | `postgres://console_audit:<p7>@<host>` |
    | `NETWORK_SERVICE_URL` | no | `http://backend.railway.internal:4848` |
-   | `NETWORK_SERVICE_TOKEN` | yes | The `NETWORK_SERVICE_CONSOLE_TOKEN` value |
+   | `NETWORK_SERVICE_TOKEN` | **yes** | The backend's `NETWORK_SERVICE_CONSOLE_TOKEN` value |
    | `OBSERVATORY_TRUST_CF_ACCESS` | no | `1` |
-   | `OBSERVATORY_CF_ACCESS_TEAM`, `OBSERVATORY_CF_ACCESS_AUD` | no | From the Access application |
-   | `OBSERVATORY_AUDIT_DATABASE_URL` | yes | A login that can write `network.staff_audit` |
+   | `OBSERVATORY_CF_ACCESS_TEAM`, `OBSERVATORY_CF_ACCESS_AUD` | no | The Zero Trust team name and the Access application's AUD tag |
+   | `OBSERVATORY_ROLES` | no | Optional: `email:role@app,...`. Admins can also add rows to `platform.staff_roles`. |
+   | `COST_BUDGET_DAILY_USD`, `COST_BUDGET_DAILY_USD_<APP>` | no | The same values as on the backend (section 7.3): the cost panel shows them |
 
-4. Custom domain:
+   Never set `OBSERVATORY_TOKEN`, `OBSERVATORY_TOKENS` or `OBSERVATORY_REVEAL_PII` here.
+
+5. Custom domain and Access:
    - Add `console.ntwrk.love` with target port 4747, and a proxied CNAME in Cloudflare.
-   - In Cloudflare Zero Trust, create an **Access → Applications → Self-hosted** app for `console.ntwrk.love`. The policy allows the staff emails only. Copy its AUD tag into `OBSERVATORY_CF_ACCESS_AUD`.
+   - In Cloudflare Zero Trust, create an **Access → Applications → Self-hosted** app for `console.ntwrk.love`. The policy allows the staff emails only. Session duration: 12 hours or less. Copy its AUD tag into `OBSERVATORY_CF_ACCESS_AUD`.
+   - The console verifies the Access JWT (`Cf-Access-Jwt-Assertion`) on every request: signature against the team's keys, audience, issuer and expiry (`src/staff.ts`). A request that did not come through Access has no valid JWT and gets 401.
    - Do not generate a Railway domain for this service.
-5. The console has no unauthenticated health route yet, so Railway only checks that the process stays up.
+6. **Verify:**
+   - `curl -s -o /dev/null -w '%{http_code}' https://console.ntwrk.love/api/me` from a shell without an Access session gives 302 or 403 (Access stops it).
+   - Sign in through Access in a browser. The header shows `real only` and your roles. Each app's Overview loads, and the label says `PRODUCTION DATA · read-only · PII scrubbed`.
+   - The start line in the deploy log (`The Network Observatory →`) has no `#token=`.
+   - **Metrics** shows the **Bias monitor (weekly)** panel (aggregates from the backend) and the **Cost (estimated)** panel (section 7.3) for analysts and admins.
 
 ### 2.7 Roll back
 
 - **Code.** Railway → service → **Deployments**. Pick the last good deployment, open its menu, and choose **Redeploy** (Railway calls it a rollback). The old image starts. Overlap and draining handle the switch.
 - **Schema.** Migrations only go forward. Each numbered migration must be additive (add columns and tables; never drop or rename something the previous build reads in the same release). Then the previous image still runs on the newer schema. A migration that cannot meet this rule needs a two-step release, written down in its PR.
-- **Data.** Restore from the Postgres volume backup (Railway → Postgres → Backups) into a **new** database first. Compare, then switch `NETWORK_DATABASE_URL` and `MIGRATION_DATABASE_URL`. Never restore over the live volume.
+- **Data.** Restore into a **new** database first: from the Postgres volume backup (Railway → Postgres → Backups), or from the daily R2 dump with `deploy/backup/restore.ts` (section 8.2). Compare, then switch `NETWORK_DATABASE_URL` and `MIGRATION_DATABASE_URL`. Never restore over the live volume.
 - **Sites.** In the Cloudflare dashboard, Pages → the project → Deployments → an earlier production deployment → **Rollback** (section 3.2), or redeploy the previous commit.
 - Write each rollback down in the incident log, with the build ids (`x-network-build`) before and after.
 
@@ -300,7 +347,7 @@ curl -s https://api.ntwrk.love/api/app                      # 421 edge_required:
 2. `api.ntwrk.love` (2.5). Check `/healthz` and the build id.
 3. `PLATFORM_PROXY_SECRET` set in each Pages project. Deploy slop.date first (decision 4), then ntwrk.love, peon.biz and friends.help (3.1 or `deploy-sites.yml`). Each answers on `<project>.pages.dev` at once.
 4. Run the checks in 3.3 on every host.
-5. Optional: the observatory console behind Access (2.6).
+5. The observatory console behind Access (2.6), the uptime monitor and the alert webhook (7), and the backup job with one restore drill (8).
 6. DNS: slop.date and friends.help (Eliza Labs Cloudflare account) point at their `pages.dev` names; ntwrk.love and peon.biz move to Pages custom domains (3). The MCP server is on once `TURNSTILE_SITE_KEY` is set on the backend.
 
 ## 6. Go-live checklist (live sends stay off)
@@ -319,7 +366,113 @@ Do every item on each deploy to production until the founder turns sends on in w
 - [ ] No `*.up.railway.app` domain on either service.
 - [ ] The logs of the last hour contain no phone number, message text, code or token. Search Railway's log view for `+1`, `555` and `"text"`.
 - [ ] Matching is off where `platform.networks.matching_enabled` is false (slop and peon until their packs land). The boot log shows `"matching":"off"` for them.
-- [ ] The Postgres backup ran at least once.
+- [ ] The Postgres backup ran at least once: the Railway volume backup, and the `backup` cron service's last run logged `"msg":"backup uploaded"`. The last restore drill (runbook-real.md section 8) passed within 30 days.
+- [ ] The uptime monitor on `/healthz` and the heartbeat are green (7.1). A test alert reached the on-call channel (7.2).
+- [ ] `curl -s -o /dev/null -w '%{http_code}' https://api.ntwrk.love/ops/metrics` gives 401 (404 if `OPS_METRICS_TOKEN` is unset).
 - [ ] Twilio Verify is the only provider that can send anything (codes only). Blooio has no key on the service.
 
 Turning sends on is a separate, written founder decision (runbook-real.md). It is not part of a deploy.
+
+## 7. Monitoring, alerts and cost
+
+What watches the backend, and who hears about it. Nothing here sends a member message.
+
+### 7.1 Uptime check (external monitor)
+
+The backend cannot report its own death. Use an external uptime service (for example Better Stack, UptimeRobot or a Cloudflare health check).
+
+1. **HTTP monitor:** `GET https://api.ntwrk.love/healthz` every 60 seconds. Expect status 200 and the body to contain `"ok":true`. Alert after 2 failures in a row.
+   - 503 `"status":"database"`: the database does not answer.
+   - 503 `"status":"tick_late"`: a network's tick has not finished in this process for `TICK_LATE_MS` (default 15 minutes, or 3 ticks if the tick is slower). The tick loop is stuck.
+   - 503 `"status":"draining"`: a deploy or a restart. One failure is normal; two in a row are not.
+2. **Heartbeat monitor:** make a heartbeat in the same service. Put its URL in `OPS_HEARTBEAT_URL`. The backend calls it after each ops round (every minute). Set the grace period to 5 minutes. A missing heartbeat means the process is down, or its tick loop or its alert dispatcher stopped.
+3. Optional: a second HTTP monitor on `GET https://api.ntwrk.love/ops/metrics` with the header `Authorization: Bearer <OPS_METRICS_TOKEN>`. Expect 200.
+4. Send these monitors to the same on-call channel as the alert webhook (7.2).
+
+### 7.2 Alerts (`deploy/backend/ops.ts`)
+
+Every minute, inside the backend's tick, the ops round reads each network and the cost ledger, and checks these rules:
+
+| Alert key | Level | When |
+|---|---|---|
+| `tick_late:<network>` | bad | No tick stored for the network for `ALERT_TICK_LATE_MS` (15 min). Covers another replica that holds the lock and hangs. |
+| `send_failures:<network>` | bad | In 24 h, at least `ALERT_SEND_FAILURE_MIN` (5) sends failed, and at least `ALERT_SEND_FAILURE_RATE` (2%) of the sends that reached the provider. Dry-run and refused sends do not count. |
+| `review_sla:<network>` | bad | A review item is past its deadline, or one expired unsent in 24 h |
+| `safety_minor:<network>` | bad | A minor signal after contact with an adult in 24 h |
+| `safety_report:<network>` | bad (urgent kind) or warn | A member report in 24 h. Urgent kinds: harassment, unsafe, scam, minor. |
+| `safety_action:<network>` | warn | A ban or a hold in 24 h |
+| `queue_outbound:<network>` | warn | `ALERT_OUTBOUND_BACKLOG` (50) or more messages wait for delivery |
+| `queue_review:<network>` | warn | `ALERT_REVIEW_BACKLOG` (30) or more items wait for review |
+| `budget:total`, `budget:<app>` | warn at `COST_BUDGET_WARN_SHARE` (80%), bad at 100% | Today's estimated cost (7.3) against the daily budget |
+| `ops_read:<network>`, `cost_read` | warn | The ops round could not read the network or the ledger |
+
+Dedupe and rate limit (`network.ops_alerts`, `network.ops_alert_posts`, migration 0020):
+
+- An alert is posted when it starts, when it goes from warn to bad, and when a safety alert's count goes up. While it lasts, it is posted again every `ALERT_REPEAT_MS` (6 hours). When it ends, one "resolved" notice is posted.
+- The state is in the database, so a deploy, a restart or a second replica does not post an alert again. One replica at a time runs the round (an advisory lock).
+- All notices of one round go in one POST. At most `ALERT_MAX_PER_HOUR` (12) posts an hour. Held notices go out in a later round. A failed POST is retried in the next round.
+- The POST body is `{ "text": ..., "source": "the-network-backend", "env": ..., "build": ..., "alerts": [{ "key", "level", "count", "text", "state" }] }`. A Slack incoming webhook shows `text`. With `ALERT_WEBHOOK_FORMAT=slack` only `{ "text" }` is sent.
+- Alerts hold network ids and counts only: never a member id, a name, a phone number or a message. The safety team opens the console for the details.
+- Without `ALERT_WEBHOOK_URL`, each notice is a log line `"msg":"alert"` with `key`, `level`, `count` and `state`. A Railway log alert on that text is a fallback.
+
+**Test the webhook** after each change of the URL. In staging, set `ALERT_REVIEW_BACKLOG=1` while one item waits for review. Wait one minute and check the channel. Then remove the variable: the "resolved" notice follows.
+
+`GET /ops/metrics` (public port, `OPS_METRICS_TOKEN`) returns the same snapshot: per network the age of the last tick, the review and send queues, the sends of 24 h by outcome, SLA misses and safety counts; today's cost per app with each budget line; and the open alerts.
+
+### 7.3 Cost ledger (`packages/network/service/cost.ts`)
+
+Every costed event is a row in `network.cost_ledger` (migration 0020): the app, the UTC day, the kind, the provider, the quantity and the cost in US dollars. Rows hold codes and counts only.
+
+| Kind | Recorded when | Price (USD) | Override |
+|---|---|---|---|
+| `otp_verify` | Twilio Verify sends a login code | 0.058 per code | `COST_TWILIO_VERIFY_USD` |
+| `photo_rating` | The Clef rater is called for a member (not for a refusal) | 0.000425 per photo (0.0017 for 4 photos) | `COST_CLEF_PHOTO_USD` |
+| `llm` | An LLM call is priced by the provider (`CostLedger.llmHooks(app, purpose)` on a core client) | The provider's own price (Surplus reports it) | none |
+| `sms_fallback` | An outbound message is stored as `fell_back` (sent by SMS) | 0.0083 per message | `COST_SMS_USD` |
+| `blooio_line` | Once a day, app `shared` | `COST_BLOOIO_LINE_MONTHLY_USD` / 30 per line | `COST_BLOOIO_LINES` (default 1) |
+
+- Today no LLM path is wired into the service. When one is (for example `understand`), build its client as `defaultLLM(svc.cost.llmHooks("<app>", "understand"))` so each call is in the ledger.
+- Budgets: `COST_BUDGET_DAILY_USD` for every app together, `COST_BUDGET_DAILY_USD_<APP>` per app (`_SHARED` for the line). The ops round alerts at 80% and 100% of a budget (7.2). The day is the UTC day.
+- The console's **Metrics → Cost (estimated)** panel shows the app's cost per day and kind for 14 days, today's shared line, and each budget line (set the same budget variables on the console). Each app's read role reads its own rows and the shared ones.
+- The prices are estimates. Compare the ledger with the Twilio, Cloudflare, Blooio and Surplus invoices each month, and change the overrides when they differ.
+
+## 8. Backups and restore
+
+Two backups, so that one failure does not lose the data:
+
+1. **Railway volume backups** (Railway Pro): Railway → Postgres → **Backups**. Turn on the daily schedule. Railway keeps them with the volume.
+2. **A daily dump to R2** (`deploy/backup/`): a logical dump outside Railway, with exact row counts to check a restore against.
+
+### 8.1 The backup job
+
+- **R2 bucket:** create `ntwrk-backups` in the ntwrk.love Cloudflare account. It must be private: no public access, no r2.dev URL, no custom domain. Add a lifecycle rule that deletes objects after 35 days. Make an R2 API token with **Object Read & Write** on this bucket only. Never use the photo bucket or its token.
+- **Service:** in Railway, **New → GitHub Repo →** this repository, named `backup`. Set Config-as-code to `/deploy/backup/railway.toml`. It builds `deploy/backup/Dockerfile` (Postgres client tools and Bun) and runs `bun run deploy/backup/backup.ts` every day at 07:15 UTC (cron service).
+- **Postgres version:** the image's `PG_MAJOR` build argument (default 16) must be the Railway server's major version or newer (`select version();`). `pg_dump` refuses a newer server.
+- **Variables:**
+
+  | Variable | Secret? | Value |
+  |---|---|---|
+  | `BACKUP_DATABASE_URL` | **yes** | `${{Postgres.DATABASE_URL}}` (the owner: it reads every table and dumps the roles) |
+  | `BACKUP_R2_ACCOUNT_ID` (or `BACKUP_R2_ENDPOINT`) | no | The ntwrk.love account id |
+  | `BACKUP_R2_BUCKET` | no | `ntwrk-backups` |
+  | `BACKUP_R2_ACCESS_KEY_ID`, `BACKUP_R2_SECRET_ACCESS_KEY` | **yes** | The bucket token |
+  | `BACKUP_PREFIX` | no | `postgres/production` (default `postgres/<PLATFORM_ENV>`) |
+  | `BACKUP_HEARTBEAT_URL` | **yes** | Optional: a heartbeat monitor (as in 7.1) with a period of 1 day and a grace of 2 hours. The job calls it only after a complete upload, so a missed or failed run raises an alert. |
+
+- **What one run does:** it opens a read-only snapshot, counts the rows of every table in `network`, `platform`, `notify`, `oauth` and `public`, and runs `pg_dump --snapshot` on the same snapshot, so the counts and the dump agree. It dumps the roles without passwords. It uploads `db.dump`, `roles.sql` and `manifest.json` (last) to `<BACKUP_PREFIX>/<UTC time>/`. A prefix with a `manifest.json` is a complete backup.
+- **Logs:** one JSON line per step: `"msg":"dump"` (bytes, tables, rows) and `"msg":"backup uploaded"`. A failure logs `"msg":"backup failed"` and exits 1. Set `BACKUP_HEARTBEAT_URL` so a failed or missed run is an alert in the same channel as 7.1.
+- **Caution:** the dump holds member data (phone numbers, messages). Only the founder and the on-call engineer may download one, and only to restore it (runbook-real.md section 8). Delete local copies after the drill.
+
+### 8.2 Restore
+
+`deploy/backup/restore.ts` restores a backup into a **new** database and checks every table's row count against the manifest. It refuses a database that exists, and the live names (`railway`, `network`, `postgres`).
+
+```bash
+# RESTORE_DATABASE_URL: an owner login on the target server (any database; usually the maintenance one).
+RESTORE_DATABASE_URL=... BACKUP_R2_ACCOUNT_ID=... BACKUP_R2_BUCKET=ntwrk-backups BACKUP_R2_ACCESS_KEY_ID=... BACKUP_R2_SECRET_ACCESS_KEY=... \
+  bun run deploy/backup/restore.ts --r2 latest --db restore_drill_20261008
+# or a backup on disk: --from <dir with manifest.json>
+```
+
+Exit 0 and `"msg":"restore checked","mismatches":0`: every table has the row count of the backup. The drill procedure, and how to switch the service to a restored database, are in runbook-real.md section 8. `bun run sim` (block `ops`, tracked) runs the same backup and restore on the dev Postgres each time.
+

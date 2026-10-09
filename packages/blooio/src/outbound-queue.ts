@@ -1,82 +1,52 @@
-// Idempotent outbound queue (PRD 32.2 network.outbound_messages).
+// The persisted outbound queue for one Blooio line (PRD 32.2 network.outbound_messages; migration 0015,
+// platform.outbound). One queue object serves one app on the line; every app on the shared line uses
+// the same tables and the same line lock, so the line's counters hold for all apps together.
 //
 // Guarantees:
-//  - Same idempotency key + same payload => one record, one provider send (enqueue is a no-op on replay).
-//  - Same key + different payload => IdempotencyConflictError (mirrors Blooio's 409).
-//  - Every provider attempt reuses the record's provider idempotency key, so a retry after a lost response
-//    cannot double-text the member.
-//  - Opt-out is checked at dispatch time (not just enqueue), so a STOP that arrives while a message waits wins.
-//  - Every agent-initiated message (anything except a direct reply or a compliance confirmation) respects quiet
-//    hours in the recipient's zone and is deferred, not dropped. An invalid zone parks that one record; it never
-//    wedges the queue (audit P1-10).
-//  - Founder/Blooio conversation rules are enforced before every send (audit P1-7): at most 3 unanswered messages
-//    per conversation, then exactly one re-engagement after 14 days of silence, reset only by an inbound message;
-//    and a per-line daily cap on brand-new conversations for agent-initiated sends.
-//  - An optional `recipientPolicy` re-checks the recipient (paused, blocked, safety hold, minor, opted out in the
-//    member store) at send time, not just at enqueue (audit P1-5). It fails closed if it throws.
-//  - All addresses are normalized to E.164 (phones) before any check, so formatting variants share one state.
-//  - One bad record never stops the drain: an unexpected error parks that record and alerts.
-//  - Blooio conversation limits (429 conversation_*) hold the message until the recipient engages; they are
-//    never retried on a timer (docs: messaging-safety).
-//  - Terminal failure on the primary channel can fall back to another adapter (e.g. Twilio SMS) when allowed.
-//    A policy block ("blocked": line safety, opted out, emergency number) never falls back (plugin-prototypes-16).
-//  - A "reply" must answer an inbound from that person within `replyWindowMs`; otherwise it is not sent, because
-//    the caller's word alone must not skip quiet hours and proactive consent (plugin-prototypes-14).
-//  - A `chat:<id>` group send checks every participant's opt-out and consent through `groupParticipants`; with
-//    no resolver it is not sent (plugin-prototypes-13).
-//  - A reply_only line holds every agent-initiated send; a record with no sender line gets the strictest safety
-//    action of any line (plugin-prototypes-15).
-//  - The shared leak guard (packages/core/src/guard.ts findLeaks) runs right before every provider send (PRD
-//    28.5, 32.14). An injectable `forbiddenProvider` supplies the recipient-specific lists (other members'
-//    private facts, private vocabulary, canaries); without one, contact patterns and canary shapes are still
-//    checked. A hit blocks the send, records only hashed reasons, and parks the message for human review.
-// Production: persist records in Postgres with a unique index on idempotency_key and use SELECT ... FOR UPDATE
-// SKIP LOCKED for dispatch; this in-memory version keeps the same state machine.
-
-import { DEFAULT_QUIET, isQuietAt, isValidTimeZone, nextAllowedAt, resolveTimeZone, type QuietWindow } from "./quiet-hours.ts";
-import type { ConsentLedger } from "./ledger.ts";
-import { normalizeAddress } from "./phone.ts";
-import { DAY, HOUR } from "../../core/src/clock.ts";
+//  - enqueue() writes in the caller's transaction (the unit of work that changed the Network state), so a
+//    message exists exactly when the state change that made it exists.
+//  - The row id is the idempotency key. The provider gets "tn:<id>" on every attempt, so a retry after a
+//    lost response, or a resend after a crash, cannot text the person twice (Blooio replays the original).
+//    The same id with other content is an IdempotencyConflictError (Blooio answers 409 for that).
+//  - drain() runs under one Postgres advisory lock per line. Before each provider call the row is "sending"
+//    with a lease. recover() hands rows whose lease ran out (the worker stopped) back to the queue; they go
+//    through every check again and are sent with the same key.
+//  - Checks at dispatch, in this order (each reads the database, so a STOP that arrives while a message
+//    waits wins): too old or about a closed item (expired); the live flags (refused_not_approved); the
+//    consent ledger and the member's opt-out (refused_opted_out); the recipient at send time
+//    (suppressed_ineligible); a "reply" must answer an inbound message from the last hour; quiet hours in the
+//    recipient's zone for agent-initiated kinds (deferred); Apple line safety: at most 3 unanswered messages
+//    per conversation, then one re-engagement after 14 days (held until the person writes); Blooio's safety
+//    state of the line; the per-recipient hourly cap, the per-line daily cap and the per-line daily cap on new
+//    conversations (retry later); the person cap of proactive messages (refused_person_cap); the leak guard
+//    (parked_leak_review). Compliance texts (STOP/HELP/START confirmations, a decline) skip the opt-out, the
+//    recipient check, quiet hours and the caps, but never the leak guard's canary and fact checks.
+//  - Provider errors: retryable ones back off (30 s, doubling, at most 30 min) and fail after 6 attempts;
+//    Blooio conversation limits hold the row until the person writes; number-level blocks end it (blocked).
+//  - Delivery receipts (Blooio webhooks) move a row to delivered, read or failed. Statuses never go back.
+//  - A row to someone who is not a member keeps the address and the text only until it ends.
+import { createHash } from "node:crypto";
+import type { SQL } from "bun";
+import { DAY, HOUR, MINUTE } from "../../core/src/clock.ts";
 import { LeakGuard } from "../../core/src/guard.ts";
-import {
-  ChannelSendError, type ChannelAdapter, type ChannelKind, type Clock, type DeliveryStatus, type StatusUpdate, type Transport,
-} from "./types.ts";
+import { normalizeAddress } from "./phone.ts";
+import { DEFAULT_QUIET, isQuietAt, isValidTimeZone, nextAllowedAt, resolveTimeZone, type QuietWindow } from "./quiet-hours.ts";
+import { ChannelSendError, type ChannelAdapter, type Clock, type StatusUpdate } from "./types.ts";
 
 export type MessageKind =
-  | "reply"        // answer to a member's own message; quiet-hours exempt
-  | "compliance"   // STOP/START/HELP confirmations; exempt from opt-out and quiet hours
-  | "proactive"    // Network-initiated; quiet hours, consent, and rate limits apply
-  | "transactional"; // reminders the member asked for; quiet hours apply, consent implied by request
+  | "reply"          // the answer to the member's own message; quiet-hours exempt
+  | "compliance"     // STOP/START/HELP confirmations and declines; exempt from the opt-out and quiet hours
+  | "proactive"      // Network-initiated; quiet hours, consent, the person cap and the line caps apply
+  | "transactional"; // everything else the Network starts (reminders, scheduling); quiet hours apply
 
-/**
- * Everything the Network starts on its own (proactive intros, reminders, nudges, feedback asks, scheduling) is
- * agent-initiated. Only direct replies to a member's own message and STOP/HELP/START confirmations are not.
- * Any kind added later defaults to agent-initiated, so it gets quiet hours and the conversation caps.
- */
+/** Everything except a direct reply and a compliance text is agent-initiated (any new kind is too). */
 export function isAgentInitiated(kind: MessageKind): boolean {
   return kind !== "reply" && kind !== "compliance";
 }
 
-/** Result of a send-time eligibility check on the recipient. */
 export type RecipientCheck = { ok: true } | { ok: false; reason: string };
-/**
- * Send-time eligibility hook (member store lookup). Return `{ ok: false, reason }` for a recipient who is paused
- * (for agent-initiated kinds), blocked, on safety hold, a minor (for intro/group content), or opted out in the
- * member store. For a `chat:<id>` group target, check every participant. Throwing is treated as ineligible.
- */
-export type RecipientPolicy = (
-  to: string,
-  ctx: { kind: MessageKind; channel: ChannelKind; briefId?: string; agentInitiated: boolean },
-) => RecipientCheck | Promise<RecipientCheck>;
 
-/**
- * What must not appear in a message to this recipient, from the Network's member store. Every field is
- * optional. `forbidden` = other members' agent-private facts (whole or 4-word runs); `facts` = the same kind of
- * strings, additionally matched on fragments, leetspeak and reordering; `fuzzy: true` treats every forbidden
- * string as a fact; `privateVocab` = words that must never appear; `canaries` = privacy canary tokens;
- * `publicPhrases` = the Network's own public vocabulary, cut out of facts before matching. Exclude the
- * recipient's own facts. See LeakOptions in packages/core/src/guard.ts.
- */
+/** What must not appear in a message to this recipient (see LeakOptions in packages/core/src/guard.ts). */
 export interface LeakSources {
   forbidden?: string[];
   privateVocab?: string[];
@@ -85,505 +55,453 @@ export interface LeakSources {
   fuzzy?: boolean;
   publicPhrases?: string[];
 }
-/** The message being checked (the provider may key its lists on the brief or kind). */
-export interface LeakCheckMessage {
-  idempotencyKey: string;
-  text: string;
-  kind: MessageKind;
-  channel: ChannelKind;
-  briefId?: string;
-}
-/**
- * Supplies the leak lists for one send. Called at dispatch, right before the provider send, so it sees the
- * current member store. `recipient` is the normalized address (E.164, Apple ID email, or `chat:<id>` for a group,
- * in which case cover every participant). Throwing parks the message (fails closed).
- */
-export type ForbiddenProvider = (recipient: string, message: LeakCheckMessage) => LeakSources | Promise<LeakSources>;
 
-/** Per-conversation counters used for the unanswered cap and the single re-engagement. */
-export interface ContactState {
-  unanswered: number;
-  lastInboundAt?: number;
-  lastOutboundAt?: number;
-  reengagementUsed: boolean;
-}
-
-export type RecordStatus =
-  | "pending" | "sending" | "deferred_quiet_hours" | "held_awaiting_reply" | "retry_scheduled"
-  | "accepted" | "sent" | "delivered" | "read"
-  | "failed" | "suppressed_opt_out" | "suppressed_no_consent" | "suppressed_ineligible" | "blocked" | "fell_back"
-  | "parked_invalid_timezone" | "parked_error" | "parked_leak_review" | "dropped_after_review";
-
-const TERMINAL: RecordStatus[] = [
-  "delivered", "read", "failed", "suppressed_opt_out", "suppressed_no_consent", "suppressed_ineligible", "blocked", "fell_back",
-  "parked_invalid_timezone", "parked_error", "parked_leak_review", "dropped_after_review",
-];
-const PROVIDER_RANK: Record<string, number> = { accepted: 1, queued: 1, sent: 2, delivered: 3, read: 4 };
-
+/** One message to enqueue. `id` is the idempotency key (network.messages id, or the id of a fixed text). */
 export interface EnqueueInput {
-  idempotencyKey: string;
-  channel: ChannelKind;
-  to: string;
-  from?: string;
-  text: string;
-  mediaUrls?: string[];
-  kind: MessageKind;
-  /** IANA zone of the recipient; required (or `city`) for agent-initiated kinds. Validated at enqueue. */
-  timeZone?: string;
-  /** Member's city (e.g. "sf"); its zone is the fallback when `timeZone` is missing or invalid. */
-  city?: string;
-  /** Network brief/template id for audit (network.outbound_messages.template_id). */
-  briefId?: string;
-  /** Allow fallback to `fallbackChannel` on terminal failure. */
-  fallbackChannel?: ChannelKind;
-  notBefore?: number;
-}
-
-export interface OutboundRecord extends EnqueueInput {
   id: string;
-  providerIdempotencyKey: string;
-  status: RecordStatus;
-  attempts: number;
-  nextAttemptAt: number;
-  createdAt: number;
-  providerMessageId?: string;
-  chatId?: string;
-  transport?: Transport;
-  sentAt?: number;
-  deliveredAt?: number;
-  readAt?: number;
-  lastError?: { failure?: string; status?: number; code?: string; message: string };
-  fallbackRecordId?: string;
-  /** Hashed leak-guard reasons (e.g. "forbidden:1a2b3c4d", "contact:phone") when parked for leak review. */
-  leakReasons?: string[];
-  /** A reviewer approved this exact text after a leak block: later dispatches (and retries) skip the leak check. */
-  leakReviewApproved?: boolean;
-  history: { at: number; status: RecordStatus; note?: string }[];
+  memberId?: string;
+  to: string;
+  kind: MessageKind;
+  text: string;
+  /** HTTPS links to attachments (photos). Blooio fetches them. */
+  mediaUrls?: string[];
+  oppId?: string;
+  timeZone?: string;
+  /** The member's city: its zone is the fallback for quiet hours. */
+  city?: string;
 }
 
-export class IdempotencyConflictError extends Error {
-  constructor(key: string) { super(`idempotency key reused with a different payload: ${key}`); this.name = "IdempotencyConflictError"; }
+/** A queued row as the checks see it. */
+export interface QueueRow {
+  id: string;
+  app: string;
+  memberId?: string;
+  line: string;
+  to: string;
+  kind: MessageKind;
+  text: string;
+  mediaUrls: string[];
+  oppId?: string;
+  timeZone: string;
+  status: string;
+  attempts: number;
+  createdAt: number;
+  inDoubt: boolean;
+  personCap: boolean;
+}
+
+/** A status a row moved to. Rows with a member also update network.messages (the runtime stores it). */
+export interface StatusChange { id: string; app: string; memberId?: string; status: string }
+
+/** What the app (the Network runtime) checks for its own rows. Every hook fails closed when it throws. */
+export interface AppChecks {
+  /** The live flags for this app (BLOOIO_ALLOW_SEND, NTWRK_LIVE_APPROVED, <APP>_LIVE_APPROVED). */
+  live(): boolean;
+  /** True when the message is about something that closed (it is stored as expired). */
+  stale?(row: QueueRow): boolean | Promise<boolean>;
+  /** True when the consent ledger or the member's own flag says the person opted out of this app. */
+  optedOut?(row: QueueRow): boolean | Promise<boolean>;
+  /** The recipient at send time: paused, blocked, held, a minor for content about others. */
+  recipient?(row: QueueRow, agentInitiated: boolean): RecipientCheck | Promise<RecipientCheck>;
+  /** The leak lists for this recipient (never their own facts). */
+  leaks?(row: QueueRow): LeakSources | Promise<LeakSources>;
+  /** Take a slot of the person's daily cap of proactive messages. False: the cap refuses it. */
+  capTake?(row: QueueRow): Promise<boolean>;
+  /** Give the slot back (the message did not go out). */
+  capRelease?(row: QueueRow): Promise<void>;
 }
 
 export interface QueueOptions {
+  sql: SQL;
   clock: Clock;
-  adapters: Partial<Record<ChannelKind, ChannelAdapter>>;
-  consent: ConsentLedger;
+  /** The provider (BlooioAdapter over BlooioClient; a recording fake in the simulations). */
+  provider: ChannelAdapter;
+  /** The sending line (E.164). */
+  line: string;
+  /** The app whose rows this queue enqueues and drains. */
+  app: string;
+  checks: AppChecks;
+  /** The worker's name on its leases. */
+  instance?: string;
   quiet?: QuietWindow;
-  /** Proactive sends require a recorded opt-in (PRD 36.1 "no proactive messages without consent"). Default true. */
-  requireConsentForProactive?: boolean;
-  /** Max sends of any kind to one recipient in a rolling hour (runaway-loop guard). Default 10. */
+  /** Sends of any kind to one recipient in a rolling hour (runaway-loop guard). Default 10. */
   perRecipientPerHour?: number;
-  /** Max brand-new agent-initiated conversations per sender line per rolling day (Blooio: ~20-50/number/day). Default 20. */
+  /** Agent-initiated sends from the line in a rolling day (prototype P3 measures the real number). Default 200. */
+  perLinePerDay?: number;
+  /** Brand-new conversations from the line in a rolling day (Blooio: about 20-50 a number). Default 20. */
   newChatsPerLinePerDay?: number;
-  /** Max messages sent into one conversation without an inbound reply (Blooio/founder rule). Default 3. */
-  maxUnansweredPerConversation?: number;
-  /** After this long since our last send, one agent-initiated re-engagement is allowed past the cap. Default 14 days. */
+  /** Messages into one conversation without an answer. Default 3. */
+  maxUnanswered?: number;
+  /** After this long since our last send, one re-engagement may pass the unanswered cap. Default 14 days. */
   reengageAfterMs?: number;
-  /** Sender line per channel when a record has no `from`, so line safety and per-line caps always have a line. */
-  defaultFrom?: Partial<Record<ChannelKind, string>>;
-  /** Send-time recipient eligibility (paused/blocked/held/minor/opted out). Strongly recommended for live use. */
-  recipientPolicy?: RecipientPolicy;
-  /** Recipient-specific leak lists (other members' private facts, vocabulary, canaries). Strongly recommended for live use. */
-  forbiddenProvider?: ForbiddenProvider;
-  /**
-   * Participants of a `chat:<id>` group target (normalized or raw addresses). Group sends other than compliance
-   * are suppressed without it, and when it throws or returns no one.
-   */
-  groupParticipants?: (chatTarget: string) => string[] | Promise<string[]>;
-  /** A "reply" must follow an inbound from the same person within this window. Default 1 hour. */
+  /** A "reply" must follow an inbound message from the person within this window. Default 1 hour. */
   replyWindowMs?: number;
-  /** Text the Network may include verbatim (its own HELP/STOP copy); removed before the contact-pattern checks. */
-  leakAllow?: string[];
   maxAttempts?: number;
   baseBackoffMs?: number;
-  onAlert?: (rec: OutboundRecord, reason: string) => void;
+  /** How long a provider call may hold a row before recover() takes it back. Default 5 minutes. */
+  leaseMs?: number;
+  /** A proactive row older than this is never sent (expired). Default 24 h. Any other row: 3 days. */
+  ttlProactiveMs?: number;
+  ttlMs?: number;
+  /** The Network's own fixed copy that may carry its contact details (removed before the contact checks). */
+  leakAllow?: string[];
+  onAlert?: (id: string, reason: string) => void;
 }
 
-
-export const DEFAULT_MAX_UNANSWERED = 3;
-export const DEFAULT_REENGAGE_AFTER_MS = 14 * DAY;
-
-function fingerprint(i: EnqueueInput): string {
-  return JSON.stringify([i.channel, i.to, i.from ?? null, i.text, i.mediaUrls ?? [], i.kind]);
+export class IdempotencyConflictError extends Error {
+  constructor(id: string) { super(`outbound id reused with other content: ${id}`); this.name = "IdempotencyConflictError"; }
 }
+
+/** Statuses that still wait for the worker (the console's backlog). */
+export const WAITING = ["pending", "retry_scheduled", "deferred_quiet_hours", "held_awaiting_reply", "sending"];
+/** Statuses the provider accepted; a receipt ends them. */
+const IN_FLIGHT = ["accepted", "sent"];
+const DUE = ["pending", "retry_scheduled", "deferred_quiet_hours"];
+const PROVIDER_RANK: Record<string, number> = { accepted: 1, queued: 1, sent: 2, delivered: 3, read: 4 };
+/** Statuses that did not go out: their person-cap slot goes back. */
+export const NOT_SENT = /^(refused|suppressed|blocked|parked|failed|expired|dropped)/;
+
+const fingerprint = (to: string, text: string, media: string[], kind: string) =>
+  createHash("sha256").update(JSON.stringify([to, text, media, kind])).digest("hex");
+const ms = (v: unknown) => (v == null ? undefined : new Date(v as string).getTime());
+
+/** One drain at a time per line and connection pool (the advisory lock covers other pools and processes). */
+const lineChains = new WeakMap<object, Map<string, Promise<unknown>>>();
 
 export class OutboundQueue {
-  readonly records = new Map<string, OutboundRecord>(); // by idempotency key
-  #byProviderId = new Map<string, OutboundRecord>();
-  #fingerprints = new Map<string, string>();
-  #sendLog: { to: string; at: number }[] = [];
-  #newChatLog: { line: string; at: number }[] = [];
-  #knownContacts = new Set<string>(); // channel:address that have engaged or been messaged
-  #contacts = new Map<string, ContactState>(); // channel:address -> unanswered/re-engagement counters
-  #lineSafety = new Map<string, string>(); // line -> Blooio safety action
-  #lastInbound = new Map<string, number>(); // normalized address (any channel) -> last inbound time
-  #seq = 0;
-  #draining = false;
-  readonly o: Required<Omit<QueueOptions, "onAlert" | "adapters" | "consent" | "clock" | "quiet" | "defaultFrom" | "recipientPolicy" | "forbiddenProvider" | "leakAllow" | "groupParticipants">> & QueueOptions;
+  readonly line: string;
+  readonly app: string;
+  private readonly o: QueueOptions;
+  private readonly instance: string;
 
-  constructor(opts: QueueOptions) {
-    this.o = {
-      requireConsentForProactive: true, perRecipientPerHour: 10, newChatsPerLinePerDay: 20, maxAttempts: 6, baseBackoffMs: 30_000,
-      maxUnansweredPerConversation: DEFAULT_MAX_UNANSWERED, reengageAfterMs: DEFAULT_REENGAGE_AFTER_MS, replyWindowMs: HOUR,
-      ...opts,
-    };
+  constructor(o: QueueOptions) {
+    this.o = o;
+    this.line = normalizeAddress(o.line);
+    this.app = o.app;
+    this.instance = o.instance ?? `pid-${process.pid}`;
   }
 
-  #contactKey(channel: ChannelKind, address: string) { return `${channel}:${normalizeAddress(address)}`; }
+  get sql() { return this.o.sql; }
+  private get now() { return this.o.clock.now(); }
+  private opt<K extends keyof QueueOptions>(k: K, d: NonNullable<QueueOptions[K]>): NonNullable<QueueOptions[K]> { return (this.o[k] ?? d) as NonNullable<QueueOptions[K]>; }
 
-  #contact(key: string): ContactState {
-    let c = this.#contacts.get(key);
-    if (!c) { c = { unanswered: 0, reengagementUsed: false }; this.#contacts.set(key, c); }
-    return c;
-  }
-
-  get #now() { return this.o.clock.now(); }
-
-  enqueue(raw: EnqueueInput): { record: OutboundRecord; deduped: boolean } {
-    if (!raw.idempotencyKey) throw new Error("idempotencyKey required");
-    const from = raw.from ?? this.o.defaultFrom?.[raw.channel];
-    const input: EnqueueInput = { ...raw, to: normalizeAddress(raw.to), ...(from ? { from: normalizeAddress(from) } : {}) };
-    const existing = this.records.get(input.idempotencyKey);
-    const fp = fingerprint(input);
-    if (existing) {
-      if (this.#fingerprints.get(input.idempotencyKey) !== fp) throw new IdempotencyConflictError(input.idempotencyKey);
-      return { record: existing, deduped: true };
+  /** Write rows in the caller's transaction. A replay of the same id and content is a no-op. */
+  async enqueue(tx: SQL, items: EnqueueInput[]): Promise<void> {
+    const now = new Date(this.now);
+    for (const i of items) {
+      const to = normalizeAddress(i.to);
+      const media = i.mediaUrls ?? [];
+      if (media.length > 10 || media.some(u => !/^https:\/\/[^\s]+$/.test(u))) throw new Error(`outbound ${i.id}: attachments must be at most 10 https links`);
+      const agent = isAgentInitiated(i.kind);
+      const zone = resolveTimeZone(i.timeZone, i.city);
+      const fp = fingerprint(to, i.text, media, i.kind);
+      // An agent-initiated message whose local time cannot be computed is parked, never sent at night.
+      const status = agent && !zone ? "parked_invalid_timezone" : "pending";
+      const row = {
+        id: i.id, app_id: this.app, member_id: i.memberId ?? null, line: this.line, to_address: to, kind: i.kind, body: i.text,
+        media_urls: tx.array(media, "TEXT"), fingerprint: fp, opportunity_id: i.oppId ?? null, time_zone: zone ?? "UTC", status,
+        next_attempt_at: now, created_at: now, updated_at: now, ended_at: status === "pending" ? null : now,
+      };
+      const wrote = await tx`insert into platform.outbound ${tx(row)} on conflict (id) do nothing returning id`;
+      if (wrote.length) {
+        if (status !== "pending") this.o.onAlert?.(i.id, "invalid_timezone");
+        continue;
+      }
+      const [old] = await tx`select fingerprint from platform.outbound where id = ${i.id}`;
+      if (old?.fingerprint !== fp) throw new IdempotencyConflictError(i.id);
     }
-    const agent = isAgentInitiated(input.kind);
-    if (agent && !input.timeZone && !input.city) {
-      throw new Error("timeZone (or city) is required for agent-initiated messages (quiet hours)");
-    }
-    const now = this.#now;
-    // Validate the zone now so a bad value can never throw inside dispatch (audit P1-10).
-    const zone = agent ? resolveTimeZone(input.timeZone, input.city) : input.timeZone;
-    const rec: OutboundRecord = {
-      ...input,
-      id: `ob_${++this.#seq}`,
-      providerIdempotencyKey: `tn:${input.idempotencyKey}`,
-      status: "pending",
-      attempts: 0,
-      nextAttemptAt: input.notBefore ?? now,
-      createdAt: now,
-      history: [{ at: now, status: "pending" }],
-    };
-    this.records.set(input.idempotencyKey, rec);
-    this.#fingerprints.set(input.idempotencyKey, fp);
-    if (agent && !zone) {
-      this.#set(rec, "parked_invalid_timezone", `unusable time zone ${JSON.stringify(input.timeZone ?? null)}`);
-      this.o.onAlert?.(rec, "invalid_timezone");
-    } else if (agent && zone !== input.timeZone) {
-      rec.timeZone = zone!;
-      rec.history.push({ at: now, status: "pending", note: `time zone from city ${input.city}` });
-    }
-    return { record: rec, deduped: false };
   }
 
-  #set(rec: OutboundRecord, status: RecordStatus, note?: string) {
-    rec.status = status;
-    rec.history.push({ at: this.#now, status, note });
+  /** Run `fn` holding this line's lock (one drainer per line across apps and processes). */
+  private async withLine<T>(fn: () => Promise<T>): Promise<T> {
+    let chains = lineChains.get(this.sql);
+    if (!chains) lineChains.set(this.sql, (chains = new Map()));
+    const prev = chains.get(this.line) ?? Promise.resolve();
+    const run = prev.catch(() => {}).then(async () => {
+      const conn = await this.sql.reserve();
+      const key = `blooio-line:${this.line}`;
+      try {
+        await conn`select pg_advisory_lock(hashtext(${key}))`;
+        try { return await fn(); } finally { await conn`select pg_advisory_unlock(hashtext(${key}))`; }
+      } finally { conn.release(); }
+    });
+    chains.set(this.line, run);
+    return run;
   }
 
-  /** Dispatch everything due. Safe to call concurrently (re-entrant calls are no-ops). */
-  async drain(): Promise<void> {
-    if (this.#draining) return;
-    this.#draining = true;
-    try {
-      const due = [...this.records.values()]
-        .filter((r) => (r.status === "pending" || r.status === "retry_scheduled" || r.status === "deferred_quiet_hours") && r.nextAttemptAt <= this.#now)
-        .sort((a, b) => a.nextAttemptAt - b.nextAttemptAt || a.createdAt - b.createdAt);
-      for (const rec of due) {
+  /** Rows of this app whose lease ran out while "sending" (the worker stopped): back to the queue, sent again with the same key. */
+  async recover(): Promise<number> {
+    const rows = await this.sql`update platform.outbound set status = 'retry_scheduled', in_doubt = true, lease_owner = null, lease_until = null,
+      next_attempt_at = ${new Date(this.now)}, updated_at = ${new Date(this.now)}, note = 'recovered after the worker stopped'
+      where app_id = ${this.app} and line = ${this.line} and status = 'sending' and lease_until < ${new Date(this.now)} returning id`;
+    if (rows.length) for (const r of rows as any[]) this.o.onAlert?.(r.id, "recovered_in_doubt");
+    return rows.length;
+  }
+
+  /** Deliver every due row of this app. Returns the status changes (for network.messages). */
+  drain(): Promise<StatusChange[]> {
+    return this.withLine(async () => {
+      const changes: StatusChange[] = [...await this.expireHeld()];
+      const rows = await this.sql`select * from platform.outbound where app_id = ${this.app} and line = ${this.line}
+        and status = any(${`{${DUE.join(",")}}`}::text[]) and next_attempt_at <= ${new Date(this.now)} order by next_attempt_at, created_at, id`;
+      for (const r of rows as any[]) {
+        const row = this.rowOf(r);
+        let c: StatusChange | undefined;
         try {
-          await this.#dispatch(rec);
-        } catch (err) {
-          // Never let one record wedge the queue: park it for a human and keep draining.
-          rec.lastError = { message: err instanceof Error ? err.message : String(err) };
-          this.#set(rec, "parked_error", rec.lastError.message);
-          this.o.onAlert?.(rec, "dispatch_error");
+          c = await this.dispatch(row);
+        } catch (e) {
+          // One bad row never stops the drain: it is parked for a person and the drain goes on.
+          c = await this.end(row, "parked_error", (e as Error).message);
+          this.o.onAlert?.(row.id, "dispatch_error");
         }
+        if (c) changes.push(c);
       }
-    } finally {
-      this.#draining = false;
-    }
+      return changes;
+    });
   }
 
-  async #dispatch(rec: OutboundRecord): Promise<void> {
-    const now = this.#now;
-    const contactKey = this.#contactKey(rec.channel, rec.to);
-    const agent = isAgentInitiated(rec.kind);
+  private rowOf(r: any): QueueRow {
+    return {
+      id: r.id, app: r.app_id, memberId: r.member_id ?? undefined, line: r.line, to: r.to_address, kind: r.kind, text: r.body ?? "",
+      mediaUrls: r.media_urls ?? [], oppId: r.opportunity_id ?? undefined, timeZone: r.time_zone, status: r.status, attempts: r.attempts,
+      createdAt: ms(r.created_at)!, inDoubt: r.in_doubt, personCap: r.person_cap,
+    };
+  }
 
-    // 1. Consent (checked at dispatch so a STOP received while waiting wins). A group is checked per participant.
-    let people = [rec.to];
-    if (rec.kind !== "compliance" && rec.to.startsWith("chat:")) {
-      if (!this.o.groupParticipants) return this.#set(rec, "suppressed_ineligible", "group send without a participant resolver");
-      try {
-        people = (await this.o.groupParticipants(rec.to)).map(normalizeAddress);
-      } catch (err) {
-        return this.#set(rec, "suppressed_ineligible", `participant resolver error: ${err instanceof Error ? err.message : String(err)}`);
-      }
-      if (!people.length) return this.#set(rec, "suppressed_ineligible", "group has no known participants");
+  /** Held rows past their time are expired (they are not due, so drain() would never see them). */
+  private async expireHeld(): Promise<StatusChange[]> {
+    const now = this.now;
+    const rows = await this.sql`select * from platform.outbound where app_id = ${this.app} and line = ${this.line} and status = 'held_awaiting_reply'
+      and created_at < ${new Date(now - Math.min(this.opt("ttlProactiveMs", DAY), this.opt("ttlMs", 3 * DAY)))}`;
+    const out: StatusChange[] = [];
+    for (const r of rows as any[]) {
+      const row = this.rowOf(r);
+      if (this.tooOld(row)) out.push(await this.end(row, "expired", "held past its time"));
     }
-    if (rec.kind !== "compliance" && people.some((p) => this.o.consent.isOptedOut(rec.channel, p))) {
-      return this.#set(rec, "suppressed_opt_out", people.length > 1 ? "a group participant opted out" : undefined);
-    }
-    if (rec.kind === "proactive" && this.o.requireConsentForProactive && !people.every((p) => this.o.consent.hasConsent(rec.channel, p))) {
-      return this.#set(rec, "suppressed_no_consent");
-    }
-    // A reply must answer something the person (or the group) sent recently.
-    if (rec.kind === "reply") {
-      const last = this.#lastInbound.get(rec.to);
-      if (last === undefined || now - last > this.o.replyWindowMs) {
-        this.o.onAlert?.(rec, "reply_without_recent_inbound");
-        return this.#set(rec, "suppressed_ineligible", "reply without a recent inbound");
-      }
-    }
+    return out;
+  }
 
-    // 2. Recipient eligibility at send time (paused, blocked, held, minor, opted out in the member store).
-    if (rec.kind !== "compliance" && this.o.recipientPolicy) {
-      let check: RecipientCheck;
-      try {
-        check = await this.o.recipientPolicy(rec.to, { kind: rec.kind, channel: rec.channel, briefId: rec.briefId, agentInitiated: agent });
-      } catch (err) {
-        check = { ok: false, reason: `policy_error: ${err instanceof Error ? err.message : String(err)}` };
-      }
-      if (!check.ok) return this.#set(rec, "suppressed_ineligible", check.reason);
-    }
+  private tooOld(row: QueueRow) {
+    const age = this.now - row.createdAt;
+    return age > this.opt("ttlMs", 3 * DAY) || (row.kind === "proactive" && age > this.opt("ttlProactiveMs", DAY));
+  }
 
-    // 3. Quiet hours in the recipient's zone, for every agent-initiated kind.
+  /** A row ends (nothing more will happen to it). A row to a non-member keeps no address and no text. */
+  private async end(row: QueueRow, status: string, note?: string, error?: string): Promise<StatusChange> {
+    const now = new Date(this.now);
+    await this.sql`update platform.outbound set status = ${status}, note = ${note ?? null}, last_error = coalesce(${error ?? null}, last_error), ended_at = ${now}, updated_at = ${now},
+      lease_owner = null, lease_until = null, to_address = case when member_id is null then null else to_address end, body = case when member_id is null then null else body end
+      where id = ${row.id}`;
+    if (row.personCap && NOT_SENT.test(status)) await this.o.checks.capRelease?.(row).catch(() => {});
+    return { id: row.id, app: row.app, memberId: row.memberId, status };
+  }
+
+  /** The row waits (not an end): a later drain tries again at `at`. */
+  private async wait(row: QueueRow, status: string, at: number, note: string): Promise<StatusChange> {
+    await this.sql`update platform.outbound set status = ${status}, next_attempt_at = ${new Date(at)}, note = ${note}, updated_at = ${new Date(this.now)}, lease_owner = null, lease_until = null where id = ${row.id}`;
+    return { id: row.id, app: row.app, memberId: row.memberId, status };
+  }
+
+  private async guarded<T>(fn: () => T | Promise<T>, failed: T): Promise<T> {
+    try { return await fn(); } catch { return failed; }
+  }
+
+  private async conversation(address: string) {
+    const [c] = await this.sql`select * from platform.line_conversations where line = ${this.line} and address = ${address}`;
+    return c as { unanswered: number; reengagement_used: boolean; last_outbound_at: unknown; last_inbound_at: unknown } | undefined;
+  }
+
+  private async dispatch(row: QueueRow): Promise<StatusChange> {
+    const now = this.now;
+    const c = this.o.checks;
+    const agent = isAgentInitiated(row.kind);
+    const compliance = row.kind === "compliance";
+
+    // 0. Too old, or about something that closed.
+    if (this.tooOld(row) || (await this.guarded(() => c.stale?.(row) ?? false, false))) return this.end(row, "expired");
+    // 1. The live flags (founder approval), checked again at send time.
+    if (!(await this.guarded(() => c.live(), false))) return this.end(row, "refused_not_approved");
+    if (!compliance) {
+      // 2. Consent: the ledger and the member's own flag, read now (a STOP that came while the row waited wins).
+      if (await this.guarded(() => c.optedOut?.(row) ?? false, true)) return this.end(row, "refused_opted_out");
+      // 3. The recipient at send time.
+      const check = await this.guarded<RecipientCheck>(() => c.recipient?.(row, agent) ?? { ok: true }, { ok: false, reason: "recipient_check_error" });
+      if (!check.ok) return this.end(row, "suppressed_ineligible", check.reason);
+    }
+    const conv = await this.conversation(row.to);
+    // 4. A reply answers something the person sent in the last hour (the caller's word alone does not skip quiet hours).
+    if (row.kind === "reply") {
+      const last = ms(conv?.last_inbound_at);
+      if (last === undefined || now - last > this.opt("replyWindowMs", HOUR)) {
+        this.o.onAlert?.(row.id, "reply_without_recent_inbound");
+        return this.end(row, "suppressed_ineligible", "reply without a recent inbound");
+      }
+    }
+    // 5. Quiet hours in the recipient's zone.
     if (agent) {
-      if (!isValidTimeZone(rec.timeZone)) {
-        this.o.onAlert?.(rec, "invalid_timezone");
-        return this.#set(rec, "parked_invalid_timezone", `unusable time zone ${JSON.stringify(rec.timeZone ?? null)}`);
-      }
+      if (!isValidTimeZone(row.timeZone)) return this.end(row, "parked_invalid_timezone");
       const quiet = this.o.quiet ?? DEFAULT_QUIET;
-      if (isQuietAt(now, rec.timeZone, quiet)) {
-        rec.nextAttemptAt = nextAllowedAt(now, rec.timeZone, quiet);
-        return this.#set(rec, "deferred_quiet_hours", `until ${new Date(rec.nextAttemptAt).toISOString()}`);
-      }
+      if (isQuietAt(now, row.timeZone, quiet)) return this.wait(row, "deferred_quiet_hours", nextAllowedAt(now, row.timeZone, quiet), "quiet hours");
     }
-
-    // 4. Conversation rules: max N unanswered, then one re-engagement after 14 days of silence.
+    // 6. Apple line safety: the unanswered streak and the one re-engagement.
     let reengagement = false;
-    if (rec.kind !== "compliance") {
-      const c = this.#contact(contactKey);
-      if (c.unanswered >= this.o.maxUnansweredPerConversation) {
-        const quietFor = c.lastOutboundAt === undefined ? Infinity : now - c.lastOutboundAt;
-        if (agent && !c.reengagementUsed && quietFor >= this.o.reengageAfterMs) {
-          reengagement = true;
-        } else {
-          return this.#set(rec, "held_awaiting_reply", c.reengagementUsed ? "unanswered_cap: re-engagement already used" : "unanswered_cap");
-        }
-      }
+    if (!compliance && conv && conv.unanswered >= this.opt("maxUnanswered", 3)) {
+      const quietFor = now - (ms(conv.last_outbound_at) ?? -Infinity);
+      if (agent && !conv.reengagement_used && quietFor >= this.opt("reengageAfterMs", 14 * DAY)) reengagement = true;
+      else return this.wait(row, "held_awaiting_reply", now, conv.reengagement_used ? "unanswered cap: re-engagement used" : "unanswered cap");
     }
-
-    // 5. Line safety state (from Blooio safety.state_changed webhooks).
-    // With no sender line the provider picks one, so the strictest action of any line applies (fail closed).
-    const line = rec.from ?? `${rec.channel}:default`;
-    const lineAction = rec.from ? this.#lineSafety.get(line) : this.#strictestLineAction();
-    const isNewChat = !this.#knownContacts.has(contactKey);
-    if (lineAction === "review" || (lineAction === "reply_only" && (agent || isNewChat)) || (lineAction === "pause_new" && isNewChat)) {
-      rec.nextAttemptAt = now + HOUR;
-      this.#set(rec, "retry_scheduled", `line safety action ${lineAction}`);
-      this.o.onAlert?.(rec, `line_safety_${lineAction}`);
-      return;
+    // 7. Blooio's safety state of the line.
+    const isNew = !conv;
+    const [safety] = await this.sql`select action from platform.line_safety where line = ${this.line}`;
+    const action = safety?.action as string | undefined;
+    if (action === "review" || (action === "reply_only" && (agent || isNew)) || (action === "pause_new" && isNew)) {
+      this.o.onAlert?.(row.id, `line_safety_${action}`);
+      return this.wait(row, "retry_scheduled", now + HOUR, `line safety ${action}`);
     }
-
-    // 6. Rate limits.
-    // Per person across channels, so a fallback channel cannot double the cap.
-    this.#sendLog = this.#sendLog.filter((e) => e.at > now - HOUR);
-    if (rec.kind !== "compliance" && this.#sendLog.filter((e) => e.to === rec.to).length >= this.o.perRecipientPerHour) {
-      rec.nextAttemptAt = now + 5 * 60_000;
-      return this.#set(rec, "retry_scheduled", "per-recipient rate limit");
+    // 8. The caps of the line and the recipient (compliance texts always go).
+    if (!compliance) {
+      const [counts] = await this.sql`select
+        count(*) filter (where to_address = ${row.to} and sent_at > ${new Date(now - HOUR)})::int as recipient,
+        count(*) filter (where kind in ('proactive', 'transactional') and sent_at > ${new Date(now - DAY)})::int as line,
+        count(*) filter (where new_conversation and sent_at > ${new Date(now - DAY)})::int as new_chats
+        from platform.outbound where line = ${this.line} and sent_at > ${new Date(now - DAY)}`;
+      if (counts.recipient >= this.opt("perRecipientPerHour", 10)) return this.wait(row, "retry_scheduled", now + 5 * MINUTE, "per-recipient hourly cap");
+      if (agent && counts.line >= this.opt("perLinePerDay", 200)) return this.wait(row, "retry_scheduled", now + HOUR, "per-line daily cap");
+      if (agent && isNew && counts.new_chats >= this.opt("newChatsPerLinePerDay", 20)) return this.wait(row, "retry_scheduled", now + HOUR, "per-line new conversation cap");
     }
-    this.#newChatLog = this.#newChatLog.filter((e) => e.at > now - DAY);
-    if (isNewChat && agent && this.#newChatLog.filter((e) => e.line === line).length >= this.o.newChatsPerLinePerDay) {
-      rec.nextAttemptAt = now + HOUR;
-      return this.#set(rec, "retry_scheduled", "per-line new conversation cap");
+    // 9. The person cap (proactive only, at send time; a redelivered id is never counted twice).
+    if (row.kind === "proactive" && c.capTake) {
+      if (!(await this.guarded(() => c.capTake!(row), false))) return this.end(row, "refused_person_cap");
+      if (!row.personCap) { row.personCap = true; await this.sql`update platform.outbound set person_cap = true where id = ${row.id}`; }
     }
-
-    const adapter = this.o.adapters[rec.channel];
-    if (!adapter) return this.#fail(rec, { message: `no adapter for channel ${rec.channel}`, failure: "invalid" });
-
-    // 7. Leak guard, immediately before the send (after every hold/defer, so it sees the current lists).
-    if (!rec.leakReviewApproved) {
-      const reasons = await this.#leakReasons(rec);
-      if (reasons.length) {
-        rec.leakReasons = reasons;
-        // Only hashed labels reach the history and the alert: never the message text or the matched value.
-        this.#set(rec, "parked_leak_review", `leak: ${reasons.join(",")}`);
-        this.o.onAlert?.(rec, "leak_blocked");
-        return;
-      }
+    // 10. The leak guard, right before the send: only hashed labels are stored, never the text or the match.
+    const leaks = await this.leakReasons(row);
+    if (leaks.length) {
+      this.o.onAlert?.(row.id, "leak_blocked");
+      return this.end(row, "parked_leak_review", `leak: ${leaks.join(",")}`);
     }
+    return this.send(row, isNew, reengagement);
+  }
 
-    // 8. Send.
-    this.#set(rec, "sending");
-    rec.attempts++;
+  private async leakReasons(row: QueueRow): Promise<string[]> {
+    let src: LeakSources = {};
+    if (this.o.checks.leaks) {
+      try { src = await this.o.checks.leaks(row); } catch { return ["leak_check_error"]; }
+    }
+    return new LeakGuard({ ...src, canaryShapes: true, allow: this.o.leakAllow, contacts: row.kind !== "compliance" }).check(row.text);
+  }
+
+  private async send(row: QueueRow, isNew: boolean, reengagement: boolean): Promise<StatusChange> {
+    const start = this.now;
+    // The lease is stored before the provider call: if the worker stops now, recover() resends with the same key.
+    await this.sql`update platform.outbound set status = 'sending', attempts = attempts + 1, lease_owner = ${this.instance},
+      lease_until = ${new Date(start + this.opt("leaseMs", 5 * MINUTE))}, updated_at = ${new Date(start)} where id = ${row.id}`;
+    const attempts = row.attempts + 1;
     try {
-      const receipt = await adapter.send({ from: rec.from, to: rec.to, text: rec.text, mediaUrls: rec.mediaUrls, idempotencyKey: rec.providerIdempotencyKey });
-      rec.providerMessageId = receipt.providerMessageId;
-      rec.chatId = receipt.chatId;
-      rec.transport = receipt.transport;
-      rec.sentAt = this.#now;
-      this.#byProviderId.set(receipt.providerMessageId, rec);
-      this.#sendLog.push({ to: rec.to, at: this.#now });
-      if (isNewChat) this.#newChatLog.push({ line, at: this.#now });
-      this.#knownContacts.add(contactKey);
-      if (rec.kind !== "compliance") {
-        const c = this.#contact(contactKey);
-        c.unanswered++;
-        c.lastOutboundAt = this.#now;
-        if (reengagement) c.reengagementUsed = true;
-      }
-      this.#applyProviderStatus(rec, receipt.status === "queued" ? "accepted" : receipt.status, receipt.replayed ? "idempotent replay" : undefined);
+      const receipt = await this.o.provider.send({ from: this.line, to: row.to, text: row.text, ...(row.mediaUrls.length ? { mediaUrls: row.mediaUrls } : {}), idempotencyKey: `tn:${row.id}` });
+      const at = new Date(this.now);
+      const status = receipt.status === "queued" ? "accepted" : receipt.status === "failed" ? "failed" : receipt.status;
+      await this.sql.begin(async tx => {
+        await tx`update platform.outbound set status = ${status}, provider_message_id = ${receipt.providerMessageId}, chat_id = ${receipt.chatId ?? null},
+          transport = ${receipt.transport ?? null}, sent_at = coalesce(sent_at, ${at}), new_conversation = ${isNew}, reengagement = ${reengagement},
+          lease_owner = null, lease_until = null, updated_at = ${at}, note = ${receipt.replayed ? "idempotent replay" : null},
+          delivered_at = ${status === "delivered" || status === "read" ? at : null}, ended_at = ${status === "delivered" || status === "read" || status === "failed" ? at : null}
+          where id = ${row.id}`;
+        if (row.kind !== "compliance") {
+          await tx`insert into platform.line_conversations (line, address, unanswered, reengagement_used, first_outbound_at, last_outbound_at)
+            values (${this.line}, ${row.to}, 1, ${reengagement}, ${at}, ${at})
+            on conflict (line, address) do update set unanswered = line_conversations.unanswered + 1, last_outbound_at = excluded.last_outbound_at,
+              reengagement_used = line_conversations.reengagement_used or excluded.reengagement_used,
+              first_outbound_at = coalesce(line_conversations.first_outbound_at, excluded.first_outbound_at)`;
+        } else {
+          await tx`insert into platform.line_conversations (line, address, first_outbound_at, last_outbound_at) values (${this.line}, ${row.to}, ${at}, ${at})
+            on conflict (line, address) do update set last_outbound_at = excluded.last_outbound_at`;
+        }
+      });
+      if (status === "failed") return this.end(row, "failed", "provider reported failure");
+      if (status === "delivered" || status === "read") return this.end(row, status);
+      return { id: row.id, app: row.app, memberId: row.memberId, status };
     } catch (err) {
       const e = err instanceof ChannelSendError ? err : new ChannelSendError(err instanceof Error ? err.message : String(err), "retryable");
-      rec.lastError = { failure: e.failure, status: e.status, code: e.code, message: e.message };
+      const error = `${e.failure}${e.status ? ` ${e.status}` : ""}${e.code ? ` ${e.code}` : ""}: ${e.message}`.slice(0, 500);
+      await this.sql`update platform.outbound set last_error = ${error} where id = ${row.id}`;
       switch (e.failure) {
         case "retryable": {
-          if (rec.attempts >= this.o.maxAttempts) return this.#fail(rec, rec.lastError);
-          const backoff = e.retryAfterMs ?? Math.min(this.o.baseBackoffMs * 2 ** (rec.attempts - 1), 30 * 60_000);
-          rec.nextAttemptAt = this.#now + backoff;
-          return this.#set(rec, "retry_scheduled", e.code ?? e.message);
+          if (attempts >= this.opt("maxAttempts", 6)) { this.o.onAlert?.(row.id, "send_failed"); return this.end(row, "failed", "retries used up", error); }
+          const backoff = e.retryAfterMs ?? Math.min(this.opt("baseBackoffMs", 30_000) * 2 ** (attempts - 1), 30 * MINUTE);
+          return this.wait(row, "retry_scheduled", this.now + backoff, e.code ?? "retry");
         }
         case "await_recipient":
-          return this.#set(rec, "held_awaiting_reply", e.code);
+          return this.wait(row, "held_awaiting_reply", this.now, e.code ?? "conversation limit");
         case "blocked":
-          // A policy block must not be routed around on another channel.
-          this.o.onAlert?.(rec, e.code ?? "blocked");
-          return this.#set(rec, "blocked", e.code);
+          this.o.onAlert?.(row.id, e.code ?? "blocked");
+          return this.end(row, "blocked", e.code, error);
         default:
-          return this.#fail(rec, rec.lastError);
+          this.o.onAlert?.(row.id, `send_${e.failure}`);
+          return this.end(row, "failed", e.code, error);
       }
     }
   }
 
-  /** Leak-guard reasons for this record (empty = clean). Fails closed: a provider error is a reason. */
-  async #leakReasons(rec: OutboundRecord): Promise<string[]> {
-    let src: LeakSources = {};
-    if (this.o.forbiddenProvider) {
-      try {
-        src = await this.o.forbiddenProvider(rec.to, { idempotencyKey: rec.idempotencyKey, text: rec.text, kind: rec.kind, channel: rec.channel, briefId: rec.briefId });
-      } catch {
-        return ["leak_check_error"];
-      }
+  /** A delivery receipt (any app on the line). Undefined when the provider id is not ours. Never goes back. */
+  async applyStatus(u: StatusUpdate): Promise<StatusChange | undefined> {
+    const [r] = await this.sql`select * from platform.outbound where provider_message_id = ${u.providerMessageId}`;
+    if (!r) return undefined;
+    const row = this.rowOf(r);
+    const at = new Date(this.now);
+    if (u.status === "failed") {
+      if (!IN_FLIGHT.includes(row.status)) return undefined; // a late failure after delivery
+      await this.sql`update platform.outbound set transport = coalesce(${u.transport ?? null}, transport) where id = ${row.id}`;
+      return this.end(row, "failed", "receipt: failed", `${u.errorCode ?? ""} ${u.errorMessage ?? ""}`.trim() || "failed");
     }
-    const guard = new LeakGuard({
-      ...src,
-      canaryShapes: true,
-      allow: this.o.leakAllow,
-      // STOP/HELP/START confirmations are the Network's fixed copy (which may carry its own contact details);
-      // blocking them would break compliance. They still get the forbidden and canary checks.
-      contacts: rec.kind !== "compliance",
-    });
-    return guard.check(rec.text);
-  }
-
-  /** Messages parked by the leak guard, waiting for a human. */
-  leakReviewQueue(): OutboundRecord[] {
-    return [...this.records.values()].filter((r) => r.status === "parked_leak_review");
+    const cur = PROVIDER_RANK[row.status];
+    if (cur === undefined || (PROVIDER_RANK[u.status] ?? 0) <= cur) return undefined; // a row that did not go out, or a status that would go back
+    const final = u.status === "delivered" || u.status === "read";
+    await this.sql`update platform.outbound set status = ${u.status}, transport = coalesce(${u.transport ?? null}, transport), updated_at = ${at},
+      delivered_at = case when ${final} then coalesce(delivered_at, ${at}) else delivered_at end,
+      read_at = case when ${u.status === "read"} then ${at} else read_at end,
+      ended_at = case when ${final} then coalesce(ended_at, ${at}) else ended_at end,
+      to_address = case when ${final} and member_id is null then null else to_address end, body = case when ${final} and member_id is null then null else body end
+      where id = ${row.id}`;
+    return { id: row.id, app: row.app, memberId: row.memberId, status: u.status };
   }
 
   /**
-   * Resolve a leak-guard park. "approve" re-queues the same text (a record's text never changes) and skips the
-   * leak check for it from then on; every other pre-send check still runs; "drop" ends the record. Returns false if the record is not parked.
+   * The person wrote (a message or a tapback) on this line: the conversation's streak and its
+   * re-engagement reset, and messages held for an answer may go (for every app). Returns how many.
    */
-  resolveLeakReview(idempotencyKey: string, decision: "approve" | "drop", reviewer?: string): boolean {
-    const rec = this.records.get(idempotencyKey);
-    if (!rec || rec.status !== "parked_leak_review") return false;
-    const who = reviewer ? ` by ${reviewer}` : "";
-    if (decision === "drop") {
-      this.#set(rec, "dropped_after_review", `leak review: dropped${who}`);
-      return true;
-    }
-    rec.leakReviewApproved = true;
-    rec.nextAttemptAt = this.#now;
-    this.#set(rec, "pending", `leak review: approved${who}`);
-    return true;
+  async inbound(address: string): Promise<number> {
+    const to = normalizeAddress(address), at = new Date(this.now);
+    await this.sql`insert into platform.line_conversations (line, address, last_inbound_at) values (${this.line}, ${to}, ${at})
+      on conflict (line, address) do update set unanswered = 0, reengagement_used = false, last_inbound_at = excluded.last_inbound_at`;
+    const rows = await this.sql`update platform.outbound set status = 'pending', next_attempt_at = ${at}, updated_at = ${at}, note = 'recipient engaged'
+      where line = ${this.line} and to_address = ${to} and status = 'held_awaiting_reply' returning id`;
+    return rows.length;
   }
 
-  #fail(rec: OutboundRecord, error: OutboundRecord["lastError"]) {
-    rec.lastError = error;
-    if (this.#fallback(rec)) return;
-    this.#set(rec, "failed", error?.code ?? error?.message);
-  }
-
-  /** Enqueue a copy on the fallback channel (same consent/quiet rules apply). Returns true if it did. */
-  #fallback(rec: OutboundRecord): boolean {
-    if (!rec.fallbackChannel || rec.fallbackChannel === rec.channel || !this.o.adapters[rec.fallbackChannel]) return false;
-    const { record } = this.enqueue({
-      idempotencyKey: `${rec.idempotencyKey}:fallback:${rec.fallbackChannel}`,
-      channel: rec.fallbackChannel, to: rec.to, text: rec.text, mediaUrls: rec.mediaUrls, kind: rec.kind,
-      timeZone: rec.timeZone, city: rec.city, briefId: rec.briefId,
-    });
-    rec.fallbackRecordId = record.id;
-    this.#set(rec, "fell_back", `-> ${rec.fallbackChannel}`);
-    return true;
-  }
-
-  #applyProviderStatus(rec: OutboundRecord, status: DeliveryStatus | "accepted", note?: string) {
-    if (status === "failed") {
-      if (!["sending", "accepted", "sent"].includes(rec.status)) return; // late failure after delivery: ignore
-      return this.#fail(rec, rec.lastError ?? { message: "provider reported failure" });
-    }
-    if (TERMINAL.includes(rec.status) && !(rec.status === "delivered" && status === "read")) return;
-    const cur = PROVIDER_RANK[rec.status] ?? 0;
-    if ((PROVIDER_RANK[status] ?? 0) <= cur) return; // never regress (webhooks can arrive out of order)
-    if (status === "delivered") rec.deliveredAt = this.#now;
-    if (status === "read") { rec.readAt = this.#now; rec.deliveredAt ??= this.#now; }
-    this.#set(rec, status as RecordStatus, note);
-  }
-
-  /** Apply a delivery/read/failure webhook. Returns the record, or undefined if the id is not ours. */
-  applyStatus(u: StatusUpdate): OutboundRecord | undefined {
-    const rec = this.#byProviderId.get(u.providerMessageId);
-    if (!rec) return undefined;
-    if (u.transport) rec.transport = u.transport;
-    if (u.status === "failed") rec.lastError = { code: u.errorCode, message: u.errorMessage ?? "failed" };
-    this.#applyProviderStatus(rec, u.status);
-    return rec;
+  /** Blooio's safety state for this line (safety.* webhooks). "none" or no action clears it. */
+  async setLineSafety(action: string | undefined, eventType?: string): Promise<void> {
+    if (!action || action === "none") { await this.sql`delete from platform.line_safety where line = ${this.line}`; return; }
+    await this.sql`insert into platform.line_safety (line, action, event_type, at) values (${this.line}, ${action}, ${eventType ?? null}, ${new Date(this.now)})
+      on conflict (line) do update set action = excluded.action, event_type = excluded.event_type, at = excluded.at`;
   }
 
   /**
-   * Recipient engaged (message or reaction): reset the unanswered counter and the re-engagement allowance,
-   * release held messages and mark the contact known.
+   * Retention: the conversation counters of an address that is nobody's verified phone (a stranger who
+   * wrote once, a removed member) once idle for a day, when no streak is open (nothing unanswered).
+   * Such an address counts as a new conversation again. Returns how many were removed.
    */
-  onRecipientEngaged(channel: ChannelKind, address: string): number {
-    const to = normalizeAddress(address);
-    const key = `${channel}:${to}`;
-    this.#knownContacts.add(key);
-    this.#lastInbound.set(to, this.#now);
-    const c = this.#contact(key);
-    c.unanswered = 0;
-    c.reengagementUsed = false;
-    c.lastInboundAt = this.#now;
-    let released = 0;
-    for (const r of this.records.values()) {
-      if (r.status === "held_awaiting_reply" && r.channel === channel && r.to === to) {
-        r.nextAttemptAt = this.#now;
-        this.#set(r, "pending", "recipient engaged");
-        released++;
-      }
-    }
-    return released;
+  async purge(): Promise<number> {
+    const before = new Date(this.now - DAY);
+    const rows = await this.sql`delete from platform.line_conversations c where c.line = ${this.line}
+      and coalesce(greatest(c.last_inbound_at, c.last_outbound_at), c.first_outbound_at) < ${before}
+      and c.unanswered = 0 and not exists (select 1 from platform.phone_identities p where p.e164 = c.address) returning address`;
+    return rows.length;
   }
 
-  #strictestLineAction(): string | undefined {
-    const actions = new Set(this.#lineSafety.values());
-    return ["review", "reply_only", "pause_new"].find((a) => actions.has(a)) ?? [...actions][0];
+  /** The status of one row (this queue's app). */
+  async statusOf(id: string): Promise<string | undefined> {
+    const [r] = await this.sql`select status from platform.outbound where id = ${id}`;
+    return r?.status;
   }
-
-  setLineSafety(line: string, action: string | undefined) {
-    const l = normalizeAddress(line);
-    if (!action || action === "none") this.#lineSafety.delete(l);
-    else this.#lineSafety.set(l, action);
-  }
-
-  /** Read-only view of a conversation's counters (for tests and the admin console). */
-  contactState(channel: ChannelKind, address: string): Readonly<ContactState> | undefined {
-    return this.#contacts.get(this.#contactKey(channel, address));
-  }
-
-  byProviderId(id: string) { return this.#byProviderId.get(id); }
-  get(key: string) { return this.records.get(key); }
 }

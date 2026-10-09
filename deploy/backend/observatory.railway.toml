@@ -1,18 +1,23 @@
-# OPTIONAL. Railway config as code for the observatory console (docs/deploy.md, section 2.5).
-# Same image as the backend, another start command. Real data only (OBSERVATORY_REAL_ONLY=1), staff
-# sign-in through Cloudflare Access (OBSERVATORY_TRUST_CF_ACCESS=1 with the team and audience set),
-# and it reaches the backend's staff API over Railway's private network (NETWORK_SERVICE_URL).
+# Railway config as code for the observatory console (docs/deploy.md, section 2.6).
+# Same image as the backend, another start command. Real data only (OBSERVATORY_REAL_ONLY=1: no game
+# mode, no lab, no simulator code in the image). Staff sign in through Cloudflare Access only
+# (OBSERVATORY_TRUST_CF_ACCESS=1 with OBSERVATORY_CF_ACCESS_TEAM and OBSERVATORY_CF_ACCESS_AUD; the
+# console refuses to start under PLATFORM_ENV=production or staging without them). It reads each app
+# through that app's own read login (OBSERVATORY_DATABASE_URL_<APP>) and acts only through the
+# backend's staff API over Railway's private network (NETWORK_SERVICE_URL, NETWORK_SERVICE_TOKEN).
 # In the service settings, set "Config-as-code path" to /deploy/backend/observatory.railway.toml.
 # Do not generate a *.up.railway.app domain for this service: it is reached only through Access.
 
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "deploy/backend/Dockerfile"
-watchPatterns = ["packages/**", "deploy/backend/**", "package.json", "bun.lock"]
+watchPatterns = ["packages/**", "deploy/backend/**", "package.json", "bun.lock", "tsconfig.json"]
 
 [deploy]
 startCommand = "bun run packages/observatory/src/server.ts --mode real"
-# The console has no unauthenticated health route yet; Railway then only checks that the process stays up.
+# /healthz answers 200 without auth or data (the console's own liveness; it does not check the database).
+healthcheckPath = "/healthz"
+healthcheckTimeout = 60
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
 drainingSeconds = 10

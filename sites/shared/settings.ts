@@ -49,6 +49,8 @@ function render(root: HTMLElement, me: Me): void {
   when(root, "stopped", stopped);
   when(root, "not-stopped", !!m && !stopped);
   showStep(root, "account");
+  // Parts of the page that need the account (the slop photos section, photos.ts) load on this event.
+  root.dispatchEvent(new CustomEvent("account", { detail: me }));
 }
 
 async function refresh(root: HTMLElement): Promise<void> {

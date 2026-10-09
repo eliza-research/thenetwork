@@ -28,7 +28,7 @@ Owners: **E** is engine and packs (`packages/core`, `engine`, `sim`, `capital`);
 | 4 | slop onboarding conversation: free-text understanding, read-back, photo ask for adults | P, E | 4 | 3 |
 | 5 | Photo upload (site and MMS) and Clef rating wired in `server.ts`; weekly bias monitor | P, E | 4 | 2, 4 |
 | 6 | Review queue for slop: slop in `PACK_READY`, reviewer of record is the person, slop rubric, SLA alerts | P | 2 | 1 |
-| 7 | Photo in the probe; relay through the agent with consent per item, scam check, relay log | E, P | 6 | 3, 5, 6 |
+| 7 | Photo in the probe; relay through the agent with consent per item, scam check (rules, then the Clef decision model; luna optional), relay log | E, P | 6 | 3, 5, 6 |
 | 8 | Post-date feedback, report and ban on the live path, ban check on photo intake | P | 1 | 7 |
 | 9 | STOP/HELP live on iMessage with one owner | P | 1 | 3 |
 | 10 | Console on Railway behind Cloudflare Access, bias and cost panels | P | 2 | 1, 6 |
@@ -54,11 +54,12 @@ About 35 engineer-days plus the two-week shadow. Items 1-3, 6 and 12b can run al
 
 ## Validation plan
 
-**Simulations only.** `bun run sim` is the single validation command and runs in CI. It fails on any blocking gate. Tracked gates are printed and never fail.
+**Simulations, integration and e2e; no unit or smoke tests** (founder; [tests-policy.md](tests-policy.md)). `bun run sim` runs every simulation and fails on any blocking gate; tracked gates are printed and never fail. `bun run test:integration` (real Postgres, real HTTP servers, the full service, the security suite) and `bun run test:e2e` (`tests/e2e`: the platform and notify through the service) run in the CI "integration" job with Postgres.
 
 - **Blocking (152 gates today, all passing):** the corpora in `evals/`; The Network's invariants and scenarios; the slop safety gates (0 declared-minor contacts, 0 stated-filter violations, scammer median reach at most 1, 0 leaks, no rating text), the slop quality gates that pass on the pinned seeds (13-16, 4 weeks), and slop conformance; the peon and friends official gate sets and conformance.
 - **Tracked (slop, failing today):** dates per member-month at least 0.9x random (0.82), age-liar contact cut at least 90% (82%), adversary-contact cut at least 90% (47%), smallest gender or orientation group at least 0.7x (0.33), harm-event cut at least 90% (87%). Each is fixed, waived in writing by the founder, or carried as a known risk into the pilot.
-- **Still missing in sim:** the real message pipeline end to end (signed webhook in, Blooio adapter out, persisted queue, Postgres, simulated clock); LLM personas sending free text through the platform; adversarial scenarios against the live agent (scammer in relay, "how hot did you rate me?", ban evader, prompt injection for a number). Gates: 0 rating or contact leaks, scammer reach at most 1.
+- **The message pipeline (`bun run sim --only pipeline`):** a signed webhook in, NetworkService, Postgres (a throwaway database on the dev cluster), the persisted queue, the Blooio adapter out to a fake provider, on a simulated clock. Scripted members join by keyword, onboard, are reviewed, probed and booked; with duplicate webhooks, a provider outage, a crash during a send and a restart, STOP in a thread, and the gateway as the STOP/HELP owner. Blocking: 0 lost or duplicated messages, 0 sends after STOP, 0 sends to minors about others, every row ends delivered or failed, keyword routing. Without Postgres (CI) it is tracked as skipped.
+- **Still missing in sim:** LLM personas sending free text through the platform; adversarial scenarios against the live agent (scammer in relay, "how hot did you rate me?", ban evader, prompt injection for a number). Gates: 0 rating or contact leaks, scammer reach at most 1.
 
 **Live pilot go/no-go:** every blocking gate passes; P3 measured; STOP owner decided; two weeks of shadow with a precision baseline; 40 committed NYC adults; restore tested; cost alerts and safety on-call live.
 
@@ -78,11 +79,13 @@ About 35 engineer-days plus the two-week shadow. Items 1-3, 6 and 12b can run al
 
 ## Open founder decisions
 
-1. **STOP/HELP owner on the shared line:** this service or the Eliza Cloud gateway. One system only, before any live send.
+1. **STOP/HELP owner on the shared line:** decided (founder, 2026-10-08): one system only, chosen by `STOP_HELP_OWNER`. The default is `service` (this service answers with core's keyword table and opt-out reading; STOP stops every app, "leave <app>" leaves one). With `gateway`, the Eliza Cloud gateway answers and reports each STOP, STOP ALL and START to the service's signed `POST /consent/gateway`; the service then never answers a keyword but still records and applies every opt-out. The backend serves `/consent/gateway` on its public port (the service checks the signature). Open: which value production uses **[FOUNDER]**.
 2. **Where the conversation runs:** the service's own LLM reader (`understand`, gpt-6-luna) or the Eliza agent (`packages/plugin-network`). Today the service owns every message and the plugin is not on the line.
 3. **Join mode for peon and friends** on production (invite, open or waitlist). The code default is open.
 4. **Ban evasion:** build a same-face check, or drop that gate and rely on phone and person bans.
-5. **The security suite** (`bun run security`, six files, CI job pending): keep it or delete it.
-6. **Clef weight fitting:** the fitter is rebuilt (`bun run clef`, with a local labelling page, feature extraction and a bias audit; [2026-10-09-clef-fitting.md](results/2026-10-09-clef-fitting.md)). The shipped weights are still a placeholder until P2 collects labels. Open: whether to launch with the placeholder or with ratings off until P2's fitted weights pass the decision rule in that document.
+5. **The security suite:** decided (founder, 2026-10-08): kept. It runs as part of the integration suite (`bun run test:integration`, CI job "integration").
+6. **Clef weight fitting:** the fitter is rebuilt (`bun run clef`, with a local labelling page, feature extraction and a bias audit; [2026-10-09-clef-fitting.md](results/2026-10-09-clef-fitting.md)). The shipped weights are still a placeholder until P2 collects labels. **Ratings are ON (founder decision):** the engine default is `appearance.mode = "soft"` (`SLOP_DEFAULT_OPTIONS`), and the slop pack launches with ratings in matching (never shared), on the placeholder weights until P2's fitted weights pass the decision rule in that document. The platform session turns the live rater on in the service (`CLEF_RATINGS`).
+
+**Decided (2026-10-09): the production relay classifier is Clef.** The relay's scam and harassment check is the rules, then the Clef decision model (`clefRelayClassifier`, clef-flash by default, about $0.09 per 1,000 messages). The rules alone stop about half of new phrasings. Clef asks a fixed question bank plus the direct questions ("Is this message a scam?"). It can only raise a decision, and when it is down it falls back to the rules and holds high-risk cues. A luna classifier through the same hook is optional. Before the pilot: run `bun run relay-eval fit --live` with the Cloudflare token, commit the answer cache and the weights, and record heldout-2 ([relay report](results/2026-10-09-relay.md) section 6).
 
 Other open platform questions (legal entity per app, a second line, recycled numbers, hash-key rotation and more) are listed in [mvp-gaps.md](mvp-gaps.md) section 5.

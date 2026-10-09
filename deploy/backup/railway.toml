@@ -1,0 +1,15 @@
+# Railway config as code for the backup job (docs/deploy.md, section 8). A cron service: Railway starts
+# it on the schedule, it dumps the database to the private R2 backup bucket and exits.
+# In the service settings, set "Config-as-code path" to /deploy/backup/railway.toml.
+# Variables: BACKUP_DATABASE_URL (the owner login, ${{Postgres.DATABASE_URL}}), BACKUP_R2_* and BACKUP_PREFIX.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "deploy/backup/Dockerfile"
+watchPatterns = ["deploy/backup/**"]
+
+[deploy]
+startCommand = "bun run deploy/backup/backup.ts"
+# Every day at 07:15 UTC (03:15 in New York, a quiet hour).
+cronSchedule = "15 7 * * *"
+restartPolicyType = "NEVER"

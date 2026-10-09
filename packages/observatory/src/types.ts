@@ -711,3 +711,19 @@ export interface PersonAppPanel {
   opportunities: number;
   cases: { id: string; level: string; status: string; opened: number }[];
 }
+
+/**
+ * One weekly bias monitor report of a network (the Network service's GET /bias; engine biasMonitor).
+ * Aggregates only: groups are photo-rating quintiles (q1 lowest) and "unrated"; ratios are a group's
+ * outcome rate over the overall rate. An alert is a ratio under 0.8 in a group of at least the minimum size.
+ */
+export type BiasMetric = "proposals" | "dates" | "secondDates";
+export interface BiasReportView {
+  network: string; app: string; at: number; members: number;
+  report: {
+    overall: Record<BiasMetric, number>;
+    groups: Record<string, { n: number; memberMonths: number; rate: Record<BiasMetric, number>; ratio: Record<BiasMetric, number> }>;
+    min: Record<BiasMetric, { group: string; ratio: number }>;
+    alerts: { group: string; metric: BiasMetric; ratio: number }[];
+  };
+}
