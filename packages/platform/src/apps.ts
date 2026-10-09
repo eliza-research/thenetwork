@@ -48,6 +48,14 @@ export const POWERED_BY = "All of these apps are powered by The Network.";
 /** The one support address for every app: only ntwrk.love receives mail (MX), and every site and SKILL.md names it. */
 export const SUPPORT_EMAIL = "help@ntwrk.love";
 const CONSENT_VERSION = "2026-10-08";
+/**
+ * The version of the text-join opt-in (copy.ts joinAsk and invited). A text join stores the exact
+ * text that was sent with this version, as a web join stores the site's ConsentText.
+ */
+export const TEXT_OPT_IN_VERSION = "text-2026-10-08";
+/** The app's terms and privacy pages (every site serves /terms and /privacy), without the scheme, for texts. */
+export const termsUrl = (a: Pick<AppInfo, "domain">) => `${a.domain}/terms`;
+export const privacyUrl = (a: Pick<AppInfo, "domain">) => `${a.domain}/privacy`;
 const consentText = (sender: string, what: string) =>
   `I agree to receive recurring text messages from ${sender} at this number: ${what}. Message frequency varies. Message and data rates may apply. Reply STOP to stop and HELP for help. Consent is not a condition of any purchase.`;
 

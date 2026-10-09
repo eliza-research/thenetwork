@@ -3,7 +3,7 @@
 import { SQL } from "bun";
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
-import type { Ban, HitResult, HitRule, Membership, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneHold, PhoneIdentity, PhoneMethod, Session, ShareGrant } from "./store.ts";
+import type { Ban, HitResult, HitRule, Membership, MembershipFlag, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, Session, ShareGrant } from "./store.ts";
 
 type Row = Record<string, any>;
 const ms = (v: unknown): number | null => (v === null || v === undefined ? null : new Date(v as string | Date).getTime());
@@ -11,10 +11,16 @@ const ts = (v: number | null | undefined) => (v === null || v === undefined ? nu
 const json = <T>(v: unknown): T => (typeof v === "string" ? JSON.parse(v) : v) as T;
 
 const person = (r: Row): Person => ({ id: r.id, lowestAge: r.lowest_age ?? null, createdAt: ms(r.created_at)!, deletedAt: ms(r.deleted_at) });
-const phone = (r: Row): PhoneIdentity => ({ e164: r.e164, personId: r.person_id, verifiedAt: ms(r.verified_at)!, method: r.method, lastSeenAt: ms(r.last_seen_at), hold: r.hold ?? null });
+const phone = (r: Row): PhoneIdentity => ({ e164: r.e164, personId: r.person_id, verifiedAt: ms(r.verified_at), method: r.method, lastSeenAt: ms(r.last_seen_at), hold: r.hold ?? null });
 const membership = (r: Row): Membership => ({
   app: r.app_id, personId: r.person_id, memberId: r.member_id, state: r.state, review: r.review ?? null, firstName: r.first_name ?? null,
-  profile: json<Record<string, unknown>>(r.profile) ?? {}, joinedAt: ms(r.joined_at), leftAt: ms(r.left_at),
+  profile: json<Record<string, unknown>>(r.profile) ?? {}, joinedAt: ms(r.joined_at), leftAt: ms(r.left_at), invitedAt: ms(r.invited_at),
+});
+const flag = (r: Row): MembershipFlag => ({
+  app: r.app_id, personId: r.person_id, reasons: r.reasons ?? [], flaggedAt: ms(r.flagged_at)!, decision: r.decision ?? null, decidedBy: r.decided_by ?? null, decidedAt: ms(r.decided_at),
+});
+const phoneChange = (r: Row): PhoneChange => ({
+  id: r.id, personId: r.person_id, app: r.app_id, newE164: r.new_e164, requestedBy: r.requested_by, requestedAt: ms(r.requested_at)!, confirmedAt: ms(r.confirmed_at),
 });
 const consent = (r: Row): ConsentEvent => ({
   e164: r.e164, app: r.app_id ?? null, line: r.line ?? null, state: r.state, source: r.source, wording: r.wording ?? null,
@@ -61,12 +67,17 @@ export class PgPeopleStore implements PeopleStore {
       const [back] = p.phoneHash ? await tx`update platform.people set deleted_at = null, lowest_age = ${p.lowestAge}
         where id = (select id from platform.people where phone_hash = ${p.phoneHash} and deleted_at is not null order by deleted_at desc limit 1) returning *` : [];
       const [r] = back ? [back] : await tx`insert into platform.people (id, lowest_age, created_at, phone_hash) values (${p.id}, ${p.lowestAge}, ${ts(p.at)}, ${p.phoneHash ?? null}) returning *`;
-      await tx`insert into platform.phone_identities (e164, person_id, verified_at, method, last_seen_at) values (${p.e164}, ${r!.id}, ${ts(p.at)}, ${p.method}, ${ts(p.at)})`;
+      // A number a staff invite named is not verified (and not seen) until something comes from it.
+      const verified = p.method === "staff" ? null : ts(p.at);
+      await tx`insert into platform.phone_identities (e164, person_id, verified_at, method, last_seen_at) values (${p.e164}, ${r!.id}, ${verified}, ${p.method}, ${verified})`;
       return person(r!);
     });
   }
   async touchPhone(e164: string, at: number) {
     await this.sql`update platform.phone_identities set last_seen_at = ${ts(at)} where e164 = ${e164}`;
+  }
+  async verifyPhone(e164: string, at: number) {
+    await this.sql`update platform.phone_identities set verified_at = ${ts(at)}, last_seen_at = ${ts(at)} where e164 = ${e164} and verified_at is null`;
   }
   async setPhoneHold(e164: string, hold: PhoneHold | null, at: number) {
     await this.sql`update platform.phone_identities set hold = ${hold}, hold_at = ${hold ? ts(at) : null} where e164 = ${e164}`;
@@ -102,10 +113,10 @@ export class PgPeopleStore implements PeopleStore {
     return r ? membership(r) : undefined;
   }
   async putMembership(m: Membership) {
-    await this.sql`insert into platform.memberships (app_id, person_id, member_id, state, review, first_name, profile, joined_at, left_at)
-      values (${m.app}, ${m.personId}, ${m.memberId}, ${m.state}, ${m.review}, ${m.firstName}, ${m.profile}::jsonb, ${ts(m.joinedAt)}, ${ts(m.leftAt)})
+    await this.sql`insert into platform.memberships (app_id, person_id, member_id, state, review, first_name, profile, joined_at, left_at, invited_at)
+      values (${m.app}, ${m.personId}, ${m.memberId}, ${m.state}, ${m.review}, ${m.firstName}, ${m.profile}::jsonb, ${ts(m.joinedAt)}, ${ts(m.leftAt)}, ${ts(m.invitedAt)})
       on conflict (app_id, person_id) do update set member_id = excluded.member_id, state = excluded.state, review = excluded.review,
-        first_name = excluded.first_name, profile = excluded.profile, joined_at = excluded.joined_at, left_at = excluded.left_at`;
+        first_name = excluded.first_name, profile = excluded.profile, joined_at = excluded.joined_at, left_at = excluded.left_at, invited_at = excluded.invited_at`;
   }
 
   async addConsent(e: ConsentEvent) {
@@ -266,6 +277,81 @@ export class PgPeopleStore implements PeopleStore {
       n += (await tx`delete from platform.rate_limits where last_at < ${b} returning 1`).length;
       n += (await tx`delete from platform.pending_texts where at < ${b} returning 1`).length;
       return n;
+    });
+  }
+
+  async dropInvite(personId: string, app: AppId) {
+    return this.sql.begin(async tx => {
+      await tx`delete from platform.memberships where person_id = ${personId}::uuid and app_id = ${app} and state = 'invited'`;
+      // The person stays unless the staff invite made them (their phone came from staff) and nothing else names
+      // them: another membership, a block, a ban, a photo, a grant or a network member.
+      const [r] = await tx`select exists (select 1 from platform.memberships where person_id = ${personId}::uuid)
+        or exists (select 1 from platform.phone_identities where person_id = ${personId}::uuid and method <> 'staff')
+        or exists (select 1 from platform.person_blocks where from_person = ${personId}::uuid or to_person = ${personId}::uuid)
+        or exists (select 1 from platform.bans where person_id = ${personId}::uuid)
+        or exists (select 1 from platform.photos where person_id = ${personId}::uuid)
+        or exists (select 1 from platform.share_grants where person_id = ${personId}::uuid)
+        or exists (select 1 from network.members where person_id = ${personId}::uuid) as keep`;
+      if (r?.keep) return { personDeleted: false };
+      await tx`delete from platform.sessions where person_id = ${personId}::uuid`;
+      await tx`delete from platform.phone_identities where person_id = ${personId}::uuid`;
+      await tx`delete from platform.membership_flags where person_id = ${personId}::uuid`;
+      await tx`delete from platform.phone_changes where person_id = ${personId}::uuid`;
+      await tx`delete from platform.people where id = ${personId}::uuid`;
+      return { personDeleted: true };
+    });
+  }
+  async staleInvites(before: number) {
+    return (await this.sql`select * from platform.memberships where state = 'invited' and coalesce(invited_at, '-infinity') < ${ts(before)} order by invited_at nulls first, member_id`).map(membership);
+  }
+
+  async putFlag(f: MembershipFlag) {
+    await this.sql`insert into platform.membership_flags (app_id, person_id, reasons, flagged_at, decision, decided_by, decided_at)
+      values (${f.app}, ${f.personId}, ${this.sql.array(f.reasons, "TEXT")}, ${ts(f.flaggedAt)}, ${f.decision}, ${f.decidedBy}, ${ts(f.decidedAt)})
+      on conflict (app_id, person_id) do update set reasons = excluded.reasons, flagged_at = excluded.flagged_at, decision = excluded.decision,
+        decided_by = excluded.decided_by, decided_at = excluded.decided_at`;
+  }
+  async getFlag(app: AppId, personId: string) {
+    const [r] = await this.sql`select * from platform.membership_flags where app_id = ${app} and person_id = ${personId}::uuid`;
+    return r ? flag(r) : undefined;
+  }
+  async openFlags(app?: AppId) {
+    const rows = app
+      ? await this.sql`select * from platform.membership_flags where decision is null and app_id = ${app} order by flagged_at, person_id`
+      : await this.sql`select * from platform.membership_flags where decision is null order by flagged_at, person_id`;
+    return rows.map(flag);
+  }
+
+  async putPhoneChange(c: PhoneChange) {
+    await this.sql`insert into platform.phone_changes (id, person_id, app_id, new_e164, requested_by, requested_at, confirmed_at)
+      values (${c.id}, ${c.personId}, ${c.app}, ${c.newE164}, ${c.requestedBy}, ${ts(c.requestedAt)}, ${ts(c.confirmedAt)})
+      on conflict (id) do update set confirmed_at = excluded.confirmed_at`;
+  }
+  async pendingPhoneChange(personId: string) {
+    const [r] = await this.sql`select * from platform.phone_changes where person_id = ${personId}::uuid and confirmed_at is null order by requested_at desc limit 1`;
+    return r ? phoneChange(r) : undefined;
+  }
+  async movePhone(m: { personId: string; changeId: string; oldE164: string; newE164: string; oldHash: string; newHash: string; at: number }) {
+    await this.sql.begin(async tx => {
+      const [old] = await tx`select * from platform.phone_identities where e164 = ${m.oldE164} and person_id = ${m.personId}::uuid for update`;
+      if (!old) throw new Error("not this person's phone");
+      await tx`insert into platform.phone_identities (e164, person_id, verified_at, method, line_type, last_seen_at) values (${m.newE164}, ${m.personId}, ${ts(m.at)}, 'otp_sms', null, ${ts(m.at)})`;
+      await tx`delete from platform.phone_identities where e164 = ${m.oldE164}`;
+      // The ledger is never updated in place: its rows are copied to the new number, then the old number's rows go.
+      await tx`insert into platform.consent_events (e164, app_id, line, state, source, wording, wording_version, ref, at)
+        select ${m.newE164}, app_id, line, state, source, wording, wording_version, ref, at from platform.consent_events where e164 = ${m.oldE164} order by at, id
+        on conflict (e164, ref) where ref is not null do nothing`;
+      await tx`delete from platform.consent_events where e164 = ${m.oldE164}`;
+      await tx`update platform.people set phone_hash = ${m.newHash} where id = ${m.personId}::uuid`;
+      const [floor] = await tx`delete from platform.age_floor where phone_hash = ${m.oldHash} returning lowest_age, at`;
+      if (floor) {
+        await tx`insert into platform.age_floor (phone_hash, lowest_age, at) values (${m.newHash}, ${floor.lowest_age}, ${floor.at})
+          on conflict (phone_hash) do update set lowest_age = least(platform.age_floor.lowest_age, excluded.lowest_age)`;
+      }
+      await tx`delete from platform.sessions where e164 = ${m.oldE164}`;
+      await tx`delete from platform.otp_challenges where e164 = ${m.oldE164}`;
+      await tx`delete from platform.pending_texts where phone_hash = ${m.oldHash}`;
+      await tx`update platform.phone_changes set confirmed_at = ${ts(m.at)}, old_hash = ${m.oldHash}, new_hash = ${m.newHash} where id = ${m.changeId}::uuid`;
     });
   }
 

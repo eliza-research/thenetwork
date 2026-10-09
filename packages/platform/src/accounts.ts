@@ -12,15 +12,23 @@
 //    membership, one member and one opt-in.
 //  - The opt-in wording is the app's canonical text (apps.ts ConsentText): the ledger stores that text
 //    and its version, never what a client sent.
+//  - A staff invite names a number nobody has proved yet: its phone is not verified until a message or
+//    a code comes from it. An invite ends without a trace (but the decline and the age floor) when the
+//    invitee is under 13, says no, or does not answer in 30 days (INVITE_TTL_MS).
+//  - Soft approval (approval.ts): a join a rule flags is let in and flagged for staff; its member is
+//    never matched until staff clear it.
 import { randomUUID } from "node:crypto";
 import { validAge } from "../../core/src/policy.ts";
 import { joinAgeCheck, lowestAge } from "./age.ts";
+import { joinFlags } from "./approval.ts";
 import type { AppId, AppInfo } from "./apps.ts";
 import { type ConsentEvent, resolveConsent, type StopScope, stopScope } from "./consent.ts";
 import { keyedHash } from "./phone.ts";
-import type { Membership, PeopleStore, Person, PhoneIdentity, PhoneMethod } from "./store.ts";
+import type { Membership, MembershipFlag, PeopleStore, Person, PhoneIdentity, PhoneMethod } from "./store.ts";
 
 export const RECYCLED_AFTER_MS = 365 * 24 * 3_600_000;
+/** An invite nobody answered is deleted after 30 days (the service's purge). */
+export const INVITE_TTL_MS = 30 * 24 * 3_600_000;
 /** Base-profile fields a person may share from one app to another. Sensitive classes are not in this list and never will be. */
 export const SHAREABLE_FIELDS = ["first_name", "city", "age_band", "interests"] as const;
 
@@ -67,6 +75,8 @@ export function parseJoin(body: unknown): JoinInput | undefined {
 }
 
 export interface JoinHookContext { app: AppInfo; person: Person; membership: Membership; e164: string; age: number; input: JoinInput }
+/** Where a join came from, for the soft-approval rules (approval.ts). */
+export interface JoinOrigin { ip?: string }
 export interface MemberHookContext { app: AppInfo; personId: string; memberId: string; e164: string }
 
 export interface AccountHooks {
@@ -80,6 +90,8 @@ export interface AccountHooks {
   onExport?(ctx: MemberHookContext): Promise<unknown> | unknown;
   /** The person's lowest age went down (a stated age on any app): every app's member must follow (a minor is never matched anywhere). */
   onAgeLowered?(ctx: { personId: string; age: number }): Promise<void> | void;
+  /** More of the person's own records for this app's export, outside the network rows (photos, connected assistants). */
+  onExportAccount?(ctx: MemberHookContext): Promise<Record<string, unknown>> | Record<string, unknown>;
 }
 
 export interface Who { e164: string; personId: string | null }
@@ -137,6 +149,8 @@ export class Accounts {
     const ph = await this.store.findPhone(e164);
     if (!ph) return "new";
     if (ph.hold !== null) return "held";
+    // The first message or code from a number a staff invite named: the number is proved now.
+    if (ph.verifiedAt === null) await this.store.verifyPhone(e164, at);
     if (this.stale(ph, at)) { await this.store.setPhoneHold(e164, "recycled_number", at); return "held"; }
     await this.store.touchPhone(e164, at);
     return "ok";
@@ -207,8 +221,10 @@ export class Accounts {
   }
 
   /**
-   * Staff or a member invite: a person (method 'staff' when new) and an 'invited' membership.
-   * Undefined for a number that asked to delete everything (the suppression hash) or is on hold.
+   * Staff or a member invite: a person (method 'staff' when new, its phone not verified until the
+   * invitee writes) and an 'invited' membership. Undefined for a number that asked to delete
+   * everything (the suppression hash) or is on hold. An existing membership comes back as it is (a
+   * waitlisted one too: the service lets it in).
    */
   async invite(app: AppInfo, e164: string): Promise<Membership | undefined> {
     const at = this.now();
@@ -216,18 +232,76 @@ export class Accounts {
     const person = (await this.personFor(e164)) ?? (await this.createPerson(e164, "staff", null));
     const existing = await this.store.getMembership(person.id, app.id);
     if (existing && existing.state !== "removed") return existing;
-    const m: Membership = { app: app.id, personId: person.id, memberId: `${app.id}_${randomUUID()}`, state: "invited", review: null, firstName: null, profile: {}, joinedAt: null, leftAt: null };
+    const m: Membership = { app: app.id, personId: person.id, memberId: `${app.id}_${randomUUID()}`, state: "invited", review: null, firstName: null, profile: {}, joinedAt: null, leftAt: null, invitedAt: at };
     await this.store.putMembership(m);
     return m;
   }
 
-  async join(app: AppInfo, who: Who, input: JoinInput): Promise<{ ok: true; membership: Membership } | { ok: false; error: JoinError }> {
-    if (!consentMatches(app, input.consent)) return { ok: false, error: "consent_wording" };
-    // One join per phone at a time: parallel requests see the first one's person and membership.
-    return this.store.withLock(`join:${who.e164}`, () => this.joinLocked(app, who, input));
+  /**
+   * An invite ends without a join: an under-13 answer, a "no thanks", or 30 days with no answer. The
+   * invited membership goes, and the person and their phone too when nothing else names them (a
+   * staff invite made them). Only the age floor (a keyed hash and an age) and the decline in the
+   * consent ledger stay.
+   */
+  async endInvite(app: AppInfo, personId: string): Promise<{ personDeleted: boolean }> {
+    return this.store.dropInvite(personId, app.id);
   }
 
-  private async joinLocked(app: AppInfo, who: Who, input: JoinInput): Promise<{ ok: true; membership: Membership } | { ok: false; error: JoinError }> {
+  /** Invites older than 30 days that nobody answered are ended (the service's purge). Returns how many. */
+  async expireInvites(): Promise<number> {
+    let n = 0;
+    for (const m of await this.store.staleInvites(this.now() - INVITE_TTL_MS)) { await this.store.dropInvite(m.personId, m.app); n++; }
+    return n;
+  }
+
+  /**
+   * Soft approval: count this join against the rules (approval.ts) and flag the membership when one
+   * fires. The member is never matched until staff clear the flag (decideFlag).
+   */
+  async flagJoin(app: AppId, personId: string, j: { e164: string; ip?: string; text?: string }): Promise<string[]> {
+    const at = this.now();
+    const reasons = await joinFlags(this.store, this.opts.hashKey, j, at);
+    if (reasons.length) await this.store.putFlag({ app, personId, reasons, flaggedAt: at, decision: null, decidedBy: null, decidedAt: null });
+    return reasons;
+  }
+
+  /** True while staff have not cleared a flag on this membership. */
+  async flagged(app: AppId, personId: string): Promise<boolean> {
+    const f = await this.store.getFlag(app, personId);
+    return !!f && f.decision === null;
+  }
+
+  /** Staff decide a flag: "clear" lets the member be matched; "keep" keeps them out of matching for good (staff may hold or ban as well). */
+  async decideFlag(app: AppId, personId: string, decision: "clear" | "keep", by: string): Promise<MembershipFlag | undefined> {
+    const f = await this.store.getFlag(app, personId);
+    if (!f || f.decision !== null) return undefined;
+    const out: MembershipFlag = { ...f, decision, decidedBy: by, decidedAt: this.now() };
+    await this.store.putFlag(out);
+    return out;
+  }
+
+  /**
+   * Move a person to a new number (F25, a staff tool after a code to the new number was confirmed):
+   * the phone, the consent history, the keyed phone hash and the age floor. Memberships, grants and
+   * photos belong to the person and stay. Refused when the new number already belongs to someone.
+   */
+  async movePhone(personId: string, changeId: string, oldE164: string, newE164: string): Promise<"ok" | "number_in_use" | "no_phone"> {
+    const old = await this.store.findPhone(oldE164);
+    if (!old || old.personId !== personId) return "no_phone";
+    if (await this.store.findPhone(newE164)) return "number_in_use";
+    await this.store.movePhone({ personId, changeId, oldE164, newE164, oldHash: this.phoneHash(oldE164), newHash: this.phoneHash(newE164), at: this.now() });
+    // The person proved the new number and brings their own opt-ins: an old delete-everything of that number no longer suppresses it (a ban refuses the change before this).
+    await this.store.unsuppress(this.phoneHash(newE164));
+    return "ok";
+  }
+
+  async join(app: AppInfo, who: Who, input: JoinInput, from: JoinOrigin = {}): Promise<{ ok: true; membership: Membership } | { ok: false; error: JoinError }> {
+    if (!consentMatches(app, input.consent)) return { ok: false, error: "consent_wording" };
+    // One join per phone at a time: parallel requests see the first one's person and membership.
+    return this.store.withLock(`join:${who.e164}`, () => this.joinLocked(app, who, input, from));
+  }
+
+  private async joinLocked(app: AppInfo, who: Who, input: JoinInput, from: JoinOrigin): Promise<{ ok: true; membership: Membership } | { ok: false; error: JoinError }> {
     const at = this.now();
     if ((await this.seen(who.e164)) === "held") return { ok: false, error: "review" };
     let person = await this.personFor(who.e164);
@@ -238,7 +312,9 @@ export class Accounts {
     const age = joinAgeCheck(input.age, await this.lowestAge(who.e164, person), app);
     if (!age.ok) {
       // Nothing is stored for this app: only the age, on the phone's age floor (and the person, if any).
-      await this.recordAge(who.e164, person, input.age);
+      // An invite ends here, and a person the invite made goes with it (audit platform-25).
+      const left = existing?.state === "invited" ? await this.endInvite(app, person!.id) : { personDeleted: false };
+      await this.recordAge(who.e164, left.personDeleted ? undefined : person, input.age);
       return { ok: false, error: "under_age" };
     }
     if (!person) person = await this.createPerson(who.e164, "otp_sms", age.effective ?? input.age);
@@ -256,6 +332,7 @@ export class Accounts {
     await this.store.putMembership(membership);
     await this.store.addConsent({ e164: who.e164, app: app.id, state: "opted_in", source: "web_form", wording: app.consent.text, wordingVersion: app.consent.version, at });
     await this.store.attachPerson(who.e164, person.id);
+    await this.flagJoin(app.id, person.id, { e164: who.e164, ip: from.ip, text: [input.firstName, input.about, ...(input.interests ?? [])].filter(Boolean).join(" ") });
     try {
       // The network member gets the person's lowest age, not the one typed now (a minor anywhere is a minor here).
       await this.hooks.onJoin?.({ app, person, membership, e164: who.e164, age: age.effective ?? input.age, input });
@@ -332,6 +409,11 @@ export class Accounts {
       } : null,
       consent,
       network: person && live ? ((await this.hooks.onExport?.({ app, personId: person.id, memberId: live.memberId, e164: who.e164 })) ?? null) : null,
+      // Base-profile grants into this app: the fields and times only (the other app is never named here).
+      shareGrants: person ? (await this.store.shareGrants(person.id)).filter(g => g.toApp === app.id).map(g => ({
+        fields: g.fields, grantedAt: new Date(g.grantedAt).toISOString(), revokedAt: g.revokedAt === null ? null : new Date(g.revokedAt).toISOString(),
+      })) : [],
+      ...(person && live ? ((await this.hooks.onExportAccount?.({ app, personId: person.id, memberId: live.memberId, e164: who.e164 })) ?? {}) : {}),
     };
   }
 

@@ -6,7 +6,8 @@ import type { ConsentEvent, ConsentLast } from "./consent.ts";
 import { lastEvents } from "./consent.ts";
 
 export type PhoneMethod = "otp_sms" | "otp_whatsapp" | "inbound_message" | "staff";
-export type MembershipState = "invited" | "onboarding" | "active" | "paused" | "restricted" | "removed";
+/** waitlist: joined The Network by text while it is invite-only; never a network member until staff invite them. */
+export type MembershipState = "invited" | "waitlist" | "onboarding" | "active" | "paused" | "restricted" | "removed";
 
 export interface Person { id: string; lowestAge: number | null; createdAt: number; deletedAt: number | null }
 /** A text flow waiting for the person's next message (platform.pending_texts): a join that has asked for name and age, The Network's "what are you looking for?", or a SHARE offer. */
@@ -14,7 +15,8 @@ export type PendingKind = "join" | "looking_for" | "share";
 export interface PendingText { phoneHash: string; kind: PendingKind; app: AppId; name: string | null; age: number | null; at: number }
 export type PhoneHold = "recycled_number";
 export interface PhoneIdentity {
-  e164: string; personId: string; verifiedAt: number; method: PhoneMethod; lastSeenAt: number | null;
+  /** null: a staff invite named the number, and nothing has come from it yet (Accounts.seen sets it). */
+  e164: string; personId: string; verifiedAt: number | null; method: PhoneMethod; lastSeenAt: number | null;
   /** Staff must look before anyone uses this number's account (it may have a new owner). */
   hold: PhoneHold | null;
 }
@@ -29,6 +31,8 @@ export interface Membership {
   profile: Record<string, unknown>;
   joinedAt: number | null;
   leftAt: number | null;
+  /** When the invite was made (state "invited"): an invite nobody answered expires (INVITE_TTL_MS). */
+  invitedAt?: number | null;
 }
 /**
  * A staff ban after a report (docs/admin-console.md 3.7.1). "phone": this number (its keyed hash) can
@@ -36,6 +40,10 @@ export interface Membership {
  * Delete everything keeps it.
  */
 export interface Ban { id: string; scope: "phone" | "person"; personId: string | null; phoneHash: string | null; reason: string; reportId: string | null; bannedBy: string; at: number }
+/** Soft approval (PRD 28.3): a join a rule flagged. The member onboards but is never matched until staff decide. */
+export interface MembershipFlag { app: AppId; personId: string; reasons: string[]; flaggedAt: number; decision: "clear" | "keep" | null; decidedBy: string | null; decidedAt: number | null }
+/** A staff phone change (F25): a code goes to the new number, and the move happens when it is confirmed. */
+export interface PhoneChange { id: string; personId: string; app: AppId; newE164: string; requestedBy: string; requestedAt: number; confirmedAt: number | null }
 export interface ShareGrant { personId: string; fromApp: AppId; toApp: AppId; fields: string[]; grantedAt: number; revokedAt: number | null }
 export interface OtpChallenge {
   id: string; app: AppId; e164: string; provider: string;
@@ -66,6 +74,8 @@ export interface PeopleStore {
    */
   createPerson(p: { id: string; e164: string; method: PhoneMethod; at: number; lowestAge: number | null; phoneHash?: string }): Promise<Person>;
   touchPhone(e164: string, at: number): Promise<void>;
+  /** The first message or code from a number a staff invite named: it is verified now. */
+  verifyPhone(e164: string, at: number): Promise<void>;
   /** Put a number on hold for staff review (or clear the hold with null). */
   setPhoneHold(e164: string, hold: PhoneHold | null, at: number): Promise<void>;
   heldPhones(): Promise<PhoneIdentity[]>;
@@ -137,6 +147,31 @@ export interface PeopleStore {
   /** Retention: drop expired OTP challenges, sessions, rate windows and pending flows older than `before`. Returns rows removed. */
   purge(before: number): Promise<number>;
 
+  /**
+   * An invite that ends without a join (an under-13 answer, a decline, or 30 days with no answer):
+   * the invited membership goes, and when the staff invite made the person (a phone with method
+   * 'staff') and nothing else names them, the person, the phone and their sessions go too.
+   */
+  dropInvite(personId: string, app: AppId): Promise<{ personDeleted: boolean }>;
+  /** Invited memberships older than `before` (invitedAt), oldest first. */
+  staleInvites(before: number): Promise<Membership[]>;
+
+  putFlag(f: MembershipFlag): Promise<void>;
+  getFlag(app: AppId, personId: string): Promise<MembershipFlag | undefined>;
+  /** Flags staff have not decided, oldest first (one app, or every app). */
+  openFlags(app?: AppId): Promise<MembershipFlag[]>;
+
+  putPhoneChange(c: PhoneChange): Promise<void>;
+  /** The newest unconfirmed phone change of a person. */
+  pendingPhoneChange(personId: string): Promise<PhoneChange | undefined>;
+  /**
+   * Move a person to a new verified number (F25): the phone identity, the consent history, the keyed
+   * phone hash (bans, tombstones, OAuth lookups) and the age floor go to the new number; sessions and
+   * pending text flows of the old number end; the old phone identity is retired. Memberships, grants
+   * and photos belong to the person and stay. Records the change as confirmed.
+   */
+  movePhone(m: { personId: string; changeId: string; oldE164: string; newE164: string; oldHash: string; newHash: string; at: number }): Promise<void>;
+
   /** Leave one app: the membership is set to removed and its name and profile are cleared; grants that involve the app are revoked. */
   forgetMembership(personId: string, app: AppId, at: number): Promise<void>;
   /** Delete everything for a person and phone; keep a tombstone (people.deleted_at and its phone hash), the blocks and the suppression hash. */
@@ -180,10 +215,13 @@ export class MemoryPeopleStore implements PeopleStore {
     this.people.set(person.id, person);
     if (p.phoneHash) this.personHash.set(person.id, p.phoneHash);
     p = { ...p, id: person.id };
-    this.phones.set(p.e164, { e164: p.e164, personId: p.id, verifiedAt: p.at, method: p.method, lastSeenAt: p.at, hold: null });
+    // A number a staff invite named is not verified (and not seen) until something comes from it.
+    const verified = p.method === "staff" ? null : p.at;
+    this.phones.set(p.e164, { e164: p.e164, personId: p.id, verifiedAt: verified, method: p.method, lastSeenAt: verified, hold: null });
     return person;
   }
   async touchPhone(e164: string, at: number) { const ph = this.phones.get(e164); if (ph) ph.lastSeenAt = at; }
+  async verifyPhone(e164: string, at: number) { const ph = this.phones.get(e164); if (ph && ph.verifiedAt === null) Object.assign(ph, { verifiedAt: at, lastSeenAt: at }); }
   async setPhoneHold(e164: string, hold: PhoneHold | null) { const ph = this.phones.get(e164); if (ph) ph.hold = hold; }
   async heldPhones() { return [...this.phones.values()].filter(p => p.hold !== null).map(p => ({ ...p })); }
   async ageFloor(phoneHash: string) { return this.ageFloors.get(phoneHash)?.age; }
@@ -295,6 +333,49 @@ export class MemoryPeopleStore implements PeopleStore {
     for (const [k, l] of this.limits) if (l.lastAt < before) { this.limits.delete(k); n++; }
     for (const [k, p] of this.pending) if (p.at < before) { this.pending.delete(k); n++; }
     return n;
+  }
+
+  async dropInvite(personId: string, app: AppId) {
+    const m = this.members.get(`${app}:${personId}`);
+    if (m?.state === "invited") this.members.delete(`${app}:${personId}`);
+    const rest = [...this.members.values()].some(x => x.personId === personId);
+    const phones = [...this.phones.values()].filter(ph => ph.personId === personId);
+    if (rest || phones.some(ph => ph.method !== "staff") || [...this.blocks.values()].some(b => b.from === personId || b.to === personId)) return { personDeleted: false };
+    for (const ph of phones) this.phones.delete(ph.e164);
+    for (const [k, s] of this.sessions) if (s.personId === personId) this.sessions.delete(k);
+    this.people.delete(personId);
+    this.personHash.delete(personId);
+    return { personDeleted: true };
+  }
+  async staleInvites(before: number) {
+    return [...this.members.values()].filter(m => m.state === "invited" && (m.invitedAt ?? 0) < before).sort((a, b) => (a.invitedAt ?? 0) - (b.invitedAt ?? 0)).map(m => ({ ...m }));
+  }
+
+  readonly flags = new Map<string, MembershipFlag>();
+  async putFlag(f: MembershipFlag) { this.flags.set(`${f.app}:${f.personId}`, { ...f, reasons: [...f.reasons] }); }
+  async getFlag(app: AppId, personId: string) { const f = this.flags.get(`${app}:${personId}`); return f && { ...f }; }
+  async openFlags(app?: AppId) { return [...this.flags.values()].filter(f => f.decision === null && (!app || f.app === app)).sort((a, b) => a.flaggedAt - b.flaggedAt).map(f => ({ ...f })); }
+
+  readonly phoneChanges = new Map<string, PhoneChange>();
+  async putPhoneChange(c: PhoneChange) { this.phoneChanges.set(c.id, { ...c }); }
+  async pendingPhoneChange(personId: string) {
+    const c = [...this.phoneChanges.values()].filter(x => x.personId === personId && x.confirmedAt === null).sort((a, b) => b.requestedAt - a.requestedAt)[0];
+    return c && { ...c };
+  }
+  async movePhone(m: { personId: string; changeId: string; oldE164: string; newE164: string; oldHash: string; newHash: string; at: number }) {
+    const old = this.phones.get(m.oldE164);
+    if (!old || old.personId !== m.personId) throw new Error("not this person's phone");
+    if (this.phones.has(m.newE164)) throw new Error("phone already linked");
+    this.phones.delete(m.oldE164);
+    this.phones.set(m.newE164, { ...old, e164: m.newE164, verifiedAt: m.at, method: "otp_sms", lastSeenAt: m.at, hold: null });
+    for (const e of this.consent) if (e.e164 === m.oldE164) e.e164 = m.newE164;
+    this.personHash.set(m.personId, m.newHash);
+    const floor = this.ageFloors.get(m.oldHash);
+    if (floor) { await this.noteAgeFloor(m.newHash, floor.age, floor.at); this.ageFloors.delete(m.oldHash); }
+    for (const [k, s] of this.sessions) if (s.e164 === m.oldE164) this.sessions.delete(k);
+    for (const [k, p] of this.pending) if (p.phoneHash === m.oldHash) this.pending.delete(k);
+    const c = this.phoneChanges.get(m.changeId);
+    if (c) c.confirmedAt = m.at;
   }
 
   async forgetMembership(personId: string, app: AppId, at: number) {
