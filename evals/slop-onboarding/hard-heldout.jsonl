@@ -1,0 +1,40 @@
+{"text":"Hi there, I'm Dana. 36 year old woman in Fort Greene looking to meet men roughly 34 to 44","expect":{"gender":"woman","seeks":["man"],"ageRange":[34,44],"location":"Fort Greene"}}
+{"text":"so im a guy and im into other guys, preferably 28-36","expect":{"gender":"man","seeks":["man"],"ageRange":[28,36]}}
+{"text":"looking for a girlfriend!! im a girl too lol","expect":{"gender":"woman"}}
+{"text":"interested in dating women and non-binary people aged 27-37","expect":{"seeks":["nonbinary","woman"],"ageRange":[27,37]}}
+{"text":"tbh i'm only into men","expect":{"seeks":["man"]}}
+{"text":"im a woman who likes women","expect":{"gender":"woman","seeks":["woman"]}}
+{"text":"Male, 29, seeking female 24-31, within 10 miles","expect":{"gender":"man","seeks":["woman"],"ageRange":[24,31],"distance":{"mode":"radius","miles":10}}}
+{"text":"not picky about gender, anyone 30-45 works","expect":{"seeks":["man","nonbinary","woman"],"ageRange":[30,45]}}
+{"text":"I'd say 25 through 32","asked":"ageRange","expect":{"ageRange":[25,32]}}
+{"text":"maybe 35-50?","asked":"ageRange","expect":{"ageRange":[35,50]}}
+{"text":"early 30s","asked":"ageRange","expect":{"ageRange":[30,33]}}
+{"text":"20s and 30s","asked":"ageRange","expect":{"ageRange":[20,39]}}
+{"text":"15 miles tops","asked":"distance","expect":{"distance":{"mode":"radius","miles":15}}}
+{"text":"i'd go up to 20 miles","expect":{"distance":{"mode":"radius","miles":20}}}
+{"text":"honestly anywhere in the city works","expect":{"distance":{"mode":"city"}}}
+{"text":"within like 3 miles i hate the train","expect":{"distance":{"mode":"radius","miles":3}}}
+{"text":"im in 11206","expect":{"location":"11206"}}
+{"text":"my zip code is 10009","expect":{"location":"10009"}}
+{"text":"I live in Ridgewood","expect":{"location":"Ridgewood"}}
+{"text":"sunset park","asked":"location","expect":{"location":"Sunset Park"}}
+{"text":"based in williamsburg","expect":{"location":"Williamsburg"}}
+{"text":"i'm up in washington heights","expect":{"location":"Washington Heights"}}
+{"text":"10002","asked":"location","expect":{"location":"10002"}}
+{"text":"i'm in the west village","expect":{"location":"West Village"}}
+{"text":"chelsea","asked":"location","expect":{"location":"Chelsea"}}
+{"text":"nb person here! into men, women, enbies, everyone","expect":{"gender":"nonbinary","seeks":["man","nonbinary","woman"]}}
+{"text":"I am a woman seeking a woman","expect":{"gender":"woman","seeks":["woman"]}}
+{"text":"guy 41 looking for women 35 to 45 in brooklyn","expect":{"gender":"man","seeks":["woman"],"ageRange":[35,45]}}
+{"text":"ladies only 😌","expect":{"seeks":["woman"]}}
+{"text":"men pls","asked":"seeks","expect":{"seeks":["man"]}}
+{"text":"women + nonbinary folks","asked":"seeks","expect":{"seeks":["nonbinary","woman"]}}
+{"text":"i'm a man","asked":"orientation","expect":{"gender":"man"}}
+{"text":"girl into guys","asked":"orientation","expect":{"gender":"woman","seeks":["man"]}}
+{"text":"im 27, female, astoria, into men 27-35, 5 miles","expect":{"gender":"woman","seeks":["man"],"ageRange":[27,35],"distance":{"mode":"radius","miles":5},"location":"Astoria"}}
+{"text":"I'm a 30 yo guy in Bushwick, looking for women in their late 20s or 30s, up to 10 miles away","expect":{"gender":"man","seeks":["woman"],"ageRange":[26,39],"distance":{"mode":"radius","miles":10},"location":"Bushwick"}}
+{"text":"36F, Park Slope. Men 34-44. 10mi.","expect":{"gender":"woman","seeks":["man"],"ageRange":[34,44],"distance":{"mode":"radius","miles":10},"location":"Park Slope"}}
+{"text":"trans guy, into women and nonbinary folks","expect":{"gender":"man","seeks":["nonbinary","woman"]}}
+{"text":"i date both men and women","expect":{"seeks":["man","woman"]}}
+{"text":"im lookin 4 a man","expect":{"seeks":["man"]}}
+{"text":"seeking men 30 to 40ish","expect":{"seeks":["man"],"ageRange":[30,40]}}

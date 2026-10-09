@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Local only: no network of any kind. Photos are read from the chosen folder into blob: URLs; labels
+     are kept in this browser and saved with the Save button (a local file download). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-src 'none'; object-src 'none'; media-src 'none'; font-src 'none'; worker-src 'none'; manifest-src 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Clef pair labelling</title>
+<style>
+  :root { --bg: #fafaf9; --fg: #1c1917; --muted: #78716c; --line: #d6d3d1; --accent: #1d4ed8; --warn: #b45309; --card: #ffffff; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #1c1917; --fg: #f5f5f4; --muted: #a8a29e; --line: #44403c; --accent: #93c5fd; --warn: #fbbf24; --card: #292524; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; background: var(--bg); color: var(--fg); }
+  main { max-width: 1200px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; margin: 0 0 8px; }
+  .rules { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; }
+  .rules li { margin: 4px 0; }
+  label.row { display: block; margin: 10px 0; }
+  input[type=text], input[type=number], select { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg); }
+  button { font: inherit; padding: 8px 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  .muted { color: var(--muted); }
+  .warn { color: var(--warn); }
+  #pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0; }
+  .side { background: var(--card); border: 2px solid var(--line); border-radius: 8px; padding: 8px; text-align: center; cursor: pointer; }
+  .side:hover { border-color: var(--accent); }
+  .side img { width: 100%; height: min(62vh, 640px); object-fit: contain; display: block; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .q { font-size: 18px; font-weight: 600; margin: 8px 0 0; }
+  kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font-size: 13px; }
+  @media (max-width: 640px) { #pair { grid-template-columns: 1fr; } .side img { height: 38vh; } }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <section id="setup">
+    <h1>Clef pair labelling (local only)</h1>
+    <div class="rules">
+      <strong>Before you start: consent and handling rules</strong>
+      <ul>
+        <li><b>Adults only.</b> Every photo must be of a verified adult (18+). If anyone in a photo might be under 18, press <kbd>F</kbd> and flag it; do not label it.</li>
+        <li><b>Consented photos only.</b> Only photos whose subject signed a release for use in rating research (listed in the consent manifest). Never scraped, social-media or member photos without that release.</li>
+        <li><b>Labels stay local.</b> This page makes no network request (its security policy forbids it). Photos never leave this computer; labels are saved as a file you hand to the operator directly, never by email, chat or a shared drive.</li>
+        <li><b>Raters are adults</b> on the founding team or paid raters who signed the rater agreement. Your rater id is a pseudonym, not your name.</li>
+        <li><b>Never share or discuss</b> a rating, a ranking or a photo outside the labelling session. Delete your copy of the photos and the labels file when the operator confirms receipt.</li>
+        <li>Judge only the photo. Choose quickly; if you genuinely can't tell, press <kbd>S</kbd> to skip.</li>
+      </ul>
+    </div>
+    <label class="row"><input type="checkbox" id="attest"> I am an adult rater, I have read these rules, and the folder I choose holds only consented photos of verified adults.</label>
+    <label class="row">Rater id (pseudonym) <input type="text" id="rater" placeholder="e.g. rater-07" autocomplete="off"></label>
+    <label class="row">Photo folder <input type="file" id="folder" webkitdirectory directory multiple></label>
+    <label class="row">Question
+      <select id="dimMode">
+        <option value="overall">Overall: who is more attractive?</option>
+        <option value="face">Face only</option>
+        <option value="body">Body only</option>
+        <option value="rotate">Rotate face / body / overall</option>
+      </select>
+    </label>
+    <label class="row">Session seed <input type="number" id="seed" value="1" min="1" style="width:6em"> <span class="muted">(the operator gives every rater the same seed: one pair in five is then shared across raters for agreement checks)</span></label>
+    <label class="row">Optional: pair plan (JSONL of {"a","b","dim"}) <input type="file" id="plan" accept=".jsonl,.json,.txt"></label>
+    <label class="row">Optional: resume from a saved labels file <input type="file" id="resume" accept=".jsonl,.json,.txt"></label>
+    <div class="bar"><button class="primary" id="start" disabled>Start</button> <span id="setupMsg" class="muted"></span></div>
+  </section>
+
+  <section id="label" hidden>
+    <div class="bar">
+      <span id="progress" class="muted"></span>
+      <span style="flex:1"></span>
+      <button id="undo">Undo <kbd>U</kbd></button>
+      <button id="save" class="primary">Save labels file</button>
+      <button id="finish">End session</button>
+    </div>
+    <p class="q" id="question"></p>
+    <div id="pair">
+      <div class="side" id="left"><img id="imgL" alt="left photo"><div class="muted">Left <kbd>1</kbd> or <kbd>&larr;</kbd></div></div>
+      <div class="side" id="right"><img id="imgR" alt="right photo"><div class="muted">Right <kbd>2</kbd> or <kbd>&rarr;</kbd></div></div>
+    </div>
+    <div class="bar muted">
+      <span><kbd>S</kbd> can't tell (skip)</span>
+      <span><kbd>F</kbd> flag a photo (may be under 18, not exactly one person, not consented)</span>
+      <span id="saved"></span>
+    </div>
+  </section>
+</main>
+<script>
+"use strict";
+// Pair schedule: deterministic per (seed, rater). Pair i % 5 === 0 comes from the SHARED stream
+// (seed only: every rater with the same folder and seed sees the same shared pairs, for inter-rater
+// reliability); the rest from the rater's own stream. About 5% of pairs repeat an earlier pair of
+// this rater with the sides swapped (test-retest). Left/right order is random.
+// Output (JSONL, one line per answer):
+//   {"a": <left photo id>, "b": <right photo id>, "winner": "a"|"b", "dim": "overall"|"face"|"body",
+//    "rater": <id>, "t": <ISO time>, "ms": <decision time>, "shared": bool, "repeat": bool, "seed": n}
+//   {"flag": <photo id>, "reason": "...", "rater": <id>, "t": ...}
+// Photo id = the path inside the chosen folder (the same ids `bun run clef features` writes).
+const $ = id => document.getElementById(id);
+const IMG = /\.(jpe?g|png|webp)$/i;
+let files = new Map(), ids = [], labels = [], plan = null, rater = "", seed = 1, dimMode = "overall";
+let cur = null, shownAt = 0, urlL = null, urlR = null, history = [], done = new Set();
+
+function hash32(s) { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); } return h >>> 0; }
+function mulberry(a) { return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+let sharedRng, ownRng, sideRng, step = 0;
+const key = (a, b, d) => (a < b ? a + "\u0000" + b : b + "\u0000" + a) + "\u0001" + d;
+const storeKey = () => "clef-label:" + rater + ":" + seed;
+function persist() { try { localStorage.setItem(storeKey(), JSON.stringify(labels)); } catch (e) {} }
+function restore() { try { const s = localStorage.getItem(storeKey()); return s ? JSON.parse(s) : []; } catch (e) { return []; } }
+
+function readyCheck() {
+  const ok = $("attest").checked && $("rater").value.trim().length > 0 && ids.length >= 2;
+  $("start").disabled = !ok;
+  $("setupMsg").textContent = ids.length ? ids.length + " photos found" + (ids.length < 2 ? " (need at least 2)" : "") : "";
+}
+$("attest").onchange = readyCheck; $("rater").oninput = readyCheck;
+$("folder").onchange = e => {
+  files = new Map();
+  for (const f of e.target.files) {
+    if (!IMG.test(f.name) || f.name.startsWith(".")) continue;
+    const parts = (f.webkitRelativePath || f.name).split("/");
+    files.set(parts.length > 1 ? parts.slice(1).join("/") : parts[0], f);
+  }
+  ids = [...files.keys()].sort();
+  readyCheck();
+};
+async function readJsonl(file) { return (await file.text()).split("\n").filter(l => l.trim()).map(l => { try { return JSON.parse(l); } catch (e) { return null; } }).filter(Boolean); }
+
+$("start").onclick = async () => {
+  rater = $("rater").value.trim().replace(/[^\w.-]/g, "_");
+  seed = Math.max(1, Number($("seed").value) || 1);
+  dimMode = $("dimMode").value;
+  if ($("plan").files[0]) plan = (await readJsonl($("plan").files[0])).filter(p => files.has(p.a) && files.has(p.b));
+  labels = restore();
+  if ($("resume").files[0]) {
+    const prev = (await readJsonl($("resume").files[0])).filter(l => l.rater === rater);
+    const seen = new Set(labels.map(l => JSON.stringify(l)));
+    for (const l of prev) if (!seen.has(JSON.stringify(l))) labels.push(l);
+  }
+  for (const l of labels) if (l.a) { done.add(key(l.a, l.b, l.dim)); history.push([l.a, l.b, l.dim]); }
+  sharedRng = mulberry(hash32("shared:" + seed)); ownRng = mulberry(hash32("own:" + seed + ":" + rater)); sideRng = mulberry(hash32("side:" + seed + ":" + rater));
+  // A resumed session replays the same streams from the start; pairs already answered are skipped,
+  // so the shared pairs stay aligned with the other raters'.
+  $("setup").hidden = true; $("label").hidden = false;
+  next();
+};
+
+function dimFor(i) { return dimMode === "rotate" ? ["face", "body", "overall"][i % 3] : dimMode; }
+function drawRaw(i) {
+  const rng = i % 5 === 0 ? sharedRng : ownRng;
+  const a = ids[Math.floor(rng() * ids.length)]; let b = ids[Math.floor(rng() * ids.length)];
+  if (b === a) b = ids[(ids.indexOf(a) + 1) % ids.length];
+  return { a, b, shared: i % 5 === 0 };
+}
+function draw() {
+  if (history.length > 10 && sideRng() < 0.05) {
+    const [a, b, d] = history[Math.floor(sideRng() * history.length)];
+    return { a: b, b: a, dim: d, shared: false, repeat: true };
+  }
+  if (plan) {
+    while (step < plan.length) { const p = plan[step++]; const d = p.dim || dimFor(step); if (!done.has(key(p.a, p.b, d))) return { a: p.a, b: p.b, dim: d, shared: true, repeat: false }; }
+    return null;
+  }
+  const cap = step + 20 * ids.length * ids.length + 1000;
+  while (step < cap) {
+    const r = drawRaw(step), d = dimFor(step); step++;
+    if (!done.has(key(r.a, r.b, d))) return sideRng() < 0.5 ? { a: r.a, b: r.b, dim: d, shared: r.shared, repeat: false } : { a: r.b, b: r.a, dim: d, shared: r.shared, repeat: false };
+  }
+  return null;
+}
+const QUESTION = { overall: "Overall, which person would most dating-app users find more attractive?", face: "Whose FACE would most dating-app users find more attractive?", body: "Whose BODY / physique would most dating-app users find more attractive?" };
+function next() {
+  cur = draw();
+  if (urlL) URL.revokeObjectURL(urlL); if (urlR) URL.revokeObjectURL(urlR);
+  if (!cur) { $("question").textContent = "No more pairs in this session. Save your labels file."; $("pair").hidden = true; return; }
+  urlL = URL.createObjectURL(files.get(cur.a)); urlR = URL.createObjectURL(files.get(cur.b));
+  $("imgL").src = urlL; $("imgR").src = urlR;
+  $("question").textContent = QUESTION[cur.dim];
+  const n = labels.filter(l => l.a && !l.skip).length;
+  $("progress").textContent = n + " labels by " + rater + (labels.some(l => l.flag) ? ", " + labels.filter(l => l.flag).length + " flags" : "");
+  shownAt = performance.now();
+}
+function answer(w) {
+  if (!cur) return;
+  const rec = { a: cur.a, b: cur.b, dim: cur.dim, rater, t: new Date().toISOString(), ms: Math.round(performance.now() - shownAt), shared: cur.shared, repeat: cur.repeat, seed };
+  if (w === "skip") rec.skip = true; else rec.winner = w;
+  labels.push(rec);
+  if (!cur.repeat) { done.add(key(cur.a, cur.b, cur.dim)); if (!rec.skip) history.push([cur.a, cur.b, cur.dim]); }
+  persist(); next();
+}
+function flag() {
+  if (!cur) return;
+  const which = prompt("Flag which photo? Type L (left) or R (right).");
+  if (!which) return;
+  const id = /^r/i.test(which.trim()) ? cur.b : cur.a;
+  const reason = prompt("Reason: 1 = may be under 18, 2 = not exactly one person, 3 = may not be consented, 4 = other", "1");
+  const reasons = { "1": "may be under 18", "2": "not exactly one person", "3": "may not be consented", "4": "other" };
+  labels.push({ flag: id, reason: reasons[(reason || "4").trim()] || "other", rater, t: new Date().toISOString() });
+  persist();
+  // A flagged photo is never shown again in this session.
+  ids = ids.filter(x => x !== id);
+  if (ids.length < 2) { cur = null; $("question").textContent = "Too few unflagged photos left. Save your labels file."; $("pair").hidden = true; return; }
+  next();
+}
+function undo() {
+  const l = labels.pop();
+  if (!l) return;
+  if (l.a) { done.delete(key(l.a, l.b, l.dim)); }
+  persist(); $("saved").textContent = "undid the last answer (the pair is not shown again)";
+}
+function save() {
+  const blob = new Blob([labels.map(l => JSON.stringify(l)).join("\n") + "\n"], { type: "application/x-ndjson" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = "labels-" + rater + "-seed" + seed + ".jsonl";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  $("saved").textContent = "saved " + labels.length + " lines";
+}
+$("left").onclick = () => answer("a"); $("right").onclick = () => answer("b");
+$("undo").onclick = undo; $("save").onclick = save;
+$("finish").onclick = () => { if (confirm("Save the labels file and clear this browser's copy?")) { save(); try { localStorage.removeItem(storeKey()); } catch (e) {} location.reload(); } };
+document.addEventListener("keydown", e => {
+  if ($("label").hidden || e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key.toLowerCase();
+  if (k === "1" || k === "arrowleft") answer("a");
+  else if (k === "2" || k === "arrowright") answer("b");
+  else if (k === "s" || k === " ") { e.preventDefault(); answer("skip"); }
+  else if (k === "f") flag();
+  else if (k === "u" || k === "backspace") { e.preventDefault(); undo(); }
+});
+</script>
+</body>
+</html>

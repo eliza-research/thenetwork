@@ -5,6 +5,6 @@
     "types": ["bun"], "resolveJsonModule": true, "allowImportingTsExtensions": true,
     "paths": { "@elizaos/core": ["./eliza/packages/core/src/index.ts"], "@elizaos/core/*": ["./eliza/packages/core/src/*"] }
   },
-  "include": ["packages/**/*.ts", "deploy/**/*.ts", "scripts/platform-dev.ts", "scripts/sim.ts", "scripts/sim/**/*.ts"],
+  "include": ["packages/**/*.ts", "deploy/**/*.ts", "scripts/platform-dev.ts", "scripts/sim.ts", "scripts/sim/**/*.ts", "scripts/clef-fit.ts"],
   "exclude": ["**/node_modules", "eliza/**", "packages/plugin-network/**"]
 }
