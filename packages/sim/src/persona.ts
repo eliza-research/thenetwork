@@ -1,6 +1,6 @@
 // Persona model: a synthetic member with HIDDEN ground truth (what the Network can never
 // read directly) and a PUBLIC side (what they will reveal in conversation). PRD 34.3.
-import { DAY, type Category, type City, type MemberId } from "@thenetwork/core";
+import { DAY, type AppId, type Category, type City, type MemberId } from "@thenetwork/core";
 import { Rng, hash32 } from "@thenetwork/core";
 import type { WritingStyle } from "./taxonomy.ts";
 import type { Knowledge, RichnessTier } from "./sources.ts";
@@ -108,6 +108,8 @@ export interface Persona {
    * Absent = legacy behavior (every stated trait is known, no sources).
    */
   knowledge?: Knowledge;
+  /** Apps the person is a member of (multi-app worlds). Absent = The Network only. */
+  apps?: AppId[];
 }
 
 /** All canary strings in a population (for leak scanning). */

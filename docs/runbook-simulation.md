@@ -387,6 +387,9 @@ The simulations are the validation layer (2026-10-08: the unit and golden tests 
 |---|---|
 | `packages/network`, `packages/sim` | `bun run sim --only network` (the invariant run, consent vs push on seeds 1-3, every NYC scenario, the sim scenarios at pass^3; about 4-10 minutes depending on machine load) |
 | An app pack or world | `bun run sim --only slop` (or `peon`, `friends`) |
+| slop as it runs live (the slop wiring in `packages/network/service/packs.ts`, `ConsentNetwork`) | `bun run sim --only slop-live` (seeds 21-22, 30 days, and the live scenarios in `packages/sim/scenarios/live`) |
+| `packages/network/service`, `packages/blooio`, `packages/platform` inbound | `bun test --conditions eliza-source --timeout 120000 deploy/backend/pipeline.test.ts` (the pipeline world: signed webhooks in, the queue out to a fake Blooio, on Postgres; needs the dev cluster) |
+| Scale (nightly) | `bun run sim --only scale` (the ConsentNetwork, 300 personas, 60 days); `bun run sim --nightly` runs it with capital |
 | Parsers, corpora, the leak guard, opt-out | `bun run sim --only evals` |
 | `packages/capital` | `bun run sim --only capital` (32 paired seeds; slow) |
 | Platform, MCP or backend security | `bun run security` (the suite pending the founder's decision; needs the dev Postgres) |
