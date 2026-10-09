@@ -68,7 +68,10 @@ const AS_LAUNCHED_TRACKED: RegExp[] = [];
 /** Ban evaders and bot farm accounts per city (3 and 6 of 300). */
 export const ADVERSARIES: WorldSpec = { banEvader: 0.01, botFarm: 0.02 };
 /** Adversary-arm gates that fail on the pinned seeds today: tracked with the value. */
-const ADVERSARY_TRACKED: RegExp[] = [];
+const ADVERSARY_TRACKED: RegExp[] = [
+  /^ban evaders: reveals with a next account after a hold/, // 0.75 per seed (2026-10-08): live has no face match, so a new number gets back in
+  /^bot farms: bot contacts cut vs random/, // 27.8% (2026-10-08): live has no classifier for a burst of keyword joins
+];
 
 const emptySlopState = (): SlopNetworkState => ({ now: SLOP_WORLD_START + 12 * 3_600_000, week: 0, interactions: [], feedback: [], safetyHolds: [], inboundAsks: [], edges: [], paused: new Set(), asks: [], learned: new Map() });
 

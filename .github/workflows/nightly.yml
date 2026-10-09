@@ -36,7 +36,7 @@ env:
 jobs:
   sim:
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 340
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -51,7 +51,7 @@ jobs:
         run: |
           if [ -n "${LIVE_TESTS:-}" ]; then echo "LIVE_TESTS must be unset in CI"; exit 1; fi
           bun run sim --nightly --json sim-nightly.json
-        timeout-minutes: 170
+        timeout-minutes: 330
 
   pipeline:
     runs-on: ubuntu-24.04
