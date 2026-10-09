@@ -246,14 +246,18 @@ describe("flake policy (slop wiring)", () => {
 
   test("the flaker: one forgiven no-show with a plain note, a second in 90 days lowers trust", async () => {
     const w = await joined(PEOPLE, slop());
+    const note = () => (w.net.exportState() as NetworkState).members.find(m => m.id === "ben")?.note?.text;
     inject(w, [meeting("o1", "ana", "ben", T0 - 5 * HOUR, "done")], { ben: { awaiting: { kind: "feedback", oppId: "o1", at: T0 - HOUR } } });
     await w.say("ben", "sorry, I couldn't make it");
-    expect(w.lastTo("ben")).toBe(slopCopy.flakeForgiven);
+    // The note rides on the next message we send them (no extra text about a missed plan).
+    expect(note()).toBe(slopCopy.flakeForgiven);
     expect(w.net.trust.get("ben").score).toBe(0);
+    await w.say("ben", "block Zed");
+    expect(w.lastTo("ben")!.startsWith(slopCopy.flakeForgiven)).toBe(true);
     w.clock.t += 20 * DAY;
     inject(w, [meeting("o2", "ben", "cara", w.clock.t - 5 * HOUR, "done")], { ben: { awaiting: { kind: "feedback", oppId: "o2", at: w.clock.t - HOUR } } });
     await w.say("ben", "I couldn't make it, sorry");
-    expect(w.lastTo("ben")).toBe(slopCopy.flakeCounted);
+    expect(note()).toBe(slopCopy.flakeCounted);
     expect(w.net.trust.get("ben").score).toBe(2);
     // A flake is reliability, not safety: no case.
     expect(w.net.safetyCases().find(c => c.memberId === "ben")).toBeUndefined();

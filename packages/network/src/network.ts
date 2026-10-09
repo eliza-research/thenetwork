@@ -2132,13 +2132,15 @@ export class ConsentNetwork implements NetworkUnderTest {
     const timing: Timing = invite ? "slot" : "logistics";
     // One open question at a time: a probe waits (up to a day) while the member's answer to an ask
     // (growth, profiling, check-in) is still due, so "Sure, my friend Wren would love this" is never
-    // read as a yes to the probe.
-    const askOpen = this.askOpen(m, now);
+    // read as a yes to the probe. "How did it go?" is an open question too: "it was great, would do it
+    // again" is the answer to that, never a yes to a new probe.
+    const feedbackOpen = m.awaiting?.kind === "feedback" && m.awaiting.oppId !== o.id && now - m.awaiting.at < ASK_HOLD_MS ? m.awaiting.at : undefined;
+    const askOpen = this.askOpen(m, now) || feedbackOpen !== undefined;
     if (askOpen || !this.timingOk(m, timing, now)) {
       if (!o.deferLogged?.includes(id)) {
         o.deferLogged = [...(o.deferLogged ?? []), id];
         this.counters.deferred++;
-        this.ctx.log("send_deferred", { memberId: id, kind: "probe", oppId: o.id, until: askOpen ? m.openAskAt! + ASK_HOLD_MS : this.openAt(m, timing, now) });
+        this.ctx.log("send_deferred", { memberId: id, kind: "probe", oppId: o.id, until: askOpen ? Math.max(this.askOpen(m, now) ? m.openAskAt! : 0, feedbackOpen ?? 0) + ASK_HOLD_MS : this.openAt(m, timing, now) });
       }
       return;
     }
@@ -2493,13 +2495,16 @@ export class ConsentNetwork implements NetworkUnderTest {
   /**
    * A flake (PRD 32.13, Section 17): a corroborated no-show or a late cancel. The first in 90 days is
    * forgiven with a plain note; a later one costs trust points (trust.ts flake). `reply`: the member
-   * just wrote to us (the note answers them); otherwise it is an info text.
+   * just cancelled (the note is the answer). A no-show's note rides on the next message we send them
+   * (noteFor): no extra text about a missed plan, and the "how did it go?" reply stays as it was.
    */
   private flake(m: MemberState, why: "no_show" | "late_cancel", reply: boolean) {
     const r = this.trust.flake(m.id, this.now());
     this.ctx.log("flake", { memberId: m.id, why, counted: r === "counted" });
     if (m.optedOut) return;
-    this.send(m, r === "forgiven" ? copy.flakeForgiven : copy.flakeCounted, { type: "info" }, reply ? "reply" : "info");
+    const text = r === "forgiven" ? copy.flakeForgiven : copy.flakeCounted;
+    if (reply) this.send(m, text, { type: "info" }, "reply");
+    else this.noteFor(m.id, text);
   }
 
   /** Members the booked plan reached who neither confirmed nor dropped before it closed: an expired reveal. */
@@ -2604,13 +2609,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     } else if (flakedOn) {
       this.ctx.log("flaked_on", { memberId: m.id, oppId: o.id });
       this.send(m, copy.flakedOn, { type: "info" }, "reply");
-    } else if (!o.plan && f.selfNoShow) {
-      // They missed it and said so: the flake note is the reply (one forgiven in 90 days).
-      this.flake(m, "no_show", true);
     } else if (crewId) {
       const a = plans.activityById.get(o.plan!.activityId)!;
       this.send(m, `${copy.feedbackThanks} ${copy.crewOffer(a.label)}`, { type: "crew_offer", crew: { crewId, activity: a.id } }, "reply", { about: others, hook: { t: "crew_offer", crewId } });
     } else this.ack(m, copy.feedbackThanks);
+    // They missed it and said so: a flake (one forgiven in 90 days), its note on their next message.
+    if (f.selfNoShow && !o.plan && !reportKind && !flakedOn) this.flake(m, "no_show", false);
     if (f.selfNoShow) { m.noShows++; m.completedSinceNoShow = 0; }
     else m.completedSinceNoShow++;
     for (const other of others) {
