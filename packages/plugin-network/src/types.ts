@@ -3,7 +3,12 @@
  * through a host-injected NetworkStore (in Cloud: the network domain services
  * over Hyperdrive; in the simulator: an in-memory store).
  */
-import type { ParticipationState } from "../../core/src/types.js";
+/**
+ * PRD 7.2 participation states. Mirrors `ParticipationState` in packages/core/src/types.ts; kept
+ * literal because this package must not import outside itself (Eliza Cloud installs a copy of
+ * this directory alone, so a relative path into packages/core does not resolve there).
+ */
+export type ParticipationState = "open" | "normal" | "quiet" | "receiving" | "paused";
 
 export const NETWORK_CONTEXTS = ["network", "social", "settings"] as const;
 

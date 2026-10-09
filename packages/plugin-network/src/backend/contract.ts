@@ -13,6 +13,9 @@ export type NetworkTransport = "imessage" | "sms" | "rcs" | "unknown";
 
 export const TURN_PATH = "/internal/turn";
 export const DELIVER_PATH = "/internal/deliver";
+export const SET_STATE_PATH = "/internal/set-state";
+export const SIGNALS_PATH = "/internal/signals";
+export const UPDATES_PATH = "/internal/updates";
 
 export interface TurnRequest {
   /** The provider message id (Blooio msg_… / Twilio SM…). Idempotency key: a replay returns the stored result and runs nothing. */
@@ -46,7 +49,11 @@ export interface TurnContext {
 
 export type TurnResponse =
   /** The service answered deterministically (STOP, HELP, START, leave, join, looking-for, onboarding, read-back, SHARE, yes/no). Send exactly these; call no model. May be empty (nothing to say, e.g. a held number). */
-  | { outcome: "handled"; replies: string[]; app: NetworkAppId | null; memberId: string | null; reason: string }
+  | {
+      outcome: "handled"; replies: string[]; app: NetworkAppId | null; memberId: string | null; reason: string;
+      /** Set when this turn changed carrier consent (STOP / START / leave): the gateway mirrors it into its send-time fence. scope "all" = every app on the line. */
+      consent?: { state: "opted_out" | "opted_in"; scope: "all" | "app" };
+    }
   /** Free conversation: the agent replies, with this context and the plugin's actions. */
   | { outcome: "open"; app: NetworkAppId; memberId: string; context: TurnContext }
   /** The service will not handle this sender (no network for the app, unknown sender). The agent says nothing Network-specific. */
@@ -68,3 +75,40 @@ export interface DeliverRequest {
 export type DeliverResponse =
   | { ok: true; status: "queued" | "sent" | "duplicate"; providerMessageId?: string }
   | { ok: false; error: "opted_out" | "invalid" | "unavailable" };
+
+/**
+ * Agent actions in an open turn (all signed, x-ntwrk-svc-id = idempotencyKey or messageId).
+ * memberId and app are the service's, from the open TurnResponse; never from model output.
+ */
+export interface SetStateRequest {
+  idempotencyKey: string;
+  app: NetworkAppId;
+  memberId: string;
+  state: "open" | "busy" | "traveling" | "paused";
+  from: string | null;
+  until: string | null;
+  note: string | null;
+}
+export interface SetStateResponse {
+  /** null when nothing changed (no event written). */
+  eventId: string | null;
+  previous: SetStateRequest["state"];
+  current: SetStateRequest["state"];
+  from: string | null;
+  until: string | null;
+  committedAt: string;
+  replayed: boolean;
+  unchanged: boolean;
+}
+
+export interface SignalsRequest {
+  messageId: string;
+  app: NetworkAppId;
+  memberId: string;
+  signals: Array<{ kind: "opt_out" | "travel" | "safety_concern"; evidence: string }>;
+}
+export interface SignalsResponse { recorded: number }
+
+export interface UpdatesRequest { app: NetworkAppId; memberId: string; messageId: string }
+/** Unseen inbox items; reading marks them seen on every surface. Summaries are member-safe. */
+export interface UpdatesResponse { items: Array<{ summary: string }> }

@@ -1,6 +1,19 @@
 # Eliza as The Network's conversation layer
 
-Status: **proposal, 2026-10-08.** Owner of the Eliza side: the plugin-network session. Needs agreement from the engine and platform owners before building.
+Status: **agreed 2026-10-08** by the engine and platform owners. Owner of the Eliza side: the plugin-network session.
+
+## Build status
+
+| Part | Owner | State |
+|---|---|---|
+| Wire contract and shared signing (`@thenetwork/plugin-network/contract`, `/svc-auth`, `/client`) | Eliza side | **Done** (import-free) |
+| Gateway takeover: service turn first, handled replies, consent mirror, open-turn context | Eliza side | **Done**, behind `NETWORK_TAKEOVER=1` (eliza `spike/network-plugin` d8d186d) |
+| Cloud route and runtime: service-backed Network store for open turns | Eliza side | **Done** |
+| Service `POST /internal/turn` (collecting adapter around `inbound`) | Platform | Pending |
+| Service `/internal/set-state`, `/internal/signals`, `/internal/updates` | Platform | Pending |
+| Gateway `POST /internal/deliver` for signed service sends | Eliza side | Next |
+| Plugin `RELAY` action → service (`relayItemAsync` with the luna classifier) | Eliza side + Platform | Next |
+| Character flag | Eliza side | Next; going live needs the founder's go-ahead |
 
 ## Decision being implemented
 

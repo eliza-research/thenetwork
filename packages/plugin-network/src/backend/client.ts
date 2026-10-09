@@ -1,5 +1,9 @@
 /** Signed HTTP client for the Network service's /internal/* endpoints (the Eliza side's NetworkBackend). */
-import { TURN_PATH, type TurnRequest, type TurnResponse } from "./contract.js";
+import {
+  SET_STATE_PATH, SIGNALS_PATH, TURN_PATH, UPDATES_PATH,
+  type SetStateRequest, type SetStateResponse, type SignalsRequest, type SignalsResponse,
+  type TurnRequest, type TurnResponse, type UpdatesRequest, type UpdatesResponse,
+} from "./contract.js";
 import { svcSign } from "./svc-auth.js";
 
 export interface NetworkServiceClientOptions {
@@ -38,5 +42,17 @@ export class NetworkServiceClient {
   /** One inbound message. Idempotent by messageId. */
   turn(req: TurnRequest): Promise<TurnResponse> {
     return this.#post<TurnResponse>(TURN_PATH, req.messageId, req);
+  }
+
+  setState(req: SetStateRequest): Promise<SetStateResponse> {
+    return this.#post<SetStateResponse>(SET_STATE_PATH, req.idempotencyKey, req);
+  }
+
+  recordSignals(req: SignalsRequest): Promise<SignalsResponse> {
+    return this.#post<SignalsResponse>(SIGNALS_PATH, `${req.messageId}:signals`, req);
+  }
+
+  readUpdates(req: UpdatesRequest): Promise<UpdatesResponse> {
+    return this.#post<UpdatesResponse>(UPDATES_PATH, `${req.messageId}:updates`, req);
   }
 }

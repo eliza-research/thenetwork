@@ -25,3 +25,4 @@ export { parseDateExpr, resolveWindow, zonedNow, type DateWindow } from "./routi
 export * from "./backend/contract.js";
 export * from "./backend/svc-auth.js";
 export { NetworkServiceClient, NetworkServiceError, type NetworkServiceClientOptions } from "./backend/client.js";
+export { createServiceNetworkStore, parseServiceTurn, type ServiceTurn } from "./backend/service-store.js";

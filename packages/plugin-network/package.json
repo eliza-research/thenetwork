@@ -24,6 +24,11 @@
       "eliza-source": "./src/backend/contract.ts",
       "types": "./src/backend/contract.ts",
       "default": "./src/backend/contract.ts"
+    },
+    "./client": {
+      "eliza-source": "./src/backend/client.ts",
+      "types": "./src/backend/client.ts",
+      "default": "./src/backend/client.ts"
     }
   },
   "description": "The Network edge plugin for the Eliza shared agent: MEMBER_CONTEXT provider, SET_STATE action, NETWORK_SIGNALS evaluator, Network routing (state intent, structured action field, authz). Bound to an injected NetworkStore; Eliza Cloud supplies the Postgres store.",
