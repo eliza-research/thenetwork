@@ -1,4 +1,7 @@
 // Offline Network plugin boundary scenarios: app/member scope survives reads, effects and retries.
+import { cp, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { IAgentRuntime, Memory } from "@elizaos/core";
 import { createNetworkEdgePlugin } from "../../packages/plugin-network/src/edge.ts";
 import { InMemoryNetworkStore } from "../../packages/plugin-network/src/memory-store.ts";
@@ -8,6 +11,20 @@ import type { Block } from "./gate.ts";
 import { expect } from "./gate.ts";
 
 export async function networkPluginScope(b: Block): Promise<void> {
+  await b.run("Network plugin: installed SDK client bundles without sibling packages", async () => {
+    const isolated = await mkdtemp(join(tmpdir(), "network-sdk-"));
+    try {
+      await cp(`${import.meta.dir}/../../packages/plugin-network/src`, join(isolated, "src"), {recursive: true});
+      const build = await Bun.build({
+        entrypoints: [join(isolated, "src/backend/client.ts")],
+        target: "browser",
+      });
+      if (!build.success) throw new Error(build.logs.map(log => log.message).join("\n"));
+      expect(build.outputs.length).toBe(1);
+    } finally {
+      await rm(isolated, {recursive: true, force: true});
+    }
+  });
   const now = () => new Date("2026-10-08T12:00:00Z");
   const fixtures: NetworkMemberContext[] = [
     { app: "slop", memberId: "same-local-id", firstName: "Dating canary", city: "nyc", state: "open", stateUntil: null, facets: ["PRIVATE_DATING_CANARY"], activeItems: [] },

@@ -17,7 +17,6 @@ import {
   type UpdatesResponse,
 } from "./contract.js";
 import { svcSign } from "./svc-auth.js";
-import { readCappedText } from "../../../platform/src/body.ts";
 
 export interface NetworkServiceClientOptions {
   /** Service origin, e.g. https://network-service.up.railway.app (no trailing slash needed). */
@@ -69,8 +68,32 @@ export class NetworkServiceClient {
       });
       if (!res.ok)
         throw new NetworkServiceError(res.status, `${path} -> ${res.status}`);
-      const text = await readCappedText(res, 4 * 1024 * 1024);
-      if (text === "too_large") throw new NetworkServiceError(502, "Network service response exceeds the transport limit");
+      const limit = 4 * 1024 * 1024;
+      if (Number(res.headers.get("content-length")) > limit) {
+        await res.body?.cancel().catch(() => {});
+        throw new NetworkServiceError(502, "Network service response exceeds the transport limit");
+      }
+      let text = "";
+      if (res.body) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let size = 0;
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            size += value.byteLength;
+            if (size > limit) {
+              await reader.cancel().catch(() => {});
+              throw new NetworkServiceError(502, "Network service response exceeds the transport limit");
+            }
+            text += decoder.decode(value, { stream: true });
+          }
+          text += decoder.decode();
+        } finally {
+          reader.releaseLock();
+        }
+      }
       return JSON.parse(text) as T;
     } catch (error) {
       if (error instanceof NetworkServiceError) throw error;
