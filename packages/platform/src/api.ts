@@ -237,7 +237,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           const c = await accounts.canJoin(app, who);
           return json(200, {
             app: appId, phoneMasked: maskPhone(who.e164), membership: publicMembership(c.membership),
-            smsOptedIn: await accounts.optedIn(appId, who.e164),
+            smsOptedIn: c.reason !== "review" && await accounts.optedIn(appId, who.e164),
             canJoin: c.canJoin, ...(c.reason && c.reason !== "member" ? { reason: c.reason } : {}),
           });
         });

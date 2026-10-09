@@ -86,12 +86,12 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     const cookie = await login(c, "slop", phone);
     expect(cookie).toStartWith("sid_slop=");
     const me = await call(c, "slop", "GET", "/api/me", undefined, cookie);
-    expect(me.body).toEqual({ app: "slop", phoneMasked: `+1 •••-•••-${phone.slice(-4)}`, membership: null, canJoin: true });
+    expect(me.body).toEqual({ app: "slop", phoneMasked: `+1 •••-•••-${phone.slice(-4)}`, membership: null, smsOptedIn: false, canJoin: true });
     const j = await join(c, "slop", cookie, 29);
     expect(j.status).toBe(200);
     expect(j.body.membership).toMatchObject({ state: "active", firstName: "Ana" });
     expect(c.joined.length).toBe(1);
-    expect((await call(c, "slop", "GET", "/api/me", undefined, cookie)).body).toMatchObject({ membership: { state: "active" }, canJoin: false });
+    expect((await call(c, "slop", "GET", "/api/me", undefined, cookie)).body).toMatchObject({ membership: { state: "active" }, smsOptedIn: true, canJoin: false });
     // The dev ports share cookies: a slop session is not a peon session.
     expect((await call(c, "peon", "GET", "/api/me", undefined, cookie.replace("sid_slop", "sid_peon"))).status).toBe(401);
     expect((await call(c, "slop", "POST", "/api/auth/logout", {}, cookie)).status).toBe(200);
@@ -173,7 +173,7 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     expect(c.joined.at(-1)).toBe(inv!.memberId);
     const slop = await login(c, "slop", phone);
     // /api/me shows no age from another app (the age is checked at the join only).
-    expect((await call(c, "slop", "GET", "/api/me", undefined, slop)).body).toEqual({ app: "slop", phoneMasked: expect.any(String), membership: null, canJoin: true });
+    expect((await call(c, "slop", "GET", "/api/me", undefined, slop)).body).toEqual({ app: "slop", phoneMasked: expect.any(String), membership: null, smsOptedIn: false, canJoin: true });
     const r = await join(c, "slop", slop, 25);
     expect(r.status).toBe(200);
     // The network member gets the person's lowest age, not the age typed on this site.
@@ -283,7 +283,7 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     c.clock.t += 400 * 24 * 3_600_000;
     const cookie = await login(c, "friends", phone);
     const me = await call(c, "friends", "GET", "/api/me", undefined, cookie);
-    expect(me.body).toEqual({ app: "friends", phoneMasked: expect.any(String), membership: null, canJoin: false, reason: "review" });
+    expect(me.body).toEqual({ app: "friends", phoneMasked: expect.any(String), membership: null, smsOptedIn: false, canJoin: false, reason: "review" });
     expect(me.text).not.toContain("Olivia");
     for (const [m, path, b] of [["GET", "/api/me/export", undefined], ["POST", "/api/me/delete", { scope: "all" }], ["POST", "/api/me/delete", { scope: "app" }]] as const) {
       const r = await call(c, "friends", m, path, b, cookie);
