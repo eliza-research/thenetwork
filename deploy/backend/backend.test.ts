@@ -4,8 +4,6 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { DEFAULT_HOST_MAP } from "../../packages/platform/src/apps.ts";
 import { SQL } from "bun";
 import { AgentContextStore } from "../../packages/network/service/agent-context-store.ts";
-import { createNetworkEdgePlugin } from "../../packages/plugin-network/src/edge.ts";
-import type { IAgentRuntime, Memory } from "@elizaos/core";
 import { NetworkService } from "../../packages/network/service/service.ts";
 import { randomUUID } from "node:crypto";
 import { dropDb, emptyDb, pgAvailable } from "../../packages/platform/test/pg.ts";
@@ -493,7 +491,7 @@ describe.skipIf(!pgAvailable)("Cloud host membership lookup (isolated Postgres, 
 
 
 describe.skipIf(!pgAvailable)("Agent context store (isolated Postgres runtime, no sends)", () => {
-  test("reads fresh shareable context only, denies revoked authority, and exposes no write capabilities", async () => {
+  test("reads fresh shareable context only and denies revoked authority", async () => {
     const url = await emptyDb("agent_context");
     let svc: NetworkService | undefined;
     try {
@@ -535,11 +533,17 @@ describe.skipIf(!pgAvailable)("Agent context store (isolated Postgres runtime, n
           {id: "other_shared", member_id: "other_context_member", value: "OTHER_MEMBER_CONTEXT_CANARY"},
           {id: "private_disguised_shared", member_id: memberId, value: "PRIVATE_CONTEXT_CANARY"},
           {id: "other_name", member_id: memberId, value: "ask Other Person about chess"},
+          {id: "other_first_name", member_id: memberId, value: "ask Other about chess"},
           {id: "unconfirmed", member_id: memberId, value: "UNCONFIRMED_CONTEXT_CANARY", status: "proposed"},
           {id: "sensitive", member_id: memberId, value: "SENSITIVE_CONTEXT_CANARY", sensitive: "health"},
           {id: "future", member_id: memberId, value: "FUTURE_CONTEXT_CANARY", valid_from: new Date(now+1)},
           {id: "expired", member_id: memberId, value: "EXPIRED_CONTEXT_CANARY", valid_to: new Date(now)},
           {id: "phone", member_id: memberId, value: "call +12125550184"},
+          {id: "handle", member_id: memberId, value: "DM @ada_handle"},
+          {id: "local_phone", member_id: memberId, value: "call 555-0102"},
+          {id: "street", member_id: memberId, value: "123 Bedford Ave"},
+          {id: "url", member_id: memberId, value: "https://example.com"},
+          {id: "obfuscated_phone", member_id: memberId, value: "call ５５５-０１０２"},
         ];
         for (const f of facets) await tx`insert into network.facets ${tx({app_id: "slop", kind: "interest", privacy_scope: "shareable", provenance: "said", status: "confirmed", ...f})}`;
       });
@@ -582,16 +586,6 @@ describe.skipIf(!pgAvailable)("Agent context store (isolated Postgres runtime, n
       await rt.scoped(async tx => { await tx`update network.members set participation_state = 'receiving' where app_id = 'slop' and id = ${memberId}`; });
       expect(await store.getMemberContext(memberId, "slop")).toBeNull();
       await rt.scoped(async tx => { await tx`update network.members set participation_state = 'normal' where app_id = 'slop' and id = ${memberId}`; });
-      for (const routing of ["planner", "structured"] as const) {
-        const plugin = createNetworkEdgePlugin({store, authority: {app: "slop", memberId}, routing});
-        expect(plugin.actions).toEqual([]);
-        expect(plugin.evaluators).toEqual([]);
-        expect(plugin.responseHandlerFieldEvaluators).toBeUndefined();
-        const rendered = await plugin.providers![0]!.get({} as IAgentRuntime, {} as Memory, {values: {}, data: {}, text: ""});
-        expect(rendered.text).toContain("plays chess");
-        expect(rendered.text).toContain("Active items unavailable from this host");
-        expect(rendered.text).not.toMatch(/CANARY|Other Person|1212555/);
-      }
       const after = await svc.sql`select (select count(*)::int from network.network_state) as states,
         (select count(*)::int from network.events) as events, (select count(*)::int from network.messages) as messages`;
       expect(after).toEqual(before);

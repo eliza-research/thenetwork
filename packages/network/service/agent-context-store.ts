@@ -49,14 +49,19 @@ export class AgentContextStore implements NetworkContextStore {
         : member.state === NETWORK_STATE_TO_PARTICIPATION.busy ? "busy"
         : member.state === NETWORK_STATE_TO_PARTICIPATION.paused ? "paused" : null;
       if (!state) return null;
+      const firstName = member.name.trim().split(/\s+/)[0] ?? "";
       const forbidden = [
-        ...snapshot.members.flatMap(m => m.id === memberId ? [m.id] : [m.id, m.name]),
+        ...snapshot.members.flatMap(m => {
+          if (m.id === memberId) return [m.id];
+          const otherFirstName = m.name.trim().split(/\s+/)[0] ?? "";
+          // The member's own name is allowed even when another member shares it.
+          return [m.id, m.name, ...(otherFirstName && otherFirstName.toLowerCase() !== firstName.toLowerCase() ? [otherFirstName] : [])];
+        }),
         ...snapshot.facets.map(f => f.id),
         o.e164, o.personId,
       ];
       const facts = snapshot.facets.filter(f => f.scope === "agent_private").map(f => f.value);
-      const safe = (text: string) => outputLeaks(text, { forbidden, facts }).length === 0;
-      const firstName = member.name.trim().split(/\s+/)[0] ?? "";
+      const safe = (text: string) => outputLeaks(text, { forbidden, facts, contacts: true }).length === 0;
       if (!safe(firstName) || !safe(member.homeCity)) return null;
       const facets = snapshot.facets.filter(f => f.memberId === memberId && f.scope === "shareable"
         && f.confirmedByMember === true && !f.sensitive

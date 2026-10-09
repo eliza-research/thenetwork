@@ -3,7 +3,7 @@ import type { IAgentRuntime, Memory } from "@elizaos/core";
 import { createNetworkEdgePlugin } from "../../packages/plugin-network/src/edge.ts";
 import { InMemoryNetworkStore } from "../../packages/plugin-network/src/memory-store.ts";
 import { createMemberContextProvider } from "../../packages/plugin-network/src/providers/member-context.ts";
-import type { NetworkMemberContext, NetworkTurnAuthority } from "../../packages/plugin-network/src/types.ts";
+import type { NetworkContextStore, NetworkMemberContext, NetworkTurnAuthority } from "../../packages/plugin-network/src/types.ts";
 import type { Block } from "./gate.ts";
 import { expect } from "./gate.ts";
 
@@ -68,4 +68,24 @@ export async function networkPluginScope(b: Block): Promise<void> {
     expect(context.text).toContain("FRIENDS_ONLY_CANARY");
     expect(context.text).not.toContain("PRIVATE_DATING_CANARY");
   });
+  await b.run("Network plugin: a context-only host exposes no writes and marks active items unavailable", async () => {
+    const authority: NetworkTurnAuthority = {app: "friends", memberId: "read-only-member"};
+    const member: NetworkMemberContext = {
+      ...authority, firstName: "Ada", city: "nyc", state: "open", stateFrom: null,
+      stateUntil: null, facets: ["plays chess"], activeItems: null,
+    };
+    const store: NetworkContextStore = {
+      getMemberContext: async (memberId, app) => app === authority.app && memberId === authority.memberId ? structuredClone(member) : null,
+    };
+    for (const routing of ["planner", "structured"] as const) {
+      const plugin = createNetworkEdgePlugin({store, authority, routing});
+      expect(plugin.actions).toEqual([]);
+      expect(plugin.evaluators).toEqual([]);
+      expect(plugin.responseHandlerFieldEvaluators).toBeUndefined();
+      const rendered = await plugin.providers![0]!.get({} as IAgentRuntime, {} as Memory, {values: {}, data: {}, text: ""});
+      expect(rendered.text).toContain("plays chess");
+      expect(rendered.text).toContain("Active items unavailable from this host");
+    }
+  });
+
 }

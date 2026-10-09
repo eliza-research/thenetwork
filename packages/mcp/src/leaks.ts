@@ -20,8 +20,8 @@ export const ISO_TIMESTAMP = /\b\d{4}-\d{2}-\d{2}t\d{2}:\d{2}/i;
  * The violations in `text` (empty = clean). `forbidden` are exact strings (ids, names, contact values),
  * `facts` private facts matched fuzzily. Labels never contain the matched value.
  */
-export function outputLeaks(text: string, o: { forbidden?: string[]; facts?: string[] } = {}): string[] {
-  const v = new LeakGuard({ exact: (o.forbidden ?? []).filter(Boolean), facts: (o.facts ?? []).filter(Boolean), contacts: false }).check(text);
+export function outputLeaks(text: string, o: { forbidden?: string[]; facts?: string[]; contacts?: boolean } = {}): string[] {
+  const v = new LeakGuard({ exact: (o.forbidden ?? []).filter(Boolean), facts: (o.facts ?? []).filter(Boolean), contacts: o.contacts ?? false }).check(text);
   // Narrower than the core contact patterns: our own copy carries links and venue names.
   const variants = plainVariants(text);
   if (variants.some(t => PHONE.test(t))) v.push("phone_pattern");
