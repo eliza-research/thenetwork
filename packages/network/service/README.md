@@ -59,8 +59,8 @@ It resolves the membership again and reads the canonical runtime snapshot under 
 It checks membership again inside that lock. A missing or revoked binding returns `404 unavailable`.
 The response contains the member's first name, city, current state, and confirmed, non-sensitive,
 shareable facets only. Private facts, contact details, and other members' names and IDs are filtered.
-State windows and member-safe active item summaries have no canonical owner yet: both window fields
-and `activeItems` are `null`. A state that the plugin cannot represent is unavailable.
+State windows use the canonical member record. Member-safe active item summaries
+have no canonical owner yet, so `activeItems` is `null`. A state that the plugin cannot represent is unavailable.
 This endpoint has no write capability. Successful context reads audit `read_agent_context`.
 
 `POST /agent/membership-status` accepts exactly `{"e164":"+12125550101"}`.
@@ -83,10 +83,98 @@ Successful reads audit `read_agent_route` without retaining the message text.
 App selection is internal metadata for the existing one-number, one-assistant conversation;
 it does not create a new conversation or change the member's history.
 
+## Signed gateway turns
+
+`SERVICE_TURN_SECRET` enables the exact public backend paths `/internal/turn`,
+`/internal/turn-receipt`, `/internal/set-state`, `/internal/signals`, and
+`/internal/updates`. Without a 32-character secret these paths return 503.
+They use the shared `svcVerify` contract, the service Clock, the raw body, and
+`Cache-Control: no-store`. They do not expose the staff API. URL overrides are refused.
+
+`/internal/turn` calls the existing `NetworkService.inbound` once. Routing, joins,
+consent, onboarding, age checks, and deterministic replies keep their current owners.
+The durable claim commits before those effects. Its key is `(channel, messageId)`
+and its digest binds the complete request. Completed retries return the stored JSON
+object. A changed payload conflicts. Processing interrupted after a partial effect
+returns `409 turn_unresolved`; it is never applied again automatically.
+
+An async request scope stamps each causal outbound. Only this sender's non-proactive
+outputs are collected, in commit order. Their rows say `collected`, never delivered.
+They bypass provider delivery, caps, and sent-notification hooks. Other recipients,
+proactive sends, ticks, and staff work keep the existing outbox. Non-member policy
+replies use the same collector. No full request text or raw phone is stored in the
+claim; the existing keyed phone hash connects it to current canonical authorization.
+
+Handled results include ordered `replyIds`, `delivery: "collected"`, `replyKind`,
+and `accountEligible`. The latter permits Cloud account/history processing only;
+it grants no Network membership or matching permission. A known under-13 age,
+hold, ban, suppression, or this turn's opt-out refuses it. Unknown age does not
+prevent a generic first-text join prompt. Cloud still checks its own account lifecycle.
+Open results require a current exact-app membership and return the existing
+`AgentContextStore` projection. `singlePlayer` uses the person's lowest known age;
+missing age fails closed to matching. Unsupported active-item context remains `null`.
+A literal acknowledgement may be handled with no replies. Empty output alone never
+selects an open turn.
+
+`/internal/turn-receipt` accepts the signed Cloud/gateway receipt for the exact
+ordered reply IDs. Normal acceptance needs provider IDs and a recorded canonical
+history entry. A canonical compliance reply with `accountEligible: false` may be
+acknowledged without creating an account or history. Unknown outcomes stay
+`send_unknown`, outside the retry queue. Verified recovery may advance unknown to
+accepted or rejected. Accepted receipts are immutable. This endpoint never sends.
+
+Forget and delete use the existing lifecycle owners to erase collected bodies,
+context responses, and action results. Opaque replay fences remain, so an old
+provider retry cannot recreate the erased data or apply the turn again. Deletion
+also seals in-flight claims; later collection or action completion fails closed.
+
+Actions bind `(channel, original messageId, app, memberId)` from the completed open
+turn and recheck canonical membership. Their durable journal stores effect receipts,
+not a second member state. State writes, request events, private signal facets, and
+completion receipts commit inside the existing Network save transaction. Interrupted
+actions remain explicitly unresolved. Updates use the existing single inbox and
+mark only this app's items seen; their result replays instead of consuming twice.
+
+Participation windows live on `network.members.participation_window`. The existing
+`participation_state` is the base outside the window. The snapshot uses Clock to
+apply the requested state inside the window and restore the base afterward.
+An action result and self-context describe the saved requested state, including an
+upcoming window; `from`/`stateFrom` distinguishes it from its current effect.
+Times are normalized to UTC. Notes remain private and never enter self-context.
+Signals are proposed, inferred, `agent_private` facets. They do not record carrier
+STOP, change matching consent, or impose a ban.
+
+Local integration command: `bun --no-env-file --conditions=eliza-source test deploy/backend/backend.test.ts`.
+The suite uses isolated Postgres and localhost HTTP with recording adapters. It
+covers replay, concurrency, restarts, unknown outcomes, partial effects, atomic
+action rollback, state-window phases, private signals, and exact-app inbox reads.
+
+`NETWORK_CHANNEL=eliza_cloud` selects the existing outbound policy queue with a
+signed Cloud transport. Set `NETWORK_CLOUD_DELIVERY_ORIGIN` and the same
+`SERVICE_TURN_SECRET`; activation still needs the existing global and app live
+flags. The provider key is held by the gateway. Unknown sends are terminal in the
+normal queue. Startup and ticks may read four authoritative receipts concurrently
+per pass, at most once per minute per row, using the original stored recipient,
+kind, ID, and body. Remaining unknown rows rotate fairly; they are never resent
+or silently expired. A recovered receipt updates the outbox through a guarded
+transition under the existing runtime lock. Only that winner may rebuild queue
+acceptance counters. Forget erases queue/ledger data under the same lock.
+
+Provider acceptance and the inbox projection have separate outbox receipts.
+`accepted_at` preserves the provider time when supplied (or the service's observed
+acceptance time). `notification_recorded_at` marks the existing Notify projection.
+A restart or tick can repair four missing projections without HTTP or provider
+calls. Notify uses its existing item and delivery IDs to make that repair idempotent.
+A forgotten row cannot be projected again.
+
+This source does not establish live delivery, account creation, deployment, or migration acceptance.
+
 | Variable | Default | What it does |
 |---|---|---|
 | `NETWORK_DATABASE_URL` | `DATABASE_URL` | Postgres with the `network` schema. A login that can read and write it. |
 | `NETWORK_SERVICE_TOKENS` | none | Staff role tokens, the Observatory's scheme. Without them, every staff route answers 401. |
+| `NETWORK_CLOUD_DELIVERY_ORIGIN` | none | Exact Cloud API origin for `NETWORK_CHANNEL=eliza_cloud`; HTTPS outside explicit local development. |
+| `SERVICE_TURN_SECRET` | none | Dedicated gateway/service signing secret for the exact `/internal/*` paths. |
 | `NETWORK_SERVICE_AGENT_TOKEN` | none | Optional private agent reader designation. Also requires `admin@<app>` for the same credential in `NETWORK_SERVICE_TOKENS`. |
 | `NETWORK_SERVICE_AUDIT_DATABASE_URL` | the database URL | The login that writes `network.staff_audit` |
 | `BLOOIO_WEBHOOK_SECRET` | none | Verifies the shared line's webhook (`/webhooks/blooio`). Without it, that webhook answers 503. |

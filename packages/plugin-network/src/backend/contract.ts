@@ -14,6 +14,7 @@ export type NetworkAppId = (typeof NETWORK_APP_IDS)[number];
 export type NetworkTransport = "imessage" | "sms" | "rcs" | "unknown";
 
 export const TURN_PATH = "/internal/turn";
+export const TURN_RECEIPT_PATH = "/internal/turn-receipt";
 export const DELIVER_PATH = "/api/internal/network/deliver";
 export const SET_STATE_PATH = "/internal/set-state";
 export const SIGNALS_PATH = "/internal/signals";
@@ -44,7 +45,8 @@ export interface TurnContext {
   stateUntil: string | null;
   facets: string[];
   /** Open items (an intro waiting on a yes, a plan), member-safe one-liners. */
-  activeItems: Array<{ id: string; kind: string; summary: string }>;
+  /** null means the canonical owner cannot supply safe summaries; it is not an empty inbox. */
+  activeItems: Array<{ id: string; kind: string; summary: string }> | null;
   /** True while the member is a minor: single-player help only, never introductions. */
   singlePlayer: boolean;
 }
@@ -52,14 +54,51 @@ export interface TurnContext {
 export type TurnResponse =
   /** The service answered deterministically (STOP, HELP, START, leave, join, looking-for, onboarding, read-back, SHARE, yes/no). Send exactly these; call no model. May be empty (nothing to say, e.g. a held number). */
   | {
-      outcome: "handled"; replies: string[]; app: NetworkAppId | null; memberId: string | null; reason: string;
+      outcome: "handled";
+      replies: string[];
+      /** Ordered causal output IDs. Collection is not provider acceptance. */
+      replyIds: string[];
+      delivery: "collected";
+      replyKind: "reply" | "compliance";
+      /** Canonical policy admission for Cloud account/history, not matching permission. */
+      accountEligible: boolean;
+      app: NetworkAppId | null;
+      memberId: string | null;
+      reason: string;
       /** Set when this turn changed carrier consent (STOP / START / leave): the gateway mirrors it into its send-time fence. scope "all" = every app on the line. */
-      consent?: { state: "opted_out" | "opted_in"; scope: "all" | "app" };
+      consent?: {
+        state: "opted_out" | "opted_in";
+        scope: "all" | "app";
+        app: NetworkAppId | null;
+        at: number;
+      };
     }
   /** Free conversation: the agent replies, with this context and the plugin's actions. */
-  | { outcome: "open"; app: NetworkAppId; memberId: string; context: TurnContext }
+  | {
+      outcome: "open";
+      channel: TurnRequest["channel"];
+      app: NetworkAppId;
+      memberId: string;
+      context: TurnContext;
+    }
   /** The service will not handle this sender (no network for the app, unknown sender). The agent says nothing Network-specific. */
   | { outcome: "ignored"; reason: string };
+
+/** Gateway acknowledgement of the exact collected outputs for one inbound turn. */
+export interface TurnReceiptRequest {
+  channel: TurnRequest["channel"];
+  messageId: string;
+  replyIds: string[];
+  outcome: "accepted" | "unknown" | "rejected";
+  providerMessageIds: string[];
+  /** True only after the canonical Cloud owner records the accepted message. */
+  historyRecorded: boolean;
+}
+
+export interface TurnReceiptResponse {
+  ok: true;
+  replayed: boolean;
+}
 
 export interface DeliverRequest {
   /** Idempotency key (also x-ntwrk-svc-id). The gateway sends each key at most once. */
@@ -81,6 +120,8 @@ export type DeliverResponse =
       ok: true;
       replayed: boolean;
       providerMessageIds: string[];
+      /** Verified original acceptance time from the provider receipt owner. */
+      acceptedAt: string;
       /** False when the recipient has no Eliza account yet (handled turns only): sent, but not in agent history. */
       history: boolean;
     }
@@ -96,6 +137,8 @@ export type DeliverResponse =
  * memberId and app are the service's, from the open TurnResponse; never from model output.
  */
 export interface SetStateRequest {
+  messageId: string;
+  channel: TurnRequest["channel"];
   idempotencyKey: string;
   app: NetworkAppId;
   memberId: string;
@@ -117,13 +160,26 @@ export interface SetStateResponse {
 }
 
 export interface SignalsRequest {
+  channel: TurnRequest["channel"];
   messageId: string;
   app: NetworkAppId;
   memberId: string;
-  signals: Array<{ kind: "opt_out" | "travel" | "safety_concern"; evidence: string }>;
+  signals: Array<{
+    kind: "opt_out" | "travel" | "safety_concern";
+    evidence: string;
+  }>;
 }
-export interface SignalsResponse { recorded: number }
+export interface SignalsResponse {
+  recorded: number;
+}
 
-export interface UpdatesRequest { app: NetworkAppId; memberId: string; messageId: string }
+export interface UpdatesRequest {
+  channel: TurnRequest["channel"];
+  app: NetworkAppId;
+  memberId: string;
+  messageId: string;
+}
 /** Unseen inbox items; reading marks them seen on every surface. Summaries are member-safe. */
-export interface UpdatesResponse { items: Array<{ summary: string }> }
+export interface UpdatesResponse {
+  items: Array<{ summary: string }>;
+}

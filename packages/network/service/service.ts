@@ -23,21 +23,27 @@
 //    /apps/:app/..., each action audited. The review mode is never exposed: production is "human" only.
 //  - Sends: each app's adapter (dry-run by default; Blooio needs the per-app live flag too) after a
 //    person-level cap of proactive messages across apps (default 3 a day).
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { SQL } from "bun";
 import { DAY, RealClock, type Clock, type MemberId } from "@thenetwork/core";
 import type { ActionResult, NetworkOptions, ReviewDecision, ReviewOptions } from "../src/network.ts";
 import { brandOf, copy as ntwrkCopy, copyFor, type Copy } from "../src/copy.ts";
-import { isMinor } from "@thenetwork/core";
+import { isMinor, canJoin, canBeMatched } from "@thenetwork/core";
 import { ageAnswer, agesStated } from "../src/classify.ts";
 import { NetworkRuntime, type RuntimeHost } from "./runtime.ts";
 import { AgentContextStore } from "./agent-context-store.ts";
+import { svcVerify } from "../../plugin-network/src/backend/svc-auth.ts";
+import { TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH, type TurnRequest, type TurnResponse } from "../../plugin-network/src/backend/contract.ts";
+import { NETWORK_STATE_TO_PARTICIPATION } from "../../plugin-network/src/types.ts";
+import { effectiveParticipation, participationWindow } from "./participation.ts";
 import type { ChannelAdapter, Outbound } from "./channel.ts";
 import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { Accounts, type AccountHooks, type JoinHookContext, type MemberHookContext } from "../../platform/src/accounts.ts";
 import { joinAgeCheck } from "../../platform/src/age.ts";
 import { detectKeyword as platformKeyword, keywordEvent, leaveTarget, resolveConsent, stopScope, type StopScope } from "../../platform/src/consent.ts";
 import { devShortcutsAllowed, isProduction, platformEnv, type Env } from "../../platform/src/env.ts";
+import { readCapped } from "../../platform/src/body.ts";
 import { keyedHash, maskPhone, normalizePhone, safeEqual } from "../../platform/src/phone.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
 import type { Membership, PeopleStore, PendingText, Person } from "../../platform/src/store.ts";
@@ -60,6 +66,8 @@ import type { AuditEntry, RoleGrant, StaffRole, StaffUser } from "../../observat
 export { NetworkRuntime } from "./runtime.ts";
 type Row = Record<string, unknown>;
 const MAX_BODY_BYTES = 256 * 1024;
+const serviceTurnKey = (channel: unknown, messageId: unknown) => createHash("sha256").update(JSON.stringify([channel, messageId])).digest("hex");
+const internalJson = (data: unknown, status = 200) => Response.json(data, {status, headers: {"cache-control": "no-store"}});
 export const WEBHOOK_PATH = "/webhooks/blooio";
 /** The tables the service needs (bun run db:migrate). */
 const REQUIRED_TABLES = [
@@ -123,6 +131,8 @@ export interface ServiceOptions {
   consoleToken?: string;
   /** Private server assertion credential. Also needs admin@app in `tokens`; never use the console token. No environment default. */
   agentToken?: string;
+  /** Dedicated gateway signing secret; absent keeps /internal/* disabled. */
+  serviceTurnSecret?: string;
   /** The shared line's webhook secret (BLOOIO_WEBHOOK_SECRET). Without it /webhooks/blooio answers 503. */
   webhookSecret?: string;
   /** One app's line: /webhooks/blooio/<app> with <APP>_BLOOIO_WEBHOOK_SECRET. Without a secret that path answers 503. */
@@ -163,10 +173,17 @@ const NOTIFY_TYPES = new Set(["probe", "plan_probe", "proposal", "reminder", "fe
 const NOTIFY_SUMMARY_MAX = 500;
 
 export type InboundOutcome =
-  | "handled" | "duplicate" | "unknown_sender" | "ignored" | "ignored_group" | "status" | "reaction" | "safety"
+  | "handled" | "open" | "duplicate" | "unknown_sender" | "ignored" | "ignored_group" | "status" | "reaction" | "safety"
   | "invite_only" | "join_asked" | "joined" | "under_age" | "stopped" | "left" | "no_network" | "held";
 
 interface Route { app: AppId; shared: boolean }
+interface InboundTurn {
+  readonly id: string;
+  readonly from: string;
+  app?: AppId;
+  memberId?: string;
+  consent?: { state: "opted_out" | "opted_in"; scope: "all" | "app"; app: AppId | null; at: number };
+}
 
 const lower = (s: string) => s.normalize("NFKC").toLowerCase();
 /** Words that are never a first name in a join answer. */
@@ -220,6 +237,9 @@ export class NetworkService implements RuntimeHost {
   private readonly tokens: Map<string, RoleGrant[]>;
   private readonly consoleToken?: string;
   private readonly agentToken?: string;
+  private readonly serviceTurnSecret?: string;
+  private readonly turns = new AsyncLocalStorage<InboundTurn>();
+  inboundTurn = (): InboundTurn | undefined => this.turns.getStore();
   private readonly secret?: string;
   private readonly secrets: Partial<Record<AppId, string>>;
   private readonly hashKey: string;
@@ -239,6 +259,7 @@ export class NetworkService implements RuntimeHost {
     this.log = o.log ?? console.log;
     this.env = o.env ?? process.env;
     this.secret = o.webhookSecret;
+    this.serviceTurnSecret = o.serviceTurnSecret;
     this.consoleToken = o.consoleToken || undefined;
     this.agentToken = o.agentToken && (!this.consoleToken || !safeEqual(o.agentToken, this.consoleToken)) ? o.agentToken : undefined;
     this.secrets = o.webhookSecrets ?? {};
@@ -316,7 +337,8 @@ export class NetworkService implements RuntimeHost {
   /** Check the schema, then let each network deliver what a restart left waiting. */
   async start() {
     const missing: string[] = [];
-    for (const t of REQUIRED_TABLES) {
+    const required = this.serviceTurnSecret ? [...REQUIRED_TABLES, "platform.service_turns", "platform.service_turn_replies", "platform.service_actions"] : REQUIRED_TABLES;
+    for (const t of required) {
       const [r] = await this.sql`select to_regclass(${t}) is not null as ok`;
       if (!r?.ok) missing.push(t);
     }
@@ -583,7 +605,7 @@ export class NetworkService implements RuntimeHost {
     const rt = this.runtimeFor(a);
     if (!rt) return null;
     const [member, facets, intents, presence, messages, opps] = await rt.scoped(async tx => [
-      await tx`select id, name, home_city, home_area, age, account_status, opted_out, joined_at from network.members where app_id = ${a} and id = ${memberId}`,
+      await tx`select id, name, home_city, home_area, age, account_status, participation_state, participation_window, opted_out, joined_at from network.members where app_id = ${a} and id = ${memberId}`,
       await tx`select kind, value, tags, provenance, status, valid_from from network.facets where app_id = ${a} and member_id = ${memberId} and privacy_scope <> 'agent_private' order by id`,
       await tx`select objective, category, status, created_at from network.intents where app_id = ${a} and member_id = ${memberId} order by created_at, id`,
       await tx`select city, type, areas from network.presence where app_id = ${a} and member_id = ${memberId}`,
@@ -687,11 +709,14 @@ export class NetworkService implements RuntimeHost {
     if (ev.isGroup) return "ignored_group";
     const route = await this.route(ev, o.app);
     const app = this.apps[route.app];
+    const turn = this.inboundTurn();
+    if (turn) turn.app = route.app;
     const rt = this.runtimeFor(route.app);
     if (!rt) { this.log(`[inbound] no network runs for ${route.app}; not stored`); return "no_network"; }
     // Only the routed network's address book (each runtime refreshes its own inside its units of work).
     await rt.identities();
     const memberId = rt.memberOf(ev.from);
+    if (turn) turn.memberId = memberId;
     const e164 = normalizePhone(ev.from);
     const t = this.clock.now();
     const rowId = `in:${ev.channel}:${ev.messageId}`;
@@ -703,6 +728,7 @@ export class NetworkService implements RuntimeHost {
       const scope: StopScope = kw === "stop_all" || route.shared ? "global" : stopScope(this.env);
       const { event, reply } = keywordEvent(kw, e164 ?? ev.from, app, t, { line, scope, ref: rowId });
       if (e164 && event) await this.accounts.recordConsent(event);
+      if (turn && event) turn.consent = { state: "opted_out", scope: scope === "global" ? "all" : "app", app: scope === "global" ? null : app.id, at: t };
       // The adapters in the STOP's scope only (the send path also reads the consent ledger).
       for (const r of this.runtimes.values()) if (scope === "global" || r === rt) r.adapter.optedOut?.(ev.from, true);
       if (e164) await this.people.deletePending(this.phoneKey(e164));
@@ -740,6 +766,7 @@ export class NetworkService implements RuntimeHost {
         const person = await this.accounts.personFor(e164);
         if (person) await this.accounts.leave(leaving, { e164, personId: person.id });
         else { await this.accounts.recordConsent({ e164, app: leaving.id, line, state: "opted_out", source: "leave", ref: rowId, at: t }); await this.forget(leaving, lid); }
+        if (turn) { turn.app = leaving.id; turn.memberId = lid; turn.consent = { state: "opted_out", scope: "app", app: leaving.id, at: t }; }
         await this.direct(lrt, ev.from, this.copyOf(leaving).leftApp, `sys:${rowId}`);
         return "left";
       }
@@ -749,6 +776,7 @@ export class NetworkService implements RuntimeHost {
       rt.adapter.engaged?.(ev.from);
       if (kw === "start" && e164) {
         await this.accounts.recordConsent({ e164, app: app.id, line, state: "opted_in", source: "keyword:start", wording: "START keyword", ref: rowId, at: t });
+        if (turn) turn.consent = { state: "opted_in", scope: "app", app: app.id, at: t };
         const person = await this.accounts.personFor(e164);
         const m = person && (await this.people.getMembership(person.id, app.id));
         if (m?.state === "paused") await this.people.putMembership({ ...m, state: "active" });
@@ -796,7 +824,7 @@ export class NetworkService implements RuntimeHost {
   private async memberMessage(rt: NetworkRuntime, memberId: MemberId, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, kw: ReturnType<typeof platformKeyword>, systemReply?: string, fromThread = true): Promise<InboundOutcome> {
     const out = await this.memberUnit(rt, memberId, ev, rowId, kw, systemReply);
     // The member wrote in the thread: pending notify deliveries count as acted on (an assistant's submit_profile does not).
-    if (out === "handled" && fromThread && this.notify && kw !== "stop" && kw !== "stop_all") {
+    if ((out === "handled" || out === "open") && fromThread && this.notify && kw !== "stop" && kw !== "stop_all") {
       const personId = await this.personOfMember(rt, memberId);
       if (personId) await this.notify.threadReply(personId, ev.transport === "sms" ? "sms" : "imessage", this.clock.now()).catch(e => this.log(`[notify] thread reply not recorded: ${(e as Error).message}`));
     }
@@ -813,7 +841,8 @@ export class NetworkService implements RuntimeHost {
       const channel = ev.transport === "sms" ? "sms" : "imessage";
       rt.unit.inbound = { id: rowId, member_id: memberId, direction: "inbound", channel, body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
       rt.replyingTo = memberId;
-      try { await n.onInbound({ id: rowId, memberId, body: ev.text, ts: t, channel, ...(keyword ? { keyword } : {}) }); } finally { rt.replyingTo = undefined; }
+      let disposition: "handled" | "open";
+      try { disposition = await n.onInbound({ id: rowId, memberId, body: ev.text, ts: t, channel, ...(keyword ? { keyword } : {}) }); } finally { rt.replyingTo = undefined; }
       // Carrier keywords: the app's own confirmation (packages/platform apps.ts). START gets the Network's own welcome back.
       if (systemReply) rt.system(memberId, `sys:${rowId}`, systemReply);
       if (keyword === "STOP") { rt.unit.optOut.set(memberId, true); rt.adapter.optedOut?.(ev.from, true); }
@@ -823,7 +852,7 @@ export class NetworkService implements RuntimeHost {
         rt.unit.forget.add(memberId);
         for (const s of rt.unit.sends) if (s.memberId === memberId) s.kind = "compliance";
       }
-      return "handled" as const;
+      return this.inboundTurn() && disposition === "open" ? "open" as const : "handled" as const;
     });
   }
 
@@ -855,6 +884,12 @@ export class NetworkService implements RuntimeHost {
 
   /** One fixed text to someone who is not a member here. Nothing is stored. */
   private async direct(rt: NetworkRuntime, to: string, body: string, id: string) {
+    const turn = this.inboundTurn();
+    if (turn && normalizeAddress(to) === turn.from) {
+      await this.sql`insert into platform.service_turn_replies (turn_id, reply_id, app_id, body, kind)
+        values (${turn.id}, ${id}, ${rt.app.id}, ${body}, 'compliance') on conflict do nothing`;
+      return;
+    }
     await rt.adapter.direct(to, body, id);
   }
 
@@ -921,6 +956,7 @@ export class NetworkService implements RuntimeHost {
     };
     await this.people.putMembership(membership);
     await this.accounts.recordConsent({ e164, app: app.id, line: ev.to ? normalizeAddress(ev.to) : null, state: "opted_in", source: "inbound_message", wording: ask, ref: rowId, at: t });
+    if (this.inboundTurn()) this.inboundTurn()!.memberId = membership.memberId;
     if (membership.state !== "active") return "joined";
     await this.createMember(rt, membership, { age: Math.min(age, check.effective ?? age), firstName: name });
     // Their answer is their first message: the Network welcomes them as a reply to it.
@@ -1239,10 +1275,214 @@ export class NetworkService implements RuntimeHost {
     return { ...h, networks };
   }
 
+  /** Actions use the original open turn as provenance and recheck current membership. */
+  private async internalAction(path: string, b: Row, signedId: string, raw: string): Promise<Response> {
+    const stateAction = path === SET_STATE_PATH;
+    const keys = stateAction ? ["channel", "messageId", "app", "memberId", "idempotencyKey", "state", "from", "until", "note"]
+      : path === SIGNALS_PATH ? ["channel", "messageId", "app", "memberId", "signals"] : ["channel", "messageId", "app", "memberId"];
+    const key = stateAction ? b.idempotencyKey : `${b.messageId}:${path === SIGNALS_PATH ? "signals" : "updates"}`;
+    if (!isAppId(b.app) || typeof b.memberId !== "string" || !b.memberId.trim() || typeof key !== "string" || !key.trim() || signedId !== key
+      || Object.keys(b).length !== keys.length || Object.keys(b).some(name => !keys.includes(name))) return internalJson({error: "invalid_request"}, 400);
+    let window: ReturnType<typeof participationWindow>;
+    if (stateAction) {
+      try { window = participationWindow({state: b.state, from: b.from, until: b.until, note: b.note}); }
+      catch { return internalJson({error: "invalid_state_window"}, 400); }
+      if (window?.until !== null && Date.parse(window!.until) <= this.clock.now()) return internalJson({error: "expired_state_window"}, 400);
+    } else if (path === SIGNALS_PATH && (!Array.isArray(b.signals) || b.signals.some(signal => !signal || typeof signal !== "object"
+      || !["opt_out", "travel", "safety_concern"].includes(signal.kind) || typeof signal.evidence !== "string" || !signal.evidence.trim() || Object.keys(signal).length !== 2))) return internalJson({error: "invalid_signals"}, 400);
+    const turnId = serviceTurnKey(b.channel, b.messageId);
+    const [turn] = await this.sql`select sender_hash, response from platform.service_turns where id = ${turnId} and state = 'completed'`;
+    if (!turn || turn.response?.outcome !== "open" || turn.response.app !== b.app || turn.response.memberId !== b.memberId) return internalJson({error: "turn_scope_invalid", retryable: false}, 403);
+    const who = await this.accounts.byPhoneHash(turn.sender_hash);
+    const rt = this.runtimeFor(b.app);
+    if (!who || !rt) return internalJson({error: "membership_unavailable", retryable: false}, 403);
+    const authorized = async () => {
+      const active = await this.accounts.activeMembership(rt.app, {e164: who.e164, personId: who.person.id});
+      return active?.membership.memberId === b.memberId;
+    };
+    if (!(await authorized())) return internalJson({error: "membership_unavailable", retryable: false}, 403);
+    if (path === UPDATES_PATH && !this.notify) return internalJson({error: "canonical_updates_unavailable", retryable: false}, 503);
+    const id = createHash("sha256").update(JSON.stringify([turnId, path, key])).digest("hex");
+    const digest = createHash("sha256").update(raw).digest("hex");
+    const [claimed] = await this.sql`insert into platform.service_actions (id, turn_id, operation, request_hash, state, created_at)
+      values (${id}, ${turnId}, ${path}, ${digest}, 'processing', ${new Date(this.clock.now())}) on conflict do nothing returning id`;
+    if (!claimed) {
+      const [prior] = await this.sql`select request_hash, state, response from platform.service_actions where id = ${id}`;
+      if (prior?.request_hash !== digest) return internalJson({error: "action_conflict", retryable: false}, 409);
+      if (prior.state !== "completed") return internalJson({error: "action_unresolved", retryable: false}, 409);
+      return internalJson(stateAction ? {...prior.response, replayed: true} : prior.response);
+    }
+    try {
+      let result: Row = {};
+      const complete = async (tx: SQL) => {
+        const saved = await tx`update platform.service_actions set state = 'completed', response = ${result}::jsonb where id = ${id} and state = 'processing' returning id`;
+        if (!saved.length) throw new Error("Action claim was sealed before completion");
+      };
+      if (path === UPDATES_PATH) {
+        if (!(await authorized())) throw new Error("Membership revoked before updates");
+        result = {items: (await this.updatesFor(who.person.id, rt.app.id, "web")).map(item => ({summary: item.summary}))};
+        await complete(this.sql);
+      } else {
+        await rt.unitOfWork(async n => {
+          if (!(await authorized())) throw new Error("Membership revoked before action");
+          if (stateAction) {
+            const [row] = await rt.scoped(tx => tx`select participation_state, participation_window from network.members where app_id = ${rt.app.id} and id = ${b.memberId as string}`);
+            if (!row) throw new Error("Canonical member missing");
+            const prior = participationWindow(row.participation_window);
+            const relevant = prior && (prior.until === null || Date.parse(prior.until) > this.clock.now()) ? prior : undefined;
+            const previous = relevant?.state ?? (row.participation_state === "quiet" ? "busy" : row.participation_state === "paused" ? "paused" : "open");
+            const scheduled = window!.state === "traveling" || window!.from !== null || window!.until !== null || window!.note !== null;
+            const nextWindow = scheduled ? window! : null;
+            const base = scheduled ? row.participation_state : NETWORK_STATE_TO_PARTICIPATION[window!.state];
+            const unchanged = base === row.participation_state && JSON.stringify(nextWindow) === JSON.stringify(prior ?? null);
+            result = {eventId: null, previous, current: window!.state, from: window!.from, until: window!.until, committedAt: new Date(this.clock.now()).toISOString(), replayed: false, unchanged};
+            if (!unchanged) n.syncParticipationRecord(b.memberId as string, effectiveParticipation(base, nextWindow ?? undefined, this.clock.now()));
+            rt.unit.effects.push(async tx => {
+              if (!unchanged) {
+                await tx`update network.members set participation_state = ${base}, participation_window = ${nextWindow}::jsonb where app_id = ${rt.app.id} and id = ${b.memberId as string}`;
+                const [event] = await tx`insert into network.events (app_id, at, actor_type, actor_id, type, object_type, object_id, payload)
+                  values (${rt.app.id}, ${new Date(this.clock.now())}, 'member', ${b.memberId as string}, 'member_state_requested', 'member', ${b.memberId as string}, ${{state: window!.state, from: window!.from, until: window!.until}}::jsonb) returning id`;
+                result.eventId = String(event.id);
+              }
+              await complete(tx);
+            });
+          } else {
+            const signals = b.signals as Array<{kind: string; evidence: string}>;
+            result = {recorded: signals.length};
+            rt.unit.effects.push(async tx => {
+              for (const [index, signal] of signals.entries()) {
+                await tx`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, source, status, valid_from)
+                  values (${rt.app.id}, ${`service-signal:${id}:${index}`}, ${b.memberId as string}, 'fact', ${signal.evidence}, ${tx.array([`signal:${signal.kind}`], "TEXT")}, 'agent_private', 'inferred', 'chat', 'proposed', ${new Date(this.clock.now())})`;
+              }
+              if (signals.length) await tx`insert into network.events (app_id, at, actor_type, actor_id, type, object_type, object_id, payload)
+                values (${rt.app.id}, ${new Date(this.clock.now())}, 'agent', ${b.memberId as string}, 'network_signals_proposed', 'member', ${b.memberId as string}, ${{kinds: signals.map(signal => signal.kind), count: signals.length}}::jsonb)`;
+              await complete(tx);
+            });
+          }
+        });
+      }
+      return internalJson(result);
+    } catch {
+      await this.sql`update platform.service_actions set state = 'unresolved' where id = ${id} and state = 'processing'`;
+      return internalJson({error: "action_unresolved", retryable: false}, 409);
+    }
+  }
+
+  /** Signed gateway ingress. A durable claim precedes every platform or Network effect. */
+  private async internalTurn(req: Request): Promise<Response> {
+    const url = new URL(req.url);
+    if (req.method !== "POST") return internalJson({ error: "method_not_allowed" }, 405);
+    if (url.search) return internalJson({ error: "invalid_request" }, 400);
+    const bytes = await readCapped(req, MAX_BODY_BYTES);
+    if (bytes === "too_large") return internalJson({error: "payload_too_large"}, 413);
+    let raw: string;
+    try { raw = new TextDecoder("utf-8", {fatal: true}).decode(bytes); }
+    catch { return internalJson({error: "invalid_request"}, 400); }
+    const auth = await svcVerify(this.serviceTurnSecret, { method: req.method, path: url.pathname, headers: req.headers, body: raw, nowS: Math.floor(this.clock.now() / 1000) });
+    if (!auth.ok) return internalJson({ error: auth.reason }, auth.reason === "no_secret" ? 503 : 401);
+    let b: Row;
+    try { b = JSON.parse(raw); } catch { return internalJson({ error: "invalid_request" }, 400); }
+    if (!b || typeof b !== "object" || Array.isArray(b)) return internalJson({ error: "invalid_request" }, 400);
+    if ((b.channel !== "blooio" && b.channel !== "twilio") || typeof b.messageId !== "string" || !b.messageId.trim() || /[\r\n\u0000]/.test(b.messageId)) return internalJson({ error: "invalid_request" }, 400);
+    if ([SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH].includes(url.pathname)) return this.internalAction(url.pathname, b, auth.id, raw);
+    const id = serviceTurnKey(b.channel, b.messageId);
+    const digest = createHash("sha256").update(raw).digest("hex");
+    if (url.pathname === TURN_RECEIPT_PATH) {
+      if (auth.id !== `${b.messageId}:receipt` || Object.keys(b).length !== 6
+        || !Array.isArray(b.replyIds) || !b.replyIds.every(x => typeof x === "string")
+        || !Array.isArray(b.providerMessageIds) || !b.providerMessageIds.every(x => typeof x === "string" && x.trim())
+        || typeof b.historyRecorded !== "boolean" || !["accepted", "unknown", "rejected"].includes(b.outcome as string)) return internalJson({ error: "invalid_request" }, 400);
+      return this.sql.begin(async tx => {
+        const [claim] = await tx`select state, response, receipt_hash, receipt from platform.service_turns where id = ${id} for update`;
+        if (!claim || claim.state !== "completed" || claim.response?.outcome !== "handled") return internalJson({ error: "turn_unavailable", retryable: false }, 409);
+        if (claim.receipt_hash === digest) return internalJson({ ok: true, replayed: true });
+        if (claim.receipt_hash && !(claim.receipt?.outcome === "unknown" && (b.outcome === "accepted" || b.outcome === "rejected"))) return internalJson({ error: "receipt_conflict", retryable: false }, 409);
+        const replies = await tx`select reply_id, app_id from platform.service_turn_replies where turn_id = ${id} order by ordinal` as Array<{reply_id: string; app_id: string}>;
+        if (!replies.length || JSON.stringify(replies.map(reply => reply.reply_id)) !== JSON.stringify(b.replyIds)) return internalJson({ error: "receipt_scope_invalid", retryable: false }, 409);
+        if ((b.outcome === "accepted" && (!(b.providerMessageIds as string[]).length || (!b.historyRecorded && !(claim.response.replyKind === "compliance" && claim.response.accountEligible === false))))
+          || (b.outcome !== "accepted" && b.historyRecorded)) return internalJson({ error: "invalid_receipt", retryable: false }, 400);
+        const status = b.outcome === "accepted" ? "sent" : b.outcome === "unknown" ? "send_unknown" : "refused_gateway";
+        await tx`update platform.service_turn_replies set status = ${status} where turn_id = ${id}`;
+        // RLS remains exact-app, even when a STOP produced confirmations on several apps.
+        for (const app of new Set(replies.map(reply => reply.app_id))) {
+          await tx`select set_config('app.app_id', ${app}, true)`;
+          await tx`update network.messages set status = ${status}, accepted_at = case when ${b.outcome === "accepted"} then coalesce(accepted_at, ${new Date(this.clock.now())}) else accepted_at end where app_id = ${app} and service_turn_id = ${id} and id in ${tx(b.replyIds as string[])} and status in ('collected', 'send_unknown')`;
+        }
+        await tx`update platform.service_turns set receipt_hash = ${digest}, receipt = ${b}::jsonb where id = ${id}`;
+        return internalJson({ ok: true, replayed: false });
+      });
+    }
+    if (auth.id !== b.messageId || Object.keys(b).some(key => !["messageId", "channel", "from", "to", "text", "transport", "receivedAt", "app"].includes(key))
+      || normalizePhone(b.from) !== b.from || typeof b.from !== "string"
+      || (b.to !== null && (typeof b.to !== "string" || normalizePhone(b.to) !== b.to))
+      || typeof b.text !== "string" || !b.text.trim()
+      || !["imessage", "sms", "rcs", "unknown"].includes(b.transport as string)
+      || typeof b.receivedAt !== "number" || !Number.isSafeInteger(b.receivedAt) || b.receivedAt < 0
+      || (b.app !== undefined && !isAppId(b.app))) return internalJson({ error: "invalid_request" }, 400);
+    const input = b as unknown as TurnRequest;
+    const [claimed] = await this.sql`insert into platform.service_turns (id, channel, message_id, request_hash, sender_hash, state, created_at)
+      values (${id}, ${input.channel}, ${input.messageId}, ${digest}, ${this.phoneKey(input.from)}, 'processing', ${new Date(this.clock.now())})
+      on conflict do nothing returning id`;
+    if (!claimed) {
+      const [prior] = await this.sql`select request_hash, state, response from platform.service_turns where id = ${id}`;
+      if (prior?.request_hash !== digest) return internalJson({ error: "turn_conflict", retryable: false }, 409);
+      if (prior.state === "completed") return internalJson(prior.response);
+      return internalJson({ error: "turn_unresolved", retryable: false }, 409);
+    }
+    const turn: InboundTurn = { id, from: input.from };
+    try {
+      const outcome = await this.turns.run(turn, () => this.inbound({
+        kind: "message", channel: input.channel, messageId: input.messageId, from: input.from, to: input.to,
+        chatId: input.from, isGroup: false, text: input.text, mediaUrls: [], transport: input.transport, receivedAt: input.receivedAt,
+      }, { app: input.app }));
+      const replies = await this.sql`select reply_id, body, kind from platform.service_turn_replies where turn_id = ${id} order by ordinal` as Array<{reply_id: string; body: string; kind: string}>;
+      // Cloud account admission is separate from Network membership and adult matching.
+      const person = await this.accounts.personFor(input.from);
+      const age = await this.accounts.lowestAge(input.from, person);
+      const accountEligible = !(await this.accounts.held(input.from)) && !(await this.accounts.banned(input.from, person))
+        && !(await this.people.isSuppressed(this.phoneKey(input.from))) && (age === undefined || canJoin(age))
+        && turn.consent?.state !== "opted_out";
+      let response: TurnResponse;
+      if (outcome === "duplicate") {
+        await this.sql`update platform.service_turns set state = 'unresolved' where id = ${id}`;
+        return internalJson({ error: "turn_unresolved", retryable: false }, 409);
+      }
+      if (outcome === "open" && !replies.length && turn.app && turn.memberId) {
+        const rt = this.runtimeFor(turn.app)!;
+        const binding = await this.accounts.activeMembership(rt.app, { e164: input.from, personId: null });
+        const context = binding && binding.membership.memberId === turn.memberId ? await new AgentContextStore({
+          app: turn.app, memberId: turn.memberId, personId: binding.person.id,
+          e164: input.from, accounts: this.accounts, runtime: rt,
+        }).getMemberContext(turn.memberId, turn.app) : null;
+        if (!binding || !context) response = { outcome: "handled", replies: [], replyIds: [], delivery: "collected", replyKind: "reply", accountEligible, app: turn.app, memberId: turn.memberId, reason: "context_unavailable" };
+        else response = { outcome: "open", channel: input.channel, app: turn.app, memberId: turn.memberId, context: {
+          firstName: context.firstName, city: context.city, state: context.state, stateFrom: context.stateFrom ?? null,
+          stateUntil: context.stateUntil, facets: context.facets, activeItems: null,
+          singlePlayer: !canBeMatched(await this.accounts.lowestAge(input.from, binding.person)),
+        } };
+      } else if (outcome === "no_network" || outcome === "unknown_sender") response = { outcome: "ignored", reason: outcome };
+      else response = {
+        outcome: "handled", replies: replies.map(reply => reply.body), replyIds: replies.map(reply => reply.reply_id), delivery: "collected",
+        replyKind: replies.length > 0 && replies.every(reply => reply.kind === "compliance") ? "compliance" : "reply",
+        accountEligible,
+        app: turn.app ?? null, memberId: turn.memberId ?? null, reason: outcome, ...(turn.consent ? { consent: turn.consent } : {}),
+      };
+      const completed = await this.sql`update platform.service_turns set state = 'completed', response = ${response}::jsonb, completed_at = ${new Date(this.clock.now())}
+        where id = ${id} and state = 'processing' returning id`;
+      if (!completed.length) return internalJson({ error: "turn_unresolved", retryable: false }, 409);
+      return internalJson(response);
+    } catch {
+      // Effects may already have committed. Preserve the claim; never run it again on a retry.
+      await this.sql`update platform.service_turns set state = 'unresolved' where id = ${id} and state = 'processing'`;
+      return internalJson({ error: "turn_unresolved", retryable: false }, 409);
+    }
+  }
+
   // ------------------------------------------------------------------ HTTP
   /** The HTTP handler: the inbound webhooks and the staff API. The public API is publicFetch (its own port). */
   fetch = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
+    if ([TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH].includes(url.pathname)) return this.internalTurn(req);
     let path = url.pathname.replace(/\/+$/, "") || "/";
     const agentRoute = path === "/agent/route";
     const agentMembershipStatus = path === "/agent/membership-status";

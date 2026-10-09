@@ -47,6 +47,14 @@ export class ConsentLedger {
     return e;
   }
 
+  /** Only memory-only ledgers can be erased here; durable suppression has its own owner. */
+  forgetTransient(address: string): void {
+    if (this.store) throw new Error("Durable consent must be erased through its storage owner");
+    const normalized = normalizeAddress(address);
+    for (const [key, entry] of this.#current) if (entry.address === normalized) this.#current.delete(key);
+    for (let i = this.history.length - 1; i >= 0; i--) if (this.history[i]!.address === normalized) this.history.splice(i, 1);
+  }
+
   isOptedOut(channel: ChannelKind, address: string): boolean {
     return this.#current.get(this.#key(channel, address))?.state === "opted_out";
   }

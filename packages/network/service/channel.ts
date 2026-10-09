@@ -11,12 +11,15 @@ import type { MemberId } from "@thenetwork/core";
 import { blooioRecipientPolicy, forbiddenProvider, type ConsentNetwork } from "../src/network.ts";
 import { ConsentLedger } from "../../blooio/src/ledger.ts";
 import { OutboundQueue, type MessageKind } from "../../blooio/src/outbound-queue.ts";
-import type { Clock, ChannelAdapter as ProviderAdapter, StatusUpdate } from "../../blooio/src/types.ts";
+import type { Clock, ChannelAdapter as ProviderAdapter, StatusUpdate, SendReceipt } from "../../blooio/src/types.ts";
 
 /** One message the Network sent in a unit of work. `id` is the Network's idempotency key and the network.messages id. */
 export interface Outbound {
   id: string;
   memberId: MemberId;
+  /** Causal inbound turn; collected replies never enter the provider adapter. */
+  serviceTurnId?: string;
+  collected?: boolean;
   /** The member's address (E.164 or Apple ID email) from network.channel_identities; undefined when there is none. */
   to?: string;
   body: string;
@@ -33,16 +36,22 @@ export interface Outbound {
 export const WAITING_STATUSES = ["queued", "pending", "sending", "deferred_quiet_hours", "held_awaiting_reply", "retry_scheduled"];
 
 /** A message's delivery status now (network.messages.status). */
-export interface Delivery { id: string; status: string }
+export interface Delivery { id: string; status: string; receipt?: SendReceipt; acceptedAt?: number }
 
 export interface ChannelAdapter {
-  readonly name: "dry_run" | "blooio";
+  readonly name: "dry_run" | "blooio" | "eliza_cloud";
   /** The status a send is stored with, in the same transaction as the Network state. */
   readonly storedStatus: string;
   /** Deliver sends that are already stored. Returns the status of each one. */
   deliver(msgs: Outbound[]): Promise<Delivery[]>;
   /** Retry what waits (quiet hours, held until the member writes back). The service calls it on every tick. Returns changed statuses. */
   flush(): Promise<Delivery[]>;
+  /** Query authoritative receipts for uncertain sends, without provider dispatch. */
+  reconcile?(messages: Outbound[]): Promise<Delivery[]>;
+  /** Adopt a recovered receipt only after the durable outbox transition wins. */
+  receiptCommitted?(message: Outbound, receipt: SendReceipt): void;
+  /** Erase transient recipient data after canonical deletion. */
+  forgetRecipient?(address: string): void;
   /** The member wrote (a message or a tapback): held messages can go. */
   engaged?(address: string): void;
   /** STOP (true) or START (false) from this address. */
@@ -112,7 +121,7 @@ export interface BlooioAdapterOptions {
  * ask for a separate opt-in; STOP is recorded in its ledger and in the Network.
  */
 export class BlooioAdapter implements ChannelAdapter {
-  readonly name = "blooio" as const;
+  readonly name: ChannelAdapter["name"] = "blooio";
   readonly storedStatus = "queued";
   readonly queue: OutboundQueue;
   private ledger: ConsentLedger;
@@ -164,7 +173,7 @@ export class BlooioAdapter implements ChannelAdapter {
       this.queue.enqueue({ idempotencyKey: m.id, channel: "blooio", to: m.to, text: m.body, kind: m.kind, city: this.city, ...(m.oppId ? { briefId: m.oppId } : {}) });
     }
     await this.queue.drain();
-    for (const m of msgs) if (m.to) out.push({ id: m.id, status: this.queue.get(m.id)?.status ?? "failed" });
+    for (const m of msgs) if (m.to) out.push({ id: m.id, status: this.queue.get(m.id)?.status ?? "failed", acceptedAt: this.queue.get(m.id)?.sentAt });
     return out;
   }
 
@@ -172,11 +181,17 @@ export class BlooioAdapter implements ChannelAdapter {
     if (!this.live) return [];
     const before = new Map([...this.queue.records.values()].map(r => [r.idempotencyKey, r.status]));
     await this.queue.drain();
-    return [...this.queue.records.values()].filter(r => before.get(r.idempotencyKey) !== r.status).map(r => ({ id: r.idempotencyKey, status: r.status }));
+    return [...this.queue.records.values()].filter(r => before.get(r.idempotencyKey) !== r.status).map(r => ({ id: r.idempotencyKey, status: r.status, acceptedAt: r.sentAt }));
+  }
+
+  forgetRecipient(address: string) {
+    this.queue.forgetRecipient(address);
+    this.ledger.forgetTransient(address);
+    this.strangers.delete(address);
   }
 
   engaged(address: string) { this.queue.onRecipientEngaged("blooio", address); }
   optedOut(address: string, out: boolean) { this.ledger.record("blooio", address, out ? "opted_out" : "opted_in", out ? "keyword:STOP" : "keyword:START"); }
-  status(u: StatusUpdate): Delivery | undefined { const r = this.queue.applyStatus(u); return r ? { id: r.idempotencyKey, status: r.status } : undefined; }
+  status(u: StatusUpdate): Delivery | undefined { const r = this.queue.applyStatus(u); return r ? { id: r.idempotencyKey, status: r.status, acceptedAt: r.sentAt } : undefined; }
   lineSafety(line: string, action: string | undefined) { this.queue.setLineSafety(line, action); }
 }

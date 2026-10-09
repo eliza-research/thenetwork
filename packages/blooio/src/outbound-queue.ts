@@ -39,14 +39,11 @@ import { normalizeAddress } from "./phone.ts";
 import { DAY, HOUR } from "../../core/src/clock.ts";
 import { LeakGuard } from "../../core/src/guard.ts";
 import {
-  ChannelSendError, type ChannelAdapter, type ChannelKind, type Clock, type DeliveryStatus, type StatusUpdate, type Transport,
+  ChannelSendError, type ChannelAdapter, type ChannelKind, type Clock, type DeliveryStatus, type SendReceipt, type StatusUpdate, type Transport,
 } from "./types.ts";
 
-export type MessageKind =
-  | "reply"        // answer to a member's own message; quiet-hours exempt
-  | "compliance"   // STOP/START/HELP confirmations; exempt from opt-out and quiet hours
-  | "proactive"    // Network-initiated; quiet hours, consent, and rate limits apply
-  | "transactional"; // reminders the member asked for; quiet hours apply, consent implied by request
+export type { MessageKind } from "./types.ts";
+import type { MessageKind } from "./types.ts";
 
 /**
  * Everything the Network starts on its own (proactive intros, reminders, nudges, feedback asks, scheduling) is
@@ -110,7 +107,7 @@ export interface ContactState {
 
 export type RecordStatus =
   | "pending" | "sending" | "deferred_quiet_hours" | "held_awaiting_reply" | "retry_scheduled"
-  | "accepted" | "sent" | "delivered" | "read"
+  | "accepted" | "sent" | "delivered" | "read" | "unknown_acceptance"
   | "failed" | "suppressed_opt_out" | "suppressed_no_consent" | "suppressed_ineligible" | "blocked" | "fell_back"
   | "parked_invalid_timezone" | "parked_error" | "parked_leak_review" | "dropped_after_review";
 
@@ -142,6 +139,7 @@ export interface EnqueueInput {
 export interface OutboundRecord extends EnqueueInput {
   id: string;
   providerIdempotencyKey: string;
+  reengagement?: boolean;
   status: RecordStatus;
   attempts: number;
   nextAttemptAt: number;
@@ -308,6 +306,7 @@ export class OutboundQueue {
   }
 
   async #dispatch(rec: OutboundRecord): Promise<void> {
+    if (this.records.get(rec.idempotencyKey) !== rec) return;
     const now = this.#now;
     const contactKey = this.#contactKey(rec.channel, rec.to);
     const agent = isAgentInitiated(rec.kind);
@@ -321,6 +320,7 @@ export class OutboundQueue {
       } catch (err) {
         return this.#set(rec, "suppressed_ineligible", `participant resolver error: ${err instanceof Error ? err.message : String(err)}`);
       }
+      if (this.records.get(rec.idempotencyKey) !== rec) return;
       if (!people.length) return this.#set(rec, "suppressed_ineligible", "group has no known participants");
     }
     if (rec.kind !== "compliance" && people.some((p) => this.o.consent.isOptedOut(rec.channel, p))) {
@@ -346,6 +346,7 @@ export class OutboundQueue {
       } catch (err) {
         check = { ok: false, reason: `policy_error: ${err instanceof Error ? err.message : String(err)}` };
       }
+      if (this.records.get(rec.idempotencyKey) !== rec) return;
       if (!check.ok) return this.#set(rec, "suppressed_ineligible", check.reason);
     }
 
@@ -407,6 +408,7 @@ export class OutboundQueue {
     // 7. Leak guard, immediately before the send (after every hold/defer, so it sees the current lists).
     if (!rec.leakReviewApproved) {
       const reasons = await this.#leakReasons(rec);
+      if (this.records.get(rec.idempotencyKey) !== rec) return;
       if (reasons.length) {
         rec.leakReasons = reasons;
         // Only hashed labels reach the history and the alert: never the message text or the matched value.
@@ -417,29 +419,20 @@ export class OutboundQueue {
     }
 
     // 8. Send.
+    if (this.records.get(rec.idempotencyKey) !== rec) return;
+    rec.reengagement = reengagement;
     this.#set(rec, "sending");
     rec.attempts++;
     try {
-      const receipt = await adapter.send({ from: rec.from, to: rec.to, text: rec.text, mediaUrls: rec.mediaUrls, idempotencyKey: rec.providerIdempotencyKey });
-      rec.providerMessageId = receipt.providerMessageId;
-      rec.chatId = receipt.chatId;
-      rec.transport = receipt.transport;
-      rec.sentAt = this.#now;
-      this.#byProviderId.set(receipt.providerMessageId, rec);
-      this.#sendLog.push({ to: rec.to, at: this.#now });
-      if (isNewChat) this.#newChatLog.push({ line, at: this.#now });
-      this.#knownContacts.add(contactKey);
-      if (rec.kind !== "compliance") {
-        const c = this.#contact(contactKey);
-        c.unanswered++;
-        c.lastOutboundAt = this.#now;
-        if (reengagement) c.reengagementUsed = true;
-      }
-      this.#applyProviderStatus(rec, receipt.status === "queued" ? "accepted" : receipt.status, receipt.replayed ? "idempotent replay" : undefined);
+      const receipt = await adapter.send({ from: rec.from, to: rec.to, text: rec.text, mediaUrls: rec.mediaUrls, idempotencyKey: rec.providerIdempotencyKey, context: { idempotencyKey: rec.idempotencyKey, kind: rec.kind } });
+      this.#recordAcceptance(rec, receipt);
     } catch (err) {
+      if (this.records.get(rec.idempotencyKey) !== rec) return;
       const e = err instanceof ChannelSendError ? err : new ChannelSendError(err instanceof Error ? err.message : String(err), "retryable");
       rec.lastError = { failure: e.failure, status: e.status, code: e.code, message: e.message };
       switch (e.failure) {
+        case "unknown":
+          return this.#set(rec, "unknown_acceptance", e.code ?? "acceptance_unknown");
         case "retryable": {
           if (rec.attempts >= this.o.maxAttempts) return this.#fail(rec, rec.lastError);
           const backoff = e.retryAfterMs ?? Math.min(this.o.baseBackoffMs * 2 ** (rec.attempts - 1), 30 * 60_000);
@@ -456,6 +449,53 @@ export class OutboundQueue {
           return this.#fail(rec, rec.lastError);
       }
     }
+  }
+
+  /** Canonical deletion owns suppression; erase this queue's transient recipient data. */
+  forgetRecipient(address: string): void {
+    const normalized = normalizeAddress(address);
+    for (const [key, record] of this.records) {
+      if (normalizeAddress(record.to) !== normalized) continue;
+      this.records.delete(key);
+      this.#fingerprints.delete(key);
+      if (record.providerMessageId) this.#byProviderId.delete(record.providerMessageId);
+    }
+    for (const [key, record] of this.#byProviderId) if (normalizeAddress(record.to) === normalized) this.#byProviderId.delete(key);
+    for (const key of this.#knownContacts) if (key.slice(key.indexOf(":") + 1) === normalized) this.#knownContacts.delete(key);
+    for (const key of this.#contacts.keys()) if (key.slice(key.indexOf(":") + 1) === normalized) this.#contacts.delete(key);
+    this.#lastInbound.delete(normalized);
+    this.#sendLog = this.#sendLog.filter(entry => normalizeAddress(entry.to) !== normalized);
+  }
+
+  /** Apply a verified receipt without dispatching or repeating an accepted record. */
+  acceptReceipt(input: EnqueueInput, receipt: SendReceipt): OutboundRecord {
+    const { record } = this.enqueue(input);
+    if (!["accepted", "sent", "delivered", "read"].includes(record.status)) this.#recordAcceptance(record, receipt);
+    return record;
+  }
+
+  #recordAcceptance(rec: OutboundRecord, receipt: SendReceipt): void {
+    if (this.records.get(rec.idempotencyKey) !== rec) return;
+    if (typeof receipt.providerMessageId !== "string" || !receipt.providerMessageId.trim() || (receipt.acceptedAt !== undefined && !Number.isFinite(receipt.acceptedAt))) throw new ChannelSendError("Invalid provider receipt", "unknown");
+    const at = receipt.acceptedAt ?? this.#now;
+    const contactKey = this.#contactKey(rec.channel, rec.to);
+    const line = rec.from ?? `${rec.channel}:default`;
+    const isNewChat = !this.#knownContacts.has(contactKey);
+    rec.providerMessageId = receipt.providerMessageId;
+    rec.chatId = receipt.chatId;
+    rec.transport = receipt.transport;
+    rec.sentAt = at;
+    this.#byProviderId.set(receipt.providerMessageId, rec);
+    this.#sendLog.push({ to: rec.to, at });
+    if (isNewChat) this.#newChatLog.push({ line, at });
+    this.#knownContacts.add(contactKey);
+    if (rec.kind !== "compliance") {
+      const c = this.#contact(contactKey);
+      if (c.lastInboundAt === undefined || c.lastInboundAt <= at) c.unanswered++;
+      c.lastOutboundAt = Math.max(c.lastOutboundAt ?? -Infinity, at);
+      if (rec.reengagement) c.reengagementUsed = true;
+    }
+    this.#applyProviderStatus(rec, receipt.status === "queued" ? "accepted" : receipt.status, receipt.replayed ? "idempotent replay" : undefined);
   }
 
   /** Leak-guard reasons for this record (empty = clean). Fails closed: a provider error is a reason. */

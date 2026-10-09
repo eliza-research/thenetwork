@@ -82,6 +82,11 @@ describe("config", () => {
     expect(loadConfig({ ...base, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" }).channel).toBe("blooio");
     expect(loadConfig(base).warnings.join(" ")).toMatch(/stay dry-run/);
     expect(() => loadConfig({ ...base, BLOOIO_API_KEY: undefined, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" })).toThrow(/BLOOIO_API_KEY/);
+    const cloud = {...DEPLOYED, NETWORK_CHANNEL: "eliza_cloud", NETWORK_CLOUD_DELIVERY_ORIGIN: "https://cloud.invalid", SERVICE_TURN_SECRET: "fixture-service-key-" + "s".repeat(40)};
+    expect(loadConfig(cloud).channel).toBe("dry-run");
+    expect(loadConfig({...cloud, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1"}).channel).toBe("eliza_cloud");
+    expect(loadConfig({...cloud, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1"}, ["--dry-run"]).channel).toBe("dry-run");
+    expect(() => loadConfig({...cloud, SERVICE_TURN_SECRET: undefined, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1"})).toThrow(/SERVICE_TURN_SECRET/);
   });
 
   test("extra hosts are for staging only and must name a known app", () => {
@@ -788,4 +793,281 @@ describe.skipIf(!pgAvailable)("Cloud host canonical app route (isolated Postgres
       await dropDb(url);
     }
   }, 120_000);
+});
+
+// Signed service ingress over a real localhost HTTP server and isolated Postgres.
+// The adapter records only attempts; no provider, model, OTP or photo is called.
+describe.skipIf(!pgAvailable)("gateway service turns (real HTTP and Postgres, no sends)", () => {
+  const turnSecret = "local-turn-signing-fixture-" + "t".repeat(40);
+  const now = Date.parse("2026-10-09T12:00:00Z");
+  async function fixture(name: string) {
+    const url = await emptyDb(`service_turn_${name}`);
+    await migrate(url);
+    const sends: Array<{id: string; to?: string; body: string}> = [];
+    let time = now;
+    const options = { url, serviceTurnSecret: turnSecret, clock: {now: () => time}, env: {PLATFORM_ENV: "dev"}, photoStorage: null, log: () => {}, adapter: {
+      name: "dry_run" as const, storedStatus: "queued", flush: async () => [],
+      deliver: async (messages: import("../../packages/network/service/channel.ts").Outbound[]) => {
+        sends.push(...messages);
+        return messages.map(message => ({id: message.id, status: "dry_run"}));
+      },
+      direct: async (to: string, body: string, id: string) => { sends.push({to, body, id}); return "dry_run"; },
+    }};
+    let service = await NetworkService.fromDatabase(options);
+    const backend = () => createBackend({svc: service, config: loadConfig({PLATFORM_ENV: "dev", DATABASE_URL: url}), log: {info() {}, error() {}} as any, ping: async () => true});
+    let api = backend();
+    let server = Bun.serve({hostname: "127.0.0.1", port: 0, fetch: api.publicFetch});
+    const {svcSign} = await import("../../packages/plugin-network/src/backend/svc-auth.ts");
+    return {
+      url, sends, get service() {return service;}, advance(at: number) { time = at; },
+      async call(payload: unknown, path = "/internal/turn", secret = turnSecret, signedId?: string) {
+        const b = payload as {messageId: string};
+        const raw = JSON.stringify(payload);
+        const headers = await svcSign(secret, {method: "POST", path: new URL(path, "http://x").pathname, id: signedId ?? (path === "/internal/turn-receipt" ? `${b.messageId}:receipt` : b.messageId), body: raw, nowS: Math.floor(time / 1000)});
+        const response = await fetch(new URL(path, server.url), {method: "POST", headers: {"content-type": "application/json", ...headers}, body: raw});
+        expect(response.headers.get("cache-control")).toBe("no-store");
+        return {status: response.status, body: await response.json() as any};
+      },
+      async restart() { await server.stop(true); await service.close(); service = await NetworkService.fromDatabase(options); await service.start(); api = backend(); server = Bun.serve({hostname: "127.0.0.1", port: 0, fetch: api.publicFetch}); },
+      async close() { await server.stop(true); await service.close(); await dropDb(url); },
+    };
+  }
+  const message = (messageId: string, from: string, text: string, app?: "ntwrk" | "friends" | "slop" | "peon") => ({messageId, channel: "blooio", from, to: null, text, transport: "imessage", receivedAt: now, ...(app ? {app} : {})});
+
+  test("claims before join/consent effects, replays across restart, binds channel and payload, and acknowledges exact outputs", async () => {
+    const f = await fixture("replay");
+    try {
+      const input = message("join-request", "+12125550160", "friends");
+      expect((await f.call(input, "/internal/turn", "wrong-secret-" + "w".repeat(40))).status).toBe(401);
+      expect((await f.call(input, "/internal/turn?app=slop")).status).toBe(400);
+      const concurrent = await Promise.all([f.call(input), f.call(input)]);
+      const first = concurrent.find(result => result.status === 200)!;
+      expect(first.status).toBe(200);
+      for (const result of concurrent) {
+        if (result.status === 409) expect(result.body).toEqual({error: "turn_unresolved", retryable: false});
+        else expect(result).toEqual(first);
+      }
+      expect(first.body).toMatchObject({outcome: "handled", delivery: "collected", accountEligible: true, reason: "join_asked"});
+      expect(first.body.replies.length).toBe(1);
+      expect(first.body.replyIds.length).toBe(1);
+      expect(f.sends).toEqual([]);
+      const counts = () => f.service.sql`select (select count(*)::int from platform.pending_texts) as pending, (select count(*)::int from platform.rate_limits) as hits`;
+      const before = await counts();
+      expect(await f.call(input)).toEqual(first);
+      expect((await f.call({...input, text: "changed"})).status).toBe(409);
+      expect(await counts()).toEqual(before);
+      expect((await f.call({...input, channel: "twilio", transport: "sms"})).status).toBe(200);
+      expect((await f.service.sql`select channel from platform.service_turns where message_id = 'join-request'`).length).toBe(2);
+      await f.restart();
+      expect(await f.call(input)).toEqual(first);
+      expect(f.sends).toEqual([]);
+      const receipt = {channel: input.channel, messageId: input.messageId, replyIds: first.body.replyIds, outcome: "accepted", providerMessageIds: ["fixture-provider-accepted"], historyRecorded: true};
+      expect((await f.call({...receipt, replyIds: ["other-turn"]}, "/internal/turn-receipt")).status).toBe(409);
+      expect((await f.call({...receipt, historyRecorded: false}, "/internal/turn-receipt")).status).toBe(400);
+      expect(await f.call(receipt, "/internal/turn-receipt")).toEqual({status: 200, body: {ok: true, replayed: false}});
+      expect(await f.call(receipt, "/internal/turn-receipt")).toEqual({status: 200, body: {ok: true, replayed: true}});
+      expect((await f.call({...receipt, providerMessageIds: ["changed"]}, "/internal/turn-receipt")).status).toBe(409);
+      const rows = await f.service.sql`select status from platform.service_turn_replies where reply_id = ${first.body.replyIds[0]}`;
+      expect(rows[0].status).toBe("sent");
+    } finally { await f.close(); }
+  }, 120_000);
+
+  test("isolates simultaneous users/apps and a tick, preserves silent handled turns, and returns canonical minor context", async () => {
+    const f = await fixture("causal");
+    try {
+      const a = message("adult-join", "+12125550161", "Sam, 29", "friends");
+      const b = message("minor-join", "+12125550162", "Kim, 16", "peon");
+      const [adult, minor] = await Promise.all([f.call(a), f.call(b), f.service.tick()]);
+      expect(adult.status).toBe(200); expect(minor.status).toBe(200);
+      expect(adult.body.replies.join(" ")).not.toContain("Kim");
+      expect(minor.body.replies.join(" ")).not.toContain("Sam");
+      expect(f.sends).toEqual([]);
+      for (const [app, id] of [["friends", adult.body.memberId], ["peon", minor.body.memberId]] as const) {
+        await f.service.runtimeFor(app)!.unitOfWork(n => {
+          const state = n.exportState();
+          const member = state.members.find(member => member.id === id)!;
+          member.stage = "active"; member.awaiting = undefined;
+          n.importState(state);
+        });
+      }
+      const quiet = await f.call(message("quiet-ack", a.from, "thanks", "friends"));
+      expect(quiet.body).toMatchObject({outcome: "handled", replies: [], replyIds: []});
+      const open = await f.call(message("adult-open", a.from, "Can we talk about my day?", "friends"));
+      expect(open.body).toMatchObject({outcome: "open", app: "friends", memberId: adult.body.memberId, context: {singlePlayer: false, activeItems: null}});
+      const short = await f.call(message("short-question", b.from, "why?", "peon"));
+      expect(short.body).toMatchObject({outcome: "open", context: {singlePlayer: true}});
+      // A committed person-level age floor is authoritative even while an app's
+      // member projection still has its earlier adult age.
+      await f.service.people.noteAgeFloor(f.service.accounts.phoneHash(a.from), 16, now);
+      const minorOpen = await f.call(message("minor-open", a.from, "Could we chat about the day again?", "friends"));
+      expect(minorOpen.body).toMatchObject({outcome: "open", context: {singlePlayer: true}});
+      const collected = await f.service.sql`select status, service_turn_id from network.messages where direction = 'outbound'`;
+      expect(collected.every((row: any) => row.status === "collected" && typeof row.service_turn_id === "string")).toBe(true);
+      expect(f.sends).toEqual([]);
+      // An unrelated committed message may share a runtime delivery batch, but
+      // it must never become this inbound's reply or acquire its turn key.
+      const background = message("peer-join", "+12125550166", "Pat, 30", "friends");
+      const peer = await f.call(background);
+      const rt = f.service.runtimeFor("friends")!;
+      const [help] = await Promise.all([
+        f.call(message("help-with-background", a.from, "HELP", "friends")),
+        rt.unitOfWork(() => rt.system(peer.body.memberId, "background-message", "OTHER_PERSON_TICK_CANARY", "transactional")),
+        rt.tick(),
+      ]);
+      expect(help.body.replies.join(" ")).not.toContain("OTHER_PERSON_TICK_CANARY");
+      expect(f.sends.map(send => send.id)).toEqual(["background-message"]);
+      const [other] = await f.service.sql`select service_turn_id, status from network.messages where id = 'background-message'`;
+      expect(other.service_turn_id).toBeNull();
+      expect(other.status).toBe("dry_run");
+    } finally { await f.close(); }
+  }, 120_000);
+
+  test("keeps partial effects unresolved without rerunning, and keeps STOP/under-age receipts out of automatic delivery", async () => {
+    const f = await fixture("fault");
+    try {
+      const pending = f.service.people.putPending.bind(f.service.people);
+      let writes = 0;
+      f.service.people.putPending = async (...args) => { writes++; await pending(...args); throw new Error("fault after the platform commit"); };
+      const input = message("partial-join", "+12125550163", "friends");
+      expect(await f.call(input)).toEqual({status: 409, body: {error: "turn_unresolved", retryable: false}});
+      expect((await f.service.sql`select count(*)::int as n from platform.pending_texts`)[0].n).toBe(1);
+      f.service.people.putPending = pending;
+      expect((await f.call(input)).status).toBe(409);
+      expect(writes).toBe(1);
+      await f.restart();
+      expect((await f.call(input)).status).toBe(409);
+      const stop = message("stop-once", "+12125550164", "STOP");
+      const stopped = await f.call(stop);
+      expect(stopped.body).toMatchObject({outcome: "handled", replyKind: "compliance", accountEligible: false, consent: {state: "opted_out", scope: "all"}});
+      expect(await f.call(stop)).toEqual(stopped);
+      expect((await f.service.sql`select count(*)::int as n from platform.consent_events where ref = 'in:blooio:stop-once'`)[0].n).toBe(1);
+      const underage = await f.call(message("decline", "+12125550165", "Lee, 12", "friends"));
+      expect(underage.body).toMatchObject({outcome: "handled", replyKind: "compliance", accountEligible: false, reason: "under_age"});
+      expect((await f.service.sql`select count(*)::int as n from platform.phone_identities where e164 = '+12125550165'`)[0].n).toBe(0);
+      const receipt = {channel: "blooio", messageId: "stop-once", replyIds: stopped.body.replyIds, outcome: "unknown", providerMessageIds: [], historyRecorded: false};
+      expect((await f.call(receipt, "/internal/turn-receipt")).status).toBe(200);
+      expect((await f.service.sql`select status from platform.service_turn_replies where reply_id = ${stopped.body.replyIds[0]}`)[0].status).toBe("send_unknown");
+      await f.restart();
+      expect(f.sends).toEqual([]);
+      expect((await f.call({...receipt, outcome: "accepted", providerMessageIds: ["recovered-accepted"]}, "/internal/turn-receipt")).status).toBe(200);
+      expect(f.sends).toEqual([]);
+      // Delete seals a real in-flight claim before its later direct reply write.
+      const put = f.service.people.putPending.bind(f.service.people);
+      let reached!: () => void, resume!: () => void;
+      const effectDone = new Promise<void>(resolve => {reached = resolve;});
+      const continueReply = new Promise<void>(resolve => {resume = resolve;});
+      f.service.people.putPending = async (...args) => {await put(...args); reached(); await continueReply;};
+      const lateInput = message("late-collected-after-delete", "+12125550168", "friends");
+      const late = f.call(lateInput);
+      await effectDone;
+      await f.service.accounts.deleteAll({e164: lateInput.from, personId: null});
+      resume();
+      expect(await late).toEqual({status: 409, body: {error: "turn_unresolved", retryable: false}});
+      f.service.people.putPending = put;
+      expect((await f.call(lateInput)).status).toBe(409);
+      const [claim] = await f.service.sql`select id, state from platform.service_turns where message_id = 'late-collected-after-delete'`;
+      expect(claim.state).toBe("unresolved");
+      expect((await f.service.sql`select count(*)::int as n from platform.service_turn_replies where turn_id = ${claim.id}`)[0].n).toBe(0);
+      expect(f.sends).toEqual([]);
+    } finally { await f.close(); }
+  }, 120_000);
+  test("actions bind the original open turn, commit canonical participation windows and private signals, and consume one inbox", async () => {
+    const f = await fixture("actions");
+    try {
+      const from = "+12125550167";
+      const joined = await f.call(message("action-join", from, "Alex, 28", "friends"));
+      const rt = f.service.runtimeFor("friends")!;
+      await rt.unitOfWork(n => {
+        const state = n.exportState(); const member = state.members.find(member => member.id === joined.body.memberId)!;
+        member.stage = "active"; member.awaiting = undefined; n.importState(state);
+      });
+      const open = await f.call(message("action-origin", from, "Can we talk about my day?", "friends"));
+      expect(open.body.outcome).toBe("open");
+      const scope = {channel: "blooio", messageId: "action-origin", app: "friends", memberId: joined.body.memberId};
+      const state = {...scope, idempotencyKey: "state-1", state: "busy", from: null, until: null, note: null};
+      const set = (body: Record<string, unknown>) => f.call(body, "/internal/set-state", turnSecret, String(body.idempotencyKey));
+      const changed = await set(state);
+      expect(changed.status).toBe(200);
+      expect(changed.body).toMatchObject({previous: "open", current: "busy", unchanged: false, replayed: false});
+      expect(changed.body.eventId).not.toBeNull();
+      expect((await set(state)).body).toMatchObject({...changed.body, replayed: true});
+      expect((await set({...state, state: "paused"})).status).toBe(409);
+      const same = await set({...state, idempotencyKey: "state-2"});
+      expect(same.body).toMatchObject({current: "busy", unchanged: true, eventId: null});
+      const [row] = await f.service.sql`select participation_state from network.members where app_id = 'friends' and id = ${joined.body.memberId}`;
+      expect(row.participation_state).toBe("quiet");
+      const [saved] = await f.service.sql`select state from network.network_state where id = 'friends:nyc'`;
+      expect(saved.state.members.find((member: any) => member.id === joined.body.memberId).state).toBe("quiet");
+      const future = {...state, idempotencyKey: "state-trip", state: "traveling", from: new Date(now + 3600000).toISOString(), until: new Date(now + 7200000).toISOString(), note: "PRIVATE_STATE_NOTE_CANARY"};
+      expect((await set(future)).body).toMatchObject({current: "traveling", from: future.from, until: future.until});
+      const view = () => rt.readSnapshot(snapshot => snapshot.members.find(member => member.id === joined.body.memberId)!.state);
+      expect(await view()).toBe("quiet");
+      const binding = await f.service.accounts.activeMembership(rt.app, {e164: from, personId: null});
+      const context = new AgentContextStore({app: "friends", memberId: joined.body.memberId, personId: binding!.person.id, e164: from, accounts: f.service.accounts, runtime: rt});
+      await rt.scoped(tx => tx`insert into network.facets (app_id, id, member_id, kind, value, privacy_scope, provenance, status)
+        values ('friends', 'note-leak-probe', ${joined.body.memberId}, 'fact', 'PRIVATE_STATE_NOTE_CANARY', 'shareable', 'said', 'confirmed')`);
+      const upcoming = await context.getMemberContext(joined.body.memberId, "friends");
+      expect(upcoming).toMatchObject({state: "traveling", stateFrom: future.from, stateUntil: future.until});
+      expect(JSON.stringify(upcoming)).not.toContain("PRIVATE_STATE_NOTE_CANARY");
+      f.advance(now + 3600001); await rt.tick(); expect(await view()).toBe("paused");
+      f.advance(now + 7200001); await rt.tick(); expect(await view()).toBe("quiet");
+      const consent = await f.service.sql`select count(*)::int as n from platform.consent_events`;
+      const signals = {...scope, signals: [{kind: "opt_out", evidence: "PRIVATE_SIGNAL_CANARY"}, {kind: "travel", evidence: "Possible trip"}]};
+      const signal = await f.call(signals, "/internal/signals", turnSecret, "action-origin:signals");
+      expect(signal).toEqual({status: 200, body: {recorded: 2}});
+      expect(await f.call(signals, "/internal/signals", turnSecret, "action-origin:signals")).toEqual(signal);
+      const facets = await f.service.sql`select privacy_scope, provenance, status from network.facets where value = 'PRIVATE_SIGNAL_CANARY'`;
+      expect(facets).toEqual([{privacy_scope: "agent_private", provenance: "inferred", status: "proposed"}]);
+      expect(await f.service.sql`select count(*)::int as n from platform.consent_events`).toEqual(consent);
+      expect(JSON.stringify(await context.getMemberContext(joined.body.memberId, "friends"))).not.toContain("PRIVATE_SIGNAL_CANARY");
+      await f.service.notify!.add({personId: binding!.person.id, app: "friends", eventType: "fixture", subjectId: "own-update", urgency: "normal", summary: "Approved own update"}, now);
+      await f.service.notify!.add({personId: binding!.person.id, app: "peon", eventType: "fixture", subjectId: "other-app-update", urgency: "normal", summary: "OTHER_APP_UPDATE_CANARY"}, now);
+      const updates = await f.call(scope, "/internal/updates", turnSecret, "action-origin:updates");
+      expect(updates).toEqual({status: 200, body: {items: [{summary: "Approved own update"}]}});
+      expect(await f.call(scope, "/internal/updates", turnSecret, "action-origin:updates")).toEqual(updates);
+      expect(await f.service.updatesFor(binding!.person.id, "friends", "web")).toEqual([]);
+      expect((await f.service.updatesFor(binding!.person.id, "peon", "web"))[0].summary).toBe("OTHER_APP_UPDATE_CANARY");
+      expect((await set({...state, idempotencyKey: "foreign-member", memberId: "foreign"})).status).toBe(403);
+      expect((await set({...state, idempotencyKey: "foreign-channel", channel: "twilio"})).status).toBe(403);
+      // A failure after state/event SQL but before PgStore commits rolls back
+      // the entire unit, while the earlier durable action claim survives.
+      const save = rt.pg.save.bind(rt.pg);
+      const beforeFault = await f.service.sql`select count(*)::int as n from network.events where type = 'member_state_requested'`;
+      rt.pg.save = (value, effect) => save(value, async tx => { await effect?.(tx); throw new Error("fault before the Network save commit"); });
+      const failedState = {...state, idempotencyKey: "state-fault", state: "paused"};
+      expect((await set(failedState)).status).toBe(409);
+      rt.pg.save = save;
+      expect((await set(failedState)).body).toEqual({error: "action_unresolved", retryable: false});
+      expect(await view()).toBe("quiet");
+      expect(await f.service.sql`select count(*)::int as n from network.events where type = 'member_state_requested'`).toEqual(beforeFault);
+      await rt.unitOfWork(() => {});
+      expect(rt.net.exportState().members.find(member => member.id === joined.body.memberId)!.state).toBe("quiet");
+      await f.service.people.addConsent({e164: from, app: null, state: "opted_out", source: "fixture-revoke", at: now + 7200002});
+      expect((await set({...state, idempotencyKey: "revoked"})).status).toBe(403);
+      expect(f.sends).toEqual([]);
+      await f.service.people.addConsent({e164: from, app: null, state: "opted_in", source: "fixture-restore", at: now + 7200003});
+      await f.service.notify!.add({personId: binding!.person.id, app: "friends", eventType: "fixture", subjectId: "delete-race", urgency: "normal", summary: "DELETE_RACE_PRIVATE_CANARY"}, now);
+      const deletionOrigin = await f.call(message("delete-race-origin", from, "Can we chat about something else?", "friends"));
+      expect(deletionOrigin.body.outcome).toBe("open");
+      const readUpdates = f.service.updatesFor.bind(f.service);
+      let reached!: () => void, resume!: () => void;
+      const readDone = new Promise<void>(resolve => {reached = resolve;});
+      const resumeRead = new Promise<void>(resolve => {resume = resolve;});
+      f.service.updatesFor = async (...args) => {const value = await readUpdates(...args); reached(); await resumeRead; return value;};
+      const late = f.call({...scope, messageId: "delete-race-origin"}, "/internal/updates", turnSecret, "delete-race-origin:updates");
+      await readDone;
+      await f.service.accounts.deleteAll({e164: from, personId: binding!.person.id});
+      resume();
+      const sealed = await late;
+      expect(sealed).toEqual({status: 409, body: {error: "action_unresolved", retryable: false}});
+      expect(JSON.stringify(sealed)).not.toContain("DELETE_RACE_PRIVATE_CANARY");
+      f.service.updatesFor = readUpdates;
+      const redacted = await f.service.sql`select response from platform.service_turns where message_id = 'action-origin'`;
+      expect(redacted[0].response).toEqual({outcome: "ignored", reason: "membership_removed"});
+      expect((await f.service.sql`select count(*)::int as n from platform.service_turn_replies`)[0].n).toBe(0);
+      expect((await f.service.sql`select count(*)::int as n from platform.service_actions where response is not null`)[0].n).toBe(0);
+      expect((await f.call(message("action-origin", from, "Can we talk about my day?", "friends"))).body).toEqual(redacted[0].response);
+    } finally { await f.close(); }
+  }, 120_000);
+
 });

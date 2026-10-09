@@ -2,7 +2,7 @@
  * Context-only adapter for a trusted host's verified phone and exact app membership.
  * Reads the canonical runtime snapshot; it provides no state or signal write methods.
  * Receiving and unknown participation states are unavailable because the plugin cannot
- * represent them. Windows and member-safe active-item summaries have no canonical owner yet.
+ * represent them. Windows use the canonical member row; member-safe active-item summaries remain unavailable.
  */
 import type { Accounts } from "../../platform/src/accounts.ts";
 import type { AppId } from "../../platform/src/apps.ts";
@@ -10,6 +10,7 @@ import { normalizePhone } from "../../platform/src/phone.ts";
 import { outputLeaks } from "../../mcp/src/leaks.ts";
 import { assertNetworkMemberScope, NETWORK_STATE_TO_PARTICIPATION } from "../../plugin-network/src/types.ts";
 import type { NetworkContextStore, NetworkMemberContext, NetworkMemberScope } from "../../plugin-network/src/types.ts";
+import { participationWindow } from "./participation.ts";
 import type { NetworkRuntime } from "./runtime.ts";
 
 export interface AgentContextStoreOptions extends NetworkMemberScope {
@@ -45,9 +46,12 @@ export class AgentContextStore implements NetworkContextStore {
       if (!(await this.authorized())) return null;
       const member = snapshot.members.find(m => m.id === memberId);
       if (!member) return null;
-      const state = member.state === "open" || member.state === NETWORK_STATE_TO_PARTICIPATION.open ? "open"
+      const [row] = await o.runtime.scoped(tx => tx`select participation_window from network.members where app_id = ${app} and id = ${memberId}`);
+      const window = participationWindow(row?.participation_window);
+      const scheduled = window && (window.until === null || Date.parse(window.until) > snapshot.now) ? window : undefined;
+      const state = scheduled?.state ?? (member.state === "open" || member.state === NETWORK_STATE_TO_PARTICIPATION.open ? "open"
         : member.state === NETWORK_STATE_TO_PARTICIPATION.busy ? "busy"
-        : member.state === NETWORK_STATE_TO_PARTICIPATION.paused ? "paused" : null;
+        : member.state === NETWORK_STATE_TO_PARTICIPATION.paused ? "paused" : null);
       if (!state) return null;
       const firstName = member.name.trim().split(/\s+/)[0] ?? "";
       const forbidden = [
@@ -60,7 +64,10 @@ export class AgentContextStore implements NetworkContextStore {
         ...snapshot.facets.map(f => f.id),
         o.e164, o.personId,
       ];
-      const facts = snapshot.facets.filter(f => f.scope === "agent_private").map(f => f.value);
+      const facts = [
+        ...snapshot.facets.filter(f => f.scope === "agent_private").map(f => f.value),
+        ...(window?.note ? [window.note] : []),
+      ];
       const safe = (text: string) => outputLeaks(text, { forbidden, facts, contacts: true }).length === 0;
       if (!safe(firstName) || !safe(member.homeCity)) return null;
       const facets = snapshot.facets.filter(f => f.memberId === memberId && f.scope === "shareable"
@@ -70,7 +77,7 @@ export class AgentContextStore implements NetworkContextStore {
         && safe(f.value)).map(f => f.value);
       return {
         app, memberId, firstName, city: member.homeCity, state,
-        stateFrom: null, stateUntil: null, facets, activeItems: null,
+        stateFrom: scheduled?.from ?? null, stateUntil: scheduled?.until ?? null, facets, activeItems: null,
       };
     });
   }

@@ -32,6 +32,7 @@ import { eventOf, membersOf, type EventRow } from "../../observatory/src/events.
 
 /** Delivery statuses of a send that did not go out (its person-cap slot is released). */
 const NOT_SENT = /^(refused|suppressed|blocked|parked|failed)/;
+const ACCEPTED_STATUSES = new Set(["accepted", "sent", "delivered", "read", "dry_run"]);
 import { summarizeRun } from "../../observatory/src/engineCapture.ts";
 
 type Row = Record<string, unknown>;
@@ -45,6 +46,8 @@ const CLOSED_STAGES = new Set(["done", "closed"]);
 /** What one unit of work produced. Written in the save transaction, then delivered. */
 export interface Unit {
   inbound?: Row;
+  /** Canonical member/action writes that commit with this Network unit. */
+  effects: Array<(tx: SQL) => Promise<void>>;
   sends: Outbound[];
   events: EventRow[];
   blocks: [MemberId, MemberId][];
@@ -53,7 +56,7 @@ export interface Unit {
   optOut: Map<MemberId, boolean>;
   forget: Set<MemberId>;
 }
-const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set() });
+const newUnit = (): Unit => ({ effects: [], sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set() });
 
 /** What the service gives each runtime: the shared connection and clock, and the checks that span apps. */
 export interface RuntimeHost {
@@ -61,6 +64,8 @@ export interface RuntimeHost {
   clock: Clock;
   instance: string;
   log: (line: string) => void;
+  /** Request-local causal ownership; absent for ticks, staff work and provider webhooks. */
+  inboundTurn?(): { id: string; from: string } | undefined;
   /** Proactive sends of this batch the person-level daily cap refuses (ids). Called before delivery. */
   capRefused(rt: NetworkRuntime, batch: Outbound[]): Promise<Set<string>>;
   /** Give back the person-cap slots of sends the adapter refused (they never went out). */
@@ -170,9 +175,12 @@ export class NetworkRuntime {
     for (const r of await this.scoped(tx => tx`select event from network.capital_events where app_id = ${this.app.id} order by t, id`) as any[]) {
       try { this.capital.ledger.record(typeof r.event === "string" ? JSON.parse(r.event) : r.event); } catch { /* out of order: counted by the wiring only for new events */ }
     }
-    if (this.adapter.storedStatus === "dry_run") return;
+    if (this.adapter.storedStatus === "dry_run") {
+      await this.pg.withLock(() => this.projectAccepted());
+      return;
+    }
     await this.unitOfWork(async n => {
-      const rows = await this.scoped(tx => tx`select id, member_id, body, type, opportunity_id, proactive, system, ts from network.messages
+      const rows = await this.scoped(tx => tx`select id, member_id, body, type, opportunity_id, proactive, system, ts, outbound_to, outbound_kind, service_turn_id from network.messages
         where app_id = ${this.app.id} and direction = 'outbound' and status = any(${`{${WAITING_STATUSES.join(",")}}`}::text[]) order by ts, id`) as any[];
       const now = this.clock.now();
       const expired: string[] = [];
@@ -181,16 +189,67 @@ export class NetworkRuntime {
         const opp = r.opportunity_id ? n.opps.get(r.opportunity_id) : undefined;
         const stale = age > WAITING_TTL_MS || (r.proactive && age > WAITING_TTL_PROACTIVE_MS) || (opp !== undefined && CLOSED_STAGES.has(opp.stage));
         if (stale) { expired.push(r.id); continue; }
-        this.committed.push({
-          id: r.id, memberId: r.member_id, to: this.memberToAddr.get(r.member_id), body: r.body, kind: r.system ? "compliance" : r.proactive ? "proactive" : "transactional",
-          type: r.type ?? undefined, oppId: r.opportunity_id ?? undefined, proactive: r.proactive, system: r.system, ts: new Date(r.ts).getTime(),
-        });
+        this.committed.push(this.outboundFromRow(r));
       }
       if (expired.length) {
         await this.storeStatuses(expired.map(id => ({ id, status: "expired" })));
         this.host.log(`[restart] ${expired.length} waiting message(s) expired, not sent (${this.id})`);
       }
     });
+    await this.reconcileUnknown();
+    await this.pg.withLock(() => this.projectAccepted());
+  }
+
+  private outboundFromRow(row: Row): Outbound {
+    return {
+      id: row.id as string, memberId: row.member_id as string,
+      to: (row.outbound_to as string | null) ?? this.memberToAddr.get(row.member_id as string), body: row.body as string,
+      kind: (row.outbound_kind as Outbound["kind"] | null) ?? (row.system ? "compliance" : row.proactive ? "proactive" : "transactional"),
+      type: (row.type as string | null) ?? undefined, oppId: (row.opportunity_id as string | null) ?? undefined,
+      proactive: row.proactive as boolean, system: row.system as boolean, ts: new Date(row.ts as string | Date).getTime(),
+      ...((typeof row.service_turn_id === "string") ? {serviceTurnId: row.service_turn_id} : {}),
+    };
+  }
+
+  /** At most four concurrent receipt reads per pass; never dispatch an unknown send again. */
+  private async reconcileUnknown(): Promise<void> {
+    if (!this.adapter.reconcile) return;
+    const now = this.clock.now();
+    const rows = await this.scoped(tx => tx`update network.messages set receipt_checked_at = ${new Date(now)}
+      where app_id = ${this.app.id} and id in (
+        select id from network.messages where app_id = ${this.app.id} and status = 'unknown_acceptance'
+          and outbound_to is not null and outbound_kind is not null
+          and (receipt_checked_at is null or receipt_checked_at <= ${new Date(now - 60_000)})
+        order by receipt_checked_at nulls first, ts, id limit 4 for update skip locked
+      ) returning *`) as Row[];
+    await Promise.all(rows.map(async row => {
+      const message = this.outboundFromRow(row);
+      const outcomes = await this.adapter.reconcile!([message]);
+      const accepted = outcomes.find(outcome => outcome.id === message.id && outcome.status === "accepted");
+      if (!accepted?.receipt) return;
+      await this.pg.withLock(async () => {
+        const changed = await this.scoped(tx => tx`update network.messages set status = 'accepted', accepted_at = ${new Date(accepted.receipt!.acceptedAt ?? now)}
+          where app_id = ${this.app.id} and id = ${message.id} and status = 'unknown_acceptance'
+            and body = ${message.body} and outbound_to = ${message.to!} and outbound_kind = ${message.kind} returning id`);
+        if (!changed.length) return;
+        this.adapter.receiptCommitted?.(message, accepted.receipt!);
+        await this.projectAccepted([message.id]);
+      });
+    }));
+  }
+
+  /** Called under the existing runtime lock. Notify dedupes its delivery ID,
+   * so a crash after its SQL commit but before this flag does not duplicate it. */
+  private async projectAccepted(ids?: string[]): Promise<void> {
+    if (!this.host.delivered || ids?.length === 0) return;
+    const rows = await this.scoped(tx => tx`select * from network.messages where app_id = ${this.app.id}
+      and direction = 'outbound' and accepted_at is not null and notification_recorded_at is null
+      and (${ids ? tx.array(ids, "TEXT") : null}::text[] is null or id = any(${ids ? tx.array(ids, "TEXT") : null}::text[]))
+      order by accepted_at, id limit ${ids?.length ?? 4}`) as Row[];
+    if (!rows.length) return;
+    await this.host.delivered(this, rows.map(row => ({...this.outboundFromRow(row), ts: new Date(row.accepted_at as Date | string).getTime()})));
+    await this.scoped(tx => tx`update network.messages set notification_recorded_at = ${new Date(this.clock.now())}
+      where app_id = ${this.app.id} and id in ${tx(rows.map(row => row.id as string))} and accepted_at is not null and notification_recorded_at is null`);
   }
 
   // ------------------------------------------------------------------ units of work
@@ -209,7 +268,7 @@ export class NetworkRuntime {
         const u = this.unit;
         // PgStore.save sets app.app_id for its own transaction; the unit's rows go in the same one.
         await this.pg.save(state, tx => this.writeUnit(tx, u));
-        this.committed.push(...u.sends);
+        this.committed.push(...u.sends.filter(send => !send.collected));
         this.unit = newUnit();
       },
       withTickLock: fn => this.pg.withTickLock(fn),
@@ -258,7 +317,7 @@ export class NetworkRuntime {
         const t = this.clock.now();
         const meta = o?.meta ?? {};
         const id = o?.idempotencyKey ?? `${memberId}:${t}:${this.nonce}${++this.seq}`;
-        this.unit.sends.push({
+        const collected = this.recordOutbound({
           id, memberId, to: this.memberToAddr.get(memberId), body,
           // "reply" only when the Network says so (send(): never a proactive send, a growth ask, a
           // re-engagement or a check-in), so the queue's quiet hours and caps still apply to those.
@@ -266,7 +325,7 @@ export class NetworkRuntime {
           // A probe names its opportunity only in meta.probe (anonymous to the member); the row links it either way.
           type: meta.type, oppId: meta.proposalId ?? meta.probe?.key, proactive: !!meta.proactive, system: false, ts: t,
         });
-        return { id, ts: t, direction: "outbound", channel: "imessage", from: "network", to: memberId, memberId, body, status: "delivered", meta } satisfies SimMessage;
+        return { id, ts: t, direction: "outbound", channel: "imessage", from: "network", to: memberId, memberId, body, status: collected ? "collected" : "delivered", meta } satisfies SimMessage;
       },
       snapshot: () => this.snap ?? { now: this.clock.now(), members: [], facets: [], intents: [], presence: [], edges: [], recentProposals: [] },
       // A proposal record has no oracle in production; eventOf reads only the proposal and the source.
@@ -277,21 +336,39 @@ export class NetworkRuntime {
     };
   }
 
+  private recordOutbound(send: Outbound): boolean {
+    const turn = this.host.inboundTurn?.();
+    if (turn) {
+      send.serviceTurnId = turn.id;
+      send.collected = send.to === turn.from && !send.proactive && send.kind !== "proactive";
+    }
+    this.unit.sends.push(send);
+    return send.collected === true;
+  }
+
   /** A system send (keyword confirmations, the link notice) in the current unit. It does not go through the Network. */
   system(memberId: MemberId, id: string, body: string, kind: Outbound["kind"] = "compliance", type = "system") {
-    this.unit.sends.push({ id, memberId, to: this.memberToAddr.get(memberId), body, kind, type, proactive: false, system: true, ts: this.clock.now() });
+    this.recordOutbound({ id, memberId, to: this.memberToAddr.get(memberId), body, kind, type, proactive: false, system: true, ts: this.clock.now() });
   }
 
   /** Everything the unit produced, inside the save transaction (app.app_id is set). Rows that name a member not in this app's network.members are skipped. */
   private async writeUnit(tx: SQL, u: Unit) {
     const app = this.app.id;
+    for (const effect of u.effects) await effect(tx);
     const named = new Set<string>([...u.sends.map(s => s.memberId), ...(u.inbound ? [u.inbound.member_id as string] : []), ...u.blocks.flat(), ...u.optOut.keys()]);
     const known = new Set<string>();
     if (named.size) for (const r of await tx`select id from network.members where app_id = ${app} and id in ${tx([...named])}`) known.add(r.id);
     const ok = (id: string) => known.has(id) && !u.forget.has(id);
     if (u.inbound && ok(u.inbound.member_id as string)) await tx`insert into network.messages ${tx({ ...u.inbound, app_id: app })} on conflict (id) do nothing`;
+    // A collected reply and its causal ownership commit with this unit, including
+    // a generic under-age decline whose member rows are removed in the same save.
+    for (const send of u.sends.filter(send => send.collected)) {
+      await tx`insert into platform.service_turn_replies (turn_id, reply_id, app_id, body, kind)
+        values (${send.serviceTurnId!}, ${send.id}, ${app}, ${send.body}, ${send.kind === "compliance" ? "compliance" : "reply"}) on conflict do nothing`;
+    }
     const out = u.sends.filter(s => ok(s.memberId)).map(s => ({
-      id: s.id, app_id: app, member_id: s.memberId, direction: "outbound", channel: "imessage", body: s.body, status: this.adapter.storedStatus,
+      id: s.id, app_id: app, member_id: s.memberId, direction: "outbound", channel: "imessage", body: s.body, status: s.collected ? "collected" : this.adapter.storedStatus, service_turn_id: s.serviceTurnId ?? null,
+      outbound_to: s.to ?? null, outbound_kind: s.kind,
       type: s.type ?? null, opportunity_id: s.oppId ?? null, proactive: s.proactive, system: s.system, ts: new Date(s.ts),
     }));
     for (let i = 0; i < out.length; i += 500) {
@@ -323,6 +400,16 @@ export class NetworkRuntime {
     for (const [id, out] of u.optOut) if (ok(id)) await tx`update network.members set opted_out = ${out} where app_id = ${app} and id = ${id}`;
     // The forget path (an under-age decline, leaving the app, deleting everything): keep only the id. Nothing that names the member stays.
     for (const id of u.forget) {
+      const priorAddresses = await tx`select distinct outbound_to from network.messages where app_id = ${app} and member_id = ${id} and outbound_to is not null` as Row[];
+      for (const address of new Set([this.memberToAddr.get(id), ...priorAddresses.map(row => row.outbound_to as string)])) {
+        if (address) this.adapter.forgetRecipient?.(address);
+      }
+      // Forget owns erasure, including service replay responses and reply bodies.
+      // The current leave/decline turn may still emit its generic policy notice.
+      await tx`select platform.scrub_service_turns(array(select distinct turn.id from platform.service_turns turn
+        where turn.id <> ${this.host.inboundTurn?.()?.id ?? ""} and (
+          (turn.response->>'app' = ${app} and turn.response->>'memberId' = ${id})
+          or turn.id in (select service_turn_id from network.messages where app_id = ${app} and member_id = ${id}))))`;
       await tx`delete from network.messages where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.feedback where app_id = ${app} and (from_id = ${id} or about_id = ${id})`;
       // Every event that names them, by the same keys the writer reads (membersOf): actor, object and the payload.
@@ -337,7 +424,7 @@ export class NetworkRuntime {
       await tx`delete from network.edges where app_id = ${app} and (from_id = ${id} or to_id = ${id})`;
       await tx`delete from network.channel_identities where app_id = ${app} and member_id = ${id}`;
       await tx`update network.members set invited_by = null where app_id = ${app} and invited_by = ${id}`;
-      await tx`update network.members set name = null, home_city = null, home_area = null, account_status = 'removed', opted_out = false, age = null, invited_by = null,
+      await tx`update network.members set name = null, participation_window = null, home_city = null, home_area = null, account_status = 'removed', opted_out = false, age = null, invited_by = null,
         community = null, occupation = null, bio = null, prefs = '{}'::jsonb, unanswered_proactive = 0, joined_at = null, person_id = null where app_id = ${app} and id = ${id}`;
     }
   }
@@ -370,11 +457,10 @@ export class NetworkRuntime {
       // A send the adapter refused did not go out: its person-cap slot goes back (dry-run counts as sent).
       const notSent = ds.filter(d => NOT_SENT.test(d.status)).map(d => d.id);
       if (notSent.length) await this.host.capRelease?.(notSent);
-      if (this.host.delivered) {
-        const no = new Set(notSent);
-        const sent = go.filter(b => !no.has(b.id));
-        if (sent.length) await this.host.delivered(this, sent).catch(e => this.host.log(`[deliver] delivered hook failed (${this.id}): ${(e as Error).message}`));
-      }
+      const accepted = ds.filter(delivery => ACCEPTED_STATUSES.has(delivery.status)).map(delivery => delivery.id);
+      if (accepted.length) await this.pg.withLock(() => this.projectAccepted(accepted)).catch(() => {
+        this.host.log(`[deliver] accepted inbox projection remains pending (${this.id})`);
+      });
     } catch (e) {
       this.host.log(`[deliver] ${go.length} send(s) wait for the next tick (${this.id}): ${(e as Error).message}`);
       this.retry.push(...go);
@@ -387,7 +473,9 @@ export class NetworkRuntime {
     const rows = ds.filter(d => d.status !== this.adapter.storedStatus && (!only || only.has(d.id)));
     if (!rows.length) return;
     await this.scoped(async tx => {
-      for (const d of rows) await tx`update network.messages set status = ${d.status} where app_id = ${this.app.id} and id = ${d.id} and direction = 'outbound'`;
+      for (const d of rows) await tx`update network.messages set status = ${d.status},
+        accepted_at = case when ${ACCEPTED_STATUSES.has(d.status)} then coalesce(accepted_at, ${new Date(d.receipt?.acceptedAt ?? d.acceptedAt ?? this.clock.now())}) else accepted_at end
+        where app_id = ${this.app.id} and id = ${d.id} and direction = 'outbound'`;
     });
   }
 
@@ -399,6 +487,8 @@ export class NetworkRuntime {
     if (this.retry.length) this.committed.unshift(...this.retry.splice(0));
     await this.deliver();
     await this.storeStatuses(await this.adapter.flush());
+    await this.reconcileUnknown();
+    await this.pg.withLock(() => this.projectAccepted());
     return ran;
   }
 

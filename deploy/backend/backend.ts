@@ -14,6 +14,7 @@
 // before the public API or the MCP server sees the request: a verified request gets Host = the signed
 // site host (which picks the app) and keeps the signed visitor IP for the rate limits; any other
 // request loses every proxy and forwarding header, so a client can never pick either one.
+import { TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH } from "../../packages/plugin-network/src/backend/contract.ts";
 import { appForHost, DEFAULT_HOST_MAP, isAppId, type AppId } from "../../packages/platform/src/apps.ts";
 import { requirePlatformEnv, type Env, type PlatformEnv } from "../../packages/platform/src/env.ts";
 import { PROXY_HEADERS, verifyProxyHeaders } from "../../packages/platform/src/proxy.ts";
@@ -44,7 +45,7 @@ export interface BackendConfig {
   build: string;
   migrateOnBoot: boolean;
   /** "dry-run" unless NETWORK_CHANNEL=blooio with BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1 (each app also needs its own flag). */
-  channel: "dry-run" | "blooio";
+  channel: "dry-run" | "blooio" | "eliza_cloud";
   shutdownGraceMs: number;
   tickMs: number;
   warnings: string[];
@@ -102,11 +103,12 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
     hostMap[h] = a;
   }
 
-  const blooioAsked = e.NETWORK_CHANNEL === "blooio" && !argv.includes("--dry-run");
+  const requested = (e.NETWORK_CHANNEL === "blooio" || e.NETWORK_CHANNEL === "eliza_cloud") && !argv.includes("--dry-run") ? e.NETWORK_CHANNEL : undefined;
   // The Blooio adapter is built only when the global flags are on; each app's own flag is checked again per send.
   // The same global check as liveSendAllowed(env, "ntwrk") in packages/network/service/channel.ts.
-  const channel = blooioAsked && e.BLOOIO_ALLOW_SEND === "1" && e.NTWRK_LIVE_APPROVED === "1" ? "blooio" : "dry-run";
-  if (blooioAsked && channel === "dry-run") warnings.push("NETWORK_CHANNEL=blooio without BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1: sends stay dry-run");
+  const channel = requested && e.BLOOIO_ALLOW_SEND === "1" && e.NTWRK_LIVE_APPROVED === "1" ? requested : "dry-run";
+  if (requested && channel === "dry-run") warnings.push(`NETWORK_CHANNEL=${requested} without BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1: sends stay dry-run`);
+  if (channel === "eliza_cloud" && (!e.NETWORK_CLOUD_DELIVERY_ORIGIN || !e.SERVICE_TURN_SECRET || e.SERVICE_TURN_SECRET.length < 32)) throw new Error("Cloud delivery needs NETWORK_CLOUD_DELIVERY_ORIGIN and a dedicated SERVICE_TURN_SECRET");
   if (channel === "blooio" && (!e.BLOOIO_API_KEY || !(e.BLOOIO_FROM || e.BLOOIO_FROM_NUMBER))) throw new Error("live sends need BLOOIO_API_KEY and BLOOIO_FROM");
   if (!e.NETWORK_SERVICE_TOKENS) warnings.push("NETWORK_SERVICE_TOKENS is not set: every staff route answers 401");
   if (!e.BLOOIO_WEBHOOK_SECRET) warnings.push("BLOOIO_WEBHOOK_SECRET is not set: the shared-line webhook answers 503");
@@ -278,6 +280,8 @@ export function createBackend(d: BackendDeps) {
         // Deployed, only a request a site router signed may name a site (audit: a direct request with
         // Host: slop.date was served as slop.date, and every such request shared one socket IP).
         res = c.deployed && !n.edge ? json(421, { ok: false, error: "edge_required" }) : await track(svc.publicFetch(n.req, server));
+      } else if ([TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH].includes(path)) {
+        res = await track(svc.fetch(req));
       } else if (path === "/webhooks/blooio" || path.startsWith("/webhooks/blooio/")) {
         res = await track(svc.fetch(req));
       } else if (MCP_PATH.test(path)) {

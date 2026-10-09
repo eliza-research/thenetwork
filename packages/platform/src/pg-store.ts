@@ -292,6 +292,7 @@ export class PgPeopleStore implements PeopleStore {
       }
       await tx`delete from platform.phone_identities where e164 = ${e164}`;
       await tx`delete from platform.pending_texts where phone_hash = ${phoneHash}`;
+      await tx`select platform.scrub_service_turns(array(select id from platform.service_turns where sender_hash = ${phoneHash}))`;
     });
   }
 }

@@ -15,6 +15,7 @@ import { resolveSenderLine } from "../../blooio/src/line.ts";
 import { assertBootConfig } from "../../platform/src/env.ts";
 import { BlooioAdapter, liveFlag, liveSendAllowed } from "./channel.ts";
 import { serveService, startTicks } from "./serve.ts";
+import { CloudChannelAdapter } from "./cloud-channel.ts";
 import { NetworkService, webhookSecretsFromEnv } from "./service.ts";
 
 function arg(name: string): string | undefined {
@@ -33,17 +34,20 @@ async function main() {
   if (!url) throw new Error("set NETWORK_DATABASE_URL (or DATABASE_URL) to the Postgres with the network and platform schemas (bun run db:migrate)");
   const clock = new RealClock();
   const blooio = !dryRun && process.env.NETWORK_CHANNEL === "blooio";
+  const cloud = !dryRun && process.env.NETWORK_CHANNEL === "eliza_cloud";
   const host = arg("--host") ?? process.env.NETWORK_SERVICE_HOST ?? "127.0.0.1";
   const local = host === "127.0.0.1" || host === "localhost";
   const svc = await NetworkService.fromDatabase({
     url, clock, instance: process.env.NETWORK_SERVICE_INSTANCE ?? `${process.pid}`,
     tokens: process.env.NETWORK_SERVICE_TOKENS, consoleToken: process.env.NETWORK_SERVICE_CONSOLE_TOKEN, webhookSecret: process.env.BLOOIO_WEBHOOK_SECRET, webhookSecrets: webhookSecretsFromEnv(),
     agentToken: process.env.NETWORK_SERVICE_AGENT_TOKEN,
+    serviceTurnSecret: process.env.SERVICE_TURN_SECRET,
     auditUrl: process.env.NETWORK_SERVICE_AUDIT_DATABASE_URL,
     network: { seed: Number(process.env.NETWORK_SEED ?? 1) },
     // The dev site proxy (scripts/sites-dev.ts) names the site in X-Forwarded-Host. Trust it only on a local, non-production bind.
     publicApi: { trustForwardedHost: local && env === "dev" },
-    adapter: blooio ? (net, rt) => {
+    adapter: blooio || cloud ? (net, rt) => {
+      if (cloud) return new CloudChannelAdapter({net, clock, memberOf: rt.memberOf, app: rt.app.id, city: rt.city, env: process.env, origin: process.env.NETWORK_CLOUD_DELIVERY_ORIGIN ?? "", secret: process.env.SERVICE_TURN_SECRET ?? ""});
       const key = process.env.BLOOIO_API_KEY;
       if (!key) throw new Error("NETWORK_CHANNEL=blooio needs BLOOIO_API_KEY");
       const from = resolveSenderLine();
@@ -52,7 +56,7 @@ async function main() {
   });
   await svc.start();
   for (const rt of svc.runtimes.values()) {
-    const mode = blooio ? (liveSendAllowed(process.env, rt.app.id) ? "blooio LIVE" : `blooio (refusing: BLOOIO_ALLOW_SEND=1, NTWRK_LIVE_APPROVED=1${rt.app.id === "ntwrk" ? "" : ` and ${liveFlag(rt.app.id)}=1`} are needed)`) : "dry-run";
+    const mode = blooio || cloud ? (liveSendAllowed(process.env, rt.app.id) ? `${rt.adapter.name} LIVE` : `${rt.adapter.name} (refusing: BLOOIO_ALLOW_SEND=1, NTWRK_LIVE_APPROVED=1${rt.app.id === "ntwrk" ? "" : ` and ${liveFlag(rt.app.id)}=1`} are needed)`) : "dry-run";
     console.log(`network ${rt.id}: sends ${mode}, review "human", matching ${rt.matchingAllowed ? "allowed (the admin switch decides)" : "not allowed (platform.networks)"}`);
   }
   if (!process.env.NETWORK_SERVICE_TOKENS) console.warn("NETWORK_SERVICE_TOKENS is not set: every staff route answers 401");

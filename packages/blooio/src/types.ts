@@ -4,6 +4,9 @@
 /** Minimal clock contract; structurally compatible with @thenetwork/core Clock/SimClock. */
 export type { Clock } from "../../core/src/clock.ts";
 
+/** Queue-owned message classification used by transport policy. */
+export type MessageKind = "reply" | "compliance" | "proactive" | "transactional";
+
 export type ChannelKind = "blooio" | "sim" | "twilio";
 export type Transport = "imessage" | "sms" | "rcs" | "pending" | "unknown" | "sim";
 
@@ -93,9 +96,13 @@ export interface SendRequest {
   mediaUrls?: string[];
   /** Same key => provider will not send twice (Blooio honours Idempotency-Key on sends). */
   idempotencyKey: string;
+  /** Queue-owned classification and source key; never supplied by a model. */
+  context?: { idempotencyKey: string; kind: MessageKind };
 }
 
 export interface SendReceipt {
+  /** Verified original provider acceptance time, including receipt recovery. */
+  acceptedAt?: number;
   providerMessageId: string;
   chatId?: string;
   status: DeliveryStatus;
@@ -112,7 +119,7 @@ export interface SendReceipt {
  * - invalid: our request is wrong (400/404/409/422). Do not retry.
  * - auth: 401/403 credential problems.
  */
-export type FailureClass = "retryable" | "await_recipient" | "blocked" | "invalid" | "auth";
+export type FailureClass = "retryable" | "await_recipient" | "blocked" | "invalid" | "auth" | "unknown";
 
 export class ChannelSendError extends Error {
   constructor(

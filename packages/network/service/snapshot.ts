@@ -3,6 +3,7 @@
 // production service (service.ts) and the Observatory's shadow engine runs (observatory
 // src/sources/real.ts) use this one builder, so both see the same members. It never reads
 // network.channel_identities (phones and emails).
+import { effectiveParticipation, participationWindow } from "./participation.ts";
 import type { SQL } from "bun";
 import { DAY, type Edge, type EdgeType, type Facet, type Intent, type Member, type Presence, type Proposal, type WorldSnapshot } from "@thenetwork/core";
 
@@ -70,7 +71,7 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
     now,
     // The account status rides along (the Network reads it): a paused or restricted account is never matched or contacted.
     members: (members as any[]).filter(r => keep(r.id)).map((r): Member & { accountStatus: string } => ({
-      id: r.id, name: r.name, homeCity: r.home_city, state: r.opted_out ? "paused" : r.participation_state, prefs: r.prefs, accountStatus: r.account_status,
+      id: r.id, name: r.name, homeCity: r.home_city, state: r.opted_out ? "paused" : effectiveParticipation(r.participation_state, participationWindow(r.participation_window), now), prefs: r.prefs, accountStatus: r.account_status,
       // A missing age stays missing (undefined), never 0: 0 is a valid age under 13, and the Network
       // would decline the member and delete their data. Missing means unknown: treated as a minor and asked (network.md 6.3).
       ...(r.invited_by ? { invitedBy: r.invited_by } : {}), joinedAt: ms(r.joined_at) ?? 0, age: r.age ?? (undefined as unknown as number), unansweredProactive: r.unanswered_proactive,
