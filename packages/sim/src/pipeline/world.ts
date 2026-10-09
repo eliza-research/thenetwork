@@ -189,7 +189,8 @@ export class PipelineWorld {
     const r = this.rt(app);
     await this.svc.sql`update platform.networks set matching_enabled = true where id = ${r.id}`;
     r.matchingAllowed = true;
-    const res = await this.svc.setMatching(STAFF, true, r);
+    // A few test members and no shadow days: below the launch gate (PRD 37.3), so an admin override with its reason.
+    const res = await this.svc.setMatching(STAFF, true, r, { override: "pipeline world: a few test members, no shadow days" });
     if (!res.ok) throw new Error(`matching on ${r.id}: ${res.reason}`);
   }
   /** Approve every item in a network's review queue, as a human reviewer does (the reviewer of record is STAFF). */

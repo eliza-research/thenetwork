@@ -91,7 +91,9 @@ function oppState(o: NetworkState["opps"][number]): string {
     default: return o.closedFrom === "scheduled" ? "CANCELLED" : "SKIPPED";
   }
 }
-const SOURCE: Record<string, string> = { engine: "engine", request: "member", plans: "member", second_encounter: "network", newcomer_welcome: "network", player: "player" };
+const SOURCE: Record<string, string> = { engine: "engine", request: "member", plans: "member", second_encounter: "network", newcomer_welcome: "network", player: "player", human_composed: "reviewer" };
+/** review_items columns added by migration 0017 (shadow labels and blind second reviews). A database without them gets the rows without them. */
+export const SHADOW_REVIEW_COLUMNS = ["shadow", "second_status", "second_decision", "second_reviewer", "second_reason", "second_decided_at"] as const;
 
 /** A participant's status in the console's words (observatory ParticipantStatus). */
 function partStatus(o: NetworkState["opps"][number], s: string | undefined, id: string): string {
@@ -123,6 +125,8 @@ export function consoleRows(state: NetworkState, savedAt = state.savedAt, city =
       opportunity_id: o.id, queued_at: date(r.queuedAt), deadline: date(r.deadline), decision: r.decision ?? null,
       reason: r.reason && REVIEW_REASONS.has(r.reason) ? r.reason : null, note: r.note ?? null, reviewer: r.reviewer ?? null, decided_at: date(r.decidedAt),
       origin: o.origin, seconds_spent: r.secondsSpent ?? null, edits: r.edits ?? null, rerolls: r.rerolls?.length ?? 0, invalidated: r.invalidated ?? null,
+      shadow: !!o.shadow, second_status: r.second?.status ?? null, second_decision: r.second?.decision ?? null, second_reviewer: r.second?.reviewer ?? null,
+      second_reason: r.second?.reason && REVIEW_REASONS.has(r.second.reason) ? r.second.reason : null, second_decided_at: date(r.second?.decidedAt),
     });
   }
   const requests: Row[] = state.requests.map(q => ({
@@ -173,8 +177,15 @@ export class PgStore implements NetworkStore {
    * (the production service writes the messages, events and edges of the unit of work there), so the
    * state and what it sent are committed together or not at all.
    */
+  /** Does network.review_items have the 0017 columns? Checked once per store. */
+  private shadowCols?: Promise<boolean>;
+
   async save(state: NetworkState, also?: (tx: SQL) => Promise<void>): Promise<void> {
     const rows = consoleRows(state, state.savedAt, this.city);
+    this.shadowCols ??= this.sql`select count(*)::int as n from information_schema.columns where table_schema = 'network' and table_name = 'review_items' and column_name = 'second_status'`
+      .then(r => (r[0]?.n ?? 0) > 0, () => { this.shadowCols = undefined; return false; });
+    if (!(await this.shadowCols)) for (const r of rows.review_items) for (const k of SHADOW_REVIEW_COLUMNS) delete r[k];
+    const upd = await this.shadowCols;
     await this.sql.begin(async tx => {
       await tx`select set_config('app.app_id', ${this.app}, true)`;
       // What the last save held, so rows the state dropped are deleted (and only rows this store wrote).
@@ -204,10 +215,18 @@ export class PgStore implements NetworkStore {
         on conflict (id) do update set state = excluded.state, objective = excluded.objective, explanations = excluded.explanations, meeting_at = excluded.meeting_at,
           reason = excluded.reason, updated_at = excluded.updated_at`;
       for (let i = 0; i < parts.length; i += 500) await tx`insert into network.participations ${tx(parts.slice(i, i + 500))}`;
-      for (let i = 0; i < rows.review_items.length; i += 500) await tx`insert into network.review_items ${tx(rows.review_items.slice(i, i + 500))}
-        on conflict (opportunity_id) do update set deadline = excluded.deadline, decision = excluded.decision, reason = excluded.reason, note = excluded.note,
-          reviewer = excluded.reviewer, decided_at = excluded.decided_at, origin = excluded.origin, seconds_spent = excluded.seconds_spent, edits = excluded.edits,
-          rerolls = excluded.rerolls, invalidated = excluded.invalidated`;
+      for (let i = 0; i < rows.review_items.length; i += 500) {
+        const chunk = rows.review_items.slice(i, i + 500);
+        if (upd) await tx`insert into network.review_items ${tx(chunk)}
+          on conflict (opportunity_id) do update set deadline = excluded.deadline, decision = excluded.decision, reason = excluded.reason, note = excluded.note,
+            reviewer = excluded.reviewer, decided_at = excluded.decided_at, origin = excluded.origin, seconds_spent = excluded.seconds_spent, edits = excluded.edits,
+            rerolls = excluded.rerolls, invalidated = excluded.invalidated, shadow = excluded.shadow, second_status = excluded.second_status,
+            second_decision = excluded.second_decision, second_reviewer = excluded.second_reviewer, second_reason = excluded.second_reason, second_decided_at = excluded.second_decided_at`;
+        else await tx`insert into network.review_items ${tx(chunk)}
+          on conflict (opportunity_id) do update set deadline = excluded.deadline, decision = excluded.decision, reason = excluded.reason, note = excluded.note,
+            reviewer = excluded.reviewer, decided_at = excluded.decided_at, origin = excluded.origin, seconds_spent = excluded.seconds_spent, edits = excluded.edits,
+            rerolls = excluded.rerolls, invalidated = excluded.invalidated`;
+      }
       for (let i = 0; i < rows.requests.length; i += 500) await tx`insert into network.requests ${tx(rows.requests.slice(i, i + 500))}
         on conflict (id) do update set outcome = excluded.outcome, tries = excluded.tries, opportunity_id = excluded.opportunity_id,
           fulfilled_at = excluded.fulfilled_at, updated_at = excluded.updated_at`;

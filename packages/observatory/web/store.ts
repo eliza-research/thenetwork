@@ -167,11 +167,12 @@ class AuthError extends Error {}
 /** A detail fetch: the data, or the HTTP status and error (403 = this role cannot open it). */
 export type Fetched<T> = { data: T; status: 200; error?: undefined } | { data?: undefined; status: number; error: string };
 /** Review edits and re-rolls (PRD 32.8). */
-export interface DecideOpts { reason?: ReviewReason; note?: string; explanations?: Record<string, string>; objective?: string; swapOut?: string }
+export interface DecideOpts { reason?: ReviewReason; note?: string; explanations?: Record<string, string>; objective?: string; probes?: Record<string, string>; swapOut?: string }
 /** Time on one review item counts at most this long (a card left open is not review work). */
 const REVIEW_SECONDS_CAP = 30 * 60;
 /** Review codes for an action that was refused before anything was recorded (the item still waits). */
-const REFUSED = new Set(["in_flight", "not_in_review", "note_required", "participant_minor", "participant_declined", "matching_paused", "nothing_to_edit", "not_a_participant", "edit_leak", "cannot_swap", "unknown_decision", "unknown_reason", "forbidden", ""]);
+const REFUSED = new Set(["in_flight", "not_in_review", "note_required", "participant_minor", "participant_declined", "matching_paused", "nothing_to_edit", "not_a_participant", "edit_leak", "cannot_swap", "unknown_decision", "unknown_reason", "forbidden",
+  "appearance_leak", "no_probe_hook", "shadow_label_only", "same_reviewer", "not_applicable", ""]);
 /**
  * Reads #token= once (the server prints the page URL with the token in the fragment, which the browser
  * never sends to a server or in a Referer), then removes it from the address bar and the history entry;
@@ -750,8 +751,9 @@ class ObsStore {
    */
   reviewPending(): Opp[] {
     const oppFocus = this.ui.focus?.kind === "opportunity";
+    // Items in review, and blind second reviews (decided by someone else; the first decision is not shown).
     return [...this.opps.values()]
-      .filter(o => o.state === "IN_REVIEW" && this.matchOpp(o, { range: true, stateGroup: true }) && (oppFocus || this.focusOpp(o)))
+      .filter(o => (o.state === "IN_REVIEW" || o.review?.second?.status === "pending") && this.matchOpp(o, { range: true, stateGroup: true }) && (oppFocus || this.focusOpp(o)))
       .sort((a, b) => (a.review?.deadline ?? Infinity) - (b.review?.deadline ?? Infinity));
   }
   /** Review decisions (approve, reject, expired) in the range, newest first. */

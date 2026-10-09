@@ -227,7 +227,8 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     expect(net.review(a!.oppId, "approve", { reviewer: "sim" })).toBe(true);
     expect(net.review(bb!.oppId, "reject", { reason: "weak_reason", reviewer: "sim" })).toBe(true);
     expect(net.review(bb!.oppId, "approve")).toBe(false);
-    const left = net.reviewQueue().map(q => q.oppId);
+    // Blind second reviews (doubleReviewShare) of the decided items are not waiting for a first decision.
+    const left = net.reviewQueue().filter(q => !q.second).map(q => q.oppId);
     await w.advanceTo(start + 2 * DAY + 30 * MINUTE);
     const probes = logs(records, "probe_sent");
     expect(probes.filter(l => l.detail.oppId === a!.oppId).length).toBeGreaterThan(0);

@@ -155,7 +155,7 @@ export async function authenticateStaff(req: Request, o: StaffAuthOptions): Prom
     if (header && header !== v.email) return { status: 401, error: "Cloudflare Access email does not match the token" };
     const grants = ssoGrants(v.email, o);
     if (!grants.length) return { status: 403, error: "no staff role for this account" };
-    return { user: { ...staffUser(v.email, grants, "sso"), expiresAt: v.exp } };
+    return { user: { ...staffUser(v.email, grants, "sso"), expiresAt: v.exp, issuedAt: v.iat } };
   }
   return authenticate(req, o);
 }
@@ -308,7 +308,7 @@ export class AccessVerifier {
     this.staleWarned = false;
   }
 
-  async verify(token: string): Promise<{ email: string; exp: number } | { error: string }> {
+  async verify(token: string): Promise<{ email: string; exp: number; iat: number } | { error: string }> {
     const parts = token.split(".");
     if (parts.length !== 3) return { error: "malformed token" };
     let header: { alg?: string; kid?: string }, claims: Record<string, unknown>;
@@ -329,7 +329,7 @@ export class AccessVerifier {
     if (nbf !== undefined && nbf > now + ACCESS_SKEW_MS) return { error: "not valid yet" };
     // A service token (no email) is not a person: staff sign in as themselves (runbook-real 7.3).
     if (typeof claims.email !== "string" || !claims.email.includes("@")) return { error: "no email in the token" };
-    return { email: claims.email.trim().toLowerCase(), exp };
+    return { email: claims.email.trim().toLowerCase(), exp, iat };
   }
 }
 
@@ -418,7 +418,9 @@ export class PgAudit implements AuditSink {
   async close() { await this.sql.close(); }
 }
 
-export function createAudit(o: { url?: string; dir?: string } = {}): AuditSink {
+/** The audit sink: Postgres (network.staff_audit) when a URL is given, else a local JSONL file. `production`: Postgres or nothing (a file on one machine is not an audit log). */
+export function createAudit(o: { url?: string; dir?: string; production?: boolean } = {}): AuditSink {
   const url = o.url ?? process.env.OBSERVATORY_AUDIT_DATABASE_URL;
+  if (!url && o.production) throw new Error("in production the console's audit log must be Postgres: set OBSERVATORY_AUDIT_DATABASE_URL");
   return url ? new PgAudit(url) : new FileAudit(o.dir);
 }

@@ -125,6 +125,13 @@ export function lookingFor(text: string): AppId[] {
   return out;
 }
 
+/**
+ * Review SLA per app in hours (founder decisions 2026-10-08): slop 6 h (a dating introduction goes
+ * stale fast), peon 24 h (hiring reviewers check a role), the others 12 h. One source for the
+ * Network's review deadline (service/packs.ts appWiring) and the console's SLA count (observatory apps.ts).
+ */
+export const REVIEW_SLA_HOURS: Readonly<Record<AppId, number>> = { ntwrk: 12, slop: 6, peon: 24, friends: 12 };
+
 /** The network id for an app and a city: network.network_state.id and platform.networks.id. */
 export const networkId = (app: AppId, city: string) => `${app}:${city}`;
 

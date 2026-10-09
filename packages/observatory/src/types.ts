@@ -171,6 +171,15 @@ export interface ReviewInfo {
   rerolls?: number;
   /** Approved, but a gate failed on the re-check (e.g. "busy_elsewhere", "held", "matching_paused"): nobody was contacted. */
   invalidated?: string;
+  /** A shadow item (the Network's shadow mode): approve or reject is a label only, and nobody is contacted. */
+  shadow?: boolean;
+  /** A blind second review: waiting, or done (the second decision, stored without effect). */
+  second?: { status: "pending" | "done"; decision?: "approve" | "reject"; reviewer?: string; decidedAt?: number };
+  /**
+   * What the app's pack would send (real mode with the Network service; game mode): the probe per
+   * participant and the booked-plan reveal with placeholders. `edited`: participants whose probe a reviewer wrote.
+   */
+  drafts?: { probe: Record<MemberId, string>; reveal?: Record<MemberId, string>; edited?: MemberId[] };
 }
 /** A reviewer's action (PRD 32.8). "edit" changes texts, then approves. "reroll" swaps a participant and keeps it waiting. */
 export type ReviewDecision = "approve" | "reject" | "edit" | "reroll";
@@ -238,7 +247,7 @@ export interface HealthAlert {
 
 export interface ScoreMetric {
   key: "worthwhile_interruption" | "opt_in" | "completion" | "repeat_edges" | "first_value_14d" | "attention_burden"
-    | "reviewer_minutes" | "opt_outs" | "invite_rate" | "minors_contacted" | "leaks";
+    | "reviewer_minutes" | "opt_outs" | "invite_rate" | "minors_contacted" | "leaks" | "shadow_precision" | "review_agreement";
   label: string;
   /** null when there is nothing to measure yet. */
   value: number | null;
@@ -440,6 +449,8 @@ export interface StaffUser {
   via: "token" | "sso";
   /** SSO: when the Cloudflare Access token expires (ms). Sockets close then (they are re-checked on a timer too). */
   expiresAt?: number;
+  /** SSO: when the Cloudflare Access token was issued (its iat, ms): a PII reveal or a photo read needs a recent sign-in. */
+  issuedAt?: number;
 }
 
 export interface AuditEntry {
@@ -528,12 +539,22 @@ export interface ConfigChange {
   /** Sim time (game) or wall time (real). */
   at: number;
   actor: string;
-  key: "matching" | "review_mode";
+  key: "matching" | "review_mode" | "shadow";
   from: string | boolean | null;
   to: string | boolean;
 }
+/** The launch gate for turning matching on (PRD 37.3), as the Network service counts it. */
+export interface LaunchGate {
+  committedAdults: number; needAdults: number;
+  /** Days in the last 14 with at least one shadow label, and the labels in them. */
+  shadowDays: number; needDays: number; shadowLabels: number;
+  ok: boolean; shadowEnabled: boolean;
+}
+
 export interface ConfigInfo {
   matchingEnabled: boolean;
+  /** Real mode with the Network service: the launch gate counts and the shadow switch. */
+  launchGate?: LaunchGate | { error: string };
   reviewMode: "human" | "auto" | null;
   /** Network options in force (read-only display). */
   network: Record<string, number | boolean | string | null>;
@@ -617,12 +638,18 @@ export type ControlCommand =
     explanations?: Record<MemberId, string>;
     /** "edit": a new objective (leak-checked). */
     objective?: string;
+    /** "edit": a new probe text per participant (apps with a probe hook; leak-checked, and on slop checked for appearance words). */
+    probes?: Record<MemberId, string>;
     /** "reroll": the participant to swap for an alternate. */
     swapOut?: MemberId;
   }
+  /** A reviewer's own opportunity (PRD 35.2): it waits for review like any other item. */
+  | { type: "compose"; participants: MemberId[]; objective: string; category?: Category; explanations?: Record<MemberId, string>; probes?: Record<MemberId, string> }
+  /** Admin only: shadow mode (the engine runs daily while matching is off; its proposals wait as labels). */
+  | { type: "shadow"; on: boolean }
   | { type: "review_mode"; mode: "human" | "auto" }
-  /** Admin only: the "proactive matching on in NYC" switch. */
-  | { type: "matching"; on: boolean }
+  /** Admin only: the "proactive matching on in NYC" switch. Turning it on passes the launch gate, or an override with a typed reason (logged). */
+  | { type: "matching"; on: boolean; override?: string }
   | { type: "refresh" } | { type: "shadow_run"; city?: City };
 
 export interface ControlResult {

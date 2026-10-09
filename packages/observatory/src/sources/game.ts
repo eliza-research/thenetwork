@@ -335,7 +335,7 @@ export class GameSource implements DataSource {
     const judge = this.store.judge;
     const last = this.store.runs.filter(r => !r.shadow).at(-1);
     const alerts = healthAlerts({
-      now, start: this.start, reviewOpen: n?.reviewQueue() ?? [], sla: { app: this.app, hours: slaHours()[this.app] }, matchingLocked: !matchingAllowed(this.app), reviewExpired: this.recent.filter(x => x.key === "review_expired").length,
+      now, start: this.start, reviewOpen: n?.reviewQueue().filter(i => !i.shadow && !i.second) ?? [], sla: { app: this.app, hours: slaHours()[this.app] }, matchingLocked: !matchingAllowed(this.app), reviewExpired: this.recent.filter(x => x.key === "review_expired").length,
       deferred: n ? n.exportState().deferred.length : null, refusals, guardBlocked: this.recent.filter(x => x.key === "guard_blocked").length,
       lastEngineRun: last?.at, expectEngine: !!n || this.opts.engine === "engine-v1", matchingEnabled: n?.matchingEnabled() ?? true,
       invariants: judge?.invariants ?? null, canaryLeaks: judge?.canaryLeaks ?? null, minorContacts: judge?.minorContacts ?? null,
@@ -696,7 +696,7 @@ export class GameSource implements DataSource {
           if (why) return { ok: false, error: REVIEW_BLOCK_ERRORS[why] ?? why, code: why };
           const opts: ReviewOptions = { reason: cmd.reason, note, reviewer: actor ?? "player" };
           if (typeof cmd.secondsSpent === "number") opts.secondsSpent = cmd.secondsSpent;
-          if (cmd.decision === "edit") { opts.explanations = cmd.explanations; opts.objective = cmd.objective; }
+          if (cmd.decision === "edit") { opts.explanations = cmd.explanations; opts.objective = cmd.objective; if (cmd.probes) opts.probes = cmd.probes; }
           if (cmd.decision === "reroll" && cmd.swapOut) opts.swapOut = cmd.swapOut;
           const r = this.consent.decide(cmd.oppId, cmd.decision, opts);
           await this.settle();
@@ -722,6 +722,23 @@ export class GameSource implements DataSource {
           const from = this.consent.matchingEnabled();
           this.consent.setMatchingEnabled(cmd.on, actor ?? "player");
           if (from !== cmd.on) this.recordConfig(actor ?? "player", "matching", from, cmd.on);
+          await this.settle();
+          break;
+        }
+        case "compose": {
+          // A reviewer's own opportunity: the Network's filters run, then it waits for review (approve it in the Review tab).
+          if (!this.consent) return { ok: false, error: "composing needs the consent Network", code: "no_consent_network" };
+          if (!Array.isArray(cmd.participants) || typeof cmd.objective !== "string") return { ok: false, error: "participants and objective are required", code: "bad_compose" };
+          const r = this.consent.compose({ participants: cmd.participants, objective: cmd.objective, category: cmd.category, explanations: cmd.explanations, probes: cmd.probes, reviewer: actor ?? "player" });
+          await this.settle();
+          this.push();
+          return r.ok ? { ok: true, data: { oppId: r.oppId } } : { ok: false, error: `not composed: ${r.reason.replace(/_/g, " ")}`, code: r.reason };
+        }
+        case "shadow": {
+          if (!this.consent) return { ok: false, error: "shadow mode needs the consent Network", code: "no_consent_network" };
+          const from = this.consent.shadowEnabled();
+          this.consent.setShadowEnabled(!!cmd.on, actor ?? "player");
+          if (from !== !!cmd.on) this.recordConfig(actor ?? "player", "shadow", from, !!cmd.on);
           await this.settle();
           break;
         }
@@ -790,7 +807,7 @@ export class GameSource implements DataSource {
 }
 
 /** Commands that change the world or the Network: they wait for a running step (idle()). Clock controls and reads do not. */
-const WAITS_FOR_WORLD = new Set<ControlCommand["type"]>(["review", "review_mode", "matching", "propose", "say", "god", "check_scenario"]);
+const WAITS_FOR_WORLD = new Set<ControlCommand["type"]>(["review", "review_mode", "matching", "shadow", "compose", "propose", "say", "god", "check_scenario"]);
 
 /** Why an item is no longer waiting for review, from what the console shows now. */
 function notInReview(o: ObsOpportunity | undefined): string {

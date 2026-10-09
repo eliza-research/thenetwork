@@ -42,7 +42,7 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { SQL } from "bun";
 import { DAY, LeakGuard, RealClock, type Clock, type MemberId } from "@thenetwork/core";
-import type { ActionResult, NetworkOptions, ReviewDecision, ReviewOptions } from "../src/network.ts";
+import type { ActionResult, ComposeInput, NetworkOptions, ReviewDecision, ReviewOptions } from "../src/network.ts";
 import { brandOf, copy as ntwrkCopy, copyFor, type Copy } from "../src/copy.ts";
 import { isMinor } from "@thenetwork/core";
 import { ageAnswer, agesStated } from "../src/classify.ts";
@@ -116,6 +116,13 @@ const BIAS_MONITOR: StaffUser = { id: "system:bias-monitor", roles: ["admin"], g
 const DECISIONS = new Set(["approve", "reject", "edit", "reroll"]);
 /** A reviewer's time on one item is clamped to an hour (audit observatory-10). */
 const MAX_REVIEW_SECONDS = 3600;
+/**
+ * The launch gate for turning matching on (PRD 37.3): at least this many committed adults (active,
+ * 18+, the app's hard fields known), and this many days of shadow, each with at least one labelled
+ * shadow item. An admin may override it with a typed reason of at least LAUNCH_OVERRIDE_MIN characters (audited).
+ */
+export const LAUNCH_GATE = { adults: 40, days: 14 } as const;
+export const LAUNCH_OVERRIDE_MIN = 10;
 
 /** A person was banned (by phone or by person): their verified phones now. */
 export interface BanHookContext { personId: string; e164s: string[]; by: "phone" | "person" }
@@ -1325,15 +1332,22 @@ export class NetworkService implements RuntimeHost {
     return r;
   }
 
-  /** The review queue of a network (default The Network), oldest first, from the newest stored state. */
-  reviewQueue(rt = this.main) { return rt.reviewQueue(); }
+  /** The review queue of a network (default The Network), oldest first, from the newest stored state. `drafts`: with the pack's texts. */
+  reviewQueue(rt = this.main, o: { drafts?: boolean } = {}) { return rt.reviewQueue(o); }
 
   review(user: StaffUser, oppId: string, decision: ReviewDecision, o: Omit<ReviewOptions, "reviewer">, rt = this.main) {
     // The reviewer of record is the signed-in person (reviewerOfRecord), never a body field; time on the item is clamped.
     const secondsSpent = typeof o.secondsSpent === "number" && Number.isFinite(o.secondsSpent) ? Math.min(Math.max(0, o.secondsSpent), MAX_REVIEW_SECONDS) : undefined;
     const opts: ReviewOptions = { ...o, secondsSpent, reviewer: user.id };
-    const detail = { decision, reason: o.reason ?? null, ...(o.swapOut ? { swapOut: o.swapOut } : {}), ...(o.explanations || o.objective ? { edited: [...Object.keys(o.explanations ?? {}).map(k => `explanation:${k}`), ...(o.objective !== undefined ? ["objective"] : [])] } : {}) };
+    const edited = [...Object.keys(o.explanations ?? {}).map(k => `explanation:${k}`), ...(o.objective !== undefined ? ["objective"] : []), ...Object.keys(o.probes ?? {}).map(k => `probe:${k}`)];
+    const detail = { decision, reason: o.reason ?? null, ...(o.swapOut ? { swapOut: o.swapOut } : {}), ...(edited.length ? { edited } : {}) };
     return this.staffAction(rt, user, "review", { type: "opportunity", id: oppId }, detail, n => n.decide(oppId, decision, opts));
+  }
+
+  /** A reviewer's own opportunity (POST /compose): the Network's filters run first, then it waits for review. The texts are not audited, only their count. */
+  compose(user: StaffUser, x: Omit<ComposeInput, "reviewer">, rt = this.main) {
+    const detail = { participants: [...x.participants], category: x.category ?? null, probes: Object.keys(x.probes ?? {}).length, objectiveLength: x.objective.length };
+    return this.staffAction(rt, user, "compose", { type: "opportunity", id: "new" }, detail, n => n.compose({ ...x, reviewer: user.id }));
   }
 
   liftHold(user: StaffUser, memberId: MemberId, note?: string, rt = this.main) {
@@ -1728,14 +1742,54 @@ export class NetworkService implements RuntimeHost {
     return r;
   }
 
-  /** The matching switch of one network. A network whose registry row does not allow matching (slop and peon until their packs ship) refuses "on". */
-  setMatching(user: StaffUser, on: boolean, rt = this.main) {
-    if (on && !rt.matchingAllowed) {
-      // A refused attempt is audited too.
-      return this.audit.write({ actor: user.id, roles: user.roles, action: "config", targetType: "config", targetId: `matching_${rt.id}`, mode: "real", app: rt.app.id, at: this.clock.now(), ok: false, detail: { matching: on, network: rt.id, phase: "refused", reason: "matching_not_allowed" } })
-        .then(() => ({ ok: false, reason: "matching_not_allowed" }) as ActionResult);
+  /**
+   * The launch gate of one network (PRD 37.3), from its newest stored state: committed adults (active,
+   * 18+, no minor signal, not held, the app's hard fields known) and days of shadow labels in the last 14.
+   */
+  async launchGate(rt = this.main) {
+    const now = this.clock.now();
+    return rt.readState(n => {
+      const committedAdults = n.committedAdults(rt.wiring.committed);
+      const sh = n.shadowLabelDays(now, LAUNCH_GATE.days);
+      return {
+        committedAdults, needAdults: LAUNCH_GATE.adults, shadowDays: sh.days, needDays: LAUNCH_GATE.days, shadowLabels: sh.labels,
+        ok: committedAdults >= LAUNCH_GATE.adults && sh.days >= LAUNCH_GATE.days, shadowEnabled: n.shadowEnabled(),
+      };
+    });
+  }
+
+  /**
+   * The matching switch of one network. A network whose registry row does not allow matching (peon
+   * until its pack ships) refuses "on". Turning it on also needs the launch gate (launchGate), unless
+   * an admin overrides it with a typed reason; the override and its reason are audited.
+   */
+  async setMatching(user: StaffUser, on: boolean, rt = this.main, o: { override?: string } = {}): Promise<ActionResult> {
+    const target = { type: "config" as const, id: `matching_${rt.id}` };
+    // A refused attempt is audited too.
+    const refuse = async (reason: string, extra: Row = {}) => {
+      await this.audit.write({ actor: user.id, roles: user.roles, action: "config", targetType: target.type, targetId: target.id, mode: "real", app: rt.app.id, at: this.clock.now(), ok: false, detail: { matching: on, network: rt.id, phase: "refused", reason, ...extra } });
+      return { ok: false, reason } as ActionResult;
+    };
+    if (on && !rt.matchingAllowed) return refuse("matching_not_allowed");
+    const override = o.override?.trim();
+    if (override !== undefined && override.length < LAUNCH_OVERRIDE_MIN) return refuse("override_reason_required");
+    let gate: Row = {};
+    if (on) {
+      const g = await this.launchGate(rt);
+      gate = { committedAdults: g.committedAdults, shadowDays: g.shadowDays, shadowLabels: g.shadowLabels };
+      if (!g.ok && !override) return refuse(g.committedAdults < LAUNCH_GATE.adults ? "launch_gate_adults" : "launch_gate_shadow", gate);
+      if (!g.ok) gate = { ...gate, override: true };
     }
-    return this.staffAction(rt, user, "config", { type: "config", id: `matching_${rt.id}` }, { matching: on }, n => { n.setMatchingEnabled(on, user.id); return { ok: true }; });
+    if (override && on) {
+      // The override's reason goes in the audit row's reason column, before the switch (no row, no switch).
+      await this.audit.write({ actor: user.id, roles: user.roles, action: "config", targetType: target.type, targetId: target.id, mode: "real", app: rt.app.id, at: this.clock.now(), ok: true, reason: override, detail: { matching: on, network: rt.id, phase: "override", ...gate } });
+    }
+    return this.staffAction(rt, user, "config", target, { matching: on, ...gate }, n => { n.setMatchingEnabled(on, user.id); return { ok: true }; });
+  }
+
+  /** Shadow mode of one network (admin): the daily engine run queues shadow items while matching is off. */
+  setShadow(user: StaffUser, on: boolean, rt = this.main) {
+    return this.staffAction(rt, user, "config", { type: "config", id: `shadow_${rt.id}` }, { shadow: on }, n => { n.setShadowEnabled(on, user.id); return { ok: true }; });
   }
 
   /** Health of one network (default The Network), plus a summary of every network the user holds a role for. */
@@ -1789,7 +1843,12 @@ export class NetworkService implements RuntimeHost {
       if (req.method === "GET" && path === "/review") {
         const no = need(["reviewer", "safety"]); if (no) return no;
         await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_review_queue", mode: "real", ok: true, app: rt.app.id });
-        return json({ ok: true, network: rt.id, items: await this.reviewQueue(rt) });
+        // ?drafts=1: each item carries the texts the app's pack would send (the probe and the reveal).
+        return json({ ok: true, network: rt.id, items: await this.reviewQueue(rt, { drafts: url.searchParams.get("drafts") === "1" }) });
+      }
+      if (req.method === "GET" && path === "/launch-gate") {
+        const no = need(["admin"]); if (no) return no;
+        return json({ ok: true, network: rt.id, gate: await this.launchGate(rt) });
       }
       if (path === "/holds") {
         // Numbers on hold (they may have a new owner): staff for every app decide (GET lists, POST decides).
@@ -1865,14 +1924,23 @@ export class NetworkService implements RuntimeHost {
         try { oppId = decodeURIComponent(m[1]!); } catch { return json({ ok: false, error: "invalid_id" }, 400); }
         const b = await body(req);
         if (!b) return json({ ok: false, error: "invalid_json" }, 400);
-        const { decision, reason, note, secondsSpent, explanations, objective, swapOut } = b as Record<string, any>;
+        const { decision, reason, note, secondsSpent, explanations, objective, swapOut, probes } = b as Record<string, any>;
         const str = (v: unknown, max: number) => v === undefined || (typeof v === "string" && v.length <= max);
         if (!DECISIONS.has(decision) || oppId.length > 200 || !str(reason, 64) || !str(note, 2000) || !str(objective, 500) || !str(swapOut, 200)
-          || (secondsSpent !== undefined && typeof secondsSpent !== "number")
-          || (explanations !== undefined && (typeof explanations !== "object" || explanations === null || Array.isArray(explanations) || Object.values(explanations).some(v => typeof v !== "string" || v.length > 500)))) {
+          || (secondsSpent !== undefined && typeof secondsSpent !== "number") || !texts(explanations, 500) || !texts(probes, 600)) {
           return json({ ok: false, error: "invalid_review" }, 400);
         }
-        return result(await this.review(user, oppId, decision, { reason, note, secondsSpent, explanations, objective, swapOut }, rt));
+        return result(await this.review(user, oppId, decision, { reason, note, secondsSpent, explanations, objective, swapOut, probes }, rt));
+      }
+      if (path === "/compose") {
+        // A reviewer's own opportunity: it is queued for review like any other (another reviewer approves it).
+        const no = need(["reviewer"]); if (no) return no;
+        const b = await body(req) as Record<string, any> | undefined;
+        const ok = b && Array.isArray(b.participants) && b.participants.length >= 2 && b.participants.length <= 6 && b.participants.every((x: unknown) => typeof x === "string" && x.length <= 200)
+          && typeof b.objective === "string" && b.objective.trim().length > 0 && b.objective.length <= 300 && (b.category === undefined || (typeof b.category === "string" && b.category.length <= 40))
+          && texts(b.explanations, 500) && texts(b.probes, 600);
+        if (!ok) return json({ ok: false, error: "invalid_compose" }, 400);
+        return result(await this.compose(user, { participants: b!.participants, objective: b!.objective, category: b!.category, explanations: b!.explanations, probes: b!.probes }, rt));
       }
       if (path === "/safety/lift" || path === "/safety/close") {
         const no = need(["safety"]); if (no) return no;
@@ -1950,7 +2018,14 @@ export class NetworkService implements RuntimeHost {
         const no = need(["admin"]); if (no) return no;
         const b = await body(req) as Record<string, any> | undefined;
         if (typeof b?.on !== "boolean") return json({ ok: false, error: "on_required" }, 400);
-        return result(await this.setMatching(user, b.on, rt));
+        if (b.override !== undefined && (typeof b.override !== "string" || b.override.length > 1000)) return json({ ok: false, error: "invalid_override" }, 400);
+        return result(await this.setMatching(user, b.on, rt, { override: b.override }));
+      }
+      if (path === "/shadow") {
+        const no = need(["admin"]); if (no) return no;
+        const b = await body(req) as Record<string, any> | undefined;
+        if (typeof b?.on !== "boolean") return json({ ok: false, error: "on_required" }, 400);
+        return result(await this.setShadow(user, b.on, rt));
       }
       return json({ ok: false, error: "not_found" }, 404);
     } catch (e) {
@@ -2019,6 +2094,8 @@ async function fetchMediaBytes(url: string): Promise<Uint8Array | undefined> {
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 const result = (r: ActionResult) => json(r, r.ok ? 200 : 409);
+/** Absent, or a plain object of strings (member id -> text) each at most `max` long. */
+const texts = (v: unknown, max: number) => v === undefined || (!!v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length <= 6 && Object.values(v).every(x => typeof x === "string" && x.length <= max));
 async function body(req: Request): Promise<unknown> {
   try { const b = await req.json(); return b && typeof b === "object" ? b : undefined; } catch { return undefined; }
 }

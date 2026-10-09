@@ -22,7 +22,7 @@
 //   POST /safety/dismiss { reportId, note }
 //   GET  /members/<id>/photos  (X-Network-Reason: the typed reason) -> { ok, photos: [{ id, url, expiresAt? }] }
 // 409 { reason } is a refusal with the Network's reason; 404 means the service has no such route yet.
-import type { ControlCommand, ControlResult, HealthAlert, MemberPhoto, ReportKind, SafetyAction, SafetyReport } from "../types.ts";
+import type { ControlCommand, ControlResult, HealthAlert, LaunchGate, MemberPhoto, ReportKind, ReviewInfo, SafetyAction, SafetyReport } from "../types.ts";
 import { REVIEW_BLOCK_ERRORS, SAFETY_ERRORS } from "./source.ts";
 
 export interface ServiceConfig {
@@ -42,6 +42,22 @@ export interface ServiceHealth {
   backlog: { review: number; reviewOverdue: number; deferred: number; outboundWaiting: number };
   refusals: { sendRefused: number; guardBlocked: number; channel: Record<string, number> };
 }
+
+/** The Network's refusals of a reviewer's own opportunity, in words. */
+const COMPOSE_ERRORS: Record<string, string> = {
+  participant_minor: "members under 18 (or of unknown age) are never matched", participant_declined: "a participant was declined at join", unknown_member: "unknown member",
+  opted_out: "a participant opted out", held: "a participant is on hold or watch", busy_elsewhere: "a participant is in another open opportunity",
+  over_cap: "a participant is at their message cap this week", not_eligible: "a participant cannot be contacted now (onboarding, away, or waiting on us)",
+  blocked_pair: "two participants blocked each other", edit_leak: "a text would leak a private fact or contact details", appearance_leak: "a text speaks of someone's looks (never on slop)",
+  matching_paused: "proactive matching is off", category_not_allowed: "this app does not use that category", bad_participants: "2 to 6 different members",
+  objective_required: "say what it is for", no_probe_hook: "this app has no probe text to replace", not_a_participant: "a text is for someone not in it",
+};
+/** The launch gate refusals (POST /matching). */
+const MATCHING_ERRORS: Record<string, string> = {
+  launch_gate_adults: "fewer than 40 committed adults: matching stays off unless an admin overrides it with a reason",
+  launch_gate_shadow: "fewer than 14 days of shadow labels: matching stays off unless an admin overrides it with a reason",
+  override_reason_required: "an override needs a reason of at least 10 characters", matching_not_allowed: "this app's network does not allow matching",
+};
 
 /** The service's last tick is late (it ticks every minute): warn after 5 minutes, bad after 15. */
 export const SERVICE_TICK_WARN = 5 * 60_000, SERVICE_TICK_BAD = 15 * 60_000;
@@ -94,10 +110,36 @@ export class ServiceClient {
   }
 
   review(staff: string, cmd: Extract<ControlCommand, { type: "review" }>): Promise<ControlResult> {
-    const { decision, reason, note, explanations, objective, swapOut } = cmd;
+    const { decision, reason, note, explanations, objective, swapOut, probes } = cmd;
     // Time on one item counts at most 30 minutes (a card left open is not review work; audit observatory-10).
     const secondsSpent = cmd.secondsSpent === undefined ? undefined : Math.min(1800, Math.max(0, Number(cmd.secondsSpent) || 0));
-    return this.act(`/review/${encodeURIComponent(cmd.oppId)}`, staff, { decision, reason, note, secondsSpent, explanations, objective, swapOut }, REVIEW_BLOCK_ERRORS);
+    return this.act(`/review/${encodeURIComponent(cmd.oppId)}`, staff, { decision, reason, note, secondsSpent, explanations, objective, swapOut, probes }, REVIEW_BLOCK_ERRORS);
+  }
+
+  /** A reviewer's own opportunity (POST /compose). The Network's filters run there; 409 says which one refused it. */
+  compose(staff: string, cmd: Extract<ControlCommand, { type: "compose" }>): Promise<ControlResult> {
+    const { participants, objective, category, explanations, probes } = cmd;
+    return this.act("/compose", staff, { participants, objective, category, explanations, probes }, COMPOSE_ERRORS);
+  }
+
+  /** The review queue's pack texts and blind second reviews (GET /review?drafts=1), by opportunity id. */
+  async reviewDrafts(): Promise<Map<string, { drafts?: ReviewInfo["drafts"]; second?: boolean; shadow?: boolean }> | { error: string }> {
+    try {
+      const { status, json } = await this.call("GET", "/review?drafts=1");
+      if (status !== 200 || !json.ok || !Array.isArray(json.items)) return { error: String(json.error ?? `HTTP ${status}`) };
+      const out = new Map<string, { drafts?: ReviewInfo["drafts"]; second?: boolean; shadow?: boolean }>();
+      const strs = (v: unknown) => (v && typeof v === "object" ? Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([, x]) => typeof x === "string")) as Record<string, string> : undefined);
+      for (const it of json.items as Record<string, any>[]) {
+        if (typeof it.oppId !== "string") continue;
+        const probe = strs(it.drafts?.probe), reveal = strs(it.drafts?.reveal);
+        const edited = Array.isArray(it.drafts?.edited) ? (it.drafts.edited as unknown[]).filter((x): x is string => typeof x === "string") : undefined;
+        out.set(it.oppId, {
+          ...(probe && Object.keys(probe).length ? { drafts: { probe, ...(reveal && Object.keys(reveal).length ? { reveal } : {}), ...(edited?.length ? { edited } : {}) } } : {}),
+          ...(it.second ? { second: true } : {}), ...(it.shadow ? { shadow: true } : {}),
+        });
+      }
+      return out;
+    } catch (e) { return { error: (e as Error).message }; }
   }
 
   safety(staff: string, a: SafetyAction): Promise<ControlResult> {
@@ -141,7 +183,22 @@ export class ServiceClient {
     return { ok: false, code: String(json.reason ?? "service_error"), error: String(json.error ?? `the Network service answered ${status}`) };
   }
 
-  matching(staff: string, on: boolean): Promise<ControlResult> { return this.act("/matching", staff, { on }, {}); }
+  matching(staff: string, on: boolean, override?: string): Promise<ControlResult> { return this.act("/matching", staff, { on, ...(override ? { override } : {}) }, MATCHING_ERRORS); }
+
+  shadow(staff: string, on: boolean): Promise<ControlResult> { return this.act("/shadow", staff, { on }, {}); }
+
+  /** The launch gate counts (GET /launch-gate). */
+  async launchGate(): Promise<LaunchGate | { error: string }> {
+    try {
+      const { status, json } = await this.call("GET", "/launch-gate");
+      if (status !== 200 || !json.ok || !json.gate) return { error: String(json.error ?? `HTTP ${status}`) };
+      const g = json.gate as Record<string, unknown>, n = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+      return {
+        committedAdults: n(g.committedAdults), needAdults: n(g.needAdults), shadowDays: n(g.shadowDays), needDays: n(g.needDays), shadowLabels: n(g.shadowLabels),
+        ok: g.ok === true, shadowEnabled: g.shadowEnabled === true,
+      };
+    } catch (e) { return { error: (e as Error).message }; }
+  }
 
   async health(): Promise<ServiceHealth | { error: string }> {
     try {

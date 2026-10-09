@@ -264,7 +264,8 @@ describe.skipIf(skip)("photos on the live path", () => {
 
   test("the bias job stores a report and a bias_report event, and pauses matching under 0.8x", async () => {
     const user: StaffUser = { id: "test-admin", roles: ["admin"], grants: [{ role: "admin", app: "*" }], via: "token" };
-    expect((await svc.setMatching(user, true, slop)).ok).toBe(true);
+    // A handful of test members and no shadow days: below the launch gate, so an admin override with a reason.
+    expect((await svc.setMatching(user, true, slop, { override: "photos test: bias job on a small table" })).ok).toBe(true);
     expect(slop.net.matchingEnabled()).toBe(true);
     // A healthy week from the tables (few members: no group is large enough to judge, ratio 1).
     const ok = await svc.biasReport(slop);

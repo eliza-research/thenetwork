@@ -1,5 +1,10 @@
 // Human review queue (PRD 32.8, PRD 35 review module). Every network-composed opportunity waits
 // here before any member is contacted. Cards sort by deadline; the selected card expands.
+// A card shows the texts the app's pack would send (the probe per person, the reveal); an edit
+// replaces a person's probe. SHADOW cards are labels only (matching off, shadow on): approve or reject
+// records the label and nobody is contacted. SECOND cards are blind second reviews of an item someone
+// else decided: the first decision is not shown and the second changes nothing. slop cards never show
+// a score or its components (docs/review-rubric-slop.md). Compose: a reviewer's own opportunity.
 // Keyboard (Review tab open, no input focused): j/k move, a approve, r then 1-8 reject with a
 // reason, e edit what each person is told, s then 1-n re-roll (swap that person), n note, x score,
 // Enter open, Esc leaves the current mode. The time from opening a card to the decision is sent with it.
@@ -19,10 +24,16 @@ function reasonOf(rv: { reason?: string; note?: string }): { reason?: string; no
   return m && store.reasons().some(x => x[0] === m[1]) ? { reason: m[1], note: m[2] || undefined } : { reason: rv.reason, note: rv.note };
 }
 
+/** A blind second review waiting for this console (someone else made the first decision). */
+export const isSecond = (o: Opp) => o.state !== "IN_REVIEW" && o.review?.second?.status === "pending";
+/** slop never shows a score, its components or anything about looks to a reviewer. */
+const noScores = () => store.app === "slop";
+
 /** One line for the review state: countdown while queued, then the decision. */
 export function reviewLine(o: Opp): ReactNode {
   const rv = o.review;
   if (!rv) return null;
+  if (rv.shadow && rv.decision && rv.decision !== "expired") return <span>Shadow label: {rv.decision === "approve" ? "good" : "not good"}{rv.reviewer ? ` · by ${reviewerName(rv.reviewer)}` : ""} · nobody contacted</span>;
   const extra = [
     rv.edits?.length ? "edited" : "",
     rv.rerolls ? `re-rolled ${rv.rerolls}×` : "",
@@ -78,22 +89,30 @@ function useReviewCtl(): ReviewCtl {
   return { mode, setMode, note, setNote, awaitingOther, setAwaitingOther, noteRef, drafts, setDrafts, error, setError, reset };
 }
 
-/** Why approval is blocked for this opportunity, if it is. */
+/** Why approval is blocked for this opportunity, if it is. A shadow label or a second review sends nothing, so matching may be off. */
 export function approveBlock(o: Opp): string | undefined {
   if (!store.canAct()) return "Read-only source";
   if (o.participants.some(id => store.members.get(id)?.minor)) return "Members under 18 are never introduced";
   if (o.participants.some(id => store.members.get(id)?.declined)) return "A participant was declined at join";
-  if (store.network?.matchingEnabled === false) return "Proactive matching is off (admin switch)";
+  if (store.network?.matchingEnabled === false && !o.review?.shadow && !isSecond(o)) return "Proactive matching is off (admin switch)";
   return undefined;
 }
 
+/** Edit drafts: "<id>" what a person is told, "p:<id>" their probe, "" the plan. */
+const probeKey = (id: string) => `p:${id}`;
+function startDrafts(o: Opp): Record<string, string> {
+  const probes = o.review?.drafts?.probe ?? {};
+  return { ...Object.fromEntries(o.participants.map(id => [id, o.explanations[id] ?? ""])), ...Object.fromEntries(Object.entries(probes).map(([id, t]) => [probeKey(id), t])), "": o.objective };
+}
+
 /** The edits that differ from the current texts. Undefined when nothing changed. */
-function editsOf(o: Opp, drafts: Record<string, string>): Pick<DecideOpts, "explanations" | "objective"> | undefined {
-  const explanations: Record<string, string> = {};
+function editsOf(o: Opp, drafts: Record<string, string>): Pick<DecideOpts, "explanations" | "objective" | "probes"> | undefined {
+  const explanations: Record<string, string> = {}, probes: Record<string, string> = {};
   for (const id of o.participants) if (drafts[id] !== undefined && drafts[id]!.trim() !== (o.explanations[id] ?? "").trim()) explanations[id] = drafts[id]!;
+  for (const [id, t] of Object.entries(o.review?.drafts?.probe ?? {})) { const d = drafts[probeKey(id)]; if (d !== undefined && d.trim() !== t.trim()) probes[id] = d; }
   const objective = drafts[""] !== undefined && drafts[""]!.trim() !== o.objective.trim() ? drafts[""] : undefined;
-  if (!Object.keys(explanations).length && objective === undefined) return undefined;
-  return { ...(Object.keys(explanations).length ? { explanations } : {}), ...(objective !== undefined ? { objective } : {}) };
+  if (!Object.keys(explanations).length && !Object.keys(probes).length && objective === undefined) return undefined;
+  return { ...(Object.keys(explanations).length ? { explanations } : {}), ...(Object.keys(probes).length ? { probes } : {}), ...(objective !== undefined ? { objective } : {}) };
 }
 
 /** Send a decision with the controller's note and edits; errors stay on the card. */
@@ -114,11 +133,14 @@ export function ReviewActions({ o, ctl, onDone }: { o: Opp; ctl?: ReviewCtl; onD
   if (!store.canReview()) return null;
   const block = approveBlock(o);
   const edits = c.mode === "edit" ? editsOf(o, c.drafts) : undefined;
-  const swap = swappable(o);
+  // A shadow label or a blind second review is approve or reject only.
+  const labelOnly = !!o.review?.shadow || isSecond(o);
+  const swap = labelOnly ? [] : swappable(o);
+  const probes = o.review?.drafts?.probe ?? {};
   const toggle = (m: ReviewMode) => {
     c.setError(null); c.setAwaitingOther(false);
     if (c.mode === m) { c.setMode("none"); return; }
-    if (m === "edit") c.setDrafts({ ...Object.fromEntries(o.participants.map(id => [id, o.explanations[id] ?? ""])), "": o.objective });
+    if (m === "edit") c.setDrafts(startDrafts(o));
     c.setMode(m);
   };
   const reject = async (reason: ReviewReason) => {
@@ -133,10 +155,18 @@ export function ReviewActions({ o, ctl, onDone }: { o: Opp; ctl?: ReviewCtl; onD
       {c.mode === "edit" && (
         <div className="review-edit">
           {o.participants.map(id => (
-            <label key={id} className="edit-row">
-              <span className="muted small">Told {store.firstName(id)}</span>
-              <textarea className="input" rows={2} value={c.drafts[id] ?? ""} onChange={e => c.setDrafts({ ...c.drafts, [id]: e.target.value })} />
-            </label>
+            <div key={id}>
+              {probes[id] !== undefined && (
+                <label className="edit-row">
+                  <span className="muted small" title="The anonymous probe this person gets (time options are added when it goes out). Leak-checked; on slop, nothing about looks.">Probe to {store.firstName(id)}</span>
+                  <textarea className="input" rows={3} value={c.drafts[probeKey(id)] ?? ""} onChange={e => c.setDrafts({ ...c.drafts, [probeKey(id)]: e.target.value })} />
+                </label>
+              )}
+              <label className="edit-row">
+                <span className="muted small">Told {store.firstName(id)}</span>
+                <textarea className="input" rows={2} value={c.drafts[id] ?? ""} onChange={e => c.setDrafts({ ...c.drafts, [id]: e.target.value })} />
+              </label>
+            </div>
           ))}
           <label className="edit-row">
             <span className="muted small">Plan</span>
@@ -152,9 +182,9 @@ export function ReviewActions({ o, ctl, onDone }: { o: Opp; ctl?: ReviewCtl; onD
         </div>
       )}
       <div className={`review-actions ${c.mode === "reject" ? "rejecting" : ""}`}>
-        <button className="btn primary" disabled={!!block} title={block ?? "Approve (a)"} onClick={approve}>{edits ? "Approve with edits" : "Approve"}</button>
-        <button className={c.mode === "edit" ? "btn active" : "btn"} title="Edit what each person is told (e)" onClick={() => toggle("edit")}>Edit</button>
-        <button className={c.mode === "reroll" ? "btn active" : "btn"} disabled={!swap.length} title={swap.length ? "Swap a participant for an alternate (s)" : "Nobody can be swapped"} onClick={() => toggle("reroll")}>Re-roll</button>
+        <button className="btn primary" disabled={!!block} title={block ?? (o.review?.shadow ? "Label: a good match (a). Nobody is contacted." : "Approve (a)")} onClick={approve}>{edits ? "Approve with edits" : o.review?.shadow ? "Good match" : "Approve"}</button>
+        {!labelOnly && <button className={c.mode === "edit" ? "btn active" : "btn"} title="Edit the probe and what each person is told (e)" onClick={() => toggle("edit")}>Edit</button>}
+        {!labelOnly && <button className={c.mode === "reroll" ? "btn active" : "btn"} disabled={!swap.length} title={swap.length ? "Swap a participant for an alternate (s)" : "Nobody can be swapped"} onClick={() => toggle("reroll")}>Re-roll</button>}
         <button className={c.mode === "reject" ? "btn active" : "btn"} title="Reject with a reason (r)" onClick={() => toggle("reject")}>Reject ▾</button>
         {c.mode === "reject" && (
           <span className="reasons">
@@ -188,6 +218,7 @@ export function ReviewQueue() {
   const [selId, setSelId] = useState<string>();
   const [scoreOpen, setScoreOpen] = useState(false);
   const ctl = useReviewCtl();
+  const [composing, setComposing] = useState(false);
   const sel = (f?.kind === "opportunity" && pending.find(o => o.id === f.id)) || pending.find(o => o.id === selId) || pending[0];
   const counts = s.network?.review ?? countDecisions();
 
@@ -218,10 +249,10 @@ export function ReviewQueue() {
       else if (e.key === "k") { handled(); select(pending[Math.max(0, i - 1)]); }
       else if (e.key === "a" && canAct) { handled(); if (!approveBlock(sel)) act(sel, ctl, "approve").then(ok => { if (ok) afterDecision(); }); }
       else if (e.key === "r" && canAct) { handled(); ctl.setError(null); ctl.setMode("reject"); ctl.setAwaitingOther(false); }
-      else if (e.key === "s" && canAct && swappable(sel).length) { handled(); ctl.setError(null); ctl.setMode("reroll"); }
-      else if (e.key === "e" && canAct) {
+      else if (e.key === "s" && canAct && !sel.review?.shadow && !isSecond(sel) && swappable(sel).length) { handled(); ctl.setError(null); ctl.setMode("reroll"); }
+      else if (e.key === "e" && canAct && !sel.review?.shadow && !isSecond(sel)) {
         handled(); ctl.setError(null);
-        ctl.setDrafts({ ...Object.fromEntries(sel.participants.map(id => [id, sel.explanations[id] ?? ""])), "": sel.objective });
+        ctl.setDrafts(startDrafts(sel));
         ctl.setMode("edit");
       }
       else if (ctl.mode === "reject" && /^[1-8]$/.test(e.key)) {
@@ -256,6 +287,7 @@ export function ReviewQueue() {
           </div>
         )}
         <span className="muted small">approved {counts.approved} · rejected {counts.rejected} · expired {counts.expired}</span>
+        {s.canReview() && <button className={composing ? "btn active" : "btn"} title="Compose an introduction yourself: the same checks run, and it waits for review" onClick={() => setComposing(v => !v)}>Compose</button>}
         {s.network?.matchingEnabled === false && <Badge tone="warn" title="An admin turned proactive matching off: approvals wait">matching off</Badge>}
         {!s.canAct() && <span className="muted small">read-only</span>}
         <span className="spacer" />
@@ -264,6 +296,7 @@ export function ReviewQueue() {
           <button className={view === "decided" ? "active" : ""} onClick={() => store.setUI({ reviewView: "decided" })}>Decided</button>
         </div>
       </div>
+      {composing && <ComposeForm onDone={() => setComposing(false)} />}
       {view === "pending" ? (
         pending.length ? (
           <div className="review-list">
@@ -310,11 +343,13 @@ function ReviewCard({ o, selected, onSelect, ctl, scoreOpen, setScoreOpen, onDon
   return (
     <div ref={ref} className={`review-card ${selected ? "selected" : ""} ${selected && ctl.mode === "reject" ? "rejecting" : ""}`}>
       <button type="button" className="review-head" onClick={onSelect}>
-        {o.review ? <Countdown deadline={o.review.deadline} /> : <span className="countdown">–</span>}
+        {o.review && !isSecond(o) ? <Countdown deadline={o.review.deadline} /> : <span className="countdown">{isSecond(o) ? "2nd" : "–"}</span>}
         <span className="review-title">{s.oppTitle(o)}</span>
         <span className="muted small">{humanize(o.kind)}{o.category ? ` · ${o.category}` : ""} · {originLabel(originOf(o))}{o.review?.rerolls ? ` · re-rolled ${o.review.rerolls}×` : ""}</span>
+        {o.review?.shadow && <Badge tone="warn" title="Shadow item: matching is off. Approve or reject is a label; nobody is contacted.">SHADOW</Badge>}
+        {isSecond(o) && <Badge tone="info" title="Blind second review: someone else decided this item. Your decision is stored and changes nothing.">SECOND REVIEW</Badge>}
         <span className="spacer" />
-        {o.source !== "player" && <span className="muted small">score {o.score.toFixed(2)}</span>}
+        {o.source !== "player" && !noScores() && <span className="muted small">score {o.score.toFixed(2)}</span>}
         <span className="muted">{selected ? "▾" : "▸"}</span>
       </button>
       {selected && (
@@ -332,6 +367,12 @@ function ReviewCard({ o, selected, onSelect, ctl, scoreOpen, setScoreOpen, onDon
                   {isBusyElsewhere(o, id) && <Badge tone="warn" title="In another open opportunity">busy</Badge>}
                 </div>
                 {want && <div className="small"><span className="muted">wants:</span> “{want}”</div>}
+                {!editing && o.review?.drafts?.probe[id] && (
+                  <div className="small why" title="The probe this person gets (time options are added when it goes out)">
+                    <span className="muted">probe{o.review.drafts.edited?.includes(id) ? " (edited)" : ""}:</span> “{o.review.drafts.probe[id]}”
+                  </div>
+                )}
+                {!editing && o.review?.drafts?.reveal?.[id] && <div className="small muted" title="What they get if both say yes (place and time filled in then)">reveal: “{o.review.drafts.reveal[id]}”</div>}
                 {!editing && o.explanations[id] && <div className="small why" title="Shown to this member"><span className="muted">told:</span> “{o.explanations[id]}”</div>}
               </div>
             );
@@ -347,7 +388,7 @@ function ReviewCard({ o, selected, onSelect, ctl, scoreOpen, setScoreOpen, onDon
             <span><span className="muted">History:</span> {hist.length ? hist.slice(0, 3).map((h, i) => <span key={h.id}>{i > 0 && ", "}<OppLink o={h}>{humanize(h.state)} {stamp(h.createdAt)}</OppLink></span>) : "none"}</span>,
             o.alternates.length > 0 && <span><span className="muted">Alternates:</span> {o.alternates.map((a, i) => <span key={a}>{i > 0 && ", "}<MemberLink id={a} /></span>)}</span>,
           ]} />
-          {o.source !== "player" && o.components && (
+          {o.source !== "player" && o.components && !noScores() && (
             <details className="disclosure" open={scoreOpen} onToggle={e => { const v = (e.currentTarget as HTMLDetailsElement).open; if (v !== scoreOpen) setScoreOpen(v); }}>
               <summary>Score {o.score.toFixed(2)}{o.exploration ? " · exploration" : ""}</summary>
               <Components c={o.components} />
@@ -356,6 +397,34 @@ function ReviewCard({ o, selected, onSelect, ctl, scoreOpen, setScoreOpen, onDon
           <ReviewActions o={o} ctl={ctl} onDone={onDone} />
         </div>
       )}
+    </div>
+  );
+}
+
+/** A reviewer's own introduction (PRD 35.2): member ids, what it is for, and what each is told. The Network's filters run on submit. */
+function ComposeForm({ onDone }: { onDone(): void }) {
+  const [ids, setIds] = useState("");
+  const [objective, setObjective] = useState("");
+  const [told, setTold] = useState("");
+  const [error, setError] = useState<string>();
+  const submit = async () => {
+    const participants = ids.split(/[\s,]+/).map(x => x.trim()).filter(Boolean);
+    if (participants.length < 2 || !objective.trim()) { setError("Two or more member ids and what it is for"); return; }
+    const explanations = told.trim() ? Object.fromEntries(participants.map(id => [id, told.trim()])) : undefined;
+    const r = await store.control({ type: "compose", participants, objective: objective.trim(), ...(explanations ? { explanations } : {}) });
+    if (r.ok) { store.toast("Composed: it waits for review", "good"); onDone(); } else setError(r.error ?? r.code ?? "refused");
+  };
+  return (
+    <div className="review-edit">
+      <label className="edit-row"><span className="muted small">Member ids</span><input className="input" value={ids} onChange={e => setIds(e.target.value)} placeholder="m1, m2" /></label>
+      <label className="edit-row"><span className="muted small">What for</span><input className="input" value={objective} onChange={e => setObjective(e.target.value)} placeholder="coffee to talk about climbing" /></label>
+      <label className="edit-row"><span className="muted small">Why (each is told)</span><input className="input" value={told} onChange={e => setTold(e.target.value)} placeholder="you both climb on weekends" /></label>
+      <div className="review-actions">
+        <button className="btn primary" onClick={submit}>Queue for review</button>
+        <button className="btn" onClick={onDone}>Cancel</button>
+        <span className="muted small">Minors, holds, blocks, busy members and message caps are refused. Another reviewer should approve it.</span>
+      </div>
+      {error && <div className="callout bad small" role="alert">{error}</div>}
     </div>
   );
 }

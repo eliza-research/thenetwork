@@ -4,7 +4,21 @@
 // or occupation, opportunity texts written for a member are dropped, and feed lines lose the names in
 // them. The oracle's verdict on an opportunity (hidden truth, game mode) is stripped for everyone
 // until the opportunity is resolved, unless this staff member has the truth lens on.
-import type { ObsDelta, ObsFeedItem, ObsMember, ObsOpportunity, ObsState, StaffRole } from "./types.ts";
+import type { EngineRunSummary, ObsDelta, ObsFeedItem, ObsMember, ObsOpportunity, ObsState, StaffRole } from "./types.ts";
+
+/**
+ * Apps whose scores never reach a staff member (slop: the engine score folds in appearance; PRD 40.5,
+ * docs/review-rubric-slop.md). Opportunities go out with score 0 and no components, and engine runs
+ * without their top configurations.
+ */
+export const SCORELESS_APPS: ReadonlySet<string> = new Set(["slop"]);
+export function scoreless(o: ObsOpportunity): ObsOpportunity {
+  const { components: _c, ...rest } = o;
+  return { ...rest, score: 0 };
+}
+export const scorelessRun = (r: EngineRunSummary): EngineRunSummary => ({ ...r, top: [] });
+/** Shaping options for one app: `scoreless` for SCORELESS_APPS. */
+export interface ShapeOptions { scoreless?: boolean }
 
 /** "full": staff who may open members (admin, reviewer, safety; engineer in simulated worlds). "counts": analysts. */
 export type ViewClass = "full" | "counts";
@@ -58,8 +72,8 @@ function countsFeed(items: ObsFeedItem[], names: RegExp | undefined): ObsFeedIte
 }
 
 /** /api/state for one caller. */
-export function shapeState(s: ObsState, cls: ViewClass, truth: boolean): ObsState {
-  const out: ObsState = { ...s, opportunities: s.opportunities.map(o => stripOracle(o, truth)) };
+export function shapeState(s: ObsState, cls: ViewClass, truth: boolean, x: ShapeOptions = {}): ObsState {
+  const out: ObsState = { ...s, opportunities: s.opportunities.map(o => stripOracle(x.scoreless ? scoreless(o) : o, truth)), ...(x.scoreless ? { engineRuns: s.engineRuns.map(scorelessRun) } : {}) };
   if (!truth) delete out.truth;
   if (cls === "full") return out;
   const names = namePattern(s.members);
@@ -71,8 +85,9 @@ export function shapeState(s: ObsState, cls: ViewClass, truth: boolean): ObsStat
 }
 
 /** One WebSocket delta for one caller. `allMembers`: the app's members now (the feed names come from them). */
-export function shapeDelta(d: ObsDelta, cls: ViewClass, truth: boolean, allMembers: () => Iterable<ObsMember>): ObsDelta {
-  const out: ObsDelta = d.opportunities ? { ...d, opportunities: d.opportunities.map(o => stripOracle(o, truth)) } : { ...d };
+export function shapeDelta(d: ObsDelta, cls: ViewClass, truth: boolean, allMembers: () => Iterable<ObsMember>, x: ShapeOptions = {}): ObsDelta {
+  const out: ObsDelta = d.opportunities ? { ...d, opportunities: d.opportunities.map(o => stripOracle(x.scoreless ? scoreless(o) : o, truth)) } : { ...d };
+  if (x.scoreless && out.engineRuns) out.engineRuns = out.engineRuns.map(scorelessRun);
   if (cls === "full") return out;
   if (out.members) out.members = out.members.map(countsMember);
   if (out.opportunities) out.opportunities = out.opportunities.map(countsOpp);

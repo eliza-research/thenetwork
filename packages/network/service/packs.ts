@@ -27,7 +27,7 @@ import { parseAgeRange, parseBasics, parseDistance, parseOrientation, parseZip, 
 import { slopOnboarding } from "./slopOnboarding.ts";
 import { eveningVenues } from "./venues-nyc.ts";
 import { brandOf, copyFor } from "../src/copy.ts";
-import { APPS, type AppId } from "../../platform/src/apps.ts";
+import { APPS, REVIEW_SLA_HOURS, type AppId } from "../../platform/src/apps.ts";
 
 /** What one app's network gets: its pack, the engine config the pack was tuned with, plans config and hooks. */
 export interface AppWiring {
@@ -39,28 +39,36 @@ export interface AppWiring {
   plans?: boolean;
   /** The member prefs a new member of this app starts with (createMember). Romance only for adults. */
   prefs(age: number): { categoriesOptIn: string[]; romanceOptIn: boolean };
+  /** The app's review SLA in hours (platform REVIEW_SLA_HOURS, the console's numbers too): an item waiting longer expires unsent. */
+  reviewSlaHours: number;
+  /** The launch gate's "committed adult" (PRD 37.3): the app's hard fields are known. Default: any active adult. */
+  committed?(tags: readonly string[], area: string | undefined): boolean;
 }
 
 const NTWRK_CATEGORIES = ["social", "hobby", "professional", "events", "growth", "help"];
 
 /** The wiring for one app. A new instance each time (packs hold no state, but options are per network). `env`: SLOP_PROBE_PHOTO. */
 export function appWiring(app: AppId, env: Record<string, string | undefined> = process.env): AppWiring {
+  const reviewSlaHours = REVIEW_SLA_HOURS[app] ?? 12;
   switch (app) {
     case "slop": {
       // Founder decision 9: no ID check (phone login is the identity check; a stated age is enough).
       const pack = makeSlopPack({ verification: { required: false } });
       return {
-        pack, engine: { ...SLOP_ENGINE_CONFIG, cities: ["nyc"] }, hooks: slopHooks(pack.options, { probePhoto: env.SLOP_PROBE_PHOTO === "1" }), plans: false,
+        pack, engine: { ...SLOP_ENGINE_CONFIG, cities: ["nyc"] }, hooks: slopHooks(pack.options, { probePhoto: env.SLOP_PROBE_PHOTO === "1" }), plans: false, reviewSlaHours,
         // Dating only, and only for adults: a member under 18 never opts in to romance (core invariant 1).
         prefs: age => ({ categoriesOptIn: age >= 18 ? ["romance"] : [], romanceOptIn: age >= 18 }),
+        // Orientation (who they are and who they seek), an age range, a distance, and a zip or a neighborhood.
+        committed: (tags, area) => ["romance:is:", "romance:seeks:", "romance:age:", "slop:max_miles:"].every(p => tags.some(t => t.startsWith(p)))
+          && (tags.some(t => t.startsWith("slop:zip:")) || (!!area && NEIGHBORHOOD.has(area))),
       };
     }
     case "peon":
-      return { pack: peonPack, engine: { ...PEON_ENGINE_CONFIG, cities: ["nyc"] }, plans: false, prefs: () => ({ categoriesOptIn: ["professional"], romanceOptIn: false }) };
+      return { pack: peonPack, engine: { ...PEON_ENGINE_CONFIG, cities: ["nyc"] }, plans: false, reviewSlaHours, prefs: () => ({ categoriesOptIn: ["professional"], romanceOptIn: false }) };
     case "friends":
-      return { pack: friendsPack, plansConfig: FRIENDS_PLANS, prefs: () => ({ categoriesOptIn: ["social", "hobby"], romanceOptIn: false }) };
+      return { pack: friendsPack, plansConfig: FRIENDS_PLANS, reviewSlaHours, prefs: () => ({ categoriesOptIn: ["social", "hobby"], romanceOptIn: false }) };
     default:
-      return { prefs: () => ({ categoriesOptIn: NTWRK_CATEGORIES, romanceOptIn: false }) };
+      return { reviewSlaHours, prefs: () => ({ categoriesOptIn: NTWRK_CATEGORIES, romanceOptIn: false }) };
   }
 }
 
