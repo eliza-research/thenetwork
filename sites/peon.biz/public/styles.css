@@ -147,3 +147,6 @@ body.landing {
   --l-pill-bg: #1a1306; --l-pill-ink: #ffffff; --l-radius: 6px; --l-pill: 4px; --l-focus: #1f2a44;
   --l-font: Barlow, system-ui, -apple-system, 'Segoe UI', sans-serif; --l-display: 'Barlow Condensed', 'Arial Narrow', 'Roboto Condensed', system-ui, sans-serif;
 }
+
+/* State-driven panels must stay hidden even when their layout uses grid. */
+[hidden] { display: none !important; }

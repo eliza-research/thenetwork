@@ -8,12 +8,12 @@
 <a class="skip" href="#main">Skip to content</a>
 <div class="wrap top">
   <a class="mark" href="/">peon<b>.biz</b></a>
-  <nav aria-label="Main"><a href="/join">Join the waitlist</a><a href="/settings" aria-current="page">Settings</a><a href="/privacy">Privacy</a></nav>
+  <nav aria-label="Main"><a href="/join">Join peon.biz</a><a href="/settings" aria-current="page">Settings</a><a href="/privacy">Privacy</a></nav>
 </div>
 <main id="main" class="narrow page">
 <h1>Settings</h1>
 <div class="flow" data-settings data-export-name="peon-biz-my-data"
-  data-msg-stopped="Messages from peon.biz are stopped. Text START to us to turn them back on."
+  data-msg-stopped="Messages from every app powered by The Network are stopped. Text START to resume this app."
   data-gone-app="You left peon.biz. We deleted your profile and messages for peon.biz."
   data-gone-all="We deleted everything tied to your phone number. We keep only a scrambled copy of the number, so that we never text it again.">
   <p class="notice" data-flow-error role="alert" hidden></p>
@@ -58,8 +58,8 @@
     <p class="status" data-status aria-live="polite"></p>
     <div class="actions" data-when="has-membership">
       <div><h3>Export my data</h3><p>Download a file with what peon.biz holds about you. It holds only this site's data.</p><button class="btn quiet" type="button" data-action="export">Export my data</button></div>
-      <div data-when="not-stopped"><h3>Stop messages</h3><p>Every app powered by The Network stops texting this number, not only this one. Your membership stays. Text START to turn messages back on.</p><button class="btn quiet" type="button" data-action="stop">Stop messages</button></div>
-      <div data-when="stopped" hidden><h3>Messages are stopped</h3><p>Text START to peon.biz to turn them back on.</p></div>
+      <div data-when="not-stopped"><h3>Stop messages</h3><p>Every app powered by The Network stops texting this number, not only this one. Your membership stays. Text START to resume this app.</p><button class="btn quiet" type="button" data-action="stop">Stop messages</button></div>
+      <div data-when="stopped" hidden><h3>Messages are stopped</h3><p>Every app powered by The Network has stopped texting this number. Text START to resume this app.</p></div>
       <div><h3>Leave peon.biz</h3><p>We delete your profile, messages and matching data for peon.biz.</p><button class="btn quiet" type="button" data-action="leave">Leave peon.biz</button></div>
     </div>
     <div class="actions">
@@ -68,7 +68,7 @@
     <p><button class="linkish" type="button" data-action="logout">Log out</button></p>
 
     <dialog data-confirm="stop" aria-labelledby="d-stop"><form method="dialog">
-      <h2 id="d-stop">Stop messages from peon.biz?</h2><p>You will get no more texts from peon.biz until you text START.</p>
+      <h2 id="d-stop">Stop messages from every app?</h2><p>Every app powered by The Network stops texting this number. Your memberships stay. Text START to resume this app.</p>
       <div class="row"><button class="btn" value="confirm">Stop messages</button><button class="btn quiet" value="cancel">Cancel</button></div></form></dialog>
     <dialog data-confirm="leave" aria-labelledby="d-leave"><form method="dialog">
       <h2 id="d-leave">Leave peon.biz?</h2><p>We delete your profile, messages and matching data for peon.biz. You can join again later.</p>
