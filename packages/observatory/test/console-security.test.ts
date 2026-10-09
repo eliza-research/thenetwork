@@ -8,9 +8,13 @@ import { createAudit, FileAudit, type AuditSink } from "../src/staff.ts";
 import { scrubText } from "../src/scrub.ts";
 import type { AuditEntry } from "../src/types.ts";
 
-// Nothing from the shell may change the server under test.
-for (const k of ["NODE_ENV", "OBSERVATORY_TOKEN", "OBSERVATORY_TOKENS", "OBSERVATORY_TRUST_CF_ACCESS", "OBSERVATORY_CF_ACCESS_TEAM", "OBSERVATORY_CF_ACCESS_AUD", "OBSERVATORY_ROLES",
-  "OBSERVATORY_AUDIT_DATABASE_URL", "OBSERVATORY_REAL_ONLY", "NETWORK_DATABASE_URL", "DATABASE_URL", "NETWORK_SERVICE_URL", "NETWORK_SERVICE_TOKEN", "OBSERVATORY_FRESH_AUTH_MINUTES", "PLATFORM_ENV"]) delete process.env[k];
+// Nothing from the shell may change the server under test. The values come back after this file, so
+// the files that run after it in the same process (bun test sets NODE_ENV=test) see what they expect.
+const SHELL_ENV = ["NODE_ENV", "OBSERVATORY_TOKEN", "OBSERVATORY_TOKENS", "OBSERVATORY_TRUST_CF_ACCESS", "OBSERVATORY_CF_ACCESS_TEAM", "OBSERVATORY_CF_ACCESS_AUD", "OBSERVATORY_ROLES",
+  "OBSERVATORY_AUDIT_DATABASE_URL", "OBSERVATORY_REAL_ONLY", "NETWORK_DATABASE_URL", "DATABASE_URL", "NETWORK_SERVICE_URL", "NETWORK_SERVICE_TOKEN", "OBSERVATORY_FRESH_AUTH_MINUTES", "PLATFORM_ENV"];
+const savedEnv = Object.fromEntries(SHELL_ENV.map(k => [k, process.env[k]]));
+for (const k of SHELL_ENV) delete process.env[k];
+afterAll(() => { for (const [k, v] of Object.entries(savedEnv)) if (v !== undefined) process.env[k] = v; });
 
 /** An audit sink in memory that says it is Postgres (production refuses a file). */
 class MemAudit implements AuditSink {
