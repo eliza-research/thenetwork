@@ -38,7 +38,7 @@ export interface Extra {
   /** Iteration 3 gate inputs: scam harm events; core adversary contacts (scammers, harassers, age liars); harms other than deception. */
   scamHarms: number; coreAdversaryContacts: number; harmsNoDeception: number;
   /** Iteration 2: members who widened their radius when asked; relay classifier stats. */
-  widened: number; relay?: NonNullable<SlopRunResult["relay"]>;
+  widened: number; relay?: NonNullable<SlopRunResult["relay"]>; photos?: NonNullable<SlopRunResult["photos"]>;
   /**
    * Low-variance companions of the realized rates (for tuning; the gates use the realized ones):
    * mean oracle soft label over the dates that happened (pSecond, 32 chemistry draws; 0 with an
@@ -113,13 +113,13 @@ export function extraOf(res: SlopRunResult, m: SlopMetrics): Extra {
     groups, feasibleGroups, overall: { dates: m.datesPerMemberMonth * m.members * months, memberMonths: m.members * months },
     asksSent: res.asks?.sent ?? 0, asksAnswered: res.asks?.answered ?? 0,
     contactsByKind, harmsByKind, demo, outcomes, harassment, scamHarms, coreAdversaryContacts, harmsNoDeception,
-    widened: res.asks?.widened ?? 0, ...(res.relay ? { relay: res.relay } : {}),
+    widened: res.asks?.widened ?? 0, ...(res.relay ? { relay: res.relay } : {}), ...(res.photos ? { photos: res.photos } : {}),
   };
 }
 
 /** A world spec for an arm: verification and the iteration-2 platform features (snapshot.ts PlatformModel). */
 export interface WorldSpec {
-  verification?: boolean; photos?: number; relay?: boolean | Partial<NonNullable<PlatformModel["relay"]>>; review?: number; widen?: boolean;
+  verification?: boolean; photos?: number; /** Share of adults who consent to show their photo to a match (default 1). */ photoConsent?: number; relay?: boolean | Partial<NonNullable<PlatformModel["relay"]>>; review?: number; widen?: boolean;
   /** Iteration 3: appearance rater (noise, bias), post-date check-in reports, catfish share of the population. */
   rater?: boolean | Partial<NonNullable<PlatformModel["rater"]>>; checkin?: boolean; catfish?: number;
   /** Iteration 4: body types and body-type preferences in the world (bodyType.ts). */
@@ -129,7 +129,7 @@ export function worldOptions(w: WorldSpec = {}): { verification?: VerificationMo
   const platform: PlatformModel = {};
   if (w.rater) platform.rater = { ...RATER_DEFAULTS, ...(typeof w.rater === "object" ? w.rater : {}) };
   if (w.checkin) platform.checkin = { ...CHECKIN_DEFAULTS };
-  if (w.photos !== undefined) platform.photos = { noiseSd: w.photos };
+  if (w.photos !== undefined) platform.photos = { noiseSd: w.photos, ...(w.photoConsent !== undefined ? { consent: w.photoConsent } : {}) };
   if (w.relay) platform.relay = { ...RELAY_DEFAULTS, ...(typeof w.relay === "object" ? w.relay : {}) };
   if (w.review !== undefined) platform.review = { ...REVIEW_DEFAULTS, days: w.review };
   if (w.widen) platform.widen = { ...WIDEN_DEFAULTS };

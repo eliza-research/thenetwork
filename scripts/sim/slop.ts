@@ -3,7 +3,7 @@
 // invariants, and the conformance rules for slopPack (core rules, the stated filters, no rating text).
 //
 // PINNED (CI): seeds 13-16, 4 weeks, 300 per city; the iteration-5 world: population
-// {catfish 0.005, body types on}, world {verification, relay, 3-day review, widen, check-in, photo in
+// {catfish 0.005, body types on}, world {verification, relay through the engine's relay.ts, 3-day review, widen, check-in, photo in
 // the probe (sd 1), rater on}; arms "random" (baseline) and the default slopPack (slop-pack-1.4.0, d+b).
 // Gate policy (decided for the founder, 2026-10-08):
 //   - BLOCKING: the safety gates (0 declared-minor contacts, 0 stated-filter violations, scammer
@@ -38,12 +38,15 @@ import { buildSlopSnapshot, RATER_DEFAULTS, SLOP_WORLD_START, type SlopNetworkSt
 import { BASELINES } from "../../packages/sim/src/apps/slop/baselines.ts";
 import { slopMetrics } from "../../packages/sim/src/apps/slop/metrics.ts";
 import { runSlopWorld, runSlopWorldAsync } from "../../packages/sim/src/apps/slop/world.ts";
+import { mergeRelayStats } from "../../packages/sim/src/apps/slop/relay.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
 
+const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
+
 export const SLOP_PINNED = { seeds: [13, 14, 15, 16], weeks: 4, perCity: 300 };
 const POPULATION: WorldSpec = { catfish: 0.005, bodyTypes: true };
-const WORLD: WorldSpec = { verification: true, relay: true, review: 3, widen: true, checkin: true };
+const WORLD: WorldSpec = { verification: true, relay: { engine: true }, review: 3, widen: true, checkin: true };
 const PACK_WORLD: WorldSpec = { photos: 1, rater: true };
 /** Gates that fail in every photos arm on held-out seeds today (docs/results/2026-10-08-slop-pack.md I5.4): tracked, not blocking. */
 const TRACKED = [/^Dates per member-month vs random/, /^Minor contacts \(age liars\) cut/, /^Adversary contacts cut/, /^Lowest group vs overall/, /^Same, feasible members/,
@@ -81,6 +84,25 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
     const blocking = safety || (!o.quick && !TRACKED.some(r => r.test(g.name)));
     b.gate(`gate ${g.name} (${g.target})`, g.pass, value, blocking);
   }
+
+  // ---- the relay in the world (critical path item 7): adversary personas after the reveal ----------
+  const rs = mergeRelayStats(pack.extra.map(e => e.relay?.engine).filter(x => !!x) as never);
+  const minN = (n: number) => (o.quick ? 1 : n); // --quick runs one short seed: sample-size floors drop, the gates stay
+  const cls = (k: string) => rs.byClass[k] ?? { n: 0, stopped: 0, contentStopped: 0 };
+  const rate = (ks: string[], f: "stopped" | "contentStopped") => { const n = ks.reduce((s, k) => s + cls(k).n, 0); return { n, r: ks.reduce((s, k) => s + cls(k)[f], 0) / Math.max(1, n) }; };
+  b.track("relay world: items, delivered, senders held, harms prevented, age slips", true, `${rs.items} items, ${rs.delivered} delivered, ${rs.heldSenders} senders held, ${rs.prevented} harms prevented, ${rs.ageSignals} age slips; ${Object.entries(rs.byClass).map(([k, v]) => `${k} ${v.stopped}/${v.n}`).join(", ")}`);
+  b.gate("relay world: 0 rating, contact or private-fact (canary) leaks in delivered items", rs.items > minN(200) && rs.leaks.rating + rs.leaks.contact + rs.leaks.canary === 0, JSON.stringify(rs.leaks));
+  const sh = rate(["scam", "harassment"], "stopped"), shc = rate(["scam", "harassment"], "contentStopped");
+  b.gate("relay world: scam and harassment items held or blocked >= 90% (in thread and on content alone)", sh.n >= minN(20) && sh.r >= 0.9 && shc.r >= 0.9, `${pct(sh.r)} in thread, ${pct(shc.r)} content only (n ${sh.n})`);
+  const cr = rate(["contact", "rating"], "contentStopped");
+  b.gate("relay world: contact-fishing and rating-probe items held or blocked >= 90% (content alone)", cr.n >= minN(20) && cr.r >= 0.9, `${pct(cr.r)} (n ${cr.n})`);
+  const hon = rate(["honest"], "contentStopped"), honT = rate(["honest"], "stopped");
+  b.gate("relay world: honest messages held <= 5% (content alone)", hon.n >= minN(200) && hon.r <= 0.05, `${pct(hon.r)} content only, ${pct(honT.r)} in thread (n ${hon.n})`);
+  b.gate("relay world: 0 relays to or from a minor (declared, or after an age slip); every slip blocked", rs.minorRelays === 0 && cls("minor_signal").stopped === cls("minor_signal").n, `${rs.minorRelays} relays, slips ${cls("minor_signal").stopped}/${cls("minor_signal").n}`);
+  b.gate("relay world: contact shares only with explicit consent (0 without; every bad-consent item blocked)", rs.contactWithoutConsent === 0 && cls("contact_share").n > 0 && cls("bad_consent").stopped === cls("bad_consent").n, `${cls("contact_share").n - cls("contact_share").stopped} shared with consent, ${cls("bad_consent").stopped}/${cls("bad_consent").n} bad-consent blocked`);
+  b.gate("relay world: relay log rows carry no message body or contact value", rs.logBodies === 0, String(rs.logBodies));
+  const ph = pack.extra.reduce((s, e) => s + (e.photos?.withPhoto ?? 0), 0), noPh = pack.extra.reduce((s, e) => s + (e.photos?.withoutPhoto ?? 0), 0);
+  b.track("photo in the probe: probes with a photo (engine probePhotoRefs)", ph > 0, `${ph} with a photo, ${noPh} without`);
 
   // ---- world invariants: no hidden truth in the agent's view; baselines; the ban loop ----------------
   await b.run("world: personas deterministic by seed; the snapshot carries no hidden truth, canary or adversary label", () => {

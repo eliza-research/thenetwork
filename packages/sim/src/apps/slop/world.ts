@@ -20,6 +20,8 @@ import { SLOTS, SLOT_DAY, generateSlopPersonas, type DateActivity, type SlopGenO
 import { SLOP_WORLD_START, buildSlopSnapshot, reviewDecision, type PlatformModel, type SlopAskField, type SlopNetworkState, type SlopSnapshot, type VerificationModel } from "./snapshot.ts";
 import { visibleProfiles, type VisibleProfile } from "./visible.ts";
 import type { BodyTypeModel } from "./bodyType.ts";
+import { probePhotoRefs } from "@thenetwork/engine/src/packs/slop/plan.ts";
+import { emptyRelayStats, relayExchange, relayRole, simPhotoConsent, simPhotoIds, type RelaySimStats } from "./relay.ts";
 
 /** One date proposal from a matcher. `options`: slot indices into SLOTS (2-3). */
 export interface SlopProposal {
@@ -84,7 +86,9 @@ export interface SlopRunResult {
   /** Asks sent and answered (matchers that ask before proposing). */
   asks?: { sent: number; answered: number; byField: Partial<Record<SlopAskField, number>>; widened?: number };
   /** Relay classifier (platform.relay): holds placed, true / false positives, harms prevented. */
-  relay?: { holds: number; truePositive: number; falsePositive: number; prevented: number };
+  relay?: { holds: number; truePositive: number; falsePositive: number; prevented: number; engine?: RelaySimStats };
+  /** Probes that carried a photo, and probes in a photo world that did not (adult, consent or id rule). */
+  photos?: { withPhoto: number; withoutPhoto: number };
 }
 
 const SLOT_HOUR: Record<string, number> = { day: 14, eve: 19 };
@@ -105,6 +109,7 @@ interface RunCtx {
   world: SlopWorld; cap: number; flows: FlowRecord[]; likedWeek: Map<MemberId, number>;
   asks: NonNullable<SlopRunResult["asks"]>;
   relay: NonNullable<SlopRunResult["relay"]>;
+  photoCount: NonNullable<SlopRunResult["photos"]>;
 }
 
 /** Start of week `week`: inbound asks, then the snapshot the matcher sees. */
@@ -126,26 +131,26 @@ function beginWeek(rc: RunCtx, week: number, seed: number): { ctx: MatcherContex
 export function runSlopWorld(o: SlopRunOptions): SlopRunResult {
   const world = createSlopWorld(o);
   const matcher = typeof o.matcher === "function" ? o.matcher(world) : o.matcher;
-  const rc: RunCtx = { world, cap: o.capPerWeek ?? 2, flows: [], likedWeek: new Map(), asks: { sent: 0, answered: 0, byField: {} }, relay: { holds: 0, truePositive: 0, falsePositive: 0, prevented: 0 } };
+  const rc: RunCtx = { world, cap: o.capPerWeek ?? 2, flows: [], likedWeek: new Map(), asks: { sent: 0, answered: 0, byField: {} }, relay: { holds: 0, truePositive: 0, falsePositive: 0, prevented: 0, ...(o.platform?.relay?.engine ? { engine: emptyRelayStats() } : {}) }, photoCount: { withPhoto: 0, withoutPhoto: 0 } };
   for (let week = 0; week < world.weeks; week++) {
     const { ctx, askedNow } = beginWeek(rc, week, o.seed);
     const out = matcher.propose(ctx);
     if (out instanceof Promise) throw new Error(`matcher ${matcher.name} is async: use runSlopWorldAsync`);
     resolveWeek(rc, week, out, askedNow);
   }
-  return { world, flows: rc.flows, matcher: matcher.name, ...(rc.asks.sent ? { asks: rc.asks } : {}), ...(world.state.platform?.relay ? { relay: rc.relay } : {}) };
+  return { world, flows: rc.flows, matcher: matcher.name, ...(rc.asks.sent ? { asks: rc.asks } : {}), ...(world.state.platform?.relay ? { relay: rc.relay } : {}), ...(world.state.platform?.photos ? { photos: rc.photoCount } : {}) };
 }
 
 /** Same as runSlopWorld for matchers whose propose is async (the engine-backed slop pack). */
 export async function runSlopWorldAsync(o: SlopRunOptions): Promise<SlopRunResult> {
   const world = createSlopWorld(o);
   const matcher = typeof o.matcher === "function" ? o.matcher(world) : o.matcher;
-  const rc: RunCtx = { world, cap: o.capPerWeek ?? 2, flows: [], likedWeek: new Map(), asks: { sent: 0, answered: 0, byField: {} }, relay: { holds: 0, truePositive: 0, falsePositive: 0, prevented: 0 } };
+  const rc: RunCtx = { world, cap: o.capPerWeek ?? 2, flows: [], likedWeek: new Map(), asks: { sent: 0, answered: 0, byField: {} }, relay: { holds: 0, truePositive: 0, falsePositive: 0, prevented: 0, ...(o.platform?.relay?.engine ? { engine: emptyRelayStats() } : {}) }, photoCount: { withPhoto: 0, withoutPhoto: 0 } };
   for (let week = 0; week < world.weeks; week++) {
     const { ctx, askedNow } = beginWeek(rc, week, o.seed);
     resolveWeek(rc, week, await matcher.propose(ctx), askedNow);
   }
-  return { world, flows: rc.flows, matcher: matcher.name, ...(rc.asks.sent ? { asks: rc.asks } : {}), ...(world.state.platform?.relay ? { relay: rc.relay } : {}) };
+  return { world, flows: rc.flows, matcher: matcher.name, ...(rc.asks.sent ? { asks: rc.asks } : {}), ...(world.state.platform?.relay ? { relay: rc.relay } : {}), ...(world.state.platform?.photos ? { photos: rc.photoCount } : {}) };
 }
 
 /** The week's asks (answered or not) and the probe-first flows for the week's proposals. */
@@ -194,12 +199,20 @@ function resolveWeek(rc: RunCtx, week: number, out: MatcherOutput, askedNow: Set
     if (state.paused.has(a.id) || state.paused.has(b.id)) return;
     const interaction: InteractionRecord = { id: key, kind: "intro", category: "romance", participants: [a.id, b.id], at: state.now, outcome: "pending" };
     const done = (outcome: InteractionRecord["outcome"], extra: Partial<InteractionRecord> = {}) => state.interactions.push({ ...interaction, outcome, ...extra });
+    // Photo in the probe: the engine's rule (adults both sides, consent, an opaque id), as on the live path.
+    const probePhoto = (id: MemberId) => {
+      const other = id === a.id ? b : a, me = id === a.id ? a : b;
+      const held = state.safetyHolds.some(h => h.memberId === other.id && (h.to === undefined || h.to > state.now));
+      const ok = probePhotoRefs({ age: other.stated.claimedAge, photoConsent: simPhotoConsent(other, photos?.consent), photoIds: simPhotoIds(other), held }, { age: me.stated.claimedAge }).length > 0;
+      if (ok) rc.photoCount.withPhoto++; else rc.photoCount.withoutPhoto++;
+      return ok;
+    };
     const ctx = (id: MemberId) => ({
       week, city: pr.city, activity: pr.activity, asked: askedNow.has(id),
       recentLikedDate: likedWeek.has(id) && week - likedWeek.get(id)! <= 2,
       probesThisWeek: invites.get(id) ?? 0,
       sharedFactMatch: !!pr.sharedFact && oracle.p(id).hidden.interests.includes(pr.sharedFact),
-      ...(photos ? { photo: { of: id === a.id ? b.id : a.id, noiseSd: photos.noiseSd } } : {}),
+      ...(photos && probePhoto(id) ? { photo: { of: id === a.id ? b.id : a.id, noiseSd: photos.noiseSd } } : {}),
     });
     // 1. first probe
     if ((invites.get(a.id) ?? 0) >= cap || booked.has(a.id)) { f.stage = "dropped_first_cap"; return; }
@@ -222,7 +235,25 @@ function resolveWeek(rc: RunCtx, week: number, out: MatcherOutput, askedNow: Set
     const slot = both[0] ?? opts2[0]!;
     f.slot = slot; f.revealed = true; f.day = week * 7 + SLOT_DAY[SLOTS[slot]!];
     const revealHarms = behavior.harms(a.id, b.id, key, "reveal");
-    if (relay) {
+    if (relay?.engine) {
+      // Critical path item 7: the pair exchange items through the engine's relay policy.
+      const blocked = (x: MemberId, y: MemberId) => state.edges.some(e => e.type === "blocked" && ((e.from === x && e.to === y) || (e.from === y && e.to === x)));
+      const heldNow = (x: MemberId) => state.safetyHolds.some(h => h.memberId === x && (h.to === undefined || h.to > state.now));
+      const ex = relayExchange({ seed: world.seed, key, now: state.now, a, b, activity: pr.activity, harms: revealHarms, blocked, held: heldNow, photoConsent: photos?.consent ?? 1, ...(relay.roles ? { shares: relay.roles } : {}) }, rc.relay.engine!);
+      for (const id of new Set([...ex.flagged, ...ex.ageSignal])) {
+        rc.relay.holds++;
+        // Sim-only relay roles (contact fishers, rating probers) count as true positives, not honest members.
+        const honest = relayRole(oracle.p(id), relay.roles) === "honest";
+        if (honest) rc.relay.falsePositive++; else rc.relay.truePositive++;
+        // Review clears a non-adversary adult (honest, or a sim-only contact fisher or rating prober: a
+        // warning, not a ban) with p = clearHonest; never an age slip.
+        const q = oracle.p(id);
+        const cleared = !q.hidden.adversary && !q.hidden.isMinor && !ex.ageSignal.has(id) && review && reviewDecision(q, review) === "cleared";
+        if (!heldNow(id)) state.safetyHolds.push({ memberId: id, from: state.now, reason: ex.ageSignal.has(id) ? "relay: age under 18 stated" : honest ? "relay: flagged (false positive)" : "relay: flagged", ...(cleared ? { to: state.now + review!.days * DAY } : {}) });
+      }
+      rc.relay.prevented += revealHarms.length - ex.kept.length;
+      f.harms.push(...ex.kept);
+    } else if (relay) {
       // Relay classifier: an adversary's scripted message is flagged with p = recall; the message is
       // blocked (its harm does not happen) and the sender is held. Honest members: false positives.
       const flagged = new Set<MemberId>();
@@ -245,8 +276,9 @@ function resolveWeek(rc: RunCtx, week: number, out: MatcherOutput, askedNow: Set
       rc.relay.prevented += revealHarms.length - kept.length;
       f.harms.push(...kept);
     } else f.harms.push(...revealHarms);
-    const outA = behavior.backsOut(a.id, b.id, key, oracle.statedAccepts(a, b, week), photos?.noiseSd);
-    const outB = behavior.backsOut(b.id, a.id, key, oracle.statedAccepts(b, a, week), photos?.noiseSd);
+    // The photo shrinks the surprise at the reveal only for a member whose probe carried it.
+    const outA = behavior.backsOut(a.id, b.id, key, oracle.statedAccepts(a, b, week), c1.photo ? photos?.noiseSd : undefined);
+    const outB = behavior.backsOut(b.id, a.id, key, oracle.statedAccepts(b, a, week), c2.photo ? photos?.noiseSd : undefined);
     if (outA || outB) { f.stage = "backout"; done("cancelled", { acceptedBy: [a.id, b.id], declinedBy: [...(outA ? [a.id] : []), ...(outB ? [b.id] : [])] }); applyHarms(world, f.harms, key); return; }
     booked.add(a.id); booked.add(b.id);
     // 4. the date

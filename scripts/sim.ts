@@ -2,7 +2,7 @@
 // network. Each block runs simulations (or scores hand-written corpora) and checks named gates; the
 // run exits 1 when any BLOCKING gate fails. Tracked gates are printed and never fail the run.
 //
-//   bun run sim                      evals, onboard, network, slop, peon, friends, clef (the CI run)
+//   bun run sim                      evals, onboard, network, slop, relay, peon, friends, clef (the CI run)
 //   bun run sim --only slop          one block (repeatable or comma-separated: --only network,peon)
 //   bun run sim --quick              fewer seeds and shorter runs; quality gates become tracked
 //   bun run sim --with-capital       also the network-capital block (slow: 32 paired seeds; nightly)
@@ -13,7 +13,9 @@
 //   evals     evals/ corpora: consent replies, abuse, teen ages, wants, areas, negations, core replies, opt-out, leak guard
 //   network   ConsentNetwork in the NYC world: invariants (seed 3, 10 days), consent vs push (seeds 1-3, 21 days) with the
 //             attention and plans invariants, NYC scenarios, sim scenarios at pass^3, networkPack conformance
-//   slop      slop.date: seeds 13-16, 4 weeks, 300 per city; safety + passing quality gates block, known-failing gates tracked
+//   slop      slop.date: seeds 13-16, 4 weeks, 300 per city; safety + passing quality gates block, known-failing gates tracked;
+//             the relay inside the world (adversary personas after the reveal) and the photo in the probe
+//   relay     the relay policy (engine relay.ts): evals/relay/ corpora and scripted scenarios; photo-in-probe rule
 //   peon      peon.biz: seeds 13-16, 8 weeks; the official gates block
 //   friends   friends.help: seeds 5-8, 8 weeks, 400 personas; the official gates block
 //   onboard   slop.date onboarding: evals/slop-onboarding corpus gates (rules only) and the persona onboarding sim (seeds 13-14)
@@ -28,6 +30,7 @@ import { Block, type Gate } from "./sim/gate.ts";
 import { onboardBlock } from "./sim/onboard.ts";
 import { networkBlock } from "./sim/network.ts";
 import { peonBlock } from "./sim/peon.ts";
+import { relayBlock } from "./sim/relay.ts";
 import { slopBlock } from "./sim/slop.ts";
 
 type Opts = { quick: boolean; llm: boolean };
@@ -36,12 +39,13 @@ const BLOCKS: Record<string, (b: Block, o: Opts) => Promise<void>> = {
   network: networkBlock,
   slop: slopBlock,
   onboard: onboardBlock,
+  relay: b => relayBlock(b),
   peon: peonBlock,
   friends: friendsBlock,
   clef: b => clefBlock(b),
   capital: capitalBlock,
 };
-const DEFAULT = ["evals", "onboard", "network", "slop", "peon", "friends", "clef"];
+const DEFAULT = ["evals", "onboard", "network", "slop", "relay", "peon", "friends", "clef"];
 
 const argv = process.argv.slice(2);
 const values = (k: string) => argv.flatMap((x, i) => (x === `--${k}` ? (argv[i + 1] ?? "").split(",") : x.startsWith(`--${k}=`) ? x.slice(k.length + 3).split(",") : [])).filter(Boolean);
