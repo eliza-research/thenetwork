@@ -28,9 +28,9 @@ export class SessionService {
   private hash(token: string) { return tokenHash(token, this.opts.secret); }
 
   /** A new session. `startedAt` is the OTP login time (a rotation keeps it). */
-  async create(app: AppId, e164: string, personId: string | null, rotatedFrom: string | null = null, startedAt?: number): Promise<{ token: string; session: Session }> {
-    const token = newToken(), at = this.now(), started = startedAt ?? at;
-    const expiresAt = Math.min(at + (this.opts.ttlMs ?? SESSION_TTL_MS), started + (this.opts.maxMs ?? SESSION_MAX_MS));
+  async create(app: AppId, e164: string, personId: string | null, rotatedFrom: string | null = null, startedAt?: number, expiresBefore?: number, delegatedCloud?: true): Promise<{ token: string; session: Session }> {
+    const token = `${delegatedCloud ? "cloud." : ""}${newToken()}`, at = this.now(), started = startedAt ?? at;
+    const expiresAt = Math.min(at + (this.opts.ttlMs ?? SESSION_TTL_MS), started + (this.opts.maxMs ?? SESSION_MAX_MS), expiresBefore ?? Infinity);
     const session: Session = { tokenHash: this.hash(token), app, e164, personId, createdAt: at, startedAt: started, expiresAt, rotatedFrom, revokedAt: null };
     await this.store.putSession(session);
     return { token, session };
@@ -48,7 +48,8 @@ export class SessionService {
     // Already rotated (in its grace time), young, or at the end of its chain: use it as it is.
     if (s.revokedAt !== null || at - s.createdAt < (this.opts.rotateMs ?? SESSION_ROTATE_MS)) return { session: s, token, rotated: false };
     await this.store.revokeSession(s.tokenHash, at + SESSION_GRACE_MS);
-    const next = await this.create(app, s.e164, s.personId, s.tokenHash, s.startedAt);
+    const cloud = token.startsWith("cloud.");
+    const next = await this.create(app, s.e164, s.personId, s.tokenHash, s.startedAt, cloud ? s.expiresAt : undefined, cloud ? true : undefined);
     return { session: next.session, token: next.token, rotated: true };
   }
 
