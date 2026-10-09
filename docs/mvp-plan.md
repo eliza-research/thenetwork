@@ -44,7 +44,7 @@ About 35 engineer-days plus the two-week shadow. Items 1-3, 6 and 12b can run al
 | # | Prototype | Decides |
 |---|---|---|
 | P1 | Concierge pilot: 20-30 NYC adults, human-composed probes on the real line, engine in shadow | Whether people say yes, show up and want a second date |
-| P2 | Clef weight fitting from labelled pairs, with a bias audit | Whether ratings help at all; replaces the placeholder weights |
+| P2 | Clef weight fitting from labelled pairs, with a bias audit (tooling and runbook: [2026-10-09-clef-fitting.md](results/2026-10-09-clef-fitting.md); about 4,000 labels from 6+ raters on 600-1,000 consented photos) | Whether ratings help at all; replaces the placeholder weights |
 | P3 | Blooio deliverability on 10-20 test phones for 3 days | The daily cap per line, attachments, ban risk |
 | P4 | Onboarding quality, rules only against rules plus the LLM reader | At least 80% of hard fields filled in 24 hours, 0 wrong gender or seeking parses |
 | P5 | Photo in the probe, A/B inside P1 | Confirms the arm; code and sim must agree |
@@ -83,6 +83,6 @@ About 35 engineer-days plus the two-week shadow. Items 1-3, 6 and 12b can run al
 3. **Join mode for peon and friends** on production (invite, open or waitlist). The code default is open.
 4. **Ban evasion:** build a same-face check, or drop that gate and rely on phone and person bans.
 5. **The security suite** (`bun run security`, six files, CI job pending): keep it or delete it.
-6. **Clef weight fitting:** the fitter was deleted in the cleanup and the shipped weights are a placeholder. Rebuild the fitter for P2, or launch with ratings off until it exists.
+6. **Clef weight fitting:** the fitter is rebuilt (`bun run clef`, with a local labelling page, feature extraction and a bias audit; [2026-10-09-clef-fitting.md](results/2026-10-09-clef-fitting.md)). The shipped weights are still a placeholder until P2 collects labels. Open: whether to launch with the placeholder or with ratings off until P2's fitted weights pass the decision rule in that document.
 
 Other open platform questions (legal entity per app, a second line, recycled numbers, hash-key rotation and more) are listed in [mvp-gaps.md](mvp-gaps.md) section 5.

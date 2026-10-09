@@ -61,13 +61,14 @@ Do not break these. `bun run sim` checks them in every simulated run.
 
 ```bash
 bun install
-bun run sim                  # the validation layer: evals, network, slop, peon, friends (pinned seeds; exits 1 on a blocking gate)
-bun run sim --only network   # one block (evals | onboard | network | slop | peon | friends | capital); repeatable
+bun run sim                  # the validation layer: evals, network, slop, onboard, peon, friends, clef (pinned seeds; exits 1 on a blocking gate)
+bun run sim --only network   # one block (evals | onboard | network | slop | peon | friends | clef | capital); repeatable
 bun run sim --quick          # fewer seeds, shorter runs; quality gates become tracked
 bun run sim --with-capital   # adds the network-capital block (32 paired seeds; nightly)
 bun run typecheck
 bun run plugins/build.ts --check
 bun run security             # the security suite pending the founder's decision (needs the dev Postgres)
+bun run clef <fit|calibrate|features|audit|synth>   # P2 Clef weight fitting (docs/results/2026-10-09-clef-fitting.md); only `features --live` calls Workers AI
 
 # The ConsentNetwork on the NYC world (docs/runbook-simulation.md)
 bun run packages/network/harness/experiment.ts --days 21 --seed 1
