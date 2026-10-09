@@ -15,7 +15,18 @@ export function maskPhone(e164: string): string {
 }
 
 export function mountAuth(root: HTMLElement, onSignedIn: () => Promise<void> | void): void {
-  void api.authMode().then(mode => {
+  const form = root.querySelector<HTMLFormElement>('form[data-form="phone"]');
+  if (!form) return;
+  // The static form defaults to GET; block native submission before any await.
+  form.addEventListener("submit", event => event.preventDefault());
+  const submit = form.querySelector<HTMLButtonElement>("button[type=submit], button:not([type])");
+  const busyLabel = submit?.dataset.busy;
+  if (submit) submit.dataset.busy = "Loading sign-in…";
+  void busy(form, () => api.authMode()).then(mode => {
+    if (submit) {
+      if (busyLabel === undefined) delete submit.dataset.busy;
+      else submit.dataset.busy = busyLabel;
+    }
     if (!mode.ok) {
       // Older, unconfigured backends keep the existing phone-code flow.
       if (mode.status === 404) mountOtpAuth(root, onSignedIn);
@@ -23,8 +34,6 @@ export function mountAuth(root: HTMLElement, onSignedIn: () => Promise<void> | v
       return;
     }
     if (mode.data.mode !== "cloud") { mountOtpAuth(root, onSignedIn); return; }
-    const form = root.querySelector<HTMLFormElement>('form[data-form="phone"]');
-    if (!form) return;
     const explanation = form.parentElement?.querySelector(":scope > p");
     explanation?.remove();
     const error = form.querySelector<HTMLElement>("[data-error]");
