@@ -28,13 +28,14 @@ The single inbox and the notification scheduler from `docs/research/2026-10-08-e
   - **`notifyTick`.** Runs the outcome sweep, then `dispatch`. The inbox's own sends go out as a unit of work on the member's network (`runtime.system(..., type "notify")`), so the platform consent ledger, the member's opt-out and the person cap apply, as for every other send.
 - **MCP.** `packages/mcp` has the tool `get_updates` (scope `membership:read`, the grant's own app only, optional `update_token`). Its hooks `updates` and `assistantLinked` are wired in `serve.ts`. The assistant is identified by the client's redirect hosts (`assistantOf`). Consent marks the assistant active, and every revocation path marks it inactive.
 - **Ticks.** `deploy/backend/backend.ts` runs `svc.notifyTick()` once per round, after the networks. The standalone `serve.ts` does the same. Replicas may overlap safely: a delivery id is recorded once.
-- **Migrations.** `packages/observatory/db/migrate.ts` applies `db/schema.sql` as the repeatable `9002_notify_schema`, with grants to `network_service`.
+- **Migrations.** `packages/observatory/db/migrate.ts` applies `db/schema.sql` as the repeatable `9002_notify_schema`, then `db/retention.sql` once as `9003_notify_retention`. Only `network_service` writes the inbox.
+- **Retention.** The existing Network forget transaction seals the member record, then calls `notify.forget_data` for that app. Full account deletion clears the person's remaining inbox, delivery, task-token and surface-signal data in the existing platform deletion transaction. Mixed-app references keep their surviving item IDs. Shared surface signals stay while another live or pending membership remains; last leave and full deletion clear them. Canonical person/member and item-row locks fence late inserts without a second deletion ledger. The privileged cleanup requires an already removed member/membership in the current app scope, or a deleted person for full erasure; it cannot erase a live scope merely because the caller holds the service role. STOP, suppression and service person-cap data are untouched by this cleanup.
 
 **Prototypes and the plugin:**
 - **Outbound queue** (`packages/blooio`). Use `queueSink(queue, providerFor)` and `recipientPolicy: queuePolicy(notifier, existing)`.
 - **`packages/plugin-network`.** Set `NetworkStore.readUpdates = threadHooks(notifier, now).readUpdates` to register `GET_UPDATES`.
 
-**Validation:** the notifier's unit and end-to-end tests were deleted on 2026-10-08 (simulations only; in git history at 16cde70).
+**Validation:** `bun --no-env-file --conditions=eliza-source test deploy/backend/backend.test.ts -t 'Notify '` uses isolated Postgres and the real leave/delete/projection owners. It covers mixed-app references, other-person isolation, STOP/suppression, concurrent last leave, a held accepted projection, late writes and restart. The older notifier unit/e2e tests were removed on 2026-10-08 (history at `16cde70`).
 
 ## Not yet
 

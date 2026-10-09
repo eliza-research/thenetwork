@@ -1070,4 +1070,140 @@ describe.skipIf(!pgAvailable)("gateway service turns (real HTTP and Postgres, no
     } finally { await f.close(); }
   }, 120_000);
 
+  test("Notify app leave erases only its references and keeps other apps, people, STOP and suppression", async () => {
+    const f = await fixture("notify_scope");
+    try {
+      const from = "+12125550170", otherFrom = "+12125550171";
+      await f.call(message("notify-friends", from, "Lee, 29", "friends"));
+      await f.call(message("notify-peon", from, "Lee, 29", "peon"));
+      await f.call(message("notify-other", otherFrom, "Pat, 30", "friends"));
+      const person = (await f.service.accounts.personFor(from))!;
+      const other = (await f.service.accounts.personFor(otherFrom))!;
+      const notify = f.service.notify!, store = notify.store;
+      const add = (personId: string, app: string, subjectId: string, summary: string) => notify.add({personId, app, eventType: "fixture", subjectId, urgency: "normal", summary}, now);
+      const a = (await add(person.id, "friends", "own-a", "APP_A_PRIVATE_CANARY")).item;
+      const b = (await add(person.id, "peon", "own-b", "APP_B_PRIVATE_CANARY")).item;
+      const outsider = (await add(other.id, "friends", "other", "OTHER_PERSON_CANARY")).item;
+      for (const [deliveryId, personId, itemIds] of [["only-a", person.id, [a.id]], ["only-b", person.id, [b.id]], ["mixed", person.id, [a.id, b.id]], ["other", other.id, [outsider.id]]] as const) {
+        await store.recordDelivery({deliveryId, personId, itemIds: [...itemIds], target: "chatgpt", countsTowardCap: true, sentAt: now});
+      }
+      for (const [token, personId, itemIds] of [["T-AAAAAA", person.id, [a.id]], ["T-BBBBBB", person.id, [b.id]], ["T-CCCCCC", person.id, [a.id, b.id]], ["T-DDDDDD", other.id, [outsider.id]]] as const) {
+        await store.insertToken({token, personId, itemIds: [...itemIds], issuedAt: now, expiresAt: now + 86400000});
+      }
+      await store.setActive(person.id, "chatgpt", true);
+      await store.recordOutcome(person.id, "chatgpt", "acted", now);
+      await store.setActive(other.id, "claude", true);
+      const signals = await store.signals(person.id), otherSignals = await store.signals(other.id);
+      await expect(f.service.runtimeFor("friends")!.scoped(tx => tx`select notify.forget_data(${person.id}, 'friends')`)).rejects.toThrow("Notify app erasure requires canonical removal");
+      await expect(Promise.resolve(f.service.sql`select notify.forget_data(${person.id}, null)`)).rejects.toThrow("Notify full erasure requires canonical deletion");
+      await expect(f.service.runtimeFor("friends")!.scoped(tx => tx`select notify.forget_data(${person.id}, 'peon')`)).rejects.toThrow("Notify app erasure requires canonical app scope");
+      await expect(f.service.sql.begin(async tx => {
+        await tx.unsafe("set local role platform_service");
+        await tx`select set_config('app.app_id', 'friends', true)`;
+        await tx`select notify.forget_data(${person.id}, 'friends')`;
+      })).rejects.toThrow("Notify app erasure requires canonical removal");
+      expect(await store.getItems([a.id, b.id])).toHaveLength(2);
+      // Invited/pending memberships may have inbox data before a network row exists.
+      await f.service.people.putMembership({app: "ntwrk", personId: person.id, memberId: "notify_pending_member", state: "invited", review: null, firstName: "Lee", profile: {}, joinedAt: null, leftAt: null});
+      const pending = (await add(person.id, "ntwrk", "pending", "PENDING_APP_PRIVATE_CANARY")).item;
+      await f.service.accounts.leave(f.service.apps.ntwrk, {e164: from, personId: person.id});
+      expect(await store.getItems([pending.id])).toEqual([]);
+      expect(await store.signals(person.id)).toEqual(signals);
+      await f.service.accounts.stop(f.service.apps.friends, {e164: from, personId: person.id});
+      const hash = f.service.accounts.phoneHash(from);
+      await f.service.people.suppress(hash, "fixture-existing-suppression", now);
+      await f.service.accounts.leave(f.service.apps.friends, {e164: from, personId: person.id});
+      await f.service.sql.begin(async tx => {
+        await tx.unsafe("set local role platform_service");
+        await tx`select set_config('app.app_id', 'friends', true)`;
+        await tx`select notify.forget_data(${person.id}, 'friends')`;
+      });
+      expect(await store.getItems([a.id, b.id])).toEqual([expect.objectContaining({id: b.id, summary: "APP_B_PRIVATE_CANARY"})]);
+      expect(await store.getDelivery("only-a")).toBeUndefined();
+      expect((await store.getDelivery("mixed"))!.itemIds).toEqual([b.id]);
+      expect((await store.getDelivery("only-b"))!.itemIds).toEqual([b.id]);
+      expect(await store.getToken("T-AAAAAA")).toBeUndefined();
+      expect((await store.getToken("T-CCCCCC"))!.itemIds).toEqual([b.id]);
+      expect((await store.getToken("T-BBBBBB"))!.itemIds).toEqual([b.id]);
+      expect(await store.signals(person.id)).toEqual(signals);
+      expect(await store.signals(other.id)).toEqual(otherSignals);
+      expect((await store.getDelivery("other"))!.itemIds).toEqual([outsider.id]);
+      expect((await store.getToken("T-DDDDDD"))!.itemIds).toEqual([outsider.id]);
+      expect(await f.service.accounts.optedIn("peon", from)).toBe(false);
+      expect(await f.service.people.isSuppressed(hash)).toBe(true);
+      await expect(add(person.id, "friends", "late-erased-app", "LATE_APP_PRIVATE_CANARY")).rejects.toThrow("Notify membership is unavailable");
+      expect(await store.recordDelivery({deliveryId: "late-a", personId: person.id, itemIds: [a.id], target: "chatgpt", countsTowardCap: false, sentAt: now})).toBe(false);
+      expect(await store.insertToken({token: "T-EEEEEE", personId: person.id, itemIds: [a.id], issuedAt: now, expiresAt: now + 86400000})).toBe(false);
+      await f.service.accounts.leave(f.service.apps.peon, {e164: from, personId: person.id});
+      expect(await store.unseen(person.id, now)).toEqual([]);
+      expect(await store.getDelivery("mixed")).toBeUndefined();
+      expect(await store.getToken("T-CCCCCC")).toBeUndefined();
+      expect(await store.signals(person.id)).toEqual([]);
+      await store.setActive(person.id, "chatgpt", false);
+      await store.touch(person.id, "web", now);
+      expect(await store.signals(person.id)).toEqual([]);
+      expect(await f.service.people.isSuppressed(hash)).toBe(true);
+      expect(await store.getItems([outsider.id])).toHaveLength(1);
+      expect(await store.signals(other.id)).toEqual(otherSignals);
+      await f.restart();
+      expect(await f.service.notify!.store.unseen(person.id, now)).toEqual([]);
+      expect(await f.service.notify!.store.signals(person.id)).toEqual([]);
+      // Last memberships may be left concurrently on different runtime owners.
+      await f.call(message("notify-other-peon", otherFrom, "Pat, 30", "peon"));
+      await Promise.all([
+        f.service.accounts.leave(f.service.apps.friends, {e164: otherFrom, personId: other.id}),
+        f.service.accounts.leave(f.service.apps.peon, {e164: otherFrom, personId: other.id}),
+      ]);
+      expect(await f.service.notify!.store.signals(other.id)).toEqual([]);
+      expect(await f.service.notify!.store.getItems([outsider.id])).toEqual([]);
+    } finally { await f.close(); }
+  }, 120_000);
+
+  test("Notify full deletion waits for accepted projection, erases person data, and fences late writes and restart repair", async () => {
+    const f = await fixture("notify_projection_delete");
+    try {
+      const from = "+12125550172";
+      const joined = await f.call(message("notify-delete-join", from, "Alex, 28", "friends"));
+      const person = (await f.service.accounts.personFor(from))!;
+      const rt = f.service.runtimeFor("friends")!, store = f.service.notify!.store;
+      const input = {personId: person.id, app: "ntwrk", eventType: "fixture", subjectId: "not-current-membership", urgency: "normal" as const, summary: "PERSON_PRIVATE_NOTIFY_CANARY"};
+      const item = (await f.service.notify!.add(input, now)).item;
+      await store.recordDelivery({deliveryId: "person-old-delivery", personId: person.id, itemIds: [item.id], target: "chatgpt", countsTowardCap: true, sentAt: now});
+      await store.insertToken({token: "T-FFFFFF", personId: person.id, itemIds: [item.id], issuedAt: now, expiresAt: now + 86400000});
+      await store.setActive(person.id, "chatgpt", true);
+      const delivered = f.service.delivered.bind(f.service);
+      let reached!: () => void, resume!: () => void;
+      const projectionStarted = new Promise<void>(resolve => {reached = resolve;});
+      const continueProjection = new Promise<void>(resolve => {resume = resolve;});
+      f.service.delivered = async (...args) => {reached(); await continueProjection; await delivered(...args);};
+      const accepted = rt.unitOfWork(() => rt.system(joined.body.memberId, "notify-delete-accepted", "LATE_PROJECTION_PRIVATE_CANARY", "transactional", "reminder"));
+      await projectionStarted;
+      let erased = false;
+      const deletion = f.service.accounts.deleteAll({e164: from, personId: person.id}).then(() => {erased = true;});
+      await Bun.sleep(20);
+      expect(erased).toBe(false);
+      resume();
+      await accepted; await deletion;
+      f.service.delivered = delivered;
+      for (const table of ["inbox_items", "deliveries", "task_tokens", "surface_signals"]) {
+        const [row] = await f.service.sql.unsafe(`select count(*)::int as n from notify.${table} where person_id = $1`, [person.id]);
+        expect(row.n).toBe(0);
+      }
+      expect(await f.service.people.isSuppressed(f.service.accounts.phoneHash(from))).toBe(true);
+      expect((await f.service.sql`select count(*)::int as n from network.messages where id = 'notify-delete-accepted'`)[0].n).toBe(0);
+      await expect(f.service.notify!.recordSent(input, {deliveryId: "late-deleted-delivery", channel: "imessage", countsTowardCap: true, sentAt: now})).rejects.toThrow("Notify membership is unavailable");
+      expect(await store.recordDelivery({deliveryId: "late-deleted-ref", personId: person.id, itemIds: [item.id], target: "chatgpt", countsTowardCap: true, sentAt: now})).toBe(false);
+      expect(await store.insertToken({token: "T-GGGGGG", personId: person.id, itemIds: [item.id], issuedAt: now, expiresAt: now + 86400000})).toBe(false);
+      await store.setActive(person.id, "chatgpt", true);
+      await store.recordOutcome(person.id, "web", "acted", now);
+      expect(await store.signals(person.id)).toEqual([]);
+      await f.restart();
+      await f.service.runtimeFor("friends")!.tick();
+      for (const table of ["inbox_items", "deliveries", "task_tokens", "surface_signals"]) {
+        const [row] = await f.service.sql.unsafe(`select count(*)::int as n from notify.${table} where person_id = $1`, [person.id]);
+        expect(row.n).toBe(0);
+      }
+    } finally { await f.close(); }
+  }, 120_000);
+
 });

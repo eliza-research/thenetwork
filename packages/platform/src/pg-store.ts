@@ -274,6 +274,8 @@ export class PgPeopleStore implements PeopleStore {
       await tx`update platform.memberships set state = 'removed', review = null, first_name = null, profile = '{}'::jsonb, left_at = ${ts(at)}
         where person_id = ${personId} and app_id = ${app}`;
       await tx`update platform.share_grants set revoked_at = ${ts(at)} where person_id = ${personId} and (from_app = ${app} or to_app = ${app}) and revoked_at is null`;
+      await tx`select set_config('app.app_id', ${app}, true)`;
+      await tx`select notify.forget_data(${personId}, ${app})`;
     });
   }
 
@@ -289,6 +291,7 @@ export class PgPeopleStore implements PeopleStore {
         // Blocks stay (a safety fact): the tombstone keeps them, and a new join by this phone revives it.
         await tx`delete from platform.phone_identities where person_id = ${personId}`;
         await tx`update platform.people set lowest_age = null, age_verified_at = null, deleted_at = ${ts(at)} where id = ${personId}`;
+        await tx`select notify.forget_data(${personId}, null)`;
       }
       await tx`delete from platform.phone_identities where e164 = ${e164}`;
       await tx`delete from platform.pending_texts where phone_hash = ${phoneHash}`;

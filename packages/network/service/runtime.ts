@@ -354,10 +354,16 @@ export class NetworkRuntime {
   /** Everything the unit produced, inside the save transaction (app.app_id is set). Rows that name a member not in this app's network.members are skipped. */
   private async writeUnit(tx: SQL, u: Unit) {
     const app = this.app.id;
+    if (u.forget.size) await tx`select person.id from platform.people person join network.members member on member.person_id = person.id
+      where member.app_id = ${app} and member.id in ${tx([...u.forget])} order by person.id for update of person`;
     for (const effect of u.effects) await effect(tx);
-    const named = new Set<string>([...u.sends.map(s => s.memberId), ...(u.inbound ? [u.inbound.member_id as string] : []), ...u.blocks.flat(), ...u.optOut.keys()]);
+    const named = new Set<string>([...u.sends.map(s => s.memberId), ...(u.inbound ? [u.inbound.member_id as string] : []), ...u.blocks.flat(), ...u.optOut.keys(), ...u.forget]);
     const known = new Set<string>();
-    if (named.size) for (const r of await tx`select id from network.members where app_id = ${app} and id in ${tx([...named])}`) known.add(r.id);
+    const personIds = new Map<string, string>();
+    if (named.size) for (const r of await tx`select id, person_id from network.members where app_id = ${app} and id in ${tx([...named])}`) {
+      known.add(r.id);
+      if (r.person_id) personIds.set(r.id, r.person_id);
+    }
     const ok = (id: string) => known.has(id) && !u.forget.has(id);
     if (u.inbound && ok(u.inbound.member_id as string)) await tx`insert into network.messages ${tx({ ...u.inbound, app_id: app })} on conflict (id) do nothing`;
     // A collected reply and its causal ownership commit with this unit, including
@@ -426,6 +432,7 @@ export class NetworkRuntime {
       await tx`update network.members set invited_by = null where app_id = ${app} and invited_by = ${id}`;
       await tx`update network.members set name = null, participation_window = null, home_city = null, home_area = null, account_status = 'removed', opted_out = false, age = null, invited_by = null,
         community = null, occupation = null, bio = null, prefs = '{}'::jsonb, unanswered_proactive = 0, joined_at = null, person_id = null where app_id = ${app} and id = ${id}`;
+      if (personIds.has(id)) await tx`select notify.forget_data(${personIds.get(id)!}, ${app})`;
     }
   }
 
