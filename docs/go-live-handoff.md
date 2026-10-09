@@ -104,57 +104,84 @@ Follow `docs/deploy.md` section 2. Summary:
 
 ## 7. Eliza live: eliza.app becomes an entry into The Network
 
-The design is in `docs/design/eliza-conversation-layer.md`. Here is the flow and the prerequisites.
+The design is in `docs/design/eliza-conversation-layer.md`. Eliza-side code is on branch `spike/network-plugin` of elizaOS/eliza (the `eliza/` submodule). Section corrected 2026-10-08 by the Eliza-side owner.
 
 ```
 iMessage (Blooio, shared line)
-  → Eliza gateway (signed inbound, dedupe, STOP fence, consent ledger)
-  → shared agent "Eliza" with plugin-network
-      → POST service /internal/turn  {from, to, text, messageId, transport, app?}
-          handled → reply as given (routing, join, STOP/leave, looking-for, slop onboarding)
-          open    → Eliza's model answers with MEMBER_CONTEXT; actions call service /internal/*
-                    (set-state, updates, relay → relayItem with the Clef classifier; only `rendered` is sent)
-Network service proactive sends → Eliza gateway /internal/deliver → Blooio
+  → Eliza gateway (Railway; signed inbound, dedupe, consent fence)
+      NETWORK_TAKEOVER=1 and the sender is allowed:
+      → POST service /internal/turn  (signed, SERVICE_TURN_SECRET)
+          handled → the service's replies, sent as one message; no model call
+                    (STOP/START are mirrored into the gateway fence)
+          open    → Eliza Cloud agent turn with the service's context; the plugin's store is
+                    service-backed (set-state, signals, updates; relay → /internal/relay with the Clef classifier)
+Network service sends → POST Eliza Cloud /api/internal/network/deliver (signed)
+                      → gateway /internal/deliver → Blooio, then appended to the member's agent history
 ```
+
+**Where things deploy (elizaOS/eliza GitHub Actions, manual dispatch, protected environments):**
+- **Gateway:** the "Deploy Gateway Webhook" workflow (`deploy-gateway-webhook.yml`) deploys to Railway: `gateway-webhook-stg-staging` and `gateway-webhook-production`.
+- **Cloud API (Workers):** `cloud-cf-deploy.yml` (wrangler).
+- **Both workflows refuse feature branches** for staging and production, and production deploys from `main`. So `spike/network-plugin` has to merge through a PR into elizaOS/eliza. That's a change to a shared upstream repo, so it needs the founder's approval.
+
+**Environment variables:**
+
+| Where | Variable | Value |
+|---|---|---|
+| Gateway (Railway) | `NETWORK_TAKEOVER` | `1` turns it on; unset or `0` is the legacy path |
+| Gateway | `NETWORK_SERVICE_URL` | the service origin (Railway) |
+| Gateway | `SERVICE_TURN_SECRET` | 32+ random bytes; the same value on all three |
+| Gateway | `NETWORK_TAKEOVER_ALLOWLIST` | optional, comma-separated E.164 numbers; set only for the shadow step |
+| Cloud API (Workers secret) | `NETWORK_SERVICE_URL`, `SERVICE_TURN_SECRET` | same values. Without them the Cloud ignores the gateway's turn context and its own invite gate applies |
+| Cloud API (existing) | `GATEWAY_INTERNAL_SECRET`, `ELIZA_APP_WEBHOOK_GATEWAY_URL`, binding `SHARED_RUNTIME_CONVERSATIONS` | already set for reminders. `/api/internal/network/deliver` uses them |
+| Service (Railway) | `SERVICE_TURN_SECRET`, and the Cloud origin for `/api/internal/network/deliver` | platform owner names the variable |
 
 **Prerequisites, all of which must be true before go-live:**
 
-1. **Service.** `/internal/turn`, `/internal/set-state`, `/internal/updates`, `/internal/relay` and `/internal/signals` are deployed and signed. Platform owner.
-2. **Gateway.** `/internal/deliver` is deployed. The takeover code (`NETWORK_TAKEOVER`) is merged into the Eliza Cloud deploy branch. Eliza-side owner.
-3. **One STOP owner.** The Blooio webhook for the shared line points only at the Eliza gateway, and the service has `STOP_HELP_OWNER=gateway`.
-4. **eliza.app as an entry:**
-   - The eliza.app home page and its "text Eliza" button lead into The Network on the same shared line.
-   - The page copy says Eliza is The Network's agent, and links to ntwrk.love and the three apps.
-   - Ask the Eliza-side owner who changes the eliza.app site. Whoever it is, coordinate with them.
-5. **Existing eliza.app users.** Decide with the founder how to tell current eliza.app users about the change. They must not be silently enrolled in matching:
-   - On their next message they get a one-time notice that Eliza is now The Network's agent, with what that means and how to opt out.
-   - Matching needs the normal Network join and consent.
-   - Under-18s follow the minors rule.
-6. **The character:** "Eliza", speaking as The Network's agent with an app-aware voice. It must pass the Eliza-side owner's live eval.
-7. **Sims and integration green.** `bun run sim` passes, the `/internal/turn` integration tests pass against real Postgres, and the Workerd harness passes.
+1. **Service.** `/internal/turn`, `/internal/set-state`, `/internal/signals`, `/internal/updates` and `/internal/relay` are deployed and signed. The shared-line adapter sends through `/api/internal/network/deliver`. Owner: platform.
+2. **Build blocker, Eliza side.** The gateway and the Cloud depend on `@thenetwork/plugin-network` through a `file:` path outside the eliza repo, so CI and the gateway's Docker build cannot resolve it. Before staging, choose one:
+   - publish the package to GitHub Packages and pin a version (recommended);
+   - vendor a synced copy into elizaOS/eliza.
 
-**The go-live sequence** needs the founder's explicit approval at each starred step:
+   The Eliza-side owner does this; the founder chooses.
+3. **Merge.** `spike/network-plugin` is merged into elizaOS/eliza through a PR (founder approval).
+4. **One STOP owner.** The Blooio webhook for the shared line points only at the Eliza gateway. Remove the old `ovh-eliza` webhook, which needs Blooio account owner approval. The service doesn't consume Blooio webhooks for the shared line.
+5. **eliza.app as an entry.** The home page is `packages/app` in elizaOS/eliza; `scripts/check-homepage-public-readiness.ts` checks it.
+   - The Eliza-side owner prepares the copy and CTA change as part of the same PR: Eliza is The Network's agent, with links to ntwrk.love and the apps.
+   - The founder approves the wording.
+6. **Existing eliza.app users.** This is the founder's decision; the engine owner proposed the wording.
+   - They get a one-time notice on their next message.
+   - Matching needs the normal Network join and consent, and minors follow the minors rule.
+   - The service decides this. A known eliza.app user who isn't a Network member is a "handled" turn: the notice, then the join flow.
+7. **The character.** It's "Eliza", speaking as The Network's agent, and must pass the Eliza-side owner's live eval.
+8. **Tests green:**
+   - `bun run sim`;
+   - the service's `/internal/turn` integration tests against real Postgres;
+   - the Eliza side: gateway (`network-takeover.test.ts`), the Cloud deliver route, and the Workerd shared runtime.
 
-1. Staging. Turn on `NETWORK_TAKEOVER=1` in the staging Eliza Cloud, pointed at the staging service. Run the scripted conversation checks:
+**The go-live sequence.** The founder's explicit approval is needed at each starred step.
+
+1. **Staging.** On the staging gateway set `NETWORK_TAKEOVER=1`, `NETWORK_SERVICE_URL` and `SERVICE_TURN_SECRET`, and set the same secret on the staging Cloud API, pointed at the staging service. Then run the scripted conversations:
    - keyword join for each app;
    - no keyword → "friends, dating or work?";
-   - STOP, HELP and leave-one-app;
+   - STOP, HELP, START and leave-one-app;
    - a banned number refused;
    - a minor joining but never matched;
    - slop onboarding to a confirmed read-back;
-   - a relay that goes through, and a scam that is held.
-2. ★ Production shadow. Turn on takeover for the founder's test numbers only, if the gateway supports an allowlist; ask the Eliza-side owner. Live sends from the matching engine stay off. Every proactive proposal goes to the review queue.
-3. ★ Production takeover for all eliza.app traffic. Flip `NETWORK_TAKEOVER=1`. Watch for one hour:
-   - error rate and latency on `/internal/turn`;
+   - a relay that goes through, and a scam that's held;
+   - a service outage. The webhook should reopen with nothing sent, then succeed on Blooio's retry.
+2. ★ **Production shadow.** Set `NETWORK_TAKEOVER=1` and `NETWORK_TAKEOVER_ALLOWLIST=<founder test numbers>` on the production gateway. Everyone else stays on today's path. Matching-engine live sends stay off, and every proactive proposal goes to the review queue.
+3. ★ **Production takeover for everyone.** Remove `NETWORK_TAKEOVER_ALLOWLIST`, then watch for one hour:
+   - `/internal/turn` errors and latency (handled turns should take well under 1 s);
    - STOP handled once;
-   - no unhandled turns;
+   - webhook reopen rate;
    - Blooio delivery failures under 2%.
-4. ★ Live sends for slop.date in NYC, behind the review gate, per `docs/mvp-plan.md` section 13 (shadow first, then live).
+4. ★ **Live sends** for slop.date in NYC, behind the review gate, per `docs/mvp-plan.md` section 13.
 
 **Rollback:**
-- Set `NETWORK_TAKEOVER=0` in Eliza Cloud. eliza.app traffic goes back to the old behavior and STOP stays in the gateway.
+- Set `NETWORK_TAKEOVER=0` on the **gateway**. It's a gateway variable, not a Cloud one. Traffic returns to the legacy path, where the gateway handles STOP itself. The Cloud needs no change; without the gateway's turn context it uses its own store and gates.
 - Turn live sends off in the service.
-- Roll back Pages or Railway deployments from their dashboards (deploy.md 2.7 and 3.2).
+- Roll back Railway or Workers deployments from their dashboards, or redeploy the previous SHA with the same workflows.
 
 ## 8. Go-live checklist (all must be true)
 
