@@ -207,9 +207,9 @@ export const slopPack = makeSlopPack();
 
 export { slopOptions, SLOP_DEFAULT_OPTIONS, type SlopPackOptions } from "./options.ts";
 export { slopProfiles, SLOTS, type SlopProfile, type Slot } from "./profile.ts";
-export { planFirstDate, planFromInput, PUBLIC_VENUE, type DatePlan } from "./plan.ts";
+export { planFirstDate, planFromInput, probePhotoRefs, PROBE_PHOTO_MAX, PUBLIC_VENUE, type DatePlan, type ProbePhotoRef, type ProbePhotoSubject } from "./plan.ts";
 export { distanceBand, cellOfZip, ZIPS as SLOP_ZIPS, type DistanceBand } from "./zips.ts";
-export { ageBand, SLOP_ASK_QUESTIONS } from "./copy.ts";
+export { ageBand, SLOP_ASK_QUESTIONS, SLOP_PROBE_PHOTO_LINE, slopProbeMessage, slopProbeText } from "./copy.ts";
 export { mutualMarkets } from "./geo.ts";
 export { adultsOnly, appearanceFacet, appearanceLeak, APPEARANCE_LEAK_PATTERNS, BODY_TYPES, canRatePhotos, ClipAppearanceRater, parseAppearance, rateMember, VisionLlmAppearanceRater, VISION_RATER_SYSTEM, type AppearanceRater, type AppearanceScore, type BodyType, type PhotoRef, type RatingSubject, type VisionChat } from "./appearance.ts";
 export { CLEF_FEATURES, CLEF_MODEL_IDS, CLEF_QUESTIONS, ClefError, clefFeatures, applyHead, makeClefRater, makeClefRaterFromEnv, WorkersAIClefRater, type ClefModel, type ClefRaterOptions } from "./clef.ts";
