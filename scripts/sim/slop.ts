@@ -12,6 +12,16 @@
 //     member-month >= 0.9x random, age-liar contact cut >= 90%, adversary-contact cut >= 90%, the smallest
 //     gender / orientation group >= 0.7x (all members and feasible members), and harm-event cut >= 90%.
 // --quick: seed 13 only, 2 weeks, 150 per city; every quality gate is tracked (one seed is noise).
+//
+// The AS-LAUNCHED arm (audit 2026-10-08: the pinned arm measures a safety stack live does not have):
+// the same population and seeds with what origin/main runs live: no ID or liveness check (founder
+// decision 9), no relay, no photo in the probe, no rater; human safety review, the widen ask and the
+// post-date check-in stay (the live slop hooks have them). Its safety gates that pass on the pinned
+// seeds block; the ones that fail are TRACKED with the value (AS_LAUNCHED_TRACKED); its quality gates
+// are tracked. The pinned arm above stays the target arm, unchanged.
+// The ADVERSARY arms add ban evaders (rejoin after a hold on the same phone or a new number, the same
+// face) and bot farm accounts (keyword joins in a burst, a scam script) to the population, against
+// random and the as-launched pack, with the live ban policy (a banned phone never joins; no face match).
 import type { Facet, MemberId } from "../../packages/core/src/index.ts";
 import { canBeMatched, DAY } from "../../packages/core/src/index.ts";
 import * as A from "../../packages/engine/src/attention.ts";
@@ -50,6 +60,15 @@ const TRACKED = [/^Dates per member-month vs random/, /^Minor contacts \(age lia
   // Not in the founder's tracked list, but it does not pass on the pinned seeds (86.9%; I5.4 reports 87% on seeds 13-16 at 4 weeks).
   /^Harm events cut \(not counting/];
 const SAFETY = [/^Declared-minor contacts/, /^Stated-filter violations/, /^Scammer median reach/];
+/** What live runs on origin/main (packages/network/service/packs.ts): no verification, relay, photo or rater. */
+export const AS_LAUNCHED: WorldSpec = { review: 3, widen: true, checkin: true };
+const AS_LAUNCHED_PACK = { verification: { required: false } };
+/** As-launched safety gates that fail on the pinned seeds today: tracked with the value, to fix or waive (founder waiver register). */
+const AS_LAUNCHED_TRACKED: RegExp[] = [];
+/** Ban evaders and bot farm accounts per city (3 and 6 of 300). */
+export const ADVERSARIES: WorldSpec = { banEvader: 0.01, botFarm: 0.02 };
+/** Adversary-arm gates that fail on the pinned seeds today: tracked with the value. */
+const ADVERSARY_TRACKED: RegExp[] = [];
 
 const emptySlopState = (): SlopNetworkState => ({ now: SLOP_WORLD_START + 12 * 3_600_000, week: 0, interactions: [], feedback: [], safetyHolds: [], inboundAsks: [], edges: [], paused: new Set(), asks: [], learned: new Map() });
 
@@ -82,6 +101,30 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
     b.gate(`gate ${g.name} (${g.target})`, g.pass, value, blocking);
   }
 
+  // ---- the as-launched arm: what live has today --------------------------------------------------------
+  const live = await runArm("slop as-launched", spec.seeds, spec.weeks, spec.perCity, AS_LAUNCHED_PACK, { ...POPULATION, ...AS_LAUNCHED });
+  b.track("fingerprint: as-launched arm", true, digest(live));
+  for (const g of gates3(live, random)) {
+    const value = g.name.includes("cut") ? `${(g.value * 100).toFixed(1)}%` : g.value.toFixed(3);
+    const blocking = SAFETY.some(r => r.test(g.name)) && !AS_LAUNCHED_TRACKED.some(r => r.test(g.name));
+    b.gate(`as-launched gate ${g.name} (${g.target})`, g.pass, value, blocking);
+  }
+
+  // ---- ban evaders and bot farms: random vs the as-launched pack, the live ban policy ----------------------
+  const advRandom = await runArm("random", spec.seeds, spec.weeks, spec.perCity, undefined, { ...POPULATION, ...ADVERSARIES });
+  const advLive = await runArm("slop as-launched", spec.seeds, spec.weeks, spec.perCity, AS_LAUNCHED_PACK, { ...POPULATION, ...AS_LAUNCHED, ...ADVERSARIES });
+  b.track("fingerprint: adversary arms", true, digest([advRandom, advLive]));
+  const mean = (xs: number[]) => xs.reduce((x, y) => x + y, 0) / Math.max(1, xs.length);
+  const ev = (a: typeof advLive, k: keyof (typeof advLive)["extra"][number]["evaders"]) => mean(a.extra.map(e => e.evaders[k]));
+  const advGate = (name: string, pass: boolean, value: string) => b.gate(name, pass, value, !o.quick && !ADVERSARY_TRACKED.some(r => r.test(name)));
+  advGate("adversaries: declared-minor contacts and stated-filter violations stay 0 with evaders and bots (as-launched)", advLive.metrics.every(m => m.safety.minorContacts === 0 && m.filterViolations === 0), advLive.metrics.map(m => `${m.safety.minorContacts}/${m.filterViolations}`).join(","));
+  advGate("ban evaders: reveals with a next account after a hold, per seed (as-launched, live ban policy; target 0)", ev(advLive, "contacts") === 0,
+    `${ev(advLive, "contacts").toFixed(2)} (next accounts per seed: ${ev(advLive, "tried").toFixed(2)} tried, ${ev(advLive, "stoppedPhone").toFixed(2)} stopped by the phone ban, ${ev(advLive, "joined").toFixed(2)} joined; random: ${ev(advRandom, "contacts").toFixed(2)} reveals)`);
+  const botReach = mean(advLive.extra.map(e => e.botMedianReach)), botCut = 1 - mean(advLive.extra.map(e => e.botContacts)) / Math.max(1e-9, mean(advRandom.extra.map(e => e.botContacts)));
+  advGate("bot farms: median members a bot account reached <= 1 (as-launched)", botReach <= 1, botReach.toFixed(2));
+  advGate("bot farms: bot contacts cut vs random >= 90% (as-launched)", botCut >= 0.9, `${(botCut * 100).toFixed(1)}% (${mean(advLive.extra.map(e => e.botContacts)).toFixed(1)} vs ${mean(advRandom.extra.map(e => e.botContacts)).toFixed(1)} reveals per seed)`);
+  advGate("adversaries: scammer median reach <= 1 with evaders and bots (as-launched)", mean(advLive.extra.map(e => e.scammerMedianReach)) <= 1, mean(advLive.extra.map(e => e.scammerMedianReach)).toFixed(2));
+
   // ---- world invariants: no hidden truth in the agent's view; baselines; the ban loop ----------------
   await b.run("world: personas deterministic by seed; the snapshot carries no hidden truth, canary or adversary label", () => {
     expect(JSON.stringify(generateSlopPersonas({ seed: 7, perCity: 80 }))).toBe(JSON.stringify(generateSlopPersonas({ seed: 7, perCity: 80 })));
@@ -99,6 +142,22 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
       h.values = { ...h.values, smoking: "regular" }; h.availability = { slotFree: h.availability.slotFree.map(() => 0.5), shock: 0 };
     }
     expect(JSON.stringify(buildSlopSnapshot(perturbed, emptySlopState()))).toBe(json);
+  });
+  await b.run("world: ban evaders and bot farms carry no label into the snapshot; a held evader comes back under a new id, stopped by the phone ban only on the same phone", () => {
+    const ps = generateSlopPersonas({ seed: 6, perCity: 300, adversaryShares: { ban_evader: 0.01, bot_farm: 0.02 } });
+    expect(ps.filter(p => p.hidden.adversary === "ban_evader").length).toBe(9);
+    expect(ps.filter(p => p.hidden.adversary === "bot_farm").length).toBe(18);
+    const json = JSON.stringify(buildSlopSnapshot(ps, emptySlopState()));
+    for (const k of ["ban_evader", "bot_farm", "evades", "face-", "samePhone"]) expect(json).not.toContain(k);
+    // Minors' occupations come from the adults' list: no "student" tell.
+    expect(ps.filter(p => p.hidden.isMinor).every(p => p.stated.occupation !== "student")).toBe(true);
+    const r = runSlopWorld({ seed: 6, perCity: 300, weeks: 4, matcher: BASELINES.random as never, adversaryShares: { ban_evader: 0.01 }, platform: { checkin: { harassment: 1 } } });
+    const rejoins = r.world.state.rejoins ?? [];
+    expect(rejoins.length).toBeGreaterThan(0);
+    for (const x of rejoins.filter(x => x.outcome)) {
+      expect(x.persona.hidden.face).toBe(r.world.oracle.p(x.persona.evadesRoot!).hidden.face);
+      expect(x.outcome).toBe(x.persona.hidden.evades!.samePhone ? "stopped_phone" : "joined");
+    }
   });
   await b.run("world: declared minors are present, kept out of romance in the snapshot, and never proposed by any baseline", () => {
     const ps = generateSlopPersonas({ seed: 3, perCity: 300 });

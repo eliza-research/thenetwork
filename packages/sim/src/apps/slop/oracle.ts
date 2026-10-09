@@ -150,8 +150,9 @@ export class SlopOracle {
     let ea = sigmoid(this.latent(a, b) + P.dateLift + chem + na) * this.compat(a, b) * fit(a);
     let eb = sigmoid(this.latent(b, a) + P.dateLift + chem + nb) * this.compat(b, a) * fit(b);
     // Adversaries ruin the date for the other person (harm is counted separately).
-    if (b.hidden.adversary === "catfish" || b.hidden.adversary === "harasser" || b.hidden.adversary === "romance_scammer") ea *= 0.2;
-    if (a.hidden.adversary === "catfish" || a.hidden.adversary === "harasser" || a.hidden.adversary === "romance_scammer") eb *= 0.2;
+    const ruins = (x: SlopPersona) => ["catfish", "harasser", "romance_scammer", "ban_evader", "bot_farm"].includes(x.hidden.adversary ?? "");
+    if (ruins(b)) ea *= 0.2;
+    if (ruins(a)) eb *= 0.2;
     ea = clamp01(ea); eb = clamp01(eb);
     const wa = ea >= P.wantSecond, wb = eb >= P.wantSecond;
     return { ea, eb, quality: Math.sqrt(ea * eb), good: Math.min(ea, eb) >= P.goodDate, wantsSecondA: wa, wantsSecondB: wb, bothWantSecond: wa && wb };
@@ -186,8 +187,8 @@ export class SlopOracle {
    */
   probeYesProb(id: MemberId, c: ProbeContext): number {
     const P = ORACLE_PARAMS, p = this.p(id), H = p.hidden;
-    if (H.adversary === "romance_scammer") return 0.95;
-    if (H.adversary === "harasser" || H.adversary === "catfish") return 0.88;
+    if (H.adversary === "romance_scammer" || H.adversary === "bot_farm") return 0.95;
+    if (H.adversary === "harasser" || H.adversary === "catfish" || H.adversary === "ban_evader") return 0.88;
     let y = this.weekAppetite(p, c.week);
     if (c.recentLikedDate) y *= P.receptivityAfterLikedDate;
     y *= Math.pow(P.fatigue, Math.max(0, c.probesThisWeek ?? 0));
@@ -255,11 +256,12 @@ export class SlopOracle {
     const one = (off: SlopPersona, vic: SlopPersona) => {
       switch (off.hidden.adversary) {
         case "romance_scammer":
+        case "bot_farm":
           out.push({ kind: "offplatform_move", victim: vic.id, offender: off.id, prob: 0.9, when: "reveal" });
           out.push({ kind: "money_ask", victim: vic.id, offender: off.id, prob: 0.6, when: "reveal" });
           out.push({ kind: "financial_loss", victim: vic.id, offender: off.id, prob: 0.12, when: "reveal" });
           break;
-        case "harasser": out.push({ kind: "harassment", victim: vic.id, offender: off.id, prob: 0.5, when: "reveal" }); break;
+        case "harasser": case "ban_evader": out.push({ kind: "harassment", victim: vic.id, offender: off.id, prob: 0.5, when: "reveal" }); break;
         case "catfish": out.push({ kind: "catfish_reveal", victim: vic.id, offender: off.id, prob: 0.9, when: "date" }); break;
         case "not_single": out.push({ kind: "deception", victim: vic.id, offender: off.id, prob: 0.3, when: "date" }); break;
       }

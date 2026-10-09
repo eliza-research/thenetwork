@@ -104,7 +104,15 @@ export interface PlatformModel {
   relay?: { scamRecall: number; hostileRecall: number; falsePositive: number };
   review?: { days: number; clearHonest: number; catchAdversary: number };
   widen?: { agree: number; miles: number };
+  /**
+   * What stops a ban evader's next account (world.ts): a ban by phone (a banned number never joins
+   * any app; live) and a face match against held accounts (not live: photos and face matching are a
+   * founder decision). Absent = the live policy, BAN_EVASION_LIVE.
+   */
+  banEvasion?: { phone: boolean; face: boolean };
 }
+/** The live ban policy (2026-10-08): a banned phone never joins again; no face matching. */
+export const BAN_EVASION_LIVE = { phone: true, face: false };
 export const RATER_DEFAULTS = { noise: 0.5, bias: 0, biasShare: 0.3 };
 export const CHECKIN_DEFAULTS: Partial<Record<string, number>> = { harassment: 0.85, deception: 0.6, catfish_reveal: 0.85, money_ask: 0.7, offplatform_move: 0.4, minor_contact: 0.5 };
 
@@ -160,6 +168,8 @@ export interface SlopNetworkState {
   platform?: PlatformModel;
   /** Iteration 4: body types (bodyType.ts): stated body-type preferences and the rater's body type. */
   bodyTypes?: BodyTypeModel;
+  /** Ban evaders' next accounts: due in a week, then joined or stopped at the door (harness side; never in a snapshot). */
+  rejoins?: { week: number; persona: SlopPersona; outcome?: "joined" | "stopped_phone" | "stopped_face" }[];
 }
 
 /** Which stated fields the agent learned in onboarding, by richness tier. */
@@ -251,7 +261,8 @@ export function slopFacetsOf(p: SlopPersona, joinedAt: number, learned?: Readonl
   const adv = p.hidden.adversary;
   for (const [kind, sig] of Object.entries(SIGNAL_RATES)) {
     const fp = kind === "age_liar" && S.claimedAge <= 19 ? AGE_SIGNAL_FALSE_POSITIVE_YOUNG : SIGNAL_FALSE_POSITIVE;
-    const pr = adv === kind ? sig.byTier[tier] : fp;
+    // A ban evader is a harasser in the chat too.
+    const pr = adv === kind || (adv === "ban_evader" && kind === "harasser") ? sig.byTier[tier] : fp;
     if (sr.next() < pr) f("fact", sig.tag.replace("safety:", "").replace(/_/g, " "), [sig.tag], "agent_private", { provenance: "inferred", inferred: true, confirmedByMember: false, confidence: 0.6 });
   }
   return out;

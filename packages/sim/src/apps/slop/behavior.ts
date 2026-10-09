@@ -32,7 +32,7 @@ export class SlopBehavior {
   /** Inbound ask this week ("find me someone for this weekend"). */
   asksThisWeek(id: MemberId, week: number): boolean {
     const p = this.oracle.p(id);
-    if (p.hidden.adversary === "romance_scammer" || p.hidden.adversary === "harasser") return this.r("ask", id, week).bool(0.6);
+    if (["romance_scammer", "harasser", "ban_evader", "bot_farm"].includes(p.hidden.adversary ?? "")) return this.r("ask", id, week).bool(0.6);
     return this.r("ask", id, week).bool(this.oracle.weekAppetite(p, week) * ASK_RATE);
   }
 

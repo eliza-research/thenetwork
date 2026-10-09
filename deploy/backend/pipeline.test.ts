@@ -196,6 +196,23 @@ d("pipeline world: inbound, joins and keywords (shared line)", () => {
     expect((await w.text(who, "slop")).result).toBe("join_asked");
   });
 
+  test("a ban by phone: the number never joins any app again, also after deleting everything; a new number is not stopped (no face match live)", async () => {
+    const who = phone(), next = phone();
+    const s = await joinByKeyword(w, "slop", who, "Rex", 34);
+    expect((await w.svc.ban(STAFF, w.rt("slop"), s, "phone", "pipeline world: harassment after a date")).ok).toBe(true);
+    expect((await w.person(who))!.memberships.map(m => m.state)).toEqual(["restricted"]);
+    const mark = w.mark;
+    expect((await w.text(who, "friends.help")).result).toBe("held");
+    expect(w.since(mark, who)).toEqual([]);
+    const p = (await w.person(who))!.person;
+    await w.svc.accounts.deleteAll({ e164: who, personId: p.id });
+    expect((await w.text(who, "slop")).result).toBe("held");
+    expect((await w.text(who, "Rex, 34")).result).toBe("held");
+    expect(await w.memberOf("slop", who)).toBeUndefined();
+    // The same person on a new number joins: live has no face match (ban evasion is a tracked gap, scripts/sim/slop.ts).
+    expect((await w.text(next, "slop")).result).toBe("join_asked");
+  });
+
   test("a delivery receipt (message.delivered) updates the stored row", async () => {
     const who = phone();
     await w.text(who, "HELP");

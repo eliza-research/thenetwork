@@ -4,7 +4,7 @@
 // a replayable JSONL run log to runs/<runId>/.
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { DAY, HOUR, MINUTE, SimClock, type MemberId, type Proposal } from "@thenetwork/core";
+import { DAY, HOUR, MINUTE, SimClock, type AppId, type MemberId, type Proposal } from "@thenetwork/core";
 import type { OracleSummary, RunRecord, RunRecordInput } from "@thenetwork/core";
 import { computeMetrics, type Metrics } from "./judge/metrics.ts";
 import { PolicyPersonaAgent, templateText, timeConflict, type PolicyOptions } from "./agent/policy.ts";
@@ -82,6 +82,12 @@ export interface WorldOptions {
   /** Live listener for every run record as it is logged (observatory, streaming UIs). */
   onRecord?: (r: RunRecord) => void;
   /**
+   * Multi-app worlds: the app a member's inbound text (and join) belongs to, so every record names its
+   * app (the judge's cross_app_leak). Outbound texts carry the app the network stamped (SimMeta.app).
+   * Absent: single-app ntwrk records, as before.
+   */
+  appOf?: (memberId: MemberId) => AppId | undefined;
+  /**
    * Growth: build the persona for a friend a member invites (ctx.invite). Return undefined to
    * decline (e.g. an invite cap). The new persona joins `joinDelayMs` later.
    */
@@ -147,7 +153,8 @@ export class World {
     this.opts.onRecord?.(full);
   }
   private logMessage(m: SimMessage) {
-    this.rec({ type: "message", msg: { id: m.id, ts: m.ts, direction: m.direction, memberId: m.memberId, body: m.body, status: m.status, keyword: m.keyword, system: m.system, meta: m.meta as any } });
+    const app = (m.meta?.app as AppId | undefined) ?? (m.direction === "inbound" ? this.opts.appOf?.(m.memberId) : undefined);
+    this.rec({ type: "message", msg: { id: m.id, ts: m.ts, direction: m.direction, memberId: m.memberId, body: m.body, status: m.status, keyword: m.keyword, system: m.system, meta: m.meta as any, ...(app ? { app } : {}) } });
   }
 
   private buildNameIndex() {
@@ -279,6 +286,7 @@ export class World {
       id: p.id, name: p.name, archetype: p.archetype, adversarial: p.hidden.adversarial, homeCity: p.homeCity,
       joinDay: Math.floor((joinAt - this.start) / DAY), trueAge: p.hidden.trueAge, claimedAge: p.public.claimedAge, quietHours: quietHoursOf(p),
       canary: p.hidden.privateDisclosure?.canary, privateFact: p.hidden.privateDisclosure?.fact, romanceOptIn: p.hidden.romance.optIn,
+      ...(p.apps ? { apps: [...p.apps] } : {}),
     } });
     this.scheduler.at(joinAt, "join", { personaId: p.id });
   }
@@ -392,7 +400,8 @@ export class World {
     mem.joined = true; mem.joinedAt = this.clock.now();
     this.joined.set(id, this.clock.now());
     this.channel.register(id, this.rng.fork("chan", id).bool(0.75) ? "imessage" : "sms");
-    this.rec({ type: "join", memberId: id });
+    const app = this.opts.appOf?.(id);
+    this.rec({ type: "join", memberId: id, ...(app ? { app } : {}) });
     const text = await this.agent.joinMessage(this.personaCtx(p, "join"));
     this.personaSend(p, text);
     const r = this.rng.fork("ini0", id);

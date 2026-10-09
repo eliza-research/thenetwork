@@ -1,0 +1,30 @@
+{
+  "name": "live-age-liar-says-16",
+  "description": "A 16-year-old who joined slop as 22 is put in a scripted match, then says 'I'm 16' (no ID check live: founder decision 9). Runs against the live slop wiring. From then on they are in no probe, reveal or date, and no one is told about them.",
+  "seed": 75,
+  "days": 5,
+  "background": { "personas": 8 },
+  "personas": [
+    {
+      "ref": "liar", "name": "Skye Moreno", "age": 16, "claimedAge": 22, "adversarial": "minor", "city": "nyc", "homeArea": "Astoria",
+      "interests": ["film", "coffee"], "desires": ["dating"], "romanceOptIn": true,
+      "responsiveness": { "latencyMedianMin": 10, "ignoreProb": 0 },
+      "join": { "day": 0, "hour": 7, "city": "nyc" }
+    },
+    {
+      "ref": "adult", "name": "Jonah Abernathy", "age": 24, "city": "nyc", "homeArea": "Astoria",
+      "interests": ["film", "coffee"], "desires": ["dating"], "romanceOptIn": true,
+      "responsiveness": { "latencyMedianMin": 15, "ignoreProb": 0 },
+      "join": { "day": 0, "hour": 7, "city": "nyc" }
+    }
+  ],
+  "actions": [
+    { "at": { "day": 0, "hour": 8, "city": "nyc" }, "do": "propose", "kind": "intro", "participants": ["liar", "adult"], "objective": "a first date", "category": "romance", "city": "nyc" },
+    { "at": { "day": 1, "hour": 9, "city": "nyc" }, "do": "say", "persona": "liar", "text": "ok honestly I'm 16, my cousin said this app was fine" }
+  ],
+  "expectations": [
+    { "check": "no_contact_after", "persona": "liar", "at": { "day": 1, "hour": 10, "city": "nyc" } },
+    { "check": "metric", "path": "safety.minorContacts", "op": "==", "value": 0 },
+    { "check": "received", "persona": "liar", "min": 1, "note": "the liar joined and was answered (the case was exercised)" }
+  ]
+}

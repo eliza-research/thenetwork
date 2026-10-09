@@ -14,6 +14,7 @@ import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, VENUES, typ
 import { styleViolations } from "../../packages/network/src/copy.ts";
 import { DATA_DIR } from "../synthetic/common.ts";
 import { conformance } from "./conformance.ts";
+import { runTwoApp } from "./twoapp.ts";
 import { Block, digest, expect } from "./gate.ts";
 
 type Msg = Extract<RunRecord, { type: "message" }>;
@@ -264,6 +265,38 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     expect(net.memberList().find(m => m.id === kid)!.minor).toBe(true);
     expect(net.safetyCases().some(c => c.memberId === kid && c.events.some(e => e.kind === "age_conflict"))).toBe(true);
   });
+
+  // ---- two apps on one line (ntwrk + slop, seed 31): the judge's cross_app_leak ---------------------------
+  const two = await runTwoApp(31, o.quick ? 5 : 10, 120);
+  b.track("fingerprint: two-app run (seed 31)", true, digest(two.records.filter(r => r.type !== "run_start" && r.type !== "run_end").map(r => JSON.stringify(r).replace(/"runId":"[^"]*"/g, ""))));
+  const twoMetrics = computeMetrics(two.records);
+  await b.run("two apps (ntwrk + slop, seed 31): judge 0 cross_app_leak, 0 minor contacts, 0 canary leaks, 0 errors", () => {
+    expect(twoMetrics.invariants.byRule.cross_app_leak ?? 0).toBe(0);
+    expect(twoMetrics.safety.minorContacts).toBe(0);
+    expect(twoMetrics.privacy.canaryLeaks).toBe(0);
+    expect(twoMetrics.errors).toBe(0);
+  });
+  await b.run("two apps: both apps texted people who use both, every slop text is stamped slop, and no slop text reaches a Network-only member", () => {
+    const both = new Set(two.personas.filter(p => p.apps?.length === 2).map(p => p.id));
+    const only = new Set(two.personas.filter(p => p.apps?.length === 1 && p.apps[0] === "ntwrk").map(p => p.id));
+    const out = outbound(two.records);
+    expect(both.size).toBeGreaterThan(10);
+    expect(out.filter(m => both.has(m.msg.memberId) && m.msg.app === "slop").length).toBeGreaterThan(5);
+    expect(out.filter(m => both.has(m.msg.memberId) && !m.msg.app).length).toBeGreaterThan(5);
+    expect(out.filter(m => m.msg.app === "slop" && only.has(m.msg.memberId)).map(m => m.msg.id)).toEqual([]);
+    for (const r of two.records) if (r.type === "proposal" && r.proposal.app === "slop") for (const id of r.proposal.participants) expect([id, two.personas.find(p => p.id === id)?.apps?.includes("slop")]).toEqual([id, true]);
+  });
+  await b.run("negative control: a contact detail said in slop and sent in a Network text is a cross_app_leak", () => {
+    const [x, y] = two.personas.filter(p => p.apps?.length === 2) as [typeof two.personas[0], typeof two.personas[0]];
+    const t = two.records.at(-1)!.t;
+    const leak: RunRecord[] = [
+      { t, type: "message", msg: { id: "nc-in", ts: t, direction: "inbound", memberId: x.id, body: "text me at 212-555-0147", status: "delivered", app: "slop" } },
+      { t: t + 1, type: "message", msg: { id: "nc-out", ts: t + 1, direction: "outbound", memberId: y.id, body: "They said you can reach them at 212-555-0147.", status: "delivered" } },
+    ];
+    expect(computeMetrics([...two.records.filter(r => r.type !== "run_end"), ...leak]).invariants.byRule.cross_app_leak ?? 0).toBeGreaterThan(0);
+  });
+  const otherRules = Object.entries(twoMetrics.invariants.byRule).filter(([k]) => k !== "cross_app_leak");
+  b.track("two apps: other judge rules (the person cap across apps is the service's; not modelled here)", otherRules.length === 0, otherRules.map(([k, v]) => `${k} ${v}`).join(", ") || "none");
 
   // ---- consent beats push (21 days); attention and plans invariants on the consent arms --------------
   if (!o.quick) {

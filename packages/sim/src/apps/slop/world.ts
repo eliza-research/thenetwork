@@ -16,8 +16,8 @@ import { Rng, hash32 } from "@thenetwork/core";
 import { SlopBehavior, type HarmEvent } from "./behavior.ts";
 import type { SlopCity } from "./geo.ts";
 import { SlopOracle, type DateOutcome } from "./oracle.ts";
-import { SLOTS, SLOT_DAY, generateSlopPersonas, type DateActivity, type SlopGenOptions, type SlopPersona } from "./persona.ts";
-import { SLOP_WORLD_START, buildSlopSnapshot, reviewDecision, type PlatformModel, type SlopAskField, type SlopNetworkState, type SlopSnapshot, type VerificationModel } from "./snapshot.ts";
+import { SLOTS, SLOT_DAY, evaderRejoin, generateSlopPersonas, type DateActivity, type SlopGenOptions, type SlopPersona } from "./persona.ts";
+import { BAN_EVASION_LIVE, SLOP_WORLD_START, buildSlopSnapshot, reviewDecision, type PlatformModel, type SlopAskField, type SlopNetworkState, type SlopSnapshot, type VerificationModel } from "./snapshot.ts";
 import { visibleProfiles, type VisibleProfile } from "./visible.ts";
 import type { BodyTypeModel } from "./bodyType.ts";
 
@@ -107,11 +107,30 @@ interface RunCtx {
   relay: NonNullable<SlopRunResult["relay"]>;
 }
 
+/**
+ * Ban evaders whose next account is due this week try to join: a ban by phone stops the same phone,
+ * a face match stops the same face (platform.banEvasion; default the live policy). One that gets in
+ * is a new member (the matcher sees a new account; the harness knows it is the same person).
+ */
+function rejoinEvaders(world: SlopWorld, week: number) {
+  const policy = world.state.platform?.banEvasion ?? BAN_EVASION_LIVE;
+  for (const r of world.state.rejoins ?? []) {
+    if (r.week !== week || r.outcome) continue;
+    const ev = r.persona.hidden.evades!;
+    if (policy.phone && ev.samePhone) { r.outcome = "stopped_phone"; continue; }
+    if (policy.face && world.state.safetyHolds.some(h => world.oracle.byId.get(h.memberId)?.hidden.face === r.persona.hidden.face)) { r.outcome = "stopped_face"; continue; }
+    r.outcome = "joined";
+    world.personas.push(r.persona);
+    world.oracle.byId.set(r.persona.id, r.persona);
+  }
+}
+
 /** Start of week `week`: inbound asks, then the snapshot the matcher sees. */
 function beginWeek(rc: RunCtx, week: number, seed: number): { ctx: MatcherContext; askedNow: Set<MemberId> } {
   const { world } = rc, { behavior, state } = world;
   state.week = week;
   state.now = SLOP_WORLD_START + week * 7 * DAY;
+  rejoinEvaders(world, week);
   const askedNow = new Set<MemberId>();
   for (const p of world.personas) {
     if (!canBeMatched(p.stated.claimedAge) || state.paused.has(p.id)) continue;
@@ -284,7 +303,12 @@ function applyHarms(w: SlopWorld, harms: HarmEvent[], flowKey: string) {
     if (!h.reported) continue;
     // A reported minor contact ("they seemed underage") holds the minor, not the reporter.
     const held = h.kind === "minor_contact" ? h.victim : h.offender;
-    if (!w.state.safetyHolds.some(x => x.memberId === held && (x.to === undefined || x.to > w.state.now))) w.state.safetyHolds.push({ memberId: held, from: w.state.now, reason: `reported: ${h.kind}` });
+    if (!w.state.safetyHolds.some(x => x.memberId === held && (x.to === undefined || x.to > w.state.now))) {
+      w.state.safetyHolds.push({ memberId: held, from: w.state.now, reason: `reported: ${h.kind}` });
+      // A held ban evader comes back next week on another account.
+      const p = w.oracle.byId.get(held);
+      if (p?.hidden.adversary === "ban_evader") (w.state.rejoins ??= []).push({ week: w.state.week + 1, persona: evaderRejoin(p, w.state.week + 1, w.seed) });
+    }
     if (h.kind !== "minor_contact") w.state.edges.push({ from: h.victim, to: h.offender, type: "blocked", strength: 1, explicit: true, createdAt: w.state.now });
   }
 }

@@ -1,0 +1,31 @@
+{
+  "name": "live-stop-during-probe",
+  "description": "A dater gets a date probe, never answers it, and texts STOP while it is open. Runs against the live slop wiring. Nothing more reaches them, and the other person is never told who they were.",
+  "seed": 77,
+  "days": 4,
+  "background": { "personas": 8 },
+  "personas": [
+    {
+      "ref": "stopper", "name": "Lior Hendricks", "age": 33, "city": "nyc", "homeArea": "Park Slope",
+      "interests": ["cooking", "coffee"], "desires": ["dating"], "romanceOptIn": true,
+      "responsiveness": { "latencyMedianMin": 30, "ignoreProb": 1 },
+      "join": { "day": 0, "hour": 7, "city": "nyc" }
+    },
+    {
+      "ref": "other", "name": "Maren Okonkwo", "age": 31, "city": "nyc", "homeArea": "Park Slope",
+      "interests": ["cooking", "coffee"], "desires": ["dating"], "romanceOptIn": true,
+      "responsiveness": { "latencyMedianMin": 15, "ignoreProb": 0 },
+      "join": { "day": 0, "hour": 7, "city": "nyc" }
+    }
+  ],
+  "actions": [
+    { "at": { "day": 0, "hour": 8, "city": "nyc" }, "do": "propose", "kind": "intro", "participants": ["stopper", "other"], "objective": "a first date", "category": "romance", "city": "nyc" },
+    { "at": { "day": 1, "hour": 10, "city": "nyc" }, "do": "opt_out", "persona": "stopper" }
+  ],
+  "expectations": [
+    { "check": "received", "persona": "stopper", "types": ["probe"], "min": 1, "beforeStop": true, "note": "a probe was open when they stopped (the case was exercised)" },
+    { "check": "no_messages_after_stop", "persona": "stopper" },
+    { "check": "no_text_matching", "to": "other", "pattern": "Hendricks|Lior H\\." },
+    { "check": "metric", "path": "invariants.byRule.send_after_stop", "op": "==", "value": 0 }
+  ]
+}

@@ -3,6 +3,15 @@
 // a failed expectation throws, and `Block.run` turns the throw into a failed gate with its message.
 // No bun:test: the validation layer is the simulation CLI (founder decision 2026-10-08).
 
+/**
+ * The blocking gates each block runs on the pinned seeds (counted 2026-10-08, after the as-launched,
+ * adversary, slop-live, two-app and scale gates). scripts/sim.ts fails a block that runs fewer. Raise a
+ * number when gates are added; lower one only with the founder's written waiver.
+ */
+export const MIN_BLOCKING: Record<string, number> = {};
+/** The same for --quick (one seed, shorter runs: quality gates are tracked there). */
+export const MIN_BLOCKING_QUICK: Record<string, number> = {};
+
 export interface Gate { block: string; name: string; pass: boolean; blocking: boolean; detail?: string; ms?: number }
 
 const show = (x: unknown) => { try { const s = JSON.stringify(x); return s === undefined ? String(x) : s.length > 400 ? `${s.slice(0, 400)}...` : s; } catch { return String(x); } };

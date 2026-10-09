@@ -1846,6 +1846,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       id: o.id, kind: o.kind, participants: [...o.participants], alternates: [...o.alternates], objective: o.objective, category: o.category,
       city: "nyc", window: o.plan ? { start: o.meetingAt ?? o.plan.window.start, end: o.plan.window.end } : { start: o.meetingAt ?? now + DAY, end: (o.meetingAt ?? now + DAY) + 4 * DAY }, score: o.score, components: o.components,
       exploration: o.exploration, explanations: { ...o.explanations }, generator: o.generator, createdAt: o.createdAt,
+      ...(this.app.id === "ntwrk" ? {} : { app: this.app.id }),
     };
   }
 
@@ -3662,7 +3663,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     } else if (this.followup) m.askUsed = (m.askUsed ?? 0) + 1;
     m.lastOutUnsol = unsol;
     m.outbound = (m.outbound ?? 0) + 1;
-    this.ctx.send(m.id, text, { meta, idempotencyKey: `${m.id}:${++this.seq}`, reply });
+    // The app is stamped on the record (absent = "ntwrk"), so the judge can check cross_app_leak.
+    this.ctx.send(m.id, text, { meta: this.app.id === "ntwrk" ? meta : { ...meta, app: this.app.id }, idempotencyKey: `${m.id}:${++this.seq}`, reply });
     m.pendingAck = undefined;
     if (note || (m.note && now - m.note.at >= 7 * DAY)) m.note = undefined;
     m.lastSent = { body: text, at: now };

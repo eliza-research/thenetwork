@@ -37,6 +37,10 @@ export interface Extra {
   harassment: { offenders: number; victims: number; secondPlusVictims: number; afterReportMax: number; afterReportTotal: number };
   /** Iteration 3 gate inputs: scam harm events; core adversary contacts (scammers, harassers, age liars); harms other than deception. */
   scamHarms: number; coreAdversaryContacts: number; harmsNoDeception: number;
+  /** Ban evaders' next accounts (populations with ban_evader): tried, stopped by phone or face, joined; reveals with a next account. */
+  evaders: { tried: number; stoppedPhone: number; stoppedFace: number; joined: number; contacts: number };
+  /** Bot farm accounts (populations with bot_farm): median distinct members a bot reached (a reveal), and reveals with a bot. */
+  botMedianReach: number; botContacts: number;
   /** Iteration 2: members who widened their radius when asked; relay classifier stats. */
   widened: number; relay?: NonNullable<SlopRunResult["relay"]>;
   /**
@@ -105,11 +109,23 @@ export function extraOf(res: SlopRunResult, m: SlopMetrics): Extra {
     for (const h of f.harms) { if (["offplatform_move", "money_ask", "financial_loss"].includes(h.kind)) scamHarms++; if (h.kind !== "deception") harmsNoDeception++; }
     if (f.revealed && [f.first, f.partner].some(id => ["romance_scammer", "harasser", "age_liar"].includes(O.p(id).hidden.adversary ?? ""))) coreAdversaryContacts++;
   }
+  const rejoins = res.world.state.rejoins ?? [];
+  const evaders = {
+    tried: rejoins.filter(r => r.outcome).length, stoppedPhone: rejoins.filter(r => r.outcome === "stopped_phone").length,
+    stoppedFace: rejoins.filter(r => r.outcome === "stopped_face").length, joined: rejoins.filter(r => r.outcome === "joined").length,
+    contacts: res.flows.filter(f => f.revealed && [f.first, f.partner].some(id => !!O.p(id).hidden.evades)).length,
+  };
+  const bots = new Map<MemberId, Set<MemberId>>();
+  for (const p of res.world.personas) if (p.hidden.adversary === "bot_farm") bots.set(p.id, new Set());
+  let botContacts = 0;
+  for (const f of res.flows) if (f.revealed) for (const [x, y] of [[f.first, f.partner], [f.partner, f.first]] as const) if (bots.has(x)) { bots.get(x)!.add(y); botContacts++; }
+  const br = [...bots.values()].map(s => s.size).sort((a, b) => a - b);
   let soft = 0, nd = 0;
   for (const f of res.flows) if (f.stage === "date") { nd++; soft += res.world.oracle.softLabel(f.first, f.partner, f.activity, 32).pSecond; }
   return {
     softSecondRate: nd ? soft / nd : 0, softSecondDates: soft,
     scammerMedianReach: rs.length ? rs[Math.floor((rs.length - 1) / 2)]! : 0,
+    evaders, botMedianReach: br.length ? br[Math.floor((br.length - 1) / 2)]! : 0, botContacts,
     groups, feasibleGroups, overall: { dates: m.datesPerMemberMonth * m.members * months, memberMonths: m.members * months },
     asksSent: res.asks?.sent ?? 0, asksAnswered: res.asks?.answered ?? 0,
     contactsByKind, harmsByKind, demo, outcomes, harassment, scamHarms, coreAdversaryContacts, harmsNoDeception,
@@ -119,21 +135,24 @@ export function extraOf(res: SlopRunResult, m: SlopMetrics): Extra {
 
 /** A world spec for an arm: verification and the iteration-2 platform features (snapshot.ts PlatformModel). */
 export interface WorldSpec {
+  /** Ban evaders and bot farm accounts per city share (persona.ts; default 0), and what stops an evader's next account (default the live policy). */
+  banEvader?: number; botFarm?: number; banEvasion?: { phone: boolean; face: boolean };
   verification?: boolean; photos?: number; relay?: boolean | Partial<NonNullable<PlatformModel["relay"]>>; review?: number; widen?: boolean;
   /** Iteration 3: appearance rater (noise, bias), post-date check-in reports, catfish share of the population. */
   rater?: boolean | Partial<NonNullable<PlatformModel["rater"]>>; checkin?: boolean; catfish?: number;
   /** Iteration 4: body types and body-type preferences in the world (bodyType.ts). */
   bodyTypes?: boolean | Partial<BodyTypeModel>;
 }
-export function worldOptions(w: WorldSpec = {}): { verification?: VerificationModel; platform?: PlatformModel; adversaryShares?: { catfish: number }; bodyTypes?: BodyTypeModel } {
+export function worldOptions(w: WorldSpec = {}): { verification?: VerificationModel; platform?: PlatformModel; adversaryShares?: { catfish?: number; ban_evader?: number; bot_farm?: number }; bodyTypes?: BodyTypeModel } {
   const platform: PlatformModel = {};
+  if (w.banEvasion) platform.banEvasion = { ...w.banEvasion };
   if (w.rater) platform.rater = { ...RATER_DEFAULTS, ...(typeof w.rater === "object" ? w.rater : {}) };
   if (w.checkin) platform.checkin = { ...CHECKIN_DEFAULTS };
   if (w.photos !== undefined) platform.photos = { noiseSd: w.photos };
   if (w.relay) platform.relay = { ...RELAY_DEFAULTS, ...(typeof w.relay === "object" ? w.relay : {}) };
   if (w.review !== undefined) platform.review = { ...REVIEW_DEFAULTS, days: w.review };
   if (w.widen) platform.widen = { ...WIDEN_DEFAULTS };
-  return { ...(w.verification ? { verification: VERIFICATION_DEFAULTS } : {}), ...(Object.keys(platform).length ? { platform } : {}), ...(w.catfish !== undefined ? { adversaryShares: { catfish: w.catfish } } : {}), ...(w.bodyTypes ? { bodyTypes: { ...BODY_TYPE_DEFAULTS, ...(typeof w.bodyTypes === "object" ? w.bodyTypes : {}) } } : {}) };
+  return { ...(w.verification ? { verification: VERIFICATION_DEFAULTS } : {}), ...(Object.keys(platform).length ? { platform } : {}), ...(w.catfish !== undefined || w.banEvader || w.botFarm ? { adversaryShares: { ...(w.catfish !== undefined ? { catfish: w.catfish } : {}), ...(w.banEvader ? { ban_evader: w.banEvader } : {}), ...(w.botFarm ? { bot_farm: w.botFarm } : {}) } } : {}), ...(w.bodyTypes ? { bodyTypes: { ...BODY_TYPE_DEFAULTS, ...(typeof w.bodyTypes === "object" ? w.bodyTypes : {}) } } : {}) };
 }
 
 /**

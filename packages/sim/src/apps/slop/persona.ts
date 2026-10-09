@@ -28,8 +28,15 @@ export type DateActivity = "coffee" | "drinks" | "dinner" | "walk" | "museum" | 
 export const DATE_ACTIVITIES: readonly DateActivity[] = ["coffee", "drinks", "dinner", "walk", "museum", "live_music", "comedy", "climbing", "hike", "cooking_class"];
 /** Trait / taste dimensions. A person HAS traits and has a (revealed) TASTE over others' traits. */
 export const TASTE_DIMS = ["adventurous", "intellectual", "artsy", "ambitious", "homebody"] as const;
-export type AdversaryKind = "romance_scammer" | "catfish" | "harasser" | "age_liar" | "not_single";
-export const ADVERSARY_KINDS: readonly AdversaryKind[] = ["romance_scammer", "catfish", "harasser", "age_liar", "not_single"];
+/**
+ * ban_evader: a harasser who, once held after a report, joins again (world.ts banEvasion): with the
+ * same phone (a banned number never joins live) or a new number, with the same face either way.
+ * bot_farm: fake accounts that join by keyword in one burst, say yes to everything, never show, and
+ * move victims off-platform (a scam script). Both are off by default (shares 0), so the pinned arms
+ * keep their populations; scripts/sim/slop.ts runs them in their own arms.
+ */
+export type AdversaryKind = "romance_scammer" | "catfish" | "harasser" | "age_liar" | "not_single" | "ban_evader" | "bot_farm";
+export const ADVERSARY_KINDS: readonly AdversaryKind[] = ["romance_scammer", "catfish", "harasser", "age_liar", "not_single", "ban_evader", "bot_farm"];
 
 /** Where someone will date. `radius`: within `miles` of a zip. */
 export type LocationScope =
@@ -83,6 +90,10 @@ export interface HiddenTruth {
   adversary?: AdversaryKind;
   /** Unique token that must never appear in a snapshot (leak tests). */
   canary: string;
+  /** A face id (the same person's photos): a ban evader keeps it on every account. */
+  face?: string;
+  /** A ban evader's later account: the account it evades, and whether it uses the same phone. */
+  evades?: { from: MemberId; samePhone: boolean; week: number };
 }
 
 /** What the member would tell the agent if asked. The snapshot shows a richness-filtered subset. */
@@ -106,6 +117,8 @@ export interface StatedProfile {
 export interface SlopPersona {
   id: MemberId; name: string;
   hidden: HiddenTruth; stated: StatedProfile;
+  /** A ban evader's first account (harness only: the same person across accounts). */
+  evadesRoot?: MemberId;
   /** True when bio came from the optional LLM prose pass (prose.ts). */
   enriched?: boolean;
 }
@@ -119,7 +132,7 @@ export interface SlopGenOptions {
   minorShare?: number;
   /** Share of minors who claim 18+ (age liars; default 0.4). */
   minorLiarShare?: number;
-  /** Adult adversary shares (default 0.01 scammer, 0.015 catfish, 0.015 harasser, 0.03 not single). */
+  /** Adult adversary shares (default 0.01 scammer, 0.015 catfish, 0.015 harasser, 0.03 not single; ban evaders and bot farms 0). */
   adversaryShares?: Partial<Record<Exclude<AdversaryKind, "age_liar">, number>>;
   /** Share of adults who date in several cities (default 0.05) or travel (default 0.04). */
   multiCityShare?: number; travelerShare?: number;
@@ -251,8 +264,8 @@ export function generateSlopPersonas(opts: SlopGenOptions): SlopPersona[] {
     const role = new Map<number, AdversaryKind | "minor">();
     let k = 0;
     for (let i = 0; i < nMinor; i++) role.set(slots[k++]!, i < Math.round(nMinor * liarShare) ? "age_liar" : "minor");
-    for (const kind of ["romance_scammer", "catfish", "harasser", "not_single"] as const)
-      for (let i = 0; i < Math.round(perCity * advShares[kind]); i++) role.set(slots[k++]!, kind);
+    for (const kind of ["romance_scammer", "catfish", "harasser", "not_single", "ban_evader", "bot_farm"] as const)
+      for (let i = 0; i < Math.round(perCity * ((advShares as Partial<Record<AdversaryKind, number>>)[kind] ?? 0)); i++) role.set(slots[k++]!, kind);
     const tierOrder = cr.fork("tiers").shuffle([...Array(perCity).keys()]);
     const tierOf = new Map<number, RichnessTier>();
     let acc = 0, ti = 0;
@@ -275,7 +288,7 @@ function makePersona(id: string, city: SlopCity, r: Rng, role: AdversaryKind | "
   const home = r.pick(zipsIn(city));
   const statedRange = statedAgeRange(g, ageForPrefs, r);
   // Revealed range: the stated one, a little wider for less desirable people (they date outside it).
-  const desirability = r.normal(0, 1) + ageDesirability(g, trueAge) + (role === "romance_scammer" || role === "catfish" ? 0.8 : 0);
+  const desirability = r.normal(0, 1) + ageDesirability(g, trueAge) + (role === "romance_scammer" || role === "catfish" || role === "bot_farm" ? 0.8 : 0);
   const widen = desirability < 0 ? 2 : 0;
   const ageRange: [number, number] = [Math.max(18, statedRange[0] - widen), statedRange[1] + widen];
   const maxMiles = r.weighted([[5, 0.2], [10, 0.35], [25, 0.3], [50, 0.15]] as const);
@@ -310,7 +323,8 @@ function makePersona(id: string, city: SlopCity, r: Rng, role: AdversaryKind | "
   const usuallyFree = SLOTS.filter((_, i) => availability.slotFree[i]! >= 0.5 ? r.bool(0.9) : r.bool(0.1));
   const statedGoal: Goal = goal === "unsure" && r.bool(0.4) ? "long_term" : goal;
   const name = `${r.pick(FIRST_NAMES)} ${r.pick(LAST_NAMES)}`;
-  const occupation = minor ? "student" : r.pick(OCCUPATIONS);
+  // Minors draw from the adults' occupations: a "student" tell made age liars easy to spot (audit 2026-10-08).
+  const occupation = r.pick(OCCUPATIONS);
   const adversary: AdversaryKind | undefined = role === "minor" ? undefined : role;
   const hidden: HiddenTruth = {
     trueAge, isMinor: minor, matchGender: g, identity, orientation: o, seeks, ageRange,
@@ -319,12 +333,14 @@ function makePersona(id: string, city: SlopCity, r: Rng, role: AdversaryKind | "
     goal: adversary === "romance_scammer" ? "long_term" : goal, values, dealbreakers, interests, activities,
     appetite: Math.min(0.95, Math.max(0.1, (goal === "casual" ? 0.62 : goal === "long_term" ? 0.55 : 0.42) + r.normal(0, 0.15))),
     availability,
-    replyProb: adversary === "romance_scammer" ? 0.98 : Math.min(0.98, Math.max(0.35, r.normal(0.82, 0.12))),
+    replyProb: adversary === "romance_scammer" || adversary === "bot_farm" ? 0.98 : Math.min(0.98, Math.max(0.35, r.normal(0.82, 0.12))),
     latencyMedianMin: Math.round(r.logNormal(45, 1)),
-    flakiness: adversary === "romance_scammer" ? 0.85 : adversary === "catfish" ? 0.5 : Math.min(0.4, Math.max(0.02, r.logNormal(0.08, 0.6))),
+    flakiness: adversary === "bot_farm" ? 0.97 : adversary === "romance_scammer" ? 0.85 : adversary === "catfish" ? 0.5 : Math.min(0.4, Math.max(0.02, r.logNormal(0.08, 0.6))),
     honesty: Math.min(1, Math.max(0.6, r.normal(0.9, 0.08))),
-    richness, adversary,
+    // A bot's profile is thin: it says little beyond the keyword join.
+    richness: adversary === "bot_farm" ? "minimal" : richness, adversary,
     canary: `CANARY-${hash32("canary", id, String(opts.seed)).toString(36)}`,
+    ...(adversary === "ban_evader" ? { face: `face-${hash32("face", id, String(opts.seed)).toString(36)}` } : {}),
   };
   const stated: StatedProfile = {
     claimedAge, matchGender: g, identity, orientation: o, seeks: [...seeks], ageRange: statedRange,
@@ -341,6 +357,20 @@ export function templateBio(name: string, occupation: string, area: string, inte
   const first = name.split(" ")[0];
   const label = (t: string) => INTERESTS.find(i => i.tag === t)?.label ?? t.replace(/_/g, " ");
   return `${first} is a ${occupation} in ${area}. Into ${interests.slice(0, 3).map(label).join(", ")}. Ideal first date: ${activities[0]!.replace(/_/g, " ")}.`;
+}
+
+/**
+ * A ban evader's next account, `week` weeks in: the same person (hidden truth, face, stated profile)
+ * under a new member id, on the same phone or a new one (p = 0.5, seeded).
+ */
+export function evaderRejoin(p: SlopPersona, week: number, seed: number | string): SlopPersona {
+  const samePhone = new Rng(hash32("evader-phone", p.id, String(seed))).bool(0.5);
+  const id = `${p.id}~r${week}`;
+  return {
+    ...structuredClone(p), id,
+    hidden: { ...structuredClone(p.hidden), canary: `CANARY-${hash32("canary", id, String(seed)).toString(36)}`, evades: { from: p.evadesRoot ?? p.id, samePhone, week } },
+    evadesRoot: p.evadesRoot ?? p.id,
+  };
 }
 
 /** Cities a persona is physically in during `week` (hidden truth). */

@@ -1,0 +1,90 @@
+# Nightly: the long simulations CI does not run on every push (PRD 34.1, 34.3), and the pipeline world.
+#   sim:      bun run sim --nightly: every default block plus capital (32 paired seeds, 90 days) and scale
+#             (the ConsentNetwork, 300 personas, 60 days). Exits 1 on any blocking gate failure.
+#   pipeline: deploy/backend/pipeline.test.ts: signed Blooio webhooks into the service on Postgres, out
+#             through the queue to a fake provider (packages/sim/src/pipeline). Nothing is sent.
+# No secrets are given to this workflow and every provider key is blank: no LLM, Blooio, Twilio or
+# Cloudflare call can happen. No live flag is ever set. Actions and the Postgres image are pinned by
+# digest, as in ci.yml.
+name: nightly
+
+on:
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SURPLUS_API_KEY: ""
+  OPENAI_API_KEY: ""
+  BLOOIO_API_KEY: ""
+  BLOOIO_LIVE_TEST: ""
+  TWILIO_AUTH_TOKEN: ""
+  TURNSTILE_SECRET_KEY: ""
+  CLOUDFLARE_API_TOKEN: ""
+  NTWRK_ALLOW_DEPLOY: ""
+  LLM_ALLOW_OPENAI_FALLBACK: ""
+  LLM_TIMEOUT_MS: "10000"
+  LLM_MAX_RETRIES: "0"
+
+jobs:
+  sim:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - name: Install
+        run: bun install --frozen-lockfile
+        timeout-minutes: 5
+      - name: Simulations, nightly (default blocks, capital, scale)
+        run: |
+          if [ -n "${LIVE_TESTS:-}" ]; then echo "LIVE_TESTS must be unset in CI"; exit 1; fi
+          bun run sim --nightly --json sim-nightly.json
+        timeout-minutes: 170
+
+  pipeline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      # The dev Postgres port (54339). The pipeline world makes its own network_test_e2e* databases.
+      postgres:
+        image: postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d
+        env:
+          POSTGRES_USER: runner
+          POSTGRES_DB: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 54339:5432
+        options: >-
+          --health-cmd "pg_isready -U runner"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - name: Install
+        run: bun install --frozen-lockfile
+        timeout-minutes: 5
+      - name: Require Postgres (the pipeline test skips without it)
+        run: pg_isready -h localhost -p 54339
+      - name: Pipeline world (fake Blooio, Postgres, simulated clock)
+        run: |
+          if [ -n "${LIVE_TESTS:-}" ]; then echo "LIVE_TESTS must be unset in CI"; exit 1; fi
+          bun test --conditions eliza-source --timeout 120000 deploy/backend/pipeline.test.ts
+        timeout-minutes: 25
