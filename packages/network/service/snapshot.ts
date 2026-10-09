@@ -4,6 +4,7 @@
 // src/sources/real.ts) use this one builder, so both see the same members. It never reads
 // network.channel_identities (phones and emails).
 import type { SQL } from "bun";
+import { heldPeople } from "./person-safety.ts";
 import { DAY, type Edge, type EdgeType, type Facet, type Intent, type Member, type Presence, type Proposal, type WorldSnapshot } from "@thenetwork/core";
 
 const CORE_EDGES = new Set<EdgeType>(["invited_by", "vouched_for", "knows", "met", "introduced", "helped", "hosted", "enjoyed", "would_interact_again", "group_only", "avoid", "blocked"]);
@@ -39,6 +40,9 @@ export interface SnapshotScope { app: string; city?: string }
  * `accountStatus`: the Network keeps a paused or restricted account out of matching and sends it only
  * replies and safety notices. Blocks are person to person: a block made on any app is a "blocked"
  * edge here when both people are members of this app (it says nothing about the other app).
+ * A person on a safety hold on any app (platform.person_safety, read through platform.held_people:
+ * ids only) carries `safetyHold`: the Network never matches or contacts them but for replies and
+ * safety notices, and no app learns why.
  * Without a scope: The Network (ntwrk), every city (the Observatory's shadow runs).
  * Facets, intents and presence of members who are not joined (invited, removed) are left out too. Every
  * query has an ORDER BY, so the same rows give the same snapshot and the same engine run id
@@ -59,6 +63,7 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
       join network.members f on f.person_id = pb.from_person and f.app_id = ${app}
       join network.members t on t.person_id = pb.to_person and t.app_id = ${app} order by f.id, t.id`,
   ]);
+  const held = await heldPeople(sql, [...new Set((members as any[]).map(r => r.person_id as string | null).filter((x): x is string => !!x))]);
   // The city: members who live there, or have presence there.
   const joined = new Set((members as any[]).map(r => r.id as string));
   const inCity = (scope.city === undefined ? undefined
@@ -69,8 +74,9 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
   return {
     now,
     // The account status rides along (the Network reads it): a paused or restricted account is never matched or contacted.
-    members: (members as any[]).filter(r => keep(r.id)).map((r): Member & { accountStatus: string } => ({
+    members: (members as any[]).filter(r => keep(r.id)).map((r): Member & { accountStatus: string; safetyHold?: boolean } => ({
       id: r.id, name: r.name, homeCity: r.home_city, state: r.opted_out ? "paused" : r.participation_state, prefs: r.prefs, accountStatus: r.account_status,
+      ...(r.person_id && held.has(r.person_id) ? { safetyHold: true } : {}),
       // A missing age stays missing (undefined), never 0: 0 is a valid age under 13, and the Network
       // would decline the member and delete their data. Missing means unknown: treated as a minor and asked (network.md 6.3).
       ...(r.invited_by ? { invitedBy: r.invited_by } : {}), joinedAt: ms(r.joined_at) ?? 0, age: r.age ?? (undefined as unknown as number), unansweredProactive: r.unanswered_proactive,
