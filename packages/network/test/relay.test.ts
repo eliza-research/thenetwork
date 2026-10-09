@@ -237,6 +237,10 @@ describe("reading relay texts", () => {
     for (const t of ["can I have the dumplings instead?", "see you friday!", "Can't this week, maybe another time."]) expect([t, isReschedule(t)]).toEqual([t, false]);
     for (const t of ["yes!", "I'd see him again", "definitely, a second date for sure"]) expect([t, againOf(t)]).toEqual([t, true]);
     for (const t of ["no", "it was nice but I wouldn't see him again", "not again"]) expect([t, againOf(t)]).toEqual([t, false]);
+    // The engine relay policy's rules run too: a stated minor age, harassment, rating talk.
+    expect(relayCheck("lol I'm 16 actually")).toContain("rules:minor_signal");
+    expect(relayCheck("send me nudes first")).toContain("rules:harass:sexual");
+    expect(relayCheck("what's my rating on this app?")).toContain("rules:rating:probe");
     const ben = [{ id: "ben", first: "Ben" }];
     expect(explicitRelayOf("tell Ben that I'm running late", ben)).toEqual({ to: "ben", text: "I'm running late" });
     expect(explicitRelayOf("let ben know I'm by the door", ben)).toEqual({ to: "ben", text: "I'm by the door" });

@@ -6,9 +6,10 @@
 //    through the Network's own send path: send-time checks, quiet hours (a relay is logistics, not an
 //    interruption) and the leak guard all apply.
 //  - Every relayed text is checked first: the core leak guard (other members' private facts, contact
-//    details, canaries), the appearance-leak check for apps that rate photos, and a scam and
-//    off-platform check (money, gift cards, crypto, other apps, links, numbers, handles). A hit holds
-//    the text for staff (a safety case event); nothing goes out until staff release it.
+//    details, canaries), the appearance-leak check for apps that rate photos, a scam and
+//    off-platform check (money, gift cards, crypto, other apps, links, numbers, handles) and the
+//    engine relay policy's rules (harassment, rating talk, a stated minor age). A hit holds the text
+//    for staff (a safety case event); nothing goes out until staff release it.
 //  - Contact swap: a request for the other's number (or "send them my number") asks the other side;
 //    only an explicit yes from both sends each the other's number, once. A no or 72 hours of silence
 //    gets the same gentle answer, so nobody learns which it was.
@@ -20,6 +21,7 @@
 // RelayHost. Everything kept here is plain JSON (exportState).
 import { createHash } from "node:crypto";
 import { findLeaks, HOUR, type MemberId, type TimeOption } from "@thenetwork/core";
+import { classifyRelayText } from "@thenetwork/engine/src/relay.ts";
 import { normText, parseProbeReply, type Classified } from "./classify.ts";
 import { whenPhrase, type Copy } from "./copy.ts";
 
@@ -219,9 +221,17 @@ export function scamCheck(text: string): string[] {
   const t = normText(text);
   return [...new Set(SCAM_RULES.filter(([, rx]) => rx.test(t)).map(([k]) => k))];
 }
-/** The relay's own check, without other members' facts: scam and off-platform kinds plus the core guard's contact details. */
+/**
+ * The rules on a relayed text, without other members' facts: this file's scam and off-platform kinds,
+ * the engine relay policy's rules (engine/src/relay.ts: harassment, threats, rating talk, injection,
+ * a spelled-out number, a stated minor age) and the core guard's contact details.
+ */
 export function relayCheck(text: string): string[] {
-  return [...scamCheck(text).map(k => `scam:${k}`), ...findLeaks(text).filter(r => r.startsWith("contact:"))];
+  const rules = classifyRelayText(text);
+  return [...new Set([
+    ...scamCheck(text).map(k => `scam:${k}`), ...rules.codes.map(c => `rules:${c}`), ...(rules.minorSignal ? ["rules:minor_signal"] : []),
+    ...findLeaks(text).filter(r => r.startsWith("contact:")),
+  ])];
 }
 
 /**
@@ -368,7 +378,7 @@ export class RelayDesk {
     for (const r of to) {
       const appearance = this.h.appearance(forAppearanceCheck(text));
       const reasons = [...new Set([
-        ...this.h.leaks(text, from, r), ...(appearance ? ["appearance"] : []), ...scamCheck(text).map(k => `scam:${k}`), ...abuse.map(a => `abuse:${a}`),
+        ...this.h.leaks(text, from, r), ...(appearance ? ["appearance"] : []), ...relayCheck(text), ...abuse.map(a => `abuse:${a}`),
       ])];
       const e: RelayEntry = { id: this.id("rl"), threadId: t.id, from, to: r, at: now, status: "sent", bodyHash: bodyHash(text), fromName: name };
       this.s.log.push(e);
