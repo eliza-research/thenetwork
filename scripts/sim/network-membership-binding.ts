@@ -47,14 +47,14 @@ export async function networkMembershipBinding(b: Block): Promise<void> {
     await f.store.addConsent({e164: f.e164, app: "friends", state: "opted_in", source: "simulation-start", at: f.at + 2});
     expect(await f.accounts.activeMembership(APPS.friends, f.who)).toBeTruthy();
     expect(await f.accounts.activeMembership(APPS.slop, f.who)).toBeUndefined();
-    await f.store.forgetMembership(f.person.id, "friends");
+    await f.store.forgetMembership(f.person.id, "friends", f.at + 3);
     expect(await f.accounts.activeMembership(APPS.friends, f.who)).toBeUndefined();
   });
   await b.run("Cloud binding: recycled, held and deleted identities are refused without writes", async () => {
     for (const reason of ["stale", "held", "deleted"] as const) {
       const f = await fixture();
       if (reason === "stale") await f.store.touchPhone(f.e164, f.at - RECYCLED_AFTER_MS - 1);
-      if (reason === "held") await f.store.setPhoneHold(f.e164, "recycled_number", f.at);
+      if (reason === "held") await f.store.setPhoneHold(f.e164, "recycled_number");
       if (reason === "deleted") f.person.deletedAt = f.at;
       const before = JSON.stringify([Array.from(f.store.people), Array.from(f.store.phones), Array.from(f.store.members), f.store.consent]);
       expect(await f.accounts.activeMembership(APPS.slop, f.who)).toBeUndefined();
