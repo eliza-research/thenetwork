@@ -5,7 +5,9 @@ deliverability). Used by the Network service (`packages/network/service`), the s
 (`deploy/backend/server.ts`) and the notifier (`packages/notify`). Research and live verification results are in
 [docs/research/blooio.md](../../docs/research/blooio.md).
 
-Nothing here sends a real message unless the backend runs with `BLOOIO_ALLOW_SEND=1` (otherwise `DryRunAdapter`).
+Nothing here sends a real message unless the backend runs with `NETWORK_CHANNEL=blooio`, `BLOOIO_ALLOW_SEND=1` and an
+app's `<APP>_LIVE_APPROVED=1` (the flag matrix is in `packages/network/service/README.md`). Otherwise the backend runs
+the same queue against `DryRunAdapter`, a recording fake provider.
 Promoted from `prototypes/messaging-blooio` on 2026-10-08; the standalone receiver, the simulated bus, the one-off
 scripts and the tests were dropped (they remain in git history).
 
@@ -21,7 +23,8 @@ scripts and the tests were dropped (they remain in git history).
 | `src/phone.ts` | `toE164` / `normalizeAddress`: international E.164 normalization. Queue, ledger, caps and line safety all key on it. |
 | `src/line.ts` | `resolveSenderLine()`: reads `BLOOIO_FROM` (canonical) or `BLOOIO_FROM_NUMBER` (alias), E.164-normalized; throws if both are set and differ |
 | `src/quiet-hours.ts` | Quiet hours in the recipient's IANA zone (default 21:00-09:00), next-allowed-time (DST-safe), zone validation with a city fallback |
-| `src/outbound-queue.ts` | Idempotent outbound queue with pre-send enforcement (below), Blooio safety-state handling, backoff retries reusing the same provider key, hold-until-reply on conversation limits, fallback to a second adapter (e.g. Twilio SMS) |
+| `src/outbound-queue.ts` | Idempotent outbound queue with pre-send enforcement (below), Blooio safety-state handling, backoff retries reusing the same provider key, hold-until-reply on conversation limits, fallback to a second adapter (e.g. Twilio SMS). Its state goes through a `QueueStore` (`InMemoryQueueStore` by default). |
+| `src/pg-queue-store.ts` | `PgQueueStore`: the queue's state in Postgres (migration 0014: `network.outbound_queue`, `outbound_sends`, `outbound_contacts`, `outbound_inbound`, `line_safety`), and its alerts as `network.events` rows of type `queue_alert` |
 | `src/adapters/blooio-adapter.ts` | `ChannelAdapter` over the client, plus `DryRunAdapter` |
 
 ## Pre-send enforcement (checked at dispatch, in this order)
@@ -36,10 +39,13 @@ Agent-initiated means every kind except `reply` (a direct answer to the member's
 3. **Quiet hours** (default 21:00-09:00 recipient local) for every agent-initiated kind, not just proactive.
    The zone is validated at enqueue, with the member's city as a fallback; an unusable zone parks that one record
    (`parked_invalid_timezone`) and alerts. It never blocks the rest of the queue.
-4. **Conversation rules**: at most **3 unanswered** messages per conversation. After that, exactly **one
-   re-engagement** is allowed once **14 days** have passed since our last send. Anything else is held until the
-   member writes back (a message or tapback), which resets both counters. Counters are in memory.
-5. **Line safety** from Blooio `safety.*` webhooks.
+4. **Conversation rules** (PRD 41.4): an interruption (any agent-initiated kind) goes only while at most **1**
+   message is unanswered (`maxUnansweredForInterruption`); replies are exempt from that, but nothing except compliance
+   goes once **3** are unanswered (Blooio's limit). Past either cap, exactly **one re-engagement** is allowed once
+   **30 days** have passed since our last send. Anything else is held until the member writes back (a message or
+   tapback), which resets both counters. The counters are in the store, so a restart keeps them.
+5. **Line safety** from Blooio `safety.*` webhooks. An event that names no line applies to the default line
+   (`BLOOIO_FROM`), or to every line (`*`) when none is configured: it fails closed. Stored, so a restart keeps it.
 6. **Rate limits**: per-recipient hourly cap, and the per-line daily cap on brand-new conversations (default 20)
    for every agent-initiated kind. The line comes from `from`, else `defaultFrom` (set from `BLOOIO_FROM`).
 7. **Leak guard**, immediately before the provider send: the shared `LeakGuard` from `packages/core/src/guard.ts`.
@@ -56,7 +62,20 @@ Every address is normalized to E.164 first, so `+1 (555) 010-0001`, `15550100001
 opt-out, one counter and one cap. An unexpected error while dispatching one record parks it (`parked_error`) and
 alerts; the drain continues.
 
-Opt-outs persist through a `ConsentStore` (the service uses Postgres; `FileConsentStore` writes append-only JSONL).
+## State and restarts
+
+`start()` loads the store: waiting records, records of the last 30 days (so a receipt after a restart updates its
+row), the send counters of the last day, the contacts, line safety and the last inbound per address. `flush()` writes
+what changed as one batch; `drain()` flushes after every record. A stored record keeps its text and address only
+while it may still be sent or is parked for leak review; a final record keeps neither. Counters key on
+`addressKey` (the service passes a keyed hash), never the number. `prune()` removes final records older than 30
+days (never a waiting or parked one), old counters and contacts idle for 180 days, in memory and in the store.
+Parked leak-review records survive a restart; the service's staff API lists and resolves them.
+
+The queue's consent ledger is not durable. In the service, the source of truth for STOP is the platform consent
+ledger (`platform.consent_events`) and the member's `opted_out` flag, both checked before every delivery
+(`packages/network/service/runtime.ts`). `ConsentStore` and `FileConsentStore` (append-only JSONL) are for a
+standalone ledger; the service does not use them.
 
 ## Environment
 
@@ -66,6 +85,10 @@ Opt-outs persist through a `ConsentStore` (the service uses Postgres; `FileConse
 | `BLOOIO_FROM` | The sending line, E.164 (no default; set it in the deploy environment). |
 | `BLOOIO_FROM_NUMBER` | Accepted alias for `BLOOIO_FROM` (older `.env` files). If both are set they must match. |
 | `BLOOIO_WEBHOOK_SECRET` | `whsec_...` for webhook verification |
-| `BLOOIO_ALLOW_SEND` | `1` to send for real; otherwise dry-run |
+| `BLOOIO_ALLOW_SEND` | `1` (with an app's `<APP>_LIVE_APPROVED=1`) to send for real; otherwise the queue dry run |
+| `QUEUE_MAX_UNANSWERED` | Interruptions go while at most this many are unanswered (default 1) |
+| `QUEUE_REENGAGE_AFTER_DAYS` | Days of silence before the single re-engagement (default 30) |
 
-Validation: the channel rules are exercised end to end by the Network simulations (`bun run sim`).
+Validation: `packages/blooio/test/outbound-queue.test.ts` (both stores, restarts, receipts, pruning, line safety) and
+`deploy/backend/queue.test.ts` (the backend's line in the queue dry run). The Network simulations (`bun run sim`) do
+not use this queue.

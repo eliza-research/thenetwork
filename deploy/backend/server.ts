@@ -6,8 +6,9 @@
 // 2. Applies pending migrations under the advisory lock (packages/observatory/db/migrate.ts). MIGRATE_ON_BOOT=0 skips.
 // 3. Starts every network in platform.networks, the public port (PORT) and the private staff port (STAFF_PORT).
 // 4. Ticks every network each minute. SIGTERM or SIGINT: finish the work in flight, release the locks, exit.
-// Sends are dry-run unless NETWORK_CHANNEL=blooio, BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1, and each
-// app other than ntwrk also has its own <APP>_LIVE_APPROVED=1 (founder approval).
+// One queue for the line, shared by every app (line.ts). Sends are the queue dry run (a recording fake provider)
+// unless NETWORK_CHANNEL=blooio and BLOOIO_ALLOW_SEND=1: then an app sends with its own <APP>_LIVE_APPROVED=1
+// (founder approval), and the line's HELP/STOP/leave replies go when any app may send.
 import { SQL } from "bun";
 import { captureConsole, createBackend, ensureServiceLogin, ipOf, jsonLogger, loadConfig, MAX_PUBLIC_BODY_BYTES, serviceLoginProblem } from "./backend.ts";
 
@@ -15,11 +16,8 @@ import { captureConsole, createBackend, ensureServiceLogin, ipOf, jsonLogger, lo
 const log = jsonLogger(undefined, { svc: "backend" });
 captureConsole(log);
 const { RealClock } = await import("../../packages/core/src/clock.ts");
-const { BlooioClient } = await import("../../packages/blooio/src/blooio/client.ts");
-const { BlooioAdapter: ProviderAdapter } = await import("../../packages/blooio/src/adapters/blooio-adapter.ts");
-const { resolveSenderLine } = await import("../../packages/blooio/src/line.ts");
 const { migrate } = await import("../../packages/observatory/db/migrate.ts");
-const { BlooioAdapter, liveFlag, liveSendAllowed } = await import("../../packages/network/service/channel.ts");
+const { lineChannel } = await import("./line.ts");
 const { NetworkService, webhookSecretsFromEnv } = await import("../../packages/network/service/service.ts");
 const { createServiceMcp } = await import("../../packages/network/service/serve.ts");
 
@@ -57,6 +55,7 @@ async function main() {
   }
 
   const clock = new RealClock();
+  const line = lineChannel(c, { clock, log: s => log.info(s) });
   const svc = await NetworkService.fromDatabase({
     url: c.databaseUrl, clock, instance: process.env.NETWORK_SERVICE_INSTANCE ?? process.env.RAILWAY_REPLICA_ID ?? `${process.pid}`,
     tokens: process.env.NETWORK_SERVICE_TOKENS, consoleToken: process.env.NETWORK_SERVICE_CONSOLE_TOKEN,
@@ -66,15 +65,13 @@ async function main() {
     // The backend decides the app and the client IP before the public API sees the request (backend.ts normalizeEdge).
     publicApi: { hostMap: c.hostMap, ipOf, trustForwardedHost: false },
     log: s => log.info(s),
-    adapter: c.channel === "blooio" ? (net, rt) => {
-      const from = resolveSenderLine();
-      return new BlooioAdapter({ net, provider: new ProviderAdapter(new BlooioClient({ apiKey: process.env.BLOOIO_API_KEY! }), from), clock, memberOf: rt.memberOf, from, app: rt.app.id, city: rt.city });
-    } : undefined,
+    adapter: line.adapter,
   });
+  // The queue's state (waiting messages, counters, line safety) loads before the networks deliver what waits.
+  await line.start(() => svc.sql);
   await svc.start();
   for (const rt of svc.runtimes.values()) {
-    const sends = c.channel === "blooio" ? (liveSendAllowed(process.env, rt.app.id) ? "live" : `refused (${liveFlag(rt.app.id)} is off)`) : "dry-run";
-    log.info("network", { network: rt.id, sends, matching: rt.matchingAllowed ? "allowed" : "off" });
+    log.info("network", { network: rt.id, sends: line.label(rt.app.id), matching: rt.matchingAllowed ? "allowed" : "off" });
   }
 
   // The MCP server and its OAuth server on the service's own platform parts (packages/mcp). The oauth

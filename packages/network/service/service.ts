@@ -34,6 +34,7 @@ import { NetworkRuntime, type RuntimeHost } from "./runtime.ts";
 import type { SafetySignal } from "../src/safety.ts";
 import { clearPerson, holdPerson, openHolds } from "./person-safety.ts";
 import type { ChannelAdapter, Outbound } from "./channel.ts";
+import { notOpenText } from "./shared-line.ts";
 import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { Accounts, type AccountHooks, type JoinHookContext, type MemberHookContext } from "../../platform/src/accounts.ts";
 import { joinAgeCheck } from "../../platform/src/age.ts";
@@ -169,7 +170,7 @@ const NOTIFY_SUMMARY_MAX = 500;
 
 export type InboundOutcome =
   | "handled" | "duplicate" | "unknown_sender" | "ignored" | "ignored_group" | "status" | "reaction" | "safety"
-  | "invite_only" | "join_asked" | "joined" | "under_age" | "stopped" | "left" | "no_network" | "held";
+  | "invite_only" | "join_asked" | "joined" | "under_age" | "stopped" | "left" | "no_network" | "held" | "not_open";
 
 interface Route { app: AppId; shared: boolean }
 
@@ -742,21 +743,25 @@ export class NetworkService implements RuntimeHost {
       case "ignored": case "typing": return "ignored";
       case "status": {
         for (const rt of this.runtimes.values()) {
-          const d = rt.adapter.status?.(ev);
+          const d = await rt.adapter.status?.(ev);
           if (d) { await rt.storeStatuses([d]); break; }
         }
         return "status";
       }
       case "safety":
-        for (const rt of this.runtimes.values()) rt.adapter.lineSafety?.(ev.line ?? "", ev.type === "safety.number_banned" ? "review" : ev.action);
+        // Once per line. An event with no line applies to the configured line (the adapter fails closed).
+        for (const a of this.lineAdapters()) await a.lineSafety?.(ev.line, ev.type === "safety.number_banned" ? "review" : ev.action, { type: ev.type });
         this.log(`[safety] ${ev.type} action=${ev.action ?? "-"}`);
         return "safety";
       case "reaction":
-        for (const rt of this.runtimes.values()) rt.adapter.engaged?.(ev.from);
+        await this.engageLine(ev.from);
         return "reaction";
       case "message": break;
     }
     if (ev.isGroup) return "ignored_group";
+    // Any message on the line engages the address for every app, before anything answers it: the welcome and
+    // the join questions are replies, held messages can go, and none of it counts as a new conversation.
+    await this.engageLine(ev.from);
     const route = await this.route(ev, o.app);
     const app = this.apps[route.app];
     const rt = this.runtimeFor(route.app);
@@ -779,7 +784,7 @@ export class NetworkService implements RuntimeHost {
       for (const r of this.runtimes.values()) if (scope === "global" || r === rt) r.adapter.optedOut?.(ev.from, true);
       if (e164) await this.people.deletePending(this.phoneKey(e164));
       if (memberId) await this.memberMessage(rt, memberId, ev, rowId, kw, reply);
-      else await this.direct(rt, ev.from, reply, `sys:${rowId}`);
+      else await this.direct(rt, ev.from, reply, `sys:${rowId}`, true);
       const person = e164 ? await this.accounts.personFor(e164) : undefined;
       if (person) await this.stopped(app, person.id, scope, memberId ? { rt, memberId } : undefined);
       else if (scope === "global") {
@@ -797,7 +802,7 @@ export class NetworkService implements RuntimeHost {
     // answered or stored until staff decide (STOP above always works; HELP still answers).
     if (e164 && (await this.accounts.seen(e164)) === "held") {
       this.log(`[inbound] a number on hold for review (${rt.id}): not handled`);
-      if (kw === "help") await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`);
+      if (kw === "help") await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`, true);
       return "held";
     }
 
@@ -812,13 +817,12 @@ export class NetworkService implements RuntimeHost {
         const person = await this.accounts.personFor(e164);
         if (person) await this.accounts.leave(leaving, { e164, personId: person.id });
         else { await this.accounts.recordConsent({ e164, app: leaving.id, line, state: "opted_out", source: "leave", ref: rowId, at: t }); await this.forget(leaving, lid); }
-        await this.direct(lrt, ev.from, this.copyOf(leaving).leftApp, `sys:${rowId}`);
+        await this.direct(lrt, ev.from, this.copyOf(leaving).leftApp, `sys:${rowId}`, true);
         return "left";
       }
     }
 
     if (memberId) {
-      rt.adapter.engaged?.(ev.from);
       if (kw === "start" && e164) {
         await this.accounts.recordConsent({ e164, app: app.id, line, state: "opted_in", source: "keyword:start", wording: "START keyword", ref: rowId, at: t });
         const person = await this.accounts.personFor(e164);
@@ -839,7 +843,14 @@ export class NetworkService implements RuntimeHost {
 
     // Not a member of this app. Nothing is stored about them unless they join (age check passed).
     if (!e164) { this.log(`[inbound] unknown sender (not a phone), ${ev.text.length} chars, not stored`); return "unknown_sender"; }
-    if (kw === "help") { await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`); return "handled"; }
+    if (kw === "help") { await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`, true); return "handled"; }
+    // An app that may not send yet (its live flag is off): one short line reply a day, no join, nothing stored.
+    if (route.shared && rt.adapter.live === false) {
+      const { count } = await this.people.hit(`not_open:${app.id}:${this.phoneKey(e164)}`, DAY, t);
+      if (count === 1) await this.direct(rt, ev.from, notOpenText(app.name, app.domain), `sys:${rowId}`, true);
+      this.log(`[inbound] ${app.id} is not open on the line: ${count === 1 ? "not-open reply" : "no reply (sent today)"}, not stored`);
+      return "not_open";
+    }
     // One text join per phone at a time (the same lock as a web join).
     return this.people.withLock(`join:${e164}`, () => this.join(rt, app, e164, ev, rowId, route));
   }
@@ -857,6 +868,9 @@ export class NetworkService implements RuntimeHost {
     if (!m || !rt || !["active", "onboarding"].includes(m.state)) return "not_member";
     if (await this.accounts.banned(e164)) return "not_member";
     const t = this.clock.now(), rowId = `agent_${randomUUID()}`;
+    // The person acted through their own assistant, not in the thread: the Network's answers are replies
+    // (the reply window opens), but the conversation is not marked as answered.
+    await this.engageLine(e164, { viaAssistant: true });
     const ev: Extract<ChannelEvent, { kind: "message" }> = {
       kind: "message", channel: "imessage" as never, messageId: rowId, from: e164, to: null, chatId: e164, isGroup: false, text, mediaUrls: [], transport: "imessage" as never, receivedAt: t,
     };
@@ -929,9 +943,24 @@ export class NetworkService implements RuntimeHost {
     }
   }
 
-  /** One fixed text to someone who is not a member here. Nothing is stored. */
-  private async direct(rt: NetworkRuntime, to: string, body: string, id: string) {
-    await rt.adapter.direct(to, body, id);
+  /** One fixed text to someone who is not a member here. Nothing is stored. `system`: a line reply (HELP, STOP, leave, not open), allowed whenever any app may send. */
+  private async direct(rt: NetworkRuntime, to: string, body: string, id: string, system = false) {
+    await rt.adapter.direct(to, body, id, system ? { system } : undefined);
+  }
+
+  /** Each runtime's adapter once per line (apps on one line share a queue). */
+  private lineAdapters(): ChannelAdapter[] {
+    const seen = new Set<object>(), out: ChannelAdapter[] = [];
+    for (const r of this.runtimes.values()) {
+      const key = r.adapter.shared ?? r.adapter;
+      if (!seen.has(key)) { seen.add(key); out.push(r.adapter); }
+    }
+    return out;
+  }
+
+  /** Someone wrote on the line (or, `viaAssistant`, through their own assistant): every app's queue counts it. */
+  private async engageLine(address: string, o?: { viaAssistant?: boolean }) {
+    for (const a of this.lineAdapters()) await a.engaged?.(address, o);
   }
 
   /**
@@ -1003,12 +1032,12 @@ export class NetworkService implements RuntimeHost {
     await this.memberMessage(rt, membership.memberId, ev, rowId, undefined);
     // A person who uses another app with this number: the link notice (never names the other app).
     if (others.length) {
-      await rt.unitOfWork(() => { rt.system(membership.memberId, `link:${rowId}`, c.linkNotice, "transactional", "info"); });
+      await rt.unitOfWork(() => { rt.system(membership.memberId, `link:${rowId}`, c.linkNotice, "reply", "info"); });
       await this.people.putPending({ phoneHash: key, kind: "share", app: app.id, name: null, age: null, at: t });
     } else if (app.id === "ntwrk" && route.shared && !invited) {
       // No keyword: The Network asks what they are looking for, then enrolls them (founder decision 2).
       const askText = lookingForAsk(Math.min(age, check.effective ?? age));
-      await rt.unitOfWork(() => { rt.system(membership.memberId, `ask:${rowId}`, askText, "transactional", "info"); });
+      await rt.unitOfWork(() => { rt.system(membership.memberId, `ask:${rowId}`, askText, "reply", "info"); });
       await this.people.putPending({ phoneHash: key, kind: "looking_for", app: "ntwrk", name: null, age: null, at: t });
     }
     return "joined";
@@ -1301,6 +1330,21 @@ export class NetworkService implements RuntimeHost {
     return r.ok ? { ok: true, photos: r.value } : { ok: false, reason: r.reason };
   }
 
+  /**
+   * Release or drop a message the leak guard parked (admin or safety). Audited before and after; the
+   * message's stored status follows (network.messages). A release still runs every other send check.
+   */
+  async leakDecision(user: StaffUser, rt: NetworkRuntime, id: string, decision: "release" | "drop", reason: string): Promise<ActionResult> {
+    const base = { actor: user.id, roles: user.roles, action: "leak_review", targetType: "case" as const, targetId: id.slice(0, 200), mode: "real" as const, app: rt.app.id };
+    await this.audit.write({ ...base, at: this.clock.now(), ok: true, detail: { decision, reason, network: rt.id, phase: "requested" } });
+    const status = await rt.adapter.resolveLeakReview?.(id, decision, user.id);
+    if (status) await rt.storeStatuses([{ id, status }]);
+    const r: ActionResult = status ? { ok: true } : { ok: false, reason: "not_parked" };
+    await this.audit.write({ ...base, at: this.clock.now(), ok: r.ok, detail: { decision, network: rt.id, phase: "result", ...(status ? { status } : { reason: "not_parked" }) } })
+      .catch(e => this.log(`[audit] result row failed: ${(e as Error).message}`));
+    return r;
+  }
+
   /** The matching switch of one network. A network whose registry row does not allow matching (slop and peon until their packs ship) refuses "on". */
   setMatching(user: StaffUser, on: boolean, rt = this.main) {
     if (on && !rt.matchingAllowed) {
@@ -1381,6 +1425,24 @@ export class NetworkService implements RuntimeHost {
         const no = need(["safety"]); if (no) return no;
         await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_safety_reports", mode: "real", ok: true, app: rt.app.id });
         return json({ ok: true, network: rt.id, reports: await this.safetyReports(rt) });
+      }
+      if (req.method === "GET" && path === "/queue/leak-review") {
+        // Messages the leak guard parked (they persist across restarts): admin or safety for the app.
+        const no = need(["admin", "safety"]); if (no) return no;
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_leak_review", mode: "real", ok: true, app: rt.app.id });
+        const items = (rt.adapter.leakReview?.() ?? []).map(i => ({ ...i, to: maskPhone(i.to) }));
+        return json({ ok: true, network: rt.id, items });
+      }
+      const leakPath = path.match(/^\/queue\/leak-review\/([^/]+)$/);
+      if (req.method === "POST" && leakPath) {
+        const no = need(["admin", "safety"]); if (no) return no;
+        let id: string;
+        try { id = decodeURIComponent(leakPath[1]!); } catch { return json({ ok: false, error: "invalid_id" }, 400); }
+        const b = await body(req) as Record<string, any> | undefined;
+        if (!b || (b.decision !== "release" && b.decision !== "drop") || typeof b.reason !== "string" || b.reason.trim().length < 5 || b.reason.length > 2000 || id.length > 300) {
+          return json({ ok: false, error: "decision_and_reason_required" }, 400);
+        }
+        return result(await this.leakDecision(user, rt, id, b.decision, b.reason));
       }
       const photoPath = path.match(/^\/members\/([^/]+)\/photos$/);
       if (req.method === "GET" && photoPath) {

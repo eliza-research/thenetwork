@@ -2,16 +2,20 @@
 // a ChannelAdapter only delivers what the Network already decided to send.
 //  - DryRunAdapter (the default): nothing leaves the machine. The service stores each send in
 //    network.messages with status "dry_run", and the adapter logs one line (no message text).
-//  - BlooioAdapter: the OutboundQueue (packages/blooio) with the Network's
-//    send-time recipient checks (blooioRecipientPolicy) and leak lists (forbiddenProvider). It sends
-//    only when BLOOIO_ALLOW_SEND=1, NTWRK_LIVE_APPROVED=1 and the app's own <APP>_LIVE_APPROVED=1
-//    (founder approval per app; for ntwrk the last two are the same flag). Otherwise every message is
-//    refused ("refused_not_approved") and the provider is never called.
+//  - BlooioAdapter: one app's view of the line's shared OutboundQueue (shared-line.ts; packages/blooio)
+//    with the Network's send-time recipient checks (blooioRecipientPolicy) and leak lists
+//    (forbiddenProvider). An app's own sends need BLOOIO_ALLOW_SEND=1 and its <APP>_LIVE_APPROVED=1
+//    (founder approval per app); otherwise they are refused ("refused_not_approved") and the provider
+//    is never called. The line's system replies (HELP, STOP/START, leave, "not open yet") need
+//    BLOOIO_ALLOW_SEND=1 and at least one app live. In the queue dry run (SharedLine mode "dry_run")
+//    the provider is a recording fake and QUEUE_DRY_RUN_APPS stands in for the flags.
 import type { MemberId } from "@thenetwork/core";
-import { blooioRecipientPolicy, forbiddenProvider, type ConsentNetwork } from "../src/network.ts";
-import { ConsentLedger } from "../../blooio/src/ledger.ts";
-import { OutboundQueue, type MessageKind } from "../../blooio/src/outbound-queue.ts";
+import type { ConsentNetwork } from "../src/network.ts";
+import { type MessageKind } from "../../blooio/src/outbound-queue.ts";
 import type { Clock, ChannelAdapter as ProviderAdapter, StatusUpdate } from "../../blooio/src/types.ts";
+import { appApproved, liveFlag, SharedLine, type AppQueue } from "./shared-line.ts";
+
+export { liveFlag, SharedLine };
 
 /** One message the Network sent in a unit of work. `id` is the Network's idempotency key and the network.messages id. */
 export interface Outbound {
@@ -35,38 +39,44 @@ export const WAITING_STATUSES = ["queued", "pending", "sending", "deferred_quiet
 /** A message's delivery status now (network.messages.status). */
 export interface Delivery { id: string; status: string }
 
+/** A message parked by the leak guard, for staff (GET /queue/leak-review). */
+export interface LeakItem { id: string; app?: string; kind: string; to: string; text: string; reasons: string[]; createdAt: number }
+
 export interface ChannelAdapter {
-  readonly name: "dry_run" | "blooio";
+  readonly name: "dry_run" | "blooio" | "queue_dry_run";
   /** The status a send is stored with, in the same transaction as the Network state. */
   readonly storedStatus: string;
   /** Deliver sends that are already stored. Returns the status of each one. */
   deliver(msgs: Outbound[]): Promise<Delivery[]>;
   /** Retry what waits (quiet hours, held until the member writes back). The service calls it on every tick. Returns changed statuses. */
   flush(): Promise<Delivery[]>;
-  /** The member wrote (a message or a tapback): held messages can go. */
-  engaged?(address: string): void;
+  /** False when this app may not send its own messages (its live flag is off). Undefined: it may. */
+  readonly live?: boolean;
+  /** The line this adapter shares with other apps (the service calls line-wide hooks once per line). */
+  readonly shared?: object;
+  /** Someone wrote (a message or a tapback): held messages can go. `viaAssistant`: through their own assistant, not the thread. */
+  engaged?(address: string, o?: { viaAssistant?: boolean }): void | Promise<void>;
   /** STOP (true) or START (false) from this address. */
   optedOut?(address: string, out: boolean): void;
-  /** A delivery receipt from the provider. */
-  status?(u: StatusUpdate): Delivery | undefined;
-  /** A line safety change from the provider. */
-  lineSafety?(line: string, action: string | undefined): void;
+  /** A delivery receipt from the provider: the status of this app's message, else undefined. */
+  status?(u: StatusUpdate): Delivery | undefined | Promise<Delivery | undefined>;
+  /** A line safety change from the provider. No line: the configured line (fail closed). */
+  lineSafety?(line: string | undefined, action: string | undefined, detail?: Record<string, unknown>): void | Promise<void>;
   /**
    * A fixed text to someone who is not a member of this app (the invite-only reply, the join question,
    * an under-age decline, a keyword confirmation). Nothing about them is stored; the log line has no text.
+   * `system`: a line reply (HELP, STOP, leave, "not open yet") that goes whenever any app may send.
    */
-  direct(to: string, body: string, id: string): Promise<string>;
+  direct(to: string, body: string, id: string, o?: { system?: boolean }): Promise<string>;
+  /** Messages of this app parked by the leak guard. */
+  leakReview?(): LeakItem[];
+  /** Release (send after the other checks) or drop a parked message. Returns its new status, or undefined if it is not parked here. */
+  resolveLeakReview?(id: string, decision: "release" | "drop", reviewer: string): Promise<string | undefined>;
 }
 
-/** The app's own live flag: NTWRK_LIVE_APPROVED, SLOP_LIVE_APPROVED, ... */
-export const liveFlag = (app: string) => `${app.toUpperCase()}_LIVE_APPROVED`;
-
-/**
- * Live sends need BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1 (the founder's approval), and for an
- * app other than ntwrk its own <APP>_LIVE_APPROVED=1 too.
- */
+/** Live sends of an app need BLOOIO_ALLOW_SEND=1 and its own <APP>_LIVE_APPROVED=1 (founder approval per app). */
 export function liveSendAllowed(env: Record<string, string | undefined> = process.env, app = "ntwrk"): boolean {
-  return env.BLOOIO_ALLOW_SEND === "1" && env.NTWRK_LIVE_APPROVED === "1" && env[liveFlag(app)] === "1";
+  return appApproved(env, app, "live");
 }
 
 /** Nothing leaves the machine. The service stores every send with status "dry_run". */
@@ -88,97 +98,115 @@ export class DryRunAdapter implements ChannelAdapter {
 
 export interface BlooioAdapterOptions {
   net: ConsentNetwork;
-  /** The provider (packages/blooio BlooioAdapter over a BlooioClient). Tests pass a fake. */
-  provider: ProviderAdapter;
+  /** The line's shared queue (one per line, built once). Without it the adapter builds a line of its own over `provider`. */
+  line?: SharedLine;
+  /** The provider (packages/blooio BlooioAdapter over a BlooioClient). Tests pass a fake. Not used with `line`. */
+  provider?: ProviderAdapter;
   clock: Clock;
   /** Address (as the queue normalizes it) to member id, from network.channel_identities. */
   memberOf: (address: string) => MemberId | undefined;
-  /** The sending line (BLOOIO_FROM). */
+  /** The sending line (BLOOIO_FROM). Not used with `line`. */
   from?: string;
   /** The app this adapter sends for (its live flag). Default "ntwrk". */
   app?: string;
   /** The network's city, for the queue's per-city limits. Default "nyc". */
   city?: string;
-  /** Read for the two live flags on every delivery. Default process.env. */
+  /** Read for the live flags on every delivery. Default process.env. Not used with `line`. */
   env?: Record<string, string | undefined>;
   log?: (line: string) => void;
 }
 
 /**
- * The prototype's OutboundQueue behind the two live flags. The queue re-checks the recipient at
- * send time through the Network (blooioRecipientPolicy), runs the leak guard with the Network's
- * lists (forbiddenProvider), keeps quiet hours, the unanswered cap, rate limits and idempotency.
- * Joining the Network (a row in network.members) is the member's consent, so the queue does not
- * ask for a separate opt-in; STOP is recorded in its ledger and in the Network.
+ * One app's sends on the line's shared OutboundQueue. The queue re-checks the recipient at send time
+ * through this app's Network (blooioRecipientPolicy), runs the leak guard with its lists
+ * (forbiddenProvider), keeps quiet hours, the unanswered caps, rate limits and idempotency, per line
+ * and address across apps. Joining an app (a row in network.members) is the member's consent, so the
+ * queue does not ask for a separate opt-in; STOP is recorded in the line's ledger and in the Network.
  */
 export class BlooioAdapter implements ChannelAdapter {
-  readonly name = "blooio" as const;
+  readonly name: "blooio" | "queue_dry_run";
   readonly storedStatus = "queued";
-  readonly queue: OutboundQueue;
-  private ledger: ConsentLedger;
-  private env: Record<string, string | undefined>;
+  readonly queue: AppQueue;
+  readonly line: SharedLine;
   private log: (line: string) => void;
   readonly app: string;
   private city: string;
-  /** Addresses that get one fixed non-member text (direct()): the recipient check lets that one compliance send through. */
-  private strangers = new Set<string>();
 
   constructor(o: BlooioAdapterOptions) {
-    this.env = o.env ?? process.env;
     this.log = o.log ?? console.log;
     this.app = o.app ?? "ntwrk";
     this.city = o.city ?? "nyc";
-    this.ledger = new ConsentLedger(o.clock, "address");
-    const ids = (to: string) => (to.startsWith("chat:") ? o.net.opps.get(to.slice(5))?.participants : o.memberOf(to));
-    const members = blooioRecipientPolicy(o.net, o.memberOf);
-    this.queue = new OutboundQueue({
-      clock: o.clock, adapters: { blooio: o.provider }, consent: this.ledger, requireConsentForProactive: false,
-      ...(o.from ? { defaultFrom: { blooio: o.from } } : {}),
-      recipientPolicy: (to, ctx) => (ctx.kind === "compliance" && this.strangers.has(to) ? { ok: true } : members(to, ctx)),
-      forbiddenProvider: forbiddenProvider(o.net, ids),
-      // The app's own settings links (onboarding's "see or delete it" line and the photo ask).
-      leakAllow: o.net.siteLinks,
-      onAlert: (r, why) => this.log(`[blooio] alert ${why} on ${r.idempotencyKey}`),
-    });
+    if (!o.line && !o.provider) throw new Error("BlooioAdapter needs a line or a provider");
+    this.line = o.line ?? new SharedLine({ provider: o.provider!, clock: o.clock, from: o.from, env: o.env, log: this.log });
+    this.line.register(this.app, o.net, o.memberOf);
+    this.queue = this.line.forApp(this.app);
+    this.name = this.line.mode === "dry_run" ? "queue_dry_run" : "blooio";
   }
 
-  get live() { return liveSendAllowed(this.env, this.app); }
-  private get flags() { return ["BLOOIO_ALLOW_SEND=1", "NTWRK_LIVE_APPROVED=1", ...(this.app === "ntwrk" ? [] : [`${liveFlag(this.app)}=1`])].join(", "); }
+  get shared() { return this.line; }
+  get live() { return this.line.approved(this.app); }
 
-  async direct(to: string, body: string, id: string): Promise<string> {
-    if (!this.live) { this.log(`[blooio] refused a direct send: live sending needs ${this.flags}`); return "refused_not_approved"; }
-    this.strangers.add(to);
-    try {
-      this.queue.enqueue({ idempotencyKey: id, channel: "blooio", to, text: body, kind: "compliance", city: this.city });
-      await this.queue.drain();
-      return this.queue.get(id)?.status ?? "failed";
-    } finally { this.strangers.delete(to); }
+  async direct(to: string, body: string, id: string, o: { system?: boolean } = {}): Promise<string> {
+    if (o.system) return this.line.system(this.app, to, body, id);
+    if (!this.live) { this.log(`[blooio] refused a direct send: ${this.app} needs ${this.line.needs(this.app)}`); return "refused_not_approved"; }
+    if (!this.queue.get(id)) this.queue.enqueue({ idempotencyKey: id, channel: "blooio", to, text: body, kind: "compliance", city: this.city });
+    await this.queue.drain();
+    return this.queue.get(id)?.status ?? "failed";
   }
 
   async deliver(msgs: Outbound[]): Promise<Delivery[]> {
-    if (!this.live) {
-      if (msgs.length) this.log(`[blooio] refused ${msgs.length} send(s): live sending needs ${this.flags}`);
-      return msgs.map(m => ({ id: m.id, status: "refused_not_approved" }));
-    }
     const out: Delivery[] = [];
+    const go: Outbound[] = [];
+    let refused = 0;
     for (const m of msgs) {
+      // A keyword confirmation (STOP, START, HELP) is the line's reply: it goes whenever any app may send.
+      if (m.kind === "compliance" && m.system) {
+        out.push({ id: m.id, status: m.to ? await this.line.system(this.app, m.to, m.body, m.id) : "failed_no_address" });
+        continue;
+      }
+      if (!this.live) { refused++; out.push({ id: m.id, status: "refused_not_approved" }); continue; }
       if (!m.to) { out.push({ id: m.id, status: "failed_no_address" }); continue; }
       this.queue.enqueue({ idempotencyKey: m.id, channel: "blooio", to: m.to, text: m.body, kind: m.kind, city: this.city, ...(m.oppId ? { briefId: m.oppId } : {}) });
+      go.push(m);
     }
-    await this.queue.drain();
-    for (const m of msgs) if (m.to) out.push({ id: m.id, status: this.queue.get(m.id)?.status ?? "failed" });
+    if (refused) this.log(`[blooio] refused ${refused} send(s): ${this.app} needs ${this.line.needs(this.app)}`);
+    if (go.length) await this.queue.drain();
+    for (const m of go) out.push({ id: m.id, status: this.queue.get(m.id)?.status ?? "failed" });
+    // Returned here; the next flush() need not report them again.
+    this.line.takeChanges(this.app, new Set(out.map(d => d.id))).forEach(d => this.pending.set(d.id, d.status));
     return out;
   }
+  /** Changes of other records seen while delivering, reported by the next flush(). */
+  private pending = new Map<string, string>();
 
   async flush(): Promise<Delivery[]> {
-    if (!this.live) return [];
-    const before = new Map([...this.queue.records.values()].map(r => [r.idempotencyKey, r.status]));
-    await this.queue.drain();
-    return [...this.queue.records.values()].filter(r => before.get(r.idempotencyKey) !== r.status).map(r => ({ id: r.idempotencyKey, status: r.status }));
+    await this.line.drain();
+    const changed = new Map(this.pending);
+    this.pending.clear();
+    for (const d of this.line.takeChanges(this.app)) changed.set(d.id, d.status);
+    return [...changed].map(([id, status]) => ({ id, status }));
   }
 
-  engaged(address: string) { this.queue.onRecipientEngaged("blooio", address); }
-  optedOut(address: string, out: boolean) { this.ledger.record("blooio", address, out ? "opted_out" : "opted_in", out ? "keyword:STOP" : "keyword:START"); }
-  status(u: StatusUpdate): Delivery | undefined { const r = this.queue.applyStatus(u); return r ? { id: r.idempotencyKey, status: r.status } : undefined; }
-  lineSafety(line: string, action: string | undefined) { this.queue.setLineSafety(line, action); }
+  engaged(address: string, o?: { viaAssistant?: boolean }) { return this.line.engaged(address, o); }
+  optedOut(address: string, out: boolean) { this.line.optedOut(this.app, address, out); }
+  async status(u: StatusUpdate): Promise<Delivery | undefined> {
+    // One line, several apps: only the app that sent it stores the status.
+    if (this.line.queue.byProviderId(u.providerMessageId)?.app !== this.app) return undefined;
+    const r = await this.line.status(u);
+    return r ? { id: r.idempotencyKey, status: r.status } : undefined;
+  }
+  async lineSafety(line: string | undefined, action: string | undefined, detail?: Record<string, unknown>) { await this.line.lineSafety(line, action, detail); }
+
+  leakReview(): LeakItem[] {
+    return this.line.queue.leakReviewQueue().filter(r => r.app === this.app)
+      .map(r => ({ id: r.idempotencyKey, app: r.app, kind: r.kind, to: r.to, text: r.text, reasons: r.leakReasons ?? [], createdAt: r.createdAt }));
+  }
+
+  async resolveLeakReview(id: string, decision: "release" | "drop", reviewer: string): Promise<string | undefined> {
+    const r = this.line.queue.get(id);
+    if (!r || r.app !== this.app || !this.line.queue.resolveLeakReview(id, decision === "release" ? "approve" : "drop", reviewer)) return undefined;
+    await this.line.drain();
+    this.line.takeChanges(this.app, new Set([id])).forEach(d => this.pending.set(d.id, d.status));
+    return this.line.queue.get(id)?.status;
+  }
 }

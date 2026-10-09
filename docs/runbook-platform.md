@@ -88,7 +88,7 @@ The transcript captured on 2026-10-07 is gone: it showed the old `buddies` id, a
 | Blocks | A block on any app is person to person (`platform.person_blocks`). Each app's snapshot reads it as a "blocked" edge when both people are members there. |
 | Person cap | At most 3 proactive messages a day for one person across all apps, taken when the message is handed to the adapter: `platform.person_cap_take` (SECURITY DEFINER, one lock for every app) counts and records in `platform.person_sends`, so two networks delivering at once cannot both pass, and it works under the `network_service` role. Over the cap: status `refused_person_cap`, not sent. |
 | Reviewer of record | With `NETWORK_SERVICE_CONSOLE_TOKEN` set, a request with that token may name the signed-in person in `X-Network-Staff-Id`; the audit and the review record that person. The header from any other token is ignored. |
-| Live sends | Each app needs `BLOOIO_ALLOW_SEND=1`, `NTWRK_LIVE_APPROVED=1` and its own `<APP>_LIVE_APPROVED=1`. platform:dev never sends. |
+| Live sends | Each app needs `BLOOIO_ALLOW_SEND=1` and its own `<APP>_LIVE_APPROVED=1`; the line's HELP/STOP replies need `BLOOIO_ALLOW_SEND=1` and any app live. platform:dev never sends. |
 
 ## 5. Environment variables
 
@@ -102,8 +102,8 @@ The service reads these. **[FOUNDER]** marks a flag that only the founder may se
 | `BLOOIO_WEBHOOK_SECRET` | `whsec_dev_shared` in `platform:dev` | no | The shared line's webhook (`/webhooks/blooio`). Without it, 503. **[CREDENTIALS]** |
 | `<APP>_BLOOIO_WEBHOOK_SECRET` | `whsec_dev_<app>` in `platform:dev` | yes | One app's line (`/webhooks/blooio/<app>`), for example `SLOP_BLOOIO_WEBHOOK_SECRET`. **[CREDENTIALS]** |
 | `NETWORK_CHANNEL` | dry-run | no | `blooio` uses the Blooio adapter (`BLOOIO_API_KEY`, `BLOOIO_FROM`). `--dry-run` always wins. |
-| `BLOOIO_ALLOW_SEND`, `NTWRK_LIVE_APPROVED` | off | no | Both must be `1` for any live send. **[FOUNDER]** |
-| `<APP>_LIVE_APPROVED` | off | yes | Also `1` for that app (`SLOP_LIVE_APPROVED`, `PEON_LIVE_APPROVED`, `FRIENDS_LIVE_APPROVED`; for ntwrk it is `NTWRK_LIVE_APPROVED`). **[FOUNDER]** |
+| `BLOOIO_ALLOW_SEND` | off | no | Must be `1` for any live send. **[FOUNDER]** |
+| `<APP>_LIVE_APPROVED` | off | yes | `1` for that app to send (`NTWRK_LIVE_APPROVED`, `SLOP_LIVE_APPROVED`, `PEON_LIVE_APPROVED`, `FRIENDS_LIVE_APPROVED`). No other app's flag is needed. **[FOUNDER]** |
 | `PLATFORM_API_PORT` | 8790 | no | The public API (`/api/*`) |
 | `PLATFORM_API_ORIGIN` | `http://127.0.0.1:8790` | no | Where `sites:dev` proxies `/api/*` |
 | `NETWORK_SERVICE_HOST`, `NETWORK_SERVICE_PORT` | `127.0.0.1`, 4848 | no | Staff API and webhooks. `X-Forwarded-Host` from the dev proxy is trusted only with `PLATFORM_ENV=dev` on a local bind. |
@@ -123,7 +123,7 @@ The app policy is data, not variables: `platform.apps` (join mode, join age, mat
 
 | Gate | Where | State in dev |
 |---|---|---|
-| Live sends | `BLOOIO_ALLOW_SEND=1`, `NTWRK_LIVE_APPROVED=1` and `<APP>_LIVE_APPROVED=1`, read on every delivery | Off. `platform:dev` uses the dry-run adapter and warns if a flag is set. |
+| Live sends | `BLOOIO_ALLOW_SEND=1` and `<APP>_LIVE_APPROVED=1`, read on every delivery | Off. `platform:dev` uses the dry-run adapter and warns if a flag is set. |
 | Human review | Every opportunity waits for a person. The service refuses any review mode but "human". | On |
 | Matching per network | `platform.networks.matching_enabled` (slop and peon false), then the admin switch | slop and peon cannot be turned on (409). ntwrk and friends start off; an admin turns them on. |
 | Join age | `platform.apps.min_join_age` and the Network's `app` option | 13 on every app; matching 18+ |

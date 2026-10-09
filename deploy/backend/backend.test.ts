@@ -70,12 +70,12 @@ describe("config", () => {
 
   test("sends stay dry-run unless every global live flag is set", () => {
     const base = { ...DEPLOYED, NETWORK_CHANNEL: "blooio", BLOOIO_API_KEY: "k", BLOOIO_FROM: "+15550100" };
-    expect(loadConfig(DEPLOYED).channel).toBe("dry-run");
-    expect(loadConfig(base).channel).toBe("dry-run");
-    expect(loadConfig({ ...base, BLOOIO_ALLOW_SEND: "1" }).channel).toBe("dry-run");
-    expect(loadConfig({ ...base, NTWRK_LIVE_APPROVED: "1" }).channel).toBe("dry-run");
-    expect(loadConfig({ ...base, BLOOIO_ALLOW_SEND: "true", NTWRK_LIVE_APPROVED: "1" }).channel).toBe("dry-run");
-    expect(loadConfig({ ...base, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" }, ["--dry-run"]).channel).toBe("dry-run");
+    expect(loadConfig(DEPLOYED).channel).toBe("queue-dry-run");
+    expect(loadConfig(base).channel).toBe("queue-dry-run");
+    expect(loadConfig({ ...base, BLOOIO_ALLOW_SEND: "1" }).channel).toBe("queue-dry-run");
+    expect(loadConfig({ ...base, NTWRK_LIVE_APPROVED: "1" }).channel).toBe("queue-dry-run");
+    expect(loadConfig({ ...base, BLOOIO_ALLOW_SEND: "true", NTWRK_LIVE_APPROVED: "1" }).channel).toBe("queue-dry-run");
+    expect(loadConfig({ ...base, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" }, ["--dry-run"]).channel).toBe("queue-dry-run");
     expect(loadConfig({ ...base, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" }).channel).toBe("blooio");
     expect(loadConfig(base).warnings.join(" ")).toMatch(/stay dry-run/);
     expect(() => loadConfig({ ...base, BLOOIO_API_KEY: undefined, BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1" })).toThrow(/BLOOIO_API_KEY/);
@@ -399,7 +399,7 @@ describe.skipIf(!pgAvailable)("boot (dev Postgres, a database of its own)", () =
     const lines = logs.trim().split("\n");
     for (const l of lines) expect(() => JSON.parse(l)).not.toThrow();
     expect(logs).toMatch(/"msg":"shutdown complete".*"clean":true/);
-    expect(logs).toMatch(/"sends":"dry-run"/);
+    expect(logs).toMatch(/"sends":"queue-dry-run"/);
     expect(logs).not.toMatch(/"sends":"live"/);
   }, 30_000);
 });

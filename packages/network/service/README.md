@@ -2,14 +2,27 @@
 
 This folder holds the production process for the ConsentNetwork. One process runs one network per row of `platform.networks` (`ntwrk:nyc`, `slop:nyc`, `peon:nyc`, `friends:nyc`; platform plan 6.1). It runs each network against Postgres, takes inbound messages from the channel gateway, serves the public API the four sites call, and gives staff a small API for review and safety. Nothing in this folder is deployed. Local dev for the whole platform: [docs/runbook-platform.md](../../../docs/runbook-platform.md).
 
-**Sends are dry-run.** The default adapter stores each message in `network.messages` with status `dry_run` and sends nothing. The Blooio adapter refuses every message unless `BLOOIO_ALLOW_SEND=1`, `NTWRK_LIVE_APPROVED=1` and the app's own `<APP>_LIVE_APPROVED=1` are set (for ntwrk the last two are the same flag). Set an approval flag only with the founder's approval.
+**Sends are dry-run.** The shared backend (`deploy/backend`) runs the queue dry run by default: the real Blooio queue and its checks against a recording fake provider. `main.ts` and the service's own default adapter (`DryRunAdapter`) are log only: they store each message in `network.messages` with status `dry_run` and **skip the queue entirely**, so quiet hours, the caps, line safety, the reply window and the send-time leak guard never run on that path. Live sends follow the flag matrix below. Set an approval flag only with the founder's approval.
+
+### Who may send (the flag matrix)
+
+Every app shares one queue for the line (`shared-line.ts`). The flags are read at every send.
+
+| Send | Live (`NETWORK_CHANNEL=blooio`) | Queue dry run (the backend default) |
+|---|---|---|
+| An app's own messages (everything its Network composes; join questions, invite-only and under-age replies to non-members) | `BLOOIO_ALLOW_SEND=1` and that app's `<APP>_LIVE_APPROVED=1`. No other app's flag. | The app is in `QUEUE_DRY_RUN_APPS` (default every app) |
+| The line's system replies: HELP, STOP and START confirmations, the "leave <app>" confirmation, and a short "not open yet" to a keyword of an app that may not send | `BLOOIO_ALLOW_SEND=1` and at least one app's `<APP>_LIVE_APPROVED=1` | At least one app is in `QUEUE_DRY_RUN_APPS` |
+| Anything else | Refused (`refused_not_approved`); the provider is never called | Recorded by the fake provider only |
+
+The backend uses the Blooio API only when `BLOOIO_ALLOW_SEND=1` and some app is approved; otherwise it stays in the queue dry run and warns. A message that waits in the queue is checked again at dispatch, so turning a flag off stops what waits. Who answers STOP and HELP on the line is unchanged (this service; see the boundary below). A keyword of an app that may not send gets the "not open yet" reply (once a day per number), and no join starts.
 
 | File | What it does |
 |---|---|
 | `service.ts` | `NetworkService`: the networks, inbound routing (line, keyword, person, membership), keywords through the platform consent ledger, text joins, the person cap, the platform hooks, the staff API |
 | `runtime.ts` | `NetworkRuntime`: one network under its own lock, its snapshot and address book, the unit of work and the save transaction |
 | `snapshot.ts` | `loadSnapshot(sql, now, { app, city })`: one app's rows only, plus person-to-person blocks |
-| `channel.ts` | The adapters (dry-run, Blooio) and the live flags |
+| `channel.ts` | The adapters (log-only dry run, Blooio) and the live flags |
+| `shared-line.ts` | `SharedLine`: one OutboundQueue per line for every app, the flag matrix, the line's system replies, queue alerts |
 | `serve.ts`, `main.ts` | The HTTP servers, the tick loop, the production entry point |
 
 ## Run it
@@ -38,10 +51,12 @@ The database must have the `network` and `platform` schemas (`bun run db:migrate
 | `OTP_PROVIDER` | dev console | `twilio` uses Twilio Verify (needs its credentials). The dev console provider refuses production. |
 | `NETWORK_SERVICE_HOST`, `NETWORK_SERVICE_PORT` | `127.0.0.1`, `4848` | The bind address. Another host prints a warning. |
 | `NETWORK_SERVICE_INSTANCE` | the process id | The name in `pg_stat_activity` (the lock holder in `/health`) |
-| `NETWORK_CHANNEL` | dry-run | `blooio` uses the Blooio adapter (needs `BLOOIO_API_KEY`, `BLOOIO_FROM`). `--dry-run` always wins. |
-| `BLOOIO_ALLOW_SEND`, `NTWRK_LIVE_APPROVED`, `<APP>_LIVE_APPROVED` | off | All `1` for the app: the Blooio adapter sends for it. **[FOUNDER]** |
+| `NETWORK_CHANNEL` | dry-run | `blooio` uses the Blooio adapter (needs `BLOOIO_API_KEY`, `BLOOIO_FROM`). `--dry-run` always wins. The backend: unset is the queue dry run, `dry-run` is log only. |
+| `BLOOIO_ALLOW_SEND`, `<APP>_LIVE_APPROVED` | off | `BLOOIO_ALLOW_SEND=1` and the app's flag: the app sends. The line's system replies need any one app's flag (the matrix above). **[FOUNDER]** |
 | `NETWORK_LLM_READER` | off | `1`: the LLM reader (`extract.ts`, `defaultLLM()`: gpt-6-luna on Surplus, OpenAI fallback) reads member texts the rules miss. On slop it also reads the dating fields. Phones, emails, addresses and long digit runs are masked first. Off: the rules alone. |
 | `NETWORK_ENGINE_JUDGE` | off | `1`: the engine's judge passes run with `defaultLLM()` (slop: the dating rubric in `packs/slop/judge.ts`). Off: no judge, and run logs say so. |
+| `QUEUE_DRY_RUN_APPS` | every app | The apps the queue dry run treats as live (`ntwrk,slop`) |
+| `QUEUE_MAX_UNANSWERED`, `QUEUE_REENGAGE_AFTER_DAYS` | `1`, `30` | An interruption goes only while at most this many are unanswered (PRD 41.4); the single re-engagement after this many days |
 
 ## What it does
 
@@ -60,7 +75,7 @@ The database must have the `network` and `platform` schemas (`bun run db:migrate
 | Restart | The state loads first, then rows that wait for delivery are delivered once. A proactive row older than 24 h, any row older than 3 days, or a row about a closed opportunity is stored as `expired`. An adapter error keeps rows waiting for the next tick; the webhook still answers 200. |
 | Saves | The Network state, its console rows, and what the unit produced (messages, events, blocks, engine runs, opt-outs) are written in one transaction. Then the adapter delivers. |
 | Under 13 | The decline goes out. Then the member's row keeps only the id (`account_status = 'removed'`). Their messages, facets, intents, presence, edges, phone and events are deleted (every event that names them: actor, object or payload). |
-| Outbound | `ChannelAdapter` (`channel.ts`). `DryRunAdapter` is the default. `BlooioAdapter` wraps the prototype's `OutboundQueue` with `blooioRecipientPolicy` and `forbiddenProvider`, and refuses without both live flags. |
+| Outbound | `ChannelAdapter` (`channel.ts`). `DryRunAdapter` (log only, no queue) is the service's default. `BlooioAdapter` is one app's view of the line's shared `OutboundQueue` (`shared-line.ts`), with that app's `blooioRecipientPolicy` and `forbiddenProvider`. One queue per line: the new-conversation cap, the unanswered streaks and the reply window are per line and address across apps. Any message from an address engages it for every app before anything answers it, so the welcome and the join questions go as replies and are not new conversations. The queue's state is in Postgres (`PgQueueStore`, migration 0014) and loads before the networks deliver what a restart left waiting. Queue alerts and Blooio safety webhooks are `network.events` rows of type `queue_alert` (`{ kind, line, address_hash, detail }`). A safety event with no line holds the configured line. |
 | App packs | `packs.ts`. Each network gets its app's engine pack (`appWiring`): The Network keeps networkPack; slop runs `makeSlopPack({ verification: { required: false } })` (founder decision 9: no ID check; a stated adult age is enough) with `SLOP_ENGINE_CONFIG` on nyc; peon runs `peonPack` with `PEON_ENGINE_CONFIG`; friends runs `friendsPack` with `FRIENDS_PLANS`. Members aged 13-17, and anyone who may be a minor, never enter a pack's input (`ConsentNetwork.packInput`). Every item still waits for a human reviewer. slop adds its hooks (`apphooks.ts`): the hard-field asks in one message (each at most twice), the answers as agent_private tags, the date probe with an age band and a distance band, a public place near the midpoint (lit indoor or plaza places after dark), the booked date with the share-my-date tip, and the check-in after the date. A new slop member opts in to dating only when the person is 18 or more. |
 | Reports, holds, bans | A "report X" message and slop's check-in after a date are reports (`reports.ts`): ids and a kind (harassment, lying, no_show, unsafe, scam, minor, other), never the words. An urgent check-in report keeps the member out of matching until staff decide. Hold reaches the person on every app. A ban (`platform.bans`, migration 0011) by phone or by person restricts every membership, holds every member, suppresses the numbers, and refuses every later join (web or text). Delete everything keeps it. |
 | Photos | `packages/platform/src/photos.ts` on `/api/photos/*` (slop only): an adult (the person's lowest stated age is 18 or more; an unknown age fails closed), the photo consent, JPEG/PNG/WebP up to 8 MB and 6 photos, metadata stripped. Storage: `PHOTO_STORAGE=r2` (`R2_ENDPOINT` or `R2_ACCOUNT_ID`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`; a private bucket) or `PHOTO_STORAGE=local` (dev only, `PHOTO_DIR`). Unset: photos are off. No public URL: staff get a 5-minute signed link (`PHOTO_VIEW_BASE_URL`, default `https://<app domain>`) after an audited read. An optional rater (`photoRater`, default "none") writes agent_private facets only for a verified adult. Leaving the app, delete everything, or an age under 18 deletes the photos. |
@@ -84,6 +99,8 @@ Send `Authorization: Bearer <token>`. Tokens are per app: `reviewer@slop:<t>` is
 | `POST /safety/clear-person` | safety@* or admin@* | `{ memberId, note }`: clears the person's safety holds on every app (platform.person_safety, migration 0019); 409 `not_held`, `no_person`, `needs_safety_everywhere`. See docs/runbook-safety.md |
 | `POST /members/:id/verify` | safety | `{ check: "age" \| "liveness", result: "pass" \| "fail", note }`: `verify:<check>:<result>` on the member (PRD 40.5), until a vendor writes it |
 | `GET /members/:id/photos` | safety | `X-Network-Reason: <5+ characters>`. Verified adults only (403 `adults_only`); the audit row is written before any link |
+| `GET /queue/leak-review` | admin, safety | This app's messages the leak guard parked (they survive a restart): `{ id, kind, to (masked), text, reasons, createdAt }` |
+| `POST /queue/leak-review/:id` | admin, safety | `{ decision: "release" \| "drop", reason (5+ characters) }`. A release runs every other send check again; 409 `not_parked` |
 | `POST /matching` | admin | `{ on: true \| false }`. Refused (`matching_not_allowed`) for a network the registry keeps off. Migration 0011 allows slop and peon; their stored switch still starts off. |
 | `/review-mode` | none | Always 404. Production review is "human" only (PRD 32.8). The service refuses any other mode at start. |
 
@@ -111,7 +128,8 @@ Rules for the boundary:
 ## Limits
 
 - **No live send has been made.** The Blooio path is tested only with a fake provider.
-- **The Blooio queue is in memory.** Its conversation counters, line safety and rate limits start again after a restart (audit network-service-12). The rows in `network.messages` keep the status.
+- **One process per line.** The queue's state is in Postgres, but dispatch is not shared: two replicas of the backend each run their own queue for the same line (the provider key still stops a double send). Run one backend replica while the line is live.
+- **The queue's own STOP ledger is in memory.** STOP is enforced from the platform consent ledger and `network.members.opted_out` before delivery; a message that waits in the queue is checked again by the member policy at dispatch.
 - **The requester's time question has no opportunity id.** The Network sends it with no `proposalId` (network.md 4.1), so its `network.messages` row has no `opportunity_id`. Probes are linked through `meta.probe.key`.
 - **Invites are not built.** The Network's `ctx.invite` is not set, so an invite request logs `invite` with no new member.
 - **The service imports the Observatory's modules** (`events.ts`, `engineCapture.ts`, `staff.ts`) by path, so the events, run summaries and staff auth are the same in both. The Observatory imports `snapshot.ts` from here.
