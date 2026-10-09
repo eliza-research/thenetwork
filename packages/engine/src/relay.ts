@@ -21,8 +21,12 @@
 //                  self-disclosure ("I'm 16") blocks and flags the age for the platform;
 //   5. classifier  rules first: money requests, gift cards, crypto and "investments", moving
 //                  off-platform before the first date, contact fishing, prompt injection, sexual
-//                  pressure, insults (hold); threats and slurs (block). An optional LLM hook runs only
-//                  on items the rules pass (`relayItemAsync`); its error holds the item by default;
+//                  pressure, insults (hold); threats and slurs (block). An optional model hook
+//                  (`relayItemAsync`; production: the Clef decision model, relayClef.ts) runs on items
+//                  the rules pass (and, with `escalateHeld`, on items they hold). It can only ADD
+//                  reasons: it raises pass to hold or block, never lowers what the rules decided. A
+//                  hook error holds the item by default (the Clef hook never throws: it falls back to
+//                  the rules itself, see relayClef.ts);
 //   6. rate        per sender per opportunity: a burst limit, a daily limit, photos per day, and one
 //                  contact share per opportunity.
 // Deterministic and offline: no clock reads (the caller passes `now`), no randomness, no model call
@@ -136,6 +140,11 @@ export interface RelayContext {
   history?: readonly RelayRecord[];
   /** The sender's last delivered texts in this thread (oldest first): a number split across messages is caught. */
   recentTexts?: readonly string[];
+  /**
+   * The last few rendered messages in this thread, both directions, oldest first, exactly as delivered
+   * ("Sam says: ..."). Context for the classifier hook only (`relayItemAsync`); never logged.
+   */
+  thread?: readonly string[];
   /** A compiled guard with both members' private facts (owner set) and canaries (`relayGuard`). */
   guard?: LeakGuard;
   limits?: Partial<RelayLimits>;
@@ -155,8 +164,8 @@ export interface RelayResult {
 
 /** Reason families. `block` ones stop the item for good; `hold` ones send it to staff review. */
 export const RELAY_REASON_FAMILIES = {
-  block: ["state", "party", "minor", "optout", "consent", "photo", "contact_share", "canary", "harass_severe", "format"],
-  hold: ["safety", "leak", "contact", "rating", "scam", "offplatform", "fishing", "injection", "harass", "rate", "text", "llm"],
+  block: ["state", "party", "minor", "optout", "consent", "photo", "contact_share", "canary", "harass_severe", "format", "llm_severe", "clef_severe"],
+  hold: ["safety", "leak", "contact", "rating", "scam", "offplatform", "fishing", "injection", "harass", "rate", "text", "llm", "clef"],
 } as const;
 const BLOCK_PREFIX = new Set<string>(RELAY_REASON_FAMILIES.block);
 
@@ -383,22 +392,47 @@ function finish(item: RelayItem, ctx: RelayContext, reasons: string[], x: { cont
   return { decision, reasons, rendered, photos: decision === "pass" ? x.photos : [], record, senderNotice };
 }
 
-/** An optional model check on items the rules pass. Flags are short labels ("scam", "harassment"). */
-export type RelayClassifierHook = (input: { text: string; kind: RelayKind }) => Promise<{ flags: string[] }>;
+/** What a classifier hook sees: the item's text, its kind, and the thread so far (rendered, oldest first). */
+export interface RelayClassifierInput {
+  text: string;
+  kind: RelayKind;
+  /** The last few rendered messages (`RelayContext.thread`), oldest first; may be empty. */
+  context?: readonly string[];
+  /** The pair has met (the first date happened): moving off-platform is not an early move. */
+  met?: boolean;
+}
+/**
+ * A hook's answer. `flags` hold the item (`<source>:<flag>`), `block` blocks it
+ * (`<source>_severe:<flag>`). `source` is "llm" (default) or "clef". `scores` are for the caller's
+ * own metrics; the relay ignores them.
+ */
+export interface RelayClassifierOutput { flags: string[]; block?: string[]; source?: "llm" | "clef"; scores?: Record<string, number> }
+/** An optional model check after the rules. */
+export type RelayClassifierHook = (input: RelayClassifierInput) => Promise<RelayClassifierOutput>;
+
+const flagCode = (f: unknown) => String(f).toLowerCase().replace(/[^a-z_]/g, "").slice(0, 24) || "flag";
 
 /**
- * `relayItem`, then the optional LLM hook on a passed item that has text. A flag holds the item
- * (`llm:<flag>`); a hook error holds it too unless `failOpen` is set.
+ * `relayItem`, then the optional hook on an item with text that the rules passed (or held, with
+ * `escalateHeld`). The hook only adds reasons: a flag holds, a block flag blocks, nothing lowers the
+ * rules' decision, and an item the rules block never reaches the hook. A hook error holds the item
+ * (`llm:error`) unless `failOpen` is set.
  */
-export async function relayItemAsync(item: RelayItem, ctx: RelayContext, o: { hook?: RelayClassifierHook; failOpen?: boolean } = {}): Promise<RelayResult> {
+export async function relayItemAsync(item: RelayItem, ctx: RelayContext, o: { hook?: RelayClassifierHook; failOpen?: boolean; escalateHeld?: boolean } = {}): Promise<RelayResult> {
   const first = relayItem(item, ctx);
   const text = (item.text ?? "").trim();
-  if (first.decision !== "pass" || !o.hook || !text) return first;
-  let flags: string[];
-  try { flags = (await o.hook({ text, kind: item.kind })).flags ?? []; } catch { flags = o.failOpen ? [] : ["error"]; }
-  const extra = [...new Set(flags.map(f => `llm:${String(f).toLowerCase().replace(/[^a-z_]/g, "").slice(0, 24) || "flag"}`))];
+  if (!o.hook || !text || first.decision === "block" || (first.decision === "hold" && !o.escalateHeld)) return first;
+  let out: RelayClassifierOutput;
+  try {
+    out = await o.hook({ text, kind: item.kind, context: [...(ctx.thread ?? [])], met: ctx.opportunity.metAt !== undefined && ctx.opportunity.metAt <= ctx.now });
+  } catch { out = { flags: o.failOpen ? [] : ["error"] }; }
+  const src = out?.source === "clef" ? "clef" : "llm";
+  const extra = [...new Set([
+    ...(out?.flags ?? []).map(f => `${src}:${flagCode(f)}`),
+    ...(out?.block ?? []).map(f => `${src}_severe:${flagCode(f)}`),
+  ])];
   if (!extra.length) return first;
-  return finish(item, ctx, [...first.reasons, ...extra].sort(), { contactValue: null, photos: [], text, ageSignal: first.record.ageSignal });
+  return finish(item, ctx, [...new Set([...first.reasons, ...extra])].sort(), { contactValue: null, photos: [], text, ageSignal: first.record.ageSignal });
 }
 
 // --------------------------------------------------------------------------- member requests

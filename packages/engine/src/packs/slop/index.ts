@@ -212,7 +212,7 @@ export { distanceBand, cellOfZip, ZIPS as SLOP_ZIPS, type DistanceBand } from ".
 export { ageBand, SLOP_ASK_QUESTIONS, SLOP_PROBE_PHOTO_LINE, slopProbeMessage, slopProbeText } from "./copy.ts";
 export { mutualMarkets } from "./geo.ts";
 export { adultsOnly, appearanceFacet, appearanceLeak, APPEARANCE_LEAK_PATTERNS, BODY_TYPES, canRatePhotos, ClipAppearanceRater, parseAppearance, rateMember, VisionLlmAppearanceRater, VISION_RATER_SYSTEM, type AppearanceRater, type AppearanceScore, type BodyType, type PhotoRef, type RatingSubject, type VisionChat } from "./appearance.ts";
-export { CLEF_FEATURES, CLEF_MODEL_IDS, CLEF_QUESTIONS, ClefError, clefFeatures, applyHead, makeClefRater, makeClefRaterFromEnv, WorkersAIClefRater, type ClefModel, type ClefRaterOptions } from "./clef.ts";
+export { CLEF_FEATURES, CLEF_MODEL_IDS, CLEF_PRICE_PER_M_INPUT, CLEF_QUESTIONS, ClefError, clefFeatures, clefFeatureRow, clefFeatureNames, clefRun, applyHead, makeClefRater, makeClefRaterFromEnv, WorkersAIClefRater, type ClefModel, type ClefRaterOptions, type ClefCallOptions, type ClefRequest, type ClefFetch } from "./clef.ts";
 export { DEFAULT_CLEF_WEIGHTS, loadClefWeights, validateClefWeights, type ClefWeights } from "./clefWeights.ts";
 export { biasMonitor, ratingQuintiles, type BiasReport, type MemberOutcome } from "./biasMonitor.ts";
 export { pairValue, firstOf, SLOP_GENERATOR } from "./generators.ts";
