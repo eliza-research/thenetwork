@@ -159,7 +159,7 @@ Build each small, learn from it, then commit.
 
 ## 4. Simulation coverage still needed
 
-All validation is `bun run sim` (simulations only). This is what the simulations must still cover.
+Validation is `bun run sim` plus the integration and e2e suites (`bun run test:integration`, `bun run test:e2e`; no unit or smoke tests, [tests-policy.md](tests-policy.md)). This is what the simulations must still cover.
 
 ### 4.1 What each app's simulation must cover before launch
 

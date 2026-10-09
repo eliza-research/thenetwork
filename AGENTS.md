@@ -24,6 +24,7 @@ These replace any earlier defaults in task prompts or in docs/research/2026-10-0
 10. **Agent-first sites (founder, 2026-10-08).** The sites are mainly a way to get into the person's own AI agent (ChatGPT, Claude, Muse, Grok, Perplexity...). Each landing page keeps as little text as possible: the name, one line, "Copy this into your agent." with the prompt `Read https://<domain>/SKILL.md and follow it to sign me up for <app>.`, a Copy button, and "Open in <agent>" deeplinks below it (chatgpt.com/?q=, claude.ai/new?q=, grok.com/?q=, perplexity.ai/search?q=; Muse link to be confirmed). No safety notice, no explanations, no compliance text on the landing pages (legal pages stay, linked in the footer). Onboarding happens in the agent: the SKILL.md tells the agent to collect the profile in conversation, then hand the person one link to confirm their own phone (the agent never sees the code), then submit the profile through the MCP server once the person has authorized it. Design canvases (Claude artifacts) per site are the source of truth for the look: ntwrk.love https://claude.ai/artifact/6dyUVv8TytUtBXhPmPfrB3, slop.date https://claude.ai/artifact/A1ZqF7TzBRDNPAj3e91R9q, peon.biz https://claude.ai/artifact/PhvnY97HotDZp1WFvhRLFk, friends.help https://claude.ai/artifact/5yUa6JgAw8wjNaN1sp36rF.
 11. **Engine-session audit hand-offs (2026-10-08).** docs/audit/2026-10-08-fixes-core.md lists 37 items for packages/network, observatory, platform and sites. Use core's shared reply parser (`parseReply`, `classifyYesNo`, `parseOptOut` from `@thenetwork/core`, packages/core/src/replies.ts) instead of any local yes/no parser; only `answer: "yes"` is consent, a counter is not a yes. Use `parseOptOut` on the inbound path (STOP everywhere, per-app leave). Probes need a pause path (engine `withPausePath`); info messages go through the outreach controller; plans copy never reaches minors; pass `categoriesOptIn` in view() and the category to `eligibilityFor` at send time; capital `onFeedback` emits `confirmedBy`; stamp `app` on run-log records; the lowest stated age wherever ages meet (the unused `effectiveAge` helper was removed in the 2026-10-08 cleanup; reinstate it in core/policy.ts if a caller needs it); ORDER BY in snapshot queries; persist exposure debt; `checkThread` on send with LEAK_LABEL_KEY in production. The judge now uses PRD_BUDGETS and `requireReview: true`; its new invariants (minor contacts via plans copy, probes without a pause path, unflagged proactive info, unreviewed probes) must reach 0.
 12. **slop rater wiring (engine main 87a9d2f, merged after this round).** Env `CLOUDFLARE_AI_TOKEN` (Workers AI) + `CLOUDFLARE_ACCOUNT_ID`, optional `CLEF_MODEL` (`clef` | `clef-flash`) and `CLEF_WEIGHTS_PATH`. On photo upload or change, after the 18+ check: `makeClefRaterFromEnv()` (base64 images, up to 4, max 4 MiB each, never URLs), store via `appearanceFacet` as agent_private, retry API errors; the rater itself refuses minors and unverified ages. Run `appearanceLeak` on any agent-written text about another person (relay). Admin runs `biasMonitor` weekly (alert below 0.8x outcome ratio).
+13. **Ratings are ON (founder).** Appearance ratings feed slop matching (never shared): the engine default is `appearance.mode = "soft"` in `SLOP_DEFAULT_OPTIONS` (packages/engine/src/packs/slop/options.ts). Do not default them off or wait for P2; the placeholder Clef weights ship until fitted weights pass the P2 decision rule. The platform session switches the live rater in the service (`CLEF_RATINGS`).
 
 ## Hard rules
 
@@ -33,7 +34,7 @@ CONTRIBUTING.md section 3 is the full text. In one line each:
 - No busywork: no style, naming, coverage or defensive-check PRs.
 - Evidence or nothing: numbers before and after, same command and seed.
 - Simplify first: extend or merge what exists; remove dead code.
-- Validate end to end with `bun run sim` (and the observatory for UI). A bug fix adds a gate, a scenario or a corpus row that fails before the fix. No unit tests.
+- Validate with the simulations (`bun run sim`), the integration suite (`bun run test:integration`, real Postgres, real HTTP servers, the full service) and the e2e suite (`bun run test:e2e`), plus the observatory for UI. A bug fix adds a sim gate, a scenario, a corpus row or an integration/e2e case that fails before the fix. No unit tests and no smoke tests ([docs/tests-policy.md](docs/tests-policy.md)).
 - Defend the design: give two other implementations.
 - UI changes need videos and a how-to-test.
 - Write in ASD-STE100 (CONTRIBUTING.md section 4).
@@ -67,7 +68,9 @@ bun run sim --quick          # fewer seeds, shorter runs; quality gates become t
 bun run sim --with-capital   # adds the network-capital block (32 paired seeds; nightly)
 bun run typecheck
 bun run plugins/build.ts --check
-bun run security             # the security suite pending the founder's decision (needs the dev Postgres)
+bun run test:integration     # integration suite incl. the security files (real Postgres on :54339 via dev-pg; docs/tests-policy.md)
+bun run test:e2e             # e2e: the full service and platform through HTTP (tests/e2e; needs Postgres)
+bun run security             # the security subset of the integration suite
 bun run clef <fit|calibrate|features|audit|synth>   # P2 Clef weight fitting (docs/results/2026-10-09-clef-fitting.md); only `features --live` calls Workers AI
 
 # The ConsentNetwork on the NYC world (docs/runbook-simulation.md)

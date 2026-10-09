@@ -118,7 +118,7 @@ contains a minor's id, alias or name, and that the final guard never fires. A mu
 
 ## Validation
 
-The unit and property tests named in the table above were deleted on 2026-10-08 (founder decision: simulations only); they are in git history at 16cde70. `bun run sim` now checks the engine through the packs: the conformance rules on random and per-app worlds (minors, blocks, consent before reveal, leaks, filters and the judge), and the world gates.
+The unit and property tests named in the table above were deleted on 2026-10-08 and stay deleted (no unit tests: [docs/tests-policy.md](../../docs/tests-policy.md)); they are in git history at 16cde70. `bun run sim` now checks the engine through the packs: the conformance rules on random and per-app worlds (minors, blocks, consent before reveal, leaks, filters and the judge), and the world gates.
 
 ## Benchmark
 

@@ -54,11 +54,11 @@ About 35 engineer-days plus the two-week shadow. Items 1-3, 6 and 12b can run al
 
 ## Validation plan
 
-**Simulations only.** `bun run sim` is the single validation command and runs in CI. It fails on any blocking gate. Tracked gates are printed and never fail.
+**Simulations, integration and e2e; no unit or smoke tests** (founder; [tests-policy.md](tests-policy.md)). `bun run sim` runs every simulation and fails on any blocking gate; tracked gates are printed and never fail. `bun run test:integration` (real Postgres, real HTTP servers, the full service, the security suite) and `bun run test:e2e` (`tests/e2e`: the platform and notify through the service) run in the CI "integration" job with Postgres.
 
 - **Blocking (152 gates today, all passing):** the corpora in `evals/`; The Network's invariants and scenarios; the slop safety gates (0 declared-minor contacts, 0 stated-filter violations, scammer median reach at most 1, 0 leaks, no rating text), the slop quality gates that pass on the pinned seeds (13-16, 4 weeks), and slop conformance; the peon and friends official gate sets and conformance.
 - **Tracked (slop, failing today):** dates per member-month at least 0.9x random (0.82), age-liar contact cut at least 90% (82%), adversary-contact cut at least 90% (47%), smallest gender or orientation group at least 0.7x (0.33), harm-event cut at least 90% (87%). Each is fixed, waived in writing by the founder, or carried as a known risk into the pilot.
-- **Still missing in sim:** the real message pipeline end to end (signed webhook in, Blooio adapter out, persisted queue, Postgres, simulated clock); LLM personas sending free text through the platform; adversarial scenarios against the live agent (scammer in relay, "how hot did you rate me?", ban evader, prompt injection for a number). Gates: 0 rating or contact leaks, scammer reach at most 1.
+- **Still missing in sim:** the real message pipeline end to end (signed webhook in, Blooio adapter out, persisted queue, Postgres, simulated clock; the service integration tests and `tests/e2e` cover it with dry-run sends, not with simulated members); LLM personas sending free text through the platform; adversarial scenarios against the live agent (scammer in relay, "how hot did you rate me?", ban evader, prompt injection for a number). Gates: 0 rating or contact leaks, scammer reach at most 1.
 
 **Live pilot go/no-go:** every blocking gate passes; P3 measured; STOP owner decided; two weeks of shadow with a precision baseline; 40 committed NYC adults; restore tested; cost alerts and safety on-call live.
 
@@ -82,7 +82,7 @@ About 35 engineer-days plus the two-week shadow. Items 1-3, 6 and 12b can run al
 2. **Where the conversation runs:** the service's own LLM reader (`understand`, gpt-6-luna) or the Eliza agent (`packages/plugin-network`). Today the service owns every message and the plugin is not on the line.
 3. **Join mode for peon and friends** on production (invite, open or waitlist). The code default is open.
 4. **Ban evasion:** build a same-face check, or drop that gate and rely on phone and person bans.
-5. **The security suite** (`bun run security`, six files, CI job pending): keep it or delete it.
-6. **Clef weight fitting:** the fitter is rebuilt (`bun run clef`, with a local labelling page, feature extraction and a bias audit; [2026-10-09-clef-fitting.md](results/2026-10-09-clef-fitting.md)). The shipped weights are still a placeholder until P2 collects labels. Open: whether to launch with the placeholder or with ratings off until P2's fitted weights pass the decision rule in that document.
+5. **The security suite:** decided (founder, 2026-10-08): kept. It runs as part of the integration suite (`bun run test:integration`, CI job "integration").
+6. **Clef weight fitting:** the fitter is rebuilt (`bun run clef`, with a local labelling page, feature extraction and a bias audit; [2026-10-09-clef-fitting.md](results/2026-10-09-clef-fitting.md)). The shipped weights are still a placeholder until P2 collects labels. **Ratings are ON (founder decision):** the engine default is `appearance.mode = "soft"` (`SLOP_DEFAULT_OPTIONS`), and the slop pack launches with ratings in matching (never shared), on the placeholder weights until P2's fitted weights pass the decision rule in that document. The platform session turns the live rater on in the service (`CLEF_RATINGS`).
 
 Other open platform questions (legal entity per app, a second line, recycled numbers, hash-key rotation and more) are listed in [mvp-gaps.md](mvp-gaps.md) section 5.

@@ -389,7 +389,7 @@ The simulations are the validation layer (2026-10-08: the unit and golden tests 
 | An app pack or world | `bun run sim --only slop` (or `peon`, `friends`) |
 | Parsers, corpora, the leak guard, opt-out | `bun run sim --only evals` |
 | `packages/capital` | `bun run sim --only capital` (32 paired seeds; slow) |
-| Platform, MCP or backend security | `bun run security` (the suite pending the founder's decision; needs the dev Postgres) |
+| Platform, MCP, backend, service, console (Postgres, HTTP) | `bun run test:integration` and `bun run test:e2e` (need the dev Postgres; `bun run security` is the security subset) |
 | `sites/` | `DEPLOY_TARGET=production bun run sites/sites.ts` and `bunx tsc --noEmit -p sites/tsconfig.json` |
 | Any TypeScript | `bun run typecheck` |
 | Before you mark the PR ready | `bun run sim` and `bun run typecheck` |
