@@ -1,7 +1,7 @@
 /**
  * Service-to-service signing between the Eliza gateway / shared agent and the Network service
- * (docs/design/eliza-conversation-layer.md). ONE implementation, imported by both sides
- * (`@thenetwork/plugin-network/svc-auth`). No imports: WebCrypto only, so it runs in Workerd and Bun.
+ * (eliza-research/thenetwork docs/design/eliza-conversation-layer.md). Mirrored byte-for-byte in the
+ * service (packages/core/src/svc/svc-auth.ts). No imports: WebCrypto only, so it runs in Workerd and Bun.
  *
  *   canonical = METHOD \n PATH \n TS \n ID \n hex(sha256(body))
  *   x-ntwrk-svc-ts  = unix seconds

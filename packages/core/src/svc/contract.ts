@@ -1,7 +1,7 @@
 /**
  * Wire contract between the Eliza side (gateway + shared agent + plugin-network) and the Network
- * service (docs/design/eliza-conversation-layer.md). Dependency-free so the Cloud copy of this
- * package and the service read the same file. Every request is signed with svc-auth.ts.
+ * service (eliza-research/thenetwork, docs/design/eliza-conversation-layer.md). Dependency-free:
+ * the service keeps a byte-for-byte mirror of this file. Every request is signed with svc-auth.ts.
  *
  *   POST /internal/turn     Eliza → service   one inbound message on the shared line
  *   POST /api/internal/network/deliver  service → Eliza Cloud  a message the service wants sent
@@ -11,6 +11,12 @@
 /** Mirrors APP_IDS in packages/platform/src/apps.ts (kept literal: this file has no imports). */
 export type NetworkAppId = "ntwrk" | "slop" | "peon" | "friends";
 export type NetworkTransport = "imessage" | "sms" | "rcs" | "unknown";
+
+/**
+ * Contract version. This file and svc-auth.ts are mirrored byte-for-byte in eliza-research/thenetwork
+ * (packages/core/src/svc/); bump this on any wire change and update both copies together.
+ */
+export const CONTRACT_VERSION = "2026-10-08.1";
 
 export const TURN_PATH = "/internal/turn";
 export const DELIVER_PATH = "/api/internal/network/deliver";

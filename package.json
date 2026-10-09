@@ -12,7 +12,7 @@
     "sim": "bun run --conditions eliza-source scripts/sim.ts",
     "clef": "bun run --conditions eliza-source scripts/clef-fit.ts",
     "relay-eval": "bun run --conditions eliza-source scripts/relay-eval.ts",
-    "typecheck": "tsc --noEmit -p . && tsc --noEmit -p sites/tsconfig.json && bun run --cwd packages/plugin-network typecheck",
+    "typecheck": "tsc --noEmit -p . && tsc --noEmit -p sites/tsconfig.json",
     "observatory": "bun run packages/observatory/src/server.ts",
     "observatory:db": "bun run packages/observatory/db/dev-pg.ts up && bun run packages/observatory/db/seed.ts --from-sim --days 14",
     "db:migrate": "bun run packages/observatory/db/migrate.ts",

@@ -39,7 +39,7 @@ Repo: <https://github.com/eliza-research/thenetwork> (public). Work from a fresh
 | DNS for slop.date and friends.help | Cloudflare account **Eliza Labs** (developer login). Domains move to shawmakesmagic after the 10-day transfer lock. Apex CNAMEs to `<project>.pages.dev` already exist. |
 | Backend and Postgres | Railway project **the-network** (id `02295109-b29e-4e2c-b0d2-a2f5e88bb9e9`): service `backend`, `Postgres`, environment `production`. The backend is **not** connected to GitHub: it is deployed with `railway up --service backend` from `~/thenetwork-deploy` (a worktree of `origin/main`, linked with `railway link`), built from `deploy/backend/Dockerfile` (`RAILWAY_DOCKERFILE_PATH`). Domains: `backend-production-4dac.up.railway.app` (generated) and `api.ntwrk.love` (custom). |
 | Observatory console (optional) | Railway service `observatory`, only behind Cloudflare Access |
-| Eliza Cloud (gateway, shared agent) | The `eliza/` submodule. The takeover branch is `spike/network-plugin`; ask the Eliza-side owner for its deploy path. |
+| Eliza Cloud (gateway, shared agent) | elizaOS/eliza (no longer a submodule here). The takeover branch is `spike/network-plugin`; ask the Eliza-side owner for its deploy path. |
 | iMessage line | Blooio, one shared line. Its webhook must point at the **Eliza gateway**, and at nothing else. |
 | CI and deploys | GitHub Actions `ci.yml` and `deploy-sites.yml`. Environment `production` requires the founder's review and deploys only from `main`. |
 
@@ -104,7 +104,7 @@ Follow `docs/deploy.md` section 2. Summary:
 
 ## 7. Eliza live: eliza.app becomes an entry into The Network
 
-The design is in `docs/design/eliza-conversation-layer.md`. Eliza-side code is on branch `spike/network-plugin` of elizaOS/eliza (the `eliza/` submodule). Section corrected 2026-10-08 by the Eliza-side owner.
+The design is in `docs/design/eliza-conversation-layer.md`. Eliza-side code, including `@elizaos/plugin-network`, is on branch `spike/network-plugin` of elizaOS/eliza (no longer a submodule of this repo). Section corrected 2026-10-08 by the Eliza-side owner.
 
 ```
 iMessage (Blooio, shared line)
@@ -139,11 +139,7 @@ Network service sends → POST Eliza Cloud /api/internal/network/deliver (signed
 **Prerequisites, all of which must be true before go-live:**
 
 1. **Service.** `/internal/turn`, `/internal/set-state`, `/internal/signals`, `/internal/updates` and `/internal/relay` are deployed and signed. The shared-line adapter sends through `/api/internal/network/deliver`. Owner: platform.
-2. **Build blocker, Eliza side.** The gateway and the Cloud depend on `@thenetwork/plugin-network` through a `file:` path outside the eliza repo, so CI and the gateway's Docker build cannot resolve it. Before staging, choose one:
-   - publish the package to GitHub Packages and pin a version (recommended);
-   - vendor a synced copy into elizaOS/eliza.
-
-   The Eliza-side owner does this; the founder chooses.
+2. **Plugin location (resolved 2026-10-09).** Founder decision: the plugin moved upstream as `@elizaos/plugin-network` (elizaOS/eliza `plugins/plugin-network`, a workspace package), so Eliza CI and the gateway image build it in-repo. thenetwork keeps only a byte-identical mirror of the contract in `packages/core/src/svc/`.
 3. **Merge.** `spike/network-plugin` is merged into elizaOS/eliza through a PR (founder approval).
 4. **One STOP owner.** The Blooio webhook for the shared line points only at the Eliza gateway. Remove the old `ovh-eliza` webhook, which needs Blooio account owner approval. The service doesn't consume Blooio webhooks for the shared line.
 5. **eliza.app as an entry.** The home page is `packages/app` in elizaOS/eliza; `scripts/check-homepage-public-readiness.ts` checks it.

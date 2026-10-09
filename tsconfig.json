@@ -5,5 +5,5 @@
     "types": ["bun"], "resolveJsonModule": true, "allowImportingTsExtensions": true
   },
   "include": ["packages/**/*.ts", "deploy/**/*.ts", "tests/**/*.ts", "scripts/platform-dev.ts", "scripts/sim.ts", "scripts/sim/**/*.ts", "scripts/clef-fit.ts", "scripts/relay-eval.ts", "scripts/relay-clef-lib.ts"],
-  "exclude": ["**/node_modules", "eliza/**", "packages/plugin-network/**"]
+  "exclude": ["**/node_modules", "eliza/**"]
 }
