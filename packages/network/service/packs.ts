@@ -203,6 +203,28 @@ export function slopHooks(options: Parameters<typeof planFromInput>[4]): AppHook
       }
       return { tags, replaces };
     },
+    learnUnderstood(u, parsed, { now }) {
+      // Only fields the offline parser read nothing for in this message, tagged as the LLM's reading.
+      const tags: AppTag[] = [];
+      const replaces: string[] = [];
+      const llm = (t: string, kind: Facet["kind"]): AppTag => ({ ...tag(t, kind, now), provenance: "llm" });
+      const had = (prefix: string) => parsed.some(t => t.tag.startsWith(prefix));
+      const field = (prefix: string, add: AppTag[]) => { if (!add.length || had(prefix)) return; tags.push(...add); replaces.push(prefix); };
+      if (u.is) field("romance:is:", [llm(`romance:is:${u.is}`, "preference")]);
+      if (u.seeks?.length) field("romance:seeks:", u.seeks.map(g => llm(`romance:seeks:${g}`, "preference")));
+      if (u.ageRange) field("romance:age:", [llm(`romance:age:${u.ageRange[0]}-${u.ageRange[1]}`, "preference")]);
+      if (!had("slop:scope:") && !had("slop:max_miles:")) {
+        const n = u.radiusMiles ?? (u.cityWide ? 25 : undefined);
+        if (n !== undefined) {
+          tags.push(llm(u.radiusMiles !== undefined ? `slop:scope:radius:${n}` : "slop:scope:city", "preference"), llm(`slop:max_miles:${n}`, "preference"));
+          replaces.push("slop:scope:", "slop:max_miles:");
+        }
+      }
+      if (u.zip && ZIP_BY.has(u.zip)) field("slop:zip:", [llm(`slop:zip:${u.zip}`, "fact")]);
+      if (u.goal) field("slop:goal:", [llm(`slop:goal:${u.goal}`, "goal")]);
+      if (!had("slop:dealbreaker:")) for (const x of u.dealbreakers ?? []) tags.push(llm(`slop:dealbreaker:${x}`, "boundary"));
+      return { tags, replaces };
+    },
     timeOptions(o, now, input) {
       const p = plan(o, input());
       if (!p) return undefined;

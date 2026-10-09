@@ -16,12 +16,15 @@
 //    SECURITY DEFINER function that returns ids only.
 import { randomUUID } from "node:crypto";
 import type { SQL } from "bun";
-import { DAY, type City, type Clock, type MemberId, type WorldSnapshot } from "@thenetwork/core";
+import { DAY, defaultLLM, type City, type Clock, type MemberId, type WorldSnapshot } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import type { NetworkContext, SimMessage } from "@thenetwork/core";
 import { ConsentNetwork, type NetworkOptions, type NetworkState } from "../src/network.ts";
 import { PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
 import { capitalWiring, type CapitalEvent } from "../src/capital.ts";
+import { llmUnderstand } from "../src/extract.ts";
+import type { MemberSettings } from "../src/intents.ts";
+import { CHAT_FACET, learnedFacetRows, sameRow, type LearnedFacetRow } from "../src/learned.ts";
 import type { AppInfo } from "../../platform/src/apps.ts";
 import { loadSnapshot } from "./snapshot.ts";
 import { appWiring, type AppWiring } from "./packs.ts";
@@ -52,8 +55,10 @@ export interface Unit {
   capital: CapitalEvent[];
   optOut: Map<MemberId, boolean>;
   forget: Set<MemberId>;
+  /** Settings members changed by text (pause, quiet hours, how often), for network.members. */
+  settings: Map<MemberId, MemberSettings>;
 }
-const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set() });
+const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), settings: new Map() });
 
 /** What the service gives each runtime: the shared connection and clock, and the checks that span apps. */
 export interface RuntimeHost {
@@ -138,6 +143,11 @@ export class NetworkRuntime {
       onLedger: e => { this.capital.onLedger(e); this.unit.capital.push(e); },
       // An age a member stated (network-consent-12): the service writes it to the person after the unit.
       onAgeStated: (memberId, age, o) => { this.statedAges.push({ memberId, age, ...o }); },
+      // A pause, quiet hours or cadence the member set by text: written to network.members with the unit.
+      onSettings: (memberId, st) => { this.unit.settings.set(memberId, { ...this.unit.settings.get(memberId), ...st }); },
+      // The LLM reader (gpt-6-luna via defaultLLM, OpenAI fallback) and the engine judge are off unless turned on.
+      ...(process.env.NETWORK_LLM_READER === "1" ? { understand: llmUnderstand(defaultLLM(), { app: o.app.id }) } : {}),
+      ...(process.env.NETWORK_ENGINE_JUDGE === "1" ? { engineLLM: defaultLLM() } : {}),
     });
     this.net.init(this.context());
     this.adapter = typeof o.adapter === "function" ? o.adapter(this.net, this) : o.adapter ?? new DryRunAdapter(host.log);
@@ -208,7 +218,7 @@ export class NetworkRuntime {
       save: async (state: NetworkState) => {
         const u = this.unit;
         // PgStore.save sets app.app_id for its own transaction; the unit's rows go in the same one.
-        await this.pg.save(state, tx => this.writeUnit(tx, u));
+        await this.pg.save(state, async tx => { await this.writeUnit(tx, u); await this.writeLearned(tx, state, u); });
         this.committed.push(...u.sends);
         this.unit = newUnit();
       },
@@ -321,6 +331,12 @@ export class NetworkRuntime {
     }
     for (const r of u.runs) await tx`insert into network.matching_runs ${tx(r)} on conflict (id) do nothing`;
     for (const [id, out] of u.optOut) if (ok(id)) await tx`update network.members set opted_out = ${out} where app_id = ${app} and id = ${id}`;
+    // Settings the member changed by text: the record the snapshot, the engine and the settings page read.
+    for (const [id, st] of u.settings) {
+      if (!ok(id) && !(await tx`select 1 from network.members where app_id = ${app} and id = ${id}`).length) continue;
+      if (st.state) await tx`update network.members set participation_state = ${st.state} where app_id = ${app} and id = ${id}`;
+      if (st.quietHours) await tx`update network.members set prefs = jsonb_set(coalesce(prefs, '{}'::jsonb), '{quietHours}', (${JSON.stringify(st.quietHours)}::text)::jsonb) where app_id = ${app} and id = ${id}`;
+    }
     // The forget path (an under-age decline, leaving the app, deleting everything): keep only the id. Nothing that names the member stays.
     for (const id of u.forget) {
       await tx`delete from network.messages where app_id = ${app} and member_id = ${id}`;
@@ -339,6 +355,39 @@ export class NetworkRuntime {
       await tx`update network.members set invited_by = null where app_id = ${app} and invited_by = ${id}`;
       await tx`update network.members set name = null, home_city = null, home_area = null, account_status = 'removed', opted_out = false, age = null, invited_by = null,
         community = null, occupation = null, bio = null, prefs = '{}'::jsonb, unanswered_proactive = 0, joined_at = null, person_id = null where app_id = ${app} and id = ${id}`;
+    }
+  }
+
+  /**
+   * What the Network learned from members' texts (interests, skills, wants, the app's tags) as
+   * network.facets rows with ":chat:" in the id (learned.ts), so the member's export and the console
+   * see them. Only rows that changed are written; rows the state no longer has are deleted. App tags
+   * stay agent_private. Members not in network.members (or forgotten in this unit) get nothing.
+   */
+  private async writeLearned(tx: SQL, state: NetworkState, u: Unit) {
+    const app = this.app.id;
+    const want = learnedFacetRows(state);
+    const ids = [...new Set([...want.values()].map(r => r.member_id))];
+    const members = new Set<string>();
+    for (let i = 0; i < ids.length; i += 500) {
+      for (const r of await tx`select id from network.members where app_id = ${app} and account_status <> 'removed' and id in ${tx(ids.slice(i, i + 500))}`) members.add(r.id);
+    }
+    const have = new Map<string, any>();
+    for (const r of await tx`select id, member_id, kind, value, tags, privacy_scope, provenance, valid_to from network.facets where app_id = ${app} and position(${CHAT_FACET} in id) > 0`) have.set(r.id, r);
+    const write: LearnedFacetRow[] = [];
+    for (const r of want.values()) {
+      if (!members.has(r.member_id) || u.forget.has(r.member_id)) continue;
+      const h = have.get(r.id);
+      if (!h || !sameRow(r, { ...h, tags: h.tags ?? [], valid_to: h.valid_to ? new Date(h.valid_to).getTime() : null })) write.push(r);
+    }
+    const drop = [...have.keys()].filter(id => !want.has(id) || !members.has(want.get(id)!.member_id));
+    for (let i = 0; i < drop.length; i += 500) await tx`delete from network.facets where app_id = ${app} and id in ${tx(drop.slice(i, i + 500))}`;
+    for (const r of write) {
+      await tx`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, source, confidence, status, valid_from, valid_to)
+        values (${app}, ${r.id}, ${r.member_id}, ${r.kind}, ${r.value}, ${tx.array(r.tags, "TEXT")}, ${r.privacy_scope}, ${r.provenance}, ${r.source}, ${r.confidence}, 'confirmed',
+          ${new Date(r.valid_from)}, ${r.valid_to === null ? null : new Date(r.valid_to)})
+        on conflict (id) do update set kind = excluded.kind, value = excluded.value, tags = excluded.tags, privacy_scope = excluded.privacy_scope,
+          provenance = excluded.provenance, source = excluded.source, confidence = excluded.confidence, valid_from = excluded.valid_from, valid_to = excluded.valid_to`;
     }
   }
 

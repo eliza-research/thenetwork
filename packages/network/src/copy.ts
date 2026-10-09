@@ -180,6 +180,55 @@ export function copyFor(b: CopyBrand) {
     photoAsk: (site: string) => `If you'd like, add a couple of photos at ${site}/settings#photos.`,
     resume: (question: string) => `No rush. When you have a minute, let's pick up where we left off: ${question}`,
   },
+  // What a member asks about the agent itself (asks.ts, intents.ts). Every text from an active adult gets one short, honest reply.
+  /** "How does this work?" */
+  help: `I'm ${b.agent} (an AI). Now and then I suggest a person or plan that looks worth your time, and nobody learns who you are until you both say yes. You can ask me for something, ask what I know about you, say "pause for 2 weeks" or "not after 9pm", or reply STOP to opt out.`,
+  /** Anything else from an active adult: what the agent can do, never a guess. */
+  fallback: `I'm not sure what you mean, so I won't guess. You can ask me to find someone or something to do, ask what I know about you, or say "pause for 2 weeks".`,
+  /** "What do you know about me?" Grouped by where it came from; never a rating, appearance, trust or safety fact. */
+  knowMe: (told: string, profile: string) =>
+    `Here's what I know. ${told ? `You told me: ${told}.` : ""}${told && profile ? " " : ""}${profile ? `From your profile: ${profile}.` : ""} If anything is wrong, just tell me what to fix.`,
+  knowNothing: "I don't know much about you yet. Tell me what you're into or what you're looking for and I'll remember it.",
+  corrected: (changes: string) => `Thanks, updated: ${changes}.`,
+  correctUnclear: (example: string) => `I couldn't tell what to change. Try something like "${example}".`,
+  paused: (until?: string) => until
+    ? `Done. I'll stay quiet until ${until}. Text me anytime if you want something sooner, or say "resume".`
+    : `Done. I'll stay quiet until you say "resume". You can still text me anytime.`,
+  resumed: "Welcome back. I'll suggest things again when something looks worth it.",
+  notPaused: "You're not paused, so nothing to change. I'll text when something looks worth it.",
+  quietSet: (from: string, to: string) => `Got it: no texts from me between ${from} and ${to}. Tell me new hours anytime to change it.`,
+  onlyWhenAsked: `Got it. I won't reach out on my own; I'll only answer when you text me. Say "resume" to change that.`,
+  moreOften: `Done. I'll suggest things a bit more often. Say "less often" anytime.`,
+  lessOften: `Done. I'll text less, about once a month unless you ask me for something. Say "more often" anytime.`,
+  listIntents: (lines: string) => `Here's what I'm looking for for you: ${lines}. Say "stop looking for" one of them to close it.`,
+  listNone: "You don't have anything open with me right now. Tell me what you're looking for anytime.",
+  intentClosed: (what: string) => `Done. I've stopped looking for ${what}. Ask again anytime to restart.`,
+  intentPaused: (what: string) => `Done. I've put ${what} on hold. Ask for it again anytime and I'll pick it back up.`,
+  intentNotFound: `I couldn't find that in what I'm looking for. Ask "what are you looking for" to see the list.`,
+  /** A question the agent cannot look up (F8, F10): honest, never a place it has not checked. */
+  infoQuestion: (offerPerson: boolean) => offerPerson
+    ? "I can't look things like that up yet, so I won't guess. If you'd like, I can try to find someone here who knows: just ask me to find someone into it."
+    : "I can't look things like that up yet, so I won't guess.",
+  /** Until member invites exist: how a friend joins an open app. Never a link that does not exist. */
+  inviteHowToJoin: (friend: string, keyword: string, domain: string) => `Thanks! I can't send invite links yet, but ${friend} can join by texting "${keyword}" to this number or on ${domain}.`,
+  invitesNotOpen: (friend: string) => `Thanks! Invites aren't open yet, so I can't add ${friend} right now.`,
+  growthJoinHow: (keyword: string, domain: string) => `Glad that went well. If a friend would enjoy ${b.name}, they can join by texting "${keyword}" to this number or on ${domain}.`,
+  noneYetJoinHow: (what: string, keyword: string, domain: string) =>
+    `I couldn't find someone for ${what} this time. I'll keep an eye out. If you know someone who'd be great for it, they can join by texting "${keyword}" to this number or on ${domain}.`,
+  noneYetPlain: (what: string) => `I couldn't find someone for ${what} this time. I'll keep an eye out.`,
+  /** F24: data requests by text go to the settings page; nothing is deleted by text. */
+  exportData: (domain: string) => `To download everything ${b.name} has about you, go to ${domain}/settings and sign in with your phone number. I can't send it by text.`,
+  deleteData: (domain: string) => `To delete your data, go to ${domain}/settings: it removes your profile, messages and matches here for good. I can't delete it by text, so we know it's really you. Reply STOP to stop all messages now.`,
+  /** F21, 33.10: one honest note when nothing fits for a while, with one thing that could help. */
+  emptyState: (why: string, change: string) => `An honest update: nothing fits what you asked for yet, mostly because ${why}. One thing that could help: ${change}. No need to reply.`,
+  /** F9: a want the member told us about is about to lapse. */
+  reconfirm: (what: string) => `Still want me to look for ${what}? Reply yes to keep it going, or no to stop.`,
+  reconfirmKept: "Got it, I'll keep looking.",
+  reconfirmDropped: "Done, I've stopped looking for that.",
+  /** F19, 21.2: the sampled "Was that worth a text?" a day after a probe answer. */
+  worthAsk: "Was that worth a text? yes or no",
+  worthThanks: "Thanks, that helps.",
+  nothingBooked: "You don't have anything booked with me right now, so there's nothing to cancel.",
   };
 }
 export type Copy = ReturnType<typeof copyFor>;

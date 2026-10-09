@@ -10,7 +10,12 @@
 //    override a refusal, a conditional, a hedge or a mixed reply (mergeConsent).
 //  - An age the LLM reads can only make the member younger (a minor), never decline them: a
 //    decline deletes data, so it needs the offline explicit form.
-import { tryChatJson, type ChatMessage, type LLM } from "@thenetwork/core";
+//  - slop.date (ctx.app "slop"): the dating fields (gender, who they seek, age range, distance, zip,
+//    goal, dealbreakers), strictly validated. The Network uses one only when the offline parser read
+//    nothing for that field in the same message, and tags it provenance "llm" (apphooks learnUnderstood).
+//  - Phone numbers, emails, street addresses and runs of 6+ digits are masked before the text leaves
+//    (core pii.ts); a 5-digit zip stays.
+import { maskPii, tryChatJson, type ChatMessage, type LLM } from "@thenetwork/core";
 import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import type { ConsentWhy, TimeOption } from "./classify.ts";
 import { NEIGHBORHOODS } from "./geo.ts";
@@ -24,9 +29,25 @@ export interface Understood {
   area?: string;
   /** An age the sender states about themselves. */
   selfAge?: number;
+  /** slop.date only: the dating fields the message states (validated; see SlopFields). */
+  slop?: SlopFields;
+}
+export const SLOP_GENDERS = ["woman", "man", "nonbinary"] as const;
+export const SLOP_GOALS = ["casual", "long_term", "unsure"] as const;
+export const SLOP_DEALBREAKERS = ["smoker", "heavy_drinker", "has_kids", "wants_kids", "no_kids_ever", "religious", "nonreligious", "right_politics", "left_politics"] as const;
+/** The slop.date fields the LLM reader may report. Every field is optional; the age range is 18 or older. */
+export interface SlopFields {
+  is?: (typeof SLOP_GENDERS)[number];
+  seeks?: (typeof SLOP_GENDERS)[number][];
+  ageRange?: [number, number];
+  /** Miles from their zip, or the whole city. */
+  radiusMiles?: number; cityWide?: boolean;
+  zip?: string;
+  goal?: (typeof SLOP_GOALS)[number];
+  dealbreakers?: (typeof SLOP_DEALBREAKERS)[number][];
 }
 /** What the Network tells the reader about the message: what it asked last, and the offered times. */
-export interface UnderstandContext { awaiting?: string; options?: readonly TimeOption[] }
+export interface UnderstandContext { awaiting?: string; options?: readonly TimeOption[]; /** The app (slop adds the dating fields). */ app?: string }
 /** The LLM reader. Resolves to undefined when the model failed or answered out of shape (fail closed). */
 export type Understand = (body: string, ctx: UnderstandContext) => Promise<Understood | undefined>;
 
@@ -63,7 +84,7 @@ export function understandPrompt(body: string, ctx: UnderstandContext): ChatMess
         "interests and skills: only the member's own, said in the first person. A skill they look for in someone else is a want, not a skill.",
         "area: the member's own neighborhood, exactly as listed, or null. Never pick a neighborhood they did not name.",
         "selfAge: an age the member states about themselves now, as a number, or null.",
-        "Reply with only this JSON object: {\"consent\": \"yes\"|\"no\"|\"unclear\"|null, \"times\": [], \"wants\": [], \"notWanted\": [], \"interests\": [], \"skills\": [], \"area\": string|null, \"selfAge\": number|null}",
+        ...(ctx.app === "slop" ? SLOP_PROMPT : ["Reply with only this JSON object: {\"consent\": \"yes\"|\"no\"|\"unclear\"|null, \"times\": [], \"wants\": [], \"notWanted\": [], \"interests\": [], \"skills\": [], \"area\": string|null, \"selfAge\": number|null}"]),
       ].join("\n"),
     },
     {
@@ -82,13 +103,71 @@ export function understandPrompt(body: string, ctx: UnderstandContext): ChatMess
   ];
 }
 
+/** The dating fields (slop.date only), in the same strict style: only what the member said about themselves and who they seek. */
+const SLOP_PROMPT = [
+  "slop: the dating details the member states, or null. is: the member's own gender (" + SLOP_GENDERS.join(", ") + "). seeks: the genders they want to date.",
+  "ageRange: [lowest, highest] age they want to date, both 18 or more. radiusMiles: how far they would travel for a date in miles; cityWide: true for \"anywhere in the city\".",
+  "zip: their own 5-digit zip code. goal: " + SLOP_GOALS.join(", ") + ". dealbreakers: only from " + SLOP_DEALBREAKERS.join(", ") + ".",
+  "Reply with only this JSON object: {\"consent\": \"yes\"|\"no\"|\"unclear\"|null, \"times\": [], \"wants\": [], \"notWanted\": [], \"interests\": [], \"skills\": [], \"area\": string|null, \"selfAge\": number|null, \"slop\": {\"is\": string|null, \"seeks\": [], \"ageRange\": [number, number]|null, \"radiusMiles\": number|null, \"cityWide\": boolean|null, \"zip\": string|null, \"goal\": string|null, \"dealbreakers\": []}|null}",
+];
+
 const isStrList = (v: unknown): v is string[] => Array.isArray(v) && v.every(x => typeof x === "string");
+
+/** Strict check of the dating fields. Throws on anything out of shape (the whole reply is then rejected). */
+export function validateSlopFields(raw: unknown): SlopFields | undefined {
+  if (raw === null || raw === undefined) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) throw new Error("bad_slop");
+  const r = raw as Record<string, unknown>;
+  const allowed = new Set(["is", "seeks", "ageRange", "radiusMiles", "cityWide", "zip", "goal", "dealbreakers"]);
+  for (const k of Object.keys(r)) if (!allowed.has(k)) throw new Error(`unknown_key:slop.${k}`);
+  const out: SlopFields = {};
+  const oneOf = <T extends string>(v: unknown, vocab: readonly T[], k: string): T | undefined => {
+    if (v === null || v === undefined) return undefined;
+    if (typeof v !== "string" || !(vocab as readonly string[]).includes(v)) throw new Error(`bad_slop:${k}`);
+    return v as T;
+  };
+  const listOf = <T extends string>(v: unknown, vocab: readonly T[], k: string): T[] => {
+    if (v === null || v === undefined) return [];
+    if (!isStrList(v)) throw new Error(`bad_slop:${k}`);
+    return [...new Set(v.map(x => oneOf(x, vocab, k)!))].sort();
+  };
+  const is = oneOf(r.is, SLOP_GENDERS, "is");
+  if (is) out.is = is;
+  const seeks = listOf(r.seeks, SLOP_GENDERS, "seeks");
+  if (seeks.length) out.seeks = seeks;
+  if (r.ageRange !== null && r.ageRange !== undefined) {
+    const a = r.ageRange;
+    if (!Array.isArray(a) || a.length !== 2 || !a.every(x => typeof x === "number" && Number.isInteger(x))) throw new Error("bad_slop:ageRange");
+    const [lo, hi] = a as [number, number];
+    // Never under 18 (core invariant): a range that reaches under 18 is out of shape, not clamped.
+    if (lo < 18 || hi > 99 || hi < lo) throw new Error("bad_slop:ageRange");
+    out.ageRange = [lo, hi];
+  }
+  if (r.radiusMiles !== null && r.radiusMiles !== undefined) {
+    const n = r.radiusMiles;
+    if (typeof n !== "number" || !Number.isInteger(n) || n < 1 || n > 200) throw new Error("bad_slop:radiusMiles");
+    out.radiusMiles = n;
+  }
+  if (r.cityWide !== null && r.cityWide !== undefined) {
+    if (typeof r.cityWide !== "boolean") throw new Error("bad_slop:cityWide");
+    if (r.cityWide) out.cityWide = true;
+  }
+  if (r.zip !== null && r.zip !== undefined) {
+    if (typeof r.zip !== "string" || !/^\d{5}$/.test(r.zip)) throw new Error("bad_slop:zip");
+    out.zip = r.zip;
+  }
+  const goal = oneOf(r.goal, SLOP_GOALS, "goal");
+  if (goal) out.goal = goal;
+  const db = listOf(r.dealbreakers, SLOP_DEALBREAKERS, "dealbreakers");
+  if (db.length) out.dealbreakers = db;
+  return Object.keys(out).length ? out : undefined;
+}
 
 /** Strict shape check. Throws on anything out of shape or out of vocabulary (the caller retries, then fails closed). */
 export function validateUnderstood(raw: unknown, ctx: UnderstandContext = {}): Understood {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("not_object");
   const r = raw as Record<string, unknown>;
-  const allowed = new Set(["consent", "times", "wants", "notWanted", "interests", "skills", "area", "selfAge"]);
+  const allowed = new Set(["consent", "times", "wants", "notWanted", "interests", "skills", "area", "selfAge", ...(ctx.app === "slop" ? ["slop"] : [])]);
   for (const k of Object.keys(r)) if (!allowed.has(k)) throw new Error(`unknown_key:${k}`);
   const list = (k: string, vocab: Set<string>): string[] => {
     const v = r[k] ?? [];
@@ -104,11 +183,13 @@ export function validateUnderstood(raw: unknown, ctx: UnderstandContext = {}): U
   if (area !== null && area !== undefined && (typeof area !== "string" || !AREAS.has(area))) throw new Error("bad_area");
   const age = r.selfAge;
   if (age !== null && age !== undefined && (typeof age !== "number" || !Number.isInteger(age) || age < 1 || age > 120)) throw new Error("bad_age");
+  const slop = ctx.app === "slop" ? validateSlopFields(r.slop) : undefined;
   return {
     ...(consent ? { consent: consent as Understood["consent"] } : {}),
     ...(times.length && consent === "yes" ? { times } : {}),
     wants: list("wants", DESIRE_IDS), notWanted: list("notWanted", DESIRE_IDS), interests: list("interests", INTEREST_TAGS), skills: list("skills", SKILL_TAGS),
     ...(typeof area === "string" ? { area } : {}), ...(typeof age === "number" ? { selfAge: age } : {}),
+    ...(slop ? { slop } : {}),
   };
 }
 
@@ -116,10 +197,12 @@ export function validateUnderstood(raw: unknown, ctx: UnderstandContext = {}): U
  * The LLM reader on a core client (defaultLLM() is gpt-6-luna on Surplus). Two attempts, then
  * undefined. Never throws.
  */
-export function llmUnderstand(llm: LLM, o: { maxTokens?: number; attempts?: number } = {}): Understand {
-  return async (body, ctx) => {
+export function llmUnderstand(llm: LLM, o: { maxTokens?: number; attempts?: number; app?: string } = {}): Understand {
+  return async (body, ctx0) => {
     if (!body.trim() || body.length > MAX_UNDERSTAND_CHARS) return undefined;
-    const r = await tryChatJson(llm, understandPrompt(body, ctx), raw => validateUnderstood(raw, ctx), { attempts: o.attempts ?? 2, maxTokens: o.maxTokens ?? 400 });
+    const ctx: UnderstandContext = o.app && !ctx0.app ? { ...ctx0, app: o.app } : ctx0;
+    // Contact details never leave for a third-party model (PRD 32.14); a 5-digit zip stays.
+    const r = await tryChatJson(llm, understandPrompt(maskPii(body), ctx), raw => validateUnderstood(raw, ctx), { attempts: o.attempts ?? 2, maxTokens: o.maxTokens ?? 400 });
     return r.ok ? r.value : undefined;
   };
 }
