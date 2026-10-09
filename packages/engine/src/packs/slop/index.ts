@@ -216,3 +216,5 @@ export { CLEF_FEATURES, CLEF_MODEL_IDS, CLEF_QUESTIONS, ClefError, clefFeatures,
 export { DEFAULT_CLEF_WEIGHTS, loadClefWeights, validateClefWeights, type ClefWeights } from "./clefWeights.ts";
 export { biasMonitor, ratingQuintiles, type BiasReport, type MemberOutcome } from "./biasMonitor.ts";
 export { pairValue, firstOf, SLOP_GENERATOR } from "./generators.ts";
+export { extractSlopProfile, extractSlopProfileLLM, llmSlopReader, slopReaderPrompt, validateSlopReading, slopOnboardTags, readMessage, emptyOnboarding, hardFilled, hasField, coarsePlace, HARD_FIELDS, DEALBREAKER_IDS, DATE_ACTIVITY_IDS, LLM_FILL_BELOW, type SlopOnboarding, type OnboardField, type HardField, type Field, type Evidence, type Distance, type Location, type ExtractOptions, type SlopReader, type SlopTag, type Dealbreaker, type DateActivity } from "./extract.ts";
+export { readBack, readBackFacts, applyCorrection, nextQuestion, markAsked, hardComplete, SLOP_ONBOARD_QUESTIONS, READBACK_FIELDS, MAX_ASKS_PER_QUESTION, type ReadBackFact } from "./onboard.ts";

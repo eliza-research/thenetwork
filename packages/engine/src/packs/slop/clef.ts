@@ -7,7 +7,7 @@
 // yes/no, choice, score = ordered levels) and returns answer PROBABILITIES; it returns no embedding.
 // As in jevector, the "vector" is the answers to a fixed question bank (CLEF_QUESTIONS). On top of it
 // sits a small learned decision model (clefWeights.ts): a linear head per dimension (face, body,
-// overall) fitted from labelled pairs (Bradley-Terry, fitClef.ts), a calibration to a z-like scale
+// overall) fitted from labelled pairs (Bradley-Terry, clef-fit/fit.ts), a calibration to a z-like scale
 // on the member population, and a categorical body type from Clef's choice probabilities.
 //
 // Flow, per member, when photos are uploaded (OUTSIDE the engine run; the engine stays pure):

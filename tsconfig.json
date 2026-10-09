@@ -4,6 +4,6 @@
     "strict": true, "skipLibCheck": true, "noEmit": true,
     "types": ["bun"], "resolveJsonModule": true, "allowImportingTsExtensions": true
   },
-  "include": ["packages/**/*.ts", "deploy/**/*.ts", "scripts/platform-dev.ts", "scripts/sim.ts", "scripts/sim/**/*.ts"],
+  "include": ["packages/**/*.ts", "deploy/**/*.ts", "scripts/platform-dev.ts", "scripts/sim.ts", "scripts/sim/**/*.ts", "scripts/clef-fit.ts"],
   "exclude": ["**/node_modules", "eliza/**", "packages/plugin-network/**"]
 }
