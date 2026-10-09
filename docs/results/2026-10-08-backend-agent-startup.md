@@ -26,6 +26,7 @@ After the mapping, actual HTTP requests give these results:
 
 | Request | Result |
 |---|---|
+| Reader: canonical app route, explicit Slop keyword or existing membership | 200; app, person ID, member ID only |
 | Reader: private Slop membership | 200; app, person ID, member ID only |
 | Reader: private Slop context | 200; first name, city, state, safe facet; no private facet |
 | Reader: either endpoint on the public listener | 404 |
@@ -51,7 +52,7 @@ bun run sim --only onboard --quick
 git diff --check
 ```
 
-- Backend: 30 pass, 0 fail, 386 assertions. The boot check has 75 assertions.
+- Backend: 30 pass, 0 fail, 398 assertions. The boot check also covers explicit and implicit canonical app routing.
 - Root, sites, and plugin TypeScript checks: pass.
 - Onboarding quick run: 18/18 blocking gates pass, five tracked gates pass.
 - Onboarding sample: corpus 444 rows; seed 13; 117 adults and three minors in the persona run.

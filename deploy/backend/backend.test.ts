@@ -366,7 +366,8 @@ describe.skipIf(!pgAvailable)("boot (dev Postgres, a database of its own)", () =
       await owner.unsafe(`grant network_service to ${role}`);
       await owner.unsafe(`grant connect on database ${new URL(url).pathname.slice(1)} to ${role}`);
     } finally { await owner.close(); }
-    const now = Date.parse("2026-10-08T12:00:00Z");
+    // The child process uses RealClock; its phone fixture must not age into a recycled-number hold.
+    const now = Date.now();
     const e164 = "+12125550189", personId = randomUUID(), memberId = "boot_agent_member";
     const agentToken = "boot-agent-reader-" + "a".repeat(40), staffToken = "boot-human-staff-" + "h".repeat(40);
     const fixture = await NetworkService.fromDatabase({url, clock: {now: () => now}, env: {PLATFORM_ENV: "dev", PLATFORM_HASH_KEY: DEPLOYED.PLATFORM_HASH_KEY}, notify: false, photoStorage: null, log: () => {}});
@@ -427,6 +428,14 @@ describe.skipIf(!pgAvailable)("boot (dev Postgres, a database of its own)", () =
           : {app: "slop", memberId, firstName: "Ada", city: "nyc", state: "open", stateFrom: null, stateUntil: null, facets: ["plays chess"], activeItems: null});
         expect((await privateCall(`/apps/friends/agent/${endpoint}`)).status).toBe(403);
       }
+      for (const text of ["slop", "hello"]) {
+        const response = await privateCall("/agent/route", agentToken, {e164, text});
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({app: "slop", personId, memberId});
+      }
+      expect((await privateCall("/agent/route", agentToken, {e164, text: "slop"}, "POST", port)).status).toBe(404);
+      expect((await privateCall("/agent/route", staffToken, {e164, text: "slop"})).status).toBe(403);
+      expect((await privateCall("/agent/route", agentToken, {e164, text: "friends"})).status).toBe(403);
       expect((await privateCall("/matching?app=slop", agentToken, {on: true})).status).toBe(403);
       expect((await privateCall("/health?app=slop", agentToken, {}, "GET")).status).toBe(403);
       expect((await privateCall("/health?app=slop", staffToken, {}, "GET")).status).toBe(200);
