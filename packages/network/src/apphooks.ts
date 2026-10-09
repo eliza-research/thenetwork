@@ -13,9 +13,13 @@
 // Every hook is optional. Without hooks (The Network) nothing changes.
 import type { Category, Facet, MemberId } from "@thenetwork/core";
 import type { EngineInput } from "@thenetwork/engine";
+import type { SlopFields } from "./extract.ts";
 
-/** A profile tag the app learned from a member's words. It is kept in the Network's state and goes to the engine as a facet. */
-export interface AppTag { tag: string; kind: Facet["kind"]; scope: Facet["scope"]; at: number }
+/**
+ * A profile tag the app learned from a member's words. It is kept in the Network's state and goes to the engine as a facet.
+ * `provenance` "llm": only the LLM reader read it (the offline parser found nothing for that field).
+ */
+export interface AppTag { tag: string; kind: Facet["kind"]; scope: Facet["scope"]; at: number; provenance?: "llm" }
 
 /** What a hook sees of one opportunity. */
 export interface HookOpp {
@@ -38,6 +42,11 @@ export interface AppHooks {
    * `replaces`: tag prefixes whose older tags the new ones replace ("romance:seeks:").
    */
   learn?(body: string, reasons: readonly string[], ctx: { now: number }): { tags: AppTag[]; replaces: string[] };
+  /**
+   * Tags from what the LLM reader read (extract.ts Understood.slop), for fields the offline parser
+   * found nothing for in the same message (`parsed`: the tags `learn` returned). Tagged provenance "llm".
+   */
+  learnUnderstood?(u: SlopFields, parsed: readonly AppTag[], ctx: { now: number }): { tags: AppTag[]; replaces: string[] };
   /** The first member's time options; undefined: the Network's own (attention.chooseTimeOptions). */
   timeOptions?(o: HookOpp, now: number, input: () => EngineInput): { start: number; end: number }[] | undefined;
   /** The probe text; undefined: the Network's own. */
