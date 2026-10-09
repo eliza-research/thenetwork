@@ -1,3 +1,4 @@
+import { assertNetworkMemberScope } from "../types.js";
 /**
  * SET_STATE: change the member's availability state (open, busy, traveling,
  * paused). Member identity comes from host authority, never from parameters.
@@ -79,6 +80,8 @@ function failure(code: string, text: string): ActionResult {
 }
 
 export function createSetStateAction(options: SetStateActionOptions): Action {
+  assertNetworkMemberScope(options.authority);
+  options = { ...options, authority: Object.freeze({ ...options.authority }) };
   return {
     name: "SET_STATE",
     description:
@@ -174,6 +177,7 @@ export function createSetStateAction(options: SetStateActionOptions): Action {
         return { ...failure("missing_idempotency", "message has no stable id"), continueChain: false };
       }
       const exec = await options.store.setState({
+        app: options.authority.app,
         memberId: options.authority.memberId,
         state: decision.state,
         from: decision.from,

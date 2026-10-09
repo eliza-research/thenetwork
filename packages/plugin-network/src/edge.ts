@@ -1,3 +1,4 @@
+import { assertNetworkMemberScope } from "./types.js";
 /** Worker-safe Network plugin bound to host-owned stores and turn authority. */
 import type { Plugin } from "@elizaos/core";
 import { createGetUpdatesAction } from "./actions/get-updates.js";
@@ -43,6 +44,8 @@ export interface NetworkEdgePluginOptions {
 }
 
 export function createNetworkEdgePlugin(options: NetworkEdgePluginOptions): Plugin {
+  assertNetworkMemberScope(options.authority);
+  options = { ...options, authority: Object.freeze({ ...options.authority }) };
   const actionsEnabled = options.actionsEnabled ?? true;
   const routing = options.routing ?? "planner";
   return {

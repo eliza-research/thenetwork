@@ -1,3 +1,4 @@
+import { assertNetworkMemberScope } from "../types.js";
 /**
  * MEMBER_CONTEXT: the member's shareable profile summary, current state and
  * active items, read from the injected NetworkStore each turn.
@@ -20,6 +21,8 @@ export interface MemberContextProviderOptions {
 export function createMemberContextProvider(
   options: MemberContextProviderOptions,
 ): Provider {
+  assertNetworkMemberScope(options.authority);
+  options = { ...options, authority: Object.freeze({ ...options.authority }) };
   return {
     name: "MEMBER_CONTEXT",
     description:
@@ -32,10 +35,8 @@ export function createMemberContextProvider(
       _message: Memory,
       _state?: State,
     ): Promise<ProviderResult> => {
-      const member = await options.store.getMemberContext(
-        options.authority.memberId,
-      );
-      if (!member) {
+      const member = await options.store.getMemberContext(options.authority.memberId, options.authority.app);
+      if (!member || member.app !== options.authority.app || member.memberId !== options.authority.memberId) {
         return { text: "", data: { member: null } };
       }
       const lines = [
@@ -57,6 +58,7 @@ export function createMemberContextProvider(
         values: { networkMemberState: member.state },
         data: {
           member: {
+            app: member.app,
             memberId: member.memberId,
             state: member.state,
             stateFrom: member.stateFrom ?? null,

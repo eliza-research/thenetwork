@@ -1,6 +1,9 @@
-/** Deterministic in-memory NetworkStore for unit tests and the simulator. */
+/** Deterministic, app-scoped in-memory NetworkStore for the simulator. */
+import type { AppId } from "../../platform/src/apps.js";
+import { assertNetworkMemberScope } from "./types.js";
 import type {
   NetworkMemberContext,
+  NetworkMemberScope,
   NetworkSignal,
   NetworkStore,
   SetStateExecution,
@@ -9,8 +12,8 @@ import type {
 
 export class InMemoryNetworkStore implements NetworkStore {
   readonly members = new Map<string, NetworkMemberContext>();
-  readonly events: Array<{ id: string; type: string; memberId: string; payload: unknown }> = [];
-  readonly signals: Array<{ memberId: string; messageId: string; signal: NetworkSignal }> = [];
+  readonly events: Array<{ id: string; type: string; app: AppId; memberId: string; payload: unknown }> = [];
+  readonly signals: Array<{ app: AppId; memberId: string; messageId: string; signal: NetworkSignal }> = [];
   private readonly ledger = new Map<string, { exec: SetStateExecution; payload: string }>();
   private seq = 0;
 
@@ -18,25 +21,32 @@ export class InMemoryNetworkStore implements NetworkStore {
     members: NetworkMemberContext[] = [],
     private readonly now: () => Date = () => new Date(),
   ) {
-    for (const m of members) this.members.set(m.memberId, structuredClone(m));
+    for (const m of members) this.members.set(this.memberKey(m), structuredClone(m));
   }
 
-  async getMemberContext(memberId: string): Promise<NetworkMemberContext | null> {
-    const m = this.members.get(memberId);
+  private memberKey(scope: NetworkMemberScope): string {
+    assertNetworkMemberScope(scope);
+    return JSON.stringify([scope.app, scope.memberId]);
+  }
+
+  async getMemberContext(memberId: string, app: AppId): Promise<NetworkMemberContext | null> {
+    const m = this.members.get(this.memberKey({ app, memberId }));
     return m ? structuredClone(m) : null;
   }
 
   async setState(input: SetStateInput): Promise<SetStateExecution> {
+    const memberKey = this.memberKey(input);
+    const member = this.members.get(memberKey);
+    if (!member) throw new Error(`unknown Network membership ${memberKey}`);
+    const ledgerKey = JSON.stringify([input.app, input.memberId, input.idempotencyKey]);
     // Same key + different payload is a conflict, never a replay of someone else's change
     // (audit plugin-prototypes-4). Cloud's store must do the same.
-    const payload = JSON.stringify([input.memberId, input.state, input.from ?? null, input.until ?? null]);
-    const prior = this.ledger.get(input.idempotencyKey);
+    const payload = JSON.stringify([input.app, input.memberId, input.state, input.from ?? null, input.until ?? null]);
+    const prior = this.ledger.get(ledgerKey);
     if (prior) {
       if (prior.payload !== payload) throw new Error(`idempotency key reused with a different payload: ${input.idempotencyKey}`);
       return { ...prior.exec, replayed: true };
     }
-    const member = this.members.get(input.memberId);
-    if (!member) throw new Error(`unknown member ${input.memberId}`);
     const previous = member.state;
     const from = input.from ?? null;
     if (previous === input.state && (member.stateFrom ?? null) === from && (member.stateUntil ?? null) === (input.until ?? null)) {
@@ -44,7 +54,7 @@ export class InMemoryNetworkStore implements NetworkStore {
         eventId: null, previous, current: previous, from, until: input.until,
         committedAt: this.now(), replayed: false, unchanged: true,
       };
-      this.ledger.set(input.idempotencyKey, { exec: noop, payload });
+      this.ledger.set(ledgerKey, { exec: noop, payload });
       return noop;
     }
     member.state = input.state;
@@ -55,6 +65,7 @@ export class InMemoryNetworkStore implements NetworkStore {
     this.events.push({
       id: eventId,
       type: "member.state_changed",
+      app: input.app,
       memberId: input.memberId,
       payload: { previous, current: input.state, from, until: input.until, note: input.note },
     });
@@ -68,17 +79,18 @@ export class InMemoryNetworkStore implements NetworkStore {
       replayed: false,
       unchanged: false,
     };
-    this.ledger.set(input.idempotencyKey, { exec, payload });
+    this.ledger.set(ledgerKey, { exec, payload });
     return exec;
   }
 
-  async recordSignals(input: {
-    memberId: string;
+  async recordSignals(input: NetworkMemberScope & {
     messageId: string;
     signals: NetworkSignal[];
   }): Promise<{ recorded: number }> {
+    const memberKey = this.memberKey(input);
+    if (!this.members.has(memberKey)) throw new Error(`unknown Network membership ${memberKey}`);
     for (const signal of input.signals) {
-      this.signals.push({ memberId: input.memberId, messageId: input.messageId, signal });
+      this.signals.push({ app: input.app, memberId: input.memberId, messageId: input.messageId, signal });
     }
     return { recorded: input.signals.length };
   }

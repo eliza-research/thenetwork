@@ -1,3 +1,4 @@
+import { assertNetworkMemberScope } from "../types.js";
 /**
  * NETWORK_SIGNALS: post-turn evaluator that records deterministic member
  * signals (opt-out wording, travel, safety concern) from the current message.
@@ -48,11 +49,14 @@ export interface NetworkSignalsEvaluatorOptions {
 export function createNetworkSignalsEvaluator(
   options: NetworkSignalsEvaluatorOptions,
 ): Evaluator<Output, { text: string }> {
+  assertNetworkMemberScope(options.authority);
+  options = { ...options, authority: Object.freeze({ ...options.authority }) };
   const recordProcessor: EvaluatorProcessor<Output, { text: string }> = {
     name: "recordNetworkSignals",
     async process({ output, message }) {
       if (output.signals.length === 0) return undefined;
       const { recorded } = await options.store.recordSignals({
+        app: options.authority.app,
         memberId: options.authority.memberId,
         messageId: String(message.id ?? ""),
         signals: output.signals,

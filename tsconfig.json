@@ -2,7 +2,8 @@
   "compilerOptions": {
     "target": "ES2022", "module": "ESNext", "moduleResolution": "Bundler",
     "strict": true, "skipLibCheck": true, "noEmit": true,
-    "types": ["bun"], "resolveJsonModule": true, "allowImportingTsExtensions": true
+    "types": ["bun"], "resolveJsonModule": true, "allowImportingTsExtensions": true,
+    "paths": { "@elizaos/core": ["./eliza/packages/core/src/index.ts"], "@elizaos/core/*": ["./eliza/packages/core/src/*"] }
   },
   "include": ["packages/**/*.ts", "deploy/**/*.ts", "scripts/platform-dev.ts", "scripts/sim.ts", "scripts/sim/**/*.ts"],
   "exclude": ["**/node_modules", "eliza/**", "packages/plugin-network/**"]

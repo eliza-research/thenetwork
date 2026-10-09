@@ -1,3 +1,4 @@
+import { assertNetworkMemberScope } from "../types.js";
 /**
  * GET_UPDATES: the member asks what's new ("updates", "anything from the Network?"). Read-only for
  * the member's data; it marks the returned inbox items seen everywhere (single inbox, entry-flows
@@ -16,6 +17,8 @@ export interface GetUpdatesActionOptions {
 export const MAX_UPDATES_IN_REPLY = 5;
 
 export function createGetUpdatesAction(options: GetUpdatesActionOptions): Action {
+  assertNetworkMemberScope(options.authority);
+  options = { ...options, authority: Object.freeze({ ...options.authority }) };
   return {
     name: "GET_UPDATES",
     description: "Show the member's new Network updates (introductions, plans, questions, reminders) and mark them seen.",
@@ -29,7 +32,7 @@ export function createGetUpdatesAction(options: GetUpdatesActionOptions): Action
     parameters: [],
     validate: async () => true,
     handler: async (_runtime: IAgentRuntime, _message: Memory): Promise<ActionResult> => {
-      const { items } = await options.store.readUpdates(options.authority.memberId);
+      const { items } = await options.store.readUpdates(options.authority.memberId, options.authority.app);
       const shown = items.slice(0, MAX_UPDATES_IN_REPLY).map((i) => i.summary.trim()).filter(Boolean);
       const more = items.length - shown.length;
       return {

@@ -1,8 +1,9 @@
 /**
  * Network plugin contracts. The plugin owns no state: every read and write goes
- * through a host-injected NetworkStore (in Cloud: the network domain services
- * over Hyperdrive; in the simulator: an in-memory store).
+ * through a host-injected, app-scoped NetworkStore. The simulator uses memory;
+ * the Cloud host must supply the durable membership-bound adapter before activation.
  */
+import { isAppId, type AppId } from "../../platform/src/apps.js";
 import type { ParticipationState } from "../../core/src/types.js";
 
 export const NETWORK_CONTEXTS = ["network", "social", "settings"] as const;
@@ -29,8 +30,7 @@ export const NETWORK_STATE_TO_PARTICIPATION = {
   paused: "paused",
 } as const satisfies Record<NetworkMemberState, ParticipationState>;
 
-export interface NetworkMemberContext {
-  memberId: string;
+export interface NetworkMemberContext extends NetworkMemberScope {
   firstName: string;
   city: string;
   state: NetworkMemberState;
@@ -42,8 +42,7 @@ export interface NetworkMemberContext {
   activeItems: Array<{ kind: string; summary: string }>;
 }
 
-export interface SetStateInput {
-  memberId: string;
+export interface SetStateInput extends NetworkMemberScope {
   state: NetworkMemberState;
   /** Window start (ISO); null = now. Presence windows: PRD 16.1-16.3, ME-011. */
   from?: string | null;
@@ -82,27 +81,33 @@ export interface NetworkUpdatesRead {
 }
 
 export interface NetworkStore {
-  getMemberContext(memberId: string): Promise<NetworkMemberContext | null>;
+  getMemberContext(memberId: string, app: AppId): Promise<NetworkMemberContext | null>;
   /** Optional: hosts wired to the single inbox implement it, and GET_UPDATES is registered only then. */
-  readUpdates?(memberId: string): Promise<NetworkUpdatesRead>;
+  readUpdates?(memberId: string, app: AppId): Promise<NetworkUpdatesRead>;
   setState(input: SetStateInput): Promise<SetStateExecution>;
-  recordSignals(input: {
-    memberId: string;
+  recordSignals(input: NetworkMemberScope & {
     messageId: string;
     signals: NetworkSignal[];
   }): Promise<{ recorded: number }>;
 }
 
-/** Host-supplied, trusted turn authority. Never derived from model output. */
-export interface NetworkTurnAuthority {
+/** Canonical app membership resolved by the host, never by model output. */
+export interface NetworkMemberScope {
+  app: AppId;
   memberId: string;
-  /**
-   * The app (site) this turn runs in, e.g. "ntwrk.love" (audit judge-evals-7). Idempotency keys are
-   * scoped by it, and stores and judges use it for cross-app checks. Hosts should always set it.
-   */
-  app?: string;
+}
+
+/** Host-supplied, trusted turn authority. Never derived from model output. */
+export interface NetworkTurnAuthority extends NetworkMemberScope {
   /** The member's IANA time zone; dates in the member's words resolve on their local day. */
   timeZone?: string;
+}
+
+/** Reject unscoped JavaScript callers as well as invalid typed host bindings. */
+export function assertNetworkMemberScope(scope: NetworkMemberScope): void {
+  if (!scope || !isAppId(scope.app) || typeof scope.memberId !== "string" || !scope.memberId.trim()) {
+    throw new Error("Network authority requires a canonical app and a nonempty member id");
+  }
 }
 
 /**
@@ -111,5 +116,6 @@ export interface NetworkTurnAuthority {
  * replay another member's change.
  */
 export function setStateIdempotencyKey(authority: NetworkTurnAuthority, origin: string, ordinal: number): string {
-  return `network:set_state:v2:${authority.app ?? "default"}:${authority.memberId}:${origin}:${ordinal}`;
+  assertNetworkMemberScope(authority);
+  return `network:set_state:v2:${authority.app}:${authority.memberId}:${origin}:${ordinal}`;
 }

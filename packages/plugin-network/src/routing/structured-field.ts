@@ -1,3 +1,4 @@
+import { assertNetworkMemberScope } from "../types.js";
 /**
  * Design B: one structured route+action decision inside the Stage-1 call.
  *
@@ -153,6 +154,8 @@ export interface NetworkActionFieldOptions {
 export function createNetworkActionFieldEvaluator(
   options: NetworkActionFieldOptions,
 ): ResponseHandlerFieldEvaluator<NetworkActionProposal> {
+  assertNetworkMemberScope(options.authority);
+  options = { ...options, authority: Object.freeze({ ...options.authority }) };
   const now = options.now ?? (() => new Date());
   return {
     name: NETWORK_ACTION_FIELD,
@@ -194,6 +197,7 @@ export function createNetworkActionFieldEvaluator(
         };
       }
       const exec = await options.store.setState({
+        app: options.authority.app,
         memberId: options.authority.memberId,
         state: decision.state,
         from: decision.from,
