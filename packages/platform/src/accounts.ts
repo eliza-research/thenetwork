@@ -14,7 +14,7 @@
 //    and its version, never what a client sent.
 import { randomUUID } from "node:crypto";
 import { validAge } from "../../core/src/policy.ts";
-import { joinAgeCheck, lowestAge } from "./age.ts";
+import { canJoinApp, joinAgeCheck, lowestAge } from "./age.ts";
 import type { AppId, AppInfo } from "./apps.ts";
 import { type ConsentEvent, resolveConsent, type StopScope, stopScope } from "./consent.ts";
 import { keyedHash } from "./phone.ts";
@@ -204,6 +204,26 @@ export class Accounts {
     if (membership && membership.state !== "removed" && membership.state !== "invited") return { canJoin: false, reason: "member", membership, person };
     if (app.joinMode === "invite" && membership?.state !== "invited") return { canJoin: false, reason: "invite_only", membership, person };
     return { canJoin: true, membership, person };
+  }
+
+  /**
+   * Authorize an existing active membership for a trusted host's canonical app and already verified
+   * phone/session. This does not verify a phone, create a person, join an app, or update last-seen time.
+   * Onboarding belongs to the service's join flow. All refusals have the same result, including a
+   * person who belongs only to another app. Recheck before each action; this is not a durable grant.
+   */
+  async activeMembership(app: AppInfo, who: Who): Promise<{ person: Person; membership: Membership } | undefined> {
+    const phone = await this.store.findPhone(who.e164);
+    // A stale number is refused even before a login/message has written its recycled-number hold.
+    if (!phone || phone.hold !== null || this.stale(phone, this.now())) return undefined;
+    const person = await this.personFor(who.e164);
+    if (!person || person.id !== phone.personId || (who.personId !== null && who.personId !== person.id)) return undefined;
+    if (await this.banned(who.e164, person)) return undefined;
+    if (!canJoinApp(await this.lowestAge(who.e164, person), app)) return undefined;
+    const membership = await this.store.getMembership(person.id, app.id);
+    if (!membership || membership.app !== app.id || membership.personId !== person.id || membership.state !== "active" || membership.review !== null) return undefined;
+    if ((await this.store.isSuppressed(this.phoneHash(who.e164))) || !(await this.optedIn(app.id, who.e164))) return undefined;
+    return { person, membership };
   }
 
   /**
