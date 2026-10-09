@@ -58,7 +58,8 @@ About 35 engineer-days plus the two-week shadow. Items 1-3, 6 and 12b can run al
 
 - **Blocking (152 gates today, all passing):** the corpora in `evals/`; The Network's invariants and scenarios; the slop safety gates (0 declared-minor contacts, 0 stated-filter violations, scammer median reach at most 1, 0 leaks, no rating text), the slop quality gates that pass on the pinned seeds (13-16, 4 weeks), and slop conformance; the peon and friends official gate sets and conformance.
 - **Tracked (slop, failing today):** dates per member-month at least 0.9x random (0.82), age-liar contact cut at least 90% (82%), adversary-contact cut at least 90% (47%), smallest gender or orientation group at least 0.7x (0.33), harm-event cut at least 90% (87%). Each is fixed, waived in writing by the founder, or carried as a known risk into the pilot.
-- **Still missing in sim:** the real message pipeline end to end (signed webhook in, Blooio adapter out, persisted queue, Postgres, simulated clock); LLM personas sending free text through the platform; adversarial scenarios against the live agent (scammer in relay, "how hot did you rate me?", ban evader, prompt injection for a number). Gates: 0 rating or contact leaks, scammer reach at most 1.
+- **The message pipeline (`bun run sim --only pipeline`):** a signed webhook in, NetworkService, Postgres (a throwaway database on the dev cluster), the persisted queue, the Blooio adapter out to a fake provider, on a simulated clock. Scripted members join by keyword, onboard, are reviewed, probed and booked; with duplicate webhooks, a provider outage, a crash during a send and a restart, STOP in a thread, and the gateway as the STOP/HELP owner. Blocking: 0 lost or duplicated messages, 0 sends after STOP, 0 sends to minors about others, every row ends delivered or failed, keyword routing. Without Postgres (CI) it is tracked as skipped.
+- **Still missing in sim:** LLM personas sending free text through the platform; adversarial scenarios against the live agent (scammer in relay, "how hot did you rate me?", ban evader, prompt injection for a number). Gates: 0 rating or contact leaks, scammer reach at most 1.
 
 **Live pilot go/no-go:** every blocking gate passes; P3 measured; STOP owner decided; two weeks of shadow with a precision baseline; 40 committed NYC adults; restore tested; cost alerts and safety on-call live.
 
@@ -78,7 +79,7 @@ About 35 engineer-days plus the two-week shadow. Items 1-3, 6 and 12b can run al
 
 ## Open founder decisions
 
-1. **STOP/HELP owner on the shared line:** this service or the Eliza Cloud gateway. One system only, before any live send.
+1. **STOP/HELP owner on the shared line:** decided (founder, 2026-10-08): one system only, chosen by `STOP_HELP_OWNER`. The default is `service` (this service answers with core's keyword table and opt-out reading; STOP stops every app, "leave <app>" leaves one). With `gateway`, the Eliza Cloud gateway answers and reports each STOP, STOP ALL and START to the service's signed `POST /consent/gateway`; the service then never answers a keyword but still records and applies every opt-out. The backend serves `/consent/gateway` on its public port (the service checks the signature). Open: which value production uses **[FOUNDER]**.
 2. **Where the conversation runs:** the service's own LLM reader (`understand`, gpt-6-luna) or the Eliza agent (`packages/plugin-network`). Today the service owns every message and the plugin is not on the line.
 3. **Join mode for peon and friends** on production (invite, open or waitlist). The code default is open.
 4. **Ban evasion:** build a same-face check, or drop that gate and rely on phone and person bans.

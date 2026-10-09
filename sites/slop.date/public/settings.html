@@ -3,7 +3,7 @@
 <title>Settings · slop.date</title><meta name="description" content="See your membership, export your data, stop messages, or delete your data.">
 <meta name="theme-color" content="#20231a">
 <meta name="turnstile-sitekey" content="{{TURNSTILE_SITE_KEY}}">
-<link rel="stylesheet" href="./styles.css"><script type="module" src="../../shared/settings.ts"></script></head>
+<link rel="stylesheet" href="./styles.css"><script type="module" src="../../shared/settings.ts"></script><script type="module" src="../../shared/photos.ts"></script></head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <div class="wrap top">
@@ -56,6 +56,16 @@
     </dl>
     <p data-when="no-membership" hidden>This number has not joined slop.date. <a href="/join">Join slop.date</a>.</p>
     <p class="status" data-status aria-live="polite"></p>
+    <div class="photos" data-photos hidden>
+      <h3>Your photos</h3>
+      <p data-photo-consent-text></p>
+      <div class="field"><label><input type="checkbox" data-photo-consent> I agree</label></div>
+      <div class="field"><label for="photo-file">Add a photo (JPEG, PNG or WebP, up to 8 MB)</label>
+        <input id="photo-file" type="file" accept="image/jpeg,image/png,image/webp" data-photo-file></div>
+      <p class="status" data-photo-status aria-live="polite"></p>
+      <ul class="photo-list" data-photo-list></ul>
+      <p class="hint">No other member sees your photos. You can also text a photo to us; we ask for your OK first.</p>
+    </div>
     <div class="actions" data-when="has-membership">
       <div><h3>Export my data</h3><p>Download a file with what slop.date holds about you. It holds only this site's data.</p><button class="btn quiet" type="button" data-action="export">Export my data</button></div>
       <div data-when="not-stopped"><h3>Stop messages</h3><p>Every app powered by The Network stops texting this number, not only this one. Your membership stays. Text START to turn messages back on.</p><button class="btn quiet" type="button" data-action="stop">Stop messages</button></div>

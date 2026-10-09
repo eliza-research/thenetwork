@@ -29,7 +29,6 @@ import { randomBytes } from "node:crypto";
 import { parseArgs } from "node:util";
 import type { Server, ServerWebSocket } from "bun";
 import index from "../web/index.html";
-import { SCENARIOS } from "@thenetwork/network/harness";
 import { Lab, LAB_LIMITS, validateLab, type LabOptions } from "./lab.ts";
 import { runDiff } from "./runDiff.ts";
 import { SQL } from "bun";
@@ -38,6 +37,7 @@ import { appProfile, memberFacets, photosAllowed } from "./appProfile.ts";
 import { countsMember, countsOpp, shapeDelta, shapeState, viewClass, type ViewClass } from "./shape.ts";
 import { appHealth } from "./health.ts";
 import { PeopleView, peopleUrl } from "./people.ts";
+import { CostView } from "./ops.ts";
 import {
   AccessVerifier, allowed, appsFor, authenticateStaff, canCrossApp, createAudit, hasEverywhere, parseRoles, parseTokenGrants, PgStaffRoles, rolesFor, ssoGrants, staffUser,
   type AccessConfig, type AuditSink,
@@ -233,6 +233,11 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
   const hostname = opts.hostname ?? process.env.OBSERVATORY_HOST ?? "127.0.0.1";
   const tokens = parseTokenGrants(opts.tokens ?? process.env.OBSERVATORY_TOKENS, { explicitApp: process.env.NODE_ENV === "production" || process.env.PLATFORM_ENV === "production", minLength: opts.minTokenLength ?? 32 });
   const trustCfAccess = opts.trustCfAccess ?? process.env.OBSERVATORY_TRUST_CF_ACCESS === "1";
+  // A deployed console signs staff in through Cloudflare Access only: without it the server would make an
+  // admin token and print it into the host's logs (docs/deploy.md 2.6).
+  if (realOnly && ["staging", "production"].includes(process.env.PLATFORM_ENV ?? "") && !trustCfAccess) {
+    throw new Error("refusing to start: a deployed console (OBSERVATORY_REAL_ONLY=1, PLATFORM_ENV staging or production) needs Cloudflare Access: OBSERVATORY_TRUST_CF_ACCESS=1 with OBSERVATORY_CF_ACCESS_TEAM and OBSERVATORY_CF_ACCESS_AUD");
+  }
   if (trustCfAccess && (tokens.size || opts.token || process.env.OBSERVATORY_TOKEN)) console.warn("Observatory: single sign-on is on, so OBSERVATORY_TOKENS and OBSERVATORY_TOKEN are refused (each person signs in as themselves)");
   const roles = parseRoles(opts.roles ?? process.env.OBSERVATORY_ROLES);
   const adminToken = opts.token ?? process.env.OBSERVATORY_TOKEN ?? (tokens.size || trustCfAccess ? undefined : randomBytes(24).toString("base64url"));
@@ -252,6 +257,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
   const lab = new Lab(opts.lab);
   const pUrl = opts.peopleUrl === false ? undefined : opts.peopleUrl ?? opts.real?.url ?? peopleUrl();
   let people: PeopleView | undefined;
+  const costs = new CostView();
   /** Active PII reveals: "<staff id>|<mode>|<app>|<member id>" -> grant (a game member and a real member never share one). In memory: a restart ends every reveal. */
   const reveals = new Map<string, RevealGrant>();
   const revealKey = (u: StaffUser, app: AppId, memberId: string) => `${u.id}|${mode}|${app}|${memberId}`;
@@ -393,6 +399,8 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
     development: opts.development ?? process.env.NODE_ENV !== "production",
     routes: {
       "/": index,
+      // Liveness for Railway's health check and an uptime monitor: no auth, no data, no Host check (Access guards the domain).
+      "/healthz": () => new Response(JSON.stringify({ ok: true }), { headers: { ...SECURITY_HEADERS, "content-type": "application/json" } }),
       "/api/health": global(() => json({ ok: true, mode })),
       "/api/me": global((_r, u) => json({ ...u, realOnly, apps: appsFor(u, mode), crossApp: canCrossApp(u), appInfo: consoleApps(sla) })),
       "/api/apps/health": global(async (_r, u) => {
@@ -405,7 +413,8 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         }
         return json({ mode, apps: out });
       }),
-      "/api/levels": global(() => json(realOnly ? [] : SCENARIOS.map(x => ({ id: x.id, title: x.title, description: x.description, days: x.days })))),
+      // The scenario list is game mode's (the simulation harness): imported only when asked, so a real-only image never loads it.
+      "/api/levels": global(async () => json(realOnly ? [] : (await import("@thenetwork/network/harness")).SCENARIOS.map(x => ({ id: x.id, title: x.title, description: x.description, days: x.days })))),
       "/api/mode": {
         GET: global(() => json({ mode, realOnly, realConfigured: !!(opts.real?.url ?? process.env.NETWORK_DATABASE_URL ?? process.env.DATABASE_URL) })),
         POST: global(async (req, u) => {
@@ -591,6 +600,22 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           return json(r, r.ok ? 200 : 409);
         }, ["safety"]),
       },
+      // The weekly bias monitor (aggregates only; real mode reads it from the Network service). Admin or analyst.
+      "/api/bias": guard(async (_r, u, app) => {
+        const src = await source(mode, app);
+        if (!src.bias) return json({ ok: false, error: "the bias monitor runs on real data only (bun run sim measures it in simulation)", code: "real_only" }, 404);
+        const no = await record(u, app, { action: "read_bias", ok: true });
+        if (no) return no;
+        const r = await src.bias(u.id);
+        return json(r, r.ok ? 200 : 502);
+      }, ["analyst"]),
+      // The cost panel (src/ops.ts): estimated cost per day and kind, and today's budget use. Real mode only.
+      "/api/ops/cost": guard(async (req, u, app) => {
+        if (mode !== "real") return json({ ok: false, error: "costs are recorded on real data only", code: "real_only" }, 404);
+        const days = Number(new URL(req.url).searchParams.get("days")) || 14;
+        const r = await costs.summary(app, Date.now(), { days, everyApp: hasEverywhere(u, "admin") || hasEverywhere(u, "analyst") });
+        return r ? json({ ok: true, ...r }) : json({ ok: false, error: "no database configured", code: "not_configured" }, 503);
+      }, ["analyst"]),
       "/api/config": guard(async (_r, _u, app) => json(await (await source(mode, app)).config()), ["analyst"]),
       "/api/audit": guard(async (req, u, app) => {
         const q = new URL(req.url).searchParams;
@@ -725,6 +750,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
       server.stop(true);
       await audit.close();
       await people?.close();
+      await costs.close();
       await rolesSql?.close();
     },
   };

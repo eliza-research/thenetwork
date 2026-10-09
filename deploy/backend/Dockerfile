@@ -1,7 +1,7 @@
 # The shared backend (docs/deploy.md). Build from the repository root:
 #   docker build -f deploy/backend/Dockerfile -t network-backend .
 # One image serves both Railway services: the backend (default command) and the optional
-# observatory console (deploy/backend/observatory.railway.toml overrides the start command).
+# observatory console (deploy/backend/observatory.railway.toml overrides the start command, real mode only).
 
 # Bun 1.4.2 (the version the repo is tested with), Debian slim, pinned by its multi-arch index digest.
 # To update: look up the new tag's digest on Docker Hub (oven/bun), change both lines together, rebuild, rerun the smoke in docs/deploy.md.
@@ -15,6 +15,9 @@ COPY packages ./packages
 COPY deploy ./deploy
 # The runtime has no npm dependencies of its own: this links the workspaces. No lifecycle scripts run.
 RUN bun install --frozen-lockfile --production --ignore-scripts
+# The simulator, the judges, the eval corpora, the synthetic worlds and the Eliza plugin never run here:
+# the backend and the real-only console import none of them (bun run sim, block ops, checks this line).
+RUN rm -rf packages/sim packages/judge packages/evals packages/worlds packages/plugin-network
 
 FROM ${BUN_IMAGE}
 WORKDIR /app

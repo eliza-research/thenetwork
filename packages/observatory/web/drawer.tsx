@@ -4,8 +4,9 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { EngineRunSummary, ObsFeedItem } from "../src/types.ts";
 import { EDGE_STYLE } from "./graph.ts";
-import { Config, Growth, Lab, Requests, RunDiffView, SafetyCases, Scorecard } from "./admin.tsx";
+import { BiasMonitor, Config, Growth, Lab, Requests, RunDiffView, SafetyCases, Scorecard } from "./admin.tsx";
 import { Levels } from "./network.tsx";
+import { CostPanel } from "./ops.tsx";
 import { stateLabel } from "./panels.tsx";
 import { ReviewQueue } from "./review.tsx";
 import {
@@ -402,6 +403,8 @@ function Metrics() {
       <div className="run-grid">
         {st.scorecard && <Section title="Scorecard (PRD 28.2)"><Scorecard rows={st.scorecard} /></Section>}
         <Growth />
+        {s.mode === "real" && s.can("analyst") && <Section title="Bias monitor (weekly)"><BiasMonitor /></Section>}
+        {s.mode === "real" && s.can("analyst") && <Section title="Cost (estimated)"><CostPanel /></Section>}
       </div>
       <div className="run-grid">
         <Section title="Proposals by origin"><Bars data={byOrigin} label={k => k} /></Section>

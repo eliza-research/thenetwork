@@ -14,10 +14,11 @@ export type AppScope = AppId | "*";
 export const DEFAULT_APP: AppId = "ntwrk";
 
 /**
- * Apps whose engine pack has shipped: matching may run. The others still simulate joins, onboarding and
- * safety, with matching off (founder direction 2026-10-08: the engine session owns the packs).
+ * Apps whose engine pack has shipped: matching may run and the review queue takes their items. slop.date
+ * is the first pilot (slopPack, critical path item 6). peon stays off in the console: its matching runs
+ * locally only (AGENTS.md decision 4).
  */
-export const PACK_READY: ReadonlySet<AppId> = new Set<AppId>(APP_IDS.filter(a => a !== "slop" && a !== "peon"));
+export const PACK_READY: ReadonlySet<AppId> = new Set<AppId>(APP_IDS.filter(a => a !== "peon"));
 export const matchingAllowed = (app: AppId) => PACK_READY.has(app);
 export const MATCHING_OFF_TEXT = "matching off until pack";
 

@@ -7,7 +7,7 @@ import { useSyncExternalStore } from "react";
 import { NEIGHBORHOOD, type Borough } from "@thenetwork/network/geo"; // geo only: the package root pulls server code into the browser bundle
 import type { ConsoleApp } from "../src/apps.ts";
 import type {
-  AppHealth, AppProfile360, AuditEntry, ClockInfo, ConfigInfo, ControlCommand, ControlResult, EngineRunSummary, EnvInfo, GameState, LabRequest, LabRun, MemberDetail, MemberTimeline,
+  AppHealth, AppProfile360, AuditEntry, BiasReportView, ClockInfo, ConfigInfo, ControlCommand, ControlResult, EngineRunSummary, EnvInfo, GameState, LabRequest, LabRun, MemberDetail, MemberTimeline,
   MemberTruth, Mode, NetworkInfo, ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsOpportunity, ObsRequest, ObsState, ObsStats, OpportunityDetail,
   MemberPhoto, PersonAppPanel, PersonSummary, RevealGrant, ReviewDecision, ReviewReason, RunDiff, SafetyAction, SafetyInfo, SearchHit, StaffRole, StaffUser,
 } from "../src/types.ts";
@@ -460,6 +460,10 @@ class ObsStore {
   safety() { return this.fetch<SafetyInfo>("/api/safety"); }
   safetyAction(a: SafetyAction) { return this.fetch<ControlResult>("/api/safety", a); }
   config() { return this.fetch<ConfigInfo>("/api/config"); }
+  /** The cost panel (real mode; analyst or admin): src/ops.ts. */
+  cost() { return this.fetch<import("../src/ops.ts").CostSummary & { ok: boolean }>("/api/ops/cost"); }
+  /** The weekly bias monitor reports (real mode; admin or analyst). */
+  bias() { return this.fetch<{ ok: boolean; reports?: BiasReportView[]; error?: string }>("/api/bias"); }
   audit(q: { limit?: number; actor?: string; targetId?: string } = {}) {
     const p = new URLSearchParams(Object.entries(q).filter(([, v]) => v !== undefined && v !== "").map(([k, v]) => [k, String(v)]));
     return this.fetch<{ sink: string; entries: AuditEntry[] }>(`/api/audit?${p}`);

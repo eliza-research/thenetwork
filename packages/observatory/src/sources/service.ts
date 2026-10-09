@@ -21,8 +21,9 @@
 //   POST /safety/ban     { memberId, by: "phone"|"person", note, reportId? }
 //   POST /safety/dismiss { reportId, note }
 //   GET  /members/<id>/photos  (X-Network-Reason: the typed reason) -> { ok, photos: [{ id, url, expiresAt? }] }
+//   GET  /bias                          -> { ok, reports: BiasReportView[] } (the weekly bias monitor; admin or analyst)
 // 409 { reason } is a refusal with the Network's reason; 404 means the service has no such route yet.
-import type { ControlCommand, ControlResult, HealthAlert, MemberPhoto, ReportKind, SafetyAction, SafetyReport } from "../types.ts";
+import type { BiasReportView, ControlCommand, ControlResult, HealthAlert, MemberPhoto, ReportKind, SafetyAction, SafetyReport } from "../types.ts";
 import { REVIEW_BLOCK_ERRORS, SAFETY_ERRORS } from "./source.ts";
 
 export interface ServiceConfig {
@@ -142,6 +143,15 @@ export class ServiceClient {
   }
 
   matching(staff: string, on: boolean): Promise<ControlResult> { return this.act("/matching", staff, { on }, {}); }
+
+  /** The weekly bias monitor reports of the app's network, newest first (GET /bias; admin or analyst). */
+  async bias(staff: string): Promise<{ ok: true; reports: BiasReportView[] } | { ok: false; error: string }> {
+    try {
+      const { status, json } = await this.call("GET", "/bias", staff);
+      if (status !== 200 || !json.ok || !Array.isArray(json.reports)) return { ok: false, error: String(json.error ?? `HTTP ${status}`) };
+      return { ok: true, reports: (json.reports as BiasReportView[]).filter(r => r && typeof r.at === "number" && r.report && typeof r.report === "object") };
+    } catch (e) { return { ok: false, error: (e as Error).message }; }
+  }
 
   async health(): Promise<ServiceHealth | { error: string }> {
     try {

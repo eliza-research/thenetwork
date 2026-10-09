@@ -154,6 +154,25 @@ for (const s of stores) describe.skipIf(s.skip)(`API defences (${s.name})`, () =
     expect(day.filter(x => x === 200).length).toBe(6);
   });
 
+  test("platform-3 a number not seen for 12 months (a possible new owner) logs in: no membership shown, export and delete answer 403 review, the old data stays", async () => {
+    const c = make(store), phone = newPhone();
+    const cookie = await c.login("slop", phone);
+    expect((await c.call("slop", "POST", "/api/join", { firstName: "Old", age: 31, consent: { sms: true, wording: APPS.slop.consent.text } }, { cookie })).status).toBe(200);
+    const person = (await c.api.accounts.personFor(phone))!;
+    // 13 months later someone with the number logs in again.
+    c.clock.t += 395 * 24 * 3_600_000;
+    const fresh = await c.login("slop", phone);
+    expect(await c.api.accounts.held(phone)).toBe(true);
+    const me = await c.call("slop", "GET", "/api/me", undefined, { cookie: fresh });
+    expect(me.status).toBe(200);
+    expect(me.body).toMatchObject({ membership: null, canJoin: false, reason: "review" });
+    expect(me.text).not.toContain("Old");
+    expect((await c.call("slop", "GET", "/api/me/export", undefined, { cookie: fresh })).body).toMatchObject({ ok: false, error: "review" });
+    for (const scope of ["app", "all"]) expect((await c.call("slop", "POST", "/api/me/delete", { scope }, { cookie: fresh })).status).toBe(403);
+    expect((await c.call("slop", "POST", "/api/join", { firstName: "New", age: 25, consent: { sms: true, wording: APPS.slop.consent.text } }, { cookie: fresh })).body).toMatchObject({ ok: false, error: "review" });
+    expect((await store.memberships(person.id)).filter(m => m.state !== "removed").length).toBe(1);
+  });
+
   test("no enumeration: otp/start answers the same body for a known, an unknown and a held phone, in a similar time", async () => {
     const c = make(store);
     const known = newPhone(), unknown = newPhone();

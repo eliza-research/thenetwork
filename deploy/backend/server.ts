@@ -22,6 +22,8 @@ const { migrate } = await import("../../packages/observatory/db/migrate.ts");
 const { BlooioAdapter, liveFlag, liveSendAllowed } = await import("../../packages/network/service/channel.ts");
 const { NetworkService, webhookSecretsFromEnv } = await import("../../packages/network/service/service.ts");
 const { createServiceMcp } = await import("../../packages/network/service/serve.ts");
+const { createOps, PgAlertStore, runtimeProbe } = await import("./ops.ts");
+const { photoRaterFromEnv } = await import("../../packages/platform/src/photos.ts");
 
 async function main() {
   const c = loadConfig(process.env, process.argv);
@@ -57,7 +59,14 @@ async function main() {
   }
 
   const clock = new RealClock();
+  // The slop.date photo rater (AGENTS.md decision 12): off unless CLEF_RATINGS=on with the Workers AI
+  // token, the account id and fitted weights (CLEF_WEIGHTS_PATH, version and provenance). Off: photos still work.
+  const raterEnv = await photoRaterFromEnv(process.env, { log: s => log.warn(s) });
+  const photoRater = raterEnv.rater;
+  const raterLog = { status: raterEnv.status, rater: photoRater?.id ?? "off", weights: raterEnv.weights ?? null, detail: raterEnv.detail ?? null };
+  if (raterEnv.status === "refused_weights") log.error("photo rater", raterLog); else log.info("photo rater", raterLog);
   const svc = await NetworkService.fromDatabase({
+    photoRater,
     url: c.databaseUrl, clock, instance: process.env.NETWORK_SERVICE_INSTANCE ?? process.env.RAILWAY_REPLICA_ID ?? `${process.pid}`,
     tokens: process.env.NETWORK_SERVICE_TOKENS, consoleToken: process.env.NETWORK_SERVICE_CONSOLE_TOKEN,
     webhookSecret: process.env.BLOOIO_WEBHOOK_SECRET, webhookSecrets: webhookSecretsFromEnv(),
@@ -83,10 +92,18 @@ async function main() {
   log.info("mcp", { enabled: !!mcp });
 
   const pool = new SQL({ url: c.databaseUrl, max: 1, idleTimeout: 30, connection: { application_name: "network-backend-health" } });
+  // Monitoring and alerts (ops.ts; docs/deploy.md section 7): its own small pool, so a slow webhook never holds a service connection.
+  const opsPool = new SQL({ url: c.databaseUrl, max: 2, idleTimeout: 30, connection: { application_name: "network-backend-ops" } });
+  const ops = createOps({
+    config: c.ops, probes: () => [...svc.runtimes.values()].map(runtimeProbe), cost: svc.cost,
+    store: new PgAlertStore(opsPool), now: () => clock.now(), log,
+  });
+  log.info("ops", { alerts: c.ops.webhookUrl ? "webhook" : "log", heartbeat: !!c.ops.heartbeatUrl, metrics: !!c.ops.metricsToken, budgetDailyUsd: c.ops.budgets.daily ?? null });
   const backend = createBackend({
     svc, config: c, log,
     mcp: mcp && (req => mcp.fetch(req)),
     ping: async () => { await pool`select 1`; return true; },
+    ops,
   });
 
   const servers: { stop(force?: boolean): unknown }[] = [];
@@ -104,6 +121,7 @@ async function main() {
     log.info("shutdown", { signal });
     const { clean } = await backend.shutdown(servers);
     await pool.close().catch(() => {});
+    await opsPool.close().catch(() => {});
     process.exit(clean ? 0 : 1);
   };
   process.on("SIGTERM", () => void stop("SIGTERM"));

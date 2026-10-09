@@ -90,6 +90,8 @@ export function serveService(svc: NetworkService, o: { host: string; port: numbe
 export function startTicks(svc: NetworkService, log: (s: string) => void = console.log) {
   const busy = new Set<string>();
   const loop = async () => {
+    // Inbound messages a crash or an error left waiting go first, in order per sender.
+    await svc.inboxTick();
     await Promise.all([...svc.runtimes.values()].map(async rt => {
       if (busy.has(rt.id)) return;
       busy.add(rt.id);

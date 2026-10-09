@@ -96,6 +96,8 @@ export function keywordApp(text: string, apps: Record<AppId, Pick<AppInfo, "id" 
   const t = text.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}. ]+/gu, " ").replace(/\s+/g, " ").trim().replace(/\.$/, "");
   const bare = t.replace(/^join /, "");
   for (const a of Object.values(apps)) if (bare === a.id || bare === a.domain || bare === `www.${a.domain}`) return a.id;
+  // The Network by name ("the network", "network") joins ntwrk like its keyword.
+  if ((bare === "the network" || bare === "network") && "ntwrk" in apps) return "ntwrk";
   return undefined;
 }
 

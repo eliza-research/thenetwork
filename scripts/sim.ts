@@ -1,6 +1,8 @@
-// bun run sim: the single validation command. Offline and deterministic: no LLM, no Postgres, no
-// network. Each block runs simulations (or scores hand-written corpora) and checks named gates; the
-// run exits 1 when any BLOCKING gate fails. Tracked gates are printed and never fail the run.
+// bun run sim: the single validation command. Offline and deterministic: no LLM, no network, and no
+// Postgres except the safety block's Postgres scenarios, which run on a database of their own on the
+// dev cluster (:54339) when it is there and are tracked as skipped when it is not. Each block runs
+// simulations (or scores hand-written corpora) and checks named gates; the run exits 1 when any
+// BLOCKING gate fails. Tracked gates are printed and never fail the run.
 //
 //   bun run sim                      evals, network, slop, peon, friends (the CI run)
 //   bun run sim --only slop          one block (repeatable or comma-separated: --only network,peon)
@@ -15,13 +17,26 @@
 //   slop      slop.date: seeds 13-16, 4 weeks, 300 per city; safety + passing quality gates block, known-failing gates tracked
 //   peon      peon.biz: seeds 13-16, 8 weeks; the official gates block
 //   friends   friends.help: seeds 5-8, 8 weeks, 400 personas; the official gates block
+//   safety    slop.date photos (adults only, consent, rater), bans on every rejoin path, report -> hold -> ban, the reviewer
+//             of record, SLA alerts and the bias monitor; its Postgres scenarios block when the dev Postgres runs, else tracked
+//   ops       monitoring, alerts, cost, the console's deploy guards and image contents; on the dev Postgres (tracked):
+//             the ops tables under row-level security and the backup drill (dump, restore, equal row counts)
+//   pipeline  the real message path: signed Blooio webhook -> NetworkService -> Postgres (a throwaway database on the dev
+//             cluster, :54339) -> persisted queue -> Blooio adapter -> fake provider, simulated clock; skipped (tracked) without Postgres
+//   audit     regression gates for the 2026-10-08 audit's P0/P1 fixes that lost their tests in the cleanup
+//             (docs/audit/2026-10-09-platform-status.md): NYC world (seed 3, 9 days), trust, plans, the four
+//             site builds, the sites' API client and the Cloudflare deploy guard (refused commands only)
 //   capital   network capital: 32 paired seeds, 90 days (--with-capital or --only capital)
+import { auditBlock } from "./sim/audit.ts";
 import { capitalBlock } from "./sim/capital.ts";
 import { evalsBlock } from "./sim/evals.ts";
 import { friendsBlock } from "./sim/friends.ts";
 import { Block, type Gate } from "./sim/gate.ts";
 import { networkBlock } from "./sim/network.ts";
+import { opsBlock } from "./sim/ops.ts";
 import { peonBlock } from "./sim/peon.ts";
+import { pipelineBlock } from "./sim/pipeline.ts";
+import { safetyBlock } from "./sim/safety.ts";
 import { slopBlock } from "./sim/slop.ts";
 
 type Opts = { quick: boolean };
@@ -31,9 +46,13 @@ const BLOCKS: Record<string, (b: Block, o: Opts) => Promise<void>> = {
   slop: slopBlock,
   peon: peonBlock,
   friends: friendsBlock,
+  pipeline: b => pipelineBlock(b),
+  safety: b => safetyBlock(b),
+  ops: b => opsBlock(b),
+  audit: b => auditBlock(b),
   capital: capitalBlock,
 };
-const DEFAULT = ["evals", "network", "slop", "peon", "friends"];
+const DEFAULT = ["evals", "network", "slop", "peon", "friends", "safety", "ops", "pipeline", "audit"];
 
 const argv = process.argv.slice(2);
 const values = (k: string) => argv.flatMap((x, i) => (x === `--${k}` ? (argv[i + 1] ?? "").split(",") : x.startsWith(`--${k}=`) ? x.slice(k.length + 3).split(",") : [])).filter(Boolean);

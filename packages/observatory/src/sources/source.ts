@@ -1,6 +1,6 @@
 // A data source feeds the observatory: the simulated world (game mode) or Postgres (real mode).
 import type {
-  ConfigInfo, ControlCommand, ControlResult, MemberDetail, MemberPhoto, MemberTimeline, Mode, ObsDelta, ObsState, OpportunityDetail, SafetyAction,
+  BiasReportView, ConfigInfo, ControlCommand, ControlResult, MemberDetail, MemberPhoto, MemberTimeline, Mode, ObsDelta, ObsState, OpportunityDetail, SafetyAction,
   SafetyInfo, SearchHit,
 } from "../types.ts";
 
@@ -31,6 +31,8 @@ export interface DataSource {
    * checks the role, the reason, the member's age and writes the audit row first. Absent: no photos.
    */
   photos?(memberId: string, actor: string, reason: string): Promise<{ ok: true; photos: MemberPhoto[] } | ControlResult>;
+  /** The weekly bias monitor reports (real mode: the Network service, GET /bias). Absent: the simulation has none here (bun run sim measures it). */
+  bias?(actor: string): Promise<{ ok: true; reports: BiasReportView[] } | { ok: false; error: string }>;
   /** Outbound agent messages and system events only; never what a member wrote (gap 18). */
   search(q: string, limit?: number): Promise<SearchHit[]>;
   /** Deltas pushed as the source changes (about 4 per second while anything changes). */

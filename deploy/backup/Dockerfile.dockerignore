@@ -1,0 +1,5 @@
+# Build context: the repository root. Only the backup scripts go in.
+*
+!deploy/backup/
+**/.env
+**/.env.*
