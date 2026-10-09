@@ -621,7 +621,7 @@ export class NetworkService implements RuntimeHost {
    *  5. otherwise The Network (a stranger joins it).
    * An app's name inside a sentence ("my ex is on slop.date") never routes a member's message.
    */
-  private async route(ev: Extract<ChannelEvent, { kind: "message" }>, forced?: AppId): Promise<Route> {
+  private async route(ev: Pick<Extract<ChannelEvent, { kind: "message" }>, "from" | "to" | "text">, forced?: AppId): Promise<Route> {
     if (forced) return { app: forced, shared: false };
     if (ev.to) {
       const line = normalizeAddress(ev.to);
@@ -1244,7 +1244,8 @@ export class NetworkService implements RuntimeHost {
   fetch = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
     let path = url.pathname.replace(/\/+$/, "") || "/";
-    const agentRequest = /^(?:\/apps\/[^/]+)?\/agent\/(?:membership|context)$/.test(path);
+    const agentRoute = path === "/agent/route";
+    const agentRequest = agentRoute || /^(?:\/apps\/[^/]+)?\/agent\/(?:membership|context)$/.test(path);
     const json = (data: unknown, status = 200) => Response.json(data, { status, ...(agentRequest ? { headers: { "cache-control": "no-store" } } : {}) });
     try {
       if (agentRequest) {
@@ -1263,28 +1264,36 @@ export class NetworkService implements RuntimeHost {
       let app: AppId = "ntwrk";
       const scoped = path.match(/^\/apps\/([^/]+)(\/.*)?$/);
       const named = scoped ? scoped[1]! : url.searchParams.get("app");
-      if (agentRequest && named === null) return json({ ok: false, error: "app_required" }, 400);
+      if (agentRoute && (named !== null || url.searchParams.has("city"))) return json({ ok: false, error: "invalid_request" }, 400);
+      if (agentRequest && !agentRoute && named === null) return json({ ok: false, error: "app_required" }, 400);
       if (named !== null) {
         if (!isAppId(named)) return json({ ok: false, error: "unknown_app" }, 404);
         app = named;
       }
       if (scoped) path = scoped[2] ?? "/";
-      const rt = this.runtimeFor(app, url.searchParams.get("city") ?? undefined) ?? (named === null ? this.main : undefined);
+      let rt = this.runtimeFor(app, url.searchParams.get("city") ?? undefined) ?? (named === null ? this.main : undefined);
       if (!rt) return json({ ok: false, error: "no_network" }, 404);
       const auth = this.tokens.size ? authenticate(req, { tokens: this.tokens }) : { status: 401 as const, error: "no staff tokens configured (NETWORK_SERVICE_TOKENS)" };
       if (!("user" in auth)) return json({ ok: false, error: auth.error }, auth.status);
       const user = this.reviewerOfRecord(req, auth.user);
-      // A role for this app (role@app or role@*); admin for the app passes every check.
-      const need = (roles: StaffRole[]) => (allowed(user, roles, rt.app.id, "real") ? undefined : json({ ok: false, code: "forbidden", error: `needs role ${roles.map(r => `${r}@${rt.app.id}`).join(" or ")}` }, 403));
-      if (path === "/agent/membership" || path === "/agent/context") {
+      if (agentRequest) {
         const given = req.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1]?.trim() ?? "";
-        if (!this.agentToken || !safeEqual(given, this.agentToken) || !allowed(auth.user, ["admin"], rt.app.id, "real")) return json({ ok: false, error: "forbidden" }, 403);
+        if (!this.agentToken || !safeEqual(given, this.agentToken)) return json({ ok: false, error: "forbidden" }, 403);
+        if (!agentRoute && !allowed(auth.user, ["admin"], rt.app.id, "real")) return json({ ok: false, error: "forbidden" }, 403);
         if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
         if (Number(req.headers.get("content-length") ?? "0") > MAX_BODY_BYTES) return json({ ok: false, error: "payload_too_large" }, 413);
         const raw = await req.text();
         if (Buffer.byteLength(raw) > MAX_BODY_BYTES) return json({ ok: false, error: "payload_too_large" }, 413);
         const b = await body(raw) as Row | undefined;
-        if (!b || Object.keys(b).length !== 1 || typeof b.e164 !== "string" || normalizePhone(b.e164) !== b.e164) return json({ ok: false, error: "invalid_request" }, 400);
+        if (!b || Object.keys(b).length !== (agentRoute ? 2 : 1) || typeof b.e164 !== "string" || normalizePhone(b.e164) !== b.e164
+          || (agentRoute && typeof b.text !== "string")) return json({ ok: false, error: "invalid_request" }, 400);
+        if (agentRoute) {
+          const selected = await this.route({ from: b.e164, to: null, text: b.text as string });
+          const selectedRuntime = this.runtimeFor(selected.app);
+          if (!selectedRuntime) return json({ ok: false, error: "unavailable" }, 404);
+          rt = selectedRuntime;
+          if (!allowed(auth.user, ["admin"], rt.app.id, "real")) return json({ ok: false, error: "forbidden" }, 403);
+        }
         // Only the designated server may assert this already verified phone. This read grants no action authority.
         const binding = await this.accounts.activeMembership(rt.app, { e164: b.e164, personId: null });
         if (!binding) return json({ ok: false, error: "unavailable" }, 404);
@@ -1293,10 +1302,13 @@ export class NetworkService implements RuntimeHost {
           e164: b.e164, accounts: this.accounts, runtime: rt,
         }).getMemberContext(binding.membership.memberId, rt.app.id) : undefined;
         if (path === "/agent/context" && !context) return json({ ok: false, error: "unavailable" }, 404);
-        await this.audit.write({ at: this.clock.now(), actor: auth.user.id, roles: auth.user.roles, action: context ? "read_agent_context" : "read_agent_membership", targetType: "person", targetId: this.phoneKey(b.e164), mode: "real", ok: true, app: rt.app.id });
+        await this.audit.write({ at: this.clock.now(), actor: auth.user.id, roles: auth.user.roles, action: context ? "read_agent_context" : agentRoute ? "read_agent_route" : "read_agent_membership", targetType: "person", targetId: this.phoneKey(b.e164), mode: "real", ok: true, app: rt.app.id });
         if (context) return json(context);
         return json({ app: rt.app.id, personId: binding.person.id, memberId: binding.membership.memberId });
       }
+      // A role for this app (role@app or role@*); admin for the app passes every check.
+      const staffApp = rt.app.id;
+      const need = (roles: StaffRole[]) => (allowed(user, roles, staffApp, "real") ? undefined : json({ ok: false, code: "forbidden", error: `needs role ${roles.map(r => `${r}@${staffApp}`).join(" or ")}` }, 403));
       if (req.method === "GET" && path === "/health") {
         const no = need(["admin", "reviewer", "safety", "analyst"]); if (no) return no;
         return json(await this.health(rt, user));

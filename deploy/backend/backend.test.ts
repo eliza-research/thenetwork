@@ -633,3 +633,78 @@ describe.skipIf(!pgAvailable)("Agent context store (isolated Postgres runtime, n
     }
   }, 120_000);
 });
+
+describe.skipIf(!pgAvailable)("Cloud host canonical app route (isolated Postgres, no sends)", () => {
+  test("routes whole keywords and existing conversation state, then checks selected-app authority without writes", async () => {
+    const url = await emptyDb("agent_route");
+    const services: NetworkService[] = [];
+    try {
+      await migrate(url);
+      const now = Date.parse("2026-10-08T12:00:00Z"), e164 = "+12125550186", personId = randomUUID();
+      const serverToken = "route-host-" + "r".repeat(40), staffToken = "route-human-" + "h".repeat(40);
+      const options = {url, clock: {now: () => now}, env: {PLATFORM_ENV: "dev"}, notify: false as const, photoStorage: null, log: () => {}};
+      const svc = await NetworkService.fromDatabase({...options, agentToken: serverToken, tokens: `admin@*:${serverToken},admin@*:${staffToken}`}); services.push(svc);
+      await svc.people.createPerson({id: personId, e164, method: "inbound_message", at: now, lowestAge: 25, phoneHash: svc.accounts.phoneHash(e164)});
+      for (const app of ["slop", "friends"] as const) {
+        const memberId = `${app}_route_member`;
+        await svc.people.putMembership({app, personId, memberId, state: "active", review: null, firstName: "Route fixture", profile: {canary: "ROUTE_PROFILE_CANARY"}, joinedAt: now, leftAt: null});
+        await svc.people.addConsent({e164, app, state: "opted_in", source: "local-route-test", at: now});
+        await svc.runtimeFor(app)!.scoped(async tx => {
+          await tx`insert into network.members (app_id, id, name, home_city, age, person_id, account_status)
+            values (${app}, ${memberId}, 'Route Fixture', 'nyc', 25, ${personId}, 'active')`;
+        });
+      }
+      // The real shared-line router reads this persisted outbound history, without delivering it.
+      await svc.runtimeFor("friends")!.scoped(async tx => {
+        await tx`insert into network.messages (id, app_id, member_id, direction, channel, body, status, ts)
+          values ('friends_route_last_out', 'friends', 'friends_route_member', 'outbound', 'imessage', 'LOCAL_ROUTE_HISTORY_CANARY', 'dry_run', ${new Date(now)})`;
+      });
+      const request = (text = "slop", token: string | null = serverToken, path = "/agent/route", body: unknown = {e164, text}, method = "POST") => new Request(`http://127.0.0.1:4848${path}`, {
+        method, headers: {"content-type": "application/json", ...(token ? {authorization: `Bearer ${token}`} : {})}, ...(method === "POST" ? {body: JSON.stringify(body)} : {}),
+      });
+      const call = async (text = "slop", token: string | null = serverToken, path = "/agent/route", body: unknown = {e164, text}, target = svc, method = "POST") => {
+        const response = await target.fetch(request(text, token, path, body, method));
+        expect(response.headers.get("cache-control")).toBe("no-store");
+        return response;
+      };
+      const counts = () => svc.sql`select (select count(*)::int from network.messages) as messages,
+        (select count(*)::int from network.network_state) as states, (select count(*)::int from network.events) as events,
+        (select count(*)::int from platform.consent_events) as consent, (select count(*)::int from platform.memberships) as memberships,
+        (select count(*)::int from platform.pending_texts) as pending`;
+      const before = await counts();
+      for (const [text, app] of [["slop", "slop"], ["join slop.date", "slop"], ["friends", "friends"], ["join friends.help", "friends"], ["my ex is on slop.date", "friends"]] as const) {
+        const response = await call(text);
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({app, personId, memberId: `${app}_route_member`});
+      }
+      expect((await call("slop", null)).status).toBe(401);
+      expect((await call("slop", staffToken)).status).toBe(403);
+      expect((await call("slop", serverToken, "/agent/route?app=friends")).status).toBe(400);
+      expect((await call("slop", serverToken, "/agent/route?city=nyc")).status).toBe(400);
+      expect((await call("slop", serverToken, "/agent/route", {e164, text: "slop", app: "friends"})).status).toBe(400);
+      expect((await call("slop", serverToken, "/agent/route", {e164, text: "slop", personId: "forged"})).status).toBe(400);
+      expect((await call("slop", serverToken, "/agent/route", {e164, text: 42})).status).toBe(400);
+      expect((await call("slop", serverToken, "/agent/route", {e164: "2125550186", text: "slop"})).status).toBe(400);
+      expect((await call("slop", serverToken, "/agent/route", {}, svc, "GET")).status).toBe(405);
+      expect((await svc.publicFetch(request())).status).toBe(404);
+      const restricted = await NetworkService.fromDatabase({...options, agentToken: serverToken, tokens: `admin@slop:${serverToken}`}); services.push(restricted);
+      expect((await call("friends", serverToken, "/agent/route", {e164, text: "friends"}, restricted)).status).toBe(403);
+      expect((await call("slop", serverToken, "/agent/route", {e164, text: "slop"}, restricted)).status).toBe(200);
+      expect(await counts()).toEqual(before);
+      const audit = await svc.sql`select target_id, app_id, detail from network.staff_audit where action = 'read_agent_route' order by id`;
+      expect(audit.length).toBe(6);
+      expect(new Set(audit.map((row: {app_id: string}) => row.app_id))).toEqual(new Set(["slop", "friends"]));
+      expect(audit.every((row: {target_id: string}) => row.target_id === svc.accounts.phoneHash(e164))).toBe(true);
+      expect(JSON.stringify(audit)).not.toMatch(/1212555|my ex|join slop|CANARY|Route Fixture/);
+      const absent = await call("slop", serverToken, "/agent/route", {e164: "+12125550187", text: "slop"});
+      expect(absent.status).toBe(404);
+      await svc.people.addConsent({e164, app: null, state: "opted_out", source: "local-route-stop", at: now+1});
+      const stopped = await call("STOP");
+      expect(stopped.status).toBe(404);
+      expect(await stopped.json()).toEqual(await absent.json());
+    } finally {
+      for (const service of services) await service.close();
+      await dropDb(url);
+    }
+  }, 120_000);
+});
