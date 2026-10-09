@@ -4,7 +4,8 @@
  * package and the service read the same file. Every request is signed with svc-auth.ts.
  *
  *   POST /internal/turn     Eliza → service   one inbound message on the shared line
- *   POST /internal/deliver  service → Eliza   a message the service wants sent (proactive, relay)
+ *   POST /api/internal/network/deliver  service → Eliza Cloud  a message the service wants sent
+ *        (proactive, relay): delivered through the gateway and appended to the member's agent history
  */
 
 /** Mirrors APP_IDS in packages/platform/src/apps.ts (kept literal: this file has no imports). */
@@ -12,7 +13,7 @@ export type NetworkAppId = "ntwrk" | "slop" | "peon" | "friends";
 export type NetworkTransport = "imessage" | "sms" | "rcs" | "unknown";
 
 export const TURN_PATH = "/internal/turn";
-export const DELIVER_PATH = "/internal/deliver";
+export const DELIVER_PATH = "/api/internal/network/deliver";
 export const SET_STATE_PATH = "/internal/set-state";
 export const SIGNALS_PATH = "/internal/signals";
 export const UPDATES_PATH = "/internal/updates";
@@ -66,6 +67,8 @@ export interface DeliverRequest {
   /** Sending line, E.164; absent = the shared line. */
   from?: string | null;
   text: string;
+  /** Default "blooio" (the shared line); "twilio" for SMS fallback. */
+  channel?: "blooio" | "twilio";
   app: NetworkAppId;
   memberId: string | null;
   /** reply: answer to an inbound; proactive: an intro, reminder or check-in (quiet hours and caps already applied by the service); relay: another member's message, `rendered` only. */
@@ -73,8 +76,19 @@ export interface DeliverRequest {
 }
 
 export type DeliverResponse =
-  | { ok: true; status: "queued" | "sent" | "duplicate"; providerMessageId?: string }
-  | { ok: false; error: "opted_out" | "invalid" | "unavailable" };
+  | {
+      ok: true;
+      replayed: boolean;
+      providerMessageIds: string[];
+      /** False when the recipient has no Eliza account yet (handled turns only): sent, but not in agent history. */
+      history: boolean;
+    }
+  | {
+      ok: false;
+      /** opted_out: STOP on the line; unknown: the provider may have it, do not resend blindly. */
+      error: "opted_out" | "invalid" | "rejected" | "unknown";
+      retryable: boolean;
+    };
 
 /**
  * Agent actions in an open turn (all signed, x-ntwrk-svc-id = idempotencyKey or messageId).
