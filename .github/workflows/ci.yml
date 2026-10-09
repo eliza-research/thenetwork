@@ -1,5 +1,7 @@
-# Offline CI: install, typecheck, `bun run sim` (the simulations and their gates), the plugin build
-# check and the sites production build; plus the pending security suite with a real Postgres. No
+# CI: install, typecheck, `bun run sim` (the simulations and their gates), the plugin build check and
+# the sites production build; plus the integration and e2e suites (security suite included) with a
+# real Postgres. Validation policy: simulations + integration + e2e, no unit or smoke tests
+# (docs/tests-policy.md). No
 # secrets are given to CI, and LIVE_TESTS is never set, so no paid LLM call, Blooio or Twilio call,
 # or Cloudflare deploy can happen here. Deploys live in deploy-sites.yml. Actions and the Postgres image are pinned by digest.
 name: ci
@@ -45,16 +47,15 @@ jobs:
       - name: Install
         run: bun install --frozen-lockfile
         timeout-minutes: 5
-      - name: Typecheck (packages, deploy, scripts/sim)
+      - name: Typecheck (packages, deploy, tests, scripts/sim)
         run: bunx tsc --noEmit -p .
         timeout-minutes: 5
       - name: Typecheck (sites, scripts)
         run: bunx tsc --noEmit -p sites/tsconfig.json
         timeout-minutes: 5
       - name: Simulations (bun run sim)
-        # The validation layer is the simulations (founder decision 2026-10-08): evals corpora, the
-        # Network in the NYC world, slop, peon and friends, each with its gates on pinned seeds. No LLM,
-        # no Postgres. Exits 1 on any blocking gate failure.
+        # The simulations: evals corpora, the Network in the NYC world, slop, peon and friends, each
+        # with its gates on pinned seeds. No LLM, no Postgres. Exits 1 on any blocking gate failure.
         run: |
           if [ -n "${LIVE_TESTS:-}" ]; then echo "LIVE_TESTS must be unset in CI"; exit 1; fi
           bun run sim
@@ -66,13 +67,14 @@ jobs:
         env:
           DEPLOY_TARGET: production
 
-  security:
-    # "security (pending)": the minimal security suite kept pending the founder's decision (platform
-    # row-level security and composite keys, CSRF and enumeration limits, MCP OAuth PKCE, the backend's
-    # "two logins" RLS check). Runs with a real Postgres; nothing else in CI needs one.
-    name: security (pending)
+  integration:
+    # The integration suite (real Postgres, real HTTP servers, several packages together, the full
+    # service; the security files are part of it: platform row-level security and composite keys, CSRF
+    # and enumeration limits, MCP OAuth PKCE, the backend's "two logins" RLS check) and the e2e suite
+    # (tests/e2e). Sends are dry-run and OTP providers are fakes: nothing leaves the runner.
+    name: integration
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     services:
       # The dev Postgres port (54339). The test helpers create one database per test process.
       postgres:
@@ -112,11 +114,16 @@ jobs:
         run: |
           pg_isready -h localhost -p 54339
           bun run scripts/require-pg.ts
-      - name: Security suite (pending decision)
+      - name: Integration suite (includes the security suite)
         run: |
           if [ -n "${LIVE_TESTS:-}" ]; then echo "LIVE_TESTS must be unset in CI"; exit 1; fi
-          bun run security
-        timeout-minutes: 15
+          bun run test:integration
+        timeout-minutes: 30
+      - name: E2E suite (tests/e2e)
+        run: |
+          if [ -n "${LIVE_TESTS:-}" ]; then echo "LIVE_TESTS must be unset in CI"; exit 1; fi
+          bun run test:e2e
+        timeout-minutes: 10
 
   plugin-network:
     # The Eliza plugin typechecks against the eliza submodule. Non-blocking until its imports resolve
