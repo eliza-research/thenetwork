@@ -35,7 +35,7 @@ The schema is in `packages/observatory/db/migrations/` (0003 platform, 0004 app 
 | `POST /api/auth/otp/start {phone, turnstileToken?}` | Always `{ok:true}` after at least 700 ms, known phone or not. `429 {ok:false, error:"rate_limited"}` over the limits. +1 numbers only. |
 | `POST /api/auth/otp/verify {phone, code}` | `{ok:true}` and a session cookie, or `400 invalid_code` |
 | `POST /api/auth/logout` | `{ok:true}`, cookie cleared |
-| `GET /api/me` | 401, or `{app, phoneMasked, membership, canJoin, reason?}` |
+| `GET /api/me` | 401, or `{app, phoneMasked, membership, smsOptedIn, canJoin, reason?}` |
 | `POST /api/join {firstName, age, neighborhood?, zip?, interests?, about?, consent: {sms: true, wording? , version?}}` | `{ok:true, membership}` or `400 under_age \| invite_only \| invalid \| consent_wording`. The wording must be the app's canonical text (or its version) from `GET /api/app`. |
 | `POST /api/me/share {fromApp, fields}` | Stores a base-profile grant (`first_name`, `city`, `age_band`, `interests`). No site shows it. |
 | `GET /api/me/export` | This app's data only |
@@ -44,6 +44,8 @@ The schema is in `packages/observatory/db/migrations/` (0003 platform, 0004 app 
 | `POST /api/me/delete {scope: "app" \| "all"}` | Leave this app (the forget path), or delete every membership and the phone (a tombstone, the blocks, the age floor and a suppression hash stay). `all` needs a login in the last 10 minutes (403 `reauth`). |
 | `GET /api/app` | `{id, name, domain, joinMode, minJoinAge, minMatchAge, keywords, poweredBy, consent: {version, text}}` |
 | `GET /api/demo` | The replay from the `demo` option. The service supplies none yet, so it answers 404 `not_found`. |
+
+`smsOptedIn` reads this app's current consent through `Accounts.optedIn`. A paused membership can still permit messages. Global STOP stops every app; a later app-scoped START resumes only that app. Older site clients may ignore the field.
 
 The app comes from the host a site router signed (`src/proxy.ts`, `PLATFORM_PROXY_SECRET`, at most 60 s old), else the Host header (`DEFAULT_HOST_MAP`: the four domains and their `www` names; in dev also `localhost` / `127.0.0.1` ports 5101-5104). The dev proxy's `X-Forwarded-Host` is trusted only with `PLATFORM_ENV=dev` on a local bind. The client IP for the rate limits is the IP a site router signed, else the socket address; a header the client sets is never read. Bodies over 16 KB get 413. An explicit `app` that does not match the Host gets `400 app_mismatch`. The cookie is `sid_<app>` in dev (the localhost ports share cookies) and `__Host-sid` with `Secure` everywhere else; always `HttpOnly; SameSite=Lax`. A session is rotated after a day; the old token works for 60 more seconds.
 

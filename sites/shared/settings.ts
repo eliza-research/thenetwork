@@ -36,11 +36,12 @@ function flowError(root: HTMLElement, text: string): void {
 
 function render(root: HTMLElement, me: Me): void {
   const m = me.membership;
-  const stopped = m ? ["opted_out", "stopped"].includes(m.state) : false;
+  const stopped = typeof me.smsOptedIn === "boolean" ? !me.smsOptedIn
+    : m ? ["opted_out", "stopped"].includes(m.state) : false;
   fill(root, {
     phoneMasked: me.phoneMasked,
     firstName: m?.firstName ?? "",
-    state: m ? STATE_LABELS[m.state] ?? m.state : "",
+    state: m ? stopped ? STATE_LABELS.stopped : STATE_LABELS[m.state] ?? m.state : "",
     joinedAt: m ? formatDate(m.joinedAt) : "",
   });
   when(root, "has-membership", !!m);
