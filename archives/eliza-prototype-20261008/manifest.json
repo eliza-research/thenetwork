@@ -1,0 +1,333 @@
+{
+  "sourceRepository": "elizaOS/eliza-derived local checkout",
+  "sourceBranch": "codex/network-phone-portal-20261007",
+  "base": "65621da3a424f8fcdce760db5c9c414117082e18",
+  "head": "f172717ef49f429141549e197fbf5b32cb561daa",
+  "commits": [
+    {
+      "sha": "374f9cc38a1e3eeba83665794a4386c546def577",
+      "subject": "Add Network introduction preparation and SQL integration proof"
+    },
+    {
+      "sha": "f1af37b74eac4aaff54a7436aa7011d44d92031f",
+      "subject": "Implement local Network prototype with native Eliza owners"
+    },
+    {
+      "sha": "b0dfc5d22db24ad509201a61f7225695e7d32a81",
+      "subject": "Add local Network operations, corpus privacy and native qualification studies"
+    },
+    {
+      "sha": "f086f28f556add2be6d38a74023e1b9ebebd3d9e",
+      "subject": "Protect retained private history and render full replays lazily"
+    },
+    {
+      "sha": "2e1ceea295bf294d5cc6371e883e4575c7c9373c",
+      "subject": "Select matching runs by ID and recognize native provider UUIDs"
+    },
+    {
+      "sha": "beb92ecb16f3539548167ee932ea524b642dd51a",
+      "subject": "test(network): stream complete native history through an owned cursor"
+    },
+    {
+      "sha": "62aa4a34af82b6c5b2330cd45b6d327472eaa8ac",
+      "subject": "test(network): budget complete native study evidence by cohort size"
+    },
+    {
+      "sha": "c3542077091bacba25df53b5113b946b7803eace",
+      "subject": "fix(network): require requester consent throughout group workflow"
+    },
+    {
+      "sha": "4c9b8818267107de2f0a4b51c303d9c4122dd896",
+      "subject": "test(network): report native evidence digest progress"
+    },
+    {
+      "sha": "8fac3679513b952f398c71c58ce721f3b03b2c1f",
+      "subject": "docs(network): define matching vocabulary and human review protocol"
+    },
+    {
+      "sha": "647ad60de2fe0a8393a2ac9ccb4380d3a51fa849",
+      "subject": "fix(network): score mutual benefit from each participant intent"
+    },
+    {
+      "sha": "a1c3522b0d92bc4231dc43cc6c320029d8817027",
+      "subject": "fix(network): enforce minimum age and solo teen policy"
+    },
+    {
+      "sha": "71f096c82f70ce9907029824155ff4a6c7a1f3d3",
+      "subject": "test(network): keep scoring checks focused on behavior"
+    },
+    {
+      "sha": "afcc6338bbc4592afd2a8c1a84323aafe18ba74e",
+      "subject": "feat(network): prepare local phone login using shared auth owner"
+    },
+    {
+      "sha": "64884dedd76104eb0c3a8eaf70bf02b8869089bf",
+      "subject": "feat(network): add phone-first branded member portal previews"
+    },
+    {
+      "sha": "d6f05fc988e9f930028da8f3876d8ddba631e4fb",
+      "subject": "fix(network): make retained chat history keyboard scrollable"
+    },
+    {
+      "sha": "073390faa5125937c492346f96c452d684e94aba",
+      "subject": "docs(network): document phone preview and shared auth boundaries"
+    },
+    {
+      "sha": "6d6b4fa6c5a1791a250293218b8b3d9079922442",
+      "subject": "feat(cloud): prepare phone-only Network login with existing SMS and MFA owners"
+    },
+    {
+      "sha": "c550216dfe94a8d28635f4e4d8279e28673eec7d",
+      "subject": "fix(cloud): keep branded phone login copy focused on the member"
+    },
+    {
+      "sha": "c2ef5252741fc5f38a9416cffd03da1ba7c7bdb8",
+      "subject": "fix(cloud): share the existing account notice across phone login surfaces"
+    },
+    {
+      "sha": "2e6163ce107aef99df5108bf27dcc09d4fc54e42",
+      "subject": "fix(network): simplify member portal and distinguish sample demo from Cloud login"
+    },
+    {
+      "sha": "6e23d41979f2f8c0754c2507c59da3be71ee4ef4",
+      "subject": "feat(network): wire branded member pages to Cloud account owners"
+    },
+    {
+      "sha": "f172717ef49f429141549e197fbf5b32cb561daa",
+      "subject": "test(network): cover real chat component composition"
+    }
+  ],
+  "changedFiles": [
+    "bun.lock",
+    "packages/auth/README.md",
+    "packages/auth/package.json",
+    "packages/auth/src/server/phone.ts",
+    "packages/cloud/scripts/network-data-export.ts",
+    "packages/cloud/scripts/network-workbench.ts",
+    "packages/cloud/scripts/package.json",
+    "packages/cloud/shared/package.json",
+    "packages/cloud/shared/src/lib/network/README.md",
+    "packages/cloud/shared/src/lib/network/agent/local-model.ts",
+    "packages/cloud/shared/src/lib/network/agent/service.test.ts",
+    "packages/cloud/shared/src/lib/network/agent/service.ts",
+    "packages/cloud/shared/src/lib/network/agent/sources.test.ts",
+    "packages/cloud/shared/src/lib/network/agent/sources.ts",
+    "packages/cloud/shared/src/lib/network/coordination/availability.ts",
+    "packages/cloud/shared/src/lib/network/coordination/disclosure.ts",
+    "packages/cloud/shared/src/lib/network/coordination/erasure.ts",
+    "packages/cloud/shared/src/lib/network/coordination/programme.ts",
+    "packages/cloud/shared/src/lib/network/coordination/quiet-hours.ts",
+    "packages/cloud/shared/src/lib/network/coordination/scheduler.ts",
+    "packages/cloud/shared/src/lib/network/coordination/service.test.ts",
+    "packages/cloud/shared/src/lib/network/coordination/service.ts",
+    "packages/cloud/shared/src/lib/network/digest.ts",
+    "packages/cloud/shared/src/lib/network/domain/domain.integration.test.ts",
+    "packages/cloud/shared/src/lib/network/domain/index.ts",
+    "packages/cloud/shared/src/lib/network/domain/matching-run-lookup.integration.test.ts",
+    "packages/cloud/shared/src/lib/network/domain/policy.ts",
+    "packages/cloud/shared/src/lib/network/domain/schema.ts",
+    "packages/cloud/shared/src/lib/network/domain/service.ts",
+    "packages/cloud/shared/src/lib/network/domain/store.ts",
+    "packages/cloud/shared/src/lib/network/domain/types.ts",
+    "packages/cloud/shared/src/lib/network/domain/validation.ts",
+    "packages/cloud/shared/src/lib/network/evaluation/fixtures.ts",
+    "packages/cloud/shared/src/lib/network/evaluation/metrics.test.ts",
+    "packages/cloud/shared/src/lib/network/evaluation/metrics.ts",
+    "packages/cloud/shared/src/lib/network/evaluation/native-cadence.study.test.ts",
+    "packages/cloud/shared/src/lib/network/evaluation/native-http.study.test.ts",
+    "packages/cloud/shared/src/lib/network/evaluation/native-replay.study.test.ts",
+    "packages/cloud/shared/src/lib/network/evaluation/persona-replay.test.ts",
+    "packages/cloud/shared/src/lib/network/evaluation/privacy-corpus.test.ts",
+    "packages/cloud/shared/src/lib/network/evaluation/privacy-records.test.ts",
+    "packages/cloud/shared/src/lib/network/evaluation/simulator.integration.test.ts",
+    "packages/cloud/shared/src/lib/network/evaluation/simulator.ts",
+    "packages/cloud/shared/src/lib/network/matching/comparison.test.ts",
+    "packages/cloud/shared/src/lib/network/matching/comparison.ts",
+    "packages/cloud/shared/src/lib/network/matching/config.ts",
+    "packages/cloud/shared/src/lib/network/matching/domain-projection.ts",
+    "packages/cloud/shared/src/lib/network/matching/eligibility.ts",
+    "packages/cloud/shared/src/lib/network/matching/empty-states.ts",
+    "packages/cloud/shared/src/lib/network/matching/engine.test.ts",
+    "packages/cloud/shared/src/lib/network/matching/engine.ts",
+    "packages/cloud/shared/src/lib/network/matching/generators.ts",
+    "packages/cloud/shared/src/lib/network/matching/graph.test.ts",
+    "packages/cloud/shared/src/lib/network/matching/graph.ts",
+    "packages/cloud/shared/src/lib/network/matching/local-constraints.test.ts",
+    "packages/cloud/shared/src/lib/network/matching/local-constraints.ts",
+    "packages/cloud/shared/src/lib/network/matching/monthly-planning.test.ts",
+    "packages/cloud/shared/src/lib/network/matching/native-retrieval.test.ts",
+    "packages/cloud/shared/src/lib/network/matching/native-retrieval.ts",
+    "packages/cloud/shared/src/lib/network/matching/on-demand.test.ts",
+    "packages/cloud/shared/src/lib/network/matching/opportunity.ts",
+    "packages/cloud/shared/src/lib/network/matching/providers.test.ts",
+    "packages/cloud/shared/src/lib/network/matching/providers.ts",
+    "packages/cloud/shared/src/lib/network/matching/replay-purpose.test.ts",
+    "packages/cloud/shared/src/lib/network/matching/scoring-fixtures.ts",
+    "packages/cloud/shared/src/lib/network/matching/scoring.test.ts",
+    "packages/cloud/shared/src/lib/network/matching/scoring.ts",
+    "packages/cloud/shared/src/lib/network/matching/stage-evidence.test.ts",
+    "packages/cloud/shared/src/lib/network/matching/test-fixtures.ts",
+    "packages/cloud/shared/src/lib/network/matching/types.ts",
+    "packages/cloud/shared/src/lib/network/native-owners/native-owners.integration.test.ts",
+    "packages/cloud/shared/src/lib/network/native-owners/service.ts",
+    "packages/cloud/shared/src/lib/network/outreach/empty-state.test.ts",
+    "packages/cloud/shared/src/lib/network/outreach/service.test.ts",
+    "packages/cloud/shared/src/lib/network/outreach/service.ts",
+    "packages/cloud/shared/src/lib/network/policy/introduction.ts",
+    "packages/cloud/shared/src/lib/network/runtime-sql.ts",
+    "packages/cloud/shared/src/lib/network/workbench/analytics.test.ts",
+    "packages/cloud/shared/src/lib/network/workbench/analytics.ts",
+    "packages/cloud/shared/src/lib/network/workbench/application-views.ts",
+    "packages/cloud/shared/src/lib/network/workbench/application.integration.test.ts",
+    "packages/cloud/shared/src/lib/network/workbench/application.ts",
+    "packages/cloud/shared/src/lib/network/workbench/availability.ts",
+    "packages/cloud/shared/src/lib/network/workbench/commands.ts",
+    "packages/cloud/shared/src/lib/network/workbench/data-export.integration.test.ts",
+    "packages/cloud/shared/src/lib/network/workbench/data-export.large.integration.test.ts",
+    "packages/cloud/shared/src/lib/network/workbench/data-export.ts",
+    "packages/cloud/shared/src/lib/network/workbench/experience.test.ts",
+    "packages/cloud/shared/src/lib/network/workbench/experience.ts",
+    "packages/cloud/shared/src/lib/network/workbench/health-alerts.integration.test.ts",
+    "packages/cloud/shared/src/lib/network/workbench/host.lifecycle.test.ts",
+    "packages/cloud/shared/src/lib/network/workbench/host.ts",
+    "packages/cloud/shared/src/lib/network/workbench/matching-jobs.test.ts",
+    "packages/cloud/shared/src/lib/network/workbench/matching-jobs.ts",
+    "packages/cloud/shared/src/lib/network/workbench/member-graph-navigation.test.ts",
+    "packages/cloud/shared/src/lib/network/workbench/mock-transport.test.ts",
+    "packages/cloud/shared/src/lib/network/workbench/mock-transport.ts",
+    "packages/cloud/shared/src/lib/network/workbench/operations-views.test.ts",
+    "packages/cloud/shared/src/lib/network/workbench/operations-views.ts",
+    "packages/cloud/shared/src/lib/network/workbench/operations.ts",
+    "packages/cloud/shared/src/lib/network/workbench/portal-login.test.ts",
+    "packages/cloud/shared/src/lib/network/workbench/portal-login.ts",
+    "packages/cloud/shared/src/lib/network/workbench/programme-groups.ts",
+    "packages/cloud/shared/src/lib/network/workbench/programme-priority.test.ts",
+    "packages/cloud/shared/src/lib/network/workbench/programme-priority.ts",
+    "packages/cloud/shared/src/lib/network/workbench/review-report-metrics.test.ts",
+    "packages/cloud/shared/src/lib/network/workbench/review-safety.integration.test.ts",
+    "packages/cloud/shared/src/lib/network/workbench/safety-hold.integration.test.ts",
+    "packages/cloud/shared/src/lib/network/workbench/scoped-reads.integration.test.ts",
+    "packages/cloud/shared/src/lib/network/workbench/simulation-ingress.ts",
+    "packages/cloud/shared/src/lib/network/workbench/simulation-lab.integration.test.ts",
+    "packages/cloud/shared/src/lib/network/workbench/simulation-lab.ts",
+    "packages/cloud/shared/src/lib/network/workbench/views.controls.test.ts",
+    "packages/cloud/shared/src/lib/network/workbench/views.ts",
+    "packages/cloud/shared/src/lib/network/workbench/world.ts",
+    "packages/cloud/shared/src/lib/services/shared-runtime/run-shared-agent-turn.ts",
+    "packages/cloud/shared/src/lib/services/shared-runtime/shared-eliza-runtime.ts",
+    "packages/contracts/package.json",
+    "packages/contracts/src/index.ts",
+    "packages/contracts/src/network-workbench.ts",
+    "packages/core/src/index.ts",
+    "packages/core/src/roles.ts",
+    "packages/core/src/security/pii-pseudonymizer.ts",
+    "packages/core/test/pii-data-corpus.test.ts",
+    "packages/core/test/pii-record-corpus.test.ts",
+    "packages/core/test/swap-control-objects.test.ts",
+    "packages/scripts/script-plugin-coupling.allowlist.json",
+    "packages/ui/PRODUCT.md",
+    "packages/ui/src/cloud/public-pages/pages/login/login-page.tsx",
+    "packages/ui/src/cloud/public-pages/pages/login/login-terms.tsx",
+    "packages/ui/src/cloud/public-pages/pages/login/network-phone-login-page.test.tsx",
+    "packages/ui/src/cloud/public-pages/pages/login/network-phone-login-page.tsx",
+    "packages/ui/src/cloud/public-pages/pages/login/steward-login-section.phone-login.test.tsx",
+    "packages/ui/src/cloud/public-pages/pages/login/steward-login-section.tsx",
+    "packages/ui/src/cloud/public-pages/pages/network-chat-page.composition.test.tsx",
+    "packages/ui/src/cloud/public-pages/pages/network-chat-page.test.tsx",
+    "packages/ui/src/cloud/public-pages/pages/network-chat-page.tsx",
+    "packages/ui/src/cloud/public-pages/register.ts",
+    "packages/ui/src/components/composites/chat/chat-composer.stop.test.tsx",
+    "packages/ui/src/components/composites/chat/chat-composer.test.tsx",
+    "packages/ui/src/components/composites/chat/chat-composer.tsx",
+    "packages/ui/src/login/LoginMfaChallenge.tsx",
+    "packages/ui/src/network/NetworkActionButtons.tsx",
+    "packages/ui/src/network/NetworkConversation.test.tsx",
+    "packages/ui/src/network/NetworkConversation.tsx",
+    "packages/ui/src/network/NetworkGraph.interactions.test.tsx",
+    "packages/ui/src/network/NetworkGraph.test.tsx",
+    "packages/ui/src/network/NetworkGraph.tsx",
+    "packages/ui/src/network/NetworkPipeline.tsx",
+    "packages/ui/src/network/NetworkPortal.tsx",
+    "packages/ui/src/network/NetworkWorkbench.test.tsx",
+    "packages/ui/src/network/NetworkWorkbench.tsx",
+    "packages/ui/src/network/api.test.ts",
+    "packages/ui/src/network/api.ts",
+    "packages/ui/src/network/entry.test.tsx",
+    "packages/ui/src/network/entry.tsx",
+    "packages/ui/src/network/index.html",
+    "packages/ui/src/network/network.css",
+    "packages/ui/src/network/portal-api.ts",
+    "packages/ui/src/network/portal.css",
+    "packages/ui/src/network/portal.test.tsx",
+    "packages/ui/src/state/useCloudState.same-tab-login.test.tsx",
+    "packages/ui/src/state/useCloudState.ts",
+    "plugins/plugin-assistant/src/features/index.ts",
+    "plugins/plugin-assistant/src/features/trajectories/erasure.ts",
+    "plugins/plugin-assistant/src/features/trajectories/index.ts",
+    "plugins/plugin-assistant/src/index.ts",
+    "plugins/plugin-assistant/src/services/approval/network-introduction.pglite.test.ts",
+    "plugins/plugin-assistant/src/services/approval/store.ts",
+    "plugins/plugin-assistant/src/services/approval/types.ts",
+    "plugins/plugin-calendar/README.md",
+    "plugins/plugin-calendar/package.json",
+    "plugins/plugin-calendar/src/actions/conflict-detect.ts",
+    "plugins/plugin-calendar/src/actions/index.ts",
+    "plugins/plugin-calendar/src/index.ts",
+    "plugins/plugin-calendar/src/service/availability.ts",
+    "plugins/plugin-calendar/src/service/free-slots.bounds.test.ts",
+    "plugins/plugin-network/README.md",
+    "plugins/plugin-network/package.json",
+    "plugins/plugin-network/src/index.test.ts",
+    "plugins/plugin-network/src/index.ts",
+    "plugins/plugin-network/tsconfig.json",
+    "plugins/plugin-network/vitest.config.ts",
+    "plugins/plugin-relationships/package.json",
+    "plugins/plugin-relationships/src/graph.ts",
+    "plugins/plugin-relationships/src/knowledge-graph/entity-store.ts",
+    "plugins/plugin-relationships/src/knowledge-graph/record-repository.ts",
+    "plugins/plugin-relationships/src/knowledge-graph/record-store.test.ts",
+    "plugins/plugin-relationships/src/knowledge-graph/relationship-store.ts",
+    "plugins/plugin-scheduling/src/index.ts",
+    "plugins/plugin-scheduling/src/network-delivery-contract.test.ts",
+    "plugins/plugin-scheduling/src/scheduled-task/sql-admission-guards.test.ts",
+    "plugins/plugin-scheduling/src/scheduled-task/store.ts",
+    "plugins/plugin-sql/build.ts",
+    "plugins/plugin-sql/package.json",
+    "plugins/plugin-sql/src/database-utils/erase-private-room.ts",
+    "plugins/plugin-sql/src/database-utils/scoped-message-evidence.ts",
+    "plugins/plugin-sql/src/index.ts",
+    "plugins/plugin-sql/src/memory-store.ts"
+  ],
+  "commitCount": 23,
+  "changedFileCount": 199,
+  "files": {
+    "history.bundle": {
+      "bytes": 559383,
+      "sha256": "01bc34a46f26fb4b3a2003f352735910e0274f034360508ec1e6271d77c26de1"
+    },
+    "changes.patch": {
+      "bytes": 1993469,
+      "sha256": "3e3bb308c1ea1b0bb2620b07fd1f5605e2663821888a064cf7684a9034d0c0c5"
+    }
+  },
+  "verification": {
+    "incrementalBundle": "git bundle verify passed",
+    "patch": "git apply --cached --check against exact base passed",
+    "historicalObjectsScreened": 328,
+    "knownCredentialPatternFindings": [],
+    "scannerLimit": "Known credential patterns only; not a complete guarantee. Source, commit messages and all new history blobs scanned."
+  },
+  "excluded": "Ignored evidence, databases, browser sessions, credentials, logs, attachments, node_modules and runtime data are not Git objects in this archive. No working-tree or ignored files were added.",
+  "state": "Paused experimental prototype; not ready to merge; no live acceptance claimed",
+  "reviewGuide": {
+    "path": "PAUSED-ELIZA-PROTOTYPE.md",
+    "sha256": "1b0e782b6f047f951c618ff540e22f173e69a416f955fb7ae886df7df87adb5c"
+  },
+  "publication": {
+    "target": "git@github.com:eliza-research/thenetwork.git",
+    "branch": "codex/paused-eliza-prototype-20261008",
+    "public": true,
+    "state": "Prepared locally; awaiting user approval to push",
+    "deployment": "No deploy authorized"
+  }
+}
