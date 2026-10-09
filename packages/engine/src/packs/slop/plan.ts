@@ -2,7 +2,8 @@
 // the reveal IS the booked plan, "You're both in: meet Sam, Thu 7pm. Reply if you can't make it").
 // Activity from the date ideas both stated, 2-3 time options from the slots both said they are
 // usually free (then either, then the rest), a PUBLIC venue type only, short by default.
-import type { City, MemberId } from "@thenetwork/core";
+import { canBeMatched, type City, type MemberId } from "@thenetwork/core";
+import { isOpaquePhotoId } from "../../relay.ts";
 import type { EngineInput } from "../../types.ts";
 import { mutualMarkets } from "./geo.ts";
 import { SLOP_DEFAULT_OPTIONS, type SlopPackOptions } from "./options.ts";
@@ -52,4 +53,34 @@ export function planFromInput(input: EngineInput, first: MemberId, partner: Memb
   const P = slopProfiles(input);
   const a = P.get(first), b = P.get(partner);
   return a && b ? planFirstDate(a, b, markets, o) : null;
+}
+
+// ------------------------------------------------------------------------------- photo in the probe
+// Founder decision 2026-10-08 (PRD 40.5): the anonymous first probe can include one photo of the
+// other person. Name and contact stay hidden until both say yes. The platform and the slop world
+// both call `probePhotoRefs`, so the sim's photo arm and the live probe follow the same rule.
+
+/** The member whose photo would be shown, as the platform knows them. */
+export interface ProbePhotoSubject {
+  /** LOWEST stated or recorded age; undefined = unknown (never shown). */
+  age: number | undefined;
+  /** Consent to show their photos to a proposed match (separate from the upload consent). */
+  photoConsent: boolean;
+  /** Their photos with the current consent, best first (opaque ids). */
+  photoIds: readonly string[];
+  /** An open safety hold or ban: no photo goes out. */
+  held?: boolean;
+}
+/** A photo reference in a probe: an opaque id the platform resolves to a short-lived image. Never a URL. */
+export interface ProbePhotoRef { id: string }
+export const PROBE_PHOTO_MAX = 1;
+
+/**
+ * The photo(s) a probe may carry: [] unless the subject AND the recipient are adults (core
+ * `canBeMatched` on the lowest age), the subject consented to photo use, is not held, and has a
+ * valid opaque photo id. At most PROBE_PHOTO_MAX.
+ */
+export function probePhotoRefs(subject: ProbePhotoSubject, recipient: { age: number | undefined }): ProbePhotoRef[] {
+  if (!canBeMatched(subject.age) || !canBeMatched(recipient.age) || !subject.photoConsent || subject.held) return [];
+  return subject.photoIds.filter(isOpaquePhotoId).slice(0, PROBE_PHOTO_MAX).map(id => ({ id }));
 }

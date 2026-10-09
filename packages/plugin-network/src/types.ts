@@ -3,8 +3,14 @@
  * through a host-injected, app-scoped NetworkStore. The simulator uses memory;
  * the Cloud host must supply the durable membership-bound adapter before activation.
  */
-import { isAppId, type AppId } from "../../platform/src/apps.js";
-import type { ParticipationState } from "../../core/src/types.js";
+import { NETWORK_APP_IDS, type NetworkAppId as AppId } from "./backend/contract.js";
+/**
+ * PRD 7.2 participation states. Mirrors `ParticipationState` in packages/core/src/types.ts; kept
+ * literal because this package must not import outside itself (Eliza Cloud installs a copy of
+ * this directory alone, so a relative path into packages/core does not resolve there).
+ */
+export type ParticipationState = "open" | "normal" | "quiet" | "receiving" | "paused";
+
 
 export const NETWORK_CONTEXTS = ["network", "social", "settings"] as const;
 
@@ -112,7 +118,7 @@ export interface NetworkTurnAuthority extends NetworkMemberScope {
 
 /** Reject unscoped JavaScript callers as well as invalid typed host bindings. */
 export function assertNetworkMemberScope(scope: NetworkMemberScope): void {
-  if (!scope || !isAppId(scope.app) || typeof scope.memberId !== "string" || !scope.memberId.trim()) {
+  if (!scope || !NETWORK_APP_IDS.includes(scope.app) || typeof scope.memberId !== "string" || !scope.memberId.trim()) {
     throw new Error("Network authority requires a canonical app and a nonempty member id");
   }
 }

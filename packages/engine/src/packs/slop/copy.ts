@@ -1,7 +1,8 @@
 // slop.date member-facing copy. Every string still passes the core leak gate (LeakGuard) before it
 // is sent: explanations in explain.ts, probes in attention.buildProbe. Distances are bands only
 // ("2-5 mi"), never miles to a decimal, a zip or a coordinate. Declines are silent; nothing ever
-// says why someone said no, and nothing claims a compatibility score.
+// says why someone said no, and nothing claims a compatibility score. A probe can carry one photo of
+// an adult who consented to photo use (slopProbeMessage); nothing in the text ever describes it.
 import type { Facet } from "@thenetwork/core";
 
 export const SLOP_LANE_LABEL: Record<string, string> = { romance: "a first date" };
@@ -24,12 +25,30 @@ export const SLOP_ASK_QUESTIONS: Record<string, string> = {
 
 /**
  * The anonymous probe (PRD 40.5): it says plainly that it is a date, gives the planned activity and
- * the time options, and at most one shareable fact about the other person. No name, no photo, no
- * employer, no area code or zip (the core passes the recipient's own area; slop never prints it).
+ * the time options, and at most one shareable fact about the other person. It can carry one photo of
+ * the other person (founder decision 2026-10-08; `slopProbeMessage` and plan.ts `probePhotoRefs`),
+ * but never their name, contact, employer, area code or zip (the core passes the recipient's own
+ * area; slop never prints it). Name and contact stay hidden until both say yes.
  */
 export function slopProbeText(ctx: { when: string }, activity: string, attribute?: string): string {
   const also = attribute ? ` They're into ${attribute.replace(/[.\s]+$/, "")}.` : "";
   return `There's someone I think you might like to go on a date with: ${activity.replace(/[.\s]+$/, "")}, ${ctx.when}.${also} Want me to check if they're up for it? I'll only tell you who it is if you both say yes.`;
+}
+
+/** The sentence added when the probe carries the other person's photo. It names no one and describes nothing. */
+export const SLOP_PROBE_PHOTO_LINE = "I've attached a photo they chose to share; their name and number stay private until you both say yes.";
+
+/**
+ * The probe as sent: the core probe text (already through the leak gate) plus, when `photos` is not
+ * empty, the photo line before the question, and the photo ids to attach (opaque ids the platform
+ * resolves; at most one). With an empty list the text is unchanged.
+ */
+export function slopProbeMessage(probe: { text: string }, photos: readonly { id: string }[] = []): { text: string; photos: string[] } {
+  const ids = photos.slice(0, 1).map(p => p.id);
+  if (!ids.length) return { text: probe.text, photos: [] };
+  const at = probe.text.indexOf(" Want me to check");
+  const text = at >= 0 ? `${probe.text.slice(0, at)} ${SLOP_PROBE_PHOTO_LINE}${probe.text.slice(at)}` : `${probe.text} ${SLOP_PROBE_PHOTO_LINE}`;
+  return { text, photos: ids };
 }
 
 /** Age band for a probe or a reveal ("late 20s"), never the exact age. */
