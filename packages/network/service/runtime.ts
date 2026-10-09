@@ -420,12 +420,20 @@ export class NetworkRuntime {
   }
 
   /** Read the newest stored state without saving anything (like reviewQueue). */
-  readState<T>(fn: (n: ConsentNetwork) => T): Promise<T> {
+  readState<T>(fn: (n: ConsentNetwork) => T | Promise<T>): Promise<T> {
     return this.store.withLock(async () => {
       const s = await this.store.load();
       if (s) this.net.importState(s);
       this.unit = newUnit();
       return fn(this.net);
+    });
+  }
+
+  /** Read the fresh canonical snapshot under the same lock as readState. Saves nothing. */
+  readSnapshot<T>(fn: (snapshot: WorldSnapshot) => T | Promise<T>): Promise<T> {
+    return this.readState(() => {
+      if (!this.snap) throw new Error("Network snapshot unavailable");
+      return fn(this.snap);
     });
   }
 

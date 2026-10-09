@@ -7,9 +7,9 @@ import { createNetworkSignalsEvaluator } from "./evaluators/network-signals.js";
 import { createMemberContextProvider } from "./providers/member-context.js";
 import { NETWORK_CONTEXT_DEFINITION } from "./routing/context.js";
 import { createNetworkActionFieldEvaluator } from "./routing/structured-field.js";
-import type { NetworkStore, NetworkTurnAuthority } from "./types.js";
+import type { NetworkHostStore, NetworkStore, NetworkTurnAuthority } from "./types.js";
 
-type GetUpdatesStore = NetworkStore & Required<Pick<NetworkStore, "readUpdates">>;
+type GetUpdatesStore = NetworkHostStore & Required<Pick<NetworkStore, "readUpdates">>;
 
 export const NETWORK_EDGE_COMPATIBILITY = {
   target: "edge",
@@ -23,7 +23,7 @@ export const NETWORK_EDGE_COMPATIBILITY = {
 export type NetworkRouting = "planner" | "structured";
 
 export interface NetworkEdgePluginOptions {
-  store: NetworkStore;
+  store: NetworkHostStore;
   authority: NetworkTurnAuthority;
   /** Default true. Set false for system/lifecycle turns (zero actions). */
   actionsEnabled?: boolean;
@@ -48,18 +48,27 @@ export function createNetworkEdgePlugin(options: NetworkEdgePluginOptions): Plug
   options = { ...options, authority: Object.freeze({ ...options.authority }) };
   const actionsEnabled = options.actionsEnabled ?? true;
   const routing = options.routing ?? "planner";
+  const stateStore = typeof options.store.setState === "function"
+    ? { setState: options.store.setState.bind(options.store) } : undefined;
+  const signalStore = typeof options.store.recordSignals === "function"
+    ? { recordSignals: options.store.recordSignals.bind(options.store) } : undefined;
+  const context = stateStore ? NETWORK_CONTEXT_DEFINITION : {
+    ...NETWORK_CONTEXT_DEFINITION,
+    description: "The member's Network profile and current participation state. This host cannot change availability.",
+    descriptionCompressed: "Read Network profile and current state",
+  };
   return {
     name: "network-edge",
-    description: "The Network: member context, availability state and post-turn signals.",
+    description: "The Network: host-supported member context and capabilities.",
     contexts: ["network"],
     init: async (_config, runtime) => {
-      runtime.contexts.tryRegister(NETWORK_CONTEXT_DEFINITION);
+      runtime.contexts.tryRegister(context);
     },
-    ...(actionsEnabled && routing === "structured"
+    ...(actionsEnabled && stateStore && routing === "structured"
       ? {
           responseHandlerFieldEvaluators: [
             createNetworkActionFieldEvaluator({
-              store: options.store,
+              store: stateStore,
               authority: options.authority,
               now: options.now,
             }),
@@ -74,19 +83,19 @@ export function createNetworkEdgePlugin(options: NetworkEdgePluginOptions): Plug
     // GET_UPDATES only reads (and marks seen), so it is offered in both routing modes.
     actions: actionsEnabled
       ? [
-          ...(routing === "planner"
-            ? [createSetStateAction({ store: options.store, authority: options.authority, now: options.now })]
+          ...(stateStore && routing === "planner"
+            ? [createSetStateAction({ store: stateStore, authority: options.authority, now: options.now })]
             : []),
-          ...(options.store.readUpdates
+          ...(typeof options.store.readUpdates === "function"
             ? [createGetUpdatesAction({ store: options.store as GetUpdatesStore, authority: options.authority })]
             : []),
         ]
       : [],
-    evaluators: [
+    evaluators: signalStore ? [
       createNetworkSignalsEvaluator({
-        store: options.store,
+        store: signalStore,
         authority: options.authority,
       }),
-    ],
+    ] : [],
   };
 }

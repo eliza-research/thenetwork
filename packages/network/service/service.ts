@@ -31,6 +31,7 @@ import { brandOf, copy as ntwrkCopy, copyFor, type Copy } from "../src/copy.ts";
 import { isMinor } from "@thenetwork/core";
 import { ageAnswer, agesStated } from "../src/classify.ts";
 import { NetworkRuntime, type RuntimeHost } from "./runtime.ts";
+import { AgentContextStore } from "./agent-context-store.ts";
 import type { ChannelAdapter, Outbound } from "./channel.ts";
 import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { Accounts, type AccountHooks, type JoinHookContext, type MemberHookContext } from "../../platform/src/accounts.ts";
@@ -1243,7 +1244,7 @@ export class NetworkService implements RuntimeHost {
   fetch = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
     let path = url.pathname.replace(/\/+$/, "") || "/";
-    const agentRequest = /^(?:\/apps\/[^/]+)?\/agent\/membership$/.test(path);
+    const agentRequest = /^(?:\/apps\/[^/]+)?\/agent\/(?:membership|context)$/.test(path);
     const json = (data: unknown, status = 200) => Response.json(data, { status, ...(agentRequest ? { headers: { "cache-control": "no-store" } } : {}) });
     try {
       if (agentRequest) {
@@ -1275,7 +1276,7 @@ export class NetworkService implements RuntimeHost {
       const user = this.reviewerOfRecord(req, auth.user);
       // A role for this app (role@app or role@*); admin for the app passes every check.
       const need = (roles: StaffRole[]) => (allowed(user, roles, rt.app.id, "real") ? undefined : json({ ok: false, code: "forbidden", error: `needs role ${roles.map(r => `${r}@${rt.app.id}`).join(" or ")}` }, 403));
-      if (path === "/agent/membership") {
+      if (path === "/agent/membership" || path === "/agent/context") {
         const given = req.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1]?.trim() ?? "";
         if (!this.agentToken || !safeEqual(given, this.agentToken) || !allowed(auth.user, ["admin"], rt.app.id, "real")) return json({ ok: false, error: "forbidden" }, 403);
         if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
@@ -1287,7 +1288,13 @@ export class NetworkService implements RuntimeHost {
         // Only the designated server may assert this already verified phone. This read grants no action authority.
         const binding = await this.accounts.activeMembership(rt.app, { e164: b.e164, personId: null });
         if (!binding) return json({ ok: false, error: "unavailable" }, 404);
-        await this.audit.write({ at: this.clock.now(), actor: auth.user.id, roles: auth.user.roles, action: "read_agent_membership", targetType: "person", targetId: this.phoneKey(b.e164), mode: "real", ok: true, app: rt.app.id });
+        const context = path === "/agent/context" ? await new AgentContextStore({
+          app: rt.app.id, memberId: binding.membership.memberId, personId: binding.person.id,
+          e164: b.e164, accounts: this.accounts, runtime: rt,
+        }).getMemberContext(binding.membership.memberId, rt.app.id) : undefined;
+        if (path === "/agent/context" && !context) return json({ ok: false, error: "unavailable" }, 404);
+        await this.audit.write({ at: this.clock.now(), actor: auth.user.id, roles: auth.user.roles, action: context ? "read_agent_context" : "read_agent_membership", targetType: "person", targetId: this.phoneKey(b.e164), mode: "real", ok: true, app: rt.app.id });
+        if (context) return json(context);
         return json({ app: rt.app.id, personId: binding.person.id, memberId: binding.membership.memberId });
       }
       if (req.method === "GET" && path === "/health") {

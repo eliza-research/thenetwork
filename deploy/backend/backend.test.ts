@@ -3,6 +3,9 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { DEFAULT_HOST_MAP } from "../../packages/platform/src/apps.ts";
 import { SQL } from "bun";
+import { AgentContextStore } from "../../packages/network/service/agent-context-store.ts";
+import { createNetworkEdgePlugin } from "../../packages/plugin-network/src/edge.ts";
+import type { IAgentRuntime, Memory } from "@elizaos/core";
 import { NetworkService } from "../../packages/network/service/service.ts";
 import { randomUUID } from "node:crypto";
 import { dropDb, emptyDb, pgAvailable } from "../../packages/platform/test/pg.ts";
@@ -482,6 +485,155 @@ describe.skipIf(!pgAvailable)("Cloud host membership lookup (isolated Postgres, 
       expect((await consoleOnly.fetch(request("/agent/membership?app=slop"))).status).toBe(503);
     } finally {
       for (const other of others) await other.close();
+      await svc?.close();
+      await dropDb(url);
+    }
+  }, 120_000);
+});
+
+
+describe.skipIf(!pgAvailable)("Agent context store (isolated Postgres runtime, no sends)", () => {
+  test("reads fresh shareable context only, denies revoked authority, and exposes no write capabilities", async () => {
+    const url = await emptyDb("agent_context");
+    let svc: NetworkService | undefined;
+    try {
+      await migrate(url);
+      const now = Date.parse("2026-10-08T12:00:00Z");
+      const serverToken = "context-host-" + "c".repeat(40), staffToken = "context-staff-" + "s".repeat(40);
+      svc = await NetworkService.fromDatabase({url, agentToken: serverToken, tokens: `admin@slop:${serverToken},admin@*:${staffToken}`, clock: {now: () => now}, env: {PLATFORM_ENV: "dev"}, notify: false, photoStorage: null, log: () => {}});
+      const e164 = "+12125550183", personId = randomUUID(), memberId = "same_context_member";
+      await svc.people.createPerson({id: personId, e164, method: "inbound_message", at: now, lowestAge: 25, phoneHash: svc.accounts.phoneHash(e164)});
+      const friendsId = "friends_context_member";
+      const membership = (app: "slop" | "friends") => ({app, personId, memberId: app === "slop" ? memberId : friendsId, state: "active" as const, review: null, firstName: "Ada", profile: {}, joinedAt: now, leftAt: null});
+      for (const app of ["slop", "friends"] as const) {
+        await svc.people.putMembership(membership(app));
+        await svc.people.addConsent({e164, app, state: "opted_in", source: "local-context-test", at: now});
+        await svc.runtimeFor(app)!.scoped(async tx => {
+          await tx`insert into network.members (app_id, id, name, home_city, age, person_id, account_status)
+            values (${app}, ${membership(app).memberId}, 'Ada Lovelace', 'nyc', 25, ${personId}, 'active')`;
+        });
+      }
+      const contextRequest = (path: string, token: string | null = serverToken, body: unknown = {e164}, method = "POST") => new Request(`http://127.0.0.1:4848${path}`, {
+        method, headers: {"content-type": "application/json", ...(token ? {authorization: `Bearer ${token}`} : {})},
+        ...(method === "POST" ? {body: JSON.stringify(body)} : {}),
+      });
+      const contextCall = async (path = "/apps/slop/agent/context", token: string | null = serverToken, body: unknown = {e164}, method = "POST") => {
+        const response = await svc!.fetch(contextRequest(path, token, body, method));
+        expect(response.headers.get("cache-control")).toBe("no-store");
+        return response;
+      };
+      const rt = svc.runtimeFor("slop")!;
+      const options = {app: "slop" as const, memberId, e164, personId, accounts: svc.accounts, runtime: rt};
+      const store = new AgentContextStore(options);
+      await rt.scoped(async tx => {
+        await tx`insert into network.members (app_id, id, name, home_city, age) values ('slop', 'other_context_member', 'Other Person', 'nyc', 30)`;
+        const facets = [
+          {id: "own_shared", member_id: memberId, value: "plays chess"},
+          {id: "own_private", member_id: memberId, value: "PRIVATE_CONTEXT_CANARY", privacy_scope: "agent_private"},
+          {id: "own_matchable", member_id: memberId, value: "MATCHABLE_CONTEXT_CANARY", privacy_scope: "matchable"},
+          {id: "own_opportunity", member_id: memberId, value: "OPPORTUNITY_CONTEXT_CANARY", privacy_scope: "opportunity_specific"},
+          {id: "other_shared", member_id: "other_context_member", value: "OTHER_MEMBER_CONTEXT_CANARY"},
+          {id: "private_disguised_shared", member_id: memberId, value: "PRIVATE_CONTEXT_CANARY"},
+          {id: "other_name", member_id: memberId, value: "ask Other Person about chess"},
+          {id: "unconfirmed", member_id: memberId, value: "UNCONFIRMED_CONTEXT_CANARY", status: "proposed"},
+          {id: "sensitive", member_id: memberId, value: "SENSITIVE_CONTEXT_CANARY", sensitive: "health"},
+          {id: "future", member_id: memberId, value: "FUTURE_CONTEXT_CANARY", valid_from: new Date(now+1)},
+          {id: "expired", member_id: memberId, value: "EXPIRED_CONTEXT_CANARY", valid_to: new Date(now)},
+          {id: "phone", member_id: memberId, value: "call +12125550184"},
+        ];
+        for (const f of facets) await tx`insert into network.facets ${tx({app_id: "slop", kind: "interest", privacy_scope: "shareable", provenance: "said", status: "confirmed", ...f})}`;
+      });
+      await svc.runtimeFor("friends")!.scoped(async tx => {
+        await tx`insert into network.facets (app_id, id, member_id, kind, value, privacy_scope, provenance)
+          values ('friends', 'friend_shared', ${friendsId}, 'interest', 'FRIENDS_CONTEXT_CANARY', 'shareable', 'said')`;
+      });
+      const before = await svc.sql`select (select count(*)::int from network.network_state) as states,
+        (select count(*)::int from network.events) as events, (select count(*)::int from network.messages) as messages`;
+      expect(await store.getMemberContext(memberId, "slop")).toEqual({app: "slop", memberId, firstName: "Ada", city: "nyc", state: "open", stateFrom: null, stateUntil: null, facets: ["plays chess"], activeItems: null});
+      expect((await contextCall("/apps/slop/agent/context", null)).status).toBe(401);
+      expect((await contextCall("/apps/slop/agent/context", staffToken)).status).toBe(403);
+      expect((await contextCall("/apps/friends/agent/context")).status).toBe(403);
+      expect((await contextCall("/agent/context")).status).toBe(400);
+      expect((await contextCall("/apps/slop/agent/context", serverToken, {e164, memberId: "forged"})).status).toBe(400);
+      expect((await contextCall("/apps/slop/agent/context", serverToken, {e164: "2125550183"})).status).toBe(400);
+      expect((await contextCall("/apps/slop/agent/context", serverToken, {}, "GET")).status).toBe(405);
+      const response = await contextCall();
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual(await store.getMemberContext(memberId, "slop"));
+      expect((await svc.publicFetch(contextRequest("/apps/slop/agent/context"))).status).toBe(404);
+      const [audit] = await svc.sql`select target_id, app_id, detail from network.staff_audit where action = 'read_agent_context'`;
+      expect(audit.app_id).toBe("slop");
+      expect(audit.target_id).not.toBe(e164);
+      expect(JSON.stringify(audit)).not.toMatch(/1212555|CANARY|Ada|plays chess/);
+      expect(await store.getMemberContext(memberId, "friends")).toBeNull();
+      expect(await store.getMemberContext("other_context_member", "slop")).toBeNull();
+      const friends = new AgentContextStore({...options, app: "friends", memberId: friendsId, runtime: svc.runtimeFor("friends")!});
+      expect((await friends.getMemberContext(friendsId, "friends"))!.facets).toEqual(["FRIENDS_CONTEXT_CANARY"]);
+      expect(await new AgentContextStore({...options, personId: randomUUID()}).getMemberContext(memberId, "slop")).toBeNull();
+      expect(await new AgentContextStore({...options, memberId: "absent_context_member"}).getMemberContext("absent_context_member", "slop")).toBeNull();
+      // A platform membership alone must not cause ConsentNetwork.member() to fabricate a profile.
+      await svc.people.putMembership({...membership("slop"), memberId: "absent_context_member"});
+      expect(await new AgentContextStore({...options, memberId: "absent_context_member"}).getMemberContext("absent_context_member", "slop")).toBeNull();
+      expect(rt.net.memberList().some(m => m.id === "absent_context_member")).toBe(false);
+      await svc.people.putMembership(membership("slop"));
+      // Direct database changes must reach the next read, with no cached plugin state.
+      await rt.scoped(async tx => { await tx`update network.members set participation_state = 'quiet' where app_id = 'slop' and id = ${memberId}`; });
+      expect((await store.getMemberContext(memberId, "slop"))!.state).toBe("busy");
+      await rt.scoped(async tx => { await tx`update network.members set participation_state = 'receiving' where app_id = 'slop' and id = ${memberId}`; });
+      expect(await store.getMemberContext(memberId, "slop")).toBeNull();
+      await rt.scoped(async tx => { await tx`update network.members set participation_state = 'normal' where app_id = 'slop' and id = ${memberId}`; });
+      for (const routing of ["planner", "structured"] as const) {
+        const plugin = createNetworkEdgePlugin({store, authority: {app: "slop", memberId}, routing});
+        expect(plugin.actions).toEqual([]);
+        expect(plugin.evaluators).toEqual([]);
+        expect(plugin.responseHandlerFieldEvaluators).toBeUndefined();
+        const rendered = await plugin.providers![0]!.get({} as IAgentRuntime, {} as Memory, {values: {}, data: {}, text: ""});
+        expect(rendered.text).toContain("plays chess");
+        expect(rendered.text).toContain("Active items unavailable from this host");
+        expect(rendered.text).not.toMatch(/CANARY|Other Person|1212555/);
+      }
+      const after = await svc.sql`select (select count(*)::int from network.network_state) as states,
+        (select count(*)::int from network.events) as events, (select count(*)::int from network.messages) as messages`;
+      expect(after).toEqual(before);
+      // Revoke after the first genuine Accounts check while the runtime lock is occupied.
+      let release!: () => void, occupied!: () => void, checked!: () => void;
+      const unlocked = new Promise<void>(resolve => { release = resolve; });
+      const acquired = new Promise<void>(resolve => { occupied = resolve; });
+      const firstCheck = new Promise<void>(resolve => { checked = resolve; });
+      const lock = rt.store.withLock(async () => { occupied(); await unlocked; });
+      await acquired;
+      let checks = 0;
+      const rechecked = new AgentContextStore({...options, accounts: {activeMembership: async (...args) => {
+        const result = await svc!.accounts.activeMembership(...args);
+        if (++checks === 1) checked();
+        return result;
+      }}});
+      const pending = rechecked.getMemberContext(memberId, "slop");
+      try {
+        await firstCheck;
+        await svc.people.putMembership({...membership("slop"), state: "removed", leftAt: now+1});
+      } finally { release(); }
+      await lock;
+      expect(await pending).toBeNull();
+      expect(checks).toBe(2);
+      const revoked = await contextCall();
+      const absent = await contextCall("/apps/slop/agent/context", serverToken, {e164: "+12125550185"});
+      expect(revoked.status).toBe(404);
+      expect(absent.status).toBe(404);
+      expect(await revoked.json()).toEqual(await absent.json());
+      await svc.people.putMembership(membership("slop"));
+      expect(await store.getMemberContext(memberId, "slop")).not.toBeNull();
+      await svc.people.addConsent({e164, app: "slop", state: "opted_out", source: "local-context-leave", at: now+1});
+      expect(await store.getMemberContext(memberId, "slop")).toBeNull();
+      expect((await friends.getMemberContext(friendsId, "friends"))!.facets).toEqual(["FRIENDS_CONTEXT_CANARY"]);
+      await svc.people.addConsent({e164, app: "slop", state: "opted_in", source: "local-context-rejoin", at: now+2});
+      await svc.people.addConsent({e164, app: null, state: "opted_out", source: "local-context-stop", at: now+3});
+      expect(await store.getMemberContext(memberId, "slop")).toBeNull();
+      expect(await friends.getMemberContext(friendsId, "friends")).toBeNull();
+      const stopped = await contextCall();
+      expect(stopped.status).toBe(404);
+      expect(await stopped.json()).toEqual({ok: false, error: "unavailable"});
+    } finally {
       await svc?.close();
       await dropDb(url);
     }

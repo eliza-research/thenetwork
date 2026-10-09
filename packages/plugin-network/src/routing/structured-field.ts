@@ -146,7 +146,7 @@ export const NETWORK_STATE_CLARIFICATION =
   "I didn't change your Network availability. If you want to, tell me in your own words, like \"pause my intros until Friday\".";
 
 export interface NetworkActionFieldOptions {
-  store: NetworkStore;
+  store: Pick<NetworkStore, "setState">;
   authority: NetworkTurnAuthority;
   now?: () => Date;
 }

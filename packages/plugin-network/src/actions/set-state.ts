@@ -29,7 +29,7 @@ import {
 } from "../types.js";
 
 export interface SetStateActionOptions {
-  store: NetworkStore;
+  store: Pick<NetworkStore, "setState">;
   authority: NetworkTurnAuthority;
   roleGate?: Action["roleGate"];
   now?: () => Date;

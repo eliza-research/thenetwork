@@ -42,7 +42,7 @@ interface Output {
 }
 
 export interface NetworkSignalsEvaluatorOptions {
-  store: NetworkStore;
+  store: Pick<NetworkStore, "recordSignals">;
   authority: NetworkTurnAuthority;
 }
 

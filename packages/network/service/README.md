@@ -52,6 +52,15 @@ This read neither creates a person nor joins an app. Its answer is not a durable
 Recheck canonical authorization before each effect under the existing SQL and action locks.
 The Cloud backend and Shared agent keep their existing number and ingress path. This endpoint does not change provider routing.
 
+`POST /apps/<app>/agent/context` uses the same credential, explicit app, and exact phone body.
+It resolves the membership again and reads the canonical runtime snapshot under its read lock.
+It checks membership again inside that lock. A missing or revoked binding returns `404 unavailable`.
+The response contains the member's first name, city, current state, and confirmed, non-sensitive,
+shareable facets only. Private facts, contact details, and other members' names and IDs are filtered.
+State windows and member-safe active item summaries have no canonical owner yet: both window fields
+and `activeItems` are `null`. A state that the plugin cannot represent is unavailable.
+This endpoint has no write capability. Successful context reads audit `read_agent_context`.
+
 | Variable | Default | What it does |
 |---|---|---|
 | `NETWORK_DATABASE_URL` | `DATABASE_URL` | Postgres with the `network` schema. A login that can read and write it. |

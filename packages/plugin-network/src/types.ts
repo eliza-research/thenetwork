@@ -39,7 +39,8 @@ export interface NetworkMemberContext extends NetworkMemberScope {
   stateUntil: string | null;
   /** Shareable profile facets only; private facets never reach the plugin. */
   facets: string[];
-  activeItems: Array<{ kind: string; summary: string }>;
+  /** null = the host cannot supply member-safe active items. */
+  activeItems: Array<{ kind: string; summary: string }> | null;
 }
 
 export interface SetStateInput extends NetworkMemberScope {
@@ -90,6 +91,12 @@ export interface NetworkStore {
     signals: NetworkSignal[];
   }): Promise<{ recorded: number }>;
 }
+
+/** The context-only capability; supplying it grants no write capability. */
+export type NetworkContextStore = Pick<NetworkStore, "getMemberContext">;
+
+/** Hosts expose only the capabilities they actually implement. */
+export type NetworkHostStore = NetworkContextStore & Partial<Pick<NetworkStore, "setState" | "recordSignals" | "readUpdates">>;
 
 /** Canonical app membership resolved by the host, never by model output. */
 export interface NetworkMemberScope {

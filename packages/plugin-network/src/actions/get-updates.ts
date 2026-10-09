@@ -9,7 +9,7 @@ import type { Action, ActionResult, IAgentRuntime, Memory } from "@elizaos/core"
 import { NETWORK_CONTEXTS, type NetworkStore, type NetworkTurnAuthority } from "../types.js";
 
 export interface GetUpdatesActionOptions {
-  store: NetworkStore & Required<Pick<NetworkStore, "readUpdates">>;
+  store: Required<Pick<NetworkStore, "readUpdates">>;
   authority: NetworkTurnAuthority;
   roleGate?: Action["roleGate"];
 }

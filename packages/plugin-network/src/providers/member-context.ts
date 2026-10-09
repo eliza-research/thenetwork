@@ -10,10 +10,10 @@ import type {
   ProviderResult,
   State,
 } from "@elizaos/core";
-import type { NetworkStore, NetworkTurnAuthority } from "../types.js";
+import type { NetworkContextStore, NetworkTurnAuthority } from "../types.js";
 
 export interface MemberContextProviderOptions {
-  store: NetworkStore;
+  store: NetworkContextStore;
   authority: NetworkTurnAuthority;
   roleGate?: Provider["roleGate"];
 }
@@ -47,7 +47,9 @@ export function createMemberContextProvider(
       if (member.facets.length > 0) {
         lines.push(`About: ${member.facets.join("; ")}`);
       }
-      if (member.activeItems.length > 0) {
+      if (member.activeItems === null) {
+        lines.push("Active items unavailable from this host");
+      } else if (member.activeItems.length > 0) {
         lines.push("Active items:");
         for (const item of member.activeItems) {
           lines.push(`- [${item.kind}] ${item.summary}`);
