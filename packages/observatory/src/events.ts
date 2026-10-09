@@ -35,10 +35,22 @@ export const NETWORK_EVENT_KINDS: ReadonlySet<string> = new Set([
   // An opportunity closed because the members' picked times had nothing in common left, and a member
   // record that now says under 18 (a staff age correction).
   "no_common_time", "minor_record", "minor_after_contact",
+  // Safety and outcomes (admin-console 3.7, 3.10): reports (ids and a kind, never the reporter's words),
+  // a member reported as under 18, an abuse disclosure (its kinds), gaming flags and their decision,
+  // a meeting called off, a booked plan and who came.
+  "report_received", "minor_reported", "abuse_disclosed", "fraud_queued", "fraud_decision", "meeting_cancelled", "plan_booked", "attendance",
+  // Shadow mode and review quality: the switch, each shadow run, a blind second review, a reviewer's own opportunity.
+  "shadow_switch", "shadow_run", "second_review", "composed", "compose_refused",
 ]);
-const STAFF_ACTOR: Record<string, EventRow["actor_type"]> = { review_decision: "reviewer", review_refused: "reviewer", review_mode: "admin", matching_switch: "admin", safety_action: "admin" };
+const STAFF_ACTOR: Record<string, EventRow["actor_type"]> = {
+  review_decision: "reviewer", review_refused: "reviewer", review_mode: "admin", matching_switch: "admin", safety_action: "admin",
+  second_review: "reviewer", composed: "reviewer", compose_refused: "reviewer", shadow_switch: "admin", fraud_decision: "reviewer",
+};
 /** Payload keys that could hold text a member wrote. */
 const NEVER = new Set(["text", "body", "message"]);
+
+/** Report kinds with a 1-hour staff target (packages/network reports.ts URGENT_REPORTS). */
+const URGENT_REPORT_KINDS: ReadonlySet<string> = new Set(["harassment", "unsafe", "scam", "minor"]);
 
 const scalar = (v: unknown): v is string | number | boolean | null => v === null || ["string", "number", "boolean"].includes(typeof v);
 
@@ -99,7 +111,7 @@ export function membersOf(row: Pick<EventRow, "actor_type" | "actor_id" | "objec
   const ids = new Set<string>();
   if (row.actor_type === "member" && row.actor_id) ids.add(row.actor_id);
   if (row.object_type === "member" && row.object_id) ids.add(row.object_id);
-  for (const k of ["memberId", "from", "newMemberId", "out", "in"]) if (typeof p[k] === "string") ids.add(p[k] as string);
+  for (const k of ["memberId", "from", "newMemberId", "out", "in", "target"]) if (typeof p[k] === "string") ids.add(p[k] as string);
   if (Array.isArray(p.participants)) for (const x of p.participants) ids.add(String(x));
   // gate_reason: the members of an engine proposal the gates stopped.
   if (Array.isArray(p.members)) for (const x of p.members) ids.add(String(x));
@@ -229,6 +241,24 @@ export function describe(row: EventRow, name: (id: string) => string = id => id)
     case "outreach_resumed": text = "Outreach resumed (they wrote again)"; break;
     case "ask_sent": text = `Profile question sent (${human(p.reason)})`; keep("reason"); break;
     case "ask_answered": text = `Profile question answered (${human(p.reason)})`; keep("reason"); break;
+    // Safety: a minor and an urgent report are high severity (1-hour target, PRD 36.3).
+    case "report_received": {
+      const urgent = URGENT_REPORT_KINDS.has(String(p.kind));
+      text = `Report received: ${human(p.kind)}${p.target ? ` about ${name(p.target)}` : ""}${p.met ? " (after a date)" : ""}${urgent ? " · urgent, 1-hour target" : ""}`;
+      severity = urgent ? "bad" : "warn"; keep("kind", "source", "met", "reportId"); break;
+    }
+    case "minor_reported": text = `Reported as under 18${p.by ? ` by ${name(p.by)}` : ""}: out of matching until staff check · urgent`; severity = "bad"; break;
+    case "abuse_disclosed": text = `Disclosed abuse or danger (${(p.kinds as string[] | undefined)?.map(human).join(", ") ?? "?"}): support resources sent · urgent`; severity = "bad"; break;
+    case "fraud_queued": text = `Gaming flag queued for review: ${human(p.flag)}`; severity = "warn"; keep("flag", "fraudId"); break;
+    case "fraud_decision": text = `Gaming flag ${human(p.decision)}${p.reviewer ? ` by ${p.reviewer}` : ""}: ${human(p.flag)}`; keep("flag", "decision", "reviewer"); break;
+    case "meeting_cancelled": text = `Meeting called off (${human(p.reason)})`; severity = "warn"; keep("reason"); break;
+    case "plan_booked": text = `Plan booked: ${p.going ?? "?"} going (quorum ${p.quorum ?? "?"})`; severity = "good"; keep("going", "quorum"); break;
+    case "attendance": text = `Attendance: ${p.present ?? 0} of ${p.booked ?? 0} came`; severity = (p.present ?? 0) >= 2 ? "good" : "warn"; keep("booked", "present", "answered"); break;
+    case "shadow_switch": text = `Shadow mode turned ${p.on ? "on" : "off"}${p.actor ? ` by ${p.actor}` : ""}`; keep("on", "actor"); break;
+    case "shadow_run": text = `Shadow engine run: ${p.queued ?? 0} of ${p.proposals ?? 0} proposals queued as labels; nobody contacted`; keep("proposals", "queued"); break;
+    case "second_review": text = `Blind second review${p.reviewer ? ` by ${p.reviewer}` : ""}: ${human(p.decision)} (${p.agreed ? "agrees" : "disagrees"} with the first)`; severity = p.agreed ? undefined : "warn"; keep("decision", "agreed", "reviewer"); break;
+    case "composed": text = `Composed by a reviewer${p.reviewer ? ` (${p.reviewer})` : ""}: waits for review`; keep("reviewer", "category"); break;
+    case "compose_refused": text = `Reviewer's opportunity refused: ${human(p.reason)}`; severity = "warn"; keep("reason"); break;
     default: break;
   }
   const memberId = subjectOf(row);

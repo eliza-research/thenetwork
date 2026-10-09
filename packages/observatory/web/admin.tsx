@@ -261,16 +261,26 @@ export function Config() {
   const s = useStore();
   const r = useFetch<ConfigInfo>(() => store.config(), `${s.mode}|${s.network?.matchingEnabled}|${s.network?.review.mode}`);
   const [confirm, setConfirm] = useState(false);
+  const [override, setOverride] = useState("");
   useEffect(() => { if (!confirm) return; const h = setTimeout(() => setConfirm(false), 4000); return () => clearTimeout(h); }, [confirm]);
   const c = r.data;
   if (!c) return <Err {...r} />;
   const locked = !!s.env?.matchingLocked && !c.matchingEnabled;
   const canSwitch = c.canChange && s.isAdmin() && !locked;
+  const gate = c.launchGate && !("error" in c.launchGate) ? c.launchGate : undefined;
+  // Turning matching on below the launch gate needs a typed reason (the service logs it with the switch).
+  const needsOverride = !c.matchingEnabled && !!gate && !gate.ok;
   const flip = async () => {
+    if (needsOverride && override.trim().length < 10) { store.toast("Below the launch gate: type a reason (10+ characters) to override", "info"); return; }
     if (!confirm) { setConfirm(true); return; }
     setConfirm(false);
-    const x = await store.control({ type: "matching", on: !c.matchingEnabled });
-    if (x.ok) { store.toast(`Proactive matching ${c.matchingEnabled ? "off" : "on"}`, c.matchingEnabled ? "info" : "good"); r.reload(); }
+    const x = await store.control({ type: "matching", on: !c.matchingEnabled, ...(needsOverride ? { override: override.trim() } : {}) });
+    if (x.ok) { store.toast(`Proactive matching ${c.matchingEnabled ? "off" : "on"}`, c.matchingEnabled ? "info" : "good"); setOverride(""); r.reload(); }
+  };
+  const flipShadow = async () => {
+    const on = !gate?.shadowEnabled;
+    const x = await store.control({ type: "shadow", on });
+    if (x.ok) { store.toast(`Shadow mode ${on ? "on" : "off"}`, "info"); r.reload(); }
   };
   return (
     <div className="config">
@@ -283,6 +293,32 @@ export function Config() {
               : <span className="muted small">{locked ? "Off until the app's pack ships" : c.canChange ? "Admin only" : "Read-only here"}</span>}
             <span className="muted small">Review: {c.reviewMode ?? "–"}</span>
           </div>
+          {c.launchGate && "error" in c.launchGate && <div className="muted small">Launch gate: {c.launchGate.error}</div>}
+          {gate && (
+            <div className="small">
+              <div className="review-actions">
+                <span title="Active members, 18+, no minor signal, not held, with the app's hard fields known (slop: orientation, age range, distance, zip)">
+                  Committed adults <b className={gate.committedAdults >= gate.needAdults ? "" : "warn-text"}>{gate.committedAdults}</b> / {gate.needAdults}
+                </span>
+                <span title="Days in the last 14 with at least one labelled shadow item">
+                  Shadow days <b className={gate.shadowDays >= gate.needDays ? "" : "warn-text"}>{gate.shadowDays}</b> / {gate.needDays} ({gate.shadowLabels} labels)
+                </span>
+                <Badge tone={gate.ok ? "good" : "warn"}>{gate.ok ? "launch gate met" : "below the launch gate"}</Badge>
+              </div>
+              <div className="review-actions">
+                <span className="muted small">Shadow mode</span>
+                <Badge tone={gate.shadowEnabled ? "good" : "warn"}>{gate.shadowEnabled ? "on" : "off"}</Badge>
+                {c.canChange && s.isAdmin() && <button className="btn" onClick={flipShadow}>{gate.shadowEnabled ? "Turn off" : "Turn on"}</button>}
+                <span className="muted small">While matching is off, the engine runs daily and its proposals wait in Review as SHADOW labels; nobody is contacted.</span>
+              </div>
+              {needsOverride && canSwitch && (
+                <label className="edit-row">
+                  <span className="muted small">Override reason (logged with your name; at least 10 characters)</span>
+                  <input className="input" value={override} onChange={e => setOverride(e.target.value)} placeholder="Why matching goes on below the launch gate" />
+                </label>
+              )}
+            </div>
+          )}
           <table className="table">
             <thead><tr><th>v</th><th>When</th><th>Who</th><th>Setting</th><th>Change</th></tr></thead>
             <tbody>

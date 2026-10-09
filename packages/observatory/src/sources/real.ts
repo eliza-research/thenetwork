@@ -16,6 +16,7 @@ import { OUTREACH, SIM_AUTO_REVIEWER } from "@thenetwork/network";
 import { CONNECTION } from "@thenetwork/network";
 import { facetOf, intentOf, loadSnapshot, presenceOf } from "@thenetwork/network/service/snapshot";
 import { runEngineSummarized } from "../engineCapture.ts";
+import { appWiring } from "../../../network/service/packs.ts";
 import { describe, onTimeline, requestLabel, type EventRow } from "../events.ts";
 import { ALERT_WINDOW, growthStats, healthAlerts, hours, reportsFromCases, safetyInfo, scorecard, type MsgMeta } from "../health.ts";
 import { memberFacets } from "../appProfile.ts";
@@ -56,6 +57,7 @@ const SAID_YES = ["accepted", "countered", "confirmed", "attended", "no_show", "
 const HELD = ["COMPLETED", "FEEDBACK_COLLECTED"];
 const ms = (d: Date | string | null | undefined) => (d ? new Date(d).getTime() : undefined);
 export const HIDDEN_MESSAGE = "[member message hidden]";
+const scrubAll = (texts: Record<string, string>) => Object.fromEntries(Object.entries(texts).map(([k, v]) => [k, scrubText(v, false)]));
 
 /** How the Network treats a member's age at one moment (network.md 6.3). */
 interface AgeState { minor: boolean; unknown: boolean }
@@ -309,7 +311,9 @@ export class RealSource implements DataSource {
             (select greatest(coalesce(max(ts), 'epoch'), (select coalesce(max(updated_at), 'epoch') from network.opportunities where app_id = ${app})) from network.messages where app_id = ${app}) as last_activity,
             (select min(joined_at) from network.members where app_id = ${app}) as first_join`,
       // Older databases may not have the review table (or its newer columns) yet: show what there is rather than fail.
-      sql`select opportunity_id, queued_at, deadline, decision, reason, note, reviewer, decided_at, origin, seconds_spent::text::float8 as seconds_spent, edits, rerolls, invalidated from network.review_items where app_id = ${app}`
+      sql`select opportunity_id, queued_at, deadline, decision, reason, note, reviewer, decided_at, origin, seconds_spent::text::float8 as seconds_spent, edits, rerolls, invalidated,
+            shadow, second_status, second_decision, second_reviewer, second_decided_at from network.review_items where app_id = ${app}`
+        .catch(() => sql`select opportunity_id, queued_at, deadline, decision, reason, note, reviewer, decided_at, origin, seconds_spent::text::float8 as seconds_spent, edits, rerolls, invalidated from network.review_items where app_id = ${app}`)
         .catch(() => sql`select opportunity_id, queued_at, deadline, decision, reason, note, reviewer, decided_at from network.review_items where app_id = ${app}`).catch(() => []),
       this.ageInfo(sql),
       // The booked plan: when it reached each member (the reveal), and who called it off.
@@ -319,6 +323,7 @@ export class RealSource implements DataSource {
     ]);
     this.ages = ages;
     const reviewBy = new Map((reviews as any[]).map(r => [r.opportunity_id as string, r]));
+    const drafts = await this.reviewDrafts(reviews as any[]);
     const t = totals[0]!;
     this.lastActivity = ms(t.last_activity) ?? 0;
     const start = ms(t.first_join);
@@ -380,6 +385,8 @@ export class RealSource implements DataSource {
       };
       const rv = reviewBy.get(r.id);
       if (rv) o.review = this.reviewOf(rv);
+      const d = drafts && !("error" in drafts) ? drafts.get(r.id) : undefined;
+      if (o.review && d?.drafts) o.review.drafts = this.reveal ? d.drafts : { ...d.drafts, probe: scrubAll(d.drafts.probe), ...(d.drafts.reveal ? { reveal: scrubAll(d.drafts.reveal) } : {}) };
       if (times.has(r.id)) o.times = times.get(r.id);
       if (o.meetingAt !== undefined && told.has(r.id)) o.booked = { at: o.meetingAt, optOutHours: BOOKED_OPT_OUT_HOURS, told: told.get(r.id)!, cancelled: cancelled.get(r.id) ?? {} };
       upsertIfChanged(s.opps, o, x => s.upsertOpp(x));
@@ -490,7 +497,8 @@ export class RealSource implements DataSource {
       sql`select member_id, ts, opportunity_id, type, body from network.messages
           where app_id = ${app} and direction = 'outbound' and not system and status !~ '^(refused|suppressed|blocked|parked|held)'`,
       sql`select max(at) as at from network.matching_runs where app_id = ${app}`,
-      sql`select count(*)::int as n from network.review_items where app_id = ${app} and decision = 'expired' and decided_at >= ${since}`.catch(() => [{ n: 0 }]),
+      sql`select count(*)::int as n from network.review_items where app_id = ${app} and decision = 'expired' and decided_at >= ${since} and not shadow`
+        .catch(() => sql`select count(*)::int as n from network.review_items where app_id = ${app} and decision = 'expired' and decided_at >= ${since}`).catch(() => [{ n: 0 }]),
       this.service?.health(),
     ]);
     // Network state (stored by the Network's PgStore).
@@ -499,7 +507,7 @@ export class RealSource implements DataSource {
       const trust = new Map<string, "ok" | "watch" | "hold">(((typeof row.trust === "string" ? JSON.parse(row.trust) : row.trust) ?? []).map((t: any) => [t.id, t.level]));
       const counters = (typeof row.counters === "string" ? JSON.parse(row.counters) : row.counters) ?? {};
       const gate = (typeof row.gate === "string" ? JSON.parse(row.gate) : row.gate) ?? {};
-      const open = [...s.opps.values()].filter(o => o.state === "IN_REVIEW").length;
+      const open = [...s.opps.values()].filter(o => o.state === "IN_REVIEW" && !o.review?.shadow).length;
       const reqRows = reqs as any[];
       const info: NetworkInfo = {
         kind: "consent", counters, gateReasons: gate, matchingEnabled: row.matching !== false,
@@ -534,11 +542,13 @@ export class RealSource implements DataSource {
     let guardBlocked = 0;
     for (const r of ev24 as any[]) { if (r.type === "guard_blocked") guardBlocked += r.n; else refusals[r.reason ?? "unknown"] = (refusals[r.reason ?? "unknown"] ?? 0) + r.n; }
     const opps = [...s.opps.values()].filter(o => o.source !== "shadow");
+    // Shadow items are labels: never counted as review backlog or as sent proposals.
+    const live = opps.filter(o => !o.review?.shadow);
     const all = evAll as any[];
     const leaks = all.filter(e => e.type === "invariant_violation" && /leak|canary/i.test(e.rule ?? "")).length;
     const minorContacts = this.minorContacts(contacts as any[]);
     const alerts = healthAlerts({
-      now, start: this.store.clock.start, reviewOpen: opps.filter(o => o.state === "IN_REVIEW" && o.review).map(o => ({ deadline: o.review!.deadline, queuedAt: o.review!.queuedAt })),
+      now, start: this.store.clock.start, reviewOpen: live.filter(o => o.state === "IN_REVIEW" && o.review).map(o => ({ deadline: o.review!.deadline, queuedAt: o.review!.queuedAt })),
       sla: { app: this.app, hours: slaHours()[this.app] }, matchingLocked: !matchingAllowed(this.app),
       reviewExpired: (expired as any[])[0]?.n ?? 0, deferred: this.netState?.deferred ?? null, refusals, guardBlocked,
       lastEngineRun: ms((lastRun as any[])[0]?.at), expectEngine: !!this.netState || s.runs.some(r => !r.shadow), matchingEnabled: this.netState?.matchingEnabled ?? matchingAllowed(this.app),
@@ -555,7 +565,7 @@ export class RealSource implements DataSource {
     const messages: MsgMeta[] = (msgs as any[]).map(m => ({ memberId: m.member_id, ts: ms(m.ts) ?? 0, direction: m.direction, proactive: m.proactive, status: m.status }));
     const card = scorecard({
       now, start: this.store.clock.start, members, opps, messages, requests, optOutAt, invites: s.counts.invites, accepts: s.counts.accepts,
-      reviewSeconds: opps.reduce((a, o) => a + (o.review?.secondsSpent ?? 0), 0), sentProposals: opps.filter(o => o.review?.decision === "approve" && !o.review.invalidated && o.review.reviewer !== SIM_AUTO_REVIEWER).length,
+      reviewSeconds: live.reduce((a, o) => a + (o.review?.secondsSpent ?? 0), 0), sentProposals: live.filter(o => o.review?.decision === "approve" && !o.review.invalidated && o.review.reviewer !== SIM_AUTO_REVIEWER).length,
       inviters, minorContacts, leaks,
     });
     const growth = growthStats({ members, opps, requests, invitees, invitesSent: inviteRows.length, growthAsks: all.filter(e => e.type === "growth_ask").length, inviters });
@@ -682,9 +692,26 @@ export class RealSource implements DataSource {
     };
   }
 
+  /** The pack's texts per item in review, from the Network service (GET /review?drafts=1, audited there). */
+  private drafts?: { key: string; at: number; map: Awaited<ReturnType<ServiceClient["reviewDrafts"]>> };
+  /**
+   * Asked again only when the items waiting changed, or after a minute: every read is an audit row in
+   * the service, and the poll runs every 10 seconds.
+   */
+  private async reviewDrafts(reviews: any[]) {
+    if (!this.service) return undefined;
+    const key = reviews.filter(r => !r.decision || r.second_status === "pending").map(r => r.opportunity_id as string).sort().join(",");
+    if (!key) return undefined;
+    const now = Date.now();
+    if (!this.drafts || this.drafts.key !== key || now - this.drafts.at > 60_000) this.drafts = { key, at: now, map: await this.service.reviewDrafts() };
+    return this.drafts.map;
+  }
+
   private reviewOf(r: any): ReviewInfo {
     const edits = typeof r.edits === "string" ? JSON.parse(r.edits) : r.edits;
     return {
+      ...(r.shadow ? { shadow: true } : {}),
+      ...(r.second_status ? { second: { status: r.second_status, ...(r.second_decision ? { decision: r.second_decision } : {}), ...(r.second_reviewer ? { reviewer: r.second_reviewer } : {}), ...(r.second_decided_at ? { decidedAt: ms(r.second_decided_at) } : {}) } } : {}),
       queuedAt: ms(r.queued_at) ?? 0, deadline: ms(r.deadline) ?? 0, decision: r.decision ?? undefined, reason: r.reason ?? undefined,
       note: r.note ? scrubText(r.note, this.reveal) : undefined, reviewer: r.reviewer ?? undefined, decidedAt: ms(r.decided_at),
       ...(r.seconds_spent !== null && r.seconds_spent !== undefined ? { secondsSpent: Number(r.seconds_spent) } : {}),
@@ -778,12 +805,12 @@ export class RealSource implements DataSource {
 
   async config(): Promise<ConfigInfo> {
     const sql = this.sql;
-    const rows = sql ? await sql`select at, actor_id, type, payload from network.events where app_id = ${this.app} and type in ('matching_switch', 'review_mode') order by at, id` : [];
+    const rows = sql ? await sql`select at, actor_id, type, payload from network.events where app_id = ${this.app} and type in ('matching_switch', 'review_mode', 'shadow_switch') order by at, id` : [];
     const history: ConfigChange[] = [];
-    const last: Record<string, string | boolean | null> = { matching: true, review_mode: "human" };
+    const last: Record<string, string | boolean | null> = { matching: true, review_mode: "human", shadow: false };
     for (const r of rows as any[]) {
-      const key = r.type === "matching_switch" ? "matching" : "review_mode";
-      const to = key === "matching" ? !!r.payload?.on : String(r.payload?.mode);
+      const key = r.type === "matching_switch" ? "matching" : r.type === "shadow_switch" ? "shadow" : "review_mode";
+      const to = key === "review_mode" ? String(r.payload?.mode) : !!r.payload?.on;
       if (last[key] === to) continue;
       history.push({ version: history.length + 1, at: ms(r.at) ?? 0, actor: String(r.payload?.actor ?? r.actor_id ?? "unknown"), key, from: last[key] ?? null, to });
       last[key] = to;
@@ -791,6 +818,7 @@ export class RealSource implements DataSource {
     return {
       matchingEnabled: this.netState?.matchingEnabled ?? matchingAllowed(this.app), reviewMode: this.netState ? "human" : null, network: {},
       outreach: JSON.parse(JSON.stringify(OUTREACH)), history, canChange: !!this.service,
+      ...(this.service ? { launchGate: await this.service.launchGate() } : {}),
     };
   }
 
@@ -832,11 +860,14 @@ export class RealSource implements DataSource {
         this.shadowing ??= this.shadowRun(cmd.city).finally(() => { this.shadowing = undefined; });
         return await this.shadowing;
       }
-      // Staff actions go to the Network service, which runs the same checks as the Network (decide()).
+      // Staff actions go to the Network service, which runs the same checks as the Network (decide(),
+      // compose(), the launch gate). The console refuses only what it knows is locked (no pack yet).
       if (cmd.type === "matching" && cmd.on && !matchingAllowed(this.app)) return { ok: false, error: `${this.app}: ${MATCHING_OFF_TEXT}`, code: "matching_locked" };
-      if (cmd.type === "review" || cmd.type === "matching") {
+      if (cmd.type === "review" || cmd.type === "matching" || cmd.type === "compose" || cmd.type === "shadow") {
         if (!this.service) return { ok: false, error: `real-world mode is read-only: set NETWORK_SERVICE_URL and NETWORK_SERVICE_TOKEN to send "${cmd.type}" to the Network service`, code: "read_only" };
-        return this.afterAction(cmd.type === "review" ? await this.service.review(actor, cmd) : await this.service.matching(actor, cmd.on));
+        const svc = this.service;
+        return this.afterAction(cmd.type === "review" ? await svc.review(actor, cmd) : cmd.type === "compose" ? await svc.compose(actor, cmd)
+          : cmd.type === "shadow" ? await svc.shadow(actor, cmd.on) : await svc.matching(actor, cmd.on, cmd.override));
       }
       return { ok: false, error: `real-world mode is read-only: "${cmd.type}" is only available in game mode` };
     } catch (e) {
@@ -856,18 +887,31 @@ export class RealSource implements DataSource {
     return loadSnapshot(this.isolation === "rls_role" ? appBlocksSql(this.sql, this.app) : this.sql, this.store.clock.now, { app: this.app });
   }
 
+  /**
+   * The app's cities: its rows in platform.networks (the registry), else the cities its engine config
+   * names (slop and peon: nyc), else nyc.
+   */
+  private async appCities(): Promise<City[]> {
+    const rows = this.sql ? await this.sql`select city from platform.networks where app_id = ${this.app} order by city`.catch(() => []) : [];
+    const fromDb = (rows as any[]).map(r => String(r.city) as City);
+    return fromDb.length ? fromDb : (appWiring(this.app).engine?.cities as City[] | undefined) ?? ["nyc"];
+  }
+
   private async shadowRun(city?: City): Promise<ControlResult> {
     const snap = await this.snapshot();
+    const mine = await this.appCities();
+    if (city && !mine.includes(city)) return { ok: false, error: `${this.app} does not run in ${city} (its cities: ${mine.join(", ")})`, code: "unknown_city" };
     this.store.clock.busy = "shadow engine run";
     this.push();
     try {
       for (const id of this.shadowIds) this.store.removeOpp(id);
       this.shadowIds.clear();
       this.shadowRuns = [];
-      const cities: City[] = city ? [city] : ["sf", "nyc"];
+      const cities: City[] = city ? [city] : mine;
       let total = 0;
       for (const c of cities) {
-        const { proposals, summary } = await runEngineSummarized(snap, { seed: 1, city: c, shadow: true });
+        // The app's pack, hooks and engine config (packs.ts appWiring), adults only: what the Network would run.
+        const { proposals, summary } = await runEngineSummarized(snap, { seed: 1, city: c, shadow: true, app: this.app });
         this.shadowRuns.push(summary);
         this.store.addRun(summary);
         for (const p of proposals) {
@@ -883,7 +927,7 @@ export class RealSource implements DataSource {
           });
         }
       }
-      this.store.pushFeed({ t: snap.now, kind: "engine", text: `Shadow run (engine-v1, nothing sent): ${total} proposals for ${cities.map(c => c.toUpperCase()).join(" + ")}` });
+      this.store.pushFeed({ t: snap.now, kind: "engine", text: `Shadow run (engine-v1, ${this.app} pack, nothing sent): ${total} proposals for ${cities.map(c => c.toUpperCase()).join(" + ")}` });
       return { ok: true, data: { proposals: total } };
     } finally {
       this.store.clock.busy = undefined;
@@ -897,6 +941,9 @@ const NET_FEED: Record<string, FeedKind> = {
   review_decision: "review", review_expired: "review", review_invalidated: "review", matching_switch: "config", trust: "trust",
   safety_action: "trust", abuse: "adversarial", guard_blocked: "guard", join_declined: "trust", minor_signal: "trust", age_unknown: "trust",
   age_resolved: "trust", age_conflict: "trust",
+  report_received: "trust", minor_reported: "trust", abuse_disclosed: "adversarial", fraud_queued: "review", fraud_decision: "review",
+  meeting_cancelled: "meeting", plan_booked: "meeting", attendance: "outcome",
+  shadow_switch: "config", shadow_run: "engine", second_review: "review", composed: "review",
   // The rule only: an invariant's detail can name a canary.
   invariant_violation: "invariant",
 };

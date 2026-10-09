@@ -121,9 +121,44 @@ export function firstValue(opps: ObsOpportunity[], requests: ObsRequest[]): Map<
   return first;
 }
 
+const NY_DAY = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" });
+/** Shadow labels count toward precision for this long (the launch gate looks at 14 days of shadow). */
+export const SHADOW_WINDOW_DAYS = 14;
+
+/**
+ * Shadow precision (PRD 34.6, 37.3): shadow items a reviewer approved over shadow items a reviewer
+ * decided (approve or reject), in the last 14 days. Expired items are not labels.
+ */
+export function shadowPrecision(opps: ObsOpportunity[], now: number): { approved: number; decided: number; days: number } {
+  let approved = 0, decided = 0;
+  const days = new Set<string>();
+  for (const o of opps) {
+    const r = o.review;
+    if (!r?.shadow || (r.decision !== "approve" && r.decision !== "reject") || r.decidedAt === undefined || now - r.decidedAt > SHADOW_WINDOW_DAYS * DAY) continue;
+    decided++;
+    if (r.decision === "approve") approved++;
+    days.add(NY_DAY.format(r.decidedAt));
+  }
+  return { approved, decided, days: days.size };
+}
+
+/** Blind second reviews that agree with the first decision (approve vs reject), over second reviews done. */
+export function reviewAgreement(opps: ObsOpportunity[]): { agreed: number; done: number } {
+  let agreed = 0, done = 0;
+  for (const o of opps) {
+    const r = o.review, sec = r?.second;
+    if (!sec || sec.status !== "done" || !sec.decision || (r!.decision !== "approve" && r!.decision !== "reject")) continue;
+    done++;
+    if (sec.decision === r!.decision) agreed++;
+  }
+  return { agreed, done };
+}
+
 export function scorecard(x: ScoreInput): ScoreMetric[] {
   const joined = x.members.filter(m => m.joined && !m.declined);
-  const opps = x.opps.filter(o => o.source !== "shadow");
+  const shadow = shadowPrecision(x.opps, x.now), agree = reviewAgreement(x.opps);
+  // Shadow items are labels: they never count as proposals, meetings or review work below.
+  const opps = x.opps.filter(o => o.source !== "shadow" && !o.review?.shadow);
 
   // Worthwhile-interruption proxy: a proactive message the member answered within 72 h, and no STOP in that time.
   const byMember = new Map<MemberId, MsgMeta[]>();
@@ -191,6 +226,10 @@ export function scorecard(x: ScoreInput): ScoreMetric[] {
       how: "Members under 18 contacted about another member (judge scorer in game mode; in real mode, messages about an opportunity while the recipient or anyone in it was treated as under 18, by the record age or the Network's age state)." }),
     metric({ key: "leaks", label: "Leaks", value: x.leaks, unit: "count", n: x.leaks ?? 0, target: { op: "==", value: 0 },
       how: "Canary leaks (judge scorer in game mode; leak or canary invariant events in real mode)." }),
+    metric({ key: "shadow_precision", label: "Shadow precision (14 days)", value: share(shadow.approved, shadow.decided), unit: "share", n: shadow.decided,
+      how: `Shadow items a reviewer approved over shadow items a reviewer labelled, in the last 14 days (${shadow.days} day(s) with a label). Nobody is contacted about a shadow item. The precision baseline for the launch gate (PRD 37.3).` }),
+    metric({ key: "review_agreement", label: "Reviewer agreement", value: share(agree.agreed, agree.done), unit: "share", n: agree.done, target: { op: ">=", value: 0.8 },
+      how: "Blind second reviews (a share of decided items, default 10%) whose approve or reject matches the first reviewer's." }),
   ];
 }
 
@@ -221,8 +260,15 @@ export function growthStats(x: GrowthInput): GrowthStats {
 export const hours = (ms: number) => Math.round((ms / HOUR) * 10) / 10;
 
 // ---------------------------------------------------------------- safety console (gap 7)
-/** Kinds that make a case urgent (PRD 36.3: 1-hour target). Others: 24 hours. */
-const URGENT = new Set(["harassment", "scam_money", "contact_extraction"]);
+/**
+ * Case event kinds that make a case urgent (PRD 36.3: 1-hour target; harassment, money scams and
+ * minors are urgent). Others: 24 hours. "report:<kind>" is a member's report (packages/network
+ * reports.ts URGENT_REPORTS); "minor_reported" is another member saying they are under 18.
+ */
+export const URGENT_CASE_KINDS: ReadonlySet<string> = new Set([
+  "harassment", "scam_money", "contact_extraction", "minor_reported",
+  "report:harassment", "report:unsafe", "report:scam", "report:minor",
+]);
 const CLOSED_OPP = new Set(["COMPLETED", "FEEDBACK_COLLECTED", "DECLINED", "EXPIRED", "CANCELLED", "SKIPPED", "ABANDONED", "QUORUM_FAILED"]);
 
 export interface SafetyInput {
@@ -284,7 +330,7 @@ export function reportQueue(now: number, rows: NonNullable<SafetyInput["reports"
 export function safetyInfo(x: SafetyInput): SafetyInfo {
   const name = new Map(x.members.map(m => [m.id, m.name]));
   const cases = x.cases.map((c): ObsSafetyCase => {
-    const urgent = c.level === "hold" || c.events.some(e => URGENT.has(e.kind));
+    const urgent = c.level === "hold" || c.events.some(e => URGENT_CASE_KINDS.has(e.kind));
     const dueAt = c.opened + (urgent ? HOUR : DAY);
     return {
       id: c.id, memberId: c.memberId, memberName: name.get(c.memberId) ?? c.memberId, level: c.level, status: c.status, opened: c.opened,
@@ -313,7 +359,7 @@ export function safetyInfo(x: SafetyInput): SafetyInfo {
  */
 export function appHealth(app: AppId, st: ObsState, slaHours: number): AppHealth {
   const now = st.clock.now, alerts = st.stats.alerts ?? [];
-  const open = st.opportunities.filter(o => o.state === "IN_REVIEW" && o.source !== "shadow");
+  const open = st.opportunities.filter(o => o.state === "IN_REVIEW" && o.source !== "shadow" && !o.review?.shadow);
   const late = open.filter(o => o.review && now - o.review.queuedAt > slaHours * HOUR).length;
   const expired = alerts.find(a => a.key === "review_sla_missed")?.count ?? 0;
   const failures = alerts.filter(a => a.key.startsWith("send_refused:") || a.key.startsWith("service_channel:") || a.key === "guard_blocked").reduce((n, a) => n + a.count, 0);

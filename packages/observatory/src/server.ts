@@ -18,6 +18,11 @@
 // localhost (DNS rebinding) or a foreign Origin (cross-site WebSocket hijacking) are refused, unless
 // OBSERVATORY_ALLOWED_ORIGINS (comma-separated origins) lists them. The page "/" is public.
 // OBSERVATORY_REAL_ONLY=1 (production build): game mode, every game control and the lab are off.
+// NODE_ENV=production fails closed (productionProblems): it refuses to start without Cloudflare Access
+// (OBSERVATORY_TRUST_CF_ACCESS=1 with the team and the audience), with a static token configured, or
+// without a Postgres audit log (OBSERVATORY_AUDIT_DATABASE_URL); real-only is forced, and no token is
+// made or printed. A PII reveal and a photo read need a sign-in from the last 15 minutes
+// (OBSERVATORY_FRESH_AUTH_MINUTES): the Access token's iat. GET /healthz answers without auth and without data.
 // Four apps (platform plan section 5): every /api route and the WebSocket take ?app=ntwrk|slop|peon|friends
 // (default ntwrk), and every check is for that app's roles (role@app or role@*). Each app has its
 // own world (game mode) or its own rows (real mode: OBSERVATORY_DATABASE_URL_<APP>, the app's read
@@ -35,7 +40,7 @@ import { runDiff } from "./runDiff.ts";
 import { SQL } from "bun";
 import { APP_IDS, consoleApps, DEFAULT_APP, isAppId, slaHours, toNetworkReason, type AppId } from "./apps.ts";
 import { appProfile, memberFacets, photosAllowed } from "./appProfile.ts";
-import { countsMember, countsOpp, shapeDelta, shapeState, viewClass, type ViewClass } from "./shape.ts";
+import { countsMember, countsOpp, SCORELESS_APPS, scoreless, scorelessRun, shapeDelta, shapeState, viewClass, type ViewClass } from "./shape.ts";
 import { appHealth } from "./health.ts";
 import { PeopleView, peopleUrl } from "./people.ts";
 import {
@@ -87,6 +92,28 @@ export interface ServerOptions {
   socketCheckMs?: number;
   /** How often platform.staff_roles is read again (default 60 s). */
   staffRolesEveryMs?: number;
+  /** Production rules (productionProblems). Default: NODE_ENV=production. */
+  production?: boolean;
+  /** A PII reveal or a photo read needs an SSO sign-in this recent (default OBSERVATORY_FRESH_AUTH_MINUTES, else 15). */
+  freshAuthMinutes?: number;
+}
+
+/** A PII reveal or a photo read needs a sign-in at most this many minutes old (by default). */
+export const FRESH_AUTH_MINUTES = 15;
+
+/**
+ * Why the console may not start in production, or [] (fail closed; admin-console 4). Production needs
+ * Cloudflare Access with its team and audience (every person signs in as themselves), no static
+ * token, real mode only, and a Postgres audit log.
+ */
+export function productionProblems(c: { trustCfAccess: boolean; team?: string; aud?: string; tokens: boolean; realOnly: boolean | undefined; auditPostgres: boolean }): string[] {
+  const out: string[] = [];
+  if (!c.trustCfAccess) out.push("single sign-on is off: set OBSERVATORY_TRUST_CF_ACCESS=1");
+  if (!c.team?.trim() || !c.aud?.trim()) out.push("Cloudflare Access is not configured: set OBSERVATORY_CF_ACCESS_TEAM and OBSERVATORY_CF_ACCESS_AUD");
+  if (c.tokens) out.push("a static token is set (OBSERVATORY_TOKEN or OBSERVATORY_TOKENS): staff sign in through Cloudflare Access only");
+  if (c.realOnly === false) out.push("real-only cannot be turned off in production");
+  if (!c.auditPostgres) out.push("the audit log is not Postgres: set OBSERVATORY_AUDIT_DATABASE_URL");
+  return out;
 }
 
 export interface ObservatoryServer {
@@ -140,7 +167,7 @@ interface WsData { app: AppId; user: StaffUser; cls: ViewClass; truth: boolean }
 const SIM: readonly StaffRole[] = ["reviewer", "safety", "engineer"];
 export const CONTROL_ROLES: Readonly<Record<ControlCommand["type"], readonly StaffRole[]>> = {
   play: SIM, pause: SIM, speed: SIM, step: SIM, propose: SIM, takeover: SIM, reply: SIM, say: SIM, god: SIM, peek: SIM, lens: ["safety"], check_scenario: SIM,
-  review: ["reviewer"], review_mode: [], matching: [], reset: [],
+  review: ["reviewer"], compose: ["reviewer"], review_mode: [], matching: [], shadow: [], reset: [],
   refresh: ["reviewer", "safety", "analyst"], shadow_run: ["analyst"],
 };
 /** The simulation lab's runs: analysts and engineers. */
@@ -156,7 +183,19 @@ function hostnameOf(hostOrUrl: string): string | undefined {
 }
 
 export async function createServer(opts: ServerOptions = {}): Promise<ObservatoryServer> {
-  const realOnly = opts.realOnly ?? process.env.OBSERVATORY_REAL_ONLY === "1";
+  const production = opts.production ?? process.env.NODE_ENV === "production";
+  if (production) {
+    const trust = opts.trustCfAccess ?? process.env.OBSERVATORY_TRUST_CF_ACCESS === "1";
+    const audit = opts.audit && "write" in opts.audit ? opts.audit.kind === "postgres" : !!((opts.audit as { url?: string } | undefined)?.url ?? process.env.OBSERVATORY_AUDIT_DATABASE_URL);
+    const problems = productionProblems({
+      trustCfAccess: trust, team: opts.cfAccess?.team ?? process.env.OBSERVATORY_CF_ACCESS_TEAM, aud: opts.cfAccess?.aud ?? process.env.OBSERVATORY_CF_ACCESS_AUD,
+      tokens: !!(opts.token ?? process.env.OBSERVATORY_TOKEN ?? opts.tokens ?? process.env.OBSERVATORY_TOKENS), realOnly: opts.realOnly, auditPostgres: audit,
+    });
+    if (problems.length) throw new Error(`Observatory: refusing to start in production: ${problems.join("; ")}`);
+  }
+  // Production is real mode only, whatever OBSERVATORY_REAL_ONLY says.
+  const realOnly = production || (opts.realOnly ?? process.env.OBSERVATORY_REAL_ONLY === "1");
+  const freshAuthMs = (opts.freshAuthMinutes ?? (Number(process.env.OBSERVATORY_FRESH_AUTH_MINUTES) || FRESH_AUTH_MINUTES)) * 60_000;
   let mode: Mode = realOnly ? "real" : opts.mode ?? "game";
   const sla = slaHours();
   /** One source per (mode, app), started when first asked for. */
@@ -186,7 +225,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
       if (w.app !== app) continue;
       const k = `${w.cls}|${w.truth}`;
       let msg = made.get(k);
-      if (!msg) { msg = JSON.stringify({ type: "delta", mode: m, app, delta: withAuth(shapeDelta(d, w.cls, w.truth, () => names.values())) }); made.set(k, msg); }
+      if (!msg) { msg = JSON.stringify({ type: "delta", mode: m, app, delta: withAuth(shapeDelta(d, w.cls, w.truth, () => names.values(), { scoreless: SCORELESS_APPS.has(app) })) }); made.set(k, msg); }
       ws.send(msg);
     }
   };
@@ -235,7 +274,8 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
   const trustCfAccess = opts.trustCfAccess ?? process.env.OBSERVATORY_TRUST_CF_ACCESS === "1";
   if (trustCfAccess && (tokens.size || opts.token || process.env.OBSERVATORY_TOKEN)) console.warn("Observatory: single sign-on is on, so OBSERVATORY_TOKENS and OBSERVATORY_TOKEN are refused (each person signs in as themselves)");
   const roles = parseRoles(opts.roles ?? process.env.OBSERVATORY_ROLES);
-  const adminToken = opts.token ?? process.env.OBSERVATORY_TOKEN ?? (tokens.size || trustCfAccess ? undefined : randomBytes(24).toString("base64url"));
+  // A random admin token for local use only: never in production (productionProblems refused any token there).
+  const adminToken = opts.token ?? process.env.OBSERVATORY_TOKEN ?? (tokens.size || trustCfAccess || production ? undefined : randomBytes(24).toString("base64url"));
   if (adminToken && adminToken.length < (opts.minTokenLength ?? 32)) throw new Error(`OBSERVATORY_TOKEN is shorter than ${opts.minTokenLength ?? 32} characters`);
   if (adminToken) { const list = tokens.get(adminToken) ?? []; if (!list.some(g => g.role === "admin" && g.app === "*")) list.push({ role: "admin", app: "*" }); tokens.set(adminToken, list); }
   // The Access email is trusted only from a verified JWT: without the team and the audience, refuse to start.
@@ -248,7 +288,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
   const stored = rolesSql ? new PgStaffRoles(rolesSql, opts.staffRolesEveryMs) : undefined;
   await stored?.start();
   const auth = { tokens, trustCfAccess, roles, access, stored };
-  const audit: AuditSink = opts.audit && "write" in opts.audit ? opts.audit : createAudit(opts.audit as { url?: string; dir?: string } | undefined);
+  const audit: AuditSink = opts.audit && "write" in opts.audit ? opts.audit : createAudit({ ...(opts.audit as { url?: string; dir?: string } | undefined), production });
   const lab = new Lab(opts.lab);
   const pUrl = opts.peopleUrl === false ? undefined : opts.peopleUrl ?? opts.real?.url ?? peopleUrl();
   let people: PeopleView | undefined;
@@ -363,6 +403,12 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
       return json({ error: "audit log unavailable: request refused" }, 503);
     }
   }
+  /**
+   * A PII reveal or a photo read needs a recent sign-in: an SSO user's Access token issued within
+   * freshAuthMs. A static token (local and test servers only; production refuses them) has no sign-in time.
+   */
+  const staleSignIn = (u: StaffUser): boolean => u.via === "sso" ? u.issuedAt === undefined || Date.now() - u.issuedAt > freshAuthMs : production;
+  const reauth = () => json({ ok: false, error: `sign in again: this needs a sign-in from the last ${Math.round(freshAuthMs / 60_000)} minutes`, code: "reauth_required" }, 401);
   const revealFor = (u: StaffUser, app: AppId, memberId: string): RevealGrant | undefined => {
     const k = revealKey(u, app, memberId), g = reveals.get(k);
     if (g && g.until <= Date.now()) { reveals.delete(k); return undefined; }
@@ -393,6 +439,8 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
     development: opts.development ?? process.env.NODE_ENV !== "production",
     routes: {
       "/": index,
+      // For load balancers and uptime checks: no auth, and nothing about the data or the mode.
+      "/healthz": () => new Response("ok", { headers: { ...SECURITY_HEADERS, "content-type": "text/plain" } }),
       "/api/health": global(() => json({ ok: true, mode })),
       "/api/me": global((_r, u) => json({ ...u, realOnly, apps: appsFor(u, mode), crossApp: canCrossApp(u), appInfo: consoleApps(sla) })),
       "/api/apps/health": global(async (_r, u) => {
@@ -421,7 +469,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
       },
       "/api/state": guard(async (_r, u, app) => {
         const truth = truthFor(u, app);
-        return json(withAuth(shapeState((await source(mode, app)).state({ truth }), viewClass(rolesFor(u, app, mode)), truth)));
+        return json(withAuth(shapeState((await source(mode, app)).state({ truth }), viewClass(rolesFor(u, app, mode)), truth, { scoreless: SCORELESS_APPS.has(app) })));
       }),
       "/api/ws-ticket": {
         // The browser's WebSocket cannot send an Authorization header: a one-use ticket for 30 s instead of a token in the URL.
@@ -480,6 +528,10 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           const reason = String(b.reason ?? "").trim();
           if (app !== "slop") return json({ ok: false, error: "photos exist only on slop", code: "no_photos" }, 404);
           if (reason.length < PERSON_REASON_MIN) return json({ ok: false, error: `a reason (at least ${PERSON_REASON_MIN} characters) is required`, code: "reason_required" }, 400);
+          if (staleSignIn(u)) {
+            const no = await record(u, app, { action: "read_photos", targetType: "member", targetId: id, reason, ok: false, detail: { refused: "reauth_required" } });
+            return no ?? reauth();
+          }
           const src = await source(mode, app);
           const d = await src.member(id, { reveal: true });
           if (!d) return json({ ok: false, error: "not found" }, 404);
@@ -499,8 +551,10 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         const id = decodeURIComponent(req.params.id!);
         const no = await record(u, app, { action: "read_opportunity", targetType: "opportunity", targetId: id, ok: true });
         if (no) return no;
-        const d = await (await source(mode, app)).opportunity(id, { truth: truthFor(u, app) });
-        if (!d) return json({ error: "not found" }, 404);
+        const found = await (await source(mode, app)).opportunity(id, { truth: truthFor(u, app) });
+        if (!found) return json({ error: "not found" }, 404);
+        // slop: no score, no components, no run top list (the score folds in appearance).
+        const d = SCORELESS_APPS.has(app) ? { ...found, opportunity: scoreless(found.opportunity), ...(found.run ? { run: scorelessRun(found.run) } : {}) } : found;
         // An analyst sees the opportunity's shape, never the people in it or the texts written to them.
         if (viewClass(rolesFor(u, app, mode)) === "counts") return json({ ...d, opportunity: countsOpp(d.opportunity), members: d.members.map(countsMember), messages: [] });
         // What a member wrote only for staff who may open that member (4.1); others get its length.
@@ -519,6 +573,10 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           const b = await req.json().catch(() => ({})) as { memberId?: string; reason?: string; minutes?: number };
           const memberId = String(b.memberId ?? ""), reason = String(b.reason ?? "").trim();
           if (!memberId || reason.length < 5) return json({ ok: false, error: "a member and a reason (at least 5 characters) are required" }, 400);
+          if (staleSignIn(u)) {
+            const no = await record(u, app, { action: "reveal", targetType: "member", targetId: memberId, reason, ok: false, detail: { refused: "reauth_required" } });
+            return no ?? reauth();
+          }
           const s = await source(mode, app);
           if (!s.state().members.some(m => m.id === memberId)) {
             // A refused reveal is audited too: probing for who is a member leaves a row (audit observatory-M3).
@@ -550,7 +608,8 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           // Own keys only: "constructor" or "__proto__" is not a command (audit observatory-13).
           const need = Object.hasOwn(CONTROL_ROLES, cmd.type) ? CONTROL_ROLES[cmd.type] : undefined;
           if (!need) return json({ ok: false, error: "unknown command" }, 400);
-          const target = "oppId" in cmd ? { targetType: "opportunity" as const, targetId: cmd.oppId } : "memberId" in cmd ? { targetType: "member" as const, targetId: cmd.memberId } : cmd.type === "matching" || cmd.type === "review_mode" ? { targetType: "config" as const, targetId: cmd.type } : {};
+          const target = "oppId" in cmd ? { targetType: "opportunity" as const, targetId: cmd.oppId } : "memberId" in cmd ? { targetType: "member" as const, targetId: cmd.memberId }
+            : cmd.type === "matching" || cmd.type === "review_mode" || cmd.type === "shadow" ? { targetType: "config" as const, targetId: cmd.type } : {};
           const detail = auditDetail(cmd);
           if (!allowed(u, need, app, mode)) {
             await record(u, app, { action: cmd.type, ...target, ok: false, detail: { ...detail, refused: "forbidden" } });
@@ -614,7 +673,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         const runs = (await source(mode, app)).state().engineRuns;
         const a = runs.find(r => r.id === q.get("a")), b = runs.find(r => r.id === q.get("b"));
         if (!a || !b) return json({ error: "unknown run id (a and b must be engine run ids from the state)" }, 404);
-        return json(runDiff(a, b));
+        return json(SCORELESS_APPS.has(app) ? runDiff(scorelessRun(a), scorelessRun(b)) : runDiff(a, b));
       }),
       "/api/lab": guard(async (_r, _u, app) => json({ enabled: !realOnly, running: lab.running, runs: await lab.list(app) }), LAB_ROLES),
       "/api/lab/run": {
@@ -733,7 +792,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
 /** Command fields an audit row keeps as they are (ids, decisions, codes, numbers). Anything else a client sends is dropped (audit observatory-15). */
 const AUDIT_FIELDS = new Set(["oppId", "memberId", "promptId", "decision", "reason", "on", "mode", "speed", "ms", "action", "participants", "category", "swapOut", "secondsSpent", "auto", "city", "seed", "engine", "personas", "days", "network", "scenario"]);
 /** Free texts: only their length is kept. */
-const AUDIT_TEXTS = new Set(["text", "objective", "note", "why"]);
+const AUDIT_TEXTS = new Set(["text", "objective", "note", "why", "override"]);
 const auditValue = (v: unknown): unknown =>
   typeof v === "string" ? v.slice(0, 200) : typeof v === "number" || typeof v === "boolean" || v === null ? v
     : Array.isArray(v) ? v.slice(0, 20).filter(x => typeof x === "string").map(x => (x as string).slice(0, 200)) : undefined;
@@ -742,7 +801,7 @@ const auditValue = (v: unknown): unknown =>
 export function auditDetail(cmd: ControlCommand): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(cmd)) {
-    if (k === "explanations" && v && typeof v === "object") out.explanations = Object.keys(v).slice(0, 20).map(x => x.slice(0, 200));
+    if ((k === "explanations" || k === "probes") && v && typeof v === "object") out[k] = Object.keys(v).slice(0, 20).map(x => x.slice(0, 200));
     else if (AUDIT_TEXTS.has(k) && typeof v === "string") out[`${k}Length`] = v.length;
     else if (AUDIT_FIELDS.has(k)) { const x = auditValue(v); if (x !== undefined) out[k] = x; }
   }

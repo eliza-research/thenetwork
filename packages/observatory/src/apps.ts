@@ -1,9 +1,9 @@
 // The admin console for four apps (docs/research/2026-10-08-platform-architecture.md section 5).
 // The app list, names, domains and ages come from the platform registry (packages/platform/src/apps.ts):
 // a rename there changes the console too. This file adds what only the console needs: the review
-// reason codes and the review SLA per app, and whether an app's engine pack has shipped (slop and peon
-// matching stays off until it has).
-import { APP_IDS, APPS, isAppId, type AppId } from "../../platform/src/apps.ts";
+// reason codes and the review SLA per app, and whether an app's engine pack has shipped (peon matching
+// stays off until it has; slop's pack shipped, behind the service's launch gate).
+import { APP_IDS, APPS, isAppId, REVIEW_SLA_HOURS, type AppId } from "../../platform/src/apps.ts";
 import { REVIEW_REASONS, type ReviewReason } from "./types.ts";
 
 export { APP_IDS, APPS, isAppId, type AppId };
@@ -15,9 +15,11 @@ export const DEFAULT_APP: AppId = "ntwrk";
 
 /**
  * Apps whose engine pack has shipped: matching may run. The others still simulate joins, onboarding and
- * safety, with matching off (founder direction 2026-10-08: the engine session owns the packs).
+ * safety, with matching off (founder direction 2026-10-08: the engine session owns the packs). slop's
+ * pack shipped (slop-pack-1.4.0); turning its matching on still goes through the Network service's
+ * launch gate (40 committed adults, 14 days of shadow labels, or an admin override with a reason).
  */
-export const PACK_READY: ReadonlySet<AppId> = new Set<AppId>(APP_IDS.filter(a => a !== "slop" && a !== "peon"));
+export const PACK_READY: ReadonlySet<AppId> = new Set<AppId>(APP_IDS.filter(a => a !== "peon"));
 export const matchingAllowed = (app: AppId) => PACK_READY.has(app);
 export const MATCHING_OFF_TEXT = "matching off until pack";
 
@@ -59,12 +61,12 @@ export function toNetworkReason(app: AppId, code: string, note?: string): { reas
 }
 
 /**
- * Review SLA per app in hours: how long an item may wait before the console counts an SLA miss (the
- * Network's own deadline still expires items unsent). Defaults are founder decisions: slop 6 h (a
- * dating introduction goes stale fast), peon 24 h (hiring reviewers check a role), the others 12 h.
- * OBSERVATORY_REVIEW_SLA_HOURS="slop:6,peon:24" overrides them.
+ * Review SLA per app in hours: how long an item may wait before the console counts an SLA miss. The
+ * defaults are the platform's REVIEW_SLA_HOURS, which the Network also uses for its review deadline
+ * (service/packs.ts), so an item expires unsent when the console counts it missed.
+ * OBSERVATORY_REVIEW_SLA_HOURS="slop:6,peon:24" overrides the console's count only.
  */
-export const DEFAULT_SLA_HOURS: Record<AppId, number> = Object.fromEntries(APP_IDS.map(a => [a, a === "slop" ? 6 : a === "peon" ? 24 : 12])) as Record<AppId, number>;
+export const DEFAULT_SLA_HOURS: Record<AppId, number> = { ...REVIEW_SLA_HOURS };
 export function slaHours(spec = process.env.OBSERVATORY_REVIEW_SLA_HOURS): Record<AppId, number> {
   const out = { ...DEFAULT_SLA_HOURS };
   for (const part of (spec ?? "").split(",").map(x => x.trim()).filter(Boolean)) {
