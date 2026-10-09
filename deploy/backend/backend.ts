@@ -14,7 +14,7 @@
 // before the public API or the MCP server sees the request: a verified request gets Host = the signed
 // site host (which picks the app) and keeps the signed visitor IP for the rate limits; any other
 // request loses every proxy and forwarding header, so a client can never pick either one.
-import { appForHost, DEFAULT_HOST_MAP, isAppId, type AppId } from "../../packages/platform/src/apps.ts";
+import { APP_IDS, appForHost, DEFAULT_HOST_MAP, isAppId, type AppId } from "../../packages/platform/src/apps.ts";
 import { requirePlatformEnv, type Env, type PlatformEnv } from "../../packages/platform/src/env.ts";
 import { PROXY_HEADERS, verifyProxyHeaders } from "../../packages/platform/src/proxy.ts";
 
@@ -43,8 +43,12 @@ export interface BackendConfig {
   hostMap: Record<string, AppId>;
   build: string;
   migrateOnBoot: boolean;
-  /** "dry-run" unless NETWORK_CHANNEL=blooio with BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1 (each app also needs its own flag). */
-  channel: "dry-run" | "blooio";
+  /**
+   * "blooio" only for NETWORK_CHANNEL=blooio with BLOOIO_ALLOW_SEND=1 and at least one <APP>_LIVE_APPROVED=1
+   * (each app still needs its own flag per send; line.ts). "dry-run" (log only) for NETWORK_CHANNEL=dry-run.
+   * Otherwise "queue-dry-run": the real queue against a recording fake provider.
+   */
+  channel: "dry-run" | "queue-dry-run" | "blooio";
   shutdownGraceMs: number;
   tickMs: number;
   warnings: string[];
@@ -103,10 +107,11 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   }
 
   const blooioAsked = e.NETWORK_CHANNEL === "blooio" && !argv.includes("--dry-run");
-  // The Blooio adapter is built only when the global flags are on; each app's own flag is checked again per send.
-  // The same global check as liveSendAllowed(env, "ntwrk") in packages/network/service/channel.ts.
-  const channel = blooioAsked && e.BLOOIO_ALLOW_SEND === "1" && e.NTWRK_LIVE_APPROVED === "1" ? "blooio" : "dry-run";
-  if (blooioAsked && channel === "dry-run") warnings.push("NETWORK_CHANNEL=blooio without BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1: sends stay dry-run");
+  // The Blooio provider is used only when BLOOIO_ALLOW_SEND=1 and some app is approved; each app's own flag is
+  // checked again per send (packages/network/service/shared-line.ts appApproved).
+  const someApp = APP_IDS.some(a => e[`${a.toUpperCase()}_LIVE_APPROVED`] === "1");
+  const channel = blooioAsked && e.BLOOIO_ALLOW_SEND === "1" && someApp ? "blooio" : e.NETWORK_CHANNEL === "dry-run" ? "dry-run" : "queue-dry-run";
+  if (blooioAsked && channel !== "blooio") warnings.push("NETWORK_CHANNEL=blooio without BLOOIO_ALLOW_SEND=1 and an app's <APP>_LIVE_APPROVED=1: sends stay dry-run (the queue dry run)");
   if (channel === "blooio" && (!e.BLOOIO_API_KEY || !(e.BLOOIO_FROM || e.BLOOIO_FROM_NUMBER))) throw new Error("live sends need BLOOIO_API_KEY and BLOOIO_FROM");
   if (!e.NETWORK_SERVICE_TOKENS) warnings.push("NETWORK_SERVICE_TOKENS is not set: every staff route answers 401");
   if (!e.BLOOIO_WEBHOOK_SECRET) warnings.push("BLOOIO_WEBHOOK_SECRET is not set: the shared-line webhook answers 503");

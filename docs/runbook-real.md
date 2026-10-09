@@ -337,15 +337,15 @@ Checked on 2026-10-08 on a migrated scratch database: `--once --dry-run` printed
 | `<APP>_BLOOIO_WEBHOOK_SECRET` | none | One app's line (`/webhooks/blooio/<app>`), for example `SLOP_BLOOIO_WEBHOOK_SECRET`. Without it, that path answers 503. **[CREDENTIALS]** |
 | `NETWORK_CHANNEL` | dry-run | `blooio` uses the Blooio adapter. `--dry-run` always wins. |
 | `BLOOIO_API_KEY`, `BLOOIO_FROM` | none | The Blooio key and the sending line (E.164; `BLOOIO_FROM_NUMBER` is an alias). Needed with `NETWORK_CHANNEL=blooio`. **[CREDENTIALS]** |
-| `BLOOIO_ALLOW_SEND`, `NTWRK_LIVE_APPROVED`, `<APP>_LIVE_APPROVED` | off | The live-send gate (below) **[FOUNDER]** |
+| `BLOOIO_ALLOW_SEND`, `<APP>_LIVE_APPROVED` | off | The live-send gate (below) **[FOUNDER]** |
 | `PLATFORM_API_PORT` | 8790 | The public API for the sites (`--api-port`) |
 | `PLATFORM_STOP_SCOPE`, `PLATFORM_HASH_KEY`, `OTP_PROVIDER`, `TWILIO_*`, `TURNSTILE_SECRET_KEY`, `NODE_ENV`, `PLATFORM_ENV` | see [runbook-platform.md](runbook-platform.md) section 5 | STOP scope, the hash key (required in production), web login codes, bot check, production mode **[CREDENTIALS]** for the keys |
 
 **Live sends.** **Warning:** a live send texts a real phone. Do not set both flags without the founder's approval for that exact launch.
 
 - The default adapter is dry-run: each message is stored in `network.messages` with status `dry_run`. Nothing leaves the machine.
-- `NETWORK_CHANNEL=blooio` uses the Blooio adapter: the prototype's `OutboundQueue` with `blooioRecipientPolicy` and `forbiddenProvider` ([network.md](network.md) 6.5).
-- The Blooio adapter reads the flags on every delivery. It refuses every send (`refused_not_approved`, no provider call) unless `BLOOIO_ALLOW_SEND=1` and `NTWRK_LIVE_APPROVED=1` are both set, and, for an app other than ntwrk, its own `<APP>_LIVE_APPROVED=1` (`SLOP_LIVE_APPROVED`, `PEON_LIVE_APPROVED`, `BUDDIES_LIVE_APPROVED`). One flag alone, or any value but `1`, refuses.
+- `NETWORK_CHANNEL=blooio` uses the Blooio adapter: one `OutboundQueue` for the line, shared by every app, with each app's `blooioRecipientPolicy` and `forbiddenProvider`, its state in Postgres (migration 0014) ([network.md](network.md) 6.5).
+- The Blooio adapter reads the flags on every delivery. An app's own sends need `BLOOIO_ALLOW_SEND=1` and that app's `<APP>_LIVE_APPROVED=1` (`NTWRK_LIVE_APPROVED`, `SLOP_LIVE_APPROVED`, `PEON_LIVE_APPROVED`, `FRIENDS_LIVE_APPROVED`); otherwise `refused_not_approved`, no provider call. The line's HELP, STOP/START, leave and "not open yet" replies need `BLOOIO_ALLOW_SEND=1` and any one app's flag. Any value but `1` refuses. The matrix is in `packages/network/service/README.md`.
 - A person cap holds across apps: at most 3 proactive messages a day for one person. A send over it gets `refused_person_cap`.
 - At start the service prints the send mode: `dry-run`, `blooio (refusing: ...)` or `blooio LIVE`.
 
@@ -416,8 +416,8 @@ Decision first **[FOUNDER]**: PRD 31 says the Network is built inside Eliza Clou
    - Start command: `bun run packages/network/service/main.ts` (6.5), with `NETWORK_SERVICE_HOST=0.0.0.0` only behind the access proxy.
    - Each tick, for each network: `runTick(net, new PgStore(DATABASE_URL, "<app>:<city>"), now)`. It takes `pg_try_advisory_lock(hashtext('network-tick-<app>:<city>'))`. If the lock is held, the tick is skipped. Each inbound message and staff action: `runStored(net, store, fn)`, which waits for the same lock. Every call loads the newest stored state before it runs and saves after, so two instances run one unit of work at a time and never overwrite each other's saves.
    - The service ticks every minute (fixed in `main.ts`). The engine runs once a day inside the tick (09:00 New York). Initial invites and asks go in each member's send window (12:00 New York plus up to 2 hours of spread, open for 6 hours, or a time learned from their replies), so the one-minute tick keeps sends close to the slot ([network.md](network.md) 6.4).
-   - Run one replica first. A second replica is safe (the lock), but each replica has its own in-memory Blooio queue.
-   - Sends stay dry-run. Live Blooio sends need `NETWORK_CHANNEL=blooio`, `BLOOIO_ALLOW_SEND=1`, `NTWRK_LIVE_APPROVED=1` and the app's `<APP>_LIVE_APPROVED=1`, and the founder's approval **[FOUNDER]** (6.5).
+   - Run one replica. The Blooio queue's state is in Postgres, but each replica dispatches its own queue for the line.
+   - Sends stay dry-run. Live Blooio sends need `NETWORK_CHANNEL=blooio`, `BLOOIO_ALLOW_SEND=1` and the app's `<APP>_LIVE_APPROVED=1`, and the founder's approval **[FOUNDER]** (6.5).
    - The platform variables: `PLATFORM_HASH_KEY` (required with `NODE_ENV=production`), `OTP_PROVIDER=twilio` with the Twilio Verify credentials, `TURNSTILE_SECRET_KEY`, `PLATFORM_STOP_SCOPE` **[CREDENTIALS]** ([runbook-platform.md](runbook-platform.md) section 5).
    - Variables (6.5): `NETWORK_DATABASE_URL` (the `network_rw` login), `NETWORK_SERVICE_TOKENS` (one token per role, plus the console token with the admin role) **[CREDENTIALS]**, `NETWORK_SERVICE_AUDIT_DATABASE_URL` (optional), `BLOOIO_WEBHOOK_SECRET`, `BLOOIO_API_KEY` and `BLOOIO_FROM` **[CREDENTIALS]**, `SURPLUS_API_KEY` and `OPENAI_API_KEY` **[CREDENTIALS]** (gpt-6-luna for every LLM use; the Network calls the engine without an LLM today).
    - Review mode stays `"human"` (the default). Never set `"auto"` outside the simulator.
