@@ -52,6 +52,9 @@ import type { NetworkStore } from "./store.ts";
 import { HOLD, Trust, type TrustEvent, type TrustLevel, type TrustState } from "./trust.ts";
 import type { AppHooks, AppTag, HookOpp } from "./apphooks.ts";
 import { checkInReport, reportKindOf, URGENT_REPORTS, type ReportKind, type SafetyReport } from "./reports.ts";
+import { MEMBER_ASK_KINDS } from "./asks.ts";
+import { MemberTextReplies, withOwnSettings, type MemberSettings, type MemberTexts, type TextsHost } from "./intents.ts";
+import { withoutChatFacets } from "./learned.ts";
 
 /** Where an opportunity came from. "planner": a plan from the engine planner, or a crew session (Opp.crewId). */
 export type Origin = "engine" | "request" | "plans" | "planner" | "second_encounter" | "newcomer_welcome" | "player";
@@ -203,6 +206,10 @@ export interface NetworkOptions {
    * ALLOWED_CATEGORIES. Nothing outside it is ever proposed, requested or composed.
    */
   allowedCategories?: readonly Category[];
+  /** Share of probe answers that get "Was that worth a text?" a day later (F19; default 0.2; 0 = never). */
+  worthSample?: number;
+  /** A setting the member changed by text (pause, quiet hours, how often): the service mirrors it on the member record. */
+  onSettings?: (memberId: MemberId, s: MemberSettings) => void;
 }
 
 /**
@@ -297,6 +304,8 @@ interface MemberState {
    * send was one. `askAt`/`askUsed`: the member's own last ask and the follow-ups used on it.
    */
   unsol?: Record<string, number[]>; unsolStreak?: number; lastOutUnsol?: boolean; askAt?: number; askUsed?: number;
+  /** Settings the member set by text and the replies module's own state (intents.ts). */
+  texts?: MemberTexts;
 }
 
 /** The PRD 32.9 reply window: a send this soon after the member's own message (at most 3 of them) is a reply. */
@@ -517,7 +526,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** The app this Network serves, and its member-facing copy. */
   readonly app: AppInfo;
   private readonly copy: Copy;
-  private opts: Required<Omit<NetworkOptions, "app" | "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "plansConfig" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "allowedCategories" | "hooks">>
+  private opts: Required<Omit<NetworkOptions, "app" | "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "plansConfig" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "allowedCategories" | "hooks" | "worthSample" | "onSettings">>
     & Pick<NetworkOptions, "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "hooks">;
   /** The categories this app may start opportunities in (ALLOWED_CATEGORIES). */
   readonly allowedCategories: ReadonlySet<Category>;
@@ -539,6 +548,31 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.pcfg = resolvePlans(opts.plansConfig ?? {});
     this.trust.onChange = (id, from, to, why) => this.onTrustChange(id, from, to, why);
     this.trust.onEvent = (id, e) => this.caseEvent(id, e);
+    this.textsHost = this.makeTextsHost(opts);
+    this.texts = new MemberTextReplies(this.textsHost);
+  }
+
+  /** Replies to everything an active adult says, and the texts that belong to them (intents.ts). */
+  private readonly texts: MemberTextReplies;
+  private readonly textsHost: TextsHost;
+  private makeTextsHost(opts: NetworkOptions): TextsHost {
+    return {
+      app: this.app, copy: this.copy, allowedCategories: this.allowedCategories, seed: opts.seed ?? 1, desireDays: LEARNED_DESIRE_DAYS,
+      worthSample: opts.worthSample ?? 0.2,
+      now: () => this.now(),
+      log: (kind, detail) => this.ctx.log(kind, detail),
+      send: (m, body, meta, kind) => this.send(m as MemberState, body, meta, kind),
+      ack: (m, text) => this.ack(m as MemberState, text),
+      members: () => this.members.values(),
+      requests: () => this.requests,
+      learn: (m, body, reasons) => this.learnFrom(m as MemberState, body, reasons),
+      record: id => { const r = this.record(id); return r ? { state: r.state, quietHours: r.prefs?.quietHours } : undefined; },
+      profileFacets: id => this.snapshotCached().facets.filter(f => f.memberId === id),
+      slotOpen: m => this.timingOk(m as MemberState, "slot", this.now()),
+      invitesOpen: () => !!this.ctx.invite,
+      ...(opts.onSettings ? { onSettings: opts.onSettings } : {}),
+      dirty: () => { this.dirty = true; },
+    };
   }
 
   /** The store runTick() uses when none is passed. */
@@ -591,7 +625,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** An inbound message answers everything pending and is the only thing that resets the unanswered rules. */
   private heardFrom(m: MemberState) {
     m.pendingAsks = []; m.unanswered = 0; m.outbound = 0; m.openAskAt = undefined; m.reengaged = false;
-    if (m.onlyWhenAsked) { m.onlyWhenAsked = false; this.ctx.log("outreach_resumed", { memberId: m.id }); }
+    // "Only when I ask" the member chose by text stays until they say "resume" (intents.ts).
+    if (m.onlyWhenAsked && !m.texts?.own?.onlyWhenAsked) { m.onlyWhenAsked = false; this.ctx.log("outreach_resumed", { memberId: m.id }); }
   }
 
   /**
@@ -709,6 +744,11 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (this.clarify(m, aw, c)) return;
     }
     if (this.optIns(m, body)) return;
+    // What the member asks about the agent itself (asks.ts): an active adult gets the answer; 13-17 keep their path.
+    if (c.ask && MEMBER_ASK_KINDS.has(c.kind)) {
+      if (m.minor) c = { ...c, kind: c.ask.was ?? "other" };
+      else if (m.stage === "active") return this.texts.handle(m, c, body);
+    }
     if (aw?.kind === "crew" && aw.crewId) {
       const yn = this.yesNoOf(body);
       if (yn === "yes" || yn === "no") { m.awaiting = undefined; return this.onCrewAnswer(m, aw.crewId, yn === "yes"); }
@@ -769,6 +809,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (c.kind === "people_request" && !m.minor) return this.openRequest(m, c, {});
     if (c.kind === "plans_request" || (c.kind === "people_request" && m.minor)) return this.onPlans(m, c);
     if (m.minor && c.kind === "other" && body.length > 12) return this.concierge(m);
+    // Everything else from an adult gets a short, honest reply (intents.ts).
+    if (!m.minor) this.texts.handle(m, c, body);
   }
 
   /**
@@ -982,6 +1024,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     const learn = this.opts.hooks?.learn;
     if (!learn || m.minor) return;
     const r = learn(body, reasons, { now: this.now() });
+    // What only the LLM reader read (slop fields the parser found nothing for), tagged "llm".
+    const u = this.understood?.slop && this.opts.hooks?.learnUnderstood?.(this.understood.slop, r.tags, { now: this.now() });
+    if (u && u.tags.length) { r.tags.push(...u.tags); r.replaces.push(...u.replaces); }
     if (!r.tags.length) return;
     const keep = (m.appTags ?? []).filter(t => !r.replaces.some(p => t.tag.startsWith(p)) && !r.tags.some(n => n.tag === t.tag));
     m.appTags = [...keep, ...r.tags];
@@ -1394,7 +1439,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     const def = req.desireId ? desireById.get(req.desireId) : undefined;
     const what = def ? def.text.replace(/^(find|meet|get|be part of|try|start|make|play|join|go on) /, "").replace(/^learn to /, "learning to ") : "that";
     const v = nearbyVenues(m.area, def ? def.needsInterests : req.tags, 1)[0];
-    this.send(m, `${copy.requestNoneYet(what)}${v ? ` Meanwhile, ${v.name} is a good public spot for it.` : ""}`, { type: "info" }, "info");
+    const none = this.ctx.invite ? copy.requestNoneYet(what) : this.app.joinMode === "open" ? this.copy.noneYetJoinHow(what, this.app.id, this.app.domain) : this.copy.noneYetPlain(what);
+    this.send(m, `${none}${v ? ` Meanwhile, ${v.name} is a good public spot for it.` : ""}`, { type: "info" }, "info");
     if (this.canInvite(m)) m.awaiting = { kind: "growth", at: this.now() };
   }
 
@@ -2026,6 +2072,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const picked = offered.filter(x => keys.includes(x.key));
     if (!retry) m.answered++;
     this.ctx.log(retry ? "time_answer" : "probe_answer", { oppId, memberId: m.id, yes, ...(offered.length ? { picked: picked.map(x => x.key) } : {}) });
+    if (!retry) this.texts.probeAnswered(m, oppId);
     if (yes) {
       if (!retry) this.counters.probeYes++;
       o.status.set(m.id, "available"); o.primed.add(m.id);
@@ -2072,6 +2119,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!o.planRun || o.planRun.answers[m.id] !== "pending") return;
     m.answered++;
     this.ctx.log("probe_answer", { oppId: o.id, memberId: m.id, yes, plan: true });
+    this.texts.probeAnswered(m, o.id);
     if (yes) this.counters.probeYes++; else { this.counters.probeNo++; this.emit({ type: "declined", member: m.id, planId: o.id }, `${o.id}:${m.id}`); }
     const notThen = !yes && /\b(that time|then|that day|make it)\b/i.test(body);
     if (yes || notThen) m.availHistory = [...(m.availHistory ?? []), { at: o.plan!.window.start, outcome: yes ? "accepted" as const : "declined_time" as const }].slice(-40);
@@ -2382,6 +2430,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   private invite(m: MemberState, friendName: string) {
+    // No member invites yet (the service has none): say how a friend joins, never a link that does not exist.
+    if (!this.ctx.invite) { this.ctx.log("invite_unavailable", { from: m.id }); this.send(m, this.texts.inviteReply(friendName), { type: "info" }, "reply"); return; }
     if (!this.canInvite(m)) { this.send(m, "Thanks! You're out of invites for now; I'll let you know when you have more.", { type: "info" }, "reply"); return; }
     m.invites.push(this.now());
     this.counters.invitesSent++;
@@ -2393,6 +2443,11 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** A growth ask is an ask, not an invite (founder decision 3): not on the cap; one question at a time. */
   private growthAsk(m: MemberState, body: string, kind: string): SendResult {
+    // Without member invites, never promise one: an open app says how a friend joins; an invite-only app does not ask.
+    if (!this.ctx.invite) {
+      if (this.app.joinMode !== "open") return "refused";
+      body = this.copy.growthJoinHow(this.app.id, this.app.domain);
+    }
     return this.send(m, body, { type: "growth_ask", proactive: false }, "growth", { hook: { t: "growth", kind } });
   }
 
@@ -3007,6 +3062,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     const p = nyParts(now);
     this.weeklyCheckins(now);
+    this.texts.tick(now);
     if (p.hour >= this.opts.runHour && p.hour < ENGINE_RUN_UNTIL && this.lastRunDay !== p.day) {
       this.lastRunDay = p.day;
       this.trust.decay(now);
@@ -3167,6 +3223,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.counters.engineRuns++; this.counters.engineProposals += proposals.length;
     this.currentRunId = this.sid(`${runLog.runId}-nyc`);
     this.opts.onEngineRun?.(runLog, proposals, now);
+    // A want that found nothing for 10+ days: one honest note (33.10).
+    this.texts.emptyStates(runLog.emptyStates ?? [], now);
     let started = 0;
     const ranked = [...proposals].sort((a, b) => b.score - a.score || (a.id < b.id ? -1 : 1));
     // D6: note top-quartile items held for members on "only when I ask" (the only re-engagement trigger).
@@ -3405,7 +3463,8 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** The engine's input: the public snapshot plus everything the Network has learned and observed. */
   engineInput(now: number): EngineInput {
-    const snap = this.ctx.snapshot();
+    // The Network's own learned facts come from its state below; the mirrored rows (learned.ts) are left out.
+    const snap = withoutChatFacets(this.ctx.snapshot());
     const nyc = new Set(snap.members.filter(m => m.homeCity === "nyc" && !this.declinedIds.has(m.id)).map(m => m.id));
     const facets: Facet[] = snap.facets.filter(f => nyc.has(f.memberId));
     const intents: Intent[] = snap.intents.filter(i => nyc.has(i.memberId));
@@ -3431,7 +3490,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     const recent = [...this.opps.values()].filter(o => now - o.createdAt < 30 * DAY).map(o => this.toProposal(o));
     const engineInput: EngineInput = {
       // A member with no valid age on the record who told us they are an adult (6.3) goes in with that age.
-      now, members: snap.members.filter(m => nyc.has(m.id)).map(x => { const m = this.members.get(x.id); return !validAge(x.age) && m && !m.minor && validAge(m.statedAge) ? { ...x, age: m.statedAge } : x; }),
+      now, members: snap.members.filter(m => nyc.has(m.id)).map(x => {
+        const m = this.members.get(x.id);
+        // A pause or quiet hours the member set by text, until the record says the same (intents.ts).
+        const y = m?.texts?.own ? withOwnSettings(m, x, now, this.textsHost) : x;
+        return !validAge(y.age) && m && !m.minor && validAge(m.statedAge) ? { ...y, age: m.statedAge } : y;
+      }),
       facets, intents, presence: snap.presence.filter(p => nyc.has(p.memberId)),
       edges: [
         ...snap.edges.filter(e => nyc.has(e.from) && nyc.has(e.to)),
@@ -3468,7 +3532,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const facets = input.facets.filter(f => adult.has(f.memberId));
     for (const m of this.members.values()) {
       if (!adult.has(m.id)) continue;
-      for (const t of m.appTags ?? []) facets.push({ id: `${m.id}:app:${t.tag}`, memberId: m.id, kind: t.kind, value: t.tag, tags: [t.tag], scope: t.scope, provenance: "said", confidence: 0.9, validFrom: t.at, source: "chat", observedAt: t.at, inferred: false, confirmedByMember: true });
+      for (const t of m.appTags ?? []) facets.push({ id: `${m.id}:app:${t.tag}`, memberId: m.id, kind: t.kind, value: t.tag, tags: [t.tag], scope: t.scope, provenance: t.provenance === "llm" ? "inferred" : "said", confidence: t.provenance === "llm" ? 0.7 : 0.9, validFrom: t.at, source: "chat", observedAt: t.at, inferred: false, confirmedByMember: true });
     }
     const out: EngineInput = {
       ...input,
@@ -4048,7 +4112,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   private snapshotCached(): WorldSnapshot {
     const now = this.now();
     if (!this.snapCache || this.dirty || now - this.snapCache.at > 20 * 60_000 || now < this.snapCache.at) {
-      this.snapCache = { at: now, snap: this.ctx.snapshot() }; this.knownCache = undefined; this.dirty = false;
+      this.snapCache = { at: now, snap: withoutChatFacets(this.ctx.snapshot()) }; this.knownCache = undefined; this.dirty = false;
     }
     return this.snapCache.snap;
   }
@@ -4116,7 +4180,9 @@ export class ConsentNetwork implements NetworkUnderTest {
    * record now keeps the member out of matching (a minor, or a paused or restricted account).
    */
   private syncRecord(m: MemberState): boolean {
-    const r = this.record(m.id);
+    // What the member set by text (pause, quiet hours) sits on top of the record until the record catches up (intents.ts).
+    const r0 = this.record(m.id);
+    const r = r0 && m.texts?.own ? withOwnSettings(m, r0, this.now(), this.textsHost) : r0;
     if (r) {
       const q = r.prefs?.quietHours;
       if (q && (q[0] !== m.quietHours[0] || q[1] !== m.quietHours[1])) m.quietHours = [q[0], q[1]];

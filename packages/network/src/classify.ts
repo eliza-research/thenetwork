@@ -11,10 +11,13 @@ import { parseReply, type Category } from "@thenetwork/core";
 import type { TimeOption } from "@thenetwork/core";
 import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { NEIGHBORHOODS } from "./geo.ts";
+import { memberAskOf, type MemberAsk, type MemberAskKind } from "./asks.ts";
 
 export type Abuse = "sales_spam" | "scam_money" | "contact_extraction" | "prompt_injection" | "harassment" | "mass_recruit";
 export type InboundKind =
-  | "people_request" | "plans_request" | "invite_friend" | "cancel" | "block" | "report" | "feedback_like" | "ack" | "other";
+  | "people_request" | "plans_request" | "invite_friend" | "cancel" | "block" | "report" | "feedback_like" | "ack" | "other"
+  /** What the member asks about the agent itself (asks.ts). */
+  | MemberAskKind;
 
 export interface Classified {
   kind: InboundKind;
@@ -43,6 +46,8 @@ export interface Classified {
   target?: string;
   /** The original text. */
   text?: string;
+  /** For the member's asks about the agent (asks.ts): the pause or quiet hours they said. */
+  ask?: MemberAsk;
 }
 
 /** Lower case, NFKC, straight quotes. */
@@ -152,7 +157,11 @@ export function classify(body: string): Classified {
 
   if (abuse.length && !desire) return out;
   if (RX.plans.test(t) && !x.negatedAsk) return { ...out, kind: "plans_request", category: out.category ?? "events" };
-  if (desire || (RX.peopleAsk.test(t) && !x.negatedAsk)) return { ...out, kind: "people_request", category: out.category ?? "social" };
+  const people = !!desire || (RX.peopleAsk.test(t) && !x.negatedAsk);
+  // Asks about the agent itself replace "other" and "ack", and a people request about a place (asks.ts).
+  const own = memberAskOf(low, { isPeopleAsk: people });
+  if (own) return { ...out, kind: own.kind, ask: { ...own, was: people ? "people_request" : RX.ack.test(t) || t.length < 12 ? "ack" : "other" }, ...(people ? { category: out.category ?? "social" } : {}) };
+  if (people) return { ...out, kind: "people_request", category: out.category ?? "social" };
   if (RX.ack.test(t) || t.length < 12) return { ...out, kind: "ack" };
   return out;
 }

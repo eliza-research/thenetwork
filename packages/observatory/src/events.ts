@@ -35,6 +35,11 @@ export const NETWORK_EVENT_KINDS: ReadonlySet<string> = new Set([
   // An opportunity closed because the members' picked times had nothing in common left, and a member
   // record that now says under 18 (a staff age correction).
   "no_common_time", "minor_record", "minor_after_contact",
+  // What members ask about the agent itself (packages/network intents.ts): settings changed by text,
+  // the sampled "Was that worth a text?" answers (type "worth_a_text", payload {opportunityId, worth}),
+  // empty-state notes, closed asks and reconfirms. Ids, codes and counts only.
+  "member_setting", "worth_a_text", "worth_a_text_asked", "empty_state_notice", "intent_closed", "intents_listed", "know_me",
+  "profile_corrected", "want_reconfirm_sent", "want_reconfirmed", "delete_request", "invite_unavailable",
 ]);
 const STAFF_ACTOR: Record<string, EventRow["actor_type"]> = { review_decision: "reviewer", review_refused: "reviewer", review_mode: "admin", matching_switch: "admin", safety_action: "admin" };
 /** Payload keys that could hold text a member wrote. */
