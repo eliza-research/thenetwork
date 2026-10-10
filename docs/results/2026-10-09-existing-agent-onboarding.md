@@ -165,11 +165,11 @@ Current direct checks show valid TLS: health HTTP 200 (`env=production`, `build=
 These checks establish endpoint reachability, not hosted private Slop authorization or launch readiness.
 The isolated Cloudflare CLI is logged out. A Chrome work-identity check showed one account and no domains.
 The user clarified that Eliza Cloudflare is in Brave. The Chrome result is not evidence about Eliza Labs access.
-Existing Network zone access belongs to another account. The owner is handling a new domain; its purchased name and backend origin remain unconfirmed.
+Shaw purchased `ntwrk.party`, as confirmed by the user. Main `2add897` names `ntwrk.party` and `api.ntwrk.party` as the source targets. Current deployed source, routing and account access remain unverified in this lane.
 An isolated fixture journey does not require Network zone access. It remains local only.
 The latest domain instruction is verified from user-provided messages and an authorized native Messages read.
-New endpoint/domain changes await the owner's confirmed purchased name. No duplicate purchase or old-zone move is planned.
-No Cloudflare, DNS, deployment, main merge, or live-private flag change occurred.
+New endpoint changes require verified zone access and the platform owner's service/database target. No duplicate purchase or old-zone move is planned.
+This lane made no Cloudflare, DNS, deployment, main merge, or live-private flag change. Shaw merged the domain and platform PRs separately.
 
 ## Evidence and publication limits
 
@@ -182,4 +182,13 @@ The 24-second captured-frame walkthrough was shown to the user before public att
 [Draft PR #13](https://github.com/eliza-research/thenetwork/pull/13) contains the source, walkthrough, and review steps.
 Reconciled integration and onboarding E2E passed in hosted PR CI on `e095820`; duplicate push CI exposed the separate Lab race.
 After its fix and parent cleanup: local integration 403/403 (8945 assertions, 115.26 seconds), e2e 29/29 and typecheck pass.
-Final-head hosted checks are pending. Hosted-client acceptance remains unfinished.
+Hosted checks passed on the earlier `34b3aa6` head. These historical results do not qualify the later merge with main. Hosted-client acceptance remains unfinished.
+
+## Current-main reconciliation
+
+The remote PR branch already included Shaw's domain edits at `0cfb515`. This lane fast-forwarded to that head, then merged main `2add897`.
+The four conflicts use main's exact deployment docs and `0003`/`0030` migrations. The renamed skills, default-off development-only ChatGPT pilot, and onboarding E2E cases remain.
+The retired-domain CI guard finds no matches. Typecheck, plugin snapshot checks, four local static builds, and 29 E2E tests (254 assertions) pass on the merged tree.
+The static builds warn that the Turnstile site key is absent; they do not establish working production OTP.
+The full integration suite passes: 420 tests, 9478 assertions, zero failures in 96.62 seconds, using owned Postgres port 54349. No real sends or models ran.
+Databases that recorded the earlier ineffective `0030` and still hold the old domain need a new repair migration. Editing `0030` does not rerun it. The platform owner verified its local preview row and checksum are correct; hosted database state remains unverified. No database ledger was changed.
