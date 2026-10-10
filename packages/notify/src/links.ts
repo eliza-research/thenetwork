@@ -12,11 +12,11 @@ import type { Assistant } from "./types.ts";
 
 export const MAX_PROMPT_CHARS = 80;
 export const MAX_URL_CHARS = 160;
-export const DEFAULT_PAGE_BASE = "https://ntwrk.love";
+export const DEFAULT_PAGE_BASE = "https://ntwrk.party";
 
 export const ASSISTANT_LABEL: Record<Assistant, string> = { chatgpt: "ChatGPT", claude: "Claude", grok: "Grok" };
 
-const ALLOWED_HOSTS = new Set(["chatgpt.com", "claude.ai", "grok.com", "ntwrk.love"]);
+const ALLOWED_HOSTS = new Set(["chatgpt.com", "claude.ai", "grok.com", "ntwrk.party"]);
 const SHORTENERS = /(^|\.)(bit\.ly|tinyurl\.com|t\.co|goo\.gl|ow\.ly|is\.gd|buff\.ly|rebrand\.ly|cutt\.ly|shorturl\.at)$/i;
 
 export function updatePrompt(token: string): string {
@@ -50,7 +50,7 @@ export function assertSendableUrl(url: string, extraHosts: string[] = []): strin
   return url;
 }
 
-/** The buttons on ntwrk.love/t/<token>. Tapping a button (a user gesture) does open the app. */
+/** The buttons on ntwrk.party/t/<token>. Tapping a button (a user gesture) does open the app. */
 export function buttonPageButtons(token: string, assistants: Assistant[], replyTo?: string): { label: string; href: string }[] {
   const prompt = updatePrompt(token);
   const buttons = assistants.map(a => ({ label: `Open in ${ASSISTANT_LABEL[a]}`, href: assistantLink(a, prompt) }));

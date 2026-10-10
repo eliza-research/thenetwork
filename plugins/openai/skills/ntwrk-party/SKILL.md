@@ -1,13 +1,13 @@
 ---
-name: ntwrk-love
-description: Explains The Network (ntwrk.love), the text-message agent that powers friends.help (friends in New York City) and peon.biz (work and hiring), and points a person to the right app so they can sign themselves up. Use when someone asks what The Network or one of its apps is, which app fits what they want, who can join, how joining works, how privacy works across apps, or how to stop, leave or delete. Never signs anyone up, never asks for or types a phone number or verification code, and never searches for or contacts other people.
-license: Proprietary. Terms at https://ntwrk.love/terms
-compatibility: Needs web access to open https://ntwrk.love pages. Sending the profile needs this app's MCP server at https://ntwrk.love/mcp/openai (OAuth sign-in by the person).
+name: ntwrk-party
+description: Explains The Network (ntwrk.party), the text-message agent that powers friends.help (friends in New York City) and peon.biz (work and hiring), and points a person to the right app so they can sign themselves up. Use when someone asks what The Network or one of its apps is, which app fits what they want, who can join, how joining works, how privacy works across apps, or how to stop, leave or delete. Never signs anyone up, never asks for or types a phone number or verification code, and never searches for or contacts other people.
+license: Proprietary. Terms at https://ntwrk.party/terms
+compatibility: Needs web access to open https://ntwrk.party pages. Sending the profile needs this app's MCP server at https://ntwrk.party/mcp/openai (OAuth sign-in by the person).
 metadata:
   app: ntwrk
-  site: https://ntwrk.love
-  backend: "https://api.ntwrk.love"
-  mcp: "https://ntwrk.love/mcp/openai"
+  site: https://ntwrk.party
+  backend: "https://api.ntwrk.party"
+  mcp: "https://ntwrk.party/mcp/openai"
   operator: Eliza Research Corporation
   version: "1.0.0"
 ---
@@ -17,13 +17,13 @@ metadata:
 The Network is an agent you text. It learns what a person is looking for and finds people, small
 groups and plans that fit. It asks first: nobody is introduced unless both people say yes.
 
-All of these apps are powered by The Network. They share one backend at https://api.ntwrk.love, one text
+All of these apps are powered by The Network. They share one backend at https://api.ntwrk.party, one text
 line and one rule: nothing crosses apps without the person's consent. The Network's MCP server is at
-https://ntwrk.love/mcp/openai; each app's site has its own (https://<site>/mcp).
+https://ntwrk.party/mcp/openai; each app's site has its own (https://<site>/mcp).
 
 | App | For | Text keyword | Site |
 |---|---|---|---|
-| The Network | Introductions, plans and events (invite-only for now) | no keyword | https://ntwrk.love |
+| The Network | Introductions, plans and events (invite-only for now) | no keyword | https://ntwrk.party |
 | friends.help | Friends and small group plans in New York City | friends | https://friends.help |
 | peon.biz | Work and hiring (waitlist) | peon | https://peon.biz |
 
@@ -46,10 +46,10 @@ The person signs up through you, in this conversation:
 
 1. Ask, one or two questions at a time: first name, neighborhood, what they want more of right now (people, plans or events), what they like to do, and when they are usually free. Never ask for a phone number, a code, an
    address or anything about another person. Read the profile back and change it until they agree.
-2. Give them one link to confirm their own phone: https://ntwrk.love/join?via=agent. On that page they type
+2. Give them one link to confirm their own phone: https://ntwrk.party/join?via=agent. On that page they type
    their own number, the code we text them, their first name and age, and agree to the texts. You
    never see the number or the code.
-3. When they say it is done, connect to this app's MCP server (https://ntwrk.love/mcp/openai). They sign in on our
+3. When they say it is done, connect to this app's MCP server (https://ntwrk.party/mcp/openai). They sign in on our
    page in their own browser (no code again if they just joined there) and allow access. Then call
    submit_profile once with the profile they agreed to, in their words. check_status shows their
    status.
@@ -92,6 +92,6 @@ applies on every app.
 
 ## Support
 
-- Support: https://ntwrk.love/support (email help@ntwrk.love)
-- Privacy: https://ntwrk.love/privacy
-- Terms and text messaging terms: https://ntwrk.love/terms
+- Support: https://ntwrk.party/support (email help@ntwrk.party)
+- Privacy: https://ntwrk.party/privacy
+- Terms and text messaging terms: https://ntwrk.party/terms
