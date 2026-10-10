@@ -6,6 +6,13 @@ import {DELIVER_PATH, NETWORK_APP_IDS, type DeliverRequest, type NetworkAppId} f
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {BlooioAdapter, type BlooioAdapterOptions} from "./channel.ts";
 
+/**
+ * Receipt lookup only (never a send) for a deliver whose acceptance is unknown; same body as DELIVER_PATH.
+ * Not in the Cloud b763 contract (core/src/svc/contract.ts is its byte-for-byte mirror), so it is named
+ * here until the upstream contract carries it. An optional `acceptedAt` in the answer is accepted the same way.
+ */
+export const DELIVER_RECEIPT_PATH = `${DELIVER_PATH}/receipt`;
+
 export class CloudChannelAdapter extends BlooioAdapter {
   override readonly name = "eliza_cloud" as const;
   constructor(options: Omit<BlooioAdapterOptions,"provider"|"app"> & {app:NetworkAppId; origin:string; secret:string; fetch?:typeof fetch}) {
@@ -18,8 +25,9 @@ export class CloudChannelAdapter extends BlooioAdapter {
       if (!scope || scope.app!==options.app || !NETWORK_APP_IDS.includes(scope.app as NetworkAppId) || normalizePhone(request.to)!==request.to || request.mediaUrls?.length)
         throw new ChannelSendError("Cloud delivery needs a canonical text and persisted queue scope","invalid");
       const payload:DeliverRequest={id:scope.id,to:request.to,text:request.text,app:options.app,memberId:scope.memberId,channel:"blooio",
-        kind:scope.kind==="relay" ? "relay" : scope.kind==="reply" || scope.kind==="compliance" ? "reply" : "proactive"};
-      const path=receiptOnly?`${DELIVER_PATH}/receipt`:DELIVER_PATH,body=JSON.stringify(payload);
+        // A relayed item (packages/network/src/relay.ts) is queued with the outbound id "relay:<item>".
+        kind:scope.kind==="reply" || scope.kind==="compliance" ? "reply" : scope.id.startsWith("relay:") ? "relay" : "proactive"};
+      const path=receiptOnly?DELIVER_RECEIPT_PATH:DELIVER_PATH,body=JSON.stringify(payload);
       let response:Response,value:unknown;
       try {
         response=await(options.fetch??fetch)(`${origin.origin}${path}`,{method:"POST",body,redirect:"error",signal:AbortSignal.timeout(10_000),
@@ -29,11 +37,14 @@ export class CloudChannelAdapter extends BlooioAdapter {
         value=JSON.parse(text);
       } catch {throw new ChannelSendError("Cloud acceptance is unknown","unknown");}
       const result=value && typeof value==="object" && !Array.isArray(value)?value as Record<string,unknown>:null;
-      if (response.status===200 && result?.ok===true && result.history===true && typeof result.replayed==="boolean"
+      // Accepted is accepted: history is false for a recipient with no Eliza account yet (the contract), and
+      // acceptedAt is optional (the queue uses its own clock without it). A malformed acceptedAt is not trusted.
+      const acceptedAt=typeof result?.acceptedAt==="string" ? Date.parse(result.acceptedAt) : undefined;
+      if (response.status===200 && result?.ok===true && typeof result.history==="boolean" && typeof result.replayed==="boolean"
         && Array.isArray(result.providerMessageIds) && result.providerMessageIds.length>0 && result.providerMessageIds.every(id=>typeof id==="string" && id.trim())
-        && typeof result.acceptedAt==="string" && Number.isFinite(Date.parse(result.acceptedAt))) {
+        && (result.acceptedAt===undefined || Number.isFinite(acceptedAt))) {
         return {providerMessageId:result.providerMessageIds[0] as string,providerMessageIds:result.providerMessageIds as string[],status:"queued",
-          replayed:result.replayed,acceptedAt:Date.parse(result.acceptedAt),historyRecorded:true};
+          replayed:result.replayed,...(acceptedAt!==undefined?{acceptedAt}:{}),historyRecorded:result.history};
       }
       if (!receiptOnly && result?.ok===false && result.error!=="unknown") {
         if (result.error==="opted_out") throw new ChannelSendError("Recipient opted out","blocked",response.status,"opted_out");

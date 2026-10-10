@@ -9,7 +9,7 @@ metadata:
   backend: "https://api.ntwrk.party"
   mcp: "https://slop.date/mcp"
   operator: Eliza Research Corporation
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # slop.date
@@ -43,17 +43,27 @@ share one backend at https://api.ntwrk.party, and one text line. This app's MCP 
 
 ## How a person joins (they do it, not you)
 
-The person signs up through you, in this conversation:
+Check connector support before collecting a profile. The current server refuses OpenAI clients
+on slop.date, including ChatGPT, even outside the public plugin. In those clients, explain that
+this agent cannot submit a Slop profile. The person can join on the web themselves, but that
+does not complete onboarding through their existing agent. Do not route them to another assistant.
+
+For clients that support this app's connector, the person signs up through you, in this conversation:
 
 1. Ask, one or two questions at a time: first name (no last name), neighborhood, who they hope to meet (gender, age range of adults 18 and older, how far they will travel), what they are looking for, and two or three things they like. Never ask for a phone number, a code, an
    address or anything about another person. Read the profile back and change it until they agree.
 2. Give them one link to confirm their own phone: https://slop.date/join?via=agent. On that page they type
    their own number, the code we text them, their first name and age, and agree to the texts. You
    never see the number or the code.
-3. When they say it is done, connect to this app's MCP server (https://slop.date/mcp). They sign in on our
-   page in their own browser (no code again if they just joined there) and allow access. Then call
-   submit_profile once with the profile they agreed to, in their words. check_status shows their
-   status.
+3. Ask the person to return to this same agent conversation when they finish on the site.
+   If this app's MCP tools are not available, they must add https://slop.date/mcp in their client's connector settings.
+   Reading this file does not install a connector or authorize access. If the client cannot add it,
+   explain that profile submission is unfinished; do not claim success or send the profile elsewhere.
+   The person signs in and allows access on our page. A code is skipped only when that browser
+   has a current session for this app. Call check_status first and confirm its app is slop.
+   If the connection names another app, stop and connect to this app; never submit across apps.
+   Call submit_profile once with their approved profile, then check_status on the same connection.
+   Report success only when both calls confirm it.
 4. No agent at hand: the person can text "slop" or "slop.date" as their first message to The Network's line
    and answer the agent there.
 

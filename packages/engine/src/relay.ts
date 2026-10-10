@@ -147,6 +147,12 @@ export interface RelayContext {
   thread?: readonly string[];
   /** A compiled guard with both members' private facts (owner set) and canaries (`relayGuard`). */
   guard?: LeakGuard;
+  /**
+   * Extra text rules from the platform (for example the slop pack's `appearanceLeak` on an app that
+   * rates photos). Returns reason codes from RELAY_REASON_FAMILIES ("rating:appearance"); they are
+   * added to the rules' reasons like any other.
+   */
+  extraRules?: (text: string) => string[];
   limits?: Partial<RelayLimits>;
 }
 
@@ -249,10 +255,12 @@ export function classifyRelayText(text: string): { codes: string[]; minorSignal:
 // ----------------------------------------------------------------------------------- photo ids
 /**
  * A photo reference is an opaque id the platform resolves (its own photo table): 8-64 characters of
- * [A-Za-z0-9_-], never a URL, path, email, phone number or a name with a contact in it.
+ * [A-Za-z0-9_-], never a URL, path, email, phone number or a name with a contact in it. A run of 7 or
+ * more digits (separators "-" and "_" ignored: "212-555-0147") reads as a phone number and fails; the
+ * platform's id generator (platform/src/photos.ts `newPhotoId`) draws again until its id passes.
  */
 export function isOpaquePhotoId(id: unknown): id is string {
-  return typeof id === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(id) && !/\d{7,}/.test(id) && !/^(?:https?|www|data|file)/i.test(id);
+  return typeof id === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(id) && !/\d{7,}/.test(id.replace(/[-_]/g, "")) && !/^(?:https?|www|data|file)/i.test(id);
 }
 
 // ------------------------------------------------------------------------------------- guard
@@ -357,6 +365,7 @@ export function relayItem(item: RelayItem, ctx: RelayContext): RelayResult {
         reasons.add(code);
       }
       if (c.minorSignal) { reasons.add("minor:signal"); ageSignal = true; }
+      for (const code of ctx.extraRules?.(text) ?? []) if (/^[a-z_]+:[a-z0-9_]+$/.test(code)) reasons.add(code);
     }
   }
 

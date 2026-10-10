@@ -19,6 +19,8 @@ export interface ServiceMcpOptions {
   now?: () => number;
   /** false: the migration runner has applied the oauth schema (deployed: the service login cannot create it). */
   migrate?: boolean;
+  /** Owned dev-only private ChatGPT pilot. Public /mcp/openai is unchanged. Default off. */
+  privateOpenAiApps?: readonly McpAppId[];
 }
 
 /**
@@ -35,6 +37,9 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
   const env = o.env ?? process.env;
   const log = o.log ?? console.log;
   const dev = devShortcutsAllowed(env);
+  const privateOpenAiApps = o.privateOpenAiApps ?? (env.MCP_PRIVATE_OPENAI_APPS ?? "").split(",").map(s => s.trim()).filter(Boolean);
+  if (privateOpenAiApps.some(id => !isMcpAppId(id))) throw new Error("MCP_PRIVATE_OPENAI_APPS must name existing apps");
+  if (privateOpenAiApps.length && !dev) throw new Error("MCP_PRIVATE_OPENAI_APPS is for an owned dev runtime only");
   const siteKey = env.TURNSTILE_SITE_KEY?.trim();
   if (!dev && (!siteKey || !env.TURNSTILE_SECRET_KEY || !o.databaseUrl)) {
     log("MCP server off: it needs TURNSTILE_SITE_KEY, TURNSTILE_SECRET_KEY and a database outside PLATFORM_ENV=dev");
@@ -61,7 +66,7 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
         assistantLinked: (personId, assistant, active) => svc.assistantLinked(personId, assistant, active),
       } : {}),
     }),
-    store, issuer, hostMap, env, proxySecret: o.proxySecret, log, now: o.now ?? (() => svc.clock.now()),
+    store, issuer, hostMap, env, privateOpenAiApps: privateOpenAiApps as McpAppId[], proxySecret: o.proxySecret, log, now: o.now ?? (() => svc.clock.now()),
     // The token's hostname must be one of that site's hosts (as on the platform API), never another site.
     turnstile: siteKey && env.TURNSTILE_SECRET_KEY ? { siteKey, verify: (t, ip, app) => new CloudflareTurnstile(env.TURNSTILE_SECRET_KEY!).verify(t, ip, dev ? undefined : app ? siteHosts(app) : []) } : undefined,
   });

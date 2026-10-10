@@ -173,7 +173,11 @@ test("policy changes winning after the async gate refuse ordinary dispatch while
     let release!:()=>void,arrive!:()=>void;
     const gate=new Promise<void>(resolve=>{release=resolve;}),entered=new Promise<void>(resolve=>{arrive=resolve;});
     checks.leaks=async row=>{const result=await original!(row);if(row.id===id){arrive();await gate;}return result;};
-    const sending=rt.unitOfWork(()=>rt.unit.sends.push({id,memberId,to:phone,body:"Your requested reminder is ready.",kind:"reply",type:"reminder",proactive:false,system:false,ts:clock.now()}));
+    // A paused or restricted account, or a membership under review, still gets replies to its own messages
+    // (the admission fence stops only proactive sends: outbound-queue.ts send()). Those barriers are
+    // tested with a proactive row; a phone hold and a ban stop a reply too.
+    const proactive=variant==="account_paused"||variant==="account_restricted"||variant==="membership_restricted"||variant==="membership_review";
+    const sending=rt.unitOfWork(()=>rt.unit.sends.push({id,memberId,to:phone,body:"Your requested reminder is ready.",kind:proactive?"proactive":"reply",type:"reminder",proactive,system:false,ts:clock.now()}));
     try {
       await entered;
       if(variant==="account_paused"||variant==="account_restricted") await rt.scoped(tx=>tx`update network.members set account_status=${variant==="account_paused"?"paused":"restricted"} where app_id='friends' and id=${memberId}`);
@@ -185,6 +189,8 @@ test("policy changes winning after the async gate refuse ordinary dispatch while
       expect(dispatches).toBe(before);
       const [stored]=await sql`select status,provider_message_id,sent_at from platform.outbound where id=${id}`;
       expect(stored.provider_message_id).toBeNull();expect(stored.sent_at).toBeNull();expect(stored.status).not.toBe("accepted");
+      // The admission fence itself ended the row, after the async gate.
+      expect(stored.status).toBe(({account_paused:"suppressed_ineligible",account_restricted:"suppressed_ineligible",membership_restricted:"dropped_forgotten",membership_review:"dropped_forgotten",phone_hold:"dropped_forgotten",ban:"refused_opted_out"} as const)[variant]);
       if(variant==="account_restricted") {
         await rt.unitOfWork(()=>rt.system(memberId,"restricted-compliance","Your safety request was received.","compliance"));
         expect(dispatches).toBe(before+1);

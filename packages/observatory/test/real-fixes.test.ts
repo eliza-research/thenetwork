@@ -85,6 +85,10 @@ describe.skipIf(!pgAvailable)("real mode fixes and per-app panels (Postgres)", (
     await facet("f4", "s1", "fact", "age check passed", ["verify:age:pass"]);
     await facet("f5", "s1", "fact", "attractiveness 0.91", ["slop:attractiveness:0.91"]);
     await facet("f6", "s1", "interest", "climbing", ["climbing"], "shareable");
+    // The photo rating exactly as the service writes it (writeRating: the engine's appearanceFacet, agent_private, source photo_rater).
+    await sql`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, source, confidence, status, valid_from)
+      values ('slop', 's1:appearance', 's1', 'fact', 'photo rating (internal)', ${"{appearance:face=0.83,appearance:body=0.77,appearance:overall=0.81,appearance:conf=0.64,appearance:bodyType=athletic}"}::text[],
+        'agent_private', 'inferred', 'photo_rater', 0.64, 'confirmed', now())`;
     await facet("f7", "s2", "fact", "age check passed", ["verify:age:pass"]);
     await facet("f8", "s2", "preference", "seeks", ["romance:seeks:man"]);
     // peon: a job seat (with a proxy tag that must never show) and a candidate.
@@ -152,6 +156,9 @@ describe.skipIf(!pgAvailable)("real mode fixes and per-app panels (Postgres)", (
     const revealed = await (await as(TOK.safety, "/api/member/s1?app=slop")).json() as MemberDetail;
     expect(revealed.facets.map(f => f.id).sort()).toEqual(["f1", "f2", "f3", "f4", "f6"]);
     expect(JSON.stringify([shown, revealed])).not.toMatch(/attractiveness|0\.91/);
+    // The photo rating never shows, revealed or not, in the member detail, the app panel or the state.
+    const state = await (await as(TOK.safety, "/api/state?app=slop")).text();
+    for (const body of [JSON.stringify([d, hidden, shown, revealed]), state]) expect(body).not.toMatch(/appearance|photo rating|athletic/);
     // Photos: a reason; never under 18; verified adults only; only https links come back.
     expect((await post(TOK.safety, "/api/member/s1/photos?app=slop", { reason: "no" })).status).toBe(400);
     const minor = await post(TOK.safety, "/api/member/s2/photos?app=slop", { reason: "report r9 check" });

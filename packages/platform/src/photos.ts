@@ -9,18 +9,25 @@
 //    not banned, whose person is an adult (lowest age 18 or more, never unknown) and passes the app's
 //    own check (`eligible`: for slop, a member stated 18+ with no failed staff age check; decision 9).
 //    JPEG, PNG or WebP only (checked on the bytes, not the header), at most PHOTO_MAX_BYTES and
-//    PHOTO_MAX_PER_PERSON. Metadata (EXIF with GPS, XMP, comments, text chunks) is stripped before
-//    anything is stored. A refused photo is never stored and never rated.
+//    PHOTO_MAX_PER_PERSON. Metadata is stripped before anything is stored, by an allowlist: only the
+//    parts a decoder needs are kept (stripMetadata), so EXIF with GPS, XMP, comments, text chunks and
+//    anything unknown never reach storage. A refused photo is never stored and never rated.
 //  - Storage: object storage under a random key (R2 in production, a 0700 folder in dev). There is no
 //    public URL. Staff see a photo only through the backend: the service's audited photo route makes
 //    a signed link that works for 5 minutes (viewUrl / view).
-//  - Rating: an optional engine AppearanceRater (production: makeClefRaterFromEnv, Cloudflare Workers
-//    AI Clef; AGENTS.md decision 12). It rates the MEMBER from their newest photos (at most 4, at most
-//    4 MiB each, bytes only, never a URL) after every upload or delete, only for a verified adult
-//    (checked again at rating time, before any byte is read: zero rater calls otherwise), with retries
-//    on API errors (withRetry). The score goes to `onRating` (the service stores it with the engine's
-//    appearanceFacet, agent_private) and is never returned by any route. No rater: ratings are off and
-//    everything else works.
+//  - Rating: an engine AppearanceRater (production: photoRaterFromEnv, Cloudflare Workers AI Clef;
+//    AGENTS.md decisions 12 and 13). Ratings are ON by default (founder, 2026-10-09: CLEF_RATINGS
+//    unset or `on`; `off` turns them off). Without CLEF_WEIGHTS_PATH the engine's placeholder Clef
+//    weights are used (status on_placeholder) until fitted weights pass the P2 decision rule; a weights
+//    file must carry a version and a provenance record or it is refused. Without the Workers AI token
+//    and account id nothing is rated (off_env). It rates the MEMBER from their newest photos (at most 4,
+//    at most 4 MiB each, bytes only, never a URL) after every upload or delete, only for a verified
+//    adult with a live membership who is not banned (checked before any byte is read: zero rater calls
+//    otherwise, and checked again when the rater returns and after the write: a score is discarded if
+//    the age dropped under 18, a ban landed, the member left or a rated photo was deleted meanwhile),
+//    with retries on API errors (withRetry; each try is a cost row). The score goes to `onRating` (the
+//    service stores it with the engine's appearanceFacet, agent_private) and is never returned by any
+//    route or shown in the console. No rater: ratings are off and everything else works.
 //  - Delete: the member deletes one photo (the rating is dropped, then made again from what is left);
 //    leaving the app or deleting everything deletes them all; a person whose lowest age drops under 18
 //    loses them all (deleteFor), and their rating with them.
@@ -30,40 +37,49 @@ import { join, resolve } from "node:path";
 import { S3Client, type SQL } from "bun";
 import type { AppId } from "./apps.ts";
 import { readCapped } from "./body.ts";
-import type { PeopleStore } from "./store.ts";
+import type { MembershipState, PeopleStore } from "./store.ts";
 import type { AppearanceRater, AppearanceScore, RatingSubject } from "../../engine/src/packs/slop/appearance.ts";
 import { makeClefRaterFromEnv, type ClefRaterOptions } from "../../engine/src/packs/slop/clef.ts";
-import { validateClefWeights, type ClefWeights } from "../../engine/src/packs/slop/clefWeights.ts";
+import { DEFAULT_CLEF_WEIGHTS, validateClefWeights, type ClefWeights } from "../../engine/src/packs/slop/clefWeights.ts";
+import { isOpaquePhotoId } from "../../engine/src/relay.ts";
 
-/** Why the rater is on or off (server.ts logs it at start). */
-export type RaterStatus = "on" | "off_flag" | "off_env" | "off_no_weights" | "refused_weights";
+/** Why the rater is on or off (server.ts logs it at start, with the weights version). */
+export type RaterStatus = "on" | "on_placeholder" | "off_flag" | "off_env" | "refused_weights";
 
 /**
- * The slop.date photo rater from the environment (AGENTS.md decision 12 and "Clef ratings", 2026-10-09).
- * Ratings are OFF unless CLEF_RATINGS=on. When on, it needs CLOUDFLARE_AI_TOKEN, CLOUDFLARE_ACCOUNT_ID
- * and CLEF_WEIGHTS_PATH: a fitted weights file with a version and a provenance record (what it was
- * fitted on). The placeholder weights, or a file without version or provenance, are refused and ratings
- * stay off: no real member is rated by an unfitted model. The rater is the engine's Clef behind its
- * adults-only guard, with up to 3 tries on an API error. Off: photos still work, nothing is rated.
+ * The slop.date photo rater from the environment (AGENTS.md decisions 12 and 13, "Clef ratings" and
+ * founder decision 5 of 2026-10-09). Ratings are ON by default: CLEF_RATINGS unset or `on` means on,
+ * `off` turns them off, and any other value is refused (off) so a typo never rates anyone by surprise.
+ * On, it needs CLOUDFLARE_AI_TOKEN and CLOUDFLARE_ACCOUNT_ID (without them: off_env; photos still work
+ * and nothing is rated). Weights: with no CLEF_WEIGHTS_PATH the engine's placeholder weights are used
+ * (status on_placeholder) until fitted weights pass the P2 decision rule; a file given by
+ * CLEF_WEIGHTS_PATH must be fitted weights with a version and a provenance record (what it was fitted
+ * on), or it is refused and ratings stay off. The rater is the engine's Clef behind its adults-only
+ * guard, with up to 3 tries on an API error.
  */
 export async function photoRaterFromEnv(
   env: Record<string, string | undefined>,
   o: { fetch?: ClefRaterOptions["fetch"]; sleep?: (ms: number) => Promise<void>; log?: (s: string) => void; readFile?: (path: string) => Promise<string> } = {},
 ): Promise<{ rater?: AppearanceRater; status: RaterStatus; weights?: string; detail?: string }> {
-  if ((env.CLEF_RATINGS ?? "").trim().toLowerCase() !== "on") return { status: "off_flag" };
+  const flag = (env.CLEF_RATINGS ?? "").trim().toLowerCase();
+  if (flag === "off") return { status: "off_flag" };
+  if (flag !== "" && flag !== "on") return { status: "off_flag", detail: `CLEF_RATINGS must be on or off (got ${JSON.stringify(env.CLEF_RATINGS)})` };
   if (!env.CLOUDFLARE_AI_TOKEN || !env.CLOUDFLARE_ACCOUNT_ID) return { status: "off_env", detail: "CLOUDFLARE_AI_TOKEN and CLOUDFLARE_ACCOUNT_ID are required" };
-  if (!env.CLEF_WEIGHTS_PATH) return { status: "off_no_weights", detail: "CLEF_WEIGHTS_PATH is required (fitted weights with version and provenance)" };
-  let w: ClefWeights;
-  try {
-    const raw = JSON.parse(await (o.readFile ?? (p => Bun.file(p).text()))(env.CLEF_WEIGHTS_PATH)) as ClefWeights & { provenance?: unknown };
-    if (typeof raw.version !== "string" || !raw.version.trim()) return { status: "refused_weights", detail: "the weights file has no version" };
-    const prov = raw.provenance as { fitter?: unknown; fittedAt?: unknown } | undefined;
-    if (raw.placeholder !== false || !prov || typeof prov !== "object" || typeof prov.fitter !== "string" || typeof prov.fittedAt !== "string")
-      return { status: "refused_weights", detail: `weights ${raw.version} carry no provenance (fitter, fittedAt) or are a placeholder` };
-    w = validateClefWeights(raw);
-  } catch (e) { return { status: "refused_weights", detail: (e as Error).message }; }
+  let w: ClefWeights = DEFAULT_CLEF_WEIGHTS;
+  if (env.CLEF_WEIGHTS_PATH) {
+    try {
+      const raw = JSON.parse(await (o.readFile ?? (p => Bun.file(p).text()))(env.CLEF_WEIGHTS_PATH)) as ClefWeights & { provenance?: unknown };
+      if (typeof raw.version !== "string" || !raw.version.trim()) return { status: "refused_weights", detail: "the weights file has no version" };
+      const prov = raw.provenance as { fitter?: unknown; fittedAt?: unknown } | undefined;
+      if (raw.placeholder !== false || !prov || typeof prov !== "object" || typeof prov.fitter !== "string" || typeof prov.fittedAt !== "string")
+        return { status: "refused_weights", detail: `weights ${raw.version} carry no provenance (fitter, fittedAt) or are a placeholder` };
+      w = validateClefWeights(raw);
+    } catch (e) { return { status: "refused_weights", detail: (e as Error).message }; }
+  }
   const rater = withRetry(makeClefRaterFromEnv(env, { weights: w, ...(o.fetch ? { fetch: o.fetch } : {}) }), { attempts: 3, ...(o.sleep ? { sleep: o.sleep } : {}), ...(o.log ? { log: o.log } : {}) });
-  return { rater, status: "on", weights: w.version };
+  return env.CLEF_WEIGHTS_PATH
+    ? { rater, status: "on", weights: w.version }
+    : { rater, status: "on_placeholder", weights: w.version, detail: "placeholder Clef weights (no CLEF_WEIGHTS_PATH): they ship until fitted weights pass the P2 decision rule" };
 }
 
 export type PhotoType = "image/jpeg" | "image/png" | "image/webp";
@@ -79,6 +95,18 @@ export const PHOTO_CONSENT = {
   version: "2026-10-08",
   text: "I agree that slop.date may store these photos privately. The matchmaker may use them, privately, to learn who I might like and who might like me. No other member sees them, no score from them is ever shown to anyone, and a person on the safety team looks at them only after a report. Photos are for adults (18+) only. I can delete them anytime.",
 } as const;
+
+/**
+ * A new photo id: "ph_" and 24 hex characters. Ids with a run of 7 or more digits are drawn again, so
+ * every id passes the engine's `isOpaquePhotoId` (which refuses digit runs because they read as phone
+ * numbers); about a quarter of plain random hex ids have such a run.
+ */
+export function newPhotoId(): string {
+  for (;;) {
+    const id = `ph_${randomBytes(12).toString("hex")}`;
+    if (isOpaquePhotoId(id)) return id;
+  }
+}
 
 export interface PhotoRow {
   id: string; personId: string; app: AppId; storageKey: string; contentType: PhotoType; bytes: number; sha256: string;
@@ -98,13 +126,18 @@ export function retryable(e: unknown): boolean {
   return e instanceof TypeError || (e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError"));
 }
 
+export interface RetryOptions { attempts?: number; baseMs?: number; sleep?: (ms: number) => Promise<void>; log?: (s: string) => void }
+const retried = new WeakMap<AppearanceRater, { inner: AppearanceRater; options: RetryOptions }>();
+/** The rater inside a withRetry wrapper and its options (the cost ledger meters each try: cost.ts meterRater). */
+export const retryParts = (r: AppearanceRater) => retried.get(r);
+
 /**
  * The rater with retries on API errors: up to `attempts` calls with a doubling wait (the wait goes
  * through `sleep`, so a simulation never waits). A refusal (null) is an answer, never retried.
  */
-export function withRetry(r: AppearanceRater, o: { attempts?: number; baseMs?: number; sleep?: (ms: number) => Promise<void>; log?: (s: string) => void } = {}): AppearanceRater {
+export function withRetry(r: AppearanceRater, o: RetryOptions = {}): AppearanceRater {
   const attempts = Math.max(1, o.attempts ?? 3), base = o.baseMs ?? 500, sleep = o.sleep ?? (ms => Bun.sleep(ms));
-  return {
+  const wrapped: AppearanceRater = {
     id: r.id,
     async rate(subject, photos) {
       for (let i = 1; ; i++) {
@@ -116,6 +149,8 @@ export function withRetry(r: AppearanceRater, o: { attempts?: number; baseMs?: n
       }
     },
   };
+  retried.set(wrapped, { inner: r, options: o });
+  return wrapped;
 }
 
 // ------------------------------------------------------------------------------------ bytes
@@ -131,9 +166,16 @@ const ascii = (b: Uint8Array, at: number, n: number) => String.fromCharCode(...b
 export class BadImage extends Error {}
 
 /**
- * The image with its metadata removed: JPEG APP1-APP15 segments (EXIF and its GPS block, XMP, IPTC)
- * and comments; PNG text, time and eXIf chunks; WebP EXIF and XMP chunks (and their VP8X flags).
- * The pixels are not touched. A malformed file throws BadImage (never stored).
+ * The image with its metadata removed, by an allowlist: only what a decoder needs is copied, and
+ * everything else (EXIF and its GPS block, XMP, IPTC, ICC profiles, comments, text chunks, maker
+ * notes, chunks nobody has named yet) is dropped. The pixels are not touched. A malformed file throws
+ * BadImage (never stored).
+ *   JPEG  SOI, DQT, SOF*, DHT, DAC, DRI, DNL, SOS with its scan data, EOI; APP0 only as a bare JFIF
+ *         header (its thumbnail removed) and APP14 only as the 12-byte Adobe colour-transform header.
+ *   PNG   IHDR, PLTE, IDAT, IEND, tRNS, gAMA and sRGB (colour only, no text). iCCP is dropped: its
+ *         profile name and description are free text.
+ *   WebP  VP8, VP8L, VP8X, ALPH, ANIM and ANMF (and inside each frame only ALPH, VP8 and VP8L). The
+ *         VP8X flags for ICC, EXIF and XMP are cleared.
  */
 export function stripMetadata(b: Uint8Array, type: PhotoType): Uint8Array {
   if (type === "image/jpeg") return stripJpeg(b);
@@ -141,14 +183,17 @@ export function stripMetadata(b: Uint8Array, type: PhotoType): Uint8Array {
   return stripWebp(b);
 }
 
+/** JPEG markers a decoder needs (besides SOI, SOS, EOI and the bare markers): SOF0-SOF15 without DHT (C4), JPG (C8) and DAC (CC), then DHT, DAC, DQT, DNL, DRI. */
+const JPEG_KEEP = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf, 0xc4, 0xcc, 0xdb, 0xdc, 0xdd]);
+
 /**
- * JPEG: every segment is copied except APP1-APP15 and comments, scan by scan (progressive files have
+ * JPEG: segments are copied only when JPEG_KEEP has them, scan by scan (progressive files have
  * several), and nothing after the first EOI. Phones append whole second images after EOI (MPF
  * pictures, depth maps, motion-photo trailers) with their own EXIF and GPS: those never survive.
  */
 function stripJpeg(b: Uint8Array): Uint8Array {
   const out: Uint8Array[] = [b.subarray(0, 2)];
-  let i = 2, scanned = false;
+  let i = 2, scanned = false, jfif = false;
   while (i < b.length) {
     if (b[i] !== 0xff) throw new BadImage("jpeg: marker expected");
     const m = b[i + 1]!;
@@ -172,12 +217,19 @@ function stripJpeg(b: Uint8Array): Uint8Array {
       i = j; scanned = true;
       continue;
     }
-    if (m === 0x01 || (m >= 0xd0 && m <= 0xd7) || m === 0xff) { out.push(b.subarray(i, i + 2)); i += m === 0xff ? 1 : 2; continue; }
+    // Bare markers (no length): TEM, restart markers; 0xFF is fill before a marker.
+    if (m === 0x01 || (m >= 0xd0 && m <= 0xd7)) { out.push(b.subarray(i, i + 2)); i += 2; continue; }
+    if (m === 0xff) { i += 1; continue; }
     if (i + 4 > b.length) throw new BadImage("jpeg: truncated");
     const len = (b[i + 2]! << 8) | b[i + 3]!;
     if (len < 2 || i + 2 + len > b.length) throw new BadImage("jpeg: bad segment");
-    const drop = (m >= 0xe1 && m <= 0xef) || m === 0xfe;
-    if (!drop) out.push(b.subarray(i, i + 2 + len));
+    const payload = b.subarray(i + 4, i + 2 + len);
+    if (JPEG_KEEP.has(m)) out.push(b.subarray(i, i + 2 + len));
+    else if (m === 0xe0 && !jfif && payload.length >= 14 && ascii(payload, 0, 5) === "JFIF\0") {
+      // JFIF: version, units and density only; the thumbnail (and anything after it) is dropped.
+      out.push(Uint8Array.of(0xff, 0xe0, 0x00, 0x10), payload.subarray(0, 12), Uint8Array.of(0, 0));
+      jfif = true;
+    } else if (m === 0xee && payload.length === 12 && ascii(payload, 0, 5) === "Adobe") out.push(b.subarray(i, i + 2 + len)); // the colour transform of CMYK/YCCK files: flags only
     i += 2 + len;
   }
   // A file cut off after its scan data (no EOI): keep the image, close it.
@@ -185,15 +237,17 @@ function stripJpeg(b: Uint8Array): Uint8Array {
   throw new BadImage("jpeg: no image data");
 }
 
-const PNG_DROP = new Set(["eXIf", "tEXt", "iTXt", "zTXt", "tIME"]);
+const PNG_KEEP = new Set(["IHDR", "PLTE", "IDAT", "IEND", "tRNS", "gAMA", "sRGB"]);
 function stripPng(b: Uint8Array): Uint8Array {
   const out: Uint8Array[] = [b.subarray(0, 8)];
-  let i = 8, end = false;
+  let i = 8, end = false, first = true;
   while (i + 12 <= b.length) {
     const len = ((b[i]! << 24) >>> 0) + (b[i + 1]! << 16) + (b[i + 2]! << 8) + b[i + 3]!;
     const type = ascii(b, i + 4, 4);
     if (i + 12 + len > b.length) throw new BadImage("png: bad chunk");
-    if (!PNG_DROP.has(type)) out.push(b.subarray(i, i + 12 + len));
+    if (first && type !== "IHDR") throw new BadImage("png: IHDR must come first");
+    first = false;
+    if (PNG_KEEP.has(type)) out.push(b.subarray(i, i + 12 + len));
     i += 12 + len;
     if (type === "IEND") { end = true; break; }
   }
@@ -201,21 +255,39 @@ function stripPng(b: Uint8Array): Uint8Array {
   return concat(out);
 }
 
-function stripWebp(b: Uint8Array): Uint8Array {
+const WEBP_KEEP = new Set(["VP8 ", "VP8L", "VP8X", "ALPH", "ANIM", "ANMF"]);
+const WEBP_FRAME_KEEP = new Set(["ALPH", "VP8 ", "VP8L"]);
+/** RIFF chunks from `at` to `end`, each with its padding; only the types in `keep`. */
+function riffChunks(b: Uint8Array, at: number, end: number, keep: Set<string>): Uint8Array[] {
   const chunks: Uint8Array[] = [];
-  let i = 12;
-  while (i + 8 <= b.length) {
+  let i = at;
+  while (i + 8 <= end) {
     const type = ascii(b, i, 4);
     const len = b[i + 4]! | (b[i + 5]! << 8) | (b[i + 6]! << 16) | ((b[i + 7]! << 24) >>> 0);
     const padded = len + (len & 1);
-    if (i + 8 + len > b.length) throw new BadImage("webp: bad chunk");
-    if (type !== "EXIF" && type !== "XMP ") {
-      const c = b.slice(i, i + 8 + Math.min(padded, b.length - i - 8));
-      if (type === "VP8X" && c.length > 8) c[8] = c[8]! & ~0x0c; // the EXIF (0x08) and XMP (0x04) flags
-      chunks.push(c);
+    if (i + 8 + len > end) throw new BadImage("webp: bad chunk");
+    if (keep.has(type)) {
+      if (type === "ANMF") {
+        // A frame: its 16-byte header, then its own chunks (only the image ones are kept).
+        if (len < 16) throw new BadImage("webp: bad frame");
+        const inner = concat(riffChunks(b, i + 24, i + 8 + len, WEBP_FRAME_KEEP));
+        const size = 16 + inner.length;
+        const head = b.slice(i, i + 24);
+        head[4] = size & 0xff; head[5] = (size >> 8) & 0xff; head[6] = (size >> 16) & 0xff; head[7] = (size >>> 24) & 0xff;
+        chunks.push(head, inner);
+      } else {
+        const c = b.slice(i, i + 8 + Math.min(padded, end - i - 8));
+        if (type === "VP8X" && c.length > 8) c[8] = c[8]! & ~0x2c; // the ICC (0x20), EXIF (0x08) and XMP (0x04) flags
+        chunks.push(c);
+      }
     }
     i += 8 + padded;
   }
+  return chunks;
+}
+
+function stripWebp(b: Uint8Array): Uint8Array {
+  const chunks = riffChunks(b, 12, b.length, WEBP_KEEP);
   if (!chunks.length) throw new BadImage("webp: no chunks");
   const body = concat(chunks);
   const head = new Uint8Array(12);
@@ -328,7 +400,9 @@ export class PgPhotoStore implements PhotoStore {
 }
 
 // ------------------------------------------------------------------------------------ service
-export type PhotoRefusal = "photos_off" | "app_not_allowed" | "consent_required" | "adults_only" | "not_verified" | "banned" | "too_large" | "bad_type" | "bad_image" | "too_many" | "not_found";
+export type PhotoRefusal = "photos_off" | "app_not_allowed" | "consent_required" | "adults_only" | "not_verified" | "banned" | "too_large" | "bad_type" | "bad_image" | "too_many" | "not_found" | "not_member";
+/** Membership states in which a member may be rated (left or removed: never). */
+const LIVE_MEMBERSHIP: readonly MembershipState[] = ["active", "paused", "onboarding"];
 export type PhotoResult<T> = { ok: true; value: T } | { ok: false; reason: PhotoRefusal };
 
 export interface PhotoServiceOptions {
@@ -391,7 +465,7 @@ export class PhotoService {
     if ((await this.o.meta.list(personId)).length >= PHOTO_MAX_PER_PERSON) return { ok: false, reason: "too_many" };
     let bytes: Uint8Array;
     try { bytes = stripMetadata(input, type); } catch { return { ok: false, reason: "bad_image" }; }
-    const id = `ph_${randomBytes(12).toString("hex")}`;
+    const id = newPhotoId();
     const key = randomBytes(24).toString("hex");
     await this.o.storage.put(key, bytes, type);
     await this.o.meta.put({ id, personId, app, storageKey: key, contentType: type, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), consentVersion, createdAt: this.now() });
@@ -400,14 +474,32 @@ export class PhotoService {
   }
 
   /**
+   * Whether a rating of this person on this app may be made or kept now: photos on, not banned, an
+   * adult (lowest age and the app's own check), a live membership of the app and, when `photoIds` is
+   * given, every one of those photos still there. Undefined: yes.
+   */
+  private async ratingRefusal(personId: string, app: AppId, photoIds?: readonly string[]): Promise<PhotoRefusal | undefined> {
+    const who = await this.mayTake(personId, app);
+    if (who) return who;
+    const m = await this.o.people.getMembership(personId, app);
+    if (!m || !LIVE_MEMBERSHIP.includes(m.state)) return "not_member";
+    if (photoIds) for (const id of photoIds) { const r = await this.o.meta.get(id); if (!r || r.personId !== personId || r.app !== app) return "not_found"; }
+    return undefined;
+  }
+
+  /**
    * Rate the member from their newest photos (at most RATER_MAX_PHOTOS, each at most RATER_MAX_BYTES)
    * with the configured rater. Refused (no rater call, nothing written) for anyone who is not a
-   * verified adult now, or is banned. No rater: nothing happens. Returns whether a score was written.
+   * verified adult with a live membership now, or is banned. A rater call takes seconds, so everything
+   * is checked again when it returns (the lowest age can drop under 18, a ban can land, the member can
+   * leave or delete a photo meanwhile): the score is discarded unless all still hold. It is checked a
+   * third time after the write, and a change that landed during the write drops the rating again
+   * (onRemoved). No rater: nothing happens. Returns whether a score was written.
    */
   async rate(personId: string, app: AppId): Promise<{ rated: boolean; refused?: PhotoRefusal }> {
     const rater = this.o.rater;
     if (!rater || !this.o.storage) return { rated: false };
-    const who = await this.mayTake(personId, app);
+    const who = await this.ratingRefusal(personId, app);
     if (who) return { rated: false, refused: who };
     const person = await this.o.people.getPerson(personId);
     const subject: RatingSubject = { age: person!.lowestAge!, ageVerified: true };
@@ -417,7 +509,19 @@ export class PhotoService {
     if (!photos.length) return { rated: false, refused: "not_found" };
     const s = await rater.rate(subject, photos);
     if (!s) return { rated: false };
+    const ids = photos.map(p => p.id);
+    const changed = await this.ratingRefusal(personId, app, ids);
+    if (changed) {
+      this.o.log?.(`[photos] rating discarded: ${changed} while the rater ran`);
+      return { rated: false, refused: changed };
+    }
     await this.o.onRating?.(personId, app, s, subject);
+    const late = await this.ratingRefusal(personId, app, ids);
+    if (late) {
+      this.o.log?.(`[photos] rating dropped: ${late} while it was written`);
+      await this.o.onRemoved?.(personId, app, ids[0]!);
+      return { rated: false, refused: late };
+    }
     return { rated: true };
   }
 

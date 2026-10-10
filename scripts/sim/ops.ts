@@ -9,7 +9,7 @@
 //             image prunes exactly those packages.
 //   tracked:  on the dev Postgres (:54339), when it is up: the ops tables and grants under row-level
 //             security, and the backup drill (pg_dump to a directory, restore into a new database,
-//             row counts equal table by table).
+//             row counts equal table by table). With REQUIRE_PG=1 (CI) these two gates block.
 import { dirname, relative, resolve } from "node:path";
 import { SQL } from "bun";
 import { CostLedger, MemoryCostSink, budgetLines, costRatesFromEnv, DEFAULT_RATES, PgCostSink } from "../../packages/network/service/cost.ts";
@@ -45,13 +45,13 @@ export async function opsBlock(b: Block): Promise<void> {
       ...healthy("slop:nyc", "slop"), lastTickAgoMs: 20 * MIN,
       backlog: { review: 40, reviewOverdue: 2, deferred: 0, outboundWaiting: 80 },
       sends24h: { attempted: 100, failed: 6, refused: 0, dryRun: 0, smsFallback: 0 }, reviewExpired24h: 1,
-      safety24h: { reports: 2, urgentReports: 1, minorAfterContact: 1, holds: 1, bans: 1 },
+      safety24h: { reports: 2, urgentReports: 1, minorAfterContact: 1, holds: 1, bans: 1 }, safetySignalsWaiting: 2, biasAlerts24h: 1,
     };
     const cost: OpsMetrics["cost"] = { day: "2026-10-08", totalUsd: 9, byApp: { slop: 9 }, budgets: budgetLines({ slop: 9 }, { daily: 10, byApp: { slop: 8 } }) };
     const got = Object.fromEntries(evaluate({ networks: [sick], cost }, CFG).map(a => [a.key, a.level]));
     expect(got).toEqual({
       "tick_late:slop:nyc": "bad", "send_failures:slop:nyc": "bad", "review_sla:slop:nyc": "bad", "safety_minor:slop:nyc": "bad", "safety_report:slop:nyc": "bad",
-      "safety_action:slop:nyc": "warn", "queue_outbound:slop:nyc": "warn", "queue_review:slop:nyc": "warn", "budget:total": "warn", "budget:slop": "bad",
+      "safety_signal:slop:nyc": "bad", "bias_report:slop:nyc": "warn", "safety_action:slop:nyc": "warn", "queue_outbound:slop:nyc": "warn", "queue_review:slop:nyc": "warn", "budget:total": "warn", "budget:slop": "bad",
     });
     // Under the minimum count, or under the rate, failures are not an alert; a report that is not urgent is a warning.
     const few = { ...healthy("peon:nyc", "peon"), sends24h: { attempted: 10, failed: 4, refused: 0, dryRun: 0, smsFallback: 0 } };
@@ -249,7 +249,7 @@ export async function opsBlock(b: Block): Promise<void> {
     expect([ok.status, (await ok.json()).ok]).toEqual([200, true]);
     expect(() => loadConfig({ ...base, OPS_METRICS_TOKEN: "short" })).toThrow();
     const thrown = (f: () => unknown) => { try { f(); return ""; } catch (e) { return (e as Error).message; } };
-    expect(thrown(() => loadConfig({ PLATFORM_ENV: "staging", DATABASE_URL: "postgres://x@db/x", MIGRATION_DATABASE_URL: "postgres://o@db/x", PLATFORM_HASH_KEY: "h".repeat(40), PLATFORM_PROXY_SECRET: "s".repeat(40),
+    expect(thrown(() => loadConfig({ PLATFORM_ENV: "staging", DATABASE_URL: "postgres://x@db/x", MIGRATION_DATABASE_URL: "postgres://o@db/x", PLATFORM_HASH_KEY: "h".repeat(40), LEAK_LABEL_KEY: "l".repeat(40), PLATFORM_PROXY_SECRET: "s".repeat(40),
       TURNSTILE_SECRET_KEY: "f", OTP_PROVIDER: "twilio", TWILIO_ACCOUNT_SID: "AC", TWILIO_AUTH_TOKEN: "t", TWILIO_VERIFY_SERVICE_SID: "VA", ALERT_WEBHOOK_URL: "http://hooks.example.test/x" }))).toMatch(/must be https/);
     // A tick that never finishes: healthy until TICK_LATE_MS (15 min by default), then 503 for the uptime monitor.
     void on.startTicks();
@@ -299,6 +299,7 @@ export async function opsBlock(b: Block): Promise<void> {
     b.track("backup drill: dump and restore into a new database, row counts equal", false, "skipped: the dev Postgres is not running");
     return;
   }
+  const pgBlocking = process.env.REQUIRE_PG === "1";
   const src = `ops_drill_src_${process.pid}`, dst = `ops_drill_dst_${process.pid}`;
   const a = new SQL({ url: admin, max: 1 });
   await a.unsafe(`drop database if exists ${dst}`); await a.unsafe(`drop database if exists ${src}`);
@@ -348,8 +349,9 @@ export async function opsBlock(b: Block): Promise<void> {
         expect(m.error).toBeUndefined();
         expect(m.sends24h).toEqual({ attempted: 3, failed: 1, refused: 1, dryRun: 1, smsFallback: 1 });
         expect([m.safety24h.minorAfterContact, m.safety24h.bans, m.safety24h.reports, m.safety24h.urgentReports, m.smsByDay.today]).toEqual([1, 1, 2, 1, 1]);
+        expect([m.safetySignalsWaiting, m.biasAlerts24h]).toEqual([0, 0]);
       } finally { await sql.close(); }
-    }, false);
+    }, pgBlocking);
 
     await b.run("backup drill: pg_dump of a seeded database, restore into a new database, row counts equal table by table", async () => {
       const { backup } = await import("../../deploy/backup/backup.ts");
@@ -367,7 +369,7 @@ export async function opsBlock(b: Block): Promise<void> {
         expect(await restore({ serverUrl: admin, db: "railway", dir }).then(() => "restored", e => String(e.message))).toMatch(/refusing/);
         b.track(`backup drill: ${Object.keys(bk.manifest.rowCounts).length} tables, ${rows} rows, dump ${Math.round(bk.bytes / 1024)} KiB, restore ${r.ms} ms`, true);
       } finally { await Bun.$`rm -rf ${dir}`.quiet().nothrow(); }
-    }, false);
+    }, pgBlocking);
   } finally {
     await a.unsafe(`drop database if exists ${dst}`).catch(() => {});
     await a.unsafe(`drop database if exists ${src}`).catch(() => {});

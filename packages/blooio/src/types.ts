@@ -94,7 +94,7 @@ export interface SendRequest {
   /** Same key => provider will not send twice (Blooio honours Idempotency-Key on sends). */
   idempotencyKey: string;
   /** Immutable persisted queue scope, supplied by the server rather than message text. */
-  context?: {id: string; app: string; memberId: string | null; kind: "reply" | "compliance" | "proactive" | "transactional" | "relay"};
+  context?: {id: string; app: string; memberId: string | null; kind: "reply" | "compliance" | "proactive" | "transactional"};
 }
 
 export interface SendReceipt {

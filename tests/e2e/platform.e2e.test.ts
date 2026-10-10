@@ -9,7 +9,11 @@ import { lastEvents, resolveConsent } from "../../packages/platform/src/consent.
 import { APP_IDS, type AppId } from "../../packages/platform/src/apps.ts";
 import { proxySignature } from "../../packages/platform/src/proxy.ts";
 import { PHOTO_CONSENT } from "../../packages/platform/src/photos.ts";
-import { Browser, connectMcp, newPhone, pgAvailable, rpc, signIn, startStack, toolData, webJoin, type Stack } from "./harness.ts";
+import { pkceS256 } from "../../packages/mcp/src/util.ts";
+import { createServiceMcp } from "../../packages/network/service/serve.ts";
+import { svcSign } from "../../packages/core/src/svc/svc-auth.ts";
+import { SET_STATE_PATH, TURN_PATH, type TurnRequest } from "../../packages/core/src/svc/contract.ts";
+import { Browser, connectMcp, VERIFIER, newPhone, pgAvailable, rpc, signIn, startStack, toolData, TURN_SECRET, webJoin, type Stack } from "./harness.ts";
 
 const T = 180_000;
 if (!pgAvailable) {
@@ -131,7 +135,159 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
     }
   }, T);
 
+  test("a pause set by text shows on Settings with its end date; resume ends it and keeps messages on (#11)", async () => {
+    // As the Eliza gateway does: a signed /internal/turn for each text, then the agent's signed
+    // /internal/set-state on the member's open turn ("pause me until next Friday").
+    const phone = newPhone();
+    const signed = async (path: string, body: object, id: string) => {
+      const raw = JSON.stringify(body);
+      return st.svc.fetch(new Request(`http://127.0.0.1${path}`, { method: "POST", headers: { "content-type": "application/json", ...await svcSign(TURN_SECRET, { method: "POST", path, id, body: raw, nowS: Math.floor(st.clock.now() / 1000) }) }, body: raw }));
+    };
+    const turn = async (messageId: string, text: string) => {
+      const body: TurnRequest = { messageId, channel: "blooio", from: phone, to: null, text, transport: "imessage", receivedAt: st.clock.now(), app: "friends" };
+      const res = await signed(TURN_PATH, body, messageId);
+      expect(res.status).toBe(200);
+      st.clock.advance(60_000);
+      return (await res.json()) as Record<string, any>;
+    };
+    for (const [i, text] of ["friends.help", "Ari, 29", "I enjoy hiking and cooking", "Saturday afternoons work for me", "Small groups are good"].entries()) await turn(`pause-${phone}-${i}`, text);
+    const open = await turn(`pause-${phone}-open`, "Pause me until next Friday, I'm slammed at work");
+    expect(open.outcome).toBe("open");
+    const until = new Date(st.clock.now() + 7 * DAY).toISOString();
+    const key = `pause-${phone}-state`;
+    const set = await signed(SET_STATE_PATH, { channel: "blooio", messageId: `pause-${phone}-open`, app: "friends", memberId: open.memberId, idempotencyKey: key, state: "paused", from: null, until, note: null }, key);
+    expect(set.status, await set.clone().text()).toBe(200);
+
+    const b = new Browser();
+    await signIn(st, "friends", phone, b);
+    const m = await me("friends", b);
+    expect(m.status).toBe(200);
+    expect(m.body.membership.state).toBe("active");
+    expect(m.body.participation).toMatchObject({ state: "paused", until });
+    // A pause is not a stop: messaging consent is unchanged.
+    expect(m.body.smsOptedIn).toBe(true);
+    // The value is read from the member record the Network uses, not a copy.
+    const [row] = await sql`select participation_window from network.members where app_id = 'friends' and id = ${open.memberId}`;
+    expect(row.participation_window.until).toBe(until);
+    // Every site's Settings page has the slot that shows "Paused until <date>" and the resume button.
+    for (const app of APP_IDS) {
+      const html = await (await st.site(app, "/settings")).text();
+      expect(html).toContain('data-slot="pauseText"');
+      expect(html).toContain('data-action="resume"');
+    }
+
+    const resume = await st.site("friends", "/api/me/resume", { browser: b, json: {} });
+    expect(resume.status).toBe(200);
+    const after = await me("friends", b);
+    expect(after.body.participation).toMatchObject({ state: "open", until: null });
+    expect(after.body.smsOptedIn).toBe(true);
+    // Not a member: nothing to resume.
+    const stranger = new Browser();
+    await signIn(st, "peon", newPhone(), stranger);
+    expect((await st.site("peon", "/api/me/resume", { browser: stranger, json: {} })).status).toBe(400);
+  }, T);
+
   describe("MCP through the site router", () => {
+    test("private ChatGPT Slop is dev-only and keeps the public plugin closed", async () => {
+      const redirect = "https://chatgpt.com/connector_platform_oauth_redirect";
+      const denied = await st.site("slop", "/oauth/register", { json: { redirect_uris: [redirect], token_endpoint_auth_method: "none" } });
+      expect(denied.status).toBe(400);
+      for (const env of [
+        { PLATFORM_ENV: "production" }, { PLATFORM_ENV: "staging" }, { PLATFORM_ENV: "unknown" },
+        { PLATFORM_ENV: "dev", NODE_ENV: "production" },
+      ]) {
+        await expect(createServiceMcp(st.svc, { env: { ...env, MCP_PRIVATE_OPENAI_APPS: "slop" } })).rejects.toThrow("owned dev runtime only");
+      }
+      const beforeOuter = Number((await sql`select count(*) as n from network.members`)[0]!.n);
+      const pilot = await startStack({ privateOpenAiApps: ["slop"] });
+      const db = new SQL({ url: pilot.url, max: 2 });
+      try {
+        expect(pilot.url).not.toBe(st.url);
+        expect((await rpc(pilot, "slop", "/mcp/openai", "tools/list")).res.status).toBe(404);
+        expect((await pilot.site("slop", "/.well-known/oauth-protected-resource/mcp/openai")).status).toBe(404);
+        const publicApps = toolData(await rpc(pilot, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: {} }));
+        expect(JSON.stringify(publicApps)).not.toMatch(/slop|dating/i);
+        const phone = newPhone();
+        const browser = new Browser();
+        expect((await webJoin(pilot, "slop", phone, { age: 30, browser })).res.status).toBe(200);
+        const connection = await connectMcp(pilot, "slop", phone, { browser, redirect });
+        expect(connection.token?.access_token, connection.html).toBeString();
+        expect(new URL(connection.location!).searchParams.get("iss")).toBe(pilot.sites.slop.origin);
+        const member = (await db`select m.id from network.members m join platform.phone_identities ph on ph.person_id = m.person_id where m.app_id = 'slop' and ph.e164 = ${phone}`)[0]!;
+        const about = "I'm Rae, 30, in Williamsburg, looking for a long-term relationship. I like climbing and live music. Free weekend afternoons.";
+        expect(toolData(await rpc(pilot, "slop", "/mcp", "tools/call", { name: "submit_profile", arguments: { about } }, connection.token!.access_token)).submitted).toBe(true);
+        expect((await db`select member_id from network.messages where member_id = ${member.id} and body = ${about}`).length).toBe(1);
+        expect(toolData(await rpc(pilot, "slop", "/mcp", "tools/call", { name: "check_status", arguments: {} }, connection.token!.access_token))).toMatchObject({ app: "slop", status: "active" });
+        // A handler restart uses the SAME Postgres clients, grants and tokens; off suspends, not revokes.
+        const authorizeQuery = new URLSearchParams({ response_type: "code", client_id: connection.client.client_id, redirect_uri: redirect, code_challenge: pkceS256(VERIFIER), code_challenge_method: "S256", resource: `${pilot.sites.slop.origin}/mcp` });
+        // A pre-existing CIMD client cannot inherit the DCR pilot, even with a non-OpenAI redirect.
+        const dcrClient = (await pilot.mcp.store.getClient(connection.client.client_id))!;
+        const cimdId = "https://chatgpt.com/oauth/client.json";
+        await pilot.mcp.store.putClient({ ...dcrClient, id: cimdId, kind: "cimd", surface: "full", redirectUris: ["https://client.example/callback"] });
+        const cimdQuery = new URLSearchParams(authorizeQuery);
+        cimdQuery.set("client_id", cimdId);
+        cimdQuery.set("redirect_uri", "https://client.example/callback");
+        expect((await pilot.site("slop", `/oauth/authorize?${cimdQuery}`, { browser })).status).toBe(403);
+        expect((await pilot.site("slop", "/oauth/token", { form: { grant_type: "refresh_token", refresh_token: connection.token!.refresh_token, client_id: cimdId } })).status).toBe(401);
+        const pending = await pilot.site("slop", `/oauth/authorize?${authorizeQuery}`, { browser });
+        const rid = /name="rid" value="([^"]+)"/.exec(await pending.text())?.[1];
+        expect(rid).toBeString();
+        const refresh = () => pilot.site("slop", "/oauth/token", { form: { grant_type: "refresh_token", refresh_token: connection.token!.refresh_token, client_id: connection.client.client_id } });
+        await pilot.setPrivateOpenAiApps([]);
+        expect((await rpc(pilot, "slop", "/mcp", "tools/call", { name: "check_status", arguments: {} }, connection.token!.access_token)).res.status).toBe(404);
+        expect((await pilot.site("slop", `/oauth/authorize?${authorizeQuery}`, { browser })).status).toBe(403);
+        expect((await pilot.site("slop", "/oauth/authorize/consent", { browser, form: { rid: rid!, decision: "approve" } })).status).toBe(403);
+        expect((await refresh()).status).toBe(401);
+        const codeExchange = await pilot.site("slop", "/oauth/token", { form: { grant_type: "authorization_code", code: new URL(connection.location!).searchParams.get("code")!, redirect_uri: redirect, client_id: connection.client.client_id, code_verifier: VERIFIER } });
+        expect(codeExchange.status).toBe(401);
+        await pilot.setPrivateOpenAiApps(["slop"]);
+        expect((await rpc(pilot, "slop", "/mcp", "tools/call", { name: "check_status", arguments: {} }, connection.token!.access_token)).res.status).toBe(200);
+        await pilot.setPrivateOpenAiApps([]);
+        expect((await pilot.site("slop", "/oauth/revoke", { form: { token: connection.token!.refresh_token, client_id: connection.client.client_id } })).status).toBe(200);
+        await pilot.setPrivateOpenAiApps(["slop"]);
+        expect((await rpc(pilot, "slop", "/mcp", "tools/call", { name: "check_status", arguments: {} }, connection.token!.access_token)).res.status).toBe(401);
+        expect((await refresh()).status).toBe(400);
+        expect(Number((await sql`select count(*) as n from network.members`)[0]!.n)).toBe(beforeOuter);
+      } finally {
+        await db.close();
+        await pilot.close();
+      }
+      expect(Number((await sql`select count(*) as n from network.members`)[0]!.n)).toBe(beforeOuter);
+    }, T);
+
+    test("Slop: two assistants share one phone owner, a different account stays isolated, and one disconnect preserves the other", async () => {
+      const phone = newPhone();
+      const browser = new Browser();
+      expect((await webJoin(st, "slop", phone, { age: 30, firstName: "Rae", browser })).res.status).toBe(200);
+      const before = await memberRow("slop", phone);
+      const sent = st.otp.sent.length;
+      const a = await connectMcp(st, "slop", phone, { browser, redirect: "https://assistant-a.example/callback" });
+      const b = await connectMcp(st, "slop", phone, { browser, redirect: "http://127.0.0.1:55103/callback" });
+      expect(a.token?.access_token, a.html).toBeString();
+      expect(b.token?.access_token, b.html).toBeString();
+      expect(st.otp.sent.length).toBe(sent);
+      expect(new URL(b.location!).origin).toBe("http://127.0.0.1:55103");
+      expect(new URL(b.location!).searchParams.get("iss")).toBe(st.sites.slop.origin);
+      const about = "I'm Rae, a woman, 30, in Williamsburg, seeking men 28-38 within 5 miles for a long-term relationship. I like climbing and live music. Free weekend afternoons.";
+      expect(toolData(await rpc(st, "slop", "/mcp", "tools/call", { name: "submit_profile", arguments: { about } }, a.token!.access_token))).toMatchObject({ app: "slop", submitted: true });
+      expect((await memberRow("slop", phone))?.id).toBe(before?.id);
+      expect((await sql`select body from network.messages where member_id = ${before!.id} and direction = 'inbound'`).some((r: any) => r.body === about)).toBe(true);
+      expect(toolData(await rpc(st, "slop", "/mcp", "tools/call", { name: "check_status", arguments: {} }, b.token!.access_token))).toMatchObject({ app: "slop", status: "active" });
+      const otherPhone = newPhone();
+      const otherBrowser = new Browser();
+      expect((await webJoin(st, "slop", otherPhone, { age: 31, firstName: "Kai", browser: otherBrowser })).res.status).toBe(200);
+      const other = await connectMcp(st, "slop", otherPhone, { browser: otherBrowser });
+      const otherMember = (await memberRow("slop", otherPhone))!;
+      expect(otherMember.id).not.toBe(before!.id);
+      expect((await sql`select body from network.messages where member_id = ${otherMember.id} and body = ${about}`).length).toBe(0);
+      expect((await rpc(st, "friends", "/mcp", "tools/call", { name: "check_status", arguments: {} }, a.token!.access_token)).res.status).toBe(401);
+      expect((await st.site("slop", "/oauth/revoke", { form: { token: a.token!.access_token, client_id: a.client.client_id } })).status).toBe(200);
+      expect((await rpc(st, "slop", "/mcp", "tools/call", { name: "check_status", arguments: {} }, a.token!.access_token)).res.status).toBe(401);
+      expect((await rpc(st, "slop", "/mcp", "tools/call", { name: "check_status", arguments: {} }, b.token!.access_token)).res.status).toBe(200);
+      expect((await rpc(st, "slop", "/mcp", "tools/call", { name: "check_status", arguments: {} }, other.token!.access_token)).res.status).toBe(200);
+      expect((await me("slop", browser)).status).toBe(200);
+    }, T);
+
     test("OAuth with PKCE on peon.biz; check_status shows only peon; the token is refused on another site and on /mcp/openai", async () => {
       const phone = newPhone();
       const b = new Browser();

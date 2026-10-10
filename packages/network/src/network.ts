@@ -42,6 +42,8 @@ import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import { brandOf, copy, copyFor, type Copy, whenPhrase } from "./copy.ts";
 import { APPS, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { meetingSpot, nearbyVenues, NEIGHBORHOOD, NEIGHBORHOODS, neighborhood, travelMinutes, VENUES, type Venue } from "./geo.ts";
+import { RELAY_OPEN_AFTER_MEETING_MS, RelayDesk, type RelayAsk, type RelayCallOptions, type RelayHeld, type RelayHost, type RelayMatch, type RelayMember, type RelayOutcome, type RelayState } from "./relay.ts";
+import type { RelayRecord } from "../../engine/src/relay.ts";
 import { ABOUT_OTHERS, ASK_KINDS, LANE_BUDGETS, NEVER_REPLY, nextAt, NY, nyParts, OUTREACH, PRD_BUDGETS, SLOT_KINDS, type SendKind } from "./outreach.ts";
 import { BASE_REACH, FLOOR_EFFORT, type CapitalEvent, type CapitalEventInput, type CapitalReader, type GamingFlag, type NetworkEffort } from "./capital.ts";
 import { activityHints, BOOKING_GAP, PLAN_VENUES, planLedger, statedWindows } from "./plans.ts";
@@ -288,8 +290,10 @@ interface MemberState {
   note?: { text: string; at: number };
   /** Ledger events already emitted once for this member (member_joined, member_activated). */
   joinedLedger?: boolean; activated?: boolean;
-  /** Profile tags the app's pack learned from what the member said (AppHooks.learn): engine facets, never shown. */
+  /** Profile tags the app's onboarding loop learned from what the member said (AppHooks.onboarding): engine facets, never shown. */
   appTags?: AppTag[];
+  /** The app's onboarding state (AppHooks.onboarding), plain JSON the Network never reads inside. */
+  onboarding?: unknown;
   /**
    * Unsolicited sends (PRD 32.9, PH-003, F28): anything that is not a reply within 15 minutes, a
    * follow-up to the member's own ask, or part of an opportunity they said yes to. Times per lane
@@ -395,12 +399,18 @@ interface SendOpts {
   hook?: SendHook;
   /** A plan invite under the plan allowance: counts for two-unanswered and the Blooio streak, never on the intro cap. */
   planInvite?: boolean;
+  /** The outbound id (relay.ts: "relay:<item>", which the Cloud channel delivers as kind "relay"). Default: the member and a sequence number. */
+  key?: string;
+  /** A relayed item (relay.ts): the sender's own private facts may be in it (the leak guard skips the sender's and the recipient's). */
+  relayFrom?: MemberId;
+  /** A number swap both members asked for (relay.ts): the one contact value the leak guard lets through in this text. */
+  relayContact?: string;
 }
 type SendHook =
   | { t: "interview" } | { t: "age" } | { t: "suggested"; venues: string[] } | { t: "retry_found"; oppId: string }
   | { t: "probe"; oppId: string; id: MemberId } | { t: "reveal"; oppId: string; id: MemberId } | { t: "times"; oppId: string; id: MemberId }
   | { t: "drop_notice"; oppId: string } | { t: "feedback"; oppId: string }
-  | { t: "growth"; kind: string } | { t: "reengage" } | { t: "ask"; reason: AskRecord["reason"]; also?: string[] } | { t: "checkin" }
+  | { t: "growth"; kind: string } | { t: "reengage" } | { t: "ask"; reason: AskRecord["reason"]; also?: string[]; follow?: boolean } | { t: "checkin" }
   | { t: "plan_probe"; oppId: string; id: MemberId } | { t: "crew_offer"; crewId: string };
 interface HookFns { valid?: () => boolean; onSent?: () => void; onRefused?: () => void }
 interface Deferred { memberId: MemberId; body: string; meta: SimMeta; kind: SendKind; o: SendOpts; timing?: Timing }
@@ -454,6 +464,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   readonly name = "consent";
   readonly trust = new Trust();
   private ctx!: NetworkContext;
+  /** Relay between matched members (relay.ts): the engine relay policy decides, the desk keeps threads, the log and held items. */
+  private readonly relayDesk: RelayDesk = new RelayDesk(this.relayHost());
   private members = new Map<MemberId, MemberState>();
   readonly opps = new Map<string, Opp>();
   readonly requests: Request[] = [];
@@ -874,6 +886,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     delete this.exposureDebt[id];
     this.asks = this.asks.filter(a => a.memberId !== id);
     for (const m of this.members.values()) if (m.awaiting?.oppId && !this.opps.has(m.awaiting.oppId)) m.awaiting = undefined;
+    this.relayDesk.forget(id);
     this.members.delete(id); this.fullNames.delete(id); this.trust.forget(id); this.vouchedSkills.delete(id); this.invitedIds.delete(id);
     this.cases = this.cases.filter(c => c.memberId !== id);
     for (const c of this.cases) for (const e of c.events) if (e.by === id) delete e.by;
@@ -979,12 +992,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.ctx.log("learned", { memberId: m.id, interests: x.interests, skills: x.skills, desires: x.desireIds, area: x.area });
   }
 
-  /** What the app's pack reads from the member's words (AppHooks.learn). Newer tags replace older ones with the same prefix. Never for a minor. */
+  /** What the app's onboarding loop reads from the member's words (AppHooks.onboarding). Newer tags replace older ones with the same prefix. Never for a minor. */
   private learnAppTags(m: MemberState, body: string, reasons: readonly string[]) {
-    const learn = this.opts.hooks?.learn;
-    if (!learn || m.minor) return;
-    const r = learn(body, reasons, { now: this.now() });
-    if (!r.tags.length) return;
+    const ob = this.opts.hooks?.onboarding;
+    if (!ob || m.minor) return;
+    const r = ob.read(m.onboarding, body, reasons, { now: this.now(), age: this.ageOf(m) });
+    m.onboarding = r.state;
+    this.dirty = true;
+    if (!r.tags.length && !r.replaces.length) return;
     const keep = (m.appTags ?? []).filter(t => !r.replaces.some(p => t.tag.startsWith(p)) && !r.tags.some(n => n.tag === t.tag));
     m.appTags = [...keep, ...r.tags];
     this.dirty = true;
@@ -992,9 +1007,34 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.ctx.log("app_tags_learned", { memberId: m.id, tags: r.tags.map(t => t.tag.split(":").slice(0, 2).join(":")) });
   }
 
+  /** The age the onboarding loop starts from: the lowest one the member gave. */
+  private ageOf(m: MemberState): number | undefined {
+    const xs = [m.age, m.statedAge].filter((x): x is number => validAge(x));
+    return xs.length ? Math.min(...xs) : undefined;
+  }
+
+  /**
+   * The app's next onboarding message (AppHooks.onboarding), as a reply: a read-back or one question.
+   * `skip`: the questions the member just answered, never repeated right away. False when nothing is left.
+   */
+  private onboardNext(m: MemberState, skip: readonly string[]): boolean {
+    const ob = this.opts.hooks?.onboarding;
+    if (!ob || m.minor) return false;
+    const nx = ob.next(m.onboarding, { age: this.ageOf(m), skip });
+    if (!nx) return false;
+    this.send(m, nx.text, { type: "question", proactive: false }, "interview", { hook: { t: "ask", reason: nx.reason, follow: true } });
+    return true;
+  }
+
   private onInterviewAnswer(m: MemberState, body: string) {
     this.learnFrom(m, body);
     m.awaiting = undefined;
+    // An app with its own onboarding loop takes over after the first answer.
+    if (m.stage === "q1" && this.opts.hooks?.onboarding && !m.minor) {
+      this.activate(m);
+      if (!this.onboardNext(m, [])) this.ack(m, copy.ackLearned);
+      return;
+    }
     const ask = (next: "q2" | "q3", text: string) => {
       m.stage = next;
       this.send(m, text, { type: "question", proactive: false }, "interview", { hook: { t: "interview" } });
@@ -1016,10 +1056,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const a of together) a.answeredAt = this.now();
     ask.answeredAt = this.now();
     m.answered++; this.counters.asksAnswered++;
-    this.learnFrom(m, body, [...new Set([ask.reason, ...together.map(a => a.reason)])]);
+    const reasons = [...new Set([ask.reason, ...together.map(a => a.reason)])];
+    this.learnFrom(m, body, reasons);
     this.ctx.log("ask_answered", { memberId: m.id, reason: ask.reason });
     if (c.kind === "people_request" && !m.minor) return this.openRequest(m, c, {});
     if (c.kind === "plans_request") return this.onPlans(m, c);
+    // The onboarding loop goes on with its next question, else the usual acknowledgement.
+    if (this.onboardNext(m, reasons)) return;
     this.ack(m, copy.ackLearned);
   }
 
@@ -3212,14 +3255,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const a of asks) {
       const m = this.members.get(a.memberId);
       if (!m || done.has(m.id) || m.minor || m.stage !== "active" || m.awaiting || now - this.lastAsk(m.id) < ASK_EVERY_DAYS * DAY) continue;
-      // A pack may ask all of one member's questions in one message (slop: orientation, age range and distance).
-      const mine = asks.filter(x => x.memberId === m.id);
-      const text = mine.length > 1 ? hooks?.askText?.(mine.map(x => x.reason)) : undefined;
       done.add(m.id);
-      if (text) {
-        const [head, ...rest] = mine;
-        this.send(m, text, { type: "question", proactive: false, ask: { id: head!.id, reason: head!.reason } }, "interview", { hook: { t: "ask", reason: head!.reason, also: rest.map(x => x.reason) } });
-      } else this.send(m, a.question, { type: "question", proactive: false, ask: { id: a.id, reason: a.reason } }, "interview", { hook: { t: "ask", reason: a.reason } });
+      // An app with an onboarding loop asks its own next question (one at a time); the engine's text when the loop has none left.
+      const nx = hooks?.onboarding?.next(m.onboarding, { age: this.ageOf(m) });
+      if (nx) this.send(m, nx.text, { type: "question", proactive: false, ask: { id: a.id, reason: nx.reason } }, "interview", { hook: { t: "ask", reason: nx.reason } });
+      else this.send(m, a.question, { type: "question", proactive: false, ask: { id: a.id, reason: a.reason } }, "interview", { hook: { t: "ask", reason: a.reason } });
     }
   }
   private lastAsk(id: MemberId) { return Math.max(-Infinity, ...this.asks.filter(a => a.memberId === id).map(a => a.at)); }
@@ -3613,14 +3653,15 @@ export class ConsentNetwork implements NetworkUnderTest {
       }
     }
     // Fold a pending acknowledgement in only now, at the real send (never into a deferred body, which
-    // would fold it twice), and only its first short sentence ("Got it, thanks.").
-    if (m.pendingAck && kind !== "safety" && !/^(thanks|great|no problem|got it)/i.test(body)) {
+    // would fold it twice), and only its first short sentence ("Got it, thanks."). Never into a relayed
+    // text: that body is the other member's words, rendered by the relay policy, and goes as it is.
+    if (m.pendingAck && kind !== "safety" && kind !== "relay" && !/^(thanks|great|no problem|got it)/i.test(body)) {
       const ack = m.pendingAck.text.split(/(?<=[.!?])\s/)[0]!;
       body = `${ack} ${body}`;
       if (o.fallback !== undefined) o = { ...o, fallback: `${ack} ${o.fallback}` };
     }
     // A note for this member ("That plan didn't come together this time.") rides on their next message.
-    const note = m.note && kind !== "safety" && now - m.note.at < 7 * DAY ? m.note.text : undefined;
+    const note = m.note && kind !== "safety" && kind !== "relay" && now - m.note.at < 7 * DAY ? m.note.text : undefined;
     if (note) {
       body = `${note} ${body}`;
       if (o.fallback !== undefined) o = { ...o, fallback: `${note} ${o.fallback}` };
@@ -3637,9 +3678,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (this.laneOf(meta) !== "check_in") meta = { ...meta, proactive: true, ...(meta.proactive ? {} : { unsolicited: true }) } as SimMeta;
     }
     let text = body;
-    const leaks = this.guardCheck(text, m.id);
+    const leaks = this.guardCheck(o.relayContact ? text.split(o.relayContact).join(" ") : text, m.id, o.relayFrom);
     if (leaks.length) {
-      const fallback = o.fallback !== undefined && !this.guardCheck(o.fallback, m.id).length ? o.fallback : undefined;
+      const fallback = o.fallback !== undefined && !this.guardCheck(o.fallback, m.id, o.relayFrom).length ? o.fallback : undefined;
       this.counters.guardBlocked++;
       this.ctx.log("guard_blocked", { memberId: m.id, kind, reasons: leaks, fallback: fallback !== undefined });
       if (fallback === undefined) { fns.onRefused?.(); return "refused"; }
@@ -3664,7 +3705,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     } else if (this.followup) m.askUsed = (m.askUsed ?? 0) + 1;
     m.lastOutUnsol = unsol;
     m.outbound = (m.outbound ?? 0) + 1;
-    this.ctx.send(m.id, text, { meta, idempotencyKey: `${m.id}:${++this.seq}`, reply });
+    this.ctx.send(m.id, text, { meta, idempotencyKey: o.key ?? `${m.id}:${++this.seq}`, reply });
     m.pendingAck = undefined;
     if (note || (m.note && now - m.note.at >= 7 * DAY)) m.note = undefined;
     m.lastSent = { body: text, at: now };
@@ -3830,11 +3871,14 @@ export class ConsentNetwork implements NetworkUnderTest {
         onSent: () => { m.lastCheckinAt = now(); this.counters.checkinsSent++; this.expect(m, { kind: "checkin", at: now() }); this.ctx.log("checkin_sent", { memberId: m.id }); },
       };
       case "ask": return {
-        valid: () => !m.minor && !m.awaiting && now() - this.lastAsk(m.id) >= ASK_EVERY_DAYS * DAY,
+        // `follow`: the next onboarding question in a conversation the member is having now (not on the ask interval).
+        valid: () => !m.minor && !m.awaiting && (!!h.follow || now() - this.lastAsk(m.id) >= ASK_EVERY_DAYS * DAY),
         onSent: () => {
           const rec: AskRecord = { memberId: m.id, at: now(), reason: h.reason };
-          // One message can carry several asks (AppHooks.askText): one record each, answered together.
+          // One message can carry several asks: one record each, answered together.
           for (const r of h.also ?? []) this.asks.push({ memberId: m.id, at: rec.at, reason: r });
+          const ob = this.opts.hooks?.onboarding;
+          if (ob) m.onboarding = ob.asked(m.onboarding, [h.reason, ...(h.also ?? [])], { age: this.ageOf(m) });
           this.asks.push(rec); m.asked++; this.counters.asksSent++;
           this.expect(m, { kind: "interview", ask: rec, at: rec.at });
           this.ctx.log("ask_sent", { memberId: m.id, reason: h.reason });
@@ -3955,7 +3999,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** Leak guard: other members' private facts and every canary, compiled once per change in private facets. */
   private guardCache?: { snap: WorldSnapshot; key: string; guard: LeakGuard };
-  private guardCheck(text: string, recipient: MemberId): string[] {
+  private guardCheck(text: string, recipient: MemberId, alsoOwner?: MemberId): string[] {
     const snap = this.snapshotCached();
     if (!this.guardCache || this.guardCache.snap !== snap) {
       const priv = snap.facets.filter(f => f.scope === "agent_private");
@@ -3968,7 +4012,11 @@ export class ConsentNetwork implements NetworkUnderTest {
       });
       this.guardCache = { snap, key, guard };
     }
-    return this.guardCache.guard.check(text, { exceptOwner: recipient });
+    const leaks = this.guardCache.guard.check(text, { exceptOwner: recipient });
+    // A relayed text: what the sender wrote about themselves may go to the person they wrote to.
+    if (alsoOwner === undefined || !leaks.length) return leaks;
+    const theirs = new Set(this.guardCache.guard.check(text, { exceptOwner: alsoOwner }));
+    return leaks.filter(l => theirs.has(l));
   }
 
   /**
@@ -4202,6 +4250,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         again: [...this.planAgain], counters: this.plansCounters,
       },
       fraud: this.fraud, fraudSeq: this.fraudSeq, exposureDebt: this.exposureDebt,
+      relay: this.relayDesk.exportState(),
     };
     // A deep copy that is exactly what a JSON store keeps.
     return JSON.parse(JSON.stringify(state)) as NetworkState;
@@ -4257,6 +4306,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const k of Object.keys(this.plansCounters) as (keyof typeof this.plansCounters)[]) this.plansCounters[k] = st.plans?.counters?.[k] ?? 0;
     this.fraud = st.fraud ?? []; this.fraudSeq = st.fraudSeq ?? 0;
     this.exposureDebt = { ...(st.exposureDebt ?? {}) };
+    this.relayDesk.importState(st.relay);
     this.planWorldCache = undefined;
     this.replyTo = undefined; this.currentRunId = undefined;
     this.snapCache = undefined; this.knownCache = undefined; this.dirty = true;
@@ -4269,6 +4319,60 @@ export class ConsentNetwork implements NetworkUnderTest {
    * The member left this app ("leave <app>", the site's leave button, delete everything): forget them
    * as an under-age decline does. Only the id stays, so the Network never writes to it again.
    */
+  // ================================================================== relay (relay.ts)
+  /** What the relay desk may use: members, two-person matches, blocks, the leak guard's facts and the send path. */
+  private relayHost(): RelayHost {
+    const self = this;
+    return {
+      get app() { return self.app.id; },
+      get ratesPhotos() { return self.app.id === "slop"; },
+      now: () => this.now(),
+      member: id => {
+        const m = this.members.get(id);
+        if (!m || this.declinedIds.has(id)) return undefined;
+        this.syncRecord(m);
+        return relayMemberOf(m, this.trust.level(id) === "hold");
+      },
+      matchesOf: id => {
+        const now = this.now(), out: RelayMatch[] = [];
+        for (const o of this.opps.values()) {
+          if (o.participants.length !== 2 || !o.participants.includes(id)) continue;
+          out.push(relayMatchOf(o, p => o.status.get(p), now));
+        }
+        return out;
+      },
+      blocked: (a, b) => this.blocked(a, b),
+      privateFacts: () => {
+        const priv = this.snapshotCached().facets.filter(f => f.scope === "agent_private");
+        return { forbidden: priv.map(f => ({ text: f.value, owner: f.memberId })), canaries: priv.flatMap(f => [...f.value.matchAll(CANARY_RE)].map(x => x[1]!)) };
+      },
+      send: (to, body, o) => {
+        const m = this.members.get(to);
+        if (!m) return "refused";
+        this.dirty = true;
+        const r = this.send(m, body, { type: "relay", proposalId: o.matchId }, "relay", { about: [o.from], key: o.key, relayFrom: o.from, ...(o.contact ? { relayContact: o.contact } : {}) });
+        return r === "sent" ? "sent" : r === "deferred" ? "deferred" : "refused";
+      },
+    };
+  }
+  /** A member's relay request (POST /internal/relay): decided by the engine, delivered as its rendered text only. */
+  relayRequest(ask: RelayAsk, o: RelayCallOptions = {}): Promise<RelayOutcome> { this.relayDesk.prune(this.now()); return this.relayDesk.request(ask, o); }
+  /** The member's open match for the relay, if any (ids only); `matchId` narrows it to that one match. */
+  relayMatch(memberId: MemberId, matchId?: string): RelayMatch | undefined { return this.relayDesk.matchFor(memberId, matchId); }
+  /** Relayed items held for staff, oldest first (relay.ts). The text is kept only while held, and never a minor's. */
+  relayHeld(): RelayHeld[] { return this.relayDesk.held(); }
+  /** Staff release a held item (the engine checks it again first). */
+  releaseRelay(itemId: string, actor: string, o: RelayCallOptions = {}): ActionResult & { delivered?: boolean } {
+    const r = this.relayDesk.release(itemId, actor, o);
+    return r.ok ? { ok: true, delivered: r.delivered } : r;
+  }
+  /** Staff reject a held item: it is never delivered. */
+  rejectRelay(itemId: string, actor: string): ActionResult { return this.relayDesk.reject(itemId, actor); }
+  /** The relay log (no bodies, no contact values). */
+  relayLog(): RelayRecord[] { return this.relayDesk.records(); }
+  /** For the queue's leak guard: the member whose number an outbound relay id carries (an agreed swap only). */
+  relayContactShareFrom(outboundId: string): MemberId | undefined { return this.relayDesk.contactShareFrom(outboundId); }
+
   forgetMember(id: MemberId) { if (!this.declinedIds.has(id)) this.forget(id); }
 
   /**
@@ -4333,6 +4437,51 @@ export function forbiddenProvider(net: ConsentNetwork, memberOf?: (to: string) =
  */
 interface KnownProfile { interests: Set<string>; skills: Set<string>; strongSkills: Set<string>; desires: Set<string>; intents: number; sharedInterests: Set<string>; sharedSkills: Set<string> }
 
+// ------------------------------------------------------------------ relay views (relay.ts)
+/** A member as the relay sees them: the lowest known age (undefined when unsure: fails closed), opt-out and holds. */
+function relayMemberOf(m: Pick<MemberState, "id" | "first" | "age" | "statedAge" | "minor" | "minorSignal" | "minorReported" | "ageUnknown" | "ageConflict" | "optedOut" | "account">, trustHold: boolean): RelayMember {
+  const ages = [m.age, m.statedAge].filter((a): a is number => validAge(a));
+  const unsure = m.minor || m.minorSignal || m.minorReported || m.ageUnknown || m.ageConflict || !ages.length;
+  return { id: m.id, firstName: m.first, age: unsure ? undefined : Math.min(...ages), optedOut: m.optedOut, held: !!m.account || trustHold };
+}
+/** A two-person opportunity as the relay sees it: mutual while scheduled or done, expired a week after the meeting. */
+function relayMatchOf(o: Pick<Opp, "id" | "participants" | "stage" | "closedFrom" | "meetingAt" | "createdAt">, statusOf: (p: MemberId) => PStatus | undefined, now: number): RelayMatch {
+  const met = o.meetingAt !== undefined && o.meetingAt <= now && (o.stage === "scheduled" || o.stage === "done") ? o.meetingAt : undefined;
+  const status: RelayMatch["status"] = o.stage === "scheduled" || o.stage === "done"
+    ? (met !== undefined && now - met > RELAY_OPEN_AFTER_MEETING_MS ? "expired" : "mutual")
+    : o.stage === "closed" ? (o.closedFrom === "scheduled" ? "cancelled" : "closed") : "probing";
+  return { id: o.id, participants: [o.participants[0]!, o.participants[1]!], acceptedBy: o.participants.filter(p => statusOf(p) === "yes"), status,
+    ...(met !== undefined ? { metAt: met } : {}), at: o.meetingAt ?? o.createdAt };
+}
+
+/**
+ * Final dispatch for a relayed item, from the newest stored state (the outbound queue's admission
+ * transaction reads it again): the match is still the open two-person match of exactly these members
+ * (both said yes, not closed, not past the week after the meeting), and both members are still in it as
+ * the relay desk would see them now (adults, not opted out, not held, not declined, no block between them).
+ * Null when it may go; otherwise a reason code. The canonical platform checks (consent ledger, bans,
+ * memberships, ages) are the runtime's (runtime.ts relayAdmission).
+ */
+export function relayDispatchCheck(st: NetworkState, o: { matchId: string; from: MemberId; to: MemberId; now: number }): string | null {
+  if (o.from === o.to) return "relay:pair";
+  const opp = st.opps.find(x => x.id === o.matchId);
+  if (!opp || opp.participants.length !== 2 || !opp.participants.includes(o.from) || !opp.participants.includes(o.to)) return "relay:pair";
+  const status = new Map(opp.status);
+  const match = relayMatchOf(opp, p => status.get(p), o.now);
+  if (match.status !== "mutual" || !match.participants.every(p => match.acceptedBy.includes(p))) return "state:closed";
+  const trust = new Map((st.trust ?? []).map(r => [r.id, r.level]));
+  for (const id of [o.from, o.to]) {
+    const m = st.members.find(x => x.id === id);
+    if (!m || st.declinedIds.includes(id)) return "party:unknown";
+    const v = relayMemberOf(m, trust.get(id) === "hold");
+    if (v.age === undefined || v.age < 18) return "party:age";
+    if (v.optedOut) return "party:opted_out";
+    if (v.held) return "party:held";
+  }
+  if (st.blocks.includes(pairKey(o.from, o.to))) return "party:blocked";
+  return null;
+}
+
 /** The stored-state format version (exportState). importState refuses any other. */
 export const NETWORK_STATE_VERSION = 1;
 type AwaitingJSON = Omit<NonNullable<MemberState["awaiting"]>, "ask"> & { askIndex?: number; ask?: AskRecord };
@@ -4364,6 +4513,8 @@ export interface NetworkState {
   reports?: (SafetyReport & { met: boolean })[]; reportSeq?: number;
   /** Engine exposure debt carried between runs (added later; older states have none). */
   exposureDebt?: Record<MemberId, number>;
+  /** Relay threads, the relay log, held items and pending number swaps (relay.ts; added later). */
+  relay?: RelayState;
 }
 
 /** A member record as the snapshot gives it. The production snapshot also carries the account status (service/snapshot.ts). */

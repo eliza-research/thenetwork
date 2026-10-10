@@ -10,7 +10,7 @@
 // :54339): joins and photos by text through inbound(), the photo consent asked once, the rating stored
 // with appearanceFacet and deleted when the age drops, staff hold and ban through the staff API with
 // the console token, every rejoin path of the banned person, sends to them, and the weekly bias report.
-// Blocking when the dev Postgres is there; without it (CI's sim job has none) one tracked gate says so.
+// Blocking when the dev Postgres is there; without it one tracked gate says so (CI's sim job has Postgres and fails on that skip).
 //
 // Fakes only: no Blooio, Twilio, Cloudflare, R2 or OpenAI call is possible. Phones are +1 212 555 01xx.
 import { DAY, HOUR, type MemberId } from "../../packages/core/src/index.ts";
@@ -211,7 +211,7 @@ export async function safetyBlock(b: Block): Promise<void> {
     expect(calls).toBeGreaterThan(0);
   });
 
-  await b.run("rater env: CLEF_RATINGS is off by default; on, it needs the token and fitted weights with version and provenance; the placeholder is refused; zero calls for a minor", async () => {
+  await b.run("rater env: CLEF_RATINGS is on by default (off turns it off); it needs the token; no weights file means the placeholder weights; a file needs version and provenance; zero calls for a minor", async () => {
     const env = { CLOUDFLARE_AI_TOKEN: "fake-token", CLOUDFLARE_ACCOUNT_ID: "fake-account" };
     const placeholder = JSON.stringify(DEFAULT_CLEF_WEIGHTS);
     const fitted = JSON.stringify({ ...DEFAULT_CLEF_WEIGHTS, version: "fit-sim-1", placeholder: false, provenance: { fitter: "sim", fittedAt: "2026-10-09T00:00:00Z", photos: 0, labels: 0, raters: 0 } });
@@ -220,14 +220,18 @@ export async function safetyBlock(b: Block): Promise<void> {
     const files: Record<string, string> = { "/w/placeholder.json": placeholder, "/w/fitted.json": fitted, "/w/noprov.json": noProv, "/w/nover.json": noVersion };
     const ai = new FakeWorkersAI();
     const build = (e: Record<string, string | undefined>) => photoRaterFromEnv(e, { fetch: ai.fetch, sleep: async () => {}, readFile: async p => { const f = files[p]; if (f === undefined) throw new Error(`no file ${p}`); return f; } });
-    expect((await build({ ...env, CLEF_WEIGHTS_PATH: "/w/fitted.json" })).status).toBe("off_flag");
-    expect((await build({ CLEF_RATINGS: "on", CLEF_WEIGHTS_PATH: "/w/fitted.json" })).status).toBe("off_env");
-    expect((await build({ ...env, CLEF_RATINGS: "on" })).status).toBe("off_no_weights");
+    expect((await build({ ...env, CLEF_RATINGS: "off", CLEF_WEIGHTS_PATH: "/w/fitted.json" })).status).toBe("off_flag");
+    expect((await build({ ...env, CLEF_RATINGS: "of" })).status).toBe("off_flag"); // a typo never turns ratings on
+    expect((await build({ CLEF_WEIGHTS_PATH: "/w/fitted.json" })).status).toBe("off_env");
+    for (const flag of [undefined, "on", " ON "]) {
+      const r = await build({ ...env, CLEF_RATINGS: flag });
+      expect([r.status, r.weights, typeof r.rater?.rate]).toEqual(["on_placeholder", DEFAULT_CLEF_WEIGHTS.version, "function"]);
+    }
     for (const p of ["/w/placeholder.json", "/w/noprov.json", "/w/nover.json", "/w/missing.json"]) {
-      const r = await build({ ...env, CLEF_RATINGS: "on", CLEF_WEIGHTS_PATH: p });
+      const r = await build({ ...env, CLEF_WEIGHTS_PATH: p });
       expect([r.status, r.rater]).toEqual(["refused_weights", undefined]);
     }
-    const on = await build({ ...env, CLEF_RATINGS: "on", CLEF_WEIGHTS_PATH: "/w/fitted.json" });
+    const on = await build({ ...env, CLEF_WEIGHTS_PATH: "/w/fitted.json" });
     expect([on.status, on.weights]).toEqual(["on", "fit-sim-1"]);
     const photo = [{ id: "p1", bytes: jpegWithExif() }];
     expect(await on.rater!.rate({ age: 16, ageVerified: true }, photo)).toBe(null);
@@ -350,7 +354,7 @@ async function pgPart(b: Block): Promise<void> {
   let url: string | undefined;
   if (pgAvailable) {
     try { url = await (await import("../../packages/platform/test/pg.ts")).migratedDb("simsafety"); } catch (e) { b.track("Postgres scenarios: skipped (the dev Postgres did not start)", false, (e as Error).message.split("\n")[0]); return; }
-  } else { b.track("Postgres scenarios: skipped (no Postgres on this machine; CI's sim job has none)", false); return; }
+  } else { b.track("Postgres scenarios: skipped (no Postgres on this machine)", false); return; }
   const { NetworkService } = await import("../../packages/network/service/service.ts");
   const { SimClock } = await import("../../packages/core/src/clock.ts");
   const clock = new SimClock(T0);

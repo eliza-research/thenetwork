@@ -9,7 +9,7 @@ metadata:
   backend: "https://api.ntwrk.party"
   mcp: "https://ntwrk.party/mcp/openai"
   operator: Eliza Research Corporation
-  version: "1.0.0"
+  version: "1.0.1"
 ---
 
 # friends.help
@@ -46,10 +46,16 @@ The person signs up through you, in this conversation:
 2. Give them one link to confirm their own phone: https://friends.help/join?via=agent. On that page they type
    their own number, the code we text them, their first name and age, and agree to the texts. You
    never see the number or the code.
-3. When they say it is done, connect to this app's MCP server (https://ntwrk.party/mcp/openai). They sign in on our
-   page in their own browser (no code again if they just joined there) and allow access. Then call
-   submit_profile once with the profile they agreed to, in their words. check_status shows their
-   status.
+3. Ask the person to return to this same agent conversation when they finish on the site.
+   If this app's MCP tools are not available, they must add https://ntwrk.party/mcp/openai in their client's connector settings.
+   In ChatGPT, add https://friends.help/mcp/openai instead; /mcp does not authorize ChatGPT clients.
+   Reading this file does not install a connector or authorize access. If the client cannot add it,
+   explain that profile submission is unfinished; do not claim success or send the profile elsewhere.
+   The person signs in and allows access on our page. A code is skipped only when that browser
+   has a current session for this app. Call check_status first and confirm its app is friends.
+   If the connection names another app, stop and connect to this app; never submit across apps.
+   Call submit_profile once with their approved profile, then check_status on the same connection.
+   Report success only when both calls confirm it.
 4. No agent at hand: the person can text "friends" or "friends.help" as their first message to The Network's line
    and answer the agent there.
 

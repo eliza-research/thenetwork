@@ -4,6 +4,7 @@
 //      hard.jsonl         hard-field accuracy >= 95%; 0 wrong gender or seeking parses
 //      hard-heldout.jsonl the same gates on rows written after the rules were tuned
 //      ambiguous.jsonl    0 guessed values (every listed field stays unset)
+//      parsers.jsonl      rows ported from the service's old parser corpus: 0 wrong values; fields read (tracked)
 //      ages.jsonl         teen ages caught 100%; under-13 declined 100%; 0 adults read as minors or declined
 //      corrections.jsonl  corrections and confirmations read as labelled (>= 95%), 0 wrong gender / seeking
 //      soft.jsonl         goal, dealbreakers, values, interests, first-date ideas, free times (>= 90%)
@@ -127,6 +128,25 @@ async function corpusGates(b: Block, extract: (msgs: { text: string; asked?: Onb
     rbProblems.push(...readBackProblems(p, [r.text!], new Set(["gender", "seeks", "ageRange", "distance", "location", "goal", "dealbreakers", "interests", "activities"].filter(f => !(r.unset ?? []).includes(f)))));
   }
   gate(`${label}ambiguous inputs: 0 guessed values (n ${amb.length})`, amb.length >= 50 && guessed.length === 0, guessed.slice(0, 6).join(" | "));
+
+  // Rows ported from the service's old parser corpus (evals/slop/, removed with packs.ts parseOrientation and
+  // friends), labelled to the engine's policy: bi, pan, queer, both, either and a mix leave who they seek
+  // unset (PRD 40.5), decades read early 0-3, mid 3-6, late 6-9, and vague distances stay unset.
+  // A value other than the label (or any value where the label says unset) is wrong; an unset field is a miss.
+  const ported = await jsonl<Row & { from: string }>("parsers.jsonl");
+  const wrong: string[] = [], missed: string[] = [];
+  let fields = 0;
+  for (const r of ported) {
+    const msgs = r.messages ?? [r.text!];
+    const p = await extract(msgs.map(t => ({ text: t, asked: r.asked })));
+    for (const [f, want] of Object.entries(r.expect ?? {})) {
+      fields++;
+      if (!matches(p, f, want)) (isSet(p, f) ? wrong : missed).push(`${f} ${JSON.stringify(msgs.join(" / "))} -> ${JSON.stringify(valueOf(p, f))}`);
+    }
+    for (const f of r.unset ?? []) { fields++; if (isSet(p, f)) wrong.push(`${f} ${JSON.stringify(msgs.join(" / "))} -> ${JSON.stringify(valueOf(p, f))} (want unset)`); }
+  }
+  gate(`${label}ported parser rows (evals/slop): 0 wrong values (n ${ported.length})`, ported.length >= 120 && wrong.length === 0, wrong.slice(0, 6).join(" | "));
+  b.track(`${label}ported parser rows (evals/slop): labelled fields read`, missed.length === 0, `${pct(1 - (wrong.length + missed.length) / Math.max(1, fields))} (${fields - wrong.length - missed.length}/${fields}); unset: ${missed.slice(0, 8).join(" | ")}`);
 
   // Ages.
   const ages = await jsonl<AgeRow>("ages.jsonl");

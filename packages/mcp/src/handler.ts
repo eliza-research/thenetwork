@@ -36,6 +36,8 @@ export interface McpHandlerOptions {
   hostMap?: Record<string, McpAppId>;
   /** The surface of /mcp (default "full"). /mcp/openai is always the OpenAI surface. */
   surface?: Surface;
+  /** Owned dev-only DCR OpenAI connections on /mcp. Default off. Turning off suspends access, not grants; explicit revocation still works. Public /mcp/openai stays filtered. */
+  privateOpenAiApps?: readonly McpAppId[];
   now?: () => number;
   env?: Env;
   /**
@@ -146,6 +148,8 @@ export function assistantOf(client: Pick<OAuthClient, "redirectUris" | "surface"
 export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   const env = o.env ?? process.env;
   const apps = o.apps ?? defaultApps();
+  if (o.privateOpenAiApps?.length && !devShortcutsAllowed(env)) throw new Error("privateOpenAiApps is for an owned dev runtime only");
+  const privateOpenAiApps = new Set(o.privateOpenAiApps ?? []);
   const store = o.store ?? new MemoryOAuthStore();
   const now = o.now ?? Date.now;
   const ttl = { ...TTL, ...o.ttl };
@@ -217,6 +221,13 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   }
 
   // ---------------------------------------------------------------- clients
+  // Private pilot is DCR-only. Re-check persisted clients on every auth/write path so an
+  // operator disabling the opt-in suspends access without deleting consent or blocking revoke.
+  function openAiUnavailable(c: Ctx, client: OAuthClient): boolean {
+    const openAi = assistantOf(client) === "chatgpt" || (client.kind === "cimd" && isOpenAiHost(new URL(client.id).hostname));
+    return openAi && !c.app.openai && (client.kind !== "dcr" || !privateOpenAiApps.has(c.app.id));
+  }
+
 
   async function getClient(id: string, c: Ctx): Promise<OAuthClient | undefined> {
     if (id.length > 512) return undefined;
@@ -269,7 +280,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!Array.isArray(responses) || !responses.every(r => r === "code")) return bad("response_types may be code only.");
     if (b.scope !== undefined && (typeof b.scope !== "string" || !parseScopes(b.scope))) return bad("scope may be apps:read, membership:read and profile:write only.");
     const name = typeof b.client_name === "string" ? b.client_name.replace(/[\u0000-\u001f]/g, "").slice(0, 100) : null;
-    const surface: Surface = (uris as string[]).some(r => isOpenAiHost(new URL(r).hostname)) ? "openai" : "full";
+    const surface: Surface = !privateOpenAiApps.has(c.app.id) && (uris as string[]).some(r => isOpenAiHost(new URL(r).hostname)) ? "openai" : "full";
     if (surface === "openai" && !c.app.openai) return bad("This app is not available for this client.");
     const secret = method === "none" ? null : randomToken("ntws_");
     const client: OAuthClient = { id: `mcp_${randomId()}`, secretHash: secret ? sha256hex(secret) : null, name, redirectUris: uris as string[], authMethod: method, app: c.app.id, surface, kind: "dcr", createdAt: now() };
@@ -322,6 +333,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const client = await getClient(q.get("client_id") ?? "", c);
     // An unknown client or a redirect URI it did not register: show an error, never redirect (open redirector).
     if (!client || client.app !== c.app.id) return messagePage(c.app, "This link does not work", "The assistant is not registered on this site. Go back to the assistant and try again.");
+    if (openAiUnavailable(c, client)) return messagePage(c.app, "Not available", "This assistant connection is not available on this site.", 403);
     const asked = q.get("redirect_uri");
     const redirectUri = asked ?? (client.redirectUris.length === 1 ? client.redirectUris[0]! : null);
     if (!redirectUri || !client.redirectUris.includes(redirectUri)) return messagePage(c.app, "This link does not work", "The assistant asked to return to an address it did not register.");
@@ -379,6 +391,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const live = form && (await liveRequest(c, form));
     if (!form || !live) return messagePage(c.app, "This page has expired", "Go back to the assistant and connect again.");
     const { r, client } = live;
+    if (openAiUnavailable(c, client)) return messagePage(c.app, "Not available", "This assistant connection is not available on this site.", 403);
     const redirectHost = new URL(r.redirectUri).host;
     const clearCookie = `${browserCookie(c.app)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookies(c.app) ? "; Secure" : ""}`;
 
@@ -457,6 +470,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!form) return json(400, { error: "invalid_request", error_description: "Send application/x-www-form-urlencoded with each parameter once." });
     const client = await authClient(c, form);
     if (client instanceof Response) return client;
+    if (openAiUnavailable(c, client)) return json(401, { error: "invalid_client" });
     const bad = (error: string, d?: string) => json(400, { error, ...(d ? { error_description: d } : {}) });
     const at = now();
     const grantType = form.get("grant_type");
@@ -616,6 +630,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const auth = await bearer(c, resource);
     if (auth === "invalid") return out(401, rpcError(null, -31401, "The access token is not valid here"), { "www-authenticate": challenge(resource, { error: "invalid_token", error_description: "The access token is invalid, expired or for another resource" }) });
     const surface: Surface = pathSurface === "openai" || auth?.client.surface === "openai" ? "openai" : "full";
+    if (auth && openAiUnavailable(c, auth.client)) return out(404, rpcError(null, -32601, "Not available"));
 
     const text = await readCappedText(c.req, 65_536);
     if (text === "too_large") return out(413, rpcError(null, -32600, "Request too large"));

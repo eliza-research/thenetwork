@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "the-network",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Learn about the apps powered by The Network and sign yourself up.",
   "author": { "name": "Eliza Research Corporation", "url": "https://ntwrk.party" },
   "homepage": "https://ntwrk.party",

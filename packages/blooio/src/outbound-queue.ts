@@ -19,8 +19,13 @@
 //    per conversation, then one re-engagement after 14 days (held until the person writes); Blooio's safety
 //    state of the line; the per-recipient hourly cap, the per-line daily cap and the per-line daily cap on new
 //    conversations (retry later); the person cap of proactive messages (refused_person_cap); the leak guard
-//    (parked_leak_review). Compliance texts (STOP/HELP/START confirmations, a decline) skip the opt-out, the
-//    recipient check, quiet hours and the caps, but never the leak guard's canary and fact checks.
+//    on the new text and on the recent thread to the same address (core-14; parked_leak_review). Compliance
+//    texts (STOP/HELP/START and leave confirmations) skip the opt-out, the recipient check, quiet hours and
+//    the caps, but never the leak guard's canary and fact checks on their own text.
+//  - More than one worker: every replica may run drain(). The per-line advisory lock lets one drain run at a
+//    time; a row is claimed with a conditional update to "sending" plus a lease (status unchanged, no lease),
+//    so a second worker that read the same row finds it claimed and skips it, and a worker that stopped
+//    mid-send leaves a lease that recover() reclaims. The provider key stays "tn:<id>" on every attempt.
 //  - Provider errors: retryable ones back off (30 s, doubling, at most 30 min) and fail after 6 attempts;
 //    Blooio conversation limits hold the row until the person writes; number-level blocks end it (blocked).
 //  - Delivery receipts (Blooio webhooks) move a row to delivered, read or failed. Statuses never go back.
@@ -37,8 +42,7 @@ export type MessageKind =
   | "reply"          // the answer to the member's own message; quiet-hours exempt
   | "compliance"     // STOP/START/HELP confirmations and declines; exempt from the opt-out and quiet hours
   | "proactive"      // Network-initiated; quiet hours, consent, the person cap and the line caps apply
-  | "transactional"
-  | "relay"; // everything else the Network starts (reminders, scheduling); quiet hours apply
+  | "transactional"; // everything else the Network starts (reminders, scheduling); quiet hours apply
 
 /** Everything except a direct reply and a compliance text is agent-initiated (any new kind is too). */
 export function isAgentInitiated(kind: MessageKind): boolean {
@@ -55,7 +59,7 @@ export interface LeakSources {
   facts?: string[];
   fuzzy?: boolean;
   publicPhrases?: string[];
-  /** Exact server-attested contacts; only the core contact check uses these. */
+  /** Text this one message may carry verbatim, added to the queue's own allow list (a number two matched members agreed to swap). */
   allow?: string[];
 }
 
@@ -114,8 +118,12 @@ export interface AppChecks {
   capTake?(row: QueueRow): Promise<boolean>;
   /** Give the slot back (the message did not go out). */
   capRelease?(row: QueueRow): Promise<void>;
-  /** Revalidate a relay provenance/pair under the existing dispatch transaction. */
-  relay?(row: QueueRow, tx: SQL): Promise<RecipientCheck>;
+  /**
+   * The app's last word, inside the admission transaction after every asynchronous gate (app.app_id is
+   * set; short row locks only, no remote I/O). Not ok: the row ends suppressed. A throw parks the row.
+   * The Network checks a relayed item's match and both members here (runtime.ts relayAdmission).
+   */
+  admit?(row: QueueRow, tx: SQL): Promise<RecipientCheck>;
 }
 
 export interface QueueOptions {
@@ -150,6 +158,10 @@ export interface QueueOptions {
   /** A proactive row older than this is never sent (expired). Default 24 h. Any other row: 3 days. */
   ttlProactiveMs?: number;
   ttlMs?: number;
+  /** The leak guard reads the new text with the texts sent to the same address in this window (core-14). Default 24 h. */
+  threadWindowMs?: number;
+  /** At most this many earlier texts join the thread check (LeakGuard.checkThread reads 5 in all). Default 4. */
+  threadSize?: number;
   /** The Network's own fixed copy that may carry its contact details (removed before the contact checks). */
   leakAllow?: string[];
   onAlert?: (id: string, reason: string) => void;
@@ -371,7 +383,7 @@ export class OutboundQueue {
     if (!compliance) {
       const [counts] = await this.sql`select
         count(*) filter (where to_address = ${row.to} and sent_at > ${new Date(now - HOUR)})::int as recipient,
-        count(*) filter (where kind in ('proactive', 'transactional', 'relay') and sent_at > ${new Date(now - DAY)})::int as line,
+        count(*) filter (where kind in ('proactive', 'transactional') and sent_at > ${new Date(now - DAY)})::int as line,
         count(*) filter (where new_conversation and sent_at > ${new Date(now - DAY)})::int as new_chats
         from platform.outbound where line = ${this.line} and sent_at > ${new Date(now - DAY)}`;
       if (counts.recipient >= this.opt("perRecipientPerHour", 10)) return this.wait(row, "retry_scheduled", now + 5 * MINUTE, "per-recipient hourly cap");
@@ -397,7 +409,25 @@ export class OutboundQueue {
     if (this.o.checks.leaks) {
       try { src = await this.o.checks.leaks(row); } catch { return ["leak_check_error"]; }
     }
-    return new LeakGuard({ ...src, canaryShapes: true, allow: [...(this.o.leakAllow??[]),...(src.allow??[])], contacts: row.kind !== "compliance" }).check(row.text);
+    const own = row.memberId ?? row.to;
+    const reasons = new LeakGuard({ ...src, canaryShapes: true, allow: [...(this.o.leakAllow ?? []), ...(src.allow ?? [])], contacts: row.kind !== "compliance" }).check(row.text, { exceptOwner: own });
+    // core-14: the new text together with the recent thread to this address (any app on the line), so a
+    // value split across messages ("212 555" then "0102") is caught. The generic contact patterns run on
+    // the new text alone (two ordinary messages joined can look like a number); another member's own
+    // values, facts and canaries run on the thread. A fixed compliance text is never held for its thread.
+    if (row.kind === "compliance") return reasons;
+    const recent = await this.threadOf(row);
+    if (!recent.length) return reasons;
+    const thread = new LeakGuard({ ...src, canaryShapes: true, allow: [...(this.o.leakAllow ?? []), ...(src.allow ?? [])], contacts: false }).checkThread([...recent, row.text], { exceptOwner: own });
+    return [...new Set([...reasons, ...thread.map(r => `thread:${r}`)])];
+  }
+
+  /** The texts that went to this address on this line in the last `threadWindowMs`, oldest first (at most `threadSize`). */
+  private async threadOf(row: QueueRow): Promise<string[]> {
+    const rows = await this.sql`select body from platform.outbound where line = ${this.line} and to_address = ${row.to} and id <> ${row.id}
+      and body is not null and sent_at is not null and sent_at > ${new Date(this.now - this.opt("threadWindowMs", DAY))}
+      order by sent_at desc, id desc limit ${this.opt("threadSize", 4)}`;
+    return (rows as any[]).map(r => String(r.body)).reverse();
   }
 
   private async send(row: QueueRow, isNew: boolean, reengagement: boolean): Promise<StatusChange> {
@@ -406,20 +436,22 @@ export class OutboundQueue {
     // Erasure and admission share the person/member row fences. No remote I/O holds these locks.
     const admission = await this.sql.begin(async tx => {
       await tx`select set_config('app.app_id',${this.app},true)`;
-      if (row.kind==="relay" && (!this.o.checks.relay || !(await this.o.checks.relay(row,tx)).ok)) return "suppressed_ineligible";
+      if (this.o.checks.admit && !(await this.o.checks.admit(row, tx)).ok) return "suppressed_ineligible";
       if (row.memberId) {
         await tx`select person.id from platform.people person join network.members member on member.person_id=person.id
           where member.app_id=${row.app} and member.id=${row.memberId} order by person.id for update of person`;
         const [member] = await tx`select id,person_id,account_status,opted_out from network.members where app_id=${row.app} and id=${row.memberId} for update`;
         if (!member || member.account_status==='removed' || member.account_status==='invited') return "dropped_forgotten";
-        if (row.kind!=="compliance" && member.account_status!=="active") return "suppressed_ineligible";
+        // A paused or restricted account still gets replies to its own messages, compliance texts and
+        // safety notices (snapshot.ts); the engine already decides those. The fence stops only proactive sends.
+        if (row.kind==="proactive" && member.account_status!=="active") return "suppressed_ineligible";
         if (this.o.provider.receipt) {
           const [binding] = await tx`select membership.member_id from platform.memberships membership
             join platform.people person on person.id=membership.person_id and person.deleted_at is null
             join platform.phone_identities phone on phone.person_id=person.id and phone.e164=${row.to} and phone.hold is null
             where membership.person_id=${member.person_id} and membership.app_id=${row.app} and membership.member_id=${row.memberId}
             and membership.state not in ('removed','invited')
-            and (${row.kind==="compliance"} or (membership.state='active' and membership.review is null))
+            and (${row.kind!=="proactive"} or (membership.state='active' and membership.review is null))
             for share of membership,phone`;
           if (!binding) return "dropped_forgotten";
         }
@@ -429,8 +461,13 @@ export class OutboundQueue {
         lease_until=${new Date(start+this.opt("leaseMs",5*MINUTE))},updated_at=${new Date(start)},new_conversation=${isNew},reengagement=${reengagement}
         where id=${row.id} and app_id=${row.app} and line=${this.line} and status=${row.status} and lease_until is null
         and to_address=${row.to} and body=${row.text} and fingerprint=${fingerprint(row.to,row.text,row.mediaUrls,row.kind)} returning id`;
-      return claimed.length ? "admitted" : "dropped_forgotten";
+      if (claimed.length) return "admitted";
+      // Another worker claimed or ended the row since this drain read it: leave it to that worker.
+      const [now] = await tx`select status,lease_until from platform.outbound where id=${row.id}`;
+      if (now && (now.status!==row.status || now.lease_until!==null)) return {busy:String(now.status)};
+      return "dropped_forgotten";
     });
+    if (typeof admission==="object") return {id:row.id,app:row.app,memberId:row.memberId,status:admission.busy};
     if (admission!=="admitted") return this.end(row,admission);
     const attempts = row.attempts + 1;
     try {
@@ -485,13 +522,15 @@ export class OutboundQueue {
       if (!wrote.length) return false;
       if (status!=="failed") {
         const unanswered=row.kind==="compliance"?0:1;
+        // A send accepted at the same instant as the person's last message counts toward the streak (a reply
+        // follows the message it answers); only a send accepted before their message is already answered.
         await tx`insert into platform.line_conversations(line,address,unanswered,reengagement_used,first_outbound_at,last_outbound_at)
           values(${this.line},${row.to},${unanswered},${row.reengagement},${at},${at})
           on conflict(line,address) do update set
-            unanswered=case when line_conversations.last_inbound_at>=${at} then line_conversations.unanswered else line_conversations.unanswered+${unanswered} end,
+            unanswered=case when line_conversations.last_inbound_at>${at} then line_conversations.unanswered else line_conversations.unanswered+${unanswered} end,
             last_outbound_at=greatest(line_conversations.last_outbound_at,excluded.last_outbound_at),
             first_outbound_at=least(line_conversations.first_outbound_at,excluded.first_outbound_at),
-            reengagement_used=case when line_conversations.last_inbound_at>=${at} then line_conversations.reengagement_used else line_conversations.reengagement_used or excluded.reengagement_used end`;
+            reengagement_used=case when line_conversations.last_inbound_at>${at} then line_conversations.reengagement_used else line_conversations.reengagement_used or excluded.reengagement_used end`;
       }
       return true;
     });

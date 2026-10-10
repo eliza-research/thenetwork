@@ -7,16 +7,39 @@
 //  - Ordering per sender: the rows of one sender are handled one at a time (an advisory lock per sender,
 //    across processes), oldest received first. A failed attempt stops that sender's later rows until it
 //    is handled, so the Network never reads an answer before the question it answers.
+//  - Compliance first: a waiting STOP, STOP ALL, "leave <app>", START or HELP is handled ahead of the
+//    sender's other waiting rows, so a row that fails and retries never holds back a consent change or its
+//    confirmation. A handled STOP or STOP ALL cancels the sender's ordinary rows received before it
+//    (outcome "cancelled_by_stop"): nothing the person wrote before STOP is acted on after it (a join
+//    answer handled late would opt them back in). Rows received after the STOP are handled as usual.
 //  - Privacy: the row keeps the sender and the event only while it waits. A handled row keeps the id,
 //    the times and the outcome.
+//  - Signed turns (/internal/turn): one at a time per sender. A turn still processing after 2 minutes lost
+//    its worker and reads as unresolved; an unresolved turn holds the sender back for 10 minutes at most;
+//    STOP, START and HELP are never held back; staff can resolve a stuck turn (POST /inbound/resolve).
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { NetworkAppId, TurnRequest, TurnResponse } from "../../core/src/svc/contract.ts";
 import type { SQL } from "bun";
 import type { Clock } from "@thenetwork/core";
 import { normalizeAddress } from "../../blooio/src/phone.ts";
 import type { InboundMessage } from "../../blooio/src/types.ts";
+import { detectKeyword, leaveTarget } from "../../platform/src/consent.ts";
 
 const MAX_ATTEMPTS = 5;
+/** How many waiting rows of one sender are read to find a compliance keyword among them. */
+const KEYWORD_SCAN = 50;
+
+/** STOP, STOP ALL, START, HELP or "leave <app>": consent and its confirmation are never held back. */
+export function isComplianceText(text: unknown): boolean {
+  return typeof text === "string" && (detectKeyword(text) !== undefined || leaveTarget(text) !== undefined);
+}
+const isStopText = (text: unknown) => typeof text === "string" && ((k => k === "stop" || k === "stop_all")(detectKeyword(text)));
+/** A signed turn still "processing" after this long lost its worker (a crash): it reads as unresolved. */
+const PROCESSING_LEASE_MS = 2 * 60_000;
+/** An unresolved signed turn holds the sender's later messages back only this long, so a sender is never stuck. */
+const UNRESOLVED_BLOCK_MS = 10 * 60_000;
+/** Turn tombstones (scrubbed, unresolved) are deleted after this much longer than the purge window. */
+const TOMBSTONE_KEEP_MS = 30 * 24 * 60 * 60_000;
 
 export interface InboxOptions {
   sql: SQL;
@@ -45,12 +68,19 @@ export class Inbox {
   /** A committed claim precedes effects; the partial index admits one signed turn per sender. */
   async signed(input: TurnRequest, requestHash: string, run: (turn: InboundTurn) => Promise<TurnResponse>): Promise<{status: number; body: unknown}> {
     const id = `msg:${input.channel}:${input.messageId}`, senderHash = this.o.senderKey(input.from);
+    const now = this.o.clock.now();
+    // STOP, START and HELP are never held back by an earlier turn that did not finish (consent always gets through).
+    const keyword = isComplianceText(input.text);
     const wrote = await this.o.sql.begin(async tx => {
       const [lock] = await tx`select pg_try_advisory_xact_lock(hashtext(${`inbox-sender:${normalizeAddress(input.from)}`})) as acquired`;
       if (!lock.acquired) return [];
+      // A turn whose worker stopped (no completion within the lease) is unresolved, not processing forever.
+      await tx`update platform.inbound set status='unresolved',event=null,sender=null
+        where sender_hash=${senderHash} and status='processing' and request_hash is not null and arrived_at<${new Date(now - PROCESSING_LEASE_MS)}`;
       return tx`insert into platform.inbound(id,line,sender,received_at,arrived_at,event,status,request_hash,sender_hash)
-      select ${id},null,null,${new Date(input.receivedAt)},${new Date(this.o.clock.now())},null,'processing',${requestHash},${senderHash}
-      where not exists(select 1 from platform.inbound where sender_hash=${senderHash} and status in ('pending','processing','unresolved'))
+      select ${id},null,null,${new Date(input.receivedAt)},${new Date(now)},null,'processing',${requestHash},${senderHash}
+      where not exists(select 1 from platform.inbound where sender_hash=${senderHash} and (status='processing'
+        or (not ${keyword} and (status='pending' or (status='unresolved' and arrived_at>${new Date(now - UNRESOLVED_BLOCK_MS)})))))
       on conflict do nothing returning id`;
     });
     if (!wrote.length) {
@@ -110,7 +140,19 @@ export class Inbox {
       sender=null,event=null,sender_hash=null,member_id=null,app_id=null
       where request_hash is not null and status='done' and handled_at<${new Date(before)} returning id`;
     const removed = await this.o.sql`delete from platform.inbound where request_hash is null and status not in ('pending','processing','unresolved') and arrived_at < ${new Date(before)} returning id`;
-    return sealed.length + removed.length;
+    // Signed-turn tombstones keep replays refused for a while, then go: platform.inbound does not grow without bound.
+    const tombstones = await this.o.sql`delete from platform.inbound where request_hash is not null and status='unresolved' and arrived_at < ${new Date(before - TOMBSTONE_KEEP_MS)} returning id`;
+    return sealed.length + removed.length + tombstones.length;
+  }
+
+  /**
+   * Staff resolve a signed turn that did not finish: it stays unresolved (a replay is still refused) but no
+   * longer holds back the sender's later messages. Returns false when the row is not a stuck signed turn.
+   */
+  async resolve(id: string): Promise<boolean> {
+    const rows = await this.o.sql`update platform.inbound set status='unresolved',sender_hash=null,event=null,sender=null
+      where id=${id} and request_hash is not null and status in ('processing','unresolved') returning id`;
+    return rows.length > 0;
   }
 
   /** One sender at a time, in this process (a promise chain) and across processes (an advisory lock). */
@@ -129,18 +171,35 @@ export class Inbox {
     return run;
   }
 
+  /** After a STOP: the sender's ordinary rows received before it end unhandled (their text is dropped). */
+  private async cancelBefore(sender: string, stopAt: unknown, ids: string[]): Promise<number> {
+    if (!ids.length) return 0;
+    const rows = await this.o.sql`update platform.inbound set status = 'done', outcome = 'cancelled_by_stop', handled_at = ${new Date(this.o.clock.now())},
+      handled_order = nextval('platform.inbound_handled_seq'), event = null, sender = null
+      where sender = ${sender} and status = 'pending' and received_at <= ${stopAt as Date} and id = any(${this.o.sql.array(ids, "TEXT")}) returning id`;
+    if (rows.length) this.o.log(`[inbound] ${rows.length} earlier message(s) cancelled by STOP`);
+    return rows.length;
+  }
+
   private async handleWaiting(sender: string): Promise<number> {
     let n = 0;
     for (;;) {
-      if ((await this.o.sql`select 1 from platform.inbound where sender_hash=${this.o.senderKey(sender)} and status in ('processing','unresolved') limit 1`).length) return n;
-      const [r] = await this.o.sql`select id, event, attempts from platform.inbound where sender = ${sender} and status = 'pending' order by received_at, id limit 1`;
-      if (!r) return n;
-      const { ev, app } = (typeof r.event === "string" ? JSON.parse(r.event) : r.event) as { ev: InboundMessage; app: string | null };
+      const blockedSince = new Date(this.o.clock.now() - UNRESOLVED_BLOCK_MS), stale = new Date(this.o.clock.now() - PROCESSING_LEASE_MS);
+      if ((await this.o.sql`select 1 from platform.inbound where sender_hash=${this.o.senderKey(sender)} and request_hash is not null
+        and ((status='processing' and arrived_at>${stale}) or (status='unresolved' and arrived_at>${blockedSince})) limit 1`).length) return n;
+      const waiting = await this.o.sql`select id, event, attempts, received_at from platform.inbound where sender = ${sender} and status = 'pending'
+        order by received_at, id limit ${KEYWORD_SCAN}`;
+      if (!waiting.length) return n;
+      const parsed = (waiting as any[]).map(w => ({ ...w, ...((typeof w.event === "string" ? JSON.parse(w.event) : w.event) as { ev: InboundMessage; app: string | null }) }));
+      // A compliance keyword goes ahead of an earlier row (one that keeps failing must not hold back a STOP).
+      const r = parsed.find(w => isComplianceText(w.ev?.text)) ?? parsed[0]!;
+      const { ev, app } = r;
       try {
         const outcome = await this.o.handle(ev, app ?? undefined);
         await this.o.sql`update platform.inbound set status = 'done', outcome = ${outcome}, handled_at = ${new Date(this.o.clock.now())},
           handled_order = nextval('platform.inbound_handled_seq'), event = null, sender = null where id = ${r.id}`;
         n++;
+        if (isStopText(ev.text)) n += await this.cancelBefore(sender, r.received_at, parsed.filter(w => w.id !== r.id && !isComplianceText(w.ev?.text)).map(w => w.id as string));
       } catch (e) {
         const attempts = (r.attempts as number) + 1;
         if (attempts >= MAX_ATTEMPTS) {

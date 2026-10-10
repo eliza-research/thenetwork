@@ -28,6 +28,7 @@ export function migrations(): Migration[] {
     .filter(f => /^\d{4}_[a-z0-9_]+\.sql$/.test(f))
     .sort()
     .map(f => ({ id: f.replace(/\.sql$/, ""), file: join(MIGRATIONS_DIR, f), repeatable: false }));
+  checkNumbers(numbered.map(m => m.id));
   return [
     { id: "0001_network_schema", file: join(import.meta.dir, "schema.sql"), repeatable: true },
     { id: "0002_network_state", file: join(REPO, "packages", "network", "db", "network-state.sql"), repeatable: true },
@@ -39,6 +40,30 @@ export function migrations(): Migration[] {
     { id: "9002_notify_schema", file: join(REPO, "packages", "notify", "db", "schema.sql"), repeatable: true },
     { id: "9003_notify_retention", file: join(REPO, "packages", "notify", "db", "retention.sql"), repeatable: false },
   ];
+}
+
+/** Reserved numbers: the baselines and the repeatable schemas outside migrations/. */
+const RESERVED = new Set(["0001", "0002", "9001", "9002", "9003"]);
+
+/**
+ * Refuse two numbered migrations with the same NNNN prefix (two branches that each took the next
+ * number), and a numbered file that takes a reserved number. The ledger keys on the full id, so the
+ * runner would apply both, but their order would depend only on the name after the prefix. Fix it by
+ * giving the later file the next free number. A database that already applied the file under its old
+ * id runs it again under the new id, so a renumbered migration must be idempotent (create ... if not
+ * exists, on conflict do nothing), or the old ledger row must be renamed in the same change.
+ */
+export function checkNumbers(ids: string[]): void {
+  const seen = new Map<string, string>();
+  const bad: string[] = [];
+  for (const id of ids) {
+    const n = id.slice(0, 4);
+    if (RESERVED.has(n)) bad.push(`${id} uses the reserved number ${n}`);
+    const prev = seen.get(n);
+    if (prev) bad.push(`${prev} and ${id} share the number ${n}`);
+    else seen.set(n, id);
+  }
+  if (bad.length) throw new Error(`migrations: duplicate or reserved numbers in ${MIGRATIONS_DIR}: ${bad.join("; ")}. Give the later file the next free number.`);
 }
 
 const checksum = (text: string) => createHash("sha256").update(text).digest("hex");

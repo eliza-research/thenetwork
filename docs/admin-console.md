@@ -165,9 +165,27 @@ The console calls the Network service's staff API. Every call carries `Authoriza
 | `POST /safety/hold?app=` | `{memberId, note, reportId?}` | `200 {ok: true}`, or `409 {reason}`. Staff with `safety` on this app only hold on this app; `safety@*` (or `admin@*`) holds the person on every app. The audit row says `scope: this_app` or `every_app`, never how many apps the person uses. |
 | `POST /safety/ban?app=` | `{memberId, by: "phone" or "person", note, reportId?}` | `200 {ok: true}`, or `409 {reason}` (for example `already_banned`, or `needs_safety_everywhere`: a ban stops the number on every app, so it needs `safety@*` or `admin@*`) |
 | `POST /safety/dismiss?app=` | `{reportId, note}` | `200 {ok: true}`, or `409 {reason}` (`unknown_report`) |
+| `POST /safety/clear-minor?app=` | `{memberId, note}` | `200 {ok: true, apps: [{app, result}]}`, or `409 {reason, apps}` (`no_signal`, `age_unknown`, `record_minor`, `stated_minor`). For each app of the person, the Network runs `clearMinorSignal` and dismisses that member's open `minor` reports. `safety@*` (or `admin@*`) clears every app; `safety` on one app clears that app only. Audited (`safety: clear_minor`, `scope: this_app` or `every_app`). |
 | `GET /members/<id>/photos?app=slop` | `X-Network-Reason: <the typed reason>` | `200 {ok: true, photos: [{id, url (https), expiresAt?}]}`. The service checks the role and the age again (`403 {reason: "adults_only"}`) and writes its own audit row. |
 
+**Clearing a wrong minor signal.** A member report ("he's only 15") or a misread message can mark an adult as a minor on one app. First correct the person's age record (the lowest age must be 18 or more), then open the `minor` report in the Safety tab and press **Clear minor signal (every app)** with a note that says why the record says adult. This is one action for every app; before, staff cleared each app by hand. The Network refuses it while the member's record age or any age the member stated is under 18. In game mode it clears the simulated world's one network.
+
 A 404 without a `reason` means that the service has no such route yet: the console says so (`service_missing`). Without the service (game mode, or real mode without `NETWORK_SERVICE_URL`), the queue is built from the Network's safety cases (a `report_received` event between two members who had a date), and hold and ban are refused (`service_only`).
+
+#### 3.7.2 Held texts: leak review and held relay
+
+The Safety tab starts with "Held texts", per app, in two queues: **Leak review** (texts the send-time leak guard parked, `parked_leak_review`) and **Held relay** (relay items held for a check). Safety and admin only. Each row shows the kind, the member (or the masked number), the reasons and the time. The text is shown so staff can judge it, except when the item is about a member under 18 or with an unknown age (the service's `minor: true`, or the console's own member state): then the text is hidden and only **Reject** is possible. No score or rating ever reaches the page: the console passes only the fields listed here. **Release** (every other send check runs again) and **Reject** need a reason of 5 or more characters. Each read writes `read_held_texts`, and each decision writes a "requested" and a "result" row (`held_release` or `held_reject`).
+
+| Call | Body | Answer |
+|---|---|---|
+| `GET /queue/leak-review?app=` | | `200 {ok, items: [{id, kind, to (masked), text, reasons, createdAt, memberId?, minor?}]}` |
+| `POST /queue/leak-review/<id>?app=` | `{decision: "release" or "drop", reason}` | `200 {ok: true}` or `409 {reason}` (`not_parked`) |
+| `GET /staff/relay/held?app=` | | `200 {ok, items: [{id, kind, text?, reasons, createdAt, memberId?, minor?}]}` |
+| `POST /staff/relay/<id>/release?app=` and `.../reject` | `{reason}` | `200 {ok: true}` or `409 {reason}` |
+
+**Status (2026-10-09):** the console side is built (`/api/held`, `web/admin.tsx` HeldTexts; `packages/observatory/test/held.test.ts`). The service routes come from the messaging pipeline and the relay work and are not on this branch: until they land, each queue shows "Not available". Game mode has no held texts.
+
+How to test locally: run `bun run observatory:db`, then the console in real mode with a service (`NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/network NETWORK_SERVICE_URL=http://127.0.0.1:4848 NETWORK_SERVICE_TOKEN=<an admin token of the service> PLATFORM_ENV=dev bun run observatory --mode real`). Open the printed URL, pick slop, open Safety. Both queues say "Not available" until the service has the routes. To see rows without the service routes, point `NETWORK_SERVICE_URL` at a local fake that answers the calls above (as `held.test.ts` does). In a minor report, **Clear minor signal (every app)** needs a note and then dismisses the report.
 
 ### 3.8 Requests and demand
 
@@ -324,6 +342,8 @@ Status: built in the Observatory, 2026-10-08. The service takes the reviewer of 
 | Game controls | On | On | Off: `OBSERVATORY_REAL_ONLY=1`. The server refuses game mode, game commands and the lab. The game code is still in the bundle; it is turned off, not compiled out. |
 | Auth | Bind to 127.0.0.1; optional token | SSO and roles | SSO, second factor, roles, IP allow-list or an access proxy |
 | Banner | "SIMULATION" or "LOCAL DATABASE" | "STAGING" | "PRODUCTION · read-only · PII scrubbed" |
+
+The start guard (`deployGuard` in `src/server.ts`) fails closed. A console with real data (`OBSERVATORY_REAL_ONLY=1`, or any database URL whose host is not this machine) refuses to start without `PLATFORM_ENV`. Under `staging` and `production` it needs Cloudflare Access. Staff tokens work only with `PLATFORM_ENV=dev` and local databases. A console WebSocket opened with an Access JWT closes with code 4401 when the JWT expires (`packages/observatory/test/staff.test.ts`, OBS-05).
 
 How it reads data:
 

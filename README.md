@@ -1,6 +1,6 @@
 # The Network
 
-The code, simulations and research for The Network: an invite-only, messaging-first AI that finds and activates the latent potential between people.
+The code, simulations and research for The Network: a messaging-first AI that finds and activates the latent potential between people. Its agent is Eliza.
 
 - **PRD (canonical):** https://docs.google.com/document/d/1lLQAZNAMSC_yHCkUBVbp1CCwvyR17PuvV7TnpfuY8Xc/edit (local snapshot: [docs/prd-snapshot.md](docs/prd-snapshot.md); MVP is Section 28; edits not yet applied: [docs/prd-pending-edits.md](docs/prd-pending-edits.md))
 - **MVP plan:** [docs/mvp-plan.md](docs/mvp-plan.md)
@@ -10,7 +10,7 @@ The code, simulations and research for The Network: an invite-only, messaging-fi
 
 ## Scope
 
-This repository builds the MVP defined in PRD Section 28: one Network agent over iMessage and SMS, an asynchronous matching engine over Postgres, human review of every proactive proposal and every member request, and an admin console. Founder decision (2026-10-07): New York City is the only launch city. The PRD snapshot still says SF and NYC until it is updated. Founder decision (2026-10-08, PRD Section 40): one backend, one admin panel, one database and phone-verified login serve four apps with their own sites: The Network (ntwrk.party), slop.date (dating), peon.biz (hiring) and friends.help (NYC friends). Anyone 13 or older may join any app; matching is 18+ everywhere. One text line serves every app: STOP stops every app, "leave <app>" leaves one. A person can join one app or several. Nothing crosses apps by default. Local dev for all of it: [docs/runbook-platform.md](docs/runbook-platform.md). Anything outside PRD 28.3 and Section 40 is not built until the founders approve it and add it to the PRD. See [CONTRIBUTING.md](CONTRIBUTING.md) for what makes an acceptable issue or pull request.
+This repository builds the MVP defined in PRD Section 28: one Network agent over iMessage and SMS, an asynchronous matching engine over Postgres, human review of every proactive proposal and every member request, and an admin console. Founder decision (2026-10-07): New York City is the only launch city. The PRD snapshot still says SF and NYC until it is updated. Founder decision (2026-10-08, PRD Section 40): one backend, one admin panel, one database and phone-verified login serve four apps with their own sites: The Network (ntwrk.party), slop.date (dating), peon.biz (hiring) and friends.help (NYC friends). Anyone 13 or older may join any app; matching is 18+ everywhere. One text line serves every app: STOP stops every app, "leave <app>" leaves one. A person can join one app or several. Nothing crosses apps by default. Founder decisions (2026-10-09): slop.date, peon.biz and friends.help are open to join, and The Network stays invite-only on the web; eliza.app is one more entry into The Network, and Eliza is The Network's agent; bans are by phone number; Clef ratings are on (scores are never shown), and Clef also checks relayed messages for scams; every proactive proposal is reviewed by a person; every LLM use is gpt-6-luna on Surplus. AGENTS.md has the full list. Local dev for all of it: [docs/runbook-platform.md](docs/runbook-platform.md). Anything outside PRD 28.3 and Section 40 is not built until the founders approve it and add it to the PRD. See [CONTRIBUTING.md](CONTRIBUTING.md) for what makes an acceptable issue or pull request.
 
 ## What's here
 
@@ -28,7 +28,7 @@ This repository builds the MVP defined in PRD Section 28: one Network agent over
 | `packages/observatory` | Admin console, simulator visualizer and game, the dev Postgres and the migrations ([design](docs/observatory.md), [admin console](docs/admin-console.md), [simulation runbook](docs/runbook-simulation.md)) |
 | `sites/` | The four app sites (ntwrk.party, slop.date, peon.biz, friends.help), built as Cloudflare Pages projects with the router as `_worker.js` ([README](sites/README.md), [deploy](docs/deploy.md)) |
 | `plugins/` | The agent plugins (OpenAI and Claude manifests, SKILL.md), generated from `sites/` and checked by `bun run plugins/build.ts --check` |
-| `packages/core/src/svc` | Mirror of the Eliza service contract (`contract.ts`, `svc-auth.ts`). The Eliza side lives upstream as `@elizaos/plugin-network` in elizaOS/eliza (`plugins/plugin-network`); keep both copies byte-identical and bump `CONTRACT_VERSION` together |
+| `packages/core/src/svc` | Mirror of the Eliza service contract (`contract.ts`, `svc-auth.ts`). The Eliza side lives upstream as `@elizaos/plugin-network` in elizaOS/eliza (`plugins/plugin-network`); keep both copies byte-identical (`contract-mirror.test.ts` pins the hashes) |
 | `deploy/` | The shared backend image (Railway), the Pages router and the post-deploy smoke ([docs/deploy.md](docs/deploy.md)) |
 | `evals/` | Hand-written corpora (consent replies, abuse, teen ages, wants, areas, opt-outs, leak evasions), scored by `bun run sim` |
 | `scripts/` | `sim.ts` (the validation command), dev servers, the wrangler wrapper, the synthetic-data scripts |
@@ -36,7 +36,7 @@ This repository builds the MVP defined in PRD Section 28: one Network agent over
 
 ## Validation
 
-The validation layer is the simulations plus integration and e2e tests; there are no unit or smoke tests ([docs/tests-policy.md](docs/tests-policy.md)). `bun run sim` runs every simulation, offline and deterministic (no LLM, no Postgres), and exits non-zero on any blocking gate failure. The integration and e2e suites need the dev Postgres (`bun run packages/observatory/db/dev-pg.ts up`, port 54339):
+The validation layer is the simulations plus integration and e2e tests; there are no unit or smoke tests ([docs/tests-policy.md](docs/tests-policy.md)). `bun run sim` runs every simulation, offline and deterministic (no LLM), and exits non-zero on any blocking gate failure. The safety, ops, pipeline and audit blocks also run on the dev Postgres when it is there (CI gives them one and fails if they skip). The integration and e2e suites need the dev Postgres (`bun run packages/observatory/db/dev-pg.ts up`, port 54339):
 
 ```bash
 bun install
@@ -44,6 +44,7 @@ bun run sim                  # evals, network, slop, peon, friends on pinned see
 bun run sim --only slop      # one block; --quick for a short local run; --with-capital adds the slow capital block
 bun run typecheck
 bun run test:integration     # real Postgres, real HTTP servers, the full service; includes the security suite
+bun run security             # the security suite alone (the 11 files are listed in AGENTS.md)
 bun run test:e2e             # tests/e2e: the platform and notify end to end
 ```
 
@@ -59,4 +60,4 @@ bun run sim
 
 The simulations run with `--conditions eliza-source`.
 
-The Eliza side of The Network (gateway takeover, Cloud plumbing, `@elizaos/plugin-network`) is developed in elizaOS/eliza, branch `spike/network-plugin`. This repo talks to it only over the signed `/internal/*` contract in `packages/core/src/svc/`.
+The Eliza side of The Network (gateway takeover, Cloud plumbing, `@elizaos/plugin-network`) is developed in elizaOS/eliza, branch `spike/network-plugin`. This repo talks to it only over the signed contract mirrored in `packages/core/src/svc/contract.ts` and `svc-auth.ts`: `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals`, `/internal/updates` and `/internal/relay` (Cloud's `RelaySendRequest`/`RelaySendResponse`) on this backend, and `/api/internal/network/deliver` on Eliza Cloud. This repo has no plugin package and no eliza submodule.

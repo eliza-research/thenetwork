@@ -52,6 +52,24 @@ Every input schema has `app` only (`submit_profile`: `app` and `about`) and `add
 
 ## 5. Run and test
 
+### Private ChatGPT development pilot
+
+`MCP_PRIVATE_OPENAI_APPS=slop` permits a private ChatGPT DCR connection to `/mcp`
+in an owned, declared development runtime. It defaults off. Production, staging,
+unknown environments, and `NODE_ENV=production` refuse this setting.
+This does not enable the hosted Slop service or its public OpenAI plugin.
+The public Slop `/mcp/openai` endpoint remains unavailable.
+
+The pilot uses the existing phone account, OAuth consent, app/resource binding,
+and profile tools. It adds no model service or account store. Use fictional phones,
+fake OTP, and dry-run sends for local acceptance. Run the private ChatGPT scenario
+in `tests/e2e/platform.e2e.test.ts` for the complete local service journey.
+
+Disabling the pilot suspends private access; it does not delete accounts or revoke
+consent. Use the normal disconnect/revoke flow to revoke a grant permanently.
+Hosted ChatGPT acceptance needs a separately reviewed, reachable test endpoint and
+the user's connector consent. A successful local OAuth case does not prove it.
+
 ```bash
 bun run security                                               # the pending security suite (MCP OAuth with platform and backend checks)
 PLATFORM_ENV=dev bun run packages/mcp/src/dev-server.ts        # http://127.0.0.1:4849/mcp, memory stores, codes print to the log

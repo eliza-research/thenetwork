@@ -29,6 +29,8 @@ export { pgAvailable };
 export const PROXY_SECRET = "e2e-proxy-secret-0123456789abcdef0123456789abcdef";
 export const WEBHOOK_SECRET = "whsec_e2e_shared";
 export const ADMIN_TOKEN = "e2e-admin-token-0123456789abcdef";
+/** The Eliza gateway's signing secret (SERVICE_TURN_SECRET): the tests sign /internal/turn and /internal/set-state as the gateway does. */
+export const TURN_SECRET = "e2e-service-turn-secret-0123456789abcdef";
 /** 9:30 in New York (EDT): inside the daily engine run window. */
 export const START = Date.UTC(2026, 9, 8, 13, 30);
 
@@ -78,14 +80,17 @@ export interface Stack {
   text(from: string, body: string): Promise<string>;
   /** A staff call on the service (the staff port is private; the test calls the service directly). */
   staff(path: string, body: unknown): Promise<Response>;
+  setPrivateOpenAiApps(apps: readonly AppId[]): Promise<void>;
   close(): Promise<void>;
 }
 
-export async function startStack(): Promise<Stack> {
-  const url = await migratedDb("e2e");
+let stackSequence = 0;
+
+export async function startStack(o: { privateOpenAiApps?: readonly AppId[] } = {}): Promise<Stack> {
+  const url = await migratedDb(`e2e_${++stackSequence}`);
   const photoDir = mkdtempSync(join(tmpdir(), "e2e-photos-"));
   const clock = new SimClock(START);
-  const env = { PLATFORM_ENV: "dev", PLATFORM_PROXY_SECRET: PROXY_SECRET };
+  const env = { PLATFORM_ENV: "dev", PLATFORM_PROXY_SECRET: PROXY_SECRET, SERVICE_TURN_SECRET: TURN_SECRET };
   const otp = new FakeOtp();
   // The platform's host map plus each local site origin (random ports), so a browser Origin of a site counts as that app's own.
   const hostMap: Record<string, AppId> = { ...DEFAULT_HOST_MAP };
@@ -123,12 +128,18 @@ export async function startStack(): Promise<Stack> {
     hostMap[`127.0.0.1:${up.port}`] = s.app;
   }
   const devOrigins = Object.fromEntries(Object.values(sites).map(h => [h.site.app, h.origin]));
-  mcp = await createServiceMcp(svc, { env, databaseUrl: url, proxySecret: PROXY_SECRET, devOrigins, log: () => {} });
+  mcp = await createServiceMcp(svc, { env, databaseUrl: url, proxySecret: PROXY_SECRET, devOrigins, privateOpenAiApps: o.privateOpenAiApps, log: () => {} });
   if (!mcp) throw new Error("the MCP server did not start");
 
   let evt = 0;
   return {
-    url, clock, svc, mcp, otp, backendOrigin, sites,
+    url, clock, svc, get mcp() { return mcp!; }, otp, backendOrigin, sites,
+    async setPrivateOpenAiApps(apps) {
+      const old = mcp;
+      mcp = await createServiceMcp(svc, { env, databaseUrl: url, proxySecret: PROXY_SECRET, devOrigins, privateOpenAiApps: apps, migrate: false, log: () => {} });
+      if (!mcp) throw new Error("the MCP server did not restart");
+      await (old!.store as unknown as { close?(): Promise<void> }).close?.();
+    },
     async site(app, path, init = {}) {
       const { browser, json, form, ...rest } = init;
       const h = sites[app];

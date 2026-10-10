@@ -36,6 +36,8 @@ export interface JobProfile {
   mode?: PeonMode; market?: City; area?: string;
   must: { skill: string; min: number }[]; nice: string[];
   openings: number; urgency: number; sponsors: boolean; credRequired?: string;
+  /** Openings left on a service seat (seats.ts): the slate of one run never goes past it. Undefined in the simulated world. */
+  seatCap?: number;
   /** Fill-by date stated at intake (ms), if any. */
   fillBy?: number;
   open: boolean; scamCue: boolean; discriminatoryRequest: boolean;
@@ -173,6 +175,7 @@ function build(w: World): Cache {
           else if (t.startsWith(T.must)) { const [skill, min] = rest(t, T.must); if (!p.must.some(m => m.skill === skill)) p.must.push({ skill: skill!, min: Number(min) }); }
           else if (t.startsWith(T.nice)) { const v = t.slice(T.nice.length); if (!p.nice.includes(v)) p.nice.push(v); }
           else if (t.startsWith(T.openings)) p.openings = Number(t.slice(T.openings.length));
+          else if (t.startsWith(T.seatCap)) p.seatCap = Number(t.slice(T.seatCap.length));
           else if (t.startsWith(T.urgency)) p.urgency = Number(t.slice(T.urgency.length));
           else if (t.startsWith(T.fillBy)) p.fillBy = Number(t.slice(T.fillBy.length)) * DAY;
           else if (t.startsWith(T.sponsors)) p.sponsors = t.slice(T.sponsors.length) === "yes";

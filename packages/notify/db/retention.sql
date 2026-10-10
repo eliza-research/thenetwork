@@ -59,10 +59,16 @@ create function notify.guard_surface_member() returns trigger
 language plpgsql set search_path = pg_catalog, platform, notify as $$
 declare app text;
 begin
+  -- An invited membership counts (open join, eliza.app as an entry: signals can come before the join completes).
   for app in select app_id from platform.memberships where person_id::text = new.person_id
-    and state not in ('removed', 'invited') order by app_id loop
+    and state <> 'removed' order by app_id loop
     if notify.lock_live_scope(new.person_id, app) then return new; end if;
   end loop;
+  -- A live person with no membership at all yet keeps their surface signals; full erasure deletes them.
+  if not exists (select 1 from platform.memberships where person_id::text = new.person_id) then
+    perform 1 from platform.people where id::text = new.person_id and deleted_at is null for share;
+    if found then return new; end if;
+  end if;
   -- OAuth unlink/outcome callbacks after erasure are harmless no-ops.
   return null;
 end $$;

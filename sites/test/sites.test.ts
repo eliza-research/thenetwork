@@ -128,6 +128,12 @@ describe.each(SITES)("$domain", (s) => {
     for (const f of walk(staticDir)) expect(readFileSync(join(out(s), f)).equals(readFileSync(join(staticDir, f))), f).toBe(true);
     for (const f of files) expect(statSync(join(out(s), f)).size, f).toBeGreaterThan(0);
     for (const f of files.filter((f) => /\.(html|md|json|txt)$/.test(f))) expect(read(s, f), f).not.toContain("{{");
+    for (const f of ["SKILL.md", `.well-known/agent-skills/${s.skill}/SKILL.md`]) {
+      const skill = read(s, f);
+      expect(skill).toContain(`confirm its app is ${s.app}`);
+      expect(skill).toContain("never submit across apps");
+      if (s.app !== "slop") expect(skill).toContain(`In ChatGPT, add https://${s.domain}/mcp/openai instead`);
+    }
   });
 
   test("the slop.date safety notice is information, never a step that blocks joining", () => {
