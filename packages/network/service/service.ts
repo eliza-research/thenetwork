@@ -48,7 +48,7 @@ import { devShortcutsAllowed, isProduction, platformEnv, type Env } from "../../
 import { keyedHash, maskPhone, normalizePhone } from "../../platform/src/phone.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
 import type { Membership, PeopleStore, PendingText, Person } from "../../platform/src/store.ts";
-import { createPublicApi, type PublicApi, type PublicApiOptions } from "../../platform/src/api.ts";
+import { createPublicApi, type MemberParticipation, type PublicApi, type PublicApiOptions } from "../../platform/src/api.ts";
 import { otpProviderFromEnv } from "../../platform/src/otp.ts";
 import { turnstileFromEnv } from "../../platform/src/turnstile.ts";
 import type { PeerInfo } from "../../platform/src/api.ts";
@@ -685,6 +685,44 @@ export class NetworkService implements RuntimeHost {
   }
 
   /**
+   * The member's availability for the site's Settings (GET /api/me), read from the member record the
+   * Network uses (participation_state and participation_window, written by /internal/set-state when the
+   * member pauses by text). Nothing is copied: the site reads it on every request. A window that has
+   * ended reads as no window. The opt-out (STOP) is not part of it: /api/me shows that in smsOptedIn.
+   */
+  private async memberParticipation(app: AppInfo, memberId: MemberId): Promise<MemberParticipation | null> {
+    const rt = this.runtimeFor(app.id);
+    if (!rt) return null;
+    const [row] = await rt.scoped(tx => tx`select participation_state, participation_window, prefs from network.members where app_id = ${app.id} and id = ${memberId}`);
+    if (!row) return null;
+    const now = this.clock.now();
+    const p = effectiveParticipation({ participation_state: row.participation_state, participation_window: row.participation_window }, now);
+    const w = p.window && (p.window.until === null || Date.parse(p.window.until) > now) ? p.window : null;
+    const q = row.prefs?.quietHours;
+    const quietHours: [number, number] | undefined = Array.isArray(q) && q.length === 2 && q.every((h: unknown) => Number.isInteger(h) && (h as number) >= 0 && (h as number) < 24) ? [q[0], q[1]] : undefined;
+    const base = row.participation_state === "paused" ? "paused" : row.participation_state === "quiet" ? "busy" : "open";
+    return { state: w ? w.state : base, from: w?.from ?? null, until: w?.until ?? null, ...(quietHours ? { quietHours } : {}) };
+  }
+
+  /**
+   * Resume from the site's Settings: the availability pause ends now (the window is cleared, and a
+   * paused participation state goes back to normal). Messaging consent does not change: a member who
+   * texted STOP stays stopped until they text START. The request is an event, like the agent's.
+   */
+  private async resumeMember(app: AppInfo, memberId: MemberId): Promise<void> {
+    const rt = this.runtimeFor(app.id);
+    if (!rt) return;
+    await rt.scoped(async tx => {
+      const [row] = await tx`select participation_state, participation_window from network.members where app_id = ${app.id} and id = ${memberId} for update`;
+      if (!row || (row.participation_window === null && row.participation_state !== "paused")) return;
+      await tx`update network.members set participation_window = null,
+        participation_state = case when participation_state = 'paused' then 'normal' else participation_state end where app_id = ${app.id} and id = ${memberId}`;
+      await tx`insert into network.events(app_id, at, actor_type, actor_id, type, object_type, object_id, payload)
+        values (${app.id}, ${new Date(this.clock.now())}, 'member', ${memberId}, 'member_state_requested', 'member', ${memberId}, ${{ state: "open", from: null, until: null, source: "site" }}::jsonb)`;
+    });
+  }
+
+  /**
    * The public API the four sites call (/api/*). Built on first use: outside dev it needs an OTP
    * provider (OTP_PROVIDER=twilio) and Turnstile (TURNSTILE_SECRET_KEY); the dev shortcuts refuse.
    */
@@ -693,6 +731,8 @@ export class NetworkService implements RuntimeHost {
       store: this.people, turnstile: this.apiOptions?.turnstile ?? turnstileFromEnv(this.env),
       hashKey: this.hashKey, apps: this.apps, env: this.env,
       now: () => this.clock.now(), log: this.log, ...this.apiOptions, ...this.hooks(), photos: this.photos,
+      participation: ctx => this.memberParticipation(ctx.app, ctx.memberId),
+      onResume: ctx => this.resumeMember(ctx.app, ctx.memberId),
       // Each code Twilio Verify sends is a cost row (cost.ts).
       otp: this.cost.meterOtp(this.apiOptions?.otp ?? otpProviderFromEnv(this.env)),
     });

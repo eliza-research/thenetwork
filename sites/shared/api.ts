@@ -67,6 +67,17 @@ export interface Membership {
   firstName: string;
 }
 
+/**
+ * The member's availability, from the member record the Network uses (a pause set by text or by the
+ * agent). Not the messaging consent: STOP shows in smsOptedIn. Absent on older backends.
+ */
+export interface Participation {
+  state: "open" | "busy" | "traveling" | "paused";
+  from: string | null;
+  until: string | null;
+  quietHours?: [number, number];
+}
+
 export interface Me {
   app: string;
   phoneMasked: string;
@@ -75,6 +86,7 @@ export interface Me {
   /** Current app's canonical messaging consent; absent on older backends. */
   smsOptedIn?: boolean;
   reason?: string;
+  participation?: Participation;
 }
 
 export interface JoinBody {
@@ -130,6 +142,7 @@ export const api = {
   join: (body: JoinBody) => call<{ ok: true; membership: Membership }>("POST", "/api/join", body),
   exportData: () => call<unknown>("GET", "/api/me/export"),
   stop: () => call<unknown>("POST", "/api/me/stop"),
+  resume: () => call<unknown>("POST", "/api/me/resume"),
   remove: (scope: "app" | "all") => call<unknown>("POST", "/api/me/delete", { scope }),
   demo: () => call<unknown>("GET", "/api/demo"),
 };

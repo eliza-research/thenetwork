@@ -11,7 +11,9 @@ import { proxySignature } from "../../packages/platform/src/proxy.ts";
 import { PHOTO_CONSENT } from "../../packages/platform/src/photos.ts";
 import { pkceS256 } from "../../packages/mcp/src/util.ts";
 import { createServiceMcp } from "../../packages/network/service/serve.ts";
-import { Browser, connectMcp, VERIFIER, newPhone, pgAvailable, rpc, signIn, startStack, toolData, webJoin, type Stack } from "./harness.ts";
+import { svcSign } from "../../packages/core/src/svc/svc-auth.ts";
+import { SET_STATE_PATH, TURN_PATH, type TurnRequest } from "../../packages/core/src/svc/contract.ts";
+import { Browser, connectMcp, VERIFIER, newPhone, pgAvailable, rpc, signIn, startStack, toolData, TURN_SECRET, webJoin, type Stack } from "./harness.ts";
 
 const T = 180_000;
 if (!pgAvailable) {
@@ -131,6 +133,58 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       expect((await me(app, b)).body.membership.state).toBe("paused");
       expect((await memberRow(app, phone))?.opted_out).toBe(true);
     }
+  }, T);
+
+  test("a pause set by text shows on Settings with its end date; resume ends it and keeps messages on (#11)", async () => {
+    // As the Eliza gateway does: a signed /internal/turn for each text, then the agent's signed
+    // /internal/set-state on the member's open turn ("pause me until next Friday").
+    const phone = newPhone();
+    const signed = async (path: string, body: object, id: string) => {
+      const raw = JSON.stringify(body);
+      return st.svc.fetch(new Request(`http://127.0.0.1${path}`, { method: "POST", headers: { "content-type": "application/json", ...await svcSign(TURN_SECRET, { method: "POST", path, id, body: raw, nowS: Math.floor(st.clock.now() / 1000) }) }, body: raw }));
+    };
+    const turn = async (messageId: string, text: string) => {
+      const body: TurnRequest = { messageId, channel: "blooio", from: phone, to: null, text, transport: "imessage", receivedAt: st.clock.now(), app: "friends" };
+      const res = await signed(TURN_PATH, body, messageId);
+      expect(res.status).toBe(200);
+      st.clock.advance(60_000);
+      return (await res.json()) as Record<string, any>;
+    };
+    for (const [i, text] of ["friends.help", "Ari, 29", "I enjoy hiking and cooking", "Saturday afternoons work for me", "Small groups are good"].entries()) await turn(`pause-${phone}-${i}`, text);
+    const open = await turn(`pause-${phone}-open`, "Pause me until next Friday, I'm slammed at work");
+    expect(open.outcome).toBe("open");
+    const until = new Date(st.clock.now() + 7 * DAY).toISOString();
+    const key = `pause-${phone}-state`;
+    const set = await signed(SET_STATE_PATH, { channel: "blooio", messageId: `pause-${phone}-open`, app: "friends", memberId: open.memberId, idempotencyKey: key, state: "paused", from: null, until, note: null }, key);
+    expect(set.status, await set.clone().text()).toBe(200);
+
+    const b = new Browser();
+    await signIn(st, "friends", phone, b);
+    const m = await me("friends", b);
+    expect(m.status).toBe(200);
+    expect(m.body.membership.state).toBe("active");
+    expect(m.body.participation).toMatchObject({ state: "paused", until });
+    // A pause is not a stop: messaging consent is unchanged.
+    expect(m.body.smsOptedIn).toBe(true);
+    // The value is read from the member record the Network uses, not a copy.
+    const [row] = await sql`select participation_window from network.members where app_id = 'friends' and id = ${open.memberId}`;
+    expect(row.participation_window.until).toBe(until);
+    // Every site's Settings page has the slot that shows "Paused until <date>" and the resume button.
+    for (const app of APP_IDS) {
+      const html = await (await st.site(app, "/settings")).text();
+      expect(html).toContain('data-slot="pauseText"');
+      expect(html).toContain('data-action="resume"');
+    }
+
+    const resume = await st.site("friends", "/api/me/resume", { browser: b, json: {} });
+    expect(resume.status).toBe(200);
+    const after = await me("friends", b);
+    expect(after.body.participation).toMatchObject({ state: "open", until: null });
+    expect(after.body.smsOptedIn).toBe(true);
+    // Not a member: nothing to resume.
+    const stranger = new Browser();
+    await signIn(st, "peon", newPhone(), stranger);
+    expect((await st.site("peon", "/api/me/resume", { browser: stranger, json: {} })).status).toBe(400);
   }, T);
 
   describe("MCP through the site router", () => {
