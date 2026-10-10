@@ -284,7 +284,7 @@ Each site is one Pages project (founder decision 8):
 
 | Site | Pages project | Served on | Its own domain |
 |---|---|---|---|
-| ntwrk.party | `ntwrk-party` | `ntwrk-party.pages.dev` | `ntwrk.party`, `www.ntwrk.party`: Pages custom domains. (The old `ntwrk.love` domain is still on the legacy `ntwrk-love-site` Worker for the 10DLC pages.) |
+| ntwrk.party | `ntwrk-party` | `ntwrk-party.pages.dev` | `ntwrk.party`, `www.ntwrk.party`: Pages custom domains. (The retired domain, its www and api hosts and `ntwrk-love.pages.dev` all redirect to ntwrk.party: the `ntwrk-love-site` Worker answers 301, or 308 for the API.) |
 | slop.date | `slop-date` | `slop-date.pages.dev` | DNS in the Eliza Labs Cloudflare account points at `slop-date.pages.dev` (10 days) |
 | peon.biz | `peon-biz` | `peon-biz.pages.dev` | Pages custom domain `peon.biz` |
 | friends.help | `friends-help` | `friends-help.pages.dev` | DNS in the Eliza Labs Cloudflare account points at `friends-help.pages.dev` |
