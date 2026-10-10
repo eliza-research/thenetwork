@@ -29,6 +29,8 @@ export { pgAvailable };
 export const PROXY_SECRET = "e2e-proxy-secret-0123456789abcdef0123456789abcdef";
 export const WEBHOOK_SECRET = "whsec_e2e_shared";
 export const ADMIN_TOKEN = "e2e-admin-token-0123456789abcdef";
+/** The Eliza gateway's signing secret (SERVICE_TURN_SECRET): the tests sign /internal/turn and /internal/set-state as the gateway does. */
+export const TURN_SECRET = "e2e-service-turn-secret-0123456789abcdef";
 /** 9:30 in New York (EDT): inside the daily engine run window. */
 export const START = Date.UTC(2026, 9, 8, 13, 30);
 
@@ -88,7 +90,7 @@ export async function startStack(o: { privateOpenAiApps?: readonly AppId[] } = {
   const url = await migratedDb(`e2e_${++stackSequence}`);
   const photoDir = mkdtempSync(join(tmpdir(), "e2e-photos-"));
   const clock = new SimClock(START);
-  const env = { PLATFORM_ENV: "dev", PLATFORM_PROXY_SECRET: PROXY_SECRET };
+  const env = { PLATFORM_ENV: "dev", PLATFORM_PROXY_SECRET: PROXY_SECRET, SERVICE_TURN_SECRET: TURN_SECRET };
   const otp = new FakeOtp();
   // The platform's host map plus each local site origin (random ports), so a browser Origin of a site counts as that app's own.
   const hostMap: Record<string, AppId> = { ...DEFAULT_HOST_MAP };

@@ -13,7 +13,7 @@
 //   const api = createPublicApi({ store, otp, turnstile });
 //   Bun.serve({ fetch: async (req, server) => (await api.fetch(req, server)) ?? new Response("not found", { status: 404 }) });
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
-import { type AccountHooks, Accounts, parseJoin, publicMembership, type Who } from "./accounts.ts";
+import { type AccountHooks, Accounts, type MemberHookContext, parseJoin, publicMembership, type Who } from "./accounts.ts";
 import { APPS, type AppId, type AppInfo, appForHost, DEFAULT_HOST_MAP, DEV_HOST_MAP, isAppId, publicAppInfo, siteHosts } from "./apps.ts";
 import { devShortcutsAllowed, type Env } from "./env.ts";
 import { type OtpProvider, OtpService, type OtpLimits } from "./otp.ts";
@@ -56,9 +56,29 @@ export interface PublicApiOptions extends AccountHooks {
   otpLimits?: Partial<OtpLimits>;
   /** Private member photos (photos.ts): /api/photos/*. Without it those paths answer 404. */
   photos?: PhotoService;
+  /**
+   * The member's availability for GET /api/me, read from the member record the Network uses (a pause or
+   * busy window set by text or by the agent, and quiet hours). It is not the messaging consent: a STOP
+   * shows in smsOptedIn, never here. Without it /api/me has no participation field.
+   */
+  participation?: (ctx: MemberHookContext) => Promise<MemberParticipation | null> | MemberParticipation | null;
+  /** POST /api/me/resume: end the member's availability pause (never a STOP: messaging consent stays as it is). 404 without it. */
+  onResume?: (ctx: MemberHookContext) => Promise<void> | void;
   /** GET /api/demo: a synthetic, scrubbed replay for the landing page. 404 without it. */
   demo?: (app: AppId) => unknown | Promise<unknown>;
   log?: (s: string) => void;
+}
+
+/**
+ * The member's availability (GET /api/me). `state` uses the agent contract's words: open, busy,
+ * traveling or paused. `from` and `until` are ISO times or null (null `until`: until the member says
+ * otherwise). `quietHours` is [start hour, end hour] in the member's time, when the member set them.
+ */
+export interface MemberParticipation {
+  state: "open" | "busy" | "traveling" | "paused";
+  from: string | null;
+  until: string | null;
+  quietHours?: [number, number];
 }
 
 /** What Bun.serve passes as the second fetch argument: the socket address of the request. */
@@ -406,11 +426,25 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       case "GET /api/me":
         return withSession(async who => {
           const c = await accounts.canJoin(app, who);
+          const live = c.reason === "member" && c.membership && c.person ? c.membership : undefined;
+          const participation = live && o.participation ? await o.participation({ app, personId: live.personId, memberId: live.memberId, e164: who.e164 }) : null;
           return json(200, {
             app: appId, phoneMasked: maskPhone(who.e164), membership: publicMembership(c.membership),
             smsOptedIn: c.reason !== "review" && await accounts.optedIn(appId, who.e164),
             canJoin: c.canJoin, ...(c.reason && c.reason !== "member" ? { reason: c.reason } : {}),
+            ...(participation ? { participation } : {}),
           });
+        });
+
+      case "POST /api/me/resume":
+        // End an availability pause (set by text, by the agent or here). It is not START: a STOP stays a STOP.
+        if (!o.onResume) return json(404, { ok: false, error: "not_found" });
+        return withSession(async who => {
+          const c = await accounts.canJoin(app, who);
+          const live = c.reason === "member" && c.membership && c.person ? c.membership : undefined;
+          if (!live) return json(c.reason === "review" ? 403 : 400, { ok: false, error: c.reason === "review" ? "review" : "not_member", ...(c.reason === "review" ? { message: REVIEW_MESSAGE } : {}) });
+          await o.onResume!({ app, personId: live.personId, memberId: live.memberId, e164: who.e164 });
+          return json(200, { ok: true });
         });
 
       case "POST /api/join":

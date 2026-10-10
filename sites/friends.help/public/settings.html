@@ -53,11 +53,14 @@
       <dt data-when="has-membership">Name</dt><dd data-when="has-membership" data-slot="firstName"></dd>
       <dt data-when="has-membership">Status</dt><dd data-when="has-membership" data-slot="state"></dd>
       <dt data-when="has-membership">Joined</dt><dd data-when="has-membership" data-slot="joinedAt"></dd>
+      <dt data-when="paused" hidden>Availability</dt><dd data-when="paused" data-slot="pauseText" hidden></dd>
+      <dt data-when="has-quiet" hidden>Quiet hours</dt><dd data-when="has-quiet" data-slot="quietHours" hidden></dd>
     </dl>
     <p data-when="no-membership" hidden>This number has not joined friends.help. <a href="/join">Join friends.help</a>.</p>
     <p class="status" data-status aria-live="polite"></p>
     <div class="actions" data-when="has-membership">
       <div><h3>Export my data</h3><p>Download a file with what friends.help holds about you. It holds only this site's data.</p><button class="btn quiet" type="button" data-action="export">Export my data</button></div>
+      <div data-when="paused" hidden><h3>Resume</h3><p>You asked for a break, so friends.help suggests no one until it ends. Resume to get suggestions again now. This does not change Stop messages.</p><button class="btn quiet" type="button" data-action="resume">Resume now</button></div>
       <div data-when="not-stopped"><h3>Stop messages</h3><p>Every app powered by The Network stops texting this number, not only this one. Your membership stays. Text START to resume messages from the app you last talked with.</p><button class="btn quiet" type="button" data-action="stop">Stop messages</button></div>
       <div data-when="stopped" hidden><h3>Messages are stopped</h3><p>Text START to resume messages from the app you last talked with.</p></div>
       <div><h3>Leave friends.help</h3><p>We delete your profile, messages and matching data for friends.help.</p><button class="btn quiet" type="button" data-action="leave">Leave friends.help</button></div>

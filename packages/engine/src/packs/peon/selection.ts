@@ -98,7 +98,8 @@ export function slateCap(w: World, j: JobProfile): number {
   const target = Math.min(C.slateMax + C.pacingExtraMax * cl, (C.slateBase + C.slatePerOpening * Math.max(0, j.openings)) * (1 + C.pacingSlate * cl));
   // Applications the employer has not reviewed yet use up the slate (no pile-ups, no ghosted queues).
   const room = Math.max(0, target - historyOf(w, j.id).pendingReview);
-  const cap = Math.ceil(room / C.expectedYes);
+  // A service seat (seats.ts) proposes at most one candidate per opening left: a seat is never over-filled.
+  const cap = j.seatCap === undefined ? Math.ceil(room / C.expectedYes) : Math.min(Math.ceil(room / C.expectedYes), Math.max(0, j.seatCap));
   if (companyTrusted(w, j)) return cap;
   const probation = j.verified && j.urgency >= C.urgentMinUrgency ? C.probationUrgentProbes : C.probationProbes;
   return Math.min(cap, Math.ceil(probation / seatsOf(w, j.company)));
