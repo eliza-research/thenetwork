@@ -27,7 +27,11 @@ A handled turn with no replies (a quiet acknowledgement, an under-13 decline) ta
 
 Agent signals never act on their own. `opt_out` and `safety_concern` are stored as proposed private facets, logged as an alert line, and listed for reviewer or safety staff at `GET /signals`. STOP and "leave <app>" in the member's own words stay the only automatic consent changes.
 
-The contract is version `2026-10-09.1` (`CONTRACT_VERSION`). The matching elizaos/eliza plugin-network and Cloud change (channel on actions, turn receipts, `DELIVER_RECEIPT_PATH`, optional `acceptedAt`) has not landed yet, so the deployed plugin cannot use these actions until it does.
+**Contract.** `packages/core/src/svc/contract.ts` and `svc-auth.ts` are byte-identical to elizaos/eliza `plugins/plugin-network/src/backend/{contract,svc-auth}.ts` on `develop` (upstream #34657 and #34661). There is no contract version constant: `packages/core/test/contract-mirror.test.ts` pins the SHA-256 of both files, the same pins as upstream's `contract-mirror.test.ts`, and `bun run check:mirror` compares the files with upstream through `gh` (read-only, never in a test suite). A wire change lands upstream first, then both files are copied here unchanged and the pins are updated.
+
+Two paths the service uses are not in the mirror:
+- `DELIVER_RECEIPT_PATH = "/api/internal/network/deliver/receipt"` is a local constant in `cloud-channel.ts`. Eliza Cloud serves it (develop: `packages/cloud/api/internal/network/deliver/receipt/route.ts`, the deliver handler in reconcile-only mode): the same signed body and id as the deliver, and it never sends. The service calls it only to learn whether an unknown acceptance was accepted; it never retries an unknown acceptance with a new id. **Proposal for upstream:** add `DELIVER_RECEIPT_PATH` to `contract.ts`, so both sides name it from the contract.
+- `acceptedAt` is required in the upstream DeliverResponse; `cloud-channel.ts` still accepts a receipt without it (the queue then uses its own clock) and does not trust a malformed one.
 
 Signed state, signal and update actions bind the exact completed open turn, channel, app and member. State windows extend the canonical member row; private hypotheses use the existing facet owner. Cloud outbound uses `NETWORK_CHANNEL=eliza_cloud`, `NETWORK_CLOUD_DELIVERY_ORIGIN`, `SERVICE_TURN_SECRET` and the configured `BLOOIO_FROM`, with the same live approval flags as Blooio. The default and `--dry-run` send nothing.
 
@@ -52,36 +56,36 @@ The Eliza gateway owns the Blooio webhook of the shared line and calls `POST /in
 - A banned number gets no notice. An age under 13 (stated in the message, pending, or on the phone's age floor) gets only the existing kind decline, and the notice row of that number is deleted in the same turn.
 - Open turns are returned only for members of a Network app.
 
-**Proposal for upstream (not built).** The TurnRequest has no "known eliza.app user" flag, so the notice goes to every non-member first contact. An optional `elizaUser?: boolean` field on TurnRequest, set by the gateway for a sender with Eliza history, would let the service send the notice only to existing eliza.app users and give a plain welcome to everyone else. That is a contract change: it goes into elizaOS/eliza `plugins/plugin-network/src/backend` first, then into the byte-for-byte mirror here, with a new `CONTRACT_VERSION`.
+**Proposal for upstream (not built).** The TurnRequest has no "known eliza.app user" flag, so the notice goes to every non-member first contact. An optional `elizaUser?: boolean` field on TurnRequest, set by the gateway for a sender with Eliza history, would let the service send the notice only to existing eliza.app users and give a plain welcome to everyone else. That is a contract change: it goes into elizaOS/eliza `plugins/plugin-network/src/backend` first, then into the byte-for-byte mirror here, with new pins in both `contract-mirror.test.ts` files.
 
-**Tests.** `packages/network/test/eliza-takeover.integration.test.ts` mirrors the upstream gateway test against the real service, HTTP and Postgres: handled STOP (scope all), leave (scope app), START, an older START that loses, HELP, the join keyword, the onboarding answer, the open turn with strict context, ignored, replay by messageId, a bad signature, an over-size body, a minor (single-player, no introductions), the notice once, an under-13 decline, and START refused for a banned or held number. Sends are dry-run; a fake Cloud deliver endpoint must receive nothing.
+**Tests.** `packages/network/test/eliza-takeover.integration.test.ts` mirrors the upstream gateway test against the real service, HTTP and Postgres: handled STOP (scope all), leave (scope app), START, an older START that loses, HELP, the join keyword, the onboarding answer, the open turn with strict context, a RELAY request in the upstream shape (no match, an unknown item, no request: nothing sent), ignored, replay by messageId, a bad signature, an over-size body, a minor (single-player, no introductions), the notice once, an under-13 decline, and START refused for a banned or held number. Sends are dry-run; a fake Cloud deliver endpoint must receive nothing.
 
 ## Relay between matched members
 
-`POST /internal/relay` (relay-endpoint.ts) takes a member's relay request from Eliza during an open turn: a text for their match, "send them my number", or a photo. It is signed with `SERVICE_TURN_SECRET` like the other `/internal/*` actions, size-checked (16 KiB) before it is parsed, idempotent on `x-ntwrk-svc-id` (which must equal `idempotencyKey`), and bound to the original completed open turn and the member's current membership. The app and the member come from that turn; the recipient is always the member's current match, chosen by the service, never named by the model.
-
-The ConsentNetwork's relay desk (`packages/network/src/relay.ts`) asks the engine relay policy for every decision (`relayItemAsync` in `packages/engine/src/relay.ts`). With `CLOUDFLARE_AI_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` set it adds the Clef classifier (`clefRelayClassifierFromEnv`, clef-flash unless `RELAY_CLEF_MODEL=clef`); without them it uses the rules alone and logs `relay classifier: rules only` at start. Only the engine's `rendered` text goes to the other member, through the Network's send path and the outbound queue with the id `relay:<item>`, which the Cloud channel delivers with `kind: "relay"`. A number goes out only after both members asked to swap; the queue's leak guard lets exactly that number through for that row. Photos are refused until a consent to show photos to a match exists (Legal must approve one first). Minors are never relayed, scores are never shown, and the log (`network.relay_records`, migration 0026) keeps ids, the decision and reason codes, never a body or a contact value. A held text waits for staff and is dropped when they decide.
-
-The request and response types are defined in relay-endpoint.ts, because `packages/core/src/svc/contract.ts` mirrors the upstream plugin-network contract byte for byte. Proposed addition to that contract upstream (elizaos/eliza plugin-network and its mirror here):
+`POST /internal/relay` (relay-endpoint.ts) serves the upstream RELAY action (elizaos/eliza `plugins/plugin-network/src/actions/relay.ts`). The request and response are the upstream contract types, imported from the mirror:
 
 ```ts
-export const RELAY_PATH = "/internal/relay";
-/** A member's request to pass something to their current match. x-ntwrk-svc-id = idempotencyKey. */
-export interface RelayRequest {
-  channel: NetworkChannel;
-  messageId: string;          // the completed open turn this action belongs to
-  app: NetworkAppId;
-  memberId: string;
-  idempotencyKey: string;
-  kind: "text" | "contact_share" | "photo";
-  text: string | null;        // the message (text, at most 1000 characters) or a caption (photo); null for contact_share
-  photoIds: string[] | null;  // the member's own photo ids (photo only, at most 3)
-}
-/** `reason` is safe to say to the member as it is. */
-export interface RelayResponse { decision: "sent" | "held" | "refused"; reason: string; replayed: boolean }
+RelaySendRequest  {channel, messageId, app, memberId, itemId: string | null, text}
+RelaySendResponse {decision: "pass" | "hold" | "block" | "none", senderNotice, delivered, replayed}
 ```
 
+`text` is the member's own inbound message, never model output (the action caps it at 2000 characters). The service reads it with the engine's `parseRelayRequest`, so the kind (a text for the match, "send them my number", a photo, or none) is decided here, not by the model. The request is signed with `SERVICE_TURN_SECRET` like the other `/internal/*` actions, size-checked (16 KiB) before it is parsed, idempotent on `x-ntwrk-svc-id` (which must be `<messageId>:relay`, as the upstream client sends it: one relay per open turn), and bound to the original completed open turn and the member's current membership. The app and the member come from that turn; the recipient is always the member's current match, chosen by the service, never named by the model.
+
+- `none`: the message asks for nothing; nothing is sent and `senderNotice` is "".
+- `itemId`: null means the member's newest open match. Any other value must be the id of that match; an unknown or inactive id is refused (`block`) before anything is sent, as upstream #34661 refuses unknown targets. The open turn's `activeItems` is `null` today, so the upstream store sends null.
+- Photos are refused (`block`, "I can't send photos to a match yet.") until a consent to show photos to a match exists (Legal must approve one first).
+- Everything else goes to the ConsentNetwork's relay desk (`packages/network/src/relay.ts`), which asks the engine relay policy for every decision (`relayItemAsync` in `packages/engine/src/relay.ts`). With `CLOUDFLARE_AI_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` set it adds the Clef classifier (`clefRelayClassifierFromEnv`, clef-flash unless `RELAY_CLEF_MODEL=clef`); without them it uses the rules alone and logs `relay classifier: rules only` at start. Each Clef call is a cost row for the app (cost.ts).
+- Desk decisions map to the wire: sent is `pass`, held is `hold` (staff review, a rate limit, or a number swap waiting for the other member), refused is `block`. `senderNotice` is always a fixed sentence (the engine's or the desk's): it never repeats the matched text and never names a rule. `delivered` is true only when the engine's `rendered` text went to the send path now; a pass deferred to a reasonable hour for the recipient has `delivered: false`, and the upstream action then does not report it as sent.
+
+Only the engine's `rendered` text goes to the other member, through the Network's send path and the outbound queue with the id `relay:<item>`, which the Cloud channel delivers with `kind: "relay"`. A number goes out only after both members asked to swap; the queue's leak guard lets exactly that number through for that row. Minors are never relayed, scores are never shown, and the log (`network.relay_records`, migration 0026) keeps ids, the decision and reason codes, never a body or a contact value. A held text waits for staff and is dropped when they decide.
+
+On the Eliza side the RELAY action exists only when `NETWORK_RELAY_ENABLED=1` (upstream #34661); it is off until this endpoint is deployed and the founder sets the flag.
+
 Errors follow the other actions: 400 `invalid_request` or `invalid_relay`, 401 on a bad signature, 403 `turn_scope_invalid` or `membership_unavailable`, 409 `action_conflict` or `action_unresolved`, 413 `payload_too_large`, 429 `action_limit`.
+
+## Costs
+
+`cost.ts` writes `network.cost_ledger` rows (codes and counts only): Twilio Verify codes, Clef photo ratings, relay Clef classifier calls (kind `other`, provider `workers_ai`, `detail.purpose = "relay_classifier"`; `COST_CLEF_RELAY_USD` per call, else the engine's list price per input token), LLM attempts, SMS fallbacks and the line. The service has no production LLM client today: it never builds `defaultLLM()` or `llmUnderstand`, and slop onboarding uses the engine's rule reader. A client added later passes `cost.llmHooks(app, purpose)` with the real app and purpose. A dedicated `workers_ai_call` kind needs a migration (migration 0020 constrains the kinds). Test: `packages/network/test/cost.integration.test.ts`.
 
 ## Run it
 

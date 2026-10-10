@@ -8,10 +8,9 @@ import {SQL} from "bun";
 import {SimClock,MINUTE,DAY} from "@thenetwork/core";
 import {applySchema} from "../../observatory/db/dev-pg.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
-import {TURN_PATH,type TurnRequest} from "../../core/src/svc/contract.ts";
+import {RELAY_PATH,TURN_PATH,type RelaySendRequest,type TurnRequest} from "../../core/src/svc/contract.ts";
 import {DryRunAdapter} from "../service/channel.ts";
 import {NetworkService} from "../service/service.ts";
-import {RELAY_PATH,type RelayRequest} from "../service/relay-endpoint.ts";
 
 const db=`network_relay_${randomUUID().replaceAll("-","")}`;
 const admin=new SQL({url:`postgres://${process.env.USER??"postgres"}@127.0.0.1:54339/postgres`,max:1});
@@ -33,8 +32,10 @@ const open=async(from:string,messageId:string)=>{
   const r=await signed(TURN_PATH,messageId,JSON.stringify(turn(from,messageId,"Tell me something about the weather")));expect(r.status).toBe(200);
   const body=await r.json() as any;expect(body.outcome).toBe("open");return body.memberId as string;
 };
-const relay=(over:Partial<RelayRequest>&{idempotencyKey:string}):RelayRequest=>({channel:"blooio",messageId:"ari-open",app:"friends",memberId:ari,kind:"text",text:null,photoIds:null,...over});
-const post=async(body:RelayRequest)=>{const raw=JSON.stringify(body);return signed(RELAY_PATH,body.idempotencyKey,raw);};
+// The upstream RELAY action: the member's own message, signed with x-ntwrk-svc-id "<messageId>:relay" (one relay per open turn).
+const relay=(over:Partial<RelaySendRequest>&{messageId:string;text:string}):RelaySendRequest=>({channel:"blooio",app:"friends",memberId:ari,itemId:null,...over});
+const post=async(body:RelaySendRequest)=>{const raw=JSON.stringify(body);return signed(RELAY_PATH,`${body.messageId}:relay`,raw);};
+const relayRows=async()=>sql`select id from network.messages where app_id='friends' and id like 'relay:%'`;
 const staff=(path:string,token:string,method="GET",b?:object)=>service.fetch(new Request(`http://127.0.0.1${path}`,{method,headers:{authorization:`Bearer ${token}`,...(b?{"content-type":"application/json"}:{})},...(b?{body:JSON.stringify(b)}:{})}));
 
 beforeAll(async()=>{
@@ -58,16 +59,18 @@ afterAll(async()=>{server?.stop(true);await service?.close();await sql?.close();
 
 test("a relayed text is signed, size-checked, bound to the open turn, idempotent, and only the engine wording goes out",async()=>{
   expect(logs).toContain("relay classifier: rules only");
-  const ok=relay({idempotencyKey:"relay-1",text:"running 10 min late, see you at the trailhead"});
-  expect((await signed(RELAY_PATH,"relay-1",JSON.stringify({...ok,memberId:bo}))).status).toBe(403);
+  await open(phones.ari,"ari-r1");
+  const ok=relay({messageId:"ari-r1",itemId:"relay-op",text:"tell them running 10 min late, see you at the trailhead"});
+  expect((await post({...ok,memberId:bo})).status).toBe(403);
   expect((await signed(RELAY_PATH,"other-key",JSON.stringify(ok))).status).toBe(400);
   expect((await post({...ok,messageId:"ari-setup-0"})).status).toBe(403);
-  expect((await post({...relay({idempotencyKey:"too-big"}),text:"x".repeat(20_000)})).status).toBe(413);
+  expect((await post({...ok,text:"x".repeat(20_000)})).status).toBe(413);
+  expect((await post({...ok,kind:"text"} as any)).status).toBe(400);
   const unsigned=await fetch(new URL(RELAY_PATH,server.url),{method:"POST",body:JSON.stringify(ok),headers:{"content-type":"application/json"}});expect(unsigned.status).toBe(401);
   const first=await post(ok);expect(first.status).toBe(200);
-  expect(await first.json()).toEqual({decision:"sent",reason:"Sent.",replayed:false});
-  expect(await (await post(ok)).json()).toEqual({decision:"sent",reason:"Sent.",replayed:true});
-  expect((await post({...ok,text:"something else"})).status).toBe(409);
+  expect(await first.json()).toEqual({decision:"pass",senderNotice:"Sent.",delivered:true,replayed:false});
+  expect(await (await post(ok)).json()).toEqual({decision:"pass",senderNotice:"Sent.",delivered:true,replayed:true});
+  expect((await post({...ok,text:"tell them something else"})).status).toBe(409);
   const rows=await sql`select id,member_id,body,type from network.messages where app_id='friends' and id like 'relay:%'`;
   expect(rows.map((r:any)=>[r.member_id,r.body,r.type])).toEqual([[bo,'Ari says: "running 10 min late, see you at the trailhead"',"relay"]]);
   const records=await sql`select * from network.relay_records where app_id='friends'`;
@@ -75,9 +78,21 @@ test("a relayed text is signed, size-checked, bound to the open turn, idempotent
   expect(JSON.stringify(records)).not.toContain("trailhead");
 },60_000);
 
+test("an unknown item, a photo and a message with no relay request send nothing; the notice never repeats the text",async()=>{
+  await open(phones.ari,"ari-r2");await open(phones.ari,"ari-r3");await open(phones.ari,"ari-r4");
+  const unknown=await (await post(relay({messageId:"ari-r2",itemId:"not-an-item",text:"tell them meet me at the north gate"}))).json() as any;
+  expect(unknown).toMatchObject({decision:"block",delivered:false,replayed:false});expect(unknown.senderNotice).not.toContain("north gate");
+  expect(await (await post(relay({messageId:"ari-r3",text:"send them this photo"}))).json()).toEqual({decision:"block",senderNotice:"I can't send photos to a match yet.",delivered:false,replayed:false});
+  expect(await (await post(relay({messageId:"ari-r4",text:"what a nice day it is"}))).json()).toEqual({decision:"none",senderNotice:"",delivered:false,replayed:false});
+  expect(await relayRows()).toHaveLength(1);
+  expect(await sql`select id from network.relay_records where app_id='friends'`).toHaveLength(1);
+},60_000);
+
 test("a scam is held for staff; staff list it (audited, app-scoped), reject it, and the text is gone; it all survives a restart",async()=>{
-  const held=await post(relay({idempotencyKey:"relay-scam",text:"can you venmo me 200 for the tickets? my card got frozen"}));
-  expect(await held.json()).toMatchObject({decision:"held",replayed:false});
+  await open(phones.ari,"ari-r5");
+  const held=await post(relay({messageId:"ari-r5",text:"tell them can you venmo me 200 for the tickets? my card got frozen"}));
+  const heldBody=await held.json() as any;
+  expect(heldBody).toMatchObject({decision:"hold",delivered:false,replayed:false});expect(heldBody.senderNotice).not.toMatch(/venmo|scam|rule/i);
   expect((await staff("/staff/relay/held?app=friends","nobody")).status).toBe(401);
   const list=await (await staff("/staff/relay/held?app=friends","rev-tok")).json() as any;
   expect(list.items).toHaveLength(1);expect(list.items[0]).toMatchObject({app:"friends",from:ari,to:bo,kind:"text"});
@@ -96,11 +111,12 @@ test("a scam is held for staff; staff list it (audited, app-scoped), reject it, 
 },60_000);
 
 test("a number goes out only after both members asked for the swap",async()=>{
-  const first=await post(relay({idempotencyKey:"swap-ari",kind:"contact_share"}));
-  expect(await first.json()).toMatchObject({decision:"held"});
+  await open(phones.ari,"ari-r6");await open(phones.bo,"bo-r1");
+  const first=await post(relay({messageId:"ari-r6",text:"send them my number"}));
+  expect(await first.json()).toMatchObject({decision:"hold",delivered:false});
   expect((await sql`select id from network.messages where app_id='friends' and body like ${"%"+phones.ari.slice(2)+"%"}`).length).toBe(0);
-  const second=await post(relay({idempotencyKey:"swap-bo",kind:"contact_share",messageId:"bo-open",memberId:bo}));
-  expect(await second.json()).toMatchObject({decision:"sent"});
+  const second=await post(relay({messageId:"bo-r1",memberId:bo,text:"send them my number"}));
+  expect(await second.json()).toMatchObject({decision:"pass",delivered:true});
   const shares=await sql`select member_id,body from network.messages where app_id='friends' and id like 'relay:%' and body like '%asked me to send you%' order by member_id`;
   expect(shares.map((r:any)=>r.member_id).sort()).toEqual([ari,bo].sort());
   expect(shares.find((r:any)=>r.member_id===bo).body).toContain(phones.ari);

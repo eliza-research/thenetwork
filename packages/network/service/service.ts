@@ -238,8 +238,11 @@ export class NetworkService implements RuntimeHost {
   readonly clock: Clock;
   readonly instance: string;
   readonly audit: AuditSink;
-  /** The relay classifier (relay-endpoint.ts): Clef when the Workers AI token and account are set, else rules only. Set at start. */
-  private relayHook?: RelayClassifierHook;
+  /**
+   * The relay classifier per app (relay-endpoint.ts): Clef when the Workers AI token and account are set,
+   * else rules only (undefined). Each Clef call is a cost row for the app (cost.ts). Set at start.
+   */
+  private relayHookFor?: (app: AppId) => RelayClassifierHook;
   readonly apps: Record<AppId, AppInfo>;
   readonly people: PeopleStore;
   readonly accounts: Accounts;
@@ -376,7 +379,7 @@ export class NetworkService implements RuntimeHost {
     const declared = platformEnv(this.env);
     const [envRow] = await this.sql`select value from platform.settings where key = 'environment'`;
     if (declared && envRow && envRow.value !== declared) throw new Error(`PLATFORM_ENV is ${declared} but platform.settings.environment is ${envRow.value}: fix one of them`);
-    this.relayHook = relayClassifierFromEnv(this.env, this.log);
+    this.relayHookFor = relayClassifierFromEnv(this.env, this.log, this.cost);
     for (const rt of this.runtimes.values()) await rt.start();
   }
 
@@ -1757,7 +1760,7 @@ export class NetworkService implements RuntimeHost {
   fetch = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
     if ([TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH].includes(url.pathname)) return this.sharedTurn(req);
-    if (url.pathname === RELAY_PATH) return relayEndpoint({ sql: this.sql, clock: this.clock, secret: this.env.SERVICE_TURN_SECRET, accounts: this.accounts, photos: this.photos, runtimeFor: app => this.runtimeFor(app), ...(this.relayHook ? { hook: this.relayHook } : {}) }, req);
+    if (url.pathname === RELAY_PATH) return relayEndpoint({ sql: this.sql, clock: this.clock, secret: this.env.SERVICE_TURN_SECRET, accounts: this.accounts, runtimeFor: app => this.runtimeFor(app), ...(this.relayHookFor ? { hookFor: this.relayHookFor } : {}) }, req);
     let path = url.pathname.replace(/\/+$/, "") || "/";
     try {
       if (path === WEBHOOK_PATH || path.startsWith(`${WEBHOOK_PATH}/`)) {
