@@ -18,7 +18,7 @@ slop.date is dating by text message in New York City. The person texts with a ma
 It learns who they hope to meet and, now and then, suggests one person. Nobody is introduced
 unless both people say yes. There is no feed, no swiping and no browsing of profiles.
 
-All of these apps are powered by The Network: ntwrk.love, slop.date, friends.help and peon.biz
+All of these apps are powered by The Network: ntwrk.party, slop.date, friends.help and peon.biz
 share one backend at {{BACKEND_ORIGIN}}, and one text line. This app's MCP server is at {{MCP_URL}}.
 
 ## What the person is signing up for
@@ -87,7 +87,7 @@ The person verifies their own phone on our page. You never type a number or a co
 
 ## Privacy across apps
 
-What the person tells slop.date stays in slop.date. ntwrk.love, friends.help and peon.biz never
+What the person tells slop.date stays in slop.date. ntwrk.party, friends.help and peon.biz never
 show anything from slop.date. Dating preferences and orientation never move to another app, even if
 the person asks. One text line serves every app, so STOP on it stops every app, and a safety hold
 or ban (after a report) applies on every app powered by The Network.
@@ -100,7 +100,7 @@ or ban (after a report) applies on every app powered by The Network.
 
 ## Support
 
-- Support: https://slop.date/support (email help@ntwrk.love)
+- Support: https://slop.date/support (email help@ntwrk.party)
 - Privacy: https://slop.date/privacy
 - Terms: https://slop.date/terms
 - Text messaging terms: https://slop.date/sms-terms
