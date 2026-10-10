@@ -18,7 +18,7 @@ peon.biz introduces people looking for work to teams that are hiring, by text me
 open to join today. Introductions have not started yet. Software only suggests possible fits.
 A person on the team reviews every introduction, and the team that hires makes every hiring decision. Candidates never pay a fee.
 
-All of these apps are powered by The Network: ntwrk.love, slop.date, friends.help and peon.biz
+All of these apps are powered by The Network: ntwrk.party, slop.date, friends.help and peon.biz
 share one backend at {{BACKEND_ORIGIN}}, and one text line. This app's MCP server is at {{MCP_URL}}.
 
 ## What the person is signing up for
@@ -34,7 +34,7 @@ share one backend at {{BACKEND_ORIGIN}}, and one text line. This app's MCP serve
 - Anyone 13 or older may join. Matching is for adults 18 and older only.
 - Members aged 13 to 17 are never matched or introduced to anyone on peon.biz.
 - peon.biz never asks a candidate for money, a Social Security number or bank details. If anyone
-  does in its name, it is a scam: tell the person to report it to help@ntwrk.love.
+  does in its name, it is a scam: tell the person to report it to help@ntwrk.party.
 
 ## How a person joins (they do it, not you)
 
@@ -90,7 +90,7 @@ number uses peon.biz.
 
 ## Support
 
-- Support: https://peon.biz/support (email help@ntwrk.love)
+- Support: https://peon.biz/support (email help@ntwrk.party)
 - Privacy: https://peon.biz/privacy
 - Terms: https://peon.biz/terms
 - Text messaging terms: https://peon.biz/sms-terms
