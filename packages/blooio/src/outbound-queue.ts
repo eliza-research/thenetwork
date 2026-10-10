@@ -97,6 +97,8 @@ export interface QueueRow {
   personCap: boolean;
   newConversation: boolean;
   reengagement: boolean;
+  /** Staff released this row from leak review (migration 0032): the leak guard does not park it again. */
+  leakReleased?: boolean;
 }
 
 /** A status a row moved to. Rows with a member also update network.messages (the runtime stores it). */
@@ -149,6 +151,12 @@ export interface QueueOptions {
   baseBackoffMs?: number;
   /** How long a provider call may hold a row before recover() takes it back. Default 5 minutes. */
   leaseMs?: number;
+  /**
+   * A row whose provider acceptance stays unknown (unknown_acceptance: the worker stopped mid-call, or the
+   * provider timed out) and that no receipt lookup resolves within this long after it was created ends as
+   * failed_unknown, with an alert. Default 6 hours.
+   */
+  unknownTtlMs?: number;
   /** A proactive row older than this is never sent (expired). Default 24 h. Any other row: 3 days. */
   ttlProactiveMs?: number;
   ttlMs?: number;
@@ -166,7 +174,7 @@ export class IdempotencyConflictError extends Error {
 }
 
 /** Statuses that still wait for the worker (the console's backlog). */
-export const WAITING = ["pending", "retry_scheduled", "deferred_quiet_hours", "held_awaiting_reply", "sending"];
+export const WAITING = ["pending", "retry_scheduled", "deferred_quiet_hours", "held_awaiting_reply", "sending", "unknown_acceptance"];
 /** Statuses the provider accepted; a receipt ends them. */
 const IN_FLIGHT = ["accepted", "sent"];
 const DUE = ["pending", "retry_scheduled", "deferred_quiet_hours"];
@@ -254,6 +262,8 @@ export class OutboundQueue {
 
   /** Deliver every due row of this app. Returns the status changes (for network.messages). */
   async drain(): Promise<StatusChange[]> {
+    // Every drain reclaims rows whose lease ran out (a replica that died mid-send), not only a runtime that starts.
+    await this.recover();
     const receipts = await this.reconcileUnknown();
     return this.withLine(async () => {
       const changes: StatusChange[] = [...receipts, ...await this.expireHeld()];
@@ -280,6 +290,7 @@ export class OutboundQueue {
       id: r.id, app: r.app_id, memberId: r.member_id ?? undefined, line: r.line, to: r.to_address, kind: r.kind, text: r.body ?? "",
       mediaUrls: r.media_urls ?? [], oppId: r.opportunity_id ?? undefined, timeZone: r.time_zone, status: r.status, attempts: r.attempts,
       createdAt: ms(r.created_at)!, inDoubt: r.in_doubt, personCap: r.person_cap, newConversation: r.new_conversation, reengagement: r.reengagement,
+      ...(r.leak_released_by ? { leakReleased: true } : {}),
     };
   }
 
@@ -390,7 +401,8 @@ export class OutboundQueue {
       if (!row.personCap) { row.personCap = true; await this.sql`update platform.outbound set person_cap = true where id = ${row.id}`; }
     }
     // 10. The leak guard, right before the send: only hashed labels are stored, never the text or the match.
-    const leaks = await this.leakReasons(row);
+    // A row staff released from leak review (releaseLeak) is not parked again for the same text.
+    const leaks = row.leakReleased ? [] : await this.leakReasons(row);
     if (leaks.length) {
       this.o.onAlert?.(row.id, "leak_blocked");
       return this.end(row, "parked_leak_review", `leak: ${leaks.join(",")}`);
@@ -398,7 +410,7 @@ export class OutboundQueue {
     return this.send(row, isNew, reengagement);
   }
 
-  private async leakReasons(row: QueueRow): Promise<string[]> {
+  private async leakReasons(row: QueueRow, db: SQL = this.sql): Promise<string[]> {
     let src: LeakSources = {};
     if (this.o.checks.leaks) {
       try { src = await this.o.checks.leaks(row); } catch { return ["leak_check_error"]; }
@@ -410,15 +422,15 @@ export class OutboundQueue {
     // the new text alone (two ordinary messages joined can look like a number); another member's own
     // values, facts and canaries run on the thread. A fixed compliance text is never held for its thread.
     if (row.kind === "compliance") return reasons;
-    const recent = await this.threadOf(row);
+    const recent = await this.threadOf(row, db);
     if (!recent.length) return reasons;
     const thread = new LeakGuard({ ...src, canaryShapes: true, allow: [...(this.o.leakAllow ?? []), ...(src.allow ?? [])], contacts: false }).checkThread([...recent, row.text], { exceptOwner: own });
     return [...new Set([...reasons, ...thread.map(r => `thread:${r}`)])];
   }
 
   /** The texts that went to this address on this line in the last `threadWindowMs`, oldest first (at most `threadSize`). */
-  private async threadOf(row: QueueRow): Promise<string[]> {
-    const rows = await this.sql`select body from platform.outbound where line = ${this.line} and to_address = ${row.to} and id <> ${row.id}
+  private async threadOf(row: QueueRow, db: SQL = this.sql): Promise<string[]> {
+    const rows = await db`select body from platform.outbound where line = ${this.line} and to_address = ${row.to} and id <> ${row.id}
       and body is not null and sent_at is not null and sent_at > ${new Date(this.now - this.opt("threadWindowMs", DAY))}
       order by sent_at desc, id desc limit ${this.opt("threadSize", 4)}`;
     return (rows as any[]).map(r => String(r.body)).reverse();
@@ -533,17 +545,35 @@ export class OutboundQueue {
     return {id:row.id,app:row.app,memberId:row.memberId,status};
   }
 
-  /** Bounded read-only remote recovery; unknown rows never enter the dispatch queue. */
+  /**
+   * Bounded read-only remote recovery; unknown rows never enter the dispatch queue on an ambiguous answer.
+   * An authoritative "never admitted" (ChannelSendError code "not_found") puts the row back to the queue
+   * with the same "tn:<id>" key (idempotent at the provider). A row still unknown after unknownTtlMs ends
+   * as failed_unknown with an alert, so nothing waits forever unseen.
+   */
   private async reconcileUnknown(): Promise<StatusChange[]> {
-    if (!this.o.provider.receipt) return [];
+    const changes:StatusChange[]=[];
+    const ttl=this.opt("unknownTtlMs",6*HOUR);
+    for (const stored of await this.sql`select * from platform.outbound where app_id=${this.app} and line=${this.line}
+      and status='unknown_acceptance' and created_at<${new Date(this.now-ttl)} order by created_at,id limit 50`) {
+      const row=this.rowOf(stored);
+      this.o.onAlert?.(row.id,"unknown_acceptance_expired");
+      changes.push(await this.end(row,"failed_unknown","provider acceptance never resolved"));
+    }
+    if (!this.o.provider.receipt) return changes;
     const rows=await this.sql`select * from platform.outbound where app_id=${this.app} and line=${this.line}
       and status='unknown_acceptance' and body is not null and to_address is not null order by updated_at,id limit 4`;
-    const changes:StatusChange[]=[];
     for (const stored of rows) {
       const row=this.rowOf(stored);
       await this.sql`update platform.outbound set updated_at=${new Date(this.now)} where id=${row.id} and status='unknown_acceptance'`;
       try {changes.push(await this.acceptReceipt(row,await this.o.provider.receipt(this.request(row))));}
-      catch {
+      catch (e) {
+        if (e instanceof ChannelSendError && e.code==="not_found") {
+          // The provider never admitted this id: safe to send again with the same key.
+          const moved=await this.sql`update platform.outbound set status='retry_scheduled',next_attempt_at=${new Date(this.now)},updated_at=${new Date(this.now)},
+            note='receipt lookup: never admitted' where id=${row.id} and status='unknown_acceptance' returning id`;
+          if (moved.length) { changes.push({id:row.id,app:row.app,memberId:row.memberId,status:"retry_scheduled"}); continue; }
+        }
         // A missing or ambiguous receipt remains held; mirror it without dispatch or delivery hooks.
         changes.push({id:row.id,app:row.app,memberId:row.memberId,status:"unknown_acceptance"});
       }
@@ -605,6 +635,72 @@ export class OutboundQueue {
       and coalesce(greatest(c.last_inbound_at, c.last_outbound_at), c.first_outbound_at) < ${before}
       and c.unanswered = 0 and not exists (select 1 from platform.phone_identities p where p.e164 = c.address) returning address`;
     return rows.length;
+  }
+
+  // ---------------------------------------------------------------- replies another transport delivers
+  // In a signed turn (the Eliza Cloud seam) the Network's replies are collected and returned to Cloud,
+  // which sends them; they never pass dispatch(). They still get this queue's leak guard (canary shapes,
+  // contacts, the recipient's leak sources and the core-14 thread check) and they join the thread history
+  // the guard reads: a row with status "collected" in the caller's transaction, "sent" with sent_at once
+  // Cloud reports acceptance (collectedReceipt).
+
+  /** The leak guard's reasons for one reply that another transport will deliver (empty: it may go). `db`: the caller's transaction. */
+  async collectedLeaks(db: SQL, i: { id: string; memberId?: string; to: string; kind: MessageKind; text: string }): Promise<string[]> {
+    const row: QueueRow = {
+      id: i.id, app: this.app, ...(i.memberId ? { memberId: i.memberId } : {}), line: this.line, to: normalizeAddress(i.to), kind: i.kind, text: i.text, mediaUrls: [],
+      timeZone: "UTC", status: "collected", attempts: 0, createdAt: this.now, inDoubt: false, personCap: false, newConversation: false, reengagement: false,
+    };
+    return this.leakReasons(row, db);
+  }
+
+  /** Record collected replies to members (thread history for the leak guard) in the caller's transaction. A replay is a no-op. */
+  async recordCollected(tx: SQL, items: { id: string; memberId: string; to: string; kind: MessageKind; text: string }[]): Promise<void> {
+    const now = new Date(this.now);
+    for (const i of items) {
+      const to = normalizeAddress(i.to);
+      await tx`insert into platform.outbound ${tx({
+        id: i.id, app_id: this.app, member_id: i.memberId, line: this.line, to_address: to, kind: i.kind, body: i.text, media_urls: tx.array([], "TEXT"),
+        fingerprint: fingerprint(to, i.text, [], i.kind), opportunity_id: null, time_zone: "UTC", status: "collected", next_attempt_at: now, created_at: now, updated_at: now, ended_at: null,
+      })} on conflict (id) do nothing`;
+    }
+  }
+
+  /** Cloud's turn receipt for collected replies: accepted ones enter the thread history (sent_at); the others end. */
+  async collectedReceipt(tx: SQL, ids: string[], outcome: "accepted" | "unknown" | "rejected", at: number): Promise<void> {
+    if (!ids.length) return;
+    const status = outcome === "accepted" ? "sent" : outcome === "unknown" ? "send_unknown" : "refused_gateway";
+    await tx`update platform.outbound set status = ${status}, updated_at = ${new Date(this.now)},
+      sent_at = case when ${outcome === "accepted"} then coalesce(sent_at, ${new Date(at)}) else sent_at end,
+      ended_at = case when ${outcome === "unknown"} then null else coalesce(ended_at, ${new Date(this.now)}) end
+      where app_id = ${this.app} and id = any(${tx.array(ids, "TEXT")}) and status in ('collected', 'send_unknown')`;
+  }
+
+  /** Rows of this app the leak guard parked for a person (GET /queue/leak-review), oldest first. */
+  async parkedLeaks(limit = 200): Promise<Array<{ id: string; memberId?: string; to: string | null; kind: MessageKind; text: string | null; reasons: string[]; createdAt: number }>> {
+    const rows = await this.sql`select id, member_id, to_address, kind, body, note, created_at from platform.outbound
+      where app_id = ${this.app} and line = ${this.line} and status = 'parked_leak_review' order by created_at, id limit ${limit}`;
+    return (rows as any[]).map(r => ({
+      id: r.id, ...(r.member_id ? { memberId: r.member_id } : {}), to: r.to_address ?? null, kind: r.kind, text: r.body ?? null,
+      reasons: typeof r.note === "string" && r.note.startsWith("leak: ") ? r.note.slice(6).split(",").filter(Boolean) : [], createdAt: ms(r.created_at)!,
+    }));
+  }
+
+  /**
+   * Staff decide one parked text. "release": back to the queue (every send-time check runs again, but the
+   * leak guard does not park it again); "drop": it ends unsent (dropped_leak_review). Undefined when the
+   * row is not parked for leak review in this app.
+   */
+  async decideLeak(id: string, decision: "release" | "drop", actor: string): Promise<StatusChange | undefined> {
+    const [r] = await this.sql`select * from platform.outbound where id = ${id} and app_id = ${this.app} and line = ${this.line} and status = 'parked_leak_review'`;
+    if (!r) return undefined;
+    const row = this.rowOf(r);
+    if (decision === "drop") return this.end(row, "dropped_leak_review", `leak review: dropped by ${actor}`.slice(0, 300));
+    // A parked text to a non-member keeps no text or address (end()): there is nothing left to release.
+    if (r.body == null || r.to_address == null) return undefined;
+    const now = new Date(this.now);
+    const moved = await this.sql`update platform.outbound set status = 'pending', next_attempt_at = ${now}, updated_at = ${now}, ended_at = null,
+      note = 'leak review: released', leak_released_by = ${actor.slice(0, 300)} where id = ${id} and status = 'parked_leak_review' returning id`;
+    return moved.length ? { id: row.id, app: row.app, memberId: row.memberId, status: "pending" } : undefined;
   }
 
   /** The status of one row (this queue's app). */

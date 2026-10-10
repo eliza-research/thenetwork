@@ -291,6 +291,10 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect([prefs[k].romanceOptIn, prefs[k].categoriesOptIn]).toEqual([false, []]);
     await staff(s, "saf-tok", "POST", `/apps/slop/members/${k}/verify`, { check: "age", result: "pass", note: "ID checked by staff" });
     expect(await (await upload()).json()).toEqual({ ok: false, error: "adults_only" });
+    // The photo consent says safety looks only after a report: with no open report or safety case about the member, no link (refused and audited).
+    expect(await (await staff(s, "saf-tok", "GET", `/apps/slop/members/${a}/photos`, undefined, { "x-network-reason": "just curious" })).json()).toEqual({ ok: false, reason: "no_report" });
+    // A staff hold opens a safety case about each of them.
+    for (const id of [k, a]) expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/hold", { memberId: id, note: "report review" })).json()).toEqual({ ok: true });
     expect(await (await staff(s, "saf-tok", "GET", `/apps/slop/members/${k}/photos`, undefined, { "x-network-reason": "report review" })).json()).toEqual({ ok: false, reason: "adults_only" });
 
     // Staff read: a reason is required; the audit row comes before the link.
@@ -300,7 +304,8 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(r.photos).toHaveLength(1);
     expect(r.photos[0].url).toMatch(/^https:\/\/slop\.date\/api\/photos\/view\//);
     const audit = (await sql`select target_id, detail->>'phase' as phase, ok from network.staff_audit where action = 'read_photos' order by id`) as any[];
-    expect(audit.map(x => [x.target_id, x.phase, x.ok])).toEqual([[k, "requested", true], [k, "result", false], [a, "requested", true], [a, "result", true]]);
+    expect(audit.map(x => [x.target_id, x.phase, x.ok])).toEqual([[a, "refused", false], [k, "requested", true], [k, "result", false], [a, "requested", true], [a, "result", true]]);
+    expect((await sql`select detail->>'caseId' as c from network.staff_audit where action = 'read_photos' and target_id = ${a} and detail->>'phase' = 'requested'`)[0].c).toBeTruthy();
     // The link works through the backend (the site router forwards /api/*), without GPS.
     const u = new URL(r.photos[0].url);
     const img = await web.call("slop", "GET", `${u.pathname}${u.search}`);

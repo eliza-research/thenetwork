@@ -181,9 +181,9 @@ The Safety tab starts with "Held texts", per app, in two queues: **Leak review**
 | `GET /queue/leak-review?app=` | | `200 {ok, items: [{id, kind, to (masked), text, reasons, createdAt, memberId?, minor?}]}` |
 | `POST /queue/leak-review/<id>?app=` | `{decision: "release" or "drop", reason}` | `200 {ok: true}` or `409 {reason}` (`not_parked`) |
 | `GET /staff/relay/held?app=` | | `200 {ok, items: [{id, kind, text?, reasons, createdAt, memberId?, minor?}]}` |
-| `POST /staff/relay/<id>/release?app=` and `.../reject` | `{reason}` | `200 {ok: true}` or `409 {reason}` |
+| `POST /staff/relay/<id>/release?app=` and `.../reject` | `{note}` (the service also accepts `reason`) | `200 {ok: true}` or `409 {reason}` |
 
-**Status (2026-10-09):** the console side is built (`/api/held`, `web/admin.tsx` HeldTexts; `packages/observatory/test/held.test.ts`). The service routes come from the messaging pipeline and the relay work and are not on this branch: until they land, each queue shows "Not available". Game mode has no held texts.
+**Status (2026-10-09):** the console side is built (`/api/held`, `web/admin.tsx` HeldTexts; `packages/observatory/test/held.test.ts`), and the service serves all four routes (`packages/network/service/service.ts`; contract-checked against the real service in `packages/network/test/relay.test.ts` and `cloud-outbound.integration.test.ts`). A network with no outbound queue (dry run) answers the leak queue with 404, which the console shows as "Not available". Game mode has no held texts.
 
 How to test locally: run `bun run observatory:db`, then the console in real mode with a service (`NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/network NETWORK_SERVICE_URL=http://127.0.0.1:4848 NETWORK_SERVICE_TOKEN=<an admin token of the service> PLATFORM_ENV=dev bun run observatory --mode real`). Open the printed URL, pick slop, open Safety. Both queues say "Not available" until the service has the routes. To see rows without the service routes, point `NETWORK_SERVICE_URL` at a local fake that answers the calls above (as `held.test.ts` does). In a minor report, **Clear minor signal (every app)** needs a note and then dismisses the report.
 

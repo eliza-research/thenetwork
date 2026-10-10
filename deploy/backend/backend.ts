@@ -24,6 +24,7 @@ import { requirePlatformEnv, type Env, type PlatformEnv } from "../../packages/p
 import { PROXY_HEADERS, verifyProxyHeaders } from "../../packages/platform/src/proxy.ts";
 import { timingSafeEqual } from "node:crypto";
 import { opsConfigFromEnv, type OpsConfig } from "./ops.ts";
+import { RELAY_MAX_BODY_BYTES, RELAY_PATH } from "../../packages/network/service/relay-endpoint.ts";
 
 export { PROXY_HEADERS };
 /** The visitor IP the public API reads (ipOf). Present only on a verified request. */
@@ -31,9 +32,10 @@ export const CLIENT_IP = PROXY_HEADERS.ip;
 export const BUILD_HEADER = "x-network-build";
 const STRIP = ["x-forwarded-host", "x-forwarded-for", "x-forwarded-proto", "x-real-ip", "forwarded", "true-client-ip"];
 const PROXY_PREFIXES = ["x-network-proxy-", "x-ntwrk-proxy-"];
-/** The Eliza gateway's signed routes (served by the service) and their body cap (the service's MAX_BODY_BYTES). */
-const INTERNAL_PATHS = new Set(["/internal/turn", "/internal/turn-receipt", "/internal/set-state", "/internal/signals", "/internal/updates"]);
+/** The Eliza gateway's signed routes (served by the service) and their body cap (the service's MAX_BODY_BYTES; the relay action's own cap). */
+const INTERNAL_PATHS = new Set(["/internal/turn", "/internal/turn-receipt", "/internal/set-state", "/internal/signals", "/internal/updates", RELAY_PATH]);
 const MAX_INTERNAL_BODY = 256 * 1024;
+const internalCap = (path: string) => (path === RELAY_PATH ? RELAY_MAX_BODY_BYTES : MAX_INTERNAL_BODY);
 
 // ------------------------------------------------------------------ config
 
@@ -337,7 +339,7 @@ export function createBackend(d: BackendDeps) {
         res = c.deployed && !n.edge ? json(421, { ok: false, error: "edge_required" }) : await track(svc.publicFetch(n.req, server));
       } else if (path === "/webhooks/blooio" || path.startsWith("/webhooks/blooio/") || INTERNAL_PATHS.has(path)) {
         // A declared body over the cap is refused before the service reads or verifies it (the service caps the read too).
-        res = INTERNAL_PATHS.has(path) && Number(req.headers.get("content-length") ?? "0") > MAX_INTERNAL_BODY ? json(413, { ok: false, error: "payload_too_large" }) : await track(svc.fetch(req));
+        res = INTERNAL_PATHS.has(path) && Number(req.headers.get("content-length") ?? "0") > internalCap(path) ? json(413, { ok: false, error: "payload_too_large" }) : await track(svc.fetch(req));
       } else if (MCP_PATH.test(path)) {
         // The MCP server sees the same normalized request as the public API: Host is the site's host only via a verified edge.
         const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)());

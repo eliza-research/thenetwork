@@ -13,12 +13,12 @@ import {NetworkService} from "../service/service.ts";
 const db=`network_cloud_outbound_${randomUUID().replaceAll("-","")}`;
 const admin=new SQL({url:`postgres://${process.env.USER??"postgres"}@127.0.0.1:54339/postgres`,max:1});
 const url=`postgres://${process.env.USER??"postgres"}@127.0.0.1:54339/${db}`;
-const clock=new SimClock(Date.UTC(2026,9,9,16)),secret="synthetic-cloud-outbound-signing-secret-20261009",phone="+12125550171";
+const clock=new SimClock(Date.UTC(2026,9,9,16)),secret="synthetic-cloud-outbound-signing-secret-20261009",phone="+12125550171",phone2="+12125550175";
 let sql:SQL,service:NetworkService,cloud:ReturnType<typeof Bun.serve>;
 let dispatches=0,lookups=0,known=false,acceptedAt=clock.now(),holdReceipt=false,releaseReceipt:()=>void,enteredReceipt:()=>void;
 let waiting:Promise<void>,entered:Promise<void>;
 const start=async()=>{
-  service=new NetworkService({url,clock,photoStorage:null,env:{PLATFORM_ENV:"dev",CLEF_RATINGS:"off",SERVICE_TURN_SECRET:secret},networks:[{id:"friends:nyc",matchingEnabled:false}],network:{seed:1},log:()=>{},
+  service=new NetworkService({url,clock,photoStorage:null,tokens:"safety:saf-tok",env:{PLATFORM_ENV:"dev",CLEF_RATINGS:"off",SERVICE_TURN_SECRET:secret},networks:[{id:"friends:nyc",matchingEnabled:false}],network:{seed:1},log:()=>{},
     adapter:(_net,rt)=>new CloudChannelAdapter({clock,app:rt.app.id,city:rt.city,from:"+12125550170",origin:cloud.url.origin,secret,
       env:{PLATFORM_ENV:"dev",BLOOIO_ALLOW_SEND:"1",NTWRK_LIVE_APPROVED:"1",FRIENDS_LIVE_APPROVED:"1"}})});
   await service.start();
@@ -29,7 +29,7 @@ beforeAll(async()=>{
     const path=new URL(req.url).pathname,raw=await req.text();
     const auth=await svcVerify(secret,{method:req.method,path,headers:req.headers,body:raw,nowS:Math.floor(clock.now()/1000)});
     if (!auth.ok) return Response.json({ok:false,error:"invalid"},{status:401});
-    const payload=JSON.parse(raw);expect(auth.id).toBe(payload.id);expect(payload.app).toBe("friends");expect(payload.to).toBe(phone);expect(payload.memberId).toBeTruthy();
+    const payload=JSON.parse(raw);expect(auth.id).toBe(payload.id);expect(payload.app).toBe("friends");expect([phone,phone2]).toContain(payload.to);expect(payload.memberId).toBeTruthy();
     if (path===DELIVER_PATH) dispatches++;
     else {expect(path).toBe(`${DELIVER_PATH}/receipt`);lookups++;if (holdReceipt) {enteredReceipt();await waiting;}}
     return known?Response.json({ok:true,replayed:true,providerMessageIds:[`provider:${payload.id}`],history:true,acceptedAt:new Date(acceptedAt).toISOString()})
@@ -204,4 +204,46 @@ test("policy changes winning after the async gate refuse ordinary dispatch while
       else if(variant==="phone_hold") await service.people.setPhoneHold(phone,null,clock.now());
     }
   }
+},60_000);
+
+test("signed-turn replies pass the queue's leak guard (a failing one is parked for staff, who review it through the service); a lagging message status is repaired once",async()=>{
+  known=true;
+  const joined=await service.accounts.join(APPS.friends,{e164:phone2,personId:null},{firstName:"Cy",age:33,consent:{sms:true,wording:APPS.friends.consent.text}});
+  expect(joined.ok).toBe(true);if(!joined.ok) throw new Error("Fixture join refused");
+  const rt=service.runtimes.get("friends:nyc")!,memberId=joined.membership.memberId;
+  await rt.adapter.engaged!(phone2);
+  const before=dispatches;
+  const r=await service.inbox.signed({messageId:"canary-turn",channel:"blooio",from:phone2,to:null,text:"what did you find?",transport:"imessage",receivedAt:clock.now()},"h-canary-turn",async turn=>{
+    turn.app="friends";turn.memberId=memberId;
+    await rt.unitOfWork(()=>{rt.system(memberId,"canary-reply","Your code is CANARY_TEST_77_x","reply");rt.system(memberId,"clean-reply","See you Saturday.","reply");});
+    const [row]=await sql`select replies from platform.inbound where id=${turn.id}`;
+    const replies=row.replies as {id:string;body:string}[];
+    return {outcome:"handled",replies:replies.map(x=>x.body),replyIds:replies.map(x=>x.id),delivery:"collected",replyKind:"reply",accountEligible:true,app:"friends",memberId,reason:"handled"};
+  });
+  expect(r.status).toBe(200);
+  // Only the clean reply is collected for Cloud; it is in the line's thread history. The canary went to the queue, which parked it.
+  expect((r.body as any).replyIds).toEqual(["clean-reply"]);
+  expect((await sql`select status from platform.outbound where id='clean-reply'`)[0].status).toBe("collected");
+  expect((await sql`select status from platform.outbound where id='canary-reply'`)[0].status).toBe("parked_leak_review");
+  expect(dispatches).toBe(before);
+  // Staff review through the service (the console's routes): listed, a reason is required, dropped and audited.
+  const staffCall=(path:string,method="GET",b?:object)=>service.fetch(new Request(`http://127.0.0.1${path}`,{method,headers:{authorization:"Bearer saf-tok",...(b?{"content-type":"application/json"}:{})},...(b?{body:JSON.stringify(b)}:{})}));
+  const list=await (await staffCall("/queue/leak-review?app=friends")).json() as any;
+  expect(list.items.map((x:any)=>x.id)).toContain("canary-reply");
+  expect(list.items.find((x:any)=>x.id==="canary-reply").reasons.length).toBeGreaterThan(0);
+  expect(JSON.stringify(list)).not.toContain(phone2);
+  expect(await (await staffCall("/queue/leak-review/canary-reply?app=friends","POST",{decision:"drop",reason:"ok"})).json()).toMatchObject({ok:false,reason:"reason_required"});
+  expect(await (await staffCall("/queue/leak-review/canary-reply?app=friends","POST",{decision:"drop",reason:"a test canary, never send"})).json()).toEqual({ok:true});
+  expect((await sql`select status from platform.outbound where id='canary-reply'`)[0].status).toBe("dropped_leak_review");
+  expect((await sql`select status from network.messages where id='canary-reply'`)[0].status).toBe("dropped_leak_review");
+  expect((await sql`select reason from network.staff_audit where action='leak_drop' and target_id='canary-reply'`)[0].reason).toBe("a test canary, never send");
+  expect(await (await staffCall("/queue/leak-review/canary-reply?app=friends","POST",{decision:"release",reason:"changed my mind"})).json()).toMatchObject({ok:false,reason:"not_parked"});
+  // A message whose own status lagged the queue's (a crash between the acceptance commit and the status write):
+  // projected once, its status repaired from the queue's, and never selected again.
+  await rt.unitOfWork(()=>rt.unit.sends.push({id:"drift-1",memberId,to:phone2,body:"Your requested reminder is ready.",kind:"reply",type:"reminder",proactive:false,system:false,ts:clock.now()}));
+  expect((await sql`select status from platform.outbound where id='drift-1'`)[0].status).toBe("accepted");
+  await rt.scoped(tx=>tx`update network.messages set status='queued',notification_recorded_at=null where app_id='friends' and id='drift-1'`);
+  await rt.projectNotifications();
+  const [drift]=await sql`select status,notification_recorded_at from network.messages where id='drift-1'`;
+  expect(drift.status).toBe("accepted");expect(drift.notification_recorded_at).not.toBeNull();
 },60_000);

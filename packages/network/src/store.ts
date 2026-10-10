@@ -143,17 +143,17 @@ const textArray = (xs: readonly string[]) => `{${xs.map(x => `"${String(x).repla
  * The relay rows for a state: one network.relay_threads row per thread (ids and times only) and one
  * network.relay_records row per RelayRecord (no body, no contact value) with its staff review status.
  */
-export function relayRows(state: NetworkState, app: string): { threads: Row[]; records: Row[] } {
+export function relayRows(state: NetworkState, app: string, networkId?: string): { threads: Row[]; records: Row[] } {
   const r = state.relay;
   if (!r) return { threads: [], records: [] };
   const review = new Map(r.held.map(h => [h.itemId, h]));
   const recent = (state.savedAt ?? 0) - RELAY_ROW_WINDOW_MS;
   return {
-    threads: r.threads.map(t => ({ app_id: app, id: t.id, opportunity_id: t.id, members: textArray(t.members), opened_at: new Date(t.openedAt), messages: t.messages.length })),
+    threads: r.threads.map(t => ({ app_id: app, ...(networkId ? { network_id: networkId } : {}), id: t.id, opportunity_id: t.id, members: textArray(t.members), opened_at: new Date(t.openedAt), messages: t.messages.length })),
     records: r.log.filter(x => x.at >= recent || review.has(x.itemId)).map(x => {
       const h = review.get(x.itemId);
       return {
-        app_id: app, item_id: x.itemId, opportunity_id: x.opportunityId, kind: x.kind, from_member: x.from, to_member: x.to, at: new Date(x.at),
+        app_id: app, ...(networkId ? { network_id: networkId } : {}), item_id: x.itemId, opportunity_id: x.opportunityId, kind: x.kind, from_member: x.from, to_member: x.to, at: new Date(x.at),
         decision: x.decision, reasons: textArray(x.reasons), photo_count: x.photoCount, contact_shared: x.contactShared, age_signal: x.ageSignal, policy: x.policy,
         review: h?.status ?? null, reviewed_by: h?.decidedBy ?? null, reviewed_at: date(h?.decidedAt),
       };
@@ -161,16 +161,29 @@ export function relayRows(state: NetworkState, app: string): { threads: Row[]; r
   };
 }
 
-/** Write the relay rows (inside the save transaction; app.app_id is set). Skipped before migration 0026. */
-export async function writeRelayRows(tx: SQL, state: NetworkState, app: string): Promise<void> {
-  const [{ ok }] = await tx`select to_regclass('network.relay_records') is not null as ok`;
-  if (!ok) return;
-  const { threads, records } = relayRows(state, app);
+/** Migration 0026 (the tables) and 0031 (network_id): which of them this database has. */
+async function relaySchema(tx: SQL): Promise<{ tables: boolean; network: boolean }> {
+  const [{ ok, net }] = await tx`select to_regclass('network.relay_records') is not null as ok,
+    exists (select 1 from information_schema.columns where table_schema = 'network' and table_name = 'relay_records' and column_name = 'network_id') as net`;
+  return { tables: !!ok, network: !!net };
+}
+
+/**
+ * Write the relay rows (inside the save transaction; app.app_id is set). Skipped before migration 0026.
+ * `networkId` ('<app>:<city>', migration 0031): a row of another network of the same app is never overwritten.
+ */
+export async function writeRelayRows(tx: SQL, state: NetworkState, app: string, networkId?: string): Promise<void> {
+  const schema = await relaySchema(tx);
+  if (!schema.tables) return;
+  const net = schema.network ? networkId ?? `${app}:nyc` : undefined;
+  const { threads, records } = relayRows(state, app, net);
   for (let i = 0; i < threads.length; i += 500) await tx`insert into network.relay_threads ${tx(threads.slice(i, i + 500))}
-    on conflict (app_id, id) do update set members = excluded.members, messages = excluded.messages`;
+    on conflict (app_id, id) do update set members = excluded.members, messages = excluded.messages
+    where ${net ?? null}::text is null or relay_threads.network_id = ${net ?? null}`;
   for (let i = 0; i < records.length; i += 500) await tx`insert into network.relay_records ${tx(records.slice(i, i + 500))}
     on conflict (app_id, item_id) do update set decision = excluded.decision, reasons = excluded.reasons, photo_count = excluded.photo_count,
-      contact_shared = excluded.contact_shared, review = excluded.review, reviewed_by = excluded.reviewed_by, reviewed_at = excluded.reviewed_at`;
+      contact_shared = excluded.contact_shared, review = excluded.review, reviewed_by = excluded.reviewed_by, reviewed_at = excluded.reviewed_at
+    where ${net ?? null}::text is null or relay_records.network_id = ${net ?? null}`;
 }
 
 /**
@@ -178,11 +191,14 @@ export async function writeRelayRows(tx: SQL, state: NetworkState, app: string):
  * from network.relay_records, so the rate limits and held items survive. Held items come back without
  * their text (rows never keep one): staff can still reject them; a release delivers nothing.
  */
-export async function loadRelayRows(tx: SQL, state: NetworkState | undefined, app: string): Promise<NetworkState | undefined> {
+export async function loadRelayRows(tx: SQL, state: NetworkState | undefined, app: string, networkId?: string): Promise<NetworkState | undefined> {
   if (!state || state.relay?.log.length) return state;
-  const [{ ok }] = await tx`select to_regclass('network.relay_records') is not null as ok`;
-  if (!ok) return state;
-  const rows = await tx`select * from network.relay_records where app_id = ${app} order by at desc, item_id limit ${RELAY_LOG_MAX}` as Row[];
+  const schema = await relaySchema(tx);
+  if (!schema.tables) return state;
+  // Only this network's rows (migration 0031): another city of the same app keeps its own log and held items.
+  const net = schema.network ? networkId ?? `${app}:nyc` : undefined;
+  const rows = await tx`select * from network.relay_records where app_id = ${app} and (${net ?? null}::text is null or network_id = ${net ?? null})
+    order by at desc, item_id limit ${RELAY_LOG_MAX}` as Row[];
   if (!rows.length) return state;
   const relay: RelayState = state.relay ?? emptyRelayState();
   const ms = (v: unknown) => new Date(v as string).getTime();
@@ -233,7 +249,7 @@ export class PgStore implements NetworkStore {
       await tx`select set_config('app.app_id', ${this.app}, true)`;
       const rows = await tx`select state from network.network_state where id = ${this.id}`;
       const s = rows[0]?.state;
-      return loadRelayRows(tx, s === undefined ? undefined : ((typeof s === "string" ? JSON.parse(s) : s) as NetworkState), this.app);
+      return loadRelayRows(tx, s === undefined ? undefined : ((typeof s === "string" ? JSON.parse(s) : s) as NetworkState), this.app, this.id);
     }) as Promise<NetworkState | undefined>;
   }
 
@@ -280,7 +296,7 @@ export class PgStore implements NetworkStore {
       for (let i = 0; i < rows.requests.length; i += 500) await tx`insert into network.requests ${tx(rows.requests.slice(i, i + 500))}
         on conflict (id) do update set outcome = excluded.outcome, tries = excluded.tries, opportunity_id = excluded.opportunity_id,
           fulfilled_at = excluded.fulfilled_at, updated_at = excluded.updated_at`;
-      await writeRelayRows(tx, state, this.app);
+      await writeRelayRows(tx, state, this.app, this.id);
       if (also) await also(tx);
     });
   }

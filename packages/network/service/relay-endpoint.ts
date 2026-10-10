@@ -15,7 +15,8 @@
 // plugin-network contract byte for byte and is not edited here. The proposed upstream addition is in
 // packages/network/service/README.md ("Relay").
 //
-//   RelayRequest  {channel, messageId, app, memberId, idempotencyKey, kind: text|contact_share|photo, text: string|null, photoIds: string[]|null}
+//   RelayRequest  {channel, messageId, app, memberId, idempotencyKey, kind: text|contact_share|contact_share_cancel|photo, text: string|null, photoIds: string[]|null}
+//   contact_share_cancel takes back the member's pending number swap ("don't send my number" after asking).
 //   RelayResponse {decision: sent|held|refused, reason (safe to say to the member), replayed}
 import { createHash } from "node:crypto";
 import type { SQL } from "bun";
@@ -35,7 +36,7 @@ export const RELAY_MAX_BODY_BYTES = 16 * 1024;
 const MAX_TEXT = 1000;
 const MAX_PHOTOS = 3;
 
-export type RelayRequestKind = "text" | "contact_share" | "photo";
+export type RelayRequestKind = "text" | "contact_share" | "contact_share_cancel" | "photo";
 export interface RelayRequest {
   channel: "blooio" | "twilio";
   /** The open turn this action belongs to (platform.inbound id msg:<channel>:<messageId>). */
@@ -61,6 +62,8 @@ export interface RelayEndpointDeps {
   accounts: Accounts;
   photos?: PhotoService;
   runtimeFor(app: AppId): NetworkRuntime | undefined;
+  /** The network ('<app>:<city>') this member belongs to; falls back to runtimeFor(app) when absent. */
+  runtimeOfMember?(app: AppId, memberId: string): Promise<NetworkRuntime | undefined>;
   /** The classifier hook; undefined = rules only. */
   hook?: RelayClassifierHook;
 }
@@ -96,11 +99,11 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
     || !id(b.idempotencyKey, 512) || auth.id !== b.idempotencyKey) return json({ error: "invalid_request" }, 400);
   const kind = b.kind as RelayRequestKind;
   const text = b.text, photoIds = b.photoIds;
-  if (!["text", "contact_share", "photo"].includes(kind)
+  if (!["text", "contact_share", "contact_share_cancel", "photo"].includes(kind)
     || (text !== null && (typeof text !== "string" || text.length > MAX_TEXT))
     || (photoIds !== null && (!Array.isArray(photoIds) || photoIds.length > MAX_PHOTOS || photoIds.some(p => typeof p !== "string" || p.length > 64)))
     || (kind === "text" && (typeof text !== "string" || !text.trim() || photoIds !== null))
-    || (kind === "contact_share" && (text !== null || photoIds !== null))
+    || ((kind === "contact_share" || kind === "contact_share_cancel") && (text !== null || photoIds !== null))
     || (kind === "photo" && (!Array.isArray(photoIds) || !photoIds.length))) return json({ error: "invalid_relay" }, 400);
   const app = b.app as AppId, memberId = b.memberId as string, key = b.idempotencyKey as string;
 
@@ -108,7 +111,8 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
   const turnId = `msg:${b.channel}:${b.messageId}`;
   const [original] = await d.sql`select sender_hash,response from platform.inbound where id=${turnId} and status='done'`;
   if (!original || original.response?.outcome !== "open" || original.response.app !== app || original.response.memberId !== memberId) return json({ error: "turn_scope_invalid", retryable: false }, 403);
-  const who = await d.accounts.byPhoneHash(original.sender_hash), rt = d.runtimeFor(app);
+  // The member's own network (a second city of the app keeps its own matches, relay log and held items).
+  const who = await d.accounts.byPhoneHash(original.sender_hash), rt = d.runtimeOfMember ? await d.runtimeOfMember(app, memberId) : d.runtimeFor(app);
   if (!who || !rt) return json({ error: "membership_unavailable", retryable: false }, 403);
   const authorized = async () => (await d.accounts.activeMembership(rt.app, { e164: who.e164, personId: who.person.id }))?.membership.memberId === memberId;
   if (!await authorized()) return json({ error: "membership_unavailable", retryable: false }, 403);
@@ -144,7 +148,9 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
     // Photos: only the member's own ids; none can be shown to a match until a photo consent exists.
     const owned = kind === "photo" && d.photos ? (await d.photos.list(who.person.id, app)).map(p => p.id) : [];
     const itemId = `r_${receipt.slice(0, 32)}`;
-    const outcome = await rt.unitOfWork(net => net.relayRequest(
+    const outcome = kind === "contact_share_cancel"
+      ? await rt.unitOfWork(net => (net.relayCancelSwap(memberId), { itemId, decision: "refused" as const, reason: "Okay, I won't share your number." }))
+      : await rt.unitOfWork(net => net.relayRequest(
       { itemId, from: memberId, kind, ...(typeof text === "string" && text.trim() ? { text } : {}), ...(Array.isArray(photoIds) ? { photoIds: photoIds as string[] } : {}) },
       { ...(d.hook ? { hook: d.hook } : {}), contactOf: id => rt.addressOf(id), photos: { ids: owned, showConsent: false } },
     ));

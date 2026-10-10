@@ -8,13 +8,14 @@
 //     aged 13-17, or of unknown age, gets one plain answer a day and the photo is dropped: never
 //     fetched, never stored, never rated. A banned person gets no answer.
 //  3. The photo consent (PHOTO_CONSENT, the same text as the site) is asked once by text. Until the
-//     person answers YES, the photo is dropped and nothing is kept; they send it again after YES.
-//     Only the core reply parser's "yes" is consent (AGENTS.md decision 11). The consent is stored on
-//     the slop membership (profile.photoConsent), so leaving slop.date clears it.
+//     person answers YES PHOTOS, the photo is dropped and nothing is kept; they send it again after.
+//     Only that explicit answer (or NO PHOTOS) is taken as the answer, and only on slop: a bare "yes" or
+//     "no" in the day after the ask is an answer to something else (a probe, a date ask, another app on
+//     the shared line) and goes on to the Network unchanged. The consent is stored on the slop
+//     membership (profile.photoConsent), so leaving slop.date clears it.
 //  4. With consent: each attachment (at most PHOTO_MAX_PER_MESSAGE) is fetched with a byte cap and goes
 //     through PhotoService.upload, which checks everything again (type on the bytes, size, count),
 //     strips metadata, stores it privately and rates the member (adults only).
-import { classifyYesNo } from "@thenetwork/core";
 import type { Accounts } from "../../platform/src/accounts.ts";
 import type { AppId } from "../../platform/src/apps.ts";
 import { PHOTO_CONSENT, PHOTO_MAX_BYTES, type PhotoRefusal, type PhotoService } from "../../platform/src/photos.ts";
@@ -30,7 +31,7 @@ const LIVE = new Set(["active", "paused", "onboarding"]);
 
 /** Draft copy (needs the founder's approval and the CONTRIBUTING 3.5 videos). */
 export const PHOTO_TEXT = {
-  ask: `Before I keep any photos: ${PHOTO_CONSENT.text} Reply YES to agree, then send the photo again. Reply NO and I keep none.`,
+  ask: `Before I keep any photos: ${PHOTO_CONSENT.text} Reply YES PHOTOS to agree, then send the photo again. Reply NO PHOTOS and I keep none.`,
   agreed: "Thanks. Send your photos any time. You can see or delete them at slop.date/settings.",
   declined: "OK. I will not keep your photos.",
   stored: (n: number) => (n === 1 ? "Got it. I saved your photo privately." : `Got it. I saved ${n} photos privately.`),
@@ -38,6 +39,12 @@ export const PHOTO_TEXT = {
   badPhoto: "I could not use that photo. Send a JPEG, PNG or WebP photo of up to 8 MB.",
   tooMany: "You have the most photos I can keep. Delete one at slop.date/settings first.",
 } as const;
+
+/** The explicit answer to the photo consent ask: "YES PHOTOS" or "NO PHOTOS" (a bare yes or no is never taken). */
+export function photoConsentReply(text: string): "yes" | "no" | undefined {
+  const m = /^\s*(yes|no)[\s,.:!-]+photos?[\s.!]*$/i.exec(text ?? "");
+  return m ? (m[1]!.toLowerCase() as "yes" | "no") : undefined;
+}
 
 export type PhotoIntakeOutcome =
   | { outcome: "not_member" | "asked" | "ask_skipped" }
@@ -97,21 +104,29 @@ export class PhotoIntake {
   }
 
   /**
-   * The answer to the photo consent ask. True when it was one (YES or NO); false when nothing is
-   * pending or the answer is unclear (the message then goes on as a normal message).
+   * The answer to the photo consent ask. True when it was one (YES PHOTOS or NO PHOTOS, on slop, within
+   * a day of the ask); false otherwise, and the message then goes on as a normal message. `app`: the app
+   * the message was routed to (another app's message on the shared line is never a photo answer).
    */
-  async consentAnswer(e164: string, text: string, ref: string): Promise<boolean> {
+  async consentAnswer(e164: string, text: string, ref: string, app: AppId = PHOTO_APP): Promise<boolean> {
+    if (app !== PHOTO_APP) return false;
+    const a = photoConsentReply(text);
+    if (!a) return false;
     const key = this.d.phoneKey(e164);
     const p = await this.d.people.getPending(key, "photo_consent", PHOTO_APP);
     if (!p || this.d.now() - p.at > DAY) return false;
-    const a = classifyYesNo(text);
-    if (a === "unsure") return false;
     await this.d.people.deletePending(key, "photo_consent", PHOTO_APP);
     const who = await this.member(e164);
-    if (a === "yes" && who && !(await this.d.photos.mayTake(who.person.id, PHOTO_APP))) {
-      await this.d.people.putMembership({ ...who.m, profile: { ...who.m.profile, photoConsent: PHOTO_CONSENT.version, photoConsentAt: this.d.now(), photoConsentSource: "text" } });
-      await this.d.reply(e164, PHOTO_TEXT.agreed, `sys:${ref}`);
-    } else if (a === "no") {
+    if (a === "yes") {
+      const refused = who ? await this.d.photos.mayTake(who.person.id, PHOTO_APP) : "not_member";
+      if (who && !refused) {
+        await this.d.people.putMembership({ ...who.m, profile: { ...who.m.profile, photoConsent: PHOTO_CONSENT.version, photoConsentAt: this.d.now(), photoConsentSource: "text" } });
+        await this.d.reply(e164, PHOTO_TEXT.agreed, `sys:${ref}`);
+      } else if (refused === "adults_only" || refused === "not_verified") {
+        // Not swallowed in silence: the same plain answer a photo gets (once a day).
+        await this.once(e164, "photo_not_adult", PHOTO_TEXT.notAdult, ref);
+      }
+    } else {
       await this.d.reply(e164, PHOTO_TEXT.declined, `sys:${ref}`);
     }
     return true;

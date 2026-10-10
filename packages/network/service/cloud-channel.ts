@@ -39,6 +39,11 @@ export class CloudChannelAdapter extends BlooioAdapter {
         return {providerMessageId:result.providerMessageIds[0] as string,providerMessageIds:result.providerMessageIds as string[],status:"queued",
           replayed:result.replayed,...(acceptedAt!==undefined?{acceptedAt}:{}),historyRecorded:result.history};
       }
+      // A receipt lookup that Cloud answers with a retryable "rejected" means Cloud never admitted this id
+      // (the same meaning as on the deliver path: refused before dispatch). The queue then sends it again
+      // with the same key. Any other answer stays unknown.
+      if (receiptOnly && result?.ok===false && result.error==="rejected" && result.retryable===true)
+        throw new ChannelSendError("Cloud never admitted this id","unknown",response.status,"not_found");
       if (!receiptOnly && result?.ok===false && result.error!=="unknown") {
         if (result.error==="opted_out") throw new ChannelSendError("Recipient opted out","blocked",response.status,"opted_out");
         if (result.error==="rejected" && result.retryable===true) throw new ChannelSendError("Cloud refused admission before dispatch","retryable",response.status);
