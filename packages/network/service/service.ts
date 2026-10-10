@@ -28,14 +28,14 @@ import { SQL } from "bun";
 import { isDeepStrictEqual } from "node:util";
 import { DAY, RealClock, type Clock, type MemberId } from "@thenetwork/core";
 import type { ActionResult, NetworkOptions, ReviewDecision, ReviewOptions } from "../src/network.ts";
-import { brandOf, copy as ntwrkCopy, copyFor, type Copy } from "../src/copy.ts";
+import { brandOf, copy as ntwrkCopy, copyFor, ELIZA_NOTICE, type Copy } from "../src/copy.ts";
 import { isMinor } from "@thenetwork/core";
 import { ageAnswer, agesStated } from "../src/classify.ts";
 import { NetworkRuntime, type RuntimeHost } from "./runtime.ts";
 import { effectiveParticipation } from "./snapshot.ts";
 import { Inbox, type CollectedReply } from "./inbox.ts";
 import { TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH, type SetStateRequest, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
-import { svcVerify } from "../../core/src/svc/svc-auth.ts";
+import { SVC_MIN_SECRET, svcVerify } from "../../core/src/svc/svc-auth.ts";
 import { readCapped } from "../../platform/src/body.ts";
 import { canJoin } from "../../core/src/policy.ts";
 import { CostLedger, costRatesFromEnv, PgCostSink } from "./cost.ts";
@@ -72,22 +72,29 @@ export { NetworkRuntime } from "./runtime.ts";
 type Row = Record<string, unknown>;
 const MAX_BODY_BYTES = 256 * 1024;
 export const WEBHOOK_PATH = "/webhooks/blooio";
-/** Where the keyword gateway reports the consent events it answered (STOP_HELP_OWNER=gateway). */
-export const GATEWAY_CONSENT_PATH = "/consent/gateway";
-export const GATEWAY_SIGNATURE_HEADER = "x-network-signature";
-/** Who answers STOP, HELP and START on the shared line: one system only (founder decision, docs/mvp-plan.md). */
-export type StopHelpOwner = "service" | "gateway";
-/** STOP_HELP_OWNER: "service" (the default) or "gateway". Any other value stops the start: two owners must never both answer. */
-export function stopHelpOwner(env: Record<string, string | undefined> = process.env): StopHelpOwner {
-  const v = env.STOP_HELP_OWNER?.trim();
-  if (!v || v === "service") return "service";
-  if (v === "gateway") return "gateway";
-  throw new Error(`STOP_HELP_OWNER must be "service" or "gateway", not ${JSON.stringify(v)}`);
+/**
+ * STOP, START, HELP and "leave <app>" have one owner: this service, inside the signed turn
+ * (POST /internal/turn) or the legacy webhook. The handled turn reports the change as `consent`, and the
+ * Eliza gateway mirrors it into its send-time fence. STOP_HELP_OWNER and POST /consent/gateway are
+ * retired (the upstream gateway never called that route); a value left in the environment is ignored.
+ */
+export const RETIRED_ENV = ["STOP_HELP_OWNER", "STOP_HELP_GATEWAY_SECRET"] as const;
+/**
+ * The turn secret (SERVICE_TURN_SECRET) is checked at start: the turn path is on when the secret is set
+ * or the Cloud channel is asked for, and then the secret must have at least SVC_MIN_SECRET characters.
+ * Returns the problem, or undefined.
+ */
+export function turnSecretProblem(env: Record<string, string | undefined> = process.env): string | undefined {
+  const secret = env.SERVICE_TURN_SECRET;
+  const on = !!secret || env.NETWORK_CHANNEL === "eliza_cloud";
+  if (!on) return undefined;
+  if (!secret || secret.length < SVC_MIN_SECRET) return `SERVICE_TURN_SECRET must have at least ${SVC_MIN_SECRET} characters when the turn path is on`;
+  return undefined;
 }
 /** The tables the service needs (bun run db:migrate). */
 const REQUIRED_TABLES = [
   ...["members", "channel_identities", "facets", "intents", "presence", "edges", "messages", "events", "matching_runs", "staff_audit", "network_state", "opportunities", "review_items", "requests"].map(t => `network.${t}`),
-  ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "app_lines", "share_grants"].map(t => `platform.${t}`),
+  ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "app_lines", "share_grants", "eliza_notices"].map(t => `platform.${t}`),
 ];
 /** The dev-only key for keyed phone hashes (the platform's own default). Production needs PLATFORM_HASH_KEY. */
 const DEV_HASH_KEY = "dev-only-platform-hash-key";
@@ -245,8 +252,6 @@ export class NetworkService implements RuntimeHost {
   private readonly secret?: string;
   private readonly secrets: Partial<Record<AppId, string>>;
   private readonly hashKey: string;
-  /** Who answers STOP, HELP and START (STOP_HELP_OWNER). */
-  readonly stopHelpOwner: StopHelpOwner;
   /** The inbound inbox: one row per provider message, handled once and in order per sender (inbox.ts). */
   readonly inbox: Inbox;
   private readonly cap: number;
@@ -274,7 +279,9 @@ export class NetworkService implements RuntimeHost {
     this.consoleToken = o.consoleToken || undefined;
     this.secrets = o.webhookSecrets ?? {};
     this.cap = o.personDailyCap ?? PERSON_DAILY_CAP;
-    this.stopHelpOwner = stopHelpOwner(this.env);
+    const turnProblem = turnSecretProblem(this.env);
+    if (turnProblem) throw new Error(turnProblem);
+    for (const v of RETIRED_ENV) if (this.env[v]) this.log(`${v} is retired and ignored: STOP, START and HELP are answered inside the signed turn (README "The Eliza seam")`);
     this.apiOptions = o.publicApi;
     this.apps = o.apps ?? APPS;
     const key = this.env.PLATFORM_HASH_KEY ?? (devShortcutsAllowed(this.env) ? DEV_HASH_KEY : undefined);
@@ -807,7 +814,7 @@ export class NetworkService implements RuntimeHost {
     // answered or stored until staff decide (STOP above always works; HELP still answers).
     if (e164 && (await this.accounts.seen(e164)) === "held") {
       this.log(`[inbound] a number on hold for review (${rt.id}): not handled`);
-      if (kw === "help" && this.answersKeywords) await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`);
+      if (kw === "help") await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`);
       return "held";
     }
 
@@ -831,7 +838,7 @@ export class NetworkService implements RuntimeHost {
       if (lrt && lid) {
         const person = await this.accounts.personFor(e164);
         if (person) await this.accounts.leave(leaving, { e164, personId: person.id });
-        else { await this.accounts.recordConsent({ e164, app: leaving.id, line, state: "opted_out", source: "leave", ref: rowId, at: t }); await this.forget(leaving, lid); }
+        else { await this.accounts.recordConsent({ e164, app: leaving.id, line, state: "opted_out", source: "leave", ref: rowId, at: this.consentAt(ev) }); await this.forget(leaving, lid); }
         if (turn) { turn.app = leaving.id; turn.memberId = lid; turn.consent = {state: "opted_out", scope: "app", app: leaving.id, at: t}; }
         await this.direct(lrt, ev.from, this.copyOf(leaving).leftApp, `sys:${rowId}`);
         return "left";
@@ -840,13 +847,18 @@ export class NetworkService implements RuntimeHost {
 
     if (memberId) {
       if (kw === "start" && e164) {
-        await this.accounts.recordConsent({ e164, app: app.id, line, state: "opted_in", source: "keyword:start", wording: "START keyword", ref: rowId, at: t });
-        if (turn) turn.consent = {state: "opted_in", scope: "app", app: app.id, at: t};
+        // The recycled-number hold is checked above (seen). A banned number or person is never opted back in.
         const person = await this.accounts.personFor(e164);
+        if (await this.accounts.banned(e164, person)) { this.log(`[inbound] START from a banned number (${rt.id}): not opted in`); return "held"; }
+        const at = this.consentAt(ev);
+        await this.accounts.recordConsent({ e164, app: app.id, line, state: "opted_in", source: "keyword:start", wording: "START keyword", ref: rowId, at });
+        // The ledger orders events by their time: an older START (a late gateway retry) never undoes a newer STOP.
+        if (!(await this.accounts.optedIn(app.id, e164))) { this.log(`[inbound] START older than the last STOP (${rt.id}): not opted in`); return "handled"; }
+        if (turn) turn.consent = {state: "opted_in", scope: "app", app: app.id, at};
         const m = person && (await this.people.getMembership(person.id, app.id));
         if (m?.state === "paused") await this.people.putMembership({ ...m, state: "active" });
       }
-      const reply = kw === "help" && this.answersKeywords ? app.brand.help : undefined;
+      const reply = kw === "help" ? app.brand.help : undefined;
       if (!kw && e164 && /^\s*share\W*$/i.test(ev.text) && (await this.pendingOf(e164, "share", app.id))) return this.share(rt, app, memberId, e164, ev, rowId);
       // The answer to The Network's "what are you looking for?": enroll in the apps they named.
       if (!kw && e164 && app.id === "ntwrk" && (await this.pendingOf(e164, "looking_for"))) {
@@ -860,9 +872,46 @@ export class NetworkService implements RuntimeHost {
 
     // Not a member of this app. Nothing is stored about them unless they join (age check passed).
     if (!e164) { this.log(`[inbound] unknown sender (not a phone), ${ev.text.length} chars, not stored`); return "unknown_sender"; }
-    if (kw === "help") { if (this.answersKeywords) await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`); return "handled"; }
-    // One text join per phone at a time (the same lock as a web join).
-    return this.people.withLock(`join:${e164}`, () => this.join(rt, app, e164, ev, rowId, route));
+    if (kw === "help") { await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`); return "handled"; }
+    // One text join per phone at a time (the same lock as a web join). In a signed turn, a person who is not a
+    // member of any app first gets the one-time Eliza notice, then the normal join flow.
+    return this.people.withLock(`join:${e164}`, async () => {
+      await this.elizaNotice(app, e164, ev, rowId);
+      const out = await this.join(rt, app, e164, ev, rowId, route);
+      // Under the join age: nothing is kept, the notice row included (the phone's age floor keeps a later notice away).
+      if (out === "under_age" && this.inboundTurn()) await this.sql`delete from platform.eliza_notices where phone_hash = ${this.noticeKey(e164)}`;
+      return out;
+    });
+  }
+
+  private noticeKey(e164: string) { return keyedHash(this.hashKey, `eliza_notice:${e164}`); }
+
+  /**
+   * The one-time notice on the eliza.app line (README "The Eliza seam"; copy ELIZA_NOTICE, a DRAFT until
+   * the founder approves it). Only in a signed turn, only for a number that is not a member of any app,
+   * once per number: a keyed hash of the number and the time go in platform.eliza_notices in the same
+   * transaction as the collected reply, so a failed turn sends nothing and stores nothing. A banned number
+   * and an age under the join age (stated now, pending, or on the phone's age floor) get no notice: the
+   * join flow answers them as before. The TurnRequest has no "known eliza.app user" flag, so every such
+   * first contact gets it. It enrolls nobody: joining still needs the age check and the opt-in.
+   */
+  private async elizaNotice(app: AppInfo, e164: string, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string): Promise<boolean> {
+    if (!this.inboundTurn()) return false;
+    if ((await this.memberApps(e164)).length) return false;
+    for (const other of this.runtimes.values()) { await other.identities(); if (other.memberOf(e164)) return false; }
+    const person = await this.accounts.personFor(e164);
+    if (await this.accounts.banned(e164, person)) return false;
+    let pending = await this.pendingOf(e164, "join");
+    if (pending && pending.app !== app.id) pending = undefined;
+    const age = parseJoinText(ev.text, this.appWords(), !!pending).age ?? pending?.age ?? undefined;
+    const floor = await this.accounts.lowestAge(e164, person);
+    if ((age !== undefined && !joinAgeCheck(age, floor, app).ok) || (floor !== undefined && !canJoin(floor))) return false;
+    const key = this.noticeKey(e164);
+    return this.sql.begin(async tx => {
+      const rows = await tx`insert into platform.eliza_notices (phone_hash, sent_at) values (${key}, ${new Date(this.clock.now())}) on conflict (phone_hash) do nothing returning phone_hash`;
+      if (rows.length) await this.inbox.collect(tx, [{ id: `notice:${rowId}`, body: ELIZA_NOTICE, kind: "compliance" }]);
+      return rows.length > 0;
+    });
   }
 
   /**
@@ -911,11 +960,7 @@ export class NetworkService implements RuntimeHost {
       // Carrier keywords: the app's own confirmation (packages/platform apps.ts). START gets the Network's own welcome back.
       if (systemReply) rt.system(memberId, `sys:${rowId}`, systemReply);
       if (keyword === "STOP") rt.unit.optOut.set(memberId, true);
-      if (keyword === "START") {
-        rt.unit.optOut.set(memberId, false);
-        // The gateway owns keyword answers: the Network's own welcome back is not sent.
-        if (!this.answersKeywords) rt.unit.sends = rt.unit.sends.filter(s => s.memberId !== memberId);
-      }
+      if (keyword === "START") rt.unit.optOut.set(memberId, false);
       if (n.isDeclined(memberId)) {
         // Under the join age: nothing is kept. The one kind decline still goes out, as a policy notice the queue does not hold back.
         rt.unit.forget.add(memberId);
@@ -952,18 +997,16 @@ export class NetworkService implements RuntimeHost {
   }
 
   /**
-   * STOP or STOP ALL from a number (the line, or the gateway's report): the consent event once per
-   * `ref`, then every member it covers stops (one app, or every app on the shared line). The
-   * confirmation goes only when this service owns keyword answers (STOP_HELP_OWNER). `ev`: the inbound
-   * message, when the STOP came on the line (the member's own unit stores it).
+   * STOP or STOP ALL from a number (a signed turn or the legacy webhook): the consent event once per
+   * `ref` at the message's time (consentAt), then every member it covers stops (one app, or every app on
+   * the shared line), and the confirmation. `ev`: the inbound message (the member's own unit stores it).
    */
   private async stop(kw: "stop" | "stop_all", from: string, app: AppInfo, rt: NetworkRuntime, scope: StopScope, ref: string, line: string | undefined,
     ev?: Extract<ChannelEvent, { kind: "message" }>): Promise<InboundOutcome> {
     const e164 = normalizePhone(from), t = this.clock.now();
     await rt.identities();
     const memberId = rt.memberOf(from);
-    const { event, reply: confirmation } = keywordEvent(kw, e164 ?? from, app, t, { line, scope, ref });
-    const reply = this.answersKeywords ? confirmation : undefined;
+    const { event, reply } = keywordEvent(kw, e164 ?? from, app, this.consentAt(ev), { line, scope, ref });
     if (e164 && event) await this.accounts.recordConsent(event);
     const turn = this.inboundTurn();
     if (turn && event) turn.consent = {state: "opted_out", scope: scope === "global" ? "all" : "app", app: scope === "global" ? null : app.id, at: event.at};
@@ -991,52 +1034,14 @@ export class NetworkService implements RuntimeHost {
     return undefined;
   }
 
-  /** True when this service answers STOP, HELP and START (STOP_HELP_OWNER=service, the default). */
-  get answersKeywords(): boolean { return this.stopHelpOwner === "service" || !!this.inboundTurn(); }
-
   /**
-   * POST /consent/gateway: the gateway that owns keyword answers (STOP_HELP_OWNER=gateway) reports a
-   * STOP, STOP ALL or START it answered. Signed like a Blooio webhook (X-Network-Signature, HMAC of the
-   * raw body with STOP_HELP_GATEWAY_SECRET, 300 s window). The service records the consent event (once
-   * per event id) and applies it on every app it covers. It never sends a text for it.
-   * Body: { id, phone, keyword: "stop" | "stop_all" | "start", app?, line? }.
+   * The time of a consent event that an inbound message causes. In a signed turn it is the gateway's
+   * receipt time (never later than now), so the ledger orders STOP, START, leave and joins by when the
+   * person sent them, not by when a retry arrived. On the legacy webhook (handled in order per sender) it is now.
    */
-  private async gatewayConsent(req: Request): Promise<Response> {
-    if (this.answersKeywords) return json({ ok: false, error: "stop_help_owner_is_service" }, 409);
-    const secret = this.env.STOP_HELP_GATEWAY_SECRET;
-    if (!secret) return json({ ok: false, error: "gateway_secret_missing" }, 503);
-    const raw = await req.text();
-    if (raw.length > 16 * 1024) return json({ ok: false, error: "payload_too_large" }, 413);
-    const sig = verifyBlooioSignature(secret, req.headers.get(GATEWAY_SIGNATURE_HEADER), raw, Math.floor(this.clock.now() / 1000));
-    if (!sig.ok) return json({ ok: false, error: `signature_${sig.reason}` }, 401);
-    let b: Record<string, unknown>;
-    try { b = JSON.parse(raw); } catch { return json({ ok: false, error: "invalid_json" }, 400); }
-    const e164 = normalizePhone(b?.phone);
-    const kw = b?.keyword;
-    const appId = b?.app === undefined ? "ntwrk" : b.app;
-    if (!e164 || typeof b.id !== "string" || !b.id || b.id.length > 200 || (kw !== "stop" && kw !== "stop_all" && kw !== "start") || typeof appId !== "string" || !isAppId(appId)) {
-      return json({ ok: false, error: "invalid_consent_report" }, 400);
-    }
-    const app = this.apps[appId], rt = this.runtimeFor(appId) ?? this.main;
-    const ref = `gateway:${b.id}`, t = this.clock.now();
-    const line = typeof b.line === "string" ? normalizeAddress(b.line) : undefined;
-    if (kw === "start") {
-      // START on one app: the opt-in, the paused membership active again, the member's flag cleared. No welcome back.
-      await this.accounts.recordConsent({ e164, app: app.id, line, state: "opted_in", source: "gateway:start", wording: "START keyword", ref, at: t });
-      const person = await this.accounts.personFor(e164);
-      const m = person && (await this.people.getMembership(person.id, app.id));
-      if (m?.state === "paused") await this.people.putMembership({ ...m, state: "active" });
-      await rt.identities();
-      const memberId = rt.memberOf(e164);
-      if (memberId) await rt.unitOfWork(async n => {
-        await n.onInbound({ id: ref, memberId, body: "START", ts: t, channel: "imessage", keyword: "START" });
-        rt.unit.optOut.set(memberId, false);
-        rt.unit.sends = rt.unit.sends.filter(s => s.memberId !== memberId);
-      });
-      return json({ ok: true, result: "started" });
-    }
-    // The shared line: STOP stops every app (PRD 40.3).
-    return json({ ok: true, result: await this.stop(kw, e164, app, rt, "global", ref, line) });
+  private consentAt(ev?: { receivedAt: number }): number {
+    const now = this.clock.now();
+    return this.inboundTurn() && ev && Number.isSafeInteger(ev.receivedAt) && ev.receivedAt > 0 ? Math.min(ev.receivedAt, now) : now;
   }
 
   /** One fixed text to someone who is not a member here. Nothing is stored. */
@@ -1111,7 +1116,7 @@ export class NetworkService implements RuntimeHost {
       state: app.joinMode === "waitlist" ? "onboarding" : "active", review: null, firstName: name, profile: {}, joinedAt: t, leftAt: null,
     };
     await this.people.putMembership(membership);
-    await this.accounts.recordConsent({ e164, app: app.id, line: ev.to ? normalizeAddress(ev.to) : null, state: "opted_in", source: "inbound_message", wording: ask, ref: rowId, at: t });
+    await this.accounts.recordConsent({ e164, app: app.id, line: ev.to ? normalizeAddress(ev.to) : null, state: "opted_in", source: "inbound_message", wording: ask, ref: rowId, at: this.consentAt(ev) });
     if (membership.state !== "active") return "joined";
     await this.createMember(rt, membership, { age: Math.min(age, check.effective ?? age), firstName: name });
     // Their answer is their first message: the Network welcomes them as a reply to it.
@@ -1154,7 +1159,7 @@ export class NetworkService implements RuntimeHost {
           state: app.joinMode === "waitlist" ? "onboarding" : "active", review: null, firstName: ntwrk.firstName, profile: {}, joinedAt: t, leftAt: null,
         };
         await this.people.putMembership(m);
-        await this.accounts.recordConsent({ e164, app: id, state: "opted_in", source: "looking_for", wording: asked, ref: `${rowId}:${id}`, at: t });
+        await this.accounts.recordConsent({ e164, app: id, state: "opted_in", source: "looking_for", wording: asked, ref: `${rowId}:${id}`, at: this.consentAt(ev) });
         if (m.state === "active") await this.createMember(art, m, { age: lowest, firstName: ntwrk.firstName ?? "there" });
         joined.push(app);
       }
@@ -1679,7 +1684,6 @@ export class NetworkService implements RuntimeHost {
         if (!isAppId(appPart)) return json({ ok: false, error: "not_found" }, 404);
         return this.webhook(req, this.secrets[appPart], appPart);
       }
-      if (path === GATEWAY_CONSENT_PATH) return req.method === "POST" ? this.gatewayConsent(req) : json({ ok: false, error: "method_not_allowed" }, 405);
       // Production review is "human" only (PRD 32.8). The mode is not exposed here.
       if (path === "/review-mode" || path.endsWith("/review-mode")) return json({ ok: false, error: "not_exposed" }, 404);
       // The network: /apps/:app/... or ?app= (and ?city=); default The Network.

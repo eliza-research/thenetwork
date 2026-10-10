@@ -24,7 +24,7 @@ The backend process has two listeners:
 
 | Listener | Bind | Paths |
 |---|---|---|
-| Public, `PORT` (8790) | `0.0.0.0` when `PLATFORM_ENV` is `staging` or `production`; `127.0.0.1` otherwise | `/api/*` (the platform public API), `/webhooks/blooio[/<app>]` (Blooio, signature checked), `/consent/gateway` (the STOP/HELP gateway's signed consent reports; 409 unless `STOP_HELP_OWNER=gateway`), `/mcp`, `/oauth/*`, `/.well-known/oauth-*` (the MCP server, packages/mcp, mounted by `server.ts`; 404 `mcp_not_enabled` when `TURNSTILE_SITE_KEY` is not set), `/healthz` |
+| Public, `PORT` (8790) | `0.0.0.0` when `PLATFORM_ENV` is `staging` or `production`; `127.0.0.1` otherwise | `/api/*` (the platform public API), `/webhooks/blooio[/<app>]` (Blooio, signature checked), `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals`, `/internal/updates` (the Eliza gateway's signed calls, `SERVICE_TURN_SECRET`; a body over 256 KiB is refused), `/mcp`, `/oauth/*`, `/.well-known/oauth-*` (the MCP server, packages/mcp, mounted by `server.ts`; 404 `mcp_not_enabled` when `TURNSTILE_SITE_KEY` is not set), `/healthz` |
 | Staff, `STAFF_PORT` (4848) | `::` when deployed (Railway's private network may be IPv6 only); `127.0.0.1` otherwise | The staff API: `/health`, `/review`, `/safety/*`, `/matching`, `/holds`, `/invite`, `/apps/<app>/...`. Never on the public port. |
 
 How a site request reaches the backend:
@@ -121,8 +121,7 @@ Set these in **Variables**. Mark each **secret** row as a sealed variable. Never
 | `BLOOIO_WEBHOOK_SECRET` | **yes** | From Blooio | Without it `/webhooks/blooio` answers 503 |
 | `<APP>_BLOOIO_WEBHOOK_SECRET` | **yes** | Per-app lines only | Not needed with one shared line |
 | `PLATFORM_STOP_SCOPE` | no | leave unset | PRD 40.3: on the shared line STOP stops every app anyway |
-| `STOP_HELP_OWNER` | no | leave unset (`service`) unless the founder picks `gateway` **[FOUNDER]** | One system answers STOP, HELP and START. `gateway`: the service answers no keyword and records what the gateway reports to `POST /consent/gateway`. Any other value stops the start. |
-| `STOP_HELP_GATEWAY_SECRET` | **yes** | Shared with the gateway | Only with `STOP_HELP_OWNER=gateway`. Without it `/consent/gateway` answers 503. |
+| `STOP_HELP_OWNER`, `STOP_HELP_GATEWAY_SECRET` | no | retired; ignored with a log line | The service answers STOP, HELP and START inside the signed turn (packages/network/service/README.md, "The Eliza seam"). Remove them from Railway when convenient. |
 | `BLOOIO_LINE_DAILY_CAP`, `BLOOIO_LINE_NEW_CHATS_PER_DAY` | no | leave unset (200 and 20) until prototype P3 measures the line | The persisted queue's per-line caps on agent-started texts and new conversations in a rolling day. |
 | `BUILD_ID` | no | leave unset | Railway's `RAILWAY_GIT_COMMIT_SHA` is used. Every response carries it in `x-network-build`. |
 | `PLATFORM_DB_ENVIRONMENT_INIT` | no | `1` on the first deploy only, then delete it | Section 2.4 |
@@ -167,7 +166,7 @@ Values used in local smoke runs (`ACfake`, `fake-turnstile`, `+1 555 01xx` numbe
    - Then switch to **Proxied** (orange cloud) and keep the zone's SSL/TLS mode at **Full (strict)**. Never use Flexible: it loops redirects and sends plain HTTP to the origin.
    - **Verify** after the switch that `curl -sI https://api.ntwrk.party/healthz` answers 200.
 4. Delete Railway's generated `*.up.railway.app` domain, or never generate one. Without it, Cloudflare is the only way in.
-5. Optional hardening: a WAF rule on `api.ntwrk.party` that blocks paths other than `/api/*`, `/webhooks/blooio*`, `/consent/gateway`, `/mcp*`, `/oauth/*`, `/.well-known/oauth-*`, `/healthz` and `/ops/metrics`.
+5. Optional hardening: a WAF rule on `api.ntwrk.party` that blocks paths other than `/api/*`, `/webhooks/blooio*`, `/internal/*`, `/mcp*`, `/oauth/*`, `/.well-known/oauth-*`, `/healthz` and `/ops/metrics`.
 
 Every Pages project calls `https://api.ntwrk.party` like any other client. Only the proxy secret makes the backend trust it.
 

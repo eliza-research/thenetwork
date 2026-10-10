@@ -9,7 +9,7 @@ import { MINUTE, SimClock } from "../../../packages/core/src/index.ts";
 import { signBlooioPayload } from "../../../packages/blooio/src/blooio/webhook.ts";
 import { ChannelSendError, type ChannelAdapter, type SendReceipt, type SendRequest } from "../../../packages/blooio/src/types.ts";
 import { BlooioAdapter } from "../../../packages/network/service/channel.ts";
-import { GATEWAY_CONSENT_PATH, NetworkService, WEBHOOK_PATH } from "../../../packages/network/service/service.ts";
+import { NetworkService, WEBHOOK_PATH } from "../../../packages/network/service/service.ts";
 import { DEV_PG_PORT, devPgUp } from "../../../packages/observatory/db/dev-pg.ts";
 import { migrate } from "../../../packages/observatory/db/migrate.ts";
 
@@ -17,7 +17,6 @@ import { migrate } from "../../../packages/observatory/db/migrate.ts";
 export const START = Date.UTC(2026, 9, 5, 17);
 export const LINE = "+12125550100";
 export const SECRET = "whsec_pipeline_sim";
-export const GATEWAY_SECRET = "gw_pipeline_sim";
 export const TOKENS = "admin:sim-admin-token-000000000000000000,reviewer:sim-review-token-00000000000000000,safety:sim-safety-token-0000000000000000,analyst:sim-analyst-token-000000000000000";
 export const REVIEWER = "sim-review-token-00000000000000000";
 export const ADMIN = "sim-admin-token-000000000000000000";
@@ -110,14 +109,12 @@ export function safetyBody(clock: SimClock, action: string) {
 }
 export const signedRequest = (clock: SimClock, body: string, path = WEBHOOK_PATH, secret = SECRET, header = "x-blooio-signature") =>
   new Request(`http://127.0.0.1${path}`, { method: "POST", headers: { "content-type": "application/json", [header]: signBlooioPayload(secret, body, Math.floor(clock.now() / 1000)) }, body });
-export const gatewayRequest = (clock: SimClock, report: Record<string, unknown>, secret = GATEWAY_SECRET) =>
-  signedRequest(clock, JSON.stringify(report), GATEWAY_CONSENT_PATH, secret, "x-network-signature");
 
 /** The service as production builds it, with the fake provider behind the Blooio adapter. */
 export function pipelineService(url: string, clock: SimClock, fake: FakeBlooio, instance: string, env: Record<string, string> = {}, log: (s: string) => void = () => {}) {
   return new NetworkService({
     url, clock, instance, tokens: TOKENS, webhookSecret: SECRET, log,
-    env: { PLATFORM_ENV: "dev", STOP_HELP_GATEWAY_SECRET: GATEWAY_SECRET, ...env },
+    env: { PLATFORM_ENV: "dev", ...env },
     networks: [{ id: "ntwrk:nyc", matchingEnabled: true }, { id: "slop:nyc", matchingEnabled: true }, { id: "peon:nyc", matchingEnabled: true }, { id: "friends:nyc", matchingEnabled: true }],
     network: { seed: 1 }, photoStorage: null, notify: false,
     adapter: (_net, rt) => new BlooioAdapter({ provider: fake, clock, from: LINE, app: rt.app.id, city: rt.city, liveGate: () => true, log, limits: { baseBackoffMs: 30_000 } }),

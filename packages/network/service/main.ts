@@ -60,7 +60,7 @@ async function main() {
   if (!process.env.NETWORK_SERVICE_TOKENS) console.warn("NETWORK_SERVICE_TOKENS is not set: every staff route answers 401");
   if (!process.env.BLOOIO_WEBHOOK_SECRET) console.warn("BLOOIO_WEBHOOK_SECRET is not set: the shared-line webhook answers 503");
 
-  console.log(`STOP/HELP owner: ${svc.stopHelpOwner}${svc.answersKeywords ? "" : " (this service answers no keyword; the gateway reports to POST /consent/gateway)"}`);
+  if (!process.env.SERVICE_TURN_SECRET) console.warn("SERVICE_TURN_SECRET is not set: /internal/turn and the other signed routes answer 503");
   if (once) {
     await svc.inboxTick();
     for (const rt of svc.runtimes.values()) console.log(`${rt.id}: ${(await rt.tick()) ? "tick done" : "tick skipped: another instance holds the lock"}`);
