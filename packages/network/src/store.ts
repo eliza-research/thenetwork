@@ -133,7 +133,7 @@ export function consoleRows(state: NetworkState, savedAt = state.savedAt, city =
   return { opportunities, participations, review_items, requests };
 }
 
-// ------------------------------------------------------------------ relay rows (migration 0025)
+// ------------------------------------------------------------------ relay rows (migration 0026)
 /** Relay log rows newer than this are written on every save (older ones changed only through held items). */
 const RELAY_ROW_WINDOW_MS = 2 * 86_400_000;
 
@@ -159,7 +159,7 @@ export function relayRows(state: NetworkState, app: string): { threads: Row[]; r
   };
 }
 
-/** Write the relay rows (inside the save transaction; app.app_id is set). Skipped before migration 0025. */
+/** Write the relay rows (inside the save transaction; app.app_id is set). Skipped before migration 0026. */
 export async function writeRelayRows(tx: SQL, state: NetworkState, app: string): Promise<void> {
   const [{ ok }] = await tx`select to_regclass('network.relay_records') is not null as ok`;
   if (!ok) return;

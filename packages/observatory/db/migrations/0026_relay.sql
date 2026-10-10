@@ -1,4 +1,4 @@
--- 0025: relay between matched members (packages/network/src/relay.ts; engine relay.ts; AGENTS.md "Relay (#7)").
+-- 0026: relay between matched members (packages/network/src/relay.ts; engine relay.ts; AGENTS.md "Relay (#7)").
 --  1. network.relay_threads: one row per match whose members talked through the agent (ids, the time it
 --     opened and how many delivered items it holds). The delivered wording itself stays in the stored
 --     Network state only.
