@@ -13,6 +13,16 @@ This folder holds the production process for the ConsentNetwork. One process run
 | `inbox.ts` | The inbound inbox (`platform.inbound`): one row per provider message, handled once and in order per sender |
 | `serve.ts`, `main.ts` | The HTTP servers, the tick loop, the production entry point |
 
+## Signed Shared-agent turns
+
+`POST /internal/turn` and `POST /internal/turn-receipt` use the import-free contract in `packages/core/src/svc`. Set `SERVICE_TURN_SECRET` to the same secret (at least 32 characters) as Cloud. Without it these routes return 503. Sign the full path and raw body; query parameters are refused. Responses use `Cache-Control: no-store`.
+
+A turn commits its claim in `platform.inbound` before it calls the existing inbound handler. The channel and provider message ID identify the claim. The same body replays the stored result; a different body conflicts. An interrupted turn stays unresolved and is not rerun by the inbox tick. Replies from this turn alone are stored as `collected`, outside `platform.outbound`; collection does not mean provider acceptance. A signed receipt binds the exact ordered reply IDs. An unknown receipt can advance to accepted or rejected; accepted receipts are immutable.
+
+Open context rechecks the canonical phone and app membership. It includes confirmed shareable facts after the leak gate, and refuses context that exceeds the deployed plugin bounds. Unavailable active-item summaries are `null`. Replays recheck current admission and context, so STOP, a hold, a ban or changed context cannot reuse an old open grant. App leave seals prior signed payloads for that app.
+
+This source checkpoint covers turns and receipts. Signed state, signal and update actions and Cloud outbound transport are not wired here yet. Full-person signed-payload erasure must be combined with the canonical platform deletion hook before activation. No deployment or live flag is enabled by this change.
+
 ## Run it
 
 ```bash

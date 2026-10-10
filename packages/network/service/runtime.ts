@@ -30,6 +30,11 @@ import { loadSnapshot } from "./snapshot.ts";
 import { appWiring, type AppWiring } from "./packs.ts";
 import { DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, type Delivery, type Outbound } from "./channel.ts";
 import { normalizeAddress } from "../../blooio/src/phone.ts";
+import type { InboundTurn, CollectedReply } from "./inbox.ts";
+import type { TurnContext } from "../../core/src/svc/contract.ts";
+import { canBeMatched } from "../../core/src/policy.ts";
+import type { Accounts } from "../../platform/src/accounts.ts";
+import { outputLeaks } from "../../mcp/src/leaks.ts";
 // The Observatory's event shape and run summaries, so the console reads what this writes.
 import { eventOf, membersOf, type EventRow } from "../../observatory/src/events.ts";
 
@@ -49,8 +54,9 @@ export interface Unit {
   capital: CapitalEvent[];
   optOut: Map<MemberId, boolean>;
   forget: Set<MemberId>;
+  collected: Set<string>;
 }
-const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set() });
+const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set() });
 
 /** What the service gives each runtime: the shared connection and clock, and the checks that span apps. */
 export interface RuntimeHost {
@@ -58,6 +64,9 @@ export interface RuntimeHost {
   clock: Clock;
   instance: string;
   log: (line: string) => void;
+  accounts?: Pick<Accounts, "activeMembership" | "lowestAge" | "phoneHash">;
+  inboundTurn?(): InboundTurn | undefined;
+  collectReplies?(tx: SQL, replies: CollectedReply[]): Promise<void>;
   /** Proactive sends of this batch the person-level daily cap refuses (ids). Called before delivery. */
   capRefused(rt: NetworkRuntime, batch: Outbound[]): Promise<Set<string>>;
   /** Give back the person-cap slots of sends the adapter refused (they never went out). */
@@ -216,7 +225,7 @@ export class NetworkRuntime {
         const u = this.unit;
         // PgStore.save sets app.app_id for its own transaction; the unit's rows go in the same one.
         await this.pg.save(state, tx => this.writeUnit(tx, u));
-        this.committed.push(...u.sends);
+        this.committed.push(...u.sends.filter(s => !u.collected.has(s.id)));
         this.unit = newUnit();
       },
       withTickLock: fn => this.pg.withTickLock(fn),
@@ -265,15 +274,19 @@ export class NetworkRuntime {
         const t = this.clock.now();
         const meta = o?.meta ?? {};
         const id = o?.idempotencyKey ?? `${memberId}:${t}:${this.nonce}${++this.seq}`;
+        const turn = this.host.inboundTurn?.();
+        const causal = turn?.app === this.app.id && turn.memberId === memberId && o?.reply === true
+          && normalizeAddress(this.memberToAddr.get(memberId) ?? "") === normalizeAddress(turn.from);
+        if (causal) this.unit.collected.add(id);
         this.unit.sends.push({
           id, memberId, to: this.memberToAddr.get(memberId), body,
           // "reply" only when the Network says so (send(): never a proactive send, a growth ask, a
           // re-engagement or a check-in), so the queue's quiet hours and caps still apply to those.
-          kind: o?.reply && this.replyingTo === memberId ? "reply" : meta.proactive ? "proactive" : "transactional",
+          kind: o?.reply && (causal || this.replyingTo === memberId) ? "reply" : meta.proactive ? "proactive" : "transactional",
           // A probe names its opportunity only in meta.probe (anonymous to the member); the row links it either way.
           type: meta.type, oppId: meta.proposalId ?? meta.probe?.key, proactive: !!meta.proactive, system: false, ts: t,
         });
-        return { id, ts: t, direction: "outbound", channel: "imessage", from: "network", to: memberId, memberId, body, status: "delivered", meta } satisfies SimMessage;
+        return { id, ts: t, direction: "outbound", channel: "imessage", from: "network", to: memberId, memberId, body, status: causal ? "collected" : "delivered", meta } satisfies SimMessage;
       },
       snapshot: () => this.snap ?? { now: this.clock.now(), members: [], facets: [], intents: [], presence: [], edges: [], recentProposals: [] },
       // A proposal record has no oracle in production; eventOf reads only the proposal and the source.
@@ -286,6 +299,9 @@ export class NetworkRuntime {
 
   /** A system send (keyword confirmations, the link notice) in the current unit. It does not go through the Network. */
   system(memberId: MemberId, id: string, body: string, kind: Outbound["kind"] = "compliance", type = "system", mediaUrls?: string[]) {
+    const turn = this.host.inboundTurn?.();
+    if (turn?.app === this.app.id && turn.memberId === memberId && (kind === "reply" || kind === "compliance")
+      && normalizeAddress(this.memberToAddr.get(memberId) ?? "") === normalizeAddress(turn.from)) this.unit.collected.add(id);
     this.unit.sends.push({ id, memberId, to: this.memberToAddr.get(memberId), body, ...(mediaUrls?.length ? { mediaUrls } : {}), kind, type, proactive: false, system: true, ts: this.clock.now() });
   }
 
@@ -297,8 +313,15 @@ export class NetworkRuntime {
     if (named.size) for (const r of await tx`select id from network.members where app_id = ${app} and id in ${tx([...named])}`) known.add(r.id);
     const ok = (id: string) => known.has(id) && !u.forget.has(id);
     if (u.inbound && ok(u.inbound.member_id as string)) await tx`insert into network.messages ${tx({ ...u.inbound, app_id: app })} on conflict (id) do nothing`;
+    const turn = this.host.inboundTurn?.();
+    const captured = u.sends.filter(s => u.collected.has(s.id) && (ok(s.memberId) || u.forget.has(s.memberId)));
+    if (captured.length) {
+      if (!turn || !this.host.collectReplies) throw new Error("Signed turn collector is unavailable");
+      await this.host.collectReplies(tx, captured.map(s => ({id:s.id, body:s.body, kind:s.kind === "compliance" ? "compliance" : "reply"})));
+    }
     const out = u.sends.filter(s => ok(s.memberId)).map(s => ({
-      id: s.id, app_id: app, member_id: s.memberId, direction: "outbound", channel: "imessage", body: s.body, status: this.adapter.storedStatus,
+      id: s.id, app_id: app, member_id: s.memberId, direction: "outbound", channel: "imessage", body: s.body, status: u.collected.has(s.id) ? "collected" : this.adapter.storedStatus,
+      inbound_id: u.collected.has(s.id) ? turn!.id : null,
       type: s.type ?? null, opportunity_id: s.oppId ?? null, proactive: s.proactive, system: s.system, ts: new Date(s.ts),
     }));
     for (let i = 0; i < out.length; i += 500) {
@@ -330,6 +353,13 @@ export class NetworkRuntime {
     for (const [id, out] of u.optOut) if (ok(id)) await tx`update network.members set opted_out = ${out} where app_id = ${app} and id = ${id}`;
     // The forget path (an under-age decline, leaving the app, deleting everything): keep only the id. Nothing that names the member stays.
     for (const id of u.forget) {
+      // Seal old signed replay payloads in the same canonical removal transaction. Keep only dedupe metadata.
+      const address = this.addressOf(id);
+      const senderHash = address && this.host.accounts?.phoneHash(address);
+      await tx`update platform.inbound set status='unresolved',response=null,replies='[]'::jsonb,receipt=null,receipt_hash=null,
+        sender=null,event=null,sender_hash=null,member_id=null,app_id=null
+        where request_hash is not null and app_id=${app} and (member_id=${id} or sender_hash=${senderHash ?? null})
+        and id<>${turn?.id ?? ""}`;
       await tx`delete from network.messages where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.feedback where app_id = ${app} and (from_id = ${id} or about_id = ${id})`;
       // Every event that names them, by the same keys the writer reads (membersOf): actor, object and the payload.
@@ -355,7 +385,7 @@ export class NetworkRuntime {
     // decline to a member the unit forgets goes as a text to a non-member. Sends it does not queue (the live
     // flags are off, no address) get their status here.
     if (this.adapter.enqueue) {
-      const queued = u.sends.filter(s => ok(s.memberId) || u.forget.has(s.memberId));
+      const queued = u.sends.filter(s => !u.collected.has(s.id) && (ok(s.memberId) || u.forget.has(s.memberId)));
       const refused = await this.adapter.enqueue(tx, queued, u.forget);
       for (const [id, status] of refused) await tx`update network.messages set status = ${status} where app_id = ${app} and id = ${id} and direction = 'outbound'`;
     }
@@ -468,6 +498,41 @@ export class NetworkRuntime {
       if (s) this.net.importState(s);
       this.unit = newUnit();
       return fn(this.net);
+    });
+  }
+
+  /** Model-visible projection from the canonical snapshot, reauthorized inside its read lock. */
+  sharedContext(memberId: string): Promise<TurnContext | null> {
+    return this.store.withLock(async () => {
+      await this.refresh();
+      const e164 = this.addressOf(memberId);
+      const accounts = this.host.accounts;
+      if (!e164 || !accounts) return null;
+      const binding = await accounts.activeMembership(this.app, {e164, personId: null});
+      if (!binding || binding.membership.memberId !== memberId) return null;
+      const snapshot = this.snap!;
+      const member = snapshot.members.find(m => m.id === memberId);
+      if (!member) return null;
+      const state = member.state === "normal" || member.state === "open" ? "open"
+        : member.state === "quiet" ? "busy" : member.state === "paused" ? "paused" : null;
+      if (!state) return null;
+      const firstName = member.name.trim().split(/\s+/)[0] ?? "";
+      const forbidden = [e164, binding.person.id, ...snapshot.facets.map(f => f.id), ...snapshot.members.flatMap(m => {
+        const first = m.name.trim().split(/\s+/)[0] ?? "";
+        return m.id === memberId ? [m.id] : [m.id, m.name, ...(first.toLowerCase() !== firstName.toLowerCase() ? [first] : [])];
+      })];
+      const facts = snapshot.facets.filter(f => f.scope === "agent_private").map(f => f.value);
+      const safe = (text: string) => outputLeaks(text, {forbidden, facts}).length === 0;
+      if (!safe(firstName) || !safe(member.homeCity)) return null;
+      const facets = snapshot.facets.filter(f => f.memberId === memberId && f.scope === "shareable" && f.confirmedByMember === true
+        && !f.sensitive && (f.validFrom === undefined || f.validFrom <= snapshot.now) && (f.validTo === undefined || f.validTo > snapshot.now)
+        && safe(f.value)).map(f => f.value);
+      // The deployed plugin contract rejects larger context. Withhold it whole; never truncate a fact.
+      if (facets.length > 50 || facets.some(f => f.length > 300)) return null;
+      return {
+        firstName, city: member.homeCity, state, stateFrom: null, stateUntil: null, facets,
+        activeItems: null, singlePlayer: !canBeMatched(await accounts.lowestAge(e164, binding.person)),
+      };
     });
   }
 

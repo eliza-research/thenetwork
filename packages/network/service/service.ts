@@ -23,15 +23,20 @@
 //    /apps/:app/..., each action audited. The review mode is never exposed: production is "human" only.
 //  - Sends: each app's adapter (dry-run by default; Blooio needs the per-app live flag too) after a
 //    person-level cap of proactive messages across apps (default 3 a day).
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { SQL } from "bun";
+import { isDeepStrictEqual } from "node:util";
 import { DAY, RealClock, type Clock, type MemberId } from "@thenetwork/core";
 import type { ActionResult, NetworkOptions, ReviewDecision, ReviewOptions } from "../src/network.ts";
 import { brandOf, copy as ntwrkCopy, copyFor, type Copy } from "../src/copy.ts";
 import { isMinor } from "@thenetwork/core";
 import { ageAnswer, agesStated } from "../src/classify.ts";
 import { NetworkRuntime, type RuntimeHost } from "./runtime.ts";
-import { Inbox } from "./inbox.ts";
+import { Inbox, type CollectedReply } from "./inbox.ts";
+import { TURN_PATH, TURN_RECEIPT_PATH, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
+import { svcVerify } from "../../core/src/svc/svc-auth.ts";
+import { readCapped } from "../../platform/src/body.ts";
+import { canJoin } from "../../core/src/policy.ts";
 import { CostLedger, costRatesFromEnv, PgCostSink } from "./cost.ts";
 import type { ChannelAdapter, Outbound } from "./channel.ts";
 import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, type AppId, type AppInfo } from "../../platform/src/apps.ts";
@@ -180,7 +185,7 @@ const NOTIFY_TYPES = new Set(["probe", "plan_probe", "proposal", "reminder", "fe
 const NOTIFY_SUMMARY_MAX = 500;
 
 export type InboundOutcome =
-  | "handled" | "duplicate" | "unknown_sender" | "ignored" | "ignored_group" | "status" | "reaction" | "safety"
+  | "open" | "handled" | "duplicate" | "unknown_sender" | "ignored" | "ignored_group" | "status" | "reaction" | "safety"
   | "invite_only" | "join_asked" | "joined" | "under_age" | "stopped" | "left" | "no_network" | "held";
 
 interface Route { app: AppId; shared: boolean }
@@ -306,7 +311,7 @@ export class NetworkService implements RuntimeHost {
       reply: async (e164, text, key) => { const rt = this.runtimeFor("slop"); if (rt) await this.direct(rt, e164, text, key); },
     });
     this.audit = o.audit ?? new PgAudit(o.auditUrl ?? o.url);
-    this.inbox = new Inbox({ sql: this.sql, clock: this.clock, log: this.log, handle: (ev, app) => this.inbound(ev, app && isAppId(app) ? { app } : {}) });
+    this.inbox = new Inbox({ sql: this.sql, clock: this.clock, log: this.log, senderKey: sender => this.phoneKey(sender), handle: (ev, app) => this.inbound(ev, app && isAppId(app) ? { app } : {}) });
   }
 
   /** The service for every row of platform.networks, with the platform.apps policy rows. */
@@ -581,6 +586,10 @@ export class NetworkService implements RuntimeHost {
           on conflict (id) do nothing`;
       }
     });
+    const turn = this.inboundTurn();
+    if (turn && (await this.accounts.personFor(turn.from))?.id === m.personId) {
+      turn.app = rt.app.id; turn.memberId = m.memberId;
+    }
   }
 
   /** The platform hooks: a join creates the network member and sends the welcome; stop, forget and export reach the network. */
@@ -747,6 +756,9 @@ export class NetworkService implements RuntimeHost {
   }
 
   /** A verified, parsed channel event (Blooio webhook). `app`: the per-app webhook path. */
+  inboundTurn = () => this.inbox.currentTurn();
+  collectReplies = (tx: SQL, replies: CollectedReply[]) => this.inbox.collect(tx, replies);
+
   async inbound(ev: ChannelEvent, o: { app?: AppId } = {}): Promise<InboundOutcome> {
     switch (ev.kind) {
       case "ignored": case "typing": return "ignored";
@@ -776,6 +788,8 @@ export class NetworkService implements RuntimeHost {
     // Only the routed network's address book (each runtime refreshes its own inside its units of work).
     await rt.identities();
     const memberId = rt.memberOf(ev.from);
+    const turn = this.inboundTurn();
+    if (turn) { turn.app = app.id; turn.memberId = memberId; }
     const e164 = normalizePhone(ev.from);
     const t = this.clock.now();
     const rowId = `in:${ev.channel}:${ev.messageId}`;
@@ -817,6 +831,7 @@ export class NetworkService implements RuntimeHost {
         const person = await this.accounts.personFor(e164);
         if (person) await this.accounts.leave(leaving, { e164, personId: person.id });
         else { await this.accounts.recordConsent({ e164, app: leaving.id, line, state: "opted_out", source: "leave", ref: rowId, at: t }); await this.forget(leaving, lid); }
+        if (turn) { turn.app = leaving.id; turn.memberId = lid; turn.consent = {state: "opted_out", scope: "app", app: leaving.id, at: t}; }
         await this.direct(lrt, ev.from, this.copyOf(leaving).leftApp, `sys:${rowId}`);
         return "left";
       }
@@ -825,6 +840,7 @@ export class NetworkService implements RuntimeHost {
     if (memberId) {
       if (kw === "start" && e164) {
         await this.accounts.recordConsent({ e164, app: app.id, line, state: "opted_in", source: "keyword:start", wording: "START keyword", ref: rowId, at: t });
+        if (turn) turn.consent = {state: "opted_in", scope: "app", app: app.id, at: t};
         const person = await this.accounts.personFor(e164);
         const m = person && (await this.people.getMembership(person.id, app.id));
         if (m?.state === "paused") await this.people.putMembership({ ...m, state: "active" });
@@ -889,7 +905,8 @@ export class NetworkService implements RuntimeHost {
       const channel = ev.transport === "sms" ? "sms" : "imessage";
       rt.unit.inbound = { id: rowId, member_id: memberId, direction: "inbound", channel, body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
       rt.replyingTo = memberId;
-      try { await n.onInbound({ id: rowId, memberId, body: ev.text, ts: t, channel, ...(keyword ? { keyword } : {}) }); } finally { rt.replyingTo = undefined; }
+      let disposition: "handled" | "open";
+      try { disposition = await n.onInbound({ id: rowId, memberId, body: ev.text, ts: t, channel, ...(keyword ? { keyword } : {}) }); } finally { rt.replyingTo = undefined; }
       // Carrier keywords: the app's own confirmation (packages/platform apps.ts). START gets the Network's own welcome back.
       if (systemReply) rt.system(memberId, `sys:${rowId}`, systemReply);
       if (keyword === "STOP") rt.unit.optOut.set(memberId, true);
@@ -903,7 +920,7 @@ export class NetworkService implements RuntimeHost {
         rt.unit.forget.add(memberId);
         for (const s of rt.unit.sends) if (s.memberId === memberId) s.kind = "compliance";
       }
-      return "handled" as const;
+      return keyword || systemReply ? "handled" as const : disposition;
     });
   }
 
@@ -947,6 +964,8 @@ export class NetworkService implements RuntimeHost {
     const { event, reply: confirmation } = keywordEvent(kw, e164 ?? from, app, t, { line, scope, ref });
     const reply = this.answersKeywords ? confirmation : undefined;
     if (e164 && event) await this.accounts.recordConsent(event);
+    const turn = this.inboundTurn();
+    if (turn && event) turn.consent = {state: "opted_out", scope: scope === "global" ? "all" : "app", app: scope === "global" ? null : app.id, at: event.at};
     if (e164) await this.people.deletePending(this.phoneKey(e164));
     if (memberId && ev) await this.memberMessage(rt, memberId, ev, ref, kw, reply);
     else if (memberId) await rt.unitOfWork(async n => { await n.onInbound({ id: ref, memberId, body: "STOP", ts: t, channel: "imessage", keyword: "STOP" }); rt.unit.optOut.set(memberId, true); });
@@ -972,7 +991,7 @@ export class NetworkService implements RuntimeHost {
   }
 
   /** True when this service answers STOP, HELP and START (STOP_HELP_OWNER=service, the default). */
-  get answersKeywords(): boolean { return this.stopHelpOwner === "service"; }
+  get answersKeywords(): boolean { return this.stopHelpOwner === "service" || !!this.inboundTurn(); }
 
   /**
    * POST /consent/gateway: the gateway that owns keyword answers (STOP_HELP_OWNER=gateway) reports a
@@ -1021,6 +1040,11 @@ export class NetworkService implements RuntimeHost {
 
   /** One fixed text to someone who is not a member here. Nothing is stored. */
   private async direct(rt: NetworkRuntime, to: string, body: string, id: string) {
+    const turn = this.inboundTurn();
+    if (turn && normalizeAddress(to) === normalizeAddress(turn.from)) {
+      await this.sql.begin(tx => this.inbox.collect(tx, [{id, body, kind: "compliance"}]));
+      return;
+    }
     await rt.adapter.direct(to, body, id);
   }
 
@@ -1422,10 +1446,91 @@ export class NetworkService implements RuntimeHost {
     return { ...h, networks };
   }
 
+  /** Signed Shared turns use the existing durable inbox; collection is not provider acceptance. */
+  private async sharedTurn(req: Request): Promise<Response> {
+    const url = new URL(req.url);
+    const reply = (value: unknown, status = 200) => Response.json(value, {status, headers: {"cache-control": "no-store"}});
+    if (req.method !== "POST") return reply({error: "method_not_allowed"}, 405);
+    if (url.search) return reply({error: "invalid_request"}, 400);
+    const bytes = await readCapped(req, MAX_BODY_BYTES);
+    if (bytes === "too_large") return reply({error: "payload_too_large"}, 413);
+    let raw: string;
+    try { raw = new TextDecoder("utf-8", {fatal: true}).decode(bytes); }
+    catch { return reply({error: "invalid_request"}, 400); }
+    const auth = await svcVerify(this.env.SERVICE_TURN_SECRET, {method: req.method, path: url.pathname, headers: req.headers, body: raw, nowS: Math.floor(this.clock.now()/1000)});
+    if (!auth.ok) return reply({error: auth.reason}, auth.reason === "no_secret" ? 503 : 401);
+    let b: Row;
+    try { b = JSON.parse(raw); } catch { return reply({error: "invalid_request"}, 400); }
+    if (!b || typeof b !== "object" || Array.isArray(b) || (b.channel !== "blooio" && b.channel !== "twilio")
+      || typeof b.messageId !== "string" || !b.messageId.trim() || b.messageId.length > 512 || /[\r\n\u0000]/.test(b.messageId)) return reply({error: "invalid_request"}, 400);
+    const digest = createHash("sha256").update(raw).digest("hex");
+    const id = `msg:${b.channel}:${b.messageId}`;
+    if (url.pathname === TURN_RECEIPT_PATH) {
+      if (auth.id !== `${b.messageId}:receipt` || Object.keys(b).length !== 6
+        || !Array.isArray(b.replyIds) || !b.replyIds.every(x => typeof x === "string")
+        || !Array.isArray(b.providerMessageIds) || !b.providerMessageIds.every(x => typeof x === "string" && x.trim())
+        || typeof b.historyRecorded !== "boolean" || !["accepted", "unknown", "rejected"].includes(b.outcome as string)) return reply({error: "invalid_request"}, 400);
+      return this.sql.begin(async tx => {
+        const [claim] = await tx`select status,response,receipt_hash,receipt,replies from platform.inbound where id=${id} for update`;
+        if (!claim || claim.status !== "done" || claim.response?.outcome !== "handled") return reply({error: "turn_unavailable", retryable: false}, 409);
+        if (claim.receipt_hash === digest) return reply({ok: true, replayed: true});
+        if (claim.receipt_hash && !(claim.receipt?.outcome === "unknown" && ["accepted", "rejected"].includes(b.outcome as string))) return reply({error: "receipt_conflict", retryable: false}, 409);
+        const collected = claim.replies as CollectedReply[];
+        if (!collected.length || JSON.stringify(collected.map(r => r.id)) !== JSON.stringify(b.replyIds)) return reply({error: "receipt_scope_invalid", retryable: false}, 409);
+        if ((b.outcome === "accepted" && (!(b.providerMessageIds as string[]).length || (!b.historyRecorded && !(claim.response.replyKind === "compliance" && claim.response.accountEligible === false))))
+          || (b.outcome !== "accepted" && b.historyRecorded)) return reply({error: "invalid_receipt", retryable: false}, 400);
+        const status = b.outcome === "accepted" ? "sent" : b.outcome === "unknown" ? "send_unknown" : "refused_gateway";
+        if (isAppId(claim.response.app)) {
+          await tx`select set_config('app.app_id', ${claim.response.app}, true)`;
+          await tx`update network.messages set status=${status} where app_id=${claim.response.app} and inbound_id=${id} and id in ${tx(b.replyIds as string[])} and status in ('collected','send_unknown')`;
+        }
+        await tx`update platform.inbound set receipt_hash=${digest},receipt=${b}::jsonb where id=${id}`;
+        return reply({ok: true, replayed: false});
+      });
+    }
+    if (auth.id !== b.messageId || Object.keys(b).some(k => !["messageId","channel","from","to","text","transport","receivedAt","app"].includes(k))
+      || typeof b.from !== "string" || normalizePhone(b.from) !== b.from
+      || (b.to !== null && (typeof b.to !== "string" || normalizePhone(b.to) !== b.to))
+      || typeof b.text !== "string" || !b.text.trim() || !["imessage","sms","rcs","unknown"].includes(b.transport as string)
+      || typeof b.receivedAt !== "number" || !Number.isSafeInteger(b.receivedAt) || b.receivedAt < 0 || b.receivedAt > 8_640_000_000_000_000 || (b.app !== undefined && !isAppId(b.app))) return reply({error: "invalid_request"}, 400);
+    const input = b as unknown as TurnRequest;
+    const result = await this.inbox.signed(input, digest, async turn => {
+      const outcome = await this.inbound({kind: "message", channel: input.channel, messageId: input.messageId, from: input.from, to: input.to,
+        chatId: input.from, isGroup: false, text: input.text, mediaUrls: [], transport: input.transport, receivedAt: input.receivedAt}, {app: input.app});
+      if (outcome === "duplicate") throw new Error("Unresolved turn effects");
+      const [row] = await this.sql`select replies from platform.inbound where id=${turn.id}`;
+      const collected = row.replies as CollectedReply[];
+      const person = await this.accounts.personFor(input.from);
+      const age = await this.accounts.lowestAge(input.from, person);
+      if (outcome === "left" || (age !== undefined && !canJoin(age))) turn.memberId = undefined;
+      const accountEligible = !(await this.accounts.held(input.from)) && !(await this.accounts.banned(input.from, person))
+        && !(await this.people.isSuppressed(this.phoneKey(input.from))) && (age === undefined || canJoin(age)) && turn.consent?.state !== "opted_out";
+      if (outcome === "open" && !collected.length && turn.app && turn.memberId) {
+        const rt = this.runtimeFor(turn.app);
+        const binding = rt && await this.accounts.activeMembership(rt.app, {e164: input.from, personId: null});
+        const context = binding?.membership.memberId === turn.memberId ? await rt!.sharedContext(turn.memberId) : null;
+        if (context) return {outcome: "open", channel: input.channel, app: turn.app, memberId: turn.memberId, context};
+      }
+      if (outcome === "no_network" || outcome === "unknown_sender") return {outcome: "ignored", reason: outcome};
+      return {outcome: "handled", replies: collected.map(r => r.body), replyIds: collected.map(r => r.id), delivery: "collected",
+        replyKind: collected.length && collected.every(r => r.kind === "compliance") ? "compliance" : "reply", accountEligible,
+        app: turn.app ?? null, memberId: turn.memberId ?? null, reason: outcome === "open" ? "context_unavailable" : outcome, ...(turn.consent ? {consent: turn.consent} : {})} satisfies TurnResponse;
+    });
+    if (result.status === 200 && result.body && typeof result.body === "object" && "outcome" in result.body && result.body.outcome === "open") {
+      const cached = result.body as Extract<TurnResponse, {outcome: "open"}>;
+      const rt = this.runtimeFor(cached.app);
+      const binding = rt && await this.accounts.activeMembership(rt.app, {e164: input.from, personId: null});
+      const current = binding?.membership.memberId === cached.memberId ? await rt!.sharedContext(cached.memberId) : null;
+      if (!current || !isDeepStrictEqual(current, cached.context)) return reply({error: "turn_context_changed", retryable: false}, 409);
+    }
+    return reply(result.body, result.status);
+  }
+
   // ------------------------------------------------------------------ HTTP
   /** The HTTP handler: the inbound webhooks and the staff API. The public API is publicFetch (its own port). */
   fetch = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
+    if ([TURN_PATH, TURN_RECEIPT_PATH].includes(url.pathname)) return this.sharedTurn(req);
     let path = url.pathname.replace(/\/+$/, "") || "/";
     try {
       if (path === WEBHOOK_PATH || path.startsWith(`${WEBHOOK_PATH}/`)) {

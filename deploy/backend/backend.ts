@@ -322,7 +322,7 @@ export function createBackend(d: BackendDeps) {
         // Deployed, only a request a site router signed may name a site (audit: a direct request with
         // Host: slop.date was served as slop.date, and every such request shared one socket IP).
         res = c.deployed && !n.edge ? json(421, { ok: false, error: "edge_required" }) : await track(svc.publicFetch(n.req, server));
-      } else if (path === "/webhooks/blooio" || path.startsWith("/webhooks/blooio/") || path === "/consent/gateway") {
+      } else if (path === "/webhooks/blooio" || path.startsWith("/webhooks/blooio/") || path === "/consent/gateway" || path === "/internal/turn" || path === "/internal/turn-receipt") {
         res = await track(svc.fetch(req));
       } else if (MCP_PATH.test(path)) {
         // The MCP server sees the same normalized request as the public API: Host is the site's host only via a verified edge.

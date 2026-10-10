@@ -14,7 +14,7 @@
 //    and its version, never what a client sent.
 import { randomUUID } from "node:crypto";
 import { validAge } from "../../core/src/policy.ts";
-import { joinAgeCheck, lowestAge } from "./age.ts";
+import { canJoinApp, joinAgeCheck, lowestAge } from "./age.ts";
 import type { AppId, AppInfo } from "./apps.ts";
 import { type ConsentEvent, resolveConsent, type StopScope, stopScope } from "./consent.ts";
 import { keyedHash } from "./phone.ts";
@@ -204,6 +204,19 @@ export class Accounts {
     if (membership && membership.state !== "removed" && membership.state !== "invited") return { canJoin: false, reason: "member", membership, person };
     if (app.joinMode === "invite" && membership?.state !== "invited") return { canJoin: false, reason: "invite_only", membership, person };
     return { canJoin: true, membership, person };
+  }
+
+  /** Revalidate the exact canonical phone, person, app membership and current consent. */
+  async activeMembership(app: AppInfo, who: Who): Promise<{person: Person; membership: Membership} | undefined> {
+    const phone = await this.store.findPhone(who.e164);
+    if (!phone || phone.hold !== null || this.stale(phone, this.now())) return;
+    const person = await this.personFor(who.e164);
+    if (!person || person.id !== phone.personId || (who.personId !== null && who.personId !== person.id)) return;
+    if (await this.banned(who.e164, person) || !canJoinApp(await this.lowestAge(who.e164, person), app)) return;
+    const membership = await this.store.getMembership(person.id, app.id);
+    if (!membership || membership.app !== app.id || membership.personId !== person.id || membership.state !== "active" || membership.review !== null) return;
+    if (await this.store.isSuppressed(this.phoneHash(who.e164)) || !await this.optedIn(app.id, who.e164)) return;
+    return {person, membership};
   }
 
   /**
