@@ -169,10 +169,12 @@ export class BlooioAdapter implements ChannelAdapter {
     const num = (k: string) => { const v = Number(this.env[k]); return Number.isFinite(v) && v > 0 ? v : undefined; };
     const checks: AppChecks = {
       live: () => this.live,
-      stale: row => !!row.oppId && CLOSED_STAGES.has(rt.net.opps.get(row.oppId)?.stage ?? ""),
+      // A relayed item still goes after the date (the thread stays open for a week); a closed match stops it.
+      stale: row => !!row.oppId && (row.id.startsWith("relay:") ? (rt.net.opps.get(row.oppId)?.stage ?? "closed") === "closed" : CLOSED_STAGES.has(rt.net.opps.get(row.oppId)?.stage ?? "")),
       optedOut: row => rt.optedOut(row.id, row.memberId as MemberId | undefined, row.to),
       recipient: (row, agentInitiated) => policy(row.to, { kind: row.kind, ...(row.oppId ? { briefId: row.oppId } : {}), agentInitiated }),
-      leaks: row => leaks(row.to),
+      // A number swap both members asked for (relay.ts) is the one contact the guard lets through, for that row only.
+      leaks: row => { const from = rt.net.relayContactShareFrom(row.id), number = from && rt.addressOf(from); return number ? { ...leaks(row.to), allow: [number] } : leaks(row.to); },
       capTake: row => rt.capTake(row.id, row.memberId as MemberId),
       capRelease: row => rt.capRelease(row.id),
     };

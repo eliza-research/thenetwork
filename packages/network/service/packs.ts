@@ -16,7 +16,16 @@ import {
   friendsPack, FRIENDS_PLANS, makeSlopPack, peonPack, PEON_ENGINE_CONFIG, planFromInput, SLOP_ENGINE_CONFIG, slopProfiles,
   type AppPack, type EngineConfigInput, type EngineInput, type PlansConfigInput,
 } from "@thenetwork/engine";
-import { ageBand } from "@thenetwork/engine/src/packs/slop/copy.ts";
+import { ageBand, slopProbeMessage } from "@thenetwork/engine/src/packs/slop/copy.ts";
+import { probePhotoRefs } from "@thenetwork/engine/src/packs/slop/plan.ts";
+
+/**
+ * Photo in the probe (founder decision 2026-10-08): off. The upload consent says no other member sees
+ * a photo, so no member can consent to showing one to a proposed match until Legal approves a new
+ * consent version. Until then no subject has `photoConsent` and `probePhotoRefs` returns nothing; the
+ * attach itself (an opaque id the platform resolves) also waits for the Cloud deliver path to carry media.
+ */
+export const SLOP_PROBE_PHOTOS = false;
 import { ZIPS } from "@thenetwork/engine/src/packs/slop/zips.ts";
 import type { AppHooks, AppTag, HookOpp, HookVenue } from "../src/apphooks.ts";
 import { km, NEIGHBORHOOD, VENUES } from "../src/geo.ts";
@@ -312,7 +321,10 @@ export function slopHooks(options: Parameters<typeof planFromInput>[4]): AppHook
       const when = ctx.times ? `${ctx.times}` : ctx.when;
       const about = [age !== undefined && age >= 18 ? `in their ${ageBand(age)}` : undefined, p ? `${p.distance.startsWith("under") ? p.distance : `about ${p.distance}`} away` : undefined].filter(Boolean).join(", ");
       const facts = [about ? `They're ${about}.` : "", fact ? `They're into ${fact.replace(/_/g, " ")}.` : ""].filter(Boolean).join(" ");
-      return `There's someone I think you might like to go on a date with: ${activity}, ${when}. ${facts}${facts ? " " : ""}Want me to check if they're up for it? I'll only tell you who it is if you both say yes.${ctx.times ? " Tell me which time works, or no." : ""}`;
+      const text = `There's someone I think you might like to go on a date with: ${activity}, ${when}. ${facts}${facts ? " " : ""}Want me to check if they're up for it? I'll only tell you who it is if you both say yes.${ctx.times ? " Tell me which time works, or no." : ""}`;
+      // The engine's rule decides whether a photo may go (adults both sides, photo consent, not held, opaque ids, at most one).
+      const photos = probePhotoRefs({ age, photoConsent: SLOP_PROBE_PHOTOS, photoIds: [] }, { age: input.members.find(m => m.id === id)?.age });
+      return slopProbeMessage({ text }, photos).text;
     },
     venue(o, input) {
       const inp = input();

@@ -23,7 +23,7 @@ import type { City, Clock, MemberId, WorldSnapshot } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import type { NetworkContext, SimMessage } from "@thenetwork/core";
 import { ConsentNetwork, type NetworkOptions, type NetworkState } from "../src/network.ts";
-import { PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
+import { loadRelayRows, PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
 import { capitalWiring, type CapitalEvent } from "../src/capital.ts";
 import type { AppInfo } from "../../platform/src/apps.ts";
 import { effectiveParticipation, loadSnapshot } from "./snapshot.ts";
@@ -184,9 +184,12 @@ export class NetworkRuntime {
 
   /** The stored state of this network (inside an app-scoped transaction). */
   private async loadState(): Promise<NetworkState | undefined> {
-    const [r] = await this.scoped(tx => tx`select state from network.network_state where id = ${this.pg.id}`);
-    const s = r?.state;
-    return s === undefined ? undefined : ((typeof s === "string" ? JSON.parse(s) : s) as NetworkState);
+    return this.scoped(async tx => {
+      const [r] = await tx`select state from network.network_state where id = ${this.pg.id}`;
+      const s = r?.state;
+      // A state without its relay log gets it back from network.relay_records (store.ts).
+      return loadRelayRows(tx, s === undefined ? undefined : ((typeof s === "string" ? JSON.parse(s) : s) as NetworkState), this.app.id);
+    });
   }
 
   /**
