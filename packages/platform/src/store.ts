@@ -51,6 +51,18 @@ export interface Session {
   createdAt: number; startedAt: number; expiresAt: number; rotatedFrom: string | null; revokedAt: number | null;
 }
 
+/**
+ * A member's own number change (PRD F25; migration 0033). While it waits, newE164 is the number the code
+ * went to; once confirmed it keeps only the keyed hashes of the old and the new number (the audit record).
+ */
+export interface PhoneChange {
+  id: string; personId: string; app: AppId; newE164: string | null; requestedBy: string; requestedAt: number; confirmedAt: number | null;
+  oldHash?: string | null; newHash?: string | null;
+}
+/** What movePhone moves: the person's phone from one number to another, and everything keyed to the number. */
+export interface PhoneMove { personId: string; changeId: string; oldE164: string; newE164: string; oldHash: string; newHash: string; at: number }
+export type PhoneMoveResult = "ok" | "number_in_use" | "no_phone";
+
 /** A rate-limit rule for hit(): a hit over `limit` in the window, or within `minGapMs` of the last counted hit, is refused and not counted. */
 export interface HitRule { limit?: number; minGapMs?: number }
 export interface HitResult { count: number; prevAt: number | null; ok: boolean }
@@ -143,6 +155,20 @@ export interface PeopleStore {
   deleteAll(personId: string | null, e164: string, phoneHash: string, at: number): Promise<void>;
   /** Unlink a tombstone from its phone hash, so a new owner of the number is never revived as this person. */
   detachPhoneHash(personId: string): Promise<void>;
+
+  /** Store a number change the person started (a newer one replaces any change still waiting). */
+  putPhoneChange(c: PhoneChange): Promise<void>;
+  /** The person's newest number change that is not confirmed yet. */
+  pendingPhoneChange(personId: string): Promise<PhoneChange | undefined>;
+  /**
+   * Move the person to a new verified number, in one transaction: the phone identity (verified now), the
+   * consent history (copied, then the old number's rows go), the keyed phone hash on the person, the age
+   * floor (the lowest of both numbers' floors stays, on the new hash), the MCP grants keyed by the old hash,
+   * the one-time Eliza notice. The old number's sessions, codes and pending text flows end, and messages
+   * still waiting in the outbound queue for the old number are ended unsent. The change row is confirmed
+   * and keeps only the two hashes. "number_in_use": the new number already belongs to someone (nothing moved).
+   */
+  movePhone(m: PhoneMove): Promise<PhoneMoveResult>;
 }
 
 export class MemoryPeopleStore implements PeopleStore {
@@ -159,6 +185,7 @@ export class MemoryPeopleStore implements PeopleStore {
   readonly limits = new Map<string, { windowStart: number; count: number; lastAt: number }>();
   readonly pending = new Map<string, PendingText>();
   readonly personHash = new Map<string, string>(); // person id -> keyed phone hash
+  readonly phoneChanges = new Map<string, PhoneChange>();
   private locks = new Map<string, Promise<unknown>>();
   private seq = 0;
 
@@ -294,7 +321,35 @@ export class MemoryPeopleStore implements PeopleStore {
     for (const [k, s] of this.sessions) if (s.expiresAt < before || (s.revokedAt !== null && s.revokedAt < before)) { this.sessions.delete(k); n++; }
     for (const [k, l] of this.limits) if (l.lastAt < before) { this.limits.delete(k); n++; }
     for (const [k, p] of this.pending) if (p.at < before) { this.pending.delete(k); n++; }
+    for (const [k, c] of this.phoneChanges) if (c.confirmedAt === null && c.requestedAt < before) { this.phoneChanges.delete(k); n++; }
     return n;
+  }
+
+  async putPhoneChange(c: PhoneChange) {
+    for (const [k, x] of this.phoneChanges) if (x.personId === c.personId && x.confirmedAt === null && x.id !== c.id) this.phoneChanges.delete(k);
+    this.phoneChanges.set(c.id, { ...c });
+  }
+  async pendingPhoneChange(personId: string) {
+    let best: PhoneChange | undefined;
+    for (const c of this.phoneChanges.values()) if (c.personId === personId && c.confirmedAt === null && (!best || c.requestedAt >= best.requestedAt)) best = c;
+    return best && { ...best };
+  }
+  async movePhone(m: PhoneMove): Promise<PhoneMoveResult> {
+    const old = this.phones.get(m.oldE164);
+    if (!old || old.personId !== m.personId) return "no_phone";
+    if (this.phones.has(m.newE164)) return "number_in_use";
+    this.phones.delete(m.oldE164);
+    this.phones.set(m.newE164, { e164: m.newE164, personId: m.personId, verifiedAt: m.at, method: "otp_sms", lastSeenAt: m.at, hold: null });
+    for (const e of this.consent) if (e.e164 === m.oldE164) e.e164 = m.newE164;
+    this.personHash.set(m.personId, m.newHash);
+    const floor = this.ageFloors.get(m.oldHash);
+    if (floor) { this.ageFloors.delete(m.oldHash); await this.noteAgeFloor(m.newHash, floor.age, floor.at); }
+    for (const [k, s] of this.sessions) if (s.e164 === m.oldE164) this.sessions.delete(k);
+    for (const [k, c] of this.challenges) if (c.e164 === m.oldE164) this.challenges.delete(k);
+    for (const [k, p] of this.pending) if (p.phoneHash === m.oldHash) this.pending.delete(k);
+    const c = this.phoneChanges.get(m.changeId);
+    if (c) Object.assign(c, { confirmedAt: m.at, newE164: null, oldHash: m.oldHash, newHash: m.newHash });
+    return "ok";
   }
 
   async forgetMembership(personId: string, app: AppId, at: number) {
@@ -319,5 +374,6 @@ export class MemoryPeopleStore implements PeopleStore {
     for (const [k, c] of this.challenges) if (c.e164 === e164) this.challenges.delete(k);
     for (const [k, s] of this.sessions) if (s.e164 === e164 || (personId && s.personId === personId)) this.sessions.delete(k);
     for (const [k, p] of this.pending) if (p.phoneHash === phoneHash) this.pending.delete(k);
+    if (personId) for (const [k, c] of this.phoneChanges) if (c.personId === personId) this.phoneChanges.delete(k);
   }
 }

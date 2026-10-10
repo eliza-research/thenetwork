@@ -26,9 +26,9 @@
 // Held texts (the console's "Held texts" panel; the routes come from the messaging pipeline and the relay work):
 //   GET  /queue/leak-review             -> { ok, items: [{ id, kind, to (masked), text, reasons, createdAt, memberId? }] }
 //   POST /queue/leak-review/<id>        { decision: "release"|"drop", reason }  a release runs every other send check again
-//   GET  /staff/relay/held              -> { ok, items: [{ id, kind, text?, reasons, createdAt, memberId? }] }
-//   POST /staff/relay/<id>/release      { reason }
-//   POST /staff/relay/<id>/reject       { reason }
+//   GET  /staff/relay/held              -> { ok, items: [{ itemId, app, kind, from, to, reasons, createdAt, text? }] } (from and to are member ids)
+//   POST /staff/relay/<id>/release      { note }   (the console sends the reason as both reason and note)
+//   POST /staff/relay/<id>/reject       { note }
 // 409 { reason } is a refusal with the Network's reason; 404 means the service has no such route yet.
 import type { BiasReportView, ControlCommand, ControlResult, HealthAlert, HeldQueue, HeldText, MemberPhoto, ReportKind, SafetyAction, SafetyReport } from "../types.ts";
 import { REVIEW_BLOCK_ERRORS, SAFETY_ERRORS } from "./source.ts";
@@ -186,7 +186,8 @@ export class ServiceClient {
     const e = encodeURIComponent(id);
     return queue === "leak"
       ? this.act(`/queue/leak-review/${e}`, staff, { decision: decision === "reject" ? "drop" : "release", reason }, HELD_ERRORS)
-      : this.act(`/staff/relay/${e}/${decision}`, staff, { note: reason }, HELD_ERRORS);
+      // The service reads the reason as `note` (and accepts `reason`): it reaches the audit row.
+      : this.act(`/staff/relay/${e}/${decision}`, staff, { reason, note: reason }, HELD_ERRORS);
   }
 
   /** The weekly bias monitor reports of the app's network, newest first (GET /bias; admin or analyst). */

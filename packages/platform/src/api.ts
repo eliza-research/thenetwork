@@ -105,6 +105,8 @@ export const MAX_API_BODY_BYTES = 16 * 1024;
 export const REVIEW_MESSAGE = "We need to check this number before it can be used here. Please try again later, or email us for help.";
 /** Delete everything needs a code from a login in the last 10 minutes. */
 export const REAUTH_MESSAGE = "For your safety, log in again with a new code, then delete everything.";
+/** A number change needs a code to the current number from the last 10 minutes too (PRD F25). */
+export const REAUTH_CHANGE_MESSAGE = "For your safety, log in again with a new code, then change your number.";
 
 /** Cookie header -> map. A malformed value (bad %-escape) is skipped, never thrown. */
 export function parseCookies(header: string | null): Map<string, string> {
@@ -480,6 +482,49 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       case "POST /api/me/stop":
         // STOP from the site: every app on this number (PRD 40.3). The leave button is /api/me/delete {scope: "app"}.
         return withSession(async who => { await accounts.stop(app, who); return json(200, { ok: true }); });
+
+      case "POST /api/me/phone/start": {
+        // A member changes their own number (PRD F25), step 1: a fresh login on the current number, then a
+        // code to the new one (the OTP limits apply). The answer is the same whether or not the new number is
+        // known: that is checked after the code proves the person holds it.
+        if (cloud) return json(409, { ok: false, error: "cloud_auth_required" });
+        const t0 = performance.now();
+        try {
+          return await withSession(async (who, a) => {
+            const e164 = normalizePhone(b.phone);
+            if (!e164) return json(400, { ok: false, error: "invalid_phone" });
+            if (!sessions.fresh(a.session)) return json(403, { ok: false, error: "reauth", message: REAUTH_CHANGE_MESSAGE });
+            const r = await accounts.startNumberChange(app, who, e164, async () => (await otp.start(app, e164, ip)).ok);
+            if (!r.ok) return json(r.error === "rate_limited" ? 429 : r.error === "review" ? 403 : 400, { ok: false, error: r.error, ...(r.error === "review" ? { message: REVIEW_MESSAGE } : {}) });
+            return json(200, { ok: true });
+          });
+        } finally {
+          await pad(t0, o.minStartMs ?? 700);
+        }
+      }
+
+      case "POST /api/me/phone/confirm": {
+        // Step 2: the code from the new number. The person moves to it; every session of the old number
+        // ends, and this browser gets a new session on the new number.
+        if (cloud) return json(409, { ok: false, error: "cloud_auth_required" });
+        const t0 = performance.now();
+        try {
+          return await withSession(async who => {
+            const code = typeof b.code === "string" ? b.code.trim() : "";
+            if (!/^\d{4,10}$/.test(code)) return json(400, { ok: false, error: "invalid_code" });
+            const r = await accounts.confirmNumberChange(who, (forApp, e164) => otp.verify(forApp, e164, code, ip));
+            if (!r.ok) {
+              const status = r.error === "review" ? 403 : r.error === "no_pending_change" || r.error === "number_in_use" ? 409 : r.error === "rate_limited" ? 429 : 400;
+              return json(status, { ok: false, error: r.error, ...(r.error === "review" ? { message: REVIEW_MESSAGE } : {}) });
+            }
+            log(`[platform] number change confirmed on ${appId}`);
+            const { token } = await sessions.create(appId, r.e164, r.personId);
+            return json(200, { ok: true, phoneMasked: maskPhone(r.e164) }, { "set-cookie": cookie(appId, token, SESSION_TTL_MS / 1000) });
+          });
+        } finally {
+          await pad(t0, o.minVerifyMs ?? 300);
+        }
+      }
 
       case "POST /api/me/delete":
         return withSession(async (who, a) => {

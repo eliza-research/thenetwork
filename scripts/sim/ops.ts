@@ -66,6 +66,15 @@ export async function opsBlock(b: Block): Promise<void> {
     expect(evaluate({ networks: [{ ...healthy("friends:nyc", "friends"), error: "timeout" }], cost: { error: "x" } }, CFG).map(a => a.key)).toEqual(["ops_read:friends:nyc", "cost_read"]);
   });
 
+  await b.run("alerts: shadow precision under the 80% gate warns once there are 20 person decisions in 7 days (PRD 32.8, 34.6)", () => {
+    const at = (decided: number, clean: number) => evaluate({ networks: [{ ...healthy("slop:nyc", "slop"), precision7d: { decided, clean } }], cost: noCost }, CFG);
+    expect(at(19, 0)).toEqual([]);
+    expect(at(20, 16)).toEqual([]);
+    const low = at(20, 15);
+    expect(low.map(a => `${a.key}=${a.level}:${a.count}`)).toEqual(["precision:slop:nyc=warn:75"]);
+    expect(low[0]!.text).toMatch(/15 of 20/);
+  });
+
   await b.run("alerts: send outcomes count failures against what reached the provider (dry-run, refusals and waiting rows excluded)", async () => {
     const probe: NetworkProbe = {
       id: "slop:nyc", app: "slop",

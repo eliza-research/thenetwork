@@ -214,6 +214,7 @@ How to test locally: run `bun run observatory:db`, then the console in real mode
   - Built: in real mode with the Network service, its `/health`: unreachable (bad), the last tick late (warn after 5 minutes, bad after 15), messages refused or held by the channel, messages waiting to be delivered, and one line when all is well (last tick, channel, lock holder).
   - Built: real-mode minor contacts count messages about an opportunity while the recipient or anyone in it was treated as under 18, by the record age or by the Network's age state at that moment (before: the recipient's record age only).
   - Built: the PRD 28.2 scorecard (`stats.scorecard`) in the Metrics tab, with the value, target, met or not, and the sample size.
+  - Built (2026-10-09): shadow precision in the scorecard (`shadow_precision`, PRD 32.8 and 34.6): engine proposals, shadow runs included, that a person approved without an edit, over those a person approved or rejected (the simulated reviewer and expired items left out); target 80%. The backend's ops metrics carry the same number over 7 days (`precision7d`) and alert `precision:<network>` under 80% once there are 20 person decisions (deploy/backend/ops.ts; runbook-real.md 8.4).
   - Missing: daily LLM spend (there are no usage records). The worthwhile-interruption line is a proxy (a proactive message answered within 72 hours with no STOP); the "Was that worth a text?" question is not built.
 
 ### 3.11 Configuration

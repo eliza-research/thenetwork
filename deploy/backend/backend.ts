@@ -3,7 +3,7 @@
 //
 //   PORT (public)          /api/*                 the platform public API, for the four sites' Worker routers
 //                          /webhooks/blooio[/app] the inbound line webhooks (signature checked by the service)
-//                          /internal/turn, /internal/turn-receipt, /internal/set-state, /internal/signals, /internal/updates
+//                          /internal/turn, /internal/turn-receipt, /internal/set-state, /internal/signals, /internal/updates, /internal/relay
 //                                                 the Eliza gateway's signed calls (SERVICE_TURN_SECRET, checked by the service; STOP,
 //                                                 START, HELP and leave are answered inside the turn). A body over 256 KiB is refused here.
 //                          /mcp, /oauth/*, /.well-known/oauth-*   the MCP server (packages/mcp, mounted by server.ts; 404 when off)

@@ -19,6 +19,9 @@ export type ApiError =
   | "invite_only"
   | "review"
   | "unauthorized"
+  | "same_number"
+  | "number_in_use"
+  | "no_pending_change"
   | "unknown";
 
 /** Platform error code -> the message key the page shows. */
@@ -49,6 +52,11 @@ export const PLATFORM_ERRORS: Record<string, ApiError> = {
   method: "unknown",
   not_found: "unknown",
   api_unreachable: "api_unreachable",
+  // A member's own number change (/api/me/phone/start and /confirm).
+  same_number: "same_number",
+  number_in_use: "number_in_use",
+  no_pending_change: "no_pending_change",
+  no_person: "unauthorized",
 };
 
 export type Result<T> = { ok: true; data: T } | { ok: false; error: ApiError; status: number };
@@ -144,6 +152,8 @@ export const api = {
   stop: () => call<unknown>("POST", "/api/me/stop"),
   resume: () => call<unknown>("POST", "/api/me/resume"),
   remove: (scope: "app" | "all") => call<unknown>("POST", "/api/me/delete", { scope }),
+  phoneStart: (phone: string) => call<{ ok: true }>("POST", "/api/me/phone/start", { phone }),
+  phoneConfirm: (code: string) => call<{ ok: true; phoneMasked: string }>("POST", "/api/me/phone/confirm", { code }),
   demo: () => call<unknown>("GET", "/api/demo"),
 };
 
@@ -171,5 +181,8 @@ export const MESSAGES: Record<ApiError, string> = {
   under_age: "You must be 13 or older to join. We did not save your details.",
   invite_only: "You can join only with an invitation.",
   unauthorized: "Your session ended. Please log in again.",
+  same_number: "That is the number you use now. Enter the new number.",
+  number_in_use: "That number already has an account. Nothing was changed. Email us for help.",
+  no_pending_change: "That change timed out. Enter the new number again to get a new code.",
   unknown: "Something went wrong. Nothing was changed. Please try again.",
 };

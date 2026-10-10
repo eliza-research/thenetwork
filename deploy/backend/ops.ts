@@ -17,6 +17,7 @@
 // `text` alone is what a Slack incoming webhook shows; ALERT_WEBHOOK_FORMAT=slack sends only { text }.
 import type { SQL } from "bun";
 import { URGENT_REPORTS } from "../../packages/network/src/reports.ts";
+import { SIM_AUTO_REVIEWER } from "../../packages/network/src/network.ts";
 import { budgetLines, costBudgetsFromEnv, dayOf, type BudgetLine, type CostApp, type CostBudgets, type CostLedger } from "../../packages/network/service/cost.ts";
 import type { AppId } from "../../packages/platform/src/apps.ts";
 
@@ -113,6 +114,11 @@ export interface NetworkMetrics {
   safetySignalsWaiting?: number;
   /** Groups under 0.8x in bias monitor reports written in the last 24 h (service.ts afterTick; weekly). */
   biasAlerts24h?: number;
+  /**
+   * Shadow precision of the last 7 days (PRD 32.8 precision gate, 34.6 shadow mode): review items a person
+   * decided (approve or reject; the simulated reviewer left out) and those approved without an edit.
+   */
+  precision7d?: { decided: number; clean: number };
   /** The network could not be read (the rest of the row is zeros). */
   error?: string;
 }
@@ -138,8 +144,13 @@ export interface NetworkProbe {
    * Rows since a time: outbound statuses, event counts (type and action), report rows from the stored
    * state, and the SMS fallbacks of the UTC day that starts at `dayStart` and of the day before (the cost accruals).
    */
-  since(t: number, dayStart: number): Promise<{ statuses: Record<string, number>; events: { type: string; action: string | null; n: number }[]; reports: { kind: string }[]; sms: { today: number; yesterday: number }; safetySignals?: number; biasAlerts?: number }>;
+  since(t: number, dayStart: number): Promise<{ statuses: Record<string, number>; events: { type: string; action: string | null; n: number }[]; reports: { kind: string }[]; sms: { today: number; yesterday: number }; safetySignals?: number; biasAlerts?: number; precision7d?: { decided: number; clean: number } }>;
 }
+
+/** Below this many person decisions in 7 days the precision is not alerted on (too few to read). */
+export const PRECISION_MIN_DECIDED = 20;
+/** The precision gate (PRD 32.8): reviewer approval without edits at least 80%. */
+export const PRECISION_TARGET = 0.8;
 
 /** Final outcomes of a send that reached (or tried to reach) the provider. */
 const FAILED = /^(failed|parked_error|undeliverable)/;
@@ -181,6 +192,7 @@ export async function collectNetwork(p: NetworkProbe, now: number): Promise<Netw
       smsByDay: s.sms,
       safetySignalsWaiting: s.safetySignals ?? 0,
       biasAlerts24h: s.biasAlerts ?? 0,
+      ...(s.precision7d ? { precision7d: s.precision7d } : {}),
     };
   } catch (e) {
     return { ...empty, error: (e as Error).message.slice(0, 200) };
@@ -211,7 +223,13 @@ export function runtimeProbe(rt: {
       const [sig] = (await tx`select count(*)::int as n from network.facets where app_id = ${rt.app.id} and status = 'proposed'
         and tags && ${tx.array(["signal:safety_concern"], "TEXT")}`) as { n: number }[];
       const [bias] = (await tx`select coalesce(sum(alerts), 0)::int as n from network.bias_reports where app_id = ${rt.app.id} and network_id = ${rt.id} and at > ${at}`) as { n: number }[];
-      return { statuses, events, reports, sms: { today: sms?.today ?? 0, yesterday: sms?.yesterday ?? 0 }, safetySignals: sig?.n ?? 0, biasAlerts: bias?.n ?? 0 };
+      // Shadow precision: person decisions of the last 7 days (an edit before approving is not "without edits").
+      const [prec] = (await tx`select count(*)::int as decided,
+          count(*) filter (where decision = 'approve' and coalesce(jsonb_array_length(case when jsonb_typeof(edits) = 'array' then edits end), 0) = 0)::int as clean
+        from network.review_items where app_id = ${rt.app.id} and decision in ('approve', 'reject') and decided_at > ${new Date(t - 6 * DAY)}
+          and reviewer is not null and reviewer <> ${SIM_AUTO_REVIEWER}`) as { decided: number; clean: number }[];
+      return { statuses, events, reports, sms: { today: sms?.today ?? 0, yesterday: sms?.yesterday ?? 0 }, safetySignals: sig?.n ?? 0, biasAlerts: bias?.n ?? 0,
+        precision7d: { decided: prec?.decided ?? 0, clean: prec?.clean ?? 0 } };
     }),
   };
 }
@@ -247,6 +265,11 @@ export function evaluate(m: Pick<OpsMetrics, "networks" | "cost"> & { uptimeMs?:
     if (f.reports > 0) out.push({ key: `safety_report:${id}`, level: f.urgentReports > 0 ? "bad" : "warn", count: f.reports, bump: true, text: `${id}: ${f.reports} report(s) in 24 h (${f.urgentReports} urgent)` });
     if (n.safetySignalsWaiting) out.push({ key: `safety_signal:${id}`, level: "bad", count: n.safetySignalsWaiting, bump: true, text: `${id}: ${n.safetySignalsWaiting} agent safety signal(s) wait for staff review (console: Safety, or GET /signals)` });
     if (n.biasAlerts24h) out.push({ key: `bias_report:${id}`, level: "warn", count: n.biasAlerts24h, bump: true, text: `${id}: the weekly bias monitor found ${n.biasAlerts24h} group outcome(s) under 0.8x (console: Metrics, bias monitor)` });
+    const p = n.precision7d;
+    if (p && p.decided >= PRECISION_MIN_DECIDED && p.clean / p.decided < PRECISION_TARGET) {
+      const pct = Math.round((100 * p.clean) / p.decided);
+      out.push({ key: `precision:${id}`, level: "warn", count: pct, text: `${id}: shadow precision ${pct}% over 7 days (${p.clean} of ${p.decided} person decisions approved without edits; the gate is ${Math.round(PRECISION_TARGET * 100)}%)` });
+    }
     if (f.bans + f.holds > 0) out.push({ key: `safety_action:${id}`, level: "warn", count: f.bans + f.holds, bump: true, text: `${id}: ${f.bans} ban(s) and ${f.holds} hold(s) in 24 h` });
     if (n.backlog.outboundWaiting >= c.outboundBacklog) out.push({ key: `queue_outbound:${id}`, level: "warn", count: n.backlog.outboundWaiting, text: `${id}: ${n.backlog.outboundWaiting} message(s) waiting for delivery` });
     if (n.backlog.review >= c.reviewBacklog) out.push({ key: `queue_review:${id}`, level: "warn", count: n.backlog.review, text: `${id}: ${n.backlog.review} item(s) waiting for review` });

@@ -2,6 +2,7 @@
 // both modes. Each source gathers the inputs (game: run records and the Network; real: rows and
 // events) and these functions do the arithmetic, so the two modes cannot drift apart.
 import { DAY, HOUR, type MemberId } from "@thenetwork/core";
+import { SIM_AUTO_REVIEWER } from "@thenetwork/network";
 import { ENJOYED } from "./projector.ts";
 import { matchingAllowed, type AppId } from "./apps.ts";
 import type { AppHealth, CohortActivation, GrowthStats, HealthAlert, ObsMember, ObsOpportunity, ObsRequest, ObsSafetyCase, ObsState, ReportKind, SafetyInfo, SafetyReport, ScoreMetric } from "./types.ts";
@@ -164,6 +165,13 @@ export function scorecard(x: ScoreInput): ScoreMetric[] {
   const due = joined.filter(m => m.joinedAt !== undefined && x.now - m.joinedAt >= FIRST_VALUE_DAYS * DAY);
   const fast = due.filter(m => { const t = first.get(m.id); return t !== undefined && t - m.joinedAt! <= FIRST_VALUE_DAYS * DAY; }).length;
 
+  // Shadow precision (PRD 34.6 and the 32.8 precision gate): engine proposals a person decided (shadow runs
+  // included; the simulated reviewer and expiries left out), approved without an edit, over approved plus
+  // rejected. The baseline that must hold before matching is switched on.
+  const decided = x.opps.filter(o => (o.source === "engine" || o.source === "shadow") && o.review?.reviewer && o.review.reviewer !== SIM_AUTO_REVIEWER
+    && (o.review.decision === "approve" || o.review.decision === "reject"));
+  const clean = decided.filter(o => o.review!.decision === "approve" && !(o.review!.edits?.length)).length;
+
   const weeks = Math.max((x.now - x.start) / (7 * DAY), 1 / 7);
   const delivered = x.messages.filter(m => m.direction === "outbound" && m.proactive && m.status === "delivered").length;
   const optedOut = joined.filter(m => m.state === "opted_out").length;
@@ -183,6 +191,8 @@ export function scorecard(x: ScoreInput): ScoreMetric[] {
       how: "Delivered agent-started messages, per joined member, per week of the period." }),
     metric({ key: "reviewer_minutes", label: "Reviewer minutes per sent proposal", value: x.reviewSeconds > 0 && x.sentProposals > 0 ? x.reviewSeconds / 60 / x.sentProposals : null, unit: "minutes", n: x.sentProposals, target: { op: "<=", value: 2 },
       how: "Recorded review time over opportunities a person approved that started (the simulated reviewer is left out). No value until reviewers record time." }),
+    metric({ key: "shadow_precision", label: "Shadow precision (approved without edits)", value: share(clean, decided.length), unit: "share", n: decided.length, target: { op: ">=", value: 0.8 },
+      how: "Engine proposals (shadow runs included) a person approved without an edit, over those a person approved or rejected. The simulated reviewer and expired items are left out. PRD 32.8 precision gate; PRD 34.6 shadow mode." }),
     metric({ key: "opt_outs", label: "Opt-out rate", value: share(optedOut, joined.length), unit: "share", n: joined.length, target: { op: "<=", value: 0.05 },
       how: "Joined members who texted STOP (the PRD mute and complaint rate; mutes are not recorded separately)." }),
     metric({ key: "invite_rate", label: "Members who invited someone", value: share(x.inviters, joined.length), unit: "share", n: joined.length, target: { op: ">=", value: 0.3 },
