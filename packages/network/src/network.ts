@@ -548,11 +548,11 @@ export class ConsentNetwork implements NetworkUnderTest {
   private now() { return this.ctx.clock.now(); }
 
   // ================================================================== inbound
-  async onInbound(msg: InboundMessage) {
-    if (this.declinedIds.has(msg.memberId)) return; // declined under 13: never answered again, nothing stored
+  async onInbound(msg: InboundMessage): Promise<"handled" | "open"> {
+    if (this.declinedIds.has(msg.memberId)) return "handled"; // declined under 13: never answered again, nothing stored
     // The LLM reader runs before anything changes, so the unit below stays one synchronous step.
     const u = await this.understandSafely(msg);
-    if (this.declinedIds.has(msg.memberId)) return;
+    if (this.declinedIds.has(msg.memberId)) return "handled";
     // What a member says can change the snapshot (a trip, a setting): read it fresh, never up to 20 minutes stale.
     this.dirty = true;
     const m = this.member(msg.memberId);
@@ -569,7 +569,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!msg.keyword) m.replies = [...(m.replies ?? []), this.now()].slice(-60);
     this.heardFrom(m);
     this.replyTo = m.id; this.understood = u;
-    try { this.handleInbound(m, msg); } finally { this.replyTo = undefined; this.understood = undefined; }
+    try { return this.handleInbound(m, msg) === "open" ? "open" : "handled"; } finally { this.replyTo = undefined; this.understood = undefined; }
   }
 
   /** How many messages we had sent since the member's previous message, when this one came in. */
@@ -769,6 +769,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (c.kind === "people_request" && !m.minor) return this.openRequest(m, c, {});
     if (c.kind === "plans_request" || (c.kind === "people_request" && m.minor)) return this.onPlans(m, c);
     if (m.minor && c.kind === "other" && body.length > 12) return this.concierge(m);
+    if (ACK_ONLY.test(body)) return;
+    return "open" as const;
   }
 
   /**

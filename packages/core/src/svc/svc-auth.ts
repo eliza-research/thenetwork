@@ -19,53 +19,97 @@ export const SVC_MAX_SKEW_S = 60;
 export const SVC_MIN_SECRET = 32;
 
 const enc = new TextEncoder();
-const hex = (b: ArrayBuffer) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, "0")).join("");
+const hex = (b: ArrayBuffer) =>
+  [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, "0")).join("");
 
 async function sha256Hex(body: string): Promise<string> {
   return hex(await crypto.subtle.digest("SHA-256", enc.encode(body)));
 }
 
 async function hmacHex(secret: string, msg: string): Promise<string> {
-  const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
   return hex(await crypto.subtle.sign("HMAC", key, enc.encode(msg)));
 }
 
-export async function svcCanonical(method: string, path: string, ts: number, id: string, body: string): Promise<string> {
+export async function svcCanonical(
+  method: string,
+  path: string,
+  ts: number,
+  id: string,
+  body: string,
+): Promise<string> {
   return `${method.toUpperCase()}\n${path}\n${ts}\n${id}\n${await sha256Hex(body)}`;
 }
 
 function assertSecret(secret: string | undefined): asserts secret is string {
-  if (!secret || secret.length < SVC_MIN_SECRET) throw new Error(`SERVICE_TURN_SECRET missing or shorter than ${SVC_MIN_SECRET} characters`);
+  if (!secret || secret.length < SVC_MIN_SECRET)
+    throw new Error(
+      `SERVICE_TURN_SECRET missing or shorter than ${SVC_MIN_SECRET} characters`,
+    );
 }
 
 /** Headers for a signed request. `path` is the URL pathname only (no query). */
 export async function svcSign(
   secret: string | undefined,
-  req: { method: string; path: string; id: string; body: string; nowS?: number },
+  req: {
+    method: string;
+    path: string;
+    id: string;
+    body: string;
+    nowS?: number;
+  },
 ): Promise<Record<string, string>> {
   assertSecret(secret);
   const ts = req.nowS ?? Math.floor(Date.now() / 1000);
-  const sig = await hmacHex(secret, await svcCanonical(req.method, req.path, ts, req.id, req.body));
-  return { [SVC_TS_HEADER]: String(ts), [SVC_ID_HEADER]: req.id, [SVC_SIG_HEADER]: sig };
+  const sig = await hmacHex(
+    secret,
+    await svcCanonical(req.method, req.path, ts, req.id, req.body),
+  );
+  return {
+    [SVC_TS_HEADER]: String(ts),
+    [SVC_ID_HEADER]: req.id,
+    [SVC_SIG_HEADER]: sig,
+  };
 }
 
-export type SvcVerify = { ok: true; id: string } | { ok: false; reason: "missing" | "stale" | "bad_signature" | "no_secret" };
+export type SvcVerify =
+  | { ok: true; id: string }
+  | { ok: false; reason: "missing" | "stale" | "bad_signature" | "no_secret" };
 
 /** Verifies a request against the raw body. Constant-time compare. */
 export async function svcVerify(
   secret: string | undefined,
-  req: { method: string; path: string; headers: { get(name: string): string | null }; body: string; nowS?: number },
+  req: {
+    method: string;
+    path: string;
+    headers: { get(name: string): string | null };
+    body: string;
+    nowS?: number;
+  },
 ): Promise<SvcVerify> {
-  if (!secret || secret.length < SVC_MIN_SECRET) return { ok: false, reason: "no_secret" };
+  if (!secret || secret.length < SVC_MIN_SECRET)
+    return { ok: false, reason: "no_secret" };
   const ts = Number(req.headers.get(SVC_TS_HEADER));
   const id = req.headers.get(SVC_ID_HEADER);
   const sig = req.headers.get(SVC_SIG_HEADER);
-  if (!Number.isFinite(ts) || !id || !sig) return { ok: false, reason: "missing" };
+  if (!Number.isFinite(ts) || !id || !sig)
+    return { ok: false, reason: "missing" };
   const now = req.nowS ?? Math.floor(Date.now() / 1000);
-  if (Math.abs(now - ts) > SVC_MAX_SKEW_S) return { ok: false, reason: "stale" };
-  const want = await hmacHex(secret, await svcCanonical(req.method, req.path, ts, id, req.body));
+  if (Math.abs(now - ts) > SVC_MAX_SKEW_S)
+    return { ok: false, reason: "stale" };
+  const want = await hmacHex(
+    secret,
+    await svcCanonical(req.method, req.path, ts, id, req.body),
+  );
   if (want.length !== sig.length) return { ok: false, reason: "bad_signature" };
   let diff = 0;
-  for (let i = 0; i < want.length; i++) diff |= want.charCodeAt(i) ^ sig.charCodeAt(i);
+  for (let i = 0; i < want.length; i++)
+    diff |= want.charCodeAt(i) ^ sig.charCodeAt(i);
   return diff === 0 ? { ok: true, id } : { ok: false, reason: "bad_signature" };
 }

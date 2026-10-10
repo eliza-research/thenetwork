@@ -5,7 +5,7 @@
  * and abandoned as soon as it passes the cap, so no caller ever holds more than `max` bytes plus one
  * chunk (audit: unbounded request bodies; Bun's own default limit is 128 MB).
  */
-export async function readCapped(req: Request, max: number): Promise<Uint8Array<ArrayBuffer> | "too_large"> {
+export async function readCapped(req: Pick<Request, "headers" | "body">, max: number): Promise<Uint8Array<ArrayBuffer> | "too_large"> {
   const declared = req.headers.get("content-length");
   if (declared !== null && Number(declared) > max) return "too_large";
   if (!req.body) return new Uint8Array(new ArrayBuffer(0));
@@ -29,7 +29,7 @@ export async function readCapped(req: Request, max: number): Promise<Uint8Array<
 }
 
 /** The body as UTF-8 text, at most `max` bytes. */
-export async function readCappedText(req: Request, max: number): Promise<string | "too_large"> {
+export async function readCappedText(req: Pick<Request, "headers" | "body">, max: number): Promise<string | "too_large"> {
   const b = await readCapped(req, max);
   return b === "too_large" ? b : new TextDecoder().decode(b);
 }

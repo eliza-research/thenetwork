@@ -284,6 +284,9 @@ export class PgPeopleStore implements PeopleStore {
     await this.sql.begin(async tx => {
       if (personId) await tx`select id from platform.people where id = ${personId} for update`;
       await tx`insert into platform.suppression (phone_hash, reason, at) values (${phoneHash}, 'deleted', ${ts(at)}) on conflict do nothing`;
+      await tx`update platform.inbound set status = 'unresolved', response = null, replies = '[]'::jsonb, action_receipts = '{}'::jsonb,
+        receipt = null, receipt_hash = null, sender = null, event = null, sender_hash = null, member_id = null, app_id = null
+        where request_hash is not null and sender_hash = ${phoneHash}`;
       await tx`delete from platform.sessions where e164 = ${e164} or (${personId}::uuid is not null and person_id = ${personId}::uuid)`;
       await tx`delete from platform.otp_challenges where e164 = ${e164}`;
       await tx`delete from platform.consent_events where e164 = ${e164}`;

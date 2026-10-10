@@ -93,6 +93,8 @@ export interface SendRequest {
   mediaUrls?: string[];
   /** Same key => provider will not send twice (Blooio honours Idempotency-Key on sends). */
   idempotencyKey: string;
+  /** Immutable persisted queue scope, supplied by the server rather than message text. */
+  context?: {id: string; app: string; memberId: string | null; kind: "reply" | "compliance" | "proactive" | "transactional"};
 }
 
 export interface SendReceipt {
@@ -102,6 +104,10 @@ export interface SendReceipt {
   transport?: Transport;
   /** True when the provider returned the original result for a replayed idempotency key. */
   replayed?: boolean;
+  providerMessageIds?: string[];
+  /** Original provider acceptance time, when a receipt owner supplies it. */
+  acceptedAt?: number;
+  historyRecorded?: boolean;
 }
 
 /**
@@ -112,7 +118,7 @@ export interface SendReceipt {
  * - invalid: our request is wrong (400/404/409/422). Do not retry.
  * - auth: 401/403 credential problems.
  */
-export type FailureClass = "retryable" | "await_recipient" | "blocked" | "invalid" | "auth";
+export type FailureClass = "retryable" | "await_recipient" | "blocked" | "invalid" | "auth" | "unknown";
 
 export class ChannelSendError extends Error {
   constructor(
@@ -131,6 +137,8 @@ export class ChannelSendError extends Error {
 export interface ChannelAdapter {
   readonly kind: ChannelKind;
   send(req: SendRequest): Promise<SendReceipt>;
+  /** Read-only recovery. Its presence prevents dispatch retries after an ambiguous send. */
+  receipt?(req: SendRequest): Promise<SendReceipt>;
   /** Best-effort UX affordances; must never throw into the delivery path. */
   startTyping?(chatId: string): Promise<void>;
   stopTyping?(chatId: string): Promise<void>;
