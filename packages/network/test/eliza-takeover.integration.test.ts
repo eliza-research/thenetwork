@@ -57,7 +57,7 @@ const say = async (from: string, text: string, o: {app?: TurnRequest["app"]; rec
 };
 /** Join friends by text and answer its first questions; returns the member id. */
 const joinFriends = async (phone: string, name: string, age: number) => {
-  expect((await say(phone, "friends.help", {app: "friends"})).reason).toBe("join_asked");
+  expect((await say(phone, "friends.help", {app: "friends"})).reason).toBe("onboarding_asked");
   const joined = await say(phone, `${name}, ${age}`, {app: "friends"});
   expect(joined.reason).toBe("joined");
   for (const text of ONBOARDING) await say(phone, text, {app: "friends"});
@@ -75,20 +75,35 @@ test("a non-member gets the one-time notice, then the join flow; the number is s
   const phone = "+12125550201", before = escaped;
   const first = await say(phone, "hi");
   expect(first.outcome).toBe("handled");
-  expect(first.reason).toBe("join_asked");
+  expect(first.reason).toBe("onboarding_asked");
   expect(first.replies[0]).toBe(ELIZA_NOTICE);
   expect(first.replies.length).toBe(2);
   expect(first.replyIds.length).toBe(2);
+  expect(first.accountEligible).toBe(false);
+  expect(first.replyKind).toBe("reply");
+  expect(first.memberId).toBeNull();
+  // The trusted join prompt can be accepted without making an Eliza account.
+  const receiptBody = JSON.stringify({channel: "blooio", messageId: `SMtk${seq}`, replyIds: first.replyIds,
+    outcome: "accepted", providerMessageIds: ["synthetic-onboarding-receipt"], historyRecorded: false});
+  const receiptHeaders = await svcSign(secret, {method: "POST", path: "/internal/turn-receipt", id: `SMtk${seq}:receipt`, body: receiptBody, nowS: Math.floor(clock.now() / 1000)});
+  const accepted = await fetch(new URL("/internal/turn-receipt", server.url), {method: "POST", headers: {"content-type": "application/json", ...receiptHeaders}, body: receiptBody});
+  expect(accepted.status).toBe(200);
+  expect((await sql`select receipt->>'historyRecorded' as history from platform.inbound where id=${`msg:blooio:SMtk${seq}`}`)[0].history).toBe("false");
   const rows = await noticeRows();
   expect(rows.length).toBe(1);
   expect(rows[0]).not.toContain(phone.slice(1));
   // Once per number: the next message gets the join flow only.
-  const second = await say(phone, "hello?");
+  const secondInput = turn(phone, "hello?");
+  const second = await (await post(secondInput)).json() as any;
   expect(second.replies).not.toContain(ELIZA_NOTICE);
   expect((await noticeRows()).length).toBe(1);
   // Nothing is enrolled by the notice.
   expect((await sql`select 1 from platform.phone_identities where e164 = ${phone}`).length).toBe(0);
   expect(escaped).toBe(before);
+  // An unsent cached prompt loses admission after a canonical under-13 floor.
+  await service.accounts.recordAge(phone, undefined, 12);
+  expect((await post(secondInput)).status).toBe(409);
+  expect((await sql`select 1 from platform.phone_identities where e164 = ${phone}`).length).toBe(0);
 }, 60_000);
 
 test("an under-13 first contact gets only the kind decline, and nothing is stored", async () => {
@@ -97,6 +112,9 @@ test("an under-13 first contact gets only the kind decline, and nothing is store
   expect(r.reason).toBe("under_age");
   expect(r.replies).toEqual([APPS.ntwrk.brand.underAge]);
   expect(r.accountEligible).toBe(false);
+  const again = await say(phone, "hi");
+  expect(again.reason).not.toBe("onboarding_asked");
+  expect(again.accountEligible).toBe(false);
   expect((await noticeRows()).length).toBe(1);
   expect((await sql`select 1 from platform.phone_identities where e164 = ${phone}`).length).toBe(0);
 }, 60_000);
@@ -104,12 +122,17 @@ test("an under-13 first contact gets only the kind decline, and nothing is store
 test("join keyword, onboarding answer, then an open turn for the member with strict context", async () => {
   const phone = "+12125550203";
   const keyword = await say(phone, "friends.help", {app: "friends"});
-  expect(keyword.reason).toBe("join_asked");
+  expect(keyword.reason).toBe("onboarding_asked");
   expect(keyword.replies[0]).toBe(ELIZA_NOTICE);
   const answer = await say(phone, "Noa, 29", {app: "friends"});
   expect(answer.outcome).toBe("handled");
   expect(answer.reason).toBe("joined");
   expect(answer.replies).not.toContain(ELIZA_NOTICE);
+  // A member welcome cannot use the account-free prompt's no-history receipt.
+  const noHistory = JSON.stringify({channel: "blooio", messageId: `SMtk${seq}`, replyIds: answer.replyIds,
+    outcome: "accepted", providerMessageIds: ["synthetic-normal-receipt"], historyRecorded: false});
+  const noHistoryHeaders = await svcSign(secret, {method: "POST", path: "/internal/turn-receipt", id: `SMtk${seq}:receipt`, body: noHistory, nowS: Math.floor(clock.now() / 1000)});
+  expect((await fetch(new URL("/internal/turn-receipt", server.url), {method: "POST", headers: {"content-type": "application/json", ...noHistoryHeaders}, body: noHistory})).status).toBe(400);
   for (const text of ONBOARDING) await say(phone, text, {app: "friends"});
   const open = await say(phone, "Tell me something about the weather", {app: "friends"});
   expect(open.outcome).toBe("open");
@@ -123,7 +146,7 @@ test("join keyword, onboarding answer, then an open turn for the member with str
 
 test("RELAY (upstream RelaySendRequest) on an open turn: no match, an unknown item and no request send nothing", async () => {
   const phone = "+12125550219";
-  expect((await say(phone, "friends.help", {app: "friends"})).reason).toBe("join_asked");
+  expect((await say(phone, "friends.help", {app: "friends"})).reason).toBe("onboarding_asked");
   const joined = await say(phone, "Ira, 33", {app: "friends"});
   for (const text of ONBOARDING) await say(phone, text, {app: "friends"});
   // The relay text is the open turn's own message (the service binds it); the response, or the status when refused.

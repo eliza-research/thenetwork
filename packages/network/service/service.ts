@@ -1728,8 +1728,13 @@ export class NetworkService implements RuntimeHost {
           return json({ok: true, replayed: false});
         }
         if (JSON.stringify(collected.map(r => r.id)) !== JSON.stringify(b.replyIds)) return json({error: "receipt_scope_invalid", retryable: false}, 409);
-        // historyRecorded may be false on an accepted send: Cloud has no history for a recipient without an Eliza account yet.
-        if ((b.outcome === "accepted" && !(b.providerMessageIds as string[]).length)
+        // No-history acceptance belongs only to a persisted policy reply or
+        // canonical join prompt; a normal member reply still needs its history.
+        const accountFree = claim.response.accountEligible === false &&
+          (claim.response.replyKind === "compliance" ||
+            (claim.response.reason === "onboarding_asked" && claim.response.replyKind === "reply" &&
+              claim.response.memberId === null && isAppId(claim.response.app)));
+        if ((b.outcome === "accepted" && (!(b.providerMessageIds as string[]).length || (!b.historyRecorded && !accountFree)))
           || (b.outcome !== "accepted" && b.historyRecorded)) return json({error: "invalid_receipt", retryable: false}, 400);
         const status = b.outcome === "accepted" ? "sent" : b.outcome === "unknown" ? "send_unknown" : "refused_gateway";
         if (isAppId(claim.response.app)) {
@@ -1754,6 +1759,16 @@ export class NetworkService implements RuntimeHost {
       || typeof b.text !== "string" || !b.text.trim() || !["imessage","sms","rcs","unknown"].includes(b.transport as string)
       || typeof b.receivedAt !== "number" || !Number.isSafeInteger(b.receivedAt) || b.receivedAt < 0 || b.receivedAt > 8_640_000_000_000_000 || (b.app !== undefined && !isAppId(b.app))) return json({error: "invalid_request"}, 400);
     const input = b as unknown as TurnRequest;
+    // One current phone admission projection serves initial onboarding and its
+    // immutable replay; a stored prompt is never authority after policy changes.
+    const admission = async (app: AppId | undefined) => {
+      const person = await this.accounts.personFor(input.from);
+      const age = await this.accounts.lowestAge(input.from, person);
+      const allowed = !(await this.accounts.held(input.from)) && !(await this.accounts.banned(input.from, person))
+        && !(await this.people.isSuppressed(this.phoneKey(input.from)))
+        && (!app || resolveConsent(await this.people.lastConsent(input.from, app)) !== "opted_out");
+      return {person, age, allowed};
+    };
     const result = await this.inbox.signed(input, digest, async turn => {
       const outcome = await this.inbound({kind: "message", channel: input.channel, messageId: input.messageId, from: input.from, to: input.to,
         chatId: input.from, isGroup: false, text: input.text, mediaUrls: [], transport: input.transport, receivedAt: input.receivedAt}, {app: input.app});
@@ -1766,12 +1781,12 @@ export class NetworkService implements RuntimeHost {
         await this.sql.begin(tx => this.inbox.collect(tx, [conf]));
         collected.push(conf);
       }
-      const person = await this.accounts.personFor(input.from);
-      const age = await this.accounts.lowestAge(input.from, person);
+      const {person, age, allowed: policyAllowed} = await admission(turn.app);
       if (outcome === "left" || (age !== undefined && !canJoin(age))) turn.memberId = undefined;
-      const accountEligible = !(await this.accounts.held(input.from)) && !(await this.accounts.banned(input.from, person))
-        // An unknown age fails closed (core/policy.ts): Cloud account eligibility never runs ahead of the Network's join age check.
-        && !(await this.people.isSuppressed(this.phoneKey(input.from))) && age !== undefined && canJoin(age) && turn.consent?.state !== "opted_out";
+      // Unknown age never admits an account, history or matching. Only the
+      // canonical join prompt gets the signed account-free onboarding reason.
+      const accountEligible = policyAllowed && age !== undefined && canJoin(age);
+      const onboarding = policyAllowed && age === undefined && outcome === "join_asked" && !turn.memberId;
       const rt = turn.app ? this.runtimeFor(turn.app) : undefined;
       const binding = rt && turn.memberId ? await this.accounts.activeMembership(rt.app, {e164: input.from, personId: person?.id ?? null}) : undefined;
       // activeMembership owns the known join-age check; first contact, STOP, leave and policy denials create no service counter.
@@ -1783,7 +1798,7 @@ export class NetworkService implements RuntimeHost {
       if (outcome === "no_network" || outcome === "unknown_sender") return {outcome: "ignored", reason: outcome};
       return {outcome: "handled", replies: collected.map(r => r.body), replyIds: collected.map(r => r.id), delivery: "collected",
         replyKind: collected.length && collected.every(r => r.kind === "compliance") ? "compliance" : "reply", accountEligible,
-        app: turn.app ?? null, memberId: turn.memberId ?? null, reason: outcome === "open" ? "context_unavailable" : outcome, ...(turn.consent ? {consent: turn.consent} : {})} satisfies TurnResponse;
+        app: turn.app ?? null, memberId: turn.memberId ?? null, reason: onboarding ? "onboarding_asked" : outcome === "open" ? "context_unavailable" : outcome, ...(turn.consent ? {consent: turn.consent} : {})} satisfies TurnResponse;
     });
     if (result.status === 200 && result.body && typeof result.body === "object" && "outcome" in result.body && result.body.outcome === "open") {
       const cached = result.body as Extract<TurnResponse, {outcome: "open"}>;
@@ -1794,6 +1809,10 @@ export class NetworkService implements RuntimeHost {
     }
     if (result.status===200 && result.body && typeof result.body==="object" && "outcome" in result.body && result.body.outcome==="handled") {
       const handled=result.body as Extract<TurnResponse,{outcome:"handled"}>;
+      if (handled.reason === "onboarding_asked") {
+        const current = await admission(handled.app ?? undefined);
+        if (!current.allowed || current.age !== undefined) return json({error: "turn_onboarding_changed", retryable: false}, 409);
+      }
       if (handled.app) await this.runtimeFor(handled.app)?.projectNotifications();
     }
     return json(result.body, result.status);
