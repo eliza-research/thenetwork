@@ -72,7 +72,7 @@ export function SafetyCases() {
     <div className="run-grid">
       {info.reports && (
         <Section title={`Reports after a date (${reports.length})`}>
-          {reports.length ? reports.slice(0, 80).map(x => <ReportRow key={x.id} r={x} canBan={!!info.canBan} onDone={r.reload} />) : <div className="muted small">{s.nothing()}</div>}
+          {reports.length ? reports.slice(0, 80).map(x => <ReportRow key={x.id} r={x} canBan={!!info.canBan} canAct={info.canAct} onDone={r.reload} />) : <div className="muted small">{s.nothing()}</div>}
           {!info.canBan && <div className="muted small">Hold and ban by phone or person go to the Network service (real mode with NETWORK_SERVICE_URL).</div>}
         </Section>
       )}
@@ -148,7 +148,7 @@ function CaseRow({ c, canAct, onDone }: { c: ObsSafetyCase; canAct: boolean; onD
 }
 
 /** One post-date report: what kind, who reported whom, after which date; hold or ban the person (by phone or by person), or dismiss. */
-function ReportRow({ r, canBan, onDone }: { r: SafetyReport; canBan: boolean; onDone(): void }) {
+function ReportRow({ r, canBan, canAct, onDone }: { r: SafetyReport; canBan: boolean; canAct: boolean; onDone(): void }) {
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -180,6 +180,13 @@ function ReportRow({ r, canBan, onDone }: { r: SafetyReport; canBan: boolean; on
               <button className="btn" disabled={!ok} title="This phone number can never join again" onClick={() => act({ action: "ban", memberId: r.subjectId, by: "phone", note: n, reportId: r.id }, "Banned by phone")}>Ban phone</button>
               <button className="btn" disabled={!ok} title="Every phone of this person, on every app" onClick={() => act({ action: "ban", memberId: r.subjectId, by: "person", note: n, reportId: r.id }, "Banned by person")}>Ban person</button>
               <button className="btn ghost" disabled={!ok} onClick={() => act({ action: "dismiss", reportId: r.id, note: n }, "Report dismissed")}>Dismiss</button>
+            </div>
+          )}
+          {r.kind === "minor" && canAct && store.can("safety") && r.status === "open" && (
+            <div className="review-actions">
+              {!canBan && <input className="input grow" placeholder="Why the record says adult (logged, at least 5 characters)" value={note} onChange={e => setNote(e.target.value)} />}
+              <button className="btn" disabled={!ok} title="Only after the person's record says 18 or over. Clears the minor signal on every app you may act on and dismisses this person's minor reports. Refused while any age says under 18."
+                onClick={() => act({ action: "clear_minor", memberId: r.subjectId, note: n }, "Minor signal cleared on every app")}>Clear minor signal (every app)</button>
             </div>
           )}
         </div>

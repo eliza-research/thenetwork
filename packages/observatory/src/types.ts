@@ -520,7 +520,12 @@ export type SafetyAction =
   | { action: "hold"; memberId: MemberId; note: string; reportId?: string }
   /** Ban by phone (the number can never join again) or by person (every phone of the person). PRD 40.5: ban by person, not by account. */
   | { action: "ban"; memberId: MemberId; by: "phone" | "person"; note: string; reportId?: string }
-  | { action: "dismiss"; reportId: string; note: string };
+  | { action: "dismiss"; reportId: string; note: string }
+  /**
+   * After the person's record says adult: clear the minor signal on every app the staff member may act on,
+   * and dismiss the member's open "minor" reports (one action instead of one per app). Real mode: the Network service.
+   */
+  | { action: "clear_minor"; memberId: MemberId; note: string };
 
 // ---------------------------------------------------------------- configuration (gaps 10, 17)
 export interface ConfigChange {

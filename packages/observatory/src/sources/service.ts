@@ -20,6 +20,7 @@
 //   POST /safety/hold    { memberId, note, reportId? }            hold the person on every app
 //   POST /safety/ban     { memberId, by: "phone"|"person", note, reportId? }
 //   POST /safety/dismiss { reportId, note }
+//   POST /safety/clear-minor { memberId, note }   clearMinorSignal on every app of the person, minor reports dismissed
 //   GET  /members/<id>/photos  (X-Network-Reason: the typed reason) -> { ok, photos: [{ id, url, expiresAt? }] }
 //   GET  /bias                          -> { ok, reports: BiasReportView[] } (the weekly bias monitor; admin or analyst)
 // 409 { reason } is a refusal with the Network's reason; 404 means the service has no such route yet.
@@ -108,6 +109,7 @@ export class ServiceClient {
       case "hold": return this.act("/safety/hold", staff, { memberId: a.memberId, note: a.note, reportId: a.reportId }, SAFETY_ERRORS);
       case "ban": return this.act("/safety/ban", staff, { memberId: a.memberId, by: a.by, note: a.note, reportId: a.reportId }, SAFETY_ERRORS);
       case "dismiss": return this.act("/safety/dismiss", staff, { reportId: a.reportId, note: a.note }, SAFETY_ERRORS);
+      case "clear_minor": return this.act("/safety/clear-minor", staff, { memberId: a.memberId, note: a.note }, SAFETY_ERRORS);
     }
   }
 

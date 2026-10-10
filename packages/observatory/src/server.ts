@@ -823,7 +823,8 @@ function checkSafety(a: SafetyAction | null): SafetyAction | string {
       if (a.by !== "phone" && a.by !== "person") return "by must be phone or person";
       return needNote() ?? { action: "ban", memberId: id(a.memberId)!, by: a.by, note: note!, ...(id(a.reportId) ? { reportId: id(a.reportId) } : {}) };
     case "dismiss": return !id(a.reportId) ? "reportId is required" : needNote() ?? { action: "dismiss", reportId: id(a.reportId)!, note: note! };
-    default: return "action must be lift, close, hold, ban or dismiss";
+    case "clear_minor": return !id(a.memberId) ? "memberId is required" : needNote() ?? { action: "clear_minor", memberId: id(a.memberId)!, note: note! };
+    default: return "action must be lift, close, hold, ban, dismiss or clear_minor";
   }
 }
 
