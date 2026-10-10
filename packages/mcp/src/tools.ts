@@ -102,22 +102,19 @@ const NOT_AVAILABLE = "That app is not available here.";
 /** Validate the arguments against the tool's schema: only listed properties, enum values only. */
 /**
  * A phone number, an email address or a verification code in the profile text: refused, never stored.
- * A standalone 5-digit US zip ("11211", "(11237)") is fine, as are age ranges and miles next to it
- * ("28-35", "5"): slop's distance question needs the zip. Refused: an email; any run of digits and
- * separators with 7 or more digits (a phone, "(415) 555-0102"); a 4-digit or 6- to 10-digit number
- * (a code; the platform's codes are 6 digits).
+ * A standalone 5-digit US zip ("11211", "(11237)") is fine, as are a separate age range
+ * ("28-35") and distance ("5 miles"). Refused: an email, or a numeric run with at least
+ * 4 digits, except one standalone zip or age range.
+ * Split phone numbers and codes remain one numeric run, regardless of their labels.
  */
 export function contactOrCode(text: string): boolean {
   if (/[\w.+-]+@[\w-]+\.[\w.]+/.test(text)) return true;
   for (const m of text.matchAll(/(?<![\w])\+?[\d(][\d\s().-]*\d(?![\w])/g)) {
-    const run = m[0];
-    const tokens = run.trim().split(/\s+/);
-    // Zips and short numbers ("11211", "25-35", "5"), as long as the short ones could not spell a phone.
-    const ok = tokens.every(t => /^\d{5}$/.test(t) || /^\d{1,3}(?:-\d{1,3})?$/.test(t))
-      && tokens.filter(t => !/^\d{5}$/.test(t)).join("").replace(/\D/g, "").length < 7;
-    if (ok) continue;
-    if (run.replace(/\D/g, "").length >= 7) return true;
-    if (tokens.some(t => /^\(?\d{4}\)?$|^\(?\d{6,10}\)?$/.test(t.replace(/[.-]$/, "")))) return true;
+    const run = m[0].trim();
+    if (/^\(?\d{5}\)?$/.test(run)) continue;
+    const range = /^(\d{1,3})-(\d{1,3})$/.exec(run);
+    if (range && Number(range[1]) >= 1 && Number(range[1]) <= Number(range[2]) && Number(range[2]) <= 120) continue;
+    if (run.replace(/\D/g, "").length >= 4) return true;
   }
   return false;
 }
