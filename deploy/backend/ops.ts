@@ -2,7 +2,8 @@
 //
 //   collect()      one snapshot per network: the last stored tick, the review and send queues, the
 //                  sends of the last 24 h by outcome, review SLA misses, safety events (reports, minor
-//                  signals after contact, holds, bans); and today's cost per app against the budgets.
+//                  signals after contact, holds, bans, agent safety signals waiting for staff, bias
+//                  monitor alerts of the last 24 h); and today's cost per app against the budgets.
 //                  Counts and network ids only: never a member id, a phone number or a text.
 //   evaluate()     the snapshot as alerts (key, level, count, text).
 //   AlertDispatcher  dedupe and a rate limit, with its state in network.ops_alerts (a restart or a
@@ -108,6 +109,10 @@ export interface NetworkMetrics {
   safety24h: { reports: number; urgentReports: number; minorAfterContact: number; holds: number; bans: number };
   /** Outbound messages stored as fell_back (sent by SMS) on this UTC day and the day before. */
   smsByDay: { today: number; yesterday: number };
+  /** Agent safety_concern signals (POST /internal/signals) waiting for a person in GET /signals: the safety alert. */
+  safetySignalsWaiting?: number;
+  /** Groups under 0.8x in bias monitor reports written in the last 24 h (service.ts afterTick; weekly). */
+  biasAlerts24h?: number;
   /** The network could not be read (the rest of the row is zeros). */
   error?: string;
 }
@@ -133,7 +138,7 @@ export interface NetworkProbe {
    * Rows since a time: outbound statuses, event counts (type and action), report rows from the stored
    * state, and the SMS fallbacks of the UTC day that starts at `dayStart` and of the day before (the cost accruals).
    */
-  since(t: number, dayStart: number): Promise<{ statuses: Record<string, number>; events: { type: string; action: string | null; n: number }[]; reports: { kind: string }[]; sms: { today: number; yesterday: number } }>;
+  since(t: number, dayStart: number): Promise<{ statuses: Record<string, number>; events: { type: string; action: string | null; n: number }[]; reports: { kind: string }[]; sms: { today: number; yesterday: number }; safetySignals?: number; biasAlerts?: number }>;
 }
 
 /** Final outcomes of a send that reached (or tried to reach) the provider. */
@@ -174,6 +179,8 @@ export async function collectNetwork(p: NetworkProbe, now: number): Promise<Netw
         minorAfterContact: ev("minor_after_contact"), holds: ev("safety_action", "hold"), bans: ev("safety_action", "ban"),
       },
       smsByDay: s.sms,
+      safetySignalsWaiting: s.safetySignals ?? 0,
+      biasAlerts24h: s.biasAlerts ?? 0,
     };
   } catch (e) {
     return { ...empty, error: (e as Error).message.slice(0, 200) };
@@ -200,7 +207,11 @@ export function runtimeProbe(rt: {
         where s.id = ${rt.id} and (r->>'at')::float8 > ${t}`) as { kind: string }[];
       const [sms] = (await tx`select count(*) filter (where ts >= ${new Date(dayStart)})::int as today, count(*) filter (where ts < ${new Date(dayStart)})::int as yesterday
         from network.messages where app_id = ${rt.app.id} and direction = 'outbound' and status = 'fell_back' and ts >= ${new Date(dayStart - DAY)}`) as { today: number; yesterday: number }[];
-      return { statuses, events, reports, sms: { today: sms?.today ?? 0, yesterday: sms?.yesterday ?? 0 } };
+      // Counts only: a signal's evidence and a report's groups never leave the database here.
+      const [sig] = (await tx`select count(*)::int as n from network.facets where app_id = ${rt.app.id} and status = 'proposed'
+        and tags && ${tx.array(["signal:safety_concern"], "TEXT")}`) as { n: number }[];
+      const [bias] = (await tx`select coalesce(sum(alerts), 0)::int as n from network.bias_reports where app_id = ${rt.app.id} and network_id = ${rt.id} and at > ${at}`) as { n: number }[];
+      return { statuses, events, reports, sms: { today: sms?.today ?? 0, yesterday: sms?.yesterday ?? 0 }, safetySignals: sig?.n ?? 0, biasAlerts: bias?.n ?? 0 };
     }),
   };
 }
@@ -234,6 +245,8 @@ export function evaluate(m: Pick<OpsMetrics, "networks" | "cost"> & { uptimeMs?:
     const f = n.safety24h;
     if (f.minorAfterContact > 0) out.push({ key: `safety_minor:${id}`, level: "bad", count: f.minorAfterContact, bump: true, text: `${id}: ${f.minorAfterContact} minor signal(s) after contact with an adult in 24 h: check the safety queue now` });
     if (f.reports > 0) out.push({ key: `safety_report:${id}`, level: f.urgentReports > 0 ? "bad" : "warn", count: f.reports, bump: true, text: `${id}: ${f.reports} report(s) in 24 h (${f.urgentReports} urgent)` });
+    if (n.safetySignalsWaiting) out.push({ key: `safety_signal:${id}`, level: "bad", count: n.safetySignalsWaiting, bump: true, text: `${id}: ${n.safetySignalsWaiting} agent safety signal(s) wait for staff review (console: Safety, or GET /signals)` });
+    if (n.biasAlerts24h) out.push({ key: `bias_report:${id}`, level: "warn", count: n.biasAlerts24h, bump: true, text: `${id}: the weekly bias monitor found ${n.biasAlerts24h} group outcome(s) under 0.8x (console: Metrics, bias monitor)` });
     if (f.bans + f.holds > 0) out.push({ key: `safety_action:${id}`, level: "warn", count: f.bans + f.holds, bump: true, text: `${id}: ${f.bans} ban(s) and ${f.holds} hold(s) in 24 h` });
     if (n.backlog.outboundWaiting >= c.outboundBacklog) out.push({ key: `queue_outbound:${id}`, level: "warn", count: n.backlog.outboundWaiting, text: `${id}: ${n.backlog.outboundWaiting} message(s) waiting for delivery` });
     if (n.backlog.review >= c.reviewBacklog) out.push({ key: `queue_review:${id}`, level: "warn", count: n.backlog.review, text: `${id}: ${n.backlog.review} item(s) waiting for review` });

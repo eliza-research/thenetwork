@@ -130,9 +130,9 @@ Set these in **Variables**. Mark each **secret** row as a sealed variable. Never
 | `PHOTO_STORAGE` | no | `r2` (unset: photos are off) | slop.date photos (adults only). `local` is for dev only. |
 | `R2_ACCOUNT_ID` (or `R2_ENDPOINT`), `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | key: **yes** | A **private** bucket: no public access, no r2.dev URL | The R2 driver is not yet exercised in tests. |
 | `PHOTO_VIEW_BASE_URL` | no | `https://slop.date` | Staff photo links (5 minutes, signed) go through the backend there. |
-| `CLEF_RATINGS` | no | `off` (default). `on` only after fitted weights pass the rule in docs/results/2026-10-09-clef-fitting.md **[FOUNDER]** | The slop.date photo rater (Clef). Off: photos work, unrated. `server.ts` logs `photo rater` with its status at start. |
-| `CLEF_WEIGHTS_PATH` | no | Required when `CLEF_RATINGS=on`: a fitted weights file with a version and provenance. The placeholder, or a file without provenance, is refused (ratings stay off). | |
-| `CLOUDFLARE_AI_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | **yes** (token) | A Workers AI token, required when `CLEF_RATINGS=on` | Never set in CI or `bun run sim`. Each rating is a `photo_rating` row in the cost ledger (7.3). |
+| `CLEF_RATINGS` | no | `on` (default, founder 2026-10-09). `off` turns ratings off; any other value also leaves them off. | The slop.date photo rater (Clef). Off: photos work, unrated. `server.ts` logs `photo rater` with its status and weights version at start. |
+| `CLEF_WEIGHTS_PATH` | no | Unset: the placeholder Clef weights (status `on_placeholder`) until fitted weights pass the rule in docs/results/2026-10-09-clef-fitting.md. Set: a fitted weights file with a version and provenance; a placeholder or a file without provenance is refused (ratings stay off). | |
+| `CLOUDFLARE_AI_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | **yes** (token) | A Workers AI token and the account id. Without them nothing is rated (`off_env`). | Never set in CI or `bun run sim`. Each rater try is a `photo_rating` row in the cost ledger (7.3). |
 | `CLEF_MODEL` | no | `clef` | `clef-flash` is cheaper. A refused weights file logs `photo rater` with `status: refused_weights`. |
 | `SURPLUS_API_KEY` | **yes** | Only when an LLM path is turned on | gpt-6-luna through core's `chatJson`. Without it, LLM paths fail closed. |
 | `NETWORK_CHANNEL`, `BLOOIO_API_KEY`, `BLOOIO_FROM`, `BLOOIO_ALLOW_SEND`, `NTWRK_LIVE_APPROVED`, `<APP>_LIVE_APPROVED` | key: **yes** | **leave all unset** | Live sends. **[FOUNDER]** only. Section 6. |
@@ -174,7 +174,7 @@ Every Pages project calls `https://api.ntwrk.party` like any other client. Only 
 
 The console is the same image with another start command (`deploy/backend/observatory.railway.toml`). It runs in real mode only (`OBSERVATORY_REAL_ONLY=1`): no game mode, no lab, and no simulator code. The image removes `packages/sim`, `judge`, `evals`, `worlds` and `plugin-network`, and the console imports game mode only on demand (`bun run sim` block `ops` checks both). Staff sign in through Cloudflare Access only. The console reads each app through that app's own read login. It changes nothing in the database: review, safety actions and the matching switch go to the backend's staff API over the private network.
 
-**Caution:** under `PLATFORM_ENV=production` or `staging`, the console refuses to start without Access (`OBSERVATORY_TRUST_CF_ACCESS=1` with the team and the audience). Without Access it would make an admin token and write it into the Railway log.
+**Caution:** under `PLATFORM_ENV=production` or `staging`, the console refuses to start without Access (`OBSERVATORY_TRUST_CF_ACCESS=1` with the team and the audience). Without Access it would make an admin token and write it into the Railway log. The guard fails closed: a console that holds real data (`OBSERVATORY_REAL_ONLY=1`, or any database URL whose host is not this machine) refuses to start when `PLATFORM_ENV` is not set or is not `dev`, `staging` or `production`. Staff tokens are allowed only with `PLATFORM_ENV=dev` and local databases; a remote database needs Access under `dev` too.
 
 1. **New → GitHub Repo →** the same repository. Name the service `observatory`.
 2. Set Config-as-code to `/deploy/backend/observatory.railway.toml`. It starts `bun run packages/observatory/src/server.ts --mode real` and checks `/healthz` (no auth, no data).
@@ -399,6 +399,8 @@ Every minute, inside the backend's tick, the ops round reads each network and th
 | `review_sla:<network>` | bad | A review item is past its deadline, or one expired unsent in 24 h |
 | `safety_minor:<network>` | bad | A minor signal after contact with an adult in 24 h |
 | `safety_report:<network>` | bad (urgent kind) or warn | A member report in 24 h. Urgent kinds: harassment, unsafe, scam, minor. |
+| `safety_signal:<network>` | bad | Agent `safety_concern` signals (`POST /internal/signals`) that wait for a person in `GET /signals`. Posted again when the count goes up. |
+| `bias_report:<network>` | warn | The weekly bias monitor wrote a report with groups under 0.8x in the last 24 h. Counts only; the groups are in the console's bias panel. |
 | `safety_action:<network>` | warn | A ban or a hold in 24 h |
 | `queue_outbound:<network>` | warn | `ALERT_OUTBOUND_BACKLOG` (50) or more messages wait for delivery |
 | `queue_review:<network>` | warn | `ALERT_REVIEW_BACKLOG` (30) or more items wait for review |
@@ -456,15 +458,24 @@ Two backups, so that one failure does not lose the data:
   | `BACKUP_R2_BUCKET` | no | `ntwrk-backups` |
   | `BACKUP_R2_ACCESS_KEY_ID`, `BACKUP_R2_SECRET_ACCESS_KEY` | **yes** | The bucket token |
   | `BACKUP_PREFIX` | no | `postgres/production` (default `postgres/<PLATFORM_ENV>`) |
+  | `BACKUP_ENCRYPTION_KEY` | **yes** | At least 32 random bytes (for example `openssl rand -base64 48`). A person makes it and keeps a copy outside Railway (the founder's password manager): without it no backup can be read. The job refuses to upload without it, unless `PLATFORM_ENV=dev`. |
+  | `BACKUP_PUBLIC_PROBE_URLS` | no | Optional: comma-separated public base URLs that could serve the bucket (an r2.dev URL or a custom domain, if one was ever turned on). The privacy check reads the probe object through each of them too. |
   | `BACKUP_HEARTBEAT_URL` | **yes** | Optional: a heartbeat monitor (as in 7.1) with a period of 1 day and a grace of 2 hours. The job calls it only after a complete upload, so a missed or failed run raises an alert. |
 
-- **What one run does:** it opens a read-only snapshot, counts the rows of every table in `network`, `platform`, `notify`, `oauth` and `public`, and runs `pg_dump --snapshot` on the same snapshot, so the counts and the dump agree. It dumps the roles without passwords. It uploads `db.dump`, `roles.sql` and `manifest.json` (last) to `<BACKUP_PREFIX>/<UTC time>/`. A prefix with a `manifest.json` is a complete backup.
+- **What one run does:** it opens a read-only snapshot, counts the rows of every table in `network`, `platform`, `notify`, `oauth` and `public`, and runs `pg_dump --snapshot` on the same snapshot, so the counts and the dump agree. It dumps the roles without passwords. Before it uploads, it checks that the bucket is private: it writes a probe object, reads it without credentials at the S3 endpoint and at each `BACKUP_PUBLIC_PROBE_URLS` base, and deletes it. Any answer below 400, or no answer, stops the run before anything is uploaded. Then it encrypts `db.dump` and `roles.sql` with AES-256-GCM (key from `BACKUP_ENCRYPTION_KEY` through HKDF-SHA256) and uploads `db.dump.enc`, `roles.sql.enc` and `manifest.json` (last) to `<BACKUP_PREFIX>/<UTC time>/`. The manifest holds row counts, the source host and port, and the key id (a hash, not the key). A prefix with a `manifest.json` is a complete backup.
+- **The privacy check has a limit on R2.** The S3 endpoint always asks for credentials, so the check finds a public bucket only through a URL in `BACKUP_PUBLIC_PROBE_URLS`. A person must still check once, in the Cloudflare dashboard, that the bucket has no r2.dev URL and no custom domain.
 - **Logs:** one JSON line per step: `"msg":"dump"` (bytes, tables, rows) and `"msg":"backup uploaded"`. A failure logs `"msg":"backup failed"` and exits 1. Set `BACKUP_HEARTBEAT_URL` so a failed or missed run is an alert in the same channel as 7.1.
 - **Caution:** the dump holds member data (phone numbers, messages). Only the founder and the on-call engineer may download one, and only to restore it (runbook-real.md section 8). Delete local copies after the drill.
 
 ### 8.2 Restore
 
-`deploy/backup/restore.ts` restores a backup into a **new** database and checks every table's row count against the manifest. It refuses a database that exists, and the live names (`railway`, `network`, `postgres`).
+`deploy/backup/restore.ts` restores a backup into a **new** database and checks every table's row count against the manifest. It refuses a database that exists, the live names (`railway`, `network`, `postgres`), and the source's own database on the source server. It downloads an encrypted backup and decrypts it with `BACKUP_ENCRYPTION_KEY` (a wrong key or a changed file stops it).
+
+A restore never changes a role or a privilege on the source server:
+
+- The drill (the default) runs `pg_restore --no-owner --no-privileges`: no `ALTER OWNER`, `GRANT` or `REVOKE`. The tables belong to the login that ran the restore. Run the drill with the owner login (`postgres` on Railway), because some tables force row-level security.
+- `--keep-privileges` (a real recovery, runbook-real.md 8.3) keeps the owners and grants. They apply to the objects of the new database only.
+- `--roles` runs `roles.sql` (`CREATE ROLE` and `ALTER ROLE` for the whole server). It is refused on the source server, and on any server when the backup does not name its source. Use it only to rebuild an empty replacement server.
 
 ```bash
 # RESTORE_DATABASE_URL: an owner login on the target server (any database; usually the maintenance one).

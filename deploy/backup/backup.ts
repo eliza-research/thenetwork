@@ -8,15 +8,18 @@
 //  2. Counts the rows of every table in that snapshot (manifest.json), then runs pg_dump --snapshot
 //     on the same snapshot (db.dump, custom format), so the counts and the dump agree exactly.
 //  3. Dumps the roles without passwords (roles.sql; needs a superuser, else it is skipped with a warning).
-//  4. Uploads the three files to BACKUP_R2_BUCKET under <BACKUP_PREFIX>/<UTC time>/ and deletes the local copy.
+//  4. Checks that the bucket is not public (an unauthenticated GET of a probe object must be refused),
+//     encrypts db.dump and roles.sql (AES-256-GCM, BACKUP_ENCRYPTION_KEY; required unless PLATFORM_ENV=dev),
+//     uploads them and manifest.json to BACKUP_R2_BUCKET under <BACKUP_PREFIX>/<UTC time>/ and deletes the local copy.
 //  5. Calls BACKUP_HEARTBEAT_URL (optional, https) after the upload, so a missed or failed run raises the monitor's alert.
 // The dump holds member data (phone numbers, messages). The bucket must be private, its token scoped to
 // it alone, and a lifecycle rule deletes objects after 35 days (docs/deploy.md 8.1). Logs never hold a URL.
+// Without the encryption key nobody can read an uploaded dump: keep a copy of the key outside Railway.
 import { mkdtemp, mkdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SQL } from "bun";
-import { backupBucketFromEnv, pgBin, redactUrls, rowCounts, run, type Manifest } from "./lib.ts";
+import { assertBucketPrivate, backupBucketFromEnv, backupKeyFromEnv, encryptFile, pgBin, redactUrls, rowCounts, run, type BackupKey, type Manifest } from "./lib.ts";
 
 /** libpq environment for a URL: the password never appears in a process list. */
 export function pgEnv(url: string): Record<string, string> {
@@ -49,7 +52,7 @@ export async function backup(o: { url: string; outDir: string; roles?: boolean; 
       const version = (await run([pgBin("pg_dump"), "--version"])).trim();
       // The dump reads the exported snapshot while this transaction stays open.
       await run([pgBin("pg_dump"), "--format=custom", "--no-password", `--snapshot=${snap}`, `--file=${dump}`], { env });
-      manifest = { version: 1, createdAt: new Date().toISOString(), database: env.PGDATABASE!, serverVersion: server_version, pgDump: version, rowCounts: counts, files: { dump: "db.dump" } };
+      manifest = { version: 1, createdAt: new Date().toISOString(), database: env.PGDATABASE!, serverVersion: server_version, pgDump: version, rowCounts: counts, files: { dump: "db.dump" }, source: { host: env.PGHOST!, port: env.PGPORT! } };
     });
   } finally { await sql.close(); }
   if (o.roles !== false) {
@@ -63,17 +66,27 @@ export async function backup(o: { url: string; outDir: string; roles?: boolean; 
   return { dir: o.outDir, manifest, bytes };
 }
 
-/** Upload a backup directory to the bucket under `prefix`. Returns the keys. */
-export async function upload(dir: string, manifest: Manifest, prefix: string, env: Record<string, string | undefined> = process.env): Promise<string[]> {
+/**
+ * Upload a backup directory to the bucket under `prefix`. Returns the keys. First the bucket's privacy
+ * check (assertBucketPrivate); with a key, db.dump and roles.sql go up encrypted as `<name>.enc` and the
+ * manifest says so. `key` undefined uploads plain files (PLATFORM_ENV=dev only: backupKeyFromEnv).
+ */
+export async function upload(dir: string, manifest: Manifest, prefix: string, env: Record<string, string | undefined> = process.env, key: BackupKey | undefined = backupKeyFromEnv(env), o: { fetch?: typeof fetch } = {}): Promise<string[]> {
   const bucket = backupBucketFromEnv(env);
-  const files = ["db.dump", ...(manifest.files.roles ? ["roles.sql"] : []), "manifest.json"];
+  await assertBucketPrivate({ prefix, env, ...(o.fetch ? { fetch: o.fetch } : {}) });
+  const files = ["db.dump", ...(manifest.files.roles ? ["roles.sql"] : [])];
   const keys: string[] = [];
-  // The manifest goes last: a prefix with a manifest is a complete backup.
+  const sent: Manifest = key ? { ...manifest, encryption: { alg: "aes-256-gcm", kdf: "hkdf-sha256", keyId: key.id } } : manifest;
   for (const f of files) {
-    const key = `${prefix}/${f}`;
-    await bucket.write(key, Bun.file(join(dir, f)), { type: f.endsWith(".json") ? "application/json" : "application/octet-stream" });
-    keys.push(key);
+    let local = join(dir, f), name = f;
+    if (key) { name = `${f}.enc`; local = join(dir, name); await encryptFile(join(dir, f), local, key); }
+    const k = `${prefix}/${name}`;
+    await bucket.write(k, Bun.file(local), { type: "application/octet-stream" });
+    keys.push(k);
   }
+  // The manifest goes last: a prefix with a manifest is a complete backup.
+  await bucket.write(`${prefix}/manifest.json`, JSON.stringify(sent, null, 1), { type: "application/json" });
+  keys.push(`${prefix}/manifest.json`);
   return keys;
 }
 
@@ -83,6 +96,12 @@ if (import.meta.main) {
   const line = (level: string, msg: string, f: Record<string, unknown> = {}) => console.log(JSON.stringify({ t: new Date().toISOString(), level, msg, svc: "backup", ...f }));
   const url = process.env.BACKUP_DATABASE_URL;
   if (!url) { line("error", "BACKUP_DATABASE_URL is not set"); process.exit(1); }
+  // Before the dump: an upload without the encryption key (staging, production) is refused at once.
+  let key: BackupKey | undefined;
+  if (!a.local) {
+    try { key = backupKeyFromEnv(); } catch (e) { line("error", (e as Error).message); process.exit(1); }
+    if (!key) line("warn", "PLATFORM_ENV=dev and no BACKUP_ENCRYPTION_KEY: the dump is uploaded unencrypted");
+  }
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
   const dir = a.out ? join(a.out, stamp) : await mkdtemp(join(tmpdir(), "network-backup-"));
   try {
@@ -92,8 +111,8 @@ if (import.meta.main) {
     line("info", "dump", { bytes: r.bytes, tables: Object.keys(r.manifest.rowCounts).length, rows, server: r.manifest.serverVersion, ms: Math.round(performance.now() - t0) });
     if (!a.local) {
       const prefix = `${(process.env.BACKUP_PREFIX ?? `postgres/${process.env.PLATFORM_ENV ?? "dev"}`).replace(/\/+$/, "")}/${stamp}`;
-      const keys = await upload(dir, r.manifest, prefix);
-      line("info", "backup uploaded", { prefix, files: keys.length });
+      const keys = await upload(dir, r.manifest, prefix, process.env, key);
+      line("info", "backup uploaded", { prefix, files: keys.length, encrypted: !!key });
       // A dead man's switch for the job (docs/deploy.md 8.1): called only after a complete upload. The URL is never logged.
       const hb = process.env.BACKUP_HEARTBEAT_URL?.trim();
       if (hb) {

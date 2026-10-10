@@ -1359,6 +1359,39 @@ export class NetworkService implements RuntimeHost {
     });
   }
 
+  /**
+   * Clear a minor signal for the person behind this member, on every app (docs/runbook-real.md, the minor
+   * clear): after the person's record says adult, each app's Network runs clearMinorSignal (it refuses when
+   * the member's record or stated age is under 18) and dismisses that member's open "minor" reports. One
+   * staff action instead of one per app. Staff with safety on this app only clear it here; every app needs
+   * safety@* (or admin@*). Audited before and after (the audit row never says how many apps the person uses).
+   * Ok when every app cleared or had no signal; `apps` says what each app did.
+   */
+  async clearMinor(user: StaffUser, rt: NetworkRuntime, memberId: MemberId, note: string): Promise<ActionResult & { apps?: { app: AppId; result: string }[] }> {
+    const all = await this.membersOfPerson(rt, memberId);
+    const members = crossAppSafety(user) ? all.members : all.members.filter(x => x.rt === rt);
+    const apps: { app: AppId; result: string }[] = [];
+    const r = await this.audited(rt, user, { type: "member", id: memberId }, { safety: "clear_minor", scope: members.length > 1 ? "every_app" : "this_app" }, async () => {
+      let refusal: string | undefined;
+      // One network at a time (never one unit inside another).
+      for (const x of members) {
+        const one = await x.rt.unitOfWork(n => {
+          const c = n.clearMinorSignal(x.memberId, user.id, note);
+          if (!c.ok && c.reason !== "no_signal") return c;
+          let dismissed = 0;
+          for (const rep of n.safetyReports()) {
+            if (rep.kind === "minor" && rep.subjectId === x.memberId && rep.status === "open" && n.dismissReport(rep.id, user.id, note).ok) dismissed++;
+          }
+          return c.ok || dismissed ? { ok: true as const } : c;
+        });
+        apps.push({ app: x.rt.app.id, result: one.ok ? "cleared" : one.reason });
+        if (!one.ok && one.reason !== "no_signal") refusal ??= one.reason;
+      }
+      return refusal ? { ok: false, reason: refusal } : apps.some(a => a.result === "cleared") ? { ok: true } : { ok: false, reason: "no_signal" };
+    });
+    return { ...r, apps };
+  }
+
   /** Dismiss a report: it no longer keeps the member out of matching. */
   dismissReport(user: StaffUser, rt: NetworkRuntime, reportId: string, note: string) {
     return this.staffAction(rt, user, "safety", { type: "case", id: reportId }, { safety: "dismiss_report" }, n => n.dismissReport(reportId, user.id, note));
@@ -1798,6 +1831,15 @@ export class NetworkService implements RuntimeHost {
         if (b.note !== undefined && (typeof b.note !== "string" || b.note.length > 2000)) return json({ ok: false, error: "invalid_note" }, 400);
         if (path === "/safety/lift") return typeof b.memberId === "string" && b.memberId.length <= 200 ? result(await this.liftHold(user, b.memberId, b.note, rt)) : json({ ok: false, error: "memberId_required" }, 400);
         return typeof b.caseId === "string" && b.caseId.length <= 200 ? result(await this.closeCase(user, b.caseId, b.note, rt)) : json({ ok: false, error: "caseId_required" }, 400);
+      }
+      if (path === "/safety/clear-minor") {
+        const no = need(["safety"]); if (no) return no;
+        const b = await body(req) as Record<string, any> | undefined;
+        if (!b) return json({ ok: false, error: "invalid_json" }, 400);
+        if (typeof b.note !== "string" || b.note.trim().length < 5 || b.note.length > 2000) return json({ ok: false, error: "note_required" }, 400);
+        if (typeof b.memberId !== "string" || !b.memberId || b.memberId.length > 200) return json({ ok: false, error: "memberId_required" }, 400);
+        const r = await this.clearMinor(user, rt, b.memberId, b.note);
+        return json(r, r.ok ? 200 : 409);
       }
       if (path === "/safety/hold" || path === "/safety/ban" || path === "/safety/dismiss") {
         const no = need(["safety"]); if (no) return no;

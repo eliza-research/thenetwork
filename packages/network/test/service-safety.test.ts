@@ -199,6 +199,44 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await text(s, clock, di, "friends")).toBe("held");
   }, T);
 
+  test("minor clear: one staff action clears the signal on every app and dismisses the minor reports; audited; refused while any age says minor", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const { s, otp } = service(clock);
+    const web = site(s, clock, otp);
+    const gil = newPhone(), hal = newPhone();
+    for (const [p, who] of [[gil, "Gil, 31"], [hal, "Hal, 34"]] as const) { await text(s, clock, p, "slop"); await text(s, clock, p, who); }
+    await web.login("friends", hal);
+    expect((await web.join("friends", 34, "Hal")).status).toBe(200);
+    // A wrong report: Hal is 34 by his own record.
+    expect(await text(s, clock, gil, "report Hal, he's only 15")).toBe("handled");
+    const h = (await memberOf("slop", hal))!.id;
+    const minorReport = async () => s.runtimeFor("slop")!.readState(n => n.safetyReports().find(r => r.kind === "minor" && r.subjectId === h));
+    expect((await minorReport())?.status).toBe("open");
+    expect(await s.runtimeFor("slop")!.readState(n => n.safetyCases().some(c => c.memberId === h && c.events.some(e => e.kind === "minor_reported")))).toBe(true);
+
+    expect((await staff(s, "rev-tok", "POST", "/apps/slop/safety/clear-minor", { memberId: h, note: "record says 34" })).status).toBe(403);
+    expect((await staff(s, "saf-tok", "POST", "/apps/slop/safety/clear-minor", { memberId: h, note: "x" })).status).toBe(400);
+    const res = await staff(s, "saf-tok", "POST", "/apps/slop/safety/clear-minor", { memberId: h, note: "record says 34; wrong report" });
+    const out = await res.json() as any;
+    expect([res.status, out.ok]).toEqual([200, true]);
+    expect(Object.fromEntries((out.apps as { app: string; result: string }[]).map(a => [a.app, a.result]))).toEqual({ slop: "cleared", friends: "no_signal" });
+    expect((await minorReport())?.status).toBe("dismissed");
+    // Nothing left to clear.
+    expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/clear-minor", { memberId: h, note: "again, by mistake" })).json()).toMatchObject({ ok: false, reason: "no_signal" });
+
+    // A member whose own age is 16 stays a minor: the clear is refused.
+    const ivy = newPhone();
+    await text(s, clock, ivy, "slop"); await text(s, clock, ivy, "Ivy, 16");
+    const i = (await memberOf("slop", ivy))!.id;
+    const refused = await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/clear-minor", { memberId: i, note: "trying to clear a minor" })).json() as any;
+    expect(refused.ok).toBe(false);
+    expect(["stated_minor", "record_minor"]).toContain(refused.reason);
+
+    const rows = (await sql`select detail->>'phase' as phase, ok from network.staff_audit where action = 'safety' and detail->>'safety' = 'clear_minor' order by id`) as any[];
+    expect(rows.map(r => `${r.phase}:${r.ok}`)).toEqual(["requested:true", "result:true", "requested:true", "result:false", "requested:true", "result:false"]);
+  }, T);
+
   test("the console's client (observatory ServiceClient) reads the queue and acts through these routes; the signed-in person is the actor", async () => {
     await fresh();
     const clock = new SimClock(START);

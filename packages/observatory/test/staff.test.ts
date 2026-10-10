@@ -275,7 +275,7 @@ describe("SSO and the production switch", () => {
   }, T);
 
   test("OBSERVATORY_REAL_ONLY: no game mode, no game controls, no lab", async () => {
-    const prod = await createServer({ port: 0, development: false, realOnly: true, token: long("prod-admin"), audit: { dir: join(dir, "audit-prod") }, lab: { dir: join(dir, "lab-prod") }, real: { url: undefined, pollMs: 3_600_000 } });
+    const prod = await createServer({ port: 0, development: false, realOnly: true, platformEnv: "dev", token: long("prod-admin"), audit: { dir: join(dir, "audit-prod") }, lab: { dir: join(dir, "lab-prod") }, real: { url: undefined, pollMs: 3_600_000 } });
     try {
       const h = { authorization: `Bearer ${long("prod-admin")}`, "content-type": "application/json" };
       expect(prod.mode()).toBe("real");
@@ -290,6 +290,32 @@ describe("SSO and the production switch", () => {
       expect((await fetch(prod.url + "/api/lab/run", { method: "POST", headers: h, body: JSON.stringify({ arms: ["consent"], seeds: [1], days: 1 }) })).status).toBe(403);
       await expect(prod.source("game")).rejects.toThrow("OBSERVATORY_REAL_ONLY");
     } finally { await prod.stop(); }
+  }, T);
+});
+
+describe("the start guard fails closed (docs/deploy.md 2.6)", () => {
+  const LOCAL = "postgres://u@localhost:54339/x", REMOTE = "postgres://u:p@db.railway.internal:5432/railway";
+  test("real data without PLATFORM_ENV, or with tokens outside dev on local databases, refuses to start", async () => {
+    const start = (o: Parameters<typeof createServer>[0]) => createServer({ port: 0, development: false, audit: { dir: join(dir, "audit-guard") }, lab: { dir: join(dir, "lab-guard") }, staffRolesUrl: false, peopleUrl: false, ...o })
+      .then(async s => { await s.stop(); return "started"; }, e => String((e as Error).message));
+    const keep = { PLATFORM_ENV: process.env.PLATFORM_ENV, NETWORK_DATABASE_URL: process.env.NETWORK_DATABASE_URL, DATABASE_URL: process.env.DATABASE_URL };
+    delete process.env.PLATFORM_ENV; delete process.env.NETWORK_DATABASE_URL; delete process.env.DATABASE_URL;
+    try {
+      const real = (url: string) => ({ url, pollMs: 3_600_000, service: false as const });
+      // OBSERVATORY_REAL_ONLY=1 with no PLATFORM_ENV: refused (it used to start with a token).
+      expect(await start({ realOnly: true, token: long("guard-admin"), real: real(LOCAL) })).toMatch(/refusing to start: real data .* needs PLATFORM_ENV/);
+      expect(await start({ realOnly: true, platformEnv: "prod", token: long("guard-admin"), real: real(LOCAL) })).toMatch(/unknown PLATFORM_ENV/);
+      // A game server whose real-mode database is remote: PLATFORM_ENV is required too, and dev with a remote host needs Access.
+      expect(await start({ mode: "game", token: long("guard-admin"), real: real(REMOTE), game: { seed: 1, pushMs: 3_600_000, tickMs: 3_600_000 } })).toMatch(/needs PLATFORM_ENV/);
+      expect(await start({ mode: "game", platformEnv: "dev", token: long("guard-admin"), real: real(REMOTE), game: { seed: 1, pushMs: 3_600_000, tickMs: 3_600_000 } })).toMatch(/tokens are for local databases only/);
+      // Staging and production: Cloudflare Access, as before.
+      for (const env of ["staging", "production"]) expect(await start({ realOnly: true, platformEnv: env, token: long("guard-admin"), real: real(LOCAL) })).toMatch(/needs Cloudflare Access/);
+      // Allowed: dev with local databases and a token; a game server with no remote database and no PLATFORM_ENV.
+      expect(await start({ realOnly: true, platformEnv: "dev", token: long("guard-admin"), real: real(LOCAL) })).toBe("started");
+      expect(await start({ mode: "game", token: long("guard-admin"), real: real(LOCAL), game: { seed: 1, pushMs: 3_600_000, tickMs: 3_600_000 } })).toBe("started");
+    } finally {
+      for (const [k, v] of Object.entries(keep)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
   }, T);
 });
 

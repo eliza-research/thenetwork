@@ -22,7 +22,7 @@ import { memberFacets } from "../appProfile.ts";
 import { displayName, scrubFacet, scrubText } from "../scrub.ts";
 import { emptyCounters, Store, zeroCounts } from "../store.ts";
 import type {
-  BiasReportView, BookedPlan, ConfigChange, ConfigInfo, ControlCommand, ControlResult, EngineRunSummary, EnvInfo, FeedKind, MemberDetail, MemberPhoto, MemberStatus, MemberTimeline, NetworkInfo,
+  BiasReportView, HeldQueue, HeldText, BookedPlan, ConfigChange, ConfigInfo, ControlCommand, ControlResult, EngineRunSummary, EnvInfo, FeedKind, MemberDetail, MemberPhoto, MemberStatus, MemberTimeline, NetworkInfo,
   ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsMessage, ObsOpportunity, ObsRequest, ObsState, OpportunityDetail, ParticipantStatus, ReviewInfo,
   SafetyAction, SafetyInfo, SearchHit, TimelineEntry,
 } from "../types.ts";
@@ -768,6 +768,23 @@ export class RealSource implements DataSource {
   async bias(actor: string): Promise<{ ok: true; reports: BiasReportView[] } | { ok: false; error: string }> {
     if (!this.service) return { ok: false, error: "the bias monitor runs in the Network service: set NETWORK_SERVICE_URL and NETWORK_SERVICE_TOKEN" };
     return this.service.bias(actor);
+  }
+
+  /**
+   * Held texts from the Network service. A text about or to a member who is under 18 here, or whose age
+   * is unknown, is never shown (the service should not send one; this is the console's own check).
+   */
+  async held(queue: HeldQueue, actor: string): Promise<{ ok: true; items: HeldText[] } | { ok: false; code: string; error: string }> {
+    if (!this.service) return { ok: false, code: "not_available", error: "held texts are kept by the Network service: set NETWORK_SERVICE_URL and NETWORK_SERVICE_TOKEN" };
+    const r = await this.service.held(actor, queue);
+    if (!r.ok) return r;
+    const minors = new Set(this.state().members.filter(m => m.minor || m.ageUnknown).map(m => m.id));
+    return { ok: true, items: r.items.map(x => (x.memberId && minors.has(x.memberId) && x.text !== undefined ? (({ text: _t, ...rest }) => ({ ...rest, textHidden: "minor" as const }))(x) : x)) };
+  }
+
+  async heldDecision(queue: HeldQueue, id: string, decision: "release" | "reject", reason: string, actor: string): Promise<ControlResult> {
+    if (!this.service) return { ok: false, error: "real-world mode is read-only: set NETWORK_SERVICE_URL and NETWORK_SERVICE_TOKEN to act through the Network service", code: "read_only" };
+    return this.afterAction(await this.service.heldDecision(actor, queue, id, decision, reason));
   }
 
   /** Through the Network service (its staff API), never this connection. Without it: refused. */
