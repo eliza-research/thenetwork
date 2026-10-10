@@ -1459,7 +1459,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const def = req.desireId ? desireById.get(req.desireId) : undefined;
     const what = def ? def.text.replace(/^(find|meet|get|be part of|try|start|make|play|join|go on) /, "").replace(/^learn to /, "learning to ") : "that";
     const v = nearbyVenues(m.area, def ? def.needsInterests : req.tags, 1)[0];
-    this.send(m, `${copy.requestNoneYet(what)}${v ? ` Meanwhile, ${v.name} is a good public spot for it.` : ""}`, { type: "info" }, "info");
+    this.send(m, `${copy.requestNoneYet(what, this.invitesWork)}${v ? ` Meanwhile, ${v.name} is a good public spot for it.` : ""}`, { type: "info" }, "info");
     if (this.canInvite(m)) m.awaiting = { kind: "growth", at: this.now() };
   }
 
@@ -2441,7 +2441,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     this.interactions.push({ id: `${o.id}:fb:${m.id}`, kind: o.kind, category: o.category, participants: [...o.participants], at: this.now(), outcome: f.selfNoShow ? "no_show" : "completed", contributors: [] });
     // Growth: a good experience is the best moment to ask (at most monthly, while invites last).
-    if (!crewId && this.opts.growth && f.sentiment === "positive" && this.canInvite(m) && this.now() - m.lastGrowthAsk > 30 * DAY) {
+    if (!crewId && this.invitesWork && f.sentiment === "positive" && this.canInvite(m) && this.now() - m.lastGrowthAsk > 30 * DAY) {
       m.lastGrowthAsk = this.now();
       this.growthAsk(m, this.copy.growthAsk, "after_good_meeting");
     }
@@ -2453,7 +2453,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     return !m.minor && this.trust.ok(m.id) && this.now() >= m.invitesBlockedUntil && m.invites.filter(t => this.now() - t < 30 * DAY).length < limit;
   }
 
+  /**
+   * Growth asks and invites are on, and this Network can send an invite link (NetworkContext.invite).
+   * Without one (the production service today) no text offers or claims an invite link.
+   */
+  private get invitesWork(): boolean { return this.opts.growth && !!this.ctx.invite; }
+
   private invite(m: MemberState, friendName: string) {
+    if (!this.ctx.invite) { this.ctx.log("invite_unavailable", { from: m.id }); this.send(m, this.copy.invitesNotOpen(friendName), { type: "info" }, "reply"); return; }
     if (!this.canInvite(m)) { this.send(m, "Thanks! You're out of invites for now; I'll let you know when you have more.", { type: "info" }, "reply"); return; }
     m.invites.push(this.now());
     this.counters.invitesSent++;
@@ -3575,7 +3582,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    *  - plain asks: engaged members who've been here 10+ days and were never asked.
    */
   private growthTasks(now: number) {
-    if (!this.opts.growth) return;
+    if (!this.invitesWork) return;
     let budget = this.opts.maxGrowthAsksPerDay;
     const known = this.knownProfiles();
     const unmet = this.requests.filter(r => r.kind === "people" && r.outcome === "none" && now - r.at < 7 * DAY);
