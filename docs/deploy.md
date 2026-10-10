@@ -409,10 +409,12 @@ Every minute, inside the backend's tick, the ops round reads each network and th
 | `precision:<network>` | warn | Shadow precision under 80% over 7 days (person review decisions approved without edits, at least 20 decisions; PRD 32.8). |
 | `bias_report:<network>` | warn | The weekly bias monitor wrote a report with groups under 0.8x in the last 24 h. Counts only; the groups are in the console's bias panel. |
 | `safety_action:<network>` | warn | A ban or a hold in 24 h |
+| `line_safety` | bad | Blooio put the shared line under a safety action (`platform.line_safety`: review, reply_only, pause_new): new and agent texts wait; STOP and HELP still go. The text names the action and since when, never the number. |
+| `leak_review:<app>` | warn | Texts parked for leak review wait for a person (`GET /queue/leak-review`, the console's held texts). Posted again when the count goes up. |
 | `queue_outbound:<network>` | warn | `ALERT_OUTBOUND_BACKLOG` (50) or more messages wait for delivery |
 | `queue_review:<network>` | warn | `ALERT_REVIEW_BACKLOG` (30) or more items wait for review |
 | `budget:total`, `budget:<app>` | warn at `COST_BUDGET_WARN_SHARE` (80%), bad at 100% | Today's estimated cost (7.3) against the daily budget |
-| `ops_read:<network>`, `cost_read` | warn | The ops round could not read the network or the ledger |
+| `ops_read:<network>`, `line_read`, `cost_read` | warn | The ops round could not read the network, the shared line or the ledger |
 
 Dedupe and rate limit (`network.ops_alerts`, `network.ops_alert_posts`, migration 0020):
 
