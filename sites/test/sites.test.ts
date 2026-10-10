@@ -108,14 +108,14 @@ describe.each(SITES)("$domain", (s) => {
       expect(text(home)).toContain(APPS.ntwrk && "All of these apps are powered by The Network.");
     } else {
       for (const f of htmlFiles(s)) {
-        expect(read(s, f), f).toContain('powered by <a href="https://ntwrk.love">The Network</a>');
+        expect(read(s, f), f).toContain('powered by <a href="https://ntwrk.party">The Network</a>');
       }
     }
   });
 
-  test("support email is the one inbox that has mail routing (help@ntwrk.love)", () => {
+  test("support email is the one inbox that has mail routing (help@ntwrk.party)", () => {
     for (const f of htmlFiles(s)) {
-      for (const m of read(s, f).matchAll(/mailto:([^"?]+)/g)) expect(m[1], f).toBe("help@ntwrk.love");
+      for (const m of read(s, f).matchAll(/mailto:([^"?]+)/g)) expect(m[1], f).toBe("help@ntwrk.party");
     }
   });
 
@@ -194,7 +194,7 @@ test("agent-first landing pages (founder decision 10): name, one line, the promp
     // No safety notice, explanations or compliance text on the landing page; legal pages in the footer.
     expect(text(home), s.domain).not.toMatch(/background check|safety notice|How it works|What you get/i);
     for (const f of ["/privacy", "/terms", "/support", "/SKILL.md"]) expect(home, `${s.domain} ${f}`).toContain(`href="${f}"`);
-    // The page is short: the name, one line and the prompt box (and, on ntwrk.love, the three apps).
+    // The page is short: the name, one line and the prompt box (and, on ntwrk.party, the three apps).
     expect(text(home).split(/\s+/).length, s.domain).toBeLessThan(110);
     // CSP: no inline style or script.
     expect(home, s.domain).not.toMatch(/style="|<script(?![^>]*src=)/);
@@ -253,7 +253,7 @@ test("no 'buddies' identifier remains in sites, scripts, deploy or CI (renamed f
   expect(existsSync(join(REPO, "sites/buddies.nyc"))).toBe(false);
 });
 
-test("ntwrk.love join page says joining is by invitation", () => {
+test("ntwrk.party join page says joining is by invitation", () => {
   const ntwrk = SITES.find((s) => s.app === "ntwrk")!;
   const join = read(ntwrk, "join.html");
   expect(join).toContain('data-join-mode="invite"');

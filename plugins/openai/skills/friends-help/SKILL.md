@@ -2,12 +2,12 @@
 name: friends-help
 description: Explains friends.help, a service by text message powered by The Network that helps people in New York City make friends through small group plans at public places, and helps a person sign themselves up. Use when someone asks what friends.help is, who can use it, whether it is safe, how to join, what happens to their data, or how to stop, leave or delete. Gives the join link or the text keyword. Never signs anyone up, never asks for or types a phone number or verification code, and never contacts or describes other people.
 license: Proprietary. Terms at https://friends.help/terms
-compatibility: Needs web access to open https://friends.help pages. Sending the profile needs this app's MCP server at https://ntwrk.love/mcp/openai (OAuth sign-in by the person).
+compatibility: Needs web access to open https://friends.help pages. Sending the profile needs this app's MCP server at https://ntwrk.party/mcp/openai (OAuth sign-in by the person).
 metadata:
   app: friends
   site: https://friends.help
-  backend: "https://api.ntwrk.love"
-  mcp: "https://ntwrk.love/mcp/openai"
+  backend: "https://api.ntwrk.party"
+  mcp: "https://ntwrk.party/mcp/openai"
   operator: Eliza Research Corporation
   version: "1.0.1"
 ---
@@ -18,8 +18,8 @@ friends.help helps people in New York City make friends, by text. The agent lear
 likes to do and suggests small group plans (3 to 6 people) at public places near them: parks,
 courts, cafés, museums. The person says yes or skips. Friends, not dates.
 
-All of these apps are powered by The Network: ntwrk.love, friends.help and peon.biz
-share one backend at https://api.ntwrk.love, and one text line. This app's MCP server is at https://ntwrk.love/mcp/openai.
+All of these apps are powered by The Network: ntwrk.party, friends.help and peon.biz
+share one backend at https://api.ntwrk.party, and one text line. This app's MCP server is at https://ntwrk.party/mcp/openai.
 
 ## What the person is signing up for
 
@@ -47,7 +47,7 @@ The person signs up through you, in this conversation:
    their own number, the code we text them, their first name and age, and agree to the texts. You
    never see the number or the code.
 3. Ask the person to return to this same agent conversation when they finish on the site.
-   If this app's MCP tools are not available, they must add https://ntwrk.love/mcp/openai in their client's connector settings.
+   If this app's MCP tools are not available, they must add https://ntwrk.party/mcp/openai in their client's connector settings.
    In ChatGPT, add https://friends.help/mcp/openai instead; /mcp does not authorize ChatGPT clients.
    Reading this file does not install a connector or authorize access. If the client cannot add it,
    explain that profile submission is unfinished; do not claim success or send the profile elsewhere.
@@ -95,7 +95,7 @@ whether a phone number uses friends.help.
 
 ## Support
 
-- Support: https://friends.help/support (email help@ntwrk.love)
+- Support: https://friends.help/support (email help@ntwrk.party)
 - Privacy: https://friends.help/privacy
 - Terms: https://friends.help/terms
 - Text messaging terms: https://friends.help/sms-terms

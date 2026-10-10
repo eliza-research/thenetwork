@@ -56,11 +56,11 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       expect(text).toContain(`name: ${s.skill}`);
       // The skill names this site's own MCP endpoint (the router forwards it with the site's signed host).
       expect(text).toContain(`https://${s.domain}/mcp`);
-      expect(text).not.toContain("https://api.ntwrk.love/mcp");
+      expect(text).not.toContain("https://api.ntwrk.party/mcp");
       const idx = await st.site(app, "/.well-known/agent-skills/index.json");
       expect(idx.status).toBe(200);
       const names = ((await idx.json()) as { skills: { name: string }[] }).skills.map(x => x.name);
-      expect(names).toEqual(app === "ntwrk" ? ["ntwrk-love", "slop-date", "peon-biz", "friends-help"] : [s.skill]);
+      expect(names).toEqual(app === "ntwrk" ? ["ntwrk-party", "slop-date", "peon-biz", "friends-help"] : [s.skill]);
     });
 
     test("/api/app through the router names this site's app (the signed host picks it)", async () => {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs a pinned wrangler as the ntwrk.love Cloudflare account, isolated from other wrangler logins.
+# Runs a pinned wrangler as the ntwrk.party Cloudflare account, isolated from other wrangler logins.
 # Login once with: XDG_CONFIG_HOME=$HOME/.config/wrangler-ntwrk ./scripts/wrangler.sh login
 #
 # Deploy guard (audit P1-13, sites-infra-4): nothing may be deployed or changed in Cloudflare without
@@ -15,7 +15,7 @@
 #     vectorize, hyperdrive, workflows, containers, pipelines (kv key/namespace, r2 bucket/object,
 #     pages project/deployment take one more noun first)
 #
-# The four sites are Cloudflare Pages projects in this account (founder decision 8): ntwrk-love,
+# The four sites are Cloudflare Pages projects in this account (founder decision 8): ntwrk-party,
 # slop-date, peon-biz, friends-help. CLOUDFLARE_ACCOUNT_ID selects the account (required).
 set -euo pipefail
 
@@ -23,8 +23,8 @@ set -euo pipefail
 WRANGLER_VERSION="4.136.3"
 
 export XDG_CONFIG_HOME="$HOME/.config/wrangler-ntwrk"
-# The ntwrk.love Cloudflare account id comes from the environment (.env or the shell); no default here.
-if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then echo "wrangler.sh: set CLOUDFLARE_ACCOUNT_ID (the ntwrk.love Cloudflare account id)" >&2; exit 2; fi
+# The ntwrk.party Cloudflare account id comes from the environment (.env or the shell); no default here.
+if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then echo "wrangler.sh: set CLOUDFLARE_ACCOUNT_ID (the ntwrk.party Cloudflare account id)" >&2; exit 2; fi
 export CLOUDFLARE_ACCOUNT_ID
 
 # Flags that take the next word as their value, and switches that never do. A flag on neither list is
