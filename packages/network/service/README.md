@@ -47,7 +47,7 @@ The Eliza gateway owns the Blooio webhook of the shared line and calls `POST /in
 
 **START checks.** Before START opts a number back in, the recycled-number hold (a number not seen for 12 months waits for staff) and the ban check (by phone or person) apply. A held number gets `reason: "held"`; a banned number gets `held` and no reply.
 
-**Startup and body size.** The service refuses to start when the turn path is on and `SERVICE_TURN_SECRET` is shorter than 32 characters. Every signed route reads at most 256 KiB before it verifies or parses anything; the backend refuses a declared larger body on `/internal/*` before the service sees it.
+**Startup and body size.** The service refuses to start when the turn path is on and `SERVICE_TURN_SECRET` is shorter than 32 characters, or when it equals `NETWORK_SERVICE_CONSOLE_TOKEN` or any `NETWORK_SERVICE_TOKENS` token (Cloud's secret is never a staff bearer). Every signed route reads at most 256 KiB before it verifies or parses anything; the backend refuses a declared larger body on `/internal/*` before the service sees it.
 
 **The one-time notice.** A person who writes on the line through a signed turn and is not a member of any Network app gets, as the first reply of that handled turn, a notice that Eliza is now The Network's agent, what it means, and how to opt out (`ELIZA_NOTICE` in `packages/network/src/copy.ts`). The normal join flow follows in the same turn. Rules:
 - The wording is a **DRAFT** (`ELIZA_NOTICE_STATUS`). The founder must approve it before go-live.
@@ -98,7 +98,7 @@ The database must have the `network` and `platform` schemas (`bun run db:migrate
 | `<APP>_BLOOIO_WEBHOOK_SECRET` | none | Verifies one app's line (`/webhooks/blooio/<app>`). Without it, that path answers 503. |
 | `PLATFORM_API_PORT` | `8790` | The public API (`/api/*`) the sites call |
 | `PLATFORM_STOP_SCOPE` | every app | STOP stops every app. `app`: STOP on an app's own line stops that app only. |
-| `SERVICE_TURN_SECRET` | none | Signs the Eliza seam (`/internal/*` and Cloud deliver). The turn path is on when it is set or `NETWORK_CHANNEL=eliza_cloud`; then a secret shorter than 32 characters stops the start. Without it the signed routes answer 503. |
+| `SERVICE_TURN_SECRET` | none | Signs the Eliza seam (`/internal/*` and Cloud deliver). The turn path is on when it is set or `NETWORK_CHANNEL=eliza_cloud`; then a secret shorter than 32 characters, or one equal to a staff or console token, stops the start. Without it the signed routes answer 503. |
 | `STOP_HELP_OWNER`, `STOP_HELP_GATEWAY_SECRET` | retired | Ignored, with a log line. STOP, START and HELP are answered inside the signed turn (below). |
 | `PLATFORM_HASH_KEY`, `PLATFORM_SESSION_SECRET`, `PLATFORM_PROXY_SECRET` | dev keys | Phone hashes, session hashes, the site routers' signature. Required in production. `main.ts` refuses to start without them (`assertBootConfig`). |
 | `OTP_PROVIDER` | dev console | `twilio` uses Twilio Verify (needs its credentials). The dev console provider refuses production. |

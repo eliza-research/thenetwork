@@ -201,3 +201,67 @@ describe("production host map", () => {
     expect(await (await api.fetch(new Request("https://slop.date/api/app", { headers: { host: "slop.date" } })))!.json()).toMatchObject({ id: "slop" });
   });
 });
+
+test("phone form blocks native GET during mode discovery, then restores OTP/fallback and Cloud handlers", async () => {
+  const { mountAuth } = await import("../../../sites/shared/auth.ts");
+  const { api } = await import("../../../sites/shared/api.ts");
+  const saved = {authMode: api.authMode, otpStart: api.otpStart, cloudAuthStart: api.cloudAuthStart};
+  const documentDescriptor = Object.getOwnPropertyDescriptor(globalThis, "document");
+  const locationDescriptor = Object.getOwnPropertyDescriptor(globalThis, "location");
+  const makeButton = () => ({disabled: false, textContent: "Send code", dataset: {busy: "Sending…"}, type: "submit", className: ""});
+  class Form extends EventTarget {
+    button = makeButton();
+    input = {value: "2125550101", disabled: false, setAttribute() {}, removeAttribute() {}, focus() {}};
+    elements = Object.assign([this.input, this.button], {namedItem: () => this.input});
+    attributes = new Map<string, string>();
+    querySelector(selector: string) { return selector.startsWith("button") ? this.button : null; }
+    setAttribute(name: string, value: string) { this.attributes.set(name, value); }
+    removeAttribute(name: string) { this.attributes.delete(name); }
+    replaceChildren(button: ReturnType<typeof makeButton>) { this.button = button; this.elements = Object.assign([button], {namedItem: () => this.input}); }
+  }
+  try {
+    Object.defineProperty(globalThis, "document", {configurable: true, value: {querySelector: () => null, createElement: makeButton}});
+    let destination = "";
+    Object.defineProperty(globalThis, "location", {configurable: true, value: {pathname: "/join", assign: (url: string) => {destination = url;}}});
+    for (const mode of ["otp", "404", "cloud"] as const) {
+      const phone = new Form(), code = new Form();
+      const root = {dataset: {} as Record<string, string>, getAttribute: () => null,
+        querySelector: (selector: string) => selector === 'form[data-form="phone"]' ? phone : selector === 'form[data-form="code"]' ? code : null,
+        querySelectorAll: () => []};
+      let resolveMode!: (value: Awaited<ReturnType<typeof api.authMode>>) => void;
+      let otpCalls = 0, cloudCalls = 0;
+      api.authMode = () => new Promise(resolve => {resolveMode = resolve;});
+      api.otpStart = async e164 => {expect(e164).toBe("+12125550101"); otpCalls++; return {ok: true, data: {ok: true}};};
+      api.cloudAuthStart = async path => {expect(path).toBe("/join"); cloudCalls++; return {ok: true, data: {url: "https://cloud-staging.eliza.app/network/sign-in"}};};
+      mountAuth(root as unknown as HTMLElement, () => {});
+      const earlyEnter = new Event("submit", {cancelable: true});
+      expect(phone.dispatchEvent(earlyEnter)).toBe(false);
+      expect(earlyEnter.defaultPrevented).toBe(true);
+      expect(Array.from(phone.elements).every(control => control.disabled)).toBe(true);
+      expect(phone.attributes.get("aria-busy")).toBe("true");
+      expect(phone.button.textContent).toBe("Loading sign-in…");
+      expect(otpCalls + cloudCalls).toBe(0);
+      resolveMode(mode === "404" ? {ok: false, error: "unknown", status: 404} : {ok: true, data: {mode}});
+      await Bun.sleep(0);
+      expect(Array.from(phone.elements).every(control => !control.disabled)).toBe(true);
+      expect(phone.input.disabled).toBe(false);
+      expect(phone.attributes.has("aria-busy")).toBe(false);
+      if (mode !== "cloud") {
+        expect(phone.button.textContent).toBe("Send code");
+        expect(phone.button.dataset.busy).toBe("Sending…");
+      }
+      const normalSubmit = new Event("submit", {cancelable: true});
+      expect(phone.dispatchEvent(normalSubmit)).toBe(false);
+      expect(normalSubmit.defaultPrevented).toBe(true);
+      await Bun.sleep(0);
+      expect(otpCalls).toBe(mode === "cloud" ? 0 : 1);
+      expect(cloudCalls).toBe(mode === "cloud" ? 1 : 0);
+      if (mode === "cloud") expect(destination).toBe("https://cloud-staging.eliza.app/network/sign-in");
+      else expect(root.dataset.current).toBe("code");
+    }
+  } finally {
+    Object.assign(api, saved);
+    if (documentDescriptor) Object.defineProperty(globalThis, "document", documentDescriptor); else Reflect.deleteProperty(globalThis, "document");
+    if (locationDescriptor) Object.defineProperty(globalThis, "location", locationDescriptor); else Reflect.deleteProperty(globalThis, "location");
+  }
+});

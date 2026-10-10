@@ -243,3 +243,11 @@ test("full canonical deletion scrubs signed context, replies and receipts withou
   expect((await post(open)).status).toBe(409);expect((await receipt(ack)).status).toBe(409);
   expect(await (await post(control)).json()).toEqual(keptBody);expect(escaped).toBe(before);
 },60_000);
+
+test("the Cloud turn secret is never also a staff bearer token", () => {
+  const make = (o: {tokens?: string; consoleToken?: string}) => new NetworkService({url, clock, photoStorage:null, instance:"turn-secret-separation",
+    env:{PLATFORM_ENV:"dev", CLEF_RATINGS:"off", SERVICE_TURN_SECRET:secret}, networks:[{id:"ntwrk:nyc",matchingEnabled:false}], log:()=>{}, ...o});
+  expect(() => make({tokens:`admin@*:${secret}`})).toThrow(/SERVICE_TURN_SECRET must differ/);
+  expect(() => make({tokens:`reviewer@slop:other-staff-token-0001,admin@*:console-token-00000001`, consoleToken:secret})).toThrow(/SERVICE_TURN_SECRET must differ/);
+  expect(() => make({tokens:"admin@*:console-token-00000001", consoleToken:"console-token-00000001"})).not.toThrow();
+});
