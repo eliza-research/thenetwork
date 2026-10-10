@@ -18,7 +18,7 @@ friends.help helps people in New York City make friends, by text. The agent lear
 likes to do and suggests small group plans (3 to 6 people) at public places near them: parks,
 courts, cafés, museums. The person says yes or skips. Friends, not dates.
 
-All of these apps are powered by The Network: ntwrk.love, slop.date, friends.help and peon.biz
+All of these apps are powered by The Network: ntwrk.party, slop.date, friends.help and peon.biz
 share one backend at {{BACKEND_ORIGIN}}, and one text line. This app's MCP server is at {{MCP_URL}}.
 
 ## What the person is signing up for
@@ -95,7 +95,7 @@ whether a phone number uses friends.help.
 
 ## Support
 
-- Support: https://friends.help/support (email help@ntwrk.love)
+- Support: https://friends.help/support (email help@ntwrk.party)
 - Privacy: https://friends.help/privacy
 - Terms: https://friends.help/terms
 - Text messaging terms: https://friends.help/sms-terms

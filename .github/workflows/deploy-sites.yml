@@ -1,5 +1,5 @@
 # Build, test and deploy the four sites as Cloudflare Pages projects (founder decision 8, AGENTS.md):
-# ntwrk-love, slop-date, peon-biz and friends-help, production branch main. Each build writes
+# ntwrk-party, slop-date, peon-biz and friends-help, production branch main. Each build writes
 # sites/<domain>/dist with the static pages, _headers, the skill files, and an advanced-mode _worker.js
 # (deploy/router.ts) with _routes.json, so only the backend paths run the Worker.
 #
@@ -14,8 +14,8 @@
 # Secrets (environment "production"): CLOUDFLARE_API_TOKEN (a token scoped to Cloudflare Pages: Edit in
 # the account below). PLATFORM_PROXY_SECRET is set once per Pages project by the coordinator
 # (scripts/wrangler.sh pages secret put), never in CI.
-# Variables: CLOUDFLARE_ACCOUNT_ID (required: the ntwrk.love Cloudflare account, which holds all four
-# projects; no default in the repo), BACKEND_ORIGIN (default https://api.ntwrk.love),
+# Variables: CLOUDFLARE_ACCOUNT_ID (required: the ntwrk.party Cloudflare account, which holds all four
+# projects; no default in the repo), BACKEND_ORIGIN (default https://api.ntwrk.party),
 # TURNSTILE_SITE_KEY, BACKEND_LIVE ("true" adds /api/app to the smoke check).
 # MCP URLs use each site's canonical domain, matching sites/skills.config.ts.
 name: deploy-sites
@@ -88,7 +88,7 @@ jobs:
       matrix:
         include:
           - { app: slop, dir: slop.date, project: slop-date }
-          - { app: ntwrk, dir: ntwrk.love, project: ntwrk-love }
+          - { app: ntwrk, dir: ntwrk.party, project: ntwrk-party }
           - { app: peon, dir: peon.biz, project: peon-biz }
           - { app: friends, dir: friends.help, project: friends-help }
     steps:
