@@ -3,6 +3,6 @@ dependencies:
   tools:
     - type: mcp
       value: the-network
-      description: The Network's MCP server. app_info and start_signup need no sign-in. check_status needs the person to sign in on ntwrk.love themselves.
+      description: The Network's MCP server. app_info and start_signup need no sign-in. check_status needs the person to sign in on ntwrk.party themselves.
       transport: streamable_http
-      url: https://ntwrk.love/mcp/openai
+      url: https://ntwrk.party/mcp/openai
