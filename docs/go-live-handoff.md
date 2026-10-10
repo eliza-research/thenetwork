@@ -90,7 +90,7 @@ Follow `docs/deploy.md` section 2. Summary:
 
 1. **Pages projects.** All four exist and are deployed on `*.pages.dev`. Custom domains:
    - **slop.date, friends.help, peon.biz:** attached and serving 200. `www.peon.biz` is active too (verified 2026-10-08).
-   - **ntwrk.party** (approved step): cut over from the Worker `ntwrk-love-site` to the `ntwrk-party` Pages project once `api.ntwrk.party` is healthy. Remove the Worker's route or custom domain, attach `ntwrk.party` and `www` to the Pages project, and verify with `curl -I`.
+   - **ntwrk.party, www.ntwrk.party:** attached to the `ntwrk-party` Pages project. The retired domain (with www and api) redirects to ntwrk.party through the `ntwrk-love-site` Worker, keeping the path (301, or 308 for the API). Update the 10DLC campaign's privacy and terms URLs to ntwrk.party.
 2. **slop.date and friends.help after the transfer lock (10 days):**
    - Move the domains from Eliza Labs to shawmakesmagic: Domain Registration → Move domain to account `CLOUDFLARE_ACCOUNT_ID`, then accept it in the destination account.
    - Re-create the CNAMEs if the zone moves, and re-check the Pages custom domains.
