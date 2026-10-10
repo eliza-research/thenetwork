@@ -26,6 +26,8 @@ This package holds what the apps share: people, verified phones, memberships per
 
 The schema is in `packages/observatory/db/migrations/` (0003 platform, 0004 app ids and row-level security on the network tables, 0005 the console per app). Apply it with `bun run db:migrate` (`-- --url <local url>` for another database). Tests make a database of their own on the dev cluster (port 54339). The roles and the order are in [docs/runbook-real.md](../../docs/runbook-real.md) sections 1 and 2.
 
+Leaving an app, deleting everything and the join rollback call `notify.forget_data` (packages/notify/db/retention.sql, migration 9003) in the same transaction. Every database a `PgPeopleStore` uses must run the full migrate list, Notify included (9002 and 9003); on a database without them, leave and join rollback fail.
+
 ## Public API
 
 `createPublicApi({ store, otp, turnstile, hostMap, onJoin, onStop, onForget, onExport, ... })` returns a fetch handler. It answers `undefined` for paths outside `/api`, so any `Bun.serve` can mount it. The Network service mounts it on `PLATFORM_API_PORT` (8790) and supplies the hooks.
