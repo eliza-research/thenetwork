@@ -249,11 +249,13 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
       const clock = new SimClock(START);
       const sent: SendRequest[] = [];
       const provider = { kind: "blooio" as const, send: async (r: SendRequest) => { sent.push(r); return { providerMessageId: `p${sent.length}`, status: "queued" as const }; } };
-      const s = service(clock, "blooio", { adapter: (net, svc) => new BlooioAdapter({ net, provider, clock, memberOf: svc.memberOf, env, log: () => {} }) });
+      const s = service(clock, "blooio", { adapter: (net, svc) => new BlooioAdapter({ from: "+12125550100", net, provider, clock, memberOf: svc.memberOf, env, log: () => {} }) });
       await s.start();
       await say(s, clock, "a", "hi!");
       await more?.(s, clock);
-      return { sent, rows: await outbound("a"), health: await s.health() };
+      const result = { sent, rows: await outbound("a"), health: await s.health() };
+      await s.close();
+      return result;
     };
     for (const env of [{}, { BLOOIO_ALLOW_SEND: "1" }, { NTWRK_LIVE_APPROVED: "1" }, { BLOOIO_ALLOW_SEND: "0", NTWRK_LIVE_APPROVED: "1" }]) {
       const r = await run(env);
