@@ -130,6 +130,57 @@ test("a committed collection followed by a fault stays unresolved and is never a
 },60_000);
 
 
+test("accepted handled replies repair the single Notify projection after faults, replay and restart, then erase on leave",async()=>{
+  const phone="+12125550181",before=escaped;
+  expect((await post(turn("handled-join-start",phone,"friends.help","friends"))).status).toBe(200);
+  expect((await post(turn("handled-join-profile",phone,"Mira, 29","friends"))).status).toBe(200);
+  const originalInbound=service.inbound.bind(service);
+  service.inbound=async(...args)=>{
+    const out=await originalInbound(...args),event=args[0];
+    if (event.kind==="message" && event.messageId.startsWith("handled-notify")) {
+      const current=service.inboundTurn()!,rt=service.runtimes.get("friends:nyc")!;
+      // Controlled deterministic producer fixture; actual signed collection and Notify owners run unchanged.
+      await rt.unitOfWork(()=>{rt.system(current.memberId!,`scheduling:${event.messageId}`,"Your requested schedule is ready.","reply","scheduling");rt.unit.sends.at(-1)!.system=false;});
+    }
+    return out;
+  };
+  const actual=service.delivered.bind(service);let fail=true;
+  service.delivered=async(...args)=>{await actual(...args);if(fail){fail=false;throw new Error("synthetic after handled Notify SQL commit");}};
+  const input=turn("handled-notify",phone,"HELP","friends");
+  const response=await post(input);expect(response.status).toBe(200);const body=await response.json() as any;
+  expect(body.replies.length).toBe(2);expect(body.delivery).toBe("collected");expect(escaped).toBe(before);
+  const ack:TurnReceiptRequest={channel:input.channel,messageId:input.messageId,replyIds:body.replyIds,outcome:"unknown",providerMessageIds:[],historyRecorded:false};
+  expect((await receipt(ack)).status).toBe(200);
+  expect((await sql`select delivery_id from notify.deliveries where delivery_id='net:scheduling:handled-notify'`).length).toBe(0);
+  const accepted={...ack,outcome:"accepted" as const,providerMessageIds:["handled-proof-1","handled-proof-2"],historyRecorded:true};
+  expect((await receipt(accepted)).status).toBe(200);
+  const [message]=await sql`select ts,notification_recorded_at from network.messages where id='scheduling:handled-notify'`;
+  expect(message.notification_recorded_at).toBeNull();
+  const [notification]=await sql`select sent_at from notify.deliveries where delivery_id='net:scheduling:handled-notify'`;
+  // The signed ACK has no provider timestamp; preserve original message chronology, without claiming provider acceptance time.
+  expect(new Date(notification.sent_at).getTime()).toBe(new Date(message.ts).getTime());
+  expect(await (await post(input)).json()).toEqual(body);
+  expect((await sql`select delivery_id from notify.deliveries where delivery_id='net:scheduling:handled-notify'`).length).toBe(1);
+  expect((await sql`select notification_recorded_at from network.messages where id='scheduling:handled-notify'`)[0].notification_recorded_at).not.toBeNull();
+  expect(await (await receipt(accepted)).json()).toEqual({ok:true,replayed:true});
+  fail=true;
+  const restartInput=turn("handled-notify-restart",phone,"HELP","friends"),restartResponse=await post(restartInput);
+  expect(restartResponse.status).toBe(200);const restartBody=await restartResponse.json() as any;
+  const restartAck:TurnReceiptRequest={channel:restartInput.channel,messageId:restartInput.messageId,replyIds:restartBody.replyIds,outcome:"accepted",providerMessageIds:["handled-restart-1","handled-restart-2"],historyRecorded:true};
+  expect((await receipt(restartAck)).status).toBe(200);
+  expect((await sql`select notification_recorded_at from network.messages where id='scheduling:handled-notify-restart'`)[0].notification_recorded_at).toBeNull();
+  service.inbound=originalInbound;
+  server.stop(true);await service.close();await start();
+  expect((await sql`select delivery_id from notify.deliveries where delivery_id='net:scheduling:handled-notify-restart'`).length).toBe(1);
+  expect((await sql`select notification_recorded_at from network.messages where id='scheduling:handled-notify-restart'`)[0].notification_recorded_at).not.toBeNull();
+  const person=await service.accounts.personFor(phone);expect(person).toBeDefined();
+  await service.accounts.leave(APPS.friends,{e164:phone,personId:person!.id});
+  expect((await post(input)).status).toBe(409);expect((await receipt(accepted)).status).toBe(409);
+  expect((await sql`select id from network.messages where id in ('scheduling:handled-notify','scheduling:handled-notify-restart')`).length).toBe(0);
+  expect((await sql`select delivery_id from notify.deliveries where delivery_id in ('net:scheduling:handled-notify','net:scheduling:handled-notify-restart')`).length).toBe(0);
+  await service.runtimes.get("friends:nyc")!.start();expect(escaped).toBe(before);
+},60_000);
+
 test("completed signed payload expiry retains a tombstone and leaves unresolved effects held",async()=>{
   const input=turn("payload-expiry","+12125550151","HELP");expect((await post(input)).status).toBe(200);
   clock.advance(8*DAY);await service.purge();

@@ -397,9 +397,32 @@ export class OutboundQueue {
 
   private async send(row: QueueRow, isNew: boolean, reengagement: boolean): Promise<StatusChange> {
     const start = this.now;
-    // The lease is stored before the provider call: if the worker stops now, recover() resends with the same key.
-    await this.sql`update platform.outbound set status = 'sending', attempts = attempts + 1, lease_owner = ${this.instance},
-      lease_until = ${new Date(start + this.opt("leaseMs", 5 * MINUTE))}, updated_at = ${new Date(start)},new_conversation=${isNew},reengagement=${reengagement} where id = ${row.id}`;
+    // Admit only the current canonical member and immutable payload, after the async gates.
+    // Erasure and admission share the person/member row fences. No remote I/O holds these locks.
+    const admission = await this.sql.begin(async tx => {
+      await tx`select set_config('app.app_id',${this.app},true)`;
+      if (row.memberId) {
+        await tx`select person.id from platform.people person join network.members member on member.person_id=person.id
+          where member.app_id=${row.app} and member.id=${row.memberId} order by person.id for update of person`;
+        const [member] = await tx`select id,person_id,account_status,opted_out from network.members where app_id=${row.app} and id=${row.memberId} for update`;
+        if (!member || member.account_status==='removed' || member.account_status==='invited') return "dropped_forgotten";
+        if (this.o.provider.receipt) {
+          const [binding] = await tx`select membership.member_id from platform.memberships membership
+            join platform.people person on person.id=membership.person_id and person.deleted_at is null
+            join platform.phone_identities phone on phone.person_id=person.id and phone.e164=${row.to} and phone.hold is null
+            where membership.person_id=${member.person_id} and membership.app_id=${row.app} and membership.member_id=${row.memberId}
+            and membership.state not in ('removed','invited')`;
+          if (!binding) return "dropped_forgotten";
+        }
+        if (row.kind!=="compliance" && (member.opted_out || await this.guarded(()=>this.o.checks.optedOut?.(row)??false,true))) return "refused_opted_out";
+      }
+      const claimed = await tx`update platform.outbound set status='sending',attempts=attempts+1,lease_owner=${this.instance},
+        lease_until=${new Date(start+this.opt("leaseMs",5*MINUTE))},updated_at=${new Date(start)},new_conversation=${isNew},reengagement=${reengagement}
+        where id=${row.id} and app_id=${row.app} and line=${this.line} and status=${row.status} and lease_until is null
+        and to_address=${row.to} and body=${row.text} and fingerprint=${fingerprint(row.to,row.text,row.mediaUrls,row.kind)} returning id`;
+      return claimed.length ? "admitted" : "dropped_forgotten";
+    });
+    if (admission!=="admitted") return this.end(row,admission);
     const attempts = row.attempts + 1;
     try {
       const receipt = await this.o.provider.send(this.request(row));
@@ -440,6 +463,7 @@ export class OutboundQueue {
     if (!Number.isFinite(acceptedAt) || !receipt.providerMessageId) throw new ChannelSendError("Invalid acceptance receipt","unknown");
     const at=new Date(acceptedAt),providerIds=receipt.providerMessageIds??[receipt.providerMessageId];
     const committed=await this.sql.begin(async tx=>{
+      await tx`select set_config('app.app_id',${this.app},true)`;
       if (row.memberId) await tx`select person.id from platform.people person join network.members member on member.person_id=person.id
         where member.app_id=${row.app} and member.id=${row.memberId} order by person.id for update of person`;
       const wrote=await tx`update platform.outbound set status=${status},provider_message_id=${receipt.providerMessageId},

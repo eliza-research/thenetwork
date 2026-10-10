@@ -201,7 +201,7 @@ export class NetworkRuntime {
     for (const r of await this.scoped(tx => tx`select event from network.capital_events where app_id = ${this.app.id} order by t, id`) as any[]) {
       try { this.capital.ledger.record(typeof r.event === "string" ? JSON.parse(r.event) : r.event); } catch { /* out of order: counted by the wiring only for new events */ }
     }
-    if (!this.adapter.enqueue) return;
+    if (!this.adapter.enqueue) {await this.projectNotifications();return;}
     const recovered = (await this.adapter.recover?.()) ?? 0;
     if (recovered) this.host.log(`[restart] ${recovered} message(s) ${this.adapter.name === "eliza_cloud" ? "held for receipt lookup" : "go out again with the same provider key"} (${this.id})`);
     // One unit loads the state and the address book; its delivery drains the queue.
@@ -451,27 +451,30 @@ export class NetworkRuntime {
     try { ds = await this.adapter.deliver([]); } catch (e) { this.host.log(`[deliver] the queue waits for the next tick (${this.id}): ${(e as Error).message}`); return; }
     const mine = ds.filter(d => d.memberId && (d.app ?? this.app.id) === this.app.id);
     await this.storeStatuses(mine);
-    await this.projectAccepted();
+    await this.projectNotifications();
   }
 
   /** Repair the existing Notify projection after acceptance, including a crash after its SQL commit. */
-  private async projectAccepted() {
+  async projectNotifications() {
     if (!this.host.delivered) return;
     await this.store.withLock(async () => {
       const rows = await this.scoped(tx => tx`select m.id,m.member_id,m.body,m.type,m.opportunity_id,m.proactive,m.system,m.ts,o.kind,o.sent_at
-        from network.messages m join platform.outbound o on o.id=m.id and o.app_id=m.app_id
+        from network.messages m left join platform.outbound o on o.id=m.id and o.app_id=m.app_id
+        left join platform.inbound inbound on inbound.id=m.inbound_id
         join network.members member on member.app_id=m.app_id and member.id=m.member_id
         where m.app_id=${this.app.id} and m.direction='outbound' and member.account_status<>'removed'
-        and o.status in ('accepted','sent','delivered','read') and o.sent_at is not null and o.notification_recorded_at is null
-        and o.body is not null and o.to_address is not null order by o.sent_at,o.id limit 50`);
+        and m.notification_recorded_at is null and (
+          (o.status in ('accepted','sent','delivered','read') and o.sent_at is not null and o.body is not null and o.to_address is not null)
+          or (o.id is null and m.status='sent' and inbound.status='done' and inbound.receipt->>'outcome'='accepted'))
+        order by coalesce(o.sent_at,m.ts),m.id limit 50`);
       for (const r of rows as Row[]) {
-        const message:Outbound={id:r.id as string,memberId:r.member_id as string,body:r.body as string,kind:r.kind as Outbound["kind"],
+        const message:Outbound={id:r.id as string,memberId:r.member_id as string,body:r.body as string,kind:(r.kind??"reply") as Outbound["kind"],
           type:r.type as string|undefined,oppId:r.opportunity_id as string|undefined,proactive:r.proactive as boolean,system:r.system as boolean,
-          ts:new Date(r.ts as string).getTime(),acceptedAt:new Date(r.sent_at as string).getTime()};
+          ts:new Date(r.ts as string).getTime(),...(r.sent_at?{acceptedAt:new Date(r.sent_at as string).getTime()}:{} )};
         try {
           await this.host.delivered!(this,[message]);
-          await this.sql`update platform.outbound set notification_recorded_at=${new Date(this.clock.now())}
-            where id=${message.id} and app_id=${this.app.id} and notification_recorded_at is null and body is not null and to_address is not null`;
+          await this.scoped(tx=>tx`update network.messages set notification_recorded_at=${new Date(this.clock.now())}
+            where id=${message.id} and app_id=${this.app.id} and notification_recorded_at is null and direction='outbound' and status in ('accepted','sent','delivered','read')`);
         } catch {this.host.log(`[deliver] notification projection waits (${this.id})`);}
       }
     });
@@ -493,6 +496,7 @@ export class NetworkRuntime {
     if (this.retry.length) this.committed.unshift(...this.retry.splice(0));
     await this.deliver();
     await this.storeStatuses(await this.adapter.flush());
+    if (!this.adapter.enqueue) await this.projectNotifications();
     if (ran && this.host.afterTick) await this.host.afterTick(this).catch(e => this.host.log(`[tick] after-tick work failed (${this.id}): ${(e as Error).message}`));
     return ran;
   }

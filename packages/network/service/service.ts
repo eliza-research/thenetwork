@@ -780,8 +780,8 @@ export class NetworkService implements RuntimeHost {
       case "message": break;
     }
     if (ev.isGroup) return "ignored_group";
-    // Any message on the line is an answer in that conversation (Apple line safety: the streak resets, held messages may go).
-    await this.lineAdapter()?.engaged?.(ev.from);
+    // Legacy webhooks own transport engagement. A signed turn admits its canonical member after policy processing.
+    if (!this.inboundTurn()) await this.lineAdapter()?.engaged?.(ev.from);
     const route = await this.route(ev, o.app);
     const app = this.apps[route.app];
     const rt = this.runtimeFor(route.app);
@@ -1449,7 +1449,6 @@ export class NetworkService implements RuntimeHost {
 
   /** Agent actions inherit one completed open turn; receipts stay on that original inbound owner. */
   private async sharedAction(path: string, b: Row, signedId: string, raw: string): Promise<Response> {
-    const json = (value: unknown, status = 200) => Response.json(value, {status, headers: {"cache-control": "no-store"}});
     const stateAction = path === SET_STATE_PATH;
     const keys = stateAction ? ["channel","messageId","app","memberId","idempotencyKey","state","from","until","note"]
       : path === SIGNALS_PATH ? ["channel","messageId","app","memberId","signals"] : ["channel","messageId","app","memberId"];
@@ -1555,20 +1554,19 @@ export class NetworkService implements RuntimeHost {
   /** Signed Shared turns use the existing durable inbox; collection is not provider acceptance. */
   private async sharedTurn(req: Request): Promise<Response> {
     const url = new URL(req.url);
-    const reply = (value: unknown, status = 200) => Response.json(value, {status, headers: {"cache-control": "no-store"}});
-    if (req.method !== "POST") return reply({error: "method_not_allowed"}, 405);
-    if (url.search) return reply({error: "invalid_request"}, 400);
+    if (req.method !== "POST") return json({error: "method_not_allowed"}, 405);
+    if (url.search) return json({error: "invalid_request"}, 400);
     const bytes = await readCapped(req, MAX_BODY_BYTES);
-    if (bytes === "too_large") return reply({error: "payload_too_large"}, 413);
+    if (bytes === "too_large") return json({error: "payload_too_large"}, 413);
     let raw: string;
     try { raw = new TextDecoder("utf-8", {fatal: true}).decode(bytes); }
-    catch { return reply({error: "invalid_request"}, 400); }
+    catch { return json({error: "invalid_request"}, 400); }
     const auth = await svcVerify(this.env.SERVICE_TURN_SECRET, {method: req.method, path: url.pathname, headers: req.headers, body: raw, nowS: Math.floor(this.clock.now()/1000)});
-    if (!auth.ok) return reply({error: auth.reason}, auth.reason === "no_secret" ? 503 : 401);
+    if (!auth.ok) return json({error: auth.reason}, auth.reason === "no_secret" ? 503 : 401);
     let b: Row;
-    try { b = JSON.parse(raw); } catch { return reply({error: "invalid_request"}, 400); }
+    try { b = JSON.parse(raw); } catch { return json({error: "invalid_request"}, 400); }
     if (!b || typeof b !== "object" || Array.isArray(b) || (b.channel !== "blooio" && b.channel !== "twilio")
-      || typeof b.messageId !== "string" || !b.messageId.trim() || b.messageId.length > 512 || /[\r\n\u0000]/.test(b.messageId)) return reply({error: "invalid_request"}, 400);
+      || typeof b.messageId !== "string" || !b.messageId.trim() || b.messageId.length > 512 || /[\r\n\u0000]/.test(b.messageId)) return json({error: "invalid_request"}, 400);
     if ([SET_STATE_PATH,SIGNALS_PATH,UPDATES_PATH].includes(url.pathname)) return this.sharedAction(url.pathname,b,auth.id,raw);
     const digest = createHash("sha256").update(raw).digest("hex");
     const id = `msg:${b.channel}:${b.messageId}`;
@@ -1576,30 +1574,35 @@ export class NetworkService implements RuntimeHost {
       if (auth.id !== `${b.messageId}:receipt` || Object.keys(b).length !== 6
         || !Array.isArray(b.replyIds) || !b.replyIds.every(x => typeof x === "string")
         || !Array.isArray(b.providerMessageIds) || !b.providerMessageIds.every(x => typeof x === "string" && x.trim())
-        || typeof b.historyRecorded !== "boolean" || !["accepted", "unknown", "rejected"].includes(b.outcome as string)) return reply({error: "invalid_request"}, 400);
-      return this.sql.begin(async tx => {
+        || typeof b.historyRecorded !== "boolean" || !["accepted", "unknown", "rejected"].includes(b.outcome as string)) return json({error: "invalid_request"}, 400);
+      const result = await this.sql.begin(async tx => {
         const [claim] = await tx`select status,response,receipt_hash,receipt,replies from platform.inbound where id=${id} for update`;
-        if (!claim || claim.status !== "done" || claim.response?.outcome !== "handled") return reply({error: "turn_unavailable", retryable: false}, 409);
-        if (claim.receipt_hash === digest) return reply({ok: true, replayed: true});
-        if (claim.receipt_hash && !(claim.receipt?.outcome === "unknown" && ["accepted", "rejected"].includes(b.outcome as string))) return reply({error: "receipt_conflict", retryable: false}, 409);
+        if (!claim || claim.status !== "done" || claim.response?.outcome !== "handled") return json({error: "turn_unavailable", retryable: false}, 409);
+        if (claim.receipt_hash === digest) return json({ok: true, replayed: true});
+        if (claim.receipt_hash && !(claim.receipt?.outcome === "unknown" && ["accepted", "rejected"].includes(b.outcome as string))) return json({error: "receipt_conflict", retryable: false}, 409);
         const collected = claim.replies as CollectedReply[];
-        if (!collected.length || JSON.stringify(collected.map(r => r.id)) !== JSON.stringify(b.replyIds)) return reply({error: "receipt_scope_invalid", retryable: false}, 409);
+        if (!collected.length || JSON.stringify(collected.map(r => r.id)) !== JSON.stringify(b.replyIds)) return json({error: "receipt_scope_invalid", retryable: false}, 409);
         if ((b.outcome === "accepted" && (!(b.providerMessageIds as string[]).length || (!b.historyRecorded && !(claim.response.replyKind === "compliance" && claim.response.accountEligible === false))))
-          || (b.outcome !== "accepted" && b.historyRecorded)) return reply({error: "invalid_receipt", retryable: false}, 400);
+          || (b.outcome !== "accepted" && b.historyRecorded)) return json({error: "invalid_receipt", retryable: false}, 400);
         const status = b.outcome === "accepted" ? "sent" : b.outcome === "unknown" ? "send_unknown" : "refused_gateway";
         if (isAppId(claim.response.app)) {
           await tx`select set_config('app.app_id', ${claim.response.app}, true)`;
           await tx`update network.messages set status=${status} where app_id=${claim.response.app} and inbound_id=${id} and id in ${tx(b.replyIds as string[])} and status in ('collected','send_unknown')`;
         }
         await tx`update platform.inbound set receipt_hash=${digest},receipt=${b}::jsonb where id=${id}`;
-        return reply({ok: true, replayed: false});
+        return json({ok: true, replayed: false});
       });
+      if (result.status===200 && b.outcome==="accepted") {
+        const [claim]=await this.sql`select response from platform.inbound where id=${id}`;
+        if (isAppId(claim?.response?.app)) await this.runtimeFor(claim.response.app)?.projectNotifications();
+      }
+      return result;
     }
     if (auth.id !== b.messageId || Object.keys(b).some(k => !["messageId","channel","from","to","text","transport","receivedAt","app"].includes(k))
       || typeof b.from !== "string" || normalizePhone(b.from) !== b.from
       || (b.to !== null && (typeof b.to !== "string" || normalizePhone(b.to) !== b.to))
       || typeof b.text !== "string" || !b.text.trim() || !["imessage","sms","rcs","unknown"].includes(b.transport as string)
-      || typeof b.receivedAt !== "number" || !Number.isSafeInteger(b.receivedAt) || b.receivedAt < 0 || b.receivedAt > 8_640_000_000_000_000 || (b.app !== undefined && !isAppId(b.app))) return reply({error: "invalid_request"}, 400);
+      || typeof b.receivedAt !== "number" || !Number.isSafeInteger(b.receivedAt) || b.receivedAt < 0 || b.receivedAt > 8_640_000_000_000_000 || (b.app !== undefined && !isAppId(b.app))) return json({error: "invalid_request"}, 400);
     const input = b as unknown as TurnRequest;
     const result = await this.inbox.signed(input, digest, async turn => {
       const outcome = await this.inbound({kind: "message", channel: input.channel, messageId: input.messageId, from: input.from, to: input.to,
@@ -1612,9 +1615,11 @@ export class NetworkService implements RuntimeHost {
       if (outcome === "left" || (age !== undefined && !canJoin(age))) turn.memberId = undefined;
       const accountEligible = !(await this.accounts.held(input.from)) && !(await this.accounts.banned(input.from, person))
         && !(await this.people.isSuppressed(this.phoneKey(input.from))) && (age === undefined || canJoin(age)) && turn.consent?.state !== "opted_out";
+      const rt = turn.app ? this.runtimeFor(turn.app) : undefined;
+      const binding = rt && turn.memberId ? await this.accounts.activeMembership(rt.app, {e164: input.from, personId: person?.id ?? null}) : undefined;
+      // activeMembership owns the known join-age check; first contact, STOP, leave and policy denials create no service counter.
+      if (accountEligible && binding && binding.membership.memberId === turn.memberId) await this.lineAdapter()?.engaged?.(input.from);
       if (outcome === "open" && !collected.length && turn.app && turn.memberId) {
-        const rt = this.runtimeFor(turn.app);
-        const binding = rt && await this.accounts.activeMembership(rt.app, {e164: input.from, personId: null});
         const context = binding?.membership.memberId === turn.memberId ? await rt!.sharedContext(turn.memberId) : null;
         if (context) return {outcome: "open", channel: input.channel, app: turn.app, memberId: turn.memberId, context};
       }
@@ -1628,9 +1633,13 @@ export class NetworkService implements RuntimeHost {
       const rt = this.runtimeFor(cached.app);
       const binding = rt && await this.accounts.activeMembership(rt.app, {e164: input.from, personId: null});
       const current = binding?.membership.memberId === cached.memberId ? await rt!.sharedContext(cached.memberId) : null;
-      if (!current || !isDeepStrictEqual(current, cached.context)) return reply({error: "turn_context_changed", retryable: false}, 409);
+      if (!current || !isDeepStrictEqual(current, cached.context)) return json({error: "turn_context_changed", retryable: false}, 409);
     }
-    return reply(result.body, result.status);
+    if (result.status===200 && result.body && typeof result.body==="object" && "outcome" in result.body && result.body.outcome==="handled") {
+      const handled=result.body as Extract<TurnResponse,{outcome:"handled"}>;
+      if (handled.app) await this.runtimeFor(handled.app)?.projectNotifications();
+    }
+    return json(result.body, result.status);
   }
 
   // ------------------------------------------------------------------ HTTP
@@ -1847,7 +1856,7 @@ export function webhookSecretsFromEnv(env: Env = process.env): Partial<Record<Ap
   return out;
 }
 
-const json = (data: unknown, status = 200) => Response.json(data, { status });
+const json = (data: unknown, status = 200) => Response.json(data, {status,headers:{"cache-control":"no-store"}});
 const result = (r: ActionResult) => json(r, r.ok ? 200 : 409);
 async function body(req: Request): Promise<unknown> {
   try { const b = await req.json(); return b && typeof b === "object" ? b : undefined; } catch { return undefined; }
