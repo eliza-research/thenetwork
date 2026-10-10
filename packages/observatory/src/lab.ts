@@ -116,7 +116,15 @@ export class Lab {
   }
 
   /** A run as saved: a status change is returned only after its file is written. */
-  async get(id: string) { await this.loaded; await this.saving.get(id); return this.runs.get(id); }
+  async get(id: string) {
+    await this.loaded;
+    let saving: Promise<void> | undefined;
+    do {
+      saving = this.saving.get(id);
+      await saving;
+    } while (saving !== this.saving.get(id));
+    return structuredClone(this.runs.get(id));
+  }
 
   /** Queue a run: one child per seed. */
   async start(req: LabRequest, requestedBy: string): Promise<LabRun> {
