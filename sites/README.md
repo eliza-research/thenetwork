@@ -1,13 +1,13 @@
 # App sites
 
 Four public sites share one backend, one admin panel and one database (PRD 40, AGENTS.md
-"Platform decisions"). ntwrk.love is the home page for the whole concept and links to the apps:
+"Platform decisions"). ntwrk.party is the home page for the whole concept and links to the apps:
 "All of these apps are powered by The Network."
 Local dev for the sites and the backend together: [docs/runbook-platform.md](../docs/runbook-platform.md).
 
 | App | Site | Dev port | Join |
 |---|---|---|---|
-| `ntwrk` | ntwrk.love | 5101 | Invite-only. `/join` explains the invite text and links to settings. |
+| `ntwrk` | ntwrk.party | 5101 | Invite-only. `/join` explains the invite text and links to settings. |
 | `slop` | slop.date | 5102 | Open. 13+ join; matching and photos 18+ only. The safety notice is information, not a step. |
 | `peon` | peon.biz | 5103 | Open waitlist. 13+ join; matching 18+ only. |
 | `friends` | friends.help | 5104 | Open. 13+ join; matching and group plans 18+ only. |
@@ -19,14 +19,14 @@ Ages on the pages equal the platform registry (`packages/platform/src/apps.ts` `
 
 - `<site>/public/*.html`: one file per page (landing, join, settings, privacy, terms, SMS terms,
   guidelines, support, 404; slop also has `safety`). Each site has its own `styles.css`.
-  ntwrk.love keeps its SMS terms in `terms.html#sms`.
+  ntwrk.party keeps its SMS terms in `terms.html#sms`.
 - `<site>/static/`: files copied into `dist/` as they are (`robots.txt`; add `_redirects` or
   `.well-known/*` files here).
-- `skills/<name>/SKILL.md`: the Agent Skills file per site (`ntwrk-love`, `slop-date`, `peon-biz`,
+- `skills/<name>/SKILL.md`: the Agent Skills file per site (`ntwrk-party`, `slop-date`, `peon-biz`,
   `friends-help`). The build serves it at `/SKILL.md` and `/.well-known/agent-skills/<name>/SKILL.md`
-  with `/.well-known/agent-skills/index.json` (sha256 digests). ntwrk.love's index lists all four.
+  with `/.well-known/agent-skills/index.json` (sha256 digests). ntwrk.party's index lists all four.
 - `skills.config.ts`: the one backend origin and the MCP URL template (`BACKEND_ORIGIN`, `MCP_URL`;
-  defaults `https://api.ntwrk.love` and `https://{domain}/mcp`). Each site is its own MCP endpoint
+  defaults `https://api.ntwrk.party` and `https://{domain}/mcp`). Each site is its own MCP endpoint
   (the router forwards `/mcp` with the site's signed host); the backend origin's `/mcp` names no app. The build fills `{{BACKEND_ORIGIN}}`,
   `{{MCP_URL}}` and `{{TURNSTILE_SITE_KEY}}` in pages and skills, and fails on a leftover `{{`.
 - `shared/`: the only JavaScript. `join.ts`, `settings.ts`, `auth.ts`, `turnstile.ts` and `demo.ts`
@@ -82,7 +82,7 @@ for scripts and frames only.
 
 ## Deploy
 
-Each site is a Cloudflare Pages project (founder decision 8): `ntwrk-love`, `slop-date`, `peon-biz`,
+Each site is a Cloudflare Pages project (founder decision 8): `ntwrk-party`, `slop-date`, `peon-biz`,
 `friends-help` (`<site>/wrangler.toml`, `pages_build_output_dir = "./dist"`). The build writes the
 router `../deploy/router.ts` into `dist/_worker.js` (Pages advanced mode) and `dist/_routes.json`, so
 only `/api`, `/api/*`, `/mcp`, `/mcp/*`, `/oauth/*` and `/.well-known/oauth-*` run it. The router
@@ -91,6 +91,6 @@ forwards those paths to `BACKEND_ORIGIN` with signed `x-network-proxy-*` headers
 from `main` behind the `production` GitHub environment (`.github/workflows/deploy-sites.yml`,
 `wrangler pages deploy <dist> --project-name <name> --branch main`); there are no PR previews. By
 hand, deploys need founder approval and go through `scripts/wrangler.sh` with `NTWRK_ALLOW_DEPLOY=1`.
-All four projects are in the ntwrk.love Cloudflare account (its id is `CLOUDFLARE_ACCOUNT_ID`, from
+All four projects are in the ntwrk.party Cloudflare account (its id is `CLOUDFLARE_ACCOUNT_ID`, from
 the environment or the CI variable). Each answers on `<project>.pages.dev`, which the backend accepts as that app's host; slop.date
 and friends.help DNS (another account) point there. Details: [docs/deploy.md](../docs/deploy.md).

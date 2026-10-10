@@ -7,7 +7,7 @@ Repo: <https://github.com/eliza-research/thenetwork> (public). Work from a fresh
 ## 0. Founder decisions you are executing
 
 - **The apps.** The Network is the product, and its agent is Eliza. The shared agent that used to be eliza.app's assistant is now The Network's agent, still named Eliza. It speaks for every app on the shared iMessage line:
-  - ntwrk.love, the home page;
+  - ntwrk.party, the home page;
   - slop.date, dating, which launches first, in NYC;
   - friends.help, friends;
   - peon.biz, work.
@@ -34,10 +34,10 @@ Repo: <https://github.com/eliza-research/thenetwork> (public). Work from a fresh
 
 | Thing | Where |
 |---|---|
-| Sites (4 Pages projects: `ntwrk-love`, `slop-date`, `peon-biz`, `friends-help`) | Cloudflare account **shawmakesmagic** (`CLOUDFLARE_ACCOUNT_ID` from env, not in the repo) |
-| DNS for ntwrk.love and peon.biz | Same shawmakesmagic account |
+| Sites (4 Pages projects: `ntwrk-party`, `slop-date`, `peon-biz`, `friends-help`) | Cloudflare account **shawmakesmagic** (`CLOUDFLARE_ACCOUNT_ID` from env, not in the repo) |
+| DNS for ntwrk.party and peon.biz | Same shawmakesmagic account |
 | DNS for slop.date and friends.help | Cloudflare account **Eliza Labs** (developer login). Domains move to shawmakesmagic after the 10-day transfer lock. Apex CNAMEs to `<project>.pages.dev` already exist. |
-| Backend and Postgres | Railway project **the-network** (id `02295109-b29e-4e2c-b0d2-a2f5e88bb9e9`): service `backend`, `Postgres`, environment `production`. The backend is **not** connected to GitHub: it is deployed with `railway up --service backend` from `~/thenetwork-deploy` (a worktree of `origin/main`, linked with `railway link`), built from `deploy/backend/Dockerfile` (`RAILWAY_DOCKERFILE_PATH`). Domains: `backend-production-4dac.up.railway.app` (generated) and `api.ntwrk.love` (custom). |
+| Backend and Postgres | Railway project **the-network** (id `02295109-b29e-4e2c-b0d2-a2f5e88bb9e9`): service `backend`, `Postgres`, environment `production`. The backend is **not** connected to GitHub: it is deployed with `railway up --service backend` from `~/thenetwork-deploy` (a worktree of `origin/main`, linked with `railway link`), built from `deploy/backend/Dockerfile` (`RAILWAY_DOCKERFILE_PATH`). Domains: `backend-production-4dac.up.railway.app` (generated) and `api.ntwrk.party` (custom). |
 | Observatory console (optional) | Railway service `observatory`, only behind Cloudflare Access |
 | Eliza Cloud (gateway, shared agent) | elizaOS/eliza (no longer a submodule here). The takeover branch is `spike/network-plugin`; ask the Eliza-side owner for its deploy path. |
 | iMessage line | Blooio, one shared line. Its webhook must point at the **Eliza gateway**, and at nothing else. |
@@ -75,10 +75,10 @@ Follow `docs/deploy.md` section 2. Summary:
 3. **First boot** (approved step), once the founder has pasted the secrets:
    - Deploy `backend` from `main` (`railway up --service backend` in `~/thenetwork-deploy` after `git checkout --detach origin/main`). Watch the logs: a missing secret is named, and the service refuses to start. Current state: the image builds from main; boot stops at `PLATFORM_ENV=production needs TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_VERIFY_SERVICE_SID`.
    - The first healthy boot applies every migration as `MIGRATION_DATABASE_URL`, moves the database environment from dev to production, and creates the `network_backend` login from `NETWORK_DATABASE_URL` (`ensureServiceLogin`); the log shows `"msg":"service login","created":true`.
-   - Check `https://backend-production-<id>.up.railway.app/healthz`, then `https://api.ntwrk.love/healthz`. Both must return 200 and the `x-network-build` header.
+   - Check `https://backend-production-<id>.up.railway.app/healthz`, then `https://api.ntwrk.party/healthz`. Both must return 200 and the `x-network-build` header.
    - After the first healthy boot, delete `PLATFORM_DB_ENVIRONMENT_INIT`, then restart.
 4. **Domain** (approved step):
-   - The `api` record **exists**: CNAME `api` → `b6fzhfvu.up.railway.app`, DNS only (grey), and `api.ntwrk.love` is added as a custom domain on Railway `backend` (port 8790). After Railway shows the certificate active, switch it to **proxied**, with SSL **Full (strict)**.
+   - The `api` record **exists**: CNAME `api` → `b6fzhfvu.up.railway.app`, DNS only (grey), and `api.ntwrk.party` is added as a custom domain on Railway `backend` (port 8790). After Railway shows the certificate active, switch it to **proxied**, with SSL **Full (strict)**.
    - Then remove the `*.up.railway.app` domain, so Cloudflare is the only way in.
 5. **Backups:**
    - Turn on Railway Postgres backups.
@@ -89,7 +89,7 @@ Follow `docs/deploy.md` section 2. Summary:
 
 1. **Pages projects.** All four exist and are deployed on `*.pages.dev`. Custom domains:
    - **slop.date, friends.help, peon.biz:** attached and serving 200. `www.peon.biz` is active too (verified 2026-10-08).
-   - **ntwrk.love** (approved step): cut over from the Worker `ntwrk-love-site` to the `ntwrk-love` Pages project once `api.ntwrk.love` is healthy. Remove the Worker's route or custom domain, attach `ntwrk.love` and `www` to the Pages project, and verify with `curl -I`.
+   - **ntwrk.party** (approved step): cut over from the Worker `ntwrk-love-site` to the `ntwrk-party` Pages project once `api.ntwrk.party` is healthy. Remove the Worker's route or custom domain, attach `ntwrk.party` and `www` to the Pages project, and verify with `curl -I`.
 2. **slop.date and friends.help after the transfer lock (10 days):**
    - Move the domains from Eliza Labs to shawmakesmagic: Domain Registration → Move domain to account `CLOUDFLARE_ACCOUNT_ID`, then accept it in the destination account.
    - Re-create the CNAMEs if the zone moves, and re-check the Pages custom domains.
@@ -99,7 +99,7 @@ Follow `docs/deploy.md` section 2. Summary:
 
 1. Make sure CI is green on `main`. It runs typecheck, `bun run plugins/build.ts --check`, the sites production build, `bun run sim`, and the integration and e2e job with Postgres.
 2. Branch protection on `main`: require CI, no force pushes. Any change to repo settings needs the founder's OK.
-3. The `production` environment already exists, with the founder as required reviewer and `main` only. The repo variables are already set: `CLOUDFLARE_ACCOUNT_ID`, `BACKEND_ORIGIN=https://api.ntwrk.love`, `TURNSTILE_SITE_KEY`. `MCP_URL` is no longer read from a repo variable: `deploy-sites.yml` sets it to `https://{domain}/mcp` per site, the same default as `skills.config.ts`.
+3. The `production` environment already exists, with the founder as required reviewer and `main` only. The repo variables are already set: `CLOUDFLARE_ACCOUNT_ID`, `BACKEND_ORIGIN=https://api.ntwrk.party`, `TURNSTILE_SITE_KEY`. `MCP_URL` is no longer read from a repo variable: `deploy-sites.yml` sets it to `https://{domain}/mcp` per site, the same default as `skills.config.ts`.
 4. After the founder adds `CLOUDFLARE_API_TOKEN`, trigger `deploy-sites.yml` (manual dispatch, or a push to `main`). The founder approves the environment run, then the post-deploy check `deploy/smoke.ts` runs against all four sites.
 
 ## 7. Eliza live: eliza.app becomes an entry into The Network
@@ -143,7 +143,7 @@ Network service sends → POST Eliza Cloud /api/internal/network/deliver (signed
 3. **Merge.** `spike/network-plugin` is merged into elizaOS/eliza through a PR (founder approval).
 4. **One STOP owner.** The Blooio webhook for the shared line points only at the Eliza gateway. Remove the old `ovh-eliza` webhook, which needs Blooio account owner approval. The service doesn't consume Blooio webhooks for the shared line.
 5. **eliza.app as an entry.** The home page is `packages/app` in elizaOS/eliza; `scripts/check-homepage-public-readiness.ts` checks it.
-   - The Eliza-side owner prepares the copy and CTA change as part of the same PR: Eliza is The Network's agent, with links to ntwrk.love and the apps.
+   - The Eliza-side owner prepares the copy and CTA change as part of the same PR: Eliza is The Network's agent, with links to ntwrk.party and the apps.
    - The founder approves the wording.
 6. **Existing eliza.app users.** This is the founder's decision; the engine owner proposed the wording.
    - They get a one-time notice on their next message.
@@ -182,9 +182,9 @@ Network service sends → POST Eliza Cloud /api/internal/network/deliver (signed
 ## 8. Go-live checklist (all must be true)
 
 - [ ] All secrets in section 3 pasted by the founder. Nothing in the repo.
-- [ ] `api.ntwrk.love/healthz` 200, proxied, Full (strict); no `*.up.railway.app` domain.
+- [ ] `api.ntwrk.party/healthz` 200, proxied, Full (strict); no `*.up.railway.app` domain.
 - [ ] Postgres backups on; one restore tested.
-- [ ] Four sites serving 200 on their domains; ntwrk.love on Pages; `deploy/smoke.ts` passes.
+- [ ] Four sites serving 200 on their domains; ntwrk.party on Pages; `deploy/smoke.ts` passes.
 - [ ] CI green on `main`; `production` environment approval works.
 - [ ] Blooio webhook points only at the Eliza gateway; STOP handled once, HELP answered.
 - [ ] Banned number refused on site join, OTP, inbound and eliza.app.
