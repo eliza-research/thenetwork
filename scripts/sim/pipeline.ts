@@ -10,7 +10,7 @@
 // unanswered streak, line safety, "leave <app>", STOP on the shared line, and the one STOP/HELP
 // owner. No model is called; nothing leaves the machine.
 //
-// Without Postgres the block records one tracked gate saying it was skipped (CI has no Postgres).
+// Without Postgres the block records one tracked gate saying it was skipped (CI fails on that skip).
 // Blocking gates: 0 lost or duplicated outbound messages; 0 sends after STOP; 0 sends to minors about
 // other members (and nothing stored for an under-13); every outbound row ends delivered or failed;
 // keyword routing; restart, crash, outage, dedupe, ordering, Apple line safety and the STOP/HELP owner.
@@ -45,7 +45,7 @@ export async function pipelineBlock(b: Block): Promise<void> {
     expect(new BlooioAdapter({ provider: new H.FakeBlooio(clock), clock, from: H.LINE, app: "slop" }).live).toBe(false);
   });
   if (!H.pgInstalled()) {
-    b.track("pipeline: skipped, no Postgres installed (the dev cluster on :54339 is needed; CI has none)", false, "install postgresql@16 and run bun run sim --only pipeline");
+    b.track("pipeline: skipped, no Postgres installed (the dev cluster on :54339 is needed)", false, "install postgresql@16 and run bun run sim --only pipeline");
     return;
   }
   let url: string;

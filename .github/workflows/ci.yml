@@ -1,5 +1,5 @@
-# CI: install, typecheck, `bun run sim` (the simulations and their gates), the plugin build check and
-# the sites production build; plus the integration and e2e suites (security suite included) with a
+# CI: install, typecheck, `bun run sim` (the simulations and their gates, with a real Postgres so the
+# pipeline, safety, ops and audit Postgres gates block), the plugin build check and the sites production build; plus the integration and e2e suites (security suite included) with a
 # real Postgres. Validation policy: simulations + integration + e2e, no unit or smoke tests
 # (docs/tests-policy.md). No
 # secrets are given to CI, and LIVE_TESTS is never set, so no paid LLM call, Blooio or Twilio call,
@@ -35,8 +35,26 @@ env:
 
 jobs:
   offline:
+    # "offline" means no network calls and no secrets. The simulations get the same pinned Postgres as
+    # the integration job, so the Postgres blocks (pipeline, safety, ops, audit) run and block.
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d
+        env:
+          POSTGRES_USER: runner
+          POSTGRES_DB: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 54339:5432
+        options: >-
+          --health-cmd "pg_isready -U runner"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      REQUIRE_PG: "1"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -44,9 +62,19 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.2
+      - name: Put the Postgres client tools on PATH
+        # The simulations call pg_isready, pg_ctl, pg_dump and psql (dev-pg.ts, the ops backup drill).
+        run: |
+          bin="$(find /usr/lib/postgresql -mindepth 2 -maxdepth 2 -type d -name bin | sort -V | tail -n 1)"
+          test -x "$bin/pg_ctl"
+          echo "$bin" >> "$GITHUB_PATH"
       - name: Install
         run: bun install --frozen-lockfile
         timeout-minutes: 5
+      - name: Require Postgres
+        run: |
+          pg_isready -h localhost -p 54339
+          bun run scripts/require-pg.ts
       - name: Typecheck (packages, deploy, tests, scripts/sim)
         run: bunx tsc --noEmit -p .
         timeout-minutes: 5
@@ -55,11 +83,18 @@ jobs:
         timeout-minutes: 5
       - name: Simulations (bun run sim)
         # The simulations: evals corpora, the Network in the NYC world, slop, peon and friends, each
-        # with its gates on pinned seeds. No LLM, no Postgres. Exits 1 on any blocking gate failure.
+        # with its gates on pinned seeds, and the Postgres blocks on throwaway databases. No LLM.
+        # Exits 1 on any blocking gate failure.
         run: |
           if [ -n "${LIVE_TESTS:-}" ]; then echo "LIVE_TESTS must be unset in CI"; exit 1; fi
-          bun run sim
+          bun run sim --json sim-gates.json
         timeout-minutes: 30
+      - name: No Postgres gate was skipped
+        # A Postgres block that cannot reach Postgres records a tracked "skipped" gate. With REQUIRE_PG=1
+        # that is a failure.
+        run: |
+          skipped="$(jq -r '.gates[] | select((.blocking | not) and (.block | IN("pipeline", "safety", "ops", "audit")) and (((.name + " " + (.detail // "")) | test("skipped"; "i")))) | "[\(.block)] \(.name)"' sim-gates.json)"
+          if [ -n "$skipped" ]; then echo "Postgres gates skipped with REQUIRE_PG=1:"; echo "$skipped"; exit 1; fi
       - name: Plugin packages match their sources (OpenAI and Claude manifests, SKILL.md snapshots)
         run: bun run plugins/build.ts --check
       - name: Production build of the four sites (refuses draft legal text and unfilled placeholders)
