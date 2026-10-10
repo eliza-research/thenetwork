@@ -42,7 +42,7 @@ export const SECURITY_HEADERS: Record<string, string> = {
 };
 
 export const SITES: Site[] = [
-  { app: "ntwrk", domain: "ntwrk.love", project: "ntwrk-love", port: 5101, src: join(here, "ntwrk.love/public"), skill: "ntwrk-love" },
+  { app: "ntwrk", domain: "ntwrk.party", project: "ntwrk-party", port: 5101, src: join(here, "ntwrk.party/public"), skill: "ntwrk-party" },
   { app: "slop", domain: "slop.date", project: "slop-date", port: 5102, src: join(here, "slop.date/public"), skill: "slop-date" },
   { app: "peon", domain: "peon.biz", project: "peon-biz", port: 5103, src: join(here, "peon.biz/public"), skill: "peon-biz" },
   { app: "friends", domain: "friends.help", project: "friends-help", port: 5104, src: join(here, "friends.help/public"), skill: "friends-help" },
@@ -91,7 +91,7 @@ export function skillDescription(text: string): string {
 const TEXT = /\.(html|md|txt|json|xml)$/;
 
 /** Placeholders that the build fills: {{BACKEND_ORIGIN}}, {{MCP_URL}} (this site's MCP endpoint) and {{TURNSTILE_SITE_KEY}}. */
-export function fill(text: string, env: Record<string, string | undefined> = process.env, domain = "ntwrk.love"): string {
+export function fill(text: string, env: Record<string, string | undefined> = process.env, domain = "ntwrk.party"): string {
   const cfg = skillsConfig(env);
   const key = (env.TURNSTILE_SITE_KEY ?? "").trim();
   if (key && !/^[0-9A-Za-z_-]{1,64}$/.test(key)) throw new Error("TURNSTILE_SITE_KEY has unexpected characters");
@@ -123,7 +123,7 @@ export function headersFile(): string {
 /**
  * The agent skill files (docs/research/2026-10-08-skills-plugins-deploy.md 2.2): the site's own skill at
  * /SKILL.md and /.well-known/agent-skills/<name>/SKILL.md, and an index with a sha256 digest of the
- * exact bytes. ntwrk.love is the hub: its index lists every app's skill.
+ * exact bytes. ntwrk.party is the hub: its index lists every app's skill.
  */
 function writeSkills(s: Site, outdir: string, env: Record<string, string | undefined>): void {
   const listed = s.app === "ntwrk" ? SITES : [s];

@@ -379,7 +379,7 @@ Checked again on 2026-10-07, later, on a new scratch database (both schema files
 
 **Do not deploy anything now.** This is the plan for when the founder approves a deploy.
 
-Decision first **[FOUNDER]**: PRD 31 says the Network is built inside Eliza Cloud (Cloudflare Workers, Railway Postgres through Hyperdrive). The plan below is a standalone stack on Railway and Cloudflare under `ntwrk.love`. It uses the same pieces (Railway Postgres, a Railway matcher worker, a Cloudflare Worker with Hyperdrive), so most steps carry over if the founder picks the Eliza Cloud path.
+Decision first **[FOUNDER]**: PRD 31 says the Network is built inside Eliza Cloud (Cloudflare Workers, Railway Postgres through Hyperdrive). The plan below is a standalone stack on Railway and Cloudflare under `ntwrk.party`. It uses the same pieces (Railway Postgres, a Railway matcher worker, a Cloudflare Worker with Hyperdrive), so most steps carry over if the founder picks the Eliza Cloud path.
 
 ### 7.1 Before any deploy (code work)
 
@@ -427,34 +427,34 @@ Decision first **[FOUNDER]**: PRD 31 says the Network is built inside Eliza Clou
    - `/health` reports the last tick, the lock holder, the backlog and the refusals, for the heartbeat alert (PRD 35.2). It needs a staff token.
 9. **Observatory service.**
    - Start command: `bun run packages/observatory/src/server.ts --mode real`, with `OBSERVATORY_REAL_ONLY=1` (4.3).
-   - Variables: `NETWORK_DATABASE_URL` (a read login on the replica), `OBSERVATORY_DATABASE_URL_<APP>` (each app's read login) and `OBSERVATORY_PLATFORM_DATABASE_URL` (the cross-app login), `NETWORK_SERVICE_URL` (the matcher service's private address) and `NETWORK_SERVICE_TOKEN` (4.4) **[CREDENTIALS]**, `OBSERVATORY_TOKENS` with one token per role **[CREDENTIALS]**, `OBSERVATORY_AUDIT_DATABASE_URL` (the `observatory_audit_writer` login on the primary, section 2) **[CREDENTIALS]**, `OBSERVATORY_HOST=0.0.0.0` (the container must listen on all interfaces; it is safe only behind Access, step 7.3.3), `OBSERVATORY_ALLOWED_ORIGINS=https://observatory.ntwrk.love`, `OBSERVATORY_ENV_LABEL=STAGING` in staging, `NODE_ENV=production`.
+   - Variables: `NETWORK_DATABASE_URL` (a read login on the replica), `OBSERVATORY_DATABASE_URL_<APP>` (each app's read login) and `OBSERVATORY_PLATFORM_DATABASE_URL` (the cross-app login), `NETWORK_SERVICE_URL` (the matcher service's private address) and `NETWORK_SERVICE_TOKEN` (4.4) **[CREDENTIALS]**, `OBSERVATORY_TOKENS` with one token per role **[CREDENTIALS]**, `OBSERVATORY_AUDIT_DATABASE_URL` (the `observatory_audit_writer` login on the primary, section 2) **[CREDENTIALS]**, `OBSERVATORY_HOST=0.0.0.0` (the container must listen on all interfaces; it is safe only behind Access, step 7.3.3), `OBSERVATORY_ALLOWED_ORIGINS=https://observatory.ntwrk.party`, `OBSERVATORY_ENV_LABEL=STAGING` in staging, `NODE_ENV=production`.
    - Never set `OBSERVATORY_REVEAL_PII`. For named staff, set `OBSERVATORY_TRUST_CF_ACCESS=1` with `OBSERVATORY_CF_ACCESS_TEAM` and `OBSERVATORY_CF_ACCESS_AUD` (4.1): a request without a valid Access token is refused.
    - Do not give the service a public Railway domain. Reach it only through Cloudflare (7.3).
 
 ### 7.3 Cloudflare
 
-Use `scripts/wrangler.sh` for every Wrangler command. It runs as the ntwrk.love account and refuses commands that change Cloudflare resources unless `NTWRK_ALLOW_DEPLOY=1` is set.
+Use `scripts/wrangler.sh` for every Wrangler command. It runs as the ntwrk.party account and refuses commands that change Cloudflare resources unless `NTWRK_ALLOW_DEPLOY=1` is set.
 
 **Caution:** Do not set `NTWRK_ALLOW_DEPLOY=1` without the founder's approval for that exact deploy. Checked: `bash scripts/wrangler.sh deploy` without it exits with code 3 and deploys nothing.
 
 1. **[CREDENTIALS]** Log in once: `XDG_CONFIG_HOME=$HOME/.config/wrangler-ntwrk npx wrangler login`.
 2. **The public webhook path.** The service already takes the Blooio webhook (`POST /webhooks/blooio`, signature checked) and serves the staff API (6.5). Only the webhook may be public.
-   - **[FOUNDER]** Pick one: a Cloudflare route (or a Worker) that forwards only `POST /webhooks/blooio` on `api.ntwrk.love` to the matcher service, or a Worker that verifies the signature, answers STOP and HELP, and writes through Hyperdrive. The first reuses the tested service code. The second needs new code.
+   - **[FOUNDER]** Pick one: a Cloudflare route (or a Worker) that forwards only `POST /webhooks/blooio` on `api.ntwrk.party` to the matcher service, or a Worker that verifies the signature, answers STOP and HELP, and writes through Hyperdrive. The first reuses the tested service code. The second needs new code.
    - The staff API stays private: the Observatory reaches it on the Railway private network (`NETWORK_SERVICE_URL`). Never route `/review`, `/safety/*`, `/matching` or `/health` through a public hostname.
    - Only for the Worker option: database access through Hyperdrive to the Railway Postgres. **[FOUNDER] [CREDENTIALS]** `scripts/wrangler.sh hyperdrive create ...` with the `network_rw` connection string.
    - Check the build: `scripts/wrangler.sh deploy --dry-run`.
    - **[FOUNDER]** Deploy: `NTWRK_ALLOW_DEPLOY=1 scripts/wrangler.sh deploy`, staging first.
    - Secrets (Blooio keys, webhook secret): **[FOUNDER] [CREDENTIALS]** `NTWRK_ALLOW_DEPLOY=1 scripts/wrangler.sh secret put <NAME>`.
 3. **Cloudflare Access in front of the Observatory.** **[FOUNDER] [CREDENTIALS]**
-   - Create an Access application for `observatory.ntwrk.love` (and `observatory-staging.ntwrk.love`).
+   - Create an Access application for `observatory.ntwrk.party` (and `observatory-staging.ntwrk.party`).
    - Policy: named staff emails only, with a second factor. No bypass rules. No service tokens.
    - Access is the first sign-in. On Railway, the Observatory role tokens are the second check (4.1).
    - Named staff sign-in (`OBSERVATORY_TRUST_CF_ACCESS=1`) verifies the Access JWT against the team's keys and the application's AUD (4.1). With it on, the server takes the email from the verified token and does not ask for a role token.
-4. **DNS on ntwrk.love.** **[FOUNDER]**
-   - `observatory.ntwrk.love`: a proxied CNAME to the Observatory service's Railway target (Railway custom domain). Proxied, so Access applies.
-   - `api.ntwrk.love`: a Worker custom domain or route, through `scripts/wrangler.sh` (the guard refuses it without `NTWRK_ALLOW_DEPLOY=1`).
-   - Do not touch `mcp.ntwrk.love`. Connectors are not in the MVP (PRD 28.4).
-5. **The app sites.** **[FOUNDER]** Each site (`sites/<domain>`) is a Cloudflare Pages project (founder decision 8: `ntwrk-love`, `slop-date`, `peon-biz`, `friends-help`). Check a build with `bun run sites/sites.ts` (it writes `sites/<domain>/dist` with `_worker.js` and `_routes.json`). slop.date deploys first; all four are deployed this round by the coordinator ([deploy.md](deploy.md) section 3). `/api/*` on each site reaches the shared API through the signed router.
+4. **DNS on ntwrk.party.** **[FOUNDER]**
+   - `observatory.ntwrk.party`: a proxied CNAME to the Observatory service's Railway target (Railway custom domain). Proxied, so Access applies.
+   - `api.ntwrk.party`: a Worker custom domain or route, through `scripts/wrangler.sh` (the guard refuses it without `NTWRK_ALLOW_DEPLOY=1`).
+   - Do not touch `mcp.ntwrk.party`. Connectors are not in the MVP (PRD 28.4).
+5. **The app sites.** **[FOUNDER]** Each site (`sites/<domain>`) is a Cloudflare Pages project (founder decision 8: `ntwrk-party`, `slop-date`, `peon-biz`, `friends-help`). Check a build with `bun run sites/sites.ts` (it writes `sites/<domain>/dist` with `_worker.js` and `_routes.json`). slop.date deploys first; all four are deployed this round by the coordinator ([deploy.md](deploy.md) section 3). `/api/*` on each site reaches the shared API through the signed router.
 
 ### 7.4 Go-live checks
 

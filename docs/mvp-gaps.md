@@ -4,9 +4,9 @@ Status: 2026-10-08, checked against `origin/main` b2bb4d6 (after the cleanup in 
 
 The frame (founder decisions):
 
-- slop.date launches first, in New York, with ntwrk.love as the home page.
+- slop.date launches first, in New York, with ntwrk.party as the home page.
 - One shared Blooio iMessage line, routed by keyword.
-- All four sites are on Cloudflare Pages; the shared backend goes to Railway at `api.ntwrk.love`.
+- All four sites are on Cloudflare Pages; the shared backend goes to Railway at `api.ntwrk.party`.
 - Onboarding is agent-first: the person's own AI reads the site's `SKILL.md` and submits the profile through MCP.
 - Minors (13-17) may join but are never matched. Adult means the lowest stated age is 18 or more; unknown fails closed.
 - Photos are rated by Clef, the scores feed matching and are never shared.
@@ -53,7 +53,7 @@ Status values: **Done** (in code, on the live path), **Partial**, **Missing**, *
 | App packs | Done | `packages/engine/src/pack.ts` and the conformance rules in `scripts/sim/conformance.ts` (the goldens were replaced by run fingerprints in the cleanup) | (met) |
 | slop.date pack and sim | Sim-only, Partial | `packages/engine/src/packs/slop/*`, `packages/sim/src/apps/slop/*`, `scripts/sim/slop.ts`. Gates: Section 4. | Section 4 gates pass; photo-in-probe and rater in the same state in the sim and live. |
 | Admin app switcher | Done | `packages/observatory/web/apps.tsx`, `src/people.ts`, tokens per app role (service README, Staff API) | (met) |
-| Home page and app sites | Done (code), deploy pending | `sites/*/wrangler.toml`, `deploy/router.ts`, `.github/workflows/deploy-sites.yml`, `sites/skills/*/SKILL.md` | Pages projects live, with `/api/*` reaching `api.ntwrk.love` through the signed router (runbook-real 7.1 #13). |
+| Home page and app sites | Done (code), deploy pending | `sites/*/wrangler.toml`, `deploy/router.ts`, `.github/workflows/deploy-sites.yml`, `sites/skills/*/SKILL.md` | Pages projects live, with `/api/*` reaching `api.ntwrk.party` through the signed router (runbook-real 7.1 #13). |
 
 ### 1.2 Flows F1-F29 (PRD 29), read for slop
 
@@ -123,7 +123,7 @@ The order is by dependency. Owner **P** is the platform session (`packages/netwo
 | # | Piece | Owner | Est. | Depends on | What is missing |
 |---|---|---|---|---|---|
 | 0 | **Founder decisions** | Founder | 1 | none | (a) Who owns STOP/HELP if Eliza Cloud also receives the line's webhook (runbook-real 7.1 #10). (b) Whether the conversation is the service's own LLM reader or the Eliza agent. (c) Join mode for peon and friends on production. (d) Whether to build same-face ban evasion or drop that gate. (e) Whether to keep the security suite. (f) How to fit the Clef weights (the fitter was deleted in the cleanup). Photos in the probe are decided (yes, adults only); the engine side is done (item 7). |
-| 1 | **Backend deploy (staging, then production)** | P | 2 | 0a | Railway project, Postgres, and the `network_backend` login (`docs/deploy.md` 2.1). Secrets. `api.ntwrk.love` DNS. Staff port private. Observatory behind Access. Logins per app role (runbook-real 7.1 #14). |
+| 1 | **Backend deploy (staging, then production)** | P | 2 | 0a | Railway project, Postgres, and the `network_backend` login (`docs/deploy.md` 2.1). Secrets. `api.ntwrk.party` DNS. Staff port private. Observatory behind Access. Logins per app role (runbook-real 7.1 #14). |
 | 2 | **DB migrations against Railway** | P | 1 | 1 | `migrate.ts` refuses non-local hosts (runbook-real 1.2): needs a reviewed path (`MIGRATE_ON_BOOT` in `server.ts` with `MIGRATION_DATABASE_URL`). `PLATFORM_DB_ENVIRONMENT_INIT=1` once. pgvector. Backups on, and one restore tested. |
 | 3 | **Blooio inbound and outbound with keyword routing** | P | 3 | 1, 2, 0a | Point the line's webhook at `/webhooks/blooio`. The queue and its counters are persisted (done, migration 0015; `bun run sim --only pipeline`). Fence the saves (audit network-service-8). Test phones with `BLOOIO_ALLOW_SEND=1`, `NTWRK_LIVE_APPROVED=1` and `SLOP_LIVE_APPROVED=1` **[FOUNDER]**. The routing code is done. |
 | 4 | **The slop onboarding conversation** | P (wiring), E (copy and rubric) | 4 | 3, 0b | Wire `understand` (`llmUnderstand`, gpt-6-luna via Surplus) and `onAgeStated` into the runtime. Handle free text that is not a hard field. Read back the profile. Ask for photos for adults only. The MCP `submit_profile` path writes the same fields. A dating persona style guide (PRD 36.6). |
