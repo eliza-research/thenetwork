@@ -106,7 +106,7 @@ This file gives the status of every P0 and P1 finding of the 2026-10-08 audit ([
 | sites-infra-6 | fixed-before | `bun install --frozen-lockfile --dry-run` exits 0 on 2026-10-09; `bun.lock` lists packages/platform and packages/blooio. | |
 | sites-infra-9 | fixed-before | Renamed to friends.help. The four `wrangler.toml` files are Pages projects with no routes or custom domains. | |
 | sites-infra-10 | fixed-before, gate now | audit block: "sites-infra-10, -14: each production build ships _headers, robots.txt, SKILL.md and the router; no page says Draft". | |
-| sites-infra-13 | fixed-before | The API host is `api.ntwrk.love`, reached through each site's Pages router. security: "router to backend (deploy/router.ts, the real Worker code)". `.github/workflows/deploy-sites.yml` deploys behind the "production" environment. | |
+| sites-infra-13 | fixed-before | The API host is `api.ntwrk.party`, reached through each site's Pages router. security: "router to backend (deploy/router.ts, the real Worker code)". `.github/workflows/deploy-sites.yml` deploys behind the "production" environment. | |
 | sites-infra-14 | fixed-before, gate now | audit block: "sites-infra-14: a production build with draft legal text fails". | |
 
 ## P0 and P1 findings outside these packages

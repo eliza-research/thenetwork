@@ -7,7 +7,7 @@ import type { Category, City, MemberId, OpportunityKind, Proposal, WorldSnapshot
 
 export type ChannelKind = "imessage" | "sms";
 export type Direction = "outbound" | "inbound";
-export type DeliveryStatus = "delivered" | "suppressed_opted_out" | "failed" | "duplicate";
+export type DeliveryStatus = "delivered" | "collected" | "suppressed_opted_out" | "failed" | "duplicate";
 export type Keyword = "STOP" | "START" | "HELP";
 
 /**
@@ -152,7 +152,7 @@ export interface NetworkUnderTest {
   readonly name: string;
   init(ctx: NetworkContext): void | Promise<void>;
   /** Called for every inbound member message (including STOP/HELP keyword messages). */
-  onInbound(msg: InboundMessage): void | Promise<void>;
+  onInbound(msg: InboundMessage): void | "handled" | "open" | Promise<void | "handled" | "open">;
   /** Called on every engine/job tick (default hourly sim time). Drain due jobs here. */
   tick(now: number): void | Promise<void>;
   /** Hand the Network proposals from an external Engine or a scenario script for dispatch. */

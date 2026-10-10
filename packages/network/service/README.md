@@ -13,6 +13,18 @@ This folder holds the production process for the ConsentNetwork. One process run
 | `inbox.ts` | The inbound inbox (`platform.inbound`): one row per provider message, handled once and in order per sender |
 | `serve.ts`, `main.ts` | The HTTP servers, the tick loop, the production entry point |
 
+## Signed Shared-agent turns
+
+`POST /internal/turn` and `POST /internal/turn-receipt` use the import-free contract in `packages/core/src/svc`. Set `SERVICE_TURN_SECRET` to the same secret (at least 32 characters) as Cloud. Without it these routes return 503. Sign the full path and raw body; query parameters are refused. Responses use `Cache-Control: no-store`.
+
+A turn commits its claim in `platform.inbound` before it calls the existing inbound handler. The channel and provider message ID identify the claim. The same body replays the stored result; a different body conflicts. An interrupted turn stays unresolved and is not rerun by the inbox tick. Replies from this turn alone are stored as `collected`, outside `platform.outbound`; collection does not mean provider acceptance. A signed receipt binds the exact ordered reply IDs. An unknown receipt can advance to accepted or rejected; accepted receipts are immutable.
+
+Open context rechecks the canonical phone and app membership. It includes confirmed shareable facts after the leak gate, and refuses context that exceeds the deployed plugin bounds. Unavailable active-item summaries are `null`. Replays recheck current admission and context, so STOP, a hold, a ban or changed context cannot reuse an old open grant. App leave seals prior signed payloads for that app. The existing seven-day purge strips completed signed payloads and retains a minimal replay tombstone; interrupted claims remain unresolved until an owned recovery or deletion path seals them.
+
+Signed state, signal and update actions bind the exact completed open turn, channel, app and member. State windows extend the canonical member row; private hypotheses use the existing facet owner. Cloud outbound uses `NETWORK_CHANNEL=eliza_cloud`, `NETWORK_CLOUD_DELIVERY_ORIGIN`, `SERVICE_TURN_SECRET` and the configured `BLOOIO_FROM`, with the same live approval flags as Blooio. The default and `--dry-run` send nothing.
+
+Cloud transport reuses `platform.outbound` and all its policy checks. Unknown acceptance is held outside the dispatch queue. Restart and a bounded receipt poll never resend it. A verified receipt commits under the canonical person fence, preserves its original acceptance time, and updates line counters once. Notify projection repair uses the existing idempotent record owner and one marker on `network.messages`, for queued sends and positively acknowledged handled replies. Handled replies retain their original message time as event chronology; their ACK does not attest a provider acceptance timestamp. Canonical deletion seals late receipt commits. Dispatch admission rechecks the canonical member and immutable outbox row after the asynchronous gates, under short database locks released before remote I/O. An admitted request can remain in flight during deletion; a later receipt cannot restore erased data. Signed first contact and policy declines create no service line counter; engagement follows canonical join-age and membership admission. These tests control the Cloud HTTP transport boundary; actual Cloud history and hosted qualification remain separate gates. No deployment or live flag is enabled by this change.
+
 ## Run it
 
 ```bash

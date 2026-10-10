@@ -77,7 +77,7 @@ describe("which paths reach the backend", () => {
       expect([toml.main, toml.assets, toml.routes, toml.account_id], s.domain).toEqual([undefined, undefined, undefined, undefined]);
       expect(toml.vars.SITE_HOST, s.domain).toBe(s.domain);
       expect(toml.vars.APP_ID, s.domain).toBe(s.app);
-      expect(toml.vars.BACKEND_ORIGIN, s.domain).toBe("https://api.ntwrk.love");
+      expect(toml.vars.BACKEND_ORIGIN, s.domain).toBe("https://api.ntwrk.party");
       expect("PLATFORM_PROXY_SECRET" in toml.vars, `${s.domain} must not hold the secret`).toBe(false);
     }
     // Each pattern, read as Cloudflare does (trailing * = prefix), matches isBackendPath.
@@ -108,7 +108,7 @@ describe("the built Pages _worker.js", () => {
         await worker.fetch(new Request("https://slop-date.pages.dev/api/app"), { ASSETS: assets, PLATFORM_PROXY_SECRET: SECRET });
         await worker.fetch(new Request("https://slop-date.pages.dev/api/app"), { ASSETS: assets, PLATFORM_PROXY_SECRET: SECRET, BACKEND_ORIGIN: "https://staging.example" });
       } finally { globalThis.fetch = realFetch; }
-      expect(seen).toEqual(["https://api.ntwrk.love/api/app slop.date", "https://staging.example/api/app slop.date"]);
+      expect(seen).toEqual(["https://api.ntwrk.party/api/app slop.date", "https://staging.example/api/app slop.date"]);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
@@ -227,9 +227,9 @@ describe("fails closed", () => {
   });
 
   test("redirects from the backend pass through unfollowed (OAuth)", async () => {
-    const env: Env = { ASSETS: { fetch: async () => new Response("asset") }, BACKEND_ORIGIN: "https://api.example.test", APP_ID: "ntwrk", SITE_HOST: "ntwrk.love", PLATFORM_PROXY_SECRET: SECRET };
+    const env: Env = { ASSETS: { fetch: async () => new Response("asset") }, BACKEND_ORIGIN: "https://api.example.test", APP_ID: "ntwrk", SITE_HOST: "ntwrk.party", PLATFORM_PROXY_SECRET: SECRET };
     let redirect: RequestRedirect | undefined;
-    const res = await handle(new Request("https://ntwrk.love/oauth/authorize?client_id=x"), env, (async (_u: string, init: RequestInit) => {
+    const res = await handle(new Request("https://ntwrk.party/oauth/authorize?client_id=x"), env, (async (_u: string, init: RequestInit) => {
       redirect = init.redirect;
       return new Response(null, { status: 302, headers: { location: "https://client.example/cb?code=abc" } });
     }) as unknown as typeof fetch);

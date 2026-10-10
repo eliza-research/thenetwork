@@ -26,15 +26,19 @@ import { ConsentNetwork, type NetworkOptions, type NetworkState } from "../src/n
 import { PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
 import { capitalWiring, type CapitalEvent } from "../src/capital.ts";
 import type { AppInfo } from "../../platform/src/apps.ts";
-import { loadSnapshot } from "./snapshot.ts";
+import { effectiveParticipation, loadSnapshot } from "./snapshot.ts";
 import { appWiring, type AppWiring } from "./packs.ts";
 import { DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, type Delivery, type Outbound } from "./channel.ts";
 import { normalizeAddress } from "../../blooio/src/phone.ts";
+import type { InboundTurn, CollectedReply } from "./inbox.ts";
+import type { TurnContext } from "../../core/src/svc/contract.ts";
+import { canBeMatched } from "../../core/src/policy.ts";
+import type { Accounts } from "../../platform/src/accounts.ts";
+import { outputLeaks } from "../../mcp/src/leaks.ts";
 // The Observatory's event shape and run summaries, so the console reads what this writes.
 import { eventOf, membersOf, type EventRow } from "../../observatory/src/events.ts";
 
-/** Delivery statuses of a send that did not go out (its person-cap slot is released). */
-const NOT_SENT = /^(refused|suppressed|blocked|parked|failed)/;
+import { NOT_SENT } from "../../blooio/src/outbound-queue.ts";
 import { summarizeRun } from "../../observatory/src/engineCapture.ts";
 
 type Row = Record<string, unknown>;
@@ -49,8 +53,9 @@ export interface Unit {
   capital: CapitalEvent[];
   optOut: Map<MemberId, boolean>;
   forget: Set<MemberId>;
+  collected: Set<string>;
 }
-const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set() });
+const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set() });
 
 /** What the service gives each runtime: the shared connection and clock, and the checks that span apps. */
 export interface RuntimeHost {
@@ -58,6 +63,9 @@ export interface RuntimeHost {
   clock: Clock;
   instance: string;
   log: (line: string) => void;
+  accounts?: Pick<Accounts, "activeMembership" | "lowestAge" | "phoneHash">;
+  inboundTurn?(): InboundTurn | undefined;
+  collectReplies?(tx: SQL, replies: CollectedReply[]): Promise<void>;
   /** Proactive sends of this batch the person-level daily cap refuses (ids). Called before delivery. */
   capRefused(rt: NetworkRuntime, batch: Outbound[]): Promise<Set<string>>;
   /** Give back the person-cap slots of sends the adapter refused (they never went out). */
@@ -193,9 +201,9 @@ export class NetworkRuntime {
     for (const r of await this.scoped(tx => tx`select event from network.capital_events where app_id = ${this.app.id} order by t, id`) as any[]) {
       try { this.capital.ledger.record(typeof r.event === "string" ? JSON.parse(r.event) : r.event); } catch { /* out of order: counted by the wiring only for new events */ }
     }
-    if (!this.adapter.enqueue) return;
+    if (!this.adapter.enqueue) {await this.projectNotifications();return;}
     const recovered = (await this.adapter.recover?.()) ?? 0;
-    if (recovered) this.host.log(`[restart] ${recovered} message(s) a stopped worker held go out again with the same provider key (${this.id})`);
+    if (recovered) this.host.log(`[restart] ${recovered} message(s) ${this.adapter.name === "eliza_cloud" ? "held for receipt lookup" : "go out again with the same provider key"} (${this.id})`);
     // One unit loads the state and the address book; its delivery drains the queue.
     await this.unitOfWork(() => undefined);
   }
@@ -216,7 +224,7 @@ export class NetworkRuntime {
         const u = this.unit;
         // PgStore.save sets app.app_id for its own transaction; the unit's rows go in the same one.
         await this.pg.save(state, tx => this.writeUnit(tx, u));
-        this.committed.push(...u.sends);
+        this.committed.push(...u.sends.filter(s => !u.collected.has(s.id)));
         this.unit = newUnit();
       },
       withTickLock: fn => this.pg.withTickLock(fn),
@@ -265,15 +273,19 @@ export class NetworkRuntime {
         const t = this.clock.now();
         const meta = o?.meta ?? {};
         const id = o?.idempotencyKey ?? `${memberId}:${t}:${this.nonce}${++this.seq}`;
+        const turn = this.host.inboundTurn?.();
+        const causal = turn?.app === this.app.id && turn.memberId === memberId && o?.reply === true
+          && normalizeAddress(this.memberToAddr.get(memberId) ?? "") === normalizeAddress(turn.from);
+        if (causal) this.unit.collected.add(id);
         this.unit.sends.push({
           id, memberId, to: this.memberToAddr.get(memberId), body,
           // "reply" only when the Network says so (send(): never a proactive send, a growth ask, a
           // re-engagement or a check-in), so the queue's quiet hours and caps still apply to those.
-          kind: o?.reply && this.replyingTo === memberId ? "reply" : meta.proactive ? "proactive" : "transactional",
+          kind: o?.reply && (causal || this.replyingTo === memberId) ? "reply" : meta.proactive ? "proactive" : "transactional",
           // A probe names its opportunity only in meta.probe (anonymous to the member); the row links it either way.
           type: meta.type, oppId: meta.proposalId ?? meta.probe?.key, proactive: !!meta.proactive, system: false, ts: t,
         });
-        return { id, ts: t, direction: "outbound", channel: "imessage", from: "network", to: memberId, memberId, body, status: "delivered", meta } satisfies SimMessage;
+        return { id, ts: t, direction: "outbound", channel: "imessage", from: "network", to: memberId, memberId, body, status: causal ? "collected" : "delivered", meta } satisfies SimMessage;
       },
       snapshot: () => this.snap ?? { now: this.clock.now(), members: [], facets: [], intents: [], presence: [], edges: [], recentProposals: [] },
       // A proposal record has no oracle in production; eventOf reads only the proposal and the source.
@@ -286,19 +298,36 @@ export class NetworkRuntime {
 
   /** A system send (keyword confirmations, the link notice) in the current unit. It does not go through the Network. */
   system(memberId: MemberId, id: string, body: string, kind: Outbound["kind"] = "compliance", type = "system", mediaUrls?: string[]) {
+    const turn = this.host.inboundTurn?.();
+    if (turn?.app === this.app.id && turn.memberId === memberId && (kind === "reply" || kind === "compliance")
+      && normalizeAddress(this.memberToAddr.get(memberId) ?? "") === normalizeAddress(turn.from)) this.unit.collected.add(id);
     this.unit.sends.push({ id, memberId, to: this.memberToAddr.get(memberId), body, ...(mediaUrls?.length ? { mediaUrls } : {}), kind, type, proactive: false, system: true, ts: this.clock.now() });
   }
 
   /** Everything the unit produced, inside the save transaction (app.app_id is set). Rows that name a member not in this app's network.members are skipped. */
   private async writeUnit(tx: SQL, u: Unit) {
     const app = this.app.id;
+    const personIds = new Map<string, string>();
+    if (u.forget.size) {
+      const rows = await tx`select person.id,member.id as member_id from platform.people person
+        join network.members member on member.person_id=person.id where member.app_id=${app} and member.id in ${tx([...u.forget])}
+        order by person.id for update of person`;
+      for (const row of rows as Row[]) personIds.set(row.member_id as string, row.id as string);
+    }
     const named = new Set<string>([...u.sends.map(s => s.memberId), ...(u.inbound ? [u.inbound.member_id as string] : []), ...u.blocks.flat(), ...u.optOut.keys()]);
     const known = new Set<string>();
     if (named.size) for (const r of await tx`select id from network.members where app_id = ${app} and id in ${tx([...named])}`) known.add(r.id);
     const ok = (id: string) => known.has(id) && !u.forget.has(id);
     if (u.inbound && ok(u.inbound.member_id as string)) await tx`insert into network.messages ${tx({ ...u.inbound, app_id: app })} on conflict (id) do nothing`;
+    const turn = this.host.inboundTurn?.();
+    const captured = u.sends.filter(s => u.collected.has(s.id) && (ok(s.memberId) || u.forget.has(s.memberId)));
+    if (captured.length) {
+      if (!turn || !this.host.collectReplies) throw new Error("Signed turn collector is unavailable");
+      await this.host.collectReplies(tx, captured.map(s => ({id:s.id, body:s.body, kind:s.kind === "compliance" ? "compliance" : "reply"})));
+    }
     const out = u.sends.filter(s => ok(s.memberId)).map(s => ({
-      id: s.id, app_id: app, member_id: s.memberId, direction: "outbound", channel: "imessage", body: s.body, status: this.adapter.storedStatus,
+      id: s.id, app_id: app, member_id: s.memberId, direction: "outbound", channel: "imessage", body: s.body, status: u.collected.has(s.id) ? "collected" : this.adapter.storedStatus,
+      inbound_id: u.collected.has(s.id) ? turn!.id : null,
       type: s.type ?? null, opportunity_id: s.oppId ?? null, proactive: s.proactive, system: s.system, ts: new Date(s.ts),
     }));
     for (let i = 0; i < out.length; i += 500) {
@@ -330,6 +359,13 @@ export class NetworkRuntime {
     for (const [id, out] of u.optOut) if (ok(id)) await tx`update network.members set opted_out = ${out} where app_id = ${app} and id = ${id}`;
     // The forget path (an under-age decline, leaving the app, deleting everything): keep only the id. Nothing that names the member stays.
     for (const id of u.forget) {
+      // Seal old signed replay payloads in the same canonical removal transaction. Keep only dedupe metadata.
+      const address = this.addressOf(id);
+      const senderHash = address && this.host.accounts?.phoneHash(address);
+      await tx`update platform.inbound set status='unresolved',response=null,replies='[]'::jsonb,receipt=null,receipt_hash=null,action_receipts='{}'::jsonb,
+        sender=null,event=null,sender_hash=null,member_id=null,app_id=null
+        where request_hash is not null and app_id=${app} and (member_id=${id} or sender_hash=${senderHash ?? null})
+        and id<>${turn?.id ?? ""}`;
       await tx`delete from network.messages where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.feedback where app_id = ${app} and (from_id = ${id} or about_id = ${id})`;
       // Every event that names them, by the same keys the writer reads (membersOf): actor, object and the payload.
@@ -345,7 +381,8 @@ export class NetworkRuntime {
       await tx`delete from network.channel_identities where app_id = ${app} and member_id = ${id}`;
       await tx`update network.members set invited_by = null where app_id = ${app} and invited_by = ${id}`;
       await tx`update network.members set name = null, home_city = null, home_area = null, account_status = 'removed', opted_out = false, age = null, invited_by = null,
-        community = null, occupation = null, bio = null, prefs = '{}'::jsonb, unanswered_proactive = 0, joined_at = null, person_id = null where app_id = ${app} and id = ${id}`;
+        community = null, occupation = null, bio = null, participation_window=null, prefs = '{}'::jsonb, unanswered_proactive = 0, joined_at = null, person_id = null where app_id = ${app} and id = ${id}`;
+      if (personIds.has(id)) await tx`select notify.forget_data(${personIds.get(id)!},${app})`;
       // The persisted queue keeps no text or address of theirs; what still waits is never sent.
       await tx`update platform.outbound set body = null, to_address = null, ended_at = coalesce(ended_at, ${new Date(this.clock.now())}),
         status = case when status = any(${`{${WAITING_STATUSES.join(",")}}`}::text[]) then 'dropped_forgotten' else status end
@@ -355,7 +392,7 @@ export class NetworkRuntime {
     // decline to a member the unit forgets goes as a text to a non-member. Sends it does not queue (the live
     // flags are off, no address) get their status here.
     if (this.adapter.enqueue) {
-      const queued = u.sends.filter(s => ok(s.memberId) || u.forget.has(s.memberId));
+      const queued = u.sends.filter(s => !u.collected.has(s.id) && (ok(s.memberId) || u.forget.has(s.memberId)));
       const refused = await this.adapter.enqueue(tx, queued, u.forget);
       for (const [id, status] of refused) await tx`update network.messages set status = ${status} where app_id = ${app} and id = ${id} and direction = 'outbound'`;
     }
@@ -392,8 +429,8 @@ export class NetworkRuntime {
       const notSent = ds.filter(d => NOT_SENT.test(d.status)).map(d => d.id);
       if (notSent.length) await this.host.capRelease?.(notSent);
       if (this.host.delivered) {
-        const no = new Set(notSent);
-        const sent = go.filter(b => !no.has(b.id));
+        const accepted = new Set(ds.filter(d => /^(accepted|sent|delivered|read|dry_run)$/.test(d.status)).map(d => d.id));
+        const sent = go.filter(b => accepted.has(b.id));
         if (sent.length) await this.host.delivered(this, sent).catch(e => this.host.log(`[deliver] delivered hook failed (${this.id}): ${(e as Error).message}`));
       }
     } catch (e) {
@@ -414,14 +451,33 @@ export class NetworkRuntime {
     try { ds = await this.adapter.deliver([]); } catch (e) { this.host.log(`[deliver] the queue waits for the next tick (${this.id}): ${(e as Error).message}`); return; }
     const mine = ds.filter(d => d.memberId && (d.app ?? this.app.id) === this.app.id);
     await this.storeStatuses(mine);
-    const went = mine.filter(d => /^(accepted|sent|delivered|read)$/.test(d.status)).map(d => d.id);
-    if (!went.length || !this.host.delivered) return;
-    const rows = await this.scoped(tx => tx`select id, member_id, body, type, opportunity_id, proactive, system, ts from network.messages where app_id = ${this.app.id} and id in ${tx(went)}`) as any[];
-    const sent: Outbound[] = rows.map(r => ({
-      id: r.id, memberId: r.member_id, body: r.body, kind: r.system ? "compliance" : r.proactive ? "proactive" : "transactional",
-      type: r.type ?? undefined, oppId: r.opportunity_id ?? undefined, proactive: r.proactive, system: r.system, ts: new Date(r.ts).getTime(),
-    }));
-    await this.host.delivered(this, sent).catch(e => this.host.log(`[deliver] delivered hook failed (${this.id}): ${(e as Error).message}`));
+    await this.projectNotifications();
+  }
+
+  /** Repair the existing Notify projection after acceptance, including a crash after its SQL commit. */
+  async projectNotifications() {
+    if (!this.host.delivered) return;
+    await this.store.withLock(async () => {
+      const rows = await this.scoped(tx => tx`select m.id,m.member_id,m.body,m.type,m.opportunity_id,m.proactive,m.system,m.ts,o.kind,o.sent_at
+        from network.messages m left join platform.outbound o on o.id=m.id and o.app_id=m.app_id
+        left join platform.inbound inbound on inbound.id=m.inbound_id
+        join network.members member on member.app_id=m.app_id and member.id=m.member_id
+        where m.app_id=${this.app.id} and m.direction='outbound' and member.account_status<>'removed'
+        and m.notification_recorded_at is null and (
+          (o.status in ('accepted','sent','delivered','read') and o.sent_at is not null and o.body is not null and o.to_address is not null)
+          or (o.id is null and m.status='sent' and inbound.status='done' and inbound.receipt->>'outcome'='accepted'))
+        order by coalesce(o.sent_at,m.ts),m.id limit 50`);
+      for (const r of rows as Row[]) {
+        const message:Outbound={id:r.id as string,memberId:r.member_id as string,body:r.body as string,kind:(r.kind??"reply") as Outbound["kind"],
+          type:r.type as string|undefined,oppId:r.opportunity_id as string|undefined,proactive:r.proactive as boolean,system:r.system as boolean,
+          ts:new Date(r.ts as string).getTime(),...(r.sent_at?{acceptedAt:new Date(r.sent_at as string).getTime()}:{} )};
+        try {
+          await this.host.delivered!(this,[message]);
+          await this.scoped(tx=>tx`update network.messages set notification_recorded_at=${new Date(this.clock.now())}
+            where id=${message.id} and app_id=${this.app.id} and notification_recorded_at is null and direction='outbound' and status in ('accepted','sent','delivered','read')`);
+        } catch {this.host.log(`[deliver] notification projection waits (${this.id})`);}
+      }
+    });
   }
 
   async storeStatuses(ds: Delivery[], only?: Set<string>) {
@@ -440,6 +496,7 @@ export class NetworkRuntime {
     if (this.retry.length) this.committed.unshift(...this.retry.splice(0));
     await this.deliver();
     await this.storeStatuses(await this.adapter.flush());
+    if (ran && !this.adapter.enqueue) await this.projectNotifications();
     if (ran && this.host.afterTick) await this.host.afterTick(this).catch(e => this.host.log(`[tick] after-tick work failed (${this.id}): ${(e as Error).message}`));
     return ran;
   }
@@ -468,6 +525,44 @@ export class NetworkRuntime {
       if (s) this.net.importState(s);
       this.unit = newUnit();
       return fn(this.net);
+    });
+  }
+
+  /** Model-visible projection from the canonical snapshot, reauthorized inside its read lock. */
+  sharedContext(memberId: string): Promise<TurnContext | null> {
+    return this.store.withLock(async () => {
+      await this.refresh();
+      const e164 = this.addressOf(memberId);
+      const accounts = this.host.accounts;
+      if (!e164 || !accounts) return null;
+      const binding = await accounts.activeMembership(this.app, {e164, personId: null});
+      if (!binding || binding.membership.memberId !== memberId) return null;
+      const snapshot = this.snap!;
+      const member = snapshot.members.find(m => m.id === memberId);
+      if (!member) return null;
+      const [canonical] = await this.scoped(tx => tx`select participation_state,participation_window,opted_out from network.members where app_id=${this.app.id} and id=${memberId}`);
+      if (!canonical) return null;
+      const participation = effectiveParticipation(canonical as {participation_state: typeof member.state; participation_window?:unknown; opted_out?:boolean},snapshot.now);
+      const state = participation.active ? participation.window!.state : participation.state === "normal" || participation.state === "open" || participation.state === "receiving" ? "open"
+        : participation.state === "quiet" ? "busy" : participation.state === "paused" ? "paused" : null;
+      if (!state) return null;
+      const firstName = member.name.trim().split(/\s+/)[0] ?? "";
+      const forbidden = [e164, binding.person.id, ...snapshot.facets.map(f => f.id), ...snapshot.members.flatMap(m => {
+        const first = m.name.trim().split(/\s+/)[0] ?? "";
+        return m.id === memberId ? [m.id] : [m.id, m.name, ...(first.toLowerCase() !== firstName.toLowerCase() ? [first] : [])];
+      })];
+      const facts = [...snapshot.facets.filter(f => f.scope === "agent_private").map(f => f.value),...(participation.window?.note?[participation.window.note]:[])];
+      const safe = (text: string) => outputLeaks(text, {forbidden, facts}).length === 0;
+      if (!safe(firstName) || !safe(member.homeCity)) return null;
+      const facets = snapshot.facets.filter(f => f.memberId === memberId && f.scope === "shareable" && f.confirmedByMember === true
+        && !f.sensitive && (f.validFrom === undefined || f.validFrom <= snapshot.now) && (f.validTo === undefined || f.validTo > snapshot.now)
+        && safe(f.value)).map(f => f.value);
+      // The deployed plugin contract rejects larger context. Withhold it whole; never truncate a fact.
+      if (facets.length > 50 || facets.some(f => f.length > 300)) return null;
+      return {
+        firstName, city: member.homeCity, state, stateFrom: participation.active?participation.window!.from:null, stateUntil: participation.active?participation.window!.until:null, facets,
+        activeItems: null, singlePlayer: !canBeMatched(await accounts.lowestAge(e164, binding.person)),
+      };
     });
   }
 

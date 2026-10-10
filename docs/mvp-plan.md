@@ -9,11 +9,11 @@ One network, one engine with a pack per app, one Postgres, one admin console (th
 | App | Site (Cloudflare Pages) | Backend and matching | Next step |
 |---|---|---|---|
 | slop.date (`slop`) | On Pages | Pack wired (`slop-pack-1.4.0`); matching off by the stored switch; no live send yet | **The first pilot: NYC, about 40-75 adults** |
-| ntwrk.love (`ntwrk`) | On Pages; home page for every app | Invite-only; no-keyword joins enrol people in the apps they ask for | Its own NYC matching opens after slop |
+| ntwrk.party (`ntwrk`) | On Pages; home page for every app | Invite-only; no-keyword joins enrol people in the apps they ask for | Its own NYC matching opens after slop |
 | friends.help (`friends`) | On Pages | Pack passes its sim gates; matching off; runs locally only | Join mode to decide |
 | peon.biz (`peon`) | On Pages | Pack passes its sim gates; matching off; runs locally only | Join mode to decide |
 
-All four sites are Cloudflare Pages projects; the shared backend (`deploy/backend/server.ts`) goes to Railway at `api.ntwrk.love`. Onboarding is agent-first: each site hands the person a prompt for their own AI, which reads the site's `SKILL.md` and submits the profile through the MCP server on the backend. Joining by text ("slop") works too.
+All four sites are Cloudflare Pages projects; the shared backend (`deploy/backend/server.ts`) goes to Railway at `api.ntwrk.party`. Onboarding is agent-first: each site hands the person a prompt for their own AI, which reads the site's `SKILL.md` and submits the profile through the MCP server on the backend. Joining by text ("slop") works too.
 
 ## Critical path
 

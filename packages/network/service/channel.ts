@@ -35,6 +35,7 @@ export interface Outbound {
   proactive: boolean;
   system: boolean;
   ts: number;
+  acceptedAt?: number;
 }
 
 /** Statuses that still wait for delivery (the queue's, and "queued" before the first drain). */
@@ -44,7 +45,7 @@ export const WAITING_STATUSES = ["queued", ...WAITING];
 export interface Delivery { id: string; status: string; app?: string; memberId?: string }
 
 export interface ChannelAdapter {
-  readonly name: "dry_run" | "blooio";
+  readonly name: "dry_run" | "blooio" | "eliza_cloud";
   /** The status a send is stored with, in the same transaction as the Network state. */
   readonly storedStatus: string;
   /** Called once by the runtime that owns the adapter (the persisted queue needs its database and checks). */
@@ -134,7 +135,7 @@ export interface BlooioAdapterOptions {
 
 /** Blooio behind the live flags, through the persisted queue (one queue object per app; one line lock for all). */
 export class BlooioAdapter implements ChannelAdapter {
-  readonly name = "blooio" as const;
+  readonly name: ChannelAdapter["name"] = "blooio";
   readonly storedStatus = "queued";
   readonly app: string;
   private readonly env: Record<string, string | undefined>;
