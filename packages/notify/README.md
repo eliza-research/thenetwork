@@ -31,10 +31,10 @@ The single inbox and the notification scheduler from `docs/research/2026-10-08-e
 - **Migrations.** `packages/observatory/db/migrate.ts` applies `db/schema.sql` as the repeatable `9002_notify_schema`, with grants to `network_service`.
 
 **Prototypes and the plugin:**
-- **Outbound queue** (`packages/blooio`). Use `queueSink(queue, providerFor)` and `recipientPolicy: queuePolicy(notifier, existing)`.
+- **Outbound queue** (`packages/blooio`, the Postgres queue). Use `queueSink(queue)` and `checks.recipient: queuePolicy(notifier, existing)`. `test/wiring.test.ts` runs them on a database of its own.
 - **`packages/plugin-network`.** Set `NetworkStore.readUpdates = threadHooks(notifier, now).readUpdates` to register `GET_UPDATES`.
 
-**Validation:** the notifier's unit and end-to-end tests were deleted on 2026-10-08 (simulations only; in git history at 16cde70).
+**Validation:** the notifier's unit and end-to-end tests were deleted on 2026-10-08 (simulations only; in git history at 16cde70). `test/wiring.test.ts` (integration) runs the Notifier with the Postgres outbound queue.
 
 ## Not yet
 

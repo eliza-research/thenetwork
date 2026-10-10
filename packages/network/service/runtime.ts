@@ -161,9 +161,10 @@ export class NetworkRuntime {
   // ------------------------------------------------------------------ send-time checks of the persisted queue
   /** Consent at send time for one queued message: the platform consent ledger (and bans), then the member's own opt-out. */
   async optedOut(id: string, memberId: MemberId | undefined, to: string): Promise<boolean> {
-    if (!memberId) return false;
-    const probe: Outbound = { id, memberId, to, body: "", kind: "transactional", proactive: false, system: false, ts: this.clock.now() };
+    // The platform consent ledger, suppression and bans by address: also for a direct text to a non-member.
+    const probe: Outbound = { id, memberId: memberId ?? ("" as MemberId), to, body: "", kind: "transactional", proactive: false, system: false, ts: this.clock.now() };
     if ((await this.host.consentRefused?.(this, [probe]))?.has(id)) return true;
+    if (!memberId) return false;
     const [r] = await this.scoped(tx => tx`select opted_out from network.members where app_id = ${this.app.id} and id = ${memberId}`);
     return r?.opted_out === true;
   }

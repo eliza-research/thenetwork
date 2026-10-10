@@ -111,6 +111,7 @@ Set these in **Variables**. Mark each **secret** row as a sealed variable. Never
 | `PORT` | no | `8790` | The public listener. Set it, so that Railway's domain targets this port. |
 | `STAFF_PORT` | no | `4848` | Private only. `BACKEND_STAFF=off` turns the staff listener off. |
 | `PLATFORM_HASH_KEY` | **yes** | 32+ random bytes, for example `openssl rand -base64 48` | Keys the phone and IP hashes. **Never rotate it after launch**: suppression and rate-limit rows are keyed by it. |
+| `LEAK_LABEL_KEY` | **yes** | 32+ random bytes, for example `openssl rand -base64 48` | Keys the leak guard's log labels (core-6), so a stored label cannot be matched against guessed values. `loadConfig` refuses to start staging or production without it. Dev and the simulations stay unkeyed. |
 | `PLATFORM_PROXY_SECRET` | **yes** | 32+ random characters | The same value goes into each site Worker (section 3). |
 | `TURNSTILE_SECRET_KEY` | **yes** | From Cloudflare Turnstile | One widget per site domain, or one widget listing all four |
 | `TURNSTILE_SITE_KEY` | no (public) | The same Turnstile widget | The MCP sign-in page (`/oauth/authorize` on each site) shows the widget. Without it the MCP server stays off (404 `mcp_not_enabled`). The `oauth` schema is a migration (`9001_oauth_schema`, packages/mcp/db/oauth.sql); the service login only reads and writes it. The widget's hostnames: each domain, its `www` name and its `<project>.pages.dev`. |
@@ -255,7 +256,7 @@ docker run -d --name backend-smoke -p 127.0.0.1:18791:8790 \
   -e PLATFORM_ENV=staging -e PLATFORM_DB_ENVIRONMENT_INIT=1 \
   -e MIGRATION_DATABASE_URL=postgres://$USER@host.docker.internal:54339/backend_smoke \
   -e NETWORK_DATABASE_URL=postgres://backend_smoke_svc@host.docker.internal:54339/backend_smoke \
-  -e PLATFORM_HASH_KEY=$S -e PLATFORM_PROXY_SECRET=$S \
+  -e PLATFORM_HASH_KEY=$S -e LEAK_LABEL_KEY=$S -e PLATFORM_PROXY_SECRET=$S \
   -e TURNSTILE_SECRET_KEY=fake -e OTP_PROVIDER=twilio \
   -e TWILIO_ACCOUNT_SID=ACfake -e TWILIO_AUTH_TOKEN=fake -e TWILIO_VERIFY_SERVICE_SID=VAfake \
   -e BUILD_ID=local-smoke network-backend

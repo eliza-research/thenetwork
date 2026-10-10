@@ -241,7 +241,17 @@ export interface LeakOptions {
 /** Canary-shaped tokens (see `LeakOptions.canaryShapes`). The second pattern is case-sensitive on purpose. */
 export const CANARY_SHAPES: RegExp[] = [/\bcanary_[a-z0-9]+_/i, /\b[A-Z]{2}-\d{4}-[A-Z]{3,}\b/];
 
-const LABEL_KEY: string | undefined = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.LEAK_LABEL_KEY || undefined;
+let LABEL_KEY: string | undefined = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.LEAK_LABEL_KEY || undefined;
+
+/**
+ * Key the leak labels (core-6). Production and staging call it at start with LEAK_LABEL_KEY (at least 32
+ * bytes; deploy/backend loadConfig refuses to start without it), so a stored label cannot be reversed by
+ * hashing guesses. Dev and the simulations stay unkeyed, so their labels are reproducible.
+ */
+export function setLeakLabelKey(key: string | undefined): void {
+  if (key !== undefined && new TextEncoder().encode(key).length < 32) throw new Error("LEAK_LABEL_KEY must be at least 32 bytes");
+  LABEL_KEY = key || undefined;
+}
 
 /** Short non-reversible label for logs: never log the blocked value itself. */
 export function labelHash(s: string): string {
