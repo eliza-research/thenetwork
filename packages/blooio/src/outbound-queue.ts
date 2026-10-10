@@ -120,6 +120,8 @@ export interface AppChecks {
   capTake?(row: QueueRow): Promise<boolean>;
   /** Give the slot back (the message did not go out). */
   capRelease?(row: QueueRow): Promise<void>;
+  /** Acquire app-owned row fences before the shared person/member fences, in this transaction. SQL only; no remote I/O. */
+  lockAdmission?(row: QueueRow, tx: SQL): Promise<void>;
   /**
    * The app's last word, inside the admission transaction after every asynchronous gate (app.app_id is
    * set; short row locks only, no remote I/O). Not ok: the row ends suppressed. A throw parks the row.
@@ -451,6 +453,7 @@ export class OutboundQueue {
     // Erasure and admission share the person/member row fences. No remote I/O holds these locks.
     const admission = await this.sql.begin(async tx => {
       await tx`select set_config('app.app_id',${this.app},true)`;
+      await this.o.checks.lockAdmission?.(row, tx);
       if (row.memberId) {
         await tx`select person.id from platform.people person join network.members member on member.person_id=person.id
           where member.app_id=${row.app} and member.id=${row.memberId} order by person.id for update of person`;
@@ -471,7 +474,7 @@ export class OutboundQueue {
         }
         if (row.kind!=="compliance" && (member.opted_out || await this.guarded(()=>this.o.checks.optedOut?.(row)??false,true))) return "refused_opted_out";
       }
-      // After the person/member fences: one lock order (person, member, then the app's own rows) with erasure.
+      // Recheck eligibility after person/member fences; app state fences were acquired first, as in canonical erasure.
       if (this.o.checks.admit && !(await this.o.checks.admit(row, tx)).ok) return "suppressed_ineligible";
       const claimed = await tx`update platform.outbound set status='sending',attempts=attempts+1,lease_owner=${this.instance},
         lease_until=${new Date(start+this.opt("leaseMs",5*MINUTE))},updated_at=${new Date(start)},new_conversation=${isNew},reengagement=${reengagement}
