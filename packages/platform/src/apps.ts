@@ -136,8 +136,33 @@ export function parseNetworkId(id: string): { app: AppId; city: string } | undef
  */
 export const PAGES_PROJECT: Record<AppId, string> = { ntwrk: "ntwrk-party", slop: "slop-date", peon: "peon-biz", friends: "friends-help" };
 
+/** Explicit staging authorities. Never inferred from visitor headers or used in production builds. */
+export function stagingSiteOrigins(env: Record<string, string | undefined> = process.env): Partial<Record<AppId, string>> {
+  const raw = env.STAGING_SITE_ORIGINS?.trim();
+  if (!raw) return {};
+  let value: unknown;
+  try { value = JSON.parse(raw); } catch { throw new Error("STAGING_SITE_ORIGINS must be a JSON object"); }
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("STAGING_SITE_ORIGINS must be a JSON object");
+  const entries = Object.entries(value);
+  if (!entries.length) return {};
+  if (env.PLATFORM_ENV !== "staging" || env.DEPLOY_TARGET === "production") throw new Error("STAGING_SITE_ORIGINS is for explicit staging only");
+  const out: Partial<Record<AppId, string>> = {}, hosts = new Set<string>();
+  const canonical = new Set(APP_IDS.flatMap(id => [APPS[id].domain, `www.${APPS[id].domain}`, `${PAGES_PROJECT[id]}.pages.dev`]));
+  for (const [id, rawOrigin] of entries) {
+    if (!isAppId(id) || typeof rawOrigin !== "string") throw new Error("STAGING_SITE_ORIGINS must map known apps to HTTPS origins");
+    let u: URL;
+    try { u = new URL(rawOrigin); } catch { throw new Error("STAGING_SITE_ORIGINS needs exact HTTPS origins"); }
+    if (u.protocol !== "https:" || rawOrigin !== u.origin || u.username || u.password || u.hostname.includes("*") || u.hostname.endsWith(".") || canonical.has(u.hostname) || hosts.has(u.hostname)) throw new Error("STAGING_SITE_ORIGINS needs unique, non-production, exact HTTPS origins");
+    hosts.add(u.hostname); out[id] = u.origin;
+  }
+  return out;
+}
+
 /** Every production host name of an app's site: its domain, www, and its Pages production name. */
-export const siteHosts = (a: AppId): string[] => [APPS[a].domain, `www.${APPS[a].domain}`, `${PAGES_PROJECT[a]}.pages.dev`];
+export const siteHosts = (a: AppId, env?: Record<string, string | undefined>): string[] => {
+  const stage = env ? stagingSiteOrigins(env)[a] : undefined;
+  return stage ? [new URL(stage).hostname] : [APPS[a].domain, `www.${APPS[a].domain}`, `${PAGES_PROJECT[a]}.pages.dev`];
+};
 
 /** Host header -> app in production and staging: the four domains, their www names and their Pages names. Never a localhost name. */
 export const DEFAULT_HOST_MAP: Record<string, AppId> = Object.fromEntries(

@@ -3,7 +3,7 @@
 import { createMcpHandler, devHostMap, defaultApps, defaultHostMap, isMcpAppId, type McpApp, type McpAppId, type McpHandler, MemoryOAuthStore, PgOAuthStore, platformHooks } from "../../mcp/src/index.ts";
 import { devShortcutsAllowed, type Env } from "../../platform/src/env.ts";
 import { CloudflareTurnstile } from "../../platform/src/turnstile.ts";
-import { isAppId, siteHosts } from "../../platform/src/apps.ts";
+import { isAppId, siteHosts, stagingSiteOrigins } from "../../platform/src/apps.ts";
 import type { NetworkService } from "./service.ts";
 
 export interface ServiceMcpOptions {
@@ -37,6 +37,7 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
   const env = o.env ?? process.env;
   const log = o.log ?? console.log;
   const dev = devShortcutsAllowed(env);
+  const stageOrigins = stagingSiteOrigins(env);
   const privateOpenAiApps = o.privateOpenAiApps ?? (env.MCP_PRIVATE_OPENAI_APPS ?? "").split(",").map(s => s.trim()).filter(Boolean);
   const customFlag = env.MCP_CUSTOM_CHATGPT_SLOP ?? "off";
   if (customFlag !== "off" && customFlag !== "on") throw new Error("MCP_CUSTOM_CHATGPT_SLOP must be off or on");
@@ -58,9 +59,22 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
   if (store instanceof PgOAuthStore && o.migrate !== false) await store.migrate();
   const api = svc.publicApi;
   const apps = defaultApps();
-  const issuer = (a: McpApp) => (dev && o.devOrigins?.[a.id]) || `https://${a.domain}`;
+  for (const [id, origin] of Object.entries(stageOrigins)) {
+    const a = apps[id as McpAppId];
+    a.domain = new URL(origin).host;
+    for (const key of ["site", "join", "privacy", "terms", "smsTerms", "safety", "settings"] as const) if (a.links[key]) {
+      const link = new URL(a.links[key]!);
+      a.links[key] = origin + link.pathname.replace(/\/$/, "") + link.search + link.hash;
+    }
+  }
+  const issuer = (a: McpApp) => stageOrigins[a.id] || (dev && o.devOrigins?.[a.id]) || `https://${a.domain}`;
   const hostMap = dev ? { ...defaultHostMap(apps), ...devHostMap() } : defaultHostMap(apps);
+  for (const [id, origin] of Object.entries(stageOrigins)) {
+    for (const [host, owner] of Object.entries(hostMap)) if (owner === id) delete hostMap[host];
+    hostMap[new URL(origin).host] = id as McpAppId;
+  }
   const mcp = createMcpHandler({
+    apps,
     platform: platformHooks({
       store: svc.people, otp: api.otp, accounts: api.accounts, sessions: api.sessions,
       app: id => svc.apps[id],
@@ -76,7 +90,7 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
     }),
     store, issuer, hostMap, env, privateOpenAiApps: privateOpenAiApps as McpAppId[], customChatGptSlopPersonIds, proxySecret: o.proxySecret, log, now: o.now ?? (() => svc.clock.now()),
     // The token's hostname must be one of that site's hosts (as on the platform API), never another site.
-    turnstile: siteKey && env.TURNSTILE_SECRET_KEY ? { siteKey, verify: (t, ip, app) => new CloudflareTurnstile(env.TURNSTILE_SECRET_KEY!).verify(t, ip, dev ? undefined : app ? siteHosts(app) : []) } : undefined,
+    turnstile: siteKey && env.TURNSTILE_SECRET_KEY ? { siteKey, verify: (t, ip, app) => new CloudflareTurnstile(env.TURNSTILE_SECRET_KEY!).verify(t, ip, dev ? undefined : app ? siteHosts(app, env) : []) } : undefined,
   });
   svc.onForget(async ctx => {
     // Leaving an app (or deleting everything) also deletes the grants: no row keeps the phone next to the app.

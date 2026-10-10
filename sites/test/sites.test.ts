@@ -181,6 +181,68 @@ describe.each(SITES)("$domain", (s) => {
   });
 });
 
+test("staging builds keep the served entry, skills and signed router on configured staging authorities", async () => {
+  const origins = { ntwrk: "https://hub-stage.example.test", slop: "https://slop-stage.example.test", peon: "https://peon-stage.example.test", friends: "https://friends-stage.example.test" };
+  const secret = "owned-stage-proxy-contract-secret";
+  const received: { host: string; path: string }[] = [];
+  const backend = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
+    const signed = await verifyProxyHeaders(req, secret, Math.floor(Date.now() / 1000));
+    expect(signed?.host).toBe("slop-stage.example.test");
+    received.push({ host: signed!.host, path: new URL(req.url).pathname });
+    return Response.json({ id: "slop", staging: true });
+  } });
+  const env = { PLATFORM_ENV: "staging", STAGING_SITE_ORIGINS: JSON.stringify(origins), BACKEND_ORIGIN: `http://127.0.0.1:${backend.port}` };
+  const slop = SITES.find(s => s.app === "slop")!, hub = SITES.find(s => s.app === "ntwrk")!;
+  const directory = join(tmp, "staging-slop"), hubDirectory = join(tmp, "staging-hub");
+  let server: ReturnType<typeof Bun.serve> | undefined;
+  try {
+    expect((await buildSite(slop, directory, env)).ok).toBe(true);
+    expect((await buildSite(hub, hubDirectory, env)).ok).toBe(true);
+    const home = readFileSync(join(directory, "index.html"), "utf8");
+    const prompt = `Read ${origins.slop}/SKILL.md and follow it to sign me up for slop.date.`;
+    expect(home).toContain(`<code data-prompt>${prompt}</code>`);
+    expect(home).toContain(`https://chatgpt.com/?q=${encodeURIComponent(prompt)}`);
+    for (const origin of ["https://chatgpt.com/", "https://claude.ai/new", "https://grok.com/", "https://www.perplexity.ai/search"]) {
+      const href = [...home.matchAll(/href="([^"]+)"/g)].map(m => m[1]!).find(href => href.startsWith(`${origin}?q=`));
+      expect(href, origin).toBeDefined();
+      expect(new URL(href!).searchParams.get("q"), origin).toBe(prompt);
+    }
+    expect(home).toContain(`href="${origins.ntwrk}"`);
+    expect(home).toContain("slop.date"); // Branding stays canonical.
+    expect(home).not.toContain("https://slop.date");
+    const worker = (await import(join(directory, "_worker.js"))).default;
+    server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(req) {
+      const local = new URL(req.url);
+      return worker.fetch(new Request(`${origins.slop}${local.pathname}${local.search}`, req), {
+        PLATFORM_PROXY_SECRET: secret,
+        ASSETS: { fetch: (r: Request) => new Response(Bun.file(join(directory, new URL(r.url).pathname.slice(1) || "index.html"))) },
+      });
+    } });
+    const base = `http://127.0.0.1:${server.port}`;
+    const skill = await (await fetch(`${base}/SKILL.md`)).text();
+    expect(skill).toContain(`MCP endpoint is ${origins.slop}/mcp`);
+    for (const path of ["join?via=agent", "settings", "privacy", "terms", "support"]) expect(skill).toContain(`${origins.slop}/${path}`);
+    expect(skill).toContain("email help@ntwrk.party");
+    expect(skill).not.toContain("https://slop.date");
+    const index = await (await fetch(`${base}/.well-known/agent-skills/index.json`)).json() as { skills: { url: string; digest: string }[] };
+    expect(await (await fetch(base + index.skills[0]!.url)).text()).toBe(skill);
+    for (const app of SITES) expect(readFileSync(join(hubDirectory, "SKILL.md"), "utf8")).toContain(origins[app.app]);
+    for (const path of ["/api/app", "/mcp", "/oauth/authorize", "/.well-known/oauth-protected-resource/mcp"]) {
+      expect((await (await fetch(base + path)).json()).id).toBe("slop");
+    }
+    expect(received.map(r => r.path)).toEqual(["/api/app", "/mcp", "/oauth/authorize", "/.well-known/oauth-protected-resource/mcp"]);
+    expect((await buildSite(slop, join(tmp, "staging-conflict"), { ...env, MCP_URL: "https://foreign.example/{domain}/mcp" })).ok).toBe(false);
+    expect((await buildSite(slop, join(tmp, "staging-missing"), { ...env, STAGING_SITE_ORIGINS: JSON.stringify({ slop: origins.slop }) })).ok).toBe(false);
+    expect((await buildSite(slop, join(tmp, "staging-production"), { ...env, DEPLOY_TARGET: "production" })).ok).toBe(false);
+    expect((await buildSite(slop, join(tmp, "staging-backend"), { ...env, BACKEND_ORIGIN: "https://api.ntwrk.party" })).ok).toBe(false);
+    expect((await buildSite(slop, join(tmp, "staging-backend-path"), { ...env, BACKEND_ORIGIN: "https://api.ntwrk.party/preview" })).ok).toBe(false);
+    expect((await buildSite(slop, join(tmp, "staging-backend-missing"), { ...env, BACKEND_ORIGIN: "" })).ok).toBe(false);
+    for (const origin of Object.values(origins)) {
+      expect((await buildSite(slop, join(tmp, "staging-backend-loop"), { ...env, BACKEND_ORIGIN: origin })).ok).toBe(false);
+    }
+  } finally { server?.stop(true); backend.stop(true); }
+});
+
 test("agent-first landing pages (founder decision 10): name, one line, the prompt, Copy, Open-in links; nothing else", () => {
   const AGENTS = ["https://chatgpt.com/?q=", "https://claude.ai/new?q=", "https://grok.com/?q=", "https://www.perplexity.ai/search?q="];
   for (const s of SITES) {
