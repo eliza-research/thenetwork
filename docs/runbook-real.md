@@ -535,6 +535,8 @@ Do this once before the first real member joins, then on the first working day o
 | `review_sla:<network>` | Open the console's Review tab for that app. Items past the SLA expire unsent; nobody was contacted. |
 | `safety_minor:<network>` or an urgent `safety_report` | The safety on-call opens the console's Safety tab now. Hold first, then decide (admin-console.md 3.7.1). |
 | `safety_signal:<network>` | The safety on-call reads the waiting signals (service `GET /signals`) and decides each one. |
+| `line_safety` | Open the Blooio dashboard for the line and read the safety notice. Texts wait (nothing is lost; compliance texts still go). Tell the founder; do not send from another number. |
+| `leak_review:<app>` | A safety reviewer opens the console's held texts and releases or drops each one with a reason. |
 | `bias_report:<network>` | An admin or analyst opens the bias panel (Metrics) and records what to do in the incident log. |
 | `precision:<network>` | Shadow precision (person decisions approved without edits, 7 days, at least 20 decisions) is under the 80% gate (PRD 32.8). Do not switch matching on for that app. The reviewers and an analyst read the rejected items' reason codes in the Review tab; the console scorecard row "Shadow precision" shows the same number over the whole period. |
 | `queue_outbound` or `queue_review` | Check the review staffing, and Blooio for held or deferred messages. |

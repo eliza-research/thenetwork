@@ -23,7 +23,7 @@ const { CloudChannelAdapter } = await import("../../packages/network/service/clo
 const { BlooioAdapter, liveFlag, liveSendAllowed } = await import("../../packages/network/service/channel.ts");
 const { NetworkService, webhookSecretsFromEnv } = await import("../../packages/network/service/service.ts");
 const { createServiceMcp } = await import("../../packages/network/service/serve.ts");
-const { createOps, PgAlertStore, runtimeProbe } = await import("./ops.ts");
+const { createOps, lineMetrics, PgAlertStore, runtimeProbe } = await import("./ops.ts");
 const { photoRaterFromEnv } = await import("../../packages/platform/src/photos.ts");
 const { setLeakLabelKey } = await import("../../packages/core/src/guard.ts");
 
@@ -107,7 +107,7 @@ async function main() {
   // Monitoring and alerts (ops.ts; docs/deploy.md section 7): its own small pool, so a slow webhook never holds a service connection.
   const opsPool = new SQL({ url: c.databaseUrl, max: 2, idleTimeout: 30, connection: { application_name: "network-backend-ops" } });
   const ops = createOps({
-    config: c.ops, probes: () => [...svc.runtimes.values()].map(runtimeProbe), cost: svc.cost,
+    config: c.ops, probes: () => [...svc.runtimes.values()].map(runtimeProbe), line: () => lineMetrics(opsPool), cost: svc.cost,
     store: new PgAlertStore(opsPool), now: () => clock.now(), log,
   });
   log.info("ops", { alerts: c.ops.webhookUrl ? "webhook" : "log", heartbeat: !!c.ops.heartbeatUrl, metrics: !!c.ops.metricsToken, budgetDailyUsd: c.ops.budgets.daily ?? null });

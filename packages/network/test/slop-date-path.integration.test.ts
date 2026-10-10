@@ -107,6 +107,11 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
       item = q.items?.find((x: any) => x.proposal.participants.includes(rae) && x.proposal.participants.includes(sam));
     }
     expect(item).toBeDefined();
+    // A reviewer's edit that talks about looks or a rating is refused on slop (photo ratings are never shown), and nothing is sent.
+    for (const words of ["You're both really attractive, she's in the 73rd percentile.", "Similar looks level, good match.", "Top 10% photo rating."]) {
+      const r = await (await staff(s, REVIEWER, "POST", `/apps/slop/review/${encodeURIComponent(item.oppId)}`, { decision: "edit", explanations: { [rae]: words }, secondsSpent: 5 })).json() as any;
+      expect([words, r.ok, r.code ?? r.error ?? r.reason]).toEqual([words, false, "edit_leak"]);
+    }
     expect((await sql`select count(*)::int as n from network.messages where app_id = 'slop' and opportunity_id = ${item.oppId}`)[0].n).toBe(0);
     expect((await (await staff(s, REVIEWER, "POST", `/apps/slop/review/${encodeURIComponent(item.oppId)}`, { decision: "approve", secondsSpent: 20 })).json() as any).ok).toBe(true);
 
@@ -148,5 +153,15 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     expect((await sql`select count(*)::int as n from network.opportunities o where o.app_id = 'slop' and o.id <> ${item.oppId}
       and exists (select 1 from network.participations p where p.app_id = o.app_id and p.opportunity_id = o.id and p.member_id = ${rae})
       and exists (select 1 from network.participations p where p.app_id = o.app_id and p.opportunity_id = o.id and p.member_id = ${sam})`)[0].n).toBe(0);
+
+    // ---- An urgent "report X" text by someone who met them holds them, like the check-in answer did:
+    // Rae is out of matching until staff decide (she is matchable before it).
+    const net = s.runtimeFor("slop")!.net;
+    await text(s, clock, RAE, "ok"); // nothing unanswered: she could be asked again
+    expect(net.eligible(rae as never)).toBe(true);
+    await text(s, clock, SAM, "report Rae, she threatened me after the date");
+    const byText = ((await (await staff(s, SAFETY, "GET", "/apps/slop/safety/reports")).json()) as any).reports.find((r: any) => r.subjectId === rae);
+    expect(byText).toMatchObject({ kind: "unsafe", source: "message", status: "open", reporterId: sam });
+    expect(net.eligible(rae as never)).toBe(false);
   }, T);
 });

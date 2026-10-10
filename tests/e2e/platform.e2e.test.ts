@@ -641,6 +641,10 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       expect((await webJoin(st, "slop", adult, { age: 29, browser: ab })).res.status).toBe(200);
       const refused = await upload(tb);
       expect([refused.status, ((await refused.json()) as { error: string }).error]).toEqual([403, "adults_only"]);
+      // The settings page hides the photo section (consent text and upload control) unless `eligible` is true.
+      const listOf = async (b: Browser) => (await st.site("slop", "/api/photos", { browser: b })).json() as Promise<{ eligible: boolean; photos: unknown[] }>;
+      expect(await listOf(tb)).toMatchObject({ eligible: false, photos: [] });
+      expect((await listOf(ab)).eligible).toBe(true);
       // The control: the same request from an adult is stored (no ID check, founder decision 9).
       const ok = await upload(ab);
       expect(ok.status, await ok.clone().text()).toBe(200);

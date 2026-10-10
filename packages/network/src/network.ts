@@ -44,6 +44,7 @@ import { APPS, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { meetingSpot, nearbyVenues, NEIGHBORHOOD, NEIGHBORHOODS, neighborhood, travelMinutes, VENUES, type Venue } from "./geo.ts";
 import { RELAY_OPEN_AFTER_MEETING_MS, RelayDesk, withdrawsSwap, type RelayAsk, type RelayCallOptions, type RelayHeld, type RelayHost, type RelayMatch, type RelayMember, type RelayOutcome, type RelayState } from "./relay.ts";
 import type { RelayRecord } from "../../engine/src/relay.ts";
+import { APPEARANCE_PREFIX, appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
 import { ABOUT_OTHERS, ASK_KINDS, LANE_BUDGETS, NEVER_REPLY, nextAt, NY, nyParts, OUTREACH, PRD_BUDGETS, SLOT_KINDS, type SendKind } from "./outreach.ts";
 import { BASE_REACH, FLOOR_EFFORT, type CapitalEvent, type CapitalEventInput, type CapitalReader, type GamingFlag, type NetworkEffort } from "./capital.ts";
 import { activityHints, BOOKING_GAP, PLAN_VENUES, planLedger, statedWindows } from "./plans.ts";
@@ -1232,8 +1233,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   // ------------------------------------------------------------------ reports (reports.ts; docs/admin-console.md 3.7.1)
   /**
    * A report about a member: a record with ids and a kind (never the words) and a staff case event.
-   * An urgent report (harassment, unsafe, scam, minor) at the check-in after a date takes the member
-   * out of matching until staff decide (hold, ban or dismiss). A "report X" message keeps the trust
+   * An urgent report (harassment, unsafe, scam, minor) by someone who met them (the check-in after a
+   * date, or a "report X" text; see reportHeld) takes the member out of matching until staff decide. A "report X" message keeps the trust
    * rules (trust.ts: points need two reporters who met them; a stranger only opens the case).
    */
   private fileReport(reporter: MemberId, subject: MemberId, kind: ReportKind, o: { oppId?: string; source: SafetyReport["source"]; met: boolean; caseEvent?: boolean }) {
@@ -1246,9 +1247,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.dirty = true;
   }
 
-  /** An urgent report at the check-in after a date is waiting for staff: out of matching. */
+  /**
+   * An urgent report (harassment, unsafe, scam, minor) by someone who met them through the Network is
+   * waiting for staff: out of matching until staff decide. The same for the answer to the check-in
+   * after a date and for a "report X" text (PRD 36.3): what matters is that they met, not which
+   * question the member was answering. A report by someone they never met holds nobody.
+   */
   private reportHeld(id: MemberId): boolean {
-    return this.reports.some(r => r.subjectId === id && r.status === "open" && r.source === "check_in" && r.met && URGENT_REPORTS.has(r.kind));
+    return this.reports.some(r => r.subjectId === id && r.status === "open" && r.met && URGENT_REPORTS.has(r.kind));
   }
 
   /** Reports for staff, newest first, each with how many earlier reports name the same member. Never the words. */
@@ -1367,14 +1373,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.blocks.add(pairKey(m.id, target.id));
     this.ctx.recordBlock(m.id, target.id);
     this.trust.block(m.id, now, { target: target.id, met });
-    if (verb === "report") {
-      const points = this.trust.report(target.id, m.id, now, { met });
-      if (!points) this.caseEvent(target.id, { at: now, kind: "report_received", points: 0, by: m.id });
-      // The staff queue's record (the case event above already counts it).
-      this.fileReport(m.id, target.id, c.otherAge !== undefined && isMinor(c.otherAge) ? "minor" : reportKindOf(c.text ?? ""), { source: "message", met, caseEvent: false });
-      this.ctx.log("report", { memberId: m.id, target: target.id, met, points });
-      if (c.otherAge !== undefined && isMinor(c.otherAge)) this.minorReported(target, m.id);
-    }
+    // Before any report is filed: an urgent report by someone who met them holds the subject (fileReport ->
+    // dropMember), which would close a shared booked date as "participant dropped" with no word to them.
     for (const o of [...this.opps.values()]) {
       if (!OPEN_STAGES.has(o.stage) || !o.participants.includes(m.id) || !o.participants.includes(target.id)) continue;
       if (o.stage === "scheduled") {
@@ -1386,6 +1386,14 @@ export class ConsentNetwork implements NetworkUnderTest {
         this.ctx.log("meeting_cancelled", { proposalId: o.id, reason: "blocked" });
       }
       this.close(o, "blocked");
+    }
+    if (verb === "report") {
+      const points = this.trust.report(target.id, m.id, now, { met });
+      if (!points) this.caseEvent(target.id, { at: now, kind: "report_received", points: 0, by: m.id });
+      // The staff queue's record (the case event above already counts it).
+      this.fileReport(m.id, target.id, c.otherAge !== undefined && isMinor(c.otherAge) ? "minor" : reportKindOf(c.text ?? ""), { source: "message", met, caseEvent: false });
+      this.ctx.log("report", { memberId: m.id, target: target.id, met, points });
+      if (c.otherAge !== undefined && isMinor(c.otherAge)) this.minorReported(target, m.id);
     }
     this.send(m, verb === "block" ? copy.blocked : met ? copy.reported : copy.reportUnmatched, { type: "info" }, "reply");
   }
@@ -1803,17 +1811,29 @@ export class ConsentNetwork implements NetworkUnderTest {
     return undefined;
   }
 
-  /** An edit is refused when it names someone outside the opportunity, or a text would leak a private fact or contact details. */
+  /**
+   * An edit is refused when it names someone outside the opportunity, or a text would leak a private
+   * fact or contact details. On an app that rates photos (slop) a reviewer's words are also checked
+   * for the rating: looks words, a score, a percentile or a stored appearance tag (`appearanceLeak`,
+   * PRD 40.5: ratings are never shown to anyone). The pack's own text never mentions looks.
+   */
   private editBlock(o: Opp, opts: ReviewOptions): string | undefined {
     const ex = Object.entries(opts.explanations ?? {});
     if (!ex.length && opts.objective === undefined) return "nothing_to_edit";
+    const ratingLeak = this.ratesPhotos ? (() => {
+      const tags = this.snapshotCached().facets.filter(f => o.participants.includes(f.memberId)).flatMap(f => f.tags.filter(t => t.startsWith(APPEARANCE_PREFIX)));
+      return (t: string) => appearanceLeak(t, tags) !== null;
+    })() : () => false;
     for (const [id, text] of ex) {
       if (!o.participants.includes(id)) return "not_a_participant";
-      if (!text.trim() || this.guardCheck(text, id).length) return "edit_leak";
+      if (!text.trim() || this.guardCheck(text, id).length || ratingLeak(text)) return "edit_leak";
     }
-    if (opts.objective !== undefined && (!opts.objective.trim() || o.participants.some(id => this.guardCheck(opts.objective!, id).length))) return "edit_leak";
+    if (opts.objective !== undefined && (!opts.objective.trim() || ratingLeak(opts.objective) || o.participants.some(id => this.guardCheck(opts.objective!, id).length))) return "edit_leak";
     return undefined;
   }
+
+  /** This app rates photos (slop): its outbound words are checked for the rating too (editBlock, the relay desk). */
+  private get ratesPhotos(): boolean { return this.app.id === "slop"; }
 
   /**
    * The gates again, at approval (an item can wait up to 12 hours). Every participant: not declined,
@@ -4577,7 +4597,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const self = this;
     return {
       get app() { return self.app.id; },
-      get ratesPhotos() { return self.app.id === "slop"; },
+      get ratesPhotos() { return self.ratesPhotos; },
       now: () => this.now(),
       member: id => {
         const m = this.members.get(id);
