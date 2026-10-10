@@ -7,6 +7,7 @@ import type { SQL } from "bun";
 import { DAY, type Edge, type EdgeType, type Facet, type Intent, type Member, type Presence, type Proposal, type ParticipationState, type WorldSnapshot } from "@thenetwork/core";
 
 import type { SetStateRequest } from "../../core/src/svc/contract.ts";
+import { peonSeats } from "@thenetwork/engine";
 
 /** Effective participation comes from the canonical member row and Clock only. */
 export function effectiveParticipation(row: {participation_state: ParticipationState; participation_window?: unknown; opted_out?: boolean}, now: number): {
@@ -84,7 +85,7 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
   const keep = (id: string) => joined.has(id) && (!inCity || inCity.has(id));
   const partsBy = new Map<string, any[]>();
   for (const p of parts as any[]) { if (!partsBy.has(p.opportunity_id)) partsBy.set(p.opportunity_id, []); partsBy.get(p.opportunity_id)!.push(p); }
-  return {
+  const snap: WorldSnapshot = {
     now,
     // The account status rides along (the Network reads it): a paused or restricted account is never matched or contacted.
     members: (members as any[]).filter(r => keep(r.id)).map((r): Member & { accountStatus: string } => ({
@@ -107,4 +108,8 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
       explanations: o.explanations ?? {}, generator: o.generator ?? o.source, createdAt: ms(o.created_at) ?? 0,
     })),
   };
+  // peon: each job posting (a hiring manager's intent "peon:job ...") is a job seat with capacity =
+  // openings (engine peonSeats). Read from the same rows, never stored twice. The pack hook keeps the
+  // capacity left (packs.ts). Only adult managers get seats; nothing else changes for other apps.
+  return app === "peon" ? peonSeats(snap) : snap;
 }

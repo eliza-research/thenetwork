@@ -50,6 +50,8 @@ export const T = {
   company: "peon:company:",        // job: company id
   verified: "peon:verified",       // job: employer verified (domain, registry / EIN, a human call)
   openings: "peon:openings:",      // job: open headcount
+  posting: "peon:posting:",        // service: a hiring manager's facet that belongs to one job posting (intent id); seats.ts
+  seatCap: "peon:seat_cap:",       // job seat: openings left this run (seats.ts peonSeatCapacity); caps the slate
   urgency: "peon:urgency:",        // job: 1-3
   fillBy: "peon:fill_by:",         // job: the fill-by date the employer stated at intake (epoch day)
   start: "peon:start_weeks:",      // candidate: can start in N weeks
