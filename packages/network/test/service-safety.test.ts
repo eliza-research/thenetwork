@@ -276,11 +276,12 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(readdirSync(dir)).toHaveLength(0);
     expect((await sql`select count(*)::int as n from platform.photos`)[0].n).toBe(0);
   }, T);
-  test("ratings of looks go with their photo, with a failed age check, and with a minor age on any app (adults only)", async () => {
+  test("the private member rating recomputes after photo deletion and clears on failed age or a minor age in any app", async () => {
     await fresh();
     const dir = mkdtempSync(join(tmpdir(), "svc-ratings-")); dirs.push(dir);
     const clock = new SimClock(START);
-    const rater: PhotoRater = { id: "fake", rate: async () => ({ face: 0.5, body: 0.5, overall: 0.5, confidence: 0.9, model: "fake" }) };
+    const ratedPhotoCounts: number[] = [];
+    const rater: PhotoRater = { id: "fake", rate: async (_subject, photos) => { ratedPhotoCounts.push(photos.length); return { face: 0.5, body: 0.5, overall: 0.5, confidence: 0.9, model: "fake" }; } };
     const { s, otp } = service(clock, { photoStorage: new LocalDiskPhotoStorage(dir), photoRater: rater });
     const web = site(s, clock, otp);
     const ana = newPhone();
@@ -288,13 +289,16 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect((await web.join("slop", 30, "Ana")).status).toBe(200);
     const a = (await memberOf("slop", ana))!.id;
     const upload = async () => (await (await web.call("slop", "POST", "/api/photos", jpeg() as unknown as BodyInit, { "content-type": "image/jpeg", "x-photo-consent": PHOTO_CONSENT.version })).json()) as { ok: boolean; id: string };
-    const ratings = async () => (await sql`select count(*)::int as n from network.facets where member_id = ${a} and id like ${`${a}:photo:%`}`)[0].n as number;
+    const ratings = async () => (await sql`select count(*)::int as n from network.facets where member_id = ${a} and id = ${`${a}:appearance`}`)[0].n as number;
     const first = await upload(), second = await upload();
+    expect(ratedPhotoCounts).toEqual([1, 2]);
     expect([first.ok, second.ok]).toEqual([true, true]);
-    expect(await ratings()).toBe(2);
-    // The member deletes one photo: its rating goes with it (before: the rating stayed).
+    expect(await ratings()).toBe(1);
+    // Deleting one photo recomputes the one private member rating from the remaining photo.
     expect((await web.json("slop", "POST", "/api/photos/delete", { id: first.id })).status).toBe(200);
     expect(await ratings()).toBe(1);
+    expect(ratedPhotoCounts).toEqual([1, 2, 1]);
+    expect((await sql`select privacy_scope from network.facets where id = ${`${a}:appearance`}`)[0].privacy_scope).toBe("agent_private");
     // A failed age check recorded by staff: no rating stays on this app.
     expect((await staff(s, "saf-tok", "POST", `/apps/slop/members/${a}/verify`, { check: "age", result: "fail", note: "staff review" })).status).toBe(200);
     expect(await ratings()).toBe(0);
@@ -306,6 +310,9 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect((await web.join("friends", 15, "Ana")).status).toBe(200);
     expect(await ratings()).toBe(0);
     expect(readdirSync(dir)).toHaveLength(0);
+    const calls = ratedPhotoCounts.length;
+    expect((await upload()).ok).toBe(false);
+    expect(ratedPhotoCounts).toHaveLength(calls);
   }, T);
   test("staff with safety on one app hold on that app only and cannot ban; the audit never counts the person's apps", async () => {
     await fresh();
