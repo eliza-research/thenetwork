@@ -188,6 +188,36 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
   }, T);
 
   describe("MCP through the site router", () => {
+    test("custom ChatGPT Slop keeps ZIP profiles but refuses split phone numbers and codes before storage", async () => {
+      const pilot = await startStack();
+      const db = new SQL({ url: pilot.url, max: 2 });
+      try {
+        const phone = newPhone(), browser = new Browser();
+        expect((await webJoin(pilot, "slop", phone, { age: 30, browser })).res.status).toBe(200);
+        const person = (await pilot.svc.publicApi.accounts.personFor(phone))!;
+        const member = (await db`select id from network.members where person_id=${person.id} and app_id='slop'`)[0]!;
+        pilot.setCustomChatGptSlopPersonIds([person.id]);
+        const c = await connectMcp(pilot, "slop", phone, { browser, redirect: "https://chatgpt.com/connector_platform_oauth_redirect" });
+        expect(c.token?.access_token).toBeString();
+        const submit = (about: string) => rpc(pilot, "slop", "/mcp", "tools/call", { name: "submit_profile", arguments: { app: "slop", about } }, c.token!.access_token);
+        for (const about of ["My phone number is 11211 12345.", "My phone is 41555 50102.", "My verification code is 12 34 56.", "Please keep this private: 41555 50102.", "Please keep this private: 12 34 56.", "Please keep this private: 12-34 56.", "Reach me at cell2125550142."]) {
+          expect(toolData(await submit(about)).error).toMatch(/phone numbers, codes and email/);
+          expect((await db`select id from network.messages where body=${about}`).length).toBe(0);
+        }
+        for (const about of [
+          "I'm Rae, 30, in 11211. Seeking men 28-35 within 5 miles for a long-term relationship. I like climbing and live music.",
+          "I'm Rae, 30, near (11237), seeking men 28-35 within 5 miles. I like climbing and live music.",
+          "I'm Rae, 30, in 11211. I like 1990s music, climbing and live shows.",
+        ]) {
+          expect(toolData(await submit(about))).toMatchObject({ app: "slop", submitted: true });
+          expect((await db`select id from network.messages where member_id=${member.id} and body=${about}`).length).toBe(1);
+        }
+        expect((await db`select id from network.members where person_id=${person.id} and app_id='slop'`)[0]!.id).toBe(member.id);
+        expect((await pilot.svc.publicApi.accounts.personFor(phone))?.id).toBe(person.id);
+        expect(toolData(await rpc(pilot, "slop", "/mcp", "tools/call", { name: "check_status", arguments: { app: "slop" } }, c.token!.access_token))).toMatchObject({ app: "slop", status: "active" });
+      } finally { await db.close(); await pilot.close(); }
+    }, T);
+
     test("custom ChatGPT Slop configuration is separate, default-off and fail-closed", async () => {
       const on = { MCP_CUSTOM_CHATGPT_SLOP: "on", MCP_CUSTOM_CHATGPT_SLOP_PERSON_IDS: "owned-person" };
       for (const env of [{ ...on, PLATFORM_ENV: "dev" }, { ...on, PLATFORM_ENV: "unknown" }, on]) {
