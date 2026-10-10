@@ -131,9 +131,9 @@ Set these in **Variables**. Mark each **secret** row as a sealed variable. Never
 | `PHOTO_STORAGE` | no | `r2` (unset: photos are off) | slop.date photos (adults only). `local` is for dev only. |
 | `R2_ACCOUNT_ID` (or `R2_ENDPOINT`), `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | key: **yes** | A **private** bucket: no public access, no r2.dev URL | The R2 driver is not yet exercised in tests. |
 | `PHOTO_VIEW_BASE_URL` | no | `https://slop.date` | Staff photo links (5 minutes, signed) go through the backend there. |
-| `CLEF_RATINGS` | no | `off` (default). `on` only after fitted weights pass the rule in docs/results/2026-10-09-clef-fitting.md **[FOUNDER]** | The slop.date photo rater (Clef). Off: photos work, unrated. `server.ts` logs `photo rater` with its status at start. |
-| `CLEF_WEIGHTS_PATH` | no | Required when `CLEF_RATINGS=on`: a fitted weights file with a version and provenance. The placeholder, or a file without provenance, is refused (ratings stay off). | |
-| `CLOUDFLARE_AI_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | **yes** (token) | A Workers AI token, required when `CLEF_RATINGS=on` | Never set in CI or `bun run sim`. Each rating is a `photo_rating` row in the cost ledger (7.3). |
+| `CLEF_RATINGS` | no | `on` (default, founder 2026-10-09). `off` turns ratings off; any other value also leaves them off. | The slop.date photo rater (Clef). Off: photos work, unrated. `server.ts` logs `photo rater` with its status and weights version at start. |
+| `CLEF_WEIGHTS_PATH` | no | Unset: the placeholder Clef weights (status `on_placeholder`) until fitted weights pass the rule in docs/results/2026-10-09-clef-fitting.md. Set: a fitted weights file with a version and provenance; a placeholder or a file without provenance is refused (ratings stay off). | |
+| `CLOUDFLARE_AI_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | **yes** (token) | A Workers AI token and the account id. Without them nothing is rated (`off_env`). | Never set in CI or `bun run sim`. Each rater try is a `photo_rating` row in the cost ledger (7.3). |
 | `CLEF_MODEL` | no | `clef` | `clef-flash` is cheaper. A refused weights file logs `photo rater` with `status: refused_weights`. |
 | `SURPLUS_API_KEY` | **yes** | Only when an LLM path is turned on | gpt-6-luna through core's `chatJson`. Without it, LLM paths fail closed. |
 | `NETWORK_CHANNEL`, `BLOOIO_API_KEY`, `BLOOIO_FROM`, `BLOOIO_ALLOW_SEND`, `NTWRK_LIVE_APPROVED`, `<APP>_LIVE_APPROVED` | key: **yes** | **leave all unset** | Live sends. **[FOUNDER]** only. Section 6. |
