@@ -41,6 +41,8 @@ import { eventOf, membersOf, type EventRow } from "../../observatory/src/events.
 
 import { NOT_SENT, type RecipientCheck } from "../../blooio/src/outbound-queue.ts";
 import { summarizeRun } from "../../observatory/src/engineCapture.ts";
+import type { JobPosting } from "../src/jobs.ts";
+import { savePosting } from "./postings.ts";
 
 type Row = Record<string, unknown>;
 
@@ -57,8 +59,10 @@ export interface Unit {
   collected: Set<string>;
   /** A signed agent action's receipt (relay-endpoint.ts), completed in this unit's save transaction with its rows. */
   completeAction?: (tx: SQL) => Promise<void>;
+  /** peon job postings saved in this unit (a manager's confirmed text, or staff): their rows go in the save transaction. */
+  postings: JobPosting[];
 }
-const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set() });
+const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set(), postings: [] });
 
 /** What the service gives each runtime: the shared connection and clock, and the checks that span apps. */
 export interface RuntimeHost {
@@ -148,6 +152,8 @@ export class NetworkRuntime {
       onLedger: e => { this.capital.onLedger(e); this.unit.capital.push(e); },
       // An age a member stated (network-consent-12): the service writes it to the person after the unit.
       onAgeStated: (memberId, age, o) => { this.statedAges.push({ memberId, age, ...o }); },
+      // peon (#9): a posting the manager confirmed (or staff saved) is written with the unit (writeUnit).
+      onPosting: p => { this.unit.postings.push(p); },
     });
     this.net.init(this.context());
     this.adapter = typeof o.adapter === "function" ? o.adapter(this.net, this) : o.adapter ?? new DryRunAdapter(host.log);
@@ -391,7 +397,7 @@ export class NetworkRuntime {
         order by person.id for update of person`;
       for (const row of rows as Row[]) personIds.set(row.member_id as string, row.id as string);
     }
-    const named = new Set<string>([...u.sends.map(s => s.memberId), ...(u.inbound ? [u.inbound.member_id as string] : []), ...u.blocks.flat(), ...u.optOut.keys()]);
+    const named = new Set<string>([...u.sends.map(s => s.memberId), ...(u.inbound ? [u.inbound.member_id as string] : []), ...u.blocks.flat(), ...u.optOut.keys(), ...u.postings.map(p => p.managerId)]);
     const known = new Set<string>();
     if (named.size) for (const r of await tx`select id from network.members where app_id = ${app} and id in ${tx([...named])}`) known.add(r.id);
     const ok = (id: string) => known.has(id) && !u.forget.has(id);
@@ -445,6 +451,8 @@ export class NetworkRuntime {
         on conflict do nothing`;
     }
     for (const r of u.runs) await tx`insert into network.matching_runs ${tx(r)} on conflict (id) do nothing`;
+    // Job postings: the intent and its tagged facets on the manager (postings.ts); never for a member this unit forgets.
+    for (const p of u.postings) if (ok(p.managerId)) await savePosting(tx, app, p);
     for (const [id, out] of u.optOut) if (ok(id)) await tx`update network.members set opted_out = ${out} where app_id = ${app} and id = ${id}`;
     // The forget path (an under-age decline, leaving the app, deleting everything): keep only the id. Nothing that names the member stays.
     for (const id of u.forget) {

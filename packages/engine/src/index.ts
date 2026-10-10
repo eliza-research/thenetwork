@@ -24,7 +24,7 @@ export { friendsPack, friendsGeo, FRIENDS_PACK_VERSION, FRIENDS_PLANS, DEFAULT_F
 export * as friendsKit from "./packs/friends/index.ts";
 // peonPack (docs/results/2026-10-08-peon-pack.md): peon.biz on the shared engine.
 export { peonPack, PEON_PACK_VERSION, PEON_ENGINE_CONFIG } from "./packs/peon/index.ts";
-export { peonSeats, peonSeatCapacity, seatFills, seatIdOf, isSeatId } from "./packs/peon/seats.ts";
+export { peonSeats, peonSeatCapacity, seatFills, seatIdOf, isSeatId, postingIdOf, seatOwnerOf } from "./packs/peon/seats.ts";
 export * as peonKit from "./packs/peon/index.ts";
 // Relay through the agent after a match (docs/results/2026-10-09-relay.md).
 export { relayItem, relayItemAsync, relayItemFromRequest, relayGuard, classifyRelayText, parseRelayRequest, pastContacts, threadMessage, isOpaquePhotoId, RELAY_POLICY_VERSION, RELAY_LIMITS, RELAY_RULES, RELAY_REASON_FAMILIES, RELAY_WORDING, MINOR_SIGNAL, spelledPhone, type RelayKind, type RelayDecision, type RelayParty, type RelayOpportunity, type RelayConsent, type RelayItem, type RelayLimits, type RelayRecord, type RelayContext, type RelayResult, type RelayClassifierHook, type RelayClassifierInput, type RelayClassifierOutput, type RelayRequest, type RelayThreadMessage } from "./relay.ts";
