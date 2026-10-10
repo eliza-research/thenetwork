@@ -8,7 +8,8 @@ Other clients are deferred beyond completed entry checks. No client has passed l
 
 - Base: Network main `7348e94ee9f851b815f4dd35f2c97f6b9bf52ff9`.
 - Branch: `codex/network-existing-agents-20261009`.
-- Local reconciliation: `40d9a1c` includes parent fixture commit `253728c8` ancestry (PR #15), without shared production changes.
+- Reconciliation preserves parent fixture commits `253728c8` and `578445c` ancestry (PR #15).
+- Separate commit `553ca34` fixes a demonstrated Lab snapshot/persistence race; before/after real-process regression passes.
 - PRD 28.3 requires onboarding through the person's existing agent and MCP.
 - PRD 40.3 requires phone identity, separate app memberships, consent, and app isolation.
 - The person's agent uses its own model. Reading SKILL.md neither removes inference nor installs an MCP connector.
@@ -157,15 +158,17 @@ Do not request another OTP until the shared request owner agrees. No real signup
 ## Hosting and access checkpoint
 
 The user resumed the remaining work. Other-client acceptance remains deferred while ChatGPT stays first.
+The correct Brave session exposes the Eliza Labs account and Slop/Friends zones. A Network-domain search returned no results.
 GitHub's repository `MCP_URL` is corrected to `https://{domain}/mcp`, with readback. This is configuration, not a site deployment.
 Issue #5 remains open, with no assignee or comments. Its old HTTP 526 outage description is stale.
 Current direct checks show valid TLS: health HTTP 200 (`env=production`, `build=dev`), Slop/Friends app APIs and OAuth metadata HTTP 200.
 These checks establish endpoint reachability, not hosted private Slop authorization or launch readiness.
 The isolated Cloudflare CLI is logged out. A Chrome work-identity check showed one account and no domains.
-The user clarified that Eliza Cloudflare is in Brave. The Chrome result is not evidence about Eliza Labs access; Brave verification is pending.
-The minimum owner action is an invitation to the correct Cloudflare account with the scoped zone/Pages configuration access needed.
+The user clarified that Eliza Cloudflare is in Brave. The Chrome result is not evidence about Eliza Labs access.
+Existing Network zone access belongs to another account. The owner is handling a new domain; its purchased name and backend origin remain unconfirmed.
 An isolated fixture journey does not require Network zone access. It remains local only.
-The user flagged a potentially newer Shaw domain instruction. New endpoint/domain work is paused until that instruction is verified.
+The latest domain instruction is verified from user-provided messages and an authorized native Messages read.
+New endpoint/domain changes await the owner's confirmed purchased name. No duplicate purchase or old-zone move is planned.
 No Cloudflare, DNS, deployment, main merge, or live-private flag change occurred.
 
 ## Evidence and publication limits
@@ -177,4 +180,6 @@ Show sanitized screenshots and the required walkthrough/before-after video to th
 The 24-second captured-frame walkthrough was shown to the user before public attachment. Raw account captures remain private.
 [Walkthrough and before/after video](https://github.com/user-attachments/assets/cbd64c04-a151-40f9-8bf4-ac6343dbc77b). Captions also remain in the private evidence directory.
 [Draft PR #13](https://github.com/eliza-research/thenetwork/pull/13) contains the source, walkthrough, and review steps.
-Local reconciliation is prepared for publication to PR #13. Latest local integration passes; hosted-client acceptance remains unfinished.
+Reconciled integration and onboarding E2E passed in hosted PR CI on `e095820`; duplicate push CI exposed the separate Lab race.
+After its fix and parent cleanup: local integration 403/403 (8945 assertions, 115.26 seconds), e2e 29/29 and typecheck pass.
+Final-head hosted checks are pending. Hosted-client acceptance remains unfinished.
