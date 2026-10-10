@@ -111,6 +111,15 @@ test("inside the match, asking for the match's number is a swap ask for the agen
 },60_000);
 
 
+test("a profile from the member's AI assistant that asks for the match's number is never a swap ask: it is scored",async()=>{
+  await fixturePair();
+  const rt=service.runtimeFor("friends")!,score=()=>rt.net.trust.get(fromId).score,before=score();
+  // submit_profile text (InboundMessage.source "mcp") is learned, never the member's answer or request (PR #31).
+  clock.advance(MINUTE);
+  const out=await rt.unitOfWork(n=>n.onInbound({id:"mcp-swap-ask",memberId:fromId,body:"can I get Sam's number?",ts:clock.now(),channel:"imessage",source:"mcp"}));
+  expect(out).not.toBe("open");expect(score()).toBeGreaterThan(before);
+},60_000);
+
 test("a pronoun ask next to a third-party or bulk ask is still scored, whole message",async()=>{
   const net=service.runtimeFor("friends")!.net,score=()=>net.trust.get(fromId).score;
   // Each case from a clean slate: the open match, and Ari's trust at 0 (a watch would close the match).
