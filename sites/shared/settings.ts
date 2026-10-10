@@ -36,11 +36,12 @@ function flowError(root: HTMLElement, text: string): void {
 
 function render(root: HTMLElement, me: Me): void {
   const m = me.membership;
-  const stopped = m ? ["opted_out", "stopped"].includes(m.state) : false;
+  const stopped = typeof me.smsOptedIn === "boolean" ? !me.smsOptedIn
+    : m ? ["opted_out", "stopped"].includes(m.state) : false;
   fill(root, {
     phoneMasked: me.phoneMasked,
     firstName: m?.firstName ?? "",
-    state: m ? STATE_LABELS[m.state] ?? m.state : "",
+    state: m ? stopped ? STATE_LABELS.stopped : STATE_LABELS[m.state] ?? m.state : "",
     joinedAt: m ? formatDate(m.joinedAt) : "",
   });
   when(root, "has-membership", !!m);
@@ -127,7 +128,7 @@ export async function mountSettings(root: HTMLElement): Promise<void> {
     const res = await api.stop();
     if (!res.ok) return status(root, message(root, res.error));
     await refresh(root);
-    status(root, root.dataset.msgStopped ?? "Messages are stopped. Text START to us to turn them back on.");
+    status(root, root.dataset.msgStopped ?? "Messages from every app powered by The Network are stopped. Text START to resume this app.");
   });
 
   act("leave", async () => {

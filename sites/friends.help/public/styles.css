@@ -148,3 +148,6 @@ body.landing {
   --l-pill-bg: #18300f; --l-pill-ink: #e3f39a; --l-radius: 18px; --l-pill: 999px; --l-focus: #e3f39a;
   --l-font: Figtree, 'Avenir Next', system-ui, -apple-system, sans-serif; --l-display: Figtree, 'Avenir Next', system-ui, sans-serif;
 }
+
+/* State-driven panels must stay hidden even when their layout uses grid. */
+[hidden] { display: none !important; }
