@@ -19,6 +19,7 @@ const { BlooioClient } = await import("../../packages/blooio/src/blooio/client.t
 const { BlooioAdapter: ProviderAdapter } = await import("../../packages/blooio/src/adapters/blooio-adapter.ts");
 const { resolveSenderLine } = await import("../../packages/blooio/src/line.ts");
 const { migrate } = await import("../../packages/observatory/db/migrate.ts");
+const { CloudChannelAdapter } = await import("../../packages/network/service/cloud-channel.ts");
 const { BlooioAdapter, liveFlag, liveSendAllowed } = await import("../../packages/network/service/channel.ts");
 const { NetworkService, webhookSecretsFromEnv } = await import("../../packages/network/service/service.ts");
 const { createServiceMcp } = await import("../../packages/network/service/serve.ts");
@@ -75,14 +76,15 @@ async function main() {
     // The backend decides the app and the client IP before the public API sees the request (backend.ts normalizeEdge).
     publicApi: { hostMap: c.hostMap, ipOf, trustForwardedHost: false },
     log: s => log.info(s),
-    adapter: c.channel === "blooio" ? (net, rt) => {
+    adapter: c.channel === "eliza_cloud" ? (_net,rt)=>new CloudChannelAdapter({clock,from:resolveSenderLine(),app:rt.app.id,city:rt.city,env:process.env,
+      origin:process.env.NETWORK_CLOUD_DELIVERY_ORIGIN!,secret:process.env.SERVICE_TURN_SECRET!}) : c.channel === "blooio" ? (net, rt) => {
       const from = resolveSenderLine();
       return new BlooioAdapter({ net, provider: new ProviderAdapter(new BlooioClient({ apiKey: process.env.BLOOIO_API_KEY! }), from), clock, memberOf: rt.memberOf, from, app: rt.app.id, city: rt.city });
     } : undefined,
   });
   await svc.start();
   for (const rt of svc.runtimes.values()) {
-    const sends = c.channel === "blooio" ? (liveSendAllowed(process.env, rt.app.id) ? "live" : `refused (${liveFlag(rt.app.id)} is off)`) : "dry-run";
+    const sends = c.channel !== "dry-run" ? (liveSendAllowed(process.env, rt.app.id) ? "live" : `refused (${liveFlag(rt.app.id)} is off)`) : "dry-run";
     log.info("network", { network: rt.id, sends, matching: rt.matchingAllowed ? "allowed" : "off" });
   }
 

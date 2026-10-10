@@ -32,8 +32,9 @@ import { brandOf, copy as ntwrkCopy, copyFor, type Copy } from "../src/copy.ts";
 import { isMinor } from "@thenetwork/core";
 import { ageAnswer, agesStated } from "../src/classify.ts";
 import { NetworkRuntime, type RuntimeHost } from "./runtime.ts";
+import { effectiveParticipation } from "./snapshot.ts";
 import { Inbox, type CollectedReply } from "./inbox.ts";
-import { TURN_PATH, TURN_RECEIPT_PATH, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
+import { TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH, type SetStateRequest, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
 import { svcVerify } from "../../core/src/svc/svc-auth.ts";
 import { readCapped } from "../../platform/src/body.ts";
 import { canJoin } from "../../core/src/policy.ts";
@@ -155,7 +156,7 @@ export interface ServiceOptions {
   /** Proactive messages a person gets a day across all apps (default 3; 0 turns the cap off). */
   personDailyCap?: number;
   /** Options for the public API (publicFetch). OTP defaults to OTP_PROVIDER (dev console outside production). */
-  publicApi?: Partial<Pick<PublicApiOptions, "otp" | "turnstile" | "hostMap" | "trustForwardedHost" | "minStartMs" | "minVerifyMs" | "otpLimits" | "demo" | "ipOf">>;
+  publicApi?: Partial<Pick<PublicApiOptions, "otp" | "turnstile" | "hostMap" | "trustForwardedHost" | "minStartMs" | "minVerifyMs" | "otpLimits" | "demo" | "ipOf" | "cloudAuthFetch">>;
   /** PLATFORM_STOP_SCOPE, PLATFORM_HASH_KEY, NODE_ENV/PLATFORM_ENV. Default process.env. */
   env?: Env;
   /** Photo storage (platform photos.ts). Default: PHOTO_STORAGE from the environment; null turns photos off. */
@@ -472,7 +473,7 @@ export class NetworkService implements RuntimeHost {
       if (!personId) continue;
       await this.notify.recordSent(
         { personId, app: rt.app.id, eventType: b.type!, subjectId: b.oppId ?? b.id, urgency: b.proactive ? "normal" : "requested", summary: b.body.trim().slice(0, NOTIFY_SUMMARY_MAX) || "An update from the Network." },
-        { deliveryId: `net:${b.id}`, channel: "imessage", countsTowardCap: b.proactive || b.kind === "proactive", sentAt: b.ts },
+        { deliveryId: `net:${b.id}`, channel: "imessage", countsTowardCap: b.proactive || b.kind === "proactive", sentAt: b.acceptedAt ?? b.ts },
       );
     }
   }
@@ -1446,6 +1447,111 @@ export class NetworkService implements RuntimeHost {
     return { ...h, networks };
   }
 
+  /** Agent actions inherit one completed open turn; receipts stay on that original inbound owner. */
+  private async sharedAction(path: string, b: Row, signedId: string, raw: string): Promise<Response> {
+    const json = (value: unknown, status = 200) => Response.json(value, {status, headers: {"cache-control": "no-store"}});
+    const stateAction = path === SET_STATE_PATH;
+    const keys = stateAction ? ["channel","messageId","app","memberId","idempotencyKey","state","from","until","note"]
+      : path === SIGNALS_PATH ? ["channel","messageId","app","memberId","signals"] : ["channel","messageId","app","memberId"];
+    const key = stateAction ? b.idempotencyKey : `${b.messageId}:${path === SIGNALS_PATH ? "signals" : "updates"}`;
+    if (!isAppId(b.app) || typeof b.memberId !== "string" || !b.memberId.trim() || b.memberId.length > 256
+      || typeof key !== "string" || !key.trim() || key.length > 512 || /[\r\n\u0000]/.test(key) || signedId !== key
+      || Object.keys(b).length !== keys.length || Object.keys(b).some(name => !keys.includes(name))) return json({error:"invalid_request"},400);
+    const app = b.app, memberId = b.memberId;
+    let window: {state: SetStateRequest["state"]; from: string|null; until: string|null; note: string|null} | undefined;
+    if (stateAction) {
+      const date = (value: unknown) => value === null || (typeof value === "string" && value.length <= 64
+        && /T\d{2}:\d{2}.*(?:Z|[+-]\d{2}:\d{2})$/u.test(value) && Number.isFinite(Date.parse(value)));
+      if (!["open","busy","traveling","paused"].includes(b.state as string) || !date(b.from) || !date(b.until)
+        || (b.note !== null && (typeof b.note !== "string" || b.note.length > 300))
+        || (b.from !== null && b.until !== null && Date.parse(b.until as string) <= Date.parse(b.from as string))) return json({error:"invalid_state_window"},400);
+      window = {state:b.state as SetStateRequest["state"], from:b.from === null ? null : new Date(b.from as string).toISOString(),
+        until:b.until === null ? null : new Date(b.until as string).toISOString(), note:b.note as string|null};
+    } else if (path === SIGNALS_PATH && (!Array.isArray(b.signals) || b.signals.length > 20 || b.signals.some(signal => !signal || typeof signal !== "object"
+      || Array.isArray(signal) || !["opt_out","travel","safety_concern"].includes(signal.kind) || typeof signal.evidence !== "string"
+      || !signal.evidence.trim() || signal.evidence.length > 500 || Object.keys(signal).length !== 2))) return json({error:"invalid_signals"},400);
+    const turnId = `msg:${b.channel}:${b.messageId}`;
+    const [original] = await this.sql`select sender_hash,response from platform.inbound where id=${turnId} and status='done'`;
+    if (!original || original.response?.outcome !== "open" || original.response.app !== app || original.response.memberId !== memberId) return json({error:"turn_scope_invalid",retryable:false},403);
+    const who = await this.accounts.byPhoneHash(original.sender_hash), rt = this.runtimeFor(app);
+    if (!who || !rt) return json({error:"membership_unavailable",retryable:false},403);
+    const authorized = async () => (await this.accounts.activeMembership(rt.app,{e164:who.e164,personId:who.person.id}))?.membership.memberId === memberId;
+    if (!await authorized()) return json({error:"membership_unavailable",retryable:false},403);
+    if (path === UPDATES_PATH && !this.notify) return json({error:"canonical_updates_unavailable",retryable:false},503);
+    const id = createHash("sha256").update(JSON.stringify([turnId,path,key])).digest("hex"), digest = createHash("sha256").update(raw).digest("hex");
+    const lock = async (tx: SQL) => {
+      await tx`select id from platform.people where id=${who.person.id} and deleted_at is null for update`;
+      await tx`select set_config('app.app_id',${app},true)`;
+      await tx`select member_id from platform.memberships where person_id=${who.person.id} and app_id=${app} for update`;
+      await tx`select id from network.members where app_id=${app} and id=${memberId} for update`;
+      const [turn] = await tx`select status,response,sender_hash,action_receipts from platform.inbound where id=${turnId} for update`;
+      if (!turn || turn.status !== "done" || turn.sender_hash !== original.sender_hash || turn.response?.outcome !== "open"
+        || turn.response.app !== app || turn.response.memberId !== memberId || !await authorized()) throw new Error("Original turn authority changed");
+      return turn;
+    };
+    try {
+      const claim = await this.sql.begin(async tx => {
+        const turn = await lock(tx), prior = turn.action_receipts[id];
+        if (prior) {
+          if (prior.requestHash !== digest) return {response:json({error:"action_conflict",retryable:false},409)};
+          if (prior.state !== "completed") return {response:json({error:"action_unresolved",retryable:false},409)};
+          return {response:json(stateAction ? {...prior.response,replayed:true} : prior.response)};
+        }
+        if (Object.keys(turn.action_receipts).length >= 16) return {response:json({error:"action_limit",retryable:false},429)};
+        if (window?.until && Date.parse(window.until) <= this.clock.now()) return {response:json({error:"expired_state_window"},400)};
+        await tx`update platform.inbound set action_receipts=jsonb_set(action_receipts,array[${id}],${{requestHash:digest,state:"processing"}}::jsonb) where id=${turnId}`;
+        return {response:null};
+      });
+      if (claim.response) return claim.response;
+      const complete = async (tx: SQL, result: Row) => {
+        const saved = await tx`update platform.inbound set action_receipts=jsonb_set(action_receipts,array[${id}],${{requestHash:digest,state:"completed",response:result}}::jsonb)
+          where id=${turnId} and status='done' and action_receipts->${id}->>'requestHash'=${digest} and action_receipts->${id}->>'state'='processing' returning id`;
+        if (!saved.length) throw new Error("Action ownership changed before completion");
+      };
+      if (path === UPDATES_PATH) {
+        if (!await authorized()) throw new Error("Membership revoked before updates");
+        const result = {items:(await this.updatesFor(who.person.id,app,"web")).map(item=>({summary:item.summary}))};
+        await this.sql.begin(async tx=>{await lock(tx);await complete(tx,result);});
+        return json(result);
+      }
+      const result = await this.sql.begin(async tx => {
+        await lock(tx);
+        let result: Row;
+        if (window) {
+          const [member] = await tx`select participation_state,participation_window from network.members where app_id=${app} and id=${memberId}`;
+          const participation = effectiveParticipation(member,this.clock.now()), prior = participation.window;
+          const previous = participation.active ? prior!.state : participation.state === "quiet" ? "busy" : participation.state === "paused" ? "paused" : "open";
+          const scheduled = window.state === "traveling" || window.from !== null || window.until !== null || window.note !== null;
+          const nextWindow = scheduled ? window : null;
+          const base = scheduled ? member.participation_state : effectiveParticipation({...member,participation_window:window},this.clock.now()).state;
+          const unchanged = base === member.participation_state && (nextWindow === null ? prior === null : !!prior
+            && nextWindow.state === prior.state && nextWindow.from === prior.from && nextWindow.until === prior.until && nextWindow.note === prior.note);
+          result = {eventId:null,previous,current:window.state,from:window.from,until:window.until,committedAt:new Date(this.clock.now()).toISOString(),replayed:false,unchanged};
+          if (!unchanged) {
+            await tx`update network.members set participation_state=${base},participation_window=${nextWindow}::jsonb where app_id=${app} and id=${memberId}`;
+            const [event] = await tx`insert into network.events(app_id,at,actor_type,actor_id,type,object_type,object_id,payload)
+              values(${app},${new Date(this.clock.now())},'member',${memberId},'member_state_requested','member',${memberId},${{state:window.state,from:window.from,until:window.until}}::jsonb) returning id`;
+            result.eventId = String(event.id);
+          }
+        } else {
+          const signals = b.signals as Array<{kind:string;evidence:string}>;
+          for (const [index,signal] of signals.entries()) await tx`insert into network.facets(app_id,id,member_id,kind,value,tags,privacy_scope,provenance,source,status,valid_from)
+            values(${app},${`service-signal:${id}:${index}`},${memberId},'fact',${signal.evidence},${tx.array([`signal:${signal.kind}`],"TEXT")},'agent_private','inferred','chat','proposed',${new Date(this.clock.now())})`;
+          if (signals.length) await tx`insert into network.events(app_id,at,actor_type,actor_id,type,object_type,object_id,payload)
+            values(${app},${new Date(this.clock.now())},'agent',${memberId},'network_signals_proposed','member',${memberId},${{kinds:signals.map(signal=>signal.kind),count:signals.length}}::jsonb)`;
+          result = {recorded:signals.length};
+        }
+        await complete(tx,result);
+        return result;
+      });
+      return json(result);
+    } catch {
+      await this.sql`update platform.inbound set action_receipts=jsonb_set(action_receipts,array[${id}],${{requestHash:digest,state:"unresolved"}}::jsonb)
+        where id=${turnId} and status='done' and action_receipts->${id}->>'requestHash'=${digest} and action_receipts->${id}->>'state'='processing'`;
+      return json({error:"action_unresolved",retryable:false},409);
+    }
+  }
+
   /** Signed Shared turns use the existing durable inbox; collection is not provider acceptance. */
   private async sharedTurn(req: Request): Promise<Response> {
     const url = new URL(req.url);
@@ -1463,6 +1569,7 @@ export class NetworkService implements RuntimeHost {
     try { b = JSON.parse(raw); } catch { return reply({error: "invalid_request"}, 400); }
     if (!b || typeof b !== "object" || Array.isArray(b) || (b.channel !== "blooio" && b.channel !== "twilio")
       || typeof b.messageId !== "string" || !b.messageId.trim() || b.messageId.length > 512 || /[\r\n\u0000]/.test(b.messageId)) return reply({error: "invalid_request"}, 400);
+    if ([SET_STATE_PATH,SIGNALS_PATH,UPDATES_PATH].includes(url.pathname)) return this.sharedAction(url.pathname,b,auth.id,raw);
     const digest = createHash("sha256").update(raw).digest("hex");
     const id = `msg:${b.channel}:${b.messageId}`;
     if (url.pathname === TURN_RECEIPT_PATH) {
@@ -1530,7 +1637,7 @@ export class NetworkService implements RuntimeHost {
   /** The HTTP handler: the inbound webhooks and the staff API. The public API is publicFetch (its own port). */
   fetch = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
-    if ([TURN_PATH, TURN_RECEIPT_PATH].includes(url.pathname)) return this.sharedTurn(req);
+    if ([TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH].includes(url.pathname)) return this.sharedTurn(req);
     let path = url.pathname.replace(/\/+$/, "") || "/";
     try {
       if (path === WEBHOOK_PATH || path.startsWith(`${WEBHOOK_PATH}/`)) {

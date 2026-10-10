@@ -108,6 +108,10 @@ test("a normal signed join reaches open context, and STOP revokes replay without
   const r=await post(input);expect(r.status).toBe(200);const body=await r.json() as any;
   expect(body.outcome).toBe("open");expect(body.app).toBe("friends");expect(body.context.singlePlayer).toBe(false);expect(body.context.activeItems).toBeNull();
   expect(await (await post(input)).json()).toEqual(body);
+  // Canonical receiving is a valid recipient role; the wire's open state must not disable its chat.
+  await service.runtimes.get("friends:nyc")!.scoped(tx=>tx`update network.members set participation_state='receiving' where app_id='friends' and id=${body.memberId}`);
+  const receiving=await post(turn("friends-receiving-open",phone,"Tell me something about the weather","friends"));expect(receiving.status).toBe(200);
+  const receivingBody=await receiving.json() as any;expect(receivingBody.outcome).toBe("open");expect(receivingBody.context.state).toBe("open");
   expect((await post(turn("friends-stop",phone,"STOP","friends"))).status).toBe(200);
   expect((await post(input)).status).toBe(409);
   expect(escaped).toBe(before);

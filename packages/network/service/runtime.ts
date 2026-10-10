@@ -26,7 +26,7 @@ import { ConsentNetwork, type NetworkOptions, type NetworkState } from "../src/n
 import { PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
 import { capitalWiring, type CapitalEvent } from "../src/capital.ts";
 import type { AppInfo } from "../../platform/src/apps.ts";
-import { loadSnapshot } from "./snapshot.ts";
+import { effectiveParticipation, loadSnapshot } from "./snapshot.ts";
 import { appWiring, type AppWiring } from "./packs.ts";
 import { DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, type Delivery, type Outbound } from "./channel.ts";
 import { normalizeAddress } from "../../blooio/src/phone.ts";
@@ -38,8 +38,7 @@ import { outputLeaks } from "../../mcp/src/leaks.ts";
 // The Observatory's event shape and run summaries, so the console reads what this writes.
 import { eventOf, membersOf, type EventRow } from "../../observatory/src/events.ts";
 
-/** Delivery statuses of a send that did not go out (its person-cap slot is released). */
-const NOT_SENT = /^(refused|suppressed|blocked|parked|failed)/;
+import { NOT_SENT } from "../../blooio/src/outbound-queue.ts";
 import { summarizeRun } from "../../observatory/src/engineCapture.ts";
 
 type Row = Record<string, unknown>;
@@ -204,7 +203,7 @@ export class NetworkRuntime {
     }
     if (!this.adapter.enqueue) return;
     const recovered = (await this.adapter.recover?.()) ?? 0;
-    if (recovered) this.host.log(`[restart] ${recovered} message(s) a stopped worker held go out again with the same provider key (${this.id})`);
+    if (recovered) this.host.log(`[restart] ${recovered} message(s) ${this.adapter.name === "eliza_cloud" ? "held for receipt lookup" : "go out again with the same provider key"} (${this.id})`);
     // One unit loads the state and the address book; its delivery drains the queue.
     await this.unitOfWork(() => undefined);
   }
@@ -363,7 +362,7 @@ export class NetworkRuntime {
       // Seal old signed replay payloads in the same canonical removal transaction. Keep only dedupe metadata.
       const address = this.addressOf(id);
       const senderHash = address && this.host.accounts?.phoneHash(address);
-      await tx`update platform.inbound set status='unresolved',response=null,replies='[]'::jsonb,receipt=null,receipt_hash=null,
+      await tx`update platform.inbound set status='unresolved',response=null,replies='[]'::jsonb,receipt=null,receipt_hash=null,action_receipts='{}'::jsonb,
         sender=null,event=null,sender_hash=null,member_id=null,app_id=null
         where request_hash is not null and app_id=${app} and (member_id=${id} or sender_hash=${senderHash ?? null})
         and id<>${turn?.id ?? ""}`;
@@ -382,7 +381,7 @@ export class NetworkRuntime {
       await tx`delete from network.channel_identities where app_id = ${app} and member_id = ${id}`;
       await tx`update network.members set invited_by = null where app_id = ${app} and invited_by = ${id}`;
       await tx`update network.members set name = null, home_city = null, home_area = null, account_status = 'removed', opted_out = false, age = null, invited_by = null,
-        community = null, occupation = null, bio = null, prefs = '{}'::jsonb, unanswered_proactive = 0, joined_at = null, person_id = null where app_id = ${app} and id = ${id}`;
+        community = null, occupation = null, bio = null, participation_window=null, prefs = '{}'::jsonb, unanswered_proactive = 0, joined_at = null, person_id = null where app_id = ${app} and id = ${id}`;
       if (personIds.has(id)) await tx`select notify.forget_data(${personIds.get(id)!},${app})`;
       // The persisted queue keeps no text or address of theirs; what still waits is never sent.
       await tx`update platform.outbound set body = null, to_address = null, ended_at = coalesce(ended_at, ${new Date(this.clock.now())}),
@@ -430,8 +429,8 @@ export class NetworkRuntime {
       const notSent = ds.filter(d => NOT_SENT.test(d.status)).map(d => d.id);
       if (notSent.length) await this.host.capRelease?.(notSent);
       if (this.host.delivered) {
-        const no = new Set(notSent);
-        const sent = go.filter(b => !no.has(b.id));
+        const accepted = new Set(ds.filter(d => /^(accepted|sent|delivered|read|dry_run)$/.test(d.status)).map(d => d.id));
+        const sent = go.filter(b => accepted.has(b.id));
         if (sent.length) await this.host.delivered(this, sent).catch(e => this.host.log(`[deliver] delivered hook failed (${this.id}): ${(e as Error).message}`));
       }
     } catch (e) {
@@ -452,14 +451,30 @@ export class NetworkRuntime {
     try { ds = await this.adapter.deliver([]); } catch (e) { this.host.log(`[deliver] the queue waits for the next tick (${this.id}): ${(e as Error).message}`); return; }
     const mine = ds.filter(d => d.memberId && (d.app ?? this.app.id) === this.app.id);
     await this.storeStatuses(mine);
-    const went = mine.filter(d => /^(accepted|sent|delivered|read)$/.test(d.status)).map(d => d.id);
-    if (!went.length || !this.host.delivered) return;
-    const rows = await this.scoped(tx => tx`select id, member_id, body, type, opportunity_id, proactive, system, ts from network.messages where app_id = ${this.app.id} and id in ${tx(went)}`) as any[];
-    const sent: Outbound[] = rows.map(r => ({
-      id: r.id, memberId: r.member_id, body: r.body, kind: r.system ? "compliance" : r.proactive ? "proactive" : "transactional",
-      type: r.type ?? undefined, oppId: r.opportunity_id ?? undefined, proactive: r.proactive, system: r.system, ts: new Date(r.ts).getTime(),
-    }));
-    await this.host.delivered(this, sent).catch(e => this.host.log(`[deliver] delivered hook failed (${this.id}): ${(e as Error).message}`));
+    await this.projectAccepted();
+  }
+
+  /** Repair the existing Notify projection after acceptance, including a crash after its SQL commit. */
+  private async projectAccepted() {
+    if (!this.host.delivered) return;
+    await this.store.withLock(async () => {
+      const rows = await this.scoped(tx => tx`select m.id,m.member_id,m.body,m.type,m.opportunity_id,m.proactive,m.system,m.ts,o.kind,o.sent_at
+        from network.messages m join platform.outbound o on o.id=m.id and o.app_id=m.app_id
+        join network.members member on member.app_id=m.app_id and member.id=m.member_id
+        where m.app_id=${this.app.id} and m.direction='outbound' and member.account_status<>'removed'
+        and o.status in ('accepted','sent','delivered','read') and o.sent_at is not null and o.notification_recorded_at is null
+        and o.body is not null and o.to_address is not null order by o.sent_at,o.id limit 50`);
+      for (const r of rows as Row[]) {
+        const message:Outbound={id:r.id as string,memberId:r.member_id as string,body:r.body as string,kind:r.kind as Outbound["kind"],
+          type:r.type as string|undefined,oppId:r.opportunity_id as string|undefined,proactive:r.proactive as boolean,system:r.system as boolean,
+          ts:new Date(r.ts as string).getTime(),acceptedAt:new Date(r.sent_at as string).getTime()};
+        try {
+          await this.host.delivered!(this,[message]);
+          await this.sql`update platform.outbound set notification_recorded_at=${new Date(this.clock.now())}
+            where id=${message.id} and app_id=${this.app.id} and notification_recorded_at is null and body is not null and to_address is not null`;
+        } catch {this.host.log(`[deliver] notification projection waits (${this.id})`);}
+      }
+    });
   }
 
   async storeStatuses(ds: Delivery[], only?: Set<string>) {
@@ -521,15 +536,18 @@ export class NetworkRuntime {
       const snapshot = this.snap!;
       const member = snapshot.members.find(m => m.id === memberId);
       if (!member) return null;
-      const state = member.state === "normal" || member.state === "open" ? "open"
-        : member.state === "quiet" ? "busy" : member.state === "paused" ? "paused" : null;
+      const [canonical] = await this.scoped(tx => tx`select participation_state,participation_window,opted_out from network.members where app_id=${this.app.id} and id=${memberId}`);
+      if (!canonical) return null;
+      const participation = effectiveParticipation(canonical as {participation_state: typeof member.state; participation_window?:unknown; opted_out?:boolean},snapshot.now);
+      const state = participation.active ? participation.window!.state : participation.state === "normal" || participation.state === "open" || participation.state === "receiving" ? "open"
+        : participation.state === "quiet" ? "busy" : participation.state === "paused" ? "paused" : null;
       if (!state) return null;
       const firstName = member.name.trim().split(/\s+/)[0] ?? "";
       const forbidden = [e164, binding.person.id, ...snapshot.facets.map(f => f.id), ...snapshot.members.flatMap(m => {
         const first = m.name.trim().split(/\s+/)[0] ?? "";
         return m.id === memberId ? [m.id] : [m.id, m.name, ...(first.toLowerCase() !== firstName.toLowerCase() ? [first] : [])];
       })];
-      const facts = snapshot.facets.filter(f => f.scope === "agent_private").map(f => f.value);
+      const facts = [...snapshot.facets.filter(f => f.scope === "agent_private").map(f => f.value),...(participation.window?.note?[participation.window.note]:[])];
       const safe = (text: string) => outputLeaks(text, {forbidden, facts}).length === 0;
       if (!safe(firstName) || !safe(member.homeCity)) return null;
       const facets = snapshot.facets.filter(f => f.memberId === memberId && f.scope === "shareable" && f.confirmedByMember === true
@@ -538,7 +556,7 @@ export class NetworkRuntime {
       // The deployed plugin contract rejects larger context. Withhold it whole; never truncate a fact.
       if (facets.length > 50 || facets.some(f => f.length > 300)) return null;
       return {
-        firstName, city: member.homeCity, state, stateFrom: null, stateUntil: null, facets,
+        firstName, city: member.homeCity, state, stateFrom: participation.active?participation.window!.from:null, stateUntil: participation.active?participation.window!.until:null, facets,
         activeItems: null, singlePlayer: !canBeMatched(await accounts.lowestAge(e164, binding.person)),
       };
     });

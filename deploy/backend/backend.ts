@@ -50,7 +50,7 @@ export interface BackendConfig {
   build: string;
   migrateOnBoot: boolean;
   /** "dry-run" unless NETWORK_CHANNEL=blooio with BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1 (each app also needs its own flag). */
-  channel: "dry-run" | "blooio";
+  channel: "dry-run" | "blooio" | "eliza_cloud";
   shutdownGraceMs: number;
   tickMs: number;
   /** /healthz answers 503 "tick_late" when a network's tick has not finished in this process for this long (TICK_LATE_MS). */
@@ -113,10 +113,13 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   }
 
   const blooioAsked = e.NETWORK_CHANNEL === "blooio" && !argv.includes("--dry-run");
+  const cloudAsked = e.NETWORK_CHANNEL === "eliza_cloud" && !argv.includes("--dry-run");
   // The Blooio adapter is built only when the global flags are on; each app's own flag is checked again per send.
   // The same global check as liveSendAllowed(env, "ntwrk") in packages/network/service/channel.ts.
-  const channel = blooioAsked && e.BLOOIO_ALLOW_SEND === "1" && e.NTWRK_LIVE_APPROVED === "1" ? "blooio" : "dry-run";
+  const channel = (blooioAsked || cloudAsked) && e.BLOOIO_ALLOW_SEND === "1" && e.NTWRK_LIVE_APPROVED === "1" ? cloudAsked ? "eliza_cloud" : "blooio" : "dry-run";
   if (blooioAsked && channel === "dry-run") warnings.push("NETWORK_CHANNEL=blooio without BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1: sends stay dry-run");
+  if (cloudAsked && channel === "dry-run") warnings.push("NETWORK_CHANNEL=eliza_cloud without BLOOIO_ALLOW_SEND=1 and NTWRK_LIVE_APPROVED=1: sends stay dry-run");
+  if (channel === "eliza_cloud" && (!e.NETWORK_CLOUD_DELIVERY_ORIGIN || !e.SERVICE_TURN_SECRET || e.SERVICE_TURN_SECRET.length<32 || !(e.BLOOIO_FROM || e.BLOOIO_FROM_NUMBER))) throw new Error("Cloud sends need NETWORK_CLOUD_DELIVERY_ORIGIN, SERVICE_TURN_SECRET and BLOOIO_FROM");
   if (channel === "blooio" && (!e.BLOOIO_API_KEY || !(e.BLOOIO_FROM || e.BLOOIO_FROM_NUMBER))) throw new Error("live sends need BLOOIO_API_KEY and BLOOIO_FROM");
   if (!e.NETWORK_SERVICE_TOKENS) warnings.push("NETWORK_SERVICE_TOKENS is not set: every staff route answers 401");
   if (!e.BLOOIO_WEBHOOK_SECRET) warnings.push("BLOOIO_WEBHOOK_SECRET is not set: the shared-line webhook answers 503");
@@ -322,7 +325,7 @@ export function createBackend(d: BackendDeps) {
         // Deployed, only a request a site router signed may name a site (audit: a direct request with
         // Host: slop.date was served as slop.date, and every such request shared one socket IP).
         res = c.deployed && !n.edge ? json(421, { ok: false, error: "edge_required" }) : await track(svc.publicFetch(n.req, server));
-      } else if (path === "/webhooks/blooio" || path.startsWith("/webhooks/blooio/") || path === "/consent/gateway" || path === "/internal/turn" || path === "/internal/turn-receipt") {
+      } else if (path === "/webhooks/blooio" || path.startsWith("/webhooks/blooio/") || path === "/consent/gateway" || path === "/internal/turn" || path === "/internal/turn-receipt" || path === "/internal/set-state" || path === "/internal/signals" || path === "/internal/updates") {
         res = await track(svc.fetch(req));
       } else if (MCP_PATH.test(path)) {
         // The MCP server sees the same normalized request as the public API: Host is the site's host only via a verified edge.

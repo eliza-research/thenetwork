@@ -31,7 +31,7 @@ import { DAY, HOUR, MINUTE } from "../../core/src/clock.ts";
 import { LeakGuard } from "../../core/src/guard.ts";
 import { normalizeAddress } from "./phone.ts";
 import { DEFAULT_QUIET, isQuietAt, isValidTimeZone, nextAllowedAt, resolveTimeZone, type QuietWindow } from "./quiet-hours.ts";
-import { ChannelSendError, type ChannelAdapter, type Clock, type StatusUpdate } from "./types.ts";
+import { ChannelSendError, type ChannelAdapter, type Clock, type StatusUpdate, type SendRequest, type SendReceipt } from "./types.ts";
 
 export type MessageKind =
   | "reply"          // the answer to the member's own message; quiet-hours exempt
@@ -88,6 +88,8 @@ export interface QueueRow {
   createdAt: number;
   inDoubt: boolean;
   personCap: boolean;
+  newConversation: boolean;
+  reengagement: boolean;
 }
 
 /** A status a row moved to. Rows with a member also update network.messages (the runtime stores it). */
@@ -231,7 +233,8 @@ export class OutboundQueue {
 
   /** Rows of this app whose lease ran out while "sending" (the worker stopped): back to the queue, sent again with the same key. */
   async recover(): Promise<number> {
-    const rows = await this.sql`update platform.outbound set status = 'retry_scheduled', in_doubt = true, lease_owner = null, lease_until = null,
+    const recoveredStatus = this.o.provider.receipt ? 'unknown_acceptance' : 'retry_scheduled';
+    const rows = await this.sql`update platform.outbound set status = ${recoveredStatus}, in_doubt = true, lease_owner = null, lease_until = null,
       next_attempt_at = ${new Date(this.now)}, updated_at = ${new Date(this.now)}, note = 'recovered after the worker stopped'
       where app_id = ${this.app} and line = ${this.line} and status = 'sending' and lease_until < ${new Date(this.now)} returning id`;
     if (rows.length) for (const r of rows as any[]) this.o.onAlert?.(r.id, "recovered_in_doubt");
@@ -239,9 +242,10 @@ export class OutboundQueue {
   }
 
   /** Deliver every due row of this app. Returns the status changes (for network.messages). */
-  drain(): Promise<StatusChange[]> {
+  async drain(): Promise<StatusChange[]> {
+    const receipts = await this.reconcileUnknown();
     return this.withLine(async () => {
-      const changes: StatusChange[] = [...await this.expireHeld()];
+      const changes: StatusChange[] = [...receipts, ...await this.expireHeld()];
       const rows = await this.sql`select * from platform.outbound where app_id = ${this.app} and line = ${this.line}
         and status = any(${`{${DUE.join(",")}}`}::text[]) and next_attempt_at <= ${new Date(this.now)} order by next_attempt_at, created_at, id`;
       for (const r of rows as any[]) {
@@ -264,7 +268,7 @@ export class OutboundQueue {
     return {
       id: r.id, app: r.app_id, memberId: r.member_id ?? undefined, line: r.line, to: r.to_address, kind: r.kind, text: r.body ?? "",
       mediaUrls: r.media_urls ?? [], oppId: r.opportunity_id ?? undefined, timeZone: r.time_zone, status: r.status, attempts: r.attempts,
-      createdAt: ms(r.created_at)!, inDoubt: r.in_doubt, personCap: r.person_cap,
+      createdAt: ms(r.created_at)!, inDoubt: r.in_doubt, personCap: r.person_cap, newConversation: r.new_conversation, reengagement: r.reengagement,
     };
   }
 
@@ -395,37 +399,18 @@ export class OutboundQueue {
     const start = this.now;
     // The lease is stored before the provider call: if the worker stops now, recover() resends with the same key.
     await this.sql`update platform.outbound set status = 'sending', attempts = attempts + 1, lease_owner = ${this.instance},
-      lease_until = ${new Date(start + this.opt("leaseMs", 5 * MINUTE))}, updated_at = ${new Date(start)} where id = ${row.id}`;
+      lease_until = ${new Date(start + this.opt("leaseMs", 5 * MINUTE))}, updated_at = ${new Date(start)},new_conversation=${isNew},reengagement=${reengagement} where id = ${row.id}`;
     const attempts = row.attempts + 1;
     try {
-      const receipt = await this.o.provider.send({ from: this.line, to: row.to, text: row.text, ...(row.mediaUrls.length ? { mediaUrls: row.mediaUrls } : {}), idempotencyKey: `tn:${row.id}` });
-      const at = new Date(this.now);
-      const status = receipt.status === "queued" ? "accepted" : receipt.status === "failed" ? "failed" : receipt.status;
-      await this.sql.begin(async tx => {
-        await tx`update platform.outbound set status = ${status}, provider_message_id = ${receipt.providerMessageId}, chat_id = ${receipt.chatId ?? null},
-          transport = ${receipt.transport ?? null}, sent_at = coalesce(sent_at, ${at}), new_conversation = ${isNew}, reengagement = ${reengagement},
-          lease_owner = null, lease_until = null, updated_at = ${at}, note = ${receipt.replayed ? "idempotent replay" : null},
-          delivered_at = ${status === "delivered" || status === "read" ? at : null}, ended_at = ${status === "delivered" || status === "read" || status === "failed" ? at : null}
-          where id = ${row.id}`;
-        if (row.kind !== "compliance") {
-          await tx`insert into platform.line_conversations (line, address, unanswered, reengagement_used, first_outbound_at, last_outbound_at)
-            values (${this.line}, ${row.to}, 1, ${reengagement}, ${at}, ${at})
-            on conflict (line, address) do update set unanswered = line_conversations.unanswered + 1, last_outbound_at = excluded.last_outbound_at,
-              reengagement_used = line_conversations.reengagement_used or excluded.reengagement_used,
-              first_outbound_at = coalesce(line_conversations.first_outbound_at, excluded.first_outbound_at)`;
-        } else {
-          await tx`insert into platform.line_conversations (line, address, first_outbound_at, last_outbound_at) values (${this.line}, ${row.to}, ${at}, ${at})
-            on conflict (line, address) do update set last_outbound_at = excluded.last_outbound_at`;
-        }
-      });
-      if (status === "failed") return this.end(row, "failed", "provider reported failure");
-      if (status === "delivered" || status === "read") return this.end(row, status);
-      return { id: row.id, app: row.app, memberId: row.memberId, status };
+      const receipt = await this.o.provider.send(this.request(row));
+      return this.acceptReceipt({...row,newConversation:isNew,reengagement}, receipt);
     } catch (err) {
       const e = err instanceof ChannelSendError ? err : new ChannelSendError(err instanceof Error ? err.message : String(err), "retryable");
       const error = `${e.failure}${e.status ? ` ${e.status}` : ""}${e.code ? ` ${e.code}` : ""}: ${e.message}`.slice(0, 500);
       await this.sql`update platform.outbound set last_error = ${error} where id = ${row.id}`;
       switch (e.failure) {
+        case "unknown":
+          return this.wait(row,"unknown_acceptance",this.now,"provider acceptance unresolved; receipt lookup only");
         case "retryable": {
           if (attempts >= this.opt("maxAttempts", 6)) { this.o.onAlert?.(row.id, "send_failed"); return this.end(row, "failed", "retries used up", error); }
           const backoff = e.retryAfterMs ?? Math.min(this.opt("baseBackoffMs", 30_000) * 2 ** (attempts - 1), 30 * MINUTE);
@@ -441,6 +426,64 @@ export class OutboundQueue {
           return this.end(row, "failed", e.code, error);
       }
     }
+  }
+
+  private request(row: QueueRow): SendRequest {
+    return {from:this.line,to:row.to,text:row.text,...(row.mediaUrls.length?{mediaUrls:row.mediaUrls}:{}),idempotencyKey:`tn:${row.id}`,
+      context:{id:row.id,app:row.app,memberId:row.memberId??null,kind:row.kind}};
+  }
+
+  /** Commit only an extant immutable row. The person lock is shared with canonical erasure. */
+  private async acceptReceipt(row: QueueRow, receipt: SendReceipt): Promise<StatusChange> {
+    const status=receipt.status==="queued"?"accepted":receipt.status;
+    const acceptedAt=receipt.acceptedAt??this.now;
+    if (!Number.isFinite(acceptedAt) || !receipt.providerMessageId) throw new ChannelSendError("Invalid acceptance receipt","unknown");
+    const at=new Date(acceptedAt),providerIds=receipt.providerMessageIds??[receipt.providerMessageId];
+    const committed=await this.sql.begin(async tx=>{
+      if (row.memberId) await tx`select person.id from platform.people person join network.members member on member.person_id=person.id
+        where member.app_id=${row.app} and member.id=${row.memberId} order by person.id for update of person`;
+      const wrote=await tx`update platform.outbound set status=${status},provider_message_id=${receipt.providerMessageId},
+        provider_message_ids=${{ids:providerIds}}::jsonb->'ids',history_recorded=${receipt.historyRecorded??null},chat_id=${receipt.chatId??null},
+        transport=${receipt.transport??null},sent_at=coalesce(sent_at,${at}),lease_owner=null,lease_until=null,updated_at=${new Date(this.now)},
+        note=${receipt.replayed?"idempotent replay":null},delivered_at=${status==="delivered"||status==="read"?at:null},
+        ended_at=${status==="delivered"||status==="read"||status==="failed"?at:null}
+        where id=${row.id} and app_id=${row.app} and line=${this.line} and status in ('sending','unknown_acceptance')
+        and to_address=${row.to} and body=${row.text} and fingerprint=${fingerprint(row.to,row.text,row.mediaUrls,row.kind)} returning id`;
+      if (!wrote.length) return false;
+      if (status!=="failed") {
+        const unanswered=row.kind==="compliance"?0:1;
+        await tx`insert into platform.line_conversations(line,address,unanswered,reengagement_used,first_outbound_at,last_outbound_at)
+          values(${this.line},${row.to},${unanswered},${row.reengagement},${at},${at})
+          on conflict(line,address) do update set
+            unanswered=case when line_conversations.last_inbound_at>=${at} then line_conversations.unanswered else line_conversations.unanswered+${unanswered} end,
+            last_outbound_at=greatest(line_conversations.last_outbound_at,excluded.last_outbound_at),
+            first_outbound_at=least(line_conversations.first_outbound_at,excluded.first_outbound_at),
+            reengagement_used=case when line_conversations.last_inbound_at>=${at} then line_conversations.reengagement_used else line_conversations.reengagement_used or excluded.reengagement_used end`;
+      }
+      return true;
+    });
+    if (!committed) return {id:row.id,app:row.app,memberId:row.memberId,status:"dropped_forgotten"};
+    if (status==="failed") return this.end(row,"failed","provider reported failure");
+    if (status==="delivered"||status==="read") return this.end(row,status);
+    return {id:row.id,app:row.app,memberId:row.memberId,status};
+  }
+
+  /** Bounded read-only remote recovery; unknown rows never enter the dispatch queue. */
+  private async reconcileUnknown(): Promise<StatusChange[]> {
+    if (!this.o.provider.receipt) return [];
+    const rows=await this.sql`select * from platform.outbound where app_id=${this.app} and line=${this.line}
+      and status='unknown_acceptance' and body is not null and to_address is not null order by updated_at,id limit 4`;
+    const changes:StatusChange[]=[];
+    for (const stored of rows) {
+      const row=this.rowOf(stored);
+      await this.sql`update platform.outbound set updated_at=${new Date(this.now)} where id=${row.id} and status='unknown_acceptance'`;
+      try {changes.push(await this.acceptReceipt(row,await this.o.provider.receipt(this.request(row))));}
+      catch {
+        // A missing or ambiguous receipt remains held; mirror it without dispatch or delivery hooks.
+        changes.push({id:row.id,app:row.app,memberId:row.memberId,status:"unknown_acceptance"});
+      }
+    }
+    return changes;
   }
 
   /** A delivery receipt (any app on the line). Undefined when the provider id is not ours. Never goes back. */
