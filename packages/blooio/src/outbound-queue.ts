@@ -54,6 +54,8 @@ export interface LeakSources {
   facts?: string[];
   fuzzy?: boolean;
   publicPhrases?: string[];
+  /** Text this one message may carry verbatim, added to the queue's own allow list (a number two matched members agreed to swap). */
+  allow?: string[];
 }
 
 /** One message to enqueue. `id` is the idempotency key (network.messages id, or the id of a fixed text). */
@@ -392,7 +394,7 @@ export class OutboundQueue {
     if (this.o.checks.leaks) {
       try { src = await this.o.checks.leaks(row); } catch { return ["leak_check_error"]; }
     }
-    return new LeakGuard({ ...src, canaryShapes: true, allow: this.o.leakAllow, contacts: row.kind !== "compliance" }).check(row.text);
+    return new LeakGuard({ ...src, canaryShapes: true, allow: [...(this.o.leakAllow ?? []), ...(src.allow ?? [])], contacts: row.kind !== "compliance" }).check(row.text);
   }
 
   private async send(row: QueueRow, isNew: boolean, reengagement: boolean): Promise<StatusChange> {

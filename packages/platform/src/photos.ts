@@ -34,6 +34,7 @@ import type { PeopleStore } from "./store.ts";
 import type { AppearanceRater, AppearanceScore, RatingSubject } from "../../engine/src/packs/slop/appearance.ts";
 import { makeClefRaterFromEnv, type ClefRaterOptions } from "../../engine/src/packs/slop/clef.ts";
 import { validateClefWeights, type ClefWeights } from "../../engine/src/packs/slop/clefWeights.ts";
+import { isOpaquePhotoId } from "../../engine/src/relay.ts";
 
 /** Why the rater is on or off (server.ts logs it at start). */
 export type RaterStatus = "on" | "off_flag" | "off_env" | "off_no_weights" | "refused_weights";
@@ -79,6 +80,18 @@ export const PHOTO_CONSENT = {
   version: "2026-10-08",
   text: "I agree that slop.date may store these photos privately. The matchmaker may use them, privately, to learn who I might like and who might like me. No other member sees them, no score from them is ever shown to anyone, and a person on the safety team looks at them only after a report. Photos are for adults (18+) only. I can delete them anytime.",
 } as const;
+
+/**
+ * A new photo id: "ph_" and 24 hex characters. Ids with a run of 7 or more digits are drawn again, so
+ * every id passes the engine's `isOpaquePhotoId` (which refuses digit runs because they read as phone
+ * numbers); about a quarter of plain random hex ids have such a run.
+ */
+export function newPhotoId(): string {
+  for (;;) {
+    const id = `ph_${randomBytes(12).toString("hex")}`;
+    if (isOpaquePhotoId(id)) return id;
+  }
+}
 
 export interface PhotoRow {
   id: string; personId: string; app: AppId; storageKey: string; contentType: PhotoType; bytes: number; sha256: string;
@@ -391,7 +404,7 @@ export class PhotoService {
     if ((await this.o.meta.list(personId)).length >= PHOTO_MAX_PER_PERSON) return { ok: false, reason: "too_many" };
     let bytes: Uint8Array;
     try { bytes = stripMetadata(input, type); } catch { return { ok: false, reason: "bad_image" }; }
-    const id = `ph_${randomBytes(12).toString("hex")}`;
+    const id = newPhotoId();
     const key = randomBytes(24).toString("hex");
     await this.o.storage.put(key, bytes, type);
     await this.o.meta.put({ id, personId, app, storageKey: key, contentType: type, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), consentVersion, createdAt: this.now() });

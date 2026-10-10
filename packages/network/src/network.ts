@@ -42,6 +42,8 @@ import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import { brandOf, copy, copyFor, type Copy, whenPhrase } from "./copy.ts";
 import { APPS, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { meetingSpot, nearbyVenues, NEIGHBORHOOD, NEIGHBORHOODS, neighborhood, travelMinutes, VENUES, type Venue } from "./geo.ts";
+import { RelayDesk, type RelayAsk, type RelayCallOptions, type RelayHeld, type RelayHost, type RelayMatch, type RelayOutcome, type RelayState } from "./relay.ts";
+import type { RelayRecord } from "../../engine/src/relay.ts";
 import { ABOUT_OTHERS, ASK_KINDS, LANE_BUDGETS, NEVER_REPLY, nextAt, NY, nyParts, OUTREACH, PRD_BUDGETS, SLOT_KINDS, type SendKind } from "./outreach.ts";
 import { BASE_REACH, FLOOR_EFFORT, type CapitalEvent, type CapitalEventInput, type CapitalReader, type GamingFlag, type NetworkEffort } from "./capital.ts";
 import { activityHints, BOOKING_GAP, PLAN_VENUES, planLedger, statedWindows } from "./plans.ts";
@@ -395,6 +397,10 @@ interface SendOpts {
   hook?: SendHook;
   /** A plan invite under the plan allowance: counts for two-unanswered and the Blooio streak, never on the intro cap. */
   planInvite?: boolean;
+  /** The outbound id (relay.ts: "relay:<item>", which the Cloud channel delivers as kind "relay"). Default: the member and a sequence number. */
+  key?: string;
+  /** A relayed item (relay.ts): the sender's own private facts may be in it (the leak guard skips the sender's and the recipient's). */
+  relayFrom?: MemberId;
 }
 type SendHook =
   | { t: "interview" } | { t: "age" } | { t: "suggested"; venues: string[] } | { t: "retry_found"; oppId: string }
@@ -454,6 +460,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   readonly name = "consent";
   readonly trust = new Trust();
   private ctx!: NetworkContext;
+  /** Relay between matched members (relay.ts): the engine relay policy decides, the desk keeps threads, the log and held items. */
+  private readonly relayDesk: RelayDesk = new RelayDesk(this.relayHost());
   private members = new Map<MemberId, MemberState>();
   readonly opps = new Map<string, Opp>();
   readonly requests: Request[] = [];
@@ -874,6 +882,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     delete this.exposureDebt[id];
     this.asks = this.asks.filter(a => a.memberId !== id);
     for (const m of this.members.values()) if (m.awaiting?.oppId && !this.opps.has(m.awaiting.oppId)) m.awaiting = undefined;
+    this.relayDesk.forget(id);
     this.members.delete(id); this.fullNames.delete(id); this.trust.forget(id); this.vouchedSkills.delete(id); this.invitedIds.delete(id);
     this.cases = this.cases.filter(c => c.memberId !== id);
     for (const c of this.cases) for (const e of c.events) if (e.by === id) delete e.by;
@@ -3637,9 +3646,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (this.laneOf(meta) !== "check_in") meta = { ...meta, proactive: true, ...(meta.proactive ? {} : { unsolicited: true }) } as SimMeta;
     }
     let text = body;
-    const leaks = this.guardCheck(text, m.id);
+    const leaks = this.guardCheck(text, m.id, o.relayFrom);
     if (leaks.length) {
-      const fallback = o.fallback !== undefined && !this.guardCheck(o.fallback, m.id).length ? o.fallback : undefined;
+      const fallback = o.fallback !== undefined && !this.guardCheck(o.fallback, m.id, o.relayFrom).length ? o.fallback : undefined;
       this.counters.guardBlocked++;
       this.ctx.log("guard_blocked", { memberId: m.id, kind, reasons: leaks, fallback: fallback !== undefined });
       if (fallback === undefined) { fns.onRefused?.(); return "refused"; }
@@ -3664,7 +3673,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     } else if (this.followup) m.askUsed = (m.askUsed ?? 0) + 1;
     m.lastOutUnsol = unsol;
     m.outbound = (m.outbound ?? 0) + 1;
-    this.ctx.send(m.id, text, { meta, idempotencyKey: `${m.id}:${++this.seq}`, reply });
+    this.ctx.send(m.id, text, { meta, idempotencyKey: o.key ?? `${m.id}:${++this.seq}`, reply });
     m.pendingAck = undefined;
     if (note || (m.note && now - m.note.at >= 7 * DAY)) m.note = undefined;
     m.lastSent = { body: text, at: now };
@@ -3955,7 +3964,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** Leak guard: other members' private facts and every canary, compiled once per change in private facets. */
   private guardCache?: { snap: WorldSnapshot; key: string; guard: LeakGuard };
-  private guardCheck(text: string, recipient: MemberId): string[] {
+  private guardCheck(text: string, recipient: MemberId, alsoOwner?: MemberId): string[] {
     const snap = this.snapshotCached();
     if (!this.guardCache || this.guardCache.snap !== snap) {
       const priv = snap.facets.filter(f => f.scope === "agent_private");
@@ -3968,7 +3977,11 @@ export class ConsentNetwork implements NetworkUnderTest {
       });
       this.guardCache = { snap, key, guard };
     }
-    return this.guardCache.guard.check(text, { exceptOwner: recipient });
+    const leaks = this.guardCache.guard.check(text, { exceptOwner: recipient });
+    // A relayed text: what the sender wrote about themselves may go to the person they wrote to.
+    if (alsoOwner === undefined || !leaks.length) return leaks;
+    const theirs = new Set(this.guardCache.guard.check(text, { exceptOwner: alsoOwner }));
+    return leaks.filter(l => theirs.has(l));
   }
 
   /**
@@ -4202,6 +4215,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         again: [...this.planAgain], counters: this.plansCounters,
       },
       fraud: this.fraud, fraudSeq: this.fraudSeq, exposureDebt: this.exposureDebt,
+      relay: this.relayDesk.exportState(),
     };
     // A deep copy that is exactly what a JSON store keeps.
     return JSON.parse(JSON.stringify(state)) as NetworkState;
@@ -4257,6 +4271,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const k of Object.keys(this.plansCounters) as (keyof typeof this.plansCounters)[]) this.plansCounters[k] = st.plans?.counters?.[k] ?? 0;
     this.fraud = st.fraud ?? []; this.fraudSeq = st.fraudSeq ?? 0;
     this.exposureDebt = { ...(st.exposureDebt ?? {}) };
+    this.relayDesk.importState(st.relay);
     this.planWorldCache = undefined;
     this.replyTo = undefined; this.currentRunId = undefined;
     this.snapCache = undefined; this.knownCache = undefined; this.dirty = true;
@@ -4269,6 +4284,67 @@ export class ConsentNetwork implements NetworkUnderTest {
    * The member left this app ("leave <app>", the site's leave button, delete everything): forget them
    * as an under-age decline does. Only the id stays, so the Network never writes to it again.
    */
+  // ================================================================== relay (relay.ts)
+  /** What the relay desk may use: members, two-person matches, blocks, the leak guard's facts and the send path. */
+  private relayHost(): RelayHost {
+    const self = this;
+    return {
+      get app() { return self.app.id; },
+      get ratesPhotos() { return self.app.id === "slop"; },
+      now: () => this.now(),
+      member: id => {
+        const m = this.members.get(id);
+        if (!m || this.declinedIds.has(id)) return undefined;
+        this.syncRecord(m);
+        const ages = [m.age, m.statedAge].filter((a): a is number => validAge(a));
+        const unsure = m.minor || m.minorSignal || m.minorReported || m.ageUnknown || m.ageConflict || !ages.length;
+        return { id, firstName: m.first, age: unsure ? undefined : Math.min(...ages), optedOut: m.optedOut, held: !!m.account || this.trust.level(id) === "hold" };
+      },
+      matchesOf: id => {
+        const now = this.now(), out: RelayMatch[] = [];
+        for (const o of this.opps.values()) {
+          if (o.participants.length !== 2 || !o.participants.includes(id)) continue;
+          const met = o.meetingAt !== undefined && o.meetingAt <= now && (o.stage === "scheduled" || o.stage === "done") ? o.meetingAt : undefined;
+          const status: RelayMatch["status"] = o.stage === "scheduled" || o.stage === "done"
+            ? (met !== undefined && now - met > 7 * DAY ? "expired" : "mutual")
+            : o.stage === "closed" ? (o.closedFrom === "scheduled" ? "cancelled" : "closed") : "probing";
+          out.push({ id: o.id, participants: [o.participants[0]!, o.participants[1]!], acceptedBy: o.participants.filter(p => o.status.get(p) === "yes"), status,
+            ...(met !== undefined ? { metAt: met } : {}), at: o.meetingAt ?? o.createdAt });
+        }
+        return out;
+      },
+      blocked: (a, b) => this.blocked(a, b),
+      privateFacts: () => {
+        const priv = this.snapshotCached().facets.filter(f => f.scope === "agent_private");
+        return { forbidden: priv.map(f => ({ text: f.value, owner: f.memberId })), canaries: priv.flatMap(f => [...f.value.matchAll(CANARY_RE)].map(x => x[1]!)) };
+      },
+      send: (to, body, o) => {
+        const m = this.members.get(to);
+        if (!m) return "refused";
+        this.dirty = true;
+        const r = this.send(m, body, { type: "relay", proposalId: o.matchId }, "relay", { about: [o.from], key: o.key, relayFrom: o.from });
+        return r === "sent" ? "sent" : r === "deferred" ? "deferred" : "refused";
+      },
+    };
+  }
+  /** A member's relay request (POST /internal/relay): decided by the engine, delivered as its rendered text only. */
+  relayRequest(ask: RelayAsk, o: RelayCallOptions = {}): Promise<RelayOutcome> { this.relayDesk.prune(this.now()); return this.relayDesk.request(ask, o); }
+  /** The member's open match for the relay, if any (ids only). */
+  relayMatch(memberId: MemberId): RelayMatch | undefined { return this.relayDesk.matchFor(memberId); }
+  /** Relayed items held for staff, oldest first (relay.ts). The text is kept only while held, and never a minor's. */
+  relayHeld(): RelayHeld[] { return this.relayDesk.held(); }
+  /** Staff release a held item (the engine checks it again first). */
+  releaseRelay(itemId: string, actor: string, o: RelayCallOptions = {}): ActionResult & { delivered?: boolean } {
+    const r = this.relayDesk.release(itemId, actor, o);
+    return r.ok ? { ok: true, delivered: r.delivered } : r;
+  }
+  /** Staff reject a held item: it is never delivered. */
+  rejectRelay(itemId: string, actor: string): ActionResult { return this.relayDesk.reject(itemId, actor); }
+  /** The relay log (no bodies, no contact values). */
+  relayLog(): RelayRecord[] { return this.relayDesk.records(); }
+  /** For the queue's leak guard: the member whose number an outbound relay id carries (an agreed swap only). */
+  relayContactShareFrom(outboundId: string): MemberId | undefined { return this.relayDesk.contactShareFrom(outboundId); }
+
   forgetMember(id: MemberId) { if (!this.declinedIds.has(id)) this.forget(id); }
 
   /**
@@ -4364,6 +4440,8 @@ export interface NetworkState {
   reports?: (SafetyReport & { met: boolean })[]; reportSeq?: number;
   /** Engine exposure debt carried between runs (added later; older states have none). */
   exposureDebt?: Record<MemberId, number>;
+  /** Relay threads, the relay log, held items and pending number swaps (relay.ts; added later). */
+  relay?: RelayState;
 }
 
 /** A member record as the snapshot gives it. The production snapshot also carries the account status (service/snapshot.ts). */

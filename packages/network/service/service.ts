@@ -63,6 +63,8 @@ import { normalizeAddress } from "../../blooio/src/phone.ts";
 import { resolveTimeZone } from "../../blooio/src/quiet-hours.ts";
 import { Notifier, type InboxItem, type NotifyStore, type OutboundSink, type Recipient, type Surface } from "../../notify/src/index.ts";
 import { PgNotifyStore } from "../../notify/src/pg-store.ts";
+import { RELAY_PATH, relayClassifierFromEnv, relayEndpoint } from "./relay-endpoint.ts";
+import type { RelayClassifierHook } from "../../engine/src/relay.ts";
 import type { ChannelEvent } from "../../blooio/src/types.ts";
 // The Observatory's staff auth (per-app role grants) and audit sink, so the console and the service agree.
 import { allowed, authenticate, hasEverywhere, parseTokenGrants, PgAudit, type AuditSink } from "../../observatory/src/staff.ts";
@@ -229,6 +231,8 @@ export class NetworkService implements RuntimeHost {
   readonly clock: Clock;
   readonly instance: string;
   readonly audit: AuditSink;
+  /** The relay classifier (relay-endpoint.ts): Clef when the Workers AI token and account are set, else rules only. Set at start. */
+  private relayHook?: RelayClassifierHook;
   readonly apps: Record<AppId, AppInfo>;
   readonly people: PeopleStore;
   readonly accounts: Accounts;
@@ -365,6 +369,7 @@ export class NetworkService implements RuntimeHost {
     const declared = platformEnv(this.env);
     const [envRow] = await this.sql`select value from platform.settings where key = 'environment'`;
     if (declared && envRow && envRow.value !== declared) throw new Error(`PLATFORM_ENV is ${declared} but platform.settings.environment is ${envRow.value}: fix one of them`);
+    this.relayHook = relayClassifierFromEnv(this.env, this.log);
     for (const rt of this.runtimes.values()) await rt.start();
   }
 
@@ -1670,6 +1675,7 @@ export class NetworkService implements RuntimeHost {
   fetch = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
     if ([TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH].includes(url.pathname)) return this.sharedTurn(req);
+    if (url.pathname === RELAY_PATH) return relayEndpoint({ sql: this.sql, clock: this.clock, secret: this.env.SERVICE_TURN_SECRET, accounts: this.accounts, photos: this.photos, runtimeFor: app => this.runtimeFor(app), ...(this.relayHook ? { hook: this.relayHook } : {}) }, req);
     let path = url.pathname.replace(/\/+$/, "") || "/";
     try {
       if (path === WEBHOOK_PATH || path.startsWith(`${WEBHOOK_PATH}/`)) {
@@ -1730,6 +1736,13 @@ export class NetworkService implements RuntimeHost {
         const no = need(["reviewer", "safety"]); if (no) return no;
         await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_agent_signals", mode: "real", ok: true, app: rt.app.id });
         return json({ ok: true, network: rt.id, signals: await this.reviewSignals(rt.app.id) });
+      }
+      if (req.method === "GET" && (path === "/staff/relay/held" || path === "/relay/held")) {
+        // Relayed items held for a person (relay.ts): ids, reasons and times; an adult's held text; never a minor's words, never a score.
+        const no = need(["reviewer", "safety"]); if (no) return no;
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_relay_held", mode: "real", ok: true, app: rt.app.id });
+        const held = await rt.readState(n => n.relayHeld());
+        return json({ ok: true, network: rt.id, items: held.map(h => ({ itemId: h.itemId, app: h.app, kind: h.kind, from: h.from, to: h.to, reasons: h.reasons, createdAt: h.at, ...(h.text ? { text: h.text } : {}) })) });
       }
       if (path === "/inbound/resolve") {
         // A signed turn that did not finish: staff release the sender (the turn itself stays unresolved).
@@ -1794,6 +1807,20 @@ export class NetworkService implements RuntimeHost {
         if (path === "/safety/hold") return result(await this.hold(user, rt, b.memberId, b.note, b.reportId));
         if (b.by !== "phone" && b.by !== "person") return json({ ok: false, error: "by_required" }, 400);
         return result(await this.ban(user, rt, b.memberId, b.by, b.note, b.reportId));
+      }
+      const relayPath = path.match(/^\/(?:staff\/)?relay\/([^/]+)\/(release|reject)$/);
+      if (relayPath) {
+        // Release or reject a held relay item (safety role for this app); audited either way.
+        const no = need(["safety"]); if (no) return no;
+        let itemId: string;
+        try { itemId = decodeURIComponent(relayPath[1]!); } catch { return json({ ok: false, error: "invalid_id" }, 400); }
+        const b = (await body(req) ?? {}) as Record<string, any>;
+        if (itemId.length > 200 || (b.note !== undefined && (typeof b.note !== "string" || b.note.length > 2000))) return json({ ok: false, error: "invalid_relay_decision" }, 400);
+        const release = relayPath[2] === "release";
+        const r = await rt.unitOfWork(n => release ? n.releaseRelay(itemId, user.id) : n.rejectRelay(itemId, user.id));
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: release ? "relay_release" : "relay_reject", targetId: itemId,
+          mode: "real", ok: r.ok, app: rt.app.id, ...(typeof b.note === "string" ? { reason: b.note } : {}), ...("delivered" in r ? { detail: { delivered: r.delivered } } : {}) });
+        return result(r);
       }
       const verifyPath = path.match(/^\/members\/([^/]+)\/verify$/);
       if (verifyPath) {

@@ -7,6 +7,8 @@
 // The SQL is in packages/network/db/network-state.sql.
 import { SQL } from "bun";
 import type { ConsentNetwork, NetworkState } from "./network.ts";
+import type { RelayRecord } from "../../engine/src/relay.ts";
+import { emptyRelayState, RELAY_LOG_MAX, type RelayState } from "./relay.ts";
 
 export interface NetworkStore {
   load(): Promise<NetworkState | undefined>;
@@ -131,6 +133,69 @@ export function consoleRows(state: NetworkState, savedAt = state.savedAt, city =
   return { opportunities, participations, review_items, requests };
 }
 
+// ------------------------------------------------------------------ relay rows (migration 0025)
+/** Relay log rows newer than this are written on every save (older ones changed only through held items). */
+const RELAY_ROW_WINDOW_MS = 2 * 86_400_000;
+
+/**
+ * The relay rows for a state: one network.relay_threads row per thread (ids and times only) and one
+ * network.relay_records row per RelayRecord (no body, no contact value) with its staff review status.
+ */
+export function relayRows(state: NetworkState, app: string): { threads: Row[]; records: Row[] } {
+  const r = state.relay;
+  if (!r) return { threads: [], records: [] };
+  const review = new Map(r.held.map(h => [h.itemId, h]));
+  const recent = (state.savedAt ?? 0) - RELAY_ROW_WINDOW_MS;
+  return {
+    threads: r.threads.map(t => ({ app_id: app, id: t.id, opportunity_id: t.id, members: t.members, opened_at: new Date(t.openedAt), messages: t.messages.length })),
+    records: r.log.filter(x => x.at >= recent || review.has(x.itemId)).map(x => {
+      const h = review.get(x.itemId);
+      return {
+        app_id: app, item_id: x.itemId, opportunity_id: x.opportunityId, kind: x.kind, from_member: x.from, to_member: x.to, at: new Date(x.at),
+        decision: x.decision, reasons: x.reasons, photo_count: x.photoCount, contact_shared: x.contactShared, age_signal: x.ageSignal, policy: x.policy,
+        review: h?.status ?? null, reviewed_by: h?.decidedBy ?? null, reviewed_at: date(h?.decidedAt),
+      };
+    }),
+  };
+}
+
+/** Write the relay rows (inside the save transaction; app.app_id is set). Skipped before migration 0025. */
+export async function writeRelayRows(tx: SQL, state: NetworkState, app: string): Promise<void> {
+  const [{ ok }] = await tx`select to_regclass('network.relay_records') is not null as ok`;
+  if (!ok) return;
+  const { threads, records } = relayRows(state, app);
+  for (let i = 0; i < threads.length; i += 500) await tx`insert into network.relay_threads ${tx(threads.slice(i, i + 500))}
+    on conflict (app_id, id) do update set members = excluded.members, messages = excluded.messages`;
+  for (let i = 0; i < records.length; i += 500) await tx`insert into network.relay_records ${tx(records.slice(i, i + 500))}
+    on conflict (app_id, item_id) do update set decision = excluded.decision, reasons = excluded.reasons, photo_count = excluded.photo_count,
+      contact_shared = excluded.contact_shared, review = excluded.review, reviewed_by = excluded.reviewed_by, reviewed_at = excluded.reviewed_at`;
+}
+
+/**
+ * After a restart: a stored state with no relay log (saved before the relay, or reset) gets it back
+ * from network.relay_records, so the rate limits and held items survive. Held items come back without
+ * their text (rows never keep one): staff can still reject them; a release delivers nothing.
+ */
+export async function loadRelayRows(tx: SQL, state: NetworkState | undefined, app: string): Promise<NetworkState | undefined> {
+  if (!state || state.relay?.log.length) return state;
+  const [{ ok }] = await tx`select to_regclass('network.relay_records') is not null as ok`;
+  if (!ok) return state;
+  const rows = await tx`select * from network.relay_records where app_id = ${app} order by at desc, item_id limit ${RELAY_LOG_MAX}` as Row[];
+  if (!rows.length) return state;
+  const relay: RelayState = state.relay ?? emptyRelayState();
+  const ms = (v: unknown) => new Date(v as string).getTime();
+  relay.log = rows.reverse().map(r => ({
+    itemId: r.item_id as string, opportunityId: r.opportunity_id as string, app, kind: r.kind as RelayRecord["kind"], from: r.from_member as string, to: r.to_member as string,
+    at: ms(r.at), decision: r.decision as RelayRecord["decision"], reasons: (r.reasons as string[]) ?? [], photoCount: Number(r.photo_count ?? 0),
+    contactShared: r.contact_shared === true, ageSignal: r.age_signal === true, policy: r.policy as string,
+  }));
+  if (!relay.held.length) relay.held = rows.filter(r => r.review === "held").map(r => ({
+    itemId: r.item_id as string, matchId: r.opportunity_id as string, app, kind: r.kind as RelayRecord["kind"], from: r.from_member as string, to: r.to_member as string,
+    at: ms(r.at), reasons: (r.reasons as string[]) ?? [], status: "held" as const,
+  }));
+  return { ...state, relay };
+}
+
 /** '<app>:<city>' -> the app and the city. A legacy id with no ':' ('nyc') is The Network's (ntwrk). */
 export function splitNetworkId(id: string): { app: string; city: string } {
   const i = id.indexOf(":");
@@ -162,9 +227,12 @@ export class PgStore implements NetworkStore {
   }
 
   async load(): Promise<NetworkState | undefined> {
-    const rows = await this.sql`select state from network.network_state where id = ${this.id}`;
-    const s = rows[0]?.state;
-    return s === undefined ? undefined : ((typeof s === "string" ? JSON.parse(s) : s) as NetworkState);
+    return this.sql.begin(async tx => {
+      await tx`select set_config('app.app_id', ${this.app}, true)`;
+      const rows = await tx`select state from network.network_state where id = ${this.id}`;
+      const s = rows[0]?.state;
+      return loadRelayRows(tx, s === undefined ? undefined : ((typeof s === "string" ? JSON.parse(s) : s) as NetworkState), this.app);
+    }) as Promise<NetworkState | undefined>;
   }
 
   /**
@@ -210,6 +278,7 @@ export class PgStore implements NetworkStore {
       for (let i = 0; i < rows.requests.length; i += 500) await tx`insert into network.requests ${tx(rows.requests.slice(i, i + 500))}
         on conflict (id) do update set outcome = excluded.outcome, tries = excluded.tries, opportunity_id = excluded.opportunity_id,
           fulfilled_at = excluded.fulfilled_at, updated_at = excluded.updated_at`;
+      await writeRelayRows(tx, state, this.app);
       if (also) await also(tx);
     });
   }

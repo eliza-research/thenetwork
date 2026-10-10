@@ -33,6 +33,33 @@ Signed state, signal and update actions bind the exact completed open turn, chan
 
 Cloud transport reuses `platform.outbound` and all its policy checks. Unknown acceptance is held outside the dispatch queue. Restart and a bounded receipt poll never resend it. A verified receipt commits under the canonical person fence, preserves its original acceptance time, and updates line counters once. Notify projection repair uses the existing idempotent record owner and one marker on `network.messages`, for queued sends and positively acknowledged handled replies. Handled replies retain their original message time as event chronology; their ACK does not attest a provider acceptance timestamp. Canonical deletion seals late receipt commits. Dispatch admission rechecks the canonical member and immutable outbox row after the asynchronous gates, under short database locks released before remote I/O. An admitted request can remain in flight during deletion; a later receipt cannot restore erased data. Signed first contact and policy declines create no service line counter; engagement follows canonical join-age and membership admission. These tests control the Cloud HTTP transport boundary; actual Cloud history and hosted qualification remain separate gates. No deployment or live flag is enabled by this change.
 
+## Relay between matched members
+
+`POST /internal/relay` (relay-endpoint.ts) takes a member's relay request from Eliza during an open turn: a text for their match, "send them my number", or a photo. It is signed with `SERVICE_TURN_SECRET` like the other `/internal/*` actions, size-checked (16 KiB) before it is parsed, idempotent on `x-ntwrk-svc-id` (which must equal `idempotencyKey`), and bound to the original completed open turn and the member's current membership. The app and the member come from that turn; the recipient is always the member's current match, chosen by the service, never named by the model.
+
+The ConsentNetwork's relay desk (`packages/network/src/relay.ts`) asks the engine relay policy for every decision (`relayItemAsync` in `packages/engine/src/relay.ts`). With `CLOUDFLARE_AI_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` set it adds the Clef classifier (`clefRelayClassifierFromEnv`, clef-flash unless `RELAY_CLEF_MODEL=clef`); without them it uses the rules alone and logs `relay classifier: rules only` at start. Only the engine's `rendered` text goes to the other member, through the Network's send path and the outbound queue with the id `relay:<item>`, which the Cloud channel delivers with `kind: "relay"`. A number goes out only after both members asked to swap; the queue's leak guard lets exactly that number through for that row. Photos are refused until a consent to show photos to a match exists (Legal must approve one first). Minors are never relayed, scores are never shown, and the log (`network.relay_records`, migration 0025) keeps ids, the decision and reason codes, never a body or a contact value. A held text waits for staff and is dropped when they decide.
+
+The request and response types are defined in relay-endpoint.ts, because `packages/core/src/svc/contract.ts` mirrors the upstream plugin-network contract byte for byte. Proposed addition to that contract upstream (elizaos/eliza plugin-network and its mirror here):
+
+```ts
+export const RELAY_PATH = "/internal/relay";
+/** A member's request to pass something to their current match. x-ntwrk-svc-id = idempotencyKey. */
+export interface RelayRequest {
+  channel: NetworkChannel;
+  messageId: string;          // the completed open turn this action belongs to
+  app: NetworkAppId;
+  memberId: string;
+  idempotencyKey: string;
+  kind: "text" | "contact_share" | "photo";
+  text: string | null;        // the message (text, at most 1000 characters) or a caption (photo); null for contact_share
+  photoIds: string[] | null;  // the member's own photo ids (photo only, at most 3)
+}
+/** `reason` is safe to say to the member as it is. */
+export interface RelayResponse { decision: "sent" | "held" | "refused"; reason: string; replayed: boolean }
+```
+
+Errors follow the other actions: 400 `invalid_request` or `invalid_relay`, 401 on a bad signature, 403 `turn_scope_invalid` or `membership_unavailable`, 409 `action_conflict` or `action_unresolved`, 413 `payload_too_large`, 429 `action_limit`.
+
 ## Run it
 
 ```bash
@@ -101,6 +128,9 @@ Send `Authorization: Bearer <token>`. Tokens are per app: `reviewer@slop:<t>` is
 | `POST /safety/lift` | safety | `{ memberId, note? }` |
 | `POST /safety/close` | safety | `{ caseId, note? }` |
 | `GET /signals` | reviewer, safety | Agent `opt_out` and `safety_concern` signals waiting for a person: `{ id, memberId, kind, evidence, at }`, newest first |
+| `GET /staff/relay/held` | reviewer, safety | Relayed items held for a person, oldest first: `{ itemId, app, kind, from, to, reasons, createdAt, text? }`. `text` only for an adult sender's held text; never a minor's words, never a score |
+| `POST /staff/relay/:itemId/release` | safety | `{ note? }`. The engine checks the item again; anything that would now block stays undelivered (`delivered: false`) |
+| `POST /staff/relay/:itemId/reject` | safety | `{ note? }`. Never delivered; the held text is dropped |
 | `POST /inbound/resolve` | admin@* | Release a sender held back by a signed turn that did not finish: `{ id }` |
 | `GET /safety/reports` | safety | Reports about this app's members, newest first: `{ id, kind, reporterId, subjectId, opportunityId?, at, status, source, priorReports }` (docs/admin-console.md 3.7.1) |
 | `POST /safety/hold` | safety | `{ memberId, note (5+ characters), reportId? }`: the person on every app |
