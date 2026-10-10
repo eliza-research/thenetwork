@@ -6,7 +6,7 @@ import { redirectUriAllowed } from "../src/handler.ts";
 import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, MemoryOAuthStore } from "../src/store.ts";
 import { addMember, browserFlow, call, CHALLENGE, connect, origin, PHONE_A, PHONE_B, register, rpc, setup, tokenRequest, VERIFIER } from "./harness.ts";
 
-const SLOP = "slop.date", PEON = "peon.biz", NTWRK = "ntwrk.love";
+const SLOP = "slop.date", PEON = "peon.biz", NTWRK = "ntwrk.party";
 
 describe("metadata", () => {
   test("each site is its own issuer and resource; S256 only; iss in responses", async () => {
@@ -21,7 +21,7 @@ describe("metadata", () => {
     expect(prm).toMatchObject({ resource: "https://peon.biz/mcp", authorization_servers: ["https://peon.biz"], bearer_methods_supported: ["header"] });
     expect(prm.scopes_supported).not.toContain("offline_access");
     const openai = await (await env.fetch(new Request(`${origin(NTWRK)}/.well-known/oauth-protected-resource/mcp/openai`))).json() as Record<string, any>;
-    expect(openai.resource).toBe("https://ntwrk.love/mcp/openai");
+    expect(openai.resource).toBe("https://ntwrk.party/mcp/openai");
     expect((await env.fetch(new Request(`${origin(SLOP)}/.well-known/oauth-protected-resource/mcp/openai`))).status).toBe(404);
     expect((await env.fetch(new Request("https://evil.example/.well-known/oauth-authorization-server"))).status).toBe(404);
     expect(await env.handler.fetch(new Request(`${origin(SLOP)}/api/app`))).toBeUndefined();
@@ -419,7 +419,7 @@ describe("dev and proxy host rules", () => {
   });
 
   test("an http issuer is refused unless it is a loopback host", () => {
-    expect(() => setup({ issuer: "http://ntwrk.love" })).toThrow(/https/);
+    expect(() => setup({ issuer: "http://ntwrk.party" })).toThrow(/https/);
     expect(() => setup({ issuer: "http://127.0.0.1:4849" })).not.toThrow();
   });
 });

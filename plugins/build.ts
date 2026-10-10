@@ -15,15 +15,15 @@ import { DEFAULT_BACKEND_ORIGIN } from "../sites/skills.config.ts";
 const ROOT = import.meta.dir;
 const SOURCE = join(ROOT, "..", "sites", "skills");
 
-export const SITE: Record<string, string> = { "ntwrk-love": "ntwrk.love", "slop-date": "slop.date", "peon-biz": "peon.biz", "friends-help": "friends.help" };
+export const SITE: Record<string, string> = { "ntwrk-party": "ntwrk.party", "slop-date": "slop.date", "peon-biz": "peon.biz", "friends-help": "friends.help" };
 /** The one MCP endpoint of the OpenAI plugin (OpenAI allows one server per plugin). It never lists slop. */
-export const OPENAI_MCP_URL = "https://ntwrk.love/mcp/openai";
+export const OPENAI_MCP_URL = "https://ntwrk.party/mcp/openai";
 /** Each site is its own MCP resource: a connection covers that one app. */
 export const siteMcpUrl = (skill: string) => `https://${SITE[skill]}/mcp`;
 
 export const PLUGINS = {
-  openai: { skills: ["ntwrk-love", "peon-biz", "friends-help"], mcpUrl: (_: string) => OPENAI_MCP_URL },
-  claude: { skills: ["ntwrk-love", "slop-date", "peon-biz", "friends-help"], mcpUrl: siteMcpUrl },
+  openai: { skills: ["ntwrk-party", "peon-biz", "friends-help"], mcpUrl: (_: string) => OPENAI_MCP_URL },
+  claude: { skills: ["ntwrk-party", "slop-date", "peon-biz", "friends-help"], mcpUrl: siteMcpUrl },
 } as const;
 
 const fill = (text: string, mcpUrl: string) =>
@@ -33,7 +33,7 @@ const fill = (text: string, mcpUrl: string) =>
 export function withoutSlop(md: string): string {
   const inline = md
     .replace(/slop\.date \(dating\), /g, "")
-    .replace(/ntwrk\.love, slop\.date, /g, "ntwrk.love, ")
+    .replace(/ntwrk\.party, slop\.date, /g, "ntwrk.party, ")
     .replace(/"leave slop\.date"/g, '"leave peon.biz"')
     .replace(/ Dating details never move\./g, "");
   const out: string[] = [];
@@ -59,7 +59,7 @@ dependencies:
   tools:
     - type: mcp
       value: the-network
-      description: The Network's MCP server. app_info and start_signup need no sign-in. check_status needs the person to sign in on ntwrk.love themselves.
+      description: The Network's MCP server. app_info and start_signup need no sign-in. check_status needs the person to sign in on ntwrk.party themselves.
       transport: streamable_http
       url: ${OPENAI_MCP_URL}
 `;

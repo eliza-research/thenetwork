@@ -1,9 +1,9 @@
 // Smoke check for one deployed site (or a local `wrangler dev`). Read-only GETs, no secrets.
 //   bun run deploy/smoke.ts https://slop-date-site.example.workers.dev slop          # static files
-//   bun run deploy/smoke.ts https://ntwrk.love ntwrk --api                            # plus /api/app
+//   bun run deploy/smoke.ts https://ntwrk.party ntwrk --api                            # plus /api/app
 // Exits 1 with one line per failed check. CI runs it after every deploy (deploy-sites.yml).
 
-const SKILL: Record<string, string> = { ntwrk: "ntwrk-love", slop: "slop-date", peon: "peon-biz", friends: "friends-help" };
+const SKILL: Record<string, string> = { ntwrk: "ntwrk-party", slop: "slop-date", peon: "peon-biz", friends: "friends-help" };
 
 export interface Check { name: string; ok: boolean; detail: string }
 

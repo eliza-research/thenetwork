@@ -20,7 +20,7 @@ const ACTIVITY: Record<Category, string> = {
  */
 export interface CopyBrand { agent: string; name: string; /** The site (terms and privacy links in the text-join opt-in). */ domain?: string }
 /** The Network (ntwrk): the copy every earlier run used, word for word. */
-export const NTWRK_BRAND: CopyBrand = { agent: "the Network's agent", name: "the Network", domain: "ntwrk.love" };
+export const NTWRK_BRAND: CopyBrand = { agent: "the Network's agent", name: "the Network", domain: "ntwrk.party" };
 /** The copy brand of an app in the registry: "The Network" reads "the Network" inside a sentence. */
 export const brandOf = (app: { name: string; domain?: string; brand: { agentName: string } }): CopyBrand => ({ agent: app.brand.agentName, name: app.name.replace(/^The /, "the "), ...(app.domain ? { domain: app.domain } : {}) });
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
