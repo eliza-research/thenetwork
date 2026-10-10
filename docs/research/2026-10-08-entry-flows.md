@@ -114,7 +114,7 @@ Items that have not been tested on a real phone are marked **(unverified)**.
 
 ### 3.2 Coming from an AI assistant without installing anything (the "paste prompt")
 
-This is the same import prompt as step 4, reversed. A landing page on slop.date or ntwrk.love says "Paste this into your AI". It works in any assistant and needs no plugin. The prompt has the assistant write a summary, which ends with:
+This is the same import prompt as step 4, reversed. A landing page on slop.date or ntwrk.party says "Paste this into your AI". It works in any assistant and needs no plugin. The prompt has the assistant write a summary, which ends with:
 > "To join, text this to +1 (…) or tap sms:+1…&body=…"
 
 - The `sms:` link opens Messages with the summary and the app keyword prefilled. The person taps Send, and that one tap proves their phone with no code needed.
@@ -140,7 +140,7 @@ This is the same import prompt as step 4, reversed. A landing page on slop.date 
 
 - **Directory connector:** the same OAuth with phone + SMS code, the same five tools, and the same draft-approve-submit flow.
 - **The skill** is optional: it teaches tone and flow, but can't call our API by itself on claude.ai (the sandbox can't reach our domain). It is distributed as a plugin repo URL or zip, or in the directory.
-- **Before a listing:** a prefilled "add custom connector" link: `claude.ai/customize/connectors?modal=add-custom-connector&connectorName=The%20Network&connectorUrl=https://mcp.ntwrk.love/mcp`. The person confirms, then OAuth runs.
+- **Before a listing:** a prefilled "add custom connector" link: `claude.ai/customize/connectors?modal=add-custom-connector&connectorName=The%20Network&connectorUrl=https://mcp.ntwrk.party/mcp`. The person confirms, then OAuth runs.
 - **Memory:** Claude can search past chats when the person asks. Our tool descriptions describe the fields and never say "use memory". This keeps us inside §1F.
 - **Claude Code and local agents:** code-in-chat with a stored agent key, as in PRD 11.5 (kept for these).
 
@@ -197,7 +197,7 @@ We can't detect whether an app is installed from a web page. Never guess silentl
 - **Assistant-preferred:** one line of our text, then the assistant's own link with a fill-only prompt and a task token. For example:
   > "You have a new intro from The Network."
   > `chatgpt.com/?prompt=Ask%20The%20Network%20for%20update%20T-7F3K`
-- **SMS, or an unknown preference:** our branded page `ntwrk.love/t/<token>`, with a button per assistant plus "reply here". Tapping a button does open the app. Never use bit.ly-style public shorteners (carriers filter them); use our own domain.
+- **SMS, or an unknown preference:** our branded page `ntwrk.party/t/<token>`, with a button per assistant plus "reply here". Tapping a button does open the app. Never use bit.ly-style public shorteners (carriers filter them); use our own domain.
 - **Rules for the prompt in the link:**
   - Keep it under about 80 characters, and the URL under 160 (one SMS segment).
   - No names, no match details, no app brand for dating (use "The Network").

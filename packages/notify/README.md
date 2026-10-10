@@ -14,7 +14,7 @@ The single inbox and the notification scheduler from `docs/research/2026-10-08-e
 | `pg-store.ts` | `PgNotifyStore` on Postgres with Bun's SQL client, schema in `db/schema.sql`. Import it directly: it is not exported from `index.ts`, so the connector's Workers build never pulls in `bun` |
 | `scheduler.ts` | `Notifier`: due rules (requested at once, urgent after 5 min, normal after 4 h), quiet hours, a weekly cap of 2, a re-check before enqueue, `stillNeeded`, `readUpdates`, `redeemSubjects`, `shownSubjects`, `threadReply` and `sweep` (unanswered links become "ignored") |
 | `surface.ts` | `resolveDelivery`: explicit choice, then score, then thread. Links unused twice fall back to the thread |
-| `links.ts` | Fill-only assistant links (`chatgpt.com/?prompt=`, `claude.ai/new?q=`, `grok.com/?q=`), the `ntwrk.love/t/<token>` button page, and URL checks |
+| `links.ts` | Fill-only assistant links (`chatgpt.com/?prompt=`, `claude.ai/new?q=`, `grok.com/?q=`), the `ntwrk.party/t/<token>` button page, and URL checks |
 | `tokens.ts` | Task tokens `T-XXXXXX`. They are references, not credentials |
 | `compose.ts` | Message text. Links never carry the item summary or an app brand |
 | `wiring.ts` | Adapters: `queueSink` and `queuePolicy` for the outbound queue, `threadHooks` for the text agent and the plugin |
@@ -41,7 +41,7 @@ The single inbox and the notification scheduler from `docs/research/2026-10-08-e
 
 - **Producers that don't already text.** Today every update is texted by the Network itself and only recorded here. Moving a member to "updates by link in my assistant" means having the engine add the item to the inbox instead of texting it, then letting `dispatch` choose the surface.
 - **Member settings.** There is no setting for a preferred surface yet ("send my updates to Claude"). `Recipient.prefs.explicit` is ready for one.
-- **Button page.** The `ntwrk.love/t/<token>` page is not built yet.
+- **Button page.** The `ntwrk.party/t/<token>` page is not built yet.
 
 ## Device test
 

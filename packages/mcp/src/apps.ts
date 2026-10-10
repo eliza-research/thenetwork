@@ -54,7 +54,7 @@ function app(id: McpAppId, name: string, domain: string, what: string, keyword: 
 /** The default registry: the four apps, all powered by The Network. */
 export function defaultApps(): Record<McpAppId, McpApp> {
   return {
-    ntwrk: app("ntwrk", "The Network", "ntwrk.love", "The home of every app below: an agent you text that helps with people, plans and events you ask for.", null, { smsTerms: false }),
+    ntwrk: app("ntwrk", "The Network", "ntwrk.party", "The home of every app below: an agent you text that helps with people, plans and events you ask for.", null, { smsTerms: false }),
     slop: app("slop", "slop.date", "slop.date", "Dating by text message. A matchmaker suggests one person now and then, and nobody is introduced unless both say yes.", "slop", {
       adultsOnly: ["Photos and any rating of looks are for adults (18+) only; the stated age counts (no ID check). They are never asked of, stored for or shown to anyone under 18."],
       safety: true, openai: false,

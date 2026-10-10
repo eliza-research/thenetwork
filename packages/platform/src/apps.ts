@@ -45,8 +45,8 @@ export interface AppInfo {
 
 /** The line in every app's onboarding (founder decision 2). */
 export const POWERED_BY = "All of these apps are powered by The Network.";
-/** The one support address for every app: only ntwrk.love receives mail (MX), and every site and SKILL.md names it. */
-export const SUPPORT_EMAIL = "help@ntwrk.love";
+/** The one support address for every app: only ntwrk.party receives mail (MX), and every site and SKILL.md names it. */
+export const SUPPORT_EMAIL = "help@ntwrk.party";
 const CONSENT_VERSION = "2026-10-08";
 const consentText = (sender: string, what: string) =>
   `I agree to receive recurring text messages from ${sender} at this number: ${what}. Message frequency varies. Message and data rates may apply. Reply STOP to stop and HELP for help. Consent is not a condition of any purchase.`;
@@ -65,8 +65,8 @@ function brand(name: string, domain: string, agentName: string, what: string, mi
 
 export const APPS: Record<AppId, AppInfo> = {
   ntwrk: {
-    id: "ntwrk", name: "The Network", domain: "ntwrk.love", joinMode: "invite", minJoinAge: 13, minMatchAge: 18,
-    brand: brand("The Network", "ntwrk.love", "the Network's agent", "messages about people, plans, and events you asked for.", 13),
+    id: "ntwrk", name: "The Network", domain: "ntwrk.party", joinMode: "invite", minJoinAge: 13, minMatchAge: 18,
+    brand: brand("The Network", "ntwrk.party", "the Network's agent", "messages about people, plans, and events you asked for.", 13),
     consent: { version: CONSENT_VERSION, text: consentText("The Network", "replies, introductions and plans I ask for, reminders, and occasional suggestions") },
   },
   slop: {
@@ -132,7 +132,7 @@ export function parseNetworkId(id: string): { app: AppId; city: string } | undef
  * <project>.pages.dev serves the site before (and besides) its own domain, so it is a host of that app.
  * Preview deployments (<hash>.<project>.pages.dev) are never hosts: they must not reach production.
  */
-export const PAGES_PROJECT: Record<AppId, string> = { ntwrk: "ntwrk-love", slop: "slop-date", peon: "peon-biz", friends: "friends-help" };
+export const PAGES_PROJECT: Record<AppId, string> = { ntwrk: "ntwrk-party", slop: "slop-date", peon: "peon-biz", friends: "friends-help" };
 
 /** Every production host name of an app's site: its domain, www, and its Pages production name. */
 export const siteHosts = (a: AppId): string[] => [APPS[a].domain, `www.${APPS[a].domain}`, `${PAGES_PROJECT[a]}.pages.dev`];
