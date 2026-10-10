@@ -45,13 +45,13 @@ export async function opsBlock(b: Block): Promise<void> {
       ...healthy("slop:nyc", "slop"), lastTickAgoMs: 20 * MIN,
       backlog: { review: 40, reviewOverdue: 2, deferred: 0, outboundWaiting: 80 },
       sends24h: { attempted: 100, failed: 6, refused: 0, dryRun: 0, smsFallback: 0 }, reviewExpired24h: 1,
-      safety24h: { reports: 2, urgentReports: 1, minorAfterContact: 1, holds: 1, bans: 1 },
+      safety24h: { reports: 2, urgentReports: 1, minorAfterContact: 1, holds: 1, bans: 1 }, safetySignalsWaiting: 2, biasAlerts24h: 1,
     };
     const cost: OpsMetrics["cost"] = { day: "2026-10-08", totalUsd: 9, byApp: { slop: 9 }, budgets: budgetLines({ slop: 9 }, { daily: 10, byApp: { slop: 8 } }) };
     const got = Object.fromEntries(evaluate({ networks: [sick], cost }, CFG).map(a => [a.key, a.level]));
     expect(got).toEqual({
       "tick_late:slop:nyc": "bad", "send_failures:slop:nyc": "bad", "review_sla:slop:nyc": "bad", "safety_minor:slop:nyc": "bad", "safety_report:slop:nyc": "bad",
-      "safety_action:slop:nyc": "warn", "queue_outbound:slop:nyc": "warn", "queue_review:slop:nyc": "warn", "budget:total": "warn", "budget:slop": "bad",
+      "safety_signal:slop:nyc": "bad", "bias_report:slop:nyc": "warn", "safety_action:slop:nyc": "warn", "queue_outbound:slop:nyc": "warn", "queue_review:slop:nyc": "warn", "budget:total": "warn", "budget:slop": "bad",
     });
     // Under the minimum count, or under the rate, failures are not an alert; a report that is not urgent is a warning.
     const few = { ...healthy("peon:nyc", "peon"), sends24h: { attempted: 10, failed: 4, refused: 0, dryRun: 0, smsFallback: 0 } };
@@ -348,6 +348,7 @@ export async function opsBlock(b: Block): Promise<void> {
         expect(m.error).toBeUndefined();
         expect(m.sends24h).toEqual({ attempted: 3, failed: 1, refused: 1, dryRun: 1, smsFallback: 1 });
         expect([m.safety24h.minorAfterContact, m.safety24h.bans, m.safety24h.reports, m.safety24h.urgentReports, m.smsByDay.today]).toEqual([1, 1, 2, 1, 1]);
+        expect([m.safetySignalsWaiting, m.biasAlerts24h]).toEqual([0, 0]);
       } finally { await sql.close(); }
     }, false);
 

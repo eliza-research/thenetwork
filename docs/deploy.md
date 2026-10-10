@@ -400,6 +400,8 @@ Every minute, inside the backend's tick, the ops round reads each network and th
 | `review_sla:<network>` | bad | A review item is past its deadline, or one expired unsent in 24 h |
 | `safety_minor:<network>` | bad | A minor signal after contact with an adult in 24 h |
 | `safety_report:<network>` | bad (urgent kind) or warn | A member report in 24 h. Urgent kinds: harassment, unsafe, scam, minor. |
+| `safety_signal:<network>` | bad | Agent `safety_concern` signals (`POST /internal/signals`) that wait for a person in `GET /signals`. Posted again when the count goes up. |
+| `bias_report:<network>` | warn | The weekly bias monitor wrote a report with groups under 0.8x in the last 24 h. Counts only; the groups are in the console's bias panel. |
 | `safety_action:<network>` | warn | A ban or a hold in 24 h |
 | `queue_outbound:<network>` | warn | `ALERT_OUTBOUND_BACKLOG` (50) or more messages wait for delivery |
 | `queue_review:<network>` | warn | `ALERT_REVIEW_BACKLOG` (30) or more items wait for review |

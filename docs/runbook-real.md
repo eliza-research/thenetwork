@@ -534,6 +534,8 @@ Do this once before the first real member joins, then on the first working day o
 | `send_failures:<network>` | `/ops/metrics` shows the outcomes. Check Blooio's status and the line's health. Over 2% for a day is a pause condition in the pilot (mvp-plan). |
 | `review_sla:<network>` | Open the console's Review tab for that app. Items past the SLA expire unsent; nobody was contacted. |
 | `safety_minor:<network>` or an urgent `safety_report` | The safety on-call opens the console's Safety tab now. Hold first, then decide (admin-console.md 3.7.1). |
+| `safety_signal:<network>` | The safety on-call reads the waiting signals (service `GET /signals`) and decides each one. |
+| `bias_report:<network>` | An admin or analyst opens the bias panel (Metrics) and records what to do in the incident log. |
 | `queue_outbound` or `queue_review` | Check the review staffing, and Blooio for held or deferred messages. |
 | Backup heartbeat missing (`BACKUP_HEARTBEAT_URL`) | Railway → `backup` → the last run's log: `"msg":"backup failed"` gives the step. Run the job again by hand (Railway → `backup` → Deploy). Two days without a backup: tell the founder. |
 | `budget:*` | The console's Metrics → Cost panel shows which kind grew. Tell the founder at 100%. |
