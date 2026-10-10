@@ -276,6 +276,8 @@ interface MemberState {
   proactive: number[]; lastInbound: number; lastAskAt: number; joinedAt: number;
   /** What the member's next message probably answers. `ask` names an engine question (EngineResult.asks). */
   awaiting?: { kind: "probe" | "booked" | "feedback" | "growth" | "interview" | "age" | "checkin" | "crew" | "posting"; oppId?: string; ask?: AskRecord; at: number; crewId?: string; clarified?: boolean };
+  /** A block or report waiting for "Who do you mean?" (ids and kinds only; what they said is not kept). */
+  pendingSafety?: { verb: "block" | "report"; kind: ReportKind; at: number };
   invitedBy?: MemberId; invites: number[]; invitesBlockedUntil: number; lastGrowthAsk: number;
   /** What the member told us. Desires carry when they were stated: they expire and can be withdrawn. */
   learned: { interests: Set<string>; skills: Set<string>; desires: Map<string, number>; area?: string; eveningsOpen?: boolean; groups?: boolean };
@@ -475,6 +477,11 @@ const DUPLICATE_WINDOW = 10 * MINUTE;
 const VENUE_REPEAT_DAYS = 7;
 /** At most one engine question (EngineResult.asks) per member in this many days. */
 const ASK_EVERY_DAYS = 7;
+
+/** "block him", "report my date": a block or report about the member's counterpart, not a name. */
+const PRONOUN_TARGET = /^(?:him|her|them|they|he|she|my date|my match|(?:the|this|that) (?:guy|girl|person|dude|man|woman))\b/i;
+/** A reply to "Who do you mean?" that drops the question. */
+const NEVER_MIND = /^\W*(?:never ?mind|nvm|nobody|no one|none|forget it|no|nope|cancel that)\W*$/i;
 
 export class ConsentNetwork implements NetworkUnderTest {
   readonly name = "consent";
@@ -725,6 +732,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Nor is the assistant's block or report scored as the member's abuse: its words describe someone
     // else (network-consent-4), and a watch would drop the member and cancel a booked date. Learned only.
     if ((c.kind === "block" || c.kind === "report") && mcp) return this.learnFrom(m, body);
+    // The answer to "Who do you mean?" (a block or report waiting for its target): the member's own text only.
+    if (m.pendingSafety && !mcp && this.answerWho(m, body)) return;
     if (this.trust.level(m.id) === "hold") { if (c.abuse.length) this.trust.add(m.id, now, c.abuse[0]!, 0); return; }
     // "He asked me to venmo him $50": what someone else did, never the sender's abuse (ids and kinds only).
     if (c.disclosure?.length) this.ctx.log("abuse_disclosed", { memberId: m.id, kinds: c.disclosure });
@@ -1372,10 +1381,13 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /**
-   * "block X" and "report X". Order and rules (network-consent-4, -6, -7, -13, -14, -18):
+   * "block X" and "report X". Order and rules (network-consent-4, -6, -7, -13, -14, -18; F23):
    *  - the reporter's words are never scored as the reporter's abuse (handled before abuse);
-   *  - a block stands whether or not they met, and the reply is the same for a member they never
-   *    met and a name that matches nobody (no membership oracle);
+   *  - the target is resolved among the member's counterparts first (resolveTarget): "him" or "my
+   *    date" is the one open or most recent counterpart, and a name two counterparts share gets
+   *    "Who do you mean?" (only names of people the member was introduced to);
+   *  - a name that is no counterpart may still be a member they never met: the block stands, and the
+   *    reply is the same as for a name that matches nobody (no membership oracle, never a false "Done");
    *  - every report about a member opens a staff case; points need a shared interaction and
    *    corroboration (trust.ts); "reported" copy is sent only when that case exists and they met;
    *  - a report that the member is under 18 takes them out of matching until staff review (-9);
@@ -1383,11 +1395,25 @@ export class ConsentNetwork implements NetworkUnderTest {
    */
   private handleBlock(m: MemberState, c: Classified) {
     const verb = c.kind as "block" | "report";
+    const kind: ReportKind = c.otherAge !== undefined && isMinor(c.otherAge) ? "minor" : reportKindOf(c.text ?? "");
+    m.pendingSafety = undefined;
+    const r = this.resolveTarget(m, c.target ?? "", verb === "report");
+    if (r.ask) {
+      // Ids and kinds only: what they said is not kept while we wait for the name.
+      m.pendingSafety = { verb, kind, at: this.now() };
+      this.ctx.log(`${verb}_ambiguous`, { memberId: m.id, options: r.ask.length });
+      this.send(m, copy.whoDoYouMean(this.namesFor(r.ask)), { type: "question", proactive: false }, "reply");
+      return;
+    }
+    this.applyBlock(m, verb, kind, r.target);
+  }
+
+  /** The block or report itself, once the target is known (undefined: the name matched nobody). */
+  private applyBlock(m: MemberState, verb: "block" | "report", kind: ReportKind, target: MemberState | undefined) {
     const now = this.now();
-    const target = this.findByName(c.target ?? "", m.id);
     if (!target) {
       this.ctx.log(`${verb}_unresolved`, { memberId: m.id });
-      this.send(m, verb === "block" ? copy.blocked : copy.reportUnmatched, { type: "info" }, "reply");
+      this.send(m, verb === "block" ? copy.blockUnmatched : copy.reportUnmatched, { type: "info" }, "reply");
       return;
     }
     const met = this.metBefore(m.id, target.id);
@@ -1412,11 +1438,99 @@ export class ConsentNetwork implements NetworkUnderTest {
       const points = this.trust.report(target.id, m.id, now, { met });
       if (!points) this.caseEvent(target.id, { at: now, kind: "report_received", points: 0, by: m.id });
       // The staff queue's record (the case event above already counts it).
-      this.fileReport(m.id, target.id, c.otherAge !== undefined && isMinor(c.otherAge) ? "minor" : reportKindOf(c.text ?? ""), { source: "message", met, caseEvent: false });
+      this.fileReport(m.id, target.id, kind, { source: "message", met, caseEvent: false });
       this.ctx.log("report", { memberId: m.id, target: target.id, met, points });
-      if (c.otherAge !== undefined && isMinor(c.otherAge)) this.minorReported(target, m.id);
+      if (kind === "minor") this.minorReported(target, m.id);
     }
-    this.send(m, verb === "block" ? copy.blocked : met ? copy.reported : copy.reportUnmatched, { type: "info" }, "reply");
+    this.send(m, verb === "block" ? (met ? copy.blocked : copy.blockUnmatched) : met ? copy.reported : copy.reportUnmatched, { type: "info" }, "reply");
+  }
+
+  /**
+   * The people the Network introduced this member to, most recent first: the others in a booked or
+   * past meeting the member was told about, and recorded meetings. `open`: the meeting is still ahead.
+   */
+  private counterparts(id: MemberId): { m: MemberState; at: number; open: boolean }[] {
+    const by = new Map<MemberId, { at: number; open: boolean }>();
+    const add = (x: MemberId, at: number, open: boolean) => {
+      if (x === id || !this.members.has(x) || this.declinedIds.has(x)) return;
+      const p = by.get(x);
+      if (!p || at > p.at || (open && !p.open)) by.set(x, { at: Math.max(at, p?.at ?? at), open: open || !!p?.open });
+    };
+    // Only a booked meeting the member was told about, and only the others told about it who said yes:
+    // a plan's probe goes out with no names, so a member who only got a probe, or an invitee who was
+    // probed but never booked (a late joiner, an unavailable or dropped one), is no counterpart.
+    for (const o of this.opps.values()) {
+      if (!o.participants.includes(id) || o.meetingAt === undefined || !o.bookedTold?.includes(id)) continue;
+      const open = o.stage === "scheduled";
+      for (const x of o.participants) if (o.bookedTold.includes(x) && o.status.get(x) === "yes") add(x, o.meetingAt, open);
+    }
+    for (const x of this.interactions) {
+      if (!x.participants.includes(id) || (x.outcome !== "completed" && x.outcome !== "no_show")) continue;
+      for (const p of x.participants) add(p, x.at, false);
+    }
+    return [...by].map(([x, v]) => ({ m: this.members.get(x)!, ...v })).sort((a, b) => b.at - a.at || (a.m.id < b.m.id ? -1 : 1));
+  }
+
+  /**
+   * Who "block X" or "report X" is about (F23). Pronouns ("him", "her", "them", "my date") mean the
+   * one open counterpart, else the most recent one. A name is looked up among counterparts (full
+   * name, "First L.", first name); with none, among every member (findByName: a member they never
+   * met, and the block still stands). Two or more possible people, or a pronoun with no counterpart:
+   * `ask`, with the counterparts to choose from.
+   */
+  private resolveTarget(m: MemberState, raw: string, confirmPast = false): { target?: MemberState; ask?: MemberState[] } {
+    const text = raw.normalize("NFKC").replace(/[\u2018\u2019]/g, "'").replace(/[.!?,;:]+\s*$/, "").trim();
+    const cps = this.counterparts(m.id);
+    if (!text || PRONOUN_TARGET.test(text)) {
+      const open = cps.filter(x => x.open);
+      if (open.length === 1) return { target: open[0]!.m };
+      if (open.length > 1) return { ask: open.map(x => x.m) };
+      const top = cps.filter(x => x.at === cps[0]?.at);
+      // A report by pronoun with no date ahead is confirmed first ("Who do you mean: Leo?"): the most
+      // recent counterpart may be long ago and not the person the member means.
+      return top.length === 1 && !confirmPast ? { target: top[0]!.m } : { ask: top.map(x => x.m) };
+    }
+    const t = text.toLowerCase().replace(/\s+/g, " ");
+    const word = (w: string) => new RegExp(`(^|[^\\p{L}])${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=$|[^\\p{L}])`, "u");
+    const named = (x: MemberState, k: "full" | "display" | "first") => {
+      const v = (k === "full" ? this.fullNames.get(x.id) ?? "" : k === "display" ? x.display : x.first).toLowerCase().replace(/\.$/, "");
+      return !!v && word(v).test(t);
+    };
+    for (const k of ["full", "display", "first"] as const) {
+      const hits = cps.filter(x => named(x.m, k)).map(x => x.m);
+      if (hits.length === 1) return { target: hits[0]! };
+      if (hits.length > 1) return { ask: hits };
+    }
+    return { target: this.findByName(text, m.id) };
+  }
+
+  /** First names for "Who do you mean?", or "First L." when two of them share a first name. */
+  private namesFor(list: MemberState[]): string[] {
+    const firsts = list.map(x => x.first);
+    return list.map(x => (firsts.filter(f => f === x.first).length > 1 ? x.display : x.first));
+  }
+
+  /**
+   * The member's answer to "Who do you mean?" (within a day). A name or pronoun that resolves to a
+   * counterpart applies the block or report; "never mind" drops it; a short answer that still names
+   * nobody they met gets one plain reply. False: the message is about something else (the question
+   * is dropped and the message is handled as usual).
+   */
+  private answerWho(m: MemberState, body: string): boolean {
+    const p = m.pendingSafety!;
+    m.pendingSafety = undefined;
+    if (this.now() - p.at > DAY) return false;
+    const text = body.trim();
+    const r = this.resolveTarget(m, text);
+    if (r.target && this.counterparts(m.id).some(x => x.m.id === r.target!.id)) { this.applyBlock(m, p.verb, p.kind, r.target); return true; }
+    // A probe (1:1 or plan), the booked date, a crew or a check-in is also waiting: a short "no", "yes"
+    // or "can't make it" is its answer, not this one (the question is dropped; they can block or report again).
+    if (m.awaiting && ["probe", "booked", "crew", "checkin"].includes(m.awaiting.kind)) return false;
+    if (NEVER_MIND.test(text)) { this.ack(m, "Okay."); return true; }
+    if (text.split(/\s+/).length > 4) return false;
+    this.ctx.log(`${p.verb}_unresolved`, { memberId: m.id });
+    this.send(m, copy.whoUnresolved, { type: "info" }, "reply");
+    return true;
   }
 
   /**
