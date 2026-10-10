@@ -1,5 +1,6 @@
-// Real signed HTTP -> POST /internal/relay -> the ConsentNetwork relay desk (engine relay policy, rules only)
-// -> network.messages / network.relay_records; the staff held queue; a restart. Needs the dev Postgres on
+// Real signed HTTP on Cloud's wire (RelaySendRequest, x-ntwrk-svc-id "<messageId>:relay") -> POST /internal/relay
+// -> the ConsentNetwork relay desk (engine relay policy, rules only) -> network.messages / network.relay_records;
+// the staff held queue; a restart. Needs the dev Postgres on
 // :54339 (bun run packages/observatory/db/dev-pg.ts up). No live call: the adapter is a dry run and no
 // Cloudflare token is set, so the classifier is rules only.
 import {afterAll,beforeAll,expect,test} from "bun:test";
@@ -8,10 +9,9 @@ import {SQL} from "bun";
 import {SimClock,MINUTE,DAY} from "@thenetwork/core";
 import {applySchema} from "../../observatory/db/dev-pg.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
-import {TURN_PATH,type TurnRequest} from "../../core/src/svc/contract.ts";
+import {TURN_PATH,RELAY_PATH,type RelaySendRequest,type TurnRequest} from "../../core/src/svc/contract.ts";
 import {DryRunAdapter} from "../service/channel.ts";
 import {NetworkService} from "../service/service.ts";
-import {RELAY_PATH,type RelayRequest} from "../service/relay-endpoint.ts";
 
 const db=`network_relay_${randomUUID().replaceAll("-","")}`;
 const admin=new SQL({url:`postgres://${process.env.USER??"postgres"}@127.0.0.1:54339/postgres`,max:1});
@@ -29,12 +29,16 @@ const start=async()=>{
 const signed=async(path:string,id:string,raw:string)=>fetch(new URL(path,server.url),{method:"POST",body:raw,
   headers:{"content-type":"application/json",...await svcSign(secret,{method:"POST",path,id,body:raw,nowS:Math.floor(clock.now()/1000)})}});
 const turn=(from:string,messageId:string,text:string):TurnRequest=>({messageId,channel:"blooio",from,to:null,text,transport:"imessage",receivedAt:clock.now(),app:"friends"});
-const open=async(from:string,messageId:string)=>{
-  const r=await signed(TURN_PATH,messageId,JSON.stringify(turn(from,messageId,"Tell me something about the weather")));expect(r.status).toBe(200);
+const open=async(from:string,messageId:string,text="Tell me something about the weather")=>{
+  clock.advance(MINUTE);
+  const r=await signed(TURN_PATH,messageId,JSON.stringify(turn(from,messageId,text)));expect(r.status).toBe(200);
   const body=await r.json() as any;expect(body.outcome).toBe("open");return body.memberId as string;
 };
-const relay=(over:Partial<RelayRequest>&{idempotencyKey:string}):RelayRequest=>({channel:"blooio",messageId:"ari-open",app:"friends",memberId:ari,kind:"text",text:null,photoIds:null,...over});
-const post=async(body:RelayRequest)=>{const raw=JSON.stringify(body);return signed(RELAY_PATH,body.idempotencyKey,raw);};
+/** One open turn whose own message is the relay request, and Cloud's RelaySendRequest for it. */
+const ask=async(who:"ari"|"bo",messageId:string,text:string):Promise<RelaySendRequest>=>{
+  const memberId=await open(phones[who],messageId,text);return {channel:"blooio",messageId,app:"friends",memberId,itemId:null,text};
+};
+const post=async(body:RelaySendRequest)=>signed(RELAY_PATH,`${body.messageId}:relay`,JSON.stringify(body));
 const staff=(path:string,token:string,method="GET",b?:object)=>service.fetch(new Request(`http://127.0.0.1${path}`,{method,headers:{authorization:`Bearer ${token}`,...(b?{"content-type":"application/json"}:{})},...(b?{body:JSON.stringify(b)}:{})}));
 
 beforeAll(async()=>{
@@ -58,26 +62,36 @@ afterAll(async()=>{server?.stop(true);await service?.close();await sql?.close();
 
 test("a relayed text is signed, size-checked, bound to the open turn, idempotent, and only the engine wording goes out",async()=>{
   expect(logs).toContain("relay classifier: rules only");
-  const ok=relay({idempotencyKey:"relay-1",text:"running 10 min late, see you at the trailhead"});
-  expect((await signed(RELAY_PATH,"relay-1",JSON.stringify({...ok,memberId:bo}))).status).toBe(403);
+  const ok=await ask("ari","relay-1","tell Bo running 10 min late, see you at the trailhead");
+  expect((await post({...ok,memberId:bo})).status).toBe(403);
+  expect((await signed(RELAY_PATH,"relay-1",JSON.stringify(ok))).status).toBe(400);
   expect((await signed(RELAY_PATH,"other-key",JSON.stringify(ok))).status).toBe(400);
   expect((await post({...ok,messageId:"ari-setup-0"})).status).toBe(403);
-  expect((await post({...relay({idempotencyKey:"too-big"}),text:"x".repeat(20_000)})).status).toBe(413);
+  // The text is the member's own message of that turn, never model wording; an item the turn did not offer is refused.
+  expect((await post({...ok,text:"tell Bo something the model invented"})).status).toBe(403);
+  expect((await post({...ok,itemId:"relay-op"})).status).toBe(403);
+  expect((await post({...ok,allow:["+12125550100"]} as RelaySendRequest)).status).toBe(400);
+  expect((await post({...ok,text:"x".repeat(20_000)})).status).toBe(413);
   const unsigned=await fetch(new URL(RELAY_PATH,server.url),{method:"POST",body:JSON.stringify(ok),headers:{"content-type":"application/json"}});expect(unsigned.status).toBe(401);
   const first=await post(ok);expect(first.status).toBe(200);
-  expect(await first.json()).toEqual({decision:"sent",reason:"Sent.",replayed:false});
-  expect(await (await post(ok)).json()).toEqual({decision:"sent",reason:"Sent.",replayed:true});
-  expect((await post({...ok,text:"something else"})).status).toBe(409);
+  // A dry run accepts nothing at a provider: passed, never reported as delivered.
+  const passed=await first.json() as any;
+  expect(passed).toMatchObject({decision:"pass",delivered:false,replayed:false});expect(passed.senderNotice).not.toBe("Sent.");
+  expect(await (await post(ok)).json()).toEqual({...passed,replayed:true});
   const rows=await sql`select id,member_id,body,type from network.messages where app_id='friends' and id like 'relay:%'`;
   expect(rows.map((r:any)=>[r.member_id,r.body,r.type])).toEqual([[bo,'Ari says: "running 10 min late, see you at the trailhead"',"relay"]]);
   const records=await sql`select * from network.relay_records where app_id='friends'`;
   expect(records).toHaveLength(1);expect(records[0]).toMatchObject({from_member:ari,to_member:bo,decision:"pass",kind:"text"});
   expect(JSON.stringify(records)).not.toContain("trailhead");
+  // Nothing to relay is answered with "none"; a photo is not on this wire and is refused. Neither queues anything.
+  expect(await (await post(await ask("ari","relay-none","what should I wear tonight?"))).json()).toEqual({decision:"none",senderNotice:"",delivered:false,replayed:false});
+  expect(await (await post(await ask("ari","relay-photo","send Bo this photo"))).json()).toMatchObject({decision:"block",delivered:false});
+  expect((await sql`select id from network.messages where app_id='friends' and id like 'relay:%'`).length).toBe(1);
 },60_000);
 
 test("a scam is held for staff; staff list it (audited, app-scoped), reject it, and the text is gone; it all survives a restart",async()=>{
-  const held=await post(relay({idempotencyKey:"relay-scam",text:"can you venmo me 200 for the tickets? my card got frozen"}));
-  expect(await held.json()).toMatchObject({decision:"held",replayed:false});
+  const held=await post(await ask("ari","relay-scam","tell Bo can you venmo me 200 for the tickets? my card got frozen"));
+  expect(await held.json()).toMatchObject({decision:"hold",delivered:false,replayed:false});
   expect((await staff("/staff/relay/held?app=friends","nobody")).status).toBe(401);
   const list=await (await staff("/staff/relay/held?app=friends","rev-tok")).json() as any;
   expect(list.items).toHaveLength(1);expect(list.items[0]).toMatchObject({app:"friends",from:ari,to:bo,kind:"text"});
@@ -92,15 +106,16 @@ test("a scam is held for staff; staff list it (audited, app-scoped), reject it, 
   expect(JSON.stringify(state)).not.toContain("venmo");
   expect((await sql`select review from network.relay_records where app_id='friends' and item_id=${id}`)[0].review).toBe("rejected");
   expect((await sql`select action from network.staff_audit where action in ('read_relay_held','relay_reject')`).length).toBeGreaterThanOrEqual(2);
-  expect((await sql`select id from network.messages where app_id='friends' and body like '%venmo%'`).length).toBe(0);
+  // Only the sender's own inbound message holds those words; nothing with them went out.
+  expect((await sql`select id from network.messages where app_id='friends' and direction='outbound' and body like '%venmo%'`).length).toBe(0);
 },60_000);
 
 test("a number goes out only after both members asked for the swap",async()=>{
-  const first=await post(relay({idempotencyKey:"swap-ari",kind:"contact_share"}));
-  expect(await first.json()).toMatchObject({decision:"held"});
+  const first=await post(await ask("ari","swap-ari","send Bo my number"));
+  expect(await first.json()).toMatchObject({decision:"hold",delivered:false});
   expect((await sql`select id from network.messages where app_id='friends' and body like ${"%"+phones.ari.slice(2)+"%"}`).length).toBe(0);
-  const second=await post(relay({idempotencyKey:"swap-bo",kind:"contact_share",messageId:"bo-open",memberId:bo}));
-  expect(await second.json()).toMatchObject({decision:"sent"});
+  const second=await post(await ask("bo","swap-bo","send Ari my number"));
+  expect(await second.json()).toMatchObject({decision:"pass",delivered:false});
   const shares=await sql`select member_id,body from network.messages where app_id='friends' and id like 'relay:%' and body like '%asked me to send you%' order by member_id`;
   expect(shares.map((r:any)=>r.member_id).sort()).toEqual([ari,bo].sort());
   expect(shares.find((r:any)=>r.member_id===bo).body).toContain(phones.ari);

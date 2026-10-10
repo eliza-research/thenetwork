@@ -101,6 +101,8 @@ export interface RelayAsk {
   text?: string;
   /** Photos the member chose (opaque ids); the service checks they are the member's own. */
   photoIds?: string[];
+  /** The active item the member's turn named (the Cloud wire's itemId): only that match, else none. */
+  matchId?: string;
 }
 /** The answer to the member. `reason` is safe to say to the sender as it is. */
 export interface RelayOutcome { itemId: string; decision: "sent" | "held" | "refused"; reason: string; replayed?: boolean }
@@ -111,7 +113,15 @@ export interface RelayCallOptions {
   contactOf?: (id: MemberId) => string | undefined;
   /** The sender's own photo ids and whether they may be shown to a match (no consent exists yet: false). */
   photos?: { ids: string[]; showConsent: boolean };
+  /**
+   * The canonical owners' word on each member, read for this request (the platform consent ledger and
+   * STOP, bans, phone holds, membership, the lowest known age, the member row). It can only tighten the
+   * desk's own view: not an adult, opted out or held here makes the engine refuse or hold the item.
+   */
+  canonical?: ReadonlyMap<MemberId, RelayCanonical>;
 }
+/** One member as the canonical owners see them (runtime.ts relayParties). Unknown is never eligible. */
+export interface RelayCanonical { adult: boolean; optedOut: boolean; held: boolean }
 
 const NOTICE = {
   noMatch: "I can only pass messages on to someone you've matched with, and you don't have an open match right now.",
@@ -136,10 +146,10 @@ export class RelayDesk {
     this.s = { threads: x.threads ?? [], log: x.log ?? [], held: x.held ?? [], swaps: x.swaps ?? [] };
   }
 
-  /** The member's open match (newest first), if any. */
-  matchFor(from: MemberId): RelayMatch | undefined {
+  /** The member's open match (newest first), if any; `matchId` narrows it to that one match. */
+  matchFor(from: MemberId, matchId?: string): RelayMatch | undefined {
     const now = this.host.now();
-    return this.host.matchesOf(from).filter(m => m.status === "mutual" && m.participants.every(p => m.acceptedBy.includes(p)))
+    return this.host.matchesOf(from).filter(m => m.status === "mutual" && m.participants.every(p => m.acceptedBy.includes(p)) && (matchId === undefined || m.id === matchId))
       .filter(m => m.metAt === undefined || now - m.metAt <= RELAY_OPEN_AFTER_MEETING_MS).sort((a, b) => b.at - a.at || (a.id < b.id ? -1 : 1))[0];
   }
 
@@ -147,7 +157,7 @@ export class RelayDesk {
   async request(ask: RelayAsk, o: RelayCallOptions = {}): Promise<RelayOutcome> {
     const prior = this.prior(ask.itemId);
     if (prior) return { ...prior, replayed: true };
-    const match = this.matchFor(ask.from);
+    const match = this.matchFor(ask.from, ask.matchId);
     if (!match) return { itemId: ask.itemId, decision: "refused", reason: NOTICE.noMatch };
     const to = match.participants.find(p => p !== ask.from)!;
     const now = this.host.now();
@@ -171,9 +181,12 @@ export class RelayDesk {
 
   private context(item: RelayItem, match: RelayMatch, o: RelayCallOptions, now: number): RelayContext {
     const party = (id: MemberId): RelayParty => {
-      const m = this.host.member(id);
+      const m = this.host.member(id), c = o.canonical?.get(id);
+      // The canonical view can only tighten: a member it does not know is not eligible.
+      const strict = o.canonical !== undefined;
       return {
-        id, firstName: m?.firstName ?? "", age: m?.age, optedOut: m ? m.optedOut : true, held: m?.held ?? false,
+        id, firstName: m?.firstName ?? "", age: strict && !c?.adult ? undefined : m?.age,
+        optedOut: (m ? m.optedOut : true) || (strict && (!c || c.optedOut)), held: (m?.held ?? false) || (strict && (!c || c.held)),
         ...(id === item.from && o.photos ? { photoIds: o.photos.ids, photoConsent: o.photos.showConsent } : {}),
       };
     };

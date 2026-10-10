@@ -183,6 +183,8 @@ export class BlooioAdapter implements ChannelAdapter {
         : policy(row.to, { kind: row.kind, ...(row.oppId ? { briefId: row.oppId } : {}), agentInitiated }),
       // A number swap both members asked for (relay.ts) is the one contact the guard lets through, for that row only.
       leaks: row => { const from = rt.net.relayContactShareFrom(row.id), number = from && rt.addressOf(from); return number ? { ...leaks(row.to), allow: [number] } : leaks(row.to); },
+      // A relayed item: its match and both members are read again inside the admission transaction (runtime.ts).
+      admit: (row, tx) => row.id.startsWith("relay:") ? rt.relayAdmission(tx, row) : Promise.resolve({ ok: true as const }),
       capTake: row => rt.capTake(row.id, row.memberId as MemberId),
       capRelease: row => rt.capRelease(row.id),
     };

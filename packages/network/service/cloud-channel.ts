@@ -2,9 +2,16 @@
 import {ChannelSendError, type SendReceipt, type SendRequest} from "../../blooio/src/types.ts";
 import {readCappedText} from "../../platform/src/body.ts";
 import {normalizePhone} from "../../platform/src/phone.ts";
-import {DELIVER_PATH, DELIVER_RECEIPT_PATH, NETWORK_APP_IDS, type DeliverRequest, type NetworkAppId} from "../../core/src/svc/contract.ts";
+import {DELIVER_PATH, NETWORK_APP_IDS, type DeliverRequest, type NetworkAppId} from "../../core/src/svc/contract.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {BlooioAdapter, type BlooioAdapterOptions} from "./channel.ts";
+
+/**
+ * Receipt lookup only (never a send) for a deliver whose acceptance is unknown; same body as DELIVER_PATH.
+ * Not in the Cloud b763 contract (core/src/svc/contract.ts is its byte-for-byte mirror), so it is named
+ * here until the upstream contract carries it. An optional `acceptedAt` in the answer is accepted the same way.
+ */
+export const DELIVER_RECEIPT_PATH = `${DELIVER_PATH}/receipt`;
 
 export class CloudChannelAdapter extends BlooioAdapter {
   override readonly name = "eliza_cloud" as const;

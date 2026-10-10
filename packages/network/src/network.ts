@@ -42,7 +42,7 @@ import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import { brandOf, copy, copyFor, type Copy, whenPhrase } from "./copy.ts";
 import { APPS, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { meetingSpot, nearbyVenues, NEIGHBORHOOD, NEIGHBORHOODS, neighborhood, travelMinutes, VENUES, type Venue } from "./geo.ts";
-import { RelayDesk, type RelayAsk, type RelayCallOptions, type RelayHeld, type RelayHost, type RelayMatch, type RelayOutcome, type RelayState } from "./relay.ts";
+import { RELAY_OPEN_AFTER_MEETING_MS, RelayDesk, type RelayAsk, type RelayCallOptions, type RelayHeld, type RelayHost, type RelayMatch, type RelayMember, type RelayOutcome, type RelayState } from "./relay.ts";
 import type { RelayRecord } from "../../engine/src/relay.ts";
 import { ABOUT_OTHERS, ASK_KINDS, LANE_BUDGETS, NEVER_REPLY, nextAt, NY, nyParts, OUTREACH, PRD_BUDGETS, SLOT_KINDS, type SendKind } from "./outreach.ts";
 import { BASE_REACH, FLOOR_EFFORT, type CapitalEvent, type CapitalEventInput, type CapitalReader, type GamingFlag, type NetworkEffort } from "./capital.ts";
@@ -4331,20 +4331,13 @@ export class ConsentNetwork implements NetworkUnderTest {
         const m = this.members.get(id);
         if (!m || this.declinedIds.has(id)) return undefined;
         this.syncRecord(m);
-        const ages = [m.age, m.statedAge].filter((a): a is number => validAge(a));
-        const unsure = m.minor || m.minorSignal || m.minorReported || m.ageUnknown || m.ageConflict || !ages.length;
-        return { id, firstName: m.first, age: unsure ? undefined : Math.min(...ages), optedOut: m.optedOut, held: !!m.account || this.trust.level(id) === "hold" };
+        return relayMemberOf(m, this.trust.level(id) === "hold");
       },
       matchesOf: id => {
         const now = this.now(), out: RelayMatch[] = [];
         for (const o of this.opps.values()) {
           if (o.participants.length !== 2 || !o.participants.includes(id)) continue;
-          const met = o.meetingAt !== undefined && o.meetingAt <= now && (o.stage === "scheduled" || o.stage === "done") ? o.meetingAt : undefined;
-          const status: RelayMatch["status"] = o.stage === "scheduled" || o.stage === "done"
-            ? (met !== undefined && now - met > 7 * DAY ? "expired" : "mutual")
-            : o.stage === "closed" ? (o.closedFrom === "scheduled" ? "cancelled" : "closed") : "probing";
-          out.push({ id: o.id, participants: [o.participants[0]!, o.participants[1]!], acceptedBy: o.participants.filter(p => o.status.get(p) === "yes"), status,
-            ...(met !== undefined ? { metAt: met } : {}), at: o.meetingAt ?? o.createdAt });
+          out.push(relayMatchOf(o, p => o.status.get(p), now));
         }
         return out;
       },
@@ -4364,8 +4357,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
   /** A member's relay request (POST /internal/relay): decided by the engine, delivered as its rendered text only. */
   relayRequest(ask: RelayAsk, o: RelayCallOptions = {}): Promise<RelayOutcome> { this.relayDesk.prune(this.now()); return this.relayDesk.request(ask, o); }
-  /** The member's open match for the relay, if any (ids only). */
-  relayMatch(memberId: MemberId): RelayMatch | undefined { return this.relayDesk.matchFor(memberId); }
+  /** The member's open match for the relay, if any (ids only); `matchId` narrows it to that one match. */
+  relayMatch(memberId: MemberId, matchId?: string): RelayMatch | undefined { return this.relayDesk.matchFor(memberId, matchId); }
   /** Relayed items held for staff, oldest first (relay.ts). The text is kept only while held, and never a minor's. */
   relayHeld(): RelayHeld[] { return this.relayDesk.held(); }
   /** Staff release a held item (the engine checks it again first). */
@@ -4443,6 +4436,51 @@ export function forbiddenProvider(net: ConsentNetwork, memberOf?: (to: string) =
  * the rest is for matching only.
  */
 interface KnownProfile { interests: Set<string>; skills: Set<string>; strongSkills: Set<string>; desires: Set<string>; intents: number; sharedInterests: Set<string>; sharedSkills: Set<string> }
+
+// ------------------------------------------------------------------ relay views (relay.ts)
+/** A member as the relay sees them: the lowest known age (undefined when unsure: fails closed), opt-out and holds. */
+function relayMemberOf(m: Pick<MemberState, "id" | "first" | "age" | "statedAge" | "minor" | "minorSignal" | "minorReported" | "ageUnknown" | "ageConflict" | "optedOut" | "account">, trustHold: boolean): RelayMember {
+  const ages = [m.age, m.statedAge].filter((a): a is number => validAge(a));
+  const unsure = m.minor || m.minorSignal || m.minorReported || m.ageUnknown || m.ageConflict || !ages.length;
+  return { id: m.id, firstName: m.first, age: unsure ? undefined : Math.min(...ages), optedOut: m.optedOut, held: !!m.account || trustHold };
+}
+/** A two-person opportunity as the relay sees it: mutual while scheduled or done, expired a week after the meeting. */
+function relayMatchOf(o: Pick<Opp, "id" | "participants" | "stage" | "closedFrom" | "meetingAt" | "createdAt">, statusOf: (p: MemberId) => PStatus | undefined, now: number): RelayMatch {
+  const met = o.meetingAt !== undefined && o.meetingAt <= now && (o.stage === "scheduled" || o.stage === "done") ? o.meetingAt : undefined;
+  const status: RelayMatch["status"] = o.stage === "scheduled" || o.stage === "done"
+    ? (met !== undefined && now - met > RELAY_OPEN_AFTER_MEETING_MS ? "expired" : "mutual")
+    : o.stage === "closed" ? (o.closedFrom === "scheduled" ? "cancelled" : "closed") : "probing";
+  return { id: o.id, participants: [o.participants[0]!, o.participants[1]!], acceptedBy: o.participants.filter(p => statusOf(p) === "yes"), status,
+    ...(met !== undefined ? { metAt: met } : {}), at: o.meetingAt ?? o.createdAt };
+}
+
+/**
+ * Final dispatch for a relayed item, from the newest stored state (the outbound queue's admission
+ * transaction reads it again): the match is still the open two-person match of exactly these members
+ * (both said yes, not closed, not past the week after the meeting), and both members are still in it as
+ * the relay desk would see them now (adults, not opted out, not held, not declined, no block between them).
+ * Null when it may go; otherwise a reason code. The canonical platform checks (consent ledger, bans,
+ * memberships, ages) are the runtime's (runtime.ts relayAdmission).
+ */
+export function relayDispatchCheck(st: NetworkState, o: { matchId: string; from: MemberId; to: MemberId; now: number }): string | null {
+  if (o.from === o.to) return "relay:pair";
+  const opp = st.opps.find(x => x.id === o.matchId);
+  if (!opp || opp.participants.length !== 2 || !opp.participants.includes(o.from) || !opp.participants.includes(o.to)) return "relay:pair";
+  const status = new Map(opp.status);
+  const match = relayMatchOf(opp, p => status.get(p), o.now);
+  if (match.status !== "mutual" || !match.participants.every(p => match.acceptedBy.includes(p))) return "state:closed";
+  const trust = new Map((st.trust ?? []).map(r => [r.id, r.level]));
+  for (const id of [o.from, o.to]) {
+    const m = st.members.find(x => x.id === id);
+    if (!m || st.declinedIds.includes(id)) return "party:unknown";
+    const v = relayMemberOf(m, trust.get(id) === "hold");
+    if (v.age === undefined || v.age < 18) return "party:age";
+    if (v.optedOut) return "party:opted_out";
+    if (v.held) return "party:held";
+  }
+  if (st.blocks.includes(pairKey(o.from, o.to))) return "party:blocked";
+  return null;
+}
 
 /** The stored-state format version (exportState). importState refuses any other. */
 export const NETWORK_STATE_VERSION = 1;

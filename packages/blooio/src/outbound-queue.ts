@@ -118,6 +118,12 @@ export interface AppChecks {
   capTake?(row: QueueRow): Promise<boolean>;
   /** Give the slot back (the message did not go out). */
   capRelease?(row: QueueRow): Promise<void>;
+  /**
+   * The app's last word, inside the admission transaction after every asynchronous gate (app.app_id is
+   * set; short row locks only, no remote I/O). Not ok: the row ends suppressed. A throw parks the row.
+   * The Network checks a relayed item's match and both members here (runtime.ts relayAdmission).
+   */
+  admit?(row: QueueRow, tx: SQL): Promise<RecipientCheck>;
 }
 
 export interface QueueOptions {
@@ -450,6 +456,8 @@ export class OutboundQueue {
         }
         if (row.kind!=="compliance" && (member.opted_out || await this.guarded(()=>this.o.checks.optedOut?.(row)??false,true))) return "refused_opted_out";
       }
+      // After the person/member fences: one lock order (person, member, then the app's own rows) with erasure.
+      if (this.o.checks.admit && !(await this.o.checks.admit(row, tx)).ok) return "suppressed_ineligible";
       const claimed = await tx`update platform.outbound set status='sending',attempts=attempts+1,lease_owner=${this.instance},
         lease_until=${new Date(start+this.opt("leaseMs",5*MINUTE))},updated_at=${new Date(start)},new_conversation=${isNew},reengagement=${reengagement}
         where id=${row.id} and app_id=${row.app} and line=${this.line} and status=${row.status} and lease_until is null
