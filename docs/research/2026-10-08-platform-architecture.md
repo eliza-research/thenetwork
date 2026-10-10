@@ -1,6 +1,6 @@
 # One platform, four apps: architecture plan
 
-> **Superseded names (2026-10-08 cleanup note).** This is a dated research record. Since it was written: buddies.nyc was renamed friends.help (AppId `friends`, `friendsPack`); ntwrk.club belongs to someone else and is not used (ntwrk.love is the home page); `packages/worlds` moved to `packages/sim/src/apps`; the prototypes were deleted or promoted (`packages/blooio`). Current decisions: AGENTS.md "Platform decisions" and docs/mvp-plan.md.
+> **Superseded names (2026-10-08 cleanup note).** This is a dated research record. Since it was written: buddies.nyc was renamed friends.help (AppId `friends`, `friendsPack`); ntwrk.club belongs to someone else and is not used (ntwrk.party is the home page); `packages/worlds` moved to `packages/sim/src/apps`; the prototypes were deleted or promoted (`packages/blooio`). Current decisions: AGENTS.md "Platform decisions" and docs/mvp-plan.md.
 
 Status: research and plan, 2026-10-08. Nothing in this document is built or deployed. A Claude agent wrote it by hand from code reading and web research. Web prices and rules were fetched on 2026-10-07 and 2026-10-08 (UTC); each one names its source. Items marked **unverified** could not be confirmed on a primary page.
 
@@ -13,7 +13,7 @@ Code read:
 - `packages/plugin-network`.
 - `packages/core/src/policy.ts` and `types.ts`.
 - `packages/sim` (README, generator, taxonomy).
-- `sites/ntwrk.love`.
+- `sites/ntwrk.party`.
 - `packages/blooio` and `prototypes/connector-mcp`.
 - `scripts/wrangler.sh`.
 
@@ -28,7 +28,7 @@ Names used here:
 
 | App id | Domain | Product |
 |---|---|---|
-| `ntwrk` | ntwrk.club (ntwrk.love is live today) | The Network |
+| `ntwrk` | ntwrk.club (ntwrk.party is live today) | The Network |
 | `slop` | slop.date | Dating |
 | `peon` | peon.biz | Hiring |
 | `buddies` | buddies.nyc | Friend-finding in New York City |
@@ -43,8 +43,8 @@ Other terms:
 
 ## 0. Findings that change the plan
 
-1. **ntwrk.club belongs to someone else.** RDAP shows it registered at GoDaddy since 2025-02-03, with all changes locked, expiring 2027-02-03. If the founder does not own it, keep ntwrk.love as The Network's domain, or buy ntwrk.club through a broker. Nothing was bought.
-2. **slop.date and peon.biz are registered at Cloudflare** (created 2026-10-08 and 2026-10-06), on Cloudflare nameservers, and are probably the founder's. Confirm that they are in the same Cloudflare account as ntwrk.love.
+1. **ntwrk.club belongs to someone else.** RDAP shows it registered at GoDaddy since 2025-02-03, with all changes locked, expiring 2027-02-03. If the founder does not own it, keep ntwrk.party as The Network's domain, or buy ntwrk.club through a broker. Nothing was bought.
+2. **slop.date and peon.biz are registered at Cloudflare** (created 2026-10-08 and 2026-10-06), on Cloudflare nameservers, and are probably the founder's. Confirm that they are in the same Cloudflare account as ntwrk.party.
 3. **buddies.nyc is probably available** (RDAP 404). The `.nyc` nexus rule needs a registrant whose home or business street address is in NYC. Privacy proxies are not allowed, so the registrant address is public.
 4. **Dating and 10DLC may not mix.** Twilio's rejection code 30953 lists a website with "dating" content as a SHAFT (sex/adult) violation. A campaign rejected under it cannot be resubmitted. slop.date may not get A2P SMS. It would then depend on Blooio iMessage only, or on a different sender type. Ask Twilio or the aggregator before anyone submits a slop campaign.
 5. **peon.biz is probably an AEDT under NYC Local Law 144.** A matching engine that ranks candidates for NYC jobs needs an independent bias audit, a public summary and a candidate notice 10 business days before use. NYC enforcement increases in 2026. Illinois HB 3773 has applied since 2026-01-01. The Colorado replacement law (SB 26-189) starts 2027-01-01.
@@ -68,8 +68,8 @@ Other terms:
 | `packages/plugin-network` | Eliza plugin with no state of its own: member context, `SET_STATE`, signals. The host injects the store and the authority (`memberId`) | No app in `NetworkTurnAuthority`. One character in Eliza Cloud (eliza-integration 3a). |
 | `packages/blooio` | Signed webhook, keyword ledger (E.164), `FileConsentStore`, outbound queue with pre-send checks, one line (`BLOOIO_FROM`) | One line. The consent ledger is keyed by address only, so a STOP on one app would stop all apps. |
 | `prototypes/connector-mcp` | OAuth discovery, surface profiles (`teen_safe_directory`, `general_assistant`, `enterprise_professional`) with category lists | Not in MVP. Its surface-profile idea is the right shape for app packs. |
-| `sites/ntwrk.love` | Static Worker (assets only): landing page, privacy, terms with the SMS program | One site. No onboarding form; joining is invite-only by text. |
-| `scripts/wrangler.sh` | Refuses changing commands without `NTWRK_ALLOW_DEPLOY=1` | Generic logic. The messages name only ntwrk.love. The account id is fixed. |
+| `sites/ntwrk.party` | Static Worker (assets only): landing page, privacy, terms with the SMS program | One site. No onboarding form; joining is invite-only by text. |
+| `scripts/wrangler.sh` | Refuses changing commands without `NTWRK_ALLOW_DEPLOY=1` | Generic logic. The messages name only ntwrk.party. The account id is fixed. |
 
 ---
 
@@ -222,7 +222,7 @@ The engine service sets `set local app.app_id = '<app>'` in each unit of work. R
 | Action | Effect |
 |---|---|
 | Leave one app | The generalized `forget(member_id)` path runs. Today it exists only for an under-13 decline in `service.ts writeUnit`. It deletes the member's messages, feedback, events, facets, intents, presence, edges and app-specific rows. The membership row is set to `removed`. Other memberships and the phone stay. |
-| Delete everything | Leave every app, then delete `phone_identities`, `share_grants` and the person's blocks as blocker. Keep a tombstone: `people.deleted_at`, plus a hash of the phone in a suppression list, so a STOP is never forgotten (the ntwrk.love privacy page already says that a minimal deletion record is kept). Backups expire within 30 days, as the current privacy page says. |
+| Delete everything | Leave every app, then delete `phone_identities`, `share_grants` and the person's blocks as blocker. Keep a tombstone: `people.deleted_at`, plus a hash of the phone in a suppression list, so a STOP is never forgotten (the ntwrk.party privacy page already says that a minimal deletion record is kept). Backups expire within 30 days, as the current privacy page says. |
 | Export one app | A JSON file with the member's own facets, intents, presence, opportunities, messages and consent events for that app. It never includes other members' private data. |
 | Export everything | The union of the per-app exports, plus the person row and grants. |
 | Hiring records | An employment agency may have to keep records for a set time. Ask counsel before deleting `peon` application and decision records on request. Keep the AEDT audit log (section 8) apart from member data. |
@@ -330,9 +330,9 @@ Alternatives for a line: Sendblue ($100/mo per line, but outbound-first messagin
 Rules (as of 2026-10-07; [Tychron guide](https://www.tychron.com/guides/10dlc-registration/), updated 2026-08-17; [Twilio FAQ](https://help.twilio.com/articles/14910496447771-Shutdown-of-Unregistered-10DLC-Messaging-FAQ)):
 
 - Carriers have blocked all unregistered 10DLC traffic since 2025-02-01.
-- **One brand** per legal entity (Eliza Research Corporation, per the ntwrk.love site): $4.50 one time + $41.50 standard vetting.
+- **One brand** per legal entity (Eliza Research Corporation, per the ntwrk.party site): $4.50 one time + $41.50 standard vetting.
 - **One campaign per app.** Each campaign costs $15 per vetting attempt (a rejection is billed too) and $10/mo for the Standard or Mixed use case. A brand can have several campaigns, and many numbers can share a campaign.
-- Each campaign's brand name, website, sample messages, opt-in flow, privacy policy and terms must match each other. The privacy policy must say that mobile numbers and opt-in data are not shared with third parties or affiliates for marketing ([Twilio 30908](https://www.twilio.com/docs/api/errors/30908)). The ntwrk.love privacy page already has this sentence; copy it to every app.
+- Each campaign's brand name, website, sample messages, opt-in flow, privacy policy and terms must match each other. The privacy policy must say that mobile numbers and opt-in data are not shared with third parties or affiliates for marketing ([Twilio 30908](https://www.twilio.com/docs/api/errors/30908)). The ntwrk.party privacy page already has this sentence; copy it to every app.
 - Timeline: 24-72 hours for a clean submission; a rejection adds 1-2 weeks.
 - **slop.date risk:** Twilio 30953 rejects websites with dating content as SHAFT, with no resubmission. Do not submit slop's campaign until Twilio or the aggregator says in writing how a non-adult dating service is classified. Whether a rejection of one campaign affects the brand's other campaigns is **unverified**. A safe order is: ntwrk, buddies, peon, then slop.
 - Separate brands (separate legal entities) per app are an option if slop puts the brand at risk. Founder and counsel decision.
@@ -608,7 +608,7 @@ Milestone: the audit summary is published before any NYC role is matched.
 | AEDT non-compliance | Fines; a ban on use in NYC | Audit before NYC matching; decision log |
 | Human review load times four | Review SLAs missed; items expire unsent | Per-app reviewers; an SLA alert per app; review stays required below 1,000 members per app (founder rule) |
 | One JSON state document per network | Slow saves at scale | Measure at 2,000 members before wide launch |
-| ntwrk.club not owned | Branding | Keep ntwrk.love |
+| ntwrk.club not owned | Branding | Keep ntwrk.party |
 | FCC revoke-all rule | STOP per app becomes illegal | `PLATFORM_STOP_SCOPE` switch (4.3) |
 
 ### 9.2 Monthly cost estimate (pilot: about 500 members per app, 2,000 people)
@@ -642,7 +642,7 @@ Total: about $1,100-1,900 a month. Blooio lines are 75-85% of it. Human reviewer
 ## 11. Summary (20 lines)
 
 1. A four-app platform is outside PRD 28.3. The founders must approve it and add it to the PRD before any code.
-2. ntwrk.club is registered to a third party at GoDaddy (locked to 2027-02). Keep ntwrk.love unless the founder owns ntwrk.club.
+2. ntwrk.club is registered to a third party at GoDaddy (locked to 2027-02). Keep ntwrk.party unless the founder owns ntwrk.club.
 3. slop.date and peon.biz are registered at Cloudflare (probably ours). buddies.nyc looks free but needs a public NYC street address.
 4. Data model: a `platform` schema (apps, people, phone identities, memberships, consent, grants, blocks, staff roles, audit) plus `app_id` in `network`.
 5. A member id belongs to one app. Composite keys, an app-filtered snapshot and RLS keep dating data out of hiring by construction.
