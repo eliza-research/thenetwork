@@ -1,9 +1,10 @@
 // Private photos on the settings page (slop.date only; packages/platform/src/photos.ts is the contract).
 // Root: [data-photos] inside [data-settings]. It loads when the settings page shows the account (the
-// "account" event), and stays hidden when photos are off, the person has no membership, or they are
-// not signed in. Adults only: the server refuses anyone whose lowest stated age is under 18 or unknown.
+// "account" event), and stays hidden when photos are off, the person has no membership, they are not
+// signed in, or they may not add photos (GET /api/photos says eligible: false). Adults only: the server
+// refuses anyone whose lowest stated age is under 18 or unknown.
 //   GET  /api/photos/consent   the consent text and version (shown next to the checkbox)
-//   GET  /api/photos           the person's own photos (ids and dates only: no image is ever sent back)
+//   GET  /api/photos           {eligible, photos}: may they add one; their own photos (ids and dates only)
 //   POST /api/photos           the image bytes, X-Photo-Consent: <version>
 //   POST /api/photos/delete    {id}
 // The browser makes a smaller JPEG first (at most 2048 px on the long side): the upload is small, and
@@ -70,11 +71,15 @@ export function mountPhotos(box: HTMLElement): void {
     const [c, mine] = await Promise.all([get("/api/photos/consent"), get("/api/photos")]);
     // Photos off, not signed in, or no person yet: the section stays hidden.
     if (c.status !== 200 || mine.status === 401 || mine.status === 503) { box.hidden = true; return; }
+    // Not allowed to add photos here (under 18 or unknown age, a ban, an app that takes none) and nothing
+    // left to delete: the section stays hidden, so a minor never sees the consent text or the upload control.
+    if (mine.status !== 200 || (mine.body.eligible !== true && !(mine.body.photos ?? []).length)) { box.hidden = true; return; }
     box.hidden = false;
     version = String(c.body.version ?? "");
     consentText.textContent = String(c.body.text ?? "");
-    if (mine.status !== 200) { list.replaceChildren(); input.disabled = true; consent.disabled = true; say(why(mine.body)); return; }
-    input.disabled = false; consent.disabled = false;
+    // Photos still there but no longer allowed to add one: they can be deleted, and nothing can be added.
+    input.disabled = mine.body.eligible !== true; consent.disabled = mine.body.eligible !== true;
+    if (mine.body.eligible !== true) say(why({ error: "adults_only" }));
     const items = (mine.body.photos ?? []) as PhotoItem[];
     list.replaceChildren(...items.map((p, i) => {
       const li = document.createElement("li");
