@@ -14,7 +14,7 @@
 //   Bun.serve({ fetch: async (req, server) => (await api.fetch(req, server)) ?? new Response("not found", { status: 404 }) });
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { type AccountHooks, Accounts, type MemberHookContext, parseJoin, publicMembership, type Who } from "./accounts.ts";
-import { APPS, type AppId, type AppInfo, appForHost, DEFAULT_HOST_MAP, DEV_HOST_MAP, isAppId, publicAppInfo, siteHosts } from "./apps.ts";
+import { APPS, type AppId, type AppInfo, appForHost, DEFAULT_HOST_MAP, DEV_HOST_MAP, isAppId, publicAppInfo, siteHosts, stagingSiteOrigins } from "./apps.ts";
 import { devShortcutsAllowed, type Env } from "./env.ts";
 import { type OtpProvider, OtpService, type OtpLimits } from "./otp.ts";
 import { maskPhone, normalizePhone } from "./phone.ts";
@@ -146,8 +146,15 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
     return {loginOrigin: env.NETWORK_CLOUD_AUTH_LOGIN_ORIGIN, apiOrigin: env.NETWORK_CLOUD_AUTH_API_ORIGIN,
       siteOrigin, serverToken: env.NETWORK_CLOUD_AUTH_SERVER_TOKEN};
   })() : undefined;
-  const apps = o.apps ?? APPS;
-  const hostMap = o.hostMap ?? (dev ? DEV_HOST_MAP : DEFAULT_HOST_MAP);
+  const stageOrigins = stagingSiteOrigins(env);
+  const apps = { ...(o.apps ?? APPS) };
+  const hostMap = { ...(o.hostMap ?? (dev ? DEV_HOST_MAP : DEFAULT_HOST_MAP)) };
+  for (const [id, origin] of Object.entries(stageOrigins)) {
+    const app = id as AppId, host = new URL(origin).host;
+    if (hostMap[host] && hostMap[host] !== app) throw new Error("staging authority conflicts with the app host map");
+    for (const [key, owner] of Object.entries(hostMap)) if (owner === app) delete hostMap[key];
+    hostMap[host] = app; apps[app] = { ...apps[app], domain: host };
+  }
   const cloudApp = cloudAuth ? appForHost(new URL(cloudAuth.siteOrigin).host, hostMap) : undefined;
   if (cloudAuth && !cloudApp) throw new Error("Cloud auth site must map to a canonical app");
   const log = o.log ?? (s => console.log(s));
@@ -388,7 +395,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         try {
           const e164 = normalizePhone(b.phone);
           if (!e164) return json(400, { ok: false, error: "invalid_phone" });
-          if (o.turnstile && !(await o.turnstile.verify(typeof b.turnstileToken === "string" ? b.turnstileToken : undefined, ip, dev ? undefined : siteHosts(appId)))) {
+          if (o.turnstile && !(await o.turnstile.verify(typeof b.turnstileToken === "string" ? b.turnstileToken : undefined, ip, dev ? undefined : siteHosts(appId, env)))) {
             return json(400, { ok: false, error: "turnstile" });
           }
           const r = await otp.start(app, e164, ip);

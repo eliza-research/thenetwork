@@ -52,6 +52,21 @@ Every input schema has `app` only (`submit_profile`: `app` and `about`) and `add
 
 ## 5. Run and test
 
+### Isolated staging authority
+
+`STAGING_SITE_ORIGINS` is an optional JSON object of app IDs and exact HTTPS origins.
+It requires `PLATFORM_ENV=staging` and is refused in a production build.
+A configured app uses only its declared staging host, issuer, resource and links.
+Its Turnstile checks use that hostname. Unconfigured apps retain their existing behavior.
+
+Use the same mapping in the backend and site build. Staging site builds also need
+an explicit isolated backend origin and mappings for their linked apps.
+See [the deployment guide](../../docs/deploy.md#isolated-staging-site-authorities).
+No deployment, credentials, phone provider or custom ChatGPT pilot is enabled by this setting.
+The normal account, age, consent and OAuth checks remain in force.
+The public Slop OpenAI plugin remains unavailable.
+Cloud SSO keeps its separate origin and callback restrictions.
+
 ### Private ChatGPT development pilot
 
 `MCP_PRIVATE_OPENAI_APPS=slop` permits a private ChatGPT DCR connection to `/mcp`

@@ -8,6 +8,7 @@
 // with the site's signed host, and the MCP server binds a client to that one app (packages/mcp).
 // https://api.ntwrk.party/mcp names no app and answers 404. MCP_URL is a template: "{domain}" is the
 // site's domain (default "https://{domain}/mcp").
+import { APPS, stagingSiteOrigins } from "../packages/platform/src/apps.ts";
 
 export const DEFAULT_BACKEND_ORIGIN = "https://api.ntwrk.party";
 
@@ -30,6 +31,14 @@ function origin(v: string, name: string): string {
 }
 
 export function skillsConfig(env: Record<string, string | undefined> = process.env): SkillsConfig {
+  const staging = stagingSiteOrigins(env);
+  if (Object.keys(staging).length) {
+    const backend = env.BACKEND_ORIGIN ? new URL(origin(env.BACKEND_ORIGIN, "BACKEND_ORIGIN")) : undefined;
+    if (!backend || backend.origin === DEFAULT_BACKEND_ORIGIN || Object.values(staging).includes(backend.origin) || backend.hostname.endsWith(".") || backend.pathname !== "/" || backend.search || backend.hash || backend.username || backend.password) {
+      throw new Error("staging sites need an explicit isolated BACKEND_ORIGIN");
+    }
+  }
+  if (Object.keys(staging).length && env.MCP_URL && env.MCP_URL !== DEFAULT_MCP_URL) throw new Error("staging MCP_URL must use the configured site's /mcp endpoint");
   const BACKEND_ORIGIN = origin(env.BACKEND_ORIGIN || DEFAULT_BACKEND_ORIGIN, "BACKEND_ORIGIN");
   const MCP_URL = env.MCP_URL || DEFAULT_MCP_URL;
   if (!MCP_URL.includes("{domain}")) throw new Error(`MCP_URL must contain {domain}: each site is its own MCP server (got ${MCP_URL})`);
@@ -41,6 +50,9 @@ export const DEFAULT_MCP_URL = "https://{domain}/mcp";
 
 /** The MCP endpoint of one site (for example https://slop.date/mcp). */
 export function mcpUrlFor(domain: string, env: Record<string, string | undefined> = process.env): string {
+  const staging = stagingSiteOrigins(env);
+  const app = Object.values(APPS).find(a => a.domain === domain);
+  if (app && staging[app.id]) { skillsConfig(env); return `${staging[app.id]}/mcp`; }
   return skillsConfig(env).MCP_URL.replaceAll("{domain}", domain).replace(/\/+$/, "");
 }
 

@@ -1,5 +1,13 @@
 # App sites
 
+For isolated staging builds, set `PLATFORM_ENV=staging`, an explicit staging `BACKEND_ORIGIN`,
+and `STAGING_SITE_ORIGINS` as JSON mapping all four app IDs to distinct HTTPS origins.
+For example: `{"ntwrk":"https://hub-stage.example.test","slop":"https://slop-stage.example.test","peon":"https://peon-stage.example.test","friends":"https://friends-stage.example.test"}`.
+The full map keeps hub navigation and published skills from linking back to production.
+Leave `MCP_URL` unset or at its default template; each staging MCP URL is its configured origin plus `/mcp`.
+Do not set `DEPLOY_TARGET=production` with staging origins. Canonical app names, source paths,
+Pages project identities and official plugin snapshots stay unchanged. A staging build does not deploy anything.
+
 Four public sites share one backend, one admin panel and one database (PRD 40, AGENTS.md
 "Platform decisions"). ntwrk.party is the home page for the whole concept and links to the apps:
 "All of these apps are powered by The Network."

@@ -5,6 +5,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statS
 import { dirname, join, relative } from "node:path";
 import { mcpUrlFor, skillsConfig } from "./skills.config.ts";
 import { RUN_WORKER_FIRST } from "../deploy/router.ts";
+import { stagingSiteOrigins } from "../packages/platform/src/apps.ts";
 
 export type AppId = "ntwrk" | "slop" | "peon" | "friends";
 
@@ -95,10 +96,25 @@ export function fill(text: string, env: Record<string, string | undefined> = pro
   const cfg = skillsConfig(env);
   const key = (env.TURNSTILE_SITE_KEY ?? "").trim();
   if (key && !/^[0-9A-Za-z_-]{1,64}$/.test(key)) throw new Error("TURNSTILE_SITE_KEY has unexpected characters");
-  return text
+  let filled = text
     .replaceAll("{{BACKEND_ORIGIN}}", cfg.BACKEND_ORIGIN)
     .replaceAll("{{MCP_URL}}", mcpUrlFor(domain, env))
     .replaceAll("{{TURNSTILE_SITE_KEY}}", key);
+  const staging = stagingSiteOrigins(env);
+  if (Object.keys(staging).length) {
+    // Rewrite exact app URL authorities only, including the encoded URLs inside agent prompts.
+    // Names, emails, source directories, projects and other external links keep their identity.
+    for (const site of SITES) {
+      const canonical = `https://${site.domain}`;
+      const stage = staging[site.app];
+      if (!stage) throw new Error(`staging site builds need an origin for ${site.app}`);
+      const escaped = canonical.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      filled = filled.replace(new RegExp(`${escaped}(?=[/\\s"'<>?#)]|$)`, "g"), stage);
+      const encoded = encodeURIComponent(canonical).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      filled = filled.replace(new RegExp(`${encoded}(?=%2F|%3F|%23|%20|["'<>\\s&]|$)`, "g"), encodeURIComponent(stage));
+    }
+  }
+  return filled;
 }
 
 const sha256 = (b: string | Buffer) => createHash("sha256").update(b).digest("hex");
@@ -177,9 +193,10 @@ export async function buildSite(s: Site, outdir: string, env: Record<string, str
     write(join(outdir, "_headers"), headersFile());
     // Cloudflare Pages advanced mode: _worker.js is the router, and _routes.json runs it only on the
     // backend paths (every other path is a static file, served without the Worker).
+    const stagingOrigin = stagingSiteOrigins(env)[s.app];
     const worker = await Bun.build({
       entrypoints: [ROUTER], target: "browser", format: "esm", minify: true,
-      define: { __SITE_APP_ID__: JSON.stringify(s.app), __SITE_HOST__: JSON.stringify(s.domain), __SITE_BACKEND_ORIGIN__: JSON.stringify(skillsConfig(env).BACKEND_ORIGIN) },
+      define: { __SITE_APP_ID__: JSON.stringify(s.app), __SITE_HOST__: JSON.stringify(stagingOrigin ? new URL(stagingOrigin).host : s.domain), __SITE_BACKEND_ORIGIN__: JSON.stringify(skillsConfig(env).BACKEND_ORIGIN) },
     });
     if (!worker.success || worker.outputs.length !== 1) return { ok: false, logs: [...logs, ...worker.logs.map(String), "the router bundle (_worker.js) failed"] };
     write(join(outdir, "_worker.js"), await worker.outputs[0]!.text());

@@ -130,6 +130,7 @@ Set these in **Variables**. Mark each **secret** row as a sealed variable. Never
 | `BUILD_ID` | no | leave unset | Railway's `RAILWAY_GIT_COMMIT_SHA` is used. Every response carries it in `x-network-build`. |
 | `PLATFORM_DB_ENVIRONMENT_INIT` | no | `1` on the first deploy only, then delete it | Section 2.4 |
 | `BACKEND_EXTRA_HOSTS` | no | **unset in production** (refused there) | Staging only: `<host>=slop,...` for a staging site host. The Pages production names (`<project>.pages.dev`) are built in. |
+| `STAGING_SITE_ORIGINS` | no | **unset in production** | Optional staging-only JSON object: app ID to its exact HTTPS site origin. Use the same value in the backend and site build. |
 | `SHUTDOWN_GRACE_MS` | no | `25000` | Keep it under `drainingSeconds` in railway.toml (30 s) |
 | `PHOTO_STORAGE` | no | `r2` (unset: photos are off) | slop.date photos (adults only). `local` is for dev only. |
 | `R2_ACCOUNT_ID` (or `R2_ENDPOINT`), `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | key: **yes** | A **private** bucket: no public access, no r2.dev URL | The R2 driver is not yet exercised in tests. |
@@ -323,6 +324,28 @@ for S in https://ntwrk-party.pages.dev https://slop-date.pages.dev https://peon-
 done
 curl -s https://api.ntwrk.party/api/app                      # 421 edge_required: the origin alone names no site
 ```
+
+### Isolated staging site authorities
+
+Use an isolated staging database, backend and Pages projects. Keep production data and secrets out of this environment.
+
+Set `PLATFORM_ENV=staging`. Set `STAGING_SITE_ORIGINS` to one JSON object:
+
+```json
+{"ntwrk":"https://network-preview.example","slop":"https://slop-preview.example","peon":"https://peon-preview.example","friends":"https://friends-preview.example"}
+```
+
+Each value is an exact HTTPS origin. Production domains and ambiguous mappings are refused. The setting is refused in production.
+
+Use the same object for the backend and site build. Set the build's `BACKEND_ORIGIN` explicitly to the isolated staging backend. A preview build must not fall back to the production backend. Map every app whose absolute URL appears in the generated pages or skills.
+
+The configured site origin controls trusted routing, OAuth issuer and resource, application links, and Turnstile hostname checks. Register those hostnames on the staging Turnstile widget. Configure real staging phone verification separately. This setting adds no development OTP exception.
+
+Keep sends and matching disabled. Keep the custom ChatGPT pilot off until the approved adult staging account and provider checks are complete.
+
+This configuration does not create resources or enable automatic PR deployments. Do not run pull-request code with production deploy credentials. Production reviewer requirements remain unchanged.
+
+An independent preview proves that environment only. It does not prove production hosting, Cloud SSO, shared account history or native delivery. Cloud staging authentication retains its own origin and callback requirements.
 
 ## 4. GitHub: secrets and the production environment
 

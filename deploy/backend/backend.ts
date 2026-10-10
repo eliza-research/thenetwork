@@ -19,7 +19,7 @@
 // before the public API or the MCP server sees the request: a verified request gets Host = the signed
 // site host (which picks the app) and keeps the signed visitor IP for the rate limits; any other
 // request loses every proxy and forwarding header, so a client can never pick either one.
-import { appForHost, DEFAULT_HOST_MAP, isAppId, type AppId } from "../../packages/platform/src/apps.ts";
+import { appForHost, stagingSiteOrigins, DEFAULT_HOST_MAP, isAppId, type AppId } from "../../packages/platform/src/apps.ts";
 import { requirePlatformEnv, type Env, type PlatformEnv } from "../../packages/platform/src/env.ts";
 import { PROXY_HEADERS, verifyProxyHeaders } from "../../packages/platform/src/proxy.ts";
 import { timingSafeEqual } from "node:crypto";
@@ -116,10 +116,17 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   const staffHost = deployed ? "::" : "127.0.0.1";
 
   const hostMap: Record<string, AppId> = { ...DEFAULT_HOST_MAP };
+  const stageOrigins = stagingSiteOrigins(e);
+  for (const [app, origin] of Object.entries(stageOrigins)) {
+    for (const [host, owner] of Object.entries(hostMap)) if (owner === app) delete hostMap[host];
+    hostMap[new URL(origin).host] = app as AppId;
+  }
   for (const pair of (e.BACKEND_EXTRA_HOSTS ?? "").split(",").map(s => s.trim()).filter(Boolean)) {
     const [h, a] = pair.split("=").map(s => s?.trim().toLowerCase());
     if (!h || !a || !isAppId(a)) throw new Error(`BACKEND_EXTRA_HOSTS: "${pair}" is not host=app with a known app`);
     if (env === "production") throw new Error("BACKEND_EXTRA_HOSTS is for staging and previews, not production");
+    if (stageOrigins[a] && h !== new URL(stageOrigins[a]!).host) throw new Error("BACKEND_EXTRA_HOSTS conflicts with the staging app authority");
+    if (Object.entries(stageOrigins).some(([app, origin]) => new URL(origin).host === h && app !== a)) throw new Error("BACKEND_EXTRA_HOSTS conflicts with the staging app authority");
     hostMap[h] = a;
   }
 
@@ -222,7 +229,8 @@ export async function normalizeEdge(req: Request, secret: string | undefined, ho
   const headers = new Headers(req.headers);
   const url = new URL(req.url);
   const v = await verifyProxyHeaders(req, secret, Math.floor(nowMs / 1000));
-  let app = v ? appForHost(v.host, hostMap) : undefined;
+  const signedApp = v ? appForHost(v.host, hostMap) : undefined;
+  let app = signedApp;
   for (const h of STRIP) headers.delete(h);
   if (v && app) {
     headers.set("host", v.host);
@@ -235,7 +243,7 @@ export async function normalizeEdge(req: Request, secret: string | undefined, ho
   }
   const init: RequestInit = { method: req.method, headers, redirect: "manual" };
   if (req.method !== "GET" && req.method !== "HEAD") { init.body = req.body; (init as Record<string, unknown>).duplex = "half"; }
-  return { req: new Request(url, init), app, edge: !!(v && app) };
+  return { req: new Request(url, init), app, edge: !!(v && signedApp) };
 }
 
 /** The client IP for the rate limits: the trusted edge header (normalizeEdge removed any other copy), else the socket. */
