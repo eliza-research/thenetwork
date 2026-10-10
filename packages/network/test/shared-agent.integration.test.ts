@@ -97,7 +97,7 @@ test("canonical membership STOP is collected atomically and cannot drain to a pr
 test("a normal signed join reaches open context, and STOP revokes replay without rerunning the turn",async()=>{
   const phone="+12125550141", before=escaped;
   const first=await post(turn("friends-join-start",phone,"friends.help","friends"));expect(first.status).toBe(200);
-  expect((await first.json() as any).reason).toBe("join_asked");
+  expect((await first.json() as any).reason).toBe("onboarding_asked");
   const joined=await post(turn("friends-join-profile",phone,"Noa, 29","friends"));expect(joined.status).toBe(200);
   const j=await joined.json() as any;expect(j.reason).toBe("joined");expect(j.replies.length).toBeGreaterThan(0);
   let n=0;
