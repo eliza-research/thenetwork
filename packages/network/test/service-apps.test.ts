@@ -86,7 +86,7 @@ describe("per-app copy", () => {
     for (const app of APP_IDS) {
       const c = copyFor(brandOf(APPS[app]));
       const texts = [c.welcome("Sam"), c.welcome("Sam", "Ana"), c.welcomeMinor("Sam"), c.welcomeAskAge("Sam"), c.growthAsk, c.growthPlain, c.noPromotion,
-        c.joinAsk(APPS[app].minJoinAge), c.joinNeedName, c.linkNotice, c.shareDone, c.leftApp];
+        c.joinAsk(APPS[app].minJoinAge), c.joinNeedName, c.linkNotice, c.shareDone, c.leftApp, c.invitesNotOpen("Maya"), c.requestNoneYet("a climbing partner", false)];
       for (const t of texts) expect([app, t, styleViolations(t)]).toEqual([app, t, []]);
       // The keyword texts (HELP names the support address, which the contact-details rule would flag): never "reply cancel".
       for (const t of Object.values(APPS[app].brand)) expect(styleViolations(t)).not.toContain("asks_cancel");
@@ -528,6 +528,20 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(await count(sql`select count(*)::int as n from network.messages where app_id = 'slop'`)).toBe(0);
     expect(await count(sql`select count(*)::int as n from platform.phone_identities where e164 = ${p}`)).toBe(0);
     expect(await count(sql`select count(*)::int as n from platform.suppression`)).toBe(1);
+  }, T);
+
+  test("no invite link exists on the service: naming a friend gets an honest reply that sends and promises nothing", async () => {
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(START);
+    const { s } = service(clock);
+    const p = newPhone();
+    expect(await text(s, clock, p, "Sam 29", { app: "friends" })).toBe("joined");
+    const m = (await memberOf("friends", p))!;
+    await text(s, clock, p, "My friend Maya would love this, can you invite her?", { app: "friends" });
+    const bodies = (await outbound(m.id)).map(x => x.body as string);
+    expect(bodies.at(-1)).toMatch(/^Thanks! I can't send invite links yet, so nothing went to Maya\./);
+    for (const b of bodies) expect(b).not.toMatch(/here's an invite link|send you an invite/i);
+    expect((await sql`select count(*)::int as n from network.members where app_id = 'friends'`)[0].n).toBe(1);
   }, T);
 
   test("slop onboarding is the engine's loop: one question at a time, bi asked again in other words, the read-back, tags and state without the member's words", async () => {
