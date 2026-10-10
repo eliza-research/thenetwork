@@ -2,12 +2,12 @@
 name: peon-biz
 description: Explains peon.biz, a hiring service by text message powered by The Network that introduces people looking for work to teams that are hiring, and helps a person sign themselves up for the waitlist. Use when someone asks what peon.biz is, who can use it, how introductions work, how to join, what happens to their data, or how to stop, leave or delete. Gives the join link or the text keyword. Never signs anyone up, never asks for or types a phone number or verification code, never applies to jobs and never contacts candidates or employers.
 license: Proprietary. Terms at https://peon.biz/terms
-compatibility: Needs web access to open https://peon.biz pages. Sending the profile needs this app's MCP server at https://ntwrk.love/mcp/openai (OAuth sign-in by the person).
+compatibility: Needs web access to open https://peon.biz pages. Sending the profile needs this app's MCP server at https://ntwrk.party/mcp/openai (OAuth sign-in by the person).
 metadata:
   app: peon
   site: https://peon.biz
-  backend: "https://api.ntwrk.love"
-  mcp: "https://ntwrk.love/mcp/openai"
+  backend: "https://api.ntwrk.party"
+  mcp: "https://ntwrk.party/mcp/openai"
   operator: Eliza Research Corporation
   version: "1.0.0"
 ---
@@ -18,8 +18,8 @@ peon.biz introduces people looking for work to teams that are hiring, by text me
 waitlist today. Software only suggests possible fits. A person on the team reviews every
 introduction, and the team that hires makes every hiring decision. Candidates never pay a fee.
 
-All of these apps are powered by The Network: ntwrk.love, friends.help and peon.biz
-share one backend at https://api.ntwrk.love, and one text line. This app's MCP server is at https://ntwrk.love/mcp/openai.
+All of these apps are powered by The Network: ntwrk.party, friends.help and peon.biz
+share one backend at https://api.ntwrk.party, and one text line. This app's MCP server is at https://ntwrk.party/mcp/openai.
 
 ## What the person is signing up for
 
@@ -34,7 +34,7 @@ share one backend at https://api.ntwrk.love, and one text line. This app's MCP s
 - Anyone 13 or older may join the waitlist. Matching is for adults 18 and older only.
 - Members aged 13 to 17 are never matched or introduced to anyone on peon.biz.
 - peon.biz never asks a candidate for money, a Social Security number or bank details. If anyone
-  does in its name, it is a scam: tell the person to report it to help@ntwrk.love.
+  does in its name, it is a scam: tell the person to report it to help@ntwrk.party.
 
 ## How a person joins (they do it, not you)
 
@@ -45,7 +45,7 @@ The person signs up through you, in this conversation:
 2. Give them one link to confirm their own phone: https://peon.biz/join?via=agent. On that page they type
    their own number, the code we text them, their first name and age, and agree to the texts. You
    never see the number or the code.
-3. When they say it is done, connect to this app's MCP server (https://ntwrk.love/mcp/openai). They sign in on our
+3. When they say it is done, connect to this app's MCP server (https://ntwrk.party/mcp/openai). They sign in on our
    page in their own browser (no code again if they just joined there) and allow access. Then call
    submit_profile once with the profile they agreed to, in their words. check_status shows their
    status.
@@ -90,7 +90,7 @@ number uses peon.biz.
 
 ## Support
 
-- Support: https://peon.biz/support (email help@ntwrk.love)
+- Support: https://peon.biz/support (email help@ntwrk.party)
 - Privacy: https://peon.biz/privacy
 - Terms: https://peon.biz/terms
 - Text messaging terms: https://peon.biz/sms-terms
