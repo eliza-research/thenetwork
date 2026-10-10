@@ -594,10 +594,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     m.lastInbound = nowIn; m.msgsIn++;
     this.outboundBefore = m.outbound ?? 0;
     // Answers to the Network teach the send time (founder decision 1); carrier keywords do not.
-    if (!msg.keyword) m.replies = [...(m.replies ?? []), this.now()].slice(-60);
+    // A profile from the member's AI assistant (source "mcp") is not the member answering: it teaches no send time.
+    if (!msg.keyword && msg.source !== "mcp") m.replies = [...(m.replies ?? []), this.now()].slice(-60);
     this.heardFrom(m);
     // "Don't send my number": a pending number swap of theirs is withdrawn at once (relay.ts), whatever else the message says.
-    if (!msg.keyword && withdrawsSwap(body) && this.relayDesk.cancelSwaps(m.id)) this.ctx.log("relay_swap_withdrawn", { memberId: m.id });
+    if (!msg.keyword && msg.source !== "mcp" && withdrawsSwap(body) && this.relayDesk.cancelSwaps(m.id)) this.ctx.log("relay_swap_withdrawn", { memberId: m.id });
     this.replyTo = m.id; this.understood = u;
     try { return this.handleInbound(m, msg) === "open" ? "open" : "handled"; } finally { this.replyTo = undefined; this.understood = undefined; }
   }
@@ -715,7 +716,15 @@ export class ConsentNetwork implements NetworkUnderTest {
 
     // Blocks and reports first: their words describe someone else, so they are never scored as the
     // sender's abuse, and a member on hold can still block (network-consent-4).
-    if (c.kind === "block" || c.kind === "report") return this.handleBlock(m, c);
+    // A profile from the member's AI assistant (InboundMessage.source "mcp") is learned, never an answer:
+    // it never blocks or reports anyone, and it skips every answer below (a probe, a plan, a crew, the
+    // booked date, a check-in, a cancel, feedback, an invite, CALENDAR/WEEKLY). Only the member's own
+    // text in the thread does those.
+    const mcp = msg.source === "mcp";
+    if ((c.kind === "block" || c.kind === "report") && !mcp) return this.handleBlock(m, c);
+    // Nor is the assistant's block or report scored as the member's abuse: its words describe someone
+    // else (network-consent-4), and a watch would drop the member and cancel a booked date. Learned only.
+    if ((c.kind === "block" || c.kind === "report") && mcp) return this.learnFrom(m, body);
     if (this.trust.level(m.id) === "hold") { if (c.abuse.length) this.trust.add(m.id, now, c.abuse[0]!, 0); return; }
     // "He asked me to venmo him $50": what someone else did, never the sender's abuse (ids and kinds only).
     if (c.disclosure?.length) this.ctx.log("abuse_disclosed", { memberId: m.id, kinds: c.disclosure });
@@ -727,8 +736,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     // peon (#9): a job post by text, read back and saved only on the manager's yes (rules only, never an open-turn LLM output).
     if (this.opts.hooks?.postings && this.postingTurn(m, body)) return;
 
-    // Answers to what we asked.
-    const aw = m.awaiting;
+    // Answers to what we asked (never from the assistant's profile: it can only teach, below).
+    const aw = mcp && m.awaiting?.kind !== "interview" ? undefined : m.awaiting;
+    if (mcp && c.kind !== "people_request") return this.learnFromProfile(m, aw, c, body);
     if (aw?.kind === "probe" && this.opps.get(aw.oppId!)?.plan) {
       // A plan probe: yes or no to that plan at that time ("can't make that time" is a no, and a time they are not free).
       const yn = this.yesNoOf(body);
@@ -1067,6 +1077,17 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (m.stage === "q2") return ask("q3", copy.interview.format);
     if (m.stage === "q3") this.activate(m);
     this.ack(m, copy.ackLearned);
+  }
+
+  /**
+   * A profile from the member's AI assistant (InboundMessage.source "mcp") that is not a request: it
+   * may answer an onboarding question (it is about the member), and otherwise is learned quietly. It
+   * never answers a probe, a plan, the booked date or a check-in (handleInbound leaves those open).
+   */
+  private learnFromProfile(m: MemberState, aw: MemberState["awaiting"], c: Classified, body: string) {
+    if (aw?.kind === "interview" && aw.ask) return this.onAskAnswer(m, aw.ask, c, body);
+    if (aw?.kind === "interview" && m.stage !== "active") return this.onInterviewAnswer(m, body);
+    this.learnFrom(m, body);
   }
 
   /**
