@@ -3,7 +3,7 @@
 // The human signs in with the platform phone code on our page; the client and the agent never
 // send or see a phone number or a code.
 import type { Accounts, AppInfo, MembershipState, OtpService, PeopleStore, SessionService } from "@thenetwork/platform";
-import { normalizePhone } from "@thenetwork/platform";
+import { canMatchInApp, normalizePhone } from "@thenetwork/platform";
 import type { McpAppId } from "./apps.ts";
 
 /** A membership state as the person's own agent may see it. No age, no member id, nothing about others. */
@@ -41,6 +41,8 @@ export interface PlatformHooks {
   personForKey(phoneKey: string): Promise<string | null>;
   /** The person's own state in one app. */
   status(personId: string, app: McpAppId): Promise<PublicStatus>;
+  /** Current adult Slop member and phone owner, with no safety hold or ban. Never enrolls anyone. */
+  customChatGptSlopEligible?(personId: string, phoneKey: string): Promise<boolean>;
   /**
    * The profile the person gave their assistant, delivered to their own member on this app as if they
    * had texted it (the Network reads it with the same rules). Undefined: the platform does not take profiles.
@@ -134,6 +136,14 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
     phoneKey: e164 => p.accounts.phoneHash(e164),
     async personForKey(key) {
       return (await p.accounts.byPhoneHash(key))?.person.id ?? null;
+    },
+    async customChatGptSlopEligible(personId, key) {
+      const app = p.app("slop");
+      const who = await p.accounts.byPhoneHash(key);
+      if (!app || !who || who.person.id !== personId || await p.accounts.banned(who.e164, who.person)) return false;
+      const m = await p.store.getMembership(personId, "slop");
+      return !!m && !m.review && ["active", "onboarding"].includes(m.state)
+        && canMatchInApp(await p.accounts.lowestAge(who.e164, who.person), app);
     },
     ...(p.submitProfile ? {
       submitProfile: async (personId: string, id: McpAppId, key: string, text: string) => {
