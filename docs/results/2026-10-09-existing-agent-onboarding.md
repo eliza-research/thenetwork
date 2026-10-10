@@ -1,6 +1,6 @@
 # Existing-agent onboarding: acceptance report (2026-10-09)
 
-Status: live ChatGPT registration blocked; local e2e passes; full integration fails.
+Status: hosted ChatGPT registration blocked; reconciled local integration, e2e, typecheck, and production static builds pass.
 ChatGPT is the first client acceptance target requested by the user.
 Other clients are deferred beyond completed entry checks. No client has passed live Slop onboarding end to end.
 
@@ -8,6 +8,7 @@ Other clients are deferred beyond completed entry checks. No client has passed l
 
 - Base: Network main `7348e94ee9f851b815f4dd35f2c97f6b9bf52ff9`.
 - Branch: `codex/network-existing-agents-20261009`.
+- Local reconciliation: `40d9a1c` includes parent fixture commit `253728c8` ancestry (PR #15), without shared production changes.
 - PRD 28.3 requires onboarding through the person's existing agent and MCP.
 - PRD 40.3 requires phone identity, separate app memberships, consent, and app isolation.
 - The person's agent uses its own model. Reading SKILL.md neither removes inference nor installs an MCP connector.
@@ -85,7 +86,7 @@ The owned run used Postgres port 54349 and random site ports, separate from othe
 
 | Check | Result | Limit |
 |---|---|---|
-| Full e2e suite after private pilot | **29 pass, 0 fail**, 254 assertions, two files, 2.72 seconds; `private-e2e-final.log`. | Local service acceptance only. Initial pre-pilot receipt: 28 pass. |
+| Reconciled full e2e suite | **29 pass, 0 fail**, 254 assertions, two files, 3.15 seconds; `reconciled-e2e.log`. | Local service acceptance only. Initial pre-pilot receipt: 28 pass. |
 | Two assistants, same phone | Both connections resolve to the existing Slop member; second connection reads active status. | Synthetic OAuth clients, not live ChatGPT/Claude. |
 | Approved profile submission | Stored as inbound content for the original member; member ID remains unchanged. | Does not verify live model extraction or match quality. |
 | Different account | Separate member receives none of the submitted profile content. | Does not establish arbitrary account-switch behavior in a hosted client. |
@@ -97,13 +98,15 @@ The owned run used Postgres port 54349 and random site ports, separate from othe
 | Private pilot lifecycle | Same-store restart with opt-in off blocks authorization, pending consent, token issuance, and MCP. Explicit revoke still works. Re-enable restores only unrevoked grants. | Suspension is not deletion; CIMD remains excluded. |
 | Final targeted MCP integration | **49 pass, 0 fail**, 328 assertions; `mcp-final.log`. | Public and private handler checks; no hosted client acceptance. |
 | Database ownership | Each stack gets a unique database; outside database survives teardown. | Local test-cluster isolation. |
-| Typecheck after private pilot | **Pass, exit 0**; `private-typecheck-final.log`. | Static validation only. |
+| Reconciled typecheck | **Pass, exit 0**; `reconciled-typecheck.log`. | Static validation only. |
 | Built-site integration | **70 pass, 0 fail**, 1105 assertions; `sites-final.log`. | Includes Cursor link contract; not native-client acceptance. |
 | Initial full integration suite | **393 pass, 10 fail**, 403 cases across 29 files; `integration.log`. | Before private handler change. Review attributed failures to untouched paths; no independent pre-change full run proves attribution. |
+| Reconciled full integration suite | **403 pass, 0 fail**, 8942 assertions, 96.14 seconds; `reconciled-integration.log`. | Includes exact parent fixture ancestry; not hosted-client acceptance. |
+| Production static build | **Four sites pass**; `reconciled-production-build.log`. | Build only; no deployment. |
 | Initial full simulations | **275/275 blocking gates pass**, 11 tracked off target, 335.5 seconds; `sim.log`. | Before private handler change. Final targeted audit: 16/16 blocking gates pass; no live matchmaking acceptance. |
 
-Integration failures concern Observatory roles/game/real views, restart delivery/STOP persistence, live-send flags, and photo-rating deletion.
-They remain unresolved in this lane. The full repository validation is not green.
+The initial ten integration failures concerned outdated Observatory, queue, consent, live-send, and photo-rating fixtures.
+Exact parent fixture reconciliation resolves them in the latest full run. The initial full simulation predates the private handler change.
 
 Seed: 1 for the local e2e Network service. Sample: 29 e2e cases; the identity case uses two fictional people and three connections.
 Model: none for the local service acceptance run. Client model selection was not recorded; no model comparison claim is made.
@@ -137,7 +140,7 @@ Open its Slop origin and `/join?via=agent`. Treat that runtime as temporary; use
 
 ## Phone plan and remaining user actions
 
-1. Review the private local pilot and complete targeted MCP integration/audit validation before proposing a hosted test runtime.
+1. Review the validated private local pilot before proposing a hosted test runtime. A live fake journey is preparing locally only.
 2. Repeat the Slop skill fetch and confirm the exact approved prompt in the user's existing ChatGPT conversation.
 3. Connector registration was approved and attempted. Obtain any additional access grant at the actual authorization action.
 4. At real signup, coordinate one phone/OTP request with the user and parent. The user enters their code only on the site.
@@ -151,6 +154,20 @@ The hosted ChatGPT blockers remain Slop registration refusal and failed live SKI
 Phone acceptance is blocked on coordinated device access and the user completing the real consent/OTP steps.
 Do not request another OTP until the shared request owner agrees. No real signup, OTP, profile submission, or mobile acceptance occurred here.
 
+## Hosting and access checkpoint
+
+The user resumed the remaining work. Other-client acceptance remains deferred while ChatGPT stays first.
+GitHub's repository `MCP_URL` is corrected to `https://{domain}/mcp`, with readback. This is configuration, not a site deployment.
+Issue #5 remains open, with no assignee or comments. Its old HTTP 526 outage description is stale.
+Current direct checks show valid TLS: health HTTP 200 (`env=production`, `build=dev`), Slop/Friends app APIs and OAuth metadata HTTP 200.
+These checks establish endpoint reachability, not hosted private Slop authorization or launch readiness.
+The isolated Cloudflare CLI is logged out. A Chrome work-identity check showed one account and no domains.
+The user clarified that Eliza Cloudflare is in Brave. The Chrome result is not evidence about Eliza Labs access; Brave verification is pending.
+The minimum owner action is an invitation to the correct Cloudflare account with the scoped zone/Pages configuration access needed.
+An isolated fixture journey does not require Network zone access. It remains local only.
+The user flagged a potentially newer Shaw domain instruction. New endpoint/domain work is paused until that instruction is verified.
+No Cloudflare, DNS, deployment, main merge, or live-private flag change occurred.
+
 ## Evidence and publication limits
 
 Private evidence directory: `test-results/existing-agents-20261009/`.
@@ -160,4 +177,4 @@ Show sanitized screenshots and the required walkthrough/before-after video to th
 The 24-second captured-frame walkthrough was shown to the user before public attachment. Raw account captures remain private.
 [Walkthrough and before/after video](https://github.com/user-attachments/assets/cbd64c04-a151-40f9-8bf4-ac6343dbc77b). Captions also remain in the private evidence directory.
 [Draft PR #13](https://github.com/eliza-research/thenetwork/pull/13) contains the source, walkthrough, and review steps.
-Integration failures remain unresolved; final targeted MCP integration and audit passed. Hosted CI was queued at publication.
+Local reconciliation is prepared for publication to PR #13. Latest local integration passes; hosted-client acceptance remains unfinished.
