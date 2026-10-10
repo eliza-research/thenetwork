@@ -15,11 +15,19 @@
 //       fit the best (or --mode) on all tuning rows and write the weights. heldout-2 is never fitted
 //       on; it is scored (from the cache, filled with the tuning rows) and reported.
 //   Without --live, `fit` prints the plan and the cost estimate and exits.
+//   bun run relay-eval rules [--file relay/relay-heldout-2.jsonl] [--json out.json]
+//       Offline, no model call: the rules-only policy (relayItem) on one corpus file (default heldout-2,
+//       never tuned on): the class x pass/hold/block confusion, recall per class with Wilson 95% CIs,
+//       the false-hold rate on the file's honest rows and on network/benign-adult.txt, and the leak
+//       recall (contact + rating). Then rules + Clef from the recorded answers when the cache covers
+//       the file; otherwise Clef is reported as not measured. Aggregates and reason codes only.
 import { appendFile } from "node:fs/promises";
 import { CLEF_MODEL_IDS, type ClefModel } from "../packages/engine/src/packs/slop/clef.ts";
 import { clefRelayClassifier, DEFAULT_RELAY_CLEF_WEIGHTS, estimateRelayClefTokens, loadRelayClefWeights, RELAY_CLEF_BANK_VERSION, RELAY_CLEF_MODES, relayClefCost, relayClefKey, type RelayClefCacheRow, type RelayClefEvent, type RelayClefMode, type RelayClefWeights } from "../packages/engine/src/relayClef.ts";
 import { compareRelayClefModes, fitRelayClefWeights, formatArm, RELAY_CLEF_FITTER, scoreArms, type RelayFitRow } from "../packages/engine/src/relayClefFit.ts";
-import { BENIGN_FILE, CLEF_CACHE, CLEF_WEIGHTS, fitRows, HELDOUT_FILE, loadClefCache, loadCorpus, TUNING_FILES, type CorpusRow } from "./relay-clef-lib.ts";
+import { baseCtx, BENIGN_FILE, cacheLookup, CLEF_CACHE, CLEF_WEIGHTS, fitRows, HELDOUT_FILE, loadClefCache, loadCorpus, textItem, TUNING_FILES, type CorpusRow } from "./relay-clef-lib.ts";
+import { relayItem, relayItemAsync } from "../packages/engine/src/relay.ts";
+import { appearanceLeak } from "../packages/engine/src/packs/slop/appearance.ts";
 
 const argv = process.argv.slice(2);
 const cmd = argv[0] && !argv[0].startsWith("--") ? argv[0] : "eval";
@@ -29,12 +37,13 @@ function die(msg: string, code = 2): never { console.error(msg); process.exit(co
 const num = (k: string, d: number) => { const v = arg(k); if (v === undefined) return d; const n = Number(v); if (!Number.isFinite(n)) die(`--${k} must be a number`); return n; };
 const usd = (x: number) => `$${x < 0.01 ? x.toFixed(4) : x.toFixed(2)}`;
 
-if (!["eval", "fit"].includes(cmd)) die(`unknown command ${cmd}; usage: see scripts/relay-eval.ts`);
+if (!["eval", "fit", "rules"].includes(cmd)) die(`unknown command ${cmd}; usage: see scripts/relay-eval.ts`);
 const modelArg = arg("model") ?? "clef-flash";
 if (!(modelArg in CLEF_MODEL_IDS)) die("--model must be clef-flash or clef");
 const model = modelArg as ClefModel;
 const cachePath = arg("cache") ?? CLEF_CACHE;
 const live = has("live");
+if (cmd === "rules") { await rulesReport(); process.exit(0); }
 
 const tuning: { file: string; rows: CorpusRow[] }[] = [];
 for (const f of TUNING_FILES) tuning.push({ file: f, rows: await loadCorpus(f) });
@@ -127,4 +136,80 @@ if (cmd === "fit") {
   const out = arg("out") ?? CLEF_WEIGHTS;
   await Bun.write(out, `${JSON.stringify(w, null, 1)}\n`);
   console.log(`\nwrote ${out} (${w.version}); \`bun run sim --only relay\` now scores the Clef arm with it`);
+}
+
+// ------------------------------------------------------------------------------- rules report
+type Decision = "pass" | "hold" | "block";
+// Function declarations (hoisted): `rules` runs from the top of the file, before these lines.
+type Cls = CorpusRow["class"];
+function classes(): readonly Cls[] { return ["honest", "scam", "harassment", "contact", "rating"]; }
+/** Wilson 95% interval for k of n. */
+function wilson(k: number, n: number): [number, number] {
+  if (!n) return [0, 1];
+  const z = 1.96, p = k / n, d = 1 + z * z / n, c = (p + z * z / (2 * n)) / d, h = (z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))) / d;
+  return [Math.max(0, c - h), Math.min(1, c + h)];
+}
+type Rate = { k: number; n: number; rate: number; ci95: [number, number] };
+function rate(k: number, n: number): Rate { const [lo, hi] = wilson(k, n); return { k, n, rate: n ? k / n : 0, ci95: [lo, hi] }; }
+function fmtRate(r: Rate): string { return `${r.k}/${r.n} = ${(r.rate * 100).toFixed(1)}% (95% CI ${(r.ci95[0] * 100).toFixed(1)}-${(r.ci95[1] * 100).toFixed(1)}%)`; }
+
+function armReport(label: string, rows: readonly CorpusRow[], decide: (t: string) => { decision: Decision; reasons: string[] }, benignRows: readonly CorpusRow[]) {
+  const CLASSES = classes();
+  const conf = Object.fromEntries(CLASSES.map(c => [c, { pass: 0, hold: 0, block: 0 }])) as Record<Cls, Record<Decision, number>>;
+  const reasonFam: Record<string, number> = {};
+  for (const r of rows) {
+    const d = decide(r.text.trim());
+    conf[r.class][d.decision]++;
+    if (d.decision !== "pass") for (const f of new Set(d.reasons.map(x => x.split(":")[0]!))) reasonFam[`${r.class} ${f}`] = (reasonFam[`${r.class} ${f}`] ?? 0) + 1;
+  }
+  const stopped = (c: Cls) => conf[c].hold + conf[c].block;
+  const n = (c: Cls) => conf[c].pass + conf[c].hold + conf[c].block;
+  const benignHeld = benignRows.filter(r => decide(r.text.trim()).decision !== "pass").length;
+  const out = {
+    label, rows: rows.length, confusion: conf,
+    recall: { scam: rate(stopped("scam"), n("scam")), harassment: rate(stopped("harassment"), n("harassment")), contact: rate(stopped("contact"), n("contact")), rating: rate(stopped("rating"), n("rating")) },
+    leakRecall: rate(stopped("contact") + stopped("rating"), n("contact") + n("rating")),
+    falseHold: { fileHonest: rate(stopped("honest"), n("honest")), benignAdult: rate(benignHeld, benignRows.length), combined: rate(stopped("honest") + benignHeld, n("honest") + benignRows.length) },
+    reasonFamilies: reasonFam,
+  };
+  console.log(`\n-- ${label} (${rows.length} rows)`);
+  console.log("class        pass  hold  block");
+  for (const c of CLASSES) console.log(`${c.padEnd(12)} ${String(conf[c].pass).padStart(4)}  ${String(conf[c].hold).padStart(4)}  ${String(conf[c].block).padStart(5)}`);
+  for (const [k, v] of Object.entries(out.recall)) console.log(`recall ${k}: ${fmtRate(v)}`);
+  console.log(`leak recall (contact + rating): ${fmtRate(out.leakRecall)}`);
+  console.log(`false hold, file honest rows: ${fmtRate(out.falseHold.fileHonest)}`);
+  console.log(`false hold, network/benign-adult.txt: ${fmtRate(out.falseHold.benignAdult)}`);
+  console.log(`false hold, both: ${fmtRate(out.falseHold.combined)}`);
+  console.log(`reason families on stopped rows (class family: count): ${Object.entries(reasonFam).sort().map(([k, v]) => `${k}: ${v}`).join(", ")}`);
+  return out;
+}
+
+async function rulesReport(): Promise<void> {
+  const file = arg("file") ?? HELDOUT_FILE;
+  const rows = await loadCorpus(file);
+  const benignRows = await loadCorpus(BENIGN_FILE);
+  console.log(`relay rules eval: ${file} (${rows.length} rows${file === HELDOUT_FILE ? "; never tuned on" : ""}), ${BENIGN_FILE} (${benignRows.length} rows); no model call`);
+  const rules = armReport("rules only (relayItem, engine defaults)", rows, t => relayItem(textItem(t), baseCtx()), benignRows);
+  // The slop desk (packages/network/src/relay.ts) adds the pack's appearanceLeak as an extra hold rule on an
+  // app that rates photos: the live slop rules path.
+  const slopCtx = baseCtx({ extraRules: (t: string) => (appearanceLeak(t) ? ["rating:appearance"] : []) });
+  const slopRules = armReport("rules + slop appearanceLeak (the RelayDesk's rules on slop)", rows, t => relayItem(textItem(t), slopCtx), benignRows);
+  const result: Record<string, unknown> = { file, rules, slopRules };
+  const c = await loadClefCache(cachePath);
+  const covered = c ? rows.filter(r => c.has(relayClefKey(model, r.text.trim()))).length : 0;
+  if (!c?.size || covered < rows.length) {
+    const why = !c?.size ? `no recorded answers (${cachePath} is missing)` : `recorded answers cover ${covered}/${rows.length} rows`;
+    console.log(`\n-- rules + Clef (${model}): not measured: needs CLOUDFLARE_AI_TOKEN (${why}; fill with \`bun run relay-eval --live\`)`);
+    result.clef = { measured: false, reason: `needs CLOUDFLARE_AI_TOKEN; ${why}` };
+  } else {
+    const weightsPath = arg("weights") ?? CLEF_WEIGHTS;
+    const weights = (await Bun.file(weightsPath).exists()) ? await loadRelayClefWeights(weightsPath) : DEFAULT_RELAY_CLEF_WEIGHTS;
+    const hook = clefRelayClassifier({ model, weights, offline: true, answers: cacheLookup(c) });
+    // Scored on the slop desk's rules (appearanceLeak included), as production runs it.
+    const decided = new Map<string, { decision: Decision; reasons: string[] }>();
+    for (const r of [...rows, ...benignRows]) { const t = r.text.trim(); if (!decided.has(t)) { const x = await relayItemAsync(textItem(t), slopCtx, { hook }); decided.set(t, { decision: x.decision, reasons: x.reasons }); } }
+    result.clef = { measured: true, weights: weights.version, arm: armReport(`rules + Clef (${model}, offline from recorded answers, weights ${weights.version})`, rows, t => decided.get(t)!, benignRows) };
+  }
+  const out = arg("json");
+  if (out) { await Bun.write(out, `${JSON.stringify(result, null, 1)}\n`); console.log(`\nwrote ${out}`); }
 }

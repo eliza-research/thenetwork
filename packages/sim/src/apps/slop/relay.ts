@@ -75,6 +75,8 @@ const T = {
   ],
   minor: ["lol I'm 16 but I look older", "I'm still in high school so weekends are better", "my parents won't let me go out late, I'm 17"],
 };
+/** The simulator's relay templates (read by the adversarial scenarios in adversarial.ts). */
+export const SLOP_RELAY_TEMPLATES = T;
 const DAYS = ["Thursday", "Friday", "Saturday", "Sunday"];
 const fill = (s: string, r: Rng, name: string, act: string) => s.replace("{name}", name).replace("{day}", r.pick(DAYS)).replace("{act}", act.replace(/_/g, " "));
 
@@ -95,7 +97,7 @@ export interface RelaySimStats {
 export const emptyRelayStats = (): RelaySimStats => ({ items: 0, delivered: 0, byClass: {}, leaks: { rating: 0, contact: 0, canary: 0 }, minorRelays: 0, contactWithoutConsent: 0, logBodies: 0, ageSignals: 0, heldSenders: 0, prevented: 0 });
 
 /** Families that put the SENDER on a safety hold pending review (the integration note's rule). */
-const SENDER_HOLD = /^(scam|offplatform|harass|harass_severe|injection|minor):/;
+export const SLOP_SENDER_HOLD = /^(scam|offplatform|harass|harass_severe|injection|minor):/;
 const RATING_OUT = /\b(rated?|rating|score[sd]?|rank(ed|ing)?|percentile|hotness|attractiveness|league|clef|body ?type)\b/i;
 
 export interface ExchangeInput {
@@ -186,7 +188,7 @@ export function relayExchange(x: ExchangeInput, st: RelaySimStats): ExchangeResu
     score(st, p, res, ctx, item);
     if (res.decision === "pass" && item.kind === "text") recent.set(p.from.id, [...(recent.get(p.from.id) ?? []), item.text!].slice(-4));
     if (res.record.ageSignal) ageSignal.add(p.from.id);
-    if (res.decision !== "pass" && res.reasons.some(z => SENDER_HOLD.test(z))) flagged.add(p.from.id);
+    if (res.decision !== "pass" && res.reasons.some(z => SLOP_SENDER_HOLD.test(z))) flagged.add(p.from.id);
     if (item.text) delivered.set(item.text, (delivered.get(item.text) ?? false) || res.decision === "pass");
   });
   const kept = x.harms.filter(h => {
