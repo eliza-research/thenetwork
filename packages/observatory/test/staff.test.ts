@@ -311,12 +311,16 @@ describe("simulation lab", () => {
     let peak = 0;
     // get() returns a status only after its save: no deadline here, so a loaded machine only makes it slower.
     let done = (await lab.get(run.id))!;
+    const observed = done;
+    const observedValue = structuredClone(observed);
     while (done.status === "queued" || done.status === "running") { peak = Math.max(peak, lab.running); await Bun.sleep(25); done = (await lab.get(run.id))!; }
+    expect(observed).toEqual(observedValue);
     expect(peak).toBe(2);
     expect(done.status).toBe("failed"); // seed 3 failed
     expect(done.error).toContain("seed 3: exit 2");
     expect(done.results.map(r => [r.seed, r.meetings, r.everyoneYes, r.judgeInvariants])).toEqual([[1, 1, 0.5, null], [2, 2, 0.5, null], [4, 4, 0.5, null]]);
     const saved = JSON.parse(await readFile(done.file, "utf8")) as LabRun;
+    expect(saved).toEqual(done);
     expect(saved.results.length).toBe(3);
     // A new Lab on the same folder loads it again.
     expect((await new Lab({ dir: join(dir, "lab-fake"), script }).list()).map(r => r.id)).toEqual([run.id]);
