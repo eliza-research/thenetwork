@@ -26,7 +26,7 @@ create table if not exists platform.apps (
   status        text not null default 'dev' check (status in ('dev', 'staging', 'live', 'paused'))
 );
 insert into platform.apps (id, name, domain, min_join_age, min_match_age, join_mode) values
-  ('ntwrk',   'The Network', 'ntwrk.love',  13, 18, 'invite'),
+  ('ntwrk',   'The Network', 'ntwrk.party', 13, 18, 'invite'),
   ('slop',    'slop',        'slop.date',   18, 18, 'open'),
   ('peon',    'peon',        'peon.biz',    18, 18, 'open'),
   ('buddies', 'buddies',     'buddies.nyc', 18, 18, 'open')
