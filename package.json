@@ -8,7 +8,7 @@
   "scripts": {
     "test:integration": "bun test --conditions eliza-source --timeout 120000 ./deploy ./packages ./sites",
     "test:e2e": "bun test --conditions eliza-source --timeout 180000 ./tests/e2e",
-    "security": "bun test --conditions eliza-source --timeout 120000 packages/platform/test/db.test.ts packages/platform/test/api-security.test.ts packages/mcp/test/oauth.test.ts deploy/backend/backend.test.ts",
+    "security": "bun test --conditions eliza-source --timeout 120000 packages/platform/test/db.test.ts packages/platform/test/api-security.test.ts packages/platform/test/proxy.test.ts packages/platform/test/cloud-auth.pg.test.ts packages/platform/test/notify-retention.pg.test.ts packages/mcp/test/oauth.test.ts packages/mcp/test/pg.test.ts deploy/backend/backend.test.ts deploy/router.test.ts packages/network/test/shared-agent.integration.test.ts packages/observatory/test/staff.test.ts",
     "sim": "bun run --conditions eliza-source scripts/sim.ts",
     "clef": "bun run --conditions eliza-source scripts/clef-fit.ts",
     "relay-eval": "bun run --conditions eliza-source scripts/relay-eval.ts",

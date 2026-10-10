@@ -9,7 +9,7 @@
 //             image prunes exactly those packages.
 //   tracked:  on the dev Postgres (:54339), when it is up: the ops tables and grants under row-level
 //             security, and the backup drill (pg_dump to a directory, restore into a new database,
-//             row counts equal table by table).
+//             row counts equal table by table). With REQUIRE_PG=1 (CI) these two gates block.
 import { dirname, relative, resolve } from "node:path";
 import { SQL } from "bun";
 import { CostLedger, MemoryCostSink, budgetLines, costRatesFromEnv, DEFAULT_RATES, PgCostSink } from "../../packages/network/service/cost.ts";
@@ -299,6 +299,7 @@ export async function opsBlock(b: Block): Promise<void> {
     b.track("backup drill: dump and restore into a new database, row counts equal", false, "skipped: the dev Postgres is not running");
     return;
   }
+  const pgBlocking = process.env.REQUIRE_PG === "1";
   const src = `ops_drill_src_${process.pid}`, dst = `ops_drill_dst_${process.pid}`;
   const a = new SQL({ url: admin, max: 1 });
   await a.unsafe(`drop database if exists ${dst}`); await a.unsafe(`drop database if exists ${src}`);
@@ -349,7 +350,7 @@ export async function opsBlock(b: Block): Promise<void> {
         expect(m.sends24h).toEqual({ attempted: 3, failed: 1, refused: 1, dryRun: 1, smsFallback: 1 });
         expect([m.safety24h.minorAfterContact, m.safety24h.bans, m.safety24h.reports, m.safety24h.urgentReports, m.smsByDay.today]).toEqual([1, 1, 2, 1, 1]);
       } finally { await sql.close(); }
-    }, false);
+    }, pgBlocking);
 
     await b.run("backup drill: pg_dump of a seeded database, restore into a new database, row counts equal table by table", async () => {
       const { backup } = await import("../../deploy/backup/backup.ts");
@@ -367,7 +368,7 @@ export async function opsBlock(b: Block): Promise<void> {
         expect(await restore({ serverUrl: admin, db: "railway", dir }).then(() => "restored", e => String(e.message))).toMatch(/refusing/);
         b.track(`backup drill: ${Object.keys(bk.manifest.rowCounts).length} tables, ${rows} rows, dump ${Math.round(bk.bytes / 1024)} KiB, restore ${r.ms} ms`, true);
       } finally { await Bun.$`rm -rf ${dir}`.quiet().nothrow(); }
-    }, false);
+    }, pgBlocking);
   } finally {
     await a.unsafe(`drop database if exists ${dst}`).catch(() => {});
     await a.unsafe(`drop database if exists ${src}`).catch(() => {});

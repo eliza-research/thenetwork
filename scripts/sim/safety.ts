@@ -10,7 +10,7 @@
 // :54339): joins and photos by text through inbound(), the photo consent asked once, the rating stored
 // with appearanceFacet and deleted when the age drops, staff hold and ban through the staff API with
 // the console token, every rejoin path of the banned person, sends to them, and the weekly bias report.
-// Blocking when the dev Postgres is there; without it (CI's sim job has none) one tracked gate says so.
+// Blocking when the dev Postgres is there; without it one tracked gate says so (CI's sim job has Postgres and fails on that skip).
 //
 // Fakes only: no Blooio, Twilio, Cloudflare, R2 or OpenAI call is possible. Phones are +1 212 555 01xx.
 import { DAY, HOUR, type MemberId } from "../../packages/core/src/index.ts";
@@ -350,7 +350,7 @@ async function pgPart(b: Block): Promise<void> {
   let url: string | undefined;
   if (pgAvailable) {
     try { url = await (await import("../../packages/platform/test/pg.ts")).migratedDb("simsafety"); } catch (e) { b.track("Postgres scenarios: skipped (the dev Postgres did not start)", false, (e as Error).message.split("\n")[0]); return; }
-  } else { b.track("Postgres scenarios: skipped (no Postgres on this machine; CI's sim job has none)", false); return; }
+  } else { b.track("Postgres scenarios: skipped (no Postgres on this machine)", false); return; }
   const { NetworkService } = await import("../../packages/network/service/service.ts");
   const { SimClock } = await import("../../packages/core/src/clock.ts");
   const clock = new SimClock(T0);
