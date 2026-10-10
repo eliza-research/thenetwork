@@ -188,6 +188,159 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
   }, T);
 
   describe("MCP through the site router", () => {
+    test("custom ChatGPT Slop configuration is separate, default-off and fail-closed", async () => {
+      const on = { MCP_CUSTOM_CHATGPT_SLOP: "on", MCP_CUSTOM_CHATGPT_SLOP_PERSON_IDS: "owned-person" };
+      for (const env of [{ ...on, PLATFORM_ENV: "dev" }, { ...on, PLATFORM_ENV: "unknown" }, on]) {
+        await expect(createServiceMcp(st.svc, { env })).rejects.toThrow("explicit staging or production");
+      }
+      await expect(createServiceMcp(st.svc, { env: { PLATFORM_ENV: "staging", MCP_CUSTOM_CHATGPT_SLOP: "yes" } })).rejects.toThrow("off or on");
+      for (const ids of ["", "*"]) {
+        await expect(createServiceMcp(st.svc, { env: { ...on, PLATFORM_ENV: "production", MCP_CUSTOM_CHATGPT_SLOP_PERSON_IDS: ids } })).rejects.toThrow("explicit person allowlist");
+      }
+      await expect(createServiceMcp(st.svc, { env: { ...on, PLATFORM_ENV: "staging", MCP_PRIVATE_OPENAI_APPS: "slop" } })).rejects.toThrow("cannot use the dev pilot");
+      const redirect = "https://chatgpt.com/connector_platform_oauth_redirect";
+      expect((await st.site("slop", "/oauth/register", { json: { redirect_uris: [redirect], token_endpoint_auth_method: "none" } })).status).toBe(400);
+    }, T);
+
+    test("custom ChatGPT Slop uses the same adult owner, onboarding tools and revocable persistent grants", async () => {
+      const pilot = await startStack();
+      const db = new SQL({ url: pilot.url, max: 2 });
+      try {
+        const phone = newPhone(), browser = new Browser();
+        expect((await webJoin(pilot, "slop", phone, { age: 30, browser })).res.status).toBe(200);
+        const person = (await pilot.svc.publicApi.accounts.personFor(phone))!;
+        pilot.setCustomChatGptSlopPersonIds([person.id]);
+        const redirect = "https://chatgpt.com/connector_platform_oauth_redirect";
+        for (const uris of [["https://platform.openai.com/callback"], [redirect, "https://client.example/callback"]]) {
+          expect((await pilot.site("slop", "/oauth/register", { json: { redirect_uris: uris, token_endpoint_auth_method: "none" } })).status).toBe(400);
+        }
+        const c = await connectMcp(pilot, "slop", phone, { browser, redirect });
+        expect(c.token?.access_token, c.html).toBeString();
+        const token = c.token!.access_token as string;
+        expect(new URL(c.location!).searchParams.get("iss")).toBe(pilot.sites.slop.origin);
+        const status = () => rpc(pilot, "slop", "/mcp", "tools/call", { name: "check_status", arguments: {} }, token);
+        expect(toolData(await status())).toMatchObject({ app: "slop", status: "active" });
+        const about = "I'm Rae, 30, in Williamsburg. I like climbing and live music and seek a long-term relationship.";
+        expect(toolData(await rpc(pilot, "slop", "/mcp", "tools/call", { name: "submit_profile", arguments: { about } }, token)).submitted).toBe(true);
+        const member = (await db`select id from network.members where person_id=${person.id} and app_id='slop'`)[0]!;
+        expect((await db`select id from network.messages where member_id=${member.id} and body=${about}`).length).toBe(1);
+        for (const bearer of [undefined, token]) {
+          const list = (await rpc(pilot, "slop", "/mcp", "tools/list", {}, bearer)).body!.result;
+          expect(list.tools.map((t: any) => t.name)).toEqual(["app_info", "start_signup", "check_status", "submit_profile"]);
+          expect((await rpc(pilot, "slop", "/mcp", "tools/call", { name: "get_updates", arguments: {} }, bearer)).body!.result.isError).toBe(true);
+        }
+        for (const app of ["ntwrk", "friends"] as const) expect((await rpc(pilot, app, "/mcp", "tools/call", { name: "check_status", arguments: {} }, token)).res.status).toBe(401);
+        expect((await rpc(pilot, "slop", "/mcp/openai", "tools/list", {}, token)).res.status).toBe(404);
+        expect((await pilot.site("slop", "/.well-known/oauth-protected-resource/mcp/openai")).status).toBe(404);
+        expect(JSON.stringify(toolData(await rpc(pilot, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: {} })))).not.toMatch(/slop|dating/i);
+        const client = (await pilot.mcp.store.getClient(c.client.client_id))!;
+        const cimd = { ...client, id: "https://chatgpt.com/oauth/client.json", kind: "cimd" as const, redirectUris: ["https://client.example/callback"] };
+        await pilot.mcp.store.putClient(cimd);
+        const query = (clientId = c.client.client_id, uri = redirect) => new URLSearchParams({ response_type: "code", client_id: clientId, redirect_uri: uri, code_challenge: pkceS256(VERIFIER), code_challenge_method: "S256", resource: `${pilot.sites.slop.origin}/mcp` });
+        const wrongResource = query(); wrongResource.set("resource", `${pilot.sites.slop.origin}/mcp/openai`);
+        expect((await pilot.site("slop", `/oauth/authorize?${wrongResource}`, { browser })).status).toBe(400);
+        expect((await pilot.site("slop", `/oauth/authorize?${query(cimd.id, cimd.redirectUris[0]!)}`, { browser })).status).toBe(403);
+        const pending = async () => {
+          const html = await (await pilot.site("slop", `/oauth/authorize?${query()}`, { browser })).text();
+          const rid = /name="rid" value="([^"]+)"/.exec(html)![1]!;
+          const captured = new Browser();
+          for (const [key, value] of browser.jar) captured.jar.set(key, value);
+          return { rid, browser: captured };
+        };
+        const consent = await pending();
+        const codeRequest = await pending();
+        const approved = await pilot.site("slop", "/oauth/authorize/consent", { browser: codeRequest.browser, form: { rid: codeRequest.rid, decision: "approve" } });
+        const code = new URL(approved.headers.get("location")!).searchParams.get("code")!;
+        const exchange = () => pilot.site("slop", "/oauth/token", { form: { grant_type: "authorization_code", code, client_id: c.client.client_id, redirect_uri: redirect, code_verifier: VERIFIER } });
+        const refresh = () => pilot.site("slop", "/oauth/token", { form: { grant_type: "refresh_token", refresh_token: c.token!.refresh_token, client_id: c.client.client_id } });
+        for (const allowed of [undefined, ["another-person"]]) {
+          pilot.setCustomChatGptSlopPersonIds(allowed);
+          expect((await status()).res.status).toBe(allowed ? 401 : 404);
+          expect((await pilot.site("slop", "/oauth/authorize/consent", { browser: consent.browser, form: { rid: consent.rid, decision: "approve" } })).status).toBe(403);
+          expect((await exchange()).status).toBe(allowed ? 400 : 401);
+          expect((await refresh()).status).toBe(allowed ? 400 : 401);
+        }
+        pilot.setCustomChatGptSlopPersonIds([person.id]);
+        expect((await status()).res.status).toBe(200);
+        // Explicit revocation remains available while the mode is disabled.
+        pilot.setCustomChatGptSlopPersonIds();
+        expect((await pilot.site("slop", "/oauth/revoke", { form: { token: c.token!.refresh_token, client_id: c.client.client_id } })).status).toBe(200);
+        pilot.setCustomChatGptSlopPersonIds([person.id]);
+        expect((await status()).res.status).toBe(401);
+      } finally { await db.close(); await pilot.close(); }
+    }, T);
+
+    test("custom ChatGPT Slop rejects ineligible people and account switches before consent", async () => {
+      const pilot = await startStack();
+      const db = new SQL({ url: pilot.url, max: 2 });
+      try {
+        const redirect = "https://chatgpt.com/connector_platform_oauth_redirect";
+        const ids: string[] = [];
+        const owners: Array<{ phone: string; browser: Browser; person: string }> = [];
+        for (const kind of ["adult", "unlisted", "nonmember", "minor", "unknown", "review", "phone-hold", "phone-ban", "person-ban"]) {
+          const phone = newPhone(), browser = new Browser();
+          expect((await webJoin(pilot, kind === "nonmember" ? "peon" : "slop", phone, { age: kind === "minor" ? 16 : 30, browser })).res.status).toBe(200);
+          const person = (await pilot.svc.publicApi.accounts.personFor(phone))!;
+          if (kind !== "unlisted") ids.push(person.id);
+          if (kind === "unknown") { await db`update platform.people set lowest_age=null where id=${person.id}`; await pilot.svc.people.clearAgeFloor(pilot.svc.publicApi.accounts.phoneHash(phone)); }
+          if (kind === "review") await db`update platform.memberships set review='recycled_number' where person_id=${person.id} and app_id='slop'`;
+          if (kind === "phone-hold") await pilot.svc.people.setPhoneHold(phone, "recycled_number", pilot.clock.now());
+          if (kind.endsWith("ban")) await pilot.svc.people.ban({ id: crypto.randomUUID(), scope: kind === "phone-ban" ? "phone" : "person", personId: kind === "person-ban" ? person.id : null, phoneHash: kind === "phone-ban" ? pilot.svc.publicApi.accounts.phoneHash(phone) : null, reason: "owned fixture", reportId: null, bannedBy: "fixture", at: pilot.clock.now() });
+          pilot.setCustomChatGptSlopPersonIds(ids);
+          const connection = await connectMcp(pilot, "slop", phone, { browser, redirect });
+          if (kind === "adult") { expect(connection.token?.access_token).toBeString(); owners.push({ phone, browser, person: person.id }); }
+          else expect(connection.token?.access_token, kind).toBeUndefined();
+        }
+        const secondPhone = newPhone(), secondBrowser = new Browser();
+        expect((await webJoin(pilot, "slop", secondPhone, { age: 31, browser: secondBrowser })).res.status).toBe(200);
+        const second = (await pilot.svc.publicApi.accounts.personFor(secondPhone))!;
+        ids.push(second.id); pilot.setCustomChatGptSlopPersonIds(ids);
+        const first = owners[0]!;
+        const c = await connectMcp(pilot, "slop", first.phone, { browser: first.browser, redirect });
+        const q = new URLSearchParams({ response_type: "code", client_id: c.client.client_id, redirect_uri: redirect, code_challenge: pkceS256(VERIFIER), code_challenge_method: "S256" });
+        const html = await (await pilot.site("slop", `/oauth/authorize?${q}`, { browser: first.browser })).text();
+        const rid = /name="rid" value="([^"]+)"/.exec(html)![1]!;
+        await signIn(pilot, "slop", secondPhone, first.browser);
+        expect((await pilot.site("slop", "/oauth/authorize/consent", { browser: first.browser, form: { rid, decision: "approve" } })).status).toBe(403);
+      } finally { await db.close(); await pilot.close(); }
+    }, T);
+
+    test("custom ChatGPT Slop rechecks age, holds, bans and phone ownership after granting", async () => {
+      const pilot = await startStack();
+      const db = new SQL({ url: pilot.url, max: 2 });
+      try {
+        for (const kind of ["age", "hold", "phone-ban", "person-ban", "ownership"]) {
+          const phone = newPhone(), browser = new Browser();
+          expect((await webJoin(pilot, "slop", phone, { age: 30, browser })).res.status).toBe(200);
+          const person = (await pilot.svc.publicApi.accounts.personFor(phone))!;
+          pilot.setCustomChatGptSlopPersonIds([person.id]);
+          const c = await connectMcp(pilot, "slop", phone, { browser, redirect: "https://chatgpt.com/connector_platform_oauth_redirect" });
+          expect(c.token?.access_token, kind).toBeString();
+          const pendingQuery = new URLSearchParams({ response_type: "code", client_id: c.client.client_id, redirect_uri: "https://chatgpt.com/connector_platform_oauth_redirect", code_challenge: pkceS256(VERIFIER), code_challenge_method: "S256" });
+          const pendingHtml = await (await pilot.site("slop", `/oauth/authorize?${pendingQuery}`, { browser })).text();
+          const pendingId = /name="rid" value="([^"]+)"/.exec(pendingHtml)![1]!;
+          const pending = await pilot.site("slop", "/oauth/authorize/consent", { browser, form: { rid: pendingId, decision: "approve" } });
+          const code = new URL(pending.headers.get("location")!).searchParams.get("code")!;
+          if (kind === "age") await pilot.svc.people.noteAgeFloor(pilot.svc.publicApi.accounts.phoneHash(phone), 17, pilot.clock.now());
+          if (kind === "hold") await pilot.svc.people.setPhoneHold(phone, "recycled_number", pilot.clock.now());
+          if (kind.endsWith("ban")) await pilot.svc.people.ban({ id: crypto.randomUUID(), scope: kind === "phone-ban" ? "phone" : "person", personId: kind === "person-ban" ? person.id : null, phoneHash: kind === "phone-ban" ? pilot.svc.publicApi.accounts.phoneHash(phone) : null, reason: "owned fixture", reportId: null, bannedBy: "fixture", at: pilot.clock.now() });
+          if (kind === "ownership") {
+            const other = newPhone();
+            expect((await webJoin(pilot, "slop", other, { age: 31 })).res.status).toBe(200);
+            const owner = (await pilot.svc.publicApi.accounts.personFor(other))!;
+            await db`update platform.phone_identities set person_id=${owner.id} where e164=${phone}`;
+          }
+          const about = "This profile must not reach the service after eligibility changed.";
+          for (const name of ["check_status", "submit_profile"]) {
+            expect((await rpc(pilot, "slop", "/mcp", "tools/call", { name, arguments: name === "submit_profile" ? { about } : {} }, c.token!.access_token)).res.status, kind).toBe(401);
+          }
+          expect((await db`select id from network.messages where body=${about}`).length).toBe(0);
+          expect((await pilot.site("slop", "/oauth/token", { form: { grant_type: "authorization_code", code, client_id: c.client.client_id, redirect_uri: "https://chatgpt.com/connector_platform_oauth_redirect", code_verifier: VERIFIER } })).status).toBe(400);
+          expect((await pilot.site("slop", "/oauth/token", { form: { grant_type: "refresh_token", client_id: c.client.client_id, refresh_token: c.token!.refresh_token } })).status).toBe(400);
+        }
+      } finally { await db.close(); await pilot.close(); }
+    }, T);
+
     test("private ChatGPT Slop is dev-only and keeps the public plugin closed", async () => {
       const redirect = "https://chatgpt.com/connector_platform_oauth_redirect";
       const denied = await st.site("slop", "/oauth/register", { json: { redirect_uris: [redirect], token_endpoint_auth_method: "none" } });

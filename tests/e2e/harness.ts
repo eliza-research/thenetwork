@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { SimClock } from "../../packages/core/src/clock.ts";
 import { createBackend, ipOf, loadConfig } from "../../deploy/backend/backend.ts";
 import { pkceS256 } from "../../packages/mcp/src/util.ts";
-import type { McpHandler } from "../../packages/mcp/src/index.ts";
+import { createMcpHandler, platformHooks, type McpHandler } from "../../packages/mcp/src/index.ts";
 import { DryRunAdapter } from "../../packages/network/service/channel.ts";
 import { createServiceMcp } from "../../packages/network/service/serve.ts";
 import { NetworkService, WEBHOOK_PATH } from "../../packages/network/service/service.ts";
@@ -81,6 +81,7 @@ export interface Stack {
   /** A staff call on the service (the staff port is private; the test calls the service directly). */
   staff(path: string, body: unknown): Promise<Response>;
   setPrivateOpenAiApps(apps: readonly AppId[]): Promise<void>;
+  setCustomChatGptSlopPersonIds(ids?: readonly string[]): void;
   close(): Promise<void>;
 }
 
@@ -134,6 +135,18 @@ export async function startStack(o: { privateOpenAiApps?: readonly AppId[] } = {
   let evt = 0;
   return {
     url, clock, svc, get mcp() { return mcp!; }, otp, backendOrigin, sites,
+    // Test-only stage-configured handler on the owned stack. Production provider wiring is unchanged.
+    setCustomChatGptSlopPersonIds(ids) {
+      mcp = createMcpHandler({
+        store: mcp!.store, env: { PLATFORM_ENV: "staging" }, customChatGptSlopPersonIds: ids,
+        proxySecret: PROXY_SECRET, hostMap, issuer: app => devOrigins[app.id]!, now: () => clock.now(), log: () => {},
+        platform: platformHooks({
+          store: svc.people, accounts: svc.publicApi.accounts, otp: svc.publicApi.otp, sessions: svc.publicApi.sessions,
+          app: id => svc.apps[id], cookieName: id => `sid_${id}`, secureCookie: false,
+          submitProfile: (person, app, phone, text) => svc.submitProfile(person, app, phone, text),
+        }),
+      });
+    },
     async setPrivateOpenAiApps(apps) {
       const old = mcp;
       mcp = await createServiceMcp(svc, { env, databaseUrl: url, proxySecret: PROXY_SECRET, devOrigins, privateOpenAiApps: apps, migrate: false, log: () => {} });
