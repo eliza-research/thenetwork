@@ -12,6 +12,11 @@
 //              rules + Clef arm scored from RECORDED answers (evals/relay/clef-answers.jsonl) when that
 //              cache exists. No Clef call is ever made here; without the cache the arm is skipped
 //              and tracked. The rules-only gates above are unchanged.
+//   adversarial the relay and photo adversarial scenarios inside the slop world (packages/sim/src/apps/
+//              slop/adversarial.ts; #11 sims-and-e2e) on seeds 13-16: a scam after the reveal, a number
+//              swap before both yeses, a leak of the other member's details, a minor in the relay, and
+//              the photo in the probe with the flag off, no consent, a minor or a held member; then
+//              the same cases on the live path (the slop probe hook with SLOP_PROBE_PHOTOS, the desk).
 // The relay inside the slop world (adversary personas exchanging items after the reveal) is gated in
 // the slop block (scripts/sim/slop.ts, "relay world" gates), on the pinned seeds.
 import { findLeaks } from "../../packages/core/src/index.ts";
@@ -26,6 +31,8 @@ import { cacheLookup, CLEF_CACHE, CLEF_WEIGHTS, HELDOUT_FILE, loadClefCache, loa
 import { RelayDesk, type RelayHost, type RelayMatch, type RelayMember } from "../../packages/network/src/relay.ts";
 import { newPhotoId } from "../../packages/platform/src/photos.ts";
 import { isOpaquePhotoId } from "../../packages/engine/src/relay.ts";
+import { slopRelayAdversarial, type AdversarialResult } from "../../packages/sim/src/apps/slop/adversarial.ts";
+import { appWiring, SLOP_PROBE_PHOTOS } from "../../packages/network/service/packs.ts";
 import { Block, expect } from "./gate.ts";
 
 const ROOT = `${import.meta.dir}/../../evals`;
@@ -200,6 +207,7 @@ export async function relayBlock(b: Block): Promise<void> {
 
   await clefGates(b);
   await deskGates(b);
+  await adversarialGates(b);
 
   await b.run("photo in the probe: adults on both sides, photo consent, an opaque id, at most one; name and contact stay hidden", async () => {
     const sub = { age: 30, photoConsent: true, photoIds: ["ph_abcdefgh", "ph_ijklmnop"] };
@@ -496,5 +504,69 @@ async function deskGates(b: Block): Promise<void> {
   await b.run("photo ids: every platform-issued id is opaque; phone-number-like ids still fail", () => {
     for (let i = 0; i < 10_000; i++) { const id = newPhotoId(); if (!isOpaquePhotoId(id)) throw new Error(`issued id ${id} fails isOpaquePhotoId`); }
     for (const bad of ["ph_2125550147", "212-555-0147", "ph_12125550147abcd", "https://x.test/p.jpg", "+12125550147"]) expect([bad, isOpaquePhotoId(bad)]).toEqual([bad, false]);
+  });
+}
+
+// ------------------------------------------------------------------------------------ adversarial
+const ADV_SEEDS = [13, 14, 15, 16];
+const ADV_MIN: Record<AdversarialResult["scenario"], number> = { scam_after_reveal: 200, swap_before_yes: 1000, leak_other_member: 400, minor_in_relay: 400, photo_in_probe: 1500 };
+const ADV_NAME: Record<AdversarialResult["scenario"], string> = {
+  scam_after_reveal: "scam after the reveal: scammer reach <= 1 scam item, a sender hold, then nothing delivered from them",
+  swap_before_yes: "number swap (share, number in text, photo) before both yeses: every item blocked, no number in the output or the log",
+  leak_other_member: "leak of the other member's details (full name, number, private fact, canary): none delivered, stopped by the leak guard, a canary blocks",
+  minor_in_relay: "minor in the relay (age slip, declared minor, unknown age): the slip blocks, then every item both ways blocked",
+  photo_in_probe: "photo in the probe with the flag off, no consent, a minor or a held member: never a photo or the photo line; relayed photo never passes",
+};
+
+async function adversarialGates(b: Block): Promise<void> {
+  const per = ADV_SEEDS.map(seed => ({ seed, results: slopRelayAdversarial(seed) }));
+  for (const sc of Object.keys(ADV_NAME) as AdversarialResult["scenario"][]) {
+    const rs = per.map(p => ({ seed: p.seed, r: p.results.find(x => x.scenario === sc)! }));
+    const cases = rs.reduce((s, x) => s + x.r.cases, 0), ctlN = rs.reduce((s, x) => s + x.r.controls.n, 0), ctlOk = rs.reduce((s, x) => s + x.r.controls.ok, 0);
+    const fails = rs.flatMap(x => x.r.failures.map(f => `seed ${x.seed} ${f}`));
+    const stats: Record<string, number> = {};
+    for (const x of rs) for (const [k, v] of Object.entries(x.r.stats)) stats[k] = k.startsWith("max") ? Math.max(stats[k] ?? 0, v) : (stats[k] ?? 0) + v;
+    b.gate(`relay adversarial (slop world, seeds ${ADV_SEEDS.join(",")}): ${ADV_NAME[sc]} (n ${cases})`, cases >= ADV_MIN[sc] && fails.length === 0 && ctlN > 0 && ctlOk === ctlN,
+      `${fails.length} failures${fails.length ? `: ${fails.slice(0, 3).join("; ")}` : ""}; controls ${ctlOk}/${ctlN}; ${Object.entries(stats).map(([k, v]) => `${k} ${v}`).join(", ")}`);
+  }
+
+  await b.run("relay adversarial (live path): the slop probe hook never attaches a photo while SLOP_PROBE_PHOTOS is off (adults, minors, unknown ages)", () => {
+    expect(SLOP_PROBE_PHOTOS).toBe(false);
+    const probe = appWiring("slop").hooks!.probe!;
+    let n = 0;
+    for (const [ageA, ageB] of [[29, 31], [45, 22], [18, 19], [17, 30], [30, 16], [undefined, 28]] as const) {
+      const input = { now: NOW, members: [{ id: "a", age: ageA, prefs: { romanceOptIn: true, categoriesOptIn: ["romance"] } }, { id: "b", age: ageB, prefs: { romanceOptIn: true, categoriesOptIn: ["romance"] } }], facets: [], intents: [], presence: [], edges: [], recentProposals: [] } as never;
+      for (const id of ["a", "b"]) {
+        const t = probe({ id: `o-${ageA}-${ageB}`, category: "romance", participants: ["a", "b"] }, id, { when: "Thursday 7pm", input: () => input });
+        if (t === undefined) continue;
+        n++;
+        expect([ageA, ageB, id, t.includes(SLOP_PROBE_PHOTO_LINE)]).toEqual([ageA, ageB, id, false]);
+        expect(t).toMatch(/only tell you who it is if you both say yes/);
+      }
+    }
+    expect(n).toBeGreaterThan(0);
+  });
+
+  await b.run("relay adversarial (live path): the desk refuses a number swap before both yeses, and holds a scam after the reveal without sending", async () => {
+    for (const [status, acceptedBy] of [["probing", []], ["probing", ["a"]], ["mutual", ["b"]]] as const) {
+      const h = fakeHost(), d = new RelayDesk(h);
+      h.match = { ...h.match, status, acceptedBy: [...acceptedBy] };
+      for (const from of ["a", "b"] as const) {
+        const r = await d.request({ itemId: `c-${status}-${acceptedBy.length}-${from}`, from, kind: "contact_share" }, { contactOf });
+        expect([status, acceptedBy.length, from, r.decision]).toEqual([status, acceptedBy.length, from, "refused"]);
+        const t = await d.request({ itemId: `t-${status}-${acceptedBy.length}-${from}`, from, kind: "text", text: `text me at ${phones[from]!.slice(2, 5)} ${phones[from]!.slice(5, 8)} ${phones[from]!.slice(8)}` });
+        expect(t.decision).not.toBe("sent");
+      }
+      expect(h.sent).toEqual([]);
+      expect(JSON.stringify(d.records())).not.toContain("555");
+    }
+    const h = fakeHost(), d = new RelayDesk(h);
+    expect((await d.request({ itemId: "h1", from: "a", kind: "text", text: "so glad we matched, see you Saturday" })).decision).toBe("sent");
+    for (const [i, t] of ["Do you have Telegram? Much easier to chat there.", "My card got frozen, can you send me $200 through cash app until it clears?", "Can you grab two Apple gift cards and send me the codes? I'll explain later."].entries()) {
+      h.t += 60_000;
+      expect([t, (await d.request({ itemId: `s${i}`, from: "a", kind: "text", text: t })).decision]).toEqual([t, "held"]);
+    }
+    expect(h.sent.length).toBe(1);
+    expect(d.held().length).toBe(3);
   });
 }
