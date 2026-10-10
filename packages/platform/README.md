@@ -1,6 +1,6 @@
 # packages/platform
 
-One backend for four apps: ntwrk (ntwrk.love), slop (slop.date), peon (peon.biz) and friends (friends.help). The plan is `docs/research/2026-10-08-platform-architecture.md`. The scope is PRD Section 40. Local dev for everything: [docs/runbook-platform.md](../../docs/runbook-platform.md).
+One backend for four apps: ntwrk (ntwrk.party), slop (slop.date), peon (peon.biz) and friends (friends.help). The plan is `docs/research/2026-10-08-platform-architecture.md`. The scope is PRD Section 40. Local dev for everything: [docs/runbook-platform.md](../../docs/runbook-platform.md).
 
 The founder decisions of 2026-10-08 (AGENTS.md) are in the code: app id `friends` (migration 0007 renames old rows), 13+ to join every app and 18+ to be matched, one line for every app with keyword routing, STOP stops every app and "leave <app>" leaves one.
 

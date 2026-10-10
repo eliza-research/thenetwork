@@ -1,12 +1,12 @@
 # Domain research: slop.date, peon.biz, buddies.nyc (2026-10-08)
 
-> **Superseded names (2026-10-08 cleanup note).** This is a dated research record. Since it was written: buddies.nyc was renamed friends.help (AppId `friends`, `friendsPack`); ntwrk.club belongs to someone else and is not used (ntwrk.love is the home page); `packages/worlds` moved to `packages/sim/src/apps`; the prototypes were deleted or promoted (`packages/blooio`). Current decisions: AGENTS.md "Platform decisions" and docs/mvp-plan.md.
+> **Superseded names (2026-10-08 cleanup note).** This is a dated research record. Since it was written: buddies.nyc was renamed friends.help (AppId `friends`, `friendsPack`); ntwrk.club belongs to someone else and is not used (ntwrk.party is the home page); `packages/worlds` moved to `packages/sim/src/apps`; the prototypes were deleted or promoted (`packages/blooio`). Current decisions: AGENTS.md "Platform decisions" and docs/mvp-plan.md.
 
 > **Founder decisions (2026-10-08) override some recommendations below:**
 > - Members aged 13-17 may join every app but are never matched or connected to anyone; matching is 18+ everywhere.
 > - Compliance is not a launch blocker for now; the safety guards stay.
 > - One Blooio line serves all apps, with keyword routing on the first message.
-> - slop.date ships first; ntwrk.love is the home page.
+> - slop.date ships first; ntwrk.party is the home page.
 > - peon.biz and buddies.nyc run locally only.
 
 

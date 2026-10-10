@@ -67,7 +67,7 @@ describe("get_updates", () => {
 
   test("listed with only app and update_token, read-only", async () => {
     const { e } = env();
-    const t = (await rpc(e, `${origin("ntwrk.love")}/mcp`, "tools/list")).body!.result.tools.find((x: any) => x.name === "get_updates");
+    const t = (await rpc(e, `${origin("ntwrk.party")}/mcp`, "tools/list")).body!.result.tools.find((x: any) => x.name === "get_updates");
     expect(Object.keys(t.inputSchema.properties)).toEqual(["app", "update_token"]);
     expect(t.annotations.readOnlyHint).toBe(true);
   });
