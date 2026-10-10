@@ -157,3 +157,45 @@ test("signed first contact and under-age decline retain no raw service counter; 
   expect((await sql`select address from platform.line_conversations where address=${teen}`).length).toBe(1);
   expect(dispatches).toBe(before);
 },60_000);
+
+test("policy changes winning after the async gate refuse ordinary dispatch while compliance remains explicit",async()=>{
+  known=true;
+  const joined=await service.accounts.join(APPS.friends,{e164:phone,personId:null},{firstName:"Ari",age:29,consent:{sms:true,wording:APPS.friends.consent.text}});
+  expect(joined.ok).toBe(true);if(!joined.ok) throw new Error("Fixture join refused");
+  const rt=service.runtimes.get("friends:nyc")!,memberId=joined.membership.memberId;
+  const person=await service.accounts.personFor(phone);expect(person).toBeDefined();
+  const membership=(await service.people.getMembership(person!.id,"friends"))!;
+  const checks=((rt.adapter as CloudChannelAdapter).queue as unknown as {o:import("../../blooio/src/outbound-queue.ts").QueueOptions}).o.checks;
+  const original=checks.leaks;
+  for(const variant of ["account_paused","account_restricted","membership_restricted","membership_review","phone_hold","ban"] as const) {
+    await rt.adapter.engaged!(phone);
+    const before=dispatches,id=`policy-admission:${variant}`;
+    let release!:()=>void,arrive!:()=>void;
+    const gate=new Promise<void>(resolve=>{release=resolve;}),entered=new Promise<void>(resolve=>{arrive=resolve;});
+    checks.leaks=async row=>{const result=await original!(row);if(row.id===id){arrive();await gate;}return result;};
+    const sending=rt.unitOfWork(()=>rt.unit.sends.push({id,memberId,to:phone,body:"Your requested reminder is ready.",kind:"reply",type:"reminder",proactive:false,system:false,ts:clock.now()}));
+    try {
+      await entered;
+      if(variant==="account_paused"||variant==="account_restricted") await rt.scoped(tx=>tx`update network.members set account_status=${variant==="account_paused"?"paused":"restricted"} where app_id='friends' and id=${memberId}`);
+      else if(variant==="membership_restricted") await service.people.putMembership({...membership,state:"restricted"});
+      else if(variant==="membership_review") await service.people.putMembership({...membership,review:"recycled_number"});
+      else if(variant==="phone_hold") await service.people.setPhoneHold(phone,"recycled_number",clock.now());
+      else await service.people.ban({id:"owned-admission-ban",scope:"phone",personId:person!.id,phoneHash:service.accounts.phoneHash(phone),reason:"owned barrier fixture",reportId:null,bannedBy:"fixture",at:clock.now()});
+      release();await sending;
+      expect(dispatches).toBe(before);
+      const [stored]=await sql`select status,provider_message_id,sent_at from platform.outbound where id=${id}`;
+      expect(stored.provider_message_id).toBeNull();expect(stored.sent_at).toBeNull();expect(stored.status).not.toBe("accepted");
+      if(variant==="account_restricted") {
+        await rt.unitOfWork(()=>rt.system(memberId,"restricted-compliance","Your safety request was received.","compliance"));
+        expect(dispatches).toBe(before+1);
+        expect((await sql`select status from platform.outbound where id='restricted-compliance'`)[0].status).toBe("accepted");
+      }
+    } finally {
+      release();checks.leaks=original;
+      // Restore controlled canonical fixtures for the next independent barrier; never clear the final real ban.
+      if(variant==="account_paused"||variant==="account_restricted") await rt.scoped(tx=>tx`update network.members set account_status='active' where app_id='friends' and id=${memberId}`);
+      else if(variant==="membership_restricted"||variant==="membership_review") await service.people.putMembership(membership);
+      else if(variant==="phone_hold") await service.people.setPhoneHold(phone,null,clock.now());
+    }
+  }
+},60_000);

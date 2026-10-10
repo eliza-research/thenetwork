@@ -496,7 +496,7 @@ export class NetworkRuntime {
     if (this.retry.length) this.committed.unshift(...this.retry.splice(0));
     await this.deliver();
     await this.storeStatuses(await this.adapter.flush());
-    if (!this.adapter.enqueue) await this.projectNotifications();
+    if (ran && !this.adapter.enqueue) await this.projectNotifications();
     if (ran && this.host.afterTick) await this.host.afterTick(this).catch(e => this.host.log(`[tick] after-tick work failed (${this.id}): ${(e as Error).message}`));
     return ran;
   }
