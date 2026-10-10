@@ -15,7 +15,7 @@ Repo: <https://github.com/eliza-research/thenetwork> (public). Work from a fresh
 - **Joining:** slop.date, friends.help and peon.biz are open to anyone. The Network (ntwrk.party) stays invite-only on the web. Members aged 13-17 can join but are never matched or connected. Matching is 18+, based on the lowest age the person has stated.
 - **Bans:** a banned person cannot rejoin, because the ban is on the phone number. Every join, login and inbound path must refuse a banned number.
 - **Ratings:** Clef photo ratings are on, and the scores are never shown to anyone. The placeholder weights ship until fitted weights pass the P2 decision rule. Production sets `CLEF_RATINGS=on`; the code reads an unset flag as off, so keep the variable set. Clef is also the scam and harassment classifier for relayed messages.
-- **STOP and HELP** on the shared line are handled by the Eliza gateway (`STOP_HELP_OWNER=gateway`). Only one system ever answers STOP. The service parses STOP inside `/internal/turn` and reports it as `consent` in the handled response; the gateway copies it into its send fence.
+- **STOP and HELP** on the shared line are answered by the service inside the gateway's signed `/internal/turn`. Only one system ever answers STOP. The service parses STOP inside `/internal/turn` and reports it as `consent` in the handled response; the gateway copies it into its send fence.
 - **Review and model:** a person reviews every proactive proposal before any member hears of it. Every LLM use is gpt-6-luna on Surplus.
 - **Testing:** sims (`bun run sim`), integration tests and e2e tests. Do not add unit tests or smoke tests.
 
@@ -57,7 +57,7 @@ Status on 2026-10-09: **none of the founder-pasted secrets below are set yet**. 
 | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Photo storage | R2 → Manage API tokens → **Object Read & Write**, scoped to the photo bucket |
 | `BLOOIO_WEBHOOK_SECRET` | Signed inbound, if the service receives any Blooio calls | Blooio dashboard |
 | `SURPLUS_API_KEY` | gpt-6-luna for any service-side model calls | Surplus |
-| `SERVICE_TURN_SECRET` | Signs every Eliza ⇄ service call: the service's `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals`, `/internal/updates` and `/internal/relay` (not served yet), and Eliza Cloud's `/api/internal/network/deliver`. HMAC per `packages/core/src/svc/svc-auth.ts`, the byte-identical mirror of upstream `@elizaos/plugin-network` | 32+ random bytes, generated once; the same value goes in Railway `backend` and in Eliza Cloud. The platform owner can generate it into Railway; the founder copies it from Railway's Variables page into Eliza Cloud. |
+| `SERVICE_TURN_SECRET` | Signs every Eliza ⇄ service call: the service's `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals`, `/internal/updates` and `/internal/relay`, and Eliza Cloud's `/api/internal/network/deliver`. HMAC per `packages/core/src/svc/svc-auth.ts`, the byte-identical mirror of upstream `@elizaos/plugin-network` | 32+ random bytes, generated once; the same value goes in Railway `backend` and in Eliza Cloud. The platform owner can generate it into Railway; the founder copies it from Railway's Variables page into Eliza Cloud. |
 
 **GitHub → eliza-research/thenetwork → Settings → Environments → production → Secrets:**
 - `CLOUDFLARE_API_TOKEN`: an account-owned token for the shawmakesmagic account with **Account → Cloudflare Pages: Edit** only, and a 90-day TTL. The founder can run `gh secret set CLOUDFLARE_API_TOKEN -R eliza-research/thenetwork --env production` and paste it.
@@ -71,7 +71,7 @@ Status on 2026-10-09: **none of the founder-pasted secrets below are set yet**. 
 
 Follow `docs/deploy.md` section 2. Summary:
 
-1. Non-secret variables, **already set**: `PLATFORM_ENV=production`, `OTP_PROVIDER=twilio`, `PORT=8790`, `STAFF_PORT=4848`, `SHUTDOWN_GRACE_MS=25000`, `CLOUDFLARE_ACCOUNT_ID`, `CLEF_RATINGS=on`, `STOP_HELP_OWNER=gateway`, `R2_BUCKET=ntwrk-photos`, `R2_ACCOUNT_ID`, `PHOTO_VIEW_BASE_URL=https://slop.date`, `PLATFORM_DB_ENVIRONMENT_INIT=1`, `RAILWAY_DOCKERFILE_PATH=deploy/backend/Dockerfile`. **Still to set:** `PHOTO_STORAGE=r2`, only after the founder pastes the R2 keys.
+1. Non-secret variables, **already set**: `PLATFORM_ENV=production`, `OTP_PROVIDER=twilio`, `PORT=8790`, `STAFF_PORT=4848`, `SHUTDOWN_GRACE_MS=25000`, `CLOUDFLARE_ACCOUNT_ID`, `CLEF_RATINGS=on`, `STOP_HELP_OWNER=gateway` (retired and ignored now; remove it), `R2_BUCKET=ntwrk-photos`, `R2_ACCOUNT_ID`, `PHOTO_VIEW_BASE_URL=https://slop.date`, `PLATFORM_DB_ENVIRONMENT_INIT=1`, `RAILWAY_DOCKERFILE_PATH=deploy/backend/Dockerfile`. **Still to set:** `PHOTO_STORAGE=r2`, only after the founder pastes the R2 keys.
 2. The private R2 photo bucket **exists**: `ntwrk-photos` in the shawmakesmagic account (no public access, no r2.dev URL).
 3. **First boot** (approved step), once the founder has pasted the secrets:
    - Deploy `backend` from `main` (`railway up --service backend` in `~/thenetwork-deploy` after `git checkout --detach origin/main`). Watch the logs: a missing secret is named, and the service refuses to start. Current state: the image builds from main; boot stops at `PLATFORM_ENV=production needs TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_VERIFY_SERVICE_SID`.
@@ -141,7 +141,7 @@ Network service sends → POST Eliza Cloud /api/internal/network/deliver (signed
 
 **Prerequisites, all of which must be true before go-live:**
 
-1. **Service.** `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals` and `/internal/updates` are served and signed (`deploy/backend/backend.ts`). `/internal/relay` with `clefRelayClassifier` is not served yet (docs/mvp-gaps.md). The shared-line adapter sends through `/api/internal/network/deliver`. Owner: platform.
+1. **Service.** `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals` and `/internal/updates` are served and signed (`deploy/backend/backend.ts`). `/internal/relay` is served too, with `clefRelayClassifier` when the Workers AI token is set and the rules alone without it (packages/network/service/README.md). The shared-line adapter sends through `/api/internal/network/deliver`. Owner: platform.
 2. **Plugin location (resolved 2026-10-09).** Founder decision: the plugin moved upstream as `@elizaos/plugin-network` (elizaOS/eliza `plugins/plugin-network`, a workspace package), so Eliza CI and the gateway image build it in-repo. thenetwork keeps only a byte-identical mirror of the contract in `packages/core/src/svc/`.
 3. **Merge.** `spike/network-plugin` is merged into elizaOS/eliza through a PR (founder approval).
 4. **One STOP owner.** The Blooio webhook for the shared line points only at the Eliza gateway. Remove the old `ovh-eliza` webhook, which needs Blooio account owner approval. The service doesn't consume Blooio webhooks for the shared line.
