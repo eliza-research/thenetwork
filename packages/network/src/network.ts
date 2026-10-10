@@ -1335,7 +1335,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const verb = c.kind as "block" | "report";
     const kind: ReportKind = c.otherAge !== undefined && isMinor(c.otherAge) ? "minor" : reportKindOf(c.text ?? "");
     m.pendingSafety = undefined;
-    const r = this.resolveTarget(m, c.target ?? "");
+    const r = this.resolveTarget(m, c.target ?? "", verb === "report");
     if (r.ask) {
       // Ids and kinds only: what they said is not kept while we wait for the name.
       m.pendingSafety = { verb, kind, at: this.now() };
@@ -1392,10 +1392,13 @@ export class ConsentNetwork implements NetworkUnderTest {
       const p = by.get(x);
       if (!p || at > p.at || (open && !p.open)) by.set(x, { at: Math.max(at, p?.at ?? at), open: open || !!p?.open });
     };
+    // Only a booked meeting the member was told about, and only the others told about it who said yes:
+    // a plan's probe goes out with no names, so a member who only got a probe, or an invitee who was
+    // probed but never booked (a late joiner, an unavailable or dropped one), is no counterpart.
     for (const o of this.opps.values()) {
-      if (!o.participants.includes(id) || o.meetingAt === undefined || !(o.bookedTold?.includes(id) || o.contacted.has(id))) continue;
+      if (!o.participants.includes(id) || o.meetingAt === undefined || !o.bookedTold?.includes(id)) continue;
       const open = o.stage === "scheduled";
-      for (const x of o.participants) if (o.contacted.has(x) && o.status.get(x) !== "no") add(x, o.meetingAt, open);
+      for (const x of o.participants) if (o.bookedTold.includes(x) && o.status.get(x) === "yes") add(x, o.meetingAt, open);
     }
     for (const x of this.interactions) {
       if (!x.participants.includes(id) || (x.outcome !== "completed" && x.outcome !== "no_show")) continue;
@@ -1411,7 +1414,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    * met, and the block still stands). Two or more possible people, or a pronoun with no counterpart:
    * `ask`, with the counterparts to choose from.
    */
-  private resolveTarget(m: MemberState, raw: string): { target?: MemberState; ask?: MemberState[] } {
+  private resolveTarget(m: MemberState, raw: string, confirmPast = false): { target?: MemberState; ask?: MemberState[] } {
     const text = raw.normalize("NFKC").replace(/[\u2018\u2019]/g, "'").replace(/[.!?,;:]+\s*$/, "").trim();
     const cps = this.counterparts(m.id);
     if (!text || PRONOUN_TARGET.test(text)) {
@@ -1419,7 +1422,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (open.length === 1) return { target: open[0]!.m };
       if (open.length > 1) return { ask: open.map(x => x.m) };
       const top = cps.filter(x => x.at === cps[0]?.at);
-      return top.length === 1 ? { target: top[0]!.m } : { ask: top.map(x => x.m) };
+      // A report by pronoun with no date ahead is confirmed first ("Who do you mean: Leo?"): the most
+      // recent counterpart may be long ago and not the person the member means.
+      return top.length === 1 && !confirmPast ? { target: top[0]!.m } : { ask: top.map(x => x.m) };
     }
     const t = text.toLowerCase().replace(/\s+/g, " ");
     const word = (w: string) => new RegExp(`(^|[^\\p{L}])${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=$|[^\\p{L}])`, "u");
@@ -1452,9 +1457,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     m.pendingSafety = undefined;
     if (this.now() - p.at > DAY) return false;
     const text = body.trim();
-    if (NEVER_MIND.test(text)) { this.ack(m, "Okay."); return true; }
     const r = this.resolveTarget(m, text);
     if (r.target && this.counterparts(m.id).some(x => x.m.id === r.target!.id)) { this.applyBlock(m, p.verb, p.kind, r.target); return true; }
+    // A probe (1:1 or plan), the booked date, a crew or a check-in is also waiting: a short "no", "yes"
+    // or "can't make it" is its answer, not this one (the question is dropped; they can block or report again).
+    if (m.awaiting && ["probe", "booked", "crew", "checkin"].includes(m.awaiting.kind)) return false;
+    if (NEVER_MIND.test(text)) { this.ack(m, "Okay."); return true; }
     if (text.split(/\s+/).length > 4) return false;
     this.ctx.log(`${p.verb}_unresolved`, { memberId: m.id });
     this.send(m, copy.whoUnresolved, { type: "info" }, "reply");
