@@ -79,7 +79,7 @@ About 35 engineer-days plus the two-week shadow. Items 1-3, 6 and 12b can run al
 
 ## Open founder decisions
 
-1. **STOP/HELP owner on the shared line:** decided (founder, 2026-10-08): one system only, chosen by `STOP_HELP_OWNER`. The default is `service` (this service answers with core's keyword table and opt-out reading; STOP stops every app, "leave <app>" leaves one). With `gateway`, the Eliza Cloud gateway answers and reports each STOP, STOP ALL and START to the service's signed `POST /consent/gateway`; the service then never answers a keyword but still records and applies every opt-out. The backend serves `/consent/gateway` on its public port (the service checks the signature). Open: which value production uses **[FOUNDER]**.
+1. **STOP/HELP owner on the shared line:** decided (founder, 2026-10-08 and 2026-10-09): one system only, the service, inside the Eliza gateway's signed `POST /internal/turn`. STOP stops every app, "leave <app>" leaves one, and the handled turn reports `consent` for the gateway's send-time fence. `STOP_HELP_OWNER` and `POST /consent/gateway` are retired (packages/network/service/README.md, "The Eliza seam").
 2. **Where the conversation runs:** the service's own LLM reader (`understand`, gpt-6-luna) or the Eliza agent (`packages/plugin-network`). Today the service owns every message and the plugin is not on the line.
 3. **Join mode for peon and friends** on production (invite, open or waitlist). The code default is open.
 4. **Ban evasion:** build a same-face check, or drop that gate and rely on phone and person bans.
