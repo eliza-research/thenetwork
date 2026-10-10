@@ -121,7 +121,7 @@ describe("edge headers", () => {
     expect(await trusted(await signed({ host: site }), {}, "/api/me")).toBe(false);
     expect(await trusted(await signed({ host: site }), {}, "/api/app?x=1")).toBe(false);
     expect(await trusted(await signed({ host: site, method: "POST" }))).toBe(false);
-    expect(await trusted({ ...(await signed({ host: site })), [PROXY_HEADERS.host]: "ntwrk.love" })).toBe(false);
+    expect(await trusted({ ...(await signed({ host: site })), [PROXY_HEADERS.host]: "ntwrk.party" })).toBe(false);
     expect(await trusted({ ...(await signed({ host: site })), [PROXY_HEADERS.ip]: "198.51.100.1" })).toBe(false);
     // Stale or future timestamps.
     expect(await trusted(await signed({ host: site, now: Date.now() - (PROXY_MAX_SKEW_S + 5) * 1000 }))).toBe(false);
