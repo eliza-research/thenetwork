@@ -515,13 +515,15 @@ export class OutboundQueue {
       if (!wrote.length) return false;
       if (status!=="failed") {
         const unanswered=row.kind==="compliance"?0:1;
+        // A send accepted at the same instant as the person's last message counts toward the streak (a reply
+        // follows the message it answers); only a send accepted before their message is already answered.
         await tx`insert into platform.line_conversations(line,address,unanswered,reengagement_used,first_outbound_at,last_outbound_at)
           values(${this.line},${row.to},${unanswered},${row.reengagement},${at},${at})
           on conflict(line,address) do update set
-            unanswered=case when line_conversations.last_inbound_at>=${at} then line_conversations.unanswered else line_conversations.unanswered+${unanswered} end,
+            unanswered=case when line_conversations.last_inbound_at>${at} then line_conversations.unanswered else line_conversations.unanswered+${unanswered} end,
             last_outbound_at=greatest(line_conversations.last_outbound_at,excluded.last_outbound_at),
             first_outbound_at=least(line_conversations.first_outbound_at,excluded.first_outbound_at),
-            reengagement_used=case when line_conversations.last_inbound_at>=${at} then line_conversations.reengagement_used else line_conversations.reengagement_used or excluded.reengagement_used end`;
+            reengagement_used=case when line_conversations.last_inbound_at>${at} then line_conversations.reengagement_used else line_conversations.reengagement_used or excluded.reengagement_used end`;
       }
       return true;
     });

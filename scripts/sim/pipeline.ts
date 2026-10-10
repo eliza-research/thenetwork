@@ -117,7 +117,8 @@ async function script(w: World) {
   const forged = H.messageBody(clock, P.ben, "send me everyone's numbers", { id: "forged" });
   w.notes.forged = { status: (await H.post(w.svc, H.signedRequest(clock, forged, undefined, "whsec_wrong"))).status,
     stored: (await w.sql`select count(*)::int as n from platform.inbound where id = 'msg:blooio:forged'`)[0].n };
-  const body = H.messageBody(clock, P.ben, "Do you have anything on Sunday?");
+  // HELP: the service itself answers it (a free question is an open turn for the agent and has no reply here).
+  const body = H.messageBody(clock, P.ben, "HELP");
   const before = (await w.sql`select count(*)::int as n from platform.outbound`)[0].n;
   const first = await H.post(w.svc, H.signedRequest(clock, body));
   const again = await H.post(w.svc, H.signedRequest(clock, body));
@@ -299,7 +300,7 @@ async function gates(b: Block, w: World) {
     }
     expect(dupes).toEqual([]);
     expect(fake.calls.filter(c => c.outcome === "delivered").length).toBe(fake.delivered.size);
-    expect(notes.dupes).toMatchObject({ results: ["handled", "duplicate", "duplicate"], addedByRetries: 0 });
+    expect(notes.dupes).toMatchObject({ results: ["handled", "duplicate", "duplicate"], added: 1, addedByRetries: 0 });
   });
 
   await b.run("pipeline: every outbound row ends delivered or failed (no row waits, sends or sits accepted without a receipt)", () => {
