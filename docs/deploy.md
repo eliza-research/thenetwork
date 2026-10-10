@@ -115,6 +115,9 @@ Set these in **Variables**. Mark each **secret** row as a sealed variable. Never
 | `PLATFORM_PROXY_SECRET` | **yes** | 32+ random characters | The same value goes into each site Worker (section 3). |
 | `TURNSTILE_SECRET_KEY` | **yes** | From Cloudflare Turnstile | One widget per site domain, or one widget listing all four |
 | `TURNSTILE_SITE_KEY` | no (public) | The same Turnstile widget | The MCP sign-in page (`/oauth/authorize` on each site) shows the widget. Without it the MCP server stays off (404 `mcp_not_enabled`). The `oauth` schema is a migration (`9001_oauth_schema`, packages/mcp/db/oauth.sql); the service login only reads and writes it. The widget's hostnames: each domain, its `www` name and its `<project>.pages.dev`. |
+| `MCP_CUSTOM_CHATGPT_SLOP` | no | unset or `off` | Default off. `on` requires founder approval for the private real-account pilot at `https://slop.date/mcp`. Keep the public OpenAI plugin exclusion. |
+| `MCP_CUSTOM_CHATGPT_SLOP_PERSON_IDS` | **yes** (private account list) | unset while off | With the approved pilot on, list existing adult person IDs, separated by commas. Never log or publish them. An empty list or literal `*` entry fails startup. Entries match exact person IDs. Normal staging/production authentication checks still apply. |
+| `MCP_PRIVATE_OPENAI_APPS` | no | unset | Development-only fictional pilot. Never set it in staging or production, or combine it with the real-account pilot. |
 | `OTP_PROVIDER` | no | `twilio` | Required when deployed |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SERVICE_SID` | **yes** (all three) | Twilio Verify | Codes only. These send verification codes, not network messages. |
 | `NETWORK_SERVICE_TOKENS` | **yes** | `admin@*:<t>,reviewer@slop:<t>,...` | Staff tokens. Without them every staff route answers 401. |
@@ -237,6 +240,8 @@ The console is the same image with another start command (`deploy/backend/observ
 - **Schema.** Migrations only go forward. Each numbered migration must be additive (add columns and tables; never drop or rename something the previous build reads in the same release). Then the previous image still runs on the newer schema. A migration that cannot meet this rule needs a two-step release, written down in its PR.
 - **Data.** Restore into a **new** database first: from the Postgres volume backup (Railway → Postgres → Backups), or from the daily R2 dump with `deploy/backup/restore.ts` (section 8.2). Compare, then switch `NETWORK_DATABASE_URL` and `MIGRATION_DATABASE_URL`. Never restore over the live volume.
 - **Sites.** In the Cloudflare dashboard, Pages → the project → Deployments → an earlier production deployment → **Rollback** (section 3.2), or redeploy the previous commit.
+- **Pages origin binding.** Record the project's previous plain-text `BACKEND_ORIGIN` before repair. A deployment rollback does not restore this project setting. Restore it separately only when needed; preserve every other binding, especially secrets. Do not restore a known broken origin.
+- **Custom ChatGPT pilot.** Set `MCP_CUSTOM_CHATGPT_SLOP=off`, or remove the account from its allowlist. Restart the backend to suspend access. Consent, code exchange, refresh and authenticated requests are then refused for that account. Revocation remains available. Use the existing disconnect/revoke flow for permanent withdrawal; re-enabling can resume eligible, unrevoked grants.
 - Write each rollback down in the incident log, with the build ids (`x-network-build`) before and after.
 
 ### 2.8 Check it locally before a deploy
@@ -404,10 +409,12 @@ Every minute, inside the backend's tick, the ops round reads each network and th
 | `precision:<network>` | warn | Shadow precision under 80% over 7 days (person review decisions approved without edits, at least 20 decisions; PRD 32.8). |
 | `bias_report:<network>` | warn | The weekly bias monitor wrote a report with groups under 0.8x in the last 24 h. Counts only; the groups are in the console's bias panel. |
 | `safety_action:<network>` | warn | A ban or a hold in 24 h |
+| `line_safety` | bad | Blooio put the shared line under a safety action (`platform.line_safety`: review, reply_only, pause_new): new and agent texts wait; STOP and HELP still go. The text names the action and since when, never the number. |
+| `leak_review:<app>` | warn | Texts parked for leak review wait for a person (`GET /queue/leak-review`, the console's held texts). Posted again when the count goes up. |
 | `queue_outbound:<network>` | warn | `ALERT_OUTBOUND_BACKLOG` (50) or more messages wait for delivery |
 | `queue_review:<network>` | warn | `ALERT_REVIEW_BACKLOG` (30) or more items wait for review |
 | `budget:total`, `budget:<app>` | warn at `COST_BUDGET_WARN_SHARE` (80%), bad at 100% | Today's estimated cost (7.3) against the daily budget |
-| `ops_read:<network>`, `cost_read` | warn | The ops round could not read the network or the ledger |
+| `ops_read:<network>`, `line_read`, `cost_read` | warn | The ops round could not read the network, the shared line or the ledger |
 
 Dedupe and rate limit (`network.ops_alerts`, `network.ops_alert_posts`, migration 0020):
 
