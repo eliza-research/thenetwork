@@ -105,7 +105,7 @@ jobs:
         with:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
-      # Read every project before any repair. Only main receives the existing production credential.
+      # Inspect this canonical project only. Only main receives the existing production credential.
       # PATCH merges individual env keys; null explicitly deletes a key. Never resubmit secret values.
       # https://developers.cloudflare.com/api/resources/pages/subresources/projects/methods/edit/
       - name: Inspect production bindings and optionally repair backend origin
@@ -130,27 +130,28 @@ jobs:
             if (!response.ok || !body.success || !body.result) throw new Error(`${label}: Cloudflare metadata request failed (${response.status})`);
             return body.result;
           };
-          const projects = [];
-          for (const site of SITES) {
-            const current = await api(`pages/projects/${site.project}`, site.project);
-            const vars = current.deployment_configs?.production?.env_vars ?? {};
-            const value = name => vars[name]?.type === "plain_text" ? vars[name].value : undefined;
-            let origin;
-            try { const url = new URL(value("BACKEND_ORIGIN")); if (url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash && url.pathname === "/") origin = url.origin; } catch {}
-            console.log(JSON.stringify({project:site.project,branch:current.production_branch,backend:origin ?? (vars.BACKEND_ORIGIN ? "invalid binding" : "built fallback"),app:value("APP_ID") === site.app ? site.app : "missing or unexpected",host:value("SITE_HOST") === site.domain ? site.domain : "missing or unexpected",proxySecretPresent:vars.PLATFORM_PROXY_SECRET?.type === "secret_text"}));
-            if (current.production_branch !== "main" || !current.domains?.includes(site.domain)
-              || vars.PLATFORM_PROXY_SECRET?.type !== "secret_text"
-              || (vars.APP_ID && value("APP_ID") !== site.app) || (vars.SITE_HOST && value("SITE_HOST") !== site.domain)
-              || (vars.BACKEND_ORIGIN && !origin)) throw new Error(`${site.project}: production identity or bindings require owner review`);
-            projects.push({site,current,vars});
+          const site = SITES.find(item=>item.project === project);
+          if (!site) throw new Error("Unknown project");
+          const current = await api(`pages/projects/${project}`, project);
+          const vars = current.deployment_configs?.production?.env_vars ?? {};
+          const value = name => vars[name]?.type === "plain_text" ? vars[name].value : undefined;
+          let origin;
+          try { const url = new URL(value("BACKEND_ORIGIN")); if (url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash && url.pathname === "/") origin = url.origin; } catch {}
+          console.log(JSON.stringify({project,branch:current.production_branch,backend:origin ?? (vars.BACKEND_ORIGIN ? "invalid binding" : "built fallback"),app:value("APP_ID") === site.app ? site.app : "missing or unexpected",host:value("SITE_HOST") === site.domain ? site.domain : "missing or unexpected",proxySecretPresent:vars.PLATFORM_PROXY_SECRET?.type === "secret_text"}));
+          if (current.production_branch !== "main" || !current.domains?.includes(site.domain)
+            || vars.PLATFORM_PROXY_SECRET?.type !== "secret_text"
+            || (vars.APP_ID && value("APP_ID") !== site.app) || (vars.SITE_HOST && value("SITE_HOST") !== site.domain)
+            || (vars.BACKEND_ORIGIN && !origin)) throw new Error(`${project}: production identity or bindings require owner review`);
+          let widget, hostQualification = "UNQUALIFIED";
+          try { widget = await api(`challenges/widgets/${sitekey}`, "Turnstile hostname coverage"); } catch {}
+          if (widget && Array.isArray(widget.domains) && widget.domains.every(domain=>typeof domain === "string")) {
+            const covered = widget.domains.some(domain=>site.domain === domain || site.domain.endsWith(`.${domain}`));
+            hostQualification = covered ? "QUALIFIED" : "FAILED";
           }
-          const widget = await api(`challenges/widgets/${sitekey}`, "Turnstile hostname coverage");
-          const domains = Array.isArray(widget.domains) ? widget.domains : [];
-          const covered = SITES.filter(site => domains.some(domain => site.domain === domain || site.domain.endsWith(`.${domain}`))).map(site=>site.domain);
-          console.log(JSON.stringify({turnstileKeySha256:createHash("sha256").update(sitekey).digest("hex"),coveredProductionHosts:covered}));
-          if (covered.length !== SITES.length) throw new Error("Existing Turnstile widget does not cover all production hosts");
-          const selected = projects.find(item=>item.site.project === project);
-          if (!selected) throw new Error("Unknown project");
+          // Pages-only credentials may not read widgets. This repair changes no authentication setting.
+          console.log(JSON.stringify({project,turnstileKeySha256:createHash("sha256").update(sitekey).digest("hex"),hostQualification,publicOtpReadiness:"UNQUALIFIED"}));
+          if (hostQualification === "FAILED") throw new Error(`${project}: existing Turnstile widget does not cover the canonical hostname`);
+          const selected = {site,current,vars};
           const old = selected.vars.BACKEND_ORIGIN?.value;
           if (operation === "repair-and-deploy" && old !== backend) {
             const config = selected.current.deployment_configs.production;
