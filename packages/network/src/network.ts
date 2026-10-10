@@ -1116,8 +1116,13 @@ export class ConsentNetwork implements NetworkUnderTest {
   /**
    * A number asked for, inside a mutual match, about the match: "can I get her number?", "what's Sam's
    * number" (Sam being the match). Only when contact extraction is the only abuse, the member has one
-   * open relay match (relay.ts matchFor: both said yes, adults, not closed) and the text names that
-   * person or uses a pronoun. Anyone else's number, an address or a handle stays contact extraction.
+   * open relay match (relay.ts matchFor: both said yes, accepted, not closed, within its window) and
+   * every "<whose> number" in the text names that person or is a pronoun. A pronoun is taken whoever it
+   * refers to: that is safe only because the agent can share with the match alone and the relay engine
+   * needs both members to ask. What is left once those asks are removed must name no other contact
+   * detail ("and everyone's numbers", "and Cy's address"): then the whole text stays contact extraction.
+   * Minors never get here with a match: dropMember closes a minor's opportunities, and the relay treats
+   * an unsure age as undefined and refuses any share.
    */
   private swapAsk(m: MemberState, c: Classified, body: string): boolean {
     if (c.abuse.length !== 1 || c.abuse[0] !== "contact_extraction") return false;
@@ -1126,9 +1131,16 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!other) return false;
     const t = body.normalize("NFKC").replace(/[\u2018\u2019]/g, "'");
     const NUM = String.raw`(?:(?:phone|cell)\s+)?(?:number|phone|cell)\b`;
-    const whose = new RegExp(String.raw`\b(his|her|their|them|[\p{L}]+'s)\s+` + NUM, "iu").exec(t)?.[1]?.toLowerCase().replace(/'s$/, "");
-    if (!whose) return false;
-    if (!["his", "her", "their", "them"].includes(whose) && whose !== other.first.toLowerCase()) return false;
+    const first = other.first.toLowerCase();
+    let asks = 0, elsewhere = false;
+    const rest = t.replace(new RegExp(String.raw`\b(his|her|their|them|[\p{L}]+'s)\s+` + NUM, "giu"), (all: string, w: string) => {
+      const whose = w.toLowerCase().replace(/'s$/, "");
+      if (["his", "her", "their", "them"].includes(whose) || whose === first) { asks++; return " "; }
+      elsewhere = true; return all;
+    });
+    if (!asks || elsewhere) return false;
+    if (/\b(numbers?|phones?|cells?|address(es)?|emails?|instagram|ig|insta|socials|snap(chat)?|handles?|contacts?|last names?)\b/i.test(rest)) return false;
+    if (classify(rest).abuse.includes("contact_extraction")) return false;
     this.ctx.log("relay_swap_ask", { memberId: m.id, matchId: match!.id });
     return true;
   }
