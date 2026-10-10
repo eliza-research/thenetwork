@@ -36,8 +36,12 @@ function flowError(root: HTMLElement, text: string): void {
 
 function render(root: HTMLElement, me: Me): void {
   const m = me.membership;
-  const stopped = typeof me.smsOptedIn === "boolean" ? !me.smsOptedIn
-    : m ? ["opted_out", "stopped"].includes(m.state) : false;
+  // An invited or removed membership has no consent on record yet, so a missing opt-in there is not
+  // a stop. Only a live membership reads smsOptedIn === false as "Messages stopped".
+  const live = !!m && m.state !== "invited" && m.state !== "removed";
+  const stopped = !live ? false
+    : typeof me.smsOptedIn === "boolean" ? !me.smsOptedIn
+    : ["opted_out", "stopped"].includes(m.state);
   fill(root, {
     phoneMasked: me.phoneMasked,
     firstName: m?.firstName ?? "",
@@ -47,7 +51,7 @@ function render(root: HTMLElement, me: Me): void {
   when(root, "has-membership", !!m);
   when(root, "no-membership", !m);
   when(root, "stopped", stopped);
-  when(root, "not-stopped", !!m && !stopped);
+  when(root, "not-stopped", live && !stopped);
   showStep(root, "account");
   // Parts of the page that need the account (the slop photos section, photos.ts) load on this event.
   root.dispatchEvent(new CustomEvent("account", { detail: me }));
@@ -128,7 +132,7 @@ export async function mountSettings(root: HTMLElement): Promise<void> {
     const res = await api.stop();
     if (!res.ok) return status(root, message(root, res.error));
     await refresh(root);
-    status(root, root.dataset.msgStopped ?? "Messages from every app powered by The Network are stopped. Text START to resume this app.");
+    status(root, root.dataset.msgStopped ?? "Messages from every app powered by The Network are stopped. Text START to resume messages from the app you last talked with.");
   });
 
   act("leave", async () => {

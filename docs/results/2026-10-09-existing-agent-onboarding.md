@@ -24,10 +24,10 @@ Live observations below were reported by the browser operator. Account details a
 
 | Client | Desktop entry / discovery | Connector and consent | Profile / same-person readback | Phone | Result |
 |---|---|---|---|---|---|
-| ChatGPT | Signed-in user-selected Chrome profile; `?q=` prefilled, then operator manually sent. Live Slop SKILL fetch failed (`rawMarkdown`). OAuth discovery passed. | User approved connector registration. Create failed: “Some app settings were rejected.” Direct registration confirmed server rejection. No membership grant. | No live submission or membership readback. | Not run. | **Skill fetch failed; connector blocked; unfinished. Priority.** |
+| ChatGPT | Signed-in browser; `?q=` prefilled, then operator manually sent. Live Slop SKILL fetch failed (`rawMarkdown`). OAuth discovery passed. | User approved connector registration. Create failed: “Some app settings were rejected.” Direct registration confirmed server rejection. No membership grant. | No live submission or membership readback. | Not run. | **Skill fetch failed; connector blocked; unfinished. Priority.** |
 | Claude | Slop SKILL fetched. Synthetic profile collected, read back, and handed off to the join page. | Free account's custom connector slot occupied; Add custom connector disabled. Existing connector preserved. | Conversation readback passed; no MCP submission or membership readback. | Not run. | **Partial; blocked. Deferred.** |
 | Grok chat (grok.com) | Slop SKILL fetched. | No connector grant tested. | No submission or membership readback. | Not run. | **Discovery passed only. Deferred.** |
-| Grok Bot | Native app opened existing account; new conversation selected. Prompt not yet sent at this checkpoint. | Not tested. Grok chat success does not qualify Grok Bot. | Not tested. | Not run. | **Entry only; unfinished. Deferred.** |
+| Grok Bot | Native app opened; new conversation selected. Prompt not yet sent at this checkpoint. | Not tested. Grok chat success does not qualify Grok Bot. | Not tested. | Not run. | **Entry only; unfinished. Deferred.** |
 | Muse | Entry reached logged-out client. | Not tested. | Not tested. | Not run. | **Blocked by sign-in; unfinished. Deferred.** |
 | Cursor | Official web prompt preview passed; native accessibility request timed out. Source adds the documented web prompt link. | Not tested. | Not tested. | Not run. | **Web entry only; native unfinished. Deferred.** |
 | OpenClaw | CLI unavailable. No invented URL scheme added. | Not tested. | Not tested. | Not run. | **Unavailable; unfinished. Deferred.** |
@@ -157,19 +157,11 @@ Do not request another OTP until the shared request owner agrees. No real signup
 
 ## Hosting and access checkpoint
 
-The user resumed the remaining work. Other-client acceptance remains deferred while ChatGPT stays first.
-The correct Brave session exposes the Eliza Labs account and Slop/Friends zones. A Network-domain search returned no results.
-GitHub's repository `MCP_URL` is corrected to `https://{domain}/mcp`, with readback. This is configuration, not a site deployment.
-Issue #5 remains open, with no assignee or comments. Its old HTTP 526 outage description is stale.
-Current direct checks show valid TLS: health HTTP 200 (`env=production`, `build=dev`), Slop/Friends app APIs and OAuth metadata HTTP 200.
-These checks establish endpoint reachability, not hosted private Slop authorization or launch readiness.
-The isolated Cloudflare CLI is logged out. A Chrome work-identity check showed one account and no domains.
-The user clarified that Eliza Cloudflare is in Brave. The Chrome result is not evidence about Eliza Labs access.
-Existing Network zone access belongs to another account. The owner is handling a new domain; its purchased name and backend origin remain unconfirmed.
-An isolated fixture journey does not require Network zone access. It remains local only.
-The latest domain instruction is verified from user-provided messages and an authorized native Messages read.
-New endpoint/domain changes await the owner's confirmed purchased name. No duplicate purchase or old-zone move is planned.
-No Cloudflare, DNS, deployment, main merge, or live-private flag change occurred.
+Operator account, browser and domain-ownership details are kept out of the repo.
+The deploy-sites workflow sets `MCP_URL` to `https://{domain}/mcp`, which matches `skills.config.ts`.
+Current direct checks showed health and the Slop and Friends app APIs and OAuth metadata answering HTTP 200.
+These checks show the endpoints are reachable, not that hosted private Slop authorization or launch is ready.
+No Cloudflare, DNS, deployment, main merge or live-flag change happened.
 
 ## Evidence and publication limits
 

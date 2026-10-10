@@ -26,7 +26,7 @@ line and one rule: nothing crosses apps without the person's consent. The Networ
 | The Network | Introductions, plans and events (invite-only for now) | no keyword | https://ntwrk.love |
 | slop.date | Dating in New York City | slop | https://slop.date |
 | friends.help | Friends and small group plans in New York City | friends | https://friends.help |
-| peon.biz | Work and hiring (waitlist) | peon | https://peon.biz |
+| peon.biz | Work and hiring | peon | https://peon.biz |
 
 ## What the person is signing up for
 

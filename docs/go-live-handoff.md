@@ -99,7 +99,7 @@ Follow `docs/deploy.md` section 2. Summary:
 
 1. Make sure CI is green on `main`. It runs typecheck, `bun run plugins/build.ts --check`, the sites production build, `bun run sim`, and the integration and e2e job with Postgres.
 2. Branch protection on `main`: require CI, no force pushes. Any change to repo settings needs the founder's OK.
-3. The `production` environment already exists, with the founder as required reviewer and `main` only. The repo variables are already set: `CLOUDFLARE_ACCOUNT_ID`, `BACKEND_ORIGIN=https://api.ntwrk.love`, `MCP_URL`, `TURNSTILE_SITE_KEY`.
+3. The `production` environment already exists, with the founder as required reviewer and `main` only. The repo variables are already set: `CLOUDFLARE_ACCOUNT_ID`, `BACKEND_ORIGIN=https://api.ntwrk.love`, `TURNSTILE_SITE_KEY`. `MCP_URL` is no longer read from a repo variable: `deploy-sites.yml` sets it to `https://{domain}/mcp` per site, the same default as `skills.config.ts`.
 4. After the founder adds `CLOUDFLARE_API_TOKEN`, trigger `deploy-sites.yml` (manual dispatch, or a push to `main`). The founder approves the environment run, then the post-deploy check `deploy/smoke.ts` runs against all four sites.
 
 ## 7. Eliza live: eliza.app becomes an entry into The Network

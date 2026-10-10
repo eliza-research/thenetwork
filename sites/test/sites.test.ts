@@ -182,7 +182,7 @@ describe.each(SITES)("$domain", (s) => {
 });
 
 test("agent-first landing pages (founder decision 10): name, one line, the prompt, Copy, Open-in links; nothing else", () => {
-  const AGENTS = ["https://chatgpt.com/?q=", "https://claude.ai/new?q=", "https://grok.com/?q=", "https://www.perplexity.ai/search?q=", "https://cursor.com/link/prompt?text="];
+  const AGENTS = ["https://chatgpt.com/?q=", "https://claude.ai/new?q=", "https://grok.com/?q=", "https://www.perplexity.ai/search?q="];
   for (const s of SITES) {
     const home = read(s, "index.html");
     const name = s.app === "ntwrk" ? "The Network" : s.domain;

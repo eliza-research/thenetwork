@@ -25,7 +25,7 @@ https://ntwrk.love/mcp/openai; each app's site has its own (https://<site>/mcp).
 |---|---|---|---|
 | The Network | Introductions, plans and events (invite-only for now) | no keyword | https://ntwrk.love |
 | friends.help | Friends and small group plans in New York City | friends | https://friends.help |
-| peon.biz | Work and hiring (waitlist) | peon | https://peon.biz |
+| peon.biz | Work and hiring | peon | https://peon.biz |
 
 ## What the person is signing up for
 
