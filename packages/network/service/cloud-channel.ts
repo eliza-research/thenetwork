@@ -7,11 +7,12 @@ import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {BlooioAdapter, type BlooioAdapterOptions} from "./channel.ts";
 
 /**
- * Receipt lookup only (never a send) for a deliver whose acceptance is unknown; same body as DELIVER_PATH.
- * Not in the Cloud b763 contract (core/src/svc/contract.ts is its byte-for-byte mirror), so it is named
- * here until the upstream contract carries it. An optional `acceptedAt` in the answer is accepted the same way.
+ * Receipt lookup only (never a send) for a deliver whose acceptance is unknown: the same signed body as
+ * DELIVER_PATH, the same id. Not in the mirror: upstream contract.ts has no constant for it, but Eliza
+ * Cloud serves it (elizaos/eliza develop, packages/cloud/api/internal/network/deliver/receipt/route.ts,
+ * handleNetworkDelivery in reconcile-only mode). Proposal for upstream: service/README.md "Contract".
  */
-export const DELIVER_RECEIPT_PATH = `${DELIVER_PATH}/receipt`;
+export const DELIVER_RECEIPT_PATH = "/api/internal/network/deliver/receipt";
 
 export class CloudChannelAdapter extends BlooioAdapter {
   override readonly name = "eliza_cloud" as const;

@@ -39,6 +39,8 @@ import { clefRelayClassifierFromEnv } from "../../engine/src/relayClef.ts";
 import { parseRelayRequest, type RelayClassifierHook } from "../../engine/src/relay.ts";
 import { withdrawsSwap, type RelayOutcome } from "../src/relay.ts";
 import type { NetworkRuntime } from "./runtime.ts";
+import type { CostLedger } from "./cost.ts";
+import { isProduction } from "../../platform/src/env.ts";
 
 export { RELAY_PATH };
 /** A relay request is small: Cloud caps the text at 2000 characters. */
@@ -61,18 +63,41 @@ export interface RelayEndpointDeps {
   runtimeFor(app: AppId): NetworkRuntime | undefined;
   /** The network ('<app>:<city>') this member belongs to; falls back to runtimeFor(app) when absent. */
   runtimeOfMember?(app: AppId, memberId: string): Promise<NetworkRuntime | undefined>;
-  /** The classifier hook; undefined = rules only. */
-  hook?: RelayClassifierHook;
+  /** The classifier hook for an app (each Workers AI call is a cost row for that app); undefined = rules only. */
+  hookFor?: (app: AppId) => RelayClassifierHook;
 }
 
 /**
- * The relay classifier from the environment: Clef (clef-flash by default) when the Workers AI token and
- * account are set, else rules only. Logs which one once, at start.
+ * The relay classifier from the environment, per app: Clef (clef-flash by default) when the Workers AI
+ * token and account are set, else rules only (undefined). Logs which one once, at start. With a cost
+ * ledger, every Clef call that reached Workers AI is a cost row for the app (cost.ts relayClefEvent).
+ * Production without Clef fails closed: the hook always errors, so every text the rules pass is held for
+ * staff (the go-live checklist requires Clef wired); dev and staging run on the rules alone.
  */
-export function relayClassifierFromEnv(env: Record<string, string | undefined>, log: (s: string) => void): RelayClassifierHook | undefined {
-  if (!env.CLOUDFLARE_AI_TOKEN || !env.CLOUDFLARE_ACCOUNT_ID) { log("relay classifier: rules only"); return undefined; }
+export function relayClassifierFromEnv(env: Record<string, string | undefined>, log: (s: string) => void, cost?: CostLedger): ((app: AppId) => RelayClassifierHook) | undefined {
+  if (!env.CLOUDFLARE_AI_TOKEN || !env.CLOUDFLARE_ACCOUNT_ID) {
+    if (isProduction(env)) {
+      log("relay classifier: not configured in production; every relayed text is held for staff");
+      const closed: RelayClassifierHook = async () => { throw new Error("relay classifier not configured"); };
+      return () => closed;
+    }
+    log("relay classifier: rules only");
+    return undefined;
+  }
   log(`relay classifier: rules + Clef (${env.RELAY_CLEF_MODEL === "clef" ? "clef" : "clef-flash"})`);
-  return clefRelayClassifierFromEnv(env, { onEvent: e => { if (e.outcome === "error" || e.outcome === "timeout") log(`[relay] clef ${e.outcome}${e.status ? ` ${e.status}` : ""} (${e.ms} ms)`); } });
+  const hooks = new Map<AppId, RelayClassifierHook>();
+  return app => {
+    let h = hooks.get(app);
+    if (!h) {
+      const meter = cost?.relayClefEvent(app);
+      h = clefRelayClassifierFromEnv(env, { onEvent: e => {
+        meter?.(e);
+        if (e.outcome === "error" || e.outcome === "timeout") log(`[relay] clef ${e.outcome}${e.status ? ` ${e.status}` : ""} (${e.ms} ms)`);
+      } });
+      hooks.set(app, h);
+    }
+    return h;
+  };
 }
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
@@ -115,7 +140,7 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
   let b: Record<string, unknown>;
   try { b = JSON.parse(raw); } catch { return json({ error: "invalid_request" }, 400); }
   const id = (v: unknown, max: number) => typeof v === "string" && !!v.trim() && v.length <= max && !/[\r\n\u0000]/.test(v);
-  if (!b || typeof b !== "object" || Array.isArray(b) || Object.keys(b).length !== KEYS.length || Object.keys(b).some(k => !KEYS.includes(k))
+  if (!b || typeof b !== "object" || Array.isArray(b) || Object.keys(b).length !== KEYS.length || Object.keys(b).some(k => !(KEYS as string[]).includes(k))
     || (b.channel !== "blooio" && b.channel !== "twilio") || !id(b.messageId, 512) || !isAppId(b.app) || !id(b.memberId, 256)
     || auth.id !== `${b.messageId}:relay`) return json({ error: "invalid_request" }, 400);
   if ((b.itemId !== null && !id(b.itemId, 200)) || typeof b.text !== "string" || !b.text.trim() || b.text.length > MAX_TEXT) return json({ error: "invalid_relay" }, 400);
@@ -193,9 +218,10 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
         // The canonical owners' word on both members of the match the desk will pick (fails closed).
         const match = net.relayMatch(memberId as MemberId, itemId ?? undefined);
         const canonical = match ? await rt.relayParties([...match.participants]) : undefined;
+        const hook = d.hookFor?.(app);
         const outcome = await net.relayRequest(
           { itemId: key, from: memberId as MemberId, kind: request.kind, ...(request.kind === "text" ? { text: request.body } : {}), ...(itemId !== null ? { matchId: itemId } : {}) },
-          { ...(d.hook ? { hook: d.hook } : {}), contactOf: id => rt.addressOf(id), ...(canonical ? { canonical } : {}) },
+          { ...(hook ? { hook } : {}), contactOf: id => rt.addressOf(id), ...(canonical ? { canonical } : {}) },
         );
         const r = stored(outcome);
         // Committed with the relay log, the messages and the queued rows of this unit (runtime.ts writeUnit).

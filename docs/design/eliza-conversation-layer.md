@@ -6,13 +6,13 @@ Status: **agreed 2026-10-08** by the engine and platform owners. Owner of the El
 
 | Part | Owner | State |
 |---|---|---|
-| Wire contract and shared signing (`@elizaos/plugin-network/contract`, `/svc-auth`, `/client`; mirrored in `packages/core/src/svc/`) | Eliza side | **Done** (import-free; plugin moved upstream 2026-10-09) |
+| Wire contract and shared signing (`@elizaos/plugin-network/contract`, `/svc-auth`, `/client`; mirrored in `packages/core/src/svc/`) | Eliza side | **Done** (import-free; plugin moved upstream 2026-10-09). The mirror is byte-identical to elizaos/eliza `develop`; both repos pin the two files' SHA-256 in a `contract-mirror.test.ts` (here `packages/core/test/`), and `bun run check:mirror` compares them through `gh`. No contract version constant. |
 | Gateway takeover: service turn first, handled replies, consent mirror, open-turn context | Eliza side | **Done**, behind `NETWORK_TAKEOVER=1` (eliza `spike/network-plugin` d8d186d) |
 | Cloud route and runtime: service-backed Network store for open turns | Eliza side | **Done** |
 | Service `POST /internal/turn` (collecting adapter around `inbound`) | Platform | Pending |
 | Service `/internal/set-state`, `/internal/signals`, `/internal/updates` | Platform | Pending |
 | Gateway `POST /internal/deliver` for signed service sends | Eliza side | Next |
-| Plugin `RELAY` action → service (`relayItemAsync` with the luna classifier) | Eliza side + Platform | Next |
+| Plugin `RELAY` action → service `POST /internal/relay` (`RelaySendRequest`/`RelaySendResponse` in the contract; `relayItemAsync` with the Clef classifier, clef-flash) | Eliza side + Platform | **Done** on both sides (upstream #34657, #34661; service `relay-endpoint.ts`). Off upstream until the endpoint is deployed and the founder sets `NETWORK_RELAY_ENABLED=1` |
 | Character flag | Eliza side | Next; going live needs the founder's go-ahead |
 
 ## Decision being implemented
@@ -50,7 +50,7 @@ Network service ──proactive sends──> Eliza gateway /internal/deliver ─
    - `{ outcome: "open", app, memberId, context }` means free conversation. Eliza's model answers using plugin-network's `MEMBER_CONTEXT` (from `context`), and actions go to service endpoints (`/internal/set-state`, `/internal/updates`, and later relay and feedback).
    - Service-to-service auth is an HMAC header with a shared secret, like `PLATFORM_PROXY_SECRET`. Idempotency is keyed by `messageId`, so a gateway retry gets the same replies back without re-applying anything.
 3. **Proactive sends go through the Eliza gateway.** The service's channel adapter for the shared line posts to `/internal/deliver`, so every Network message lands in the agent's conversation history. Quiet hours, caps and consent stay in the service; the gateway re-checks STOP, as it already does.
-4. **The relay.** A message to a matched member is an `open` turn. The plugin's `RELAY` action calls the service, which runs `relayItem`; only `rendered` goes out, through `/internal/deliver`, to the other member.
+4. **The relay.** A message to a matched member is an `open` turn. The plugin's `RELAY` action posts the member's own message (`RelaySendRequest {channel, messageId, app, memberId, itemId|null, text}`, signed, x-ntwrk-svc-id `<messageId>:relay`) to the service's `/internal/relay`. The service checks that `text` is the turn's own inbound message (403 `relay_source_invalid` otherwise, and for an `itemId` the turn did not offer), parses the request (`parseRelayRequest`), and hands it to the ConsentNetwork relay desk, which runs `relayItemAsync` with the Clef classifier, holds for staff review and swaps numbers only after both members asked; only `rendered` goes out, through Cloud `/api/internal/network/deliver` (kind `relay`), to the other member. The answer is `RelaySendResponse {decision pass|hold|block|none, senderNotice, delivered, replayed}`; `senderNotice` never repeats the matched text or names a rule; `delivered` is true only once Cloud accepted the outbound row with provider ids and recorded history. Upstream registers the action only with `NETWORK_RELAY_ENABLED=1`.
 5. **The character.** It's named Eliza and speaks as The Network's agent, with an app-aware voice (`APPS[app].brand.agentName`). It sits behind a Cloud flag, `NETWORK_TAKEOVER`. **Flipping it on for live eliza.app users needs the founder's explicit go-ahead.**
 
 ## What plugin-network becomes

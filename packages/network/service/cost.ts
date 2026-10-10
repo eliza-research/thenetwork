@@ -7,11 +7,24 @@
 //   otp_verify     one Twilio Verify code sent (a phone login)        0.058   COST_TWILIO_VERIFY_USD
 //   photo_rating   one Clef rating try, per photo sent (up to 4)       0.000425 COST_CLEF_PHOTO_USD (0.0017 for a member's 4 photos)
 //   llm            one LLM HTTP attempt (core onResponse costMicro)   the provider's own price (Surplus reports it)
+//   other          one relay Clef classifier call to Workers AI       COST_CLEF_RELAY_USD per call, else the engine's list price
+//                  (provider workers_ai, detail.purpose             per input token (relayClefCost: clef-flash 0.09 USD per M)
+//                  "relay_classifier"; relayClefEvent)
 //   sms_fallback   one outbound message stored as fell_back (SMS)     0.0083  COST_SMS_USD
 //   blooio_line    one line for one day                              COST_BLOOIO_LINE_MONTHLY_USD / 30 (no default: from the contract)
 //
 // Rows hold codes and counts only: never a member id, a phone number or text. A write failure is
 // logged and never fails the call it measures. Network code reads time from the Clock only.
+//
+// The relay classifier rows use kind "other": migration 0020 allows only the kinds below in its check
+// constraint, and a dedicated `workers_ai_call` kind needs a new migration (the observatory owns them).
+//
+// LLM calls: the service has no production LLM client today. It never builds defaultLLM() or
+// llmUnderstand (the ConsentNetwork's `understand` is unset, so member texts are read by the offline
+// rules), and slop onboarding uses the engine's rule reader `extractSlopProfile` (no LLM reader). The
+// member conversation runs in Eliza, upstream. A service-side client added later must pass
+// `ledger.llmHooks(app, purpose)` with the real app and purpose (for example "understand",
+// "slop_onboarding"); packages/network/test/cost.integration.test.ts checks the row it writes.
 import { randomUUID } from "node:crypto";
 import type { SQL } from "bun";
 import type { Clock } from "@thenetwork/core";
@@ -19,6 +32,7 @@ import type { ClientOptions, ResponseInfo } from "@thenetwork/core";
 import type { AppId, AppInfo } from "../../platform/src/apps.ts";
 import type { OtpProvider } from "../../platform/src/otp.ts";
 import { retryParts, withRetry, type PhotoRater } from "../../platform/src/photos.ts";
+import { estimateRelayClefTokens, relayClefCost, type RelayClefEvent } from "../../engine/src/relayClef.ts";
 
 export type CostKind = "llm" | "photo_rating" | "otp_verify" | "blooio_line" | "sms_fallback" | "other";
 /** An app, or "shared" for a cost no single app owns (the line). */
@@ -36,6 +50,8 @@ export interface CostRates {
   /** One Blooio line for a month. Undefined: not accrued (the price is not known yet). */
   blooioLineMonthlyUsd?: number;
   blooioLines: number;
+  /** One relay Clef classifier call. Undefined: priced per input token at the engine's list price for the model. */
+  clefRelayUsd?: number;
 }
 
 export const DEFAULT_RATES: CostRates = { twilioVerifyUsd: 0.058, clefPhotoUsd: 0.0017 / 4, smsUsd: 0.0083, blooioLines: 1 };
@@ -58,6 +74,7 @@ export function costRatesFromEnv(env: Env = process.env): CostRates {
     smsUsd: num(env, "COST_SMS_USD") ?? DEFAULT_RATES.smsUsd,
     blooioLineMonthlyUsd: num(env, "COST_BLOOIO_LINE_MONTHLY_USD"),
     blooioLines: num(env, "COST_BLOOIO_LINES") ?? DEFAULT_RATES.blooioLines,
+    clefRelayUsd: num(env, "COST_CLEF_RELAY_USD"),
   };
 }
 
@@ -169,6 +186,23 @@ export class CostLedger {
           }
         }
       },
+    };
+  }
+
+  /**
+   * The relay classifier's telemetry (engine relayClef.ts `onEvent`) for one app: one row per Clef call
+   * that went to Workers AI ("ok", and "error" or "timeout", which may still be billed). A cached answer
+   * or a miss made no call and costs nothing. The event never carries text; the row holds the model,
+   * the outcome and the token count only.
+   */
+  relayClefEvent(app: CostApp): (e: RelayClefEvent) => void {
+    return e => {
+      if (e.outcome !== "ok" && e.outcome !== "error" && e.outcome !== "timeout") return;
+      const unit = this.rates.clefRelayUsd ?? relayClefCost(e.inputTokens ?? estimateRelayClefTokens(""), e.model);
+      void this.record({
+        app, kind: "other", provider: "workers_ai", costUsd: unit, unitCostUsd: unit,
+        detail: { purpose: "relay_classifier", model: e.model, outcome: e.outcome, ...(e.inputTokens ? { inputTokens: e.inputTokens } : {}) },
+      });
     };
   }
 

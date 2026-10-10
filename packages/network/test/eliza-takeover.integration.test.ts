@@ -9,7 +9,7 @@ import {SimClock, MINUTE} from "@thenetwork/core";
 import {applySchema} from "../../observatory/db/dev-pg.ts";
 import {APPS} from "../../platform/src/apps.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
-import {TURN_PATH, DELIVER_PATH, type TurnRequest} from "../../core/src/svc/contract.ts";
+import {TURN_PATH, DELIVER_PATH, RELAY_PATH, type RelaySendRequest, type RelaySendResponse, type TurnRequest} from "../../core/src/svc/contract.ts";
 import {DryRunAdapter} from "../service/channel.ts";
 import {NetworkService} from "../service/service.ts";
 import {ELIZA_NOTICE, ELIZA_NOTICE_STATUS} from "../src/copy.ts";
@@ -119,6 +119,29 @@ test("join keyword, onboarding answer, then an open turn for the member with str
   expect(open.context.facets.length).toBeLessThanOrEqual(50);
   for (const f of open.context.facets) expect(f.length).toBeLessThanOrEqual(300);
   expect(open.context.activeItems === null || open.context.activeItems.length <= 20).toBe(true);
+}, 60_000);
+
+test("RELAY (upstream RelaySendRequest) on an open turn: no match, an unknown item and no request send nothing", async () => {
+  const phone = "+12125550219";
+  expect((await say(phone, "friends.help", {app: "friends"})).reason).toBe("join_asked");
+  const joined = await say(phone, "Ira, 33", {app: "friends"});
+  for (const text of ONBOARDING) await say(phone, text, {app: "friends"});
+  // The relay text is the open turn's own message (the service binds it); the response, or the status when refused.
+  const post = async (text: string, itemId: string | null = null) => {
+    const open = await say(phone, text, {app: "friends"});
+    expect(open.outcome).toBe("open");expect(open.memberId).toBe(joined.memberId);
+    const req: RelaySendRequest = {channel: "blooio", messageId: `SMtk${seq}`, app: open.app, memberId: open.memberId, itemId, text};
+    const body = JSON.stringify(req);
+    const headers = await svcSign(secret, {method: "POST", path: RELAY_PATH, id: `${req.messageId}:relay`, body, nowS: Math.floor(clock.now() / 1000)});
+    return fetch(new URL(RELAY_PATH, server.url), {method: "POST", headers: {"content-type": "application/json", ...headers}, body});
+  };
+  const relay = async (text: string) => { const r = await post(text); expect(r.status).toBe(200); return r.json() as Promise<RelaySendResponse>; };
+  const noMatch = await relay("tell them I'm running late");
+  expect(noMatch).toMatchObject({decision: "block", delivered: false, replayed: false});
+  expect(noMatch.senderNotice).not.toContain("running late");
+  // An item the open turn did not offer is refused before anything runs.
+  expect((await post("tell them I'm running late", "an-item-nobody-listed")).status).toBe(403);
+  expect(await relay("what a nice day")).toEqual({decision: "none", senderNotice: "", delivered: false, replayed: false});
 }, 60_000);
 
 test("HELP, STOP with scope all, an older START that loses, START, and leave <app> with scope app", async () => {

@@ -105,7 +105,7 @@ Follow `docs/deploy.md` section 2. Summary:
 
 ## 7. Eliza live: eliza.app becomes an entry into The Network
 
-The design is in `docs/design/eliza-conversation-layer.md`. Eliza-side code, including `@elizaos/plugin-network` (`plugins/plugin-network`), is on branch `spike/network-plugin` of elizaOS/eliza. This repo has no plugin package and no eliza submodule; it keeps the wire contract in `packages/core/src/svc/contract.ts` and `svc-auth.ts`, byte-identical to the plugin's copy. Section corrected 2026-10-08 by the Eliza-side owner and 2026-10-09 for the plugin move.
+The design is in `docs/design/eliza-conversation-layer.md`. Eliza-side code, including `@elizaos/plugin-network` (`plugins/plugin-network`), is on branch `spike/network-plugin` of elizaOS/eliza; the plugin with the RELAY action (#34657) and the relay hardening (#34661) is merged to `develop`. This repo has no plugin package and no eliza submodule; it keeps the wire contract in `packages/core/src/svc/contract.ts` and `svc-auth.ts`, byte-identical to the plugin's copy on `develop` (`packages/core/test/contract-mirror.test.ts` pins both hashes; `bun run check:mirror` compares them with upstream). Section corrected 2026-10-08 by the Eliza-side owner and 2026-10-09 for the plugin move and the relay contract.
 
 ```
 iMessage (Blooio, shared line)
@@ -135,13 +135,15 @@ Network service sends → POST Eliza Cloud /api/internal/network/deliver (signed
 | Gateway | `NETWORK_SERVICE_URL` | the service origin (Railway) |
 | Gateway | `SERVICE_TURN_SECRET` | 32+ random bytes; the same value on all three |
 | Gateway | `NETWORK_TAKEOVER_ALLOWLIST` | optional, comma-separated E.164 numbers; set only for the shadow step |
+| Cloud API | `NETWORK_RELAY_ENABLED` | `1` registers the RELAY action (upstream #34661). Unset or `0` (the default): relay is off and the agent offers no relay. **[FOUNDER]** sets it only after the service's `/internal/relay` is deployed |
 | Cloud API (Workers secret) | `NETWORK_SERVICE_URL`, `SERVICE_TURN_SECRET` | same values. Without them the Cloud ignores the gateway's turn context and its own invite gate applies |
 | Cloud API (existing) | `GATEWAY_INTERNAL_SECRET`, `ELIZA_APP_WEBHOOK_GATEWAY_URL`, binding `SHARED_RUNTIME_CONVERSATIONS` | already set for reminders. `/api/internal/network/deliver` uses them |
 | Service (Railway) | `SERVICE_TURN_SECRET`, and the Cloud origin for `/api/internal/network/deliver` | platform owner names the variable |
 
 **Prerequisites, all of which must be true before go-live:**
 
-1. **Service.** `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals` and `/internal/updates` are served and signed (`deploy/backend/backend.ts`). `/internal/relay` is served too, with `clefRelayClassifier` when the Workers AI token is set and the rules alone without it (packages/network/service/README.md). The shared-line adapter sends through `/api/internal/network/deliver`. Owner: platform.
+1. **Service.** `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals` and `/internal/updates` are served and signed (`deploy/backend/backend.ts`). `/internal/relay` is served too, on the upstream `RelaySendRequest`/`RelaySendResponse` contract, with `clefRelayClassifier` when the Workers AI token is set; without it production holds every relayed text for staff and dev runs on the rules alone (packages/network/service/README.md). The shared-line adapter sends through `/api/internal/network/deliver`. Owner: platform.
+   - **Relay stays off upstream** until this endpoint is deployed on the production backend and the founder sets `NETWORK_RELAY_ENABLED=1` on the Cloud API. Without the flag the plugin does not register RELAY, so no member request reaches `/internal/relay`.
 2. **Plugin location (resolved 2026-10-09).** Founder decision: the plugin moved upstream as `@elizaos/plugin-network` (elizaOS/eliza `plugins/plugin-network`, a workspace package), so Eliza CI and the gateway image build it in-repo. thenetwork keeps only a byte-identical mirror of the contract in `packages/core/src/svc/`.
 3. **Merge.** `spike/network-plugin` is merged into elizaOS/eliza through a PR (founder approval).
 4. **One STOP owner.** The Blooio webhook for the shared line points only at the Eliza gateway. Remove the old `ovh-eliza` webhook, which needs Blooio account owner approval. The service doesn't consume Blooio webhooks for the shared line.

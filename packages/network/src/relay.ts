@@ -122,7 +122,11 @@ export interface RelayAsk {
   matchId?: string;
 }
 /** The answer to the member. `reason` is safe to say to the sender as it is. */
-export interface RelayOutcome { itemId: string; decision: "sent" | "held" | "refused"; reason: string; replayed?: boolean }
+export interface RelayOutcome {
+  itemId: string; decision: "sent" | "held" | "refused"; reason: string; replayed?: boolean;
+  /** True only when `rendered` went to the send path now ("sent"); false when it waits for quiet hours or was not sent. */
+  delivered?: boolean;
+}
 export interface RelayCallOptions {
   /** The classifier hook (production: clefRelayClassifierFromEnv). Without it: rules only. */
   hook?: RelayClassifierHook;
@@ -316,7 +320,7 @@ export class RelayDesk {
   /** An item this desk already decided (replay of the same signed request). */
   private prior(itemId: string): Omit<RelayOutcome, "replayed"> | undefined {
     const r = this.s.log.find(x => x.itemId === itemId);
-    if (r) return { itemId, decision: r.decision === "pass" ? "sent" : r.decision === "hold" ? "held" : "refused", reason: r.decision === "pass" ? "Sent." : r.decision === "hold" ? "I'm holding that one for a quick check before I pass it on." : "I can't pass that on." };
+    if (r) return { itemId, decision: r.decision === "pass" ? "sent" : r.decision === "hold" ? "held" : "refused", delivered: r.decision === "pass", reason: r.decision === "pass" ? "Sent." : r.decision === "hold" ? "I'm holding that one for a quick check before I pass it on." : "I can't pass that on." };
     if (this.s.swaps.some(x => x.itemId === itemId)) return { itemId, decision: "held", reason: NOTICE.swapWait };
     return undefined;
   }
