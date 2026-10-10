@@ -13,9 +13,20 @@ import type { Facet } from "@thenetwork/core";
 import { validAge } from "@thenetwork/core";
 import type { AppProfile360, MemberDetail, PeonProfile360, SlopPrefs, SlopProfile360 } from "./types.ts";
 
-/** A score or rating of a person: never shown (PRD 40.5: never photo attractiveness scores). */
+/** A score or rating of a person by its name (older rows and other raters). */
 const SCORE = /(^|[:_.])(desirability|attractiveness|attractive|attraction|hotness|looks|beauty|rating|ratings|elo|score|scores)([:_.=]|$)/i;
-export const isScoreFacet = (f: Facet) => f.tags.some(t => SCORE.test(t)) || SCORE.test(f.kind) || /\b(attractiveness|desirability|hotness)\b/i.test(f.value);
+/** The engine's photo rating tags (appearanceFacet in packages/engine/src/packs/slop/appearance.ts: appearance:face=..., appearance:overall=...). */
+const APPEARANCE = /^appearance:/i;
+/**
+ * A machine rating of the person: an agent_private facet written by a rater (the service stores the
+ * photo rating with source photo_rater and the id <member>:appearance), or any facet that carries the
+ * rating's tags, whatever its scope.
+ */
+const isRating = (f: Facet) =>
+  f.tags.some(t => APPEARANCE.test(t)) ||
+  (f.scope === "agent_private" && ((f.source as string | undefined) === "photo_rater" || f.id.endsWith(":appearance")));
+/** A score or rating of a person: never shown, revealed or not (PRD 40.5: never photo attractiveness scores). */
+export const isScoreFacet = (f: Facet) => isRating(f) || f.tags.some(t => SCORE.test(t)) || SCORE.test(f.kind) || /\b(attractiveness|desirability|hotness)\b/i.test(f.value);
 
 /** slop's dating facts: the pack's tag families (romance:, slop:, verify:, safety:). */
 const DATING = /^(romance|slop|verify|safety):/;

@@ -72,10 +72,15 @@ export interface ChannelAdapter {
   /**
    * A fixed text to someone who is not a member of this app (the invite-only reply, the join question,
    * an under-age decline, a keyword confirmation). The queue keeps the address and text only until the
-   * row ends; the log line has no text.
+   * row ends; the log line has no text. `kind`: "compliance" only for a STOP, HELP, START or leave
+   * confirmation and the under-age decline (it skips the opt-out, quiet hours and the caps); "reply" for an answer to the person's
+   * own message; "transactional" for a text the Network starts (a staff invite). See README "Direct texts".
    */
-  direct(to: string, body: string, id: string): Promise<string>;
+  direct(to: string, body: string, id: string, kind: DirectKind): Promise<string>;
 }
+
+/** The kinds of a direct text (never "proactive": a direct text is not an introduction or a probe). */
+export type DirectKind = Exclude<MessageKind, "proactive">;
 
 /** The app's own live flag: NTWRK_LIVE_APPROVED, SLOP_LIVE_APPROVED, ... */
 export const liveFlag = (app: string) => `${app.toUpperCase()}_LIVE_APPROVED`;
@@ -99,8 +104,8 @@ export class DryRunAdapter implements ChannelAdapter {
     return msgs.map(m => ({ id: m.id, status: "dry_run" }));
   }
   async flush(): Promise<Delivery[]> { return []; }
-  async direct(_to: string, body: string, id: string): Promise<string> {
-    this.log(`[dry-run] direct message to a non-member, ${body.length} chars, id ${id}`);
+  async direct(_to: string, body: string, id: string, kind: DirectKind): Promise<string> {
+    this.log(`[dry-run] direct ${kind} message to a non-member, ${body.length} chars, id ${id}`);
     return "dry_run";
   }
 }
@@ -169,10 +174,15 @@ export class BlooioAdapter implements ChannelAdapter {
     const num = (k: string) => { const v = Number(this.env[k]); return Number.isFinite(v) && v > 0 ? v : undefined; };
     const checks: AppChecks = {
       live: () => this.live,
-      stale: row => !!row.oppId && CLOSED_STAGES.has(rt.net.opps.get(row.oppId)?.stage ?? ""),
+      // A relayed item still goes after the date (the thread stays open for a week); a closed match stops it.
+      stale: row => !!row.oppId && (row.id.startsWith("relay:") ? (rt.net.opps.get(row.oppId)?.stage ?? "closed") === "closed" : CLOSED_STAGES.has(rt.net.opps.get(row.oppId)?.stage ?? "")),
       optedOut: row => rt.optedOut(row.id, row.memberId as MemberId | undefined, row.to),
-      recipient: (row, agentInitiated) => policy(row.to, { kind: row.kind, ...(row.oppId ? { briefId: row.oppId } : {}), agentInitiated }),
-      leaks: row => leaks(row.to),
+      // A direct text to someone who is not a member of this app (no member on the row, none at the address)
+      // is fixed copy: the member policy has nobody to check. Consent, quiet hours, caps and the leak guard still apply.
+      recipient: (row, agentInitiated) => !row.memberId && !rt.memberOf(row.to) ? { ok: true }
+        : policy(row.to, { kind: row.kind, ...(row.oppId ? { briefId: row.oppId } : {}), agentInitiated }),
+      // A number swap both members asked for (relay.ts) is the one contact the guard lets through, for that row only.
+      leaks: row => { const from = rt.net.relayContactShareFrom(row.id), number = from && rt.addressOf(from); return number ? { ...leaks(row.to), allow: [number] } : leaks(row.to); },
       capTake: row => rt.capTake(row.id, row.memberId as MemberId),
       capRelease: row => rt.capRelease(row.id),
     };
@@ -203,9 +213,9 @@ export class BlooioAdapter implements ChannelAdapter {
   async flush(): Promise<Delivery[]> { return []; }
   recover() { return this.queue.recover(); }
 
-  async direct(to: string, body: string, id: string): Promise<string> {
+  async direct(to: string, body: string, id: string, kind: DirectKind): Promise<string> {
     if (!this.live) { this.log(`[blooio] refused a direct send: live sending needs ${this.flags}`); return "refused_not_approved"; }
-    await this.queue.enqueue(this.queue.sql, [{ id, to, kind: "compliance", text: body, city: this.city }]);
+    await this.queue.enqueue(this.queue.sql, [{ id, to, kind, text: body, city: this.city }]);
     await this.queue.drain();
     return (await this.queue.statusOf(id)) ?? "failed";
   }

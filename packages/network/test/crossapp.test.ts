@@ -90,11 +90,20 @@ async function say(svc: NetworkService, clock: SimClock, app: AppId, key: string
   clock.advance(MINUTE);
   return (await res.json()).result as string;
 }
+/** Close every service this file opened, each bounded: a close that waits on a stuck query fails the hook in 30 s, not 120 s. */
+async function closeAll() {
+  for (const s of open.splice(0)) {
+    await Promise.race([s.close(), Bun.sleep(30_000).then(() => { throw new Error("NetworkService.close() did not finish in 30 s (a query or lock wait is stuck)"); })]);
+  }
+}
 const staff = (svc: NetworkService, method: string, path: string, body?: unknown) =>
   svc.fetch(new Request(`http://127.0.0.1${path}`, { method, headers: { authorization: "Bearer adm-tok", "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) }));
 
 /** One run: onboarding on both apps, optionally Ana blocks Ben on The Network, Ana asks for a climbing partner on the friends app, the engine runs, every item is approved. */
 async function run(block: boolean) {
+  // Close the previous run's service first: its pool (8 connections, a session advisory lock per sender
+  // while a message is handled) must not stay open while this run drops and rebuilds the schema under it.
+  await closeAll();
   await applySchema(URL_, { reset: true, lockTimeout: "5s" });
   const clock = new SimClock(START);
   const svc = new NetworkService({
@@ -130,7 +139,7 @@ describe.skipIf(!pgAvailable)("cross_app_leak: two apps, shared people (Postgres
     sql = new SQL({ url: URL_, max: 2 });
   }, T);
   afterAll(async () => {
-    for (const s of open) await s.close().catch(() => {});
+    await closeAll();
     await sql?.close();
     await admin(`drop database if exists ${DB} with (force)`).catch(() => {});
   });
@@ -138,46 +147,50 @@ describe.skipIf(!pgAvailable)("cross_app_leak: two apps, shared people (Postgres
   for (const block of [false, true]) {
     test(block ? "a block made on The Network keeps the two people apart on the friends app; no canary crosses apps" : "control (no block): the friends app pairs Ana with Ben; no canary crosses apps", async () => {
       const { svc, ids, queues } = await run(block);
-      const a = ids.a![FR]!, b = ids.b![FR]!;
-      const frOpps = (await sql`select o.id, o.objective, o.explanations, array_agg(p.member_id) as members from network.opportunities o
-        join network.participations p on p.app_id = o.app_id and p.opportunity_id = o.id where o.app_id = ${FR} group by o.id, o.objective, o.explanations`) as any[];
-      const paired = frOpps.some(o => o.members.includes(a) && o.members.includes(b)) || queues[FR]!.some(i => i.proposal.participants.includes(a) && i.proposal.participants.includes(b));
-      if (block) {
-        expect(paired).toBe(false);
-        expect((await sql`select origin_app from platform.person_blocks`).map((r: any) => r.origin_app)).toEqual(["ntwrk"]);
-        const snap = await loadSnapshot(sql, START, { app: FR, city: "nyc" });
-        expect(snap.edges.some(e => e.type === "blocked" && e.from === a && e.to === b)).toBe(true);
-      } else {
-        expect(paired).toBe(true);
-        expect(await sql`select 1 from platform.person_blocks`).toHaveLength(0);
-      }
-
-      // Something happened on both apps: messages, review items and opportunities.
-      for (const app of APPS_RUN) {
-        expect((await sql`select count(*)::int as n from network.messages where app_id = ${app} and direction = 'outbound'`)[0].n).toBeGreaterThan(10);
-      }
-      expect(queues.ntwrk!.length).toBeGreaterThan(0);
-      // The friends app: Ana's request finds Ben (control), or nobody once Ben is blocked (the request stays open, nobody is contacted).
-      expect(queues[FR]!.map(i => i.origin)).toEqual(block ? [] : ["request"]);
-      expect((await sql`select member_id, outcome from network.requests where app_id = ${FR}`).map((r: any) => [r.member_id, r.outcome])).toEqual([[a, block ? "none" : "probing"]]);
-
-      // cross_app_leak = 0: nothing from one app in the other's messages, review views, opportunities, events or snapshot.
-      for (const app of APPS_RUN) {
-        const other = APPS_RUN.find(x => x !== app)!;
-        const otherIds = Object.values(ids).map(x => x[other]).filter((x): x is string => !!x);
-        const texts = [
-          ...(await sql`select body from network.messages where app_id = ${app}`).map((r: any) => r.body as string),
-          JSON.stringify(queues[app]),
-          JSON.stringify(await sql`select objective, explanations from network.opportunities where app_id = ${app}`),
-          JSON.stringify(await sql`select actor_id, object_id, payload from network.events where app_id = ${app}`),
-          JSON.stringify(await loadSnapshot(sql, START + 6 * HOUR, { app, city: "nyc" })),
-          JSON.stringify(await (await staff(svc, "GET", `/apps/${app}/health`)).json()),
-        ];
-        const leaks = texts.filter(t => t.includes(CANARY[other]!) || otherIds.some(id => t.includes(`"${id}"`) || t.includes(`${id}:`)));
-        expect(leaks).toEqual([]);
-        // Each app's own canary does reach its own snapshot (the check above can see a canary).
-        expect(JSON.stringify(await loadSnapshot(sql, START, { app, city: "nyc" }))).toContain(CANARY[app]!);
-      }
+      try { await check(block, svc, ids, queues); } finally { await closeAll(); }
     }, T);
+  }
+
+  async function check(block: boolean, svc: NetworkService, ids: Awaited<ReturnType<typeof run>>["ids"], queues: Awaited<ReturnType<typeof run>>["queues"]) {
+    const a = ids.a![FR]!, b = ids.b![FR]!;
+    const frOpps = (await sql`select o.id, o.objective, o.explanations, array_agg(p.member_id) as members from network.opportunities o
+      join network.participations p on p.app_id = o.app_id and p.opportunity_id = o.id where o.app_id = ${FR} group by o.id, o.objective, o.explanations`) as any[];
+    const paired = frOpps.some(o => o.members.includes(a) && o.members.includes(b)) || queues[FR]!.some(i => i.proposal.participants.includes(a) && i.proposal.participants.includes(b));
+    if (block) {
+      expect(paired).toBe(false);
+      expect((await sql`select origin_app from platform.person_blocks`).map((r: any) => r.origin_app)).toEqual(["ntwrk"]);
+      const snap = await loadSnapshot(sql, START, { app: FR, city: "nyc" });
+      expect(snap.edges.some(e => e.type === "blocked" && e.from === a && e.to === b)).toBe(true);
+    } else {
+      expect(paired).toBe(true);
+      expect(await sql`select 1 from platform.person_blocks`).toHaveLength(0);
+    }
+
+    // Something happened on both apps: messages, review items and opportunities.
+    for (const app of APPS_RUN) {
+      expect((await sql`select count(*)::int as n from network.messages where app_id = ${app} and direction = 'outbound'`)[0].n).toBeGreaterThan(10);
+    }
+    expect(queues.ntwrk!.length).toBeGreaterThan(0);
+    // The friends app: Ana's request finds Ben (control), or nobody once Ben is blocked (the request stays open, nobody is contacted).
+    expect(queues[FR]!.map(i => i.origin)).toEqual(block ? [] : ["request"]);
+    expect((await sql`select member_id, outcome from network.requests where app_id = ${FR}`).map((r: any) => [r.member_id, r.outcome])).toEqual([[a, block ? "none" : "probing"]]);
+
+    // cross_app_leak = 0: nothing from one app in the other's messages, review views, opportunities, events or snapshot.
+    for (const app of APPS_RUN) {
+      const other = APPS_RUN.find(x => x !== app)!;
+      const otherIds = Object.values(ids).map(x => x[other]).filter((x): x is string => !!x);
+      const texts = [
+        ...(await sql`select body from network.messages where app_id = ${app}`).map((r: any) => r.body as string),
+        JSON.stringify(queues[app]),
+        JSON.stringify(await sql`select objective, explanations from network.opportunities where app_id = ${app}`),
+        JSON.stringify(await sql`select actor_id, object_id, payload from network.events where app_id = ${app}`),
+        JSON.stringify(await loadSnapshot(sql, START + 6 * HOUR, { app, city: "nyc" })),
+        JSON.stringify(await (await staff(svc, "GET", `/apps/${app}/health`)).json()),
+      ];
+      const leaks = texts.filter(t => t.includes(CANARY[other]!) || otherIds.some(id => t.includes(`"${id}"`) || t.includes(`${id}:`)));
+      expect(leaks).toEqual([]);
+      // Each app's own canary does reach its own snapshot (the check above can see a canary).
+      expect(JSON.stringify(await loadSnapshot(sql, START, { app, city: "nyc" }))).toContain(CANARY[app]!);
+    }
   }
 });

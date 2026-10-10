@@ -12,15 +12,80 @@ The frame (founder decisions):
 - Photos are rated by Clef, the scores feed matching and are never shared.
 - Exchange between matched members goes through the agent, with consent per item.
 - No ID check; compliance is a deferred backlog (PRD 40.7).
-- Only simulations are kept as tests (`bun run sim`).
+- Validation is simulations, integration tests and e2e tests (`bun run sim`, `bun run test:integration`, `bun run test:e2e`); no unit or smoke tests.
+- Founder decisions of 2026-10-09: open join for slop, peon and friends (The Network stays invite-only on the web); eliza.app is one entry; Eliza is The Network's agent; bans by phone number; Clef ratings on and Clef as the relay scam classifier; the plugin is upstream as `@elizaos/plugin-network`.
 
 ## 0. Summary
 
 - **The backend is built and deployable, but never deployed.** `deploy/backend/server.ts` brings up the migrations, the four networks (`ntwrk:nyc`, `slop:nyc`, `peon:nyc`, `friends:nyc`), the platform API, the signed Blooio webhook, keyword routing, STOP/HELP/leave, the person cap, the staff review and safety API, notify and MCP. No live send has been made; the Blooio path has only run against a fake provider.
 - **The slop engine is mature in simulation** (`slop-pack-1.4.0`): every blocking gate passes, and five tracked gates fail on the pinned seeds (Section 4).
-- **Five founder decisions are not yet on the live path:** the Clef rater is not passed to the service (`server.ts` sets no `photoRater`); the photo in the probe and the relay exist in the engine only (`probePhotoRefs`, `slopProbeMessage`, `relayItem`; docs/results/2026-10-09-relay.md) and no live path calls them; photos sent by text are dropped and no site page calls `/api/photos`; the onboarding conversation is deterministic (no `understand` or engine LLM wired, and `packages/plugin-network` is not on the line).
+- **Five founder decisions are not yet on the live path:** the Clef rater is not passed to the service (`server.ts` sets no `photoRater`); the photo in the probe and the relay exist in the engine only (`probePhotoRefs`, `slopProbeMessage`, `relayItem`; docs/results/2026-10-09-relay.md) and no live path calls them; photos sent by text are dropped and no site page calls `/api/photos`; the onboarding conversation is deterministic (no `understand` or engine LLM wired; since 2026-10-09 the conversation runs in Eliza through upstream `@elizaos/plugin-network` and `/internal/turn`).
 - **Operations gaps:** no external alerting, heartbeat or cost tracking; backups are a manual Railway step; the reviewer of record is the service token, not the person; nobody owns STOP/HELP if Eliza Cloud also receives the line's webhook.
 - **Size:** about 35 engineer-days of build plus two weeks of shadow, for a reviewed, concierge-heavy NYC pilot of about 40-75 adults.
+
+## 0a. Status 2026-10-09: what integration/all closed and what stays open
+
+This section is newer than the rest of this file. It is checked against `integration/all` (91d2d11) plus the tests-ci-docs round (branch `issues/tests-ci-docs`). The open items of issue #11 are linked by section number: #11 section 3 (needs a person, an account or a decision) and #11 section 4 (deferred).
+
+### Closed
+
+- **Main's MVP path (0eb9638) is the base.** It has the persisted Blooio outbound queue, the gateway as the one STOP owner, photos and Clef, slop review, bans by phone number, ops (cost ledger, alerts), and the pipeline simulation. `integration/mvp` (PR #12) was merged as stale: its own versions of these features, its migrations 0013-0020 and its unit tests were not kept. Two parts were ported: `maskPii` before member text reaches a model, and the slop pass-2 judge.
+- **The Eliza boundary (PRs #14 and #16).** Signed `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals` and `/internal/updates` on the backend; Eliza Cloud phone sign-in through the site router; Notify retention inside account erasure; the contract mirror in `packages/core/src/svc/`.
+- **This round.** CI's sim job has a Postgres service and `REQUIRE_PG=1`, and fails when a pipeline, safety, ops or audit Postgres gate is skipped. `bun run security` lists 11 files (AGENTS.md, tests-policy.md). `migrate.ts` refuses duplicate migration numbers (none on this base). `packages/network/test/crossapp.test.ts` closes each run's service before the next run resets the schema. The new gate `packages/network/test/slop-date-path.integration.test.ts` runs the slop path through NetworkService on Postgres: join, onboarding, review approval, a yes from both people, the booked date, the check-in, a report that reaches the safety queue, and the pair kept apart.
+- **Docs.** AGENTS.md, README.md and docs/go-live-handoff.md name the contract mirror and upstream `@elizaos/plugin-network`, list `/internal/turn-receipt` and `/internal/relay`, and record the Clef default and the consent path. The 2026-10-09 founder decisions are in docs/prd-pending-edits.md for the founder to apply to the Google Doc.
+
+### Open (agent work)
+
+- **`/internal/relay` and `clefRelayClassifier`.** Done: the service serves `/internal/relay` and the relay calls the Clef classifier when the Workers AI token is set (packages/network/service/README.md). Open: the request and response types still have to land upstream in plugin-network, and photo relay waits for a photo consent.
+- **`CLEF_RATINGS` default.** The founder default is ON, but `packages/platform/src/photos.ts` reads an unset flag as off. Production sets `CLEF_RATINGS=on`. Make an unset flag mean on, with `off` to disable.
+- **The `slop-live` simulation arm** from `integration/mvp` (#11 section 0b) did not land, because that branch was not kept. The new slop date-path integration test covers the live path on Postgres. A slop world run through the signed webhook for 30 simulated days is still missing (section 4.1).
+- **#11 section 2 items** were written against the `integration/mvp` code. Each one applies only where main's implementation has the same gap. Re-check them against this base before work starts.
+
+### Open: capital fairness gate (fix or waive, founder)
+
+`bun run sim --with-capital` (and `bun run sim --nightly`) is red on one blocking gate: "NC levers lower the bottom/top V14 ratio by <= 0.02 (95% CI lower bound, paired against every NC lever off)". It is not a code bug. The gate is underpowered:
+
+| Paired seeds | Change in ratio (levers on minus off) | Standard error | 95% CI lower bound | Gate |
+|---|---|---|---|---|
+| 32 (the gate) | -0.012 | 0.023 | -0.056 | fail |
+| 128 (measured 2026-10-09) | -0.011 | 0.012 | -0.034 | fail |
+
+The runs are deterministic (the same seed gives the same result). The per-seed differences have a standard deviation of about 0.13, because one seed's bottom/top ratio divides two decile means of about 27 members each (273 eligible members on seed 1), and the paired ratios correlate only 0.26 (the levers change what happens later in the run), so the pairing removes little noise. The levers raise V14 in both deciles (top decile +0.053, bottom decile +0.032 at 128 seeds), and the top gains more. With the effect near -0.011, the lower bound reaches -0.02 only at about 850-1,000 paired seeds. Options for the founder: (a) waive the gate in writing with these numbers; (b) keep the bound and change the measurement (more members per seed, common random numbers per lever, or a pooled ratio), which is a change to the gate's design and needs approval; (c) treat -0.011 as a real effect and tune the effort lever. The gaming gate passes. The tracked health target (ratio >= 0.80) is 0.697.
+
+### Open: needs a person, an account or a decision (#11 section 3)
+
+These stay open. Agents cannot do them. Items that the 2026-10-09 founder decisions closed are marked.
+
+- Who owns STOP/HELP on the shared line: **closed** (the Eliza gateway; the service parses STOP inside `/internal/turn`).
+- Where the conversation runs: **closed** (Eliza, through `@elizaos/plugin-network`).
+- Production join mode for peon and friends: **closed** (open join).
+- Live keyword check on iMessage, the Blooio webhook pointed at the Eliza gateway, and P3 deliverability with 10-20 test phones (deploy, live line, live flags).
+- Copy approval: the SHARE offer, the recycled-number notice, the per-app STOP/HELP texts, the text-join opt-in wording (legal).
+- A new photo consent version (a photo in a probe, relayed photos) and the biometric notice (legal).
+- Relay scope (P7) and the photo-in-probe arm (P5).
+- The fix-or-waive register for the failing tracked slop gates (section 4.1) and same-face ban evasion; the capital gate above.
+- Clef weights fitted on consented, labelled adult photos, and the bias monitor on real data (P2).
+- 50-100 hand-checked public NYC first-date venues, and booking links (P6).
+- Prototype P4 with 30 scripted and 20 real adults.
+- Railway backups, PITR and one tested restore.
+- The cost target per active member, the monthly budget, the alert destination, and the safety on-call roster.
+- The console behind Cloudflare Access, per-app read logins, the alert webhook.
+- Named and calibrated slop reviewers; a safety runbook rehearsal.
+- The 40-adult seed cohort.
+- Deeplink device tests (iPhone and Android).
+- Counsel: inferred ratings in the member export; CSAM reporting duties.
+- A judge model from another model family, and judge calibration.
+- Local agents: code-in-chat keys (PRD 11.5) or OAuth.
+
+### Deferred (#11 section 4; re-check after the pilot)
+
+- The member invite and vouch flow, and bulk founding-team invites with a console UI (the ntwrk phase; slop is open join).
+- The recycled-number holds console UI and the carrier lookup (staff can use `/holds`).
+- Member web pages for facets, intents, states and history.
+- The AI-summary import prompt flow.
+- Concierge events and interest-filtered venues (event ingestion was removed in the cleanup).
+- The calendar free/busy source, and the LinkedIn/X paste parser (ntwrk only).
+- The monthly all-member gathering (ntwrk, after the pilot).
 
 ## 1. MVP status matrix
 
@@ -31,8 +96,8 @@ Status values: **Done** (in code, on the live path), **Partial**, **Missing**, *
 | Area | Status | Evidence | What "done" means for the slop pilot |
 |---|---|---|---|
 | Membership (invite, vouch, soft approval, 13+, phone verification, home city) | Partial | Text join with age then name (`packages/network/service/service.ts` `join()`). Web join and OTP: `packages/platform/src/api.ts`, `otp.ts`. Age floor: migrations `0006`, `0007`. slop is `joinMode: "open"` (`packages/platform/src/apps.ts`). Invites are not built: `ctx.invite` is unset (service README, Limits). | A slop join (by text keyword, the web or an agent through MCP) creates the person, the membership and the member; age is stated and fails closed. Vouch and invites are not needed for slop (open join) but are needed for ntwrk. |
-| Channels (iMessage via Blooio, SMS via Twilio, voice, web chat, STOP/HELP) | Partial | Blooio in and out: `service.ts` `webhook()` and `packages/network/service/channel.ts`. Twilio is used only for Verify OTP. There is no SMS fallback, no voice and no web chat. The outbound queue is persisted (`platform.outbound`, migration 0015): written in the unit's transaction, delivered after the commit with leases, retries and crash recovery; the line counters (unanswered streak, daily caps, safety state) are in Postgres; inbound messages go through a deduplicated inbox handled in order per sender (`packages/network/service/inbox.ts`). STOP/HELP has one owner (`STOP_HELP_OWNER`). `bun run sim --only pipeline` drives it end to end with a fake provider. | One Blooio line, live, with a persisted queue, measured deliverability (prototype P3), and STOP/HELP owned by one system. SMS fallback and voice are deferred. |
-| Agent (Eliza shared agent, persona per app, profiling, concierge) | Partial | Persona copy per app: `apps.ts` `brand()` and `packages/engine/src/packs/slop/copy.ts`. The slop hard-field asks are deterministic (`packages/network/service/packs.ts` `askText`, `learn`). The LLM reader exists in `packages/network/src/extract.ts` but is not wired. `packages/plugin-network` is the Cloud side, has no README, and is not connected to the line. | Free text on the line is understood well enough to fill slop's hard fields and answer questions, measured by prototype P4. Either `llmUnderstand` is wired with `gpt-6-luna` or the Eliza agent owns the conversation, but not both (PRD 32.3 boundary). |
+| Channels (iMessage via Blooio, SMS via Twilio, voice, web chat, STOP/HELP) | Partial | Blooio in and out: `service.ts` `webhook()` and `packages/network/service/channel.ts`. Twilio is used only for Verify OTP. There is no SMS fallback, no voice and no web chat. The outbound queue is persisted (`platform.outbound`, migration 0015): written in the unit's transaction, delivered after the commit with leases, retries and crash recovery; the line counters (unanswered streak, daily caps, safety state) are in Postgres; inbound messages go through a deduplicated inbox handled in order per sender (`packages/network/service/inbox.ts`). STOP/HELP has one owner: the service, inside the signed turn. `bun run sim --only pipeline` drives it end to end with a fake provider. | One Blooio line, live, with a persisted queue, measured deliverability (prototype P3), and STOP/HELP owned by one system. SMS fallback and voice are deferred. |
+| Agent (Eliza shared agent, persona per app, profiling, concierge) | Partial | Persona copy per app: `apps.ts` `brand()` and `packages/engine/src/packs/slop/copy.ts`. The slop hard-field asks are deterministic (`packages/network/service/packs.ts` `askText`, `learn`). The LLM reader exists in `packages/network/src/extract.ts` but is not wired. The Cloud side is upstream `@elizaos/plugin-network` (elizaOS/eliza), reached through `/internal/turn` (founder 2026-10-09: the conversation runs in Eliza). | Free text on the line is understood well enough to fill slop's hard fields and answer questions, measured by prototype P4. Either `llmUnderstand` is wired with `gpt-6-luna` or the Eliza agent owns the conversation, but not both (PRD 32.3 boundary). |
 | Profile model | Done | `packages/observatory/db/schema.sql`, `packages/network/db/network-state.sql`, migration `0004` (`app_id`), the slop profile in `packages/engine/src/packs/slop/profile.ts` | (met) |
 | Enrichment (vouch notes, calendar, LinkedIn/X paste, AI memory paste) | Partial | The agent-first sites send a profile through the MCP tool `submit_profile` (`packages/mcp/src/tools.ts`; `sites/skills/slop-date/SKILL.md`). There is no calendar and no LinkedIn or X parser on the live path. | For slop: the profile from the person's own AI through MCP, plus the text conversation. The other sources are deferred. |
 | World knowledge (event ingestion, concierge) | Partial | A hand-coded list of NYC venues (`packages/network/src/geo.ts` `VENUES`, `packs.ts` `EVENING_VENUES`). Event ingestion existed only in a prototype that the cleanup deleted (history at 16cde70). | For slop: a curated list of public date venues, about 50-100 and checked by hand (prototype P6). Event ingestion is deferred. |
@@ -74,7 +139,7 @@ Status values: **Done** (in code, on the live path), **Partial**, **Missing**, *
 | F13 Event co-attendance | n/a for slop | | Deferred |
 | F14 Help request | n/a for slop | | Deferred |
 | F15 Member-initiated intro | Partial | Requests in `network.ts` | Deferred for slop |
-| F16 Relay and contact swap | **Engine done, not wired** | `packages/engine/src/relay.ts` (docs/results/2026-10-09-relay.md) | Critical path item 7: platform / plugin-network wiring |
+| F16 Relay and contact swap | **Engine done, not wired** | `packages/engine/src/relay.ts` (docs/results/2026-10-09-relay.md) | Critical path item 7: the service's `/internal/relay` with `clefRelayClassifier` (Eliza side: upstream `@elizaos/plugin-network`) |
 | F17 Scheduling | Partial | `plan.ts`, `slopVenue` | Confirm, cancel and one reschedule |
 | F18 Reminders, check-ins, flakes | Partial | Reminders and check-ins in `network.ts` (`weeklyCheckins`); the slop check-in after a date (`packs.ts`) | Day-of reminder, a "running late" relay (needs F16), a no-show record |
 | F19 Feedback and second encounter | Done | `onFeedback`, reports | (met) |
@@ -107,7 +172,7 @@ Status values: **Done** (in code, on the live path), **Partial**, **Missing**, *
 | 40.5 Reciprocal scoring, congestion, exposure | Done | `score.ts`, `assign.ts`, `options.ts` | (met) |
 | 40.5 Probe can include a photo | **Engine done, not wired** | `probePhotoRefs` (plan.ts), `slopProbeMessage` (copy.ts) | The probe send path calls them; a new photo-consent version |
 | 40.5 Mutual yes, then a booked first date at a public venue | Done (no real booking) | `plan.ts`, `slopVenue` | A curated venue list (prototype P6) |
-| 40.5 Exchange through the agent only, consent per item | **Engine done, not wired** | `relayItem` (relay.ts) | Critical path item 7: platform / plugin-network wiring |
+| 40.5 Exchange through the agent only, consent per item | **Engine done, not wired** | `relayItem` (relay.ts) | Critical path item 7: the service's `/internal/relay` with `clefRelayClassifier` (Eliza side: upstream `@elizaos/plugin-network`) |
 | 40.5 Geo by zip and radius, distance bands | Done (51 zips) | `packages/engine/src/packs/slop/zips.ts` | Every NYC zip (about 180) |
 | 40.5 Safety: feedback, report, ban by phone and person, share-my-date, check-in | Done (no relay log) | `reports.ts`, `/safety/ban`, the share-my-date tip in `packs.ts` | Relay log for ban notices (needs F16) |
 | 40.5 Scam classifier on relay | **Missing** | Only assumed in the world (`packages/sim/src/apps/slop/world.ts`); the engine reads the `safety:scam_pattern` tag | A classifier on relayed text, with recall measured on a corpus |
@@ -131,7 +196,7 @@ The order is by dependency. Owner **P** is the platform session (`packages/netwo
 | 6 | **Review queue UI for slop** | P | 2 | 1 | Observatory `PACK_READY` includes slop (`packages/observatory/src/apps.ts`). The reviewer of record is the person, not the token (runbook-real 6.4 item 2). A slop reviewer rubric. Scores never shown. SLA alert to a human. Shadow runs use `slopPack`, not networkPack (`engineCapture.ts`). |
 | 7 | **Probe, booked-plan reveal, relay** | E (photo probe), P (relay) | 6 | 3, 5, 6 | Photo in the probe (`slopProbeText`, the leak guard, the adults-only check). A relay thread after a mutual yes: forward text with a prefix, "send them my number" and photos with consent per item, `appearanceLeak` plus the leak guard on agent text, a scam check on relayed text, a relay log. Running-late relay. Probe and reveal code is already done. |
 | 8 | **Post-date feedback, report, ban** | P | 1 | 7 | Mostly done (`reports.ts`, `/safety/ban`). Add: the relay log to tell past contacts about a ban (40.5), and a ban check on MMS and photo intake. |
-| 9 | **STOP/HELP on the live line** | P | 1 | 3, 0a | The code is done: one owner (`STOP_HELP_OWNER`, default `service`; the gateway reports to `POST /consent/gateway`), and the queue checks the consent ledger, bans and suppression at send time. Remaining work: live checks on iMessage (STOP, STOP ALL, START, HELP, "leave slop.date"). |
+| 9 | **STOP/HELP on the live line** | P | 1 | 3, 0a | The code is done: one owner (the service, inside the signed `/internal/turn`; the handled turn reports `consent` to the gateway), and the queue checks the consent ledger, bans and suppression at send time. Remaining work: live checks on iMessage (STOP, STOP ALL, START, HELP, "leave slop.date"). |
 | 10 | **Admin console deploy** | P | 2 | 1, 6 | Railway `observatory` service behind Cloudflare Access (`deploy/backend/observatory.railway.toml`), `OBSERVATORY_REAL_ONLY=1`, a fresh sign-in before a PII reveal (runbook-real 6.4 item 3), a bias-monitor panel, a cost panel. |
 | 11 | **Monitoring** | P | 2 | 1 | Nothing in code sends alerts. Needed: an uptime check on `/healthz`, a heartbeat on the staff `/health` (last tick, backlog, refusals), alerts on send failures, review SLA misses, invariant violations and urgent safety reports. Use Railway alerts or a small cron that posts to Slack or email. |
 | 12 | **Cost alerts** | P | 1.5 | 4, 5, 11 | No cost tracking anywhere. Needed: LLM tokens and dollars per call (Surplus), Workers AI calls, Blooio messages per day, a daily and monthly budget, and an alert at 80%. PRD 36.4 asks for a numeric target per active member. |
@@ -173,7 +238,7 @@ Validation is `bun run sim` plus the integration and e2e suites (`bun run test:i
 | **LLM persona agents sending real texts through the platform** | `packages/sim/src/agent/llmAgent.ts` writes words only for the sim CLI | slop personas (a different model family from the agent) send free text into the webhook: onboarding, probe replies ("maybe, who is it?"), relay messages, feedback. Measure parse accuracy, consent errors (a "no" read as a yes must be 0) and style violations. |
 | **Adversarial scenarios against the live agent** | `packages/network/harness/scenarios.ts` (prompt injection), the regex classifier, the abuse fixture | In the end-to-end world: a romance scammer moving off-platform in relay, a harasser after the reveal, an age liar who later says "I'm 16", a catfish with someone else's photos, prompt injection to extract the other person's number or rating, a ban evader on a new number, a bot farm joining by keyword, a member asking "how hot did you rate me?". Gates: 0 rating or score leaks, 0 contact leaks without consent, scammer reach at most 1. |
 | Photos and rating | Simulated rater; conformance "scores never shared" | The real `photoRater` interface with a fake Workers AI in the e2e world. A minor never rated. Deletion drops the ratings. |
-| Cross-app | The `cross_app_leak` invariant | A two-app persona (ntwrk and slop) through the real routing: canaries never cross |
+| Cross-app | The `cross_app_leak` invariant; `packages/network/test/crossapp.test.ts` (ntwrk and friends on Postgres) | A two-app persona (ntwrk and slop) through the real routing: canaries never cross |
 
 **friends.help and peon.biz** (local only; not blocking slop): their official gate sets pass in `bun run sim` (friends seeds 5-8; peon seeds 13-16). Before any production join is open: the same end-to-end message-pipeline world, and for peon, the protected-attribute invariance through the real path.
 

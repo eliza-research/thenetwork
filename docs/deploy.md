@@ -24,7 +24,7 @@ The backend process has two listeners:
 
 | Listener | Bind | Paths |
 |---|---|---|
-| Public, `PORT` (8790) | `0.0.0.0` when `PLATFORM_ENV` is `staging` or `production`; `127.0.0.1` otherwise | `/api/*` (the platform public API), `/webhooks/blooio[/<app>]` (Blooio, signature checked), `/consent/gateway` (the STOP/HELP gateway's signed consent reports; 409 unless `STOP_HELP_OWNER=gateway`), `/mcp`, `/oauth/*`, `/.well-known/oauth-*` (the MCP server, packages/mcp, mounted by `server.ts`; 404 `mcp_not_enabled` when `TURNSTILE_SITE_KEY` is not set), `/healthz` |
+| Public, `PORT` (8790) | `0.0.0.0` when `PLATFORM_ENV` is `staging` or `production`; `127.0.0.1` otherwise | `/api/*` (the platform public API), `/webhooks/blooio[/<app>]` (Blooio, signature checked), `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals`, `/internal/updates` (the Eliza gateway's signed calls, `SERVICE_TURN_SECRET`; a body over 256 KiB is refused), `/mcp`, `/oauth/*`, `/.well-known/oauth-*` (the MCP server, packages/mcp, mounted by `server.ts`; 404 `mcp_not_enabled` when `TURNSTILE_SITE_KEY` is not set), `/healthz` |
 | Staff, `STAFF_PORT` (4848) | `::` when deployed (Railway's private network may be IPv6 only); `127.0.0.1` otherwise | The staff API: `/health`, `/review`, `/safety/*`, `/matching`, `/holds`, `/invite`, `/apps/<app>/...`. Never on the public port. |
 
 How a site request reaches the backend:
@@ -111,6 +111,7 @@ Set these in **Variables**. Mark each **secret** row as a sealed variable. Never
 | `PORT` | no | `8790` | The public listener. Set it, so that Railway's domain targets this port. |
 | `STAFF_PORT` | no | `4848` | Private only. `BACKEND_STAFF=off` turns the staff listener off. |
 | `PLATFORM_HASH_KEY` | **yes** | 32+ random bytes, for example `openssl rand -base64 48` | Keys the phone and IP hashes. **Never rotate it after launch**: suppression and rate-limit rows are keyed by it. |
+| `LEAK_LABEL_KEY` | **yes** | 32+ random bytes, for example `openssl rand -base64 48` | Keys the leak guard's log labels (core-6), so a stored label cannot be matched against guessed values. `loadConfig` refuses to start staging or production without it. Dev and the simulations stay unkeyed. |
 | `PLATFORM_PROXY_SECRET` | **yes** | 32+ random characters | The same value goes into each site Worker (section 3). |
 | `TURNSTILE_SECRET_KEY` | **yes** | From Cloudflare Turnstile | One widget per site domain, or one widget listing all four |
 | `TURNSTILE_SITE_KEY` | no (public) | The same Turnstile widget | The MCP sign-in page (`/oauth/authorize` on each site) shows the widget. Without it the MCP server stays off (404 `mcp_not_enabled`). The `oauth` schema is a migration (`9001_oauth_schema`, packages/mcp/db/oauth.sql); the service login only reads and writes it. The widget's hostnames: each domain, its `www` name and its `<project>.pages.dev`. |
@@ -121,8 +122,7 @@ Set these in **Variables**. Mark each **secret** row as a sealed variable. Never
 | `BLOOIO_WEBHOOK_SECRET` | **yes** | From Blooio | Without it `/webhooks/blooio` answers 503 |
 | `<APP>_BLOOIO_WEBHOOK_SECRET` | **yes** | Per-app lines only | Not needed with one shared line |
 | `PLATFORM_STOP_SCOPE` | no | leave unset | PRD 40.3: on the shared line STOP stops every app anyway |
-| `STOP_HELP_OWNER` | no | leave unset (`service`) unless the founder picks `gateway` **[FOUNDER]** | One system answers STOP, HELP and START. `gateway`: the service answers no keyword and records what the gateway reports to `POST /consent/gateway`. Any other value stops the start. |
-| `STOP_HELP_GATEWAY_SECRET` | **yes** | Shared with the gateway | Only with `STOP_HELP_OWNER=gateway`. Without it `/consent/gateway` answers 503. |
+| `STOP_HELP_OWNER`, `STOP_HELP_GATEWAY_SECRET` | no | retired; ignored with a log line | The service answers STOP, HELP and START inside the signed turn (packages/network/service/README.md, "The Eliza seam"). Remove them from Railway when convenient. |
 | `BLOOIO_LINE_DAILY_CAP`, `BLOOIO_LINE_NEW_CHATS_PER_DAY` | no | leave unset (200 and 20) until prototype P3 measures the line | The persisted queue's per-line caps on agent-started texts and new conversations in a rolling day. |
 | `BUILD_ID` | no | leave unset | Railway's `RAILWAY_GIT_COMMIT_SHA` is used. Every response carries it in `x-network-build`. |
 | `PLATFORM_DB_ENVIRONMENT_INIT` | no | `1` on the first deploy only, then delete it | Section 2.4 |
@@ -131,9 +131,9 @@ Set these in **Variables**. Mark each **secret** row as a sealed variable. Never
 | `PHOTO_STORAGE` | no | `r2` (unset: photos are off) | slop.date photos (adults only). `local` is for dev only. |
 | `R2_ACCOUNT_ID` (or `R2_ENDPOINT`), `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | key: **yes** | A **private** bucket: no public access, no r2.dev URL | The R2 driver is not yet exercised in tests. |
 | `PHOTO_VIEW_BASE_URL` | no | `https://slop.date` | Staff photo links (5 minutes, signed) go through the backend there. |
-| `CLEF_RATINGS` | no | `off` (default). `on` only after fitted weights pass the rule in docs/results/2026-10-09-clef-fitting.md **[FOUNDER]** | The slop.date photo rater (Clef). Off: photos work, unrated. `server.ts` logs `photo rater` with its status at start. |
-| `CLEF_WEIGHTS_PATH` | no | Required when `CLEF_RATINGS=on`: a fitted weights file with a version and provenance. The placeholder, or a file without provenance, is refused (ratings stay off). | |
-| `CLOUDFLARE_AI_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | **yes** (token) | A Workers AI token, required when `CLEF_RATINGS=on` | Never set in CI or `bun run sim`. Each rating is a `photo_rating` row in the cost ledger (7.3). |
+| `CLEF_RATINGS` | no | `on` (default, founder 2026-10-09). `off` turns ratings off; any other value also leaves them off. | The slop.date photo rater (Clef). Off: photos work, unrated. `server.ts` logs `photo rater` with its status and weights version at start. |
+| `CLEF_WEIGHTS_PATH` | no | Unset: the placeholder Clef weights (status `on_placeholder`) until fitted weights pass the rule in docs/results/2026-10-09-clef-fitting.md. Set: a fitted weights file with a version and provenance; a placeholder or a file without provenance is refused (ratings stay off). | |
+| `CLOUDFLARE_AI_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | **yes** (token) | A Workers AI token and the account id. Without them nothing is rated (`off_env`). | Never set in CI or `bun run sim`. Each rater try is a `photo_rating` row in the cost ledger (7.3). |
 | `CLEF_MODEL` | no | `clef` | `clef-flash` is cheaper. A refused weights file logs `photo rater` with `status: refused_weights`. |
 | `SURPLUS_API_KEY` | **yes** | Only when an LLM path is turned on | gpt-6-luna through core's `chatJson`. Without it, LLM paths fail closed. |
 | `NETWORK_CHANNEL`, `BLOOIO_API_KEY`, `BLOOIO_FROM`, `BLOOIO_ALLOW_SEND`, `NTWRK_LIVE_APPROVED`, `<APP>_LIVE_APPROVED` | key: **yes** | **leave all unset** | Live sends. **[FOUNDER]** only. Section 6. |
@@ -167,7 +167,7 @@ Values used in local smoke runs (`ACfake`, `fake-turnstile`, `+1 555 01xx` numbe
    - Then switch to **Proxied** (orange cloud) and keep the zone's SSL/TLS mode at **Full (strict)**. Never use Flexible: it loops redirects and sends plain HTTP to the origin.
    - **Verify** after the switch that `curl -sI https://api.ntwrk.party/healthz` answers 200.
 4. Delete Railway's generated `*.up.railway.app` domain, or never generate one. Without it, Cloudflare is the only way in.
-5. Optional hardening: a WAF rule on `api.ntwrk.party` that blocks paths other than `/api/*`, `/webhooks/blooio*`, `/consent/gateway`, `/mcp*`, `/oauth/*`, `/.well-known/oauth-*`, `/healthz` and `/ops/metrics`.
+5. Optional hardening: a WAF rule on `api.ntwrk.party` that blocks paths other than `/api/*`, `/webhooks/blooio*`, `/internal/*`, `/mcp*`, `/oauth/*`, `/.well-known/oauth-*`, `/healthz` and `/ops/metrics`.
 
 Every Pages project calls `https://api.ntwrk.party` like any other client. Only the proxy secret makes the backend trust it.
 
@@ -175,7 +175,7 @@ Every Pages project calls `https://api.ntwrk.party` like any other client. Only 
 
 The console is the same image with another start command (`deploy/backend/observatory.railway.toml`). It runs in real mode only (`OBSERVATORY_REAL_ONLY=1`): no game mode, no lab, and no simulator code. The image removes `packages/sim`, `judge`, `evals`, `worlds` and `plugin-network`, and the console imports game mode only on demand (`bun run sim` block `ops` checks both). Staff sign in through Cloudflare Access only. The console reads each app through that app's own read login. It changes nothing in the database: review, safety actions and the matching switch go to the backend's staff API over the private network.
 
-**Caution:** under `PLATFORM_ENV=production` or `staging`, the console refuses to start without Access (`OBSERVATORY_TRUST_CF_ACCESS=1` with the team and the audience). Without Access it would make an admin token and write it into the Railway log.
+**Caution:** under `PLATFORM_ENV=production` or `staging`, the console refuses to start without Access (`OBSERVATORY_TRUST_CF_ACCESS=1` with the team and the audience). Without Access it would make an admin token and write it into the Railway log. The guard fails closed: a console that holds real data (`OBSERVATORY_REAL_ONLY=1`, or any database URL whose host is not this machine) refuses to start when `PLATFORM_ENV` is not set or is not `dev`, `staging` or `production`. Staff tokens are allowed only with `PLATFORM_ENV=dev` and local databases; a remote database needs Access under `dev` too.
 
 1. **New → GitHub Repo →** the same repository. Name the service `observatory`.
 2. Set Config-as-code to `/deploy/backend/observatory.railway.toml`. It starts `bun run packages/observatory/src/server.ts --mode real` and checks `/healthz` (no auth, no data).
@@ -255,7 +255,7 @@ docker run -d --name backend-smoke -p 127.0.0.1:18791:8790 \
   -e PLATFORM_ENV=staging -e PLATFORM_DB_ENVIRONMENT_INIT=1 \
   -e MIGRATION_DATABASE_URL=postgres://$USER@host.docker.internal:54339/backend_smoke \
   -e NETWORK_DATABASE_URL=postgres://backend_smoke_svc@host.docker.internal:54339/backend_smoke \
-  -e PLATFORM_HASH_KEY=$S -e PLATFORM_PROXY_SECRET=$S \
+  -e PLATFORM_HASH_KEY=$S -e LEAK_LABEL_KEY=$S -e PLATFORM_PROXY_SECRET=$S \
   -e TURNSTILE_SECRET_KEY=fake -e OTP_PROVIDER=twilio \
   -e TWILIO_ACCOUNT_SID=ACfake -e TWILIO_AUTH_TOKEN=fake -e TWILIO_VERIFY_SERVICE_SID=VAfake \
   -e BUILD_ID=local-smoke network-backend
@@ -400,6 +400,8 @@ Every minute, inside the backend's tick, the ops round reads each network and th
 | `review_sla:<network>` | bad | A review item is past its deadline, or one expired unsent in 24 h |
 | `safety_minor:<network>` | bad | A minor signal after contact with an adult in 24 h |
 | `safety_report:<network>` | bad (urgent kind) or warn | A member report in 24 h. Urgent kinds: harassment, unsafe, scam, minor. |
+| `safety_signal:<network>` | bad | Agent `safety_concern` signals (`POST /internal/signals`) that wait for a person in `GET /signals`. Posted again when the count goes up. |
+| `bias_report:<network>` | warn | The weekly bias monitor wrote a report with groups under 0.8x in the last 24 h. Counts only; the groups are in the console's bias panel. |
 | `safety_action:<network>` | warn | A ban or a hold in 24 h |
 | `queue_outbound:<network>` | warn | `ALERT_OUTBOUND_BACKLOG` (50) or more messages wait for delivery |
 | `queue_review:<network>` | warn | `ALERT_REVIEW_BACKLOG` (30) or more items wait for review |
@@ -457,15 +459,24 @@ Two backups, so that one failure does not lose the data:
   | `BACKUP_R2_BUCKET` | no | `ntwrk-backups` |
   | `BACKUP_R2_ACCESS_KEY_ID`, `BACKUP_R2_SECRET_ACCESS_KEY` | **yes** | The bucket token |
   | `BACKUP_PREFIX` | no | `postgres/production` (default `postgres/<PLATFORM_ENV>`) |
+  | `BACKUP_ENCRYPTION_KEY` | **yes** | At least 32 random bytes (for example `openssl rand -base64 48`). A person makes it and keeps a copy outside Railway (the founder's password manager): without it no backup can be read. The job refuses to upload without it, unless `PLATFORM_ENV=dev`. |
+  | `BACKUP_PUBLIC_PROBE_URLS` | no | Optional: comma-separated public base URLs that could serve the bucket (an r2.dev URL or a custom domain, if one was ever turned on). The privacy check reads the probe object through each of them too. |
   | `BACKUP_HEARTBEAT_URL` | **yes** | Optional: a heartbeat monitor (as in 7.1) with a period of 1 day and a grace of 2 hours. The job calls it only after a complete upload, so a missed or failed run raises an alert. |
 
-- **What one run does:** it opens a read-only snapshot, counts the rows of every table in `network`, `platform`, `notify`, `oauth` and `public`, and runs `pg_dump --snapshot` on the same snapshot, so the counts and the dump agree. It dumps the roles without passwords. It uploads `db.dump`, `roles.sql` and `manifest.json` (last) to `<BACKUP_PREFIX>/<UTC time>/`. A prefix with a `manifest.json` is a complete backup.
+- **What one run does:** it opens a read-only snapshot, counts the rows of every table in `network`, `platform`, `notify`, `oauth` and `public`, and runs `pg_dump --snapshot` on the same snapshot, so the counts and the dump agree. It dumps the roles without passwords. Before it uploads, it checks that the bucket is private: it writes a probe object, reads it without credentials at the S3 endpoint and at each `BACKUP_PUBLIC_PROBE_URLS` base, and deletes it. Any answer below 400, or no answer, stops the run before anything is uploaded. Then it encrypts `db.dump` and `roles.sql` with AES-256-GCM (key from `BACKUP_ENCRYPTION_KEY` through HKDF-SHA256) and uploads `db.dump.enc`, `roles.sql.enc` and `manifest.json` (last) to `<BACKUP_PREFIX>/<UTC time>/`. The manifest holds row counts, the source host and port, and the key id (a hash, not the key). A prefix with a `manifest.json` is a complete backup.
+- **The privacy check has a limit on R2.** The S3 endpoint always asks for credentials, so the check finds a public bucket only through a URL in `BACKUP_PUBLIC_PROBE_URLS`. A person must still check once, in the Cloudflare dashboard, that the bucket has no r2.dev URL and no custom domain.
 - **Logs:** one JSON line per step: `"msg":"dump"` (bytes, tables, rows) and `"msg":"backup uploaded"`. A failure logs `"msg":"backup failed"` and exits 1. Set `BACKUP_HEARTBEAT_URL` so a failed or missed run is an alert in the same channel as 7.1.
 - **Caution:** the dump holds member data (phone numbers, messages). Only the founder and the on-call engineer may download one, and only to restore it (runbook-real.md section 8). Delete local copies after the drill.
 
 ### 8.2 Restore
 
-`deploy/backup/restore.ts` restores a backup into a **new** database and checks every table's row count against the manifest. It refuses a database that exists, and the live names (`railway`, `network`, `postgres`).
+`deploy/backup/restore.ts` restores a backup into a **new** database and checks every table's row count against the manifest. It refuses a database that exists, the live names (`railway`, `network`, `postgres`), and the source's own database on the source server. It downloads an encrypted backup and decrypts it with `BACKUP_ENCRYPTION_KEY` (a wrong key or a changed file stops it).
+
+A restore never changes a role or a privilege on the source server:
+
+- The drill (the default) runs `pg_restore --no-owner --no-privileges`: no `ALTER OWNER`, `GRANT` or `REVOKE`. The tables belong to the login that ran the restore. Run the drill with the owner login (`postgres` on Railway), because some tables force row-level security.
+- `--keep-privileges` (a real recovery, runbook-real.md 8.3) keeps the owners and grants. They apply to the objects of the new database only.
+- `--roles` runs `roles.sql` (`CREATE ROLE` and `ALTER ROLE` for the whole server). It is refused on the source server, and on any server when the backup does not name its source. Use it only to rebuild an empty replacement server.
 
 ```bash
 # RESTORE_DATABASE_URL: an owner login on the target server (any database; usually the maintenance one).

@@ -47,14 +47,16 @@ export const OUTREACH = {
  */
 export type SendKind =
   | "reply" | "safety" | "interview" | "probe" | "reveal" | "nudge" | "scheduling" | "reminder" | "feedback"
-  | "growth" | "reengage" | "cancellation" | "info" | "checkin";
+  | "growth" | "reengage" | "cancellation" | "info" | "checkin"
+  /** A message one matched member asked the agent to pass to the other (relay.ts): logistics inside a match both said yes to. */
+  | "relay";
 
 /** Agent-started asks that are not invites (one-question rule; never on the cap). */
 export const ASK_KINDS: ReadonlySet<SendKind> = new Set<SendKind>(["interview", "growth", "checkin"]);
 /** Interruptions that wait for the member's send slot (initial invites are added by the send path). */
 export const SLOT_KINDS: ReadonlySet<SendKind> = new Set<SendKind>(["interview", "growth", "checkin", "reengage"]);
 /** Messages about another member: the recipient must not be a minor or on watch, and no block may stand between them. */
-export const ABOUT_OTHERS: ReadonlySet<SendKind> = new Set<SendKind>(["probe", "reveal", "nudge", "scheduling", "reminder", "feedback"]);
+export const ABOUT_OTHERS: ReadonlySet<SendKind> = new Set<SendKind>(["probe", "reveal", "nudge", "scheduling", "reminder", "feedback", "relay"]);
 /** Never a direct reply, even when sent while handling the member's message. */
 export const NEVER_REPLY: ReadonlySet<SendKind> = new Set<SendKind>(["growth", "reengage", "checkin"]);
 

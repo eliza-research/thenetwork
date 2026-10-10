@@ -5,6 +5,7 @@
 // Design and results: docs/results/2026-10-08-peon-pack.md.
 //
 //   entities   candidates (members) and job seats (one member per open job, capacity = openings; schema.ts)
+//              (the service builds seats from job postings and keeps their capacity: seats.ts)
 //   retrieval  two-way: candidate -> jobs and job -> candidates (generators.ts)
 //   scoring    reciprocal, two-sided asymmetric: must-haves as floors x candidate wants (match.ts)
 //   selection  congestion control per job (slate cap) and per candidate (3 roles a week) (selection.ts)

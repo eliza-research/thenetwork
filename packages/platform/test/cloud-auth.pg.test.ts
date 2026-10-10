@@ -38,7 +38,8 @@ describe.skipIf(!pgAvailable)("Cloud phone handoff (PostgreSQL)", () => {
       return Response.json({userId: "cloud-user-fixture", organizationId: "cloud-org-fixture", e164: phone, expiresAt: sourceExpiresAt, stewardUserId: "steward-fixture", issuedAt: proofIssuedAt});
     }) as typeof fetch;
     const proxySecret = "local-proxy-fixture";
-    const options = {store, proxySecret, now: () => now, cloudAuthFetch: transport, env: {
+    // Validation caching is off here so each request reaches the transport fixture.
+    const options = {store, proxySecret, now: () => now, cloudAuthFetch: transport, cloudValidationTtlMs: 0, env: {
       PLATFORM_ENV: "dev", NETWORK_CLOUD_AUTH_ENABLED: "true", NETWORK_CLOUD_AUTH_LOGIN_ORIGIN: "https://cloud-staging.eliza.app",
       NETWORK_CLOUD_AUTH_API_ORIGIN: "https://api-staging.eliza.app", NETWORK_CLOUD_AUTH_SITE_ORIGIN: "http://127.0.0.1:5102", NETWORK_CLOUD_AUTH_SERVER_TOKEN: "local-server-fixture".repeat(2),
     }, minStartMs: 0, otp: {name: "local-fixture", send: async () => {otpSends++; return {code: "123456"};}}};
@@ -117,7 +118,8 @@ describe.skipIf(!pgAvailable)("Cloud phone handoff (PostgreSQL)", () => {
     authorityLive = false;
     expect((await call("slop", "GET", "/api/me", undefined, cookie)).status).toBe(401);
     expect(validations).toBeGreaterThan(10);
-    // A fresh Cloud proof may sign in normally, but still does not assert a phone step-up.
+    // A fresh Cloud proof signs in normally; within STEP_UP_MS it is the step-up for delete-all (not exercised
+    // here, so the rest of the scenario keeps its data).
     authorityLive = true;
     proofIssuedAt = Math.floor(now/1000);
     sourceExpiresAt = now+3*24*3_600_000;
@@ -132,7 +134,6 @@ describe.skipIf(!pgAvailable)("Cloud phone handoff (PostgreSQL)", () => {
     expect(freshLogin.headers.get("location")).toBe("/settings");
     let freshCookie = freshLogin.headers.getSetCookie().filter(value => !value.startsWith("cloud_pending_")).map(value => value.split(";")[0]).join("; ");
     expect((await call("slop", "GET", "/api/me", undefined, freshCookie)).status).toBe(200);
-    expect((await call("slop", "POST", "/api/me/delete", {scope: "all"}, freshCookie)).status).toBe(403);
     // The source proof is checked against the original cookie, then rotated and resealed together.
     now += 25*3_600_000;
     const rotated = await call("slop", "GET", "/api/me", undefined, freshCookie);

@@ -26,6 +26,7 @@ import { slopOptions, type DeepPartial, type SlopPackOptions } from "./options.t
 import { slopProfiles } from "./profile.ts";
 import { missingFields, needsBasics, reviewReason, SLOP_CANDIDATE_PRE_RULES, SLOP_LANE, slopMemberRules, slopPairRules } from "./rules.ts";
 import { aggregate } from "./score.ts";
+import { slopJudge } from "./judge.ts";
 import { distanceBand } from "./zips.ts";
 
 export const SLOP_PACK_VERSION = "slop-pack-1.4.0";
@@ -180,6 +181,8 @@ export function makeSlopPack(over: DeepPartial<SlopPackOptions> = {}): AppPack &
       // Lane words from slop's facet templates that say nothing about anyone (everyone here is dating).
       publicWords: ["date", "dates", "dating", "first", "they", "their", "they're", "theyre"],
     },
+    // Pass 2 dating rubric (judge.ts, from PR #12): runs only when the engine has an LLM; the no-LLM path is unchanged.
+    judge: slopJudge(o),
     capital: {
       earn: ["attendance", "review"],
       lose: ["no_show", "ghosting", "abuse", "fraud"],
@@ -209,7 +212,7 @@ export { slopOptions, SLOP_DEFAULT_OPTIONS, type SlopPackOptions } from "./optio
 export { slopProfiles, SLOTS, type SlopProfile, type Slot } from "./profile.ts";
 export { planFirstDate, planFromInput, probePhotoRefs, PROBE_PHOTO_MAX, PUBLIC_VENUE, type DatePlan, type ProbePhotoRef, type ProbePhotoSubject } from "./plan.ts";
 export { distanceBand, cellOfZip, ZIPS as SLOP_ZIPS, type DistanceBand } from "./zips.ts";
-export { ageBand, SLOP_ASK_QUESTIONS, SLOP_PROBE_PHOTO_LINE, slopProbeMessage, slopProbeText } from "./copy.ts";
+export { ageBand, distancePhrase, SLOP_ASK_QUESTIONS, SLOP_PROBE_PHOTO_LINE, slopBookedText, slopCheckInText, slopProbeMessage, slopProbeText } from "./copy.ts";
 export { mutualMarkets } from "./geo.ts";
 export { adultsOnly, appearanceFacet, appearanceLeak, APPEARANCE_LEAK_PATTERNS, BODY_TYPES, canRatePhotos, ClipAppearanceRater, parseAppearance, rateMember, VisionLlmAppearanceRater, VISION_RATER_SYSTEM, type AppearanceRater, type AppearanceScore, type BodyType, type PhotoRef, type RatingSubject, type VisionChat } from "./appearance.ts";
 export { CLEF_FEATURES, CLEF_MODEL_IDS, CLEF_PRICE_PER_M_INPUT, CLEF_QUESTIONS, ClefError, clefFeatures, clefFeatureRow, clefFeatureNames, clefRun, applyHead, makeClefRater, makeClefRaterFromEnv, WorkersAIClefRater, type ClefModel, type ClefRaterOptions, type ClefCallOptions, type ClefRequest, type ClefFetch } from "./clef.ts";
@@ -218,3 +221,4 @@ export { biasMonitor, ratingQuintiles, type BiasReport, type MemberOutcome } fro
 export { pairValue, firstOf, SLOP_GENERATOR } from "./generators.ts";
 export { extractSlopProfile, extractSlopProfileLLM, llmSlopReader, slopReaderPrompt, validateSlopReading, slopOnboardTags, readMessage, emptyOnboarding, hardFilled, hasField, coarsePlace, HARD_FIELDS, DEALBREAKER_IDS, DATE_ACTIVITY_IDS, LLM_FILL_BELOW, type SlopOnboarding, type OnboardField, type HardField, type Field, type Evidence, type Distance, type Location, type ExtractOptions, type SlopReader, type SlopTag, type Dealbreaker, type DateActivity } from "./extract.ts";
 export { readBack, readBackFacts, applyCorrection, nextQuestion, markAsked, hardComplete, SLOP_ONBOARD_QUESTIONS, READBACK_FIELDS, MAX_ASKS_PER_QUESTION, type ReadBackFact } from "./onboard.ts";
+export { slopJudge, slopJudgeContext, SLOP_JUDGE_SYSTEM, SLOP_JUDGE_VERSION } from "./judge.ts";

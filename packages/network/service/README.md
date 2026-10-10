@@ -19,11 +19,69 @@ This folder holds the production process for the ConsentNetwork. One process run
 
 A turn commits its claim in `platform.inbound` before it calls the existing inbound handler. The channel and provider message ID identify the claim. The same body replays the stored result; a different body conflicts. An interrupted turn stays unresolved and is not rerun by the inbox tick. Replies from this turn alone are stored as `collected`, outside `platform.outbound`; collection does not mean provider acceptance. A signed receipt binds the exact ordered reply IDs. An unknown receipt can advance to accepted or rejected; accepted receipts are immutable.
 
-Open context rechecks the canonical phone and app membership. It includes confirmed shareable facts after the leak gate, and refuses context that exceeds the deployed plugin bounds. Unavailable active-item summaries are `null`. Replays recheck current admission and context, so STOP, a hold, a ban or changed context cannot reuse an old open grant. App leave seals prior signed payloads for that app. The existing seven-day purge strips completed signed payloads and retains a minimal replay tombstone; interrupted claims remain unresolved until an owned recovery or deletion path seals them.
+Open context rechecks the canonical phone and app membership. It includes confirmed shareable facts after the leak gate, and refuses context that exceeds the deployed plugin bounds. Unavailable active-item summaries are `null`. Replays recheck current admission and context, so STOP, a hold, a ban or changed context cannot reuse an old open grant. App leave seals prior signed payloads for that app. The existing seven-day purge strips completed signed payloads and retains a minimal replay tombstone; tombstones are deleted 30 days after that.
+
+A turn still processing after 2 minutes lost its worker and becomes unresolved. An unresolved turn is never rerun, and it holds the sender's later messages back for 10 minutes at most. STOP, START and HELP are never held back. Staff with `admin@*` can release a stuck turn with `POST /inbound/resolve {"id":"msg:<channel>:<messageId>"}`; the turn stays unresolved and a replay is still refused.
+
+A handled turn with no replies (a quiet acknowledgement, an under-13 decline) takes a receipt with empty `replyIds` and `providerMessageIds`. `accountEligible` is false for an unknown age, so Cloud eligibility never runs ahead of the join age check. An accepted receipt may carry `historyRecorded: false` (no Eliza account yet).
+
+Agent signals never act on their own. `opt_out` and `safety_concern` are stored as proposed private facets, logged as an alert line, and listed for reviewer or safety staff at `GET /signals`. STOP and "leave <app>" in the member's own words stay the only automatic consent changes.
+
+The contract is version `2026-10-09.1` (`CONTRACT_VERSION`). The matching elizaos/eliza plugin-network and Cloud change (channel on actions, turn receipts, `DELIVER_RECEIPT_PATH`, optional `acceptedAt`) has not landed yet, so the deployed plugin cannot use these actions until it does.
 
 Signed state, signal and update actions bind the exact completed open turn, channel, app and member. State windows extend the canonical member row; private hypotheses use the existing facet owner. Cloud outbound uses `NETWORK_CHANNEL=eliza_cloud`, `NETWORK_CLOUD_DELIVERY_ORIGIN`, `SERVICE_TURN_SECRET` and the configured `BLOOIO_FROM`, with the same live approval flags as Blooio. The default and `--dry-run` send nothing.
 
 Cloud transport reuses `platform.outbound` and all its policy checks. Unknown acceptance is held outside the dispatch queue. Restart and a bounded receipt poll never resend it. A verified receipt commits under the canonical person fence, preserves its original acceptance time, and updates line counters once. Notify projection repair uses the existing idempotent record owner and one marker on `network.messages`, for queued sends and positively acknowledged handled replies. Handled replies retain their original message time as event chronology; their ACK does not attest a provider acceptance timestamp. Canonical deletion seals late receipt commits. Dispatch admission rechecks the canonical member and immutable outbox row after the asynchronous gates, under short database locks released before remote I/O. An admitted request can remain in flight during deletion; a later receipt cannot restore erased data. Signed first contact and policy declines create no service line counter; engagement follows canonical join-age and membership admission. These tests control the Cloud HTTP transport boundary; actual Cloud history and hosted qualification remain separate gates. No deployment or live flag is enabled by this change.
+
+## The Eliza seam (eliza.app takeover)
+
+The Eliza gateway owns the Blooio webhook of the shared line and calls `POST /internal/turn` for every direct message (docs/design/eliza-conversation-layer.md). The contract is the mirror in `packages/core/src/svc/` and must not be edited here.
+
+**Consent has one path: the turn.** STOP, STOP ALL, START, HELP and "leave <app>" are parsed by this service inside the turn. A handled turn that changed consent carries `consent {state, scope, app, at}`: STOP is `opted_out` with scope `all` and app `null`; leave is `opted_out` with scope `app`; START is `opted_in` with scope `app`. The gateway mirrors it into its send-time fence. The old `STOP_HELP_OWNER=gateway` mode and `POST /consent/gateway` are removed: the upstream gateway (elizaOS/eliza `spike/network-plugin`, `gateway-webhook/src/network-service.ts`) never called that route, it mirrors the turn's `consent` instead.
+
+**Consent order.** In a turn, the consent event time is the gateway's `receivedAt` (never later than now), for STOP, START, leave and the opt-ins of a text join. The ledger resolves by event time, so a START the person sent before a STOP, delivered late by a gateway retry, is recorded but does not opt the number back in, and the turn reports no `consent`. A STOP always stops the members when it arrives. On the legacy webhook the time is the arrival time, as before (that path handles one sender in order).
+
+**START checks.** Before START opts a number back in, the recycled-number hold (a number not seen for 12 months waits for staff) and the ban check (by phone or person) apply. A held number gets `reason: "held"`; a banned number gets `held` and no reply.
+
+**Startup and body size.** The service refuses to start when the turn path is on and `SERVICE_TURN_SECRET` is shorter than 32 characters. Every signed route reads at most 256 KiB before it verifies or parses anything; the backend refuses a declared larger body on `/internal/*` before the service sees it.
+
+**The one-time notice.** A person who writes on the line through a signed turn and is not a member of any Network app gets, as the first reply of that handled turn, a notice that Eliza is now The Network's agent, what it means, and how to opt out (`ELIZA_NOTICE` in `packages/network/src/copy.ts`). The normal join flow follows in the same turn. Rules:
+- The wording is a **DRAFT** (`ELIZA_NOTICE_STATUS`). The founder must approve it before go-live.
+- Once per number. `platform.eliza_notices` (migration 0025) keeps a keyed hash of the number (`PLATFORM_HASH_KEY`, its own domain) and the time sent, never the number. The row and the collected reply commit in one transaction.
+- It enrolls nobody. Joining still needs the age check and the opt-in; minors follow the age policy (13-17 join, never matched).
+- A banned number gets no notice. An age under 13 (stated in the message, pending, or on the phone's age floor) gets only the existing kind decline, and the notice row of that number is deleted in the same turn.
+- Open turns are returned only for members of a Network app.
+
+**Proposal for upstream (not built).** The TurnRequest has no "known eliza.app user" flag, so the notice goes to every non-member first contact. An optional `elizaUser?: boolean` field on TurnRequest, set by the gateway for a sender with Eliza history, would let the service send the notice only to existing eliza.app users and give a plain welcome to everyone else. That is a contract change: it goes into elizaOS/eliza `plugins/plugin-network/src/backend` first, then into the byte-for-byte mirror here, with a new `CONTRACT_VERSION`.
+
+**Tests.** `packages/network/test/eliza-takeover.integration.test.ts` mirrors the upstream gateway test against the real service, HTTP and Postgres: handled STOP (scope all), leave (scope app), START, an older START that loses, HELP, the join keyword, the onboarding answer, the open turn with strict context, ignored, replay by messageId, a bad signature, an over-size body, a minor (single-player, no introductions), the notice once, an under-13 decline, and START refused for a banned or held number. Sends are dry-run; a fake Cloud deliver endpoint must receive nothing.
+
+## Relay between matched members
+
+`POST /internal/relay` (relay-endpoint.ts) takes a member's relay request from Eliza during an open turn: a text for their match, "send them my number", or a photo. It is signed with `SERVICE_TURN_SECRET` like the other `/internal/*` actions, size-checked (16 KiB) before it is parsed, idempotent on `x-ntwrk-svc-id` (which must equal `idempotencyKey`), and bound to the original completed open turn and the member's current membership. The app and the member come from that turn; the recipient is always the member's current match, chosen by the service, never named by the model.
+
+The ConsentNetwork's relay desk (`packages/network/src/relay.ts`) asks the engine relay policy for every decision (`relayItemAsync` in `packages/engine/src/relay.ts`). With `CLOUDFLARE_AI_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` set it adds the Clef classifier (`clefRelayClassifierFromEnv`, clef-flash unless `RELAY_CLEF_MODEL=clef`); without them it uses the rules alone and logs `relay classifier: rules only` at start. Only the engine's `rendered` text goes to the other member, through the Network's send path and the outbound queue with the id `relay:<item>`, which the Cloud channel delivers with `kind: "relay"`. A number goes out only after both members asked to swap; the queue's leak guard lets exactly that number through for that row. Photos are refused until a consent to show photos to a match exists (Legal must approve one first). Minors are never relayed, scores are never shown, and the log (`network.relay_records`, migration 0026) keeps ids, the decision and reason codes, never a body or a contact value. A held text waits for staff and is dropped when they decide.
+
+The request and response types are defined in relay-endpoint.ts, because `packages/core/src/svc/contract.ts` mirrors the upstream plugin-network contract byte for byte. Proposed addition to that contract upstream (elizaos/eliza plugin-network and its mirror here):
+
+```ts
+export const RELAY_PATH = "/internal/relay";
+/** A member's request to pass something to their current match. x-ntwrk-svc-id = idempotencyKey. */
+export interface RelayRequest {
+  channel: NetworkChannel;
+  messageId: string;          // the completed open turn this action belongs to
+  app: NetworkAppId;
+  memberId: string;
+  idempotencyKey: string;
+  kind: "text" | "contact_share" | "photo";
+  text: string | null;        // the message (text, at most 1000 characters) or a caption (photo); null for contact_share
+  photoIds: string[] | null;  // the member's own photo ids (photo only, at most 3)
+}
+/** `reason` is safe to say to the member as it is. */
+export interface RelayResponse { decision: "sent" | "held" | "refused"; reason: string; replayed: boolean }
+```
+
+Errors follow the other actions: 400 `invalid_request` or `invalid_relay`, 401 on a bad signature, 403 `turn_scope_invalid` or `membership_unavailable`, 409 `action_conflict` or `action_unresolved`, 413 `payload_too_large`, 429 `action_limit`.
 
 ## Run it
 
@@ -47,8 +105,8 @@ The database must have the `network` and `platform` schemas (`bun run db:migrate
 | `<APP>_BLOOIO_WEBHOOK_SECRET` | none | Verifies one app's line (`/webhooks/blooio/<app>`). Without it, that path answers 503. |
 | `PLATFORM_API_PORT` | `8790` | The public API (`/api/*`) the sites call |
 | `PLATFORM_STOP_SCOPE` | every app | STOP stops every app. `app`: STOP on an app's own line stops that app only. |
-| `STOP_HELP_OWNER` | `service` | Who answers STOP, HELP and START on the line (one owner only). `gateway`: this service never answers a keyword; it still records a STOP it receives and stops every app, and it records what the gateway reports to `POST /consent/gateway`. Any other value stops the start. |
-| `STOP_HELP_GATEWAY_SECRET` | none | Signs the gateway's reports (`X-Network-Signature`, the Blooio scheme, 300 s window). Without it that route answers 503. |
+| `SERVICE_TURN_SECRET` | none | Signs the Eliza seam (`/internal/*` and Cloud deliver). The turn path is on when it is set or `NETWORK_CHANNEL=eliza_cloud`; then a secret shorter than 32 characters stops the start. Without it the signed routes answer 503. |
+| `STOP_HELP_OWNER`, `STOP_HELP_GATEWAY_SECRET` | retired | Ignored, with a log line. STOP, START and HELP are answered inside the signed turn (below). |
 | `PLATFORM_HASH_KEY`, `PLATFORM_SESSION_SECRET`, `PLATFORM_PROXY_SECRET` | dev keys | Phone hashes, session hashes, the site routers' signature. Required in production. `main.ts` refuses to start without them (`assertBootConfig`). |
 | `OTP_PROVIDER` | dev console | `twilio` uses Twilio Verify (needs its credentials). The dev console provider refuses production. |
 | `NETWORK_SERVICE_HOST`, `NETWORK_SERVICE_PORT` | `127.0.0.1`, `4848` | The bind address. Another host prints a warning. |
@@ -64,7 +122,7 @@ The database must have the `network` and `platform` schemas (`bun run db:migrate
 | Tick | Every minute, each network on its own: `runTick()` with its `PgStore` under its advisory lock (`network-tick-<app>:<city>`). A second instance skips a network while its lock is held. The engine runs once a day inside the tick (09:00 New York), as in the simulator. The clock is `RealClock`. A network whose `platform.networks.matching_enabled` is false never matches, whatever its stored switch says. |
 | Snapshot | `snapshot.ts` reads one app's members, facets, intents, presence, edges and recent opportunities at the start of every unit of work. Every query filters by `app_id`. A person-to-person block (`platform.person_blocks`, from any app) is a "blocked" edge when both people are members of this app. The Observatory's shadow runs use the same builder (The Network by default). |
 | Inbound | `POST /webhooks/blooio` (the one line for every app: `platform.app_lines`, then a keyword such as "slop.date", then the member's open item, then the app that wrote last, then The Network) and `POST /webhooks/blooio/<app>` (an app's own line, if one ever has one). Each checks `X-Blooio-Signature` on the raw body (300 s window). The phone finds the person (`platform.phone_identities`), then the membership, then the member id; members from before the platform use `network.channel_identities`. A message goes into the inbox first (`platform.inbound`, `inbox.ts`): one row per provider message id, so a provider retry, a replay or a second subscription is a duplicate; the webhook answers 200 once the row is stored, and a handler error leaves the row for the next tick (5 tries, then an alert). The messages of one sender are handled one at a time (an advisory lock per sender), oldest first. Each message is one unit of work on that app's network. Every message and tapback on the line resets that conversation's unanswered streak. Someone who is not a member: the join by text (first name and age, 13+; nothing stored until the age check passes). With no keyword they join The Network, which asks what they are looking for and enrolls them in those apps. The waiting flows are in `platform.pending_texts`. |
-| Keywords | STOP (and opt-outs in the person's own words), STOP ALL, START and HELP go through the platform consent ledger (`platform.consent_events`, one row per message) with the app's own texts (`packages/platform/src/apps.ts`). STOP stops every app. "leave <app>" leaves one app (the forget path). One owner answers keywords (`STOP_HELP_OWNER`, founder decision: one system only; default this service). With `gateway`, the service sends no STOP, HELP or START answer (and no welcome back), but a STOP it receives still stops every app, and `POST /consent/gateway` records the gateway's STOP, STOP ALL and START (once per event id) and applies them. |
+| Keywords | STOP (and opt-outs in the person's own words), STOP ALL, START and HELP go through the platform consent ledger (`platform.consent_events`, one row per message) with the app's own texts (`packages/platform/src/apps.ts`). STOP stops every app. "leave <app>" leaves one app (the forget path). One owner answers keywords: this service (founder decision: one system only), inside the signed turn in production (the section "The Eliza seam"). |
 | Public API | `/api/*` on `PLATFORM_API_PORT` (`createPublicApi`). A web join creates the network member for that app and queues the welcome through the normal send path. Stop, leave, delete everything and export call the network paths. |
 | Person cap | At most 3 proactive messages a day for one person across all apps (PRD 40.3), taken when a send is handed to the adapter (`platform.person_cap_take`: one lock for every app, a counter in `platform.person_sends`). Over the cap: `refused_person_cap`. |
 | Row-level security | Every query on a network table runs in a transaction with `app.app_id` set (`NetworkRuntime.scoped`), so the service runs under a login with the `network_service` role (which inherits `platform_service`). |
@@ -74,9 +132,9 @@ The database must have the `network` and `platform` schemas (`bun run db:migrate
 | Saves | The Network state, its console rows, and what the unit produced (messages, events, blocks, engine runs, opt-outs, and with Blooio the queue rows in `platform.outbound`) are written in one transaction. Then the queue delivers. |
 | Under 13 | The decline goes out. Then the member's row keeps only the id (`account_status = 'removed'`). Their messages, facets, intents, presence, edges, phone and events are deleted (every event that names them: actor, object or payload). |
 | Outbound | `ChannelAdapter` (`channel.ts`). `DryRunAdapter` is the default. `BlooioAdapter` is the persisted queue (`packages/blooio` `OutboundQueue`, `platform.outbound`, migration 0015) with the Network's send-time checks: the consent ledger and bans, the member's opt-out, `blooioRecipientPolicy`, the person cap, `forbiddenProvider`. It refuses without the live flags. Statuses (and Blooio receipts) are copied to `network.messages`. Attachments (photo links) go as `mediaUrls`. |
-| App packs | `packs.ts`. Each network gets its app's engine pack (`appWiring`): The Network keeps networkPack; slop runs `makeSlopPack({ verification: { required: false } })` (founder decision 9: no ID check; a stated adult age is enough) with `SLOP_ENGINE_CONFIG` on nyc; peon runs `peonPack` with `PEON_ENGINE_CONFIG`; friends runs `friendsPack` with `FRIENDS_PLANS`. Members aged 13-17, and anyone who may be a minor, never enter a pack's input (`ConsentNetwork.packInput`). Every item still waits for a human reviewer. slop adds its hooks (`apphooks.ts`): the hard-field asks in one message (each at most twice), the answers as agent_private tags, the date probe with an age band and a distance band, a public place near the midpoint (lit indoor or plaza places after dark), the booked date with the share-my-date tip, and the check-in after the date. A new slop member opts in to dating only when the person is 18 or more. |
+| App packs | `packs.ts`. Each network gets its app's engine pack (`appWiring`): The Network keeps networkPack; slop runs `makeSlopPack({ verification: { required: false } })` (founder decision 9: no ID check; a stated adult age is enough) with `SLOP_ENGINE_CONFIG` on nyc; peon runs `peonPack` with `PEON_ENGINE_CONFIG`; friends runs `friendsPack` with `FRIENDS_PLANS`. Members aged 13-17, and anyone who may be a minor, never enter a pack's input (`ConsentNetwork.packInput`). Every item still waits for a human reviewer. slop adds its hooks (`apphooks.ts`): the engine's onboarding loop (`AppHooks.onboarding`: after the welcome answer, each message goes through `extractSlopProfile`, or `applyCorrection` after a read-back, then `slopOnboardTags`; the next message is the read-back once every hard field is set, else `nextQuestion`, one question at a time and each at most twice; the state is kept on the member as `onboarding`, values only, never the member's words). Orientation follows PRD 40.5: "bi", "pan", "queer", "both" and "a mix" leave who they seek unset and the agent asks again; the founder may still choose to read them as a seeking set instead (listed as a founder decision). The pack's own asks use the loop's next question too. Then the date probe with an age band and a distance band, a public place near the midpoint (lit indoor or plaza places after dark), the booked date with the share-my-date tip, and the check-in after the date. A new slop member opts in to dating only when the person is 18 or more. |
 | Reports, holds, bans | A "report X" message and slop's check-in after a date are reports (`reports.ts`): ids and a kind (harassment, lying, no_show, unsafe, scam, minor, other), never the words. An urgent check-in report keeps the member out of matching until staff decide. Hold reaches the person on every app. A ban (`platform.bans`, migration 0011) by phone or by person restricts every membership, holds every member, suppresses the numbers, and refuses every later join (web or text). Delete everything keeps it. |
-| Photos | `packages/platform/src/photos.ts` on `/api/photos/*` (slop only; the upload form is on `slop.date/settings`): an adult (the person's lowest stated age is 18 or more; an unknown age fails closed), not banned, the photo consent, JPEG/PNG/WebP up to 8 MB and 6 photos, metadata stripped. Photos by text (`photoIntake.ts`): a slop member's attachment is fetched only after the adult and ban checks pass and the photo consent was given by text (asked once; only a "yes" counts); a minor's photo is dropped unfetched. Storage: `PHOTO_STORAGE=r2` (`R2_ENDPOINT` or `R2_ACCOUNT_ID`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`; a private bucket) or `PHOTO_STORAGE=local` (dev only, `PHOTO_DIR`). Unset: photos are off. No public URL: staff get a 5-minute signed link (`PHOTO_VIEW_BASE_URL`, default `https://<app domain>`) after an audited read. The rater (`photoRater`; `server.ts` calls the platform's `photoRaterFromEnv`: off unless `CLEF_RATINGS=on`; then the engine's `makeClefRaterFromEnv` from `CLOUDFLARE_AI_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLEF_MODEL` and a fitted `CLEF_WEIGHTS_PATH` with version and provenance (the placeholder is refused), with 3 tries on API errors) rates the member from up to 4 photos after each upload or delete and stores the engine's `appearanceFacet` (agent_private). Without the flag, the token or fitted weights, ratings are off. Leaving the app, delete everything, or an age under 18 deletes the photos and the rating; a ban deletes the rating. |
+| Photos | `packages/platform/src/photos.ts` on `/api/photos/*` (slop only; the upload form is on `slop.date/settings`): an adult (the person's lowest stated age is 18 or more; an unknown age fails closed), not banned, the photo consent, JPEG/PNG/WebP up to 8 MB and 6 photos, metadata stripped. Photos by text (`photoIntake.ts`): a slop member's attachment is fetched only after the adult and ban checks pass and the photo consent was given by text (asked once; only a "yes" counts); a minor's photo is dropped unfetched. Storage: `PHOTO_STORAGE=r2` (`R2_ENDPOINT` or `R2_ACCOUNT_ID`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`; a private bucket) or `PHOTO_STORAGE=local` (dev only, `PHOTO_DIR`). Unset: photos are off. No public URL: staff get a 5-minute signed link (`PHOTO_VIEW_BASE_URL`, default `https://<app domain>`) after an audited read. The rater (`photoRater`; `server.ts` calls the platform's `photoRaterFromEnv`: on by default, `CLEF_RATINGS=off` turns it off; the engine's `makeClefRaterFromEnv` from `CLOUDFLARE_AI_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLEF_MODEL`, with the placeholder Clef weights unless `CLEF_WEIGHTS_PATH` names a fitted file with version and provenance (a file without them is refused), with 3 tries on API errors, each try a cost row) rates the member from up to 4 photos after each upload or delete and stores the engine's `appearanceFacet` (agent_private; never in the console). The score is discarded if the person stopped being a rateable adult member, was banned or lost a rated photo while the rater ran. Without the token or the account id, ratings are off. Leaving the app, delete everything, or an age under 18 deletes the photos and the rating; a ban deletes the rating. |
 | Bias monitor | `bias.ts`: once a week per slop network, after a tick, the engine's `biasMonitor` over the last 28 days (proposals, dates, second dates) by photo-rating quintile; stored in `network.bias_reports` (migration 0014), `[alert] bias ...` log lines under 0.8x, shown in the console. |
 | Review SLA alerts | After each tick: one `[alert] review SLA ...` log line per item waiting longer than its app's SLA (slop 6 h, peon 24 h, others 12 h; observatory `DEFAULT_SLA_HOURS`). |
 | Staff API | Below. Every action writes `network.staff_audit` (a "requested" row before the action, a "result" row after) and the Network's own logs (`review_decision`, `safety_action`, `matching_switch` in `network.events`). |
@@ -92,6 +150,11 @@ Send `Authorization: Bearer <token>`. Tokens are per app: `reviewer@slop:<t>` is
 | `POST /review/:oppId` | reviewer | `{ decision: "approve" \| "reject" \| "edit" \| "reroll", reason?, note?, secondsSpent?, explanations?, objective?, swapOut? }`. The reviewer of record is the token's staff id, never a field in the body. |
 | `POST /safety/lift` | safety | `{ memberId, note? }` |
 | `POST /safety/close` | safety | `{ caseId, note? }` |
+| `GET /signals` | reviewer, safety | Agent `opt_out` and `safety_concern` signals waiting for a person: `{ id, memberId, kind, evidence, at }`, newest first |
+| `GET /staff/relay/held` | reviewer, safety | Relayed items held for a person, oldest first: `{ itemId, app, kind, from, to, reasons, createdAt, text? }`. `text` only for an adult sender's held text; never a minor's words, never a score |
+| `POST /staff/relay/:itemId/release` | safety | `{ note? }`. The engine checks the item again; anything that would now block stays undelivered (`delivered: false`) |
+| `POST /staff/relay/:itemId/reject` | safety | `{ note? }`. Never delivered; the held text is dropped |
+| `POST /inbound/resolve` | admin@* | Release a sender held back by a signed turn that did not finish: `{ id }` |
 | `GET /safety/reports` | safety | Reports about this app's members, newest first: `{ id, kind, reporterId, subjectId, opportunityId?, at, status, source, priorReports }` (docs/admin-console.md 3.7.1) |
 | `POST /safety/hold` | safety | `{ memberId, note (5+ characters), reportId? }`: the person on every app |
 | `POST /safety/ban` | safety | `{ memberId, by: "phone" \| "person", note, reportId? }`; 409 `already_banned`, `no_person`, `no_phone` |
@@ -103,6 +166,55 @@ Send `Authorization: Bearer <token>`. Tokens are per app: `reviewer@slop:<t>` is
 | `/review-mode` | none | Always 404. Production review is "human" only (PRD 32.8). The service refuses any other mode at start. |
 
 A refused action answers 409 with the Network's reason (for example `participant_minor`, `matching_paused`, `not_in_review`). A new stored state starts with matching off (runbook-real 7.4 check 8). An admin turns it on.
+
+## The outbound queue
+
+The Blooio and Cloud adapters deliver through the persisted queue in `packages/blooio/src/outbound-queue.ts` (`platform.outbound`). Its file header lists every check at send time. This section covers the parts the service decides.
+
+### Kinds
+
+A row's kind decides which checks it skips. Only `compliance` skips the opt-out, the recipient check, quiet hours and the caps. `reply` skips quiet hours, but it must answer a message the person sent in the last hour. `transactional` and `proactive` get every check.
+
+### Direct texts
+
+`NetworkService.direct()` sends one fixed text to a person who is not a member here, or before the member exists. Each caller passes its own kind:
+
+| Caller | Text | Kind |
+|---|---|---|
+| `inbound`, a number on hold | HELP answer | `compliance` |
+| `inbound`, "leave <app>" | the leave confirmation | `compliance` |
+| `inbound`, not a member | HELP answer | `compliance` |
+| `stop`, not a member | the STOP or STOP ALL confirmation | `compliance` |
+| `join`, invite-only app | the invite-only answer | `reply` |
+| `join`, no age yet | the join question (name and age) | `reply` |
+| `join`, under the join age | the under-age decline (a refusal of service that must reach the person; the Cloud contract reports it as `compliance`) | `compliance` |
+| `join`, no name yet | the name question | `reply` |
+| `PhotoIntake` (`photoIntake.ts`) | the photo consent question and photo answers | `reply` |
+| `invite` (staff) | the invitation | `transactional` |
+
+A direct text in a signed turn goes back to Cloud as a collected reply, with kind `compliance` or `reply`. A direct text with no member on the row, to an address that is not a member of the app, skips the member policy (`blooioRecipientPolicy`), because there is no member to check. It still gets the consent ledger, bans, suppression, quiet hours, caps and the leak guard. The consent check (`NetworkRuntime.optedOut`) reads `platform.consent_events` by address for these rows too. A person who sent STOP therefore gets no join question until they opt in again. A text join message with both their name and age opts them in (the join records a new consent event), and so does a web join.
+
+### STOP and the inbox
+
+A STOP, STOP ALL, "leave <app>", START or HELP that waits in the inbox is handled ahead of the sender's earlier rows (`inbox.ts`). An earlier row that keeps failing therefore never holds back a consent change or its confirmation. A handled STOP or STOP ALL ends the sender's ordinary rows that came before it, with outcome `cancelled_by_stop`. The Network never acts on them after the STOP; a join answer handled late would opt the person back in. Messages that come after the STOP are handled as usual. Signed turns already let these keywords through, and "leave <app>" now counts too. Integration case: `packages/network/test/inbox-order.integration.test.ts`.
+
+### The consent ledger at dispatch
+
+The queue keeps no STOP ledger of its own. Every row except a compliance text reads consent from Postgres at dispatch: `platform.consent_events`, bans and suppression (`NetworkService.consentRefused`), and `network.members.opted_out`. The member check runs again inside the claim transaction. So a STOP that comes in while a row waits wins on every replica. Persisting a separate ledger in the queue's tables was the other option. It was not taken because it would be a second copy of `platform.consent_events`, and the two could disagree after a STOP through the web or the gateway. A row that waits is not cancelled at STOP; dispatch ends it as `refused_opted_out`.
+
+### More than one replica
+
+Every replica may drain the queue. There are three guards, and the provider key stays `tn:<row id>` on every attempt:
+
+1. One drain at a time per line, across processes, through a Postgres advisory lock (`blooio-line:<line>`). Receipt lookups for rows in `unknown_acceptance` run before the lock, so canonical erasure never waits on remote I/O. Their commit is conditional on the row's status, so a receipt is committed once.
+2. A conditional claim before the provider call. The update to `sending` happens only if the row still has the status the drain read and no lease, and it sets a lease (`leaseMs`, 5 minutes). A worker whose claim fails leaves the row to the worker that claimed it and does not end it.
+3. `recover()` hands a `sending` row whose lease ran out back to the queue. The worker stopped. With a receipt lookup the row goes to `unknown_acceptance` and is never sent again. Without one it is sent again with the same key, so the provider replays the first result.
+
+Integration case: `packages/blooio/test/outbound-queue.test.ts` runs two workers with their own pools on one database, and each row reaches the provider once.
+
+### The leak guard and the thread
+
+Before a send, the leak guard checks the new text. It also checks the new text together with the texts sent to the same address on the line in the last 24 hours (up to 4 of them; `LeakGuard.checkThread`, core-14). This catches another member's value split across messages. The generic contact patterns run on the new text alone, because two ordinary messages joined can look like a phone number. A thread hit holds the row as `parked_leak_review` with labels prefixed `thread:`. A compliance text is checked on its own text only. Labels are keyed with `LEAK_LABEL_KEY` in staging and production (core-6). `deploy/backend` `loadConfig` refuses to start without it, and `server.ts` calls `setLeakLabelKey`. Dev and the simulations stay unkeyed, so their labels are reproducible.
 
 ## The boundary with `packages/plugin-network`
 
@@ -118,7 +230,7 @@ Two parts of the product talk to members. They have different jobs.
 
 Rules for the boundary:
 
-1. **One owner per inbound message.** The service handles every inbound message it gets. One system answers STOP, START and HELP: `STOP_HELP_OWNER` (default `service`). If Eliza Cloud also gets the line's webhook and answers keywords, set `gateway` and have Cloud report each STOP, STOP ALL and START to `POST /consent/gateway`. Two systems must not both confirm a STOP.
+1. **One owner per inbound message.** The service handles every inbound message it gets. This service answers STOP, START and HELP, inside the signed turn; the gateway only mirrors the reported `consent`. The legacy Blooio webhook must not point at the service while the gateway owns the line, or two systems would confirm a STOP.
 2. **Only this service proposes or contacts members about other members.** The plugin must not send probes, introductions or booked plans. It can read what the Network knows through its own store.
 3. **Joining is a membership.** The platform creates members: a web join (`POST /api/join`) or a join by text on an open app makes the person, the membership and the `network.members` row. For The Network, Cloud's invite gate still creates the `network.members` and `network.channel_identities` rows. An `invited` member is not a member here.
 4. **No shared process state.** The two talk only through Postgres (the `network` schema) and the channel gateway. Nothing here imports Eliza, and the plugin does not import this service.

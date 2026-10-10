@@ -1,12 +1,12 @@
 # Test policy
 
-**Founder decision:** "delete any unit tests and smoke tests, e2e and integration are fine and good". This replaces the 2026-10-08 "simulations only" policy (cleanup merged at b2bb4d6, base 16cde70), which deleted every test except the six-file security suite.
+**Founder decision:** "delete any unit tests and smoke tests, e2e and integration are fine and good". This replaces the 2026-10-08 "simulations only" policy (cleanup merged at b2bb4d6, base 16cde70), which deleted every test except the security suite of that time.
 
 The validation layer is now:
 
 | Layer | Command | What it is |
 |---|---|---|
-| Simulations | `bun run sim` | Every simulation block with its gates on pinned seeds (offline, no Postgres). |
+| Simulations | `bun run sim` | Every simulation block with its gates on pinned seeds (offline, no LLM). The safety, ops, pipeline and audit blocks also use the dev Postgres; CI's sim job has one and fails when they skip. |
 | Integration | `bun run test:integration` | Tests against real Postgres, real HTTP servers, several packages together or the full service. Includes the security suite (`bun run security` runs that subset alone). |
 | E2E | `bun run test:e2e` | `tests/e2e`: the platform and notify driven from the outside through the running service. |
 
@@ -59,7 +59,25 @@ The integration and e2e suites need the dev Postgres (`bun run packages/observat
 | `sites/test/sites.test.ts` | The four built sites against the platform registry, plus the dev proxy server | 70 pass |
 | `packages/network/test/mini.ts` | Helper (`START`, the small world) | |
 
-The security suite, kept on main and now part of the integration suite: `packages/platform/test/db.test.ts`, `packages/platform/test/api-security.test.ts`, `packages/mcp/test/oauth.test.ts`, `deploy/backend/backend.test.ts`, and the helpers `packages/platform/test/pg.ts`, `packages/mcp/test/harness.ts`. `packages/observatory/test/pg.ts` is also a helper.
+The security suite is part of the integration suite. `bun run security` runs it alone. AGENTS.md has the same list. The 11 files (2026-10-09):
+
+| File | What it checks |
+|---|---|
+| `packages/platform/test/db.test.ts` | Platform row-level security and composite keys on Postgres |
+| `packages/platform/test/api-security.test.ts` | CSRF, enumeration limits and abuse limits on the public API |
+| `packages/platform/test/proxy.test.ts` | The trusted proxy: the router's signed client IP and host, under 60 s old |
+| `packages/platform/test/cloud-auth.pg.test.ts` | Eliza Cloud phone sign-in through the signed site router and platform sessions |
+| `packages/platform/test/notify-retention.pg.test.ts` | Account erasure and Notify retention |
+| `packages/mcp/test/oauth.test.ts` | MCP OAuth with PKCE |
+| `packages/mcp/test/pg.test.ts` | MCP OAuth on Postgres |
+| `deploy/backend/backend.test.ts` | The backend's "two logins" row-level security check |
+| `deploy/router.test.ts` | The site router strips client-sent proxy headers and signs its own |
+| `packages/network/test/shared-agent.integration.test.ts` | Signed `/internal/turn` calls: replay, isolation between people, STOP, deletion |
+| `packages/observatory/test/staff.test.ts` | Staff roles, Cloudflare Access, the per-member PII reveal and the audit log |
+
+Helpers: `packages/platform/test/pg.ts`, `packages/mcp/test/harness.ts`, `packages/observatory/test/pg.ts`.
+
+The slop.date path gate is `packages/network/test/slop-date-path.integration.test.ts`: join by text, onboarding, review approval, a yes from both people, the booked date, the check-in, a report that reaches the safety queue, and the pair kept apart.
 
 Run on 2026-10-08 against a private Postgres 16 cluster: `bun run test:integration` 413 pass, 0 fail, 0 skip across 31 files (about 5.5 minutes); `bun run test:e2e` 27 pass, 0 fail.
 
@@ -92,7 +110,7 @@ Run on 2026-10-08 against a private Postgres 16 cluster: `bun run test:integrati
 - `packages/notify/test/notify.test.ts`
 - `packages/observatory/test/{scoring,scrub,web-escape,web-sinks}.test.ts`
 - `packages/platform/test/{apps,body,consent,env,otp,phone,safety,sessions,turnstile}.test.ts` (in-memory, `createPublicApi` with fakes; the Postgres and HTTP paths are in `api.test.ts`, `db.test.ts` and `api-security.test.ts`), `fixtures/opt-out.jsonl` (now in `evals/`)
-- `packages/plugin-network/test/*` (mock runtime). `runtime-construction.test.ts` builds a real Eliza `AgentRuntime` and would count as integration, but it needs the `eliza` submodule's own install, which the integration job does not have, and the plugin's imports do not resolve in CI yet (the `plugin-network` job is non-blocking). Restore it when that job is blocking.
+- The former plugin package's tests (mock runtime). The plugin moved upstream as `@elizaos/plugin-network` (elizaOS/eliza `plugins/plugin-network`), and its tests live there. This repo keeps only the contract mirror in `packages/core/src/svc/`.
 - `packages/mcp/test/plugins.test.ts` (the plugin snapshots equal a fresh build: `bun run plugins/build.ts --check` in CI does this)
 - `scripts/supply-chain.test.ts`, `scripts/wrangler.test.ts`, `scripts/synthetic/synthetic.test.ts` (static file checks)
 - `sites/test/skill.test.ts`

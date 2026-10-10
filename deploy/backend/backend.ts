@@ -3,8 +3,9 @@
 //
 //   PORT (public)          /api/*                 the platform public API, for the four sites' Worker routers
 //                          /webhooks/blooio[/app] the inbound line webhooks (signature checked by the service)
-//                          /consent/gateway       the STOP/HELP gateway's consent reports (STOP_HELP_OWNER=gateway; signed with
-//                                                 STOP_HELP_GATEWAY_SECRET, checked by the service; 409 when the service owns keywords)
+//                          /internal/turn, /internal/turn-receipt, /internal/set-state, /internal/signals, /internal/updates
+//                                                 the Eliza gateway's signed calls (SERVICE_TURN_SECRET, checked by the service; STOP,
+//                                                 START, HELP and leave are answered inside the turn). A body over 256 KiB is refused here.
 //                          /mcp, /oauth/*, /.well-known/oauth-*   the MCP server (packages/mcp, mounted by server.ts; 404 when off)
 //                          /healthz               liveness for the platform health check and the external uptime monitor
 //                                                 (no data, no auth; 503 when the database is down or a network's tick is late)
@@ -30,6 +31,9 @@ export const CLIENT_IP = PROXY_HEADERS.ip;
 export const BUILD_HEADER = "x-network-build";
 const STRIP = ["x-forwarded-host", "x-forwarded-for", "x-forwarded-proto", "x-real-ip", "forwarded", "true-client-ip"];
 const PROXY_PREFIXES = ["x-network-proxy-", "x-ntwrk-proxy-"];
+/** The Eliza gateway's signed routes (served by the service) and their body cap (the service's MAX_BODY_BYTES). */
+const INTERNAL_PATHS = new Set(["/internal/turn", "/internal/turn-receipt", "/internal/set-state", "/internal/signals", "/internal/updates"]);
+const MAX_INTERNAL_BODY = 256 * 1024;
 
 // ------------------------------------------------------------------ config
 
@@ -57,6 +61,8 @@ export interface BackendConfig {
   tickLateMs: number;
   /** Monitoring, alerts and budgets (ops.ts; docs/deploy.md section 7). */
   ops: OpsConfig;
+  /** Staging and production: the key for the leak guard's labels (LEAK_LABEL_KEY, 32+ bytes). server.ts passes it to setLeakLabelKey. Dev: undefined. */
+  leakLabelKey?: string;
   warnings: string[];
 }
 
@@ -86,6 +92,9 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   if (missing.length) throw new Error(`PLATFORM_ENV=${env} needs ${missing.join(", ")}`);
   if (proxySecret && proxySecret.length < SECRET_MIN) throw new Error(`PLATFORM_PROXY_SECRET must be at least ${SECRET_MIN} characters`);
   if (deployed && e.PLATFORM_HASH_KEY!.length < SECRET_MIN) throw new Error(`PLATFORM_HASH_KEY must be at least ${SECRET_MIN} characters`);
+  // The leak guard's log labels are keyed in staging and production (core-6); dev and sims stay unkeyed and reproducible.
+  const leakLabelKey = deployed ? e.LEAK_LABEL_KEY : undefined;
+  if (deployed && (!leakLabelKey || new TextEncoder().encode(leakLabelKey).length < SECRET_MIN)) throw new Error(`PLATFORM_ENV=${env} needs LEAK_LABEL_KEY of at least ${SECRET_MIN} bytes`);
 
   const warnings: string[] = [];
   const num = (name: string, v: string | undefined, dflt: number) => {
@@ -140,6 +149,7 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
     tickMs,
     tickLateMs: Number(e.TICK_LATE_MS ?? Math.max(15 * 60_000, 3 * tickMs)),
     ops,
+    ...(leakLabelKey ? { leakLabelKey } : {}),
     warnings,
   };
 }
@@ -325,8 +335,9 @@ export function createBackend(d: BackendDeps) {
         // Deployed, only a request a site router signed may name a site (audit: a direct request with
         // Host: slop.date was served as slop.date, and every such request shared one socket IP).
         res = c.deployed && !n.edge ? json(421, { ok: false, error: "edge_required" }) : await track(svc.publicFetch(n.req, server));
-      } else if (path === "/webhooks/blooio" || path.startsWith("/webhooks/blooio/") || path === "/consent/gateway" || path === "/internal/turn" || path === "/internal/turn-receipt" || path === "/internal/set-state" || path === "/internal/signals" || path === "/internal/updates") {
-        res = await track(svc.fetch(req));
+      } else if (path === "/webhooks/blooio" || path.startsWith("/webhooks/blooio/") || INTERNAL_PATHS.has(path)) {
+        // A declared body over the cap is refused before the service reads or verifies it (the service caps the read too).
+        res = INTERNAL_PATHS.has(path) && Number(req.headers.get("content-length") ?? "0") > MAX_INTERNAL_BODY ? json(413, { ok: false, error: "payload_too_large" }) : await track(svc.fetch(req));
       } else if (MCP_PATH.test(path)) {
         // The MCP server sees the same normalized request as the public API: Host is the site's host only via a verified edge.
         const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)());

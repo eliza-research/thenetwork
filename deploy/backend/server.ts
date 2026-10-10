@@ -25,9 +25,12 @@ const { NetworkService, webhookSecretsFromEnv } = await import("../../packages/n
 const { createServiceMcp } = await import("../../packages/network/service/serve.ts");
 const { createOps, PgAlertStore, runtimeProbe } = await import("./ops.ts");
 const { photoRaterFromEnv } = await import("../../packages/platform/src/photos.ts");
+const { setLeakLabelKey } = await import("../../packages/core/src/guard.ts");
 
 async function main() {
   const c = loadConfig(process.env, process.argv);
+  // Keyed leak labels in staging and production (core-6); loadConfig refused to start without the key.
+  if (c.leakLabelKey) setLeakLabelKey(c.leakLabelKey);
   log.info("starting", { env: c.env, build: c.build, host: c.host, port: c.port, staffPort: c.staff?.port ?? null, channel: c.channel, migrateOnBoot: c.migrateOnBoot });
   for (const w of c.warnings) log.warn(w);
 
@@ -60,8 +63,10 @@ async function main() {
   }
 
   const clock = new RealClock();
-  // The slop.date photo rater (AGENTS.md decision 12): off unless CLEF_RATINGS=on with the Workers AI
-  // token, the account id and fitted weights (CLEF_WEIGHTS_PATH, version and provenance). Off: photos still work.
+  // The slop.date photo rater (AGENTS.md decisions 12 and 13): on by default (CLEF_RATINGS=off turns it
+  // off) when the Workers AI token and account id are set; the placeholder Clef weights unless
+  // CLEF_WEIGHTS_PATH names fitted weights (version and provenance). The status and the weights version
+  // are logged here. Off: photos still work.
   const raterEnv = await photoRaterFromEnv(process.env, { log: s => log.warn(s) });
   const photoRater = raterEnv.rater;
   const raterLog = { status: raterEnv.status, rater: photoRater?.id ?? "off", weights: raterEnv.weights ?? null, detail: raterEnv.detail ?? null };

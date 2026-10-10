@@ -566,6 +566,15 @@ export class GameSource implements DataSource {
     const n = this.consent;
     if (!n) return { ok: false, error: "safety actions need the consent Network", code: "no_consent_network" };
     const note = a.note?.trim() || undefined;
+    if (a.action === "clear_minor") {
+      // The simulated world has one app: clear the signal and dismiss the member's open minor reports.
+      const c = n.clearMinorSignal(a.memberId, actor, note);
+      if (!c.ok) return { ok: false, error: SAFETY_ERRORS[c.reason] ?? c.reason, code: c.reason };
+      for (const r of n.safetyReports()) if (r.kind === "minor" && r.subjectId === a.memberId && r.status === "open") n.dismissReport(r.id, actor, note);
+      await this.settle();
+      this.push();
+      return { ok: true };
+    }
     if (a.action !== "lift" && a.action !== "close") return { ok: false, error: SAFETY_ERRORS.service_only, code: "service_only" };
     const r = a.action === "lift" ? n.liftHold(String(a.memberId ?? ""), actor, note) : n.closeCase(String(a.caseId ?? ""), actor, note);
     if (!r.ok) return { ok: false, error: SAFETY_ERRORS[r.reason] ?? r.reason, code: r.reason };

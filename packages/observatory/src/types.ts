@@ -520,7 +520,27 @@ export type SafetyAction =
   | { action: "hold"; memberId: MemberId; note: string; reportId?: string }
   /** Ban by phone (the number can never join again) or by person (every phone of the person). PRD 40.5: ban by person, not by account. */
   | { action: "ban"; memberId: MemberId; by: "phone" | "person"; note: string; reportId?: string }
-  | { action: "dismiss"; reportId: string; note: string };
+  | { action: "dismiss"; reportId: string; note: string }
+  /**
+   * After the person's record says adult: clear the minor signal on every app the staff member may act on,
+   * and dismiss the member's open "minor" reports (one action instead of one per app). Real mode: the Network service.
+   */
+  | { action: "clear_minor"; memberId: MemberId; note: string };
+
+// ---------------------------------------------------------------- held texts (leak review, relay)
+/** A queue of outbound texts that wait for staff: the leak guard's parked texts, or relay items held for a check. */
+export type HeldQueue = "leak" | "relay";
+/**
+ * One held text as the console shows it. Only these fields pass (never a score or a rating). `text` is
+ * left out for a member under 18 or with an unknown age (`textHidden`).
+ */
+export interface HeldText {
+  id: string; queue: HeldQueue; kind?: string; to?: string; memberId?: string; createdAt?: number;
+  /** Why it was held (the leak guard's labels, or the relay check's reason codes). */
+  reasons: string[];
+  text?: string;
+  textHidden?: "minor";
+}
 
 // ---------------------------------------------------------------- configuration (gaps 10, 17)
 export interface ConfigChange {

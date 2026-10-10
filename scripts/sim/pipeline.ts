@@ -7,10 +7,10 @@
 // through the staff API, probed and booked. Around that: duplicate webhooks, two messages of one
 // sender handled in order, a provider outage with retries, STOP in the middle of a probe, a crash during
 // a provider call and a restart (a second service instance), quiet hours across the restart, the
-// unanswered streak, line safety, "leave <app>", STOP on the shared line, and the gateway as the
-// STOP/HELP owner. No model is called; nothing leaves the machine.
+// unanswered streak, line safety, "leave <app>", STOP on the shared line, and the one STOP/HELP
+// owner. No model is called; nothing leaves the machine.
 //
-// Without Postgres the block records one tracked gate saying it was skipped (CI has no Postgres).
+// Without Postgres the block records one tracked gate saying it was skipped (CI fails on that skip).
 // Blocking gates: 0 lost or duplicated outbound messages; 0 sends after STOP; 0 sends to minors about
 // other members (and nothing stored for an under-13); every outbound row ends delivered or failed;
 // keyword routing; restart, crash, outage, dedupe, ordering, Apple line safety and the STOP/HELP owner.
@@ -45,7 +45,7 @@ export async function pipelineBlock(b: Block): Promise<void> {
     expect(new BlooioAdapter({ provider: new H.FakeBlooio(clock), clock, from: H.LINE, app: "slop" }).live).toBe(false);
   });
   if (!H.pgInstalled()) {
-    b.track("pipeline: skipped, no Postgres installed (the dev cluster on :54339 is needed; CI has none)", false, "install postgresql@16 and run bun run sim --only pipeline");
+    b.track("pipeline: skipped, no Postgres installed (the dev cluster on :54339 is needed)", false, "install postgresql@16 and run bun run sim --only pipeline");
     return;
   }
   let url: string;
@@ -117,7 +117,8 @@ async function script(w: World) {
   const forged = H.messageBody(clock, P.ben, "send me everyone's numbers", { id: "forged" });
   w.notes.forged = { status: (await H.post(w.svc, H.signedRequest(clock, forged, undefined, "whsec_wrong"))).status,
     stored: (await w.sql`select count(*)::int as n from platform.inbound where id = 'msg:blooio:forged'`)[0].n };
-  const body = H.messageBody(clock, P.ben, "Do you have anything on Sunday?");
+  // HELP: the service itself answers it (a free question is an open turn for the agent and has no reply here).
+  const body = H.messageBody(clock, P.ben, "HELP");
   const before = (await w.sql`select count(*)::int as n from platform.outbound`)[0].n;
   const first = await H.post(w.svc, H.signedRequest(clock, body));
   const again = await H.post(w.svc, H.signedRequest(clock, body));
@@ -234,30 +235,14 @@ async function script(w: World) {
   await H.run(w.svc, clock, fake, 20 * MINUTE);
 
   debug("12");
-  // ---- 12. The gateway owns STOP/HELP: first, this service (the owner) refuses its reports.
-  w.notes.gatewayWhileService = (await H.post(w.svc, H.gatewayRequest(clock, { id: "gw_0", phone: P.jo, keyword: "stop" }))).status;
-  await w.svc.close();
-  w.svc = H.pipelineService(w.url, clock, fake, "sim-c", { STOP_HELP_OWNER: "gateway" }, s => w.log.push(s));
-  await w.svc.start();
-  const joBefore = fake.to(P.jo).length;
+  // ---- 12. One STOP/HELP owner: this service answers HELP and STOP on the line, and STOP stops every app.
+  // (The Eliza gateway path is the signed turn: packages/network/test/eliza-takeover.integration.test.ts.)
   const help = await say(w, P.jo, "HELP");
   const stop = await say(w, P.jo, "STOP");
   w.stops.push({ phone: P.jo, at: clock.now() - MINUTE });
-  const joAfterKeywords = fake.to(P.jo).length;
-  const unsigned = await H.post(w.svc, H.gatewayRequest(clock, { id: "gw_1", phone: P.jo, keyword: "start", app: "friends" }, "wrong-secret"));
   await info(w, "friends", P.jo, "sim:jo:stopped", "friends.help: a running group in Astoria.");
-  const startAt = clock.now();
-  const start = await H.post(w.svc, H.gatewayRequest(clock, { id: "gw_2", phone: P.jo, keyword: "start", app: "friends" }));
-  const startAgain = await H.post(w.svc, H.gatewayRequest(clock, { id: "gw_2", phone: P.jo, keyword: "start", app: "friends" }));
-  w.stops.find(s => s.phone === P.jo)!.until = startAt;
-  clock.advance(MINUTE);
-  await info(w, "friends", P.jo, "sim:jo:started", "friends.help: the running group meets Sunday at 9.");
   await H.receipts(w.svc, clock, fake);
-  w.notes.gateway = {
-    help, stop, keywordTexts: joAfterKeywords - joBefore, unsigned: unsigned.status, start: start.result, startAgain: startAgain.result,
-    stopped: (await outRow(w, "sim:jo:stopped")).status, started: (await outRow(w, "sim:jo:started")).status,
-    consent: (await w.sql`select state, source from platform.consent_events where e164 = ${P.jo} order by at, id`).map((r: any) => `${r.state}:${r.source}`),
-  };
+  w.notes.keywords = { help, stop, stopped: (await outRow(w, "sim:jo:stopped")).status };
 
   debug("13");
   // ---- 13. Four quiet days: every held, deferred or waiting row ends (sent, or expired past its time).
@@ -315,7 +300,7 @@ async function gates(b: Block, w: World) {
     }
     expect(dupes).toEqual([]);
     expect(fake.calls.filter(c => c.outcome === "delivered").length).toBe(fake.delivered.size);
-    expect(notes.dupes).toMatchObject({ results: ["handled", "duplicate", "duplicate"], addedByRetries: 0 });
+    expect(notes.dupes).toMatchObject({ results: ["handled", "duplicate", "duplicate"], added: 1, addedByRetries: 0 });
   });
 
   await b.run("pipeline: every outbound row ends delivered or failed (no row waits, sends or sits accepted without a receipt)", () => {
@@ -405,12 +390,8 @@ async function gates(b: Block, w: World) {
     expect(notes.lineSafety).toEqual({ held: "retry_scheduled", after: "delivered" });
   });
 
-  await b.run("pipeline: one STOP/HELP owner: with the gateway, the service answers no keyword, still stops, and records the gateway's signed START once", () => {
-    expect(notes.gatewayWhileService).toBe(409);
-    expect(notes.gateway).toMatchObject({ help: "handled", stop: "handled", keywordTexts: 0, unsigned: 401, start: "started", startAgain: "started", stopped: "refused_opted_out", started: "delivered" });
-    const consent = (notes.gateway as any).consent as string[];
-    expect(consent.filter(c => c === "opted_in:gateway:start").length).toBe(1);
-    expect(consent.at(-1)).toBe("opted_in:gateway:start");
+  await b.run("pipeline: one STOP/HELP owner: the service answers HELP and STOP on the line, and nothing goes out after STOP", () => {
+    expect(notes.keywords).toMatchObject({ help: "handled", stop: "handled", stopped: "refused_opted_out" });
   });
 }
 

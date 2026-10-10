@@ -502,9 +502,11 @@ Do this once before the first real member joins, then on the first working day o
 
    ```bash
    RESTORE_DATABASE_URL=<the owner URL, from Railway> BACKUP_R2_ACCOUNT_ID=... BACKUP_R2_BUCKET=ntwrk-backups \
-   BACKUP_R2_ACCESS_KEY_ID=... BACKUP_R2_SECRET_ACCESS_KEY=... BACKUP_PREFIX=postgres/production \
+   BACKUP_R2_ACCESS_KEY_ID=... BACKUP_R2_SECRET_ACCESS_KEY=... BACKUP_PREFIX=postgres/production BACKUP_ENCRYPTION_KEY=... \
      bun run deploy/backup/restore.ts --r2 latest --db restore_drill_$(date -u +%Y%m%d)
    ```
+
+   The drill restores with `--no-owner --no-privileges` and never runs `roles.sql`, so it cannot change a role or a grant of the production server. Do not add `--roles` or `--keep-privileges` for a drill.
 
 3. Pass: the last line is `"msg":"restore checked"` with `"mismatches":0`, and the exit code is 0. Write down the backup time, the tables, the rows and the time the restore took.
 4. Spot check in the scratch database: `select count(*) from platform.people;`, `select max(saved_at) from network.network_state;` (close to the backup time), `select id, applied_at from public.__migrations order by applied_at desc limit 3;` (the current migrations).
@@ -517,7 +519,7 @@ Do this once before the first real member joins, then on the first working day o
 ### 8.3 Restore for real (data loss or corruption) **[FOUNDER]**
 
 1. Stop the backend's ticks: set the `backend` service's replicas to 0. Nothing is sent while it is stopped.
-2. Restore into a new database, as in 8.2 step 2, with `--db network_restored_<date>`. Pick the backup from before the problem (`--r2 postgres/production/<UTC time>`).
+2. Restore into a new database, as in 8.2 step 2, with `--db network_restored_<date> --keep-privileges` (the service and console logins need their grants). Pick the backup from before the problem (`--r2 postgres/production/<UTC time>`). Add `--roles` only when the target is a new, empty server: the script refuses it on the source server.
 3. Check: `"mismatches":0`, and the spot checks of 8.2 step 4.
 4. In the restored database, create the service and console logins again only if they do not exist on that server (the dump keeps the roles without passwords). Set new passwords and update the variables.
 5. Point `NETWORK_DATABASE_URL`, `MIGRATION_DATABASE_URL` and the console's URLs at the restored database. Start the backend (replicas 1). The boot log must show `applied: 0` (or only the migrations newer than the backup).
@@ -532,6 +534,8 @@ Do this once before the first real member joins, then on the first working day o
 | `send_failures:<network>` | `/ops/metrics` shows the outcomes. Check Blooio's status and the line's health. Over 2% for a day is a pause condition in the pilot (mvp-plan). |
 | `review_sla:<network>` | Open the console's Review tab for that app. Items past the SLA expire unsent; nobody was contacted. |
 | `safety_minor:<network>` or an urgent `safety_report` | The safety on-call opens the console's Safety tab now. Hold first, then decide (admin-console.md 3.7.1). |
+| `safety_signal:<network>` | The safety on-call reads the waiting signals (service `GET /signals`) and decides each one. |
+| `bias_report:<network>` | An admin or analyst opens the bias panel (Metrics) and records what to do in the incident log. |
 | `queue_outbound` or `queue_review` | Check the review staffing, and Blooio for held or deferred messages. |
 | Backup heartbeat missing (`BACKUP_HEARTBEAT_URL`) | Railway → `backup` → the last run's log: `"msg":"backup failed"` gives the step. Run the job again by hand (Railway → `backup` → Deploy). Two days without a backup: tell the founder. |
 | `budget:*` | The console's Metrics → Cost panel shows which kind grew. Tell the founder at 100%. |

@@ -1,6 +1,6 @@
 // A data source feeds the observatory: the simulated world (game mode) or Postgres (real mode).
 import type {
-  BiasReportView, ConfigInfo, ControlCommand, ControlResult, MemberDetail, MemberPhoto, MemberTimeline, Mode, ObsDelta, ObsState, OpportunityDetail, SafetyAction,
+  BiasReportView, ConfigInfo, ControlCommand, ControlResult, HeldQueue, HeldText, MemberDetail, MemberPhoto, MemberTimeline, Mode, ObsDelta, ObsState, OpportunityDetail, SafetyAction,
   SafetyInfo, SearchHit,
 } from "../types.ts";
 
@@ -33,6 +33,12 @@ export interface DataSource {
   photos?(memberId: string, actor: string, reason: string): Promise<{ ok: true; photos: MemberPhoto[] } | ControlResult>;
   /** The weekly bias monitor reports (real mode: the Network service, GET /bias). Absent: the simulation has none here (bun run sim measures it). */
   bias?(actor: string): Promise<{ ok: true; reports: BiasReportView[] } | { ok: false; error: string }>;
+  /**
+   * Texts held for staff (real mode: the Network service's leak review and held relay routes). The text of
+   * a member under 18, or with an unknown age, is left out. Absent: the simulation has none here.
+   */
+  held?(queue: HeldQueue, actor: string): Promise<{ ok: true; items: HeldText[] } | { ok: false; code: string; error: string }>;
+  heldDecision?(queue: HeldQueue, id: string, decision: "release" | "reject", reason: string, actor: string): Promise<ControlResult>;
   /** Outbound agent messages and system events only; never what a member wrote (gap 18). */
   search(q: string, limit?: number): Promise<SearchHit[]>;
   /** Deltas pushed as the source changes (about 4 per second while anything changes). */
@@ -82,7 +88,9 @@ export const REVIEW_BLOCK_ERRORS: Record<string, string> = {
 /** Why a safety action was refused. */
 export const SAFETY_ERRORS: Record<string, string> = {
   not_on_hold: "that member is not on hold", unknown_case: "no such case", already_closed: "that case is already closed",
-  actor_required: "a staff name is required", unknown_action: "action must be lift, close, hold, ban or dismiss",
+  actor_required: "a staff name is required", unknown_action: "action must be lift, close, hold, ban, dismiss or clear_minor",
   service_only: "hold, ban and dismiss go to the Network service: real mode with NETWORK_SERVICE_URL",
   unknown_member: "no such member", unknown_report: "no such report", already_banned: "that person is already banned",
+  no_signal: "there is no minor signal to clear", age_unknown: "the member's record has no age: set it first",
+  record_minor: "the member's record says under 18: nothing was cleared", stated_minor: "the member said an age under 18: nothing was cleared",
 };

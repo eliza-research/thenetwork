@@ -22,15 +22,22 @@ export function mountAuth(root: HTMLElement, onSignedIn: () => Promise<void> | v
   const submit = form.querySelector<HTMLButtonElement>("button[type=submit], button:not([type])");
   const busyLabel = submit?.dataset.busy;
   if (submit) submit.dataset.busy = "Loading sign-in…";
-  void busy(form, () => api.authMode()).then(mode => {
+  // A transient failure (5xx, network) is retried; after that the phone-code flow is the fallback.
+  const lookup = async () => {
+    for (let attempt = 0; ; attempt++) {
+      const mode = await api.authMode();
+      if (mode.ok || mode.status === 404 || attempt >= 2) return mode;
+      await new Promise(resolve => setTimeout(resolve, 1000 * 2 ** attempt));
+    }
+  };
+  void busy(form, lookup).then(mode => {
     if (submit) {
       if (busyLabel === undefined) delete submit.dataset.busy;
       else submit.dataset.busy = busyLabel;
     }
     if (!mode.ok) {
-      // Older, unconfigured backends keep the existing phone-code flow.
-      if (mode.status === 404) mountOtpAuth(root, onSignedIn);
-      else setError(root, "Sign-in is unavailable. Try again.");
+      // Older, unconfigured backends, and a mode lookup that keeps failing, keep the phone-code flow.
+      mountOtpAuth(root, onSignedIn);
       return;
     }
     if (mode.data.mode !== "cloud") { mountOtpAuth(root, onSignedIn); return; }
@@ -46,7 +53,7 @@ export function mountAuth(root: HTMLElement, onSignedIn: () => Promise<void> | v
     if (error) form.append(error);
     form.addEventListener("submit", async event => {
       event.preventDefault();
-      const result = await busy(form, () => api.cloudAuthStart(location.pathname));
+      const result = await busy(form, () => api.cloudAuthStart(location.pathname.startsWith("/settings") ? "/settings" : "/join"));
       if (!result.ok) { setError(form, "Sign-in is unavailable. Try again."); return; }
       location.assign(result.data.url);
     });

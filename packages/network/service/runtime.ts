@@ -23,7 +23,7 @@ import type { City, Clock, MemberId, WorldSnapshot } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import type { NetworkContext, SimMessage } from "@thenetwork/core";
 import { ConsentNetwork, type NetworkOptions, type NetworkState } from "../src/network.ts";
-import { PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
+import { loadRelayRows, PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
 import { capitalWiring, type CapitalEvent } from "../src/capital.ts";
 import type { AppInfo } from "../../platform/src/apps.ts";
 import { effectiveParticipation, loadSnapshot } from "./snapshot.ts";
@@ -161,9 +161,10 @@ export class NetworkRuntime {
   // ------------------------------------------------------------------ send-time checks of the persisted queue
   /** Consent at send time for one queued message: the platform consent ledger (and bans), then the member's own opt-out. */
   async optedOut(id: string, memberId: MemberId | undefined, to: string): Promise<boolean> {
-    if (!memberId) return false;
-    const probe: Outbound = { id, memberId, to, body: "", kind: "transactional", proactive: false, system: false, ts: this.clock.now() };
+    // The platform consent ledger, suppression and bans by address: also for a direct text to a non-member.
+    const probe: Outbound = { id, memberId: memberId ?? ("" as MemberId), to, body: "", kind: "transactional", proactive: false, system: false, ts: this.clock.now() };
     if ((await this.host.consentRefused?.(this, [probe]))?.has(id)) return true;
+    if (!memberId) return false;
     const [r] = await this.scoped(tx => tx`select opted_out from network.members where app_id = ${this.app.id} and id = ${memberId}`);
     return r?.opted_out === true;
   }
@@ -184,9 +185,12 @@ export class NetworkRuntime {
 
   /** The stored state of this network (inside an app-scoped transaction). */
   private async loadState(): Promise<NetworkState | undefined> {
-    const [r] = await this.scoped(tx => tx`select state from network.network_state where id = ${this.pg.id}`);
-    const s = r?.state;
-    return s === undefined ? undefined : ((typeof s === "string" ? JSON.parse(s) : s) as NetworkState);
+    return this.scoped(async tx => {
+      const [r] = await tx`select state from network.network_state where id = ${this.pg.id}`;
+      const s = r?.state;
+      // A state without its relay log gets it back from network.relay_records (store.ts).
+      return loadRelayRows(tx, s === undefined ? undefined : ((typeof s === "string" ? JSON.parse(s) : s) as NetworkState), this.app.id);
+    });
   }
 
   /**
@@ -552,7 +556,7 @@ export class NetworkRuntime {
         return m.id === memberId ? [m.id] : [m.id, m.name, ...(first.toLowerCase() !== firstName.toLowerCase() ? [first] : [])];
       })];
       const facts = [...snapshot.facets.filter(f => f.scope === "agent_private").map(f => f.value),...(participation.window?.note?[participation.window.note]:[])];
-      const safe = (text: string) => outputLeaks(text, {forbidden, facts}).length === 0;
+      const safe = (text: string) => outputLeaks(text, {forbidden, facts, contacts: true}).length === 0;
       if (!safe(firstName) || !safe(member.homeCity)) return null;
       const facets = snapshot.facets.filter(f => f.memberId === memberId && f.scope === "shareable" && f.confirmedByMember === true
         && !f.sensitive && (f.validFrom === undefined || f.validFrom <= snapshot.now) && (f.validTo === undefined || f.validTo > snapshot.now)

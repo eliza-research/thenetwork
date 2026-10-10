@@ -5,7 +5,11 @@
 // teeth), and the conformance rules for peonPack on peon worlds.
 // PINNED (CI): seeds 13-16, 8 weeks (docs/results/2026-10-08-peon-pack.md, iteration 3 held-out).
 // --quick: seed 13, 4 weeks; only the safety gates block.
-import { canBeMatched } from "../../packages/core/src/index.ts";
+import { canBeMatched, DAY, type Facet, type Member, type Presence } from "../../packages/core/src/index.ts";
+import { runEngine } from "../../packages/engine/src/engine.ts";
+import { JOB_INTENT, T } from "../../packages/engine/src/packs/peon/schema.ts";
+import { isSeatId, peonSeatCapacity, peonSeats, seatIdOf } from "../../packages/engine/src/packs/peon/seats.ts";
+import type { EngineInput, InteractionRecord } from "../../packages/engine/src/types.ts";
 import { PEON_ENGINE_CONFIG, peonPack } from "../../packages/engine/src/packs/peon/index.ts";
 import { peonTestWorld } from "../../packages/engine/src/packs/peon/testkit.ts";
 import { ARMS } from "../../packages/sim/src/apps/peon/arms.ts";
@@ -70,10 +74,84 @@ export async function peonBlock(b: Block, o: { quick: boolean }): Promise<void> 
     void keywordMatcher;
   });
 
+  await b.run("service seats: job postings fill seats one member per opening; filled and closed postings get no new match; minors never matched", async () => {
+    for (const seed of o.quick ? [1] : [1, 2]) {
+      const { input, posted, closed, minorOwned } = postingWorld(seed);
+      const minors = new Set(input.members.filter(m => !canBeMatched(m.age)).map(m => m.id));
+      const interactions: InteractionRecord[] = [];
+      const filled = new Map<string, number>();
+      let proposals = 0, now = input.now;
+      for (let round = 0; round < 5; round++) {
+        // The service path: the snapshot builds seats from postings, the peon hook keeps their capacity.
+        const run = peonSeatCapacity({ ...peonSeats({ ...input, now }), now, interactions: [...interactions] });
+        const r = await runEngine(run, { ...PEON_ENGINE_CONFIG, seed }, { pack: peonPack });
+        for (const p of r.proposals) {
+          const seat = p.participants.find(isSeatId);
+          expect(seat === undefined).toBe(false);
+          expect(p.participants.some(id => minors.has(id))).toBe(false);
+          expect(closed.has(seat!)).toBe(false);
+          expect(minorOwned.has(seat!)).toBe(false);
+          // Worst case: every intro is accepted at once, so each one takes an opening.
+          interactions.push({ id: `${seed}-${round}-${p.id}`, kind: p.kind, category: "professional", participants: [...p.participants], at: now, outcome: "accepted" });
+          filled.set(seat!, (filled.get(seat!) ?? 0) + 1);
+          proposals++;
+        }
+        for (const [seat, n] of filled) expect(n).toBeLessThanOrEqual(posted.get(seat) ?? 0);
+        now += 7 * DAY;
+      }
+      expect(proposals).toBeGreaterThan(5);
+      // Some seat filled to its openings and then stopped (the gate is not vacuous).
+      expect([...filled].some(([seat, n]) => n === posted.get(seat) && n > 0)).toBe(true);
+    }
+  });
+
   // Conformance on two kinds of peon world: the engine's hiring world, and the simulated snapshot (minors 13-17, canaries).
   await conformance(b, peonPack, { world: seed => peonTestWorld({ seed, candidates: 90, jobs: 20, minorShare: 0.15 }), cfg: PEON_ENGINE_CONFIG, seeds: o.quick ? [1, 2] : [1, 2, 3, 4], label: "hiring world" });
   await conformance(b, peonPack, {
     seeds: [1, 2], cfg: PEON_ENGINE_CONFIG, label: "simulated snapshot",
     world: seed => { const pop = generatePeonPopulation({ seed, perCity: 120, jobsPerCity: 30, minorShare: 0.08 }); return buildPeonSnapshot(pop, emptyState(pop, 6)); },
   });
+}
+
+/**
+ * The engine's hiring world rewritten as the service stores it: one hiring manager per company, each
+ * job a posting (an intent "peon:job" of the manager, its facets tagged peon:posting:<intent id>).
+ * Every fourth posting is closed; one company's manager is 16 (a minor's postings never get a seat).
+ */
+function postingWorld(seed: number): { input: EngineInput; posted: Map<string, number>; closed: Set<string>; minorOwned: Set<string> } {
+  const w = peonTestWorld({ seed, candidates: 90, jobs: 20, minorShare: 0.15 });
+  const jobIds = new Set(w.facets.filter(f => f.tags.includes(`${T.entity}job`)).map(f => f.memberId));
+  const companyOf = new Map(w.facets.flatMap(f => f.tags.filter(t => t.startsWith(T.company)).map(t => [f.memberId, t.slice(T.company.length)] as const)));
+  const companies = [...new Set([...jobIds].map(id => companyOf.get(id)!))].sort();
+  const owner = (job: string) => `hm-${companyOf.get(job)}`;
+  const minorCompany = companies[0];
+  const posted = new Map<string, number>(), closed = new Set<string>(), minorOwned = new Set<string>();
+  const members: Member[] = w.members.filter(m => !jobIds.has(m.id));
+  const jobMember = new Map(w.members.map(m => [m.id, m]));
+  for (const co of companies) {
+    const j = [...jobIds].find(id => companyOf.get(id) === co)!;
+    members.push({ ...jobMember.get(j)!, id: `hm-${co}`, age: co === minorCompany ? 16 : 34 });
+  }
+  const intents = w.intents.map((i, k) => {
+    if (!jobIds.has(i.memberId)) return i;
+    const seat = seatIdOf(i.id);
+    const status = k % 4 === 0 ? "closed" as const : "active" as const;
+    if (status === "closed") closed.add(seat);
+    if (companyOf.get(i.memberId) === minorCompany) minorOwned.add(seat);
+    return { ...i, memberId: owner(i.memberId), details: `${JOB_INTENT} openings`, status };
+  });
+  const postingOf = new Map(w.intents.filter(i => jobIds.has(i.memberId)).map(i => [i.memberId, i.id]));
+  const facets: Facet[] = w.facets.filter(f => !f.tags.includes(`${T.entity}job`)).map(f => {
+    if (!jobIds.has(f.memberId)) return f;
+    const pid = postingOf.get(f.memberId)!;
+    for (const t of f.tags) if (t.startsWith(T.openings)) posted.set(seatIdOf(pid), closed.has(seatIdOf(pid)) ? 0 : Number(t.slice(T.openings.length)));
+    return { ...f, memberId: owner(f.memberId), tags: [...f.tags, `${T.posting}${pid}`] };
+  });
+  const presence: Presence[] = [];
+  for (const x of w.presence) {
+    const id = jobIds.has(x.memberId) ? owner(x.memberId) : x.memberId;
+    if (!presence.some(y => y.memberId === id && y.type === x.type)) presence.push({ ...x, memberId: id });
+  }
+  const edges = w.edges.map(e => ({ ...e, from: jobIds.has(e.from) ? owner(e.from) : e.from, to: jobIds.has(e.to) ? owner(e.to) : e.to }));
+  return { input: { ...w, members, intents, facets, presence, edges }, posted, closed, minorOwned };
 }

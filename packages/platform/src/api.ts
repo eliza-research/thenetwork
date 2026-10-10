@@ -12,8 +12,8 @@
 // Mount it in any Bun.serve fetch:
 //   const api = createPublicApi({ store, otp, turnstile });
 //   Bun.serve({ fetch: async (req, server) => (await api.fetch(req, server)) ?? new Response("not found", { status: 404 }) });
-import { randomBytes, timingSafeEqual } from "node:crypto";
-import { type AccountHooks, Accounts, parseJoin, publicMembership, type Who } from "./accounts.ts";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { type AccountHooks, Accounts, type MemberHookContext, parseJoin, publicMembership, type Who } from "./accounts.ts";
 import { APPS, type AppId, type AppInfo, appForHost, DEFAULT_HOST_MAP, DEV_HOST_MAP, isAppId, publicAppInfo, siteHosts } from "./apps.ts";
 import { devShortcutsAllowed, type Env } from "./env.ts";
 import { type OtpProvider, OtpService, type OtpLimits } from "./otp.ts";
@@ -30,6 +30,8 @@ export interface PublicApiOptions extends AccountHooks {
   otp: OtpProvider;
   /** Local gated Cloud SSO transport; production enablement is not supported by this slice. */
   cloudAuthFetch?: typeof fetch;
+  /** How long a positive Cloud validation is reused per session (default 60 s; 0 checks every request). */
+  cloudValidationTtlMs?: number;
   /** Required outside PLATFORM_ENV=dev (createPublicApi throws without it). In dev, no token is asked for without it. */
   turnstile?: TurnstileVerifier;
   /** Host header -> app. Default: the production names; in dev also the local site ports. */
@@ -54,9 +56,29 @@ export interface PublicApiOptions extends AccountHooks {
   otpLimits?: Partial<OtpLimits>;
   /** Private member photos (photos.ts): /api/photos/*. Without it those paths answer 404. */
   photos?: PhotoService;
+  /**
+   * The member's availability for GET /api/me, read from the member record the Network uses (a pause or
+   * busy window set by text or by the agent, and quiet hours). It is not the messaging consent: a STOP
+   * shows in smsOptedIn, never here. Without it /api/me has no participation field.
+   */
+  participation?: (ctx: MemberHookContext) => Promise<MemberParticipation | null> | MemberParticipation | null;
+  /** POST /api/me/resume: end the member's availability pause (never a STOP: messaging consent stays as it is). 404 without it. */
+  onResume?: (ctx: MemberHookContext) => Promise<void> | void;
   /** GET /api/demo: a synthetic, scrubbed replay for the landing page. 404 without it. */
   demo?: (app: AppId) => unknown | Promise<unknown>;
   log?: (s: string) => void;
+}
+
+/**
+ * The member's availability (GET /api/me). `state` uses the agent contract's words: open, busy,
+ * traveling or paused. `from` and `until` are ISO times or null (null `until`: until the member says
+ * otherwise). `quietHours` is [start hour, end hour] in the member's time, when the member set them.
+ */
+export interface MemberParticipation {
+  state: "open" | "busy" | "traveling" | "paused";
+  from: string | null;
+  until: string | null;
+  quietHours?: [number, number];
 }
 
 /** What Bun.serve passes as the second fetch argument: the socket address of the request. */
@@ -70,6 +92,8 @@ export interface PublicApi {
   sessions: SessionService;
 }
 
+/** How far ahead of us a Cloud phone proof's issuedAt may be (clock skew). */
+const CLOUD_CLOCK_SKEW_MS = 30_000;
 class CloudAuthUnavailableError extends Error {}
 
 const DEV_HASH_KEY = "dev-only-platform-hash-key";
@@ -151,24 +175,56 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
     }
   }
 
-  const seal = (value: unknown) => {
-    const payload = Buffer.from(JSON.stringify(value)).toString("base64url");
-    return `${payload}.${tokenHash(payload, sessionSecret)}`;
+  // Cloud cookies are encrypted and authenticated (AES-256-GCM) with their own key, not the session-token
+  // HMAC, and each carries its kind as associated data: a pending cookie is never accepted as an identity,
+  // and the browser never sees the phone number or the Cloud ids inside.
+  const sealKey = createHash("sha256").update(`cloud-seal:${sessionSecret}`).digest();
+  type SealKind = "cloud-pending" | "cloud-identity";
+  const seal = (kind: SealKind, value: unknown) => {
+    const iv = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", sealKey, iv);
+    cipher.setAAD(Buffer.from(kind));
+    const data = Buffer.concat([cipher.update(JSON.stringify({...(value as object), kind})), cipher.final(), cipher.getAuthTag()]);
+    return `${iv.toString("base64url")}.${data.toString("base64url")}`;
   };
-  const unseal = (value: string | undefined): Record<string, unknown> | null => {
-    const [payload, signature, extra] = (value ?? "").split(".");
-    const expected = payload ? tokenHash(payload, sessionSecret) : "";
-    if (!payload || !signature || extra || expected.length !== signature.length || !timingSafeEqual(Buffer.from(expected), Buffer.from(signature))) return null;
-    try { return JSON.parse(Buffer.from(payload, "base64url").toString()); } catch { return null; }
+  const unseal = (kind: SealKind, value: string | undefined): Record<string, unknown> | null => {
+    const [iv, data, extra] = (value ?? "").split(".");
+    if (!iv || !data || extra) return null;
+    try {
+      const raw = Buffer.from(data, "base64url");
+      if (raw.length < 17) return null;
+      const decipher = createDecipheriv("aes-256-gcm", sealKey, Buffer.from(iv, "base64url"));
+      decipher.setAAD(Buffer.from(kind));
+      decipher.setAuthTag(raw.subarray(raw.length - 16));
+      const parsed = JSON.parse(Buffer.concat([decipher.update(raw.subarray(0, raw.length - 16)), decipher.final()]).toString());
+      return parsed && typeof parsed === "object" && parsed.kind === kind ? parsed : null;
+    } catch { return null; }
   };
-  const identityName = (app: AppId) => `cloud_identity_${app}`;
-  const identityCookie = (app: AppId, value: string, age: number) => `${identityName(app)}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${age}`;
+  // Secure (and the __Host- prefix) outside dev, like the session cookie. Cloud auth runs only in dev today;
+  // this keeps the cookies safe if the gate is ever widened.
+  const identityName = (app: AppId) => (dev ? `cloud_identity_${app}` : "__Host-cloud_identity");
+  const identityCookie = (app: AppId, value: string, age: number) => `${identityName(app)}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${age}${dev ? "" : "; Secure"}`;
+  // A positive Cloud validation is reused for 60 seconds per session, so a Cloud blip or a page load does not
+  // cost a round trip on every request. A denial is never cached.
+  const VALIDATION_TTL_MS = o.cloudValidationTtlMs ?? 60_000;
+  const validated = new Map<string, number>();
   async function cloudSessionStatus(app: AppId, jar: Map<string, string>, token: string): Promise<"valid" | "invalid" | "unavailable"> {
     const cloud = cloudAuth && cloudApp === app ? cloudAuth : undefined;
     if (!cloud) return token.startsWith("cloud.") ? "invalid" : "valid";
-    const identity = unseal(jar.get(identityName(app)));
-    if (!identity || identity.app !== app || identity.sessionHash !== tokenHash(token, sessionSecret)
-      || typeof identity.expiresAt !== "number" || identity.expiresAt <= now()) return "invalid";
+    const identity = unseal("cloud-identity", jar.get(identityName(app)));
+    const sessionHash = tokenHash(token, sessionSecret);
+    if (!identity || identity.app !== app || identity.sessionHash !== sessionHash
+      || typeof identity.expiresAt !== "number" || identity.expiresAt <= now()) { validated.delete(sessionHash); return "invalid"; }
+    if ((validated.get(sessionHash) ?? 0) > now()) return "valid";
+    const {kind: _kind, ...proof} = identity;
+    const status = await validate(cloud, proof);
+    if (status === "valid") {
+      if (validated.size > 10_000) validated.clear();
+      validated.set(sessionHash, now() + VALIDATION_TTL_MS);
+    } else validated.delete(sessionHash);
+    return status;
+  }
+  async function validate(cloud: NonNullable<typeof cloudAuth>, identity: Record<string, unknown>): Promise<"valid" | "invalid" | "unavailable"> {
     try {
       const response = await (o.cloudAuthFetch ?? fetch)(new Request(`${cloud.apiOrigin}/api/auth/sso-bridge/network-validate`, {
         method: "POST", headers: {"content-type": "application/json", origin: cloud.siteOrigin, authorization: `Bearer ${cloud.serverToken}`},
@@ -207,8 +263,10 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       const age = Math.max(0, Math.floor((a.session.expiresAt - now()) / 1000));
       response.headers.append("set-cookie", cookie(appId, a.token, age));
       if (a.token.startsWith("cloud.")) {
-        const identity = unseal(cookies.get(identityName(appId)))!;
-        response.headers.append("set-cookie", identityCookie(appId, seal({...identity, sessionHash: tokenHash(a.token, sessionSecret)}), age));
+        const {kind: _kind, ...identity} = unseal("cloud-identity", cookies.get(identityName(appId)))!;
+        const sessionHash = tokenHash(a.token, sessionSecret);
+        validated.set(sessionHash, now() + VALIDATION_TTL_MS);
+        response.headers.append("set-cookie", identityCookie(appId, seal("cloud-identity", {...identity, sessionHash}), age));
       }
     };
     const post = req.method === "POST";
@@ -260,8 +318,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
     };
 
     const cloud = cloudAuth && cloudApp === appId ? cloudAuth : undefined;
-    const pendingName = `cloud_pending_${appId}`;
-    const pendingCookie = (value: string, age: number) => `${pendingName}=${value}; Path=/api/auth/cloud; HttpOnly; SameSite=Lax; Max-Age=${age}`;
+    const pendingName = dev ? `cloud_pending_${appId}` : "__Secure-cloud_pending";
+    const pendingCookie = (value: string, age: number) => `${pendingName}=${value}; Path=/api/auth/cloud; HttpOnly; SameSite=Lax; Max-Age=${age}${dev ? "" : "; Secure"}`;
     switch (`${req.method} ${path}`) {
       case "GET /api/auth/mode":
         return json(200, {mode: cloud ? "cloud" : "otp"});
@@ -272,7 +330,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         if (!returnPath) return json(400, {ok: false, error: "invalid"});
         const state = randomBytes(32).toString("hex"), verifier = randomBytes(32).toString("hex");
         const challenge = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
-        const signedState = seal({app: appId, state, verifier, returnPath, until: now()+300_000});
+        const signedState = seal("cloud-pending", {app: appId, state, verifier, returnPath, until: now()+300_000});
         const authorize = new URL("/network/sign-in", cloud.loginOrigin);
         authorize.searchParams.set("networkSite", cloud.siteOrigin);
         authorize.searchParams.set("state", state);
@@ -282,7 +340,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       case "GET /api/auth/cloud/callback": {
         if (!cloud) return json(404, {ok: false, error: "not_found"});
         const reject = (status: number) => json(status, {ok: false, error: "cloud_auth_unavailable"}, {"set-cookie": pendingCookie("", 0)});
-        const pending = unseal(cookies.get(pendingName));
+        const pending = unseal("cloud-pending", cookies.get(pendingName));
         if (!pending || pending.app !== appId || pending.state !== url.searchParams.get("state") || typeof pending.verifier !== "string"
           || typeof pending.until !== "number" || pending.until <= now() || (pending.returnPath !== "/join" && pending.returnPath !== "/settings")) return reject(400);
         const code = url.searchParams.get("code");
@@ -297,13 +355,16 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           if (typeof identity.userId !== "string" || !identity.userId || typeof identity.organizationId !== "string" || !identity.organizationId
             || normalizePhone(identity.e164) !== identity.e164 || typeof identity.e164 !== "string" || typeof identity.expiresAt !== "number" || !Number.isFinite(identity.expiresAt) || identity.expiresAt <= now()
             || typeof identity.stewardUserId !== "string" || !identity.stewardUserId || typeof identity.issuedAt !== "number"
-            || !Number.isSafeInteger(identity.issuedAt) || identity.issuedAt <= 0 || identity.issuedAt*1000 > now()) return reject(403);
+            || !Number.isSafeInteger(identity.issuedAt) || identity.issuedAt <= 0 || identity.issuedAt*1000 > now() + CLOUD_CLOCK_SKEW_MS) return reject(403);
           await sessions.revoke(cookies.get(cookieName(appId)));
           await accounts.seen(identity.e164);
           const person = await accounts.personFor(identity.e164);
-          const {token, session} = await sessions.create(appId, identity.e164, person?.id ?? null, null, identity.issuedAt*1000, identity.expiresAt, true);
+          // A Cloud clock slightly ahead never makes the session start in the future.
+          const {token, session} = await sessions.create(appId, identity.e164, person?.id ?? null, null, Math.min(identity.issuedAt*1000, now()), identity.expiresAt, true);
           const age = Math.max(0, Math.floor((session.expiresAt-now())/1000));
-          const delegatedIdentity = seal({...identity, app: appId, sessionHash: tokenHash(token, sessionSecret)});
+          const sessionHash = tokenHash(token, sessionSecret);
+          validated.set(sessionHash, now() + VALIDATION_TTL_MS);
+          const delegatedIdentity = seal("cloud-identity", {...identity, app: appId, sessionHash});
           const responseHeaders = new Headers({location: pending.returnPath, "cache-control": "no-store", "referrer-policy": "no-referrer"});
           responseHeaders.append("set-cookie", pendingCookie("", 0));
           responseHeaders.append("set-cookie", cookie(appId, token, age));
@@ -365,11 +426,25 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       case "GET /api/me":
         return withSession(async who => {
           const c = await accounts.canJoin(app, who);
+          const live = c.reason === "member" && c.membership && c.person ? c.membership : undefined;
+          const participation = live && o.participation ? await o.participation({ app, personId: live.personId, memberId: live.memberId, e164: who.e164 }) : null;
           return json(200, {
             app: appId, phoneMasked: maskPhone(who.e164), membership: publicMembership(c.membership),
             smsOptedIn: c.reason !== "review" && await accounts.optedIn(appId, who.e164),
             canJoin: c.canJoin, ...(c.reason && c.reason !== "member" ? { reason: c.reason } : {}),
+            ...(participation ? { participation } : {}),
           });
+        });
+
+      case "POST /api/me/resume":
+        // End an availability pause (set by text, by the agent or here). It is not START: a STOP stays a STOP.
+        if (!o.onResume) return json(404, { ok: false, error: "not_found" });
+        return withSession(async who => {
+          const c = await accounts.canJoin(app, who);
+          const live = c.reason === "member" && c.membership && c.person ? c.membership : undefined;
+          if (!live) return json(c.reason === "review" ? 403 : 400, { ok: false, error: c.reason === "review" ? "review" : "not_member", ...(c.reason === "review" ? { message: REVIEW_MESSAGE } : {}) });
+          await o.onResume!({ app, personId: live.personId, memberId: live.memberId, e164: who.e164 });
+          return json(200, { ok: true });
         });
 
       case "POST /api/join":
@@ -411,9 +486,9 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           if ((b.scope === "app" || b.scope === "all") && (await accounts.held(who.e164))) return json(403, { ok: false, error: "review", message: REVIEW_MESSAGE });
           if (b.scope === "app") { await accounts.leave(app, who); return json(200, { ok: true }); }
           if (b.scope === "all") {
-            // Step-up: a cookie from an older login cannot delete everything.
-            // A bridged token is not fresh phone authentication. This slice has no owned destructive step-up.
-            if (cloud || !sessions.fresh(a.session)) return json(403, { ok: false, error: "reauth", message: REAUTH_MESSAGE });
+            // Step-up: a cookie from an older login cannot delete everything. A Cloud session starts at the Cloud
+            // phone proof's issuedAt, so a new Cloud sign-in (the site's reauth path) is the fresh step-up there.
+            if (!sessions.fresh(a.session)) return json(403, { ok: false, error: "reauth", message: REAUTH_MESSAGE });
             await accounts.deleteAll(who);
             return json(200, { ok: true }, { "set-cookie": cookie(appId, "", 0) });
           }

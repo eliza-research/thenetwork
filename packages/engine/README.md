@@ -33,6 +33,8 @@ bun run sim --only slop      # one pack (network | slop | peon | friends)
 | `peonPack` | peon.biz | `src/packs/peon/` | [peon pack](../../docs/results/2026-10-08-peon-pack.md) |
 | `friendsPack` | friends.help | `src/packs/friends/` | [friends pack](../../docs/results/2026-10-08-friends-pack.md) |
 
+slop.date onboarding has one implementation: `src/packs/slop/extract.ts` (`extractSlopProfile`, `slopOnboardTags`) and `src/packs/slop/onboard.ts` (`applyCorrection`, `readBack`, `nextQuestion`). The service runs it as the slop app's onboarding loop (`packages/network/service/packs.ts`, `AppHooks.onboarding`), and `bun run sim --only onboard` gates it on `evals/slop-onboarding/`. Orientation policy (PRD 40.5): "bi", "pan", "queer", "both" and "a mix" leave who the member seeks unset, and the agent asks who they hope to meet. The founder may still pick the other policy (read those words as a seeking set); it is listed as a founder decision.
+
 ## Design overview: code to PRD map
 
 | Module | What it does | PRD |

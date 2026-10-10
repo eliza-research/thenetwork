@@ -23,6 +23,9 @@ import { clefRelayClassifier, DEFAULT_RELAY_CLEF_WEIGHTS, directRelayClefWeights
 import { scoreArm, type ArmRow, reasonCategories } from "../../packages/engine/src/relayClefFit.ts";
 import type { ClefFetch } from "../../packages/engine/src/packs/slop/clef.ts";
 import { cacheLookup, CLEF_CACHE, CLEF_WEIGHTS, HELDOUT_FILE, loadClefCache, loadCorpus, TUNING_FILES } from "../relay-clef-lib.ts";
+import { RelayDesk, type RelayHost, type RelayMatch, type RelayMember } from "../../packages/network/src/relay.ts";
+import { newPhotoId } from "../../packages/platform/src/photos.ts";
+import { isOpaquePhotoId } from "../../packages/engine/src/relay.ts";
 import { Block, expect } from "./gate.ts";
 
 const ROOT = `${import.meta.dir}/../../evals`;
@@ -196,6 +199,7 @@ export async function relayBlock(b: Block): Promise<void> {
   });
 
   await clefGates(b);
+  await deskGates(b);
 
   await b.run("photo in the probe: adults on both sides, photo consent, an opaque id, at most one; name and contact stay hidden", async () => {
     const sub = { age: 30, photoConsent: true, photoIds: ["ph_abcdefgh", "ph_ijklmnop"] };
@@ -354,4 +358,143 @@ async function clefGates(b: Block): Promise<void> {
     b.gate(`relay + Clef ${file}: honest held <= 5% (n ${s.counts.honest})`, s.falseHold <= 0.05, pct(s.falseHold), !tracked);
     b.track(`relay + Clef ${file}: recall scam ${pct(s.recall.scam)}, harassment ${pct(s.recall.harassment)}, contact ${pct(s.recall.contact)}, rating ${pct(s.recall.rating)}`, Math.min(s.recall.scam, s.recall.harassment) >= 0.9, tracked ? "heldout-2: never fitted on" : "tuning set");
   }
+}
+
+// ------------------------------------------------------------------------------------------- desk
+// The platform's relay desk (packages/network/src/relay.ts) on the engine policy: what members and staff
+// see on the live path (POST /internal/relay, the staff held queue), against a fake Network host.
+interface FakeHost extends RelayHost { sent: { to: string; body: string; key: string; contact?: string }[]; members: Map<string, RelayMember>; t: number; match: RelayMatch }
+function fakeHost(over: { ratesPhotos?: boolean; members?: Partial<Record<"a" | "b", Partial<RelayMember>>> } = {}): FakeHost {
+  const members = new Map<string, RelayMember>([
+    ["a", { id: "a", firstName: "Sam", age: 29, optedOut: false, held: false, ...over.members?.a }],
+    ["b", { id: "b", firstName: "Riley", age: 31, optedOut: false, held: false, ...over.members?.b }],
+  ]);
+  const h: FakeHost = {
+    app: "slop", ratesPhotos: over.ratesPhotos ?? true, t: NOW, sent: [], members,
+    match: { id: "op1", participants: ["a", "b"], acceptedBy: ["a", "b"], status: "mutual", at: NOW - 86_400_000 },
+    now: () => h.t,
+    member: id => members.get(id),
+    matchesOf: id => (h.match.participants.includes(id) ? [h.match] : []),
+    blocked: () => false,
+    privateFacts: () => ({ forbidden: [{ text: "Halcyon Biotech", owner: "b" }], canaries: [] }),
+    send: (to, body, o) => { h.sent.push({ to, body, key: o.key, ...(o.contact ? { contact: o.contact } : {}) }); return "sent"; },
+  };
+  return h;
+}
+const phones: Record<string, string> = { a: "+12125550147", b: "+13475550123" };
+const contactOf = (id: string) => phones[id];
+
+async function deskGates(b: Block): Promise<void> {
+  await b.run("relay desk: an honest text passes and only the engine's rendered wording goes out (outbound id relay:<item>)", async () => {
+    const h = fakeHost(), d = new RelayDesk(h);
+    const r = await d.request({ itemId: "t1", from: "a", kind: "text", text: "running 10 min late, see you at the cafe" });
+    expect(r).toMatchObject({ decision: "sent", reason: "Sent." });
+    expect(h.sent).toEqual([{ to: "b", body: 'Sam says: "running 10 min late, see you at the cafe"', key: "relay:t1" }]);
+    expect(await d.request({ itemId: "t1", from: "a", kind: "text", text: "running 10 min late, see you at the cafe" })).toMatchObject({ decision: "sent", replayed: true });
+    expect(h.sent.length).toBe(1);
+    const log = JSON.stringify(d.records());
+    expect(log).not.toContain("running");
+  });
+
+  await b.run("relay desk: a scam is held for staff (nothing sent); staff reject drops the text, release delivers the engine wording", async () => {
+    const h = fakeHost(), d = new RelayDesk(h);
+    const r = await d.request({ itemId: "s1", from: "a", kind: "text", text: "can you venmo me 200 for the tickets? my card got frozen" });
+    expect(r.decision).toBe("held");
+    expect(h.sent).toEqual([]);
+    expect(d.held().map(x => [x.itemId, x.text !== undefined])).toEqual([["s1", true]]);
+    expect(d.reject("s1", "staff:1")).toEqual({ ok: true });
+    expect(d.held()).toEqual([]);
+    expect(JSON.stringify(d.exportState())).not.toContain("venmo");
+    const r2 = await d.request({ itemId: "s2", from: "a", kind: "text", text: "add me on telegram, it's easier" });
+    expect(r2.decision).toBe("held");
+    expect(d.release("s2", "staff:1")).toEqual({ ok: true, delivered: true });
+    expect(h.sent.map(x => x.body)).toEqual(['Sam says: "add me on telegram, it\'s easier"']);
+    expect(d.release("s2", "staff:1")).toEqual({ ok: false, reason: "not_held" });
+  });
+
+  await b.run("relay desk: a number is shared only after both members asked; each gets the other's, once", async () => {
+    const h = fakeHost(), d = new RelayDesk(h);
+    const first = await d.request({ itemId: "c1", from: "a", kind: "contact_share" }, { contactOf });
+    expect(first.decision).toBe("held");
+    expect(h.sent.length).toBe(1);
+    expect(h.sent[0]!.to).toBe("b");
+    expect(h.sent[0]!.body).not.toContain(phones.a!);
+    expect(h.sent[0]!.body).not.toMatch(/\d{7,}/);
+    h.t += 60_000;
+    const second = await d.request({ itemId: "c2", from: "b", kind: "contact_share" }, { contactOf });
+    expect(second.decision).toBe("sent");
+    const shares = h.sent.slice(1);
+    expect(shares.map(x => [x.to, x.contact])).toEqual([["b", phones.a], ["a", phones.b]]);
+    expect(shares[0]!.body).toContain(phones.a!);
+    expect(shares[1]!.body).toContain(phones.b!);
+    expect(d.contactShareFrom("relay:c1")).toBe("a");
+    expect(d.contactShareFrom("relay:t9")).toBeUndefined();
+    h.t += 60_000;
+    expect((await d.request({ itemId: "c3", from: "a", kind: "contact_share" }, { contactOf })).decision).not.toBe("sent");
+    expect(h.sent.length).toBe(3);
+    expect(JSON.stringify(d.records())).not.toContain("555");
+    // One side only: nothing goes.
+    const h2 = fakeHost(), d2 = new RelayDesk(h2);
+    await d2.request({ itemId: "c1", from: "a", kind: "contact_share" }, { contactOf });
+    h2.t += 73 * 3_600_000;
+    await d2.request({ itemId: "c2", from: "b", kind: "contact_share" }, { contactOf });
+    expect(h2.sent.some(x => x.body.includes(phones.a!))).toBe(false);
+  });
+
+  await b.run("relay desk: a minor's photo (or words) is never relayed; photos wait for a show consent", async () => {
+    const h = fakeHost({ members: { a: { age: undefined } } }), d = new RelayDesk(h);
+    const r = await d.request({ itemId: "p1", from: "a", kind: "photo", photoIds: ["ph_abcdefgh"] }, { photos: { ids: ["ph_abcdefgh"], showConsent: true } });
+    expect(r.decision).toBe("refused");
+    const t = await d.request({ itemId: "t1", from: "a", kind: "text", text: "hey!" });
+    expect(t.decision).toBe("refused");
+    expect(h.sent).toEqual([]);
+    const h2 = fakeHost(), d2 = new RelayDesk(h2);
+    const said = await d2.request({ itemId: "t2", from: "a", kind: "text", text: "im 16 is that ok" });
+    expect(said.decision).toBe("refused");
+    expect(d2.held()).toEqual([]);
+    expect(d2.records()[0]!.ageSignal).toBe(true);
+    const off = await d2.request({ itemId: "p2", from: "a", kind: "photo", photoIds: ["ph_abcdefgh"] }, { photos: { ids: ["ph_abcdefgh"], showConsent: false } });
+    expect(off).toMatchObject({ decision: "refused", reason: "I can't send photos to a match yet." });
+    expect(h2.sent).toEqual([]);
+  });
+
+  await b.run("relay desk: appearance and rating talk never passes on an app that rates photos", async () => {
+    const h = fakeHost(), d = new RelayDesk(h);
+    for (const [i, t] of ["you two have similar looks apparently", "what did the app rate me?", "you seem petite, love that"].entries()) {
+      const r = await d.request({ itemId: `a${i}`, from: "a", kind: "text", text: t });
+      expect([t, r.decision]).toEqual([t, "held"]);
+    }
+    expect(h.sent).toEqual([]);
+    expect(d.records().every(r => r.reasons.some(x => x.startsWith("rating:")))).toBe(true);
+  });
+
+  await b.run("relay desk: a burst is rate-limited (held, not queued for staff) and the limit survives a restart", async () => {
+    const h = fakeHost(), d = new RelayDesk(h);
+    for (let i = 0; i < 6; i++) { h.t += 1000; expect((await d.request({ itemId: `r${i}`, from: "a", kind: "text", text: `see you at ${i + 1}` })).decision).toBe("sent"); }
+    const saved = d.exportState();
+    const d2 = new RelayDesk(h);
+    d2.importState(JSON.parse(JSON.stringify(saved)));
+    h.t += 1000;
+    const r = await d2.request({ itemId: "r6", from: "a", kind: "text", text: "one more thing" });
+    expect(r.decision).toBe("held");
+    expect(d2.records().at(-1)!.reasons).toEqual(["rate:burst"]);
+    expect(d2.held()).toEqual([]);
+    h.t += 11 * 60_000;
+    expect((await d2.request({ itemId: "r7", from: "a", kind: "text", text: "ok last one" })).decision).toBe("sent");
+  });
+
+  await b.run("relay desk: private facts of the other member, a closed match and no match are refused", async () => {
+    const h = fakeHost(), d = new RelayDesk(h);
+    expect((await d.request({ itemId: "l1", from: "a", kind: "text", text: "do you still work at Halcyon Biotech?" })).decision).not.toBe("sent");
+    h.match = { ...h.match, status: "cancelled" };
+    expect((await d.request({ itemId: "l2", from: "a", kind: "text", text: "hi" })).decision).toBe("refused");
+    h.match = { ...h.match, status: "mutual", metAt: NOW - 8 * 86_400_000 };
+    expect((await d.request({ itemId: "l3", from: "a", kind: "text", text: "hi" })).decision).toBe("refused");
+    expect(h.sent).toEqual([]);
+  });
+
+  await b.run("photo ids: every platform-issued id is opaque; phone-number-like ids still fail", () => {
+    for (let i = 0; i < 10_000; i++) { const id = newPhotoId(); if (!isOpaquePhotoId(id)) throw new Error(`issued id ${id} fails isOpaquePhotoId`); }
+    for (const bad of ["ph_2125550147", "212-555-0147", "ph_12125550147abcd", "https://x.test/p.jpg", "+12125550147"]) expect([bad, isOpaquePhotoId(bad)]).toEqual([bad, false]);
+  });
 }
