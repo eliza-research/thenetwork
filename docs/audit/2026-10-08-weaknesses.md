@@ -102,7 +102,7 @@ The six P0 findings share one cause. The consent and understanding layer of `pac
 | sites-infra-6 | root | bun.lock:1 | bun.lock lacks packages/platform, so frozen install fails once the branch is committed. | confirmed | Regenerate bun.lock in the same commit. |
 | sites-infra-9 | sites, platform | sites/buddies.nyc/wrangler.toml:11 | buddies is not renamed to friends.help, and peon and buddies have production custom-domain configs although they are local-only. | confirmed (resolved: renamed to friends.help, AppId `friends`, migration 0007) | Rename everywhere. Remove production routes. Deploy allowlist is ntwrk and slop. |
 | sites-infra-10 | sites | sites/sites.ts:40 | The build drops every non-HTML file, so _headers, SKILL.md and robots.txt can never ship. | confirmed | Copy public/ passthrough files into dist. |
-| sites-infra-13 (also sites-infra-M3, platform-31, platform-M3) | sites, platform | sites/ntwrk.love/wrangler.toml:6 | /api/* is not routed on any site. The API runs only as a Bun process. No deploy workflow exists. Deploying ntwrk now replaces the working 10DLC page with broken forms. | confirmed | Choose the API host. Route /api through one backend. Add a gated deploy workflow with a smoke test. |
+| sites-infra-13 (also sites-infra-M3, platform-31, platform-M3) | sites, platform | sites/ntwrk.party/wrangler.toml:6 | /api/* is not routed on any site. The API runs only as a Bun process. No deploy workflow exists. Deploying ntwrk now replaces the working 10DLC page with broken forms. | confirmed | Choose the API host. Route /api through one backend. Add a gated deploy workflow with a smoke test. |
 | sites-infra-14 | sites | sites/slop.date/public/terms.html:15 | slop, peon and buddies legal pages say "Draft. Not yet in effect." | confirmed | Block any production build that contains "Draft". |
 
 ### P2
@@ -220,11 +220,11 @@ The six P0 findings share one cause. The consent and understanding layer of `pac
 | sites-infra-11 (also platform-16) | sites, platform | sites/shared/join.ts:105 | The consent ledger stores whatever wording the client sends. | confirmed | Accept only the canonical text and store its version. |
 | sites-infra-12 | sites | sites/slop.date/wrangler.toml:20 | No CSP, HSTS, frame-ancestors or nosniff on any site. | confirmed | Ship _headers with a strict policy. |
 | sites-infra-15 | sites | sites/test/sites.test.ts:66 | The sites test forbids naming other apps, but the founder wants ntwrk to link them and say "powered by The Network". | confirmed | Test the privacy rule (no per-number disclosure) instead. |
-| sites-infra-16 | sites | sites/ntwrk.love/public/index.html:20 | SMS terms omit keyword opt-in and the line number. The ntwrk invite starts with an unsolicited text. | plausible | Document every opt-in path. Invitee opts in first. |
+| sites-infra-16 | sites | sites/ntwrk.party/public/index.html:20 | SMS terms omit keyword opt-in and the line number. The ntwrk invite starts with an unsolicited text. | plausible | Document every opt-in path. Invitee opts in first. |
 | sites-infra-17 | sites | sites/shared/api.ts:48 | Client error mapping misses many platform codes. A 500 shows "can't reach our server". | confirmed | Export a typed error union and map all of it. |
 | sites-infra-18 | supply chain | scripts/wrangler.sh:67 | wrangler is fetched unpinned. Actions are pinned by tag. @types/bun is "latest". .wrangler/ is not ignored. | confirmed | Pin everything. |
 | sites-infra-20 | sites | sites/test/sites.test.ts:1 | No behavioural tests of join and settings. Destructive actions run without confirmation if a dialog is missing. | confirmed | DOM tests. Fail closed without the dialog. |
-| sites-infra-22 | sites | sites/ntwrk.love/public/privacy.html:1 | Privacy policies make operational promises no test verifies. | plausible | Add a policy-claims test suite. |
+| sites-infra-22 | sites | sites/ntwrk.party/public/privacy.html:1 | Privacy policies make operational promises no test verifies. | plausible | Add a policy-claims test suite. |
 | matching-e2e-6 | network, engine | packages/network/src/network.ts:2786 | Exposure debt is never persisted, and unrevealed probes count as exposure. | confirmed | Round-trip debt in state. Count revealed only. |
 | matching-e2e-8 | sim | packages/sim/src/oracle.ts:173 | Oracle decisions are keyed by proposal id, so re-asking is a fresh coin flip and nagging pays. | confirmed | Key by participants, category and week. Add decline memory. |
 | matching-e2e-9 | sim, network | packages/sim/src/oracle.ts:178 | Travel and time are not scored. Time-aware runs cut meetings by 40%. Queens is underserved. | confirmed | Add travel and time to showProb. Run launch arms time-aware. |
@@ -369,9 +369,9 @@ The six P0 findings share one cause. The consent and understanding layer of `pac
 | plugin-prototypes-M5 | messaging-blooio | packages/blooio/src/outbound-queue.ts | Fallback drops line attribution. | confirmed | Carry the line. |
 | sites-infra-21 | sites | sites/peon.biz/public/join.html:1 | peon collects exact age and ZIP and hides the role in interests. | plausible | Typed role. Over-18 boolean only. |
 | sites-infra-23 | sites | sites/slop.date/public/index.html:1 | help@ addresses for slop, peon and buddies may not exist. | plausible | Check MX and routing before deploy. |
-| sites-infra-24 | sites | sites/ntwrk.love/public/join.html:10 | ntwrk accepts 13-17 in New York with no minors-specific notice. | plausible | Counsel review. Data minimization. |
+| sites-infra-24 | sites | sites/ntwrk.party/public/join.html:10 | ntwrk accepts 13-17 in New York with no minors-specific notice. | plausible | Counsel review. Data minimization. |
 | sites-infra-25 | scripts | scripts/sites-dev.ts:76 | Dev server open redirect and forwarded client IP headers. | confirmed | Same-origin redirect. Strip IP headers. |
-| sites-infra-26 | sites | sites/ntwrk.love/public/index.html:5 | ntwrk has no skip link and its landmarks sit inside main. | confirmed | Fix markup. |
+| sites-infra-26 | sites | sites/ntwrk.party/public/index.html:5 | ntwrk has no skip link and its landmarks sit inside main. | confirmed | Fix markup. |
 | matching-e2e-15 | network | packages/network/src/network.ts:1039 | Request search has an id-order tie-break and no load term. | confirmed | Seeded tie-break. Load term. |
 | matching-e2e-16 | network, judge | packages/network/harness/experiment.ts:130 | "Good meeting" thresholds differ across metrics. | confirmed | One constant. |
 

@@ -1,6 +1,6 @@
 # Skills, plugins and deploys for the four sites
 
-> **Superseded names (2026-10-08 cleanup note).** This is a dated research record. Since it was written: buddies.nyc was renamed friends.help (AppId `friends`, `friendsPack`); ntwrk.club belongs to someone else and is not used (ntwrk.love is the home page); `packages/worlds` moved to `packages/sim/src/apps`; the prototypes were deleted or promoted (`packages/blooio`). Current decisions: AGENTS.md "Platform decisions" and docs/mvp-plan.md.
+> **Superseded names (2026-10-08 cleanup note).** This is a dated research record. Since it was written: buddies.nyc was renamed friends.help (AppId `friends`, `friendsPack`); ntwrk.club belongs to someone else and is not used (ntwrk.party is the home page); `packages/worlds` moved to `packages/sim/src/apps`; the prototypes were deleted or promoted (`packages/blooio`). Current decisions: AGENTS.md "Platform decisions" and docs/mvp-plan.md.
 
 Status: research and design, 2026-10-08 (UTC). Nothing here is built or deployed. A Claude agent wrote it from the sources listed in section 0 and from reading the repos. Items marked **verify** could not be confirmed on a primary page.
 
@@ -8,7 +8,7 @@ Scope: four sites on one shared backend.
 
 | App id (code) | Site | What it is |
 |---|---|---|
-| `ntwrk` | ntwrk.love | The Network, home of all apps. "All of these apps are powered by The Network." |
+| `ntwrk` | ntwrk.party | The Network, home of all apps. "All of these apps are powered by The Network." |
 | `slop` | slop.date | Dating |
 | `peon` | peon.biz | Hiring |
 | `buddies` (rename pending) | friends.help (was buddies.nyc) | Friends in New York City |
@@ -62,17 +62,17 @@ Repo files read:
 
 Live checks, run 2026-10-08 03:11 UTC:
 
-- `https://ntwrk.love/` answers 200 from the Worker.
-- `/api/app`, `/SKILL.md` and `/.well-known/agent-skills/index.json` on ntwrk.love answer 404.
+- `https://ntwrk.party/` answers 200 from the Worker.
+- `/api/app`, `/SKILL.md` and `/.well-known/agent-skills/index.json` on ntwrk.party answer 404.
 - slop.date, peon.biz and friends.help have no HTTPS answer.
-- `mcp.ntwrk.love` has no answer.
+- `mcp.ntwrk.party` has no answer.
 
 ---
 
 ## 1. Findings that change the plan
 
 1. **slop.date cannot be in a public OpenAI plugin today.** OpenAI's plugin guidelines (S6) say plugins must be "suitable for general audiences, including users aged 13–17". They also say "mature (18+) experiences will arrive once appropriate age verification and controls are in place". An 18+ dating service fails both tests. The existing connector design already keeps romance out of every connector (`CHATGPT-APPS-SDK.md`, teen-safe profile).
-   - **Recommendation:** the public ChatGPT/Codex plugin covers ntwrk.love, peon.biz and friends.help, and its MCP never returns slop.
+   - **Recommendation:** the public ChatGPT/Codex plugin covers ntwrk.party, peon.biz and friends.help, and its MCP never returns slop.
    - slop.date still publishes its SKILL.md on its own site for agents that read the web, such as Claude Code. That skill hands the person a link and does nothing else.
    - **Open question:** peon.biz (18+ matching) and friends.help (meeting strangers) are fine for a general audience only at the signup-information level. The founder should ask OpenAI before submitting.
 2. **The age rule in the code does not match the founder's rule.** `packages/platform/src/apps.ts` sets `minJoinAge: 18` for slop, peon and buddies. `sites/README.md` also says "Open, 18+". The founder's rule is 13+ join and 18+ matching for all apps.
@@ -80,13 +80,13 @@ Live checks, run 2026-10-08 03:11 UTC:
    - The examples below follow the founder's rule. They also say plainly that the dating, hiring and friends products never match anyone under 18.
    - The architecture doc (section 2.6) recommends 18+ to join slop, peon and buddies. Joining a dating app at 13 gives a minor nothing to use, so the founder should confirm the rule for slop.date before launch.
 3. **slop.date and friends.help are probably in a different Cloudflare account.**
-   - ntwrk.love and peon.biz use the nameserver pair `karl`/`stella.ns.cloudflare.com`.
+   - ntwrk.party and peon.biz use the nameserver pair `karl`/`stella.ns.cloudflare.com`.
    - slop.date and friends.help use `jessica`/`matt.ns.cloudflare.com`.
    - Cloudflare normally gives one nameserver pair to every zone in an account (**verify** in the dashboard).
    - An apex custom domain on Pages must be a zone in the same account as the Pages project (S17), and a Workers custom domain needs a zone you own (S21).
-   - Fix: either move both zones into the ntwrk.love account, or create those two projects in the other account with their own token and account id. Every `wrangler.toml` today hard-codes the ntwrk.love account.
+   - Fix: either move both zones into the ntwrk.party account, or create those two projects in the other account with their own token and account id. Every `wrangler.toml` today hard-codes the ntwrk.party account.
 4. **The rename to friends.help is not in the code.** `APPS.buddies.domain` is `buddies.nyc`, along with the host map, `sites.ts`, the `sites/buddies.nyc/` folder, the brand texts and `help@buddies.nyc`. Deploying friends.help needs the rename first, or the backend's Host map will not recognize `friends.help` and every `/api/*` call fails.
-5. **Cloudflare now says "Start new projects with Workers"** (S14). It says Workers "supports most Pages use cases and offers a broader feature set". ntwrk.love is already a Worker with static assets. See section 4.1 for the recommendation.
+5. **Cloudflare now says "Start new projects with Workers"** (S14). It says Workers "supports most Pages use cases and offers a broader feature set". ntwrk.party is already a Worker with static assets. See section 4.1 for the recommendation.
 6. **The site build does not ship non-HTML files.** `sites.ts` builds only `*.html` entry points into `dist/` and deletes `dist/` first. `SKILL.md`, `_headers`, `_redirects`, `.well-known/*`, `robots.txt` and `llms.txt` would never reach the deploy. A copy step is required (section 4.4).
 7. **The client IP is probably lost through the proxy, which breaks OTP rate limits.**
    - `api.ts` reads `CF-Connecting-IP` to enforce 10 OTP sends per IP per hour.
@@ -99,7 +99,7 @@ Live checks, run 2026-10-08 03:11 UTC:
 9. **OpenAI review needs a login that does not use SMS codes.** S5 says the reviewer account "must work without MFA approval, email or SMS codes, magic links". Our only login is phone OTP.
    - We need a reviewer-only sign-in on the OAuth page for one sandbox member in staging or production, such as a long fixed passcode stored as a secret, with no access to real members.
    - Without it, submission fails.
-10. **OpenAI needs four HTTPS listing URLs** (S5): `websiteURL`, `supportURL`, `privacyPolicyURL` and `termsOfServiceURL`. No site has a support page; there is only a `help@` mailto. Add `/support` to ntwrk.love.
+10. **OpenAI needs four HTTPS listing URLs** (S5): `websiteURL`, `supportURL`, `privacyPolicyURL` and `termsOfServiceURL`. No site has a support page; there is only a `help@` mailto. Add `/support` to ntwrk.party.
 11. **One line for all apps is a change from the architecture plan**, which put one line per app (section 4.1). With one shared line:
     - Apple's per-line limits are shared by all apps.
     - The contact card cannot carry an app's name.
@@ -125,7 +125,7 @@ Live checks, run 2026-10-08 03:11 UTC:
 
 So every skill follows these rules:
 
-- The name is kebab-case and matches its folder: `ntwrk-love`, `slop-date`, `peon-biz`, `friends-help`. A dot is not allowed, so it is `slop-date`, not `slop.date`.
+- The name is kebab-case and matches its folder: `ntwrk-party`, `slop-date`, `peon-biz`, `friends-help`. A dot is not allowed, so it is `slop-date`, not `slop.date`.
 - The description is 1024 characters or fewer, with no `<` or `>` characters.
 - No name contains "claude" or "anthropic".
 - Optional fields are `license`, `compatibility` and `metadata` only. Leave out `allowed-tools`, because there are no local tools.
@@ -139,7 +139,7 @@ So every skill follows these rules:
 | Discovery index | `https://<domain>/.well-known/agent-skills/index.json` | Agents that discover skills on websites (S10, Cloudflare RFC draft v0.2.0) | `$schema: "https://schemas.agentskills.io/discovery/0.2.0/schema.json"`. Each entry has `name`, `type: "skill-md"`, `description` (same as the frontmatter), `url`, `digest: "sha256:<64 hex>"` of the exact bytes served. Serve as `application/json`. Support GET and HEAD. 404 for missing files. Add CORS and `Cache-Control`. The RFC is a draft and adoption is early, but it costs little. |
 | Canonical file | `https://<domain>/.well-known/agent-skills/<name>/SKILL.md` | The index `url` | `text/markdown; charset=utf-8` |
 | Convenience copy | `https://<domain>/SKILL.md` | People and agents told "read slop.date/SKILL.md" | Byte-identical to the canonical file. A test checks this. |
-| Hub | ntwrk.love lists **all four** skills in its index | "All of these apps are powered by The Network" | Each of the other sites lists only its own skill. |
+| Hub | ntwrk.party lists **all four** skills in its index | "All of these apps are powered by The Network" | Each of the other sites lists only its own skill. |
 | OpenAI plugin | `plugins/the-network/skills/<name>/SKILL.md` | ChatGPT and Codex | **A snapshot**: imported at submission and "ChatGPT and Codex don't fetch them from your server at runtime" (S2). Each change needs a new plugin version. slop-date is left out (finding 1). |
 | Claude plugin | same folder, `.claude-plugin/plugin.json` + `.mcp.json` | Claude Code plugin marketplaces | S9. claude.ai custom skills are zip uploads per user (S8). |
 | Repo source of truth | `sites/skills/<name>/SKILL.md`, one file per skill | Build input | The site build and the plugin package both copy from here. Never edit a copy. |
@@ -150,8 +150,8 @@ On Claude API surfaces, skills run with **no network access** (S8). A skill ther
 
 Two values are not decided yet. Sources write them as placeholders, and the build fills them in from CI variables. A test fails the build if `{{` remains in `dist/`.
 
-- `{{NETWORK_BACKEND}}`: the shared backend base. Proposed: `https://api.ntwrk.love`. The sites reach it through their own `/api/*`.
-- `{{NETWORK_MCP_URL}}`: proposed `https://mcp.ntwrk.love/mcp`. The connector design says never to change this origin after it is published.
+- `{{NETWORK_BACKEND}}`: the shared backend base. Proposed: `https://api.ntwrk.party`. The sites reach it through their own `/api/*`.
+- `{{NETWORK_MCP_URL}}`: proposed `https://mcp.ntwrk.party/mcp`. The connector design says never to change this origin after it is published.
 - `{{NETWORK_LINE}}`: the one iMessage number.
 
 ### 2.4 slop.date (first)
@@ -177,7 +177,7 @@ metadata:
 slop.date is a dating service that runs by text message. You text one number. A matchmaker
 agent learns what you are looking for and, now and then, suggests one person. Nobody is
 introduced unless both people say yes. It is one of several apps powered by The Network
-(https://ntwrk.love). They all share one backend at {{NETWORK_BACKEND}} and one text line.
+(https://ntwrk.party). They all share one backend at {{NETWORK_BACKEND}} and one text line.
 
 ## What the person is signing up for
 
@@ -230,7 +230,7 @@ Give them the link or the keyword and stop there. The person verifies their own 
 ## Privacy in one paragraph
 
 slop.date keeps what the person tells it inside slop.date. Other apps powered by The Network
-(ntwrk.love, peon.biz, friends.help) see nothing from slop.date unless the person explicitly
+(ntwrk.party, peon.biz, friends.help) see nothing from slop.date unless the person explicitly
 shares it. Staff see sensitive details only through an audited reveal. The person can export or
 delete their slop.date data at https://slop.date/settings or by texting the line. Full policy:
 https://slop.date/privacy. Terms: https://slop.date/terms. SMS terms: https://slop.date/sms-terms.
@@ -265,7 +265,7 @@ metadata:
 # peon.biz
 
 peon.biz introduces people looking for work to people hiring, by text message. It is powered by
-The Network (https://ntwrk.love) and shares its backend at {{NETWORK_BACKEND}} and its text line.
+The Network (https://ntwrk.party) and shares its backend at {{NETWORK_BACKEND}} and its text line.
 
 ## What the person is signing up for
 
@@ -330,7 +330,7 @@ metadata:
 
 friends.help helps people in New York City find friends and things to do together, by text.
 Plans are in public places and start in small groups. It is powered by The Network
-(https://ntwrk.love), with one backend at {{NETWORK_BACKEND}} and one text line.
+(https://ntwrk.party), with one backend at {{NETWORK_BACKEND}} and one text line.
 
 ## What the person is signing up for
 - Texts from friends.help on {{NETWORK_LINE}}. Reply STOP FRIENDS to stop friends.help only,
@@ -359,19 +359,19 @@ Policy: https://friends.help/privacy. Terms: https://friends.help/terms. SMS ter
 `app_info` (app "buddies"), `start_signup`, and, after the person signs in themselves, `check_status`.
 ```
 
-### 2.7 ntwrk.love (the hub)
+### 2.7 ntwrk.party (the hub)
 
-`sites/skills/ntwrk-love/SKILL.md`:
+`sites/skills/ntwrk-party/SKILL.md`:
 
 ```markdown
 ---
-name: ntwrk-love
-description: Explains The Network (ntwrk.love), the private text-message network that powers slop.date (dating), peon.biz (hiring) and friends.help (friends in New York City), and points a person to the right app to sign themselves up. Use when someone asks what The Network or any of its apps is, which app fits what they want, how joining works, who can join, how privacy works across apps, or how to stop or delete. Never signs anyone up and never handles verification codes.
-license: Proprietary. Terms at https://ntwrk.love/terms
+name: ntwrk-party
+description: Explains The Network (ntwrk.party), the private text-message network that powers slop.date (dating), peon.biz (hiring) and friends.help (friends in New York City), and points a person to the right app to sign themselves up. Use when someone asks what The Network or any of its apps is, which app fits what they want, how joining works, who can join, how privacy works across apps, or how to stop or delete. Never signs anyone up and never handles verification codes.
+license: Proprietary. Terms at https://ntwrk.party/terms
 compatibility: Works without network access. Optional live status uses The Network MCP server at {{NETWORK_MCP_URL}}.
 metadata:
   app: ntwrk
-  site: https://ntwrk.love
+  site: https://ntwrk.party
   backend: "{{NETWORK_BACKEND}}"
   operator: Eliza Research Corporation
   version: "1.0.0"
@@ -385,7 +385,7 @@ powers several apps. All of them share one backend ({{NETWORK_BACKEND}}), one te
 
 | App | For | Join keyword | Site |
 |---|---|---|---|
-| The Network | Introductions, help, things to do (invite-only) | NETWORK | https://ntwrk.love |
+| The Network | Introductions, help, things to do (invite-only) | NETWORK | https://ntwrk.party |
 | slop.date | Dating, adults only | SLOP | https://slop.date |
 | peon.biz | Work and hiring | PEON | https://peon.biz |
 | friends.help | Friends and plans in New York City | FRIENDS | https://friends.help |
@@ -411,7 +411,7 @@ powers several apps. All of them share one backend ({{NETWORK_BACKEND}}), one te
 
 ## Privacy and control
 STOP stops one app, STOP ALL stops all. Export and delete at each site's /settings.
-Policy: https://ntwrk.love/privacy. Terms: https://ntwrk.love/terms. Support: https://ntwrk.love/support.
+Policy: https://ntwrk.party/privacy. Terms: https://ntwrk.party/terms. Support: https://ntwrk.party/support.
 ```
 
 Before publishing: check every description with `wc -c` (≤1024) and the build test. Every keyword (`SLOP`, `PEON`, `FRIENDS`, `NETWORK`) must come from the keyword table the backend uses. That table does not exist yet (finding 11). The keywords above are proposals.
@@ -438,8 +438,8 @@ Before publishing: check every description with `wc -c` (≤1024) and the build 
 
 **Recommendation:**
 
-- **Phase A:** ship the skills on the sites now, plus a skills-only OpenAI and Claude plugin for ntwrk.love, peon.biz and friends.help.
-- **Phase B:** add the minimal MCP server below, as a shard of the shared backend at `https://mcp.ntwrk.love/mcp`, and submit a new plugin version.
+- **Phase A:** ship the skills on the sites now, plus a skills-only OpenAI and Claude plugin for ntwrk.party, peon.biz and friends.help.
+- **Phase B:** add the minimal MCP server below, as a shard of the shared backend at `https://mcp.ntwrk.party/mcp`, and submit a new plugin version.
 
 The existing prototype at `thenetwork-audit/prototypes/connector-mcp` already has the OAuth discovery and host checks this needs. Reuse them.
 
@@ -465,8 +465,8 @@ Client profiles (prototype's `surface profile`):
 
 ### 3.3 Auth model
 
-- **Resource:** `https://mcp.ntwrk.love/mcp`, canonical, with no trailing slash (S11). Publish RFC 9728 metadata at `/.well-known/oauth-protected-resource` (and at `/.well-known/oauth-protected-resource/mcp`) with `resource` and `authorization_servers`.
-- **Authorization server:** the shared backend at `https://ntwrk.love` or `https://auth.ntwrk.love`.
+- **Resource:** `https://mcp.ntwrk.party/mcp`, canonical, with no trailing slash (S11). Publish RFC 9728 metadata at `/.well-known/oauth-protected-resource` (and at `/.well-known/oauth-protected-resource/mcp`) with `resource` and `authorization_servers`.
+- **Authorization server:** the shared backend at `https://ntwrk.party` or `https://auth.ntwrk.party`.
   - Serve `/.well-known/oauth-authorization-server` with:
     - `issuer` (exact match)
     - `authorization_endpoint`
@@ -481,7 +481,7 @@ Client profiles (prototype's `surface profile`):
   - Reuse the `OtpService` limits.
 - **Consent screen:** names the client, the app(s) and the single scope (`membership:read`), and says "This lets the assistant see whether you've joined. It can't see your messages, matches, or anything about other people."
   - One grant covers one app by default. Cross-app status needs a separate checkbox per app.
-- **Tokens:** short-lived JWTs whose audience is the resource (RFC 8707). Verify signature, `iss`, `aud`, `exp` and scope on every request. Return 401 with `WWW-Authenticate: Bearer resource_metadata="https://mcp.ntwrk.love/.well-known/oauth-protected-resource", scope="membership:read"`.
+- **Tokens:** short-lived JWTs whose audience is the resource (RFC 8707). Verify signature, `iss`, `aud`, `exp` and scope on every request. Return 401 with `WWW-Authenticate: Bearer resource_metadata="https://mcp.ntwrk.party/.well-known/oauth-protected-resource", scope="membership:read"`.
   - For the ChatGPT linking UI, a tool error result carries `_meta["mcp/www_authenticate"]` with `error` and `error_description` (S4).
   - Never accept or pass through other tokens (S11).
   - No `offline_access` in `scopes_supported`.
@@ -515,7 +515,7 @@ plugins/the-network/
 ├── .claude-plugin/plugin.json  # Claude Code manifest
 ├── .mcp.json                   # Claude Code MCP servers                  [phase B]
 ├── skills/
-│   ├── ntwrk-love/SKILL.md     (+ agents/openai.yaml in phase B)
+│   ├── ntwrk-party/SKILL.md     (+ agents/openai.yaml in phase B)
 │   ├── peon-biz/SKILL.md
 │   └── friends-help/SKILL.md   # slop-date NOT included in the OpenAI package
 └── assets/icon.png, logo.png   # square, ≥48x48, ≤5 MiB
@@ -529,8 +529,8 @@ plugins/the-network/
   "name": "the-network",
   "version": "1.0.0",
   "description": "Learn about apps powered by The Network and sign yourself up.",
-  "author": { "name": "Eliza Research Corporation", "url": "https://ntwrk.love" },
-  "homepage": "https://ntwrk.love",
+  "author": { "name": "Eliza Research Corporation", "url": "https://ntwrk.party" },
+  "homepage": "https://ntwrk.party",
   "license": "Proprietary",
   "keywords": ["friends", "jobs", "introductions", "new york"],
   "extensions": {
@@ -542,9 +542,9 @@ plugins/the-network/
         "developerName": "Eliza Research Corporation",
         "category": "Lifestyle",
         "capabilities": ["Read"],
-        "websiteURL": "https://ntwrk.love",
-        "privacyPolicyURL": "https://ntwrk.love/privacy",
-        "termsOfServiceURL": "https://ntwrk.love/terms",
+        "websiteURL": "https://ntwrk.party",
+        "privacyPolicyURL": "https://ntwrk.party/privacy",
+        "termsOfServiceURL": "https://ntwrk.party/terms",
         "defaultPrompt": ["What is The Network and how do I join?"],
         "composerIcon": "./assets/icon.png",
         "logo": "./assets/logo.png"
@@ -561,17 +561,17 @@ plugins/the-network/
 ```json
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
-  "mcpServers": { "the-network": { "type": "streamable-http", "url": "https://mcp.ntwrk.love/mcp" } }
+  "mcpServers": { "the-network": { "type": "streamable-http", "url": "https://mcp.ntwrk.party/mcp" } }
 }
 ```
 
-`skills/<name>/agents/openai.yaml` (phase B, S2): `dependencies.tools` holds one entry with `type: mcp`, `value: the-network`, `transport: streamable_http`, `url: https://mcp.ntwrk.love/mcp` and a description.
+`skills/<name>/agents/openai.yaml` (phase B, S2): `dependencies.tools` holds one entry with `type: mcp`, `value: the-network`, `transport: streamable_http`, `url: https://mcp.ntwrk.party/mcp` and a description.
 
-`.claude-plugin/plugin.json` (S9) has `name: "the-network"` (allowed: no `claude-` prefix), `displayName`, `version`, `description`, `author`, `homepage`, `privacyPolicyUrl`, `termsOfServiceUrl` and `supportUrl`. `.mcp.json` holds `{"mcpServers":{"the-network":{"type":"http","url":"https://mcp.ntwrk.love/mcp"}}}`. Validate with `claude plugin validate --strict plugins/the-network`.
+`.claude-plugin/plugin.json` (S9) has `name: "the-network"` (allowed: no `claude-` prefix), `displayName`, `version`, `description`, `author`, `homepage`, `privacyPolicyUrl`, `termsOfServiceUrl` and `supportUrl`. `.mcp.json` holds `{"mcpServers":{"the-network":{"type":"http","url":"https://mcp.ntwrk.party/mcp"}}}`. Validate with `claude plugin validate --strict plugins/the-network`.
 
 Do **not** include `.app.json` or hooks: ZIPs with app references or hooks cannot be submitted (S5).
 
-**OpenAI domain verification:** serve the challenge token as plain text, exactly, at `https://ntwrk.love/.well-known/openai-apps-challenge` (parent of `mcp.ntwrk.love`) or on `mcp.ntwrk.love` itself (S5). This is a static file in the ntwrk.love build, added only when OpenAI issues the token.
+**OpenAI domain verification:** serve the challenge token as plain text, exactly, at `https://ntwrk.party/.well-known/openai-apps-challenge` (parent of `mcp.ntwrk.party`) or on `mcp.ntwrk.party` itself (S5). This is a static file in the ntwrk.party build, added only when OpenAI issues the token.
 
 Local marketplace for testing: `.agents/plugins/marketplace.json` with `source: { source: "local", path: "./plugins/the-network" }`, `policy.installation: "AVAILABLE"`, `policy.authentication: "ON_INSTALL"` (S1). Then run `codex plugin marketplace add`.
 
@@ -589,10 +589,10 @@ Cloudflare's Pages overview says "Start new projects with Workers" (S14). The mi
 
 All four zones are on Cloudflare nameservers, so the one Pages-only feature does not matter here.
 
-**Recommendation: keep Workers static assets for all four sites.** ntwrk.love already runs this way; the other three `wrangler.toml` files already follow the same pattern. Add CI/CD around it. Reasons:
+**Recommendation: keep Workers static assets for all four sites.** ntwrk.party already runs this way; the other three `wrangler.toml` files already follow the same pattern. Add CI/CD around it. Reasons:
 
 1. It is Cloudflare's stated direction for new projects (S14).
-2. ntwrk.love needs no cut-over, which is the riskiest step in a Pages plan: a moment with no privacy page while 10DLC review may check it.
+2. ntwrk.party needs no cut-over, which is the riskiest step in a Pages plan: a moment with no privacy page while 10DLC review may check it.
 3. The `/api/*` proxy is a few lines with `run_worker_first = ["/api/*"]` (S19). With a service binding, if the API runs as a Worker, it never crosses the public internet. That solves findings 7 and 8 more cleanly than a Pages Function fetch.
 4. Version URLs with `--preview-alias <branch>` give per-PR previews (S20).
 
@@ -608,7 +608,7 @@ All four zones are on Cloudflare nameservers, so the one Pages-only feature does
 **Projects:** one per site, created once by the founder, because a project create is a mutating command and `scripts/wrangler.sh` refuses it without approval.
 
 ```bash
-NTWRK_ALLOW_DEPLOY=1 ./scripts/wrangler.sh pages project create ntwrk-love   --production-branch main
+NTWRK_ALLOW_DEPLOY=1 ./scripts/wrangler.sh pages project create ntwrk-party   --production-branch main
 NTWRK_ALLOW_DEPLOY=1 ./scripts/wrangler.sh pages project create slop-date    --production-branch main
 NTWRK_ALLOW_DEPLOY=1 ./scripts/wrangler.sh pages project create peon-biz     --production-branch main
 NTWRK_ALLOW_DEPLOY=1 ./scripts/wrangler.sh pages project create friends-help --production-branch main
@@ -653,7 +653,7 @@ Backend changes this needs in `packages/platform/src/api.ts`:
 
 **`_routes.json`:** `{"version":1,"include":["/api/*"],"exclude":[]}` so that only `/api/*` invokes Functions. Static pages then stay free and unlimited (S15).
 
-**`/mcp` on each site:** do **not** proxy it. The MCP resource must be one canonical URL (S11). Four proxied copies would be four OAuth resources and four plugins. Add `/mcp  https://mcp.ntwrk.love/mcp  308` to each site's `_redirects` so that people who guess a URL land in the right place. The skills name the canonical URL.
+**`/mcp` on each site:** do **not** proxy it. The MCP resource must be one canonical URL (S11). Four proxied copies would be four OAuth resources and four plugins. Add `/mcp  https://mcp.ntwrk.party/mcp  308` to each site's `_redirects` so that people who guess a URL land in the right place. The skills name the canonical URL.
 
 **`_headers`** (each site; max 100 rules, 2,000 characters per line; S16):
 
@@ -706,15 +706,15 @@ https://:version.:project.pages.dev/*
 - Check CAA records.
 - After launch, redirect `<project>.pages.dev` to the custom domain with Bulk Redirects (S17).
 
-**Safe cut-over of ntwrk.love from the Worker to Pages** (needed only if Pages is chosen):
+**Safe cut-over of ntwrk.party from the Worker to Pages** (needed only if Pages is chosen):
 
-1. Deploy the Pages project. Check everything in section 5 against `ntwrk-love.pages.dev`.
+1. Deploy the Pages project. Check everything in section 5 against `ntwrk-party.pages.dev`.
 2. Do it at a quiet hour, and not while a 10DLC campaign review is pending, because carriers check the privacy and terms pages.
-3. Move `www.ntwrk.love` first, as the canary:
-   - Remove it from the Worker. Edit `routes` in `sites/ntwrk.love/wrangler.toml`, then run `NTWRK_ALLOW_DEPLOY=1 ./scripts/wrangler.sh deploy`, or remove it in the dashboard.
+3. Move `www.ntwrk.party` first, as the canary:
+   - Remove it from the Worker. Edit `routes` in `sites/ntwrk.party/wrangler.toml`, then run `NTWRK_ALLOW_DEPLOY=1 ./scripts/wrangler.sh deploy`, or remove it in the dashboard.
    - Add it in Pages and wait for "Active" and its certificate.
    - Run the curl checks.
-4. Repeat for the apex `ntwrk.love`. Expect a short gap (seconds to minutes) while Pages provisions the record and certificate.
+4. Repeat for the apex `ntwrk.party`. Expect a short gap (seconds to minutes) while Pages provisions the record and certificate.
 5. Keep the Worker (with no routes) for a week as the rollback. Rollback means removing the Pages domain and re-adding the Worker custom domain.
 6. Delete the Worker only after a week with no errors.
 
@@ -759,8 +759,8 @@ service = "network-platform-api"
 
 New `sites/publish.ts <app>`, run after `sites.ts`:
 
-1. Copy `sites/<domain>/static/` into `dist/`: `_headers`, `_redirects`, `_routes.json` (Pages only), `robots.txt`, `llms.txt`, and `.well-known/` (with `openai-apps-challenge` on ntwrk.love when issued).
-2. Copy `sites/skills/<name>/SKILL.md` to `dist/SKILL.md` and `dist/.well-known/agent-skills/<name>/SKILL.md`. On ntwrk.love, copy all four into `.well-known/agent-skills/`.
+1. Copy `sites/<domain>/static/` into `dist/`: `_headers`, `_redirects`, `_routes.json` (Pages only), `robots.txt`, `llms.txt`, and `.well-known/` (with `openai-apps-challenge` on ntwrk.party when issued).
+2. Copy `sites/skills/<name>/SKILL.md` to `dist/SKILL.md` and `dist/.well-known/agent-skills/<name>/SKILL.md`. On ntwrk.party, copy all four into `.well-known/agent-skills/`.
 3. Substitute `{{NETWORK_BACKEND}}`, `{{NETWORK_MCP_URL}}` and `{{NETWORK_LINE}}` from env vars. Fail if any is empty in a production build.
 4. Write `index.json` with each entry's `sha256` over the final bytes.
 5. Fail on any leftover `{{`.
@@ -809,7 +809,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: preview
     permissions: { contents: read, deployments: write }
-    strategy: { matrix: { include: [ {site: ntwrk, dir: ntwrk.love, project: ntwrk-love}, ... ] } }
+    strategy: { matrix: { include: [ {site: ntwrk, dir: ntwrk.party, project: ntwrk-party}, ... ] } }
     steps:
       - uses: actions/download-artifact@<sha>
       - uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
@@ -834,13 +834,13 @@ jobs:
 | Name | Kind | Value |
 |---|---|---|
 | `CLOUDFLARE_API_TOKEN` | Environment secret (preview and production) | Pages: Custom Token with **Account → Cloudflare Pages → Edit** only (S13), limited to the one account, with a TTL of 90 days or less and an IP filter if wanted. Workers: see 4.3. |
-| `CLOUDFLARE_ACCOUNT_ID` | Secret | the ntwrk.love account id, from the environment (and a second pair if finding 3 holds) |
+| `CLOUDFLARE_ACCOUNT_ID` | Secret | the ntwrk.party account id, from the environment (and a second pair if finding 3 holds) |
 | `NETWORK_BACKEND`, `NETWORK_MCP_URL`, `NETWORK_LINE` | Variables per environment | Placeholders above |
 
 How the founder creates the token:
 
 1. Go to dash.cloudflare.com → Manage account → Account API Tokens (account-owned) → Create Token → Custom token.
-2. Name it `gh-actions-pages-deploy`. Set permissions to Account / Cloudflare Pages / Edit. Set account resources to Include → the ntwrk.love account.
+2. Name it `gh-actions-pages-deploy`. Set permissions to Account / Cloudflare Pages / Edit. Set account resources to Include → the ntwrk.party account.
 3. Set a TTL. Create it, then paste it into GitHub → Settings → Environments → production and preview → Secrets.
 4. The token is never written to the repo, `.env`, or a log.
 
@@ -853,14 +853,14 @@ Run each item against the preview URL first, then production. `$S` is the site o
 **Static and headers**
 
 ```bash
-for S in https://ntwrk.love https://slop.date https://peon.biz https://friends.help; do
+for S in https://ntwrk.party https://slop.date https://peon.biz https://friends.help; do
   curl -sI $S/ | grep -iE '^(http|content-security-policy|x-content-type-options|strict-transport)'
   curl -sI $S/SKILL.md | grep -iE '^(http|content-type|access-control-allow-origin)'   # 200, text/markdown, *
   curl -s  $S/.well-known/agent-skills/index.json | jq -e '."$schema" and (.skills|length>0)'
   curl -sI $S/privacy | head -1; curl -sI $S/terms | head -1; curl -sI $S/sms-terms | head -1
   curl -sI $S/nope | head -1                                                             # 404 page
 done
-curl -sI https://ntwrk-love.pages.dev/ | grep -i x-robots-tag                            # noindex (Pages)
+curl -sI https://ntwrk-party.pages.dev/ | grep -i x-robots-tag                            # noindex (Pages)
 ```
 
 **Digest and identity of skills**
@@ -904,7 +904,7 @@ curl -s -o /dev/null -w '%{http_code}\n' "$API_ORIGIN/api/app" -H 'X-Forwarded-H
 
 **MCP (phase B)**
 
-- `npx @modelcontextprotocol/inspector`, pinned. Use Streamable HTTP and `https://mcp-staging.ntwrk.love/mcp`, then check:
+- `npx @modelcontextprotocol/inspector`, pinned. Use Streamable HTTP and `https://mcp-staging.ntwrk.party/mcp`, then check:
   - The instructions are present, and the first 512 characters carry the rules.
   - `tools/list` shows three tools, explicit annotations, `securitySchemes`, and `additionalProperties:false`.
   - No tool has a phone or code field.
@@ -918,7 +918,7 @@ curl -s -o /dev/null -w '%{http_code}\n' "$API_ORIGIN/api/app" -H 'X-Forwarded-H
 
 **Cut-over (Pages only)**
 
-- Before and after each hostname move, run the static checks. Watch `curl -sI https://ntwrk.love/privacy` every 10 s until it returns 200 with the new deploy's headers.
+- Before and after each hostname move, run the static checks. Watch `curl -sI https://ntwrk.party/privacy` every 10 s until it returns 200 with the new deploy's headers.
 
 ---
 
@@ -930,7 +930,7 @@ curl -s -o /dev/null -w '%{http_code}\n' "$API_ORIGIN/api/app" -H 'X-Forwarded-H
    - Which account holds slop.date and friends.help (finding 3).
    - The keywords and the line number.
 2. Rename buddies to friends.help in `packages/platform`, `sites/` and the copy.
-3. Write `sites/skills/*`, `sites/publish.ts` and the skill tests. Add `/support` to ntwrk.love.
+3. Write `sites/skills/*`, `sites/publish.ts` and the skill tests. Add `/support` to ntwrk.party.
 4. Backend: the proxy-secret header rules in `api.ts`, and a keyword table in `apps.ts` exposed by `GET /api/app`.
 5. Add the proxy (Worker router or Pages Function), `_headers` and `_redirects`.
 6. Add `deploy-sites.yml` with pinned SHAs and the `preview`/`production` environments. The founder creates the token and approves the first production run.

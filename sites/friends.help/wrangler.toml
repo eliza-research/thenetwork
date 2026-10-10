@@ -7,7 +7,7 @@
 # Deploys: CI (.github/workflows/deploy-sites.yml, behind the "production" GitHub environment), or by hand
 # only with founder approval:
 #   bun run sites/sites.ts friends && NTWRK_ALLOW_DEPLOY=1 scripts/wrangler.sh pages deploy sites/friends.help/dist --project-name friends-help --branch main
-# The account comes from CLOUDFLARE_ACCOUNT_ID in the environment (the ntwrk.love Cloudflare account,
+# The account comes from CLOUDFLARE_ACCOUNT_ID in the environment (the ntwrk.party Cloudflare account,
 # which holds all four Pages projects); it is never written here.
 name = "friends-help"
 pages_build_output_dir = "./dist"
@@ -17,6 +17,6 @@ compatibility_date = "2026-09-15"
 APP_ID = "friends"
 SITE_HOST = "friends.help"
 # The one shared backend (sites/skills.config.ts BACKEND_ORIGIN).
-BACKEND_ORIGIN = "https://api.ntwrk.love"
+BACKEND_ORIGIN = "https://api.ntwrk.party"
 # Secret, set once per project (never here): PLATFORM_PROXY_SECRET, the HMAC key the backend checks.
 #   NTWRK_ALLOW_DEPLOY=1 scripts/wrangler.sh pages secret put PLATFORM_PROXY_SECRET --project-name friends-help
