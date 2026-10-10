@@ -139,6 +139,11 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(q.reports[0]).toMatchObject({ kind: "harassment", reporterId: a, subjectId: b, status: "open", source: "message", priorReports: 0 });
     expect(JSON.stringify(q)).not.toMatch(/rude|texting/);
     const reportId = q.reports[0].id as string;
+    // The report is a product event too (the member timelines of both), ids and a kind only.
+    const ev = (await sql`select actor_type, type, object_type, object_id, payload from network.events where app_id = 'slop' and type = 'report_received'`) as any[];
+    expect(ev).toHaveLength(1);
+    expect(ev[0]).toMatchObject({ actor_type: "agent", object_type: "member", object_id: a, payload: { reportId, kind: "harassment", memberId: a, target: b, source: "message", met: false } });
+    expect(JSON.stringify(ev)).not.toMatch(/rude|texting/);
 
     // Hold: a decision note of 5+ characters; the person is held on slop and on friends.
     expect((await staff(s, "saf-tok", "POST", "/apps/slop/safety/hold", { memberId: b, note: "x" })).status).toBe(400);
@@ -212,6 +217,8 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await text(s, clock, gil, "report Hal, he's only 15")).toBe("handled");
     const h = (await memberOf("slop", hal))!.id;
     const minorReport = async () => s.runtimeFor("slop")!.readState(n => n.safetyReports().find(r => r.kind === "minor" && r.subjectId === h));
+    // The minor report is a product event about Hal (out of matching until staff review).
+    expect((await sql`select object_id, payload from network.events where app_id = 'slop' and type = 'minor_reported'`).map((r: any) => [r.object_id, r.payload.memberId])).toEqual([[h, h]]);
     expect((await minorReport())?.status).toBe("open");
     expect(await s.runtimeFor("slop")!.readState(n => n.safetyCases().some(c => c.memberId === h && c.events.some(e => e.kind === "minor_reported")))).toBe(true);
 
