@@ -32,7 +32,7 @@ export const BUILD_HEADER = "x-network-build";
 const STRIP = ["x-forwarded-host", "x-forwarded-for", "x-forwarded-proto", "x-real-ip", "forwarded", "true-client-ip"];
 const PROXY_PREFIXES = ["x-network-proxy-", "x-ntwrk-proxy-"];
 /** The Eliza gateway's signed routes (served by the service) and their body cap (the service's MAX_BODY_BYTES). */
-const INTERNAL_PATHS = new Set(["/internal/turn", "/internal/turn-receipt", "/internal/set-state", "/internal/signals", "/internal/updates"]);
+const INTERNAL_PATHS = new Set(["/internal/turn", "/internal/turn-receipt", "/internal/set-state", "/internal/signals", "/internal/updates", "/internal/relay"]);
 const MAX_INTERNAL_BODY = 256 * 1024;
 
 // ------------------------------------------------------------------ config

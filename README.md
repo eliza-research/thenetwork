@@ -28,7 +28,7 @@ This repository builds the MVP defined in PRD Section 28: one Network agent over
 | `packages/observatory` | Admin console, simulator visualizer and game, the dev Postgres and the migrations ([design](docs/observatory.md), [admin console](docs/admin-console.md), [simulation runbook](docs/runbook-simulation.md)) |
 | `sites/` | The four app sites (ntwrk.party, slop.date, peon.biz, friends.help), built as Cloudflare Pages projects with the router as `_worker.js` ([README](sites/README.md), [deploy](docs/deploy.md)) |
 | `plugins/` | The agent plugins (OpenAI and Claude manifests, SKILL.md), generated from `sites/` and checked by `bun run plugins/build.ts --check` |
-| `packages/core/src/svc` | Mirror of the Eliza service contract (`contract.ts`, `svc-auth.ts`). The Eliza side lives upstream as `@elizaos/plugin-network` in elizaOS/eliza (`plugins/plugin-network`); keep both copies byte-identical and bump `CONTRACT_VERSION` together |
+| `packages/core/src/svc` | Mirror of the Eliza service contract (`contract.ts`, `svc-auth.ts`). The Eliza side lives upstream as `@elizaos/plugin-network` in elizaOS/eliza (`plugins/plugin-network`); keep both copies byte-identical (`contract-mirror.test.ts` pins the hashes) |
 | `deploy/` | The shared backend image (Railway), the Pages router and the post-deploy smoke ([docs/deploy.md](docs/deploy.md)) |
 | `evals/` | Hand-written corpora (consent replies, abuse, teen ages, wants, areas, opt-outs, leak evasions), scored by `bun run sim` |
 | `scripts/` | `sim.ts` (the validation command), dev servers, the wrangler wrapper, the synthetic-data scripts |
@@ -60,4 +60,4 @@ bun run sim
 
 The simulations run with `--conditions eliza-source`.
 
-The Eliza side of The Network (gateway takeover, Cloud plumbing, `@elizaos/plugin-network`) is developed in elizaOS/eliza, branch `spike/network-plugin`. This repo talks to it only over the signed contract mirrored in `packages/core/src/svc/contract.ts` and `svc-auth.ts`: `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals`, `/internal/updates` and `/internal/relay` (its types are a proposed upstream addition, in `packages/network/service/relay-endpoint.ts`) on this backend, and `/api/internal/network/deliver` on Eliza Cloud. This repo has no plugin package and no eliza submodule.
+The Eliza side of The Network (gateway takeover, Cloud plumbing, `@elizaos/plugin-network`) is developed in elizaOS/eliza, branch `spike/network-plugin`. This repo talks to it only over the signed contract mirrored in `packages/core/src/svc/contract.ts` and `svc-auth.ts`: `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals`, `/internal/updates` and `/internal/relay` (Cloud's `RelaySendRequest`/`RelaySendResponse`) on this backend, and `/api/internal/network/deliver` on Eliza Cloud. This repo has no plugin package and no eliza submodule.

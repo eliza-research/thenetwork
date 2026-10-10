@@ -22,7 +22,8 @@ import type { SQL } from "bun";
 import type { City, Clock, MemberId, WorldSnapshot } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import type { NetworkContext, SimMessage } from "@thenetwork/core";
-import { ConsentNetwork, type NetworkOptions, type NetworkState } from "../src/network.ts";
+import { ConsentNetwork, relayDispatchCheck, type NetworkOptions, type NetworkState } from "../src/network.ts";
+import type { RelayCanonical } from "../src/relay.ts";
 import { loadRelayRows, PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
 import { capitalWiring, type CapitalEvent } from "../src/capital.ts";
 import type { AppInfo } from "../../platform/src/apps.ts";
@@ -38,7 +39,7 @@ import { outputLeaks } from "../../mcp/src/leaks.ts";
 // The Observatory's event shape and run summaries, so the console reads what this writes.
 import { eventOf, membersOf, type EventRow } from "../../observatory/src/events.ts";
 
-import { NOT_SENT } from "../../blooio/src/outbound-queue.ts";
+import { NOT_SENT, type RecipientCheck } from "../../blooio/src/outbound-queue.ts";
 import { summarizeRun } from "../../observatory/src/engineCapture.ts";
 
 type Row = Record<string, unknown>;
@@ -54,6 +55,8 @@ export interface Unit {
   optOut: Map<MemberId, boolean>;
   forget: Set<MemberId>;
   collected: Set<string>;
+  /** A signed agent action's receipt (relay-endpoint.ts), completed in this unit's save transaction with its rows. */
+  completeAction?: (tx: SQL) => Promise<void>;
 }
 const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set() });
 
@@ -174,6 +177,76 @@ export class NetworkRuntime {
     return !(await this.host.capRefused(this, [probe])).has(id);
   }
   async capRelease(id: string): Promise<void> { await this.host.capRelease?.([id]); }
+
+  // ------------------------------------------------------------------ relay (packages/network/src/relay.ts)
+  /**
+   * The canonical owners' view of relay members: the member row (active account, not opted out), and on the
+   * platform the membership bound to the member's address with its consent ledger (STOP), bans, phone hold
+   * and suppression (accounts.activeMembership), and the lowest known age (an adult only). Fails closed: a
+   * member with no row, no address or no binding is not eligible. `tx` reads the member rows in that transaction.
+   */
+  async relayParties(ids: MemberId[], tx?: SQL): Promise<Map<MemberId, RelayCanonical>> {
+    const out = new Map<MemberId, RelayCanonical>();
+    if (!ids.length) return out;
+    const read = (t: SQL) => t`select id,person_id,account_status,opted_out from network.members where app_id=${this.app.id} and id in ${t(ids)}`;
+    const rows = (tx ? await read(tx) : await this.scoped(read)) as Row[];
+    const accounts = this.host.accounts;
+    for (const id of ids) {
+      const r = rows.find(x => x.id === id), e164 = this.addressOf(id);
+      let bound = false, adult = false;
+      if (accounts && r?.person_id && e164) {
+        const binding = await accounts.activeMembership(this.app, { e164, personId: r.person_id as string });
+        if (binding?.membership.memberId === id) { bound = true; adult = canBeMatched(await accounts.lowestAge(e164, binding.person)); }
+      }
+      out.set(id, { adult, optedOut: !r || r.opted_out === true || !bound, held: !r || r.account_status !== "active" });
+    }
+    return out;
+  }
+
+  /**
+   * Final dispatch admission of a relayed row, inside the outbound queue's admission transaction after
+   * every asynchronous gate (outbound ids "relay:<item>", and "relay:<item>:ask" for the swap question).
+   * The item must be one the relay desk passed (network.relay_records, written with the queued row) for
+   * exactly this recipient and not rejected since; the newest stored state must still hold the open
+   * two-person match of these members with both of them eligible (relayDispatchCheck); no block between
+   * them in the canonical edges or person blocks; and both members pass the canonical checks (relayParties).
+   * The stored state is read FOR SHARE, so a unit that closes the match either commits first (and is seen
+   * here) or waits for this admission.
+   */
+  async relayAdmission(tx: SQL, row: { id: string; memberId?: string | null; oppId?: string }): Promise<RecipientCheck> {
+    const no = (reason: string): RecipientCheck => ({ ok: false, reason });
+    const id = /^relay:([^:]+)(:ask)?$/.exec(row.id);
+    if (!id || !row.memberId) return no("relay:unknown");
+    const to = row.memberId as MemberId, app = this.app.id;
+    const [saved] = await tx`select state from network.network_state where id=${this.pg.id} for share`;
+    if (!saved?.state) return no("relay:no_state");
+    const state = (typeof saved.state === "string" ? JSON.parse(saved.state) : saved.state) as NetworkState;
+    let from: MemberId | undefined, matchId: string | undefined;
+    if (id[2]) {
+      // The swap question names no item of its own: the match is the row's, the sender its other member.
+      matchId = row.oppId;
+      from = state.opps.find(o => o.id === matchId)?.participants.find(p => p !== to);
+    } else {
+      const [rec] = await tx`select opportunity_id,from_member,to_member,decision,review from network.relay_records where app_id=${app} and item_id=${id[1]!}`;
+      if (!rec || rec.to_member !== to || rec.decision !== "pass" || rec.review === "rejected") return no("relay:not_passed");
+      from = rec.from_member as MemberId; matchId = rec.opportunity_id as string;
+      if (row.oppId && row.oppId !== matchId) return no("relay:pair");
+    }
+    if (!from || !matchId) return no("relay:pair");
+    const why = relayDispatchCheck(state, { matchId, from, to, now: this.clock.now() });
+    if (why) return no(why);
+    const [blocked] = await tx`select 1 as b from network.edges where app_id=${app} and type='blocked'
+      and ((from_id=${from} and to_id=${to}) or (from_id=${to} and to_id=${from}))
+      union all select 1 from platform.person_blocks pb join network.members f on f.app_id=${app} and f.id=${from} join network.members t on t.app_id=${app} and t.id=${to}
+      where (pb.from_person=f.person_id and pb.to_person=t.person_id) or (pb.from_person=t.person_id and pb.to_person=f.person_id) limit 1`;
+    if (blocked) return no("party:blocked");
+    for (const [, c] of await this.relayParties([from, to], tx)) {
+      if (!c.adult) return no("party:age");
+      if (c.optedOut) return no("party:opted_out");
+      if (c.held) return no("party:held");
+    }
+    return { ok: true };
+  }
 
   /** A transaction for this app: row-level security (network_service) shows and accepts this app's rows only. */
   scoped<T>(fn: (tx: SQL) => Promise<T>): Promise<T> {
@@ -400,6 +473,8 @@ export class NetworkRuntime {
       const refused = await this.adapter.enqueue(tx, queued, u.forget);
       for (const [id, status] of refused) await tx`update network.messages set status = ${status} where app_id = ${app} and id = ${id} and direction = 'outbound'`;
     }
+    // Last: the action receipt commits with the relay log, the messages and the queued rows, or none of them do.
+    await u.completeAction?.(tx);
   }
 
   /**
