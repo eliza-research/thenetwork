@@ -10,7 +10,7 @@
 #                   (audit finding: deploy-sites.yml preview job).
 #
 # Only code on main (reviewed, behind the production environment) ever runs next to the token, and only
-# the deploy step has it in its environment; Pages has no build command. wrangler is the pinned CLI (bunx).
+# approved production inspection/repair and deploy steps receive it. Pages has no build command. wrangler is pinned (bunx).
 # Secrets (environment "production"): CLOUDFLARE_API_TOKEN (a token scoped to Cloudflare Pages: Edit in
 # the account below). PLATFORM_PROXY_SECRET is set once per Pages project by the coordinator
 # (scripts/wrangler.sh pages secret put), never in CI.
@@ -27,6 +27,12 @@ on:
   pull_request:
     paths: ["sites/**", "deploy/router.ts", "deploy/smoke.ts", "packages/platform/src/proxy.ts", "packages/platform/src/apps.ts", ".github/workflows/deploy-sites.yml"]
   workflow_dispatch:
+    inputs:
+      pages_operation:
+        description: Inspect existing production bindings, or repair only the backend origin and redeploy
+        type: choice
+        options: [inspect, repair-and-deploy]
+        default: inspect
 
 permissions:
   contents: read
@@ -99,15 +105,77 @@ jobs:
         with:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
-      # The build has no Cloudflare token in its environment; only the deploy step below gets it.
+      # Read every project before any repair. Only main receives the existing production credential.
+      # PATCH merges individual env keys; null explicitly deletes a key. Never resubmit secret values.
+      # https://developers.cloudflare.com/api/resources/pages/subresources/projects/methods/edit/
+      - name: Inspect production bindings and optionally repair backend origin
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY }}
+          PROJECT: ${{ matrix.project }}
+          PAGES_OPERATION: ${{ github.event_name == 'workflow_dispatch' && inputs.pages_operation || 'deploy' }}
+        run: |
+          bun - <<'JS'
+          import { createHash } from "node:crypto";
+          import { SITES } from "./sites/sites.ts";
+          const { CLOUDFLARE_API_TOKEN: token, CLOUDFLARE_ACCOUNT_ID: account, TURNSTILE_SITE_KEY: sitekey, PROJECT: project, PAGES_OPERATION: operation } = process.env;
+          if (!token || !account || !sitekey?.startsWith("0x")) throw new Error("Missing production Pages authority or real public Turnstile key");
+          const backend = "https://api.ntwrk.party";
+          const api = async (path, label, init = {}) => {
+            const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/${path}`, {
+              ...init, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, redirect: "error", signal: AbortSignal.timeout(15000),
+            });
+            const body = await response.json();
+            if (!response.ok || !body.success || !body.result) throw new Error(`${label}: Cloudflare metadata request failed (${response.status})`);
+            return body.result;
+          };
+          const projects = [];
+          for (const site of SITES) {
+            const current = await api(`pages/projects/${site.project}`, site.project);
+            const vars = current.deployment_configs?.production?.env_vars ?? {};
+            const value = name => vars[name]?.type === "plain_text" ? vars[name].value : undefined;
+            let origin;
+            try { const url = new URL(value("BACKEND_ORIGIN")); if (url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash && url.pathname === "/") origin = url.origin; } catch {}
+            console.log(JSON.stringify({project:site.project,branch:current.production_branch,backend:origin ?? (vars.BACKEND_ORIGIN ? "invalid binding" : "built fallback"),app:value("APP_ID") === site.app ? site.app : "missing or unexpected",host:value("SITE_HOST") === site.domain ? site.domain : "missing or unexpected",proxySecretPresent:vars.PLATFORM_PROXY_SECRET?.type === "secret_text"}));
+            if (current.production_branch !== "main" || !current.domains?.includes(site.domain)
+              || vars.PLATFORM_PROXY_SECRET?.type !== "secret_text"
+              || (vars.APP_ID && value("APP_ID") !== site.app) || (vars.SITE_HOST && value("SITE_HOST") !== site.domain)
+              || (vars.BACKEND_ORIGIN && !origin)) throw new Error(`${site.project}: production identity or bindings require owner review`);
+            projects.push({site,current,vars});
+          }
+          const widget = await api(`challenges/widgets/${sitekey}`, "Turnstile hostname coverage");
+          const domains = Array.isArray(widget.domains) ? widget.domains : [];
+          const covered = SITES.filter(site => domains.some(domain => site.domain === domain || site.domain.endsWith(`.${domain}`))).map(site=>site.domain);
+          console.log(JSON.stringify({turnstileKeySha256:createHash("sha256").update(sitekey).digest("hex"),coveredProductionHosts:covered}));
+          if (covered.length !== SITES.length) throw new Error("Existing Turnstile widget does not cover all production hosts");
+          const selected = projects.find(item=>item.site.project === project);
+          if (!selected) throw new Error("Unknown project");
+          const old = selected.vars.BACKEND_ORIGIN?.value;
+          if (operation === "repair-and-deploy" && old !== backend) {
+            const config = selected.current.deployment_configs.production;
+            await api(`pages/projects/${project}`, project, {method:"PATCH",body:JSON.stringify({deployment_configs:{production:{env_vars:{BACKEND_ORIGIN:{type:"plain_text",value:backend}},wrangler_config_hash:config.wrangler_config_hash}}})});
+            const after = (await api(`pages/projects/${project}`, `${project} readback`)).deployment_configs.production.env_vars;
+            const remaining = vars => JSON.stringify(Object.entries(vars).filter(([name])=>name!=="BACKEND_ORIGIN").sort(([a],[b])=>a.localeCompare(b)));
+            if (after.BACKEND_ORIGIN?.type !== "plain_text" || after.BACKEND_ORIGIN.value !== backend || remaining(after) !== remaining(selected.vars)) throw new Error(`${project}: runtime readback did not preserve other bindings`);
+          } else if (operation !== "inspect" && old && old !== backend) {
+            throw new Error(`${project}: explicit repair-and-deploy approval is required`);
+          }
+          console.log(JSON.stringify({project,operation,repairRequired:old!==backend}));
+          JS
+      # The build has no Cloudflare token in its environment.
       - name: Production build
-        run: bun run sites/sites.ts ${{ matrix.app }}
+        if: github.event_name != 'workflow_dispatch' || inputs.pages_operation == 'repair-and-deploy'
+        run: |
+          test -n "$TURNSTILE_SITE_KEY" || { echo "Missing real public Turnstile key"; exit 1; }
+          bun run sites/sites.ts ${{ matrix.app }}
         env:
           DEPLOY_TARGET: production
           BACKEND_ORIGIN: ${{ vars.BACKEND_ORIGIN }}
           MCP_URL: "https://{domain}/mcp"
           TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY }}
       - name: Deploy to Cloudflare Pages
+        if: github.event_name != 'workflow_dispatch' || inputs.pages_operation == 'repair-and-deploy'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
@@ -117,10 +185,11 @@ jobs:
           test -f "$DIR/_worker.js" && test -f "$DIR/_routes.json" || { echo "missing _worker.js or _routes.json in $DIR"; exit 1; }
           bunx "wrangler@${WRANGLER_VERSION}" pages deploy "$DIR" --project-name "$PROJECT" --branch main --commit-hash "$GITHUB_SHA" --commit-dirty=false
       - name: Smoke check
+        if: github.event_name != 'workflow_dispatch' || inputs.pages_operation == 'repair-and-deploy'
         env:
           SITE_URL: https://${{ matrix.project }}.pages.dev
           APP: ${{ matrix.app }}
-          API_FLAG: ${{ vars.BACKEND_LIVE == 'true' && '--api' || '' }}
+          API_FLAG: ${{ (vars.BACKEND_LIVE == 'true' || (github.event_name == 'workflow_dispatch' && inputs.pages_operation == 'repair-and-deploy')) && '--api' || '' }}
         run: |
           args=("$SITE_URL" "$APP")
           if [ -n "$API_FLAG" ]; then args+=("$API_FLAG"); fi
