@@ -12,10 +12,11 @@ Repo: <https://github.com/eliza-research/thenetwork> (public). Work from a fresh
   - friends.help, friends;
   - peon.biz, work.
 - **eliza.app is just another entry into The Network**, like the four sites. Someone arriving through eliza.app joins The Network and is asked what they are looking for (friends, dating, work), or is routed by keyword. eliza.app is not a separate product with separate members.
-- **Joining:** slop.date, friends.help and peon.biz are open to anyone. Members aged 13-17 can join but are never matched or connected. Matching is 18+, based on the lowest age the person has stated.
+- **Joining:** slop.date, friends.help and peon.biz are open to anyone. The Network (ntwrk.love) stays invite-only on the web. Members aged 13-17 can join but are never matched or connected. Matching is 18+, based on the lowest age the person has stated.
 - **Bans:** a banned person cannot rejoin, because the ban is on the phone number. Every join, login and inbound path must refuse a banned number.
-- **Ratings:** Clef photo ratings are on, and the scores are never shown to anyone. Clef is also the scam and harassment classifier for relayed messages.
-- **STOP and HELP** on the shared line are handled by the Eliza gateway (`STOP_HELP_OWNER=gateway`). Only one system ever answers STOP.
+- **Ratings:** Clef photo ratings are on, and the scores are never shown to anyone. The placeholder weights ship until fitted weights pass the P2 decision rule. Production sets `CLEF_RATINGS=on`; the code reads an unset flag as off, so keep the variable set. Clef is also the scam and harassment classifier for relayed messages.
+- **STOP and HELP** on the shared line are handled by the Eliza gateway (`STOP_HELP_OWNER=gateway`). Only one system ever answers STOP. The service parses STOP inside `/internal/turn` and reports it as `consent` in the handled response; the gateway copies it into its send fence.
+- **Review and model:** a person reviews every proactive proposal before any member hears of it. Every LLM use is gpt-6-luna on Surplus.
 - **Testing:** sims (`bun run sim`), integration tests and e2e tests. Do not add unit tests or smoke tests.
 
 ## 1. Hard rules for you
@@ -26,7 +27,7 @@ Repo: <https://github.com/eliza-research/thenetwork> (public). Work from a fresh
 4. **Live sends stay off** until the go-live checklist (section 7) is green and the founder approves.
 5. **Coordinate before acting.** Two other Claude sessions own parts of this. Message them before you act on their areas, and do not click through the same dashboards they are using:
    - **"Synthetic people simulator and visualizer"** owns the platform: backend service, Railway, Cloudflare Pages and sites, GitHub settings.
-   - **"PRD review and technical planning"** owns the Eliza side: plugin-network, the Eliza Cloud gateway, the character and the takeover flag.
+   - **"PRD review and technical planning"** owns the Eliza side: `@elizaos/plugin-network` (upstream in elizaOS/eliza), the Eliza Cloud gateway, the character and the takeover flag.
    - Use `ListAgents` and `SendMessage` to reach them.
 6. Use `scripts/wrangler.sh`, never bare `wrangler`. It refuses changes unless `NTWRK_ALLOW_DEPLOY=1` is set; set that only for an approved step.
 
@@ -56,7 +57,7 @@ Status on 2026-10-09: **none of the founder-pasted secrets below are set yet**. 
 | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Photo storage | R2 → Manage API tokens → **Object Read & Write**, scoped to the photo bucket |
 | `BLOOIO_WEBHOOK_SECRET` | Signed inbound, if the service receives any Blooio calls | Blooio dashboard |
 | `SURPLUS_API_KEY` | gpt-6-luna for any service-side model calls | Surplus |
-| `SERVICE_TURN_SECRET` | Signs every Eliza gateway ⇄ service call (`/internal/turn`, `/internal/set-state`, `/internal/signals`, `/internal/updates`, `/internal/relay`, `/internal/deliver`), HMAC per `@thenetwork/plugin-network/svc-auth` | 32+ random bytes, generated once; the same value goes in Railway `backend` and in Eliza Cloud. The platform owner can generate it into Railway; the founder copies it from Railway's Variables page into Eliza Cloud. |
+| `SERVICE_TURN_SECRET` | Signs every Eliza ⇄ service call: the service's `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals`, `/internal/updates` and `/internal/relay` (not served yet), and Eliza Cloud's `/api/internal/network/deliver`. HMAC per `packages/core/src/svc/svc-auth.ts`, the byte-identical mirror of upstream `@elizaos/plugin-network` | 32+ random bytes, generated once; the same value goes in Railway `backend` and in Eliza Cloud. The platform owner can generate it into Railway; the founder copies it from Railway's Variables page into Eliza Cloud. |
 
 **GitHub → eliza-research/thenetwork → Settings → Environments → production → Secrets:**
 - `CLOUDFLARE_API_TOKEN`: an account-owned token for the shawmakesmagic account with **Account → Cloudflare Pages: Edit** only, and a 90-day TTL. The founder can run `gh secret set CLOUDFLARE_API_TOKEN -R eliza-research/thenetwork --env production` and paste it.
@@ -97,14 +98,14 @@ Follow `docs/deploy.md` section 2. Summary:
 
 ## 6. GitHub
 
-1. Make sure CI is green on `main`. It runs typecheck, `bun run plugins/build.ts --check`, the sites production build, `bun run sim`, and the integration and e2e job with Postgres.
+1. Make sure CI is green on `main`. It runs typecheck, `bun run plugins/build.ts --check`, the sites production build, `bun run sim` (with a Postgres service, so the Postgres gates block), and the integration and e2e job with Postgres.
 2. Branch protection on `main`: require CI, no force pushes. Any change to repo settings needs the founder's OK.
 3. The `production` environment already exists, with the founder as required reviewer and `main` only. The repo variables are already set: `CLOUDFLARE_ACCOUNT_ID`, `BACKEND_ORIGIN=https://api.ntwrk.love`, `TURNSTILE_SITE_KEY`. `MCP_URL` is no longer read from a repo variable: `deploy-sites.yml` sets it to `https://{domain}/mcp` per site, the same default as `skills.config.ts`.
 4. After the founder adds `CLOUDFLARE_API_TOKEN`, trigger `deploy-sites.yml` (manual dispatch, or a push to `main`). The founder approves the environment run, then the post-deploy check `deploy/smoke.ts` runs against all four sites.
 
 ## 7. Eliza live: eliza.app becomes an entry into The Network
 
-The design is in `docs/design/eliza-conversation-layer.md`. Eliza-side code, including `@elizaos/plugin-network`, is on branch `spike/network-plugin` of elizaOS/eliza (no longer a submodule of this repo). Section corrected 2026-10-08 by the Eliza-side owner.
+The design is in `docs/design/eliza-conversation-layer.md`. Eliza-side code, including `@elizaos/plugin-network` (`plugins/plugin-network`), is on branch `spike/network-plugin` of elizaOS/eliza. This repo has no plugin package and no eliza submodule; it keeps the wire contract in `packages/core/src/svc/contract.ts` and `svc-auth.ts`, byte-identical to the plugin's copy. Section corrected 2026-10-08 by the Eliza-side owner and 2026-10-09 for the plugin move.
 
 ```
 iMessage (Blooio, shared line)
@@ -112,7 +113,9 @@ iMessage (Blooio, shared line)
       NETWORK_TAKEOVER=1 and the sender is allowed:
       → POST service /internal/turn  (signed, SERVICE_TURN_SECRET)
           handled → the service's replies, sent as one message; no model call
-                    (STOP/START are mirrored into the gateway fence)
+                    (STOP/START/leave come back as `consent` in the handled response and
+                    are mirrored into the gateway fence)
+          → POST service /internal/turn-receipt  (the gateway acknowledges the replies it sent)
           open    → Eliza Cloud agent turn with the service's context; the plugin's store is
                     service-backed (set-state, signals, updates; relay → /internal/relay with the Clef classifier)
 Network service sends → POST Eliza Cloud /api/internal/network/deliver (signed)
@@ -138,7 +141,7 @@ Network service sends → POST Eliza Cloud /api/internal/network/deliver (signed
 
 **Prerequisites, all of which must be true before go-live:**
 
-1. **Service.** `/internal/turn`, `/internal/set-state`, `/internal/signals`, `/internal/updates` and `/internal/relay` are deployed and signed. The shared-line adapter sends through `/api/internal/network/deliver`. Owner: platform.
+1. **Service.** `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals` and `/internal/updates` are served and signed (`deploy/backend/backend.ts`). `/internal/relay` with `clefRelayClassifier` is not served yet (docs/mvp-gaps.md). The shared-line adapter sends through `/api/internal/network/deliver`. Owner: platform.
 2. **Plugin location (resolved 2026-10-09).** Founder decision: the plugin moved upstream as `@elizaos/plugin-network` (elizaOS/eliza `plugins/plugin-network`, a workspace package), so Eliza CI and the gateway image build it in-repo. thenetwork keeps only a byte-identical mirror of the contract in `packages/core/src/svc/`.
 3. **Merge.** `spike/network-plugin` is merged into elizaOS/eliza through a PR (founder approval).
 4. **One STOP owner.** The Blooio webhook for the shared line points only at the Eliza gateway. Remove the old `ovh-eliza` webhook, which needs Blooio account owner approval. The service doesn't consume Blooio webhooks for the shared line.
@@ -152,7 +155,7 @@ Network service sends → POST Eliza Cloud /api/internal/network/deliver (signed
 7. **The character.** It's "Eliza", speaking as The Network's agent, and must pass the Eliza-side owner's live eval.
 8. **Tests green:**
    - `bun run sim`;
-   - the service's `/internal/turn` integration tests against real Postgres;
+   - the service's `/internal/turn` integration tests against real Postgres (`packages/network/test/shared-agent.integration.test.ts`, `shared-actions.integration.test.ts`, `cloud-outbound.integration.test.ts`) and `bun run security`;
    - the Eliza side: gateway (`network-takeover.test.ts`), the Cloud deliver route, and the Workerd shared runtime.
 
 **The go-live sequence.** The founder's explicit approval is needed at each starred step.
