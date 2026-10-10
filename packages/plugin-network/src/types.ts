@@ -97,7 +97,7 @@ export interface NetworkStore {
 export interface NetworkTurnAuthority {
   memberId: string;
   /**
-   * The app (site) this turn runs in, e.g. "ntwrk.love" (audit judge-evals-7). Idempotency keys are
+   * The app (site) this turn runs in, e.g. "ntwrk.party" (audit judge-evals-7). Idempotency keys are
    * scoped by it, and stores and judges use it for cross-app checks. Hosts should always set it.
    */
   app?: string;
