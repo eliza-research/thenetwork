@@ -739,7 +739,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (c.disclosure?.length) this.ctx.log("abuse_disclosed", { memberId: m.id, kinds: c.disclosure });
     // Inside a mutual match, "can I get her number?" asks for a number swap (the relay: Eliza's RELAY
     // contact_share, then both must say yes), never the sender's abuse: it goes to the agent unscored.
-    if (c.abuse.length && this.swapAsk(m, c, body)) return "open" as const;
+    if (c.abuse.length && !mcp && this.swapAsk(m, c, body)) return "open" as const;
     if (c.abuse.length && !this.handleAbuse(m, c, body)) return;
 
     // peon (#9): a job post by text, read back and saved only on the manager's yes (rules only, never an open-turn LLM output).
