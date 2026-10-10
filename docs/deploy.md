@@ -457,15 +457,24 @@ Two backups, so that one failure does not lose the data:
   | `BACKUP_R2_BUCKET` | no | `ntwrk-backups` |
   | `BACKUP_R2_ACCESS_KEY_ID`, `BACKUP_R2_SECRET_ACCESS_KEY` | **yes** | The bucket token |
   | `BACKUP_PREFIX` | no | `postgres/production` (default `postgres/<PLATFORM_ENV>`) |
+  | `BACKUP_ENCRYPTION_KEY` | **yes** | At least 32 random bytes (for example `openssl rand -base64 48`). A person makes it and keeps a copy outside Railway (the founder's password manager): without it no backup can be read. The job refuses to upload without it, unless `PLATFORM_ENV=dev`. |
+  | `BACKUP_PUBLIC_PROBE_URLS` | no | Optional: comma-separated public base URLs that could serve the bucket (an r2.dev URL or a custom domain, if one was ever turned on). The privacy check reads the probe object through each of them too. |
   | `BACKUP_HEARTBEAT_URL` | **yes** | Optional: a heartbeat monitor (as in 7.1) with a period of 1 day and a grace of 2 hours. The job calls it only after a complete upload, so a missed or failed run raises an alert. |
 
-- **What one run does:** it opens a read-only snapshot, counts the rows of every table in `network`, `platform`, `notify`, `oauth` and `public`, and runs `pg_dump --snapshot` on the same snapshot, so the counts and the dump agree. It dumps the roles without passwords. It uploads `db.dump`, `roles.sql` and `manifest.json` (last) to `<BACKUP_PREFIX>/<UTC time>/`. A prefix with a `manifest.json` is a complete backup.
+- **What one run does:** it opens a read-only snapshot, counts the rows of every table in `network`, `platform`, `notify`, `oauth` and `public`, and runs `pg_dump --snapshot` on the same snapshot, so the counts and the dump agree. It dumps the roles without passwords. Before it uploads, it checks that the bucket is private: it writes a probe object, reads it without credentials at the S3 endpoint and at each `BACKUP_PUBLIC_PROBE_URLS` base, and deletes it. Any answer below 400, or no answer, stops the run before anything is uploaded. Then it encrypts `db.dump` and `roles.sql` with AES-256-GCM (key from `BACKUP_ENCRYPTION_KEY` through HKDF-SHA256) and uploads `db.dump.enc`, `roles.sql.enc` and `manifest.json` (last) to `<BACKUP_PREFIX>/<UTC time>/`. The manifest holds row counts, the source host and port, and the key id (a hash, not the key). A prefix with a `manifest.json` is a complete backup.
+- **The privacy check has a limit on R2.** The S3 endpoint always asks for credentials, so the check finds a public bucket only through a URL in `BACKUP_PUBLIC_PROBE_URLS`. A person must still check once, in the Cloudflare dashboard, that the bucket has no r2.dev URL and no custom domain.
 - **Logs:** one JSON line per step: `"msg":"dump"` (bytes, tables, rows) and `"msg":"backup uploaded"`. A failure logs `"msg":"backup failed"` and exits 1. Set `BACKUP_HEARTBEAT_URL` so a failed or missed run is an alert in the same channel as 7.1.
 - **Caution:** the dump holds member data (phone numbers, messages). Only the founder and the on-call engineer may download one, and only to restore it (runbook-real.md section 8). Delete local copies after the drill.
 
 ### 8.2 Restore
 
-`deploy/backup/restore.ts` restores a backup into a **new** database and checks every table's row count against the manifest. It refuses a database that exists, and the live names (`railway`, `network`, `postgres`).
+`deploy/backup/restore.ts` restores a backup into a **new** database and checks every table's row count against the manifest. It refuses a database that exists, the live names (`railway`, `network`, `postgres`), and the source's own database on the source server. It downloads an encrypted backup and decrypts it with `BACKUP_ENCRYPTION_KEY` (a wrong key or a changed file stops it).
+
+A restore never changes a role or a privilege on the source server:
+
+- The drill (the default) runs `pg_restore --no-owner --no-privileges`: no `ALTER OWNER`, `GRANT` or `REVOKE`. The tables belong to the login that ran the restore. Run the drill with the owner login (`postgres` on Railway), because some tables force row-level security.
+- `--keep-privileges` (a real recovery, runbook-real.md 8.3) keeps the owners and grants. They apply to the objects of the new database only.
+- `--roles` runs `roles.sql` (`CREATE ROLE` and `ALTER ROLE` for the whole server). It is refused on the source server, and on any server when the backup does not name its source. Use it only to rebuild an empty replacement server.
 
 ```bash
 # RESTORE_DATABASE_URL: an owner login on the target server (any database; usually the maintenance one).

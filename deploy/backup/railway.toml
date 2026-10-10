@@ -1,7 +1,8 @@
 # Railway config as code for the backup job (docs/deploy.md, section 8). A cron service: Railway starts
 # it on the schedule, it dumps the database to the private R2 backup bucket and exits.
 # In the service settings, set "Config-as-code path" to /deploy/backup/railway.toml.
-# Variables: BACKUP_DATABASE_URL (the owner login, ${{Postgres.DATABASE_URL}}), BACKUP_R2_* and BACKUP_PREFIX.
+# Variables: BACKUP_DATABASE_URL (the owner login, ${{Postgres.DATABASE_URL}}), BACKUP_R2_*, BACKUP_PREFIX and
+# BACKUP_ENCRYPTION_KEY (set by a person; the job refuses to upload without it outside PLATFORM_ENV=dev).
 
 [build]
 builder = "DOCKERFILE"
