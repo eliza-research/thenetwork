@@ -29,6 +29,16 @@ import { JOB_INTENT, SAFETY, T } from "./schema.ts";
 export const SEAT_PREFIX = "job:";
 export const seatIdOf = (postingId: string): MemberId => `${SEAT_PREFIX}${postingId}`;
 export const isSeatId = (id: MemberId): boolean => id.startsWith(SEAT_PREFIX);
+/** The posting id of a seat member id. */
+export const postingIdOf = (seat: MemberId): string => seat.slice(SEAT_PREFIX.length);
+
+/**
+ * The hiring manager who owns a seat (the service routes the seat's probe and intro to them,
+ * packages/network/src/jobs.ts). peonSeats stamps it on the seat member record; the engine never reads it.
+ */
+export function seatOwnerOf(m: Member): MemberId | undefined {
+  return isSeatId(m.id) ? (m as Member & { seatOwner?: MemberId }).seatOwner : undefined;
+}
 
 /** Company facts of the hiring manager that every one of their seats carries. */
 const companyFact = (t: string) => t.startsWith(T.company) || t === T.verified || t === SAFETY.scam || t === SAFETY.discriminatoryRequest;
@@ -55,7 +65,7 @@ export function peonSeats<S extends SnapshotLike>(snap: S): S {
     if (typeof owner.age !== "number" || !Number.isInteger(owner.age) || owner.age < 18) continue;
     const id = seatIdOf(p.id);
     if (byId.has(id)) continue;
-    members.push({ ...owner, id, age: 18, joinedAt: p.createdAt });
+    members.push({ ...owner, id, age: 18, joinedAt: p.createdAt, seatOwner: owner.id } as Member);
     let posted: number | undefined;
     for (const f of snap.facets) {
       if (f.memberId !== owner.id) continue;

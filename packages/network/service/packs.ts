@@ -9,8 +9,11 @@
 //   peon     peonPack with PEON_ENGINE_CONFIG on nyc. Each open job posting is a job seat (snapshot.ts,
 //            engine peonSeats), and the hook below keeps the seat's capacity: openings minus the
 //            candidates who took one or are in flight (engine peonSeatCapacity), so a seat is never
-//            over-filled and a filled or closed posting gets no new match. Local only: peon matching
-//            and sends are not enabled in production (AGENTS.md decision 4).
+//            over-filled and a filled or closed posting gets no new match. The Network routes a seat to
+//            its hiring manager (network.ts seatRoute): the candidate says yes first, then the manager
+//            reviews a blind summary, and the intro goes out only after both yeses (peonHooks below,
+//            src/jobs.ts). Managers post, update and close jobs by text (read back, saved on a yes).
+//            Local only: peon matching and sends are not enabled in production (AGENTS.md decision 4).
 //   friends  friendsPack with its plans config (FRIENDS_PLANS).
 // Every pack stays behind the Network's human review gate. Matching is off until an admin turns it on
 // (the stored switch starts off; platform.networks.matching_enabled only allows the switch). Minors
@@ -30,6 +33,7 @@ import { slopProbeMessage } from "@thenetwork/engine/src/packs/slop/copy.ts";
 import { probePhotoRefs } from "@thenetwork/engine/src/packs/slop/plan.ts";
 import { ZIPS } from "@thenetwork/engine/src/packs/slop/zips.ts";
 import type { AppHooks, AppOnboarding, HookOpp, HookVenue } from "../src/apphooks.ts";
+import { mustMarks, seatJob, SEAT_COPY } from "../src/jobs.ts";
 import { km, NEIGHBORHOOD, VENUES } from "../src/geo.ts";
 import { nextAt } from "../src/outreach.ts";
 import type { AppId } from "../../platform/src/apps.ts";
@@ -70,7 +74,7 @@ export function appWiring(app: AppId): AppWiring {
     }
     case "peon":
       return {
-        pack: peonPack, engine: { ...PEON_ENGINE_CONFIG, cities: ["nyc"] }, plans: false, hooks: { engineInput: peonSeatCapacity },
+        pack: peonPack, engine: { ...PEON_ENGINE_CONFIG, cities: ["nyc"] }, plans: false, hooks: peonHooks(),
         prefs: () => ({ categoriesOptIn: ["professional"], romanceOptIn: false }),
       };
     case "friends":
@@ -269,5 +273,42 @@ export function slopHooks(options: Parameters<typeof planFromInput>[4]): AppHook
       return slopCheckInText(others);
     },
     postDateReports: true,
+  };
+}
+
+// ==================================================================================== peon
+/**
+ * peon's hooks (#9): the seat capacity (engine peonSeatCapacity), job posts by text, and the seat
+ * copy. Candidate first: the candidate hears the job (title, pay range, place; never the manager's
+ * name); after their yes the hiring manager gets a blind summary (must-have checkmarks, start time;
+ * never a name, a score or a rank); the intro names each side only after both yeses.
+ */
+export function peonHooks(): AppHooks {
+  const seatOf = (o: HookOpp) => o.seat;
+  return {
+    engineInput: peonSeatCapacity,
+    postings: true,
+    probe(o, id, ctx) {
+      const seat = seatOf(o);
+      if (!seat) return undefined;
+      const input = ctx.input();
+      const job = seatJob(input, seat.id);
+      if (id !== seat.manager) return SEAT_COPY.candidateProbe(job);
+      const cand = o.participants.find(p => p !== seat.manager)!;
+      const start = input.facets.filter(f => f.memberId === cand).flatMap(f => f.tags).find(t => t.startsWith("peon:start_weeks:"));
+      const weeks = start ? Number(start.slice("peon:start_weeks:".length)) : undefined;
+      return SEAT_COPY.managerProbe(job, mustMarks(input, cand, job), Number.isInteger(weeks) ? weeks : undefined);
+    },
+    booked(o, id, ctx) {
+      const seat = seatOf(o);
+      if (!seat) return undefined;
+      const job = { title: seat.title ?? "the role", must: [] };
+      const other = ctx.others[0] ?? "them";
+      return id === seat.manager ? SEAT_COPY.managerIntro(job, other) : SEAT_COPY.candidateIntro(job, other);
+    },
+    checkIn(o, _id, others) {
+      const seat = seatOf(o);
+      return seat ? SEAT_COPY.checkIn({ title: seat.title ?? "the role", must: [] }, others) : undefined;
+    },
   };
 }

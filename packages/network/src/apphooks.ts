@@ -10,6 +10,7 @@
 //   venue         the meeting place after everyone said yes (slop: a public place near the midpoint)
 //   booked        the booked-plan reveal (slop: share-my-date and the check-in)
 //   checkIn       the question after the meeting (slop: how it went, and how to report)
+//   postings      peon: job posts by text (read back, saved on the manager's yes; jobs.ts)
 // Every hook is optional. Without hooks (The Network) nothing changes.
 import type { Category, Facet, MemberId } from "@thenetwork/core";
 import type { EngineInput } from "@thenetwork/engine";
@@ -39,6 +40,8 @@ export interface HookOpp {
   /** Slot starts each member picked. */
   picks?: Readonly<Record<MemberId, readonly number[]>>;
   meetingAt?: number;
+  /** peon: the job seat the engine proposed (`job:<posting>`) and the hiring manager who answers for it (jobs.ts). */
+  seat?: { id: MemberId; manager: MemberId; title?: string };
 }
 
 /** A public meeting place. Never a home. */
@@ -61,4 +64,6 @@ export interface AppHooks {
   checkIn?(o: HookOpp, id: MemberId, others: string): string | undefined;
   /** Answers to the check-in can file a report about the other person (slop: harassment, lying, a no-show, an unsafe date). */
   postDateReports?: boolean;
+  /** peon: hiring managers post, update and close jobs by text in a handled turn, read back and confirmed (jobs.ts). */
+  postings?: boolean;
 }

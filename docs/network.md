@@ -104,8 +104,36 @@ Proof that ntwrk did not change: a 21-day, seed-1 NYC run hashed every run recor
 
 Limits:
 
-- Every app runs The Network's NYC engine, places and time zone with its own brand words and join age. slop and peon matching stays off until the engine session ships their app packs (`platform.networks.matching_enabled = false`).
+- Every app runs The Network's NYC engine, places and time zone with its own brand words and join age. slop and peon matching stays off until an admin turns it on (`platform.networks.matching_enabled = false`). peon job seats: 1.4.
 - slop and peon review reasons exist only in the Observatory. The Network's `decide()` accepts the PRD 32.8 codes, so the console sends an app code as its PRD code with `[code]` at the start of the note ([admin-console.md](admin-console.md) 4.6).
+
+### 1.4 peon job seats (#9)
+
+A hiring manager is a peon member who owns job postings. The engine matches job seats, and the Network routes each seat to its manager. Code: `src/jobs.ts` (model, intake, copy), `src/network.ts` (routing), `service/packs.ts` (`peonHooks`), `service/postings.ts` (rows and the staff API).
+
+**The posting.** A `JobPosting` has a title, openings (1-50), a pay range (required), the work model, an area, must-haves, nice-to-haves and a status (`active` or `closed`). It is stored as rows that the engine reads already: an intent `Hire: <title>` (details `peon:job`) and facets tagged `peon:posting:<id>` on the manager (`postingFacts`). There is no new table and no migration. The rows are in `network.intents` and `network.facets`, under the same row-level security, and the forget path deletes them with the member. The snapshot makes each posting a seat `job:<id>` (engine `peonSeats`), and `seatOwnerOf(seat)` gives the manager.
+
+**Who may post.** `managerProblem(id)`: a peon member with a record age of 18 or more and no minor signal, report or age conflict; not paused, restricted, opted out, held or banned; opted in to work matching (`professional`). A minor gets "Job posts are for adults (18+) only." Closing a posting always works.
+
+**Intake by text.** The intake runs in a handled turn (`AppHooks.postings`, peon only), with rules only. It never reads an open-turn LLM output. A posting command ("We're hiring a data analyst, 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL") starts a draft. The Network asks for a missing title or pay range (at most two questions), then reads the post back. The manager's yes saves it (`applyPosting`, then `NetworkOptions.onPosting`). The service writes the rows in the same transaction as the state (`runtime.ts` `writeUnit`). Other details correct the draft, and a no drops it. "Update my data analyst post: 3 openings" and "Close my data analyst post" work the same way. The draft is in `MemberState.posting`, so it survives a restart.
+
+**Staff API** (`jobPostingRoutes`, peon only, admin for writes): `GET /postings?managerId=`, `POST /postings`, `POST /postings/:id/close` (`reason: closed | filled`), `POST /employers/:memberId/verify` (`company`, `note`; peonPack proposes no job of an unverified employer). Each write goes through `applyPosting` in a unit of work, with the same checks as a text, and writes `network.staff_audit`.
+
+**Routing.** The engine proposes a pair `[candidate, job:<id>]`. `seatRoute` puts the manager in place of the seat and keeps `Opp.seat = { id, manager }`. A seat without a manager on the record is never proposed (gate `seat_without_manager`). Every item goes to the review queue first, like every other item. Then the normal consent flow runs:
+
+1. The candidate first (`firstOf`): the job title, pay range and place. No manager name.
+2. After the candidate's yes, the manager gets a blind summary: must-have checkmarks and the start time. No name, score or rank. For the manager this is not an initial invite (they asked for candidates), so it waits only for quiet hours.
+3. After both yeses, the intro gives each side the other's name. They write through the agent, or ask it to share a number (relay). There is no reminder. The check-in asks if they talked.
+
+A no from the manager closes the item (an alternate candidate never stands in for the manager). The manager's seat items never make the manager "busy" for other seat items. Minors, held, banned and opted-out candidates are never in an item (the pack input leaves out minors; `eligible` refuses the rest).
+
+**Capacity.** In the engine's input (`seatView`), the manager is the seat again in recent proposals, interactions and open items. An item that both sides said yes to holds an opening (`accepted`) until it closes or its check-in is answered. The engine hook `peonSeatCapacity` then caps each seat at its openings left.
+
+**Close and fill.** At every tick, `checkSeats` ends a seat's items in review or in probes when the posting is closed or gone, or when intros that both sides accepted take all its openings. A candidate who already said yes gets "That job is no longer open...". Intros that are already done stay.
+
+**Validation.** `bun run sim --only peon-seats` (blocking: intake, routing, double opt-in, exclusions, restart, close; review "human", approved by the gate). `packages/network/test/peon-postings.integration.test.ts` (text intake, the yes, restart, the staff API, on Postgres). `packages/network/test/peon-seats.integration.test.ts` (seats and capacity from rows).
+
+**Not built.** The service does not register `jobPostingRoutes` yet (one line in `service.ts`). There is no web intake page. Interview, offer and hire stages after the intro are not tracked. The pack's own stages go further (PRD 40.6).
 
 ## 2. The review gate (PRD 32.8)
 

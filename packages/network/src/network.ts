@@ -53,6 +53,7 @@ type LedgerInput = CapitalEventInput extends infer E ? (E extends CapitalEventIn
 import type { NetworkStore } from "./store.ts";
 import { HOLD, Trust, type TrustEvent, type TrustLevel, type TrustState } from "./trust.ts";
 import type { AppHooks, AppTag, HookOpp } from "./apphooks.ts";
+import { isSeatId, postingFromDraft, postingFromFacts, postingProblem, postingsOf, POSTING_COPY, readPostingText, seatIdOf, seatOwnerOf, SEAT_COPY, type JobPosting, type PostingDraft } from "./jobs.ts";
 import { checkInReport, reportKindOf, URGENT_REPORTS, type ReportKind, type SafetyReport } from "./reports.ts";
 
 /** Where an opportunity came from. "planner": a plan from the engine planner, or a crew session (Opp.crewId). */
@@ -205,6 +206,12 @@ export interface NetworkOptions {
    * ALLOWED_CATEGORIES. Nothing outside it is ever proposed, requested or composed.
    */
   allowedCategories?: readonly Category[];
+  /**
+   * peon (#9): a job posting a hiring manager confirmed by text, or staff saved (applyPosting). The
+   * service writes its rows (intent and facets) in the same transaction as the state (runtime.ts);
+   * the next snapshot makes it a job seat. Without it, a confirmed post is logged and not kept.
+   */
+  onPosting?: (p: JobPosting) => void;
 }
 
 /**
@@ -267,7 +274,7 @@ interface MemberState {
   /** When each initial invite went out (the cap counts these, founder decision 3). */
   proactive: number[]; lastInbound: number; lastAskAt: number; joinedAt: number;
   /** What the member's next message probably answers. `ask` names an engine question (EngineResult.asks). */
-  awaiting?: { kind: "probe" | "booked" | "feedback" | "growth" | "interview" | "age" | "checkin" | "crew"; oppId?: string; ask?: AskRecord; at: number; crewId?: string; clarified?: boolean };
+  awaiting?: { kind: "probe" | "booked" | "feedback" | "growth" | "interview" | "age" | "checkin" | "crew" | "posting"; oppId?: string; ask?: AskRecord; at: number; crewId?: string; clarified?: boolean };
   invitedBy?: MemberId; invites: number[]; invitesBlockedUntil: number; lastGrowthAsk: number;
   /** What the member told us. Desires carry when they were stated: they expire and can be withdrawn. */
   learned: { interests: Set<string>; skills: Set<string>; desires: Map<string, number>; area?: string; eveningsOpen?: boolean; groups?: boolean };
@@ -294,6 +301,8 @@ interface MemberState {
   appTags?: AppTag[];
   /** The app's onboarding state (AppHooks.onboarding), plain JSON the Network never reads inside. */
   onboarding?: unknown;
+  /** peon: a job post (or a close) read back to the manager and waiting for their yes (jobs.ts). */
+  posting?: PostingDraft;
   /**
    * Unsolicited sends (PRD 32.9, PH-003, F28): anything that is not a reply within 15 minutes, a
    * follow-up to the member's own ask, or part of an opportunity they said yes to. Times per lane
@@ -369,6 +378,12 @@ interface Opp {
   post?: Record<MemberId, { came: boolean; again: boolean; otherNoShow: boolean; named: MemberId[] }>;
   /** Attendance resolved and the ledger told (plan_attended / plan_no_show / plan_ghosted). */
   finalized?: boolean;
+  /**
+   * peon (#9): the engine proposed a job seat. `id` is the seat (`job:<posting>`), `manager` the hiring
+   * manager who owns it and stands in for it here: they get the blind review after the candidate's
+   * yes and the intro only after both yeses. The engine's own views (capacity, pair rules) see the seat.
+   */
+  seat?: { id: MemberId; manager: MemberId };
 }
 /** A member request. The member's own words are not kept: only what the classifier read from them. */
 interface Request {
@@ -529,8 +544,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** The app this Network serves, and its member-facing copy. */
   readonly app: AppInfo;
   private readonly copy: Copy;
-  private opts: Required<Omit<NetworkOptions, "app" | "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "plansConfig" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "allowedCategories" | "hooks">>
-    & Pick<NetworkOptions, "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "hooks">;
+  private opts: Required<Omit<NetworkOptions, "app" | "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "plansConfig" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "allowedCategories" | "hooks" | "onPosting">>
+    & Pick<NetworkOptions, "engine" | "onEngineRun" | "store" | "onLedger" | "capital" | "understand" | "onAgeStated" | "engineLLM" | "pack" | "hooks" | "onPosting">;
   /** The categories this app may start opportunities in (ALLOWED_CATEGORIES). */
   readonly allowedCategories: ReadonlySet<Category>;
   private pcfg: PlansConfig;
@@ -545,7 +560,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       invitesPerMonth: opts.invitesPerMonth ?? 3, maxGrowthAsksPerDay: opts.maxGrowthAsksPerDay ?? 8, onboardingRequests: opts.onboardingRequests ?? false,
       review: opts.review ?? "human", reviewSlaHours: opts.reviewSlaHours ?? 12, matchingEnabled: opts.matchingEnabled ?? true,
       engine: opts.engine, onEngineRun: opts.onEngineRun, store: opts.store, onLedger: opts.onLedger, capital: opts.capital, plans: opts.plans ?? true,
-      understand: opts.understand, onAgeStated: opts.onAgeStated, engineLLM: opts.engineLLM, pack: opts.pack, hooks: opts.hooks,
+      understand: opts.understand, onAgeStated: opts.onAgeStated, engineLLM: opts.engineLLM, pack: opts.pack, hooks: opts.hooks, onPosting: opts.onPosting,
     };
     this.allowedCategories = new Set(opts.allowedCategories ?? ALLOWED_CATEGORIES[this.app.id] ?? ALLOWED_CATEGORIES.ntwrk!);
     this.pcfg = resolvePlans(opts.plansConfig ?? {});
@@ -702,6 +717,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     // "He asked me to venmo him $50": what someone else did, never the sender's abuse (ids and kinds only).
     if (c.disclosure?.length) this.ctx.log("abuse_disclosed", { memberId: m.id, kinds: c.disclosure });
     if (c.abuse.length && !this.handleAbuse(m, c, body)) return;
+
+    // peon (#9): a job post by text, read back and saved only on the manager's yes (rules only, never an open-turn LLM output).
+    if (this.opts.hooks?.postings && this.postingTurn(m, body)) return;
 
     // Answers to what we asked.
     const aw = m.awaiting;
@@ -1778,7 +1796,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     for (let i = 0; i < o.participants.length; i++) for (let j = i + 1; j < o.participants.length; j++)
       if (this.blocked(o.participants[i]!, o.participants[j]!)) return "blocked_pair";
-    if (o.origin === "engine") return this.gateReason({ ...this.toProposal(o), roles: o.roles ?? {}, anchor: o.anchor } as EngineProposal, o.id);
+    if (o.origin === "engine") return this.gateReason({ ...this.toProposal(o), roles: o.roles ?? {}, anchor: o.anchor, ...(o.seat ? { seat: o.seat } : {}) } as SeatProposal, o.id);
     return undefined;
   }
 
@@ -1790,7 +1808,8 @@ export class ConsentNetwork implements NetworkUnderTest {
    */
   private reroll(o: Opp, opts: ReviewOptions, reviewer: string, logged: Record<string, unknown>): ActionResult {
     const now = this.now();
-    const swappable = o.participants.filter(p => p !== o.requester);
+    // A seat item's hiring manager is never swapped out (only the candidate can be).
+    const swappable = o.participants.filter(p => p !== o.requester && p !== o.seat?.manager);
     const out = opts.swapOut ?? (swappable.length === 1 ? swappable[0] : undefined);
     if (out !== undefined && !swappable.includes(out)) { this.ctx.log("review_refused", { oppId: o.id, decision: "reroll", reason: "cannot_swap" }); return { ok: false, reason: "cannot_swap" }; }
     const stay = o.participants.filter(p => p !== out);
@@ -1859,13 +1878,15 @@ export class ConsentNetwork implements NetworkUnderTest {
    * firstToProbe (the member with the live want: seeker, initiator, newcomer), else the first participant.
    */
   private firstOf(o: Opp): MemberId {
+    // peon: candidate first; the hiring manager reviews only a candidate who said yes.
+    if (o.seat) return o.participants.find(p => p !== o.seat!.manager) ?? o.participants[0]!;
     if (o.requester && o.participants.includes(o.requester)) return o.requester;
     return o.roles ? attention.firstToProbe({ participants: o.participants, roles: o.roles }) : o.participants[0]!;
   }
 
   /** What an app's hook sees of an opportunity. */
   private hookOpp(o: Opp): HookOpp {
-    return { id: o.id, category: o.category, participants: [...o.participants], ...(o.first ? { first: o.first } : {}), ...(o.picks ? { picks: o.picks } : {}), ...(o.meetingAt !== undefined ? { meetingAt: o.meetingAt } : {}) };
+    return { id: o.id, category: o.category, participants: [...o.participants], ...(o.first ? { first: o.first } : {}), ...(o.seat ? { seat: { ...o.seat, title: this.seatTitle(o.seat.id) } } : {}), ...(o.picks ? { picks: o.picks } : {}), ...(o.meetingAt !== undefined ? { meetingAt: o.meetingAt } : {}) };
   }
   /** The pack input, built at most once per call site (hooks that need it ask for it). */
   private inputOnce(): () => EngineInput { let x: EngineInput | undefined; return () => (x ??= this.packInput(this.now())); }
@@ -1934,7 +1955,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     const now = this.now();
     if (o.contacted.has(id)) return;
     o.status.set(id, "probing");
-    const invite = o.requester !== id;
+    // A hiring manager asked for candidates (their posting): the review of one is not an initial invite.
+    const invite = o.requester !== id && o.seat?.manager !== id;
     const timing: Timing = invite ? "slot" : "logistics";
     // One open question at a time: a probe waits (up to a day) while the member's answer to an ask
     // (growth, profiling, check-in) is still due, so "Sure, my friend Wren would love this" is never
@@ -1953,7 +1975,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!this.inNyc(id, now, now + 6 * DAY)) { this.refuse(id, "probe", "away"); o.status.set(id, "unavailable"); return this.replaceOrClose(o, id); }
     // The others' picked times are all too soon now (or turned down): new times would not match theirs.
     if (this.commonTimeGone(o, id, now)) return this.closeNoCommonTime(o, id);
-    const options = this.timeOptionsFor(o, id, now);
+    // A job intro has no meeting slot to pick: the two arrange the talk through the agent after the intro.
+    const options = o.seat ? [] : this.timeOptionsFor(o, id, now);
     const times = options.length ? attention.timeOptionsPhrase(options, NY) : undefined;
     const area = o.venueArea ?? m.area;
     const when = o.category === "hobby" || o.category === "events" ? "this weekend" : "this week";
@@ -2144,6 +2167,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   private replaceOrClose(o: Opp, out: MemberId) {
     if (o.stage !== "probing") return;
     if (o.requester === out) return this.close(o, "requester unavailable");
+    // A seat item without its hiring manager is over (an alternate candidate never stands in for them).
+    if (o.seat?.manager === out) return this.close(o, "manager unavailable");
     const group = o.participants.length > 2;
     let alt: MemberId | undefined;
     while (!alt && o.alternates.length && o.replacements < 3) {
@@ -3044,6 +3069,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     for (const m of this.members.values()) this.refreshUnanswered(m, now);
     for (const o of [...this.opps.values()]) this.advance(o, now);
+    this.checkSeats();
     for (const m of this.members.values()) {
       const aw = m.awaiting;
       if (!aw) continue;
@@ -3159,7 +3185,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       }
       // Reminders land inside each member's allowed window before the meeting: at T-4h when that is
       // allowed, otherwise at the last allowed tick before it (the evening before for an early meeting).
-      for (const id of o.participants) {
+      // A job intro has no meeting the Network booked: no reminder (the two arrange it through the agent).
+      for (const id of o.seat ? [] : o.participants) {
         if (o.status.get(id) !== "yes" || o.reminded.has(id) || now >= o.meetingAt || now < o.meetingAt - DAY) continue;
         const m = this.members.get(id);
         if (!m || !this.timingOk(m, "logistics", now)) continue;
@@ -3220,7 +3247,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     // By score. The audit (matching-e2e-5) asked to keep the engine's own order so its exposure-floor
     // picks survive the daily cap; an A/B on seeds 1-3 (docs/results/2026-10-08-network-hardening.md)
     // showed no fairness gain and lower enjoyment, so the order stays until a larger run decides.
-    for (const p of ranked) {
+    for (const p0 of ranked) {
+      // peon: a job seat is answered by its hiring manager (seatRoute); a seat without one is never proposed.
+      const p = this.seatRoute(p0);
+      if (!p) { this.gate("seat_without_manager", p0.participants); continue; }
       if (started >= this.opts.maxNewPerDay) { this.gate("daily_cap", p.participants); continue; }
       const why = this.gateReason(p);
       if (why) { this.gate(why, p.participants); continue; }
@@ -3354,9 +3384,9 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /** Skeptical gate on engine output. Returns why a proposal is NOT started, or undefined. */
-  private gateReason(p: EngineProposal, exceptOpp?: string): string | undefined {
+  private gateReason(p: SeatProposal, exceptOpp?: string): string | undefined {
     if (!this.allowedCategories.has(p.category ?? "social")) return "category_not_allowed";
-    if (p.participants.some(id => !this.eligible(id, exceptOpp))) return "participant_unavailable";
+    if (p.participants.some(id => !this.eligibleIn(p, id, exceptOpp))) return "participant_unavailable";
     if (p.category === "romance") { const why = this.romanceGate(p.participants); if (why) return why; }
     // Receiving is support-only (founder default D1-D18): never ask them to give, host or connect.
     if (p.participants.some(id => this.members.get(id)?.state === "receiving" && CONTRIBUTOR_ROLES.has(p.roles?.[id] as never))) return "receiving_contributor";
@@ -3421,8 +3451,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     return undefined;
   }
 
-  private fromProposal(p: Proposal, origin: Origin, now: number): Opp | undefined {
-    if (p.participants.some(id => !this.eligible(id))) { if (origin === "player") this.ctx.log("proposal_skipped", { proposalId: p.id, reason: "participant unavailable" }); return undefined; }
+  private fromProposal(p: Proposal & { seat?: Opp["seat"] }, origin: Origin, now: number): Opp | undefined {
+    if (p.participants.some(id => !this.eligibleIn(p, id))) { if (origin === "player") this.ctx.log("proposal_skipped", { proposalId: p.id, reason: "participant unavailable" }); return undefined; }
     const tags = [...new Set(p.participants.flatMap(id => [...(this.knownProfiles().get(id)?.interests ?? [])]))].slice(0, 6);
     // Engine explanations may name the other person ("Sam K.: lives near..."); members only ever see
     // names at the reveal, and only of the people in it, so strip every member name first.
@@ -3438,6 +3468,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     });
     // What the gates need to run again when a reviewer approves it (approvalCheck).
     if (origin === "engine") { const e = p as Partial<EngineProposal>; o.anchor = e.anchor; o.roles = e.roles; }
+    if (p.seat) o.seat = { ...p.seat };
     if (o.anchor?.type === "event" && p.window) o.anchorWindow = { ...p.window };
     // Engine text can quote matchable facets: every member-facing reason is rebuilt from shareable facts (network-consent-11).
     if (origin === "engine") this.reexplain(o);
@@ -3528,7 +3559,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       openOpportunities: this.openOpps().filter(o => o.participants.every(id => adult.has(id)))
         .map(o => ({ id: o.id, participants: [...o.participants], stage: o.stage === "scheduled" ? "scheduled" as const : "inviting" as const, ...(o.meetingAt !== undefined ? { until: o.meetingAt } : {}) })),
     };
-    return this.opts.hooks?.engineInput?.(out) ?? out;
+    return this.opts.hooks?.engineInput?.(this.seatView(out)) ?? this.seatView(out);
   }
 
   /** A want the member told us stays live for its horizon, unless they later withdrew it. */
@@ -4124,9 +4155,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     return !this.busy(id, exceptOpp) && !this.overBudget(m);
   }
   /** In an open opportunity (other than `exceptOpp`) and not out of it. */
-  busy(id: MemberId, exceptOpp?: string) {
+  busy(id: MemberId, exceptOpp?: string, seats = false) {
     for (const o of this.openOpps()) {
       if (o.id === exceptOpp || !o.participants.includes(id)) continue;
+      // A hiring manager reviews every candidate for their seats at once: a seat item never makes them busy (`seats`: it does, for dropMember).
+      if (!seats && o.seat?.manager === id) continue;
       const st = o.status.get(id) ?? "";
       if (["unavailable", "no", "dropped"].includes(st)) continue;
       // A yes to a plan still waiting for quorum does not block other items (plans ask 6).
@@ -4185,7 +4218,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /** At the start of a unit: read the record again, and take a member the record now keeps out of matching out of every open opportunity. */
   private syncMember(m: MemberState) {
-    if (this.syncRecord(m) && this.busy(m.id)) this.dropMember(m.id, m.account ? `account ${m.account}` : "minors policy");
+    if (this.syncRecord(m) && this.busy(m.id, undefined, true)) this.dropMember(m.id, m.account ? `account ${m.account}` : "minors policy");
   }
 
   member(id: MemberId): MemberState {
@@ -4214,6 +4247,186 @@ export class ConsentNetwork implements NetworkUnderTest {
     return m;
   }
   memberList() { return [...this.members.values()]; }
+
+  // ================================================================== peon job seats (#9, jobs.ts)
+  /**
+   * An engine proposal for a job seat, as the hiring manager's item: the seat id becomes the manager
+   * (who answers for it), and the item remembers the seat so the engine's views keep seeing it
+   * (seatView). Undefined: the seat has no manager on the record (it is never proposed). Proposals
+   * without a seat pass through unchanged.
+   */
+  private seatRoute(p: EngineProposal): SeatProposal | undefined {
+    const seat = p.participants.find(isSeatId);
+    if (!seat) return p;
+    const rec = this.record(seat);
+    const manager = rec ? seatOwnerOf(rec) : undefined;
+    if (!manager || p.participants.includes(manager) || p.participants.filter(isSeatId).length !== 1) return undefined;
+    const swap = (id: MemberId) => (id === seat ? manager : id);
+    const keys = <T>(o: Record<MemberId, T> | undefined): Record<MemberId, T> => Object.fromEntries(Object.entries(o ?? {}).map(([k, v]) => [swap(k), v]));
+    return {
+      ...p, participants: p.participants.map(swap), alternates: (p.alternates ?? []).filter(a => !isSeatId(a) && a !== manager),
+      explanations: keys(p.explanations), roles: keys(p.roles), ...(p.anchor ? { anchor: { ...p.anchor, id: swap(p.anchor.id) } } : {}), seat: { id: seat, manager },
+    };
+  }
+
+  /** The job title of a seat (its posting's "Hire: <title>"), for the seat copy. */
+  private seatTitle(seat: MemberId): string {
+    return (this.snapshotCached().intents.find(i => i.memberId === seat)?.objective ?? "").replace(/^Hire:\s*/i, "") || "the role";
+  }
+
+  /** Eligibility inside one proposal: the hiring manager of a seat item is checked as a manager (managerProblem), everyone else as usual. */
+  private eligibleIn(p: { seat?: Opp["seat"] }, id: MemberId, exceptOpp?: string): boolean {
+    return p.seat?.manager === id ? !this.managerProblem(id) : this.eligible(id, exceptOpp);
+  }
+
+  /**
+   * Why this member may not own a job posting or answer for a seat now (undefined: they may). A peon
+   * member who is a confirmed adult (record age 18+, no minor signal, report or conflict), active (not
+   * paused, restricted, opted out, held or banned) and opted in to work matching.
+   */
+  managerProblem(id: MemberId): "adults_only" | "not_ready" | "opt_in" | undefined {
+    if (this.declinedIds.has(id)) return "not_ready";
+    const r = this.record(id);
+    if (!r || isSeatId(id)) return "not_ready";
+    const m = this.member(id);
+    this.syncRecord(m);
+    if (!validAge(r.age) || r.age < 18 || m.minor || m.minorSignal || m.ageConflict || m.minorReported) return "adults_only";
+    if (m.optedOut || m.account || ["paused", "restricted", "removed", "invited"].includes(r.accountStatus ?? "") || !this.trust.ok(id) || this.reportHeld(id)) return "not_ready";
+    if (!(r.prefs?.categoriesOptIn ?? []).includes("professional")) return "opt_in";
+    return undefined;
+  }
+
+  /**
+   * The engine's view of seat items: the hiring manager is the seat again in recent proposals,
+   * interactions and open items, so the pack counts each seat's openings (engine seatFills) and its
+   * pair rules see the seat. A seat item both sides said yes to holds its opening ("accepted") until
+   * it closes or its check-in is answered.
+   */
+  private seatView(input: EngineInput): EngineInput {
+    const seats = new Map<string, NonNullable<Opp["seat"]>>();
+    for (const o of this.opps.values()) if (o.seat) seats.set(o.id, o.seat);
+    if (!seats.size) return input;
+    const view = (oppId: string, ids: readonly MemberId[] | undefined) => {
+      const s = seats.get(oppId.split(":fb:")[0]!.replace(/:seat$/, ""));
+      return (ids ?? []).map(id => (s && id === s.manager ? s.id : id));
+    };
+    const interactions = (input.interactions ?? []).map(x => ({
+      ...x, participants: view(x.id, x.participants),
+      ...(x.declinedBy ? { declinedBy: view(x.id, x.declinedBy) } : {}), ...(x.acceptedBy ? { acceptedBy: view(x.id, x.acceptedBy) } : {}),
+      ...(x.contributors ? { contributors: view(x.id, x.contributors) } : {}), ...(x.noResponse ? { noResponse: view(x.id, x.noResponse) } : {}),
+    }));
+    for (const o of this.opps.values()) {
+      if (!o.seat || o.meetingAt === undefined || o.stage === "closed" || interactions.some(x => x.id.startsWith(`${o.id}:fb:`))) continue;
+      interactions.push({ id: `${o.id}:seat`, kind: o.kind, category: o.category, participants: view(o.id, o.participants), at: o.meetingAt, outcome: "accepted", acceptedBy: view(o.id, o.participants) });
+    }
+    return {
+      ...input, interactions,
+      recentProposals: (input.recentProposals ?? []).map(p => ({ ...p, participants: view(p.id, p.participants), alternates: view(p.id, p.alternates) })),
+      ...(input.openOpportunities ? { openOpportunities: input.openOpportunities.map(o => ({ ...o, participants: view(o.id, o.participants) })) } : {}),
+    };
+  }
+
+  /**
+   * At every tick: a seat item still in review or in probes ends when its posting closed (or is gone)
+   * or its openings are all taken by intros both sides said yes to (a filled posting).
+   */
+  private checkSeats() {
+    const open = this.openOpps().filter(o => o.seat && o.stage !== "scheduled");
+    if (!open.length) return;
+    const snap = this.snapshotCached();
+    for (const seatId of new Set(open.map(o => o.seat!.id))) {
+      const active = snap.intents.some(i => i.memberId === seatId && i.status === "active");
+      if (!active) { this.endSeat(seatId, "posting closed"); continue; }
+      const posted = Number(snap.facets.find(f => f.id === `${seatId}:openings`)?.tags.find(t => t.startsWith("peon:openings:"))?.slice("peon:openings:".length) ?? 0);
+      const filled = new Set([...this.opps.values()].filter(o => o.seat?.id === seatId && o.meetingAt !== undefined && o.stage !== "closed").map(o => o.participants.find(p => p !== o.seat!.manager)));
+      if (filled.size >= posted) this.endSeat(seatId, "posting filled");
+    }
+  }
+
+  /**
+   * End a seat's items that are not booked yet (review or probes). A candidate who already said yes
+   * hears that the job is no longer open; nobody learns who else was in it. Booked intros stay.
+   */
+  private endSeat(seatId: MemberId, reason: "posting closed" | "posting filled") {
+    for (const o of this.openOpps()) {
+      if (o.seat?.id !== seatId || o.stage === "scheduled") continue;
+      for (const id of o.participants) {
+        if (id === o.seat.manager || o.status.get(id) !== "available") continue;
+        const m = this.members.get(id);
+        if (m) this.send(m, SEAT_COPY.postingClosed, { type: "info", proposalId: o.id }, "cancellation");
+      }
+      this.ctx.log("seat_ended", { oppId: o.id, seat: seatId, reason });
+      this.close(o, reason);
+    }
+  }
+
+  /** A posting of this manager as it stands in the snapshot (an update keeps what it does not change). */
+  private storedPosting(managerId: MemberId, postingId: string): JobPosting | undefined {
+    const snap = this.snapshotCached();
+    const seat = seatIdOf(postingId);
+    const rec = snap.members.find(x => x.id === seat);
+    if (!rec || seatOwnerOf(rec) !== managerId) return undefined;
+    const intent = snap.intents.find(i => i.memberId === seat && i.id === postingId);
+    if (!intent) return undefined;
+    const ref = postingsOf(snap, managerId).find(p => p.id === postingId);
+    const p = postingFromFacts(intent, snap.facets.filter(f => f.memberId === seat));
+    return { ...p, managerId, openings: ref && ref.openings > 0 ? ref.openings : p.openings };
+  }
+
+  /**
+   * Save a job posting (the manager's confirmed text, or staff through the API, service/postings.ts).
+   * An active posting needs a manager who may own one (managerProblem); closing always works. The
+   * rows are written by the service (onPosting); a closed posting ends its open seat items at once.
+   */
+  applyPosting(p: JobPosting, actor: string): ActionResult {
+    const bad = postingProblem(p);
+    if (bad) return { ok: false, reason: bad };
+    const rec = this.snapshotCached().members.find(x => x.id === seatIdOf(p.id));
+    if (rec && seatOwnerOf(rec) !== p.managerId) return { ok: false, reason: "not_owner" };
+    if (p.status === "active") { const why = this.managerProblem(p.managerId); if (why) return { ok: false, reason: why }; }
+    else if (!this.record(p.managerId)) return { ok: false, reason: "unknown_member" };
+    this.opts.onPosting?.(p);
+    this.ctx.log("posting_saved", { postingId: p.id, managerId: p.managerId, status: p.status, openings: p.openings, actor, kept: !!this.opts.onPosting });
+    if (p.status !== "active") this.endSeat(seatIdOf(p.id), p.closedReason === "filled" ? "posting filled" : "posting closed");
+    this.dirty = true;
+    return { ok: true };
+  }
+
+  /**
+   * A job post by text in a handled turn. A posting command starts a draft (or a close); while a draft
+   * waits, a yes saves it, a no drops it, and other details correct it. Every step answers with one
+   * message (a question or the read-back). False: the text is not about a posting.
+   */
+  private postingTurn(m: MemberState, body: string): boolean {
+    const waiting = m.awaiting?.kind === "posting" && m.posting ? m.posting : undefined;
+    const reply = (text: string) => { this.send(m, text, { type: "info" }, "reply"); return true; };
+    const clear = () => { m.posting = undefined; if (m.awaiting?.kind === "posting") m.awaiting = undefined; };
+    if (waiting?.ready) {
+      const yn = this.yesNoOf(body);
+      if (yn === "yes") {
+        clear();
+        const prev = waiting.id ? this.storedPosting(m.id, waiting.id) : undefined;
+        const posting = postingFromDraft(waiting, m.id, this.now(), prev);
+        if (!posting) return reply(POSTING_COPY.dropped);
+        const r = this.applyPosting(posting, m.id);
+        if (!r.ok) return reply(r.reason === "adults_only" ? POSTING_COPY.adultsOnly : r.reason === "opt_in" ? POSTING_COPY.optIn : POSTING_COPY.notReady);
+        return reply(posting.status !== "active" ? POSTING_COPY.closed(posting.title) : prev ? POSTING_COPY.updated(posting.title) : POSTING_COPY.saved(posting.title));
+      }
+      if (yn === "no" && !/\d|\$/.test(body)) { clear(); return reply(POSTING_COPY.dropped); }
+    }
+    const step = readPostingText(body, { ...(waiting ? { draft: waiting } : {}), postings: postingsOf(this.snapshotCached(), m.id), newId: `${m.id.replace(/[^A-Za-z0-9_.-]/g, "")}-job-${this.now().toString(36)}` });
+    if (!step) { if (waiting) clear(); return false; }
+    const why = this.managerProblem(m.id);
+    if (why && !step.draft?.close) { clear(); return reply(why === "adults_only" ? POSTING_COPY.adultsOnly : why === "opt_in" ? POSTING_COPY.optIn : POSTING_COPY.notReady); }
+    if (!step.draft) { clear(); return reply(step.text); }
+    const asks = (waiting?.asks ?? 0) + (step.ready ? 0 : 1);
+    // Two questions without the missing field: the draft is dropped (one question at a time, never a loop).
+    if (asks > 2) { clear(); return reply(POSTING_COPY.dropped); }
+    m.posting = { ...step.draft, asks, ready: step.ready };
+    m.awaiting = { kind: "posting", at: this.now() };
+    this.ctx.log("posting_read_back", { memberId: m.id, ready: step.ready, close: !!step.draft.close });
+    return reply(step.text);
+  }
 
   // ================================================================== state (store.ts)
   /**
@@ -4481,6 +4694,8 @@ export interface NetworkState {
 
 /** A member record as the snapshot gives it. The production snapshot also carries the account status (service/snapshot.ts). */
 type MemberRecord = WorldSnapshot["members"][number] & { accountStatus?: string };
+/** An engine proposal, routed to a seat's hiring manager when it was for a job seat (seatRoute). */
+type SeatProposal = EngineProposal & { seat?: { id: MemberId; manager: MemberId } };
 
 function interestLabel(tag: string) { return INTERESTS.find(i => i.tag === tag)?.label ?? tag.replace(/_/g, " "); }
 function skillLabel(tag: string) { const l = SKILLS.find(s => s.tag === tag)?.label ?? tag; return l; }
