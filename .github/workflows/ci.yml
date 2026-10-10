@@ -62,6 +62,9 @@ jobs:
         timeout-minutes: 30
       - name: Plugin packages match their sources (OpenAI and Claude manifests, SKILL.md snapshots)
         run: bun run plugins/build.ts --check
+      - name: The retired domain is gone (the hub is ntwrk.party; the old domain only redirects)
+        run: |
+          if git grep -n -I -E 'ntwrk[.]love' -- .; then echo "use ntwrk.party / api.ntwrk.party instead"; exit 1; fi
       - name: Production build of the four sites (refuses draft legal text and unfilled placeholders)
         run: bun run sites/sites.ts
         env:
