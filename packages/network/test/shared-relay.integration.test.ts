@@ -59,7 +59,7 @@ beforeAll(async()=>{
   await admin.unsafe(`create database ${db}`);await applySchema(url,{lockTimeout:"5s"});sql=new SQL({url,max:4});
   cloud=Bun.serve({hostname:"127.0.0.1",port:0,fetch:async req=>{
     const path=new URL(req.url).pathname,raw=await req.text(),auth=await svcVerify(secret,{method:req.method,path,headers:req.headers,body:raw,nowS:Math.floor(clock.now()/1000)});
-    expect(auth.ok).toBe(true);const input=JSON.parse(raw);expect([a,b,c]).toContain(input.to);
+    expect(auth.ok).toBe(true);const input=JSON.parse(raw);expect([a,b,c,"+12125550214"]).toContain(input.to);
     if(input.kind==="relay"){if(path===DELIVER_PATH){posts++;sent.push(input);}else{expect(path).toBe(DELIVER_RECEIPT_PATH);polls++;}}
     else ancillaryPosts++;
     return known?Response.json({ok:true,replayed:path!==DELIVER_PATH,providerMessageIds:[`owned:${input.id}`],acceptedAt:new Date(clock.now()).toISOString(),history:true}):Response.json({ok:false,error:"unknown",retryable:true},{status:202});
@@ -193,4 +193,44 @@ test("STOP and canonical erasure revoke relay and action receipts; transaction f
   expect(JSON.stringify(state.relay.threads)).not.toContain("running ten minutes late");
   expect(JSON.stringify(state.relay.held)).not.toContain("text another person");
   expect(posts).toBe(before);
+},60_000);
+
+
+test("relay admission and canonical leave use one lock order, retaining the fresh STOP check",async()=>{
+  const recipient="+12125550214",rt=service.runtimeFor("friends")!;
+  for(const [i,text] of ["friends.help","Dee, 29", "I enjoy hiking and cooking","Saturday afternoons work for me","Small groups are good"].entries()) {
+    clock.advance(MINUTE);expect((await post(TURN_PATH,turn(recipient,`leave-race-join:${i}`,text))).status).toBe(200);
+  }
+  const who=await service.accounts.personFor(recipient);expect(who).toBeDefined();
+  fromId=thirdId;toId=(await service.people.getMembership(who!.id,"friends"))!.memberId;
+  clock.advance(11*MINUTE);await fixturePair();
+  const checks=((rt.adapter as CloudChannelAdapter).queue as unknown as {o:QueueOptions}).o.checks,original=checks.admit!;
+  let release!:()=>void,entered!:()=>void;
+  const gate=new Promise<void>(resolve=>{release=resolve;}),atGate=new Promise<void>(resolve=>{entered=resolve;});
+  const sqlStates:string[]=[];
+  checks.admit=async(row,tx)=>{
+    if(row.id.startsWith("relay:")){entered();await gate;}
+    try{return await original(row,tx);}catch(error){sqlStates.push((error as {errno?:string}).errno??"unknown");throw error;}
+  };
+  let sending:Promise<Response>|undefined,leaving:Promise<void>|undefined;
+  try{
+    const request=await open("relay-leave-lock-order","tell Dee I'll meet them outside",c),before=posts;
+    sending=post(RELAY_PATH,request);
+    await Promise.race([atGate,sending.then(async r=>{throw Error(`relay never reached admission: ${await r.clone().text()}`);})]);
+    leaving=service.accounts.leave(service.apps.friends,{e164:recipient,personId:who!.id}).catch(error=>{sqlStates.push((error as {errno?:string}).errno??"unknown");throw error;});
+    // Wait for the real erasure transaction to contend with dispatch, without
+    // replacing either owner or assuming how long the database takes.
+    expect(await waitFor(async()=>{
+      const rows=await sql`select pid from pg_stat_activity where datname=${db} and wait_event_type='Lock'`;
+      return rows.length>0;
+    })).toBe(true);
+    release();
+    const [delivered,forgotten]=await Promise.allSettled([sending,leaving]);
+    expect(sqlStates).toEqual([]);expect(forgotten.status).toBe("fulfilled");
+    expect(delivered.status).toBe("fulfilled");
+    if(delivered.status==="fulfilled")expect(await delivered.value.json()).toMatchObject({delivered:false});
+    expect(posts).toBe(before);
+    expect((await service.people.getMembership(who!.id,"friends"))?.state).toBe("removed");
+    expect((await sql`select id from platform.outbound where app_id='friends' and member_id=${toId} and (body is not null or to_address is not null)`).length).toBe(0);
+  }finally{release?.();checks.admit=original;await Promise.allSettled([sending,leaving]);}
 },60_000);

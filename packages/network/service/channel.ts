@@ -190,6 +190,11 @@ export class BlooioAdapter implements ChannelAdapter {
         const from = rt.net.relayContactShareFrom(row.id), number = from && rt.addressOf(from);
         return number ? { ...base, allow: [number] } : base;
       },
+      // PgStore.save locks the state before erasing members. Dispatch takes the
+      // same order, then the existing admit check revalidates current parties.
+      lockAdmission: async (row, tx) => {
+        if (row.id.startsWith("relay:")) await tx`select id from network.network_state where id=${rt.pg.id} for share`;
+      },
       // A relayed item: its match and both members are read again inside the admission transaction (runtime.ts).
       admit: (row, tx) => row.id.startsWith("relay:") ? rt.relayAdmission(tx, row) : Promise.resolve({ ok: true as const }),
       capTake: row => rt.capTake(row.id, row.memberId as MemberId),
