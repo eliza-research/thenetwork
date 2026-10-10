@@ -8,7 +8,7 @@
 // Modelling assumptions (documented in docs/results/2026-10-08-network-capital.md):
 //  A1 Effort improves outcomes modestly: P(good outcome) = q x (1 + effortGain x (effortIndex - 1))
 //     for every match made for the member (the seeker of an intro, the asker of a help request).
-//     effortGain 0.4 -> the capped top tier (index 1.25) gives +10% relative.
+//     effortGain 0.4 -> the capped top tier (index 1.10) gives +4% relative.
 //  A2 Life-driven flakiness (illness, caregiving) is mostly cancellation before the cutoff plus an
 //     occasional no-show; it is independent of how much the member wants to take part.
 //  A3 Adversaries also behave like regular members; their gaming is on top.
@@ -33,7 +33,10 @@ export const T0 = Date.UTC(2026, 9, 5, 0);
 /**
  * Common random numbers: every decision draws from a hash of (seed, purpose, day, members), not a
  * shared stream. Arms that differ only in a lever then see the same coin flips for the same
- * decisions, so paired comparisons stay paired even when a lever changes who joins.
+ * decisions, so paired comparisons stay paired even when a lever changes who joins. For that to
+ * hold, ids that feed a key are derived from (member, day), never from a running counter, and a
+ * member is drawn from a population with `member`/`weighted` (rendezvous hashing), not by index:
+ * with a counter or an index, one extra invite re-rolled every later draw in that seed.
  */
 export class Keyed {
   constructor(private seed: number) {}
@@ -49,6 +52,22 @@ export class Keyed {
   chance(p: number, ...parts: (string | number)[]) { return this.u(...parts) < p; }
   int(n: number, ...parts: (string | number)[]) { return Math.floor(this.u(...parts) * n); }
   pick<T>(xs: readonly T[], ...parts: (string | number)[]): T { return xs[this.int(xs.length, ...parts)]!; }
+  /**
+   * Pick a member by rendezvous hashing: the one with the smallest key for (parts, id). Unlike `pick`,
+   * whose index shifts for everyone when the list grows by one, adding or removing a member changes
+   * the result only when that member wins. This is what keeps arms paired when a lever changes who joins.
+   */
+  member<T extends { id: string }>(xs: readonly T[], ...parts: (string | number)[]): T {
+    let best = xs[0]!, bu = Infinity;
+    for (const x of xs) { const u = this.u(...parts, x.id); if (u < bu) { bu = u; best = x; } }
+    return best;
+  }
+  /** Weighted `member` (exponential race): P(x) is proportional to w(x), stable under membership changes. */
+  weighted<T extends { id: string }>(xs: readonly T[], w: (x: T) => number, ...parts: (string | number)[]): T {
+    let best = xs[0]!, bk = Infinity;
+    for (const x of xs) { const wx = w(x); if (wx <= 0) continue; const k = -Math.log(1 - this.u(...parts, x.id)) / wx; if (k < bk) { bk = k; best = x; } }
+    return best;
+  }
 }
 
 export type PType =
@@ -231,7 +250,6 @@ export function simulate(o: SimOptions): SimResult {
 
   const reviewQ: { day: number; members: string[] }[] = [];
   const reviewed = new Map<string, number>();
-  const nextInviteN = { n: 0 };
 
   for (let day = 0; day < days; day++) {
     const t9 = T0 + day * DAY + 9 * HOUR;
@@ -244,7 +262,7 @@ export function simulate(o: SimOptions): SimResult {
     for (const p of pool) {
       const rate = BUDGET[p.state] / 7 / 2 * p.activity;
       if (!K.chance(rate, "intro", day, p.id)) continue;
-      const c = K.pick(matchable, "cp", day, p.id);
+      const c = K.member(matchable, "cp", day, p.id);
       if (c.id === p.id) continue;
       const aYes = K.chance(p.accept, "acc", day, p.id, c.id), bYes = K.chance(c.accept, "acc", day, c.id, p.id);
       if (!aYes) emit({ type: "declined", t: t9, member: p.id });
@@ -254,13 +272,11 @@ export function simulate(o: SimOptions): SimResult {
 
     // --- help asks
     const helpers = pool.filter(p => p.helpRate > 0);
-    const helpW = helpers.reduce((s, p) => s + p.helpRate, 0);
     for (const p of pool) {
       if (!K.chance(p.state === "receiving" ? 0.08 : 0.025, "ask", day, p.id)) continue;
       emit({ type: "help_asked", t: t9, member: p.id });
       took(p.id, day);
-      let r = K.u("helper", day, p.id) * helpW, h = helpers[0]!;
-      for (const x of helpers) { r -= x.helpRate; if (r <= 0) { h = x; break; } }
+      const h = K.weighted(helpers, x => x.helpRate, "helper", day, p.id);
       if (h.id === p.id || !K.chance(0.7, "helps", day, p.id)) continue;
       const helpId = `h${seq}`;
       emit({ type: "help_given", t: t9 + 2 * HOUR, helper: h.id, recipient: p.id, helpId });
@@ -275,7 +291,7 @@ export function simulate(o: SimOptions): SimResult {
     if (day % 7 === 3) for (let i = 0; i < 4; i++) {
       const cands = pool.filter(p => p.helpRate >= 0.3);
       if (!cands.length || !K.chance(0.6, "need", day, i)) continue;
-      emit({ type: "need_answered", t: t9 + 8 * HOUR, member: K.pick(cands, "needby", day, i).id, needId: `n${day}_${i}`, confirmedBy: "staff" });
+      emit({ type: "need_answered", t: t9 + 8 * HOUR, member: K.member(cands, "needby", day, i).id, needId: `n${day}_${i}`, confirmedBy: "staff" });
     }
 
     // --- stewards (weekly review work)
@@ -289,11 +305,11 @@ export function simulate(o: SimOptions): SimResult {
       const invited = new Set<string>();
       // The lever reserves every slot above the base for low exposure (OrganizingReach.reservedForLowExposure).
       const firstSlots = reachExtraToLowExposure ? Math.min(reach, base) : reach;
-      for (let i = 0; i < firstSlots * 2 && invited.size < firstSlots; i++) { const c = K.pick(matchable, "crewinv", day, p.id, i); if (c.id !== p.id) invited.add(c.id); }
+      for (let i = 0; i < firstSlots * 2 && invited.size < firstSlots; i++) { const c = K.member(matchable, "crewinv", day, p.id, i); if (c.id !== p.id) invited.add(c.id); }
       if (reachExtraToLowExposure && reach > invited.size) {
         // Extra reach earned through NC goes to members with the least recent participation (exposure floor).
         const recent = (m: string) => (participation.get(m) ?? []).filter(d => day - d < 14).length;
-        const cands = [...new Set(Array.from({ length: (reach - invited.size) * 4 }, (_, i) => K.pick(matchable, "crewx", day, p.id, i)))]
+        const cands = [...new Set(Array.from({ length: (reach - invited.size) * 4 }, (_, i) => K.member(matchable, "crewx", day, p.id, i)))]
           .filter(c => c.id !== p.id && !invited.has(c.id)).sort((a, b) => recent(a.id) - recent(b.id) || (a.id < b.id ? -1 : 1));
         for (const c of cands) { if (invited.size >= reach) break; invited.add(c.id); }
       }
@@ -312,7 +328,7 @@ export function simulate(o: SimOptions): SimResult {
       const r = K.u("vq", day, p.id);
       const quality = r < p.inviteeQuality ? "good" : r < p.inviteeQuality + (1 - p.inviteeQuality) / 2 ? "mediocre" : "bad";
       const joined = K.chance(0.75, "vjoin", day, p.id);
-      const invId = `inv${nextInviteN.n++}`;
+      const invId = `inv_${p.id}_${day}`;
       invites.push({ voucher: p.id, invitee: invId, day, quality, joined });
       if (!joined || day + 2 >= days) continue;
       const ip = mk(invId, quality === "good" ? "invitee_good" : quality === "mediocre" ? "invitee_mediocre" : "invitee_bad", day + 2, { invitedBy: p.id, active: false });
@@ -338,7 +354,7 @@ export function simulate(o: SimOptions): SimResult {
     // --- honest friends (A5): about weekly, a plan one of them starts, verified by each other
     friendPairs.forEach(([a, b], i) => {
       if ((day + i) % 7 !== 0 || !K.chance(0.8, "friends", day, a.id)) return;
-      const planId = `f${++planSeq}`, st = T0 + day * DAY + 19 * HOUR;
+      const planId = `f${day}_${i}`, st = T0 + day * DAY + 19 * HOUR;
       for (const [x, y] of [[a, b], [b, a]] as const) {
         emit({ type: "plan_accepted", t: t9, member: x.id, planId, kind: "plan", startsAt: st });
         took(x.id, day);
@@ -362,7 +378,7 @@ export function simulate(o: SimOptions): SimResult {
           const cap = vouchLever ? vouchCapacity(L.internalEntries(p.id), T0 + day * DAY, L.cfg) : 3;
           if (recent < cap && day + 6 < days) {
             p.vouchTimes.push(day);
-            const sid = `syb${nextInviteN.n++}`;
+            const sid = `syb_${p.id}_${day}`;
             mk(sid, "sybil", day + 1, { invitedBy: p.id, group: g });
             invites.push({ voucher: p.id, invitee: sid, day, quality: "bad", joined: true });
             emit({ type: "member_joined", t: T0 + (day + 1) * DAY, member: sid, age: 30, vouchedBy: p.id }, [p.id]);

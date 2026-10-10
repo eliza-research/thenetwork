@@ -18,6 +18,15 @@ Two default changes were needed to pass gate (a) once all levers were in the com
 
 Gate (a) does not pass if effort helps 2.5x more than assumed (-0.023). Measure the real effort effect in the pilot.
 
+## Update 2026-10-09: gate (a) failed on main, fixed
+
+Once gate (a) read the 95% CI lower bound (capital-13), it failed on main: change -0.012, lower bound -0.056. Two causes, measured at 32 paired seeds (`bun run packages/capital/experiments/run.ts`):
+
+- **Effort lever (mechanism).** Effort alone lowered the ratio by -0.016 ± 0.003, a precise effect: high-NC members got up to +25% AI spend, which raised the top decile's V14 (+0.018) and barely the bottom's (+0.003). Fix in `src/levers.ts` `EFFORT_TABLE`, per PRD 39.2.3 (a high floor, diminishing returns at the top): the floor is raised (judge pass 2 on the top 12 instead of 10), and the tiers above add +5%, +3% and +2% spend, capped at +10% (was +12%, +8%, +5%, capped at +25%). Effort alone is now -0.005 ± 0.002. The x2.5 effort-effect sensitivity now passes too (lower bound -0.011).
+- **Broken pairing in the harness (measurement).** The common-random-numbers design promised that arms stay paired when a lever changes who joins. They did not: invitee and sybil ids came from a running counter, friend-plan ids from the plan counter, and intro, crew, helper and needs picks indexed into the population list. One extra or missing invite re-rolled every later draw in that seed, so the vouch lever alone carried a paired standard error of 0.022 and the gate's CI was about +-0.045 whatever the levers did. Fix in `experiments/world.ts`: ids are derived from (member, day), and members are drawn by rendezvous hashing (`Keyed.member`, `Keyed.weighted`), which changes a draw only when the added or removed member wins it. The gate's threshold (0.02), seeds (1-32), sample size and comparator are unchanged.
+
+After both fixes, 32 paired seeds: **change +0.015 (95% CI -0.004 to +0.034), PASS**. By lever: effort -0.005 ± 0.002, reach +0.008 ± 0.007, vouch +0.008 ± 0.010. Gaming still passes (vouch ring -52%, staged -57%, help farm -55%). Health target (b), tracked: 0.70 (levers off 0.69). Each fix alone: the pairing fix with the old effort table gives +0.007 (lower bound -0.011, a pass, with effort still at -0.013 ± 0.003); the effort fix on the old harness gives -0.008 (lower bound -0.052, a fail, because the CI stays wide). The numbers in the sections below are from 2026-10-08 and predate this update.
+
 ## Fairness gate (coordinator decision, 2026-10-08)
 
 The founder delegated the gate. The coordinator restated it in two parts:
@@ -71,7 +80,7 @@ The gate is encoded in `experiments/run.ts`:
 | Category decay: x 1/(1 + n/softN), where n = earlier credits in that category in the last 30 days. softN: vouch 3, attendance 8, help 6, organizing 6, needs 4, review 20 | |
 | Cap on positive NC per rolling 30 days | 40 |
 | Detection: reciprocal ring = at least 5 confirmed member-controlled credits in 30 days, with at least 60% confirmed by members the member confirms back within 2 hops, and that set no larger than 6. Staged meetup = the same people in at least 3 member-started plans verified only by each other. Vouch ring = the invitee's value came only from members with a two-way confirmation tie to the voucher | |
-| **Effort tiers: NC at least 15, 45 and 120** gives tiers 1, 2 and 3. Tier 0 is the floor for everyone, including negative NC | index 1.00 / 1.12 / 1.20 / 1.25 |
+| **Effort tiers: NC at least 15, 45 and 120** gives tiers 1, 2 and 3. Tier 0 is the floor for everyone, including negative NC | index 1.00 / 1.05 / 1.08 / 1.10 (was 1.00 / 1.12 / 1.20 / 1.25 until 2026-10-09) |
 | Vouch capacity per 30 days: 2, plus 1 per vouch that worked out (at most +3), minus 2 per lost stake. Range 0 to 5. 0 for 90 days after abuse or fraud | |
 | Organizing reach: 8 people, plus 2 for every 3 sessions, up to 16. **Every slot above 8 is reserved for members with the least recent participation** (`reservedForLowExposure`). 4 for 90 days after abuse or fraud | |
 
@@ -79,10 +88,10 @@ The gate is encoded in `experiments/run.ts`:
 
 | Tier | judge pass 2 topK / groupTopK | deep pass (pass 3) | concierge research depth | standing-intent re-search | plan options |
 |---|---|---|---|---|---|
-| 0 (floor = today's defaults) | 10 / 3 | off | 3 | every 3 days | 3 |
-| 1 | 12 / 3 | off | 4 | every 3 days | 3 |
-| 2 | 12 / 4 | on, top 3 | 4 | every 2 days | 4 |
-| 3 (cap) | 14 / 4 | on, top 4 | 5 | every 2 days | 4 |
+| 0 (floor, raised 2026-10-09: judge top 12, not today's 10) | 12 / 3 | off | 3 | every 3 days | 3 |
+| 1 | 12 / 4 | off | 4 | every 3 days | 3 |
+| 2 | 14 / 4 | off | 4 | every 2 days | 4 |
+| 3 (cap) | 14 / 4 | on, top 2 | 5 | every 2 days | 4 |
 
 `OVERLAY_ENGINE_KEYS = ["judge"]`. A test checks that the overlay's engine part sets only the judge knobs. It never sets weights, thresholds, budgets, exposure or selection. The overlay is meant to apply only when the engine serves this member's own intents. The engine has no per-seeker config today: that is integration ask 2.
 

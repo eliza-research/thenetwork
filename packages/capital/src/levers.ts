@@ -32,14 +32,19 @@ export interface EffortOverlay {
 export const OVERLAY_ENGINE_KEYS = ["judge"] as const;
 
 /**
- * Tier table. Tier 0 is the floor every member gets (today's engine defaults: pass-2 judge on the
- * top 10, re-search every 3 days). The top is capped and each tier adds less than the one before.
+ * Tier table (PRD 39.2.3: a high floor, diminishing returns at the top). Tier 0 is the floor every
+ * member gets, raised above today's engine defaults (pass-2 judge on the top 12, not 10). Each tier
+ * above adds less than the one before (+5%, +3%, +2% relative AI spend) and the top is capped at
+ * +10% over the floor. The earlier table (1.00 / 1.12 / 1.20 / 1.25 over a floor at today's
+ * defaults) gave high-NC members enough extra effort to widen the bottom/top-decile V14 gap by
+ * about 0.016 on its own (docs/results/2026-10-08-network-capital.md, fairness gate).
+ * The floor's network knobs stay at today's values (FLOOR_EFFORT in packages/network).
  */
 export const EFFORT_TABLE: Record<EffortTier, Omit<EffortOverlay, "tier">> = {
-  0: { effortIndex: 1.0, engine: { judge: { topK: 10, groupTopK: 3, deep: { enabled: false } } }, network: { conciergeResearchDepth: 3, intentReSearchDays: 3, planBuildingOptions: 3 } },
-  1: { effortIndex: 1.12, engine: { judge: { topK: 12, groupTopK: 3, deep: { enabled: false } } }, network: { conciergeResearchDepth: 4, intentReSearchDays: 3, planBuildingOptions: 3 } },
-  2: { effortIndex: 1.2, engine: { judge: { topK: 12, groupTopK: 4, deep: { enabled: true, topK: 3 } } }, network: { conciergeResearchDepth: 4, intentReSearchDays: 2, planBuildingOptions: 4 } },
-  3: { effortIndex: 1.25, engine: { judge: { topK: 14, groupTopK: 4, deep: { enabled: true, topK: 4 } } }, network: { conciergeResearchDepth: 5, intentReSearchDays: 2, planBuildingOptions: 4 } },
+  0: { effortIndex: 1.0, engine: { judge: { topK: 12, groupTopK: 3, deep: { enabled: false } } }, network: { conciergeResearchDepth: 3, intentReSearchDays: 3, planBuildingOptions: 3 } },
+  1: { effortIndex: 1.05, engine: { judge: { topK: 12, groupTopK: 4, deep: { enabled: false } } }, network: { conciergeResearchDepth: 4, intentReSearchDays: 3, planBuildingOptions: 3 } },
+  2: { effortIndex: 1.08, engine: { judge: { topK: 14, groupTopK: 4, deep: { enabled: false } } }, network: { conciergeResearchDepth: 4, intentReSearchDays: 2, planBuildingOptions: 4 } },
+  3: { effortIndex: 1.1, engine: { judge: { topK: 14, groupTopK: 4, deep: { enabled: true, topK: 2 } } }, network: { conciergeResearchDepth: 5, intentReSearchDays: 2, planBuildingOptions: 4 } },
 };
 
 export const balanceOf = (entries: readonly LedgerEntry[], at = Infinity) => entries.reduce((s, e) => (e.t <= at ? s + e.amount : s), 0);
