@@ -4,7 +4,25 @@
 // src/sources/real.ts) use this one builder, so both see the same members. It never reads
 // network.channel_identities (phones and emails).
 import type { SQL } from "bun";
-import { DAY, type Edge, type EdgeType, type Facet, type Intent, type Member, type Presence, type Proposal, type WorldSnapshot } from "@thenetwork/core";
+import { DAY, type Edge, type EdgeType, type Facet, type Intent, type Member, type Presence, type Proposal, type ParticipationState, type WorldSnapshot } from "@thenetwork/core";
+
+import type { SetStateRequest } from "../../core/src/svc/contract.ts";
+
+/** Effective participation comes from the canonical member row and Clock only. */
+export function effectiveParticipation(row: {participation_state: ParticipationState; participation_window?: unknown; opted_out?: boolean}, now: number): {
+  state: ParticipationState; window: Pick<SetStateRequest,"state"|"from"|"until"|"note"> | null; active: boolean;
+} {
+  const raw = row.participation_window;
+  const value = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string,unknown> : null;
+  const validDate = (v:unknown) => v === null || (typeof v === "string" && Number.isFinite(Date.parse(v)));
+  const valid = value && ["open","busy","traveling","paused"].includes(value.state as string)
+    && validDate(value.from) && validDate(value.until) && (value.note === null || typeof value.note === "string")
+    && (value.from === null || value.until === null || Date.parse(value.from as string)<Date.parse(value.until as string));
+  const window = valid ? value as unknown as Pick<SetStateRequest,"state"|"from"|"until"|"note"> : null;
+  const active = !row.opted_out && !!window && (window.from === null || Date.parse(window.from)<=now) && (window.until === null || Date.parse(window.until)>now);
+  const scheduled = window?.state === "open" ? "normal" : window?.state === "paused" ? "paused" : "quiet";
+  return {state:row.opted_out?"paused":active?scheduled:row.participation_state,window,active};
+}
 
 const CORE_EDGES = new Set<EdgeType>(["invited_by", "vouched_for", "knows", "met", "introduced", "helped", "hosted", "enjoyed", "would_interact_again", "group_only", "avoid", "blocked"]);
 const ms = (d: Date | string | null | undefined) => (d ? new Date(d).getTime() : undefined);
@@ -70,7 +88,7 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
     now,
     // The account status rides along (the Network reads it): a paused or restricted account is never matched or contacted.
     members: (members as any[]).filter(r => keep(r.id)).map((r): Member & { accountStatus: string } => ({
-      id: r.id, name: r.name, homeCity: r.home_city, state: r.opted_out ? "paused" : r.participation_state, prefs: r.prefs, accountStatus: r.account_status,
+      id: r.id, name: r.name, homeCity: r.home_city, state: effectiveParticipation(r,now).state, prefs: r.prefs, accountStatus: r.account_status,
       // A missing age stays missing (undefined), never 0: 0 is a valid age under 13, and the Network
       // would decline the member and delete their data. Missing means unknown: treated as a minor and asked (network.md 6.3).
       ...(r.invited_by ? { invitedBy: r.invited_by } : {}), joinedAt: ms(r.joined_at) ?? 0, age: r.age ?? (undefined as unknown as number), unansweredProactive: r.unanswered_proactive,
