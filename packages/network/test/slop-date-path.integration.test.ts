@@ -2,7 +2,8 @@
 // slop by text on the shared line, answer the onboarding asks, a person approves the match in the
 // review queue, both say yes to the anonymous date probe, the date is booked, the check-in comes after
 // the date, and one member's answer files a report. The report reaches the safety queue and the two
-// people are kept apart afterwards. Postgres in a database of its own per test process; dry-run sends
+// people are kept apart afterwards. A profile from Rae's own AI assistant (MCP submit_profile) that
+// reads like an answer is learned but never taken as one: no yes to the probe, no cancel, no report. Postgres in a database of its own per test process; dry-run sends
 // (the text is read back from network.messages); fictional numbers (+1 212 555 01xx).
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
@@ -110,6 +111,12 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     expect((await sql`select count(*)::int as n from network.messages where app_id = 'slop' and opportunity_id = ${item.oppId}`)[0].n).toBe(0);
     expect((await (await staff(s, REVIEWER, "POST", `/apps/slop/review/${encodeURIComponent(item.oppId)}`, { decision: "approve", secondsSpent: 20 })).json() as any).ok).toBe(true);
 
+    // A profile from Rae's own AI assistant (MCP submit_profile): learned, never the member's answer.
+    const raePerson = ((await sql`select person_id from platform.phone_identities where e164 = ${RAE}`)[0] as { person_id: string }).person_id;
+    const fromAssistant = async (about: string) => { expect(await s.submitProfile(raePerson, "slop", RAE, about)).toBe("accepted"); clock.advance(MINUTE); };
+    const raeStatus = async () => ((await sql`select status, responded_at from network.participations where opportunity_id = ${item.oppId} and member_id = ${rae}`)[0] as any);
+    let assistantTried = false;
+
     // ---- The anonymous probe, a yes from each side, the booked date.
     const answered = new Set<string>();
     for (let i = 0; i < 24; i++) {
@@ -117,7 +124,19 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
       for (const [id, e164] of [[rae, RAE], [sam, SAM]] as const) {
         const msgs = (await inbox(id)).filter(m => m.opp === item.oppId);
         const ask = msgs.at(-1);
-        if (ask && !answered.has(ask.body) && /\?/.test(ask.body) && !/How did your date/.test(ask.body)) { answered.add(ask.body); debug(`${id} asked: ${ask.body}`); await text(s, clock, e164, "Yes, the first time works"); }
+        if (ask && !answered.has(ask.body) && /\?/.test(ask.body) && !/How did your date/.test(ask.body)) {
+          answered.add(ask.body); debug(`${id} asked: ${ask.body}`);
+          if (id === rae && !assistantTried) {
+            // The assistant's profile says yes while the probe is open: Rae's answer is still open and nothing is sent.
+            assistantTried = true;
+            const before = (await inbox(rae)).length, st = await raeStatus();
+            await fromAssistant("Yes, the first time works. I love climbing and live music.");
+            expect(await raeStatus()).toEqual(st);
+            expect((await raeStatus()).responded_at).toBeNull();
+            expect((await inbox(rae)).length).toBe(before);
+          }
+          await text(s, clock, e164, "Yes, the first time works");
+        }
       }
       const [o] = await sql`select state from network.opportunities where app_id = 'slop' and id = ${item.oppId}`;
       if (o?.state === "SCHEDULED") break;
@@ -125,6 +144,12 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     const [booked] = await sql`select state, meeting_at from network.opportunities where app_id = 'slop' and id = ${item.oppId}`;
     expect(booked?.state).toBe("SCHEDULED");
     for (const id of [rae, sam]) expect((await inbox(id)).some(m => /You're both in: a first date with/.test(m.body))).toBe(true);
+    expect(assistantTried).toBe(true);
+    // The assistant's profile can't cancel the booked date or report anyone; only Rae's own texts do.
+    await fromAssistant("Sorry, I can't make it anymore, cancel the date.");
+    await fromAssistant("Report Sam, he was rude to me and I want to block him.");
+    expect((await sql`select state from network.opportunities where app_id = 'slop' and id = ${item.oppId}`)[0]?.state).toBe("SCHEDULED");
+    expect(((await (await staff(s, SAFETY, "GET", "/apps/slop/safety/reports")).json()) as any).reports ?? []).toHaveLength(0);
 
     // ---- After the date: the check-in, and Rae's answer files a report.
     const meetingAt = booked.meeting_at ? new Date(booked.meeting_at).getTime() : clock.now() + 3 * DAY;
