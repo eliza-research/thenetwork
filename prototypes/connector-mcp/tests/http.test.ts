@@ -7,13 +7,13 @@ import { ClientRegistry } from "../src/oauth.ts";
 import { DEFAULT_SCOPES, SCOPES } from "../src/schemas.ts";
 import { CLIENTS, designJsonBlocks, world } from "./helpers.ts";
 
-const ORIGIN = "https://mcp.ntwrk.love";
+const ORIGIN = "https://mcp.ntwrk.party";
 const PRM_URL = `${ORIGIN}/.well-known/oauth-protected-resource/mcp`;
 const DEFAULT_SCOPE_STR = "network.read.basic network.write.requests network.write.profile network.write.responses offline_access";
 
 function setup() {
   const w = world();
-  const cfg = loadConfig({ NETWORK_DOMAIN: "ntwrk.love", MCP_ORIGIN: ORIGIN });
+  const cfg = loadConfig({ NETWORK_DOMAIN: "ntwrk.party", MCP_ORIGIN: ORIGIN });
   const tok = (clientId: string, scopes: string[] = [...DEFAULT_SCOPES], extra: Partial<VerifiedToken> = {}): VerifiedToken => ({
     memberId: w.ava.id, grantId: `grt_${clientId.length}_${scopes.length}`, clientId, scopes, audience: cfg.resource,
     expiresAt: w.clock.now() + 3600_000, grantCreatedAt: w.clock.now() - 7 * DAY, ...extra,
@@ -46,21 +46,21 @@ const rpc = (token: string | null, body: unknown, extra: Record<string, string> 
 const init = (name = "t") => ({ jsonrpc: "2.0", id: 0, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name, version: "0" } } });
 const toolCall = (name: string, args: Record<string, unknown>, id = 1) => ({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } });
 
-describe("config: the permanent origin is ntwrk.love", () => {
-  test("defaults and the repo .env.example agree on https://mcp.ntwrk.love", () => {
+describe("config: the permanent origin is ntwrk.party", () => {
+  test("defaults and the repo .env.example agree on https://mcp.ntwrk.party", () => {
     const d = loadConfig({});
-    expect(d).toMatchObject({ networkDomain: "ntwrk.love", origin: ORIGIN, issuer: ORIGIN, resource: `${ORIGIN}/mcp`, resourceMetadataUrl: PRM_URL, documentationUrl: "https://ntwrk.love/assistants" });
+    expect(d).toMatchObject({ networkDomain: "ntwrk.party", origin: ORIGIN, issuer: ORIGIN, resource: `${ORIGIN}/mcp`, resourceMetadataUrl: PRM_URL, documentationUrl: "https://ntwrk.party/assistants" });
     const example = readFileSync(new URL("../../../.env.example", import.meta.url), "utf8");
-    expect(example).toMatch(/^NETWORK_DOMAIN=ntwrk\.love$/m);
-    expect(example).toMatch(/^MCP_ORIGIN=https:\/\/mcp\.ntwrk\.love$/m);
-    expect(loadConfig({ NETWORK_DOMAIN: "ntwrk.love" }).origin).toBe(ORIGIN);
-    expect(loadConfig({ MCP_ORIGIN: "https://mcp-staging.ntwrk.love/" }).resource).toBe("https://mcp-staging.ntwrk.love/mcp");
-    expect(() => loadConfig({ MCP_ORIGIN: "http://mcp.ntwrk.love" })).toThrow();
-    expect(() => loadConfig({ MCP_ORIGIN: "https://mcp.ntwrk.love/mcp" })).toThrow();
+    expect(example).toMatch(/^NETWORK_DOMAIN=ntwrk\.party$/m);
+    expect(example).toMatch(/^MCP_ORIGIN=https:\/\/mcp\.ntwrk\.party$/m);
+    expect(loadConfig({ NETWORK_DOMAIN: "ntwrk.party" }).origin).toBe(ORIGIN);
+    expect(loadConfig({ MCP_ORIGIN: "https://mcp-staging.ntwrk.party/" }).resource).toBe("https://mcp-staging.ntwrk.party/mcp");
+    expect(() => loadConfig({ MCP_ORIGIN: "http://mcp.ntwrk.party" })).toThrow();
+    expect(() => loadConfig({ MCP_ORIGIN: "https://mcp.ntwrk.party/mcp" })).toThrow();
   });
 });
 
-describe("OAuth metadata (RFC 9728, RFC 8414) at the ntwrk.love origin", () => {
+describe("OAuth metadata (RFC 9728, RFC 8414) at the ntwrk.party origin", () => {
   test("protected resource metadata equals the design document at both well-known paths", async () => {
     const { handle } = setup();
     const designPrm = designJsonBlocks().find((b) => "resource" in b && "authorization_servers" in b);

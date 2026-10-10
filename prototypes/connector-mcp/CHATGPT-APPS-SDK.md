@@ -5,7 +5,7 @@ Sources: [docs/research/connectors/chatgpt.md](../../docs/research/connectors/ch
 ## Naming and origin
 
 - On 2026-07-09 OpenAI renamed ChatGPT "apps" to **plugins**, and the App Directory became the **Plugin Directory**. A plugin still wraps a remote MCP server.
-- The permanent MCP origin is **https://mcp.ntwrk.love**, with resource `https://mcp.ntwrk.love/mcp`. ChatGPT treats an origin change as a new plugin [O11], so don't change it.
+- The permanent MCP origin is **https://mcp.ntwrk.party**, with resource `https://mcp.ntwrk.party/mcp`. ChatGPT treats an origin change as a new plugin [O11], so don't change it.
 - Config comes from `MCP_ORIGIN` / `NETWORK_DOMAIN` (`src/config.ts`; repo `.env`).
 
 ## What the prototype does for ChatGPT
@@ -62,7 +62,7 @@ The profile is never derived from `clientInfo.name`.
 
 Invalid, expired or wrong-audience tokens get HTTP 401 for every host. Claude grants get HTTP 403 for missing scopes, with the same granted-plus-needed `scope`.
 
-**AS metadata (RFC 8414, issuer `https://mcp.ntwrk.love`):**
+**AS metadata (RFC 8414, issuer `https://mcp.ntwrk.party`):**
 - `code_challenge_methods_supported: ["S256"]`
 - `client_id_metadata_document_supported: true`
 - `token_endpoint_auth_methods_supported: ["none","private_key_jwt"]`
@@ -85,7 +85,7 @@ With `iss` support, ChatGPT uses `https://chatgpt.com/connector_platform_oauth_r
 2. **Age policy text.** The PRD still says 18+. Terms and privacy must match the founder decision before listing (design §15 Q4, §7.5). Confirm with OpenAI that an invite-only service is acceptable (Q5).
 3. **Reviewer tenant** with synthetic data and a password login (design §3.3).
 4. **Listing**, privacy policy, and the 5 positive / 3 negative test cases [O4].
-5. **Deployment.** `wrangler.toml` targets the `ntwrk.love` zone (`mcp.ntwrk.love/*`) with `NETWORK_MCP_ENABLED = "false"`. It isn't deployed. Production is a shard of `eliza-cloud-api` (design D1).
+5. **Deployment.** `wrangler.toml` targets the `ntwrk.party` zone (`mcp.ntwrk.party/*`) with `NETWORK_MCP_ENABLED = "false"`. It isn't deployed. Production is a shard of `eliza-cloud-api` (design D1).
 
 ## Local try-out
 

@@ -3,12 +3,12 @@
 // Values come from env (MCP_ORIGIN / NETWORK_DOMAIN, see the repo .env); defaults match production.
 import type { SurfaceProfileName } from "./profiles.ts";
 
-export const DEFAULT_NETWORK_DOMAIN = "ntwrk.love";
+export const DEFAULT_NETWORK_DOMAIN = "ntwrk.party";
 
 export interface NetworkConfig {
-  /** Brand domain, e.g. ntwrk.love. */
+  /** Brand domain, e.g. ntwrk.party. */
   networkDomain: string;
-  /** MCP origin, e.g. https://mcp.ntwrk.love. Also the OAuth issuer (same origin, design §3.1). */
+  /** MCP origin, e.g. https://mcp.ntwrk.party. Also the OAuth issuer (same origin, design §3.1). */
   origin: string;
   /** Canonical RFC 8707 resource identifier: `${origin}/mcp`. */
   resource: string;

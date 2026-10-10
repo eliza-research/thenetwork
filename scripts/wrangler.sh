@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Runs wrangler as the ntwrk.love Cloudflare account, isolated from other wrangler logins.
+# Runs wrangler as the ntwrk.party Cloudflare account, isolated from other wrangler logins.
 # Login once with: XDG_CONFIG_HOME=$HOME/.config/wrangler-ntwrk npx wrangler login
 #
-# Deploy guard (audit P1-13): nothing may be deployed to ntwrk.love (including mcp.ntwrk.love)
+# Deploy guard (audit P1-13): nothing may be deployed to ntwrk.party (including mcp.ntwrk.party)
 # without founder approval. `deploy`, `publish`, `versions upload/deploy`, `rollback`, `delete`,
 # `triggers deploy`, secret writes and other commands that change Cloudflare resources are refused
 # unless NTWRK_ALLOW_DEPLOY=1 is set. `deploy --dry-run` and read-only commands (whoami, dev,
@@ -52,8 +52,8 @@ if [ "$mutating" = 1 ]; then
     echo "scripts/wrangler.sh: NTWRK_ALLOW_DEPLOY=1 set; running mutating command: wrangler $*" >&2
   else
     cat >&2 <<MSG
-scripts/wrangler.sh: refusing to run 'wrangler $*': it changes Cloudflare resources for ntwrk.love.
-Deploys (including mcp.ntwrk.love) need founder approval first. Use --dry-run to check a deploy,
+scripts/wrangler.sh: refusing to run 'wrangler $*': it changes Cloudflare resources for ntwrk.party.
+Deploys (including mcp.ntwrk.party) need founder approval first. Use --dry-run to check a deploy,
 or, once approved, re-run with NTWRK_ALLOW_DEPLOY=1.
 MSG
     exit 3

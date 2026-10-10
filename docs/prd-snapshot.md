@@ -318,7 +318,7 @@ As of October 2026, ChatGPT supports MCP-powered apps/plugins, Claude supports c
 - The connector receives only scopes the member explicitly grants. Default scopes should be minimal and revocable.
 - All actions create server-side audit receipts visible to the member regardless of which client initiated them.
 ## 11.2 Proposed connector tools
-Decision (v0.2): the earlier tool list was too granular. External assistants get a small, opaque surface; the Network itself decides state, privacy, matching, and timing. The MVP does not ship the connector (Section 28). Approved v0.2 tool set (five tools, because ChatGPT and Claude reject a catch-all tool that mixes reads and writes): ask_network_agent (read-only), tell_network_agent (write), share_profile_with_network (narrow typed fields only, no chat history), get_network_updates (read-only), and respond_to_network_item (the only accept/decline path). Served at https://mcp.ntwrk.love/mcp. The original four-tool draft is kept below for reference:
+Decision (v0.2): the earlier tool list was too granular. External assistants get a small, opaque surface; the Network itself decides state, privacy, matching, and timing. The MVP does not ship the connector (Section 28). Approved v0.2 tool set (five tools, because ChatGPT and Claude reject a catch-all tool that mixes reads and writes): ask_network_agent (read-only), tell_network_agent (write), share_profile_with_network (narrow typed fields only, no chat history), get_network_updates (read-only), and respond_to_network_item (the only accept/decline path). Served at https://mcp.ntwrk.party/mcp. The original four-tool draft is kept below for reference:
 
 | Tool | Purpose | Risk |
 |---|---|---|
@@ -903,7 +903,7 @@ An invite-only Network in San Francisco and New York for about 150-300 members (
 |---|---|---|
 | Native app Network tab, push notifications, location sharing, "around tonight" presence, map | Messaging covers the MVP loop; location needs privacy validation (20.3). | Presence model, Capacitor app, native location plugin |
 | Bluetooth/proximity discovery at events | Needs app and safety design. | Presence, events program |
-| ChatGPT / Claude / Grok / Muse connectors (five-tool MCP surface at mcp.ntwrk.love) | Needs phone-verified agent keys for MCP clients (Section 11.5); OAuth only if a host requires it (Section 30). | ask/tell_network_agent = the same agent turn; share_profile_with_network = enrichment pipeline |
+| ChatGPT / Claude / Grok / Muse connectors (five-tool MCP surface at mcp.ntwrk.party) | Needs phone-verified agent keys for MCP clients (Section 11.5); OAuth only if a host requires it (Section 30). | ask/tell_network_agent = the same agent turn; share_profile_with_network = enrichment pipeline |
 | Telegram, WhatsApp, Signal channels; agent in existing group chats | Telegram and WhatsApp adapters exist in the cloud gateway, so these are fast follows; Signal has no connector. | Channel gateway, identity linking |
 | Forwarding opportunities to non-members via private links | Validation gate in 20.3 (forwarding and privacy expectations). | Invitations, consent workflow |
 | Gmail, Instagram, and broader data import | Sensitive; prove value with lighter sources first. | Enrichment pipeline with provenance |
@@ -1445,7 +1445,7 @@ The team must be able to see everything happening in the Network, from any membe
 ## 36.9 Data, backup, and recovery
 - Network schema included in existing Postgres backups with point-in-time recovery; tested restore; nightly export to R2; disaster-recovery runbook.
 ## 36.10 Repository and ownership
-- Decided (2026-10-07): Network code lives in the thenetwork repository, including the Network plugin (packages/plugin-network). Eliza is included as a git submodule until its packages are published. Eliza Cloud keeps only the integration glue: identity scoping, the invite gate, STOP/HELP, the Twilio path, capability flags, network migrations, the Postgres store and per-turn wiring. Name an owner for each subsystem in Section 32. Prototypes, research, and test harnesses live in https://github.com/lalalune/thenetwork (private). The product domain is ntwrk.love; the assistant connector is served at https://mcp.ntwrk.love/mcp.
+- Decided (2026-10-07): Network code lives in the thenetwork repository, including the Network plugin (packages/plugin-network). Eliza is included as a git submodule until its packages are published. Eliza Cloud keeps only the integration glue: identity scoping, the invite gate, STOP/HELP, the Twilio path, capability flags, network migrations, the Postgres store and per-turn wiring. Name an owner for each subsystem in Section 32. Prototypes, research, and test harnesses live in https://github.com/lalalune/thenetwork (private). The product domain is ntwrk.party; the assistant connector is served at https://mcp.ntwrk.party/mcp.
 # 37. MVP build plan and milestones
 Indicative sequence assuming a small team (2-3 engineers, 1 product/community lead, part-time design, contract reviewers). Each milestone ends with simulated-world tests passing for the flows it delivers.
 

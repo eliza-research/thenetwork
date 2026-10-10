@@ -113,7 +113,7 @@ export class FakeNetwork {
   constructor(public clock: Clock, opts: { handleKey?: string; assistantsUrl?: string } = {}) {
     this.limiter = new RateLimiter(clock);
     this.handleKey = opts.handleKey ?? "prototype-item-handle-key";
-    this.assistantsUrl = opts.assistantsUrl ?? "ntwrk.love/assistants";
+    this.assistantsUrl = opts.assistantsUrl ?? "ntwrk.party/assistants";
   }
 
   private id(prefix: string) { return `${prefix}_${(++this.seq).toString(36).padStart(5, "0")}`; }

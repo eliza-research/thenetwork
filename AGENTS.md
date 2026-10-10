@@ -66,7 +66,7 @@ bun run observatory:db       # local Postgres on :54339 with a 14-day simulated 
 - Copy `.env.example` to `.env`. Never commit `.env` or anything in `runs/`.
 - The local dev Postgres for the Observatory is on port **54339**. Do not touch port 54329; another tool uses it.
 - `packages/observatory/db/seed.ts` refuses non-local hosts. Do not pass `--allow-remote` unless a human asks.
-- Cloudflare work for ntwrk.love goes through `scripts/wrangler.sh` only. It refuses `deploy` (except `--dry-run`) and other commands that change Cloudflare resources unless `NTWRK_ALLOW_DEPLOY=1` is set. Do not set it without the founder's approval.
+- Cloudflare work for ntwrk.party goes through `scripts/wrangler.sh` only. It refuses `deploy` (except `--dry-run`) and other commands that change Cloudflare resources unless `NTWRK_ALLOW_DEPLOY=1` is set. Do not set it without the founder's approval.
 
 ## Results
 

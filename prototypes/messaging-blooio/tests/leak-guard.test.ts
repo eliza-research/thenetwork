@@ -126,9 +126,9 @@ describe("default guard (no provider)", () => {
   });
 
   test("compliance copy may carry the Network's own contact details; leakAllow covers other fixed copy", async () => {
-    const w = world({ leakAllow: ["Questions? help@ntwrk.love"] });
-    expect((await send(w, "The Network: help at help@ntwrk.love. Reply STOP to opt out.", { kind: "compliance", key: "c" })).status).toBe("sent");
-    expect((await send(w, "See you Saturday. Questions? help@ntwrk.love", { key: "r", to: BOB })).status).toBe("sent");
+    const w = world({ leakAllow: ["Questions? help@ntwrk.party"] });
+    expect((await send(w, "The Network: help at help@ntwrk.party. Reply STOP to opt out.", { kind: "compliance", key: "c" })).status).toBe("sent");
+    expect((await send(w, "See you Saturday. Questions? help@ntwrk.party", { key: "r", to: BOB })).status).toBe("sent");
     // But a canary is blocked even in compliance copy.
     expect((await send(w, "Reply STOP to opt out. QX-4821-ORCHID", { kind: "compliance", key: "c2", to: "+15551110003" })).status).toBe("parked_leak_review");
   });

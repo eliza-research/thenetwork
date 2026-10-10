@@ -1,4 +1,4 @@
-// Cloudflare Worker entry for mcp.ntwrk.love (see wrangler.toml). NOT deployed by this prototype.
+// Cloudflare Worker entry for mcp.ntwrk.party (see wrangler.toml). NOT deployed by this prototype.
 // It serves the production discovery documents from MCP_ORIGIN / NETWORK_DOMAIN and rejects every
 // bearer token with a 401 challenge, because the authorization server is still a stub. The
 // in-memory FakeNetwork is never reachable here. NETWORK_MCP_ENABLED gates the whole host (§12.1).

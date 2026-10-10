@@ -1,7 +1,7 @@
 // Local run: `bun run src/main.ts`, then point MCP Inspector at http://localhost:8787/mcp with header
 // `Authorization: Bearer dev-ava` (Claude profile) or `dev-ava-chatgpt` (ChatGPT teen-safe profile)
 // or `dev-kai` (a 16-year-old member). Synthetic world only. Discovery documents always describe the
-// production origin from MCP_ORIGIN / NETWORK_DOMAIN (default https://mcp.ntwrk.love).
+// production origin from MCP_ORIGIN / NETWORK_DOMAIN (default https://mcp.ntwrk.party).
 import { RealClock, SimClock } from "@thenetwork/core";
 import { loadConfig } from "./config.ts";
 import { FakeNetwork, seedWorld } from "./fake-network.ts";

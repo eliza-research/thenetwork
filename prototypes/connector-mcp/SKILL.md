@@ -2,7 +2,7 @@
 name: the-network
 description: Use The Network (the member's private, invite-only network agent for introductions, help, and things to do nearby) through its connector tools when the member asks what's new from their Network, asks their Network agent a question, wants the Network to do or remember something, answers a Network item, or asks you to share specific profile details they have approved. Not for researching or contacting specific people outside The Network.
 license: Proprietary
-compatibility: Requires The Network connector (remote MCP at https://mcp.ntwrk.love/mcp; tools ask_network_agent, tell_network_agent, share_profile_with_network, get_network_updates, respond_to_network_item).
+compatibility: Requires The Network connector (remote MCP at https://mcp.ntwrk.party/mcp; tools ask_network_agent, tell_network_agent, share_profile_with_network, get_network_updates, respond_to_network_item).
 metadata:
   version: "0.2.0"
   status: prototype
