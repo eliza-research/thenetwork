@@ -37,6 +37,7 @@ export function migrations(): Migration[] {
     { id: "9001_oauth_schema", file: join(REPO, "packages", "mcp", "db", "oauth.sql"), repeatable: true },
     // The single inbox (packages/notify/db/schema.sql): repeatable and idempotent, grants to network_service.
     { id: "9002_notify_schema", file: join(REPO, "packages", "notify", "db", "schema.sql"), repeatable: true },
+    { id: "9003_notify_retention", file: join(REPO, "packages", "notify", "db", "retention.sql"), repeatable: false },
   ];
 }
 
