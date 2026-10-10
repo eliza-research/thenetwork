@@ -2,7 +2,7 @@
 import {afterAll, beforeAll, expect, test} from "bun:test";
 import {randomUUID} from "node:crypto";
 import {SQL} from "bun";
-import {SimClock, MINUTE} from "@thenetwork/core";
+import {SimClock, MINUTE, DAY} from "@thenetwork/core";
 import {applySchema} from "../../observatory/db/dev-pg.ts";
 import {APPS} from "../../platform/src/apps.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
@@ -123,4 +123,15 @@ test("a committed collection followed by a fault stays unresolved and is never a
   const [row]=await sql`select status,replies,response,sender,event from platform.inbound where id='msg:blooio:fault-after-effects'`;
   expect(row.status).toBe("unresolved");expect(row.replies.length).toBe(1);expect(row.response).toBeNull();expect(row.sender).toBeNull();expect(row.event).toBeNull();
   clock.advance(MINUTE);expect((await post(turn("after-fault",input.from,"HELP"))).status).toBe(409);
+},60_000);
+
+
+test("completed signed payload expiry retains a tombstone and leaves unresolved effects held",async()=>{
+  const input=turn("payload-expiry","+12125550151","HELP");expect((await post(input)).status).toBe(200);
+  clock.advance(8*DAY);await service.purge();
+  expect((await post(input)).status).toBe(409);
+  const [expired]=await sql`select status,request_hash,response,replies,receipt,sender_hash from platform.inbound where id='msg:blooio:payload-expiry'`;
+  expect(expired.status).toBe("unresolved");expect(expired.request_hash).toBeDefined();expect(expired.response).toBeNull();expect(expired.replies).toEqual([]);expect(expired.receipt).toBeNull();expect(expired.sender_hash).toBeNull();
+  const [interrupted]=await sql`select status,replies from platform.inbound where id='msg:blooio:fault-after-effects'`;
+  expect(interrupted.status).toBe("unresolved");expect(interrupted.replies.length).toBe(1);
 },60_000);

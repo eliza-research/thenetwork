@@ -308,6 +308,13 @@ export class NetworkRuntime {
   /** Everything the unit produced, inside the save transaction (app.app_id is set). Rows that name a member not in this app's network.members are skipped. */
   private async writeUnit(tx: SQL, u: Unit) {
     const app = this.app.id;
+    const personIds = new Map<string, string>();
+    if (u.forget.size) {
+      const rows = await tx`select person.id,member.id as member_id from platform.people person
+        join network.members member on member.person_id=person.id where member.app_id=${app} and member.id in ${tx([...u.forget])}
+        order by person.id for update of person`;
+      for (const row of rows as Row[]) personIds.set(row.member_id as string, row.id as string);
+    }
     const named = new Set<string>([...u.sends.map(s => s.memberId), ...(u.inbound ? [u.inbound.member_id as string] : []), ...u.blocks.flat(), ...u.optOut.keys()]);
     const known = new Set<string>();
     if (named.size) for (const r of await tx`select id from network.members where app_id = ${app} and id in ${tx([...named])}`) known.add(r.id);
@@ -376,6 +383,7 @@ export class NetworkRuntime {
       await tx`update network.members set invited_by = null where app_id = ${app} and invited_by = ${id}`;
       await tx`update network.members set name = null, home_city = null, home_area = null, account_status = 'removed', opted_out = false, age = null, invited_by = null,
         community = null, occupation = null, bio = null, prefs = '{}'::jsonb, unanswered_proactive = 0, joined_at = null, person_id = null where app_id = ${app} and id = ${id}`;
+      if (personIds.has(id)) await tx`select notify.forget_data(${personIds.get(id)!},${app})`;
       // The persisted queue keeps no text or address of theirs; what still waits is never sent.
       await tx`update platform.outbound set body = null, to_address = null, ended_at = coalesce(ended_at, ${new Date(this.clock.now())}),
         status = case when status = any(${`{${WAITING_STATUSES.join(",")}}`}::text[]) then 'dropped_forgotten' else status end

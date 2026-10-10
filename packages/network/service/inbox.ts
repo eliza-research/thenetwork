@@ -106,7 +106,11 @@ export class Inbox {
 
   /** Retention: handled rows older than `before` (a provider retries for hours, not weeks). */
   async purge(before: number): Promise<number> {
-    return (await this.o.sql`delete from platform.inbound where request_hash is null and status not in ('pending','processing','unresolved') and arrived_at < ${new Date(before)} returning id`).length;
+    const sealed = await this.o.sql`update platform.inbound set status='unresolved',response=null,replies='[]'::jsonb,receipt=null,receipt_hash=null,
+      sender=null,event=null,sender_hash=null,member_id=null,app_id=null
+      where request_hash is not null and status='done' and handled_at<${new Date(before)} returning id`;
+    const removed = await this.o.sql`delete from platform.inbound where request_hash is null and status not in ('pending','processing','unresolved') and arrived_at < ${new Date(before)} returning id`;
+    return sealed.length + removed.length;
   }
 
   /** One sender at a time, in this process (a promise chain) and across processes (an advisory lock). */
