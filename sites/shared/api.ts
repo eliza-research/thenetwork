@@ -7,6 +7,8 @@
  */
 export type ApiError =
   | "api_unreachable"
+  | "cloud_auth_unavailable"
+  | "cloud_auth_required"
   | "server"
   | "rate_limited"
   | "invalid_code"
@@ -21,6 +23,8 @@ export type ApiError =
 
 /** Platform error code -> the message key the page shows. */
 export const PLATFORM_ERRORS: Record<string, ApiError> = {
+  cloud_auth_unavailable: "cloud_auth_unavailable",
+  cloud_auth_required: "cloud_auth_required",
   rate_limited: "rate_limited",
   invalid_code: "invalid_code",
   invalid_phone: "invalid_phone",
@@ -139,6 +143,8 @@ export function toE164(input: string): string | null {
 }
 
 export const MESSAGES: Record<ApiError, string> = {
+  cloud_auth_unavailable: "Phone sign-in is unavailable right now. Please try again in a minute.",
+  cloud_auth_required: "Reload this page, then choose Continue with your phone to sign in.",
   api_unreachable: "We can't reach our server right now. Nothing was sent. Please try again in a minute.",
   server: "Something went wrong on our side. Please try again in a minute.",
   invalid_phone: "Enter a 10-digit US mobile number.",
