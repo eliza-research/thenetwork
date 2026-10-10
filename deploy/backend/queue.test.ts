@@ -144,7 +144,7 @@ describe.skipIf(!pgAvailable)("the line in the queue dry run (one queue, every a
     const k2 = await member("slop", KIM, "Kim");
     const nrt = svc.runtimeFor("ntwrk")!, srt = svc.runtimeFor("slop")!;
     // Kim writes to each app once (each app's Network now knows Kim, and the answers are replies).
-    await text(KIM, "ntwrk.love");
+    await text(KIM, "ntwrk.party");
     await text(KIM, "slop.date");
     expect(records().filter(r => r.to === KIM).every(r => r.kind === "reply" && r.status === "accepted")).toBe(true);
     await nrt.unitOfWork(() => nrt.system(k1 as never, "kim:1", "First note.", "transactional", "info"));
@@ -164,7 +164,7 @@ describe.skipIf(!pgAvailable)("the line in the queue dry run (one queue, every a
   test("leak review: staff list a parked message and release it; the alert is a queue_alert event", async () => {
     const LEE = "+12125550180";
     const id = await member("ntwrk", LEE, "Lee");
-    await text(LEE, "ntwrk.love");
+    await text(LEE, "ntwrk.party");
     const before = sentTo(LEE).length;
     const rt = svc.runtimeFor("ntwrk")!;
     // A reply to Lee that carries a phone number: the leak guard parks it right before the send.
