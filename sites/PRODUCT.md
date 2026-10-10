@@ -20,17 +20,17 @@ One backend, one admin panel and one database serve four apps. Each app has its 
 
 | App | Site | What it does |
 |---|---|---|
-| ntwrk | ntwrk.love | The Network: the home page for the whole concept; links to every app |
+| ntwrk | ntwrk.party | The Network: the home page for the whole concept; links to every app |
 | slop | slop.date | Dating by text. 13+ may join; matching and photos are 18+ only |
 | peon | peon.biz | Hiring by text: candidates and teams (waitlist until matching is live) |
 | friends | friends.help | Friends in New York City: small groups and plans at public places |
 
-ntwrk.love links every app and says "All of these apps are powered by The Network." The other
-sites link only ntwrk.love. A site never shows or hints at another app that a phone number uses.
+ntwrk.party links every app and says "All of these apps are powered by The Network." The other
+sites link only ntwrk.party. A site never shows or hints at another app that a phone number uses.
 
 ## Brand Personality
 
-- ntwrk.love: calm, plain, trusted. Keep the existing look.
+- ntwrk.party: calm, plain, trusted. Keep the existing look.
 - slop.date: wry, warm, honest. It jokes about dating apps, never about safety.
 - peon.biz: practical, fair, no hype. Reads like a good job posting.
 - friends.help: friendly, local, outdoors. Plans in parks and public places (keeps the moss look).

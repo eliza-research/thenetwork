@@ -195,4 +195,4 @@ export function styleViolations(text: string, opts: { firstContact?: boolean } =
  */
 export const ELIZA_NOTICE_STATUS: "DRAFT" | "APPROVED" = "DRAFT";
 export const ELIZA_NOTICE =
-  "Hi, it's Eliza. I'm now the agent of The Network (ntwrk.love), which helps people meet for friends, dating and work. Nothing changes for you unless you join, and nobody is matched with you without your consent. Reply STOP anytime to stop all messages from this number.";
+  "Hi, it's Eliza. I'm now the agent of The Network (ntwrk.party), which helps people meet for friends, dating and work. Nothing changes for you unless you join, and nobody is matched with you without your consent. Reply STOP anytime to stop all messages from this number.";
