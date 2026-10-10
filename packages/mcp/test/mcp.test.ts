@@ -198,7 +198,8 @@ describe("submit_profile (founder decision 10: the profile comes from the person
     expect((await call(env, PEON_MCP, "submit_profile", { about: "Backend roles." }, { token: c.token.access_token })).res.status).toBe(401);
     const c2 = await connect(env, "peon.biz", PHONE_A);
     // Contact details and codes are refused, never stored or relayed.
-    for (const about of ["Call me at 212 555 0142 about roles", "my code is 482913 thanks", "email rae@example.org for my CV"]) {
+    for (const about of ["Call me at 212 555 0142 about roles", "my code is 482913 thanks", "email rae@example.org for my CV", "My number is (415) 555-0102 if needed.",
+      "call +1 415 555 0102 anytime ok", "reach me at 4155550102 please", "my cell 555 0102 for the job", "the code was 4821 and I like jazz", "verification 1234567890 here"]) {
       r = await call(env, PEON_MCP, "submit_profile", { about }, { token: c2.token.access_token });
       expect([about, r.body!.result.isError]).toEqual([about, true]);
     }
@@ -206,7 +207,8 @@ describe("submit_profile (founder decision 10: the profile comes from the person
     r = await call(env, PEON_MCP, "submit_profile", { about: "Looking for a backend role in Brooklyn.", phone: "+12125550142" }, { token: c2.token.access_token });
     expect(r.body!.result.isError).toBe(true);
     expect(got).toEqual([]);
-    const about = "Looking for a backend role, Brooklyn, weekday mornings. I like small teams.";
+    // A standalone 5-digit zip is part of a profile (slop's distance question needs it), next to ranges and miles too.
+    const about = "Looking for a backend role near 11211 (Brooklyn), within 5 miles, 20-30 hours a week. I like small teams.";
     env.clock.t += 61_000; // past the per-grant call limit of one minute
     r = await call(env, PEON_MCP, "submit_profile", { about }, { token: c2.token.access_token });
     expect(r.body!.result.structuredContent).toMatchObject({ app: "peon", submitted: true });
