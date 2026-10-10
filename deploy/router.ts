@@ -48,7 +48,7 @@ export function isBackendPath(pathname: string): boolean {
 
 export interface Env {
   ASSETS: { fetch(req: Request): Promise<Response> };
-  /** The shared backend, for example https://api.ntwrk.love (no trailing slash needed). */
+  /** The shared backend, for example https://api.ntwrk.party (no trailing slash needed). */
   BACKEND_ORIGIN: string;
   /** This site's app id: ntwrk | slop | peon | friends. */
   APP_ID: string;

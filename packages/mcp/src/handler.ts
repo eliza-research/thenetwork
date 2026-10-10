@@ -2,7 +2,7 @@
 // service mounts next to the platform's /api/*. Each site's Worker forwards /mcp, /oauth/* and
 // /.well-known/oauth-* to the shared backend, so every site is its own issuer and resource:
 //   https://slop.date/mcp          the MCP endpoint (resource) for slop; clients registered here are bound to slop
-//   https://ntwrk.love/mcp/openai  the same server for the public OpenAI plugin (slop is hidden)
+//   https://ntwrk.party/mcp/openai  the same server for the public OpenAI plugin (slop is hidden)
 // Spec: MCP 2026-07-28 (Streamable HTTP, stateless, per-request _meta; initialize kept for 2025-03-26
 // to 2025-11-25 clients), OAuth 2.1 with PKCE S256, RFC 7591 (registration), RFC 8414 and RFC 9728
 // (metadata), RFC 8707 (resource), RFC 9207 (iss), RFC 7009 (revocation).
