@@ -21,6 +21,7 @@ This package holds what the apps share: people, verified phones, memberships per
 | `src/sessions.ts` | Random 32-byte tokens, only a keyed hash is stored, one app each, 30 days, rotation after a day, 90 days at most from the login, step-up for delete everything |
 | `src/accounts.ts` | Join, invite, stop, leave one app, delete everything, export one app, share grants |
 | `src/api.ts` | `createPublicApi(...)`: the `/api/*` routes the sites call |
+| `src/photos.ts` | Private member photos (slop.date only, adults only): upload with the photo consent, the metadata strip (an allowlist of the parts a decoder needs), private storage, 5-minute signed staff links, and the Clef photo rater (`photoRaterFromEnv`). Ratings are on by default; the score is agent_private and never shown to anyone. |
 
 ## Database
 
@@ -61,6 +62,9 @@ The app comes from the host a site router signed (`src/proxy.ts`, `PLATFORM_PROX
 | `PLATFORM_STOP_SCOPE` | Unset: STOP stops every app. `app`: STOP on an app's own line stops that app only. |
 | `OTP_PROVIDER`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SERVICE_SID` | `twilio` uses Twilio Verify; anything else uses the dev console (codes in the log; `PLATFORM_ENV=dev` only) |
 | `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile; without it, the dev bypass (`PLATFORM_ENV=dev` only) |
+| `CLEF_RATINGS` | The slop.date photo rater. Unset or `on`: on (founder, 2026-10-09). `off`: off; any other value also leaves it off. Off: photos still work, nothing is rated. |
+| `CLOUDFLARE_AI_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLEF_MODEL` | Workers AI for the rater. Without the token and the account id nothing is rated (status `off_env`). |
+| `CLEF_WEIGHTS_PATH` | Unset: the engine's placeholder Clef weights (status `on_placeholder`, logged at start with the weights version) until fitted weights pass the P2 decision rule. Set: a fitted weights file with a version and a provenance record, or it is refused (`refused_weights`, ratings off). |
 | `PLATFORM_ENV` | `production`, `staging` or `dev`. Detection fails closed: an environment that is not declared dev gets no dev shortcut. `bun test` (`NODE_ENV=test`) counts as dev. Outside dev, `assertBootConfig` refuses to start without Twilio, Turnstile, the three secrets, a database and review mode human. |
 
 ## Rules the code keeps
@@ -73,11 +77,12 @@ The app comes from the host a site router signed (`src/proxy.ts`, `PLATFORM_PROX
 - `/api/me/share` gives the same answer whether or not a grant was stored.
 - OTP: 3 codes per number per hour across every app, 10 per IP, a 30 s gap, a global budget (500 an hour), and 10 code checks per number and 30 per IP an hour.
 - The dev OTP console, the Turnstile bypass, the dev hash key and the trusted `X-Forwarded-Host` run only with `PLATFORM_ENV=dev`.
+- A photo rating is checked before the rater runs, again when it returns and again after it is written: a person whose lowest age drops under 18, who is banned, who leaves, or whose rated photo is deleted meanwhile keeps no rating. Each rater try is a `photo_rating` row in the cost ledger.
 - Nothing is sent in tests. The Twilio adapter runs only with `OTP_PROVIDER=twilio` and its credentials.
 
 ## Validation
 
-The platform's unit tests were deleted on 2026-10-08 (founder decision: simulations only). Kept, pending the founder's decision: the security suite (`test/db.test.ts`: composite foreign keys, per-app RLS, platform_service limits, append-only audit; `test/api-security.test.ts`: CSRF, no phone-number enumeration, OTP limits), run with `bun run security` against the dev Postgres and in CI as "security (pending)". The opt-out corpus is scored by `bun run sim` (evals/opt-out.jsonl).
+The platform's unit tests were deleted on 2026-10-08 (founder decision: simulations only). Integration tests on Postgres are allowed (founder decision 4 of 2026-10-09): `test/photos.test.ts` covers the metadata strip corpus, the photo rules and the rating race. Kept, pending the founder's decision: the security suite (`test/db.test.ts`: composite foreign keys, per-app RLS, platform_service limits, append-only audit; `test/api-security.test.ts`: CSRF, no phone-number enumeration, OTP limits), run with `bun run security` against the dev Postgres and in CI as "security (pending)". The opt-out corpus is scored by `bun run sim` (evals/opt-out.jsonl).
 
 ## Known gaps
 

@@ -60,8 +60,10 @@ async function main() {
   }
 
   const clock = new RealClock();
-  // The slop.date photo rater (AGENTS.md decision 12): off unless CLEF_RATINGS=on with the Workers AI
-  // token, the account id and fitted weights (CLEF_WEIGHTS_PATH, version and provenance). Off: photos still work.
+  // The slop.date photo rater (AGENTS.md decisions 12 and 13): on by default (CLEF_RATINGS=off turns it
+  // off) when the Workers AI token and account id are set; the placeholder Clef weights unless
+  // CLEF_WEIGHTS_PATH names fitted weights (version and provenance). The status and the weights version
+  // are logged here. Off: photos still work.
   const raterEnv = await photoRaterFromEnv(process.env, { log: s => log.warn(s) });
   const photoRater = raterEnv.rater;
   const raterLog = { status: raterEnv.status, rater: photoRater?.id ?? "off", weights: raterEnv.weights ?? null, detail: raterEnv.detail ?? null };

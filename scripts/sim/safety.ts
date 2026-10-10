@@ -211,7 +211,7 @@ export async function safetyBlock(b: Block): Promise<void> {
     expect(calls).toBeGreaterThan(0);
   });
 
-  await b.run("rater env: CLEF_RATINGS is off by default; on, it needs the token and fitted weights with version and provenance; the placeholder is refused; zero calls for a minor", async () => {
+  await b.run("rater env: CLEF_RATINGS is on by default (off turns it off); it needs the token; no weights file means the placeholder weights; a file needs version and provenance; zero calls for a minor", async () => {
     const env = { CLOUDFLARE_AI_TOKEN: "fake-token", CLOUDFLARE_ACCOUNT_ID: "fake-account" };
     const placeholder = JSON.stringify(DEFAULT_CLEF_WEIGHTS);
     const fitted = JSON.stringify({ ...DEFAULT_CLEF_WEIGHTS, version: "fit-sim-1", placeholder: false, provenance: { fitter: "sim", fittedAt: "2026-10-09T00:00:00Z", photos: 0, labels: 0, raters: 0 } });
@@ -220,14 +220,18 @@ export async function safetyBlock(b: Block): Promise<void> {
     const files: Record<string, string> = { "/w/placeholder.json": placeholder, "/w/fitted.json": fitted, "/w/noprov.json": noProv, "/w/nover.json": noVersion };
     const ai = new FakeWorkersAI();
     const build = (e: Record<string, string | undefined>) => photoRaterFromEnv(e, { fetch: ai.fetch, sleep: async () => {}, readFile: async p => { const f = files[p]; if (f === undefined) throw new Error(`no file ${p}`); return f; } });
-    expect((await build({ ...env, CLEF_WEIGHTS_PATH: "/w/fitted.json" })).status).toBe("off_flag");
-    expect((await build({ CLEF_RATINGS: "on", CLEF_WEIGHTS_PATH: "/w/fitted.json" })).status).toBe("off_env");
-    expect((await build({ ...env, CLEF_RATINGS: "on" })).status).toBe("off_no_weights");
+    expect((await build({ ...env, CLEF_RATINGS: "off", CLEF_WEIGHTS_PATH: "/w/fitted.json" })).status).toBe("off_flag");
+    expect((await build({ ...env, CLEF_RATINGS: "of" })).status).toBe("off_flag"); // a typo never turns ratings on
+    expect((await build({ CLEF_WEIGHTS_PATH: "/w/fitted.json" })).status).toBe("off_env");
+    for (const flag of [undefined, "on", " ON "]) {
+      const r = await build({ ...env, CLEF_RATINGS: flag });
+      expect([r.status, r.weights, typeof r.rater?.rate]).toEqual(["on_placeholder", DEFAULT_CLEF_WEIGHTS.version, "function"]);
+    }
     for (const p of ["/w/placeholder.json", "/w/noprov.json", "/w/nover.json", "/w/missing.json"]) {
-      const r = await build({ ...env, CLEF_RATINGS: "on", CLEF_WEIGHTS_PATH: p });
+      const r = await build({ ...env, CLEF_WEIGHTS_PATH: p });
       expect([r.status, r.rater]).toEqual(["refused_weights", undefined]);
     }
-    const on = await build({ ...env, CLEF_RATINGS: "on", CLEF_WEIGHTS_PATH: "/w/fitted.json" });
+    const on = await build({ ...env, CLEF_WEIGHTS_PATH: "/w/fitted.json" });
     expect([on.status, on.weights]).toEqual(["on", "fit-sim-1"]);
     const photo = [{ id: "p1", bytes: jpegWithExif() }];
     expect(await on.rater!.rate({ age: 16, ageVerified: true }, photo)).toBe(null);

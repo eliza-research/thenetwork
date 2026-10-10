@@ -5,7 +5,7 @@
 //
 //   kind           what is counted                                   price (USD, env override)
 //   otp_verify     one Twilio Verify code sent (a phone login)        0.058   COST_TWILIO_VERIFY_USD
-//   photo_rating   one Clef rating call, per photo sent (up to 4)      0.000425 COST_CLEF_PHOTO_USD (0.0017 for a member's 4 photos)
+//   photo_rating   one Clef rating try, per photo sent (up to 4)       0.000425 COST_CLEF_PHOTO_USD (0.0017 for a member's 4 photos)
 //   llm            one LLM HTTP attempt (core onResponse costMicro)   the provider's own price (Surplus reports it)
 //   sms_fallback   one outbound message stored as fell_back (SMS)     0.0083  COST_SMS_USD
 //   blooio_line    one line for one day                              COST_BLOOIO_LINE_MONTHLY_USD / 30 (no default: from the contract)
@@ -18,7 +18,7 @@ import type { Clock } from "@thenetwork/core";
 import type { ClientOptions, ResponseInfo } from "@thenetwork/core";
 import type { AppId, AppInfo } from "../../platform/src/apps.ts";
 import type { OtpProvider } from "../../platform/src/otp.ts";
-import type { PhotoRater } from "../../platform/src/photos.ts";
+import { retryParts, withRetry, type PhotoRater } from "../../platform/src/photos.ts";
 
 export type CostKind = "llm" | "photo_rating" | "otp_verify" | "blooio_line" | "sms_fallback" | "other";
 /** An app, or "shared" for a cost no single app owns (the line). */
@@ -147,12 +147,15 @@ export class CostLedger {
   }
 
   /**
-   * The appearance rater, with one photo_rating row per rating call that reached the model: the
-   * price of one photo times the photos sent (Clef: 0.0017 USD for a member's 4 photos). A refusal
-   * (null: not a verified adult) reached nothing and costs nothing; an error is counted.
+   * The appearance rater, with one photo_rating row per rater call that reached the model, each try
+   * counted on its own (a rater wrapped in withRetry is metered inside the retry, so three tries are
+   * three rows): the price of one photo times the photos sent (Clef: 0.0017 USD for a member's 4
+   * photos). A refusal (null: not a verified adult) reached nothing and costs nothing; an error is counted.
    */
   meterRater(r: PhotoRater, app: AppId = "slop"): PhotoRater {
     if (r.id === "none") return r;
+    const parts = retryParts(r);
+    if (parts) return withRetry(this.meterRater(parts.inner, app), parts.options);
     const ledger = this;
     return {
       id: r.id,
