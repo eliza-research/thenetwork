@@ -288,8 +288,10 @@ interface MemberState {
   note?: { text: string; at: number };
   /** Ledger events already emitted once for this member (member_joined, member_activated). */
   joinedLedger?: boolean; activated?: boolean;
-  /** Profile tags the app's pack learned from what the member said (AppHooks.learn): engine facets, never shown. */
+  /** Profile tags the app's onboarding loop learned from what the member said (AppHooks.onboarding): engine facets, never shown. */
   appTags?: AppTag[];
+  /** The app's onboarding state (AppHooks.onboarding), plain JSON the Network never reads inside. */
+  onboarding?: unknown;
   /**
    * Unsolicited sends (PRD 32.9, PH-003, F28): anything that is not a reply within 15 minutes, a
    * follow-up to the member's own ask, or part of an opportunity they said yes to. Times per lane
@@ -400,7 +402,7 @@ type SendHook =
   | { t: "interview" } | { t: "age" } | { t: "suggested"; venues: string[] } | { t: "retry_found"; oppId: string }
   | { t: "probe"; oppId: string; id: MemberId } | { t: "reveal"; oppId: string; id: MemberId } | { t: "times"; oppId: string; id: MemberId }
   | { t: "drop_notice"; oppId: string } | { t: "feedback"; oppId: string }
-  | { t: "growth"; kind: string } | { t: "reengage" } | { t: "ask"; reason: AskRecord["reason"]; also?: string[] } | { t: "checkin" }
+  | { t: "growth"; kind: string } | { t: "reengage" } | { t: "ask"; reason: AskRecord["reason"]; also?: string[]; follow?: boolean } | { t: "checkin" }
   | { t: "plan_probe"; oppId: string; id: MemberId } | { t: "crew_offer"; crewId: string };
 interface HookFns { valid?: () => boolean; onSent?: () => void; onRefused?: () => void }
 interface Deferred { memberId: MemberId; body: string; meta: SimMeta; kind: SendKind; o: SendOpts; timing?: Timing }
@@ -979,12 +981,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.ctx.log("learned", { memberId: m.id, interests: x.interests, skills: x.skills, desires: x.desireIds, area: x.area });
   }
 
-  /** What the app's pack reads from the member's words (AppHooks.learn). Newer tags replace older ones with the same prefix. Never for a minor. */
+  /** What the app's onboarding loop reads from the member's words (AppHooks.onboarding). Newer tags replace older ones with the same prefix. Never for a minor. */
   private learnAppTags(m: MemberState, body: string, reasons: readonly string[]) {
-    const learn = this.opts.hooks?.learn;
-    if (!learn || m.minor) return;
-    const r = learn(body, reasons, { now: this.now() });
-    if (!r.tags.length) return;
+    const ob = this.opts.hooks?.onboarding;
+    if (!ob || m.minor) return;
+    const r = ob.read(m.onboarding, body, reasons, { now: this.now(), age: this.ageOf(m) });
+    m.onboarding = r.state;
+    this.dirty = true;
+    if (!r.tags.length && !r.replaces.length) return;
     const keep = (m.appTags ?? []).filter(t => !r.replaces.some(p => t.tag.startsWith(p)) && !r.tags.some(n => n.tag === t.tag));
     m.appTags = [...keep, ...r.tags];
     this.dirty = true;
@@ -992,9 +996,34 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.ctx.log("app_tags_learned", { memberId: m.id, tags: r.tags.map(t => t.tag.split(":").slice(0, 2).join(":")) });
   }
 
+  /** The age the onboarding loop starts from: the lowest one the member gave. */
+  private ageOf(m: MemberState): number | undefined {
+    const xs = [m.age, m.statedAge].filter((x): x is number => validAge(x));
+    return xs.length ? Math.min(...xs) : undefined;
+  }
+
+  /**
+   * The app's next onboarding message (AppHooks.onboarding), as a reply: a read-back or one question.
+   * `skip`: the questions the member just answered, never repeated right away. False when nothing is left.
+   */
+  private onboardNext(m: MemberState, skip: readonly string[]): boolean {
+    const ob = this.opts.hooks?.onboarding;
+    if (!ob || m.minor) return false;
+    const nx = ob.next(m.onboarding, { age: this.ageOf(m), skip });
+    if (!nx) return false;
+    this.send(m, nx.text, { type: "question", proactive: false }, "interview", { hook: { t: "ask", reason: nx.reason, follow: true } });
+    return true;
+  }
+
   private onInterviewAnswer(m: MemberState, body: string) {
     this.learnFrom(m, body);
     m.awaiting = undefined;
+    // An app with its own onboarding loop takes over after the first answer.
+    if (m.stage === "q1" && this.opts.hooks?.onboarding && !m.minor) {
+      this.activate(m);
+      if (!this.onboardNext(m, [])) this.ack(m, copy.ackLearned);
+      return;
+    }
     const ask = (next: "q2" | "q3", text: string) => {
       m.stage = next;
       this.send(m, text, { type: "question", proactive: false }, "interview", { hook: { t: "interview" } });
@@ -1016,10 +1045,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const a of together) a.answeredAt = this.now();
     ask.answeredAt = this.now();
     m.answered++; this.counters.asksAnswered++;
-    this.learnFrom(m, body, [...new Set([ask.reason, ...together.map(a => a.reason)])]);
+    const reasons = [...new Set([ask.reason, ...together.map(a => a.reason)])];
+    this.learnFrom(m, body, reasons);
     this.ctx.log("ask_answered", { memberId: m.id, reason: ask.reason });
     if (c.kind === "people_request" && !m.minor) return this.openRequest(m, c, {});
     if (c.kind === "plans_request") return this.onPlans(m, c);
+    // The onboarding loop goes on with its next question, else the usual acknowledgement.
+    if (this.onboardNext(m, reasons)) return;
     this.ack(m, copy.ackLearned);
   }
 
@@ -3212,14 +3244,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const a of asks) {
       const m = this.members.get(a.memberId);
       if (!m || done.has(m.id) || m.minor || m.stage !== "active" || m.awaiting || now - this.lastAsk(m.id) < ASK_EVERY_DAYS * DAY) continue;
-      // A pack may ask all of one member's questions in one message (slop: orientation, age range and distance).
-      const mine = asks.filter(x => x.memberId === m.id);
-      const text = mine.length > 1 ? hooks?.askText?.(mine.map(x => x.reason)) : undefined;
       done.add(m.id);
-      if (text) {
-        const [head, ...rest] = mine;
-        this.send(m, text, { type: "question", proactive: false, ask: { id: head!.id, reason: head!.reason } }, "interview", { hook: { t: "ask", reason: head!.reason, also: rest.map(x => x.reason) } });
-      } else this.send(m, a.question, { type: "question", proactive: false, ask: { id: a.id, reason: a.reason } }, "interview", { hook: { t: "ask", reason: a.reason } });
+      // An app with an onboarding loop asks its own next question (one at a time); the engine's text when the loop has none left.
+      const nx = hooks?.onboarding?.next(m.onboarding, { age: this.ageOf(m) });
+      if (nx) this.send(m, nx.text, { type: "question", proactive: false, ask: { id: a.id, reason: nx.reason } }, "interview", { hook: { t: "ask", reason: nx.reason } });
+      else this.send(m, a.question, { type: "question", proactive: false, ask: { id: a.id, reason: a.reason } }, "interview", { hook: { t: "ask", reason: a.reason } });
     }
   }
   private lastAsk(id: MemberId) { return Math.max(-Infinity, ...this.asks.filter(a => a.memberId === id).map(a => a.at)); }
@@ -3830,11 +3859,14 @@ export class ConsentNetwork implements NetworkUnderTest {
         onSent: () => { m.lastCheckinAt = now(); this.counters.checkinsSent++; this.expect(m, { kind: "checkin", at: now() }); this.ctx.log("checkin_sent", { memberId: m.id }); },
       };
       case "ask": return {
-        valid: () => !m.minor && !m.awaiting && now() - this.lastAsk(m.id) >= ASK_EVERY_DAYS * DAY,
+        // `follow`: the next onboarding question in a conversation the member is having now (not on the ask interval).
+        valid: () => !m.minor && !m.awaiting && (!!h.follow || now() - this.lastAsk(m.id) >= ASK_EVERY_DAYS * DAY),
         onSent: () => {
           const rec: AskRecord = { memberId: m.id, at: now(), reason: h.reason };
-          // One message can carry several asks (AppHooks.askText): one record each, answered together.
+          // One message can carry several asks: one record each, answered together.
           for (const r of h.also ?? []) this.asks.push({ memberId: m.id, at: rec.at, reason: r });
+          const ob = this.opts.hooks?.onboarding;
+          if (ob) m.onboarding = ob.asked(m.onboarding, [h.reason, ...(h.also ?? [])], { age: this.ageOf(m) });
           this.asks.push(rec); m.asked++; this.counters.asksSent++;
           this.expect(m, { kind: "interview", ask: rec, at: rec.at });
           this.ctx.log("ask_sent", { memberId: m.id, reason: h.reason });

@@ -16,7 +16,8 @@
 //   network   ConsentNetwork in the NYC world: invariants (seed 3, 10 days), consent vs push (seeds 1-3, 21 days) with the
 //             attention and plans invariants, NYC scenarios, sim scenarios at pass^3, networkPack conformance
 //   slop      slop.date: seeds 13-16, 4 weeks, 300 per city; safety + passing quality gates block, known-failing gates tracked;
-//             the relay inside the world (adversary personas after the reveal) and the photo in the probe
+//             the relay inside the world (adversary personas after the reveal) and the photo in the probe; the slop-live arm (the
+//             service's slop wiring and onboarding loop in the sim World, human review, seeds 21-22, 30 days)
 //   relay     the relay policy (engine relay.ts): evals/relay/ corpora and scripted scenarios; photo-in-probe rule
 //   peon      peon.biz: seeds 13-16, 8 weeks; the official gates block
 //   friends   friends.help: seeds 5-8, 8 weeks, 400 personas; the official gates block

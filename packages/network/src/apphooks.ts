@@ -3,8 +3,8 @@
 // first, consent first, the leak guard on every text, minors never in a pack's input, blocks,
 // STOP and the caps. A hook only supplies app data and app words at fixed points:
 //   engineInput   app fields for the pack (slop: verification and zip presence)
-//   askText       one message for every engine ask of one member (slop asks its hard fields together)
-//   learn         profile tags from a member's answer (slop: orientation, age range, distance, zip)
+//   onboarding    the app's onboarding loop: tags from each answer and the next question or read-back
+//                 (slop: the engine's extractSlopProfile -> slopOnboardTags -> readBack / nextQuestion)
 //   timeOptions   the first member's time options (slop: the date plan's slots)
 //   probe         the anonymous probe text (slop: a date, an age band and a distance band)
 //   venue         the meeting place after everyone said yes (slop: a public place near the midpoint)
@@ -16,6 +16,22 @@ import type { EngineInput } from "@thenetwork/engine";
 
 /** A profile tag the app learned from a member's words. It is kept in the Network's state and goes to the engine as a facet. */
 export interface AppTag { tag: string; kind: Facet["kind"]; scope: Facet["scope"]; at: number }
+
+/**
+ * An app's onboarding conversation. Its state is plain JSON the Network keeps on the member
+ * (MemberState.onboarding) and passes back on every call; the Network never reads inside it.
+ */
+export interface AppOnboarding {
+  /**
+   * Read one message from the member. `reasons`: the questions it answers ([] for any other message).
+   * Returns the new state, the profile tags learned, and the tag prefixes whose older tags they replace.
+   */
+  read(state: unknown, body: string, reasons: readonly string[], ctx: { now: number; age?: number }): { state: unknown; tags: AppTag[]; replaces: string[] };
+  /** The one next message (a read-back to confirm, or one question); undefined when nothing is left. `skip`: questions not to repeat right away. */
+  next(state: unknown, ctx: { age?: number; skip?: readonly string[] }): { reason: string; text: string } | undefined;
+  /** The state after questions were sent (the re-ask cap). */
+  asked(state: unknown, reasons: readonly string[], ctx: { age?: number }): unknown;
+}
 
 /** What a hook sees of one opportunity. */
 export interface HookOpp {
@@ -31,13 +47,8 @@ export interface HookVenue { id: string; name: string; neighborhood: string; lat
 export interface AppHooks {
   /** The pack's input, from the Network's own (minors are already removed). Pure. */
   engineInput?(input: EngineInput): EngineInput;
-  /** One question for all the asks of one member, in the engine's order; undefined: each ask's own text, one at a time. */
-  askText?(reasons: readonly string[]): string | undefined;
-  /**
-   * Tags learned from a member's message. `reasons`: the asks it answers ([] for any other message).
-   * `replaces`: tag prefixes whose older tags the new ones replace ("romance:seeks:").
-   */
-  learn?(body: string, reasons: readonly string[], ctx: { now: number }): { tags: AppTag[]; replaces: string[] };
+  /** The app's onboarding loop; undefined: the Network's own interview and each engine ask's own text. */
+  onboarding?: AppOnboarding;
   /** The first member's time options; undefined: the Network's own (attention.chooseTimeOptions). */
   timeOptions?(o: HookOpp, now: number, input: () => EngineInput): { start: number; end: number }[] | undefined;
   /** The probe text; undefined: the Network's own. */

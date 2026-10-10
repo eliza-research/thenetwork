@@ -1,0 +1,128 @@
+{"text":"I'm a woman, not into men, looking for women","expect":{"gender":"woman","seeks":["woman"]},"from":"slop/orientation"}
+{"text":"no women please, men only","asked":"orientation","expect":{"seeks":["man"]},"unset":["gender"],"from":"slop/orientation"}
+{"text":"I'm a man who likes men","expect":{"gender":"man","seeks":["man"]},"from":"slop/orientation"}
+{"text":"I'm a woman looking for men","expect":{"gender":"woman","seeks":["man"]},"from":"slop/orientation"}
+{"text":"straight guy","asked":"orientation","expect":{"gender":"man","seeks":["woman"]},"from":"slop/orientation"}
+{"text":"straight woman, 31","asked":"orientation","expect":{"gender":"woman","seeks":["man"]},"from":"slop/orientation"}
+{"text":"gay man","asked":"orientation","expect":{"gender":"man","seeks":["man"]},"from":"slop/orientation"}
+{"text":"gay woman here","asked":"orientation","expect":{"gender":"woman","seeks":["woman"]},"from":"slop/orientation"}
+{"text":"lesbian","asked":"orientation","expect":{"gender":"woman","seeks":["woman"]},"from":"slop/orientation"}
+{"text":"I'm bi","asked":"orientation","unset":["gender","seeks"],"from":"slop/orientation"}
+{"text":"bi guy, into both","asked":"orientation","expect":{"gender":"man"},"unset":["seeks"],"from":"slop/orientation"}
+{"text":"queer, open to anyone","asked":"orientation","expect":{"seeks":["man","nonbinary","woman"]},"unset":["gender"],"from":"slop/orientation"}
+{"text":"women","asked":"orientation","expect":{"seeks":["woman"]},"unset":["gender"],"from":"slop/orientation"}
+{"text":"men","asked":"orientation","expect":{"seeks":["man"]},"unset":["gender"],"from":"slop/orientation"}
+{"text":"guys mostly","asked":"orientation","expect":{"seeks":["man"]},"unset":["gender"],"from":"slop/orientation"}
+{"text":"Women and nonbinary people","asked":"orientation","expect":{"seeks":["nonbinary","woman"]},"unset":["gender"],"from":"slop/orientation"}
+{"text":"anyone really","asked":"orientation","expect":{"seeks":["man","nonbinary","woman"]},"unset":["gender"],"from":"slop/orientation"}
+{"text":"a mix is good","asked":"orientation","unset":["gender","seeks"],"from":"slop/orientation"}
+{"text":"both","asked":"orientation","unset":["gender","seeks"],"from":"slop/orientation"}
+{"text":"either is fine","asked":"orientation","unset":["gender","seeks"],"from":"slop/orientation"}
+{"text":"I'm nonbinary, into women and nonbinary people","asked":"orientation","expect":{"gender":"nonbinary","seeks":["nonbinary","woman"]},"from":"slop/orientation"}
+{"text":"I'm non-binary and I date men","expect":{"gender":"nonbinary","seeks":["man"]},"from":"slop/orientation"}
+{"text":"I'm a trans woman into women","expect":{"gender":"woman","seeks":["woman"]},"from":"slop/orientation"}
+{"text":"trans man looking for guys","asked":"orientation","expect":{"gender":"man","seeks":["man"]},"from":"slop/orientation"}
+{"text":"m4w","asked":"orientation","expect":{"gender":"man","seeks":["woman"]},"from":"slop/orientation"}
+{"text":"f4f","asked":"orientation","expect":{"gender":"woman","seeks":["woman"]},"from":"slop/orientation"}
+{"text":"I'm a guy, looking for a woman to date","expect":{"gender":"man","seeks":["woman"]},"from":"slop/orientation"}
+{"text":"As a woman I'm interested in men and women","expect":{"gender":"woman","seeks":["man","woman"]},"from":"slop/orientation"}
+{"text":"I am a man and I'm attracted to women","expect":{"gender":"man","seeks":["woman"]},"from":"slop/orientation"}
+{"text":"only women","asked":"orientation","expect":{"seeks":["woman"]},"unset":["gender"],"from":"slop/orientation"}
+{"text":"women only","asked":"orientation","expect":{"seeks":["woman"]},"unset":["gender"],"from":"slop/orientation"}
+{"text":"just guys","asked":"orientation","expect":{"seeks":["man"]},"unset":["gender"],"from":"slop/orientation"}
+{"text":"I'm into all kinds of music","unset":["gender","seeks"],"from":"slop/orientation"}
+{"text":"I like both hiking and going to shows","unset":["gender","seeks"],"from":"slop/orientation"}
+{"text":"yes all good","asked":"orientation","unset":["gender","seeks"],"from":"slop/orientation"}
+{"text":"I'd like someone kind and funny","unset":["gender","seeks"],"from":"slop/orientation"}
+{"text":"Looking for something serious","unset":["gender","seeks"],"from":"slop/orientation"}
+{"text":"my friends say I'm a lot of fun","unset":["gender","seeks"],"from":"slop/orientation"}
+{"text":"I want to meet people who love food","unset":["gender","seeks"],"from":"slop/orientation"}
+{"text":"not into men","asked":"orientation","unset":["gender","seeks"],"from":"slop/orientation"}
+{"text":"not men","asked":"orientation","unset":["gender","seeks"],"from":"slop/orientation"}
+{"text":"anyone but men","asked":"orientation","expect":{"seeks":["nonbinary","woman"]},"unset":["gender"],"from":"slop/orientation"}
+{"text":"everyone except guys tbh","asked":"orientation","expect":{"seeks":["nonbinary","woman"]},"unset":["gender"],"from":"slop/orientation"}
+{"text":"I'm a man, not into women, I date men","expect":{"gender":"man","seeks":["man"]},"from":"slop/orientation"}
+{"text":"I don't date men, only women","expect":{"seeks":["woman"]},"unset":["gender"],"from":"slop/orientation"}
+{"text":"I'm not really into guys, looking for women","expect":{"seeks":["woman"]},"unset":["gender"],"from":"slop/orientation"}
+{"text":"no guys, just women","asked":"orientation","expect":{"seeks":["woman"]},"unset":["gender"],"from":"slop/orientation"}
+{"text":"women, no men please","asked":"orientation","expect":{"seeks":["woman"]},"unset":["gender"],"from":"slop/orientation"}
+{"text":"men are a no for me, women and nonbinary folks yes","asked":"orientation","expect":{"seeks":["nonbinary","woman"]},"unset":["gender"],"from":"slop/orientation"}
+{"text":"I'm a woman, never dated women, looking for men","expect":{"gender":"woman","seeks":["man"]},"from":"slop/orientation"}
+{"text":"not looking for men, I'm into women","expect":{"seeks":["woman"]},"unset":["gender"],"from":"slop/orientation"}
+{"text":"I'm a woman, not straight, into women","expect":{"gender":"woman","seeks":["woman"]},"from":"slop/orientation"}
+{"text":"not into anyone who smokes, looking for women","expect":{"seeks":["woman"]},"unset":["gender"],"from":"slop/orientation"}
+{"text":"no women, men only","asked":"orientation","expect":{"seeks":["man"]},"unset":["gender"],"from":"slop/orientation"}
+{"text":"I don't want to date guys anymore, women only","expect":{"seeks":["woman"]},"unset":["gender"],"from":"slop/orientation"}
+{"text":"I'm a guy and I'm not into dudes, looking for girls","expect":{"gender":"man","seeks":["woman"]},"from":"slop/orientation"}
+{"text":"nonbinary folks and women, not men","asked":"orientation","expect":{"seeks":["nonbinary","woman"]},"unset":["gender"],"from":"slop/orientation"}
+{"text":"I'm not looking for women","unset":["gender","seeks"],"from":"slop/orientation"}
+{"text":"late 20s to mid 30s","asked":"ageRange","expect":{"ageRange":[26,36]},"from":"slop/age-range"}
+{"text":"25-35","asked":"ageRange","expect":{"ageRange":[25,35]},"from":"slop/age-range"}
+{"text":"25-35","expect":{"ageRange":[25,35]},"from":"slop/age-range"}
+{"text":"25 to 35","expect":{"ageRange":[25,35]},"from":"slop/age-range"}
+{"text":"between 25 and 30","expect":{"ageRange":[25,30]},"from":"slop/age-range"}
+{"text":"anywhere between 28 and 36 works","asked":"ageRange","expect":{"ageRange":[28,36]},"from":"slop/age-range"}
+{"text":"30s","asked":"ageRange","expect":{"ageRange":[30,39]},"from":"slop/age-range"}
+{"text":"their 30s","asked":"ageRange","expect":{"ageRange":[30,39]},"from":"slop/age-range"}
+{"text":"mid 30s","asked":"ageRange","expect":{"ageRange":[33,36]},"from":"slop/age-range"}
+{"text":"mid-30s","asked":"ageRange","expect":{"ageRange":[33,36]},"from":"slop/age-range"}
+{"text":"early 30s","asked":"ageRange","expect":{"ageRange":[30,33]},"from":"slop/age-range"}
+{"text":"late twenties","asked":"ageRange","expect":{"ageRange":[26,29]},"from":"slop/age-range"}
+{"text":"early to mid thirties","asked":"ageRange","expect":{"ageRange":[30,36]},"from":"slop/age-range"}
+{"text":"20s to 30s","asked":"ageRange","expect":{"ageRange":[20,39]},"from":"slop/age-range"}
+{"text":"late 20s-early 30s","asked":"ageRange","expect":{"ageRange":[26,33]},"from":"slop/age-range"}
+{"text":"mid 20s to early 30s please","asked":"ageRange","expect":{"ageRange":[23,33]},"from":"slop/age-range"}
+{"text":"25 to early 30s","asked":"ageRange","expect":{"ageRange":[25,33]},"from":"slop/age-range"}
+{"text":"late 20s to 35","asked":"ageRange","expect":{"ageRange":[26,35]},"from":"slop/age-range"}
+{"text":"around 30","asked":"ageRange","expect":{"ageRange":[27,33]},"from":"slop/age-range"}
+{"text":"30ish","asked":"ageRange","expect":{"ageRange":[27,33]},"from":"slop/age-range"}
+{"text":"about 40","asked":"ageRange","expect":{"ageRange":[37,43]},"from":"slop/age-range"}
+{"messages":["I'm 31.","around my age"],"asked":"ageRange","expect":{"ageRange":[28,34]},"from":"slop/age-range"}
+{"messages":["I'm 45.","my age or so"],"asked":"ageRange","expect":{"ageRange":[42,48]},"from":"slop/age-range"}
+{"text":"my age","asked":"ageRange","unset":["ageRange"],"from":"slop/age-range"}
+{"text":"30+","asked":"ageRange","expect":{"ageRange":[30,99]},"from":"slop/age-range"}
+{"text":"35 and up","asked":"ageRange","expect":{"ageRange":[35,99]},"from":"slop/age-range"}
+{"text":"under 40","asked":"ageRange","expect":{"ageRange":[18,39]},"from":"slop/age-range"}
+{"text":"40 or younger","asked":"ageRange","expect":{"ageRange":[18,40]},"from":"slop/age-range"}
+{"text":"16-25","asked":"ageRange","expect":{"ageRange":[18,25]},"from":"slop/age-range"}
+{"text":"35-28","asked":"ageRange","expect":{"ageRange":[28,35]},"from":"slop/age-range"}
+{"text":"ages 26 to 34 years old","asked":"ageRange","expect":{"ageRange":[26,34]},"from":"slop/age-range"}
+{"text":"I'm looking for someone 27-33","expect":{"ageRange":[27,33]},"from":"slop/age-range"}
+{"text":"30s","unset":["ageRange"],"from":"slop/age-range"}
+{"text":"I'm in my late 20s","asked":"ageRange","unset":["ageRange"],"from":"slop/age-range"}
+{"text":"10-20 minutes away","unset":["ageRange"],"from":"slop/age-range"}
+{"text":"I live in 11211","asked":"ageRange","unset":["ageRange"],"from":"slop/age-range"}
+{"text":"no idea","asked":"ageRange","unset":["ageRange"],"from":"slop/age-range"}
+{"text":"I'm 29","unset":["ageRange"],"from":"slop/age-range"}
+{"text":"within 5 miles","asked":"distance","expect":{"distance":{"mode":"radius","miles":5}},"from":"slop/distance"}
+{"text":"10mi","asked":"distance","expect":{"distance":{"mode":"radius","miles":10}},"from":"slop/distance"}
+{"text":"up to 25 miles","expect":{"distance":{"mode":"radius","miles":25}},"from":"slop/distance"}
+{"text":"two miles","asked":"distance","expect":{"distance":{"mode":"radius","miles":2}},"from":"slop/distance"}
+{"text":"a couple of miles is fine, maybe 3 miles","asked":"distance","expect":{"distance":{"mode":"radius","miles":3}},"from":"slop/distance"}
+{"text":"8 km","asked":"distance","expect":{"distance":{"mode":"radius","miles":5}},"from":"slop/distance"}
+{"text":"within 15 kilometers","asked":"distance","expect":{"distance":{"mode":"radius","miles":9}},"from":"slop/distance"}
+{"text":"walking distance","asked":"distance","unset":["distance"],"from":"slop/distance"}
+{"text":"my neighborhood ideally","asked":"distance","unset":["distance"],"from":"slop/distance"}
+{"text":"same borough","asked":"distance","unset":["distance"],"from":"slop/distance"}
+{"text":"stay in brooklyn","asked":"distance","unset":["distance"],"from":"slop/distance"}
+{"text":"just the city","asked":"distance","expect":{"distance":{"mode":"city"}},"from":"slop/distance"}
+{"text":"anywhere in nyc","asked":"distance","expect":{"distance":{"mode":"city"}},"from":"slop/distance"}
+{"text":"all five boroughs","asked":"distance","expect":{"distance":{"mode":"city"}},"from":"slop/distance"}
+{"text":"5","asked":"distance","expect":{"distance":{"mode":"radius","miles":5}},"from":"slop/distance"}
+{"text":"10 max","asked":"distance","expect":{"distance":{"mode":"radius","miles":10}},"from":"slop/distance"}
+{"text":"half a mile","asked":"distance","expect":{"distance":{"mode":"radius","miles":2}},"from":"slop/distance"}
+{"text":"5","unset":["distance"],"from":"slop/distance"}
+{"text":"I ran a 5k today","asked":"distance","unset":["distance"],"from":"slop/distance"}
+{"text":"not sure","asked":"distance","unset":["distance"],"from":"slop/distance"}
+{"text":"11211","asked":"location","expect":{"location":"11211"},"from":"slop/zip"}
+{"text":"I'm in 11211, Williamsburg","asked":"location","expect":{"location":"11211"},"from":"slop/zip"}
+{"text":"zip is 10003","asked":"location","expect":{"location":"10003"},"from":"slop/zip"}
+{"text":"10025.","asked":"location","expect":{"location":"10025"},"from":"slop/zip"}
+{"text":"Bushwick (11237)","asked":"location","expect":{"location":"11237"},"from":"slop/zip"}
+{"text":"11211-1234","asked":"location","expect":{"location":"11211"},"from":"slop/zip"}
+{"text":"call 2125550102","asked":"location","unset":["location"],"from":"slop/zip"}
+{"text":"my code is 123456","asked":"location","unset":["location"],"from":"slop/zip"}
+{"text":"I make $85000","asked":"location","unset":["location"],"from":"slop/zip"}
+{"text":"1,11211","asked":"location","unset":["location"],"from":"slop/zip"}
+{"text":"Williamsburg","asked":"location","expect":{"location":"Williamsburg"},"from":"slop/zip"}
+{"text":"25-35","asked":"location","unset":["location"],"from":"slop/zip"}

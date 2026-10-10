@@ -15,6 +15,7 @@ import type { OtpProvider } from "../../platform/src/otp.ts";
 import { BlooioAdapter, DryRunAdapter, liveSendAllowed, type Outbound } from "../service/channel.ts";
 import { NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/service.ts";
 import { brandOf, copyFor, styleViolations } from "../src/copy.ts";
+import { SLOP_ONBOARD_QUESTIONS } from "../../engine/src/packs/slop/index.ts";
 import { START } from "./mini.ts";
 
 const T = 300_000;
@@ -527,5 +528,41 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     expect(await count(sql`select count(*)::int as n from network.messages where app_id = 'slop'`)).toBe(0);
     expect(await count(sql`select count(*)::int as n from platform.phone_identities where e164 = ${p}`)).toBe(0);
     expect(await count(sql`select count(*)::int as n from platform.suppression`)).toBe(1);
+  }, T);
+
+  test("slop onboarding is the engine's loop: one question at a time, bi asked again in other words, the read-back, tags and state without the member's words", async () => {
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(START);
+    const { s } = service(clock);
+    const p = newPhone();
+    expect(await text(s, clock, p, "Sam 29", { app: "slop" })).toBe("joined");
+    const m = (await memberOf("slop", p))!;
+    const last = async () => (await outbound(m.id)).at(-1)!;
+    // The welcome's answer starts the loop. The age from the join is known, so the first question is who they are and seek.
+    await text(s, clock, p, "Honestly just more fun in my week.", { app: "slop" });
+    expect(await last()).toMatchObject({ type: "question", body: SLOP_ONBOARD_QUESTIONS.slop_orientation!.text });
+    // PRD 40.5: "bi" names no seeking set. Nothing is guessed, and the next question asks who they hope to meet (not the same text again).
+    await text(s, clock, p, "I'm bi", { app: "slop" });
+    expect((await last()).body).toBe(SLOP_ONBOARD_QUESTIONS.slop_seeks!.text);
+    await text(s, clock, p, "women and men", { app: "slop" });
+    expect((await last()).body).toBe(SLOP_ONBOARD_QUESTIONS.slop_gender!.text);
+    await text(s, clock, p, "a woman", { app: "slop" });
+    expect((await last()).body).toBe(SLOP_ONBOARD_QUESTIONS.slop_age_range!.text);
+    await text(s, clock, p, "28-38", { app: "slop" });
+    expect((await last()).body).toBe(SLOP_ONBOARD_QUESTIONS.slop_distance!.text);
+    // Every hard field is set: the read-back repeats only what they said, then "yep" confirms and the soft questions start.
+    await text(s, clock, p, "within 5 miles of 11211", { app: "slop" });
+    expect((await last()).body).toBe("so: you're a woman looking for men and women 28-38 within 5 mi of 11211. right?");
+    await text(s, clock, p, "yep", { app: "slop" });
+    expect((await last()).body).toBe(SLOP_ONBOARD_QUESTIONS.slop_basics!.text);
+    const bodies = (await outbound(m.id)).map(x => x.body);
+    expect(new Set(bodies).size).toBe(bodies.length);
+    // The stored state: the pack's tags (the stated label is kept agent_private, never read back), the confirmed onboarding, and never the member's own words.
+    const state = (await sql`select state from network.network_state where id = 'slop:nyc'`)[0].state;
+    const st = typeof state === "string" ? JSON.parse(state) : state;
+    const me = st.members.find((x: any) => x.id === m.id);
+    expect(me.appTags.map((t: any) => t.tag).sort()).toEqual(["romance:age:28-38", "romance:is:woman", "romance:seeks:man", "romance:seeks:woman", "slop:max_miles:5", "slop:orientation:bisexual", "slop:scope:radius:5", "slop:zip:11211"]);
+    expect(me.onboarding.confirmed).toBe(true);
+    for (const words of ["I'm bi", "women and men", "within 5 miles", "more fun"]) expect(JSON.stringify(me.onboarding)).not.toContain(words);
   }, T);
 });

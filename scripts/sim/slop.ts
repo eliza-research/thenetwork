@@ -12,6 +12,8 @@
 //     member-month >= 0.9x random, age-liar contact cut >= 90%, adversary-contact cut >= 90%, the smallest
 //     gender / orientation group >= 0.7x (all members and feasible members), and harm-event cut >= 90%.
 // --quick: seed 13 only, 2 weeks, 150 per city; every quality gate is tracked (one seed is noise).
+// Then the slop-live arm (scripts/sim/slop-live.ts): the service's slop wiring and onboarding loop in
+// the sim World (seeds 21-22, 30 days); its invariant gates block.
 import type { Facet, MemberId } from "../../packages/core/src/index.ts";
 import { canBeMatched, DAY } from "../../packages/core/src/index.ts";
 import * as A from "../../packages/engine/src/attention.ts";
@@ -28,6 +30,7 @@ import { ageRangeOf } from "../../packages/engine/src/packs/slop/rules.ts";
 import { statedDealbreaker } from "../../packages/engine/src/packs/slop/score.ts";
 import { cellMiles } from "../../packages/engine/src/packs/slop/zips.ts";
 import { EngineRng as Rng } from "../../packages/core/src/index.ts";
+import { slopLiveArm } from "./slop-live.ts";
 import type { EngineInput, EngineProposal } from "../../packages/engine/src/types.ts";
 import { World } from "../../packages/engine/src/world.ts";
 import { BODY_TYPE_DEFAULTS } from "../../packages/sim/src/apps/slop/bodyType.ts";
@@ -275,4 +278,7 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
     }
     expect(minors).toBeGreaterThan(0);
   });
+
+  // ---- slop-live: the production ConsentNetwork with the slop wiring (scripts/sim/slop-live.ts) -----
+  await slopLiveArm(b, o);
 }
