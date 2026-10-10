@@ -407,11 +407,11 @@ describe("leak-guard gaps", () => {
 // ------------------------------------------------------------------------------------------------
 describe("RFC 8707 resource matching", () => {
   test("canonical resource accepts trailing slash and uppercase scheme/host only", () => {
-    for (const ok of ["https://mcp.ntwrk.love/mcp", "https://mcp.ntwrk.love/mcp/", "HTTPS://MCP.NTWRK.LOVE/mcp"]) expect(normalizeResource(ok, cfg)).toBe(cfg.resource);
+    for (const ok of ["https://mcp.ntwrk.party/mcp", "https://mcp.ntwrk.party/mcp/", "HTTPS://MCP.NTWRK.LOVE/mcp"]) expect(normalizeResource(ok, cfg)).toBe(cfg.resource);
     for (const bad of [
-      "https://mcp.ntwrk.love", "https://mcp.ntwrk.love/", "https://mcp.ntwrk.love/MCP", "https://mcp.ntwrk.love/mcp?x=1",
-      "https://mcp.ntwrk.love/mcp#f", "https://mcp.ntwrk.love:444/mcp", "http://mcp.ntwrk.love/mcp", "https://evil@mcp.ntwrk.love/mcp",
-      "https://mcp.ntwrk.love.evil.test/mcp", "mcp.ntwrk.love/mcp", "",
+      "https://mcp.ntwrk.party", "https://mcp.ntwrk.party/", "https://mcp.ntwrk.party/MCP", "https://mcp.ntwrk.party/mcp?x=1",
+      "https://mcp.ntwrk.party/mcp#f", "https://mcp.ntwrk.party:444/mcp", "http://mcp.ntwrk.party/mcp", "https://evil@mcp.ntwrk.party/mcp",
+      "https://mcp.ntwrk.party.evil.test/mcp", "mcp.ntwrk.party/mcp", "",
     ]) expect(normalizeResource(bad, cfg)).toBeNull();
   });
 });

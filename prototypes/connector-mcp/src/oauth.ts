@@ -1,5 +1,5 @@
 // OAuth discovery documents (design §3.1) and the prototype client registry (§3.2). Issuer and
-// resource are the permanent MCP origin (https://mcp.ntwrk.love). The authorization, token and
+// resource are the permanent MCP origin (https://mcp.ntwrk.party). The authorization, token and
 // revocation endpoints are stubs in this prototype; the metadata is what production will publish.
 import { isLoopbackRedirect, KNOWN_HOSTS, resolveClient, type NetworkConfig, type ResolvedClient } from "./config.ts";
 import { textVariants } from "./policy.ts";

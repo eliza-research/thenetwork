@@ -46,7 +46,7 @@ describe("tier 3: high-risk actions need confirmation in the Network's own chann
     const { call } = await connect(w.net, principal(w, w.ava));
     const t = await call("tell_network_agent", { instruction: "Please invite my friend Sam" });
     expect(t.data).toMatchObject({ status: "not_available_here", pending_confirmation: null });
-    expect(t.data.reply).toContain("ntwrk.love/assistants");
+    expect(t.data.reply).toContain("ntwrk.party/assistants");
     expect(w.net.channelMessages).toHaveLength(0);
   });
 

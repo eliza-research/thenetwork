@@ -65,7 +65,7 @@ export const key = () => `key_${(++n).toString().padStart(8, "0")}`;
 /** Parse the ```json blocks of the approved design doc (tests compare our contracts to it). */
 export function designJsonBlocks(): any[] {
   const doc = readFileSync(new URL("../../../docs/research/mcp-server-design.md", import.meta.url), "utf8");
-  return [...doc.matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => JSON.parse(m[1]!.replaceAll("<network-domain>", "ntwrk.love")));
+  return [...doc.matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => JSON.parse(m[1]!.replaceAll("<network-domain>", "ntwrk.party")));
 }
 
 /** Every model-visible string across a result (content text + structuredContent). */
