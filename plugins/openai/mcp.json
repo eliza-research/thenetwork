@@ -1,6 +1,6 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
   "mcpServers": {
-    "the-network": { "type": "streamable-http", "url": "https://ntwrk.love/mcp/openai" }
+    "the-network": { "type": "streamable-http", "url": "https://ntwrk.party/mcp/openai" }
   }
 }
