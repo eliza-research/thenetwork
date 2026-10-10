@@ -32,7 +32,7 @@ import index from "../web/index.html";
 import { Lab, LAB_LIMITS, validateLab, type LabOptions } from "./lab.ts";
 import { runDiff } from "./runDiff.ts";
 import { SQL } from "bun";
-import { APP_IDS, consoleApps, DEFAULT_APP, isAppId, slaHours, toNetworkReason, type AppId } from "./apps.ts";
+import { APP_IDS, appUrlEnv, consoleApps, DEFAULT_APP, isAppId, slaHours, toNetworkReason, type AppId } from "./apps.ts";
 import { appProfile, memberFacets, photosAllowed } from "./appProfile.ts";
 import { countsMember, countsOpp, shapeDelta, shapeState, viewClass, type ViewClass } from "./shape.ts";
 import { appHealth } from "./health.ts";
@@ -65,6 +65,8 @@ export interface ServerOptions {
   staffRolesUrl?: string | false;
   /** Cloudflare Access JWT checks. Default: OBSERVATORY_CF_ACCESS_TEAM and OBSERVATORY_CF_ACCESS_AUD. Required with trustCfAccess. */
   cfAccess?: Partial<AccessConfig>;
+  /** The deployment: dev, staging or production. Default: PLATFORM_ENV. Real data needs it set (deployGuard). */
+  platformEnv?: string;
   /** Production build: no game mode, no game controls, no lab. Default: OBSERVATORY_REAL_ONLY=1. */
   realOnly?: boolean;
   /** Where audit rows go. Default: OBSERVATORY_AUDIT_DATABASE_URL (Postgres), else a JSONL file in OBSERVATORY_AUDIT_DIR or runs/audit. */
@@ -150,6 +152,33 @@ const QUIET = new Set(["play", "pause", "speed", "step", "refresh"]);
 /** Commands that exist only in game mode (refused when OBSERVATORY_REAL_ONLY=1). */
 const GAME_ONLY = new Set(["play", "pause", "speed", "step", "propose", "takeover", "reply", "say", "god", "peek", "lens", "check_scenario", "reset", "review_mode"]);
 
+const LOCAL_DB_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+/** A database URL whose host is not this machine (an unparsable URL counts as remote). */
+const remoteDb = (url: string) => { try { return !LOCAL_DB_HOSTS.has(new URL(url).hostname.toLowerCase()); } catch { return true; } };
+
+/**
+ * The console's start guard (docs/deploy.md 2.6), fail closed. The console holds real data when it is
+ * real-only (OBSERVATORY_REAL_ONLY=1) or when any database it may read is not on this machine (a game
+ * server can switch to real mode). Then:
+ *  - PLATFORM_ENV must be set (dev, staging or production);
+ *  - staging and production need Cloudflare Access (no tokens);
+ *  - PLATFORM_ENV=dev may use tokens only with local databases; a remote one needs Cloudflare Access too.
+ * Returns why the server must not start, or undefined.
+ */
+export function deployGuard(o: { realOnly: boolean; trustCfAccess: boolean; platformEnv?: string; databaseUrls: (string | undefined)[] }): string | undefined {
+  const remote = o.databaseUrls.some(u => !!u && remoteDb(u));
+  if (!o.realOnly && !remote) return undefined;
+  const env = o.platformEnv?.trim();
+  const why = o.realOnly ? "OBSERVATORY_REAL_ONLY=1" : "a database that is not on this machine";
+  const access = "needs Cloudflare Access: OBSERVATORY_TRUST_CF_ACCESS=1 with OBSERVATORY_CF_ACCESS_TEAM and OBSERVATORY_CF_ACCESS_AUD";
+  if (!env) return `real data (${why}) needs PLATFORM_ENV (dev, staging or production)`;
+  if (env !== "dev" && env !== "staging" && env !== "production") return `unknown PLATFORM_ENV "${env}" (dev, staging or production)`;
+  if (o.trustCfAccess) return undefined;
+  if (env !== "dev") return `a deployed console (${why}, PLATFORM_ENV ${env}) ${access}`;
+  if (remote) return `PLATFORM_ENV=dev with a database that is not on this machine ${access} (tokens are for local databases only)`;
+  return undefined;
+}
+
 /** Hostname of a Host header or an origin, lowercased, without the port ("[::1]" keeps its brackets). */
 function hostnameOf(hostOrUrl: string): string | undefined {
   try { return new URL(hostOrUrl.includes("://") ? hostOrUrl : `http://${hostOrUrl}`).hostname.toLowerCase(); } catch { return undefined; }
@@ -234,10 +263,14 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
   const tokens = parseTokenGrants(opts.tokens ?? process.env.OBSERVATORY_TOKENS, { explicitApp: process.env.NODE_ENV === "production" || process.env.PLATFORM_ENV === "production", minLength: opts.minTokenLength ?? 32 });
   const trustCfAccess = opts.trustCfAccess ?? process.env.OBSERVATORY_TRUST_CF_ACCESS === "1";
   // A deployed console signs staff in through Cloudflare Access only: without it the server would make an
-  // admin token and print it into the host's logs (docs/deploy.md 2.6).
-  if (realOnly && ["staging", "production"].includes(process.env.PLATFORM_ENV ?? "") && !trustCfAccess) {
-    throw new Error("refusing to start: a deployed console (OBSERVATORY_REAL_ONLY=1, PLATFORM_ENV staging or production) needs Cloudflare Access: OBSERVATORY_TRUST_CF_ACCESS=1 with OBSERVATORY_CF_ACCESS_TEAM and OBSERVATORY_CF_ACCESS_AUD");
-  }
+  // admin token and print it into the host's logs (docs/deploy.md 2.6). Fail closed (deployGuard).
+  const refusal = deployGuard({
+    realOnly, trustCfAccess, platformEnv: opts.platformEnv ?? process.env.PLATFORM_ENV,
+    databaseUrls: [opts.real?.url ?? process.env.NETWORK_DATABASE_URL ?? process.env.DATABASE_URL,
+      ...APP_IDS.map(a => opts.real?.appUrls?.[a] ?? process.env[appUrlEnv(a)]), process.env.OBSERVATORY_PLATFORM_DATABASE_URL,
+      typeof opts.peopleUrl === "string" ? opts.peopleUrl : undefined, typeof opts.staffRolesUrl === "string" ? opts.staffRolesUrl : undefined],
+  });
+  if (refusal) throw new Error(`refusing to start: ${refusal}`);
   if (trustCfAccess && (tokens.size || opts.token || process.env.OBSERVATORY_TOKEN)) console.warn("Observatory: single sign-on is on, so OBSERVATORY_TOKENS and OBSERVATORY_TOKEN are refused (each person signs in as themselves)");
   const roles = parseRoles(opts.roles ?? process.env.OBSERVATORY_ROLES);
   const adminToken = opts.token ?? process.env.OBSERVATORY_TOKEN ?? (tokens.size || trustCfAccess ? undefined : randomBytes(24).toString("base64url"));
