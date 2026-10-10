@@ -72,6 +72,8 @@ export interface Me {
   phoneMasked: string;
   membership: Membership | null;
   canJoin: boolean;
+  /** Current app's canonical messaging consent; absent on older backends. */
+  smsOptedIn?: boolean;
   reason?: string;
 }
 
