@@ -38,6 +38,8 @@ export interface McpHandlerOptions {
   surface?: Surface;
   /** Owned dev-only DCR OpenAI connections on /mcp. Default off. Turning off suspends access, not grants; explicit revocation still works. Public /mcp/openai stays filtered. */
   privateOpenAiApps?: readonly McpAppId[];
+  /** Inactive by default. Explicit deployed-only, account-allowlisted custom ChatGPT Slop onboarding. */
+  customChatGptSlopPersonIds?: readonly string[];
   now?: () => number;
   env?: Env;
   /**
@@ -150,6 +152,13 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   const apps = o.apps ?? defaultApps();
   if (o.privateOpenAiApps?.length && !devShortcutsAllowed(env)) throw new Error("privateOpenAiApps is for an owned dev runtime only");
   const privateOpenAiApps = new Set(o.privateOpenAiApps ?? []);
+  const customSlopPeople = o.customChatGptSlopPersonIds === undefined ? null : new Set(o.customChatGptSlopPersonIds);
+  if (customSlopPeople) {
+    if (privateOpenAiApps.size) throw new Error("custom ChatGPT Slop cannot use the dev pilot");
+    if (!["staging", "production"].includes(env.PLATFORM_ENV ?? "")) throw new Error("custom ChatGPT Slop needs explicit staging or production");
+    if (!customSlopPeople.size || [...customSlopPeople].some(id => !id.trim() || id === "*")) throw new Error("custom ChatGPT Slop needs an explicit person allowlist");
+    if (!o.platform.customChatGptSlopEligible || !o.platform.session) throw new Error("custom ChatGPT Slop needs current account eligibility and sessions");
+  }
   const store = o.store ?? new MemoryOAuthStore();
   const now = o.now ?? Date.now;
   const ttl = { ...TTL, ...o.ttl };
@@ -225,7 +234,23 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   // operator disabling the opt-in suspends access without deleting consent or blocking revoke.
   function openAiUnavailable(c: Ctx, client: OAuthClient): boolean {
     const openAi = assistantOf(client) === "chatgpt" || (client.kind === "cimd" && isOpenAiHost(new URL(client.id).hostname));
-    return openAi && !c.app.openai && (client.kind !== "dcr" || !privateOpenAiApps.has(c.app.id));
+    return openAi && !c.app.openai && !customSlopClient(c, client) && (client.kind !== "dcr" || !privateOpenAiApps.has(c.app.id));
+  }
+
+  function chatGptRedirects(uris: readonly string[]): boolean {
+    return uris.length > 0 && uris.every(uri => {
+      const u = new URL(uri);
+      return u.protocol === "https:" && !u.username && !u.password && ["chatgpt.com", "chat.openai.com"].includes(u.host);
+    });
+  }
+
+  function customSlopClient(c: Ctx, client: OAuthClient): boolean {
+    return customSlopPeople !== null && c.app.id === "slop" && client.kind === "dcr" && chatGptRedirects(client.redirectUris);
+  }
+
+  async function customSlopEligible(c: Ctx, client: OAuthClient, personId: string | null, phoneKey: string): Promise<boolean> {
+    if (!customSlopClient(c, client)) return true;
+    return !!personId && customSlopPeople!.has(personId) && await o.platform.customChatGptSlopEligible!(personId, phoneKey);
   }
 
 
@@ -280,7 +305,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!Array.isArray(responses) || !responses.every(r => r === "code")) return bad("response_types may be code only.");
     if (b.scope !== undefined && (typeof b.scope !== "string" || !parseScopes(b.scope))) return bad("scope may be apps:read, membership:read and profile:write only.");
     const name = typeof b.client_name === "string" ? b.client_name.replace(/[\u0000-\u001f]/g, "").slice(0, 100) : null;
-    const surface: Surface = !privateOpenAiApps.has(c.app.id) && (uris as string[]).some(r => isOpenAiHost(new URL(r).hostname)) ? "openai" : "full";
+    const custom = customSlopPeople !== null && c.app.id === "slop" && chatGptRedirects(uris as string[]);
+    const surface: Surface = !custom && !privateOpenAiApps.has(c.app.id) && (uris as string[]).some(r => isOpenAiHost(new URL(r).hostname)) ? "openai" : "full";
     if (surface === "openai" && !c.app.openai) return bad("This app is not available for this client.");
     const secret = method === "none" ? null : randomToken("ntws_");
     const client: OAuthClient = { id: `mcp_${randomId()}`, secretHash: secret ? sha256hex(secret) : null, name, redirectUris: uris as string[], authMethod: method, app: c.app.id, surface, kind: "dcr", createdAt: now() };
@@ -350,6 +376,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const rawResource = q.get("resource");
     const resource = rawResource ? canonicalResource(rawResource, c.issuer) : resourceFor(c.issuer, client.surface);
     if (!resource) return fail("invalid_target", "resource must be this site's MCP endpoint");
+    if (customSlopClient(c, client) && resource !== resourceFor(c.issuer, "full")) return fail("invalid_target", "this connection must use the /mcp endpoint");
     if (client.surface === "openai" && resource !== resourceFor(c.issuer, "openai")) return fail("invalid_target", "this client must use the /mcp/openai endpoint");
     // login_hint, phone or any other person data in the URL is never read: the person types it on our page.
     const browser = randomToken();
@@ -364,6 +391,10 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const cookieOut = [cookie];
     let res: Response;
     if (signedIn) {
+      if (!(await customSlopEligible(c, client, signedIn.personId, o.platform.phoneKey(signedIn.e164)))) {
+        await store.deleteAuthRequest(r.id);
+        return messagePage(c.app, "Not available", "This account cannot use this assistant connection.", 403);
+      }
       if (signedIn.setCookie) cookieOut.push(signedIn.setCookie);
       await store.updateAuthRequest(r.id, { e164: signedIn.e164, personId: signedIn.personId, step: "consent" });
       res = consentPage(c.app, r.id, client.name, redirectHost, new URL(redirectUri).origin, scopes);
@@ -419,7 +450,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       const code = (form.get("code") ?? "").replace(/\s/g, "");
       if (!(await o.platform.verifyOtp(c.app.id, r.e164, code, c.ip))) return codePage(c.app, r.id, r.e164.slice(-4), { error: "That code did not work. Check the newest text and try again." });
       const who = await o.platform.login(r.e164);
-      if (who === "held") {
+      if (who === "held" || !(await customSlopEligible(c, client, who.personId, o.platform.phoneKey(r.e164)))) {
         await store.deleteAuthRequest(r.id);
         const res = messagePage(c.app, "We need to check this number", "We need to check this number before it can be used here. Please try again later, or email us for help.", 403);
         res.headers.append("set-cookie", clearCookie);
@@ -438,6 +469,14 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       await store.deleteAuthRequest(r.id);
       await store.audit({ at: now(), kind: "consent_denied", clientId: client.id, grantId: null, app: c.app.id, detail: null });
       return redirectTo(r.redirectUri, { error: "access_denied", error_description: "The person did not allow access", state: r.state, iss: c.issuer }, 303, { "set-cookie": clearCookie });
+    }
+    if (customSlopClient(c, client)) {
+      const current = await o.platform.session!(c.app.id, c.req);
+      if (!current || current.personId !== r.personId || o.platform.phoneKey(current.e164) !== o.platform.phoneKey(r.e164)
+        || !(await customSlopEligible(c, client, r.personId, o.platform.phoneKey(r.e164)))) {
+        await store.deleteAuthRequest(r.id);
+        return messagePage(c.app, "Not available", "This account cannot use this assistant connection.", 403);
+      }
     }
     const at = now();
     const grant: Grant = { id: `grant_${randomId()}`, clientId: client.id, app: c.app.id, phoneKey: o.platform.phoneKey(r.e164), personId: r.personId, scopes: r.scopes, resource: r.resource, createdAt: at, expiresAt: at + ttl.grantMs, revokedAt: null };
@@ -493,6 +532,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       if (res && canonicalResource(res, c.issuer) !== ac.resource) return bad("invalid_target");
       const grant = await store.getGrant(ac.grantId);
       if (!grant || grant.revokedAt !== null || grant.expiresAt <= at) return bad("invalid_grant");
+      if (!(await customSlopEligible(c, client, grant.personId, grant.phoneKey))) return bad("invalid_grant");
       const pair = await issuePair(client, grant, ac.scopes, ac.resource);
       await store.audit({ at, kind: "token_issued", clientId: client.id, grantId: grant.id, app: c.app.id, detail: ac.scopes.join(" ") });
       return json(200, pair);
@@ -504,6 +544,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       if (!t || t.kind !== "refresh" || t.clientId !== client.id || t.revokedAt !== null || t.expiresAt <= at) return bad("invalid_grant");
       const grant = await store.getGrant(t.grantId);
       if (!grant || grant.revokedAt !== null || grant.expiresAt <= at) return bad("invalid_grant");
+      if (!(await customSlopEligible(c, client, grant.personId, grant.phoneKey))) return bad("invalid_grant");
       const asked = form.get("scope") === null ? t.scopes : parseScopes(form.get("scope"));
       if (!asked || !asked.every(s => t.scopes.includes(s))) return bad("invalid_scope");
       const res = form.get("resource");
@@ -631,6 +672,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (auth === "invalid") return out(401, rpcError(null, -31401, "The access token is not valid here"), { "www-authenticate": challenge(resource, { error: "invalid_token", error_description: "The access token is invalid, expired or for another resource" }) });
     const surface: Surface = pathSurface === "openai" || auth?.client.surface === "openai" ? "openai" : "full";
     if (auth && openAiUnavailable(c, auth.client)) return out(404, rpcError(null, -32601, "Not available"));
+    if (auth && !(await customSlopEligible(c, auth.client, auth.grant.personId, auth.grant.phoneKey))) return out(401, rpcError(null, -31401, "The access token is not valid here"), { "www-authenticate": challenge(resource, { error: "invalid_token" }) });
+    const onboardingOnly = customSlopPeople !== null && c.app.id === "slop" && (!auth || customSlopClient(c, auth.client));
 
     const text = await readCappedText(c.req, 65_536);
     if (text === "too_large") return out(413, rpcError(null, -32600, "Request too large"));
@@ -679,11 +722,12 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       case "ping":
         return result({});
       case "tools/list":
-        return result({ tools: toolDefs(apps, surface, host) });
+        return result({ tools: toolDefs(apps, surface, host).filter(t => !onboardingOnly || t.name !== "get_updates") });
       case "tools/call": {
         const name = params.name;
         if (!(TOOL_NAMES as readonly string[]).includes(name)) return out(200, { jsonrpc: "2.0", id, result: { ...(modern ? { resultType: "complete" } : {}), content: [{ type: "text", text: "Unknown tool." }], isError: true } });
         const tool = name as ToolName;
+        if (onboardingOnly && tool === "get_updates") return result({ content: [{ type: "text", text: "This connection supports onboarding only." }], isError: true });
         const need = TOOL_SCOPE[tool];
         if (need) {
           const scopeChallenge = challenge(resource, auth ? { error: "insufficient_scope", error_description: `This tool needs ${need}` } : {});
@@ -799,4 +843,3 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     },
   };
 }
-
