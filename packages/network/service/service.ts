@@ -34,9 +34,11 @@ import { ageAnswer, agesStated } from "../src/classify.ts";
 import { NetworkRuntime, type RuntimeHost } from "./runtime.ts";
 import { effectiveParticipation } from "./snapshot.ts";
 import { Inbox, type CollectedReply } from "./inbox.ts";
-import { TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH, type SetStateRequest, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
+import { TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH, RELAY_PATH, type SetStateRequest, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
 import { svcVerify } from "../../core/src/svc/svc-auth.ts";
 import { readCapped } from "../../platform/src/body.ts";
+import { parseRelayRequest, relayItemFromRequest, relayItemAsync, type RelayClassifierHook } from "../../engine/src/relay.ts";
+import { clefRelayClassifierFromEnv } from "../../engine/src/relayClef.ts";
 import { canJoin } from "../../core/src/policy.ts";
 import { CostLedger, costRatesFromEnv, PgCostSink } from "./cost.ts";
 import type { ChannelAdapter, Outbound } from "./channel.ts";
@@ -161,6 +163,8 @@ export interface ServiceOptions {
   env?: Env;
   /** Photo storage (platform photos.ts). Default: PHOTO_STORAGE from the environment; null turns photos off. */
   photoStorage?: PhotoStorage | null;
+  /** Trusted classifier boundary; production otherwise uses configured Clef credentials. */
+  relayClassifier?: RelayClassifierHook;
   /** The appearance rater (server.ts: makeClefRaterFromEnv behind withRetry). Undefined: ratings are off; photos still work. */
   photoRater?: PhotoRater;
   /** Fetch one attachment of a photo sent by text (default: https only, capped; photoIntake.ts). The simulation passes a fake. */
@@ -263,6 +267,7 @@ export class NetworkService implements RuntimeHost {
   private readonly photoBaseUrl?: string;
   /** Estimated cost per event, per app and per day (cost.ts, network.cost_ledger): OTP codes, photo ratings, LLM calls. */
   readonly cost: CostLedger;
+  private readonly relayClassifier?: RelayClassifierHook;
 
   constructor(o: ServiceOptions) {
     if (o.network?.review && o.network.review !== "human") throw new Error(`review mode "${o.network.review}" is refused: production review is "human" only (runbook-real 7.4)`);
@@ -270,6 +275,7 @@ export class NetworkService implements RuntimeHost {
     this.instance = o.instance ?? `${process.pid}`;
     this.log = o.log ?? console.log;
     this.env = o.env ?? process.env;
+    this.relayClassifier=o.relayClassifier??(this.env.CLOUDFLARE_AI_TOKEN&&this.env.CLOUDFLARE_ACCOUNT_ID?clefRelayClassifierFromEnv(this.env):undefined);
     this.secret = o.webhookSecret;
     this.consoleToken = o.consoleToken || undefined;
     this.secrets = o.webhookSecrets ?? {};
@@ -1449,10 +1455,10 @@ export class NetworkService implements RuntimeHost {
 
   /** Agent actions inherit one completed open turn; receipts stay on that original inbound owner. */
   private async sharedAction(path: string, b: Row, signedId: string, raw: string): Promise<Response> {
-    const stateAction = path === SET_STATE_PATH;
+    const stateAction = path === SET_STATE_PATH, relayAction=path===RELAY_PATH;
     const keys = stateAction ? ["channel","messageId","app","memberId","idempotencyKey","state","from","until","note"]
-      : path === SIGNALS_PATH ? ["channel","messageId","app","memberId","signals"] : ["channel","messageId","app","memberId"];
-    const key = stateAction ? b.idempotencyKey : `${b.messageId}:${path === SIGNALS_PATH ? "signals" : "updates"}`;
+      : path === SIGNALS_PATH ? ["channel","messageId","app","memberId","signals"] : relayAction ? ["channel","messageId","app","memberId","itemId","text"] : ["channel","messageId","app","memberId"];
+    const key = stateAction ? b.idempotencyKey : `${b.messageId}:${path === SIGNALS_PATH ? "signals" : relayAction ? "relay" : "updates"}`;
     if (!isAppId(b.app) || typeof b.memberId !== "string" || !b.memberId.trim() || b.memberId.length > 256
       || typeof key !== "string" || !key.trim() || key.length > 512 || /[\r\n\u0000]/.test(key) || signedId !== key
       || Object.keys(b).length !== keys.length || Object.keys(b).some(name => !keys.includes(name))) return json({error:"invalid_request"},400);
@@ -1469,9 +1475,14 @@ export class NetworkService implements RuntimeHost {
     } else if (path === SIGNALS_PATH && (!Array.isArray(b.signals) || b.signals.length > 20 || b.signals.some(signal => !signal || typeof signal !== "object"
       || Array.isArray(signal) || !["opt_out","travel","safety_concern"].includes(signal.kind) || typeof signal.evidence !== "string"
       || !signal.evidence.trim() || signal.evidence.length > 500 || Object.keys(signal).length !== 2))) return json({error:"invalid_signals"},400);
+    if (relayAction && ((b.itemId!==null&&(typeof b.itemId!=="string"||!b.itemId.trim()||b.itemId.length>200)) || typeof b.text!=="string" || !b.text.trim() || b.text.length>2000)) return json({error:"invalid_relay"},400);
     const turnId = `msg:${b.channel}:${b.messageId}`;
     const [original] = await this.sql`select sender_hash,response from platform.inbound where id=${turnId} and status='done'`;
     if (!original || original.response?.outcome !== "open" || original.response.app !== app || original.response.memberId !== memberId) return json({error:"turn_scope_invalid",retryable:false},403);
+    if (relayAction) {
+      const [source]=await this.sql.begin(async tx=>{await tx`select set_config('app.app_id',${app},true)`;return tx`select body from network.messages where app_id=${app} and id=${`in:${b.channel}:${b.messageId}`} and member_id=${memberId} and direction='inbound'`;});
+      if (!source || source.body.trim()!==(b.text as string).trim() || (b.itemId!==null && !original.response.context.activeItems?.some((item:{id:string})=>item.id===b.itemId))) return json({error:"relay_source_invalid",retryable:false},403);
+    }
     const who = await this.accounts.byPhoneHash(original.sender_hash), rt = this.runtimeFor(app);
     if (!who || !rt) return json({error:"membership_unavailable",retryable:false},403);
     const authorized = async () => (await this.accounts.activeMembership(rt.app,{e164:who.e164,personId:who.person.id}))?.membership.memberId === memberId;
@@ -1488,13 +1499,19 @@ export class NetworkService implements RuntimeHost {
         || turn.response.app !== app || turn.response.memberId !== memberId || !await authorized()) throw new Error("Original turn authority changed");
       return turn;
     };
+    const relayReceipt=async(tx:SQL,response:Row,outboundId?:string):Promise<Row>=>{
+      const [outbound]=outboundId?await tx`select status,provider_message_ids,history_recorded from platform.outbound where app_id=${app} and id=${outboundId}`:[];
+      const delivered=!!outbound && ['accepted','sent','delivered','read'].includes(outbound.status) && outbound.history_recorded===true
+        && Array.isArray(outbound.provider_message_ids) && outbound.provider_message_ids.length>0;
+      return {...response,delivered,senderNotice:response.decision==='pass'?(delivered?'Sent.':'Delivery is not confirmed yet.'):response.senderNotice};
+    };
     try {
       const claim = await this.sql.begin(async tx => {
         const turn = await lock(tx), prior = turn.action_receipts[id];
         if (prior) {
           if (prior.requestHash !== digest) return {response:json({error:"action_conflict",retryable:false},409)};
           if (prior.state !== "completed") return {response:json({error:"action_unresolved",retryable:false},409)};
-          return {response:json(stateAction ? {...prior.response,replayed:true} : prior.response)};
+          return {response:json(relayAction ? {...await relayReceipt(tx,prior.response,prior.outboundId),replayed:true} : stateAction ? {...prior.response,replayed:true} : prior.response)};
         }
         if (Object.keys(turn.action_receipts).length >= 16) return {response:json({error:"action_limit",retryable:false},429)};
         if (window?.until && Date.parse(window.until) <= this.clock.now()) return {response:json({error:"expired_state_window"},400)};
@@ -1502,11 +1519,41 @@ export class NetworkService implements RuntimeHost {
         return {response:null};
       });
       if (claim.response) return claim.response;
+      let relayOutputId:string|undefined;
       const complete = async (tx: SQL, result: Row) => {
-        const saved = await tx`update platform.inbound set action_receipts=jsonb_set(action_receipts,array[${id}],${{requestHash:digest,state:"completed",response:result}}::jsonb)
+        const saved = await tx`update platform.inbound set action_receipts=jsonb_set(action_receipts,array[${id}],${{requestHash:digest,state:"completed",response:result,...(relayOutputId?{outboundId:relayOutputId}:{})}}::jsonb)
           where id=${turnId} and status='done' and action_receipts->${id}->>'requestHash'=${digest} and action_receipts->${id}->>'state'='processing' returning id`;
         if (!saved.length) throw new Error("Action ownership changed before completion");
       };
+      if (relayAction) {
+        const request=parseRelayRequest(b.text as string);
+        let response:Row={decision:'none',senderNotice:'',delivered:false,replayed:false};
+        if(request.kind==='none') {await this.sql.begin(async tx=>{await lock(tx);await complete(tx,response);});return json(response);}
+        if(request.kind==='photo' || !this.relayClassifier) {
+          response={decision:'hold',senderNotice:request.kind==='photo'?"I couldn't send that photo.":"I haven't sent that; the safety check is unavailable.",delivered:false,replayed:false};
+          await this.sql.begin(async tx=>{await lock(tx);await complete(tx,response);});return json(response);
+        }
+        const projection=await rt.scoped(tx=>rt.relayContext(tx,turnId,memberId,b.itemId as string|null));
+        if(!projection) {response={decision:'block',senderNotice:"I can't pass that on.",delivered:false,replayed:false};await this.sql.begin(async tx=>{await lock(tx);await complete(tx,response);});return json(response);}
+        relayOutputId=`relay:${id}`;
+        const item=relayItemFromRequest(request,{id:relayOutputId,from:memberId,to:projection.context.recipient.id,at:this.clock.now(),contact:{kind:'phone',value:projection.contact}});
+        if(!item) throw new Error("Canonical relay item unavailable");
+        if(item.consent) item.consent.at=new Date(projection.turn.received_at as string).getTime();
+        // No SQL/advisory lock spans the classifier. It may only strengthen the deterministic policy.
+        const classified=await relayItemAsync(item,projection.context,{hook:this.relayClassifier});
+        response={decision:classified.decision,senderNotice:classified.decision==='pass'?'Delivery is not confirmed yet.':classified.senderNotice,delivered:false,replayed:false};
+        await rt.unitOfWork(n=>{
+          const current=n.opps.get(projection.context.opportunity.id);
+          const mutual=!!current&&current.stage==='scheduled'&&current.participants.length===2&&current.participants.includes(memberId)
+            &&current.participants.includes(item.to)&&current.participants.every(id=>current.status.get(id)==='yes');
+          if(!mutual) {classified.decision='block';classified.rendered='';classified.record={...classified.record,decision:'block',reasons:['state:closed'],contactShared:false};response={decision:'block',senderNotice:"I can't pass that on.",delivered:false,replayed:false};}
+          if(classified.decision==='pass') rt.unit.sends.push({id:relayOutputId!,memberId:item.to,to:rt.addressOf(item.to),body:classified.rendered,kind:'relay',type:'relay',oppId:projection.context.opportunity.id,proactive:false,system:false,ts:this.clock.now()});
+          rt.unit.events.push({at:this.clock.now(),actor_type:'member',actor_id:memberId,type:'relay_decision',object_type:'member',object_id:item.to,
+            payload:{...classified.record,contactShared:false,turnId,actionKey:id}});
+          rt.unit.completeAction=async tx=>{await lock(tx);await complete(tx,response);};
+        });
+        return json(await relayReceipt(this.sql,response,relayOutputId));
+      }
       if (path === UPDATES_PATH) {
         if (!await authorized()) throw new Error("Membership revoked before updates");
         const result = {items:(await this.updatesFor(who.person.id,app,"web")).map(item=>({summary:item.summary}))};
@@ -1567,7 +1614,7 @@ export class NetworkService implements RuntimeHost {
     try { b = JSON.parse(raw); } catch { return json({error: "invalid_request"}, 400); }
     if (!b || typeof b !== "object" || Array.isArray(b) || (b.channel !== "blooio" && b.channel !== "twilio")
       || typeof b.messageId !== "string" || !b.messageId.trim() || b.messageId.length > 512 || /[\r\n\u0000]/.test(b.messageId)) return json({error: "invalid_request"}, 400);
-    if ([SET_STATE_PATH,SIGNALS_PATH,UPDATES_PATH].includes(url.pathname)) return this.sharedAction(url.pathname,b,auth.id,raw);
+    if ([SET_STATE_PATH,SIGNALS_PATH,UPDATES_PATH,RELAY_PATH].includes(url.pathname)) return this.sharedAction(url.pathname,b,auth.id,raw);
     const digest = createHash("sha256").update(raw).digest("hex");
     const id = `msg:${b.channel}:${b.messageId}`;
     if (url.pathname === TURN_RECEIPT_PATH) {
@@ -1646,7 +1693,7 @@ export class NetworkService implements RuntimeHost {
   /** The HTTP handler: the inbound webhooks and the staff API. The public API is publicFetch (its own port). */
   fetch = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
-    if ([TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH].includes(url.pathname)) return this.sharedTurn(req);
+    if ([TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH, RELAY_PATH].includes(url.pathname)) return this.sharedTurn(req);
     let path = url.pathname.replace(/\/+$/, "") || "/";
     try {
       if (path === WEBHOOK_PATH || path.startsWith(`${WEBHOOK_PATH}/`)) {

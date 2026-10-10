@@ -37,7 +37,8 @@ export type MessageKind =
   | "reply"          // the answer to the member's own message; quiet-hours exempt
   | "compliance"     // STOP/START/HELP confirmations and declines; exempt from the opt-out and quiet hours
   | "proactive"      // Network-initiated; quiet hours, consent, the person cap and the line caps apply
-  | "transactional"; // everything else the Network starts (reminders, scheduling); quiet hours apply
+  | "transactional"
+  | "relay"; // everything else the Network starts (reminders, scheduling); quiet hours apply
 
 /** Everything except a direct reply and a compliance text is agent-initiated (any new kind is too). */
 export function isAgentInitiated(kind: MessageKind): boolean {
@@ -54,6 +55,8 @@ export interface LeakSources {
   facts?: string[];
   fuzzy?: boolean;
   publicPhrases?: string[];
+  /** Exact server-attested contacts; only the core contact check uses these. */
+  allow?: string[];
 }
 
 /** One message to enqueue. `id` is the idempotency key (network.messages id, or the id of a fixed text). */
@@ -111,6 +114,8 @@ export interface AppChecks {
   capTake?(row: QueueRow): Promise<boolean>;
   /** Give the slot back (the message did not go out). */
   capRelease?(row: QueueRow): Promise<void>;
+  /** Revalidate a relay provenance/pair under the existing dispatch transaction. */
+  relay?(row: QueueRow, tx: SQL): Promise<RecipientCheck>;
 }
 
 export interface QueueOptions {
@@ -366,7 +371,7 @@ export class OutboundQueue {
     if (!compliance) {
       const [counts] = await this.sql`select
         count(*) filter (where to_address = ${row.to} and sent_at > ${new Date(now - HOUR)})::int as recipient,
-        count(*) filter (where kind in ('proactive', 'transactional') and sent_at > ${new Date(now - DAY)})::int as line,
+        count(*) filter (where kind in ('proactive', 'transactional', 'relay') and sent_at > ${new Date(now - DAY)})::int as line,
         count(*) filter (where new_conversation and sent_at > ${new Date(now - DAY)})::int as new_chats
         from platform.outbound where line = ${this.line} and sent_at > ${new Date(now - DAY)}`;
       if (counts.recipient >= this.opt("perRecipientPerHour", 10)) return this.wait(row, "retry_scheduled", now + 5 * MINUTE, "per-recipient hourly cap");
@@ -392,7 +397,7 @@ export class OutboundQueue {
     if (this.o.checks.leaks) {
       try { src = await this.o.checks.leaks(row); } catch { return ["leak_check_error"]; }
     }
-    return new LeakGuard({ ...src, canaryShapes: true, allow: this.o.leakAllow, contacts: row.kind !== "compliance" }).check(row.text);
+    return new LeakGuard({ ...src, canaryShapes: true, allow: [...(this.o.leakAllow??[]),...(src.allow??[])], contacts: row.kind !== "compliance" }).check(row.text);
   }
 
   private async send(row: QueueRow, isNew: boolean, reengagement: boolean): Promise<StatusChange> {
@@ -401,6 +406,7 @@ export class OutboundQueue {
     // Erasure and admission share the person/member row fences. No remote I/O holds these locks.
     const admission = await this.sql.begin(async tx => {
       await tx`select set_config('app.app_id',${this.app},true)`;
+      if (row.kind==="relay" && (!this.o.checks.relay || !(await this.o.checks.relay(row,tx)).ok)) return "suppressed_ineligible";
       if (row.memberId) {
         await tx`select person.id from platform.people person join network.members member on member.person_id=person.id
           where member.app_id=${row.app} and member.id=${row.memberId} order by person.id for update of person`;
