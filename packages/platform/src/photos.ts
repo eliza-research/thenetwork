@@ -577,7 +577,7 @@ export class PhotoService {
    * The /api/photos routes, for the public API (api.ts). `personId` is the signed-in person (null:
    * not signed in, or no person yet). Undefined: not a photo route.
    *   GET  /api/photos/consent         the consent text and version
-   *   GET  /api/photos                 the member's own photos (ids only)
+   *   GET  /api/photos                 {eligible, photos}: may this person add a photo; their own photos (ids only)
    *   POST /api/photos                 the image bytes (Content-Type image/*), X-Photo-Consent: <version>
    *   POST /api/photos/delete          {id}
    *   GET  /api/photos/view/<id>?exp=&sig=   a signed staff link
@@ -599,7 +599,10 @@ export class PhotoService {
     const person = await who();
     if (person === "unauthorized") return json(401, { ok: false, error: "unauthorized" });
     if (!person) return refuse("adults_only");
-    if (req.method === "GET" && path === "/api/photos") return json(200, { ok: true, photos: await this.list(person, app) });
+    // `eligible`: whether this person may add a photo here now (an adult, not banned, an app that takes
+    // photos). The settings page shows the photo section only when it is true or a photo is still there to
+    // delete, so a 13-17 member is never shown the consent text or an upload control.
+    if (req.method === "GET" && path === "/api/photos") return json(200, { ok: true, eligible: (await this.mayTake(person, app)) === undefined, photos: await this.list(person, app) });
     if (req.method === "POST" && path === "/api/photos") {
       // Read with a cap: a chunked body (no Content-Length) is abandoned as soon as it passes the limit.
       const buf = await readCapped(req, PHOTO_MAX_BYTES);
