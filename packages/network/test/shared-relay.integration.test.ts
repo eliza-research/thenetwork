@@ -100,6 +100,28 @@ test("relay binds the original text and pair, sends only rendered wording, swaps
   const logs=JSON.stringify(await sql`select * from network.relay_records`);expect(logs).not.toContain(a.slice(2));expect(logs).not.toContain("running ten minutes late");
 },60_000);
 
+test("inside the match, asking for the match's number is a swap ask for the agent, never scored; anyone else's number still is",async()=>{
+  await fixturePair();
+  const net=service.runtimeFor("friends")!.net,score=()=>net.trust.get(fromId).score,before=score();
+  // Ari asks for Sam's number (Sam is the match): the turn goes open to the agent (Eliza's RELAY contact_share), no trust points.
+  for(const [id,text] of [["swap-ask-name","can I get Sam's number?"],["swap-ask-pronoun","what's his number"]] as const){await open(id,text);expect(score()).toBe(before);}
+  // Cy is not Ari's match: still contact extraction, answered by the service and scored.
+  clock.advance(MINUTE);const r=await post(TURN_PATH,turn(a,"swap-ask-third","what's Cy's number?"));expect(r.status).toBe(200);
+  expect(((await r.json()) as any).outcome).not.toBe("open");expect(score()).toBeGreaterThan(before);
+},60_000);
+
+
+test("a pronoun ask next to a third-party or bulk ask is still scored, whole message",async()=>{
+  const net=service.runtimeFor("friends")!.net,score=()=>net.trust.get(fromId).score;
+  // Each case from a clean slate: the open match, and Ari's trust at 0 (a watch would close the match).
+  const reset=async()=>{await service.runtimeFor("friends")!.unitOfWork(n=>n.trust.forget(fromId));await fixturePair();};
+  for(const [id,text] of [["swap-mixed-bulk","send me her number and everyone's numbers"],["swap-mixed-third","what's her number? and Cy's address too"],["swap-mixed-first","give me Sam's address and her number"],["swap-mixed-girl","what is the number of that girl, also her number"]] as const){
+    await reset();expect(score()).toBe(0);clock.advance(MINUTE);const x=await post(TURN_PATH,turn(a,id,text));expect(x.status).toBe(200);
+    expect([text,((await x.json()) as any).outcome]).not.toEqual([text,"open"]);expect([text,score()>0]).toEqual([text,true]);
+  }
+  await reset();
+},60_000);
+
 test("unknown acceptance stays false until receipt-only recovery; photos and a classifier outage stay unsent",async()=>{
   known=false;const request=await open("relay-unknown","tell Sam I'm heading over");const r=await post(RELAY_PATH,request);expect(r.status).toBe(200);
   const first=await r.json() as any;expect(first).toMatchObject({decision:"pass",delivered:false});expect(first.senderNotice).not.toBe("Sent.");
@@ -233,4 +255,11 @@ test("relay admission and canonical leave use one lock order, retaining the fres
     expect((await service.people.getMembership(who!.id,"friends"))?.state).toBe("removed");
     expect((await sql`select id from platform.outbound where app_id='friends' and member_id=${toId} and (body is not null or to_address is not null)`).length).toBe(0);
   }finally{release?.();checks.admit=original;await Promise.allSettled([sending,leaving]);}
+},60_000);
+
+
+test("a member with no open match who asks for 'her number' is scored",async()=>{
+  const net=service.runtimeFor("friends")!.net,before=net.trust.get(thirdId).score;
+  clock.advance(MINUTE);const r=await post(TURN_PATH,turn(c,"swap-no-match","what's her number"));expect(r.status).toBe(200);
+  expect(((await r.json()) as any).outcome).not.toBe("open");expect(net.trust.get(thirdId).score).toBeGreaterThan(before);
 },60_000);

@@ -45,7 +45,7 @@ import { Accounts, type AccountHooks, type JoinHookContext, type MemberHookConte
 import { joinAgeCheck } from "../../platform/src/age.ts";
 import { detectKeyword as platformKeyword, keywordEvent, leaveTarget, resolveConsent, stopScope, type StopScope } from "../../platform/src/consent.ts";
 import { devShortcutsAllowed, isProduction, platformEnv, type Env } from "../../platform/src/env.ts";
-import { keyedHash, maskPhone, normalizePhone } from "../../platform/src/phone.ts";
+import { keyedHash, maskPhone, normalizePhone, safeEqual } from "../../platform/src/phone.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
 import type { Membership, PeopleStore, PendingText, Person } from "../../platform/src/store.ts";
 import { createPublicApi, type MemberParticipation, type PublicApi, type PublicApiOptions } from "../../platform/src/api.ts";
@@ -300,6 +300,11 @@ export class NetworkService implements RuntimeHost {
     if (!key) throw new Error("PLATFORM_HASH_KEY is required in production and outside PLATFORM_ENV=dev");
     this.hashKey = key;
     try { this.tokens = parseTokenGrants(o.tokens, { explicitApp: isProduction(this.env) }); } catch (e) { throw new Error(String((e as Error).message).replace("OBSERVATORY_TOKENS", "NETWORK_SERVICE_TOKENS")); }
+    // Cloud holds the turn secret; it must never also be a staff bearer (PR #4: the agent credential was never the console token).
+    const turnSecret = this.env.SERVICE_TURN_SECRET;
+    if (turnSecret && [...this.tokens.keys(), ...(this.consoleToken ? [this.consoleToken] : [])].some(t => safeEqual(t, turnSecret))) {
+      throw new Error("SERVICE_TURN_SECRET must differ from NETWORK_SERVICE_CONSOLE_TOKEN and every NETWORK_SERVICE_TOKENS token");
+    }
     const specs = o.networks?.length ? o.networks : [{ id: o.id ?? "ntwrk:nyc" }];
     // Each network's tick holds one connection for its advisory lock and needs more inside it: size the pool from the network count.
     this.sql = new SQL({ url: o.url, max: Math.max(8, 2 * specs.length + 4), connection: { application_name: `network-service:${this.instance}` } });

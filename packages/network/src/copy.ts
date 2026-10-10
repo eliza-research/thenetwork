@@ -96,8 +96,9 @@ export function copyFor(b: CopyBrand) {
   requestWaiting: "Got it. I'm not starting new introductions right now, but I'll keep your request open and look again soon.",
   /** A standing request found a match on a later try; sent only after a reviewer approved it. */
   requestRetryFound: "Good news: I may have found someone for what you asked about. Checking with them now.",
-  requestNoneYet: (what: string) =>
-    `I couldn't find someone for ${what} this time. I'll keep an eye out. If you know someone who'd be great for it, reply with their first name and I'll send you an invite to pass on.`,
+  /** `invites`: invite links work here (NetworkContext.invite); without them the text offers none. */
+  requestNoneYet: (what: string, invites = true) =>
+    `I couldn't find someone for ${what} this time. I'll keep an eye out.${invites ? " If you know someone who'd be great for it, reply with their first name and I'll send you an invite to pass on." : ""}`,
   plans: (lines: string[]) => `A few ideas nearby: ${lines.join("; ")}. Want me to see if anyone else is up for one of them?`,
   /** The same ideas with no offer to find company: for minors, members who cannot be matched, and while matching is off. */
   plansNoOffer: (lines: string[]) => `A few ideas nearby: ${lines.join("; ")}. Happy to suggest more anytime.`,
@@ -110,6 +111,8 @@ export function copyFor(b: CopyBrand) {
   feedbackAsk: (others: string) => `How did it go with ${others}?`,
   feedbackThanks: "Thanks, that's really helpful.",
   growthAsk: `Glad that went well. If you know someone who'd enjoy ${b.name}, reply with their first name and I'll send you an invite link to pass on.`,
+  /** A member names a friend to invite where no invite link can be sent: nothing is promised. */
+  invitesNotOpen: (friend: string) => `Thanks! I can't send invite links yet, so nothing went to ${friend}. They're welcome to sign up for ${b.name} themselves.`,
   inviteSent: (friend: string) => `Done: here's an invite link for ${friend}. I'll welcome them when they join.`,
   inviteeJoined: (friend: string) => `${friend} just joined. Thanks for bringing them in.`,
   secondEncounter: (others: string) => `You and ${others} both said you'd meet again. Want me to find a time?`,

@@ -15,7 +15,7 @@
 //   availability    friends:free:<slot>                  agent_private
 //   preference      friends:max_travel:<min>             agent_private
 //   fact            friends:new_to_city                  agent_private (timing and tone only; never shown)
-//   fact            verify:liveness:<r>, verify:age:<r>  agent_private
+//   fact            verify:liveness:<r>, verify:age:<r>  agent_private (r: pass, fail or pending; info.ts VERIFY_PASS)
 //   fact            safety:<cue>                         agent_private, inferred
 //   Intent          category "social", "meet people nearby to do things with"
 import { DAY, canBeMatched, type Edge, type Facet, type Intent, type Member, type MemberId, type Presence, type WorldSnapshot } from "@thenetwork/core";
@@ -25,6 +25,7 @@ import type { Crew, PlanOutcomeRecord } from "@thenetwork/engine/src/plans.ts";
 import { fromLocal } from "@thenetwork/core";
 import { Rng, hash32 } from "@thenetwork/core";
 import { SLOT_TIME } from "@thenetwork/engine/src/packs/friends/index.ts";
+import { verifyTag } from "@thenetwork/engine/src/packs/friends/info.ts";
 import { SLOTS, h01, hoodOf, type FriendsPersona, type FriendsSlot, type RichnessTier } from "./persona.ts";
 
 export const NYC_TZ = "America/New_York";
@@ -155,8 +156,9 @@ export function friendsFacetsOf(p: FriendsPersona, joinedAt: number, week = 0): 
   if (K.tolerance) f("preference", `travel tolerance ${S.maxTravel}`, [`friends:max_travel:${S.maxTravel}`], "agent_private");
   if (S.newToCity) f("fact", "recently moved", ["friends:new_to_city"], "agent_private");
   const v = verifyAt(p, week);
-  f("fact", `liveness ${v.liveness}`, [`verify:liveness:${v.liveness}`], "agent_private", { provenance: "connected_source" });
-  f("fact", `ageassurance ${v.age}`, [`verify:age:${v.age}`], "agent_private", { provenance: "connected_source" });
+  // The tag is the one the staff verify path and slop write: verify:<check>:<pass|fail> (pending until a result).
+  f("fact", `liveness ${v.liveness}`, [`verify:liveness:${verifyTag(v.liveness)}`], "agent_private", { provenance: "connected_source" });
+  f("fact", `ageassurance ${v.age}`, [`verify:age:${verifyTag(v.age)}`], "agent_private", { provenance: "connected_source" });
   const cues = cuesOf(p);
   for (const tag of cues) f("fact", "flagged for review", [tag], "agent_private", { provenance: "inferred", inferred: true, confirmedByMember: false, confidence: 0.6 });
   if (cues.length && clearedAt(p, week)) f("fact", "review cleared", ["review:cleared"], "agent_private", { provenance: "inferred" });

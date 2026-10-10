@@ -9,7 +9,7 @@ metadata:
   backend: "https://api.ntwrk.party"
   mcp: "https://slop.date/mcp"
   operator: Eliza Research Corporation
-  version: "1.0.1"
+  version: "1.0.2"
 ---
 
 # slop.date
@@ -43,10 +43,15 @@ share one backend at https://api.ntwrk.party, and one text line. This app's MCP 
 
 ## How a person joins (they do it, not you)
 
-Check connector support before collecting a profile. The current server refuses OpenAI clients
-on slop.date, including ChatGPT, even outside the public plugin. In those clients, explain that
-this agent cannot submit a Slop profile. The person can join on the web themselves, but that
-does not complete onboarding through their existing agent. Do not route them to another assistant.
+Check connector support before collecting a profile. slop.date is not available through The
+Network's public OpenAI plugin. Custom ChatGPT onboarding is off by default. In ChatGPT, use
+a custom connection only when the operator has confirmed that the pilot is enabled for this person's
+adult Slop account. Its MCP endpoint is https://slop.date/mcp, not /mcp/openai. Reading this
+file does not install that connection or grant access. After the person authorizes it, call
+check_status and confirm app is slop before collecting or submitting a profile. In ChatGPT, if the pilot
+is not confirmed, the connector is unavailable, or authorization fails, explain that submission
+is unfinished. The person can join on the web themselves, but that does not complete onboarding
+through their existing agent. Do not route them to another assistant.
 
 For clients that support this app's connector, the person signs up through you, in this conversation:
 
