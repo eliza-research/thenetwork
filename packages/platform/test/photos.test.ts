@@ -310,6 +310,8 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     expect((await call("POST", "/api/join", JSON.stringify({ firstName: "Kai", age: 16, consent: { sms: true, version: APPS.slop.consent.version } }), jsonH)).status).toBe(200);
     verified.add((await people.findPhone("+12125550171"))!.personId);
     expect(await call("POST", "/api/photos", jpeg() as unknown as BodyInit, img)).toEqual({ status: 403, body: { ok: false, error: "adults_only" } });
+    // The settings page reads `eligible` to keep the photo section (consent text, upload control) hidden from a minor.
+    expect(await call("GET", "/api/photos")).toEqual({ status: 200, body: { ok: true, eligible: false, photos: [] } });
     // An adult: a cross-site request and a wrong type are refused before anything is read.
     cookie = "";
     await login("+12125550172");
@@ -319,9 +321,11 @@ describe.skipIf(!pgAvailable)("PhotoService on Postgres", () => {
     expect((await call("POST", "/api/photos", jpeg() as unknown as BodyInit, { ...img, origin: "https://evil.example" })).status).toBe(403);
     expect((await call("POST", "/api/photos", jpeg() as unknown as BodyInit, { "content-type": "text/plain", "x-photo-consent": PHOTO_CONSENT.version })).status).toBe(415);
     expect((await call("POST", "/api/photos", jpeg() as unknown as BodyInit, { "content-type": "image/jpeg" })).body).toEqual({ ok: false, error: "consent_required" });
+    expect((await call("GET", "/api/photos")).body).toEqual({ ok: true, eligible: true, photos: [] });
     const ok = await call("POST", "/api/photos", jpeg() as unknown as BodyInit, img);
     expect(ok.status).toBe(200);
     const list = await call("GET", "/api/photos");
+    expect(list.body.eligible).toBe(true);
     expect(list.body.photos).toHaveLength(1);
     expect(JSON.stringify(list.body)).not.toMatch(/url|score|rating/);
     expect((await call("POST", "/api/photos/delete", JSON.stringify({ id: ok.body.id }), jsonH)).status).toBe(200);

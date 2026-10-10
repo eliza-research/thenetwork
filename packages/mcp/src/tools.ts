@@ -100,8 +100,34 @@ export type ToolOutcome =
 const NOT_AVAILABLE = "That app is not available here.";
 
 /** Validate the arguments against the tool's schema: only listed properties, enum values only. */
-/** A phone number, an email address or a verification code in the profile text: refused, never stored. */
-const CONTACT_OR_CODE = /\+?\d[\d\s().-]{6,}\d|[\w.+-]+@[\w-]+\.[\w.]+|(?<![\w])\d{4,10}(?![\w])/;
+/**
+ * A phone number, an email address or a verification code in the profile text: refused, never stored.
+ * A standalone 5-digit US zip ("11211", "(11237)") is fine, as are age ranges and miles next to it
+ * ("28-35", "5"): slop's distance question needs the zip. Refused: an email; any run of digits and
+ * separators with 10 or more digits, or 7 or more outside 5-digit groups (a phone, "(415) 555-0102",
+ * "cell4155550102"), whether or not letters touch it; a 4-digit or 6- to 10-digit number (a code; the
+ * platform's codes are 6 digits). A code split into short groups ("12 34 56") or a 5-digit code is not
+ * told apart from ages, miles or a zip.
+ */
+export function contactOrCode(text: string): boolean {
+  if (/[\w.+-]+@[\w-]+\.[\w.]+/.test(text)) return true;
+  // Unanchored: a phone touching a letter or underscore ("cell4155550102", "_4155550102_") is still a phone.
+  for (const m of text.matchAll(/\+?[\d(][\d\s().-]*\d/g)) {
+    const run = m[0];
+    const tokens = run.trim().split(/\s+/);
+    // 10 or more digits in one run is a phone however it is grouped ("41555 50102", "212 55501 42").
+    if (run.replace(/\D/g, "").length >= 10) return true;
+    // Zips and short numbers ("11211", "25-35", "5"), as long as the short ones could not spell a phone.
+    const ok = tokens.every(t => /^\d{5}$/.test(t) || /^\d{1,3}(?:-\d{1,3})?$/.test(t))
+      && tokens.filter(t => !/^\d{5}$/.test(t)).join("").replace(/\D/g, "").length < 7;
+    if (ok) continue;
+    if (run.replace(/\D/g, "").length >= 7) return true;
+    // A code is a number on its own ("1990s" or "abc1234" is not one), as before.
+    const alone = !/\w/.test(text[m.index! - 1] ?? "") && !/\w/.test(text[m.index! + run.length] ?? "");
+    if (alone && tokens.some(t => /^\(?\d{4}\)?$|^\(?\d{6,10}\)?$/.test(t.replace(/[.-]$/, "")))) return true;
+  }
+  return false;
+}
 
 export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host: McpApp): { ok: true; app?: string; about?: string; token?: string } | { ok: false; message: string } {
   if (args === undefined || args === null) args = {};
@@ -113,7 +139,7 @@ export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host
   if (name === "submit_profile") {
     const about = typeof a.about === "string" ? a.about.trim() : "";
     if (about.length < 10 || about.length > PROFILE_MAX_CHARS) return { ok: false, message: `about must be 10 to ${PROFILE_MAX_CHARS} characters.` };
-    if (CONTACT_OR_CODE.test(about)) return { ok: false, message: "Leave out phone numbers, codes and email addresses: the app never takes them from an assistant." };
+    if (contactOrCode(about)) return { ok: false, message: "Leave out phone numbers, codes and email addresses: the app never takes them from an assistant." };
     if (a.app !== undefined && a.app !== host.id) return { ok: false, message: `This connection covers ${host.name} only.` };
     return { ok: true, app: host.id, about };
   }
