@@ -139,7 +139,7 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(q.reports[0]).toMatchObject({ kind: "harassment", reporterId: a, subjectId: b, status: "open", source: "message", priorReports: 0 });
     expect(JSON.stringify(q)).not.toMatch(/rude|texting/);
     const reportId = q.reports[0].id as string;
-    // The report is a product event too (the member timelines of both), ids and a kind only.
+    // The report is a product event too (on the reporter's timeline; payload.target names the subject), ids and a kind only.
     const ev = (await sql`select actor_type, type, object_type, object_id, payload from network.events where app_id = 'slop' and type = 'report_received'`) as any[];
     expect(ev).toHaveLength(1);
     expect(ev[0]).toMatchObject({ actor_type: "agent", object_type: "member", object_id: a, payload: { reportId, kind: "harassment", memberId: a, target: b, source: "message", met: false } });
@@ -202,6 +202,26 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: aboutDi.subjectId, by: "person", note: "scam confirmed" })).json()).toEqual({ ok: true });
     expect((await sql`select scope from platform.bans`).map((r: any) => r.scope)).toEqual(["person"]);
     expect(await text(s, clock, di, "friends")).toBe("held");
+  }, T);
+
+  test("forget: a report or a minor report names neither party in network.events after that party leaves", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const { s } = service(clock);
+    const names = async (id: string) => ((await sql`select type from network.events where app_id = 'slop' and (actor_id = ${id} or object_id = ${id} or position(${id} in payload::text) > 0)`) as any[]).map(r => r.type);
+    const [ana, ben, cy, di] = [newPhone(), newPhone(), newPhone(), newPhone()];
+    for (const [p, who] of [[ana, "Ana, 30"], [ben, "Ben, 32"], [cy, "Cy, 29"], [di, "Di, 31"]] as const) { await text(s, clock, p, "slop"); await text(s, clock, p, who); }
+    const b = (await memberOf("slop", ben))!.id, c = (await memberOf("slop", cy))!.id;
+    // The reported member leaves: the report_received row (payload.target) goes with them.
+    expect(await text(s, clock, ana, "report Ben, he was rude and kept texting me")).toBe("handled");
+    expect(await names(b)).toContain("report_received");
+    expect(await text(s, clock, ben, "leave slop.date")).toBe("left");
+    expect(await names(b)).toEqual([]);
+    // The reporter of a minor report leaves: the minor_reported row (payload.by) goes with them.
+    expect(await text(s, clock, cy, "report Di, she's only 15")).toBe("handled");
+    expect(await names(c)).toContain("minor_reported");
+    expect(await text(s, clock, cy, "leave slop.date")).toBe("left");
+    expect(await names(c)).toEqual([]);
   }, T);
 
   test("minor clear: one staff action clears the signal on every app and dismisses the minor reports; audited; refused while any age says minor", async () => {
