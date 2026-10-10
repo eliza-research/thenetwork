@@ -3,8 +3,8 @@
   "name": "the-network",
   "version": "1.0.1",
   "description": "Learn about the apps powered by The Network and sign yourself up.",
-  "author": { "name": "Eliza Research Corporation", "url": "https://ntwrk.love" },
-  "homepage": "https://ntwrk.love",
+  "author": { "name": "Eliza Research Corporation", "url": "https://ntwrk.party" },
+  "homepage": "https://ntwrk.party",
   "license": "Proprietary",
   "keywords": ["friends", "jobs", "introductions", "new york"],
   "extensions": {
@@ -12,13 +12,13 @@
       "interface": {
         "displayName": "The Network",
         "shortDescription": "Find out what The Network's apps do and how to join",
-        "longDescription": "Explains The Network, peon.biz (work and hiring) and friends.help (friends in New York City): who can join, how introductions and privacy work, and how to stop. It gives you a link to sign yourself up. It never asks for your phone number or your verification code. After you sign in on ntwrk.love and allow it, it can tell you your own status in The Network.",
+        "longDescription": "Explains The Network, peon.biz (work and hiring) and friends.help (friends in New York City): who can join, how introductions and privacy work, and how to stop. It gives you a link to sign yourself up. It never asks for your phone number or your verification code. After you sign in on ntwrk.party and allow it, it can tell you your own status in The Network.",
         "developerName": "Eliza Research Corporation",
         "category": "Lifestyle",
         "capabilities": ["Read"],
-        "websiteURL": "https://ntwrk.love",
-        "privacyPolicyURL": "https://ntwrk.love/privacy",
-        "termsOfServiceURL": "https://ntwrk.love/terms",
+        "websiteURL": "https://ntwrk.party",
+        "privacyPolicyURL": "https://ntwrk.party/privacy",
+        "termsOfServiceURL": "https://ntwrk.party/terms",
         "defaultPrompt": ["What is The Network and how do I join?"],
         "composerIcon": "./assets/icon.png",
         "logo": "./assets/logo.png"

@@ -73,7 +73,7 @@ New `docs/results/SUMMARY.md` (one section per folded topic plus one line per pr
 
 - Blooio org, channel and webhook ids, the other two Blooio-org numbers and the internal Tailscale hostname are redacted in `docs/research/blooio.md` (the fixtures that held real ids were deleted).
 - The Cloudflare account id is gone from the tree: `CLOUDFLARE_ACCOUNT_ID` is required from the environment (`scripts/wrangler.sh` stops without it) and from the CI variable; `.env.example` leaves it blank; the wrangler.toml files never set `account_id`.
-- `developer@elizalabs.ai` is replaced by "the Eliza Labs Cloudflare account". The Pages projects' account is called "the ntwrk.love Cloudflare account" so the two accounts stay distinct.
+- `developer@elizalabs.ai` is replaced by "the Eliza Labs Cloudflare account". The Pages projects' account is called "the ntwrk.party Cloudflare account" so the two accounts stay distinct.
 - The remaining emails in docs are public role addresses (mcp-review@ and directory@anthropic.com, vendor-incident@meta.com, api@letterboxd.com); the named-person emails were in the deleted docs.
 - Absolute `/Users/...` paths in docs are repo-relative.
 - Kept: the public 808 Network line. No history rewrite.
@@ -129,7 +129,7 @@ deebe62 Budgets in network/src/outreach.ts; the judge moves into the sim; packag
 cc0046b docs: README, AGENTS, CONTRIBUTING and package READMEs for bun run sim
 242fc9c Cloudflare account id from the environment, no hardcoded defaults
 0c92cf3 docs: fold, trim and delete per the cleanup plan; redact private data in docs
-1142bbe Name the Cloudflare accounts: Pages projects in the ntwrk.love account, slop/friends zones in Eliza Labs
+1142bbe Name the Cloudflare accounts: Pages projects in the ntwrk.party account, slop/friends zones in Eliza Labs
 ```
 
 Plus the commit that adds this report.
