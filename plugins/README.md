@@ -4,7 +4,7 @@ Two plugin packages. Both point at the MCP server in [packages/mcp](../packages/
 
 | Folder | For | Skills | MCP server |
 |---|---|---|---|
-| `openai/` | ChatGPT and Codex (public plugin) | ntwrk-love, peon-biz, friends-help | `https://ntwrk.love/mcp/openai` (one server; slop is hidden) |
+| `openai/` | ChatGPT and Codex (public plugin) | ntwrk-party, peon-biz, friends-help | `https://ntwrk.party/mcp/openai` (one server; slop is hidden) |
 | `claude/` | Claude Code (marketplace in `.claude-plugin/marketplace.json`) | all four, with slop-date | one per site: `https://<domain>/mcp` |
 
 slop.date is not in the OpenAI plugin. OpenAI requires plugins that suit people aged 13-17. slop.date keeps its own SKILL.md on its site and in the Claude plugin.

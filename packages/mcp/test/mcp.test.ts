@@ -3,8 +3,8 @@
 import { describe, expect, test } from "bun:test";
 import { addMember, call, connect, MODERN, origin, PHONE_A, PHONE_B, register, rpc, setup } from "./harness.ts";
 
-const NTWRK = `${origin("ntwrk.love")}/mcp`;
-const OPENAI = `${origin("ntwrk.love")}/mcp/openai`;
+const NTWRK = `${origin("ntwrk.party")}/mcp`;
+const OPENAI = `${origin("ntwrk.party")}/mcp/openai`;
 
 describe("Streamable HTTP, 2026-07-28", () => {
   test("server/discover, tools/list and tools/call with the request headers", async () => {
@@ -68,9 +68,9 @@ describe("Streamable HTTP, 2026-07-28", () => {
     expect(batch.status).toBe(400);
     expect((await env.fetch(new Request(NTWRK, { method: "POST", headers: { "content-type": "application/json" }, body: "{" }))).status).toBe(400);
     expect((await rpc(env, NTWRK, "tools/list", {}, { headers: { origin: "https://evil.example" } })).res.status).toBe(403);
-    const own = await rpc(env, NTWRK, "tools/list", {}, { headers: { origin: "https://ntwrk.love" } });
+    const own = await rpc(env, NTWRK, "tools/list", {}, { headers: { origin: "https://ntwrk.party" } });
     expect(own.res.status).toBe(200);
-    expect(own.res.headers.get("access-control-allow-origin")).toBe("https://ntwrk.love");
+    expect(own.res.headers.get("access-control-allow-origin")).toBe("https://ntwrk.party");
   });
 
   test("legacy clients: initialize, then tools/list and tools/call without _meta", async () => {
@@ -124,7 +124,7 @@ describe("surface=openai hides slop", () => {
     const env = setup();
     const chatgpt = { redirect_uris: ["https://chatgpt.com/connector_platform_oauth_redirect"] };
     expect((await register(env, "slop.date", chatgpt)).res.status).toBe(400);
-    const c = await connect(env, "ntwrk.love", PHONE_A, { register: chatgpt, redirectUri: chatgpt.redirect_uris[0] });
+    const c = await connect(env, "ntwrk.party", PHONE_A, { register: chatgpt, redirectUri: chatgpt.redirect_uris[0] });
     // Its token is for /mcp/openai only.
     expect((await rpc(env, NTWRK, "tools/list", {}, { token: c.token.access_token })).res.status).toBe(401);
     const l = await rpc(env, OPENAI, "tools/list", {}, { token: c.token.access_token });

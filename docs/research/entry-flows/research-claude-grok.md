@@ -74,7 +74,7 @@ Source: Software Directory Policy, dated **2026-04-15**, https://support.claude.
 ### 1.4 Install links for connectors (H; new vs claude.md)
 Source: https://claude.com/docs/connectors/building/directory-vs-custom (accessed 2026-10-07).
 - **Unlisted custom connector, prefilled dialog:**
-  `https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=The%20Network&connectorUrl=https%3A%2F%2Fmcp.ntwrk.love%2Fmcp`
+  `https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=The%20Network&connectorUrl=https%3A%2F%2Fmcp.ntwrk.party%2Fmcp`
   This opens the Add-custom-connector dialog with the name and URL filled in, plus a notice that the values came from an external link. The user must confirm. A signed-out user signs in first, then sees the dialog.
 - **Directory listing:** `https://claude.ai/directory/connectors/<slug>`. The slug is permanent.
 - **Suggested Connectors:** only directory connectors are eligible, and Claude can suggest them in chat.
