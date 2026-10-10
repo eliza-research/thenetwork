@@ -44,6 +44,7 @@ import { APPS, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { meetingSpot, nearbyVenues, NEIGHBORHOOD, NEIGHBORHOODS, neighborhood, travelMinutes, VENUES, type Venue } from "./geo.ts";
 import { RELAY_OPEN_AFTER_MEETING_MS, RelayDesk, withdrawsSwap, type RelayAsk, type RelayCallOptions, type RelayHeld, type RelayHost, type RelayMatch, type RelayMember, type RelayOutcome, type RelayState } from "./relay.ts";
 import type { RelayRecord } from "../../engine/src/relay.ts";
+import { APPEARANCE_PREFIX, appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
 import { ABOUT_OTHERS, ASK_KINDS, LANE_BUDGETS, NEVER_REPLY, nextAt, NY, nyParts, OUTREACH, PRD_BUDGETS, SLOT_KINDS, type SendKind } from "./outreach.ts";
 import { BASE_REACH, FLOOR_EFFORT, type CapitalEvent, type CapitalEventInput, type CapitalReader, type GamingFlag, type NetworkEffort } from "./capital.ts";
 import { activityHints, BOOKING_GAP, PLAN_VENUES, planLedger, statedWindows } from "./plans.ts";
@@ -1775,17 +1776,29 @@ export class ConsentNetwork implements NetworkUnderTest {
     return undefined;
   }
 
-  /** An edit is refused when it names someone outside the opportunity, or a text would leak a private fact or contact details. */
+  /**
+   * An edit is refused when it names someone outside the opportunity, or a text would leak a private
+   * fact or contact details. On an app that rates photos (slop) a reviewer's words are also checked
+   * for the rating: looks words, a score, a percentile or a stored appearance tag (`appearanceLeak`,
+   * PRD 40.5: ratings are never shown to anyone). The pack's own text never mentions looks.
+   */
   private editBlock(o: Opp, opts: ReviewOptions): string | undefined {
     const ex = Object.entries(opts.explanations ?? {});
     if (!ex.length && opts.objective === undefined) return "nothing_to_edit";
+    const ratingLeak = this.ratesPhotos ? (() => {
+      const tags = this.snapshotCached().facets.filter(f => o.participants.includes(f.memberId)).flatMap(f => f.tags.filter(t => t.startsWith(APPEARANCE_PREFIX)));
+      return (t: string) => appearanceLeak(t, tags) !== null;
+    })() : () => false;
     for (const [id, text] of ex) {
       if (!o.participants.includes(id)) return "not_a_participant";
-      if (!text.trim() || this.guardCheck(text, id).length) return "edit_leak";
+      if (!text.trim() || this.guardCheck(text, id).length || ratingLeak(text)) return "edit_leak";
     }
-    if (opts.objective !== undefined && (!opts.objective.trim() || o.participants.some(id => this.guardCheck(opts.objective!, id).length))) return "edit_leak";
+    if (opts.objective !== undefined && (!opts.objective.trim() || ratingLeak(opts.objective) || o.participants.some(id => this.guardCheck(opts.objective!, id).length))) return "edit_leak";
     return undefined;
   }
+
+  /** This app rates photos (slop): its outbound words are checked for the rating too (editBlock, the relay desk). */
+  private get ratesPhotos(): boolean { return this.app.id === "slop"; }
 
   /**
    * The gates again, at approval (an item can wait up to 12 hours). Every participant: not declined,
@@ -4549,7 +4562,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const self = this;
     return {
       get app() { return self.app.id; },
-      get ratesPhotos() { return self.app.id === "slop"; },
+      get ratesPhotos() { return self.ratesPhotos; },
       now: () => this.now(),
       member: id => {
         const m = this.members.get(id);
