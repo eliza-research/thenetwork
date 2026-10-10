@@ -2,7 +2,7 @@
 // both modes. Each source gathers the inputs (game: run records and the Network; real: rows and
 // events) and these functions do the arithmetic, so the two modes cannot drift apart.
 import { DAY, HOUR, type MemberId } from "@thenetwork/core";
-import { SIM_AUTO_REVIEWER } from "@thenetwork/network";
+import { SIM_AUTO_REVIEWER, URGENT_REPORTS } from "@thenetwork/network";
 import { ENJOYED } from "./projector.ts";
 import { matchingAllowed, type AppId } from "./apps.ts";
 import type { AppHealth, CohortActivation, GrowthStats, HealthAlert, ObsMember, ObsOpportunity, ObsRequest, ObsSafetyCase, ObsState, ReportKind, SafetyInfo, SafetyReport, ScoreMetric } from "./types.ts";
@@ -247,8 +247,8 @@ export interface SafetyInput {
   canBan?: boolean;
 }
 
-/** Report kinds with a 1-hour target (PRD 36.3: harassment, money scams and minors are urgent). */
-export const URGENT_REPORTS: ReadonlySet<ReportKind> = new Set(["harassment", "unsafe", "scam", "minor"]);
+/** Report kinds with a 1-hour target (PRD 36.3): the Network's own set, so the two cannot drift. */
+export { URGENT_REPORTS };
 
 /**
  * Post-date reports from the Network's safety cases, when no report store answers (game mode, or real

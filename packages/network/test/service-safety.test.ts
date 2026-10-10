@@ -17,6 +17,11 @@ import { DryRunAdapter } from "../service/channel.ts";
 import { ServiceClient } from "../../observatory/src/sources/service.ts";
 import { NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/service.ts";
 import { START } from "./mini.ts";
+import { loadSnapshot } from "../service/snapshot.ts";
+import { resolveConfig } from "../../engine/src/config.ts";
+import { localEmbed } from "../../engine/src/embed.ts";
+import { friendsInfo, friendsPack } from "../../engine/src/packs/friends/index.ts";
+import { World } from "../../engine/src/world.ts";
 
 const T = 300_000;
 const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!Bun.which("pg_ctl");
@@ -139,6 +144,11 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(q.reports[0]).toMatchObject({ kind: "harassment", reporterId: a, subjectId: b, status: "open", source: "message", priorReports: 0 });
     expect(JSON.stringify(q)).not.toMatch(/rude|texting/);
     const reportId = q.reports[0].id as string;
+    // The report is a product event too (on the reporter's timeline; payload.target names the subject), ids and a kind only.
+    const ev = (await sql`select actor_type, type, object_type, object_id, payload from network.events where app_id = 'slop' and type = 'report_received'`) as any[];
+    expect(ev).toHaveLength(1);
+    expect(ev[0]).toMatchObject({ actor_type: "agent", object_type: "member", object_id: a, payload: { reportId, kind: "harassment", memberId: a, target: b, source: "message", met: false } });
+    expect(JSON.stringify(ev)).not.toMatch(/rude|texting/);
 
     // Hold: a decision note of 5+ characters; the person is held on slop and on friends.
     expect((await staff(s, "saf-tok", "POST", "/apps/slop/safety/hold", { memberId: b, note: "x" })).status).toBe(400);
@@ -199,6 +209,26 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await text(s, clock, di, "friends")).toBe("held");
   }, T);
 
+  test("forget: a report or a minor report names neither party in network.events after that party leaves", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const { s } = service(clock);
+    const names = async (id: string) => ((await sql`select type from network.events where app_id = 'slop' and (actor_id = ${id} or object_id = ${id} or position(${id} in payload::text) > 0)`) as any[]).map(r => r.type);
+    const [ana, ben, cy, di] = [newPhone(), newPhone(), newPhone(), newPhone()];
+    for (const [p, who] of [[ana, "Ana, 30"], [ben, "Ben, 32"], [cy, "Cy, 29"], [di, "Di, 31"]] as const) { await text(s, clock, p, "slop"); await text(s, clock, p, who); }
+    const b = (await memberOf("slop", ben))!.id, c = (await memberOf("slop", cy))!.id;
+    // The reported member leaves: the report_received row (payload.target) goes with them.
+    expect(await text(s, clock, ana, "report Ben, he was rude and kept texting me")).toBe("handled");
+    expect(await names(b)).toContain("report_received");
+    expect(await text(s, clock, ben, "leave slop.date")).toBe("left");
+    expect(await names(b)).toEqual([]);
+    // The reporter of a minor report leaves: the minor_reported row (payload.by) goes with them.
+    expect(await text(s, clock, cy, "report Di, she's only 15")).toBe("handled");
+    expect(await names(c)).toContain("minor_reported");
+    expect(await text(s, clock, cy, "leave slop.date")).toBe("left");
+    expect(await names(c)).toEqual([]);
+  }, T);
+
   test("minor clear: one staff action clears the signal on every app and dismisses the minor reports; audited; refused while any age says minor", async () => {
     await fresh();
     const clock = new SimClock(START);
@@ -212,6 +242,8 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await text(s, clock, gil, "report Hal, he's only 15")).toBe("handled");
     const h = (await memberOf("slop", hal))!.id;
     const minorReport = async () => s.runtimeFor("slop")!.readState(n => n.safetyReports().find(r => r.kind === "minor" && r.subjectId === h));
+    // The minor report is a product event about Hal (out of matching until staff review).
+    expect((await sql`select object_id, payload from network.events where app_id = 'slop' and type = 'minor_reported'`).map((r: any) => [r.object_id, r.payload.memberId])).toEqual([[h, h]]);
     expect((await minorReport())?.status).toBe("open");
     expect(await s.runtimeFor("slop")!.readState(n => n.safetyCases().some(c => c.memberId === h && c.events.some(e => e.kind === "minor_reported")))).toBe(true);
 
@@ -357,6 +389,31 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect((await upload()).ok).toBe(false);
     expect(ratedPhotoCounts).toHaveLength(calls);
   }, T);
+  test("friends: a member staff verified (liveness and age passed, the tags the verify route writes) is verified for the friends pack; a failed or missing check is not", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const { s, otp } = service(clock);
+    const web = site(s, clock, otp);
+    const ids: string[] = [];
+    for (const [i, name] of ["Ari", "Bo"].entries()) {
+      web.forget("friends");
+      const phone = newPhone();
+      await web.login("friends", phone);
+      expect((await web.join("friends", 30 + i, name)).status).toBe(200);
+      ids.push((await memberOf("friends", phone))!.id);
+    }
+    const [ari, bo] = ids as [string, string];
+    const verified = async () => {
+      const w = new World(await loadSnapshot(sql, clock.now(), { app: "friends", city: "nyc" }), resolveConfig({ seed: 1 }), localEmbed, friendsPack);
+      return Object.fromEntries(ids.map(id => [id, friendsInfo(w).get(id)?.verified ?? null]));
+    };
+    expect(await verified()).toEqual({ [ari]: false, [bo]: false });
+    for (const [id, check, result] of [[ari, "liveness", "pass"], [ari, "age", "pass"], [bo, "liveness", "pass"], [bo, "age", "fail"]] as const) {
+      expect(await (await staff(s, "saf-tok", "POST", `/apps/friends/members/${id}/verify`, { check, result, note: "staff review" })).json()).toEqual({ ok: true });
+    }
+    expect(await verified()).toEqual({ [ari]: true, [bo]: false });
+  }, T);
+
   test("staff with safety on one app hold on that app only and cannot ban; the audit never counts the person's apps", async () => {
     await fresh();
     const clock = new SimClock(START);

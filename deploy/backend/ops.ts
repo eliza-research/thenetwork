@@ -3,7 +3,8 @@
 //   collect()      one snapshot per network: the last stored tick, the review and send queues, the
 //                  sends of the last 24 h by outcome, review SLA misses, safety events (reports, minor
 //                  signals after contact, holds, bans, agent safety signals waiting for staff, bias
-//                  monitor alerts of the last 24 h); and today's cost per app against the budgets.
+//                  monitor alerts of the last 24 h); the shared line (Blooio safety actions on it, texts
+//                  parked for leak review per app); and today's cost per app against the budgets.
 //                  Counts and network ids only: never a member id, a phone number or a text.
 //   evaluate()     the snapshot as alerts (key, level, count, text).
 //   AlertDispatcher  dedupe and a rate limit, with its state in network.ops_alerts (a restart or a
@@ -123,6 +124,24 @@ export interface NetworkMetrics {
   error?: string;
 }
 
+/**
+ * The shared line, outside any one network (platform tables): Blooio safety actions in force on a line
+ * (platform.line_safety: new and agent texts wait while one is set; compliance texts still go) and
+ * texts parked for leak review per app (they wait for a person: GET /queue/leak-review). Actions,
+ * times and counts only: never the line's number, an address or a text.
+ */
+export interface LineMetrics {
+  restricted: { action: string; since: number }[];
+  leakReview: Record<string, number>;
+}
+
+export async function lineMetrics(sql: SQL): Promise<LineMetrics> {
+  const restricted = ((await sql`select action, at from platform.line_safety where action <> 'none' order by at, action`) as { action: string; at: Date }[])
+    .map(r => ({ action: r.action, since: new Date(r.at).getTime() }));
+  const leak = (await sql`select app_id, count(*)::int as n from platform.outbound where status = 'parked_leak_review' group by app_id order by app_id`) as { app_id: string; n: number }[];
+  return { restricted, leakReview: Object.fromEntries(leak.map(r => [r.app_id, r.n])) };
+}
+
 export interface OpsMetrics {
   ok: true;
   at: number;
@@ -131,6 +150,8 @@ export interface OpsMetrics {
   /** Since this process's ops runner started (a network with no stored tick is late only after tickLateMs of uptime). */
   uptimeMs: number;
   networks: NetworkMetrics[];
+  /** The shared line (lineMetrics); absent when the runner has no line reader. */
+  line?: LineMetrics | { error: string };
   cost: { day: string; totalUsd: number; byApp: Partial<Record<CostApp, number>>; budgets: BudgetLine[] } | { error: string };
   alerts?: { open: { key: string; level: AlertLevel; count: number }[]; postsLastHour: number };
 }
@@ -246,7 +267,7 @@ export interface Alert {
 const mins = (ms: number) => `${Math.round(ms / MIN)} min`;
 
 /** The snapshot as alerts. Pure: the same snapshot gives the same alerts. */
-export function evaluate(m: Pick<OpsMetrics, "networks" | "cost"> & { uptimeMs?: number }, c: Pick<OpsConfig, "tickLateMs" | "sendFailureRate" | "sendFailureMin" | "outboundBacklog" | "reviewBacklog" | "budgetWarnShare">): Alert[] {
+export function evaluate(m: Pick<OpsMetrics, "networks" | "cost"> & { uptimeMs?: number; line?: OpsMetrics["line"] }, c: Pick<OpsConfig, "tickLateMs" | "sendFailureRate" | "sendFailureMin" | "outboundBacklog" | "reviewBacklog" | "budgetWarnShare">): Alert[] {
   const out: Alert[] = [];
   for (const n of m.networks) {
     const id = n.network;
@@ -273,6 +294,17 @@ export function evaluate(m: Pick<OpsMetrics, "networks" | "cost"> & { uptimeMs?:
     if (f.bans + f.holds > 0) out.push({ key: `safety_action:${id}`, level: "warn", count: f.bans + f.holds, bump: true, text: `${id}: ${f.bans} ban(s) and ${f.holds} hold(s) in 24 h` });
     if (n.backlog.outboundWaiting >= c.outboundBacklog) out.push({ key: `queue_outbound:${id}`, level: "warn", count: n.backlog.outboundWaiting, text: `${id}: ${n.backlog.outboundWaiting} message(s) waiting for delivery` });
     if (n.backlog.review >= c.reviewBacklog) out.push({ key: `queue_review:${id}`, level: "warn", count: n.backlog.review, text: `${id}: ${n.backlog.review} item(s) waiting for review` });
+  }
+  if (m.line && "error" in m.line) out.push({ key: "line_read", level: "warn", count: 1, text: `Could not read the shared line's state: ${m.line.error}` });
+  else if (m.line) {
+    const r = m.line.restricted;
+    if (r.length) {
+      const what = r.map(x => `"${x.action}" since ${new Date(x.since).toISOString().slice(0, 16)}Z`).join(", ");
+      out.push({ key: "line_safety", level: "bad", count: r.length, text: `Blooio put the shared line under a safety action (${what}): new and agent texts wait; STOP and HELP still go. Check the Blooio dashboard.` });
+    }
+    for (const [app, n] of Object.entries(m.line.leakReview)) {
+      if (n > 0) out.push({ key: `leak_review:${app}`, level: "warn", count: n, bump: true, text: `${app}: ${n} text(s) held for leak review wait for a person (console: held texts, or GET /queue/leak-review)` });
+    }
   }
   if ("error" in m.cost) out.push({ key: "cost_read", level: "warn", count: 1, text: `Could not read the cost ledger: ${m.cost.error}` });
   else for (const b of m.cost.budgets) {
@@ -432,6 +464,8 @@ export function webhookPoster(url: string, fetchFn: typeof fetch = fetch): (body
 export interface OpsDeps {
   config: OpsConfig;
   probes: () => NetworkProbe[];
+  /** The shared line's state (lineMetrics on the platform tables). Without it there are no line alerts. */
+  line?: () => Promise<LineMetrics>;
   cost?: Pick<CostLedger, "totals" | "accrue">;
   store: AlertStore;
   now: () => number;
@@ -460,6 +494,7 @@ export function createOps(d: OpsDeps) {
   async function collect(accrue: boolean): Promise<OpsMetrics> {
     const now = d.now();
     const networks = await Promise.all(d.probes().map(p => collectNetwork(p, now)));
+    const line: OpsMetrics["line"] = d.line ? await d.line().catch(e => ({ error: (e as Error).message.slice(0, 200) })) : undefined;
     let cost: OpsMetrics["cost"];
     try {
       const day = dayOf(now);
@@ -476,7 +511,7 @@ export function createOps(d: OpsDeps) {
       const totalUsd = Math.round(Object.values(byApp).reduce((s, x) => s + (x ?? 0), 0) * 10_000) / 10_000;
       cost = { day, totalUsd, byApp, budgets: budgetLines(byApp, c.budgets) };
     } catch (e) { cost = { error: (e as Error).message.slice(0, 200) }; }
-    const m: OpsMetrics = { ok: true, at: now, env: c.env, build: c.build, uptimeMs: now - startedAt, networks, cost, ...(lastAlerts ? { alerts: lastAlerts } : {}) };
+    const m: OpsMetrics = { ok: true, at: now, env: c.env, build: c.build, uptimeMs: now - startedAt, networks, ...(line ? { line } : {}), cost, ...(lastAlerts ? { alerts: lastAlerts } : {}) };
     last = { at: now, metrics: m };
     return m;
   }

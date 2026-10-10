@@ -44,6 +44,7 @@ import { APPS, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { meetingSpot, nearbyVenues, NEIGHBORHOOD, NEIGHBORHOODS, neighborhood, travelMinutes, VENUES, type Venue } from "./geo.ts";
 import { RELAY_OPEN_AFTER_MEETING_MS, RelayDesk, withdrawsSwap, type RelayAsk, type RelayCallOptions, type RelayHeld, type RelayHost, type RelayMatch, type RelayMember, type RelayOutcome, type RelayState } from "./relay.ts";
 import type { RelayRecord } from "../../engine/src/relay.ts";
+import { APPEARANCE_PREFIX, appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
 import { ABOUT_OTHERS, ASK_KINDS, LANE_BUDGETS, NEVER_REPLY, nextAt, NY, nyParts, OUTREACH, PRD_BUDGETS, SLOT_KINDS, type SendKind } from "./outreach.ts";
 import { BASE_REACH, FLOOR_EFFORT, type CapitalEvent, type CapitalEventInput, type CapitalReader, type GamingFlag, type NetworkEffort } from "./capital.ts";
 import { activityHints, BOOKING_GAP, PLAN_VENUES, planLedger, statedWindows } from "./plans.ts";
@@ -600,10 +601,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     m.lastInbound = nowIn; m.msgsIn++;
     this.outboundBefore = m.outbound ?? 0;
     // Answers to the Network teach the send time (founder decision 1); carrier keywords do not.
-    if (!msg.keyword) m.replies = [...(m.replies ?? []), this.now()].slice(-60);
+    // A profile from the member's AI assistant (source "mcp") is not the member answering: it teaches no send time.
+    if (!msg.keyword && msg.source !== "mcp") m.replies = [...(m.replies ?? []), this.now()].slice(-60);
     this.heardFrom(m);
     // "Don't send my number": a pending number swap of theirs is withdrawn at once (relay.ts), whatever else the message says.
-    if (!msg.keyword && withdrawsSwap(body) && this.relayDesk.cancelSwaps(m.id)) this.ctx.log("relay_swap_withdrawn", { memberId: m.id });
+    if (!msg.keyword && msg.source !== "mcp" && withdrawsSwap(body) && this.relayDesk.cancelSwaps(m.id)) this.ctx.log("relay_swap_withdrawn", { memberId: m.id });
     this.replyTo = m.id; this.understood = u;
     try { return this.handleInbound(m, msg) === "open" ? "open" : "handled"; } finally { this.replyTo = undefined; this.understood = undefined; }
   }
@@ -721,19 +723,31 @@ export class ConsentNetwork implements NetworkUnderTest {
 
     // Blocks and reports first: their words describe someone else, so they are never scored as the
     // sender's abuse, and a member on hold can still block (network-consent-4).
-    if (c.kind === "block" || c.kind === "report") return this.handleBlock(m, c);
-    // The answer to "Who do you mean?" (a block or report waiting for its target).
-    if (m.pendingSafety && this.answerWho(m, body)) return;
+    // A profile from the member's AI assistant (InboundMessage.source "mcp") is learned, never an answer:
+    // it never blocks or reports anyone, and it skips every answer below (a probe, a plan, a crew, the
+    // booked date, a check-in, a cancel, feedback, an invite, CALENDAR/WEEKLY). Only the member's own
+    // text in the thread does those.
+    const mcp = msg.source === "mcp";
+    if ((c.kind === "block" || c.kind === "report") && !mcp) return this.handleBlock(m, c);
+    // Nor is the assistant's block or report scored as the member's abuse: its words describe someone
+    // else (network-consent-4), and a watch would drop the member and cancel a booked date. Learned only.
+    if ((c.kind === "block" || c.kind === "report") && mcp) return this.learnFrom(m, body);
+    // The answer to "Who do you mean?" (a block or report waiting for its target): the member's own text only.
+    if (m.pendingSafety && !mcp && this.answerWho(m, body)) return;
     if (this.trust.level(m.id) === "hold") { if (c.abuse.length) this.trust.add(m.id, now, c.abuse[0]!, 0); return; }
     // "He asked me to venmo him $50": what someone else did, never the sender's abuse (ids and kinds only).
     if (c.disclosure?.length) this.ctx.log("abuse_disclosed", { memberId: m.id, kinds: c.disclosure });
+    // Inside a mutual match, "can I get her number?" asks for a number swap (the relay: Eliza's RELAY
+    // contact_share, then both must say yes), never the sender's abuse: it goes to the agent unscored.
+    if (c.abuse.length && this.swapAsk(m, c, body)) return "open" as const;
     if (c.abuse.length && !this.handleAbuse(m, c, body)) return;
 
     // peon (#9): a job post by text, read back and saved only on the manager's yes (rules only, never an open-turn LLM output).
     if (this.opts.hooks?.postings && this.postingTurn(m, body)) return;
 
-    // Answers to what we asked.
-    const aw = m.awaiting;
+    // Answers to what we asked (never from the assistant's profile: it can only teach, below).
+    const aw = mcp && m.awaiting?.kind !== "interview" ? undefined : m.awaiting;
+    if (mcp && c.kind !== "people_request") return this.learnFromProfile(m, aw, c, body);
     if (aw?.kind === "probe" && this.opps.get(aw.oppId!)?.plan) {
       // A plan probe: yes or no to that plan at that time ("can't make that time" is a no, and a time they are not free).
       const yn = this.yesNoOf(body);
@@ -1075,6 +1089,17 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /**
+   * A profile from the member's AI assistant (InboundMessage.source "mcp") that is not a request: it
+   * may answer an onboarding question (it is about the member), and otherwise is learned quietly. It
+   * never answers a probe, a plan, the booked date or a check-in (handleInbound leaves those open).
+   */
+  private learnFromProfile(m: MemberState, aw: MemberState["awaiting"], c: Classified, body: string) {
+    if (aw?.kind === "interview" && aw.ask) return this.onAskAnswer(m, aw.ask, c, body);
+    if (aw?.kind === "interview" && m.stage !== "active") return this.onInterviewAnswer(m, body);
+    this.learnFrom(m, body);
+  }
+
+  /**
    * The answer to an engine question (EngineResult.asks): learn from it, record when it came
    * (`answeredAt`, fed back to the engine as recentAsks), then handle a request it contains.
    */
@@ -1117,6 +1142,38 @@ export class ConsentNetwork implements NetworkUnderTest {
     if ((c.kind === "people_request" || c.kind === "plans_request") && this.trust.ok(m.id)) { this.ack(m, reply); return true; }
     this.send(m, reply, { type: "info" }, "reply");
     return false;
+  }
+
+  /**
+   * A number asked for, inside a mutual match, about the match: "can I get her number?", "what's Sam's
+   * number" (Sam being the match). Only when contact extraction is the only abuse, the member has one
+   * open relay match (relay.ts matchFor: both said yes, accepted, not closed, within its window) and
+   * every "<whose> number" in the text names that person or is a pronoun. A pronoun is taken whoever it
+   * refers to: that is safe only because the agent can share with the match alone and the relay engine
+   * needs both members to ask. What is left once those asks are removed must name no other contact
+   * detail ("and everyone's numbers", "and Cy's address"): then the whole text stays contact extraction.
+   * Minors never get here with a match: dropMember closes a minor's opportunities, and the relay treats
+   * an unsure age as undefined and refuses any share.
+   */
+  private swapAsk(m: MemberState, c: Classified, body: string): boolean {
+    if (c.abuse.length !== 1 || c.abuse[0] !== "contact_extraction") return false;
+    const match = this.relayDesk.matchFor(m.id);
+    const other = match?.participants.length === 2 ? this.members.get(match.participants.find(p => p !== m.id)!) : undefined;
+    if (!other) return false;
+    const t = body.normalize("NFKC").replace(/[\u2018\u2019]/g, "'");
+    const NUM = String.raw`(?:(?:phone|cell)\s+)?(?:number|phone|cell)\b`;
+    const first = other.first.toLowerCase();
+    let asks = 0, elsewhere = false;
+    const rest = t.replace(new RegExp(String.raw`\b(his|her|their|them|[\p{L}]+'s)\s+` + NUM, "giu"), (all: string, w: string) => {
+      const whose = w.toLowerCase().replace(/'s$/, "");
+      if (["his", "her", "their", "them"].includes(whose) || whose === first) { asks++; return " "; }
+      elsewhere = true; return all;
+    });
+    if (!asks || elsewhere) return false;
+    if (/\b(numbers?|phones?|cells?|address(es)?|emails?|instagram|ig|insta|socials|snap(chat)?|handles?|contacts?|last names?)\b/i.test(rest)) return false;
+    if (classify(rest).abuse.includes("contact_extraction")) return false;
+    this.ctx.log("relay_swap_ask", { memberId: m.id, matchId: match!.id });
+    return true;
   }
 
   private onTrustChange(id: MemberId, from: TrustLevel, to: TrustLevel, why: string) {
@@ -1206,8 +1263,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   // ------------------------------------------------------------------ reports (reports.ts; docs/admin-console.md 3.7.1)
   /**
    * A report about a member: a record with ids and a kind (never the words) and a staff case event.
-   * An urgent report (harassment, unsafe, scam, minor) at the check-in after a date takes the member
-   * out of matching until staff decide (hold, ban or dismiss). A "report X" message keeps the trust
+   * An urgent report (harassment, unsafe, scam, minor) by someone who met them (the check-in after a
+   * date, or a "report X" text; see reportHeld) takes the member out of matching until staff decide. A "report X" message keeps the trust
    * rules (trust.ts: points need two reporters who met them; a stranger only opens the case).
    */
   private fileReport(reporter: MemberId, subject: MemberId, kind: ReportKind, o: { oppId?: string; source: SafetyReport["source"]; met: boolean; caseEvent?: boolean }) {
@@ -1220,9 +1277,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.dirty = true;
   }
 
-  /** An urgent report at the check-in after a date is waiting for staff: out of matching. */
+  /**
+   * An urgent report (harassment, unsafe, scam, minor) by someone who met them through the Network is
+   * waiting for staff: out of matching until staff decide. The same for the answer to the check-in
+   * after a date and for a "report X" text (PRD 36.3): what matters is that they met, not which
+   * question the member was answering. A report by someone they never met holds nobody.
+   */
   private reportHeld(id: MemberId): boolean {
-    return this.reports.some(r => r.subjectId === id && r.status === "open" && r.source === "check_in" && r.met && URGENT_REPORTS.has(r.kind));
+    return this.reports.some(r => r.subjectId === id && r.status === "open" && r.met && URGENT_REPORTS.has(r.kind));
   }
 
   /** Reports for staff, newest first, each with how many earlier reports name the same member. Never the words. */
@@ -1358,14 +1420,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.blocks.add(pairKey(m.id, target.id));
     this.ctx.recordBlock(m.id, target.id);
     this.trust.block(m.id, now, { target: target.id, met });
-    if (verb === "report") {
-      const points = this.trust.report(target.id, m.id, now, { met });
-      if (!points) this.caseEvent(target.id, { at: now, kind: "report_received", points: 0, by: m.id });
-      // The staff queue's record (the case event above already counts it).
-      this.fileReport(m.id, target.id, kind, { source: "message", met, caseEvent: false });
-      this.ctx.log("report", { memberId: m.id, target: target.id, met, points });
-      if (kind === "minor") this.minorReported(target, m.id);
-    }
+    // Before any report is filed: an urgent report by someone who met them holds the subject (fileReport ->
+    // dropMember), which would close a shared booked date as "participant dropped" with no word to them.
     for (const o of [...this.opps.values()]) {
       if (!OPEN_STAGES.has(o.stage) || !o.participants.includes(m.id) || !o.participants.includes(target.id)) continue;
       if (o.stage === "scheduled") {
@@ -1377,6 +1433,14 @@ export class ConsentNetwork implements NetworkUnderTest {
         this.ctx.log("meeting_cancelled", { proposalId: o.id, reason: "blocked" });
       }
       this.close(o, "blocked");
+    }
+    if (verb === "report") {
+      const points = this.trust.report(target.id, m.id, now, { met });
+      if (!points) this.caseEvent(target.id, { at: now, kind: "report_received", points: 0, by: m.id });
+      // The staff queue's record (the case event above already counts it).
+      this.fileReport(m.id, target.id, kind, { source: "message", met, caseEvent: false });
+      this.ctx.log("report", { memberId: m.id, target: target.id, met, points });
+      if (kind === "minor") this.minorReported(target, m.id);
     }
     this.send(m, verb === "block" ? (met ? copy.blocked : copy.blockUnmatched) : met ? copy.reported : copy.reportUnmatched, { type: "info" }, "reply");
   }
@@ -1573,8 +1637,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     const def = req.desireId ? desireById.get(req.desireId) : undefined;
     const what = def ? def.text.replace(/^(find|meet|get|be part of|try|start|make|play|join|go on) /, "").replace(/^learn to /, "learning to ") : "that";
     const v = nearbyVenues(m.area, def ? def.needsInterests : req.tags, 1)[0];
-    this.send(m, `${copy.requestNoneYet(what)}${v ? ` Meanwhile, ${v.name} is a good public spot for it.` : ""}`, { type: "info" }, "info");
-    if (this.canInvite(m)) m.awaiting = { kind: "growth", at: this.now() };
+    this.send(m, `${copy.requestNoneYet(what, this.invitesWork)}${v ? ` Meanwhile, ${v.name} is a good public spot for it.` : ""}`, { type: "info" }, "info");
+    if (this.invitesWork && this.canInvite(m)) m.awaiting = { kind: "growth", at: this.now() };
   }
 
   /**
@@ -1882,17 +1946,29 @@ export class ConsentNetwork implements NetworkUnderTest {
     return undefined;
   }
 
-  /** An edit is refused when it names someone outside the opportunity, or a text would leak a private fact or contact details. */
+  /**
+   * An edit is refused when it names someone outside the opportunity, or a text would leak a private
+   * fact or contact details. On an app that rates photos (slop) a reviewer's words are also checked
+   * for the rating: looks words, a score, a percentile or a stored appearance tag (`appearanceLeak`,
+   * PRD 40.5: ratings are never shown to anyone). The pack's own text never mentions looks.
+   */
   private editBlock(o: Opp, opts: ReviewOptions): string | undefined {
     const ex = Object.entries(opts.explanations ?? {});
     if (!ex.length && opts.objective === undefined) return "nothing_to_edit";
+    const ratingLeak = this.ratesPhotos ? (() => {
+      const tags = this.snapshotCached().facets.filter(f => o.participants.includes(f.memberId)).flatMap(f => f.tags.filter(t => t.startsWith(APPEARANCE_PREFIX)));
+      return (t: string) => appearanceLeak(t, tags) !== null;
+    })() : () => false;
     for (const [id, text] of ex) {
       if (!o.participants.includes(id)) return "not_a_participant";
-      if (!text.trim() || this.guardCheck(text, id).length) return "edit_leak";
+      if (!text.trim() || this.guardCheck(text, id).length || ratingLeak(text)) return "edit_leak";
     }
-    if (opts.objective !== undefined && (!opts.objective.trim() || o.participants.some(id => this.guardCheck(opts.objective!, id).length))) return "edit_leak";
+    if (opts.objective !== undefined && (!opts.objective.trim() || ratingLeak(opts.objective) || o.participants.some(id => this.guardCheck(opts.objective!, id).length))) return "edit_leak";
     return undefined;
   }
+
+  /** This app rates photos (slop): its outbound words are checked for the rating too (editBlock, the relay desk). */
+  private get ratesPhotos(): boolean { return this.app.id === "slop"; }
 
   /**
    * The gates again, at approval (an item can wait up to 12 hours). Every participant: not declined,
@@ -2555,7 +2631,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     this.interactions.push({ id: `${o.id}:fb:${m.id}`, kind: o.kind, category: o.category, participants: [...o.participants], at: this.now(), outcome: f.selfNoShow ? "no_show" : "completed", contributors: [] });
     // Growth: a good experience is the best moment to ask (at most monthly, while invites last).
-    if (!crewId && this.opts.growth && f.sentiment === "positive" && this.canInvite(m) && this.now() - m.lastGrowthAsk > 30 * DAY) {
+    if (!crewId && this.invitesWork && f.sentiment === "positive" && this.canInvite(m) && this.now() - m.lastGrowthAsk > 30 * DAY) {
       m.lastGrowthAsk = this.now();
       this.growthAsk(m, this.copy.growthAsk, "after_good_meeting");
     }
@@ -2567,7 +2643,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     return !m.minor && this.trust.ok(m.id) && this.now() >= m.invitesBlockedUntil && m.invites.filter(t => this.now() - t < 30 * DAY).length < limit;
   }
 
+  /**
+   * Growth asks and invites are on, and this Network can send an invite link (NetworkContext.invite).
+   * Without one (the production service today) no text offers or claims an invite link.
+   */
+  private get invitesWork(): boolean { return this.opts.growth && !!this.ctx.invite; }
+
   private invite(m: MemberState, friendName: string) {
+    if (!this.ctx.invite) { this.ctx.log("invite_unavailable", { from: m.id }); this.send(m, this.copy.invitesNotOpen(friendName), { type: "info" }, "reply"); return; }
     if (!this.canInvite(m)) { this.send(m, "Thanks! You're out of invites for now; I'll let you know when you have more.", { type: "info" }, "reply"); return; }
     m.invites.push(this.now());
     this.counters.invitesSent++;
@@ -3689,7 +3772,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    *  - plain asks: engaged members who've been here 10+ days and were never asked.
    */
   private growthTasks(now: number) {
-    if (!this.opts.growth) return;
+    if (!this.invitesWork) return;
     let budget = this.opts.maxGrowthAsksPerDay;
     const known = this.knownProfiles();
     const unmet = this.requests.filter(r => r.kind === "people" && r.outcome === "none" && now - r.at < 7 * DAY);
@@ -4656,7 +4739,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const self = this;
     return {
       get app() { return self.app.id; },
-      get ratesPhotos() { return self.app.id === "slop"; },
+      get ratesPhotos() { return self.ratesPhotos; },
       now: () => this.now(),
       member: id => {
         const m = this.members.get(id);

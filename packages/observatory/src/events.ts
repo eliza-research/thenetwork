@@ -7,7 +7,7 @@
 import type { MemberId } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import { desireById } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
-import { SLOT_KINDS, type SendKind } from "@thenetwork/network";
+import { SLOT_KINDS, URGENT_REPORTS, type SendKind } from "@thenetwork/network";
 import type { SystemEvent } from "./types.ts";
 
 export interface EventRow {
@@ -35,6 +35,9 @@ export const NETWORK_EVENT_KINDS: ReadonlySet<string> = new Set([
   // An opportunity closed because the members' picked times had nothing in common left, and a member
   // record that now says under 18 (a staff age correction).
   "no_common_time", "minor_record", "minor_after_contact",
+  // Safety (PRD 32.14, 36.3): a report (ids, kind, source, whether they met), a report that a member is
+  // under 18, and harm a member told us someone else did (kinds only). Never the reporter's words.
+  "report_received", "minor_reported", "abuse_disclosed",
 ]);
 const STAFF_ACTOR: Record<string, EventRow["actor_type"]> = { review_decision: "reviewer", review_refused: "reviewer", review_mode: "admin", matching_switch: "admin", safety_action: "admin" };
 /** Payload keys that could hold text a member wrote. */
@@ -99,7 +102,7 @@ export function membersOf(row: Pick<EventRow, "actor_type" | "actor_id" | "objec
   const ids = new Set<string>();
   if (row.actor_type === "member" && row.actor_id) ids.add(row.actor_id);
   if (row.object_type === "member" && row.object_id) ids.add(row.object_id);
-  for (const k of ["memberId", "from", "newMemberId", "out", "in"]) if (typeof p[k] === "string") ids.add(p[k] as string);
+  for (const k of ["memberId", "from", "newMemberId", "out", "in", "target", "by"]) if (typeof p[k] === "string") ids.add(p[k] as string);
   if (Array.isArray(p.participants)) for (const x of p.participants) ids.add(String(x));
   // gate_reason: the members of an engine proposal the gates stopped.
   if (Array.isArray(p.members)) for (const x of p.members) ids.add(String(x));
@@ -161,6 +164,11 @@ export function describe(row: EventRow, name: (id: string) => string = id => id)
     case "member_blocked": text = `${name(row.actor_id ?? "")} blocked ${name(row.object_id ?? "")}`; severity = "warn"; break;
     case "member_opted_out": text = "Texted STOP (opted out)"; severity = "warn"; break;
     case "safety_flag": text = `Safety flag: ${human(p.kind)}`; severity = "bad"; keep("kind"); break;
+    case "report_received":
+      text = `${name(p.memberId)} reported ${name(p.target)}: ${human(p.kind)} (${p.source === "check_in" ? "at the check-in after a date" : "by text"}${p.met ? ", they met" : ", never met through us"})`;
+      severity = URGENT_REPORTS.has(p.kind) ? "bad" : "warn"; keep("kind", "source", "met", "reportId"); break;
+    case "minor_reported": text = `${name(p.memberId)} reported as under 18 by ${name(p.by)}: out of matching until staff review`; severity = "bad"; break;
+    case "abuse_disclosed": text = `${name(p.memberId)} told us about harm by someone else (${Array.isArray(p.kinds) ? p.kinds.map(human).join(", ") : "unspecified"})`; severity = "warn"; break;
     case "invariant_violation": text = `Invariant violation: ${human(p.rule)}`; severity = "bad"; keep("rule"); break;
     case "review_queued": text = `${p.rerolled ? "Re-rolled and queued" : "Queued"} for review (${human(p.origin)}); nobody contacted`; keep("origin", "deadline", "rerolled"); break;
     case "review_decision": {

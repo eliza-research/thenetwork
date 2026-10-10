@@ -18,7 +18,7 @@ import { APPS } from "../../packages/platform/src/apps.ts";
 import type { PhotoRater } from "../../packages/platform/src/photos.ts";
 import { createBackend, jsonLogger, loadConfig, type ServiceLike } from "../../deploy/backend/backend.ts";
 import {
-  AlertDispatcher, collectNetwork, createOps, evaluate, MemoryAlertStore, opsConfigFromEnv, PgAlertStore, runtimeProbe,
+  AlertDispatcher, collectNetwork, createOps, evaluate, lineMetrics, MemoryAlertStore, opsConfigFromEnv, PgAlertStore, runtimeProbe,
   type Alert, type NetworkMetrics, type NetworkProbe, type OpsMetrics,
 } from "../../deploy/backend/ops.ts";
 import { Block, expect } from "./gate.ts";
@@ -64,6 +64,16 @@ export async function opsBlock(b: Block): Promise<void> {
     expect(evaluate({ networks: [never], cost: noCost, uptimeMs: 16 * MIN }, CFG).map(a => a.key)).toEqual(["tick_late:friends:nyc"]);
     expect(evaluate({ networks: [never], cost: noCost, uptimeMs: MIN }, CFG)).toEqual([]);
     expect(evaluate({ networks: [{ ...healthy("friends:nyc", "friends"), error: "timeout" }], cost: { error: "x" } }, CFG).map(a => a.key)).toEqual(["ops_read:friends:nyc", "cost_read"]);
+  });
+
+  await b.run("alerts: a Blooio safety action on the shared line is bad; texts held for leak review warn per app; no number in either", () => {
+    const line = { restricted: [{ action: "pause_new", since: T0 }], leakReview: { slop: 2, peon: 0 } };
+    const got = evaluate({ networks: [healthy("slop:nyc", "slop")], cost: noCost, line }, CFG);
+    expect(got.map(a => `${a.key}=${a.level}:${a.count}`)).toEqual(["line_safety=bad:1", "leak_review:slop=warn:2"]);
+    expect(got.find(a => a.key === "leak_review:slop")!.bump).toBe(true);
+    expect(JSON.stringify(got)).not.toMatch(PHONE);
+    expect(evaluate({ networks: [healthy("slop:nyc", "slop")], cost: noCost, line: { restricted: [], leakReview: {} } }, CFG)).toEqual([]);
+    expect(evaluate({ networks: [], cost: noCost, line: { error: "timeout" } }, CFG).map(a => a.key)).toEqual(["line_read"]);
   });
 
   await b.run("alerts: shadow precision under the 80% gate warns once there are 20 person decisions in 7 days (PRD 32.8, 34.6)", () => {
@@ -359,6 +369,26 @@ export async function opsBlock(b: Block): Promise<void> {
         expect(m.sends24h).toEqual({ attempted: 3, failed: 1, refused: 1, dryRun: 1, smsFallback: 1 });
         expect([m.safety24h.minorAfterContact, m.safety24h.bans, m.safety24h.reports, m.safety24h.urgentReports, m.smsByDay.today]).toEqual([1, 1, 2, 1, 1]);
         expect([m.safetySignalsWaiting, m.biasAlerts24h]).toEqual([0, 0]);
+      } finally { await sql.close(); }
+    }, pgBlocking);
+
+    await b.run("the shared line on Postgres: a Blooio safety action and texts parked for leak review are read as actions and counts; clearing them clears the alerts", async () => {
+      const sql = new SQL({ url: srcUrl, max: 1 });
+      try {
+        expect(await lineMetrics(sql)).toEqual({ restricted: [], leakReview: {} });
+        await sql`insert into platform.line_safety (line, action, event_type, at) values ('+12125550100', 'review', 'safety.review', ${new Date(T0)})`;
+        for (const [id, status] of [["ob1", "parked_leak_review"], ["ob2", "parked_leak_review"], ["ob3", "delivered"]] as const) {
+          await sql`insert into platform.outbound (id, app_id, line, to_address, kind, body, fingerprint, time_zone, status, next_attempt_at, created_at, updated_at)
+            values (${id}, 'slop', '+12125550100', '+12125550101', 'proactive', 'synthetic text', ${id}, 'America/New_York', ${status}, ${new Date(T0)}, ${new Date(T0)}, ${new Date(T0)})`;
+        }
+        const m = await lineMetrics(sql);
+        expect(m).toEqual({ restricted: [{ action: "review", since: T0 }], leakReview: { slop: 2 } });
+        const alerts = evaluate({ networks: [], cost: noCost, line: m }, CFG);
+        expect(alerts.map(a => `${a.key}=${a.level}:${a.count}`)).toEqual(["line_safety=bad:1", "leak_review:slop=warn:2"]);
+        expect(JSON.stringify(alerts)).not.toMatch(PHONE);
+        await sql`delete from platform.line_safety`;
+        await sql`update platform.outbound set status = 'dropped' where status = 'parked_leak_review'`;
+        expect(evaluate({ networks: [], cost: noCost, line: await lineMetrics(sql) }, CFG)).toEqual([]);
       } finally { await sql.close(); }
     }, pgBlocking);
 

@@ -468,6 +468,7 @@ export class NetworkRuntime {
       // Every event that names them, by the same keys the writer reads (membersOf): actor, object and the payload.
       await tx`delete from network.events where app_id = ${app} and (actor_id = ${id} or object_id = ${id}
         or payload->>'memberId' = ${id} or payload->>'from' = ${id} or payload->>'newMemberId' = ${id} or payload->>'out' = ${id} or payload->>'in' = ${id}
+        or payload->>'target' = ${id} or payload->>'by' = ${id}
         or coalesce(payload->'participants', '[]'::jsonb) @> to_jsonb(${id}::text) or coalesce(payload->'members', '[]'::jsonb) @> to_jsonb(${id}::text)
         or jsonb_exists(coalesce(payload->'attendance', '{}'::jsonb), ${id}))`;
       await tx`delete from network.capital_events where app_id = ${app} and (member_id = ${id} or position(${`"${id}"`} in event::text) > 0)`;
