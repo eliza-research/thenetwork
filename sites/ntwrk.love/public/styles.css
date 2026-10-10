@@ -106,3 +106,6 @@ body.landing {
 .landing .l-apps .app-friends span { color: #c5d4b0; }
 .landing .l-apps .app-peon { background: #ffffff; color: #1f2a44; border: 2px solid #f28c28; }
 .landing .l-apps .app-peon span { color: #4a5470; }
+
+/* State-driven panels must stay hidden even when their layout uses grid. */
+[hidden] { display: none !important; }

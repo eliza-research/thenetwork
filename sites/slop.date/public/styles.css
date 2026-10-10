@@ -159,3 +159,6 @@ body.landing {
   --l-pill-bg: #1d2008; --l-pill-ink: #e4f24a; --l-radius: 22px; --l-pill: 999px; --l-focus: #e4f24a;
   --l-font: Nunito, ui-rounded, system-ui, -apple-system, sans-serif; --l-display: Nunito, 'SF Pro Rounded', ui-rounded, 'Arial Rounded MT Bold', system-ui, sans-serif;
 }
+
+/* State-driven panels must stay hidden even when their layout uses grid. */
+[hidden] { display: none !important; }
