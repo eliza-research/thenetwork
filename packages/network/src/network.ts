@@ -1460,7 +1460,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const what = def ? def.text.replace(/^(find|meet|get|be part of|try|start|make|play|join|go on) /, "").replace(/^learn to /, "learning to ") : "that";
     const v = nearbyVenues(m.area, def ? def.needsInterests : req.tags, 1)[0];
     this.send(m, `${copy.requestNoneYet(what, this.invitesWork)}${v ? ` Meanwhile, ${v.name} is a good public spot for it.` : ""}`, { type: "info" }, "info");
-    if (this.canInvite(m)) m.awaiting = { kind: "growth", at: this.now() };
+    if (this.invitesWork && this.canInvite(m)) m.awaiting = { kind: "growth", at: this.now() };
   }
 
   /**
