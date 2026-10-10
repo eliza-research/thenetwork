@@ -88,9 +88,9 @@ describe("roles per app", () => {
     expect(healthAlerts({ ...base, reviewOpen: [item], sla: { app: "ntwrk", hours: 12 } }).find(a => a.key === "review_app_sla")).toBeUndefined();
   });
 
-  test("lab runs for slop and peon start no new opportunities", () => {
-    expect(labArgs({ arms: ["consent"], seeds: [1], days: 3, app: "slop" }, 1)).toContain("--max-new");
-    expect(labArgs({ arms: ["consent"], seeds: [1], days: 3, app: "friends" }, 1)).not.toContain("--max-new");
+  test("lab allows the shipped Slop pack and keeps Peon matching off", () => {
+    expect(labArgs({ arms: ["consent"], seeds: [1], days: 3, app: "peon" }, 1)).toContain("--max-new");
+    expect(labArgs({ arms: ["consent"], seeds: [1], days: 3, app: "slop" }, 1)).not.toContain("--max-new");
   });
 });
 
@@ -125,12 +125,13 @@ describe("the console for four apps (game mode)", () => {
     expect((await fetch(`${obs.url}/ws?app=ntwrk`, { headers: { authorization: `Bearer ${long("rev-slop")}`, upgrade: "websocket", connection: "upgrade", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==", "sec-websocket-version": "13" } })).status).toBe(403);
   }, T);
 
-  test("slop: members aged 13+ join and carry the minor flag, matching is off until its pack, and the banner says so", async () => {
+  test("slop: the shipped pack matches adults and keeps joined minors out", async () => {
     const slop = await (await as("adm", "/api/state?app=slop")).json() as ObsState;
     const ntwrk = await (await as("adm", "/api/state?app=ntwrk")).json() as ObsState;
-    expect(slop.env).toMatchObject({ app: "slop", matchingLocked: true });
+    expect(slop.env).toMatchObject({ app: "slop" });
+    expect(slop.env.matchingLocked).toBeUndefined();
     expect(slop.env.label).toContain("SLOP");
-    expect(slop.env.label).toContain("matching off until pack");
+    expect(slop.env.label).not.toContain("matching off until pack");
     expect(ntwrk.env.app).toBe("ntwrk");
     expect(ntwrk.env.matchingLocked).toBeUndefined();
     // AGENTS.md decision 1: 13+ may join every app; members aged 13-17 show with the minor flag and are never matched.
@@ -138,19 +139,19 @@ describe("the console for four apps (game mode)", () => {
     expect(teens.length).toBeGreaterThan(0);
     expect(teens.every(m => m.minor)).toBe(true);
 
-    // Joins and onboarding still run; no opportunity is composed.
+    // Joins and onboarding run; opportunities never include minors.
     expect((await post("adm", "/api/control?app=slop", { type: "step", ms: 2 * DAY })).status).toBe(200);
     const after = await (await as("adm", "/api/state?app=slop")).json() as ObsState;
     expect(after.members.filter(m => m.joined).length).toBeGreaterThan(0);
-    expect(after.opportunities.filter(o => o.source !== "shadow")).toHaveLength(0);
+    expect(after.opportunities.every(o => [...o.participants, ...o.alternates].every(id => !after.members.find(m => m.id === id)?.minor))).toBe(true);
     // A joined teen is never introduced, even by staff.
     const teen = after.members.find(m => m.joined && m.minor && !m.declined), adult = after.members.find(m => m.joined && !m.minor);
     expect(teen && adult).toBeTruthy();
     const pick = await post("adm", "/api/control?app=slop", { type: "propose", participants: [teen!.id, adult!.id] });
     expect([pick.status, (await pick.json()).error]).toEqual([409, expect.stringContaining("under 18")]);
-    expect(after.network?.matchingEnabled).toBe(false);
+    expect(after.network?.matchingEnabled).toBe(true);
     const on = await post("adm", "/api/control?app=slop", { type: "matching", on: true });
-    expect([on.status, (await on.json()).code]).toEqual([409, "matching_locked"]);
+    expect(on.status).toBe(200);
   }, T);
 
   test("reasons are checked per app; the audit row names the app and keeps the app's code", async () => {
@@ -170,10 +171,12 @@ describe("the console for four apps (game mode)", () => {
     expect((await as("eng", "/api/safety?app=slop")).status).toBe(403);
     const h = await (await as("rev-slop", "/api/apps/health")).json() as { apps: AppHealth[] };
     expect(h.apps.map(a => a.app)).toEqual(["slop"]);
-    expect(h.apps[0]).toMatchObject({ app: "slop", available: true, slaHours: 6, matching: "locked" });
+    expect(h.apps[0]).toMatchObject({ app: "slop", available: true, slaHours: 6, matching: "on" });
     const all = await (await as("adm", "/api/apps/health")).json() as { apps: AppHealth[] };
     expect(all.apps.map(a => a.app)).toEqual(["ntwrk", "slop", "peon", "friends"]);
     expect(all.apps.find(a => a.app === "peon")?.available).toBe(false); // its world was never opened
+    const peon = await post("adm", "/api/control?app=peon", { type: "matching", on: true });
+    expect([peon.status, (await peon.json()).code]).toEqual([409, "matching_locked"]);
   }, T);
 });
 
@@ -243,7 +246,7 @@ describe.skipIf(!pgAvailable)("real mode for four apps (Postgres)", () => {
     try {
       await ntwrk.init(); await slop.init();
       const n = ntwrk.state(), s = slop.state();
-      expect(s.env).toMatchObject({ app: "slop", appIsolation: "app_filter", matchingLocked: true });
+      expect(s.env).toMatchObject({ app: "slop", appIsolation: "app_filter", capabilities: { readOnly: true } });
       expect(s.members.map(m => m.id).sort()).toEqual(["s1", "s2"]);
       expect(n.members.some(m => m.id === "s1")).toBe(false);
       expect(n.members.length).toBe(g.state().members.length);

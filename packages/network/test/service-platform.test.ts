@@ -264,13 +264,26 @@ describe.skipIf(!pgAvailable)("the service as the platform's channel (Postgres)"
     const flags = { BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1", FRIENDS_LIVE_APPROVED: "1" };
     const sent: SendRequest[] = [];
     const provider = { kind: "blooio" as const, send: async (r: SendRequest) => { sent.push(r); return { providerMessageId: `p${sent.length}`, status: "queued" as const }; } };
-    const live = { adapter: (net: any, rt: any) => new BlooioAdapter({ net, provider, clock, memberOf: rt.memberOf, env: flags, app: rt.app.id, log: () => {} }) };
+    const live = { adapter: (net: any, rt: any) => new BlooioAdapter({ from: "+12125550100", net, provider, clock, memberOf: rt.memberOf, env: flags, app: rt.app.id, log: () => {} }) };
+    const { s: seeder } = service(clock, live);
+    await seeder.start();
+    const queue = (seeder.runtimeFor("friends")!.adapter as BlooioAdapter).queue;
+    await queue.inbound(p);
+    await queue.enqueue(sql, [
+      { id: "w-reply", memberId: m.id, to: p, kind: "reply", text: "body w-reply", city: "nyc" },
+      { id: "w-probe-old", memberId: m.id, to: p, kind: "proactive", text: "body w-probe-old", city: "nyc" },
+      { id: "w-ancient", memberId: m.id, to: p, kind: "reply", text: "body w-ancient", city: "nyc" },
+    ]);
+    for (const [id, ago] of [["w-reply", HOUR], ["w-probe-old", 30 * HOUR], ["w-ancient", 4 * DAY]] as const)
+      await sql`update platform.outbound set created_at = ${new Date(clock.now() - ago)} where id = ${id}`;
+    await seeder.close();
     for (let i = 0; i < 2; i++) {
       const { s: again } = service(clock, live);
       await again.start();
       await again.close();
     }
     expect(sent.filter(r => r.text === "body w-reply").length).toBe(1);
+    expect(sent[0]!.idempotencyKey).toBe("tn:w-reply");
     expect(sent.filter(r => r.text !== "body w-reply").length).toBe(0);
     const st = Object.fromEntries((await sql`select id, status from network.messages where id like 'w-%'`).map((r: any) => [r.id, r.status]));
     expect(st["w-probe-old"]).toBe("expired");
@@ -345,7 +358,13 @@ describe.skipIf(!pgAvailable)("the service as the platform's channel (Postgres)"
     let fail = true;
     net.onInbound = async msg => { if (fail) { fail = false; throw new Error("boom"); } return orig(msg); };
     const req = webhook(clock, p, "STOP");
-    expect((await s.fetch(req())).status).toBe(500);
+    const first = await s.fetch(req());
+    expect(first.status).toBe(200);
+    expect((await first.json()).result).toBe("retry_later");
+    expect((await sql`select status, attempts from platform.inbound where id = ${`msg:blooio:msg_${evt}`}`)[0]).toMatchObject({ status: "pending", attempts: 1 });
+    expect(await count(sql`select count(*)::int as n from platform.consent_events where e164 = ${p} and state = 'opted_out'`)).toBe(1);
+    expect(await s.inbox.drain()).toBe(1);
+    expect((await sql`select status from platform.inbound where id = ${`msg:blooio:msg_${evt}`}`)[0].status).toBe("done");
     expect((await s.fetch(req())).status).toBe(200);
     expect(await count(sql`select count(*)::int as n from platform.consent_events where e164 = ${p} and state = 'opted_out'`)).toBe(1);
     expect((await memberOf("friends", p))!.opted_out).toBe(true);
