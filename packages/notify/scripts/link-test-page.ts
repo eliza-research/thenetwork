@@ -19,7 +19,7 @@ const rows: [string, string, string][] = [
   ["A3", "ChatGPT import prompt, fill-only", `https://chatgpt.com/?prompt=${enc(importPrompt)}`],
   ["B1", "Claude update", assistantLink("claude", prompt)],
   ["B2", "Claude import prompt", `https://claude.ai/new?q=${enc(importPrompt)}`],
-  ["B3", "Claude add custom connector", `https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=${enc("The Network")}&connectorUrl=${enc("https://mcp.ntwrk.love/mcp")}`],
+  ["B3", "Claude add custom connector", `https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=${enc("The Network")}&connectorUrl=${enc("https://mcp.ntwrk.party/mcp")}`],
   ["C1", "Grok update", assistantLink("grok", prompt)],
   ["C2", "Grok import prompt", `https://grok.com/?q=${enc(importPrompt)}`],
   ["C3", "Grok on X (unverified)", `https://x.com/i/grok?text=${enc(prompt)}`],

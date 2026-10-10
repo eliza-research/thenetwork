@@ -151,7 +151,7 @@ export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host
 function publicInfo(a: McpApp, surface: Surface) {
   return {
     id: a.id, name: a.name, site: a.links.site, what: a.what,
-    powered_by: "All of these apps are powered by The Network (https://ntwrk.love).",
+    powered_by: "All of these apps are powered by The Network (https://ntwrk.party).",
     join: {
       mode: a.joinMode,
       url: `${a.links.join}?via=agent`,
