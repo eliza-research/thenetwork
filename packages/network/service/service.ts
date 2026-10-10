@@ -39,7 +39,7 @@ import { SVC_MIN_SECRET, svcVerify } from "../../core/src/svc/svc-auth.ts";
 import { readCapped } from "../../platform/src/body.ts";
 import { canJoin } from "../../core/src/policy.ts";
 import { CostLedger, costRatesFromEnv, PgCostSink } from "./cost.ts";
-import type { ChannelAdapter, Outbound } from "./channel.ts";
+import type { ChannelAdapter, DirectKind, Outbound } from "./channel.ts";
 import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { Accounts, type AccountHooks, type JoinHookContext, type MemberHookContext } from "../../platform/src/accounts.ts";
 import { joinAgeCheck } from "../../platform/src/age.ts";
@@ -320,7 +320,7 @@ export class NetworkService implements RuntimeHost {
     this.photoIntake = new PhotoIntake({
       people: this.people, accounts: this.accounts, photos: this.photos, phoneKey: e164 => this.phoneKey(e164), now: () => this.clock.now(),
       fetchMedia: o.fetchMedia ?? fetchMediaCapped, log: this.log,
-      reply: async (e164, text, key) => { const rt = this.runtimeFor("slop"); if (rt) await this.direct(rt, e164, text, key); },
+      reply: async (e164, text, key) => { const rt = this.runtimeFor("slop"); if (rt) await this.direct(rt, e164, text, key, "reply"); },
     });
     this.audit = o.audit ?? new PgAudit(o.auditUrl ?? o.url);
     this.inbox = new Inbox({ sql: this.sql, clock: this.clock, log: this.log, senderKey: sender => this.phoneKey(sender), handle: (ev, app) => this.inbound(ev, app && isAppId(app) ? { app } : {}) });
@@ -819,7 +819,7 @@ export class NetworkService implements RuntimeHost {
     // answered or stored until staff decide (STOP above always works; HELP still answers).
     if (e164 && (await this.accounts.seen(e164)) === "held") {
       this.log(`[inbound] a number on hold for review (${rt.id}): not handled`);
-      if (kw === "help") await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`);
+      if (kw === "help") await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`, "compliance");
       return "held";
     }
 
@@ -845,7 +845,7 @@ export class NetworkService implements RuntimeHost {
         if (person) await this.accounts.leave(leaving, { e164, personId: person.id });
         else { await this.accounts.recordConsent({ e164, app: leaving.id, line, state: "opted_out", source: "leave", ref: rowId, at: this.consentAt(ev) }); await this.forget(leaving, lid); }
         if (turn) { turn.app = leaving.id; turn.memberId = lid; turn.consent = {state: "opted_out", scope: "app", app: leaving.id, at: t}; }
-        await this.direct(lrt, ev.from, this.copyOf(leaving).leftApp, `sys:${rowId}`);
+        await this.direct(lrt, ev.from, this.copyOf(leaving).leftApp, `sys:${rowId}`, "compliance");
         return "left";
       }
     }
@@ -877,7 +877,7 @@ export class NetworkService implements RuntimeHost {
 
     // Not a member of this app. Nothing is stored about them unless they join (age check passed).
     if (!e164) { this.log(`[inbound] unknown sender (not a phone), ${ev.text.length} chars, not stored`); return "unknown_sender"; }
-    if (kw === "help") { await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`); return "handled"; }
+    if (kw === "help") { await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`, "compliance"); return "handled"; }
     // One text join per phone at a time (the same lock as a web join). In a signed turn, a person who is not a
     // member of any app first gets the one-time Eliza notice, then the normal join flow.
     return this.people.withLock(`join:${e164}`, async () => {
@@ -1018,7 +1018,7 @@ export class NetworkService implements RuntimeHost {
     if (e164) await this.people.deletePending(this.phoneKey(e164));
     if (memberId && ev) await this.memberMessage(rt, memberId, ev, ref, kw, reply);
     else if (memberId) await rt.unitOfWork(async n => { await n.onInbound({ id: ref, memberId, body: "STOP", ts: t, channel: "imessage", keyword: "STOP" }); rt.unit.optOut.set(memberId, true); });
-    else if (reply) await this.direct(rt, from, reply, `sys:${ref}`);
+    else if (reply) await this.direct(rt, from, reply, `sys:${ref}`, "compliance");
     const person = e164 ? await this.accounts.personFor(e164) : undefined;
     if (person) await this.stopped(app, person.id, scope, memberId ? { rt, memberId } : undefined);
     else if (scope === "global") {
@@ -1049,14 +1049,18 @@ export class NetworkService implements RuntimeHost {
     return this.inboundTurn() && ev && Number.isSafeInteger(ev.receivedAt) && ev.receivedAt > 0 ? Math.min(ev.receivedAt, now) : now;
   }
 
-  /** One fixed text to someone who is not a member here. Nothing is stored. */
-  private async direct(rt: NetworkRuntime, to: string, body: string, id: string) {
+  /**
+   * One fixed text to someone who is not a member here. Nothing is stored. `kind`: "compliance" only for
+   * a keyword or leave confirmation and the under-age decline; "reply" for an answer to their own message; "transactional" for a
+   * text the Network starts (README "Direct texts" lists every caller).
+   */
+  private async direct(rt: NetworkRuntime, to: string, body: string, id: string, kind: DirectKind) {
     const turn = this.inboundTurn();
     if (turn && normalizeAddress(to) === normalizeAddress(turn.from)) {
-      await this.sql.begin(tx => this.inbox.collect(tx, [{id, body, kind: "compliance"}]));
+      await this.sql.begin(tx => this.inbox.collect(tx, [{id, body, kind: kind === "compliance" ? "compliance" : "reply"}]));
       return;
     }
-    await rt.adapter.direct(to, body, id);
+    await rt.adapter.direct(to, body, id, kind);
   }
 
   /**
@@ -1079,7 +1083,7 @@ export class NetworkService implements RuntimeHost {
     if (app.joinMode === "invite" && !invited && !(route.shared && app.id === "ntwrk")) {
       // The same answer whether or not the number uses another app; at most once a day per number.
       const { count } = await this.people.hit(`invite_only:${app.id}:${key}`, DAY, t);
-      if (count === 1) await this.direct(rt, ev.from, app.brand.inviteOnly, `sys:${rowId}`);
+      if (count === 1) await this.direct(rt, ev.from, app.brand.inviteOnly, `sys:${rowId}`, "reply");
       this.log(`[inbound] not a member of invite-only ${app.id}: ${count === 1 ? "invite-only reply" : "no reply (sent today)"}, not stored`);
       return "invite_only";
     }
@@ -1091,7 +1095,7 @@ export class NetworkService implements RuntimeHost {
     if (age === undefined) {
       await this.people.putPending({ phoneHash: key, kind: "join", app: app.id, name: name ?? null, age: null, at: t });
       const { count } = await this.people.hit(`join_ask:${app.id}:${key}`, DAY, t);
-      if (count <= 3) await this.direct(rt, ev.from, ask, `sys:${rowId}`);
+      if (count <= 3) await this.direct(rt, ev.from, ask, `sys:${rowId}`, "reply");
       return "join_asked";
     }
     const check = joinAgeCheck(age, await this.accounts.lowestAge(e164, person), app);
@@ -1100,13 +1104,13 @@ export class NetworkService implements RuntimeHost {
       // so a second try with an older age is refused too.
       await this.accounts.recordAge(e164, person, age);
       await this.people.deletePending(key, "join");
-      await this.direct(rt, ev.from, app.brand.underAge, `sys:${rowId}`);
+      await this.direct(rt, ev.from, app.brand.underAge, `sys:${rowId}`, "compliance");
       this.log(`[inbound] under the join age for ${app.id}: declined, nothing stored`);
       return "under_age";
     }
     if (!name) {
       await this.people.putPending({ phoneHash: key, kind: "join", app: app.id, name: null, age, at: t });
-      await this.direct(rt, ev.from, c.joinNeedName, `sys:${rowId}`);
+      await this.direct(rt, ev.from, c.joinNeedName, `sys:${rowId}`, "reply");
       return "join_asked";
     }
     await this.people.deletePending(key, "join");
@@ -1232,7 +1236,7 @@ export class NetworkService implements RuntimeHost {
     await this.audit.write({ actor: user.id, roles: user.roles, action: "invite", targetType: target.type, targetId: target.id, mode: "real", app: rt.app.id, at: this.clock.now(), ok: true, detail: { network: rt.id, phase: "requested" } });
     const m = await this.accounts.invite(rt.app, e164);
     const r: ActionResult = !m ? { ok: false, reason: "not_invitable" } : m.state !== "invited" ? { ok: false, reason: "already_member" } : { ok: true };
-    if (r.ok) await this.direct(rt, e164, this.copyOf(rt.app).invited(rt.app.minJoinAge), `invite:${rt.app.id}:${key.slice(0, 16)}:${this.clock.now()}`);
+    if (r.ok) await this.direct(rt, e164, this.copyOf(rt.app).invited(rt.app.minJoinAge), `invite:${rt.app.id}:${key.slice(0, 16)}:${this.clock.now()}`, "transactional");
     await this.audit.write({ actor: user.id, roles: user.roles, action: "invite", targetType: target.type, targetId: target.id, mode: "real", app: rt.app.id, at: this.clock.now(), ok: r.ok, detail: { network: rt.id, phase: "result", ...(r.ok ? {} : { reason: r.reason }) } })
       .catch(e => this.log(`[audit] result row failed: ${(e as Error).message}`));
     return r;

@@ -167,6 +167,55 @@ Send `Authorization: Bearer <token>`. Tokens are per app: `reviewer@slop:<t>` is
 
 A refused action answers 409 with the Network's reason (for example `participant_minor`, `matching_paused`, `not_in_review`). A new stored state starts with matching off (runbook-real 7.4 check 8). An admin turns it on.
 
+## The outbound queue
+
+The Blooio and Cloud adapters deliver through the persisted queue in `packages/blooio/src/outbound-queue.ts` (`platform.outbound`). Its file header lists every check at send time. This section covers the parts the service decides.
+
+### Kinds
+
+A row's kind decides which checks it skips. Only `compliance` skips the opt-out, the recipient check, quiet hours and the caps. `reply` skips quiet hours, but it must answer a message the person sent in the last hour. `transactional` and `proactive` get every check.
+
+### Direct texts
+
+`NetworkService.direct()` sends one fixed text to a person who is not a member here, or before the member exists. Each caller passes its own kind:
+
+| Caller | Text | Kind |
+|---|---|---|
+| `inbound`, a number on hold | HELP answer | `compliance` |
+| `inbound`, "leave <app>" | the leave confirmation | `compliance` |
+| `inbound`, not a member | HELP answer | `compliance` |
+| `stop`, not a member | the STOP or STOP ALL confirmation | `compliance` |
+| `join`, invite-only app | the invite-only answer | `reply` |
+| `join`, no age yet | the join question (name and age) | `reply` |
+| `join`, under the join age | the under-age decline (a refusal of service that must reach the person; the Cloud contract reports it as `compliance`) | `compliance` |
+| `join`, no name yet | the name question | `reply` |
+| `PhotoIntake` (`photoIntake.ts`) | the photo consent question and photo answers | `reply` |
+| `invite` (staff) | the invitation | `transactional` |
+
+A direct text in a signed turn goes back to Cloud as a collected reply, with kind `compliance` or `reply`. A direct text with no member on the row, to an address that is not a member of the app, skips the member policy (`blooioRecipientPolicy`), because there is no member to check. It still gets the consent ledger, bans, suppression, quiet hours, caps and the leak guard. The consent check (`NetworkRuntime.optedOut`) reads `platform.consent_events` by address for these rows too. A person who sent STOP therefore gets no join question until they opt in again. A text join message with both their name and age opts them in (the join records a new consent event), and so does a web join.
+
+### STOP and the inbox
+
+A STOP, STOP ALL, "leave <app>", START or HELP that waits in the inbox is handled ahead of the sender's earlier rows (`inbox.ts`). An earlier row that keeps failing therefore never holds back a consent change or its confirmation. A handled STOP or STOP ALL ends the sender's ordinary rows that came before it, with outcome `cancelled_by_stop`. The Network never acts on them after the STOP; a join answer handled late would opt the person back in. Messages that come after the STOP are handled as usual. Signed turns already let these keywords through, and "leave <app>" now counts too. Integration case: `packages/network/test/inbox-order.integration.test.ts`.
+
+### The consent ledger at dispatch
+
+The queue keeps no STOP ledger of its own. Every row except a compliance text reads consent from Postgres at dispatch: `platform.consent_events`, bans and suppression (`NetworkService.consentRefused`), and `network.members.opted_out`. The member check runs again inside the claim transaction. So a STOP that comes in while a row waits wins on every replica. Persisting a separate ledger in the queue's tables was the other option. It was not taken because it would be a second copy of `platform.consent_events`, and the two could disagree after a STOP through the web or the gateway. A row that waits is not cancelled at STOP; dispatch ends it as `refused_opted_out`.
+
+### More than one replica
+
+Every replica may drain the queue. There are three guards, and the provider key stays `tn:<row id>` on every attempt:
+
+1. One drain at a time per line, across processes, through a Postgres advisory lock (`blooio-line:<line>`). Receipt lookups for rows in `unknown_acceptance` run before the lock, so canonical erasure never waits on remote I/O. Their commit is conditional on the row's status, so a receipt is committed once.
+2. A conditional claim before the provider call. The update to `sending` happens only if the row still has the status the drain read and no lease, and it sets a lease (`leaseMs`, 5 minutes). A worker whose claim fails leaves the row to the worker that claimed it and does not end it.
+3. `recover()` hands a `sending` row whose lease ran out back to the queue. The worker stopped. With a receipt lookup the row goes to `unknown_acceptance` and is never sent again. Without one it is sent again with the same key, so the provider replays the first result.
+
+Integration case: `packages/blooio/test/outbound-queue.test.ts` runs two workers with their own pools on one database, and each row reaches the provider once.
+
+### The leak guard and the thread
+
+Before a send, the leak guard checks the new text. It also checks the new text together with the texts sent to the same address on the line in the last 24 hours (up to 4 of them; `LeakGuard.checkThread`, core-14). This catches another member's value split across messages. The generic contact patterns run on the new text alone, because two ordinary messages joined can look like a phone number. A thread hit holds the row as `parked_leak_review` with labels prefixed `thread:`. A compliance text is checked on its own text only. Labels are keyed with `LEAK_LABEL_KEY` in staging and production (core-6). `deploy/backend` `loadConfig` refuses to start without it, and `server.ts` calls `setLeakLabelKey`. Dev and the simulations stay unkeyed, so their labels are reproducible.
+
 ## The boundary with `packages/plugin-network`
 
 Two parts of the product talk to members. They have different jobs.

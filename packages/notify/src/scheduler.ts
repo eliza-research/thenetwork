@@ -7,7 +7,7 @@
 //    Messages made only of requested items do not count.
 //  - Nothing is planned during the member's quiet hours. The outbound queue enforces them again.
 //  - Just before enqueueing, items are re-read: anything seen on another surface is dropped, and a
-//    send with nothing left is cancelled. `stillNeeded` lets the outbound queue's recipientPolicy
+//    send with nothing left is cancelled. `stillNeeded` lets the outbound queue's recipient check
 //    cancel a message that waited in the queue and was seen elsewhere meanwhile.
 //  - Surface signals learn from outcomes: a redeemed token or a thread reply is "acted"; a delivery
 //    with neither after OUTCOME_WINDOW_MS is "ignored" (`sweep`).
@@ -34,7 +34,7 @@ export interface RecipientDirectory {
   get(personId: string): Recipient | undefined | Promise<Recipient | undefined>;
 }
 
-/** Structurally compatible with packages/blooio OutboundQueue.enqueue (through queueSink). */
+/** The Notifier's sink: packages/blooio OutboundQueue through queueSink, or the service's unit of work. */
 export interface OutboundSink {
   enqueue(input: {
     idempotencyKey: string; channel: Channel; to: string; text: string;
@@ -203,7 +203,7 @@ export class Notifier {
   }
 
   /**
-   * For the outbound queue's recipientPolicy (briefId = deliveryId): false once every item in the
+   * For the outbound queue's recipient check (the row id is the deliveryId): false once every item in the
    * delivery was seen on some surface, so a message still waiting is not sent.
    */
   async stillNeeded(deliveryId: string): Promise<boolean> {

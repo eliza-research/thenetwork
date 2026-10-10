@@ -25,9 +25,12 @@ const { NetworkService, webhookSecretsFromEnv } = await import("../../packages/n
 const { createServiceMcp } = await import("../../packages/network/service/serve.ts");
 const { createOps, PgAlertStore, runtimeProbe } = await import("./ops.ts");
 const { photoRaterFromEnv } = await import("../../packages/platform/src/photos.ts");
+const { setLeakLabelKey } = await import("../../packages/core/src/guard.ts");
 
 async function main() {
   const c = loadConfig(process.env, process.argv);
+  // Keyed leak labels in staging and production (core-6); loadConfig refused to start without the key.
+  if (c.leakLabelKey) setLeakLabelKey(c.leakLabelKey);
   log.info("starting", { env: c.env, build: c.build, host: c.host, port: c.port, staffPort: c.staff?.port ?? null, channel: c.channel, migrateOnBoot: c.migrateOnBoot });
   for (const w of c.warnings) log.warn(w);
 

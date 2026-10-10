@@ -61,6 +61,8 @@ export interface BackendConfig {
   tickLateMs: number;
   /** Monitoring, alerts and budgets (ops.ts; docs/deploy.md section 7). */
   ops: OpsConfig;
+  /** Staging and production: the key for the leak guard's labels (LEAK_LABEL_KEY, 32+ bytes). server.ts passes it to setLeakLabelKey. Dev: undefined. */
+  leakLabelKey?: string;
   warnings: string[];
 }
 
@@ -90,6 +92,9 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   if (missing.length) throw new Error(`PLATFORM_ENV=${env} needs ${missing.join(", ")}`);
   if (proxySecret && proxySecret.length < SECRET_MIN) throw new Error(`PLATFORM_PROXY_SECRET must be at least ${SECRET_MIN} characters`);
   if (deployed && e.PLATFORM_HASH_KEY!.length < SECRET_MIN) throw new Error(`PLATFORM_HASH_KEY must be at least ${SECRET_MIN} characters`);
+  // The leak guard's log labels are keyed in staging and production (core-6); dev and sims stay unkeyed and reproducible.
+  const leakLabelKey = deployed ? e.LEAK_LABEL_KEY : undefined;
+  if (deployed && (!leakLabelKey || new TextEncoder().encode(leakLabelKey).length < SECRET_MIN)) throw new Error(`PLATFORM_ENV=${env} needs LEAK_LABEL_KEY of at least ${SECRET_MIN} bytes`);
 
   const warnings: string[] = [];
   const num = (name: string, v: string | undefined, dflt: number) => {
@@ -144,6 +149,7 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
     tickMs,
     tickLateMs: Number(e.TICK_LATE_MS ?? Math.max(15 * 60_000, 3 * tickMs)),
     ops,
+    ...(leakLabelKey ? { leakLabelKey } : {}),
     warnings,
   };
 }
