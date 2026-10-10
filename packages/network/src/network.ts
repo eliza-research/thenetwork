@@ -719,6 +719,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (this.trust.level(m.id) === "hold") { if (c.abuse.length) this.trust.add(m.id, now, c.abuse[0]!, 0); return; }
     // "He asked me to venmo him $50": what someone else did, never the sender's abuse (ids and kinds only).
     if (c.disclosure?.length) this.ctx.log("abuse_disclosed", { memberId: m.id, kinds: c.disclosure });
+    // Inside a mutual match, "can I get her number?" asks for a number swap (the relay: Eliza's RELAY
+    // contact_share, then both must say yes), never the sender's abuse: it goes to the agent unscored.
+    if (c.abuse.length && this.swapAsk(m, c, body)) return "open" as const;
     if (c.abuse.length && !this.handleAbuse(m, c, body)) return;
 
     // peon (#9): a job post by text, read back and saved only on the manager's yes (rules only, never an open-turn LLM output).
@@ -1109,6 +1112,38 @@ export class ConsentNetwork implements NetworkUnderTest {
     if ((c.kind === "people_request" || c.kind === "plans_request") && this.trust.ok(m.id)) { this.ack(m, reply); return true; }
     this.send(m, reply, { type: "info" }, "reply");
     return false;
+  }
+
+  /**
+   * A number asked for, inside a mutual match, about the match: "can I get her number?", "what's Sam's
+   * number" (Sam being the match). Only when contact extraction is the only abuse, the member has one
+   * open relay match (relay.ts matchFor: both said yes, accepted, not closed, within its window) and
+   * every "<whose> number" in the text names that person or is a pronoun. A pronoun is taken whoever it
+   * refers to: that is safe only because the agent can share with the match alone and the relay engine
+   * needs both members to ask. What is left once those asks are removed must name no other contact
+   * detail ("and everyone's numbers", "and Cy's address"): then the whole text stays contact extraction.
+   * Minors never get here with a match: dropMember closes a minor's opportunities, and the relay treats
+   * an unsure age as undefined and refuses any share.
+   */
+  private swapAsk(m: MemberState, c: Classified, body: string): boolean {
+    if (c.abuse.length !== 1 || c.abuse[0] !== "contact_extraction") return false;
+    const match = this.relayDesk.matchFor(m.id);
+    const other = match?.participants.length === 2 ? this.members.get(match.participants.find(p => p !== m.id)!) : undefined;
+    if (!other) return false;
+    const t = body.normalize("NFKC").replace(/[\u2018\u2019]/g, "'");
+    const NUM = String.raw`(?:(?:phone|cell)\s+)?(?:number|phone|cell)\b`;
+    const first = other.first.toLowerCase();
+    let asks = 0, elsewhere = false;
+    const rest = t.replace(new RegExp(String.raw`\b(his|her|their|them|[\p{L}]+'s)\s+` + NUM, "giu"), (all: string, w: string) => {
+      const whose = w.toLowerCase().replace(/'s$/, "");
+      if (["his", "her", "their", "them"].includes(whose) || whose === first) { asks++; return " "; }
+      elsewhere = true; return all;
+    });
+    if (!asks || elsewhere) return false;
+    if (/\b(numbers?|phones?|cells?|address(es)?|emails?|instagram|ig|insta|socials|snap(chat)?|handles?|contacts?|last names?)\b/i.test(rest)) return false;
+    if (classify(rest).abuse.includes("contact_extraction")) return false;
+    this.ctx.log("relay_swap_ask", { memberId: m.id, matchId: match!.id });
+    return true;
   }
 
   private onTrustChange(id: MemberId, from: TrustLevel, to: TrustLevel, why: string) {
