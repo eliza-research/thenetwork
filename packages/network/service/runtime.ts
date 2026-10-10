@@ -38,6 +38,8 @@ import { outputLeaks } from "../../mcp/src/leaks.ts";
 // The Observatory's event shape and run summaries, so the console reads what this writes.
 import { eventOf, membersOf, type EventRow } from "../../observatory/src/events.ts";
 
+import { parseRelayRequest, relayItemFromRequest, relayItem, relayGuard, type RelayContext, type RelayRecord } from "../../engine/src/relay.ts";
+import type { QueueRow } from "../../blooio/src/outbound-queue.ts";
 import { NOT_SENT } from "../../blooio/src/outbound-queue.ts";
 import { summarizeRun } from "../../observatory/src/engineCapture.ts";
 
@@ -54,6 +56,7 @@ export interface Unit {
   optOut: Map<MemberId, boolean>;
   forget: Set<MemberId>;
   collected: Set<string>;
+  completeAction?: (tx: SQL) => Promise<void>;
 }
 const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set() });
 
@@ -63,7 +66,7 @@ export interface RuntimeHost {
   clock: Clock;
   instance: string;
   log: (line: string) => void;
-  accounts?: Pick<Accounts, "activeMembership" | "lowestAge" | "phoneHash">;
+  accounts?: Pick<Accounts, "activeMembership" | "lowestAge" | "phoneHash" | "byPhoneHash">;
   inboundTurn?(): InboundTurn | undefined;
   collectReplies?(tx: SQL, replies: CollectedReply[]): Promise<void>;
   /** Proactive sends of this batch the person-level daily cap refuses (ids). Called before delivery. */
@@ -396,6 +399,7 @@ export class NetworkRuntime {
       const refused = await this.adapter.enqueue(tx, queued, u.forget);
       for (const [id, status] of refused) await tx`update network.messages set status = ${status} where app_id = ${app} and id = ${id} and direction = 'outbound'`;
     }
+    await u.completeAction?.(tx);
   }
 
   /**
@@ -526,6 +530,66 @@ export class NetworkRuntime {
       this.unit = newUnit();
       return fn(this.net);
     });
+  }
+
+  /** One canonical pair/thread projection for classification and final relay dispatch admission. */
+  async relayContext(tx: SQL, turnId: string, memberId: string, itemId: string | null): Promise<{context:RelayContext; source:string; contact:string; turn:Row} | null> {
+    const accounts=this.host.accounts;
+    if(!accounts) return null;
+    const [turn]=await tx`select status,response,sender_hash,received_at,action_receipts from platform.inbound where id=${turnId}`;
+    if(!turn || turn.status!=="done" || turn.response?.outcome!=="open" || turn.response.app!==this.app.id || turn.response.memberId!==memberId) return null;
+    const who=await accounts.byPhoneHash(turn.sender_hash);
+    if(!who || (await accounts.activeMembership(this.app,{e164:who.e164,personId:who.person.id}))?.membership.memberId!==memberId) return null;
+    const [source]=await tx`select body from network.messages where app_id=${this.app.id} and id=${turnId.replace(/^msg:/,"in:")} and member_id=${memberId} and direction='inbound'`;
+    const [saved]=await tx`select state from network.network_state where id=${this.pg.id} for share`;
+    if(!source || !saved?.state) return null;
+    const state=(typeof saved.state==="string"?JSON.parse(saved.state):saved.state) as NetworkState;
+    const pair=state.opps.filter(op=>op.stage==="scheduled" && op.participants.length===2 && op.participants.includes(memberId)
+      && op.participants.every(id=>op.status.some(([member,status])=>member===id&&status==="yes")) && (itemId===null||op.id===itemId))
+      .sort((a,b)=>b.createdAt-a.createdAt||a.id.localeCompare(b.id))[0];
+    if(!pair) return null;
+    const other=pair.participants.find(id=>id!==memberId)!;
+    await tx`select person.id from platform.people person join network.members member on member.person_id=person.id
+      where member.app_id=${this.app.id} and member.id in ${tx([memberId,other])} order by person.id for update of person`;
+    const members=await tx`select member.id,member.account_status,member.opted_out,member.participation_state,member.participation_window,phone.e164
+      from network.members member left join platform.phone_identities phone on phone.person_id=member.person_id
+      where member.app_id=${this.app.id} and member.id in ${tx([memberId,other])} order by member.id for update of member`;
+    const sender=members.find((member:Row)=>member.id===memberId),recipient=members.find((member:Row)=>member.id===other);
+    if(!sender || !recipient || sender.e164!==who.e164 || typeof recipient.e164!=="string") return null;
+    const recipientBinding=await accounts.activeMembership(this.app,{e164:recipient.e164,personId:null});
+    const snapshot=await loadSnapshot(tx,this.clock.now(),{app:this.app.id,city:this.city});
+    const historyRows=await tx`select event.payload,outbound.status,outbound.history_recorded,outbound.provider_message_ids,message.body,original.body as source
+      from network.events event left join platform.outbound outbound on outbound.id=event.payload->>'itemId' and outbound.app_id=event.app_id
+      left join network.messages message on message.id=outbound.id and message.app_id=event.app_id
+      left join network.messages original on original.id=regexp_replace(event.payload->>'turnId','^msg:','in:') and original.app_id=event.app_id
+      where event.app_id=${this.app.id} and event.type='relay_decision' and event.payload->>'opportunityId'=${pair.id} order by event.at,event.id`;
+    const confirmed=(row:Row)=>['accepted','sent','delivered','read'].includes(row.status as string)&&row.history_recorded===true&&Array.isArray(row.provider_message_ids)&&row.provider_message_ids.length>0;
+    const history=historyRows.map((row:Row)=>({...row.payload as RelayRecord,contactShared:(row.payload as RelayRecord).kind==='contact_share'&&confirmed(row)}));
+    const delivered=historyRows.filter(confirmed).slice(-20);
+    const recentTexts=delivered.filter((row:Row)=>(row.payload as RelayRecord).from===memberId&&typeof row.source==='string').flatMap((row:Row)=>{const request=parseRelayRequest(row.source as string);return request.kind==='text'?[request.body]:[];});
+    const privateFacts=snapshot.facets.filter(f=>f.scope==='agent_private').map(f=>({text:f.value,owner:f.memberId}));
+    return {source:source.body,contact:who.e164,turn,context:{now:this.clock.now(),opportunity:{id:pair.id,app:this.app.id,participants:[memberId,other],acceptedBy:[memberId,other],status:'mutual'},
+      sender:{id:memberId,firstName:turn.response.context.firstName??'',age:await accounts.lowestAge(who.e164,who.person),optedOut:sender.opted_out||effectiveParticipation(sender,this.clock.now()).state==='paused',held:sender.account_status!=='active'},
+      recipient:{id:other,firstName:snapshot.members.find(m=>m.id===other)?.name.split(/\s+/)[0]??'',age:recipientBinding?await accounts.lowestAge(recipient.e164,recipientBinding.person):undefined,
+        optedOut:!recipientBinding||recipient.opted_out||effectiveParticipation(recipient,this.clock.now()).state==='paused',held:recipient.account_status!=='active'},
+      blocked:snapshot.edges.some(edge=>edge.type==='blocked'&&((edge.from===memberId&&edge.to===other)||(edge.from===other&&edge.to===memberId))),
+      history,recentTexts,thread:delivered.map((row:Row)=>row.body as string),guard:relayGuard({facts:privateFacts,forbidden:privateFacts})}};
+  }
+
+  /** The event/action receipt attests provenance; only the sender's exact verified contact may be allowed. */
+  async relayPolicy(tx:SQL,row:QueueRow):Promise<{ok:true;allow?:string[]}|{ok:false;reason:string}> {
+    const [event]=await tx`select actor_id,object_id,payload from network.events where app_id=${this.app.id} and type='relay_decision' and payload->>'itemId'=${row.id}`;
+    if(!event || event.object_id!==row.memberId || event.payload.decision!=='pass') return {ok:false,reason:"relay_unavailable"};
+    const projection=await this.relayContext(tx,event.payload.turnId,event.actor_id,event.payload.opportunityId);
+    // A null-target turn attests the chosen pair in its own immutable receipt, not an offered model item.
+    if(!projection) return {ok:false,reason:"relay_unavailable"};
+    const receipt=(projection.turn.action_receipts as Record<string,{state:string;outboundId?:string}>)[event.payload.actionKey];
+    if(receipt?.state!=='completed'||receipt.outboundId!==row.id||projection.context.recipient.id!==row.memberId) return {ok:false,reason:"relay_unavailable"};
+    const request=parseRelayRequest(projection.source),item=relayItemFromRequest(request,{id:row.id,from:event.actor_id,to:row.memberId!,at:this.clock.now(),contact:{kind:'phone',value:projection.contact}});
+    if(!item) return {ok:false,reason:"relay_unavailable"};
+    if(item.consent) item.consent.at=new Date(projection.turn.received_at as string).getTime();
+    const result=relayItem(item,projection.context);
+    return result.decision==='pass'&&result.rendered===row.text ? {ok:true,...(item.kind==='contact_share'?{allow:[projection.contact]}:{})}:{ok:false,reason:"relay_unavailable"};
   }
 
   /** Model-visible projection from the canonical snapshot, reauthorized inside its read lock. */

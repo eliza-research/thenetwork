@@ -172,7 +172,14 @@ export class BlooioAdapter implements ChannelAdapter {
       stale: row => !!row.oppId && CLOSED_STAGES.has(rt.net.opps.get(row.oppId)?.stage ?? ""),
       optedOut: row => rt.optedOut(row.id, row.memberId as MemberId | undefined, row.to),
       recipient: (row, agentInitiated) => policy(row.to, { kind: row.kind, ...(row.oppId ? { briefId: row.oppId } : {}), agentInitiated }),
-      leaks: row => leaks(row.to),
+      leaks: async row => {
+        const sources=leaks(row.to);
+        if(row.kind!=="relay") return sources;
+        const admission=await rt.scoped(tx=>rt.relayPolicy(tx,row));
+        if(!admission.ok) throw new Error("Relay provenance unavailable");
+        return {...sources,...(admission.allow?{allow:admission.allow}:{})};
+      },
+      relay: (row,tx)=>rt.relayPolicy(tx,row),
       capTake: row => rt.capTake(row.id, row.memberId as MemberId),
       capRelease: row => rt.capRelease(row.id),
     };

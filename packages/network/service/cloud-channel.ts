@@ -18,7 +18,7 @@ export class CloudChannelAdapter extends BlooioAdapter {
       if (!scope || scope.app!==options.app || !NETWORK_APP_IDS.includes(scope.app as NetworkAppId) || normalizePhone(request.to)!==request.to || request.mediaUrls?.length)
         throw new ChannelSendError("Cloud delivery needs a canonical text and persisted queue scope","invalid");
       const payload:DeliverRequest={id:scope.id,to:request.to,text:request.text,app:options.app,memberId:scope.memberId,channel:"blooio",
-        kind:scope.kind==="reply" || scope.kind==="compliance" ? "reply" : "proactive"};
+        kind:scope.kind==="relay" ? "relay" : scope.kind==="reply" || scope.kind==="compliance" ? "reply" : "proactive"};
       const path=receiptOnly?`${DELIVER_PATH}/receipt`:DELIVER_PATH,body=JSON.stringify(payload);
       let response:Response,value:unknown;
       try {
