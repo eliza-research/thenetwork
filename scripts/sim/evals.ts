@@ -8,6 +8,9 @@
 import { classifyYesNo, findLeaks, parseOptOut, parseReply, type ReplyAnswer } from "../../packages/core/src/index.ts";
 import { classify, extractProfile, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
 import { detectKeyword, leaveTarget, optOutPhrase } from "../../packages/platform/src/consent.ts";
+import { createPublicApi } from "../../packages/platform/src/api.ts";
+import { APPS, type AppId } from "../../packages/platform/src/apps.ts";
+import { MemoryPeopleStore } from "../../packages/platform/src/store.ts";
 import { outputLeaks } from "../../packages/mcp/src/leaks.ts";
 import { Block, expect } from "./gate.ts";
 
@@ -16,6 +19,38 @@ const jsonl = async <T>(name: string): Promise<T[]> => (await Bun.file(`${ROOT}/
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 
 export async function evalsBlock(b: Block): Promise<void> {
+  await b.run("Settings consent: paused is not STOP; global STOP and newer app START project independently", async () => {
+    let at = Date.parse("2026-10-09T12:00:00Z");
+    const e164 = "+12125550301", store = new MemoryPeopleStore();
+    const person = await store.createPerson({id: "consent-projection-person", e164, method: "inbound_message", at, lowestAge: 25});
+    const api = createPublicApi({store, env: {PLATFORM_ENV: "dev"}, now: () => at,
+      otp: {name: "unused", send: async () => {throw new Error("Consent projection must not send OTP");}}});
+    const cookies = new Map<AppId, string>();
+    for (const app of ["slop", "friends"] as const) {
+      await store.putMembership({app, personId: person.id, memberId: `${app}_consent`, state: "paused", review: null, firstName: "Consent Fixture", profile: {}, joinedAt: at, leftAt: null});
+      await api.accounts.recordConsent({e164, app, state: "opted_in", source: "simulation", at});
+      const {token} = await api.sessions.create(app, e164, person.id);
+      cookies.set(app, `sid_${app}=${token}`);
+    }
+    const request = async (app: "slop" | "friends", path = "/api/me", body?: object) => {
+      const response = (await api.fetch(new Request(`https://${APPS[app].domain}${path}`, {
+        method: body ? "POST" : "GET", headers: {host: APPS[app].domain, origin: `https://${APPS[app].domain}`, cookie: cookies.get(app)!, "content-type": "application/json"},
+        ...(body ? {body: JSON.stringify(body)} : {}),
+      })))!;
+      expect(response.status).toBe(200);
+      return await response.json() as {smsOptedIn: boolean; membership: {state: string}};
+    };
+    const paused = await request("slop");
+    expect(paused.membership.state).toBe("paused"); expect(paused.smsOptedIn).toBe(true);
+    at++;
+    await request("slop", "/api/me/stop", {});
+    expect((await request("slop")).smsOptedIn).toBe(false);
+    expect((await request("friends")).smsOptedIn).toBe(false);
+    at++;
+    await api.accounts.recordConsent({e164, app: "friends", state: "opted_in", source: "simulation-app-START", at});
+    expect((await request("friends")).smsOptedIn).toBe(true);
+    expect((await request("slop")).smsOptedIn).toBe(false);
+  });
   // ---- the Network's parser gates (accuracy >= 97%, refusals read as yes = 0) -------------------
   const OPTIONS = [{ key: "a", start: 1, end: 2, label: "Thursday 7pm" }, { key: "b", start: 3, end: 4, label: "Saturday 11am" }, { key: "c", start: 5, end: 6, label: "Sunday 2pm" }];
   for (const file of ["consent-replies.jsonl", "consent-heldout.jsonl"]) {

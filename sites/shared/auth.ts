@@ -15,6 +15,45 @@ export function maskPhone(e164: string): string {
 }
 
 export function mountAuth(root: HTMLElement, onSignedIn: () => Promise<void> | void): void {
+  const form = root.querySelector<HTMLFormElement>('form[data-form="phone"]');
+  if (!form) return;
+  // The static form defaults to GET; block native submission before any await.
+  form.addEventListener("submit", event => event.preventDefault());
+  const submit = form.querySelector<HTMLButtonElement>("button[type=submit], button:not([type])");
+  const busyLabel = submit?.dataset.busy;
+  if (submit) submit.dataset.busy = "Loading sign-in…";
+  void busy(form, () => api.authMode()).then(mode => {
+    if (submit) {
+      if (busyLabel === undefined) delete submit.dataset.busy;
+      else submit.dataset.busy = busyLabel;
+    }
+    if (!mode.ok) {
+      // Older, unconfigured backends keep the existing phone-code flow.
+      if (mode.status === 404) mountOtpAuth(root, onSignedIn);
+      else setError(root, "Sign-in is unavailable. Try again.");
+      return;
+    }
+    if (mode.data.mode !== "cloud") { mountOtpAuth(root, onSignedIn); return; }
+    const explanation = form.parentElement?.querySelector(":scope > p");
+    explanation?.remove();
+    const error = form.querySelector<HTMLElement>("[data-error]");
+    const button = document.createElement("button");
+    button.type = "submit";
+    button.className = "btn";
+    button.dataset.busy = "Opening…";
+    button.textContent = "Continue with your phone";
+    form.replaceChildren(button);
+    if (error) form.append(error);
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      const result = await busy(form, () => api.cloudAuthStart(location.pathname));
+      if (!result.ok) { setError(form, "Sign-in is unavailable. Try again."); return; }
+      location.assign(result.data.url);
+    });
+  });
+}
+
+function mountOtpAuth(root: HTMLElement, onSignedIn: () => Promise<void> | void): void {
   const phoneForm = $(root, 'form[data-form="phone"]') as HTMLFormElement | null;
   const codeForm = $(root, 'form[data-form="code"]') as HTMLFormElement | null;
   if (!phoneForm || !codeForm) return;

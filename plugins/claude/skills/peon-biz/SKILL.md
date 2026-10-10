@@ -1,6 +1,6 @@
 ---
 name: peon-biz
-description: Explains peon.biz, a hiring service by text message powered by The Network that introduces people looking for work to teams that are hiring, and helps a person sign themselves up for the waitlist. Use when someone asks what peon.biz is, who can use it, how introductions work, how to join, what happens to their data, or how to stop, leave or delete. Gives the join link or the text keyword. Never signs anyone up, never asks for or types a phone number or verification code, never applies to jobs and never contacts candidates or employers.
+description: Explains peon.biz, a hiring service by text message powered by The Network that introduces people looking for work to teams that are hiring, and helps a person sign themselves up. Use when someone asks what peon.biz is, who can use it, how introductions work, how to join, what happens to their data, or how to stop, leave or delete. Gives the join link or the text keyword. Never signs anyone up, never asks for or types a phone number or verification code, never applies to jobs and never contacts candidates or employers.
 license: Proprietary. Terms at https://peon.biz/terms
 compatibility: Needs web access to open https://peon.biz pages. Sending the profile needs this app's MCP server at https://peon.biz/mcp (OAuth sign-in by the person).
 metadata:
@@ -14,9 +14,9 @@ metadata:
 
 # peon.biz
 
-peon.biz introduces people looking for work to teams that are hiring, by text message. It is a
-waitlist today. Software only suggests possible fits. A person on the team reviews every
-introduction, and the team that hires makes every hiring decision. Candidates never pay a fee.
+peon.biz introduces people looking for work to teams that are hiring, by text message. It is
+open to join today. Introductions have not started yet. Software only suggests possible fits.
+A person on the team reviews every introduction, and the team that hires makes every hiring decision. Candidates never pay a fee.
 
 All of these apps are powered by The Network: ntwrk.party, slop.date, friends.help and peon.biz
 share one backend at https://api.ntwrk.party, and one text line. This app's MCP server is at https://peon.biz/mcp.
@@ -31,7 +31,7 @@ share one backend at https://api.ntwrk.party, and one text line. This app's MCP 
 
 ## Who can use it
 
-- Anyone 13 or older may join the waitlist. Matching is for adults 18 and older only.
+- Anyone 13 or older may join. Matching is for adults 18 and older only.
 - Members aged 13 to 17 are never matched or introduced to anyone on peon.biz.
 - peon.biz never asks a candidate for money, a Social Security number or bank details. If anyone
   does in its name, it is a scam: tell the person to report it to help@ntwrk.party.

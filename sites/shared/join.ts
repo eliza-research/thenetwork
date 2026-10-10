@@ -28,14 +28,14 @@ function block(root: HTMLElement, reason: string): void {
 }
 
 function route(root: HTMLElement, me: Me, inviteOnly: boolean): void {
-  if (me.membership) {
-    fill(root, { firstName: me.membership.firstName, joinedAt: formatDate(me.membership.joinedAt) });
-    showStep(root, "member");
-  } else if (!me.canJoin) {
-    block(root, me.reason ?? (inviteOnly ? "invite_only" : "unknown"));
-  } else {
+  if (me.canJoin) {
     fill(root, { phoneMasked: me.phoneMasked });
     showStep(root, "profile");
+  } else if (me.membership) {
+    fill(root, { firstName: me.membership.firstName, joinedAt: formatDate(me.membership.joinedAt) });
+    showStep(root, "member");
+  } else {
+    block(root, me.reason ?? (inviteOnly ? "invite_only" : "unknown"));
   }
 }
 

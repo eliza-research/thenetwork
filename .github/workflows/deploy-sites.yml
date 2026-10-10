@@ -15,8 +15,9 @@
 # the account below). PLATFORM_PROXY_SECRET is set once per Pages project by the coordinator
 # (scripts/wrangler.sh pages secret put), never in CI.
 # Variables: CLOUDFLARE_ACCOUNT_ID (required: the ntwrk.party Cloudflare account, which holds all four
-# projects; no default in the repo), BACKEND_ORIGIN (default https://api.ntwrk.party), MCP_URL (a template with
-# {domain}; leave unset), TURNSTILE_SITE_KEY, BACKEND_LIVE ("true" adds /api/app to the smoke check).
+# projects; no default in the repo), BACKEND_ORIGIN (default https://api.ntwrk.party),
+# TURNSTILE_SITE_KEY, BACKEND_LIVE ("true" adds /api/app to the smoke check).
+# MCP URLs use each site's canonical domain, matching sites/skills.config.ts.
 name: deploy-sites
 
 on:
@@ -71,7 +72,7 @@ jobs:
         env:
           DEPLOY_TARGET: production
           BACKEND_ORIGIN: ${{ vars.BACKEND_ORIGIN }}
-          MCP_URL: ${{ vars.MCP_URL }}
+          MCP_URL: "https://{domain}/mcp"
           TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY }}
 
   production:
@@ -104,7 +105,7 @@ jobs:
         env:
           DEPLOY_TARGET: production
           BACKEND_ORIGIN: ${{ vars.BACKEND_ORIGIN }}
-          MCP_URL: ${{ vars.MCP_URL }}
+          MCP_URL: "https://{domain}/mcp"
           TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY }}
       - name: Deploy to Cloudflare Pages
         env:

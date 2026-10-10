@@ -12,6 +12,7 @@
 // Mount it in any Bun.serve fetch:
 //   const api = createPublicApi({ store, otp, turnstile });
 //   Bun.serve({ fetch: async (req, server) => (await api.fetch(req, server)) ?? new Response("not found", { status: 404 }) });
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { type AccountHooks, Accounts, parseJoin, publicMembership, type Who } from "./accounts.ts";
 import { APPS, type AppId, type AppInfo, appForHost, DEFAULT_HOST_MAP, DEV_HOST_MAP, isAppId, publicAppInfo, siteHosts } from "./apps.ts";
 import { devShortcutsAllowed, type Env } from "./env.ts";
@@ -19,7 +20,7 @@ import { type OtpProvider, OtpService, type OtpLimits } from "./otp.ts";
 import { maskPhone, normalizePhone } from "./phone.ts";
 import { readCappedText } from "./body.ts";
 import { verifyProxyHeaders } from "./proxy.ts";
-import { SessionService, SESSION_TTL_MS } from "./sessions.ts";
+import { SessionService, SESSION_TTL_MS, tokenHash } from "./sessions.ts";
 import type { PeopleStore } from "./store.ts";
 import type { TurnstileVerifier } from "./turnstile.ts";
 import type { PhotoService } from "./photos.ts";
@@ -27,6 +28,8 @@ import type { PhotoService } from "./photos.ts";
 export interface PublicApiOptions extends AccountHooks {
   store: PeopleStore;
   otp: OtpProvider;
+  /** Local gated Cloud SSO transport; production enablement is not supported by this slice. */
+  cloudAuthFetch?: typeof fetch;
   /** Required outside PLATFORM_ENV=dev (createPublicApi throws without it). In dev, no token is asked for without it. */
   turnstile?: TurnstileVerifier;
   /** Host header -> app. Default: the production names; in dev also the local site ports. */
@@ -67,6 +70,8 @@ export interface PublicApi {
   sessions: SessionService;
 }
 
+class CloudAuthUnavailableError extends Error {}
+
 const DEV_HASH_KEY = "dev-only-platform-hash-key";
 const DEV_SESSION_SECRET = "dev-only-platform-session-secret";
 /** The largest request body the API reads (every route takes a small JSON object). */
@@ -100,8 +105,25 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   if (!o.turnstile && !dev) throw new Error("a Turnstile verifier is required outside PLATFORM_ENV=dev (TURNSTILE_SECRET_KEY)");
   const proxySecret = o.proxySecret ?? env.PLATFORM_PROXY_SECRET ?? undefined;
   const now = o.now ?? Date.now;
+  const localOrigin = (raw: string | undefined) => {
+    if (!raw) return undefined;
+    const value = new URL(raw);
+    if (value.protocol !== "http:" || !["localhost", "127.0.0.1"].includes(value.hostname) || value.href !== `${value.origin}/`) throw new Error("Cloud auth review requires an exact loopback site origin");
+    return value.origin;
+  };
+  const cloudAuth = env.NETWORK_CLOUD_AUTH_ENABLED === "true" ? (() => {
+    if (!dev || env.NETWORK_CLOUD_AUTH_LOGIN_ORIGIN !== "https://cloud-staging.eliza.app"
+      || env.NETWORK_CLOUD_AUTH_API_ORIGIN !== "https://api-staging.eliza.app"
+      || (env.NETWORK_CLOUD_AUTH_SERVER_TOKEN?.length ?? 0) < 32) throw new Error("Cloud site auth requires the approved staging/local tuple and server authority");
+    const siteOrigin = localOrigin(env.NETWORK_CLOUD_AUTH_SITE_ORIGIN);
+    if (!siteOrigin) throw new Error("Cloud auth review requires the configured loopback site origin");
+    return {loginOrigin: env.NETWORK_CLOUD_AUTH_LOGIN_ORIGIN, apiOrigin: env.NETWORK_CLOUD_AUTH_API_ORIGIN,
+      siteOrigin, serverToken: env.NETWORK_CLOUD_AUTH_SERVER_TOKEN};
+  })() : undefined;
   const apps = o.apps ?? APPS;
   const hostMap = o.hostMap ?? (dev ? DEV_HOST_MAP : DEFAULT_HOST_MAP);
+  const cloudApp = cloudAuth ? appForHost(new URL(cloudAuth.siteOrigin).host, hostMap) : undefined;
+  if (cloudAuth && !cloudApp) throw new Error("Cloud auth site must map to a canonical app");
   const log = o.log ?? (s => console.log(s));
   const accounts = new Accounts(o.store, {
     hashKey, now, env, apps: id => apps[id],
@@ -129,6 +151,39 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
     }
   }
 
+  const seal = (value: unknown) => {
+    const payload = Buffer.from(JSON.stringify(value)).toString("base64url");
+    return `${payload}.${tokenHash(payload, sessionSecret)}`;
+  };
+  const unseal = (value: string | undefined): Record<string, unknown> | null => {
+    const [payload, signature, extra] = (value ?? "").split(".");
+    const expected = payload ? tokenHash(payload, sessionSecret) : "";
+    if (!payload || !signature || extra || expected.length !== signature.length || !timingSafeEqual(Buffer.from(expected), Buffer.from(signature))) return null;
+    try { return JSON.parse(Buffer.from(payload, "base64url").toString()); } catch { return null; }
+  };
+  const identityName = (app: AppId) => `cloud_identity_${app}`;
+  const identityCookie = (app: AppId, value: string, age: number) => `${identityName(app)}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${age}`;
+  async function cloudSessionStatus(app: AppId, jar: Map<string, string>, token: string): Promise<"valid" | "invalid" | "unavailable"> {
+    const cloud = cloudAuth && cloudApp === app ? cloudAuth : undefined;
+    if (!cloud) return token.startsWith("cloud.") ? "invalid" : "valid";
+    const identity = unseal(jar.get(identityName(app)));
+    if (!identity || identity.app !== app || identity.sessionHash !== tokenHash(token, sessionSecret)
+      || typeof identity.expiresAt !== "number" || identity.expiresAt <= now()) return "invalid";
+    try {
+      const response = await (o.cloudAuthFetch ?? fetch)(new Request(`${cloud.apiOrigin}/api/auth/sso-bridge/network-validate`, {
+        method: "POST", headers: {"content-type": "application/json", origin: cloud.siteOrigin, authorization: `Bearer ${cloud.serverToken}`},
+        body: JSON.stringify(identity), redirect: "error", cache: "no-store", signal: AbortSignal.timeout(5000),
+      }));
+      if (response.redirected || response.status === 429 || response.status >= 500 || response.status === 404) return "unavailable";
+      if (!response.ok) {
+        // Only the owner's explicit proof denial revokes a session. Authority/configuration failures stay unavailable.
+        const failure = await response.json() as {ok?: unknown; code?: unknown};
+        return response.status === 403 && failure.ok === false && failure.code === undefined ? "invalid" : "unavailable";
+      }
+      return (await response.json() as {ok?: unknown}).ok === true ? "valid" : "unavailable";
+    } catch { return "unavailable"; }
+  }
+
   async function handle(req: Request, url: URL, peer?: string): Promise<Response> {
     // A request signed by a site router: its host and client IP. Otherwise our own Host and the socket.
     const signed = await verifyProxyHeaders(req, proxySecret, Math.floor(now() / 1000));
@@ -137,6 +192,25 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
     const appId = appForHost(host, hostMap);
     if (!appId) return json(404, { ok: false, error: "unknown_app" });
     const app = apps[appId];
+    const cookies = parseCookies(req.headers.get("cookie"));
+    const auth = async () => {
+      const token = cookies.get(cookieName(appId));
+      if (!token) return undefined;
+      // Check the original cookie's proof before SessionService can rotate it.
+      const status = await cloudSessionStatus(appId, cookies, token);
+      if (status === "unavailable") throw new CloudAuthUnavailableError();
+      if (status === "invalid") { await sessions.revoke(token); return undefined; }
+      return sessions.authenticate(appId, token);
+    };
+    const rotatedCookies = (response: Response, a: NonNullable<Awaited<ReturnType<typeof auth>>>) => {
+      if (!a.rotated) return;
+      const age = Math.max(0, Math.floor((a.session.expiresAt - now()) / 1000));
+      response.headers.append("set-cookie", cookie(appId, a.token, age));
+      if (a.token.startsWith("cloud.")) {
+        const identity = unseal(cookies.get(identityName(appId)))!;
+        response.headers.append("set-cookie", identityCookie(appId, seal({...identity, sessionHash: tokenHash(a.token, sessionSecret)}), age));
+      }
+    };
     const post = req.method === "POST";
     if (!post && req.method !== "GET") return json(405, { ok: false, error: "method" });
     const photoPath = url.pathname.replace(/\/+$/, "");
@@ -151,11 +225,13 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         try { originHost = origin ? new URL(origin).host : undefined; } catch { /* not a URL */ }
         if (origin && appForHost(originHost, hostMap) !== appId) return json(403, { ok: false, error: "origin" });
       }
-      const jar = parseCookies(req.headers.get("cookie"));
-      return (await o.photos.route(req, photoPath, appId, async () => {
-        const a = await sessions.authenticate(appId, jar.get(cookieName(appId)));
-        return a ? a.session.personId : "unauthorized";
+      let authenticated: Awaited<ReturnType<typeof auth>>;
+      const response = (await o.photos.route(req, photoPath, appId, async () => {
+        authenticated = await auth();
+        return authenticated ? authenticated.session.personId : "unauthorized";
       }))!;
+      if (authenticated) rotatedCookies(response, authenticated);
+      return response;
     }
     if (post) {
       // CSRF: JSON only (a cross-site form cannot send it without CORS), a cross-site Origin or fetch is refused.
@@ -175,17 +251,66 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
     if (explicit !== undefined && explicit !== null && explicit !== appId) return json(400, { ok: false, error: "app_mismatch" });
 
     const path = url.pathname.replace(/\/+$/, "");
-    const cookies = parseCookies(req.headers.get("cookie"));
-    const auth = async () => sessions.authenticate(appId, cookies.get(cookieName(appId)));
     const withSession = async (fn: (who: Who, a: NonNullable<Awaited<ReturnType<typeof auth>>>) => Promise<Response>): Promise<Response> => {
       const a = await auth();
       if (!a) return json(401, { ok: false, error: "unauthorized" });
       const res = await fn({ e164: a.session.e164, personId: a.session.personId }, a);
-      if (a.rotated && !res.headers.has("set-cookie")) res.headers.append("set-cookie", cookie(appId, a.token, SESSION_TTL_MS / 1000));
+      if (!res.headers.has("set-cookie")) rotatedCookies(res, a);
       return res;
     };
 
+    const cloud = cloudAuth && cloudApp === appId ? cloudAuth : undefined;
+    const pendingName = `cloud_pending_${appId}`;
+    const pendingCookie = (value: string, age: number) => `${pendingName}=${value}; Path=/api/auth/cloud; HttpOnly; SameSite=Lax; Max-Age=${age}`;
     switch (`${req.method} ${path}`) {
+      case "GET /api/auth/mode":
+        return json(200, {mode: cloud ? "cloud" : "otp"});
+      case "POST /api/auth/cloud/start": {
+        if (!cloud) return json(404, {ok: false, error: "not_found"});
+        const returnPath = b.returnPath === "/join" || b.returnPath === "/join.html" ? "/join"
+          : b.returnPath === "/settings" || b.returnPath === "/settings.html" ? "/settings" : null;
+        if (!returnPath) return json(400, {ok: false, error: "invalid"});
+        const state = randomBytes(32).toString("hex"), verifier = randomBytes(32).toString("hex");
+        const challenge = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+        const signedState = seal({app: appId, state, verifier, returnPath, until: now()+300_000});
+        const authorize = new URL("/network/sign-in", cloud.loginOrigin);
+        authorize.searchParams.set("networkSite", cloud.siteOrigin);
+        authorize.searchParams.set("state", state);
+        authorize.searchParams.set("challenge", Buffer.from(challenge).toString("hex"));
+        return json(200, {url: authorize.href}, {"set-cookie": pendingCookie(signedState, 300)});
+      }
+      case "GET /api/auth/cloud/callback": {
+        if (!cloud) return json(404, {ok: false, error: "not_found"});
+        const reject = (status: number) => json(status, {ok: false, error: "cloud_auth_unavailable"}, {"set-cookie": pendingCookie("", 0)});
+        const pending = unseal(cookies.get(pendingName));
+        if (!pending || pending.app !== appId || pending.state !== url.searchParams.get("state") || typeof pending.verifier !== "string"
+          || typeof pending.until !== "number" || pending.until <= now() || (pending.returnPath !== "/join" && pending.returnPath !== "/settings")) return reject(400);
+        const code = url.searchParams.get("code");
+        if (!code || !/^enso_[0-9a-f]{64}$/.test(code)) return reject(400);
+        try {
+          const response = await (o.cloudAuthFetch ?? fetch)(new Request(`${cloud.apiOrigin}/api/auth/sso-bridge/network-exchange`, {
+            method: "POST", headers: {"content-type": "application/json", origin: cloud.siteOrigin, authorization: `Bearer ${cloud.serverToken}`},
+            body: JSON.stringify({code, codeVerifier: pending.verifier}), redirect: "error", cache: "no-store", signal: AbortSignal.timeout(5000),
+          }));
+          if (!response.ok || response.redirected) return reject(403);
+          const identity = await response.json() as {userId?: unknown; organizationId?: unknown; e164?: unknown; expiresAt?: unknown; stewardUserId?: unknown; issuedAt?: unknown};
+          if (typeof identity.userId !== "string" || !identity.userId || typeof identity.organizationId !== "string" || !identity.organizationId
+            || normalizePhone(identity.e164) !== identity.e164 || typeof identity.e164 !== "string" || typeof identity.expiresAt !== "number" || !Number.isFinite(identity.expiresAt) || identity.expiresAt <= now()
+            || typeof identity.stewardUserId !== "string" || !identity.stewardUserId || typeof identity.issuedAt !== "number"
+            || !Number.isSafeInteger(identity.issuedAt) || identity.issuedAt <= 0 || identity.issuedAt*1000 > now()) return reject(403);
+          await sessions.revoke(cookies.get(cookieName(appId)));
+          await accounts.seen(identity.e164);
+          const person = await accounts.personFor(identity.e164);
+          const {token, session} = await sessions.create(appId, identity.e164, person?.id ?? null, null, identity.issuedAt*1000, identity.expiresAt, true);
+          const age = Math.max(0, Math.floor((session.expiresAt-now())/1000));
+          const delegatedIdentity = seal({...identity, app: appId, sessionHash: tokenHash(token, sessionSecret)});
+          const responseHeaders = new Headers({location: pending.returnPath, "cache-control": "no-store", "referrer-policy": "no-referrer"});
+          responseHeaders.append("set-cookie", pendingCookie("", 0));
+          responseHeaders.append("set-cookie", cookie(appId, token, age));
+          responseHeaders.append("set-cookie", identityCookie(appId, delegatedIdentity, age));
+          return new Response(null, {status: 303, headers: responseHeaders});
+        } catch { return reject(503); }
+      }
       case "GET /api/app":
         return json(200, publicAppInfo(app));
 
@@ -195,6 +320,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       }
 
       case "POST /api/auth/otp/start": {
+        if (cloud) return json(409, {ok: false, error: "cloud_auth_required"});
         const t0 = performance.now();
         try {
           const e164 = normalizePhone(b.phone);
@@ -211,6 +337,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       }
 
       case "POST /api/auth/otp/verify": {
+        if (cloud) return json(409, {ok: false, error: "cloud_auth_required"});
         const t0 = performance.now();
         try {
           const e164 = normalizePhone(b.phone);
@@ -228,15 +355,19 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         }
       }
 
-      case "POST /api/auth/logout":
+      case "POST /api/auth/logout": {
         await sessions.revoke(cookies.get(cookieName(appId)));
-        return json(200, { ok: true }, { "set-cookie": cookie(appId, "", 0) });
+        const response = json(200, { ok: true }, { "set-cookie": cookie(appId, "", 0) });
+        response.headers.append("set-cookie", identityCookie(appId, "", 0));
+        return response;
+      }
 
       case "GET /api/me":
         return withSession(async who => {
           const c = await accounts.canJoin(app, who);
           return json(200, {
             app: appId, phoneMasked: maskPhone(who.e164), membership: publicMembership(c.membership),
+            smsOptedIn: c.reason !== "review" && await accounts.optedIn(appId, who.e164),
             canJoin: c.canJoin, ...(c.reason && c.reason !== "member" ? { reason: c.reason } : {}),
           });
         });
@@ -281,7 +412,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           if (b.scope === "app") { await accounts.leave(app, who); return json(200, { ok: true }); }
           if (b.scope === "all") {
             // Step-up: a cookie from an older login cannot delete everything.
-            if (!sessions.fresh(a.session)) return json(403, { ok: false, error: "reauth", message: REAUTH_MESSAGE });
+            // A bridged token is not fresh phone authentication. This slice has no owned destructive step-up.
+            if (cloud || !sessions.fresh(a.session)) return json(403, { ok: false, error: "reauth", message: REAUTH_MESSAGE });
             await accounts.deleteAll(who);
             return json(200, { ok: true }, { "set-cookie": cookie(appId, "", 0) });
           }
@@ -301,6 +433,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         try { peer = server?.requestIP(req)?.address; } catch { /* not a served request (tests) */ }
         return await handle(req, url, peer);
       } catch (e) {
+        if (e instanceof CloudAuthUnavailableError) return json(503, {ok: false, error: "cloud_auth_unavailable"});
         log(`[platform] ${req.method} ${url.pathname} failed: ${(e as Error).message}`);
         return json(500, { ok: false, error: "server" });
       }
