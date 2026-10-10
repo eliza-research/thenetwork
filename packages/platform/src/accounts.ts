@@ -12,7 +12,13 @@
 //    membership, one member and one opt-in.
 //  - The opt-in wording is the app's canonical text (apps.ts ConsentText): the ledger stores that text
 //    and its version, never what a client sent.
+//  - A member changes their own number (PRD F25) in two steps: a fresh login on the current number
+//    starts it and a code goes to the new number; the code confirms it. The same rules as a staff
+//    change: a number on hold or a banned person or number never moves, a number that already belongs
+//    to someone is refused, the consent history and the age floor move with the person, and the old
+//    number's sessions end. The phone_changes row (keyed hashes only) is the audit record.
 import { randomUUID } from "node:crypto";
+import { DAY } from "../../core/src/clock.ts";
 import { validAge } from "../../core/src/policy.ts";
 import { canJoinApp, joinAgeCheck, lowestAge } from "./age.ts";
 import type { AppId, AppInfo } from "./apps.ts";
@@ -21,6 +27,11 @@ import { keyedHash } from "./phone.ts";
 import type { Membership, PeopleStore, Person, PhoneIdentity, PhoneMethod } from "./store.ts";
 
 export const RECYCLED_AFTER_MS = 365 * 24 * 3_600_000;
+/** A started number change must be confirmed with the code from the new number within this time. */
+export const NUMBER_CHANGE_MS = 15 * 60_000;
+/** Number changes a person may start in a day (each sends a code). */
+export const NUMBER_CHANGES_PER_DAY = 3;
+export type NumberChangeError = "same_number" | "review" | "no_person" | "rate_limited" | "no_pending_change" | "invalid_code" | "number_in_use";
 /** Base-profile fields a person may share from one app to another. Sensitive classes are not in this list and never will be. */
 export const SHAREABLE_FIELDS = ["first_name", "city", "age_band", "interests"] as const;
 
@@ -89,6 +100,7 @@ export const publicMembership = (m: Membership | undefined) =>
   m && m.state !== "removed" ? { state: m.state, joinedAt: m.joinedAt === null ? null : new Date(m.joinedAt).toISOString(), firstName: m.firstName } : null;
 
 export class Accounts {
+  private readonly phoneListeners: ((ctx: { personId: string }) => Promise<unknown> | unknown)[] = [];
   constructor(
     readonly store: PeopleStore,
     private readonly opts: { hashKey: string; now?: () => number; hooks?: AccountHooks; env?: Record<string, string | undefined>; apps: (id: AppId) => AppInfo },
@@ -169,6 +181,67 @@ export class Accounts {
     await this.store.unsuppress(hash);
     await this.store.clearAgeFloor(hash);
     return true;
+  }
+
+  /**
+   * Run `fn` after a person's number changed (the backend refreshes each network's member addresses:
+   * deploy/backend/server.ts). A listener that throws never undoes the change: the listener logs its own errors.
+   */
+  onPhoneChanged(fn: (ctx: { personId: string }) => Promise<unknown> | unknown) { this.phoneListeners.push(fn); }
+
+  /**
+   * Step 1 of a member's own number change: the caller checked that the login is fresh (a code to the
+   * current number in the last minutes: PRD F25 "confirmation from the existing number"). `sendCode`
+   * sends a code to the new number through the OTP service and its limits. The answer never says whether
+   * the new number is known or banned: that is checked at step 2, after the person proved they hold it.
+   */
+  async startNumberChange(app: AppInfo, who: Who, newE164: string, sendCode: () => Promise<boolean>): Promise<{ ok: true } | { ok: false; error: NumberChangeError }> {
+    const at = this.now();
+    if (newE164 === who.e164) return { ok: false, error: "same_number" };
+    const own = await this.store.findPhone(who.e164);
+    if (!own || own.hold !== null || this.stale(own, at)) return { ok: false, error: "review" };
+    const person = await this.personFor(who.e164);
+    if (!person || person.id !== own.personId || (who.personId !== null && who.personId !== person.id)) return { ok: false, error: "no_person" };
+    // A banned person or number never moves: a new number would escape a ban by phone.
+    if (await this.banned(who.e164, person)) return { ok: false, error: "review" };
+    if (!(await this.store.hit(`phone-change:${this.phoneHash(`person:${person.id}`)}`, DAY, at, { limit: NUMBER_CHANGES_PER_DAY })).ok) return { ok: false, error: "rate_limited" };
+    if (!(await sendCode())) return { ok: false, error: "rate_limited" };
+    await this.store.putPhoneChange({ id: randomUUID(), personId: person.id, app: app.id, newE164, requestedBy: "member", requestedAt: at, confirmedAt: null });
+    return { ok: true };
+  }
+
+  /**
+   * Step 2: the code from the new number. `verify` checks it on the OTP service (it answers true once).
+   * Then, with the new number proved: a banned new number reads as review, a number that belongs to
+   * anyone (a member, a held number) is "number_in_use", and otherwise the person moves (store.movePhone).
+   * A delete of everything by an earlier owner of the new number no longer suppresses it, and the lowest
+   * age either number ever stated becomes the person's (every app follows a lower age).
+   */
+  async confirmNumberChange(who: Who, verify: (app: AppId, e164: string) => Promise<boolean>): Promise<{ ok: true; e164: string; personId: string } | { ok: false; error: NumberChangeError }> {
+    const own = await this.store.findPhone(who.e164);
+    if (!own || own.hold !== null || this.stale(own, this.now())) return { ok: false, error: "review" };
+    const person = await this.personFor(who.e164);
+    if (!person || person.id !== own.personId || (who.personId !== null && who.personId !== person.id)) return { ok: false, error: "no_person" };
+    const change = await this.store.pendingPhoneChange(person.id);
+    if (!change?.newE164 || this.now() - change.requestedAt > NUMBER_CHANGE_MS) return { ok: false, error: "no_pending_change" };
+    const newE164 = change.newE164;
+    if (!(await verify(change.app, newE164))) return { ok: false, error: "invalid_code" };
+    // One lock, on the new number (a join of that number waits): withLock never nests.
+    const r = await this.store.withLock(`join:${newE164}`, async (): Promise<{ ok: true } | { ok: false; error: NumberChangeError }> => {
+      if (await this.banned(who.e164, person)) return { ok: false, error: "review" };
+      if (await this.store.isBanned(this.phoneHash(newE164))) return { ok: false, error: "review" };
+      if (await this.store.findPhone(newE164)) return { ok: false, error: "number_in_use" };
+      const moved = await this.store.movePhone({ personId: person.id, changeId: change.id, oldE164: who.e164, newE164, oldHash: this.phoneHash(who.e164), newHash: this.phoneHash(newE164), at: this.now() });
+      if (moved !== "ok") return { ok: false, error: moved === "number_in_use" ? "number_in_use" : "review" };
+      await this.store.unsuppress(this.phoneHash(newE164));
+      return { ok: true };
+    });
+    if (!r.ok) return r;
+    // The new number's age floor (any age ever stated from it) joins the person's: the lowest wins.
+    const floor = await this.store.ageFloor(this.phoneHash(newE164));
+    if (floor !== undefined) await this.recordAge(newE164, await this.store.getPerson(person.id), floor);
+    for (const fn of this.phoneListeners) await Promise.resolve().then(() => fn({ personId: person.id })).catch(() => {});
+    return { ok: true, e164: newE164, personId: person.id };
   }
 
   /** The lowest age known for this phone: the person's (any app) and the phone's age floor. */

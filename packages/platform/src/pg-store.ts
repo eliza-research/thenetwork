@@ -3,7 +3,7 @@
 import { SQL } from "bun";
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
-import type { Ban, HitResult, HitRule, Membership, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneHold, PhoneIdentity, PhoneMethod, Session, ShareGrant } from "./store.ts";
+import type { Ban, HitResult, HitRule, Membership, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, PhoneMove, PhoneMoveResult, Session, ShareGrant } from "./store.ts";
 
 type Row = Record<string, any>;
 const ms = (v: unknown): number | null => (v === null || v === undefined ? null : new Date(v as string | Date).getTime());
@@ -25,6 +25,12 @@ const challenge = (r: Row): OtpChallenge => ({
   id: String(r.id), app: r.app_id, e164: r.e164, provider: r.provider, providerRef: r.provider_ref ?? null, codeHash: r.code_hash ?? null, attempts: r.attempts,
   createdAt: ms(r.created_at)!, expiresAt: ms(r.expires_at)!, consumedAt: ms(r.consumed_at),
 });
+const phoneChange = (r: Row): PhoneChange => ({
+  id: r.id, personId: r.person_id, app: r.app_id, newE164: r.new_e164 ?? null, requestedBy: r.requested_by, requestedAt: ms(r.requested_at)!,
+  confirmedAt: ms(r.confirmed_at), oldHash: r.old_hash ?? null, newHash: r.new_hash ?? null,
+});
+/** Outbound rows that still wait for the worker (packages/blooio outbound-queue.ts); a row being sent or in doubt is left alone. */
+const OUTBOUND_WAITING = "{pending,retry_scheduled,deferred_quiet_hours,held_awaiting_reply}";
 const session = (r: Row): Session => ({
   tokenHash: r.token_hash, app: r.app_id, e164: r.e164, personId: r.person_id ?? null, createdAt: ms(r.created_at)!, startedAt: ms(r.started_at ?? r.created_at)!, expiresAt: ms(r.expires_at)!,
   rotatedFrom: r.rotated_from ?? null, revokedAt: ms(r.revoked_at),
@@ -265,6 +271,7 @@ export class PgPeopleStore implements PeopleStore {
       n += (await tx`delete from platform.sessions where expires_at < ${b} or revoked_at < ${b} returning 1`).length;
       n += (await tx`delete from platform.rate_limits where last_at < ${b} returning 1`).length;
       n += (await tx`delete from platform.pending_texts where at < ${b} returning 1`).length;
+      n += (await tx`delete from platform.phone_changes where confirmed_at is null and requested_at < ${b} returning 1`).length;
       return n;
     });
   }
@@ -300,6 +307,60 @@ export class PgPeopleStore implements PeopleStore {
       }
       await tx`delete from platform.phone_identities where e164 = ${e164}`;
       await tx`delete from platform.pending_texts where phone_hash = ${phoneHash}`;
+      if (personId) await tx`delete from platform.phone_changes where person_id = ${personId}::uuid`;
+    });
+  }
+
+  async putPhoneChange(c: PhoneChange) {
+    await this.sql.begin(async tx => {
+      // One waiting change per person: a newer request replaces the older one.
+      await tx`delete from platform.phone_changes where person_id = ${c.personId}::uuid and confirmed_at is null and id <> ${c.id}::uuid`;
+      await tx`insert into platform.phone_changes (id, person_id, app_id, new_e164, requested_by, requested_at, confirmed_at, old_hash, new_hash)
+        values (${c.id}, ${c.personId}, ${c.app}, ${c.newE164}, ${c.requestedBy}, ${ts(c.requestedAt)}, ${ts(c.confirmedAt)}, ${c.oldHash ?? null}, ${c.newHash ?? null})
+        on conflict (id) do update set new_e164 = excluded.new_e164, confirmed_at = excluded.confirmed_at, old_hash = excluded.old_hash, new_hash = excluded.new_hash`;
+    });
+  }
+  async pendingPhoneChange(personId: string) {
+    const [r] = await this.sql`select * from platform.phone_changes where person_id = ${personId}::uuid and confirmed_at is null order by requested_at desc limit 1`;
+    return r ? phoneChange(r) : undefined;
+  }
+  async movePhone(m: PhoneMove): Promise<PhoneMoveResult> {
+    return this.sql.begin(async tx => {
+      const [old] = await tx`select * from platform.phone_identities where e164 = ${m.oldE164} and person_id = ${m.personId}::uuid for update`;
+      if (!old) return "no_phone";
+      // The new number is checked again inside the transaction (a join or another change may have taken it).
+      const [taken] = await tx`select 1 from platform.phone_identities where e164 = ${m.newE164}`;
+      if (taken) return "number_in_use";
+      await tx`insert into platform.phone_identities (e164, person_id, verified_at, method, last_seen_at) values (${m.newE164}, ${m.personId}::uuid, ${ts(m.at)}, 'otp_sms', ${ts(m.at)})`;
+      await tx`delete from platform.phone_identities where e164 = ${m.oldE164}`;
+      // The ledger is never updated in place: its rows are copied to the new number, then the old number's rows go.
+      await tx`insert into platform.consent_events (e164, app_id, line, state, source, wording, wording_version, ref, at)
+        select ${m.newE164}, app_id, line, state, source, wording, wording_version, ref, at from platform.consent_events where e164 = ${m.oldE164} order by at, id
+        on conflict (e164, ref) where ref is not null do nothing`;
+      await tx`delete from platform.consent_events where e164 = ${m.oldE164}`;
+      await tx`update platform.people set phone_hash = ${m.newHash} where id = ${m.personId}::uuid`;
+      const [floor] = await tx`delete from platform.age_floor where phone_hash = ${m.oldHash} returning lowest_age, at`;
+      if (floor) {
+        await tx`insert into platform.age_floor (phone_hash, lowest_age, at) values (${m.newHash}, ${floor.lowest_age}, ${floor.at})
+          on conflict (phone_hash) do update set lowest_age = least(platform.age_floor.lowest_age, excluded.lowest_age)`;
+      }
+      await tx`delete from platform.sessions where e164 = ${m.oldE164}`;
+      await tx`delete from platform.otp_challenges where e164 = ${m.oldE164}`;
+      await tx`delete from platform.pending_texts where phone_hash = ${m.oldHash}`;
+      // Messages still waiting for the old number never go there: it may belong to someone else next.
+      await tx`update platform.outbound set status = 'suppressed_ineligible', note = 'number changed', to_address = null, ended_at = ${ts(m.at)}, updated_at = ${ts(m.at)},
+          lease_owner = null, lease_until = null
+        where to_address = ${m.oldE164} and status = any(${OUTBOUND_WAITING}::text[])`;
+      await tx`insert into platform.eliza_notices (phone_hash, sent_at) select ${m.newHash}, sent_at from platform.eliza_notices where phone_hash = ${m.oldHash} on conflict do nothing`;
+      await tx`delete from platform.eliza_notices where phone_hash = ${m.oldHash}`;
+      // The person's linked agents (MCP OAuth grants) hold the keyed hash: they move with the number (PRD 11.5, F25).
+      const [oauth] = await tx`select case when to_regclass('oauth.grants') is null then false
+        else has_schema_privilege('oauth', 'USAGE') and has_table_privilege(to_regclass('oauth.grants'), 'UPDATE') end as ok`;
+      if (oauth?.ok) await tx`update oauth.grants set phone_key = ${m.newHash} where phone_key = ${m.oldHash}`;
+      const changed = await tx`update platform.phone_changes set confirmed_at = ${ts(m.at)}, new_e164 = null, old_hash = ${m.oldHash}, new_hash = ${m.newHash}
+        where id = ${m.changeId}::uuid and person_id = ${m.personId}::uuid and confirmed_at is null returning id`;
+      if (!changed.length) throw new Error("no waiting number change for this person");
+      return "ok";
     });
   }
 }

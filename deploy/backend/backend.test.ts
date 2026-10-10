@@ -237,6 +237,19 @@ describe("routing", () => {
     expect(calls.at(-1)!.path).toBe("/webhooks/blooio/slop");
   });
 
+  test("every signed gateway route reaches the service on the public port, /internal/relay included (regression: it answered 404)", async () => {
+    const { svc, calls } = fakeService();
+    const b = createBackend({ svc, config: cfg(), log: silent, ping: async () => true });
+    for (const p of ["/internal/turn", "/internal/turn-receipt", "/internal/set-state", "/internal/signals", "/internal/updates", "/internal/relay"]) {
+      const before = calls.length;
+      await b.publicFetch(new Request(`http://api.example.test${p}`, { method: "POST", body: "{}" }));
+      expect([p, calls.length - before, calls.at(-1)?.path]).toEqual([p, 1, p]);
+    }
+    // The body cap applies to the relay route too.
+    const big = await b.publicFetch(new Request("http://api.example.test/internal/relay", { method: "POST", body: "{}", headers: { "content-length": String(300 * 1024) } }));
+    expect(big.status).toBe(413);
+  });
+
   test("deployed, an unsigned request names no site: /api and /mcp answer 421 (audit: Host: slop.date was served as slop.date)", async () => {
     const { svc, calls } = fakeService();
     const b = createBackend({ svc, config: cfg(), log: silent, ping: async () => true, mcp: async () => new Response("ok") });

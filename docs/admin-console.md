@@ -180,10 +180,10 @@ The Safety tab starts with "Held texts", per app, in two queues: **Leak review**
 |---|---|---|
 | `GET /queue/leak-review?app=` | | `200 {ok, items: [{id, kind, to (masked), text, reasons, createdAt, memberId?, minor?}]}` |
 | `POST /queue/leak-review/<id>?app=` | `{decision: "release" or "drop", reason}` | `200 {ok: true}` or `409 {reason}` (`not_parked`) |
-| `GET /staff/relay/held?app=` | | `200 {ok, items: [{id, kind, text?, reasons, createdAt, memberId?, minor?}]}` |
-| `POST /staff/relay/<id>/release?app=` and `.../reject` | `{reason}` | `200 {ok: true}` or `409 {reason}` |
+| `GET /staff/relay/held?app=` | | `200 {ok, items: [{itemId, app, kind, from, to, reasons, createdAt, text?}]}` (`from` and `to` are member ids; the console reads `itemId` as the row id and `from` as the member) |
+| `POST /staff/relay/<id>/release?app=` and `.../reject` | `{reason, note}` (the service reads `note`; the console sends the reason as both) | `200 {ok: true, delivered?}` or `409 {reason}` |
 
-**Status (2026-10-09):** the console side is built (`/api/held`, `web/admin.tsx` HeldTexts; `packages/observatory/test/held.test.ts`). The service routes come from the messaging pipeline and the relay work and are not on this branch: until they land, each queue shows "Not available". Game mode has no held texts.
+**Status (2026-10-09, adversarial review):** the console side is built (`/api/held`, `web/admin.tsx` HeldTexts; `packages/observatory/test/held.test.ts`). **Held relay** works against the service's `GET /staff/relay/held` and `POST /staff/relay/<id>/release|reject` (packages/network/service/service.ts). Before the review fix the console read only `id`, so the service's rows (`itemId`) were all dropped and the queue looked empty; and it sent the reason only as `reason`, so the service's audit row had none. **Leak review** still shows "Not available": the service has no `/queue/leak-review` route yet (parked rows stay `parked_leak_review` in `platform.outbound`; written up for the service owner). Game mode has no held texts.
 
 How to test locally: run `bun run observatory:db`, then the console in real mode with a service (`NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/network NETWORK_SERVICE_URL=http://127.0.0.1:4848 NETWORK_SERVICE_TOKEN=<an admin token of the service> PLATFORM_ENV=dev bun run observatory --mode real`). Open the printed URL, pick slop, open Safety. Both queues say "Not available" until the service has the routes. To see rows without the service routes, point `NETWORK_SERVICE_URL` at a local fake that answers the calls above (as `held.test.ts` does). In a minor report, **Clear minor signal (every app)** needs a note and then dismisses the report.
 
@@ -214,6 +214,7 @@ How to test locally: run `bun run observatory:db`, then the console in real mode
   - Built: in real mode with the Network service, its `/health`: unreachable (bad), the last tick late (warn after 5 minutes, bad after 15), messages refused or held by the channel, messages waiting to be delivered, and one line when all is well (last tick, channel, lock holder).
   - Built: real-mode minor contacts count messages about an opportunity while the recipient or anyone in it was treated as under 18, by the record age or by the Network's age state at that moment (before: the recipient's record age only).
   - Built: the PRD 28.2 scorecard (`stats.scorecard`) in the Metrics tab, with the value, target, met or not, and the sample size.
+  - Built (2026-10-09): shadow precision in the scorecard (`shadow_precision`, PRD 32.8 and 34.6): engine proposals, shadow runs included, that a person approved without an edit, over those a person approved or rejected (the simulated reviewer and expired items left out); target 80%. The backend's ops metrics carry the same number over 7 days (`precision7d`) and alert `precision:<network>` under 80% once there are 20 person decisions (deploy/backend/ops.ts; runbook-real.md 8.4).
   - Missing: daily LLM spend (there are no usage records). The worthwhile-interruption line is a proxy (a proactive message answered within 72 hours with no STOP); the "Was that worth a text?" question is not built.
 
 ### 3.11 Configuration

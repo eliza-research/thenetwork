@@ -3,7 +3,7 @@
 //
 //   PORT (public)          /api/*                 the platform public API, for the four sites' Worker routers
 //                          /webhooks/blooio[/app] the inbound line webhooks (signature checked by the service)
-//                          /internal/turn, /internal/turn-receipt, /internal/set-state, /internal/signals, /internal/updates
+//                          /internal/turn, /internal/turn-receipt, /internal/set-state, /internal/signals, /internal/updates, /internal/relay
 //                                                 the Eliza gateway's signed calls (SERVICE_TURN_SECRET, checked by the service; STOP,
 //                                                 START, HELP and leave are answered inside the turn). A body over 256 KiB is refused here.
 //                          /mcp, /oauth/*, /.well-known/oauth-*   the MCP server (packages/mcp, mounted by server.ts; 404 when off)
@@ -32,7 +32,9 @@ export const BUILD_HEADER = "x-network-build";
 const STRIP = ["x-forwarded-host", "x-forwarded-for", "x-forwarded-proto", "x-real-ip", "forwarded", "true-client-ip"];
 const PROXY_PREFIXES = ["x-network-proxy-", "x-ntwrk-proxy-"];
 /** The Eliza gateway's signed routes (served by the service) and their body cap (the service's MAX_BODY_BYTES). */
-const INTERNAL_PATHS = new Set(["/internal/turn", "/internal/turn-receipt", "/internal/set-state", "/internal/signals", "/internal/updates"]);
+// /internal/relay (relay-endpoint.ts RELAY_PATH) is one of them: without it the deployed backend answered the
+// gateway's relay calls 404 on the public port, so no relayed item ever reached the relay policy.
+const INTERNAL_PATHS = new Set(["/internal/turn", "/internal/turn-receipt", "/internal/set-state", "/internal/signals", "/internal/updates", "/internal/relay"]);
 const MAX_INTERNAL_BODY = 256 * 1024;
 
 // ------------------------------------------------------------------ config

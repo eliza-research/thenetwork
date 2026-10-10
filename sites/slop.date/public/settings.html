@@ -75,6 +75,22 @@
       <div data-when="stopped" hidden><h3>Messages are stopped</h3><p>Text START to resume messages from the app you last talked with.</p></div>
       <div><h3>Leave slop.date</h3><p>We delete your profile, messages and matching data for slop.date.</p><button class="btn quiet" type="button" data-action="leave">Leave slop.date</button></div>
     </div>
+    <div class="actions change-number" data-change-number data-when="has-membership">
+      <div><h3>Change my number</h3><p>We text a code to your new number. Your memberships, your choices about messages and your data move to it. For your safety, this works only within 10 minutes of logging in with a code.</p>
+        <form data-form="new-phone" novalidate>
+          <div class="field"><label for="new-phone">New mobile number</label>
+            <input id="new-phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="(212) 555-0123" required></div>
+          <p class="error" data-error role="alert" hidden></p>
+          <button class="btn quiet" type="submit" data-busy="Sending…">Text a code to the new number</button>
+        </form>
+        <form data-form="new-code" novalidate hidden>
+          <div class="field"><label for="new-code">The code we sent to the new number</label>
+            <input id="new-code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" required></div>
+          <p class="error" data-error role="alert" hidden></p>
+          <button class="btn quiet" type="submit" data-busy="Checking…">Change my number</button>
+        </form>
+      </div>
+    </div>
     <div class="actions">
       <div class="danger-zone"><h3>Delete everything</h3><p>We delete all data tied to this phone number, everywhere Eliza Research Corporation holds it, and log you out. This cannot be undone.</p><button class="btn danger" type="button" data-action="delete-all">Delete everything</button></div>
     </div>

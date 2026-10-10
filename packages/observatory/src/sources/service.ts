@@ -26,9 +26,9 @@
 // Held texts (the console's "Held texts" panel; the routes come from the messaging pipeline and the relay work):
 //   GET  /queue/leak-review             -> { ok, items: [{ id, kind, to (masked), text, reasons, createdAt, memberId? }] }
 //   POST /queue/leak-review/<id>        { decision: "release"|"drop", reason }  a release runs every other send check again
-//   GET  /staff/relay/held              -> { ok, items: [{ id, kind, text?, reasons, createdAt, memberId? }] }
-//   POST /staff/relay/<id>/release      { reason }
-//   POST /staff/relay/<id>/reject       { reason }
+//   GET  /staff/relay/held              -> { ok, items: [{ itemId, app, kind, from, to, reasons, createdAt, text? }] } (from and to are member ids)
+//   POST /staff/relay/<id>/release      { note }   (the console sends the reason as both reason and note)
+//   POST /staff/relay/<id>/reject       { note }
 // 409 { reason } is a refusal with the Network's reason; 404 means the service has no such route yet.
 import type { BiasReportView, ControlCommand, ControlResult, HealthAlert, HeldQueue, HeldText, MemberPhoto, ReportKind, SafetyAction, SafetyReport } from "../types.ts";
 import { REVIEW_BLOCK_ERRORS, SAFETY_ERRORS } from "./source.ts";
@@ -165,13 +165,16 @@ export class ServiceClient {
       return {
         ok: true,
         items: (json.items as Record<string, unknown>[]).flatMap((x): HeldText[] => {
-          const id = str(x.id, 300);
+          // The service names a held relay item `itemId` and its sender `from` (service.ts GET /staff/relay/held);
+          // reading only `id` dropped every held relay item, so the panel was always empty.
+          const id = str(x.id, 300) ?? str(x.itemId, 300);
           if (!id) return [];
+          const memberId = str(x.memberId, 200) ?? str(x.from, 200);
           const at = Number(x.createdAt ?? x.at);
           return [{
             id, queue, reasons: Array.isArray(x.reasons) ? x.reasons.filter((r): r is string => typeof r === "string").map(r => r.slice(0, 120)).slice(0, 20) : [],
             ...(str(x.kind, 60) ? { kind: str(x.kind, 60) } : {}), ...(str(x.to, 40) ? { to: maskTo(str(x.to, 40)!) } : {}),
-            ...(str(x.memberId, 200) ? { memberId: str(x.memberId, 200) } : {}), ...(Number.isFinite(at) ? { createdAt: at } : {}),
+            ...(memberId ? { memberId } : {}), ...(Number.isFinite(at) ? { createdAt: at } : {}),
             ...(x.minor === true ? { textHidden: "minor" as const } : str(x.text) ? { text: str(x.text) } : {}),
           }];
         }),
@@ -184,7 +187,8 @@ export class ServiceClient {
     const e = encodeURIComponent(id);
     return queue === "leak"
       ? this.act(`/queue/leak-review/${e}`, staff, { decision: decision === "reject" ? "drop" : "release", reason }, HELD_ERRORS)
-      : this.act(`/staff/relay/${e}/${decision}`, staff, { reason }, HELD_ERRORS);
+      // The relay routes read the staff reason as `note` (service.ts): without it the service's audit row had no reason.
+      : this.act(`/staff/relay/${e}/${decision}`, staff, { reason, note: reason }, HELD_ERRORS);
   }
 
   /** The weekly bias monitor reports of the app's network, newest first (GET /bias; admin or analyst). */

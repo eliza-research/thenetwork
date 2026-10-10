@@ -61,8 +61,12 @@ describe.skipIf(!pgAvailable)("real mode: admin-console data from Postgres", () 
   test("scorecard and growth match game mode where the data is the same; alerts are computed", () => {
     const card = (s: ObsState) => Object.fromEntries(s.stats.scorecard!.map(m => [m.key, m.value]));
     const [a, b] = [card(gs), card(rs)];
-    for (const k of ["opt_in", "completion", "repeat_edges", "opt_outs", "minors_contacted", "leaks", "reviewer_minutes"]) expect([k, b[k]]).toEqual([k, a[k]]);
+    for (const k of ["opt_in", "completion", "repeat_edges", "opt_outs", "minors_contacted", "leaks", "reviewer_minutes", "shadow_precision"]) expect([k, b[k]]).toEqual([k, a[k]]);
     expect(b.minors_contacted).toBe(0);
+    // Shadow precision (PRD 32.8, 34.6): the one person decision above is an edit, so nothing was approved
+    // without an edit; the simulated reviewer's decisions after the switch to auto are left out.
+    const sp = rs.stats.scorecard!.find(m => m.key === "shadow_precision")!;
+    expect([sp.n, sp.value, sp.target]).toEqual([1, 0, { op: ">=", value: 0.8 }]);
     expect(rs.stats.growth!.invitesSent).toBe(gs.stats.growth!.invitesSent);
     expect(rs.stats.growth!.invitees.members).toBe(gs.stats.growth!.invitees.members);
     expect(Array.isArray(rs.stats.alerts)).toBe(true);

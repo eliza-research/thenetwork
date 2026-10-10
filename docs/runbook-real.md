@@ -536,7 +536,35 @@ Do this once before the first real member joins, then on the first working day o
 | `safety_minor:<network>` or an urgent `safety_report` | The safety on-call opens the console's Safety tab now. Hold first, then decide (admin-console.md 3.7.1). |
 | `safety_signal:<network>` | The safety on-call reads the waiting signals (service `GET /signals`) and decides each one. |
 | `bias_report:<network>` | An admin or analyst opens the bias panel (Metrics) and records what to do in the incident log. |
+| `precision:<network>` | Shadow precision (person decisions approved without edits, 7 days, at least 20 decisions) is under the 80% gate (PRD 32.8). Do not switch matching on for that app. The reviewers and an analyst read the rejected items' reason codes in the Review tab; the console scorecard row "Shadow precision" shows the same number over the whole period. |
 | `queue_outbound` or `queue_review` | Check the review staffing, and Blooio for held or deferred messages. |
 | Backup heartbeat missing (`BACKUP_HEARTBEAT_URL`) | Railway → `backup` → the last run's log: `"msg":"backup failed"` gives the step. Run the job again by hand (Railway → `backup` → Deploy). Two days without a backup: tell the founder. |
 | `budget:*` | The console's Metrics → Cost panel shows which kind grew. Tell the founder at 100%. |
+
+## 9. Membership rules staff must know
+
+### 9.1 A held person can still join an app (founder minors rule)
+
+Checked on 2026-10-09 against `packages/platform/src/accounts.ts` (`join` and `joinLocked`). This is the intended behavior under the founder's rule "minors (13-17) join all apps but are never matched":
+
+- **Join refuses** only these: a number on hold for review (a recycled number, `seen()`), a banned number or person (`banned()`, by phone hash or person, on every app), an under-age join (the lowest age ever stated for the phone or the person, under the app's join age), and an invite-only app without an invite. The answers are `review`, `under_age` and `invite_only`; a ban reads as `review`.
+- **Join does not refuse** a person whom staff hold for safety (`POST /safety/hold`), a person with an open minor signal or minor report, or a minor (13-17). They join, and the rule that protects others is matching: they are never matched or connected. A minor is never matched because age is a person-level fact: the lowest age ever stated for the person or the phone is the new member's age on every app (`age.effective`).
+- **Gap (owner: the service, `packages/network/service/service.ts` `joined()`):** a safety hold and a minor signal are kept by each app's Network, not by the person. A person held on slop.date who then joins peon.biz or friends.help gets a new member there that is not held, so that member can be matched on the new app. The same is true for a minor signal on one app while the record age says adult. Until the service copies the hold (and an open minor signal) to the new member at join, staff who hold a person must also check the person's other apps after any later join: `POST /safety/hold` with `safety@*` holds every live membership of the person at the time of the hold only. The proposed patch is in the #11 adversarial review results.
+- A ban is different: it is refused at join on every app, and the person's numbers are suppressed.
+
+### 9.2 A member changes their own number (PRD F25)
+
+Settings page, "Change my number" (`POST /api/me/phone/start`, then `POST /api/me/phone/confirm`; `accounts.ts` `startNumberChange` and `confirmNumberChange`):
+
+1. The member logs in with a code to the current number. The change starts only within 10 minutes of that login (the confirmation from the existing number). After that the API answers 403 `reauth`.
+2. A code goes to the new number through the same OTP service and limits as a login (Twilio Verify in production), at most 3 changes started per person a day. The answer is the same whether or not the new number is known.
+3. The member types that code within 15 minutes. Only then is the new number checked: a banned new number answers `review`, a number that belongs to anyone (a member, a number on hold) answers `number_in_use`, and nothing moves.
+4. The move, in one transaction (`PgPeopleStore.movePhone`): the phone identity, the consent history (copied to the new number, then the old number's rows deleted; a STOP from the new number that is newer still wins), the person's keyed phone hash (linked agents' OAuth grants move with it), and the age floor (the lowest of both numbers). The old number's sessions, codes and pending text flows end. Messages still waiting in the outbound queue for the old number end unsent (`suppressed_ineligible`, note "number changed"). A delete of everything by an earlier owner of the new number no longer suppresses it. If the new number's age floor is lower, the person's lowest age follows and every app's member follows it.
+5. The browser gets a new session on the new number. The backend refreshes every network's member addresses at once (`deploy/backend/server.ts`).
+
+Refused: a number on hold (`review`), a banned person or number (`review`; a new number would escape a ban by phone), the same number (`same_number`), Cloud sign-in sites (`cloud_auth_required`).
+
+Audit: `platform.phone_changes` keeps one row per change: who asked (`member`), when it was asked and confirmed, and the keyed hashes of the old and the new number. It never keeps the old number. A change that was not confirmed is removed by the retention purge; delete everything removes the person's rows.
+
+Known limits: another backend replica reads the new address at its next restart or join refresh (the service does not refresh member addresses on its tick; written up for the service owner). The `network.messages` row of a message ended by the change keeps its earlier status.
 

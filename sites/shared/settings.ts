@@ -8,9 +8,12 @@
 // Confirms: dialog[data-confirm="stop|leave|delete-all"] holding form[method=dialog] with a
 // button value="confirm". The delete-all dialog also holds input[name=confirmText] that must
 // equal its data-word attribute. A page without the dialog cannot run the action (fail closed).
-import { api, type Me, type Participation } from "./api.ts";
+// Number change (PRD F25): [data-change-number] holds form[data-form="new-phone"] (input[name=phone])
+// and form[data-form="new-code"] (input[name=code]), each with its own [data-error]. It works within
+// 10 minutes of a login by code; after that the API answers "reauth" and the page asks for a new login.
+import { api, toE164, type Me, type Participation } from "./api.ts";
 import { mountAuth } from "./auth.ts";
-import { $, fill, formatDate, message, ready, showStep, when } from "./ui.ts";
+import { $, busy, fill, formatDate, message, ready, setError, showStep, when } from "./ui.ts";
 
 const STATE_LABELS: Record<string, string> = {
   active: "Active",
@@ -119,6 +122,42 @@ function download(name: string, data: unknown): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+/** The number change forms: a code to the new number, then that code. A page without them has no number change. */
+export function mountNumberChange(root: HTMLElement, onChanged: () => Promise<void>): void {
+  const box = $(root, "[data-change-number]");
+  const phoneForm = box?.querySelector<HTMLFormElement>('form[data-form="new-phone"]');
+  const codeForm = box?.querySelector<HTMLFormElement>('form[data-form="new-code"]');
+  if (!box || !phoneForm || !codeForm) return;
+  const reauth = root.dataset.msgReauthChange ?? "For your safety, log out, log in again with a new code, then change your number.";
+  const show = (step: "phone" | "code") => { phoneForm.hidden = step !== "phone"; codeForm.hidden = step !== "code"; };
+  phoneForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    setError(phoneForm, "");
+    const e164 = toE164(phoneForm.querySelector<HTMLInputElement>('input[name="phone"]')?.value ?? "");
+    if (!e164) return setError(phoneForm, message(root, "invalid_phone"));
+    const res = await busy(phoneForm, () => api.phoneStart(e164));
+    // A 403 "unauthorized" is the API's "reauth": the login is older than 10 minutes.
+    if (!res.ok) return setError(phoneForm, res.status === 403 && res.error === "unauthorized" ? reauth : message(root, res.error));
+    show("code");
+  });
+  codeForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    setError(codeForm, "");
+    const code = codeForm.querySelector<HTMLInputElement>('input[name="code"]')?.value.trim() ?? "";
+    if (!/^\d{4,10}$/.test(code)) return setError(codeForm, message(root, "invalid_code"));
+    const res = await busy(codeForm, () => api.phoneConfirm(code));
+    if (!res.ok) {
+      if (res.error === "no_pending_change") show("phone");
+      return setError(res.error === "no_pending_change" ? phoneForm : codeForm, message(root, res.error));
+    }
+    phoneForm.reset();
+    codeForm.reset();
+    show("phone");
+    await onChanged();
+    status(root, root.dataset.msgNumberChanged ?? "Your number is changed. We text the new number from now on.");
+  });
+}
+
 export async function mountSettings(root: HTMLElement): Promise<void> {
   showStep(root, "loading");
   mountAuth(root, async () => {
@@ -127,6 +166,7 @@ export async function mountSettings(root: HTMLElement): Promise<void> {
   });
   await refresh(root);
   ready(root);
+  mountNumberChange(root, () => refresh(root));
 
   const act = (name: string, fn: (btn: HTMLButtonElement) => Promise<void>) =>
     root.querySelectorAll<HTMLButtonElement>(`[data-action="${name}"]`).forEach((b) =>

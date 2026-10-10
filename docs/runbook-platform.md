@@ -70,6 +70,7 @@ The transcript captured on 2026-10-07 is gone: it showed the old `buddies` id, a
 | `GET /api/me` on another site with the first site's cookie | 401: each site has its own cookie |
 | Stop messages on one site (or STOP on the shared line) | every app stops for that number; "leave <app>" or the leave button leaves one app |
 | `POST /api/me/delete {"scope":"all"}` within 10 minutes of a login | `{"ok":true}`; later, 403 `reauth` |
+| `POST /api/me/phone/start {"phone"}` within 10 minutes of a login, then `POST /api/me/phone/confirm {"code"}` with the code from the new number | `{"ok":true}`, then `{"ok":true,"phoneMasked"}` and a new session cookie on the new number; later than 10 minutes, 403 `reauth`; a number that belongs to someone, 409 `number_in_use` (only after its code); runbook-real.md 9.2 |
 | Any request straight to the backend without the router's signature, in staging or production | 421 `edge_required` |
 
 ## 4. Rules the service keeps

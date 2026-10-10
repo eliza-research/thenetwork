@@ -238,7 +238,7 @@ export interface HealthAlert {
 
 export interface ScoreMetric {
   key: "worthwhile_interruption" | "opt_in" | "completion" | "repeat_edges" | "first_value_14d" | "attention_burden"
-    | "reviewer_minutes" | "opt_outs" | "invite_rate" | "minors_contacted" | "leaks";
+    | "reviewer_minutes" | "shadow_precision" | "opt_outs" | "invite_rate" | "minors_contacted" | "leaks";
   label: string;
   /** null when there is nothing to measure yet. */
   value: number | null;

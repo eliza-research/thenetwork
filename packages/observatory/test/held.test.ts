@@ -36,6 +36,11 @@ beforeAll(async () => {
       ] });
       if (u.pathname === "/queue/leak-review/leak%3A1" || u.pathname === "/queue/leak-review/leak:1") return Response.json({ ok: true });
       if (u.pathname.startsWith("/queue/leak-review/")) return Response.json({ ok: false, reason: "not_parked" }, { status: 409 });
+      // The relay route as packages/network/service/service.ts answers it (itemId, from and to member ids), on slop only.
+      if (u.pathname === "/staff/relay/held" && req.method === "GET" && u.searchParams.get("app") === "slop") return Response.json({ ok: true, network: "slop:nyc", items: [
+        { itemId: "rl_1", app: "slop", kind: "text", from: "slop_m1", to: "slop_m2", reasons: ["clef:scam"], createdAt: Date.now() - 30_000, text: "send me a gift card" },
+      ] });
+      if (u.pathname === "/staff/relay/rl_1/release" && req.method === "POST") return Response.json({ ok: true, delivered: true });
       return Response.json({ error: "no route" }, { status: 404 });
     },
   });
@@ -88,10 +93,22 @@ describe("held texts in the console", () => {
     expect(rows.filter(e => e.action === "held_reject").map(e => `${e.detail?.phase}:${e.ok}`).sort()).toEqual(["requested:true", "result:false"]);
   }, T);
 
-  test("held relay: the service has no route yet, so the console says not available (and acts on nothing)", async () => {
+  test("held relay: the service's own item shape (itemId, from) is listed, and a decision sends the reason as the service's note", async () => {
+    // Regression: the console read only `id`, so every held relay item was dropped and the panel was always empty.
     const r = await as(TOK.safety, "/api/held?app=slop&queue=relay");
+    expect(r.status).toBe(200);
+    const body = await r.json() as { ok: boolean; items: HeldText[] };
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]).toMatchObject({ id: "rl_1", queue: "relay", kind: "text", memberId: "slop_m1", reasons: ["clef:scam"], text: "send me a gift card" });
+    const p = await post(TOK.safety, "/api/held?app=slop", { queue: "relay", id: "rl_1", decision: "release", reason: "consent checked by staff" });
+    expect([p.status, (await p.json()).ok]).toEqual([200, true]);
+    expect(calls.filter(c => c.method === "POST" && c.path === "/staff/relay/rl_1/release").at(-1)!.body).toEqual({ reason: "consent checked by staff", note: "consent checked by staff" });
+  }, T);
+
+  test("a queue the service does not answer is not available (and acts on nothing)", async () => {
+    const r = await as(TOK.admin, "/api/held?app=peon&queue=relay");
     expect([r.status, (await r.json()).code]).toEqual([404, "not_available"]);
-    const p = await post(TOK.safety, "/api/held?app=slop", { queue: "relay", id: "rl1", decision: "release", reason: "consent checked" });
+    const p = await post(TOK.admin, "/api/held?app=peon", { queue: "relay", id: "rl1", decision: "release", reason: "consent checked" });
     expect([p.status, (await p.json()).code]).toEqual([404, "service_missing"]);
   }, T);
 });

@@ -24,7 +24,7 @@ The backend process has two listeners:
 
 | Listener | Bind | Paths |
 |---|---|---|
-| Public, `PORT` (8790) | `0.0.0.0` when `PLATFORM_ENV` is `staging` or `production`; `127.0.0.1` otherwise | `/api/*` (the platform public API), `/webhooks/blooio[/<app>]` (Blooio, signature checked), `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals`, `/internal/updates` (the Eliza gateway's signed calls, `SERVICE_TURN_SECRET`; a body over 256 KiB is refused), `/mcp`, `/oauth/*`, `/.well-known/oauth-*` (the MCP server, packages/mcp, mounted by `server.ts`; 404 `mcp_not_enabled` when `TURNSTILE_SITE_KEY` is not set), `/healthz` |
+| Public, `PORT` (8790) | `0.0.0.0` when `PLATFORM_ENV` is `staging` or `production`; `127.0.0.1` otherwise | `/api/*` (the platform public API), `/webhooks/blooio[/<app>]` (Blooio, signature checked), `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals`, `/internal/updates`, `/internal/relay` (the Eliza gateway's signed calls, `SERVICE_TURN_SECRET`; a body over 256 KiB is refused), `/mcp`, `/oauth/*`, `/.well-known/oauth-*` (the MCP server, packages/mcp, mounted by `server.ts`; 404 `mcp_not_enabled` when `TURNSTILE_SITE_KEY` is not set), `/healthz` |
 | Staff, `STAFF_PORT` (4848) | `::` when deployed (Railway's private network may be IPv6 only); `127.0.0.1` otherwise | The staff API: `/health`, `/review`, `/safety/*`, `/matching`, `/holds`, `/invite`, `/apps/<app>/...`. Never on the public port. |
 
 How a site request reaches the backend:
@@ -401,6 +401,7 @@ Every minute, inside the backend's tick, the ops round reads each network and th
 | `safety_minor:<network>` | bad | A minor signal after contact with an adult in 24 h |
 | `safety_report:<network>` | bad (urgent kind) or warn | A member report in 24 h. Urgent kinds: harassment, unsafe, scam, minor. |
 | `safety_signal:<network>` | bad | Agent `safety_concern` signals (`POST /internal/signals`) that wait for a person in `GET /signals`. Posted again when the count goes up. |
+| `precision:<network>` | warn | Shadow precision under 80% over 7 days (person review decisions approved without edits, at least 20 decisions; PRD 32.8). |
 | `bias_report:<network>` | warn | The weekly bias monitor wrote a report with groups under 0.8x in the last 24 h. Counts only; the groups are in the console's bias panel. |
 | `safety_action:<network>` | warn | A ban or a hold in 24 h |
 | `queue_outbound:<network>` | warn | `ALERT_OUTBOUND_BACKLOG` (50) or more messages wait for delivery |

@@ -88,6 +88,11 @@ async function main() {
     } : undefined,
   });
   await svc.start();
+  // A member's own number change (packages/platform accounts.ts, PRD F25): each network reads the new
+  // address at once, so nothing queued later goes to the old number.
+  svc.publicApi.accounts.onPhoneChanged(async () => {
+    for (const rt of svc.runtimes.values()) await rt.identities().catch(e => log.warn("identities refresh failed", { network: rt.id, error: (e as Error).message }));
+  });
   for (const rt of svc.runtimes.values()) {
     const sends = c.channel !== "dry-run" ? (liveSendAllowed(process.env, rt.app.id) ? "live" : `refused (${liveFlag(rt.app.id)} is off)`) : "dry-run";
     log.info("network", { network: rt.id, sends, matching: rt.matchingAllowed ? "allowed" : "off" });
