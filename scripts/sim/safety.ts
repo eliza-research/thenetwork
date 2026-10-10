@@ -407,7 +407,7 @@ async function pgPart(b: Block): Promise<void> {
       expect(await text(A, "Sam, 29")).toBe("joined");
       await text(A, "", ["https://media.test/a1.jpg"]);
       expect([await photoRows(await personOf(A)), fetched.length]).toEqual([0, 0]);
-      expect(await text(A, "YES")).toBe("handled");
+      expect(await text(A, "YES PHOTOS")).toBe("handled");
       await text(A, "", ["https://media.test/a2.jpg"]);
       const pid = await personOf(A);
       const memberId = (await svc.people.getMembership(pid!, "slop"))!.memberId;
@@ -423,7 +423,7 @@ async function pgPart(b: Block): Promise<void> {
     await b.run("pg: staff hold then ban through the staff API with the console token: the audit actor is the signed-in person; the rating goes", async () => {
       await text(B, "slop");
       expect(await text(B, "Alex, 31")).toBe("joined");
-      await text(B, "", ["https://media.test/b0.jpg"]); await text(B, "yes"); await text(B, "", ["https://media.test/b1.jpg"]);
+      await text(B, "", ["https://media.test/b0.jpg"]); await text(B, "yes photos"); await text(B, "", ["https://media.test/b1.jpg"]);
       bPerson = await personOf(B); bMember = (await svc.people.getMembership(bPerson!, "slop"))!.memberId;
       expect((await ratingRows(bMember)).length).toBe(1);
       const hold = await staff("/safety/hold", CONSOLE, { memberId: bMember, note: "held after a report" });

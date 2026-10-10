@@ -321,8 +321,11 @@ export class OutboundQueue {
   /** A row ends (nothing more will happen to it). A row to a non-member keeps no address and no text. */
   private async end(row: QueueRow, status: string, note?: string, error?: string): Promise<StatusChange> {
     const now = new Date(this.now);
+    // A text parked for leak review keeps its text and address until staff decide (a drop ends it and clears them).
+    const keep = status === "parked_leak_review";
     await this.sql`update platform.outbound set status = ${status}, note = ${note ?? null}, last_error = coalesce(${error ?? null}, last_error), ended_at = ${now}, updated_at = ${now},
-      lease_owner = null, lease_until = null, to_address = case when member_id is null then null else to_address end, body = case when member_id is null then null else body end
+      lease_owner = null, lease_until = null,
+      to_address = case when member_id is null and ${!keep} then null else to_address end, body = case when member_id is null and ${!keep} then null else body end
       where id = ${row.id}`;
     if (row.personCap && NOT_SENT.test(status)) await this.o.checks.capRelease?.(row).catch(() => {});
     return { id: row.id, app: row.app, memberId: row.memberId, status };

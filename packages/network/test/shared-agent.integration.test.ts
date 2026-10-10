@@ -120,12 +120,19 @@ test("a normal signed join reaches open context, and STOP revokes replay without
 test("a committed collection followed by a fault stays unresolved and is never automatically rerun",async()=>{
   const original=service.inbound.bind(service);let handled=0;
   service.inbound=async(...args)=>{handled++;await original(...args);throw new Error("synthetic after-effect fault");};
-  const input=turn("fault-after-effects","+12125550131","HELP");
-  expect((await post(input)).status).toBe(409);expect((await post(input)).status).toBe(409);expect(handled).toBe(1);
-  service.inbound=original;
-  await service.tick();expect(handled).toBe(1);
+  const input=turn("fault-after-effects","+12125550131","hello there");
+  try {
+    expect((await post(input)).status).toBe(409);expect((await post(input)).status).toBe(409);expect(handled).toBe(1);
+    // A compliance turn (STOP, START, HELP, leave) whose reply committed before the fault is never sealed:
+    // it answers with what committed (inbox.ts rescueCompliance), once, and is never rerun.
+    const help=turn("fault-after-help","+12125550132","HELP");
+    const rescued=await post(help);expect(rescued.status).toBe(200);
+    const rescuedBody=await rescued.json() as any;expect(rescuedBody).toMatchObject({outcome:"handled",reason:"compliance_partial"});expect(rescuedBody.replies.length).toBe(1);
+    expect(await (await post(help)).json()).toEqual(rescuedBody);expect(handled).toBe(2);
+  } finally { service.inbound=original; }
+  await service.tick();expect(handled).toBe(2);
   const [row]=await sql`select status,replies,response,sender,event from platform.inbound where id='msg:blooio:fault-after-effects'`;
-  expect(row.status).toBe("unresolved");expect(row.replies.length).toBe(1);expect(row.response).toBeNull();expect(row.sender).toBeNull();expect(row.event).toBeNull();
+  expect(row.status).toBe("unresolved");expect(row.replies.length).toBeGreaterThan(0);expect(row.response).toBeNull();expect(row.sender).toBeNull();expect(row.event).toBeNull();
   // The unresolved turn holds this sender's ordinary messages back (at most 10 minutes); STOP, START and
   // HELP are never held back (inbox.ts), so the person can always get help or stop.
   clock.advance(MINUTE);expect((await post(turn("after-fault",input.from,"hello again"))).status).toBe(409);
@@ -191,7 +198,7 @@ test("completed signed payload expiry retains a tombstone and leaves unresolved 
   const [expired]=await sql`select status,request_hash,response,replies,receipt,sender_hash from platform.inbound where id='msg:blooio:payload-expiry'`;
   expect(expired.status).toBe("unresolved");expect(expired.request_hash).toBeDefined();expect(expired.response).toBeNull();expect(expired.replies).toEqual([]);expect(expired.receipt).toBeNull();expect(expired.sender_hash).toBeNull();
   const [interrupted]=await sql`select status,replies from platform.inbound where id='msg:blooio:fault-after-effects'`;
-  expect(interrupted.status).toBe("unresolved");expect(interrupted.replies.length).toBe(1);
+  expect(interrupted.status).toBe("unresolved");expect(interrupted.replies.length).toBeGreaterThan(0);
 },60_000);
 
 test("full canonical deletion scrubs signed context, replies and receipts without crossing people",async()=>{

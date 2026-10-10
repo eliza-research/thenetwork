@@ -121,6 +121,10 @@ class SeatWorld {
 }
 
 const CANDIDATES = ["c1", "c2", "c3", "c4"];
+/** A pending short acknowledgement ("Got it, thanks.", "Great, thanks.") may ride in front of the next send (network.ts). */
+const ACK = /^(?:Got it|Thanks|Great|No problem)[^.!?]*[.!?] /i;
+const isCopy = (body: string, copy: string) => body === copy || (ACK.test(body) && body.endsWith(` ${copy}`));
+const startsWith = (body: string, re: RegExp) => re.test(body.replace(ACK, ""));
 const POST = "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL";
 
 export async function peonSeatsBlock(b: Block): Promise<void> {
@@ -199,7 +203,8 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
     const c = candOf(A);
     expect(await w.runUntil(() => w.probedFor(c, A))).toBe(true);
     const probe = w.about(A).filter(s => s.to === c).at(-1)!.body;
-    expect(probe).toBe(SEAT_COPY.candidateProbe({ title: "data analyst", pay: "$90k-$120k", where: "hybrid in Brooklyn", must: [] }));
+    // The probe is the seat copy; a pending short acknowledgement ("Got it, thanks.") may ride in front of it (network.ts send).
+    expect(isCopy(probe, SEAT_COPY.candidateProbe({ title: "data analyst", pay: "$90k-$120k", where: "hybrid in Brooklyn", must: [] }))).toBe(true);
     expect(probe).not.toMatch(/Rowan|Abbott|Acme|score|%/);
     expect(w.about(A).some(s => s.to === "hm1")).toBe(false);
     await w.say(c, "yes");
@@ -221,12 +226,15 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
     await w.say("hm1", "yes");
     expect(w.opp(A)?.stage).toBe("scheduled");
     // The intro is logistics: it waits only for quiet hours.
-    const intro = (id: MemberId, re: RegExp) => w.about(A).some(s => s.to === id && re.test(s.body));
+    const intro = (id: MemberId, re: RegExp) => w.about(A).some(s => s.to === id && startsWith(s.body, re));
     expect(await w.runUntil(() => intro("hm1", /^Intro: Cand C\. said yes to your data analyst post\./) && intro(c, /^Good news: Rowan A\., who is hiring for data analyst, said yes too\./), DAY)).toBe(true);
     // The engine sees the seat hold one of its two openings.
     const input = w.net.packInput(w.clock.now());
     expect(input.interactions?.some(x => x.id === `${A}:seat` && x.participants.includes(seat) && x.outcome === "accepted")).toBe(true);
-    expect(input.facets.find(f => f.id === `${seat}:openings`)?.tags).toContain("peon:openings:1");
+    // Two openings: this intro holds one, and every other seat item still in flight (review or probes) is
+    // about to hold one (engine seatFills), so the seat has 2 - 1 - inFlight left.
+    const inFlight = w.net.exportState().opps.filter(o => o.seat?.id === seat && o.id !== A && o.stage !== "closed").length;
+    expect(input.facets.find(f => f.id === `${seat}:openings`)?.tags).toContain(`peon:openings:${Math.max(0, 1 - inFlight)}`);
   });
 
   let B = "";
@@ -247,7 +255,7 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
     expect(w.last("hm1")).toBe(POSTING_COPY.closed("data analyst"));
     expect(w.saved.at(-1)).toMatchObject({ id: postingId, status: "closed" });
     expect(w.opp(B)).toMatchObject({ stage: "closed", closedReason: "posting closed" });
-    expect(await w.runUntil(() => w.last(c) === SEAT_COPY.postingClosed, DAY)).toBe(true);
+    expect(await w.runUntil(() => isCopy(w.last(c), SEAT_COPY.postingClosed), DAY)).toBe(true);
     expect(w.opp(A)?.stage).toBe("scheduled");
     await w.run(3 * DAY);
     expect(queue().filter(i => i.oppId !== A && i.oppId !== B).length).toBe(0);

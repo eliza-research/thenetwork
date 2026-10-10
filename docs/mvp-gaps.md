@@ -99,7 +99,7 @@ Each item of #11 section 2 was written against `integration/mvp`. This is its st
 | member-text-intents: no live LLM run of the reader or the judge | Human or founder | Needs provider keys and a founder-approved live run; agents here have no keys. |
 | member-text-intents: settings do not show a pause end date set by text | Done | c680335: `sites/shared/settings.ts` `pauseText` ("Paused until <date>") with the resume control. |
 | member-text-intents: scratchpad files overwritten | Closed (informational) | A note about a past run on a shared scratchpad. Agents now write logs only to their own worktree. |
-| safety-line: a held person can still join (join checks only bans) | Open (by design today) | On main a held person can join and is never matched (snapshot and person_safety); bans are refused at join, OTP and inbound (`service.ts`). Refusing a join for a safety hold is a policy change; re-check with the founder before building it. |
+| safety-line: a held person can still join (join checks only bans) | Human or founder (by design today) | On main a held person can join and is never matched (snapshot and person_safety); bans are refused at join, OTP and inbound (`service.ts`). Refusing a join for a safety hold is a policy change; re-check with the founder before building it. |
 | safety-line: clearing per-app minor signals is manual | Done | 7d6a166: staff `POST /safety/clear-minor` runs `clearMinorSignal` on every app of the person and dismisses the minor reports (`packages/network/service/service.ts` `clearMinor`; the console calls it, `packages/observatory/src/sources/service.ts`). |
 | safety-line: no safety_alert paging integration | Done (code); destination is a founder number | c6c70cb: `deploy/backend/ops.ts` alert monitor counts reports, urgent reports, minor signals after contact, holds, bans and waiting safety signals and posts to the alert sinks. The destination (`ALERT_WEBHOOK_URL`) and the on-call roster are founder items (#22). |
 | safety-line: no rebase onto origin/main | Closed (informational) | The branch was not kept; main is the base (section 0a). |
@@ -117,7 +117,7 @@ Each item of #11 section 2 was written against `integration/mvp`. This is its st
 | photos-live: the live probe does not use `slopProbeMessage` or `probePhotoRefs` | Done | 4cca459: `packages/network/service/packs.ts` probe hook calls `probePhotoRefs` and `slopProbeMessage`; platform photo ids are opaque (`newPhotoId`, gate "photo ids" in `bun run sim --only relay`). |
 | photos-live: no consent text for showing a photo to a match | Human or founder | `SLOP_PROBE_PHOTOS = false` until Founder and Legal approve a photo consent version (#22). The relay block gates that no probe carries a photo while it is off. |
 | membership-hardening: VoIP-looking number rule needs a carrier lookup | Human or founder | Needs a carrier lookup account and a decision (#22; section 4 of #11 defers it). |
-| membership-hardening: members cannot change their own number | In progress elsewhere | Member number change is owned by another open package; staff `clearHold` `same_owner` / `new_owner` exists. |
+| membership-hardening: members cannot change their own number | Done | fin/adversarial-review-fixes: `POST /api/me/phone/start` and `/confirm` (fresh login, code to the new number, ban/hold/in-use checks, consent history and grants move, old sessions end; `platform.phone_changes`, migration 0033), settings control on all four sites, `packages/platform/test/number-change.pg.test.ts`. |
 | membership-hardening: no rebase | Closed (informational) | The branch was not kept. |
 | membership-hardening: text joins have no client IP | Closed (informational) | A known limit: the IP-burst rule applies to web joins; text joins are checked by the number-block and risk-word rules. |
 | sims-and-e2e: the capital block fails | Human or founder | Fix or waive (section 0a, "capital fairness gate"); the waiver is a founder decision. |
@@ -125,14 +125,14 @@ Each item of #11 section 2 was written against `integration/mvp`. This is its st
 | sims-and-e2e: relay and photo adversarial scenarios are todos | Done | `packages/sim/src/apps/slop/adversarial.ts`, gated in `scripts/sim/relay.ts` (docs/results/2026-10-10-relay-heldout.md section 3): scam after the reveal, number swap before both yeses, leak of the other member's details, a minor in the relay, photo in the probe with the flag off, no consent, a minor or a held member. |
 | sims-and-e2e: `pkill -f scripts/sim.ts` incident | Closed (informational) | A note about a past run. Agents no longer run `pkill -f` or kill processes they did not start. |
 | console-review-shadow: not rebased | Closed (informational) | The branch was not kept. |
-| ops-monitoring: Workers AI calls not counted | In progress elsewhere | The Workers AI and LLM cost rows are owned by another open package. |
-| ops-monitoring: LLM rows land under app "platform", purpose "other" | In progress elsewhere | Same package as the cost rows. |
+| ops-monitoring: Workers AI calls not counted | Done | fin/contract-relay-cost: each relay Clef call to Workers AI is a cost row for its app (`cost.ts relayClefEvent`, `packages/network/test/cost.integration.test.ts`). |
+| ops-monitoring: LLM rows land under app "platform", purpose "other" | Done (moot) | The service has no production LLM client (the conversation runs in Eliza); `llmHooks` records app and purpose when a caller sets them and is covered by `cost.integration.test.ts`. |
 | ops-monitoring: founder numbers not set; external uptime check; Railway restore | Human or founder | `COST_BUDGET_*`, `COST_TARGET_PER_MEMBER_USD`, unit prices, `ALERT_WEBHOOK_URL`, RPO/RTO, the uptime check and the restore need the founder or a deploy (#22). |
-| ops-monitoring: shadow precision not in the scorecard | In progress elsewhere | Owned by the console-review-shadow follow-up. |
+| ops-monitoring: shadow precision not in the scorecard | Done | fin/adversarial-review-fixes: a scorecard row in the console, `precision7d` in the ops metrics and a `precision:<network>` alert under 80% with 20+ decisions; ops sim gate. |
 | ops-monitoring: pilot metric limits (mutes, complaints, "dates held") | Closed (informational) | Documented limits in each metric's "how" text and section 4; nothing to build before the pilot. |
 | ops-monitoring: nothing was pushed | Closed (informational) | The packages are merged into main. |
 
-Also in progress elsewhere (not #11 section 2 rows, but they block closing #11): the adversarial review passes of #11 section 1, and the peon job seats.
+#11 section 1 (the adversarial review passes, the fixes and the final full round) and the peon job seats (#9) are done on main (fin/review-fixes, fin/adversarial-review-fixes, fin/peon-job-seats, and the combined fin/all round).
 
 The relay classifier on held-out 2 (#10) is measured in docs/results/2026-10-10-relay-heldout.md: rules only, scam recall 60%, leak recall 65%, 0% false holds on 246 benign texts; Clef not measured (needs `CLOUDFLARE_AI_TOKEN`).
 

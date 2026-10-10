@@ -122,6 +122,8 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
     const [A, C] = ["+12125550185", "+12125550186"];
     const owner = t.browser(); await owner.login(C); await t.join(owner);
     const b = t.browser(); await b.login(A); await t.join(b);
+    // Past the OTP resend interval for C (the owner's own login code just went to it).
+    t.tick(2 * MIN);
     // Step 1 answers the same as for an unknown number (no enumeration).
     expect(await b.call("POST", "/api/me/phone/start", { phone: C })).toEqual({ status: 200, body: { ok: true } });
     expect(await b.call("POST", "/api/me/phone/confirm", { code: t.codes.get(C) })).toMatchObject({ status: 409, body: { error: "number_in_use" } });
