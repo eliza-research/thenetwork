@@ -135,3 +135,46 @@ test("completed signed payload expiry retains a tombstone and leaves unresolved 
   const [interrupted]=await sql`select status,replies from platform.inbound where id='msg:blooio:fault-after-effects'`;
   expect(interrupted.status).toBe("unresolved");expect(interrupted.replies.length).toBe(1);
 },60_000);
+
+test("full canonical deletion scrubs signed context, replies and receipts without crossing people",async()=>{
+  const phone="+12125550161", otherPhone="+12125550162", before=escaped;
+  for (const [from, name] of [[phone,"Deleteari"],[otherPhone,"Keepnoa"]]) {
+    expect((await post(turn(`delete-join-${name}`,from,"friends.help","friends"))).status).toBe(200);
+    expect((await post(turn(`delete-profile-${name}`,from,`${name}, 29`,"friends"))).status).toBe(200);
+    for (const [i,text] of ["I enjoy hiking and cooking","Saturday afternoons work for me","Small groups are good"].entries()) {
+      clock.advance(MINUTE);
+      expect((await post(turn(`delete-onboard-${name}-${i}`,from,text,"friends"))).status).toBe(200);
+    }
+  }
+  const open=turn("delete-open",phone,"Tell me something about the weather","friends");
+  const opened=await post(open);expect(opened.status).toBe(200);
+  const openBody=await opened.json() as any;expect(openBody.outcome).toBe("open");
+  expect(JSON.stringify(openBody)).toContain("Deleteari");
+  const help=turn("delete-help",phone,"HELP","friends");
+  const handled=await post(help);expect(handled.status).toBe(200);
+  const helpBody=await handled.json() as any;expect(helpBody.outcome).toBe("handled");expect(helpBody.replyIds.length).toBeGreaterThan(0);
+  const ack:TurnReceiptRequest={channel:help.channel,messageId:help.messageId,replyIds:helpBody.replyIds,outcome:"accepted",providerMessageIds:["owned-delete-receipt"],historyRecorded:true};
+  expect((await receipt(ack)).status).toBe(200);
+  const control=turn("delete-other-person",otherPhone,"Tell me something about the weather","friends");
+  const kept=await post(control);expect(kept.status).toBe(200);const keptBody=await kept.json();
+  expect((await sql`select receipt from platform.inbound where id='msg:blooio:delete-help'`)[0].receipt).not.toBeNull();
+  const call=async(path:string,body:unknown,cookie?:string)=>fetch(new URL(path,server.url),{method:"POST",headers:{host:"localhost:5104","content-type":"application/json",...(cookie?{cookie}:{})},body:JSON.stringify(body)});
+  expect((await call("/api/auth/otp/start",{phone})).status).toBe(200);
+  const login=await call("/api/auth/otp/verify",{phone,code});expect(login.status).toBe(200);
+  const cookie=login.headers.get("set-cookie")!.split(";")[0]!;
+  expect((await call("/api/me/delete",{scope:"all"},cookie)).status).toBe(200);
+  for (const input of [open,help]) {
+    const replay=await post(input);expect(replay.status).toBe(409);
+    expect(await replay.text()).not.toContain("Deleteari");
+    const [row]=await sql`select response,replies,receipt,receipt_hash,sender_hash,member_id,app_id,sender,event from platform.inbound where id=${`msg:${input.channel}:${input.messageId}`}`;
+    expect(row).toEqual({response:null,replies:[],receipt:null,receipt_hash:null,sender_hash:null,member_id:null,app_id:null,sender:null,event:null});
+  }
+  expect((await receipt(ack)).status).toBe(409);
+  expect((await sql`select person_id from platform.phone_identities where e164=${phone}`).length).toBe(0);
+  expect((await sql`select person_id from platform.phone_identities where e164=${otherPhone}`).length).toBe(1);
+  expect(await (await post(control)).json()).toEqual(keptBody);
+  expect(escaped).toBe(before);
+  server.stop(true);await service.close();await start();
+  expect((await post(open)).status).toBe(409);expect((await receipt(ack)).status).toBe(409);
+  expect(await (await post(control)).json()).toEqual(keptBody);expect(escaped).toBe(before);
+},60_000);
