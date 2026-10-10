@@ -19,7 +19,15 @@ This folder holds the production process for the ConsentNetwork. One process run
 
 A turn commits its claim in `platform.inbound` before it calls the existing inbound handler. The channel and provider message ID identify the claim. The same body replays the stored result; a different body conflicts. An interrupted turn stays unresolved and is not rerun by the inbox tick. Replies from this turn alone are stored as `collected`, outside `platform.outbound`; collection does not mean provider acceptance. A signed receipt binds the exact ordered reply IDs. An unknown receipt can advance to accepted or rejected; accepted receipts are immutable.
 
-Open context rechecks the canonical phone and app membership. It includes confirmed shareable facts after the leak gate, and refuses context that exceeds the deployed plugin bounds. Unavailable active-item summaries are `null`. Replays recheck current admission and context, so STOP, a hold, a ban or changed context cannot reuse an old open grant. App leave seals prior signed payloads for that app. The existing seven-day purge strips completed signed payloads and retains a minimal replay tombstone; interrupted claims remain unresolved until an owned recovery or deletion path seals them.
+Open context rechecks the canonical phone and app membership. It includes confirmed shareable facts after the leak gate, and refuses context that exceeds the deployed plugin bounds. Unavailable active-item summaries are `null`. Replays recheck current admission and context, so STOP, a hold, a ban or changed context cannot reuse an old open grant. App leave seals prior signed payloads for that app. The existing seven-day purge strips completed signed payloads and retains a minimal replay tombstone; tombstones are deleted 30 days after that.
+
+A turn still processing after 2 minutes lost its worker and becomes unresolved. An unresolved turn is never rerun, and it holds the sender's later messages back for 10 minutes at most. STOP, START and HELP are never held back. Staff with `admin@*` can release a stuck turn with `POST /inbound/resolve {"id":"msg:<channel>:<messageId>"}`; the turn stays unresolved and a replay is still refused.
+
+A handled turn with no replies (a quiet acknowledgement, an under-13 decline) takes a receipt with empty `replyIds` and `providerMessageIds`. `accountEligible` is false for an unknown age, so Cloud eligibility never runs ahead of the join age check. An accepted receipt may carry `historyRecorded: false` (no Eliza account yet).
+
+Agent signals never act on their own. `opt_out` and `safety_concern` are stored as proposed private facets, logged as an alert line, and listed for reviewer or safety staff at `GET /signals`. STOP and "leave <app>" in the member's own words stay the only automatic consent changes.
+
+The contract is version `2026-10-09.1` (`CONTRACT_VERSION`). The matching elizaos/eliza plugin-network and Cloud change (channel on actions, turn receipts, `DELIVER_RECEIPT_PATH`, optional `acceptedAt`) has not landed yet, so the deployed plugin cannot use these actions until it does.
 
 Signed state, signal and update actions bind the exact completed open turn, channel, app and member. State windows extend the canonical member row; private hypotheses use the existing facet owner. Cloud outbound uses `NETWORK_CHANNEL=eliza_cloud`, `NETWORK_CLOUD_DELIVERY_ORIGIN`, `SERVICE_TURN_SECRET` and the configured `BLOOIO_FROM`, with the same live approval flags as Blooio. The default and `--dry-run` send nothing.
 
@@ -92,6 +100,8 @@ Send `Authorization: Bearer <token>`. Tokens are per app: `reviewer@slop:<t>` is
 | `POST /review/:oppId` | reviewer | `{ decision: "approve" \| "reject" \| "edit" \| "reroll", reason?, note?, secondsSpent?, explanations?, objective?, swapOut? }`. The reviewer of record is the token's staff id, never a field in the body. |
 | `POST /safety/lift` | safety | `{ memberId, note? }` |
 | `POST /safety/close` | safety | `{ caseId, note? }` |
+| `GET /signals` | reviewer, safety | Agent `opt_out` and `safety_concern` signals waiting for a person: `{ id, memberId, kind, evidence, at }`, newest first |
+| `POST /inbound/resolve` | admin@* | Release a sender held back by a signed turn that did not finish: `{ id }` |
 | `GET /safety/reports` | safety | Reports about this app's members, newest first: `{ id, kind, reporterId, subjectId, opportunityId?, at, status, source, priorReports }` (docs/admin-console.md 3.7.1) |
 | `POST /safety/hold` | safety | `{ memberId, note (5+ characters), reportId? }`: the person on every app |
 | `POST /safety/ban` | safety | `{ memberId, by: "phone" \| "person", note, reportId? }`; 409 `already_banned`, `no_person`, `no_phone` |

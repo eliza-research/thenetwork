@@ -1447,6 +1447,17 @@ export class NetworkService implements RuntimeHost {
     return { ...h, networks };
   }
 
+  /** Proposed opt_out and safety_concern signals for staff, newest first (agent_private; staff with reviewer or safety roles only). */
+  private async reviewSignals(app: AppId): Promise<{id: string; memberId: string; kind: string; evidence: string; at: number}[]> {
+    const rows = await this.sql.begin(async tx => {
+      await tx`select set_config('app.app_id',${app},true)`;
+      return tx`select id,member_id,tags,value,valid_from from network.facets where app_id=${app} and status='proposed'
+        and tags && ${tx.array(["signal:opt_out","signal:safety_concern"],"TEXT")} order by valid_from desc, id limit 200`;
+    });
+    return (rows as any[]).map(r => ({id: r.id, memberId: r.member_id, kind: String((r.tags as string[]).find(t => t.startsWith("signal:"))).slice(7),
+      evidence: r.value, at: new Date(r.valid_from).getTime()}));
+  }
+
   /** Agent actions inherit one completed open turn; receipts stay on that original inbound owner. */
   private async sharedAction(path: string, b: Row, signedId: string, raw: string): Promise<Response> {
     const stateAction = path === SET_STATE_PATH;
@@ -1538,6 +1549,10 @@ export class NetworkService implements RuntimeHost {
             values(${app},${`service-signal:${id}:${index}`},${memberId},'fact',${signal.evidence},${tx.array([`signal:${signal.kind}`],"TEXT")},'agent_private','inferred','chat','proposed',${new Date(this.clock.now())})`;
           if (signals.length) await tx`insert into network.events(app_id,at,actor_type,actor_id,type,object_type,object_id,payload)
             values(${app},${new Date(this.clock.now())},'agent',${memberId},'network_signals_proposed','member',${memberId},${{kinds:signals.map(signal=>signal.kind),count:signals.length}}::jsonb)`;
+          // opt_out and safety_concern never act on their own: they wait for a person in GET /signals.
+          // STOP and "leave <app>" in the member's own words stay the only automatic consent changes.
+          const review = signals.filter(signal => signal.kind === "opt_out" || signal.kind === "safety_concern");
+          if (review.length) this.log(`[alert] ${app}: ${review.length} agent signal(s) (${[...new Set(review.map(signal => signal.kind))].join(", ")}) wait for staff review (GET /signals)`);
           result = {recorded:signals.length};
         }
         await complete(tx,result);
@@ -1581,8 +1596,15 @@ export class NetworkService implements RuntimeHost {
         if (claim.receipt_hash === digest) return json({ok: true, replayed: true});
         if (claim.receipt_hash && !(claim.receipt?.outcome === "unknown" && ["accepted", "rejected"].includes(b.outcome as string))) return json({error: "receipt_conflict", retryable: false}, 409);
         const collected = claim.replies as CollectedReply[];
-        if (!collected.length || JSON.stringify(collected.map(r => r.id)) !== JSON.stringify(b.replyIds)) return json({error: "receipt_scope_invalid", retryable: false}, 409);
-        if ((b.outcome === "accepted" && (!(b.providerMessageIds as string[]).length || (!b.historyRecorded && !(claim.response.replyKind === "compliance" && claim.response.accountEligible === false))))
+        // A handled turn with no reply (a quiet acknowledgement, an under-13 decline) takes an empty receipt and is done.
+        if (!collected.length) {
+          if ((b.replyIds as string[]).length || (b.providerMessageIds as string[]).length || b.historyRecorded) return json({error: "receipt_scope_invalid", retryable: false}, 409);
+          await tx`update platform.inbound set receipt_hash=${digest},receipt=${b}::jsonb where id=${id}`;
+          return json({ok: true, replayed: false});
+        }
+        if (JSON.stringify(collected.map(r => r.id)) !== JSON.stringify(b.replyIds)) return json({error: "receipt_scope_invalid", retryable: false}, 409);
+        // historyRecorded may be false on an accepted send: Cloud has no history for a recipient without an Eliza account yet.
+        if ((b.outcome === "accepted" && !(b.providerMessageIds as string[]).length)
           || (b.outcome !== "accepted" && b.historyRecorded)) return json({error: "invalid_receipt", retryable: false}, 400);
         const status = b.outcome === "accepted" ? "sent" : b.outcome === "unknown" ? "send_unknown" : "refused_gateway";
         if (isAppId(claim.response.app)) {
@@ -1614,7 +1636,8 @@ export class NetworkService implements RuntimeHost {
       const age = await this.accounts.lowestAge(input.from, person);
       if (outcome === "left" || (age !== undefined && !canJoin(age))) turn.memberId = undefined;
       const accountEligible = !(await this.accounts.held(input.from)) && !(await this.accounts.banned(input.from, person))
-        && !(await this.people.isSuppressed(this.phoneKey(input.from))) && (age === undefined || canJoin(age)) && turn.consent?.state !== "opted_out";
+        // An unknown age fails closed (core/policy.ts): Cloud account eligibility never runs ahead of the Network's join age check.
+        && !(await this.people.isSuppressed(this.phoneKey(input.from))) && age !== undefined && canJoin(age) && turn.consent?.state !== "opted_out";
       const rt = turn.app ? this.runtimeFor(turn.app) : undefined;
       const binding = rt && turn.memberId ? await this.accounts.activeMembership(rt.app, {e164: input.from, personId: person?.id ?? null}) : undefined;
       // activeMembership owns the known join-age check; first contact, STOP, leave and policy denials create no service counter.
@@ -1701,6 +1724,22 @@ export class NetworkService implements RuntimeHost {
         const no = need(["safety"]); if (no) return no;
         await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_safety_reports", mode: "real", ok: true, app: rt.app.id });
         return json({ ok: true, network: rt.id, reports: await this.safetyReports(rt) });
+      }
+      if (req.method === "GET" && path === "/signals") {
+        // Agent signals that need a person: opt_out and safety_concern proposed from /internal/signals.
+        const no = need(["reviewer", "safety"]); if (no) return no;
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_agent_signals", mode: "real", ok: true, app: rt.app.id });
+        return json({ ok: true, network: rt.id, signals: await this.reviewSignals(rt.app.id) });
+      }
+      if (path === "/inbound/resolve") {
+        // A signed turn that did not finish: staff release the sender (the turn itself stays unresolved).
+        if (!hasEverywhere(user, "admin")) return json({ ok: false, code: "forbidden", error: "needs role admin@*" }, 403);
+        if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
+        const b = await body(req) as Record<string, any> | undefined;
+        if (typeof b?.id !== "string" || !b.id.startsWith("msg:") || b.id.length > 600) return json({ ok: false, error: "id_required" }, 400);
+        const ok = await this.inbox.resolve(b.id);
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "resolve_inbound_turn", mode: "real", ok, app: rt.app.id });
+        return result(ok ? { ok: true } : { ok: false, reason: "not_stuck" });
       }
       if (req.method === "GET" && path === "/bias") {
         // The weekly bias monitor (aggregates only): admin or analyst for this app.

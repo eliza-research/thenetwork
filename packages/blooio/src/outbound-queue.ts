@@ -406,14 +406,16 @@ export class OutboundQueue {
           where member.app_id=${row.app} and member.id=${row.memberId} order by person.id for update of person`;
         const [member] = await tx`select id,person_id,account_status,opted_out from network.members where app_id=${row.app} and id=${row.memberId} for update`;
         if (!member || member.account_status==='removed' || member.account_status==='invited') return "dropped_forgotten";
-        if (row.kind!=="compliance" && member.account_status!=="active") return "suppressed_ineligible";
+        // A paused or restricted account still gets replies to its own messages, compliance texts and
+        // safety notices (snapshot.ts); the engine already decides those. The fence stops only proactive sends.
+        if (row.kind==="proactive" && member.account_status!=="active") return "suppressed_ineligible";
         if (this.o.provider.receipt) {
           const [binding] = await tx`select membership.member_id from platform.memberships membership
             join platform.people person on person.id=membership.person_id and person.deleted_at is null
             join platform.phone_identities phone on phone.person_id=person.id and phone.e164=${row.to} and phone.hold is null
             where membership.person_id=${member.person_id} and membership.app_id=${row.app} and membership.member_id=${row.memberId}
             and membership.state not in ('removed','invited')
-            and (${row.kind==="compliance"} or (membership.state='active' and membership.review is null))
+            and (${row.kind!=="proactive"} or (membership.state='active' and membership.review is null))
             for share of membership,phone`;
           if (!binding) return "dropped_forgotten";
         }

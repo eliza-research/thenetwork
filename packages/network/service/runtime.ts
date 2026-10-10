@@ -552,7 +552,7 @@ export class NetworkRuntime {
         return m.id === memberId ? [m.id] : [m.id, m.name, ...(first.toLowerCase() !== firstName.toLowerCase() ? [first] : [])];
       })];
       const facts = [...snapshot.facets.filter(f => f.scope === "agent_private").map(f => f.value),...(participation.window?.note?[participation.window.note]:[])];
-      const safe = (text: string) => outputLeaks(text, {forbidden, facts}).length === 0;
+      const safe = (text: string) => outputLeaks(text, {forbidden, facts, contacts: true}).length === 0;
       if (!safe(firstName) || !safe(member.homeCity)) return null;
       const facets = snapshot.facets.filter(f => f.memberId === memberId && f.scope === "shareable" && f.confirmedByMember === true
         && !f.sensitive && (f.validFrom === undefined || f.validFrom <= snapshot.now) && (f.validTo === undefined || f.validTo > snapshot.now)
