@@ -275,7 +275,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
       const clock = new SimClock(START);
       const sent: SendRequest[] = [];
       const provider = { kind: "blooio" as const, send: async (r: SendRequest) => { sent.push(r); return { providerMessageId: `p${sent.length}`, status: "queued" as const }; } };
-      const { s } = service(clock, { adapter: (net, rt) => new BlooioAdapter({ net, provider, clock, memberOf: rt.memberOf, env, app: rt.app.id, log: () => {} }) });
+      const { s } = service(clock, { adapter: (net, rt) => new BlooioAdapter({ from: "+12125550100", net, provider, clock, memberOf: rt.memberOf, env, app: rt.app.id, log: () => {} }) });
       await text(s, clock, newPhone(), "hi", { app: FR });
       expect(sent.length).toBe(sends);
     }
@@ -352,7 +352,7 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
     const flags = { BLOOIO_ALLOW_SEND: "1", NTWRK_LIVE_APPROVED: "1", [`${FR.toUpperCase()}_LIVE_APPROVED`]: "1", SLOP_LIVE_APPROVED: "1" };
     const sent: SendRequest[] = [];
     const provider = { kind: "blooio" as const, send: async (r: SendRequest) => { sent.push(r); return { providerMessageId: `p${sent.length}`, status: "queued" as const }; } };
-    const live = { adapter: (net: any, rt: any) => new BlooioAdapter({ net, provider, clock, memberOf: rt.memberOf, env: flags, app: rt.app.id, log: () => {} }) };
+    const live = { adapter: (net: any, rt: any) => new BlooioAdapter({ from: "+12125550100", net, provider, clock, memberOf: rt.memberOf, env: flags, app: rt.app.id, log: () => {} }) };
     const appScope = { env: { PLATFORM_ENV: "dev", PLATFORM_STOP_SCOPE: "app" } };
     const { s } = service(clock, { ...live, ...appScope });
     clock.set(START + 14 * HOUR); // inside the send window (quiet hours hold proactive sends only)
