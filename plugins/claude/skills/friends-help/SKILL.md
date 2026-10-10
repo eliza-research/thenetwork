@@ -6,7 +6,7 @@ compatibility: Needs web access to open https://friends.help pages. Sending the 
 metadata:
   app: friends
   site: https://friends.help
-  backend: "https://api.ntwrk.love"
+  backend: "https://api.ntwrk.party"
   mcp: "https://friends.help/mcp"
   operator: Eliza Research Corporation
   version: "1.0.0"
@@ -18,8 +18,8 @@ friends.help helps people in New York City make friends, by text. The agent lear
 likes to do and suggests small group plans (3 to 6 people) at public places near them: parks,
 courts, cafés, museums. The person says yes or skips. Friends, not dates.
 
-All of these apps are powered by The Network: ntwrk.love, slop.date, friends.help and peon.biz
-share one backend at https://api.ntwrk.love, and one text line. This app's MCP server is at https://friends.help/mcp.
+All of these apps are powered by The Network: ntwrk.party, slop.date, friends.help and peon.biz
+share one backend at https://api.ntwrk.party, and one text line. This app's MCP server is at https://friends.help/mcp.
 
 ## What the person is signing up for
 
@@ -89,7 +89,7 @@ whether a phone number uses friends.help.
 
 ## Support
 
-- Support: https://friends.help/support (email help@ntwrk.love)
+- Support: https://friends.help/support (email help@ntwrk.party)
 - Privacy: https://friends.help/privacy
 - Terms: https://friends.help/terms
 - Text messaging terms: https://friends.help/sms-terms

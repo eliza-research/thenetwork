@@ -1,11 +1,11 @@
 ---
-name: ntwrk-love
-description: Explains The Network (ntwrk.love), the text-message agent that powers slop.date (dating), friends.help (friends in New York City) and peon.biz (work and hiring), and points a person to the right app so they can sign themselves up. Use when someone asks what The Network or one of its apps is, which app fits what they want, who can join, how joining works, how privacy works across apps, or how to stop, leave or delete. Never signs anyone up, never asks for or types a phone number or verification code, and never searches for or contacts other people.
-license: Proprietary. Terms at https://ntwrk.love/terms
-compatibility: Needs web access to open https://ntwrk.love pages. Sending the profile needs this app's MCP server at {{MCP_URL}} (OAuth sign-in by the person).
+name: ntwrk-party
+description: Explains The Network (ntwrk.party), the text-message agent that powers slop.date (dating), friends.help (friends in New York City) and peon.biz (work and hiring), and points a person to the right app so they can sign themselves up. Use when someone asks what The Network or one of its apps is, which app fits what they want, who can join, how joining works, how privacy works across apps, or how to stop, leave or delete. Never signs anyone up, never asks for or types a phone number or verification code, and never searches for or contacts other people.
+license: Proprietary. Terms at https://ntwrk.party/terms
+compatibility: Needs web access to open https://ntwrk.party pages. Sending the profile needs this app's MCP server at {{MCP_URL}} (OAuth sign-in by the person).
 metadata:
   app: ntwrk
-  site: https://ntwrk.love
+  site: https://ntwrk.party
   backend: "{{BACKEND_ORIGIN}}"
   mcp: "{{MCP_URL}}"
   operator: Eliza Research Corporation
@@ -23,7 +23,7 @@ line and one rule: nothing crosses apps without the person's consent. The Networ
 
 | App | For | Text keyword | Site |
 |---|---|---|---|
-| The Network | Introductions, plans and events (invite-only for now) | no keyword | https://ntwrk.love |
+| The Network | Introductions, plans and events (invite-only for now) | no keyword | https://ntwrk.party |
 | slop.date | Dating in New York City | slop | https://slop.date |
 | friends.help | Friends and small group plans in New York City | friends | https://friends.help |
 | peon.biz | Work and hiring (waitlist) | peon | https://peon.biz |
@@ -49,7 +49,7 @@ The person signs up through you, in this conversation:
 
 1. Ask, one or two questions at a time: first name, neighborhood, what they want more of right now (people, plans or events), what they like to do, and when they are usually free. Never ask for a phone number, a code, an
    address or anything about another person. Read the profile back and change it until they agree.
-2. Give them one link to confirm their own phone: https://ntwrk.love/join?via=agent. On that page they type
+2. Give them one link to confirm their own phone: https://ntwrk.party/join?via=agent. On that page they type
    their own number, the code we text them, their first name and age, and agree to the texts. You
    never see the number or the code.
 3. When they say it is done, connect to this app's MCP server ({{MCP_URL}}). They sign in on our
@@ -95,6 +95,6 @@ applies on every app.
 
 ## Support
 
-- Support: https://ntwrk.love/support (email help@ntwrk.love)
-- Privacy: https://ntwrk.love/privacy
-- Terms and text messaging terms: https://ntwrk.love/terms
+- Support: https://ntwrk.party/support (email help@ntwrk.party)
+- Privacy: https://ntwrk.party/privacy
+- Terms and text messaging terms: https://ntwrk.party/terms
