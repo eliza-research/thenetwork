@@ -10,7 +10,7 @@
 //    override a refusal, a conditional, a hedge or a mixed reply (mergeConsent).
 //  - An age the LLM reads can only make the member younger (a minor), never decline them: a
 //    decline deletes data, so it needs the offline explicit form.
-import { tryChatJson, type ChatMessage, type LLM } from "@thenetwork/core";
+import { maskPii, tryChatJson, type ChatMessage, type LLM } from "@thenetwork/core";
 import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import type { ConsentWhy, TimeOption } from "./classify.ts";
 import { NEIGHBORHOODS } from "./geo.ts";
@@ -119,7 +119,7 @@ export function validateUnderstood(raw: unknown, ctx: UnderstandContext = {}): U
 export function llmUnderstand(llm: LLM, o: { maxTokens?: number; attempts?: number } = {}): Understand {
   return async (body, ctx) => {
     if (!body.trim() || body.length > MAX_UNDERSTAND_CHARS) return undefined;
-    const r = await tryChatJson(llm, understandPrompt(body, ctx), raw => validateUnderstood(raw, ctx), { attempts: o.attempts ?? 2, maxTokens: o.maxTokens ?? 400 });
+    const r = await tryChatJson(llm, understandPrompt(maskPii(body), ctx), raw => validateUnderstood(raw, ctx), { attempts: o.attempts ?? 2, maxTokens: o.maxTokens ?? 400 });
     return r.ok ? r.value : undefined;
   };
 }

@@ -15,7 +15,7 @@
 //    `declined` and clears everything (core policy: nothing is stored).
 //  - No race, ethnicity, health or immigration field exists here; such words are never stored.
 import type { City, Facet, LLM, ChatMessage } from "@thenetwork/core";
-import { canBeMatched, MIN_MEMBER_AGE, tryChatJson } from "@thenetwork/core";
+import { canBeMatched, maskPii, MIN_MEMBER_AGE, tryChatJson } from "@thenetwork/core";
 import { INTERESTS } from "../network/vocabulary.ts";
 import type { Gender, Goal, Slot } from "./profile.ts";
 import { SLOTS } from "./profile.ts";
@@ -965,7 +965,7 @@ export function validateSlopReading(raw: unknown, text: string): SlopLlmReading 
 export function llmSlopReader(llm: LLM, o: { maxTokens?: number; attempts?: number } = {}): SlopReader {
   return async (text, ctx) => {
     if (!text.trim() || text.length > 1200) return undefined;
-    const r = await tryChatJson(llm, slopReaderPrompt(text, ctx), raw => validateSlopReading(raw, text), { attempts: o.attempts ?? 2, maxTokens: o.maxTokens ?? 500 });
+    const r = await tryChatJson(llm, slopReaderPrompt(maskPii(text), ctx), raw => validateSlopReading(raw, text), { attempts: o.attempts ?? 2, maxTokens: o.maxTokens ?? 500 });
     return r.ok ? r.value : undefined;
   };
 }
