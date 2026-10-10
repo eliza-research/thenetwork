@@ -65,3 +65,4 @@
 {"text":"surprise me","asked":"ageRange","unset":["ageRange"]}
 {"text":"no kids","unset":["dealbreakers"]}
 {"text":"kids","asked":"dealbreakers","unset":["dealbreakers"]}
+{"text":"a woman would be nice","asked":"seeks","unset":["gender"]}

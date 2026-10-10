@@ -154,3 +154,7 @@
 {"text":"looking for men 18-25","expect":{"seeks":["man"],"ageRange":[18,25]}}
 {"text":"i date women, 18-24","expect":{"seeks":["woman"],"ageRange":[18,24]}}
 {"text":"women between 40 and 50 pls","expect":{"seeks":["woman"],"ageRange":[40,50]}}
+{"text":"a woman","asked":"gender","expect":{"gender":"woman"}}
+{"text":"a guy","asked":"gender","expect":{"gender":"man"}}
+{"text":"a trans woman, into men","asked":"orientation","expect":{"gender":"woman","seeks":["man"]}}
+{"text":"I'd say a man looking for women","asked":"orientation","expect":{"gender":"man","seeks":["woman"]}}

@@ -217,6 +217,8 @@ const SELF_RULES: RegExp[] = [
   new RegExp(`^\\s*(?:(?:hi|hey|hello|yo|sup|ok|so|well|hiya)[\\s,!]+)?((?:${ADJ}[\\s,]+){0,3})${SELF_G}\\b(?=\\s*(?:$|[,\\/(-]|here\\b|lookin|looking|seeking|lf\\b|in\\b|from\\b|\\d|tryna|wanting|into\\b|who\\s+likes?|4|for\\b|,))(?!\\s*,\\s*(?:this|that|it|i\\b|i'm|what|so|ugh|wow|why|how|you|these|those|lol|seriously))`),
   new RegExp(`\\b((?:${ADJ}\\s+){0,2})${SELF_G}(?:\\s+(?:person|human))?\\s+here\\b`),
 ];
+/** A bare answer to "how do you describe yourself?": "a woman", "a trans guy into men" (only when that was asked). */
+const SELF_ANSWER = new RegExp(`^\\s*(?:(?:i'?d say|just|probably|um|well)[\\s,]+)?(?:a|an)\\s+((?:${ADJ}[\\s,]+){0,3})${SELF_G}(?:\\s+(?:person|human))?\\b(?=\\s*(?:$|[,.!\\/(-]|lookin|looking|seeking|into\\b|who\\s+likes?|for\\b|and\\b))`);
 function genderOfWord(w: string): Gender | undefined {
   const x = w.replace(/\s+/g, " ").trim();
   if (new RegExp(`^(?:${G_WOMAN}|w|f|women|girls)$`).test(x)) return "woman";
@@ -239,11 +241,12 @@ function identityOf(adj: string, w: string): string | undefined {
 const ORIENT_WORDS: Record<string, string> = { straight: "straight", gay: "gay", lesbian: "lesbian", bi: "bisexual", bisexual: "bisexual", pan: "pansexual", pansexual: "pansexual", queer: "queer", ace: "asexual", asexual: "asexual" };
 
 interface GenderReading { gender?: Cand<Gender>; identity?: Cand<string>; orientation?: Cand<string>; hasKids?: Cand<"yes"> }
-function readGender(t: string): GenderReading {
+function readGender(t: string, asked?: OnboardField): GenderReading {
   const out: GenderReading = {};
+  const rules = asked === "gender" || asked === "orientation" ? [...SELF_RULES, SELF_ANSWER] : SELF_RULES;
   for (const s of sentences(t)) {
     if (THIRD_PARTY.test(s.text)) continue;
-    for (const rx of SELF_RULES) for (const m of all(rx, s.text)) {
+    for (const rx of rules) for (const m of all(rx, s.text)) {
       const lead = m[0].length - m[0].trimStart().length;
       if (/\bnot\s*$/.test(s.text.slice(0, m.index + lead)) || /\b(?:i'?m|im|i am) not\b/.test(m[0])) continue;
       const adj = (m[1] ?? "").trim(), w = m[2]!;
@@ -278,7 +281,9 @@ const SEEK_WORD: [RegExp, Gender][] = [
   [/^(?:nonbinary|nonbinery|non-binary|nb|nbs|enby|enbies|genderqueer)$/, "nonbinary"],
 ];
 const SEEK_FILLER = /^(?:a|an|the|some|cute|nice|tall|older|younger|mostly|mainly|only|just|also|too|and|or|&|\+|plus|n|\/|people|folks|ppl|persons|humans|of|kind|really|primarily|other|fellow|queer|trans|straight|bi|gay|lesbian|single|hot|cool|smart|funny|interesting|ish|lol|tbh|honestly|pls|please|preferably|ideally|i guess|non|binary|people's|cis|masc|femme|fem|feminine|masculine|good|great|decent|real|genuine|sweet|honest|handsome|pretty|beautiful|new|special|right|solid|kind-hearted|caring|both|either)$/;
-const ALL_GENDERS = /^\s*(?:(?:a|the)\s+)?(?:anyone|any1|anybody|everyone|everybody|whoever|all genders|any genders?|people of (?:all|any) genders?|all of the above|all of them|any of them|all three|everyone really|literally anyone|all|anyone really)\b/;
+const ALL_GENDERS = /^\s*(?:(?:a|the)\s+)?(?:anyone|any1|anybody|everyone|everybody|whoever|all genders|any genders?|people of (?:all|any) genders?|all of the above|all of them|any of them|all three|everyone really|literally anyone|all(?=\s*(?:$|[,.!?;)]|lol\b|tbh\b|really\b|please\b|pls\b|honestly\b|i guess\b))|anyone really)\b/;
+/** "anyone but men", "everyone except guys": the genders after it are excluded. */
+const ALL_BUT = /^\s*(?:but|except|besides|other than|apart from|excluding|minus)\b/;
 const SEEK_TRIGGER = /\b(?:look(?:ing|in'?|ng)?\s+(?:for|4)|lokking for|loking for|lookign for|lf|seeking|searching for|into|interested in|attracted to|dat(?:e|ing|in)|meet(?:ing)?|want(?:ing)?|wanna (?:date|meet)|prefer|preferably|open to|down for|tryna (?:meet|date|find)|hoping (?:to meet|for)|after|only|just|exclusively|strictly|(?<!i'?m |im )likes?|loves?)\b/;
 
 interface SeekReading { seeks?: Cand<Gender[]>; neg: Gender[]; additive: boolean }
@@ -287,7 +292,12 @@ function genderList(text: string, from: number): { genders: Set<Gender>; neg: Se
   const rest = text.slice(from);
   const genders = new Set<Gender>(), neg = new Set<Gender>();
   const am = ALL_GENDERS.exec(rest);
-  if (am) return { genders: new Set(GENDERS), neg, end: from + am[0].length, all: true };
+  if (am) {
+    const after = from + am[0].length, but = ALL_BUT.exec(text.slice(after));
+    if (!but) return { genders: new Set(GENDERS), neg, end: after, all: true };
+    const x = genderList(text, after + but[0].length);
+    return { genders: new Set(GENDERS.filter(g => !x.genders.has(g))), neg: x.genders, end: x.end, all: false };
+  }
   const tok = /\s*(non[- ]binary|[a-z0-9'&+\/-]+|,)/g;
   let m: RegExpExecArray | null, end = from, negMode = false;
   while ((m = tok.exec(rest))) {
@@ -343,6 +353,8 @@ function readSeeks(t0: string, asked?: OnboardField): SeekReading {
     const singularAsked = asked === "seeks" && /^\s*(?:(?:actually|no|oh|um|well|so)[\s,!]+)*(?:a\s+|an\s+)?(?:woman|man|guy|girl|gal|lady|dude|nonbinary person|nb person)\b/.test(s.text);
     if (asked !== "gender" && (plural || singularAsked) && (L.genders.size || L.neg.size) && !/^\s*(?:i'?m|im|i am)\b/.test(s.text)) {
       for (const g of L.neg) neg.add(g);
+      // "men are a no for me", "guys are out": the genders named are excluded.
+      if (/^\s*(?:are|is)\s+(?:a\s+)?(?:hard\s+)?(?:no|not|never|out|off the table|a pass|pass)\b/.test(s.text.slice(L.end))) { for (const g of L.genders) neg.add(g); return; }
       // "no men" (no comma) excludes; "no, men" is a correction that names them.
       if (/\b(?:no|not|nope|nah)\s+$/.test(s.text.slice(0, lead))) { for (const g of L.genders) neg.add(g); return; }
       if (L.genders.size) {
@@ -403,6 +415,14 @@ function readAgeRange(t: string, asked: OnboardField | undefined, selfAge?: numb
       if (b[1] < a[0]) continue;
       if (range && range.start <= s.start + m.index && range.end >= s.start + m.index) continue;
       range = cand([Math.max(18, a[0]), b[1]] as [number, number], s, m, 0.85);
+    }
+    // A number and a decade: "25 to early 30s", "late 20s to 35".
+    for (const m of all(new RegExp(`(?<![\\d.$])(\\d{2})\\s*(?:-|to|through|thru|–)\\s*${DECADE}(?![a-z])|\\b${DECADE}\\s*(?:-|to|through|thru|–)\\s*(\\d{2})(?![\\d']|\\s*s\\b)`), s.text)) {
+      if (!isBare && !RANGE_CTX.test(s.text)) continue;
+      if (negated(s.text, m.index, 2) || RANGE_UNIT_AFTER.test(s.text.slice(m.index + m[0].length))) continue;
+      const v = m[1] ? [Number(m[1]), decadeBounds(m[2], Number(m[3]))[1]] : [decadeBounds(m[4], Number(m[5]))[0], Number(m[6])];
+      if (v[1]! < v[0]! || v[1]! < 18 || v[1]! > 99) continue;
+      range = cand([Math.max(18, v[0]!), v[1]!] as [number, number], s, m, 0.85);
     }
     // Open bounds: "30+", "25 and up", "over 30", "under 40", "40 max".
     let lo: { v: number; m: RegExpExecArray } | undefined, hi: { v: number; m: RegExpExecArray } | undefined;
@@ -497,7 +517,7 @@ const NOT_HOME = /\b(?:(?:minutes|mins|min|hours?|hrs?|blocks|stops)\s+(?:away\s
 function readLocation(t: string, asked: OnboardField | undefined, market?: City): Cand<Location> | undefined {
   let best: Cand<Location> | undefined;
   for (const s of sentences(t)) {
-    for (const m of all(/(?<![\d$#.\-\/])(\d{5})(?:-\d{4})?(?![\d\/])/, s.text)) {
+    for (const m of all(/(?<![\d$#.\-\/])(?<!\d,)(\d{5})(?:-\d{4})?(?![\d\/])/, s.text)) {
       if (/^\s*(?:mi\b|miles|dollars|bucks|steps|people|followers)/.test(s.text.slice(m.index + m[0].length))) continue;
       if (/\$\s*$/.test(s.text.slice(0, m.index))) continue;
       if (/\bnot\s*$/.test(s.text.slice(0, m.index))) continue;
@@ -745,7 +765,7 @@ export interface Reading {
 
 export function readMessage(text: string, o: ExtractOptions & { selfAge?: number } = {}): Reading {
   const t = normText(text);
-  const a = readAge(t), g = readGender(t), sk = readSeeks(t, o.asked);
+  const a = readAge(t), g = readGender(t, o.asked), sk = readSeeks(t, o.asked);
   const ar = readAgeRange(t, o.asked, a.age?.value ?? o.selfAge);
   const v = readValues(t);
   if (g.hasKids && !v.hasKids) v.hasKids = g.hasKids;

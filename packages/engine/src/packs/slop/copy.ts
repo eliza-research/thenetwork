@@ -30,10 +30,19 @@ export const SLOP_ASK_QUESTIONS: Record<string, string> = {
  * but never their name, contact, employer, area code or zip (the core passes the recipient's own
  * area; slop never prints it). Name and contact stay hidden until both say yes.
  */
-export function slopProbeText(ctx: { when: string }, activity: string, attribute?: string): string {
+export function slopProbeText(ctx: { when: string; times?: boolean }, activity: string, attribute?: string, about?: string): string {
+  const who = about ? ` They're ${about.replace(/[.\s]+$/, "")}.` : "";
   const also = attribute ? ` They're into ${attribute.replace(/[.\s]+$/, "")}.` : "";
-  return `There's someone I think you might like to go on a date with: ${activity.replace(/[.\s]+$/, "")}, ${ctx.when}.${also} Want me to check if they're up for it? I'll only tell you who it is if you both say yes.`;
+  return `There's someone I think you might like to go on a date with: ${activity.replace(/[.\s]+$/, "")}, ${ctx.when}.${who}${also} Want me to check if they're up for it? I'll only tell you who it is if you both say yes.${ctx.times ? " Tell me which time works, or no." : ""}`;
 }
+
+/** The booked date after both said yes: a public place, the share-my-date tip and the check-in to come. */
+export const slopBookedText = (other: string, when: string, where: string): string =>
+  `You're both in: a first date with ${other}, ${when}. Meet at ${where}, a public place. Reply if you can't make it. Tip: forward this text to a friend so someone knows where you'll be. I'll check in after to see how it went.`;
+
+/** The check-in after the date: how it went, and how to report anything that felt wrong. */
+export const slopCheckInText = (other: string): string =>
+  `How did your date with ${other} go? If anything felt wrong (they were rude, didn't show, or weren't who they said), tell me and I'll pass it to our safety team. If you ever feel unsafe, call 911 first.`;
 
 /** The sentence added when the probe carries the other person's photo. It names no one and describes nothing. */
 export const SLOP_PROBE_PHOTO_LINE = "I've attached a photo they chose to share; their name and number stay private until you both say yes.";
