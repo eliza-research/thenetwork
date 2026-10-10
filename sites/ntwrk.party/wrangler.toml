@@ -1,22 +1,22 @@
 # The Network's home page and the hub for every app.
-# Cloudflare Pages project "ntwrk-love" (founder decision 8, AGENTS.md), production branch main, served on
-# ntwrk-love.pages.dev and, once DNS points there, on ntwrk.love. The build (bun run sites/sites.ts ntwrk) writes
+# Cloudflare Pages project "ntwrk-party" (founder decision 8, AGENTS.md), production branch main, served on
+# ntwrk-party.pages.dev and, once DNS points there, on ntwrk.party. The build (bun run sites/sites.ts ntwrk) writes
 # ./dist with the static pages and an advanced-mode _worker.js (deploy/router.ts) plus _routes.json:
 # only /api, /api/*, /mcp, /mcp/*, /oauth/* and /.well-known/oauth-* run the Worker, which forwards them
 # to the shared backend with signed proxy headers. Every other path is a static file.
 # Deploys: CI (.github/workflows/deploy-sites.yml, behind the "production" GitHub environment), or by hand
 # only with founder approval:
-#   bun run sites/sites.ts ntwrk && NTWRK_ALLOW_DEPLOY=1 scripts/wrangler.sh pages deploy sites/ntwrk.love/dist --project-name ntwrk-love --branch main
-# The account comes from CLOUDFLARE_ACCOUNT_ID in the environment (the ntwrk.love Cloudflare account,
+#   bun run sites/sites.ts ntwrk && NTWRK_ALLOW_DEPLOY=1 scripts/wrangler.sh pages deploy sites/ntwrk.party/dist --project-name ntwrk-party --branch main
+# The account comes from CLOUDFLARE_ACCOUNT_ID in the environment (the ntwrk.party Cloudflare account,
 # which holds all four Pages projects); it is never written here.
-name = "ntwrk-love"
+name = "ntwrk-party"
 pages_build_output_dir = "./dist"
 compatibility_date = "2026-09-15"
 
 [vars]
 APP_ID = "ntwrk"
-SITE_HOST = "ntwrk.love"
+SITE_HOST = "ntwrk.party"
 # The one shared backend (sites/skills.config.ts BACKEND_ORIGIN).
-BACKEND_ORIGIN = "https://api.ntwrk.love"
+BACKEND_ORIGIN = "https://api.ntwrk.party"
 # Secret, set once per project (never here): PLATFORM_PROXY_SECRET, the HMAC key the backend checks.
-#   NTWRK_ALLOW_DEPLOY=1 scripts/wrangler.sh pages secret put PLATFORM_PROXY_SECRET --project-name ntwrk-love
+#   NTWRK_ALLOW_DEPLOY=1 scripts/wrangler.sh pages secret put PLATFORM_PROXY_SECRET --project-name ntwrk-party

@@ -1,6 +1,6 @@
 # Engine generalization: one matching engine, four app packs
 
-> **Superseded names (2026-10-08 cleanup note).** This is a dated research record. Since it was written: buddies.nyc was renamed friends.help (AppId `friends`, `friendsPack`); ntwrk.club belongs to someone else and is not used (ntwrk.love is the home page); `packages/worlds` moved to `packages/sim/src/apps`; the prototypes were deleted or promoted (`packages/blooio`). Current decisions: AGENTS.md "Platform decisions" and docs/mvp-plan.md.
+> **Superseded names (2026-10-08 cleanup note).** This is a dated research record. Since it was written: buddies.nyc was renamed friends.help (AppId `friends`, `friendsPack`); ntwrk.club belongs to someone else and is not used (ntwrk.party is the home page); `packages/worlds` moved to `packages/sim/src/apps`; the prototypes were deleted or promoted (`packages/blooio`). Current decisions: AGENTS.md "Platform decisions" and docs/mvp-plan.md.
 
 Date: 2026-10-08. Read-only audit. No code was changed and no LLM calls were made.
 
@@ -8,7 +8,7 @@ Date: 2026-10-08. Read-only audit. No code was changed and no LLM calls were mad
 
 | App | Domain | What it matches |
 |---|---|---|
-| **The Network** | ntwrk.club (ntwrk.love is live today) | The existing app: friends, activities, help, professional, dating with opt-in, events and plans; SF and NYC, with NYC the launch city. |
+| **The Network** | ntwrk.club (ntwrk.party is live today) | The existing app: friends, activities, help, professional, dating with opt-in, events and plans; SF and NYC, with NYC the launch city. |
 | **slop.date** | Dating | A single city, several cities, or within X miles of a zip code or point. |
 | **peon.biz** | Hiring | Candidate ↔ job (employer). |
 | **buddies.nyc** | Friend-finding | NYC only. |
