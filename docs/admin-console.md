@@ -172,6 +172,21 @@ The console calls the Network service's staff API. Every call carries `Authoriza
 
 A 404 without a `reason` means that the service has no such route yet: the console says so (`service_missing`). Without the service (game mode, or real mode without `NETWORK_SERVICE_URL`), the queue is built from the Network's safety cases (a `report_received` event between two members who had a date), and hold and ban are refused (`service_only`).
 
+#### 3.7.2 Held texts: leak review and held relay
+
+The Safety tab starts with "Held texts", per app, in two queues: **Leak review** (texts the send-time leak guard parked, `parked_leak_review`) and **Held relay** (relay items held for a check). Safety and admin only. Each row shows the kind, the member (or the masked number), the reasons and the time. The text is shown so staff can judge it, except when the item is about a member under 18 or with an unknown age (the service's `minor: true`, or the console's own member state): then the text is hidden and only **Reject** is possible. No score or rating ever reaches the page: the console passes only the fields listed here. **Release** (every other send check runs again) and **Reject** need a reason of 5 or more characters. Each read writes `read_held_texts`, and each decision writes a "requested" and a "result" row (`held_release` or `held_reject`).
+
+| Call | Body | Answer |
+|---|---|---|
+| `GET /queue/leak-review?app=` | | `200 {ok, items: [{id, kind, to (masked), text, reasons, createdAt, memberId?, minor?}]}` |
+| `POST /queue/leak-review/<id>?app=` | `{decision: "release" or "drop", reason}` | `200 {ok: true}` or `409 {reason}` (`not_parked`) |
+| `GET /staff/relay/held?app=` | | `200 {ok, items: [{id, kind, text?, reasons, createdAt, memberId?, minor?}]}` |
+| `POST /staff/relay/<id>/release?app=` and `.../reject` | `{reason}` | `200 {ok: true}` or `409 {reason}` |
+
+**Status (2026-10-09):** the console side is built (`/api/held`, `web/admin.tsx` HeldTexts; `packages/observatory/test/held.test.ts`). The service routes come from the messaging pipeline and the relay work and are not on this branch: until they land, each queue shows "Not available". Game mode has no held texts.
+
+How to test locally: run `bun run observatory:db`, then the console in real mode with a service (`NETWORK_DATABASE_URL=postgres://$USER@localhost:54339/network NETWORK_SERVICE_URL=http://127.0.0.1:4848 NETWORK_SERVICE_TOKEN=<an admin token of the service> PLATFORM_ENV=dev bun run observatory --mode real`). Open the printed URL, pick slop, open Safety. Both queues say "Not available" until the service has the routes. To see rows without the service routes, point `NETWORK_SERVICE_URL` at a local fake that answers the calls above (as `held.test.ts` does). In a minor report, **Clear minor signal (every app)** needs a note and then dismisses the report.
+
 ### 3.8 Requests and demand
 
 - **SHOULD**: open member requests by category and age; outcome (probing, fulfilled, still looking, none); retries; why unfulfilled (density gap, requester busy, trust); supply and demand per category; suggested growth asks.

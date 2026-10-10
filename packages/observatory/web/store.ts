@@ -7,7 +7,7 @@ import { useSyncExternalStore } from "react";
 import { NEIGHBORHOOD, type Borough } from "@thenetwork/network/geo"; // geo only: the package root pulls server code into the browser bundle
 import type { ConsoleApp } from "../src/apps.ts";
 import type {
-  AppHealth, AppProfile360, AuditEntry, BiasReportView, ClockInfo, ConfigInfo, ControlCommand, ControlResult, EngineRunSummary, EnvInfo, GameState, LabRequest, LabRun, MemberDetail, MemberTimeline,
+  AppHealth, AppProfile360, AuditEntry, BiasReportView, HeldQueue, HeldText, ClockInfo, ConfigInfo, ControlCommand, ControlResult, EngineRunSummary, EnvInfo, GameState, LabRequest, LabRun, MemberDetail, MemberTimeline,
   MemberTruth, Mode, NetworkInfo, ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsOpportunity, ObsRequest, ObsState, ObsStats, OpportunityDetail,
   MemberPhoto, PersonAppPanel, PersonSummary, RevealGrant, ReviewDecision, ReviewReason, RunDiff, SafetyAction, SafetyInfo, SearchHit, StaffRole, StaffUser,
 } from "../src/types.ts";
@@ -459,6 +459,8 @@ class ObsStore {
   opportunity(id: string) { return this.fetch<OpportunityDetail>(`/api/opportunity/${encodeURIComponent(id)}`); }
   safety() { return this.fetch<SafetyInfo>("/api/safety"); }
   safetyAction(a: SafetyAction) { return this.fetch<ControlResult>("/api/safety", a); }
+  held(queue: HeldQueue) { return this.fetch<{ ok: boolean; items?: HeldText[]; code?: string; error?: string }>(`/api/held?queue=${queue}`); }
+  heldDecision(queue: HeldQueue, id: string, decision: "release" | "reject", reason: string) { return this.fetch<ControlResult>("/api/held", { queue, id, decision, reason }); }
   config() { return this.fetch<ConfigInfo>("/api/config"); }
   /** The cost panel (real mode; analyst or admin): src/ops.ts. */
   cost() { return this.fetch<import("../src/ops.ts").CostSummary & { ok: boolean }>("/api/ops/cost"); }

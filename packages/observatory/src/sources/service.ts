@@ -23,8 +23,14 @@
 //   POST /safety/clear-minor { memberId, note }   clearMinorSignal on every app of the person, minor reports dismissed
 //   GET  /members/<id>/photos  (X-Network-Reason: the typed reason) -> { ok, photos: [{ id, url, expiresAt? }] }
 //   GET  /bias                          -> { ok, reports: BiasReportView[] } (the weekly bias monitor; admin or analyst)
+// Held texts (the console's "Held texts" panel; the routes come from the messaging pipeline and the relay work):
+//   GET  /queue/leak-review             -> { ok, items: [{ id, kind, to (masked), text, reasons, createdAt, memberId? }] }
+//   POST /queue/leak-review/<id>        { decision: "release"|"drop", reason }  a release runs every other send check again
+//   GET  /staff/relay/held              -> { ok, items: [{ id, kind, text?, reasons, createdAt, memberId? }] }
+//   POST /staff/relay/<id>/release      { reason }
+//   POST /staff/relay/<id>/reject       { reason }
 // 409 { reason } is a refusal with the Network's reason; 404 means the service has no such route yet.
-import type { BiasReportView, ControlCommand, ControlResult, HealthAlert, MemberPhoto, ReportKind, SafetyAction, SafetyReport } from "../types.ts";
+import type { BiasReportView, ControlCommand, ControlResult, HealthAlert, HeldQueue, HeldText, MemberPhoto, ReportKind, SafetyAction, SafetyReport } from "../types.ts";
 import { REVIEW_BLOCK_ERRORS, SAFETY_ERRORS } from "./source.ts";
 
 export interface ServiceConfig {
@@ -146,6 +152,41 @@ export class ServiceClient {
 
   matching(staff: string, on: boolean): Promise<ControlResult> { return this.act("/matching", staff, { on }, {}); }
 
+  /**
+   * Texts held for staff: the leak guard's parked texts or held relay items. Only the fields of HeldText
+   * pass (no score, no rating). 404 without a reason: the service has no such route yet ("not_available").
+   */
+  async held(staff: string, queue: HeldQueue): Promise<{ ok: true; items: HeldText[] } | { ok: false; code: string; error: string }> {
+    try {
+      const { status, json } = await this.call("GET", queue === "leak" ? "/queue/leak-review" : "/staff/relay/held", staff);
+      if (status === 404 && !json.reason) return { ok: false, code: "not_available", error: queue === "leak" ? "the Network service has no leak review route yet" : "the Network service has no held relay route yet" };
+      if (status !== 200 || !json.ok || !Array.isArray(json.items)) return { ok: false, code: "service_error", error: String(json.error ?? `HTTP ${status}`) };
+      const str = (v: unknown, max = 2000) => (typeof v === "string" && v ? v.slice(0, max) : undefined);
+      return {
+        ok: true,
+        items: (json.items as Record<string, unknown>[]).flatMap((x): HeldText[] => {
+          const id = str(x.id, 300);
+          if (!id) return [];
+          const at = Number(x.createdAt ?? x.at);
+          return [{
+            id, queue, reasons: Array.isArray(x.reasons) ? x.reasons.filter((r): r is string => typeof r === "string").map(r => r.slice(0, 120)).slice(0, 20) : [],
+            ...(str(x.kind, 60) ? { kind: str(x.kind, 60) } : {}), ...(str(x.to, 40) ? { to: maskTo(str(x.to, 40)!) } : {}),
+            ...(str(x.memberId, 200) ? { memberId: str(x.memberId, 200) } : {}), ...(Number.isFinite(at) ? { createdAt: at } : {}),
+            ...(x.minor === true ? { textHidden: "minor" as const } : str(x.text) ? { text: str(x.text) } : {}),
+          }];
+        }),
+      };
+    } catch (e) { return { ok: false, code: "service_unavailable", error: (e as Error).message }; }
+  }
+
+  /** Release or reject one held text, with the staff member's reason (5+ characters). */
+  heldDecision(staff: string, queue: HeldQueue, id: string, decision: "release" | "reject", reason: string): Promise<ControlResult> {
+    const e = encodeURIComponent(id);
+    return queue === "leak"
+      ? this.act(`/queue/leak-review/${e}`, staff, { decision: decision === "reject" ? "drop" : "release", reason }, HELD_ERRORS)
+      : this.act(`/staff/relay/${e}/${decision}`, staff, { reason }, HELD_ERRORS);
+  }
+
   /** The weekly bias monitor reports of the app's network, newest first (GET /bias; admin or analyst). */
   async bias(staff: string): Promise<{ ok: true; reports: BiasReportView[] } | { ok: false; error: string }> {
     try {
@@ -161,6 +202,18 @@ export class ServiceClient {
       return status === 200 && json.ok ? json as ServiceHealth : { error: String(json.error ?? `HTTP ${status}`) };
     } catch (e) { return { error: (e as Error).message }; }
   }
+}
+
+/** Why a held text was not released or rejected. */
+export const HELD_ERRORS: Record<string, string> = {
+  not_parked: "that text is no longer held", not_held: "that text is no longer held", reason_required: "a reason of 5 or more characters is required",
+  unknown_item: "no such held text", opted_out: "the recipient opted out: nothing was sent", minor: "a member under 18 is involved: nothing was sent",
+};
+
+/** A phone number as staff may see it: the last two digits only (the service already masks; this is a second check). */
+function maskTo(to: string): string {
+  const digits = to.replace(/\D/g, "");
+  return digits.length >= 7 ? `…${digits.slice(-2)}` : to;
 }
 
 /** The service's health as alert lines (the Overview strip): unreachable, a late tick, channel refusals, and one line when all is well. */

@@ -527,6 +527,21 @@ export type SafetyAction =
    */
   | { action: "clear_minor"; memberId: MemberId; note: string };
 
+// ---------------------------------------------------------------- held texts (leak review, relay)
+/** A queue of outbound texts that wait for staff: the leak guard's parked texts, or relay items held for a check. */
+export type HeldQueue = "leak" | "relay";
+/**
+ * One held text as the console shows it. Only these fields pass (never a score or a rating). `text` is
+ * left out for a member under 18 or with an unknown age (`textHidden`).
+ */
+export interface HeldText {
+  id: string; queue: HeldQueue; kind?: string; to?: string; memberId?: string; createdAt?: number;
+  /** Why it was held (the leak guard's labels, or the relay check's reason codes). */
+  reasons: string[];
+  text?: string;
+  textHidden?: "minor";
+}
+
 // ---------------------------------------------------------------- configuration (gaps 10, 17)
 export interface ConfigChange {
   version: number;

@@ -633,6 +633,36 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           return json(r, r.ok ? 200 : 409);
         }, ["safety"]),
       },
+      // Held texts: the leak guard's parked texts and held relay items (real mode, from the Network service).
+      // Safety or admin; each read and each decision is audited; a decision needs a reason of 5+ characters.
+      "/api/held": {
+        GET: guard(async (req, u, app) => {
+          const queue = new URL(req.url).searchParams.get("queue");
+          if (queue !== "leak" && queue !== "relay") return json({ ok: false, error: "queue must be leak or relay", code: "bad_queue" }, 400);
+          const src = await source(mode, app);
+          if (!src.held) return json({ ok: false, error: "held texts exist on real data only", code: "real_only" }, 404);
+          const no = await record(u, app, { action: "read_held_texts", ok: true, detail: { queue } });
+          if (no) return no;
+          const r = await src.held(queue, u.id);
+          return json(r, r.ok ? 200 : r.code === "not_available" ? 404 : 502);
+        }, ["safety"]),
+        POST: guard(async (req, u, app) => {
+          const b = await req.json().catch(() => null) as { queue?: unknown; id?: unknown; decision?: unknown; reason?: unknown } | null;
+          const reason = typeof b?.reason === "string" ? b.reason.trim().slice(0, 500) : "";
+          if (!b || (b.queue !== "leak" && b.queue !== "relay") || typeof b.id !== "string" || !b.id || b.id.length > 300 || (b.decision !== "release" && b.decision !== "reject")) {
+            return json({ ok: false, error: "queue (leak or relay), id and decision (release or reject) are required", code: "bad_action" }, 400);
+          }
+          if (reason.length < PERSON_REASON_MIN) return json({ ok: false, error: `a reason (at least ${PERSON_REASON_MIN} characters) is required`, code: "reason_required" }, 400);
+          const src = await source(mode, app);
+          if (!src.heldDecision) return json({ ok: false, error: "held texts exist on real data only", code: "real_only" }, 404);
+          const target = { targetType: "case" as const, targetId: `${b.queue}:${b.id}` };
+          const no = await record(u, app, { action: `held_${b.decision}`, ...target, ok: true, reason, detail: { phase: "requested", queue: b.queue } });
+          if (no) return no;
+          const r = await src.heldDecision(b.queue, b.id, b.decision, reason, u.id);
+          await record(u, app, { action: `held_${b.decision}`, ...target, ok: r.ok, detail: { phase: "result", queue: b.queue, ...(r.code ? { code: r.code } : {}) } });
+          return json(r, r.ok ? 200 : r.code === "service_missing" ? 404 : 409);
+        }, ["safety"]),
+      },
       // The weekly bias monitor (aggregates only; real mode reads it from the Network service). Admin or analyst.
       "/api/bias": guard(async (_r, u, app) => {
         const src = await source(mode, app);

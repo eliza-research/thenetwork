@@ -3,7 +3,7 @@
 // audit log), the simulation lab and run diff. Each one checks the role before it shows a control;
 // the server checks it again.
 import { useEffect, useState, type ReactNode } from "react";
-import type { AuditEntry, BiasReportView, ConfigInfo, DiffNum, EngineRunSummary, LabArm, LabRun, ObsRequest, ObsSafetyCase, RunDiff, SafetyAction, SafetyInfo, SafetyReport, ScoreMetric } from "../src/types.ts";
+import type { AuditEntry, BiasReportView, HeldQueue, HeldText, ConfigInfo, DiffNum, EngineRunSummary, LabArm, LabRun, ObsRequest, ObsSafetyCase, RunDiff, SafetyAction, SafetyInfo, SafetyReport, ScoreMetric } from "../src/types.ts";
 import { store, useStore } from "./store.ts";
 import { Badge, Countdown, dur, humanize, Kpi, MemberLink, num, OppLink, pct, Section, stamp } from "./ui.tsx";
 
@@ -70,6 +70,7 @@ export function SafetyCases() {
   const reports = (info.reports ?? []).filter(x => show === "all" || x.status === "open").filter(x => f?.kind !== "member" || x.subjectId === f.id || x.reporterId === f.id);
   return (
     <div className="run-grid">
+      <HeldTexts />
       {info.reports && (
         <Section title={`Reports after a date (${reports.length})`}>
           {reports.length ? reports.slice(0, 80).map(x => <ReportRow key={x.id} r={x} canBan={!!info.canBan} canAct={info.canAct} onDone={r.reload} />) : <div className="muted small">{s.nothing()}</div>}
@@ -95,6 +96,67 @@ export function SafetyCases() {
         {minors.members.length > 0 && <div className="people">{minors.members.slice(0, 40).map(id => <MemberLink key={id} id={id} />)}</div>}
         {minors.unknownAge.length > 0 && <div className="people"><span className="muted small">Age unknown:</span> {minors.unknownAge.slice(0, 40).map(id => <MemberLink key={id} id={id} />)}</div>}
       </Section>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- held texts (leak review, relay)
+const HELD_QUEUES: [HeldQueue, string][] = [["leak", "Leak review"], ["relay", "Held relay"]];
+/**
+ * Texts that wait for staff before they go out: the leak guard's parked texts and relay items held for a
+ * check (real mode, from the Network service; per app). Release or reject with a reason; both are audited.
+ * Never a score. The text of a member under 18 or with an unknown age is not shown.
+ */
+function HeldTexts() {
+  const s = useStore();
+  const [queue, setQueue] = useState<HeldQueue>("leak");
+  const r = useFetch<{ ok: boolean; items?: HeldText[]; code?: string; error?: string }>(() => store.held(queue), `${s.mode}|${s.app}|${queue}`, 30_000);
+  const items = r.data?.items;
+  const unavailable = r.status === 404;
+  return (
+    <Section title={`Held texts${items ? ` (${items.length})` : ""}`} right={
+      <div className="seg" role="radiogroup" aria-label="Queue">
+        {HELD_QUEUES.map(([k, l]) => <button key={k} className={queue === k ? "active" : ""} onClick={() => setQueue(k)}>{l}</button>)}
+      </div>
+    }>
+      {items
+        ? items.length ? items.slice(0, 100).map(x => <HeldRow key={x.id} x={x} onDone={r.reload} />) : <div className="muted small">Nothing held.</div>
+        : unavailable
+          ? <div className="muted small">Not available: {s.mode === "real" ? (r.error ?? "the Network service has no route for this queue yet") : "held texts exist on real data only"}.</div>
+          : <Err status={r.status} error={r.error} />}
+    </Section>
+  );
+}
+
+function HeldRow({ x, onDone }: { x: HeldText; onDone(): void }) {
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const act = async (decision: "release" | "reject") => {
+    setBusy(true);
+    const res = await store.heldDecision(x.queue, x.id, decision, reason.trim());
+    setBusy(false);
+    if (res.data?.ok) { store.toast(decision === "release" ? "Released: every other send check runs again" : "Rejected: nothing is sent", "good"); setReason(""); onDone(); }
+    else store.toast(res.data?.error ?? res.error ?? "refused", "bad");
+  };
+  const ok = reason.trim().length >= 5 && !busy;
+  return (
+    <div className="case open">
+      <div className="case-head">
+        <Badge tone="warn">{x.kind ? humanize(x.kind) : x.queue}</Badge>
+        {x.memberId ? <MemberLink id={x.memberId} /> : x.to ? <span className="muted small">to {x.to}</span> : null}
+        <span className="muted small">{x.reasons.length ? x.reasons.join(", ") : "no reason given"}{x.createdAt ? ` · ${stamp(x.createdAt)}` : ""}</span>
+      </div>
+      <div className="case-body">
+        {x.textHidden ? <div className="muted small">Text not shown: a member under 18 (or with an unknown age) is involved. Reject it.</div>
+          : x.text !== undefined ? <div className="pre small">{x.text}</div> : <div className="muted small">No text.</div>}
+        {store.can("safety") && (
+          <div className="review-actions">
+            <input className="input grow" placeholder="Reason (logged, at least 5 characters)" value={reason} onChange={e => setReason(e.target.value)} />
+            <button className="btn" disabled={!ok || !!x.textHidden} title="Send it after every other send check runs again" onClick={() => act("release")}>Release</button>
+            <button className="btn ghost" disabled={!ok} onClick={() => act("reject")}>Reject</button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 // A data source feeds the observatory: the simulated world (game mode) or Postgres (real mode).
 import type {
-  BiasReportView, ConfigInfo, ControlCommand, ControlResult, MemberDetail, MemberPhoto, MemberTimeline, Mode, ObsDelta, ObsState, OpportunityDetail, SafetyAction,
+  BiasReportView, ConfigInfo, ControlCommand, ControlResult, HeldQueue, HeldText, MemberDetail, MemberPhoto, MemberTimeline, Mode, ObsDelta, ObsState, OpportunityDetail, SafetyAction,
   SafetyInfo, SearchHit,
 } from "../types.ts";
 
@@ -33,6 +33,12 @@ export interface DataSource {
   photos?(memberId: string, actor: string, reason: string): Promise<{ ok: true; photos: MemberPhoto[] } | ControlResult>;
   /** The weekly bias monitor reports (real mode: the Network service, GET /bias). Absent: the simulation has none here (bun run sim measures it). */
   bias?(actor: string): Promise<{ ok: true; reports: BiasReportView[] } | { ok: false; error: string }>;
+  /**
+   * Texts held for staff (real mode: the Network service's leak review and held relay routes). The text of
+   * a member under 18, or with an unknown age, is left out. Absent: the simulation has none here.
+   */
+  held?(queue: HeldQueue, actor: string): Promise<{ ok: true; items: HeldText[] } | { ok: false; code: string; error: string }>;
+  heldDecision?(queue: HeldQueue, id: string, decision: "release" | "reject", reason: string, actor: string): Promise<ControlResult>;
   /** Outbound agent messages and system events only; never what a member wrote (gap 18). */
   search(q: string, limit?: number): Promise<SearchHit[]>;
   /** Deltas pushed as the source changes (about 4 per second while anything changes). */
