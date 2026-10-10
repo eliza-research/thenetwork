@@ -19,6 +19,9 @@ On base main `ba88f4c`, and after the skill correction:
 passes 70 tests, zero failures and 1141 assertions. It builds the four sites and exercises
 their HTTP server, discovery files, exact prompt links and proxy contract.
 `git diff --check` passes. No model, paid provider or real message was used.
+Hosted CI caught a stale Claude skill snapshot after the canonical version change.
+The snapshot was regenerated, the Claude package version advanced to 1.0.2,
+and `bun run plugins/build.ts --check` passes. The OpenAI package still excludes Slop.
 
 A separate ignored harness journey on base `ba88f4c` uses real Postgres and HTTP with fictional OTP.
 Both ordinary-agent and custom-ChatGPT connections retain the same person after number change.
