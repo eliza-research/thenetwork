@@ -181,8 +181,15 @@ export class BlooioAdapter implements ChannelAdapter {
       // is fixed copy: the member policy has nobody to check. Consent, quiet hours, caps and the leak guard still apply.
       recipient: (row, agentInitiated) => !row.memberId && !rt.memberOf(row.to) ? { ok: true }
         : policy(row.to, { kind: row.kind, ...(row.oppId ? { briefId: row.oppId } : {}), agentInitiated }),
+      // A relayed item may carry its sender's own private facts, as the Network's guard allows (guardCheck
+      // relayFrom): the queue excludes the sender's facts too, so it never parks what the Network passed.
       // A number swap both members asked for (relay.ts) is the one contact the guard lets through, for that row only.
-      leaks: row => { const from = rt.net.relayContactShareFrom(row.id), number = from && rt.addressOf(from); return number ? { ...leaks(row.to), allow: [number] } : leaks(row.to); },
+      leaks: row => {
+        const sender = rt.net.relaySenderOf(row.id), recipient = (row.memberId as MemberId | undefined) ?? rt.memberOf(row.to);
+        const base = sender && recipient ? rt.net.leakSources([recipient], [sender]) : leaks(row.to);
+        const from = rt.net.relayContactShareFrom(row.id), number = from && rt.addressOf(from);
+        return number ? { ...base, allow: [number] } : base;
+      },
       // A relayed item: its match and both members are read again inside the admission transaction (runtime.ts).
       admit: (row, tx) => row.id.startsWith("relay:") ? rt.relayAdmission(tx, row) : Promise.resolve({ ok: true as const }),
       capTake: row => rt.capTake(row.id, row.memberId as MemberId),

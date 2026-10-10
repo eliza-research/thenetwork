@@ -29,7 +29,7 @@ import { capitalWiring, type CapitalEvent } from "../src/capital.ts";
 import type { AppInfo } from "../../platform/src/apps.ts";
 import { effectiveParticipation, loadSnapshot } from "./snapshot.ts";
 import { appWiring, type AppWiring } from "./packs.ts";
-import { DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, type Delivery, type Outbound } from "./channel.ts";
+import { BlooioAdapter, DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, type Delivery, type Outbound } from "./channel.ts";
 import { normalizeAddress } from "../../blooio/src/phone.ts";
 import type { InboundTurn, CollectedReply } from "./inbox.ts";
 import type { TurnContext } from "../../core/src/svc/contract.ts";
@@ -262,7 +262,7 @@ export class NetworkRuntime {
       const [r] = await tx`select state from network.network_state where id = ${this.pg.id}`;
       const s = r?.state;
       // A state without its relay log gets it back from network.relay_records (store.ts).
-      return loadRelayRows(tx, s === undefined ? undefined : ((typeof s === "string" ? JSON.parse(s) : s) as NetworkState), this.app.id);
+      return loadRelayRows(tx, s === undefined ? undefined : ((typeof s === "string" ? JSON.parse(s) : s) as NetworkState), this.app.id, this.pg.id);
     });
   }
 
@@ -397,6 +397,15 @@ export class NetworkRuntime {
     const ok = (id: string) => known.has(id) && !u.forget.has(id);
     if (u.inbound && ok(u.inbound.member_id as string)) await tx`insert into network.messages ${tx({ ...u.inbound, app_id: app })} on conflict (id) do nothing`;
     const turn = this.host.inboundTurn?.();
+    const queue = this.adapter instanceof BlooioAdapter ? this.adapter.queue : undefined;
+    // Collected replies (Cloud sends them) get the queue's own leak guard first: canary shapes, contacts,
+    // the recipient's leak sources and the thread check. One that fails is not collected; it goes into
+    // the queue like any other send, where the same guard parks it for staff (parked_leak_review).
+    if (queue) for (const s of u.sends) {
+      if (!u.collected.has(s.id) || !s.to) continue;
+      const reasons = await queue.collectedLeaks(tx, { id: s.id, ...(u.forget.has(s.memberId) ? {} : { memberId: s.memberId }), to: s.to, kind: s.kind, text: s.body });
+      if (reasons.length) { u.collected.delete(s.id); this.host.log(`[alert] a collected reply failed the leak guard and goes to the queue for review (${this.id}, ${s.id})`); }
+    }
     const captured = u.sends.filter(s => u.collected.has(s.id) && (ok(s.memberId) || u.forget.has(s.memberId)));
     if (captured.length) {
       if (!turn || !this.host.collectReplies) throw new Error("Signed turn collector is unavailable");
@@ -407,6 +416,9 @@ export class NetworkRuntime {
       inbound_id: u.collected.has(s.id) ? turn!.id : null,
       type: s.type ?? null, opportunity_id: s.oppId ?? null, proactive: s.proactive, system: s.system, ts: new Date(s.ts),
     }));
+    // Collected replies to members join the line's thread history (platform.outbound "collected"; sent_at when Cloud accepts), so the
+    // leak guard's thread check (core-14) sees what Cloud delivered, and a value split across a reply and a later text is caught.
+    if (queue) await queue.recordCollected(tx, captured.filter(s => ok(s.memberId) && s.to).map(s => ({ id: s.id, memberId: s.memberId, to: s.to!, kind: s.kind, text: s.body })));
     for (let i = 0; i < out.length; i += 500) {
       const chunk = out.slice(i, i + 500);
       const wrote = new Set((await tx`insert into network.messages ${tx(chunk)} on conflict (id) do nothing returning id`).map((r: any) => r.id as string));
@@ -537,7 +549,7 @@ export class NetworkRuntime {
   async projectNotifications() {
     if (!this.host.delivered) return;
     await this.store.withLock(async () => {
-      const rows = await this.scoped(tx => tx`select m.id,m.member_id,m.body,m.type,m.opportunity_id,m.proactive,m.system,m.ts,o.kind,o.sent_at
+      const rows = await this.scoped(tx => tx`select m.id,m.member_id,m.body,m.type,m.opportunity_id,m.proactive,m.system,m.ts,o.kind,o.sent_at,o.status as outbound_status
         from network.messages m left join platform.outbound o on o.id=m.id and o.app_id=m.app_id
         left join platform.inbound inbound on inbound.id=m.inbound_id
         join network.members member on member.app_id=m.app_id and member.id=m.member_id
@@ -552,8 +564,11 @@ export class NetworkRuntime {
           ts:new Date(r.ts as string).getTime(),...(r.sent_at?{acceptedAt:new Date(r.sent_at as string).getTime()}:{} )};
         try {
           await this.host.delivered!(this,[message]);
-          await this.scoped(tx=>tx`update network.messages set notification_recorded_at=${new Date(this.clock.now())}
-            where id=${message.id} and app_id=${this.app.id} and notification_recorded_at is null and direction='outbound' and status in ('accepted','sent','delivered','read')`);
+          // The select qualified the row; mark it by id alone (a message whose status lagged the queue's, e.g. a crash after
+          // acceptance, would otherwise be selected and projected again on every drain), and repair that status from the queue's.
+          await this.scoped(tx=>tx`update network.messages set notification_recorded_at=${new Date(this.clock.now())},
+            status=coalesce(${(r.outbound_status as string | null) ?? null}::text,status)
+            where id=${message.id} and app_id=${this.app.id} and notification_recorded_at is null and direction='outbound'`);
         } catch {this.host.log(`[deliver] notification projection waits (${this.id})`);}
       }
     });

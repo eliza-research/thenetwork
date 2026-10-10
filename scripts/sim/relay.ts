@@ -23,7 +23,7 @@ import { clefRelayClassifier, DEFAULT_RELAY_CLEF_WEIGHTS, directRelayClefWeights
 import { scoreArm, type ArmRow, reasonCategories } from "../../packages/engine/src/relayClefFit.ts";
 import type { ClefFetch } from "../../packages/engine/src/packs/slop/clef.ts";
 import { cacheLookup, CLEF_CACHE, CLEF_WEIGHTS, HELDOUT_FILE, loadClefCache, loadCorpus, TUNING_FILES } from "../relay-clef-lib.ts";
-import { RelayDesk, type RelayHost, type RelayMatch, type RelayMember } from "../../packages/network/src/relay.ts";
+import { RelayDesk, withdrawsSwap, type RelayHost, type RelayMatch, type RelayMember } from "../../packages/network/src/relay.ts";
 import { newPhotoId } from "../../packages/platform/src/photos.ts";
 import { isOpaquePhotoId } from "../../packages/engine/src/relay.ts";
 import { Block, expect } from "./gate.ts";
@@ -439,6 +439,52 @@ async function deskGates(b: Block): Promise<void> {
     h2.t += 73 * 3_600_000;
     await d2.request({ itemId: "c2", from: "b", kind: "contact_share" }, { contactOf });
     expect(h2.sent.some(x => x.body.includes(phones.a!))).toBe(false);
+  });
+
+  await b.run("relay desk: a swapped number is never kept in the thread (stored state, classifier context); the Clef prompt is PII-masked", async () => {
+    const h = fakeHost(), d = new RelayDesk(h);
+    await d.request({ itemId: "c1", from: "a", kind: "contact_share" }, { contactOf });
+    h.t += 60_000;
+    expect((await d.request({ itemId: "c2", from: "b", kind: "contact_share" }, { contactOf })).decision).toBe("sent");
+    const threads = JSON.stringify(d.exportState().threads);
+    expect(threads).toContain("shared their number.");
+    for (const p of Object.values(phones)) { expect(threads).not.toContain(p); expect(threads).not.toContain(p.slice(-4)); }
+    // The relay hook's prompt: contact details in the message or in the thread context are masked (PRD 32.14).
+    const f = fakeClef(() => ({}));
+    const hook = clefRelayClassifier({ token: "t", accountId: "acct", fetch: f.fetch });
+    await relayItemAsync(text("see you at 7 then"), baseCtx({ thread: ["Sam asked me to send you their number: +1 (212) 555-0147", "Riley says: \"mail me at riley@example.com\""] }), { hook });
+    expect(f.calls[0]!.state).not.toContain("555-0147");
+    expect(f.calls[0]!.state).not.toContain("riley@example.com");
+    expect(f.calls[0]!.state).toContain("[phone]");
+  });
+
+  await b.run("relay desk: a swap request lasts only as long as the engine's consent (never backdated) and can be taken back", async () => {
+    // 16 minutes between the two requests: the first consent is stale, nothing is shared, the second request waits instead.
+    const h = fakeHost(), d = new RelayDesk(h);
+    await d.request({ itemId: "c1", from: "a", kind: "contact_share" }, { contactOf });
+    h.t += 16 * 60_000;
+    expect((await d.request({ itemId: "c2", from: "b", kind: "contact_share" }, { contactOf })).decision).toBe("held");
+    expect(h.sent.some(x => x.contact)).toBe(false);
+    // Withdrawn: "don't send my number" (or the relay action's cancel) removes the pending request.
+    for (const t of ["actually don't send my number", "cancel the number swap", "never mind about my number"]) expect(withdrawsSwap(t)).toBe(true);
+    for (const t of ["send them my number", "my number is in my profile", "don't be late"]) expect(withdrawsSwap(t)).toBe(false);
+    expect(d.cancelSwaps("b")).toBe(1);
+    h.t += 60_000;
+    expect((await d.request({ itemId: "c3", from: "a", kind: "contact_share" }, { contactOf })).decision).toBe("held");
+    expect(h.sent.some(x => x.contact)).toBe(false);
+  });
+
+  await b.run("relay desk: a number swap never goes one way: a refused first share stops the second, and neither is logged as shared", async () => {
+    const h = fakeHost(), d = new RelayDesk(h);
+    h.send = (to, body, o) => { if (o.contact && to === "b") return "refused"; h.sent.push({ to, body, key: o.key, ...(o.contact ? { contact: o.contact } : {}) }); return "sent"; };
+    await d.request({ itemId: "c1", from: "a", kind: "contact_share" }, { contactOf });
+    h.t += 60_000;
+    expect((await d.request({ itemId: "c2", from: "b", kind: "contact_share" }, { contactOf })).decision).toBe("refused");
+    expect(h.sent.some(x => x.contact)).toBe(false);
+    expect([d.contactShareFrom("relay:c1"), d.contactShareFrom("relay:c2")]).toEqual([undefined, undefined]);
+    expect(d.records().filter(r => r.contactShared)).toEqual([]);
+    // A replay of either request never answers "Sent.".
+    expect((await d.request({ itemId: "c2", from: "b", kind: "contact_share" }, { contactOf })).decision).not.toBe("sent");
   });
 
   await b.run("relay desk: a minor's photo (or words) is never relayed; photos wait for a show consent", async () => {

@@ -25,7 +25,7 @@
 // Everything here is plain JSON (exportState). Deterministic: the host passes the time.
 import type { MemberId, Owned } from "@thenetwork/core";
 import {
-  relayGuard, relayItem, relayItemAsync, RELAY_WORDING, threadMessage,
+  relayGuard, relayItem, relayItemAsync, RELAY_LIMITS, RELAY_WORDING, threadMessage,
   type RelayClassifierHook, type RelayContext, type RelayItem, type RelayOpportunity, type RelayParty, type RelayRecord, type RelayResult, type RelayThreadMessage,
 } from "../../engine/src/relay.ts";
 import { appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
@@ -33,8 +33,13 @@ import { appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
 const HOUR = 3_600_000, DAY = 24 * HOUR;
 /** A thread stays open this long after the meeting (then the match is "expired" for the relay). */
 export const RELAY_OPEN_AFTER_MEETING_MS = 7 * DAY;
-/** A swap request waits this long for the other member's own request. */
-export const RELAY_SWAP_TTL_MS = 72 * HOUR;
+/**
+ * A swap request waits this long for the other member's own request: the engine's consent TTL. The
+ * first member's consent is the time of their own request, so a share later than this would rest on
+ * stale consent (the engine refuses it, and nothing is backdated to get past that check). After it
+ * runs out, the other member's request starts a new swap and the first member is asked again.
+ */
+export const RELAY_SWAP_TTL_MS = RELAY_LIMITS.consentTtlMs;
 /** Log rows kept in the state (the rate limits look back one day; staff and ban notices further). */
 export const RELAY_LOG_MAX = 5000;
 const THREAD_MAX = 50;
@@ -80,6 +85,8 @@ export interface RelayHeld {
   itemId: string; matchId: string; app: string; kind: RelayItem["kind"]; from: MemberId; to: MemberId; at: number;
   reasons: string[];
   text?: string;
+  /** Set on a listing (ConsentNetwork.relayHeld) when the sender's age is now in doubt: the text is withheld. */
+  textHidden?: "minor";
   photoIds?: string[];
   status: "held" | "released" | "rejected";
   decidedBy?: string; decidedAt?: number;
@@ -88,6 +95,16 @@ export interface RelayHeld {
 export interface RelayThreadState { id: string; app: string; members: [MemberId, MemberId]; openedAt: number; messages: RelayThreadMessage[] }
 /** A member asked to swap numbers; waiting for the other member's own request. */
 export interface RelaySwap { itemId: string; matchId: string; from: MemberId; to: MemberId; at: number }
+
+/**
+ * "Don't send my number", "cancel the number swap", "never mind about my number": the member takes
+ * back a pending swap request. A negation or a cancel word together with their number.
+ */
+export function withdrawsSwap(text: string): boolean {
+  const t = text.replace(/[\u2019\u2018`\u00b4]/g, "'").toLowerCase();
+  return /\b(?:don'?t|dont|do not|never|stop|cancel|hold off|rather not|changed my mind|never ?mind|nvm|take back|scratch)\b/.test(t)
+    && /\b(?:my (?:phone number|number|phone|digits|cell|contact(?: info)?)|(?:number|numbers) swap|swap(?:ping)? numbers)\b/.test(t);
+}
 export interface RelayState { threads: RelayThreadState[]; log: RelayRecord[]; held: RelayHeld[]; swaps: RelaySwap[] }
 export const emptyRelayState = (): RelayState => ({ threads: [], log: [], held: [], swaps: [] });
 
@@ -131,7 +148,9 @@ const NOTICE = {
   undelivered: "I couldn't pass that on right now.",
   late: "I'll pass that on when it's a reasonable hour for them.",
 };
-const swapAsk = (name: string) => `${name} would like to swap numbers with you. If you'd like that too, say "send them my number" and I'll share both.`;
+const swapAsk = (name: string) => `${name} would like to swap numbers with you. If you'd like that too, say "send them my number" in the next 15 minutes and I'll share both.`;
+/** What the relay thread (and the classifier's context) keeps for a delivered number: never the number. */
+const SHARED_NUMBER = (name: string) => `${name || "They"} shared their number.`;
 
 /** The text inside the engine's wording (`Name says: "..."`), for the leak guard's thread check. */
 const bodyOf = (rendered: string | null) => (rendered ? /^.{1,40}? says: "([\s\S]*)"$/.exec(rendered)?.[1] : undefined);
@@ -223,15 +242,23 @@ export class RelayDesk {
       return { itemId: item.id, decision: "held", reason: res.senderNotice };
     }
     const sent = this.deliver(res, match, item, contact);
-    if (sent === "refused") return { itemId: item.id, decision: "refused", reason: NOTICE.undelivered };
+    if (sent === "refused") { this.undelivered(res.record); return { itemId: item.id, decision: "refused", reason: NOTICE.undelivered }; }
     return { itemId: item.id, decision: "sent", reason: sent === "deferred" ? NOTICE.late : res.senderNotice };
+  }
+
+  /** The send path refused a passed item: the log says it was not delivered (and no number was shared), so a replay never answers "Sent." */
+  private undelivered(r: RelayRecord) {
+    this.log({ ...r, decision: "block", contactShared: false, reasons: [...new Set([...r.reasons, "send:refused"])].sort() });
   }
 
   private deliver(res: RelayResult, match: RelayMatch, item: RelayItem, contact?: string): "sent" | "deferred" | "refused" {
     const sent = this.host.send(item.to, res.rendered, { from: item.from, matchId: match.id, key: `relay:${item.id}`, ...(contact ? { contact } : {}) });
     if (sent === "refused") return sent;
     const t = this.openThread(match);
-    t.messages.push(threadMessage(res));
+    const msg = threadMessage(res);
+    // A number swap keeps no number: the thread (and the classifier context built from it) says only that it was shared.
+    if (item.kind === "contact_share") msg.rendered = SHARED_NUMBER((this.host.member(item.from)?.firstName ?? "").trim().split(/\s+/)[0] ?? "");
+    t.messages.push(msg);
     if (t.messages.length > THREAD_MAX) t.messages.splice(0, t.messages.length - THREAD_MAX);
     return sent;
   }
@@ -253,23 +280,37 @@ export class RelayDesk {
       return { itemId: ask.itemId, decision: "held", reason: NOTICE.swapWait };
     }
     // Both asked. Each share runs through the engine with its own consent (the other member's was given at
-    // their own request); both go out only when both pass, so nobody's number goes one way.
+    // their own request, within the consent TTL; never backdated). Both go out only when both pass and the
+    // first one was delivered, so nobody's number goes one way.
     const theirValue = o.contactOf?.(to);
     if (!theirValue) return { itemId: ask.itemId, decision: "refused", reason: "I can't swap numbers right now." };
     this.s.swaps = this.s.swaps.filter(x => x !== theirs);
-    const theirItem = this.share(theirs.itemId, to, ask.from, theirs.at, theirValue), myItem = this.share(ask.itemId, ask.from, to, now, mineValue);
-    const theirRes = await this.decide(theirItem, match, o, now), myRes = await this.decide(myItem, match, o);
+    const theirItem = this.share(theirs.itemId, to, ask.from, now, theirValue, theirs.at), myItem = this.share(ask.itemId, ask.from, to, now, mineValue);
+    const theirRes = await this.decide(theirItem, match, o), myRes = await this.decide(myItem, match, o);
     if (theirRes.decision === "pass" && myRes.decision === "pass") {
-      this.apply(theirRes, match, theirItem, o, theirValue);
+      const first = this.apply(theirRes, match, theirItem, o, theirValue);
+      if (first.decision !== "sent") {
+        // The first share was refused at send time: the second never goes, and neither record says a number was shared.
+        this.undelivered(myRes.record);
+        return { itemId: ask.itemId, decision: "refused", reason: "I can't swap numbers right now." };
+      }
       return this.apply(myRes, match, myItem, o, mineValue);
     }
     if (theirRes.decision !== "pass") this.apply(theirRes, match, theirItem, o);
     if (myRes.decision !== "pass") return this.apply(myRes, match, myItem, o);
+    this.undelivered(myRes.record);
     return { itemId: ask.itemId, decision: "refused", reason: "I can't swap numbers right now." };
   }
 
-  private share(id: string, from: MemberId, to: MemberId, at: number, value: string): RelayItem {
-    return { id, kind: "contact_share", from, to, at, contact: { kind: "phone", value }, consent: { kind: "contact_share", by: from, itemId: id, at } };
+  /** The member takes back their pending number swap ("don't send my number"). Returns how many requests were removed. */
+  cancelSwaps(from: MemberId): number {
+    const before = this.s.swaps.length;
+    this.s.swaps = this.s.swaps.filter(x => x.from !== from);
+    return before - this.s.swaps.length;
+  }
+
+  private share(id: string, from: MemberId, to: MemberId, at: number, value: string, consentAt = at): RelayItem {
+    return { id, kind: "contact_share", from, to, at, contact: { kind: "phone", value }, consent: { kind: "contact_share", by: from, itemId: id, at: consentAt } };
   }
 
   /** An item this desk already decided (replay of the same signed request). */
@@ -342,6 +383,12 @@ export class RelayDesk {
     if (!outboundId.startsWith("relay:")) return undefined;
     const r = this.s.log.find(x => x.itemId === outboundId.slice(6));
     return r && r.kind === "contact_share" && r.decision === "pass" && r.contactShared ? r.from : undefined;
+  }
+  /** The sender of the relayed item an outbound id ("relay:<item>") delivers, when the item passed. Not the swap ask ("relay:<item>:ask"). */
+  senderOf(outboundId: string): MemberId | undefined {
+    if (!outboundId.startsWith("relay:")) return undefined;
+    const r = this.s.log.find(x => x.itemId === outboundId.slice(6));
+    return r && r.decision === "pass" ? r.from : undefined;
   }
   threads(): RelayThreadState[] { return this.exportState().threads; }
 

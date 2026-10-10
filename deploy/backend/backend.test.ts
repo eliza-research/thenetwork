@@ -237,6 +237,23 @@ describe("routing", () => {
     expect(calls.at(-1)!.path).toBe("/webhooks/blooio/slop");
   });
 
+  test("the Eliza gateway's signed routes reach the service on the public port, /internal/relay included (it was 404), each under its own body cap", async () => {
+    const { svc, calls } = fakeService();
+    const b = createBackend({ svc, config: cfg(), log: silent, ping: async () => true });
+    for (const p of ["/internal/turn", "/internal/turn-receipt", "/internal/set-state", "/internal/signals", "/internal/updates", "/internal/relay"]) {
+      const r = await b.publicFetch(new Request(`http://api.example.test${p}`, { method: "POST", body: "{}", headers: { "content-type": "application/json" } }));
+      expect([p, r.status]).toEqual([p, 200]);
+      expect(calls.at(-1)).toMatchObject({ kind: "staff", path: p });
+    }
+    const n = calls.length;
+    // The relay action's cap is 16 KiB (relay-endpoint.ts RELAY_MAX_BODY_BYTES): a larger declared body never reaches the service.
+    const big = await b.publicFetch(new Request("http://api.example.test/internal/relay", { method: "POST", body: "x".repeat(17 * 1024), headers: { "content-length": String(17 * 1024) } }));
+    expect(big.status).toBe(413);
+    expect(calls.length).toBe(n);
+    // The same size is fine on the turn route (256 KiB).
+    expect((await b.publicFetch(new Request("http://api.example.test/internal/turn", { method: "POST", body: "x".repeat(17 * 1024), headers: { "content-length": String(17 * 1024) } }))).status).toBe(200);
+  });
+
   test("deployed, an unsigned request names no site: /api and /mcp answer 421 (audit: Host: slop.date was served as slop.date)", async () => {
     const { svc, calls } = fakeService();
     const b = createBackend({ svc, config: cfg(), log: silent, ping: async () => true, mcp: async () => new Response("ok") });

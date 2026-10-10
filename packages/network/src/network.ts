@@ -42,7 +42,7 @@ import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import { brandOf, copy, copyFor, type Copy, whenPhrase } from "./copy.ts";
 import { APPS, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { meetingSpot, nearbyVenues, NEIGHBORHOOD, NEIGHBORHOODS, neighborhood, travelMinutes, VENUES, type Venue } from "./geo.ts";
-import { RELAY_OPEN_AFTER_MEETING_MS, RelayDesk, type RelayAsk, type RelayCallOptions, type RelayHeld, type RelayHost, type RelayMatch, type RelayMember, type RelayOutcome, type RelayState } from "./relay.ts";
+import { RELAY_OPEN_AFTER_MEETING_MS, RelayDesk, withdrawsSwap, type RelayAsk, type RelayCallOptions, type RelayHeld, type RelayHost, type RelayMatch, type RelayMember, type RelayOutcome, type RelayState } from "./relay.ts";
 import type { RelayRecord } from "../../engine/src/relay.ts";
 import { ABOUT_OTHERS, ASK_KINDS, LANE_BUDGETS, NEVER_REPLY, nextAt, NY, nyParts, OUTREACH, PRD_BUDGETS, SLOT_KINDS, type SendKind } from "./outreach.ts";
 import { BASE_REACH, FLOOR_EFFORT, type CapitalEvent, type CapitalEventInput, type CapitalReader, type GamingFlag, type NetworkEffort } from "./capital.ts";
@@ -580,6 +580,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Answers to the Network teach the send time (founder decision 1); carrier keywords do not.
     if (!msg.keyword) m.replies = [...(m.replies ?? []), this.now()].slice(-60);
     this.heardFrom(m);
+    // "Don't send my number": a pending number swap of theirs is withdrawn at once (relay.ts), whatever else the message says.
+    if (!msg.keyword && withdrawsSwap(body) && this.relayDesk.cancelSwaps(m.id)) this.ctx.log("relay_swap_withdrawn", { memberId: m.id });
     this.replyTo = m.id; this.understood = u;
     try { return this.handleInbound(m, msg) === "open" ? "open" : "handled"; } finally { this.replyTo = undefined; this.understood = undefined; }
   }
@@ -4025,9 +4027,11 @@ export class ConsentNetwork implements NetworkUnderTest {
    * except the recipient's own. A group (several recipients) or an unknown recipient excludes nothing,
    * so every participant is covered. The Network's own place and interest names are public phrases.
    */
-  leakSources(recipients?: readonly MemberId[]): LeakSources {
+  leakSources(recipients?: readonly MemberId[], alsoOwners: readonly MemberId[] = []): LeakSources {
     const own = recipients?.length === 1 ? recipients[0] : undefined;
-    const priv = this.snapshotCached().facets.filter(f => f.scope === "agent_private" && f.memberId !== own);
+    // `alsoOwners`: a relayed text may carry its sender's own facts (guardCheck's relayFrom), only with a single known recipient.
+    const except = new Set(own === undefined ? [] : [own, ...alsoOwners]);
+    const priv = this.snapshotCached().facets.filter(f => f.scope === "agent_private" && !except.has(f.memberId));
     const values = [...new Set(priv.map(f => f.value.trim()).filter(Boolean))];
     return {
       forbidden: values,
@@ -4357,10 +4361,25 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
   /** A member's relay request (POST /internal/relay): decided by the engine, delivered as its rendered text only. */
   relayRequest(ask: RelayAsk, o: RelayCallOptions = {}): Promise<RelayOutcome> { this.relayDesk.prune(this.now()); return this.relayDesk.request(ask, o); }
+  /** The member takes back their pending number swap (POST /internal/relay kind contact_share_cancel, or "don't send my number"). */
+  relayCancelSwap(memberId: MemberId): number { const n = this.relayDesk.cancelSwaps(memberId); if (n) this.dirty = true; return n; }
   /** The member's open match for the relay, if any (ids only); `matchId` narrows it to that one match. */
   relayMatch(memberId: MemberId, matchId?: string): RelayMatch | undefined { return this.relayDesk.matchFor(memberId, matchId); }
+  /** The member is (or may be) a minor, their age is unknown or in conflict, or they were declined or are unknown: staff never see their words. */
+  ageInDoubt(id: MemberId): boolean {
+    // A member this Network has not loaded yet (no message since the state began) is read from the snapshot, as holdMember does.
+    if (!this.members.has(id) && this.record(id) && !this.declinedIds.has(id)) this.member(id);
+    return this.relayHost().member(id)?.age === undefined;
+  }
   /** Relayed items held for staff, oldest first (relay.ts). The text is kept only while held, and never a minor's. */
-  relayHeld(): RelayHeld[] { return this.relayDesk.held(); }
+  relayHeld(): RelayHeld[] {
+    // The age is checked again now: a sender who is (or may be) a minor since the hold, or was declined, has their words withheld.
+    return this.relayDesk.held().map(h => {
+      if (!h.text || !this.ageInDoubt(h.from)) return h;
+      const { text: _text, ...rest } = h;
+      return { ...rest, textHidden: "minor" as const };
+    });
+  }
   /** Staff release a held item (the engine checks it again first). */
   releaseRelay(itemId: string, actor: string, o: RelayCallOptions = {}): ActionResult & { delivered?: boolean } {
     const r = this.relayDesk.release(itemId, actor, o);
@@ -4372,6 +4391,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   relayLog(): RelayRecord[] { return this.relayDesk.records(); }
   /** For the queue's leak guard: the member whose number an outbound relay id carries (an agreed swap only). */
   relayContactShareFrom(outboundId: string): MemberId | undefined { return this.relayDesk.contactShareFrom(outboundId); }
+  /** For the queue's leak guard: the sender of a relayed item this outbound id delivers (the engine passed it, or staff released it). */
+  relaySenderOf(outboundId: string): MemberId | undefined { return this.relayDesk.senderOf(outboundId); }
 
   forgetMember(id: MemberId) { if (!this.declinedIds.has(id)) this.forget(id); }
 

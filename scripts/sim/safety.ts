@@ -154,9 +154,15 @@ export async function safetyBlock(b: Block): Promise<void> {
     expect(await w.intake.photosIn(a.e164, ["https://media.test/1.jpg"], "m1")).toEqual({ outcome: "asked" });
     expect(await w.intake.photosIn(a.e164, ["https://media.test/2.jpg"], "m2")).toEqual({ outcome: "ask_skipped" });
     expect([w.fetched.length, await w.rows(a.personId), w.ai.calls]).toEqual([0, 0, 0]);
-    // A counter or an unclear answer is not consent (core parseReply: only "yes" is consent).
+    // A counter or an unclear answer is not consent. Neither is a bare "yes": it may answer a probe or a
+    // date ask (or another app on the shared line), so it goes on to the Network and changes nothing here.
     expect(await w.intake.consentAnswer(a.e164, "maybe later?", "m3")).toBe(false);
-    expect(await w.intake.consentAnswer(a.e164, "yes", "m4")).toBe(true);
+    expect(await w.intake.consentAnswer(a.e164, "yes", "m3b")).toBe(false);
+    expect(await w.intake.consentAnswer(a.e164, "no", "m3c")).toBe(false);
+    expect((await w.people.getMembership(a.personId, "slop"))!.profile.photoConsent).toBeUndefined();
+    // The explicit answer on another app's message is not taken either.
+    expect(await w.intake.consentAnswer(a.e164, "YES PHOTOS", "m3d", "ntwrk")).toBe(false);
+    expect(await w.intake.consentAnswer(a.e164, "YES PHOTOS", "m4")).toBe(true);
     expect((await w.people.getMembership(a.personId, "slop"))!.profile.photoConsent).toBe(PHOTO_CONSENT.version);
     const r = await w.intake.photosIn(a.e164, ["https://media.test/3.jpg"], "m5");
     expect(r).toEqual({ outcome: "stored", stored: 1, refused: [] });
@@ -167,7 +173,8 @@ export async function safetyBlock(b: Block): Promise<void> {
     // NO: nothing is stored and no consent is recorded.
     const n = await w.member(21, 31);
     await w.intake.photosIn(n.e164, ["https://media.test/4.jpg"], "n1");
-    expect(await w.intake.consentAnswer(n.e164, "no thanks", "n2")).toBe(true);
+    expect(await w.intake.consentAnswer(n.e164, "no thanks", "n2")).toBe(false);
+    expect(await w.intake.consentAnswer(n.e164, "no photos", "n2b")).toBe(true);
     expect((await w.people.getMembership(n.personId, "slop"))!.profile.photoConsent).toBeUndefined();
     expect(await w.rows(n.personId)).toBe(0);
   });

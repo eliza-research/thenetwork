@@ -37,7 +37,7 @@ import { readCapped } from "../../platform/src/body.ts";
 import type { Accounts } from "../../platform/src/accounts.ts";
 import { clefRelayClassifierFromEnv } from "../../engine/src/relayClef.ts";
 import { parseRelayRequest, type RelayClassifierHook } from "../../engine/src/relay.ts";
-import type { RelayOutcome } from "../src/relay.ts";
+import { withdrawsSwap, type RelayOutcome } from "../src/relay.ts";
 import type { NetworkRuntime } from "./runtime.ts";
 
 export { RELAY_PATH };
@@ -50,6 +50,7 @@ const NOTICE = {
   photo: "I can't send photos to a match yet.",
   unconfirmed: "I've passed that on, but delivery isn't confirmed yet.",
   sent: "Sent.",
+  withdrawn: "Okay, I won't share your number.",
 };
 
 export interface RelayEndpointDeps {
@@ -58,6 +59,8 @@ export interface RelayEndpointDeps {
   secret: string | undefined;
   accounts: Accounts;
   runtimeFor(app: AppId): NetworkRuntime | undefined;
+  /** The network ('<app>:<city>') this member belongs to; falls back to runtimeFor(app) when absent. */
+  runtimeOfMember?(app: AppId, memberId: string): Promise<NetworkRuntime | undefined>;
   /** The classifier hook; undefined = rules only. */
   hook?: RelayClassifierHook;
 }
@@ -122,7 +125,8 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
   const turnId = `msg:${b.channel}:${b.messageId}`;
   const [original] = await d.sql`select sender_hash,response from platform.inbound where id=${turnId} and status='done'`;
   if (!original || original.response?.outcome !== "open" || original.response.app !== app || original.response.memberId !== memberId) return json({ error: "turn_scope_invalid", retryable: false }, 403);
-  const who = await d.accounts.byPhoneHash(original.sender_hash), rt = d.runtimeFor(app);
+  // The member's own network (a second city of the app keeps its own matches, relay log and held items).
+  const who = await d.accounts.byPhoneHash(original.sender_hash), rt = d.runtimeOfMember ? await d.runtimeOfMember(app, memberId) : d.runtimeFor(app);
   if (!who || !rt) return json({ error: "membership_unavailable", retryable: false }, 403);
   const authorized = async () => (await d.accounts.activeMembership(rt.app, { e164: who.e164, personId: who.person.id }))?.membership.memberId === memberId;
   if (!await authorized()) return json({ error: "membership_unavailable", retryable: false }, 403);
@@ -170,7 +174,16 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
   try {
     const request = parseRelayRequest(text);
     let result: StoredRelay;
-    if (request.kind === "none" || request.kind === "photo") {
+    if (request.kind === "none" && withdrawsSwap(text)) {
+      // "Don't send my number": the member takes back a pending number swap (committed with the receipt).
+      result = await rt.unitOfWork(async net => {
+        // The turn's own message may already have withdrawn it (network.ts); either way nothing of theirs is pending.
+        net.relayCancelSwap(memberId as MemberId);
+        const r: StoredRelay = { decision: "none", notice: NOTICE.withdrawn };
+        rt.unit.completeAction = async tx => { await lock(tx); await complete(tx, r); };
+        return r;
+      });
+    } else if (request.kind === "none" || request.kind === "photo") {
       // Nothing to relay ("none"), or a photo, which this wire cannot carry: the receipt alone.
       result = request.kind === "none" ? { decision: "none", notice: "" } : { decision: "block", notice: NOTICE.photo };
       await d.sql.begin(async tx => { await lock(tx); await complete(tx, result); });

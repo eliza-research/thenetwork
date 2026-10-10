@@ -39,7 +39,7 @@ import { SVC_MIN_SECRET, svcVerify } from "../../core/src/svc/svc-auth.ts";
 import { readCapped } from "../../platform/src/body.ts";
 import { canJoin } from "../../core/src/policy.ts";
 import { CostLedger, costRatesFromEnv, PgCostSink } from "./cost.ts";
-import type { ChannelAdapter, DirectKind, Outbound } from "./channel.ts";
+import { BlooioAdapter, type ChannelAdapter, type DirectKind, type Outbound } from "./channel.ts";
 import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { Accounts, type AccountHooks, type JoinHookContext, type MemberHookContext } from "../../platform/src/accounts.ts";
 import { joinAgeCheck } from "../../platform/src/age.ts";
@@ -359,6 +359,15 @@ export class NetworkService implements RuntimeHost {
   /** The network of an app (and a city; default its first network here). */
   runtimeFor(app: AppId, city?: string): NetworkRuntime | undefined {
     for (const r of this.runtimes.values()) if (r.app.id === app && (city === undefined || r.city === city)) return r;
+    return undefined;
+  }
+  /** The network of the app that holds this member (a second city of an app is its own network). */
+  async runtimeOfMember(app: AppId, memberId: string): Promise<NetworkRuntime | undefined> {
+    for (const r of this.runtimes.values()) {
+      if (r.app.id !== app) continue;
+      await r.identities();
+      if (r.addressOf(memberId as MemberId)) return r;
+    }
     return undefined;
   }
   private copyOf(app: AppInfo): Copy {
@@ -870,7 +879,8 @@ export class NetworkService implements RuntimeHost {
 
     // Photos by text (photoIntake.ts): the answer to the photo consent ask, then any attachment. A photo
     // from a minor, an unknown age, a banned person or a non-member of slop is dropped before it is fetched.
-    if (e164 && !kw && (await this.photoIntake.consentAnswer(e164, ev.text, rowId))) return "handled";
+    // Only an explicit YES PHOTOS / NO PHOTOS routed to slop: a bare yes or no goes on to the Network (a probe, a date ask, another app).
+    if (e164 && !kw && (await this.photoIntake.consentAnswer(e164, ev.text, rowId, route.app))) return "handled";
     if (e164 && ev.mediaUrls?.length) {
       // A provider retry of the same message takes no photo twice.
       const first = (await this.people.hit(`photo_msg:${rowId}`, DAY, t)).count === 1;
@@ -889,7 +899,7 @@ export class NetworkService implements RuntimeHost {
         const person = await this.accounts.personFor(e164);
         if (person) await this.accounts.leave(leaving, { e164, personId: person.id });
         else { await this.accounts.recordConsent({ e164, app: leaving.id, line, state: "opted_out", source: "leave", ref: rowId, at: this.consentAt(ev) }); await this.forget(leaving, lid); }
-        if (turn) { turn.app = leaving.id; turn.memberId = lid; turn.consent = {state: "opted_out", scope: "app", app: leaving.id, at: t}; }
+        if (turn) { turn.app = leaving.id; turn.memberId = lid; turn.consent = {state: "opted_out", scope: "app", app: leaving.id, at: t}; turn.confirmation = {id: `sys:${rowId}`, body: this.copyOf(leaving).leftApp}; }
         await this.direct(lrt, ev.from, this.copyOf(leaving).leftApp, `sys:${rowId}`, "compliance");
         return "left";
       }
@@ -957,11 +967,16 @@ export class NetworkService implements RuntimeHost {
     const floor = await this.accounts.lowestAge(e164, person);
     if ((age !== undefined && !joinAgeCheck(age, floor, app).ok) || (floor !== undefined && !canJoin(floor))) return false;
     const key = this.noticeKey(e164);
-    return this.sql.begin(async tx => {
+    const wrote = await this.sql.begin(async tx => {
       const rows = await tx`insert into platform.eliza_notices (phone_hash, sent_at) values (${key}, ${new Date(this.clock.now())}) on conflict (phone_hash) do nothing returning phone_hash`;
       if (rows.length) await this.inbox.collect(tx, [{ id: `notice:${rowId}`, body: ELIZA_NOTICE, kind: "compliance" }]);
       return rows.length > 0;
     });
+    // The notice row commits before the join runs: a turn that then fails (its collected notice never
+    // reaches Cloud) takes the row back, so the retry or the next first contact still gets the notice.
+    const turn = this.inboundTurn();
+    if (wrote && turn) (turn.onFail ??= []).push(() => this.sql`delete from platform.eliza_notices where phone_hash = ${key}`);
+    return wrote;
   }
 
   /**
@@ -1060,6 +1075,8 @@ export class NetworkService implements RuntimeHost {
     if (e164 && event) await this.accounts.recordConsent(event);
     const turn = this.inboundTurn();
     if (turn && event) turn.consent = {state: "opted_out", scope: scope === "global" ? "all" : "app", app: scope === "global" ? null : app.id, at: event.at};
+    // The STOP is recorded: its confirmation goes out even if a later step of this turn fails (Inbox.rescueCompliance).
+    if (turn && event && reply && normalizeAddress(from) === normalizeAddress(turn.from)) turn.confirmation = {id: `sys:${ref}`, body: reply};
     if (e164) await this.people.deletePending(this.phoneKey(e164));
     if (memberId && ev) await this.memberMessage(rt, memberId, ev, ref, kw, reply);
     else if (memberId) await rt.unitOfWork(async n => { await n.onInbound({ id: ref, memberId, body: "STOP", ts: t, channel: "imessage", keyword: "STOP" }); rt.unit.optOut.set(memberId, true); });
@@ -1509,7 +1526,19 @@ export class NetworkService implements RuntimeHost {
    */
   async staffPhotos(user: StaffUser, rt: NetworkRuntime, memberId: MemberId, reason: string): Promise<{ ok: true; photos: { id: string; url: string; expiresAt: number }[] } | { ok: false; reason: string }> {
     const base = { actor: user.id, roles: user.roles, action: "read_photos", targetType: "member" as const, targetId: memberId, mode: "real" as const, app: rt.app.id };
-    await this.audit.write({ ...base, at: this.clock.now(), ok: true, detail: { reason, phase: "requested" } });
+    // The photo consent says a person on the safety team looks "only after a report": an open report (or
+    // an open safety case) about this member is required, and its id goes in the audit row.
+    const ground = await rt.readState(n => {
+      const report = n.safetyReports().find(r => r.subjectId === memberId && (r.status === "open" || r.status === "held"));
+      if (report) return { reportId: report.id };
+      const c = n.safetyCases().find(x => x.memberId === memberId && (x.status === "open" || x.status === "held"));
+      return c ? { caseId: c.id } : undefined;
+    });
+    if (!ground) {
+      await this.audit.write({ ...base, at: this.clock.now(), ok: false, detail: { reason, phase: "refused", refused: "no_report" } });
+      return { ok: false, reason: "no_report" };
+    }
+    await this.audit.write({ ...base, at: this.clock.now(), ok: true, detail: { reason, phase: "requested", ...ground } });
     const personId = await this.personOfMember(rt, memberId);
     const r = personId ? await this.photos.staffLinks(personId, rt.app.id, this.photoBaseUrl ?? `https://${rt.app.domain}`) : { ok: false as const, reason: "adults_only" as const };
     await this.audit.write({ ...base, at: this.clock.now(), ok: r.ok, detail: { phase: "result", ...(r.ok ? { photos: r.value.length } : { reason: r.reason }) } }).catch(e => this.log(`[audit] result row failed: ${(e as Error).message}`));
@@ -1702,6 +1731,9 @@ export class NetworkService implements RuntimeHost {
         if (isAppId(claim.response.app)) {
           await tx`select set_config('app.app_id', ${claim.response.app}, true)`;
           await tx`update network.messages set status=${status} where app_id=${claim.response.app} and inbound_id=${id} and id in ${tx(b.replyIds as string[])} and status in ('collected','send_unknown')`;
+          // The same replies in the line's thread history (the leak guard's core-14 check reads accepted ones).
+          const lrt = this.runtimeFor(claim.response.app);
+          if (lrt?.adapter instanceof BlooioAdapter) await lrt.adapter.queue.collectedReceipt(tx, b.replyIds as string[], b.outcome as "accepted" | "unknown" | "rejected", this.clock.now());
         }
         await tx`update platform.inbound set receipt_hash=${digest},receipt=${b}::jsonb where id=${id}`;
         return json({ok: true, replayed: false});
@@ -1724,6 +1756,12 @@ export class NetworkService implements RuntimeHost {
       if (outcome === "duplicate") throw new Error("Unresolved turn effects");
       const [row] = await this.sql`select replies from platform.inbound where id=${turn.id}`;
       const collected = row.replies as CollectedReply[];
+      // A recorded STOP or leave always carries its confirmation (a retry after a partial failure finds the member's unit already stored).
+      if (turn.confirmation && !collected.some(r => r.kind === "compliance")) {
+        const conf: CollectedReply = {...turn.confirmation, kind: "compliance"};
+        await this.sql.begin(tx => this.inbox.collect(tx, [conf]));
+        collected.push(conf);
+      }
       const person = await this.accounts.personFor(input.from);
       const age = await this.accounts.lowestAge(input.from, person);
       if (outcome === "left" || (age !== undefined && !canJoin(age))) turn.memberId = undefined;
@@ -1762,7 +1800,7 @@ export class NetworkService implements RuntimeHost {
   fetch = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
     if ([TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH].includes(url.pathname)) return this.sharedTurn(req);
-    if (url.pathname === RELAY_PATH) return relayEndpoint({ sql: this.sql, clock: this.clock, secret: this.env.SERVICE_TURN_SECRET, accounts: this.accounts, runtimeFor: app => this.runtimeFor(app), ...(this.relayHook ? { hook: this.relayHook } : {}) }, req);
+    if (url.pathname === RELAY_PATH) return relayEndpoint({ sql: this.sql, clock: this.clock, secret: this.env.SERVICE_TURN_SECRET, accounts: this.accounts, runtimeFor: app => this.runtimeFor(app), runtimeOfMember: (app, memberId) => this.runtimeOfMember(app, memberId), ...(this.relayHook ? { hook: this.relayHook } : {}) }, req);
     let path = url.pathname.replace(/\/+$/, "") || "/";
     try {
       if (path === WEBHOOK_PATH || path.startsWith(`${WEBHOOK_PATH}/`)) {
@@ -1828,7 +1866,46 @@ export class NetworkService implements RuntimeHost {
         const no = need(["reviewer", "safety"]); if (no) return no;
         await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_relay_held", mode: "real", ok: true, app: rt.app.id });
         const held = await rt.readState(n => n.relayHeld());
-        return json({ ok: true, network: rt.id, items: held.map(h => ({ itemId: h.itemId, app: h.app, kind: h.kind, from: h.from, to: h.to, reasons: h.reasons, createdAt: h.at, ...(h.text ? { text: h.text } : {}) })) });
+        // The console's HeldText shape: `id` is the item, `memberId` the sender (whose words they are). No recipient id
+        // (the console masks `to` as a phone number). relayHeld() already leaves out a sender's text once their age is in doubt.
+        return json({ ok: true, network: rt.id, items: held.map(h => ({ id: h.itemId, itemId: h.itemId, app: h.app, kind: h.kind, memberId: h.from, from: h.from, reasons: h.reasons, createdAt: h.at,
+          ...(h.text ? { text: h.text } : h.textHidden ? { minor: true } : {}) })) });
+      }
+      if (path === "/queue/leak-review" || path.startsWith("/queue/leak-review/")) {
+        // Texts the outbound queue's leak guard parked (status parked_leak_review): safety staff for this app
+        // read them (the phone masked, a minor's or an age-in-doubt member's text withheld) and release or drop one
+        // with a reason of 5 or more characters. Audited either way. 404 with no reason: this network has no queue.
+        const no = need(["safety"]); if (no) return no;
+        const queue = rt.adapter instanceof BlooioAdapter ? rt.adapter.queue : undefined;
+        if (!queue) return json({ ok: false, error: "no_queue" }, 404);
+        if (req.method === "GET" && path === "/queue/leak-review") {
+          await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_leak_review", mode: "real", ok: true, app: rt.app.id });
+          const rows = await queue.parkedLeaks();
+          const doubt = await rt.readState(n => new Set(rows.filter(r => r.memberId && n.ageInDoubt(r.memberId as MemberId)).map(r => r.id)));
+          return json({ ok: true, network: rt.id, items: rows.map(r => ({ id: r.id, kind: r.kind, ...(r.memberId ? { memberId: r.memberId } : {}), ...(r.to ? { to: maskPhone(r.to) } : {}),
+            reasons: r.reasons, createdAt: r.createdAt, ...(doubt.has(r.id) ? { minor: true } : r.text ? { text: r.text } : {}) })) });
+        }
+        if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
+        let id: string;
+        try { id = decodeURIComponent(path.slice("/queue/leak-review/".length)); } catch { return json({ ok: false, error: "invalid_id" }, 400); }
+        const b = (await body(req) ?? {}) as Record<string, any>;
+        const note = typeof b.reason === "string" ? b.reason : typeof b.note === "string" ? b.note : undefined;
+        if (!id || id.length > 300 || (b.decision !== "release" && b.decision !== "drop") || (note !== undefined && note.length > 2000)) return json({ ok: false, error: "invalid_leak_decision" }, 400);
+        if (note === undefined || note.trim().length < 5) return json({ ok: false, reason: "reason_required" }, 409);
+        const parked = (await queue.parkedLeaks(1000)).find(r => r.id === id);
+        let r: ActionResult;
+        if (!parked) r = { ok: false, reason: "not_parked" };
+        // A release never sends to a member who is (or may be) a minor; a drop always may.
+        else if (b.decision === "release" && parked.memberId && await rt.readState(n => n.ageInDoubt(parked.memberId as MemberId))) r = { ok: false, reason: "minor" };
+        else {
+          const change = await queue.decideLeak(id, b.decision, user.id);
+          r = change ? { ok: true } : { ok: false, reason: "not_parked" };
+          if (change?.memberId) await rt.storeStatuses([{ id: change.id, status: change.status }]);
+          if (change && b.decision === "release") await rt.deliver();
+        }
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: b.decision === "release" ? "leak_release" : "leak_drop", targetId: id,
+          mode: "real", ok: r.ok, app: rt.app.id, reason: note, ...(r.ok ? {} : { detail: { refused: (r as { reason?: string }).reason } }) });
+        return result(r);
       }
       if (path === "/inbound/resolve") {
         // A signed turn that did not finish: staff release the sender (the turn itself stays unresolved).
@@ -1910,11 +1987,14 @@ export class NetworkService implements RuntimeHost {
         let itemId: string;
         try { itemId = decodeURIComponent(relayPath[1]!); } catch { return json({ ok: false, error: "invalid_id" }, 400); }
         const b = (await body(req) ?? {}) as Record<string, any>;
-        if (itemId.length > 200 || (b.note !== undefined && (typeof b.note !== "string" || b.note.length > 2000))) return json({ ok: false, error: "invalid_relay_decision" }, 400);
+        // A decision note of 5 or more characters, as every other safety decision (the console sends `note`; `reason` is accepted too).
+        const note = typeof b.note === "string" ? b.note : typeof b.reason === "string" ? b.reason : undefined;
+        if (itemId.length > 200 || (note !== undefined && note.length > 2000)) return json({ ok: false, error: "invalid_relay_decision" }, 400);
+        if (note === undefined || note.trim().length < 5) return json({ ok: false, reason: "reason_required", error: "note_required" }, 409);
         const release = relayPath[2] === "release";
         const r = await rt.unitOfWork(n => release ? n.releaseRelay(itemId, user.id) : n.rejectRelay(itemId, user.id));
         await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: release ? "relay_release" : "relay_reject", targetId: itemId,
-          mode: "real", ok: r.ok, app: rt.app.id, ...(typeof b.note === "string" ? { reason: b.note } : {}), ...("delivered" in r ? { detail: { delivered: r.delivered } } : {}) });
+          mode: "real", ok: r.ok, app: rt.app.id, reason: note, ...("delivered" in r ? { detail: { delivered: r.delivered } } : {}) });
         return result(r);
       }
       const verifyPath = path.match(/^\/members\/([^/]+)\/verify$/);

@@ -12,6 +12,7 @@ import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {TURN_PATH,RELAY_PATH,type RelaySendRequest,type TurnRequest} from "../../core/src/svc/contract.ts";
 import {DryRunAdapter} from "../service/channel.ts";
 import {NetworkService} from "../service/service.ts";
+import {ServiceClient} from "../../observatory/src/sources/service.ts";
 
 const db=`network_relay_${randomUUID().replaceAll("-","")}`;
 const admin=new SQL({url:`postgres://${process.env.USER??"postgres"}@127.0.0.1:54339/postgres`,max:1});
@@ -94,13 +95,26 @@ test("a scam is held for staff; staff list it (audited, app-scoped), reject it, 
   expect(await held.json()).toMatchObject({decision:"hold",delivered:false,replayed:false});
   expect((await staff("/staff/relay/held?app=friends","nobody")).status).toBe(401);
   const list=await (await staff("/staff/relay/held?app=friends","rev-tok")).json() as any;
-  expect(list.items).toHaveLength(1);expect(list.items[0]).toMatchObject({app:"friends",from:ari,to:bo,kind:"text"});
+  expect(list.items).toHaveLength(1);expect(list.items[0]).toMatchObject({app:"friends",from:ari,memberId:ari,kind:"text"});
+  // The console's HeldText shape (packages/observatory/src/sources/service.ts): `id` is the item; no recipient id that the console would mask as a phone.
+  expect(list.items[0].id).toBe(list.items[0].itemId);expect(list.items[0]).not.toHaveProperty("to");
   expect(JSON.stringify(list)).not.toMatch(/score|rating/i);
   const id=list.items[0].itemId as string;
   expect((await staff(`/staff/relay/${id}/reject?app=friends`,"rev-tok","POST",{})).status).toBe(403);
   server.stop(true);await service.close();await start();
   expect((await (await staff("/staff/relay/held?app=friends","saf-tok")).json() as any).items.map((x:any)=>x.itemId)).toEqual([id]);
-  expect((await staff(`/staff/relay/${id}/reject?app=friends`,"saf-tok","POST",{note:"scam"})).status).toBe(200);
+  // Contract: the console's own client reads this real route (it used to drop every item for want of `id`).
+  const console_=new ServiceClient({url:server.url.href,token:"saf-tok",app:"friends"});
+  const seen=await console_.held("safety@example.org","relay");
+  expect(seen).toMatchObject({ok:true,items:[{id,queue:"relay",kind:"text",memberId:ari}]});
+  expect((seen as any).items[0].text).toContain("venmo");
+  // This network has no outbound queue (dry run): the leak review queue reads as not available, not as an error.
+  expect(await console_.held("safety@example.org","leak")).toMatchObject({ok:false,code:"not_available"});
+  // A decision needs a reason of 5 or more characters (it reaches the audit row); the console sends it as `note`.
+  expect(await (await staff(`/staff/relay/${id}/reject?app=friends`,"saf-tok","POST",{})).json()).toMatchObject({ok:false,reason:"reason_required"});
+  expect((await staff(`/staff/relay/${id}/reject?app=friends`,"saf-tok","POST",{note:"scam"})).status).toBe(409);
+  expect((await staff(`/staff/relay/${id}/reject?app=friends`,"saf-tok","POST",{note:"asks for money: a scam"})).status).toBe(200);
+  expect((await sql`select reason from network.staff_audit where action='relay_reject' and target_id=${id}`)[0].reason).toBe("asks for money: a scam");
   expect((await (await staff("/staff/relay/held?app=friends","saf-tok")).json() as any).items).toEqual([]);
   const [state]=await sql`select state from network.network_state where id='friends:nyc'`;
   expect(JSON.stringify(state)).not.toContain("venmo");
@@ -108,6 +122,26 @@ test("a scam is held for staff; staff list it (audited, app-scoped), reject it, 
   expect((await sql`select action from network.staff_audit where action in ('read_relay_held','relay_reject')`).length).toBeGreaterThanOrEqual(2);
   // Only the sender's own inbound message holds those words; nothing with them went out.
   expect((await sql`select id from network.messages where app_id='friends' and direction='outbound' and body like '%venmo%'`).length).toBe(0);
+},60_000);
+
+test("a swap request lasts only as long as the engine's consent (15 min, never backdated) and a member can take it back",async()=>{
+  const numbers=async()=>(await sql`select id from network.messages where app_id='friends' and (body like ${"%"+phones.ari.slice(2)+"%"} or body like ${"%"+phones.bo.slice(2)+"%"})`).length;
+  expect(await (await post(await ask("ari","ttl-ari","send Bo my number"))).json()).toMatchObject({decision:"hold"});
+  // 16 minutes later Bo asks: Ari's consent is stale, so nothing is shared; Bo's request now waits for Ari instead.
+  clock.advance(16*MINUTE);
+  expect(await (await post(await ask("bo","ttl-bo","send Ari my number"))).json()).toMatchObject({decision:"hold"});
+  expect(await numbers()).toBe(0);
+  // Bo changes their mind in a plain message ("don't send my number"): the pending request is gone.
+  clock.advance(MINUTE);
+  expect((await signed(TURN_PATH,"bo-withdraw",JSON.stringify(turn(phones.bo,"bo-withdraw","actually please don't send my number")))).status).toBe(200);
+  expect(await (await post(await ask("ari","ttl-ari-2","send Bo my number"))).json()).toMatchObject({decision:"hold"});
+  expect(await numbers()).toBe(0);
+  // Ari takes theirs back through the relay action ("don't send my number" is nothing to relay, and confirmed).
+  expect(await (await post(await ask("ari","ttl-ari-cancel","actually don't send my number"))).json()).toEqual({decision:"none",senderNotice:"Okay, I won't share your number.",delivered:false,replayed:false});
+  expect(await (await post(await ask("bo","ttl-bo-2","send Ari my number"))).json()).toMatchObject({decision:"hold"});
+  expect(await numbers()).toBe(0);
+  // Clean slate for the next test: Bo's request is withdrawn too.
+  expect(await (await post(await ask("bo","ttl-bo-cancel","never mind, don't send my number"))).json()).toMatchObject({decision:"none"});
 },60_000);
 
 test("a number goes out only after both members asked for the swap",async()=>{
@@ -121,4 +155,11 @@ test("a number goes out only after both members asked for the swap",async()=>{
   expect(shares.find((r:any)=>r.member_id===bo).body).toContain(phones.ari);
   expect(shares.find((r:any)=>r.member_id===ari).body).toContain(phones.bo);
   expect(JSON.stringify(await sql`select * from network.relay_records where app_id='friends'`)).not.toContain(phones.ari.slice(2));
+  // The relay thread (stored state, and the classifier's context) keeps that a number was shared, never the number.
+  const [{state}]=await sql`select state from network.network_state where id='friends:nyc'`;
+  const threads=JSON.stringify((typeof state==="string"?JSON.parse(state):state).relay.threads);
+  expect(threads).toContain("shared their number.");
+  for(const p of Object.values(phones))expect(threads).not.toContain(p.slice(2));
+  // Relay rows carry their network (migration 0031).
+  expect((await sql`select distinct network_id from network.relay_records where app_id='friends'`).map((r:any)=>r.network_id)).toEqual(["friends:nyc"]);
 },60_000);
