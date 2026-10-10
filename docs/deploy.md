@@ -4,10 +4,10 @@ This is how The Network goes online. Read it with [runbook-platform.md](runbook-
 
 **User decisions this round (2026-10-08).**
 
-- All four sites are deployed: ntwrk.love, slop.date, peon.biz and friends.help.
-- **Hosting (founder decision 8, AGENTS.md; it supersedes "Workers static assets").** Each site is a classic Cloudflare Pages project in the ntwrk.love Cloudflare account (`CLOUDFLARE_ACCOUNT_ID`): `ntwrk-love`, `slop-date`, `peon-biz`, `friends-help` (production branch `main`, served on `<project>.pages.dev`). The forwarding of `/api/*`, `/mcp`, `/oauth/*` and `/.well-known/oauth-*` to the shared backend is an advanced-mode `_worker.js` that the build makes from `deploy/router.ts`, with `_routes.json` so only those paths run it.
-- The shared backend is one process on Railway: `https://api.ntwrk.love`.
-- slop.date and friends.help stay in the Eliza Labs Cloudflare account for 10 days; their DNS points at the `slop-date.pages.dev` and `friends-help.pages.dev` projects. Every config takes the account id from the environment (`CLOUDFLARE_ACCOUNT_ID`), default the ntwrk.love account.
+- All four sites are deployed: ntwrk.party, slop.date, peon.biz and friends.help.
+- **Hosting (founder decision 8, AGENTS.md; it supersedes "Workers static assets").** Each site is a classic Cloudflare Pages project in the ntwrk.party Cloudflare account (`CLOUDFLARE_ACCOUNT_ID`): `ntwrk-party`, `slop-date`, `peon-biz`, `friends-help` (production branch `main`, served on `<project>.pages.dev`). The forwarding of `/api/*`, `/mcp`, `/oauth/*` and `/.well-known/oauth-*` to the shared backend is an advanced-mode `_worker.js` that the build makes from `deploy/router.ts`, with `_routes.json` so only those paths run it.
+- The shared backend is one process on Railway: `https://api.ntwrk.party`.
+- slop.date and friends.help stay in the Eliza Labs Cloudflare account for 10 days; their DNS points at the `slop-date.pages.dev` and `friends-help.pages.dev` projects. Every config takes the account id from the environment (`CLOUDFLARE_ACCOUNT_ID`), default the ntwrk.party account.
 - The backend treats each project's production name (`<project>.pages.dev`) as a host of its app (packages/platform `siteHosts`): the Origin check and Turnstile accept it, so a site works there before its own domain points at it. Preview deployments (`<hash>.<project>.pages.dev`) are not hosts.
 
 ## 1. What runs where
@@ -15,7 +15,7 @@ This is how The Network goes online. Read it with [runbook-platform.md](runbook-
 | Part | Where | Code | Public? |
 |---|---|---|---|
 | Sites (4 Pages projects) | Cloudflare Pages, one project per site, advanced-mode `_worker.js` | `sites/<domain>/wrangler.toml`, `deploy/router.ts`, `sites/sites.ts` | Yes, on `<project>.pages.dev` and each site's domain |
-| Shared backend | Railway service `backend` | `deploy/backend/` (`server.ts` wraps `packages/network/service`) | Port `PORT` on `api.ntwrk.love`. The staff port is private. |
+| Shared backend | Railway service `backend` | `deploy/backend/` (`server.ts` wraps `packages/network/service`) | Port `PORT` on `api.ntwrk.party`. The staff port is private. |
 | Postgres | Railway Postgres | migrations in `packages/observatory/db/` | No (private network only) |
 | Observatory console (optional) | Railway service `observatory` | `packages/observatory`, `deploy/backend/observatory.railway.toml` | Only through Cloudflare Access |
 
@@ -30,7 +30,7 @@ How a site request reaches the backend:
 
 1. The visitor calls `https://slop.date/api/app`.
 2. The slop.date Pages Worker (`_worker.js`) removes any proxy headers the client sent and signs new ones with `PLATFORM_PROXY_SECRET`: the visitor IP, the site host, and a timestamp (`packages/platform/src/proxy.ts`).
-3. It forwards the request to `https://api.ntwrk.love/api/app`.
+3. It forwards the request to `https://api.ntwrk.party/api/app`.
 4. The backend checks the signature and the timestamp (60 s window) with `verifyProxyHeaders`. If they are valid and the host is a known site, the request's `Host` becomes `slop.date`, and that picks the app. The signed IP is used for the rate limits.
 5. Any other request loses every proxy and forwarding header. Deployed (`PLATFORM_ENV` staging or production), an unsigned request to `/api/*`, `/mcp` or `/oauth/*` gets **421 `edge_required`**: a client that calls the origin directly never picks the app or the rate-limit bucket, whatever `Host` it sends.
 
@@ -146,20 +146,20 @@ Values used in local smoke runs (`ACfake`, `fake-turnstile`, `+1 555 01xx` numbe
    - one `"msg":"network"` line per network, each with `"sends":"dry-run"`.
 4. Delete `PLATFORM_DB_ENVIRONMENT_INIT`. Railway redeploys. The second boot must show `applied: 0`.
 
-### 2.5 Custom domain `api.ntwrk.love` (Cloudflare DNS)
+### 2.5 Custom domain `api.ntwrk.party` (Cloudflare DNS)
 
-1. Railway: open service `backend` → **Settings → Networking → Custom Domain**. Enter `api.ntwrk.love` with target port `8790`. Railway shows a CNAME target (`<something>.up.railway.app`), and it may also show a TXT verification record.
-2. Cloudflare (the ntwrk.love account, zone ntwrk.love) → DNS:
+1. Railway: open service `backend` → **Settings → Networking → Custom Domain**. Enter `api.ntwrk.party` with target port `8790`. Railway shows a CNAME target (`<something>.up.railway.app`), and it may also show a TXT verification record.
+2. Cloudflare (the ntwrk.party account, zone ntwrk.party) → DNS:
    - `CNAME api → <target>.up.railway.app`;
    - the TXT record, if Railway asked for one.
 3. Proxy status:
    - Start with **DNS only** (grey cloud) until Railway shows the domain as active with its certificate.
    - Then switch to **Proxied** (orange cloud) and keep the zone's SSL/TLS mode at **Full (strict)**. Never use Flexible: it loops redirects and sends plain HTTP to the origin.
-   - **Verify** after the switch that `curl -sI https://api.ntwrk.love/healthz` answers 200.
+   - **Verify** after the switch that `curl -sI https://api.ntwrk.party/healthz` answers 200.
 4. Delete Railway's generated `*.up.railway.app` domain, or never generate one. Without it, Cloudflare is the only way in.
-5. Optional hardening: a WAF rule on `api.ntwrk.love` that blocks paths other than `/api/*`, `/webhooks/blooio*`, `/mcp*`, `/oauth/*`, `/.well-known/oauth-*` and `/healthz`.
+5. Optional hardening: a WAF rule on `api.ntwrk.party` that blocks paths other than `/api/*`, `/webhooks/blooio*`, `/mcp*`, `/oauth/*`, `/.well-known/oauth-*` and `/healthz`.
 
-Every Pages project calls `https://api.ntwrk.love` like any other client. Only the proxy secret makes the backend trust it.
+Every Pages project calls `https://api.ntwrk.party` like any other client. Only the proxy secret makes the backend trust it.
 
 ### 2.6 Observatory console (optional)
 
@@ -183,8 +183,8 @@ The console is the same image with another start command. Real data only, and st
    | `OBSERVATORY_AUDIT_DATABASE_URL` | yes | A login that can write `network.staff_audit` |
 
 4. Custom domain:
-   - Add `console.ntwrk.love` with target port 4747, and a proxied CNAME in Cloudflare.
-   - In Cloudflare Zero Trust, create an **Access → Applications → Self-hosted** app for `console.ntwrk.love`. The policy allows the staff emails only. Copy its AUD tag into `OBSERVATORY_CF_ACCESS_AUD`.
+   - Add `console.ntwrk.party` with target port 4747, and a proxied CNAME in Cloudflare.
+   - In Cloudflare Zero Trust, create an **Access → Applications → Self-hosted** app for `console.ntwrk.party`. The policy allows the staff emails only. Copy its AUD tag into `OBSERVATORY_CF_ACCESS_AUD`.
    - Do not generate a Railway domain for this service.
 5. The console has no unauthenticated health route yet, so Railway only checks that the process stays up.
 
@@ -235,13 +235,13 @@ Without a container runtime, run `bun run start:backend` with the same variables
 
 Each site is one Pages project (founder decision 8):
 
-- `sites/<domain>/wrangler.toml`: `name = "<project>"`, `pages_build_output_dir = "./dist"`, and `[vars]` `APP_ID`, `SITE_HOST`, `BACKEND_ORIGIN = "https://api.ntwrk.love"`. No `account_id`, no routes: the account comes from `CLOUDFLARE_ACCOUNT_ID`.
+- `sites/<domain>/wrangler.toml`: `name = "<project>"`, `pages_build_output_dir = "./dist"`, and `[vars]` `APP_ID`, `SITE_HOST`, `BACKEND_ORIGIN = "https://api.ntwrk.party"`. No `account_id`, no routes: the account comes from `CLOUDFLARE_ACCOUNT_ID`.
 - `bun run sites/sites.ts <app>` writes `sites/<domain>/dist`: the pages, `_headers`, the skill files, `_worker.js` (the router, `deploy/router.ts`, bundled through `deploy/pages-worker.ts`: the default export only, as workerd requires, with the site's `APP_ID`, `SITE_HOST` and `BACKEND_ORIGIN` built in; a project variable still wins) and `_routes.json` (the Worker runs on `/api`, `/api/*`, `/mcp`, `/mcp/*`, `/oauth/*`, `/.well-known/oauth-*` only; every other path is a static file).
 - The router answers 413 for a body over 9 MB and 503 `proxy_not_configured` without `PLATFORM_PROXY_SECRET`. It never forwards unsigned.
 
 | Site | Pages project | Served on | Its own domain |
 |---|---|---|---|
-| ntwrk.love | `ntwrk-love` | `ntwrk-love.pages.dev` | `ntwrk.love`, `www.ntwrk.love`: add them as Pages custom domains. They are on the `ntwrk-love-site` **Worker** today: remove the Worker's custom domains first, in the same quiet hour (10DLC pages). |
+| ntwrk.party | `ntwrk-party` | `ntwrk-party.pages.dev` | `ntwrk.party`, `www.ntwrk.party`: add them as Pages custom domains. They are on the `ntwrk-love-site` **Worker** today: remove the Worker's custom domains first, in the same quiet hour (10DLC pages). |
 | slop.date | `slop-date` | `slop-date.pages.dev` | DNS in the Eliza Labs Cloudflare account points at `slop-date.pages.dev` (10 days) |
 | peon.biz | `peon-biz` | `peon-biz.pages.dev` | Pages custom domain `peon.biz` |
 | friends.help | `friends-help` | `friends-help.pages.dev` | DNS in the Eliza Labs Cloudflare account points at `friends-help.pages.dev` |
@@ -259,7 +259,7 @@ NTWRK_ALLOW_DEPLOY=1 scripts/wrangler.sh pages deploy sites/slop.date/dist --pro
 Notes:
 
 - The projects exist: never pass `--force`, never create them again.
-- `scripts/wrangler.sh` uses its own wrangler login (`XDG_CONFIG_HOME=$HOME/.config/wrangler-ntwrk`). Its account defaults to the ntwrk.love account (all four projects). It refuses `pages deploy`, `pages secret put` and every other change without `NTWRK_ALLOW_DEPLOY=1`, and `deploy --dry-run --no-dry-run` counts as a real deploy (the last value wins, as in wrangler).
+- `scripts/wrangler.sh` uses its own wrangler login (`XDG_CONFIG_HOME=$HOME/.config/wrangler-ntwrk`). Its account defaults to the ntwrk.party account (all four projects). It refuses `pages deploy`, `pages secret put` and every other change without `NTWRK_ALLOW_DEPLOY=1`, and `deploy --dry-run --no-dry-run` counts as a real deploy (the last value wins, as in wrangler).
 
 ### 3.2 Roll back a site
 
@@ -268,12 +268,12 @@ Pages → the project → **Deployments** → an earlier production deployment �
 ### 3.3 After each site deploy
 
 ```bash
-for S in https://ntwrk-love.pages.dev https://slop-date.pages.dev https://peon-biz.pages.dev https://friends-help.pages.dev; do
+for S in https://ntwrk-party.pages.dev https://slop-date.pages.dev https://peon-biz.pages.dev https://friends-help.pages.dev; do
   bun run deploy/smoke.ts $S <app> --api                    # 13 checks, the same as CI
   curl -s $S/api/app; echo                                  # this site's app only
-  curl -s -H 'x-network-proxy-host: ntwrk.love' $S/api/app; echo   # still this site's app (client copy removed)
+  curl -s -H 'x-network-proxy-host: ntwrk.party' $S/api/app; echo   # still this site's app (client copy removed)
 done
-curl -s https://api.ntwrk.love/api/app                      # 421 edge_required: the origin alone names no site
+curl -s https://api.ntwrk.party/api/app                      # 421 edge_required: the origin alone names no site
 ```
 
 ## 4. GitHub: secrets and the production environment
@@ -285,27 +285,27 @@ curl -s https://api.ntwrk.love/api/app                      # 421 edge_required:
 
    | Name | Environment | Value |
    |---|---|---|
-   | `CLOUDFLARE_API_TOKEN` (secret) | production | Account-owned token for the ntwrk.love account: Account → Cloudflare Pages → Edit. TTL 90 days. The only Cloudflare secret `deploy-sites.yml` reads, and only in its deploy step. |
-   | `CLOUDFLARE_ACCOUNT_ID` (variable) | production | Required: the ntwrk.love account id (all four projects). It is not in the repo. |
-   | `BACKEND_ORIGIN`, `TURNSTILE_SITE_KEY`, `BACKEND_LIVE` (variables) | production | `https://api.ntwrk.love`, the public widget key, `true` once the API is live |
+   | `CLOUDFLARE_API_TOKEN` (secret) | production | Account-owned token for the ntwrk.party account: Account → Cloudflare Pages → Edit. TTL 90 days. The only Cloudflare secret `deploy-sites.yml` reads, and only in its deploy step. |
+   | `CLOUDFLARE_ACCOUNT_ID` (variable) | production | Required: the ntwrk.party account id (all four projects). It is not in the repo. |
+   | `BACKEND_ORIGIN`, `TURNSTILE_SITE_KEY`, `BACKEND_LIVE` (variables) | production | `https://api.ntwrk.party`, the public widget key, `true` once the API is live |
 
    There are no PR preview deployments: they ran pull-request code next to the deploy token and the production proxy secret (audit). `PLATFORM_PROXY_SECRET` is never a GitHub secret: it is set once per Pages project (3.1).
    | `RAILWAY_TOKEN` | production | A Railway **project token** for the `production` environment. Only if production deploys go through Actions (below). |
 
 3. Railway production deploys. Pick one:
    - **(a)** Railway auto-deploys `main` with **Wait for CI**. This is simple, but it has no founder approval step.
-   - **(b) Recommended.** Turn off auto-deploy for the production environment. A job in the sites' deploy workflow, `environment: production`, runs `railway up --service backend --environment production --ci` after CI passes. It then waits for `https://api.ntwrk.love/healthz` to report the new `build`.
+   - **(b) Recommended.** Turn off auto-deploy for the production environment. A job in the sites' deploy workflow, `environment: production`, runs `railway up --service backend --environment production --ci` after CI passes. It then waits for `https://api.ntwrk.party/healthz` to report the new `build`.
    - Staging may auto-deploy.
 4. Pin every action by full commit SHA. Never use `pull_request_target`. PRs from forks get no secrets.
 
 ## 5. Order of the first go-live
 
 1. Railway: project, Postgres, the `backend` service, its variables (live-send variables unset), and the first deploy (2.4).
-2. `api.ntwrk.love` (2.5). Check `/healthz` and the build id.
-3. `PLATFORM_PROXY_SECRET` set in each Pages project. Deploy slop.date first (decision 4), then ntwrk.love, peon.biz and friends.help (3.1 or `deploy-sites.yml`). Each answers on `<project>.pages.dev` at once.
+2. `api.ntwrk.party` (2.5). Check `/healthz` and the build id.
+3. `PLATFORM_PROXY_SECRET` set in each Pages project. Deploy slop.date first (decision 4), then ntwrk.party, peon.biz and friends.help (3.1 or `deploy-sites.yml`). Each answers on `<project>.pages.dev` at once.
 4. Run the checks in 3.3 on every host.
 5. Optional: the observatory console behind Access (2.6).
-6. DNS: slop.date and friends.help (Eliza Labs Cloudflare account) point at their `pages.dev` names; ntwrk.love and peon.biz move to Pages custom domains (3). The MCP server is on once `TURNSTILE_SITE_KEY` is set on the backend.
+6. DNS: slop.date and friends.help (Eliza Labs Cloudflare account) point at their `pages.dev` names; ntwrk.party and peon.biz move to Pages custom domains (3). The MCP server is on once `TURNSTILE_SITE_KEY` is set on the backend.
 
 ## 6. Go-live checklist (live sends stay off)
 
@@ -316,9 +316,9 @@ Do every item on each deploy to production until the founder turns sends on in w
 - [ ] `select status, count(*) from network.messages where direction = 'outbound' group by 1;` shows only `dry_run` (and `refused_*`) rows.
 - [ ] `PLATFORM_ENV=production` and `select value from platform.settings where key = 'environment'` says `production`. The 555-01xx trigger is then on.
 - [ ] `PLATFORM_DB_ENVIRONMENT_INIT` is gone from the variables.
-- [ ] `curl https://api.ntwrk.love/healthz` gives 200 with the expected `build`. Each site's `/api/app` names its own app and gives the same `x-network-build`.
-- [ ] `curl https://api.ntwrk.love/review` gives 404. The staff API is reachable only on the private network.
-- [ ] `curl -H 'x-network-proxy-host: slop.date' https://api.ntwrk.love/api/app` gives 421 `edge_required`.
+- [ ] `curl https://api.ntwrk.party/healthz` gives 200 with the expected `build`. Each site's `/api/app` names its own app and gives the same `x-network-build`.
+- [ ] `curl https://api.ntwrk.party/review` gives 404. The staff API is reachable only on the private network.
+- [ ] `curl -H 'x-network-proxy-host: slop.date' https://api.ntwrk.party/api/app` gives 421 `edge_required`.
 - [ ] The boot log has no `refusing to start` line, and `select rolsuper, rolbypassrls from pg_roles where rolname = '<service login>'` is `f, f`.
 - [ ] No `*.up.railway.app` domain on either service.
 - [ ] The logs of the last hour contain no phone number, message text, code or token. Search Railway's log view for `+1`, `555` and `"text"`.

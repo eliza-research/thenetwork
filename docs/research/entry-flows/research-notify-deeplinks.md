@@ -28,7 +28,7 @@ Confidence: **high** = primary source fetched today (official docs or a vendor's
 2. **Auto-send is not something to rely on.** ChatGPT web used to auto-submit `?q=`; after a prompt-injection report
    (Tenable TRA-2025-22) OpenAI added "auto-submit protections based on the sec-fetch-site header" (2025-07-11).
    Claude documents prefill-then-review. Design every link so that **the user taps Send**.
-3. **Our own redirector breaks universal links.** A tap on `ntwrk.love/r/x` that 302s to `chatgpt.com/?q=` generally
+3. **Our own redirector breaks universal links.** A tap on `ntwrk.party/r/x` that 302s to `chatgpt.com/?q=` generally
    stays in Safari (Branch, Auth0, Apple forums). Either put the assistant's link directly in the message, or use an
    interstitial page on our domain with a button the user taps (a user tap to another domain does trigger the app).
    No web page can detect whether ChatGPT or Claude is installed.
@@ -137,7 +137,7 @@ Test on an iPhone (app installed and not installed), an Android phone, and deskt
   **short branded link** on SMS.
 - **10DLC and shorteners.** Public shorteners (bit.ly, tinyurl) get campaigns rejected (Twilio error 30963) and are
   widely filtered (Microsoft Learn SMS FAQ; Bandwidth quoting T-Mobile's code that links should tie to the business's
-  own domain). **Use our own domain** (ntwrk.love or a dedicated short domain we own), declare it in the campaign
+  own domain). **Use our own domain** (ntwrk.party or a dedicated short domain we own), declare it in the campaign
   samples, and keep it consistent with the brand website. **High** for "no public shorteners", **med** for exact
   carrier enforcement.
   - Twilio 30963: https://www.twilio.com/docs/api/errors/30963
@@ -189,7 +189,7 @@ in-browser). **Med-high.** The usual fix (host an AASA on the tracking domain) w
 - **Direct link** (high-confidence preference, iMessage): send the assistant's universal link itself. The tap opens
   the app if installed and the web client if not. We lose click tracking, but **the task token in the prompt is the
   click tracking**: when the assistant calls our tool with it, we know the surface, the time, and that it worked.
-- **Interstitial** (`https://ntwrk.love/t/<token>`; unknown preference, SMS, or a fallback): a fast server-rendered
+- **Interstitial** (`https://ntwrk.party/t/<token>`; unknown preference, SMS, or a fallback): a fast server-rendered
   page with truthful OG tags ("Your Network update"), a primary button for the predicted assistant, secondary buttons
   for the others, and "Reply by text instead". The button is a user tap to another domain, which triggers universal
   links (**med**; test). It logs User-Agent and the choice, which becomes a preference signal. Desktop visitors get
@@ -316,7 +316,7 @@ for that connection, returns the items, and marks them acted.
 - Tool results that contain other members' free text are untrusted data for the assistant (MCP design doc). Keep
   them clearly delimited.
 - Tenable's report shows why auto-submit is dangerous. Not depending on auto-send also protects members.
-- Train trust signals: notifications come only from the saved contact; links go only to `ntwrk.love` or official
+- Train trust signals: notifications come only from the saved contact; links go only to `ntwrk.party` or official
   assistant domains; our OG previews are truthful.
 
 ### 5.4 Length limits
@@ -375,7 +375,7 @@ for that connection, returns the items, and marks them acted.
 4. **Link builder**:
    - iMessage with a confident assistant: our text line, then the assistant's universal link with a prefilled
      prompt and task token (`chatgpt.com/?q=`, `claude.ai/new?q=`, `grok.com/?q=`).
-   - SMS, or an unknown preference: a `ntwrk.love/t/<token>` interstitial with tap buttons. Never a server redirect,
+   - SMS, or an unknown preference: a `ntwrk.party/t/<token>` interstitial with tap buttons. Never a server redirect,
      never a public shortener.
    - Always possible to reply in the thread.
 5. **Task token** = opaque, owner-bound, expiring reference; authorization comes from the assistant connection;

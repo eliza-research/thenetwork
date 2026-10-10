@@ -3,7 +3,7 @@
 // The backend runs the same loop in process with MONITOR=1; use this one from a cron or a second service.
 //   bun run scripts/monitor.ts                       # the local dev database, every 5 minutes
 //   bun run scripts/monitor.ts --once --state f.json # one run (a cron); the dedupe state lives in f.json
-//   bun run scripts/monitor.ts --url <db> --healthz-url https://api.ntwrk.love/healthz
+//   bun run scripts/monitor.ts --url <db> --healthz-url https://api.ntwrk.party/healthz
 // Sinks: the log always, ALERT_FILE (JSON lines) and ALERT_WEBHOOK_URL (https JSON POST) when set.
 // Budgets: COST_BUDGET_DAILY_USD, COST_BUDGET_MONTHLY_USD (unset: no cost alert). Never sends SMS.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
