@@ -721,6 +721,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     // text in the thread does those.
     const mcp = msg.source === "mcp";
     if ((c.kind === "block" || c.kind === "report") && !mcp) return this.handleBlock(m, c);
+    // Nor is the assistant's block or report scored as the member's abuse: its words describe someone
+    // else (network-consent-4), and a watch would drop the member and cancel a booked date. Learned only.
+    if ((c.kind === "block" || c.kind === "report") && mcp) return this.learnFrom(m, body);
     if (this.trust.level(m.id) === "hold") { if (c.abuse.length) this.trust.add(m.id, now, c.abuse[0]!, 0); return; }
     // "He asked me to venmo him $50": what someone else did, never the sender's abuse (ids and kinds only).
     if (c.disclosure?.length) this.ctx.log("abuse_disclosed", { memberId: m.id, kinds: c.disclosure });

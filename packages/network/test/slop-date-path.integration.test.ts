@@ -148,6 +148,9 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     // The assistant's profile can't cancel the booked date or report anyone; only Rae's own texts do.
     await fromAssistant("Sorry, I can't make it anymore, cancel the date.");
     await fromAssistant("Report Sam, he was rude to me and I want to block him.");
+    // Words that would be abuse from the sender ("he owes me money") describe Sam: Rae is not scored or dropped.
+    await fromAssistant("Block Sam, he owes me money and keeps texting.");
+    expect(s.runtimeFor("slop")!.net.trust.level(rae as never)).toBe("ok");
     expect((await sql`select state from network.opportunities where app_id = 'slop' and id = ${item.oppId}`)[0]?.state).toBe("SCHEDULED");
     expect(((await (await staff(s, SAFETY, "GET", "/apps/slop/safety/reports")).json()) as any).reports ?? []).toHaveLength(0);
 
