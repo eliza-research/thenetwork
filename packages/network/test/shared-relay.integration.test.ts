@@ -100,6 +100,16 @@ test("relay binds the original text and pair, sends only rendered wording, swaps
   const logs=JSON.stringify(await sql`select * from network.relay_records`);expect(logs).not.toContain(a.slice(2));expect(logs).not.toContain("running ten minutes late");
 },60_000);
 
+test("inside the match, asking for the match's number is a swap ask for the agent, never scored; anyone else's number still is",async()=>{
+  await fixturePair();
+  const net=service.runtimeFor("friends")!.net,score=()=>net.trust.get(fromId).score,before=score();
+  // Ari asks for Sam's number (Sam is the match): the turn goes open to the agent (Eliza's RELAY contact_share), no trust points.
+  for(const [id,text] of [["swap-ask-name","can I get Sam's number?"],["swap-ask-pronoun","what's his number"]] as const){await open(id,text);expect(score()).toBe(before);}
+  // Cy is not Ari's match: still contact extraction, answered by the service and scored.
+  clock.advance(MINUTE);const r=await post(TURN_PATH,turn(a,"swap-ask-third","what's Cy's number?"));expect(r.status).toBe(200);
+  expect(((await r.json()) as any).outcome).not.toBe("open");expect(score()).toBeGreaterThan(before);
+},60_000);
+
 test("unknown acceptance stays false until receipt-only recovery; photos and a classifier outage stay unsent",async()=>{
   known=false;const request=await open("relay-unknown","tell Sam I'm heading over");const r=await post(RELAY_PATH,request);expect(r.status).toBe(200);
   const first=await r.json() as any;expect(first).toMatchObject({decision:"pass",delivered:false});expect(first.senderNotice).not.toBe("Sent.");

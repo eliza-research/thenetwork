@@ -718,6 +718,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (this.trust.level(m.id) === "hold") { if (c.abuse.length) this.trust.add(m.id, now, c.abuse[0]!, 0); return; }
     // "He asked me to venmo him $50": what someone else did, never the sender's abuse (ids and kinds only).
     if (c.disclosure?.length) this.ctx.log("abuse_disclosed", { memberId: m.id, kinds: c.disclosure });
+    // Inside a mutual match, "can I get her number?" asks for a number swap (the relay: Eliza's RELAY
+    // contact_share, then both must say yes), never the sender's abuse: it goes to the agent unscored.
+    if (c.abuse.length && this.swapAsk(m, c, body)) return "open" as const;
     if (c.abuse.length && !this.handleAbuse(m, c, body)) return;
 
     // peon (#9): a job post by text, read back and saved only on the manager's yes (rules only, never an open-turn LLM output).
@@ -1108,6 +1111,26 @@ export class ConsentNetwork implements NetworkUnderTest {
     if ((c.kind === "people_request" || c.kind === "plans_request") && this.trust.ok(m.id)) { this.ack(m, reply); return true; }
     this.send(m, reply, { type: "info" }, "reply");
     return false;
+  }
+
+  /**
+   * A number asked for, inside a mutual match, about the match: "can I get her number?", "what's Sam's
+   * number" (Sam being the match). Only when contact extraction is the only abuse, the member has one
+   * open relay match (relay.ts matchFor: both said yes, adults, not closed) and the text names that
+   * person or uses a pronoun. Anyone else's number, an address or a handle stays contact extraction.
+   */
+  private swapAsk(m: MemberState, c: Classified, body: string): boolean {
+    if (c.abuse.length !== 1 || c.abuse[0] !== "contact_extraction") return false;
+    const match = this.relayDesk.matchFor(m.id);
+    const other = match?.participants.length === 2 ? this.members.get(match.participants.find(p => p !== m.id)!) : undefined;
+    if (!other) return false;
+    const t = body.normalize("NFKC").replace(/[\u2018\u2019]/g, "'");
+    const NUM = String.raw`(?:(?:phone|cell)\s+)?(?:number|phone|cell)\b`;
+    const whose = new RegExp(String.raw`\b(his|her|their|them|[\p{L}]+'s)\s+` + NUM, "iu").exec(t)?.[1]?.toLowerCase().replace(/'s$/, "");
+    if (!whose) return false;
+    if (!["his", "her", "their", "them"].includes(whose) && whose !== other.first.toLowerCase()) return false;
+    this.ctx.log("relay_swap_ask", { memberId: m.id, matchId: match!.id });
+    return true;
   }
 
   private onTrustChange(id: MemberId, from: TrustLevel, to: TrustLevel, why: string) {
