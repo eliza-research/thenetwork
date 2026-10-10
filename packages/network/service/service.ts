@@ -990,9 +990,11 @@ export class NetworkService implements RuntimeHost {
 
   /**
    * The profile a person gave their own AI agent, sent through the MCP server's submit_profile
-   * (founder decision 10): delivered to their member on this app as if they had texted it, so the
-   * Network reads it with the same rules (wants, interests, availability, an age that can only lower,
-   * minors and abuse). Only for a live membership; it never creates a member. The text is the member's.
+   * (founder decision 10): delivered to their member on this app with source "mcp", so the Network
+   * reads it with the same rules (wants, interests, availability, an age that can only lower, minors
+   * and abuse) but never takes it as the member's answer: not a yes to a probe, not a cancel of a
+   * booked date, not a block or a report (InboundMessage.source). Only for a live membership; it
+   * never creates a member. The text is the member's.
    */
   async submitProfile(personId: string, appId: AppId, e164: string, text: string): Promise<"accepted" | "not_member"> {
     const m = await this.people.getMembership(personId, appId);
@@ -1010,7 +1012,8 @@ export class NetworkService implements RuntimeHost {
 
   /** A member's message (or keyword) as one unit of work on their app's network. */
   private async memberMessage(rt: NetworkRuntime, memberId: MemberId, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, kw: ReturnType<typeof platformKeyword>, systemReply?: string, fromThread = true): Promise<InboundOutcome> {
-    const out = await this.memberUnit(rt, memberId, ev, rowId, kw, systemReply);
+    // Not from the thread: a profile from the member's AI assistant, learned but never an answer (InboundMessage.source).
+    const out = await this.memberUnit(rt, memberId, ev, rowId, kw, systemReply, !fromThread);
     // The member wrote in the thread: pending notify deliveries count as acted on (an assistant's submit_profile does not).
     if (out === "handled" && fromThread && this.notify && kw !== "stop" && kw !== "stop_all") {
       const personId = await this.personOfMember(rt, memberId);
@@ -1019,7 +1022,7 @@ export class NetworkService implements RuntimeHost {
     return out;
   }
 
-  private memberUnit(rt: NetworkRuntime, memberId: MemberId, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, kw: ReturnType<typeof platformKeyword>, systemReply?: string): Promise<InboundOutcome> {
+  private memberUnit(rt: NetworkRuntime, memberId: MemberId, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, kw: ReturnType<typeof platformKeyword>, systemReply?: string, fromAssistant = false): Promise<InboundOutcome> {
     const keyword = kw === "stop" || kw === "stop_all" ? "STOP" : kw === "start" ? "START" : kw === "help" ? "HELP" : undefined;
     return rt.unitOfWork(async n => {
       // Under the lock, so a provider retry or a second subscription is handled once.
@@ -1030,7 +1033,7 @@ export class NetworkService implements RuntimeHost {
       rt.unit.inbound = { id: rowId, member_id: memberId, direction: "inbound", channel, body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
       rt.replyingTo = memberId;
       let disposition: "handled" | "open";
-      try { disposition = await n.onInbound({ id: rowId, memberId, body: ev.text, ts: t, channel, ...(keyword ? { keyword } : {}) }); } finally { rt.replyingTo = undefined; }
+      try { disposition = await n.onInbound({ id: rowId, memberId, body: ev.text, ts: t, channel, ...(keyword ? { keyword } : {}), ...(fromAssistant ? { source: "mcp" as const } : {}) }); } finally { rt.replyingTo = undefined; }
       // Carrier keywords: the app's own confirmation (packages/platform apps.ts). START gets the Network's own welcome back.
       if (systemReply) rt.system(memberId, `sys:${rowId}`, systemReply);
       if (keyword === "STOP") rt.unit.optOut.set(memberId, true);

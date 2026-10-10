@@ -103,18 +103,22 @@ const NOT_AVAILABLE = "That app is not available here.";
 /**
  * A phone number, an email address or a verification code in the profile text: refused, never stored.
  * A standalone 5-digit US zip ("11211", "(11237)") is fine, as are a separate age range
- * ("28-35") and distance ("5 miles"). Refused: an email, or a numeric run with at least
- * 4 digits, except one standalone zip or age range.
- * Split phone numbers and codes remain one numeric run, regardless of their labels.
+ * ("28-35") and distance ("5 miles"). Numeric runs with 7 or more digits are refused even
+ * when letters touch them. Standalone runs with at least 4 digits are refused except one
+ * zip or bounded age range. Thus "1990s" is text, but "12 34 56" is a code.
  */
 export function contactOrCode(text: string): boolean {
   if (/[\w.+-]+@[\w-]+\.[\w.]+/.test(text)) return true;
-  for (const m of text.matchAll(/(?<![\w])\+?[\d(][\d\s().-]*\d(?![\w])/g)) {
-    const run = m[0].trim();
+  // A phone touching letters or underscores is still a phone.
+  for (const m of text.matchAll(/\+?[\d(][\d\s().-]*\d/g)) {
+    const run = m[0];
+    const digits = run.replace(/\D/g, "").length;
+    if (digits >= 7) return true;
     if (/^\(?\d{5}\)?$/.test(run)) continue;
     const range = /^(\d{1,3})-(\d{1,3})$/.exec(run);
     if (range && Number(range[1]) >= 1 && Number(range[1]) <= Number(range[2]) && Number(range[2]) <= 120) continue;
-    if (run.replace(/\D/g, "").length >= 4) return true;
+    const alone = !/\w/.test(text[m.index! - 1] ?? "") && !/\w/.test(text[m.index! + run.length] ?? "");
+    if (alone && digits >= 4) return true;
   }
   return false;
 }

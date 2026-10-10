@@ -594,10 +594,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     m.lastInbound = nowIn; m.msgsIn++;
     this.outboundBefore = m.outbound ?? 0;
     // Answers to the Network teach the send time (founder decision 1); carrier keywords do not.
-    if (!msg.keyword) m.replies = [...(m.replies ?? []), this.now()].slice(-60);
+    // A profile from the member's AI assistant (source "mcp") is not the member answering: it teaches no send time.
+    if (!msg.keyword && msg.source !== "mcp") m.replies = [...(m.replies ?? []), this.now()].slice(-60);
     this.heardFrom(m);
     // "Don't send my number": a pending number swap of theirs is withdrawn at once (relay.ts), whatever else the message says.
-    if (!msg.keyword && withdrawsSwap(body) && this.relayDesk.cancelSwaps(m.id)) this.ctx.log("relay_swap_withdrawn", { memberId: m.id });
+    if (!msg.keyword && msg.source !== "mcp" && withdrawsSwap(body) && this.relayDesk.cancelSwaps(m.id)) this.ctx.log("relay_swap_withdrawn", { memberId: m.id });
     this.replyTo = m.id; this.understood = u;
     try { return this.handleInbound(m, msg) === "open" ? "open" : "handled"; } finally { this.replyTo = undefined; this.understood = undefined; }
   }
@@ -715,17 +716,29 @@ export class ConsentNetwork implements NetworkUnderTest {
 
     // Blocks and reports first: their words describe someone else, so they are never scored as the
     // sender's abuse, and a member on hold can still block (network-consent-4).
-    if (c.kind === "block" || c.kind === "report") return this.handleBlock(m, c);
+    // A profile from the member's AI assistant (InboundMessage.source "mcp") is learned, never an answer:
+    // it never blocks or reports anyone, and it skips every answer below (a probe, a plan, a crew, the
+    // booked date, a check-in, a cancel, feedback, an invite, CALENDAR/WEEKLY). Only the member's own
+    // text in the thread does those.
+    const mcp = msg.source === "mcp";
+    if ((c.kind === "block" || c.kind === "report") && !mcp) return this.handleBlock(m, c);
+    // Nor is the assistant's block or report scored as the member's abuse: its words describe someone
+    // else (network-consent-4), and a watch would drop the member and cancel a booked date. Learned only.
+    if ((c.kind === "block" || c.kind === "report") && mcp) return this.learnFrom(m, body);
     if (this.trust.level(m.id) === "hold") { if (c.abuse.length) this.trust.add(m.id, now, c.abuse[0]!, 0); return; }
     // "He asked me to venmo him $50": what someone else did, never the sender's abuse (ids and kinds only).
     if (c.disclosure?.length) this.ctx.log("abuse_disclosed", { memberId: m.id, kinds: c.disclosure });
+    // Inside a mutual match, "can I get her number?" asks for a number swap (the relay: Eliza's RELAY
+    // contact_share, then both must say yes), never the sender's abuse: it goes to the agent unscored.
+    if (c.abuse.length && this.swapAsk(m, c, body)) return "open" as const;
     if (c.abuse.length && !this.handleAbuse(m, c, body)) return;
 
     // peon (#9): a job post by text, read back and saved only on the manager's yes (rules only, never an open-turn LLM output).
     if (this.opts.hooks?.postings && this.postingTurn(m, body)) return;
 
-    // Answers to what we asked.
-    const aw = m.awaiting;
+    // Answers to what we asked (never from the assistant's profile: it can only teach, below).
+    const aw = mcp && m.awaiting?.kind !== "interview" ? undefined : m.awaiting;
+    if (mcp && c.kind !== "people_request") return this.learnFromProfile(m, aw, c, body);
     if (aw?.kind === "probe" && this.opps.get(aw.oppId!)?.plan) {
       // A plan probe: yes or no to that plan at that time ("can't make that time" is a no, and a time they are not free).
       const yn = this.yesNoOf(body);
@@ -1067,6 +1080,17 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /**
+   * A profile from the member's AI assistant (InboundMessage.source "mcp") that is not a request: it
+   * may answer an onboarding question (it is about the member), and otherwise is learned quietly. It
+   * never answers a probe, a plan, the booked date or a check-in (handleInbound leaves those open).
+   */
+  private learnFromProfile(m: MemberState, aw: MemberState["awaiting"], c: Classified, body: string) {
+    if (aw?.kind === "interview" && aw.ask) return this.onAskAnswer(m, aw.ask, c, body);
+    if (aw?.kind === "interview" && m.stage !== "active") return this.onInterviewAnswer(m, body);
+    this.learnFrom(m, body);
+  }
+
+  /**
    * The answer to an engine question (EngineResult.asks): learn from it, record when it came
    * (`answeredAt`, fed back to the engine as recentAsks), then handle a request it contains.
    */
@@ -1109,6 +1133,38 @@ export class ConsentNetwork implements NetworkUnderTest {
     if ((c.kind === "people_request" || c.kind === "plans_request") && this.trust.ok(m.id)) { this.ack(m, reply); return true; }
     this.send(m, reply, { type: "info" }, "reply");
     return false;
+  }
+
+  /**
+   * A number asked for, inside a mutual match, about the match: "can I get her number?", "what's Sam's
+   * number" (Sam being the match). Only when contact extraction is the only abuse, the member has one
+   * open relay match (relay.ts matchFor: both said yes, accepted, not closed, within its window) and
+   * every "<whose> number" in the text names that person or is a pronoun. A pronoun is taken whoever it
+   * refers to: that is safe only because the agent can share with the match alone and the relay engine
+   * needs both members to ask. What is left once those asks are removed must name no other contact
+   * detail ("and everyone's numbers", "and Cy's address"): then the whole text stays contact extraction.
+   * Minors never get here with a match: dropMember closes a minor's opportunities, and the relay treats
+   * an unsure age as undefined and refuses any share.
+   */
+  private swapAsk(m: MemberState, c: Classified, body: string): boolean {
+    if (c.abuse.length !== 1 || c.abuse[0] !== "contact_extraction") return false;
+    const match = this.relayDesk.matchFor(m.id);
+    const other = match?.participants.length === 2 ? this.members.get(match.participants.find(p => p !== m.id)!) : undefined;
+    if (!other) return false;
+    const t = body.normalize("NFKC").replace(/[\u2018\u2019]/g, "'");
+    const NUM = String.raw`(?:(?:phone|cell)\s+)?(?:number|phone|cell)\b`;
+    const first = other.first.toLowerCase();
+    let asks = 0, elsewhere = false;
+    const rest = t.replace(new RegExp(String.raw`\b(his|her|their|them|[\p{L}]+'s)\s+` + NUM, "giu"), (all: string, w: string) => {
+      const whose = w.toLowerCase().replace(/'s$/, "");
+      if (["his", "her", "their", "them"].includes(whose) || whose === first) { asks++; return " "; }
+      elsewhere = true; return all;
+    });
+    if (!asks || elsewhere) return false;
+    if (/\b(numbers?|phones?|cells?|address(es)?|emails?|instagram|ig|insta|socials|snap(chat)?|handles?|contacts?|last names?)\b/i.test(rest)) return false;
+    if (classify(rest).abuse.includes("contact_extraction")) return false;
+    this.ctx.log("relay_swap_ask", { memberId: m.id, matchId: match!.id });
+    return true;
   }
 
   private onTrustChange(id: MemberId, from: TrustLevel, to: TrustLevel, why: string) {
@@ -1467,8 +1523,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     const def = req.desireId ? desireById.get(req.desireId) : undefined;
     const what = def ? def.text.replace(/^(find|meet|get|be part of|try|start|make|play|join|go on) /, "").replace(/^learn to /, "learning to ") : "that";
     const v = nearbyVenues(m.area, def ? def.needsInterests : req.tags, 1)[0];
-    this.send(m, `${copy.requestNoneYet(what)}${v ? ` Meanwhile, ${v.name} is a good public spot for it.` : ""}`, { type: "info" }, "info");
-    if (this.canInvite(m)) m.awaiting = { kind: "growth", at: this.now() };
+    this.send(m, `${copy.requestNoneYet(what, this.invitesWork)}${v ? ` Meanwhile, ${v.name} is a good public spot for it.` : ""}`, { type: "info" }, "info");
+    if (this.invitesWork && this.canInvite(m)) m.awaiting = { kind: "growth", at: this.now() };
   }
 
   /**
@@ -2461,7 +2517,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     this.interactions.push({ id: `${o.id}:fb:${m.id}`, kind: o.kind, category: o.category, participants: [...o.participants], at: this.now(), outcome: f.selfNoShow ? "no_show" : "completed", contributors: [] });
     // Growth: a good experience is the best moment to ask (at most monthly, while invites last).
-    if (!crewId && this.opts.growth && f.sentiment === "positive" && this.canInvite(m) && this.now() - m.lastGrowthAsk > 30 * DAY) {
+    if (!crewId && this.invitesWork && f.sentiment === "positive" && this.canInvite(m) && this.now() - m.lastGrowthAsk > 30 * DAY) {
       m.lastGrowthAsk = this.now();
       this.growthAsk(m, this.copy.growthAsk, "after_good_meeting");
     }
@@ -2473,7 +2529,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     return !m.minor && this.trust.ok(m.id) && this.now() >= m.invitesBlockedUntil && m.invites.filter(t => this.now() - t < 30 * DAY).length < limit;
   }
 
+  /**
+   * Growth asks and invites are on, and this Network can send an invite link (NetworkContext.invite).
+   * Without one (the production service today) no text offers or claims an invite link.
+   */
+  private get invitesWork(): boolean { return this.opts.growth && !!this.ctx.invite; }
+
   private invite(m: MemberState, friendName: string) {
+    if (!this.ctx.invite) { this.ctx.log("invite_unavailable", { from: m.id }); this.send(m, this.copy.invitesNotOpen(friendName), { type: "info" }, "reply"); return; }
     if (!this.canInvite(m)) { this.send(m, "Thanks! You're out of invites for now; I'll let you know when you have more.", { type: "info" }, "reply"); return; }
     m.invites.push(this.now());
     this.counters.invitesSent++;
@@ -3595,7 +3658,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    *  - plain asks: engaged members who've been here 10+ days and were never asked.
    */
   private growthTasks(now: number) {
-    if (!this.opts.growth) return;
+    if (!this.invitesWork) return;
     let budget = this.opts.maxGrowthAsksPerDay;
     const known = this.knownProfiles();
     const unmet = this.requests.filter(r => r.kind === "people" && r.outcome === "none" && now - r.at < 7 * DAY);

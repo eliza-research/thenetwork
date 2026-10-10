@@ -113,6 +113,13 @@ export interface InboundMessage {
   id: string; memberId: MemberId; body: string; ts: number; channel: ChannelKind; keyword?: Keyword;
   /** A tapback on an outbound message (SimMeta.reaction); `body` then carries the emoji. Never a keyword. */
   reaction?: Reaction;
+  /**
+   * "mcp": a profile the member's own AI assistant sent through the MCP server's submit_profile. It is
+   * learned (age, wants, interests, onboarding), but it is never the member's answer to anything: not a
+   * yes or no to a probe, a plan, a crew or a booked date, not a cancel, not check-in feedback, not a
+   * block or a report, and it does not teach the send time. Absent: the member texted it.
+   */
+  source?: "mcp";
 }
 
 export interface MeetingReport {

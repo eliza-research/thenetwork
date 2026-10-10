@@ -199,7 +199,8 @@ describe("submit_profile (founder decision 10: the profile comes from the person
     const c2 = await connect(env, "peon.biz", PHONE_A);
     // Contact details and codes are refused, never stored or relayed.
     for (const about of ["Call me at 212 555 0142 about roles", "my code is 482913 thanks", "email rae@example.org for my CV", "My number is (415) 555-0102 if needed.",
-      "call +1 415 555 0102 anytime ok", "reach me at 4155550102 please", "my cell 555 0102 for the job", "the code was 4821 and I like jazz", "verification 1234567890 here"]) {
+      "call +1 415 555 0102 anytime ok", "reach me at 4155550102 please", "my cell 555 0102 for the job", "the code was 4821 and I like jazz", "verification 1234567890 here",
+      "my cell4155550102 thanks", "call 4155550102ok", "text me at tel4155550102", "_4155550102_ here", "my number 41555 50102 ok", "number is 212 55501 42 ok"]) {
       r = await call(env, PEON_MCP, "submit_profile", { about }, { token: c2.token.access_token });
       expect([about, r.body!.result.isError]).toEqual([about, true]);
     }

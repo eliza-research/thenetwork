@@ -200,13 +200,14 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         const c = await connectMcp(pilot, "slop", phone, { browser, redirect: "https://chatgpt.com/connector_platform_oauth_redirect" });
         expect(c.token?.access_token).toBeString();
         const submit = (about: string) => rpc(pilot, "slop", "/mcp", "tools/call", { name: "submit_profile", arguments: { app: "slop", about } }, c.token!.access_token);
-        for (const about of ["My phone number is 11211 12345.", "My phone is 41555 50102.", "My verification code is 12 34 56.", "Please keep this private: 41555 50102.", "Please keep this private: 12 34 56.", "Please keep this private: 12-34 56."]) {
+        for (const about of ["My phone number is 11211 12345.", "My phone is 41555 50102.", "My verification code is 12 34 56.", "Please keep this private: 41555 50102.", "Please keep this private: 12 34 56.", "Please keep this private: 12-34 56.", "Reach me at cell2125550142."]) {
           expect(toolData(await submit(about)).error).toMatch(/phone numbers, codes and email/);
           expect((await db`select id from network.messages where body=${about}`).length).toBe(0);
         }
         for (const about of [
           "I'm Rae, 30, in 11211. Seeking men 28-35 within 5 miles for a long-term relationship. I like climbing and live music.",
           "I'm Rae, 30, near (11237), seeking men 28-35 within 5 miles. I like climbing and live music.",
+          "I'm Rae, 30, in 11211. I like 1990s music, climbing and live shows.",
         ]) {
           expect(toolData(await submit(about))).toMatchObject({ app: "slop", submitted: true });
           expect((await db`select id from network.messages where member_id=${member.id} and body=${about}`).length).toBe(1);
