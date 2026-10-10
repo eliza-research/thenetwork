@@ -123,6 +123,14 @@ export function copyFor(b: CopyBrand) {
   /** A report about someone the member did not meet through the Network, or a name that matches nobody: no claim about who they are. */
   reportUnmatched: "Thanks for telling me. I couldn't match that name to someone you met through me. If you're ever in danger, call 911 first.",
   reported: "Thanks for telling me. I've blocked them for you and flagged this for the safety team. If you're ever in danger, call 911 first.",
+  /** A block by a name that is not someone they met through the Network: the same words whether or not the name is a member's (no membership oracle). */
+  blockUnmatched: "I couldn't match that name to someone you met through me. If they're a member, they won't be matched with you, and they won't be told.",
+  /** "block him" or a name two of their counterparts share: which one. Only names of people the member was introduced to. */
+  whoDoYouMean: (names: string[]) => names.length
+    ? `Who do you mean: ${names.join(" or ")}? Reply with the name and I'll take care of it.`
+    : "Who do you mean? Reply with their first name and I'll take care of it.",
+  /** The answer to "Who do you mean?" still named nobody they met: nothing was applied. */
+  whoUnresolved: "I couldn't tell who you mean, so nothing has changed yet. Reply block or report with their first name anytime.",
   hold: "Your account is paused while our team takes a look. You'll hear from a person soon.",
   minorNotice: "Thanks for telling me. Since you're under 18, I won't introduce you to other members, but I'm happy to suggest public places and events.",
   minorConcierge: (topic: string, ideas: string) => `For ${topic}, ${ideas}. Happy to suggest more anytime.`,
