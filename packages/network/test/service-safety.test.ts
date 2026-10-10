@@ -17,6 +17,11 @@ import { DryRunAdapter } from "../service/channel.ts";
 import { ServiceClient } from "../../observatory/src/sources/service.ts";
 import { NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/service.ts";
 import { START } from "./mini.ts";
+import { loadSnapshot } from "../service/snapshot.ts";
+import { resolveConfig } from "../../engine/src/config.ts";
+import { localEmbed } from "../../engine/src/embed.ts";
+import { friendsInfo, friendsPack } from "../../engine/src/packs/friends/index.ts";
+import { World } from "../../engine/src/world.ts";
 
 const T = 300_000;
 const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!Bun.which("pg_ctl");
@@ -357,6 +362,31 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect((await upload()).ok).toBe(false);
     expect(ratedPhotoCounts).toHaveLength(calls);
   }, T);
+  test("friends: a member staff verified (liveness and age passed, the tags the verify route writes) is verified for the friends pack; a failed or missing check is not", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const { s, otp } = service(clock);
+    const web = site(s, clock, otp);
+    const ids: string[] = [];
+    for (const [i, name] of ["Ari", "Bo"].entries()) {
+      web.forget("friends");
+      const phone = newPhone();
+      await web.login("friends", phone);
+      expect((await web.join("friends", 30 + i, name)).status).toBe(200);
+      ids.push((await memberOf("friends", phone))!.id);
+    }
+    const [ari, bo] = ids as [string, string];
+    const verified = async () => {
+      const w = new World(await loadSnapshot(sql, clock.now(), { app: "friends", city: "nyc" }), resolveConfig({ seed: 1 }), localEmbed, friendsPack);
+      return Object.fromEntries(ids.map(id => [id, friendsInfo(w).get(id)?.verified ?? null]));
+    };
+    expect(await verified()).toEqual({ [ari]: false, [bo]: false });
+    for (const [id, check, result] of [[ari, "liveness", "pass"], [ari, "age", "pass"], [bo, "liveness", "pass"], [bo, "age", "fail"]] as const) {
+      expect(await (await staff(s, "saf-tok", "POST", `/apps/friends/members/${id}/verify`, { check, result, note: "staff review" })).json()).toEqual({ ok: true });
+    }
+    expect(await verified()).toEqual({ [ari]: true, [bo]: false });
+  }, T);
+
   test("staff with safety on one app hold on that app only and cannot ban; the audit never counts the person's apps", async () => {
     await fresh();
     const clock = new SimClock(START);

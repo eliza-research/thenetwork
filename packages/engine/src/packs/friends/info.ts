@@ -35,6 +35,15 @@ export interface FriendsInfo {
   standing: StandingAvailability[];
 }
 
+/**
+ * The one value a passed check has: verify:<check>:pass, as the staff verify path
+ * (packages/network/service/service.ts verify) and slop write it. Anything else (fail, pending, the
+ * older "passed") is not verified: fail closed.
+ */
+export const VERIFY_PASS = "pass";
+/** The tag value of a check result (the simulator's personas say passed / failed / pending). */
+export const verifyTag = (r: "passed" | "failed" | "pending" | "pass" | "fail") => (r === "passed" || r === "pass" ? "pass" : r === "failed" || r === "fail" ? "fail" : "pending");
+
 export const DEFAULT_TOLERANCE = 40;
 const cache = new WeakMap<World, Map<MemberId, FriendsInfo>>();
 
@@ -76,7 +85,7 @@ export function friendsInfo(w: World): Map<MemberId, FriendsInfo> {
     const tol = Number(val(FT.maxTravel));
     m.set(id, {
       home, often, tolerance: Number.isFinite(tol) && tol > 0 ? tol : DEFAULT_TOLERANCE,
-      verified: val(FT.liveness) === "passed" && val(FT.age) === "passed",
+      verified: val(FT.liveness) === VERIFY_PASS && val(FT.age) === VERIFY_PASS,
       safetyCue: ts.some(t => t.startsWith(FT.safety)) && !ts.includes(FT.reviewCleared),
       groupPref: val(FT.groupPref), energy: val(FT.energy), lifeStage: val(FT.lifeStage),
       standing: standingFromTags(ts, mi.m.joinedAt),
