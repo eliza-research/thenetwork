@@ -126,7 +126,10 @@ test("a committed collection followed by a fault stays unresolved and is never a
   await service.tick();expect(handled).toBe(1);
   const [row]=await sql`select status,replies,response,sender,event from platform.inbound where id='msg:blooio:fault-after-effects'`;
   expect(row.status).toBe("unresolved");expect(row.replies.length).toBe(1);expect(row.response).toBeNull();expect(row.sender).toBeNull();expect(row.event).toBeNull();
-  clock.advance(MINUTE);expect((await post(turn("after-fault",input.from,"HELP"))).status).toBe(409);
+  // The unresolved turn holds this sender's ordinary messages back (at most 10 minutes); STOP, START and
+  // HELP are never held back (inbox.ts), so the person can always get help or stop.
+  clock.advance(MINUTE);expect((await post(turn("after-fault",input.from,"hello again"))).status).toBe(409);
+  expect((await post(turn("after-fault-help",input.from,"HELP"))).status).toBe(200);
 },60_000);
 
 

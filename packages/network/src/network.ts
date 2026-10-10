@@ -403,6 +403,8 @@ interface SendOpts {
   key?: string;
   /** A relayed item (relay.ts): the sender's own private facts may be in it (the leak guard skips the sender's and the recipient's). */
   relayFrom?: MemberId;
+  /** A number swap both members asked for (relay.ts): the one contact value the leak guard lets through in this text. */
+  relayContact?: string;
 }
 type SendHook =
   | { t: "interview" } | { t: "age" } | { t: "suggested"; venues: string[] } | { t: "retry_found"; oppId: string }
@@ -3651,14 +3653,15 @@ export class ConsentNetwork implements NetworkUnderTest {
       }
     }
     // Fold a pending acknowledgement in only now, at the real send (never into a deferred body, which
-    // would fold it twice), and only its first short sentence ("Got it, thanks.").
-    if (m.pendingAck && kind !== "safety" && !/^(thanks|great|no problem|got it)/i.test(body)) {
+    // would fold it twice), and only its first short sentence ("Got it, thanks."). Never into a relayed
+    // text: that body is the other member's words, rendered by the relay policy, and goes as it is.
+    if (m.pendingAck && kind !== "safety" && kind !== "relay" && !/^(thanks|great|no problem|got it)/i.test(body)) {
       const ack = m.pendingAck.text.split(/(?<=[.!?])\s/)[0]!;
       body = `${ack} ${body}`;
       if (o.fallback !== undefined) o = { ...o, fallback: `${ack} ${o.fallback}` };
     }
     // A note for this member ("That plan didn't come together this time.") rides on their next message.
-    const note = m.note && kind !== "safety" && now - m.note.at < 7 * DAY ? m.note.text : undefined;
+    const note = m.note && kind !== "safety" && kind !== "relay" && now - m.note.at < 7 * DAY ? m.note.text : undefined;
     if (note) {
       body = `${note} ${body}`;
       if (o.fallback !== undefined) o = { ...o, fallback: `${note} ${o.fallback}` };
@@ -3675,7 +3678,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (this.laneOf(meta) !== "check_in") meta = { ...meta, proactive: true, ...(meta.proactive ? {} : { unsolicited: true }) } as SimMeta;
     }
     let text = body;
-    const leaks = this.guardCheck(text, m.id, o.relayFrom);
+    const leaks = this.guardCheck(o.relayContact ? text.split(o.relayContact).join(" ") : text, m.id, o.relayFrom);
     if (leaks.length) {
       const fallback = o.fallback !== undefined && !this.guardCheck(o.fallback, m.id, o.relayFrom).length ? o.fallback : undefined;
       this.counters.guardBlocked++;
@@ -4354,7 +4357,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         const m = this.members.get(to);
         if (!m) return "refused";
         this.dirty = true;
-        const r = this.send(m, body, { type: "relay", proposalId: o.matchId }, "relay", { about: [o.from], key: o.key, relayFrom: o.from });
+        const r = this.send(m, body, { type: "relay", proposalId: o.matchId }, "relay", { about: [o.from], key: o.key, relayFrom: o.from, ...(o.contact ? { relayContact: o.contact } : {}) });
         return r === "sent" ? "sent" : r === "deferred" ? "deferred" : "refused";
       },
     };

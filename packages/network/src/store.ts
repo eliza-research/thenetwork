@@ -136,6 +136,8 @@ export function consoleRows(state: NetworkState, savedAt = state.savedAt, city =
 // ------------------------------------------------------------------ relay rows (migration 0026)
 /** Relay log rows newer than this are written on every save (older ones changed only through held items). */
 const RELAY_ROW_WINDOW_MS = 2 * 86_400_000;
+/** A Postgres text[] literal: Bun.SQL sends a JS array in a bulk insert as a plain comma string. */
+const textArray = (xs: readonly string[]) => `{${xs.map(x => `"${String(x).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`).join(",")}}`;
 
 /**
  * The relay rows for a state: one network.relay_threads row per thread (ids and times only) and one
@@ -147,12 +149,12 @@ export function relayRows(state: NetworkState, app: string): { threads: Row[]; r
   const review = new Map(r.held.map(h => [h.itemId, h]));
   const recent = (state.savedAt ?? 0) - RELAY_ROW_WINDOW_MS;
   return {
-    threads: r.threads.map(t => ({ app_id: app, id: t.id, opportunity_id: t.id, members: t.members, opened_at: new Date(t.openedAt), messages: t.messages.length })),
+    threads: r.threads.map(t => ({ app_id: app, id: t.id, opportunity_id: t.id, members: textArray(t.members), opened_at: new Date(t.openedAt), messages: t.messages.length })),
     records: r.log.filter(x => x.at >= recent || review.has(x.itemId)).map(x => {
       const h = review.get(x.itemId);
       return {
         app_id: app, item_id: x.itemId, opportunity_id: x.opportunityId, kind: x.kind, from_member: x.from, to_member: x.to, at: new Date(x.at),
-        decision: x.decision, reasons: x.reasons, photo_count: x.photoCount, contact_shared: x.contactShared, age_signal: x.ageSignal, policy: x.policy,
+        decision: x.decision, reasons: textArray(x.reasons), photo_count: x.photoCount, contact_shared: x.contactShared, age_signal: x.ageSignal, policy: x.policy,
         review: h?.status ?? null, reviewed_by: h?.decidedBy ?? null, reviewed_at: date(h?.decidedAt),
       };
     }),
