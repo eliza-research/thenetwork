@@ -51,7 +51,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       expect(await home.text()).toContain("<html");
       const md = await st.site(app, "/SKILL.md");
       expect(md.status).toBe(200);
-      expect(md.headers.get("content-type")).toContain("text/markdown");
+      expect(md.headers.get("content-type")).toBe("text/plain; charset=utf-8");
       const text = await md.text();
       expect(text).toContain(`name: ${s.skill}`);
       // The skill names this site's own MCP endpoint (the router forwards it with the site's signed host).

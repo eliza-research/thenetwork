@@ -130,9 +130,9 @@ export function headersFile(): string {
   const skill = "  Access-Control-Allow-Origin: *\n  Cache-Control: public, max-age=300";
   return [
     `/*\n${all}`,
-    `/SKILL.md\n  Content-Type: text/markdown; charset=utf-8\n${skill}`,
+    `/SKILL.md\n  Content-Type: text/plain; charset=utf-8\n${skill}`,
     `/.well-known/agent-skills/index.json\n  Content-Type: application/json\n${skill}`,
-    `/.well-known/agent-skills/*/SKILL.md\n  Content-Type: text/markdown; charset=utf-8\n${skill}`,
+    `/.well-known/agent-skills/*/SKILL.md\n  Content-Type: text/plain; charset=utf-8\n${skill}`,
   ].join("\n\n") + "\n";
 }
 

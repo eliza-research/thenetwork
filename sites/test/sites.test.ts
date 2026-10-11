@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { verifyProxyHeaders } from "../../packages/platform/src/proxy.ts";
 import { APPS } from "../../packages/platform/src/apps.ts";
 import { SITES, buildSite, walk, type Site } from "../sites.ts";
@@ -383,12 +384,26 @@ describe("dev server", () => {
     expect(res.headers.get("location")).toBe("/evil.example");
   });
 
-  test("serves SKILL.md as markdown and the skills index", async () => {
+  test("serves unchanged skill bytes as reader-compatible plain text with matching catalog digest", async () => {
     const md = await fetch(`http://127.0.0.1:${up.port}/SKILL.md`);
     expect(md.status).toBe(200);
-    expect(md.headers.get("content-type")).toContain("text/markdown");
+    expect(md.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    const bytes = new Uint8Array(await md.arrayBuffer());
+    expect(Buffer.from(bytes).equals(readFileSync(join(out(slop), "SKILL.md")))).toBe(true);
     const idx = await fetch(`http://127.0.0.1:${up.port}/.well-known/agent-skills/index.json`);
-    expect(((await idx.json()) as { skills: { name: string }[] }).skills.map((x) => x.name)).toEqual(["slop-date"]);
+    expect(idx.headers.get("content-type")).toContain("application/json");
+    const catalog = await idx.json() as { skills: { name: string; url: string; digest: string }[] };
+    expect(catalog.skills.map((x) => x.name)).toEqual(["slop-date"]);
+    const canonical = await fetch(`http://127.0.0.1:${up.port}${catalog.skills[0]!.url}`);
+    expect(canonical.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(Buffer.from(await canonical.arrayBuffer()).equals(Buffer.from(bytes))).toBe(true);
+    expect(catalog.skills[0]!.digest).toBe(`sha256:${createHash("sha256").update(bytes).digest("hex")}`);
+    for (const s of SITES) {
+      const headers = read(s, "_headers");
+      expect(headers).toContain("/SKILL.md\n  Content-Type: text/plain; charset=utf-8");
+      expect(headers).toContain("/.well-known/agent-skills/*/SKILL.md\n  Content-Type: text/plain; charset=utf-8");
+      expect(headers).toContain("X-Content-Type-Options: nosniff");
+    }
     expect((await fetch(`http://127.0.0.1:${up.port}/_redirects`)).status).toBe(404);
   });
 
