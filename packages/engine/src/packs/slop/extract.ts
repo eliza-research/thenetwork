@@ -267,8 +267,8 @@ function readGender(t: string, asked?: OnboardField): GenderReading {
     for (const m of all(/(?:^|[\s,(])(f|m)\s*\/?\s*\d{2}(?![\d'])(?!\s*(?:mi|miles|km|min))/, s.text)) out.gender = cand(m[1] === "f" ? "woman" : "man", s, m, 0.9);
     for (const m of all(/\((f|m|nb)\)/, s.text)) out.gender = cand(m[1] === "f" ? "woman" : m[1] === "m" ? "man" : "nonbinary", s, m, 0.9);
     for (const m of all(/\b(m|w|f|nb)4(?:m|w|f|nb|a|any|mw|wm|all)\b/, s.text)) out.gender = cand(m[1] === "m" ? "man" : m[1] === "nb" ? "nonbinary" : "woman", s, m, 0.9);
-    // Orientation said alone: "I'm bi", "gay btw", "straight here".
-    for (const m of all(new RegExp(`\\b${ME}\\s+(?:a\\s+|pretty\\s+|very\\s+|mostly\\s+)?(straight|gay|lesbian|bisexual|bi|pansexual|pan|queer|ace|asexual)\\b(?!\\s*(?:friendly|bar|bars|club))|\\b(straight|gay|bi|queer|lesbian|pan)\\s+(?:here|btw|fwiw)\\b|^\\s*(lesbian|bisexual|pansexual|queer)\\s*[,.!]?\\s*(?:$|\\d)`), s.text)) {
+    // Orientation said alone: "I'm bi", "gay btw", "straight here", "I'm a woman, lesbian".
+    for (const m of all(new RegExp(`\\b${ME}\\s+(?:a\\s+|pretty\\s+|very\\s+|mostly\\s+)?(straight|gay|lesbian|bisexual|bi|pansexual|pan|queer|ace|asexual)\\b(?!\\s*(?:friendly|bar|bars|club))|\\b(straight|gay|bi|queer|lesbian|pan)\\s+(?:here|btw|fwiw)\\b|(?:^|,)\\s*(lesbian|bisexual|pansexual|queer)\\s*[,.!]?\\s*(?:$|\\d)`), s.text)) {
       out.orientation = cand(ORIENT_WORDS[(m[1] ?? m[2] ?? m[3])!]!, s, m, 0.95);
     }
   }
@@ -294,6 +294,8 @@ function genderList(text: string, from: number): { genders: Set<Gender>; neg: Se
   const rest = text.slice(from);
   const genders = new Set<Gender>(), neg = new Set<Gender>();
   const am = ALL_GENDERS.exec(rest);
+  // "anyone who smokes", "anybody with kids": a person qualifier (a dealbreaker), not every gender.
+  if (am && /^\s*(?:who|that|with|w\/)\b/.test(rest.slice(am[0].length))) return { genders: new Set(), neg: new Set(), end: from, all: false };
   if (am) {
     const after = from + am[0].length, but = ALL_BUT.exec(text.slice(after));
     if (!but) return { genders: new Set(GENDERS), neg, end: after, all: true };
@@ -301,10 +303,12 @@ function genderList(text: string, from: number): { genders: Set<Gender>; neg: Se
     return { genders: new Set(GENDERS.filter(g => !x.genders.has(g))), neg: x.genders, end: x.end, all: false };
   }
   const tok = /\s*(non[- ]binary|[a-z0-9'&+\/-]+|,)/g;
-  let m: RegExpExecArray | null, end = from, negMode = false;
+  let m: RegExpExecArray | null, end = from, negMode = false, afterComma = false;
   while ((m = tok.exec(rest))) {
     const w = m[1]!.replace(/[,]/g, "");
-    if (!w) { end = from + tok.lastIndex; continue; }
+    if (!w) { afterComma = true; end = from + tok.lastIndex; continue; }
+    // "no guys, just women", "I don't date men, only women": a new clause after the comma ends the list.
+    if (afterComma && /^(?:only|just|exclusively|strictly|but|looking|seeking|into|prefer|want)$/.test(w)) break;
     if (/^(?:not|no|except|never|nor)$/.test(w)) { negMode = true; end = from + tok.lastIndex; continue; }
     const g = SEEK_WORD.find(([rx]) => rx.test(w))?.[1];
     if (g) { (negMode ? neg : genders).add(g); end = from + tok.lastIndex; continue; }
@@ -358,7 +362,12 @@ function readSeeks(t0: string, asked?: OnboardField): SeekReading {
       // "men are a no for me", "guys are out": the genders named are excluded.
       if (/^\s*(?:are|is)\s+(?:a\s+)?(?:hard\s+)?(?:no|not|never|out|off the table|a pass|pass)\b/.test(s.text.slice(L.end))) { for (const g of L.genders) neg.add(g); return; }
       // "no men" (no comma) excludes; "no, men" is a correction that names them.
-      if (/\b(?:no|not|nope|nah)\s+$/.test(s.text.slice(0, lead))) { for (const g of L.genders) neg.add(g); return; }
+      // Only up to the first comma: "no women, men only" excludes women; "men only" is read from its own comma part.
+      if (/\b(?:no|not|nope|nah)\s+$/.test(s.text.slice(0, lead))) {
+        const comma = s.text.indexOf(",", lead);
+        for (const g of (comma > 0 ? genderList(s.text.slice(0, comma), lead) : L).genders) neg.add(g);
+        return;
+      }
       if (L.genders.size) {
         const c = cand([...L.genders].sort(), s, { index: lead, 0: s.text.slice(lead, L.end) }, plural ? 0.95 : 0.9);
         best = best ? { ...c, value: [...new Set([...best.value, ...c.value])].sort() } : c;
@@ -831,16 +840,17 @@ export function finalize(p: SlopOnboarding, changed = false): SlopOnboarding {
   if (p.age && p.age.value < 18) p.minor = true;
   if (p.declined) return { ...emptyOnboarding(), turns: p.turns, minor: true, declined: true, age: p.age, askCounts: p.askCounts };
   // Seeking from a stated label, only where the label settles it (never bi, pan or queer).
+  if (!p.seeks && !p.gender && p.orientation?.value === "lesbian") p.seeks = { value: ["woman"], confidence: 0.7, evidence: p.orientation.evidence, source: p.orientation.source };
   if (!p.seeks && p.gender && p.orientation) {
     const o = p.orientation.value, g = p.gender.value;
-    const v: Gender[] | undefined = o === "straight" && g !== "nonbinary" ? [g === "woman" ? "man" : "woman"] : o === "gay" && g === "man" ? ["man"] : o === "lesbian" && g === "woman" ? ["woman"] : undefined;
+    const v: Gender[] | undefined = o === "straight" && g !== "nonbinary" ? [g === "woman" ? "man" : "woman"] : o === "gay" && g === "man" ? ["man"] : o === "gay" && g === "woman" ? ["woman"] : o === "lesbian" ? ["woman"] : undefined;
     if (v) p.seeks = { value: v, confidence: 0.7, evidence: p.orientation.evidence, source: p.orientation.source };
   }
   // Founder decision (2026-10-11): a woman or a man still unclear about who they hope to meet after the
   // seeks question was asked its last time is read as straight. The read-back repeats it (confidence 0.6,
   // the read-back floor) and any later answer replaces it. Without this, seeks stayed empty and the
-  // member was never matchable. Nonbinary members are never defaulted.
-  if (!p.seeks && p.gender && p.gender.value !== "nonbinary" && (p.askCounts.slop_seeks ?? 0) >= MAX_ASKS_PER_QUESTION) {
+  // member was never matchable. Nonbinary members, and anyone who said gay, lesbian or asexual, are never defaulted.
+  if (!p.seeks && p.gender && p.gender.value !== "nonbinary" && !["gay", "lesbian", "asexual"].includes(p.orientation?.value ?? "") && (p.askCounts.slop_seeks ?? 0) >= MAX_ASKS_PER_QUESTION) {
     p.seeks = { value: [p.gender.value === "woman" ? "man" : "woman"], confidence: 0.6, evidence: p.gender.evidence, source: "rules" };
   }
   if (changed) p.confirmed = false;

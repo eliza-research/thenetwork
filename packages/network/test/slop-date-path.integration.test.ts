@@ -215,4 +215,24 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     expect(all.some(b => /looking for men/.test(b))).toBe(true);
     await s.close(); svc = undefined;
   }, T);
+
+  // A clear answer with a negation is read as said, never replaced by the straight default:
+  // "I don't date men, only women" from a woman is women (before, the parser read nothing, and after two
+  // asks the default would have said men).
+  test("a woman who says 'I don't date men, only women' is read as seeking women", async () => {
+    const clock = new SimClock(START);
+    const s = svc = new NetworkService({
+      url: URL_, clock, instance: "slop-neg", log: () => {}, env: { PLATFORM_ENV: "dev" }, networks: [{ id: "slop:nyc" }],
+      tokens: `admin:${ADMIN},reviewer:${REVIEWER},safety:${SAFETY}`, webhookSecret: SECRET, network: { seed: 3 }, photoStorage: null, notify: false,
+      adapter: () => new DryRunAdapter(() => {}),
+    });
+    await s.start();
+    const KIM = "+12125550164";
+    for (const body of ["slop", "Kim, 27", "I'm a woman. I live in Astoria and love bouldering", "I don't date men, only women", "25 to 35, within 5 miles of 11105"]) await text(s, clock, KIM, body);
+    const all = (await inbox((await memberId(KIM))!)).map(m => m.body);
+    debug(all.join(" | "));
+    expect(all.some(b => /looking for women/.test(b))).toBe(true);
+    expect(all.some(b => /looking for men/.test(b))).toBe(false);
+    await s.close(); svc = undefined;
+  }, T);
 });
