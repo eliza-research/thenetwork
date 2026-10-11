@@ -2,7 +2,7 @@
   "kind": "slop-project-authority",
   "policyRevision": "2026-10-11.1",
   "projectId": "thenetwork",
-  "proposal": "https://github.com/SlopDotCash/slopdotcash/pull/645",
+  "proposal": "https://github.com/SlopDotCash/slopdotcash/issues/645",
   "repository": {
     "fullName": "eliza-research/thenetwork",
     "id": "1406333828",
