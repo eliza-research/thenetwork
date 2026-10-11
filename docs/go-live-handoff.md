@@ -38,7 +38,7 @@ Repo: <https://github.com/eliza-research/thenetwork> (public). Work from a fresh
 | Sites (4 Pages projects: `ntwrk-party`, `slop-date`, `peon-biz`, `friends-help`) | Cloudflare account **shawmakesmagic** (`CLOUDFLARE_ACCOUNT_ID` from env, not in the repo) |
 | DNS for ntwrk.party and peon.biz | Same shawmakesmagic account |
 | DNS for slop.date and friends.help | Cloudflare account **Eliza Labs** (developer login). Domains move to shawmakesmagic after the 10-day transfer lock. Apex CNAMEs to `<project>.pages.dev` already exist. |
-| Backend and Postgres | Railway project **the-network** (id `02295109-b29e-4e2c-b0d2-a2f5e88bb9e9`): service `backend`, `Postgres`, environment `production`. The backend is **not** connected to GitHub: it is deployed with `railway up --service backend` from `~/thenetwork-deploy` (a worktree of `origin/main`, linked with `railway link`), built from `deploy/backend/Dockerfile` (`RAILWAY_DOCKERFILE_PATH`). Domains: `backend-production-4dac.up.railway.app` (generated) and `api.ntwrk.party` (custom). |
+| Backend and Postgres | Railway project **the-network** (id `02295109-b29e-4e2c-b0d2-a2f5e88bb9e9`): service `backend`, `Postgres`, environment `production`. The backend is **not** connected to GitHub: it is deployed with `railway up --service backend --environment production --ci` from a clean `git archive origin/main` export (linked with `railway link`), built from `deploy/backend/Dockerfile` (`RAILWAY_DOCKERFILE_PATH`). `BUILD_ID` is set to the deployed commit, so `/healthz` and `x-network-build` name it. Domain: `api.ntwrk.party` (custom) only; the generated `*.up.railway.app` domain was deleted on 2026-10-11. |
 | Observatory console (optional) | Railway service `observatory`, only behind Cloudflare Access |
 | Eliza Cloud (gateway, shared agent) | elizaOS/eliza (no longer a submodule here). The takeover branch is `spike/network-plugin`; ask the Eliza-side owner for its deploy path. |
 | iMessage line | Blooio, one shared line. Its webhook must point at the **Eliza gateway**, and at nothing else. |
@@ -71,16 +71,15 @@ Status on 2026-10-09: **none of the founder-pasted secrets below are set yet**. 
 
 Follow `docs/deploy.md` section 2. Summary:
 
-1. Non-secret variables, **already set**: `PLATFORM_ENV=production`, `OTP_PROVIDER=twilio`, `PORT=8790`, `STAFF_PORT=4848`, `SHUTDOWN_GRACE_MS=25000`, `CLOUDFLARE_ACCOUNT_ID`, `CLEF_RATINGS=on`, `STOP_HELP_OWNER=gateway` (retired and ignored now; remove it), `R2_BUCKET=ntwrk-photos`, `R2_ACCOUNT_ID`, `PHOTO_VIEW_BASE_URL=https://slop.date`, `PLATFORM_DB_ENVIRONMENT_INIT=1`, `RAILWAY_DOCKERFILE_PATH=deploy/backend/Dockerfile`. **Still to set:** `PHOTO_STORAGE=r2`, only after the founder pastes the R2 keys.
+1. Non-secret variables, **already set**: `PLATFORM_ENV=production`, `OTP_PROVIDER=twilio`, `PORT=8790`, `STAFF_PORT=4848`, `SHUTDOWN_GRACE_MS=25000`, `CLOUDFLARE_ACCOUNT_ID`, `CLEF_RATINGS=on`, `R2_BUCKET=ntwrk-photos`, `R2_ACCOUNT_ID`, `PHOTO_VIEW_BASE_URL=https://slop.date`, `BUILD_ID`, `RAILWAY_DOCKERFILE_PATH=deploy/backend/Dockerfile`. **Still to set:** `PHOTO_STORAGE=r2`, only after the founder pastes the R2 keys.
 2. The private R2 photo bucket **exists**: `ntwrk-photos` in the shawmakesmagic account (no public access, no r2.dev URL).
 3. **First boot** (approved step), once the founder has pasted the secrets:
-   - Deploy `backend` from `main` (`railway up --service backend` in `~/thenetwork-deploy` after `git checkout --detach origin/main`). Watch the logs: a missing secret is named, and the service refuses to start. Current state: the image builds from main; boot stops at `PLATFORM_ENV=production needs TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_VERIFY_SERVICE_SID`.
+   - Deploy `backend` from `main`: export a clean tree (`git archive origin/main | tar -x -C <dir>`), set `BUILD_ID` to the commit, and run `railway up --service backend --environment production --ci` in that directory. Watch the logs: a missing secret is named, and the service refuses to start. Current state (2026-10-11): main `33398b2` is deployed and healthy, with sends in dry-run. `STOP_HELP_OWNER` and `PLATFORM_DB_ENVIRONMENT_INIT` are removed. `LEAK_LABEL_KEY` is set.
    - The first healthy boot applies every migration as `MIGRATION_DATABASE_URL`, moves the database environment from dev to production, and creates the `network_backend` login from `NETWORK_DATABASE_URL` (`ensureServiceLogin`); the log shows `"msg":"service login","created":true`.
-   - Check `https://backend-production-<id>.up.railway.app/healthz`, then `https://api.ntwrk.party/healthz`. Both must return 200 and the `x-network-build` header.
+   - Check `https://api.ntwrk.party/healthz`. It must return 200 and the `x-network-build` header.
    - After the first healthy boot, delete `PLATFORM_DB_ENVIRONMENT_INIT`, then restart.
 4. **Domain** (approved step):
-   - The `api` record **exists**: CNAME `api` → `b6fzhfvu.up.railway.app`, DNS only (grey), and `api.ntwrk.party` is added as a custom domain on Railway `backend` (port 8790). After Railway shows the certificate active, switch it to **proxied**, with SSL **Full (strict)**.
-   - Then remove the `*.up.railway.app` domain, so Cloudflare is the only way in.
+   - Done on 2026-10-11: CNAME `api` → the Railway custom-domain target, **proxied**; the zone SSL/TLS mode is **Full (strict)**; the generated `*.up.railway.app` domain is removed, so Cloudflare is the only way in.
 5. **Backups:**
    - Turn on Railway Postgres backups.
    - Do one test restore into a scratch database and record the result in `docs/runbook-platform.md`.
@@ -187,10 +186,10 @@ Network service sends → POST Eliza Cloud /api/internal/network/deliver (signed
 ## 8. Go-live checklist (all must be true)
 
 - [ ] All secrets in section 3 pasted by the founder. Nothing in the repo.
-- [ ] `api.ntwrk.party/healthz` 200, proxied, Full (strict); no `*.up.railway.app` domain.
+- [x] `api.ntwrk.party/healthz` 200, proxied, Full (strict); no `*.up.railway.app` domain.
 - [ ] Postgres backups on; one restore tested.
-- [ ] Four sites serving 200 on their domains; ntwrk.party on Pages; `deploy/smoke.ts` passes.
-- [ ] CI green on `main`; `production` environment approval works.
+- [x] Four sites serving 200 on their domains; ntwrk.party on Pages; `deploy/smoke.ts` passes.
+- [x] CI green on `main`; `production` environment approval works.
 - [ ] Blooio webhook points only at the Eliza gateway; STOP handled once, HELP answered.
 - [ ] Banned number refused on site join, OTP, inbound and eliza.app.
 - [ ] Minors: join allowed, never matched, never rated, never relayed (sims plus one live check with a test number).
