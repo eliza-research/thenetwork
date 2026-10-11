@@ -1,0 +1,17 @@
+{
+  "kind": "slop-project-authority",
+  "policyRevision": "2026-10-11.1",
+  "projectId": "thenetwork",
+  "proposal": "https://github.com/SlopDotCash/slopdotcash/pull/645",
+  "repository": {
+    "fullName": "eliza-research/thenetwork",
+    "id": "1406333828",
+    "integrationBranch": "main"
+  },
+  "schemaVersion": "1",
+  "steward": {
+    "actorId": "314117943",
+    "login": "eliza-research",
+    "nodeId": "O_kgDOErkPNw"
+  }
+}
