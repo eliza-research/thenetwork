@@ -192,4 +192,27 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     expect(byText).toMatchObject({ kind: "unsafe", source: "message", status: "open", reporterId: sam });
     expect(net.eligible(rae as never)).toBe(false);
   }, T);
+
+  // Founder decision (2026-10-11, issue #22): a woman or a man who stays unclear about who they hope to
+  // meet after the seeks question was asked its two times is read as straight. The read-back says so,
+  // and the member can change it. Before this, seeks stayed empty and the member was never matchable.
+  test("an unclear seeks answer after both asks defaults to straight, shown in the read-back", async () => {
+    const clock = new SimClock(START);
+    const s = svc = new NetworkService({
+      url: URL_, clock, instance: "slop-seeks", log: () => {}, env: { PLATFORM_ENV: "dev" }, networks: [{ id: "slop:nyc" }],
+      tokens: `admin:${ADMIN},reviewer:${REVIEWER},safety:${SAFETY}`, webhookSecret: SECRET, network: { seed: 2 }, photoStorage: null, notify: false,
+      adapter: () => new DryRunAdapter(() => {}),
+    });
+    await s.start();
+    const JO = "+12125550163";
+    for (const body of ["slop", "Jo, 30", "I'm a woman, I'm bi. I live in Bushwick and love dancing", "not sure honestly", "idk, whatever works"]) await text(s, clock, JO, body);
+    const jo = (await memberId(JO))!;
+    expect(jo).toBeString();
+    await text(s, clock, JO, "25 to 35, within 5 miles of 11237");
+    const all = (await inbox(jo)).map(m => m.body);
+    debug(all.join(" | "));
+    expect(all.filter(b => /Who are you hoping to meet/.test(b))).toHaveLength(2);
+    expect(all.some(b => /looking for men/.test(b))).toBe(true);
+    await s.close(); svc = undefined;
+  }, T);
 });

@@ -39,6 +39,8 @@ export interface Field<T> { value: T; confidence: number; evidence: Evidence; so
 export type OnboardField = "age" | "gender" | "seeks" | "orientation" | "ageRange" | "distance" | "location" | "goal" | "dealbreakers" | "values" | "interests" | "activities" | "free";
 /** The fields the engine needs before it may propose (rules.ts missingFields + a placeable location). */
 export const HARD_FIELDS = ["gender", "seeks", "ageRange", "distance", "location"] as const;
+/** Each onboarding question at most this many times (the pack's maxAsksPerField default). */
+export const MAX_ASKS_PER_QUESTION = 2;
 export type HardField = (typeof HARD_FIELDS)[number];
 
 /** The onboarding profile: what the member said, field by field. Missing fields stay unset. */
@@ -833,6 +835,13 @@ export function finalize(p: SlopOnboarding, changed = false): SlopOnboarding {
     const o = p.orientation.value, g = p.gender.value;
     const v: Gender[] | undefined = o === "straight" && g !== "nonbinary" ? [g === "woman" ? "man" : "woman"] : o === "gay" && g === "man" ? ["man"] : o === "lesbian" && g === "woman" ? ["woman"] : undefined;
     if (v) p.seeks = { value: v, confidence: 0.7, evidence: p.orientation.evidence, source: p.orientation.source };
+  }
+  // Founder decision (2026-10-11): a woman or a man still unclear about who they hope to meet after the
+  // seeks question was asked its last time is read as straight. The read-back repeats it (confidence 0.6,
+  // the read-back floor) and any later answer replaces it. Without this, seeks stayed empty and the
+  // member was never matchable. Nonbinary members are never defaulted.
+  if (!p.seeks && p.gender && p.gender.value !== "nonbinary" && (p.askCounts.slop_seeks ?? 0) >= MAX_ASKS_PER_QUESTION) {
+    p.seeks = { value: [p.gender.value === "woman" ? "man" : "woman"], confidence: 0.6, evidence: p.gender.evidence, source: "rules" };
   }
   if (changed) p.confirmed = false;
   p.matchable = !p.minor && !p.declined && canBeMatched(p.age?.value) && hardFilled(p) === HARD_FIELDS.length && p.confirmed;

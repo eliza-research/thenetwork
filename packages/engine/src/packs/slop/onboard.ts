@@ -3,13 +3,14 @@
 //   inbound text -> extractSlopProfile (or applyCorrection after a read-back) -> persist slopOnboardTags
 //   -> when every hard field is set and not yet confirmed: send readBack -> otherwise send nextQuestion.
 // Copy rules: one question per message, about the member only; the read-back repeats only what the
-// member said, and never identity, orientation, age, kids, faith or anything the rules did not read.
+// member said (or the one stated default: straight after an unclear seeks answer), and never identity, orientation, age, kids, faith or anything the rules did not read.
 import { classifyYesNo } from "@thenetwork/core";
 import type { Gender } from "./profile.ts";
 import { SLOP_ASK_QUESTIONS } from "./copy.ts";
 import {
-  extractSlopProfile, finalize, HARD_FIELDS, hasField, type Dealbreaker, type DateActivity, type ExtractOptions, type OnboardField, type SlopOnboarding,
+  extractSlopProfile, finalize, HARD_FIELDS, hasField, MAX_ASKS_PER_QUESTION, type Dealbreaker, type DateActivity, type ExtractOptions, type OnboardField, type SlopOnboarding,
 } from "./extract.ts";
+export { MAX_ASKS_PER_QUESTION };
 
 // ------------------------------------------------------------------------------------------ read-back
 
@@ -112,8 +113,6 @@ export const SLOP_ONBOARD_QUESTIONS: Record<string, { field: OnboardField; text:
   slop_activities: { field: "activities", text: "What's your idea of a good first date: coffee, drinks, dinner, a walk, a show?" },
   slop_free: { field: "free", text: "Which evenings or weekend times are usually free for you?" },
 };
-/** Each question at most this many times (the pack's maxAsksPerField default). */
-export const MAX_ASKS_PER_QUESTION = 2;
 
 /**
  * The one next question to send, hard fields first (gender and seeking, age range, distance, then a
