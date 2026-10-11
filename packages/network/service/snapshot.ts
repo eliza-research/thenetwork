@@ -87,7 +87,8 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
   for (const p of parts as any[]) { if (!partsBy.has(p.opportunity_id)) partsBy.set(p.opportunity_id, []); partsBy.get(p.opportunity_id)!.push(p); }
   const snap: WorldSnapshot = {
     now,
-    // The account status rides along (the Network reads it): a paused or restricted account is never matched or contacted.
+    // The account status rides along (the Network reads it): a paused or restricted account is never matched and gets no
+    // proactive message; replies to its own messages, compliance texts and safety notices still go (founder, 2026-10-11).
     members: (members as any[]).filter(r => keep(r.id)).map((r): Member & { accountStatus: string } => ({
       id: r.id, name: r.name, homeCity: r.home_city, state: effectiveParticipation(r,now).state, prefs: r.prefs, accountStatus: r.account_status,
       // A missing age stays missing (undefined), never 0: 0 is a valid age under 13, and the Network
