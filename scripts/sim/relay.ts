@@ -542,9 +542,16 @@ async function deskGates(b: Block): Promise<void> {
     expect((await d.request({ itemId: "l1", from: "a", kind: "text", text: "do you still work at Halcyon Biotech?" })).decision).not.toBe("sent");
     h.match = { ...h.match, status: "cancelled" };
     expect((await d.request({ itemId: "l2", from: "a", kind: "text", text: "hi" })).decision).toBe("refused");
-    h.match = { ...h.match, status: "mutual", metAt: NOW - 8 * 86_400_000 };
+    h.match = { ...h.match, status: "closed" };
     expect((await d.request({ itemId: "l3", from: "a", kind: "text", text: "hi" })).decision).toBe("refused");
     expect(h.sent).toEqual([]);
+  });
+
+  // Founder decision 2026-10-11 (#22, P7): a persistent thread. The week-after-the-date expiry is gone.
+  await b.run("relay desk: the thread persists after the date (a text 8 days after the meeting is sent)", async () => {
+    const h = fakeHost(), d = new RelayDesk(h);
+    h.match = { ...h.match, status: "mutual", metAt: NOW - 8 * 86_400_000 };
+    expect((await d.request({ itemId: "p1", from: "a", kind: "text", text: "want to get dinner again next week?" })).decision).toBe("sent");
   });
 
   await b.run("photo ids: every platform-issued id is opaque; phone-number-like ids still fail", () => {

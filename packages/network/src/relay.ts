@@ -31,8 +31,6 @@ import {
 import { appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
 
 const HOUR = 3_600_000, DAY = 24 * HOUR;
-/** A thread stays open this long after the meeting (then the match is "expired" for the relay). */
-export const RELAY_OPEN_AFTER_MEETING_MS = 7 * DAY;
 /**
  * A swap request waits this long for the other member's own request: the engine's consent TTL. The
  * first member's consent is the time of their own request, so a share later than this would rest on
@@ -173,7 +171,7 @@ export class RelayDesk {
   matchFor(from: MemberId, matchId?: string): RelayMatch | undefined {
     const now = this.host.now();
     return this.host.matchesOf(from).filter(m => m.status === "mutual" && m.participants.every(p => m.acceptedBy.includes(p)) && (matchId === undefined || m.id === matchId))
-      .filter(m => m.metAt === undefined || now - m.metAt <= RELAY_OPEN_AFTER_MEETING_MS).sort((a, b) => b.at - a.at || (a.id < b.id ? -1 : 1))[0];
+      .sort((a, b) => b.at - a.at || (a.id < b.id ? -1 : 1))[0];
   }
 
   /** One member request: decide through the engine, deliver `rendered`, keep the log. Idempotent on `itemId`. */

@@ -42,7 +42,7 @@ import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import { brandOf, copy, copyFor, type Copy, whenPhrase } from "./copy.ts";
 import { APPS, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { meetingSpot, nearbyVenues, NEIGHBORHOOD, NEIGHBORHOODS, neighborhood, travelMinutes, VENUES, type Venue } from "./geo.ts";
-import { RELAY_OPEN_AFTER_MEETING_MS, RelayDesk, withdrawsSwap, type RelayAsk, type RelayCallOptions, type RelayHeld, type RelayHost, type RelayMatch, type RelayMember, type RelayOutcome, type RelayState } from "./relay.ts";
+import { RelayDesk, withdrawsSwap, type RelayAsk, type RelayCallOptions, type RelayHeld, type RelayHost, type RelayMatch, type RelayMember, type RelayOutcome, type RelayState } from "./relay.ts";
 import type { RelayRecord } from "../../engine/src/relay.ts";
 import { APPEARANCE_PREFIX, appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
 import { ABOUT_OTHERS, ASK_KINDS, LANE_BUDGETS, NEVER_REPLY, nextAt, NY, nyParts, OUTREACH, PRD_BUDGETS, SLOT_KINDS, type SendKind } from "./outreach.ts";
@@ -4875,11 +4875,15 @@ function relayMemberOf(m: Pick<MemberState, "id" | "first" | "age" | "statedAge"
   const unsure = m.minor || m.minorSignal || m.minorReported || m.ageUnknown || m.ageConflict || !ages.length;
   return { id: m.id, firstName: m.first, age: unsure ? undefined : Math.min(...ages), optedOut: m.optedOut, held: !!m.account || trustHold };
 }
-/** A two-person opportunity as the relay sees it: mutual while scheduled or done, expired a week after the meeting. */
+/**
+ * A two-person opportunity as the relay sees it: mutual while scheduled or done. The thread persists after the
+ * date (founder decision 2026-10-11, #22, P7: a persistent thread, not a one-shot number swap); STOP, leave,
+ * a hold, a block or a closed match still end it.
+ */
 function relayMatchOf(o: Pick<Opp, "id" | "participants" | "stage" | "closedFrom" | "meetingAt" | "createdAt">, statusOf: (p: MemberId) => PStatus | undefined, now: number): RelayMatch {
   const met = o.meetingAt !== undefined && o.meetingAt <= now && (o.stage === "scheduled" || o.stage === "done") ? o.meetingAt : undefined;
   const status: RelayMatch["status"] = o.stage === "scheduled" || o.stage === "done"
-    ? (met !== undefined && now - met > RELAY_OPEN_AFTER_MEETING_MS ? "expired" : "mutual")
+    ? "mutual"
     : o.stage === "closed" ? (o.closedFrom === "scheduled" ? "cancelled" : "closed") : "probing";
   return { id: o.id, participants: [o.participants[0]!, o.participants[1]!], acceptedBy: o.participants.filter(p => statusOf(p) === "yes"), status,
     ...(met !== undefined ? { metAt: met } : {}), at: o.meetingAt ?? o.createdAt };
@@ -4888,7 +4892,7 @@ function relayMatchOf(o: Pick<Opp, "id" | "participants" | "stage" | "closedFrom
 /**
  * Final dispatch for a relayed item, from the newest stored state (the outbound queue's admission
  * transaction reads it again): the match is still the open two-person match of exactly these members
- * (both said yes, not closed, not past the week after the meeting), and both members are still in it as
+ * (both said yes, not closed), and both members are still in it as
  * the relay desk would see them now (adults, not opted out, not held, not declined, no block between them).
  * Null when it may go; otherwise a reason code. The canonical platform checks (consent ledger, bans,
  * memberships, ages) are the runtime's (runtime.ts relayAdmission).

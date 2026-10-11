@@ -163,3 +163,13 @@ test("a number goes out only after both members asked for the swap",async()=>{
   // Relay rows carry their network (migration 0031).
   expect((await sql`select distinct network_id from network.relay_records where app_id='friends'`).map((r:any)=>r.network_id)).toEqual(["friends:nyc"]);
 },60_000);
+
+test("the thread persists after the date: a text 9 days after the meeting is still relayed (founder decision P7, #22)",async()=>{
+  // The fixture's meeting was one day after setup; the numbers were already swapped above, and the thread keeps working.
+  clock.advance(10*DAY);
+  const late=await post(await ask("ari","relay-late","tell Bo thanks again for the hike, want to go again next weekend?"));
+  expect(late.status).toBe(200);
+  expect(await late.json()).toMatchObject({decision:"pass",delivered:false});
+  const rows=await sql`select body from network.messages where app_id='friends' and id like 'relay:%' and member_id=${bo} order by ts desc limit 1`;
+  expect(rows[0]?.body).toContain("want to go again next weekend");
+},60_000);
