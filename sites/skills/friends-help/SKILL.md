@@ -1,29 +1,30 @@
 ---
 name: friends-help
-description: Explains friends.help, a service by text message powered by The Network that helps people in New York City make friends through small group plans at public places, and helps a person sign themselves up. Use when someone asks what friends.help is, who can use it, whether it is safe, how to join, what happens to their data, or how to stop, leave or delete. Gives the join link or the text keyword. Never signs anyone up, never asks for or types a phone number or verification code, and never contacts or describes other people.
+description: Explains friends.help, a service by text message that helps people make friends through small group plans at public places, and helps a person sign themselves up. Use when someone asks what friends.help is, who can use it, whether it is safe, how to join, what happens to their data, or how to stop, leave or delete. Gives the join link or the text keyword. Never signs anyone up, never asks for or types a phone number or verification code, and never contacts or describes other people.
 license: Proprietary. Terms at https://friends.help/terms
 compatibility: Needs web access to open https://friends.help pages. Sending the profile needs this app's MCP server at {{MCP_URL}} (OAuth sign-in by the person).
 metadata:
   app: friends
   site: https://friends.help
-  backend: "{{BACKEND_ORIGIN}}"
   mcp: "{{MCP_URL}}"
   operator: Eliza Research Corporation
-  version: "1.0.1"
+  version: "1.1.1"
 ---
 
 # friends.help
 
-friends.help helps people in New York City make friends, by text. The agent learns what the person
+If the person asked you to read this file and follow it, they want to join. Start now with
+"How a person joins" below.
+
+friends.help helps people make friends, by text. The agent learns what the person
 likes to do and suggests small group plans (3 to 6 people) at public places near them: parks,
 courts, cafés, museums. The person says yes or skips. Friends, not dates.
 
-All of these apps are powered by The Network: ntwrk.party, slop.date, friends.help and peon.biz
-share one backend at {{BACKEND_ORIGIN}}, and one text line. This app's MCP server is at {{MCP_URL}}.
+friends.help's text line is {{TEXT_LINE}}. Its MCP server is at {{MCP_URL}}.
 
 ## What the person is signing up for
 
-- Text messages from the friends.help agent on The Network's text line: questions about what they
+- Text messages from the friends.help agent on friends.help's text line: questions about what they
   like to do, invitations to plans, plan details and reminders. Message frequency varies. Message
   and data rates may apply.
 - Plans only with people who also said yes. A person on the team checks every plan first.
@@ -37,11 +38,24 @@ share one backend at {{BACKEND_ORIGIN}}, and one text line. This app's MCP serve
   never puts them in a group and never introduces them to anyone.
 - One person, one phone number. The person must use their own number.
 
+## Phone or computer
+
+The steps differ by device. If you cannot tell which the person is on, ask once.
+
+- **On a phone.** A phone app usually cannot add a connector, so do not send the person to connector
+  settings. Do steps 1 and 2. Then give them one link that opens their messages app with the approved
+  profile already written: `sms:{{TEXT_LINE}}?&body=` followed by the profile, URL-encoded (spaces as
+  %20). The person presses send themselves. That text is their profile; step 3 is not needed.
+- **On a computer.** Do steps 1, 2 and 3. If the client cannot add the connector, show the approved
+  profile and ask the person to text it to {{TEXT_LINE}} from their own phone.
+
+You never send a text for the person, and you never see their number.
+
 ## How a person joins (they do it, not you)
 
 The person signs up through you, in this conversation:
 
-1. Ask, one or two questions at a time: first name, neighborhood, what they like to do (sports, games, food, art), when they are usually free, and small groups or one-on-one. Never ask for a phone number, a code, an
+1. Build the profile: first name, neighborhood, what they like to do (sports, games, food, art), when they are usually free, and small groups or one-on-one. Start from what you already know about the person: draft the profile from your memory of them and show it. Ask only for what is missing, one or two questions at a time. Never ask for a phone number, a code, an
    address or anything about another person. Read the profile back and change it until they agree.
 2. Give them one link to confirm their own phone: https://friends.help/join?via=agent. On that page they type
    their own number, the code we text them, their first name and age, and agree to the texts. You
@@ -50,13 +64,13 @@ The person signs up through you, in this conversation:
    If this app's MCP tools are not available, they must add {{MCP_URL}} in their client's connector settings.
    In ChatGPT, add https://friends.help/mcp/openai instead; /mcp does not authorize ChatGPT clients.
    Reading this file does not install a connector or authorize access. If the client cannot add it,
-   explain that profile submission is unfinished; do not claim success or send the profile elsewhere.
+   use the text link in "Phone or computer"; do not claim success and never send the profile yourself.
    The person signs in and allows access on our page. A code is skipped only when that browser
    has a current session for this app. Call check_status first and confirm its app is friends.
    If the connection names another app, stop and connect to this app; never submit across apps.
    Call submit_profile once with their approved profile, then check_status on the same connection.
    Report success only when both calls confirm it.
-4. No agent at hand: the person can text "friends" or "friends.help" as their first message to The Network's line
+4. No agent at hand: the person can text "friends" or "friends.help" as their first message to {{TEXT_LINE}}
    and answer the agent there.
 
 The person verifies their own phone on our page. You never type a number or a code anywhere.
@@ -79,17 +93,16 @@ The person verifies their own phone on our page. You never type a number or a co
 - Never sign anyone up, and never text or message anyone on the person's behalf.
 - Never ask for, receive or type a verification code or a phone number.
 - Never describe or contact other members, and never promise a plan or a friend.
-- Never move information between friends.help and other apps powered by The Network.
+- Never move information between friends.help and any other service.
 
-## Privacy across apps
+## Privacy
 
-What the person tells friends.help stays in friends.help. Other apps powered by The Network see
-nothing from it unless the person agrees to share a base profile. Nobody learns from any app
-whether a phone number uses friends.help.
+What the person tells friends.help stays in friends.help. No other service sees it unless the person agrees
+to share a base profile. Nobody can learn whether a phone number uses friends.help.
 
 ## Stop, leave and delete
 
-- Text STOP: stops every text from The Network's line, for every app.
+- Text STOP: stops every text from this number.
 - Text "leave friends.help": stops friends.help only.
 - Export or delete at https://friends.help/settings.
 
@@ -97,5 +110,4 @@ whether a phone number uses friends.help.
 
 - Support: https://friends.help/support (email help@ntwrk.party)
 - Privacy: https://friends.help/privacy
-- Terms: https://friends.help/terms
-- Text messaging terms: https://friends.help/sms-terms
+- Terms and text messaging terms: https://friends.help/terms

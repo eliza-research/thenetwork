@@ -139,14 +139,15 @@ dialog h2 { font-size: 26px; margin: 0 0 8px; }
 /* Turnstile check on the phone step: empty (no height) when there is no site key. */
 .human:not(:empty) { margin: 12px 0; min-height: 65px; }
 
-/* The agent-first landing page (index.html; sites/shared/landing.css has the layout): this site's tokens,
-   from its design canvas (AGENTS.md decision 10). */
+/* The landing page (index.html; sites/shared/landing.css has the layout): black and white, and this
+   site's one colour on the highlighted word and the text tile. */
 body.landing {
-  --l-bg: #22401f; --l-ink: #f3f8e6; --l-h1: #e3f39a; --l-muted: #c5d4b0;
-  --l-accent: #e3f39a; --l-accent-ink: #18300f;
-  --l-panel: #18300f; --l-panel-ink: #f3f8e6; --l-panel-rule: #36502b; --l-panel-button: #22401f;
-  --l-pill-bg: #18300f; --l-pill-ink: #e3f39a; --l-radius: 18px; --l-pill: 999px; --l-focus: #e3f39a;
-  --l-font: Figtree, 'Avenir Next', system-ui, -apple-system, sans-serif; --l-display: Figtree, 'Avenir Next', system-ui, sans-serif;
+  color-scheme: light dark;
+  --l-bg: oklch(0.985 0 0); --l-ink: oklch(0.16 0 0); --l-muted: oklch(0.43 0 0); --l-rule: oklch(0.87 0 0);
+  --l-hi: oklch(0.5 0.13 150); --l-hi-ink: oklch(0.985 0 0);
+}
+@media (prefers-color-scheme: dark) {
+  body.landing { --l-bg: oklch(0.15 0 0); --l-ink: oklch(0.96 0 0); --l-muted: oklch(0.74 0 0); --l-rule: oklch(0.3 0 0); --l-hi: oklch(0.72 0.17 150); --l-hi-ink: oklch(0.17 0.04 150); }
 }
 
 /* State-driven panels must stay hidden even when their layout uses grid. */

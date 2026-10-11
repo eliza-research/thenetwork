@@ -9,8 +9,8 @@ Do not set `DEPLOY_TARGET=production` with staging origins. Canonical app names,
 Pages project identities and official plugin snapshots stay unchanged. A staging build does not deploy anything.
 
 Four public sites share one backend, one admin panel and one database (PRD 40, AGENTS.md
-"Platform decisions"). ntwrk.party is the home page for the whole concept and links to the apps:
-"All of these apps are powered by The Network."
+"Platform decisions"). Each site is its own brand (founder direction, 2026-10-10): no app site names The Network or another
+app, and ntwrk.party names no app. ntwrk.party asks a person what they want (friends, dating, work).
 Local dev for the sites and the backend together: [docs/runbook-platform.md](../docs/runbook-platform.md).
 
 | App | Site | Dev port | Join |
@@ -25,9 +25,9 @@ Ages on the pages equal the platform registry (`packages/platform/src/apps.ts` `
 
 ## Layout
 
-- `<site>/public/*.html`: one file per page (landing, join, settings, privacy, terms, SMS terms,
+- `<site>/public/*.html`: one file per page (landing, join, settings, privacy, terms,
   guidelines, support, 404; slop also has `safety`). Each site has its own `styles.css`.
-  ntwrk.party keeps its SMS terms in `terms.html#sms`.
+  The SMS terms are a section of the terms page (`terms.html#sms`). The landing page links privacy and terms only.
 - `<site>/static/`: files copied into `dist/` as they are (`robots.txt`; add `_redirects` or
   `.well-known/*` files here).
 - `skills/<name>/SKILL.md`: the Agent Skills file per site (`ntwrk-party`, `slop-date`, `peon-biz`,
@@ -36,18 +36,27 @@ Ages on the pages equal the platform registry (`packages/platform/src/apps.ts` `
 - `skills.config.ts`: the one backend origin and the MCP URL template (`BACKEND_ORIGIN`, `MCP_URL`;
   defaults `https://api.ntwrk.party` and `https://{domain}/mcp`). Each site is its own MCP endpoint
   (the router forwards `/mcp` with the site's signed host); the backend origin's `/mcp` names no app. The build fills `{{BACKEND_ORIGIN}}`,
-  `{{MCP_URL}}` and `{{TURNSTILE_SITE_KEY}}` in pages and skills, and fails on a leftover `{{`.
+  `{{MCP_URL}}`, `{{TEXT_LINE}}` and `{{TURNSTILE_SITE_KEY}}` in pages and skills, and fails on a leftover `{{`.
 - `shared/`: the only JavaScript. `join.ts`, `settings.ts`, `auth.ts`, `turnstile.ts` and `demo.ts`
   find elements by `data-*` attributes, so each site writes its own markup and copy.
 - `sites.ts`: the site list and the build (Bun's HTML bundler, then `static/`, `_headers` and the
   skill files into `dist/`).
 - `PRODUCT.md`: who the sites are for and the design principles.
 
-The landing pages are agent-first (founder decision 10): the name, one line, "Copy this into your
-agent." with the prompt `Read https://<domain>/SKILL.md and follow it to sign me up for <app>.`, a Copy
-button (`shared/agent.ts`) and "Open in <agent>" links (ChatGPT, Claude, Grok, Perplexity; Muse waits
-for its link). No safety notice or explanations on them; legal pages are in the footer. They work
-without JavaScript (the prompt stays selectable). Join and settings need it and say so in `<noscript>`.
+The landing pages are agent-first (founder decision 10) and hold four things: the name, one line
+("Let your agent find you the perfect date."), the prompt field, and a row of agent logos with no names.
+A click copies the prompt `Read https://<domain>/SKILL.md and follow it.` and
+opens the agent with the prompt filled in. The prompt sits in a field with a Copy button, and the logos sit under it. `agents.ts` is the list (ChatGPT, Claude, Grok, Muse,
+Gemini, Perplexity, Cursor, OpenClaw, Hermes) and writes the row into `{{AGENTS}}` at build time; an
+agent with no prompt link is a button that copies and says where to paste. The last tile opens
+Messages to the shared line (`TEXT_LINE`, default in `skills.config.ts`) with the app's keyword.
+`shared/agent.ts` tells a phone from a desktop: Cursor shows on a desktop only, and the text tile
+shows on a phone or a Mac only. The page is black and white with one colour per site
+(`--l-hi` in each `styles.css`); `shared/landing.css` has the layout and the font (Host Grotesk, OFL,
+`shared/fonts/`). Logos are in `shared/logos/` (from @lobehub/icons-static-svg, MIT; the Messages
+logo from simple-icons). Link behaviour: [docs/research/2026-10-10-agent-deep-links.md](../docs/research/2026-10-10-agent-deep-links.md).
+The pages work without JavaScript (links open the agent; the prompt stays selectable). Join and
+settings need it and say so in `<noscript>`.
 
 ## Commands
 

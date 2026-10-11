@@ -8,7 +8,10 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { verifyProxyHeaders } from "../../packages/platform/src/proxy.ts";
-import { APPS } from "../../packages/platform/src/apps.ts";
+import { APPS, keywordApp } from "../../packages/platform/src/apps.ts";
+import { AGENTS, keywordFor, promptFor } from "../agents.ts";
+import { TEXT_LINE } from "../skills.config.ts";
+import { device } from "../shared/agent.ts";
 import { SITES, buildSite, walk, type Site } from "../sites.ts";
 import { serveSite } from "../../scripts/sites-dev.ts";
 import { toE164 } from "../shared/api.ts";
@@ -22,8 +25,8 @@ const read = (s: Site, f: string) => readFileSync(join(out(s), f), "utf8");
 const htmlFiles = (s: Site) => readdirSync(out(s)).filter((f) => f.endsWith(".html"));
 const OTHER_APP_DOMAINS = (s: Site) => SITES.filter((o) => o.app !== s.app && o.app !== "ntwrk").map((o) => o.domain);
 const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-const smsPage = (s: Site) => (s.app === "ntwrk" ? "terms.html" : "sms-terms.html");
-const smsHref = (s: Site) => (s.app === "ntwrk" ? "/terms#sms" : "/sms-terms");
+// The text messaging terms are a section of the terms page on every site.
+const smsPage = (_: Site) => "terms.html";
 
 function consentWording(html: string): string {
   const m = html.match(/<span data-consent-wording[^>]*>([\s\S]*?)<\/span>/);
@@ -41,7 +44,7 @@ afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 describe.each(SITES)("$domain", (s) => {
   test("every required page is built", () => {
     const need = ["index.html", "join.html", "settings.html", "privacy.html", "terms.html", "guidelines.html", "support.html", "404.html"];
-    if (s.app !== "ntwrk") need.push("sms-terms.html");
+    expect(htmlFiles(s)).not.toContain("sms-terms.html");
     if (s.app === "slop") need.push("safety.html");
     expect(htmlFiles(s)).toEqual(expect.arrayContaining(need));
   });
@@ -50,7 +53,8 @@ describe.each(SITES)("$domain", (s) => {
     for (const f of htmlFiles(s)) {
       const html = read(s, f);
       expect(html.match(/<title>([^<]+)<\/title>/)?.[1]?.trim().length ?? 0, f).toBeGreaterThan(3);
-      for (const href of ["/privacy", "/terms", smsHref(s), "/guidelines", "/settings", "/support"]) {
+      // The landing page links privacy and terms only.
+      for (const href of f === "index.html" ? ["/privacy", "/terms"] : ["/privacy", "/terms", "/guidelines", "/settings", "/support"]) {
         expect(html.includes(`href="${href}"`), `${f} links ${href}`).toBe(true);
       }
     }
@@ -95,21 +99,23 @@ describe.each(SITES)("$domain", (s) => {
     expect(sms).toContain(s.app === "ntwrk" ? '"leave slop.date"' : `leave ${s.domain}`);
   });
 
-  test("umbrella: app sites say they are powered by The Network and name no other app", () => {
+  test("each site is its own brand: no page names another app, and an app site never names The Network", () => {
     for (const f of readdirSync(out(s)).filter((f) => /\.(html|js|css)$/.test(f))) {
       const body = read(s, f).toLowerCase();
       for (const d of OTHER_APP_DOMAINS(s)) {
-        if (s.app !== "ntwrk") expect(body.includes(d), `${f} mentions ${d}`).toBe(false);
+        if (s.app !== "ntwrk" || f === "index.html") expect(body.includes(d), `${f} mentions ${d}`).toBe(false);
+      }
+      // The support inbox (help@ntwrk.party) is the one place an app site shows the hub's domain.
+      if (s.app !== "ntwrk" && f.endsWith(".html")) {
+        expect(body, f).not.toContain("the network");
+        expect(body.replaceAll("help@ntwrk.party", ""), f).not.toContain("ntwrk.party");
       }
     }
-    if (s.app === "ntwrk") {
-      const home = read(s, "index.html");
-      for (const d of ["slop.date", "friends.help", "peon.biz"]) expect(home, d).toContain(`href="https://${d}"`);
-      expect(text(home)).toContain(APPS.ntwrk && "All of these apps are powered by The Network.");
-    } else {
-      for (const f of htmlFiles(s)) {
-        expect(read(s, f), f).toContain('powered by <a href="https://ntwrk.party">The Network</a>');
-      }
+    for (const f of ["SKILL.md", `.well-known/agent-skills/${s.skill}/SKILL.md`]) {
+      const skill = read(s, f).toLowerCase();
+      for (const d of OTHER_APP_DOMAINS(s)) expect(skill.includes(d), `${f} mentions ${d}`).toBe(false);
+      if (s.app !== "ntwrk") expect(skill.replaceAll("help@ntwrk.party", ""), f).not.toMatch(/the network|ntwrk\.party/);
+      expect(skill, f).not.toMatch(/new york|nyc|san francisco/);
     }
   });
 
@@ -199,15 +205,14 @@ test("staging builds keep the served entry, skills and signed router on configur
     expect((await buildSite(slop, directory, env)).ok).toBe(true);
     expect((await buildSite(hub, hubDirectory, env)).ok).toBe(true);
     const home = readFileSync(join(directory, "index.html"), "utf8");
-    const prompt = `Read ${origins.slop}/SKILL.md and follow it to sign me up for slop.date.`;
+    const prompt = `Read ${origins.slop}/SKILL.md and follow it.`;
     expect(home).toContain(`<code data-prompt>${prompt}</code>`);
     expect(home).toContain(`https://chatgpt.com/?q=${encodeURIComponent(prompt)}`);
-    for (const origin of ["https://chatgpt.com/", "https://claude.ai/new", "https://grok.com/", "https://www.perplexity.ai/search"]) {
+    for (const origin of ["https://chatgpt.com/", "https://claude.ai/new", "https://grok.com/", "https://gemini.google.com/app", "https://www.perplexity.ai/search"]) {
       const href = [...home.matchAll(/href="([^"]+)"/g)].map(m => m[1]!).find(href => href.startsWith(`${origin}?q=`));
       expect(href, origin).toBeDefined();
       expect(new URL(href!).searchParams.get("q"), origin).toBe(prompt);
     }
-    expect(home).toContain(`href="${origins.ntwrk}"`);
     expect(home).toContain("slop.date"); // Branding stays canonical.
     expect(home).not.toContain("https://slop.date");
     const worker = (await import(join(directory, "_worker.js"))).default;
@@ -226,7 +231,7 @@ test("staging builds keep the served entry, skills and signed router on configur
     expect(skill).not.toContain("https://slop.date");
     const index = await (await fetch(`${base}/.well-known/agent-skills/index.json`)).json() as { skills: { url: string; digest: string }[] };
     expect(await (await fetch(base + index.skills[0]!.url)).text()).toBe(skill);
-    for (const app of SITES) expect(readFileSync(join(hubDirectory, "SKILL.md"), "utf8")).toContain(origins[app.app]);
+    expect(readFileSync(join(hubDirectory, "SKILL.md"), "utf8")).toContain(`${origins.ntwrk}/join?via=agent`);
     for (const path of ["/api/app", "/mcp", "/oauth/authorize", "/.well-known/oauth-protected-resource/mcp"]) {
       expect((await (await fetch(base + path)).json()).id).toBe("slop");
     }
@@ -243,24 +248,47 @@ test("staging builds keep the served entry, skills and signed router on configur
   } finally { server?.stop(true); backend.stop(true); }
 });
 
-test("agent-first landing pages (founder decision 10): name, one line, the prompt, Copy, Open-in links; nothing else", () => {
-  const AGENTS = ["https://chatgpt.com/?q=", "https://claude.ai/new?q=", "https://grok.com/?q=", "https://www.perplexity.ai/search?q="];
+test("landing pages: one line, the prompt field, a logo for every agent; nothing else", () => {
   for (const s of SITES) {
     const home = read(s, "index.html");
-    const name = s.app === "ntwrk" ? "The Network" : s.domain;
-    const prompt = `Read https://${s.domain}/SKILL.md and follow it to sign me up for ${name}.`;
-    expect(text(home), s.domain).toContain("Copy this into your agent.");
+    const prompt = promptFor(s);
+    const q = encodeURIComponent(prompt);
     expect(home, s.domain).toContain(`<code data-prompt>${prompt}</code>`);
     expect(home, s.domain).toMatch(/<button type="button" data-copy[^>]*>Copy<\/button>/);
-    for (const a of AGENTS) expect(home, `${s.domain} ${a}`).toContain(`href="${a}${encodeURIComponent(prompt)}"`);
-    // No safety notice, explanations or compliance text on the landing page; legal pages in the footer.
-    expect(text(home), s.domain).not.toMatch(/background check|safety notice|How it works|What you get/i);
-    for (const f of ["/privacy", "/terms", "/support", "/SKILL.md"]) expect(home, `${s.domain} ${f}`).toContain(`href="${f}"`);
-    // The page is short: the name, one line and the prompt box (and, on ntwrk.party, the three apps).
-    expect(text(home).split(/\s+/).length, s.domain).toBeLessThan(110);
-    // CSP: no inline style or script.
+    expect(home.match(/<h1>/g)?.length, s.domain).toBe(1);
+    // Every agent is a logo with an accessible name and no visible name; a link opens it with the prompt.
+    const row = home.match(/<nav class="l-agents"[^>]*>([\s\S]*?)<\/nav>/)?.[1] ?? "";
+    expect(text(row), s.domain).toBe("");
+    for (const a of AGENTS) {
+      const tile = row.match(new RegExp(`<(a|button)[^>]*data-agent="${a.id}"[^>]*>\\s*<svg`))?.[0] ?? "";
+      expect(tile, `${s.domain} ${a.id}`).toContain(`aria-label="${a.href ? "Open in" : "Copy the prompt for"} ${a.name}"`);
+      if (a.href) expect(tile, `${s.domain} ${a.id}`).toContain(`href="${a.href.replace("{q}", q).replace("{skill}", encodeURIComponent(`https://${s.domain}/SKILL.md`))}"`);
+      else expect(tile, `${s.domain} ${a.id}`).toMatch(/^<button type="button"[^>]* hidden /);
+      expect(tile.includes('data-only="desktop"'), `${s.domain} ${a.id}`).toBe(Boolean(a.desktopOnly));
+    }
+    // Joining by text: the shared line with this app's keyword, which the line routes to this app.
+    expect(row, s.domain).toContain(`href="sms:${TEXT_LINE}?&amp;body=${keywordFor(s)}"`);
+    expect(keywordApp(keywordFor(s)), s.domain).toBe(s.app);
+    // No eyebrow, safety notice, explanation, city or sibling brand; legal pages in the footer.
+    expect(text(home), s.domain).not.toMatch(/background check|safety notice|How it works|What you get|powered by|New York|San Francisco/i);
+    const foot = home.match(/<footer[^>]*>([\s\S]*?)<\/footer>/)?.[1] ?? "";
+    expect([...foot.matchAll(/href="([^"]+)"/g)].map((m) => m[1]), s.domain).toEqual(["/privacy", "/terms"]);
+    expect(home, s.domain).not.toContain("l-by");
+    expect(text(home).split(/\s+/).length, s.domain).toBeLessThan(45);
+    // CSP: no inline style or script, and the font is a same-origin file.
     expect(home, s.domain).not.toMatch(/style="|<script(?![^>]*src=)/);
+    for (const f of readdirSync(out(s)).filter((f) => f.endsWith(".css"))) expect(read(s, f), f).not.toContain("data:font");
+    expect(existsSync(join(out(s), "fonts/host-grotesk.woff2")), s.domain).toBe(true);
   }
+});
+
+test("the page script tells a phone from a desktop (iPadOS reports itself as a Mac)", () => {
+  const ua = { iphone: "Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X)", android: "Mozilla/5.0 (Linux; Android 16; Pixel 10)", mac: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", windows: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" };
+  expect(device({ userAgent: ua.iphone, maxTouchPoints: 5 })).toEqual({ mobile: true, messages: true });
+  expect(device({ userAgent: ua.android, maxTouchPoints: 5 })).toEqual({ mobile: true, messages: true });
+  expect(device({ userAgent: ua.mac, maxTouchPoints: 5 })).toEqual({ mobile: true, messages: true });
+  expect(device({ userAgent: ua.mac, maxTouchPoints: 0 })).toEqual({ mobile: false, messages: true });
+  expect(device({ userAgent: ua.windows, maxTouchPoints: 0 })).toEqual({ mobile: false, messages: false });
 });
 
 test("slop.date keeps its safety information off the landing page, and photos are for adults only", () => {
@@ -281,7 +309,7 @@ test("slop.date keeps its safety information off the landing page, and photos ar
 
 test("peon.biz says a person reviews every introduction; no compliance gate blocks joining", () => {
   const peon = SITES.find((s) => s.app === "peon")!;
-  for (const f of ["index.html", "join.html"]) {
+  for (const f of ["join.html"]) {
     const t = text(read(peon, f));
     expect(t, f).toMatch(/reviews every introduction/i);
     expect(t, f).not.toContain("bias audit");

@@ -17,6 +17,8 @@ export interface SkillsConfig {
   BACKEND_ORIGIN: string;
   /** The MCP URL template: "{domain}" is replaced by each site's domain (mcpUrlFor). */
   MCP_URL: string;
+  /** The one text line every app shares (founder decision 2), in E.164. Pages and skills link to it with sms:. */
+  TEXT_LINE: string;
 }
 
 function origin(v: string, name: string): string {
@@ -43,10 +45,14 @@ export function skillsConfig(env: Record<string, string | undefined> = process.e
   const MCP_URL = env.MCP_URL || DEFAULT_MCP_URL;
   if (!MCP_URL.includes("{domain}")) throw new Error(`MCP_URL must contain {domain}: each site is its own MCP server (got ${MCP_URL})`);
   origin(MCP_URL.replaceAll("{domain}", "example.com"), "MCP_URL");
-  return { BACKEND_ORIGIN, MCP_URL };
+  const TEXT_LINE = env.TEXT_LINE || DEFAULT_TEXT_LINE;
+  if (!/^\+[1-9]\d{7,14}$/.test(TEXT_LINE)) throw new Error(`TEXT_LINE must be an E.164 number (got ${TEXT_LINE})`);
+  return { BACKEND_ORIGIN, MCP_URL, TEXT_LINE };
 }
 
 export const DEFAULT_MCP_URL = "https://{domain}/mcp";
+/** The Network line (.env.example BLOOIO_FROM). */
+export const DEFAULT_TEXT_LINE = "+18087881821";
 
 /** The MCP endpoint of one site (for example https://slop.date/mcp). */
 export function mcpUrlFor(domain: string, env: Record<string, string | undefined> = process.env): string {
@@ -56,4 +62,4 @@ export function mcpUrlFor(domain: string, env: Record<string, string | undefined
   return skillsConfig(env).MCP_URL.replaceAll("{domain}", domain).replace(/\/+$/, "");
 }
 
-export const { BACKEND_ORIGIN, MCP_URL } = skillsConfig();
+export const { BACKEND_ORIGIN, MCP_URL, TEXT_LINE } = skillsConfig();

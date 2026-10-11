@@ -250,8 +250,8 @@ async function sitesGates(b: Block) {
         expect([s.domain, readFileSync(join(r.out, "_worker.js"), "utf8").includes(DEFAULT_BACKEND_ORIGIN)]).toEqual([s.domain, true]);
         expect([s.domain, /13 or older/i.test(skill) && /18 (and|or) older/i.test(skill)]).toEqual([s.domain, true]);
         if (s.app === "ntwrk") continue;
-        expect([s.domain, /STOP[^\n]*every app/.test(skill) && skill.includes(`"leave ${s.domain}"`)]).toEqual([s.domain, true]);
-        const sms = join(r.out, "sms-terms.html");
+        expect([s.domain, /STOP[^\n]*every (app|text)/.test(skill) && skill.includes(`"leave ${s.domain}"`)]).toEqual([s.domain, true]);
+        const sms = join(r.out, "terms.html");
         if (existsSync(sms)) expect([s.domain, /STOP[\s\S]{0,120}(every|all) text/.test(readFileSync(sms, "utf8")) && readFileSync(sms, "utf8").includes(`leave ${s.domain}`)]).toEqual([s.domain, true]);
       }
     });

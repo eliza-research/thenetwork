@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { mcpUrlFor, skillsConfig } from "./skills.config.ts";
+import { agentRow } from "./agents.ts";
 import { RUN_WORKER_FIRST } from "../deploy/router.ts";
 import { stagingSiteOrigins } from "../packages/platform/src/apps.ts";
 
@@ -91,7 +92,7 @@ export function skillDescription(text: string): string {
 /** Files that may hold placeholders. Bundled JS and CSS never do (minified JS can contain "{{" legitimately). */
 const TEXT = /\.(html|md|txt|json|xml)$/;
 
-/** Placeholders that the build fills: {{BACKEND_ORIGIN}}, {{MCP_URL}} (this site's MCP endpoint) and {{TURNSTILE_SITE_KEY}}. */
+/** Placeholders that the build fills: {{BACKEND_ORIGIN}}, {{MCP_URL}} (this site's MCP endpoint), {{TEXT_LINE}} and {{TURNSTILE_SITE_KEY}}. */
 export function fill(text: string, env: Record<string, string | undefined> = process.env, domain = "ntwrk.party"): string {
   const cfg = skillsConfig(env);
   const key = (env.TURNSTILE_SITE_KEY ?? "").trim();
@@ -99,6 +100,7 @@ export function fill(text: string, env: Record<string, string | undefined> = pro
   let filled = text
     .replaceAll("{{BACKEND_ORIGIN}}", cfg.BACKEND_ORIGIN)
     .replaceAll("{{MCP_URL}}", mcpUrlFor(domain, env))
+    .replaceAll("{{TEXT_LINE}}", cfg.TEXT_LINE)
     .replaceAll("{{TURNSTILE_SITE_KEY}}", key);
   const staging = stagingSiteOrigins(env);
   if (Object.keys(staging).length) {
@@ -190,6 +192,15 @@ export async function buildSite(s: Site, outdir: string, env: Record<string, str
     }
     const staticDir = join(dirname(s.src), "static");
     if (existsSync(staticDir)) cpSync(staticDir, outdir, { recursive: true });
+    // The bundler inlines the landing font as data:, which font-src 'self' refuses: serve the file instead.
+    // Read and write, not cpSync: a copy touches the source, and the dev server watches shared/.
+    mkdirSync(join(outdir, "fonts"), { recursive: true });
+    writeFileSync(join(outdir, "fonts/host-grotesk.woff2"), readFileSync(join(here, "shared/fonts/host-grotesk.woff2")));
+    for (const f of readdirSync(outdir).filter((x) => x.endsWith(".css"))) {
+      const css = readFileSync(join(outdir, f), "utf8");
+      const out = css.replace(/url\(["']?data:font\/woff2;base64,[^)"']+["']?\)/g, 'url("/fonts/host-grotesk.woff2")');
+      if (out !== css) writeFileSync(join(outdir, f), out);
+    }
     write(join(outdir, "_headers"), headersFile());
     // Cloudflare Pages advanced mode: _worker.js is the router, and _routes.json runs it only on the
     // backend paths (every other path is a static file, served without the Worker).
@@ -202,6 +213,9 @@ export async function buildSite(s: Site, outdir: string, env: Record<string, str
     write(join(outdir, "_worker.js"), await worker.outputs[0]!.text());
     write(join(outdir, "_routes.json"), routesFile());
     writeSkills(s, outdir, env);
+    // The landing page's logo row (agents.ts), before fill() so a staging build rewrites its links too.
+    const home = join(outdir, "index.html");
+    writeFileSync(home, readFileSync(home, "utf8").replaceAll("{{AGENTS}}", agentRow(s, skillsConfig(env).TEXT_LINE)));
     const problems: string[] = [];
     for (const f of walk(outdir)) {
       const full = join(outdir, f);

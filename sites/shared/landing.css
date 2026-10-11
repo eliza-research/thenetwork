@@ -1,28 +1,79 @@
-/* The agent-first landing page (founder decision 10): the name, one line, "Copy this into your agent."
-   with the prompt, a Copy button and "Open in <agent>" links. Each site sets the tokens below in its
-   own styles.css (body.landing); the layout is shared. The design canvases are the source of truth. */
-body.landing { margin: 0; min-height: 100vh; display: flex; flex-direction: column; background: var(--l-bg); color: var(--l-ink); font: 500 17px/1.5 var(--l-font); }
-.landing .l-wrap { width: min(100% - 32px, 1040px); margin-inline: auto; }
-.landing .l-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-block: 28px; }
-.landing .l-mark { font: 900 26px/1 var(--l-display); letter-spacing: -0.03em; color: var(--l-ink); text-decoration: none; }
-.landing .l-by { font-size: 15px; color: var(--l-muted); }
-.landing .l-by a { color: var(--l-muted); }
-.landing main { flex-grow: 1; display: flex; flex-direction: column; gap: 28px; padding-block: 40px 64px; }
-.landing h1 { margin: 0; font: 900 clamp(44px, 8vw, 96px)/0.98 var(--l-display); letter-spacing: -0.035em; color: var(--l-h1); text-wrap: balance; }
-.landing .l-box { background: var(--l-accent); color: var(--l-accent-ink); border-radius: var(--l-radius); padding: 28px; display: flex; flex-direction: column; gap: 18px; }
-.landing .l-box h2 { margin: 0; font: 900 clamp(26px, 4vw, 40px)/1.05 var(--l-display); letter-spacing: -0.02em; }
-.landing .l-prompt { background: var(--l-panel); color: var(--l-panel-ink); border-radius: calc(var(--l-radius) * 0.65); padding: 18px 18px 18px 22px; display: flex; flex-wrap: wrap; gap: 14px; align-items: center; justify-content: space-between; }
-.landing .l-prompt code { font: 16px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; flex: 1 1 280px; min-width: 0; overflow-wrap: anywhere; user-select: all; }
-.landing .l-prompt button { min-height: 44px; padding: 0 18px; border-radius: 10px; border: 1px solid var(--l-panel-rule); background: var(--l-panel-button); color: var(--l-panel-ink); font: 700 15px var(--l-font); cursor: pointer; }
-.landing .l-agents { display: flex; flex-wrap: wrap; gap: 10px; }
-.landing .l-agents a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 16px; border-radius: var(--l-pill); background: var(--l-pill-bg); color: var(--l-pill-ink); font-weight: 800; font-size: 15px; text-decoration: none; }
-.landing .l-agents a:hover { text-decoration: underline; }
-.landing .l-line { margin: 0; font-size: 16px; color: var(--l-muted); }
-.landing .l-apps { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
-.landing .l-apps a { display: flex; flex-direction: column; gap: 6px; padding: 22px; border-radius: 16px; min-height: 110px; text-decoration: none; }
-.landing .l-apps strong { font-size: 24px; }
-.landing .l-foot { display: flex; flex-wrap: wrap; gap: 8px 20px; padding-block: 20px 32px; font-size: 14px; }
-.landing .l-foot a { color: var(--l-muted); }
-.landing :focus-visible { outline: 3px solid var(--l-focus); outline-offset: 3px; border-radius: 4px; }
+/* The landing page: the name, one line, one byline, a row of agent logos. Black and white with one
+   colour per site (the highlighted word). Each site sets the tokens in its own styles.css
+   (body.landing); the layout is shared. */
+@font-face { font-family: "Host Grotesk"; src: url("./fonts/host-grotesk.woff2") format("woff2"); font-weight: 300 800; font-display: swap; }
+
+body.landing {
+  margin: 0; min-height: 100vh; min-height: 100svh; display: grid; grid-template-rows: auto 1fr auto;
+  background: var(--l-bg); color: var(--l-ink);
+  font: 400 17px/1.5 "Host Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased; -webkit-text-size-adjust: 100%;
+}
+.landing .l-wrap { width: min(100% - 2 * clamp(20px, 6vw, 64px), 1120px); margin-inline: auto; }
+/* A site's own styles.css may style header, main and footer for its other pages: not here. */
+.landing header, .landing main, .landing footer { max-width: none; padding-inline: 0; }
+.landing footer.l-foot { margin-block: 0; border: 0; }
+.landing .l-wrap { width: min(100% - 2 * clamp(20px, 6vw, 64px), 1120px); margin-inline: auto; }
+.landing .l-top { padding-block: clamp(20px, 3vw, 32px); }
+.landing .l-mark { display: inline-flex; align-items: center; gap: 10px; font-weight: 650; font-size: 18px; letter-spacing: -0.02em; color: var(--l-ink); text-decoration: none; }
+.landing .l-mark svg { width: 30px; height: 30px; flex: none; }
+.landing .l-logo-hi { fill: var(--l-hi); } .landing .l-logo-bg { fill: var(--l-bg); }
+
+.landing main { align-self: center; padding-block: clamp(40px, 9vh, 112px) clamp(56px, 11vh, 136px); }
+.landing h1 { margin: 0; max-width: 12ch; font: 600 clamp(2.75rem, 8.4vw, 5.75rem)/1.06 "Host Grotesk", ui-sans-serif, system-ui, sans-serif; letter-spacing: -0.04em; color: var(--l-ink); text-wrap: balance; }
+.landing h1 mark { background: var(--l-hi); color: var(--l-hi-ink); padding: 0 0.14em; margin-inline: -0.04em; border-radius: 0.14em; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+
+/* The prompt: a field with a Copy button. Selectable with no JavaScript. */
+.landing .l-prompt {
+  margin-top: clamp(36px, 6vw, 56px); max-width: 640px; display: flex; align-items: center; gap: 12px;
+  padding: 8px 8px 8px 20px; min-height: 64px; border: 1px solid var(--l-rule); border-radius: 18px;
+}
+.landing .l-prompt code { flex: 1; min-width: 0; padding-block: 8px; font: 500 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--l-ink); overflow-wrap: anywhere; user-select: all; -webkit-user-select: all; }
+.landing .l-prompt button {
+  flex: none; min-width: 84px; height: 46px; padding: 0 20px; border: 0; border-radius: 12px; background: var(--l-hi); color: var(--l-hi-ink);
+  font: 650 15px/1 "Host Grotesk", ui-sans-serif, system-ui, sans-serif; cursor: pointer; transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1), filter 160ms ease-out;
+}
+.landing .l-prompt button:active { transform: scale(0.96); }
+@media (hover: hover) { .landing .l-prompt button:hover { filter: brightness(1.06); } }
+
+/* The agents, under the field: logos only. The name shows on hover and to screen readers. */
+.landing .l-agents { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 8px; }
+.landing .l-agent {
+  position: relative; flex: none; width: 46px; height: 46px; padding: 0; display: grid; place-items: center;
+  border: 1px solid var(--l-rule); border-radius: 13px; background: transparent; color: var(--l-ink); cursor: pointer;
+  transition: background-color 180ms ease-out, color 180ms ease-out, border-color 180ms ease-out, transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.landing .l-agent svg { width: 22px; height: 22px; display: block; }
+.landing .l-agent:active { transform: scale(0.94); }
+@media (hover: hover) {
+  .landing .l-agent:hover { background: var(--l-ink); color: var(--l-bg); border-color: var(--l-ink); transform: translateY(-2px); }
+  .landing .l-agent::after {
+    content: attr(data-tip); position: absolute; top: calc(100% + 8px); left: 50%; translate: -50% -4px; white-space: nowrap;
+    font-size: 13px; line-height: 1; color: var(--l-muted); opacity: 0; pointer-events: none;
+    transition: opacity 160ms ease-out, translate 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .landing .l-agent:hover::after, .landing .l-agent:focus-visible::after { opacity: 1; translate: -50% 0; }
+}
+/* The page script sets data-device and data-messages on <html>. With no script, every link shows. */
+[data-device="mobile"] .landing [data-only="desktop"], [data-messages="no"] .landing [data-only="messages"] { display: none; }
+@media (max-width: 479px) {
+  .landing .l-prompt { flex-direction: column; align-items: stretch; gap: 8px; padding: 14px 8px 8px; }
+  .landing .l-prompt code { padding: 0 8px 6px; font-size: 13px; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .landing .l-agent { animation: l-rise 620ms cubic-bezier(0.16, 1, 0.3, 1) backwards; }
+  .landing .l-agent:nth-child(2) { animation-delay: 40ms; } .landing .l-agent:nth-child(3) { animation-delay: 80ms; }
+  .landing .l-agent:nth-child(4) { animation-delay: 120ms; } .landing .l-agent:nth-child(5) { animation-delay: 160ms; }
+  .landing .l-agent:nth-child(6) { animation-delay: 200ms; } .landing .l-agent:nth-child(7) { animation-delay: 240ms; }
+  .landing .l-agent:nth-child(8) { animation-delay: 280ms; } .landing .l-agent:nth-child(9) { animation-delay: 320ms; }
+  .landing .l-agent:nth-child(10) { animation-delay: 360ms; }
+}
+@keyframes l-rise { from { opacity: 0.001; transform: translateY(10px); } }
+.landing .l-status { margin: 22px 0 0; min-height: 1.5em; font-size: 14px; color: var(--l-muted); }
+
+.landing .l-foot { display: flex; flex-wrap: wrap; gap: 6px 20px; padding-block: 20px 28px; font-size: 13px; }
+.landing .l-foot a { color: var(--l-muted); text-decoration: none; }
+.landing .l-foot a:hover { color: var(--l-ink); text-decoration: underline; text-underline-offset: 3px; }
+.landing :focus-visible { outline: 2px solid var(--l-ink); outline-offset: 3px; }
 .landing .skip { position: absolute; left: -9999px; }
-.landing .skip:focus { left: 16px; top: 16px; background: var(--l-accent); color: var(--l-accent-ink); padding: 8px 12px; z-index: 10; }
+.landing .skip:focus { left: 16px; top: 16px; background: var(--l-ink); color: var(--l-bg); padding: 8px 12px; z-index: 10; }

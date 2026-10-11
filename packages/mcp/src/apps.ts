@@ -44,7 +44,7 @@ function app(id: McpAppId, name: string, domain: string, what: string, keyword: 
     adultsOnly: ["Matching and introductions to other people are for adults 18 or older only. Nobody under 18 is ever matched or introduced.", ...(extra.adultsOnly ?? [])],
     links: {
       site, join: `${site}/join`, privacy: `${site}/privacy`, terms: `${site}/terms`,
-      smsTerms: extra.smsTerms === false ? null : `${site}/sms-terms`, safety: extra.safety ? `${site}/safety` : null,
+      smsTerms: extra.smsTerms === false ? null : `${site}/terms#sms`, safety: extra.safety ? `${site}/safety` : null,
       settings: `${site}/settings`, support: `mailto:${SUPPORT_EMAIL}`,
     },
     openai: extra.openai ?? true,

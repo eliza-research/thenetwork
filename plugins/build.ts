@@ -10,7 +10,7 @@
 // other apps, and the build fails if "slop" or "dating" is left anywhere in plugins/openai.
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { DEFAULT_BACKEND_ORIGIN } from "../sites/skills.config.ts";
+import { DEFAULT_BACKEND_ORIGIN, DEFAULT_TEXT_LINE } from "../sites/skills.config.ts";
 
 const ROOT = import.meta.dir;
 const SOURCE = join(ROOT, "..", "sites", "skills");
@@ -27,7 +27,7 @@ export const PLUGINS = {
 } as const;
 
 const fill = (text: string, mcpUrl: string) =>
-  text.replaceAll("{{BACKEND_ORIGIN}}", DEFAULT_BACKEND_ORIGIN).replaceAll("{{MCP_URL}}", mcpUrl);
+  text.replaceAll("{{BACKEND_ORIGIN}}", DEFAULT_BACKEND_ORIGIN).replaceAll("{{MCP_URL}}", mcpUrl).replaceAll("{{TEXT_LINE}}", DEFAULT_TEXT_LINE);
 
 /** Remove slop.date from a skill for the OpenAI plugin: inline mentions, then whole table rows and list items. */
 export function withoutSlop(md: string): string {
@@ -35,7 +35,8 @@ export function withoutSlop(md: string): string {
     .replace(/slop\.date \(dating\), /g, "")
     .replace(/ntwrk\.party, slop\.date, /g, "ntwrk.party, ")
     .replace(/"leave slop\.date"/g, '"leave peon.biz"')
-    .replace(/ Dating details never move\./g, "");
+    .replace(/ Dating details never move\./g, "")
+    .replace(/friends, dating or work/g, "friends or work");
   const out: string[] = [];
   const lines = inline.split("\n");
   for (let i = 0; i < lines.length; i++) {
@@ -46,7 +47,7 @@ export function withoutSlop(md: string): string {
       let j = i + 1;
       while (j < lines.length && /^ {2}\S/.test(lines[j]!)) j++;
       const item = lines.slice(i, j);
-      if (item.some(l => /slop/i.test(l))) { i = j - 1; continue; }
+      if (item.some(l => /slop|dating/i.test(l))) { i = j - 1; continue; }
     }
     out.push(line);
   }

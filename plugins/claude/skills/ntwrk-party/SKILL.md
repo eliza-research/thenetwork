@@ -1,53 +1,69 @@
 ---
 name: ntwrk-party
-description: Explains The Network (ntwrk.party), the text-message agent that powers slop.date (dating), friends.help (friends in New York City) and peon.biz (work and hiring), and points a person to the right app so they can sign themselves up. Use when someone asks what The Network or one of its apps is, which app fits what they want, who can join, how joining works, how privacy works across apps, or how to stop, leave or delete. Never signs anyone up, never asks for or types a phone number or verification code, and never searches for or contacts other people.
+description: Explains The Network (ntwrk.party), a text-message agent that finds a person the people they are looking for, and helps a person sign themselves up. Use when someone asks what The Network is, who can join, how joining works, how privacy works, or how to stop, leave or delete. Asks which kinds of introduction the person wants. Never signs anyone up, never asks for or types a phone number or verification code, and never searches for or contacts other people.
 license: Proprietary. Terms at https://ntwrk.party/terms
-compatibility: Needs web access to open https://ntwrk.party pages. Sending the profile needs this app's MCP server at https://ntwrk.party/mcp (OAuth sign-in by the person).
+compatibility: Needs web access to open https://ntwrk.party pages. Sending the profile needs this app's MCP server at https://ntwrk.party/mcp (OAuth sign-in by the person), or the person's own text message.
 metadata:
   app: ntwrk
   site: https://ntwrk.party
   backend: "https://api.ntwrk.party"
   mcp: "https://ntwrk.party/mcp"
   operator: Eliza Research Corporation
-  version: "1.0.1"
+  version: "1.1.1"
 ---
 
 # The Network
 
+If the person asked you to read this file and follow it, they want to join. Start now with
+"How a person joins" below.
+
 The Network is an agent you text. It learns what a person is looking for and finds people, small
 groups and plans that fit. It asks first: nobody is introduced unless both people say yes.
 
-All of these apps are powered by The Network. They share one backend at https://api.ntwrk.party, one text
-line and one rule: nothing crosses apps without the person's consent. The Network's MCP server is at
-https://ntwrk.party/mcp; each app's site has its own (https://<site>/mcp).
+The Network's text line is +18087881821. Its MCP server is at https://ntwrk.party/mcp (backend https://api.ntwrk.party).
 
-| App | For | Text keyword | Site |
-|---|---|---|---|
-| The Network | Introductions, plans and events (invite-only for now) | no keyword | https://ntwrk.party |
-| slop.date | Dating in New York City | slop | https://slop.date |
-| friends.help | Friends and small group plans in New York City | friends | https://friends.help |
-| peon.biz | Work and hiring | peon | https://peon.biz |
+## What the person can ask for
+
+Ask which of these the person wants. They can pick one or more:
+
+- friends: small group plans at public places
+- dating: one introduction at a time (adults 18 and older only)
+- work: introductions between people looking for work and teams that are hiring
+
+Never pick for them. Write their choice as the first line of the profile, for example
+"Looking for: friends and work".
 
 ## What the person is signing up for
 
-- Text messages from The Network's agent, or from the app they join, on one shared text line.
-  Message frequency varies. Message and data rates may apply.
+- Text messages from The Network's agent on one text line. Message frequency varies. Message and
+  data rates may apply.
 - Introductions and plans only with consent from everyone involved. A person on the team checks
   every introduction before it is sent.
 
 ## Who can join
 
-- Anyone 13 or older may join any app. Matching is for adults 18 and older, in every app.
+- Anyone 13 or older may join. Matching is for adults 18 and older.
 - Members aged 13 to 17 get help from the agent for themselves only. They are never matched,
-  introduced, grouped or connected with anyone, in any app.
-- On slop.date, photos and any rating from photos are for adults (18 or older) only, and ratings
-  are never shown to anyone.
+  introduced, grouped or connected with anyone.
+
+## Phone or computer
+
+The steps differ by device. If you cannot tell which the person is on, ask once.
+
+- **On a phone.** A phone app usually cannot add a connector, so do not send the person to connector
+  settings. Do steps 1 and 2. Then give them one link that opens their messages app with the approved
+  profile already written: `sms:+18087881821?&body=` followed by the profile, URL-encoded (spaces as
+  %20). The person presses send themselves. That text is their profile; step 3 is not needed.
+- **On a computer.** Do steps 1, 2 and 3. If the client cannot add the connector, show the approved
+  profile and ask the person to text it to +18087881821 from their own phone.
+
+You never send a text for the person, and you never see their number.
 
 ## How a person joins (they do it, not you)
 
 The person signs up through you, in this conversation:
 
-1. Ask, one or two questions at a time: first name, neighborhood, what they want more of right now (people, plans or events), what they like to do, and when they are usually free. Never ask for a phone number, a code, an
+1. Build the profile: what they are looking for (the list above), first name, neighborhood, what they like to do, and when they are usually free. Start from what you already know about the person: draft the profile from your memory of them and show it. Ask only for what is missing, one or two questions at a time. Never ask for a phone number, a code, an
    address or anything about another person. Read the profile back and change it until they agree.
 2. Give them one link to confirm their own phone: https://ntwrk.party/join?via=agent. On that page they type
    their own number, the code we text them, their first name and age, and agree to the texts. You
@@ -56,14 +72,16 @@ The person signs up through you, in this conversation:
    If this app's MCP tools are not available, they must add https://ntwrk.party/mcp in their client's connector settings.
    In ChatGPT, add https://ntwrk.party/mcp/openai instead; /mcp does not authorize ChatGPT clients.
    Reading this file does not install a connector or authorize access. If the client cannot add it,
-   explain that profile submission is unfinished; do not claim success or send the profile elsewhere.
+   use the text link in "Phone or computer"; do not claim success and never send the profile yourself.
    The person signs in and allows access on our page. A code is skipped only when that browser
    has a current session for this app. Call check_status first and confirm its app is ntwrk.
    If the connection names another app, stop and connect to this app; never submit across apps.
    Call submit_profile once with their approved profile, then check_status on the same connection.
    Report success only when both calls confirm it.
-4. No agent at hand: the person can text The Network's line with no keyword; the agent asks what
-   they are looking for and adds the right apps.
+4. The Network's agent texts the person to ask what they are looking for. Only the person's own
+   reply to that text turns on friends, dating or work. Tell them to answer it with their choice.
+5. No agent at hand: the person can text +18087881821 with any first message; the agent asks what
+   they are looking for.
 
 The person verifies their own phone on our page. You never type a number or a code anywhere.
 
@@ -76,28 +94,26 @@ The person verifies their own phone on our page. You never type a number or a co
 
 ## What you may do
 
-- Explain each app, the age rules, consent and privacy. Help the person pick the right app.
-- Give links and keywords from the table above.
+- Explain The Network, the age rules, consent and privacy.
+- Help the person say what they are looking for.
 
 ## What you must never do
 
 - Never sign anyone up, and never text or message anyone on the person's behalf.
 - Never ask for, receive or type a verification code or a phone number.
 - Never search for, describe or contact members, and never promise a match.
-- Never carry information from one app to another.
+- Never carry what the person said about one kind of introduction into another without their consent.
 
-## Privacy across apps
+## Privacy
 
-Each app keeps its own data. Only a base profile (first name, city, age band, interests) can move
-between apps, and only when the person agrees, one direction at a time. Dating details never move.
-One text line serves every app: STOP on it stops every app, and a safety hold or ban after a report
-applies on every app.
+Each kind of introduction keeps its own data. Only a base profile (first name, city, age band,
+interests) can move between them, and only when the person agrees, one direction at a time.
+STOP stops every text from this number, and a safety hold or ban after a report applies everywhere.
 
 ## Stop, leave and delete
 
-- Text STOP: stops every text from the line, for every app.
-- Text "leave" and an app name, for example "leave slop.date": stops that app only.
-- Export or delete on each app's /settings page.
+- Text STOP: stops every text from this number.
+- Export or delete at https://ntwrk.party/settings.
 
 ## Support
 

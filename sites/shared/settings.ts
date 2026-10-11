@@ -194,7 +194,7 @@ export async function mountSettings(root: HTMLElement): Promise<void> {
     const res = await api.stop();
     if (!res.ok) return status(root, message(root, res.error));
     await refresh(root);
-    status(root, root.dataset.msgStopped ?? "Messages from every app powered by The Network are stopped. Text START to resume messages from the app you last talked with.");
+    status(root, root.dataset.msgStopped ?? "Messages from every app on this number are stopped. Text START to resume messages from the app you last talked with.");
   });
 
   act("resume", async () => {
