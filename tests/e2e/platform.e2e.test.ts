@@ -188,6 +188,57 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
   }, T);
 
   describe("MCP through the site router", () => {
+    test("public signup instructions match the invite-only Network page and keep open apps usable", async () => {
+      const page = await (await st.site("ntwrk", "/join?via=agent")).text();
+      expect(page).toContain("The Network is invite-only. There is no sign-up form.");
+      const info = toolData(await rpc(st, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: { app: "ntwrk" } }));
+      expect(info.join.mode).toBe("invite");
+      expect(info.join.how).toContain("Reply to that invitation text to accept");
+      expect(info.join.how).toContain("https://ntwrk.party/settings");
+      expect(info.join.how).not.toContain("The agent asks what they are looking for");
+      const signup = (app: AppId) => rpc(st, "ntwrk", "/mcp/openai", "tools/call", { name: "start_signup", arguments: { app } });
+      const invite = toolData(await signup("ntwrk"));
+      expect(invite).toMatchObject({ app: "ntwrk", join_mode: "invite", url: "https://ntwrk.party/join?via=agent" });
+      expect(invite.instructions_for_person).toContain("Reply to that invitation text to accept");
+      expect(invite.instructions_for_person).toContain("https://ntwrk.party/settings");
+      expect(invite.instructions_for_person).not.toMatch(/enter your own phone|code arrives|type it on that page/i);
+      for (const app of ["peon", "friends"] as const) {
+        const info = toolData(await rpc(st, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: { app } }));
+        expect(info.join.how).toContain(`texts "${app}" as their first message`);
+        const open = toolData(await signup(app));
+        expect(open).toMatchObject({ app, join_mode: "open" });
+        expect(open.instructions_for_person).toContain("enter your own phone number");
+        expect(open.instructions_for_person).toContain("Never share the code");
+      }
+      expect((await signup("slop")).body!.result.isError).toBe(true);
+      expect((await sql`select count(*)::int as n from oauth.grants`)[0]!.n).toBe(0);
+    }, T);
+
+    test("authenticated nonmembers get invitation guidance for Network and signup guidance for open apps", async () => {
+      const phone = newPhone(), browser = new Browser();
+      expect((await webJoin(st, "peon", phone, { age: 30, browser })).res.status).toBe(200);
+      const person = (await st.svc.publicApi.accounts.personFor(phone))!;
+      const about = "I like climbing and live music, and hope to meet local friends.";
+      const before = Number((await sql`select count(*) as n from network.messages`)[0]!.n);
+      for (const app of ["ntwrk", "friends"] as const) {
+        await signIn(st, app, phone, browser);
+        const connection = await connectMcp(st, app, phone, { browser, path: "/mcp/openai", redirect: "https://chatgpt.com/connector_platform_oauth_redirect" });
+        expect(connection.token?.access_token, connection.html).toBeString();
+        for (const name of ["check_status", "submit_profile"] as const) {
+          const data = toolData(await rpc(st, app, "/mcp/openai", "tools/call", { name, arguments: name === "submit_profile" ? { about } : {} }, connection.token!.access_token));
+          expect(data).toMatchObject({ app, status: "not_joined" });
+          if (name === "submit_profile") expect(data.submitted).toBe(false);
+          if (app === "ntwrk") {
+            expect(data.next_step).toContain("invite-only");
+            expect(data.next_step).toContain("Reply to that invitation text to accept");
+            expect(data.next_step).not.toContain("sign up there");
+          } else expect(data.next_step).toBe("Not joined. To join, open https://friends.help/join and sign up there.");
+        }
+        expect(await st.svc.people.getMembership(person.id, app)).toBeUndefined();
+      }
+      expect(Number((await sql`select count(*) as n from network.messages`)[0]!.n)).toBe(before);
+    }, T);
+
     test("custom ChatGPT Slop keeps ZIP profiles but refuses split phone numbers and codes before storage", async () => {
       const pilot = await startStack();
       const db = new SQL({ url: pilot.url, max: 2 });

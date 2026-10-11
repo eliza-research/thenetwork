@@ -150,6 +150,11 @@ export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host
   return { ok: true, app: a.app };
 }
 
+function invitationGuidance(a: McpApp): string {
+  return `${a.name} is invite-only. There is no public sign-up form. Ask a member who knows you, or the team, for an invitation. ` +
+    `Reply to that invitation text to accept. Already a member? Open ${a.links.settings} yourself to sign in.`;
+}
+
 function publicInfo(a: McpApp, surface: Surface) {
   return {
     id: a.id, name: a.name, site: a.links.site, what: a.what,
@@ -158,7 +163,7 @@ function publicInfo(a: McpApp, surface: Surface) {
       mode: a.joinMode,
       url: `${a.links.join}?via=agent`,
       keyword: a.keyword,
-      how: a.keyword
+      how: a.joinMode === "invite" ? invitationGuidance(a) : a.keyword
         ? `The person texts "${a.keyword}" as their first message to The Network's line, or opens ${a.links.join} and verifies their own phone there.`
         : `The person texts The Network's line with no keyword, or opens ${a.links.join}. The agent asks what they are looking for (${surface === "openai" ? "friends or work" : "friends, dating or work"}) and adds the right apps.`,
     },
@@ -175,7 +180,9 @@ function publicInfo(a: McpApp, surface: Surface) {
 }
 
 const NEXT: Record<PublicStatus, (a: McpApp) => string> = {
-  not_joined: a => `Not joined. To join, open ${a.links.join} and sign up there.`,
+  not_joined: a => a.joinMode === "invite"
+    ? `Not joined. ${invitationGuidance(a)}`
+    : `Not joined. To join, open ${a.links.join} and sign up there.`,
   invited: a => `Invited. To accept, open ${a.links.join} or reply to the invitation text.`,
   onboarding: () => "Joining is not finished. Reply to the last text from the agent to finish.",
   active: () => "Active. Nothing to do. The agent texts when it has something worth the person's time.",
@@ -216,8 +223,10 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       return {
         kind: "ok",
         data: {
-          app: a.id, url: `${a.links.join}?via=agent`, keyword: a.keyword,
-          instructions_for_person: `Open ${a.links.join}?via=agent yourself and enter your own phone number. ` +
+          app: a.id, join_mode: a.joinMode, url: `${a.links.join}?via=agent`, keyword: a.keyword,
+          instructions_for_person: a.joinMode === "invite"
+            ? `${invitationGuidance(a)} Never share a verification code with anyone, including this assistant.`
+            : `Open ${a.links.join}?via=agent yourself and enter your own phone number. ` +
             `A code arrives by text: type it on that page only. Never share the code with anyone, including this assistant.` +
             (a.keyword ? ` Or text "${a.keyword}" as your first message to The Network's line.` : ""),
           ages: { join: a.ages.join, matching: a.ages.match },
