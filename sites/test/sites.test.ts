@@ -280,6 +280,9 @@ test("landing pages: one line, the prompt field, a logo for every agent; nothing
     expect(home, s.domain).not.toMatch(/style="|<script(?![^>]*src=)/);
     for (const f of readdirSync(out(s)).filter((f) => f.endsWith(".css"))) expect(read(s, f), f).not.toContain("data:font");
     expect(existsSync(join(out(s), "fonts/host-grotesk.woff2")), s.domain).toBe(true);
+    // Every site has its logo in the header and as the favicon of every page.
+    expect(home, s.domain).toMatch(/<a class="l-mark" href="\/"><svg /);
+    for (const f of htmlFiles(s)) expect(read(s, f), `${s.domain} ${f}`).toMatch(/<link rel="icon" href="\/favicon-[a-z0-9]+\.svg" type="image\/svg\+xml">/);
   }
 });
 

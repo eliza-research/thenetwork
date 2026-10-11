@@ -17,7 +17,7 @@ body.landing {
 .landing .l-top { padding-block: clamp(20px, 3vw, 32px); }
 .landing .l-mark { display: inline-flex; align-items: center; gap: 10px; font-weight: 650; font-size: 18px; letter-spacing: -0.02em; color: var(--l-ink); text-decoration: none; }
 .landing .l-mark svg { width: 30px; height: 30px; flex: none; }
-.landing .l-logo-hi { fill: var(--l-hi); } .landing .l-logo-bg { fill: var(--l-bg); }
+.landing .l-logo-hi { fill: var(--l-hi); } .landing .l-logo-bg { fill: var(--l-bg); } .landing .l-logo-line { fill: none; stroke: var(--l-bg); }
 
 .landing main { align-self: center; padding-block: clamp(40px, 9vh, 112px) clamp(56px, 11vh, 136px); }
 .landing h1 { margin: 0; max-width: 12ch; font: 600 clamp(2.75rem, 8.4vw, 5.75rem)/1.06 "Host Grotesk", ui-sans-serif, system-ui, sans-serif; letter-spacing: -0.04em; color: var(--l-ink); text-wrap: balance; }
