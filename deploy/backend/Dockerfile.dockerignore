@@ -5,6 +5,7 @@
 !tsconfig.json
 !packages/
 !deploy/
+!evals/relay/clef-relay-weights.json
 **/node_modules
 **/.env
 **/.env.*

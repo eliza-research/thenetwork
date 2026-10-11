@@ -35,7 +35,8 @@ import { svcVerify } from "../../core/src/svc/svc-auth.ts";
 import { isAppId, type AppId } from "../../platform/src/apps.ts";
 import { readCapped } from "../../platform/src/body.ts";
 import type { Accounts } from "../../platform/src/accounts.ts";
-import { clefRelayClassifierFromEnv } from "../../engine/src/relayClef.ts";
+import { readFileSync } from "node:fs";
+import { clefRelayClassifierFromEnv, DEFAULT_RELAY_CLEF_WEIGHTS, validateRelayClefWeights, type RelayClefWeights } from "../../engine/src/relayClef.ts";
 import { parseRelayRequest, type RelayClassifierHook } from "../../engine/src/relay.ts";
 import { withdrawsSwap, type RelayOutcome } from "../src/relay.ts";
 import type { NetworkRuntime } from "./runtime.ts";
@@ -84,13 +85,16 @@ export function relayClassifierFromEnv(env: Record<string, string | undefined>, 
     log("relay classifier: rules only");
     return undefined;
   }
-  log(`relay classifier: rules + Clef (${env.RELAY_CLEF_MODEL === "clef" ? "clef" : "clef-flash"})`);
+  // RELAY_CLEF_WEIGHTS_PATH names fitted weights (evals/relay/clef-relay-weights.json, written by `relay-eval fit`).
+  // A file that does not validate stops the start; without the variable the hand-set placeholder is used.
+  const weights = env.RELAY_CLEF_WEIGHTS_PATH ? validateRelayClefWeights(JSON.parse(readFileSync(env.RELAY_CLEF_WEIGHTS_PATH, "utf8")) as RelayClefWeights) : undefined;
+  log(`relay classifier: rules + Clef (${env.RELAY_CLEF_MODEL === "clef" ? "clef" : "clef-flash"}, weights ${(weights ?? DEFAULT_RELAY_CLEF_WEIGHTS).version})`);
   const hooks = new Map<AppId, RelayClassifierHook>();
   return app => {
     let h = hooks.get(app);
     if (!h) {
       const meter = cost?.relayClefEvent(app);
-      h = clefRelayClassifierFromEnv(env, { onEvent: e => {
+      h = clefRelayClassifierFromEnv(env, { ...(weights ? { weights } : {}), onEvent: e => {
         meter?.(e);
         if (e.outcome === "error" || e.outcome === "timeout") log(`[relay] clef ${e.outcome}${e.status ? ` ${e.status}` : ""} (${e.ms} ms)`);
       } });

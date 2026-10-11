@@ -103,7 +103,10 @@ if (cachedTokens) console.log(`cost of the cached answers: ${cachedTokens.toLoca
 if (tune.rows.length < 50) die("too few tuning rows with answers to report (need 50)", cmd === "fit" ? 1 : 0);
 
 const headFalseHold = num("max-false-hold", 0.02), l2 = num("l2", 0.003);
-const cmp = compareRelayClefModes(tune.rows, { l2, headFalseHold });
+// A mode is eligible only when rules + Clef hold at most the same share of honest rows as each head's threshold
+// targets (--max-false-hold, 2%). With the earlier 5% limit, direct (2.7% in CV) won and held 15.4% of benign-adult
+// texts live (docs/results/2026-10-11-clef-relay-live.md).
+const cmp = compareRelayClefModes(tune.rows, { l2, headFalseHold, maxFalseHold: headFalseHold });
 const fitted: Record<RelayClefMode, RelayClefWeights> = Object.fromEntries(RELAY_CLEF_MODES.map(m => [m, fitRelayClefWeights(tune.rows, { mode: m, l2, maxFalseHold: headFalseHold })])) as Record<RelayClefMode, RelayClefWeights>;
 const report = (label: string, w: RelayClefWeights, cv?: (typeof cmp.modes)[number]) => {
   const h = scoreArms(held.rows, w), b = ben.rows.length ? scoreArms(ben.rows as RelayFitRow[], w) : null;
@@ -114,7 +117,7 @@ const report = (label: string, w: RelayClefWeights, cv?: (typeof cmp.modes)[numb
   if (b) console.log(`benign-adult honest held: rules + Clef ${(b.combined.falseHold * 100).toFixed(1)}% (n ${b.combined.n})`);
 };
 console.log(`\n${formatArm("tuning: rules only", scoreArms(tune.rows, DEFAULT_RELAY_CLEF_WEIGHTS).rules)}`);
-for (const m of cmp.modes) report(`mode ${m.mode}${m.mode === cmp.best ? " (best on tuning CV, Clef alone)" : ""}${m.eligible ? "" : " (over the 5% false-hold limit)"}: weights fitted on all tuning rows for heldout-2`, fitted[m.mode], m);
+for (const m of cmp.modes) report(`mode ${m.mode}${m.mode === cmp.best ? " (best on tuning CV, Clef alone)" : ""}${m.eligible ? "" : ` (over the ${(headFalseHold * 100).toFixed(0)}% false-hold limit)`}: weights fitted on all tuning rows for heldout-2`, fitted[m.mode], m);
 const shippedPath = arg("weights") ?? CLEF_WEIGHTS;
 const shipped = (await Bun.file(shippedPath).exists()) ? await loadRelayClefWeights(shippedPath) : DEFAULT_RELAY_CLEF_WEIGHTS;
 report(`shipped weights ${shipped.version} (mode ${shipped.mode}; in-sample on tuning when fitted on it)`, shipped);

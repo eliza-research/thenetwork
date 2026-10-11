@@ -1,0 +1,193 @@
+{
+ "version": "relay-clef-bank-2026-10-11",
+ "bank": "relay-clef-bank-1",
+ "mode": "bank",
+ "heads": {
+  "scam": {
+   "w": {
+    "money": 3.6366,
+    "investment": 1.803,
+    "sob_story": 1.1383,
+    "offplatform": 1.9865,
+    "shares_contact": -1.5698,
+    "personal_info": -1.4792,
+    "injection": -0.728,
+    "impersonation": 0.1242,
+    "link": 1.186,
+    "threat": -0.957,
+    "slur": -0.1713,
+    "insult": -1.0824,
+    "sexual_pressure": -0.9621,
+    "rating_probe": -1.0454,
+    "minor": 0.1792,
+    "ordinary": -1.596,
+    "harm": 1.7775
+   },
+   "b": -2.7867,
+   "hold": 0.3
+  },
+  "harassment": {
+   "w": {
+    "money": -2.2533,
+    "investment": -1.1392,
+    "sob_story": -0.755,
+    "offplatform": -1.3602,
+    "shares_contact": -1.4417,
+    "personal_info": -1.1102,
+    "injection": -1.13,
+    "impersonation": -0.0939,
+    "link": -0.5821,
+    "threat": 2.067,
+    "slur": 0.369,
+    "insult": 2.7117,
+    "sexual_pressure": 2.0898,
+    "rating_probe": -1.6989,
+    "minor": -0.1208,
+    "ordinary": -2.8051,
+    "harm": 1.8668
+   },
+   "b": -1.0953,
+   "hold": 0.3,
+   "severe": {
+    "features": [
+     "threat",
+     "slur"
+    ],
+    "min": 0.85
+   }
+  },
+  "contact_fishing": {
+   "w": {
+    "money": -0.8616,
+    "investment": -0.2881,
+    "sob_story": -0.351,
+    "offplatform": 1.5361,
+    "shares_contact": 3.1587,
+    "personal_info": 4.187,
+    "injection": 0.9174,
+    "impersonation": 0.073,
+    "link": -0.4008,
+    "threat": -0.428,
+    "slur": -0.0901,
+    "insult": -0.6443,
+    "sexual_pressure": -0.3733,
+    "rating_probe": -1.0658,
+    "minor": -0.0489,
+    "ordinary": -0.5749,
+    "harm": 0.4295
+   },
+   "b": -3.4062,
+   "hold": 0.3
+  },
+  "rating_probe": {
+   "w": {
+    "money": -0.5228,
+    "investment": -0.1901,
+    "sob_story": -0.2521,
+    "offplatform": -0.6582,
+    "shares_contact": -0.3763,
+    "personal_info": -0.3735,
+    "injection": 1.5582,
+    "impersonation": 0.0371,
+    "link": -0.1085,
+    "threat": -0.2378,
+    "slur": -0.0708,
+    "insult": -0.4566,
+    "sexual_pressure": 0.1483,
+    "rating_probe": 5.3025,
+    "minor": -0.0707,
+    "ordinary": -1.0065,
+    "harm": -1.0849
+   },
+   "b": -2.925,
+   "hold": 0.3
+  },
+  "minor_signal": {
+   "b": -5,
+   "w": {
+    "minor": 9.5
+   },
+   "hold": 0.5
+  }
+ },
+ "uncertain": {
+  "minConfidence": 0.6,
+  "floor": 0.3
+ },
+ "provenance": {
+  "fitter": "relay-clef-fit-1",
+  "fittedAt": "2026-10-11",
+  "rows": 290,
+  "files": [
+   "relay/relay.jsonl",
+   "relay/relay-paraphrases.jsonl",
+   "relay/relay-heldout-1.jsonl"
+  ],
+  "model": "clef-flash",
+  "notes": "mode bank (best of direct, bank, both by 5-fold CV on the tuning sets); heldout-2 not fitted on",
+  "report": {
+   "cv": [
+    {
+     "mode": "direct",
+     "score": 0.9500000000000001,
+     "eligible": false,
+     "falseHold": 0.02727272727272727,
+     "recall": {
+      "scam": 1,
+      "harassment": 1,
+      "contact": 1,
+      "rating": 1
+     }
+    },
+    {
+     "mode": "bank",
+     "score": 0.9455555555555555,
+     "eligible": true,
+     "falseHold": 0,
+     "recall": {
+      "scam": 1,
+      "harassment": 1,
+      "contact": 1,
+      "rating": 1
+     }
+    },
+    {
+     "mode": "both",
+     "score": 0.9450000000000001,
+     "eligible": true,
+     "falseHold": 0,
+     "recall": {
+      "scam": 1,
+      "harassment": 1,
+      "contact": 1,
+      "rating": 1
+     }
+    }
+   ],
+   "heldout2": {
+    "n": 65,
+    "recall": {
+     "scam": 1,
+     "harassment": 0.9,
+     "contact": 1,
+     "rating": 1
+    },
+    "precision": {
+     "scam": 0.8333333333333334,
+     "harassment": 1,
+     "contact_fishing": 1,
+     "rating_probe": 1,
+     "minor_signal": 0
+    },
+    "falseHold": 0.04,
+    "counts": {
+     "honest": 25,
+     "scam": 10,
+     "harassment": 10,
+     "contact": 10,
+     "rating": 10
+    }
+   }
+  }
+ }
+}
