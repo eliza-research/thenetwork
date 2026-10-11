@@ -346,6 +346,35 @@ describe.skipIf(!pgAvailable)("the service as the platform's channel (Postgres)"
     expect((await outbound((await memberOf("slop", q))!.id)).map(x => x.status)).toEqual(["dry_run"]);
   }, T);
 
+  test("after STOP, a later text gets one START hint in 30 days (member and stranger); START from a stranger opts back in", async () => {
+    // Founder decision 2026-10-11 (#22): a person who sent STOP and texts again is told once how to resume.
+    await fresh();
+    const clock = new SimClock(START);
+    const { s, directs } = service(clock);
+    const hint = (to: string) => directs.filter(d => d.to === to && /Reply START to resume/.test(d.body) && !/won't get more messages/.test(d.body));
+    // A member: STOP, then two texts. Exactly one hint; the member's texts still reach the Network.
+    const p = newPhone();
+    await text(s, clock, p, "Ivy 28", { app: "friends" });
+    expect(await memberOf("friends", p)).toBeDefined();
+    await text(s, clock, p, "STOP", { app: "friends" });
+    expect(await consentOf(p, "friends")).toBe("opted_out");
+    await text(s, clock, p, "hi", { app: "friends" });
+    await text(s, clock, p, "hello?", { app: "friends" });
+    expect(hint(p).map(d => d.body)).toEqual([APPS.friends.brand.stoppedHint]);
+    // 30 days later one more hint.
+    clock.advance(31 * DAY);
+    await text(s, clock, p, "hey", { app: "friends" });
+    expect(hint(p)).toHaveLength(2);
+    // A stranger: STOP before joining, then "hi" twice: one hint; START opts them back in.
+    const q = newPhone();
+    expect(await text(s, clock, q, "stop texting me")).toBe("stopped");
+    await text(s, clock, q, "hi");
+    await text(s, clock, q, "hi again");
+    expect(hint(q)).toHaveLength(1);
+    await text(s, clock, q, "START");
+    expect(await consentOf(q, "ntwrk")).toBe("opted_in");
+  }, T);
+
   test("SVC-10 a STOP survives a unit that fails once: one ledger event, opted out after the retry, one confirmation", async () => {
     await fresh();
     const clock = new SimClock(START);

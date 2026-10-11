@@ -934,6 +934,9 @@ export class NetworkService implements RuntimeHost {
         const wants = lookingFor(ev.text).filter(a => a !== "ntwrk" && this.runtimeFor(a));
         if (wants.length) return this.enroll(rt, memberId, e164, wants, ev, rowId);
       }
+      // After STOP the member's texts still reach the Network (a report is never dropped), but its replies are
+      // refused: the person gets one hint instead (founder decision 2026-10-11, #22).
+      if (!kw && e164) await this.stopHint(rt, app, e164, ev, rowId);
       const out = await this.memberMessage(rt, memberId, ev, rowId, kw, reply);
       if (e164) await this.statedAge(app, rt, memberId, e164);
       return out;
@@ -942,15 +945,38 @@ export class NetworkService implements RuntimeHost {
     // Not a member of this app. Nothing is stored about them unless they join (age check passed).
     if (!e164) { this.log(`[inbound] unknown sender (not a phone), ${ev.text.length} chars, not stored`); return "unknown_sender"; }
     if (kw === "help") { await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`, "compliance"); return "handled"; }
+    // START from someone who is not a member (they sent STOP before joining): opt them back in, then the join
+    // flow asks for name and age as usual. A banned number or person is never opted back in.
+    if (kw === "start") {
+      const person = await this.accounts.personFor(e164);
+      if (await this.accounts.banned(e164, person)) { this.log(`[inbound] START from a banned number (${rt.id}): not opted in`); return "held"; }
+      await this.accounts.recordConsent({ e164, app: app.id, line, state: "opted_in", source: "keyword:start", wording: "START keyword", ref: rowId, at: this.consentAt(ev) });
+      if (turn) turn.consent = { state: "opted_in", scope: "app", app: app.id, at: this.consentAt(ev) };
+    }
     // One text join per phone at a time (the same lock as a web join). In a signed turn, a person who is not a
     // member of any app first gets the one-time Eliza notice, then the normal join flow.
     return this.people.withLock(`join:${e164}`, async () => {
       await this.elizaNotice(app, e164, ev, rowId);
       const out = await this.join(rt, app, e164, ev, rowId, route);
+      // The join question to someone who sent STOP is refused at send time: they get the one hint instead.
+      if (out === "join_asked" && !kw) await this.stopHint(rt, app, e164, ev, rowId);
       // Under the join age: nothing is kept, the notice row included (the phone's age floor keeps a later notice away).
       if (out === "under_age" && this.inboundTurn()) await this.sql`delete from platform.eliza_notices where phone_hash = ${this.noticeKey(e164)}`;
       return out;
     });
+  }
+
+  /**
+   * A person whose last consent event for this app is an opt-out texted again (not a keyword): one short
+   * compliance reply saying how to resume, at most once in 30 days per number and app. Not for a number that
+   * erased everything (suppressed) or a banned one: those stay quiet.
+   */
+  private async stopHint(rt: NetworkRuntime, app: AppInfo, e164: string, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string): Promise<void> {
+    const key = this.phoneKey(e164);
+    if (resolveConsent(await this.people.lastConsent(e164, app.id)) !== "opted_out" || (await this.people.isSuppressed(key))) return;
+    if (await this.people.isBanned(key, (await this.people.findPhone(e164))?.personId ?? null)) return;
+    const { count } = await this.people.hit(`stop_hint:${app.id}:${key}`, 30 * DAY, this.clock.now());
+    if (count === 1) await this.direct(rt, ev.from, app.brand.stoppedHint, `sys:${rowId}`, "compliance");
   }
 
   private noticeKey(e164: string) { return keyedHash(this.hashKey, `eliza_notice:${e164}`); }

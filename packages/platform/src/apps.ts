@@ -25,6 +25,8 @@ export interface AppBrand {
   help: string;
   /** The polite answer when a person tries to join an invite-only app on its site. */
   inviteOnly: string;
+  /** The one reply to a person who sent STOP and then texts again (at most once in 30 days): how to resume. */
+  stoppedHint: string;
   /** The kind decline for a person under the join age. Says nothing more than needed. */
   underAge: string;
 }
@@ -59,6 +61,7 @@ function brand(name: string, domain: string, agentName: string, what: string, mi
     start: `You're back on ${name}. Reply STOP anytime to stop all messages, HELP for help.`,
     help: `${name}: ${what} Message frequency varies. Reply STOP to stop all messages on this number, or "leave ${domain}" to leave ${name} only. Help: ${SUPPORT_EMAIL}`,
     inviteOnly: `${name} is invite-only right now. If a member invites you, you can join then.`,
+    stoppedHint: `You're unsubscribed from ${name}, so I can't reply. Reply START to resume.`,
     underAge: `Thanks for your interest in ${name}. You need to be at least ${minJoinAge} to join, so we can't sign you up.`,
   };
 }
