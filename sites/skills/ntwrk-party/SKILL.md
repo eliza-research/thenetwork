@@ -9,7 +9,7 @@ metadata:
   backend: "{{BACKEND_ORIGIN}}"
   mcp: "{{MCP_URL}}"
   operator: Eliza Research Corporation
-  version: "1.1.1"
+  version: "1.1.2"
 ---
 
 # The Network
@@ -51,10 +51,13 @@ Never pick for them. Write their choice as the first line of the profile, for ex
 The steps differ by device. If you cannot tell which the person is on, ask once.
 
 - **On a phone.** A phone app usually cannot add a connector, so do not send the person to connector
-  settings. Do steps 1 and 2. Then give them one link that opens their messages app with the approved
+  settings. Do step 1. Then give them one link that opens their messages app with the approved
   profile already written: `sms:{{TEXT_LINE}}?&body=` followed by the profile, URL-encoded (spaces as
-  %20). The person presses send themselves. That text is their profile; step 3 is not needed.
-- **On a computer.** Do steps 1, 2 and 3. If the client cannot add the connector, show the approved
+  %20). The person presses send themselves. Then they answer the Network's onboarding texts themselves.
+  Steps 2 and 3 are not needed for this route. A first text does not require a website invitation.
+  Sending a profile does not prove membership; report joining unfinished until the Network confirms it.
+- **On a computer.** Do step 1, then follow the website requirement in step 2 before step 3.
+  If the person has no invitation or membership, or the client cannot add the connector, show the approved
   profile and ask the person to text it to {{TEXT_LINE}} from their own phone.
 
 You never send a text for the person, and you never see their number.
@@ -65,9 +68,12 @@ The person signs up through you, in this conversation:
 
 1. Build the profile: what they are looking for (the list above), first name, neighborhood, what they like to do, and when they are usually free. Start from what you already know about the person: draft the profile from your memory of them and show it. Ask only for what is missing, one or two questions at a time. Never ask for a phone number, a code, an
    address or anything about another person. Read the profile back and change it until they agree.
-2. Give them one link to confirm their own phone: https://ntwrk.party/join?via=agent. On that page they type
-   their own number, the code we text them, their first name and age, and agree to the texts. You
-   never see the number or the code.
+2. The website is invite-only. There is no public sign-up form at https://ntwrk.party/join?via=agent.
+   For website/MCP onboarding, ask whether they already belong or received an invitation.
+   Reply to your own invitation text to accept; never ask this assistant to accept it for you.
+   A person without either can ask a member who knows them, or the team, for an invitation,
+   or use the self-text route above. After accepted membership, the person signs in themselves
+   at https://ntwrk.party/settings with their own phone and code. You never see or enter either.
 3. Ask the person to return to this same agent conversation when they finish on the site.
    If this app's MCP tools are not available, they must add {{MCP_URL}} in their client's connector settings.
    In ChatGPT, add https://ntwrk.party/mcp/openai instead; /mcp does not authorize ChatGPT clients.
@@ -76,6 +82,7 @@ The person signs up through you, in this conversation:
    The person signs in and allows access on our page. A code is skipped only when that browser
    has a current session for this app. Call check_status first and confirm its app is ntwrk.
    If the connection names another app, stop and connect to this app; never submit across apps.
+   If membership is not active or onboarding, follow its next step; do not submit or claim joined.
    Call submit_profile once with their approved profile, then check_status on the same connection.
    Report success only when both calls confirm it.
 4. The Network's agent texts the person to ask what they are looking for. Only the person's own
@@ -83,7 +90,8 @@ The person signs up through you, in this conversation:
 5. No agent at hand: the person can text {{TEXT_LINE}} with any first message; the agent asks what
    they are looking for.
 
-The person verifies their own phone on our page. You never type a number or a code anywhere.
+Website sign-in uses the person's own phone and code on our page. The self-text route uses their
+own messages app and onboarding replies. You never type a number or a code anywhere.
 
 ## Consent rules
 

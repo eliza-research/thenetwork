@@ -191,6 +191,17 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
     test("public signup instructions match the invite-only Network page and keep open apps usable", async () => {
       const page = await (await st.site("ntwrk", "/join?via=agent")).text();
       expect(page).toContain("The Network is invite-only. There is no sign-up form.");
+      const app = await (await st.site("ntwrk", "/api/app")).json() as { joinMode: string };
+      expect(app.joinMode).toBe("invite");
+      const skill = await (await st.site("ntwrk", "/SKILL.md")).text();
+      expect(skill).toContain("The website is invite-only. There is no public sign-up form");
+      expect(skill).toContain("Reply to your own invitation text to accept");
+      expect(skill).toContain("https://ntwrk.party/settings");
+      expect(skill).not.toContain("On that page they type");
+      expect(skill).toContain("A first text does not require a website invitation");
+      expect(skill).toContain("sms:");
+      expect(skill).toContain("The person presses send themselves");
+      expect(skill).toContain("Only the person's own");
       const info = toolData(await rpc(st, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: { app: "ntwrk" } }));
       expect(info.join.mode).toBe("invite");
       expect(info.join.how).toContain("Reply to that invitation text to accept");
