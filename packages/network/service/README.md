@@ -50,7 +50,7 @@ The Eliza gateway owns the Blooio webhook of the shared line and calls `POST /in
 **Startup and body size.** The service refuses to start when the turn path is on and `SERVICE_TURN_SECRET` is shorter than 32 characters, or when it equals `NETWORK_SERVICE_CONSOLE_TOKEN` or any `NETWORK_SERVICE_TOKENS` token (Cloud's secret is never a staff bearer). Every signed route reads at most 256 KiB before it verifies or parses anything; the backend refuses a declared larger body on `/internal/*` before the service sees it.
 
 **The one-time notice.** A person who writes on the line through a signed turn and is not a member of any Network app gets, as the first reply of that handled turn, a notice that Eliza is now The Network's agent, what it means, and how to opt out (`ELIZA_NOTICE` in `packages/network/src/copy.ts`). The normal join flow follows in the same turn. Rules:
-- The wording is a **DRAFT** (`ELIZA_NOTICE_STATUS`). The founder must approve it before go-live.
+- The wording is **approved** by the founder (2026-10-11, `ELIZA_NOTICE_STATUS`). A change to it needs a new approval.
 - Once per number. `platform.eliza_notices` (migration 0025) keeps a keyed hash of the number (`PLATFORM_HASH_KEY`, its own domain) and the time sent, never the number. The row and the collected reply commit in one transaction.
 - It enrolls nobody. Joining still needs the age check and the opt-in; minors follow the age policy (13-17 join, never matched).
 - A banned number gets no notice. An age under 13 (stated in the message, pending, or on the phone's age floor) gets only the existing kind decline, and the notice row of that number is deleted in the same turn.

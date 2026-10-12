@@ -65,8 +65,8 @@ const joinFriends = async (phone: string, name: string, age: number) => {
 };
 const noticeRows = async () => (await sql`select phone_hash from platform.eliza_notices`).map((r: any) => r.phone_hash as string);
 
-test("the notice copy is a draft until the founder approves it", () => {
-  expect(ELIZA_NOTICE_STATUS).toBe("DRAFT");
+test("the notice copy is founder-approved (2026-10-11), short, and names STOP", () => {
+  expect(ELIZA_NOTICE_STATUS).toBe("APPROVED");
   expect(ELIZA_NOTICE).toContain("STOP");
   expect(ELIZA_NOTICE.length).toBeLessThanOrEqual(360);
 });

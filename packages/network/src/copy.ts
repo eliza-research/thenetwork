@@ -201,9 +201,9 @@ export function styleViolations(text: string, opts: { firstContact?: boolean } =
 /**
  * The one-time notice to a person on the eliza.app line who is not a member of any Network app, sent
  * once per number as the first reply of their first signed turn, before the join flow
- * (packages/network/service/README.md, "The Eliza seam"). DRAFT: the founder must approve the wording
- * before go-live (docs/go-live-handoff.md section 7, prerequisite 6). Do not mark it approved here.
+ * (packages/network/service/README.md, "The Eliza seam"). Approved by the founder on 2026-10-11 (#22).
+ * A change to the wording needs a new founder approval.
  */
-export const ELIZA_NOTICE_STATUS: "DRAFT" | "APPROVED" = "DRAFT";
+export const ELIZA_NOTICE_STATUS: "DRAFT" | "APPROVED" = "APPROVED";
 export const ELIZA_NOTICE =
   "Hi, it's Eliza. I'm now the agent of The Network (ntwrk.party), which helps people meet for friends, dating and work. Nothing changes for you unless you join, and nobody is matched with you without your consent. Reply STOP anytime to stop all messages from this number.";
