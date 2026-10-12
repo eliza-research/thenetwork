@@ -50,11 +50,18 @@ const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 export const SLOP_PINNED = { seeds: [13, 14, 15, 16], weeks: 4, perCity: 300 };
 const POPULATION: WorldSpec = { catfish: 0.005, bodyTypes: true };
 const WORLD: WorldSpec = { verification: true, relay: { engine: true }, review: 3, widen: true, checkin: true };
-const PACK_WORLD: WorldSpec = { photos: 1, rater: true };
+// Founder decision 2026-10-11 (#22): no photo is shown between members (no photo in the probe, no photo relay);
+// the AI only rates photos. The sim matches the product: the rater is on, the probe photo is off.
+const PACK_WORLD: WorldSpec = { rater: true };
 /** Gates that fail in every photos arm on held-out seeds today (docs/results/2026-10-08-slop-pack.md I5.4): tracked, not blocking. */
 const TRACKED = [/^Dates per member-month vs random/, /^Minor contacts \(age liars\) cut/, /^Adversary contacts cut/, /^Lowest group vs overall/, /^Same, feasible members/,
   // Not in the founder's tracked list, but it does not pass on the pinned seeds (86.9%; I5.4 reports 87% on seeds 13-16 at 4 weeks).
-  /^Harm events cut \(not counting/];
+  /^Harm events cut \(not counting/,
+  // Founder decision 2026-10-11 (#22): no photo in the probe. Without it the sim's members accept on fit and the
+  // AI's appearance match only, so more of them back out at the reveal and fewer reach a second date (with the photo:
+  // 3.47x, 2.78x, 4.7%; without: 1.73x, 1.68x, 12.2%; dates per member-month rose from 0.82x to 1.01x). These
+  // are known costs of the decision in the sim's model, tracked and not blocking (PRD 28.5: waived in writing).
+  /^Second-date rate vs random/, /^Second dates per seed vs random/, /^Back-outs at reveal/];
 const SAFETY = [/^Declared-minor contacts/, /^Stated-filter violations/, /^Scammer median reach/];
 
 const emptySlopState = (): SlopNetworkState => ({ now: SLOP_WORLD_START + 12 * 3_600_000, week: 0, interactions: [], feedback: [], safetyHolds: [], inboundAsks: [], edges: [], paused: new Set(), asks: [], learned: new Map() });
@@ -105,7 +112,7 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
   b.gate("relay world: contact shares only with explicit consent (0 without; every bad-consent item blocked)", rs.contactWithoutConsent === 0 && cls("contact_share").n > 0 && cls("bad_consent").stopped === cls("bad_consent").n, `${cls("contact_share").n - cls("contact_share").stopped} shared with consent, ${cls("bad_consent").stopped}/${cls("bad_consent").n} bad-consent blocked`);
   b.gate("relay world: relay log rows carry no message body or contact value", rs.logBodies === 0, String(rs.logBodies));
   const ph = pack.extra.reduce((s, e) => s + (e.photos?.withPhoto ?? 0), 0), noPh = pack.extra.reduce((s, e) => s + (e.photos?.withoutPhoto ?? 0), 0);
-  b.track("photo in the probe: probes with a photo (engine probePhotoRefs)", ph > 0, `${ph} with a photo, ${noPh} without`);
+  await b.run(`no photo is shown between members: 0 probes carry a photo (${ph} with, ${noPh} without)`, () => expect(ph).toBe(0));
 
   // ---- world invariants: no hidden truth in the agent's view; baselines; the ban loop ----------------
   await b.run("world: personas deterministic by seed; the snapshot carries no hidden truth, canary or adversary label", () => {
