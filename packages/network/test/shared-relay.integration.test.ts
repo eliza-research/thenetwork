@@ -2,15 +2,18 @@
 // "<messageId>:relay") -> POST /internal/relay -> the ConsentNetwork relay desk -> the durable outbox ->
 // the Cloud deliver path. Classifier and Cloud HTTP are controlled boundaries. Needs the dev Postgres on :54339.
 import {afterAll,beforeAll,expect,test} from "bun:test";
-import {randomUUID} from "node:crypto";
+import {randomUUID,createHash} from "node:crypto";
 import {SQL} from "bun";
 import {DAY,HOUR,MINUTE,SimClock} from "@thenetwork/core";
 import {applySchema} from "../../observatory/db/dev-pg.ts";
-import {TURN_PATH,RELAY_PATH,DELIVER_PATH,type RelaySendRequest,type TurnRequest} from "../../core/src/svc/contract.ts";
+import {TURN_PATH,RELAY_PATH,DELIVER_PATH,RELAY_PHOTO_RESOLVE_PATH,type RelaySendRequest,type TurnRequest} from "../../core/src/svc/contract.ts";
 import {svcSign,svcVerify} from "../../core/src/svc/svc-auth.ts";
 import {CloudChannelAdapter,DELIVER_RECEIPT_PATH} from "../service/cloud-channel.ts";
 import {NetworkService} from "../service/service.ts";
+import {PgAudit} from "../../observatory/src/staff.ts";
+import type {AuditEntry} from "../../observatory/src/types.ts";
 import type {NetworkState} from "../src/network.ts";
+import {PHOTO_CONSENT,type PhotoStorage} from "../../platform/src/photos.ts";
 import type {QueueOptions} from "../../blooio/src/outbound-queue.ts";
 const db=`network_relay_${randomUUID().replaceAll("-","")}`,url=`postgres://${process.env.USER??"postgres"}@127.0.0.1:54339/${db}`;
 const admin=new SQL({url:`postgres://${process.env.USER??"postgres"}@127.0.0.1:54339/postgres`,max:1});
@@ -19,11 +22,21 @@ const a="+12125550211",b="+12125550212",c="+12125550213";
 let sql:SQL,service:NetworkService,server:ReturnType<typeof Bun.serve>,cloud:ReturnType<typeof Bun.serve>,fromId:string,toId:string,thirdId:string;
 let classifierFails=false,classifications=0,known=true,posts=0,polls=0,ancillaryPosts=0;
 let classifyGate:Promise<void>|undefined,classifyEntered:(()=>void)|undefined;
-const sent:Array<{id:string;text:string;kind:string;to:string}>=[];
+const sent:Array<{id:string;text:string;kind:string;to:string;approvedPhotos?:import("../../core/src/svc/contract.ts").ApprovedRelayPhoto[]}>=[];
+const staffToken="synthetic-photo-safety-token-20261016",staffId=`token:safety#${createHash("sha256").update(staffToken).digest("hex").slice(0,8)}`;
+let photoPolicyEnabled=false,photoResolves=0,reviewerEnabled=true,failPreviewAudit=false,storageReads=0;
+const capabilityUrls:string[]=[];
+const photoBytes=new Map<string,Uint8Array>();
+const photoStorage:PhotoStorage={kind:"local",put:async(k,bytes)=>{photoBytes.set(k,bytes.slice());},get:async k=>{storageReads++;return photoBytes.get(k); },delete:async k=>{photoBytes.delete(k);}};
 const start=async()=>{
-  service=new NetworkService({url,clock,photoStorage:null,env:{PLATFORM_ENV:"dev",CLEF_RATINGS:"off",SERVICE_TURN_SECRET:secret},networks:[{id:"friends:nyc",matchingEnabled:false}],log:()=>{},
+  const audit=new PgAudit(url);
+  service=new NetworkService({url,clock,photoStorage,audit:{kind:audit.kind,list:q=>audit.list(q),close:()=>audit.close(),write:async(entry:AuditEntry)=>{
+      if(failPreviewAudit&&entry.action==="read_relay_photo"&&entry.detail?.phase==="requested")throw Error("synthetic preview audit write failure");
+      await audit.write(entry);
+    }},photoDeliveryOrigin:"https://backend.photo-fixture.invalid",tokens:`safety@slop:${staffToken}`,
+    ...(photoPolicyEnabled?{photoRelayPolicy:{version:"relay-fixture-v1",notice:"Share this selected photo with {{recipient}} only after its designated safety review. Test fixture policy.",authorizeReviewer:async(id:string)=>id===staffId&&reviewerEnabled}}:{}),env:{PLATFORM_ENV:"dev",CLEF_RATINGS:"off",SERVICE_TURN_SECRET:secret},networks:[{id:"friends:nyc",matchingEnabled:false},{id:"slop:nyc",matchingEnabled:false}],log:()=>{},
     relayClassifier:async()=>{classifications++;if(classifyGate){classifyEntered?.();await classifyGate;}if(classifierFails)throw new Error("synthetic classifier outage");return {flags:[],source:"clef" as const};},
-    adapter:(_net,rt)=>new CloudChannelAdapter({app:rt.app.id,clock,city:rt.city,from:"+12125550210",origin:cloud.url.origin,secret,env:{PLATFORM_ENV:"dev",BLOOIO_ALLOW_SEND:"1",NTWRK_LIVE_APPROVED:"1",FRIENDS_LIVE_APPROVED:"1"}})});
+    adapter:(_net,rt)=>new CloudChannelAdapter({app:rt.app.id,clock,city:rt.city,from:"+12125550210",origin:cloud.url.origin,secret,env:{PLATFORM_ENV:"dev",BLOOIO_ALLOW_SEND:"1",NTWRK_LIVE_APPROVED:"1",FRIENDS_LIVE_APPROVED:"1",SLOP_LIVE_APPROVED:"1"}})});
   await service.start();server=Bun.serve({hostname:"127.0.0.1",port:0,fetch:req=>service.fetch(req)});
 };
 const restart=async()=>{server.stop(true);await service.close();await start();};
@@ -38,10 +51,10 @@ const open=async(messageId:string,text:string,phone=a):Promise<RelaySendRequest>
   clock.advance(MINUTE);const r=await post(TURN_PATH,turn(phone,messageId,text));expect(r.status).toBe(200);const body=await r.json() as any;expect(body.outcome).toBe("open");
   return {channel:"blooio",messageId,app:"friends",memberId:body.memberId,itemId:null,text:text.trim()};
 };
-const fixturePair=async(closed=false)=>service.runtimeFor("friends")!.unitOfWork(n=>{
+const fixturePair=async(closed=false,app:"friends"|"slop"="friends",pair=[fromId,toId])=>service.runtimeFor(app)!.unitOfWork(n=>{
   // Explicit canonical mutual-consent fixture. This case qualifies relay, not engine matching or human review.
   const state=n.exportState();state.opps=state.opps.filter(op=>op.id!=="relay-pair");
-  const op:NetworkState["opps"][number]={id:"relay-pair",origin:"engine",kind:"intro",category:"social",objective:"coffee",detail:"coffee",participants:[fromId,toId],alternates:[],primed:[],status:[[fromId,"yes"],[toId,"yes"]],explanations:{},stage:closed?"closed":"scheduled",...(closed?{closedFrom:"scheduled"}:{}),deadline:clock.now()+DAY,createdAt:clock.now(),score:.8,generator:"fixture",components:{fit:0,mutualBenefit:0,warmPath:0,novelty:0,timingFit:0,activationCost:0,interruptionCost:0,load:0,repetition:0,socialRisk:0,confidence:0},exploration:false,review:{queuedAt:clock.now(),deadline:clock.now()+DAY,decision:"approve",reviewer:"fixture"},sameDay:false,contacted:[fromId,toId],reminded:[],feedbackFrom:[],tags:[],replacements:0} as NetworkState["opps"][number];
+  const op:NetworkState["opps"][number]={id:"relay-pair",origin:"engine",kind:"intro",category:"social",objective:"coffee",detail:"coffee",participants:pair,alternates:[],primed:[],status:pair.map(id=>[id,"yes"]),explanations:{},stage:closed?"closed":"scheduled",...(closed?{closedFrom:"scheduled"}:{}),deadline:clock.now()+DAY,createdAt:clock.now(),score:.8,generator:"fixture",components:{fit:0,mutualBenefit:0,warmPath:0,novelty:0,timingFit:0,activationCost:0,interruptionCost:0,load:0,repetition:0,socialRisk:0,confidence:0},exploration:false,review:{queuedAt:clock.now(),deadline:clock.now()+DAY,decision:"approve",reviewer:"fixture"},sameDay:false,contacted:pair,reminded:[],feedbackFrom:[],tags:[],replacements:0} as NetworkState["opps"][number];
   state.opps.push(op);n.importState(state);
 });
 /** The pair as the stored state holds it now (a close commits before its own delivery, which waits for the held dispatch). */
@@ -59,8 +72,20 @@ beforeAll(async()=>{
   await admin.unsafe(`create database ${db}`);await applySchema(url,{lockTimeout:"5s"});sql=new SQL({url,max:4});
   cloud=Bun.serve({hostname:"127.0.0.1",port:0,fetch:async req=>{
     const path=new URL(req.url).pathname,raw=await req.text(),auth=await svcVerify(secret,{method:req.method,path,headers:req.headers,body:raw,nowS:Math.floor(clock.now()/1000)});
-    expect(auth.ok).toBe(true);const input=JSON.parse(raw);expect([a,b,c,"+12125550214"]).toContain(input.to);
-    if(input.kind==="relay"){if(path===DELIVER_PATH){posts++;sent.push(input);}else{expect(path).toBe(DELIVER_RECEIPT_PATH);polls++;}}
+    expect(auth.ok).toBe(true);const input=JSON.parse(raw);expect([a,b,c,"+12125550214","+12125550215","+12125550216"]).toContain(input.to);
+    if(input.kind==="relay"){if(path===DELIVER_PATH){
+      posts++;sent.push(input);
+      if(input.approvedPhotos){
+        const providerKey=`network:personal:fixture:${createHash("sha256").update(input.id).digest("hex")}`;
+        const body=JSON.stringify({id:providerKey,deliveryId:input.id,to:input.to,approvedPhotos:input.approvedPhotos});
+        const resolved=await service.fetch(new Request(`https://backend.photo-fixture.invalid${RELAY_PHOTO_RESOLVE_PATH}`,{method:"POST",body,
+          headers:{"content-type":"application/json",...await svcSign(secret,{method:"POST",path:RELAY_PHOTO_RESOLVE_PATH,id:providerKey,body,nowS:Math.floor(clock.now()/1000)})}}));
+        expect(resolved.status).toBe(200);const payload=await resolved.json() as any;expect(payload.photos).toHaveLength(1);
+        photoResolves++;capabilityUrls.push(payload.photos[0].url);
+        const media=await service.publicFetch(new Request(payload.photos[0].url));expect(media.status).toBe(200);expect(media.headers.get("content-type")).toBe("image/jpeg");
+        expect(createHash("sha256").update(new Uint8Array(await media.arrayBuffer())).digest("hex")).toBe(input.approvedPhotos[0].sha256);
+      }
+    }else{expect(path).toBe(DELIVER_RECEIPT_PATH);polls++;}}
     else ancillaryPosts++;
     return known?Response.json({ok:true,replayed:path!==DELIVER_PATH,providerMessageIds:[`owned:${input.id}`],acceptedAt:new Date(clock.now()).toISOString(),history:true}):Response.json({ok:false,error:"unknown",retryable:true},{status:202});
   }});await start();
@@ -272,3 +297,83 @@ test("a member with no open match who asks for 'her number' is scored",async()=>
   clock.advance(MINUTE);const r=await post(TURN_PATH,turn(c,"swap-no-match","what's her number"));expect(r.status).toBe(200);
   expect(((await r.json()) as any).outcome).not.toBe("open");expect(net.trust.get(thirdId).score).toBeGreaterThan(before);
 },60_000);
+
+test("selected photos survive queued uncertainty/restart with native JSONB refs, and revocation wins final admission",async()=>{
+  const sender="+12125550215",recipient="+12125550216";
+  for(const [phone,name] of [[sender,"Dena"],[recipient,"Elle"]])for(const [i,text]of ["slop.date",`${name}, 29`,"I enjoy hiking and cooking","Saturday afternoons work for me","Small groups are good"].entries()){
+    clock.advance(MINUTE);expect((await post(TURN_PATH,{...turn(phone!,`photo-setup:${name}:${i}`,text),app:"slop"})).status).toBe(200);
+  }
+  const person=(await service.accounts.personFor(sender))!,other=(await service.accounts.personFor(recipient))!;
+  const from=(await service.people.getMembership(person.id,"slop"))!.memberId,to=(await service.people.getMembership(other.id,"slop"))!.memberId;
+  await fixturePair(false,"slop",[from,to]);
+  // Synthetic JPEG storage boundary; all ownership, consent, reviews, queue and replay state use real Postgres.
+  const upload=await service.photos.upload(person.id,"slop",Uint8Array.from([255,216,255,218,0,2,1,255,217]),PHOTO_CONSENT.version);
+  expect(upload.ok).toBe(true);if(!upload.ok)throw Error(JSON.stringify(upload));
+  expect(await service.photoRelay.select("slop",person.id,"relay-pair",upload.value.id,"relay-fixture-v1",true,"fixture-select-primary-20261016")).toBeUndefined();
+  photoPolicyEnabled=true;await restart();
+  const selected=await service.photoRelay.select("slop",person.id,"relay-pair",upload.value.id,"relay-fixture-v1",true,"fixture-select-primary-20261016");
+  expect(selected?.state).toBe("pending");if(!selected)throw Error("normal selected item refused");
+  const beforeAuditRead=storageReads;
+  failPreviewAudit=true;
+  try{
+    const refused=await fetch(new URL(`/relay/${selected.itemId}/photo?app=slop`,server.url),{headers:{authorization:`Bearer ${staffToken}`}});
+    expect(refused.status).toBe(503);expect(refused.headers.get("x-network-photo-review-token")).toBeNull();expect(storageReads).toBe(beforeAuditRead);
+  }finally{failPreviewAudit=false;}
+  expect((await service.audit.list({targetId:selected.itemId,actions:["read_relay_photo"]})).length).toBe(0);
+  const reviewTokens=new Map<string,string>();
+  const release=async(id:string)=>{
+    if(!reviewTokens.has(id)){
+      const preview=await fetch(new URL(`/relay/${id}/photo?app=slop`,server.url),{headers:{authorization:`Bearer ${staffToken}`}});
+      expect(preview.status).toBe(200);await preview.arrayBuffer();
+      reviewTokens.set(id,preview.headers.get("x-network-photo-review-token")!);
+    }
+    return fetch(new URL(`/relay/${id}/release?app=slop`,server.url),{method:"POST",headers:{authorization:`Bearer ${staffToken}`,"content-type":"application/json"},body:JSON.stringify({note:"Selected item checked for fixture consent and safety",photoReviewToken:reviewTokens.get(id)})});
+  };
+  const before=posts;
+  // Fail the real queue insert after per-item human approval; the claim/state/queue transaction must roll back together.
+  await sql.unsafe("create function fail_selected_photo_enqueue() returns trigger language plpgsql as $$ begin if NEW.id like 'relay:pri_%' then raise exception 'synthetic selected photo queue failure'; end if; return NEW; end $$");
+  await sql.unsafe("create trigger selected_photo_enqueue_fault before insert on platform.outbound for each row execute function fail_selected_photo_enqueue()");
+  try {expect((await release(selected.itemId)).status).toBe(503);}finally{await sql.unsafe("drop trigger selected_photo_enqueue_fault on platform.outbound");await sql.unsafe("drop function fail_selected_photo_enqueue()");}
+  const audited=await service.audit.list({limit:100,targetId:selected.itemId});
+  expect(audited.some(row=>row.actor===staffId&&row.reason==="Selected item checked for fixture consent and safety"&&row.detail?.phase==="reviewed")).toBe(true);
+  expect(audited.some(row=>row.actor===staffId&&!row.ok&&row.detail?.phase==="result"&&row.detail?.delivered===false)).toBe(true);
+  const reviewed=await service.photoRelay.item(selected.itemId);expect(reviewed).toMatchObject({state:"approved",actionId:null});
+  expect((await sql`select id from platform.outbound where id=${`relay:${selected.itemId}`}`).length).toBe(0);expect(posts).toBe(before);
+  reviewerEnabled=false;expect((await release(selected.itemId)).status).toBe(403);expect(posts).toBe(before);
+  expect((await sql`select id from platform.outbound where id=${`relay:${selected.itemId}`}`).length).toBe(0);reviewerEnabled=true;
+  await restart();expect((await service.photoRelay.item(selected.itemId))!.reviewId).toBe(reviewed!.reviewId);
+  known=false;
+  const decision=await release(selected.itemId);expect(decision.status).toBe(200);expect(await decision.json()).toMatchObject({ok:true,delivered:false});
+  const [saved]=await sql`select approved_photos,jsonb_typeof(approved_photos) as shape,jsonb_typeof(approved_photos->0) as element,status,fingerprint from platform.outbound where id=${`relay:${selected.itemId}`}`;
+  expect(saved.shape).toBe("array");expect(saved.element).toBe("object");expect(saved.approved_photos).toHaveLength(1);expect(saved.status).toBe("unknown_acceptance");
+  expect(posts).toBe(before+1);const delivered=sent.at(-1)!;expect(delivered.approvedPhotos).toEqual(saved.approved_photos);
+  expect(delivered.approvedPhotos![0]).toMatchObject({itemId:selected.itemId,photoId:upload.value.id,senderMemberId:from,recipientMemberId:to});
+  expect(JSON.stringify(saved.approved_photos)).not.toContain("https:");
+  await expect(sql.begin(tx=>(service.runtimeFor("slop")!.adapter as CloudChannelAdapter).queue.enqueue(tx as unknown as SQL,[{id:`relay:${selected.itemId}`,memberId:to,to:recipient,kind:"transactional",text:delivered.text,oppId:"relay-pair",city:"nyc",approvedPhotos:[{...saved.approved_photos[0],sha256:"a".repeat(64)}]}]))).rejects.toThrow("outbound id reused");
+  expect((await sql`select approved_photos from platform.outbound where id=${`relay:${selected.itemId}`}`)[0]!.approved_photos).toEqual(saved.approved_photos);
+  const review=(await service.photoRelay.item(selected.itemId))!.reviewId;
+  await restart();expect((await service.photoRelay.item(selected.itemId))!.reviewId).toBe(review);
+  known=true;await service.runtimeFor("slop")!.deliver();expect(posts).toBe(before+1);expect(photoResolves).toBe(1);
+  expect((await sql`select status,approved_photos,fingerprint from platform.outbound where id=${`relay:${selected.itemId}`}`)[0]).toMatchObject({status:"accepted",approved_photos:saved.approved_photos,fingerprint:saved.fingerprint});
+  // A second release reuses the original desk/queue id and does not approve or send again.
+  expect((await release(selected.itemId)).status).toBe(200);expect(posts).toBe(before+1);expect(photoResolves).toBe(1);expect((await service.photoRelay.item(selected.itemId))!.reviewId).toBe(review);
+  expect(await service.photoRelay.revoke("slop",person.id,selected.itemId)).toBe(true);
+  expect((await service.publicFetch(new Request(capabilityUrls[0]!))).status).toBe(404);
+  for(const refusal of ["reject","revoke"] as const){
+  clock.advance(MINUTE);
+  // Normal recipient engagement resets the real unanswered-send guard; the relay policy stays unchanged.
+  expect((await post(TURN_PATH,{...turn(recipient,`photo-recipient-engaged-${refusal}`,"Sounds good, thanks"),app:"slop"})).status).toBe(200);
+  const next=await service.photoRelay.select("slop",person.id,"relay-pair",upload.value.id,"relay-fixture-v1",true,`fixture-select-next-${refusal}-20261016`);expect(next).toBeDefined();if(!next)throw Error("second selection refused");
+  const rt=service.runtimeFor("slop")!,checks=((rt.adapter as CloudChannelAdapter).queue as unknown as {o:QueueOptions}).o.checks,original=checks.leaks!;
+  let resume!:()=>void,entered!:()=>void;const gate=new Promise<void>(r=>{resume=r;}),atGate=new Promise<void>(r=>{entered=r;});
+  checks.leaks=async row=>{const result=await original(row);if(row.id===`relay:${next.itemId}`){entered();await gate;}return result;};
+  let pending:Promise<Response>|undefined;
+  try{
+    pending=release(next.itemId);await Promise.race([atGate,pending.then(async r=>{const failures=await sql`select type,payload from network.events where app_id='slop' and type in ('send_refused','send_skipped','guard_blocked') order by at desc limit 5`;throw Error(`Photo never reached final dispatch: ${await r.text()}; normal send diagnostics=${JSON.stringify(failures)}`);})]);
+    if(refusal==="revoke")expect(await service.photoRelay.revoke("slop",person.id,next.itemId)).toBe(true);
+    else expect((await fetch(new URL(`/relay/${next.itemId}/reject?app=slop`,server.url),{method:"POST",headers:{authorization:`Bearer ${staffToken}`,"content-type":"application/json"},body:JSON.stringify({note:"Reject this selected item before dispatch"})})).status).toBe(200);
+    resume();expect((await pending).status).toBe(200);
+    expect(posts).toBe(before+1);expect((await sql`select status from platform.outbound where id=${`relay:${next.itemId}`}`)[0]!.status).toMatch(/^suppressed/);
+  }finally{resume?.();checks.leaks=original;if(pending)await pending;known=true;}
+  }
+},120_000);

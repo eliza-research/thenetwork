@@ -24,6 +24,7 @@ import { SessionService, SESSION_TTL_MS, tokenHash, signupAccountView } from "./
 import type { PeopleStore } from "./store.ts";
 import type { TurnstileVerifier } from "./turnstile.ts";
 import type { PhotoService } from "./photos.ts";
+import type { PhotoRelayService } from "./photo-relay.ts";
 
 export interface PublicApiOptions extends AccountHooks {
   store: PeopleStore;
@@ -56,6 +57,8 @@ export interface PublicApiOptions extends AccountHooks {
   otpLimits?: Partial<OtpLimits>;
   /** Private member photos (photos.ts): /api/photos/*. Without it those paths answer 404. */
   photos?: PhotoService;
+  /** Voluntary item sharing. Absent until an approved item-review policy is configured. */
+  photoRelay?: PhotoRelayService;
   /**
    * The member's availability for GET /api/me, read from the member record the Network uses (a pause or
    * busy window set by text or by the agent, and quiet hours). It is not the messaging consent: a STOP
@@ -253,6 +256,9 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   }
 
   async function handle(req: Request, url: URL, peer?: string): Promise<Response> {
+    // This exact purpose-scoped capability verifies its own immutable recipient/item authority.
+    const selectedPhoto = await o.photoRelay?.serveDelivery(req);
+    if (selectedPhoto) return selectedPhoto;
     // A request signed by a site router: its host and client IP. Otherwise our own Host and the socket.
     const signed = await verifyProxyHeaders(req, proxySecret, Math.floor(now() / 1000));
     const host = signed?.host ?? (o.trustForwardedHost ? req.headers.get("x-forwarded-host") : null) ?? req.headers.get("host") ?? url.host;
@@ -284,6 +290,21 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
     const post = req.method === "POST";
     if (!post && req.method !== "GET") return json(405, { ok: false, error: "method" });
     const photoPath = url.pathname.replace(/\/+$/, "");
+    if (o.photoRelay && photoPath.startsWith("/api/relay-photos/")) {
+      if (post) {
+        if (!(req.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) return json(415, { ok: false, error: "json_required" });
+        if (req.headers.get("sec-fetch-site") === "cross-site") return json(403, { ok: false, error: "origin" });
+        const origin = req.headers.get("origin");
+        try { if (origin && appForHost(new URL(origin).host, hostMap) !== appId) return json(403, { ok: false, error: "origin" }); }
+        catch { return json(403, { ok: false, error: "origin" }); }
+      }
+      let authenticated: Awaited<ReturnType<typeof auth>>;
+      const response = await o.photoRelay.route(req, photoPath, appId, async () => {
+        authenticated = await auth();
+        return authenticated?.session.personId ? { personId: authenticated.session.personId, accountView: signupAccountView(appId, accounts.phoneHash(authenticated.session.e164)) } : undefined;
+      });
+      if (response) { if (authenticated) rotatedCookies(response, authenticated); return response; }
+    }
     if (o.photos && (photoPath === "/api/photos" || photoPath.startsWith("/api/photos/"))) {
       // The upload is raw image bytes, not JSON: the same cross-site checks, and an image or JSON type only.
       if (post) {

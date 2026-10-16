@@ -782,9 +782,14 @@ export class RealSource implements DataSource {
     return { ok: true, items: r.items.map(x => (x.memberId && minors.has(x.memberId) && x.text !== undefined ? (({ text: _t, ...rest }) => ({ ...rest, textHidden: "minor" as const }))(x) : x)) };
   }
 
-  async heldDecision(queue: HeldQueue, id: string, decision: "release" | "reject", reason: string, actor: string): Promise<ControlResult> {
+  async heldPhoto(id:string,actor:string,reason:string):Promise<Response> {
+    if(!this.service)return Response.json({error:"The Network photo service is unavailable."},{status:404});
+    return this.service.heldPhoto(actor,id,reason);
+  }
+
+  async heldDecision(queue: HeldQueue, id: string, decision: "release" | "reject", reason: string, actor: string, photoReviewToken?:string): Promise<ControlResult> {
     if (!this.service) return { ok: false, error: "real-world mode is read-only: set NETWORK_SERVICE_URL and NETWORK_SERVICE_TOKEN to act through the Network service", code: "read_only" };
-    return this.afterAction(await this.service.heldDecision(actor, queue, id, decision, reason));
+    return this.afterAction(await this.service.heldDecision(actor, queue, id, decision, reason, photoReviewToken));
   }
 
   /** Through the Network service (its staff API), never this connection. Without it: refused. */

@@ -16,7 +16,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 const MIRRORED_CONTRACT_SHA256: Record<string, string> = {
-  "contract.ts": "ac6b6f7353889c9b0189cb92f811dee0070a1a1cd18e92e539ee346516dc010a",
+  "contract.ts": "564b22b222547f47bf11908a7074c7f640f5059925460ccdb2e69d4d2fb20d42",
   "svc-auth.ts": "80c561af25581926e6317837f91e92063e4655e5cd9a687597ce4ea8ce297c70",
 };
 

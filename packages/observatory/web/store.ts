@@ -224,6 +224,8 @@ class ObsStore {
   loading = true;
   /** The API answered 401: the UI shows the token prompt. */
   authNeeded = false;
+  /** Nonsecret invalidation for private previews across actual credential/session changes. */
+  authEpoch = 0;
   private token = initialToken();
   private filtersMode: Mode | null = null;
   /**
@@ -290,7 +292,7 @@ class ObsStore {
     headers.set("x-observatory-mode", this.mode);
     const r = await fetch(this.withApp(path), { ...init, headers });
     if (r.status === 401) {
-      if (!this.authNeeded) { this.authNeeded = true; this.notify(); }
+      if (!this.authNeeded) { this.authEpoch++; this.authNeeded = true; this.notify(); }
       throw new AuthError("token required");
     }
     return r;
@@ -309,6 +311,7 @@ class ObsStore {
   }
 
   setToken(t: string) {
+    if(t.trim()!==this.token)this.authEpoch++;
     this.token = t.trim();
     try { sessionStorage.setItem(TOKEN_KEY, this.token); } catch { /* memory only */ }
     this.authNeeded = false;
@@ -323,6 +326,7 @@ class ObsStore {
     try {
       const [mode, me] = await Promise.all([this.getJSON<{ mode: Mode }>("/api/mode"), this.fetch<Me>("/api/me")]);
       // An older server has no /api/me: it has one admin token.
+      if(JSON.stringify([this.me?.id,this.me?.grants,this.me?.roles])!==JSON.stringify([me.data?.id,me.data?.grants,me.data?.roles]))this.authEpoch++;
       this.me = me.data ?? { id: "token", roles: ["admin"], grants: [{ role: "admin", app: "*" }], via: "token" };
       this.mode = mode.mode;
       // No role for this app: the first app this person holds one for. None (cross_app_safety only): the person view.
@@ -460,7 +464,15 @@ class ObsStore {
   safety() { return this.fetch<SafetyInfo>("/api/safety"); }
   safetyAction(a: SafetyAction) { return this.fetch<ControlResult>("/api/safety", a); }
   held(queue: HeldQueue) { return this.fetch<{ ok: boolean; items?: HeldText[]; code?: string; error?: string }>(`/api/held?queue=${queue}`); }
-  heldDecision(queue: HeldQueue, id: string, decision: "release" | "reject", reason: string) { return this.fetch<ControlResult>("/api/held", { queue, id, decision, reason }); }
+  async heldPhoto(id:string,reason:string):Promise<{blob?:Blob;error?:string}>{
+    try{
+      const r=await this.api(`/api/held/${encodeURIComponent(id)}/photo`,{headers:{"x-network-reason":reason}});
+      if(!r.ok)return {error:"The selected photo could not load. Try again or reject it."};
+      const blob=await r.blob();
+      return ["image/jpeg","image/png","image/webp"].includes(blob.type)&&blob.size>0?{blob}:{error:"The selected photo could not be verified. You can still reject it."};
+    }catch{return {error:"The selected photo could not load. Try again or reject it."};}
+  }
+  heldDecision(queue: HeldQueue, id: string, decision: "release" | "reject", reason: string, photoReviewed?:boolean) { return this.fetch<ControlResult>("/api/held", { queue, id, decision, reason, ...(photoReviewed?{photoReviewed}:{}) }); }
   config() { return this.fetch<ConfigInfo>("/api/config"); }
   /** The cost panel (real mode; analyst or admin): src/ops.ts. */
   cost() { return this.fetch<import("../src/ops.ts").CostSummary & { ok: boolean }>("/api/ops/cost"); }

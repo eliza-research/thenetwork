@@ -293,6 +293,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
   const costs = new CostView();
   /** Active PII reveals: "<staff id>|<mode>|<app>|<member id>" -> grant (a game member and a real member never share one). In memory: a restart ends every reveal. */
   const reveals = new Map<string, RevealGrant>();
+  const photoPreviews = new Map<string,{token:string;until:number}>();
   const revealKey = (u: StaffUser, app: AppId, memberId: string) => `${u.id}|${mode}|${app}|${memberId}`;
   /** One-use WebSocket tickets: ticket -> who asked, for which app, until when. */
   const tickets = new Map<string, { user: StaffUser; app: AppId; until: number }>();
@@ -635,6 +636,22 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
       },
       // Held texts: the leak guard's parked texts and held relay items (real mode, from the Network service).
       // Safety or admin; each read and each decision is audited; a decision needs a reason of 5+ characters.
+      "/api/held/:id/photo": {GET:guard(async(req,u,app)=>{
+        const id=decodeURIComponent(req.params.id!),reason=req.headers.get("x-network-reason")?.trim()??"";
+        if(!/^pri_[a-f0-9]{32}$/.test(id)||reason.length<PERSON_REASON_MIN||reason.length>500)return json({error:"A selected item and review reason are required."},400);
+        const src=await source(mode,app);if(!src.heldPhoto)return json({error:"Selected photo review is unavailable."},404);
+        const no=await record(u,app,{action:"read_relay_photo",targetType:"case",targetId:id,reason,ok:true});if(no)return no;
+        const key=revealKey(u,app,`relay-photo:${id}`);photoPreviews.delete(key);
+        const response=await src.heldPhoto(id,u.id,reason),token=response.headers.get("x-network-photo-review-token"),until=Number(token?.split(".")[0]);
+        if(!response.ok)return response;
+        if(!token||!Number.isSafeInteger(until)||until<=Date.now()||until>Date.now()+5*60_000){await response.body?.cancel();return json({error:"This photo preview expired. Load it again."},409);}
+        for(const [k,v]of photoPreviews)if(v.until<=Date.now())photoPreviews.delete(k);
+        if(photoPreviews.size>=1000){await response.body?.cancel();return json({error:"Too many active previews. Retry shortly."},429);}
+        photoPreviews.set(key,{token,until});
+        const headers=new Headers(response.headers);headers.delete("x-network-photo-review-token");
+        headers.set("cache-control","no-store");headers.set("referrer-policy","no-referrer");
+        return new Response(response.body,{status:200,headers});
+      },["safety"])},
       "/api/held": {
         GET: guard(async (req, u, app) => {
           const queue = new URL(req.url).searchParams.get("queue");
@@ -647,7 +664,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           return json(r, r.ok ? 200 : r.code === "not_available" ? 404 : 502);
         }, ["safety"]),
         POST: guard(async (req, u, app) => {
-          const b = await req.json().catch(() => null) as { queue?: unknown; id?: unknown; decision?: unknown; reason?: unknown } | null;
+          const b = await req.json().catch(() => null) as { queue?: unknown; id?: unknown; decision?: unknown; reason?: unknown; photoReviewed?:unknown } | null;
           const reason = typeof b?.reason === "string" ? b.reason.trim().slice(0, 500) : "";
           if (!b || (b.queue !== "leak" && b.queue !== "relay") || typeof b.id !== "string" || !b.id || b.id.length > 300 || (b.decision !== "release" && b.decision !== "reject")) {
             return json({ ok: false, error: "queue (leak or relay), id and decision (release or reject) are required", code: "bad_action" }, 400);
@@ -655,10 +672,14 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           if (reason.length < PERSON_REASON_MIN) return json({ ok: false, error: `a reason (at least ${PERSON_REASON_MIN} characters) is required`, code: "reason_required" }, 400);
           const src = await source(mode, app);
           if (!src.heldDecision) return json({ ok: false, error: "held texts exist on real data only", code: "real_only" }, 404);
+          const photo=b.queue==="relay"&&b.id.startsWith("pri_");
+          const preview=photo?photoPreviews.get(revealKey(u,app,`relay-photo:${b.id}`)):undefined;
+          if(photo&&b.decision==="release"&&(b.photoReviewed!==true||!preview||preview.until<=Date.now()))return json({ok:false,error:"Load and review this selected photo before releasing it.",code:"photo_preview_required"},409);
           const target = { targetType: "case" as const, targetId: `${b.queue}:${b.id}` };
           const no = await record(u, app, { action: `held_${b.decision}`, ...target, ok: true, reason, detail: { phase: "requested", queue: b.queue } });
           if (no) return no;
-          const r = await src.heldDecision(b.queue, b.id, b.decision, reason, u.id);
+          const r = await src.heldDecision(b.queue, b.id, b.decision, reason, u.id, photo&&b.decision==="release"?preview!.token:undefined);
+          if(photo&&r.ok)photoPreviews.delete(revealKey(u,app,`relay-photo:${b.id}`));
           await record(u, app, { action: `held_${b.decision}`, ...target, ok: r.ok, detail: { phase: "result", queue: b.queue, ...(r.code ? { code: r.code } : {}) } });
           return json(r, r.ok ? 200 : r.code === "service_missing" ? 404 : 409);
         }, ["safety"]),

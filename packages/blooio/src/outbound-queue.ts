@@ -31,6 +31,7 @@
 //  - Delivery receipts (Blooio webhooks) move a row to delivered, read or failed. Statuses never go back.
 //  - A row to someone who is not a member keeps the address and the text only until it ends.
 import { createHash } from "node:crypto";
+import { parseApprovedRelayPhotos, type ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import type { SQL } from "bun";
 import { DAY, HOUR, MINUTE } from "../../core/src/clock.ts";
 import { LeakGuard } from "../../core/src/guard.ts";
@@ -72,6 +73,8 @@ export interface EnqueueInput {
   text: string;
   /** HTTPS links to attachments (photos). Blooio fetches them. */
   mediaUrls?: string[];
+  /** Immutable approved selections, never temporary provider URLs. */
+  approvedPhotos?: ApprovedRelayPhoto[];
   oppId?: string;
   timeZone?: string;
   /** The member's city: its zone is the fallback for quiet hours. */
@@ -88,6 +91,7 @@ export interface QueueRow {
   kind: MessageKind;
   text: string;
   mediaUrls: string[];
+  approvedPhotos?: ApprovedRelayPhoto[];
   oppId?: string;
   timeZone: string;
   status: string;
@@ -190,8 +194,9 @@ const PROVIDER_RANK: Record<string, number> = { accepted: 1, queued: 1, sent: 2,
 /** Statuses that did not go out: their person-cap slot goes back. */
 export const NOT_SENT = /^(refused|suppressed|blocked|parked|failed|expired|dropped)/;
 
-const fingerprint = (to: string, text: string, media: string[], kind: string) =>
-  createHash("sha256").update(JSON.stringify([to, text, media, kind])).digest("hex");
+const fingerprint = (to: string, text: string, media: string[], kind: string, photos?: ApprovedRelayPhoto[]) =>
+  // Retain legacy text/media fingerprints; approved selections additionally bind their full immutable payload.
+  createHash("sha256").update(JSON.stringify(photos?.length ? [to, text, media, kind, photos] : [to, text, media, kind])).digest("hex");
 const ms = (v: unknown) => (v == null ? undefined : new Date(v as string).getTime());
 
 /** One drain at a time per line and connection pool (the advisory lock covers other pools and processes). */
@@ -221,9 +226,13 @@ export class OutboundQueue {
       const to = normalizeAddress(i.to);
       const media = i.mediaUrls ?? [];
       if (media.length > 10 || media.some(u => !/^https:\/\/[^\s]+$/.test(u))) throw new Error(`outbound ${i.id}: attachments must be at most 10 https links`);
+      const photos = i.approvedPhotos?.length ? parseApprovedRelayPhotos(i.approvedPhotos) : undefined;
+      if (i.approvedPhotos !== undefined && (!photos || media.length || !i.id.startsWith("relay:") || !i.memberId || !i.oppId
+        || photos.some(p => p.app !== this.app || p.itemId !== i.id.slice(6) || p.threadId !== i.oppId || p.recipientMemberId !== i.memberId)))
+        throw new Error(`outbound ${i.id}: invalid approved photo scope`);
       const agent = isAgentInitiated(i.kind);
       const zone = resolveTimeZone(i.timeZone, i.city);
-      const fp = fingerprint(to, i.text, media, i.kind);
+      const fp = fingerprint(to, i.text, media, i.kind, photos);
       // An agent-initiated message whose local time cannot be computed is parked, never sent at night.
       const status = agent && !zone ? "parked_invalid_timezone" : "pending";
       const row = {
@@ -233,6 +242,7 @@ export class OutboundQueue {
       };
       const wrote = await tx`insert into platform.outbound ${tx(row)} on conflict (id) do nothing returning id`;
       if (wrote.length) {
+        if (photos) await tx`update platform.outbound set approved_photos=${{photos}}::jsonb->'photos' where id=${i.id} and app_id=${this.app}`;
         if (status !== "pending") this.o.onAlert?.(i.id, "invalid_timezone");
         continue;
       }
@@ -294,9 +304,12 @@ export class OutboundQueue {
   }
 
   private rowOf(r: any): QueueRow {
+    const photos = Array.isArray(r.approved_photos) && r.approved_photos.length ? parseApprovedRelayPhotos(r.approved_photos) : undefined;
+    if (r.approved_photos != null && (!Array.isArray(r.approved_photos) || r.approved_photos.length && !photos))
+      throw new Error("Invalid persisted approved photos");
     return {
       id: r.id, app: r.app_id, memberId: r.member_id ?? undefined, line: r.line, to: r.to_address, kind: r.kind, text: r.body ?? "",
-      mediaUrls: r.media_urls ?? [], oppId: r.opportunity_id ?? undefined, timeZone: r.time_zone, status: r.status, attempts: r.attempts,
+      mediaUrls: r.media_urls ?? [], ...(photos ? {approvedPhotos:photos} : {}), oppId: r.opportunity_id ?? undefined, timeZone: r.time_zone, status: r.status, attempts: r.attempts,
       createdAt: ms(r.created_at)!, inDoubt: r.in_doubt, personCap: r.person_cap, newConversation: r.new_conversation, reengagement: r.reengagement,
       ...(r.leak_released_by ? { leakReleased: true } : {}),
     };
@@ -479,7 +492,7 @@ export class OutboundQueue {
       const claimed = await tx`update platform.outbound set status='sending',attempts=attempts+1,lease_owner=${this.instance},
         lease_until=${new Date(start+this.opt("leaseMs",5*MINUTE))},updated_at=${new Date(start)},new_conversation=${isNew},reengagement=${reengagement}
         where id=${row.id} and app_id=${row.app} and line=${this.line} and status=${row.status} and lease_until is null
-        and to_address=${row.to} and body=${row.text} and fingerprint=${fingerprint(row.to,row.text,row.mediaUrls,row.kind)} returning id`;
+        and to_address=${row.to} and body=${row.text} and fingerprint=${fingerprint(row.to,row.text,row.mediaUrls,row.kind,row.approvedPhotos)} returning id`;
       if (claimed.length) return "admitted";
       // Another worker claimed or ended the row since this drain read it: leave it to that worker.
       const [now] = await tx`select status,lease_until from platform.outbound where id=${row.id}`;
@@ -518,7 +531,7 @@ export class OutboundQueue {
 
   private request(row: QueueRow): SendRequest {
     return {from:this.line,to:row.to,text:row.text,...(row.mediaUrls.length?{mediaUrls:row.mediaUrls}:{}),idempotencyKey:`tn:${row.id}`,
-      context:{id:row.id,app:row.app,memberId:row.memberId??null,kind:row.kind}};
+      context:{id:row.id,app:row.app,memberId:row.memberId??null,kind:row.kind,...(row.approvedPhotos?.length?{approvedPhotos:row.approvedPhotos}:{})}};
   }
 
   /** Commit only an extant immutable row. The person lock is shared with canonical erasure. */
@@ -537,7 +550,7 @@ export class OutboundQueue {
         note=${receipt.replayed?"idempotent replay":null},delivered_at=${status==="delivered"||status==="read"?at:null},
         ended_at=${status==="delivered"||status==="read"||status==="failed"?at:null}
         where id=${row.id} and app_id=${row.app} and line=${this.line} and status in ('sending','unknown_acceptance')
-        and to_address=${row.to} and body=${row.text} and fingerprint=${fingerprint(row.to,row.text,row.mediaUrls,row.kind)} returning id`;
+        and to_address=${row.to} and body=${row.text} and fingerprint=${fingerprint(row.to,row.text,row.mediaUrls,row.kind,row.approvedPhotos)} returning id`;
       if (!wrote.length) return false;
       if (status!=="failed") {
         const unanswered=row.kind==="compliance"?0:1;

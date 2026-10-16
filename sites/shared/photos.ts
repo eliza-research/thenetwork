@@ -64,16 +64,20 @@ export function mountPhotos(box: HTMLElement): void {
   const consent = box.querySelector<HTMLInputElement>("input[data-photo-consent]")!;
   const input = box.querySelector<HTMLInputElement>("input[type=file][data-photo-file]")!;
   let version = "";
+  let generation = 0;
   const say = (t: string) => { status.textContent = t; };
   const why = (b: any) => TEXT[String(b?.error ?? "")] ?? "Something went wrong. Nothing was changed. Please try again.";
 
   async function load(): Promise<void> {
-    const [c, mine] = await Promise.all([get("/api/photos/consent"), get("/api/photos")]);
-    // Photos off, not signed in, or no person yet: the section stays hidden.
-    if (c.status !== 200 || mine.status === 401 || mine.status === 503) { box.hidden = true; return; }
+    const g = ++generation;
+    const [c, mine, relay] = await Promise.all([get("/api/photos/consent"), get("/api/photos"), get("/api/relay-photos/options")]);
+    if (g !== generation) return;
+    const selections = relay.status === 200 && Array.isArray(relay.body.selections) ? relay.body.selections as { itemId: string; photoId: string; state: string; expiresAt: number }[] : [];
+    // Own cancellation survives policy/storage withdrawal and loss of upload eligibility.
+    if (c.status !== 200 || (mine.status !== 200 && !selections.length)) { box.hidden = true; return; }
     // Not allowed to add photos here (under 18 or unknown age, a ban, an app that takes none) and nothing
     // left to delete: the section stays hidden, so a minor never sees the consent text or the upload control.
-    if (mine.status !== 200 || (mine.body.eligible !== true && !(mine.body.photos ?? []).length)) { box.hidden = true; return; }
+    if (mine.body.eligible !== true && !(mine.body.photos ?? []).length && !selections.length) { box.hidden = true; return; }
     box.hidden = false;
     version = String(c.body.version ?? "");
     consentText.textContent = String(c.body.text ?? "");
@@ -95,9 +99,66 @@ export function mountPhotos(box: HTMLElement): void {
         await load();
       });
       li.append(label, " ", del);
+      // Closed by default. Only an approved item-review policy returns these options.
+      if (relay.status === 200 && relay.body.enabled === true && Array.isArray(relay.body.threads) && relay.body.threads.length && !selections.some(s => s.photoId === p.id && (s.state === "pending" || s.state === "approved"))) {
+        const choose = document.createElement("select");
+        choose.setAttribute("aria-label", `Share photo ${i + 1} with a match`);
+        choose.add(new Option("Choose a match", ""));
+        for (const thread of relay.body.threads) choose.add(new Option(String(thread.label), String(thread.id)));
+        const notice = document.createElement("label"), agree = document.createElement("input"), words = document.createElement("span");
+        agree.type = "checkbox"; agree.disabled = true;
+        notice.append(agree, words);
+        const send = document.createElement("button"); send.type = "button"; send.textContent = "Request photo sharing"; send.disabled = true;
+        choose.addEventListener("change", () => {
+          requestNonce = "";
+          agree.checked = false; agree.disabled = !choose.value; send.disabled = true;
+          words.textContent = choose.value ? String(relay.body.notice).replaceAll("{{recipient}}", choose.selectedOptions[0]!.textContent ?? "") : "";
+        });
+        let requestNonce = "";
+        agree.addEventListener("change", () => {
+          send.disabled = !agree.checked || !choose.value;
+          if (agree.checked && choose.value) {
+            const key = JSON.stringify(["photo-relay", relay.body.accountView, p.id, choose.value, relay.body.version]);
+            try {
+              const terminal = selections.filter(s => s.photoId === p.id && (s.state === "revoked" || s.state === "rejected" || s.state === "expired")).map(s => s.itemId).sort().join(",");
+              const retained = JSON.parse(sessionStorage.getItem(key) ?? "null") as { nonce?: string; terminal?: string } | null;
+              requestNonce = retained?.terminal === terminal && typeof retained.nonce === "string" ? retained.nonce : crypto.randomUUID();
+              sessionStorage.setItem(key, JSON.stringify({ nonce: requestNonce, terminal }));
+            } catch { requestNonce ||= crypto.randomUUID(); }
+          }
+        });
+        send.addEventListener("click", async () => {
+          if (g !== generation || !agree.checked || !choose.value) return;
+          send.disabled = true;
+          const result = await post("/api/relay-photos/select", JSON.stringify({ photoId: p.id, threadId: choose.value, noticeVersion: relay.body.version, consent: true }), { "content-type": "application/json", "x-photo-account": String(relay.body.accountView), "idempotency-key": requestNonce });
+          if (g !== generation) return;
+          agree.checked = false;
+          say(result.status === 200 ? "Your selected photo is waiting for a safety review. It has not been sent." : result.status === 409 ? "Your account changed. Refresh before choosing a photo." : "This photo cannot be shared right now.");
+          // A reload discovers the persisted selection even when the POST response was lost.
+          await load();
+        });
+        li.append(document.createElement("br"), choose, notice, send);
+      }
       return li;
     }));
-    if (!items.length) { const li = document.createElement("li"); li.className = "muted"; li.textContent = "No photos yet."; list.append(li); }
+    for (const selected of selections) {
+      const li = document.createElement("li");
+      li.textContent = selected.state === "pending" ? "Selected photo: waiting for a safety review. " : selected.state === "approved" ? "Selected photo: approved for sharing. " : selected.state === "expired" ? "Photo-sharing permission expired." : "Photo sharing canceled.";
+      if (selected.state === "pending" || selected.state === "approved") {
+        const cancel = document.createElement("button"); cancel.type = "button"; cancel.textContent = "Cancel photo sharing";
+        cancel.addEventListener("click", async () => {
+          if (g !== generation) return;
+          cancel.disabled = true;
+          const stopped = await post("/api/relay-photos/revoke", JSON.stringify({ itemId: selected.itemId }), { "content-type": "application/json", "x-photo-account": String(relay.body.accountView) });
+          if (g !== generation) return;
+          say(stopped.status === 200 ? "Photo sharing canceled." : stopped.status === 409 ? "Your account changed. Refresh before canceling." : "Could not cancel. Refresh and try again.");
+          await load();
+        });
+        li.append(cancel);
+      }
+      list.append(li);
+    }
+    if (!items.length && !selections.length) { const li = document.createElement("li"); li.className = "muted"; li.textContent = "No photos yet."; list.append(li); }
   }
 
   input.addEventListener("change", async () => {
@@ -120,6 +181,7 @@ export function mountPhotos(box: HTMLElement): void {
 
   // Only for a member of this app (the settings page sends its GET /api/me answer with the event).
   box.closest("[data-settings]")?.addEventListener("account", e => {
+    ++generation; list.replaceChildren(); consent.checked = false; status.textContent = "";
     if ((e as CustomEvent<{ membership: unknown } | undefined>).detail?.membership) void load(); else box.hidden = true;
   });
 }

@@ -38,7 +38,8 @@ export interface DataSource {
    * a member under 18, or with an unknown age, is left out. Absent: the simulation has none here.
    */
   held?(queue: HeldQueue, actor: string): Promise<{ ok: true; items: HeldText[] } | { ok: false; code: string; error: string }>;
-  heldDecision?(queue: HeldQueue, id: string, decision: "release" | "reject", reason: string, actor: string): Promise<ControlResult>;
+  heldPhoto?(id:string,actor:string,reason:string):Promise<Response>;
+  heldDecision?(queue: HeldQueue, id: string, decision: "release" | "reject", reason: string, actor: string, photoReviewToken?:string): Promise<ControlResult>;
   /** Outbound agent messages and system events only; never what a member wrote (gap 18). */
   search(q: string, limit?: number): Promise<SearchHit[]>;
   /** Deltas pushed as the source changes (about 4 per second while anything changes). */

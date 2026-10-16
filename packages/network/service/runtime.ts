@@ -33,8 +33,11 @@ import { appWiring, type AppWiring } from "./packs.ts";
 import { BlooioAdapter, DryRunAdapter, WAITING_STATUSES, type ChannelAdapter, type Delivery, type Outbound } from "./channel.ts";
 import { normalizeAddress } from "../../blooio/src/phone.ts";
 import type { InboundTurn, CollectedReply } from "./inbox.ts";
-import type { TurnContext } from "../../core/src/svc/contract.ts";
+import { parseApprovedRelayPhotos, type TurnContext } from "../../core/src/svc/contract.ts";
 import { canBeMatched } from "../../core/src/policy.ts";
+import type { PhotoRelayService } from "../../platform/src/photo-relay.ts";
+import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
+import { isDeepStrictEqual } from "node:util";
 import type { Accounts } from "../../platform/src/accounts.ts";
 import { outputLeaks } from "../../mcp/src/leaks.ts";
 // The Observatory's event shape and run summaries, so the console reads what this writes.
@@ -73,6 +76,9 @@ export interface RuntimeHost {
   log: (line: string) => void;
   conversationCities?(rt: NetworkRuntime): readonly string[];
   accounts?: Pick<Accounts, "activeMembership" | "lowestAge" | "phoneHash">;
+  photoRelay?: PhotoRelayService;
+  /** Canonical read checks inside an existing admission transaction, without another pool lease. */
+  accountsFor?(tx: SQL): Pick<Accounts, "activeMembership" | "lowestAge" | "phoneHash">;
   inboundTurn?(): InboundTurn | undefined;
   collectReplies?(tx: SQL, replies: CollectedReply[]): Promise<void>;
   /** Proactive sends of this batch the person-level daily cap refuses (ids). Called before delivery. */
@@ -196,11 +202,13 @@ export class NetworkRuntime {
   async relayParties(ids: MemberId[], tx?: SQL): Promise<Map<MemberId, RelayCanonical>> {
     const out = new Map<MemberId, RelayCanonical>();
     if (!ids.length) return out;
-    const read = (t: SQL) => t`select id,person_id,account_status,opted_out from network.members where app_id=${this.app.id} and id in ${t(ids)}`;
+    const read = (t: SQL) => t`select m.id,m.person_id,m.account_status,m.opted_out,
+      (select p.e164 from platform.phone_identities p where p.person_id=m.person_id order by p.e164 limit 1) as e164
+      from network.members m where m.app_id=${this.app.id} and m.id in ${t(ids)}`;
     const rows = (tx ? await read(tx) : await this.scoped(read)) as Row[];
-    const accounts = this.host.accounts;
+    const accounts = tx ? this.host.accountsFor?.(tx) ?? this.host.accounts : this.host.accounts;
     for (const id of ids) {
-      const r = rows.find(x => x.id === id), e164 = this.addressOf(id);
+      const r = rows.find(x => x.id === id), e164 = r?.e164 as string | undefined;
       let bound = false, adult = false;
       if (accounts && r?.person_id && e164) {
         const binding = await accounts.activeMembership(this.app, { e164, personId: r.person_id as string });
@@ -221,7 +229,7 @@ export class NetworkRuntime {
    * The stored state is read FOR SHARE, so a unit that closes the match either commits first (and is seen
    * here) or waits for this admission.
    */
-  async relayAdmission(tx: SQL, row: { id: string; memberId?: string | null; oppId?: string }): Promise<RecipientCheck> {
+  async relayAdmission(tx: SQL, row: { id: string; memberId?: string | null; oppId?: string; approvedPhotos?: ApprovedRelayPhoto[] }): Promise<RecipientCheck> {
     const no = (reason: string): RecipientCheck => ({ ok: false, reason });
     const id = /^relay:([^:]+)(:ask)?$/.exec(row.id);
     if (!id || !row.memberId) return no("relay:unknown");
@@ -241,6 +249,22 @@ export class NetworkRuntime {
       if (row.oppId && row.oppId !== matchId) return no("relay:pair");
     }
     if (!from || !matchId) return no("relay:pair");
+    const pair = await this.relayPairAdmission(tx, state, from, to, matchId);
+    if (!pair.ok) return pair;
+    if (row.approvedPhotos?.length) {
+      if (row.approvedPhotos.length!==1 || !this.host.photoRelay) return no("photo:unavailable");
+      const photo=row.approvedPhotos[0]!;
+      if (photo.itemId!==id[1] || photo.app!==app || photo.threadId!==matchId || photo.senderMemberId!==from || photo.recipientMemberId!==to)
+        return no("photo:scope");
+      const current=await this.host.photoRelay.approved(photo.itemId,tx);
+      if (!current || !isDeepStrictEqual(current,photo)) return no("photo:revoked");
+    }
+    return {ok:true};
+  }
+
+  private async relayPairAdmission(tx: SQL, state: NetworkState, from: MemberId, to: MemberId, matchId: string): Promise<RecipientCheck> {
+    const no = (reason: string): RecipientCheck => ({ ok: false, reason });
+    const app = this.app.id;
     const why = relayDispatchCheck(state, { matchId, from, to, now: this.clock.now() });
     if (why) return no(why);
     const [blocked] = await tx`select 1 as b from network.edges where app_id=${app} and type='blocked'
@@ -254,6 +278,32 @@ export class NetworkRuntime {
       if (c.held) return no("party:held");
     }
     return { ok: true };
+  }
+
+  /** Current canonical parties for a selected photo; no participant or phone is selected by the model. */
+  async relayPhotoParties(input: { app: AppInfo["id"]; threadId: string; senderPersonId: string }, transaction?: SQL): Promise<{
+    senderPersonId: string; senderMemberId: string; recipientPersonId: string; recipientMemberId: string;
+  } | undefined> {
+    if (input.app !== this.app.id) return;
+    const read = async (tx: SQL) => {
+      await tx`select set_config('app.app_id', ${this.app.id}, true)`;
+      // This lookup can run under the photo item's lock. Do not take the inverse
+      // network_state lock order; the outbound queue owns its final shared lock.
+      const [saved] = await tx`select state from network.network_state where id=${this.pg.id}`;
+      if (!saved?.state) return;
+      const state = (typeof saved.state === "string" ? JSON.parse(saved.state) : saved.state) as NetworkState;
+      const op = state.opps.find(o => o.id === input.threadId);
+      if (!op || op.participants.length !== 2) return;
+      const rows = await tx`select id,person_id from network.members where app_id=${this.app.id} and id in ${tx(op.participants)}`;
+      const sender = rows.find((r: Row) => r.person_id === input.senderPersonId);
+      const recipient = rows.find((r: Row) => r.id !== sender?.id);
+      if (!sender?.person_id || !recipient?.person_id || recipient.person_id === sender.person_id) return;
+      const allowed = await this.relayPairAdmission(tx, state, sender.id as MemberId, recipient.id as MemberId, op.id);
+      if (!allowed.ok) return;
+      return { senderPersonId: sender.person_id as string, senderMemberId: sender.id as string,
+        recipientPersonId: recipient.person_id as string, recipientMemberId: recipient.id as string };
+    };
+    return transaction ? read(transaction) : this.scoped(read);
   }
 
   /** A transaction for this app: row-level security (network_service) shows and accepts this app's rows only. */
@@ -359,6 +409,8 @@ export class NetworkRuntime {
       send: (memberId, body, o) => {
         const t = this.clock.now();
         const meta = o?.meta ?? {};
+        const approvedPhotos = meta.approvedPhotos === undefined ? undefined : parseApprovedRelayPhotos(meta.approvedPhotos);
+        if (meta.approvedPhotos !== undefined && !approvedPhotos) throw new Error("Invalid deferred approved photo payload");
         const id = o?.idempotencyKey ?? `${memberId}:${t}:${this.nonce}${++this.seq}`;
         const turn = this.host.inboundTurn?.();
         const causal = turn?.app === this.app.id && turn.memberId === memberId && o?.reply === true
@@ -370,6 +422,7 @@ export class NetworkRuntime {
           // re-engagement or a check-in), so the queue's quiet hours and caps still apply to those.
           kind: o?.reply && (causal || this.replyingTo === memberId) ? "reply" : meta.proactive ? "proactive" : "transactional",
           // A probe names its opportunity only in meta.probe (anonymous to the member); the row links it either way.
+          ...(approvedPhotos ? { approvedPhotos } : {}),
           type: meta.type, oppId: meta.proposalId ?? meta.probe?.key, proactive: !!meta.proactive, system: false, ts: t,
         });
         return { id, ts: t, direction: "outbound", channel: "imessage", from: "network", to: memberId, memberId, body, status: causal ? "collected" : "delivered", meta } satisfies SimMessage;

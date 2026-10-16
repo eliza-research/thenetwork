@@ -287,7 +287,7 @@ interface MemberState {
   /** Venues suggested to this member (venue id -> when), so a repeat ask gets new ideas or nothing. */
   suggested: Map<string, number>;
   /** The last text sent to this member (the duplicate check in send()). */
-  lastSent?: { body: string; at: number };
+  lastSent?: { body: string; at: number; photoItemId?: string };
   /** Standing availability said at onboarding ("weekends, mostly"): availability tags that do not expire (plans ask 1). */
   standing?: { tags: string[]; at: number };
   /** This week's stated windows from the weekly check-in answer, and the activities named in it. */
@@ -3927,7 +3927,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     // Never the same text to one member twice within 10 minutes (the judge's duplicate_send rule).
     // Only plain texts are skipped; a send that changes state (onSent) is never silently dropped.
-    if (!fns.onSent && m.lastSent?.body === text && now - m.lastSent.at < DUPLICATE_WINDOW) {
+    if (!fns.onSent && m.lastSent?.body === text && now - m.lastSent.at < DUPLICATE_WINDOW
+      && (!Array.isArray(meta.approvedPhotos) || !meta.approvedPhotos.length || m.lastSent.photoItemId === (meta.approvedPhotos[0] as {itemId:string}).itemId)) {
       this.ctx.log("send_skipped", { memberId: m.id, kind, reason: "duplicate" });
       return "refused";
     }
@@ -3947,7 +3948,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.ctx.send(m.id, text, { meta, idempotencyKey: o.key ?? `${m.id}:${++this.seq}`, reply });
     m.pendingAck = undefined;
     if (note || (m.note && now - m.note.at >= 7 * DAY)) m.note = undefined;
-    m.lastSent = { body: text, at: now };
+    m.lastSent = { body: text, at: now, ...(Array.isArray(meta.approvedPhotos) && meta.approvedPhotos.length ? {photoItemId:(meta.approvedPhotos[0] as {itemId:string}).itemId} : {}) };
     fns.onSent?.();
     return "sent";
   }
@@ -4771,8 +4772,11 @@ export class ConsentNetwork implements NetworkUnderTest {
       send: (to, body, o) => {
         const m = this.members.get(to);
         if (!m) return "refused";
+        if (o.photoIds?.length && (!o.approvedPhotos?.length || o.photoIds.length !== o.approvedPhotos.length
+          || o.photoIds.some((id, i) => id !== o.approvedPhotos![i]!.photoId))) return "refused";
         this.dirty = true;
-        const r = this.send(m, body, { type: "relay", proposalId: o.matchId }, "relay", { about: [o.from], key: o.key, relayFrom: o.from, ...(o.contact ? { relayContact: o.contact } : {}) });
+        const r = this.send(m, body, { type: "relay", proposalId: o.matchId,
+          ...(o.approvedPhotos?.length ? { approvedPhotos: o.approvedPhotos } : {}) }, "relay", { about: [o.from], key: o.key, relayFrom: o.from, ...(o.contact ? { relayContact: o.contact } : {}) });
         return r === "sent" ? "sent" : r === "deferred" ? "deferred" : "refused";
       },
     };

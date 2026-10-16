@@ -2,7 +2,7 @@
 // member requests, the PRD 28.2 scorecard and growth, the configuration (matching switch, history,
 // audit log), the simulation lab and run diff. Each one checks the role before it shows a control;
 // the server checks it again.
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { AuditEntry, BiasReportView, HeldQueue, HeldText, ConfigInfo, DiffNum, EngineRunSummary, LabArm, LabRun, ObsRequest, ObsSafetyCase, RunDiff, SafetyAction, SafetyInfo, SafetyReport, ScoreMetric } from "../src/types.ts";
 import { store, useStore } from "./store.ts";
 import { Badge, Countdown, dur, humanize, Kpi, MemberLink, num, OppLink, pct, Section, stamp } from "./ui.tsx";
@@ -131,9 +131,22 @@ function HeldTexts() {
 function HeldRow({ x, onDone }: { x: HeldText; onDone(): void }) {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
+  const scope=useStore(),photo=x.queue==="relay"&&x.kind==="photo";
+  const identity=JSON.stringify([scope.mode,scope.app,x.id,x.createdAt??null,scope.me?.id,scope.me?.grants,scope.me?.roles,scope.authEpoch,scope.authNeeded]),active=useRef(identity);active.current=identity;
+  const [preview,setPreview]=useState<string>(),[previewIdentity,setPreviewIdentity]=useState(""),[previewError,setPreviewError]=useState(""),[loading,setLoading]=useState(false),[loaded,setLoaded]=useState(false),[reviewed,setReviewed]=useState(false);
+  useEffect(()=>{active.current=identity;setPreview(undefined);setPreviewIdentity("");setLoaded(false);setReviewed(false);setPreviewError("");setLoading(false);return()=>{active.current="";};},[identity]);
+  useEffect(()=>()=>{if(preview)URL.revokeObjectURL(preview);},[preview]);
+  const loadPhoto=async()=>{
+    setLoading(true);setLoaded(false);setReviewed(false);setPreviewError("");setPreview(undefined);
+    const result=await store.heldPhoto(x.id,reason.trim());
+    if(active.current!==identity)return;
+    setLoading(false);if(result.blob){setPreviewIdentity(identity);setPreview(URL.createObjectURL(result.blob));}else setPreviewError(result.error??"The selected photo could not load. You can still reject it.");
+  };
+  const currentPreview=!!preview&&previewIdentity===identity&&!scope.authNeeded;
   const act = async (decision: "release" | "reject") => {
+    if(photo&&decision==="release"&&(!currentPreview||!loaded||!reviewed))return;
     setBusy(true);
-    const res = await store.heldDecision(x.queue, x.id, decision, reason.trim());
+    const res = await store.heldDecision(x.queue, x.id, decision, reason.trim(),photo&&currentPreview&&loaded&&reviewed);
     setBusy(false);
     if (res.data?.ok) { store.toast(decision === "release" ? "Released: every other send check runs again" : "Rejected: nothing is sent", "good"); setReason(""); onDone(); }
     else store.toast(res.data?.error ?? res.error ?? "refused", "bad");
@@ -147,12 +160,18 @@ function HeldRow({ x, onDone }: { x: HeldText; onDone(): void }) {
         <span className="muted small">{x.reasons.length ? x.reasons.join(", ") : "no reason given"}{x.createdAt ? ` · ${stamp(x.createdAt)}` : ""}</span>
       </div>
       <div className="case-body">
-        {x.textHidden ? <div className="muted small">Text not shown: a member under 18 (or with an unknown age) is involved. Reject it.</div>
+        {photo ? <div className="relay-photo-review">
+          <p className="muted small">Review only this voluntarily selected photo. Gallery access and private appearance scores are not part of this review.</p>
+          {store.can("safety")&&<button className="btn ghost" disabled={!ok||loading||!!x.textHidden} onClick={loadPhoto}>{loading?"Loading selected photo…":preview?"Reload selected photo":"Load selected photo"}</button>}
+          {currentPreview&&<img src={preview} alt="Photo selected by the sender for this matched recipient" onLoad={()=>setLoaded(true)} onError={()=>{setLoaded(false);setReviewed(false);setPreview(undefined);setPreviewError("The selected photo could not display. Try again or reject it.");}}/>}
+          {previewError&&<p role="alert" className="bad small">{previewError}</p>}
+          {currentPreview&&<label className="small"><input type="checkbox" checked={reviewed} disabled={!loaded||busy} onChange={e=>setReviewed(e.target.checked)}/> I reviewed this selected item under its consent and safety policy.</label>}
+        </div> : x.textHidden ? <div className="muted small">Text not shown: a member under 18 (or with an unknown age) is involved. Reject it.</div>
           : x.text !== undefined ? <div className="pre small">{x.text}</div> : <div className="muted small">No text.</div>}
         {store.can("safety") && (
           <div className="review-actions">
-            <input className="input grow" placeholder="Reason (logged, at least 5 characters)" value={reason} onChange={e => setReason(e.target.value)} />
-            <button className="btn" disabled={!ok || !!x.textHidden} title="Send it after every other send check runs again" onClick={() => act("release")}>Release</button>
+            <input className="input grow" placeholder="Reason (logged, at least 5 characters)" value={reason} onChange={e => {setReason(e.target.value);setReviewed(false);}} />
+            <button className="btn" disabled={!ok || !!x.textHidden || (photo&&(!currentPreview||!loaded||!reviewed))} title="Send it after every other send check runs again" onClick={() => act("release")}>Release</button>
             <button className="btn ghost" disabled={!ok} onClick={() => act("reject")}>Reject</button>
           </div>
         )}

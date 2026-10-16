@@ -15,8 +15,8 @@
 //  - A number goes out only after both members asked to swap: the first "send them my number" waits
 //    (and the other member is asked once); the second runs both shares through the engine, each with
 //    its own consent. A photo needs its own explicit send and the sender's consent to show photos to a
-//    match, which no member can give yet (Legal must approve the consent text first), so photos are
-//    refused for now.
+//    match, which no member can give yet (Legal must approve the consent text first), so photos remain
+//    refused unless that selected item has the separately approved review/consent policy.
 //  - A held item waits for staff (GET /staff/relay/held; release or reject). Its text is kept only while
 //    it is held and is dropped on the decision. A blocked item keeps no text at all.
 //  - The relay log is the engine's RelayRecord (ids, kind, decision, reason codes with leak matches as
@@ -24,6 +24,7 @@
 //    the stored state and in network.relay_records (PgStore), and survives a restart.
 // Everything here is plain JSON (exportState). Deterministic: the host passes the time.
 import type { MemberId, Owned } from "@thenetwork/core";
+import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import {
   relayGuard, relayItem, relayItemAsync, RELAY_LIMITS, RELAY_WORDING, threadMessage,
   type RelayClassifierHook, type RelayContext, type RelayItem, type RelayOpportunity, type RelayParty, type RelayRecord, type RelayResult, type RelayThreadMessage,
@@ -75,7 +76,7 @@ export interface RelayHost {
   /** The app rates photos (slop): run `appearanceLeak` on relayed text. */
   ratesPhotos: boolean;
   /** Send `body` to `to` through the Network's send path. `key` is the outbound id. "sent", "deferred" or "refused". */
-  send(to: MemberId, body: string, o: { from: MemberId; matchId: string; key: string; contact?: string }): "sent" | "deferred" | "refused";
+  send(to: MemberId, body: string, o: { from: MemberId; matchId: string; key: string; contact?: string; photoIds?: string[]; approvedPhotos?: ApprovedRelayPhoto[] }): "sent" | "deferred" | "refused";
 }
 
 /** A held item waiting for staff. `text` only while held (dropped on release or reject). */
@@ -108,7 +109,7 @@ export const emptyRelayState = (): RelayState => ({ threads: [], log: [], held: 
 
 /** A member's relay request (POST /internal/relay). The recipient is always the member's current match. */
 export interface RelayAsk {
-  /** Idempotent item id (the service derives it from the signed request id). */
+  /** Idempotent item id: signed action-derived for text, durable selected-item id for a photo. */
   itemId: string;
   from: MemberId;
   kind: RelayItem["kind"];
@@ -130,8 +131,8 @@ export interface RelayCallOptions {
   hook?: RelayClassifierHook;
   /** The member's verified contact (the person record's phone), for a number swap. Never from a message. */
   contactOf?: (id: MemberId) => string | undefined;
-  /** The sender's own photo ids and whether they may be shown to a match (no consent exists yet: false). */
-  photos?: { ids: string[]; showConsent: boolean };
+  /** The exact selected photo ids and their current per-item reviewed consent; no gallery permission. */
+  photos?: { ids: string[]; showConsent: boolean; approved?: ApprovedRelayPhoto[] };
   /**
    * The canonical owners' word on each member, read for this request (the platform consent ledger and
    * STOP, bans, phone holds, membership, the lowest known age, the member row). It can only tighten the
@@ -243,7 +244,7 @@ export class RelayDesk {
       });
       return { itemId: item.id, decision: "held", reason: res.senderNotice };
     }
-    const sent = this.deliver(res, match, item, contact);
+    const sent = this.deliver(res, match, item, o, contact);
     if (sent === "refused") { this.undelivered(res.record); return { itemId: item.id, decision: "refused", reason: NOTICE.undelivered }; }
     return { itemId: item.id, decision: "sent", reason: sent === "deferred" ? NOTICE.late : res.senderNotice };
   }
@@ -253,8 +254,8 @@ export class RelayDesk {
     this.log({ ...r, decision: "block", contactShared: false, reasons: [...new Set([...r.reasons, "send:refused"])].sort() });
   }
 
-  private deliver(res: RelayResult, match: RelayMatch, item: RelayItem, contact?: string): "sent" | "deferred" | "refused" {
-    const sent = this.host.send(item.to, res.rendered, { from: item.from, matchId: match.id, key: `relay:${item.id}`, ...(contact ? { contact } : {}) });
+  private deliver(res: RelayResult, match: RelayMatch, item: RelayItem, o: RelayCallOptions, contact?: string): "sent" | "deferred" | "refused" {
+    const sent = this.host.send(item.to, res.rendered, { from: item.from, matchId: match.id, key: `relay:${item.id}`, ...(contact ? { contact } : {}), ...(res.photos?.length ? { photoIds: res.photos, approvedPhotos: o.photos?.approved } : {}) });
     if (sent === "refused") return sent;
     const t = this.openThread(match);
     const msg = threadMessage(res);
@@ -360,7 +361,7 @@ export class RelayDesk {
     decided();
     if (!rendered) return { ok: true, delivered: false };
     const res: RelayResult = { ...again, decision: "pass", rendered, photos: again.photos, record: { ...again.record, decision: "pass", reasons: [...again.record.reasons, "staff:released"].sort() } };
-    const sent = this.deliver(res, match, item);
+    const sent = this.deliver(res, match, item, o);
     if (sent !== "refused") this.log(res.record);
     return { ok: true, delivered: sent !== "refused" };
   }

@@ -1,3 +1,5 @@
+import { readCapped } from "../../../platform/src/body.ts";
+import { sniffType, PHOTO_MAX_BYTES } from "../../../platform/src/photos.ts";
 // Real mode's write path: the Network service's staff API (packages/network/service, runbook-real
 // 6.5). The Observatory's own database login stays read-only; review decisions, safety actions and
 // the matching switch go to the service, which runs them under its lock, writes the Network's logs and
@@ -181,13 +183,29 @@ export class ServiceClient {
     } catch (e) { return { ok: false, code: "service_unavailable", error: (e as Error).message }; }
   }
 
+  /** Binary proxy for ONE selected item, carrying the authenticated reviewer and app. */
+  async heldPhoto(staff:string,id:string,reason:string):Promise<Response> {
+    if(!/^pri_[a-f0-9]{32}$/.test(id))return Response.json({error:"Invalid selected photo"},{status:400});
+    try{
+      const path=`/staff/relay/${encodeURIComponent(id)}/photo`;
+      const response=await fetch(this.url+path+(this.c.app?`?app=${encodeURIComponent(this.c.app)}`:""),{
+        redirect:"error",signal:AbortSignal.timeout(this.c.timeoutMs??15_000),
+        headers:{authorization:`Bearer ${this.c.token}`,[STAFF_HEADER]:staff,...(this.c.app?{[APP_HEADER]:this.c.app}:{}),[REASON_HEADER]:reason.replace(/[\r\n]+/g," ").slice(0,500)}});
+      if(!response.ok){await response.body?.cancel();return Response.json({error:"The selected photo is unavailable. You can still reject it."},{status:response.status===403||response.status===404?response.status:502});}
+      const type=response.headers.get("content-type"),token=response.headers.get("x-network-photo-review-token");
+      const bytes=await readCapped(response,PHOTO_MAX_BYTES);
+      if(bytes==="too_large"||!bytes.length||sniffType(bytes)!==type||!token||!/^[1-9]\d{0,15}\.[a-f0-9]{64}$/.test(token))return Response.json({error:"The selected photo could not be verified. You can still reject it."},{status:502});
+      return new Response(bytes,{headers:{"content-type":type!,"cache-control":"no-store","x-content-type-options":"nosniff","x-network-photo-review-token":token}});
+    }catch{return Response.json({error:"The selected photo could not load. Try again or reject it."},{status:502});}
+  }
+
   /** Release or reject one held text, with the staff member's reason (5+ characters). */
-  heldDecision(staff: string, queue: HeldQueue, id: string, decision: "release" | "reject", reason: string): Promise<ControlResult> {
+  heldDecision(staff: string, queue: HeldQueue, id: string, decision: "release" | "reject", reason: string, photoReviewToken?:string): Promise<ControlResult> {
     const e = encodeURIComponent(id);
     return queue === "leak"
       ? this.act(`/queue/leak-review/${e}`, staff, { decision: decision === "reject" ? "drop" : "release", reason }, HELD_ERRORS)
       // The service reads the reason as `note` (and accepts `reason`): it reaches the audit row.
-      : this.act(`/staff/relay/${e}/${decision}`, staff, { reason, note: reason }, HELD_ERRORS);
+      : this.act(`/staff/relay/${e}/${decision}`, staff, { reason, note: reason, ...(photoReviewToken?{photoReviewToken}:{}) }, HELD_ERRORS);
   }
 
   /** The weekly bias monitor reports of the app's network, newest first (GET /bias; admin or analyst). */

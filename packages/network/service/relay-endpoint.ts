@@ -20,8 +20,8 @@
 // engine's `rendered` text, through the outbound queue ("relay:<item>", Cloud deliver kind "relay"). The
 // canonical owners' word on both members (consent ledger and STOP, bans, holds, membership, the lowest
 // age) tightens the desk's view for the request, and the queue reads the match and both members again at
-// final dispatch (runtime.ts relayAdmission). Photos are not on this wire (no attachment in Cloud's
-// DeliverRequest), so a photo request is refused.
+// final dispatch (runtime.ts relayAdmission). A photo request may consume only the unique current
+// selected, consented and reviewed item for that pair; no URL or gallery permission comes from the model.
 //
 // The action receipt, the relay log, the messages and the queued rows commit in one transaction (the
 // unit's save). `delivered` is true only for a pass whose outbound row Cloud accepted with provider ids
@@ -34,6 +34,7 @@ import { RELAY_PATH, type RelaySendResponse } from "../../core/src/svc/contract.
 import { svcVerify } from "../../core/src/svc/svc-auth.ts";
 import { isAppId, type AppId } from "../../platform/src/apps.ts";
 import { readCapped } from "../../platform/src/body.ts";
+import type { PhotoRelayService } from "../../platform/src/photo-relay.ts";
 import type { Accounts } from "../../platform/src/accounts.ts";
 import { readFileSync } from "node:fs";
 import { clefRelayClassifierFromEnv, DEFAULT_RELAY_CLEF_WEIGHTS, validateRelayClefWeights, type RelayClefWeights } from "../../engine/src/relayClef.ts";
@@ -64,6 +65,7 @@ export interface RelayEndpointDeps {
   secret: string | undefined;
   routePolicy?: NetworkRoutePolicy;
   accounts: Accounts;
+  photos?: PhotoRelayService;
   runtimeFor(app: AppId): NetworkRuntime | undefined;
   /** The network ('<app>:<city>') this member belongs to; falls back to runtimeFor(app) when absent. */
   runtimeOfMember?(app: AppId, memberId: string): Promise<NetworkRuntime | undefined>;
@@ -213,27 +215,41 @@ export async function relayEndpoint(d: RelayEndpointDeps, req: Request): Promise
         // The turn's own message may already have withdrawn it (network.ts); either way nothing of theirs is pending.
         net.relayCancelSwap(memberId as MemberId);
         const r: StoredRelay = { decision: "none", notice: NOTICE.withdrawn };
-        rt.unit.completeAction = async tx => { await lock(tx); await complete(tx, r); };
+        rt.unit.completeAction = async tx => { await lock(tx); await complete(tx,r); };
         return r;
       });
-    } else if (request.kind === "none" || request.kind === "photo") {
-      // Nothing to relay ("none"), or a photo, which this wire cannot carry: the receipt alone.
-      result = request.kind === "none" ? { decision: "none", notice: "" } : { decision: "block", notice: NOTICE.photo };
+    } else if (request.kind === "none") {
+      // Nothing to relay: persist only the action receipt.
+      result = { decision: "none", notice: "" };
       await d.sql.begin(async tx => { await lock(tx); await complete(tx, result); });
     } else {
-      const key = `r_${receipt.slice(0, 32)}`;
+      let key = `r_${receipt.slice(0, 32)}`;
       result = await rt.unitOfWork(async net => {
         // The canonical owners' word on both members of the match the desk will pick (fails closed).
         const match = net.relayMatch(memberId as MemberId, itemId ?? undefined);
         const canonical = match ? await rt.relayParties([...match.participants]) : undefined;
+        const photo = request.kind === "photo" && match ? await d.photos?.approvedForParty(app, match.id, memberId) : undefined;
+        if (request.kind === "photo" && !photo) {
+          const r: StoredRelay = {decision:"block",notice:NOTICE.photo};
+          rt.unit.completeAction = async tx => {await lock(tx);await complete(tx,r);};
+          return r;
+        }
+        if (photo) key = photo.itemId;
         const hook = d.hookFor?.(app);
         const outcome = await net.relayRequest(
-          { itemId: key, from: memberId as MemberId, kind: request.kind, ...(request.kind === "text" ? { text: request.body } : {}), ...(itemId !== null ? { matchId: itemId } : {}) },
-          { ...(hook ? { hook } : {}), contactOf: id => rt.addressOf(id), ...(canonical ? { canonical } : {}) },
+          { itemId: key, from: memberId as MemberId, kind: request.kind, ...(photo ? {photoIds:[photo.photoId]} : {}), ...(request.kind === "text" ? { text: request.body } : {}), ...(itemId !== null ? { matchId: itemId } : {}) },
+          { ...(photo ? {photos:{ids:[photo.photoId],showConsent:true,approved:[photo]}} : {}), ...(hook ? { hook } : {}), contactOf: id => rt.addressOf(id), ...(canonical ? { canonical } : {}) },
         );
         const r = stored(outcome);
         // Committed with the relay log, the messages and the queued rows of this unit (runtime.ts writeUnit).
-        rt.unit.completeAction = async tx => { await lock(tx); await complete(tx, r); };
+        rt.unit.completeAction = async tx => {
+          await lock(tx);
+          if (photo && r.decision === "pass") {
+            const claimed = await d.photos!.claimForAction(tx,photo.itemId,app,photo.threadId,memberId,`photo-selection:${photo.itemId}`);
+            if (!claimed || JSON.stringify(claimed)!==JSON.stringify(photo)) throw new Error("Photo selection changed before commit");
+          }
+          await complete(tx,r);
+        };
         return r;
       });
     }

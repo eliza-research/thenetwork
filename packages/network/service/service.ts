@@ -27,7 +27,7 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { SQL } from "bun";
 import { isDeepStrictEqual } from "node:util";
 import { DAY, LLMBudget, RealClock, recommenderLLM, type Clock, type City, type MemberId } from "@thenetwork/core";
-import type { ActionResult, NetworkOptions, ReviewDecision, ReviewOptions } from "../src/network.ts";
+import type { ActionResult, NetworkOptions, NetworkState, ReviewDecision, ReviewOptions } from "../src/network.ts";
 import { brandOf, copy as ntwrkCopy, copyFor, ELIZA_NOTICE, type Copy } from "../src/copy.ts";
 import { isMinor } from "@thenetwork/core";
 import { ageAnswer, agesStated } from "../src/classify.ts";
@@ -35,7 +35,7 @@ import { NetworkRuntime, type RuntimeHost } from "./runtime.ts";
 import { effectiveParticipation } from "./snapshot.ts";
 import { Inbox, type CollectedReply } from "./inbox.ts";
 import { networkRoutePolicy, routeEnvelopeAllowed, sameNetworkAuthority, type NetworkRoutePolicy } from "./route-authority.ts";
-import { TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH, type SetStateRequest, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
+import { TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH, RELAY_PHOTO_RESOLVE_PATH, parseApprovedRelayPhotos, type SetStateRequest, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
 import { SVC_MIN_SECRET, svcVerify } from "../../core/src/svc/svc-auth.ts";
 import { readCapped } from "../../platform/src/body.ts";
 import { canJoin } from "../../core/src/policy.ts";
@@ -54,6 +54,7 @@ import { otpProviderFromEnv } from "../../platform/src/otp.ts";
 import { turnstileFromEnv } from "../../platform/src/turnstile.ts";
 import type { PeerInfo } from "../../platform/src/api.ts";
 import { PHOTO_APPS, PgPhotoStore, PhotoService, photoStorageFromEnv, type PhotoRater, type PhotoStorage } from "../../platform/src/photos.ts";
+import { PhotoRelayService, PgPhotoRelayStore, type PhotoRelayPolicy, type PhotoRelayItem } from "../../platform/src/photo-relay.ts";
 import { appearanceFacet, type AppearanceScore, type RatingSubject } from "../../engine/src/packs/slop/appearance.ts";
 import { fetchMediaCapped, PhotoIntake, type PhotoIntakeDeps } from "./photoIntake.ts";
 import { BIAS_EVERY_MS, biasAlerts, biasReport, type BiasMember, type StoredBiasReport } from "./bias.ts";
@@ -171,6 +172,10 @@ export interface ServiceOptions {
   env?: Env;
   /** Photo storage (platform photos.ts). Default: PHOTO_STORAGE from the environment; null turns photos off. */
   photoStorage?: PhotoStorage | null;
+  /** Explicit approved per-item notice/reviewer authority. Ordinary runtime leaves this absent. */
+  photoRelayPolicy?: PhotoRelayPolicy;
+  /** Fixed public backend origin of selected-item capability fetches, never a model URL. */
+  photoDeliveryOrigin?: string;
   /** The relay classifier (a trusted test or simulation boundary). Default: relayClassifierFromEnv (Clef when configured, else rules only). */
   relayClassifier?: RelayClassifierHook;
   /** The appearance rater (server.ts: makeClefRaterFromEnv behind withRetry). Undefined: ratings are off; photos still work. */
@@ -282,6 +287,8 @@ export class NetworkService implements RuntimeHost {
   private readonly forgetListeners: Array<(ctx: MemberHookContext) => Promise<unknown> | unknown> = [];
   /** Private member photos (slop; verified adults only). */
   readonly photos: PhotoService;
+  readonly photoRelay: PhotoRelayService;
+  private readonly photoDeliveryOrigin?: string;
   /** Photos sent by text (photoIntake.ts). */
   readonly photoIntake: PhotoIntake;
   /** Review items already alerted for passing their app's SLA (this instance). */
@@ -351,10 +358,17 @@ export class NetworkService implements RuntimeHost {
     this.photos = new PhotoService({
       people: this.people, meta: new PgPhotoStore(this.sql), storage: o.photoStorage === null ? undefined : o.photoStorage ?? photoStorageFromEnv(this.env),
       signingKey: key, now: () => this.clock.now(), rater: o.photoRater && this.cost.meterRater(o.photoRater), log: this.log,
-      eligible: (personId, app) => this.verifiedAdult(personId, app),
-      banned: personId => this.personBanned(personId),
+      eligible: (personId, app, tx) => this.verifiedAdult(personId, app, tx),
+      banned: (personId, tx) => this.personBanned(personId, tx),
       onRating: (personId, app, score, subject) => this.writeRating(personId, app, score, subject),
       onRemoved: (personId, app) => this.dropRatings(personId, app),
+    });
+    this.photoDeliveryOrigin = o.photoDeliveryOrigin;
+    this.photoRelay = new PhotoRelayService({
+      store: new PgPhotoRelayStore(this.sql), photos: this.photos, signingKey: key, now: () => this.clock.now(),
+      ...(o.photoRelayPolicy && !this.routePolicy ? { policy: o.photoRelayPolicy } : {}),
+      authorize: (input, tx) => this.photoRelayParties(input, tx),
+      threads: (app, personId) => this.photoRelayThreads(app, personId),
     });
     this.photoIntake = new PhotoIntake({
       people: this.people, accounts: this.accounts, photos: this.photos, phoneKey: e164 => this.phoneKey(e164), now: () => this.clock.now(),
@@ -363,6 +377,47 @@ export class NetworkService implements RuntimeHost {
     });
     this.audit = o.audit ?? new PgAudit(o.auditUrl ?? o.url);
     this.inbox = new Inbox({ sql: this.sql, clock: this.clock, log: this.log, senderKey: sender => this.phoneKey(sender), handle: (ev, app) => this.inbound(ev, app && isAppId(app) ? { app } : {}) });
+  }
+
+  /** Reuse canonical account policy inside the caller's existing PostgreSQL transaction. */
+  accountsFor(tx: SQL): Accounts {
+    return new Accounts(new PgPeopleStore(tx), { hashKey: this.hashKey, now: () => this.clock.now(), env: this.env, apps: id => this.apps[id] });
+  }
+
+  private async photoRelayParties(input: { app: AppId; threadId: string; senderPersonId: string }, transaction?: SQL) {
+    if (this.routePolicy) return;
+    const read = async (tx: SQL) => {
+      await tx`select set_config('app.app_id', ${input.app}, true)`;
+      const [member] = await tx`select m.id,m.home_city from network.members m join platform.memberships p
+        on p.app_id=m.app_id and p.member_id=m.id and p.person_id=m.person_id
+        where m.app_id=${input.app} and m.person_id=${input.senderPersonId}`;
+      const rt = member && this.runtimeForHome(input.app, member.home_city as string);
+      return rt?.relayPhotoParties(input, tx);
+    };
+    return transaction ? read(transaction) : this.sql.begin(read);
+  }
+
+  private async photoRelayThreads(app: AppId, senderPersonId: string): Promise<{ id: string; label: string }[]> {
+    if (this.routePolicy) return [];
+    return this.sql.begin(async tx => {
+      await tx`select set_config('app.app_id', ${app}, true)`;
+      const [member] = await tx`select m.id,m.home_city from network.members m join platform.memberships p
+        on p.app_id=m.app_id and p.member_id=m.id and p.person_id=m.person_id
+        where m.app_id=${app} and m.person_id=${senderPersonId}`;
+      const rt = member && this.runtimeForHome(app, member.home_city as string);
+      if (!rt) return [];
+      const [row] = await tx`select state from network.network_state where id=${rt.pg.id}`;
+      if (!row?.state) return [];
+      const state = (typeof row.state === "string" ? JSON.parse(row.state) : row.state) as NetworkState;
+      const threads: { id: string; label: string }[] = [];
+      for (const op of state.opps.filter(o => o.participants.includes(member.id as MemberId))) {
+        const pair = await rt.relayPhotoParties({ app, threadId: op.id, senderPersonId }, tx);
+        if (!pair) continue;
+        const [other] = await tx`select name from network.members where app_id=${app} and id=${pair.recipientMemberId}`;
+        threads.push({ id: op.id, label: typeof other?.name === "string" ? other.name.trim().split(/\s+/)[0] || "Your match" : "Your match" });
+      }
+      return threads;
+    });
   }
 
   /** The service for every row of platform.networks, with the platform.apps policy rows. */
@@ -839,7 +894,7 @@ export class NetworkService implements RuntimeHost {
     this.api ??= createPublicApi({
       store: this.people, turnstile: this.apiOptions?.turnstile ?? turnstileFromEnv(this.env),
       hashKey: this.hashKey, apps: this.apps, env: this.env,
-      now: () => this.clock.now(), log: this.log, ...this.apiOptions, ...this.hooks(), photos: this.photos,
+      now: () => this.clock.now(), log: this.log, ...this.apiOptions, ...this.hooks(), photos: this.photos, photoRelay: this.photoRelay,
       participation: ctx => this.memberParticipation(ctx.app, ctx.memberId),
       onResume: ctx => this.resumeMember(ctx.app, ctx.memberId),
       home: ctx => this.memberHome(ctx),
@@ -1450,12 +1505,14 @@ export class NetworkService implements RuntimeHost {
    * person's lowest age is checked by PhotoService), and no failed age check recorded by staff
    * (verify:age:fail). Founder decision 9: no ID check, a stated age is enough.
    */
-  private async verifiedAdult(personId: string, app: AppId): Promise<boolean> {
-    const m = await this.people.getMembership(personId, app);
+  private async verifiedAdult(personId: string, app: AppId, transaction?: SQL): Promise<boolean> {
+    const people = transaction ? new PgPeopleStore(transaction) : this.people;
+    const m = await people.getMembership(personId, app);
     const rt = this.runtimeFor(app);
     if (!m || !rt || !["active", "paused", "onboarding"].includes(m.state)) return false;
-    const rows = await rt.scoped(tx => tx`select m.age, f.tags, f.valid_from from network.members m left join network.facets f on f.app_id = m.app_id and f.member_id = m.id and f.status <> 'rejected'
-      and exists (select 1 from unnest(f.tags) t where t like 'verify:age:%') where m.app_id = ${app} and m.id = ${m.memberId} order by f.valid_from desc nulls last, f.id desc`) as any[];
+    const read = (tx: SQL) => tx`select m.age, f.tags, f.valid_from from network.members m left join network.facets f on f.app_id = m.app_id and f.member_id = m.id and f.status <> 'rejected'
+      and exists (select 1 from unnest(f.tags) t where t like 'verify:age:%') where m.app_id = ${app} and m.id = ${m.memberId} order by f.valid_from desc nulls last, f.id desc`;
+    const rows = (transaction ? await read(transaction) : await rt.scoped(read)) as any[];
     if (!rows.length || !(rows[0].age >= 18)) return false;
     // Founder decision 9 (AGENTS.md): no ID check; the stated age (18+ on the person and the member) is
     // enough. A staff-recorded failed age check still refuses.
@@ -1494,10 +1551,11 @@ export class NetworkService implements RuntimeHost {
   }
 
   /** A ban on the person, or on any phone they have (platform.bans). */
-  async personBanned(personId: string): Promise<boolean> {
-    const hashes = await this.people.phoneHashesOf(personId);
-    if (await this.people.isBanned(hashes[0] ?? "", personId)) return true;
-    for (const h of hashes.slice(1)) if (await this.people.isBanned(h)) return true;
+  async personBanned(personId: string, transaction?: SQL): Promise<boolean> {
+    const people = transaction ? new PgPeopleStore(transaction) : this.people;
+    const hashes = await people.phoneHashesOf(personId);
+    if (await people.isBanned(hashes[0] ?? "", personId)) return true;
+    for (const h of hashes.slice(1)) if (await people.isBanned(h)) return true;
     return false;
   }
 
@@ -1986,12 +2044,57 @@ export class NetworkService implements RuntimeHost {
     return json(result.body, result.status);
   }
 
+  /** Purpose-scoped proof of a successful per-item preview by this actual reviewer. */
+  private photoReviewProof(item:PhotoRelayItem,reviewer:string,until:number):string {
+    const {id,app,photoId,sha256,bytes,contentType,threadId,senderPersonId,recipientPersonId,senderMemberId,recipientMemberId,consentId,consentedAt,expiresAt,policyVersion,policyNotice,notice}=item;
+    return keyedHash(this.hashKey,`photo-review:${JSON.stringify({reviewer,until,id,app,photoId,sha256,bytes,contentType,threadId,senderPersonId,recipientPersonId,senderMemberId,recipientMemberId,consentId,consentedAt,expiresAt,policyVersion,policyNotice,notice})}`);
+  }
+  private validPhotoReview(item:PhotoRelayItem,reviewer:string,value:unknown):boolean {
+    if(typeof value!=="string" || !/^[1-9]\d{0,15}\.[a-f0-9]{64}$/.test(value))return false;
+    const [raw,proof]=value.split("."),until=Number(raw);
+    return Number.isSafeInteger(until) && until>this.clock.now() && until<=item.expiresAt && safeEqual(proof!,this.photoReviewProof(item,reviewer,until));
+  }
+
+  /** Resolve only an existing claimed queue item; no caller-chosen origin or attachment URL. */
+  private async resolveRelayPhoto(req: Request): Promise<Response> {
+    const url=new URL(req.url);
+    if (req.method!=="POST" || url.search) return json({error:"invalid_request"},400);
+    const bytes=await readCapped(req,16*1024);
+    if (bytes==="too_large") return json({error:"payload_too_large"},413);
+    let raw:string,b:Record<string,unknown>;
+    try {raw=new TextDecoder("utf-8",{fatal:true}).decode(bytes);b=JSON.parse(raw);} catch {return json({error:"invalid_request"},400);}
+    const auth=await svcVerify(this.env.SERVICE_TURN_SECRET,{method:"POST",path:RELAY_PHOTO_RESOLVE_PATH,headers:req.headers,body:raw,nowS:Math.floor(this.clock.now()/1000)});
+    if (!auth.ok) return json({error:auth.reason},auth.reason==="no_secret"?503:401);
+    if (!b || typeof b!=="object" || Array.isArray(b) || Object.keys(b).some(k=>!["networkAuthority","id","deliveryId","to","approvedPhotos"].includes(k))
+      || typeof b.id!=="string" || b.id!==auth.id || typeof b.deliveryId!=="string" || typeof b.to!=="string" || normalizePhone(b.to)!==b.to)
+      return json({error:"invalid_request"},400);
+    // Isolated handled-reply realms cannot originate relays, even with a valid envelope.
+    if (!routeEnvelopeAllowed(this.routePolicy,b.networkAuthority,this.clock.now()) || this.routePolicy) return json({error:"route_authority_invalid"},403);
+    const photos=parseApprovedRelayPhotos(b.approvedPhotos);
+    if (!photos || !this.photoDeliveryOrigin || photos.length!==1 || b.deliveryId!==`relay:${photos[0]!.itemId}`) return json({error:"photo_unavailable"},403);
+    const d=photos[0]!,rt=await this.runtimeOfMember(d.app,d.recipientMemberId);
+    if (!rt) return json({error:"photo_unavailable"},403);
+    const allowed=await rt.scoped(async tx=>{
+      const [row]=await tx`select outbound.*,identity.e164 from platform.outbound outbound
+        join network.members member on member.app_id=outbound.app_id and member.id=outbound.member_id
+        join platform.phone_identities identity on identity.person_id=member.person_id
+        where outbound.id=${b.deliveryId as string} and outbound.app_id=${d.app} and identity.e164=${b.to as string}`;
+      if (!row || row.status!=="sending" || row.member_id!==d.recipientMemberId || row.opportunity_id!==d.threadId || row.to_address!==b.to
+        || !isDeepStrictEqual(row.approved_photos,photos)) return false;
+      return (await rt.relayAdmission(tx,{id:row.id,memberId:row.member_id,oppId:row.opportunity_id,approvedPhotos:photos})).ok;
+    });
+    if (!allowed) return json({error:"photo_unavailable"},403);
+    const resolved=await this.photoRelay.issueDelivery(d,d.recipientMemberId,b.id as string,this.photoDeliveryOrigin);
+    return resolved?json({photos:[resolved]}):json({error:"photo_unavailable"},403);
+  }
+
   // ------------------------------------------------------------------ HTTP
   /** The HTTP handler: the inbound webhooks and the staff API. The public API is publicFetch (its own port). */
   fetch = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
+    if (url.pathname === RELAY_PHOTO_RESOLVE_PATH) return this.resolveRelayPhoto(req);
     if ([TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH].includes(url.pathname)) return this.sharedTurn(req);
-    if (url.pathname === RELAY_PATH) return relayEndpoint({ sql: this.sql, clock: this.clock, secret: this.env.SERVICE_TURN_SECRET, routePolicy: this.routePolicy, accounts: this.accounts, runtimeFor: app => this.runtimeFor(app), runtimeOfMember: (app, memberId) => this.runtimeOfMember(app, memberId), ...(this.relayHookFor ? { hookFor: this.relayHookFor } : {}) }, req);
+    if (url.pathname === RELAY_PATH) return relayEndpoint({ sql: this.sql, clock: this.clock, secret: this.env.SERVICE_TURN_SECRET, routePolicy: this.routePolicy, accounts: this.accounts, photos:this.photoRelay, runtimeFor: app => this.runtimeFor(app), runtimeOfMember: (app, memberId) => this.runtimeOfMember(app, memberId), ...(this.relayHookFor ? { hookFor: this.relayHookFor } : {}) }, req);
     let path = url.pathname.replace(/\/+$/, "") || "/";
     try {
       if (path === WEBHOOK_PATH || path.startsWith(`${WEBHOOK_PATH}/`)) {
@@ -2057,10 +2160,27 @@ export class NetworkService implements RuntimeHost {
         const no = need(["reviewer", "safety"]); if (no) return no;
         await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_relay_held", mode: "real", ok: true, app: rt.app.id });
         const held = await rt.readState(n => n.relayHeld());
+        const selected = (await this.photoRelay.held(rt.app.id)).filter(p=>p.threadId && p.app===rt.app.id);
         // The console's HeldText shape: `id` is the item, `memberId` the sender (whose words they are). No recipient id
         // (the console masks `to` as a phone number). relayHeld() already leaves out a sender's text once their age is in doubt.
         return json({ ok: true, network: rt.id, items: held.map(h => ({ id: h.itemId, itemId: h.itemId, app: h.app, kind: h.kind, memberId: h.from, from: h.from, reasons: h.reasons, createdAt: h.at,
-          ...(h.text ? { text: h.text } : h.textHidden ? { minor: true } : {}) })) });
+          ...(h.text ? { text: h.text } : h.textHidden ? { minor: true } : {}) })).concat(selected.map(p=>({id:p.id,itemId:p.id,app:p.app,kind:"photo",memberId:p.senderMemberId,from:p.senderMemberId,reasons:["photo:review"],createdAt:p.createdAt}))) });
+      }
+      const relayPhotoPreview=path.match(/^\/(?:staff\/)?relay\/(pri_[a-zA-Z0-9_-]+)\/photo$/);
+      if (req.method==="GET" && relayPhotoPreview) {
+        const no=need(["safety"]);if(no)return no;
+        await this.audit.write({at:this.clock.now(),actor:user.id,roles:user.roles,action:"read_relay_photo",targetId:relayPhotoPreview[1]!,mode:"real",ok:true,app:rt.app.id,detail:{phase:"requested"}});
+        const selected=await this.photoRelay.item(relayPhotoPreview[1]!);
+        let media:Awaited<ReturnType<PhotoRelayService["reviewBytes"]>>;
+        try {media=selected?.app===rt.app.id?await this.photoRelay.reviewBytes(selected.id,user.id):undefined;}
+        catch(error){
+          await this.audit.write({at:this.clock.now(),actor:user.id,roles:user.roles,action:"read_relay_photo",targetId:relayPhotoPreview[1]!,mode:"real",ok:false,app:rt.app.id,detail:{phase:"result"}});
+          throw error;
+        }
+        await this.audit.write({at:this.clock.now(),actor:user.id,roles:user.roles,action:"read_relay_photo",targetId:relayPhotoPreview[1]!,mode:"real",ok:!!media,app:rt.app.id,detail:{phase:"result"}});
+        const until=selected?Math.min(selected.expiresAt,this.clock.now()+5*60_000):0;
+        return media && selected && until>this.clock.now()?new Response(new Uint8Array(media.bytes).buffer,{headers:{"content-type":media.contentType,"cache-control":"no-store","x-content-type-options":"nosniff",
+          "x-network-photo-review-token":`${until}.${this.photoReviewProof(selected,user.id,until)}`}}):json({ok:false,reason:"photo_unavailable"},403);
       }
       if (path === "/queue/leak-review" || path.startsWith("/queue/leak-review/")) {
         // Texts the outbound queue's leak guard parked (status parked_leak_review): safety staff for this app
@@ -2183,9 +2303,44 @@ export class NetworkService implements RuntimeHost {
         if (itemId.length > 200 || (note !== undefined && note.length > 2000)) return json({ ok: false, error: "invalid_relay_decision" }, 400);
         if (note === undefined || note.trim().length < 5) return json({ ok: false, reason: "reason_required", error: "note_required" }, 409);
         const release = relayPath[2] === "release";
-        const r = await rt.unitOfWork(n => release ? n.releaseRelay(itemId, user.id) : n.rejectRelay(itemId, user.id));
+        const selected = itemId.startsWith("pri_") ? await this.photoRelay.item(itemId) : undefined;
+        if (selected && selected.app !== rt.app.id) return json({ok:false,reason:"not_held"},404);
+        let r: {ok:true;delivered?:boolean}|{ok:false;reason:string};
+        if(selected)await this.audit.write({at:this.clock.now(),actor:user.id,roles:user.roles,action:release?"relay_release":"relay_reject",targetId:itemId,mode:"real",ok:true,app:rt.app.id,reason:note,detail:{phase:"requested"}});
+        try {
+        if (selected) {
+          if (!release) r = await this.photoRelay.review(itemId,user.id,"unsafe") ? {ok:true} : {ok:false,reason:"not_held"};
+          else {
+            if (!this.validPhotoReview(selected,user.id,b.photoReviewToken) || !await this.photoRelay.reviewAuthorized(itemId,user.id)) {
+              await this.audit.write({at:this.clock.now(),actor:user.id,roles:user.roles,action:"relay_release",targetId:itemId,mode:"real",ok:false,app:rt.app.id,reason:note,detail:{phase:"result",delivered:false,refused:"photo_preview_required"}});
+              return json({ok:false,reason:"photo_preview_required"},403);
+            }
+            if (selected.state === "pending") {
+              if (!await this.photoRelay.review(itemId,user.id,"safe")) throw new Error("Photo review refused");
+              await this.audit.write({at:this.clock.now(),actor:user.id,roles:user.roles,action:"relay_release",targetId:itemId,mode:"real",ok:true,app:rt.app.id,reason:note,detail:{phase:"reviewed",delivered:false}});
+            }
+            const photo=await this.photoRelay.approved(itemId);
+            if (!photo) r={ok:false,reason:"photo_unavailable"};
+            else r=await rt.unitOfWork(async net=>{
+              const canonical=await rt.relayParties([photo.senderMemberId,photo.recipientMemberId] as MemberId[]);
+              const outcome=await net.relayRequest({itemId,from:photo.senderMemberId as MemberId,kind:"photo",photoIds:[photo.photoId],matchId:photo.threadId},
+                {photos:{ids:[photo.photoId],showConsent:true,approved:[photo]},canonical});
+              if (outcome.decision !== "sent") return {ok:false as const,reason:outcome.reason};
+              rt.unit.completeAction=async tx=>{
+                if (!this.validPhotoReview(selected,user.id,b.photoReviewToken) || !await this.photoRelay.reviewAuthorized(itemId,user.id,tx)) throw new Error("Photo review expired or authority changed before commit");
+                const claimed=await this.photoRelay.claimForAction(tx,itemId,rt.app.id,photo.threadId,photo.senderMemberId,`photo-selection:${itemId}`);
+                if (!claimed || JSON.stringify(claimed)!==JSON.stringify(photo)) throw new Error("Photo selection changed before commit");
+              };
+              return {ok:true as const,delivered:false}; // Queue handoff is not a provider delivery receipt.
+            });
+          }
+        } else r = await rt.unitOfWork(n => release ? n.releaseRelay(itemId, user.id) : n.rejectRelay(itemId, user.id));
+        } catch(error) {
+          if(selected)await this.audit.write({at:this.clock.now(),actor:user.id,roles:user.roles,action:release?"relay_release":"relay_reject",targetId:itemId,mode:"real",ok:false,app:rt.app.id,reason:note,detail:{phase:"result",delivered:false,refused:"photo_queue_or_review_failed"}});
+          throw error;
+        }
         await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: release ? "relay_release" : "relay_reject", targetId: itemId,
-          mode: "real", ok: r.ok, app: rt.app.id, reason: note, ...("delivered" in r ? { detail: { delivered: r.delivered } } : {}) });
+          mode: "real", ok: r.ok, app: rt.app.id, reason: note, ...(selected?{detail:{phase:"result",delivered:false}}:"delivered" in r ? { detail: { delivered: r.delivered } } : {}) });
         return result(r);
       }
       const verifyPath = path.match(/^\/members\/([^/]+)\/verify$/);

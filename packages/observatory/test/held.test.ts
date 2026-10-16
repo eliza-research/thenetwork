@@ -17,7 +17,7 @@ let fake: ReturnType<typeof Bun.serve>;
 let obs: ObservatoryServer;
 let dir: string;
 const keep = { NETWORK_DATABASE_URL: process.env.NETWORK_DATABASE_URL, DATABASE_URL: process.env.DATABASE_URL };
-const as = (tok: string, path: string, init: RequestInit = {}) => fetch(obs.url + path, { ...init, headers: { authorization: `Bearer ${tok}`, "content-type": "application/json" } });
+const as = (tok: string, path: string, init: RequestInit = {}) => fetch(obs.url + path, { ...init, headers: { authorization: `Bearer ${tok}`, "content-type": "application/json", ...Object.fromEntries(new Headers(init.headers)) } });
 const post = (tok: string, path: string, body: unknown) => as(tok, path, { method: "POST", body: JSON.stringify(body) });
 
 beforeAll(async () => {
@@ -40,6 +40,12 @@ beforeAll(async () => {
       if (u.pathname === "/staff/relay/held" && req.method === "GET" && u.searchParams.get("app") === "slop") return Response.json({ ok: true, network: "slop:nyc", items: [
         { itemId: "rl_1", app: "slop", kind: "text", from: "slop_m1", to: "slop_m2", reasons: ["clef:scam"], createdAt: Date.now() - 30_000, text: "send me a gift card" },
       ] });
+      if(/^\/staff\/relay\/pri_[a-f0-9]{32}\/photo$/.test(u.pathname)){
+        if(u.pathname.includes("pri_"+"b".repeat(32)))return Response.json({error:"unavailable"},{status:403});
+        const bad=u.pathname.includes("pri_"+"c".repeat(32));
+        return new Response(bad?"<svg/>":Uint8Array.from([255,216,255,218,0,2,1,255,217]),{headers:{"content-type":bad?"image/svg+xml":"image/jpeg","x-network-photo-review-token":`${Date.now()+60_000}.${"a".repeat(64)}`}});
+      }
+      if(/^\/staff\/relay\/pri_[a-f0-9]{32}\/(release|reject)$/.test(u.pathname)&&req.method==="POST")return Response.json({ok:true,delivered:false});
       if (u.pathname === "/staff/relay/rl_1/release" && req.method === "POST") return Response.json({ ok: true, delivered: true });
       return Response.json({ error: "no route" }, { status: 404 });
     },
@@ -112,3 +118,27 @@ describe("held texts in the console", () => {
     expect([p.status, (await p.json()).code]).toEqual([404, "service_missing"]);
   }, T);
 });
+
+test("selected photo proxy binds staff/app/item preview before release; denied or invalid preview leaves rejection available",async()=>{
+  const id="pri_"+"a".repeat(32),path=`/api/held/${id}/photo?app=slop`,headers={"x-network-reason":"Check this voluntarily selected item"};
+  const decision={queue:"relay",id,decision:"release",reason:"Selected item consent and safety checked",photoReviewed:true};
+  expect((await post(TOK.safety,"/api/held?app=slop",decision)).status).toBe(409);
+  const before=calls.filter(c=>c.path.endsWith("/photo")).length;
+  for(const token of [TOK.reviewer,TOK.analyst])expect((await as(token,path,{headers})).status).toBe(403);
+  expect(calls.filter(c=>c.path.endsWith("/photo"))).toHaveLength(before);
+  const preview=await as(TOK.safety,path,{headers});expect(preview.status).toBe(200);expect(preview.headers.get("content-type")).toBe("image/jpeg");expect(preview.headers.get("x-network-photo-review-token")).toBeNull();
+  expect([...new Uint8Array(await preview.arrayBuffer())]).toEqual([255,216,255,218,0,2,1,255,217]);
+  expect((await post(TOK.admin,"/api/held?app=slop",decision)).status).toBe(409);
+  expect((await post(TOK.safety,"/api/held?app=slop",{...decision,photoReviewed:false})).status).toBe(409);
+  expect((await post(TOK.safety,"/api/held?app=slop",decision)).status).toBe(200);
+  const call=calls.filter(c=>c.path===`/staff/relay/${id}/release`).at(-1)!;expect(call.app).toBe("slop");expect(call.staff).toBeTruthy();expect(call.body.photoReviewToken).toMatch(/^[1-9]\d+\.[a-f0-9]{64}$/);
+  expect((await post(TOK.safety,"/api/held?app=slop",decision)).status).toBe(409);
+  for(const [suffix,status]of [["b",403],["c",502]] as const){
+    const unavailable="pri_"+suffix.repeat(32);expect((await as(TOK.safety,`/api/held/${unavailable}/photo?app=slop`,{headers})).status).toBe(status);
+    expect((await post(TOK.safety,"/api/held?app=slop",{...decision,id:unavailable})).status).toBe(409);
+    expect((await post(TOK.safety,"/api/held?app=slop",{...decision,id:unavailable,decision:"reject"})).status).toBe(200);
+  }
+  const audited=await (await as(TOK.admin,"/api/audit?app=slop")).json() as {entries:AuditEntry[]};
+  expect(audited.entries.some(e=>e.action==="read_relay_photo"&&e.reason===headers["x-network-reason"])).toBe(true);
+  expect(JSON.stringify(audited)).not.toMatch(/photoReviewToken|https?:.*sig=/);
+},T);

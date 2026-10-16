@@ -35,6 +35,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { S3Client, type SQL } from "bun";
+import { PgPeopleStore } from "./pg-store.ts";
 import type { AppId } from "./apps.ts";
 import { readCapped } from "./body.ts";
 import type { MembershipState, PeopleStore } from "./store.ts";
@@ -418,9 +419,9 @@ export interface PhotoServiceOptions {
    * The app's own adult check for this person, beyond the lowest age (slop: the member's stated age
    * is 18+ and no staff age check failed; decision 9). The service reads the network rows. Default: refuse (fail closed).
    */
-  eligible?: (personId: string, app: AppId) => Promise<boolean>;
+  eligible?: (personId: string, app: AppId, tx?: SQL) => Promise<boolean>;
   /** A staff ban on the person or any of their phones (platform.bans). A banned person's photo is never taken. Default: not banned. */
-  banned?: (personId: string) => Promise<boolean>;
+  banned?: (personId: string, tx?: SQL) => Promise<boolean>;
   /** The member's rating from their photos: the service stores it with appearanceFacet (agent_private). Never returned by a route. */
   onRating?: (personId: string, app: AppId, score: AppearanceScore, subject: RatingSubject) => Promise<void>;
   /** A photo is gone (removed, left, deleted, a minor age, a ban): the service deletes the member's rating. */
@@ -435,10 +436,10 @@ export class PhotoService {
   get rating() { return !!this.o.rater; }
 
   /** An adult on this app: lowest age 18+ (an unknown age fails) and the app's own check (slop: no failed staff age check). */
-  async adult(personId: string, app: AppId): Promise<PhotoRefusal | undefined> {
-    const p = await this.o.people.getPerson(personId);
+  async adult(personId: string, app: AppId, tx?: SQL): Promise<PhotoRefusal | undefined> {
+    const p = await (tx ? new PgPeopleStore(tx) : this.o.people).getPerson(personId);
     if (!p || p.deletedAt !== null || p.lowestAge === null || p.lowestAge < 18) return "adults_only";
-    if (!(await (this.o.eligible?.(personId, app) ?? Promise.resolve(false)))) return "not_verified";
+    if (!(await (this.o.eligible?.(personId, app, tx) ?? Promise.resolve(false)))) return "not_verified";
     return undefined;
   }
 
@@ -446,11 +447,11 @@ export class PhotoService {
    * Whether this person may give a photo to this app now: photos on, an app that takes photos, not
    * banned, an adult. Checked before any byte is read (an MMS photo is not even fetched otherwise).
    */
-  async mayTake(personId: string, app: AppId): Promise<PhotoRefusal | undefined> {
+  async mayTake(personId: string, app: AppId, tx?: SQL): Promise<PhotoRefusal | undefined> {
     if (!this.o.storage) return "photos_off";
     if (!PHOTO_APPS.includes(app)) return "app_not_allowed";
-    if (await (this.o.banned?.(personId) ?? Promise.resolve(false))) return "banned";
-    return this.adult(personId, app);
+    if (await (this.o.banned?.(personId, tx) ?? Promise.resolve(false))) return "banned";
+    return this.adult(personId, app, tx);
   }
 
   async upload(personId: string, app: AppId, input: Uint8Array, consentVersion: string | undefined): Promise<PhotoResult<{ id: string }>> {
@@ -478,12 +479,12 @@ export class PhotoService {
    * adult (lowest age and the app's own check), a live membership of the app and, when `photoIds` is
    * given, every one of those photos still there. Undefined: yes.
    */
-  private async ratingRefusal(personId: string, app: AppId, photoIds?: readonly string[]): Promise<PhotoRefusal | undefined> {
-    const who = await this.mayTake(personId, app);
+  private async ratingRefusal(personId: string, app: AppId, photoIds?: readonly string[], tx?: SQL): Promise<PhotoRefusal | undefined> {
+    const who = await this.mayTake(personId, app, tx);
     if (who) return who;
-    const m = await this.o.people.getMembership(personId, app);
+    const m = await (tx ? new PgPeopleStore(tx) : this.o.people).getMembership(personId, app);
     if (!m || !LIVE_MEMBERSHIP.includes(m.state)) return "not_member";
-    if (photoIds) for (const id of photoIds) { const r = await this.o.meta.get(id); if (!r || r.personId !== personId || r.app !== app) return "not_found"; }
+    if (photoIds) for (const id of photoIds) { const r = await (tx ? new PgPhotoStore(tx) : this.o.meta).get(id); if (!r || r.personId !== personId || r.app !== app) return "not_found"; }
     return undefined;
   }
 
@@ -523,6 +524,24 @@ export class PhotoService {
       return { rated: false, refused: late };
     }
     return { rated: true };
+  }
+
+  /** Selected-item path only. Revalidates owner/app/adult/live membership and immutable bytes.
+   * This grants neither review nor delivery: PhotoRelayService enforces that separate authority. */
+  async relayPhoto(personId: string, app: AppId, id: string, expected?: { sha256: string; bytes: number; contentType: PhotoType }, tx?: SQL): Promise<PhotoRow | undefined> {
+    if (await this.ratingRefusal(personId, app, [id], tx)) return;
+    const row = await (tx ? new PgPhotoStore(tx) : this.o.meta).get(id);
+    if (!row || row.personId !== personId || row.app !== app) return;
+    if (expected && (row.sha256 !== expected.sha256 || row.bytes !== expected.bytes || row.contentType !== expected.contentType)) return;
+    return row;
+  }
+  async relayBytes(personId: string, app: AppId, id: string, expected: { sha256: string; bytes: number; contentType: PhotoType }, tx?: SQL) {
+    const row = await this.relayPhoto(personId, app, id, expected, tx);
+    if (!row || !this.o.storage) return;
+    const bytes = await this.o.storage.get(row.storageKey);
+    if (!bytes || bytes.length !== expected.bytes || sniffType(bytes) !== expected.contentType || createHash("sha256").update(bytes).digest("hex") !== expected.sha256) return;
+    if (!(await this.relayPhoto(personId, app, id, expected, tx))) return;
+    return { bytes, contentType: row.contentType };
   }
 
   /** The member's own photos (no bytes, no score). */
