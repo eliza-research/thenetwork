@@ -28,12 +28,28 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
   const appProp = (description: string) => ({ type: "string", enum: ids, description });
   const noauth = [{ type: "noauth" }];
   const oauth = [{ type: "oauth2", scopes: ["membership:read"] }];
+  const text = { type: "string" };
+  const nullableText = { type: ["string", "null"] };
+  const object = (properties: Record<string, unknown>) => ({ type: "object", properties, required: Object.keys(properties), additionalProperties: false });
+  const appId = { type: "string", enum: ids };
+  const ownApp = { type: "string", enum: [host.id] };
+  const joinMode = { type: "string", enum: ["invite", "open", "waitlist"] };
+  const ages = object({ join: { type: "integer" }, matching: { type: "integer" } });
+  const status = { type: "string", enum: Object.keys(NEXT) };
+  const publicApp = object({
+    id: appId, name: text, site: text, what: text, powered_by: text,
+    join: object({ mode: joinMode, url: text, keyword: nullableText, how: text }),
+    ages, adults_only: { type: "array", items: text }, stop: text,
+    consent_rules: { type: "array", items: text },
+    links: object({ privacy: text, terms: text, sms_terms: nullableText, safety: nullableText, settings: text, support: text }),
+  });
   return [
     {
       name: "app_info",
       title: "About the apps",
       description: "Public facts about one app powered by The Network, or about all of them: what it is for, who can join, how a person joins, and links to its privacy, terms and safety pages. Never returns anything about a person.",
       inputSchema: { type: "object", properties: { app: appProp("One app. Leave it out for all apps.") }, additionalProperties: false },
+      outputSchema: { type: "object", anyOf: [publicApp, object({ apps: { type: "array", items: publicApp } })] },
       annotations: annotations("About the apps"),
       securitySchemes: noauth,
       _meta: { securitySchemes: noauth },
@@ -43,6 +59,7 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
       title: "Get the sign-up link",
       description: "Returns the link and the text keyword a person uses to sign themselves up for one app, with plain instructions to give them. It does not sign anyone up and takes no personal details.",
       inputSchema: { type: "object", properties: { app: appProp("The app to join.") }, required: ["app"], additionalProperties: false },
+      outputSchema: object({ app: appId, join_mode: joinMode, url: text, keyword: nullableText, instructions_for_person: text, ages }),
       annotations: annotations("Get the sign-up link"),
       securitySchemes: noauth,
       _meta: { securitySchemes: noauth },
@@ -51,6 +68,7 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
       name: "prepare_signup", title: "Prepare my Join form",
       description: "After verified phone sign-in and OAuth approval, save only the first name and optional home city the person explicitly approved for this app. They must open Join, review or edit every field and consent themselves. Never creates a person, membership or text consent. One draft per grant; no age, phone, code, gender or dating preferences.",
       inputSchema: { type: "object", properties: { app: { type: "string", enum: [host.id] }, firstName: { type: "string", minLength: 1, maxLength: 50 }, homeCity: { type: "string", enum: ["nyc", "sf"] } }, required: ["firstName"], additionalProperties: false },
+      outputSchema: object({ prepared: { type: "boolean", const: true }, app: ownApp, url: text, next_step: text }),
       annotations: { title: "Prepare my Join form", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       securitySchemes: [{ type: "oauth2", scopes: ["profile:write"] }],
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["profile:write"] }] },
@@ -60,6 +78,7 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
       title: `My ${host.name} status`,
       description: `After the person signs in on ${host.domain} and allows access, returns their own status in ${host.name} only (not joined, invited, onboarding, active, stopped or on hold) and what to do next. Never returns anything about other people or other apps.`,
       inputSchema: { type: "object", properties: { app: { type: "string", enum: [host.id], description: `Optional. Always ${host.id}: this connection covers ${host.name} only.` } }, additionalProperties: false },
+      outputSchema: object({ app: ownApp, status, next_step: text, manage_url: text }),
       annotations: annotations(`My ${host.name} status`),
       securitySchemes: oauth,
       _meta: { securitySchemes: oauth },
@@ -76,6 +95,10 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
         },
         required: ["about"], additionalProperties: false,
       },
+      outputSchema: { type: "object", anyOf: [
+        object({ app: ownApp, submitted: { type: "boolean", const: true }, next_step: text }),
+        object({ app: ownApp, submitted: { type: "boolean", const: false }, status, next_step: text }),
+      ] },
       annotations: { title: `Send my profile to ${host.name}`, readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       securitySchemes: [{ type: "oauth2", scopes: ["profile:write"] }],
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["profile:write"] }] },
@@ -92,6 +115,7 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
         },
         additionalProperties: false,
       },
+      outputSchema: object({ app: ownApp, updates: { type: "array", items: object({ summary: text, at: text, kind: text }) }, next_step: text }),
       // Reading marks items seen and every call updates the assistant's last-used time.
       annotations: { title: `My ${host.name} updates`, readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       securitySchemes: oauth,
