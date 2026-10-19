@@ -241,7 +241,9 @@ export class PgStore implements NetworkStore {
 
   /** Apply packages/network/db/network-state.sql (idempotent). */
   async migrate() {
-    await this.sql.unsafe(await Bun.file(new URL("../db/network-state.sql", import.meta.url).pathname).text());
+    // The URL goes to Bun.file as a URL: its .pathname is percent-encoded, which breaks a checkout
+    // under a path with non-ASCII characters.
+    await this.sql.unsafe(await Bun.file(new URL("../db/network-state.sql", import.meta.url)).text());
   }
 
   async load(): Promise<NetworkState | undefined> {

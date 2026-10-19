@@ -41,8 +41,8 @@ describe.skipIf(!pgAvailable)("migrations (Postgres)", () => {
     const url = await emptyDb("upgrade"); urls.push(url);
     const sql = new SQL({ url, max: 1 });
     try {
-      await sql.unsafe(await Bun.file(new URL("../../observatory/db/schema.sql", import.meta.url).pathname).text());
-      await sql.unsafe(await Bun.file(new URL("../../network/db/network-state.sql", import.meta.url).pathname).text());
+      await sql.unsafe(await Bun.file(new URL("../../observatory/db/schema.sql", import.meta.url)).text());
+      await sql.unsafe(await Bun.file(new URL("../../network/db/network-state.sql", import.meta.url)).text());
       await sql`insert into network.members (id, name, home_city, age, joined_at) values ('a', 'A', 'nyc', 34, now()), ('b', 'B', 'nyc', null, now())`;
       // A legacy member texts from a phone; another from an Apple ID (not a phone: left as it is).
       await sql`insert into network.channel_identities (member_id, channel, address, is_primary) values ('a', 'imessage', '+12125550177', true), ('b', 'imessage', 'b@example.com', true)`;

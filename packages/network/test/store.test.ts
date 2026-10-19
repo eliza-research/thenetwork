@@ -215,7 +215,7 @@ describe.skipIf(!pgAvailable)("PgStore", () => {
     await admin(`create database ${DB}`);
     // The observatory schema first, then the Network's migration (twice: it is idempotent).
     const setup = new SQL({ url: TEST_URL, max: 1 });
-    await setup.unsafe(await Bun.file(new URL("../../observatory/db/schema.sql", import.meta.url).pathname).text());
+    await setup.unsafe(await Bun.file(new URL("../../observatory/db/schema.sql", import.meta.url)).text());
     await setup.close();
     const a = new PgStore(TEST_URL), b = new PgStore(TEST_URL);
     stores.push(a, b);

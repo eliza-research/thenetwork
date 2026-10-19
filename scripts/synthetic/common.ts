@@ -1,5 +1,6 @@
 // Shared constants and record types for the synthetic member dataset (data/synthetic/).
 // Every record is SYNTHETIC: invented people, invented names, fictional contact details.
+import { fileURLToPath } from "node:url";
 import type {
   Category, City, NetworkCity, Edge, EdgeType, Facet, FacetKind, Intent, Member, ParticipationState, Presence,
   PrivacyScope, Provenance,
@@ -17,7 +18,9 @@ export const SEED = 20261005;
 export const SNAPSHOT_NOW = Date.UTC(2026, 9, 12, 17, 0, 0);
 export const PER_CITY = 250;
 
-export const REPO = new URL("../../", import.meta.url).pathname.replace(/\/$/, "");
+// fileURLToPath, not URL.pathname: a URL pathname is percent-encoded, so a checkout under a path
+// with non-ASCII characters (or a literal "%") reads files that do not exist.
+export const REPO = fileURLToPath(new URL("../../", import.meta.url)).replace(/\/$/, "");
 export const DATA_DIR = `${REPO}/data/synthetic/${DATASET_VERSION}`;
 export const CACHE_DIR = `${REPO}/runs/synthetic-cache/${DATASET_VERSION}`; // gitignored
 
