@@ -1,10 +1,12 @@
 // The trusted proxy (founder decision 2026-10-08: Cloudflare Worker routers in front of one backend).
 // A site router signs the client IP and its host (proxy.ts); the backend trusts them only with a
 // valid signature under 60 s old, and otherwise uses the socket address and its own Host map
-// (PLAT-18, PLAT-19 in small). End to end: routeSiteRequest -> a local Bun server -> createPublicApi.
+// (PLAT-18, PLAT-19 in small). End to end: deployed Pages router -> local Bun server -> createPublicApi.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createPublicApi } from "../src/api.ts";
-import { PROXY_HEADERS, proxySignature, routeSiteRequest, signProxyHeaders, verifyProxyHeaders } from "../src/proxy.ts";
+import { PROXY_HEADERS, proxySignature, signProxyHeaders, verifyProxyHeaders } from "../src/proxy.ts";
+import { handle as routeSiteRequest } from "../../../deploy/router.ts";
+import { appForHost } from "../src/apps.ts";
 import { MemoryPeopleStore } from "../src/store.ts";
 
 const SECRET = "p".repeat(40);
@@ -46,11 +48,11 @@ describe("a site router in front of the backend", () => {
     server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: async (req, srv) => (await api.fetch(req, srv)) ?? new Response("not found", { status: 404 }) });
   });
   afterAll(() => server?.stop(true));
-  const env = () => ({ API_ORIGIN: `http://127.0.0.1:${server.port}`, PROXY_SECRET: SECRET, ASSETS: assets });
+  const env = (site: string) => ({ BACKEND_ORIGIN: `http://127.0.0.1:${server.port}`, PLATFORM_PROXY_SECRET: SECRET, ASSETS: assets, SITE_HOST: site, APP_ID: appForHost(site)! });
   let n = 0;
   const phone = () => `+1212555${String(100 + ++n).padStart(4, "0")}`;
   const visit = (site: string, path: string, init: RequestInit & { ip: string; headers?: Record<string, string> }) =>
-    routeSiteRequest(new Request(`https://${site}${path}`, { ...init, headers: { "cf-connecting-ip": init.ip, ...(init.headers ?? {}) } }), env());
+    routeSiteRequest(new Request(`https://${site}${path}`, { ...init, headers: { "cf-connecting-ip": init.ip, ...(init.headers ?? {}) } }), env(site));
 
   test("the router forwards /api, /mcp, /oauth and /.well-known/oauth-* and serves the rest as assets", async () => {
     expect(await (await visit("slop.date", "/join", { ip: "198.51.100.1" })).text()).toBe("asset /join");

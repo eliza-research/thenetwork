@@ -22,7 +22,7 @@ import { otpConfigProblems } from "../../packages/platform/src/otp-config.ts";
 // request loses every proxy and forwarding header, so a client can never pick either one.
 import { appForHost, stagingSiteOrigins, DEFAULT_HOST_MAP, isAppId, type AppId } from "../../packages/platform/src/apps.ts";
 import { requirePlatformEnv, type Env, type PlatformEnv } from "../../packages/platform/src/env.ts";
-import { PROXY_HEADERS, verifyProxyHeaders } from "../../packages/platform/src/proxy.ts";
+import { isProxyHeader, PROXY_HEADERS, verifyProxyHeaders } from "../../packages/platform/src/proxy.ts";
 import { timingSafeEqual } from "node:crypto";
 import { opsConfigFromEnv, type OpsConfig } from "./ops.ts";
 import { networkRoutePolicy } from "../../packages/network/service/route-authority.ts";
@@ -33,7 +33,6 @@ export { PROXY_HEADERS };
 export const CLIENT_IP = PROXY_HEADERS.ip;
 export const BUILD_HEADER = "x-network-build";
 const STRIP = ["x-forwarded-host", "x-forwarded-for", "x-forwarded-proto", "x-real-ip", "forwarded", "true-client-ip"];
-const PROXY_PREFIXES = ["x-network-proxy-", "x-ntwrk-proxy-"];
 /** The Eliza gateway's signed routes (served by the service) and their body cap (the service's MAX_BODY_BYTES). */
 const INTERNAL_PATHS = new Set(["/internal/turn", "/internal/turn-receipt", "/internal/set-state", "/internal/signals", "/internal/updates", "/internal/relay"]);
 const MAX_INTERNAL_BODY = 256 * 1024;
@@ -241,7 +240,7 @@ export async function normalizeEdge(req: Request, secret: string | undefined, ho
     url.protocol = "https:";
     if (!/^[0-9a-f:.]{2,45}$/i.test(v.ip)) headers.delete(PROXY_HEADERS.ip);
   } else {
-    for (const k of [...headers.keys()]) if (PROXY_PREFIXES.some(p => k.toLowerCase().startsWith(p))) headers.delete(k);
+    for (const k of [...headers.keys()]) if (isProxyHeader(k)) headers.delete(k);
     app = appForHost(headers.get("host") ?? url.host, hostMap);
   }
   const init: RequestInit = { method: req.method, headers, redirect: "manual" };

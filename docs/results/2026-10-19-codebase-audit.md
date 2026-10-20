@@ -254,3 +254,29 @@ The full 575-test suite above predates this last fix; the six backup tests and t
   CLI entry points, upstream contract mirrors, or the founder-approved Clef placeholder weights.
 - Refresh main before final validation: PRs #99 and #101 are no longer in the open PR list.
   The live list now includes #102, #103, and #104; website-account changes in #104 are separate work.
+
+## Current-main refresh and deployed router consolidation
+
+The audit branch is rebased onto `eeb9cfe`. Main now includes PR #99 (decoded file paths), #101
+(scorecard observation time), #102 (recorded PRD decisions), and #103 (read-only Pages credential probe).
+Git skipped the previously cherry-picked scorecard patch during rebase. No audit patch conflicted.
+
+`platform/src/proxy.ts` contained a second router used only by its tests. The sites use
+`deploy/router.ts`, which applies the current body cap and header rules. Removed the unused router,
+its private header-strip helper, and its duplicate path expression. The platform HTTP integration
+tests now call the deployed Pages router. Header classification has one owner in platform's proxy
+module; the backend, Pages router, and local site server reuse it.
+
+Before and after: 64 pass, 0 fail, 423 assertions across router, backend, and platform proxy tests.
+The suite covers built Pages workers, spoofed headers, signed app routing, body caps, and OTP IP limits.
+Typecheck passes. Commands and logs:
+
+```sh
+REQUIRE_PG=1 bun test --conditions eliza-source --timeout 120000 deploy/router.test.ts deploy/backend/backend.test.ts packages/platform/test/proxy.test.ts
+bun run typecheck
+```
+
+`runs/audit/proxy-dedupe-before.log`, `proxy-dedupe-after.log`, and `typecheck-proxy.log`.
+Alternatives were keeping both routers aligned or moving the deployed router into platform.
+The first retains duplicate behavior; the second moves working deployment code without a need.
+The chosen change removes the unused path and tests the existing deployment owner.

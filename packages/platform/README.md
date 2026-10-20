@@ -14,7 +14,7 @@ This package holds what the apps share: people, verified phones, memberships per
 | `src/age.ts` | `canJoinApp`, `canMatchInApp`, lowest age wins (built on `packages/core/src/policy.ts`) |
 | `src/phone.ts` | E.164 for US and Canadian numbers only (no Caribbean, toll-free or premium codes), masking, keyed hashes |
 | `src/consent.ts` | STOP (and opt-outs in the person's own words, English and Spanish) for every app, `leave <app>` for one, START for one app, `PLATFORM_STOP_SCOPE=app` for an app's own line |
-| `src/proxy.ts` | The trusted proxy: the signer the site routers use (HMAC over method, path, host, client IP, time), the check the API runs, and a complete router (`routeSiteRequest`) |
+| `src/proxy.ts` | The trusted proxy: header classification, signing (HMAC over method, path, host, client IP, time), and signature verification. The deployed router is `deploy/router.ts`. |
 | `src/store.ts`, `src/pg-store.ts` | `PeopleStore`: `MemoryPeopleStore` and `PgPeopleStore` (the `platform` schema) |
 | `src/otp.ts` | `OtpService` (3 sends per number per hour, 10 per IP per hour, 30 s gap, 10 min expiry, 5 tries), `TwilioVerifyProvider`, `DevConsoleProvider` |
 | `src/turnstile.ts` | Cloudflare Turnstile check; a dev bypass that refuses production |

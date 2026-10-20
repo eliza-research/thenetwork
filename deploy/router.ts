@@ -23,10 +23,10 @@
 // first, so only this Worker can set them. No X-Forwarded-* header is sent: the backend trusts nothing
 // but the signature. Without PLATFORM_PROXY_SECRET the Worker forwards nothing (503).
 
-import { signProxyHeaders, signedPath } from "../packages/platform/src/proxy.ts";
+import { isProxyHeader, signProxyHeaders, signedPath } from "../packages/platform/src/proxy.ts";
 import { readCapped } from "../packages/platform/src/body.ts";
 
-const PROXY_PREFIXES = ["x-network-proxy-", "x-ntwrk-proxy-"];
+export { isProxyHeader };
 /** The IP the router signs when Cloudflare names none (never in production; wrangler dev may omit it). */
 export const UNKNOWN_IP = "unknown";
 
@@ -67,9 +67,6 @@ export function proxyHeaders(o: { secret: string; method: string; url: URL; host
   return signProxyHeaders(o.secret, { method: o.method, path: signedPath(o.url), host: o.host, ip: o.ip || UNKNOWN_IP, ts: Math.floor(o.now / 1000) });
 }
 
-/** True for a header a client must never be able to set on a forwarded request. */
-export const isProxyHeader = (name: string) => PROXY_PREFIXES.some((p) => name.toLowerCase().startsWith(p));
-
 const jsonError = (status: number, error: string) =>
   new Response(JSON.stringify({ ok: false, error }), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
 
@@ -82,7 +79,7 @@ export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fet
   const headers = new Headers();
   req.headers.forEach((v, k) => {
     const key = k.toLowerCase();
-    if (!DROP.has(key) && !PROXY_PREFIXES.some((p) => key.startsWith(p)) && !key.startsWith("cf-")) headers.set(key, v);
+    if (!DROP.has(key) && !isProxyHeader(key) && !key.startsWith("cf-")) headers.set(key, v);
   });
   const ip = req.headers.get("cf-connecting-ip") || UNKNOWN_IP;
   const target = new URL(url.pathname + url.search, env.BACKEND_ORIGIN);

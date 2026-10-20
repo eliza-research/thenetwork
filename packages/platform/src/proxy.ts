@@ -22,6 +22,12 @@ export const PROXY_HEADERS = {
 /** A signature older (or newer) than this is refused. */
 export const PROXY_MAX_SKEW_S = 60;
 
+/** Trusted header namespaces, including the retired proxy contract. Strip client copies before signing. */
+export const isProxyHeader = (name: string) => {
+  const key = name.toLowerCase();
+  return key.startsWith("x-network-proxy-") || key.startsWith("x-ntwrk-proxy-");
+};
+
 export interface ProxyFacts { method: string; path: string; host: string; ip: string; ts: number }
 
 const enc = new TextEncoder();
@@ -45,7 +51,7 @@ export const proxySignature = (secret: string, f: ProxyFacts) => hmac(secret, me
 
 /**
  * The four headers a site router sets on a forwarded request. The router must first delete any copy
- * of these headers that the client sent (stripProxyHeaders).
+ * of the proxy header namespaces that the client sent (isProxyHeader).
  */
 export async function signProxyHeaders(secret: string, f: Omit<ProxyFacts, "ts"> & { ts?: number }): Promise<Record<string, string>> {
   const facts: ProxyFacts = { ...f, ts: f.ts ?? Math.floor(Date.now() / 1000) };
@@ -55,12 +61,6 @@ export async function signProxyHeaders(secret: string, f: Omit<ProxyFacts, "ts">
     [PROXY_HEADERS.ts]: String(facts.ts),
     [PROXY_HEADERS.sig]: await proxySignature(secret, facts),
   };
-}
-
-/** Remove client copies of the trusted headers (and the hop headers a router must not forward). */
-export function stripProxyHeaders(h: Headers): Headers {
-  for (const k of [...Object.values(PROXY_HEADERS), "x-forwarded-host", "x-forwarded-for", "x-real-ip", "forwarded"]) h.delete(k);
-  return h;
 }
 
 /** The path the signature covers: pathname plus the query string. */
@@ -79,25 +79,4 @@ export async function verifyProxyHeaders(req: Request, secret: string | undefine
   if (Math.abs(nowS - t) > PROXY_MAX_SKEW_S) return undefined;
   const want = await proxySignature(secret, { method: req.method, path: signedPath(new URL(req.url)), host, ip, ts: t });
   return sameString(want, sig) ? { ip, host: host.toLowerCase() } : undefined;
-}
-
-/** The paths a site router forwards to the shared backend; everything else is a static asset. */
-export const FORWARDED_PATHS = /^\/(api(\/|$)|mcp(\/|$)|oauth\/|\.well-known\/oauth-)/;
-
-/**
- * A complete site router for a Cloudflare Worker with static assets (env.ASSETS) and the backend
- * origin in env.API_ORIGIN, signing with env.PROXY_SECRET. Sites may copy it as it is.
- */
-export async function routeSiteRequest(req: Request, env: { API_ORIGIN: string; PROXY_SECRET: string; ASSETS: { fetch(r: Request): Promise<Response> } }): Promise<Response> {
-  const url = new URL(req.url);
-  if (!FORWARDED_PATHS.test(url.pathname)) return env.ASSETS.fetch(req);
-  const target = new URL(url.pathname + url.search, env.API_ORIGIN);
-  const headers = stripProxyHeaders(new Headers(req.headers));
-  headers.delete("host");
-  const ip = req.headers.get("cf-connecting-ip") ?? "";
-  for (const [k, v] of Object.entries(await signProxyHeaders(env.PROXY_SECRET, { method: req.method, path: signedPath(target), host: url.host, ip }))) headers.set(k, v);
-  const res = await fetch(target, { method: req.method, headers, body: req.method === "GET" || req.method === "HEAD" ? undefined : req.body, redirect: "manual" });
-  const out = new Response(res.body, res);
-  out.headers.set("cache-control", out.headers.get("cache-control") ?? "no-store");
-  return out;
 }
