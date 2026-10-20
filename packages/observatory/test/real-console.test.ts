@@ -2,7 +2,7 @@
 // section 6): the Network's stored state, requests, the newer review columns, events for the
 // timeline and the opportunity history, safety cases, the config history, search without inbound
 // text, the per-member PII reveal, and the append-only staff audit table.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
 import { SQL } from "bun";
 import { DAY } from "@thenetwork/core";
 import { rowsFromGame, writeRows } from "../db/writer.ts";
@@ -36,11 +36,16 @@ describe.skipIf(!pgAvailable)("real mode: admin-console data from Postgres", () 
     const sql = new SQL(url);
     await writeRows(sql, rowsFromGame(g), { truncate: true });
     await sql.close();
+    // Compare the same observation time. Wall time must not make future simulated meetings overdue.
+    setSystemTime(new Date(gs.clock.now));
     real = new RealSource({ url, pollMs: 3_600_000, pushMs: 3_600_000, service: false });
     await real.init();
     rs = real.state();
   }, T);
-  afterAll(async () => { await real?.dispose(); await g?.dispose(); await dropTestDb(); });
+  afterAll(async () => {
+    try { await real?.dispose(); await g?.dispose(); await dropTestDb(); }
+    finally { setSystemTime(); }
+  });
 
   test("review items with edits, re-rolls and time spent; requests; the Network's counters and switch", () => {
     expect(rs.env.error).toBeUndefined();
