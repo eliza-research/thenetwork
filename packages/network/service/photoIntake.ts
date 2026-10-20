@@ -32,12 +32,12 @@ const LIVE = new Set(["active", "paused", "onboarding"]);
 /** Draft copy (needs the founder's approval and the CONTRIBUTING 3.5 videos). */
 export const PHOTO_TEXT = {
   ask: `Before I keep any photos: ${PHOTO_CONSENT.text} Reply YES PHOTOS to agree, then send the photo again. Reply NO PHOTOS and I keep none.`,
-  agreed: "Thanks. Send your photos any time. You can see or delete them at slop.date/settings.",
+  agreed: "Thanks. Send your photos any time. To request a copy or deletion, email help@ntwrk.party.",
   declined: "OK. I will not keep your photos.",
   stored: (n: number) => (n === 1 ? "Got it. I saved your photo privately." : `Got it. I saved ${n} photos privately.`),
   notAdult: "I can't keep photos for you here.",
   badPhoto: "I could not use that photo. Send a JPEG, PNG or WebP photo of up to 8 MB.",
-  tooMany: "You have the most photos I can keep. Delete one at slop.date/settings first.",
+  tooMany: "You have the most photos I can keep. Email help@ntwrk.party to request deletion before sending more.",
 } as const;
 
 /** The explicit answer to the photo consent ask: "YES PHOTOS" or "NO PHOTOS" (a bare yes or no is never taken). */

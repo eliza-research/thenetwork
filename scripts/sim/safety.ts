@@ -163,6 +163,8 @@ export async function safetyBlock(b: Block): Promise<void> {
     // The explicit answer on another app's message is not taken either.
     expect(await w.intake.consentAnswer(a.e164, "YES PHOTOS", "m3d", "ntwrk")).toBe(false);
     expect(await w.intake.consentAnswer(a.e164, "YES PHOTOS", "m4")).toBe(true);
+    expect(w.replies.at(-1)!.text).not.toContain("/settings");
+    expect(w.replies.at(-1)!.text).toContain("help@ntwrk.party");
     expect((await w.people.getMembership(a.personId, "slop"))!.profile.photoConsent).toBe(PHOTO_CONSENT.version);
     const r = await w.intake.photosIn(a.e164, ["https://media.test/3.jpg"], "m5");
     expect(r).toEqual({ outcome: "stored", stored: 1, refused: [] });
