@@ -10,4 +10,3 @@ export interface MemberParticipation {
   until: string | null;
   quietHours?: [number, number];
 }
-

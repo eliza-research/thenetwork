@@ -77,7 +77,7 @@ The unused-symbol compiler scan found additional candidates which still need rev
 The full integration command started before edits, but loaded later files while edits were underway.
 It is diagnostic evidence, not a final unchanged-base or final-head certification.
 The scorecard failure already has an open repair, PR #101. The path-decoding repair is open as PR #99.
-PR #101 is incorporated locally, not merged on GitHub. PR #99 remains separate.
+Historical boundary at that run: PR #101 was incorporated locally and PR #99 was separate. Both are included in the later main base.
 Five module-load errors and the old age behavior came from changing files during the diagnostic run.
 A fresh process on the rebased tree is required; no passing suite is claimed from that run.
 
@@ -429,4 +429,18 @@ The mixed-revision integration run finished 576 pass / 2 fail: both photo-relay 
 binding corrected during that run. Their corrected suites pass 26 tests / 467 assertions. A fresh
 full integration run is in progress on the rebased source. Rebased e2e including browser cases
 passes 45 tests / 676 assertions. These are local controlled-service tests, not hosted agent-client
-acceptance. The required maintainer-provided staging URL has been requested.
+acceptance. The user explicitly deferred hosted agent-client checks on 2026-10-19 ("skip it for now please"). They are not claimed as passed.
+
+Rebased local results on c729bb2: full integration 578 pass, 0 fail, 12091 assertions across
+61 files (126.53 seconds); e2e including browser cases 45 pass, 0 fail, 676 assertions. Refreshed
+friends, safety and audit blocks: 51/51 blocking gates pass, one tracked metric off target.
+Together with the unaffected blocks from the full run, all 329 blocking gates have passed.
+The full run's 14 tracked off-target metrics remain research targets, not passing quality claims.
+The final duplicate-function scan reports no exact bodies at its 180-character threshold; the
+unreferenced-source scan lists only the same six documented command-line entry points.
+
+The latest main adds #105 (Text Eliza app-specific links). It changes only site entry points and
+site build/tests. The branch is refreshed again; site checks will be rerun. Removed one unused
+callback input introduced by #104. Strict unused-symbol checks pass after that cleanup.
+Hosted agent-client checks are deferred at the user's request. Real provider billing cost was
+not recorded by the bounded LLM run; no zero-cost claim is made.
