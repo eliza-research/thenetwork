@@ -18,6 +18,7 @@
 //     strips metadata, stores it privately and rates the member (adults only).
 import type { Accounts } from "../../platform/src/accounts.ts";
 import type { AppId } from "../../platform/src/apps.ts";
+import { readCapped } from "../../platform/src/body.ts";
 import { PHOTO_CONSENT, PHOTO_MAX_BYTES, type PhotoRefusal, type PhotoService } from "../../platform/src/photos.ts";
 import type { PeopleStore } from "../../platform/src/store.ts";
 import { DAY } from "@thenetwork/core";
@@ -151,19 +152,5 @@ export async function fetchMediaCapped(url: string, maxBytes: number): Promise<U
   if (u.protocol !== "https:") return undefined;
   const res = await fetch(u, { redirect: "error", signal: AbortSignal.timeout(15_000) });
   if (!res.ok || !res.body) return undefined;
-  if (Number(res.headers.get("content-length") ?? "0") > maxBytes) return "too_large";
-  const parts: Uint8Array[] = [];
-  let n = 0;
-  const reader = res.body.getReader();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    n += value.length;
-    if (n > maxBytes) { await reader.cancel().catch(() => {}); return "too_large"; }
-    parts.push(value);
-  }
-  const out = new Uint8Array(n);
-  let at = 0;
-  for (const p of parts) { out.set(p, at); at += p.length; }
-  return out;
+  return readCapped(res, maxBytes);
 }

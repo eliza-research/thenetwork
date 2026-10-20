@@ -9,7 +9,8 @@ import { agentRow, messagesHref, joinMessageFor, promptFor } from "./agents.ts";
 import { RUN_WORKER_FIRST } from "../deploy/router.ts";
 import { stagingSiteOrigins } from "../packages/platform/src/apps.ts";
 
-export type AppId = "ntwrk" | "slop" | "peon" | "friends";
+import type { AppId } from "../packages/core/src/types.ts";
+export type { AppId };
 
 export interface Site {
   app: AppId;

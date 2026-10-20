@@ -227,6 +227,27 @@ describe.skipIf(!pgAvailable)("the service as the platform's channel (Postgres)"
     expect((await memberOf("peon", p))!.age).toBe(16);
   }, T);
 
+  test("a repeated web join records a lower age across existing memberships without joining twice", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const { s, otp } = service(clock);
+    const web = site(s, clock, otp);
+    const p = newPhone();
+    await web.login("friends", p);
+    expect((await web.join("friends", 30)).status).toBe(200);
+    await web.login("slop", p);
+    expect((await web.join("slop", 30)).status).toBe(200);
+    const before = await memberOf("slop", p);
+    const consents = await count(sql`select count(*)::int as n from platform.consent_events where e164 = ${p}`);
+    expect((await web.join("slop", 16)).status).toBe(200);
+    expect(await lowestAge(p)).toBe(16);
+    for (const app of ["friends", "slop"] as const) expect((await memberOf(app, p))!.age).toBe(16);
+    expect((await memberOf("slop", p))!.id).toBe(before!.id);
+    expect((await web.join("slop", 30)).status).toBe(200);
+    expect(await lowestAge(p)).toBe(16);
+    expect(await count(sql`select count(*)::int as n from platform.consent_events where e164 = ${p}`)).toBe(consents);
+  }, T);
+
   test("SVC-03 an attested adult who says 'I am 12 years old' is held, not deleted: rows stay, other apps treat them as a minor", async () => {
     await fresh();
     const clock = new SimClock(START);

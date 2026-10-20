@@ -16,9 +16,10 @@
 // outer boroughs; domain research C4). Copied in spirit from packages/network/src/geo.ts
 // (travelMinutes, meetingSpot), which the engine cannot import.
 import type { MemberId } from "@thenetwork/core";
+import { km, type Borough } from "@thenetwork/core/src/geo.ts";
+export { km, type Borough };
 import type { Venue } from "../network/activities.ts";
 
-export type Borough = "Manhattan" | "Brooklyn" | "Queens" | "Bronx" | "Staten Island";
 export const BOROUGHS: readonly Borough[] = ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"];
 
 export interface Neighborhood {
@@ -98,12 +99,6 @@ export const ZONES: readonly string[] = [...new Set(NEIGHBORHOODS.map(n => n.zon
 export function hood(x: string | undefined): Neighborhood | undefined {
   if (!x) return undefined;
   return NEIGHBORHOOD.get(x) ?? NEIGHBORHOOD_BY_NAME.get(x.toLowerCase());
-}
-
-export function km(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
-  const R = 6371, dLat = ((b.lat - a.lat) * Math.PI) / 180, dLng = ((b.lng - a.lng) * Math.PI) / 180;
-  const x = Math.sin(dLat / 2) ** 2 + Math.cos((a.lat * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(x));
 }
 
 const CROSS: Record<string, number> = {

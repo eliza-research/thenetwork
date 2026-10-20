@@ -2,7 +2,7 @@
 // ONE id space (member id) before any filter runs (ME-006; Soulmates pitfall: blocks stored in
 // one id space and compared in another).
 import type { Category, City, Edge, EdgeType, Facet, FacetKind, Intent, Member, MemberId, Presence, Proposal } from "@thenetwork/core";
-import { canBeMatched, DAY, HOUR } from "@thenetwork/core";
+import { canBeMatched, DAY } from "@thenetwork/core";
 import type { EngineConfig } from "./config.ts";
 import { centroid, cosine, tokenize, type EmbedFn } from "./embed.ts";
 import { sha256, stableStringify } from "./hash.ts";
@@ -10,7 +10,7 @@ import type { AppPack } from "./pack.ts";
 import { networkPack } from "./packs/network/index.ts";
 import type { EngineInput, FeedbackRecord, InteractionRecord, NetworkEvent, ReliabilityEvidence, Role } from "./types.ts";
 
-import { intersect, subtract, union, type Interval } from "./interval.ts";
+import type { Interval } from "./interval.ts";
 export type { Interval };
 export const pairKey = (a: MemberId, b: MemberId) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
@@ -300,7 +300,7 @@ export class World {
         inviterRoot: "",
         presence: presenceBy.get(m.id) ?? [],
         inOpenOpportunity: openMembers.has(m.id),
-        acceptance: acceptanceOf(cfg, m, intentsBy.get(m.id) ?? [], response.get(m.id), proactive.get(m.id) ?? 0, now),
+        acceptance: acceptanceOf(cfg, response.get(m.id)),
       });
     }
     this.ids = [...this.members.keys()].sort();
@@ -400,7 +400,7 @@ export function responseHistory(interactions: InteractionRecord[], now: number):
  * (no oracle, no hidden truth). A Beta-smoothed share of the invites the member said yes to,
  * with prior `acceptance.prior` and weight `acceptance.strength`.
  */
-export function acceptanceOf(cfg: EngineConfig, m: Member, intents: Intent[], hist: { yes: number; n: number } | undefined, recentProactive: number, now: number): number {
+export function acceptanceOf(cfg: EngineConfig, hist: { yes: number; n: number } | undefined): number {
   const A = cfg.acceptance;
   return ((hist?.yes ?? 0) + A.prior * A.strength) / ((hist?.n ?? 0) + A.strength);
 }

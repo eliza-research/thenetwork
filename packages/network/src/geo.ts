@@ -3,9 +3,9 @@
 // selection. Venues are public places (parks, libraries, plazas, markets): the MVP suggests where
 // to meet but never books, and never uses anyone's home (PRD 32.12, 17.5).
 import type { Category } from "@thenetwork/core";
+import { km, type Borough, type LatLng } from "@thenetwork/core/src/geo.ts";
+export { km, type Borough, type LatLng };
 
-export type Borough = "Manhattan" | "Brooklyn" | "Queens" | "Bronx" | "Staten Island";
-export interface LatLng { lat: number; lng: number }
 export interface Neighborhood extends LatLng { name: string; borough: Borough }
 export interface Venue extends LatLng {
   id: string; name: string; neighborhood: string; borough: Borough;
@@ -94,13 +94,6 @@ const TAG_HINTS: Record<string, string[]> = {
   climate_tech: ["professional"], parenting: ["parents"], sailing: ["sailing"], volunteering: ["social"],
   social: ["social"], professional: ["professional", "cowork"], romance: ["walk"], hobby: ["outdoors"], help: [], growth: ["quiet"], events: ["social"],
 };
-
-const R = 6371;
-export function km(a: LatLng, b: LatLng): number {
-  const dLat = ((b.lat - a.lat) * Math.PI) / 180, dLng = ((b.lng - a.lng) * Math.PI) / 180;
-  const x = Math.sin(dLat / 2) ** 2 + Math.cos((a.lat * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(x));
-}
 
 /**
  * Door-to-door minutes, roughly: walking under 1.2 km; otherwise subway-ish (8 min overhead plus

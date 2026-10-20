@@ -22,7 +22,7 @@
 // BYTE IDENTITY (section 3.2). Pack identity travels BESIDE the config (`deps.pack`, the World
 // constructor), never inside it: EngineConfig / AttentionConfig / PlansConfig keep their shapes and
 // hashes. Run logs get no new fields for networkPack. Rule and generator order is the contract.
-import type { Category, City, Facet, Intent, MemberId, OpportunityKind } from "@thenetwork/core";
+import type { AppId, Category, City, Facet, Intent, MemberId, OpportunityKind } from "@thenetwork/core";
 import type { ActivityType } from "./packs/network/activities.ts";
 import type { AttentionConfig, EngineConfig, PlansConfig } from "./config.ts";
 import type { GenCtx } from "./genkit.ts";
@@ -45,7 +45,7 @@ export interface AssignContext {
 
 // ---------------------------------------------------------------------------------------- ids
 /** App ids (platform.apps). */
-export type AppId = "ntwrk" | "slop" | "peon" | "friends";
+export type { AppId } from "@thenetwork/core";
 /** Open strings at the core; a pack narrows them (networkPack: Category, City, Role, OpportunityKind). */
 export type LaneId = string;
 export type RoleId = string;

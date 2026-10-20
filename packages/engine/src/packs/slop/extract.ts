@@ -161,7 +161,6 @@ const NOT_NOW = /(?:\blike|\bas if|\bas though|\bpretend(?:ing)?|\bwhen|\bif|\bi
 const AGE_END = "(?=\\s*(?:$|[,!?:)\\/&]|and\\b|but\\b|so\\b|lol\\b|lmao\\b|haha\\b|btw\\b|tho\\b|here\\b|now\\b|too\\b|turning\\b|actually\\b|tbh\\b|y\\/?o\\b|yrs?\\b(?!\\s+(?:in|into|sober|clean))|years?(?:\\s+old)?\\b(?!\\s+(?:in|into|sober|clean|ago|of))|f\\b|m\\b|nb\\b|female\\b|male\\b|woman\\b|man\\b|guy\\b|girl\\b|gal\\b|dude\\b|looking\\b|lookin\\b|lf\\b|from\\b|in\\b|living\\b|w\\/|with\\b|straight\\b|gay\\b|bi\\b|queer\\b|single\\b|trans\\b|nonbinary\\b|\\(|-(?!\\s*\\d)))";
 const YEARS_OLD = "(?:years?[\\s-]+old|yrs?[\\s-]+old|y\\/o|yo)(?![a-z])";
 const KIN_AFTER = /^\s*(?:son|daughter|kid|kids|boy|girl|child|dog|cat|nephew|niece|brother|sister|cousin|whisky|whiskey|scotch|car|laptop)/;
-type AgeHit = { age: number; strict: boolean; m: RegExpExecArray };
 const AGE_RULES: { rx: RegExp; age: (m: RegExpExecArray) => number; strict: boolean }[] = [
   { rx: new RegExp(`\\b${ME}\\s+(?:only |just |literally |barely |like |about )?(\\d{1,2})(?!\\d|')(?!\\s*(?:-|to)\\s*\\d)${AGE_END}`), age: m => Number(m[1]), strict: true },
   { rx: new RegExp(`\\bi (?:just )?turned\\s+(\\d{1,2})\\b${AGE_END}`), age: m => Number(m[1]), strict: true },
@@ -728,7 +727,6 @@ const DAY_SLOTS: [RegExp, Slot[]][] = [
 const WEEKNIGHTS: Slot[] = ["mon_eve", "tue_eve", "wed_eve", "thu_eve", "fri_eve"];
 const WEEKEND: Slot[] = ["sat_day", "sat_eve", "sun_day", "sun_eve"];
 const FREE_CTX = /\b(?:free|available|open|work(?:s)? for me|good for me|can do|best|usually|generally|mostly|easiest|prefer|off)\b/;
-const BUSY_CTX = /\b(?:busy|work(?:ing)?|booked|slammed|not free|unavailable|can'?t do|cant do|except|but not|not)\b/;
 
 function slotsIn(text: string): Slot[] {
   const out = new Set<Slot>();

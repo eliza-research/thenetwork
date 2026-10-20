@@ -2,10 +2,9 @@
 // Nothing here is about a person. The join mode and the ages come from the platform registry
 // (packages/platform/src/apps.ts) when it has the app, so the server and the sites cannot drift.
 import { APPS as PLATFORM_APPS, PAGES_PROJECT, SUPPORT_EMAIL } from "@thenetwork/platform";
+import { APP_IDS as MCP_APP_IDS, isAppId as isMcpAppId, type AppId as McpAppId } from "../../core/src/types.ts";
 
-export const MCP_APP_IDS = ["ntwrk", "slop", "peon", "friends"] as const;
-export type McpAppId = (typeof MCP_APP_IDS)[number];
-export const isMcpAppId = (v: unknown): v is McpAppId => typeof v === "string" && (MCP_APP_IDS as readonly string[]).includes(v);
+export { MCP_APP_IDS, isMcpAppId, type McpAppId };
 
 /**
  * Which client surface a request comes from. "openai" is the public OpenAI (ChatGPT, Codex) plugin:
@@ -30,17 +29,13 @@ export interface McpApp {
   openai: boolean;
 }
 
-type PlatformPolicy = { joinMode: McpApp["joinMode"]; minJoinAge: number; minMatchAge: number };
-
-function app(id: McpAppId, name: string, domain: string, what: string, keyword: string | null, extra: { adultsOnly?: string[]; smsTerms?: boolean; safety?: boolean; openai?: boolean; joinMode?: McpApp["joinMode"] }): McpApp {
-  // The platform registry is the source of truth for join mode and ages. An app it does not know yet
-  // (for example before a rename lands) gets the founder defaults: 13+ to join, 18+ to be matched.
-  const p = (PLATFORM_APPS as Record<string, PlatformPolicy | undefined>)[id];
+function app(id: McpAppId, name: string, domain: string, what: string, keyword: string | null, extra: { adultsOnly?: string[]; smsTerms?: boolean; safety?: boolean; openai?: boolean }): McpApp {
+  const p = PLATFORM_APPS[id];
   const site = `https://${domain}`;
   return {
     id, name, domain, what, keyword,
-    joinMode: p?.joinMode ?? extra.joinMode ?? "open",
-    ages: { join: p?.minJoinAge ?? 13, match: Math.max(18, p?.minMatchAge ?? 18) },
+    joinMode: p.joinMode,
+    ages: { join: p.minJoinAge, match: p.minMatchAge },
     adultsOnly: ["Matching and introductions to other people are for adults 18 or older only. Nobody under 18 is ever matched or introduced.", ...(extra.adultsOnly ?? [])],
     links: {
       site, join: `${site}/join`, privacy: `${site}/privacy`, terms: `${site}/terms`,

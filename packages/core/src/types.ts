@@ -10,7 +10,9 @@ export type ParticipationState = "open" | "normal" | "quiet" | "receiving" | "pa
  * Optional everywhere: absent means the single-app Network ("ntwrk"). Facts, names and contact
  * details learned in one app must never reach a message sent in another (judge: cross_app_leak).
  */
-export type AppId = "ntwrk" | "slop" | "peon" | "friends";
+export const APP_IDS = ["ntwrk", "slop", "peon", "friends"] as const;
+export type AppId = (typeof APP_IDS)[number];
+export const isAppId = (v: unknown): v is AppId => typeof v === "string" && (APP_IDS as readonly string[]).includes(v);
 export type PrivacyScope = "agent_private" | "matchable" | "shareable" | "opportunity_specific";
 export type Provenance = "said" | "connected_source" | "inferred" | "vouched";
 export type FacetKind =

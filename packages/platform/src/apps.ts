@@ -7,9 +7,8 @@
 //    person joins The Network, which asks what they are looking for (LOOKING_FOR).
 //  - STOP on the shared line stops every app; "leave <app>" leaves one.
 
-export const APP_IDS = ["ntwrk", "slop", "peon", "friends"] as const;
-export type AppId = (typeof APP_IDS)[number];
-export const isAppId = (v: unknown): v is AppId => typeof v === "string" && (APP_IDS as readonly string[]).includes(v);
+import { APP_IDS, isAppId, type AppId } from "../../core/src/types.ts";
+export { APP_IDS, isAppId, type AppId };
 
 export type JoinMode = "invite" | "open" | "waitlist";
 

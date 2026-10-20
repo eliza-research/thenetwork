@@ -331,7 +331,6 @@ export class Accounts {
    * Undefined for a number that asked to delete everything (the suppression hash) or is on hold.
    */
   async invite(app: AppInfo, e164: string): Promise<Membership | undefined> {
-    const at = this.now();
     if ((await this.held(e164)) || (await this.store.isSuppressed(this.phoneHash(e164))) || (await this.banned(e164))) return undefined;
     const person = (await this.personFor(e164)) ?? (await this.createPerson(e164, "staff", null));
     const existing = await this.store.getMembership(person.id, app.id);
@@ -353,7 +352,12 @@ export class Accounts {
     let person = await this.personFor(who.e164);
     if (await this.banned(who.e164, person)) return { ok: false, error: "review" };
     const existing = person && (await this.store.getMembership(person.id, app.id));
-    if (existing && existing.state !== "removed" && existing.state !== "invited") return { ok: true, membership: existing };
+    if (existing && existing.state !== "removed" && existing.state !== "invited") {
+      // A repeated join is still an age statement. Keep the membership and consent unchanged,
+      // but propagate a lower age before returning the existing membership.
+      await this.recordAge(who.e164, person, input.age);
+      return { ok: true, membership: existing };
+    }
     if (app.joinMode === "invite" && existing?.state !== "invited") return { ok: false, error: "invite_only" };
     const age = joinAgeCheck(input.age, await this.lowestAge(who.e164, person), app);
     if (!age.ok) {
