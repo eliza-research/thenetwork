@@ -118,6 +118,7 @@ export interface AccountHooks {
   /** The member's own network data for this app (facets, intents, opportunities, messages). */
   onExport?(ctx: MemberHookContext): Promise<unknown> | unknown;
   /** The person's lowest age went down (a stated age on any app): every app's member must follow (a minor is never matched anywhere). */
+  /** Reconcile app state with the stored minimum after each age statement; must be idempotent. */
   onAgeLowered?(ctx: { personId: string; age: number }): Promise<void> | void;
 }
 
@@ -286,9 +287,10 @@ export class Accounts {
     } finally {
       // A temporary-data cleanup failure must not prevent the existing person-level safety update.
       if (person) {
-        const before = (await this.store.getPerson(person.id))?.lowestAge ?? null;
         const after = await this.store.noteAge(person.id, age);
-        if (before === null || after < before) await this.hooks.onAgeLowered?.({ personId: person.id, age: after });
+        // A prior hook may have failed after noteAge committed. Reconcile on retry, even if the
+        // statement is unchanged or older than the stored minimum. The hook only lowers app ages.
+        await this.hooks.onAgeLowered?.({ personId: person.id, age: after });
       }
     }
   }

@@ -249,6 +249,33 @@ describe.skipIf(!pgAvailable)("the service as the platform's channel (Postgres)"
     expect(await count(sql`select count(*)::int as n from platform.consent_events where e164 = ${p}`)).toBe(consents);
   }, T);
 
+  test("a repeated age statement repairs cross-app age propagation after a database failure", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const { s, otp } = service(clock);
+    const web = site(s, clock, otp);
+    const p = newPhone();
+    for (const app of ["friends", "slop"] as const) {
+      await web.login(app, p);
+      expect((await web.join(app, 30)).status).toBe(200);
+    }
+    // A database failure after the person age commits must be repairable on retry.
+    await sql.unsafe(`create function network.fail_age_update() returns trigger language plpgsql as $$
+      begin if new.app_id = 'slop' and new.age = 16 then raise exception 'age propagation interrupted'; end if; return new; end $$`);
+    await sql.unsafe(`create trigger fail_age_update before update on network.members for each row execute function network.fail_age_update()`);
+    try {
+      await expect(s.accounts.recordAge(p, await s.accounts.personFor(p), 16)).rejects.toThrow("age propagation interrupted");
+    } finally {
+      await sql.unsafe(`drop trigger fail_age_update on network.members`);
+      await sql.unsafe(`drop function network.fail_age_update()`);
+    }
+    expect(await lowestAge(p)).toBe(16);
+    expect((await memberOf("slop", p))!.age).toBe(30);
+    // Even a retry with the old age must carry forward the committed lower age.
+    expect((await web.join("slop", 30)).status).toBe(200);
+    for (const app of ["friends", "slop"] as const) expect((await memberOf(app, p))!.age).toBe(16);
+  }, T);
+
   test("SVC-03 an attested adult who says 'I am 12 years old' is held, not deleted: rows stay, other apps treat them as a minor", async () => {
     await fresh();
     const clock = new SimClock(START);

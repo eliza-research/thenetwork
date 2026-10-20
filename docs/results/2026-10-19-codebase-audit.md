@@ -131,3 +131,30 @@ Alternatives considered:
 
 The fix cancels the immutable digest. Remaining items stay in the inbox; it does not make a new
 digest for them. This preserves the existing policy that records notification intent before enqueue.
+
+## Confirmed defect: an age propagation failure is not repaired on retry
+
+The person-level age commits before the service updates each app. A failure in those updates left
+one app at the old age. A later statement did not call the hook because the person-level age was
+already lower. The retry returned success without repairing that app.
+
+`recordAge` now calls the idempotent reconciliation hook with the stored minimum after each age
+statement. This also repairs a retry that supplies the old, higher age. It removes one database read.
+
+The regression uses a Postgres trigger to fail the slop member update after the person age commits.
+The trigger is removed before the retry. Before the fix, slop stays at 30; after it, both apps are 16.
+The person-level send fence remains a separate check; this regression does not claim a live minor contact.
+
+```sh
+REQUIRE_PG=1 bun test --conditions eliza-source --timeout 120000 packages/network/test/service-platform.test.ts packages/platform/test/number-change.pg.test.ts packages/mcp/test/signup-draft.test.ts
+```
+
+Result: 34 pass, 0 fail, 370 assertions; typecheck passes. Logs: `runs/audit/age-retry-before.log`,
+`age-retry-after.log`, and `typecheck-age-retry.log`. No model or random seed is used.
+
+Alternatives considered:
+
+1. Put all effects in one transaction. Photo storage deletion cannot join a Postgres transaction.
+2. Add a durable pending-hook table. This adds state when the existing lower-only updates can run again.
+
+The chosen fix repeats reconciliation on age statements. It does not add a background retry worker.
