@@ -65,6 +65,29 @@ describe.skipIf(!pgAvailable)("console roles (migration 0010)", () => {
     expect(await as("network_observatory_slop", tx => tx`select origin_app from platform.person_blocks_slop`)).toMatchObject({ e: expect.stringContaining("origin_app") });
   }, T);
 
+  test("matching age views apply canonical floors and preserve app permissions", async () => {
+    await sql.begin(async tx => {
+      await tx`update platform.people set lowest_age = 16, phone_hash = 'age-view-fixture' where id = ${P.a}`;
+      await tx`insert into platform.age_floor values ('age-view-fixture', 15, now())`;
+    });
+    expect(await as("network_observatory_slop", tx => tx`select * from platform.matching_ages_slop order by member_id`)).toEqual({ v: [
+      { app_id: "slop", member_id: "s1", age: 15 },
+      { app_id: "slop", member_id: "s3", age: 41 },
+    ] });
+    expect(await as("network_observatory", tx => tx`select age from platform.matching_ages_ntwrk where member_id = 'n1'`)).toEqual({ v: [{ age: 15 }] });
+    for (const role of ["network_observatory", "network_observatory_ntwrk", "network_observatory_cross_app"]) {
+      expect(await as(role, tx => tx`select * from platform.matching_ages_slop`)).toEqual(denied);
+    }
+    expect(await as("network_observatory_slop", tx => tx`select * from platform.people`)).toEqual(denied);
+    for (const role of ["network_observatory_slop", "network_observatory_cross_app"]) {
+      for (const q of [
+        (tx: SQL) => tx`select * from platform.matching_ages`,
+        (tx: SQL) => tx`select * from platform.matching_ages_ntwrk`,
+        (tx: SQL) => tx`select * from platform.age_floor`,
+      ]) expect(await as(role, q)).toEqual(denied);
+    }
+  }, T);
+
   test("OBS-08: the cross-app role cannot read names, bios, ages or message texts; its counts work", async () => {
     const r = "network_observatory_cross_app";
     for (const q of [
@@ -101,6 +124,10 @@ describe.skipIf(!pgAvailable)("console roles (migration 0010)", () => {
     expect(by.network_observatory_slop!.filter(x => /console|person_blocks/.test(x))).toEqual(["network.network_state_console_slop", "platform.person_blocks_slop"]);
     expect(by.network_observatory_ntwrk!.filter(x => /console|person_blocks/.test(x))).toEqual(["network.network_state_console_ntwrk", "platform.person_blocks_ntwrk"]);
     expect(by.network_observatory!.filter(x => /console|person_blocks/.test(x))).toEqual(["network.network_state_console_ntwrk"]);
+    expect(by.network_observatory_slop!.filter(x => /matching_ages/.test(x))).toEqual(["platform.matching_ages_slop"]);
+    expect(by.network_observatory_ntwrk!.filter(x => /matching_ages/.test(x))).toEqual(["platform.matching_ages_ntwrk"]);
+    expect(by.network_observatory!.filter(x => /matching_ages/.test(x))).toEqual(["platform.matching_ages_ntwrk"]);
+    expect(by.network_observatory_cross_app!.filter(x => /matching_ages/.test(x))).toEqual([]);
     // The cross-app role: no table of messages or members as a whole (column grants only).
     expect(by.network_observatory_cross_app!.filter(x => /console/.test(x))).toEqual(["network.network_state_console_cross_app"]);
     expect(by.network_observatory_cross_app).not.toContain("network.messages");

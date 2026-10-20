@@ -323,3 +323,40 @@ Evidence: `runs/audit/observatory-types-before.log`, `typecheck-observatory.log`
 `observatory-type-files.txt`. The browser bundle is a build check, not a visual acceptance claim.
 Alternatives were adding the unsupported field to the server type or retaining the cast.
 The first invents a payload; the second conceals drift. The browser now follows the existing server types.
+
+## Matching reads the canonical age floor
+
+A failed app-row update can leave a member age at 30 after the person age commits as 16.
+The existing retry repair closes this gap only when another age statement arrives. Before that
+retry, the matching snapshot still used 30. The real Postgres failure-injection case now reads the
+snapshot before retry: it failed with expected 16, received 30, then passed with this change.
+This is a matching-input defect; it does not prove a minor received a message past the separate
+send-time fence.
+
+Migration 0038 adds a service view with invoker permissions and app-specific console views.
+The snapshot uses the lowest of member age, person age, and retained phone age floor. A missing
+age stays unknown. App roles can read only their own matching-age view; the cross-app role cannot
+read these views. The person summary still intentionally reads its existing lowest-age field.
+The console's existing SQL adapter now selects both app-scoped blocks and age views.
+
+The role integration case checks a phone floor of 15 with a person record of 16 and member record
+of 30, access to each permitted view, and denial of other-app and raw age-floor access. The grant
+inventory runs after reapplying the baseline schema, so a later baseline run must not reopen
+these views. Existing console parity cases also cover members without linked people.
+
+Alternatives: make every age write and network hook one transaction, or rely on retry reconciliation.
+The first requires a wider change to the account-store and runtime transaction boundaries. The
+second leaves an unsafe matching input until a retry. Reading the canonical floor keeps matching
+safe during that gap without changing the service wire contract.
+
+Evidence: runs/audit/snapshot-age-before.log, snapshot-age-after.log, snapshot-age-roles.log,
+integration-age-floor.log, and typecheck-age-floor.log. The first role-test run found that the
+person-summary role intentionally reads platform.people; its original assertion was too broad.
+The final assertions preserve that existing feature while testing the new view boundaries.
+
+Validation: all three TypeScript configurations pass. The full integration run finished with
+577 passes and one failure: the catalog allowlist had not yet named the new app-specific views.
+After adding those exact views to the allowlist, both affected migration suites pass:
+16 tests, 142 assertions, no failures (runs/audit/age-floor-catalog.log). No application logic was
+changed after that full run except renaming the local SQL adapter to appSnapshotSql. A final
+whole-tree integration run remains part of audit closeout.

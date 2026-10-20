@@ -67,7 +67,9 @@ export interface SnapshotScope { app: string; city?: string; homeCities?: readon
 export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope = { app: "ntwrk" }): Promise<WorldSnapshot> {
   const app = scope.app;
   const [members, facets, intents, presence, edges, recent, parts, personBlocks] = await Promise.all([
-    sql`select * from network.members where app_id = ${app} and account_status not in ('invited', 'removed') order by id`,
+    sql`select m.*, a.age as matching_age from network.members m
+      left join platform.matching_ages a on a.app_id = m.app_id and a.member_id = m.id
+      where m.app_id = ${app} and m.account_status not in ('invited', 'removed') order by m.id`,
     sql`select * from network.facets where app_id = ${app} and status <> 'rejected' order by member_id, id`,
     sql`select * from network.intents where app_id = ${app} order by member_id, id`,
     sql`select * from network.presence where app_id = ${app} order by member_id, city, type`,
@@ -93,7 +95,7 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
       id: r.id, name: r.name, homeCity: r.home_city, state: effectiveParticipation(r,now).state, prefs: r.prefs, accountStatus: r.account_status,
       // A missing age stays missing (undefined), never 0: 0 is a valid age under 13, and the Network
       // would decline the member and delete their data. Missing means unknown: treated as a minor and asked (network.md 6.3).
-      ...(r.invited_by ? { invitedBy: r.invited_by } : {}), joinedAt: ms(r.joined_at) ?? 0, age: r.age ?? (undefined as unknown as number), unansweredProactive: r.unanswered_proactive,
+      ...(r.invited_by ? { invitedBy: r.invited_by } : {}), joinedAt: ms(r.joined_at) ?? 0, age: r.matching_age ?? (undefined as unknown as number), unansweredProactive: r.unanswered_proactive,
     })),
     facets: (facets as any[]).filter(r => keep(r.member_id)).map(facetOf), intents: (intents as any[]).filter(r => keep(r.member_id)).map(intentOf),
     presence: (presence as any[]).filter(r => keep(r.member_id)).map(presenceOf),

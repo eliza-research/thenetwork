@@ -19,6 +19,7 @@ import { enrolledText, LOOKING_FOR_ASK, LOOKING_FOR_ASK_MINOR, NetworkService, W
 import { brandOf, copyFor } from "../src/copy.ts";
 import { START } from "./mini.ts";
 import { queueSink } from "../../notify/src/wiring.ts";
+import { loadSnapshot } from "../service/snapshot.ts";
 
 const T = 300_000;
 const REPO = resolve(import.meta.dir, "../../..");
@@ -270,7 +271,11 @@ describe.skipIf(!pgAvailable)("the service as the platform's channel (Postgres)"
       await sql.unsafe(`drop function network.fail_age_update()`);
     }
     expect(await lowestAge(p)).toBe(16);
-    expect((await memberOf("slop", p))!.age).toBe(30);
+    const staleSlop = (await memberOf("slop", p))!;
+    expect(staleSlop.age).toBe(30);
+    // Matching must already see the canonical minimum, before any retry repairs the app row.
+    const snapshot = await s.runtimeFor("slop")!.scoped(tx => loadSnapshot(tx, clock.now(), { app: "slop" }));
+    expect(snapshot.members.find(m => m.id === staleSlop.id)?.age).toBe(16);
     // Even a retry with the old age must carry forward the committed lower age.
     expect((await web.join("slop", 30)).status).toBe(200);
     for (const app of ["friends", "slop"] as const) expect((await memberOf(app, p))!.age).toBe(16);
