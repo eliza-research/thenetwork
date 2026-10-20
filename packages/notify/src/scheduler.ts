@@ -203,13 +203,15 @@ export class Notifier {
   }
 
   /**
-   * For the outbound queue's recipient check (the row id is the deliveryId): false once every item in the
-   * delivery was seen on some surface, so a message still waiting is not sent.
+   * Revalidate the immutable queued digest. Erasure or expiry cancels the whole text: its old body
+   * cannot be sent after the underlying item set changes. Seen items alone cancel only when all were seen.
    */
-  async stillNeeded(deliveryId: string): Promise<boolean> {
+  async stillNeeded(deliveryId: string, now: number): Promise<boolean> {
     const d = await this.store.getDelivery(deliveryId);
-    if (!d) return true;
-    return (await this.store.getItems(d.itemIds)).some(i => i.seenAt === undefined);
+    if (!d || deliveryIdFor(d.personId, d.itemIds) !== deliveryId) return false;
+    const items = await this.store.getItems(d.itemIds);
+    if (items.length !== d.itemIds.length || items.some(i => i.expiresAt !== undefined && i.expiresAt <= now)) return false;
+    return items.some(i => i.seenAt === undefined);
   }
 
   private async acted(deliveryId: string | undefined, on: Surface, personId: string, now: number) {

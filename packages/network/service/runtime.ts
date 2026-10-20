@@ -89,6 +89,8 @@ export interface RuntimeHost {
   consentRefused?(rt: NetworkRuntime, batch: Outbound[]): Promise<Set<string>>;
   /** The sends the adapter took (not refused or failed), after their statuses are stored. Errors are logged, never retried. */
   delivered?(rt: NetworkRuntime, sent: Outbound[]): Promise<void>;
+  /** The current inbox records still authorize an immutable queued notification. */
+  notificationCurrent?(id: string): Promise<boolean>;
   /** After a tick that ran on this instance (the review SLA alerts, the weekly bias monitor). Errors are logged; the tick still counts. */
   afterTick?(rt: NetworkRuntime): Promise<void>;
 }
@@ -176,6 +178,10 @@ export class NetworkRuntime {
   get instance(): string { return this.host.instance; }
 
   // ------------------------------------------------------------------ send-time checks of the persisted queue
+  async notificationCurrent(id: string): Promise<boolean> {
+    return this.host.notificationCurrent ? this.host.notificationCurrent(id) : false;
+  }
+
   /** Consent at send time for one queued message: the platform consent ledger (and bans), then the member's own opt-out. */
   async optedOut(id: string, memberId: MemberId | undefined, to: string): Promise<boolean> {
     // The platform consent ledger, suppression and bans by address: also for a direct text to a non-member.

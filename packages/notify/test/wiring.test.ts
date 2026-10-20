@@ -10,7 +10,10 @@ import { pgAvailable } from "../../observatory/test/pg.ts";
 import { OutboundQueue } from "../../blooio/src/outbound-queue.ts";
 import type { ChannelAdapter, SendRequest } from "../../blooio/src/types.ts";
 import { APPS } from "../../platform/src/apps.ts";
-import { MemoryNotifyStore, Notifier, queuePolicy, queueSink, threadHooks, type Recipient } from "../src/index.ts";
+import { Notifier, queuePolicy, queueSink, threadHooks, type Recipient } from "../src/index.ts";
+
+import { PgNotifyStore } from "../src/pg-store.ts";
+import { PgPeopleStore } from "../../platform/src/pg-store.ts";
 
 const user = process.env.USER ?? "postgres";
 const db = `notify_wiring_${randomUUID().replaceAll("-", "")}`;
@@ -24,18 +27,21 @@ async function setup(prefs: Recipient["prefs"] = { channel: "imessage" }) {
   // 12:00 in New York: outside quiet hours. Each setup has its own person and number.
   const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
   const now = () => clock.now();
-  const to = `+1212555${String(6000 + ++n)}`;
+  const to = `+121255501${String(++n).padStart(2, "0")}`;
   const sent: SendRequest[] = [];
   const provider: ChannelAdapter = {
     kind: "sim",
     async send(req) { sent.push(req); return { providerMessageId: `sim:${req.idempotencyKey}`, chatId: req.to, status: "sent", transport: "sim" }; },
   };
-  const store = new MemoryNotifyStore();
-  const r: Recipient = { personId: `p${n}`, to, timeZone: NY, prefs, proactiveAllowed: true };
+  const store = new PgNotifyStore(sql);
+  const people = new PgPeopleStore(sql);
+  const person = await people.createPerson({ id: randomUUID(), e164: to, method: "inbound_message", at: now(), lowestAge: 28 });
+  await people.putMembership({ app: "friends", personId: person.id, memberId: `friends_${n}`, state: "active", review: null, firstName: "Synthetic", profile: {}, joinedAt: now(), leftAt: null });
+  const r: Recipient = { personId: person.id, to, timeZone: NY, prefs, proactiveAllowed: true };
   const notifier = new Notifier(store, { get: id => (id === r.personId ? r : undefined) }, { isQuiet: () => false });
   const queue = new OutboundQueue({
     sql, clock, provider, line: "+12125550100", app: "friends",
-    checks: { live: () => true, recipient: queuePolicy(notifier) },
+    checks: { live: () => true, recipient: queuePolicy(notifier, clock) },
     leakAllow: Object.values(APPS).flatMap(a => [`https://${a.domain}`, a.domain]),
   });
   return { clock, now, store, notifier, queue, sink: queueSink(queue), sent, r };
@@ -77,8 +83,27 @@ describe.skipIf(!pgAvailable)("notify + the Postgres outbound queue", () => {
     await store.markSeen(r.personId, "claude", now(), [it.id]);
     await queue.drain();
     const [row] = await sql`select status, note from platform.outbound where id = ${sent[0]!.deliveryId}`;
-    expect([row.status, row.note]).toEqual(["suppressed_ineligible", "seen_elsewhere"]);
+    expect([row.status, row.note]).toEqual(["suppressed_ineligible", "notification_obsolete"]);
     expect(calls.length).toBe(0);
+  });
+
+
+  test.each(["expired", "mixed", "erased", "left_app"] as const)("queued notification with %s content is suppressed", async mode => {
+    const { clock, now, notifier, queue, sink, sent: calls, r } = await setup();
+    await notifier.add({ ...req(r.personId, `exp-${mode}`), expiresAt: now() + 60_000 }, now());
+    if (mode === "mixed") await notifier.add(req(r.personId, "still-live", "Another update."), now());
+    if (mode === "left_app") {
+      await new PgPeopleStore(sql).putMembership({ app: "slop", personId: r.personId, memberId: `slop_${n}`, state: "active", review: null, firstName: "Synthetic", profile: {}, joinedAt: now(), leftAt: null });
+      await notifier.add({ ...req(r.personId, "other-app", "Another update."), app: "slop" }, now());
+    }
+    const { sent } = await notifier.dispatch(now(), sink);
+    expect(sent).toHaveLength(1);
+    if (mode === "erased") await new PgPeopleStore(sql).deleteAll(r.personId, r.to, "synthetic-deletion-hash", now());
+    else if (mode === "left_app") await new PgPeopleStore(sql).forgetMembership(r.personId, "friends", now());
+    else clock.advance(60_000);
+    await queue.drain();
+    expect(calls).toHaveLength(0);
+    expect(await queue.statusOf(sent[0]!.deliveryId)).toBe("suppressed_ineligible");
   });
 
   test("thread hooks: readUpdates clears the inbox; an inbound message counts as acting", async () => {

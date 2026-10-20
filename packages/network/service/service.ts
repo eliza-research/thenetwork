@@ -644,6 +644,11 @@ export class NetworkService implements RuntimeHost {
     };
   }
 
+  /** Send-time authorization for a queued notification, including after a restart. */
+  async notificationCurrent(id: string): Promise<boolean> {
+    return this.notify ? this.notify.stillNeeded(id, this.clock.now()) : false;
+  }
+
   /** Once per tick: close stale delivery outcomes, then send what the inbox has due. */
   async notifyTick(): Promise<void> {
     if (!this.notify) return;

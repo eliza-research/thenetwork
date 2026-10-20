@@ -177,7 +177,8 @@ export class BlooioAdapter implements ChannelAdapter {
     const checks: AppChecks = {
       live: () => this.live,
       // A relayed item still goes after the date (the thread stays open for a week); a closed match stops it.
-      stale: row => !!row.oppId && (row.id.startsWith("relay:") ? (rt.net.opps.get(row.oppId)?.stage ?? "closed") === "closed" : CLOSED_STAGES.has(rt.net.opps.get(row.oppId)?.stage ?? "")),
+      stale: async row => row.id.startsWith("ntf_") ? !await rt.notificationCurrent(row.id)
+        : !!row.oppId && (row.id.startsWith("relay:") ? (rt.net.opps.get(row.oppId)?.stage ?? "closed") === "closed" : CLOSED_STAGES.has(rt.net.opps.get(row.oppId)?.stage ?? "")),
       optedOut: row => rt.optedOut(row.id, row.memberId as MemberId | undefined, row.to),
       // A direct text to someone who is not a member of this app (no member on the row, none at the address)
       // is fixed copy: the member policy has nobody to check. Consent, quiet hours, caps and the leak guard still apply.

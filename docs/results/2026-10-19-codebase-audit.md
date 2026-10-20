@@ -69,7 +69,10 @@ The unused-symbol compiler scan found additional candidates which still need rev
 | Current-main typecheck, four site builds and plugin snapshots | Pass |
 | Current-main e2e | 42 pass, 3 optional browser cases skipped, 0 fail, 609 assertions |
 | Current-main optional browser cases, run separately | 3 pass, 0 fail, 71 assertions |
-| Current-main integration and targeted simulations | In progress |
+| Current-main integration | 569 pass, 0 fail, 12183 assertions |
+| Targeted onboard, friends, network simulations with REQUIRE_PG=1 | 98/98 blocking gates pass; 2 tracked metrics off target |
+| Notification changes: integration, retention, service and cloud outbound | 41 pass, 0 fail, 476 assertions |
+| Typecheck after notification changes | Pass |
 
 The full integration command started before edits, but loaded later files while edits were underway.
 It is diagnostic evidence, not a final unchanged-base or final-head certification.
@@ -96,3 +99,35 @@ This report is hand-written. Counts come from command output in ignored `runs/au
 The optional browser cases used the existing Playwright module at `/Users/shawwalters/v3/node_modules/playwright/index.mjs`.
 They exercise built pages with controlled API/provider boundaries, not actual hosted agent clients.
 Current validation logs: `runs/audit/integration-current.log`, `sim-current.log`, `browser-current.log`, and `e2e-current.log`.
+
+## Confirmed defect: queued notifications outlive their source records
+
+The queue could send an expired inbox item or a digest with content from an erased app.
+The notification policy allowed a missing delivery record and checked only whether an item was unseen.
+The service queue also did not call this policy.
+
+The send-time check now requires the original item set, all records present, no expired item,
+and at least one unseen item. A missing record fails closed. The service queue uses the same check.
+The item-set hash detects retention changes without storing another copy of the text.
+
+Real Postgres regressions cover full expiry, partial expiry, full erasure, and leaving one app.
+All four failed before the fix and pass after it. A service regression failed by sending expired
+content before the fix; after the fix it suppresses that content and still sends a current item.
+The queue uses a recording provider, fictional numbers, and a simulated clock; no live sends occur.
+
+```sh
+REQUIRE_PG=1 bun test --conditions eliza-source --timeout 120000 packages/notify/test packages/platform/test/notify-retention.pg.test.ts packages/network/test/service-platform.test.ts packages/network/test/cloud-outbound.integration.test.ts
+```
+
+Result: 41 pass, 0 fail, 476 assertions. Logs are in `runs/audit/notify-suite-after.log`.
+The narrow before/after logs are `notify-current-before.log`, `notify-current-after.log`,
+`service-notify-before.log`, and `service-notify-after.log` in the same directory.
+No model or random seed is used in these deterministic database cases.
+
+Alternatives considered:
+
+1. Rewrite the queued digest after erasure. This changes the body under an existing delivery identity.
+2. Cancel rows only when an item is erased. This misses expiry while a message waits in the queue.
+
+The fix cancels the immutable digest. Remaining items stay in the inbox; it does not make a new
+digest for them. This preserves the existing policy that records notification intent before enqueue.

@@ -3,8 +3,8 @@
 
 import type { Notifier } from "./scheduler.ts";
 import type { Channel } from "./types.ts";
-
-type Check = { ok: true } | { ok: false; reason: string };
+import type { Clock } from "../../core/src/clock.ts";
+import type { RecipientCheck } from "../../blooio/src/outbound-queue.ts";
 
 /**
  * For packages/blooio OutboundQueue `AppChecks.recipient` (the Postgres queue, platform.outbound). A
@@ -14,10 +14,11 @@ type Check = { ok: true } | { ok: false; reason: string };
  */
 export function queuePolicy<R extends { id: string }>(
   notifier: Pick<Notifier, "stillNeeded">,
-  next?: (row: R, agentInitiated: boolean) => Check | Promise<Check>,
+  clock: Clock,
+  next?: (row: R, agentInitiated: boolean) => RecipientCheck | Promise<RecipientCheck>,
 ) {
-  return async (row: R, agentInitiated: boolean): Promise<Check> => {
-    if (row.id.startsWith("ntf_") && !(await notifier.stillNeeded(row.id))) return { ok: false, reason: "seen_elsewhere" };
+  return async (row: R, agentInitiated: boolean): Promise<RecipientCheck> => {
+    if (row.id.startsWith("ntf_") && !(await notifier.stillNeeded(row.id, clock.now()))) return { ok: false, reason: "notification_obsolete" };
     return next ? next(row, agentInitiated) : { ok: true };
   };
 }
