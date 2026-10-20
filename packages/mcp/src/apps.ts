@@ -25,7 +25,7 @@ export interface McpApp {
   ages: { join: number; match: number };
   /** Rules that apply to adults only, in plain words. */
   adultsOnly: string[];
-  links: { site: string; join: string; privacy: string; terms: string; smsTerms: string | null; safety: string | null; settings: string; support: string };
+  links: { site: string; join: string; privacy: string; terms: string; smsTerms: string | null; safety: string | null; support: string };
   /** False: never listed or offered on the OpenAI surface. */
   openai: boolean;
 }
@@ -45,7 +45,7 @@ function app(id: McpAppId, name: string, domain: string, what: string, keyword: 
     links: {
       site, join: `${site}/join`, privacy: `${site}/privacy`, terms: `${site}/terms`,
       smsTerms: extra.smsTerms === false ? null : `${site}/terms#sms`, safety: extra.safety ? `${site}/safety` : null,
-      settings: `${site}/settings`, support: `mailto:${SUPPORT_EMAIL}`,
+      support: `mailto:${SUPPORT_EMAIL}`,
     },
     openai: extra.openai ?? true,
   };

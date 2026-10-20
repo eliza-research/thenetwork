@@ -43,19 +43,17 @@ afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
 describe.each(SITES)("$domain", (s) => {
   test("every required page is built", () => {
-    const need = ["index.html", "join.html", "settings.html", "privacy.html", "terms.html", "guidelines.html", "support.html", "404.html"];
+    const need = ["index.html", "join.html", "privacy.html", "terms.html", "guidelines.html", "support.html", "404.html"];
     expect(htmlFiles(s)).not.toContain("sms-terms.html");
     if (s.app === "slop") need.push("safety.html");
     expect(htmlFiles(s)).toEqual(expect.arrayContaining(need));
   });
 
-  test("members can reach phone sign-in from home and return to the existing text conversation", () => {
-    const header = read(s, "index.html").match(/<header[^>]*>([\s\S]*?)<\/header>/)?.[1] ?? "";
-    expect(header, s.domain).toMatch(/<a[^>]*href="\/settings"[^>]*>Sign in<\/a>/);
-    const account = read(s, "settings.html");
-    expect(account, s.domain).toContain(`href="sms:${TEXT_LINE}?&amp;body=${encodeURIComponent(keywordFor(s))}"`);
-    expect(account, s.domain).toContain("Open Messages");
-    expect(account, s.domain).toContain('<option value="" disabled>Select your home city</option>');
+  test("landing pages lead to agents without a standalone account portal", () => {
+    expect(htmlFiles(s)).not.toContain("settings.html");
+    for (const f of htmlFiles(s)) expect(read(s, f)).not.toContain('href="/settings"');
+    expect(read(s, "index.html")).not.toContain("Sign in");
+    expect(read(s, "index.html")).toContain("sms:");
   });
 
   test("every page has a title and the legal links", () => {
@@ -63,7 +61,7 @@ describe.each(SITES)("$domain", (s) => {
       const html = read(s, f);
       expect(html.match(/<title>([^<]+)<\/title>/)?.[1]?.trim().length ?? 0, f).toBeGreaterThan(3);
       // The landing page links privacy and terms only.
-      for (const href of f === "index.html" ? ["/privacy", "/terms"] : ["/privacy", "/terms", "/guidelines", "/settings", "/support"]) {
+      for (const href of f === "index.html" ? ["/privacy", "/terms"] : ["/privacy", "/terms", "/guidelines", "/support"]) {
         expect(html.includes(`href="${href}"`), `${f} links ${href}`).toBe(true);
       }
     }
@@ -187,8 +185,8 @@ describe.each(SITES)("$domain", (s) => {
     }
   });
 
-  test("the phone step on join and settings carries the Turnstile slot and the site key meta", () => {
-    for (const f of ["join.html", "settings.html"]) {
+  test("the phone step on join carries the Turnstile slot and the site key meta", () => {
+    for (const f of ["join.html"]) {
       const html = read(s, f);
       expect(html, f).toContain('<meta name="turnstile-sitekey" content="">');
       expect(html.indexOf("data-turnstile"), f).toBeGreaterThan(html.indexOf('data-form="phone"'));
@@ -237,7 +235,7 @@ test("staging builds keep the served entry, skills and signed router on configur
     const base = `http://127.0.0.1:${server.port}`;
     const skill = await (await fetch(`${base}/SKILL.md`)).text();
     expect(skill).toContain(`MCP endpoint is ${origins.slop}/mcp`);
-    for (const path of ["join?via=agent", "settings", "privacy", "terms", "support"]) expect(skill).toContain(`${origins.slop}/${path}`);
+    for (const path of ["join?via=agent", "privacy", "terms", "support"]) expect(skill).toContain(`${origins.slop}/${path}`);
     expect(skill).toContain("email help@ntwrk.party");
     expect(skill).not.toContain("https://slop.date");
     const index = await (await fetch(`${base}/.well-known/agent-skills/index.json`)).json() as { skills: { url: string; digest: string }[] };

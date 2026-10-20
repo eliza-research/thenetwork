@@ -1,4 +1,4 @@
-// Phone -> code login, shared by /join and /settings. The person types their own number and the code
+// Phone -> code login, for /join. The person types their own number and the code
 // that we text them; nothing else (no agent, no other page) can enter it for them.
 // Markup contract inside the flow root:
 //   [data-step="phone"]  form[data-form="phone"] with input[name=phone] and an empty [data-turnstile]
@@ -53,7 +53,7 @@ export function mountAuth(root: HTMLElement, onSignedIn: () => Promise<void> | v
     if (error) form.append(error);
     form.addEventListener("submit", async event => {
       event.preventDefault();
-      const result = await busy(form, () => api.cloudAuthStart(location.pathname.startsWith("/settings") ? "/settings" : "/join"));
+      const result = await busy(form, () => api.cloudAuthStart("/join"));
       if (!result.ok) { setError(form, "Sign-in is unavailable. Try again."); return; }
       location.assign(result.data.url);
     });

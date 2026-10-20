@@ -14,7 +14,6 @@ body.landing {
 .landing footer.l-foot { margin-block: 0; border: 0; }
 .landing .l-wrap { width: min(100% - 2 * clamp(20px, 6vw, 64px), 1120px); margin-inline: auto; }
 .landing .l-top { padding-block: clamp(20px, 3vw, 32px); display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-.landing .l-sign-in { display: inline-flex; align-items: center; min-height: 44px; color: var(--l-ink); font-size: 15px; text-underline-offset: 4px; }
 .landing .l-mark { display: inline-flex; align-items: center; gap: 10px; font-weight: 650; font-size: 18px; letter-spacing: -0.02em; color: var(--l-ink); text-decoration: none; }
 .landing .l-mark svg { width: 30px; height: 30px; flex: none; }
 .landing .l-logo-hi { fill: var(--l-hi); } .landing .l-logo-bg { fill: var(--l-bg); } .landing .l-logo-line { fill: none; stroke: var(--l-bg); }

@@ -11,8 +11,9 @@ brand
 
 People who read a site on a phone, often after a friend sends a link. Most already use an AI agent
 that knows them. They want to know what the service is, whether it is safe, and how to
-join or leave. Each site has one job: explain one app, let a person join it by phone, and let a
-member see, export, stop or delete their data.
+join. Each site sends the person to their agent or Messages. Phone confirmation remains part
+of signup and connector authorization. There is no standalone sign-in page or member dashboard
+(founder correction, 2026-10-19). Data requests go to the existing support address.
 
 ## Product Purpose
 

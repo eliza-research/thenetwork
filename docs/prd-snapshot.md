@@ -1,5 +1,8 @@
 <!-- Snapshot of the canonical PRD (Google Doc). Edit the Google Doc, not this file. https://docs.google.com/document/d/1lLQAZNAMSC_yHCkUBVbp1CCwvyR17PuvV7TnpfuY8Xc/edit -->
 
+Founder correction — 2026-10-19: no standalone website account portal
+The four public sites do not offer a Sign in link, a settings page, or a member dashboard. People use their agent or text conversation. Phone confirmation and connector authorization remain only for signup and agent access. STOP and per-app leave remain text commands. Export and deletion requests use help@ntwrk.party. This correction supersedes earlier requirements for public website account controls; it does not remove backend privacy controls or OAuth consent safeguards.
+
 THE NETWORK
 Product Requirements Document
 The Network is an intelligence for discovering and activating the latent potential between people. It creates the conditions for useful, surprising, meaningful things to happen - without requiring people to spend more of their lives managing social coordination.

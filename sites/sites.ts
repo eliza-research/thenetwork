@@ -33,7 +33,7 @@ export const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
 /**
  * Security headers for every page (Cloudflare reads dist/_headers; the dev server sends the same).
  * Everything is same-origin except the Turnstile script and frame. No site may frame a page (the
- * settings page has stop, leave and delete buttons).
+ * signup page has consent controls).
  */
 export const SECURITY_HEADERS: Record<string, string> = {
   "Content-Security-Policy": `default-src 'self'; script-src 'self' ${TURNSTILE_ORIGIN}; frame-src ${TURNSTILE_ORIGIN}; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`,

@@ -124,14 +124,14 @@ describe.skipIf(!pgAvailable)("Cloud phone handoff (PostgreSQL)", () => {
     proofIssuedAt = Math.floor(now/1000);
     sourceExpiresAt = now+3*24*3_600_000;
     code = `enso_${"b".repeat(64)}`;
-    const freshStart = await call("slop", "POST", "/api/auth/cloud/start", {returnPath: "/settings"});
+    const freshStart = await call("slop", "POST", "/api/auth/cloud/start", {returnPath: "/join"});
     const freshPending = freshStart.headers.get("set-cookie")!.split(";")[0]!;
     const freshAuthorize = new URL((await freshStart.json()).url);
     challenge = freshAuthorize.searchParams.get("challenge")!;
     const freshCallback = `/api/auth/cloud/callback?code=${code}&state=${freshAuthorize.searchParams.get("state")}`;
     const freshLogin = await call("slop", "GET", freshCallback, undefined, freshPending);
     expect(freshLogin.status).toBe(303);
-    expect(freshLogin.headers.get("location")).toBe("/settings");
+    expect(freshLogin.headers.get("location")).toBe("/join");
     let freshCookie = freshLogin.headers.getSetCookie().filter(value => !value.startsWith("cloud_pending_")).map(value => value.split(";")[0]).join("; ");
     expect((await call("slop", "GET", "/api/me", undefined, freshCookie)).status).toBe(200);
     // The source proof is checked against the original cookie, then rotated and resealed together.

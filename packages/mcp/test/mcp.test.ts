@@ -107,7 +107,7 @@ describe("Streamable HTTP, 2026-07-28", () => {
     expect(r.res.status).toBe(200);
     expect(r.body!.result.isError).toBe(false);
     const status = r.body!.result.structuredContent;
-    expect(status).toMatchObject({ app: "friends", status: "active", manage_url: "https://friends.help/settings" });
+    expect(status).toMatchObject({ app: "friends", status: "active", manage_url: "mailto:help@ntwrk.party" });
     // Membership is confirmed; no delivery or matching capability was supplied to this handler.
     expect(status.next_step).not.toMatch(/\b(texts?|messages?|matching|introductions?|ready)\b/i);
     expect(status.next_step).toMatch(/signed up/i);

@@ -588,7 +588,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
   async function consents(c: Ctx, revokeOne: boolean): Promise<Response> {
     const who: SignedIn | undefined = o.platform.session ? await o.platform.session(c.app.id, c.req) : undefined;
-    if (!who) return messagePage(c.app, "Sign in first", `Sign in at ${c.app.links.settings}, then open this page again.`, 401);
+    if (!who) return messagePage(c.app, "Sign in first", "Connect this app in your agent and confirm your phone during authorization, then open this page again.", 401);
     let notice: string | undefined;
     if (revokeOne) {
       if (c.req.method !== "POST") return json(405, { error: "method_not_allowed" }, { allow: "POST" });

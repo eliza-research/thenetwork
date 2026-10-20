@@ -359,7 +359,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       case "POST /api/auth/cloud/start": {
         if (!cloud) return json(404, {ok: false, error: "not_found"});
         const returnPath = b.returnPath === "/join" || b.returnPath === "/join.html" ? "/join"
-          : b.returnPath === "/settings" || b.returnPath === "/settings.html" ? "/settings" : null;
+          : null;
         if (!returnPath) return json(400, {ok: false, error: "invalid"});
         const state = randomBytes(32).toString("hex"), verifier = randomBytes(32).toString("hex");
         const challenge = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
@@ -375,7 +375,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         const reject = (status: number) => json(status, {ok: false, error: "cloud_auth_unavailable"}, {"set-cookie": pendingCookie("", 0)});
         const pending = unseal("cloud-pending", cookies.get(pendingName));
         if (!pending || pending.app !== appId || pending.state !== url.searchParams.get("state") || typeof pending.verifier !== "string"
-          || typeof pending.until !== "number" || pending.until <= now() || (pending.returnPath !== "/join" && pending.returnPath !== "/settings")) return reject(400);
+          || typeof pending.until !== "number" || pending.until <= now() || pending.returnPath !== "/join") return reject(400);
         const code = url.searchParams.get("code");
         if (!code || !/^enso_[0-9a-f]{64}$/.test(code)) return reject(400);
         try {

@@ -9,7 +9,7 @@ metadata:
   backend: "{{BACKEND_ORIGIN}}"
   mcp: "{{MCP_URL}}"
   operator: Eliza Research Corporation
-  version: "1.1.4"
+  version: "1.1.5"
 ---
 
 # The Network
@@ -74,8 +74,8 @@ The person signs up through you, in this conversation:
    For website/MCP onboarding, ask whether they already belong or received an invitation.
    Reply to your own invitation text to accept; never ask this assistant to accept it for you.
    A person without either can ask a member who knows them, or the team, for an invitation,
-   or use the self-text route above. After accepted membership, the person signs in themselves
-   at https://ntwrk.party/settings with their own phone and code. You never see or enter either.
+   or use the self-text route above. After accepted membership, connect the MCP server in step 3.
+   The person confirms their own phone during connector authorization. You never see or enter the code.
 3. Ask the person to return to this same agent conversation when they finish on the site.
    If this app's MCP tools are not available, they must add {{MCP_URL}} in their client's connector settings.
    In ChatGPT, add https://ntwrk.party/mcp/openai instead; /mcp does not authorize ChatGPT clients.
@@ -123,7 +123,7 @@ STOP stops every text from this number, and a safety hold or ban after a report 
 ## Stop, leave and delete
 
 - Text STOP: stops every text from this number.
-- Export or delete at https://ntwrk.party/settings.
+- To request an export or deletion, email help@ntwrk.party.
 
 ## Support
 

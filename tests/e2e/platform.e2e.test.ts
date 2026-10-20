@@ -372,7 +372,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
     }
   }, T);
 
-  test("a pause set by text shows on Settings with its end date; resume ends it and keeps messages on (#11)", async () => {
+  test("a pause set by text is readable through the API; resume preserves messaging consent (#11)", async () => {
     // As the Eliza gateway does: a signed /internal/turn for each text, then the agent's signed
     // /internal/set-state on the member's open turn ("pause me until next Friday").
     const phone = newPhone();
@@ -406,11 +406,10 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
     // The value is read from the member record the Network uses, not a copy.
     const [row] = await sql`select participation_window from network.members where app_id = 'friends' and id = ${open.memberId}`;
     expect(row.participation_window.until).toBe(until);
-    // Every site's Settings page has the slot that shows "Paused until <date>" and the resume button.
+    // Removed account routes must not expose a standalone sign-in form.
     for (const app of APP_IDS) {
-      const html = await (await st.site(app, "/settings")).text();
-      expect(html).toContain('data-slot="pauseText"');
-      expect(html).toContain('data-action="resume"');
+      const page = await st.site(app, "/settings");
+      expect(page.status).toBe(404);
     }
 
     const resume = await st.site("friends", "/api/me/resume", { browser: b, json: {} });
@@ -521,7 +520,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       const skill = await (await st.site("ntwrk", "/SKILL.md")).text();
       expect(skill).toContain("The website is invite-only. There is no public sign-up form");
       expect(skill).toContain("Reply to your own invitation text to accept");
-      expect(skill).toContain("https://ntwrk.party/settings");
+      expect(skill).not.toContain("https://ntwrk.party/settings");
       expect(skill).not.toContain("On that page they type");
       expect(skill).toContain("A first text does not require a website invitation");
       expect(skill).toContain("sms:");
@@ -530,13 +529,13 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       const info = toolData(await rpc(st, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: { app: "ntwrk" } }));
       expect(info.join.mode).toBe("invite");
       expect(info.join.how).toContain("Reply to that invitation text to accept");
-      expect(info.join.how).toContain("https://ntwrk.party/settings");
+      expect(info.join.how).toContain("connector authorization");
       expect(info.join.how).not.toContain("The agent asks what they are looking for");
       const signup = (app: AppId) => rpc(st, "ntwrk", "/mcp/openai", "tools/call", { name: "start_signup", arguments: { app } });
       const invite = toolData(await signup("ntwrk"));
       expect(invite).toMatchObject({ app: "ntwrk", join_mode: "invite", url: "https://ntwrk.party/join?via=agent" });
       expect(invite.instructions_for_person).toContain("Reply to that invitation text to accept");
-      expect(invite.instructions_for_person).toContain("https://ntwrk.party/settings");
+      expect(invite.instructions_for_person).toContain("connector authorization");
       expect(invite.instructions_for_person).not.toMatch(/enter your own phone|code arrives|type it on that page/i);
       for (const app of ["peon", "friends"] as const) {
         const info = toolData(await rpc(st, "ntwrk", "/mcp/openai", "tools/call", { name: "app_info", arguments: { app } }));
@@ -1058,7 +1057,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       expect((await webJoin(st, "slop", adult, { age: 29, browser: ab })).res.status).toBe(200);
       const refused = await upload(tb);
       expect([refused.status, ((await refused.json()) as { error: string }).error]).toEqual([403, "adults_only"]);
-      // The settings page hides the photo section (consent text and upload control) unless `eligible` is true.
+      // Photo API eligibility remains restricted to adult members.
       const listOf = async (b: Browser) => (await st.site("slop", "/api/photos", { browser: b })).json() as Promise<{ eligible: boolean; photos: unknown[] }>;
       expect(await listOf(tb)).toMatchObject({ eligible: false, photos: [] });
       expect((await listOf(ab)).eligible).toBe(true);

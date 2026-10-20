@@ -42,7 +42,7 @@ export async function smoke(base: string, app: string, opts: { api?: boolean; fe
   const canonical = await get(`/.well-known/agent-skills/${skill}/SKILL.md`);
   add("/SKILL.md equals the canonical copy", canonical.res?.status === 200 && canonical.body === md.body, String(canonical.res?.status));
 
-  for (const p of ["/privacy", "/terms", "/support", "/join", "/settings"]) {
+  for (const p of ["/privacy", "/terms", "/support", "/join"]) {
     const r = await get(p);
     add(`GET ${p} is 200`, r.res?.status === 200, String(r.res?.status));
   }

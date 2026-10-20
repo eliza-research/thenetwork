@@ -1,4 +1,4 @@
-// Small DOM helpers shared by the join and settings pages. Each site writes its own markup and
+// Small DOM helpers shared by the join pages. Each site writes its own markup and
 // copy; this code only finds elements by data attributes:
 //   [data-step="name"]       one panel of a flow; only one is visible at a time
 //   [data-slot="name"]       text filled in from the API (textContent only)

@@ -8,7 +8,7 @@ metadata:
   site: https://friends.help
   mcp: "https://friends.help/mcp"
   operator: Eliza Research Corporation
-  version: "1.1.3"
+  version: "1.1.4"
 ---
 
 # friends.help
@@ -146,7 +146,7 @@ to share a base profile. Nobody can learn whether a phone number uses friends.he
 
 - Text STOP: stops every text from this number.
 - Text "leave friends.help": stops friends.help only.
-- Export or delete at https://friends.help/settings.
+- To request an export or deletion, email help@ntwrk.party.
 
 ## Support
 

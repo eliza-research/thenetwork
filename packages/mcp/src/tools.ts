@@ -41,7 +41,7 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
     join: object({ mode: joinMode, url: text, keyword: nullableText, how: text }),
     ages, adults_only: { type: "array", items: text }, stop: text,
     consent_rules: { type: "array", items: text },
-    links: object({ privacy: text, terms: text, sms_terms: nullableText, safety: nullableText, settings: text, support: text }),
+    links: object({ privacy: text, terms: text, sms_terms: nullableText, safety: nullableText, support: text }),
   });
   return [
     {
@@ -191,7 +191,7 @@ export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host
 
 function invitationGuidance(a: McpApp): string {
   return `${a.name} is invite-only. There is no public sign-up form. Ask a member who knows you, or the team, for an invitation. ` +
-    `Reply to that invitation text to accept. Already a member? Open ${a.links.settings} yourself to sign in.`;
+    `Reply to that invitation text to accept. Already a member? Confirm your phone during connector authorization, then return to your agent.`;
 }
 
 function publicInfo(a: McpApp, surface: Surface) {
@@ -214,7 +214,7 @@ function publicInfo(a: McpApp, surface: Surface) {
       "Nothing crosses from one app to another unless the person shares it.",
       "The person signs themselves up and types their own code on the site. An assistant never handles the code.",
     ],
-    links: { privacy: a.links.privacy, terms: a.links.terms, sms_terms: a.links.smsTerms, safety: a.links.safety, settings: a.links.settings, support: a.links.support },
+    links: { privacy: a.links.privacy, terms: a.links.terms, sms_terms: a.links.smsTerms, safety: a.links.safety, support: a.links.support },
   };
 }
 
@@ -225,8 +225,8 @@ const NEXT: Record<PublicStatus, (a: McpApp) => string> = {
   invited: a => `Invited. To accept, open ${a.links.join} or reply to the invitation text.`,
   onboarding: () => "Joining is not finished. Reply to the last text from the agent to finish.",
   active: () => "You are signed up.",
-  stopped: a => `Messages are stopped. To start again, text START to the line or open ${a.links.settings}.`,
-  on_hold: a => `On hold. The person should open ${a.links.settings} or email ${a.links.support.replace("mailto:", "")}.`,
+  stopped: a => `Messages are stopped. To start again, text START to the line.`,
+  on_hold: a => `On hold. The person should email ${a.links.support.replace("mailto:", "")}.`,
 };
 
 export interface CallContext {
@@ -298,7 +298,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
       if (!grantStillTheirs(g.personId, now)) return { kind: "invalid_grant" };
       const status: PublicStatus = now === null ? "not_joined" : await c.hooks.status(now, g.app);
       const a = c.apps[g.app];
-      return { kind: "ok", data: { app: a.id, status, next_step: NEXT[status](a), manage_url: a.links.settings } };
+      return { kind: "ok", data: { app: a.id, status, next_step: NEXT[status](a), manage_url: a.links.support } };
     }
     case "submit_profile": {
       const g = c.grant;

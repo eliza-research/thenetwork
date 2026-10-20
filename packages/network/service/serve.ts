@@ -62,7 +62,7 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
   for (const [id, origin] of Object.entries(stageOrigins)) {
     const a = apps[id as McpAppId];
     a.domain = new URL(origin).host;
-    for (const key of ["site", "join", "privacy", "terms", "smsTerms", "safety", "settings"] as const) if (a.links[key]) {
+    for (const key of ["site", "join", "privacy", "terms", "smsTerms", "safety"] as const) if (a.links[key]) {
       const link = new URL(a.links[key]!);
       a.links[key] = origin + link.pathname.replace(/\/$/, "") + link.search + link.hash;
     }
