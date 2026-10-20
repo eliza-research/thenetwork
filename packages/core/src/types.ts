@@ -124,6 +124,13 @@ export type OpportunityState =
   | "REJECTED_IN_REVIEW" | "DECLINED" | "EXPIRED" | "QUORUM_FAILED" | "CANCELLED"
   | "SAFETY_HOLD" | "DISPUTED" | "ABANDONED";
 
+/** An opportunity the Network already sent and that is still open (invite pending or meeting ahead). */
+export interface OpenOpportunity {
+  id: string; participants: MemberId[]; stage: "inviting" | "scheduled";
+  /** Invite expiry or meeting time (epoch ms), if known. */
+  until?: number;
+}
+
 /** Snapshot the engine reads. Built from Postgres in production, from the simulator in tests. */
 export interface WorldSnapshot {
   now: number; members: Member[]; facets: Facet[]; intents: Intent[];

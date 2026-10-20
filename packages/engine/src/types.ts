@@ -1,7 +1,7 @@
 // Engine-local extensions of the shared contract (packages/core). These are proposed for
 // promotion into core (see README "Proposed core changes").
 import type {
-  Category, City, MemberId, OpportunityKind, Proposal, ScoreComponents, WorldSnapshot,
+  Category, City, MemberId, OpenOpportunity, OpportunityKind, Proposal, ScoreComponents, WorldSnapshot,
 } from "@thenetwork/core";
 
 export interface NetworkEvent {
@@ -27,12 +27,7 @@ export interface InteractionRecord {
   /** Invitees who were asked but never answered before the invite expired. */
   noResponse?: MemberId[];
 }
-/** An opportunity the Network already sent and that is still open (invite pending or meeting ahead). */
-export interface OpenOpportunity {
-  id: string; participants: MemberId[]; stage: "inviting" | "scheduled";
-  /** Invite expiry or meeting time (epoch ms), if known. */
-  until?: number;
-}
+export type { OpenOpportunity } from "@thenetwork/core";
 /** A question the agent asked a member instead of proposing (engine output "ask"; v1.2). */
 export interface AskRecord {
   memberId: MemberId; at: number; reason: AskReason;

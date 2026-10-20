@@ -83,12 +83,7 @@ export interface Membership {
  * The member's availability, from the member record the Network uses (a pause set by text or by the
  * agent). Not the messaging consent: STOP shows in smsOptedIn. Absent on older backends.
  */
-export interface Participation {
-  state: "open" | "busy" | "traveling" | "paused";
-  from: string | null;
-  until: string | null;
-  quietHours?: [number, number];
-}
+export type Participation = import("../../packages/platform/src/public-types.ts").MemberParticipation;
 
 export interface Me {
   app: string;

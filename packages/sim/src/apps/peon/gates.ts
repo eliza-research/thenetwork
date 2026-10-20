@@ -5,7 +5,8 @@
 // Each gate compares the pack with the keyword job board (and the oracle) on the SAME seeds.
 import { poolImpact, type PeonMetrics } from "./metrics.ts";
 
-export interface GateResult { id: string; gate: string; value: string; pass: boolean }
+import type { GateResult } from "../gates.ts";
+export type { GateResult } from "../gates.ts";
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN);
 const M = (xs: PeonMetrics[], f: (m: PeonMetrics) => number) => mean(xs.map(f));
 const median = (xs: number[]) => { if (!xs.length) return 0; const s = [...xs].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2; };

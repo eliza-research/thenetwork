@@ -8,7 +8,8 @@
 // pooled over seeds (mean of each metric); the worst seed is shown where it matters.
 import type { FriendsMetrics } from "./metrics.ts";
 
-export interface GateResult { id: string; gate: string; value: string; pass: boolean }
+import type { GateResult } from "../gates.ts";
+export type { GateResult } from "../gates.ts";
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN);
 const M = (xs: FriendsMetrics[], f: (m: FriendsMetrics) => number) => mean(xs.map(f));
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;

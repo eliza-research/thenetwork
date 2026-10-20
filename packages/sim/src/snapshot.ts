@@ -64,7 +64,7 @@ export interface SimInteraction {
   declinedBy?: MemberId[]; acceptedBy?: MemberId[]; noResponse?: MemberId[];
 }
 export interface SimFeedback { id: string; from: MemberId; about: MemberId; opportunityId: string; at: number; sentiment: "positive" | "neutral" | "negative"; wouldMeetAgain: boolean }
-export interface SimOpenOpportunity { id: string; participants: MemberId[]; stage: "inviting" | "scheduled"; until?: number }
+export type SimOpenOpportunity = import("@thenetwork/core").OpenOpportunity;
 export interface SimSnapshot extends WorldSnapshot {
   events?: SimEvent[];
   interactions?: SimInteraction[];

@@ -75,17 +75,8 @@ export interface PublicApiOptions extends AccountHooks {
   log?: (s: string) => void;
 }
 
-/**
- * The member's availability (GET /api/me). `state` uses the agent contract's words: open, busy,
- * traveling or paused. `from` and `until` are ISO times or null (null `until`: until the member says
- * otherwise). `quietHours` is [start hour, end hour] in the member's time, when the member set them.
- */
-export interface MemberParticipation {
-  state: "open" | "busy" | "traveling" | "paused";
-  from: string | null;
-  until: string | null;
-  quietHours?: [number, number];
-}
+import type { MemberParticipation } from "./public-types.ts";
+export type { MemberParticipation } from "./public-types.ts";
 
 /** What Bun.serve passes as the second fetch argument: the socket address of the request. */
 export interface PeerInfo { requestIP(req: Request): { address: string } | null }

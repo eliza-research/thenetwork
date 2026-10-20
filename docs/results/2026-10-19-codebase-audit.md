@@ -380,3 +380,21 @@ website-account removal in main c729bb2, which must be incorporated before close
 Alternatives were retaining unused bindings or enabling repository-wide unused errors immediately.
 The first leaves misleading inputs; the second changes enforcement policy beyond this cleanup.
 This change removes proven unused work without adding a new test policy.
+
+## Shared type ownership
+
+An AST scan of tracked production TypeScript interfaces and object type aliases with at least
+three members found four exact field-shape pairs. Three describe the same contract and now share
+an owner: OpenOpportunity in core (engine re-exports it; the simulator retains its alias),
+MemberParticipation in a browser-safe platform type module (the site retains Participation),
+and app-world GateResult in the simulator's apps directory (both app import paths still export it).
+
+The fourth pair is intentionally distinct: core LocalParts numbers weekdays Monday-first,
+while simulation LocalParts numbers them Sunday-first. Sharing that type would obscure different
+semantics. The post-change scan finds only that pair. This scan covers exact field shapes, not
+all semantically similar types. All three TypeScript configurations pass.
+
+Evidence: runs/audit/duplicate-types.ts, duplicate-types.jsonl, duplicate-types-after.jsonl,
+and shared-types-check.log. Alternatives were importing engine types into the generic snapshot
+builder or keeping duplicate wire declarations. The shared owners retain dependency direction
+and give producers and consumers one declaration. These edits erase at compile time.
