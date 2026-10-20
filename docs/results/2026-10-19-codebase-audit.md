@@ -66,7 +66,10 @@ The unused-symbol compiler scan found additional candidates which still need rev
 | Plugin snapshot check | Pass |
 | Mixed-tree diagnostic integration run | 476 pass, 7 fail; not final evidence |
 | Old-base targeted simulations | Interrupted to rebase; onboarding passed 19 blocking gates |
-| Current-main integration, e2e and build checks | In progress |
+| Current-main typecheck, four site builds and plugin snapshots | Pass |
+| Current-main e2e | 42 pass, 3 optional browser cases skipped, 0 fail, 609 assertions |
+| Current-main optional browser cases, run separately | 3 pass, 0 fail, 71 assertions |
+| Current-main integration and targeted simulations | In progress |
 
 The full integration command started before edits, but loaded later files while edits were underway.
 It is diagnostic evidence, not a final unchanged-base or final-head certification.
@@ -89,3 +92,7 @@ This report is hand-written. Counts come from command output in ignored `runs/au
 - Run one full simulation at the end, with Postgres required.
 - Record real-LLM evidence and applicable agent-client evidence separately from local tests.
 - Keep deployed-provider and live-delivery claims separate from local acceptance.
+
+The optional browser cases used the existing Playwright module at `/Users/shawwalters/v3/node_modules/playwright/index.mjs`.
+They exercise built pages with controlled API/provider boundaries, not actual hosted agent clients.
+Current validation logs: `runs/audit/integration-current.log`, `sim-current.log`, `browser-current.log`, and `e2e-current.log`.
