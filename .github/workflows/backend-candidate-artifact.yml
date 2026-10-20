@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: backend-candidate-353a2b-artifact
+  group: backend-candidate-3d7a2f7-artifact
   cancel-in-progress: false
 
 jobs:
@@ -18,15 +18,15 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
-      CANDIDATE_SOURCE: 353a2b0ae5bea23999ae51078781bdf128a26224
-      CANDIDATE_TREE: 949c917bacd81a8a217ed30a64bfabbc5fa70763
+      CANDIDATE_SOURCE: 3d7a2f7c32a063b86e825670b9cdb2c07e93a4c7
+      CANDIDATE_TREE: 4a27be0d43310711d362cc8cd51d762deaee8320
       # No ref input, repository secret, environment, registry login or runtime access.
       BUILDKIT_IMAGE: moby/buildkit:v0.23.2@sha256:ddd1ca44b21eda906e81ab14a3d467fa6c39cd73b9a39df1196210edcb8db59e
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          repository: eliza-research/thenetwork
-          ref: 353a2b0ae5bea23999ae51078781bdf128a26224
+          repository: NubsCarson/thenetwork
+          ref: 3d7a2f7c32a063b86e825670b9cdb2c07e93a4c7
           persist-credentials: false
 
       - name: Collect the exact reviewed backend inputs
@@ -43,7 +43,7 @@ jobs:
           assert not git('status', '--porcelain').strip()
           paths = git('ls-tree', '-r', '--name-only', source).decode().splitlines()
           paths = [p for p in paths if p in ('package.json', 'bun.lock', 'tsconfig.json', 'evals/relay/clef-relay-weights.json') or p.startswith(('packages/', 'deploy/'))]
-          assert len(paths) == 434
+          assert len(paths) == 435
           output = pathlib.Path(os.environ['RUNNER_TEMP']) / 'backend-candidate'
           context = pathlib.Path(os.environ['RUNNER_TEMP']) / 'backend-context'
           output.mkdir(); context.mkdir()
@@ -59,7 +59,7 @@ jobs:
                   target.parent.mkdir(parents=True, exist_ok=True)
                   target.write_bytes(data); target.chmod(0o644)
           archive_hash = hashlib.sha256(archive.read_bytes()).hexdigest()
-          assert archive_hash == '02ccbc9214327aaa9246759ee4ee4d0990e17e533babfae4e6a83b38031a6bd6'
+          assert archive_hash == 'bad46f0841cb8f334819a06bb836b932c60c369ab495867a0411e501835dbc19'
           manifest = {'source': source, 'sourceTree': tree, 'archiveSource': source,
               'canonicalDockerfile': 'deploy/backend/Dockerfile', 'files': rows,
               'sourceFileCount': len(rows), 'archiveSHA256': archive_hash,
@@ -135,7 +135,7 @@ jobs:
       - name: Retain the candidate and its receipts for seven days
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: backend-candidate-353a2b-${{ github.run_id }}-${{ github.run_attempt }}
+          name: backend-candidate-3d7a2f7-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/backend-candidate/
           if-no-files-found: error
           compression-level: 0

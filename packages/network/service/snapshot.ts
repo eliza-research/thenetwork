@@ -32,7 +32,7 @@ export function facetOf(r: any): Facet {
   return {
     id: r.id, memberId: r.member_id, kind: r.kind, value: r.value, tags: r.tags ?? [], scope: r.privacy_scope, provenance: r.provenance,
     confidence: r.confidence, validFrom: ms(r.valid_from), validTo: ms(r.valid_to), ...(r.source ? { source: r.source } : {}),
-    ...(r.sensitive ? { sensitive: r.sensitive } : {}), confirmedByMember: r.status === "confirmed",
+    ...(r.sensitive ? { sensitive: r.sensitive } : {}), ...(r.provenance === "inferred" ? { inferred: true } : {}), confirmedByMember: r.status === "confirmed",
   };
 }
 

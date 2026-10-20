@@ -18,7 +18,7 @@ import { APP_IDS, APPS, type AppId } from "../../platform/src/apps.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
-import { START } from "./mini.ts";
+import { Mini, START } from "./mini.ts";
 
 const T = 600_000;
 const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!Bun.which("pg_ctl");
@@ -143,6 +143,33 @@ describe.skipIf(!pgAvailable)("cross_app_leak: two apps, shared people (Postgres
     await sql?.close();
     await admin(`drop database if exists ${DB} with (force)`).catch(() => {});
   });
+
+  test("a proposed inferred database interest is not treated as confirmed matching evidence", async () => {
+    await applySchema(URL_, { reset: true, lockTimeout: "5s" });
+    const clock = new SimClock(START);
+    const svc = new NetworkService({ url: URL_, clock, instance: "inferred-facet", log: () => {}, env: { PLATFORM_ENV: "dev" }, networks: APPS_RUN.map(app => ({ id: `${app}:nyc` })) });
+    open.push(svc);
+    await svc.start();
+    const ids = await seed(svc);
+    const a = ids.a!.ntwrk!, b = ids.b!.ntwrk!;
+    await sql`delete from network.facets where app_id = 'ntwrk'`;
+    await sql`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, source, confidence, status, valid_from) values
+      ('ntwrk', 'stated-interest', ${a}, 'interest', 'hiking', '{hiking}', 'matchable', 'said', 'chat', 0.9, 'confirmed', ${new Date(START)}),
+      ('ntwrk', 'proposed-interest', ${b}, 'interest', 'hiking', '{hiking}', 'matchable', 'inferred', 'gmail', 0.9, 'proposed', ${new Date(START)})`;
+    const matchEvidence = async () => {
+      const snap = await loadSnapshot(sql, START, { app: "ntwrk", city: "nyc" });
+      const world = new Mini([{ id: a, name: "Ana" }, { id: b, name: "Ben" }]);
+      world.facets.splice(0, world.facets.length, ...snap.facets);
+      return { snap, score: world.net.knownWantMet(a, [b], "social") };
+    };
+    expect((await matchEvidence()).score).toBe(0);
+    await sql`update network.facets set status = 'confirmed' where id = 'proposed-interest'`;
+    const confirmed = await matchEvidence();
+    expect(confirmed.score).toBe(0.3);
+    expect(confirmed.snap.facets.find(f => f.id === "proposed-interest")).toMatchObject({ provenance: "inferred", source: "gmail", inferred: true, confirmedByMember: true });
+    await sql`update network.facets set status = 'rejected' where id = 'proposed-interest'`;
+    expect((await matchEvidence()).score).toBe(0);
+  }, T);
 
   for (const block of [false, true]) {
     test(block ? "a block made on The Network keeps the two people apart on the friends app; no canary crosses apps" : "control (no block): the friends app pairs Ana with Ben; no canary crosses apps", async () => {
