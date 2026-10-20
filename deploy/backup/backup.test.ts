@@ -22,7 +22,7 @@ const SCRATCH = `restore_test_${process.pid}`;
 /** A local S3-compatible bucket: PUT, GET, HEAD and DELETE by path (bucket/key). Signed requests always pass; an unsigned GET passes only when `public`. */
 function fakeBucket(bucket: string) {
   const objects = new Map<string, Uint8Array>();
-  const state = { public: false };
+  const state = { public: false, unsignedStatus: 403 };
   const signed = (req: Request) => !!req.headers.get("authorization") || new URL(req.url).searchParams.has("X-Amz-Signature");
   const server = Bun.serve({
     port: 0, hostname: "127.0.0.1",
@@ -34,7 +34,7 @@ function fakeBucket(bucket: string) {
       if (req.method === "PUT") { if (!signed(req)) return new Response("AccessDenied", { status: 403 }); objects.set(key, new Uint8Array(await req.arrayBuffer())); return new Response(null, { status: 200, headers: { etag: '"x"' } }); }
       if (req.method === "DELETE") { if (!signed(req)) return new Response("AccessDenied", { status: 403 }); objects.delete(key); return new Response(null, { status: 204 }); }
       if (req.method === "GET" || req.method === "HEAD") {
-        if (!signed(req) && !state.public) return new Response("AccessDenied", { status: 403 });
+        if (!signed(req) && !state.public) return new Response("Unsigned request refused", { status: state.unsignedStatus });
         const o = objects.get(key);
         if (!o) return new Response("NoSuchKey", { status: 404 });
         return new Response(req.method === "HEAD" ? null : Buffer.from(o), { status: 200, headers: { "content-length": String(o.length), etag: '"x"' } });
@@ -119,6 +119,16 @@ describe("backup encryption and the bucket check", () => {
       const r = await backup({ url: src, outDir: join(dir, "public"), roles: false });
       const err = await upload(r.dir, r.manifest, "postgres/production/20261009T000000Z", b.env, backupKey(KEY)).then(() => "uploaded", e => String(e.message));
       expect(err).toMatch(/readable without credentials/);
+      expect([...b.objects.keys()]).toEqual([]);
+    } finally { b.stop(); }
+  }, T);
+
+  for (const status of [429, 503]) test.skipIf(!pgAvailable)(`an inconclusive privacy probe (HTTP ${status}) prevents backup upload`, async () => {
+    const b = fakeBucket(`ntwrk-backups-error-${status}`);
+    b.state.unsignedStatus = status;
+    try {
+      const r = await backup({ url: src, outDir: join(dir, `error-${status}`), roles: false });
+      await expect(upload(r.dir, r.manifest, "postgres/production/20261009T000000Z", b.env, backupKey(KEY))).rejects.toThrow("privacy check inconclusive");
       expect([...b.objects.keys()]).toEqual([]);
     } finally { b.stop(); }
   }, T);

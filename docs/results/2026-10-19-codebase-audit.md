@@ -217,3 +217,40 @@ Typecheck passes (`runs/audit/typecheck-import-cleanup.log`).
 They remain unchanged. Evidence: `runs/audit/contract-mirror-current.log`.
 The combined tree passes the full integration suite: 575 pass, 0 fail, 12212 assertions across
 61 files (`REQUIRE_PG=1 bun run test:integration`, `runs/audit/integration-second-batch.log`).
+
+## Confirmed defect: backup privacy checks accept server errors
+
+An anonymous probe that returned HTTP 429 or 503 passed the privacy check. The job then uploaded
+the backup even though that response did not establish whether anonymous access was refused.
+The check now accepts only 401, 403, or 404. Other responses fail before the backup upload.
+The existing probe cleanup still runs. Encryption and the documented R2 privacy-check limit remain.
+
+The regression uses a real local Postgres dump and a local S3-compatible HTTP server. Both cases
+uploaded before the fix (0 pass, 2 fail); after it, neither leaves backup objects in the bucket.
+The full backup file passes 6 tests and 32 assertions, including encryption and a restore drill
+that checks source-server roles are unchanged. Typecheck passes.
+
+```sh
+REQUIRE_PG=1 bun test --conditions eliza-source --timeout 120000 deploy/backup/backup.test.ts
+```
+
+Logs: `runs/audit/backup-privacy-before.log`, `backup-privacy-after.log`, and `typecheck-backup.log`.
+No model, real bucket, or deployed database is used. The test fixture supplies the HTTP failures;
+dumping, encryption, HTTP upload, and restore use the real implementations.
+
+Alternatives considered:
+
+1. Retry every error until a conclusive response. This adds delay and retry state to the daily job.
+2. Continue because the backup is encrypted. This defeats the separate private-bucket requirement.
+
+The job now fails the inconclusive run so its existing failure reporting can surface it.
+The full 575-test suite above predates this last fix; the six backup tests and typecheck cover this batch.
+
+## Next review candidates
+
+- Consolidate the exact friends/slop Gini duplicate while preserving reported metrics and fingerprints.
+- Consolidate proxy-header classification shared by the edge router and backend.
+- Continue the remaining source review and unused-parameter review. Do not remove intentional fixtures,
+  CLI entry points, upstream contract mirrors, or the founder-approved Clef placeholder weights.
+- Refresh main before final validation: PRs #99 and #101 are no longer in the open PR list.
+  The live list now includes #102, #103, and #104; website-account changes in #104 are separate work.

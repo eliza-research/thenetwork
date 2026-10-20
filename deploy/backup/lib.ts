@@ -166,7 +166,8 @@ export async function decryptFile(src: string, dst: string, k: BackupKey): Promi
  * Check that the bucket is not public before anything is uploaded: write a probe object, then GET it
  * without credentials at the S3 endpoint (path style) and at each URL in BACKUP_PUBLIC_PROBE_URLS
  * (comma-separated bases, for example the bucket's r2.dev URL if one was ever turned on). Any 2xx or
- * 3xx answer is a public bucket. A probe URL that does not answer at all cannot be checked: also refused.
+ * 3xx answer is a public bucket. Only 401, 403, or 404 confirms that the object is not available
+ * anonymously. Other errors or no response are inconclusive: also refused.
  * The probe object is deleted afterwards.
  */
 export async function assertBucketPrivate(o: { prefix: string; env?: Record<string, string | undefined>; fetch?: typeof fetch }): Promise<void> {
@@ -189,6 +190,7 @@ export async function assertBucketPrivate(o: { prefix: string; env?: Record<stri
         throw new Error(`bucket privacy check failed: an unauthenticated GET of the probe did not answer (${(e as Error).name}); nothing was uploaded`);
       }
       if (status < 400) throw new Error(`the backup bucket is readable without credentials (HTTP ${status} for the probe object): nothing was uploaded`);
+      if (![401, 403, 404].includes(status)) throw new Error(`bucket privacy check inconclusive (HTTP ${status} for the probe object): nothing was uploaded`);
     }
   } finally {
     await bucket.delete(key).catch(() => undefined);
