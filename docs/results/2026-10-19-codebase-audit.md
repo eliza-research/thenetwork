@@ -1,4 +1,4 @@
-# Codebase audit: work in progress
+# Codebase audit: fixes and validation
 
 This report records verified changes. It does not certify the whole codebase or production.
 The first pass started at local `b9a6c20` on branch `codex/codebase-audit`.
@@ -87,7 +87,7 @@ or real agent-client run has occurred in this audit.
 The deterministic regression has one scenario; confidence intervals do not apply.
 This report is hand-written. Counts come from command output in ignored `runs/audit/` logs.
 
-## Remaining work
+## Remaining work at the first checkpoint
 
 - Finish the source review of matching, review, relay, delivery, persistence, and operational flows.
 - Review remaining dead-code, duplicate-type, and complexity candidates before changing them.
@@ -246,7 +246,7 @@ Alternatives considered:
 The job now fails the inconclusive run so its existing failure reporting can surface it.
 The full 575-test suite above predates this last fix; the six backup tests and typecheck cover this batch.
 
-## Next review candidates
+## Review candidates at that checkpoint
 
 - Consolidate the exact friends/slop Gini duplicate while preserving reported metrics and fingerprints.
 - Consolidate proxy-header classification shared by the edge router and backend.
@@ -444,3 +444,24 @@ site build/tests. The branch is refreshed again; site checks will be rerun. Remo
 callback input introduced by #104. Strict unused-symbol checks pass after that cleanup.
 Hosted agent-client checks are deferred at the user's request. Real provider billing cost was
 not recorded by the bounded LLM run; no zero-cost claim is made.
+
+## Final local checkpoint
+
+Base: main c9d2ec9. After that site's-only refresh, site integration passes 85 tests / 1310
+assertions, browser-enabled e2e passes 45 tests / 676 assertions, the audit block passes 16/16,
+and all TypeScript configurations pass. The last full integration run on c729bb2 passed all
+578 tests; the subsequent upstream change touched sites only and those tests are repeated here.
+AGENTS.md and CLAUDE.md remain byte-identical. The final diff has no whitespace errors.
+Logs: sites-main-105.log, e2e-main-105.log, audit-main-105.log, typecheck-main-105.log.
+
+The unused-symbol and duplicate-body candidates are resolved. Six standalone source roots remain
+because they are documented CLIs. The local-time type pair remains distinct because weekday
+numbering differs. The judge's independent quiet-hour window calculation remains independent:
+sharing an implementation with the system it grades would weaken that check. Production defaults,
+intentional simulation baselines, fitted-weight placeholders required by the founder, and real
+deployment commands were not removed merely because they differ from local test code.
+
+The full evidence includes real Postgres, routed HTTP, controlled browser flows, deterministic
+simulations, and a bounded real-LLM run. Hosted agent-client checks are explicitly deferred by the
+user. No production or live-message acceptance claim follows from these local results. Hosted CI
+for the submitted head is pending when this checkpoint is written.
