@@ -7,7 +7,7 @@ import { cosine } from "./embed.ts";
 import type { RetrievalCtx } from "./retrieval.ts";
 import type { EngineRng as Rng } from "@thenetwork/core";
 import type { Candidate, Format, NetworkEvent } from "./types.ts";
-import { intentText, type MemberIndex, type World } from "./world.ts";
+import { intentText, type MemberIndex } from "./world.ts";
 
 export interface GenCtx extends RetrievalCtx {
   rng: Rng;
@@ -31,7 +31,7 @@ export function label(f: Facet | undefined): string | undefined {
 }
 
 /** Best shareable facet of `of` relative to embedding q (used for objectives / explanations). */
-export function bestShareable(w: World, of: MemberIndex, q: number[]): Facet | undefined {
+export function bestShareable(of: MemberIndex, q: number[]): Facet | undefined {
   let best: Facet | undefined; let bs = -1;
   for (const f of of.share) {
     const e = of.facetEmb.get(f.id);
@@ -44,7 +44,7 @@ export function bestShareable(w: World, of: MemberIndex, q: number[]): Facet | u
 
 export function intentFormat(i: Intent): Format { return /\b(group|band|team|crew|club|doubles|people)\b/i.test(intentText(i)) ? "small_group" : "one_to_one"; }
 
-export function benefitForProvider(w: World, provider: MemberIndex, seeker: MemberIndex, facet?: Facet): number {
+export function benefitForProvider(provider: MemberIndex, seeker: MemberIndex, facet?: Facet): number {
   const interest = cosine(provider.desireEmb, seeker.profileEmb);
   const enjoys = facet?.kind === "offer" ? 0.6 : facet ? 0.35 : 0.2;
   return Math.min(1, Math.max(enjoys, enjoys + 0.4 * Math.max(0, interest)));

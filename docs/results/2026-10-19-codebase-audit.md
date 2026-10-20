@@ -82,7 +82,8 @@ Five module-load errors and the old age behavior came from changing files during
 A fresh process on the rebased tree is required; no passing suite is claimed from that run.
 
 All runs above use Bun 1.4.2. Database runs use local Postgres on port 54339.
-No real LLM, paid rater, live message, deployment, or real agent-client run has occurred in this audit.
+The real-LLM run below uses synthetic personas. No paid rater, live message, deployment,
+or real agent-client run has occurred in this audit.
 The deterministic regression has one scenario; confidence intervals do not apply.
 This report is hand-written. Counts come from command output in ignored `runs/audit/` logs.
 
@@ -158,3 +159,43 @@ Alternatives considered:
 2. Add a durable pending-hook table. This adds state when the existing lower-only updates can run again.
 
 The chosen fix repeats reconciliation on age statements. It does not add a background retry worker.
+
+## Real-LLM evidence: synthetic persona wording
+
+Command: `bun run packages/sim/src/cli.ts --personas 6 --days 3 --seed 2 --llm`.
+The launcher passes only basic process variables and the provider keys from the original checkout,
+with `DEFAULT_LLM_PROVIDER=surplus` and `DEFAULT_LLM_MODEL=gpt-6-luna`.
+No live-send, deployment, or channel settings are passed to the child.
+
+Result: 8 logical LLM calls, 0 LLM failures, 117 simulation events, 21.429 seconds.
+No provider fallback is reported. The persona caller requests JSON with a 3000-token budget,
+temperature 0.8, and at most two structured-output attempts. The shared client controls wire settings,
+HTTP retries, token growth, and deadlines.
+
+The run reports 0 canary leaks, minor contacts, invariant violations, style failures, and network errors.
+It contains six adults, no adversarial personas, one proposal, and no meetings. The network is the
+stub baseline; the LLM supplies wording while policy controls decisions. These results do not prove
+production matching, real client onboarding, or the safety of adversarial and minor cases.
+There is no paired LLM quality claim or meaningful significance estimate from this small run.
+Log: `runs/audit/llm-personas.log`; generated run: `runs/run-2026-10-20T01-13-26-827Z-s2-stub`.
+
+## Matching helper cleanup
+
+Removed unused world arguments from shareable-facet and provider-benefit helpers, and from peon
+candidate construction. Removed an unused probe context, summary wrapper, and slate type.
+The slate type had duplicated the match-check shape but had no consumer; deleting it avoids creating
+a new shared abstraction for unused code. Searches include all tracked source and documentation.
+
+`REQUIRE_PG=1 bun run sim --only peon --only evals` passes all 52 blocking gates before and after.
+Reported gate output is identical after excluding durations. The official seeds and sample sizes
+are those of the existing blocks; no model is called. Typecheck passes.
+Logs: `runs/audit/engine-cleanup-before.log`, `engine-cleanup-after.log`, and `typecheck-engine-cleanup.log`.
+The network block also passes all 61 blocking gates after cleanup, with no tracked metric off target
+(`runs/audit/network-cleanup-after.log`).
+
+Alternatives were retaining unused parameters or adding shared types for the unused slate.
+Neither improves a live caller. The cleanup leaves matching arithmetic and copy unchanged.
+
+An AST scan of non-test TypeScript function bodies found two exact duplicates of at least 180
+characters: the friends/slop Gini calculation and the relay baseline context. These remain review
+candidates. This scan detects exact token matches, not every semantic duplicate.

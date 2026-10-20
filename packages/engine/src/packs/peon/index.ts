@@ -107,7 +107,7 @@ export const peonPack: AppPack = {
     noWarmMentionLanes: ["professional"],
     probeAllowed: (_lane, othersCount) => othersCount === 1,
     laneActivity: LANE_ACTIVITY,
-    probeText: (ctx, activity) => peonProbeText(ctx, activity),
+    probeText: (_ctx, activity) => peonProbeText(activity),
   },
   judge: peonJudge,
   explain: {

@@ -33,14 +33,14 @@ export function intentToCapability(ctx: GenCtx): Candidate[] {
       if (!got.length) { ctx.unmatchedIntents.add(intent.id); continue; }
       for (const r of got.slice(0, w.cfg.maxPerIntent)) {
         const mb = w.get(r.id)!;
-        const shared = bestShareable(w, mb, w.intentEmb.get(intent.id)!);
+        const shared = bestShareable(mb, w.intentEmb.get(intent.id)!);
         out.push(makeCandidate({
           kind: "intro", generator: "intent_to_capability", category: intent.category,
           participants: [a, r.id], roles: { [a]: "seeker", [r.id]: "provider" }, format: "one_to_one",
           objective: `Intro: ${label(r.facet) ?? label(shared) ?? CATEGORY_LABEL[intent.category]}`,
           anchor: { type: "intent", id: intent.id }, preferredCity: ma.m.homeCity,
           channels: r.channels, evidence: { [a]: [], [r.id]: [r.facet?.id, shared?.id].filter(Boolean) as string[] },
-          fit: r.sim, benefit: { [a]: r.sim, [r.id]: benefitForProvider(w, mb, ma, r.facet) },
+          fit: r.sim, benefit: { [a]: r.sim, [r.id]: benefitForProvider(mb, ma, r.facet) },
           warm: r.channels.has("graph") ? 0.4 : 0, riskText: `${intentText(intent)} ${r.facet?.value ?? ""}`,
         }));
       }
@@ -68,7 +68,7 @@ export function complementaryIntents(ctx: GenCtx): Candidate[] {
     const fmt: Format = intentFormat(i);
     const ok = (id: MemberId, own: Intent) => !memberReason(w, id, { category: i.category, role: "peer", format: fmt, timeSensitive: false, ownIntentCreatedAt: own.createdAt });
     if (!ok(a, i) || !ok(b, j)) continue;
-    const sharedA = label(fab.facet) ?? label(bestShareable(w, mb, w.intentEmb.get(i.id)!));
+    const sharedA = label(fab.facet) ?? label(bestShareable(mb, w.intentEmb.get(i.id)!));
     out.push(makeCandidate({
       kind: "intro", generator: "complementary_intents", category: i.category,
       participants: [a, b], roles: { [a]: "peer", [b]: "peer" }, format: fmt,
@@ -182,7 +182,7 @@ export function sharedIntentPooling(ctx: GenCtx): Candidate[] {
     similar.sort((p, q) => (q.sim - p.sim) || (p.id < q.id ? -1 : 1));
     if (!similar.length) continue;
     const ma = w.get(seed.memberId)!;
-    const theme = bestShareable(w, ma, se);
+    const theme = bestShareable(ma, se);
     if (similar.length >= 2 && fmt === "small_group") {
       const pool = [{ id: seed.memberId, affinity: 1 }, ...similar.map(s => ({ id: s.id, affinity: s.sim }))];
       const g = composeGroup(w, {
@@ -308,7 +308,7 @@ export function warmPath(ctx: GenCtx): Candidate[] {
           anchor: { type: "intent", id: intent.id }, via: path.via, preferredCity: ma.m.homeCity,
           channels: new Set(["graph", f.sim >= w.cfg.retrieval.minSim ? "semantic" : "graph_only"]),
           evidence: { [a]: [], [b]: [f.facet?.id].filter(Boolean) as string[] },
-          fit: f.sim, benefit: { [a]: f.sim, [b]: benefitForProvider(w, mb, ma, f.facet) }, warm: warmPathValue(path.strength),
+          fit: f.sim, benefit: { [a]: f.sim, [b]: benefitForProvider(mb, ma, f.facet) }, warm: warmPathValue(path.strength),
           riskText: `${intentText(intent)} ${f.facet?.value ?? ""}`,
         }));
       }
@@ -370,7 +370,7 @@ export function helpRequest(ctx: GenCtx): Candidate[] {
           preferredCity: ma.m.homeCity, channels: new Set(helpers.flatMap(h => [...h.channels])),
           evidence: Object.fromEntries([[a, []], ...helpers.map(h => [h.id, [h.facet?.id].filter(Boolean)])]),
           fit: helpers.reduce((s, h) => s + h.sim, 0) / helpers.length,
-          benefit: Object.fromEntries([[a, 0.9], ...helpers.map(h => [h.id, benefitForProvider(w, w.get(h.id)!, ma, h.facet)])]),
+          benefit: Object.fromEntries([[a, 0.9], ...helpers.map(h => [h.id, benefitForProvider(w.get(h.id)!, ma, h.facet)])]),
           alternates, safetyClass: home ? "medium" : "low", riskText: text,
         }));
       }
@@ -607,7 +607,7 @@ export function expansion(ctx: GenCtx): Candidate[] {
       objective: `Try something new: ${label(best.facet) ?? "a new kind of activity"}`, anchor: { type: "member", id: a },
       preferredCity: ma.m.homeCity, channels: new Set(["expansion"]),
       evidence: { [a]: [d.id], [best.id]: [best.facet?.id].filter(Boolean) as string[] },
-      fit: best.sim, benefit: { [a]: best.sim, [best.id]: benefitForProvider(w, mb, ma, best.facet) },
+      fit: best.sim, benefit: { [a]: best.sim, [best.id]: benefitForProvider(mb, ma, best.facet) },
       exploration: true, riskText: `${d.value} ${best.facet?.value ?? ""}`,
     }));
   }

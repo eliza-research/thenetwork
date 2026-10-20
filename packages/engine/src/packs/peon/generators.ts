@@ -52,7 +52,7 @@ export function poolSize(w: World, jobId: MemberId): number {
   return m.get(jobId) ?? 0;
 }
 
-function toCandidate(w: World, generator: string, r: PairRow): Candidate {
+function toCandidate(generator: string, r: PairRow): Candidate {
   const { cand, job } = r;
   const ev = job.must.map(m => cand.skills.get(m.skill)?.facetId).filter((x): x is string => !!x);
   return makeCandidate({
@@ -75,7 +75,7 @@ export const PEON_GENERATORS: readonly GeneratorSpec[] = [
       const by = new Map<MemberId, PairRow[]>();
       for (const r of pairTable(ctx)) { if (!by.has(r.cand.id)) by.set(r.cand.id, []); by.get(r.cand.id)!.push(r); }
       const out: Candidate[] = [];
-      for (const id of [...by.keys()].sort()) for (const r of by.get(id)!.sort(byValue).slice(0, RETRIEVAL.jobsPerCandidate)) out.push(toCandidate(ctx.w, "candidate_to_jobs", r));
+      for (const id of [...by.keys()].sort()) for (const r of by.get(id)!.sort(byValue).slice(0, RETRIEVAL.jobsPerCandidate)) out.push(toCandidate("candidate_to_jobs", r));
       return out;
     },
   },
@@ -85,7 +85,7 @@ export const PEON_GENERATORS: readonly GeneratorSpec[] = [
       const by = new Map<MemberId, PairRow[]>();
       for (const r of pairTable(ctx)) { if (!by.has(r.job.id)) by.set(r.job.id, []); by.get(r.job.id)!.push(r); }
       const out: Candidate[] = [];
-      for (const id of [...by.keys()].sort()) for (const r of by.get(id)!.sort(byValue).slice(0, RETRIEVAL.candidatesPerJob)) out.push(toCandidate(ctx.w, "job_to_candidates", r));
+      for (const id of [...by.keys()].sort()) for (const r of by.get(id)!.sort(byValue).slice(0, RETRIEVAL.candidatesPerJob)) out.push(toCandidate("job_to_candidates", r));
       return out;
     },
   },

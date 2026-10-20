@@ -2,13 +2,12 @@
 // Criteria-based only: never a score, a rank or a percentile; never a candidate's name before the
 // employer said yes; never anything sealed or a proxy. Every string still passes the core leak gate.
 import type { MemberId } from "@thenetwork/core";
-import type { EngineRng as Rng } from "@thenetwork/core";
 import type { Candidate } from "../../types.ts";
 import type { World } from "../../world.ts";
 import { privateVocabulary } from "../../explain.ts";
 import { checkMemberFacing } from "../../judgeCommon.ts";
 import { mustChecks } from "./match.ts";
-import { candidateOf, sides, type CandidateProfile, type JobProfile } from "./profile.ts";
+import { sides, type CandidateProfile, type JobProfile } from "./profile.ts";
 
 /** Short words only (the leak gate ignores tokens under 4 letters), so it passes for any member. */
 export const PEON_SAFE_FALLBACK = "A new job fit for you.";
@@ -23,7 +22,7 @@ const pay = (j: JobProfile) => (j.payMin !== undefined && j.payMax !== undefined
 const where = (j: JobProfile) => (j.mode === "remote" ? "remote" : `${j.mode ?? "onsite"} in ${(j.area ?? j.market ?? "").replace(/_/g, " ")}`.trim());
 
 /** The anonymous probe (AttentionPack.probeText). Candidate-first: the employer is never told who until the candidate opts in. */
-export function peonProbeText(ctx: { contributor: boolean; when: string; othersCount: number }, activity: string): string {
+export function peonProbeText(activity: string): string {
   return `A verified employer is hiring for ${activity}. Want me to put you forward? They see only a summary you approve, never your name, until they say yes too. ${NEVER_ASKS}`;
 }
 
@@ -50,13 +49,6 @@ function summarySentences(cand: CandidateProfile, job: JobProfile): string[] {
     ...(cand.startWeeks !== undefined ? [`Can start in ${cand.startWeeks} week${cand.startWeeks === 1 ? "" : "s"}.`] : []),
   ];
 }
-
-/** Candidate-approved summary for the employer: must-have checkmarks, nothing identifying. */
-export function candidateSummary(cand: CandidateProfile, job: JobProfile): string {
-  return summarySentences(cand, job).join(" ");
-}
-
-export interface SlateEntry { candidate: MemberId; checks: { skill: string; status: "met" | "partial" | "missing" }[]; summary: string }
 
 export const PEON_ASK_QUESTIONS: Record<string, string> = {
   no_structured_want: "What kind of work are you looking for next, and what's the lowest pay you'd take? I'll only suggest roles with a posted pay range.",
