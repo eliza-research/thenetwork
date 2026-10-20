@@ -8,6 +8,8 @@
 // network sets (proposalId, probe, participants, relayFrom) are used only to find MORE contacts
 // (minors, blocks, names), or to exempt a message that belongs to an opportunity the member
 // really accepted (a simulator decision record).
+import { gini } from "@thenetwork/core";
+export { gini };
 import { classifyYesNo, DAY, HOUR, isMinor as isMinorAge, type AppId, type MemberId, type ParticipationState } from "@thenetwork/core";
 import { CONNECTION, LANE_BUDGETS, PRD_BUDGETS } from "../../../network/src/outreach.ts";
 import { checkMessage, findContactDetails, hasPausePath, normalizeCanary } from "./rules.ts";
@@ -116,15 +118,6 @@ function localHour(t: number, city: string): number {
 }
 const inWindow = (h: number, [s, e]: [number, number]) => (s <= e ? h >= s && h < e : h >= s || h < e);
 
-/** Gini coefficient of non-negative values. */
-export function gini(values: number[]): number {
-  const xs = values.slice().sort((a, b) => a - b);
-  const n = xs.length, sum = xs.reduce((s, x) => s + x, 0);
-  if (!n || !sum) return 0;
-  let acc = 0;
-  xs.forEach((x, i) => { acc += (2 * (i + 1) - n - 1) * x; });
-  return acc / (n * sum);
-}
 /** Share of the total held by the top 10% (at least one member). */
 export function topShare(values: number[], frac = 0.1): number {
   const xs = values.slice().sort((a, b) => b - a);

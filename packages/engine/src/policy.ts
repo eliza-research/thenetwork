@@ -3,6 +3,8 @@
 // pairs, no time-overlapping fixed-time commitments, per-city caps). Greedy with an in-run load
 // penalty and an amortized exposure-debt lift; an exposure-floor pass first; then a seeded
 // 10-15% exploration slice, logged with selection probabilities for off-policy evaluation.
+import { gini } from "@thenetwork/core";
+export { gini };
 import type { City, MemberId } from "@thenetwork/core";
 import { isMinor } from "./filters.ts";
 import { sha256 } from "./hash.ts";
@@ -197,16 +199,6 @@ function selectOnce(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId,
   return { selected, budgetSkips };
 }
 
-export function gini(xs: number[]): number {
-  const n = xs.length;
-  if (!n) return 0;
-  const s = [...xs].sort((a, b) => a - b);
-  const sum = s.reduce((a, b) => a + b, 0);
-  if (sum === 0) return 0;
-  let acc = 0;
-  for (let i = 0; i < n; i++) acc += (2 * (i + 1) - n - 1) * s[i]!;
-  return acc / (n * sum);
-}
 
 export function lorenz(xs: number[], points = 10): number[] {
   const s = [...xs].sort((a, b) => a - b);

@@ -280,3 +280,24 @@ bun run typecheck
 Alternatives were keeping both routers aligned or moving the deployed router into platform.
 The first retains duplicate behavior; the second moves working deployment code without a need.
 The chosen change removes the unused path and tests the existing deployment owner.
+
+## One Gini calculation
+
+Core now owns the Gini calculation. Engine policy, the network experiment harness, the run-log
+judge, and the friends and slop worlds import and re-export it. Existing import paths still work.
+This removes five parallel implementations. The shared version uses the engine's weighted sum
+and accepts a readonly input without changing it.
+
+Numerical comparison: 518 arrays, seed 73921, five old implementations, 2590 comparisons.
+Empty, zero, equal, concentrated, and generated count populations are included. The largest
+absolute difference is 2.220446049250313e-16; 790 comparisons differ only in floating-point rounding.
+The comparison is an ignored audit script, not a new unit-test suite.
+
+Before and after `REQUIRE_PG=1 bun run sim --only slop --only friends`: all 56 blocking gates pass,
+with the same nine tracked metrics off target. Typecheck passes. No model is called.
+Logs: `runs/audit/gini-before.log`, `gini-after.log`, `gini-numeric-before.log`,
+`gini-numeric-after.log`, and `typecheck-gini.log`.
+
+Alternatives were sharing only the two exact copies or making the simulators import engine policy.
+The first leaves three copies; the second couples a basic statistic to engine policy. A leaf core
+module gives every existing caller the same mathematical definition without a policy dependency.

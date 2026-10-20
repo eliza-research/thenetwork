@@ -1,6 +1,8 @@
 // Metrics for a slop run, computed from the harness's flow records (they include hidden truth, so
 // this is harness-side only). Per-member rates use REAL members: true adults who are not
 // adversaries. Safety metrics count every contact with an adversary or a minor.
+import { gini } from "@thenetwork/core";
+export { gini };
 import type { MemberId } from "@thenetwork/core";
 import { canBeMatched } from "@thenetwork/core";
 import type { HarmKind } from "./oracle.ts";
@@ -39,13 +41,6 @@ export interface SlopMetrics {
   fairness: { byGroup: Record<string, GroupMetrics>; byGender: Record<string, GroupMetrics>; minMaxDateRatio: number };
 }
 
-export function gini(xs: number[]): number {
-  const v = [...xs].sort((a, b) => a - b), n = v.length, s = v.reduce((a, b) => a + b, 0);
-  if (!n || !s) return 0;
-  let cum = 0;
-  for (let i = 0; i < n; i++) cum += (i + 1) * v[i]!;
-  return (2 * cum) / (n * s) - (n + 1) / n;
-}
 const topShare = (xs: number[], q = 0.1) => {
   const v = [...xs].sort((a, b) => b - a), s = v.reduce((a, b) => a + b, 0);
   return s ? v.slice(0, Math.max(1, Math.round(v.length * q))).reduce((a, b) => a + b, 0) / s : 0;

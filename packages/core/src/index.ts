@@ -11,3 +11,4 @@ export * from "./rng.ts";
 export * from "./network.ts";
 export * from "./runlog.ts";
 export * from "./pii.ts";
+export * from "./stats.ts";

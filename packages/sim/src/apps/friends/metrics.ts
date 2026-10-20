@@ -1,5 +1,7 @@
 // Metrics for a friends.help run (harness side: they read hidden truth). Per-member rates use REAL
 // members: true adults who are not adversaries. Definitions are in the results doc.
+import { gini } from "@thenetwork/core";
+export { gini };
 import type { MemberId } from "@thenetwork/core";
 import { canBeMatched } from "@thenetwork/core";
 import type { HarmKind } from "./oracle.ts";
@@ -56,13 +58,6 @@ export interface FriendsMetrics {
   selfHangouts: number;
 }
 
-export function gini(xs: number[]): number {
-  const v = [...xs].sort((a, b) => a - b), n = v.length, s = v.reduce((a, b) => a + b, 0);
-  if (!n || !s) return 0;
-  let cum = 0;
-  for (let i = 0; i < n; i++) cum += (i + 1) * v[i]!;
-  return (2 * cum) / (n * s) - (n + 1) / n;
-}
 const div = (a: number, b: number) => (b ? a / b : 0);
 const median = (xs: number[]) => { if (!xs.length) return null; const v = [...xs].sort((a, b) => a - b); const m = v.length >> 1; return v.length % 2 ? v[m]! : (v[m - 1]! + v[m]!) / 2; };
 
