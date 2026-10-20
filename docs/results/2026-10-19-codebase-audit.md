@@ -197,5 +197,23 @@ Alternatives were retaining unused parameters or adding shared types for the unu
 Neither improves a live caller. The cleanup leaves matching arithmetic and copy unchanged.
 
 An AST scan of non-test TypeScript function bodies found two exact duplicates of at least 180
-characters: the friends/slop Gini calculation and the relay baseline context. These remain review
-candidates. This scan detects exact token matches, not every semantic duplicate.
+characters: the friends/slop Gini calculation and the relay baseline context. The Gini calculation
+remains a review candidate. This scan detects exact token matches, not every semantic duplicate.
+
+## Relay fixtures and unused imports
+
+The relay block now uses `baseCtx` and `textItem` from its existing shared relay library.
+It no longer owns a second baseline context and text-item constructor. Alternatives were keeping
+the copies or creating another fixture module. The existing shared library already supplies the
+same data to the relay CLI, so it needs no new dependency layer.
+
+`REQUIRE_PG=1 bun run sim --only relay` passes all 60 blocking gates before and after. Gate output
+is identical except timing; four tracked metrics remain off target. No model is called.
+Logs: `runs/audit/relay-dedupe-before.log` and `relay-dedupe-after.log`.
+Unused imports confirmed by the compiler were removed from 17 source, harness, and test files.
+Typecheck passes (`runs/audit/typecheck-import-cleanup.log`).
+
+`bun run check:mirror` confirms both service contract files match upstream `elizaOS/eliza@develop`.
+They remain unchanged. Evidence: `runs/audit/contract-mirror-current.log`.
+The combined tree passes the full integration suite: 575 pass, 0 fail, 12212 assertions across
+61 files (`REQUIRE_PG=1 bun run test:integration`, `runs/audit/integration-second-batch.log`).

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { startStack, newPhone, webJoin, Browser, connectMcp, VERIFIER, rpc, toolData } from '../../../tests/e2e/harness.ts';
+import { startStack, newPhone, webJoin, Browser, connectMcp, VERIFIER } from '../../../tests/e2e/harness.ts';
 import { createServiceMcp } from '../service/serve.ts';
 import { createPublicApi } from '../../platform/src/api.ts';
 import { pkceS256 } from '../../mcp/src/util.ts';

@@ -2,7 +2,7 @@
 // keeps the codes it would have texted. No network, no real phone numbers (555-01xx only).
 import { Accounts, APPS, type AppInfo, MemoryPeopleStore, type OtpProvider, OtpService, SessionService } from "@thenetwork/platform";
 import { createMcpHandler, type McpHandlerOptions } from "../src/handler.ts";
-import { platformHooks, type PlatformHooks, type PlatformParts } from "../src/hooks.ts";
+import { platformHooks, type PlatformParts } from "../src/hooks.ts";
 import type { McpAppId } from "../src/apps.ts";
 import { MemoryOAuthStore, type OAuthStore } from "../src/store.ts";
 import { pkceS256 } from "../src/util.ts";

@@ -3,7 +3,7 @@
 import type { MemberId } from "@thenetwork/core";
 import { gini } from "@thenetwork/engine/src/policy.ts";
 import { sealedGroups } from "./persona.ts";
-import type { Flow, PeonRunResult } from "./world.ts";
+import type { PeonRunResult } from "./world.ts";
 
 /**
  * Selection-rate stages for the four-fifths check (29 CFR 1607.4(D); NYC LL144 style). Each stage

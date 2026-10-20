@@ -3,7 +3,7 @@
 import type { Category, MemberId } from "@thenetwork/core";
 import { ADULT_AGE as CORE_ADULT_AGE, canBeMatched, DAY, HOUR } from "@thenetwork/core";
 import type { EngineConfig } from "./config.ts";
-import type { Candidate, Format, Role } from "./types.ts";
+import type { Candidate } from "./types.ts";
 import { pairKey, type World } from "./world.ts";
 
 /**

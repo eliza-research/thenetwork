@@ -24,7 +24,7 @@ import type { FeedbackRecord, InteractionRecord, SafetyHold } from "@thenetwork/
 import { Rng, hash32 } from "@thenetwork/core";
 import { zipInfo, type SlopCity } from "./geo.ts";
 import { appearanceFacet, canRatePhotos } from "@thenetwork/engine/src/packs/slop/appearance.ts";
-import { SLOTS, TASTE_DIMS, type RichnessTier, type SlopPersona } from "./persona.ts";
+import { TASTE_DIMS, type RichnessTier, type SlopPersona } from "./persona.ts";
 import { bodyPref, bodyPrefStated, ratedBodyType, type BodyTypeModel } from "./bodyType.ts";
 
 /** Monday 2026-10-12 00:00 UTC: week 0 of every slop run. */

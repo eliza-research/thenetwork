@@ -27,7 +27,7 @@ import { parseRelayRequest, pastContacts, relayGuard, relayItem, relayItemAsync,
 import { clefRelayClassifier, DEFAULT_RELAY_CLEF_WEIGHTS, directRelayClefWeights, loadRelayClefWeights, RELAY_CLEF_QUESTIONS, type RelayClefEvent } from "../../packages/engine/src/relayClef.ts";
 import { scoreArm, type ArmRow, reasonCategories } from "../../packages/engine/src/relayClefFit.ts";
 import type { ClefFetch } from "../../packages/engine/src/packs/slop/clef.ts";
-import { cacheLookup, CLEF_CACHE, CLEF_WEIGHTS, HELDOUT_FILE, loadClefCache, loadCorpus, TUNING_FILES } from "../relay-clef-lib.ts";
+import { baseCtx, textItem as text, cacheLookup, CLEF_CACHE, CLEF_WEIGHTS, HELDOUT_FILE, loadClefCache, loadCorpus, TUNING_FILES } from "../relay-clef-lib.ts";
 import { RelayDesk, withdrawsSwap, type RelayHost, type RelayMatch, type RelayMember } from "../../packages/network/src/relay.ts";
 import { newPhotoId } from "../../packages/platform/src/photos.ts";
 import { isOpaquePhotoId } from "../../packages/engine/src/relay.ts";
@@ -40,17 +40,6 @@ const jsonl = async <T>(name: string): Promise<T[]> => (await Bun.file(`${ROOT}/
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 
 const NOW = Date.UTC(2026, 9, 9, 18);
-/** A mutual opportunity between Sam (a) and Riley (b), both adults, nothing held or blocked. */
-export function baseCtx(over: Partial<RelayContext> = {}): RelayContext {
-  return {
-    now: NOW,
-    opportunity: { id: "op1", app: "slop", participants: ["a", "b"], acceptedBy: ["a", "b"], status: "mutual" },
-    sender: { id: "a", firstName: "Sam", age: 29, photoIds: ["ph_abcdefgh"], photoConsent: true },
-    recipient: { id: "b", firstName: "Riley", age: 31, photoIds: ["ph_ijklmnop"], photoConsent: true },
-    blocked: false, history: [], ...over,
-  };
-}
-const text = (t: string, id = "i1", at = NOW): RelayItem => ({ id, kind: "text", from: "a", to: "b", at, text: t });
 const share = (over: Partial<RelayItem> = {}): RelayItem => ({ id: "c1", kind: "contact_share", from: "a", to: "b", at: NOW, contact: { kind: "phone", value: "+1 (212) 555-0147" }, consent: { kind: "contact_share", by: "a", itemId: "c1", at: NOW - 60_000 }, ...over });
 const photo = (over: Partial<RelayItem> = {}): RelayItem => ({ id: "p1", kind: "photo", from: "a", to: "b", at: NOW, photoIds: ["ph_abcdefgh"], consent: { kind: "photo", by: "a", itemId: "p1", at: NOW - 30_000, photoIds: ["ph_abcdefgh"] }, ...over });
 

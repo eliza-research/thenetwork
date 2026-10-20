@@ -18,7 +18,7 @@
 // Every pack stays behind the Network's human review gate. Matching is off until an admin turns it on
 // (the stored switch starts off; platform.networks.matching_enabled only allows the switch). Minors
 // never enter a pack's input (ConsentNetwork.packInput). Nothing here reads hidden truth.
-import { DAY, HOUR, type Facet, type MemberId } from "@thenetwork/core";
+import { DAY, HOUR, type MemberId } from "@thenetwork/core";
 import {
   friendsPack, FRIENDS_PLANS, makeSlopPack, peonPack, PEON_ENGINE_CONFIG, peonSeatCapacity, planFromInput, SLOP_ENGINE_CONFIG, slopProfiles,
   type AppPack, type EngineConfigInput, type EngineInput, type PlansConfigInput,

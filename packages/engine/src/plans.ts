@@ -21,7 +21,7 @@ import { availabilityProb, candidateSlots, timeOptionsPhrase, type AvailabilityE
 import { DEFAULT_ATTENTION, DEFAULT_CONFIG, DEFAULT_PLANS, type AttentionConfig, type PlansConfig } from "./config.ts";
 import { tokenize } from "./embed.ts";
 import { privateVocabulary } from "./explain.ts";
-import { isMinor, memberReason, pairReason } from "./filters.ts";
+import { isMinor, memberReason } from "./filters.ts";
 import { makeCompat } from "./group.ts";
 import { checkMemberFacing } from "./judgeCommon.ts";
 import { fromLocal, localParts } from "@thenetwork/core";

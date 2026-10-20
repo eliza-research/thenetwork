@@ -5,7 +5,7 @@
 // (invites, newcomers, a bad invitee), and logistics (travel). Every run uses the simulated
 // reviewer (review "auto"): each opportunity is queued and approved before anyone is contacted.
 //   bun run packages/network/harness/scenarios.ts [scenario_id]
-import { DAY, HOUR, MINUTE, UNDER_MIN_AGE_DECLINE, type MemberId } from "@thenetwork/core";
+import { DAY, HOUR, UNDER_MIN_AGE_DECLINE, type MemberId } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import { PolicyPersonaAgent, World, desireById, type Persona, type PersonaContext, type WorldAction } from "@thenetwork/sim";
 import { DATA_DIR } from "../../../scripts/synthetic/common.ts";

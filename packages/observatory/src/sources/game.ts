@@ -15,7 +15,7 @@ import { CapturingEngine, summarizeRun } from "../engineCapture.ts";
 import { ConsentNetwork, OUTREACH, SIM_AUTO_REVIEWER, type ReviewOptions } from "@thenetwork/network";
 import { appBanner, APPS, DEFAULT_APP, MATCHING_OFF_TEXT, matchingAllowed, slaHours, type AppId } from "../apps.ts";
 import { friendFactory, SCENARIOS, ScriptedJoinAgent } from "@thenetwork/network/harness";
-import { describe, eventOf, onTimeline, requestLabel, toMs, type EventRow } from "../events.ts";
+import { describe, eventOf, onTimeline, requestLabel, toMs } from "../events.ts";
 import { memberFacets } from "../appProfile.ts";
 import { ALERT_WINDOW, growthStats, healthAlerts, hours, reportsFromCases, safetyInfo, scorecard } from "../health.ts";
 import { Projector } from "../projector.ts";

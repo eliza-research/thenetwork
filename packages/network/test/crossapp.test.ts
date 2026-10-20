@@ -14,7 +14,7 @@ import { SQL } from "bun";
 import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
-import { APP_IDS, APPS, type AppId } from "../../platform/src/apps.ts";
+import type { AppId } from "../../platform/src/apps.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
 import { loadSnapshot } from "../service/snapshot.ts";

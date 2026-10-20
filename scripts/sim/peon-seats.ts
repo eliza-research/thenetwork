@@ -17,7 +17,7 @@
 //   close       closing a posting by text ends its open items (a candidate who said yes is told), and
 //               no new item is proposed for it
 import { DAY, HOUR, SimClock, type Facet, type Intent, type Member, type MemberId, type NetworkContext, type Presence, type SimMessage, type SimMeta } from "../../packages/core/src/index.ts";
-import { peonPack, PEON_ENGINE_CONFIG } from "../../packages/engine/src/packs/peon/index.ts";
+import { PEON_ENGINE_CONFIG } from "../../packages/engine/src/packs/peon/index.ts";
 import { peonSeats, seatIdOf } from "../../packages/engine/src/packs/peon/seats.ts";
 import { ConsentNetwork, type NetworkOptions } from "../../packages/network/src/network.ts";
 import { parsePosting, postingFacts, POSTING_COPY, readPostingText, SEAT_COPY, type JobPosting } from "../../packages/network/src/jobs.ts";

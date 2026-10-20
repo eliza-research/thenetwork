@@ -6,7 +6,7 @@ import { canBeMatched } from "@thenetwork/core";
 import type { HarmKind } from "./oracle.ts";
 import { isSafe } from "./oracle.ts";
 import { groupOf, type SlopPersona } from "./persona.ts";
-import type { FlowRecord, SlopRunResult } from "./world.ts";
+import type { SlopRunResult } from "./world.ts";
 
 export interface GroupMetrics { n: number; datesPerMemberMonth: number; shareWithProposal: number; shareWithDate: number; goodDateRate: number }
 

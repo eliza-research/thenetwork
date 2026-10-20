@@ -1,7 +1,6 @@
 // Vocabulary for synthetic personas: names, private disclosures, boundaries and writing styles. The
 // member vocabulary (interests, skills, desires, neighborhoods) is the Network's
 // (engine packs/network/vocabulary.ts) and is re-exported here.
-import type { Category, City } from "@thenetwork/core";
 
 export { DESIRES, desireById, INTERESTS, NEIGHBORHOODS, SKILLS, type DesireDef, type InterestDef, type SkillDef } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 

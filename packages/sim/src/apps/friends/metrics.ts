@@ -3,7 +3,7 @@
 import type { MemberId } from "@thenetwork/core";
 import { canBeMatched } from "@thenetwork/core";
 import type { HarmKind } from "./oracle.ts";
-import { hoodOf, isReal, type FriendsPersona } from "./persona.ts";
+import { hoodOf, isReal } from "./persona.ts";
 import { visibleRedFlag, weekTime } from "./snapshot.ts";
 import { pk, type FriendsRunResult } from "./world.ts";
 

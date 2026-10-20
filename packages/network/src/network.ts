@@ -52,7 +52,7 @@ import { activityHints, BOOKING_GAP, PLAN_VENUES, planLedger, statedWindows } fr
 /** A ledger event as the Network builds it: the emitter adds the id and the Clock time. */
 type LedgerInput = CapitalEventInput extends infer E ? (E extends CapitalEventInput ? Omit<E, "t"> : never) : never;
 import type { NetworkStore } from "./store.ts";
-import { HOLD, Trust, type TrustEvent, type TrustLevel, type TrustState } from "./trust.ts";
+import { HOLD, Trust, type TrustLevel, type TrustState } from "./trust.ts";
 import type { AppHooks, AppTag, HookOpp } from "./apphooks.ts";
 import { isSeatId, postingFromDraft, postingFromFacts, postingProblem, postingsOf, POSTING_COPY, readPostingText, seatIdOf, seatOwnerOf, SEAT_COPY, type JobPosting, type PostingDraft } from "./jobs.ts";
 import { checkInReport, reportKindOf, URGENT_REPORTS, type ReportKind, type SafetyReport } from "./reports.ts";

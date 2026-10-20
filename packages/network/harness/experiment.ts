@@ -27,7 +27,6 @@ import { createEngine } from "../../sim/src/engineAdapter.ts";
 import { friendFactory } from "./growth.ts";
 import { ConsentNetwork, type NetworkOptions } from "../src/network.ts";
 import { capitalWiring } from "../src/capital.ts";
-import { OUTREACH } from "../src/outreach.ts";
 import { ParaphraseAgent } from "./paraphrase.ts";
 
 export interface ArmResult {
