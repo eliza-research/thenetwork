@@ -242,7 +242,6 @@ function weightedSample<T>(r: Rng, items: [T, number][], k: number): T[] {
 /** Simulate what the Network knows about one persona. Deterministic for (persona, ctx, rng). */
 export function simulateKnowledge(p: Persona, ctx: KnowledgeContext, r: Rng): Knowledge {
   const chat = chatCoverage(p, ctx.tier, r.fork("chat"));
-  const h = p.hidden;
   const minor = ctx.minor;
   const rs = r.fork("sources");
   const nActive = ctx.tier === "minimal" ? 0 : rs.weighted(SOURCE_COUNT[ctx.tier]);

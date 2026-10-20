@@ -152,7 +152,7 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
   const byAdvKind: Record<string, number> = {};
   for (const c of contacts) {
     for (const [x, y] of [[c.a, c.b], [c.b, c.a]] as const) {
-      const px = O.p(x), py = O.p(y);
+      const px = O.p(x);
       if (!realIds.has(y)) continue;
       if (seenC.has(`${x}>${y}`)) continue;
       seenC.add(`${x}>${y}`);

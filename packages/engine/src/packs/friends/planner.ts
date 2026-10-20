@@ -340,7 +340,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       const pf = new Map(cand.map(id => [id, slots.map(sl => hasWindow(inp.evidence.get(id)!, sl, now, cfg, att))] as const));
       // Up to 3 options on distinct days where the MOST candidates are free (yes-sayers must agree on
       // one option for quorum, so overlap beats coverage).
-      const ranked = slots.map((sl, i) => ({ i, n: cand.filter(id => pf.get(id)![i]! > 0).length })).sort((x, y) => (y.n - x.n) || (slots[x.i]!.start - slots[y.i]!.start));
+      const ranked = slots.map((_, i) => ({ i, n: cand.filter(id => pf.get(id)![i]! > 0).length })).sort((x, y) => (y.n - x.n) || (slots[x.i]!.start - slots[y.i]!.start));
       const chosen: number[] = [];
       for (const r of ranked) {
         if (chosen.length >= pol.tableOptions || r.n < Math.max(3, (ranked[0]?.n ?? 0) * 0.5)) break;

@@ -37,7 +37,7 @@ export const ARMS: Record<string, Arm> = {
   // ---- ablations -------------------------------------------------------------------------------
   "no-congestion": {
     name: "pack: no congestion control", about: "no slate cap, spread or lifts (candidate cap kept)",
-    matcher: packMatcher({ name: "pack-no-congestion", pack: withPack({ selection: { ...peonPack.selection, adjust: (w, c, v, times) => (c.participants.some(id => times(id) >= CONGESTION.candidateWeekly && id.startsWith("c-")) ? -Infinity : v) } }) }),
+    matcher: packMatcher({ name: "pack-no-congestion", pack: withPack({ selection: { ...peonPack.selection, adjust: (_w, c, v, times) => (c.participants.some(id => times(id) >= CONGESTION.candidateWeekly && id.startsWith("c-")) ? -Infinity : v) } }) }),
   },
   "one-way": {
     name: "pack: one-way retrieval", about: "candidate -> jobs only",

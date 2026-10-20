@@ -360,3 +360,23 @@ After adding those exact views to the allowlist, both affected migration suites 
 16 tests, 142 assertions, no failures (runs/audit/age-floor-catalog.log). No application logic was
 changed after that full run except renaming the local SQL adapter to appSnapshotSql. A final
 whole-tree integration run remains part of audit closeout.
+
+## Remaining unused inputs and reads
+
+The strict unused-symbol compiler pass now passes. Removed the unused plan-probe timestamp and
+updated both callers, the unused threshold label input, the unused persona prompt context input,
+an extra oracle lookup, an unused hidden-truth read, a redundant relay clock read, an unused import,
+and unused callback bindings. Required callback positions use an underscore name. No prompt text,
+classification formula, or member-facing text changed.
+
+An initial broad edit also removed bindings used by other callbacks and missed a caller in scripts.
+TypeScript caught those errors; they were repaired before the clean unused-symbol result. The
+corrected full typecheck passes (runs/audit/typecheck-final-corrected.log). The discarded first
+typecheck log is not passing evidence. The e2e run with Playwright enabled passes 45 tests and 680
+assertions. Four site builds, plugin snapshots, and the upstream contract mirror check pass.
+Full simulation and integration are still running; these results also precede the newly merged
+website-account removal in main c729bb2, which must be incorporated before closeout.
+
+Alternatives were retaining unused bindings or enabling repository-wide unused errors immediately.
+The first leaves misleading inputs; the second changes enforcement policy beyond this cleanup.
+This change removes proven unused work without adding a new test policy.

@@ -97,7 +97,7 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
         for (const me of p.participants) { const probe = A.buildProbe(ww, { proposalId: p.id, kind: p.kind, category: p.category, objective: p.objective, window: p.window, tz: NYC_TZ }, me, p.participants.filter(x => x !== me), s.now); if (probe) expect(probe.text).not.toMatch(ROMANCE_FRAMING); }
       }
       let probes = 0;
-      for (const p of allPlans(wk)) for (const me of p.invited) { const t = buildPlanProbe(ww, p, me, s.now, NYC_TZ); if (t) { probes++; expect(t).not.toMatch(ROMANCE_FRAMING); expect(t).not.toMatch(/canary/i); } }
+      for (const p of allPlans(wk)) for (const me of p.invited) { const t = buildPlanProbe(ww, p, me, NYC_TZ); if (t) { probes++; expect(t).not.toMatch(ROMANCE_FRAMING); expect(t).not.toMatch(/canary/i); } }
       expect(probes).toBeGreaterThan(0);
     }
   });

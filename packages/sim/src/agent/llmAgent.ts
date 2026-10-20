@@ -76,7 +76,7 @@ function timeSituation(d: PolicyDecision): string {
   return `The agent offered these times: ${offered}. Only ${fits.map(o => o.label).join(" and ")} work${fits.length === 1 ? "s" : ""} for you. Name ${fits.length === 1 ? "that day" : "those days"} (for example "${fits.map(o => o.label.split(/\s+/)[0]).join(" or ")} works") and do not name the others.`;
 }
 
-function situation(ctx: PersonaContext, d: PolicyDecision, llmDecides: boolean): string {
+function situation(d: PolicyDecision, llmDecides: boolean): string {
   const times = timeSituation(d);
   if (times) return `${d.intent === "probe_yes" ? "You'd be up for what the agent asks about. " : ""}${times} Keep it short.`;
   switch (d.intent) {
@@ -133,7 +133,7 @@ Return ONLY JSON: {"text": string, "decision": "accept"|"decline"|"counter"|"non
 - "text": your SMS reply in your writing style.
 - "decision": for proposals, the decision your reply expresses; otherwise "none".
 - "worthwhile": was the agent's latest message worth a text, in your honest opinion?`;
-    const user = `Conversation so far:\n${history || "(none)"}\n\nNew message from the Network agent:\n"${msg.body}"\n\nSituation: ${situation(ctx, d, !!this.opts.llmDecides)}`;
+    const user = `Conversation so far:\n${history || "(none)"}\n\nNew message from the Network agent:\n"${msg.body}"\n\nSituation: ${situation(d, !!this.opts.llmDecides)}`;
     try {
       this.calls++;
       const j = await chatJson(this.llm,

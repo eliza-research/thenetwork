@@ -134,7 +134,7 @@ export class PhotoRelayService {
     return { itemId: saved.id, state: saved.state, expiresAt: saved.expiresAt };
   }
   async revoke(app: AppId, personId: string, id: string): Promise<boolean> {
-    return this.o.store.locked(id, async (r, save, context) => {
+    return this.o.store.locked(id, async (r, save) => {
       if (!r || r.app !== app || r.senderPersonId !== personId) return false;
       await save({ ...r, state: "revoked" }); return true;
     });

@@ -483,7 +483,7 @@ export const PLAN_COPY_PUBLIC: ReadonlySet<string> = new Set(tokenize([...COST, 
  * vocabulary) and a name-token check; richer variants are dropped first; null if none passes.
  * Null for any minor involved and for anything romance (plans never are).
  */
-export function buildPlanProbe(w: World, plan: Plan, recipient: MemberId, now: number, tz: string): string | null {
+export function buildPlanProbe(w: World, plan: Plan, recipient: MemberId, tz: string): string | null {
   const others = plan.invited.filter(x => x !== recipient);
   if (!plan.invited.includes(recipient) || w.pack.ontology.lanes.some(l => l.neverInPlans && l.id === plan.category)) return null;
   if ([recipient, ...others].some(id => !w.get(id) || isMinor(w, id))) return null;

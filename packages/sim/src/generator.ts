@@ -9,7 +9,7 @@ import {
 } from "./taxonomy.ts";
 import { DEFAULT_RICHNESS_MIX, assignRichness, simulateKnowledge, type RichnessTier } from "./sources.ts";
 import type {
-  AdversarialKind, Archetype, Desire, Gender, HiddenTruth, Persona, PublicProfile, Relationship,
+  AdversarialKind, Archetype, Desire, Gender, HiddenTruth, Persona, PublicProfile,
   RelationshipType, Responsiveness, Routine,
 } from "./persona.ts";
 import { drawLapse } from "./persona.ts";

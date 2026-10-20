@@ -82,7 +82,7 @@ export function fitLogistic(X: readonly (readonly number[])[], y: readonly numbe
 }
 
 export const THRESHOLD_GRID = [0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95] as const;
-function pickThreshold(probs: readonly number[], isPos: readonly boolean[], isHonest: readonly boolean[], maxFalseHold: number): number {
+function pickThreshold(probs: readonly number[], isHonest: readonly boolean[], maxFalseHold: number): number {
   const nh = isHonest.filter(Boolean).length || 1;
   for (const t of THRESHOLD_GRID) if (probs.filter((p, i) => isHonest[i] && p >= t).length / nh <= maxFalseHold) return t;
   return 0.95;
@@ -105,7 +105,7 @@ export function fitRelayClefWeights(rows: readonly RelayFitRow[], o: RelayFitOpt
       const fit = fitLogistic(rows.map(r => feats.map(f => r.x[f] ?? 0)), pos.map(Number), o.l2 ?? 0.003);
       head = { w: Object.fromEntries(feats.map((f, i) => [f, Math.round(fit.w[i]! * 1e4) / 1e4])), b: Math.round(fit.b * 1e4) / 1e4, hold: 0.5, ...severe };
     }
-    head.hold = pickThreshold(rows.map(r => relayClefProb(head, r.x)), pos, honest, o.maxFalseHold ?? 0.02);
+    head.hold = pickThreshold(rows.map(r => relayClefProb(head, r.x)), honest, o.maxFalseHold ?? 0.02);
     heads[c] = head;
   }
   // minor_signal keeps its hand-set head; in direct mode it reads the one minor question.

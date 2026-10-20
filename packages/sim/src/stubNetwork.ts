@@ -295,7 +295,7 @@ export class StubNetwork implements NetworkUnderTest {
   private schedule(opp: Opp, now: number) {
     const going = [...opp.invites].filter(([, i]) => i.status === "yes").map(([id]) => id);
     opp.stage = "scheduled";
-    for (const [id, inv] of opp.invites) if (inv.status === "pending") inv.status = "dropped";
+    for (const inv of opp.invites.values()) if (inv.status === "pending") inv.status = "dropped";
     const at = this.opts.timeAware ? this.pickSlot(opp.p, going, now) : nextLocalHour(now + 2 * DAY, opp.p.city, 19);
     opp.meetingAt = at;
     const area = this.member(going[0]!).area;

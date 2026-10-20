@@ -170,7 +170,6 @@ export class RelayDesk {
 
   /** The member's open match (newest first), if any; `matchId` narrows it to that one match. */
   matchFor(from: MemberId, matchId?: string): RelayMatch | undefined {
-    const now = this.host.now();
     return this.host.matchesOf(from).filter(m => m.status === "mutual" && m.participants.every(p => m.acceptedBy.includes(p)) && (matchId === undefined || m.id === matchId))
       .sort((a, b) => b.at - a.at || (a.id < b.id ? -1 : 1))[0];
   }

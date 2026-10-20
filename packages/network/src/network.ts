@@ -2986,7 +2986,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     } else if (this.overBudget(m)) return this.planDefer(o, id, "cap", now);
     // A crew session's extra seats (organizing reach) go to people outside the crew: they get the plain plan probe.
     const inCrew = !o.plan.crewId || !!this.crews.find(c => c.id === o.plan!.crewId)?.members.includes(id);
-    const text = plans.buildPlanProbe(this.planWorld(now), inCrew ? o.plan : { ...o.plan, crewId: undefined }, id, now, NY);
+    const text = plans.buildPlanProbe(this.planWorld(now), inCrew ? o.plan : { ...o.plan, crewId: undefined }, id, NY);
     if (!text) { this.refuse(id, "probe", "plan_copy"); return this.planAnswer(o, id, false, true); }
     const a = plans.activityById.get(o.plan.activityId)!;
     const res = this.send(m, text, {
