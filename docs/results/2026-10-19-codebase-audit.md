@@ -398,3 +398,35 @@ Evidence: runs/audit/duplicate-types.ts, duplicate-types.jsonl, duplicate-types-
 and shared-types-check.log. Alternatives were importing engine types into the generic snapshot
 builder or keeping duplicate wire declarations. The shared owners retain dependency direction
 and give producers and consumers one declaration. These edits erase at compile time.
+
+## Staff safety reads fail visibly
+
+The cross-app person view caught both state-query failures and substituted an empty array.
+With both views unavailable, the HTTP summary still returned 200 and removed the held-person
+marker. The real Postgres/HTTP regression failed before the fix (expected 500, received 200).
+It now checks both summary and app panel failure, restores the views, and checks that the
+restricted marker returns.
+
+The person view now reads the migrated cross-app view directly. SQL failures reach the existing
+sanitized HTTP error handler. There is no fallback to the broad legacy view or empty safety state.
+The full app-console integration file passes 14 tests and 133 assertions. Typecheck passes.
+Logs: runs/audit/people-failure-before.log, people-failure-after.log, typecheck-refreshed.log.
+
+Alternatives were retaining the old view fallback but throwing on its failure, or adding a second
+"unknown" safety-state representation throughout the UI. The first still hides a broken current
+schema; the second adds a state that the existing HTTP error path already represents. The migration
+is required on local and hosted databases, so the direct query is both simpler and accurate.
+
+## Latest base and validation boundary
+
+The branch is rebased onto main c729bb2 (#104), including the founder's removal of the standalone
+website account portal. No conflict resolution was needed. The full simulation run finished:
+328/329 blocking gates, with one friends plan-probe failure caused by the caller corrected during
+the earlier run. The other blocks passed. Only the affected friends block and the main-change
+safety/audit blocks are rerun; no second full simulation is launched.
+
+The mixed-revision integration run finished 576 pass / 2 fail: both photo-relay failures used the
+binding corrected during that run. Their corrected suites pass 26 tests / 467 assertions. A fresh
+full integration run is in progress on the rebased source. Rebased e2e including browser cases
+passes 45 tests / 676 assertions. These are local controlled-service tests, not hosted agent-client
+acceptance. The required maintainer-provided staging URL has been requested.

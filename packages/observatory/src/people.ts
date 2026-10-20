@@ -33,10 +33,9 @@ export class PeopleView {
   /** The newest console row of every app's Network state: member id -> trust level, and the cases. */
   private async states(): Promise<Map<AppId, { trust: Map<string, string>; cases: any[] }>> {
     const out = new Map<AppId, { trust: Map<string, string>; cases: any[] }>();
-    // The cross-app role reads only trust levels and cases (network_state_console_cross_app, migration 0010);
-    // a local login without it reads the shared view. Every city of an app counts.
-    const rows = await this.sql`select app, trust, cases from network.network_state_console_cross_app`.catch(() =>
-      this.sql`select case when position(':' in id) > 0 then split_part(id, ':', 1) else 'ntwrk' end as app, trust, cases from network.network_state_console`.catch(() => []));
+    // This migrated view is also available to the local development login. A read failure must
+    // reach the route's error handler, never look like an empty set of holds and cases.
+    const rows = await this.sql`select app, trust, cases from network.network_state_console_cross_app`;
     for (const r of rows as any[]) {
       if (!isAppId(r.app)) continue;
       const cur = out.get(r.app) ?? { trust: new Map<string, string>(), cases: [] as any[] };

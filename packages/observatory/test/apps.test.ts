@@ -336,6 +336,23 @@ describe.skipIf(!pgAvailable)("real mode for four apps (Postgres)", () => {
       expect(log.slice(-2)).toEqual(["audit:open_person_app", "read:panel"]);
       expect(rows.at(-1)).toMatchObject({ action: "open_person_app", app: "slop", targetType: "person", targetId: P1, reason: "safety report 42", actor: expect.stringMatching(/^token:admin#/) });
       expect(log.indexOf("audit:read_person")).toBeLessThan(log.indexOf("read:summary"));
+      // A database failure must not present a held person as having no holds.
+      await admin(async sql => {
+        await sql`alter view network.network_state_console_cross_app rename to unavailable_cross_app`;
+        await sql`alter view network.network_state_console rename to unavailable_console`;
+      });
+      try {
+        const unavailable = await as("cx", `/api/person/${P1}`);
+        expect(unavailable.status).toBe(500);
+        expect(await unavailable.json()).toMatchObject({ code: "internal" });
+        expect((await post("cx", `/api/person/${P1}/open`, { app: "slop", reason: "safety report 42" })).status).toBe(500);
+      } finally {
+        await admin(async sql => {
+          await sql`alter view network.unavailable_cross_app rename to network_state_console_cross_app`;
+          await sql`alter view network.unavailable_console rename to network_state_console`;
+        });
+      }
+      expect((await (await as("cx", `/api/person/${P1}`)).json()).holds).toEqual([{ app: "*", level: "restricted" }]);
       // No audit row, no read (fail closed).
       failAudit = true;
       const n = log.length;
