@@ -1,7 +1,9 @@
 # Codebase audit: work in progress
 
 This report records verified changes. It does not certify the whole codebase or production.
-The audit starts at `b9a6c20` on branch `codex/codebase-audit`.
+The first pass started at local `b9a6c20` on branch `codex/codebase-audit`.
+A live GitHub refresh found newer merged work. The branch was rebased onto `24b8d3a`.
+The existing scorecard repair from PR #101 was cherry-picked with its original commit attribution.
 The original checkout's untracked `.claude/` and `prototypes/` folders remain untouched.
 
 ## Confirmed defect: repeated joins ignore a lower age
@@ -62,13 +64,16 @@ The unused-symbol compiler scan found additional candidates which still need rev
 | Typecheck after consolidation | Pass |
 | Four production site builds | Pass |
 | Plugin snapshot check | Pass |
-| Full integration baseline | In progress; scorecard observation-time failure reproduced |
-| Targeted onboard, friends, network simulations | In progress |
+| Mixed-tree diagnostic integration run | 476 pass, 7 fail; not final evidence |
+| Old-base targeted simulations | Interrupted to rebase; onboarding passed 19 blocking gates |
+| Current-main integration, e2e and build checks | In progress |
 
 The full integration command started before edits, but loaded later files while edits were underway.
 It is diagnostic evidence, not a final unchanged-base or final-head certification.
 The scorecard failure already has an open repair, PR #101. The path-decoding repair is open as PR #99.
-Neither existing contribution is duplicated by this audit.
+PR #101 is incorporated locally, not merged on GitHub. PR #99 remains separate.
+Five module-load errors and the old age behavior came from changing files during the diagnostic run.
+A fresh process on the rebased tree is required; no passing suite is claimed from that run.
 
 All runs above use Bun 1.4.2. Database runs use local Postgres on port 54339.
 No real LLM, paid rater, live message, deployment, or real agent-client run has occurred in this audit.
