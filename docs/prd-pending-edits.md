@@ -8,10 +8,12 @@ This file lists proposed PRD edits that are not yet in the PRD. Apply an edit in
 
 Earlier items were applied on 2026-10-08 (PRD 28, 31, 32, 34, 35, 36, 37, 38, 40, Appendix B, and the new Section 41); the open founder questions moved to PRD 27 and `docs/mvp-gaps.md` section 5.
 
+## Applied October 19, 2026
+
+Items 1 and 2 were applied in the canonical Google Doc and read back: validation uses simulations, integration and e2e, the security suite is kept, and appearance ratings are on with placeholder weights until P2 qualifies fitted weights. The matching snapshot passages below were refreshed from that readback. Items 3-6 remain pending.
+
 ## Pending
 
-1. **PRD 34 (and the summary rows in 28, 27 and the decision log): validation is simulations + integration + e2e** (founder, after 2026-10-08). Retitle 34 "Validation: simulations, integration and e2e". Unit and smoke tests are not kept; integration tests (real Postgres, real HTTP servers, several packages together, the full service) and e2e tests (`tests/e2e`) are. The security suite is kept as part of the integration suite (CI job "integration"), so the "Keep the security suite?" row in 27 is closed. Classification and the restored files: `docs/tests-policy.md`.
-2. **PRD 27 "Clef weight fitting" row: ratings are ON** (founder). Appearance ratings feed slop matching from launch (never shared), on the placeholder weights until P2's fitted weights pass the decision rule; remove "keep ratings off until fitted weights exist".
 3. **Founder decisions of 2026-10-09** (PRD 27, 28, 32.3, 37.1, 40 and the decision log; Appendix B where it names the plugin). Apply these in the Google Doc. Then re-snapshot `docs/prd-snapshot.md` from the Google Doc. Do not edit the snapshot first.
    - **Open join for every app.** slop.date, peon.biz and friends.help are open: anyone aged 13 or more can join. The Network (ntwrk.party) stays invite-only on the web. This closes the "production join mode for peon and friends" question in PRD 37.1 item 0(c) and 40.6.
    - **eliza.app is one entry.** eliza.app is one more way into The Network, like the four sites. A person who arrives through eliza.app joins The Network and is asked what they are looking for (friends, dating, work), or is routed by keyword. It is not a separate product with separate members. An existing eliza.app user gets a one-time notice and is not matched before the normal join and consent.
