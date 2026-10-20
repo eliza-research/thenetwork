@@ -358,6 +358,7 @@ export class Accounts {
       // A repeated join is still an age statement. Keep the membership and consent unchanged,
       // but propagate a lower age before returning the existing membership.
       await this.recordAge(who.e164, person, input.age);
+      if (!joinAgeCheck(input.age, await this.lowestAge(who.e164, person), app).ok) return { ok: false, error: "under_age" };
       return { ok: true, membership: existing };
     }
     if (app.joinMode === "invite" && existing?.state !== "invited") return { ok: false, error: "invite_only" };

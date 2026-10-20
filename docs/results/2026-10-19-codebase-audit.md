@@ -465,3 +465,17 @@ The full evidence includes real Postgres, routed HTTP, controlled browser flows,
 simulations, and a bounded real-LLM run. Hosted agent-client checks are explicitly deferred by the
 user. No production or live-message acceptance claim follows from these local results. Hosted CI
 for the submitted head is pending when this checkpoint is written.
+
+## Review repair: repeat signup below the join minimum
+
+The repeated-join path recorded a lower age but returned a successful membership even for age 12.
+It now applies the existing join-age policy after recording the floor. A later claim of age 30 still
+receives `under_age`; it cannot raise the floor. Existing membership and consent are not recreated.
+
+Before: the added real-Postgres case expected HTTP 400 and received 200.
+After: `bun test --conditions eliza-source --timeout 120000 packages/network/test/service-platform.test.ts`
+passes 19 tests with 224 assertions. The case verifies a 30 to 16 to 12 age correction, a later 30
+claim, and unchanged consent-event count. This is deterministic API/database evidence, not a model run.
+
+Alternatives: rejecting before recording the age loses the safety floor; accepting an idempotent join
+without applying the minimum incorrectly reports signup success. No production records or messages changed.

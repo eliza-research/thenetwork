@@ -248,6 +248,14 @@ describe.skipIf(!pgAvailable)("the service as the platform's channel (Postgres)"
     expect((await web.join("slop", 30)).status).toBe(200);
     expect(await lowestAge(p)).toBe(16);
     expect(await count(sql`select count(*)::int as n from platform.consent_events where e164 = ${p}`)).toBe(consents);
+    // A corrected age below the join minimum must not return a successful membership.
+    const underAge = await web.join("slop", 12);
+    expect(underAge.status).toBe(400);
+    expect(underAge.body).toMatchObject({ error: "under_age" });
+    expect(await lowestAge(p)).toBe(12);
+    expect((await web.join("slop", 30)).status).toBe(400);
+    expect(await count(sql`select count(*)::int as n from platform.consent_events where e164 = ${p}`)).toBe(consents);
+
   }, T);
 
   test("a repeated age statement repairs cross-app age propagation after a database failure", async () => {
