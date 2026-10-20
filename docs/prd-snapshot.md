@@ -1865,7 +1865,7 @@ Two workstreams, engine and packs, and platform. Section 37 has owners and exit 
 - Phase 5: attention, plans and capital across apps.
 slop.date goes live when Phases 0-2 meet their exit criteria and the founder approves live sends. Phases 0-4 are built and pass their sim gates; the critical path, the remaining prototypes and the pilot gates are in 37.1-37.3. Join mode for peon.biz and friends.help is open. The timing of The Network's own NYC matching remains a founder decision (San Francisco only after the expansion gates, 25.6).
 # 41. Experience design: attention budget, plans and continuous conversation
-Status (2026-10-08): the experience design of 2026-10-07 (docs/design/2026-10-07-experience-design.md), reconciled with Section 40.4. It amends 7.2, 8.2, 9.3, 12.3, 29 (F6, F11, F12, F20, F21, F28), 32.9, 33.3-33.4 and 33.10. Where it differs from 40.4, 40.4 wins: sends go at a learned send time (default 12:00 local), not in a fixed Thursday digest; only initial invites count against the cap; the reveal is the booked plan; plans have their own allowance (1 initial plan invite per 7 days); and crews form after one great plan. For slop.date a probe may include one photo (40.5).
+Status (2026-10-08): the experience design of 2026-10-07 (docs/design/2026-10-07-experience-design.md), reconciled with Section 40.4. It amends 7.2, 8.2, 9.3, 12.3, 29 (F6, F11, F12, F20, F21, F28), 32.9, 33.3-33.4 and 33.10. Where it differs from 40.4, 40.4 wins: sends go at a learned send time (default 12:00 local), not in a fixed Thursday digest; only initial invites count against the cap; the reveal is the booked plan; plans have their own allowance (1 initial plan invite per 7 days); and crews form after one great plan. Slop.date probes contain no photo (founder, 2026-10-11; 40.5).
 ## 41.1 Principles
 - The scarce resource is the member's attention. Budget interruptions, not proposals, and measure value delivered, not messages sent.
 - The conversation is the product, so onboarding never ends.
@@ -1877,7 +1877,7 @@ An interruption is any message the Network starts that the member did not ask fo
 - Learned signals can only make the Network quieter; only the member can ask for more.
 - No filler. A hold queue keeps up to 10 items per member, each with an expiry, and re-checks them before sending.
 ## 41.3 Consent-first probes
-- The Network asks about the activity before revealing the person: at most one shareable fact, never a name (slop.date may add one photo).
+- The Network asks about the activity before revealing the person: at most one shareable fact, never a name or photo.
 - The member with the live want is asked first. The match is reviewed before the first probe.
 ## 41.4 Messaging limits
 Blooio allows three unanswered messages per conversation and one re-engagement after 14 days. The Network sends an interruption only when at most one message is unanswered, uses the single re-engagement at most once (after 30 or more days, for a high-value item), and keeps new conversations under 20 per line per day. The configured line limits remain 20 new conversations and 200 agent-started texts per day until P3 measures delivery. These are delivery controls, not billing limits; replies are not capped. The daily cost alert is $50 across all apps. Cost per active member, unit prices, RPO/RTO and the safety on-call roster still need owner decisions.
