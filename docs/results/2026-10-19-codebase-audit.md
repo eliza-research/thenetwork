@@ -301,3 +301,25 @@ Logs: `runs/audit/gini-before.log`, `gini-after.log`, `gini-numeric-before.log`,
 Alternatives were sharing only the two exact copies or making the simulators import engine policy.
 The first leaves three copies; the second couples a basic statistic to engine policy. A leaf core
 module gives every existing caller the same mathematical definition without a policy dependency.
+The reported gate output is unchanged except timing and raw fingerprints, which include the changed
+floating-point representation: slop `17120ad1dac399a1` -> `445afd705328fe54`, friends
+`fb2abeda7169b765` -> `e5bf70e069eaa7e9`. No golden expectation or threshold was changed.
+
+## Observatory uses shared payload types
+
+The browser store now reads `JudgeStats` directly from `ObsStats`, instead of a second partial type
+and a cast. Its opportunity alias uses the server's `ObsOpportunity`. Removed the optional `wants`
+payload branch: no server projector or source emits that field. Member requests still display their
+existing requester objective. The default app order imports core's browser-safe app IDs.
+No rendered copy, layout, or supported server payload changes.
+
+The root `typecheck` command now runs the existing Observatory TypeScript configuration too.
+Compiler file inventories confirm it adds nine UI TSX files and `held-photo-ui.test.tsx` that the
+old command omitted. All three configurations pass. The Observatory browser bundle builds.
+The app and held-photo HTTP/DOM integration files pass 15 tests and 175 assertions.
+
+Evidence: `runs/audit/observatory-types-before.log`, `typecheck-observatory.log`,
+`observatory-shared-after.log`, `observatory-build.log`, `root-type-files.txt`, and
+`observatory-type-files.txt`. The browser bundle is a build check, not a visual acceptance claim.
+Alternatives were adding the unsupported field to the server type or retaining the cast.
+The first invents a payload; the second conceals drift. The browser now follows the existing server types.

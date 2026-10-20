@@ -44,9 +44,8 @@ export function historyBetween(o: Opp): Opp[] {
   return [...store.opps.values()].filter(x => x.id !== o.id && x.createdAt <= o.createdAt && [...x.participants].sort().join("|") === key).sort((a, b) => b.createdAt - a.createdAt);
 }
 
-/** The intent each side is based on. Without the `wants` payload: the requester's objective only. */
+/** A member request's objective belongs to its requester. */
 export function wantsOf(o: Opp, id: string): string | undefined {
-  if (o.wants) return o.wants[id];
   return originOf(o) === "request" && o.participants[0] === id ? o.objective : undefined;
 }
 

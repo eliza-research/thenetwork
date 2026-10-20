@@ -4,16 +4,17 @@
 // global filters (range, borough, members, origin, state group). Every panel filters through the
 // predicates on ObsStore, never its own copy.
 import { useSyncExternalStore } from "react";
+import { APP_IDS } from "../../core/src/types.ts";
 import { NEIGHBORHOOD, type Borough } from "@thenetwork/network/geo"; // geo only: the package root pulls server code into the browser bundle
 import type { ConsoleApp } from "../src/apps.ts";
 import type {
   AppHealth, AppProfile360, AuditEntry, BiasReportView, HeldQueue, HeldText, ClockInfo, ConfigInfo, ControlCommand, ControlResult, EngineRunSummary, EnvInfo, GameState, LabRequest, LabRun, MemberDetail, MemberTimeline,
-  MemberTruth, Mode, NetworkInfo, ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsOpportunity, ObsRequest, ObsState, ObsStats, OpportunityDetail,
+  JudgeStats, MemberTruth, Mode, NetworkInfo, ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsOpportunity, ObsRequest, ObsState, ObsStats, OpportunityDetail,
   MemberPhoto, PersonAppPanel, PersonSummary, RevealGrant, ReviewDecision, ReviewReason, RunDiff, SafetyAction, SafetyInfo, SearchHit, StaffRole, StaffUser,
 } from "../src/types.ts";
 
-/** The app ids, in switcher order (the server's list in /api/me replaces it). Kept here so the browser bundle does not pull server code. */
-export const APP_ORDER = ["ntwrk", "slop", "peon", "friends"];
+/** Default switcher order; the server's list in /api/me replaces it. Core's type module is browser-safe. */
+export const APP_ORDER: readonly string[] = APP_IDS;
 /** What the switcher shows: one app, "all" (health of every app) or the cross-app person view. */
 export type Page = { kind: "app" } | { kind: "all" } | { kind: "person"; id: string };
 export type Me = StaffUser & { realOnly?: boolean; apps?: string[]; crossApp?: boolean; appInfo?: ConsoleApp[] };
@@ -29,13 +30,7 @@ export const DRAWER_TABS: DrawerTab[] = ["review", "feed", "pipeline", "requests
 export interface Filters { range: RangeKey; borough: "all" | Borough; members: MemberFilter; origin: string; stateGroup: "all" | StateGroup }
 export type FilterKey = keyof Filters;
 
-/**
- * Fields the server sends that src/types.ts does not declare yet (that file belongs to the server
- * work). `wants` is the intent text each side of a queued proposal is based on; `judge` holds the
- * judge-derived safety counts. Both are optional: the UI works without them.
- */
-export type Opp = ObsOpportunity & { wants?: Record<string, string> };
-export interface JudgeCounts { invariants: number; canaryLeaks: number; minorContacts: number; byRule?: Record<string, number> }
+export type Opp = ObsOpportunity;
 
 export interface UIState {
   focus: Focus;
@@ -789,7 +784,7 @@ class ObsStore {
   canAct() { return !!this.env && (this.env.capabilities.staffActions ?? !this.env.capabilities.readOnly); }
   /** This viewer may decide review items here (actions possible and the reviewer role). */
   canReview() { return this.canAct() && this.can("reviewer"); }
-  judge(): JudgeCounts | undefined { return (this.stats as (ObsStats & { judge?: JudgeCounts }) | undefined)?.judge; }
+  judge(): JudgeStats | undefined { return this.stats?.judge; }
   /** A review card was opened: the time to the decision is sent with it (a training label). */
   reviewOpen(id: string) { if (!this.reviewOpened.has(id)) this.reviewOpened.set(id, Date.now()); }
   /**
