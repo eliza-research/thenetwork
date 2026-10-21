@@ -16,6 +16,9 @@
 // the sim World (seeds 21-22, 30 days); its invariant gates block.
 import type { Facet, MemberId } from "../../packages/core/src/index.ts";
 import { canBeMatched, DAY } from "../../packages/core/src/index.ts";
+import type { AssignContext } from "../../packages/engine/src/pack.ts";
+import type { SelectionResult } from "../../packages/engine/src/policy.ts";
+import type { Scored } from "../../packages/engine/src/scoring.ts";
 import * as A from "../../packages/engine/src/attention.ts";
 import { resolveConfig } from "../../packages/engine/src/config.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
@@ -32,7 +35,7 @@ import { cellMiles } from "../../packages/engine/src/packs/slop/zips.ts";
 import { EngineRng as Rng } from "../../packages/core/src/index.ts";
 import { slopLiveArm } from "./slop-live.ts";
 import type { EngineInput, EngineProposal } from "../../packages/engine/src/types.ts";
-import { World } from "../../packages/engine/src/world.ts";
+import { World, pairKey } from "../../packages/engine/src/world.ts";
 import { BODY_TYPE_DEFAULTS } from "../../packages/sim/src/apps/slop/bodyType.ts";
 import { slopEngineInput, slopEngineMatcher } from "../../packages/sim/src/apps/slop/enginePack.ts";
 import { gates3, runArm, type WorldSpec } from "../../packages/sim/src/apps/slop/packEval.ts";
@@ -284,6 +287,53 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
       expect(snap.facets.some(f => f.tags.some(t => t.startsWith(APPEARANCE_PREFIX) || t.startsWith("slop:wants_body:")))).toBe(false);
     }
     expect(minors).toBeGreaterThan(0);
+  });
+
+  // ---- the stable-roommates invariant (packages/engine/src/packs/slop/assign.ts stableRound) -----
+  // The pack documents `assignment: "stable"` as "no two members would both rather be proposed to
+  // each other than to whom they got". This gate runs the real engine with that option and checks the
+  // invariant on the result. A blocking pair is an eligible pair the algorithm did not choose, whose
+  // two members are both matched elsewhere, and who each prefer the other to their own partner on
+  // their OWN predicted enjoyment (Candidate.benefit). The comparison is strict, so the check never
+  // depends on the value or id tie-break inside stableRound: a tie in own benefit is not a block.
+  await b.run("assignment stable: no matched pair blocks another on own benefit (0 blocking pairs)", async () => {
+    let matched = 0, blocked = 0;
+    for (const s of [1, 2, 3, 4, 5]) {
+      const input = slopWorld(s, { perCity: 60 });
+      const pack = makeSlopPack({ assignment: "stable" });
+      const assign = pack.selection.assign!;
+      let seen: { w: World; scored: readonly Scored[]; ctx: AssignContext; result: SelectionResult } | undefined;
+      pack.selection.assign = (w, scored, ctx) => { const r = assign(w, scored, ctx); seen = { w, scored, ctx, result: r }; return r; };
+      await runEngine(input, cfg(s), { pack });
+      expect(seen).not.toBeUndefined();
+      const { w, scored, ctx, result } = seen!;
+      // The edge set stableRound saw: eligible two-person candidates, both members usable, at or
+      // above minValue. The first pair for a key wins, as it does when the pack builds its edges.
+      const usable = (id: MemberId) => !ctx.exclude?.has(id) && !w.get(id)!.inOpenOpportunity;
+      const edges = new Map<string, { a: MemberId; b: MemberId; ownA: number; ownB: number }>();
+      for (const x of scored) {
+        if (!x.eligible || x.c.participants.length !== 2 || x.c.exploration) continue;
+        const [a, b] = x.c.participants as [MemberId, MemberId];
+        if (!usable(a) || !usable(b) || x.score < pack.options.minValue) continue;
+        const k = pairKey(a, b);
+        if (edges.has(k)) continue;
+        edges.set(k, { a, b, ownA: x.c.benefit[a] ?? 0, ownB: x.c.benefit[b] ?? 0 });
+      }
+      const chosen = result.selected.map(x => x.s.c.participants as [MemberId, MemberId]);
+      const partner = new Map<MemberId, MemberId>();
+      for (const [u, v] of chosen) { partner.set(u, v); partner.set(v, u); }
+      const picked = new Set(chosen.map(([u, v]) => pairKey(u, v)));
+      const own = (m: MemberId, o: MemberId) => { const e = edges.get(pairKey(m, o))!; return m === e.a ? e.ownA : e.ownB; };
+      matched += chosen.length;
+      for (const [k, e] of edges) {
+        if (picked.has(k)) continue;
+        const { a, b } = e, pa = partner.get(a), pb = partner.get(b);
+        if (pa === undefined || pb === undefined) continue;
+        if (own(a, b) > own(a, pa) && own(b, a) > own(b, pb)) blocked++;
+      }
+    }
+    expect(matched).toBeGreaterThan(20);
+    expect(blocked).toBe(0);
   });
 
   // ---- slop-live: the production ConsentNetwork with the slop wiring (scripts/sim/slop-live.ts) -----

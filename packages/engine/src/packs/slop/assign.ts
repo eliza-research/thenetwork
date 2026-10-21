@@ -169,9 +169,12 @@ function stableRound(edges: readonly Edge[]): Edge[] {
       const cur = held.get(y);
       const ry = rank.get(y)!;
       if (cur === undefined || ry.get(x)! < ry.get(cur)!) {
-        held.set(y, x);
-        // y will never accept anyone worse than x: delete them (which frees cur, if any).
+        // y holds x and rejects the proposal it held (cur, if any). Delete the worse candidates
+        // first: del(y, cur) then sees held.get(y) === cur and frees cur, exactly as the code
+        // comment says. Setting held before the deletes would hide cur, and cur would never
+        // propose again.
         for (const z of [...active.get(y)!]) if (ry.get(z)! > ry.get(x)!) del(y, z);
+        held.set(y, x);
         break;
       }
       del(x, y);
