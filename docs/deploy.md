@@ -1,5 +1,9 @@
 # Deploy: the shared backend on Railway and the four sites on Cloudflare Pages
 
+The Cloudflare backend migration uses [deploy/cloudflare](../deploy/cloudflare/README.md).
+It preserves PostgreSQL and keeps the replacement inactive until the old backend is drained.
+The Railway steps below describe the current deployment and rollback path.
+
 This is how The Network goes online. Read it with [runbook-platform.md](runbook-platform.md) (local dev) and [runbook-real.md](runbook-real.md) (the real network and its gates). The coordinator deploys. Nobody turns on live sends from this document: section 6 keeps them off.
 
 **User decisions this round (2026-10-08).**

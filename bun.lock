@@ -5,6 +5,8 @@
     "": {
       "name": "thenetwork",
       "devDependencies": {
+        "@cloudflare/containers": "0.3.7",
+        "@cloudflare/workers-types": "4.20260429.1",
         "@types/bun": "1.4.2",
         "ajv": "8.20.0",
         "typescript": "^5.6.0",
@@ -88,6 +90,10 @@
     },
   },
   "packages": {
+    "@cloudflare/containers": ["@cloudflare/containers@0.3.7", "", {}, "sha512-DM9dm3FnIBSyiSJ1FLavKwl/lk3oAmTaynCzZQ9pZR0ncRPquSxkxd8Nu2MFILxmDDsPkxKsSNEh9mHHMty4Fw=="],
+
+    "@cloudflare/workers-types": ["@cloudflare/workers-types@4.20260429.1", "", {}, "sha512-WtwRki7i/RnkzXkJXhI9PmrmMpftpwDocRdeBQ29aHOOSCwV7nAlh163XRzjftnQGuW9nDEnu7Om+RJMn46N+Q=="],
+
     "@thenetwork/blooio": ["@thenetwork/blooio@workspace:packages/blooio"],
 
     "@thenetwork/capital": ["@thenetwork/capital@workspace:packages/capital"],

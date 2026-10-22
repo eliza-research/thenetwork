@@ -13,7 +13,7 @@
     "clef": "bun run --conditions eliza-source scripts/clef-fit.ts",
     "relay-eval": "bun run --conditions eliza-source scripts/relay-eval.ts",
     "check:mirror": "bun run scripts/check-contract-mirror.ts",
-    "typecheck": "tsc --noEmit -p . && tsc --noEmit -p sites/tsconfig.json && tsc --noEmit -p packages/observatory/tsconfig.json",
+    "typecheck": "tsc --noEmit -p . && tsc --noEmit -p sites/tsconfig.json && tsc --noEmit -p packages/observatory/tsconfig.json && tsc --noEmit -p deploy/cloudflare",
     "observatory": "bun run packages/observatory/src/server.ts",
     "observatory:db": "bun run packages/observatory/db/dev-pg.ts up && bun run packages/observatory/db/seed.ts --from-sim --days 14",
     "db:migrate": "bun run packages/observatory/db/migrate.ts",
@@ -24,6 +24,8 @@
     "sites:build": "bun run sites/sites.ts"
   },
   "devDependencies": {
+    "@cloudflare/containers": "0.3.7",
+    "@cloudflare/workers-types": "4.20260429.1",
     "@types/bun": "1.4.2",
     "ajv": "8.20.0",
     "typescript": "^5.6.0"

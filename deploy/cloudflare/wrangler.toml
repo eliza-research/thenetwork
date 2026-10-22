@@ -1,0 +1,55 @@
+name = "network-backend"
+main = "worker.ts"
+compatibility_date = "2026-09-28"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+preview_urls = false
+
+[observability]
+enabled = true
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["NetworkBackend"]
+
+[env.staging]
+name = "network-backend-staging"
+
+[env.staging.vars]
+PLATFORM_ENV = "staging"
+BACKEND_ENABLED = "false"
+
+[env.staging.triggers]
+crons = ["* * * * *"]
+
+[[env.staging.containers]]
+class_name = "NetworkBackend"
+image = "../backend/Dockerfile"
+image_build_context = "../.."
+max_instances = 1
+instance_type = "standard-1"
+
+[[env.staging.durable_objects.bindings]]
+name = "BACKEND"
+class_name = "NetworkBackend"
+
+[env.production]
+name = "network-backend-production"
+
+[env.production.vars]
+PLATFORM_ENV = "production"
+BACKEND_ENABLED = "false"
+
+[env.production.triggers]
+crons = ["* * * * *"]
+
+[[env.production.containers]]
+class_name = "NetworkBackend"
+image = "../backend/Dockerfile"
+image_build_context = "../.."
+max_instances = 1
+instance_type = "standard-1"
+
+[[env.production.durable_objects.bindings]]
+name = "BACKEND"
+class_name = "NetworkBackend"
