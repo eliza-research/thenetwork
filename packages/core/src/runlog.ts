@@ -56,13 +56,6 @@ export type RunRecord =
   | { t: number; type: "network_error"; error: string }
   | { t: number; type: "network_log"; kind: string; detail: Record<string, unknown> }
   | { t: number; type: "run_end"; simEnd: number; wallMs: number; stats: Record<string, number> };
-
-export type RunRecordType = RunRecord["type"];
 /** A record before the logger stamps the sim time `t`. */
 export type RunRecordInput = RunRecord extends infer R ? R extends RunRecord ? Omit<R, "t"> & { t?: number } : never : never;
-
-/** Parse a JSONL run log. */
-export function parseRunLog(text: string): RunRecord[] {
-  return text.split("\n").filter(l => l.trim()).map(l => JSON.parse(l) as RunRecord);
-}
 

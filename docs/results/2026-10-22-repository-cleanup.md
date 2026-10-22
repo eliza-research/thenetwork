@@ -29,15 +29,17 @@ Do not split the large Network state machine solely by line count; moving couple
 
 | ID | Work | Status |
 |---|---|---|
-| C1 | Remove unused parameters and imports | Planned |
-| C2 | Reuse core FNV-1a for extraction delimiters without changing prompt bytes | Planned |
-| C3 | Share report mean, standard error and formatting across app CLIs | Planned |
-| C4 | Share connection cleanup counts and count-only response projection | Planned |
-| C5 | Share no-store JSON response construction with identical headers | Planned |
-| C6 | Remove unreferenced helper declarations after caller and export inspection | Planned |
-| C7 | Consolidate repeated local Postgres administration helper | Planned |
-| C9 | Move the identical open-review lookup into the Observatory store | Planned |
-| C8 | Use a typed partial group-search state instead of undefined as any | Planned |
+| C1 | Remove unused parameters and imports | Implemented |
+| C2 | Reuse core FNV-1a for extraction delimiters without changing prompt bytes | Implemented |
+| C3 | Share report mean, standard error and formatting across app CLIs | Implemented |
+| C4 | Share connection cleanup counts and count-only response projection | Implemented |
+| C5 | Share no-store JSON response construction with identical headers | Implemented |
+| C6 | Remove unreferenced helper declarations after caller and export inspection | Implemented |
+| C7 | Consolidate repeated local Postgres administration helper | Implemented |
+| C11 | Remove retired city-field selectors from browser flow tests | Implemented |
+| C10 | Share the identical captured-message test type in the existing Network harness | Implemented |
+| C9 | Move the identical open-review lookup into the Observatory store | Implemented |
+| C8 | Use a typed partial group-search state instead of undefined as any | Implemented |
 
 ## Retained similarities
 
@@ -467,7 +469,7 @@ Binary assets are inventoried, not interpreted as code. Data and documents are r
 | `packages/network/service/profile-suggestion-endpoint.ts` | 157 | C6 |
 | `packages/network/service/profile-suggestion-review.ts` | 58 | Scan; retain |
 | `packages/network/service/profile-suggestion-withdrawal-endpoint.ts` | 67 | C4 |
-| `packages/network/service/profile-suggestions.ts` | 461 | Scan; retain |
+| `packages/network/service/profile-suggestions.ts` | 461 | C4 |
 | `packages/network/service/relay-endpoint.ts` | 263 | C5 |
 | `packages/network/service/route-authority.ts` | 35 | Scan; retain |
 | `packages/network/service/runtime.ts` | 768 | Scan; retain |
@@ -498,7 +500,7 @@ Binary assets are inventoried, not interpreted as code. Data and documents are r
 | `packages/network/test/gateway-fixtures.integration.test.ts` | 161 | Scan; retain |
 | `packages/network/test/inbox-order.integration.test.ts` | 173 | Scan; retain |
 | `packages/network/test/invites-honest.test.ts` | 22 | Scan; retain |
-| `packages/network/test/mini.ts` | 153 | Scan; retain |
+| `packages/network/test/mini.ts` | 153 | C10 |
 | `packages/network/test/peon-postings.integration.test.ts` | 131 | C7 |
 | `packages/network/test/peon-seats.integration.test.ts` | 107 | Scan; retain |
 | `packages/network/test/profile-cleanup-reconciliation.postgres.test.ts` | 593 | Scan; retain |
@@ -853,12 +855,166 @@ Binary assets are inventoried, not interpreted as code. Data and documents are r
 | `sites/test/contract.test.ts` | 166 | Scan; retain |
 | `sites/test/sites.test.ts` | 525 | Scan; retain |
 | `sites/tsconfig.json` | 11 | Scan; retain |
-| `tests/e2e/agent-return.e2e.test.ts` | 78 | Scan; retain |
+| `tests/e2e/agent-return.e2e.test.ts` | 78 | C11 |
 | `tests/e2e/auth-feedback.e2e.test.ts` | 93 | Scan; retain |
 | `tests/e2e/harness.ts` | 291 | Scan; retain |
 | `tests/e2e/notify.e2e.test.ts` | 89 | Scan; retain |
 | `tests/e2e/platform.e2e.test.ts` | 1097 | Scan; retain |
-| `tests/e2e/signup-draft.e2e.test.ts` | 131 | Scan; retain |
+| `tests/e2e/signup-draft.e2e.test.ts` | 131 | C11 |
 | `tools/clef-label/README.md` | 76 | Inventory; retain |
 | `tools/clef-label/index.html` | 237 | Inventory; retain |
 | `tsconfig.json` | 10 | Scan; retain |
+
+## Implementation and evidence
+
+All eleven accepted cleanup batches are implemented. No schema, wire mirror, member copy or matching policy changed.
+The two new leaf files are `packages/platform/src/response.ts` and `packages/sim/src/apps/report.ts`.
+The first owns private JSON responses. The second owns app-world report formatting.
+
+The group-search beam now models unevaluated seeds without fabricated statistics or `any` casts.
+Completed groups retain required statistics. Their scoring and traversal order are unchanged.
+The shared Postgres admin helper retains lock timeouts, connection cleanup and the MCP isolated-fixture URL override.
+Connection cleanup counts share one declaration across storage and both endpoint contracts.
+The result projection copies only permitted counts. Authorization, nonce, expiry and transaction checks remain in their existing paths.
+
+### Removed declarations
+
+The source and documentation reference scan found no executable callers for these declarations.
+The list includes four declarations used only by other removed helpers.
+Upstream contract-only declarations remain; they have external consumers.
+
+| File | Removed declarations |
+|---|---|
+| `packages/blooio/src/blooio/webhook.ts` | `DELIVERY_HEADER`, `dedupeKeysFor` |
+| `packages/blooio/src/phone.ts` | `isE164` |
+| `packages/core/src/guard.ts` | `matchFolded` |
+| `packages/core/src/runlog.ts` | `RunRecordType`, `parseRunLog` |
+| `packages/engine/src/attention.ts` | `applyLearnedCadence`, `digestDue`, `REENGAGE_SUFFIX`, `holdValue`, `HoldResult`, `addToHold` |
+| `packages/engine/src/config.ts` | `engineSupplyBudgets` |
+| `packages/engine/src/packs/peon/schema.ts` | `MODES` |
+| `packages/engine/src/plans.ts` | `RECURRING_WANT` |
+| `packages/engine/src/testkit.ts` | `baseMember`, `emptyInput` |
+| `packages/mcp/src/handler.ts` | `LATEST_PROTOCOL` |
+| `packages/network/service/profile-suggestion-endpoint.ts` | `SuggestionReviewResponse` |
+| `packages/network/src/jobs.ts` | `seatIn` |
+| `packages/notify/src/links.ts` | `buttonPageButtons` |
+| `packages/notify/src/tokens.ts` | `findToken` |
+| `packages/observatory/src/apps.ts` | `AppScope` |
+| `packages/platform/src/apps.ts` | `parseNetworkId` |
+| `packages/platform/src/phone.ts` | `isSyntheticPhone` |
+| `packages/platform/src/photos.ts` | `PHOTO_TYPES` |
+| `packages/sim/src/apps/friends/baselines.ts` | `ACTIVITY_COUNT` |
+| `packages/sim/src/apps/peon/skills.ts` | `LEVEL_TITLE` |
+| `packages/sim/src/apps/slop/geo.ts` | `allZipsIn` |
+| `packages/sim/src/apps/slop/oracle.ts` | `SLOT_COUNT` |
+| `packages/sim/src/apps/slop/persona.ts` | `DATE_ACTIVITIES` |
+| `packages/sim/src/apps/slop/visible.ts` | `shownDistance` |
+| `packages/sim/src/judge/llmJudges.ts` | `ShareabilityVerdict`, `TimingVerdict`, `judgeExplanationShareability`, `judgeTiming` |
+| `packages/sim/src/judge/rules.ts` | `findCanaries` |
+| `packages/sim/src/persona.ts` | `canariesOf` |
+
+The unused judge-only boolean reader and the two unused rubric entries were removed with their callers.
+No active judge prompt changed. The active message-quality and privacy-audit judges remain.
+
+### Reproducible checks
+
+| Check | Before | After |
+|---|---|---|
+| Integration, real local Postgres | 678 pass, 8 optional skips, 0 fail; 13,726 assertions | Same counts and assertions |
+| Selected sim blocks: onboard, network, slop, peon, friends | 164/164 blocking; 10 tracked off target | Same 164 blocking gates pass |
+| Full simulation | Selected blocks above | 330/330 blocking; 14 tracked off target; no Postgres skips |
+| Optional isolated cleanup reconciliation | Not enabled in baseline suite | 6 pass, 0 fail; 70 assertions |
+| Typecheck | Five unused-symbol diagnostics | All four configurations pass; strict unused-symbol pass clean |
+| Plugin snapshots | Retained generated files | Pass |
+| Upstream contract mirrors | Byte-pinned files retained | Both match current upstream develop |
+| Four site builds | No visual source changes | Pass |
+| Delimiter hashing | Inline FNV-1a copies | 1,005 samples match core FNV-1a exactly |
+| CLI statistics | Three inline implementations | 6,180 comparisons match original source, including Peon's one-digit default |
+
+Commands:
+
+```sh
+REQUIRE_PG=1 bun run test:integration
+REQUIRE_PG=1 bun run sim --only onboard --only network --only slop --only peon --only friends
+REQUIRE_PG=1 bun run sim
+bun run typecheck
+bunx tsc --noEmit --noUnusedLocals --noUnusedParameters -p .
+bun run plugins/build.ts --check
+bun run check:mirror
+bun run sites:build
+REQUIRE_PG=1 PLAYWRIGHT_MODULE=/tmp/network-review-browser/node_modules/playwright/index.mjs bun run test:e2e
+```
+
+The optional cleanup suite needs `NETWORK_RETRY_RECONCILIATION_TEST=1` and `NETWORK_RETRY_POSTGRES_URL`.
+Supply a fresh local database named `network_retry_<8–40 hex characters>` on port 54339.
+Run `bun test --conditions eliza-source --timeout 120000 packages/network/test/profile-cleanup-reconciliation.postgres.test.ts`.
+The audit harness dropped its dedicated database and synthetic role afterwards.
+
+The initial browser attempt failed because Chromium revision 1248 was absent. This was a runtime setup failure.
+The strict compiler found imports made obsolete by deletion; these were removed before passing validation.
+Review caught Peon's different display precision. Its call site now preserves the one-digit default.
+The final parity check evaluates each original formatter from the base commit and compares all three implementations.
+
+### Real-model evidence
+
+```sh
+bun run packages/sim/src/cli.ts --personas 6 --days 3 --seed 2 --llm
+```
+
+Provider: Surplus Intelligence; model: `gpt-6-luna`, through the core client. No fallback was logged. Eight persona calls, zero failures.
+Settings: temperature 0.8; initial maximum 3,000 tokens; up to two JSON attempts with token growth.
+This run limits transport retries to one and each call deadline to 90 seconds.
+It uses fictional personas and the stub Network; it does not prove production delivery or the engine's optional model judge.
+Results: zero minor contacts, zero invariant violations, zero Network errors, and 14/14 style checks pass.
+The CLI does not record billing totals here; no measured cost claim is made.
+Logs and numeric comparisons are in ignored `runs/cleanup/` and are not committed.
+
+### Remaining boundaries
+
+No real agent-client signup run was performed. The cleanup changes no agent-facing flow, tool schema or rendered phone page.
+Local HTTP and browser cases verify that boundary; they are not hosted ChatGPT or Claude acceptance.
+No production migration, deployment or live member send was performed.
+The finite static review is not a proof that every possible refactor or defect has been found.
+Historical migrations, synthetic corpora, generated plugin snapshots, standalone CLIs and independent oracle checks remain intentional.
+The repository still has large state-machine modules and database-row assertions. Rewriting them without a concrete defect would add risk.
+
+### Final simulation evidence
+
+`REQUIRE_PG=1 bun run sim`: 330/330 blocking gates pass; 14 tracked metrics remain off target.
+No skipped Postgres gates. The full run used pinned seeds and the simulator's configured reviewers, including simulated auto review.
+The production review gate remains human review. No matching-quality improvement is claimed.
+The Peon CLI precision correction affects table rendering only; the simulation imports its world and gates, not the CLI.
+The post-correction 6,180-case formatter comparison covers that final edit.
+
+Final duplicate-body candidates in production are the independent distance oracle, the two authorization fences,
+and two small CLI argument readers. Their distinct policy or caller context justifies retaining them.
+The remaining exact type pairs have different meanings. The identical captured-message test rows now share `DirectMessage` in the existing harness.
+This final type-only change emits no runtime behavior.
+The unused-export scan now finds only the eight retained upstream mirror declarations.
+
+### Browser regression repair
+
+Both optional signup browser tests timed out on the unchanged base `d617f7b`.
+A fresh archive of that commit reproduced both failures with the same browser runtime.
+Both tests still selected `homeCity`, which the current friends.help Join form no longer renders.
+The return test also checked retired welcome copy; it now checks the member-name slot.
+The tests now exercise the actual name, age and consent fields and assert that the retired city field is absent.
+The draft test still supplies a San Francisco draft, verifies current-account isolation, and checks that Join does not persist a city the form never submitted.
+This removes stale test assumptions without changing the form, public copy, signup handler or draft protocol.
+Alternatives were restoring the removed UI field or skipping the browser cases. Both would conceal the current product contract.
+
+### Additional file dispositions
+
+| File | Disposition |
+|---|---|
+| `packages/platform/src/response.ts` | C5: new shared private JSON response owner |
+| `packages/sim/src/apps/report.ts` | C3: new shared CLI statistics owner |
+| `docs/results/2026-10-22-repository-cleanup.md` | Review ledger and validation evidence |
+
+The repaired browser regression cases pass: 2 tests, 55 assertions, zero failures.
+Playwright 1.64.1 uses Chromium Headless Shell 156.0.8078.4 (revision 1248).
+These are isolated browser tests, with controlled HTTP boundaries; no hosted agent account or real OTP is involved.
+
+Final browser-enabled e2e: **45 pass, 0 fail, 708 assertions**, across five files.
+Final typecheck passes all four configurations. `AGENTS.md` and `CLAUDE.md` remain identical.
+`git diff --check` passes. No secrets, ignored logs, generated site builds or member data are included.

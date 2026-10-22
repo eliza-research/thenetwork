@@ -124,13 +124,6 @@ export function lookingFor(text: string): AppId[] {
 /** The network id for an app and a city: network.network_state.id and platform.networks.id. */
 export const networkId = (app: AppId, city: string) => `${app}:${city}`;
 
-/** A legacy network id ('nyc') belongs to ntwrk. */
-export function parseNetworkId(id: string): { app: AppId; city: string } | undefined {
-  if (!id.includes(":")) return { app: "ntwrk", city: id };
-  const [app, city] = id.split(":");
-  return isAppId(app) && city ? { app, city } : undefined;
-}
-
 /**
  * The Cloudflare Pages project of each site (founder decision 8). Its production name
  * <project>.pages.dev serves the site before (and besides) its own domain, so it is a host of that app.

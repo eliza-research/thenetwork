@@ -27,10 +27,6 @@ export function toE164(raw: string): string | null {
   return E164.test(out) ? out : null;
 }
 
-export function isE164(s: string): boolean {
-  return E164.test(s);
-}
-
 /** Canonical key for any recipient address (phone, email, or chat:<id>). */
 export function normalizeAddress(raw: string): string {
   const s = raw.normalize("NFKC").trim();

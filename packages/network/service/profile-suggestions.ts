@@ -7,6 +7,14 @@ import { parseProfileReviewDisconnectProof, parseProfileReviewDisconnectRequest,
   type ProfileReviewDisconnectRequest, type ProfileReviewDisconnectProof } from "../../core/src/svc/profile-review-disconnect.ts";
 import { fold, isSensitiveTerm, type AppId } from "@thenetwork/core";
 
+export interface ConnectionCleanupCounts { pending: number; retainedAccepted: number; linkedFacts: number }
+/** Validate aggregate results and expose only the three permitted counts. */
+export function cleanupCounts(counts: ConnectionCleanupCounts): ConnectionCleanupCounts | null {
+  const { pending, retainedAccepted, linkedFacts } = counts;
+  return [pending, retainedAccepted, linkedFacts].some(n => !Number.isSafeInteger(n) || n < 0)
+    ? null : { pending, retainedAccepted, linkedFacts };
+}
+
 /** These values come from authenticated server context, never an assistant's arguments. */
 export interface SuggestionOwner { userId: string; organizationId: string; personId: string; app: AppId; chatId: string }
 export interface SourceSuggestion {
@@ -54,7 +62,7 @@ const valueOK = (s: unknown): s is string => typeof s === "string" && s.trim().l
   && !sensitive(s);
 
 /** Decode only a complete stored result. Never reconstruct an earlier response from current profile state. */
-function completedCleanupCounts(value: unknown): { pending: number; retainedAccepted: number; linkedFacts: number } | undefined {
+function completedCleanupCounts(value: unknown): ConnectionCleanupCounts | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const v = value as Record<string, unknown>;
   if (Object.keys(v).sort().join() !== "linkedFacts,pending,retainedAccepted"
@@ -285,7 +293,7 @@ export class ProfileSuggestions {
 
   /** Revocation cleanup never depends on an active source-read grant. Replay consumes no mutation. */
   async applyRevokedConnection(owner: SuggestionOwner, request: ProfileReviewDisconnectRequest,
-    proof: ProfileReviewDisconnectProof, fence: () => boolean): Promise<{ pending: number; retainedAccepted: number; linkedFacts: number } | null> {
+    proof: ProfileReviewDisconnectProof, fence: () => boolean): Promise<ConnectionCleanupCounts | null> {
     const denied = new Error("Revoked connection authority changed");
     const valid = () => {
       const now = this.fence?.now() ?? Date.now();
@@ -362,7 +370,7 @@ export class ProfileSuggestions {
 
   /** Owner-intake withdrawal V2; no OAuth-revocation assertion and no active source read. */
   async applyOwnerWithdrawal(owner: SuggestionOwner, request: ProfileReviewWithdrawalRequest,
-    proof: ProfileReviewWithdrawalProof, fence: () => boolean): Promise<{ pending: number; retainedAccepted: number; linkedFacts: number } | null> {
+    proof: ProfileReviewWithdrawalProof, fence: () => boolean): Promise<ConnectionCleanupCounts | null> {
     const denied = new Error("Owner withdrawal authority changed");
     const valid = () => !!this.authorizeOwner && fence()
       && !!parseProfileReviewWithdrawalProof(proof, request, proof.requestSha256, this.fence?.now() ?? Date.now())

@@ -1,6 +1,7 @@
 // Run friends.help arms over seeds and print the comparison table (docs/results/2026-10-08-friends-pack.md).
 // No LLM calls.
 //   bun run packages/sim/src/apps/friends/cli.ts --seeds 1-4 --n 400 --weeks 8 [--only pack,random,greedy,oracle] [--json out.json]
+import { mean, formatEstimate as fmt } from "../report.ts";
 import { friendsArms } from "./arms.ts";
 import { historicalGates, officialGates, printGates, trackedMetrics } from "./gates.ts";
 import { friendsMetrics, type FriendsMetrics } from "./metrics.ts";
@@ -26,9 +27,6 @@ async function main() {
       console.error(`${name} seed ${seed}: meetups ${m.meetups}, repeat ${(m.repeatRate * 100).toFixed(0)}%, V14 ${(m.v14 * 100).toFixed(0)}%, track ${(m.friendshipTrackShare * 100).toFixed(1)}%, travel ${m.travel.medianGroupMax.toFixed(0)}m, boroughMin ${m.boroughRatioMin.toFixed(2)}, adv ${m.safety.adversaryContacts}/${m.safety.knownAdversaryContacts}, minor ${m.safety.declaredMinorContacts}/${m.safety.hiddenMinorContacts} (${((performance.now() - t) / 1000).toFixed(1)}s)`);
     }
   }
-  const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
-  const se = (xs: number[]) => { const m = mean(xs); return Math.sqrt(xs.reduce((a, b) => a + (b - m) ** 2, 0) / Math.max(1, xs.length - 1) / xs.length); };
-  const fmt = (xs: number[], pct = false, d = 2) => (pct ? `${(mean(xs) * 100).toFixed(1)}% ± ${(se(xs) * 100).toFixed(1)}` : `${mean(xs).toFixed(d)} ± ${se(xs).toFixed(d)}`);
   const rows: [string, (m: FriendsMetrics) => number, boolean, number?][] = [
     ["Proposals / seed", m => m.proposals, false, 0],
     ["Probes / seed", m => m.probes, false, 0],

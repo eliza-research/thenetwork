@@ -6,15 +6,11 @@ import type { AppId } from "../../platform/src/apps.ts";
 import { isAppId } from "../../platform/src/apps.ts";
 import { readCapped } from "../../platform/src/body.ts";
 import { svcVerify } from "../../core/src/svc/svc-auth.ts";
-import { ProfileSuggestions, collectionProposalMatchesStoredCommand, type SuggestionAuthorization, type SuggestionOwner, type SuggestionReviewBatch, type SuggestionProposal } from "./profile-suggestions.ts";
+import { ProfileSuggestions, collectionProposalMatchesStoredCommand, type SuggestionAuthorization, type SuggestionOwner, type SuggestionProposal } from "./profile-suggestions.ts";
 import { renderSuggestionReview, reviewSuggestionMessage } from "./profile-suggestion-review.ts";
 import { routeEnvelopeAllowed, type NetworkRoutePolicy } from "./route-authority.ts";
 
 export const SUGGESTION_PATH = "/internal/profile-suggestions/";
-export type SuggestionReviewResponse =
-  | { kind: "preview"; batch: SuggestionReviewBatch; reviewText: string }
-  | { kind: "saved"; accepted: string[]; rejected: string[]; reviewText: string }
-  | { kind: "deleted" | "denied"; reviewText: string };
 export interface SuggestionTurnIdentity {
   personId: string; memberId: string; app: AppId; channel: "blooio" | "twilio"; messageId: string;
   action: "preview" | "decide" | "delete" | "collect"; batchId: string; commandSha256: string;

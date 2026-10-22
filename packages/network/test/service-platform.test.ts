@@ -17,7 +17,7 @@ import type { OtpProvider } from "../../platform/src/otp.ts";
 import { BlooioAdapter, DryRunAdapter, type ChannelAdapter, type Delivery, type Outbound } from "../service/channel.ts";
 import { enrolledText, LOOKING_FOR_ASK, LOOKING_FOR_ASK_MINOR, NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/service.ts";
 import { brandOf, copyFor } from "../src/copy.ts";
-import { START } from "./mini.ts";
+import { START, type DirectMessage as Direct } from "./mini.ts";
 import { queueSink } from "../../notify/src/wiring.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
 
@@ -46,7 +46,6 @@ class FakeOtp implements OtpProvider {
 
 let sql: SQL;
 const open: NetworkService[] = [];
-interface Direct { app: string; to: string; body: string }
 
 function service(clock: SimClock, more: Partial<ServiceOptions> = {}) {
   const directs: Direct[] = [];

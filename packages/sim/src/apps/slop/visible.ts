@@ -1,7 +1,7 @@
 // Read a slop snapshot back into a typed dating profile per member: the reader the slop AppPack can
 // use (or copy). It reads ONLY the snapshot, so anything it returns is agent-visible.
 import { canBeMatched, type Facet, type MemberId } from "@thenetwork/core";
-import { distanceBucket, zipInfo, zipMiles, CITY_ANCHOR_ZIP, type DistanceBucket, type SlopCity } from "./geo.ts";
+import { zipInfo, zipMiles, CITY_ANCHOR_ZIP, type SlopCity } from "./geo.ts";
 import { SLOTS, TASTE_DIMS, type DateActivity, type Dealbreaker, type Goal, type LocationScope, type MatchGender, type Slot } from "./persona.ts";
 import type { SlopSnapshot } from "./snapshot.ts";
 
@@ -89,11 +89,6 @@ export function visibleMutualCities(a: VisibleProfile, b: VisibleProfile): SlopC
     if (d <= limitOf(a) && d <= limitOf(b)) out.push(c);
   }
   return out;
-}
-
-/** The only distance shown to members. */
-export function shownDistance(a: VisibleProfile, b: VisibleProfile, city: SlopCity): DistanceBucket {
-  return distanceBucket(zipMiles(zipFor(a, city), zipFor(b, city)));
 }
 
 /** Stated dealbreaker hit, from visible values only (unknown values never count as a hit). */

@@ -9,8 +9,8 @@ export { pgAvailable };
 const USER = process.env.USER ?? "postgres";
 const ADMIN_URL = `postgres://${USER}@localhost:${DEV_PG_PORT}/postgres`;
 
-async function admin(q: string) {
-  const sql = new SQL({ url: ADMIN_URL, max: 1 });
+export async function admin(q: string, url = ADMIN_URL) {
+  const sql = new SQL({ url, max: 1 });
   try { await sql.unsafe("set lock_timeout = '5s'"); await sql.unsafe(q); } finally { await sql.close(); }
 }
 

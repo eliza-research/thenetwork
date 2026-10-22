@@ -2,6 +2,7 @@
 // (docs/admin-console.md 3.7.1; founder decisions 2026-10-08: photos and ratings are for verified
 // adults only). Postgres in a database of its own per test process; dry-run sends; fictional numbers
 // (+1 212 555 01xx); photos in a temporary folder (no R2).
+import { admin } from "../../platform/test/pg.ts";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,9 +28,7 @@ const T = 300_000;
 const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!Bun.which("pg_ctl");
 const USER = process.env.USER ?? "postgres";
 const DB = `network_service_safety_test_${process.pid}`;
-const ADMIN_URL = `postgres://${USER}@localhost:${DEV_PG_PORT}/postgres`;
 const URL_ = `postgres://${USER}@localhost:${DEV_PG_PORT}/${DB}`;
-async function admin(q: string) { const sql = new SQL({ url: ADMIN_URL, max: 1 }); try { await sql.unsafe("set lock_timeout = '5s'"); await sql.unsafe(q); } finally { await sql.close(); } }
 
 const SECRET = "whsec_shared";
 const NETS = [{ id: "ntwrk:nyc" }, { id: "slop:nyc" }, { id: "peon:nyc" }, { id: "friends:nyc" }];

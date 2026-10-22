@@ -89,9 +89,3 @@ export const hasPausePath = (text: string): boolean => PAUSE_PATH.test(text);
 
 /** Canary match that survives case, spacing and punctuation changes ("ZQ 4821 orchid"). */
 export const normalizeCanary = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-
-/** Find canary tokens present in a text. */
-export function findCanaries(text: string, canaries: string[]): string[] {
-  const norm = normalizeCanary(text);
-  return canaries.filter(c => c && normalizeCanary(c) && norm.includes(normalizeCanary(c)));
-}

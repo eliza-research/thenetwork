@@ -15,14 +15,11 @@ import { codePage, consentPage, consentsPage, messagePage, phonePage } from "./p
 import { MemoryOAuthStore, type AuthCode, type AuthRequest, type ClientAuthMethod, type Grant, type OAuthClient, type OAuthStore, type Scope, SCOPES, type Token } from "./store.ts";
 import { callTool, checkArgs, INSTRUCTIONS, TOOL_NAMES, TOOL_SCOPE, type ToolName, toolDefs } from "./tools.ts";
 import { cookieValue, isLoopbackHost, json, pkceS256, randomId, randomToken, readForm, readJson, safeEqual, sha256hex, validChallenge, validVerifier } from "./util.ts";
-
-export const LATEST_PROTOCOL = "2026-07-28";
 export const MODERN_PROTOCOLS = ["2026-07-28"] as const;
 export const LEGACY_PROTOCOLS = ["2025-11-25", "2025-06-18", "2025-03-26"] as const;
 const META_VERSION = "io.modelcontextprotocol/protocolVersion";
 const META_CAPS = "io.modelcontextprotocol/clientCapabilities";
 const SERVER_INFO = { name: "the-network", title: "The Network", version: "1.0.0" };
-
 
 /** Redirect hosts of OpenAI clients (ChatGPT, Codex). A client that returns there is on the OpenAI surface. */
 export const OPENAI_REDIRECT_HOSTS = ["chatgpt.com", "chat.openai.com", "platform.openai.com", "openai.com"];
@@ -254,7 +251,6 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     return !!personId && customSlopPeople!.has(personId) && await o.platform.customChatGptSlopEligible!(personId, phoneKey);
   }
 
-
   async function getClient(id: string, c: Ctx): Promise<OAuthClient | undefined> {
     if (id.length > 512) return undefined;
     const known = await store.getClient(id);
@@ -409,7 +405,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       cookieOut.push(handoff.setCookie);
       res=new Response(null,{status:302,headers:{location:handoff.url,"cache-control":"no-store"}});
     } else {
-      res = phonePage(c.app, r.id, client.name, redirectHost, { turnstileSiteKey: o.turnstile?.siteKey });
+      res = phonePage(c.app, r.id, { turnstileSiteKey: o.turnstile?.siteKey });
     }
     for (const c2 of cookieOut) res.headers.append("set-cookie", c2);
     return res;
@@ -458,15 +454,15 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       const t0 = performance.now();
       const pad = async () => { const left = (o.minOtpStartMs ?? 700) - (performance.now() - t0); if (left > 0) await Bun.sleep(left); };
       if (o.turnstile && !(await o.turnstile.verify(form.get("cf-turnstile-response") ?? undefined, c.ip, c.app.id))) {
-        return phonePage(c.app, r.id, client.name, redirectHost, { error: "Please complete the check and try again.", turnstileSiteKey: o.turnstile.siteKey });
+        return phonePage(c.app, r.id, { error: "Please complete the check and try again.", turnstileSiteKey: o.turnstile.siteKey });
       }
       const e164 = o.platform.normalizePhone(form.get("phone"));
-      if (!e164) return phonePage(c.app, r.id, client.name, redirectHost, { error: "Enter a US or Canada phone number.", turnstileSiteKey: o.turnstile?.siteKey });
+      if (!e164) return phonePage(c.app, r.id, { error: "Enter a US or Canada phone number.", turnstileSiteKey: o.turnstile?.siteKey });
       const sent = await o.platform.startOtp(c.app.id, e164, c.ip);
       await pad();
       if (!sent.ok) {
         const text = sent.error === "rate_limited" ? "Too many codes were asked for. Please wait and try again." : "Sign-in is not available for this app right now.";
-        return phonePage(c.app, r.id, client.name, redirectHost, { error: text, turnstileSiteKey: o.turnstile?.siteKey });
+        return phonePage(c.app, r.id, { error: text, turnstileSiteKey: o.turnstile?.siteKey });
       }
       await store.updateAuthRequest(r.id, { e164, step: "code" });
       return codePage(c.app, r.id, e164.slice(-4));

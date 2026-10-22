@@ -41,6 +41,11 @@ export const zeroCounts = (): RunningCounts => ({
 });
 
 export class Store {
+  inOpenReview(memberId: MemberId): boolean {
+    for (const o of this.opps.values()) if (o.state === "IN_REVIEW" && o.participants.includes(memberId)) return true;
+    return false;
+  }
+
   readonly members = new Map<MemberId, ObsMember>();
   readonly edges = new Map<string, ObsEdge>();
   readonly opps = new Map<string, ObsOpportunity>();
