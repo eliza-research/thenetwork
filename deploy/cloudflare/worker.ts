@@ -50,10 +50,19 @@ export class NetworkBackend extends Container<Env> {
   }
 }
 
+async function stopInactiveBackend(env: Env): Promise<void> {
+  // A provisioned Worker without runtime credentials has no process to drain.
+  if (!env.BACKEND_RUNTIME_CONFIG) return;
+  // SIGTERM lets the existing backend finish in-flight work and release leases.
+  // A 503 response alone does not certify that this drain has finished.
+  await getContainer(env.BACKEND, "backend").stop();
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     // Install and validate configuration before transferring ownership of jobs.
     if (env.BACKEND_ENABLED !== "true") {
+      await stopInactiveBackend(env);
       return new Response("Backend deployment inactive", { status: 503 });
     }
     // Preserve the signed Pages proxy headers and raw request body. The backend
@@ -61,7 +70,10 @@ export default {
     return getContainer(env.BACKEND, "backend").fetch(request);
   },
   async scheduled(_event: unknown, env: Env): Promise<void> {
-    if (env.BACKEND_ENABLED !== "true") return;
+    if (env.BACKEND_ENABLED !== "true") {
+      await stopInactiveBackend(env);
+      return;
+    }
     const response = await getContainer(env.BACKEND, "backend").fetch("http://backend/healthz");
     if (!response.ok) throw new Error(`Backend readiness failed (${response.status})`);
     await response.body?.cancel();

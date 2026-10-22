@@ -7,7 +7,8 @@ and database grants. A minute cron keeps its persisted job scheduler running.
 
 Use `scripts/wrangler.sh` with the approved account and `--env staging` or
 `--env production`. The checked-in configuration is inactive. Requests return 503
-and the cron does nothing until `BACKEND_ENABLED=true` is supplied at deployment.
+and neither requests nor cron start it until `BACKEND_ENABLED=true` is supplied
+at deployment.
 
 1. Build and verify the source commit. Run the repository integration, e2e,
    simulation, and type checks. Build the image with `deploy --dry-run`.
@@ -26,6 +27,8 @@ and the cron does nothing until `BACKEND_ENABLED=true` is supplied at deployment
    after these checks. Verify all four sites and their environment separation.
 6. Retire the old Railway backend after the checks pass. Keep PostgreSQL.
 
-For rollback, deactivate the Cloudflare deployment and drain its work before
+For rollback, deactivate the Cloudflare deployment. Its next request or cron sends
+SIGTERM when runtime credentials are present. Verify the container is stopped
+with `wrangler containers instances <application-id>` before
 restarting the old backend. Restore the previous Pages origin. Never activate
 both deployments with uncoordinated ownership of outbound work.
