@@ -36,6 +36,7 @@ Do not split the large Network state machine solely by line count; moving couple
 | C5 | Share no-store JSON response construction with identical headers | Planned |
 | C6 | Remove unreferenced helper declarations after caller and export inspection | Planned |
 | C7 | Consolidate repeated local Postgres administration helper | Planned |
+| C9 | Move the identical open-review lookup into the Observatory store | Planned |
 | C8 | Use a typed partial group-search state instead of undefined as any | Planned |
 
 ## Retained similarities
@@ -586,12 +587,12 @@ Binary assets are inventoried, not interpreted as code. Data and documents are r
 | `packages/observatory/src/scrub.ts` | 59 | Scan; retain |
 | `packages/observatory/src/server.ts` | 898 | Scan; retain |
 | `packages/observatory/src/shape.ts` | 83 | Scan; retain |
-| `packages/observatory/src/sources/game.ts` | 838 | Scan; retain |
-| `packages/observatory/src/sources/real.ts` | 968 | Scan; retain |
+| `packages/observatory/src/sources/game.ts` | 838 | C9 |
+| `packages/observatory/src/sources/real.ts` | 968 | C9 |
 | `packages/observatory/src/sources/service.ts` | 257 | Scan; retain |
 | `packages/observatory/src/sources/source.ts` | 98 | Scan; retain |
 | `packages/observatory/src/staff.ts` | 425 | Scan; retain |
-| `packages/observatory/src/store.ts` | 178 | Scan; retain |
+| `packages/observatory/src/store.ts` | 178 | C9 |
 | `packages/observatory/src/takeover.ts` | 92 | Scan; retain |
 | `packages/observatory/src/types.ts` | 752 | Scan; retain |
 | `packages/observatory/test/apps.test.ts` | 381 | Scan; retain |
