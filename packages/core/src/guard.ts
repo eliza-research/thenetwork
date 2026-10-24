@@ -106,15 +106,6 @@ export function textVariants(s: string): string[] {
   return [...out];
 }
 
-/** First match of `re` in any variant of `s` (vocabulary checks), or null. */
-export function matchFolded(re: RegExp, s: string): string | null {
-  for (const v of textVariants(s)) {
-    const m = re.exec(v);
-    if (m) return m[0];
-  }
-  return null;
-}
-
 /** `textVariants` with punctuation collapsed (what forbidden strings, facts, vocabulary and canaries match against). */
 export function foldedVariants(s: string): string[] {
   return [...new Set(textVariants(s).map(collapse))];

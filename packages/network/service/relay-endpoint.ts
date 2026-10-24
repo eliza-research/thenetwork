@@ -27,6 +27,7 @@
 // unit's save). `delivered` is true only for a pass whose outbound row Cloud accepted with provider ids
 // and recorded history; a replay reads that again (an unknown acceptance is recovered by the queue's
 // receipt-only lookup, never by a second send).
+import { privateJson as json } from "../../platform/src/response.ts";
 import { createHash } from "node:crypto";
 import type { SQL } from "bun";
 import type { Clock, MemberId } from "@thenetwork/core";
@@ -108,8 +109,6 @@ export function relayClassifierFromEnv(env: Record<string, string | undefined>, 
     return h;
   };
 }
-
-const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
 
 /** What the action receipt keeps: the decision and the desk's notice, and the outbound id of a pass. */
 interface StoredRelay { decision: RelaySendResponse["decision"]; notice: string; outboundId?: string }

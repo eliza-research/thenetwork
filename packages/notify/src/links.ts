@@ -49,11 +49,3 @@ export function assertSendableUrl(url: string, extraHosts: string[] = []): strin
   if (url.length > MAX_URL_CHARS) throw new Error(`url longer than ${MAX_URL_CHARS}: ${url.length}`);
   return url;
 }
-
-/** The buttons on ntwrk.party/t/<token>. Tapping a button (a user gesture) does open the app. */
-export function buttonPageButtons(token: string, assistants: Assistant[], replyTo?: string): { label: string; href: string }[] {
-  const prompt = updatePrompt(token);
-  const buttons = assistants.map(a => ({ label: `Open in ${ASSISTANT_LABEL[a]}`, href: assistantLink(a, prompt) }));
-  if (replyTo) buttons.push({ label: "Reply by text", href: `sms:${replyTo}` });
-  return buttons;
-}

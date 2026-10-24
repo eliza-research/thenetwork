@@ -28,9 +28,3 @@ export function newToken(rand: (max: number) => number = randomInt): string {
   for (let i = 0; i < TOKEN_LENGTH; i++) s += ALPHABET[rand(ALPHABET.length)];
   return `T-${s}`;
 }
-
-/** Pull a token out of free text the assistant passes along ("update T-7F3K9Q please"). */
-export function findToken(text: string): string | undefined {
-  const m = text.toUpperCase().match(/\bT-[2-9A-HJKMNP-TV-Z]{6}\b/);
-  return m?.[0];
-}

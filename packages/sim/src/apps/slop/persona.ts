@@ -25,7 +25,6 @@ export type Dealbreaker =
   | "right_politics" | "left_politics";
 export const DEALBREAKERS: readonly Dealbreaker[] = ["smoker", "heavy_drinker", "has_kids", "wants_kids", "no_kids_ever", "religious", "nonreligious", "right_politics", "left_politics"];
 export type DateActivity = "coffee" | "drinks" | "dinner" | "walk" | "museum" | "live_music" | "comedy" | "climbing" | "hike" | "cooking_class";
-export const DATE_ACTIVITIES: readonly DateActivity[] = ["coffee", "drinks", "dinner", "walk", "museum", "live_music", "comedy", "climbing", "hike", "cooking_class"];
 /** Trait / taste dimensions. A person HAS traits and has a (revealed) TASTE over others' traits. */
 export const TASTE_DIMS = ["adventurous", "intellectual", "artsy", "ambitious", "homebody"] as const;
 export type AdversaryKind = "romance_scammer" | "catfish" | "harasser" | "age_liar" | "not_single";

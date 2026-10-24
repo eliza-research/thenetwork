@@ -69,5 +69,4 @@ export const SEARCH_INTENT = "peon:search";
 export const JOB_INTENT = "peon:job";
 
 export type PeonMode = "onsite" | "hybrid" | "remote";
-export const MODES: readonly PeonMode[] = ["onsite", "hybrid", "remote"];
 

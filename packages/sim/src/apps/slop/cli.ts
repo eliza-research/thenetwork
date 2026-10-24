@@ -1,6 +1,7 @@
 // Run the slop.date baselines over seeds and print the table used in
 // docs/results/2026-10-08-slop-world.md. No LLM calls.
 //   bun run packages/sim/src/apps/slop/cli.ts --seeds 1-8 --per-city 300 --weeks 4 [--only random,greedy,oracle] [--json out.json]
+import { mean, formatEstimate as fmt } from "../report.ts";
 import { BASELINES } from "./baselines.ts";
 import { slopMetrics, type SlopMetrics } from "./metrics.ts";
 import { runSlopWorld } from "./world.ts";
@@ -21,9 +22,6 @@ for (const name of only) {
     console.error(`${name} seed ${seed}: dates ${m.dates}, second ${(m.secondDateRate * 100).toFixed(1)}% (${((performance.now() - t) / 1000).toFixed(1)}s)`);
   }
 }
-const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
-const se = (xs: number[]) => { const m = mean(xs); return Math.sqrt(xs.reduce((a, b) => a + (b - m) ** 2, 0) / Math.max(1, xs.length - 1) / xs.length); };
-const fmt = (xs: number[], pct = false, d = 2) => pct ? `${(mean(xs) * 100).toFixed(1)}% ± ${(se(xs) * 100).toFixed(1)}` : `${mean(xs).toFixed(d)} ± ${se(xs).toFixed(d)}`;
 const rows: [string, (m: SlopMetrics) => number, boolean, number?][] = [
   ["Proposals / seed", m => m.proposals, false, 0],
   ["Probes delivered / seed", m => m.probesDelivered, false, 0],

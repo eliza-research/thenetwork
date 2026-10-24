@@ -47,7 +47,7 @@ browserTest("agent-origin Join returns the person to the same conversation; dire
       expect(await page.locator("[data-agent-return]").count()).toBe(0);
       await profile.locator('[name="firstName"]').fill("TestMember");
       await profile.locator('[name="age"]').fill("21");
-      await profile.locator('[name="homeCity"]').selectOption("sf");
+      expect(await profile.locator('[name="homeCity"]').count()).toBe(0);
       await profile.locator('[name="consent"]').check();
       await profile.getByRole("button", { name: "Join", exact: true }).click();
       const done = page.locator('[data-step="done"]');
@@ -55,7 +55,7 @@ browserTest("agent-origin Join returns the person to the same conversation; dire
       await done.scrollIntoViewIfNeeded();
       // Give reviewers a readable view in the optional native video recording.
       if (video) await page.waitForTimeout(1200);
-      expect(await done.textContent()).toContain("Welcome, TestMember");
+      expect(await done.locator('[data-slot="firstName"]').textContent()).toBe("TestMember");
       const handoff = done.locator("[data-agent-return]");
       if (suffix) {
         expect(await handoff.count()).toBe(1);

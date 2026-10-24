@@ -4,6 +4,7 @@
 // only offers names of people the member was introduced to. Ported from closed PR #12
 // (mvp/r1-safety-line). Postgres in a database of its own per test process; dry-run sends (the text is
 // read back from network.messages); fictional numbers (+1 212 555 01xx).
+import { admin } from "../../platform/test/pg.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { SQL } from "bun";
@@ -18,9 +19,7 @@ const T = 300_000;
 const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!Bun.which("pg_ctl");
 const USER = process.env.USER ?? "postgres";
 const DB = `network_slop_block_test_${process.pid}`;
-const ADMIN_URL = `postgres://${USER}@localhost:${DEV_PG_PORT}/postgres`;
 const URL_ = `postgres://${USER}@localhost:${DEV_PG_PORT}/${DB}`;
-async function admin(q: string) { const sql = new SQL({ url: ADMIN_URL, max: 1 }); try { await sql.unsafe("set lock_timeout = '5s'"); await sql.unsafe(q); } finally { await sql.close(); } }
 
 const SECRET = "whsec_slop_block";
 const ADMIN = "adm-tok", REVIEWER = "rev-tok";

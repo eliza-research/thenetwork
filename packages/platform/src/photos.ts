@@ -84,7 +84,6 @@ export async function photoRaterFromEnv(
 }
 
 export type PhotoType = "image/jpeg" | "image/png" | "image/webp";
-export const PHOTO_TYPES: readonly PhotoType[] = ["image/jpeg", "image/png", "image/webp"];
 /** Apps that take photos. */
 export const PHOTO_APPS: readonly AppId[] = ["slop"];
 export const PHOTO_MAX_BYTES = 8 * 1024 * 1024;

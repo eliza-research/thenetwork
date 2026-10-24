@@ -3,8 +3,8 @@
 // (platform.outbound) and the Blooio adapter out to a fake provider that records every request, on a
 // simulated clock. Nothing leaves the machine: the fake has kind "sim", the only provider kind the
 // adapter accepts a live gate for; the real live flags are never set. Phones are +1 212 555 01xx.
+import { admin } from "../../../packages/platform/test/pg.ts";
 import { existsSync } from "node:fs";
-import { SQL } from "bun";
 import { MINUTE, SimClock } from "../../../packages/core/src/index.ts";
 import { signBlooioPayload } from "../../../packages/blooio/src/blooio/webhook.ts";
 import { ChannelSendError, type ChannelAdapter, type SendReceipt, type SendRequest } from "../../../packages/blooio/src/types.ts";
@@ -21,15 +21,9 @@ export const TOKENS = "admin:sim-admin-token-000000000000000000,reviewer:sim-rev
 export const REVIEWER = "sim-review-token-00000000000000000";
 export const ADMIN = "sim-admin-token-000000000000000000";
 const USER = process.env.USER ?? "postgres";
-const ADMIN_URL = `postgres://${USER}@localhost:${DEV_PG_PORT}/postgres`;
 
 /** Whether a dev Postgres can run here (the binaries are installed). */
 export const pgInstalled = () => ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!Bun.which("pg_ctl");
-
-async function admin(q: string) {
-  const sql = new SQL({ url: ADMIN_URL, max: 1 });
-  try { await sql.unsafe("set lock_timeout = '5s'"); await sql.unsafe(q); } finally { await sql.close(); }
-}
 
 /** A fresh migrated database of its own (pipeline_sim_<pid>), never the dev `network` database. */
 export async function throwawayDb(): Promise<string> {

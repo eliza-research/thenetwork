@@ -5,6 +5,7 @@
 // The staff API (service/postings.ts jobPostingRoutes) verifies the employer, refuses a minor's
 // posting, and closes the posting (the seat then has no opening). Postgres in a database of its own;
 // dry-run sends; fictional numbers (+1 212 555 01xx). Nothing is sent.
+import { admin } from "../../platform/test/pg.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { SQL } from "bun";
@@ -22,9 +23,7 @@ const T = 300_000;
 const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!Bun.which("pg_ctl");
 const USER = process.env.USER ?? "postgres";
 const DB = `network_peon_postings_test_${process.pid}`;
-const ADMIN_URL = `postgres://${USER}@localhost:${DEV_PG_PORT}/postgres`;
 const URL_ = `postgres://${USER}@localhost:${DEV_PG_PORT}/${DB}`;
-async function admin(q: string) { const sql = new SQL({ url: ADMIN_URL, max: 1 }); try { await sql.unsafe("set lock_timeout = '5s'"); await sql.unsafe(q); } finally { await sql.close(); } }
 
 const SECRET = "whsec_peon_postings";
 const ROWAN = "+12125550171", KAI = "+12125550172";

@@ -7,6 +7,7 @@
 //  - a person-to-person block made on one app keeps the two people apart on the other app (the
 //    control run without the block pairs them).
 // Postgres in a database of its own per test process. Nothing is sent (dry-run adapters).
+import { admin } from "../../platform/test/pg.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -23,9 +24,7 @@ import { Mini, START } from "./mini.ts";
 const T = 600_000;
 const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!Bun.which("pg_ctl");
 const DB = `network_crossapp_test_${process.pid}`;
-const ADMIN_URL = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/postgres`;
 const URL_ = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/${DB}`;
-async function admin(q: string) { const sql = new SQL({ url: ADMIN_URL, max: 1 }); try { await sql.unsafe("set lock_timeout = '5s'"); await sql.unsafe(q); } finally { await sql.close(); } }
 
 const FR: AppId = "friends";
 const APPS_RUN: AppId[] = ["ntwrk", FR];

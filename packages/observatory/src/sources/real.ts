@@ -714,8 +714,7 @@ export class RealSource implements DataSource {
   }
 
   inOpenReview(memberId: string): boolean {
-    for (const o of this.store.opps.values()) if (o.state === "IN_REVIEW" && o.participants.includes(memberId)) return true;
-    return false;
+    return this.store.inOpenReview(memberId);
   }
 
   /**
@@ -954,7 +953,6 @@ function upsertIfChanged<T extends { id: string }>(map: Map<string, T>, next: T,
   const cur = map.get(next.id);
   if (!cur || JSON.stringify(cur) !== JSON.stringify(next)) upsert(next);
 }
-
 
 /** Message types that connect a member to another member (judge metrics.ts CONNECT_TYPES): never sent to a minor. */
 const CONNECT_TYPES = new Set(["probe", "proposal", "relay", "growth_ask", "scheduling", "reminder", "cancellation", "feedback_request", "confirmation"]);

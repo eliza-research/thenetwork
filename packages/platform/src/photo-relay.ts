@@ -1,5 +1,6 @@
 // Voluntary selected-item sharing. Appearance scores and gallery/staff links never enter this path.
 // No production policy is supplied by default: uploading privately does not authorize item review.
+import { privateJson } from "./response.ts";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { SQL } from "bun";
 import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
@@ -233,7 +234,7 @@ export class PhotoRelayService {
   }
   async route(req: Request, path: string, app: AppId, who: () => Promise<{ personId: string; accountView: string } | undefined>): Promise<Response | undefined> {
     if (!path.startsWith("/api/relay-photos/")) return;
-    const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
+    const json = (status: number, body: unknown) => privateJson(body, status);
     const identity = await who();
     if (!identity) return json(401, { ok: false, error: "unauthorized" });
     const person = identity.personId;

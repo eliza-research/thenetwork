@@ -1,6 +1,7 @@
 // State persistence (docs/network.md 11, admin-console gap 1): exportState / importState, the
 // stores (MemoryStore, PgStore) and runTick. The proof: a Network that restarts from its stored
 // state does exactly what an uninterrupted one does.
+import { admin } from "../../platform/test/pg.ts";
 import { afterAll, describe, expect, test } from "bun:test";
 import { DAY, HOUR, MINUTE } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
@@ -198,9 +199,7 @@ describe("runTick and the tick lock", () => {
 // A database of its own per test process (the packages/observatory/test/pg.ts pattern). Skipped when Postgres is absent.
 const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!Bun.which("pg_ctl");
 const DB = `network_store_test_${process.pid}`;
-const ADMIN_URL = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/postgres`;
 const TEST_URL = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/${DB}`;
-async function admin(q: string) { const sql = new SQL({ url: ADMIN_URL, max: 1 }); try { await sql.unsafe("set lock_timeout = '5s'"); await sql.unsafe(q); } finally { await sql.close(); } }
 
 describe.skipIf(!pgAvailable)("PgStore", () => {
   const stores: PgStore[] = [];

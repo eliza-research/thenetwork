@@ -209,7 +209,6 @@ export const DEFAULT_CONFIG: EngineConfig = {
   homeEntryTerms: ["home", "apartment", "house", "move", "moving", "couch", "furniture", "my place"],
 };
 
-
 // ------------------------------------------------------------------------------------------------
 // Attention budget (docs/design/2026-10-07-experience-design.md section 1, Phase 1; founder
 // defaults D1-D18, with D2, D4 and D5 replaced by the founder's decisions of 2026-10-07: rolling
@@ -383,16 +382,6 @@ export function resolveAttention(input: AttentionConfigInput = {}): AttentionCon
     if (cfg.maxItems[s] > 3) throw new Error("attention.maxItems is at most 3 (D1)");
   }
   return cfg;
-}
-/**
- * D1: with the attention layer on, the interruption cap lives at send time (attention.ts), so the
- * engine's per-member proposal budget becomes a SUPPLY limit: cap x items per message (Normal
- * 2 x 3 = 6 per 7 days). Pass the result as engine config overrides; DEFAULT_CONFIG is unchanged.
- */
-export function engineSupplyBudgets(att: AttentionConfig = DEFAULT_ATTENTION): EngineConfigInput {
-  const out: Partial<Record<ParticipationState, { limit: number; periodDays: number }>> = {};
-  for (const st of Object.keys(att.caps) as ParticipationState[]) out[st] = { limit: att.caps[st].limit * Math.max(1, att.maxItems[st]), periodDays: att.caps[st].periodDays };
-  return { budgets: out };
 }
 export function attentionConfigHash(cfg: AttentionConfig): string {
   return sha256(stableStringify(JSON.parse(JSON.stringify(cfg, (_k, v) => (v === Infinity ? "Infinity" : v))))).slice(0, 16);

@@ -2,7 +2,6 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { SITES, buildSite } from '../../sites/sites.ts';
-import { phonePage, codePage, consentsPage } from '../../packages/mcp/src/pages.ts';
 import { defaultApps } from '../../packages/mcp/src/apps.ts';
 const root = join(import.meta.dir, '../..');
 let revision = 0;
@@ -38,7 +37,7 @@ Bun.serve({ hostname:'127.0.0.1',port,async fetch(req) {
   const source = readFileSync(file,'utf8');
   if (source!==body.source) return new Response('Source changed. Reload before saving.',{status:409});
   let i=0;
-  const updated = source.replace(pattern,(whole,tag,attrs,text)=>{
+  const updated = source.replace(pattern,(whole,tag,attrs)=>{
    const value=body.edits[String(i++)];
    const safe = typeof value==='string' ? escape(value).replaceAll('`','&#96;').replaceAll('${','&#36;{') : '';
    return typeof value==='string' ? `<${tag}${attrs??''}>${safe}</${tag}>` : whole;
@@ -54,7 +53,7 @@ Bun.serve({ hostname:'127.0.0.1',port,async fetch(req) {
   if(page.startsWith('oauth-')) {
    const {phonePage,codePage,consentsPage}=await import('../../packages/mcp/src/pages.ts?revision='+revision);
    const app=defaultApps()[site.app];
-   const response=page==='oauth-phone'?phonePage(app,'preview','Your assistant','assistant.example'):page==='oauth-code'?codePage(app,'preview','0123'):consentsPage(app,[],String);
+   const response=page==='oauth-phone'?phonePage(app,'preview'):page==='oauth-code'?codePage(app,'preview','0123'):consentsPage(app,[],String);
    html=await response.text();
    const source=readFileSync(file,'utf8');
    const renderer={'oauth-phone':'phonePage','oauth-code':'codePage','oauth-connections':'consentsPage'}[page];
@@ -69,7 +68,7 @@ Bun.serve({ hostname:'127.0.0.1',port,async fetch(req) {
   } else {
    if(!existsSync(file)) return new Response('Not found',{status:404});
    let i=0;
-   html=readFileSync(file,'utf8').replace(pattern,(whole,tag,attrs,text)=>`<${tag}${attrs??''} data-edit="${i++}">${text}</${tag}>`);
+   html=readFileSync(file,'utf8').replace(pattern,(_whole,tag,attrs,text)=>`<${tag}${attrs??''} data-edit="${i++}">${text}</${tag}>`);
    html=html.replace(/<script[\s\S]*?<\/script>/g,'').replaceAll('{{TURNSTILE_SITE_KEY}}','').replaceAll('./styles.css',`/asset/styles.css?app=${site.app}&page=join`).replaceAll('../../shared/member.css',`/asset/member.css?app=${site.app}&page=join`);
   }
   const requestedState=u.searchParams.get('state')??'phone';

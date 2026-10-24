@@ -88,17 +88,17 @@ export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | nu
   const poolIds = opts.pool.map(p => p.id).filter(id => !forced.includes(id));
   const key = (ids: MemberId[]) => [...ids].sort().join(",");
 
-  let beam: State[] = [];
+  let beam: Omit<State, "stats">[] = [];
   if (forced.length) {
-    const ev = forced.length > 1 ? evaluateGroup(w, forced, opts, compat, affinity) : { score: 0, stats: undefined as any, city: opts.preferredCity ?? w.get(forced[0]!)!.m.homeCity };
+    const ev = forced.length > 1 ? evaluateGroup(w, forced, opts, compat, affinity) : { score: 0, city: opts.preferredCity ?? w.get(forced[0]!)!.m.homeCity };
     if (!ev) return null;
-    beam = [{ ids: [...forced], score: ev.score, stats: ev.stats, city: ev.city }];
+    beam = [{ ids: [...forced], score: ev.score, city: ev.city }];
   } else {
     const seeds = [...poolIds].sort((a, b) => {
       const ha = opts.needHost && w.get(a)!.isHost ? 1 : 0, hb = opts.needHost && w.get(b)!.isHost ? 1 : 0;
       return (hb - ha) || ((affinity.get(b)! - affinity.get(a)!)) || (a < b ? -1 : 1);
     }).slice(0, opts.beamWidth);
-    beam = seeds.map(id => ({ ids: [id], score: affinity.get(id)!, stats: undefined as any, city: w.get(id)!.m.homeCity }));
+    beam = seeds.map(id => ({ ids: [id], score: affinity.get(id)!, city: w.get(id)!.m.homeCity }));
   }
 
   const complete: State[] = [];
@@ -120,8 +120,9 @@ export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | nu
       }
     }
     next.sort((a, b) => (b.score - a.score) || (key(a.ids) < key(b.ids) ? -1 : 1));
-    beam = next.slice(0, opts.beamWidth);
-    for (const st of beam) if (st.ids.length >= opts.minSize) complete.push(st);
+    const evaluated = next.slice(0, opts.beamWidth);
+    beam = evaluated;
+    for (const st of evaluated) if (st.ids.length >= opts.minSize) complete.push(st);
   }
   if (!complete.length) return null;
   // Small preference for fuller groups (quorum resilience), capped by maxSize.

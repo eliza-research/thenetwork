@@ -42,7 +42,7 @@ ${body}
 const hidden = (rid: string) => `<input type="hidden" name="rid" value="${esc(rid)}">`;
 const err = (e?: string) => (e ? `<p class="err" role="alert">${esc(e)}</p>` : "");
 
-export function phonePage(app: McpApp, rid: string, clientName: string | null, redirectHost: string, o: { error?: string; turnstileSiteKey?: string } = {}) {
+export function phonePage(app: McpApp, rid: string, o: { error?: string; turnstileSiteKey?: string } = {}) {
   return page(app, "Sign in", `<h1>Confirm your phone number</h1>
 ${err(o.error)}
 <form method="post" action="/oauth/authorize/phone">${hidden(rid)}

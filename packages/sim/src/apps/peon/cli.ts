@@ -1,5 +1,6 @@
 // Run peon.biz arms over seeds and print the tables in docs/results/2026-10-08-peon-pack.md. No LLM calls.
 //   bun run packages/sim/src/apps/peon/cli.ts --seeds 1-4 [--arms keyword,pack,...] [--per-city 400] [--jobs 80] [--weeks 8] [--json out.json] [--impact]
+import { formatEstimate as fmt } from "../report.ts";
 import { ARMS } from "./arms.ts";
 import { historicalGates, officialGates, type GateResult } from "./gates.ts";
 import { peonMetrics, poolImpact, STAGES, type PeonMetrics } from "./metrics.ts";
@@ -28,10 +29,6 @@ async function main() {
       console.error(`${a} seed ${seed}: hires ${all[a]!.at(-1)!.hires} (${((performance.now() - t) / 1000).toFixed(1)}s)`);
     }
   }
-
-  const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
-  const se = (xs: number[]) => { const m = mean(xs); return Math.sqrt(xs.reduce((a, b) => a + (b - m) ** 2, 0) / Math.max(1, xs.length - 1) / xs.length); };
-  const fmt = (xs: number[], pct = false, d = 1) => (pct ? `${(mean(xs) * 100).toFixed(1)}% ± ${(se(xs) * 100).toFixed(1)}` : `${mean(xs).toFixed(d)} ± ${se(xs).toFixed(d)}`);
   type Row = [string, (m: PeonMetrics) => number, boolean, number?];
   const rows: Row[] = [
     ["Intros delivered", m => m.probesDelivered, false, 0],
@@ -74,7 +71,7 @@ async function main() {
   ];
   console.log(`| Metric (mean ± SE, seeds ${seeds.join(",")}; ${perCity} candidates + ${jobsPerCity} jobs per city; ${weeks} weeks; world ${realism.name}) | ${arms.map(a => ARMS[a]!.name).join(" | ")} |`);
   console.log(`|---|${arms.map(() => "---:").join("|")}|`);
-  for (const [label, f, pct, d] of rows) console.log(`| ${label} | ${arms.map(a => fmt(all[a]!.map(f), pct, d)).join(" | ")} |`);
+  for (const [label, f, pct, d] of rows) console.log(`| ${label} | ${arms.map(a => fmt(all[a]!.map(f), pct, d ?? 1)).join(" | ")} |`);
 
   // ---- gates (the pack against keyword on the same seeds) -----------------------------------------
   const gateArm = arg("gate-arm", "pack")!;
