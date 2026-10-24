@@ -31,8 +31,6 @@ export const FAMILIES: Family[] = [
   { id: "warehouse_logistics", soc: "53-7062", title: "Warehouse Associate", skills: ["inventory", "shipping", "safety_compliance", "forklift", "scheduling", "cdl_driving"], pay: 48, candShare: 0.08, jobShare: 0.15, remote: 0, cred: { id: "cdl", jobs: 0.25, holders: 0.35 }, adjacent: "customer_support" },
 ];
 export const FAMILY = new Map(FAMILIES.map(f => [f.id, f]));
-
-export const LEVEL_TITLE = ["", "Associate", "", "Senior", "Lead", "Principal"];
 export const SENIORITY_PAY = [0, 0.72, 0.86, 1, 1.22, 1.45];
 export const MARKET_PAY: Record<City, number> = { sf: 1.12, nyc: 1.06, la: 1.08 }; // la: not modelled by the hiring world yet
 export const REMOTE_PAY = 1.0;

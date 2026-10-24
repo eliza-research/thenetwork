@@ -7,9 +7,6 @@ import { APP_IDS, APPS, isAppId, type AppId } from "../../platform/src/apps.ts";
 import { REVIEW_REASONS, type ReviewReason } from "./types.ts";
 
 export { APP_IDS, APPS, isAppId, type AppId };
-
-/** A role grant's app: one app, or every app ("*"). */
-export type AppScope = AppId | "*";
 /** The app a request without `app` belongs to (the console before the four apps). */
 export const DEFAULT_APP: AppId = "ntwrk";
 

@@ -738,6 +738,3 @@ export function crewSessionPlan(crew: Crew, now: number, place: Plan["place"], p
     probeDeadline: Math.min(start - pcfg.deadlineBeforeStartHours * HOUR, now + pcfg.probeWindowHours * HOUR), score: 0.6, u: {}, familiar: {}, createdAt: now, category: pack.plans!.lane,
   };
 }
-
-/** A recurring want ("weekly run club", "regular dinner group"): seeds a crew after one positive plan. */
-export const RECURRING_WANT = /\b(weekly|regular(ly)?|every (week|weekend|sunday|saturday|monday|tuesday|wednesday|thursday|friday)|club|crew|group)\b/i;

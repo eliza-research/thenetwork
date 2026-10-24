@@ -9,6 +9,9 @@ import { ConsentNetwork, type NetworkOptions } from "../src/index.ts";
 /** 2026-10-05 13:00 New York. */
 export const START = Date.UTC(2026, 9, 5, 17);
 
+/** A direct message captured by the dry-run service adapter. */
+export interface DirectMessage { app: string; to: string; body: string }
+
 export interface Spec {
   id: MemberId; name: string; age?: number; area?: string; interests?: string[]; skills?: string[];
   /** Live wants (objective = a DESIRES text). */

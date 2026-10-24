@@ -14,7 +14,7 @@
 import { canBeMatched, type MemberId } from "@thenetwork/core";
 import { Rng, hash32, clamp01 } from "@thenetwork/core";
 import { zipMiles, zipInfo, type SlopCity } from "./geo.ts";
-import { SLOTS, citiesInWeek, violates, zipIn, type DateActivity, type SlopPersona } from "./persona.ts";
+import { citiesInWeek, violates, zipIn, type DateActivity, type SlopPersona } from "./persona.ts";
 import { bodyTerm, type BodyTypeModel } from "./bodyType.ts";
 
 export const ORACLE_PARAMS = {
@@ -295,5 +295,3 @@ export function sharedCities(a: SlopPersona, b: SlopPersona, week?: number, side
   }
   return out;
 }
-
-export const SLOT_COUNT = SLOTS.length;

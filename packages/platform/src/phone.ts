@@ -29,9 +29,6 @@ const NOT_US_CA = new Set([
 export const usOrCanadaArea = (area: string) =>
   /^[2-9]\d\d$/.test(area) && !NOT_US_CA.has(area) && !/^[2-9]11$/.test(area) && !/^[2-9]9\d$/.test(area) && !/^(37|96)\d$/.test(area);
 
-/** The fictional 555-01xx numbers that tests and the simulator use. Refused in production (migration 0003 trigger). */
-export const isSyntheticPhone = (e164: string) => /^\+1\d{3}55501\d{2}$/.test(e164);
-
 /** "+1 •••-•••-0101": enough for the person to recognize their own number. */
 export const maskPhone = (e164: string) => `+1 •••-•••-${e164.slice(-4)}`;
 

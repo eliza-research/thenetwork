@@ -15,7 +15,7 @@
 //    `declined` and clears everything (core policy: nothing is stored).
 //  - No race, ethnicity, health or immigration field exists here; such words are never stored.
 import type { City, Facet, LLM, ChatMessage } from "@thenetwork/core";
-import { canBeMatched, maskPii, MIN_MEMBER_AGE, tryChatJson } from "@thenetwork/core";
+import { fnv1a, canBeMatched, maskPii, MIN_MEMBER_AGE, tryChatJson } from "@thenetwork/core";
 import { INTERESTS } from "../network/vocabulary.ts";
 import type { Gender, Goal, Slot } from "./profile.ts";
 import { SLOTS } from "./profile.ts";
@@ -954,15 +954,10 @@ export interface SlopLlmReading { [k: string]: { value: unknown; quote: string }
 /** The LLM reader: one message plus the fields still missing; undefined when it failed (fail closed). */
 export type SlopReader = (text: string, ctx: { asked?: OnboardField; missing: LlmField[] }) => Promise<SlopLlmReading | undefined>;
 
-function nonceOf(text: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
-  return h.toString(36);
-}
 /** The prompt (the member's words are data inside a nonce-tagged block; the reader must quote its evidence). */
 export function slopReaderPrompt(text: string, ctx: { asked?: OnboardField; missing: LlmField[] }): ChatMessage[] {
   const clean = text.replace(/<\/?\s*member_message[^>]*>/gi, " ");
-  const n = nonceOf(clean);
+  const n = fnv1a(clean).toString(36);
   return [
     { role: "system", content: [
       "You read one text message a person sent to a dating matchmaker, and report only what it states, as JSON.",

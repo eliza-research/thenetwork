@@ -15,7 +15,7 @@ import { activityById } from "@thenetwork/engine/src/packs/network/activities.ts
 import { daypartOf } from "@thenetwork/engine/src/plans.ts";
 import { hood, transitMinutes, type Neighborhood } from "@thenetwork/engine/src/packs/friends/index.ts";
 import type { Rng } from "@thenetwork/core";
-import { FRIEND_ACTIVITIES, SLOTS, hoodOf, isReal } from "./persona.ts";
+import { SLOTS, hoodOf, isReal } from "./persona.ts";
 import { NYC_TZ, slotTime } from "./snapshot.ts";
 import { visibleProfiles, type VisibleProfile } from "./visible.ts";
 import { VENUES, pk, type FriendsMatcher, type FriendsProposal, type FriendsWorld } from "./world.ts";
@@ -165,4 +165,3 @@ export function oracleMatcher(w: FriendsWorld): FriendsMatcher {
 }
 
 export const BASELINES = { random: randomWithinArea, greedy: greedyPopular, oracle: oracleMatcher } as const;
-export const ACTIVITY_COUNT = FRIEND_ACTIVITIES.length;

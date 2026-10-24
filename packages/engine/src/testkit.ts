@@ -2,7 +2,7 @@
 // independent of packages/sim: it only needs to produce varied, adversarial-enough inputs
 // (canary facets, aliases, blocks, holds, minors, travel, cooldowns, history) to exercise every
 // hard constraint.
-import type { Category, City, Edge, Facet, Intent, Member, Preferences, Presence, Proposal } from "@thenetwork/core";
+import type { Category, City, Edge, Facet, Intent, Member, Presence, Proposal } from "@thenetwork/core";
 import { DAY, HOUR } from "@thenetwork/core";
 import { EngineRng as Rng } from "@thenetwork/core";
 import type { EngineInput, FeedbackRecord, InteractionRecord, NetworkEvent, SafetyHold } from "./types.ts";
@@ -195,19 +195,6 @@ export function randomWorld(opts: WorldOptions = {}): EngineInput {
   }
   return { now, members, facets, intents, presence, edges, recentProposals, events, safetyHolds, feedback, interactions, idAliases, reliability, categoryQuotas: {} };
 }
-
-/** A fixed small cast for unit tests. */
-export function baseMember(id: string, over: Partial<Omit<Member, "prefs">> & { prefs?: Partial<Preferences> } = {}): Member {
-  const { prefs, ...rest } = over;
-  return {
-    id, name: id.toUpperCase(), homeCity: "sf", state: "open",
-    joinedAt: Date.UTC(2026, 0, 1), age: 30, unansweredProactive: 0, ...rest,
-    prefs: { categoriesOptIn: ["social", "professional", "hobby", "help", "events", "growth"], quietHours: [22, 8], romanceOptIn: false, formats: ["one_to_one", "small_group", "event"], maxTravelMinutes: 45, onlyWhenAsked: false, ...prefs },
-  };
-}
 export function facet(memberId: string, n: number, kind: Facet["kind"], value: string, tags: string[], scope: Facet["scope"] = "shareable"): Facet {
   return { id: `${memberId}-f${n}`, memberId, kind, value, tags, scope, provenance: "said", confidence: 0.9 };
-}
-export function emptyInput(now = Date.UTC(2026, 9, 5, 16)): EngineInput {
-  return { now, members: [], facets: [], intents: [], presence: [], edges: [], recentProposals: [], events: [], safetyHolds: [], feedback: [], interactions: [], idAliases: {} };
 }

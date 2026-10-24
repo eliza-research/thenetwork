@@ -288,7 +288,4 @@ export const SEAT_COPY = {
   checkIn: (j: SeatJob, other: string) => `Did you and ${other} talk about the ${j.title} role? Tell me how it went, and tell me if anything felt off.`,
   postingClosed: "That job is no longer open, so I've stopped that intro. I'll keep looking for you.",
 };
-
-/** The seat of an opportunity, if the engine proposed it for a job seat (participants carry the seat id). */
-export function seatIn(participants: readonly MemberId[]): MemberId | undefined { return participants.find(isSeatId); }
 export { isSeatId, seatIdOf, seatOwnerOf, postingIdOf };

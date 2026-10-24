@@ -19,8 +19,6 @@ export const ZIPS: readonly ZipInfo[] = ENGINE_ZIPS.map(z => ({ zip: z.zip, city
 export const zipInfo = new Map(ZIPS.map(z => [z.zip, z]));
 /** The home zips personas in `city` are drawn from (SIM_HOME_ZIPS, in their original order). */
 export const zipsIn = (city: SlopCity): ZipInfo[] => SIM_HOME_ZIPS.map(z => zipInfo.get(z)!).filter(z => z.city === city);
-/** Every known zip in `city` (the full lookup table). */
-export const allZipsIn = (city: SlopCity): ZipInfo[] => ZIPS.filter(z => z.city === city);
 /** The zip a visitor to `city` is assumed to meet in (downtown core); used for multi-city members and travelers. */
 export const CITY_ANCHOR_ZIP: Record<SlopCity, string> = { sf: "94103", nyc: "10003", la: "90026" };
 

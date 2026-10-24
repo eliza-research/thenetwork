@@ -2,6 +2,7 @@
 // cap, per-app live flags, per-app staff roles, and the public API mounted on the service. Postgres in
 // a database of its own per test process (the packages/observatory/test/pg.ts pattern). Nothing is
 // sent: the adapters are dry-run (or Blooio with a fake provider), and OTP codes come from a fake.
+import { admin } from "../../platform/test/pg.ts";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { SQL } from "bun";
@@ -16,14 +17,12 @@ import { BlooioAdapter, DryRunAdapter, liveSendAllowed, type Outbound } from "..
 import { NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/service.ts";
 import { brandOf, copyFor, styleViolations } from "../src/copy.ts";
 import { SLOP_ONBOARD_QUESTIONS } from "../../engine/src/packs/slop/index.ts";
-import { START } from "./mini.ts";
+import { START, type DirectMessage as Direct } from "./mini.ts";
 
 const T = 300_000;
 const pgAvailable = ["16", "17", "18"].some(v => existsSync(`/opt/homebrew/opt/postgresql@${v}/bin/pg_ctl`)) || !!Bun.which("pg_ctl");
 const DB = `network_service_apps_test_${process.pid}`;
-const ADMIN_URL = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/postgres`;
 const URL_ = `postgres://${process.env.USER ?? "postgres"}@localhost:${DEV_PG_PORT}/${DB}`;
-async function admin(q: string) { const sql = new SQL({ url: ADMIN_URL, max: 1 }); try { await sql.unsafe("set lock_timeout = '5s'"); await sql.unsafe(q); } finally { await sql.close(); } }
 
 /** The NYC friends app (the registry's id; it was renamed once, so the test reads it). */
 const FR: AppId = "friends";
@@ -40,7 +39,6 @@ class FakeOtp implements OtpProvider {
 
 let sql: SQL;
 const open: NetworkService[] = [];
-interface Direct { app: string; to: string; body: string }
 
 function service(clock: SimClock, more: Partial<ServiceOptions> = {}) {
   const directs: Direct[] = [];

@@ -545,8 +545,7 @@ export class GameSource implements DataSource {
   }
 
   inOpenReview(memberId: string): boolean {
-    for (const o of this.store.opps.values()) if (o.state === "IN_REVIEW" && o.participants.includes(memberId)) return true;
-    return false;
+    return this.store.inOpenReview(memberId);
   }
 
   async safety(): Promise<SafetyInfo> {

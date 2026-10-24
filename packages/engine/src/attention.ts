@@ -28,7 +28,7 @@ import { tokenize } from "./embed.ts";
 import { privateVocabulary } from "./explain.ts";
 import { checkMemberFacing } from "./judgeCommon.ts";
 import type {
-  AttentionItem, AttentionLedgerEntry, CadencePrefs, Effort, EngineProposal, HeldItem, HoldReason, ItemKind, LedgerKind, Role,
+  AttentionItem, AttentionLedgerEntry, CadencePrefs, Effort, EngineProposal, HeldItem, ItemKind, LedgerKind, Role,
 } from "./types.ts";
 import { CONTRIBUTOR_ROLES } from "./types.ts";
 
@@ -72,32 +72,6 @@ export function defaultCadence(state: ParticipationState, cfg: AttentionConfig =
     mode: "digest", digestDays: [...cfg.digest.days[state]], digestHour: cfg.digest.hour, digestPeriod: cfg.digest.period[state],
     categoryWeight: {}, maxItemsPerDigest: items, romanceInDigest: cfg.romanceInDigest,
   };
-}
-
-/**
- * D11: learned cadence never increases frequency. Every frequency-related field of the result is
- * the quieter of the explicit preference and the learned one: fewer digest days, fewer items,
- * a lower cap, mode only ever moved towards quieter. Only an explicit request (the `explicit`
- * argument) can raise frequency, and capFor() still clamps that to the state cap.
- */
-export function applyLearnedCadence(explicit: CadencePrefs, learned: Partial<CadencePrefs>): CadencePrefs {
-  const out: CadencePrefs = { ...explicit, categoryWeight: { ...explicit.categoryWeight } };
-  if (learned.digestDays) {
-    const kept = explicit.digestDays.filter(d => learned.digestDays!.includes(d));
-    out.digestDays = kept.length ? kept : explicit.digestDays.slice(0, 1);
-  }
-  if (learned.maxItemsPerDigest !== undefined) out.maxItemsPerDigest = Math.min(explicit.maxItemsPerDigest, learned.maxItemsPerDigest) as 1 | 2 | 3;
-  if (learned.capOverride !== undefined) out.capOverride = Math.min(explicit.capOverride ?? Infinity, learned.capOverride);
-  if (learned.digestPeriod === "month") out.digestPeriod = "month";
-  const quietness: Record<CadencePrefs["mode"], number> = { as_it_comes: 0, digest: 1, only_when_great: 2, only_when_asked: 3 };
-  if (learned.mode && quietness[learned.mode] > quietness[explicit.mode]) out.mode = learned.mode;
-  for (const [c, w] of Object.entries(learned.categoryWeight ?? {})) {
-    const cur = explicit.categoryWeight[c as Category] ?? 1;
-    out.categoryWeight[c as Category] = Math.min(cur, w ?? cur);
-  }
-  // The digest hour is not a frequency: learning may move it (reply-rate by hour).
-  if (learned.digestHour !== undefined) out.digestHour = learned.digestHour;
-  return out;
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -309,17 +283,6 @@ export function nextDigestSlot(m: Pick<MemberAttention, "memberId" | "tz" | "pre
 export function lastDigestSlot(m: Pick<MemberAttention, "memberId" | "tz" | "prefs">, ts: number, cfg: AttentionConfig = DEFAULT_ATTENTION): number | undefined {
   for (let k = 0; k >= -62; k--) { const s = slotOnDay(m, ts, k, cfg); if (s !== undefined && s <= ts) return s; }
   return undefined;
-}
-/**
- * The slot a digest is due for now, or undefined: the latest slot within the last `windowHours`
- * (so a slot that falls in quiet hours can still go out when they end) not yet served.
- * as_it_comes members have no slot wait: any time is a slot.
- */
-export function digestDue(m: MemberAttention, now: number, lastServedSlot: number | undefined, cfg: AttentionConfig = DEFAULT_ATTENTION, windowHours = 24): number | undefined {
-  if (m.prefs.mode === "as_it_comes") return now;
-  const s = lastDigestSlot(m, now, cfg);
-  if (s === undefined || now - s >= windowHours * HOUR) return undefined;
-  return lastServedSlot !== undefined && lastServedSlot >= s ? undefined : s;
 }
 
 /**
@@ -564,8 +527,6 @@ export function quantile(xs: number[], q: number): number {
   return s[lo]! + (s[hi]! - s[lo]!) * (i - lo);
 }
 
-export const REENGAGE_SUFFIX = "Want me to keep sending these?";
-
 /**
  * D6: one Blooio re-engagement after auto-pause. Only when the member is in only-when-asked
  * because of unanswered interruptions (not STOP, not their explicit choice), silent >= 30 days,
@@ -612,46 +573,6 @@ export function holdExpiry(p: Pick<EngineProposal, "window" | "anchor" | "partic
   // Fixed-time items (event anchors, plans): the earlier of start - 24h and the probe deadline.
   if (p.anchor?.type === "event" && p.window) exp = Math.min(exp, p.window.start - cfg.expiry.eventLeadHours * HOUR);
   return exp;
-}
-
-/** Static value used for queue ordering and eviction (no urgency term). */
-const holdValue = (it: AttentionItem, prefs: Pick<CadencePrefs, "categoryWeight">, cfg: AttentionConfig) => itemValue(it, prefs, cfg);
-
-export interface HoldResult { queue: HeldItem[]; added: boolean; evicted: HeldItem[]; reason?: "duplicate" | "hold_full" | "expired" | "dismissed" }
-
-/**
- * Add an item to a member's hold queue (capacity 10, evict lowest V). The same key (the same
- * opportunity re-proposed by a later run) replaces the held item only if its V is higher by the
- * hysteresis margin (6.2). `dismissed`: keys the member saw and passed on, until a time.
- */
-export function addToHold(queue: readonly HeldItem[], item: AttentionItem, prefs: Pick<CadencePrefs, "categoryWeight">, now: number,
-  o: { reason?: HoldReason; dismissed?: ReadonlyMap<string, number>; cfg?: AttentionConfig } = {}): HoldResult {
-  const cfg = o.cfg ?? DEFAULT_ATTENTION;
-  const q = [...queue];
-  if (item.urgency.expiresAt <= now) return { queue: q, added: false, evicted: [], reason: "expired" };
-  if ((o.dismissed?.get(item.key) ?? -Infinity) > now) return { queue: q, added: false, evicted: [], reason: "dismissed" };
-  const held: HeldItem = { ...item, heldReason: o.reason ?? "digest_wait", heldAt: now, revalidateAt: now + cfg.hold.revalidateHours * HOUR };
-  const evicted: HeldItem[] = [];
-  const same = q.findIndex(x => x.key === item.key);
-  if (same >= 0) {
-    const old = q[same]!;
-    // A partner probe (the first member already said yes) always supersedes a cold one.
-    const promote = item.stage === "partner" && old.stage !== "partner";
-    if (!promote && holdValue(item, prefs, cfg) < holdValue(old, prefs, cfg) + cfg.hold.replaceMargin) return { queue: q, added: false, evicted: [], reason: "duplicate" };
-    evicted.push(old);
-    q.splice(same, 1);
-  }
-  q.push(held);
-  if (q.length > cfg.hold.capacity) {
-    // Evict the lowest V; partner probes are evicted last (someone already said yes).
-    const order = [...q].sort((a, b) => ((a.stage === "partner" ? 1 : 0) - (b.stage === "partner" ? 1 : 0))
-      || (holdValue(a, prefs, cfg) - holdValue(b, prefs, cfg)) || (b.heldAt - a.heldAt) || (a.id < b.id ? 1 : -1));
-    const out = order[0]!;
-    q.splice(q.indexOf(out), 1);
-    evicted.push(out);
-    if (out === held) return { queue: q, added: false, evicted: evicted.filter(x => x !== held), reason: "hold_full" };
-  }
-  return { queue: q, added: true, evicted };
 }
 
 /**

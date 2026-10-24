@@ -110,12 +110,6 @@ export interface Persona {
   knowledge?: Knowledge;
 }
 
-/** All canary strings in a population (for leak scanning). */
-export function canariesOf(personas: Persona[]): { memberId: MemberId; canary: string; fact: string }[] {
-  return personas.flatMap(p => p.hidden.privateDisclosure
-    ? [{ memberId: p.id, canary: p.hidden.privateDisclosure.canary, fact: p.hidden.privateDisclosure.fact }] : []);
-}
-
 // ---- intent liveness (the Network's intent record vs the persona's hidden want) ----------------
 //
 // The Network keeps an intent live for `horizonDays` after it was stated or last re-confirmed

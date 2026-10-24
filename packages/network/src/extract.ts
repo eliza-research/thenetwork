@@ -10,7 +10,7 @@
 //    override a refusal, a conditional, a hedge or a mixed reply (mergeConsent).
 //  - An age the LLM reads can only make the member younger (a minor), never decline them: a
 //    decline deletes data, so it needs the offline explicit form.
-import { maskPii, tryChatJson, type ChatMessage, type LLM } from "@thenetwork/core";
+import { fnv1a, maskPii, tryChatJson, type ChatMessage, type LLM } from "@thenetwork/core";
 import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import type { ConsentWhy, TimeOption } from "./classify.ts";
 import { NEIGHBORHOODS } from "./geo.ts";
@@ -37,17 +37,10 @@ const AREAS = new Set(NEIGHBORHOODS.map(n => n.name));
 /** Longest member text sent to the model. Longer texts use the offline reading only. */
 export const MAX_UNDERSTAND_CHARS = 1200;
 
-/** A short id that depends on every character of the message (FNV-1a): the closing tag cannot be forged from inside it. */
-function nonceOf(text: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
-  return h.toString(36);
-}
-
 /** The prompt. Exported for the prompt-injection tests. */
 export function understandPrompt(body: string, ctx: UnderstandContext): ChatMessage[] {
   const clean = body.replace(/<\/?\s*member_message[^>]*>/gi, " ");
-  const n = nonceOf(clean);
+  const n = fnv1a(clean).toString(36);
   const opts = ctx.options?.length ? ctx.options.map(o => `${o.key} = ${o.label}`).join("; ") : "none";
   return [
     {

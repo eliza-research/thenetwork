@@ -40,27 +40,28 @@ browserTest("approved authenticated draft fills editable fields; corrected Join 
     await context.addCookies([{name:"sid_friends",value:session.token,url:server.url.origin}]);
     const page=await context.newPage();await page.goto(server.url+"join?via=agent");
     await page.waitForFunction(()=>document.querySelector<HTMLInputElement>('[name="firstName"]')?.value==="Ari");
-    expect(await page.locator('[name="homeCity"]').inputValue()).toBe("sf");
+
+    expect(await page.locator('[name="homeCity"]').count()).toBe(0);
     await page.reload();await page.waitForFunction(()=>document.querySelector<HTMLInputElement>('[name="firstName"]')?.value==="Ari");
-    expect(await page.locator('[name="homeCity"]').inputValue()).toBe("sf");
+
     expect(await page.locator('[name="age"]').inputValue()).toBe("");expect(await page.locator('[name="consent"]').isChecked()).toBe(false);
-    await page.locator('[name="firstName"]').fill("Rae");await page.locator('[name="homeCity"]').selectOption("nyc");await page.locator('[name="age"]').fill("29");await page.locator('[name="consent"]').check();await page.locator('form[data-form="profile"] button[type="submit"]').click();
+    await page.locator('[name="firstName"]').fill("Rae");await page.locator('[name="age"]').fill("29");await page.locator('[name="consent"]').check();await page.locator('form[data-form="profile"] button[type="submit"]').click();
     await page.locator('[data-step="done"]').waitFor({state:"visible"});
-    const person=await e.accounts.personFor(PHONE_A),m=await e.people.getMembership(person!.id,"friends");expect(m!.firstName).toBe("Rae");expect(m!.profile.homeCity).toBe("nyc");
+    const person=await e.accounts.personFor(PHONE_A),m=await e.people.getMembership(person!.id,"friends");expect(m!.firstName).toBe("Rae");expect(m!.profile.homeCity).toBeUndefined();
     expect((await e.people.consentEvents(PHONE_A,"friends")).length).toBe(1);
     // Separate fresh test environment would be needed after Join. On a second page with a
     // delayed claim, the dirty-input guarantee is exercised before any Join or account write.
     const phone="+12125550149",other=await connect(e,"friends.help",phone);await call(e,"https://friends.help/mcp","prepare_signup",{firstName:"Tess",homeCity:"sf"},{token:other.token.access_token});
     const s=await e.sessions.create("friends",phone,null);await context.addCookies([{name:"sid_friends",value:s.token,url:server.url.origin}]);delay=true;
     await page.goto(server.url+"join?via=agent");await page.locator('[data-step="profile"]').waitFor({state:"visible"});
-    await page.locator('[name="firstName"]').fill("Inez");await page.locator('[name="homeCity"]').selectOption("nyc");
+    await page.locator('[name="firstName"]').fill("Inez");
     const responseDone=page.waitForResponse((r:any)=>r.url().endsWith("/oauth/signup-draft"));
     const ownerRechecked=page.waitForResponse((r:any)=>r.url().endsWith("/api/me"));release();
     // Wait for the actual delayed payload and its ownership recheck, not unrelated background fetches.
     expect((await(await responseDone).json()).draft).toEqual({firstName:"Tess",homeCity:"sf"});
     await ownerRechecked;
     await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
-    expect(await page.locator('[name="firstName"]').inputValue()).toBe("Inez");expect(await page.locator('[name="homeCity"]').inputValue()).toBe("nyc");expect(await e.accounts.personFor(phone)).toBeUndefined();
+    expect(await page.locator('[name="firstName"]').inputValue()).toBe("Inez");expect(await e.accounts.personFor(phone)).toBeUndefined();
     // A delayed response for the old account must not cross a normal reauthentication.
     held=new Promise<void>(r=>{release=r;});
     const oldRequest=page.waitForRequest((r:any)=>r.url().endsWith("/oauth/signup-draft"));
@@ -108,20 +109,21 @@ browserTest("approved authenticated draft fills editable fields; corrected Join 
     await page.waitForFunction(()=>document.querySelector<HTMLInputElement>('[name="firstName"]')?.value==="Mina");
     expect(await page.locator('[data-step="profile"]').isVisible()).toBe(true);
     expect(await page.locator('[data-step="done"]').isVisible()).toBe(false);
-    expect(await page.locator('[name="homeCity"]').inputValue()).toBe("nyc");
+
     expect(await page.locator('[name="age"]').inputValue()).toBe("");expect(await page.locator('[name="consent"]').isChecked()).toBe(false);
     expect(await page.locator('[data-flow-error]').isVisible()).toBe(true);
     expect((await page.locator('[data-flow-error]').textContent())?.trim().length).toBeGreaterThan(0);
     expect(e.provider.sent.length).toBe(sentBeforeSwitch);
     // B now reviews/corrects the new form and explicitly supplies B's own age and consent.
-    await page.locator('[name="firstName"]').fill("Rae");await page.locator('[name="homeCity"]').selectOption("sf");
+    await page.locator('[name="firstName"]').fill("Rae");
     await page.locator('[name="age"]').fill("29");await page.locator('[name="consent"]').check();
     const accepted=page.waitForResponse((r:any)=>r.url().endsWith("/api/join"));
     await page.locator('form[data-form="profile"] button[type="submit"]').click();const joined=await accepted;expect(joined.status()).toBe(200);
     expect(joined.request().postDataJSON().signupView).toBe(signupAccountView("friends",e.accounts.phoneHash(switchedPhone)));
     await page.locator('[data-step="done"]').waitFor({state:"visible"});
     const switchedPerson=await e.accounts.personFor(switchedPhone),switchedMember=await e.people.getMembership(switchedPerson!.id,"friends");
-    expect(switchedMember!.firstName).toBe("Rae");expect(switchedMember!.profile.homeCity).toBe("sf");
+    expect(switchedMember!.firstName).toBe("Rae");expect(switchedMember!.profile.homeCity).toBeUndefined();
+    expect(joined.request().postDataJSON().homeCity).toBeUndefined();
     expect(await e.people.ageFloor(e.accounts.phoneHash(switchedPhone))).toBe(29);
     expect(await e.people.consentEvents(switchedPhone,"friends")).toHaveLength(1);
     expect(await e.accounts.personFor(nextPhone)).toBeUndefined();expect(e.provider.sent.length).toBe(sentBeforeSwitch);

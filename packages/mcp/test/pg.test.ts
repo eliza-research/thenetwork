@@ -1,7 +1,7 @@
 // OAuth on Postgres: a unique database on the dev cluster or an explicitly owned
 // loopback fixture, dropped afterwards. The refresh regression uses real HTTP.
+import { admin as adminSql } from "../../platform/test/pg.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { SQL } from "bun";
 import { randomUUID } from "node:crypto";
 import { APPS, createPublicApi, PgPeopleStore } from "@thenetwork/platform";
 import { migrate } from "../../observatory/db/migrate.ts";
@@ -18,16 +18,13 @@ const USER = process.env.USER ?? "postgres";
 // Never start/reset that cluster or accept a remote/service database here.
 const EXPLICIT_PG = process.env.MCP_TEST_PG_URL;
 const ADMIN_URL = EXPLICIT_PG ?? `postgres://${USER}@localhost:${DEV_PG_PORT}/postgres`;
+const admin = (q: string) => adminSql(q, ADMIN_URL);
 const parsedAdmin = new URL(ADMIN_URL);
 if (!["postgres:", "postgresql:"].includes(parsedAdmin.protocol) || !["localhost", "127.0.0.1", "[::1]"].includes(parsedAdmin.hostname) || parsedAdmin.pathname !== "/postgres") throw new Error("MCP_TEST_PG_URL must name an owned loopback postgres admin database");
 if (process.env.REQUIRE_PG === "1" && !EXPLICIT_PG && !pgAvailable) throw new Error("OAuth integration requires PostgreSQL");
 const DB = `mcp_test_${process.pid}_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
 const testUrl = new URL(ADMIN_URL);
 testUrl.pathname = `/${DB}`;
-const admin = async (q: string) => {
-  const sql = new SQL({ url: ADMIN_URL, max: 1 });
-  try { await sql.unsafe("set lock_timeout = '5s'"); await sql.unsafe(q); } finally { await sql.close(); }
-};
 
 describe.skipIf(!EXPLICIT_PG && !pgAvailable)("PgOAuthStore", () => {
   let store: PgOAuthStore;
