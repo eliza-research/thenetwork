@@ -393,8 +393,14 @@ function readSeeks(t0: string, asked?: OnboardField): SeekReading {
 // ------------------------------------------------------------------------------------------ age range
 
 const RANGE_UNIT_AFTER = /^\s*(?:mi\b|mis\b|miles?|mile|km|kms|min|mins|minutes|pm|am|p\.m|a\.m|hours?|hrs?|blocks|k\b|%|ft|feet|years? (?:ago|sober)|lbs?|dollars|bucks|o'?clock)/;
-const DECADE = "(?:(early|mid|late)[\\s-]*)?(20|30|40|50|60)'?s";
+const DECADE_WORD: Record<string, number> = { twenties: 20, thirties: 30, forties: 40, fifties: 50, sixties: 60 };
+/** A decade token: "30s", "30's", "thirties" -> 30. */
+const decadeOf = (token: string): number => DECADE_WORD[token] ?? Number(token.replace(/'?s$/, ""));
+const DECADE_TOKEN = "(?:20|30|40|50|60)'?s|twenties|thirties|forties|fifties|sixties";
+const DECADE = `(?:(early|mid|late)[\\s-]*)?(${DECADE_TOKEN})`;
 const RANGE_CTX = /\b(?:their|his|her|range|ages?|aged|looking|lookin|into|date|dating|seeking|prefer|want|anyone|someone|somebody|people|folks|guys|girls|women|men|ladies|dudes|between|from|around|older|younger|nb|enbies|partner|ideally|preferably)\b/;
+/** Words that make a following age about someone the member seeks, not about the member. */
+const SEEK_CTX = /\b(?:looking for|lookin for|into|seeking|prefer|want|dating|date|someone|somebody|anyone)\b/;
 function decadeBounds(part: string | undefined, d: number): [number, number] {
   return part === "early" ? [d, d + 3] : part === "mid" ? [d + 3, d + 6] : part === "late" ? [d + 6, d + 9] : [d, d + 9];
 }
@@ -409,19 +415,33 @@ function readAgeRange(t: string, asked: OnboardField | undefined, selfAge?: numb
       if (RANGE_UNIT_AFTER.test(s.text.slice(m.index + m[0].length))) continue;
       if (negated(s.text, m.index, 2) && !/\bno,?\s*$/.test(s.text.slice(0, m.index))) continue;
       let lo = Number(m[1]), hi = Number(m[2]);
-      if (hi < lo || hi < 18 || hi > 99 || hi - lo > 60) continue;
+      // A bare answer to the age question can arrive reversed: "35-28" means 28-35.
+      if (hi < lo) {
+        if (asked !== "ageRange") continue;
+        [lo, hi] = [hi, lo];
+      }
+      if (hi < 18 || hi > 99 || hi - lo > 60) continue;
       if (!isBare && !RANGE_CTX.test(s.text) && !/^\s*(?:no,?\s*|actually,?\s*|nah,?\s*|make it\s+|change (?:it )?to\s+|more like\s+)?\d{2}\s*(?:-|to)\s*\d{2}/.test(s.text) && !(asked === undefined && s.text.trim().split(/\s+/).length <= 4)) continue;
       lo = Math.max(18, lo);
       range = cand([lo, hi] as [number, number], s, m, 0.95);
     }
-    // Decades: "in their 30s", "late 20s to mid 30s" (never "I'm in my 30s").
+    // Two halves of one decade: "early to mid thirties", "early-to-mid 30s" -> [30, 36].
+    for (const m of all(new RegExp(`\\b(early|mid|late)\\s*(?:-|to|through|thru|–|and)\\s*(early|mid|late)\\s+(${DECADE_TOKEN})(?![a-z])`), s.text)) {
+      const before = s.text.slice(Math.max(0, m.index - 12), m.index);
+      if (/\b(?:my|i'?m in|im in|in my)\s*$/.test(before) || /\bmy\b/.test(before.slice(-4))) continue;
+      if (!isBare && !RANGE_CTX.test(s.text)) continue;
+      if (negated(s.text, m.index, 2)) continue;
+      const d = decadeOf(m[3]!);
+      range = cand([Math.max(18, decadeBounds(m[1], d)[0]), decadeBounds(m[2], d)[1]] as [number, number], s, m, 0.85);
+    }
+    // Decades: "in their 30s", "late 20s to mid 30s", "late twenties" (never "I'm in my 30s").
     for (const m of all(new RegExp(`\\b${DECADE}(?:\\s*(?:-|to|or|and|through|thru|–)\\s*${DECADE})?(?![a-z])`), s.text)) {
       const before = s.text.slice(Math.max(0, m.index - 12), m.index);
       if (/\b(?:my|i'?m in|im in|in my)\s*$/.test(before) || /\bmy\b/.test(before.slice(-4))) continue;
       if (!isBare && !RANGE_CTX.test(s.text)) continue;
       if (negated(s.text, m.index, 2)) continue;
-      const a = decadeBounds(m[1], Number(m[2]));
-      const b = m[4] ? decadeBounds(m[3], Number(m[4])) : a;
+      const a = decadeBounds(m[1], decadeOf(m[2]!));
+      const b = m[4] ? decadeBounds(m[3], decadeOf(m[4])) : a;
       if (b[1] < a[0]) continue;
       if (range && range.start <= s.start + m.index && range.end >= s.start + m.index) continue;
       range = cand([Math.max(18, a[0]), b[1]] as [number, number], s, m, 0.85);
@@ -430,9 +450,22 @@ function readAgeRange(t: string, asked: OnboardField | undefined, selfAge?: numb
     for (const m of all(new RegExp(`(?<![\\d.$])(\\d{2})\\s*(?:-|to|through|thru|–)\\s*${DECADE}(?![a-z])|\\b${DECADE}\\s*(?:-|to|through|thru|–)\\s*(\\d{2})(?![\\d']|\\s*s\\b)`), s.text)) {
       if (!isBare && !RANGE_CTX.test(s.text)) continue;
       if (negated(s.text, m.index, 2) || RANGE_UNIT_AFTER.test(s.text.slice(m.index + m[0].length))) continue;
-      const v = m[1] ? [Number(m[1]), decadeBounds(m[2], Number(m[3]))[1]] : [decadeBounds(m[4], Number(m[5]))[0], Number(m[6])];
+      const v = m[1] ? [Number(m[1]), decadeBounds(m[2], decadeOf(m[3]!))[1]] : [decadeBounds(m[4], decadeOf(m[5]!))[0], Number(m[6])];
       if (v[1]! < v[0]! || v[1]! < 18 || v[1]! > 99) continue;
       range = cand([Math.max(18, v[0]!), v[1]!] as [number, number], s, m, 0.85);
+    }
+    // Fuzzy, one number: "around 30", "about 40", "30ish" -> +/- 3 years. A hedge on the member's own
+    // age ("i'm around 30", "about 30 years old") is an age statement, not a range: never read it as one.
+    if (!range) for (const m of all(/(?<![\d.$])(?:around|about|roughly|approximately|approx\.?|close to)\s+(\d{2})\b|(?<![\d.$])(\d{2})\s*(?:ish|or so)\b/, s.text)) {
+      const v = Number(m[1] ?? m[2]);
+      if (v < 18 || v > 99) continue;
+      const after = s.text.slice(m.index + m[0].length);
+      if (RANGE_UNIT_AFTER.test(after) || /^\s*(?:years? old|yrs? old|yo|y\/o)\b/.test(after)) continue;
+      const before = s.text.slice(Math.max(0, m.index - 14), m.index);
+      if (/\b(?:i'?m|im|i am|he'?s|she'?s|they'?re)\s*$/i.test(before) && !SEEK_CTX.test(s.text)) continue;
+      if (!isBare && !RANGE_CTX.test(s.text)) continue;
+      if (negated(s.text, m.index, 2)) continue;
+      range = cand([Math.max(18, v - 3), Math.min(99, v + 3)] as [number, number], s, m, 0.8);
     }
     // Open bounds: "30+", "25 and up", "over 30", "under 40", "40 max".
     let lo: { v: number; m: RegExpExecArray } | undefined, hi: { v: number; m: RegExpExecArray } | undefined;
@@ -449,6 +482,8 @@ function readAgeRange(t: string, asked: OnboardField | undefined, selfAge?: numb
     }
     // Relative: "5 years either way", "+/- 4 years of me".
     for (const m of all(/(?:\+\/-|plus or minus|give or take|within)?\s*(\d{1,2})\s*(?:years?|yrs?)\s*(?:either way|older or younger|younger or older|of my age|up or down|\+\/-|of me|in either direction)/, s.text)) rel = cand(Number(m[1]), s, m, 0.8);
+    // Hedged self-reference: "around my age", "my age or so" -> +/- 3 years, resolved only when the member's own age is known.
+    for (const m of all(/(?:around|about|roughly|close to)\s+my age\b|\bmy age\s*(?:or so|ish|give or take)\b/, s.text)) rel = cand(3, s, m, 0.75);
     // A bare range answer: "25 35", "30s".
     if (asked === "ageRange" && !range) {
       const m = /^\s*(\d{2})\s+(\d{2})\s*$/.exec(s.text);
