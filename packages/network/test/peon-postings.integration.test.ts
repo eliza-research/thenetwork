@@ -68,6 +68,55 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
     await admin(`drop database if exists ${DB} with (force)`).catch(() => {});
   });
 
+  test("closing and reopening a posting preserves its headcount while closed seats stay unavailable", async () => {
+    const clock = new SimClock(START);
+    let s = svc = service(clock);
+    await s.start();
+    const phone = "+12125550174";
+    const observations: { posted: number; closed: number; reopened: number; seat: number }[] = [];
+    const call = async (method: string, path: string, body?: unknown) => {
+      const routes = jobPostingRoutes({ rt: s.runtimeFor("peon")!, user: { id: "staff:test", roles: ["admin"] }, need: () => undefined, audit: async () => {}, now: () => clock.now() });
+      const response = await routes(new Request(`http://127.0.0.1:4848/apps/peon${path}`, { method,
+        ...(body ? { headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {}) }), path.split("?")[0]!);
+      expect(response!.status).toBe(200);
+      return await response!.json() as any;
+    };
+    try {
+      await text(s, clock, phone, "peon");
+      await text(s, clock, phone, "Jules, 35");
+      const manager = (await memberId(phone))!;
+      for (const openings of [1, 3, 5]) {
+        const id = `headcount-${openings}`;
+        const created = await call("POST", "/postings", { id, managerId: manager, title: "data analyst", openings, payMin: 90, payMax: 120, mode: "hybrid" });
+        expect(created.posting.openings).toBe(openings);
+        const closed = await call("POST", `/postings/${id}/close`, { reason: openings === 3 ? "filled" : "closed" });
+        expect(closed.posting).toMatchObject({ openings, status: "closed" });
+        let snap = await loadSnapshot(sql, clock.now(), { app: "peon", city: "nyc" });
+        expect(snap.facets.find(f => f.id === `job:${id}:openings`)?.tags).toEqual(["peon:openings:0"]);
+        expect(snap.intents.find(i => i.id === id)?.status).toBe("closed");
+
+        await s.close();
+        s = svc = service(clock);
+        await s.start();
+        const listed = await call("GET", `/postings?managerId=${encodeURIComponent(manager)}`);
+        const stored = listed.postings.find((p: any) => p.id === id);
+        expect(stored.status).toBe("closed");
+        snap = await loadSnapshot(sql, clock.now(), { app: "peon", city: "nyc" });
+        expect(snap.facets.find(f => f.id === `job:${id}:openings`)?.tags).toEqual(["peon:openings:0"]);
+
+        // Updating a closed post reopens it; omitted fields must retain their saved values.
+        const reopened = await call("POST", "/postings", { id, managerId: manager });
+        expect(reopened.posting).toMatchObject({ status: "active", payMin: 90, payMax: 120, mode: "hybrid" });
+        snap = await loadSnapshot(sql, clock.now(), { app: "peon", city: "nyc" });
+        const tag = snap.facets.find(f => f.id === `job:${id}:openings`)!.tags[0]!;
+        observations.push({ posted: openings, closed: stored.openings, reopened: reopened.posting.openings, seat: Number(tag.slice("peon:openings:".length)) });
+      }
+      expect(observations).toEqual([1, 3, 5].map(n => ({ posted: n, closed: n, reopened: n, seat: n })));
+    } finally {
+      await s.close();
+    }
+  }, T);
+
   test("a job post by text is read back, saved on the yes, kept across a restart, and closed by staff", async () => {
     const clock = new SimClock(START);
     let s = svc = service(clock);
