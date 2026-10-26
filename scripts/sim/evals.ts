@@ -66,6 +66,16 @@ export async function evalsBlock(b: Block): Promise<void> {
     b.gate(`consent replies ${file}: no refusal or hedge read as yes`, notYesAsYes.length === 0, notYesAsYes.slice(0, 5).join(" | "));
   }
 
+  // A member who names a day the probe did not offer ("Friday works" when the options are Thursday,
+  // Saturday and Sunday) asks for another time. The reply is a yes with no pick, so onProbeAnswer
+  // offers new times; booking every offered time would confirm a time they never accepted.
+  const unoffered = await jsonl<{ text: string; label: "yes"; keys: string[] }>("network/consent-unoffered-days.jsonl");
+  const booked = unoffered.filter(l => {
+    const r = parseProbeReply(l.text, OPTIONS);
+    return r.answer !== "yes" || r.keys.length > 0;
+  });
+  b.gate(`consent replies: an unoffered day books no offered time (n ${unoffered.length})`, unoffered.length >= 16 && booked.length === 0, booked.slice(0, 5).map(l => l.text).join(" | "));
+
   const benign = (await Bun.file(`${ROOT}/network/benign-adult.txt`).text()).trim().split("\n");
   const flagged = benign.filter(t => classify(t).abuse.length);
   b.gate(`benign adult phrasing: precision >= 99% (n ${benign.length})`, benign.length >= 200 && 1 - flagged.length / benign.length >= 0.99, pct(1 - flagged.length / benign.length));
