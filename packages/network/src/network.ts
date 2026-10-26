@@ -4629,7 +4629,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     const why = this.managerProblem(m.id);
     if (why && !step.draft?.close) { clear(); return reply(why === "adults_only" ? POSTING_COPY.adultsOnly : why === "opt_in" ? POSTING_COPY.optIn : POSTING_COPY.notReady); }
     if (!step.draft) { clear(); return reply(step.text); }
-    const asks = (waiting?.asks ?? 0) + (step.ready ? 0 : 1);
+    // Intake carries this draft's questions forward; a new posting starts without that count.
+    const asks = (step.draft.asks ?? 0) + (step.ready ? 0 : 1);
     // Two questions without the missing field: the draft is dropped (one question at a time, never a loop).
     if (asks > 2) { clear(); return reply(POSTING_COPY.dropped); }
     m.posting = { ...step.draft, asks, ready: step.ready };
