@@ -152,7 +152,9 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
     await s.start();
     await text(s, clock, phone, "yes");
     expect(await last(manager)).toBe("Updated: data analyst.");
-    expect(await savedTags()).toEqual(original.map(t => t === "peon:openings:2" ? "peon:openings:3" : t).sort());
+    // A confirmed save may advance its revision time; every other saved field must be preserved.
+    const withoutRevisionTime = (tags: string[]) => tags.filter(t => !t.startsWith("peon:posting_updated_at:"));
+    expect(withoutRevisionTime(await savedTags())).toEqual(withoutRevisionTime(original.map(t => t === "peon:openings:2" ? "peon:openings:3" : t).sort()));
     expect((await postings(manager)).map(x => x.id)).toEqual([p.id]);
 
     // Another partial edit and a correction retain the saved fields; a no discards both edits.
