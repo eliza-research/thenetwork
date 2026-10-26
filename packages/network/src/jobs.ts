@@ -145,7 +145,7 @@ export interface IntakeStep { draft?: PostingDraft; text: string; ready: boolean
  * starts a new draft (or a close); a text while a draft waits corrects it. Returns the next message:
  * a question for a missing field, or the read-back (ready: a yes saves it).
  */
-export function readPostingText(body: string, ctx: { draft?: PostingDraft; postings: readonly PostingRef[]; newId: string }): IntakeStep | undefined {
+export function readPostingText(body: string, ctx: { draft?: PostingDraft; postings: readonly PostingRef[]; newId: string; storedPosting?: (id: string) => JobPosting | undefined }): IntakeStep | undefined {
   const command = POSTING_COMMAND.test(body);
   if (!command && !ctx.draft) return undefined;
   if (command && CLOSE_COMMAND.test(body)) {
@@ -164,14 +164,22 @@ export function readPostingText(body: string, ctx: { draft?: PostingDraft; posti
     return { draft: { close: true, id: pick[0]!.id, title: pick[0]!.title }, text: POSTING_COPY.readBackClose(pick[0]!.title), ready: true };
   }
   const read = parsePosting(body);
-  const base: PostingDraft = command && !/^\s*update\b/i.test(body) ? { id: ctx.newId } : { ...(ctx.draft ?? {}) };
+  let base: PostingDraft = command && !/^\s*update\b/i.test(body) ? { id: ctx.newId } : { ...(ctx.draft ?? {}) };
   if (command && /^\s*update\b/i.test(body)) {
-    // "Update my data analyst post: 3 openings": the named (or only) active post, its stored fields kept by the caller.
+    // "Update my data analyst post: 3 openings": begin with the named (or only) active post,
+    // so missing-field checks and the confirmation describe the same fields that will be saved.
     const open = ctx.postings.filter(p => p.active);
     const named = open.filter(p => body.toLowerCase().includes(p.title.toLowerCase()));
     const pick = named.length === 1 ? named[0] : open.length === 1 ? open[0] : undefined;
     if (!pick) return { text: open.length ? POSTING_COPY.whichToClose(open.map(p => p.title)).replace("close", "update") : POSTING_COPY.nothingToClose, ready: false };
-    if (base.id !== pick.id) { base.id = pick.id; base.title ??= pick.title; }
+    if (base.id !== pick.id) {
+      base = { id: pick.id, title: pick.title };
+      const prev = ctx.storedPosting?.(pick.id);
+      if (prev) {
+        const { family, seniority, openings, payMin, payMax, mode, area, must, nice, sponsors } = prev;
+        Object.assign(base, { family, seniority, openings, payMin, payMax, mode, area, must, nice, sponsors });
+      }
+    }
     if (read.title?.toLowerCase() === pick.title.toLowerCase() || (read.title && body.toLowerCase().includes(`${read.title} post`))) delete read.title;
   }
   const merged: PostingDraft = { ...base };

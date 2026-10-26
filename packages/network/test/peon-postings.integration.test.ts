@@ -127,4 +127,47 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
     expect(snap.facets.find(f => f.id === `${seat}:openings`)?.tags).toEqual(["peon:openings:0"]);
     expect(snap.facets.filter(f => f.memberId === seat).flatMap(f => f.tags)).toContain("peon:verified");
   }, T);
+
+  test("partial text updates keep the saved post in the read-back, including across restart before confirmation", async () => {
+    await svc?.close();
+    const clock = new SimClock(START + 24 * 60 * MINUTE);
+    let s = svc = service(clock);
+    await s.start();
+    const phone = "+12125550173";
+    await text(s, clock, phone, "peon");
+    await text(s, clock, phone, "Morgan, 34");
+    const manager = (await memberId(phone))!;
+    await text(s, clock, phone, "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL");
+    await text(s, clock, phone, "yes");
+    const [p] = await postings(manager);
+    const savedTags = async () => ((await sql`select tags from network.facets where app_id = 'peon' and member_id = ${manager} and ${`peon:posting:${p.id}`} = any(tags)`) as any[]).flatMap(r => r.tags as string[]).sort();
+    const original = await savedTags();
+    expect(original).toContain("peon:openings:2");
+
+    await text(s, clock, phone, "Update my data analyst post: 3 openings");
+    expect(await last(manager)).toMatch(/^Here's your job post: Data analyst, 3 openings, \$90k-\$120k a year, hybrid in Brooklyn\..*Must-haves: sql.*Reply yes to post it/);
+    expect(await savedTags()).toEqual(original);
+    await s.close();
+    s = svc = service(clock);
+    await s.start();
+    await text(s, clock, phone, "yes");
+    expect(await last(manager)).toBe("Updated: data analyst.");
+    expect(await savedTags()).toEqual(original.map(t => t === "peon:openings:2" ? "peon:openings:3" : t).sort());
+    expect((await postings(manager)).map(x => x.id)).toEqual([p.id]);
+
+    // Another partial edit and a correction retain the saved fields; a no discards both edits.
+    const updated = await savedTags();
+    await text(s, clock, phone, "Update my data analyst post: $100k-$140k");
+    expect(await last(manager)).toMatch(/^Here's your job post: Data analyst, 3 openings, \$100k-\$140k a year, hybrid in Brooklyn\./);
+    await text(s, clock, phone, "actually 4 openings");
+    expect(await last(manager)).toMatch(/^Here's your job post: Data analyst, 4 openings, \$100k-\$140k a year, hybrid in Brooklyn\./);
+    await text(s, clock, phone, "no");
+    expect(await last(manager)).toBe(POSTING_COPY.dropped);
+    expect(await savedTags()).toEqual(updated);
+
+    // A new job still requires its own salary; the previous post is not a default for it.
+    await text(s, clock, phone, "We're hiring a cashier, 1 opening");
+    expect(await last(manager)).toBe(POSTING_COPY.askPay);
+    expect(await postings(manager)).toHaveLength(1);
+  }, T);
 });

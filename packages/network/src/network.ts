@@ -4624,7 +4624,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       }
       if (yn === "no" && !/\d|\$/.test(body)) { clear(); return reply(POSTING_COPY.dropped); }
     }
-    const step = readPostingText(body, { ...(waiting ? { draft: waiting } : {}), postings: postingsOf(this.snapshotCached(), m.id), newId: `${m.id.replace(/[^A-Za-z0-9_.-]/g, "")}-job-${this.now().toString(36)}` });
+    const step = readPostingText(body, { ...(waiting ? { draft: waiting } : {}), postings: postingsOf(this.snapshotCached(), m.id),
+      storedPosting: id => this.storedPosting(m.id, id), newId: `${m.id.replace(/[^A-Za-z0-9_.-]/g, "")}-job-${this.now().toString(36)}` });
     if (!step) { if (waiting) clear(); return false; }
     const why = this.managerProblem(m.id);
     if (why && !step.draft?.close) { clear(); return reply(why === "adults_only" ? POSTING_COPY.adultsOnly : why === "opt_in" ? POSTING_COPY.optIn : POSTING_COPY.notReady); }
