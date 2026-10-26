@@ -2586,8 +2586,9 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** The most recent meeting this member went to, already held, that they have not given feedback on. */
   private feedbackDue(m: MemberState): Opp | undefined {
     const now = this.now();
-    return [...this.opps.values()].reverse().find(o => o.stage === "done" && o.status.get(m.id) === "yes" && !o.feedbackFrom.has(m.id)
-      && o.meetingAt !== undefined && o.meetingAt <= now && now - o.meetingAt < 7 * DAY);
+    return [...this.opps.values()].reverse().filter(o => o.stage === "done" && o.status.get(m.id) === "yes" && !o.feedbackFrom.has(m.id)
+      && o.meetingAt !== undefined && o.meetingAt <= now && now - o.meetingAt < 7 * DAY)
+      .sort((a, b) => b.meetingAt! - a.meetingAt!)[0];
   }
 
   private onFeedback(m: MemberState, o: Opp, body: string, f = feedbackOf(body)) {
