@@ -332,7 +332,8 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       return [id, f] as const;
     }));
     const acts = [...(w.pack.plans?.activities ?? [])].map(a => ({ a, n: pool.filter(id => (fits.get(id)!.get(a.id) ?? 0) >= cfg.minFit).length }))
-      .filter(x => x.n >= minInvite).sort((x, y) => (y.n - x.n) || (x.a.id < y.a.id ? -1 : 1));
+      .filter(x => x.n >= minInvite && inp.venues.some(v => v.city === "nyc" && v.activities.includes(x.a.id)))
+      .sort((x, y) => (y.n - x.n) || (x.a.id < y.a.id ? -1 : 1));
     for (const { a } of acts) {
       const cand = pool.filter(id => !used.has(id) && (fits.get(id)!.get(a.id) ?? 0) >= cfg.minFit && (w.get(id)!.m.age ?? 0) >= a.ageMin);
       if (cand.length < minInvite) continue;
