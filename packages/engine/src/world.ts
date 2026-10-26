@@ -148,6 +148,7 @@ export class World {
     // --- interactions ----------------------------------------------------------------------
     this.interactions = (input.interactions ?? []).map(r => ({
       ...r, participants: r.participants.map(C), declinedBy: r.declinedBy?.map(C), contributors: r.contributors?.map(C),
+      acceptedBy: r.acceptedBy?.map(C), noResponse: r.noResponse?.map(C),
     }));
     for (const r of this.interactions) {
       for (let i = 0; i < r.participants.length; i++) for (let j = i + 1; j < r.participants.length; j++) {
@@ -169,9 +170,13 @@ export class World {
     const resolved = new Set(this.interactions.filter(r => r.outcome !== "pending").map(r => r.id));
     // v1.2: proposals the Network never sent neither count against budgets nor block the pair.
     const unsent = new Set(cfg.dispatch.billOnlySent ? input.unsentProposalIds ?? [] : []);
-    const recent: Proposal[] = (input.recentProposals ?? []).filter(p => !unsent.has(p.id)).map(p => ({
-      ...p, participants: p.participants.map(C), alternates: (p.alternates ?? []).map(C),
-    }));
+    const recent: Proposal[] = (input.recentProposals ?? []).filter(p => !unsent.has(p.id)).map(p => {
+      const roles = (p as Proposal & { roles?: Record<MemberId, Role> }).roles;
+      return {
+        ...p, participants: p.participants.map(C), alternates: (p.alternates ?? []).map(C),
+        ...(roles ? { roles: Object.fromEntries(Object.entries(roles).map(([id, role]) => [C(id), role])) } : {}),
+      };
+    });
     for (const p of recent) {
       for (let i = 0; i < p.participants.length; i++) for (let j = i + 1; j < p.participants.length; j++) {
         const k = pairKey(p.participants[i]!, p.participants[j]!);
