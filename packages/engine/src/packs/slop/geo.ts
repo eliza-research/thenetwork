@@ -2,10 +2,10 @@
 // holding BOTH ways (PRD 40.5). Members are placed on coarse cells snapped from their zip centroid
 // (zips.ts); a visitor to another market is placed at that market's anchor cell. A pair can meet in a
 // market both date in this week when the cell distance plus a safety margin is within BOTH members'
-// limits: d <= min(rA, rB). Time overlap (presence, trips, multi-city routines) is the core
-// city-bucket model, unchanged. Members only ever see a distance band ("2-5 mi").
+// limits: d <= min(rA, rB). Time overlap uses the core presence intervals, restricted to those
+// qualifying markets. Members only ever see a distance band ("2-5 mi").
 import type { City, MemberId } from "@thenetwork/core";
-import { cityBucketGeo } from "../../geo.ts";
+import { cityBucketGeo, overlapInMarkets } from "../../geo.ts";
 import type { GeoModel } from "../../pack.ts";
 import type { World } from "../../world.ts";
 import type { SlopPackOptions } from "./options.ts";
@@ -42,7 +42,17 @@ export function makeRadiusGeo(o: SlopPackOptions): GeoModel {
     markets: cfg => cfg.cities,
     tz: (market, cfg) => cfg.timezones[market] ?? "UTC",
     location: (w, id, start, end) => cityBucketGeo.location(w, id, start, end),
-    overlap: (w, ids, start, end, preferred) => cityBucketGeo.overlap(w, ids, start, end, preferred),
+    overlap(w, ids, start, end, preferred) {
+      const P = prof(w);
+      let markets = w.cfg.cities;
+      for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
+        const a = P.get(ids[i]!), b = P.get(ids[j]!);
+        if (!a || !b) return null;
+        const allowed = new Set(mutualMarkets(a, b, o, markets).map(m => m.market));
+        markets = markets.filter(m => allowed.has(m));
+      }
+      return overlapInMarkets(w, ids, start, end, markets, preferred);
+    },
     /** Same coarse cell (activation cost). */
     sharesArea(w: World, ids: MemberId[], market: City | undefined): boolean {
       if (!market || ids.length < 2) return false;
