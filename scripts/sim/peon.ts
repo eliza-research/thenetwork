@@ -7,6 +7,10 @@
 // --quick: seed 13, 4 weeks; only the safety gates block.
 import { canBeMatched, DAY, type Facet, type Member, type Presence } from "../../packages/core/src/index.ts";
 import { runEngine } from "../../packages/engine/src/engine.ts";
+import { resolveConfig } from "../../packages/engine/src/config.ts";
+import { localEmbed } from "../../packages/engine/src/embed.ts";
+import { World } from "../../packages/engine/src/world.ts";
+import { historyOf } from "../../packages/engine/src/packs/peon/profile.ts";
 import { JOB_INTENT, T } from "../../packages/engine/src/packs/peon/schema.ts";
 import { isSeatId, peonSeatCapacity, peonSeats, seatIdOf } from "../../packages/engine/src/packs/peon/seats.ts";
 import type { EngineInput, InteractionRecord } from "../../packages/engine/src/types.ts";
@@ -102,6 +106,34 @@ export async function peonBlock(b: Block, o: { quick: boolean }): Promise<void> 
       expect(proposals).toBeGreaterThan(5);
       // Some seat filled to its openings and then stopped (the gate is not vacuous).
       expect([...filled].some(([seat, n]) => n === posted.get(seat) && n > 0)).toBe(true);
+    }
+  });
+
+  await b.run("hiring history and recommendations survive aliases in acceptance and no-response records", async () => {
+    for (const seed of [1, 2, 3]) {
+      const input = peonTestWorld({ seed, candidates: 90, jobs: 20 });
+      const cfg = { ...PEON_ENGINE_CONFIG, seed };
+      const initial = await runEngine(input, cfg, { pack: peonPack });
+      expect(initial.proposals.length).toBeGreaterThan(3);
+      const interactions: InteractionRecord[] = initial.proposals.map((p, i) => ({
+        id: `history-${i}`, kind: p.kind, category: p.category, participants: p.participants, at: input.now - 7 * DAY,
+        outcome: i % 3 === 0 ? "pending" : i % 3 === 1 ? "completed" : "expired",
+        acceptedBy: i % 3 === 1 ? p.participants : p.participants.filter(id => id.startsWith("c")),
+        noResponse: i % 3 === 2 ? p.participants.filter(id => id.startsWith("j")) : [],
+      }));
+      const canonical: EngineInput = { ...input, interactions,
+        idAliases: { ...input.idAliases, ...Object.fromEntries(input.members.map(m => [`legacy:${m.id}`, m.id])) } };
+      const aliased: EngineInput = { ...canonical, interactions: interactions.map(r => ({ ...r,
+        participants: r.participants.map(id => `legacy:${id}`),
+        acceptedBy: r.acceptedBy?.map(id => `legacy:${id}`), noResponse: r.noResponse?.map(id => `legacy:${id}`),
+      })) };
+      const expected = await runEngine(canonical, cfg, { pack: peonPack });
+      const actual = await runEngine(aliased, cfg, { pack: peonPack });
+      expect(expected.proposals.length).toBeGreaterThan(0);
+      expect(actual.proposals).toEqual(expected.proposals);
+      const a = new World(canonical, resolveConfig(cfg), localEmbed, peonPack);
+      const b = new World(aliased, resolveConfig(cfg), localEmbed, peonPack);
+      for (const id of a.ids) expect(historyOf(b, id)).toEqual(historyOf(a, id));
     }
   });
 

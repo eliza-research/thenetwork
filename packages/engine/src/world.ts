@@ -148,6 +148,7 @@ export class World {
     // --- interactions ----------------------------------------------------------------------
     this.interactions = (input.interactions ?? []).map(r => ({
       ...r, participants: r.participants.map(C), declinedBy: r.declinedBy?.map(C), contributors: r.contributors?.map(C),
+      acceptedBy: r.acceptedBy?.map(C), noResponse: r.noResponse?.map(C),
     }));
     for (const r of this.interactions) {
       for (let i = 0; i < r.participants.length; i++) for (let j = i + 1; j < r.participants.length; j++) {
