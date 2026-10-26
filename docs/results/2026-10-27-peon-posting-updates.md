@@ -57,6 +57,8 @@ REQUIRE_PG=1 bun run test:e2e
 - E2E: 42 pass, 1 optional skip, 0 fail; 654 assertions, 43 tests in three files, 77.21 seconds.
 - Combined locally with the preceding eight contribution PRs: clean cherry-pick, typecheck passes, 9/9 job-seat gates pass; both posting integration cases pass with 54 assertions (5.96 seconds).
 
+Compatibility follow-up (`32125f2d2aaff09aa3d1f23ae9672772af7cc6e9`): the later posting-metadata fix makes a confirmed edit correctly advance its stored update time. The successful-save assertion now excludes only the revision-time tag when comparing the unchanged job fields. Before confirmation and after cancellation, the test still compares every stored tag. The metadata regression separately verifies exact update times. This is a test-only adjustment: the isolated posting file still passes both tests (54 assertions, 7.88 seconds), all four typecheck configurations pass, and the eleven-contribution combination passes all four posting cases (109 assertions, 7.10 seconds). The full integration, e2e and simulation results above precede this assertion adjustment; production code is unchanged.
+
 The simulation's existing pinned settings are unchanged. Network covers seed 3 over 10 days plus the consent/push comparisons on seeds 1-3 over 21 days and scenarios. Peon uses seeds 13-16, eight weeks, 400 candidates and 80 jobs per city, pack/keyword/oracle arms and realism v2. The job-seat block uses its existing hand-built service world. No new quality threshold was fitted. The repo's one-full-simulation-per-agent allowance was already used for PR #136; these runs cover the affected blocks.
 
 ## safety_gates
