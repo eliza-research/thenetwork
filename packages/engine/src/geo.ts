@@ -5,7 +5,7 @@
 // or point, mutual radius) implements the same interface plus `pairReason` / `displayDistance`.
 import type { City, MemberId, Presence } from "@thenetwork/core";
 import { HOUR } from "@thenetwork/core";
-import type { GeoModel } from "./pack.ts";
+import type { GeoModel, GeoOverlap } from "./pack.ts";
 import { intersect, subtract, union, type Interval } from "./interval.ts";
 import type { World } from "./world.ts";
 
@@ -37,20 +37,7 @@ export const cityBucketGeo: GeoModel = {
   },
 
   /** Common availability of all members in one city (prefers `preferred`, else largest overlap). */
-  overlap(w: World, ids: MemberId[], start: number, end: number, preferred?: City): { city: City; intervals: Interval[]; hours: number } | null {
-    const locs = ids.map(id => w.locationCached(id, start, end));
-    let best: { city: City; intervals: Interval[]; hours: number } | null = null;
-    for (const city of w.cfg.cities) {
-      let ivs: Interval[] = [[start, end]];
-      for (const l of locs) { ivs = intersect(ivs, l.get(city) ?? []); if (!ivs.length) break; }
-      const hours = ivs.reduce((s, [a, b]) => s + (b - a), 0) / HOUR;
-      const required = Math.min(w.cfg.minOverlapHours, ((end - start) / HOUR) * 0.99);
-      if (hours <= 0 || hours < required) continue;
-      const bonus = city === preferred ? 1e6 : 0;
-      if (!best || hours + bonus > best.hours + (best.city === preferred ? 1e6 : 0)) best = { city, intervals: ivs, hours };
-    }
-    return best;
-  },
+  overlap: (w, ids, start, end, preferred) => overlapInMarkets(w, ids, start, end, w.cfg.cities, preferred),
 
   /** Activation cost input: every member lists one common area (neighbourhood) in the configuration's city. */
   sharesArea(w: World, ids: MemberId[], market: City | undefined): boolean {
@@ -59,3 +46,19 @@ export const cityBucketGeo: GeoModel = {
     return areaSets.length > 1 && [...areaSets[0]!].some(a => areaSets.every(s => s.has(a)));
   },
 };
+
+/** Search only eligible markets; preserve presence intervals, preferred city and overlap thresholds. */
+export function overlapInMarkets(w: World, ids: MemberId[], start: number, end: number, markets: readonly City[], preferred?: City): GeoOverlap | null {
+  const locs = ids.map(id => w.locationCached(id, start, end));
+  let best: GeoOverlap | null = null;
+  for (const city of markets) {
+    let ivs: Interval[] = [[start, end]];
+    for (const l of locs) { ivs = intersect(ivs, l.get(city) ?? []); if (!ivs.length) break; }
+    const hours = ivs.reduce((s, [a, b]) => s + (b - a), 0) / HOUR;
+    const required = Math.min(w.cfg.minOverlapHours, ((end - start) / HOUR) * 0.99);
+    if (hours <= 0 || hours < required) continue;
+    const bonus = city === preferred ? 1e6 : 0;
+    if (!best || hours + bonus > best.hours + (best.city === preferred ? 1e6 : 0)) best = { city, intervals: ivs, hours };
+  }
+  return best;
+}
