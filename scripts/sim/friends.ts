@@ -4,13 +4,13 @@
 // tracked metrics (printed, non-blocking), the harness caps, and the conformance rules for friendsPack.
 // PINNED (CI): seeds 5-8, 8 weeks, 400 personas (docs/results/2026-10-08-friends-pack.md, held-out).
 // --quick: seed 5, 4 weeks, 200 personas; only the safety gates block.
-import { canBeMatched, type MemberId } from "../../packages/core/src/index.ts";
+import { canBeMatched, DAY, type Facet, type MemberId } from "../../packages/core/src/index.ts";
 import * as A from "../../packages/engine/src/attention.ts";
 import { resolveConfig } from "../../packages/engine/src/config.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
 import { runEngine } from "../../packages/engine/src/engine.ts";
 import { candidateReason, memberReason } from "../../packages/engine/src/filters.ts";
-import { DEFAULT_FRIENDS_POLICY, FRIENDS_PLANS, ROMANCE_FRAMING, friendsInfo, friendsPack, planFriendsWeek } from "../../packages/engine/src/packs/friends/index.ts";
+import { DEFAULT_FRIENDS_POLICY, FRIENDS_PLANS, FRIENDS_SLOTS, ROMANCE_FRAMING, friendsInfo, friendsPack, planFriendsWeek } from "../../packages/engine/src/packs/friends/index.ts";
 import { buildPlanProbe } from "../../packages/engine/src/plans.ts";
 import type { Candidate, EngineInput } from "../../packages/engine/src/types.ts";
 import { World } from "../../packages/engine/src/world.ts";
@@ -74,6 +74,39 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
     return { s, w, wk: planFriendsWeek(w, { now: s.now, tz: NYC_TZ, evidence: evidenceOf(w, s), venues: VENUES, crews: s.crews.filter(c => !c.handedOff), outcomes: s.outcomes, offered: s.offered }, DEFAULT_FRIENDS_POLICY, FRIENDS_PLANS) };
   };
   const allPlans = (wk: ReturnType<typeof weekOf>["wk"]) => [...wk.sessions, ...wk.offers.map(x => x.first), ...wk.repeats, ...wk.plans, ...wk.partners];
+
+  await b.run("availability: future weekly slots do not change current plans; active slots still take effect", () => {
+    const failures: number[] = [];
+    const observations: { seed: number; basePlans: number; futurePlans: number; sameFuturePlans: boolean; activeChangesPlans: boolean }[] = [];
+    for (const seed of [101, 102, 103]) {
+      const r = runFriendsWorld({ seed, n: 160, weeks: 3, matcher: BASELINES.random });
+      r.world.state.week = 3; r.world.state.now += 7 * DAY;
+      const s = buildFriendsSnapshot(r.world.personas, r.world.state);
+      const extra: Facet[] = s.members.filter(m => canBeMatched(m.age)).map(m => ({
+        id: `future-free-${m.id}`, memberId: m.id, kind: "availability_pattern", value: "Additional weekly availability",
+        tags: FRIENDS_SLOTS.map(slot => `friends:free:${slot}`), scope: "agent_private", provenance: "said", confidence: 1,
+        source: "chat", confirmedByMember: true, validFrom: s.now + 30 * DAY,
+      }));
+      const plan = (added: Facet[]) => {
+        const snap = { ...s, facets: [...s.facets, ...added] };
+        const w = new World(engineInputOf(snap), resolveConfig({ seed }), localEmbed, friendsPack);
+        return planFriendsWeek(w, { now: s.now, tz: NYC_TZ, evidence: evidenceOf(w, snap), venues: VENUES,
+          crews: s.crews.filter(c => !c.handedOff), outcomes: s.outcomes, offered: s.offered }, DEFAULT_FRIENDS_POLICY, FRIENDS_PLANS);
+      };
+      const base = plan([]), future = plan(extra);
+      const active = plan(extra.map(f => ({ ...f, validFrom: s.now })));
+      const expired = plan(extra.map(f => ({ ...f, validFrom: s.now - 30 * DAY, validTo: s.now - 1 })));
+      expect(allPlans(base).length).toBeGreaterThan(0);
+      expect(Bun.deepEquals(expired, base)).toBe(true);
+      // Positive control: the very same availability matters at its inclusive start boundary.
+      expect(Bun.deepEquals(active, base)).toBe(false);
+      const sameFuturePlans = Bun.deepEquals(future, base);
+      if (!sameFuturePlans) failures.push(seed);
+      observations.push({ seed, basePlans: allPlans(base).length, futurePlans: allPlans(future).length, sameFuturePlans, activeChangesPlans: !Bun.deepEquals(active, base) });
+    }
+    console.log(`  future availability: ${JSON.stringify(observations)}`);
+    expect(failures).toEqual([]);
+  });
 
   await b.run("conformance friends: no romance at any layer (lane, member, pair, attention item, probe, explanations, plan probes)", async () => {
     expect(friendsPack.ontology.lanes.map(l => l.id)).not.toContain("romance");
