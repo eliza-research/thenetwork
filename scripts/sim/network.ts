@@ -4,7 +4,10 @@
 // attention and plans invariants on the consent arms; and the shared conformance rules for networkPack.
 import { readdirSync } from "node:fs";
 import { DAY, HOUR, MINUTE, type MemberId } from "../../packages/core/src/index.ts";
-import { DEFAULT_ATTENTION } from "../../packages/engine/src/index.ts";
+import { DEFAULT_ATTENTION, localEmbed, resolveConfig, runEngine } from "../../packages/engine/src/index.ts";
+import { randomWorld } from "../../packages/engine/src/testkit.ts";
+import type { EngineInput } from "../../packages/engine/src/types.ts";
+import { World as EngineWorld } from "../../packages/engine/src/world.ts";
 import { networkPack } from "../../packages/engine/src/packs/network/index.ts";
 import type { RunRecord } from "../../packages/core/src/index.ts";
 import { computeMetrics } from "../../packages/sim/src/judge/metrics.ts";
@@ -36,6 +39,34 @@ async function world(days: number, seed = 3, network: NetworkOptions = { review:
 }
 
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
+  await b.run("proposal history: contribution counts and recommendations survive role ID aliases", async () => {
+    for (const seed of [1, 2, 3]) {
+      const input = randomWorld({ seed, members: 120, minors: false });
+      const initial = await runEngine(input, { seed });
+      const p = initial.proposals.find(p => p.kind !== "help" && Object.values(p.roles).some(r => networkPack.ontology.contributorRoles.has(r)));
+      expect(p).toBeTruthy();
+      const contributor = p!.participants.find(id => networkPack.ontology.contributorRoles.has(p!.roles[id]!))!;
+      // Outside the ordinary weekly contact budget, but still inside the contribution window.
+      const recentProposals = [0, 1].map(i => ({ ...p!, id: `past-${i}`, createdAt: input.now - 10 * DAY }));
+      const canonical: EngineInput = { ...input, recentProposals,
+        idAliases: { ...input.idAliases, ...Object.fromEntries(input.members.map(m => [`legacy:${m.id}`, m.id])) } };
+      const expected = await runEngine(canonical, { seed });
+      expect(expected.proposals.length).toBeGreaterThan(0);
+      const a = new EngineWorld(canonical, resolveConfig({ seed }), localEmbed);
+      expect(a.get(contributor)!.recentContribution).toBe(2);
+      for (const rolesOnly of [false, true]) {
+        const aliased: EngineInput = { ...canonical, recentProposals: recentProposals.map(p => ({ ...p,
+          participants: rolesOnly ? p.participants : p.participants.map(id => `legacy:${id}`),
+          roles: Object.fromEntries(Object.entries(p.roles).map(([id, role]) => [`legacy:${id}`, role])),
+        })) };
+        const actual = await runEngine(aliased, { seed });
+        const z = new EngineWorld(aliased, resolveConfig({ seed }), localEmbed);
+        for (const id of a.ids) expect(z.get(id)!.recentContribution).toBe(a.get(id)!.recentContribution);
+        expect(actual.proposals).toEqual(expected.proposals);
+      }
+    }
+  });
+
   // ---- invariants: NYC, 10 days, seed 3, simulated reviewer ---------------------------------------
   const run = await world(10);
   await run.w.advanceTo(run.w.end);
