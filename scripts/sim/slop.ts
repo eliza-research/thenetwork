@@ -86,6 +86,34 @@ export function slopWorld(seed: number, o: { perCity?: number; minorShare?: numb
 }
 
 export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> {
+  await b.run("date plans preserve aliased profile fields after matching, regardless of profile-cache order", async () => {
+    for (const seed of [1, 2, 3]) {
+      const input = slopWorld(seed, { perCity: 50, minorShare: 0 });
+      const alias = (id: MemberId) => `legacy:${id}`;
+      const aliased: EngineInput = { ...input,
+        facets: input.facets.map(f => ({ ...f, memberId: alias(f.memberId) })),
+        presence: input.presence.map(p => ({ ...p, memberId: alias(p.memberId) })),
+        intents: input.intents.map(i => ({ ...i, memberId: alias(i.memberId) })),
+        idAliases: { ...input.idAliases, ...Object.fromEntries(input.members.flatMap(m => [[alias(m.id), `prior:${m.id}`], [`prior:${m.id}`, m.id]])) },
+      };
+      const cfg = { ...SLOP_ENGINE_CONFIG, seed };
+      const expected = await runEngine(input, cfg, { pack: slopPack });
+      const actual = await runEngine(aliased, cfg, { pack: slopPack });
+      expect(expected.proposals.length).toBeGreaterThan(0);
+      expect(actual.proposals).toEqual(expected.proposals);
+      const plans = (data: EngineInput) => actual.proposals.map(p => planFromInput(data, p.participants[0]!, p.participants[1]!, ["sf", "nyc", "la"], slopPack.options));
+      const expectedPlans = plans(input);
+      expect(expectedPlans.every(Boolean)).toBe(true);
+      // The standalone planner and engine consumers can read the same input in either order.
+      for (const warm of [false, true]) {
+        const data = { ...aliased };
+        if (warm) slopProfiles(data, id => id);
+        expect(plans(data)).toEqual(expectedPlans);
+        expect(plans(data)).toEqual(expectedPlans);
+      }
+    }
+  });
+
   // ---- launch gates on the pinned seeds -------------------------------------------------------------
   const spec = o.quick ? { seeds: [13], weeks: 2, perCity: 150 } : SLOP_PINNED;
   const random = await runArm("random", spec.seeds, spec.weeks, spec.perCity, undefined, POPULATION);
