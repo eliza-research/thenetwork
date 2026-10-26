@@ -384,7 +384,9 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       // Venue: minimize the longest trip (finish() always re-picks for new plans), then the options.
       const fp = finish(plan, "new", true);
       if (!fp) continue;
-      fp.options = opts.map(o => ({ start: o.start, end: o.start + a.durationMin * 60_000 }));
+      const venue = fp.venueId ? venueById.get(fp.venueId) : undefined;
+      fp.options = opts.filter(o => !venue || venueOpen(venue, o, a.durationMin, tz, att))
+        .map(o => ({ start: o.start, end: o.start + a.durationMin * 60_000 }));
       out.plans.push(fp);
       for (const id of [...fp.invited, ...fp.alternates]) used.add(id);
     }

@@ -4,7 +4,7 @@
 // tracked metrics (printed, non-blocking), the harness caps, and the conformance rules for friendsPack.
 // PINNED (CI): seeds 5-8, 8 weeks, 400 personas (docs/results/2026-10-08-friends-pack.md, held-out).
 // --quick: seed 5, 4 weeks, 200 personas; only the safety gates block.
-import { canBeMatched, type MemberId } from "../../packages/core/src/index.ts";
+import { canBeMatched, DAY, HOUR, localParts, type MemberId } from "../../packages/core/src/index.ts";
 import * as A from "../../packages/engine/src/attention.ts";
 import { resolveConfig } from "../../packages/engine/src/config.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
@@ -40,6 +40,33 @@ function friendsSnapshotAfter(seed: number, weeks = 3, n = 160): FriendsSnapshot
 const friendsWorld = (seed: number): EngineInput => engineInputOf(friendsSnapshotAfter(seed));
 
 export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<void> {
+  await b.run("tables: every offered time fits the selected venue's opening hours", () => {
+    for (const seed of [101, 102, 103]) {
+      const r = runFriendsWorld({ seed, n: 160, weeks: 3, matcher: BASELINES.random });
+      r.world.state.week = 3; r.world.state.now += 7 * DAY;
+      const s = buildFriendsSnapshot(r.world.personas, r.world.state);
+      const w = new World(engineInputOf(s), resolveConfig({ seed }), localEmbed, friendsPack);
+      // A venue can serve evenings on weekdays and only mornings on weekends.
+      const venues = VENUES.map(v => ({ ...v, hours: { weekday: [18, 23] as [number, number], weekend: [9, 12] as [number, number] } }));
+      const wk = planFriendsWeek(w, { now: s.now, tz: NYC_TZ, evidence: evidenceOf(w, s), venues, crews: [], outcomes: [], offered: [] },
+        { ...DEFAULT_FRIENDS_POLICY, crews: false, repeat: false, tableOptions: 3 }, FRIENDS_PLANS);
+      const placed = wk.plans.filter(p => p.venueId);
+      expect(placed.length).toBeGreaterThan(0);
+      expect(placed.some(p => p.options.length > 1)).toBe(true);
+      for (const p of placed) {
+        const v = venues.find(v => v.id === p.venueId)!;
+        expect(p.options.some(o => o.start === p.window.start && o.end === p.window.end)).toBe(true);
+        for (const option of p.options) {
+          const lp = localParts(option.start, NYC_TZ);
+          const [open, close] = [0, 6].includes((lp.weekday + 1) % 7) ? v.hours.weekend : v.hours.weekday;
+          const start = lp.hour + lp.minute / 60;
+          expect(start).toBeGreaterThanOrEqual(open);
+          expect(start + (option.end - option.start) / HOUR).toBeLessThanOrEqual(close);
+        }
+      }
+    }
+  });
+
   const spec = o.quick ? { seeds: [5], weeks: 4, n: 200 } : FRIENDS_PINNED;
   const all: Record<"pack" | "random" | "oracle", FriendsMetrics[]> = { pack: [], random: [], oracle: [] };
   const matchers = { pack: friendsPackMatcher(), random: BASELINES.random, oracle: BASELINES.oracle };
