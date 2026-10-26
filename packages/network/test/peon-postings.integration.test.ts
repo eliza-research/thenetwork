@@ -68,6 +68,82 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
     await admin(`drop database if exists ${DB} with (force)`).catch(() => {});
   });
 
+  test("a missing title can be answered directly after restart, then read back and confirmed", async () => {
+    await svc?.close();
+    const clock = new SimClock(START + 3 * 24 * 60 * MINUTE);
+    let s = svc = service(clock);
+    await s.start();
+    const rows = [
+      { phone: "+12125550181", answer: "Data analyst", title: "data analyst" },
+      { phone: "+12125550182", answer: "Senior data analyst", title: "senior data analyst" },
+      { phone: "+12125550183", answer: "C++ developer", title: "c++ developer" },
+      { phone: "+12125550184", answer: "title: Data analyst", title: "data analyst" },
+    ];
+    const start = "Job posting: 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL";
+    const managers: string[] = [];
+    for (const row of rows) {
+      await text(s, clock, row.phone, "peon");
+      await text(s, clock, row.phone, "Taylor, 34");
+      const manager = (await memberId(row.phone))!;
+      managers.push(manager);
+      await text(s, clock, row.phone, start);
+      expect(await last(manager)).toBe(POSTING_COPY.askTitle);
+      expect(await postings(manager)).toHaveLength(0);
+    }
+    await s.close();
+    s = svc = service(clock);
+    await s.start();
+    const observations: { answer: string; readBack: boolean; saved: boolean }[] = [];
+    for (const [i, row] of rows.entries()) {
+      const manager = managers[i]!;
+      await text(s, clock, row.phone, row.answer);
+      const readBack = (await last(manager)).toLowerCase().startsWith(`here's your job post: ${row.title}, 2 openings, $90k-$120k a year, hybrid in brooklyn.`);
+      expect(await postings(manager)).toHaveLength(0);
+      if (readBack) expect(await last(manager)).toContain("Must-haves: sql. Reply yes to post it");
+      await text(s, clock, row.phone, "yes");
+      const saved = await postings(manager);
+      observations.push({ answer: row.answer, readBack, saved: saved.length === 1 && saved[0].objective === `Hire: ${row.title}` });
+    }
+    // Read persisted rows after a second service restart, not just the in-memory draft.
+    await s.close();
+    s = svc = service(clock);
+    await s.start();
+    for (const [i, row] of rows.entries()) {
+      const saved = await postings(managers[i]!);
+      if (!observations[i]!.saved) { expect(saved).toHaveLength(0); continue; }
+      expect(saved).toHaveLength(1);
+      expect(saved[0]).toMatchObject({ objective: `Hire: ${row.title}`, status: "active" });
+      const snap = await loadSnapshot(sql, clock.now(), { app: "peon", city: "nyc" });
+      const tags = snap.facets.filter(f => f.memberId === `job:${saved[0].id}`).flatMap(f => f.tags);
+      for (const tag of ["peon:openings:2", "peon:pay:90-120", "peon:mode:hybrid", "peon:area:brooklyn", "peon:must:sql:2"]) expect(tags).toContain(tag);
+      if (row.title.startsWith("senior")) expect(tags).toContain("peon:seniority:3");
+    }
+    // The fallback is only an answer to the title question. Non-answers and other field replies
+    // must not become titles, and a bare title without an intake must not start a posting.
+    const phone = "+12125550185";
+    await text(s, clock, phone, "peon");
+    await text(s, clock, phone, "Casey, 34");
+    const manager = (await memberId(phone))!;
+    await text(s, clock, phone, "Data analyst");
+    expect(await postings(manager)).toHaveLength(0);
+    expect(await last(manager)).not.toMatch(/Here's your job post:/);
+    for (const [i, answer] of ["yes", "no", "not sure", "How does this work?", "$100k-$140k", "hybrid"].entries()) {
+      const controlPhone = `+121255501${86 + i}`;
+      await text(s, clock, controlPhone, "peon");
+      await text(s, clock, controlPhone, "Jordan, 34");
+      const controlManager = (await memberId(controlPhone))!;
+      await text(s, clock, controlPhone, start);
+      expect(await last(controlManager)).toBe(POSTING_COPY.askTitle);
+      await text(s, clock, controlPhone, answer);
+      expect(await last(controlManager)).not.toMatch(/Here's your job post:/);
+      expect(await postings(controlManager)).toHaveLength(0);
+    }
+    await s.close();
+    svc = undefined;
+    console.log(`  title answers: ${JSON.stringify(observations)}`);
+    expect(observations.every(x => x.readBack && x.saved)).toBe(true);
+  }, T);
+
   test("a job post by text is read back, saved on the yes, kept across a restart, and closed by staff", async () => {
     const clock = new SimClock(START);
     let s = svc = service(clock);
