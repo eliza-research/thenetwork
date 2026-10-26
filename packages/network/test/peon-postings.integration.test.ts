@@ -68,6 +68,89 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
     await admin(`drop database if exists ${DB} with (force)`).catch(() => {});
   });
 
+  test("overlapping posting titles select the named role, but distinct mentions and duplicate titles stay ambiguous", async () => {
+    await svc?.close();
+    const clock = new SimClock(START + 4 * 24 * 60 * MINUTE);
+    let s = svc = service(clock);
+    await s.start();
+    const phone = "+12125550192";
+    await text(s, clock, phone, "peon");
+    await text(s, clock, phone, "Alex, 34");
+    const manager = (await memberId(phone))!;
+    const titles = ["analyst", "data analyst", "senior data analyst", "product designer"];
+    for (const title of titles) {
+      await text(s, clock, phone, `We're hiring a ${title}, 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL`);
+      expect(await last(manager)).toContain("Reply yes to post it");
+      await text(s, clock, phone, "yes");
+    }
+    const stored = async () => Promise.all((await postings(manager)).map(async row => ({
+      ...row,
+      tags: ((await sql`select tags from network.facets where app_id = 'peon' and member_id = ${manager} and ${`peon:posting:${row.id}`} = any(tags)`) as { tags: string[] }[]).flatMap(f => f.tags).sort(),
+    })));
+    const original = await stored();
+    expect(original).toHaveLength(4);
+    const id = (title: string) => original.find(p => p.objective === `Hire: ${title}`)!.id as string;
+    await s.close();
+    s = svc = service(clock);
+    await s.start();
+
+    // Both orders must remain ambiguous: the short title also appears outside the longer one.
+    for (const command of ["Close my analyst post and senior data analyst post", "Close my senior data analyst post and analyst post"]) {
+      await text(s, clock, phone, command);
+      expect(await last(manager)).toMatch(/^Which post should I close:/);
+      expect(await stored()).toEqual(original);
+      await text(s, clock, phone, "no");
+    }
+    const observations: { operation: string; selectedAndSaved: boolean }[] = [];
+    await text(s, clock, phone, "Update my senior data analyst post: 3 openings, $100k-$140k, hybrid in Brooklyn, must have SQL");
+    const updateReadBack = (await last(manager)).startsWith("Here's your job post: Senior data analyst, 3 openings, $100k-$140k");
+    expect(await stored()).toEqual(original);
+    await text(s, clock, phone, "yes");
+    const updated = await stored();
+    expect(updated.filter(p => p.id !== id("senior data analyst"))).toEqual(original.filter(p => p.id !== id("senior data analyst")));
+    const senior = updated.find(p => p.id === id("senior data analyst"))!;
+    observations.push({ operation: "update senior", selectedAndSaved: updateReadBack && senior.tags.includes("peon:openings:3") && senior.tags.includes("peon:pay:100-140") });
+
+    await text(s, clock, phone, "Close my senior data analyst post");
+    const closeReadBack = (await last(manager)) === POSTING_COPY.readBackClose("senior data analyst");
+    expect(await stored()).toEqual(updated);
+    await text(s, clock, phone, "yes");
+    const closed = await stored();
+    expect(closed.filter(p => p.id !== id("senior data analyst"))).toEqual(updated.filter(p => p.id !== id("senior data analyst")));
+    observations.push({ operation: "close senior", selectedAndSaved: closeReadBack && closed.find(p => p.id === id("senior data analyst"))!.status === "closed" });
+
+    await text(s, clock, phone, "Close my post");
+    expect(await last(manager)).toMatch(/^Which post should I close:/);
+    await s.close();
+    s = svc = service(clock);
+    await s.start();
+    await text(s, clock, phone, "data analyst");
+    const answerReadBack = (await last(manager)) === POSTING_COPY.readBackClose("data analyst");
+    expect(await stored()).toEqual(closed);
+    await text(s, clock, phone, "yes");
+    const answered = await stored();
+    expect(answered.filter(p => p.id !== id("data analyst"))).toEqual(closed.filter(p => p.id !== id("data analyst")));
+    observations.push({ operation: "answer which post", selectedAndSaved: answerReadBack && answered.find(p => p.id === id("data analyst"))!.status === "closed" });
+
+    // Non-overlapping title control, then two distinct postings with the exact same title.
+    await text(s, clock, phone, "Close my product designer post");
+    expect(await last(manager)).toBe(POSTING_COPY.readBackClose("product designer"));
+    expect(await stored()).toEqual(answered);
+    await text(s, clock, phone, "yes");
+    expect((await stored()).find(p => p.id === id("product designer"))!.status).toBe("closed");
+    await text(s, clock, phone, "We're hiring an analyst, 1 opening, $90k-$120k, hybrid in Brooklyn, must have SQL");
+    await text(s, clock, phone, "yes");
+    const duplicate = await stored();
+    expect(duplicate.filter(p => p.objective === "Hire: analyst" && p.status === "active")).toHaveLength(2);
+    await text(s, clock, phone, "Close my analyst post");
+    expect(await last(manager)).toMatch(/^Which post should I close:/);
+    expect(await stored()).toEqual(duplicate);
+    await s.close();
+    svc = undefined;
+    console.log(`  named postings: ${JSON.stringify(observations)}`);
+    expect(observations.every(x => x.selectedAndSaved)).toBe(true);
+  }, T);
+
   test("a job post by text is read back, saved on the yes, kept across a restart, and closed by staff", async () => {
     const clock = new SimClock(START);
     let s = svc = service(clock);

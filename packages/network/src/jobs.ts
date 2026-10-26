@@ -140,6 +140,25 @@ export function postingsOf(snap: Pick<WorldSnapshot, "members" | "intents" | "fa
 /** The intake result for one text: a draft and the message to send, or undefined (not about a posting). */
 export interface IntakeStep { draft?: PostingDraft; text: string; ready: boolean }
 
+/** A shorter title inside a longer named title is not a second posting mention. */
+function namedPostings(body: string, postings: readonly PostingRef[]): PostingRef[] {
+  const lower = body.toLowerCase();
+  const mentions: { posting: PostingRef; start: number; end: number }[] = [];
+  for (const posting of postings) {
+    const title = posting.title.toLowerCase();
+    if (!title) continue;
+    for (let start = lower.indexOf(title); start >= 0; start = lower.indexOf(title, start + 1)) {
+      mentions.push({ posting, start, end: start + title.length });
+    }
+  }
+  // Keep a separate short-title mention elsewhere in the message, and keep different postings
+  // with identical titles ambiguous (equal spans do not contain one another strictly).
+  const named = new Set(mentions.filter(m => !mentions.some(other =>
+    other.start <= m.start && other.end >= m.end && (other.start < m.start || other.end > m.end),
+  )).map(m => m.posting.id));
+  return postings.filter(p => named.has(p.id));
+}
+
 /**
  * Read one text in a handled turn. `draft`: what waits for the manager's yes. A posting command
  * starts a new draft (or a close); a text while a draft waits corrects it. Returns the next message:
@@ -151,15 +170,13 @@ export function readPostingText(body: string, ctx: { draft?: PostingDraft; posti
   if (command && CLOSE_COMMAND.test(body)) {
     const open = ctx.postings.filter(p => p.active);
     if (!open.length) return { text: POSTING_COPY.nothingToClose, ready: false };
-    const lower = body.toLowerCase();
-    const named = open.filter(p => lower.includes(p.title.toLowerCase()));
+    const named = namedPostings(body, open);
     const pick = named.length === 1 ? named[0] : open.length === 1 ? open[0] : undefined;
     if (!pick) return { draft: { close: true }, text: POSTING_COPY.whichToClose(open.map(p => p.title)), ready: false };
     return { draft: { close: true, id: pick.id, title: pick.title }, text: POSTING_COPY.readBackClose(pick.title), ready: true };
   }
   if (ctx.draft?.close && !command) {
-    const lower = body.toLowerCase();
-    const pick = ctx.postings.filter(p => p.active && lower.includes(p.title.toLowerCase()));
+    const pick = namedPostings(body, ctx.postings.filter(p => p.active));
     if (pick.length !== 1) return undefined;
     return { draft: { close: true, id: pick[0]!.id, title: pick[0]!.title }, text: POSTING_COPY.readBackClose(pick[0]!.title), ready: true };
   }
@@ -168,7 +185,7 @@ export function readPostingText(body: string, ctx: { draft?: PostingDraft; posti
   if (command && /^\s*update\b/i.test(body)) {
     // "Update my data analyst post: 3 openings": the named (or only) active post, its stored fields kept by the caller.
     const open = ctx.postings.filter(p => p.active);
-    const named = open.filter(p => body.toLowerCase().includes(p.title.toLowerCase()));
+    const named = namedPostings(body, open);
     const pick = named.length === 1 ? named[0] : open.length === 1 ? open[0] : undefined;
     if (!pick) return { text: open.length ? POSTING_COPY.whichToClose(open.map(p => p.title)).replace("close", "update") : POSTING_COPY.nothingToClose, ready: false };
     if (base.id !== pick.id) { base.id = pick.id; base.title ??= pick.title; }
