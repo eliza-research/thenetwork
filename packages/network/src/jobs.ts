@@ -16,6 +16,7 @@
 //                 (must-have checkmarks, never a score, never a name), the intro after both yeses, and
 //                 the check-in. Every text still goes through the Network's leak guard.
 import type { Category, Facet, Intent, MemberId, WorldSnapshot } from "@thenetwork/core";
+import { parseReply } from "@thenetwork/core";
 import { isSeatId, postingIdOf, seatIdOf, seatOwnerOf } from "@thenetwork/engine";
 import type { EngineInput } from "@thenetwork/engine";
 import { JOB_INTENT, T, type PeonMode } from "@thenetwork/engine/src/packs/peon/schema.ts";
@@ -164,6 +165,13 @@ export function readPostingText(body: string, ctx: { draft?: PostingDraft; posti
     return { draft: { close: true, id: pick[0]!.id, title: pick[0]!.title }, text: POSTING_COPY.readBackClose(pick[0]!.title), ready: true };
   }
   const read = parsePosting(body);
+  // A reply to "What's the job title?" need not repeat "title:". Keep the existing title grammar,
+  // but do not reinterpret yes/no, uncertainty, questions or a reply about another posting field.
+  if (!command && ctx.draft && !ctx.draft.title && !read.title
+    && Object.keys(read).every(k => k === "seniority") && parseReply(body).reason === "no_signal") {
+    const title = parsePosting(`title: ${body}`).title;
+    if (title) read.title = title;
+  }
   const base: PostingDraft = command && !/^\s*update\b/i.test(body) ? { id: ctx.newId } : { ...(ctx.draft ?? {}) };
   if (command && /^\s*update\b/i.test(body)) {
     // "Update my data analyst post: 3 openings": the named (or only) active post, its stored fields kept by the caller.
