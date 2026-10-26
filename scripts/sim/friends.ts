@@ -4,7 +4,7 @@
 // tracked metrics (printed, non-blocking), the harness caps, and the conformance rules for friendsPack.
 // PINNED (CI): seeds 5-8, 8 weeks, 400 personas (docs/results/2026-10-08-friends-pack.md, held-out).
 // --quick: seed 5, 4 weeks, 200 personas; only the safety gates block.
-import { canBeMatched, type MemberId } from "../../packages/core/src/index.ts";
+import { canBeMatched, HOUR, localParts, type MemberId } from "../../packages/core/src/index.ts";
 import * as A from "../../packages/engine/src/attention.ts";
 import { resolveConfig } from "../../packages/engine/src/config.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
@@ -74,6 +74,35 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
     return { s, w, wk: planFriendsWeek(w, { now: s.now, tz: NYC_TZ, evidence: evidenceOf(w, s), venues: VENUES, crews: s.crews.filter(c => !c.handedOff), outcomes: s.outcomes, offered: s.offered }, DEFAULT_FRIENDS_POLICY, FRIENDS_PLANS) };
   };
   const allPlans = (wk: ReturnType<typeof weekOf>["wk"]) => [...wk.sessions, ...wk.offers.map(x => x.first), ...wk.repeats, ...wk.plans, ...wk.partners];
+
+  await b.run("friends repeat plans keep the local weekday and time across DST, with the minimum lead", () => {
+    const s = friendsSnapshotAfter(1);
+    const past = s.outcomes.find(o => o.positive.length >= 2)!;
+    expect(past).toBeTruthy();
+    // Replay a positive meetup from the seeded world at the clock changes, plus an ordinary week.
+    // Inspect the real planner's timestamps before the harness rounds them to weekly slot indices.
+    const cases = [
+      ["2026-10-18T23:30:00Z", "2026-10-19T13:00:00Z", "2026-10-25T23:30:00Z"],
+      ["2026-10-25T23:30:00Z", "2026-10-26T13:00:00Z", "2026-11-02T00:30:00Z"],
+      ["2027-03-08T00:30:00Z", "2027-03-08T14:00:00Z", "2027-03-14T23:30:00Z"],
+      ["2026-10-25T23:30:00Z", "2026-10-31T18:00:00Z", "2026-11-02T00:30:00Z"],
+    ];
+    const actual: string[][] = [];
+    for (const [at, planningAt] of cases) {
+      const now = Date.parse(planningAt!);
+      const w = new World({ ...engineInputOf(s), now }, resolveConfig({ seed: 1 }), localEmbed, friendsPack);
+      const outcome = { ...past, at: Date.parse(at!), positive: past.positive.slice(0, 2), attended: past.positive.slice(0, 2) };
+      const wk = planFriendsWeek(w, { now, tz: NYC_TZ, evidence: new Map(), venues: VENUES, crews: [], outcomes: [outcome], offered: [] },
+        { ...DEFAULT_FRIENDS_POLICY, crews: false, timeOptions: false }, FRIENDS_PLANS);
+      actual.push(wk.repeats.map(plan => new Date(plan.window.start).toISOString()));
+      for (const plan of wk.repeats) {
+        expect(plan.invited).toEqual([...outcome.positive].sort());
+        expect(plan.window.start).toBeGreaterThanOrEqual(now + FRIENDS_PLANS.minLeadHours * HOUR);
+      }
+    }
+    expect(actual).toEqual(cases.map(([, , expected]) => [new Date(expected!).toISOString()]));
+    for (const start of actual.flat()) expect(localParts(Date.parse(start), NYC_TZ)).toMatchObject({ weekday: 6, hour: 19, minute: 30 });
+  });
 
   await b.run("conformance friends: no romance at any layer (lane, member, pair, attention item, probe, explanations, plan probes)", async () => {
     expect(friendsPack.ontology.lanes.map(l => l.id)).not.toContain("romance");
