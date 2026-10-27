@@ -795,13 +795,48 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     [ord("third|3rd"), 2], [/(?<![\d:])\b3\b(?!\s*(am|pm|:|\d|of|more|people|hours?|mins?))/g, 2], [/\b(last|later|latest) one\b/g, options.length - 1],
   ];
   for (const [re, i] of ordinals) if (options[i]) for (const m of t.matchAll(re)) mark([options[i]!.key], m.index!, m[0].length);
+  // Times are resolved together, because two options can share a day or a clock
+  // time. A named day or time is a pick only when the words identify exactly one
+  // option; otherwise the option would be recorded as availability the member
+  // never gave.
+  const dayMentions: { day: string; index: number; len: number }[] = [];
   for (const [re, dayName] of DAY_WORDS) {
-    const keys = options.filter(o => o.label.startsWith(dayName)).map(o => o.key);
-    if (keys.length) for (const m of t.matchAll(re)) mark(keys, m.index!, m[0].length);
+    for (const m of t.matchAll(re)) dayMentions.push({ day: dayName, index: m.index!, len: m[0].length });
   }
+  const clockMentions: { clock: string; index: number; len: number }[] = [];
   for (const m of t.matchAll(/\b(\d{1,2})(?::\d\d)?\s*(am|pm)\b/g)) {
-    const label = `${Number(m[1])}${m[2]}`;
-    mark(options.filter(o => o.label.endsWith(` ${label}`)).map(o => o.key), m.index!, m[0].length);
+    clockMentions.push({ clock: `${Number(m[1])}${m[2]}`, index: m.index!, len: m[0].length });
+  }
+  const days = new Set(dayMentions.map(m => m.day));
+  const clocks = new Set(clockMentions.map(m => m.clock));
+  const timeMentions = [...dayMentions, ...clockMentions].sort((a, b) => a.index - b.index);
+  // Time words that fit more than one option are not a yes to all of them.
+  let ambiguousTime = false;
+  if (timeMentions.length) {
+    const at = timeMentions[0]!;
+    const matched = options.filter(o => (!days.size || [...days].some(d => o.label.startsWith(d))) && (!clocks.size || [...clocks].some(c => o.label.endsWith(` ${c}`))));
+    if (negatedAt(t, at.index, at.len)) {
+      // A refusal is safe even when the words fit more than one option.
+      for (const o of matched) neg.add(o.key);
+    } else if (matched.length === 1) mark([matched[0]!.key], at.index, at.len);
+    else if (matched.length > 1) {
+      // Two options can share a clock time, so a bare "7pm" picks nothing. A day
+      // that names exactly one option is still a real pick ("thursday or sunday").
+      let resolved = 0;
+      const components = days.size ? [...days] : [...clocks];
+      for (const component of components) {
+        const forComponent = matched.filter(o => days.size ? o.label.startsWith(component) : o.label.endsWith(` ${component}`));
+        if (forComponent.length === 1) {
+          mark([forComponent[0]!.key], at.index, at.len);
+          resolved += 1;
+        }
+      }
+      ambiguousTime = resolved === 0;
+    } else if (!matched.length) {
+      // The member named a time that is not on offer: that is not a yes to the
+      // times they did not name. Ask again instead of booking one of them.
+      ambiguousTime = true;
+    }
   }
   // A reply that is only time words ("sat 11am", "thursday or sunday") picks them all firmly.
   let residue = t;
@@ -821,6 +856,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
   const allAt = ALL.exec(t) ?? ALL_WEAK.exec(t);
   if (allAt && c.answer !== "counter" && !negatedAt(t, allAt.index, allAt[0].length)) return open.length ? { answer: "yes", keys: open, why: c.why } : unclear;
+  if (ambiguousTime) return unclear;
   if (c.answer === "yes") return { answer: "yes", keys: open, why: c.why };
   if (c.answer === "counter") return { answer: "yes", keys: [], why: c.why };
   // Only refusals ("Thursday doesn't work") are not a yes: the probe stays open for a clear answer.

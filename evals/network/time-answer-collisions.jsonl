@@ -1,0 +1,10 @@
+{"text":"Wednesday 7pm works for me.","answer":"yes","keys":["a"],"options":[{"key":"a","label":"Wednesday 7pm"},{"key":"b","label":"Thursday 7pm"},{"key":"c","label":"Friday 7pm"}]}
+{"text":"Thursday 7pm works for me.","answer":"yes","keys":["b"],"options":[{"key":"a","label":"Wednesday 7pm"},{"key":"b","label":"Thursday 7pm"},{"key":"c","label":"Friday 7pm"}]}
+{"text":"Friday 7pm works for me.","answer":"yes","keys":["c"],"options":[{"key":"a","label":"Wednesday 7pm"},{"key":"b","label":"Thursday 7pm"},{"key":"c","label":"Friday 7pm"}]}
+{"text":"Saturday 10am works for me.","answer":"yes","keys":["a"],"options":[{"key":"a","label":"Saturday 10am"},{"key":"b","label":"Sunday 10am"}]}
+{"text":"Sunday 10am works for me.","answer":"yes","keys":["b"],"options":[{"key":"a","label":"Saturday 10am"},{"key":"b","label":"Sunday 10am"}]}
+{"text":"Saturday 2pm works for me.","answer":"yes","keys":["b"],"options":[{"key":"a","label":"Thursday 7pm"},{"key":"b","label":"Saturday 2pm"},{"key":"c","label":"Saturday 7pm"}]}
+{"text":"Saturday 7pm works for me.","answer":"yes","keys":["c"],"options":[{"key":"a","label":"Thursday 7pm"},{"key":"b","label":"Saturday 2pm"},{"key":"c","label":"Saturday 7pm"}]}
+{"text":"7pm works for me.","answer":"unclear","options":[{"key":"a","label":"Wednesday 7pm"},{"key":"b","label":"Thursday 7pm"},{"key":"c","label":"Friday 7pm"}]}
+{"text":"Saturday works for me.","answer":"unclear","options":[{"key":"a","label":"Thursday 7pm"},{"key":"b","label":"Saturday 2pm"},{"key":"c","label":"Saturday 7pm"}]}
+{"text":"thursday or sunday works","answer":"yes","keys":["a","b"],"options":[{"key":"a","label":"Thursday 7pm"},{"key":"b","label":"Sunday 2pm"},{"key":"c","label":"Saturday 11am"}]}
