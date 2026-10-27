@@ -355,11 +355,16 @@ export class RelayDesk {
     if (!match || !item) { decided(); return { ok: true, delivered: false }; }
     // Rate limits are judged at the original time (the item's own attempt is excluded by the engine).
     const again = relayItem(item, this.context(item, match, o, h.at));
+    const partyHeld = again.reasons.some(r => r.startsWith("safety:"));
     const first = (this.host.member(h.from)?.firstName ?? "").trim().split(/\s+/)[0] || "Your match";
-    const rendered = again.decision === "pass" ? again.rendered : again.decision === "hold" && item.kind === "text" ? RELAY_WORDING.text(first, item.text!) : "";
+    const rendered = again.decision === "pass" ? again.rendered
+      : again.decision === "hold" && !partyHeld
+        ? (item.kind === "text" ? RELAY_WORDING.text(first, item.text!) : item.kind === "photo" ? RELAY_WORDING.photo(first, item.text || undefined) : "")
+        : "";
     decided();
     if (!rendered) return { ok: true, delivered: false };
-    const res: RelayResult = { ...again, decision: "pass", rendered, photos: again.photos, record: { ...again.record, decision: "pass", reasons: [...again.record.reasons, "staff:released"].sort() } };
+    const photos = item.kind === "photo" ? [...new Set(item.photoIds ?? [])] : again.photos;
+    const res: RelayResult = { ...again, decision: "pass", rendered, photos, record: { ...again.record, decision: "pass", photoCount: photos.length, reasons: [...again.record.reasons, "staff:released"].sort() } };
     const sent = this.deliver(res, match, item, o);
     if (sent !== "refused") this.log(res.record);
     return { ok: true, delivered: sent !== "refused" };

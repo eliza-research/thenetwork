@@ -407,6 +407,21 @@ async function deskGates(b: Block): Promise<void> {
     expect(d.release("s2", "staff:1")).toEqual({ ok: true, delivered: true });
     expect(h.sent.map(x => x.body)).toEqual(['Sam says: "add me on telegram, it\'s easier"']);
     expect(d.release("s2", "staff:1")).toEqual({ ok: false, reason: "not_held" });
+    // A party safety hold (in the desk or canonical) stops staff release from delivering; a held photo caption can be released when the photo itself is valid.
+    expect((await d.request({ itemId: "s3", from: "a", kind: "text", text: "add me on signal instead" })).decision).toBe("held");
+    h.members.get("a")!.held = true;
+    expect(d.release("s3", "staff:1")).toEqual({ ok: true, delivered: false });
+    expect(h.sent.length).toBe(1);
+    expect(d.records().find(x => x.itemId === "s3")!.decision).toBe("hold");
+    h.members.get("a")!.held = false;
+    expect((await d.request({ itemId: "s4", from: "a", kind: "text", text: "dm me on instagram" })).decision).toBe("held");
+    expect(d.release("s4", "staff:1", { canonical: new Map([["a", { adult: true, optedOut: false, held: false }], ["b", { adult: true, optedOut: false, held: true }]]) })).toEqual({ ok: true, delivered: false });
+    expect(h.sent.length).toBe(1);
+    const photos = { ids: ["ph_abcdefgh"], showConsent: true };
+    expect((await d.request({ itemId: "p_cap", from: "a", kind: "photo", photoIds: ["ph_abcdefgh"], text: "add me on telegram" }, { photos })).decision).toBe("held");
+    expect(d.release("p_cap", "staff:1", { photos })).toEqual({ ok: true, delivered: true });
+    expect(h.sent.at(-1)!.body).toBe('Sam sent you a photo: "add me on telegram"');
+    expect(d.records().find(x => x.itemId === "p_cap")).toMatchObject({ decision: "pass", photoCount: 1 });
   });
 
   await b.run("relay desk: a number is shared only after both members asked; each gets the other's, once", async () => {
