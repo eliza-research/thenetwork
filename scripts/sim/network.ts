@@ -3,7 +3,9 @@
 // over 21 days; every NYC scenario; every sim/scenarios/*.json at pass^3 against the push stub; the
 // attention and plans invariants on the consent arms; and the shared conformance rules for networkPack.
 import { readdirSync } from "node:fs";
-import { DAY, HOUR, MINUTE, type MemberId } from "../../packages/core/src/index.ts";
+import { DAY, HOUR, MINUTE, SimClock, type MemberId, type NetworkContext, type SimMessage } from "../../packages/core/src/index.ts";
+import { randomWorld } from "../../packages/engine/src/testkit.ts";
+import { standingFromFacets, availabilityProb } from "../../packages/engine/src/attention.ts";
 import { DEFAULT_ATTENTION } from "../../packages/engine/src/index.ts";
 import { networkPack } from "../../packages/engine/src/packs/network/index.ts";
 import type { RunRecord } from "../../packages/core/src/index.ts";
@@ -36,6 +38,48 @@ async function world(days: number, seed = 3, network: NetworkOptions = { review:
 }
 
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
+  await b.run("recurring availability: refused day groups are not saved as free time", async () => {
+    const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri"].map(d => `evening:${d}`);
+    const weekends = ["Sun", "Sat"].flatMap(d => ["morning", "afternoon", "evening"].map(p => `${p}:${d}`));
+    const cases: [string, string[], number | undefined][] = [
+      ["Usually free Tuesday evenings, not weekends", ["evening:Tue"], Date.UTC(2026, 9, 10, 14)],
+      ["Usually free Saturday mornings, not weekdays", ["morning:Sat"], Date.UTC(2026, 9, 6, 23)],
+      ["Usually free Sunday afternoons, not weeknights", ["afternoon:Sun"], Date.UTC(2026, 9, 6, 23)],
+      ["Usually free Tuesday evenings, weekends don't work", ["evening:Tue"], Date.UTC(2026, 9, 10, 14)],
+      ["Usually free Saturday mornings, weekdays are busy", ["morning:Sat"], Date.UTC(2026, 9, 6, 23)],
+      ["Usually free Sunday afternoons, weeknights are out", ["afternoon:Sun"], Date.UTC(2026, 9, 6, 23)],
+      ["Usually free weekends", weekends, undefined],
+      ["Usually free weekdays", weekdays, undefined],
+      ["Usually free weeknights", weekdays, undefined],
+      ["Usually free Tuesday evenings, not Saturday", ["evening:Tue"], Date.UTC(2026, 9, 10, 14)],
+    ];
+    const results: { tags: string[]; expected: string[]; p?: number }[] = [];
+    for (const seed of [1, 2, 3]) for (const [body, expected, refusedAt] of cases) {
+      const input = randomWorld({ seed, members: 120, minors: false });
+      const member = input.members.find(m => m.homeCity === "nyc" && m.state === "normal")!;
+      const clock = new SimClock(input.now);
+      let seq = 0;
+      const ctx: NetworkContext = {
+        clock, snapshot: () => input,
+        send: (memberId, body, options) => ({ id: `availability:${++seq}`, ts: clock.now(), direction: "outbound", channel: "sms", from: "network", to: memberId, memberId, body, status: "delivered", meta: options?.meta } satisfies SimMessage),
+        recordProposal: () => {}, recordMeeting: () => "unused", recordBlock: () => {}, log: () => {},
+      };
+      const opts = { seed, review: "human" as const, matchingEnabled: false };
+      let net = new ConsentNetwork(opts);
+      net.init(ctx);
+      await net.onInbound({ id: "join", memberId: member.id, body: "Hi", ts: clock.now(), channel: "sms" });
+      await net.onInbound({ id: "availability", memberId: member.id, body, ts: clock.now(), channel: "sms" });
+      // The same persisted state survives a process restart before the scheduler reads it.
+      const state = JSON.parse(JSON.stringify(net.exportState()));
+      net = new ConsentNetwork(opts); net.init(ctx); net.importState(state);
+      const saved = net.memberList().find(m => m.id === member.id)!.standing!;
+      const standing = standingFromFacets([{ kind: "availability_pattern", tags: saved.tags, observedAt: saved.at }], clock.now());
+      const p = refusedAt === undefined ? undefined : availabilityProb({ memberId: member.id, tz: NY, standing }, { start: refusedAt, end: refusedAt + 2 * HOUR }, clock.now());
+      results.push({ tags: saved.tags, expected, ...(p === undefined ? {} : { p }) });
+    }
+    expect(results.filter(r => JSON.stringify(r.tags) === JSON.stringify(r.expected)).length).toBe(30);
+    for (const r of results) if (r.p !== undefined) expect(r.p).toBeLessThan(DEFAULT_ATTENTION.availability.prior.weekendDay);
+  });
   // ---- invariants: NYC, 10 days, seed 3, simulated reviewer ---------------------------------------
   const run = await world(10);
   await run.w.advanceTo(run.w.end);

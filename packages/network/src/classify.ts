@@ -735,9 +735,9 @@ export function availabilityTags(body: string): string[] {
   type Tok = { at: number; days?: number[]; part?: string };
   const toks: Tok[] = [];
   DAY_WORDS.forEach(([re], i) => { for (const m of t.matchAll(re)) if (!negatedAt(t, m.index!, m[0].length)) toks.push({ at: m.index!, days: [i] }); });
-  for (const m of t.matchAll(/\bweekends?\b/g)) toks.push({ at: m.index!, days: [0, 6] });
-  for (const m of t.matchAll(/\bweekdays?\b/g)) toks.push({ at: m.index!, days: [1, 2, 3, 4, 5] });
-  for (const m of t.matchAll(/\bweeknights?\b/g)) toks.push({ at: m.index!, days: [1, 2, 3, 4, 5] }, { at: m.index!, part: "evening" });
+  for (const m of t.matchAll(/\bweekends?\b/g)) if (!negatedAt(t, m.index!, m[0].length)) toks.push({ at: m.index!, days: [0, 6] });
+  for (const m of t.matchAll(/\bweekdays?\b/g)) if (!negatedAt(t, m.index!, m[0].length)) toks.push({ at: m.index!, days: [1, 2, 3, 4, 5] });
+  for (const m of t.matchAll(/\bweeknights?\b/g)) if (!negatedAt(t, m.index!, m[0].length)) toks.push({ at: m.index!, days: [1, 2, 3, 4, 5] }, { at: m.index!, part: "evening" });
   for (const [re, part] of [[/\bmornings?\b/g, "morning"], [/\bafternoons?\b|\blunch\b/g, "afternoon"], [/\b(?:evenings?|nights?|after work)\b/g, "evening"]] as const) {
     for (const m of t.matchAll(re)) toks.push({ at: m.index!, part });
   }
