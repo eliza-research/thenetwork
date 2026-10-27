@@ -17,9 +17,12 @@ import { migrate } from "../../../packages/observatory/db/migrate.ts";
 export const START = Date.UTC(2026, 9, 5, 17);
 export const LINE = "+12125550100";
 export const SECRET = "whsec_pipeline_sim";
-export const TOKENS = "admin:sim-admin-token-000000000000000000,reviewer:sim-review-token-00000000000000000,safety:sim-safety-token-0000000000000000,analyst:sim-analyst-token-000000000000000";
+export const SAFETY = "sim-safety-token-0000000000000000";
+export const TOKENS = `admin:sim-admin-token-000000000000000000,reviewer:sim-review-token-00000000000000000,safety:${SAFETY},analyst:sim-analyst-token-000000000000000`;
 export const REVIEWER = "sim-review-token-00000000000000000";
 export const ADMIN = "sim-admin-token-000000000000000000";
+/** The signed Shared turn / relay wire (core svc-auth): 32+ characters, different from every staff token. */
+export const TURN_SECRET = "sim-turn-secret-0000000000000000000000000000";
 const USER = process.env.USER ?? "postgres";
 const ADMIN_URL = `postgres://${USER}@localhost:${DEV_PG_PORT}/postgres`;
 
