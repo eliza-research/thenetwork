@@ -1891,6 +1891,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (fi) return this.decideFraud(fi, decision, opts);
     const o = this.opps.get(oppId);
     if (!o || o.stage !== "review" || !o.review) return { ok: false, reason: "not_in_review" };
+    // An item past its SLA expires unsent (PRD 28.3, 32.8), even when no tick has run since its
+    // deadline: no decision, reroll included, may revive it or send it late.
+    if (this.now() >= o.review.deadline) {
+      this.advance(o, this.now());
+      return { ok: false, reason: "review_expired" };
+    }
     const refuse = (reason: string): ActionResult => { this.ctx.log("review_refused", { oppId, decision, reason }); return { ok: false, reason }; };
     if (!REVIEW_DECISIONS.has(decision)) return refuse("unknown_decision");
     const blocked = this.reviewBlock(oppId, decision, opts) ?? (decision === "edit" ? this.editBlock(o, opts) : undefined);

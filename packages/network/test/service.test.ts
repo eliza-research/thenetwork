@@ -219,6 +219,32 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     expect(h.lastTick.thisInstance).toEqual({ at: clock.now(), ran: true });
   }, T);
 
+  test("an item past its review SLA expires unsent even when the reviewer acts before the next tick", async () => {
+    await reset();
+    const clock = new SimClock(START);
+    const s = service(clock, "sla");
+    expect((await staff(s, "adm-tok", "POST", "/matching", { on: true })).status).toBe(200);
+    for (const id of ["a", "b", "c", "r"]) for (const text of ONBOARD) await say(s, clock, id, text);
+    expect(await say(s, clock, "r", "Anyone around who'd want to find a regular climbing partner? I'm near Greenpoint.")).toBe("handled");
+    const queue = await (await staff(s, "rev-tok", "GET", "/review")).json();
+    const item = queue.items.find((i: any) => i.origin === "request");
+    expect(item).toBeDefined();
+    const oppId = item.oppId as string;
+
+    // The SLA passes and no tick runs (one instance holds the lock, or the 60 s tick is still due).
+    clock.set(item.deadline + MINUTE);
+    const late = await staff(s, "rev-tok", "POST", `/review/${oppId}`, { decision: "approve" });
+    expect(late.status).toBe(409);
+    expect(await late.json()).toEqual({ ok: false, reason: "review_expired" });
+    expect((await sql`select decision from network.review_items where opportunity_id = ${oppId}`)[0].decision).toBe("expired");
+    // A reroll cannot give the expired item a new deadline either.
+    expect(await (await staff(s, "rev-tok", "POST", `/review/${oppId}`, { decision: "reroll" })).json()).toEqual({ ok: false, reason: "not_in_review" });
+    // Nothing about the item reaches a member, now or after the next tick.
+    expect(await s.tick()).toBe(true);
+    expect((await sql`select count(*)::int as n from network.events where type = 'probe_started' and object_id = ${oppId}`)[0].n).toBe(0);
+    expect((await sql`select count(*)::int as n from network.messages where opportunity_id = ${oppId}`)[0].n).toBe(0);
+  }, T);
+
   test("two instances never tick at once; the second sees the lock holder and skips", async () => {
     await reset();
     const clock = new SimClock(START);
