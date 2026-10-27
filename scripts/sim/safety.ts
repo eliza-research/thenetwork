@@ -29,6 +29,7 @@ import { PhotoIntake, PHOTO_TEXT } from "../../packages/network/service/photoInt
 import { biasReport, type BiasMember, type BiasOpp } from "../../packages/network/service/bias.ts";
 import { reviewerOfRecord, slaAlerts } from "../../packages/network/service/service.ts";
 import { APP_REASONS, DEFAULT_SLA_HOURS, PACK_READY, toNetworkReason } from "../../packages/observatory/src/apps.ts";
+import { feedbackOf } from "../../packages/network/src/classify.ts";
 import { checkInReport, URGENT_REPORTS } from "../../packages/network/src/reports.ts";
 import { runScenario, type NetScenario } from "../../packages/network/harness/index.ts";
 import type { StaffUser } from "../../packages/observatory/src/types.ts";
@@ -312,8 +313,32 @@ export async function safetyBlock(b: Block): Promise<void> {
       ["I felt unsafe, he wouldn't let me leave", "unsafe"],
       ["it was fine, not my type", undefined],
       ["great time, would see them again", undefined],
+      // A denial is not the harm. These sentences filed a report, a block, and (for an urgent kind) a hold.
+      ["didn't show me her art but it was great", undefined],
+      ["she was not rude at all, it was a great date", undefined],
+      ["I wasn't scared, he was easy to talk to", undefined],
+      ["not a scam, he paid for his coffee", undefined],
+      ["he didn't come off as creepy", undefined],
+      ["the museum didn't come up, but the date was nice", undefined],
+      ["she was not a no-show, we had a great time", undefined],
+      ["not fake, the photos were recent", undefined],
+      // The check-in tells the member to say these words. They stay reports.
+      ["they weren't who they said", "lying"],
+      ["they didn't show", "no_show"],
+      ["he never came", "no_show"],
+      ["not creepy at all, but he grabbed my arm", "unsafe"],
+      ["I said no, he kept texting", "harassment"],
+      ["no way he was rude", "harassment"],
     ];
     expect(cases.map(([t]) => checkInReport(t))).toEqual(cases.map(([, k]) => k));
+    // The feedback reader is the fallback that files no_show. It must agree.
+    expect(feedbackOf("didn't show me her art but it was great")).toMatchObject({ otherNoShow: false, sentiment: "positive" });
+    expect(feedbackOf("the museum didn't come up, but the date was nice").otherNoShow).toBe(false);
+    expect(feedbackOf("she was not a no-show, we had a great time").otherNoShow).toBe(false);
+    expect(feedbackOf("she was not rude at all, it was a great date").sentiment).toBe("positive");
+    expect(feedbackOf("they never showed up").otherNoShow).toBe(true);
+    expect(feedbackOf("he never came").otherNoShow).toBe(true);
+    expect(feedbackOf("he ghosted me").otherNoShow).toBe(true);
     expect(URGENT_REPORTS.has("harassment") && URGENT_REPORTS.has("unsafe")).toBe(true);
   });
 
