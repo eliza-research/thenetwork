@@ -46,3 +46,23 @@ PASS: 85/85 blocking gates, 4 tracked off target, 7s (relay 5s, evals 2s)
 ```
 
 `bun run typecheck` passed with 0 errors. `bun run test:integration` and `bun run test:e2e` were not run because this environment does not have the local PostgreSQL instance on `:54339`.
+
+## Review follow-up — 28 October 2026
+
+Added `tests/e2e/relay-release.e2e.test.ts` in response to review #5676702764. The existing E2E harness starts the real service and a freshly migrated PostgreSQL database. Two fictional adults join through the site API; a fixture supplies their mutually accepted plan. Relay requests create real held items, and release calls go through `NetworkService.fetch` at `POST /staff/relay/:id/release?app=friends`.
+
+The positive control releases a content-held text and checks the persisted relay message. A second, different held text is followed by a global `STOP` event in `platform.consent_events`, without changing `network.members.opted_out`. Release must return `{ ok: true, delivered: false }` and leave the entire app's `network.messages` ID set unchanged. Repeating the release must return `not_held`.
+
+The two texts intentionally differ: identical text would trigger duplicate-send suppression and could hide a missing eligibility check.
+
+- Runtime: Bun 1.4.2; PostgreSQL 16.15, local port 54339; `REQUIRE_PG=1`; all delivery is dry-run.
+- Focused command: `bun test --conditions eliza-source --timeout 180000 ./tests/e2e/relay-release.e2e.test.ts` — **1 pass, 0 fail, 14 assertions**.
+- Countercheck: temporarily replaced only the service route's held-item/canonical lookup with `return n.releaseRelay(itemId, user.id);`, keeping the desk fix and new test. The same command failed at the STOP release response: **received `delivered: true`, expected `false`**. Restored the service file byte-for-byte in `finally`, then reran successfully.
+- `bun run typecheck` passed after restoring the copied workspace's dependencies.
+- `bun test --conditions eliza-source --timeout 120000 ./packages/network/test/relay.test.ts` — **5 pass, 0 fail, 92 assertions**.
+- `bun run sim --only relay --only evals` — **85/85 blocking gates pass**, with 4 existing tracked metrics off target.
+- No LLM requests, live sends, or paid API calls were used for this deterministic review test.
+
+The review's two nonblocking points need no expanded behavior: an absent/already-decided held item already returns `{ ok: false, reason: "not_held" }` in `RelayDesk.release`; `contact_share` remains governed by mutual swap consent and is not made staff-releasable by this change.
+
+Follow-up assistance: OpenAI Codex desktop. The exact model identifier is not exposed in the session metadata; the original implementation's attribution is retained in the PR history.
