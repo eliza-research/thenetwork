@@ -102,3 +102,20 @@
 {"text": "stop slop", "label": "not_stop", "lang": "en"}
 {"text": "quit peon", "label": "not_stop", "lang": "en"}
 {"text": "remove me from the group chat with Ana?", "label": "not_stop", "lang": "en"}
+{"text": "pls stop", "label": "stop", "lang": "en"}
+{"text": "stop pls", "label": "stop", "lang": "en"}
+{"text": "plz stop", "label": "stop", "lang": "en"}
+{"text": "stop plz", "label": "stop", "lang": "en"}
+{"text": "Stop now", "label": "stop", "lang": "en"}
+{"text": "STOP NOW", "label": "stop", "lang": "en"}
+{"text": "stop now please", "label": "stop", "lang": "en"}
+{"text": "please stop now", "label": "stop", "lang": "en"}
+{"text": "ok stop", "label": "stop", "lang": "en"}
+{"text": "stop thanks", "label": "stop", "lang": "en"}
+{"text": "stop thank you", "label": "stop", "lang": "en"}
+{"text": "just stop", "label": "stop", "lang": "en"}
+{"text": "stop already", "label": "stop", "lang": "en"}
+{"text": "stop it, you're too funny", "label": "not_stop", "lang": "en"}
+{"text": "ok stop by at 7", "label": "not_stop", "lang": "en"}
+{"text": "just stop by later", "label": "not_stop", "lang": "en"}
+{"text": "stop now and grab food?", "label": "not_stop", "lang": "en"}
