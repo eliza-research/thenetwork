@@ -780,7 +780,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (aw?.kind === "booked") {
       // The booked plan: silence is a yes; "can't" or "no" cancels it (the other member is told, without the reason).
       const o = this.opps.get(aw.oppId!);
-      const yn = this.yesNoOf(body);
+      // What they say about their number ("I don't want to share my number yet") is about the number
+      // swap (withdrawn above), not the plan: only the rest of the message answers the booked plan.
+      const plan = withoutNumberTalk(body);
+      const yn = plan ? this.yesNoOf(plan) : "unclear";
       if (o && o.stage === "scheduled" && o.status.get(m.id) === "yes" && (c.kind === "cancel" || yn === "no")) { m.awaiting = undefined; return this.handleDrop(m, o); }
       if (yn === "yes" || c.kind === "ack") { m.awaiting = undefined; if (o && o.stage === "scheduled") this.confirmPlan(o, m.id, true); this.ack(m, copy.bookedThanks); return; }
     }
@@ -4966,6 +4969,11 @@ export interface NetworkState {
 
 /** A member record as the snapshot gives it. The production snapshot also carries the account status (service/snapshot.ts). */
 type MemberRecord = WorldSnapshot["members"][number] & { accountStatus?: string };
+/** A message without its clauses about the member's number or a number swap ("No. Also don't share my number" -> "No."). */
+const NUMBER_TALK = /\b(?:my (?:phone )?number|my digits|my cell|(?:number|numbers) swap|swap(?:ping)? numbers)\b/i;
+function withoutNumberTalk(body: string): string {
+  return body.split(/(?<=[.!?;,])\s+|\s+(?:and|but|also)\s+/i).filter(p => !NUMBER_TALK.test(p)).join(" ").trim();
+}
 /** An engine proposal, routed to a seat's hiring manager when it was for a job seat (seatRoute). */
 type SeatProposal = EngineProposal & { seat?: { id: MemberId; manager: MemberId } };
 
