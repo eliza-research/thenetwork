@@ -196,6 +196,13 @@ const SCHOOL_YEAR: Record<string, number> = { freshman: 14, sophomore: 15, junio
  */
 const NOT_NOW = /(?:\blike|\bas if|\bas though|\bpretend(?:ing)?(?: that)?|\bwhen|\bif|\bimagine|\bsays?|\bsaid|\bfeel(?:s|ing)? like|\bacts?|\bacting|\bthink|\bthinks|\bthought|"|')\s*$/;
 type AgeRule = { rx: RegExp; age: (m: RegExpExecArray) => number; explicit?: boolean };
+// A whole short message with no "I'm" ("turned 16 yesterday", "15 year old girl here", "in 9th grade",
+// "not 18 yet"): texts drop the pronoun. Anchored at both ends, so a sentence that goes on ("in 9th
+// grade I had a crush") is never read. These fail closed to a minor (never under 13, never a decline).
+const LEAD = "^\\W*(?:(?:hi|hey|hello|yo)\\W+)?";
+const SHORT_END = "\\s*(?:lol|lmao|haha|here|btw|rn|now|tho|fyi)?\\s*[.!]*\\s*$";
+const ageNum = (s: string) => (/^\d/.test(s) ? Number(s) : AGE_WORDS[s]!);
+const atLeast13Minor = (n: number) => (n >= 13 ? n : 13);
 const AGE_RX: AgeRule[] = [
   // Explicit: "I am 12 years old", "im 15 y/o", "my age is 12", "15 y/o here", "age: 15".
   { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|my age is\\s+)(\\d{1,2})\\s*${YEARS_OLD}`), age: m => Number(m[1]), explicit: true },
@@ -235,6 +242,16 @@ const AGE_RX: AgeRule[] = [
   { rx: new RegExp(`\\b(?:${ME}\\s+(?:still\\s+)?(?:in|at)|i go to)\\s+middle school\\b(?!\\s*(?:teacher|counselor|principal|nurse|coach|librarian|aide|staff))|\\bi'?m a\\s+middle schooler\\b`), age: () => 13 },
   { rx: new RegExp(`\\b(?:${ME}\\s+(?:still\\s+)?(?:in|at)|i go to)\\s+high school\\b`), age: () => 15 },
   { rx: new RegExp(`\\b${ME}\\s+a\\s+(?:high schooler|hs student|high school student)\\b`), age: () => 15 },
+  // The same statements as a whole short message without "I'm".
+  { rx: new RegExp(`${LEAD}(?:just |only )?turned\\s+(\\d{1,2}|${NUM_WORD})(?:\\s+(?:last (?:week|month)|yesterday|recently|today))?${SHORT_END}`), age: m => atLeast13(ageNum(m[1]!)) },
+  { rx: new RegExp(`${LEAD}(?:${ME}\\s+)?(?:just |only )?(?:an?\\s+)?(\\d{1,2}|${NUM_WORD})[\\s-]*${YEARS_OLD}(?:\\s+(?:guy|girl|boy|dude|kid|female|male|[fm]))?${SHORT_END}`), age: m => atLeast13(ageNum(m[1]!)) },
+  { rx: new RegExp(`${LEAD}(1[3-7]|thirteen|fourteen|fifteen|sixteen|seventeen)\\s+(?:here|lol|btw|haha)${SHORT_END}`), age: m => ageNum(m[1]!) },
+  { rx: new RegExp(`${LEAD}(?:${ME}\\s+)?(?:still\\s+)?(?:not 18 yet|under 18|a minor|underage)${SHORT_END}`), age: () => 17 },
+  { rx: new RegExp(`${LEAD}(?:almost|nearly|turning)\\s+(?:18|eighteen)(?:\\s+(?:in \\w+|next \\w+|this \\w+|soon))?${SHORT_END}|${LEAD}(?:18|eighteen)\\s+(?:next (?:week|month|year)|in (?:a few )?(?:weeks|months))${SHORT_END}`), age: () => 17 },
+  { rx: new RegExp(`${LEAD}(?:still\\s+)?in\\s+(?:the\\s+)?(6|7|8|9|10|11|12)(?:st|nd|rd|th)?\\s+grade${SHORT_END}|${LEAD}(?:an?\\s+)?(6|7|8|9|10|11|12)(?:st|nd|rd|th)\\s+grader${SHORT_END}`), age: m => atLeast13Minor(Number(m[1] ?? m[2]) + 5) },
+  { rx: new RegExp(`${LEAD}(?:an?\\s+)?(freshman|sophomore|junior|senior)\\s+(?:in|at)\\s+(?:high school|hs)${SHORT_END}|${LEAD}(?:an?\\s+)?(?:high school|hs)\\s+(freshman|sophomore|junior|senior)${SHORT_END}`), age: m => SCHOOL_YEAR[(m[1] ?? m[2])!]! },
+  { rx: new RegExp(`${LEAD}(?:still\\s+)?in middle school${SHORT_END}`), age: () => 13 },
+  { rx: new RegExp(`${LEAD}(?:still\\s+)?in high school${SHORT_END}`), age: () => 15 },
 ];
 
 /**
