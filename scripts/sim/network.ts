@@ -58,8 +58,11 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
       ["Usually free every evening, weekdays are busy", [], Date.UTC(2026, 9, 6, 23)],
       ["free most evenings", weekdays, undefined],
       ["free most evenings, not weekends", weekdays, undefined],
+      ["Free every evening, not Tuesday", [], Date.UTC(2026, 9, 6, 23)],
+      ["Free all evenings, Friday is out", [], Date.UTC(2026, 9, 9, 23)],
+      ["Free most evenings, not Sunday", weekdays, undefined],
     ];
-    const results: { tags: string[]; expected: string[]; p?: number }[] = [];
+    const results: { tags: string[]; expected: string[]; p?: number; hasStanding: boolean; hasAvailability: boolean }[] = [];
     for (const seed of [1, 2, 3]) for (const [body, expected, refusedAt] of cases) {
       const input = randomWorld({ seed, members: 120, minors: false });
       const member = input.members.find(m => m.homeCity === "nyc" && m.state === "normal")!;
@@ -75,22 +78,24 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
       net.init(ctx);
       await net.onInbound({ id: "join", memberId: member.id, body: "Hi", ts: clock.now(), channel: "sms" });
       await net.onInbound({ id: "availability", memberId: member.id, body, ts: clock.now(), channel: "sms" });
-      // The same persisted state survives a process restart before the scheduler reads it.
+      // Reload persisted state into a fresh instance before the scheduler reads it.
       const state = JSON.parse(JSON.stringify(net.exportState()));
       net = new ConsentNetwork(opts); net.init(ctx); net.importState(state);
       const reloaded = net.memberList().find(m => m.id === member.id)!;
       const saved = reloaded.standing;
       const standing = standingFromFacets(saved ? [{ kind: "availability_pattern", tags: saved.tags, observedAt: saved.at }] : [], clock.now());
       const p = refusedAt === undefined ? undefined : availabilityProb({ memberId: member.id, tz: NY, standing }, { start: refusedAt, end: refusedAt + 2 * HOUR }, clock.now());
-      results.push({ tags: saved?.tags ?? [], expected, ...(p === undefined ? {} : { p }) });
-      if (!expected.length) {
-        expect(saved).toBeUndefined();
-        expect(reloaded.availability).toBeUndefined();
-        expect(p).toBe(DEFAULT_ATTENTION.availability.prior.weekdayEvening);
-      }
+      results.push({ tags: saved?.tags ?? [], expected, hasStanding: saved !== undefined, hasAvailability: reloaded.availability !== undefined, ...(p === undefined ? {} : { p }) });
     }
     expect(results.filter(r => JSON.stringify(r.tags) === JSON.stringify(r.expected)).length).toBe(cases.length * 3);
-    for (const r of results) if (r.p !== undefined) expect(r.p).toBeLessThan(DEFAULT_ATTENTION.availability.prior.weekendDay);
+    for (const r of results) {
+      if (r.p !== undefined) expect(r.p).toBeLessThan(DEFAULT_ATTENTION.availability.prior.weekendDay);
+      if (!r.expected.length) {
+        expect(r.hasStanding).toBe(false);
+        expect(r.hasAvailability).toBe(false);
+        expect(r.p).toBe(DEFAULT_ATTENTION.availability.prior.weekdayEvening);
+      }
+    }
   });
   // ---- invariants: NYC, 10 days, seed 3, simulated reviewer ---------------------------------------
   const run = await world(10);
