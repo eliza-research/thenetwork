@@ -81,3 +81,30 @@ Time conditions are not affected: `core parseReply` returns `yes_with_time_const
 
 - `COND_RX` still lists subjects. The `conditional_yes` veto now covers the missed ones, so the list is an extra guard, not the only guard.
 - A conditional reply that contains no yes word (`Saturday if nothing comes up`) is already unclear because the Network finds no affirmation. No change is needed.
+
+## Review patch: dependency words (2026-10-28)
+
+Reviewer patch `013d745` (`fix/conditional-dependency-words`) extends `COND_RX` with `depending on`, `subject to`, `as soon as` and the guarded `when (…)` / `once (…)` forms, and pins six consent-replies rows. The corpus is now 338 rows. The table in "Corpus scores" keeps the numbers of the first fix (n 332); the dependency-word rows change the sample.
+
+Measured on this branch (bun 1.4.2 (repo-pinned), Linux; `bun run sim --only evals` is offline):
+
+Base `9c5b039` plus the six rows, before the `COND_RX` change:
+
+```
+PASS  consent replies consent-replies.jsonl: accuracy >= 97% (n 338): 98.2%
+FAIL  consent replies consent-replies.jsonl: no refusal or hedge read as yes: yes when work allows | Thursday works when work allows | yes once I know my schedule | yes depending on work | yes subject to my shift
+FAIL: 24/25 blocking gates, 0 tracked off target, 0.4s (evals 0.4s)
+```
+
+After the `COND_RX` change (this branch):
+
+```
+PASS  consent replies consent-replies.jsonl: accuracy >= 97% (n 338): 100.0%
+PASS  consent replies consent-replies.jsonl: no refusal or hedge read as yes
+PASS  consent replies consent-heldout.jsonl: accuracy >= 97% (n 75): 100.0%
+PASS: 25/25 blocking gates, 0 tracked off target, 0.5s (evals 0.5s)
+```
+
+Direct calls on this branch, options Thu 7pm / a, Sat 11am / b, Sun 2pm / c: `yes when work allows`, `Thursday works when work allows`, `yes once I know my schedule`, `yes depending on work`, `yes subject to my shift` and `yes as soon as I know` all read `{"answer":"unclear","keys":[],"why":"conditional"}`. The controls are unchanged: `sure if that works for you` and `yes if you want` stay `unclear/conditional`; `yes` and `Thursday works` stay `yes/affirm` and book all open times; `when are you free?` stays `unclear/hedged`.
+
+A known reader divergence stays out of scope here: `no, I can't say yes` gives core `no/refusal` and the Network `unclear/mixed`. The readers disagree, so the member is asked again; nothing is booked. This is the fail-safe direction.
