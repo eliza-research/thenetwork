@@ -76,6 +76,45 @@ two need the built site pages, two compare a plugin checkout that is not present
 different local database role. `bun run test:e2e` stops at the site build ("build failed for
 ntwrk.party"), the same failure as `main` here.
 
+## Real model and client runs (2026-10-29, second session)
+
+Both runs are repeatable with the same method. Neither could be finished here; what was reached and
+what stopped it is below, so none of it is claimed as a pass.
+
+### Live LLM reader on the mergeConsent path
+
+`packages/network/test/probe-unoffered-time.live.test.ts` (not in `test:integration`; skips unless
+`LIVE_LLM=1`). It builds the real `ConsentNetwork` in the `Mini` world with `llmUnderstand(defaultLLM())`
+as its reader, counts every reader call, and prints one `LIVE_RESULT` JSON line.
+
+Command: `LIVE_LLM=1 bun test --conditions eliza-source packages/network/test/probe-unoffered-time.live.test.ts`,
+with `OPENAI_BASE_URL=https://api.openai.com/v1`, `DEFAULT_LLM_PROVIDER=openai`, model left at the
+client default (`gpt-6-luna`) and no `SURPLUS_API_KEY`.
+
+Result on this branch: the reader made 2 real HTTPS calls to `api.openai.com`, both answered
+`401` (the only key on this machine is a third-party provider key, not an OpenAI key). The reader
+returned `undefined` twice, `mergeConsent` correctly kept the parser's reading, and the run recorded
+`picks: []`, `declined: []`, `unoffered: true`, one fresh offer, stage `probing`. That proves the
+network path end to end but is not model evidence: no valid model answered. The same harness with a
+provider key records the raw reader verdict next to the picks.
+
+### Codex CLI as a real agent client
+
+Local platform (`bun run platform:dev`, dry-run only, dev Postgres :54339, `platform_dev`) on
+`http://127.0.0.1:5102`, the slop.date origin. Codex CLI `0.144.4` in a throwaway `CODEX_HOME`
+under `%TEMP%`, `codex mcp add slop --url http://127.0.0.1:5102/mcp`, then `codex mcp login slop`.
+
+What worked: Codex discovered the server's OAuth metadata, registered itself, and printed its
+authorize link. The phone step took a synthetic 555-01xx number, the dev OTP printed to the local
+server log, and the code step showed the consent page with exactly the three scopes
+(`apps:read`, `membership:read`, `profile:write`). The consent request was denied because approving
+it needed the operator's authorization, which this session could not obtain; Codex then retried
+without the discovered scopes and waited on its callback.
+
+Not tested: an authenticated tool call and the probe accept/decline flow through Codex. Consent is
+the operator's decision, so this is recorded as not authorized, not as a pass. The local OTP and
+consent pages for this site are covered inside `packages/mcp` tests.
+
 ## Relation to PR #152
 
 PR #152 ("never book an offered time the member did not name", open) fixes the same parser defect for
