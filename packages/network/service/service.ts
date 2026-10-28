@@ -1749,6 +1749,9 @@ export class NetworkService implements RuntimeHost {
         : hashes.map(h => ({ id: `ban_${randomUUID()}`, scope: "phone" as const, personId, phoneHash: h, reason: note, reportId: reportId ?? null, bannedBy: user.id, at }));
       for (const b of rows) await this.people.ban(b);
       for (const h of hashes) await this.people.suppress(h, "banned", at);
+      // Live web sessions and open OTP challenges end with the ban (PRD 40.3): a banned number
+      // cannot keep acting with a cookie, and a code sent before the ban cannot finish a login.
+      await this.people.endAuthForBan(personId, at);
       // No rating of looks is kept for a banned person (they are never matched again). The photos stay for the safety team.
       await this.dropRatings(personId);
       for (const m of await this.people.memberships(personId)) if (m.state !== "removed" && m.state !== "invited") await this.people.putMembership({ ...m, state: "restricted" });
