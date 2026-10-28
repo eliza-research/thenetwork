@@ -689,9 +689,16 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     [ord("third|3rd"), 2], [/(?<![\d:])\b3\b(?!\s*(am|pm|:|\d|of|more|people|hours?|mins?))/g, 2], [/\b(last|later|latest) one\b/g, options.length - 1],
   ];
   for (const [re, i] of ordinals) if (options[i]) for (const m of t.matchAll(re)) mark([options[i]!.key], m.index!, m[0].length);
+  // A day the probe did not offer, named as a yes ("Friday works"): a counter-offer, never a yes to
+  // every offered time. A bare mention ("I'm at a wedding Friday") is not a pick (network-consent-counter).
+  let namedOffOffer = false;
   for (const [re, dayName] of DAY_WORDS) {
     const keys = options.filter(o => o.label.startsWith(dayName)).map(o => o.key);
-    if (keys.length) for (const m of t.matchAll(re)) mark(keys, m.index!, m[0].length);
+    if (keys.length) { for (const m of t.matchAll(re)) mark(keys, m.index!, m[0].length); continue; }
+    for (const m of t.matchAll(re)) {
+      if (negatedAt(t, m.index!, m[0].length)) continue;
+      if (POSITIVE_PICK.test(clauseAt(t, m.index!, m[0].length)) || c.answer === "yes") namedOffOffer = true;
+    }
   }
   for (const m of t.matchAll(/\b(\d{1,2})(?::\d\d)?\s*(am|pm)\b/g)) {
     const label = `${Number(m[1])}${m[2]}`;
@@ -708,6 +715,9 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // Refusal first. A pick after a refusal ("no, Saturday works") is mixed: ask again.
   if (c.why === "refusal") return all.some(k => strong.has(k)) ? { ...unclear, why: "mixed" } : { answer: "no", keys: [], why: c.why };
   if (c.why === "mixed" || c.why === "conditional" || c.why === "hedged") return unclear;
+  // A day the probe did not offer, named as a yes ("Friday works"), is a counter-offer: yes, but not to
+  // any offered time. The probe offers new times; the service must never book a time the member did not name.
+  if (namedOffOffer && picked.length === 0 && c.answer === "yes") return { answer: "yes", keys: [], why: "counter" };
   // A time they name and do not refuse is a yes to it ("no plans Thursday, so Thursday works").
   // A named time with a yes or a firm pick ("Saturday works"); a bare mention ("I'm at a wedding saturday") is not a yes.
   if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return { answer: "yes", keys: picked.filter(k => strong.has(k) || c.answer === "yes"), why: c.why };
