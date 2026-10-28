@@ -78,7 +78,7 @@ const r = (kind: Kind, src: string, strong = false): Rule => ({ kind, re: new Re
 
 const RULES: Rule[] = [
   // Positive idioms that contain a negation word.
-  r("yes", "\\b(?:no problem|no prob(?:lem)?s?|not a problem|no doubt|no question|why not|why the hell not|por que no|can't wait|cannot wait|can not wait|wouldn't miss it|would not miss it|don't see why not|i don't mind|don't mind|no reason not to|how could i say no|never say no|not gonna say no|(?:i )?(?:can'?t|cannot|can not|wouldn'?t|would not|won'?t|will not|don'?t|do not) say no(?: to (?:that|this|it))?|i'm not going to say no|i am not going to say no)\\b", true),
+  r("yes", "\\b(?:no problem|no prob(?:lem)?s?|not a problem|no doubt|no question|why not|why the hell not|por que no|can't wait|cannot wait|can not wait|wouldn't miss it|would not miss it|don't see why not|i don't mind|don't mind|no reason not to|how could i say no|never say no|not gonna say no|(?<=^|[.,!?;:]\\s*|\\b(?:i|we|so|but|then|and|honestly|actually|well)\\s)(?:can'?t|cannot|can not|shouldn'?t|should not|wouldn'?t|would not|won'?t|will not|don'?t|do not)\\s+(?:really\\s+|honestly\\s+|actually\\s+|possibly\\s+|ever\\s+)?say no(?: to (?:that|this|it))?|i'm not going to say no|i am not going to say no)\\b", true),
   // Reversals: what follows replaces what came before.
   r("reversal", "\\b(?:actually|on second thought|second thoughts|wait|jk|just kidding|nvm|never ?mind|scratch that|changed my mind|pensandolo bien|espera)\\b"),
   r("neutral", "\\b(?:no worries|no pressure|no rush|no stress|no biggie|no te preocupes|sin problema|(?:that's|that is|it's|it is) not a no|i'm not saying no|i am not saying no|not a no)\\b"),

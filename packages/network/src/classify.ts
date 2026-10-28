@@ -549,7 +549,7 @@ const COUNTER_RX = /\b(?:different (?:day|time|week)|another (?:day|week)|next w
 /** "No problem", "no worries", "no rush", "no plans", "no doubt": not refusals. */
 const HARMLESS_NO = /\bno (?:problem|prob|probs|worries|worry|rush|pressure|biggie|doubt|plans?|stress|sweat|complaints)\b/g;
 /** "I can't say no", "I wouldn't say no (to that)", "I won't say no": a yes that contains "no". */
-const SAY_NO_YES = /\b(?:i\s+)?(?:can'?t|cannot|can not|wouldn'?t|would not|won'?t|will not|don'?t|do not)\s+say no(?:\s+to\s+(?:that|this|it))?\b|\bi(?:'m|m| am) not going to say no\b/g;
+const SAY_NO_YES = /(?<=^|[.,!?;:]\s*|\b(?:i|we|so|but|then|and|honestly|actually|well)\s)(?:can'?t|cannot|can not|shouldn'?t|should not|wouldn'?t|would not|won'?t|will not|don'?t|do not)\s+(?:really\s+|honestly\s+|actually\s+|possibly\s+|ever\s+)?say no(?:\s+to\s+(?:that|this|it))?\b|\bi(?:'m|m| am) not going to say no\b/g;
 /** "Not a no" and "I'm not saying no" are not refusals and not a clear yes: ask again. */
 const NOT_A_NO = /\b(?:i(?:'m|m| am) not saying no|(?:that'?s|that is|it'?s|it is)\s+not a no|not a no)\b/g;
 /** One mask for every reader of a reply: "say no" idioms become a yes, the no-but-ambiguous phrases blank. */

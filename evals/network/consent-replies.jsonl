@@ -338,3 +338,10 @@
 {"text":"I can't say no to option b","label":"yes","keys":["b"]}
 {"text":"I can't say no to anything but Thursday","label":"yes","keys":["b","c"]}
 {"text":"I'm not going to say no to Thursday","label":"yes","keys":["a"]}
+{"text": "I can't really say no", "label": "yes"}
+{"text": "I can't honestly say no", "label": "yes"}
+{"text": "I shouldn't say no", "label": "yes"}
+{"text": "We can't say no", "label": "yes"}
+{"text": "She can't say no", "label": "no"}
+{"text": "They can't say no to that", "label": "no"}
+{"text": "my boss can't say no to that", "label": "no"}
