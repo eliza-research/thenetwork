@@ -631,13 +631,18 @@ const NEG_CUE = /\b(not(?! sure)|can'?t(?! wait)|cannot|couldn'?t|won'?t|wouldn'
 const NEG_AFTER = /^\s*(?:(?:one|option|time|slot)\b\s*)?(?:\d{1,2}(?::\d\d)?\s*(?:am|pm)\s*)?(?:(?:is|'s|are|would be|will be)\s+)?(?:out\b|bad\b|busy\b|full\b|packed\b|booked\b|taken\b|no good\b|not (?:good|great|ideal|possible|great)\b|tough\b|rough\b|a no\b|off\b|impossible\b|doesn'?t\b|does not\b|don'?t\b|do not\b|won'?t\b|will not\b|isn'?t\b|is not\b|can'?t\b|cannot\b)/;
 /** A clause boundary: punctuation, "but", "though", "however". */
 const CLAUSE_START = /[.,;!?]|\b(but|though|however|although|so)\b/g;
+/** A cue that rules a named day or clock time out: "any day but Friday", "free apart from Friday". */
+const EXCL_BEFORE = /\b(?:but|except(?: for)?|apart from|other than|aside from|save for|excluding|barring)\s+$/;
 /** Words that make a named time a pick ("Saturday works", "free Sunday"), not just a mention ("Saturday I'm at a wedding"). */
 const POSITIVE_PICK = /\b(works|work for (?:me|us)|does|good|fine|great|perfect|best|better|free|open|i can|let'?s|is ok|okay|please|for me|yes|yeah|sure)\b/;
 /** True when the words at `i` (of length `len`) are refused: a negation cue earlier in their clause, or a refusal right after them. */
 function negatedAt(t: string, i: number, len: number): boolean {
   let from = 0;
   for (const m of t.slice(0, i).matchAll(CLAUSE_START)) from = m.index! + m[0].length;
-  return NEG_CUE.test(t.slice(from, i)) || NEG_AFTER.test(t.slice(i + len));
+  // An exclusion cue can sit on the far side of the clause boundary it creates ("any day *but* Friday",
+  // "free apart from Friday"), where the clause-local scan below cannot see it.
+  const excl = t.slice(Math.max(0, i - 24), i);
+  return NEG_CUE.test(t.slice(from, i)) || EXCL_BEFORE.test(excl) || NEG_AFTER.test(t.slice(i + len));
 }
 /** The clause (between punctuation) around position i. */
 function clauseAt(t: string, i: number, len: number): string {
@@ -693,6 +698,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // Saturday and Sunday): the reply names no offered option, so it must never fall through to the
   // plain-yes branch below and book every option the member did not refuse
   // (network-consent: record the time they accept).
+  // A mention the reply rules *out* is not a miss (negatedAt covers "any day but Friday", "free apart
+  // from Friday"): it is a yes to the offered options, since none of them is the day being excluded.
   let unoffered = false;
   for (const [re, dayName] of DAY_WORDS) {
     const keys = options.filter(o => o.label.startsWith(dayName)).map(o => o.key);
@@ -723,8 +730,12 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return { answer: "yes", keys: picked.filter(k => strong.has(k) || c.answer === "yes"), why: c.why };
   if (NEITHER.test(t)) return { answer: "yes", keys: [], why: c.why };
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
+  // Skipped when the reply also names a day or time we did not offer: "Friday anytime works" carries the
+  // same Friday constraint as "Friday works", so the generic "anytime" must not accept the offered
+  // options ahead of the unoffered check below. A reply that names an offered option still picks it
+  // ("Friday or Thursday works" -> Thursday) because that returns from the pick branch above.
   const allAt = ALL.exec(t) ?? ALL_WEAK.exec(t);
-  if (allAt && c.answer !== "counter" && !negatedAt(t, allAt.index, allAt[0].length)) return open.length ? { answer: "yes", keys: open, why: c.why } : unclear;
+  if (allAt && c.answer !== "counter" && !unoffered && !negatedAt(t, allAt.index, allAt[0].length)) return open.length ? { answer: "yes", keys: open, why: c.why } : unclear;
   // A yes that names a day or time we did not offer shares nothing with the options: it is not a pick, and
   // it is not "none of those fit" either, so it books nothing and records nothing as refused. unclear
   // returns before onProbeAnswer (network.ts), so no declinedTimes, no availability history and no

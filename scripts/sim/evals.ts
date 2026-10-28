@@ -78,7 +78,7 @@ export async function evalsBlock(b: Block): Promise<void> {
     const r = parseProbeReply(l.text, opts);
     if (r.answer !== l.answer || JSON.stringify(r.keys) !== JSON.stringify(l.keys)) wrongUnoffered.push(`${l.text} -> ${r.answer} ${JSON.stringify(r.keys)}, want ${l.answer} ${JSON.stringify(l.keys)}`);
   }
-  b.gate(`time answers: a day or time nobody offered is never a pick (n ${unoffered.length}, exact match)`, unoffered.length >= 2 && wrongUnoffered.length === 0, wrongUnoffered.slice(0, 3).join(" | ") || `${unoffered.length}/${unoffered.length} exact`);
+  b.gate(`time answers: a day or time nobody offered is never a pick (n ${unoffered.length}, exact match)`, unoffered.length >= 8 && wrongUnoffered.length === 0, wrongUnoffered.slice(0, 3).join(" | ") || `${unoffered.length}/${unoffered.length} exact`);
 
   const benign = (await Bun.file(`${ROOT}/network/benign-adult.txt`).text()).trim().split("\n");
   const flagged = benign.filter(t => classify(t).abuse.length);

@@ -44,9 +44,33 @@ option set): `Friday works` must be `unclear` with no keys, `Saturday 11am works
 that file fails on `main` today, and any regression fails the gate outright:
 
 ```
-with the fix:     PASS  time answers: a day or time nobody offered is never a pick (n 2, exact match): 2/2 exact
+with the fix:     PASS  time answers: a day or time nobody offered is never a pick (n 5, exact match): 5/5 exact
 fix stashed:      FAIL  time answers: ...: Friday works -> yes ["a","b","c"], want unclear []   (24/26 blocking gates)
 ```
+
+## A generic "anytime" does not launder an unoffered day
+
+The first version of this guard ran after the "any of them" branch (`classify.ts:730`), so a reply that named an
+unoffered day *and* said anytime still accepted every offered option: `Friday anytime works` → `yes ["a","b","c"]`,
+booked in the full flow. The branch now also requires `!unoffered`, because "Friday anytime works" carries the same
+Friday constraint as "Friday works".
+
+This is not a blanket rejection of every unmatched mention: a reply that names an offered option returns from the pick
+branch above it, so `Friday or Thursday works` still picks Thursday (`["a"]`) and `thursday or sunday works` still picks
+both. Both cases are pinned in `unoffered-time-answers.jsonl` next to the two unoffered rows.
+
+## A mention the reply rules out is not a miss
+
+The same scan would misfire on an exclusion, because the cue sits on the far side of the clause boundary it creates:
+`any day but Friday works` names Friday, and Friday is not offered, so a naive miss flag turns a perfectly good yes into
+a re-ask. `negatedAt` therefore also tests a short window before the mention for an exclusion cue (`but`, `except`,
+`apart from`, `other than`, `aside from`, `save for`, `excluding`, `barring`). With Friday offered, `any day but Friday
+works` picks the remaining option (`["a"]` against `Thursday 7pm`/`Friday 7pm`) instead of picking Friday itself, which
+is what it did before this change. Pinned both ways in `unoffered-time-answers.jsonl`.
+
+Known, pre-existing, not fixed here: `anytime except Friday works` returns `unclear` with `why: "mixed"` because the
+classifier scores the refusal and the pick before this scan runs. It re-asks rather than booking the excluded day, so it
+is safe, and it is unchanged from `main`.
 
 ## sim and typecheck
 
@@ -84,12 +108,23 @@ version of this fix did record those three times as declined for a member who ne
 replaced.
 
 The value is not new: `unclear` / `why: "none"` is what `parseProbeReply` already returns for a reply it cannot read
-(`classify.ts:602`). Refusals, hedges and conditionals are untouched: the guard at `classify.ts:732` runs after those early
+(`classify.ts:602`). Refusals, hedges and conditionals are untouched: the guard at `classify.ts:736` runs after those early
 returns (`classify.ts:719-720`) and requires `answer === "yes"`. This also matches the answer sibling PRs #161 and #135
 chose for the same input, so the pair agree rather than diverge.
 
+One live path can still promote this answer, and it is named here rather than left implicit. `mergeConsent`
+(`extract.ts:131`) upgrades an offline `unclear` / `why: "none"` to the model's yes, and takes every offered option when
+the model gives no times (`extract.ts:138`); the caller is `network.ts:768`. That only happens when a `Network` is
+constructed with `NetworkOptions.understand` (`network.ts:189`, used at `:598`, resolved by `understandSafely` at `:629`).
+The default deployment entrypoints do not pass it, so this branch's behaviour is the rules-only one on every default path;
+an embedder that does pass it re-opens the original widening, because an unoffered day reaches the model as ordinary text.
+Closing it needs a distinct reason for "names a time we did not offer" that `mergeConsent` refuses to upgrade, which is a
+wider change than this fix and is listed as a follow-up rather than done here.
+
 ## Follow-ups
 
+- An unoffered day or time can still be promoted to a yes by the optional model reader: give it its own `ConsentWhy`
+  value (or a `mergeConsent` guard) so `why: "none"` stops being the promoted case; see Risks and trade-offs.
 - Relative days ("tomorrow works", "tonight works", "this weekend works") still book every option. The guard here only
   covers day and clock words, so this needs the widening above, re-tested against `unclear`.
 - `COUNTER_RX` (`classify.ts:543`) does not match "another time", so "can we find another time?" still books every option; `consent-replies.jsonl:94` pins no keys, so the gate cannot see it. Pin the keys when fixing.

@@ -1,2 +1,8 @@
 {"text":"Friday works","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"unclear","keys":[]}
 {"text":"Saturday 11am works","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":["b"]}
+{"text":"Friday anytime works","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"unclear","keys":[]}
+{"text":"Any time Friday works","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"unclear","keys":[]}
+{"text":"Friday or Thursday works","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":["a"]}
+{"text":"any day but Friday works","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":["a","b","c"]}
+{"text":"any day but Friday works","options":["Thursday 7pm","Friday 7pm"],"answer":"yes","keys":["a"]}
+{"text":"I'm free anytime apart from Friday","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":["a","b","c"]}
