@@ -182,3 +182,7 @@
 {"text":"no puedo el viernes","label":"no"}
 {"text":"si puedo ir, sí","label":"unsure"}
 {"text":"si tengo tiempo","label":"unsure"}
+{"text":"yes if nothing comes up","label":"unsure"}
+{"text":"yes if work allows","label":"unsure"}
+{"text":"Thursday works if work allows","label":"unsure"}
+{"text":"Saturday works if work isn't crazy","label":"unsure"}
