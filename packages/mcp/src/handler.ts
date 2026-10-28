@@ -254,6 +254,11 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     return !!personId && customSlopPeople!.has(personId) && await o.platform.customChatGptSlopEligible!(personId, phoneKey);
   }
 
+  /** Staff ban must kill live agent access: every client (not only custom ChatGPT Slop) refuses a banned phoneKey. */
+  async function grantAllowed(phoneKey: string): Promise<boolean> {
+    if (!o.platform.bannedKey) return true;
+    return !(await o.platform.bannedKey(phoneKey));
+  }
 
   async function getClient(id: string, c: Ctx): Promise<OAuthClient | undefined> {
     if (id.length > 512) return undefined;
@@ -586,6 +591,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       if (res && canonicalResource(res, c.issuer) !== ac.resource) return bad("invalid_target");
       const grant = await store.getGrant(ac.grantId);
       if (!grant || grant.revokedAt !== null || grant.expiresAt <= at) return bad("invalid_grant");
+      if (!(await grantAllowed(grant.phoneKey))) return bad("invalid_grant");
       if (!(await customSlopEligible(c, client, grant.personId, grant.phoneKey))) return bad("invalid_grant");
       const cloudStatus=await cloudGrantCurrent(grant);
       if(ac.expiresAt<=now())return bad("invalid_grant");
@@ -613,6 +619,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       if (!t || t.kind !== "refresh" || t.clientId !== client.id || t.revokedAt !== null || t.expiresAt <= at) return bad("invalid_grant");
       const grant = await store.getGrant(t.grantId);
       if (!grant || grant.revokedAt !== null || grant.expiresAt <= at) return bad("invalid_grant");
+      if (!(await grantAllowed(grant.phoneKey))) return bad("invalid_grant");
       if (!(await customSlopEligible(c, client, grant.personId, grant.phoneKey))) return bad("invalid_grant");
       const cloudStatus=await cloudGrantCurrent(grant);
       if(t.expiresAt<=now())return bad("invalid_grant");
@@ -726,6 +733,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!t || t.kind !== "access" || t.revokedAt !== null || t.expiresAt <= at || t.resource !== resource || t.app !== c.app.id) return "invalid";
     const [grant, client] = await Promise.all([store.getGrant(t.grantId), store.getClient(t.clientId)]);
     if (!grant || grant.revokedAt !== null || grant.expiresAt <= at || !client) return "invalid";
+    if (!(await grantAllowed(grant.phoneKey))) return "invalid";
     const cloudStatus=await cloudGrantCurrent(grant);
     if(t.expiresAt<=now())return "invalid";
     if(cloudStatus!=="valid")return cloudStatus;
