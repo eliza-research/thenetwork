@@ -52,6 +52,12 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
       ["Usually free weekdays", weekdays, undefined],
       ["Usually free weeknights", weekdays, undefined],
       ["Usually free Tuesday evenings, not Saturday", ["evening:Tue"], Date.UTC(2026, 9, 10, 14)],
+      ["free most evenings, not weeknights", [], Date.UTC(2026, 9, 6, 23)],
+      ["Usually free any evenings, not weekdays", [], Date.UTC(2026, 9, 6, 23)],
+      ["Usually free all evenings, weeknights don't work", [], Date.UTC(2026, 9, 6, 23)],
+      ["Usually free every evening, weekdays are busy", [], Date.UTC(2026, 9, 6, 23)],
+      ["free most evenings", weekdays, undefined],
+      ["free most evenings, not weekends", weekdays, undefined],
     ];
     const results: { tags: string[]; expected: string[]; p?: number }[] = [];
     for (const seed of [1, 2, 3]) for (const [body, expected, refusedAt] of cases) {
@@ -72,12 +78,18 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
       // The same persisted state survives a process restart before the scheduler reads it.
       const state = JSON.parse(JSON.stringify(net.exportState()));
       net = new ConsentNetwork(opts); net.init(ctx); net.importState(state);
-      const saved = net.memberList().find(m => m.id === member.id)!.standing!;
-      const standing = standingFromFacets([{ kind: "availability_pattern", tags: saved.tags, observedAt: saved.at }], clock.now());
+      const reloaded = net.memberList().find(m => m.id === member.id)!;
+      const saved = reloaded.standing;
+      const standing = standingFromFacets(saved ? [{ kind: "availability_pattern", tags: saved.tags, observedAt: saved.at }] : [], clock.now());
       const p = refusedAt === undefined ? undefined : availabilityProb({ memberId: member.id, tz: NY, standing }, { start: refusedAt, end: refusedAt + 2 * HOUR }, clock.now());
-      results.push({ tags: saved.tags, expected, ...(p === undefined ? {} : { p }) });
+      results.push({ tags: saved?.tags ?? [], expected, ...(p === undefined ? {} : { p }) });
+      if (!expected.length) {
+        expect(saved).toBeUndefined();
+        expect(reloaded.availability).toBeUndefined();
+        expect(p).toBe(DEFAULT_ATTENTION.availability.prior.weekdayEvening);
+      }
     }
-    expect(results.filter(r => JSON.stringify(r.tags) === JSON.stringify(r.expected)).length).toBe(30);
+    expect(results.filter(r => JSON.stringify(r.tags) === JSON.stringify(r.expected)).length).toBe(cases.length * 3);
     for (const r of results) if (r.p !== undefined) expect(r.p).toBeLessThan(DEFAULT_ATTENTION.availability.prior.weekendDay);
   });
   // ---- invariants: NYC, 10 days, seed 3, simulated reviewer ---------------------------------------

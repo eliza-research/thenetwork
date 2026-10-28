@@ -111,3 +111,107 @@ For the holdout, use the seed list and three wording substitutions stated above.
 Standing availability remains a decaying prior, not a hard calendar exclusion.
 This change does not repair old saved values or change exceptions within a positive group, such as "weekdays except Tuesday".
 It does not expand the existing negation grammar or measure live delivery or conversation quality.
+
+## Reviewer follow-up: default evenings
+
+The [review](https://github.com/eliza-research/thenetwork/pull/160#pullrequestreview-5677077382) identified another path that restored refused weekday evenings.
+This follow-up starts from PR head `aad676569ded15ec47a71aa388915f6c195918f5` on the same branch.
+
+The exact phrase "free most evenings, not weeknights" returned all five weekday evenings.
+"Free most evenings, not weekdays" did the same.
+The recurring-day checks rejected those groups, but the default-evening fallback added them again when no positive days remained.
+
+The fallback now checks weekday and weeknight mentions with the existing `negatedAt` rule.
+A refused group prevents that fallback from adding Monday through Friday.
+"Most evenings" and "most evenings, not weekends" still return the five weekday evenings.
+Explicit positive windows still use the existing token path.
+No other parser branch, message wording, safety threshold or dependency changes.
+
+The existing conversation gate adds six phrases, making 16 phrases on each of seeds 1, 2 and 3.
+Four phrases refuse the fallback days; two preserve valid fallback behavior.
+The refusals cover `most`, `any`, `all` and `every`, with negation before and after the group.
+The gate exports and reloads each conversation, then checks persisted tags and the scheduler's probability.
+With no affirmative window, neither standing availability nor an availability sample is created.
+The weekday-evening probability remains the existing 0.35 prior; refusal does not create a hard calendar exclusion.
+
+### measurement
+
+Use `bun run sim --only network,evals --json <output>` for both versions.
+The before version contains the expanded regression and the unchanged PR-head parser.
+The after version adds only the fallback guard.
+
+| Result | Before | After |
+|---|---:|---:|
+| Correct persisted availability, seeds 1-3 | 36/48 | 48/48 |
+| Correct new fallback refusals | 0/12 | 12/12 |
+| Original cases and new positive fallback controls | 36/36 | 36/36 |
+| Held-out phrases and seeds 4-6 | 36/48 | 48/48 |
+| Network and parser blocking gates | 86/87 | 87/87 |
+
+The before gate fails with `expected 36 to be 48`.
+The holdout uses the same conversation fixture with seeds 4-6 and these four replacement refusals:
+
+- `free most evenings, no weeknight`
+- `Usually free any evenings, not on a weekday`
+- `Usually free all evenings, weeknight is out`
+- `Usually free every evening, weekday does not work`
+
+Windows setup used Bun 1.4.2 and TypeScript 5.9.3.
+The default isolated dependency linker could not resolve `@thenetwork/platform` on this machine.
+`bun install --frozen-lockfile --linker hoisted` resolved it without changing manifests or the lockfile.
+The machine's Git configuration converted checkout text to CRLF.
+Restoring the committed LF bytes fixed contract-hash failures and the site frontmatter build error, with no additional Git diff.
+The database test environment also needed `USER=postgres`; one helper uses it without a default.
+
+### safety_gates
+
+The before run takes 179.3 seconds; the after run takes 175.3 seconds. Both have zero tracked failures.
+All 88 other gate records are identical, excluding runtime.
+This includes the invariant-run fingerprint `24bb81f068060b33` and all 25 parser and leak gates.
+Typecheck passes after the fix.
+
+The paired measurements above use the initial regression assertions.
+Independent review then required every empty-expected case to assert absent standing state, absent availability samples and the unchanged scheduler prior.
+With those unconditional assertions, `bun run sim --only network,evals` passes 87/87 gates, with zero tracked failures, in 178.6 seconds.
+All 89 gate records match the earlier after-run, excluding runtime.
+The held-out fixture with the tightened assertions passes all 48 conversations on seeds 4-6; typecheck also passes.
+No production code changed during this assertion review, so integration and end-to-end suites were not repeated.
+
+The first full integration attempt reports 592 pass, 8 skip and 9 fail in 551.23 seconds.
+Checkout setup errors prevented some tests from starting; the first end-to-end attempt also failed during setup.
+After the setup corrections, all seven failed integration files were rerun with `--conditions eliza-source --timeout 120000`.
+They report 141 pass and 6 fail across 147 tests, with 1,468 assertions, in 15.20 seconds.
+The remaining failures match those documented above: `/bin/bash` is unavailable, SIGTERM returns 143, and four site assertions expect forward-slash paths.
+No fresh paired baseline integration run was performed for this follow-up; the comparison uses the earlier committed report.
+All eleven security-suite files ran in the full integration attempt; affected router and backend files also ran in the recheck.
+The eight reconciliation skips remain opt-in; PostgreSQL 16.15 was running locally and `REQUIRE_PG=1` was set.
+
+The corrected `bun run test:e2e` reports 42 pass, 1 optional skip and 0 fail, with 654 assertions, in 68.89 seconds.
+The task's local PostgreSQL cluster was stopped after testing.
+The full simulation allowance was already used in this contribution session, as recorded above.
+This follow-up reruns the affected blocks; it does not claim a new full-suite simulation result.
+
+### Alternatives and remaining limits
+
+1. Remove the default-evening fallback. This would discard valid "most evenings" availability.
+2. Disable fallback whenever any day group is refused. This would discard valid weekdays when only weekends were refused.
+
+The guard reuses the existing negation rule and applies only to groups that overlap the fallback days.
+Exceptions within positive groups and fallback exclusions of individual named days remain outside this change.
+Existing saved values are not repaired. Unstated weekend availability is not inferred from a weekday refusal.
+
+### llm_evidence and agent_clients
+
+This follow-up changes deterministic parsing and makes zero validation model calls, at $0 model-call cost.
+No provider keys are configured in this checkout. No real-model or external agent-client result is claimed.
+The production message handler is exercised through the simulation, with matching disabled and human review retained.
+Authorship uses OpenAI through Codex; the exact model identifier is unavailable in this delegated session.
+
+### GitHub CI status
+
+[Run 40558349637](https://github.com/eliza-research/thenetwork/actions/runs/40558349637) targets the original PR head above.
+On 2026-10-28, the API reports `completed` / `action_required`, and its jobs endpoint returns an empty list.
+The run page states: "This workflow is awaiting approval from a maintainer" in PR #160.
+An upstream maintainer must review the fork workflow and decide whether to approve its run.
+No workflow approval, permission change, settings change or rerun was attempted.
+This run supplies neither passing nor failing test evidence.

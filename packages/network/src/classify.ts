@@ -763,7 +763,9 @@ export function availabilityTags(body: string): string[] {
     if (lead.length) lead.forEach(p => give(pending, p));
     else for (const d of pending) (d === 0 || d === 6 ? ["morning", "afternoon", "evening"] : ["evening"]).forEach(p => give([d], p));
   }
-  if (!out.size && lead.includes("evening") && /\b(most|any|all|every)\b/.test(t)) give([1, 2, 3, 4, 5], "evening");
+  // The default weekday evenings must not restore a day group the member just refused.
+  if (!out.size && lead.includes("evening") && /\b(most|any|all|every)\b/.test(t)
+    && ![...t.matchAll(/\b(?:weekdays?|weeknights?)\b/g)].some(m => negatedAt(t, m.index!, m[0].length))) give([1, 2, 3, 4, 5], "evening");
   const ORDER = ["morning", "afternoon", "evening"];
   return [...out.keys()].sort().flatMap(d => ORDER.filter(p => out.get(d)!.has(p)).map(p => `${p}:${DAYS3[d]}`));
 }
