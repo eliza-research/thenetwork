@@ -320,3 +320,28 @@
 {"text":"Looking for people to play chess with. Anyone? 🙌🎉","label":"unclear"}
 {"text":"Anyone around who'd want to meet someone to date? I'm near Bushwick. Honestly this is great timing.","label":"unclear"}
 {"text":"Got it. Honestly this is great timing.","label":"unclear"}
+{"text":"I can't say no","label":"yes"}
+{"text":"I can't say no to that","label":"yes"}
+{"text":"I cannot say no","label":"yes"}
+{"text":"I wouldn't say no","label":"yes"}
+{"text":"I wouldn't say no to that","label":"yes"}
+{"text":"I won't say no","label":"yes"}
+{"text":"I won't say no to that","label":"yes"}
+{"text":"I don't say no to that","label":"yes"}
+{"text":"I'm not going to say no","label":"yes"}
+{"text":"not a no","label":"unclear"}
+{"text":"That's not a no","label":"unclear"}
+{"text":"I'm not saying no","label":"unclear"}
+{"text":"I can't say no to Thursday","label":"yes","keys":["a"]}
+{"text":"I wouldn't say no to Sunday","label":"yes","keys":["c"]}
+{"text":"I won't say no to Saturday 11am","label":"yes","keys":["b"]}
+{"text":"I can't say no to option b","label":"yes","keys":["b"]}
+{"text":"I can't say no to anything but Thursday","label":"yes","keys":["b","c"]}
+{"text":"I'm not going to say no to Thursday","label":"yes","keys":["a"]}
+{"text": "I can't really say no", "label": "yes"}
+{"text": "I can't honestly say no", "label": "yes"}
+{"text": "I shouldn't say no", "label": "yes"}
+{"text": "We can't say no", "label": "yes"}
+{"text": "She can't say no", "label": "no"}
+{"text": "They can't say no to that", "label": "no"}
+{"text": "my boss can't say no to that", "label": "no"}
