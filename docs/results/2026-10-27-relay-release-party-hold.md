@@ -61,6 +61,8 @@ The two texts intentionally differ: identical text would trigger duplicate-send 
 - `bun run typecheck` passed after restoring the copied workspace's dependencies.
 - `bun test --conditions eliza-source --timeout 120000 ./packages/network/test/relay.test.ts` — **5 pass, 0 fail, 92 assertions**.
 - `bun run sim --only relay --only evals` — **85/85 blocking gates pass**, with 4 existing tracked metrics off target.
+- `bun run test:e2e` — **43 pass, 1 skip, 0 fail, 668 assertions** across 4 files. The skipped pre-existing case is `failed security checks give recovery feedback and a later SDK success clears only that feedback`; the new relay case ran and passed.
+- Broader checks were attempted once and stopped after approximately 4 minutes 42 seconds. `bun run test:integration` was incomplete and had already recorded Windows/environment failures: missing `/bin/bash` in the Wrangler test, backend SIGTERM exit 143 rather than 0, and a test connecting as role `undefined` because it interpolates `process.env.USER` without a fallback. `bun run sim` was incomplete in the network block. Neither partial run is claimed as a pass; the focused relay integration and relay/evals results above are complete.
 - No LLM requests, live sends, or paid API calls were used for this deterministic review test.
 
 The review's two nonblocking points need no expanded behavior: an absent/already-decided held item already returns `{ ok: false, reason: "not_held" }` in `RelayDesk.release`; `contact_share` remains governed by mutual swap consent and is not made staff-releasable by this change.
