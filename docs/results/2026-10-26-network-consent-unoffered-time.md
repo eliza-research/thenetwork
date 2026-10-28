@@ -39,7 +39,7 @@ The `consent-replies.jsonl` row for `Friday works` is retyped from `yes` to `unc
 
 A corpus row cannot pin this behaviour: one miss in 323 rows is 99.7%, inside the 97% bar, so the regression would come
 back with every gate green. The fix is therefore gated by an exact-match block instead, in
-`evals/network/time-answer-collisions.jsonl` and its gate in `scripts/sim/evals.ts` (100%, each row carrying its own
+`evals/network/unoffered-time-answers.jsonl` and its gate in `scripts/sim/evals.ts` (100%, each row carrying its own
 option set): `Friday works` must be `unclear` with no keys, `Saturday 11am works` must still be `["b"]`. Every row in
 that file fails on `main` today, and any regression fails the gate outright:
 
@@ -77,15 +77,15 @@ re-testing on its own, and is not part of this branch.
 
 ## Risks and trade-offs
 
-`unclear` with `why: "none"` is not the "none of those fit" path. `network.ts:771` returns before `onProbeAnswer` whenever
+`unclear` with `why: "none"` is not the "none of those fit" path. `network.ts:772` returns before `onProbeAnswer` whenever
 `r.answer === "unclear"`, so "Friday works" appends nothing to `o.declinedTimes`, bumps no `optionsNoneFit`, and writes no
 `declined_time` outcome into `m.availHistory`; the reply falls through to `clarify()`, which asks again. The `counter`
 version of this fix did record those three times as declined for a member who never refused them; that is why it was
 replaced.
 
 The value is not new: `unclear` / `why: "none"` is what `parseProbeReply` already returns for a reply it cannot read
-(`classify.ts:602`). Refusals, hedges and conditionals are untouched: the guard at `classify.ts:729` runs after those early
-returns (`classify.ts:718-719`) and requires `answer === "yes"`. This also matches the answer sibling PRs #161 and #135
+(`classify.ts:602`). Refusals, hedges and conditionals are untouched: the guard at `classify.ts:732` runs after those early
+returns (`classify.ts:719-720`) and requires `answer === "yes"`. This also matches the answer sibling PRs #161 and #135
 chose for the same input, so the pair agree rather than diverge.
 
 ## Follow-ups
