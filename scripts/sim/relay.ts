@@ -465,6 +465,9 @@ async function deskGates(b: Block): Promise<void> {
     // Withdrawn: "don't send my number" (or the relay action's cancel) removes the pending request.
     for (const t of ["actually don't send my number", "cancel the number swap", "never mind about my number"]) expect(withdrawsSwap(t)).toBe(true);
     for (const t of ["send them my number", "my number is in my profile", "don't be late"]) expect(withdrawsSwap(t)).toBe(false);
+    // A yes, or a message that only mentions the number, never takes the request back.
+    for (const t of ["I dont mind, send them my number", "don't wait, send them my number", "send them my number, I don't care", "yes send my number, stop asking", "lol never had to wait this long for someone to want my number"]) expect([t, withdrawsSwap(t)]).toEqual([t, false]);
+    for (const t of ["I'd rather not share my number", "please don't give them my number", "changed my mind about my number", "scratch the swap", "stop sharing my number", "hold off for now, my number can wait", "cancel, I'll keep my number"]) expect([t, withdrawsSwap(t)]).toEqual([t, true]);
     expect(d.cancelSwaps("b")).toBe(1);
     h.t += 60_000;
     expect((await d.request({ itemId: "c3", from: "a", kind: "contact_share" }, { contactOf })).decision).toBe("held");

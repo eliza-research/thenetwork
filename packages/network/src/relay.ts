@@ -95,14 +95,18 @@ export interface RelayThreadState { id: string; app: string; members: [MemberId,
 /** A member asked to swap numbers; waiting for the other member's own request. */
 export interface RelaySwap { itemId: string; matchId: string; from: MemberId; to: MemberId; at: number }
 
+const MY_NUMBER = "(?:my (?:phone number|number|phone|digits|cell|contact(?: info)?)|(?:the |that |our )?(?:number|numbers) swap|(?:the |that )?swap|swap(?:ping)? numbers)";
 /**
  * "Don't send my number", "cancel the number swap", "never mind about my number": the member takes
- * back a pending swap request. A negation or a cancel word together with their number.
+ * back a pending swap request. The negation must govern the share ("don't send ... my number"), or a
+ * cancel word must name the swap or the number: "I don't mind, send them my number", "don't wait"
+ * and "stop asking" are not a withdrawal.
  */
 export function withdrawsSwap(text: string): boolean {
   const t = text.replace(/[\u2019\u2018`\u00b4]/g, "'").toLowerCase();
-  return /\b(?:don'?t|dont|do not|never|stop|cancel|hold off|rather not|changed my mind|never ?mind|nvm|take back|scratch)\b/.test(t)
-    && /\b(?:my (?:phone number|number|phone|digits|cell|contact(?: info)?)|(?:number|numbers) swap|swap(?:ping)? numbers)\b/.test(t);
+  return new RegExp(`\\b(?:don'?t|dont|do not|never|stop|rather not|hold off on|no need to)\\s+(?:\\w+\\s+){0,2}?(?:send|shar|giv|pass|forward|swap)\\w*\\b[^.!?]{0,30}?\\b${MY_NUMBER}\\b`).test(t)
+    || new RegExp(`\\b(?:cancel|stop|scratch|take back|forget|never ?mind|nvm|hold off on|changed my mind about)\\s+(?:about\\s+)?${MY_NUMBER}\\b`).test(t)
+    || new RegExp(`\\bhold off\\b[^.!?]{0,30}?\\b${MY_NUMBER}\\b|\\bi'?ll keep ${MY_NUMBER}\\b|\\bkeep(?:ing)? ${MY_NUMBER} (?:private|to myself)\\b`).test(t);
 }
 export interface RelayState { threads: RelayThreadState[]; log: RelayRecord[]; held: RelayHeld[]; swaps: RelaySwap[] }
 export const emptyRelayState = (): RelayState => ({ threads: [], log: [], held: [], swaps: [] });
