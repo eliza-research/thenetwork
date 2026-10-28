@@ -306,8 +306,12 @@ export function parseOptOut(text: string, o: { apps?: readonly string[] } = {}):
 export const KEYWORDS = {
   stopAll: ["STOP ALL", "STOPALL"],
   stop: ["STOP", "UNSUBSCRIBE", "CANCEL", "END", "QUIT", "REVOKE", "OPTOUT", "OPT OUT"],
-  /** "STOP PLEASE", "PLEASE STOP": a stop with a courtesy word (the platform ledger). */
-  stopPolite: ["STOP PLEASE", "PLEASE STOP"],
+  /** "STOP PLEASE", "PLS STOP", "STOP NOW": a whole-message stop with a courtesy or urgency word (the platform ledger). */
+  stopPolite: [
+    "STOP PLEASE", "PLEASE STOP", "STOP PLS", "PLS STOP", "STOP PLZ", "PLZ STOP",
+    "STOP NOW", "STOP NOW PLEASE", "PLEASE STOP NOW", "OK STOP", "OKAY STOP",
+    "STOP THANKS", "STOP THANK YOU", "JUST STOP", "STOP ALREADY",
+  ],
   /** Spanish whole-message opt-outs, accents folded. */
   stopEs: ["PARA", "PARAR", "ALTO", "BASTA", "BAJA", "CANCELAR", "DETENER", "NO MAS", "NO MAS MENSAJES"],
   start: ["START", "UNSTOP", "SUBSCRIBE", "RESUME"],
