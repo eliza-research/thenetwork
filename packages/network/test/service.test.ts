@@ -245,6 +245,25 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     expect((await sql`select count(*)::int as n from network.messages where opportunity_id = ${oppId}`)[0].n).toBe(0);
   }, T);
 
+  test("a decision at exactly the review deadline expires the item, the same as the tick", async () => {
+    await reset();
+    const clock = new SimClock(START);
+    const s = service(clock, "sla-edge");
+    expect((await staff(s, "adm-tok", "POST", "/matching", { on: true })).status).toBe(200);
+    for (const id of ["a", "b", "c", "r"]) for (const text of ONBOARD) await say(s, clock, id, text);
+    expect(await say(s, clock, "r", "Anyone around who'd want to find a regular climbing partner? I'm near Greenpoint.")).toBe("handled");
+    const queue = await (await staff(s, "rev-tok", "GET", "/review")).json();
+    const item = queue.items.find((i: any) => i.origin === "request");
+    expect(item).toBeDefined();
+    const oppId = item.oppId as string;
+
+    clock.set(item.deadline);
+    const edge = await staff(s, "rev-tok", "POST", `/review/${oppId}`, { decision: "approve" });
+    expect(edge.status).toBe(409);
+    expect(await edge.json()).toEqual({ ok: false, reason: "review_expired" });
+    expect((await sql`select decision from network.review_items where opportunity_id = ${oppId}`)[0].decision).toBe("expired");
+  }, T);
+
   test("two instances never tick at once; the second sees the lock holder and skips", async () => {
     await reset();
     const clock = new SimClock(START);
