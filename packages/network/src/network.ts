@@ -769,7 +769,10 @@ export class ConsentNetwork implements NetworkUnderTest {
       // A bare "👍" / "ok" after two or more messages in a row ("On it." and the probe) may answer
       // either one: it is not a yes to meeting someone (asked once more).
       const r = r0.answer === "yes" && this.outboundBefore >= 2 && ACK_ONLY.test(body.trim()) ? { ...r0, answer: "unclear" as const } : r0;
-      if (r.answer !== "unclear") { m.awaiting = undefined; return this.onProbeAnswer(m, aw.oppId!, r.answer === "yes", r.keys); }
+      // A time nobody offered (and the LLM named none) is a yes that books none of the offered times:
+      // offer other times, then leave the plan to the others' picks (docs/network.md 4.1).
+      const namedNone = r.answer === "yes" && "unoffered" in r0 && !!r0.unoffered;
+      if (r.answer !== "unclear") { m.awaiting = undefined; return this.onProbeAnswer(m, aw.oppId!, r.answer === "yes", r.keys, namedNone); }
       if (this.clarify(m, aw, c)) return;
     }
     if (this.optIns(m, body)) return;
@@ -2287,18 +2290,22 @@ export class ConsentNetwork implements NetworkUnderTest {
     return { memberId: m.id, tz: NY, quietHours: m.quietHours, standing, history: m.availHistory ?? [], ...(away.length ? { away } : {}) };
   }
 
-  private onProbeAnswer(m: MemberState, oppId: string, yes: boolean, keys: string[] = []) {
+  /**
+   * `namedNone`: the reply named a time nobody offered ("Friday night please"), so it refuses no offered
+   * time. It is a yes with no pick for the others' picks, never "none of those times fit".
+   */
+  private onProbeAnswer(m: MemberState, oppId: string, yes: boolean, keys: string[] = [], namedNone = false) {
     const o = this.opps.get(oppId);
     if (!o || o.stage !== "probing" || o.status.get(m.id) !== "probing") return;
     const retry = !!o.timeRetry?.includes(m.id);
     const offered = o.offered?.[m.id] ?? [];
     const picked = offered.filter(x => keys.includes(x.key));
     if (!retry) m.answered++;
-    this.ctx.log(retry ? "time_answer" : "probe_answer", { oppId, memberId: m.id, yes, ...(offered.length ? { picked: picked.map(x => x.key) } : {}) });
+    this.ctx.log(retry ? "time_answer" : "probe_answer", { oppId, memberId: m.id, yes, ...(offered.length ? { picked: picked.map(x => x.key) } : {}), ...(namedNone ? { unoffered: true } : {}) });
     if (yes) {
       if (!retry) this.counters.probeYes++;
       o.status.set(m.id, "available"); o.primed.add(m.id);
-      if (offered.length) {
+      if (offered.length && !namedNone) {
         o.picks = { ...o.picks, [m.id]: picked.map(x => x.start) };
         o.declinedTimes = [...(o.declinedTimes ?? []), ...offered.filter(x => !picked.includes(x)).map(x => x.start)];
         if (!picked.length) this.counters.optionsNoneFit++;

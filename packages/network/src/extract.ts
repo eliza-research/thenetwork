@@ -127,11 +127,15 @@ export function llmUnderstand(llm: LLM, o: { maxTokens?: number; attempts?: numb
 /**
  * The answer to a probe: the offline reading, with the LLM's yes taken only where the rules found no
  * signal at all ("none"). A refusal, a conditional, a hedge or a mixed reply is never turned into a yes.
+ * None of those times fits stays a yes with no pick: never the offered times the member did not name.
  */
 export function mergeConsent(
-  offline: { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy },
+  offline: { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy; unoffered?: boolean },
   u: Understood | undefined, options: readonly TimeOption[],
 ): { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy | "llm" } {
+  // A yes that named a time nobody offered keeps no pick, and that is a reading of its own: the LLM
+  // may still read the wants and interests, but it cannot turn the pick back into every offered time.
+  if (offline.unoffered) return { ...offline, keys: [] };
   if (!u?.consent || offline.answer !== "unclear" || offline.why !== "none") return offline;
   if (u.consent === "no") return { answer: "no", keys: [], why: "llm" };
   if (u.consent !== "yes") return offline;

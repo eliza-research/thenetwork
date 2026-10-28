@@ -65,6 +65,15 @@ export async function evalsBlock(b: Block): Promise<void> {
     b.gate(`consent replies ${file}: accuracy >= 97% (n ${lines.length})`, lines.length >= (file === "consent-replies.jsonl" ? 300 : 75) && ok / lines.length >= 0.97, pct(ok / lines.length));
     b.gate(`consent replies ${file}: no refusal or hedge read as yes`, notYesAsYes.length === 0, notYesAsYes.slice(0, 5).join(" | "));
   }
+  // A reply that names a time nobody offered: the parser says yes with no pick, so the next step
+  // (mergeConsent) may not turn it into a pick of the offered times (issue #134).
+  const unoffered = await jsonl<{ text: string; options: string[]; answer: "yes" | "no" | "unclear"; keys: string[] }>("network/probe-unoffered-time.jsonl");
+  const asOptions = (labels: string[]) => labels.map((label, i) => ({ key: "abc"[i]!, start: i, end: i + 1, label }));
+  const unofferedMiss = unoffered.filter(l => {
+    const r = parseProbeReply(l.text, asOptions(l.options));
+    return r.answer !== l.answer || JSON.stringify(r.keys) !== JSON.stringify(l.keys);
+  }).map(l => `${JSON.stringify(l.text)} -> ${JSON.stringify(parseProbeReply(l.text, asOptions(l.options)))}, want ${JSON.stringify({ answer: l.answer, keys: l.keys })}`);
+  b.gate(`probe replies naming no offered time: read as labelled (n ${unoffered.length}, exact match)`, unoffered.length >= 7 && unofferedMiss.length === 0, unofferedMiss.slice(0, 5).join("; "));
 
   const benign = (await Bun.file(`${ROOT}/network/benign-adult.txt`).text()).trim().split("\n");
   const flagged = benign.filter(t => classify(t).abuse.length);

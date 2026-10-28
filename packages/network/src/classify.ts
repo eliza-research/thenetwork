@@ -659,14 +659,18 @@ function clauseAt(t: string, i: number, len: number): string {
  * "Thursday? lol no" and "absolutely not" are a no. A refusal followed by a pick ("no, Saturday
  * works"), a conditional ("sure, but only with a woman") and a hedge ("who is it? thursday maybe")
  * are "unclear": the member is asked again, never booked.
+ * A day or clock the member names that no option carries ("Friday night please") is a yes with no
+ * pick, never a yes to every option. `unoffered` says that happened, so a plain yes keeps no pick.
  */
-export function parseProbeReply(body: string, options: readonly TimeOption[] = []): { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy } {
+export function parseProbeReply(body: string, options: readonly TimeOption[] = []): { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy; unoffered?: boolean } {
   const t = normText(body);
   const c = consentOf(body);
   if (!options.length) return { answer: c.answer === "no" ? "no" : c.answer === "yes" || c.answer === "counter" ? "yes" : "unclear", keys: [], why: c.why };
   const all = options.map(o => o.key);
   // Every mention of an option, as a pick or a refusal. A key both picked and refused counts as picked.
   const pos = new Set<string>(), neg = new Set<string>(), strong = new Set<string>();
+  // A time the member names that no option carries, and does not refuse. Reported when the reply is a yes.
+  let unoffered = false;
   const onlyPick = (i: number, len: number) => /^[\s\W]*(?:the\s+)?$/.test(t.slice(0, i)) && /^[\s\W]*(?:one|option|works?|please|pls|lol)?[\s\W]*$/.test(t.slice(i + len));
   const mark = (keys: string[], i: number, len: number) => {
     for (const k of keys) {
@@ -692,10 +696,13 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   for (const [re, dayName] of DAY_WORDS) {
     const keys = options.filter(o => o.label.startsWith(dayName)).map(o => o.key);
     if (keys.length) for (const m of t.matchAll(re)) mark(keys, m.index!, m[0].length);
+    else for (const m of t.matchAll(re)) if (!negatedAt(t, m.index!, m[0].length)) unoffered = true;
   }
   for (const m of t.matchAll(/\b(\d{1,2})(?::\d\d)?\s*(am|pm)\b/g)) {
     const label = `${Number(m[1])}${m[2]}`;
-    mark(options.filter(o => o.label.endsWith(` ${label}`)).map(o => o.key), m.index!, m[0].length);
+    const keys = options.filter(o => o.label.endsWith(` ${label}`)).map(o => o.key);
+    if (keys.length) mark(keys, m.index!, m[0].length);
+    else if (!negatedAt(t, m.index!, m[0].length)) unoffered = true;
   }
   // A reply that is only time words ("sat 11am", "thursday or sunday") picks them all firmly.
   let residue = t;
@@ -715,7 +722,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
   const allAt = ALL.exec(t) ?? ALL_WEAK.exec(t);
   if (allAt && c.answer !== "counter" && !negatedAt(t, allAt.index, allAt[0].length)) return open.length ? { answer: "yes", keys: open, why: c.why } : unclear;
-  if (c.answer === "yes") return { answer: "yes", keys: open, why: c.why };
+  // A plain yes takes every option the member did not rule out, unless they named a time nobody offered.
+  if (c.answer === "yes") return { answer: "yes", keys: unoffered ? [] : open, why: c.why, ...(unoffered ? { unoffered } : {}) };
   if (c.answer === "counter") return { answer: "yes", keys: [], why: c.why };
   // Only refusals ("Thursday doesn't work") are not a yes: the probe stays open for a clear answer.
   return unclear;
