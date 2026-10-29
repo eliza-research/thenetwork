@@ -44,10 +44,10 @@ class SeatWorld {
   private seq = 0;
   private readonly opts: NetworkOptions;
 
-  constructor() {
+  constructor(seed = 7) {
     const w = appWiring("peon");
     this.opts = {
-      app: APPS.peon, seed: 7, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
+      app: APPS.peon, seed, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
       pack: w.pack!, hooks: w.hooks!, engine: { ...PEON_ENGINE_CONFIG, cities: ["nyc"] },
       onPosting: p => this.write(p),
     };
@@ -128,6 +128,59 @@ const startsWith = (body: string, re: RegExp) => re.test(body.replace(ACK, ""));
 const POST = "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL";
 
 export async function peonSeatsBlock(b: Block): Promise<void> {
+  await b.run("posting updates: pending intros still meet the candidate's current job constraints", async () => {
+    const cases = ["unchanged", "pay_before_review", "pay_before_reply", "pay_before_reveal", "pay_still_fits", "mode_before_reply", "seniority_before_reveal"] as const;
+    const outcomes: { seed: number; change: string; reason: string | null; probes: number; intros: number; stage: string | undefined; correct: boolean }[] = [];
+    for (const seed of [7, 13, 17]) for (const change of cases) {
+      const x = new SeatWorld(seed);
+      x.add("hm1", "Rowan Abbott", 34, { verified: "Acme" });
+      x.add("c1", "Cand One", 29, { candidate: true });
+      for (const id of ["hm1", "c1"]) for (const body of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await x.say(id, body);
+      await x.say("hm1", POST.replace("2 openings", "1 opening"));
+      await x.say("hm1", "yes");
+      expect(await x.runUntil(() => x.net.reviewQueue().length > 0, 2 * DAY)).toBe(true);
+      const id = x.net.reviewQueue()[0]!.oppId;
+      const original = x.saved.at(-1)!;
+      const update = () => {
+        const fields = change === "mode_before_reply" ? { mode: "remote" as const }
+          : change === "seniority_before_reveal" ? { seniority: 5 }
+          : change === "pay_still_fits" ? { payMin: 85, payMax: 90 } : { payMin: 50, payMax: 60 };
+        expect(x.net.applyPosting({ ...original, ...fields, updatedAt: x.clock.now() }, "sim_staff")).toEqual({ ok: true });
+        x.restart();
+      };
+      if (change === "pay_before_review") update();
+      const decision = x.net.decide(id, "approve", { reviewer: "sim_staff" });
+      if (decision.ok) {
+        expect(await x.runUntil(() => x.probedFor("c1", id), DAY)).toBe(true);
+        if (change === "pay_before_reply" || change === "mode_before_reply") update();
+        await x.say("c1", "yes");
+        await x.runUntil(() => x.probedFor("hm1", id) || x.opp(id)?.stage === "closed", DAY);
+        if (x.probedFor("hm1", id)) {
+          if (["pay_before_reveal", "pay_still_fits", "seniority_before_reveal"].includes(change)) update();
+          x.restart();
+          await x.say("hm1", "yes");
+        }
+      }
+      await x.run(2 * HOUR);
+      x.restart();
+      const o = x.opp(id), messages = x.about(id);
+      const probes = messages.filter(m => m.meta.type === "probe").length;
+      const intros = messages.filter(m => m.meta.type === "proposal").length;
+      const valid = change === "unchanged" || change === "pay_still_fits";
+      const reason = decision.ok ? o?.closedReason ?? null : decision.reason;
+      const expected = change === "mode_before_reply" ? "location_incompatible"
+        : change === "seniority_before_reveal" ? "seniority_band" : "pay_below_floor";
+      const correct = valid ? o?.stage === "scheduled" && intros === 2 && x.meetings.length === 1
+        : o?.stage === "closed" && reason === expected && intros === 0 && x.meetings.length === 0
+          && (change !== "pay_before_review" || probes === 0)
+          && (!["pay_before_reply", "mode_before_reply"].includes(change) || probes === 1)
+          && !x.probedFor("c1", id) && !x.probedFor("hm1", id);
+      outcomes.push({ seed, change, reason, probes, intros, stage: o?.stage, correct });
+    }
+    console.log("PEON_POSTING_UPDATE_OUTCOMES", JSON.stringify(outcomes));
+    expect(outcomes.filter(x => x.correct).length).toBe(outcomes.length);
+  });
+
   await b.run("intake rules: a job post is read from text, read back, and needs a title and a pay range", () => {
     const d = parsePosting(POST);
     expect(d).toMatchObject({ title: "data analyst", openings: 2, payMin: 90, payMax: 120, mode: "hybrid", area: "brooklyn", seniority: 2, must: [{ skill: "sql", level: 2 }] });
