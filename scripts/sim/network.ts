@@ -41,7 +41,7 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
   await b.run("recurring availability: refused day groups are not saved as free time", async () => {
     const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri"].map(d => `evening:${d}`);
     const weekends = ["Sun", "Sat"].flatMap(d => ["morning", "afternoon", "evening"].map(p => `${p}:${d}`));
-    const cases: [string, string[], number | undefined][] = [
+    const cases: [string, string[], number | undefined, number?][] = [
       ["Usually free Tuesday evenings, not weekends", ["evening:Tue"], Date.UTC(2026, 9, 10, 14)],
       ["Usually free Saturday mornings, not weekdays", ["morning:Sat"], Date.UTC(2026, 9, 6, 23)],
       ["Usually free Sunday afternoons, not weeknights", ["afternoon:Sun"], Date.UTC(2026, 9, 6, 23)],
@@ -61,9 +61,25 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
       ["Free every evening, not Tuesday", [], Date.UTC(2026, 9, 6, 23)],
       ["Free all evenings, Friday is out", [], Date.UTC(2026, 9, 9, 23)],
       ["Free most evenings, not Sunday", weekdays, undefined],
+      ["I'm free on weekdays except Tuesday", weekdays.filter(t => t !== "evening:Tue"), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["I'm free weekdays, not Tuesday", weekdays.filter(t => t !== "evening:Tue"), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["I can do weekdays but Tuesday is out", weekdays.filter(t => t !== "evening:Tue"), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["Usually free weekdays, Tuesdays are busy", weekdays.filter(t => t !== "evening:Tue"), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["Usually free weeknights but not Friday", weekdays.filter(t => t !== "evening:Fri"), Date.UTC(2026, 9, 9, 23), Date.UTC(2026, 9, 12, 23)],
+      ["Usually free weeknights except Friday", weekdays.filter(t => t !== "evening:Fri"), Date.UTC(2026, 9, 9, 23), Date.UTC(2026, 9, 12, 23)],
+      ["I'm free on weekends except Sunday", weekends.filter(t => t.endsWith(":Sat")), Date.UTC(2026, 9, 11, 14), Date.UTC(2026, 9, 10, 14)],
+      ["Free weekends, not Saturday", weekends.filter(t => t.endsWith(":Sun")), Date.UTC(2026, 9, 10, 14), Date.UTC(2026, 9, 11, 14)],
+      ["Free on weekends except Sunday mornings", ["morning:Sat"], Date.UTC(2026, 9, 11, 14), Date.UTC(2026, 9, 10, 14)],
+      ["Free weekday evenings except Tuesday and Friday", weekdays.filter(t => !["evening:Tue", "evening:Fri"].includes(t)), Date.UTC(2026, 9, 13, 23), Date.UTC(2026, 9, 12, 23)],
+      ["Free most weekend evenings except Saturday and Sunday", [], Date.UTC(2026, 9, 10, 23)],
+      ["Usually free weekdays, not Sunday", weekdays, undefined],
+      ["Usually free weekends, not Tuesday", weekends, undefined],
+      ["Usually free Tuesdays", ["evening:Tue"], undefined],
+      ["Usually free weekday mornings, not Tuesday", ["Mon", "Wed", "Thu", "Fri"].map(d => `morning:${d}`), Date.UTC(2026, 9, 13, 14), Date.UTC(2026, 9, 12, 14)],
+      ["Free weekday evenings except Monday and Tuesday and Wednesday and Thursday and Friday", [], Date.UTC(2026, 9, 13, 23)],
     ];
-    const results: { tags: string[]; expected: string[]; p?: number; hasStanding: boolean; hasAvailability: boolean }[] = [];
-    for (const seed of [1, 2, 3]) for (const [body, expected, refusedAt] of cases) {
+    const results: { seed: number; body: string; tags: string[]; expected: string[]; p?: number; prior?: number; allowedP?: number; allowedPrior?: number; hasStanding: boolean; hasAvailability: boolean }[] = [];
+    for (const seed of [1, 2, 3]) for (const [body, expected, refusedAt, allowedAt] of cases) {
       const input = randomWorld({ seed, members: 120, minors: false });
       const member = input.members.find(m => m.homeCity === "nyc" && m.state === "normal")!;
       const clock = new SimClock(input.now);
@@ -85,15 +101,20 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
       const saved = reloaded.standing;
       const standing = standingFromFacets(saved ? [{ kind: "availability_pattern", tags: saved.tags, observedAt: saved.at }] : [], clock.now());
       const p = refusedAt === undefined ? undefined : availabilityProb({ memberId: member.id, tz: NY, standing }, { start: refusedAt, end: refusedAt + 2 * HOUR }, clock.now());
-      results.push({ tags: saved?.tags ?? [], expected, hasStanding: saved !== undefined, hasAvailability: reloaded.availability !== undefined, ...(p === undefined ? {} : { p }) });
+      const prior = refusedAt === undefined ? undefined : availabilityProb({ memberId: member.id, tz: NY }, { start: refusedAt, end: refusedAt + 2 * HOUR }, clock.now());
+      const allowedP = allowedAt === undefined ? undefined : availabilityProb({ memberId: member.id, tz: NY, standing }, { start: allowedAt, end: allowedAt + 2 * HOUR }, clock.now());
+      const allowedPrior = allowedAt === undefined ? undefined : availabilityProb({ memberId: member.id, tz: NY }, { start: allowedAt, end: allowedAt + 2 * HOUR }, clock.now());
+      results.push({ seed, body, tags: saved?.tags ?? [], expected, hasStanding: saved !== undefined, hasAvailability: reloaded.availability !== undefined, ...(p === undefined ? {} : { p, prior }), ...(allowedP === undefined ? {} : { allowedP, allowedPrior }) });
     }
+    console.log("AVAILABILITY_REFUSAL_OUTCOMES", JSON.stringify(results));
     expect(results.filter(r => JSON.stringify(r.tags) === JSON.stringify(r.expected)).length).toBe(cases.length * 3);
     for (const r of results) {
-      if (r.p !== undefined) expect(r.p).toBeLessThan(DEFAULT_ATTENTION.availability.prior.weekendDay);
+      if (r.p !== undefined && r.expected.length) expect(r.p).toBeLessThan(r.prior!);
+      if (r.allowedP !== undefined) expect(r.allowedP).toBeGreaterThan(r.allowedPrior!);
       if (!r.expected.length) {
         expect(r.hasStanding).toBe(false);
         expect(r.hasAvailability).toBe(false);
-        expect(r.p).toBe(DEFAULT_ATTENTION.availability.prior.weekdayEvening);
+        expect(r.p).toBe(r.prior);
       }
     }
   });

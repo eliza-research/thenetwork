@@ -734,10 +734,15 @@ export function availabilityTags(body: string): string[] {
   const DAYS3 = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   type Tok = { at: number; days?: number[]; part?: string };
   const toks: Tok[] = [];
-  DAY_WORDS.forEach(([re], i) => { for (const m of t.matchAll(re)) if (!negatedAt(t, m.index!, m[0].length)) toks.push({ at: m.index!, days: [i] }); });
-  for (const m of t.matchAll(/\bweekends?\b/g)) if (!negatedAt(t, m.index!, m[0].length)) toks.push({ at: m.index!, days: [0, 6] });
-  for (const m of t.matchAll(/\bweekdays?\b/g)) if (!negatedAt(t, m.index!, m[0].length)) toks.push({ at: m.index!, days: [1, 2, 3, 4, 5] });
-  for (const m of t.matchAll(/\bweeknights?\b/g)) if (!negatedAt(t, m.index!, m[0].length)) toks.push({ at: m.index!, days: [1, 2, 3, 4, 5] }, { at: m.index!, part: "evening" });
+  // A named refusal must not be restored when an offered day group is expanded.
+  const refusedDays = new Set<number>();
+  DAY_WORDS.forEach(([re], i) => { for (const m of t.matchAll(re)) {
+    if (negatedAt(t, m.index!, m[0].length)) refusedDays.add(i);
+    else toks.push({ at: m.index!, days: [i] });
+  } });
+  for (const m of t.matchAll(/\bweekends?\b/g)) if (!negatedAt(t, m.index!, m[0].length)) toks.push({ at: m.index!, days: [0, 6].filter(d => !refusedDays.has(d)) });
+  for (const m of t.matchAll(/\bweekdays?\b/g)) if (!negatedAt(t, m.index!, m[0].length)) toks.push({ at: m.index!, days: [1, 2, 3, 4, 5].filter(d => !refusedDays.has(d)) });
+  for (const m of t.matchAll(/\bweeknights?\b/g)) if (!negatedAt(t, m.index!, m[0].length)) toks.push({ at: m.index!, days: [1, 2, 3, 4, 5].filter(d => !refusedDays.has(d)) }, { at: m.index!, part: "evening" });
   for (const [re, part] of [[/\bmornings?\b/g, "morning"], [/\bafternoons?\b|\blunch\b/g, "afternoon"], [/\b(?:evenings?|nights?|after work)\b/g, "evening"]] as const) {
     for (const m of t.matchAll(re)) toks.push({ at: m.index!, part });
   }
@@ -763,8 +768,9 @@ export function availabilityTags(body: string): string[] {
     if (lead.length) lead.forEach(p => give(pending, p));
     else for (const d of pending) (d === 0 || d === 6 ? ["morning", "afternoon", "evening"] : ["evening"]).forEach(p => give([d], p));
   }
-  // The default weekday evenings must not restore a weekday or group the member just refused.
-  if (!out.size && lead.includes("evening") && /\b(most|any|all|every)\b/.test(t)) {
+  // Do not replace an explicitly offered but fully refused group with default weekdays.
+  // The default also must not restore a weekday or group the member just refused.
+  if (!out.size && !toks.some(k => k.days) && lead.includes("evening") && /\b(most|any|all|every)\b/.test(t)) {
     const weekdayWords = [/\b(?:weekdays?|weeknights?)\b/g, ...DAY_WORDS.slice(1, 6).map(([re]) => re)];
     if (!weekdayWords.some(re => [...t.matchAll(re)].some(m => negatedAt(t, m.index!, m[0].length)))) give([1, 2, 3, 4, 5], "evening");
   }
