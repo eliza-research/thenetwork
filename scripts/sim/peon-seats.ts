@@ -44,10 +44,10 @@ class SeatWorld {
   private seq = 0;
   private readonly opts: NetworkOptions;
 
-  constructor() {
+  constructor(seed = 7) {
     const w = appWiring("peon");
     this.opts = {
-      app: APPS.peon, seed: 7, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
+      app: APPS.peon, seed, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
       pack: w.pack!, hooks: w.hooks!, engine: { ...PEON_ENGINE_CONFIG, cities: ["nyc"] },
       onPosting: p => this.write(p),
     };
@@ -128,6 +128,51 @@ const startsWith = (body: string, re: RegExp) => re.test(body.replace(ACK, ""));
 const POST = "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL";
 
 export async function peonSeatsBlock(b: Block): Promise<void> {
+  await b.run("matching: posts without required skills can reach a consented intro; stated requirements and other filters still apply", async () => {
+    const results: { seed: number; kind: string; queued: boolean; introduced: boolean }[] = [];
+    for (const seed of [7, 13, 17]) for (const kind of ["none", "nice only", "met", "missing", "pay below floor", "unverified"]) {
+      const w = new SeatWorld(seed);
+      w.add("hm", "Rowan Abbott", 34, kind === "unverified" ? {} : { verified: "Acme" });
+      w.add("c", "Casey Clark", 29, { candidate: true });
+      for (const id of ["hm", "c"]) for (const text of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await w.say(id, text);
+      const skills = kind === "nice only" ? ", nice to have SQL" : kind === "met" ? ", must have SQL" : kind === "missing" ? ", must have Rust level 5" : "";
+      const pay = kind === "pay below floor" ? "$50k-$70k" : "$90k-$120k";
+      await w.say("hm", `We're hiring a data analyst (level 2), 1 opening, ${pay}, hybrid in Brooklyn${skills}`);
+      expect(w.last("hm")).toMatch(/Reply yes to post it/);
+      expect(w.saved.length).toBe(0);
+      await w.say("hm", "yes");
+      expect(w.saved.length).toBe(1);
+      expect(w.saved[0]!.must).toEqual(kind === "met" ? [{ skill: "sql", level: 2 }] : kind === "missing" ? [{ skill: "rust", level: 5 }] : []);
+      if (kind === "nice only") expect(w.saved[0]!.nice).toEqual(["sql"]);
+      w.restart();
+      const queued = await w.runUntil(() => w.net.reviewQueue().length > 0);
+      const item = w.net.reviewQueue()[0];
+      let introduced = false;
+      if (item) {
+        const opp = item.oppId;
+        expect(w.about(opp).length).toBe(0);
+        expect(w.net.review(opp, "approve", { reviewer: "sim_staff" })).toBe(true);
+        expect(await w.runUntil(() => w.probedFor("c", opp))).toBe(true);
+        expect(w.about(opp).some(x => x.to === "hm")).toBe(false);
+        expect(w.opp(opp)?.stage).not.toBe("scheduled");
+        await w.say("c", "yes");
+        expect(await w.runUntil(() => w.probedFor("hm", opp))).toBe(true);
+        expect(w.opp(opp)?.stage).not.toBe("scheduled");
+        w.restart();
+        await w.say("hm", "yes");
+        expect(w.opp(opp)?.stage).toBe("scheduled");
+        introduced = await w.runUntil(() => w.about(opp).some(x => x.to === "c" && startsWith(x.body, /^Good news: Rowan A\./))
+          && w.about(opp).some(x => x.to === "hm" && startsWith(x.body, /^Intro: Casey C\./)), DAY);
+      }
+      results.push({ seed, kind, queued, introduced });
+    }
+    console.log("empty must-have outcomes:", JSON.stringify(results));
+    for (const row of results) {
+      const match = ["none", "nice only", "met"].includes(row.kind);
+      expect([row.queued, row.introduced]).toEqual([match, match]);
+    }
+  });
+
   await b.run("intake rules: a job post is read from text, read back, and needs a title and a pay range", () => {
     const d = parsePosting(POST);
     expect(d).toMatchObject({ title: "data analyst", openings: 2, payMin: 90, payMax: 120, mode: "hybrid", area: "brooklyn", seniority: 2, must: [{ skill: "sql", level: 2 }] });

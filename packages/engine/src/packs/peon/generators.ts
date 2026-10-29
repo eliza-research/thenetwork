@@ -20,7 +20,7 @@ export interface PairRow { cand: CandidateProfile; job: JobProfile; s: PairScore
 
 const harmonic = (a: number, b: number) => (a <= 0 || b <= 0 ? 0 : (2 * a * b) / (a + b));
 
-/** Every hard-filtered (candidate, job) pair above the must-have floor, with its reciprocal value. Cached per World. */
+/** Every hard-filtered (candidate, job) pair meeting any stated must-have floor, with its reciprocal value. Cached per World. */
 export function pairTable(ctx: Pick<GenCtx, "w" | "memberExclusions">): PairRow[] {
   const w = ctx.w;
   return worldScratch(w, "pairs", () => {
@@ -35,7 +35,8 @@ export function pairTable(ctx: Pick<GenCtx, "w" | "memberExclusions">): PairRow[
     for (const c of cs) for (const j of js) {
       if (pairReason(w, c.id, j.id, "professional")) continue;
       const s = pairScore(c, j);
-      if (s.coverage < mustFloor()) continue;
+      // No stated must-haves means no requirement floor; keep the conservative scoring prior.
+      if (j.must.length && s.coverage < mustFloor()) continue;
       rows.push({ cand: c, job: j, s, value: harmonic(s.need, s.want) });
     }
     return rows;
