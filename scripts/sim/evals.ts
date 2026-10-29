@@ -66,6 +66,18 @@ export async function evalsBlock(b: Block): Promise<void> {
     b.gate(`consent replies ${file}: no refusal or hedge read as yes`, notYesAsYes.length === 0, notYesAsYes.slice(0, 5).join(" | "));
   }
 
+  // Two options can share a day or a clock time ("Wednesday 7pm", "Thursday 7pm"). A member who
+  // names one of them must not be recorded as free at the others.
+  const collisionRows = await jsonl<{ text: string; answer: "yes" | "unclear"; keys?: string[]; options: { key: string; label: string }[] }>("network/time-answer-collisions.jsonl");
+  const collisionMisses: string[] = [];
+  for (const row of collisionRows) {
+    const options = row.options.map((o, i) => ({ key: o.key, label: o.label, start: i * 2 + 1, end: i * 2 + 2 }));
+    const r = parseProbeReply(row.text, options);
+    const expected = row.keys ?? [];
+    if (r.answer !== row.answer || JSON.stringify(r.keys) !== JSON.stringify(expected)) collisionMisses.push(`${row.text} -> ${r.answer} [${r.keys}]`);
+  }
+  b.gate(`time answers: a mention that fits more than one option is never a pick (n ${collisionRows.length})`, collisionRows.length >= 8 && collisionMisses.length === 0, collisionMisses.slice(0, 5).join(" | "));
+
   const benign = (await Bun.file(`${ROOT}/network/benign-adult.txt`).text()).trim().split("\n");
   const flagged = benign.filter(t => classify(t).abuse.length);
   b.gate(`benign adult phrasing: precision >= 99% (n ${benign.length})`, benign.length >= 200 && 1 - flagged.length / benign.length >= 0.99, pct(1 - flagged.length / benign.length));
