@@ -1,7 +1,7 @@
-# Keep table and partner time options inside venue opening hours
+# Keep Friends plans and time options inside venue opening hours
 
-Initial measurement: 2026-10-26. Partner-path follow-up: 2026-10-29.
-Base: `a0ed7bc6495d9e524afc3d500738212a28dc7bc2`. Current tested code: `a64b1d942aec3e47389b933488661b169f6dcb23`.
+Initial measurement: 2026-10-26. Partner and recurring-path follow-ups: 2026-10-29.
+Base: `a0ed7bc6495d9e524afc3d500738212a28dc7bc2`. Current tested code: `8cd252874b75d857a7bc9b654d57919ba49887cd`.
 
 ## Requirement and cause
 
@@ -17,6 +17,11 @@ Filter the table and activity-partner options against the selected venue before 
 The partner filter runs before choosing distinct days and limiting the list to three options.
 It preserves ranking among open times, activity duration, participants, and the primary window.
 There is no new matching policy, dependency, or helper file.
+
+Recurring sessions, crew offers and repeat meetups also trust their historical venue without checking its current hours.
+The common finishing step now rejects a selected venue that is closed for the primary session.
+This happens before reserving members, so existing planning priorities can still find other valid plans.
+The change does not silently move a crew to another venue or change its standing time.
 
 Other implementations considered:
 
@@ -93,6 +98,45 @@ Its fingerprint stays `e5bf70e069eaa7e9`; the repeat-meetup rate stays 33.7%.
 This is an exact scheduling constraint check, not an estimated gain in friendship quality or performance.
 The synthetic configurations are deterministic reproductions; no confidence interval applies.
 
+### Recurring-path proof
+
+The existing gate now covers generated crew sessions, crew offers and repeat meetups.
+Its history comes from three weeks of the Friends matcher, with 160 members and seeds 101–103.
+The next planning week uses the same members, crews and positive outcomes, with an empty new-plan evidence map.
+This isolates recurring paths without mocking their selection or construction.
+The venue catalog first opens 00:00–24:00, then shortens to 09:00–12:00.
+The gate disables extra time options; a fresh-seed probe also tests their enabled setting.
+
+Paired command: `bun run sim --only friends --json <output-file>`.
+Before: published head `11b9a8a` with the expanded gate. After: `8cd2528` with that same gate.
+
+| Observation, seeds 101 / 102 / 103 | Before | After |
+|---|---|---|
+| Recurring plans outside current venue hours | 5 / 5 / 3 | 0 / 0 / 0 |
+| Valid morning plans retaining their ids and invitees | 2 / 2 / 4 | 2 / 2 / 4 |
+| Friends blocking gates | 18/19 | 19/19 |
+
+All eight valid plans remain in these fixtures; 13 invalid plans are removed.
+All 21 other gate records match exactly, excluding runtime. The stock fingerprint remains `e5bf70e069eaa7e9`.
+The paired blocks take 45.1 seconds before and 47.2 seconds after.
+
+Fresh seeds 105–107 run both option settings against the old and new planner on identical inputs.
+Each setting reduces closed primary sessions from 12 to zero and leaves no closed extra options or duplicate invitations.
+All six full-day venue controls remain identical before and after.
+
+| Fresh seed | Valid morning plans before | Valid morning plans after | Exact ids and invitees retained |
+|---|---:|---:|---:|
+| 105 | 3 | 3 | 2 |
+| 106 | 2 | 2 | 2 |
+| 107 | 3 | 4 | 3 |
+
+The first fresh-seed probe assumed every valid plan would retain its id and invitees. Seed 105 disproved that assumption.
+Dropping a closed crew session frees a member for an earlier-priority, valid crew offer.
+That offer uses two members of a later repeat, replacing the repeat while keeping three valid plans.
+The production fix was unchanged. The probe now measures retention and checks hours, duplicate invitations and unchanged open-hours controls.
+This preserves the planner's existing crew-first priority instead of reserving members for invalid sessions.
+These are deterministic scheduling measurements, not evidence of improved attendance or friendship outcomes.
+
 ## safety_gates
 
 Declared-minor proposals and contacts, known-adversary contacts, blocks, consent, and leak conformance retain their passing values.
@@ -104,17 +148,17 @@ No safety gates, thresholds, live-send settings, production configuration, or me
 
 Windows, Bun 1.4.2, TypeScript 5.9.3, PostgreSQL 16.15 on loopback port 54339.
 Database suites use `USER=postgres`, `REQUIRE_PG=1`, and the task's private `OBSERVATORY_PG_DIR`.
-PostgreSQL programs are on PATH and `PG_BIN_DIR` is set. Port 54329 was not used.
+PostgreSQL programs are on PATH and `PG_BIN_DIR` is set.
 
-- `bun run sim --only friends`: 19/19 blocking gates, one existing tracked miss; 47.8s.
+- `bun run sim --only friends`: 19/19 blocking gates, one existing tracked miss; 47.2s.
 - `bun run typecheck`: all four configurations pass.
-- `bun run test:integration`, including all eleven security files: 675 pass, 8 skip, 6 fail; 13741 assertions; 689 tests, 68 files; 532.88s.
-- `bun run test:e2e`: 42 pass, 1 optional skip, 0 fail; 654 assertions; 82.15s.
-- Combined with the other seventeen contributions: 22/22 Friends blocking gates; 58.4s. Typecheck passes.
+- `bun run test:integration`, including all eleven security files: 675 pass, 8 skip, 6 fail; 13741 assertions; 689 tests, 68 files; 555.18s.
+- `bun run test:e2e`: 42 pass, 1 optional skip, 0 fail; 654 assertions; 72.98s.
+- Combined with the other eighteen contributions: 22/22 Friends blocking gates; 54.2s. Typecheck passes.
 
-Combined code is `46410ae3f4b04a93568fbbc176d66fdf39ff5d71`.
-Its 24 other Friends gate records equal the earlier combined Friends run, excluding elapsed milliseconds.
-The cherry-pick needed import-list conflict resolution only. All earlier regression cases remain present.
+Combined code is `2debcf906c67f616b4d28b6d18798c961783ad91`.
+Its 24 other Friends gate records equal the preceding combined Friends run, excluding runtime.
+This follow-up applies without conflicts; all earlier regression cases remain present.
 This is affected-path combined validation, not a new full combined integration run.
 
 The six integration failures match the established Windows baseline: absolute `/bin/bash`, SIGTERM exit status, and four site path comparisons.
@@ -137,11 +181,14 @@ No external agent-client acceptance or other operating-system result is claimed.
 
 Run `bun install --frozen-lockfile`, then `bun run sim --only friends`.
 Expect 19/19 blocking gates.
-Apply only the expanded gate to `3672570` to reproduce the partner's 21:00 versus 12:00 failure.
+Apply only the expanded gate to `11b9a8a` to reproduce closed recurring plans.
+Apply it to `3672570` to reproduce the partner's 21:00 versus 12:00 failure.
 Apply it to `a0ed7bc` to reproduce the original table failure.
 
 The table policy defaults to one option; the fixture exercises its supported three-option mode.
 Activity-partner options use the default three-time selection path.
-Filtering may reduce choices; it does not rebuild groups or claim better completion rates.
-Plans without a selected venue and changed hours for historical crews remain outside this correction.
+Filtering extra options may reduce choices without rebuilding that plan's group. No better completion rate is claimed.
+Plans without a selected venue remain outside this correction.
+When a recurring venue is closed, the session is withheld; the fix does not relocate the crew or choose a new standing time.
+Freed members can change later plans through existing priority and capacity rules.
 The catalog is synthetic; no live venue-hours accuracy is claimed. No UI or message-copy change is included.
