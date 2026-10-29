@@ -287,7 +287,7 @@ function resolveWeek(rc: RunCtx, week: number, out: MatcherOutput, askedNow: Set
     const showA = behavior.attends(a.id, key, freeA), showB = behavior.attends(b.id, key, freeB);
     const at = slotTime(week, slot);
     if (!showA || !showB) {
-      f.stage = "no_show"; done("no_show", { acceptedBy: [a.id, b.id], at }); applyHarms(world, f.harms, key); return;
+      f.stage = "no_show"; done("no_show", { acceptedBy: [a.id, b.id], noShowBy: [...(!showA ? [a.id] : []), ...(!showB ? [b.id] : [])], at }); applyHarms(world, f.harms, key); return;
     }
     f.stage = "date";
     const o2 = oracle.dateOutcome(a.id, b.id, pr.activity);

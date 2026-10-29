@@ -2638,7 +2638,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         s.add(m.id); this.again.set(k, s);
       }
     }
-    this.interactions.push({ id: `${o.id}:fb:${m.id}`, kind: o.kind, category: o.category, participants: [...o.participants], at: this.now(), outcome: f.selfNoShow ? "no_show" : "completed", contributors: [] });
+    this.interactions.push({ id: `${o.id}:fb:${m.id}`, kind: o.kind, category: o.category, participants: [...o.participants], at: this.now(), outcome: f.selfNoShow ? "no_show" : "completed", ...(f.selfNoShow ? { noShowBy: [m.id] } : {}), contributors: [] });
     // Growth: a good experience is the best moment to ask (at most monthly, while invites last).
     if (!crewId && this.invitesWork && f.sentiment === "positive" && this.canInvite(m) && this.now() - m.lastGrowthAsk > 30 * DAY) {
       m.lastGrowthAsk = this.now();
@@ -4524,6 +4524,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       ...x, participants: view(x.id, x.participants),
       ...(x.declinedBy ? { declinedBy: view(x.id, x.declinedBy) } : {}), ...(x.acceptedBy ? { acceptedBy: view(x.id, x.acceptedBy) } : {}),
       ...(x.contributors ? { contributors: view(x.id, x.contributors) } : {}), ...(x.noResponse ? { noResponse: view(x.id, x.noResponse) } : {}),
+      ...(x.noShowBy ? { noShowBy: view(x.id, x.noShowBy) } : {}),
     }));
     for (const o of this.opps.values()) {
       if (!o.seat || o.meetingAt === undefined || o.stage === "closed" || interactions.some(x => x.id.startsWith(`${o.id}:fb:`))) continue;
