@@ -1,120 +1,147 @@
-# Keep table time options inside venue opening hours
+# Keep table and partner time options inside venue opening hours
+
+Initial measurement: 2026-10-26. Partner-path follow-up: 2026-10-29.
+Base: `a0ed7bc6495d9e524afc3d500738212a28dc7bc2`. Current tested code: `a64b1d942aec3e47389b933488661b169f6dcb23`.
 
 ## Requirement and cause
 
-PRD section 6 makes scheduling a first-class part of every opportunity, including
-the proposed times and venue. On base `a0ed7bc6495d9e524afc3d500738212a28dc7bc2`,
-the Friends table builder chooses a venue that is open for the primary window.
-It then replaces the venue-filtered options from `finish()` with the table's
-earlier availability-ranked options. Those extra options can fall outside the
-chosen venue's opening hours. `planToProposal` forwards them to the consent
-simulation, where members can select one for booking.
+PRD section 6 makes scheduling part of every opportunity, including its proposed times and venue.
+This is a reproduced scheduling defect under the approved scope and CONTRIBUTING.md section 3.1.
 
-Filter those ranked options against the chosen venue before assigning them to
-the finished table. Preserve their order, duration and primary window. This is
-a reproduced scheduling defect, not a change to the matching policy.
+Both Friends paths choose a venue that is open for the primary window.
+They then replace the venue-filtered options from `finish()` with their earlier availability-ranked options.
+Those extra options can fall outside the chosen venue's hours.
+`planToProposal` forwards them to the consent simulation, where members can select one for booking.
 
-Alternatives considered: keep the generic options from `finish()`, which loses
-the table builder's group-availability selection; or move venue selection before
-group construction, which changes the planner and its ranking much more broadly.
+Filter the table and activity-partner options against the selected venue before assigning them.
+The partner filter runs before choosing distinct days and limiting the list to three options.
+It preserves ranking among open times, activity duration, participants, and the primary window.
+There is no new matching policy, dependency, or helper file.
+
+Other implementations considered:
+
+1. Keep `finish()`'s generic options. This loses each builder's availability choices; partner times must use both members' evidence.
+2. Move venue selection before group or pair construction. This changes ranking and planning much more broadly.
+
+### Primary-window guarantee
+
+The table's primary slot comes from `chosen`, which also supplies `opts`.
+The partner's primary slot is the first ranked slot.
+In both paths, `finish()` chooses the venue only when it is open for that primary slot.
+The filter therefore retains that slot. It cannot empty a placed plan's options under these paths.
+The regression requires exact primary-window membership, which also proves that the list is nonempty.
+This addresses the review's empty-list concern without adding an unnecessary fallback.
 
 ## measurement
 
-Same command before and after:
+Command for both stages: `bun run sim --only friends --json <output-file>`.
+The fixture uses repository-generated worlds: seeds 101–103, 160 members, and three weeks of random-baseline history.
+It advances to the next week and calls the actual Friends planner.
+Venue locations and activities come from the existing catalog.
+Hand-written hours are 18:00–23:00 on weekdays and 09:00–12:00 on weekends.
+All members, venues, history, and availability are synthetic. No model or planner output is mocked.
 
-```sh
-bun run sim --only friends --json friends-hours.json
-```
+### Original table proof
 
-The new gate uses seeded repository-generated worlds: seeds 101–103, 160 members
-and three weeks of random-baseline history each. Advance to the next week and
-run the actual Friends planner with three table options. The hand-written venue
-fixture uses the existing catalog and locations, with weekday hours 18:00–23:00
-and weekend hours 09:00–12:00. Crews and repeats are disabled for this fixture so
-it measures new tables; all other policy settings stay at their defaults.
+The table fixture disables crews and repeats and uses three table options.
+It checks placed plans, surviving multiple choices, exact primary-window membership, and every offered time's venue hours.
+The before run uses main `a0ed7bc`; the original table fix is `3672570`.
+These original results remain separate from the later partner measurement.
 
-Check that there are placed plans, that multiple choices survive, that each
-primary window remains offered, and that every option of each placed plan fits
-its venue. The baseline gate fails on a weekend option ending at 21:00 for a
-venue closing at 12:00. A separate replay enumerates all seeds because the gate
-stops at the first failure.
-
-| Check | Before | After |
+| Table observation, seeds 101 / 102 / 103 | Before | Original table fix |
 |---|---|---|
-| Closed-venue options, seeds 101 / 102 / 103 | 5 / 12 / 7 | 0 / 0 / 0 |
-| Placed proposals, including partner proposals, same seeds | 8 / 15 / 10 | 8 / 15 / 10 |
-| All offered options, including unplaced proposals, same seeds | 40 / 46 / 44 | 35 / 34 / 37 |
+| Closed-venue options | 5 / 12 / 7 | 0 / 0 / 0 |
+| Placed proposals, including partners | 8 / 15 / 10 | 8 / 15 / 10 |
+| All options, including unplaced proposals | 40 / 46 / 44 | 35 / 34 / 37 |
 | Friends blocking gates | 18/19 | 19/19 |
-| Existing gate records | 21 | All 21 unchanged |
-| Official pack/random/oracle fingerprint | `e5bf70e069eaa7e9` | `e5bf70e069eaa7e9` |
-| Block runtime | 40.7 s | 44.7 s |
 
-The extra seed 104 replay removes seven closed-venue options and keeps all ten
-placed proposals. Fresh seeds 105–107 also have zero closed-venue options with
-both one and three table options. The one-option controls for seeds 101–104
-retain every proposal and option count. This is an exact constraint check, not
-an estimated improvement in aggregate friendship quality.
+Fresh seeds 105–107 also had zero closed-venue options with one and three table options.
+One-option controls on seeds 101–104 retained every proposal and option count.
+The initial stock catalog did not reproduce the defect; restricted weekend hours exposed it.
+An initial unsupported assertion helper was corrected before the original paired measurement.
 
-The official comparison still uses seeds 5–8, eight weeks, 400 personas, all
-default settings, and the pack/random/oracle arms. All its values remain the
-same, including the repeat-meetup rate of 33.7% and all safety gates.
+### Partner-path proof
 
-### Attempts
+The existing gate now also exercises two generated pairs with prior group attendance and shared climbing interests.
+Seed 101 uses `f0057` and `f0159`; seed 102 uses `f0060` and `f0102`.
+Their stated windows are Tuesday evening, Saturday evening, and Sunday morning.
+The input limits availability evidence to that pair and disables unrelated repeat, crew, universal, and single-slot passes.
+The actual partner generator and planner still select the pair, activity, venue, and times.
 
-1. The stock venue catalog did not reproduce closed-venue options in seeds
-   101–104. The reduced weekend hours fixture exposes the overwritten filtering.
-2. The first gate run used `toContainEqual`, which the simulation assertion
-   helper does not support. Replace it with an explicit window-membership check;
-   rerun against unchanged production code to obtain the meaningful baseline.
-3. Apply the venue-hours filter once. The corrected gate passes without any
-   ranking or threshold changes.
+The same expanded gate ran first on `3672570`, then with the partner filter.
+Before, both bouldering plans offered Saturday 19:00–21:00 at venues closing at 12:00.
+After, both keep Tuesday 19:00–21:00 and Sunday 10:00–12:00.
+After-fix controls with weekend closing extended to 23:00 retain all three options, the same primary window, and the same participants.
+A separate replay enumerates both failing pairs because the gate stops at its first invalid option.
+
+| Partner observation | Before | After |
+|---|---|---|
+| Placed partner plans | 2 | 2 |
+| Closed-venue options | 2 | 0 |
+| Open options retained | 4 | 4 |
+| Friends blocking gates | 18/19 | 19/19 |
+| Other gate records | 21 | All 21 unchanged |
+| Block runtime | 58.7s | 47.8s |
+
+The separate exploratory replay also found two pairs that produced no proposal; those are not counted as successful fixtures.
+The committed case uses the two pairs that actually produced placed plans before and after.
+The existing gate was extended; no additional case was added for this follow-up.
+There was one partner production implementation, with no threshold or corpus changes.
+
+The official comparison uses seeds 5–8, eight weeks, 400 personas, and default pack/random/oracle arms.
+Its fingerprint stays `e5bf70e069eaa7e9`; the repeat-meetup rate stays 33.7%.
+This is an exact scheduling constraint check, not an estimated gain in friendship quality or performance.
+The synthetic configurations are deterministic reproductions; no confidence interval applies.
 
 ## safety_gates
 
-Declared-minor proposals and contacts, known-adversary contacts, blocks, consent
-and leak conformance retain their passing values. The 21 existing gate records
-are byte-equivalent after excluding assertion runtime. All members and venues
-are synthetic; all sends are dry-run.
+Declared-minor proposals and contacts, known-adversary contacts, blocks, consent, and leak conformance retain their passing values.
+All 21 other isolated gate records are identical after excluding elapsed milliseconds.
+Simulated staff approval and dry-run sends remain in use. No real messages are sent.
+No safety gates, thresholds, live-send settings, production configuration, or member data changed.
 
 ## Validation
 
-Windows, Bun 1.4.2, TypeScript 5.9.3 from the frozen lockfile, PostgreSQL 16.15
-on loopback port 54339. Database commands use `USER=postgres`, `REQUIRE_PG=1`
-and the local `PG_BIN_DIR`.
+Windows, Bun 1.4.2, TypeScript 5.9.3, PostgreSQL 16.15 on loopback port 54339.
+Database suites use `USER=postgres`, `REQUIRE_PG=1`, and the task's private `OBSERVATORY_PG_DIR`.
+PostgreSQL programs are on PATH and `PG_BIN_DIR` is set. Port 54329 was not used.
 
-- `bun run sim --only friends`: 19/19 blocking gates, one existing tracked miss.
+- `bun run sim --only friends`: 19/19 blocking gates, one existing tracked miss; 47.8s.
 - `bun run typecheck`: all four configurations pass.
-- `bun run test:integration`, including security: 675 pass, eight skip, six fail,
-  13,741 assertions, 573.58 s.
-- `bun run test:e2e`: 42 pass, one optional skip, zero failures,
-  654 assertions, 75.07 s.
+- `bun run test:integration`, including all eleven security files: 675 pass, 8 skip, 6 fail; 13741 assertions; 689 tests, 68 files; 532.88s.
+- `bun run test:e2e`: 42 pass, 1 optional skip, 0 fail; 654 assertions; 82.15s.
+- Combined with the other seventeen contributions: 22/22 Friends blocking gates; 58.4s. Typecheck passes.
 
-The six failures are the same Windows failures observed before this change:
-an absolute `/bin/bash` requirement in the Wrangler integration, SIGTERM exit
-143 rather than the backend test's expected zero, and four site-build path
-separator comparisons. The eight skips require the separate cleanup opt-in.
-The integration suite is not claimed to pass.
+Combined code is `46410ae3f4b04a93568fbbc176d66fdf39ff5d71`.
+Its 24 other Friends gate records equal the earlier combined Friends run, excluding elapsed milliseconds.
+The cherry-pick needed import-list conflict resolution only. All earlier regression cases remain present.
+This is affected-path combined validation, not a new full combined integration run.
 
-The repository's one-full-simulation-per-agent allowance was already used for
-#136. This change reruns its affected Friends block. Linux CI still needs to
-run the full matrix; the PR remains draft until then.
+The six integration failures match the established Windows baseline: absolute `/bin/bash`, SIGTERM exit status, and four site path comparisons.
+Eight integration cases require the separate reconciliation opt-in. One end-to-end case requires external origins.
+No new full baseline integration run was performed for this follow-up. The full integration suite is not green on Windows.
+Keep the PR draft pending maintainer-approved Linux CI.
+The session's one-full-simulation allowance was used for #136; this change reruns its affected Friends block.
 
-## llm_evidence and agent_clients
+## llm_evidence
 
-No model-backed behavior, prompt, authentication or client protocol changes.
-Zero validation model calls and cost. No real-client acceptance run is claimed.
-Authoring: Codex desktop 26.1021.3705.0, OpenAI `gpt-6-astra`, operator-identified.
+N/A: deterministic scheduling has no model-backed behavior. Validation model calls: 0. Model API cost: $0.
+No mocked model output is used as proof. Authorship: OpenAI / `gpt-6-astra`, client `codex`.
+
+## agent_clients
+
+N/A: this changes the local planner, not an agent connector or protocol.
+No external agent-client acceptance or other operating-system result is claimed.
 
 ## Reproduce and limits
 
-Install with `bun install --frozen-lockfile`, then run the Friends command above.
-Expect 19/19 blocking gates. Apply only the regression to `a0ed7bc` to reproduce
-the 21:00 versus 12:00 failure.
+Run `bun install --frozen-lockfile`, then `bun run sim --only friends`.
+Expect 19/19 blocking gates.
+Apply only the expanded gate to `3672570` to reproduce the partner's 21:00 versus 12:00 failure.
+Apply it to `a0ed7bc` to reproduce the original table failure.
 
-This fixes the activity-first table options. Existing plans without a selected
-venue, changed opening hours for historical crews, and separately generated
-one-to-one partner options are outside this correction. Default `tableOptions`
-is one, so the regression explicitly exercises the supported multi-option mode.
-Filtering can reduce an invitee's available choices; it does not rebuild the
-group or claim better completion rates. The catalog remains synthetic and no
-live venue-hours accuracy is claimed.
+The table policy defaults to one option; the fixture exercises its supported three-option mode.
+Activity-partner options use the default three-time selection path.
+Filtering may reduce choices; it does not rebuild groups or claim better completion rates.
+Plans without a selected venue and changed hours for historical crews remain outside this correction.
+The catalog is synthetic; no live venue-hours accuracy is claimed. No UI or message-copy change is included.
