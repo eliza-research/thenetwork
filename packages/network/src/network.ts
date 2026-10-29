@@ -782,8 +782,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       const o = this.opps.get(aw.oppId!);
       // What they say about their number ("I don't want to share my number yet") is about the number
       // swap (withdrawn above), not the plan: only the rest of the message answers the booked plan.
+      // The LLM reader read the whole message, number talk included, so it does not answer the rest.
       const plan = withoutNumberTalk(body);
-      const yn = plan ? this.yesNoOf(plan) : "unclear";
+      const yn = plan === body ? this.yesNoOf(body) : plan ? consentOf(plan).answer : "unclear";
       if (o && o.stage === "scheduled" && o.status.get(m.id) === "yes" && (c.kind === "cancel" || yn === "no")) { m.awaiting = undefined; return this.handleDrop(m, o); }
       if (yn === "yes" || c.kind === "ack") { m.awaiting = undefined; if (o && o.stage === "scheduled") this.confirmPlan(o, m.id, true); this.ack(m, copy.bookedThanks); return; }
     }
