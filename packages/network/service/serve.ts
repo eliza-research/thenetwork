@@ -101,6 +101,10 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
     // Leaving an app (or deleting everything) also deletes the grants: no row keeps the phone next to the app.
     if (isMcpAppId(ctx.app.id)) await mcp.revokeAllFor(ctx.e164, ctx.app.id, { forget: true });
   });
+  svc.onBan(async ctx => {
+    // Staff ban hard-kills live agent keys (eager revoke). #173 refuses at request time; this clears the table.
+    for (const key of ctx.phoneHashes) await mcp.revokeAllForKey(key, undefined, { detail: "staff ban" });
+  });
   return mcp;
 }
 
