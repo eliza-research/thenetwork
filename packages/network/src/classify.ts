@@ -135,10 +135,15 @@ export function classify(body: string): Classified {
   const blk = RX.block.exec(t), rep = RX.report.exec(t);
   if (blk) return { ...out, kind: "block", target: blk[1]!.trim() };
   if (rep) return { ...out, kind: "report", target: rep[1]!.replace(/[,;:.!?].*$/, "").trim() };
-  if (RX.cancel.test(t)) return { ...out, kind: "cancel" };
+  // An explanation for a past absence is feedback, not a cancellation of the next booking.
+  // Keep an explicit cancellation elsewhere in the message ahead of that feedback.
+  const afterAbsence = withoutSelfNoShow(low);
+  const pastAbsence = afterAbsence !== low && /\bsomething came up\b/.test(low);
+  const cancelText = pastAbsence ? afterAbsence.replace(/\bsomething came up\b/g, "") : t;
+  if (RX.cancel.test(cancelText)) return { ...out, kind: "cancel" };
   const inv = RX.invite.exec(t);
   if (inv && RX.inviteIntent.test(t)) return { ...out, kind: "invite_friend", friendName: inv[1] };
-  if (RX.feedback.test(t)) return { ...out, kind: "feedback_like" };
+  if (RX.feedback.test(t) || pastAbsence) return { ...out, kind: "feedback_like" };
 
   // What do they want? Wants the member negates are left out ("I don't want to meet founders").
   const x = extractProfile(t);
@@ -485,7 +490,7 @@ export function extractProfile(body: string): Profile {
 
 /** Remove explicit first-person absence claims before reading reports about the other person. */
 export function withoutSelfNoShow(body: string): string {
-  return body.replace(/[\u2018\u2019\u02bc]/g, "'").replace(/\bi\s+(?:(?:never|didn'?t|did not)\s+(?:show(?:ed)?(?:\s+up)?|turn(?:ed)?\s+up|come)\b(?!\s+(?:me|us|you|him|her|them|off|around|any|much)\b)|was\s+(?:a\s+)?no[- ]show\b)/gi, "");
+  return body.replace(/[\u2018\u2019\u02bc]/g, "'").replace(/\bi\s+(?:(?:never|didn'?t|did not)\s+(?:show(?:ed)?(?:\s+up)?|turn(?:ed)?\s+up|come)\b(?!\s+(?:me|us|you|him|her|them|off|around|any|much)\b)|was\s+(?:a\s+)?no[- ]show\b|(?:couldn'?t|didn'?t)\s+make\s+it\b|had\s+to\s+bail\b)/gi, "");
 }
 
 /**

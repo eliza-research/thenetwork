@@ -85,6 +85,57 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     }
     console.log("SELF_ABSENCE_OUTCOMES", JSON.stringify(outcomes));
     expect(outcomes.filter(r => r.correct).length).toBe(outcomes.length);
+    const routingCases = [
+      { kind: "came_up_couldnt", text: "Something came up, I couldn't make it.", missed: true },
+      { kind: "came_up_didnt", text: "Something came up, I didn't make it.", missed: true },
+      { kind: "came_up_bailed", text: "Something came up, I had to bail.", missed: true },
+      { kind: "came_up_show", text: "Something came up, I didn't show up.", missed: true },
+      { kind: "curly_couldnt", text: "Sorry, I couldn\u2019t make it. Something came up.", missed: true },
+      { kind: "generic_cancel", text: "Something came up.", missed: false, cancel: true },
+      { kind: "positive", text: "It was great!", missed: false },
+      { kind: "future", text: "I can't make it next week.", missed: false, cancel: true },
+      { kind: "past_and_future", text: "I couldn't make it last time. I need to cancel the next one.", missed: false, cancel: true },
+    ];
+    const routed: { seed: number; reportOn: boolean; kind: string; feedback: number; cancelled: number; futureStage: string; ownMisses: number; correct: boolean }[] = [];
+    for (const seed of [1, 2, 3]) for (const reportOn of [false, true]) for (const c of routingCases) {
+      const w = new Mini(["a", "b", "c"].map((id, i) => ({ id, name: ["Ana Diaz", "Ben Ito", "Cara Li"][i]!, age: 30, area: "Greenpoint", interests: ["climbing", "hiking"] })),
+        { seed, review: "human", growth: false, hooks: { postDateReports: reportOn } });
+      await w.onboard("a", "b", "c");
+      const book = async (ids: string[], answer: string) => {
+        const id = w.propose(ids, { category: "hobby", objective: "a climbing session" });
+        expect(await w.runUntil(() => w.net.reviewQueue().some(q => q.oppId === id), DAY)).toBe(true);
+        expect(w.sent.some(s => s.meta.proposalId === id || s.meta.probe?.key === id)).toBe(false);
+        expect(w.net.decide(id, "approve", { reviewer: "sim_staff" })).toEqual({ ok: true });
+        const count = w.meetings.length;
+        await w.answerProbes(ids, () => answer); expect(w.meetings.length).toBe(count + 1);
+        for (const p of ids) await w.say(p, "Thanks, still coming.");
+        return id;
+      };
+      const past = await book(["a", "b"], "the first one");
+      const at = w.meetings.find(m => m.proposalId === past)!.at;
+      await w.run(at + 3 * HOUR - w.clock.now());
+      expect(w.net.memberList().find(m => m.id === "a")?.awaiting?.kind).toBe("feedback");
+      // Acknowledgement leaves the old feedback unanswered; a new intro then uses the normal gates.
+      await w.say("a", "Thanks"); await w.say("c", "Still interested.");
+      const future = await book(["a", "c"], "the last one");
+      const futureAt = w.meetings.find(m => m.proposalId === future)!.at;
+      expect(futureAt).toBeGreaterThan(at + 5 * DAY);
+      w.restart(); expect(w.net.memberList().find(m => m.id === "a")?.awaiting).toBe(undefined);
+      await w.say("a", c.text); w.restart();
+      await w.run(at + 5 * DAY - w.clock.now()); w.restart();
+      const feedback = w.log("feedback").filter(l => l.detail.memberId === "a" && l.detail.proposalId === past);
+      const cancelled = w.log("booked_cancelled").filter(l => l.detail.memberId === "a" && l.detail.oppId === future);
+      const futureState = w.net.exportState().opps.find(o => o.id === future)!;
+      const member = w.net.memberList().find(m => m.id === "a")!;
+      const history = w.net.engineInput(w.clock.now()).interactions?.filter(r => r.id === `${past}:fb:a`) ?? [];
+      const correct = feedback.length === (c.cancel ? 0 : 1) && cancelled.length === Number(!!c.cancel)
+        && futureState.stage === (c.cancel ? "closed" : "scheduled") && member.noShows === Number(c.missed)
+        && w.net.safetyReports().length === 0 && history.length === (c.cancel ? 0 : 1)
+        && (c.cancel || (feedback[0]!.detail.selfNoShow === c.missed && history[0]!.outcome === (c.missed ? "no_show" : "completed")));
+      routed.push({ seed, reportOn, kind: c.kind, feedback: feedback.length, cancelled: cancelled.length, futureStage: futureState.stage, ownMisses: member.noShows, correct });
+    }
+    console.log("SELF_ABSENCE_ROUTING_OUTCOMES", JSON.stringify(routed));
+    expect(routed.filter(r => r.correct).length).toBe(routed.length);
   });
 
   // ---- invariants: NYC, 10 days, seed 3, simulated reviewer ---------------------------------------
