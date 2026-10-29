@@ -3,7 +3,7 @@
 // standing availability. Agent-private facets (verification, safety cues, travel tolerance,
 // availability) are read for hard filters only; they are never shown and never matched on. Cached
 // per World (the World is immutable).
-import type { MemberId } from "@thenetwork/core";
+import type { Facet, MemberId } from "@thenetwork/core";
 import type { StandingAvailability } from "../../attention.ts";
 import type { World } from "../../world.ts";
 import { hood, type Neighborhood } from "./geo.ts";
@@ -47,14 +47,14 @@ export const verifyTag = (r: "passed" | "failed" | "pending" | "pass" | "fail") 
 export const DEFAULT_TOLERANCE = 40;
 const cache = new WeakMap<World, Map<MemberId, FriendsInfo>>();
 
-/** All tags of a member's facets, any scope (agent-side reads only). */
-function tagsBy(w: World): Map<MemberId, string[]> {
-  const out = new Map<MemberId, string[]>();
+/** Keep each facet's timestamps alongside its tags (agent-side reads only, any scope). */
+function facetsBy(w: World): Map<MemberId, Facet[]> {
+  const out = new Map<MemberId, Facet[]>();
   for (const f of w.input.facets) {
     const id = w.canonical(f.memberId);
     if (f.validTo !== undefined && f.validTo < w.now) continue;
     if (!out.has(id)) out.set(id, []);
-    out.get(id)!.push(...f.tags);
+    out.get(id)!.push(f);
   }
   return out;
 }
@@ -73,10 +73,11 @@ export function friendsInfo(w: World): Map<MemberId, FriendsInfo> {
   let m = cache.get(w);
   if (m) return m;
   m = new Map();
-  const tags = tagsBy(w);
+  const facets = facetsBy(w);
   for (const id of w.ids) {
     const mi = w.get(id)!;
-    const ts = tags.get(id) ?? [];
+    const fs = facets.get(id) ?? [];
+    const ts = fs.flatMap(f => f.tags);
     const pres = mi.presence.filter(p => p.city === "nyc");
     const homeP = pres.find(p => p.type === "home");
     const home = hood(homeP?.areas[0]);
@@ -88,7 +89,7 @@ export function friendsInfo(w: World): Map<MemberId, FriendsInfo> {
       verified: val(FT.liveness) === VERIFY_PASS && val(FT.age) === VERIFY_PASS,
       safetyCue: ts.some(t => t.startsWith(FT.safety)) && !ts.includes(FT.reviewCleared),
       groupPref: val(FT.groupPref), energy: val(FT.energy), lifeStage: val(FT.lifeStage),
-      standing: standingFromTags(ts, mi.m.joinedAt),
+      standing: fs.flatMap(f => standingFromTags(f.tags, f.observedAt ?? f.validFrom ?? mi.m.joinedAt)),
     });
   }
   cache.set(w, m);
