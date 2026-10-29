@@ -2163,11 +2163,15 @@ export class ConsentNetwork implements NetworkUnderTest {
     // (growth, profiling, check-in) is still due, so "Sure, my friend Wren would love this" is never
     // read as a yes to the probe.
     const askOpen = this.askOpen(m, now);
-    if (askOpen || !this.timingOk(m, timing, now)) {
+    // A manager can have several seat items open, but only one question can own their next reply.
+    const managerQuestion = o.seat?.manager === id && (m.awaiting?.kind === "posting"
+      || (m.awaiting?.kind === "probe" && m.awaiting.oppId !== o.id));
+    if (askOpen || managerQuestion || !this.timingOk(m, timing, now)) {
       if (!o.deferLogged?.includes(id)) {
         o.deferLogged = [...(o.deferLogged ?? []), id];
         this.counters.deferred++;
-        this.ctx.log("send_deferred", { memberId: id, kind: "probe", oppId: o.id, until: askOpen ? m.openAskAt! + ASK_HOLD_MS : this.openAt(m, timing, now) });
+        this.ctx.log("send_deferred", { memberId: id, kind: "probe", oppId: o.id,
+          ...(managerQuestion ? { reason: "one_question" } : { until: askOpen ? m.openAskAt! + ASK_HOLD_MS : this.openAt(m, timing, now) }) });
       }
       return;
     }
