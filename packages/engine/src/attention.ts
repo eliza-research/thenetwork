@@ -1102,12 +1102,13 @@ export function timeOptionsPhrase(slots: readonly TimeSlot[], tz: string): strin
 }
 
 /** Standing availability from `availability_pattern` facets ("calendar usually free Tue/Thu evenings": tags evening:Tue). */
-export function standingFromFacets(facets: readonly { kind: string; tags: string[]; inferred?: boolean; observedAt?: number; validFrom?: number }[], now: number): StandingAvailability[] {
+export function standingFromFacets(facets: readonly { kind: string; tags: string[]; inferred?: boolean; observedAt?: number; validFrom?: number; validTo?: number }[], now: number): StandingAvailability[] {
   const DAYS3 = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const PARTS: Record<string, [number, number]> = { morning: [7, 12], afternoon: [12, 17], evening: [17, 22] };
   const out: StandingAvailability[] = [];
   for (const f of facets) {
     if (f.kind !== "availability_pattern") continue;
+    if (f.validFrom !== undefined && f.validFrom > now || f.validTo !== undefined && f.validTo < now) continue;
     const by = new Map<string, number[]>();
     for (const t of f.tags) {
       const [rawPart, rawDay] = t.split(":");
