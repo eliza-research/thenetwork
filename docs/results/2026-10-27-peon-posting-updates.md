@@ -61,6 +61,44 @@ Compatibility follow-up (`32125f2d2aaff09aa3d1f23ae9672772af7cc6e9`): the later 
 
 The simulation's existing pinned settings are unchanged. Network covers seed 3 over 10 days plus the consent/push comparisons on seeds 1-3 over 21 days and scenarios. Peon uses seeds 13-16, eight weeks, 400 candidates and 80 jobs per city, pack/keyword/oracle arms and realism v2. The job-seat block uses its existing hand-built service world. No new quality threshold was fitted. The repo's one-full-simulation-per-agent allowance was already used for PR #136; these runs cover the affected blocks.
 
+## Reviewer reproduction evidence (2026-10-29)
+
+The [code-reading review](https://github.com/eliza-research/thenetwork/pull/144#pullrequestreview-5679201189) requested terminal output, the database version, an explicit database-free reproduction status, and a merge order. This follow-up changes only this report and the PR description. Production code and test assertions remain unchanged from `49151db9bb663b2b234a133085cc010dbf7ecc07`.
+
+Fresh run on that exact revision: Windows, Bun 1.4.2 (`744846f84`), and the running server reports `PostgreSQL 16.15, compiled by Visual C++ build 1944, 64-bit` from `SELECT version();`. PostgreSQL was running locally on port 54339. The environment supplied `USER=postgres`, `REQUIRE_PG=1`, `OBSERVATORY_PG_PORT=54339`, `OBSERVATORY_PG_DIR` pointing to the local test cluster, and `PG_BIN_DIR` plus `PATH` pointing to its PostgreSQL binaries.
+
+Command:
+
+```sh
+bun test --conditions eliza-source --timeout 120000 ./packages/network/test/peon-postings.integration.test.ts
+```
+
+Actual terminal output (exit code 0):
+
+```text
+bun test v1.4.2 (744846f84)
+
+packages\network\test\peon-postings.integration.test.ts:
+[llm] Neither SURPLUS_API_KEY nor OPENAI_API_KEY is set: LLM calls will fail (see .env.example).
+(pass) peon postings: text intake, restart, staff API (NetworkService, Postgres) > a job post by text is read back, saved on the yes, kept across a restart, and closed by staff [742.54ms]
+(pass) peon postings: text intake, restart, staff API (NetworkService, Postgres) > partial text updates keep the saved post in the read-back, including across restart before confirmation [870.39ms]
+
+ 2 pass
+ 0 fail
+ 54 expect() calls
+Ran 2 tests across 1 file. [4.45s]
+```
+
+No model calls are required by these tests. The startup warning above does not skip or replace the database tests.
+
+**Database-free reproducer for this PR alone: none.** The existing Peon and job-seat simulation blocks do not exercise this stored-field update defect; their unchanged results are compatibility evidence, not reproduction evidence. A reviewer needs PostgreSQL and the focused integration command above to reproduce this PR's regression test. Without server binaries, this file can skip its cases; a skipped run is not validation.
+
+The later, separate [PR #197](https://github.com/eliza-research/thenetwork/pull/197) adds a database-free gate for retaining edits while choosing a posting. Its [combined-run evidence](https://github.com/startrack3r/thenetwork/blob/7917094d4de9821bce133fb53de0353ccba7952a/docs/results/2026-10-29-peon-posting-update-choice.md) also observes that #144 removes salary re-asks in that combined checkout. That gate is not part of this PR and does not change the standalone reproduction requirement above.
+
+Suggested merge order for the three overlapping posting fixes: **#144, then #145, then #146**. After #144 lands, rebase #145 on the updated main; after #145 lands, rebase #146. Resolve the shared posting-parser/integration-file context while retaining each regression case, then rerun the focused posting integration file and typecheck on each resulting branch. The earlier combined runs above are compatibility checks, not a claim that GitHub will merge all three current branches without rebasing. No merge or rebase was performed for this evidence-only update.
+
+Only the focused integration file was rerun for this follow-up. The broader integration, E2E, typecheck and simulation results above retain their original scope and dates; no fresh full-suite or Linux CI pass is claimed.
+
 ## safety_gates
 
 Existing Network and Peon consent, review, exclusion, cap and leak gates pass at their prior values. The regression checks that no posting is changed before yes, that cancellation retains the saved rows, and that a new post cannot reuse the old post's salary implicitly. No live sends or deployment were used. The lookup retains the existing manager-specific selection and ownership checks.
