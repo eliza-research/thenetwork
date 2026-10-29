@@ -46,3 +46,8 @@
 {"messages":["I date in SF and NYC within 100 miles"],"correction":"Change only my distance to 50 miles, not 100 miles.","expect":{"distance":{"mode":"multi","markets":["nyc","sf"],"miles":50}},"confirmed":false}
 {"messages":["Within 50 miles"],"correction":"I date in SF and NYC","expect":{"distance":{"mode":"multi","markets":["nyc","sf"],"miles":50}},"confirmed":false}
 {"messages":["I date in SF and NYC within 50 miles"],"correction":"only NYC","expect":{"distance":{"mode":"city"}},"confirmed":false}
+{"messages":["straight guy, 28-38, within 5 mi of 11211"],"correction":"no, i'm gay","expect":{"gender":"man","seeks":["man"]},"confirmed":false}
+{"messages":["straight guy, 28-38, within 5 mi of 11211"],"correction":"no, i'm a woman","expect":{"gender":"woman","seeks":["man"]},"confirmed":false}
+{"messages":["straight guy, 28-38, within 5 mi of 11211"],"correction":"actually i'm bi","expect":{"gender":"man","seeks":null},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"right, i'm bi","expect":{"gender":"woman","seeks":["man"]},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"right, no","expect":{"seeks":["man"],"ageRange":[28,38]},"confirmed":false}

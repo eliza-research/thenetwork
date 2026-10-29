@@ -53,6 +53,7 @@ function valueOf(p: SlopOnboarding, f: string): unknown {
 }
 function matches(p: SlopOnboarding, f: string, want: unknown): boolean {
   const got = valueOf(p, f);
+  if (want === null) return got === undefined;
   if (f === "location") return typeof got === "string" && typeof want === "string" && got.toLowerCase() === want.toLowerCase();
   if (f === "values") return Object.entries(want as Record<string, unknown>).every(([k, v]) => (got as Record<string, unknown>)[k] === v);
   if (f === "free") return same([...(got as string[])].sort(), [...(want as string[])].sort());
