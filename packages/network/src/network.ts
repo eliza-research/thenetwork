@@ -2719,8 +2719,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /**
-   * After a meeting (NC asks: attendance verification, the organizer's check-in, ghosting): resolve
-   * each booked member once, from the post-meeting answers.
+   * Attendance evidence shared by the capital ledger and crew handoff, from post-meeting answers.
    *  - Present: the member said they came, a counterpart who came confirms them (named them, or
    *    reported nobody missing: the mutual check-in), or the host checked them in.
    *    plan_attended lists how it was verified; then feedback_given if they answered.
@@ -2730,11 +2729,8 @@ export class ConsentNetwork implements NetworkUnderTest {
    *  - Nothing known: nothing is emitted.
    * A hosted plan whose host came: organized, with the host's check-in list.
    */
-  private finalize(o: Opp) {
-    if (o.finalized || o.meetingAt === undefined) return;
-    o.finalized = true;
+  private attendance(o: Opp) {
     const going = o.participants.filter(p => o.status.get(p) === "yes" && o.bookedAt?.[p] !== undefined);
-    if (!going.length) return;
     const post = o.post ?? {};
     const said = (p: MemberId) => post[p];
     const host = o.plan?.hostId && going.includes(o.plan.hostId) && said(o.plan.hostId)?.came ? o.plan.hostId : undefined;
@@ -2746,6 +2742,15 @@ export class ConsentNetwork implements NetworkUnderTest {
     // A counterpart who came and reported nobody missing confirms everyone booked (the mutual check-in).
     const vouchers = (p: MemberId) => going.filter(x => x !== p && said(x)?.came && !said(x)!.otherNoShow);
     const present = going.filter(p => said(p)?.came === true || (said(p)?.came !== false && (vouchers(p).length > 0 || checkIn.includes(p))));
+    return { going, said, host, checkIn, vouchers, present };
+  }
+
+  /** Resolve attendance once everyone answers, or four days after the meeting. */
+  private finalize(o: Opp) {
+    if (o.finalized || o.meetingAt === undefined) return;
+    o.finalized = true;
+    const { going, said, host, checkIn, vouchers, present } = this.attendance(o);
+    if (!going.length) return;
     const origin = this.originOf(o);
     for (const p of going) {
       const key = `${o.id}:${p}`;
@@ -3221,18 +3226,23 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const offer of this.crewOffers) if (!offer.resolved && now - offer.at > 3 * DAY) this.resolveCrew(offer);
     for (const crew of this.crews) {
       if (crew.handedOff) continue;
-      if ([...this.opps.values()].some(o => o.plan?.crewId === crew.id && OPEN_STAGES.has(o.stage))) continue;
+      const sessions = [...this.opps.values()].filter(o => o.plan?.crewId === crew.id);
+      // Attempts are not meetups. Use the same verified attendance as the ledger, including
+      // sessions restored from storage, and count each scheduled date only once.
+      const held = new Set(sessions.filter(o => o.finalized && this.attendance(o).present.length >= 2).map(o => o.plan!.window.start)).size;
+      if (held >= this.pcfg.crews.handOffAfterSessions) { crew.handedOff = true; this.ctx.log("crew_handoff", { crewId: crew.id }); continue; }
+      if (sessions.some(o => OPEN_STAGES.has(o.stage))) continue;
       const v = PLAN_VENUES.find(x => x.id === crew.venueId);
       const place = v ? { name: v.name, area: v.area } : { name: "the usual spot" };
       const members = crew.members.filter(id => { const m = this.members.get(id); return !!m && this.planSeatOk(m); });
       if (members.length < this.pcfg.crews.minMembers) continue;
       const next = plans.crewSessionPlan({ ...crew, members, hostRotation: crew.hostRotation.filter(h => members.includes(h)).length ? crew.hostRotation.filter(h => members.includes(h)) : members }, now, place, this.pcfg);
-      if (!next || crew.sessions.some(id => this.opps.get(id)?.plan?.window.start === next.window.start)) continue;
+      // crew.sessions holds plan ids, whereas opps is keyed by opportunity ids.
+      if (!next || sessions.some(o => o.plan!.window.start === next.window.start)) continue;
       const plan = this.withReach(next, now);
       crew.sessions.push(plan.id);
       this.plansCounters.crewSessions++;
       this.ctx.log("crew_session", { crewId: crew.id, session: crew.sessions.length, invited: plan.invited.length });
-      if (crew.sessions.length >= this.pcfg.crews.handOffAfterSessions) { crew.handedOff = true; this.ctx.log("crew_handoff", { crewId: crew.id }); }
       this.submitPlan(plan, now);
     }
   }
