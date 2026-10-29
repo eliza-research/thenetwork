@@ -176,7 +176,9 @@ export function readPostingText(body: string, ctx: { draft?: PostingDraft; posti
     return { draft: { close: true, id: pick.id, title: pick.title }, text: POSTING_COPY.readBackClose(pick.title), ready: true };
   }
   if (ctx.draft?.close && !command) {
-    const pick = namedPostings(body, ctx.postings.filter(p => p.active));
+    const open = ctx.postings.filter(p => p.active);
+    const pick = namedPostings(body, open);
+    if (pick.length > 1) return { draft: { close: true }, text: POSTING_COPY.whichToClose(open.map(p => p.title)), ready: false };
     if (pick.length !== 1) return undefined;
     return { draft: { close: true, id: pick[0]!.id, title: pick[0]!.title }, text: POSTING_COPY.readBackClose(pick[0]!.title), ready: true };
   }

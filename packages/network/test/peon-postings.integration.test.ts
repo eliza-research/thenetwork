@@ -95,11 +95,25 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
     await s.start();
 
     // Both orders must remain ambiguous: the short title also appears outside the longer one.
+    const clarifications: { reply: string; retained: boolean; resolved: boolean }[] = [];
+    const draft = () => s.runtimeFor("peon")!.net.memberList().find(m => m.id === manager)?.posting;
     for (const command of ["Close my analyst post and senior data analyst post", "Close my senior data analyst post and analyst post"]) {
       await text(s, clock, phone, command);
       expect(await last(manager)).toMatch(/^Which post should I close:/);
       expect(await stored()).toEqual(original);
+      const reply = command.replace("Close my ", "");
+      await text(s, clock, phone, reply);
+      const retained = draft()?.close === true && draft()?.id === undefined && draft()?.ready === false && draft()?.asks === 2;
+      await s.close(); s = svc = service(clock); await s.start();
+      expect(await stored()).toEqual(original);
+      await text(s, clock, phone, "senior data analyst");
+      const resolved = draft()?.id === id("senior data analyst") && draft()?.ready === true
+        && (await last(manager)) === POSTING_COPY.readBackClose("senior data analyst");
+      expect(await stored()).toEqual(original);
       await text(s, clock, phone, "no");
+      expect(draft()).toBeUndefined();
+      expect(await stored()).toEqual(original);
+      clarifications.push({ reply, retained, resolved });
     }
     const observations: { operation: string; selectedAndSaved: boolean }[] = [];
     await text(s, clock, phone, "Update my senior data analyst post: 3 openings, $100k-$140k, hybrid in Brooklyn, must have SQL");
@@ -145,10 +159,21 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
     await text(s, clock, phone, "Close my analyst post");
     expect(await last(manager)).toMatch(/^Which post should I close:/);
     expect(await stored()).toEqual(duplicate);
+    await text(s, clock, phone, "analyst");
+    const retained = draft()?.close === true && draft()?.id === undefined && draft()?.ready === false && draft()?.asks === 2;
+    await s.close(); s = svc = service(clock); await s.start();
+    expect(await stored()).toEqual(duplicate);
+    // The existing two-question limit still prevents an endless ambiguity loop.
+    await text(s, clock, phone, "analyst");
+    const resolved = draft() === undefined && (await last(manager)) === POSTING_COPY.dropped;
+    expect(await stored()).toEqual(duplicate);
+    clarifications.push({ reply: "duplicate title", retained, resolved });
     await s.close();
     svc = undefined;
     console.log(`  named postings: ${JSON.stringify(observations)}`);
     expect(observations.every(x => x.selectedAndSaved)).toBe(true);
+    console.log(`  posting clarifications: ${JSON.stringify(clarifications)}`);
+    expect(clarifications.every(x => x.retained && x.resolved)).toBe(true);
   }, T);
 
   test("a job post by text is read back, saved on the yes, kept across a restart, and closed by staff", async () => {
