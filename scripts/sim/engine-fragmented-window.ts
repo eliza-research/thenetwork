@@ -1,15 +1,17 @@
-// Regression: candidateReason must not pick a meeting window shorter than
-// minOverlapHours from fragmented presence. geo.overlap only guarantees total
-// overlap >= minOverlapHours across all intervals, so a window split into
-// 20-minute pieces totals 3h while no single piece is a usable meeting slot.
-// The longest-interval fallback must re-check the minimum itself.
-import { describe, expect, test } from "bun:test";
-import { DAY, HOUR, MINUTE, type Member, type Presence } from "@thenetwork/core";
-import { resolveConfig } from "../src/config.ts";
-import { localEmbed } from "../src/embed.ts";
-import { candidateReason } from "../src/filters.ts";
-import type { Candidate, EngineInput } from "../src/types.ts";
-import { World } from "../src/world.ts";
+// Sim gate for the fragmented-presence window fix (PR 209): candidateReason must not
+// pick a meeting window shorter than minOverlapHours (3h) from fragmented presence.
+// geo.overlap only guarantees TOTAL overlap >= 3h across all intervals, so presence split
+// into 20-minute pieces totals 3h while no single piece is a usable meeting slot. This gate
+// fails before the fix (the candidate is accepted with a ~20-minute window) and passes
+// after it (the candidate is rejected with no_presence_overlap). It is a sim gate, not a
+// unit test: it runs inside `bun run sim --only network` via the network block.
+import { DAY, HOUR, MINUTE, type Member, type Presence } from "../../packages/core/src/index.ts";
+import { resolveConfig } from "../../packages/engine/src/config.ts";
+import { localEmbed } from "../../packages/engine/src/embed.ts";
+import { candidateReason } from "../../packages/engine/src/filters.ts";
+import type { Candidate, EngineInput } from "../../packages/engine/src/types.ts";
+import { World } from "../../packages/engine/src/world.ts";
+import { Block, expect } from "./gate.ts";
 
 const NOW = Date.UTC(2026, 9, 5, 16);
 
@@ -44,10 +46,10 @@ function candidate(fixedWindow: { start: number; end: number }): Candidate {
   };
 }
 
-// Both members home in sf; "a" travels to nyc for 40 minutes out of every
-// hour, leaving nine 20-minute sf fragments in a 10h window: 9 x 20min = 3h
-// total overlap, longest single fragment 20 minutes. Only one member travels,
-// so nyc is not a common city and sf is the only overlap city.
+// Both members home in sf; "a" travels to nyc for 40 minutes out of every hour,
+// leaving nine 20-minute sf fragments in a 10h window: 9 x 20min = 3h total overlap,
+// longest single fragment 20 minutes. Only one member travels, so nyc is not a common
+// city and sf is the only overlap city.
 function fragmentedPresence(): Presence[] {
   const out: Presence[] = [
     { memberId: "a", city: "sf", type: "home", areas: ["mission"] },
@@ -63,8 +65,8 @@ function fragmentedPresence(): Presence[] {
   return out;
 }
 
-describe("candidateReason presence window", () => {
-  test("fragmented presence totalling 3h in 20-minute pieces is no overlap", () => {
+export async function fragmentedWindowGate(b: Block): Promise<void> {
+  await b.run("engine: fragmented presence totalling 3h in 20-minute pieces is no overlap", () => {
     const w = worldWith(fragmentedPresence());
     const ov = w.overlap(["a", "b"], NOW, NOW + 10 * HOUR);
     // Sanity: the bug's precondition — total overlap meets the minimum.
@@ -75,7 +77,7 @@ describe("candidateReason presence window", () => {
     expect(candidateReason(w, c)).toBe("no_presence_overlap");
   });
 
-  test("a single interval meeting the minimum still passes", () => {
+  await b.run("engine: a single interval meeting the minimum still passes (control)", () => {
     const w = worldWith([
       { memberId: "a", city: "sf", type: "home", areas: ["mission"] },
       { memberId: "b", city: "sf", type: "home", areas: ["mission"] },
@@ -84,4 +86,4 @@ describe("candidateReason presence window", () => {
     expect(candidateReason(w, c)).toBeNull();
     expect(c.window!.end - c.window!.start).toBe(4 * HOUR);
   });
-});
+}
