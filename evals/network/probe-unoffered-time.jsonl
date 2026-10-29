@@ -9,3 +9,6 @@
 {"text":"Friday works","options":["Saturday 10am","Sunday 10am"],"answer":"yes","keys":[]}
 {"text":"Yes, that works. I get off work at 6pm","options":["Saturday 10am","Sunday 10am"],"answer":"yes","keys":["a","b"]}
 {"text":"yes! I'm free, I usually finish work at 6pm","options":["Saturday 10am","Sunday 10am"],"answer":"yes","keys":["a","b"]}
+{"text":"6pm works","options":["Saturday 10am","Sunday 10am"],"answer":"yes","keys":[]}
+{"text":"yes, I get out of work at 6pm","options":["Saturday 10am","Sunday 10am"],"answer":"yes","keys":["a","b"]}
+{"text":"yes, I'm free after work at 6pm","options":["Saturday 10am","Sunday 10am"],"answer":"yes","keys":["a","b"]}

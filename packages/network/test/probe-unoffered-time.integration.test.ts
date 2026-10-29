@@ -66,6 +66,23 @@ describe("a probe answer naming a time nobody offered", () => {
       expect(w.to(first, from).filter(s => (s.meta as { timeOptions?: unknown[] }).timeOptions?.length)).toEqual([]);
     });
   }
+  // The reviewer's product path: a work-hours class in other words books the offered times, and the clock named
+  // in the other word order ("6pm works") books none and asks for a time nobody offered.
+  test("work hours in another phrasing book the offered times", async () => {
+    const { w, o, offered, first, from } = await probeThenAnswer(undefined, "yes, I get out of work at 6pm");
+    const starts = [...(o.picks?.[first] ?? [])].sort();
+    expect(starts).toEqual(o.offered[first].filter((x: TimeOption) => offered.includes(x.key)).map((x: TimeOption) => x.start).sort());
+    expect(w.to(first, from).filter(s => (s.meta as { timeOptions?: unknown[] }).timeOptions?.length)).toEqual([]);
+  });
+  test("a named clock in the other word order books none and asks for that time", async () => {
+    const { w, o, offered, first, from } = await probeThenAnswer(undefined, "6pm works");
+    expect(o.picks?.[first] ?? []).toEqual([]);
+    expect((o.declinedTimes ?? []).filter((x: number) => o.offered[first].some((y: TimeOption) => y.start === x))).toEqual([]);
+    const fresh = w.to(first, from).filter(s => (s.meta as { timeOptions?: unknown[] }).timeOptions?.length);
+    expect(fresh.length).toBe(1);
+    expect(o.stage).toBe("probing");
+    expect(offered.length).toBeGreaterThan(1);
+  });
   test("the yes still counts: the offered times stay open for the partner", async () => {
     const { w, o, first } = await probeThenAnswer();
     expect(o.status.get(first)).toBe("probing");

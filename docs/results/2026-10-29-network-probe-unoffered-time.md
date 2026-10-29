@@ -25,6 +25,12 @@ member's own time out of the picks.
   mention is when the member is free, not a time they ask for, so "Yes, that works. I get off work at 6pm"
   keeps every offered time (review of 2026-10-29). Those replies already passed on `main` a0ed7bc; a first
   version of this clock arm made them book nothing, and the corpus rows below pin them so it cannot regress.
+  The second review showed the first version was too narrow in both directions: it only looked at what came
+  before the clock and read the noun "work" as the nudge "works at". It now reads the whole clause, so work
+  hours behind any verb or preposition ("get out of work", "done with work", "home from work", "free after
+  work", "my shift ends at 6:30pm") are availability, and a clock before a pick word ("6pm works", "6pm would
+  be better") is a proposal, the other word order of "works at 7pm". An availability window before the clock
+  ("any time after 5pm", "free until 6pm") stays a plain yes.
 - `mergeConsent` keeps the parser's pick when `unoffered` is set: the LLM may still add wants,
   interests and an age, but it cannot turn the reply back into a pick of every offered time.
 - `onProbeAnswer` (`packages/network/src/network.ts`) takes `namedNone`: it records no pick and no
@@ -36,7 +42,7 @@ member's own time out of the picks.
 
 Command (deterministic, no seed, no model): `bun run sim --only evals`, plus the exact-match corpus
 gate `probe replies naming no offered time: read as labelled` over
-`evals/network/probe-unoffered-time.jsonl` (11 rows; options Thursday 7pm, Saturday 11am, Sunday 2pm, or
+`evals/network/probe-unoffered-time.jsonl` (14 rows; options Thursday 7pm, Saturday 11am, Sunday 2pm, or
 Saturday 10am and Sunday 10am).
 
 | Reply | Before (`main` a0ed7bc) | After |
@@ -50,6 +56,7 @@ Saturday 10am and Sunday 10am).
 | Sunday 2pm works | yes ["c"] | yes ["c"] |
 | Friday night please | unclear [] | unclear [] |
 | How about a different day? | yes [] ("none of those fit") | yes [] ("none of those fit") |
+| 6pm works (options Saturday 10am, Sunday 10am) | yes ["a","b"] | yes [] (asks for 6pm) |
 | yes! I'm free, I usually finish work at 6pm (options Saturday 10am, Sunday 10am) | yes ["a","b"] | yes ["a","b"] |
 | Yes, that works. I get off work at 6pm (options Saturday 10am, Sunday 10am) | yes ["a","b"] | yes ["a","b"] |
 
@@ -64,7 +71,7 @@ as it is and moves only the unoffered-day reply to the yes-with-no-pick path abo
 
 Integration case: `packages/network/test/probe-unoffered-time.integration.test.ts` (the real
 `ConsentNetwork` in the `Mini` world, `review: "auto"`, a scripted LLM reader that names no time).
-Before the fix it fails (the first three tests; `o.picks` held both offered starts); after, 6/6 pass.
+Before the fix it fails (the first three tests; `o.picks` held both offered starts); after, 8/8 pass (two more for the second review: work hours in another phrasing book both offered times, and "6pm works" books none and asks for that time).
 
 Sim, full run, same machine and data:
 

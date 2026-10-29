@@ -633,19 +633,36 @@ const NEG_AFTER = /^\s*(?:(?:one|option|time|slot)\b\s*)?(?:\d{1,2}(?::\d\d)?\s*
 const CLAUSE_START = /[.,;!?]|\b(but|though|however|although|so)\b/g;
 /** Words that make a named time a pick ("Saturday works", "free Sunday"), not just a mention ("Saturday I'm at a wedding"). */
 const POSITIVE_PICK = /\b(works|work for (?:me|us)|does|good|fine|great|perfect|best|better|free|open|i can|let'?s|is ok|okay|please|for me|yes|yeah|sure)\b/;
-/** A lead-in that proposes a clock as the meeting time: "let's do 7pm", "how about 7pm", "works at 7pm". */
-const CLOCK_LEAD = /(?:\b(?:how|what) about|\blet'?s do|\bworks?)\s+(?:on\s+)?(?:at\s+)?$/;
+/** A lead-in that proposes a clock as the meeting time: "let's do 7pm", "how about 7pm", "works for me at 7pm". */
+const CLOCK_LEAD = /(?:\b(?:how|what) about|\blet'?s do|\bworks?(?:\s+for\s+(?:me|us))?)\s+(?:on\s+)?(?:at\s+)?$/;
 /**
- * True when the clock at `i` is proposed as the meeting time: after a day ("Saturday 7pm", "on sat at 7"), or after a
- * nudge ("works at 7pm", "let's do 7pm", "how about 7pm"). A clock in a work-hours clause ("I get off work at
- * 6pm", "my shift ends at 6:30pm") is when the member is free, not a time they ask for. `head` is the clause
- * before the clock.
+ * A tail that proposes the clock before it as the meeting time ("6pm works", "6pm then", "6pm would be better").
  */
-function proposesAt(t: string, i: number, head: string): boolean {
+const CLOCK_TAIL = /^\s*(?:then|instead|would be better|is better|is good|is fine|is great|works?(?:\s+for\s+(?:me|us))?)[\s!.]*$/;
+/**
+ * An availability window before the clock ("any time after 5pm", "free until 6pm"): the clock is when they are free,
+ * not a time they ask for, so "yes, any time after 5pm works" is a plain yes.
+ */
+const CLOCK_WINDOW = /\b(?:after|before|until|till|past|by|around|any\s?time|anytime|whenever|free\s+from)\s*$/;
+/**
+ * Work hours in a clause ("I get out of work at 6pm", "done with work", "home from work", "my shift ends at 6:30pm",
+ * "free after work"): the clock is when they are free, not a time they ask for. The word "work" is not the nudge
+ * "works at ..." here.
+ */
+const WORK_HOURS = /\b(?:of|from|with|at|until|till|past|around|after|before)\s+(?:my\s+|the\s+|a\s+)?(?:work|shift)\b|\b(?:off|finish(?:es|ed|ing)?|done|home|coming|leaves?|left|ends?|ended|starts?|started|starting|getting\s+out|get(?:s|ting)?\s+out|out\s+of)\b[^.,;!?]{0,30}\b(?:work|shift)\b/;
+/**
+ * True when the clock at `i` is proposed as the meeting time: after a day ("Saturday 7pm", "on sat at 7"), after a
+ * nudge ("works at 7pm", "let's do 7pm", "how about 7pm"), or before a pick word ("6pm works"). A clock in a
+ * work-hours clause ("I get out of work at 6pm") or an availability window ("any time after 5pm") is when the
+ * member is free, not a time they ask for. `clause` is the whole clause and `head` the part before the clock.
+ */
+function proposesAt(t: string, i: number, len: number, clause: string, head: string): boolean {
   const before = t.slice(Math.max(0, i - 40), i).toLowerCase();
   if (NEG_CUE.test(`${before}${head}`)) return false;
-  if (/\b(?:off|finish(?:es|ed)?|leaves?|ends?|getting out|get out|gets out|starts?|starting)\s+(?:work|shift)?\s*(?:at)?\s*$/.test(head)) return false;
+  if (WORK_HOURS.test(clause)) return false;
   if (CLOCK_LEAD.test(before)) return true;
+  // "6pm works" is "works at 7pm" with the words swapped: the tail proposes the clock, unless it is a window.
+  if (CLOCK_TAIL.test(clause.slice(head.length + len)) && !CLOCK_WINDOW.test(head)) return true;
   return DAY_WORDS.some(([re]) => new RegExp(`(?:${re.source})\\s*(?:at\\s*)?$`).test(head));
 }
 /** True when the words at `i` (of length `len`) are refused: a negation cue earlier in their clause, or a refusal right after them. */
@@ -721,7 +738,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     if (keys.length) mark(keys, m.index!, m[0].length);
     else if (!negatedAt(t, m.index!, m[0].length)) {
       const clause = clauseAt(t, m.index!, m[0].length).toLowerCase();
-      if (proposesAt(t, m.index!, clause.slice(0, Math.max(0, clause.indexOf(m[0]))))) unoffered = true;
+      if (proposesAt(t, m.index!, m[0].length, clause, clause.slice(0, Math.max(0, clause.indexOf(m[0]))))) unoffered = true;
     }
   }
   // A reply that is only time words ("sat 11am", "thursday or sunday") picks them all firmly.
