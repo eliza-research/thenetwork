@@ -14,6 +14,7 @@ import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, VENUES, typ
 import { styleViolations } from "../../packages/network/src/copy.ts";
 import { DATA_DIR } from "../synthetic/common.ts";
 import { conformance } from "./conformance.ts";
+import { Mini } from "../../packages/network/test/mini.ts";
 import { Block, digest, expect } from "./gate.ts";
 
 type Msg = Extract<RunRecord, { type: "message" }>;
@@ -36,6 +37,67 @@ async function world(days: number, seed = 3, network: NetworkOptions = { review:
 }
 
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
+  await b.run("group attendance: a no-show report identifies the silent member", async () => {
+    const cases = [
+      { kind: "unnamed", text: "Someone didn't show up." },
+      { kind: "named", text: "Ben didn't show up." },
+      { kind: "all", text: "Nobody else came." },
+      { kind: "all_showed", text: "No one else showed up." },
+      { kind: "positive", text: "It was great!" },
+      { kind: "self", text: "I couldn't make it." },
+      { kind: "disputed", text: "Ben didn't show up.", response: true },
+      { kind: "voucher", text: "Someone didn't show up.", response: true },
+      { kind: "present_then_missing", text: "Cara came. Ben didn't show up.", missing: ["b"] },
+      { kind: "missing_then_present", text: "Ben didn't show up. Cara came.", missing: ["b"] },
+      { kind: "semicolon", text: "Cara came; Ben didn't show up.", missing: ["b"] },
+      { kind: "newline", text: "Cara came\nBen didn't show up.", missing: ["b"] },
+      { kind: "but", text: "Cara came, but Ben didn't show up.", missing: ["b"] },
+      { kind: "while", text: "Cara came, while Ben didn't show up.", missing: ["b"] },
+      { kind: "whereas", text: "Cara came, whereas Ben didn't show up.", missing: ["b"] },
+      { kind: "two_named", text: "Ben and Cara didn't show up.", missing: ["b", "c"] },
+      { kind: "comma_list", text: "Ben, Cara and Dan didn't show up.", missing: ["b", "c", "d"] },
+      { kind: "two_sentences", text: "Ben didn't show up. Cara never came.", missing: ["b", "c"] },
+    ];
+    const outcomes: { seed: number; flow: string; kind: string; misses: number[]; expected: number[]; correct: boolean }[] = [];
+    for (const seed of [1, 2, 3]) for (const flow of ["pair", "group", "plan"]) for (const c of cases) {
+      const ids = ["a", "b", "c", "d"].slice(0, flow === "pair" ? 2 : flow === "group" ? 3 : 4);
+      const w = new Mini(ids.map((id, i) => ({ id, name: ["Ana Diaz", "Ben Ito", "Cara Li", "Dan May"][i]!, age: 30, area: "Greenpoint", interests: ["hiking", "outdoors"] })),
+        { seed, review: "human", growth: false });
+      if (flow !== "plan") w.clock.advance(4 * DAY);
+      await w.onboard(...ids);
+      let id: string;
+      if (flow === "plan") {
+        expect(await w.runUntil(() => w.net.reviewQueue().some(q => q.origin === "planner"), 4 * DAY)).toBe(true);
+        id = w.net.reviewQueue().find(q => q.origin === "planner")!.oppId;
+        expect(w.net.exportState().opps.find(x => x.id === id)?.plan?.invited).toEqual(ids);
+      } else {
+        id = w.propose(ids, { category: "hobby", objective: "a hiking group" });
+        expect(await w.runUntil(() => w.net.reviewQueue().some(q => q.oppId === id), DAY)).toBe(true);
+      }
+      expect(w.sent.some(s => s.meta.probe || s.meta.proposalId)).toBe(false);
+      expect(w.net.decide(id, "approve", { reviewer: "sim_staff" })).toEqual({ ok: true });
+      await w.answerProbes(ids);
+      expect(w.meetings.every(m => m.proposalId === id)).toBe(true);
+      expect(w.meetings.flatMap(m => m.participants).sort()).toEqual(ids);
+      for (const p of ids) await w.say(p, "Thanks, still coming.");
+      await w.run(w.meetings[0]!.at + 3 * HOUR - w.clock.now()); w.restart();
+      expect(w.net.memberList().find(m => m.id === "a")?.awaiting?.kind).toBe("feedback");
+      await w.say("a", c.text);
+      if (c.response) await w.say("b", "It was great!");
+      const misses = () => ids.map(p => w.net.memberList().find(m => m.id === p)!.noShows);
+      // A report alone does not count before the unanswered check-in window ends.
+      expect(misses().slice(1)).toEqual(ids.slice(1).map(() => 0));
+      w.restart(); await w.run(5 * DAY); w.restart();
+      expect(w.net.exportState().opps.find(x => x.id === id)?.finalized).toBe(true);
+      const expected = ids.map((p, i) => i === 0 ? Number(c.kind === "self") : c.missing ? Number(c.missing.includes(p)) :
+        Number(c.kind === "all" || c.kind === "all_showed" || c.kind === "named" && p === "b" || c.kind === "unnamed" && flow === "pair"));
+      const actual = misses();
+      outcomes.push({ seed, flow, kind: c.kind, misses: actual, expected, correct: Bun.deepEquals(actual, expected) });
+      await w.run(DAY); w.restart(); expect(misses()).toEqual(actual);
+    }
+    console.log("GROUP_ABSENCE_OUTCOMES", JSON.stringify(outcomes));
+    expect(outcomes.filter(r => r.correct).length).toBe(outcomes.length);
+  });
   // ---- invariants: NYC, 10 days, seed 3, simulated reviewer ---------------------------------------
   const run = await world(10);
   await run.w.advanceTo(run.w.end);
