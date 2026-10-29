@@ -2599,7 +2599,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     // The post-meeting answer is the attendance check-in (NC: mutual check-in; the host's check-in list).
     // Plans also ask "would you do it again with this group?" (would_interact_again edges, crews).
     const crewId = o.plan ? this.planPost(m, o, body, f) : undefined;
-    if (!o.plan) o.post = { ...o.post, [m.id]: { came: !f.selfNoShow, again: f.again, otherNoShow: f.otherNoShow || NOBODY_CAME.test(body), named: others.filter(x => this.namedIn(body, x)) } };
+    if (!o.plan) o.post = { ...o.post, [m.id]: { came: !f.selfNoShow, again: f.again, otherNoShow: f.otherNoShow || NOBODY_CAME.test(body), named: others.filter(x => NOBODY_CAME.test(body) || this.namedIn(body, x)) } };
     const good = !f.selfNoShow && !f.otherNoShow && (f.sentiment === "positive" || !!o.post?.[m.id]?.again);
     if (good) this.emit({ type: "value_received", member: m.id, with: others }, `${o.id}:${m.id}`);
     this.helpFeedback(m, o, f);
@@ -2768,9 +2768,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     // A reported no-show counts only when corroborated (network-consent-17): the member said they did
     // not come, or they were asked how it went and stayed silent (finalize runs 4 days after).
+    // In a group, the report must identify this member. "Nobody else came" names all counterparts;
+    // an unnamed report can identify the missing person only in a pair.
     for (const p of going) {
       if (present.includes(p) || said(p)) continue;
-      if (going.some(x => x !== p && said(x)?.came && said(x)!.otherNoShow)) { const x = this.members.get(p); if (x) { x.noShows++; x.completedSinceNoShow = 0; } }
+      if (going.some(x => x !== p && said(x)?.came && said(x)!.otherNoShow && (going.length === 2 || said(x)!.named.includes(p)))) {
+        const x = this.members.get(p); if (x) { x.noShows++; x.completedSinceNoShow = 0; }
+      }
     }
     // A request is fulfilled only when the requester and someone else attended (matching-e2e-7).
     if (o.requester && present.includes(o.requester) && present.some(p => p !== o.requester)) {
@@ -3145,7 +3149,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   private planPost(m: MemberState, o: Opp, body: string, f: { selfNoShow: boolean; otherNoShow: boolean }): string | undefined {
     const going = o.participants.filter(p => o.status.get(p) === "yes");
     const again = planAgainOf(body) === "yes" && !f.selfNoShow;
-    const named = going.filter(x => x !== m.id && this.namedIn(body, x));
+    const named = going.filter(x => x !== m.id && (NOBODY_CAME.test(body) || this.namedIn(body, x)));
     o.post = { ...o.post, [m.id]: { came: !f.selfNoShow, again, otherNoShow: f.otherNoShow || NOBODY_CAME.test(body), named } };
     const now = this.now();
     if (again) for (const x of going) if (x !== m.id && o.post[x]?.again) { this.planAgain.set(pairKey(m.id, x), now); this.dirty = true; }
