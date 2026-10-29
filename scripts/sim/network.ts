@@ -12,6 +12,7 @@ import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, loadScenario, runSce
 import { friendFactory, nycPersonas, runArm, runScenario, SCENARIOS, type ArmResult } from "../../packages/network/harness/index.ts";
 import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, VENUES, type NetworkOptions } from "../../packages/network/src/index.ts";
 import { styleViolations } from "../../packages/network/src/copy.ts";
+import { Mini } from "../../packages/network/test/mini.ts";
 import { DATA_DIR } from "../synthetic/common.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
@@ -36,6 +37,48 @@ async function world(days: number, seed = 3, network: NetworkOptions = { review:
 }
 
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
+  await b.run("feedback: group history excludes members who cancelled before the meeting", async () => {
+    const outcomes: { seed: number; kind: string; rows: number; wrongParticipants: number; noShows: number; cancelledPrompts: number }[] = [];
+    for (const seed of [1, 2, 3]) for (const kind of ["intact", "three_to_two", "four_to_three", "remaining_no_show", "pair_cancelled"]) {
+      const ids = ["a", "b", "c", "d"].slice(0, kind === "four_to_three" ? 4 : kind === "pair_cancelled" ? 2 : 3);
+      const w = new Mini(ids.map((id, i) => ({ id, name: ["Ana Diaz", "Ben Ito", "Cara Li", "Dan Wu"][i]!,
+        age: 30, area: "Greenpoint", interests: ["climbing", "hiking"] })), { seed, review: "human", growth: false });
+      w.clock.advance(4 * DAY);
+      await w.onboard(...ids);
+      const id = w.propose(ids, { category: "hobby", objective: "a climbing session" });
+      await w.runUntil(() => w.net.reviewQueue().some(q => q.oppId === id), DAY);
+      expect(w.net.decide(id, "approve", { reviewer: "staff" })).toEqual({ ok: true });
+      await w.answerProbes(ids);
+      expect(w.meetings.length).toBe(1);
+      const cancelled = kind === "intact" ? undefined : ids.at(-1)!;
+      if (cancelled) await w.say(cancelled, "I can't make it");
+      const going = ids.filter(p => p !== cancelled);
+      // Acknowledge the plan/change, keeping the ordinary conversation-streak policy in force.
+      for (const p of going) await w.say(p, "Thanks, still coming.");
+      w.restart();
+      await w.run(w.meetings[0]!.at + 3 * HOUR - w.clock.now());
+      const expected = kind === "pair_cancelled" ? [] : going;
+      expect(w.sent.filter(s => s.meta.type === "feedback_request").map(s => s.to).sort()).toEqual([...expected].sort());
+      for (const p of expected) {
+        expect(w.net.memberList().find(m => m.id === p)?.awaiting?.kind).toBe("feedback");
+        await w.say(p, kind === "remaining_no_show" && p === "a" ? "I couldn't make it" : "It was great!");
+      }
+      w.restart();
+      const input = w.net.engineInput(w.clock.now());
+      const history = input.interactions?.filter(r => r.id.startsWith(`${id}:fb:`)) ?? [];
+      expect(history.map(r => r.id).sort()).toEqual(expected.map(p => `${id}:fb:${p}`).sort());
+      expect((input.feedback ?? []).every(f => f.from !== cancelled && f.about !== cancelled)).toBe(true);
+      outcomes.push({ seed, kind, rows: history.length,
+        wrongParticipants: history.filter(r => !Bun.deepEquals(r.participants, expected)).length,
+        noShows: history.filter(r => r.outcome === "no_show").length,
+        cancelledPrompts: w.sent.filter(s => s.meta.type === "feedback_request" && s.to === cancelled).length });
+    }
+    console.log(`group history outcomes: ${JSON.stringify(outcomes)}`);
+    for (const row of outcomes) expect(row).toEqual({ seed: row.seed, kind: row.kind,
+      rows: row.kind === "pair_cancelled" ? 0 : row.kind === "intact" || row.kind === "four_to_three" ? 3 : 2,
+      wrongParticipants: 0, noShows: row.kind === "remaining_no_show" ? 1 : 0, cancelledPrompts: 0 });
+  });
+
   // ---- invariants: NYC, 10 days, seed 3, simulated reviewer ---------------------------------------
   const run = await world(10);
   await run.w.advanceTo(run.w.end);

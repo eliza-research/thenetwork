@@ -2595,7 +2595,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     // The world turns this into its "feedback" run record (flags only: the text is not kept).
     // Privacy (network-consent-25): what the answer said, as flags; never the member's words.
     this.ctx.log("feedback", { memberId: m.id, proposalId: o.id, sentiment: f.sentiment, selfNoShow: f.selfNoShow, otherNoShow: f.otherNoShow, again: f.again });
-    const others = o.participants.filter(p => p !== m.id && o.status.get(p) === "yes");
+    const going = o.participants.filter(p => o.status.get(p) === "yes");
+    const others = going.filter(p => p !== m.id);
     // The post-meeting answer is the attendance check-in (NC: mutual check-in; the host's check-in list).
     // Plans also ask "would you do it again with this group?" (would_interact_again edges, crews).
     const crewId = o.plan ? this.planPost(m, o, body, f) : undefined;
@@ -2638,7 +2639,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         s.add(m.id); this.again.set(k, s);
       }
     }
-    this.interactions.push({ id: `${o.id}:fb:${m.id}`, kind: o.kind, category: o.category, participants: [...o.participants], at: this.now(), outcome: f.selfNoShow ? "no_show" : "completed", contributors: [] });
+    this.interactions.push({ id: `${o.id}:fb:${m.id}`, kind: o.kind, category: o.category, participants: going, at: this.now(), outcome: f.selfNoShow ? "no_show" : "completed", contributors: [] });
     // Growth: a good experience is the best moment to ask (at most monthly, while invites last).
     if (!crewId && this.invitesWork && f.sentiment === "positive" && this.canInvite(m) && this.now() - m.lastGrowthAsk > 30 * DAY) {
       m.lastGrowthAsk = this.now();
