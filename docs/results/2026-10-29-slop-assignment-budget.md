@@ -180,7 +180,19 @@ The other skip is optional browser auth-feedback e2e: `PLAYWRIGHT_MODULE` is not
 Skipped cases are not presented as executed passes.
 
 Upstream hosted CI has reported `action_required`, with no executed jobs.
-The contributor declined activation of fork Actions, which stays disabled. No Linux CI pass is claimed.
+The contributor later authorized fork Actions. Activation succeeded on 2026-10-29.
+The original [Ubuntu 24.04 run](https://github.com/miracle2044/thenetwork/actions/runs/40834482440) never obtained runners.
+Its first attempt waited about 15 minutes. One retry also remained queued.
+Both attempts were cancelled before any test step ran. Neither is counted as test evidence.
+
+An independent [Ubuntu 22.04 run](https://github.com/miracle2044/thenetwork/actions/runs/40836688774) tries another hosted runner pool.
+The validation branch is `ci/slop-budget-linux22`; workflow commit: `24acf3607490917f9f249edd7d28320064022efa`.
+It differs from source `f422e5b7e130623ae482c9e777994d8b2a5b1347` only in `.github/workflows/ci.yml`.
+Both jobs use Ubuntu 22.04 and explicitly check out that source commit.
+Test commands, pinned actions, Bun version, PostgreSQL image, empty provider keys and permissions remain the same.
+The validation branch is not part of this PR.
+Current observed status: `queued`. No Linux CI pass is claimed while no runner has executed tests.
+No deployment workflow, paid model or live-send path was invoked.
 
 ## llm_evidence
 
