@@ -87,7 +87,7 @@ export function skillText(name: string, env: Record<string, string | undefined> 
 
 /** The frontmatter description of a SKILL.md (one line, no YAML block scalars in our files). */
 export function skillDescription(text: string): string {
-  const fm = text.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
+  const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
   const parsed = Bun.YAML.parse(fm) as { description?: unknown };
   return typeof parsed.description === "string" ? parsed.description : "";
 }
@@ -219,7 +219,7 @@ export async function buildSite(s: Site, outdir: string, env: Record<string, str
     // The landing page's logo row (agents.ts), before fill() so a staging build rewrites its links too.
     const home = join(outdir, "index.html");
     const skill = skillText(s.skill, env);
-    const version = (Bun.YAML.parse(skill.match(/^---\n([\s\S]*?)\n---/)![1]!) as { metadata: { version: string } }).metadata.version;
+    const version = (Bun.YAML.parse(skill.match(/^---\r?\n([\s\S]*?)\r?\n---/)![1]!) as { metadata: { version: string } }).metadata.version;
     writeFileSync(home, readFileSync(home, "utf8")
       .replace(/(<code data-prompt>)[\s\S]*?(<\/code>)/, (_all, open, close) => `${open}${promptFor(s, version)}${close}`)
       .replaceAll("{{AGENTS}}", agentRow(s, version)));
