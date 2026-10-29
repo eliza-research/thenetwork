@@ -148,6 +148,22 @@ describe("a probe reply that names a day nobody offered", () => {
     expect(historyOf(w, "a")).toEqual([]);
   });
 
+  test("a member who accepts the offered times while naming a day nobody offered still books them", async () => {
+    const w = await probing();
+    const offered = offeredOf(w, "a");
+    expect(offered.length).toBeGreaterThan(1);
+    await w.say("a", `I have a wedding ${unofferedDay(offered)} but any of those work`);
+    expect(oppOf(w, "a").picks?.["a"]).toEqual(offered.map(x => x.start));
+    await w.runUntil(() => w.probed("b"), 2 * 24 * 60 * 60 * 1000);
+    if (w.probed("b")) await w.say("b", "yes");
+    await w.run(2 * 60 * 60 * 1000);
+    const o = oppOf(w, "a");
+    expect(o.stage).toBe("scheduled");
+    expect(o.picks?.["a"]).toEqual(offered.map(x => x.start));
+    expect(w.meetings.length).toBe(1);
+    expect(historyOf(w, "a").filter(h => h.outcome === "accepted").map(h => h.at).sort()).toEqual(offered.map(x => x.start).sort());
+  });
+
   test("a true exclusion picks the day that was not excluded", async () => {
     const w = await probing();
     const offered = offeredOf(w, "a");

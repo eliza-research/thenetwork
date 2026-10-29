@@ -631,13 +631,17 @@ const NEG_CUE = /\b(not(?! sure)|can'?t(?! wait)|cannot|couldn'?t|won'?t|wouldn'
 const NEG_AFTER = /^\s*(?:(?:one|option|time|slot)\b\s*)?(?:\d{1,2}(?::\d\d)?\s*(?:am|pm)\s*)?(?:(?:is|'s|are|would be|will be)\s+)?(?:out\b|bad\b|busy\b|full\b|packed\b|booked\b|taken\b|no good\b|not (?:good|great|ideal|possible|great)\b|tough\b|rough\b|a no\b|off\b|impossible\b|doesn'?t\b|does not\b|don'?t\b|do not\b|won'?t\b|will not\b|isn'?t\b|is not\b|can'?t\b|cannot\b)/;
 /** A clause boundary: punctuation, "but", "though", "however". */
 const CLAUSE_START = /[.,;!?]|\b(but|though|however|although|so)\b/g;
+/** True when no clause boundary sits between the two positions. */
+const sameClause = (t: string, a: number, b: number): boolean => !t.slice(Math.min(a, b), Math.max(a, b)).match(/[.,;!?]|\b(but|though|however|although|so)\b/);
 /**
- * A cue that rules a named day or clock time out: "any day but Friday", "free apart from Friday".
- * A bare "but" is contrast, not exclusion ("Sorry, but Saturday works" picks Saturday), so "but" only
- * counts behind a universal ("any day", "anytime", "all days", "whichever"); the other cues are
- * exclusionary on their own.
+ * A cue that rules a named day or clock time out: "any day but Friday", "any day bar Friday", "free
+ * apart from Friday". A bare "but" or "bar" is contrast or a place ("Sorry, but Saturday works", "at
+ * the bar Friday"), not exclusion, so both only count behind a universal ("any day", "anytime", "all
+ * days", "whichever"); the other cues are exclusionary on their own.
  */
-const EXCL_BEFORE = /\b(?:(?:any ?time|any\s+day|any\s+of\s+(?:them|those)|any\s+other\s+(?:day|time)|anything|everything|whatever|every\s*day|all|whichever)\s+but\s+|except(?: for)?\s+|apart from\s+|other than\s+|aside from\s+|save for\s+|excluding\s+|barring\s+)$/;
+const EXCL_BEFORE = /\b(?:(?:any ?time|any\s+day|any\s+of\s+(?:them|those)|any\s+other\s+(?:day|time)|anything|everything|whatever|every\s*day|all|whichever)\s+(?:but|bar)\s+|except(?: for)?\s+|apart from\s+|other than\s+|aside from\s+|save for\s+|excluding\s+|barring\s+)$/;
+/** An exclusion standing on its own ("free apart from Friday", "aside from Friday Im free"): a yes to every option it does not rule out. */
+const EXCL_ALONE = /\b(except(?: for)?|apart from|aside from|other than|save for|excluding|barring)\b/;
 /** Words that make a named time a pick ("Saturday works", "free Sunday"), not just a mention ("Saturday I'm at a wedding"). */
 const POSITIVE_PICK = /\b(works|work for (?:me|us)|does|good|fine|great|perfect|best|better|free|open|i can|let'?s|is ok|okay|please|for me|yes|yeah|sure)\b/;
 /** True when the words at `i` (of length `len`) are refused: a negation cue earlier in their clause, or a refusal right after them. */
@@ -705,20 +709,23 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // (network-consent: record the time they accept).
   // A mention the reply rules *out* is not a miss (negatedAt covers "any day but Friday", "free apart
   // from Friday"): it is a yes to the offered options, since none of them is the day being excluded.
-  let unoffered = false;
+  const unofferedAt: number[] = [], unofferedDayAt: number[] = [];
   for (const [re, dayName] of DAY_WORDS) {
     const keys = options.filter(o => o.label.startsWith(dayName)).map(o => o.key);
     for (const m of t.matchAll(re)) {
       if (keys.length) mark(keys, m.index!, m[0].length);
-      else if (!negatedAt(t, m.index!, m[0].length)) unoffered = true;
+      else if (!negatedAt(t, m.index!, m[0].length)) { unofferedAt.push(m.index!); unofferedDayAt.push(m.index!); }
     }
   }
   for (const m of t.matchAll(/\b(\d{1,2})(?::\d\d)?\s*(am|pm)\b/g)) {
     const label = `${Number(m[1])}${m[2]}`;
     const keys = options.filter(o => o.label.endsWith(` ${label}`)).map(o => o.key);
-    if (keys.length) mark(keys, m.index!, m[0].length);
-    else if (!negatedAt(t, m.index!, m[0].length)) unoffered = true;
+    // "Monday 10am works" names a day nobody offered, so the clock matches nothing: the same day
+    // constraint the day itself carries, never a pick on the offered days that share its hour.
+    if (keys.length && !unofferedDayAt.some(i => sameClause(t, i, m.index!))) mark(keys, m.index!, m[0].length);
+    else if (!negatedAt(t, m.index!, m[0].length)) unofferedAt.push(m.index!);
   }
+  const unoffered = unofferedAt.length > 0;
   // A reply that is only time words ("sat 11am", "thursday or sunday") picks them all firmly.
   let residue = t;
   for (const [re] of DAY_WORDS) residue = residue.replace(re, " ");
@@ -735,12 +742,18 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return { answer: "yes", keys: picked.filter(k => strong.has(k) || c.answer === "yes"), why: c.why };
   if (NEITHER.test(t)) return { answer: "yes", keys: [], why: c.why };
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
-  // Skipped when the reply also names a day or time we did not offer: "Friday anytime works" carries the
-  // same Friday constraint as "Friday works", so the generic "anytime" must not accept the offered
-  // options ahead of the unoffered check below. A reply that names an offered option still picks it
+  // Skipped when the universal sits in the same clause as a day or time we did not offer: "Friday anytime
+  // works" carries the same Friday constraint as "Friday works", so the generic "anytime" must not accept
+  // the offered options ahead of the unoffered check below. The skip is clause-local, because the
+  // acceptance the unoffered mention suppresses is too: "I have a wedding Friday but any of those work"
+  // accepts the offered times in its second clause. A reply that names an offered option still picks it
   // ("Friday or Thursday works" -> Thursday) because that returns from the pick branch above.
   const allAt = ALL.exec(t) ?? ALL_WEAK.exec(t);
-  if (allAt && c.answer !== "counter" && !unoffered && !negatedAt(t, allAt.index, allAt[0].length)) return open.length ? { answer: "yes", keys: open, why: c.why } : unclear;
+  const unofferedHere = !!allAt && unofferedAt.some(i => sameClause(t, i, allAt.index));
+  if (allAt && c.answer !== "counter" && !unofferedHere && !negatedAt(t, allAt.index, allAt[0].length)) return open.length ? { answer: "yes", keys: open, why: c.why } : unclear;
+  // An exclusion with nothing in front of it ("free apart from Friday", "aside from Friday Im free") is
+  // the same yes, to every option it does not rule out.
+  if (EXCL_ALONE.test(t) && !picked.length && open.length && c.answer !== "counter") return { answer: "yes", keys: open, why: c.why };
   // A yes that names a day or time we did not offer shares nothing with the options: it is not a pick, and
   // it is not "none of those fit" either, so it books nothing and records nothing as refused. unclear
   // returns before onProbeAnswer (network.ts), so no declinedTimes, no availability history and no
