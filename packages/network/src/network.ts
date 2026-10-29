@@ -3264,7 +3264,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (this.lastTick && now > this.lastTick) this.tickGap = now - this.lastTick;
     this.lastTick = now;
     // The member records can change between units (staff edits, the member's settings): read them again first.
-    for (const m of [...this.members.values()]) this.syncMember(m);
+    for (const m of [...this.members.values()]) {
+      this.syncMember(m);
+      const aw = m.awaiting;
+      // Expire the booking reply state before a resumed tick sends its feedback question.
+      // Otherwise expect() protects the old booking, and the new question loses its reply state.
+      if (aw?.kind === "booked" && (now - aw.at > OPT_OUT_HOURS * HOUR || now >= (this.opps.get(aw.oppId ?? "")?.meetingAt ?? 0))) m.awaiting = undefined;
+    }
     // Deferred sends whose window may have come. Each one runs every send-time check again.
     const waiting = this.deferred; this.deferred = [];
     for (const d of waiting) {
@@ -3281,8 +3287,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const m of this.members.values()) {
       const aw = m.awaiting;
       if (!aw) continue;
-      // A booked plan's opt-out window: 48 hours, or until the meeting (silence = in).
-      if (aw.kind === "booked" ? now - aw.at > OPT_OUT_HOURS * HOUR || now >= (this.opps.get(aw.oppId ?? "")?.meetingAt ?? 0) : aw.kind !== "probe" && now - aw.at > 3 * DAY) m.awaiting = undefined;
+      if (aw.kind !== "probe" && aw.kind !== "booked" && now - aw.at > 3 * DAY) m.awaiting = undefined;
     }
     const p = nyParts(now);
     this.weeklyCheckins(now);
