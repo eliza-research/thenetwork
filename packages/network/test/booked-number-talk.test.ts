@@ -19,7 +19,7 @@ async function booked(opts: ConstructorParameters<typeof Mini>[1] = {}) {
 }
 
 describe("number talk after a booking", () => {
-  for (const text of ["I don't want to share my number yet", "I don't want to give out my number", "I don't want to swap numbers anymore", "yes! but don't share my number yet"]) {
+  for (const text of ["I don't want to share my number yet", "I don't want to give out my number", "I don't want to swap numbers anymore", "yes! but don't share my number yet", "I don't want to share my number until we meet up"]) {
     test(`"${text}" keeps the booked plan`, async () => {
       const w = await booked();
       const from = w.mark();
@@ -41,7 +41,7 @@ describe("number talk after a booking", () => {
   });
 
   // Review on #181: a no to the plan next to number talk still calls it off.
-  for (const text of ["No. Also don't share my number", "I can't make it, and don't send my number", "Let's not meet. I also don't want to share my number.", "I don't want to swap numbers anymore. And I'm not coming.", "I don't want to give my number out, so I'm not coming", "I don't want to swap numbers. Actually no, cancel it."]) {
+  for (const text of ["No. Also don't share my number", "I can't make it, and don't send my number", "Let's not meet. I also don't want to share my number.", "I don't want to swap numbers anymore. And I'm not coming.", "I don't want to give my number out, so I'm not coming", "I don't want to swap numbers. Actually no, cancel it.", "I don't want to share my number or meet you", "I can't share my number nor meet up", "I don't want to give out my number because I'm not coming"]) {
     test(`"${text}" still calls it off`, async () => {
       const w = await booked();
       await w.say("a", text);

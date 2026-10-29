@@ -784,11 +784,12 @@ export class ConsentNetwork implements NetworkUnderTest {
       // swap (withdrawn above), not the plan: only the rest of the message answers the booked plan.
       // The LLM reader read the whole message, number talk included, so it does not answer the rest.
       // A rest the rules cannot read that still negates ("Let's not meet. I", "I'm not coming") keeps the
-      // whole message's no: in doubt the date is called off, never kept against a no.
+      // whole message's no: in doubt the date is called off, never kept against a no. So does a number
+      // clause that also names the plan ("I don't want to share my number or meet you").
       const plan = withoutNumberTalk(body);
       const whole = this.yesNoOf(body);
       const rest = plan === body ? whole : plan ? consentOf(plan).answer : "unclear";
-      const yn = rest === "unclear" && whole === "no" && NEGATES.test(plan) ? "no" : rest;
+      const yn = rest === "unclear" && whole === "no" && (NEGATES.test(plan) || (!plan && namesPlan(body))) ? "no" : rest;
       if (o && o.stage === "scheduled" && o.status.get(m.id) === "yes" && (c.kind === "cancel" || yn === "no")) { m.awaiting = undefined; return this.handleDrop(m, o); }
       if (yn === "yes" || c.kind === "ack") { m.awaiting = undefined; if (o && o.stage === "scheduled") this.confirmPlan(o, m.id, true); this.ack(m, copy.bookedThanks); return; }
     }
@@ -4981,6 +4982,13 @@ function withoutNumberTalk(body: string): string {
 }
 /** A negation or cancel word left in the rest of a booked reply. */
 const NEGATES = /\b(?:no|not|never|nope|nah|cancel\w*|dont|cant|wont|didnt)\b|\w+n['’]t\b/i;
+/** The plan named in a number clause ("...or meet you", "...because I'm not coming"), not in a time clause ("until we meet up"). */
+const PLAN_WORD = /\b(?:meet|coming|come|make it|be there|show up|attend|go out|the date|this date|cancel)\b/i;
+const PLAN_TIME = /\b(?:before|until|after|when|till|by the time|once|if|unless)\b[^.!?;]{0,24}$/i;
+function namesPlan(body: string): boolean {
+  const m = PLAN_WORD.exec(body);
+  return !!m && !PLAN_TIME.test(body.slice(Math.max(0, m.index - 40), m.index));
+}
 /** An engine proposal, routed to a seat's hiring manager when it was for a job seat (seatRoute). */
 type SeatProposal = EngineProposal & { seat?: { id: MemberId; manager: MemberId } };
 
