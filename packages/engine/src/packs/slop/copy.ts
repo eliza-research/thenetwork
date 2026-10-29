@@ -31,9 +31,29 @@ export const SLOP_ASK_QUESTIONS: Record<string, string> = {
  * area; slop never prints it). Name and contact stay hidden until both say yes.
  */
 export function slopProbeText(ctx: { when: string; times?: boolean }, activity: string, attribute?: string, about?: string): string {
-  const who = about ? ` They're ${about.replace(/[.\s]+$/, "")}.` : "";
-  const also = attribute ? ` They're into ${attribute.replace(/[.\s]+$/, "")}.` : "";
-  return `There's someone I think you might like to go on a date with: ${activity.replace(/[.\s]+$/, "")}, ${ctx.when}.${who}${also} Want me to check if they're up for it? I'll only tell you who it is if you both say yes.${ctx.times ? " Tell me which time works, or no." : ""}`;
+  const clean = (s: string) => s.replace(/[.\s]+$/, "");
+  const act = clean(activity);
+  // Keep the probe under the Network style cap (copy.ts styleViolations: 360 chars).
+  // Drop optional parts longest-last: attribute, then about, then shorten the ask.
+  const askLong = " Want me to check if they're up for it? I'll only tell you who it is if you both say yes.";
+  const askShort = " Interested? Names only if you both say yes.";
+  const tailLong = `${askLong}${ctx.times ? " Tell me which time works, or no." : ""}`;
+  const tailShort = `${askShort}${ctx.times ? " Tell me which time works, or no." : ""}`;
+  let who = about ? ` They're ${clean(about)}.` : "";
+  let also = attribute ? ` They're into ${clean(attribute)}.` : "";
+  let text = `There's someone I think you might like to go on a date with: ${act}, ${ctx.when}.${who}${also}${tailLong}`;
+  if (text.length > 360) {
+    also = "";
+    text = `There's someone I think you might like to go on a date with: ${act}, ${ctx.when}.${who}${also}${tailLong}`;
+  }
+  if (text.length > 360) {
+    who = "";
+    text = `There's someone I think you might like to go on a date with: ${act}, ${ctx.when}.${who}${also}${tailLong}`;
+  }
+  if (text.length > 360) {
+    text = `There's someone I think you might like to go on a date with: ${act}, ${ctx.when}.${who}${also}${tailShort}`;
+  }
+  return text;
 }
 
 /** The booked date after both said yes: a public place, the share-my-date tip and the check-in to come. */
