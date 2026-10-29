@@ -209,8 +209,13 @@ export function candidateReason(w: World, c: Candidate, usage?: RunUsage): Filte
   const first = ov.intervals[0]!;
   c.window = c.fixedWindow ? { start: Math.max(c.fixedWindow.start, first[0]), end: Math.min(c.fixedWindow.end, first[1]) } : { start: first[0], end: first[1] };
   if (c.window.end - c.window.start < Math.min(cfg.minOverlapHours * HOUR, (end - start) * 0.99)) {
-    // Fall back to the longest interval if the first is short.
+    // Fall back to the longest interval if the first is short, but only if that
+    // interval itself meets the minimum overlap (capped at 99% of the window,
+    // as geo.overlap does). Total overlap across fragmented intervals is not
+    // a usable meeting window: accepting a ~20-minute fragment here would let
+    // scoring/timingFit treat it as the slot.
     const longest = [...ov.intervals].sort((x, y) => (y[1] - y[0]) - (x[1] - x[0]))[0]!;
+    if (longest[1] - longest[0] < Math.min(cfg.minOverlapHours * HOUR, (end - start) * 0.99)) return "no_presence_overlap";
     c.window = { start: longest[0], end: longest[1] };
   }
   return null;
