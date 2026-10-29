@@ -250,7 +250,9 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
   const lastDate = new Map<MemberId, { at: number; liked?: boolean }>();
   for (const r of input.interactions ?? []) if (r.outcome === "completed" && r.at <= now) for (const id of r.participants) {
     const k = C(id), cur = lastDate.get(k);
-    if (!cur || r.at > cur.at) lastDate.set(k, { at: r.at });
+    // Both check-ins refer to the booked date; a later reply must not reset its pacing clock.
+    const at = r.meeting?.at ?? r.at;
+    if (!cur || at > cur.at) lastDate.set(k, { at });
   }
   const sum = new Map<MemberId, { g: number; gn: number; r: number; rn: number }>();
   const s = (id: MemberId) => { let x = sum.get(id); if (!x) { x = { g: 0, gn: 0, r: 0, rn: 0 }; sum.set(id, x); } return x; };

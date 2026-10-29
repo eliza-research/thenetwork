@@ -169,7 +169,7 @@ export async function runSlopLive(seed: number, o: { days?: number; n?: number }
 }
 
 export async function slopLiveArm(b: Block, o: { quick: boolean }): Promise<void> {
-  await b.run("slop-live: attended slots use the booked local time, not the feedback reply time", async () => {
+  await b.run("slop-live: date history uses the booked time across check-in delays and order", async () => {
     const cases = [
       { at: Date.UTC(2026, 9, 10, 18), answer: "Saturday afternoon", slot: 5, delay: 3 * HOUR },
       { at: Date.UTC(2026, 9, 11, 18), answer: "Sunday", slot: 7, delay: 2 * DAY },
@@ -212,6 +212,60 @@ export async function slopLiveArm(b: Block, o: { quick: boolean }): Promise<void
       expect(await w.runUntil(() => w.sent.some(x => x.meta.probe?.key === next))).toBe(true);
       const labels = w.sent.find(x => x.meta.probe?.key === next)!.meta.timeOptions!.map(x => x.label).sort();
       if (!Bun.deepEquals(labels, ["Saturday 2pm", "Saturday 7pm", "Sunday 2pm"])) failures.push(`${seed}:${c.at}:offered=${labels}`);
+    }
+    const { appearanceFacet, runEngine, SLOP_DEFAULT_OPTIONS } = await import("../../packages/engine/src/index.ts");
+    const pacing = [];
+    for (const seed of [1, 2, 3]) for (const kind of ["first liked", "last liked", "both liked", "neither liked"]) {
+      const wiring = appWiring("slop"), ids = ["a", "b", "c"];
+      const w = new Mini(ids.map((id, i) => ({ id, name: id, age: 30, interests: ["climbing"], shareable: true,
+        romance: { is: i ? "woman" : "man", seeks: [i ? "man" : "woman"] },
+      })), { seed, app: "slop", review: "human", pack: wiring.pack, hooks: wiring.hooks, plans: wiring.plans ?? true, engine: wiring.engine });
+      for (const [i, id] of ids.entries()) {
+        await w.say(id, "Hi");
+        await w.say(id, `I'm a ${i ? "woman looking for men" : "man looking for women"}, aged 30. Ages 25-40, within 10 miles of 11211. Looking for a long-term relationship. I like climbing. My schedule varies.`);
+        await w.say(id, "Yes, that's right.");
+        // Synthetic stored ratings permit matching; this does not exercise the photo rater.
+        w.facets.push(appearanceFacet(id, { age: 30 }, { face: 0, body: 0, overall: 0, confidence: 1, model: "synthetic-fixture" }, w.clock.now()));
+      }
+      const opp = w.propose(["a", "b"], { category: "romance", objective: "coffee" });
+      expect(await w.runUntil(() => w.net.reviewQueue().some(q => q.oppId === opp))).toBe(true);
+      expect(w.sent.some(x => x.meta.probe?.key === opp)).toBe(false);
+      expect(w.net.review(opp, "approve", { reviewer: "sim_staff" })).toBe(true);
+      await w.answerProbes(["a", "b"]);
+      expect(w.meetings.length).toBe(1);
+      const at = w.meetings[0]!.at;
+      await w.run(at + 3 * HOUR - w.clock.now());
+      for (const id of kind === "last liked" ? ["b", "a"] : ["a", "b"]) {
+        const liked = kind === "both liked" || (kind !== "neither liked" && id === "a");
+        await w.say(id, liked ? "It was great, I'd meet again!" : "It was okay.");
+        w.restart();
+        await w.run(HOUR);
+      }
+      const measure = async () => {
+        const input = w.net.packInput(w.clock.now());
+        const profiles = slopProfiles(input);
+        const states = (p: ReturnType<typeof slopProfiles>) => ids.slice(0, 2).map(id => ({ at: p.get(id)!.history.lastDateAt, liked: p.get(id)!.history.lastDateLiked }));
+        expect(states(slopProfiles({ ...input, interactions: [...input.interactions!].reverse(), feedback: [...input.feedback!].reverse() }))).toEqual(states(profiles));
+        expect(input.feedback?.length).toBe(2);
+        expect(input.interactions?.filter(r => r.outcome === "completed").map(r => r.at)).toEqual([at + 3 * HOUR, at + 4 * HOUR]);
+        const engine = await runEngine(input, wiring.engine, { pack: wiring.pack });
+        return { states: states(profiles), selected: engine.proposals.some(p => p.participants.includes("a")), excluded: engine.runLog.funnel.memberExclusions.recently_matched ?? 0 };
+      };
+      const initial = await measure();
+      const boundary = at + SLOP_DEFAULT_OPTIONS.pacing.likedDateDays * DAY;
+      await w.run(boundary - 1 - w.clock.now());
+      const beforeBoundary = await measure();
+      await w.run(1);
+      const atBoundary = await measure();
+      pacing.push({ seed, kind, at, initial, beforeBoundary, atBoundary });
+    }
+    console.log("booked-time pacing outcomes:", JSON.stringify(pacing));
+    for (const row of pacing) {
+      const states = [{ at: row.at, liked: row.kind !== "neither liked" }, { at: row.at, liked: row.kind === "both liked" }];
+      const active = { states, selected: row.kind === "neither liked", excluded: row.kind === "both liked" ? 2 : row.kind === "neither liked" ? 0 : 1 };
+      if (!Bun.deepEquals(row.initial, active)) failures.push(`${row.seed}:${row.kind}:initial`);
+      if (!Bun.deepEquals(row.beforeBoundary, active)) failures.push(`${row.seed}:${row.kind}:before boundary`);
+      if (!Bun.deepEquals(row.atBoundary, { states, selected: true, excluded: 0 })) failures.push(`${row.seed}:${row.kind}:at boundary`);
     }
     expect(failures).toEqual([]);
   });
