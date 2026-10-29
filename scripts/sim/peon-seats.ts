@@ -44,10 +44,10 @@ class SeatWorld {
   private seq = 0;
   private readonly opts: NetworkOptions;
 
-  constructor() {
+  constructor(seed = 7) {
     const w = appWiring("peon");
     this.opts = {
-      app: APPS.peon, seed: 7, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
+      app: APPS.peon, seed, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
       pack: w.pack!, hooks: w.hooks!, engine: { ...PEON_ENGINE_CONFIG, cities: ["nyc"] },
       onPosting: p => this.write(p),
     };
@@ -128,6 +128,78 @@ const startsWith = (body: string, re: RegExp) => re.test(body.replace(ACK, ""));
 const POST = "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL";
 
 export async function peonSeatsBlock(b: Block): Promise<void> {
+  await b.run("capacity: a missed interview leaves the replacement in review", async () => {
+    const outcomes: { seed: number; kind: string; free: number; queued: number; ended: number; booked: boolean }[] = [];
+    for (const seed of [7, 13, 17]) for (const kind of ["candidate missed", "manager missed", "completed", "unanswered", "closed"]) {
+      const w = new SeatWorld(seed);
+      w.add("hm1", "Rowan Abbott", 34, { verified: "Acme" });
+      for (const c of CANDIDATES) w.add(c, `Cand ${c.toUpperCase()}`, 29, { candidate: true });
+      for (const id of ["hm1", ...CANDIDATES]) for (const a of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await w.say(id, a);
+      await w.say("hm1", POST.replace("2 openings", "1 opening"));
+      expect(w.saved.length).toBe(0);
+      await w.say("hm1", "yes");
+      const seat = seatIdOf(w.saved[0]!.id);
+      const queue = () => w.net.reviewQueue().filter(i => w.opp(i.oppId)?.seat?.id === seat);
+      expect(await w.runUntil(() => queue().length > 0)).toBe(true);
+      expect(queue().length).toBe(1);
+      const first = queue()[0]!.oppId;
+      const candidate = w.opp(first)!.participants.find(p => p !== "hm1")!;
+      expect(w.about(first).length).toBe(0);
+      expect(w.net.review(first, "approve", { reviewer: "sim_staff" })).toBe(true);
+      expect(await w.runUntil(() => w.probedFor(candidate, first))).toBe(true);
+      await w.say(candidate, "yes");
+      expect(await w.runUntil(() => w.probedFor("hm1", first))).toBe(true);
+      expect(w.opp(first)?.meetingAt).toBeUndefined();
+      await w.say("hm1", "yes");
+      expect(w.opp(first)?.stage).toBe("scheduled");
+      const respondent = kind === "manager missed" ? "hm1" : candidate;
+      expect(await w.runUntil(() => w.net.memberList().find(m => m.id === respondent)?.awaiting?.kind === "feedback", 7 * DAY)).toBe(true);
+      if (kind !== "unanswered") await w.say(respondent, kind === "completed" ? "It was great" : "I couldn't make it");
+      w.restart();
+      if (kind === "closed") {
+        await w.say("hm1", "Close my data analyst post");
+        await w.say("hm1", "yes");
+        expect(w.saved.at(-1)?.status).toBe("closed");
+      }
+      const left = () => Number(w.net.packInput(w.clock.now()).facets.find(f => f.id === `${seat}:openings`)!.tags.find(t => t.startsWith("peon:openings:"))!.split(":").at(-1));
+      const free = left();
+      const released = kind === "candidate missed" || kind === "manager missed";
+      expect(free).toBe(released ? 1 : 0);
+      await w.run(3 * DAY);
+      w.restart();
+      const queued = queue().length;
+      const ended = w.logs.filter(l => l.kind === "seat_ended" && l.detail.reason === "posting filled").length;
+      let booked = false;
+      if (released && queued) {
+        expect(queued).toBe(1);
+        const second = queue()[0]!.oppId;
+        const next = w.opp(second)!.participants.find(p => p !== "hm1")!;
+        expect(next).not.toBe(candidate);
+        expect(w.about(second).length).toBe(0);
+        expect(left()).toBe(0); // The pending replacement reserves the one opening.
+        expect(w.net.review(second, "approve", { reviewer: "sim_staff" })).toBe(true);
+        expect(await w.runUntil(() => w.probedFor(next, second))).toBe(true);
+        await w.say(next, "yes");
+        expect(await w.runUntil(() => w.probedFor("hm1", second))).toBe(true);
+        expect(w.opp(second)?.meetingAt).toBeUndefined();
+        w.restart();
+        await w.say("hm1", "yes");
+        booked = w.opp(second)?.stage === "scheduled";
+        expect(left()).toBe(0);
+        await w.run(2 * HOUR);
+        expect(queue().length).toBe(0);
+      }
+      outcomes.push({ seed, kind, free, queued, ended, booked });
+    }
+    console.log("missed interview outcomes:", JSON.stringify(outcomes));
+    for (const row of outcomes) {
+      const released = row.kind === "candidate missed" || row.kind === "manager missed";
+      expect(row.queued).toBe(released ? 1 : 0);
+      expect(row.booked).toBe(released);
+      expect(row.ended).toBe(0);
+    }
+  });
+
   await b.run("intake rules: a job post is read from text, read back, and needs a title and a pay range", () => {
     const d = parsePosting(POST);
     expect(d).toMatchObject({ title: "data analyst", openings: 2, payMin: 90, payMax: 120, mode: "hybrid", area: "brooklyn", seniority: 2, must: [{ skill: "sql", level: 2 }] });
