@@ -54,7 +54,7 @@ type LedgerInput = CapitalEventInput extends infer E ? (E extends CapitalEventIn
 import type { NetworkStore } from "./store.ts";
 import { HOLD, Trust, type TrustLevel, type TrustState } from "./trust.ts";
 import type { AppHooks, AppTag, HookOpp } from "./apphooks.ts";
-import { isSeatId, postingFromDraft, postingFromFacts, postingProblem, postingsOf, POSTING_COPY, readPostingText, seatIdOf, seatOwnerOf, SEAT_COPY, type JobPosting, type PostingDraft } from "./jobs.ts";
+import { isSeatId, parsePosting, postingFromDraft, postingFromFacts, postingProblem, postingsOf, POSTING_COPY, readPostingText, seatIdOf, seatOwnerOf, SEAT_COPY, type JobPosting, type PostingDraft } from "./jobs.ts";
 import { checkInReport, reportKindOf, URGENT_REPORTS, type ReportKind, type SafetyReport } from "./reports.ts";
 
 /** Where an opportunity came from. "planner": a plan from the engine planner, or a crew session (Opp.crewId). */
@@ -4611,7 +4611,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     const waiting = m.awaiting?.kind === "posting" && m.posting ? m.posting : undefined;
     const reply = (text: string) => { this.send(m, text, { type: "info" }, "reply"); return true; };
     const clear = () => { m.posting = undefined; if (m.awaiting?.kind === "posting") m.awaiting = undefined; };
-    if (waiting?.ready) {
+    // Changed posting fields need a fresh read-back, even after yes or no. A repeated field
+    // can still confirm the existing draft; a close confirmation has no fields to edit.
+    const correcting = waiting && !waiting.close && Object.entries(parsePosting(body)).some(([key, value]) =>
+      JSON.stringify(value) !== JSON.stringify(waiting[key as keyof PostingDraft]));
+    if (waiting?.ready && !correcting) {
       const yn = this.yesNoOf(body);
       if (yn === "yes") {
         clear();
