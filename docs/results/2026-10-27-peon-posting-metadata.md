@@ -44,7 +44,7 @@ REQUIRE_PG=1 bun test --conditions eliza-source --timeout 120000 ./packages/netw
 
 The file goes from **1 pass, 1 fail** to **2 pass, 0 fail**, with 51 assertions in both runs. Final baseline: 6.64 seconds; fixed: 7.43 seconds. No performance gain is claimed. One production implementation was tried. An initial baseline also failed (6.33 seconds); the legacy compatibility control was then added before rerunning the baseline and applying the fix. The metadata regression's expected results were unchanged after the final baseline.
 
-Additional checks:
+Original implementation checks (historical; not rerun by the evidence follow-up below):
 
 ```sh
 bun run typecheck
@@ -62,6 +62,107 @@ REQUIRE_PG=1 bun run test:e2e
 The combined checkout required preserving both tests at their shared insertion point. Its first posting run had 3 pass and 1 fail: PR #144's successful-update assertion compared every tag, including the newly persisted update time. That PR received a test-only follow-up (`32125f2d2aaff09aa3d1f23ae9672772af7cc6e9`) excluding only the revision-time tag in the confirmed-save comparison. It still compares all tags before confirmation and after cancellation. This new metadata case verifies the exact update times. PR #144's isolated two-test file and typecheck also pass after the adjustment. No production change was needed to combine the fixes.
 
 Peon's existing pinned run uses seeds 13-16, eight weeks, 400 candidates and 80 jobs per city, the pack/keyword/oracle arms and realism v2. The job-seat block uses its existing service world. The general Peon simulator writes seats directly, so the new Postgres integration case proves the persistence fix. The one-full-simulation-per-agent allowance was already used for PR #136; these runs cover the affected blocks.
+
+## Reviewer evidence follow-up (2026-10-29)
+
+The [review](https://github.com/eliza-research/thenetwork/pull/146#pullrequestreview-5679201759)
+requested the private-data boundary, a non-fallback timestamp round trip,
+PostgreSQL output, and a landing order. This changes the report and PR description
+only. Code and assertions remain unchanged from `fa95bc965287ca93ebadb27742defb28d0e57e99`.
+
+### Where metadata is excluded
+
+- [`readable` and `build`](https://github.com/startrack3r/thenetwork/blob/fa95bc965287ca93ebadb27742defb28d0e57e99/packages/engine/src/packs/peon/profile.ts#L93)
+  reject `agent_private` facts before constructing Peon profiles, except explicit
+  safety or exclusion facts. The revision facet is an ordinary fact with revision
+  tags; it matches neither exception. `shareFacetIds` separately includes only
+  shareable facets.
+- [`knownProfiles`](https://github.com/startrack3r/thenetwork/blob/fa95bc965287ca93ebadb27742defb28d0e57e99/packages/network/src/network.ts#L4285) skips private
+  facets before collecting the facts used in generic member-facing reasons.
+- [`peonHooks`](https://github.com/startrack3r/thenetwork/blob/fa95bc965287ca93ebadb27742defb28d0e57e99/packages/network/service/packs.ts#L286) uses `seatJob`
+  and `SEAT_COPY` for job messages. [`seatJob`](https://github.com/startrack3r/thenetwork/blob/fa95bc965287ca93ebadb27742defb28d0e57e99/packages/network/src/jobs.ts#L261)
+  does not apply a generic scope filter. It reads only title, pay, mode, area and
+  must-have tags. Neither revision prefix is recognized. The candidate probe and
+  manager summary render those selected fields, never arbitrary facet values.
+  Booked messages use the title and counterpart name; check-ins use the title.
+
+The metadata remains in internal snapshots for the service to read. Marking it
+private alone is not a universal output filter. The scope checks and explicit
+message fields above are the relevant boundaries. This source audit is not an
+acceptance test of every external client or a new generic privacy guarantee.
+
+### Exact keys and the non-fallback round trip
+
+[`schema.ts`](https://github.com/startrack3r/thenetwork/blob/fa95bc965287ca93ebadb27742defb28d0e57e99/packages/engine/src/packs/peon/schema.ts#L54) defines
+`peon:posting_updated_at:` and `peon:posting_closed_reason:`. The
+[`postingFacts` writer](https://github.com/startrack3r/thenetwork/blob/fa95bc965287ca93ebadb27742defb28d0e57e99/packages/network/src/jobs.ts#L216) appends the
+timestamp and closure reason to those prefixes. Its ordinary `peon:posting:<id>`
+tag associates the single revision facet with the posting.
+
+[`postingFromFacts`](https://github.com/startrack3r/thenetwork/blob/fa95bc965287ca93ebadb27742defb28d0e57e99/packages/network/src/jobs.ts#L237) first selects
+facets with that exact posting-ID tag. It then reads both values with the same
+shared prefixes. `savePosting` and `loadPostings` use these writer/reader functions
+in the real database path. `postingFromDraft` is the draft converter, not the
+stored-tag reader.
+
+The [existing regression](https://github.com/startrack3r/thenetwork/blob/fa95bc965287ca93ebadb27742defb28d0e57e99/packages/network/test/peon-postings.integration.test.ts#L96)
+advances the clock by **300,123 ms** before editing. It reloads through the staff
+GET route and compares the resulting metadata with the exact edited time.
+The aggregate equality at line 128 checks all six lifecycle observations,
+including later closures and service restarts. A creation-time fallback would
+fail that equality. The separate legacy control deliberately removes only the
+other posting's private facet and requires that other posting's creation time.
+
+No assertion was added or relaxed for this follow-up. The earlier main-versus-fix
+results above remain the reproduction; the fresh successful run below confirms
+the same assertions on the published revision.
+
+### Fresh PostgreSQL run
+
+Windows; Bun 1.4.2 (`744846f84`); `SELECT version();` returned PostgreSQL 16.15,
+compiled by Visual C++ build 1944, 64-bit. Local port 54339. The environment supplied
+`USER=postgres`, `REQUIRE_PG=1`, `OBSERVATORY_PG_PORT=54339`, a local
+`OBSERVATORY_PG_DIR`, `PG_BIN_DIR`, and PostgreSQL binaries on `PATH`.
+
+```sh
+bun test --conditions eliza-source --timeout 120000 ./packages/network/test/peon-postings.integration.test.ts
+```
+
+Actual terminal output, exit 0:
+
+```text
+bun test v1.4.2 (744846f84)
+
+packages\network\test\peon-postings.integration.test.ts:
+[llm] Neither SURPLUS_API_KEY nor OPENAI_API_KEY is set: LLM calls will fail (see .env.example).
+(pass) peon postings: text intake, restart, staff API (NetworkService, Postgres) > posting update times and closure reasons survive reads and restarts without crossing postings [804.42ms]
+(pass) peon postings: text intake, restart, staff API (NetworkService, Postgres) > a job post by text is read back, saved on the yes, kept across a restart, and closed by staff [717.34ms]
+
+ 2 pass
+ 0 fail
+ 51 expect() calls
+Ran 2 tests across 1 file. [4.41s]
+```
+
+The startup warning does not skip or replace database checks. These tests make
+zero model calls. `bun run sim --only peon-seats` also passes **9/9 gates**, zero
+tracked misses, 0.1 seconds. That simulation confirms existing workflow behavior;
+it does not prove the new PostgreSQL metadata round trip.
+
+**Database-free reproducer for this PR's persistence defect: none.** Run the
+focused integration file with PostgreSQL; a skipped run is not validation.
+
+### Coordination and scope of this follow-up
+
+Suggested landing order: **#144, then #145, then #146**. Rebase each later branch
+after its predecessor lands. Retain all regression cases, then rerun the posting
+file and typecheck after resolving shared context. No merge or rebase was
+performed for this report update.
+
+Only the focused posting file and job-seat simulation were rerun here. Broader
+integration, E2E, typecheck and Peon results above retain their original dates and
+scope. No fresh full-suite or Linux CI pass is claimed. No production code,
+test assertion, public copy or client contract changed.
 
 ## safety_gates
 
