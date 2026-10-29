@@ -184,6 +184,15 @@ export function nextSameSlot(at: number, now: number, pcfg: PlansConfig): number
   return t;
 }
 
+/** Keep the crew's turn order, skipping hosts removed by eligibility or travel limits. */
+function retainedCrewHost(crew: Crew, invited: readonly MemberId[]): MemberId {
+  for (let i = 0; i < crew.hostRotation.length; i++) {
+    const host = crew.hostRotation[(crew.sessions.length + i) % crew.hostRotation.length]!;
+    if (invited.includes(host)) return host;
+  }
+  return invited[crew.sessions.length % invited.length]!;
+}
+
 export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPolicy = DEFAULT_FRIENDS_POLICY, pcfg: PlansConfig = FRIENDS_PLANS, att: AttentionConfig = DEFAULT_ATTENTION): FriendsWeek {
   const info = friendsInfo(w);
   const { now, tz } = inp;
@@ -250,7 +259,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
     if (!p) continue;
     const fp = finish({ ...p, quorum: Math.min(3, members.length) }, "crew_session");
     if (!fp) continue;
-    out.sessions.push(fp);
+    out.sessions.push({ ...fp, hostId: retainedCrewHost(crew, fp.invited) });
     for (const id of fp.invited) taken.add(id);
   }
 
@@ -274,7 +283,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       if (!p) continue;
       const fp = finish({ ...p, quorum: Math.min(3, members.length) }, "crew_offer");
       if (!fp) continue;
-      out.offers.push({ crew: c2, first: fp });
+      out.offers.push({ crew: c2, first: { ...fp, hostId: retainedCrewHost(c2, fp.invited) } });
       for (const id of fp.invited) taken.add(id);
     }
   }
