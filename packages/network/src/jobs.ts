@@ -39,6 +39,8 @@ export interface JobPosting {
 /** What a manager said so far (plain JSON in MemberState.posting). `close`: the draft closes `id`. */
 export interface PostingDraft {
   id?: string; close?: boolean;
+  /** An update waiting for the manager to name which existing posting to change. */
+  update?: boolean;
   title?: string; family?: string; seniority?: number; openings?: number; payMin?: number; payMax?: number;
   mode?: PeonMode; area?: string; must?: { skill: string; level: number }[]; nice?: string[]; sponsors?: boolean;
   /** Questions asked for this draft (at most 2 before it is dropped). */
@@ -147,6 +149,7 @@ export interface IntakeStep { draft?: PostingDraft; text: string; ready: boolean
  */
 export function readPostingText(body: string, ctx: { draft?: PostingDraft; postings: readonly PostingRef[]; newId: string }): IntakeStep | undefined {
   const command = POSTING_COMMAND.test(body);
+  const choosingUpdate = !command && ctx.draft?.update === true;
   if (!command && !ctx.draft) return undefined;
   if (command && CLOSE_COMMAND.test(body)) {
     const open = ctx.postings.filter(p => p.active);
@@ -163,20 +166,31 @@ export function readPostingText(body: string, ctx: { draft?: PostingDraft; posti
     if (pick.length !== 1) return undefined;
     return { draft: { close: true, id: pick[0]!.id, title: pick[0]!.title }, text: POSTING_COPY.readBackClose(pick[0]!.title), ready: true };
   }
-  const read = parsePosting(body);
-  const base: PostingDraft = command && !/^\s*update\b/i.test(body) ? { id: ctx.newId } : { ...(ctx.draft ?? {}) };
-  if (command && /^\s*update\b/i.test(body)) {
+  let read = parsePosting(body);
+  const base: PostingDraft = command && !/^\s*update\b/i.test(body) ? { id: ctx.newId } : choosingUpdate ? {} : { ...(ctx.draft ?? {}) };
+  if ((command && /^\s*update\b/i.test(body)) || choosingUpdate) {
     // "Update my data analyst post: 3 openings": the named (or only) active post, its stored fields kept by the caller.
     const open = ctx.postings.filter(p => p.active);
     const named = open.filter(p => body.toLowerCase().includes(p.title.toLowerCase()));
-    const pick = named.length === 1 ? named[0] : open.length === 1 ? open[0] : undefined;
-    if (!pick) return { text: open.length ? POSTING_COPY.whichToClose(open.map(p => p.title)).replace("close", "update") : POSTING_COPY.nothingToClose, ready: false };
+    const pick = named.length === 1 ? named[0] : !choosingUpdate && open.length === 1 ? open[0] : undefined;
+    if (!pick) {
+      if (choosingUpdate && !named.length) return undefined;
+      return { ...(open.length ? { draft: choosingUpdate ? { ...ctx.draft } : { ...read, update: true } } : {}), text: open.length ? POSTING_COPY.whichToClose(open.map(p => p.title)).replace("close", "update") : POSTING_COPY.nothingToClose, ready: false };
+    }
+    if (choosingUpdate) {
+      const { update: _update, asks: _asks, ready: _ready, ...pending } = ctx.draft!;
+      // The selected title identifies the job; its words are not new field values.
+      const at = body.toLowerCase().indexOf(pick.title.toLowerCase());
+      read = { ...pending, ...parsePosting(body.slice(0, at) + body.slice(at + pick.title.length)) };
+    }
     if (base.id !== pick.id) { base.id = pick.id; base.title ??= pick.title; }
+    if (choosingUpdate) base.asks = ctx.draft!.asks;
+    delete base.update;
     if (read.title?.toLowerCase() === pick.title.toLowerCase() || (read.title && body.toLowerCase().includes(`${read.title} post`))) delete read.title;
   }
   const merged: PostingDraft = { ...base };
   for (const [k, v] of Object.entries(read)) if (v !== undefined) (merged as Record<string, unknown>)[k] = v;
-  if (!command && !Object.keys(read).length) return undefined;
+  if (!command && !choosingUpdate && !Object.keys(read).length) return undefined;
   const need = missing(merged);
   if (need.length) return { draft: merged, text: need[0] === "title" ? POSTING_COPY.askTitle : POSTING_COPY.askPay, ready: false };
   return { draft: merged, text: POSTING_COPY.readBack(merged), ready: true };
