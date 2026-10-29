@@ -1,6 +1,6 @@
 # Refused recurring days must not become free time
 
-Date: 2026-10-28. Updated 2026-10-29; see the named-weekday follow-up below. Repository: eliza-research/thenetwork.
+Date: 2026-10-28. Updated 2026-10-29; the positive-group exception follow-up below is the latest result. Earlier sections describe their named revisions. Repository: eliza-research/thenetwork.
 Base: `a0ed7bc6495d9e524afc3d500738212a28dc7bc2`.
 Code and regression: `d40d29658abbd632276d66fcf826fdb4fc2d2cf9`.
 
@@ -106,7 +106,7 @@ Run `bun run sim --only network,evals` and `bun run typecheck`.
 Expect 87/87 blocking gates and a successful typecheck.
 For the holdout, use the seed list and three wording substitutions stated above.
 
-## Limits
+## Limits at the original revision
 
 Standing availability remains a decaying prior, not a hard calendar exclusion.
 This change does not repair old saved values or change exceptions within a positive group, such as "weekdays except Tuesday".
@@ -303,7 +303,7 @@ Deterministic validation made zero model calls, costing $0. No real-model or ext
 The production handler runs in the simulation with matching disabled and human review retained.
 Authorship: OpenAI / `gpt-6-astra`, Codex desktop.
 
-### Reproduce the final change
+### Reproduce the named-weekday revision
 
 1. Start at main `a0ed7bc6495d9e524afc3d500738212a28dc7bc2` in a separate checkout.
 2. Load `scripts/sim/network.ts` from `72af3e4ce46230ccef311b05a83ae0a5929cedc9`.
@@ -314,3 +314,134 @@ Authorship: OpenAI / `gpt-6-astra`, Codex desktop.
 
 For the intermediate result, use `classify.ts` from the previous published head with the current gate.
 Its first gate reports `expected 51 to be 57`.
+
+
+## Positive-group exception follow-up (2026-10-29)
+
+This section supersedes the earlier positive-group exception limit. It addresses
+[the requested change](https://github.com/eliza-research/thenetwork/pull/160#pullrequestreview-5696515672)
+on published head `fa0ba9245d77a871ddf94ea86fa2674c2cfdc12b`. Main remains
+`a0ed7bc6495d9e524afc3d500738212a28dc7bc2`.
+Tested code and expanded gate: `59a20feb119b1d923f1ec0f47d789ff524cfb37b`.
+Combined code: `4c873b6518940ef90c25e2502c0bab9e48450ff3`.
+
+### Cause and implementation
+
+The group guards reject "not weekdays", but an offered group still expands over
+a named refusal: "I'm free on weekdays except Tuesday" saves Tuesday evening.
+The saved standing pattern raises Tuesday's scheduler score above its prior.
+This is the same existing availability workflow and requirement described above.
+
+Collect refused named days during the existing day-word pass. Remove them when
+expanding an offered weekend, weekday or weeknight group. Reuse `negatedAt`;
+there is no second refusal parser or new negation grammar. Explicit positive
+named-day handling stays in its existing path. If a group becomes empty, do not
+replace it with default weekdays. For example, "Free most weekend evenings except
+Saturday and Sunday" must not invent weekday availability.
+
+Alternatives: suppressing the entire offered group loses the days the member did
+offer. Subtracting from an inferred week for every generic-evening statement
+changes the existing conservative fallback policy. This change subtracts only
+from an explicit group, and keeps the prior fallback policy.
+
+### measurement
+
+Expand the existing production-inbound regression from 19 to 35 phrases, each on
+seeds 1, 2 and 3: **105 conversations**. Keep the greeting, adult selection,
+synthetic world, human-review setting, disabled matching and JSON state reload.
+The 16 new phrases cover 11 partial group exclusions, two fully refused groups,
+and three controls. These are hand-written deterministic cases, not population
+estimates. No real member data or live messages are used.
+
+| Correct persisted availability | Published head plus identical expanded gate | Revised fix |
+|---|---:|---:|
+| All conversations | 66/105 | 105/105 |
+| New group-exclusion cases | 0/39 | 39/39 |
+| Earlier 19 phrases | 57/57 | 57/57 |
+| New unchanged controls | 9/9 | 9/9 |
+| Fully refused groups leave no new availability | 0/6 | 6/6 |
+
+All 66 previously correct outcome rows are identical. All 33 retained-day
+scheduler scores are unchanged. The regression reads both saved standing state
+and availability through the production scheduler after reload. It compares
+each refused slot against that slot's no-statement prior; this preserves the
+empty-state checks and covers weekend as well as weekday priors.
+
+At the statement time, with New York local slots:
+
+| Reply and slot | Before | After | No-statement prior |
+|---|---:|---:|---:|
+| Weekdays except Tuesday: Tuesday 19:00 | 0.750 | 0.210 | 0.350 |
+| Same reply: Monday 19:00 | 0.750 | 0.750 | 0.350 |
+| Weekends except Sunday: Sunday 10:00 | 0.770 | 0.270 | 0.450 |
+| Same reply: Saturday 10:00 | 0.770 | 0.770 | 0.450 |
+
+The statement clock is `2026-10-05T16:00:00Z`; slots are October 10/11 at 10:00
+and October 12/13 at 19:00 New York time. These are model probabilities from the
+existing attention configuration, not measured attendance rates.
+
+Same command on the previous published parser and fixed parser, with the same gate:
+
+```sh
+bun run sim --only network --only evals --json <results.json>
+```
+
+Before: **86/87** blocking gates, zero tracked misses, 251.1 seconds.
+After: **87/87**, zero tracked misses, 268.1 seconds. The new cases make
+the existing availability gate fail before the fix with `expected 66 to be 105`.
+All 88 other gate records are identical, excluding runtime. No old
+gate, corpus row, threshold, policy invariant or outcome value was weakened.
+The earlier main comparisons above apply to their stated fixtures; this fresh
+comparison starts from the published PR head, not main.
+
+### safety_gates
+
+- All four typecheck configurations pass on isolated and combined branches.
+- Integration including all 11 security files: **675 pass, 8 skip, 6 known Windows
+  failures**, 13,741 assertions, 689 tests in 68 files, 506.92s.
+- E2E: **42 pass, 1 optional browser skip, 0 fail**, 654 assertions, 43 tests in
+  three files, 42.95s.
+- Combined with the other 37 contributions: **92/92** Network/parser blocking gates,
+  zero tracked misses, 260.1 seconds. All 105 new outcome rows match
+  the standalone fix. All 93 other gate records retain their values:
+  Network compared with #199's combined run, and evals with the previous #160
+  combined run. The cherry-pick needed no conflict resolution. This branch stays local.
+
+The integration failure names match the latest isolated main-based fix (#199):
+Wrangler requires `/bin/bash`, SIGTERM returns 143 rather than 0, and four site
+tests compare Windows and POSIX paths. They are not passing tests. The eight
+retry-reconciliation skips are opt-in. No fresh paired baseline integration run
+was made for this follow-up. All security files ran within integration.
+
+Commands: `bun run typecheck`, `REQUIRE_PG=1 bun run test:integration`, and
+`REQUIRE_PG=1 bun run test:e2e`. Environment: Windows, Bun 1.4.2, PostgreSQL 16.15
+on local port 54339. `PG_BIN_DIR` and `PATH` select the binaries; `USER=postgres`
+and `OBSERVATORY_PG_DIR`/`OBSERVATORY_PG_PORT` select the local cluster.
+Dependencies are unchanged. The full-simulation allowance was used earlier;
+these are affected-block results, not a fresh full-suite or hosted Linux CI pass.
+
+### Remaining limits, llm_evidence and agent_clients
+
+"Free most evenings, not Tuesday" deliberately records no new pattern; it does
+not infer the other four weekdays. Explicit offered groups now support named
+day exclusions. Availability remains a decaying prior, not a hard calendar ban;
+existing stored values are not repaired or cleared.
+
+Refused dayparts such as "weekdays, not evenings" and "free most evenings, not
+after work" remain outside this patch. The existing daypart assignment and clause
+grammar are unchanged; this does not claim general natural-language exception
+understanding. No UI, message copy, schema, model prompt or client contract changes.
+
+Zero validation model calls/$0. The behavior is deterministic. No external-agent
+client acceptance claim. Authoring client: Codex desktop, OpenAI `gpt-6-astra`;
+app version not collected. Draft pending maintainer review and hosted CI.
+
+### Reproduce this follow-up
+
+1. Check out `fa0ba9245d77a871ddf94ea86fa2674c2cfdc12b` in a separate workspace.
+2. Load only `scripts/sim/network.ts` from `59a20feb119b1d923f1ec0f47d789ff524cfb37b`.
+3. Run the affected command above. Expect 86/87 and `expected 66 to be 105`.
+4. Load `packages/network/src/classify.ts` from the same code commit and repeat.
+5. Expect 87/87. `AVAILABILITY_REFUSAL_OUTCOMES` contains 105 correct rows.
+
+All validation processes completed. The database was stopped after validation.
