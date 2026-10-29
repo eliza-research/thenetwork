@@ -163,7 +163,9 @@ export function readPostingText(body: string, ctx: { draft?: PostingDraft; posti
     if (pick.length !== 1) return undefined;
     return { draft: { close: true, id: pick[0]!.id, title: pick[0]!.title }, text: POSTING_COPY.readBackClose(pick[0]!.title), ready: true };
   }
-  const read = parsePosting(body);
+  // The update header identifies a saved job; its title is not a request to change a field.
+  const fieldText = command && /^\s*update\b/i.test(body) ? body.replace(POSTING_COMMAND, "") : body;
+  const read = parsePosting(fieldText);
   let base: PostingDraft = command && !/^\s*update\b/i.test(body) ? { id: ctx.newId } : { ...(ctx.draft ?? {}) };
   if (command && /^\s*update\b/i.test(body)) {
     // "Update my data analyst post: 3 openings": begin with the named (or only) active post,

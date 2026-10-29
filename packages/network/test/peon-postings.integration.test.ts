@@ -15,7 +15,7 @@ import { DryRunAdapter } from "../service/channel.ts";
 import { jobPostingRoutes } from "../service/postings.ts";
 import { NetworkService, WEBHOOK_PATH } from "../service/service.ts";
 import { loadSnapshot } from "../service/snapshot.ts";
-import { POSTING_COPY } from "../src/jobs.ts";
+import { POSTING_COPY, type JobPosting } from "../src/jobs.ts";
 import { START } from "./mini.ts";
 
 const T = 300_000;
@@ -46,10 +46,10 @@ const last = async (id: string) =>
   ((await sql`select body from network.messages where app_id = 'peon' and member_id = ${id} and direction = 'outbound' order by ts desc, id desc limit 1`)[0] as { body: string } | undefined)?.body ?? "";
 const postings = async (id: string) => (await sql`select id, status, objective, details from network.intents where app_id = 'peon' and member_id = ${id} and details like 'peon:job%' order by id`) as any[];
 
-function service(clock: SimClock) {
+function service(clock: SimClock, seed = 1) {
   return new NetworkService({
     url: URL_, clock, instance: "peon-postings", log: () => {}, env: { PLATFORM_ENV: "dev" }, networks: [{ id: "ntwrk:nyc" }, { id: "peon:nyc" }],
-    tokens: "admin:adm-tok", webhookSecret: SECRET, network: { seed: 1 }, photoStorage: null, notify: false,
+    tokens: "admin:adm-tok", webhookSecret: SECRET, network: { seed }, photoStorage: null, notify: false,
     adapter: () => new DryRunAdapter(() => {}),
   });
 }
@@ -171,5 +171,63 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
     await text(s, clock, phone, "We're hiring a cashier, 1 opening");
     expect(await last(manager)).toBe(POSTING_COPY.askPay);
     expect(await postings(manager)).toHaveLength(1);
+
+    // A title identifies the existing job; its words must not become new field values.
+    const cases: { kind: string; title: string; fields?: string; change?: Partial<JobPosting>; initialMode?: JobPosting["mode"]; generic?: boolean; cancel?: boolean }[] = [
+      { kind: "keep_seniority", title: "principal data analyst" },
+      { kind: "keep_remote_title", title: "remote support engineer" },
+      { kind: "keep_hybrid_title", title: "hybrid systems engineer" },
+      { kind: "keep_area", title: "brooklyn account manager" },
+      { kind: "change_seniority", title: "principal data analyst", fields: "3 openings, level 4", change: { seniority: 4 } },
+      { kind: "change_mode", title: "remote support engineer", initialMode: "hybrid", fields: "3 openings, onsite in Queens", change: { mode: "onsite" } },
+      { kind: "change_area", title: "brooklyn account manager", fields: "3 openings, onsite in Manhattan", change: { area: "manhattan" } },
+      { kind: "generic", title: "principal data analyst", generic: true },
+      { kind: "cancel", title: "remote support engineer", cancel: true },
+      { kind: "plain", title: "data analyst" },
+    ];
+    const outcomes: { seed: number; kind: string; readBackCorrect: boolean; storedCorrect: boolean; seatCorrect: boolean; correct: boolean; stored: Partial<JobPosting>; expected: Partial<JobPosting> }[] = [];
+    let index = 0;
+    const call = async (method: string, path: string, body?: unknown) => {
+      const routes = jobPostingRoutes({ rt: s.runtimeFor("peon")!, user: { id: "staff:test", roles: ["admin"] }, need: () => undefined, audit: async () => {}, now: () => clock.now() });
+      const res = await routes(new Request(`http://127.0.0.1:4848/apps/peon${path}`, { method, ...(body ? { headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {}) }), path.split("?")[0]!);
+      expect(res!.status).toBe(200);
+      return await res!.json() as { ok: boolean; posting?: JobPosting; postings?: JobPosting[] };
+    };
+    const fields = (p: JobPosting) => ({ id: p.id, title: p.title, family: p.family, seniority: p.seniority, openings: p.openings, payMin: p.payMin, payMax: p.payMax, mode: p.mode, area: p.area, must: p.must, nice: p.nice, sponsors: p.sponsors, status: p.status });
+    for (const seed of [7, 13, 17]) for (const c of cases) {
+      await s.close(); s = svc = service(clock, seed); await s.start();
+      const phone = `+121255501${String(10 + index++).padStart(2, "0")}`;
+      await text(s, clock, phone, "peon"); await text(s, clock, phone, "Alex, 34");
+      const owner = (await memberId(phone))!;
+      const created = await call("POST", "/postings", { id: `header-${seed}-${c.kind}`, managerId: owner, title: c.title, family: "data_analyst", seniority: 2, openings: 2, payMin: 90, payMax: 120,
+        mode: c.initialMode ?? "onsite", area: "queens", must: [{ skill: "sql", level: 2 }], nice: ["python"], sponsors: true });
+      expect(created.ok).toBe(true);
+      const original = created.posting!;
+      const tags = async () => ((await sql`select tags from network.facets where app_id = 'peon' and member_id = ${owner} and ${`peon:posting:${original.id}`} = any(tags)`) as { tags: string[] }[]).flatMap(r => r.tags).sort();
+      const before = await tags();
+      await s.close(); s = svc = service(clock, seed); await s.start();
+      await text(s, clock, phone, `Update my ${c.generic ? "job" : `${c.title} post`}: ${c.fields ?? "3 openings"}`);
+      const confirmation = await last(owner);
+      expect(confirmation).toStartWith("Here's your job post:");
+      expect(await tags()).toEqual(before);
+      const changed = { ...original, openings: 3, ...c.change };
+      const place = changed.mode === "remote" ? "remote" : `${changed.mode} in ${changed.area![0]!.toUpperCase()}${changed.area!.slice(1)}`;
+      const readBackCorrect = confirmation.includes(`, 3 openings, $90k-$120k a year, ${place}.`);
+      await s.close(); s = svc = service(clock, seed); await s.start();
+      await text(s, clock, phone, c.cancel ? "no" : "yes");
+      expect(await last(owner)).toBe(c.cancel ? POSTING_COPY.dropped : `Updated: ${c.title}.`);
+      if (c.cancel) expect(await tags()).toEqual(before);
+      await s.close(); s = svc = service(clock, seed); await s.start();
+      const listed = (await call("GET", `/postings?managerId=${encodeURIComponent(owner)}`)).postings!;
+      expect(listed).toHaveLength(1);
+      const expected = c.cancel ? original : changed;
+      const storedCorrect = Bun.deepEquals(fields(listed[0]!), fields(expected));
+      const snapshot = await loadSnapshot(sql, clock.now(), { app: "peon", city: "nyc" });
+      const seatTags = snapshot.facets.filter(f => f.memberId === `job:${original.id}`).flatMap(f => f.tags);
+      const seatCorrect = [`peon:openings:${expected.openings}`, `peon:seniority:${expected.seniority}`, `peon:mode:${expected.mode}`, `peon:area:${expected.area}`].every(t => seatTags.includes(t));
+      outcomes.push({ seed, kind: c.kind, readBackCorrect, storedCorrect, seatCorrect, correct: readBackCorrect && storedCorrect && seatCorrect, stored: fields(listed[0]!), expected: fields(expected) });
+    }
+    console.log("POSTING_HEADER_OUTCOMES", JSON.stringify(outcomes));
+    expect(outcomes.filter(r => r.correct).length).toBe(outcomes.length);
   }, T);
 });
