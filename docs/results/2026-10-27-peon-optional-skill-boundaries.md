@@ -36,7 +36,17 @@ The eight labels exhaust the combinations already accepted by the optional parse
 
 The seven other spellings recover 21 previously missing matches. Each case asserts the actual saved required/optional arrays and the review queue's exact candidate list. The plain-spelling controls remain unchanged. No threshold or expected result was adjusted after observing the baseline failure; one production implementation was tried.
 
-Same command before and after, with only the new gate applied to the base first:
+For the fastest reproduction, run the block containing the new gate:
+
+```sh
+bun run sim --only peon-seats
+```
+
+Rechecked on 2026-10-30 at published head `e2342519db7421e23e433ccc48c07ef470ab4797`: **10/10 blocking gates**, zero tracked misses, 0.2 seconds. Keeping the same gate and using `packages/network/src/jobs.ts` from base `a0ed7bc6495d9e524afc3d500738212a28dc7bc2` gives **9/10**, zero tracked misses, also 0.2 seconds. Only `intake: nice-to-have spellings stay optional through confirmation and matching` fails; all nine other gate records match excluding runtime.
+
+The separate `bun run sim --only peon` block stays at **27/27 before and after**, as recorded in the original paired results below. It does not run this regression gate. Its 28 records, including the matching fingerprint, are unchanged. These are two blocks: `peon-seats` proves the text-intake fix, and `peon` checks the existing matching comparison.
+
+The broader paired command runs both blocks, with only the new gate applied to the base first:
 
 ```sh
 bun run sim --only peon --only peon-seats
