@@ -14,6 +14,7 @@ import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, VENUES, typ
 import { styleViolations } from "../../packages/network/src/copy.ts";
 import { DATA_DIR } from "../synthetic/common.ts";
 import { conformance } from "./conformance.ts";
+import { forcedGroupGate } from "./engine-forced-group.ts";
 import { Block, digest, expect } from "./gate.ts";
 
 type Msg = Extract<RunRecord, { type: "message" }>;
@@ -312,6 +313,9 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     const r = await runSimScenario({ ...s, background: { personas: 6 } }, { network: () => new StubNetwork({ seed: 1, leakyExplanations: true, introRate: 1 }) });
     b.gate("negative control: the canary check fails against a leaky network", r.results.find(x => x.expectation.check === "canary_not_leaked")?.status === "fail");
   }
+
+  // ---- engine regression gates ----------------------------------------------------------------------------
+  await forcedGroupGate(b);
 
   // ---- conformance rules for networkPack (engine level) ---------------------------------------------------
   await conformance(b, networkPack, { seeds: o.quick ? [1, 2] : [1, 2, 3, 4] });
