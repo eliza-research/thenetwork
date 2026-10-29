@@ -42,6 +42,7 @@ const friendsWorld = (seed: number): EngineInput => engineInputOf(friendsSnapsho
 
 export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<void> {
   await b.run("plans: every offered time fits the selected venue's opening hours", () => {
+    const recurring: { seed: number; closed: number; valid: number; retained: number; sources: string[] }[] = [];
     for (const seed of [101, 102, 103]) {
       const r = runFriendsWorld({ seed, n: 160, weeks: 3, matcher: BASELINES.random });
       r.world.state.week = 3; r.world.state.now += 7 * DAY;
@@ -87,7 +88,34 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
           expect(start + (option.end - option.start) / HOUR).toBeLessThanOrEqual(close);
         }
       }
+      // Replay real crew and repeat history after venues shorten their hours. Morning plans
+      // remain possible; an old successful meetup does not prove the venue is still open.
+      const history = runFriendsWorld({ seed, n: 160, weeks: 3, matcher: friendsPackMatcher() });
+      history.world.state.week = 3; history.world.state.now += 7 * DAY;
+      const snapshot = buildFriendsSnapshot(history.world.personas, history.world.state);
+      const world = new World(engineInputOf(snapshot), resolveConfig({ seed }), localEmbed, friendsPack);
+      const recurringAt = (hours: [number, number]) => {
+        const next = planFriendsWeek(world, { now: snapshot.now, tz: NYC_TZ, evidence: new Map(),
+          venues: VENUES.map(v => ({ ...v, hours: { weekday: hours, weekend: hours } })),
+          crews: snapshot.crews, outcomes: snapshot.outcomes, offered: snapshot.offered },
+        { ...DEFAULT_FRIENDS_POLICY, timeOptions: false }, FRIENDS_PLANS);
+        return [...next.sessions, ...next.offers.map(x => x.first), ...next.repeats];
+      };
+      const open = recurringAt([0, 24]), morning = recurringAt([9, 12]);
+      const fitsMorning = (p: (typeof open)[number]) => {
+        const lp = localParts(p.window.start, NYC_TZ), hour = lp.hour + lp.minute / 60;
+        return hour >= 9 && hour + (p.window.end - p.window.start) / HOUR <= 12;
+      };
+      const valid = open.filter(fitsMorning);
+      expect(valid.length).toBeGreaterThan(0);
+      expect(open.some(p => !fitsMorning(p))).toBe(true);
+      const retained = valid.filter(p => morning.some(q => q.id === p.id && Bun.deepEquals(q.invited, p.invited)));
+      recurring.push({ seed, closed: morning.filter(p => !fitsMorning(p)).length, valid: valid.length,
+        retained: retained.length, sources: [...new Set(open.map(p => p.source))].sort() });
     }
+    console.log(`recurring venue hours: ${JSON.stringify(recurring)}`);
+    expect([...new Set(recurring.flatMap(r => r.sources))].sort()).toEqual(["crew_offer", "crew_session", "repeat"]);
+    for (const r of recurring) { expect(r.closed).toBe(0); expect(r.retained).toBe(r.valid); }
   });
 
   const spec = o.quick ? { seeds: [5], weeks: 4, n: 200 } : FRIENDS_PINNED;

@@ -205,6 +205,8 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       const best = chooseVenue(inp.venues, inv, v => v.city === p.city && v.activities.includes(a.id) && v.ageMin <= Math.min(...p.invited.map(id => w.get(id)!.m.age)) && venueOpen(v, p.window, a.durationMin, tz, att));
       if (best) venue = best.venue;
     }
+    // A recurring plan's previous venue must still be open for this session.
+    if (venue && !venueOpen(venue, p.window, a.durationMin, tz, att)) return null;
     const at = hood(venue?.area ?? p.place.area);
     const minutes: Record<MemberId, number> = {};
     for (const [id, h] of homes) minutes[id] = at ? transitMinutes(h, at) : 45;
