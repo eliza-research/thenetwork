@@ -197,7 +197,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
     hooks: { onJoin: o.onJoin, onStop: o.onStop, onForget: o.onForget, onExport: o.onExport, onAgeLowered: o.onAgeLowered },
   });
   const otp = new OtpService(o.store, o.otp, { hashKey, now, limits: o.otpLimits, log });
-  const sessions = new SessionService(o.store, { now, secret: sessionSecret });
+  const sessions = new SessionService(o.store, { now, secret: sessionSecret, hashKey });
   const cookieName = (app: AppId) => (dev ? `sid_${app}` : "__Host-sid");
   const cookie = (app: AppId, token: string, maxAge: number) =>
     `${cookieName(app)}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${dev ? "" : "; Secure"}`;

@@ -7,6 +7,7 @@
 //  - Delete everything needs a fresh login (within 10 minutes): a stolen old cookie cannot do it.
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import type { AppId } from "./apps.ts";
+import { keyedHash } from "./phone.ts";
 import type { PeopleStore, Session } from "./store.ts";
 
 export const SESSION_TTL_MS = 30 * 24 * 3_600_000;
@@ -26,7 +27,7 @@ export const tokenHash = (token: string, secret: string) => createHmac("sha256",
 export const signupAccountView = (app: string, phoneKey: string) => createHash("sha256").update(`signup-view:${app}:${phoneKey}`).digest("hex");
 
 export class SessionService {
-  constructor(private readonly store: PeopleStore, private readonly opts: { secret: string; now?: () => number; ttlMs?: number; rotateMs?: number; maxMs?: number }) {}
+  constructor(private readonly store: PeopleStore, private readonly opts: { secret: string; /** When set, authenticate refuses (and revokes) a session whose phone or person is banned. */ hashKey?: string; now?: () => number; ttlMs?: number; rotateMs?: number; maxMs?: number }) {}
   private now() { return (this.opts.now ?? Date.now)(); }
   private hash(token: string) { return tokenHash(token, this.opts.secret); }
 
@@ -48,6 +49,12 @@ export class SessionService {
     const at = this.now();
     const s = await this.store.getSession(this.hash(token));
     if (!s || s.app !== app || (s.revokedAt !== null && s.revokedAt <= at) || s.expiresAt <= at) return undefined;
+    // A staff ban must end every live cookie (docs/go-live-handoff.md). Refuse and revoke here so a
+    // session that survived ban-time cleanup (or was minted after it) cannot keep acting on /api/*.
+    if (this.opts.hashKey) {
+      const banned = await this.store.isBanned(keyedHash(this.opts.hashKey, `phone:${s.e164}`), s.personId);
+      if (banned) { await this.store.revokeSession(s.tokenHash, at); return undefined; }
+    }
     // Already rotated (in its grace time), young, or at the end of its chain: use it as it is.
     if (!rotate || s.revokedAt !== null || at - s.createdAt < (this.opts.rotateMs ?? SESSION_ROTATE_MS)) return { session: s, token, rotated: false };
     await this.store.revokeSession(s.tokenHash, at + SESSION_GRACE_MS);

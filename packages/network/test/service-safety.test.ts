@@ -179,6 +179,8 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(after.reports[0].status).toBe("banned");
 
     // The banned number cannot join any other app, by text or on the web; nothing is stored and nothing is answered.
+    // OTP login refuses a banned number (PRD 40.3 / #163). Pre-ban live cookies are covered by
+    // packages/platform/test/ban-ends-authenticate.test.ts (this PR).
     const before = directs.length;
     expect(await text(s, clock, ben, "peon")).toBe("held");
     expect(directs.length).toBe(before);
