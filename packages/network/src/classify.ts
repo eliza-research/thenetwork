@@ -483,14 +483,20 @@ export function extractProfile(body: string): Profile {
   };
 }
 
+/** Remove explicit first-person absence claims before reading reports about the other person. */
+export function withoutSelfNoShow(body: string): string {
+  return body.replace(/[\u2018\u2019\u02bc]/g, "'").replace(/\bi\s+(?:(?:never|didn'?t|did not)\s+(?:show(?:ed)?(?:\s+up)?|turn(?:ed)?\s+up|come)\b(?!\s+(?:me|us|you|him|her|them|off|around|any|much)\b)|was\s+(?:a\s+)?no[- ]show\b)/gi, "");
+}
+
 /**
  * Sentiment of a feedback reply (for edges and reliability). Negations are checked first: "not
  * great", "wasn't great" and "didn't click" contain positive words but are bad meetings.
  */
 export function feedbackOf(body: string): { sentiment: "positive" | "neutral" | "negative"; selfNoShow: boolean; otherNoShow: boolean; again: boolean } {
   const t = body.toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'");
-  const selfNoShow = /couldn'?t make it|didn'?t make it|had to bail/.test(t);
-  const otherNoShow = /\b(never|didn'?t|did not) (show(ed)?( up)?|turn(ed)? up|come)\b(?! (me|us|you|him|her|them|off|around|any|much))|\bno[- ]show\b|\bstood (me|us) up\b/.test(t);
+  const other = withoutSelfNoShow(t);
+  const selfNoShow = other !== t || /couldn'?t make it|didn'?t make it|had to bail/.test(t);
+  const otherNoShow = /\b(never|didn'?t|did not) (show(ed)?( up)?|turn(ed)? up|come)\b(?! (me|us|you|him|her|them|off|around|any|much))|\bno[- ]show\b|\bstood (me|us) up\b/.test(other);
   const negative = otherNoShow || NEGATIVE_FEEDBACK.test(t);
   const sentiment = negative ? "negative" : /great|clicked|loved|amazing|nice|easy to talk/.test(t) ? "positive" : "neutral";
   const again = !negative && /again|clicked/.test(t) && !/\b(wouldn'?t|won'?t|not|never)\b[^.!?]*\bagain\b/.test(t);

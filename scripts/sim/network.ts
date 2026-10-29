@@ -15,6 +15,7 @@ import { styleViolations } from "../../packages/network/src/copy.ts";
 import { DATA_DIR } from "../synthetic/common.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
+import { Mini } from "../../packages/network/test/mini.ts";
 
 type Msg = Extract<RunRecord, { type: "message" }>;
 type Log = Extract<RunRecord, { type: "network_log" }>;
@@ -36,6 +37,56 @@ async function world(days: number, seed = 3, network: NetworkOptions = { review:
 }
 
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
+  await b.run("feedback: a member's own absence is not attributed to the counterpart", async () => {
+    const cases = [
+      { kind: "didnt", text: "I didn't show up.", self: true, other: false },
+      { kind: "curly", text: "Sorry, I didn\u2019t show up.", self: true, other: false },
+      { kind: "did_not", text: "I did not come.", self: true, other: false },
+      { kind: "never", text: "I never showed up.", self: true, other: false },
+      { kind: "turned", text: "I never turned up.", self: true, other: false },
+      { kind: "noun", text: "I was a no-show.", self: true, other: false },
+      { kind: "legacy", text: "I couldn't make it.", self: true, other: false },
+      { kind: "other", text: "Ben didn't show up.", self: false, other: true, report: "no_show" },
+      { kind: "other_noun", text: "Ben was a no-show.", self: false, other: true, report: "no_show" },
+      { kind: "mixed", text: "I didn't show up. Ben didn't show up either.", self: true, other: true, report: "no_show" },
+      { kind: "urgent", text: "I didn't show up because he kept texting me after I said no.", self: true, other: false, report: "harassment" },
+      { kind: "positive", text: "It was great!", self: false, other: false },
+      { kind: "object", text: "I showed him my photos.", self: false, other: false },
+    ];
+    const outcomes: { seed: number; reportOn: boolean; kind: string; self: boolean; other: boolean; ownMisses: number; counterpartMisses: number; reports: string[]; correct: boolean }[] = [];
+    for (const seed of [1, 2, 3]) for (const reportOn of [false, true]) for (const c of cases) {
+      const w = new Mini([
+        { id: "a", name: "Ana Diaz", age: 30, area: "Greenpoint", interests: ["climbing", "hiking"] },
+        { id: "b", name: "Ben Ito", age: 30, area: "Greenpoint", interests: ["climbing", "hiking"] },
+      ], { seed, review: "human", growth: false, hooks: { postDateReports: reportOn } });
+      w.clock.advance(4 * DAY); await w.onboard("a", "b");
+      const id = w.propose(["a", "b"], { category: "hobby", objective: "a climbing session" });
+      expect(await w.runUntil(() => w.net.reviewQueue().some(q => q.oppId === id), DAY)).toBe(true);
+      expect(w.sent.some(s => s.meta.probe || s.meta.proposalId)).toBe(false);
+      expect(w.net.decide(id, "approve", { reviewer: "sim_staff" })).toEqual({ ok: true });
+      await w.answerProbes(["a", "b"]); expect(w.meetings.length).toBe(1);
+      for (const p of ["a", "b"]) await w.say(p, "Thanks, still coming.");
+      await w.run(w.meetings[0]!.at + 3 * HOUR - w.clock.now()); w.restart();
+      expect(w.net.memberList().find(m => m.id === "a")?.awaiting?.kind).toBe("feedback");
+      await w.say("a", c.text); w.restart(); await w.run(5 * DAY); w.restart();
+      const feedback = w.logs.filter(l => l.kind === "feedback" && l.detail.memberId === "a" && l.detail.proposalId === id);
+      expect(feedback.length).toBe(1);
+      const flags = feedback[0]!.detail;
+      const ownMisses = w.net.memberList().find(m => m.id === "a")!.noShows;
+      const counterpartMisses = w.net.memberList().find(m => m.id === "b")!.noShows;
+      const history = w.net.engineInput(w.clock.now()).interactions?.filter(r => r.id === `${id}:fb:a`) ?? [];
+      const reports = w.net.safetyReports().map(r => `${r.subjectId}:${r.kind}`);
+      const expectedReports = reportOn && c.report ? [`b:${c.report}`] : [];
+      const correct = flags.selfNoShow === c.self && flags.otherNoShow === c.other
+        && ownMisses === Number(c.self) && counterpartMisses === Number(c.other && !c.self)
+        && history.length === 1 && history[0]!.outcome === (c.self ? "no_show" : "completed")
+        && Bun.deepEquals(reports, expectedReports);
+      outcomes.push({ seed, reportOn, kind: c.kind, self: !!flags.selfNoShow, other: !!flags.otherNoShow, ownMisses, counterpartMisses, reports, correct });
+    }
+    console.log("SELF_ABSENCE_OUTCOMES", JSON.stringify(outcomes));
+    expect(outcomes.filter(r => r.correct).length).toBe(outcomes.length);
+  });
+
   // ---- invariants: NYC, 10 days, seed 3, simulated reviewer ---------------------------------------
   const run = await world(10);
   await run.w.advanceTo(run.w.end);
