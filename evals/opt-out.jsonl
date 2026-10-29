@@ -119,3 +119,15 @@
 {"text": "ok stop by at 7", "label": "not_stop", "lang": "en"}
 {"text": "just stop by later", "label": "not_stop", "lang": "en"}
 {"text": "stop now and grab food?", "label": "not_stop", "lang": "en"}
+{"text": "STOP now pls", "label": "stop", "lang": "en"}
+{"text": "STOP pls now", "label": "stop", "lang": "en"}
+{"text": "STOP ok", "label": "stop", "lang": "en"}
+{"text": "STOP rn", "label": "stop", "lang": "en"}
+{"text": "STOP asap", "label": "stop", "lang": "en"}
+{"text": "STOP immediately", "label": "stop", "lang": "en"}
+{"text": "STOP for real", "label": "stop", "lang": "en"}
+{"text": "pls STOP NOW!!", "label": "stop", "lang": "en"}
+{"text": "STOP ALL PLS", "label": "stop_all", "lang": "en"}
+{"text": "pls stop all now", "label": "stop_all", "lang": "en"}
+{"text": "stop it now please", "label": "not_stop", "lang": "en"}
+{"text": "cancel please", "label": "not_stop", "lang": "en"}
