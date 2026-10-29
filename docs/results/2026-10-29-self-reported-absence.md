@@ -1,122 +1,109 @@
-# Attribute self-reported absence to the right meeting and member
+# Keep absence feedback on the right meeting and member
 
-Date: 2026-10-29. Base: `a0ed7bc6495d9e524afc3d500738212a28dc7bc2`.
-Latest paired baseline: published PR head `f4527eecfbd637eb0a63eb1c8914d6123cc0afda`.
-Tested code: `c49ce2a3983a6631b9eebce05bf9608d1f979bcf`. Combined code: `604ab36982857162d7da324dd8984840aec489eb`.
+Updated: 2026-10-30. Main base: `a0ed7bc6495d9e524afc3d500738212a28dc7bc2`.
+Latest paired baseline: published PR head `d0cbc30a6892c9aee91ca3d654c27808527715ba`.
+Tested code: `35ec0161c397fd355728cd2820c38ca27fa2e5e0`. Combined code: `e2e9b42c500842f32df522412951bf4d6df2e2bd`.
 
-The [previous report](https://github.com/startrack3r/thenetwork/blob/f4527eecfbd637eb0a63eb1c8914d6123cc0afda/docs/results/2026-10-29-self-reported-absence.md) preserves the original main comparison.
-This report includes the subsequent conversation-routing fix and current evidence.
+The [previous report](https://github.com/startrack3r/thenetwork/blob/d0cbc30a6892c9aee91ca3d654c27808527715ba/docs/results/2026-10-29-self-reported-absence.md)
+preserves the original main comparison and the first delayed-feedback comparison.
+This report describes the final behavior and the latest paired measurements.
 
 ## Requirement, causes and choices
 
 This repairs meeting feedback and reliability attribution in `docs/network.md`
-4.3/PRD 32.13. Main can read "I didn't show up" as the counterpart's absence.
-It records the speaker as present, can penalize the silent counterpart, and can
-file an automatic report against that counterpart. The original fix shares
-first-person phrase handling between feedback and post-date reporting. Separate
-counterpart allegations and harassment reports remain intact.
+4.3 and PRD 15.2/32.13. Main can read "I didn't show up" as the counterpart's absence.
+It can penalize that counterpart and file an automatic report against them.
+The original fix shares first-person phrase handling between feedback and post-date reporting.
+Separate counterpart allegations and harassment reports remain intact.
 
-There is a second failure before feedback is recorded. After a missed meeting,
-a member confirms a new booking. "Something came up, I couldn't make it" then
-cancels that future booking. The generic "something came up" cancellation rule
-runs before feedback routing, although the member describes a past absence.
+Delayed feedback can also cancel an unrelated future booking.
+"Something came up, I couldn't make it" describes a missed meeting.
+The generic cancellation rule previously took priority over that past-tense explanation.
+The fix removes the past absence and ambiguous explanation from the cancellation check.
+An explicit remaining cancellation still wins; otherwise, the existing router selects unanswered past feedback.
 
-Use the same first-person helper to recognize that explanation. Remove the
-past absence and ambiguous explanation only from the cancellation check. An
-explicit remaining cancellation still wins. Otherwise, classify the message
-as feedback, letting the existing router select the most recent unanswered
-completed meeting. Add the existing first-person "couldn't make it", "didn't
-make it" and "had to bail" forms to the shared helper.
+The latest reproduction finds an unscoped fallback: any "couldn't make it", "didn't make it", or "had to bail" marks the reporter absent.
+Thus "Ben couldn't make it" penalizes Ana, who reported Ben's absence.
+Bare self-reports also missed the shared helper and could cancel a later booking.
+
+Use one past-absence pattern for both sides of the feedback classification.
+Remove explicit first-person forms and short replies at sentence/punctuation boundaries before reading counterpart allegations.
+Keep common intervening adverbs and the existing first-person plural behavior for these forms.
+Exclude common object/complement uses such as "bail me out" and "make it awkward".
+The same helper lets "Something came up, couldn't make it" reach past feedback.
+Post-date reporting retains its existing priority for harassment and other serious allegations.
 
 Alternatives considered:
 
-1. Suppress all reports whenever the speaker missed a meeting. This loses
-   separate counterpart allegations. Inspect the remaining text instead.
-2. Treat every "something came up" as feedback. This loses ordinary future
-   cancellations. Require an explicit first-person past absence too.
-3. Always prefer past feedback over a cancellation. A message can explicitly
-   cancel the next booking as well. Keep that cancellation ahead of feedback.
+1. Suppress every report when the speaker missed the meeting. This would lose separate counterpart allegations.
+2. Remove the old fallback without handling bare replies. This would stop recognizing ordinary short self-reports.
+3. Prefer feedback over every cancellation. This would lose explicit cancellations of a future booking.
 
-No schema, historical-data migration, message template, review policy or
-client-contract change. Active probe and booking reply handling stays unchanged.
+The change needs no new schema, dependency, message template, or client contract.
+It leaves active probe and booking reply priority unchanged.
 
-## measurement: original attribution cases
+## measurement: attribution and delayed feedback
 
-The existing gate retains all **78 workflows**: 13 cases on seeds **1, 2 and 3**,
-with automatic post-date reporting off and on. These use the real Network,
-engine, human review, mutual consent, booking, feedback and attendance
-finalization, with JSON restarts. The channel, people and clock are synthetic.
+One existing gate contains **270 complete workflows**, using seeds **1, 2 and 3**,
+with automatic post-date reporting disabled and enabled.
+Its 33 direct-feedback phrases produce 198 workflows; 12 routing phrases produce 72.
+The same expanded fixture runs before and after the latest production change.
 
-The initial comparison against main improved **30/78 to 78/78** correct.
-False counterpart penalties in self-only cases fell **36 to 0**, and false
-automatic reports fell **18 to 0**. All 12 intended counterpart/mixed/harassment
-reports remained. All 78 outcome rows are identical at the previous published
-head and current standalone/combined revisions. This follow-up retains that fix.
+Each uses the real Network, engine, human review, mutual consent, booking, feedback, and attendance finalization.
+The people, channel, reviewer identity, and clock are synthetic; policy results are not mocked.
+The workflow crosses three JSON restarts and checks reliability, interaction history, and report subjects.
+The routing cases first book Ana with Ben, leave feedback unanswered, then book Ana with Cara for a later date.
+They check the old meeting's feedback and the later booking after finalization.
 
-## measurement: feedback must not cancel a later booking
-
-The same gate adds **54 workflows**: nine cases on seeds **1, 2 and 3**, with
-automatic post-date reporting off and on. Each starts with three synthetic
-adults in Greenpoint and uses the real staff proposal and human review flow.
-Ana and Ben consent to one meeting. After its feedback question, Ana sends an
-acknowledgement that leaves feedback unanswered. Ana and Cara then consent to
-a later meeting and confirm it. No reply question remains active.
-
-The member supplies delayed feedback after a JSON restart. The workflow restarts
-again, advances through the first meeting's attendance finalization, and
-restarts once more. It checks feedback attribution, reliability, interaction
-history, reports, cancellation events and the future booking's state. Policy
-outputs are not mocked. In the seed-1 reproduction, the first meeting is October
-10 at 10:00 New York time; the later booking is October 18 at 10:00. The reply
-arrives October 11 at 14:00.
-
-Five absence explanations include "couldn't make it", "didn't make it", "had
-to bail", "didn't show up" and a curly apostrophe. Controls cover positive
-feedback, "something came up" alone, an explicit future cancellation, and a
-past absence followed by an explicit future cancellation.
+Direct cases cover named and pronominal counterpart reports, mixed self/counterpart absences,
+curly apostrophes, intervening adverbs, short self-reports, object/complement controls, and harassment.
+Routing controls retain ordinary "something came up", explicit future cancellation, positive feedback,
+and a past absence followed by an explicit future cancellation.
 
 | Observation | Previous published head | Fixed |
 |---|---:|---:|
-| Correct new routing workflows | 24/54 | 54/54 |
-| Unintended future cancellations | 30 | 0 |
-| Correctly recorded past self-absences | 0 | 30 |
-| Intended future cancellations preserved | 18 | 18 |
-| Already-correct new outcome rows preserved | 24 | 24 |
+| Correct direct-feedback workflows | 120/198 | 198/198 |
+| Incorrect penalties against reporters in newly reproduced cases | 72 | 0 |
+| Intended counterpart penalties recorded | 12 | 72 |
+| Intended reports, all against the counterpart | 12 | 45 |
+| Correct routing workflows | 54/72 | 72/72 |
+| Unintended future cancellations | 18 | 0 |
+| Intended future cancellations retained | 18 | 18 |
+| Past self-absences recorded in routing cases | 30 | 48 |
+| Previously correct outcome rows retained exactly | 174 | 174 |
 
-All **132 workflow cases** pass at the current revision. These are hand-written
-deterministic cases, not population estimates. A supplemental complete workflow
-also keeps the explicit cancellation in "Something came up, I couldn't make it
-last time. I need to cancel the next one." Before/after outcomes are identical.
+All **132 workflows** from the previous PR version retain identical outcomes.
+The original main comparison improved 30/78 direct workflows to 78/78.
+The preceding routing update improved 24/54 to 54/54; those historical measurements remain linked above.
+The latest total improves **174/270 to 270/270**.
+These are deterministic regression cases, not estimates of population accuracy.
 
-Same command and settings before and after the routing follow-up:
+Same command and settings before and after:
 
 ```sh
 bun run sim --only network --only slop --only friends --only peon-seats --only evals --json <results.json>
 ```
 
-Previous head plus expanded gate: **152/153** blocking gates, 288.6 seconds.
-Fixed: **153/153**, 332.3 seconds. All **175 other gate records**
-are identical, excluding runtime. Both retain the same **nine tracked misses**:
-Slop adversary/age-liar reductions, repeat-date targets, group-disparity targets,
-reveal back-outs and probe length, plus Friends adversary harm. Timings are not
-a performance claim. The current comparison starts from the previous PR head;
-the historical report contains the earlier main measurements.
+Baseline: **152/153** blocking gates, 313.5 seconds.
+Fixed: **153/153**, 372.1 seconds.
+All **175 other gate records** are identical, excluding runtime.
+Both retain the same **9 tracked misses**: Slop adversary/age-liar reductions,
+repeat-date targets, group-disparity targets, reveal back-outs and probe length, plus Friends adversary harm.
+Timings are not a performance claim. This comparison starts from the previous PR head, not main.
 
 ## safety_gates and combined compatibility
 
 With local PostgreSQL, `REQUIRE_PG=1 bun run sim --only safety --json <results.json>`
-passes **17/17** before and after, zero tracked misses. All records are identical.
-Times: 7.9 / 9 seconds. This includes the existing post-date
-report-kind checks and database-backed safety workflows.
+passes **17/17** before and after, with zero tracked misses and identical records.
+Times: 7.4 / 8.3 seconds.
+This includes existing report-kind checks and database-backed safety workflows.
 
-Combined locally with the other **38 contributions**, the affected command
-passes **182/182** blocking gates in 363.4 seconds. All 132 workflow rows
-match the standalone fix. All **204 other records** retain their values:
-Network/evals against the latest #160 combined run, Friends against #200, and
-Slop/job seats against the prior #199 run. The combined baseline retains its
-previous **eight tracked misses**; earlier contributions had already improved
-the second-date ratio. Both code and regression merged cleanly. The combined
-branch stays local; this PR independently targets main.
+Combined locally with the other **39 contributions**, the affected command passes
+**183/183** blocking gates in 395.8 seconds.
+All 270 workflow rows match the standalone result.
+All **205 other records** match the preceding #201 combined run,
+including its 162 group-attribution workflows. The same **8 tracked misses** remain.
+The code and expanded gate merged cleanly. The combined branch stays local; this PR independently targets main.
 
 ## Validation, llm_evidence and agent_clients
 
@@ -126,36 +113,56 @@ REQUIRE_PG=1 bun run test:integration
 REQUIRE_PG=1 bun run test:e2e
 ```
 
-- All four typecheck configurations pass on standalone and combined branches.
-- Integration includes all 11 files from `bun run security`: **675 pass,
-  8 skip, 6 known Windows failures**, 13,741 assertions, 689 tests in 68 files,
-  489.66 seconds. Failure names match the preceding #160 run: Wrangler
-  needs `/bin/bash`, SIGTERM exits 143 instead of 0, and four site tests compare
-  Windows and POSIX paths. These are not passing tests. The skips are opt-in
-  retry-reconciliation cases. No fresh paired baseline integration run.
-- E2E: **42 pass, 1 optional browser skip, 0 fail**, 654 assertions,
-  43 tests in three files, 52.29 seconds.
-- Windows, Bun 1.4.2, frozen dependencies, PostgreSQL 16.15 on local port 54339.
-  `PG_BIN_DIR`/`PATH` select binaries; `USER=postgres` and
-  `OBSERVATORY_PG_DIR`/`OBSERVATORY_PG_PORT` select the test cluster.
-- The full-simulation allowance was used earlier. These are affected-block
-  results, not a fresh full-suite or hosted Linux CI pass.
-- Zero validation model calls/$0; deterministic classification and routing.
-  No external-agent client acceptance claim. Authoring client: Codex desktop,
-  OpenAI `gpt-6-astra`; app version not collected. Other clients were not tested.
+All four typecheck configurations pass on standalone and combined branches.
+Integration includes the 11 files listed by `bun run security`:
+
+```text
+675 pass
+8 skip
+6 fail
+13741 expect() calls
+Ran 689 tests across 68 files. [548.19s]
+```
+
+The six failures match the preceding run: Wrangler requires `/bin/bash`,
+SIGTERM exits 143 instead of 0, and four site tests compare Windows and POSIX paths.
+These tests are not passing. The eight skips require opt-in retry-reconciliation testing.
+No fresh paired baseline integration run was made.
+
+E2E:
+
+```text
+42 pass
+1 skip
+0 fail
+654 expect() calls
+Ran 43 tests across 3 files. [75.34s]
+```
+
+The browser skip requires `PLAYWRIGHT_MODULE`.
+Environment: Windows, Bun 1.4.2, frozen dependencies, PostgreSQL 16.15 on local port 54339.
+`PG_BIN_DIR`/`PATH` select binaries; `USER=postgres` and
+`OBSERVATORY_PG_DIR`/`OBSERVATORY_PG_PORT` select the test cluster.
+The repository's full-simulation allowance was used earlier.
+These are affected-block results, not a fresh full-suite or hosted Linux CI pass.
+
+Validation uses zero model calls and costs $0: these classification and routing paths are deterministic.
+Real-LLM and external-client qualification are not claimed.
+Authoring client: Codex desktop, OpenAI `gpt-6-astra`; app version not collected.
+Claude Code, ChatGPT, Hermes, OpenClaw, Muse, Grok, elizaOS, and Cursor were not tested as clients.
 
 ## Reproduction and limits
 
-1. Check out `f4527eecfbd637eb0a63eb1c8914d6123cc0afda` separately.
-2. Load `scripts/sim/network.ts` from `c49ce2a3983a6631b9eebce05bf9608d1f979bcf`.
-3. Run the affected command. Expect 152/153 and `expected 24 to be 54`.
+1. Check out `d0cbc30a6892c9aee91ca3d654c27808527715ba` separately.
+2. Load `scripts/sim/network.ts` from `35ec0161c397fd355728cd2820c38ca27fa2e5e0`.
+3. Run the affected command. Expect 152/153 and `expected 54 to be 72`.
 4. Load `packages/network/src/classify.ts` from the same code commit and repeat.
-5. Expect 153/153, with 78 correct `SELF_ABSENCE_OUTCOMES` rows and 54 correct
-   `SELF_ABSENCE_ROUTING_OUTCOMES` rows.
+5. Expect 153/153, with 198 correct `SELF_ABSENCE_OUTCOMES` rows and 72 correct `SELF_ABSENCE_ROUTING_OUTCOMES` rows.
 
-The routing change covers explicit past-absence explanations containing
-"something came up". It does not broadly reclassify every unsolicited absence
-statement, resolve quotations or arbitrary tense/subject ambiguity, or change
-active probe/booking reply priority. It uses the existing most-recent unanswered
-meeting rule; it does not introduce multi-meeting dialogue. Historical records
-are unchanged. No live sends or deployment. Draft pending review and hosted CI.
+This remains a bounded pattern parser. It does not resolve arbitrary quotations, omitted subjects,
+reported speech, uncommon complements, or every plural/tense ambiguity.
+The object exclusions cover named common forms, not general language understanding.
+Unsolicited routing still uses the existing most-recent unanswered meeting rule.
+It does not introduce a dialogue for choosing among several past meetings.
+The fix applies to new replies; historical finalized penalties and reports are unchanged.
+No live sends or deployment. Draft pending maintainer review and hosted CI.
