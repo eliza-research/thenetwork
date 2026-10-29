@@ -74,7 +74,9 @@ export function parsePosting(body: string): PostingDraft {
   if (open) { const n = WORDS[open[1]!.toLowerCase()] ?? Number(open[1]); if (Number.isInteger(n) && n >= 1 && n <= MAX_OPENINGS) d.openings = n; }
   const pay = /\$?\s*(\d{2,3})(?:,000|k)?\s*(?:-|–|to)\s*\$?\s*(\d{2,3})(?:,000)?\s*k\b/i.exec(t) ?? /\$\s*(\d{2,3})(?:,000|k)\s*(?:-|–|to)\s*\$?\s*(\d{2,3})(?:,000|k)?/i.exec(t);
   if (pay) { const a = Number(pay[1]), b = Number(pay[2]); if (a >= 10 && b >= a && b <= 999) { d.payMin = a; d.payMax = b; } }
-  if (/\bremote\b/i.test(t)) d.mode = "remote"; else if (/\bhybrid\b/i.test(t)) d.mode = "hybrid"; else if (/\b(on-?site|in[- ]office|in person)\b/i.test(t)) d.mode = "onsite";
+  // A refused mode is not an offer: "hybrid, not remote" must keep the stated hybrid mode.
+  const modeText = t.replace(/\b(?:(?:not|no)(?:\s+longer)?\s+(?:fully\s+)?|non[- ])(?:remote|hybrid|on-?site|in[- ]office|in person)\b(?:\s+(?:or|nor)\s+(?:remote|hybrid|on-?site|in[- ]office|in person)\b)*/gi, " ");
+  if (/\bremote\b/i.test(modeText)) d.mode = "remote"; else if (/\bhybrid\b/i.test(modeText)) d.mode = "hybrid"; else if (/\b(on-?site|in[- ]office|in person)\b/i.test(modeText)) d.mode = "onsite";
   const lower = ` ${t.toLowerCase().replace(/[^a-z0-9' -]+/g, " ")} `;
   const area = AREAS.find(a => lower.includes(` ${a} `));
   if (area) d.area = slug(area);
