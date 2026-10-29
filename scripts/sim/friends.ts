@@ -11,7 +11,8 @@ import { localEmbed } from "../../packages/engine/src/embed.ts";
 import { runEngine } from "../../packages/engine/src/engine.ts";
 import { candidateReason, memberReason } from "../../packages/engine/src/filters.ts";
 import { DEFAULT_FRIENDS_POLICY, FRIENDS_PLANS, ROMANCE_FRAMING, friendsInfo, friendsPack, planFriendsWeek } from "../../packages/engine/src/packs/friends/index.ts";
-import { buildPlanProbe } from "../../packages/engine/src/plans.ts";
+import { buildPlanProbe, planItem, planToProposal, type Crew, type PlanOutcomeRecord } from "../../packages/engine/src/plans.ts";
+import { Mini, START } from "../../packages/network/test/mini.ts";
 import type { Candidate, EngineInput } from "../../packages/engine/src/types.ts";
 import { World } from "../../packages/engine/src/world.ts";
 import { BASELINES } from "../../packages/sim/src/apps/friends/baselines.ts";
@@ -40,6 +41,45 @@ function friendsSnapshotAfter(seed: number, weeks = 3, n = 160): FriendsSnapshot
 const friendsWorld = (seed: number): EngineInput => engineInputOf(friendsSnapshotAfter(seed));
 
 export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<void> {
+  await b.run("crew hosts: sessions and offers assign hosting only to retained invitees", () => {
+    const ids = ["a", "b", "c", "d", "e", "f"];
+    const venue = VENUES.find(v => v.activities.includes("restaurant_dinner") && v.hours.weekday[1] >= 21)!;
+    const rows: { seed: number; source: string; change: string; turn: number; host?: string; expectedHost: string; invited: string[]; correct: boolean }[] = [];
+    for (const seed of [7, 13, 17]) for (const source of ["session", "offer"]) for (const turn of source === "session" ? [0, 1, 2] : [0]) {
+      for (const change of ["control", "paused", "travel", "all_hosts_paused", "all_hosts_travel"]) {
+        const mini = new Mini(ids.map((id, i) => ({ id, name: ["Ana Diaz", "Ben Ito", "Cara Li", "Dan Wu", "Eva Park", "Finn Ray"][i]!, age: 30, area: venue.area, interests: ["cooking"], skills: i < 3 ? ["hosting"] : [] })));
+        for (const id of ids) mini.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified", tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
+        const excluded = change === "control" ? [] : change.startsWith("all_hosts") ? ["a", "b", "c"] : ["a"];
+        for (const id of excluded) {
+          if (change.endsWith("paused")) mini.members.find(m => m.id === id)!.state = "paused";
+          else mini.facets.push({ id: `${id}:travel`, memberId: id, kind: "preference", value: "Travel at most one minute", tags: ["friends:max_travel:1"], scope: "agent_private", provenance: "said", confidence: 1 });
+        }
+        const w = new World(JSON.parse(JSON.stringify(mini.ctx().snapshot())), resolveConfig({ seed }), localEmbed, friendsPack);
+        const crew: Crew = { id: "crew_host_regression", activityId: "restaurant_dinner", city: "nyc", venueId: venue.id, members: ids, cadenceDays: 7, hostRotation: ["a", "b", "c"], sessions: Array.from({ length: turn }, (_, i) => `earlier-${i}`), handedOff: false, slot: { start: Date.UTC(2026, 9, 2, 23) } };
+        const outcome: PlanOutcomeRecord = { planId: "earlier", activityId: crew.activityId, city: "nyc", venueId: venue.id, at: crew.slot.start, attended: ids, positive: ids, recurringWant: [] };
+        const savedCrew = JSON.stringify(crew);
+        const week = planFriendsWeek(w, { now: START, tz: NYC_TZ, evidence: new Map(ids.map(id => [id, { memberId: id, tz: NYC_TZ }])), venues: VENUES, crews: source === "session" ? [crew] : [], outcomes: source === "offer" ? [outcome] : [], offered: [] },
+          { ...DEFAULT_FRIENDS_POLICY, repeat: false, tables: false, singleSlot: false, partnerFallback: false, partnerIntros: 0, universal: false, loosePass: false }, FRIENDS_PLANS);
+        expect(JSON.stringify(crew)).toBe(savedCrew);
+        const plans = source === "session" ? week.sessions : week.offers.map(x => x.first);
+        expect(plans.length).toBe(1);
+        // Plans cross the persisted/queued JSON boundary before role and effort accounting.
+        const plan = JSON.parse(JSON.stringify(plans[0]!)) as typeof plans[number];
+        const expectedHost = change.startsWith("all_hosts") ? ["d", "e", "f"][turn]! : change === "control" ? ["a", "b", "c"][turn]! : ["b", "b", "c"][turn]!;
+        const expectedInvited = ids.filter(id => !excluded.includes(id));
+        const proposal = planToProposal(plan);
+        const items = plan.invited.map(id => planItem(plan, id, { now: START }));
+        expect(items.every(item => item.reviewState === "pending")).toBe(true);
+        const hosts = Object.entries(proposal.roles).filter(([, role]) => role === "host").map(([id]) => id);
+        const contributions = items.filter(item => item.effort === "contribute").map(item => item.memberId);
+        const correct = plan.hostId === expectedHost && Bun.deepEquals(plan.invited, expectedInvited)
+          && Bun.deepEquals(hosts, [expectedHost]) && Bun.deepEquals(contributions, [expectedHost]);
+        rows.push({ seed, source, change, turn, host: plan.hostId, expectedHost, invited: plan.invited, correct });
+      }
+    }
+    console.log("CREW_HOST_OUTCOMES", JSON.stringify(rows));
+    expect(rows.filter(r => r.correct).length).toBe(rows.length);
+  });
   const spec = o.quick ? { seeds: [5], weeks: 4, n: 200 } : FRIENDS_PINNED;
   const all: Record<"pack" | "random" | "oracle", FriendsMetrics[]> = { pack: [], random: [], oracle: [] };
   const matchers = { pack: friendsPackMatcher(), random: BASELINES.random, oracle: BASELINES.oracle };
