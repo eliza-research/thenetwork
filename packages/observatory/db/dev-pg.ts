@@ -34,7 +34,8 @@ async function sh(cmd: string[], quiet = false) {
 export async function devPgUp(): Promise<string> {
   if (!existsSync(join(DEV_PG_DIR, "PG_VERSION"))) {
     mkdirSync(DEV_PG_DIR, { recursive: true });
-    const code = await sh([pgBin("initdb"), "-D", DEV_PG_DIR, "-A", "trust", "-E", "UTF8", "--no-locale"], true);
+    // Initialize the same login used by DEV_PG_URL and the startup query, including the fallback.
+    const code = await sh([pgBin("initdb"), "-D", DEV_PG_DIR, "-U", process.env.USER ?? "postgres", "-A", "trust", "-E", "UTF8", "--no-locale"], true);
     if (code !== 0) throw new Error("initdb failed");
   }
   const ready = await sh([pgBin("pg_isready"), "-h", "localhost", "-p", String(DEV_PG_PORT)], true);
