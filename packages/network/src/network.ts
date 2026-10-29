@@ -31,9 +31,9 @@ import {
   type Category, type Facet, type Intent, type LeakOptions, type LLM, type MemberId, type ParticipationState, type Proposal, type ScoreComponents, type WorldSnapshot,
 } from "@thenetwork/core";
 import {
-  attention, buildWorld, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, localEmbed, plans, resolveConfig, resolvePlans, runEngine,
+  attention, buildWorld, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, localEmbed, pairReason, plans, resolveConfig, resolvePlans, runEngine, World as EngineWorld,
   type AskRecord, type EngineAsk, type EngineConfigInput, type EngineInput, type EngineProposal, type FeedbackRecord, type InteractionRecord, type MatchingRunLog,
-  type AppPack, type PlansConfig, type PlansConfigInput, type World as EngineWorld,
+  type AppPack, type PlansConfig, type PlansConfigInput,
 } from "@thenetwork/engine";
 import { HELP_TEXT, STOP_CONFIRMATION, type InboundMessage, type NetworkContext, type NetworkUnderTest, type SimMeta } from "@thenetwork/core";
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
@@ -1985,6 +1985,8 @@ export class ConsentNetwork implements NetworkUnderTest {
    * two. Engine proposals also pass gateReason() again. Undefined when all pass.
    */
   private approvalCheck(o: Opp): string | undefined {
+    const seatProblem = this.seatPairProblem(o);
+    if (seatProblem) return seatProblem;
     for (const id of o.participants) {
       if (this.declinedIds.has(id)) return "participant_declined";
       const m = this.members.get(id);
@@ -2173,6 +2175,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     // A probe can go out days after the gates ran (sequential probes, send windows): someone who is
     // away from New York now or this week is not asked (the gates' 6-day presence check, again).
+    const seatProblem = this.seatPairProblem(o);
+    if (seatProblem) return this.close(o, seatProblem);
     if (!this.inNyc(id, now, now + 6 * DAY)) { this.refuse(id, "probe", "away"); o.status.set(id, "unavailable"); return this.replaceOrClose(o, id); }
     // The others' picked times are all too soon now (or turned down): new times would not match theirs.
     if (this.commonTimeGone(o, id, now)) return this.closeNoCommonTime(o, id);
@@ -2410,6 +2414,8 @@ export class ConsentNetwork implements NetworkUnderTest {
    */
   private reveal(o: Opp) {
     const now = this.now();
+    const seatProblem = this.seatPairProblem(o);
+    if (seatProblem) return this.close(o, seatProblem);
     // Send-time re-check before anyone learns who (P1-5): everyone must still be reachable about the
     // others, and have room on the Blooio streak for one more message.
     for (const id of o.participants) {
@@ -4568,6 +4574,20 @@ export class ConsentNetwork implements NetworkUnderTest {
       this.ctx.log("seat_ended", { oppId: o.id, seat: seatId, reason });
       this.close(o, reason);
     }
+  }
+
+  /** Job terms can change during review or consent. Reuse the pack's pair rules on current facts. */
+  private seatPairProblem(o: Pick<Opp, "id" | "seat" | "participants">): string | undefined {
+    if (!o.seat || !this.opts.pack) return undefined;
+    const input = this.packInput(this.now());
+    // This item is being continued, not introduced again. Keep every OTHER item's history.
+    const world = new EngineWorld({
+      ...input,
+      recentProposals: input.recentProposals?.filter(p => p.id !== o.id),
+      openOpportunities: input.openOpportunities?.filter(p => p.id !== o.id),
+    }, resolveConfig(this.opts.engine), localEmbed, this.opts.pack);
+    const candidate = o.participants.find(id => id !== o.seat!.manager);
+    return candidate ? pairReason(world, candidate, o.seat.id, "professional") ?? undefined : "not_candidate_job";
   }
 
   /** A posting of this manager as it stands in the snapshot (an update keeps what it does not change). */
