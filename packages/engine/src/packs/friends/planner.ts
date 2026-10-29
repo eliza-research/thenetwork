@@ -470,8 +470,10 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       };
       const fp = finish(plan, "partner", true);
       if (!fp) continue;
+      const venue = fp.venueId ? venueById.get(fp.venueId) : undefined;
       const days = new Set<string>();
-      fp.options = slots.filter(x => { const d = dayKey(x.sl.start); if (days.has(d)) return false; days.add(d); return true; }).slice(0, 3).map(x => ({ start: x.sl.start, end: x.sl.start + act.durationMin * 60_000 })).sort((x, y) => x.start - y.start);
+      fp.options = slots.filter(x => !venue || venueOpen(venue, x.sl, act.durationMin, tz, att))
+        .filter(x => { const d = dayKey(x.sl.start); if (days.has(d)) return false; days.add(d); return true; }).slice(0, 3).map(x => ({ start: x.sl.start, end: x.sl.start + act.durationMin * 60_000 })).sort((x, y) => x.start - y.start);
       out.partners.push(fp);
       for (const id of [a, b]) count.set(id, (count.get(id) ?? 0) + 1);
     }

@@ -11,14 +11,15 @@ import { localEmbed } from "../../packages/engine/src/embed.ts";
 import { runEngine } from "../../packages/engine/src/engine.ts";
 import { candidateReason, memberReason } from "../../packages/engine/src/filters.ts";
 import { DEFAULT_FRIENDS_POLICY, FRIENDS_PLANS, ROMANCE_FRAMING, friendsInfo, friendsPack, planFriendsWeek } from "../../packages/engine/src/packs/friends/index.ts";
-import { buildPlanProbe } from "../../packages/engine/src/plans.ts";
+import { buildPlanProbe, type PlanEvidence } from "../../packages/engine/src/plans.ts";
 import type { Candidate, EngineInput } from "../../packages/engine/src/types.ts";
 import { World } from "../../packages/engine/src/world.ts";
 import { BASELINES } from "../../packages/sim/src/apps/friends/baselines.ts";
 import { officialGates, trackedMetrics } from "../../packages/sim/src/apps/friends/gates.ts";
 import { friendsMetrics, type FriendsMetrics } from "../../packages/sim/src/apps/friends/metrics.ts";
 import { engineInputOf, evidenceOf, friendsPackMatcher } from "../../packages/sim/src/apps/friends/packMatcher.ts";
-import { buildFriendsSnapshot, NYC_TZ, type FriendsSnapshot } from "../../packages/sim/src/apps/friends/snapshot.ts";
+import { SLOTS } from "../../packages/sim/src/apps/friends/persona.ts";
+import { buildFriendsSnapshot, NYC_TZ, slotTime, type FriendsSnapshot } from "../../packages/sim/src/apps/friends/snapshot.ts";
 import { runFriendsWorld, VENUES } from "../../packages/sim/src/apps/friends/world.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
@@ -40,7 +41,7 @@ function friendsSnapshotAfter(seed: number, weeks = 3, n = 160): FriendsSnapshot
 const friendsWorld = (seed: number): EngineInput => engineInputOf(friendsSnapshotAfter(seed));
 
 export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<void> {
-  await b.run("tables: every offered time fits the selected venue's opening hours", () => {
+  await b.run("plans: every offered time fits the selected venue's opening hours", () => {
     for (const seed of [101, 102, 103]) {
       const r = runFriendsWorld({ seed, n: 160, weeks: 3, matcher: BASELINES.random });
       r.world.state.week = 3; r.world.state.now += 7 * DAY;
@@ -53,6 +54,28 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
       const placed = wk.plans.filter(p => p.venueId);
       expect(placed.length).toBeGreaterThan(0);
       expect(placed.some(p => p.options.length > 1)).toBe(true);
+      // These generated members attended a group and share climbing. Their stated windows
+      // include a closed Saturday evening between an open Tuesday evening and Sunday morning.
+      const pair = seed === 101 ? ["f0057", "f0159"] : seed === 102 ? ["f0060", "f0102"] : undefined;
+      if (pair) {
+        const windows = (["tue_eve", "sat_eve", "sun_am"] as const).map(name => {
+          const start = slotTime(s.week, SLOTS.indexOf(name));
+          return { start, end: start + 3 * HOUR };
+        });
+        const evidence = new Map<MemberId, PlanEvidence>(pair.map(id => [id, {
+          memberId: id, tz: NYC_TZ, quietHours: [22, 8], stated: { windows, at: s.now, until: s.now + 7 * DAY },
+        }]));
+        const input = { now: s.now, tz: NYC_TZ, evidence, venues, crews: [], outcomes: [], offered: [] };
+        const policy = { ...DEFAULT_FRIENDS_POLICY, crews: false, repeat: false, universal: false, universalFirst: false, singleSlot: false, loosePass: false };
+        const partners = planFriendsWeek(w, input, policy, FRIENDS_PLANS).partners;
+        expect(partners.length).toBe(1);
+        const open = planFriendsWeek(w, { ...input, venues: venues.map(v => ({ ...v, hours: { ...v.hours, weekend: [9, 23] as [number, number] } })) }, policy, FRIENDS_PLANS).partners;
+        expect(open.length).toBe(1);
+        expect(open[0]!.options.length).toBe(3);
+        expect(partners[0]!.window.start).toBe(open[0]!.window.start);
+        expect(JSON.stringify(partners[0]!.invited)).toBe(JSON.stringify(open[0]!.invited));
+        placed.push(...partners);
+      }
       for (const p of placed) {
         const v = venues.find(v => v.id === p.venueId)!;
         expect(p.options.some(o => o.start === p.window.start && o.end === p.window.end)).toBe(true);
