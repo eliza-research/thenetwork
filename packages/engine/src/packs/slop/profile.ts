@@ -233,6 +233,7 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
   const out = new Map<MemberId, History>();
   const h = (id: MemberId) => { let x = out.get(id); if (!x) { x = emptyHistory(); out.set(id, x); } return x; };
   const now = input.now;
+  const completedDates = new Map<MemberId, Set<string>>();
   for (const r of input.interactions ?? []) {
     if (r.at > now) continue;
     for (const id of r.acceptedBy ?? []) h(C(id)).yes++;
@@ -240,7 +241,14 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
     if (r.outcome === "cancelled") for (const id of r.declinedBy ?? []) h(C(id)).backouts++;
     for (const id of r.noResponse ?? []) h(C(id)).silent++;
     if (r.outcome === "completed") for (const id of r.participants) {
-      const x = h(C(id)); x.dates++;
+      const member = C(id), x = h(member);
+      // Both check-ins describe one date. Keep legacy records without an opportunity id as-is.
+      if (r.opportunityId === undefined) x.dates++;
+      else {
+        const seen = completedDates.get(member) ?? new Set<string>();
+        if (!seen.has(r.opportunityId)) x.dates++;
+        seen.add(r.opportunityId); completedDates.set(member, seen);
+      }
       const s = slotOf(r.at);
       if (s !== undefined) x.attendedSlots.push(s);
     }
