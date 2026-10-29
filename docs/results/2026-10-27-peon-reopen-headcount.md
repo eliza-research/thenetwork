@@ -37,7 +37,7 @@ REQUIRE_PG=1 bun test --conditions eliza-source --timeout 120000 ./packages/netw
 
 The file goes from **1 pass, 1 fail** to **2 pass, 0 fail**, with 68 assertions in both runs. Baseline: 6.70 seconds; fixed: 6.09 seconds. No performance gain is claimed. One implementation was tried; no assertion or threshold was adjusted after observing the baseline failure.
 
-Additional checks:
+Original implementation checks (historical; not rerun by the evidence follow-up below):
 
 ```sh
 bun run typecheck
@@ -53,6 +53,110 @@ REQUIRE_PG=1 bun run test:e2e
 - Combined with the preceding nine contribution PRs: clean cherry-pick, all four typecheck configurations pass, 9/9 job-seat gates pass, and all three posting integration cases pass (90 assertions, 14.10 seconds).
 
 Peon's existing pinned run uses seeds 13-16, eight weeks, 400 candidates and 80 jobs per city, the pack/keyword/oracle arms and realism v2. The job-seat block uses its existing small service world, including its close-by-text and capacity checks. The general Peon simulator writes seats directly; the new Postgres integration case is the evidence for the persistence fix. The one-full-simulation-per-agent allowance was already used for PR #136, so these runs cover the affected blocks.
+
+## Reviewer evidence follow-up (2026-10-29)
+
+The [review](https://github.com/eliza-research/thenetwork/pull/145#pullrequestreview-5679201482)
+requested a closed-posting output audit, actual PostgreSQL output, and a landing order.
+This follow-up changes the report and PR description only. Code and assertions
+remain unchanged from `64a45a95062e428a1679cbe3bf95a5bba47edecd`.
+
+### Why retaining the count does not advertise a closed job
+
+`matchable` is not the closure guard. The stored posting retains its headcount;
+the following existing code controls matching and messages:
+
+- [`peonSeats`](https://github.com/startrack3r/thenetwork/blob/64a45a95062e428a1679cbe3bf95a5bba47edecd/packages/engine/src/packs/peon/seats.ts#L50) removes posting
+  facts from the manager and projects them onto the seat. It strips every source
+  `peon:openings:` tag. At line 79, non-active intent status produces exactly zero
+  projected openings, regardless of the saved count.
+- [`job_closed`](https://github.com/startrack3r/thenetwork/blob/64a45a95062e428a1679cbe3bf95a5bba47edecd/packages/engine/src/packs/peon/rules.ts#L17) rejects a
+  closed job profile. The profile requires an eligible job intent and positive
+  projected openings. [`checkSeats` and `endSeat`](https://github.com/startrack3r/thenetwork/blob/64a45a95062e428a1679cbe3bf95a5bba47edecd/packages/network/src/network.ts#L4543)
+  separately close pending review/probe items when the posting becomes inactive.
+  Already booked introductions remain, as before.
+- [`peonHooks`](https://github.com/startrack3r/thenetwork/blob/64a45a95062e428a1679cbe3bf95a5bba47edecd/packages/network/service/packs.ts#L286) constructs its
+  candidate and manager messages through `seatJob` and `SEAT_COPY`. `SeatJob`
+  contains title, pay, place and must-have checks, not headcount. These templates
+  do not render raw matchable facets. Booked introductions use the title and
+  counterpart name; they do not print the stored openings count.
+
+There is no universal renderer that drops every closed posting. `peonSeats` is
+the conversion that zeros its matching capacity; lifecycle checks end pending
+introductions. The staff listing intentionally retains closed posts and their
+correct historical headcount. It is not a member-facing hiring recommendation.
+
+The existing PostgreSQL [seat integration case](https://github.com/startrack3r/thenetwork/blob/64a45a95062e428a1679cbe3bf95a5bba47edecd/packages/network/test/peon-seats.integration.test.ts#L69)
+already stores a closed posting with three openings, projects zero openings,
+and checks that the real engine produces no proposal for it. Fresh run:
+
+```sh
+REQUIRE_PG=1 bun test --conditions eliza-source --timeout 120000 ./packages/network/test/peon-seats.integration.test.ts
+```
+
+```text
+bun test v1.4.2 (744846f84)
+
+packages\network\test\peon-seats.integration.test.ts:
+[llm] Neither SURPLUS_API_KEY nor OPENAI_API_KEY is set: LLM calls will fail (see .env.example).
+(pass) each open posting is a seat with capacity = openings; full and closed seats get no new match; minors never [35.36ms]
+
+ 1 pass
+ 0 fail
+ 19 expect() calls
+Ran 1 test across 1 file. [1.83s]
+```
+
+The existing [close-by-text simulation gate](https://github.com/startrack3r/thenetwork/blob/64a45a95062e428a1679cbe3bf95a5bba47edecd/scripts/sim/peon-seats.ts#L241)
+also passes. It checks the candidate's closure message, closure of the pending
+intro, preservation of an already booked intro, and no new review item after
+three simulated days. `bun run sim --only peon-seats` passes **9/9 gates**,
+zero tracked misses, 0.1 seconds. This gate is compatibility evidence; it does
+not replace the database headcount round trip.
+
+### Fresh persistence reproduction
+
+Windows; Bun 1.4.2 (`744846f84`); `SELECT version();` returned PostgreSQL 16.15,
+compiled by Visual C++ build 1944, 64-bit. Local port 54339. The environment supplied
+`USER=postgres`, `REQUIRE_PG=1`, `OBSERVATORY_PG_PORT=54339`, a local
+`OBSERVATORY_PG_DIR`, `PG_BIN_DIR`, and PostgreSQL binaries on `PATH`.
+
+```sh
+bun test --conditions eliza-source --timeout 120000 ./packages/network/test/peon-postings.integration.test.ts
+```
+
+Actual terminal output, exit 0:
+
+```text
+bun test v1.4.2 (744846f84)
+
+packages\network\test\peon-postings.integration.test.ts:
+[llm] Neither SURPLUS_API_KEY nor OPENAI_API_KEY is set: LLM calls will fail (see .env.example).
+(pass) peon postings: text intake, restart, staff API (NetworkService, Postgres) > closing and reopening a posting preserves its headcount while closed seats stay unavailable [1090.56ms]
+(pass) peon postings: text intake, restart, staff API (NetworkService, Postgres) > a job post by text is read back, saved on the yes, kept across a restart, and closed by staff [706.36ms]
+
+ 2 pass
+ 0 fail
+ 68 expect() calls
+Ran 2 tests across 1 file. [4.39s]
+```
+
+The LLM startup warning does not skip or replace database checks. These tests
+make zero model calls. **Database-free reproducer for this PR's persistence
+defect: none.** A reviewer needs PostgreSQL; a skipped file is not validation.
+
+### Coordination and scope of this follow-up
+
+Suggested landing order: **#144, then #145, then #146**. Rebase each later branch
+after its predecessor lands. Retain each regression case, then rerun the posting
+integration file and typecheck after resolving shared context. These instructions
+do not claim that current branches merge without conflict. No merge or rebase
+was performed for this report update.
+
+Only the two focused PostgreSQL files and job-seat simulation were rerun here.
+The broader integration, E2E, typecheck and Peon results above retain their original
+dates and scope. No fresh full-suite or Linux CI pass is claimed. No production
+code, test assertion, public copy or client contract changed.
 
 ## safety_gates
 
