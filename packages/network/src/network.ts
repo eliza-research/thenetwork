@@ -306,6 +306,8 @@ interface MemberState {
   onboarding?: unknown;
   /** peon: a job post (or a close) read back to the manager and waiting for their yes (jobs.ts). */
   posting?: PostingDraft;
+  /** The manager's unanswered intro question interrupted by a posting conversation. */
+  postingProbe?: string;
   /**
    * Unsolicited sends (PRD 32.9, PH-003, F28): anything that is not a reply within 15 minutes, a
    * follow-up to the member's own ask, or part of an opportunity they said yes to. Times per lane
@@ -3285,6 +3287,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (aw.kind === "booked" ? now - aw.at > OPT_OUT_HOURS * HOUR || now >= (this.opps.get(aw.oppId ?? "")?.meetingAt ?? 0) : aw.kind !== "probe" && now - aw.at > 3 * DAY) m.awaiting = undefined;
     }
     const p = nyParts(now);
+    for (const m of this.members.values()) this.resumePostingProbe(m);
     this.weeklyCheckins(now);
     if (p.hour >= this.opts.runHour && p.hour < ENGINE_RUN_UNTIL && this.lastRunDay !== p.day) {
       this.lastRunDay = p.day;
@@ -4602,6 +4605,17 @@ export class ConsentNetwork implements NetworkUnderTest {
     return { ok: true };
   }
 
+  /** Ask an interrupted manager question again after posting ends; expiry and closure already ran. */
+  private resumePostingProbe(m: MemberState) {
+    if (!m.postingProbe || m.awaiting) return;
+    const o = this.opps.get(m.postingProbe);
+    m.postingProbe = undefined;
+    if (!o || o.seat?.manager !== m.id || o.stage !== "probing" || o.status.get(m.id) !== "probing") return;
+    // Use the normal probe path and its send checks. A posting yes/no never answers this question.
+    o.contacted.delete(m.id);
+    this.probe(o, m.id);
+  }
+
   /**
    * A job post by text in a handled turn. A posting command starts a draft (or a close); while a draft
    * waits, a yes saves it, a no drops it, and other details correct it. Every step answers with one
@@ -4632,6 +4646,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const asks = (waiting?.asks ?? 0) + (step.ready ? 0 : 1);
     // Two questions without the missing field: the draft is dropped (one question at a time, never a loop).
     if (asks > 2) { clear(); return reply(POSTING_COPY.dropped); }
+    if (m.awaiting?.kind === "probe" && m.awaiting.oppId && this.opps.get(m.awaiting.oppId)?.seat?.manager === m.id) m.postingProbe = m.awaiting.oppId;
     m.posting = { ...step.draft, asks, ready: step.ready };
     m.awaiting = { kind: "posting", at: this.now() };
     this.ctx.log("posting_read_back", { memberId: m.id, ready: step.ready, close: !!step.draft.close });
