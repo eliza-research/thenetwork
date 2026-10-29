@@ -191,7 +191,22 @@ It differs from source `f422e5b7e130623ae482c9e777994d8b2a5b1347` only in `.gith
 Both jobs use Ubuntu 22.04 and explicitly check out that source commit.
 Test commands, pinned actions, Bun version, PostgreSQL image, empty provider keys and permissions remain the same.
 The validation branch is not part of this PR.
-Current observed status: `queued`. No Linux CI pass is claimed while no runner has executed tests.
+That run finished with failures on 2026-10-29. Both typecheck steps passed.
+The Slop block passed 40/40 blocking gates, including the new budget regression.
+Full simulation: 330/331 blocking gates pass. Integration: 677 pass, 4 fail, 8 skip.
+The only simulation failure and all four integration failures came from the backup path.
+Ubuntu 22.04 selected `pg_dump` 14.24, but the PostgreSQL server was 16.15.
+The client refused to dump the newer server: `aborting because of server version mismatch`.
+The e2e step and later offline steps were skipped after those failures.
+These are actual failed jobs; no Linux suite pass is claimed.
+
+The alternate runner configuration caused this mismatch. It is not included in the contribution diff.
+The next attempt uses the repository's original Ubuntu 24.04 workflow on the PR branch.
+The [official runner inventory](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md#postgresql) lists PostgreSQL 16.15.
+New [original-workflow run](https://github.com/miracle2044/thenetwork/actions/runs/40886868999): source `63a81e4a5bea9874e724e78bce9e7383205c8bbb`.
+This source differs from the previous tested source only in the evidence report.
+Current observed status: `queued`; conclusion: `pending`.
+No successful Linux CI outcome is claimed before that run finishes.
 No deployment workflow, paid model or live-send path was invoked.
 
 ## llm_evidence
