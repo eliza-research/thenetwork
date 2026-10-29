@@ -167,6 +167,59 @@ export async function runSlopLive(seed: number, o: { days?: number; n?: number }
 }
 
 export async function slopLiveArm(b: Block, o: { quick: boolean }): Promise<void> {
+  await b.run("slop-live: a missed date is attributed to the member who missed it", async () => {
+    const { HOUR } = await import("../../packages/core/src/index.ts");
+    const { Mini } = await import("../../packages/network/test/mini.ts");
+    const { appearanceFacet, slopProfiles, SLOP_DEFAULT_OPTIONS, runEngine } = await import("../../packages/engine/src/index.ts");
+    const { reviewReason } = await import("../../packages/engine/src/packs/slop/rules.ts");
+    const outcomes: { seed: number; kind: string; counts: number[]; held: boolean[]; selected: boolean; trustExcluded: number }[] = [];
+    for (const seed of [1, 2, 3]) for (const kind of ["partner missed", "self missed", "both missed", "completed"]) {
+      const wiring = appWiring("slop");
+      const ids = ["alex", "blair", "casey", "drew"];
+      const w = new Mini(ids.map((id, i) => ({ id, name: id, age: 30, interests: ["climbing"], shareable: true, romance: { is: i ? "man" : "woman", seeks: [i ? "woman" : "man"] } })),
+        { seed, app: "slop", review: "human", pack: wiring.pack, hooks: wiring.hooks, plans: wiring.plans ?? true, engine: wiring.engine });
+      for (const [i, id] of ids.entries()) {
+        await w.say(id, "Hi");
+        await w.say(id, `I'm a ${i ? "man looking for women" : "woman looking for men"}, aged 30. Ages 25-40, within 10 miles of 11211. Looking for a long-term relationship. I like climbing. My schedule varies.`);
+        await w.say(id, "Yes, that's right.");
+        // Synthetic stored ratings satisfy the production floor; no rater call is claimed.
+        w.facets.push(appearanceFacet(id, { age: 30 }, { face: 0, body: 0, overall: 0, confidence: 1, model: "synthetic-fixture" }, w.clock.now()));
+      }
+      const partners = kind === "both missed" ? ids.slice(1, 2) : ids.slice(1, 3);
+      for (const other of partners) {
+        const pair = [ids[0]!, other];
+        const opp = w.propose(pair, { category: "romance", objective: "coffee" });
+        expect(await w.runUntil(() => w.net.reviewQueue().some(q => q.oppId === opp))).toBe(true);
+        expect(w.net.review(opp, "approve", { reviewer: "sim_staff" })).toBe(true);
+        const prior = w.meetings.length;
+        await w.answerProbes(pair, () => "yes");
+        expect(w.meetings.length).toBe(prior + 1);
+        await w.run(w.meetings.at(-1)!.at + 3 * HOUR - w.clock.now());
+        const speakers = kind === "partner missed" ? [other] : kind === "self missed" ? [ids[0]!] : pair;
+        for (const id of speakers) await w.say(id, kind === "completed" ? "It went well, thanks!" : "I couldn't make it");
+        for (const id of pair.filter(id => !speakers.includes(id))) await w.say(id, "Thanks");
+        w.restart();
+      }
+      const input = w.net.packInput(w.clock.now());
+      const history = (x: typeof input) => ids.map(id => slopProfiles(x).get(id)!.history.noShows);
+      const counts = history(input);
+      expect(history({ ...input, interactions: [...input.interactions!].reverse() })).toEqual(counts);
+      const held = ids.map(id => reviewReason(slopProfiles(input).get(id)!, SLOP_DEFAULT_OPTIONS) === "trust_review");
+      const engine = await runEngine(input, wiring.engine, { pack: wiring.pack });
+      const selected = engine.proposals.some(p => p.participants.includes(ids[0]!));
+      const trustExcluded = engine.runLog.funnel.memberExclusions.trust_review ?? 0;
+      outcomes.push({ seed, kind, counts, held, selected, trustExcluded });
+    }
+    console.log("no-show attribution outcomes:", JSON.stringify(outcomes));
+    for (const row of outcomes) {
+      const counts = row.kind === "partner missed" ? [0, 1, 1, 0] : row.kind === "self missed" ? [2, 0, 0, 0] : row.kind === "both missed" ? [1, 1, 0, 0] : [0, 0, 0, 0];
+      expect(row.counts).toEqual(counts);
+      expect(row.held).toEqual(row.kind === "self missed" ? [true, false, false, false] : [false, false, false, false]);
+      expect(row.selected).toBe(row.kind !== "self missed");
+      expect(row.trustExcluded).toBe(row.kind === "self missed" ? 1 : 0);
+    }
+  });
+
   const seeds = o.quick ? [SLOP_LIVE_PINNED.seeds[0]!] : SLOP_LIVE_PINNED.seeds;
   const runs: SlopLiveRun[] = [];
   for (const s of seeds) runs.push(await runSlopLive(s, o.quick ? { days: 14 } : {}));
