@@ -179,6 +179,46 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
     }
     console.log("PEON_UPDATE_CHOICE_OUTCOMES", JSON.stringify(outcomes));
     expect(outcomes.filter(x => x.correct).length).toBe(outcomes.length);
+    const ambiguous: { seed: number; kind: string; retained: boolean; resolved: boolean; writes: number; correct: boolean }[] = [];
+    for (const seed of [7, 13, 17]) for (const kind of ["forward", "reverse", "duplicate", "question_limit", "decline", "confirmation_no"]) {
+      const x = new SeatWorld(seed);
+      x.add("hm1", "Rowan Abbott", 34, { verified: "Acme" });
+      for (const body of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await x.say("hm1", body);
+      await x.say("hm1", `${POST}; sponsorship yes`); await x.say("hm1", "yes");
+      await x.say("hm1", "We're hiring a product designer (level 2), 1 opening, $70k-$90k, remote, must have Figma; no sponsorship");
+      await x.say("hm1", "yes");
+      if (kind === "duplicate") { await x.say("hm1", `${POST}; sponsorship yes`); await x.say("hm1", "yes"); }
+      const originals = [...x.saved], before = x.saved.length;
+      const target = originals[kind === "reverse" || kind === "duplicate" ? 1 : 0]!;
+      const fields = (p: JobPosting) => JSON.stringify([p.id, p.managerId, p.title, p.family, p.seniority, p.openings, p.payMin, p.payMax, p.mode, p.area, p.must, p.nice, p.sponsors, p.status]);
+      const draft = () => x.net.memberList().find(m => m.id === "hm1")?.posting;
+      // Supply pay here so this retry is independent of main's separate partial-update defect.
+      await x.say("hm1", "Update my job post: 3 openings, $100k-$140k");
+      expect(x.saved.length).toBe(before); x.restart();
+      const reply = kind === "duplicate" ? "data analyst" : kind === "reverse" ? "product designer and data analyst" : "data analyst and product designer";
+      await x.say("hm1", reply); x.restart();
+      const retained = draft()?.update === true && draft()?.id === undefined && draft()?.ready === false
+        && draft()?.asks === 2 && draft()?.openings === 3 && draft()?.payMin === 100 && draft()?.payMax === 140;
+      expect(x.saved.length).toBe(before);
+      await x.say("hm1", kind === "question_limit" ? reply : kind === "decline" ? "no" : target.title);
+      x.restart();
+      const resolved = kind === "question_limit" ? draft() === undefined && isCopy(x.last("hm1"), POSTING_COPY.dropped)
+        : kind === "decline" ? draft() === undefined
+        : draft()?.id === target.id && draft()?.ready === true && draft()?.asks === 2
+          && x.last("hm1").includes(target.title.charAt(0).toUpperCase() + target.title.slice(1))
+          && x.last("hm1").includes("3 openings") && x.last("hm1").includes("$100k-$140k") && /Reply yes to post it/.test(x.last("hm1"));
+      expect(x.saved.length).toBe(before);
+      await x.say("hm1", kind === "confirmation_no" ? "no" : "yes"); x.restart();
+      const writes = x.saved.length - before;
+      const wantsUpdate = ["forward", "reverse", "duplicate"].includes(kind);
+      const expected = { ...target, openings: 3, payMin: 100, payMax: 140 };
+      const correct = retained && resolved && draft() === undefined
+        && (wantsUpdate ? writes === 1 && fields(x.saved.at(-1)!) === fields(expected) : writes === 0)
+        && originals.filter(p => !wantsUpdate || p.id !== target.id).every(p => fields([...x.saved].reverse().find(q => q.id === p.id)!) === fields(p));
+      ambiguous.push({ seed, kind, retained, resolved, writes, correct });
+    }
+    console.log("PEON_UPDATE_AMBIGUITY_OUTCOMES", JSON.stringify(ambiguous));
+    expect(ambiguous.filter(x => x.correct).length).toBe(ambiguous.length);
   });
 
   await b.run("intake rules: a job post is read from text, read back, and needs a title and a pay range", () => {

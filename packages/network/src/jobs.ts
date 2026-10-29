@@ -174,8 +174,8 @@ export function readPostingText(body: string, ctx: { draft?: PostingDraft; posti
     const named = open.filter(p => body.toLowerCase().includes(p.title.toLowerCase()));
     const pick = named.length === 1 ? named[0] : !choosingUpdate && open.length === 1 ? open[0] : undefined;
     if (!pick) {
-      if (choosingUpdate) return undefined;
-      return { ...(open.length ? { draft: { ...read, update: true } } : {}), text: open.length ? POSTING_COPY.whichToClose(open.map(p => p.title)).replace("close", "update") : POSTING_COPY.nothingToClose, ready: false };
+      if (choosingUpdate && !named.length) return undefined;
+      return { ...(open.length ? { draft: choosingUpdate ? { ...ctx.draft } : { ...read, update: true } } : {}), text: open.length ? POSTING_COPY.whichToClose(open.map(p => p.title)).replace("close", "update") : POSTING_COPY.nothingToClose, ready: false };
     }
     if (choosingUpdate) {
       const { update: _update, asks: _asks, ready: _ready, ...pending } = ctx.draft!;
@@ -184,6 +184,7 @@ export function readPostingText(body: string, ctx: { draft?: PostingDraft; posti
       read = { ...pending, ...parsePosting(body.slice(0, at) + body.slice(at + pick.title.length)) };
     }
     if (base.id !== pick.id) { base.id = pick.id; base.title ??= pick.title; }
+    if (choosingUpdate) base.asks = ctx.draft!.asks;
     delete base.update;
     if (read.title?.toLowerCase() === pick.title.toLowerCase() || (read.title && body.toLowerCase().includes(`${read.title} post`))) delete read.title;
   }
