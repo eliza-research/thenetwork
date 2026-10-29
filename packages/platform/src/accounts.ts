@@ -477,8 +477,11 @@ export class Accounts {
     if (fromApp === app.id || !fields.length || fields.some(f => !(SHAREABLE_FIELDS as readonly string[]).includes(f))) return false;
     const person = await this.personFor(who.e164);
     if (!person) return false;
+    // A staff ban must not leave a path that mints new cross-app grants. Restricted memberships are
+    // the ban/hold state on the platform side; treat them like removed for share.
+    if (await this.banned(who.e164, person)) return false;
     const [to, from] = await Promise.all([this.store.getMembership(person.id, app.id), this.store.getMembership(person.id, fromApp)]);
-    const live = (m?: Membership) => !!m && m.state !== "removed" && m.state !== "invited";
+    const live = (m?: Membership) => !!m && m.state !== "removed" && m.state !== "invited" && m.state !== "restricted";
     if (!live(to) || !live(from)) return false;
     await this.store.putShareGrant({ personId: person.id, fromApp, toApp: app.id, fields: [...new Set(fields)], grantedAt: this.now(), revokedAt: null });
     return true;
