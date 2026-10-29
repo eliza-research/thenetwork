@@ -159,6 +159,10 @@
 {"text":"sure, don't cancel it","label":"yes"}
 {"text":"yes, no need to cancel","label":"yes"}
 {"text":"yes! I'm coming","label":"yes"}
+{"text":"yes! never mind what I said before","label":"yes"}
+{"text":"nvm I can make it","label":"yes"}
+{"text":"I'm not coming late, see you at 7","label":"unclear"}
+{"text":"no need to cancel, see you there","label":"unclear"}
 {"text":"I don't want to","label":"no"}
 {"text":"I'm good, thanks","label":"no"}
 {"text":"i'm ok thanks","label":"no"}

@@ -522,8 +522,9 @@ const REFUSAL_RX: RegExp[] = [
   /\b(?:i'?ll|i will|gonna|going to|i'?m going to|i'?m gonna|i have to|i'?ve got to|i gotta|will have to|i'?d|i would|i think i'?ll)\s+(?:have to\s+)?(?:pass|skip|sit (?:this|that|it) out|decline|sit this one out)\b/,
   /\b(?:hard |gonna |i )?pass\b(?!\s+(?:the|it|along|by|me|on (?:the|my)|through))/,
   /\bno time\b(?! pressure)/,
-  /\bnot (?:interested|down|for me|this (?:time|week|weekend|one)|right now|now|today|tonight|really|up for (?:it|that|this)|feeling it|my (?:thing|scene|vibe|cup of tea)|a fan|happening|gonna happen|going to happen|keen|into (?:it|that|this)|a good (?:time|week|fit)|available|possible|able to|the right time|at the moment|anytime soon|in the mood|going(?! to\b)|coming|anymore|any more)\b/,
-  /\bin no mood\b|\bnever ?mind\b|\bnvm\b|(?<!(?:don'?t|do not|not|no need to|never)\s+)\bcancel(?:l?ed|ling)?\b/,
+  /\bnot (?:interested|down|for me|this (?:time|week|weekend|one)|right now|now|today|tonight|really|up for (?:it|that|this)|feeling it|my (?:thing|scene|vibe|cup of tea)|a fan|happening|gonna happen|going to happen|keen|into (?:it|that|this)|a good (?:time|week|fit)|available|possible|able to|the right time|at the moment|anytime soon|in the mood|going(?! to\b| late\b| anywhere\b)|coming(?! late\b| in late\b| anywhere\b)|anymore|any more)\b/,
+  // "Never mind" ends its clause to be a no ("ok never mind"); "never mind what I said, yes" and "nvm I can make it" are not.
+  /\bin no mood\b|\b(?:never ?mind|nvm)\W*$|(?<!(?:don'?t|do not|not|no need to|never)\s+)\bcancel(?:l?ed|ling)?\b/,
   /\b(?:absolutely|definitely|certainly|probably|def|totally|hell|of course|surely|really|actually|sadly|unfortunately) not\b/,
   /\b(?:i'?d |i would )?rather not\b/,
   /\b(?:don'?t|do not) think (?:i can|i could|i'?ll make it|i'?ll be able)\b/,
