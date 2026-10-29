@@ -66,6 +66,10 @@ export function peonSeats<S extends SnapshotLike>(snap: S): S {
     const id = seatIdOf(p.id);
     if (byId.has(id)) continue;
     members.push({ ...owner, id, age: 18, joinedAt: p.createdAt, seatOwner: owner.id } as Member);
+    // The manager can seek work elsewhere, but cannot fill their own seat. Exclude this pair
+    // before ranking: rejecting it only during service routing can waste the seat's whole slate.
+    // This derived edge stays in the snapshot; it is not a member-authored or persisted block.
+    edges.push({ from: owner.id, to: id, type: "avoid", strength: 1, explicit: false, createdAt: p.createdAt });
     let posted: number | undefined;
     for (const f of snap.facets) {
       if (f.memberId !== owner.id) continue;
