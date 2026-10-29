@@ -6,3 +6,11 @@
 {"text":"any day but Friday works","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":["a","b","c"]}
 {"text":"any day but Friday works","options":["Thursday 7pm","Friday 7pm"],"answer":"yes","keys":["a"]}
 {"text":"I'm free anytime apart from Friday","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":["a","b","c"]}
+{"text":"Sorry, but Saturday works","options":["Saturday 10am","Sunday 10am"],"answer":"yes","keys":["a"]}
+{"text":"Sorry, but Monday works","options":["Saturday 10am","Sunday 10am"],"answer":"unclear","keys":[]}
+{"text":"anytime but Sunday works","options":["Saturday 10am","Sunday 10am"],"answer":"yes","keys":["a"]}
+{"text":"anything but Friday works","options":["Thursday 7pm","Friday 7pm"],"answer":"yes","keys":["a"]}
+{"text":"everything but Friday works","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":["a","b","c"]}
+{"text":"Sorry but Sunday works","options":["Saturday 10am","Sunday 10am"],"answer":"yes","keys":["b"]}
+{"text":"I was busy, but Sunday works","options":["Saturday 10am","Sunday 10am"],"answer":"yes","keys":["b"]}
+{"text":"Cost is fine, but Saturday works","options":["Saturday 10am","Sunday 10am"],"answer":"yes","keys":["a"]}

@@ -631,8 +631,13 @@ const NEG_CUE = /\b(not(?! sure)|can'?t(?! wait)|cannot|couldn'?t|won'?t|wouldn'
 const NEG_AFTER = /^\s*(?:(?:one|option|time|slot)\b\s*)?(?:\d{1,2}(?::\d\d)?\s*(?:am|pm)\s*)?(?:(?:is|'s|are|would be|will be)\s+)?(?:out\b|bad\b|busy\b|full\b|packed\b|booked\b|taken\b|no good\b|not (?:good|great|ideal|possible|great)\b|tough\b|rough\b|a no\b|off\b|impossible\b|doesn'?t\b|does not\b|don'?t\b|do not\b|won'?t\b|will not\b|isn'?t\b|is not\b|can'?t\b|cannot\b)/;
 /** A clause boundary: punctuation, "but", "though", "however". */
 const CLAUSE_START = /[.,;!?]|\b(but|though|however|although|so)\b/g;
-/** A cue that rules a named day or clock time out: "any day but Friday", "free apart from Friday". */
-const EXCL_BEFORE = /\b(?:but|except(?: for)?|apart from|other than|aside from|save for|excluding|barring)\s+$/;
+/**
+ * A cue that rules a named day or clock time out: "any day but Friday", "free apart from Friday".
+ * A bare "but" is contrast, not exclusion ("Sorry, but Saturday works" picks Saturday), so "but" only
+ * counts behind a universal ("any day", "anytime", "all days", "whichever"); the other cues are
+ * exclusionary on their own.
+ */
+const EXCL_BEFORE = /\b(?:(?:any ?time|any\s+day|any\s+of\s+(?:them|those)|any\s+other\s+(?:day|time)|anything|everything|whatever|every\s*day|all|whichever)\s+but\s+|except(?: for)?\s+|apart from\s+|other than\s+|aside from\s+|save for\s+|excluding\s+|barring\s+)$/;
 /** Words that make a named time a pick ("Saturday works", "free Sunday"), not just a mention ("Saturday I'm at a wedding"). */
 const POSITIVE_PICK = /\b(works|work for (?:me|us)|does|good|fine|great|perfect|best|better|free|open|i can|let'?s|is ok|okay|please|for me|yes|yeah|sure)\b/;
 /** True when the words at `i` (of length `len`) are refused: a negation cue earlier in their clause, or a refusal right after them. */
