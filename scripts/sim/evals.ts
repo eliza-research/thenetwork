@@ -65,6 +65,20 @@ export async function evalsBlock(b: Block): Promise<void> {
     b.gate(`consent replies ${file}: accuracy >= 97% (n ${lines.length})`, lines.length >= (file === "consent-replies.jsonl" ? 300 : 75) && ok / lines.length >= 0.97, pct(ok / lines.length));
     b.gate(`consent replies ${file}: no refusal or hedge read as yes`, notYesAsYes.length === 0, notYesAsYes.slice(0, 5).join(" | "));
   }
+  // Exact match, not a 97% corpus: a reply that names a day or time nobody offered must never be a pick.
+  // One corpus row cannot pin this (a single miss in 323 stays inside the accuracy bar), so each row here
+  // carries its own option set and every row must match exactly or the gate fails.
+  // Its own file, with `options` as plain labels keyed "abc" by position: the shared day/clock collision
+  // fix in a sibling PR stores `options` as {key,label} objects under a different filename. Two shapes in
+  // one file means whichever gate survives a merge misreads every row.
+  const unoffered = await jsonl<{ text: string; options: string[]; answer: "yes" | "no" | "unclear"; keys: string[] }>("network/unoffered-time-answers.jsonl");
+  const wrongUnoffered: string[] = [];
+  for (const l of unoffered) {
+    const opts = l.options.map((label, i) => ({ key: String.fromCharCode(97 + i), start: i, end: i + 1, label }));
+    const r = parseProbeReply(l.text, opts);
+    if (r.answer !== l.answer || JSON.stringify(r.keys) !== JSON.stringify(l.keys)) wrongUnoffered.push(`${l.text} -> ${r.answer} ${JSON.stringify(r.keys)}, want ${l.answer} ${JSON.stringify(l.keys)}`);
+  }
+  b.gate(`time answers: a day or time nobody offered is never a pick (n ${unoffered.length}, exact match)`, unoffered.length >= 23 && wrongUnoffered.length === 0, wrongUnoffered.slice(0, 3).join(" | ") || `${unoffered.length}/${unoffered.length} exact`);
 
   const benign = (await Bun.file(`${ROOT}/network/benign-adult.txt`).text()).trim().split("\n");
   const flagged = benign.filter(t => classify(t).abuse.length);
