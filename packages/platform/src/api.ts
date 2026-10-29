@@ -197,7 +197,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
     hooks: { onJoin: o.onJoin, onStop: o.onStop, onForget: o.onForget, onExport: o.onExport, onAgeLowered: o.onAgeLowered },
   });
   const otp = new OtpService(o.store, o.otp, { hashKey, now, limits: o.otpLimits, log });
-  const sessions = new SessionService(o.store, { now, secret: sessionSecret });
+  const sessions = new SessionService(o.store, { now, secret: sessionSecret, hashKey });
   const cookieName = (app: AppId) => (dev ? `sid_${app}` : "__Host-sid");
   const cookie = (app: AppId, token: string, maxAge: number) =>
     `${cookieName(app)}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${dev ? "" : "; Secure"}`;
@@ -468,6 +468,9 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           if (!phoneOtpOnlyApps.has(appId) && o.turnstile && !(await o.turnstile.verify(typeof b.turnstileToken === "string" ? b.turnstileToken : undefined, ip, dev ? undefined : siteHosts(appId, env)))) {
             return json(400, { ok: false, error: "turnstile" });
           }
+          // A banned number gets the same answer as any other, and no code is sent (PRD 40.3; the MCP
+          // path does the same in startOtp).
+          if (await accounts.banned(e164)) return json(200, { ok: true });
           const r = await otp.start(app, e164, ip);
           if (!r.ok) return json(429, { ok: false, error: "rate_limited" }, { "retry-after": String(Math.ceil(r.retryAfterMs / 1000)) });
           return json(200, { ok: true });
@@ -483,6 +486,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           const e164 = normalizePhone(b.phone);
           const code = typeof b.code === "string" ? b.code.trim() : "";
           if (!e164 || !(await otp.verify(appId, e164, code, ip))) return json(400, { ok: false, error: "invalid_code" });
+          // A code sent before the ban gives no session after it.
+          if (await accounts.banned(e164)) return json(400, { ok: false, error: "invalid_code" });
           // A new session at every login (the old cookie on this request is revoked: no fixation).
           await sessions.revoke(cookies.get(cookieName(appId)));
           // A number not seen for 12 months goes on hold: the session gets no person until staff decide.

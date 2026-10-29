@@ -141,10 +141,11 @@ describe.skipIf(!pgAvailable)("member number change (Postgres)", () => {
     expect(await b.call("POST", "/api/me/phone/confirm", { code: t.codes.get(B) })).toMatchObject({ status: 403, body: { error: "review" } });
     expect(await store.findPhone(B)).toBeUndefined();
     // A banned person cannot start (a new number would escape a ban by phone).
+    // The live session is refused at authenticate (401), before the phone-change handler.
     const d = t.browser(); await d.login(D); await t.join(d);
     await store.ban({ id: `ban_nc_${process.pid}_2`, scope: "person", personId: (await store.findPhone(D))!.personId, phoneHash: null, reason: "test", reportId: null, bannedBy: "staff", at: t.now() });
     t.tick(31_000);
-    expect(await d.call("POST", "/api/me/phone/start", { phone: E })).toMatchObject({ status: 403, body: { error: "review" } });
+    expect(await d.call("POST", "/api/me/phone/start", { phone: E })).toMatchObject({ status: 401, body: { ok: false, error: "unauthorized" } });
     // A number on hold (it may have a new owner) cannot move either.
     const e = t.browser(); t.tick(31_000); await e.login(E); await t.join(e);
     await store.setPhoneHold(E, "recycled_number", t.now());
