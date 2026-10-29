@@ -1,5 +1,5 @@
-// After a booking, "no need to cancel" is not a cancel: the date stays and the
-// other member hears nothing. "I need to cancel" still calls it off.
+// After a booking, "no need to cancel" and "we don't need to cancel" are not a cancel: the date stays
+// and the other member hears nothing. "I need to cancel" and "I'm not comfortable meeting" call it off.
 import { describe, expect, test } from "bun:test";
 import { Mini } from "./mini.ts";
 
@@ -16,7 +16,7 @@ async function booked() {
 }
 
 describe("cancel words after a booking", () => {
-  for (const text of ["no need to cancel, see you there", "no need to cancel, I'm still coming"]) {
+  for (const text of ["no need to cancel, see you there", "no need to cancel, I'm still coming", "we don't need to cancel", "I don't need to cancel, see you then", "I'm not comfortable with the venue but I'll come"]) {
     test(`"${text}" keeps the date`, async () => {
       const w = await booked();
       const from = w.mark();
@@ -27,7 +27,7 @@ describe("cancel words after a booking", () => {
     });
   }
 
-  for (const text of ["I need to cancel, sorry", "sorry, something came up"]) {
+  for (const text of ["I need to cancel, sorry", "sorry, something came up", "I'm not comfortable meeting", "honestly I'm not ok with meeting anymore"]) {
     test(`"${text}" calls it off`, async () => {
       const w = await booked();
       await w.say("a", text);
