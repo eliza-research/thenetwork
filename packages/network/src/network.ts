@@ -44,6 +44,7 @@ import { APPS, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { meetingSpot, nearbyVenues, NEIGHBORHOOD, NEIGHBORHOODS, neighborhood, travelMinutes, VENUES, type Venue } from "./geo.ts";
 import { RelayDesk, withdrawsSwap, type RelayAsk, type RelayCallOptions, type RelayHeld, type RelayHost, type RelayMatch, type RelayMember, type RelayOutcome, type RelayState } from "./relay.ts";
 import type { RelayRecord } from "../../engine/src/relay.ts";
+import { seatFills } from "../../engine/src/packs/peon/seats.ts";
 import { APPEARANCE_PREFIX, appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
 import { ABOUT_OTHERS, ASK_KINDS, LANE_BUDGETS, NEVER_REPLY, nextAt, NY, nyParts, OUTREACH, PRD_BUDGETS, SLOT_KINDS, type SendKind } from "./outreach.ts";
 import { BASE_REACH, FLOOR_EFFORT, type CapitalEvent, type CapitalEventInput, type CapitalReader, type GamingFlag, type NetworkEffort } from "./capital.ts";
@@ -4544,12 +4545,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     const open = this.openOpps().filter(o => o.seat && o.stage !== "scheduled");
     if (!open.length) return;
     const snap = this.snapshotCached();
+    // Use the engine's booked/feedback outcomes. Pending items reserve capacity for selection,
+    // but must not count as filled here or they would close themselves.
+    const filled = seatFills({ interactions: this.seatView({ ...snap, interactions: this.interactions }).interactions });
     for (const seatId of new Set(open.map(o => o.seat!.id))) {
       const active = snap.intents.some(i => i.memberId === seatId && i.status === "active");
       if (!active) { this.endSeat(seatId, "posting closed"); continue; }
       const posted = Number(snap.facets.find(f => f.id === `${seatId}:openings`)?.tags.find(t => t.startsWith("peon:openings:"))?.slice("peon:openings:".length) ?? 0);
-      const filled = new Set([...this.opps.values()].filter(o => o.seat?.id === seatId && o.meetingAt !== undefined && o.stage !== "closed").map(o => o.participants.find(p => p !== o.seat!.manager)));
-      if (filled.size >= posted) this.endSeat(seatId, "posting filled");
+      if ((filled.get(seatId)?.size ?? 0) >= posted) this.endSeat(seatId, "posting filled");
     }
   }
 
