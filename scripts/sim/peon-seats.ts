@@ -44,10 +44,10 @@ class SeatWorld {
   private seq = 0;
   private readonly opts: NetworkOptions;
 
-  constructor() {
+  constructor(seed = 7) {
     const w = appWiring("peon");
     this.opts = {
-      app: APPS.peon, seed: 7, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
+      app: APPS.peon, seed, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
       pack: w.pack!, hooks: w.hooks!, engine: { ...PEON_ENGINE_CONFIG, cities: ["nyc"] },
       onPosting: p => this.write(p),
     };
@@ -128,6 +128,59 @@ const startsWith = (body: string, re: RegExp) => re.test(body.replace(ACK, ""));
 const POST = "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL";
 
 export async function peonSeatsBlock(b: Block): Promise<void> {
+  await b.run("posting updates: remember the edits while asking which job to change", async () => {
+    const cases = ["named", "first", "second", "reply_edit", "title_seniority", "cancel", "decline_choice", "unknown_choice", "closed_choice", "new_post", "new_update"] as const;
+    const outcomes: { seed: number; kind: string; choosing: boolean; payReasked: boolean; writes: number; correct: boolean }[] = [];
+    for (const seed of [7, 13, 17]) for (const kind of cases) {
+      const x = new SeatWorld(seed);
+      x.add("hm1", "Rowan Abbott", 34, { verified: "Acme" });
+      for (const body of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await x.say("hm1", body);
+      await x.say("hm1", kind === "title_seniority" ? POST.replace("data analyst", "senior data analyst") : POST); await x.say("hm1", "yes");
+      await x.say("hm1", "We're hiring a product designer (level 2), 1 opening, $70k-$90k, remote, must have Figma");
+      await x.say("hm1", "yes");
+      const originals = [...x.saved];
+      const second = ["second", "reply_edit", "new_update"].includes(kind);
+      const target = originals[second ? 1 : 0]!;
+      await x.say("hm1", kind === "named" ? "Update my data analyst post: 3 openings" : "Update my job post: 3 openings");
+      const choosing = /Which post should I update/.test(x.last("hm1")) && x.net.memberList().find(m => m.id === "hm1")?.awaiting?.kind === "posting";
+      expect(x.saved.length).toBe(2);
+      x.restart();
+      if (kind === "closed_choice") expect(x.net.applyPosting({ ...target, status: "closed", updatedAt: x.clock.now() }, "sim_staff").ok).toBe(true);
+      const before = x.saved.length;
+      if (kind !== "named") await x.say("hm1", kind === "new_post" ? "We're hiring a project manager, 5 openings, $110k-$140k, remote"
+        : kind === "new_update" ? "Update my product designer post: 4 openings, $75k-$95k"
+        : kind === "decline_choice" ? "no" : kind === "unknown_choice" ? "engineering"
+        : kind === "reply_edit" ? "product designer, 4 openings" : target.title);
+      x.restart();
+      // Main's separate partial-update defect (#144) still asks for pay. Keep this case usable
+      // on main and verify that selecting a post did not discard the original headcount edit.
+      const payReasked = x.last("hm1") === POSTING_COPY.askPay;
+      if (payReasked) await x.say("hm1", `$${target.payMin}k-$${target.payMax}k`);
+      const wantsUpdate = ["named", "first", "second", "reply_edit", "title_seniority", "new_update"].includes(kind);
+      const expectedOpenings = ["reply_edit", "new_update"].includes(kind) ? 4 : 3;
+      const readBack = !(wantsUpdate || kind === "cancel") || (x.last("hm1").includes(target.title.charAt(0).toUpperCase() + target.title.slice(1))
+        && x.last("hm1").includes(`${expectedOpenings} openings`) && /Reply yes to post it/.test(x.last("hm1")));
+      expect(x.saved.length).toBe(before);
+      x.restart(); await x.say("hm1", kind === "cancel" ? "no" : "yes"); x.restart();
+      await x.run(HOUR);
+      const writes = x.saved.length - before;
+      const updated = x.saved.at(-1)!;
+      const expected = { ...target, openings: expectedOpenings, ...(kind === "new_update" ? { payMin: 75, payMax: 95 } : {}) };
+      const fields = (p: JobPosting) => JSON.stringify([p.id, p.title, p.seniority, p.openings, p.payMin, p.payMax, p.mode, p.area, p.must, p.nice, p.status]);
+      const correct = readBack
+        && (wantsUpdate ? writes === 1 && fields(updated) === fields(expected)
+          : kind === "new_post" ? writes === 1 && updated.title === "project manager" && updated.openings === 5 && !originals.some(p => p.id === updated.id)
+          : writes === 0)
+        && originals.filter(p => !wantsUpdate || p.id !== target.id).every(p => {
+          const last = [...x.saved].reverse().find(q => q.id === p.id)!;
+          return fields(last) === fields(kind === "closed_choice" && p.id === target.id ? { ...p, status: "closed" } : p);
+        });
+      outcomes.push({ seed, kind, choosing, payReasked, writes, correct });
+    }
+    console.log("PEON_UPDATE_CHOICE_OUTCOMES", JSON.stringify(outcomes));
+    expect(outcomes.filter(x => x.correct).length).toBe(outcomes.length);
+  });
+
   await b.run("intake rules: a job post is read from text, read back, and needs a title and a pay range", () => {
     const d = parsePosting(POST);
     expect(d).toMatchObject({ title: "data analyst", openings: 2, payMin: 90, payMax: 120, mode: "hybrid", area: "brooklyn", seniority: 2, must: [{ skill: "sql", level: 2 }] });
