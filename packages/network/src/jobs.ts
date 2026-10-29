@@ -78,13 +78,19 @@ export function parsePosting(body: string): PostingDraft {
   const lower = ` ${t.toLowerCase().replace(/[^a-z0-9' -]+/g, " ")} `;
   const area = AREAS.find(a => lower.includes(` ${a} `));
   if (area) d.area = slug(area);
-  for (const [re, n] of SENIORITY) if (re.test(t)) { d.seniority = n; break; }
-  const lvl = /\blevel\s*([1-5])\b/i.exec(t); if (lvl) d.seniority = Number(lvl[1]);
   const list = (s: string) => s.split(/,|\band\b|\/|;/i).map(x => x.trim().toLowerCase()).filter(x => x && x.length <= 40 && !/^(?:a|an|the|some)$/.test(x));
   const must = /\bmust(?:[- ]haves?|\s+have|\s+know)?\s*:?\s*([^.;]+?)(?=\.|;|\bnice to have\b|$)/i.exec(t);
   if (must) d.must = list(must[1]!).map(x => { const m = /^(.*?)\s*(?:\(?(?:level\s*)?([0-5])\)?)$/i.exec(x); return { skill: slug(m?.[1] || x), level: m?.[2] ? Number(m[2]) : 2 }; }).filter(x => x.skill);
   const nice = /\bnice[- ]to[- ]haves?\s*:?\s*([^.;]+)/i.exec(t);
   if (nice) d.nice = list(nice[1]!).map(slug).filter(Boolean);
+  // Skill levels and descriptions do not set the role's seniority. Keep offsets so both
+  // parsed sections can be masked, including when the existing list patterns overlap.
+  let roleText = t;
+  for (const section of [must, nice]) if (section) {
+    roleText = roleText.slice(0, section.index) + " ".repeat(section[0].length) + roleText.slice(section.index + section[0].length);
+  }
+  for (const [re, n] of SENIORITY) if (re.test(roleText)) { d.seniority = n; break; }
+  const lvl = /\blevel\s*([1-5])\b/i.exec(roleText); if (lvl) d.seniority = Number(lvl[1]);
   if (/\b(can|will|we)\s+sponsor\b|\bsponsorship (?:available|ok|yes)\b/i.test(t)) d.sponsors = true;
   else if (/\bno (?:visa )?sponsorship\b|\b(?:can(?:'|no)?t|cannot|won'?t|don'?t) sponsor\b/i.test(t)) d.sponsors = false;
   return d;
