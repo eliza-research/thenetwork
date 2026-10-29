@@ -783,8 +783,12 @@ export class ConsentNetwork implements NetworkUnderTest {
       // What they say about their number ("I don't want to share my number yet") is about the number
       // swap (withdrawn above), not the plan: only the rest of the message answers the booked plan.
       // The LLM reader read the whole message, number talk included, so it does not answer the rest.
+      // A rest the rules cannot read that still negates ("Let's not meet. I", "I'm not coming") keeps the
+      // whole message's no: in doubt the date is called off, never kept against a no.
       const plan = withoutNumberTalk(body);
-      const yn = plan === body ? this.yesNoOf(body) : plan ? consentOf(plan).answer : "unclear";
+      const whole = this.yesNoOf(body);
+      const rest = plan === body ? whole : plan ? consentOf(plan).answer : "unclear";
+      const yn = rest === "unclear" && whole === "no" && NEGATES.test(plan) ? "no" : rest;
       if (o && o.stage === "scheduled" && o.status.get(m.id) === "yes" && (c.kind === "cancel" || yn === "no")) { m.awaiting = undefined; return this.handleDrop(m, o); }
       if (yn === "yes" || c.kind === "ack") { m.awaiting = undefined; if (o && o.stage === "scheduled") this.confirmPlan(o, m.id, true); this.ack(m, copy.bookedThanks); return; }
     }
@@ -4973,8 +4977,10 @@ type MemberRecord = WorldSnapshot["members"][number] & { accountStatus?: string 
 /** A message without its clauses about the member's number or a number swap ("No. Also don't share my number" -> "No."). */
 const NUMBER_TALK = /\b(?:my (?:phone )?number|my digits|my cell|(?:number|numbers) swap|swap(?:ping)? numbers)\b/i;
 function withoutNumberTalk(body: string): string {
-  return body.split(/(?<=[.!?;,])\s+|\s+(?:and|but|also)\s+/i).filter(p => !NUMBER_TALK.test(p)).join(" ").trim();
+  return body.split(/(?<=[.!?;,])\s+|\s+(?:and|but|also|so)\s+/i).filter(p => !NUMBER_TALK.test(p)).join(" ").trim();
 }
+/** A negation or cancel word left in the rest of a booked reply. */
+const NEGATES = /\b(?:no|not|never|nope|nah|cancel\w*|dont|cant|wont|didnt)\b|\w+n['’]t\b/i;
 /** An engine proposal, routed to a seat's hiring manager when it was for a job seat (seatRoute). */
 type SeatProposal = EngineProposal & { seat?: { id: MemberId; manager: MemberId } };
 

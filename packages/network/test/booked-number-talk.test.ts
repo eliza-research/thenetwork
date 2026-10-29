@@ -40,7 +40,8 @@ describe("number talk after a booking", () => {
     expect(w.to("b", from)).toEqual([]);
   });
 
-  for (const text of ["No. Also don't share my number", "I can't make it, and don't send my number"]) {
+  // Review on #181: a no to the plan next to number talk still calls it off.
+  for (const text of ["No. Also don't share my number", "I can't make it, and don't send my number", "Let's not meet. I also don't want to share my number.", "I don't want to swap numbers anymore. And I'm not coming.", "I don't want to give my number out, so I'm not coming", "I don't want to swap numbers. Actually no, cancel it."]) {
     test(`"${text}" still calls it off`, async () => {
       const w = await booked();
       await w.say("a", text);
