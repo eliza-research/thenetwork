@@ -44,10 +44,10 @@ class SeatWorld {
   private seq = 0;
   private readonly opts: NetworkOptions;
 
-  constructor() {
+  constructor(seed = 7) {
     const w = appWiring("peon");
     this.opts = {
-      app: APPS.peon, seed: 7, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
+      app: APPS.peon, seed, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
       pack: w.pack!, hooks: w.hooks!, engine: { ...PEON_ENGINE_CONFIG, cities: ["nyc"] },
       onPosting: p => this.write(p),
     };
@@ -128,6 +128,56 @@ const startsWith = (body: string, re: RegExp) => re.test(body.replace(ACK, ""));
 const POST = "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL";
 
 export async function peonSeatsBlock(b: Block): Promise<void> {
+  await b.run("intake: refused work modes do not replace the stated mode in saved jobs or matching", async () => {
+    const cases = [
+      { text: "hybrid in Brooklyn, not remote", mode: "hybrid" },
+      { text: "not remote; hybrid in Brooklyn", mode: "hybrid" },
+      { text: "onsite in Brooklyn, not hybrid", mode: "onsite" },
+      { text: "not remote or hybrid; onsite in Brooklyn", mode: "onsite" },
+      { text: "non-remote; onsite in Brooklyn", mode: "onsite" },
+      { text: "no longer remote; hybrid in Brooklyn", mode: "hybrid" },
+      { text: "not fully remote; hybrid in Brooklyn", mode: "hybrid" },
+      { text: "remote, not onsite", mode: "remote" },
+      { text: "hybrid in Brooklyn", mode: "hybrid" },
+      { text: "onsite in Brooklyn", mode: "onsite" },
+      { text: "remote", mode: "remote" },
+      { text: "remote", correction: "Actually hybrid in Brooklyn, not remote.", mode: "hybrid" },
+    ];
+    const outcomes: { seed: number; case: number; saved: string; expected: string; readBack: boolean; seatModes: string[]; candidates: string[] }[] = [];
+    for (const seed of [7, 13, 17]) for (const [index, c] of cases.entries()) {
+      const world = new SeatWorld(seed);
+      world.add("manager", "Rowan Abbott", 34, { verified: "Acme" });
+      for (const mode of ["remote", "hybrid", "onsite"]) {
+        world.add(mode, `Candidate ${mode}`, 29, { candidate: true });
+        world.facets.find(f => f.id === `${mode}-m`)!.tags = [`peon:mode:${mode}`, "peon:area:brooklyn"];
+      }
+      for (const id of ["manager", "remote", "hybrid", "onsite"]) for (const answer of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await world.say(id, answer);
+      await world.say("manager", `We're hiring a data analyst (level 2), 1 opening, $90k-$120k, ${c.text}. Must have SQL.`);
+      if (c.correction) await world.say("manager", c.correction);
+      expect(world.saved.length).toBe(0);
+      const readBack = world.last("manager").includes(`a year, ${c.mode}${c.mode === "remote" ? "." : " in Brooklyn."}`);
+      expect(world.last("manager")).toMatch(/Reply yes to post it/);
+      world.restart();
+      await world.say("manager", "yes");
+      expect(world.saved.length).toBe(1);
+      const saved = world.saved[0]!;
+      world.restart();
+      const seat = seatIdOf(saved.id);
+      const seatModes = world.net.packInput(world.clock.now()).facets.filter(f => f.memberId === seat).flatMap(f => f.tags.filter(t => t.startsWith("peon:mode:")));
+      await world.run(2 * DAY);
+      const queue = world.net.reviewQueue().filter(item => item.proposal.participants.includes("manager"));
+      const candidates = queue.flatMap(item => item.proposal.participants.filter(id => id !== "manager")).sort();
+      for (const item of queue) expect(world.about(item.oppId).length).toBe(0);
+      outcomes.push({ seed, case: index + 1, saved: saved.mode, expected: c.mode, readBack, seatModes, candidates });
+    }
+    console.log(`work mode outcomes: ${JSON.stringify(outcomes)}`);
+    for (const row of outcomes) {
+      expect(row.saved).toBe(row.expected);
+      expect(row.readBack).toBe(true);
+      expect(row.seatModes).toEqual([`peon:mode:${row.expected}`]);
+      expect(row.candidates).toEqual([row.expected]);
+    }
+  });
   await b.run("intake rules: a job post is read from text, read back, and needs a title and a pay range", () => {
     const d = parsePosting(POST);
     expect(d).toMatchObject({ title: "data analyst", openings: 2, payMin: 90, payMax: 120, mode: "hybrid", area: "brooklyn", seniority: 2, must: [{ skill: "sql", level: 2 }] });
