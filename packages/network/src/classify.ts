@@ -488,9 +488,17 @@ export function extractProfile(body: string): Profile {
   };
 }
 
-/** Remove explicit first-person absence claims before reading reports about the other person. */
+// These past-tense replies describe a missed meeting unless they have an object/complement.
+const PAST_ABSENCE = /\b(?:(?:couldn'?t|didn'?t)\s+make\s+it\b(?!\s+(?:happen|work|awkward|worse|better|easy|hard)\b)|had\s+to\s+bail\b(?!\s+(?:me|us|you|him|her|them|out)\b))/;
+const SELF_PAST_ABSENCE = new RegExp(`\\b(?:i|we)\\s+(?:(?:\\w+ly|just|still|even|quite|also)\\s+)*${PAST_ABSENCE.source}`, "gi");
+const BARE_PAST_ABSENCE = new RegExp(`(^|[.!?;,:\\r\\n])\\s*(?:(?:sorry|unfortunately|sadly)\\s*,?\\s*)?${PAST_ABSENCE.source}`, "gi");
+
+/** Remove self-reports before reading absence allegations about someone else. */
 export function withoutSelfNoShow(body: string): string {
-  return body.replace(/[\u2018\u2019\u02bc]/g, "'").replace(/\bi\s+(?:(?:never|didn'?t|did not)\s+(?:show(?:ed)?(?:\s+up)?|turn(?:ed)?\s+up|come)\b(?!\s+(?:me|us|you|him|her|them|off|around|any|much)\b)|was\s+(?:a\s+)?no[- ]show\b|(?:couldn'?t|didn'?t)\s+make\s+it\b|had\s+to\s+bail\b)/gi, "");
+  return body.replace(/[\u2018\u2019\u02bc]/g, "'")
+    .replace(/\bi\s+(?:(?:never|didn'?t|did not)\s+(?:show(?:ed)?(?:\s+up)?|turn(?:ed)?\s+up|come)\b(?!\s+(?:me|us|you|him|her|them|off|around|any|much)\b)|was\s+(?:a\s+)?no[- ]show\b)/gi, "")
+    .replace(SELF_PAST_ABSENCE, "")
+    .replace(BARE_PAST_ABSENCE, "$1");
 }
 
 /**
@@ -500,8 +508,8 @@ export function withoutSelfNoShow(body: string): string {
 export function feedbackOf(body: string): { sentiment: "positive" | "neutral" | "negative"; selfNoShow: boolean; otherNoShow: boolean; again: boolean } {
   const t = body.toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'");
   const other = withoutSelfNoShow(t);
-  const selfNoShow = other !== t || /couldn'?t make it|didn'?t make it|had to bail/.test(t);
-  const otherNoShow = /\b(never|didn'?t|did not) (show(ed)?( up)?|turn(ed)? up|come)\b(?! (me|us|you|him|her|them|off|around|any|much))|\bno[- ]show\b|\bstood (me|us) up\b/.test(other);
+  const selfNoShow = other !== t;
+  const otherNoShow = /\b(never|didn'?t|did not) (show(ed)?( up)?|turn(ed)? up|come)\b(?! (me|us|you|him|her|them|off|around|any|much))|\bno[- ]show\b|\bstood (me|us) up\b/.test(other) || PAST_ABSENCE.test(other);
   const negative = otherNoShow || NEGATIVE_FEEDBACK.test(t);
   const sentiment = negative ? "negative" : /great|clicked|loved|amazing|nice|easy to talk/.test(t) ? "positive" : "neutral";
   const again = !negative && /again|clicked/.test(t) && !/\b(wouldn'?t|won'?t|not|never)\b[^.!?]*\bagain\b/.test(t);

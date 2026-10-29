@@ -52,6 +52,26 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
       { kind: "urgent", text: "I didn't show up because he kept texting me after I said no.", self: true, other: false, report: "harassment" },
       { kind: "positive", text: "It was great!", self: false, other: false },
       { kind: "object", text: "I showed him my photos.", self: false, other: false },
+      { kind: "name_couldnt", text: "Ben couldn't make it.", self: false, other: true, report: "no_show" },
+      { kind: "name_didnt", text: "Ben didn't make it.", self: false, other: true, report: "no_show" },
+      { kind: "name_bail", text: "Ben had to bail.", self: false, other: true, report: "no_show" },
+      { kind: "he_couldnt", text: "He couldn't make it.", self: false, other: true, report: "no_show" },
+      { kind: "she_didnt", text: "She didn't make it.", self: false, other: true, report: "no_show" },
+      { kind: "they_bail", text: "They had to bail.", self: false, other: true, report: "no_show" },
+      { kind: "other_adverb", text: "Ben unfortunately couldn't make it.", self: false, other: true, report: "no_show" },
+      { kind: "lower_name", text: "ben couldn\u2019t make it.", self: false, other: true, report: "no_show" },
+      { kind: "contrast", text: "I was there, but Ben couldn't make it.", self: false, other: true, report: "no_show" },
+      { kind: "two_sentences", text: "I showed up. Ben had to bail.", self: false, other: true, report: "no_show" },
+      { kind: "both_legacy", text: "I couldn't make it. Ben had to bail too.", self: true, other: true, report: "no_show" },
+      { kind: "bare_couldnt", text: "Couldn't make it.", self: true, other: false },
+      { kind: "bare_didnt", text: "Didn't make it.", self: true, other: false },
+      { kind: "bare_bail", text: "Had to bail.", self: true, other: false },
+      { kind: "sorry_bare", text: "Sorry, had to bail.", self: true, other: false },
+      { kind: "unfortunately_bare", text: "Unfortunately, couldn't make it.", self: true, other: false },
+      { kind: "emphatic", text: "I really couldn't make it.", self: true, other: false },
+      { kind: "explanation", text: "The train broke; couldn't make it.", self: true, other: false },
+      { kind: "bail_object", text: "Ben had to bail me out.", self: false, other: false },
+      { kind: "make_object", text: "Ben didn't make it awkward.", self: false, other: false },
     ];
     const outcomes: { seed: number; reportOn: boolean; kind: string; self: boolean; other: boolean; ownMisses: number; counterpartMisses: number; reports: string[]; correct: boolean }[] = [];
     for (const seed of [1, 2, 3]) for (const reportOn of [false, true]) for (const c of cases) {
@@ -84,7 +104,6 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
       outcomes.push({ seed, reportOn, kind: c.kind, self: !!flags.selfNoShow, other: !!flags.otherNoShow, ownMisses, counterpartMisses, reports, correct });
     }
     console.log("SELF_ABSENCE_OUTCOMES", JSON.stringify(outcomes));
-    expect(outcomes.filter(r => r.correct).length).toBe(outcomes.length);
     const routingCases = [
       { kind: "came_up_couldnt", text: "Something came up, I couldn't make it.", missed: true },
       { kind: "came_up_didnt", text: "Something came up, I didn't make it.", missed: true },
@@ -95,6 +114,9 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
       { kind: "positive", text: "It was great!", missed: false },
       { kind: "future", text: "I can't make it next week.", missed: false, cancel: true },
       { kind: "past_and_future", text: "I couldn't make it last time. I need to cancel the next one.", missed: false, cancel: true },
+      { kind: "bare_came_up", text: "Something came up, couldn't make it.", missed: true },
+      { kind: "bare_bail_came_up", text: "Something came up. Had to bail.", missed: true },
+      { kind: "bare_apology", text: "Sorry, couldn't make it. Something came up.", missed: true },
     ];
     const routed: { seed: number; reportOn: boolean; kind: string; feedback: number; cancelled: number; futureStage: string; ownMisses: number; correct: boolean }[] = [];
     for (const seed of [1, 2, 3]) for (const reportOn of [false, true]) for (const c of routingCases) {
@@ -136,6 +158,7 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     }
     console.log("SELF_ABSENCE_ROUTING_OUTCOMES", JSON.stringify(routed));
     expect(routed.filter(r => r.correct).length).toBe(routed.length);
+    expect(outcomes.filter(r => r.correct).length).toBe(outcomes.length);
   });
 
   // ---- invariants: NYC, 10 days, seed 3, simulated reviewer ---------------------------------------
