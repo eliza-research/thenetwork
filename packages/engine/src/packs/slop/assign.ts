@@ -95,10 +95,10 @@ export function slopAssign(o: SlopPackOptions, w: World, scored: readonly Scored
   } else edges.sort((p, q) => (tier(p) - tier(q)) || (q.v - p.v) || (p.s.c.key < q.s.c.key ? -1 : 1));
 
   const count = new Map<MemberId, number>();
-  // This pack replaces core selection: reserve asks and recheck the rolling budget each round.
+  // Slop questions have a separate allowance (ConsentNetwork.sendAsks); this is the proposal budget.
   const hasBudget = (id: MemberId) => {
     const mi = w.get(id)!;
-    return mi.recentProactive + (ctx.extraProactive?.get(id) ?? 0) + (count.get(id) ?? 0) < w.cfg.budgets[mi.m.state].limit;
+    return mi.recentProactive + (count.get(id) ?? 0) < w.cfg.budgets[mi.m.state].limit;
   };
   const used = new Set<string>();
   const selected: Selected[] = [];
