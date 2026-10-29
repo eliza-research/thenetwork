@@ -135,10 +135,15 @@ export function classify(body: string): Classified {
   const blk = RX.block.exec(t), rep = RX.report.exec(t);
   if (blk) return { ...out, kind: "block", target: blk[1]!.trim() };
   if (rep) return { ...out, kind: "report", target: rep[1]!.replace(/[,;:.!?].*$/, "").trim() };
-  if (RX.cancel.test(t)) return { ...out, kind: "cancel" };
+  // An explanation for a past absence is feedback, not a cancellation of the next booking.
+  // Keep an explicit cancellation elsewhere in the message ahead of that feedback.
+  const afterAbsence = withoutSelfNoShow(low);
+  const pastAbsence = afterAbsence !== low && /\bsomething came up\b/.test(low);
+  const cancelText = pastAbsence ? afterAbsence.replace(/\bsomething came up\b/g, "") : t;
+  if (RX.cancel.test(cancelText)) return { ...out, kind: "cancel" };
   const inv = RX.invite.exec(t);
   if (inv && RX.inviteIntent.test(t)) return { ...out, kind: "invite_friend", friendName: inv[1] };
-  if (RX.feedback.test(t)) return { ...out, kind: "feedback_like" };
+  if (RX.feedback.test(t) || pastAbsence) return { ...out, kind: "feedback_like" };
 
   // What do they want? Wants the member negates are left out ("I don't want to meet founders").
   const x = extractProfile(t);
@@ -483,14 +488,28 @@ export function extractProfile(body: string): Profile {
   };
 }
 
+// These past-tense replies describe a missed meeting unless they have an object/complement.
+const PAST_ABSENCE = /\b(?:(?:couldn'?t|didn'?t)\s+make\s+it\b(?!\s+(?:happen|work|awkward|worse|better|easy|hard)\b)|had\s+to\s+bail\b(?!\s+(?:me|us|you|him|her|them|out)\b))/;
+const SELF_PAST_ABSENCE = new RegExp(`\\b(?:i|we)\\s+(?:(?:\\w+ly|just|still|even|quite|also)\\s+)*${PAST_ABSENCE.source}`, "gi");
+const BARE_PAST_ABSENCE = new RegExp(`(^|[.!?;,:\\r\\n])\\s*(?:(?:sorry|unfortunately|sadly)\\s*,?\\s*)?${PAST_ABSENCE.source}`, "gi");
+
+/** Remove self-reports before reading absence allegations about someone else. */
+export function withoutSelfNoShow(body: string): string {
+  return body.replace(/[\u2018\u2019\u02bc]/g, "'")
+    .replace(/\bi\s+(?:(?:never|didn'?t|did not)\s+(?:show(?:ed)?(?:\s+up)?|turn(?:ed)?\s+up|come)\b(?!\s+(?:me|us|you|him|her|them|off|around|any|much)\b)|was\s+(?:a\s+)?no[- ]show\b)/gi, "")
+    .replace(SELF_PAST_ABSENCE, "")
+    .replace(BARE_PAST_ABSENCE, "$1");
+}
+
 /**
  * Sentiment of a feedback reply (for edges and reliability). Negations are checked first: "not
  * great", "wasn't great" and "didn't click" contain positive words but are bad meetings.
  */
 export function feedbackOf(body: string): { sentiment: "positive" | "neutral" | "negative"; selfNoShow: boolean; otherNoShow: boolean; again: boolean } {
   const t = body.toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'");
-  const selfNoShow = /couldn'?t make it|didn'?t make it|had to bail/.test(t);
-  const otherNoShow = /\b(never|didn'?t|did not) (show(ed)?( up)?|turn(ed)? up|come)\b(?! (me|us|you|him|her|them|off|around|any|much))|\bno[- ]show\b|\bstood (me|us) up\b/.test(t);
+  const other = withoutSelfNoShow(t);
+  const selfNoShow = other !== t;
+  const otherNoShow = /\b(never|didn'?t|did not) (show(ed)?( up)?|turn(ed)? up|come)\b(?! (me|us|you|him|her|them|off|around|any|much))|\bno[- ]show\b|\bstood (me|us) up\b/.test(other) || PAST_ABSENCE.test(other);
   const negative = otherNoShow || NEGATIVE_FEEDBACK.test(t);
   const sentiment = negative ? "negative" : /great|clicked|loved|amazing|nice|easy to talk/.test(t) ? "positive" : "neutral";
   const again = !negative && /again|clicked/.test(t) && !/\b(wouldn'?t|won'?t|not|never)\b[^.!?]*\bagain\b/.test(t);

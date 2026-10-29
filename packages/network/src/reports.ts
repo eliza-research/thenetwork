@@ -3,6 +3,7 @@
 // reporter's words. Urgent kinds (harassment, unsafe, scam, minor) have a 1-hour staff target; the
 // others 24 hours.
 import type { MemberId } from "@thenetwork/core";
+import { withoutSelfNoShow } from "./classify.ts";
 
 export type ReportKind = "harassment" | "lying" | "no_show" | "unsafe" | "scam" | "minor" | "other";
 export type ReportStatus = "open" | "held" | "banned" | "dismissed";
@@ -36,7 +37,7 @@ export function reportKindOf(text: string): ReportKind {
  * "it was fine" or "not my type" is not a report.
  */
 export function checkInReport(text: string): ReportKind | undefined {
-  const k = reportKindOf(text);
+  const k = reportKindOf(withoutSelfNoShow(text));
   if (k !== "other") return k;
   return /\b(report|flag|safety team)\b/i.test(text) ? "other" : undefined;
 }
