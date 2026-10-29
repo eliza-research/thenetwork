@@ -28,12 +28,12 @@ the two runs.
 
 ## Gate
 
-`evals/network/time-answer-collisions.jsonl` holds 10 hand-written rows with
+`evals/network/time-answer-collisions.jsonl` holds 17 hand-written rows with
 their own option sets. The new gate in `scripts/sim/evals.ts` reads them:
 
-- Before the fix: `FAIL time answers: a mention that fits more than one option is never a pick (n 10)`
+- Before the fix: `FAIL time answers: a mention that fits more than one option is never a pick (n 17)`
   and `25/26 blocking gates pass`.
-- After the fix: `PASS … (n 10)` and `26/26 blocking gates pass`.
+- After the fix: `PASS … (n 17)` and `26/26 blocking gates pass`.
 
 ## Limits
 

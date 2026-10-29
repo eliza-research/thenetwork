@@ -699,7 +699,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   }
   const clockMentions: { clock: string; index: number; len: number }[] = [];
   for (const m of t.matchAll(/\b(\d{1,2})(?::\d\d)?\s*(am|pm)\b/g)) {
-    clockMentions.push({ clock: `${Number(m[1])}${m[2]}`, index: m.index!, len: m[0].length });
+    clockMentions.push({ clock: m[0].replace(/\s+/g, "").toLowerCase(), index: m.index!, len: m[0].length });
   }
   // Each mention is resolved on its own, and a day carries the clock written right
   // after it ("Thursday 7pm") so the pair can identify one option. Resolving every
