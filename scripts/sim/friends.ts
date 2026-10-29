@@ -4,7 +4,7 @@
 // tracked metrics (printed, non-blocking), the harness caps, and the conformance rules for friendsPack.
 // PINNED (CI): seeds 5-8, 8 weeks, 400 personas (docs/results/2026-10-08-friends-pack.md, held-out).
 // --quick: seed 5, 4 weeks, 200 personas; only the safety gates block.
-import { canBeMatched, type MemberId } from "../../packages/core/src/index.ts";
+import { canBeMatched, DAY, HOUR, type MemberId } from "../../packages/core/src/index.ts";
 import * as A from "../../packages/engine/src/attention.ts";
 import { resolveConfig } from "../../packages/engine/src/config.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
@@ -21,6 +21,8 @@ import { engineInputOf, evidenceOf, friendsPackMatcher } from "../../packages/si
 import { buildFriendsSnapshot, NYC_TZ, type FriendsSnapshot } from "../../packages/sim/src/apps/friends/snapshot.ts";
 import { runFriendsWorld, VENUES } from "../../packages/sim/src/apps/friends/world.ts";
 import { conformance } from "./conformance.ts";
+import { Mini } from "../../packages/network/test/mini.ts";
+import { appWiring } from "../../packages/network/service/packs.ts";
 import { Block, digest, expect } from "./gate.ts";
 
 export const FRIENDS_PINNED = { seeds: [5, 6, 7, 8], weeks: 8, n: 400 };
@@ -40,6 +42,59 @@ function friendsSnapshotAfter(seed: number, weeks = 3, n = 160): FriendsSnapshot
 const friendsWorld = (seed: number): EngineInput => engineInputOf(friendsSnapshotAfter(seed));
 
 export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<void> {
+  await b.run("friends live: mutual meetup feedback can book the same table again with fresh consent", async () => {
+    const outcomes: { seed: number; kind: string; queued: number; booked: number }[] = [];
+    for (const seed of [1, 2, 3]) for (const kind of ["mutual", "one_sided", "no_show", "review_declined", "blocked", "fresh_no"]) {
+      const ids = ["a", "b", "c"];
+      const wiring = appWiring("friends");
+      const w = new Mini(ids.map((id, i) => ({ id, name: ["Ana Diaz", "Ben Ito", "Cy Moss"][i]!, age: 30, area: "Greenpoint", interests: ["climbing", "hiking", "board_games"] })),
+        { app: "friends", pack: wiring.pack, plansConfig: wiring.plansConfig, seed, review: "human", growth: false, maxNewPerDay: 20 });
+      // The same facet tags that staff verification writes; no member or consent policy is replaced.
+      for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified", tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
+      await w.onboard(...ids);
+      const first = w.propose(ids, { category: "social", objective: "play board games together" });
+      await w.runUntil(() => w.net.reviewQueue().some(q => q.oppId === first), DAY);
+      expect(w.net.decide(first, "approve", { reviewer: "staff" })).toEqual({ ok: true });
+      await w.answerProbes(ids);
+      expect(w.meetings.length).toBe(1);
+      expect(w.meetings[0]!.participants.slice().sort()).toEqual(ids);
+      const at = w.meetings[0]!.at;
+      await w.run(at + 3 * HOUR - w.clock.now());
+      for (const id of ids) await w.say(id, kind === "no_show" && id === "c" ? "I couldn't make it"
+        : kind === "one_sided" && id !== "a" ? "It was fine." : "It was great, we really clicked. Would do it again.");
+      w.restart();
+      expect(w.net.engineInput(w.clock.now()).interactions?.filter(r => r.id.startsWith(`${first}:fb:`)).length).toBe(3);
+      if (kind === "review_declined") {
+        const rejected = w.propose(ids, { category: "social", objective: "another group meetup" });
+        await w.runUntil(() => w.net.reviewQueue().some(q => q.oppId === rejected), DAY);
+        expect(w.net.decide(rejected, "reject", { reviewer: "staff", reason: "other", note: "This follow-up does not fit." })).toEqual({ ok: true });
+      }
+      if (kind === "blocked") {
+        await w.say("a", "block Ben");
+        expect(w.net.exportState().blocks).toContain("a|b");
+      }
+      w.clock.set(at + 8 * DAY + 3 * HOUR);
+      const mark = w.mark();
+      await w.net.tick(w.clock.now());
+      const queue = w.net.reviewQueue().filter(q => q.proposal.generator === "same_table_again");
+      expect(w.meetings.length).toBe(1);
+      expect(w.sent.slice(mark).filter(m => m.meta.type === "probe" || m.meta.type === "proposal")).toEqual([]);
+      w.restart();
+      for (const q of queue) {
+        expect(q.proposal.participants.slice().sort()).toEqual(ids);
+        expect(w.net.decide(q.oppId, "approve", { reviewer: "staff" })).toEqual({ ok: true });
+      }
+      w.restart();
+      if (queue.length) await w.answerProbes(ids, () => kind === "fresh_no" ? "no thanks" : "yes");
+      const booked = w.meetings.slice(1);
+      for (const m of booked) expect(m.participants.slice().sort()).toEqual(ids);
+      outcomes.push({ seed, kind, queued: queue.length, booked: booked.length });
+    }
+    console.log(`friends repeat outcomes: ${JSON.stringify(outcomes)}`);
+    for (const row of outcomes) expect(row).toEqual({ seed: row.seed, kind: row.kind,
+      queued: row.kind === "mutual" || row.kind === "fresh_no" ? 1 : 0, booked: row.kind === "mutual" ? 1 : 0 });
+  });
+
   const spec = o.quick ? { seeds: [5], weeks: 4, n: 200 } : FRIENDS_PINNED;
   const all: Record<"pack" | "random" | "oracle", FriendsMetrics[]> = { pack: [], random: [], oracle: [] };
   const matchers = { pack: friendsPackMatcher(), random: BASELINES.random, oracle: BASELINES.oracle };

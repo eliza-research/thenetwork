@@ -1741,19 +1741,15 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /**
    * Pair history (network-consent-5, -26, matching-e2e-3): a member said no to this pair (a probe or
-   * a requester's confirm), a reviewer turned it down, or the two already met or had a no-show, within
-   * `days`. Blocks and avoid edges are separate (blocked(), avoid).
+   * a requester's confirm), or a reviewer turned it down within `days`. Meetings and no-shows
+   * count for 60 days; Friends repeats exempt completed meetings only. Blocks and avoid edges
+   * are separate (blocked(), avoid).
    */
-  private pairHistory(a: MemberId, b: MemberId, days: number): boolean {
+  private pairHistory(a: MemberId, b: MemberId, days: number, repeat = false): boolean {
     const k = pairKey(a, b);
     if ((this.declined.get(k) ?? -Infinity) > this.now() - days * DAY) return true;
-    return this.metRecently(a, b, 60);
-  }
-
-  /** The two had a meeting (held, or a no-show) within `days`. */
-  private metRecently(a: MemberId, b: MemberId, days: number): boolean {
-    const since = this.now() - days * DAY;
-    return this.interactions.some(x => x.at >= since && (x.outcome === "completed" || x.outcome === "no_show") && x.participants.includes(a) && x.participants.includes(b));
+    const since = this.now() - 60 * DAY;
+    return this.interactions.some(x => x.at >= since && (x.outcome === "no_show" || (!repeat && x.outcome === "completed")) && x.participants.includes(a) && x.participants.includes(b));
   }
 
   /**
@@ -3602,9 +3598,12 @@ export class ConsentNetwork implements NetworkUnderTest {
       // An app's own pack (slop, peon, friends) ran its own hard filters, scores and asks: the Network's
       // ntwrk heuristics below (known wants, thin profiles, speculative intros) are not its rules. Blocks,
       // pair history and responsiveness still apply.
+      // Friends' repeat generator requires mutual "see again" feedback from a completed meetup.
+      // That meeting permits a repeat; a decline, no-show, block or negative feedback still prevents it.
+      const repeat = this.app.id === "friends" && p.generator === "same_table_again" && p.anchor?.type === "interaction";
       for (let i = 0; i < p.participants.length; i++) for (let j = i + 1; j < p.participants.length; j++) {
         const [a, b] = [p.participants[i]!, p.participants[j]!];
-        if (this.avoid.has(pairKey(a, b)) || this.blocked(a, b) || this.pairHistory(a, b, 60)) return "pair_history";
+        if (this.avoid.has(pairKey(a, b)) || this.blocked(a, b) || this.pairHistory(a, b, 60, repeat)) return "pair_history";
       }
       if (this.opts.selective && p.participants.some(id => this.responsiveness(id) < this.opts.minResponsiveness)) return "unresponsive";
       return undefined;
