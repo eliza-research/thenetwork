@@ -68,6 +68,69 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
     await admin(`drop database if exists ${DB} with (force)`).catch(() => {});
   });
 
+  test("posting update times and closure reasons survive reads and restarts without crossing postings", async () => {
+    await svc?.close();
+    const clock = new SimClock(START);
+    let s = svc = service(clock);
+    await s.start();
+    const phone = "+12125550175";
+    const call = async (method: string, path: string, body?: unknown) => {
+      const routes = jobPostingRoutes({ rt: s.runtimeFor("peon")!, user: { id: "staff:test", roles: ["admin"] }, need: () => undefined, audit: async () => {}, now: () => clock.now() });
+      const response = await routes(new Request(`http://127.0.0.1:4848/apps/peon${path}`, { method,
+        ...(body ? { headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {}) }), path.split("?")[0]!);
+      expect(response!.status).toBe(200);
+      return await response!.json() as any;
+    };
+    const metadata = (p: any) => ({ createdAt: p.createdAt, updatedAt: p.updatedAt, status: p.status, closedReason: p.closedReason ?? null });
+    try {
+      await text(s, clock, phone, "peon");
+      await text(s, clock, phone, "Dana, 36");
+      const managerId = (await memberId(phone))!;
+      const id = "revision-post";
+      const createdAt = clock.now();
+      await call("POST", "/postings", { id, managerId, title: "data analyst", openings: 1, payMin: 90, payMax: 120, mode: "hybrid" });
+      const read = async (postingId = id) => (await call("GET", `/postings?managerId=${encodeURIComponent(managerId)}`)).postings.find((p: any) => p.id === postingId);
+      const expected = (updatedAt: number, status = "active", closedReason: string | null = null) => ({ createdAt, updatedAt, status, closedReason });
+      const actual: ReturnType<typeof metadata>[] = [], want: ReturnType<typeof metadata>[] = [];
+
+      clock.advance(5 * MINUTE + 123);
+      const editedAt = clock.now();
+      const edited = await call("POST", "/postings", { id, managerId, payMax: 140 });
+      expect(metadata(edited.posting)).toEqual(expected(editedAt));
+      actual.push(metadata(await read())); want.push(expected(editedAt));
+
+      // A later post by the same manager must not supply this posting's revision time.
+      clock.advance(MINUTE);
+      const otherAt = clock.now(), otherId = "revision-other";
+      await call("POST", "/postings", { id: otherId, managerId, title: "cashier", openings: 1, payMin: 30, payMax: 35 });
+      actual.push(metadata(await read())); want.push(expected(editedAt));
+
+      clock.advance(MINUTE);
+      const filledAt = clock.now();
+      const closed = await call("POST", `/postings/${id}/close`, { reason: "filled" });
+      expect(metadata(closed.posting)).toEqual(expected(filledAt, "closed", "filled"));
+      actual.push(metadata(await read())); want.push(expected(filledAt, "closed", "filled"));
+      await s.close(); s = svc = service(clock); await s.start();
+      actual.push(metadata(await read())); want.push(expected(filledAt, "closed", "filled"));
+
+      clock.advance(MINUTE);
+      const reopenedAt = clock.now();
+      await call("POST", "/postings", { id, managerId });
+      actual.push(metadata(await read())); want.push(expected(reopenedAt));
+      clock.advance(MINUTE);
+      const closedAt = clock.now();
+      await call("POST", `/postings/${id}/close`, { reason: "closed" });
+      await s.close(); s = svc = service(clock); await s.start();
+      actual.push(metadata(await read())); want.push(expected(closedAt, "closed", "closed"));
+      // Legacy postings have only the original public/matchable facts, with no revision metadata.
+      await sql`delete from network.facets where app_id = 'peon' and member_id = ${managerId} and privacy_scope = 'agent_private' and ${`peon:posting:${otherId}`} = any(tags)`;
+      expect(metadata(await read(otherId))).toEqual({ createdAt: otherAt, updatedAt: otherAt, status: "active", closedReason: null });
+      expect(actual).toEqual(want);
+    } finally {
+      await s.close();
+    }
+  }, T);
+
   test("a job post by text is read back, saved on the yes, kept across a restart, and closed by staff", async () => {
     const clock = new SimClock(START);
     let s = svc = service(clock);
