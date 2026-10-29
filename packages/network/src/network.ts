@@ -4616,6 +4616,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (yn === "yes") {
         clear();
         const prev = waiting.id ? this.storedPosting(m.id, waiting.id) : undefined;
+        // A job closed after this read-back stays closed; staff can explicitly reopen it.
+        if (!waiting.close && prev?.status === "closed") return reply(POSTING_COPY.dropped);
         const posting = postingFromDraft(waiting, m.id, this.now(), prev);
         if (!posting) return reply(POSTING_COPY.dropped);
         const r = this.applyPosting(posting, m.id);
