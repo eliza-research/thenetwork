@@ -47,6 +47,16 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
       { kind: "self", text: "I couldn't make it." },
       { kind: "disputed", text: "Ben didn't show up.", response: true },
       { kind: "voucher", text: "Someone didn't show up.", response: true },
+      { kind: "present_then_missing", text: "Cara came. Ben didn't show up.", missing: ["b"] },
+      { kind: "missing_then_present", text: "Ben didn't show up. Cara came.", missing: ["b"] },
+      { kind: "semicolon", text: "Cara came; Ben didn't show up.", missing: ["b"] },
+      { kind: "newline", text: "Cara came\nBen didn't show up.", missing: ["b"] },
+      { kind: "but", text: "Cara came, but Ben didn't show up.", missing: ["b"] },
+      { kind: "while", text: "Cara came, while Ben didn't show up.", missing: ["b"] },
+      { kind: "whereas", text: "Cara came, whereas Ben didn't show up.", missing: ["b"] },
+      { kind: "two_named", text: "Ben and Cara didn't show up.", missing: ["b", "c"] },
+      { kind: "comma_list", text: "Ben, Cara and Dan didn't show up.", missing: ["b", "c", "d"] },
+      { kind: "two_sentences", text: "Ben didn't show up. Cara never came.", missing: ["b", "c"] },
     ];
     const outcomes: { seed: number; flow: string; kind: string; misses: number[]; expected: number[]; correct: boolean }[] = [];
     for (const seed of [1, 2, 3]) for (const flow of ["pair", "group", "plan"]) for (const c of cases) {
@@ -79,7 +89,7 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
       expect(misses().slice(1)).toEqual(ids.slice(1).map(() => 0));
       w.restart(); await w.run(5 * DAY); w.restart();
       expect(w.net.exportState().opps.find(x => x.id === id)?.finalized).toBe(true);
-      const expected = ids.map((p, i) => i === 0 ? Number(c.kind === "self") :
+      const expected = ids.map((p, i) => i === 0 ? Number(c.kind === "self") : c.missing ? Number(c.missing.includes(p)) :
         Number(c.kind === "all" || c.kind === "all_showed" || c.kind === "named" && p === "b" || c.kind === "unnamed" && flow === "pair"));
       const actual = misses();
       outcomes.push({ seed, flow, kind: c.kind, misses: actual, expected, correct: Bun.deepEquals(actual, expected) });
