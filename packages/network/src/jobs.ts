@@ -178,9 +178,9 @@ export function readPostingText(body: string, ctx: { draft?: PostingDraft; posti
   if (ctx.draft?.close && !command) {
     const open = ctx.postings.filter(p => p.active);
     const pick = namedPostings(body, open);
-    if (pick.length > 1) return { draft: { close: true }, text: POSTING_COPY.whichToClose(open.map(p => p.title)), ready: false };
+    if (pick.length > 1) return { draft: { close: true, asks: ctx.draft.asks }, text: POSTING_COPY.whichToClose(open.map(p => p.title)), ready: false };
     if (pick.length !== 1) return undefined;
-    return { draft: { close: true, id: pick[0]!.id, title: pick[0]!.title }, text: POSTING_COPY.readBackClose(pick[0]!.title), ready: true };
+    return { draft: { close: true, id: pick[0]!.id, title: pick[0]!.title, asks: ctx.draft.asks }, text: POSTING_COPY.readBackClose(pick[0]!.title), ready: true };
   }
   const read = parsePosting(body);
   const base: PostingDraft = command && !/^\s*update\b/i.test(body) ? { id: ctx.newId } : { ...(ctx.draft ?? {}) };

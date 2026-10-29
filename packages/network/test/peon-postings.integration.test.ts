@@ -107,7 +107,7 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
       await s.close(); s = svc = service(clock); await s.start();
       expect(await stored()).toEqual(original);
       await text(s, clock, phone, "senior data analyst");
-      const resolved = draft()?.id === id("senior data analyst") && draft()?.ready === true
+      const resolved = draft()?.id === id("senior data analyst") && draft()?.ready === true && draft()?.asks === 2
         && (await last(manager)) === POSTING_COPY.readBackClose("senior data analyst");
       expect(await stored()).toEqual(original);
       await text(s, clock, phone, "no");
