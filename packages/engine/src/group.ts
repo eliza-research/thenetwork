@@ -102,6 +102,18 @@ export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | nu
   }
 
   const complete: State[] = [];
+  // A forced group that already meets minSize is itself a complete group.
+  // Previously it was only kept if an expansion succeeded, so a valid forced
+  // trio with an empty or incompatible pool returned null even though the
+  // forced group had already been evaluated and accepted. Only the forced
+  // initial state is seeded: unforced seeds are size 1 and must still grow
+  // to minSize, and a forced group that needs a host keeps the existing
+  // host fallback below (it is only seeded when it already has one).
+  if (forced.length) {
+    for (const st of beam) {
+      if (st.ids.length >= opts.minSize && (!opts.needHost || (st.stats && st.stats.roleCoverage >= 1))) complete.push(st);
+    }
+  }
   const seen = new Set<string>();
   for (let size = beam[0]?.ids.length ?? 0; size < opts.maxSize && beam.length; size++) {
     const next: State[] = [];
