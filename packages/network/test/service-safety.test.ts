@@ -209,6 +209,55 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await text(s, clock, di, "friends")).toBe("held");
   }, T);
 
+  test("ban revokes share grants, clears pending texts, and refuses further inbound (HELP still answers)", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const { s, directs } = service(clock);
+    const ana = newPhone(), ben = newPhone();
+    for (const [p, who] of [[ana, "Ana, 30"], [ben, "Ben, 32"]] as const) {
+      expect(await text(s, clock, p, "friends")).toBe("join_asked");
+      expect(await text(s, clock, p, who)).toBe("joined");
+    }
+    // Ben joins slop too; SHARE answers the link notice and stores a friends→slop grant.
+    expect(await text(s, clock, ben, "slop")).toBe("join_asked");
+    expect(await text(s, clock, ben, "Ben, 32")).toBe("joined");
+    expect(await text(s, clock, ben, "SHARE")).toBe("handled");
+    const grantsBefore = await sql`select from_app, to_app, revoked_at from platform.share_grants`;
+    expect(grantsBefore).toHaveLength(1);
+    expect(grantsBefore[0]).toMatchObject({ from_app: "friends", to_app: "slop", revoked_at: null });
+
+    // Leave a pending share-shaped row to prove ban clears pending_texts for the person's phone hash.
+    await sql`insert into platform.pending_texts (phone_hash, kind, app_id, name, age, at)
+      select p.phone_hash, 'share', 'slop', null, null, now()
+      from platform.people p
+      join platform.phone_identities ph on ph.person_id = p.id
+      where ph.e164 = ${ben} and p.phone_hash is not null`;
+    expect((await sql`select count(*)::int as n from platform.pending_texts pt
+      join platform.people p on p.phone_hash = pt.phone_hash
+      join platform.phone_identities ph on ph.person_id = p.id
+      where ph.e164 = ${ben}`)[0].n).toBeGreaterThan(0);
+
+    expect(await text(s, clock, ana, "report Ben, he was rude and kept texting me")).toBe("handled");
+    const b = (await memberOf("slop", ben))!.id;
+    expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: b, by: "phone", note: "confirmed by staff" })).json()).toEqual({ ok: true });
+
+    const grantsAfter = await sql`select revoked_at is not null as revoked from platform.share_grants`;
+    expect(grantsAfter).toEqual([{ revoked: true }]);
+    expect((await sql`select count(*)::int as n from platform.pending_texts pt
+      join platform.people p on p.phone_hash = pt.phone_hash
+      join platform.phone_identities ph on ph.person_id = p.id
+      where ph.e164 = ${ben}`)[0].n).toBe(0);
+
+    // Restricted membership is still present, but inbound must refuse (handoff: every inbound path).
+    const before = directs.length;
+    expect(await text(s, clock, ben, "hey are you there")).toBe("held");
+    expect(directs.length).toBe(before);
+    // HELP is still answered (same rule as the recycled-number hold).
+    expect(await text(s, clock, ben, "HELP")).toBe("held");
+    const helps = new Set(Object.values(APPS).map(a => a.brand.help));
+    expect(helps.has(directs.at(-1)?.body ?? "")).toBe(true);
+  }, T);
+
   test("forget: a report or a minor report names neither party in network.events after that party leaves", async () => {
     await fresh();
     const clock = new SimClock(START);

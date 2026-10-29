@@ -1064,6 +1064,19 @@ export class NetworkService implements RuntimeHost {
       return "held";
     }
 
+    // A banned number or person: inbound refuses (docs/go-live-handoff.md). STOP above still records
+    // consent; HELP still answers. "leave <app>" still runs so a restricted membership can opt out
+    // (safety sim: ban, leave, then prove rejoin refuses). Membership may stay restricted after a
+    // ban, so this gate must run for existing members too, not only the join path.
+    if (e164) {
+      const bannedPerson = await this.accounts.personFor(e164);
+      if (await this.accounts.banned(e164, bannedPerson) && !leaveTarget(ev.text, this.apps)) {
+        this.log(`[inbound] a banned number (${rt.id}): not handled`);
+        if (kw === "help") await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`, "compliance");
+        return "held";
+      }
+    }
+
     // Photos by text (photoIntake.ts): the answer to the photo consent ask, then any attachment. A photo
     // from a minor, an unknown age, a banned person or a non-member of slop is dropped before it is fetched.
     // Only an explicit YES PHOTOS / NO PHOTOS routed to slop: a bare yes or no goes on to the Network (a probe, a date ask, another app).
@@ -1751,6 +1764,12 @@ export class NetworkService implements RuntimeHost {
       for (const h of hashes) await this.people.suppress(h, "banned", at);
       // No rating of looks is kept for a banned person (they are never matched again). The photos stay for the safety team.
       await this.dropRatings(personId);
+      // Leave and forget already revoke share grants for one app; a ban must revoke every live grant
+      // for the person, and drop pending join/share/looking_for texts so a later SHARE cannot mint one.
+      for (const g of await this.people.shareGrants(personId)) {
+        if (g.revokedAt === null) await this.people.putShareGrant({ ...g, revokedAt: at });
+      }
+      for (const h of hashes) await this.people.deletePending(h);
       for (const m of await this.people.memberships(personId)) if (m.state !== "removed" && m.state !== "invited") await this.people.putMembership({ ...m, state: "restricted" });
       let out: ActionResult = { ok: true };
       for (const x of members) {
