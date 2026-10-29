@@ -81,7 +81,7 @@ export function parsePosting(body: string): PostingDraft {
   for (const [re, n] of SENIORITY) if (re.test(t)) { d.seniority = n; break; }
   const lvl = /\blevel\s*([1-5])\b/i.exec(t); if (lvl) d.seniority = Number(lvl[1]);
   const list = (s: string) => s.split(/,|\band\b|\/|;/i).map(x => x.trim().toLowerCase()).filter(x => x && x.length <= 40 && !/^(?:a|an|the|some)$/.test(x));
-  const must = /\bmust(?:[- ]haves?|\s+have|\s+know)?\s*:?\s*([^.;]+?)(?=\.|;|\bnice to have\b|$)/i.exec(t);
+  const must = /\bmust(?:[- ]haves?|\s+have|\s+know)?\s*:?\s*([^.;]+?)(?=\.|;|\bnice[- ]to[- ]haves?\b|$)/i.exec(t);
   if (must) d.must = list(must[1]!).map(x => { const m = /^(.*?)\s*(?:\(?(?:level\s*)?([0-5])\)?)$/i.exec(x); return { skill: slug(m?.[1] || x), level: m?.[2] ? Number(m[2]) : 2 }; }).filter(x => x.skill);
   const nice = /\bnice[- ]to[- ]haves?\s*:?\s*([^.;]+)/i.exec(t);
   if (nice) d.nice = list(nice[1]!).map(slug).filter(Boolean);
