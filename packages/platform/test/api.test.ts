@@ -221,6 +221,45 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
     expect(await c.api.accounts.optedIn("friends", phone)).toBe(true);
   });
 
+  test("share refuses a banned or restricted membership; no new grant is stored", async () => {
+    const c = make(store), phone = newPhone();
+    const friends = await login(c, "friends", phone);
+    await join(c, "friends", friends, 31, "Ben");
+    const slop = await login(c, "slop", phone);
+    await join(c, "slop", slop, 31, "Benji");
+    const person = await c.api.accounts.personFor(phone);
+    expect(person).toBeTruthy();
+
+    // Active share still works.
+    expect((await call(c, "slop", "POST", "/api/me/share", { fromApp: "friends", fields: ["first_name"] }, slop)).status).toBe(200);
+    expect((await store.shareGrants(person!.id)).some(g => g.revokedAt === null)).toBe(true);
+
+    // Staff ban row + restricted memberships (what NetworkService.ban writes on the platform side).
+    await store.ban({
+      id: `ban_share_${phone.slice(-4)}`,
+      scope: "person",
+      personId: person!.id,
+      phoneHash: c.api.accounts.phoneHash(phone),
+      reason: "test",
+      reportId: null,
+      bannedBy: "staff",
+      at: c.clock.t,
+    });
+    for (const m of await store.memberships(person!.id)) {
+      if (m.state !== "removed" && m.state !== "invited") await store.putMembership({ ...m, state: "restricted" });
+    }
+    expect(await c.api.accounts.banned(phone, person!)).toBe(true);
+
+    const before = (await store.shareGrants(person!.id)).length;
+    // API still returns ok:true (it must not advertise why), but accounts.share stores nothing new.
+    expect((await call(c, "slop", "POST", "/api/me/share", { fromApp: "friends", fields: ["city"] }, slop)).status).toBe(200);
+    const grants = await store.shareGrants(person!.id);
+    expect(grants).toHaveLength(before);
+    expect(grants.every(g => g.fields.includes("city") === false || g.revokedAt !== null || g.fields.join(",") === "first_name")).toBe(true);
+    // No grant gained the city field.
+    expect(grants.some(g => g.revokedAt === null && g.fields.includes("city"))).toBe(false);
+  });
+
   test("delete all: every membership forgotten, phone and sessions gone, a tombstone and the suppression hash stay", async () => {
     const c = make(store), phone = newPhone();
     const cookie = await login(c, "friends", phone);
