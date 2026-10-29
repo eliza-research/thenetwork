@@ -96,13 +96,20 @@ export interface RelayThreadState { id: string; app: string; members: [MemberId,
 export interface RelaySwap { itemId: string; matchId: string; from: MemberId; to: MemberId; at: number }
 
 /**
- * "Don't send my number", "cancel the number swap", "never mind about my number": the member takes
- * back a pending swap request. A negation or a cancel word together with their number.
+ * A negation that is not a no to the swap ("I don't mind, send them my number", "don't wait",
+ * "stop asking", "never had to wait this long"). Blanked before withdrawsSwap reads the message, so
+ * any other negation or cancel word in it still withdraws: the reader errs toward withdrawing, because
+ * a swap left pending after a no would share the number.
+ */
+const NOT_A_NO = /\b(?:don'?t|dont|do not) (?:mind|care|wait|worry)\b|\bstop asking\b|\bnever had\b|\bno (?:problem|worries|prob|rush|hurry)\b|\bnot a problem\b/g;
+/**
+ * "Don't send my number", "cancel the number swap", "no, not my number": the member takes back a
+ * pending swap request. A negation, a cancel word or "keep" together with their number.
  */
 export function withdrawsSwap(text: string): boolean {
-  const t = text.replace(/[\u2019\u2018`\u00b4]/g, "'").toLowerCase();
-  return /\b(?:don'?t|dont|do not|never|stop|cancel|hold off|rather not|changed my mind|never ?mind|nvm|take back|scratch)\b/.test(t)
-    && /\b(?:my (?:phone number|number|phone|digits|cell|contact(?: info)?)|(?:number|numbers) swap|swap(?:ping)? numbers)\b/.test(t);
+  const t = text.replace(/[\u2019\u2018`\u00b4]/g, "'").toLowerCase().replace(NOT_A_NO, " ");
+  return /\b(?:no|not|don'?t|dont|do not|never|stop|cancel|hold off|rather|keep|changed my mind|never ?mind|nvm|take back|scratch)\b/.test(t)
+    && /\b(?:my (?:phone number|number|phone|digits|cell|contact(?: info)?)|(?:number|numbers) swap|(?:the|that|our) swap|swap(?:ping)? numbers)\b/.test(t);
 }
 export interface RelayState { threads: RelayThreadState[]; log: RelayRecord[]; held: RelayHeld[]; swaps: RelaySwap[] }
 export const emptyRelayState = (): RelayState => ({ threads: [], log: [], held: [], swaps: [] });
