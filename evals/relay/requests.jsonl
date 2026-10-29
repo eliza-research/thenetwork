@@ -35,3 +35,16 @@
 {"text": "let Sam know I'll be there at 7", "want": "text"}
 {"text": "Tell her that I'm at the bar on the left", "want": "text"}
 {"text": "ask them if 6:30 works", "want": "text"}
+{"text": "I'm not going to give him my number", "want": "none"}
+{"text": "I am not gonna send her my number", "want": "none"}
+{"text": "I can't give him my number", "want": "none"}
+{"text": "I cannot share my number with him", "want": "none"}
+{"text": "I wouldn't give her my number", "want": "none"}
+{"text": "I'm not ready to give him my number", "want": "none"}
+{"text": "no way I'd send him my number", "want": "none"}
+{"text": "I didn't send him my number", "want": "none"}
+{"text": "I wasn't going to give her my number", "want": "none"}
+{"text": "I'm not going to send them this photo", "want": "none"}
+{"text": "I couldn't share this pic with her", "want": "none"}
+{"text": "can't wait! send them my number", "want": "contact_share"}
+{"text": "tell them I can't make it at 7", "want": "text"}

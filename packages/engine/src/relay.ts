@@ -448,6 +448,12 @@ export async function relayItemAsync(item: RelayItem, ctx: RelayContext, o: { ho
 export type RelayRequest = { kind: "contact_share" } | { kind: "photo" } | { kind: "text"; body: string } | { kind: "none" };
 
 const NEG = /\b(?:don'?t|dont|do not|never|not yet|no need to|stop|shouldn'?t|won'?t|wont|rather not|hold off|wait (?:to|before)|not until)\b/;
+/**
+ * More refusals that stop a contact share or a photo send ("I'm not going to give him my number",
+ * "I can't share my number"). Only for those two: a text relay often carries them ("tell them I can't
+ * make it"). "Can't wait" is not a refusal.
+ */
+const SHARE_NEG = /\b(?:not going to|not gonna|can'?t(?! wait)|cant(?! wait)|cannot(?! wait)|can not|couldn'?t|wouldn'?t|wasn'?t|didn'?t|not ready to|no way|refuse to)\b/;
 const HEDGE = /^\s*(?:should i|do you think|is it ok(?:ay)? (?:to|if)|would it be|what if|maybe|if)\b|\b(?:later|after the date|after we meet|eventually|at some point|one day|tomorrow)\b|\b(?:should i|or not)\b/;
 const OTHER = "(?:them|him|her|my (?:match|date)|(?!(?:me|us|it|everyone|everybody|nobody|anyone|this|that)\\b)\\p{L}[\\p{L}'-]{1,30})";
 const CONTACT_REQ = new RegExp(`\\b(?:send|give|share|pass|forward|text)\\s+${OTHER}\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\b|\\b(?:share|send|give|pass)\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\s+(?:with|to)\\s+${OTHER}|^\\s*(?:yes|yeah|yep|ok|okay|sure)[,!.]?\\s+(?:send|share|give)\\s+(?:it|my number|them my number)\\b|\\b(?:they|she|he) can have my (?:number|digits|phone number)\\b`, "iu");
@@ -463,8 +469,9 @@ export function parseRelayRequest(text: string): RelayRequest {
   const t = text.replace(/[’‘`´]/g, "'").trim();
   const low = t.toLowerCase();
   const negated = NEG.test(low), hedged = HEDGE.test(low) || (/\?\s*$/.test(t) && /^\s*(?:should|would|could i|is it|do you|can i)\b/i.test(t));
-  if (CONTACT_REQ.test(t)) return negated || hedged ? { kind: "none" } : { kind: "contact_share" };
-  if (PHOTO_REQ.test(t)) return negated || hedged ? { kind: "none" } : { kind: "photo" };
+  const refused = negated || SHARE_NEG.test(low);
+  if (CONTACT_REQ.test(t)) return refused || hedged ? { kind: "none" } : { kind: "contact_share" };
+  if (PHOTO_REQ.test(t)) return refused || hedged ? { kind: "none" } : { kind: "photo" };
   const m = TEXT_REQ.exec(t);
   if (m && !negated) return { kind: "text", body: m[1]!.trim() };
   return { kind: "none" };
