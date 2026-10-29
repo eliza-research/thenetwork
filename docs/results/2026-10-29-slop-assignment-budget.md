@@ -137,8 +137,9 @@ The evidence uses real engine execution, not mocked model responses.
 N/A: no signup, MCP, OAuth, gateway or other client workflow changes.
 The local engine and simulation were exercised through Codex terminal tools.
 No end-to-end client signup was tested, and no client compatibility claim is made.
-Provider: OpenAI. The exact contributor model identifier is unavailable to this client.
-The Slop ordinary-disclosure footer uses its supported `unavailable` value.
+Provider: OpenAI. Model identifier supplied by the operator: `gpt-6.1-sol`.
+Client: Codex desktop `26.1023.6123.0`, verified from the installed Windows package.
+The initial disclosure used `unavailable`; the operator supplied the model identifier afterward.
 
 ## Limits
 
