@@ -1,6 +1,6 @@
 # Refused recurring days must not become free time
 
-Date: 2026-10-28. Repository: eliza-research/thenetwork.
+Date: 2026-10-28. Updated 2026-10-29; see the named-weekday follow-up below. Repository: eliza-research/thenetwork.
 Base: `a0ed7bc6495d9e524afc3d500738212a28dc7bc2`.
 Code and regression: `d40d29658abbd632276d66fcf826fdb4fc2d2cf9`.
 
@@ -112,7 +112,7 @@ Standing availability remains a decaying prior, not a hard calendar exclusion.
 This change does not repair old saved values or change exceptions within a positive group, such as "weekdays except Tuesday".
 It does not expand the existing negation grammar or measure live delivery or conversation quality.
 
-## Reviewer follow-up: default evenings
+## Reviewer follow-up: default evenings (2026-10-28)
 
 The [review](https://github.com/eliza-research/thenetwork/pull/160#pullrequestreview-5677077382) identified another path that restored refused weekday evenings.
 This follow-up starts from PR head `aad676569ded15ec47a71aa388915f6c195918f5` on the same branch.
@@ -215,3 +215,102 @@ The run page states: "This workflow is awaiting approval from a maintainer" in P
 An upstream maintainer must review the fork workflow and decide whether to approve its run.
 No workflow approval, permission change, settings change or rerun was attempted.
 This run supplies neither passing nor failing test evidence.
+
+## Named-weekday follow-up (2026-10-29)
+
+Code and expanded regression: `72af3e4ce46230ccef311b05a83ae0a5929cedc9`.
+Previous published head: `e3cc106bdadc668b38a918eee9b8d5c40749be2d`.
+Main remains `a0ed7bc6495d9e524afc3d500738212a28dc7bc2`.
+
+The published guard handles refused weekday groups, but "Free every evening, not Tuesday" still saves all five weekday evenings.
+"Free all evenings, Friday is out" has the same defect.
+The fallback now checks the existing Monday-through-Friday word patterns as well as the two weekday groups.
+Every check uses the existing `negatedAt` rule. This extends the same fallback guard without changing the negation grammar.
+"Most evenings, not weekends" and "most evenings, not Sunday" retain weekday evenings because those refusals do not overlap the fallback.
+Explicit positive windows still follow the existing token path.
+
+### measurement
+
+The existing gate adds two named-weekday refusals and one Sunday control.
+It now runs 19 phrases on each of seeds 1, 2 and 3: 57 conversations.
+The world, clock, adult selection, greeting, production inbound handler and state reload are unchanged.
+The reload creates a new Network instance; it does not restart an operating-system process.
+
+| Correct persisted availability | Main | Previous published head | Revised fix |
+|---|---:|---:|---:|
+| All conversations | 18/57 | 51/57 | 57/57 |
+| Original recurring-group refusals | 0/18 | 18/18 | 18/18 |
+| Generic-evening group refusals | 0/12 | 12/12 | 12/12 |
+| Named-weekday fallback refusals | 0/6 | 0/6 | 6/6 |
+| Default and non-overlapping-day controls | 18/21 | 21/21 | 21/21 |
+
+The previous-head column runs the same expanded first gate against the published parser; it fails with `expected 51 to be 57`.
+The full main run fails only that gate, with `expected 18 to be 57`.
+The gate collects every conversation before comparing counts, then checks each empty result's state and scheduler probability.
+Each empty result has no standing pattern, no availability sample, and the unchanged 0.35 weekday-evening prior.
+These assertions preserve the stricter state checks added in the previous review follow-up.
+
+Both full measurements use `bun run sim --only network,evals --json <output>`.
+Main: **86/87 blocking gates**, zero tracked failures, 218.5 seconds.
+Revised fix: **87/87 blocking gates**, zero tracked failures, 224.7 seconds.
+All 88 other gate records are identical, excluding runtime; the invariant fingerprint stays `24bb81f068060b33`.
+Historical holdout results above apply to their original fixtures; no new holdout claim is made for the added named-day cases.
+
+### safety_gates
+
+- Typecheck: pass, both isolated and combined branches.
+- Integration, including all eleven security command files: **675 pass, 8 skip, 6 known Windows failures**; 13,741 assertions, 689 tests, 68 files; 578.71s.
+- End-to-end: **42 pass, 1 optional skip, 0 fail**; 654 assertions, 43 tests, 3 files; 85.51s.
+- Combined with the other sixteen contributions: **88/88 affected gates**, zero tracked failures; 179.3 seconds.
+
+Integration uses PostgreSQL 16.15 on port 54339, `USER=postgres`, `REQUIRE_PG=1`, and the local binary directory in `PG_BIN_DIR`.
+The completed rerun sets `OBSERVATORY_PG_DIR` to a fresh, isolated cluster initialized with the local `postgres` role.
+The six failures match the measured main baseline: absolute `/bin/bash`, SIGTERM exit status, and four Windows path-separator assertions.
+The eight reconciliation skips require `NETWORK_RETRY_RECONCILIATION_TEST=1`; PostgreSQL was running.
+The end-to-end skip is the optional external-origin check.
+This PR remains draft pending maintainer-approved Linux CI.
+The full simulation allowance was used earlier; these runs follow AGENTS.md's affected-block rule.
+Combined validation covers these blocks and typecheck, not a new full combined-suite result.
+
+### Attempts, alternatives and limits
+
+An initial local attempt suppressed fallback after any named day, including weekends.
+It passed 54 conversations, 87 affected gates, typecheck and end-to-end; integration showed only the six known Windows failures.
+Final synchronization found the published group guard and its weekend-preservation control.
+The broad attempt was not pushed. The revised change preserves that published behavior and adds only overlapping named-weekday refusals.
+All final measurements above use the revised implementation and fixed 57-conversation fixture.
+
+The first final integration and combined runs were interrupted before completion; their partial logs are not passing evidence.
+On resumption, the old database needed crash recovery. Starting integration before it was ready let the helper start another local cluster.
+That attempt produced database setup errors and was stopped. Both old clusters were stopped without deleting their files.
+A fresh isolated cluster was initialized, and `psql` confirmed its `postgres` role and PostgreSQL 16.15 before the completed integration rerun.
+The combined simulation and typecheck were also rerun to completion. The completed isolated simulation and end-to-end evidence remained valid.
+
+1. Suppress fallback after every named day. This unnecessarily discards valid weekdays when only weekends are refused.
+2. Infer a week and subtract each refused day. This adds exception grammar and guesses the remaining unstated availability.
+3. Add a separate refusal parser. This duplicates the existing named-day patterns and clause rules.
+
+With only generic evenings and a refused weekday, the parser now records no new availability pattern.
+This is a conservative result; it does not infer the other four weekdays.
+Standing availability remains a decaying prior. Existing saved values are not repaired or cleared.
+Exceptions inside a positive group, such as "weekdays except Tuesday", remain outside this change.
+The older limitation about individual named days no longer applies to the generic-evening fallback.
+No message wording, UI, threshold, dependency or client contract changes.
+
+### llm_evidence and agent_clients
+
+Deterministic validation made zero model calls, costing $0. No real-model or external-client result is claimed.
+The production handler runs in the simulation with matching disabled and human review retained.
+Authorship: OpenAI / `gpt-6-astra`, Codex desktop.
+
+### Reproduce the final change
+
+1. Start at main `a0ed7bc6495d9e524afc3d500738212a28dc7bc2` in a separate checkout.
+2. Load `scripts/sim/network.ts` from `72af3e4ce46230ccef311b05a83ae0a5929cedc9`.
+3. Run `bun install --frozen-lockfile`, then `bun run sim --only network,evals`.
+4. Expect 86/87 blocking gates and `expected 18 to be 57`.
+5. Load `packages/network/src/classify.ts` from the same code commit.
+6. Run the same simulation and `bun run typecheck`. Expect 87/87 and a successful typecheck.
+
+For the intermediate result, use `classify.ts` from the previous published head with the current gate.
+Its first gate reports `expected 51 to be 57`.
