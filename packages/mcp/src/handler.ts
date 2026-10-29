@@ -84,12 +84,16 @@ export interface McpHandler {
   /** The answer for an MCP or OAuth path, or undefined for any other path. Pass the Bun server for the socket address. */
   fetch(req: Request, server?: { requestIP(req: Request): { address: string } | null }): Promise<Response | undefined>;
   store: OAuthStore;
-  /** Revoke every consent of a phone (one app, or all). Call it when the person leaves an app or deletes everything. */
   /**
    * Revoke every grant of a phone (of one app, or of all). With `forget`, the grants and sign-in requests
    * are then deleted, so nothing keeps the phone next to the app (the person left or deleted everything).
    */
   revokeAllFor(e164: string, app?: McpAppId, o?: { forget?: boolean }): Promise<number>;
+  /**
+   * Same as revokeAllFor, but the caller already has the platform phoneKey (HMAC). Used by staff ban:
+   * ban() holds hashes, not cleartext numbers.
+   */
+  revokeAllForKey(phoneKey: string, app?: McpAppId, o?: { detail?: string }): Promise<number>;
 }
 
 interface Ctx { app: McpApp; issuer: string; ip: string; req: Request; url: URL }
@@ -947,18 +951,23 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
   return {
     store,
-    async revokeAllFor(e164, app, ro = {}) {
+    async revokeAllForKey(phoneKey, app, ro = {}) {
       const at = now();
-      const key = o.platform.phoneKey(e164);
+      const detail = ro.detail ?? "account change";
       let n = 0;
       for (const id of app ? [app] : (Object.keys(apps) as McpAppId[])) {
-        for (const g of await store.grantsFor(key, id, at)) {
+        for (const g of await store.grantsFor(phoneKey, id, at)) {
           if (await revokeGrant(g.id, at)) {
             n++;
-            await store.audit({ at, kind: "consent_revoked", clientId: g.clientId, grantId: g.id, app: id, detail: "account change" });
+            await store.audit({ at, kind: "consent_revoked", clientId: g.clientId, grantId: g.id, app: id, detail });
           }
         }
       }
+      return n;
+    },
+    async revokeAllFor(e164, app, ro = {}) {
+      const key = o.platform.phoneKey(e164);
+      const n = await this.revokeAllForKey(key, app, { detail: "account change" });
       if (ro.forget) await store.forgetPhone(key, e164, app);
       return n;
     },

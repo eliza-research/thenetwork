@@ -306,6 +306,8 @@ export class NetworkService implements RuntimeHost {
   private api?: PublicApi;
   private readonly copies = new Map<AppId, Copy>();
   private readonly forgetListeners: Array<(ctx: MemberHookContext) => Promise<unknown> | unknown> = [];
+  /** Staff ban: revoke live MCP OAuth grants for the banned person's phoneKeys (wired in serve.ts). */
+  private readonly banListeners: Array<(ctx: { personId: string; phoneHashes: string[]; at: number }) => Promise<unknown> | unknown> = [];
   /** Private member photos (slop; verified adults only). */
   readonly photos: PhotoService;
   readonly photoRelay: PhotoRelayService;
@@ -816,6 +818,13 @@ export class NetworkService implements RuntimeHost {
    * The backend uses it to revoke the MCP server's OAuth grants of that app (packages/mcp revokeAllFor).
    */
   onForget(fn: (ctx: MemberHookContext) => Promise<unknown> | unknown) { this.forgetListeners.push(fn); }
+
+  /**
+   * Run `fn` after a staff ban writes the ban rows and suppresses the numbers.
+   * The backend uses it to revoke every live MCP OAuth grant of those phoneKeys
+   * (packages/mcp revokeAllForKey). Complements onForget (leave/delete) and open #172/#173.
+   */
+  onBan(fn: (ctx: { personId: string; phoneHashes: string[]; at: number }) => Promise<unknown> | unknown) { this.banListeners.push(fn); }
 
   /** Leave one app: the Network forgets the member, then the save deletes every row that names them (the forget path). */
   private async forget(app: AppInfo, memberId: MemberId) {
@@ -1749,6 +1758,11 @@ export class NetworkService implements RuntimeHost {
         : hashes.map(h => ({ id: `ban_${randomUUID()}`, scope: "phone" as const, personId, phoneHash: h, reason: note, reportId: reportId ?? null, bannedBy: user.id, at }));
       for (const b of rows) await this.people.ban(b);
       for (const h of hashes) await this.people.suppress(h, "banned", at);
+      // Live MCP OAuth grants end with the ban: a banned number cannot keep calling /mcp with a pre-ban Bearer.
+      for (const f of this.banListeners) {
+        try { await f({ personId, phoneHashes: hashes, at }); }
+        catch (e) { this.log(`[ban] grant revoke listener failed: ${(e as Error).message}`); }
+      }
       // No rating of looks is kept for a banned person (they are never matched again). The photos stay for the safety team.
       await this.dropRatings(personId);
       for (const m of await this.people.memberships(personId)) if (m.state !== "removed" && m.state !== "invited") await this.people.putMembership({ ...m, state: "restricted" });
