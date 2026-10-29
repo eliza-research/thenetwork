@@ -721,6 +721,8 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   return unclear;
 }
 
+const AVAILABILITY_TIME = new RegExp(`^(?:on\\s+)?(?:${DAY_WORDS.map(([re]) => re.source).join("|")}|\\b(?:weekdays?|weekends?|weeknights?|mornings?|afternoons?|lunch|evenings?|nights?|after work)\\b)`);
+
 /**
  * When a member says they are free ("Tue and Thu evenings", "weekends", "Saturday morning"), as
  * availability-pattern tags ("evening:Tue") that the engine's standingFromFacets reads.
@@ -730,7 +732,11 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
  * default (a weekend day: the whole day; a weekday: the evening). Days and parts are never crossed.
  */
 export function availabilityTags(body: string): string[] {
-  const t = body.toLowerCase();
+  // These exclusions have the same scope as "except". Require a time expression next so
+  // "barring emergencies" does not refuse a later day; keep this out of booking consent.
+  const t = body.toLowerCase().replace(/\b(?:other than|apart from|aside from|barring)\s+/g,
+    (cue: string, at: number, text: string) => !/\bnothing(?:\s+at all)?\s+$/.test(text.slice(0, at))
+      && AVAILABILITY_TIME.test(text.slice(at + cue.length)) ? "except " : cue);
   const DAYS3 = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   type Tok = { at: number; days?: number[]; part?: string; refused?: boolean };
   const toks: Tok[] = [];
