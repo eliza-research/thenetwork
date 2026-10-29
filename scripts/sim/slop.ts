@@ -289,6 +289,36 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
     expect(minors).toBeGreaterThan(0);
   });
 
+  await b.run("assignment: every round respects the remaining member budget", async () => {
+    for (const seed of [1, 2, 3]) {
+      const input = slopWorld(seed, { perCity: 60 });
+      const prior = await runEngine(input, cfg(seed), { pack: makeSlopPack({ asks: false, compatAsks: false, congestion: { backupMaxDegree: 0 } }) });
+      expect(prior.proposals.length).toBeGreaterThan(10);
+      const recentProposals = prior.proposals.map(p => ({ ...p, createdAt: input.now - DAY }));
+      for (const assignment of ["greedy", "stable"] as const) for (const backup of [false, true]) {
+        const pack = makeSlopPack({ assignment, asks: false, compatAsks: false, congestion: { perMemberPerTick: backup ? 1 : 2, backupMaxDegree: backup ? 1000 : 0 } });
+        for (const history of [false, true]) {
+          const runInput = history ? { ...input, recentProposals } : input;
+          const runCfg = history ? cfg(seed) : { ...cfg(seed), budgets: { open: { limit: 1, periodDays: 7 }, normal: { limit: 1, periodDays: 7 }, receiving: { limit: 1, periodDays: 7 } } };
+          const w = new World(runInput, resolveConfig(runCfg), localEmbed, pack);
+          const result = await runEngine(runInput, runCfg, { pack });
+          expect(result.proposals.length).toBeGreaterThan(10);
+          const counts = new Map<MemberId, number>();
+          for (const p of result.proposals) for (const id of p.participants) counts.set(id, (counts.get(id) ?? 0) + 1);
+          let historicalMembers = 0;
+          for (const [id, n] of counts) {
+            const mi = w.get(id)!;
+            if (mi.recentProactive) historicalMembers++;
+            expect(mi.recentProactive + n).toBeLessThanOrEqual(w.cfg.budgets[mi.m.state].limit);
+          }
+          // History must leave room for a new partner, rather than vacuously excluding everyone.
+          if (history) expect(historicalMembers).toBeGreaterThan(5);
+          else expect(Math.max(...counts.values())).toBe(1);
+        }
+      }
+    }
+  });
+
   // ---- the stable-roommates invariant (packages/engine/src/packs/slop/assign.ts stableRound) -----
   // The pack documents `assignment: "stable"` as "no two members would both rather be proposed to
   // each other than to whom they got". This gate runs the real engine with that option and checks the
