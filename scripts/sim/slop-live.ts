@@ -18,8 +18,9 @@
 // probe passes the leak guard, names no one and is slop's copy, the booked copy and the check-in are
 // slop's, one date at a time, at most 3 proactive texts a day.
 // TRACKED: the quality numbers (probes, mutual yes per probe, dates booked and held).
-import { DAY, type MemberId, type RunRecord } from "../../packages/core/src/index.ts";
-import { SLOP_ASK_QUESTIONS, SLOP_ONBOARD_QUESTIONS } from "../../packages/engine/src/packs/slop/index.ts";
+import { DAY, HOUR, localParts, type MemberId, type RunRecord } from "../../packages/core/src/index.ts";
+import { Mini } from "../../packages/network/test/mini.ts";
+import { planFromInput, slopProfiles, SLOP_ASK_QUESTIONS, SLOP_ONBOARD_QUESTIONS } from "../../packages/engine/src/packs/slop/index.ts";
 import { findLeaks } from "../../packages/core/src/guard.ts";
 import { computeMetrics } from "../../packages/sim/src/judge/metrics.ts";
 import { PolicyPersonaAgent, World, generatePersonas, type Persona } from "../../packages/sim/src/index.ts";
@@ -167,6 +168,65 @@ export async function runSlopLive(seed: number, o: { days?: number; n?: number }
 }
 
 export async function slopLiveArm(b: Block, o: { quick: boolean }): Promise<void> {
+  await b.run("slop-live: daytime hikes stay in daytime through reviewed probes, booking and restart", async () => {
+    const cases = [
+      { kind: "hike mixed", activity: "hike", free: "Usually free Tuesday evenings. Also free Saturday afternoons.", slots: ["sat_day", "sun_day"] },
+      { kind: "hike Sunday preferred", activity: "hike", free: "Usually free Tuesday evenings. Also free Sunday afternoons.", slots: ["sun_day", "sat_day"] },
+      { kind: "hike unknown schedule", activity: "hike", free: "My schedule varies.", slots: ["sat_day", "sun_day"] },
+      { kind: "hike evening schedule", activity: "hike", free: "Usually free Tuesday evenings.", slots: ["sat_day", "sun_day"] },
+      { kind: "hike declined", activity: "hike", free: "Usually free Tuesday evenings. Also free Saturday afternoons.", slots: ["sat_day", "sun_day"], decline: true },
+      { kind: "coffee control", activity: "coffee", free: "Usually free Tuesday evenings. Also free Saturday afternoons.", slots: ["tue_eve", "sat_day", "sat_eve"] },
+      { kind: "climbing control", activity: "climbing", free: "Usually free Tuesday evenings. Also free Saturday afternoons.", slots: ["tue_eve", "sat_day", "sat_eve"] },
+    ];
+    const rows = [];
+    // New York's daylight and standard offsets. The production hooks turn slot ids into local dates.
+    for (const seed of [1, 2, 3]) for (const start of [Date.UTC(2026, 9, 5, 17), Date.UTC(2026, 10, 30, 18)]) for (const c of cases) {
+      const wiring = appWiring("slop"), ids = ["a", "b"];
+      const w = new Mini([
+        { id: "a", name: "Alex", age: 30, interests: ["hiking"], shareable: true, romance: { is: "man", seeks: ["woman"] } },
+        { id: "b", name: "Blair", age: 30, interests: ["hiking"], shareable: true, romance: { is: "woman", seeks: ["man"] } },
+      ], { seed, app: "slop", review: "human", pack: wiring.pack, hooks: wiring.hooks, plans: wiring.plans ?? true, engine: wiring.engine });
+      w.clock.set(start);
+      for (const id of ids) {
+        await w.say(id, "Hi");
+        await w.say(id, `I'm a ${id === "a" ? "man looking for women" : "woman looking for men"}, aged 30. Ages 25-40, within 10 miles of 11211. Looking for a long-term relationship. For a first date I want ${c.activity}. ${c.free}`);
+        await w.say(id, "Yes, that's right.");
+      }
+      w.restart();
+      const input = w.net.packInput(w.clock.now());
+      expect(ids.map(id => slopProfiles(input).get(id)!.activities)).toEqual(ids.map(() => [c.activity]));
+      const plan = planFromInput(input, "a", "b", ["nyc"]);
+      expect(plan?.activity).toBe(c.activity);
+      const opp = w.propose(ids, { category: "romance", objective: c.activity });
+      expect(await w.runUntil(() => w.net.reviewQueue().some(q => q.oppId === opp))).toBe(true);
+      expect(w.sent.some(x => x.meta.probe?.key === opp)).toBe(false);
+      expect(w.net.review(opp, "approve", { reviewer: "sim_staff" })).toBe(true);
+      expect(await w.runUntil(() => ids.some(id => w.probed(id)))).toBe(true);
+      w.restart();
+      if (c.decline) {
+        await w.say(ids.find(id => w.probed(id))!, "no");
+        await w.run(HOUR);
+      } else await w.answerProbes(ids);
+      w.restart();
+      const probes = w.sent.filter(x => x.meta.probe?.key === opp);
+      const offered = probes.flatMap(x => (x.meta.timeOptions ?? []).map(s => ({ label: s.label, ...localParts(s.start, "America/New_York") })));
+      const meeting = w.meetings[0];
+      const booked = meeting ? localParts(meeting.at, "America/New_York") : undefined;
+      const daytime = (p: { weekday: number; hour: number }) => (p.weekday === 5 || p.weekday === 6) && p.hour === 14;
+      const yes = w.log("probe_answer").filter(x => x.detail.oppId === opp && x.detail.yes === true);
+      rows.push({ seed, start, kind: c.kind, slots: plan!.slots, expected: c.slots,
+        offered: offered.map(p => p.label), booked: booked ? { weekday: booked.weekday, hour: booked.hour } : null,
+        correct: Bun.deepEquals(plan!.slots, c.slots) && offered.length > 0 && (c.activity !== "hike" || offered.every(daytime))
+          && (c.decline ? !meeting : !!booked && (c.activity === "hike" ? daytime(booked) : booked.hour === 19)),
+        meetings: w.meetings.length, yes: yes.length, probes: probes.length });
+      expect(w.meetings.length).toBe(c.decline ? 0 : 1);
+      expect(yes.length).toBe(c.decline ? 0 : 2);
+      expect(probes.length).toBe(c.decline ? 1 : 2);
+      if (c.activity === "hike") for (const p of probes) expect(p.body).toContain("a daytime hike");
+    }
+    console.log("daytime hike outcomes:", JSON.stringify(rows));
+    expect(rows.filter(r => !r.correct).map(r => `${r.seed}:${r.start}:${r.kind}`)).toEqual([]);
+  });
   const seeds = o.quick ? [SLOP_LIVE_PINNED.seeds[0]!] : SLOP_LIVE_PINNED.seeds;
   const runs: SlopLiveRun[] = [];
   for (const s of seeds) runs.push(await runSlopLive(s, o.quick ? { days: 14 } : {}));
