@@ -20,6 +20,11 @@ member's own time out of the picks.
 - `parseProbeReply` reports `unoffered: true` when a day or a clock the member names is carried by no
   option and is not refused ("if the sun's out" is not a clock). An affirmative reply with that flag
   keeps no pick. The reply is still a yes.
+  A clock under the day arm counts, but only where the reply proposes it as the meeting time: after a day
+  ("Saturday 7pm") or after a nudge ("how about 7pm", "let's do 7pm"). A work-hours
+  mention is when the member is free, not a time they ask for, so "Yes, that works. I get off work at 6pm"
+  keeps every offered time (review of 2026-10-29). Those replies already passed on `main` a0ed7bc; a first
+  version of this clock arm made them book nothing, and the corpus rows below pin them so it cannot regress.
 - `mergeConsent` keeps the parser's pick when `unoffered` is set: the LLM may still add wants,
   interests and an age, but it cannot turn the reply back into a pick of every offered time.
 - `onProbeAnswer` (`packages/network/src/network.ts`) takes `namedNone`: it records no pick and no
@@ -31,7 +36,8 @@ member's own time out of the picks.
 
 Command (deterministic, no seed, no model): `bun run sim --only evals`, plus the exact-match corpus
 gate `probe replies naming no offered time: read as labelled` over
-`evals/network/probe-unoffered-time.jsonl` (9 rows; options Thursday 7pm, Saturday 11am, Sunday 2pm).
+`evals/network/probe-unoffered-time.jsonl` (11 rows; options Thursday 7pm, Saturday 11am, Sunday 2pm, or
+Saturday 10am and Sunday 10am).
 
 | Reply | Before (`main` a0ed7bc) | After |
 |---|---|---|
@@ -44,6 +50,11 @@ gate `probe replies naming no offered time: read as labelled` over
 | Sunday 2pm works | yes ["c"] | yes ["c"] |
 | Friday night please | unclear [] | unclear [] |
 | How about a different day? | yes [] ("none of those fit") | yes [] ("none of those fit") |
+| yes! I'm free, I usually finish work at 6pm (options Saturday 10am, Sunday 10am) | yes ["a","b"] | yes ["a","b"] |
+| Yes, that works. I get off work at 6pm (options Saturday 10am, Sunday 10am) | yes ["a","b"] | yes ["a","b"] |
+
+The two work-hours rows are from the review of 2026-10-29. "works at 7pm" still asks for a time nobody
+offered here (yes with no pick).
 
 "None of those fit" was tried first for every such reply. As the open PR #152 reports, that path
 writes every offered start to `declinedTimes` and to the member's `availHistory` as
@@ -53,7 +64,7 @@ as it is and moves only the unoffered-day reply to the yes-with-no-pick path abo
 
 Integration case: `packages/network/test/probe-unoffered-time.integration.test.ts` (the real
 `ConsentNetwork` in the `Mini` world, `review: "auto"`, a scripted LLM reader that names no time).
-Before the fix it fails (the first three tests; `o.picks` held both offered starts); after, 4/4 pass.
+Before the fix it fails (the first three tests; `o.picks` held both offered starts); after, 6/6 pass.
 
 Sim, full run, same machine and data:
 

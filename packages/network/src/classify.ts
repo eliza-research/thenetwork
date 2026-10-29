@@ -633,6 +633,21 @@ const NEG_AFTER = /^\s*(?:(?:one|option|time|slot)\b\s*)?(?:\d{1,2}(?::\d\d)?\s*
 const CLAUSE_START = /[.,;!?]|\b(but|though|however|although|so)\b/g;
 /** Words that make a named time a pick ("Saturday works", "free Sunday"), not just a mention ("Saturday I'm at a wedding"). */
 const POSITIVE_PICK = /\b(works|work for (?:me|us)|does|good|fine|great|perfect|best|better|free|open|i can|let'?s|is ok|okay|please|for me|yes|yeah|sure)\b/;
+/** A lead-in that proposes a clock as the meeting time: "let's do 7pm", "how about 7pm", "works at 7pm". */
+const CLOCK_LEAD = /(?:\b(?:how|what) about|\blet'?s do|\bworks?)\s+(?:on\s+)?(?:at\s+)?$/;
+/**
+ * True when the clock at `i` is proposed as the meeting time: after a day ("Saturday 7pm", "on sat at 7"), or after a
+ * nudge ("works at 7pm", "let's do 7pm", "how about 7pm"). A clock in a work-hours clause ("I get off work at
+ * 6pm", "my shift ends at 6:30pm") is when the member is free, not a time they ask for. `head` is the clause
+ * before the clock.
+ */
+function proposesAt(t: string, i: number, head: string): boolean {
+  const before = t.slice(Math.max(0, i - 40), i).toLowerCase();
+  if (NEG_CUE.test(`${before}${head}`)) return false;
+  if (/\b(?:off|finish(?:es|ed)?|leaves?|ends?|getting out|get out|gets out|starts?|starting)\s+(?:work|shift)?\s*(?:at)?\s*$/.test(head)) return false;
+  if (CLOCK_LEAD.test(before)) return true;
+  return DAY_WORDS.some(([re]) => new RegExp(`(?:${re.source})\\s*(?:at\\s*)?$`).test(head));
+}
 /** True when the words at `i` (of length `len`) are refused: a negation cue earlier in their clause, or a refusal right after them. */
 function negatedAt(t: string, i: number, len: number): boolean {
   let from = 0;
@@ -698,11 +713,16 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     if (keys.length) for (const m of t.matchAll(re)) mark(keys, m.index!, m[0].length);
     else for (const m of t.matchAll(re)) if (!negatedAt(t, m.index!, m[0].length)) unoffered = true;
   }
-  for (const m of t.matchAll(/\b(\d{1,2})(?::\d\d)?\s*(am|pm)\b/g)) {
+  // A clock nobody offered ("Saturday 7pm", "works at 7pm") is a time the member asks for. A work-hours
+  // mention ("I get off work at 6pm") is not, and it does not stop a plain yes from taking the offered times.
+  for (const m of t.matchAll(/(?<![\d:])(\d{1,2})(?::\d\d)?\s*(am|pm)\b/g)) {
     const label = `${Number(m[1])}${m[2]}`;
     const keys = options.filter(o => o.label.endsWith(` ${label}`)).map(o => o.key);
     if (keys.length) mark(keys, m.index!, m[0].length);
-    else if (!negatedAt(t, m.index!, m[0].length)) unoffered = true;
+    else if (!negatedAt(t, m.index!, m[0].length)) {
+      const clause = clauseAt(t, m.index!, m[0].length).toLowerCase();
+      if (proposesAt(t, m.index!, clause.slice(0, Math.max(0, clause.indexOf(m[0]))))) unoffered = true;
+    }
   }
   // A reply that is only time words ("sat 11am", "thursday or sunday") picks them all firmly.
   let residue = t;

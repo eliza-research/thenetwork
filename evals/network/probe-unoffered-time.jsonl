@@ -7,3 +7,5 @@
 {"text":"How about a different day?","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":[]}
 {"text":"Friday night please","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"unclear","keys":[]}
 {"text":"Friday works","options":["Saturday 10am","Sunday 10am"],"answer":"yes","keys":[]}
+{"text":"Yes, that works. I get off work at 6pm","options":["Saturday 10am","Sunday 10am"],"answer":"yes","keys":["a","b"]}
+{"text":"yes! I'm free, I usually finish work at 6pm","options":["Saturday 10am","Sunday 10am"],"answer":"yes","keys":["a","b"]}

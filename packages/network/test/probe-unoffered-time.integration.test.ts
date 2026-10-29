@@ -56,6 +56,16 @@ describe("a probe answer naming a time nobody offered", () => {
     expect(sent[0]!.body.startsWith("No problem.")).toBe(true);
     expect(sent[0]!.meta.timeOptions!.length).toBeGreaterThan(0);
   });
+  // A work-hours mention is when the member is free, not a time they ask for: a plain yes keeps every offered time.
+  for (const reply of ["Yes, that works. I get off work at 6pm", "yes! I'm free, I usually finish work at 6pm"]) {
+    test(`a yes with work hours books every offered time: ${JSON.stringify(reply)}`, async () => {
+      const { w, o, offered, first, from } = await probeThenAnswer(undefined, reply);
+      const starts = [...(o.picks?.[first] ?? [])].sort();
+      expect(starts).toEqual(o.offered[first].filter((x: TimeOption) => offered.includes(x.key)).map((x: TimeOption) => x.start).sort());
+      expect(starts.length).toBe(offered.length);
+      expect(w.to(first, from).filter(s => (s.meta as { timeOptions?: unknown[] }).timeOptions?.length)).toEqual([]);
+    });
+  }
   test("the yes still counts: the offered times stay open for the partner", async () => {
     const { w, o, first } = await probeThenAnswer();
     expect(o.status.get(first)).toBe("probing");
