@@ -12,6 +12,7 @@ import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, loadScenario, runSce
 import { friendFactory, nycPersonas, runArm, runScenario, SCENARIOS, type ArmResult } from "../../packages/network/harness/index.ts";
 import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, VENUES, type NetworkOptions } from "../../packages/network/src/index.ts";
 import { styleViolations } from "../../packages/network/src/copy.ts";
+import { Mini, START } from "../../packages/network/test/mini.ts";
 import { DATA_DIR } from "../synthetic/common.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
@@ -36,6 +37,44 @@ async function world(days: number, seed = 3, network: NetworkOptions = { review:
 }
 
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
+  await b.run("availability: reviewed probes ignore inactive facets and retain active or undated patterns", async () => {
+    const states = ["none", "future", "expired", "active", "starts_now", "ends_now", "onboarding"] as const;
+    const failures: string[] = [];
+    for (const seed of [1, 2, 3]) {
+      const offered = new Map<string, unknown>();
+      for (const state of states) {
+        const w = new Mini([
+          { id: "a", name: "Alex", age: 30, interests: ["climbing"], shareable: true },
+          { id: "b", name: "Blair", age: 29, interests: ["climbing"], shareable: true },
+        ], { seed, review: "human" });
+        for (const id of ["a", "b"]) for (const answer of ["hi!", "More time outdoors.", state === "onboarding" ? "Tuesday evenings." : "My schedule varies.", "One-on-one is good."]) await w.say(id, answer);
+        // The first reviewed probe is sent one tick after submission. Both validity endpoints are inclusive.
+        if (state !== "none" && state !== "onboarding") for (const id of ["a", "b"]) w.facets.push({
+          id: `${id}-availability`, memberId: id, kind: "availability_pattern", value: "Usually free Tuesday evening", tags: ["evening:Tue"],
+          scope: "agent_private", provenance: "said", confidence: 1, confirmedByMember: true, observedAt: START,
+          validFrom: state === "future" ? START + 30 * DAY : state === "starts_now" ? START + HOUR : START - DAY,
+          validTo: state === "expired" ? START - 1 : state === "ends_now" ? START + HOUR : START + 60 * DAY,
+        });
+        w.restart();
+        const opp = w.propose(["a", "b"]);
+        expect(await w.runUntil(() => w.net.reviewQueue().some(x => x.oppId === opp))).toBe(true);
+        expect(w.sent.some(x => x.meta.probe?.key === opp)).toBe(false);
+        w.net.review(opp, "approve", { reviewer: "sim" });
+        expect(await w.runUntil(() => w.probed("a") || w.probed("b"))).toBe(true);
+        const probe = w.sent.find(x => x.meta.probe?.key === opp && x.meta.timeOptions?.length);
+        expect(probe?.t).toBe(START + HOUR);
+        expect(probe!.meta.timeOptions!.length).toBeGreaterThanOrEqual(2);
+        offered.set(state, probe!.meta.timeOptions);
+      }
+      expect(offered.get("active")).not.toEqual(offered.get("none"));
+      for (const state of states.slice(1)) {
+        const control = state === "future" || state === "expired" ? "none" : "active";
+        if (!Bun.deepEquals(offered.get(state), offered.get(control))) failures.push(`${seed}:${state}`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
   // ---- invariants: NYC, 10 days, seed 3, simulated reviewer ---------------------------------------
   const run = await world(10);
   await run.w.advanceTo(run.w.end);
