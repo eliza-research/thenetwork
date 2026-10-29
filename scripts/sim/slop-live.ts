@@ -18,7 +18,9 @@
 // probe passes the leak guard, names no one and is slop's copy, the booked copy and the check-in are
 // slop's, one date at a time, at most 3 proactive texts a day.
 // TRACKED: the quality numbers (probes, mutual yes per probe, dates booked and held).
-import { DAY, type MemberId, type RunRecord } from "../../packages/core/src/index.ts";
+import { DAY, HOUR, type MemberId, type RunRecord } from "../../packages/core/src/index.ts";
+import { slopProfiles } from "../../packages/engine/src/packs/slop/profile.ts";
+import { Mini } from "../../packages/network/test/mini.ts";
 import { SLOP_ASK_QUESTIONS, SLOP_ONBOARD_QUESTIONS } from "../../packages/engine/src/packs/slop/index.ts";
 import { findLeaks } from "../../packages/core/src/guard.ts";
 import { computeMetrics } from "../../packages/sim/src/judge/metrics.ts";
@@ -167,6 +169,53 @@ export async function runSlopLive(seed: number, o: { days?: number; n?: number }
 }
 
 export async function slopLiveArm(b: Block, o: { quick: boolean }): Promise<void> {
+  await b.run("slop-live: attended slots use the booked local time, not the feedback reply time", async () => {
+    const cases = [
+      { at: Date.UTC(2026, 9, 10, 18), answer: "Saturday afternoon", slot: 5, delay: 3 * HOUR },
+      { at: Date.UTC(2026, 9, 11, 18), answer: "Sunday", slot: 7, delay: 2 * DAY },
+      { at: Date.UTC(2026, 11, 5, 19), answer: "Saturday afternoon", slot: 5, delay: 2 * DAY },
+      { at: Date.UTC(2026, 11, 6, 19), answer: "Sunday", slot: 7, delay: 3 * HOUR },
+    ];
+    const failures: string[] = [];
+    for (const seed of [1, 2, 3]) for (const c of cases) {
+      const wiring = appWiring("slop");
+      const w = new Mini([
+        { id: "a", name: "Alex", age: 30, interests: ["climbing"], shareable: true, romance: { is: "man", seeks: ["woman"] } },
+        { id: "b", name: "Blair", age: 29, interests: ["climbing"], shareable: true, romance: { is: "woman", seeks: ["man"] } },
+        { id: "c", name: "Casey", age: 31, interests: ["climbing"], shareable: true, romance: { is: "woman", seeks: ["man"] } },
+      ], { seed, app: "slop", review: "human", pack: wiring.pack, hooks: wiring.hooks, plans: wiring.plans ?? true, engine: wiring.engine });
+      w.clock.set(c.at - 2 * DAY);
+      for (const id of ["a", "b", "c"]) {
+        await w.say(id, "Hi");
+        await w.say(id, `I'm a ${id === "a" ? "man looking for women" : "woman looking for men"}. Ages 25-40, within 10 miles of 11211. Looking for a long-term relationship. I like climbing. My schedule varies.`);
+        await w.say(id, "Yes, that's right.");
+      }
+      const approve = async (opp: string) => {
+        expect(await w.runUntil(() => w.net.reviewQueue().some(q => q.oppId === opp))).toBe(true);
+        expect(w.sent.some(x => x.meta.probe?.key === opp)).toBe(false);
+        expect(w.net.review(opp, "approve", { reviewer: "sim" })).toBe(true);
+      };
+      await approve(w.propose(["a", "b"], { category: "romance", objective: "coffee" }));
+      await w.answerProbes(["a", "b"], () => c.answer);
+      expect(w.meetings.length).toBe(1);
+      expect(w.meetings[0]!.at).toBe(c.at);
+      expect(slopProfiles(w.net.packInput(w.clock.now())).get("a")!.history.attendedSlots).toEqual([]);
+      await w.run(c.at + c.delay - w.clock.now());
+      await w.say("a", "It went well, thanks!");
+      w.restart();
+      const input = w.net.packInput(w.clock.now());
+      expect(input.interactions?.filter(r => r.outcome === "completed").map(r => r.at)).toEqual([c.at + c.delay]);
+      const attended = slopProfiles(input).get("a")!.history.attendedSlots;
+      if (!Bun.deepEquals(attended, [c.slot])) failures.push(`${seed}:${c.at}:learned=${attended}`);
+      const next = w.propose(["a", "c"], { category: "romance", objective: "coffee" });
+      await approve(next);
+      expect(await w.runUntil(() => w.sent.some(x => x.meta.probe?.key === next))).toBe(true);
+      const labels = w.sent.find(x => x.meta.probe?.key === next)!.meta.timeOptions!.map(x => x.label).sort();
+      if (!Bun.deepEquals(labels, ["Saturday 2pm", "Saturday 7pm", "Sunday 2pm"])) failures.push(`${seed}:${c.at}:offered=${labels}`);
+    }
+    expect(failures).toEqual([]);
+  });
+
   const seeds = o.quick ? [SLOP_LIVE_PINNED.seeds[0]!] : SLOP_LIVE_PINNED.seeds;
   const runs: SlopLiveRun[] = [];
   for (const s of seeds) runs.push(await runSlopLive(s, o.quick ? { days: 14 } : {}));

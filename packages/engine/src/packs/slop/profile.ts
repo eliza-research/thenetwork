@@ -18,7 +18,7 @@
 // NO RACE OR ETHNICITY: there is no field for it; tags that look like one are dropped here, so no
 // rule, score or explanation can read them (PRD 40.5; conformance test "no race filters").
 import type { City, Facet, MemberId } from "@thenetwork/core";
-import { canBeMatched, DAY } from "@thenetwork/core";
+import { canBeMatched, DAY, localParts } from "@thenetwork/core";
 import type { EngineInput } from "../../types.ts";
 import { cellOfZip, isKnownZip, MARKET_ANCHOR_ZIP, normalizeZip, zipForArea, type Cell } from "./zips.ts";
 import { APPEARANCE_PREFIX, canRatePhotos, parseAppearance } from "./appearance.ts";
@@ -220,11 +220,11 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
 const emptyHistory = (): History => ({ yes: 0, no: 0, silent: 0, dates: 0, noShows: 0, backouts: 0, givenMean: 0, given: 0, receivedMean: 0, received: 0, negativeFrom: 0, blockedBy: 0, attendedSlots: [], rated: [], ratedSelf: [], ratedBody: [] });
 const SENT = { positive: 1, neutral: 0.5, negative: 0 } as const;
 
-/** Slot index of a timestamp in the dating week (the slop world's slots: weekday evenings 19:00, weekend 14:00 / 19:00 UTC). */
-function slotOf(t: number): number | undefined {
-  const d = new Date(t);
-  const dow = (d.getUTCDay() + 6) % 7; // Monday = 0
-  const eve = d.getUTCHours() >= 17;
+/** Slot in the booked date's local week. Older records and the weekly slop world use UTC. */
+function slotOf(t: number, tz: string): number | undefined {
+  const d = localParts(t, tz);
+  const dow = d.weekday; // Monday = 0
+  const eve = d.hour >= 17;
   if (dow <= 4) return eve ? dow : undefined;
   return dow === 5 ? (eve ? 6 : 5) : (eve ? 8 : 7);
 }
@@ -241,7 +241,7 @@ function histories(input: EngineInput, C: (id: MemberId) => MemberId): Map<Membe
     for (const id of r.noResponse ?? []) h(C(id)).silent++;
     if (r.outcome === "completed") for (const id of r.participants) {
       const x = h(C(id)); x.dates++;
-      const s = slotOf(r.at);
+      const s = slotOf(r.meeting?.at ?? r.at, r.meeting?.tz ?? "UTC");
       if (s !== undefined) x.attendedSlots.push(s);
     }
     if (r.outcome === "no_show") for (const id of r.participants) h(C(id)).noShows++;
