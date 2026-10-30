@@ -549,8 +549,16 @@ const COUNTER_RX = /\b(?:different (?:day|time|week)|another (?:day|week)|next w
 /** "No problem", "no worries", "no rush", "no plans", "no doubt": not refusals. */
 const HARMLESS_NO = /\bno (?:problem|prob|probs|worries|worry|rush|pressure|biggie|doubt|plans?|stress|sweat|complaints)\b/g;
 
-/** Read a reply as yes, no, a counter-offer or unclear, refusal first and sentence by sentence. */
-export function consentOf(body: string): Consent {
+/** The raw signals of one reply, read sentence by sentence with every guard in place. */
+interface ConsentScan { refusalAt: number; affirmAt: number; cond: boolean; hedge: boolean; counter: boolean; question: boolean; }
+
+/**
+ * Scan a reply once. An affirmation counts only when it survives the guards: refusal words are
+ * blanked first, a negated word ("not sure") is a hedge and not an affirmation, "great" and its
+ * kin count only at the start of a clause (not in "this is great timing"), and an emoji counts
+ * only in a short reply with no question.
+ */
+function consentScan(body: string): ConsentScan {
   const t = normText(body).replace(HARMLESS_NO, " ");
   const wordsIn = (t.match(/[a-z]+/g) ?? []).length;
   let refusalAt = Infinity, affirmAt = Infinity, cond = false, hedge = false, counter = false, question = false;
@@ -592,13 +600,19 @@ export function consentOf(body: string): Consent {
       if (COUNTER_RX.test(x)) counter = true;
     }
   }
-  if (refusalAt < Infinity) return affirmAt > refusalAt && affirmAt < Infinity ? { answer: "unclear", why: "mixed" } : { answer: "no", why: "refusal" };
-  if (counter) return { answer: "counter", why: "counter" };
-  if (cond) return { answer: "unclear", why: "conditional" };
-  if (hedge || question) return { answer: "unclear", why: "hedged" };
+  return { refusalAt, affirmAt, cond, hedge, counter, question };
+}
+
+/** Read a reply as yes, no, a counter-offer or unclear, refusal first and sentence by sentence. */
+export function consentOf(body: string): Consent {
+  const s = consentScan(body);
+  if (s.refusalAt < Infinity) return s.affirmAt > s.refusalAt && s.affirmAt < Infinity ? { answer: "unclear", why: "mixed" } : { answer: "no", why: "refusal" };
+  if (s.counter) return { answer: "counter", why: "counter" };
+  if (s.cond) return { answer: "unclear", why: "conditional" };
+  if (s.hedge || s.question) return { answer: "unclear", why: "hedged" };
   // A yes needs the shared reader (core parseReply, AGENTS decision 11) not to read a refusal: when the
   // two disagree the member is asked again, never booked.
-  if (affirmAt < Infinity) return parseReply(body).answer === "no" ? { answer: "unclear", why: "mixed" } : { answer: "yes", why: "affirm" };
+  if (s.affirmAt < Infinity) return parseReply(body).answer === "no" ? { answer: "unclear", why: "mixed" } : { answer: "yes", why: "affirm" };
   return { answer: "unclear", why: "none" };
 }
 
@@ -649,6 +663,28 @@ function clauseAt(t: string, i: number, len: number): string {
 }
 
 /**
+ * True when a counter-offer also affirms, read with the same guards as a plain yes: the
+ * affirmation must be one consentScan counts, with no condition, hedge or question over it.
+ * A bare AFFIRM_RX test would not do: it matches the "sure" in "not sure", the "works" in a
+ * hedged "maybe Friday works", the descriptive "great" in "this is great timing" and an emoji
+ * after a question, and every one of those would book a member who never said yes.
+ * "Interested" is not an affirmation word in AFFIRM_RX, so it is read on its own: it counts
+ * only in a clause that is not negated ("not interested"), hedged ("maybe I'm interested")
+ * or conditional ("interested only if ...").
+ */
+function counterIsAffirmed(body: string, t: string): boolean {
+  const s = consentScan(body);
+  if (s.affirmAt < Infinity && !s.cond && !s.hedge && !s.question) return true;
+  for (const m of t.matchAll(/\binterested\b/g)) {
+    const clause = clauseAt(t, m.index!, m[0].length);
+    if (COND_RX.test(clause) || HEDGE_RX.test(clause)) continue;
+    if (/(?:\bnot|\bnever|n't|\bno longer)\s+(?:\w+\s+)?$/.test(clause.slice(0, clause.indexOf("interested")))) continue;
+    return true;
+  }
+  return false;
+}
+
+/**
  * A member's answer to a probe (founder decision 4a), in free text: "Thursday", "the first",
  * "either", "a or b", "neither", "none of those work", "yes", "no thanks". Returns the answer and,
  * when the probe offered time options, the keys of the options they picked. A yes with an empty
@@ -663,7 +699,12 @@ function clauseAt(t: string, i: number, len: number): string {
 export function parseProbeReply(body: string, options: readonly TimeOption[] = []): { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy } {
   const t = normText(body);
   const c = consentOf(body);
-  if (!options.length) return { answer: c.answer === "no" ? "no" : c.answer === "yes" || c.answer === "counter" ? "yes" : "unclear", keys: [], why: c.why };
+  // A counter-offer is a yes only when the same reply also affirms ("sounds fun, how about next
+  // week?", "I'm up for it another day"): the corpus reads an affirmed counter as a yes with no
+  // pick. A bare counter ("how about Friday?") affirms nothing, so it is not a yes (decision 11):
+  // the answer stays unclear and the member is asked again, never booked.
+  const counterAffirmed = c.answer === "counter" && counterIsAffirmed(body, t);
+  if (!options.length) return { answer: c.answer === "no" ? "no" : c.answer === "yes" || (c.answer === "counter" && counterAffirmed) ? "yes" : "unclear", keys: [], why: c.why };
   const all = options.map(o => o.key);
   // Every mention of an option, as a pick or a refusal. A key both picked and refused counts as picked.
   const pos = new Set<string>(), neg = new Set<string>(), strong = new Set<string>();
@@ -716,7 +757,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const allAt = ALL.exec(t) ?? ALL_WEAK.exec(t);
   if (allAt && c.answer !== "counter" && !negatedAt(t, allAt.index, allAt[0].length)) return open.length ? { answer: "yes", keys: open, why: c.why } : unclear;
   if (c.answer === "yes") return { answer: "yes", keys: open, why: c.why };
-  if (c.answer === "counter") return { answer: "yes", keys: [], why: c.why };
+  if (c.answer === "counter") return counterAffirmed ? { answer: "yes", keys: [], why: c.why } : unclear;
   // Only refusals ("Thursday doesn't work") are not a yes: the probe stays open for a clear answer.
   return unclear;
 }
