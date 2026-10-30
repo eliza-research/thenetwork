@@ -182,3 +182,8 @@
 {"text":"no puedo el viernes","label":"no"}
 {"text":"si puedo ir, sí","label":"unsure"}
 {"text":"si tengo tiempo","label":"unsure"}
+{"text":"why the hell not","label":"yes"}
+{"text":"why the heck not","label":"yes"}
+{"text":"I don't see why not","label":"yes"}
+{"text":"I can't see why not","label":"yes"}
+{"text":"I do not see why not","label":"yes"}
