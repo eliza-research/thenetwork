@@ -16,11 +16,11 @@ export const URGENT_REPORTS: ReadonlySet<ReportKind> = new Set(["harassment", "u
 
 const KINDS: [ReportKind, RegExp][] = [
   ["minor", /\b(under ?age|underage|a minor|(he|she|they)(?:'s|'re| is| was| are| were) (?:only |just )?(1[0-7]|[0-9])(?![\d:.'"]|\s*(min|mins|minutes|hours?|hrs?|days?|weeks?|dollars|bucks|blocks|stops|am|pm|ft|foot|feet|out of|years? (older|younger))\b)|(1[0-7]|[0-9]) years? old|in (high|middle) school|a (kid|child|teen(ager)?))\b/i],
-  ["unsafe", /\b(unsafe|not safe|scared|afraid|threat(en(ed|ing)?)?|follow(ed|ing) me|wouldn'?t let me (go|leave)|grabbed|touched me|assault(ed)?|drugged|spiked|forced|hurt me|violent)\b/i],
-  ["harassment", /\b(harass(ed|ing|ment)?|creep(y)?|kept (texting|messaging|calling)|wouldn'?t stop|rude|insult(ed|ing)?|aggressive|hostile|abusive|slur|pushy|inappropriate|sexual comments?)\b/i],
-  ["scam", /\b(scam(mer|med)?|asked (me )?for money|venmo|cash ?app|zelle|crypto|bitcoin|gift cards?|invest(ment)?|wire (me|money))\b/i],
-  ["lying", /\b(lied|lying|liar|fake|catfish(ed)?|not (who|what) (they|he|she) said|(didn'?t|doesn'?t) look like (their|his|her) (photos?|pics?|pictures?)|old photos?|(lied|lying) about (their|his|her) age|older than|younger than (they|he|she) said|married|has a (girlfriend|boyfriend|wife|husband|partner))\b/i],
-  ["no_show", /\b(no[- ]?show(ed)?|never (showed|came|turned up)|didn'?t (show|come|turn up)|stood me up|ghosted me)\b/i],
+  ["unsafe", /\b(unsafe|not safe|scared|afraid|terrified|terrifying|threat(en(ed|ing)?)?|follow(ed|ing) me|stalk(ed|ing)? me|a stalker|(?:wouldn'?t|would not|didn'?t|did not|refused to) let me (?:go|leave|out)|grabbed|touched me|assault(ed)?|physically (?:attacked|assaulted|threatened|hurt|violent)|(?:hit|punched|attacked|choked|strangled|slapped|shoved|pushed|cornered|trapped|locked) me|drugged|spiked|forced|(?:had|pulled|threatened me with) a (?:weapon|knife|gun)|hurt me|violent)\b/i],
+  ["harassment", /\b(harass(ed|ing|ment)?|creep(y)?|kept (texting|messaging|calling)|(?:wouldn'?t|would not|refused to) stop|rude|insult(ed|ing)?|aggressive|hostile|abusive|slur|pushy|inappropriate|sexual comments?|unsolicited (?:pics?|photos?|pictures?|nudes?)|dick pics?|(?:unwanted|inappropriate) (?:touch(ing)?|physical contact))\b/i],
+  ["scam", /\b(scam(mer|med)?|(?:asked|demanded)(?: me)?(?: for)? (?:money|cash)|asked to borrow money|borrow money|lend money|venmo|cash ?app|zelle|paypal|crypto|bitcoin|gift cards?|invest(ment)?|wire (?:me|money|funds))\b/i],
+  ["lying", /\b(lied|lying|liar|fake|catfish(ed)?|not (who|what) (they|he|she) said|(?:didn'?t|did not|doesn'?t|does not) look like (?:their|his|her) (?:photos?|pics?|pictures?)|old photos?|(lied|lying) about (their|his|her) age|older than|younger than (they|he|she) said|married|has a (girlfriend|boyfriend|wife|husband|partner))\b/i],
+  ["no_show", /\b(no[- ]?show(ed)?|never (?:showed|came|turned up|arrived)|(?:didn'?t|did not) (?:show|come|turn up|arrive)|stood (?:me|us) up|ghosted me)\b/i],
 ];
 
 /** The kind of a report from its words (most serious first). "other" when nothing names a kind. */
