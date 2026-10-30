@@ -148,6 +148,11 @@ export async function relayBlock(b: Block): Promise<void> {
     expect(relayItem(text("heard you're going through a divorce?"), ctx).decision).toBe("hold");
     expect(relayItem(text("ref QX-4821-ORCHID"), ctx).decision).toBe("block");
     expect(relayItem(text("full disclosure, I have two kids from a previous marriage"), ctx).decision).toBe("pass");
+    const sharedGuard = relayGuard({ facts: [{ text: "is going through a divorce", owner: "b" }, { text: "was divorced in 2021", owner: "a" }, { text: "has two kids from a previous marriage", owner: "a" }, { text: "loves skydiving in Switzerland", owner: "b" }], canaries: ["QX-4821-ORCHID"] });
+    const sharedCtx = baseCtx({ guard: sharedGuard });
+    expect(relayItem(text("full disclosure, I was divorced in 2021"), sharedCtx).decision).toBe("pass");
+    expect(relayItem(text("heard you love skydiving in Switzerland"), sharedCtx).decision).toBe("hold");
+    expect(relayItem(text("heard you are going through a divorce?"), sharedCtx).decision).toBe("hold");
     for (const t of ["how hot did the app rate me?", "what's my score", "appearance:face=1.20", "are we the same level of attractiveness", "you're a 10/10"]) {
       const r = relayItem(text(t), ctx);
       expect([t, r.decision, r.rendered]).toEqual([t, "hold", ""]);

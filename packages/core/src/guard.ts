@@ -398,6 +398,7 @@ const words = (folded: string) => (folded ? folded.split(" ") : []);
 const grams = (ws: string[], n: number) => { const out: string[] = []; for (let i = 0; i + n <= ws.length; i++) out.push(ws.slice(i, i + n).join(" ")); return out; };
 
 type Entry = { label: string; owners: Set<string | undefined> };
+type SensitiveEntry = { label: string; owner: string | undefined; contextTokens: Set<string> };
 
 const textOf = (f: Owned) => (typeof f === "string" ? f : f.text);
 const ownerOf = (f: Owned) => (typeof f === "string" ? undefined : f.owner);
@@ -419,8 +420,8 @@ export class LeakGuard {
   /** Content token → fuzzy facts that want it (core-m4: only facts sharing a word with the text are scanned). */
   private fuzzyIndex = new Map<string, (Entry & { fact: FuzzyFact })[]>();
   private fuzzySquashed: (Entry & { fact: FuzzyFact })[] = [];
-  private sensitive = new Map<string, Entry>(); // stemmed sensitive word → the fact(s) it came from
-  private sensitivePhrases = new Map<string, Entry>();
+  private sensitive = new Map<string, SensitiveEntry[]>(); // stemmed sensitive word → the fact(s) it came from
+  private sensitivePhrases = new Map<string, SensitiveEntry[]>();
   private exact: ExactEntry[] = [];
   private vocabWords = new Map<string, string>(); // one-word vocabulary (folded) → the original, hashed on a hit
   private vocabStems = new Map<string, string>();
@@ -444,9 +445,26 @@ export class LeakGuard {
     const facts: Owned[] = [...(o.facts ?? []), ...(o.fuzzy ? o.forbidden ?? [] : [])];
     const sensitiveFrom = (folded: string, label: string, owner: string | undefined) => {
       let found = false;
-      for (const w of words(folded)) if (isSensitiveTerm(w)) { add(this.sensitive, stem(w), label, owner); found = true; }
+      const factContent = new Set(tokens(folded).filter(isContent));
+      for (const w of words(folded)) if (isSensitiveTerm(w)) {
+        const s = stem(w);
+        const contextTokens = new Set(factContent);
+        contextTokens.delete(s);
+        let list = this.sensitive.get(s);
+        if (!list) { list = []; this.sensitive.set(s, list); }
+        list.push({ label, owner, contextTokens });
+        found = true;
+      }
       const padded = ` ${folded} `;
-      for (const ph of SENSITIVE_PHRASES) if (padded.includes(` ${ph} `)) { add(this.sensitivePhrases, ph, label, owner); found = true; }
+      for (const ph of SENSITIVE_PHRASES) if (padded.includes(` ${ph} `)) {
+        const phToks = tokens(ph).filter(isContent);
+        const contextTokens = new Set(factContent);
+        for (const t of phToks) contextTokens.delete(t);
+        let list = this.sensitivePhrases.get(ph);
+        if (!list) { list = []; this.sensitivePhrases.set(ph, list); }
+        list.push({ label, owner, contextTokens });
+        found = true;
+      }
       return found;
     };
     for (const f of [...(o.forbidden ?? []), ...(o.facts ?? [])]) {
@@ -512,15 +530,36 @@ export class LeakGuard {
   }
 
   /** Reasons the text must not be sent (empty = clean). */
-  check(text: string, o: { exceptOwner?: string } = {}): string[] {
+  check(text: string, o: { exceptOwner?: string; exceptOwners?: Iterable<string | undefined> } = {}): string[] {
     if (text.length > this.maxLength) return ["too_long"];
     const reasons = new Set<string>();
     if (BIDI.test(text)) reasons.add("format:bidi");
-    const counts = (e: Entry) => [...e.owners].some(x => x === undefined || x !== o.exceptOwner);
+    const exempt = o.exceptOwners !== undefined ? new Set(o.exceptOwners) : o.exceptOwner !== undefined ? new Set([o.exceptOwner]) : undefined;
+    const counts = (e: Entry) => [...e.owners].some(x => x === undefined || !exempt?.has(x));
     const hit = (e: Entry | undefined) => { if (e && counts(e)) reasons.add(e.label); };
     const plains = plainVariants(text);
     const folded = foldedVariants(text);
     const squashed = folded.map(squash);
+    const textToks = new Set(folded.flatMap(tokens).filter(isContent));
+    const checkSensitive = (list: SensitiveEntry[] | undefined) => {
+      if (!list?.length) return;
+      const mentionsThirdParty = /\b(another|someone|somebody|other members?)\b/i.test(folded.join(" "));
+      let hasExemptContext = false;
+      for (const e of list) {
+        if (exempt && e.owner !== undefined && exempt.has(e.owner)) {
+          if (e.contextTokens.size === 0 || [...e.contextTokens].some(t => textToks.has(t))) {
+            hasExemptContext = true;
+            break;
+          }
+        }
+      }
+      if (hasExemptContext && !mentionsThirdParty) return;
+      for (const e of list) {
+        if (!exempt || e.owner === undefined || !exempt.has(e.owner)) {
+          reasons.add(e.label);
+        }
+      }
+    };
     for (const c of this.canaries) {
       if (c.word ? folded.some(f => ` ${f} `.includes(` ${c.folded} `)) : squashed.some(s => s.includes(c.folded))) reasons.add(c.label);
     }
@@ -533,8 +572,8 @@ export class LeakGuard {
       for (const [w, e] of this.whole) if (!reasons.has(e.label) && padded.includes(` ${w} `)) hit(e);
       const ws = words(f);
       if (this.ngrams.size) for (const g of grams(ws, N)) hit(this.ngrams.get(g));
-      if (this.sensitive.size) for (const w of ws) hit(this.sensitive.get(stem(w)) ?? this.sensitive.get(w));
-      for (const [ph, e] of this.sensitivePhrases) if (padded.includes(` ${ph} `)) hit(e);
+      if (this.sensitive.size) for (const w of ws) checkSensitive(this.sensitive.get(stem(w)) ?? this.sensitive.get(w));
+      for (const [ph, list] of this.sensitivePhrases) if (padded.includes(` ${ph} `)) checkSensitive(list);
       if (this.vocabWords.size) for (const w of ws) {
         const v = this.vocabWords.get(w) ?? (this.vocabStems.size ? this.vocabStems.get(stem(w)) : undefined);
         if (v !== undefined) reasons.add(`private_vocab:${labelHash(v)}`);
@@ -583,7 +622,7 @@ export class LeakGuard {
    * Check the last messages of one thread to the same recipient as one text (core-14): a number or a
    * fact split across messages ("212 555", "0102") is caught. Pass the new message last.
    */
-  checkThread(texts: readonly string[], o: { exceptOwner?: string } = {}): string[] {
+  checkThread(texts: readonly string[], o: { exceptOwner?: string; exceptOwners?: Iterable<string | undefined> } = {}): string[] {
     const recent = texts.slice(-5);
     return [...new Set([...this.check(recent.at(-1) ?? "", o), ...this.check(recent.join(" "), o), ...this.check(recent.join(""), o)])];
   }
@@ -595,6 +634,6 @@ function add(m: Map<string, Entry>, key: string, label: string, owner: string | 
 }
 
 /** One-off check. For many messages against the same lists, build a `LeakGuard` once instead. */
-export function findLeaks(text: string, o: LeakOptions = {}): string[] {
-  return new LeakGuard(o).check(text);
+export function findLeaks(text: string, o: LeakGuardOptions & { exceptOwner?: string; exceptOwners?: Iterable<string | undefined> } = {}): string[] {
+  return new LeakGuard(o).check(text, o);
 }
