@@ -3878,7 +3878,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     // A pending yes/no (a probe or a booked plan) is the open question: an ask now would make the
     // member's next answer ambiguous ("Free Tuesday evening" read as a yes to the probe).
     if (ask && (m.awaiting?.kind === "probe" || m.awaiting?.kind === "booked")) return this.refuse(m.id, kind, "one_question", fns);
-    const timing = this.timingOf(kind, proactive, reply);
+    // A notice promoted to unsolicited outreach must use the interruption window too.
+    const unsol = this.unsolicited(m, meta, now);
+    const timing = this.timingOf(kind, proactive || unsol, reply);
     if (timing !== "now") {
       const c = { outboundSinceInbound: m.outbound ?? 0 };
       const interrupt = timing === "slot" && kind !== "reengage";
@@ -3908,7 +3910,6 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Unsolicited sends (PRD 32.9 budgets, PH-003 pause path, F28 two-unanswered): marked proactive,
     // on the PRD budget of the member's state (plan invites and the weekly check-in on their own lane),
     // never a third in a row without an answer (the one re-engagement aside), and with a way to stop.
-    const unsol = this.unsolicited(m, meta, now);
     if (unsol) {
       const why = this.unsolicitedRefusal(m, meta, kind, now);
       if (why) return this.refuse(m.id, kind, why, fns);
