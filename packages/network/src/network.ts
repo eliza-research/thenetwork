@@ -3162,10 +3162,6 @@ export class ConsentNetwork implements NetworkUnderTest {
   private crewCheck(m: MemberState, o: Opp, going: MemberId[]): string | undefined {
     if (!this.pcfg.crews.enabled || !o.plan || o.plan.crewId) return undefined;
     const post = o.post ?? {};
-    const rec: plans.PlanOutcomeRecord = {
-      planId: o.id, activityId: o.plan.activityId, ...(o.plan.venueId ? { venueId: o.plan.venueId } : {}), city: "nyc", at: o.plan.window.start,
-      attended: going.filter(p => post[p]?.came), positive: going.filter(p => post[p]?.again), recurringWant: [],
-    };
     // Already offered after this plan: a later "yes, again" from another attendee joins that one offer.
     const open = this.crewOffers.find(c => c.planId === o.id);
     if (open) {
@@ -3174,7 +3170,19 @@ export class ConsentNetwork implements NetworkUnderTest {
       return open.crew.id;
     }
     const w = this.planWorld(this.now());
-    const [crew] = plans.detectCrews([rec], [...this.crews, ...this.crewOffers.map(c => c.crew)], id => !!w.get(id)?.isHost, this.pcfg);
+    const history: plans.PlanOutcomeRecord[] = [];
+    for (const prior of this.opps.values()) {
+      const p = prior.plan;
+      if (!p || p.crewId || p.activityId !== o.plan.activityId || p.city !== o.plan.city || p.window.start > this.now()) continue;
+      const replies = prior.post ?? {};
+      const attendees = prior === o ? going : prior.participants.filter(id => prior.status.get(id) === "yes");
+      history.push({
+        planId: prior.id, activityId: p.activityId, ...(p.venueId ? { venueId: p.venueId } : {}), city: p.city, at: p.window.start,
+        attended: attendees.filter(id => replies[id]?.came), positive: attendees.filter(id => replies[id]?.again),
+        recurringWant: attendees.filter(id => w.get(id)?.intents.some(i => plans.RECURRING_WANT.test(`${i.objective} ${i.details ?? ""}`))),
+      });
+    }
+    const [crew] = plans.detectCrews(history, [...this.crews, ...this.crewOffers.map(c => c.crew)], id => !!w.get(id)?.isHost, this.pcfg);
     if (!crew) return undefined;
     const a = plans.activityById.get(crew.activityId)!;
     this.crewOffers.push({ crew, planId: o.id, at: this.now(), offered: [...crew.members], yes: [], no: [] });
