@@ -8,7 +8,8 @@ import { DEFAULT_ATTENTION } from "../../packages/engine/src/index.ts";
 import { networkPack } from "../../packages/engine/src/packs/network/index.ts";
 import type { RunRecord } from "../../packages/core/src/index.ts";
 import { computeMetrics } from "../../packages/sim/src/judge/metrics.ts";
-import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, loadScenario, runScenario as runSimScenario, runScenarioPassK } from "../../packages/sim/src/index.ts";
+import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, generatePersonas, loadScenario, runScenario as runSimScenario, runScenarioPassK } from "../../packages/sim/src/index.ts";
+import { pickTimes } from "../../packages/sim/src/agent/availability.ts";
 import { friendFactory, nycPersonas, runArm, runScenario, SCENARIOS, type ArmResult } from "../../packages/network/harness/index.ts";
 import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, VENUES, type NetworkOptions } from "../../packages/network/src/index.ts";
 import { styleViolations } from "../../packages/network/src/copy.ts";
@@ -312,6 +313,19 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     const r = await runSimScenario({ ...s, background: { personas: 6 } }, { network: () => new StubNetwork({ seed: 1, leakyExplanations: true, introRate: 1 }) });
     b.gate("negative control: the canary check fails against a leaky network", r.results.find(x => x.expectation.check === "canary_not_leaked")?.status === "fail");
   }
+
+  await b.run("traveler availability: offered times use the meeting city's local date and hour", async () => {
+    const p = generatePersonas({ n: 1, seed: 83, minorShare: 0, adversarialRate: 0 })[0]!;
+    p.id = "traveler"; p.homeCity = "sf"; p.secondaryCity = undefined;
+    p.routine = { ...p.routine, wake: 8, sleep: 23, busyBlocks: [[9, 17]], freeEvenings: [1, 2, 3, 4, 5] };
+    p.hidden.trips = [{ city: "nyc", fromDay: 0, toDay: 6 }];
+    const w = new World({ seed: 83, personas: [p], days: 1, network: new StubNetwork({ seed: 83, randomIntros: false }), writeLog: false });
+    await w.run();
+    const options = [{ key: "evening", start: Date.UTC(2026, 9, 5, 23) }, { key: "sleeping", start: Date.UTC(2026, 9, 6, 7) }];
+    expect(pickTimes(p, options, "nyc", 83, w.oracle)).toEqual(["evening"]);
+    const resident = structuredClone(p); resident.hidden.trips = [];
+    expect(pickTimes(resident, options, "sf", 83, w.oracle)).toEqual([]);
+  });
 
   // ---- conformance rules for networkPack (engine level) ---------------------------------------------------
   await conformance(b, networkPack, { seeds: o.quick ? [1, 2] : [1, 2, 3, 4] });
