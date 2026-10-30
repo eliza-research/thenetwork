@@ -195,3 +195,17 @@
 {"text":"chinatown/LES","area":"Chinatown"}
 {"text":"east village / alphabet city","area":"East Village"}
 {"text":"west village near the hudson","area":"West Village"}
+{"text":"I work in the Financial District but live in Astoria","area":"Astoria"}
+{"text":"I work in the West Village, I live in Bushwick","area":"Bushwick"}
+{"text":"my office is in the Flatiron district, I live in Sunnyside","area":"Sunnyside"}
+{"text":"I commute to the Upper East Side from Harlem","area":"Harlem"}
+{"text":"visiting the Lower East Side this week, I live in Ridgewood","area":"Ridgewood"}
+{"text":"I'm not in the East Village anymore, I'm in Greenpoint","area":"Greenpoint"}
+{"text":"never been to the Upper West Side, I live in Bed-Stuy","area":"Bed-Stuy"}
+{"text":"far from the Financial District, I'm in Inwood","area":"Inwood"}
+{"text":"I work in the Financial District","area":null}
+{"text":"working in the West Village these days","area":null}
+{"text":"my office is in the Upper East Side","area":null}
+{"text":"I'm visiting the East Village next week","area":null}
+{"text":"I live in the East Village","area":"East Village"}
+{"text":"I'm in the Upper West Side, I work in Midtown","area":"Upper West Side"}

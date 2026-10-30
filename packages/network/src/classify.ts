@@ -389,8 +389,8 @@ const AREA_ALIASES: [RegExp, string][] = [
 const AREA_NAMES = new Set(NEIGHBORHOODS.map(n => n.name));
 /** Words that say where the sender is based ("I live in", "based in", "I'm around"). */
 const HOME_CTX = /\b(i live|i'?m living|living in|live in|based (in|out of)|i'?m (in|around|near|over in|up in|out in|down in|by)|im (in|around|near)|i'?m from|my (place|apartment|apt|neighborhood|hood) is|home is|i stay in|my area is|i'?m mostly (in|around)|around .* most of the week)\b/;
-/** Where a neighborhood is not home: "used to live in", "work in", "moved from". */
-const NOT_HOME = /\b(used to live(?: in)?(?: the)?|moved (?:away )?from(?: the)?|grew up in(?: the)?|work(ing)? in|office (is )?in|commute to|visiting|not in|never been to|far from)\s*$/;
+/** Where a neighborhood is not home: "used to live in", "work in the", "moved from". Each can take "the". */
+const NOT_HOME = /\b(used to live(?: in)?|moved (?:away )?from|grew up in|work(ing)? in|office (is )?in|commute to|visiting|not in|never been to|far from)(?: the)?\s*$/;
 
 export interface Profile {
   interests: string[]; skills: string[]; desireIds: string[];
