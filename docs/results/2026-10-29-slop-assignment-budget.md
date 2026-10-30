@@ -88,9 +88,9 @@ The base failure was reproduced before the fix.
 
 ## safety_gates
 
-Full offline simulation: **330/331 blocking gates pass across 13 blocks; exit 1 (bash absent from PATH)**.
-Focused audit retry: **16/16 blocking gates pass; exit 0 after adding existing Git Bash to PATH**.
-All blocking checks pass across the full run and corrected audit retry. A single all-green full run is not claimed.
+The original Ubuntu 24.04 CI passes a single complete run: **331/331 blocking gates**, with 14 tracked off target.
+Earlier Windows simulation: **330/331 blocking gates pass across 13 blocks; exit 1 (bash absent from PATH)**.
+Focused Windows audit retry: **16/16 blocking gates pass; exit 0 after adding existing Git Bash to PATH**.
 Base Slop: 39/39 blocking gates pass. Final Slop: 40/40 pass, including the new budget gate.
 Final Slop has 8 tracked gates off target. Their thresholds and blocking classifications are unchanged.
 The declared-minor exclusion, zero-leak and consent gates pass.
@@ -114,7 +114,31 @@ No gate threshold, seed, safety rule or member-facing text changes.
 
 These counters describe synthetic worlds, not human match quality.
 
-## Executed validation
+## Final Linux CI validation
+
+Verified on 2026-10-30: the [original Ubuntu 24.04 workflow](https://github.com/miracle2044/thenetwork/actions/runs/40886868999) succeeds in both jobs.
+Tested source: `63a81e4a5bea9874e724e78bce9e7383205c8bbb`. Later commits change only this evidence report.
+Bun 1.4.2, the workflow's pinned PostgreSQL 16 image, locked dependencies, and `REQUIRE_PG=1` were used.
+No validation workflow changes are included in the PR.
+
+| Check | Result |
+|---|---|
+| Package, deployment, test and simulation typecheck | PASS |
+| Site and script typecheck | PASS |
+| Full `bun run sim` | PASS: 331/331 blocking gates, 14 tracked off target |
+| No PostgreSQL simulation gate skipped | PASS |
+| Plugin skill snapshot check | PASS |
+| Retired-domain check | PASS |
+| Production build of four sites | PASS |
+| `bun run test:integration` (security files included) | 681 pass, 0 fail, 8 skip across 68 files |
+| `bun run test:e2e` | 42 pass, 0 fail, 1 skip across 3 files |
+
+The integration and e2e commands complete normally: 723 executed passes, zero failures, nine skips.
+The opt-in reconciliation suite and optional browser case remain skipped for the reasons below.
+The integration job completes at 2026-10-30 01:56 Asia/Shanghai.
+This supplies the previously missing supported Linux CI result. Real-model qualification remains unexecuted.
+
+## Earlier Windows validation
 
 Environment: Windows, Bun 1.4.2 (`744846f84`), PostgreSQL 16.15 and locked dependencies.
 Final checks use a clean LF checkout of the final code revision.
@@ -137,7 +161,7 @@ Security files are included in integration counts. Do not add those rows togethe
 Across integration and e2e: 71 files, 717 pass, 6 fail, 9 skip.
 Tests run sequentially, one fresh Bun process per file, with the package scripts' conditions and timeouts.
 This avoids this host's process-memory accumulation. No test or assertion changes.
-The monolithic package commands are not claimed as passing.
+The Windows monolithic commands are not claimed as passing. The original Linux commands later pass as recorded above.
 
 The per-file commands are:
 
@@ -198,15 +222,15 @@ The only simulation failure and all four integration failures came from the back
 Ubuntu 22.04 selected `pg_dump` 14.24, but the PostgreSQL server was 16.15.
 The client refused to dump the newer server: `aborting because of server version mismatch`.
 The e2e step and later offline steps were skipped after those failures.
-These are actual failed jobs; no Linux suite pass is claimed.
+These are actual failed jobs. They remain part of the experiment history; the original Ubuntu 24.04 run below succeeds.
 
 The alternate runner configuration caused this mismatch. It is not included in the contribution diff.
-The next attempt uses the repository's original Ubuntu 24.04 workflow on the PR branch.
+The successful final attempt uses the repository's original Ubuntu 24.04 workflow on the PR branch.
 The [official runner inventory](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md#postgresql) lists PostgreSQL 16.15.
 New [original-workflow run](https://github.com/miracle2044/thenetwork/actions/runs/40886868999): source `63a81e4a5bea9874e724e78bce9e7383205c8bbb`.
 This source differs from the previous tested source only in the evidence report.
-Current observed status: `queued`; conclusion: `pending`.
-No successful Linux CI outcome is claimed before that run finishes.
+Final observed status: `completed`; conclusion: `success`. Both `offline` and `integration` jobs pass.
+The final successful results are recorded in the Linux CI table above.
 No deployment workflow, paid model or live-send path was invoked.
 
 ## llm_evidence
@@ -229,6 +253,7 @@ This contribution model is separate from the repository's unexecuted model quali
 
 The gate covers three seeds, two algorithms, two round modes and two budget histories.
 It does not prove live messaging outcomes or human match quality.
-Required real-model qualification and a supported Linux CI run remain outstanding.
-The six reproduced base failures remain unchanged.
+Required real-model qualification remains outstanding under the operator's no-paid-model constraint.
+The supported Linux CI requirement is now satisfied by the original Ubuntu 24.04 workflow.
+The six reproduced Windows base failures remain unchanged; the final Linux integration and e2e suites have zero failures.
 All data is synthetic. No deployment, live send or model charge was performed.
