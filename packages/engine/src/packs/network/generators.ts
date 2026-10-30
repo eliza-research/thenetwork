@@ -442,11 +442,13 @@ export function secondEncounter(ctx: GenCtx): Candidate[] {
   const recentDone = w.interactions.filter(r => r.outcome === "completed" && w.now - r.at < 60 * DAY)
     .sort((a, b) => (b.at - a.at) || (a.id < b.id ? -1 : 1));
   for (const r of recentDone) {
+    // Network check-ins have one interaction ID per reply; feedback names the meeting.
+    const opportunityId = r.id.split(":fb:")[0]!;
     for (let i = 0; i < r.participants.length; i++) for (let j = i + 1; j < r.participants.length; j++) {
       const a = r.participants[i]!, b = r.participants[j]!;
       const k = pairKey(a, b);
       if (done.has(k)) continue;
-      if (!positive(a, b, r.id) || !positive(b, a, r.id)) continue;
+      if (!positive(a, b, opportunityId) || !positive(b, a, opportunityId)) continue;
       done.add(k);
       const ma = w.get(a), mb = w.get(b);
       if (!ma || !mb) continue;
