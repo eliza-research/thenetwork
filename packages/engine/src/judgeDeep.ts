@@ -90,7 +90,7 @@ export const deepDecision = (v: DeepVerdict) => v.verdict === "yes";
  */
 export function hardGate(w: World, c: Pick<Candidate, "participants" | "via" | "category"> & { alternates?: MemberId[] }): string | null {
   if (involvesMinor(w, { participants: c.participants, alternates: c.alternates ?? [], via: c.via })) return "underage";
-  const everyone = [...c.participants, ...(c.via ? [c.via] : [])];
+  const everyone = [...c.participants, ...(c.via ? [c.via] : []), ...(c.alternates ?? [])];
   for (const id of everyone) if (!w.get(id)) return "unknown_member";
   for (const id of everyone) if (w.holds.has(id)) return "safety_hold";
   for (let i = 0; i < everyone.length; i++) for (let j = i + 1; j < everyone.length; j++) if (w.blocked.has(pairKey(everyone[i]!, everyone[j]!))) return "blocked";

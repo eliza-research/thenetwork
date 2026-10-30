@@ -361,8 +361,12 @@ export function helpRequest(ctx: GenCtx): Candidate[] {
         if (seenSets.has(setKey)) continue;
         seenSets.add(setKey);
         const ids = [a, ...helpers.map(h => h.id)];
-        // Alternates must be able to join this group: no pair rule with any participant (engine-pipeline-9).
-        const alternates = ranked.filter(r => !ids.includes(r.id) && helpers.every(h => !pairReason(w, h.id, r.id, "help"))).slice(0, 3).map(r => r.id);
+        // Alternates must be able to join this group: no pair rule with any participant or each other (engine-pipeline-9).
+        const alternates: MemberId[] = [];
+        for (const r of ranked.filter(r => !ids.includes(r.id) && helpers.every(h => !pairReason(w, h.id, r.id, "help")))) {
+          if (alternates.length >= 3) break;
+          if (alternates.every(alt => !pairReason(w, alt, r.id, "help"))) alternates.push(r.id);
+        }
         out.push(makeCandidate({
           kind: "help", generator: "help_request", category: "help",
           participants: ids, roles: Object.fromEntries([[a, "seeker"], ...helpers.map(h => [h.id, "helper"])]), format: need > 1 ? "small_group" : "one_to_one",

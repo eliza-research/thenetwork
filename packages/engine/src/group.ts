@@ -133,8 +133,8 @@ export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | nu
     Object.assign(bestState, withHost);
   }
   const primary = bestState.ids;
-  // Alternates: compatible with everyone, available, ranked by fit to the group + anchor.
-  const alts = poolIds.filter(id => !primary.includes(id))
+  // Alternates: compatible with the primary group AND with each other, available, ranked by fit.
+  const candidates = poolIds.filter(id => !primary.includes(id))
     .map(id => {
       const cs = primary.map(p => compat(p, id));
       if (cs.some(c => c === -Infinity)) return null;
@@ -143,8 +143,12 @@ export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | nu
       return { id, s: cs.reduce((a, b) => a + b, 0) / cs.length + (affinity.get(id) ?? 0) };
     })
     .filter((x): x is { id: MemberId; s: number } => !!x)
-    .sort((a, b) => (b.s - a.s) || (a.id < b.id ? -1 : 1))
-    .slice(0, opts.alternates).map(x => x.id);
+    .sort((a, b) => (b.s - a.s) || (a.id < b.id ? -1 : 1));
+  const alts: MemberId[] = [];
+  for (const c of candidates) {
+    if (alts.length >= opts.alternates) break;
+    if (alts.every(alt => compat(alt, c.id) !== -Infinity)) alts.push(c.id);
+  }
   const roles: Record<MemberId, Role> = {};
   let hostAssigned = false;
   for (const id of primary) {
