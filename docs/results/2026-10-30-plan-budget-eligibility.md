@@ -1,8 +1,8 @@
-# Continue plan eligibility checks after an allowed budget exception
+# Keep plan eligibility and notification send windows intact
 
-A member excluded from a group plan by their category quota, decline cooldown or reliability state becomes eligible when their introduction budget is full. The shared member checker returns its first reason; planMemberReason treats an introduction-budget reason as unconditional acceptance, hiding the later pack rules. This fixes a reproduced planner defect under the approved scope and PRD 33's eligibility and capacity rules. Plans keep their existing separate send-time allowance.
+A full introduction budget hides later plan eligibility rules, allowing a member excluded by quota, decline cooldown or reliability state into a group. Checking those rules also exposed an existing notification defect: a request-retry notice can be sent at 08:05 and only afterwards be marked as unsolicited proactive outreach. This contribution keeps both constraints intact under the approved scope, PRD 33's eligibility rules and PRD 32.9's send-time controller.
 
-When the first reason is an allowed plan budget exception, continue the existing pure pack-rule checks and return any non-exempt reason. Preserve the immutable core prefix and the host contribution limit. Two alternatives were considered: copy quota/cooldown/reliability checks into the planner, which drifts from pack rules; or remove the plan budget exemption, which incorrectly charges the separate plan lane to introduction budgets. Reusing the pack checks retains the intended allowance without hiding later constraints.
+After an allowed plan budget exception, continue the existing pure pack rules and return any non-exempt reason. Preserve the core prefix and host contribution limit. Classify unsolicited notices before choosing their send timing, so they use the existing interruption window. Two alternatives were considered: copy later eligibility checks into the planner, which drifts from pack rules; or remove the plan budget exemption, which charges the separate plan lane to introduction budgets. The timing correction reuses the shared send path and deferred queue without changing notification text or budgets.
 
 ## measurement
 
@@ -11,16 +11,16 @@ locked dependencies. Apply only the new integration file to the base for the
 before run, then add the production fix. Same command in both runs:
 
 ```sh
-bun test --conditions eliza-source packages/network/test/plan-budget.integration.test.ts
+bun test --conditions eliza-source --timeout 120000 packages/network/test/plan-budget.integration.test.ts packages/network/test/retry-notice-window.integration.test.ts
 ```
 
-The actual World and shared group planner run seeds 1–3 over four member states (none, zero social quota, recent social decline, reliability hold-out), each with and without a full introduction budget: 24 cases. Before, 15/24 are correct; all nine constrained/full-budget cases incorrectly include the member in the six-person plan. After, 24/24 are correct. The constrained member stays excluded from invitees and alternates; the other five adults still have a valid group. Unrestricted members remain eligible in both budget controls. The same integration command changes from 0 pass/1 fail to 1 pass/0 fail. It uses stated standing windows, a public venue and the real World, eligibility rules, group composition and plan scoring. No planner decision or model response is mocked. No statistical quality estimate is claimed.
+The planner integration runs seeds 1–3 over none/quota/cooldown/reliability states with and without a full introduction budget: 15/24 correct before, 24/24 after. Constrained members remain excluded from invitees and alternates, while five other adults retain a valid group; unrestricted budget controls still include all six. A second real ConsentNetwork integration runs seeds 1–3: a standing request retries, a human approves it, the requester confirms, and the candidate declines next day at 08:05 NY. Before the timing fix, the requester gets an unsolicited proactive notice before their send window. After, it stays deferred through JSON restart and sends exactly once in an allowed window. Both integrations pass together: 2 pass, 0 fail, 29 assertions. No eligibility or send decision is mocked. These are deterministic contracts, not a statistical quality claim.
 
 ## safety_gates
 
-Core age, pause and hold checks still run first. A budget exception is the only reason skipped; quota, cooldown and reliability rules retain their configured values. A host's contribution limit remains blocking. No review, consent, budget value or safety gate changes.
+Core age, pause and hold checks still run first. Only the documented budget exceptions are skipped; quota, cooldown, reliability and host contribution limits retain their values. The first hosted attempt (5adace3) passed integration/e2e but failed one network send-window gate (329/330), exposing the late notification classification. This follow-up fixes that path with a separate failing-before regression. No gate, threshold or budget is relaxed. A new complete CI run checks the final source.
 
-Standard typechecks run in fork CI. A local attempt did not return a final compiler status and is not counted as a pass.
+All four TypeScript configurations pass locally using the existing compiler under Bun runtime.
 The fork's unmodified Ubuntu 24.04/PostgreSQL CI runs the
 standard typecheck, full simulation, integration including security, and e2e
 commands. Its result is linked in the PR. No local PostgreSQL or full-simulation
