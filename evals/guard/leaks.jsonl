@@ -130,3 +130,24 @@
 {"text":"FYI she can't climb, knee surgery recovery","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"leak","note":"paraphrased private fact"}
 {"text":"they get anxious in big groups, social anxiety","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"leak","note":"paraphrased private fact"}
 {"text":"careful, with an ex who stalks them","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"leak","note":"paraphrased private fact"}
+{"text":"find me on insta samlee","want":"contact","note":"handle with no @ after a find-me cue"}
+{"text":"hmu on snap samleee","want":"contact","note":"handle with no @ after a find-me cue"}
+{"text":"dm me on ig as samlee","want":"contact","note":"handle with no @ after a find-me cue"}
+{"text":"tiktok samlee","want":"contact","note":"whole message: an app and a handle"}
+{"text":"search samlee22 on ig","want":"contact","note":"handle before the app"}
+{"text":"add sam.lee on snap","want":"contact","note":"handle before the app"}
+{"text":"look up samlee on insta","want":"contact","note":"handle before the app"}
+{"text":"my handle is samlee everywhere","want":"contact","note":"handle with no @ after handle is"}
+{"text":"username: samlee","want":"contact","note":"handle with no @ after username"}
+{"text":"I'm big on tiktok","want":"clean","note":"app name, no handle"}
+{"text":"I love tiktok dances and insta stories","want":"clean","note":"app name, no handle"}
+{"text":"find me on insta later","want":"clean","note":"app name, no handle"}
+{"text":"tiktok lol","want":"clean","note":"app name, no handle"}
+{"text":"add me on ig too","want":"clean","note":"app name, no handle"}
+{"text":"follow us on instagram","want":"clean","note":"app name, no handle"}
+{"text":"my handle is the same everywhere","want":"clean","note":"app name, no handle"}
+{"text":"my username is private","want":"clean","note":"app name, no handle"}
+{"text":"watched ep3 on tiktok","want":"clean","note":"app name, no handle"}
+{"text":"signal boost","want":"clean","note":"app name, no handle"}
+{"text":"whatsapp group","want":"clean","note":"app name, no handle"}
+{"text":"I'm always on insta","want":"clean","note":"app name, no handle"}

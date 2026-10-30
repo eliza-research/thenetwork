@@ -120,6 +120,11 @@ export function foldedVariants(s: string): string[] {
   return [...new Set(textVariants(s).map(collapse))];
 }
 
+const SOCIAL = "ig|insta|instagram|snap|snapchat|tiktok|twitter|telegram|tg|whatsapp|signal|discord|venmo|cashapp|cash app|kik|threads|bluesky|bsky|linkedin|fb|facebook|wechat|line id";
+/** Words that follow an app name in plain talk ("insta stories", "find me on ig later"): never a handle. */
+const NOT_HANDLE = "(?!(?:a|an|the|me|my|it|is|us|them|him|her|you|your|and|or|but|so|too|to|on|in|at|for|of|with|now|then|later|tonight|today|tomorrow|sometime|anytime|instead|maybe|again|first|soon|only|also|lol|haha|ok|okay|pls|please|thanks|thx|same|story|stories|reel|reels|post|posts|live|dm|dms|message|messages|chat|call|calls|video|videos|group|groups|request|account|page|profile|feed|streak|streaks|trend|trends|marketplace|drama|boost|private|everyone|people|back|along|out|up|works)(?![a-z0-9_.]))";
+const BARE_HANDLE = `@?${NOT_HANDLE}[a-z][a-z0-9_.]{2,29}(?![a-z0-9_.@])`;
+
 const TLDS = "com|co|io|ly|net|org|app|xyz|biz|me|link|gg|info|us|dev|ai|so|page|site|online|store|shop|club|live|tv|fm|to|cc|ca|uk|de|fr|es|it|nl|eu|au|in|mx|br|tech|life|world|blog|social|chat|zone|one|fun|art|bio|lol|wtf|vip|pro|nyc|la|sf|email|mail|cash|money|pay|bz|gl|im|is|ms|ws|fyi|space|website|top|icu|vercel|netlify|substack|onion";
 
 /** Contact-detail patterns, run on `plain` text (punctuation kept) and on the contact variants (`contactVariants`). */
@@ -142,7 +147,11 @@ export const CONTACT_PATTERNS: { name: string; re: RegExp }[] = [
   // "@samlee", "dm me@samlee" (an @ inside a word but not an email).
   { name: "handle", re: /(?:^|[^a-z0-9._%+-])@[a-z0-9_][a-z0-9_.]{1,29}|[a-z0-9]@[a-z0-9_]{2,30}(?![a-z0-9_]*\.[a-z])/ },
   // "ig: samlee_nyc", "my insta is samlee_nyc", "snap @sam", "discord sam#1234".
-  { name: "handle", re: /\b(?:ig|insta|instagram|snap|snapchat|tiktok|twitter|telegram|tg|whatsapp|signal|discord|venmo|cashapp|cash app|kik|threads|bluesky|bsky|linkedin|fb|facebook|wechat|line id)\b\s*(?:[:=]|is|handle|handle is|is at|at)?\s*@?(?:[a-z0-9_.]*[_.\d#][a-z0-9_.#]*[a-z0-9]|(?<=[:=@]\s*)[a-z][a-z0-9]{2,29})/ },
+  { name: "handle", re: new RegExp(`\\b(?:${SOCIAL})\\b\\s*(?:[:=]|is|handle|handle is|is at|at)?\\s*@?(?:[a-z0-9_.]*[_.\\d#][a-z0-9_.#]*[a-z0-9]|(?<=[:=@]\\s*)[a-z][a-z0-9]{2,29})`) },
+  // The handle before the app: "search samlee22 on ig", "add sam.lee on snap", "look up samlee on insta".
+  { name: "handle", re: new RegExp(`\\b[a-z][a-z0-9_.]*[_.\\d][a-z0-9_.]*[a-z0-9]\\s+(?:on|at)\\s+(?:my\\s+)?(?:${SOCIAL})\\b|\\b(?:search|search for|look up|add|follow)\\s+${BARE_HANDLE}\\s+on\\s+(?:${SOCIAL})\\b`) },
+  // A plain-letter handle with a clear cue: "my handle is samlee", "find me on insta samlee", "tiktok samlee" (the whole message).
+  { name: "handle", re: new RegExp(`\\b(?:handle|username|user name|screen name|gamertag)\\s*(?:is|[:=])\\s*${BARE_HANDLE}|\\b(?:(?:find|add|follow|dm|message|hit) me(?: up)?|hmu) on (?:${SOCIAL}) (?:as )?${BARE_HANDLE}|^\\s*(?:${SOCIAL})\\s+${BARE_HANDLE}\\s*[.!]?\\s*$`) },
 ];
 
 const NUMBER_WORDS: Record<string, string> = {
