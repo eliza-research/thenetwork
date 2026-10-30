@@ -26,7 +26,8 @@
 // whitespace collapsed to one space, letters and digits of every script kept), so "Ｄivorce",
 // "dívorce", "ᴅɪᴠᴏʀᴄᴇ" and "divorce," match, and non-Latin facts are protected too (audit core-3).
 // Contact checks also run on variants with number words, other-script digits, letter O/l inside
-// numbers, spaced "@" and ".", and spelled "at"/"dot" normalized (audit core-2).
+// numbers, spaced "@" and ".", spelled "at"/"dot", bracket-defanged dots ("example[.]com") and
+// period lookalikes ("example。com", "212·555·0102") normalized (audit core-2).
 // Forbidden strings, facts, vocabulary and canaries are also matched on variants with spaced-out
 // letters collapsed ("d i v o r c e") and digit/symbol substitutions undone ("d1v0rce").
 // Reasons never contain the matched text (logs must not carry the private value): matches are
@@ -165,11 +166,17 @@ function asciiDigits(s: string): string {
  * Variants of `plain` text for the contact checks (audit core-2): number words as digits ("two one
  * two" → "2 1 2"), other-script digits as ASCII, letter O/l/i inside numbers as 0/1, keycap emoji
  * dropped, spaced "@" and "." closed up, spelled "at"/"dot" as "@"/".", underscores as spaces.
+ * Bracket-wrapped dots ("[.]", "(.)", "{.}", "<.>") and period lookalikes that NFKC does not fold
+ * become a normal "." so "example[.]com" and "212·555·0102" match the same patterns as "example.com".
  */
 export function contactVariants(s: string): string[] {
   const out = new Set<string>();
   for (const p of plainVariants(s)) {
     let v = asciiDigits(p).replace(/⃣/g, "");
+    // Middle dot, bullet, hyphenation point, bullet operator, dot operator, katakana middle dot,
+    // ideographic full stop. NFKC leaves these in place (fullwidth "." is already folded).
+    v = v.replace(/[\u00b7\u2022\u2027\u2219\u22c5\u30fb\u3002]/g, ".");
+    v = v.replace(/\[\s{0,3}\.\s{0,3}\]|\(\s{0,3}\.\s{0,3}\)|\{\s{0,3}\.\s{0,3}\}|<\s{0,3}\.\s{0,3}>/g, ".");
     v = v.replace(/\b[a-z]+\b/g, w => NUMBER_WORDS[w] ?? w);
     v = v.replace(/\boh\b(?=[\s.\-]*\d)|(?<=\d[\s.\-]*)\boh\b/g, "0");
     v = v.replace(/(?<=\d[\s.\-]{0,2})[o](?![a-z])|(?<![a-z])[o](?=[\s.\-]{0,2}\d)/g, "0").replace(/(?<=\d[\s.\-]{0,2})[li](?![a-z])|(?<![a-z])[li](?=[\s.\-]{0,2}\d)/g, "1");

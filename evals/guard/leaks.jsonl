@@ -130,3 +130,33 @@
 {"text":"FYI she can't climb, knee surgery recovery","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"leak","note":"paraphrased private fact"}
 {"text":"they get anxious in big groups, social anxiety","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"leak","note":"paraphrased private fact"}
 {"text":"careful, with an ex who stalks them","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"leak","note":"paraphrased private fact"}
+{"text":"visit example[.]com","want":"contact","note":"core-2 defanged dot"}
+{"text":"sam at example[.]com","want":"contact","note":"core-2 defanged dot"}
+{"text":"www[.]example[.]com/sam","want":"contact","note":"core-2 defanged dot"}
+{"text":"example(.)com","want":"contact","note":"core-2 defanged dot"}
+{"text":"see example (.) com","want":"contact","note":"core-2 defanged dot"}
+{"text":"example{.}com","want":"contact","note":"core-2 defanged dot"}
+{"text":"example<.>com","want":"contact","note":"core-2 defanged dot"}
+{"text":"visit example［.］com","want":"contact","note":"core-2 defanged dot"}
+{"text":"example[。]com","want":"contact","note":"core-2 defanged dot"}
+{"text":"her blog is example。com","want":"contact","note":"core-2 defanged dot"}
+{"text":"example 。 com","want":"contact","note":"core-2 defanged dot"}
+{"text":"example·com","want":"contact","note":"core-2 defanged dot"}
+{"text":"call 212·555·0102","want":"contact","note":"core-2 defanged dot"}
+{"text":"text 555·0102","want":"contact","note":"core-2 defanged dot"}
+{"text":"call 212•555•0102","want":"contact","note":"core-2 defanged dot"}
+{"text":"signal me at 212・555・0102","want":"contact","note":"core-2 defanged dot"}
+{"text":"example‧com","want":"contact","note":"core-2 defanged dot"}
+{"text":"example∙com","want":"contact","note":"core-2 defanged dot"}
+{"text":"example⋅com","want":"contact","note":"core-2 defanged dot"}
+{"text":"use items[.]map in the code","want":"clean","note":"core-2 benign defanged dot"}
+{"text":"the score was 3[.]5 out of 5","want":"clean","note":"core-2 benign defanged dot"}
+{"text":"see footnote [1.] below","want":"clean","note":"core-2 benign defanged dot"}
+{"text":"Saturday · in Brooklyn, near the park","want":"clean","note":"core-2 benign defanged dot"}
+{"text":"about 2·5 miles away","want":"clean","note":"core-2 benign defanged dot"}
+{"text":"co·workers wanted a quieter bar","want":"clean","note":"core-2 benign defanged dot"}
+{"text":"the range is (.) empty for now","want":"clean","note":"core-2 benign defanged dot"}
+{"text":"Meet at 7. In the park we can walk.","want":"clean","note":"core-2 benign defanged dot"}
+{"text":"See you there。 In the morning we can walk.","want":"clean","note":"core-2 benign defanged dot"}
+{"text":"Your order #555·0102 is confirmed.","want":"clean","note":"core-2 benign defanged dot"}
+{"text":"• in the park at noon","want":"clean","note":"core-2 benign defanged dot"}
