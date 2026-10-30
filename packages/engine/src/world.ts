@@ -157,7 +157,7 @@ export class World {
         if ((r.outcome === "pending" || r.outcome === "accepted") && now - r.at < cfg.cooldowns.activeProposalDays * DAY * 4) this.activePairs.add(k);
       }
       if (r.outcome === "declined" || r.outcome === "expired") {
-        const who = r.outcome === "declined" ? (r.declinedBy?.length ? r.declinedBy : r.participants) : r.participants;
+        const who = r.outcome === "declined" ? (r.declinedBy?.length ? r.declinedBy : r.participants) : r.noResponse?.map(C) ?? r.participants;
         for (const m of who) {
           if (!this.memberCategoryDeclines.has(m)) this.memberCategoryDeclines.set(m, new Map());
           const mm = this.memberCategoryDeclines.get(m)!;
