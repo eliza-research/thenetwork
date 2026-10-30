@@ -129,15 +129,17 @@ const POST = "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hyb
 
 export async function peonSeatsBlock(b: Block): Promise<void> {
   const filledRows = [];
-  for (const seed of [1, 2, 3]) for (const scenario of ["confirm", "decline", "choose", "no-post", "named", "negated", "form", "quoted"] as const) {
+  for (const seed of [1, 2, 3]) for (const scenario of ["confirm", "decline", "choose", "choose-it", "no-post", "named", "negated", "form", "quoted"] as const) {
+    const choosing = scenario === "choose" || scenario === "choose-it";
     const x = new SeatWorld(seed);
     x.add("hm", "Rowan Abbott", 34, { verified: "Acme" });
     x.add("candidate", "Casey Bell", 29, { candidate: true });
     for (const id of ["hm", "candidate"]) for (const body of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await x.say(id, body);
     if (scenario !== "no-post") { await x.say("hm", POST); await x.say("hm", "yes"); }
     const target = x.saved[0];
-    if (scenario === "choose") {
-      await x.say("hm", "We're hiring a barista, 1 opening, $40k-$50k, onsite in Queens"); await x.say("hm", "yes");
+    if (choosing) {
+      await x.say("hm", scenario === "choose-it" ? "We're hiring IT, 1 opening, $90k-$120k, hybrid in Brooklyn"
+        : "We're hiring a barista, 1 opening, $40k-$50k, onsite in Queens"); await x.say("hm", "yes");
     }
     if (target && !(await x.runUntil(() => x.net.reviewQueue().some(q => x.opp(q.oppId)?.seat?.id === seatIdOf(target.id)), 2 * DAY)))
       throw new Error(`filled-job setup: no real engine review item for seed ${seed}, ${scenario}`);
@@ -151,7 +153,7 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
     await x.say("hm", body);
     const which = x.to("hm", mark).some(m => m.body.includes("Which post should I close:"));
     const empty = x.to("hm", mark).some(m => isCopy(m.body, POSTING_COPY.nothingToClose));
-    if (scenario === "choose") { x.restart(); await x.say("hm", "data analyst"); }
+    if (choosing) { x.restart(); await x.say("hm", "data analyst"); }
     const draft = x.net.memberList().find(m => m.id === "hm")?.posting;
     const confirmation = !!target && !!draft?.close && draft.id === target.id && !!draft.ready
       && x.to("hm", mark).some(m => isCopy(m.body, POSTING_COPY.readBackClose(target.title)));
@@ -159,13 +161,13 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
     x.restart();
     await x.say("hm", scenario === "decline" ? "no" : "yes");
     x.restart(); await x.run(2 * DAY); x.restart();
-    const shouldClose = ["confirm", "choose", "named"].includes(scenario);
+    const shouldClose = ["confirm", "choose", "choose-it", "named"].includes(scenario);
     const closed = target ? x.saved.filter(p => p.id === target.id).at(-1)?.status === "closed" : false;
     const ended = queued.filter(id => x.opp(id)?.stage === "closed" && x.opp(id)?.closedReason === "posting closed").length;
     const queuedAfter = target ? x.net.reviewQueue().filter(q => x.opp(q.oppId)?.seat?.id === seatIdOf(target.id)).length : 0;
-    const siblingOpen = scenario !== "choose" || x.saved.filter(p => p.id !== target!.id).every(p => p.status === "active");
+    const siblingOpen = !choosing || x.saved.filter(p => p.id !== target!.id).every(p => p.status === "active");
     const expectedPrompt = scenario === "no-post" ? empty : ["negated", "form", "quoted"].includes(scenario) ? !draft : confirmation;
-    const correct = expectedPrompt && (scenario !== "choose" || which) && unchangedBeforeYes && siblingOpen && closed === shouldClose
+    const correct = expectedPrompt && (!choosing || which) && unchangedBeforeYes && siblingOpen && closed === shouldClose
       && x.saved.length === before + (shouldClose ? 1 : 0) && (shouldClose ? ended === queued.length && queuedAfter === 0 : ended === 0);
     filledRows.push({ seed, scenario, confirmation, which, empty, unchangedBeforeYes, queued: queued.length, closed, ended, queuedAfter, siblingOpen, correct });
   }

@@ -152,7 +152,8 @@ export function readPostingText(body: string, ctx: { draft?: PostingDraft; posti
     const open = ctx.postings.filter(p => p.active);
     if (!open.length) return { text: POSTING_COPY.nothingToClose, ready: false };
     const lower = body.toLowerCase();
-    const named = open.filter(p => lower.includes(p.title.toLowerCase()));
+    // The short "we filled it" command names no job, even when one is titled "IT".
+    const named = /\b(?:the|our|my)\b/i.test(body) ? open.filter(p => lower.includes(p.title.toLowerCase())) : [];
     const pick = named.length === 1 ? named[0] : open.length === 1 ? open[0] : undefined;
     if (!pick) return { draft: { close: true }, text: POSTING_COPY.whichToClose(open.map(p => p.title)), ready: false };
     return { draft: { close: true, id: pick.id, title: pick.title }, text: POSTING_COPY.readBackClose(pick.title), ready: true };
