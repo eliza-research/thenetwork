@@ -17,7 +17,12 @@
 //   close       closing a posting by text ends its open items (a candidate who said yes is told), and
 //               no new item is proposed for it
 import { DAY, HOUR, SimClock, type Facet, type Intent, type Member, type MemberId, type NetworkContext, type Presence, type SimMessage, type SimMeta } from "../../packages/core/src/index.ts";
-import { PEON_ENGINE_CONFIG } from "../../packages/engine/src/packs/peon/index.ts";
+import { PEON_ENGINE_CONFIG, peonPack } from "../../packages/engine/src/packs/peon/index.ts";
+import { resolveConfig } from "../../packages/engine/src/config.ts";
+import { localEmbed } from "../../packages/engine/src/embed.ts";
+import { World } from "../../packages/engine/src/world.ts";
+import { historyOf, profileOf } from "../../packages/engine/src/packs/peon/profile.ts";
+import { companyTrusted, responsiveness } from "../../packages/engine/src/packs/peon/selection.ts";
 import { peonSeats, seatIdOf } from "../../packages/engine/src/packs/peon/seats.ts";
 import { ConsentNetwork, type NetworkOptions } from "../../packages/network/src/network.ts";
 import { parsePosting, postingFacts, POSTING_COPY, readPostingText, SEAT_COPY, type JobPosting } from "../../packages/network/src/jobs.ts";
@@ -44,10 +49,10 @@ class SeatWorld {
   private seq = 0;
   private readonly opts: NetworkOptions;
 
-  constructor() {
+  constructor(seed = 7) {
     const w = appWiring("peon");
     this.opts = {
-      app: APPS.peon, seed: 7, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
+      app: APPS.peon, seed, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
       pack: w.pack!, hooks: w.hooks!, engine: { ...PEON_ENGINE_CONFIG, cities: ["nyc"] },
       onPosting: p => this.write(p),
     };
@@ -128,6 +133,58 @@ const startsWith = (body: string, re: RegExp) => re.test(body.replace(ACK, ""));
 const POST = "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL";
 
 export async function peonSeatsBlock(b: Block): Promise<void> {
+  const acceptedRows = [];
+  for (const seed of [1, 2, 3]) for (const scenario of ["manager-wait", "before-interview", "legacy-delivered", "after-interview"] as const) {
+    const x = new SeatWorld(seed);
+    x.add("hm", "Rowan Abbott", 34, { verified: "Acme" });
+    x.add("cand", "Casey Bell", 29, { candidate: true });
+    for (const id of ["hm", "cand"]) for (const text of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await x.say(id, text);
+    await x.say("hm", POST.replace("2 openings", "1 opening")); await x.say("hm", "yes");
+    if (!await x.runUntil(() => x.net.reviewQueue().length > 0)) throw new Error("accepted history: no review");
+    const id = x.net.reviewQueue()[0]!.oppId, seat = x.opp(id)!.seat!.id;
+    const beforeReview = x.about(id).length;
+    if (!x.net.review(id, "approve", { reviewer: "sim_staff" })) throw new Error("accepted history: review refused");
+    if (!await x.runUntil(() => x.probedFor("cand", id))) throw new Error("accepted history: no candidate probe");
+    await x.say("cand", "yes"); x.restart();
+    if (!await x.runUntil(() => x.probedFor("hm", id))) throw new Error("accepted history: no manager probe");
+    if (scenario !== "manager-wait") {
+      await x.say("hm", "yes");
+      if (scenario === "legacy-delivered") {
+        if (!await x.runUntil(() => ["hm", "cand"].every(p => x.about(id).some(s => s.to === p && s.meta.type === "proposal")), DAY)) throw new Error("accepted history: no delivered intro");
+        // Older saved bookings have delivery times but no explicit acceptance timestamp.
+        const state = JSON.parse(JSON.stringify(x.net.exportState()));
+        delete state.opps.find((o: { id: string }) => o.id === id).seatAcceptedAt;
+        x.net.importState(state);
+      }
+      if (scenario === "after-interview" && !await x.runUntil(() => x.clock.now() >= x.opp(id)!.meetingAt!, 7 * DAY)) throw new Error("accepted history: interview time not reached");
+    }
+    const read = () => {
+      const input = x.net.packInput(x.clock.now());
+      const world = new World(input, resolveConfig({ ...PEON_ENGINE_CONFIG, seed, cities: ["nyc"] }), localEmbed, peonPack);
+      const job = profileOf(world, seat);
+      if (job?.kind !== "job") throw new Error("accepted history: no job profile");
+      const h = historyOf(world, seat), c = historyOf(world, "cand");
+      const records = (input.interactions ?? []).filter(r => r.id === `${id}:seat`);
+      return { records: records.length, at: records[0]?.at ?? null, accepted: records.flatMap(r => r.acceptedBy ?? []).sort(),
+        applications: h.applications28, answered: h.answered, ghosted: h.ghosted, candidateInFlight: c.inFlight,
+        trusted: companyTrusted(world, job), response: responsiveness(world, job) };
+    };
+    const result = read(), meetingAt = x.opp(id)?.meetingAt;
+    x.restart();
+    const stable = JSON.stringify(result) === JSON.stringify(read());
+    await x.run(HOUR);
+    const fixedTime = read().at === result.at;
+    const accepted = scenario !== "manager-wait";
+    const correct = beforeReview === 0 && stable && fixedTime && result.records === Number(accepted)
+      && JSON.stringify(result.accepted) === JSON.stringify(accepted ? ["cand", seat].sort() : [])
+      && result.applications === Number(accepted) && result.answered === Number(accepted) && result.ghosted === 0
+      && result.candidateInFlight === Number(accepted) && result.trusted === accepted && result.response === (accepted ? 3 / 3.5 : 2 / 2.5)
+      && (!["before-interview", "legacy-delivered"].includes(scenario) || meetingAt! > x.clock.now())
+      && x.meetings.length === Number(accepted);
+    acceptedRows.push({ seed, scenario, ...result, beforeReview, stable, fixedTime, correct });
+  }
+  b.gate("accepted job introductions enter history before the future interview and retain their time after restart", acceptedRows.every(r => r.correct), JSON.stringify({ rows: acceptedRows }));
+
   await b.run("intake rules: a job post is read from text, read back, and needs a title and a pay range", () => {
     const d = parsePosting(POST);
     expect(d).toMatchObject({ title: "data analyst", openings: 2, payMin: 90, payMax: 120, mode: "hybrid", area: "brooklyn", seniority: 2, must: [{ skill: "sql", level: 2 }] });
