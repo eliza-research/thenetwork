@@ -591,16 +591,23 @@ export function expansion(ctx: GenCtx): Candidate[] {
     if (!outside.length) continue;
     const category: Category = "hobby";
     if (memberReason(w, a, { category, role: "seeker", format: "one_to_one", timeSensitive: false })) continue;
-    const d = outside[0]!;
-    const q = ma.facetEmb.get(d.id)!;
+    // A desire stored first must not hide a later one. Score every desire outside the
+    // member's cluster and keep the provider with the highest similarity at or above minSim.
     const pool = eligibleMembers(ctx, category, "provider", "one_to_one", false, new Set([a])).filter(id => w.get(id)!.cluster !== ma.cluster && w.canMeet([a, id]));
-    let best: { id: MemberId; sim: number; facet?: Facet } | undefined;
-    for (const id of pool) {
-      const r = w.bestFacet(w.get(id)!, q, "caps");
-      if (r.sim >= w.cfg.retrieval.minSim && (!best || r.sim > best.sim)) best = { id, ...r };
+    let best: { id: MemberId; sim: number; facet?: Facet; desire: Facet } | undefined;
+    for (const d of outside) {
+      const q = ma.facetEmb.get(d.id)!;
+      for (const id of pool) {
+        const r = w.bestFacet(w.get(id)!, q, "caps");
+        if (r.sim < w.cfg.retrieval.minSim) continue;
+        if (!best || r.sim > best.sim || (r.sim === best.sim && (id < best.id || (id === best.id && d.id < best.desire.id)))) {
+          best = { id, sim: r.sim, facet: r.facet, desire: d };
+        }
+      }
     }
     if (!best) continue;
     const mb = w.get(best.id)!;
+    const d = best.desire;
     out.push(makeCandidate({
       kind: "expansion", generator: "expansion", category,
       participants: [a, best.id], roles: { [a]: "seeker", [best.id]: "provider" }, format: "one_to_one",
