@@ -47,6 +47,10 @@ export function makeCompat(w: World, category: Category) {
   };
 }
 
+function canHost(w: World, id: MemberId, opts: ComposeOptions): boolean {
+  return Boolean(w.get(id)?.isHost && !memberReason(w, id, { category: opts.category, role: "host", format: opts.format ?? "small_group", timeSensitive: false }));
+}
+
 export function evaluateGroup(w: World, ids: MemberId[], opts: ComposeOptions, compat: (a: MemberId, b: MemberId) => number, affinity: Map<MemberId, number>):
   { score: number; stats: GroupStats; city: City } | null {
   let sum = 0, n = 0, warm = 0;
@@ -65,7 +69,7 @@ export function evaluateGroup(w: World, ids: MemberId[], opts: ComposeOptions, c
   const minBest = ids.length > 1 ? Math.min(...ids.map(id => best.get(id) ?? 0)) : 1;
   if (ids.length > 1 && minBest < opts.minPairwise) return null;
   const avgPairwise = n ? sum / n : 0.5;
-  const hasHost = ids.some(id => w.get(id)!.isHost);
+  const hasHost = ids.some(id => canHost(w, id, opts));
   const roleCoverage = opts.needHost ? (hasHost ? 1 : 0) : (hasHost ? 1 : 0.7);
   const warmScore = warm === 0 ? 0.3 : warm <= 2 ? 1 : Math.max(0, 1 - 0.25 * (warm - 2));
   const clusters = new Set(ids.map(id => w.get(id)!.cluster));
@@ -95,7 +99,7 @@ export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | nu
     beam = [{ ids: [...forced], score: ev.score, stats: ev.stats, city: ev.city }];
   } else {
     const seeds = [...poolIds].sort((a, b) => {
-      const ha = opts.needHost && w.get(a)!.isHost ? 1 : 0, hb = opts.needHost && w.get(b)!.isHost ? 1 : 0;
+      const ha = opts.needHost && canHost(w, a, opts) ? 1 : 0, hb = opts.needHost && canHost(w, b, opts) ? 1 : 0;
       return (hb - ha) || ((affinity.get(b)! - affinity.get(a)!)) || (a < b ? -1 : 1);
     }).slice(0, opts.beamWidth);
     beam = seeds.map(id => ({ ids: [id], score: affinity.get(id)!, stats: undefined as any, city: w.get(id)!.m.homeCity }));
@@ -149,7 +153,7 @@ export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | nu
   let hostAssigned = false;
   for (const id of primary) {
     if (opts.forcedRole && forced.includes(id)) roles[id] = opts.forcedRole;
-    else if (!hostAssigned && w.get(id)!.isHost && !memberReason(w, id, { category: opts.category, role: "host", format: opts.format ?? "small_group", timeSensitive: false })) {
+    else if (!hostAssigned && canHost(w, id, opts)) {
       roles[id] = "host"; hostAssigned = true;
     }
     else roles[id] = "guest";
