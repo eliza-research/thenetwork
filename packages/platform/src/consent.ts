@@ -77,13 +77,27 @@ export function optOutPhrase(text: string): boolean {
   return coreOptOutPhrase(text, t => leaveTarget(t) !== undefined);
 }
 
+/**
+ * A courtesy or urgency word a person may end a request with. It never names an app, so it is stripped
+ * before the app match: "leave slop now" and "unsubscribe from slop now" leave slop only.
+ */
+const TRAILING_COURTESY = / (?:please|pls|thanks|thank you|now|right now|for now|asap|today|immediately)$/;
+
 /** "leave slop", "leave slop.date", "stop slop", "quit peon", "leave the network": the app to leave (that app only), or undefined. */
 export function leaveTarget(text: string, apps: Record<AppId, Pick<AppInfo, "id" | "domain" | "name">> = APPS): AppId | undefined {
   const t = fold(text).toLowerCase().replace(/[^\p{L}\p{N}. ]+/gu, " ").replace(/\s+/g, " ").trim().replace(/\.$/, "");
   // "leave slop", and the same with stop, quit, cancel, unsubscribe (from) or exit: that app only.
   const m = /^(?:please )?(?:leave|quit|exit|stop|cancel|unsubscribe(?: from| me from)?) (.+)$/.exec(t);
   if (!m) return undefined;
-  const x = m[1]!.replace(/^the /, "").replace(/ please$/, "");
+  // Strip a trailing courtesy or urgency word before matching the app, so "leave slop now" stays a leave
+  // of slop. Without this the app does not match, the phrase is not a leave, and "unsubscribe from slop
+  // now" falls through to the free-text opt-out reader as a stop of every app.
+  let x = m[1]!.replace(/^the /, "").trim();
+  for (let i = 0; i < 3; i++) {
+    const next = x.replace(TRAILING_COURTESY, "").trim();
+    if (next === x) break;
+    x = next;
+  }
   return Object.values(apps).find(a => x === a.id || x === a.domain || x === `www.${a.domain}` || x === a.name.toLowerCase().replace(/^the /, ""))?.id;
 }
 
