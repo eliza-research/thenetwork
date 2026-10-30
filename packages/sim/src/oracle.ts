@@ -169,6 +169,12 @@ export class Oracle {
     // Intent liveness (persona.ts): judge on the wants each persona still holds at `at`. A lapsed
     // want never counts; a held want counts whether or not the Network's intent record is live.
     const people = ps.filter((p): p is Persona => !!p).map(p => withLiveDesires(p, at));
+    // Each person visiting the city sometime in the window is insufficient: they
+    // must be present together. Presence changes only at trip-day boundaries.
+    const presenceEnd = Math.min(prop.window?.end ?? at, at + 7 * DAY);
+    const presenceTimes = [at, ...people.flatMap(p => p.hidden.trips.flatMap(tr => [tr.fromDay, tr.toDay + 1])
+      .map(day => this.worldStart + day * DAY).filter(t => t > at && t < presenceEnd))];
+    if (!presenceTimes.some(t => people.every(p => this.presentIn(p, prop.city, t)))) flags.add("city_mismatch");
     // Minors policy: checked over every participant, not only per pair, so a one-person
     // proposal (growth ask, relay) involving a minor is flagged too.
     if (people.some(p => p.hidden.trueAge < 18)) flags.add("minor_included");
@@ -370,17 +376,21 @@ export class Oracle {
 
   /**
    * Ground-truth latent one-to-one opportunities among `members`: pairs in the same city
-   * the oracle rates compatible. Used for recall. O(n^2) per city.
+   * the oracle rates compatible. Use actual presence, including trips, for recall.
    */
   latentPairs(members: MemberId[], at: number): { a: MemberId; b: MemberId; quality: number }[] {
     const ps = members.map(id => this.byId.get(id)).filter((p): p is Persona => !!p && !p.hidden.adversarial && p.hidden.trueAge >= 18);
+    const cities = new Map(ps.map(p => [p.id, [...new Set([p.homeCity, ...(p.secondaryCity ? [p.secondaryCity] : []), ...p.hidden.trips.map(tr => tr.city)])]
+      .filter(city => this.presentIn(p, city, at))]));
     const res: { a: MemberId; b: MemberId; quality: number }[] = [];
     for (let i = 0; i < ps.length; i++) for (let j = i + 1; j < ps.length; j++) {
       const a = ps[i]!, b = ps[j]!;
-      if (a.homeCity !== b.homeCity) continue;
       if (a.relationships.some(r => r.to === b.id)) continue; // already know each other
-      const v = this.evaluate({ id: `latent:${a.id}:${b.id}`, kind: "intro", participants: [a.id, b.id], city: a.homeCity, window: { start: at, end: at } });
-      if (v.compatible) res.push({ a: a.id, b: b.id, quality: v.quality });
+      for (const city of cities.get(a.id)!) {
+        if (!cities.get(b.id)!.includes(city)) continue;
+        const v = this.evaluate({ id: `latent:${a.id}:${b.id}`, kind: "intro", participants: [a.id, b.id], city, window: { start: at, end: at } });
+        if (v.compatible) { res.push({ a: a.id, b: b.id, quality: v.quality }); break; }
+      }
     }
     return res;
   }
