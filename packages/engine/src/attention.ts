@@ -1044,7 +1044,7 @@ export function candidateSlots(tz: string, now: number, o: { window?: TimeSlot }
       const start = fromLocal(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), h, tz);
       const slot = { start, end: start + A.slotHours * HOUR };
       if (start < now + A.minLeadHours * HOUR || start > now + A.horizonDays * DAY) continue;
-      if (o.window && (start < o.window.start || slot.end > o.window.end + A.slotHours * HOUR)) continue;
+      if (o.window && (start < o.window.start || slot.end > o.window.end)) continue;
       out.push(slot);
     }
   }
