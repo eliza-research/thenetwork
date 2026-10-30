@@ -44,10 +44,10 @@ class SeatWorld {
   private seq = 0;
   private readonly opts: NetworkOptions;
 
-  constructor() {
+  constructor(seed = 7) {
     const w = appWiring("peon");
     this.opts = {
-      app: APPS.peon, seed: 7, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
+      app: APPS.peon, seed, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
       pack: w.pack!, hooks: w.hooks!, engine: { ...PEON_ENGINE_CONFIG, cities: ["nyc"] },
       onPosting: p => this.write(p),
     };
@@ -128,6 +128,83 @@ const startsWith = (body: string, re: RegExp) => re.test(body.replace(ACK, ""));
 const POST = "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL";
 
 export async function peonSeatsBlock(b: Block): Promise<void> {
+  const budgetRows = [];
+  for (const seed of [1, 2, 3]) for (const scenario of ["four-openings", "one-opening", "quiet", "paused", "probation", "probation-reset"] as const) {
+    const x = new SeatWorld(seed);
+    const onboard = async (id: string) => {
+      for (const text of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await x.say(id, text);
+    };
+    x.add("hm", "Rowan Abbott", 34, { verified: "Acme" });
+    await onboard("hm");
+    if (!scenario.startsWith("probation")) {
+      x.add("warm", "Casey Bell", 29, { candidate: true }); await onboard("warm");
+      // Establish the company's answered-application history through the actual consent flow.
+      await x.say("hm", POST.replace("2 openings", "1 opening")); await x.say("hm", "yes");
+      if (!await x.runUntil(() => x.net.reviewQueue().length > 0)) throw new Error("seat budget: no warm-up review");
+      const warm = x.net.reviewQueue()[0]!.oppId;
+      if (!x.net.review(warm, "approve", { reviewer: "sim_staff" })) throw new Error("seat budget: warm-up review refused");
+      if (!await x.runUntil(() => x.probedFor("warm", warm))) throw new Error("seat budget: no warm-up candidate probe");
+      await x.say("warm", "yes");
+      if (!await x.runUntil(() => x.probedFor("hm", warm))) throw new Error("seat budget: no warm-up manager probe");
+      await x.say("hm", "yes");
+      if (x.opp(warm)?.stage !== "scheduled") throw new Error("seat budget: warm-up intro not confirmed");
+      await x.say("hm", "We filled the data analyst role."); await x.say("hm", "yes");
+      // This candidate has a confirmed intro and withdraws their search; the intro history stays.
+      x.intents.find(i => i.memberId === "warm" && i.details === "peon:search")!.status = "closed";
+      x.restart();
+      const warmSeat = x.opp(warm)!.seat!.id;
+      if (!x.net.packInput(x.clock.now()).interactions?.some(r => r.outcome === "accepted"
+        && r.acceptedBy?.includes("warm") && r.acceptedBy.includes(warmSeat))) throw new Error("seat budget: no answered-application history");
+    }
+    const ids = ["c1", "c2", "c3", "c4"];
+    for (const id of ids) { x.add(id, `Candidate ${id}`, 29, { candidate: true }); await onboard(id); }
+    const openings = scenario === "one-opening" ? 1 : 4;
+    await x.say("hm", POST.replace("2 openings", `${openings} openings`)); await x.say("hm", "yes");
+    const seat = seatIdOf(x.saved.at(-1)!.id);
+    const state = scenario === "quiet" || scenario === "paused" ? scenario : "normal";
+    x.members.find(m => m.id === "hm")!.state = state;
+    x.restart(); await x.run(2 * DAY);
+    const queued = x.net.reviewQueue().filter(q => x.opp(q.oppId)?.seat?.id === seat);
+    const probes = () => x.sent.filter(s => ids.includes(s.to) && s.meta.type === "probe");
+    const beforeReview = probes().length;
+    for (const q of queued) if (!x.net.review(q.oppId, "approve", { reviewer: "sim_staff" })) throw new Error("seat budget: review refused");
+    for (const q of queued) {
+      const id = x.opp(q.oppId)!.participants.find(p => p !== "hm")!;
+      if (!await x.runUntil(() => x.probedFor(id, q.oppId))) throw new Error("seat budget: no candidate probe");
+      await x.say(id, "no");
+    }
+    x.restart(); await x.run(2 * DAY); x.restart();
+    const beforeRenewal = probes().length;
+    let renewed = 0;
+    if (scenario === "probation-reset") {
+      await x.run(4 * DAY); x.restart();
+      const next = x.net.reviewQueue().filter(q => x.opp(q.oppId)?.seat?.id === seat);
+      renewed = next.length;
+      for (const q of next) {
+        if (!x.net.review(q.oppId, "approve", { reviewer: "sim_staff" })) throw new Error("seat budget: renewal review refused");
+        const id = x.opp(q.oppId)!.participants.find(p => p !== "hm")!;
+        if (!await x.runUntil(() => x.probedFor(id, q.oppId))) throw new Error("seat budget: no renewed candidate probe");
+        await x.say(id, "no");
+      }
+    }
+    const input = x.net.packInput(x.clock.now());
+    const live = x.net.reviewQueue().filter(q => x.opp(q.oppId)?.seat?.id === seat).length;
+    const managerProbes = x.sent.filter(s => s.to === "hm" && s.meta.type === "probe"
+      && x.opp(s.meta.probe?.key ?? "")?.seat?.id === seat).length;
+    const expected = scenario === "paused" ? 0 : scenario === "four-openings" ? 4 : scenario.startsWith("probation") ? 3 : 1;
+    const total = expected + (scenario === "probation-reset" ? 1 : 0);
+    const retainedState = input.members.find(m => m.id === "hm")?.state === state
+      && ids.every(id => input.members.find(m => m.id === id)?.state === "normal");
+    const distinct = new Set(probes().map(s => s.to)).size;
+    const correct = queued.length === expected && beforeRenewal === expected && probes().length === total && distinct === total
+      && renewed === (scenario === "probation-reset" ? 1 : 0)
+      && beforeReview === 0 && managerProbes === 0 && retainedState && live <= openings
+      && (scenario === "one-opening" || live === 0) && x.clock.now() - START < (scenario === "probation-reset" ? 12 : 7) * DAY;
+    budgetRows.push({ seed, scenario, openings, state, queued: queued.length, probes: probes().length,
+      distinct, beforeReview, beforeRenewal, renewed, managerProbes, retainedState, live, correct });
+  }
+  b.gate("a trusted job uses its opening slate without spending the manager's candidate budget", budgetRows.every(r => r.correct), JSON.stringify({ rows: budgetRows }));
+
   await b.run("intake rules: a job post is read from text, read back, and needs a title and a pay range", () => {
     const d = parsePosting(POST);
     expect(d).toMatchObject({ title: "data analyst", openings: 2, payMin: 90, payMax: 120, mode: "hybrid", area: "brooklyn", seniority: 2, must: [{ skill: "sql", level: 2 }] });
