@@ -7,7 +7,7 @@
 //
 // The rules were rebuilt against hand-written corpora (test/fixtures), not the simulator's own
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
-import { parseReply, type Category } from "@thenetwork/core";
+import { MIN_MEMBER_AGE, parseReply, type Category } from "@thenetwork/core";
 import type { TimeOption } from "@thenetwork/core";
 import { DESIRES, INTERESTS, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { NEIGHBORHOODS } from "./geo.ts";
@@ -183,7 +183,8 @@ const AGE_END = `(?=\\s*(?:${CLAUSE_END}|${YEARS_OLD}))`;
 // "and", "now" and "too" also end an age, but only for 13 and up: "I'm 3 and 0 this season" or
 // "I'm 2 years in nyc now" must never decline an adult (a decline deletes the member's data).
 // Also "actually", "tbh", "honestly", "fyi" and "last week": "I'm 15 actually", "I turned 13 last week".
-const AGE_END_LOOSE = `(?=\\s*(?:${CLAUSE_END}|${YEARS_OLD}|and\\b|now\\b|too\\b|turning\\b|actually\\b|tbh\\b|honestly\\b|fyi\\b|last (?:week|month|year)\\b|yesterday\\b|recently\\b|in (?:high|middle) school\\b))`;
+// "from", "looking for" and "going on" go on like an age too: "I'm 16 from Queens", "I'm 15 looking for friends".
+const AGE_END_LOOSE = `(?=\\s*(?:${CLAUSE_END}|${YEARS_OLD}|and\\b|now\\b|too\\b|turning\\b|actually\\b|tbh\\b|honestly\\b|fyi\\b|last (?:week|month|year)\\b|yesterday\\b|recently\\b|in (?:high|middle) school\\b|from\\b|looking for\\b|going on\\b))`;
 /** "15f", "16 m", "15/f": an age and a sex, the way teens introduce themselves. Never "15m away" or "raised 15m". */
 const AGE_SEX_END = "(?=\\s*(?:$|[.,!?;:)]|here\\b|lol\\b|btw\\b|from\\b|in\\b|looking\\b|nyc\\b|bk\\b))";
 const atLeast13 = (n: number) => (n >= 13 ? n : NaN);
@@ -200,6 +201,9 @@ const AGE_RX: AgeRule[] = [
   // Explicit: "I am 12 years old", "im 15 y/o", "my age is 12", "15 y/o here", "age: 15".
   { rx: new RegExp(`\\b(?:${ME}\\s+${SAME}|my age is\\s+)(\\d{1,2})\\s*${YEARS_OLD}`), age: m => Number(m[1]), explicit: true },
   { rx: new RegExp(`\\b${ME}\\s+${SAME}(one|two|three|four|five|six|seven|eight|nine|${NUM_WORD})[\\s-]+${YEARS_OLD}`), age: m => AGE_WORDS[m[1]!]!, explicit: true },
+  // "I'm a 15 year old girl looking for friends", "I am a fourteen-year-old": the age goes on as a noun
+  // phrase. Under 13 reads as 13 (a minor, never a decline): "I'm a 12 year old at heart" is an idiom.
+  { rx: new RegExp(`\\b${ME}\\s+${SAME}an?\\s+(\\d{1,2}|one|two|three|four|five|six|seven|eight|nine|${NUM_WORD})[\\s-]*y(?:ears?|rs?)[\\s-]+old\\b(?!\\s+at heart)`), age: m => Math.max(MIN_MEMBER_AGE, /^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!) },
   { rx: new RegExp(`\\bmy age is\\s+(\\d{1,2})${AGE_END}`), age: m => Number(m[1]), explicit: true },
   { rx: new RegExp(`^\\W*(?:(?:hi|hey|hello|yo)\\W+)?(?:my )?age\\s*[:=-]?\\s*(\\d{1,2})${AGE_END}`), age: m => Number(m[1]), explicit: true },
   // Leading "15 y/o here", "12yo." (only when it is about the sender: "12 yo whisky is great" is not).
