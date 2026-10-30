@@ -57,13 +57,16 @@ export async function evalsBlock(b: Block): Promise<void> {
     const lines = await jsonl<{ text: string; label: "yes" | "no" | "unclear"; keys?: string[] }>(`network/${file}`);
     let ok = 0;
     const notYesAsYes: string[] = [];
+    const yesAsNotYes: string[] = [];
     for (const l of lines) {
       const r = parseProbeReply(l.text, OPTIONS);
       if (r.answer === l.label && (!l.keys || JSON.stringify(r.keys) === JSON.stringify(l.keys))) ok++;
       if (l.label !== "yes" && r.answer === "yes") notYesAsYes.push(l.text);
+      if (l.label === "yes" && r.answer !== "yes") yesAsNotYes.push(l.text);
     }
     b.gate(`consent replies ${file}: accuracy >= 97% (n ${lines.length})`, lines.length >= (file === "consent-replies.jsonl" ? 300 : 75) && ok / lines.length >= 0.97, pct(ok / lines.length));
     b.gate(`consent replies ${file}: no refusal or hedge read as yes`, notYesAsYes.length === 0, notYesAsYes.slice(0, 5).join(" | "));
+    b.gate(`consent replies ${file}: every yes reply reads as yes`, yesAsNotYes.length === 0, yesAsNotYes.slice(0, 5).join(" | "));
   }
 
   const benign = (await Bun.file(`${ROOT}/network/benign-adult.txt`).text()).trim().split("\n");

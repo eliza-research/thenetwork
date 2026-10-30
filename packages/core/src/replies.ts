@@ -76,7 +76,7 @@ const r = (kind: Kind, src: string, strong = false): Rule => ({ kind, re: new Re
 
 const RULES: Rule[] = [
   // Positive idioms that contain a negation word.
-  r("yes", "\\b(?:no problem|no prob(?:lem)?s?|not a problem|no doubt|no question|why not|why the hell not|por que no|can't wait|cannot wait|can not wait|wouldn't miss it|would not miss it|don't see why not|i don't mind|don't mind|no reason not to|how could i say no|never say no|not gonna say no)\\b", true),
+  r("yes", "\\b(?:no problem|no prob(?:lem)?s?|not a problem|no doubt|no question|why not|why the (?:hell|heck) not|(?:don't|do not|can't|cannot) see (?:any )?(?:reason )?why not|por que no|can't wait|cannot wait|can not wait|wouldn't miss it|would not miss it|i don't mind|don't mind|no reason not to|how could i say no|never say no|not gonna say no)\\b", true),
   // Reversals: what follows replaces what came before.
   r("reversal", "\\b(?:actually|on second thought|second thoughts|wait|jk|just kidding|nvm|never ?mind|scratch that|changed my mind|pensandolo bien|espera)\\b"),
   r("neutral", "\\b(?:no worries|no pressure|no rush|no stress|no biggie|no te preocupes|sin problema)\\b"),

@@ -548,10 +548,12 @@ const COND_RX = /\b(?:only if|only with|only when|only for|as long as|so long as
 const COUNTER_RX = /\b(?:different (?:day|time|week)|another (?:day|week)|next week|later (?:in the week|this month|on)|reschedule|instead|rain ?check|some other (?:day|time)|how about|what about|later date|the week after|push it)\b/;
 /** "No problem", "no worries", "no rush", "no plans", "no doubt": not refusals. */
 const HARMLESS_NO = /\bno (?:problem|prob|probs|worries|worry|rush|pressure|biggie|doubt|plans?|stress|sweat|complaints)\b/g;
+/** Positive idioms that contain a negation word ("I don't see why not"): not refusals. */
+const POSITIVE_WHY_NOT = /\b(?:i\s+)?(?:don'?t|do not|can'?t|cannot)\s+see\s+(?:any\s+)?(?:reason\s+)?why\s+not\b|\bwhy\s+(?:the\s+)?(?:hell|heck)\s+not\b/g;
 
 /** Read a reply as yes, no, a counter-offer or unclear, refusal first and sentence by sentence. */
 export function consentOf(body: string): Consent {
-  const t = normText(body).replace(HARMLESS_NO, " ");
+  const t = normText(body).replace(HARMLESS_NO, " ").replace(POSITIVE_WHY_NOT, " yes ");
   const wordsIn = (t.match(/[a-z]+/g) ?? []).length;
   let refusalAt = Infinity, affirmAt = Infinity, cond = false, hedge = false, counter = false, question = false;
   for (const s of sentencesOf(t)) {
