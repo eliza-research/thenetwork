@@ -141,9 +141,11 @@ export const CONTACT_PATTERNS: { name: string; re: RegExp }[] = [
   { name: "url", re: new RegExp(`\\b(?:https?|hxxps?|h\\*\\*ps?):\\/\\/\\S+|\\bwww\\.\\S+|\\b[a-z0-9][a-z0-9-]*\\.(?:${TLDS})\\b(?:\\/\\S*)?`) },
   // "@samlee", "dm me@samlee" (an @ inside a word but not an email).
   { name: "handle", re: /(?:^|[^a-z0-9._%+-])@[a-z0-9_][a-z0-9_.]{1,29}|[a-z0-9]@[a-z0-9_]{2,30}(?![a-z0-9_]*\.[a-z])/ },
-  // "ig: samlee_nyc", "my insta is samlee_nyc", "snap @sam", "discord sam#1234", "cashapp $samlee".
-  // A Cash App cashtag starts with "$" and a letter, so "venmo $20" stays a dollar amount.
-  { name: "handle", re: /\b(?:ig|insta|instagram|snap|snapchat|tiktok|twitter|telegram|tg|whatsapp|signal|discord|venmo|cashapp|cash app|kik|threads|bluesky|bsky|linkedin|fb|facebook|wechat|line id)\b\s*(?:[:=]|is|handle|handle is|is at|at)?\s*(?:@|\$(?=[a-z]))?(?:[a-z0-9_.]*[_.\d#][a-z0-9_.#]*[a-z0-9]|(?<=[:=@$]\s*)[a-z][a-z0-9]{2,29})/ },
+  // "ig: samlee_nyc", "my insta is samlee_nyc", "snap @sam", "discord sam#1234".
+  { name: "handle", re: /\b(?:ig|insta|instagram|snap|snapchat|tiktok|twitter|telegram|tg|whatsapp|signal|discord|venmo|cashapp|cash app|kik|threads|bluesky|bsky|linkedin|fb|facebook|wechat|line id)\b\s*(?:[:=]|is|handle|handle is|is at|at)?\s*@?(?:[a-z0-9_.]*[_.\d#][a-z0-9_.#]*[a-z0-9]|(?<=[:=@]\s*)[a-z][a-z0-9]{2,29})/ },
+  // "cashapp $samlee", "my cashtag is $samlee". Only Cash App handles start with "$", so the "$"
+  // prefix is accepted after these keywords alone: "venmo $20" and "venmo $tickets money" stay clean.
+  { name: "handle", re: /\b(?:cashapp|cash app|cashtag)\b\s*(?:[:=]|is)?\s*\$[a-z][a-z0-9_]{1,19}/ },
 ];
 
 const NUMBER_WORDS: Record<string, string> = {

@@ -134,3 +134,6 @@
 {"text":"cashapp: $sam_lee","want":"contact","note":"core-2 Cash App cashtag"}
 {"text":"cash app $SamLee","want":"contact","note":"core-2 Cash App cashtag"}
 {"text":"venmo $20 for the tickets","want":"clean","note":"core-2 a dollar amount after a payment app is not a handle"}
+{"text":"my cashtag is $samlee","want":"contact","note":"core-2 Cash App cashtag after the word cashtag"}
+{"text":"venmo $tickets money","want":"clean","note":"core-2 a $word after venmo is a note, not a handle"}
+{"text":"i'll venmo $dinner later","want":"clean","note":"core-2 a $word after venmo is a note, not a handle"}
