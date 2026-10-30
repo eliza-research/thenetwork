@@ -123,6 +123,17 @@ export async function evalsBlock(b: Block): Promise<void> {
   });
 
   // ---- opt-out (core parseOptOut and the platform consent ledger) --------------------------------
+  await b.run("platform: STOP ALL of every app is read with a courtesy or urgency word beside it", () => {
+    // A whole-message STOP ALL opts out of every app. A member who writes "STOP ALL NOW" or
+    // "STOP ALL PLEASE" asked for the same thing, and an unread STOP ALL leaves them subscribed.
+    for (const t of ["STOP ALL NOW", "STOP ALL PLEASE", "please stop all", "stop all now please", "stopall now", "STOP ALL RIGHT NOW"]) expect([t, detectKeyword(t) ?? null]).toEqual([t, "stop_all"]);
+    // Only a courtesy or urgency word is tolerated: a number, a second request or a negation keeps its
+    // current reading, and "stop all the texts" stays the plain STOP it always was.
+    expect(detectKeyword("STOP ALL 2") ?? null).toBe(null);
+    expect(detectKeyword("stop all by later") ?? null).toBe(null);
+    expect(detectKeyword("please don't stop all") ?? null).toBe(null);
+    expect(detectKeyword("stop all the texts now")).toBe("stop");
+  });
   const parse = await jsonl<{ text: string; match: "exact" | "likely" | "none" }>("opt-out-parse.jsonl");
   const parseMiss = parse.filter(r => parseOptOut(r.text).match !== r.match).map(r => `${JSON.stringify(r.text)} -> ${parseOptOut(r.text).match}`);
   b.gate(`core parseOptOut (n ${parse.length}): every row read as labelled`, parseMiss.length === 0, parseMiss.join("; "));

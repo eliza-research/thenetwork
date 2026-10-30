@@ -55,6 +55,21 @@ export function lastEvents(events: readonly ConsentEvent[], e164: string, app: A
 
 // Keywords: the one table and the free-text opt-out reading live in packages/core/src/replies.ts.
 const STOP_ALL_WORDS = new Set<string>(KEYWORDS.stopAll);
+/**
+ * A courtesy or urgency word a person may put next to a whole-message STOP ALL: "STOP ALL NOW",
+ * "STOP ALL PLEASE", "PLEASE STOP ALL". The word never changes the request, and a STOP ALL that is
+ * not read at all leaves the member subscribed to every app. Only that word is tolerated: anything
+ * else to the side of it (a number, a second request) keeps its current reading, and a negated
+ * "don't stop all" is not a stop because the negation survives the strip.
+ */
+const STOP_ALL_HEAD = /^(?:PLEASE |PLS )/;
+const STOP_ALL_TAIL = / (?:RIGHT NOW|THANK YOU|FOR NOW|IMMEDIATELY|PLEASE|THANKS|ALREADY|ASAP|PLS|NOW)$/;
+/** "STOP ALL NOW" -> "STOP ALL"; anything else is returned unchanged. */
+const stopAllKey = (key: string): string => {
+  let s = key.replace(STOP_ALL_HEAD, "");
+  for (let i = 0; i < 2; i++) s = s.replace(STOP_ALL_TAIL, "");
+  return s;
+};
 const STOP_WORDS = new Set<string>([...KEYWORDS.stop, ...KEYWORDS.stopPolite]);
 const START_WORDS = new Set<string>(KEYWORDS.start);
 const HELP_WORDS = new Set<string>(KEYWORDS.help);
@@ -64,7 +79,8 @@ export type Keyword = "stop" | "stop_all" | "start" | "help";
 
 export function detectKeyword(text: string): Keyword | undefined {
   const k = keywordKey(text);
-  if (STOP_ALL_WORDS.has(k)) return "stop_all";
+  // "STOP ALL NOW" is a STOP ALL of every app: an unread global opt-out leaves the member subscribed.
+  if (STOP_ALL_WORDS.has(k) || STOP_ALL_WORDS.has(stopAllKey(k))) return "stop_all";
   // "STOPP", "STOOOP": a misspelt STOP is still a STOP.
   if (STOP_WORDS.has(k) || SPANISH_STOP_WORDS.has(k) || /^S+T+O+P+$/.test(k) || optOutPhrase(text)) return "stop";
   if (START_WORDS.has(k)) return "start";
