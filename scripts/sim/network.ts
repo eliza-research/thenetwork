@@ -5,6 +5,13 @@
 import { readdirSync } from "node:fs";
 import { DAY, HOUR, MINUTE, type MemberId } from "../../packages/core/src/index.ts";
 import { DEFAULT_ATTENTION } from "../../packages/engine/src/index.ts";
+import { World as EngineWorld } from "../../packages/engine/src/world.ts";
+import { resolveConfig } from "../../packages/engine/src/config.ts";
+import { localEmbed } from "../../packages/engine/src/embed.ts";
+import { computeComponents } from "../../packages/engine/src/scoring.ts";
+import { randomWorld } from "../../packages/engine/src/testkit.ts";
+import { friendsPack } from "../../packages/engine/src/packs/friends/index.ts";
+import type { Candidate } from "../../packages/engine/src/types.ts";
 import { networkPack } from "../../packages/engine/src/packs/network/index.ts";
 import type { RunRecord } from "../../packages/core/src/index.ts";
 import { computeMetrics } from "../../packages/sim/src/judge/metrics.ts";
@@ -312,6 +319,31 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     const r = await runSimScenario({ ...s, background: { personas: 6 } }, { network: () => new StubNetwork({ seed: 1, leakyExplanations: true, introRate: 1 }) });
     b.gate("negative control: the canary check fails against a leaky network", r.results.find(x => x.expectation.check === "canary_not_leaked")?.status === "fail");
   }
+
+  await b.run("meeting locality: future, expired, and disjoint visits cannot lower a candidate's travel cost", () => {
+    const input = randomWorld({ members: 2, seed: 83, minors: false, aliases: false });
+    const [a, b] = input.members.map(m => m.id) as [string, string];
+    input.members = input.members.map(m => ({ ...m, homeCity: "nyc" }));
+    const start = input.now + DAY, end = start + 2 * HOUR;
+    const baselinePresence = [{ memberId: a, city: "nyc" as const, type: "home" as const, areas: ["Upper West Side"] }, { memberId: b, city: "nyc" as const, type: "home" as const, areas: ["Bushwick"] }];
+    const c: Candidate = {
+      key: "meeting-locality", kind: "intro", generator: "shared_intent", category: "social", participants: [a, b], roles: { [a]: "peer", [b]: "peer" },
+      format: "one_to_one", objective: "coffee", city: "nyc", window: { start, end }, channels: new Set(["semantic"]), evidence: {},
+      fit: 1, benefit: { [a]: 1, [b]: 1 }, warm: 0, alternates: [], exploration: false, safetyClass: "low", timeSensitive: false, riskText: "",
+    };
+    for (const pack of [networkPack, friendsPack]) {
+      const score = (extra: typeof input.presence) => computeComponents(new EngineWorld({ ...input, presence: [...baselinePresence, ...extra] }, resolveConfig(), localEmbed, pack), c);
+      const baseline = score([]);
+      const visit = (from: number, to: number) => ({ memberId: b, city: "nyc" as const, type: "temporary" as const, areas: ["Upper West Side"], from, to });
+      expect(score([visit(end + DAY, end + 2 * DAY)])).toEqual(baseline);
+      expect(score([visit(start - DAY, start)])).toEqual(baseline);
+      expect(score([visit(start, end)]).activationCost).toBeLessThan(baseline.activationCost);
+      expect(score([
+        { memberId: a, city: "nyc", type: "temporary", areas: ["Queens"], from: start + HOUR, to: end },
+        visit(start + HOUR, end),
+      ])).toEqual(baseline);
+    }
+  });
 
   // ---- conformance rules for networkPack (engine level) ---------------------------------------------------
   await conformance(b, networkPack, { seeds: o.quick ? [1, 2] : [1, 2, 3, 4] });

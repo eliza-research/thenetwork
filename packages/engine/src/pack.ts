@@ -22,7 +22,7 @@
 // BYTE IDENTITY (section 3.2). Pack identity travels BESIDE the config (`deps.pack`, the World
 // constructor), never inside it: EngineConfig / AttentionConfig / PlansConfig keep their shapes and
 // hashes. Run logs get no new fields for networkPack. Rule and generator order is the contract.
-import type { AppId, Category, City, Facet, Intent, MemberId, OpportunityKind } from "@thenetwork/core";
+import type { AppId, Category, City, Facet, Intent, MemberId, OpportunityKind, Proposal } from "@thenetwork/core";
 import type { ActivityType } from "./packs/network/activities.ts";
 import type { AttentionConfig, EngineConfig, PlansConfig } from "./config.ts";
 import type { GenCtx } from "./genkit.ts";
@@ -178,8 +178,8 @@ export interface GeoModel {
   location(w: World, id: MemberId, start: number, end: number): Map<City, Interval[]>;
   /** Common availability of all members in one market (prefers `preferred`); null = cannot meet. The core geo filter. */
   overlap(w: World, ids: MemberId[], start: number, end: number, preferred?: City): GeoOverlap | null;
-  /** Do all members share a neighbourhood / cell in `market` (activation cost). */
-  sharesArea(w: World, ids: MemberId[], market: City | undefined): boolean;
+  /** Do all members share a neighbourhood / cell in `market` during the window (otherwise now)? */
+  sharesArea(w: World, ids: MemberId[], market: City | undefined, window?: Proposal["window"]): boolean;
   /**
    * Optional pair-level geo hard filter, checked after the pack's pair rules (radius model: mutual
    * radius, d <= min(rA, rB)). Must be symmetric. networkPack: absent (city overlap only).

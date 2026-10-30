@@ -105,7 +105,7 @@ export function computeComponents(w: World, c: Candidate, verdict?: JudgeVerdict
   }
 
   // Activation cost: distance (shared area), group coordination, short lead time, travel limits.
-  const shareArea = w.pack.geo.sharesArea(w, ids, c.city);
+  const shareArea = w.pack.geo.sharesArea(w, ids, c.city, c.window);
   let activationCost = ids.length === 1 ? 0.05 : shareArea ? 0.1 : 0.3;
   activationCost += 0.05 * Math.max(0, ids.length - 2);
   if (c.window && c.window.start - w.now < 12 * HOUR) activationCost += 0.15;
