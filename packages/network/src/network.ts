@@ -387,6 +387,8 @@ interface Opp {
    * yes and the intro only after both yeses. The engine's own views (capacity, pair rules) see the seat.
    */
   seat?: { id: MemberId; manager: MemberId };
+  /** When both sides accepted this job introduction, separate from the future interview time. */
+  seatAcceptedAt?: number;
 }
 /** A member request. The member's own words are not kept: only what the classifier read from them. */
 interface Request {
@@ -2436,6 +2438,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.counters.oppsRevealed++; this.counters.oppsAllYes++; this.counters.scheduled++;
     if (!o.recorded) { o.recorded = true; this.ctx.recordProposal(this.toProposal(o), o.origin === "engine" ? "engine" : o.origin === "player" ? "player" : "network"); }
     o.stage = "scheduled";
+    if (o.seat) o.seatAcceptedAt = now;
     for (const id of o.participants) o.status.set(id, "yes");
     if (o.requester) {
       const r = this.requests.find(x => x.oppId === o.id && x.memberId === o.requester);
@@ -4527,7 +4530,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     }));
     for (const o of this.opps.values()) {
       if (!o.seat || o.meetingAt === undefined || o.stage === "closed" || interactions.some(x => x.id.startsWith(`${o.id}:fb:`))) continue;
-      interactions.push({ id: `${o.id}:seat`, kind: o.kind, category: o.category, participants: view(o.id, o.participants), at: o.meetingAt, outcome: "accepted", acceptedBy: view(o.id, o.participants) });
+      // The answer happened already. Dating it at the future interview hides it from historyOf.
+      // Older snapshots can establish acceptance by the first delivered introduction.
+      const at = o.seatAcceptedAt ?? Math.min(o.meetingAt, ...Object.values(o.bookedAt ?? {}));
+      interactions.push({ id: `${o.id}:seat`, kind: o.kind, category: o.category, participants: view(o.id, o.participants), at, outcome: "accepted", acceptedBy: view(o.id, o.participants) });
     }
     return {
       ...input, interactions,
