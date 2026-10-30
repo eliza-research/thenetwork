@@ -142,13 +142,14 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   f.passedHardFilters = passed.length;
   t = lap("filter", t);
 
-  // 3. Score; dedupe by participant set (keep best).
+  // 3. Score; dedupe by participant set (prefer eligible, then keep best).
   let scored: Scored[] = passed.map(c => scoreCandidate(w, c));
   const bySet = new Map<string, Scored>();
   for (const s of scored) {
     const k = [...s.c.participants].sort().join(",");
     const cur = bySet.get(k);
-    if (!cur || s.score > cur.score || (s.score === cur.score && s.c.key < cur.c.key)) bySet.set(k, s);
+    if (!cur || (s.eligible && !cur.eligible)
+      || (s.eligible === cur.eligible && (s.score > cur.score || (s.score === cur.score && s.c.key < cur.c.key)))) bySet.set(k, s);
   }
   f.deduped = scored.length - bySet.size;
   scored = [...bySet.values()].sort((a, b) => (a.c.key < b.c.key ? -1 : 1));
