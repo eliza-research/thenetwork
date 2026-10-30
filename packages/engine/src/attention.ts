@@ -571,6 +571,9 @@ export const REENGAGE_SUFFIX = "Want me to keep sending these?";
  * because of unanswered interruptions (not STOP, not their explicit choice), silent >= 30 days,
  * never re-engaged since their last inbound message, outside quiet hours, and only for a held item
  * whose V is above the member's 75th percentile (`valueHistory`: V of items held or sent to them).
+ * With no history on record there is no percentile to beat, so the bar is the member state's
+ * quality bar instead of the candidates' own values: deriving the bar from the items being
+ * judged makes a single (or tied) item judge itself and always fail.
  * If it goes unanswered, the member stays silent until they write in.
  */
 export function reengagement(inp: {
@@ -595,7 +598,10 @@ export function reengagement(inp: {
     .sort((a, b) => (b.v - a.v) || (a.it.id < b.it.id ? -1 : 1));
   const best = vals[0];
   if (!best) return { send: false, reason: "nothing_eligible" };
-  const bar = quantile(inp.valueHistory.length ? inp.valueHistory : vals.map(x => x.v), cfg.blooio.reengagePercentile);
+  // With no history, never derive the bar from the candidates themselves: a single item
+  // (or tied items) would set its own bar and always fail the strict > check. Use the
+  // state's quality bar, the existing absolute value floor in this file, instead.
+  const bar = inp.valueHistory.length ? quantile(inp.valueHistory, cfg.blooio.reengagePercentile) : cfg.qualityBar[m.state];
   if (!(best.v > bar)) return { send: false, reason: "not_high_value" };
   return { send: true, reason: "ok", item: best.it, value: best.v };
 }
