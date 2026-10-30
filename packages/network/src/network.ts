@@ -2515,7 +2515,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Only members who were told about the plan hear that it changed.
     for (const id of still) if (o.bookedTold?.includes(id)) this.send(this.member(id), copy.dropNotice(m.first, keep), { type: "cancellation", proposalId: o.id }, "cancellation",
       { hook: { t: "drop_notice", oppId: o.id } });
-    if (!keep) { this.expireReveals(o); o.closedFrom = o.stage; o.closedReason = "participant dropped"; o.stage = "closed"; this.ctx.log("opportunity_closed", { proposalId: o.id, reason: "participant dropped" }); }
+    if (!keep) {
+      this.expireReveals(o); o.closedFrom = o.stage; o.closedReason = "participant dropped"; o.stage = "closed";
+      // A cancelled booking is still an introduction: keep it in the engine's pair history.
+      this.interactions.push({ id: o.id, kind: o.kind, category: o.category, participants: [...o.participants], at: this.now(), outcome: "cancelled" });
+      this.ctx.log("opportunity_closed", { proposalId: o.id, reason: "participant dropped" });
+    }
   }
 
   /** Members the booked plan reached who neither confirmed nor dropped before it closed: an expired reveal. */
@@ -4077,6 +4082,11 @@ export class ConsentNetwork implements NetworkUnderTest {
         onSent: () => {
           if (!o) return;
           this.expect(m, { kind: "booked", oppId: o.id, at: now() });
+          // Slop never introduces the same pair twice, even if neither answers the later check-in.
+          // Record the delivered introduction once; it does not claim the date happened.
+          if (this.app.id === "slop" && !o.bookedTold?.length) {
+            this.interactions.push({ id: `${o.id}:introduced`, kind: o.kind, category: o.category, participants: [...o.participants], at: now(), outcome: "accepted" });
+          }
           o.bookedTold = [...(o.bookedTold ?? []), h.id]; this.counters.reveals++;
           // The member accepted a plan at this time (NC plan_accepted; silence for 48 hours confirms it).
           o.bookedAt = { ...o.bookedAt, [h.id]: now() };
