@@ -162,3 +162,18 @@
 {"text":"Kit here, I'm 15 actually, I like drawing and chess.","teen":true}
 {"text":"I turned 13 last week","teen":true}
 {"text":"I'm 30 actually, just look young","teen":false}
+{"text":"I'm 30. I'm 15.","teen":true}
+{"text":"I'm 25. Actually I'm 17.","teen":true}
+{"text":"I'm 40 but I'm 16.","teen":true}
+{"text":"I am 40 years old. I am 12 years old.","teen":true}
+{"text":"I'm 30. I just turned 17.","teen":true}
+{"text":"my age is 28. my age is 13.","teen":true}
+{"text":"I'm 21. I'm only 15.","teen":true}
+{"text":"Hi I'm 32. Sorry I'm 15.","teen":true}
+{"text":"I'm 16. I'm 40.","teen":true}
+{"text":"I'm 30. I'm 15 minutes away.","teen":false}
+{"text":"I'm 40. I'm 12 years into this job.","teen":false}
+{"text":"I'm 30. I'm 15 blocks from the park.","teen":false}
+{"text":"He's 20. She's 14.","other":14}
+{"text":"He's 16. She's 12.","other":12}
+{"text":"Alex is 30. Sam is 13.","other":13}
