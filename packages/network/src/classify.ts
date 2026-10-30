@@ -715,6 +715,18 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
   const allAt = ALL.exec(t) ?? ALL_WEAK.exec(t);
   if (allAt && c.answer !== "counter" && !negatedAt(t, allAt.index, allAt[0].length)) return open.length ? { answer: "yes", keys: open, why: c.why } : unclear;
+  // A named day that was not offered ("Friday works" when Friday is not an option) is a counter:
+  // a yes with no pick, never a yes to every offered time. The probe then offers new times.
+  if (!picked.length && c.answer === "yes") {
+    const offeredDays = new Set(options.map(o => o.label.split(" ")[0]!.toLowerCase()));
+    for (const [re, dayName] of DAY_WORDS) {
+      if (!offeredDays.has(dayName.toLowerCase())) {
+        for (const m of t.matchAll(re)) {
+          if (!negatedAt(t, m.index!, m[0].length)) return { answer: "yes", keys: [], why: "counter" };
+        }
+      }
+    }
+  }
   if (c.answer === "yes") return { answer: "yes", keys: open, why: c.why };
   if (c.answer === "counter") return { answer: "yes", keys: [], why: c.why };
   // Only refusals ("Thursday doesn't work") are not a yes: the probe stays open for a clear answer.
