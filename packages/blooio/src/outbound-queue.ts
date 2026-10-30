@@ -29,7 +29,8 @@
 //  - Provider errors: retryable ones back off (30 s, doubling, at most 30 min) and fail after 6 attempts;
 //    Blooio conversation limits hold the row until the person writes; number-level blocks end it (blocked).
 //  - Delivery receipts (Blooio webhooks) move a row to delivered, read or failed. Statuses never go back.
-//  - A row to someone who is not a member keeps the address and the text only until it ends.
+//  - A row to someone who is not a member keeps the text only until it ends, and the address until it ends or,
+//    when it was sent, until the per-recipient hourly cap no longer counts it (purge() clears it then).
 import { createHash } from "node:crypto";
 import { parseApprovedRelayPhotos, type ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import type { SQL } from "bun";
@@ -333,14 +334,14 @@ export class OutboundQueue {
     return age > this.opt("ttlMs", 3 * DAY) || (row.kind === "proactive" && age > this.opt("ttlProactiveMs", DAY));
   }
 
-  /** A row ends (nothing more will happen to it). A row to a non-member keeps no address and no text. */
+  /** A row ends (nothing more will happen to it). A row to a non-member keeps no text, and no address unless it was sent (see purge). */
   private async end(row: QueueRow, status: string, note?: string, error?: string): Promise<StatusChange> {
     const now = new Date(this.now);
     // A text parked for leak review keeps its text and address until staff decide (a drop ends it and clears them).
     const keep = status === "parked_leak_review";
     await this.sql`update platform.outbound set status = ${status}, note = ${note ?? null}, last_error = coalesce(${error ?? null}, last_error), ended_at = ${now}, updated_at = ${now},
       lease_owner = null, lease_until = null,
-      to_address = case when member_id is null and ${!keep} then null else to_address end, body = case when member_id is null and ${!keep} then null else body end
+      to_address = case when member_id is null and ${!keep} and sent_at is null then null else to_address end, body = case when member_id is null and ${!keep} then null else body end
       where id = ${row.id}`;
     if (row.personCap && NOT_SENT.test(status)) await this.o.checks.capRelease?.(row).catch(() => {});
     return { id: row.id, app: row.app, memberId: row.memberId, status };
@@ -626,7 +627,7 @@ export class OutboundQueue {
       delivered_at = case when ${final} then coalesce(delivered_at, ${at}) else delivered_at end,
       read_at = case when ${u.status === "read"} then ${at} else read_at end,
       ended_at = case when ${final} then coalesce(ended_at, ${at}) else ended_at end,
-      to_address = case when ${final} and member_id is null then null else to_address end, body = case when ${final} and member_id is null then null else body end
+      body = case when ${final} and member_id is null then null else body end
       where id = ${row.id}`;
     return { id: row.id, app: row.app, memberId: row.memberId, status: u.status };
   }
@@ -661,6 +662,9 @@ export class OutboundQueue {
     const rows = await this.sql`delete from platform.line_conversations c where c.line = ${this.line}
       and coalesce(greatest(c.last_inbound_at, c.last_outbound_at), c.first_outbound_at) < ${before}
       and c.unanswered = 0 and not exists (select 1 from platform.phone_identities p where p.e164 = c.address) returning address`;
+    // A sent row to a non-member keeps its address only while the per-recipient hourly cap counts it.
+    await this.sql`update platform.outbound set to_address = null where line = ${this.line} and member_id is null and to_address is not null
+      and ended_at is not null and status <> 'parked_leak_review' and sent_at < ${new Date(this.now - HOUR)}`;
     return rows.length;
   }
 

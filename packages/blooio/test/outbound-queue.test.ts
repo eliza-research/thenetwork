@@ -159,6 +159,29 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
     expect(calls.map(c => c.idempotencyKey)).toEqual(["tn:thread-1", "tn:thread-3", "tn:thread-2"]);
   });
 
+  test("the per-recipient hourly cap also counts delivered texts to a non-member (their texts end at delivery)", async () => {
+    const { calls, provider } = recorder();
+    const q = queue(a, provider);
+    const to = "+12125558001";
+    // A stranger (no member id) who keeps writing, e.g. an auto-responder: every text gets a reply, and every
+    // reply is delivered at once (the delivery receipt ends the row).
+    for (let i = 0; i < 11; i++) {
+      await q.inbound(to);
+      await q.enqueue(a, [{ id: `stranger-${i}`, to, kind: "reply", text: `Text JOIN to start (${i}).`, timeZone: NY }]);
+      await q.drain();
+      await q.applyStatus({ kind: "status", channel: "sim", providerMessageId: `sim:tn:stranger-${i}`, status: "delivered", at: clock.now() });
+    }
+    // At most 10 sends to one recipient in a rolling hour (runaway-loop guard): the 11th waits.
+    expect(calls.filter(c => c.to === to).length).toBe(10);
+    const [r] = await a`select status, note from platform.outbound where id = 'stranger-10'`;
+    expect([r.status, r.note]).toEqual(["retry_scheduled", "per-recipient hourly cap"]);
+    // The delivered rows keep no text; purge() clears their address once the hourly cap no longer counts them.
+    expect((await a`select id from platform.outbound where id like 'stranger-%' and status = 'delivered' and body is not null`).length).toBe(0);
+    clock.advance(61 * 60_000);
+    await q.purge();
+    expect((await a`select id from platform.outbound where id like 'stranger-%' and status = 'delivered' and to_address is not null`).length).toBe(0);
+  });
+
   test("replies another transport delivers (signed turns) get the leak guard and join the thread it reads", async () => {
     const { calls, provider } = recorder();
     const leaks = { forbidden: ["violet lantern supper club"] };
