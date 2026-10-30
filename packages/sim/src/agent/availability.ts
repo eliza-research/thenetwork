@@ -15,8 +15,8 @@ import { localParts } from "../time.ts";
  * busy blocks (work, school run), then half the time; weekend daytime: 60%. Draws are keyed by
  * (seed, persona, local date, daypart), so the same slot is always free or always busy.
  */
-export function hiddenFree(p: Persona, t: number, seed: number | string): boolean {
-  const lp = localParts(t, p.homeCity);
+export function hiddenFree(p: Persona, t: number, seed: number | string, city: City = p.homeCity): boolean {
+  const lp = localParts(t, city);
   const h = lp.hour + lp.minute / 60, d = lp.weekday;
   const { wake, sleep, busyBlocks, freeEvenings } = p.routine;
   const bed = sleep < 12 ? sleep + 24 : sleep;
@@ -35,7 +35,7 @@ export interface PresenceCheck { presentIn(p: Persona, city: City, t: number): b
 
 /** Free at `t` for a meeting in `city`: in that city then (trips count) and free in its week. */
 export function freeFor(p: Persona, t: number, city: City, seed: number | string, presence: PresenceCheck): boolean {
-  return presence.presentIn(p, city, t) && hiddenFree(p, t, seed);
+  return presence.presentIn(p, city, t) && hiddenFree(p, t, seed, city);
 }
 
 /** Share of members booked at a time they are not free who do not come (the rest rearrange). */
