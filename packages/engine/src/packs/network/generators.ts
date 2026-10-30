@@ -492,7 +492,11 @@ export function newcomerWelcome(ctx: GenCtx): Candidate[] {
     if (!mn.newcomer || mn.degree > 2) continue;
     if (memberReason(w, n, { category: "social", role: "newcomer", format: "small_group", timeSensitive: false })) continue;
     const city = mn.m.homeCity;
+    // Pair rules before ranking, as in intent_to_capability and expansion: a member
+    // blocked (or dealbreaker / cooldown) against the newcomer can never join the
+    // forced group, so they must not take a pool slot from a viable member.
     const pool = eligibleMembers(ctx, "social", "guest", "small_group", false, new Set([n]))
+      .filter(id => !pairReason(w, n, id, "social"))
       .filter(id => { const mi = w.get(id)!; return !mi.newcomer && (mi.m.homeCity === city) && (mi.m.state === "open" || mi.m.state === "normal"); })
       .map(id => {
         const mi = w.get(id)!;

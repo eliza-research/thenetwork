@@ -14,6 +14,7 @@ import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, VENUES, typ
 import { styleViolations } from "../../packages/network/src/copy.ts";
 import { DATA_DIR } from "../synthetic/common.ts";
 import { conformance } from "./conformance.ts";
+import { newcomerPairGate } from "./engine-newcomer-pair.ts";
 import { Block, digest, expect } from "./gate.ts";
 
 type Msg = Extract<RunRecord, { type: "message" }>;
@@ -315,4 +316,7 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
 
   // ---- conformance rules for networkPack (engine level) ---------------------------------------------------
   await conformance(b, networkPack, { seeds: o.quick ? [1, 2] : [1, 2, 3, 4] });
+
+  // ---- engine regression gates ----------------------------------------------------------------------------
+  await newcomerPairGate(b);
 }
