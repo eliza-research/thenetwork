@@ -176,7 +176,12 @@ export function sharedIntentPooling(ctx: GenCtx): Candidate[] {
       if (s < w.cfg.retrieval.poolSim) continue;
       if (!w.canMeet([seed.memberId, o.memberId]) || pairReason(w, seed.memberId, o.memberId, seed.category)) continue;
       if (memberReason(w, o.memberId, { category: seed.category, role: "peer", format: fmt, timeSensitive: false, ownIntentCreatedAt: o.createdAt })) continue;
-      if (similar.some(x => x.id === o.memberId)) continue;
+      // One entry per member, and it must be their best-fitting intent: intents arrive in
+      // id order, not fit order, so keeping the first one seen understates the pair (and
+      // the group) when a member's perfect intent sorts after a weaker one in the same
+      // category. The member already passed every check above, so only the fit changes.
+      const existing = similar.find(x => x.id === o.memberId);
+      if (existing) { if (s > existing.sim) { existing.sim = s; existing.intent = o; } continue; }
       similar.push({ id: o.memberId, sim: s, intent: o });
     }
     similar.sort((p, q) => (q.sim - p.sim) || (p.id < q.id ? -1 : 1));
