@@ -170,7 +170,9 @@ function selectOnce(w: World, scored: Scored[], rng: Rng, debt: Record<MemberId,
     && x.score >= explorationBar(w, x.c, x.threshold))
     .sort((a, b) => (a.c.key < b.c.key ? -1 : 1));
   for (let k = 0; k < slots; k++) {
-    let avail = pool.filter(x => !taken.has(x.c.key) && canTake(x));
+    // Exploration uses its lower bar, but must obey the pack's caps just as the other passes do.
+    let avail = pool.filter(x => !taken.has(x.c.key) && canTake(x)
+      && (!w.pack.selection.adjust || adjusted(x) >= explorationBar(w, x.c, x.threshold)));
     // Alternate draws between dedicated expansion picks (33.4) and the general novelty pool.
     const expansionOnly = avail.filter(x => x.c.exploration);
     if (k % 2 === 0 && expansionOnly.length) avail = expansionOnly;

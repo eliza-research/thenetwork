@@ -40,6 +40,48 @@ export async function peonBlock(b: Block, o: { quick: boolean }): Promise<void> 
   for (const g of officialGates(all.pack, all.keyword, all.oracle)) b.gate(`gate ${g.gate}`, g.pass, g.value, SAFETY.has(g.id) || !o.quick);
   b.gate("positive control: the keyword board reaches unverified, no-range and scam jobs", all.keyword.some(m => m.safety.unverifiedIntros > 0) && all.keyword.some(m => m.safety.noRangeIntros > 0) && all.keyword.some(m => m.safety.scamIntros > 0));
 
+  await b.run("exploration: pack limits still cap each job at its remaining openings", async () => {
+    const fixture = (nJobs: number): EngineInput => {
+      const now = Date.UTC(2026, 9, 12, 12);
+      const input: EngineInput = { now, members: [], facets: [], intents: [], presence: [], edges: [], recentProposals: [], interactions: [] };
+      for (let k = 0; k < nJobs + 24; k++) {
+        const job = k < nJobs, id = job ? `j${k}` : `c${k - nJobs}`;
+        input.members.push({ id, name: `Synthetic ${id}`, age: 30, homeCity: "nyc", state: "open", joinedAt: now - 40 * DAY, unansweredProactive: 0,
+          prefs: { categoriesOptIn: ["professional"], quietHours: [22, 8], romanceOptIn: false, formats: ["one_to_one"], maxTravelMinutes: 45, onlyWhenAsked: false } });
+        input.presence.push({ memberId: id, city: "nyc", type: "home", areas: ["manhattan"] });
+        const add = (tags: string[], value: string, kind: Facet["kind"] = "fact") => input.facets.push({ id: `${id}-f${input.facets.length}`, memberId: id, kind, value, tags, scope: "shareable", confidence: 1, provenance: "said" });
+        add([`${T.entity}${job ? "job" : "candidate"}`], job ? "Hiring role" : "Looking for work");
+        add([`${T.family}software_engineer`, `${T.seniority}2`, `${T.mode}remote`], "Remote software engineering");
+        if (job) {
+          add([`${T.company}one-company`, T.verified, `${T.pay}100-150`, `${T.openings}10`, `${T.urgency}1`, `${T.sponsors}yes`], "Verified One Company, salary 100-150k");
+          add([`${T.must}python:2`], "Python required", "skill");
+        } else {
+          add([`${T.skill}python:5:demonstrated`], "Python developer", "skill");
+          add([`${T.floor}60`, `${T.auth}yes`, `${T.needsSponsor}no`], "Authorized to work, minimum 60k");
+        }
+        input.intents.push({ id: `${id}-intent`, memberId: id, category: "professional", objective: job ? "Hire a software engineer" : "Find a software engineering role",
+          details: job ? JOB_INTENT : "peon:search", status: "active", createdAt: now - DAY, horizonDays: 90 });
+      }
+      return input;
+    };
+
+    for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) for (const rate of [0, 0.125]) {
+      const input = fixture(40);
+      input.facets = input.facets.map(f => ({ ...f, tags: f.tags.map(t => t === `${T.company}one-company` ? `${T.company}${f.memberId}` : t) }));
+      for (const f of input.facets) if (f.tags.some(t => t.startsWith(T.openings))) f.tags.push(`${T.seatCap}1`);
+      const result = await runEngine(input, { ...PEON_ENGINE_CONFIG, seed, exploration: { rate, maxShare: 0.15 } }, { pack: peonPack });
+      expect(result.proposals.length).toBe(40);
+      const counts = new Map<string, number>();
+      for (const p of result.proposals) {
+        const job = p.participants.find(id => id.startsWith("j"))!;
+        counts.set(job, (counts.get(job) ?? 0) + 1);
+      }
+      expect(counts.size).toBe(40);
+      expect(Math.max(...counts.values())).toBe(1);
+      if (rate) expect(result.proposals.some(p => p.exploration)).toBe(true);
+    }
+  });
+
   await b.run("world: the snapshot carries no sealed attribute or hidden truth; canaries and proxies only agent_private", () => {
     const pop = generatePeonPopulation({ seed: 5 });
     const snap = buildPeonSnapshot(pop, emptyState(pop, 6));
