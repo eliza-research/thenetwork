@@ -283,7 +283,7 @@ export function networkStateFromRecords(records: readonly RunRecord[], now: numb
       const m = r.msg;
       if (m.direction === "outbound") {
         const pid = m.meta?.proposalId;
-        if (m.meta?.type === "proposal" && pid) { if (!invited.has(pid)) invited.set(pid, new Map()); invited.get(pid)!.set(m.memberId, m.ts); }
+        if (m.status === "delivered" && m.meta?.type === "proposal" && pid) { if (!invited.has(pid)) invited.set(pid, new Map()); invited.get(pid)!.set(m.memberId, m.ts); }
         if (m.status === "delivered" && m.meta?.type && !["info", "confirmation"].includes(m.meta.type)) thread.set(m.memberId, { type: m.meta.type, proposalId: pid });
       } else if (!m.keyword) {
         const th = thread.get(m.memberId);
