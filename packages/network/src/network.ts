@@ -3813,8 +3813,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const [k, s] of this.again) {
       if (s.size < 2) continue;
       const [a, b] = k.split("|") as [MemberId, MemberId];
-      this.again.delete(k);
       if (!this.eligible(a) || !this.eligible(b)) continue;
+      this.again.delete(k);
       const o = this.newOpp({ origin: "second_encounter", kind: "second_encounter", category: "social", objective: "meet again", detail: "meeting up again", participants: [a, b], alternates: [], primed: [], explanations: { [a]: "you both said you'd meet again", [b]: "you both said you'd meet again" }, score: 0.8, generator: "second_encounter", tags: [] });
       this.submit(o);
     }
