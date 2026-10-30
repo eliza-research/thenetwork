@@ -17,12 +17,17 @@
 //   close       closing a posting by text ends its open items (a candidate who said yes is told), and
 //               no new item is proposed for it
 import { DAY, HOUR, SimClock, type Facet, type Intent, type Member, type MemberId, type NetworkContext, type Presence, type SimMessage, type SimMeta } from "../../packages/core/src/index.ts";
-import { PEON_ENGINE_CONFIG } from "../../packages/engine/src/packs/peon/index.ts";
+import { PEON_ENGINE_CONFIG, peonPack } from "../../packages/engine/src/packs/peon/index.ts";
 import { peonSeats, seatIdOf } from "../../packages/engine/src/packs/peon/seats.ts";
 import { ConsentNetwork, type NetworkOptions } from "../../packages/network/src/network.ts";
 import { parsePosting, postingFacts, POSTING_COPY, readPostingText, SEAT_COPY, type JobPosting } from "../../packages/network/src/jobs.ts";
 import { appWiring } from "../../packages/network/service/packs.ts";
 import { APPS } from "../../packages/platform/src/apps.ts";
+import { resolveConfig } from "../../packages/engine/src/config.ts";
+import { localEmbed } from "../../packages/engine/src/embed.ts";
+import { World } from "../../packages/engine/src/world.ts";
+import { historyOf, profileOf } from "../../packages/engine/src/packs/peon/profile.ts";
+import { companyTrusted, responsiveness } from "../../packages/engine/src/packs/peon/selection.ts";
 import { Block, expect } from "./gate.ts";
 
 /** 2026-10-05 13:00 New York (a Monday). */
@@ -44,10 +49,10 @@ class SeatWorld {
   private seq = 0;
   private readonly opts: NetworkOptions;
 
-  constructor() {
+  constructor(seed = 7) {
     const w = appWiring("peon");
     this.opts = {
-      app: APPS.peon, seed: 7, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
+      app: APPS.peon, seed, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
       pack: w.pack!, hooks: w.hooks!, engine: { ...PEON_ENGINE_CONFIG, cities: ["nyc"] },
       onPosting: p => this.write(p),
     };
@@ -128,6 +133,69 @@ const startsWith = (body: string, re: RegExp) => re.test(body.replace(ACK, ""));
 const POST = "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL";
 
 export async function peonSeatsBlock(b: Block): Promise<void> {
+  const responseRows = [];
+  for (const seed of [1, 2, 3]) for (const scenario of ["manager-no", "manager-silent", "candidate-no", "candidate-silent", "posting-closed", "review-rejected", "mutual-yes"] as const) {
+    const x = new SeatWorld(seed);
+    x.add("hm", "Rowan Abbott", 34, { verified: "Acme" });
+    x.add("cand", "Casey Bell", 29, { candidate: true });
+    for (const id of ["hm", "cand"]) for (const text of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await x.say(id, text);
+    await x.say("hm", POST.replace("2 openings", "1 opening")); await x.say("hm", "yes");
+    if (!await x.runUntil(() => x.net.reviewQueue().length > 0)) throw new Error("response history: no review");
+    const id = x.net.reviewQueue()[0]!.oppId, seat = x.opp(id)!.seat!.id;
+    const beforeReview = x.about(id).length;
+    if (scenario === "review-rejected") x.net.review(id, "reject", { reviewer: "sim_staff" });
+    else {
+      if (!x.net.review(id, "approve", { reviewer: "sim_staff" })) throw new Error("response history: review refused");
+      if (!await x.runUntil(() => x.probedFor("cand", id))) throw new Error("response history: no candidate probe");
+      if (scenario === "candidate-no") await x.say("cand", "no");
+      else if (scenario === "candidate-silent") {
+        x.restart();
+        if (!await x.runUntil(() => x.opp(id)?.stage === "closed")) throw new Error("response history: candidate probe did not expire");
+      } else {
+        await x.say("cand", "yes"); x.restart();
+        if (!await x.runUntil(() => x.probedFor("hm", id))) throw new Error("response history: no manager probe");
+        if (scenario === "manager-no") await x.say("hm", "no");
+        else if (scenario === "mutual-yes") {
+          await x.say("hm", "yes");
+          // Accepted intro records are dated at the planned introduction, not the reply time.
+          const meetingAt = x.opp(id)!.meetingAt!;
+          if (!await x.runUntil(() => x.clock.now() >= meetingAt, 7 * DAY)) throw new Error("response history: intro time not reached");
+        }
+        else if (scenario === "posting-closed") {
+          await x.say("hm", "Close my data analyst post"); await x.say("hm", "yes");
+        } else if (!await x.runUntil(() => x.opp(id)?.stage === "closed")) throw new Error("response history: manager probe did not expire");
+      }
+    }
+    const read = () => {
+      const input = x.net.packInput(x.clock.now());
+      const w = new World(input, resolveConfig({ ...PEON_ENGINE_CONFIG, seed, cities: ["nyc"] }), localEmbed, peonPack);
+      const job = profileOf(w, seat);
+      if (job?.kind !== "job") throw new Error("response history: missing job profile");
+      const h = historyOf(w, seat);
+      const records = (input.interactions ?? []).filter(r => r.id === id || r.id === `${id}:seat`);
+      return { records: records.length, accepted: records.flatMap(r => r.acceptedBy ?? []).sort(), declined: records.flatMap(r => r.declinedBy ?? []).sort(), unanswered: records.flatMap(r => r.noResponse ?? []).sort(),
+        applications: h.applications28, answered: h.answered, ghosted: h.ghosted, trusted: companyTrusted(w, job), response: responsiveness(w, job) };
+    };
+    const result = read(); x.restart();
+    const stable = JSON.stringify(read()) === JSON.stringify(result);
+    const applied = !["candidate-no", "candidate-silent", "review-rejected"].includes(scenario);
+    const answered = scenario === "manager-no" || scenario === "mutual-yes";
+    const expectedAccepted = scenario === "mutual-yes" ? ["cand", seat].sort() : applied ? ["cand"] : [];
+    const expectedDeclined = scenario === "manager-no" ? [seat] : scenario === "candidate-no" ? ["cand"] : [];
+    const expectedUnanswered = scenario === "manager-silent" ? [seat] : scenario === "candidate-silent" ? ["cand"] : [];
+    const same = (a: string[], b: string[]) => JSON.stringify(a) === JSON.stringify(b);
+    const managerProbes = x.about(id).filter(s => s.to === "hm" && s.meta.probe).length;
+    const revealed = x.meetings.filter(m => m.proposalId === id).length;
+    const correct = stable && beforeReview === 0 && result.records === (scenario === "review-rejected" ? 0 : 1)
+      && same(result.accepted, expectedAccepted) && same(result.declined, expectedDeclined) && same(result.unanswered, expectedUnanswered)
+      && result.applications === Number(applied) && result.answered === Number(answered) && result.ghosted === Number(scenario === "manager-silent")
+      && result.trusted === answered && result.response === (answered ? 3 / 3.5 : scenario === "manager-silent" ? 2 / 3.5 : 2 / 2.5)
+      && managerProbes === Number(applied) && revealed === Number(scenario === "mutual-yes")
+      && x.opp(id)?.stage === (scenario === "mutual-yes" ? "scheduled" : "closed");
+    responseRows.push({ seed, scenario, ...result, beforeReview, managerProbes, revealed, stable, correct });
+  }
+  b.gate("closed job applications retain explicit answers and delivered-probe timeouts across restarts", responseRows.every(r => r.correct), JSON.stringify({ rows: responseRows }));
+
   await b.run("intake rules: a job post is read from text, read back, and needs a title and a pay range", () => {
     const d = parsePosting(POST);
     expect(d).toMatchObject({ title: "data analyst", openings: 2, payMin: 90, payMax: 120, mode: "hybrid", area: "brooklyn", seniority: 2, must: [{ skill: "sql", level: 2 }] });
