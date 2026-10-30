@@ -130,9 +130,9 @@ export function llmUnderstand(llm: LLM, o: { maxTokens?: number; attempts?: numb
  * None of those times fits stays a yes with no pick: never the offered times the member did not name.
  */
 export function mergeConsent(
-  offline: { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy; unoffered?: boolean },
+  offline: { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy; unoffered?: boolean; refused?: string[] },
   u: Understood | undefined, options: readonly TimeOption[],
-): { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy | "llm" } {
+): { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy | "llm"; refused?: string[] } {
   // A yes that named a time nobody offered keeps no pick, and that is a reading of its own: the LLM
   // may still read the wants and interests, but it cannot turn the pick back into every offered time.
   if (offline.unoffered) return { ...offline, keys: [] };

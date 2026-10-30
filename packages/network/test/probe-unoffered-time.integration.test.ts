@@ -83,6 +83,26 @@ describe("a probe answer naming a time nobody offered", () => {
     expect(o.stage).toBe("probing");
     expect(offered.length).toBeGreaterThan(1);
   });
+  test("a reply naming an unoffered day that also turns an offered time down keeps the refusal", async () => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    await w.onboard("a", "b");
+    w.propose(["a", "b"]);
+    await w.runUntil(() => w.probed("a") || w.probed("b"), 4 * DAY);
+    const first = w.probed("a") ? "a" : "b";
+    expect(w.probed(first)).toBe(true);
+    const o = [...(w.net as any).opps.values()][0];
+    const sat = o.offered[first].find((x: TimeOption) => x.label.startsWith("Saturday"));
+    const from = w.sent.length;
+    await w.say(first, "Friday works, Saturday doesn't");
+    await w.run(DAY);
+    expect(o.picks?.[first] ?? []).toEqual([]);
+    expect(o.declinedTimes ?? []).toContain(sat.start);
+    const hist = (w.net as any).memberList().find((m: { id: string }) => m.id === first)?.availHistory ?? [];
+    expect(hist.some((x: { at: number; outcome: string }) => x.at === sat.start && x.outcome === "declined_time")).toBe(true);
+    const fresh = w.to(first, from).filter(s => (s.meta as { timeOptions?: unknown[] }).timeOptions?.length);
+    expect(fresh.length).toBe(1);
+    expect((fresh[0]!.meta as { timeOptions: TimeOption[] }).timeOptions.some(x => x.start === sat.start)).toBe(false);
+  });
   test("the yes still counts: the offered times stay open for the partner", async () => {
     const { w, o, first } = await probeThenAnswer();
     expect(o.status.get(first)).toBe("probing");

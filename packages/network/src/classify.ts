@@ -694,7 +694,7 @@ function clauseAt(t: string, i: number, len: number): string {
  * A day or clock the member names that no option carries ("Friday night please") is a yes with no
  * pick, never a yes to every option. `unoffered` says that happened, so a plain yes keeps no pick.
  */
-export function parseProbeReply(body: string, options: readonly TimeOption[] = []): { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy; unoffered?: boolean } {
+export function parseProbeReply(body: string, options: readonly TimeOption[] = []): { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy; unoffered?: boolean; refused?: string[] } {
   const t = normText(body);
   const c = consentOf(body);
   if (!options.length) return { answer: c.answer === "no" ? "no" : c.answer === "yes" || c.answer === "counter" ? "yes" : "unclear", keys: [], why: c.why };
@@ -760,7 +760,12 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   const allAt = ALL.exec(t) ?? ALL_WEAK.exec(t);
   if (allAt && c.answer !== "counter" && !negatedAt(t, allAt.index, allAt[0].length)) return open.length ? { answer: "yes", keys: open, why: c.why } : unclear;
   // A plain yes takes every option the member did not rule out, unless they named a time nobody offered.
-  if (c.answer === "yes") return { answer: "yes", keys: unoffered ? [] : open, why: c.why, ...(unoffered ? { unoffered } : {}) };
+  if (c.answer === "yes") {
+    if (!unoffered) return { answer: "yes", keys: open, why: c.why };
+    // Keep a refusal made in the same reply ("Friday works, Saturday doesn't"). It must stay in the
+    // engine history and be left out of the retry, even though the unoffered pick is suppressed.
+    return { answer: "yes", keys: [], why: c.why, unoffered, refused: all.filter(k => neg.has(k) && !pos.has(k)) };
+  }
   if (c.answer === "counter") return { answer: "yes", keys: [], why: c.why };
   // Only refusals ("Thursday doesn't work") are not a yes: the probe stays open for a clear answer.
   return unclear;
