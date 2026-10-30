@@ -44,10 +44,10 @@ class SeatWorld {
   private seq = 0;
   private readonly opts: NetworkOptions;
 
-  constructor() {
+  constructor(seed = 7) {
     const w = appWiring("peon");
     this.opts = {
-      app: APPS.peon, seed: 7, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
+      app: APPS.peon, seed, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
       pack: w.pack!, hooks: w.hooks!, engine: { ...PEON_ENGINE_CONFIG, cities: ["nyc"] },
       onPosting: p => this.write(p),
     };
@@ -128,6 +128,51 @@ const startsWith = (body: string, re: RegExp) => re.test(body.replace(ACK, ""));
 const POST = "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL";
 
 export async function peonSeatsBlock(b: Block): Promise<void> {
+  const filledRows = [];
+  for (const seed of [1, 2, 3]) for (const scenario of ["confirm", "decline", "choose", "choose-it", "no-post", "named", "negated", "form", "quoted"] as const) {
+    const choosing = scenario === "choose" || scenario === "choose-it";
+    const x = new SeatWorld(seed);
+    x.add("hm", "Rowan Abbott", 34, { verified: "Acme" });
+    x.add("candidate", "Casey Bell", 29, { candidate: true });
+    for (const id of ["hm", "candidate"]) for (const body of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await x.say(id, body);
+    if (scenario !== "no-post") { await x.say("hm", POST); await x.say("hm", "yes"); }
+    const target = x.saved[0];
+    if (choosing) {
+      await x.say("hm", scenario === "choose-it" ? "We're hiring IT, 1 opening, $90k-$120k, hybrid in Brooklyn"
+        : "We're hiring a barista, 1 opening, $40k-$50k, onsite in Queens"); await x.say("hm", "yes");
+    }
+    if (target && !(await x.runUntil(() => x.net.reviewQueue().some(q => x.opp(q.oppId)?.seat?.id === seatIdOf(target.id)), 2 * DAY)))
+      throw new Error(`filled-job setup: no real engine review item for seed ${seed}, ${scenario}`);
+    const queued = target ? x.net.reviewQueue().filter(q => x.opp(q.oppId)?.seat?.id === seatIdOf(target.id)).map(q => q.oppId) : [];
+    const before = x.saved.length;
+    x.restart();
+    const mark = x.mark();
+    const short = ["We filled it.", "WE FILLED IT!", "  we filled it  "][seed - 1]!;
+    const body = scenario === "named" ? "We filled the data analyst role." : scenario === "negated" ? "We haven't filled it yet."
+      : scenario === "form" ? "We filled it out." : scenario === "quoted" ? "My colleague said we filled it." : short;
+    await x.say("hm", body);
+    const which = x.to("hm", mark).some(m => m.body.includes("Which post should I close:"));
+    const empty = x.to("hm", mark).some(m => isCopy(m.body, POSTING_COPY.nothingToClose));
+    if (choosing) { x.restart(); await x.say("hm", "data analyst"); }
+    const draft = x.net.memberList().find(m => m.id === "hm")?.posting;
+    const confirmation = !!target && !!draft?.close && draft.id === target.id && !!draft.ready
+      && x.to("hm", mark).some(m => isCopy(m.body, POSTING_COPY.readBackClose(target.title)));
+    const unchangedBeforeYes = x.saved.length === before && queued.every(id => x.opp(id)?.stage !== "closed");
+    x.restart();
+    await x.say("hm", scenario === "decline" ? "no" : "yes");
+    x.restart(); await x.run(2 * DAY); x.restart();
+    const shouldClose = ["confirm", "choose", "choose-it", "named"].includes(scenario);
+    const closed = target ? x.saved.filter(p => p.id === target.id).at(-1)?.status === "closed" : false;
+    const ended = queued.filter(id => x.opp(id)?.stage === "closed" && x.opp(id)?.closedReason === "posting closed").length;
+    const queuedAfter = target ? x.net.reviewQueue().filter(q => x.opp(q.oppId)?.seat?.id === seatIdOf(target.id)).length : 0;
+    const siblingOpen = !choosing || x.saved.filter(p => p.id !== target!.id).every(p => p.status === "active");
+    const expectedPrompt = scenario === "no-post" ? empty : ["negated", "form", "quoted"].includes(scenario) ? !draft : confirmation;
+    const correct = expectedPrompt && (!choosing || which) && unchangedBeforeYes && siblingOpen && closed === shouldClose
+      && x.saved.length === before + (shouldClose ? 1 : 0) && (shouldClose ? ended === queued.length && queuedAfter === 0 : ended === 0);
+    filledRows.push({ seed, scenario, confirmation, which, empty, unchangedBeforeYes, queued: queued.length, closed, ended, queuedAfter, siblingOpen, correct });
+  }
+  b.gate("filled-job text reaches confirmation, closes only the chosen post, and ends its pending matches", filledRows.every(r => r.correct), JSON.stringify({ rows: filledRows }));
+
   await b.run("intake rules: a job post is read from text, read back, and needs a title and a pay range", () => {
     const d = parsePosting(POST);
     expect(d).toMatchObject({ title: "data analyst", openings: 2, payMin: 90, payMax: 120, mode: "hybrid", area: "brooklyn", seniority: 2, must: [{ skill: "sql", level: 2 }] });

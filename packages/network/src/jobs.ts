@@ -58,7 +58,7 @@ const BOROUGHS = ["manhattan", "brooklyn", "queens", "bronx", "staten island"];
 const AREAS = [...BOROUGHS, ...NEIGHBORHOODS.map(n => n.name.toLowerCase())].sort((a, b) => b.length - a.length);
 
 /** A text that starts or changes a job post (a posting command). */
-export const POSTING_COMMAND = /^\s*(?:(?:we(?:'| a)?re|i(?:'| a)?m|we are|i am|now)\s+hiring\b|hiring\s*:|post(?:ing)?\s+(?:a\s+)?(?:new\s+)?job\b|new\s+job\s+post|job\s+post(?:ing)?\s*:|update\s+(?:my|our|the)\s+[\w ]{0,40}?(?:job|post|posting|role)\b|(?:close|take\s+down|remove)\s+(?:my|our|the)\s+[\w ]{0,40}?(?:job|post|posting|role)\b|we\s+(?:filled|hired\s+for)\s+(?:the|our|my)\b)/i;
+export const POSTING_COMMAND = /^\s*(?:(?:we(?:'| a)?re|i(?:'| a)?m|we are|i am|now)\s+hiring\b|hiring\s*:|post(?:ing)?\s+(?:a\s+)?(?:new\s+)?job\b|new\s+job\s+post|job\s+post(?:ing)?\s*:|update\s+(?:my|our|the)\s+[\w ]{0,40}?(?:job|post|posting|role)\b|(?:close|take\s+down|remove)\s+(?:my|our|the)\s+[\w ]{0,40}?(?:job|post|posting|role)\b|we\s+(?:(?:filled|hired\s+for)\s+(?:the|our|my)\b|filled\s+it\s*[.!]?\s*$))/i;
 const CLOSE_COMMAND = /^\s*(?:(?:close|take\s+down|remove)\s+(?:my|our|the)\b|we\s+(?:filled|hired\s+for)\b)/i;
 
 /** Read job-post fields from one text (rules only). Fields not in the text stay undefined. */
@@ -152,7 +152,8 @@ export function readPostingText(body: string, ctx: { draft?: PostingDraft; posti
     const open = ctx.postings.filter(p => p.active);
     if (!open.length) return { text: POSTING_COPY.nothingToClose, ready: false };
     const lower = body.toLowerCase();
-    const named = open.filter(p => lower.includes(p.title.toLowerCase()));
+    // The short "we filled it" command names no job, even when one is titled "IT".
+    const named = /\b(?:the|our|my)\b/i.test(body) ? open.filter(p => lower.includes(p.title.toLowerCase())) : [];
     const pick = named.length === 1 ? named[0] : open.length === 1 ? open[0] : undefined;
     if (!pick) return { draft: { close: true }, text: POSTING_COPY.whichToClose(open.map(p => p.title)), ready: false };
     return { draft: { close: true, id: pick.id, title: pick.title }, text: POSTING_COPY.readBackClose(pick.title), ready: true };
