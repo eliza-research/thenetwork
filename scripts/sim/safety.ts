@@ -302,7 +302,7 @@ export async function safetyBlock(b: Block): Promise<void> {
     expect([done.status, done.decidedBy]).toEqual(["banned", "pat@example.com"]);
   });
 
-  await b.run("check-in after a date (slop live path): harassment, lying about age, identity or photos, a no-show and an unsafe date each file a report; small talk does not", () => {
+  await b.run("check-in after a date (slop live path): harassment, lying about age, identity or photos, a no-show and an unsafe date each file a report; small talk and negated report words do not", () => {
     const cases: [string, string | undefined][] = [
       ["he kept texting me after I said no, total harassment", "harassment"],
       ["she lied about her age, she is way older than she said", "lying"],
@@ -312,6 +312,25 @@ export async function safetyBlock(b: Block): Promise<void> {
       ["I felt unsafe, he wouldn't let me leave", "unsafe"],
       ["it was fine, not my type", undefined],
       ["great time, would see them again", undefined],
+      // A negated report word is not a report ("not rude", "wasn't scared at all").
+      ["great time, he was not rude at all", undefined],
+      ["she wasn't rude, just quiet", undefined],
+      ["he wasn't rude or pushy", undefined],
+      ["he never made me feel unsafe", undefined],
+      ["I wasn't scared at all", undefined],
+      ["not creepy at all, really sweet", undefined],
+      ["nothing inappropriate, it was fine", undefined],
+      ["she didn't harass me or anything, just not my type", undefined],
+      ["he looked like his photos, not fake at all", undefined],
+      ["no scam vibes, totally normal", undefined],
+      // A report next to a negation is still a report.
+      ["he wasn't rude but he kept texting me after I said no", "harassment"],
+      ["not rude, just creepy", "harassment"],
+      ["I didn't know he would be so aggressive", "harassment"],
+      ["I've never been so scared on a date", "unsafe"],
+      ["I never felt more unsafe", "unsafe"],
+      ["I told him no and he grabbed me", "unsafe"],
+      ["he didn't hurt me but he grabbed my arm", "unsafe"],
     ];
     expect(cases.map(([t]) => checkInReport(t))).toEqual(cases.map(([, k]) => k));
     expect(URGENT_REPORTS.has("harassment") && URGENT_REPORTS.has("unsafe")).toBe(true);
