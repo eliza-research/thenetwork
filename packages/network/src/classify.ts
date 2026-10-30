@@ -461,6 +461,14 @@ export function extractProfile(body: string): Profile {
         if (SEEKING.test(before.slice(-40))) continue;
         skills.add(tag);
       }
+      // Exact taxonomy labels follow the same attribution rules; a bare skill label is a profile answer.
+      for (const k of SKILLS) {
+        const at = part.indexOf(k.label.toLowerCase());
+        if (at < 0 || at > negAt) continue;
+        const before = part.slice(0, at);
+        if (SEEKING.test(before.slice(-40))) continue;
+        if (FIRST_PERSON.test(part) || !before.trim()) skills.add(k.tag);
+      }
     }
   }
   // The message-level pass for activity wants (the activity and the ask in different sentences).
@@ -470,7 +478,6 @@ export function extractProfile(body: string): Profile {
   const plain = kept.join(" ");
   for (const d of DESIRES) if (plain.includes(d.text.toLowerCase()) && !notWanted.has(d.id)) desires.add(d.id);
   for (const i of INTERESTS) if (plain.includes(i.label.toLowerCase())) interests.add(i.tag);
-  for (const k of SKILLS) if (plain.includes(k.label.toLowerCase())) skills.add(k.tag);
   // A negated like is not an interest ("not into running"): drop interests named only after a negation.
   const where = areaOf(body);
   return {
