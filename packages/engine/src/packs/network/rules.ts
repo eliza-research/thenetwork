@@ -107,7 +107,9 @@ export const NETWORK_CANDIDATE_POST_RULES: readonly CandidateRule[] = [
       if (c.kind === "help" && isHomeEntry(w.cfg, c.riskText)) {
         const requester = c.participants[0]!;
         const helpers = c.participants.slice(1);
-        const acquainted = helpers.every(h => w.edgeHas(requester, h, "met") || w.edgeHas(requester, h, "knows") || w.edgeHas(requester, h, "helped"));
+        // `every` on an empty helper list is vacuously true, so a help candidate
+        // with no helpers at all used to pass this rule. Require at least one helper.
+        const acquainted = helpers.length > 0 && helpers.every(h => w.edgeHas(requester, h, "met") || w.edgeHas(requester, h, "knows") || w.edgeHas(requester, h, "helped"));
         if (helpers.length < 2 && !acquainted) return "home_entry_rule";
         c.safetyClass = "medium";
       }
