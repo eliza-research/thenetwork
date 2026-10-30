@@ -277,7 +277,7 @@ interface MemberState {
   /** What the member's next message probably answers. `ask` names an engine question (EngineResult.asks). */
   awaiting?: { kind: "probe" | "booked" | "feedback" | "growth" | "interview" | "age" | "checkin" | "crew" | "posting"; oppId?: string; ask?: AskRecord; at: number; crewId?: string; clarified?: boolean };
   /** A block or report waiting for "Who do you mean?" (ids and kinds only; what they said is not kept). */
-  pendingSafety?: { verb: "block" | "report"; kind: ReportKind; at: number };
+  pendingSafety?: { verb: "block" | "report"; kind: ReportKind; at: number; targets?: MemberId[] };
   invitedBy?: MemberId; invites: number[]; invitesBlockedUntil: number; lastGrowthAsk: number;
   /** What the member told us. Desires carry when they were stated: they expire and can be withdrawn. */
   learned: { interests: Set<string>; skills: Set<string>; desires: Map<string, number>; area?: string; eveningsOpen?: boolean; groups?: boolean };
@@ -1409,7 +1409,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const r = this.resolveTarget(m, c.target ?? "", verb === "report");
     if (r.ask) {
       // Ids and kinds only: what they said is not kept while we wait for the name.
-      m.pendingSafety = { verb, kind, at: this.now() };
+      m.pendingSafety = { verb, kind, at: this.now(), targets: r.ask.map(x => x.id) };
       this.ctx.log(`${verb}_ambiguous`, { memberId: m.id, options: r.ask.length });
       this.send(m, copy.whoDoYouMean(this.namesFor(r.ask)), { type: "question", proactive: false }, "reply");
       return;
@@ -1530,8 +1530,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     m.pendingSafety = undefined;
     if (this.now() - p.at > DAY) return false;
     const text = body.trim();
-    const r = this.resolveTarget(m, text);
-    if (r.target && this.counterparts(m.id).some(x => x.m.id === r.target!.id)) { this.applyBlock(m, p.verb, p.kind, r.target); return true; }
+    let target = this.resolveTarget(m, text).target;
+    if (!target && p.targets?.length === 1 && (this.yesNoOf(text) === "yes" || /^\W*(?:yes|yeah|yep|yup|sure|correct|right|that's (?:him|her|them)|yes please)\b/i.test(text))) {
+      target = this.members.get(p.targets[0]!);
+    }
+    if (target) { this.applyBlock(m, p.verb, p.kind, target); return true; }
     // A probe (1:1 or plan), the booked date, a crew or a check-in is also waiting: a short "no", "yes"
     // or "can't make it" is its answer, not this one (the question is dropped; they can block or report again).
     if (m.awaiting && ["probe", "booked", "crew", "checkin"].includes(m.awaiting.kind)) return false;

@@ -58,4 +58,31 @@ describe("block and report targets in a group plan", () => {
     await w.say("a", "Ben");
     expect(w.net.safetyReports().map(r => [r.reporterId, r.subjectId])).toEqual([["a", "b"]]);
   });
+
+  test("affirming 'Who do you mean: Ben?' with 'yes' files the report", async () => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    await w.onboard("a", "b");
+    w.propose(["a", "b"]);
+    await w.answerProbes(["a", "b"]);
+    await w.run(5 * DAY);
+    let from = w.mark();
+    await w.say("a", "report him, he was creepy");
+    expect(w.to("a", from).map(s => s.body)).toEqual([expect.stringMatching(/^Who do you mean: Ben\?/)]);
+    expect(w.net.safetyReports()).toHaveLength(0);
+    from = w.mark();
+    await w.say("a", "yes");
+    expect(w.net.safetyReports().map(r => [r.reporterId, r.subjectId])).toEqual([["a", "b"]]);
+  });
+
+  test("a member with no counterparts can block someone by name after answering 'Who do you mean?'", async () => {
+    const w = new Mini([climber("a", "Ana Diaz"), climber("b", "Ben Ito")], { review: "auto" });
+    await w.onboard("a", "b");
+    let from = w.mark();
+    await w.say("a", "block him");
+    expect(w.to("a", from).map(s => s.body)).toEqual([expect.stringMatching(/^Who do you mean\?/)]);
+    from = w.mark();
+    await w.say("a", "Ben");
+    expect((w.net as any).blocks.has("a|b")).toBe(true);
+  });
 });
+
