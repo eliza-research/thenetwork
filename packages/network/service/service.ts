@@ -1391,10 +1391,12 @@ export class NetworkService implements RuntimeHost {
     const existing = person ? await this.people.getMembership(person.id, app.id) : undefined;
     const invited = existing?.state === "invited";
     if (app.joinMode === "invite" && !invited && !(route.shared && app.id === "ntwrk")) {
-      // The same answer whether or not the number uses another app; at most once a day per number.
-      const { count } = await this.people.hit(`invite_only:${app.id}:${key}`, DAY, t);
-      if (count === 1) await this.direct(rt, ev.from, app.brand.inviteOnly, `sys:${rowId}`, "reply");
-      this.log(`[inbound] not a member of invite-only ${app.id}: ${count === 1 ? "invite-only reply" : "no reply (sent today)"}, not stored`);
+      // The same answer whether or not the number uses another app; at most once a day per number
+      // (mvp-gaps item 12), on the store's minimum-gap rule so that a fixed clock window cannot send
+      // it twice in one evening: docs/results/2026-10-22-stop-hint-cooldown.md fixed the same class.
+      const { ok } = await this.people.hit(`invite_only:${app.id}:${key}`, DAY, t, { minGapMs: DAY });
+      if (ok) await this.direct(rt, ev.from, app.brand.inviteOnly, `sys:${rowId}`, "reply");
+      this.log(`[inbound] not a member of invite-only ${app.id}: ${ok ? "invite-only reply" : "no reply (answered in the last day)"}, not stored`);
       return "invite_only";
     }
     let p = await this.pendingOf(e164, "join");
