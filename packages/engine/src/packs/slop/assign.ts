@@ -95,12 +95,18 @@ export function slopAssign(o: SlopPackOptions, w: World, scored: readonly Scored
   } else edges.sort((p, q) => (tier(p) - tier(q)) || (q.v - p.v) || (p.s.c.key < q.s.c.key ? -1 : 1));
 
   const count = new Map<MemberId, number>();
+  // Slop questions have a separate allowance (ConsentNetwork.sendAsks); this is the proposal budget.
+  const hasBudget = (id: MemberId) => {
+    const mi = w.get(id)!;
+    return mi.recentProactive + (count.get(id) ?? 0) < w.cfg.budgets[mi.m.state].limit;
+  };
   const used = new Set<string>();
   const selected: Selected[] = [];
   const rounds = Math.max(1, C.perMemberPerTick, C.backupMaxDegree > 0 ? 2 : 1);
   for (let round = 1; round <= rounds; round++) {
     const backupOnly = round > C.perMemberPerTick;
     const avail = edges.filter(e => !used.has(pairKey(e.a, e.b)) && (count.get(e.a) ?? 0) < round && (count.get(e.b) ?? 0) < round
+      && hasBudget(e.a) && hasBudget(e.b)
       && (!backupOnly || Math.min(degree.get(e.a) ?? 0, degree.get(e.b) ?? 0) <= C.backupMaxDegree));
     const chosen = o.assignment === "stable" ? stableRound(avail) : greedyRound(avail);
     for (const e of chosen) {
