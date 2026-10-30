@@ -305,14 +305,14 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
         .sort((x, y) => (fits.get(y)!.get(a.id)! * avail.get(y)! - fits.get(x)!.get(a.id)! * avail.get(x)!) || byTie(x, y)).slice(0, pcfg.poolSize);
       if (pool.length < 2) continue;
       // Place: the event itself, or the open public venue covering the most pool members' areas.
-      let place: { name: string; area?: string; venueId?: string; ageMin: number; priceTier: number };
+      let place: { name: string; area?: string; venueId?: string; ageMin: number; priceTier: number; capacity?: number };
       if (wh.event) place = { name: wh.event.title, area: wh.event.area, ageMin: a.ageMin, priceTier: a.costTier };
       else {
-        const vs = inp.venues.filter(v => v.public && v.city === city && v.activities.includes(a.id) && openAt(v, wh.slot, a.durationMin, tz, att));
+        const vs = inp.venues.filter(v => v.public && v.city === city && v.activities.includes(a.id) && (v.capacity === undefined || v.capacity >= 2) && openAt(v, wh.slot, a.durationMin, tz, att));
         if (!vs.length) continue;
         const cover = (v: Venue) => pool.filter(id => areas.get(id)!.has(v.area.toLowerCase())).length;
         const v = [...vs].sort((x, y) => (cover(y) - cover(x)) || (x.id < y.id ? -1 : 1))[0]!;
-        place = { name: v.name, area: v.area, venueId: v.id, ageMin: Math.max(v.ageMin, a.ageMin), priceTier: v.priceTier };
+        place = { name: v.name, area: v.area, venueId: v.id, ageMin: Math.max(v.ageMin, a.ageMin), priceTier: v.priceTier, capacity: v.capacity };
       }
       let pool2 = pool.filter(id => ageOk(id, place.ageMin));
       const input = (id: MemberId): PlanMemberInput => ({
@@ -321,8 +321,8 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
       });
       const score = (ids: MemberId[]) => scorePlanGroup(ids.map(input), compat, familiar, pcfg);
       const passes = (s: PlanScore | null): s is PlanScore => !!s && s.min >= pcfg.minMemberU && s.score >= pcfg.threshold;
-      // An event's capacity bounds the group (engine-attention-plans-13).
-      const cap = wh.event?.capacity ?? Infinity;
+      // The chosen public place's capacity bounds both groups and partner fallbacks.
+      const cap = wh.event?.capacity ?? place.capacity ?? Infinity;
       const minG = Math.max(pcfg.size.min, a.groupSize[0]), maxG = Math.min(pcfg.size.max, a.groupSize[1], pcfg.size.target, cap);
       if (maxG < Math.min(minG, 2)) continue;
       const minInvite = Math.min(maxG, Math.max(minG, pcfg.minInvite));
