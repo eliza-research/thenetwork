@@ -12,6 +12,7 @@ import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, loadScenario, runSce
 import { friendFactory, nycPersonas, runArm, runScenario, SCENARIOS, type ArmResult } from "../../packages/network/harness/index.ts";
 import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, VENUES, type NetworkOptions } from "../../packages/network/src/index.ts";
 import { styleViolations } from "../../packages/network/src/copy.ts";
+import { Mini } from "../../packages/network/test/mini.ts";
 import { DATA_DIR } from "../synthetic/common.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
@@ -36,6 +37,75 @@ async function world(days: number, seed = 3, network: NetworkOptions = { review:
 }
 
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
+  await b.run("network live: mutual positive check-ins reach a reviewed second encounter", async () => {
+    const rows: { seed: number; scenario: string; queued: number; booked: number; correct: boolean }[] = [];
+    const ids = ["a", "b"];
+    for (const seed of [1, 2, 3]) for (const scenario of ["mutual", "one-sided", "negative", "no-feedback", "blocked", "prior-rejection", "no-show", "blocked-before-approval", "review-rejected", "fresh-no", "explicit-again"]) {
+      const w = new Mini(ids.map((id, i) => ({ id, name: ["Ana Diaz", "Ben Ito"][i]!, age: 30, area: "Greenpoint", interests: ["climbing", "hiking", "board_games"], shareable: true })),
+        { seed, review: "human", growth: false, plans: false, maxNewPerDay: 20 });
+      await w.onboard(...ids);
+      const first = w.propose(ids, { category: "social", objective: "play board games together" });
+      expect(await w.runUntil(() => w.net.reviewQueue().some(q => q.oppId === first), DAY)).toBe(true);
+      expect(w.net.decide(first, "approve", { reviewer: "sim_staff" })).toEqual({ ok: true });
+      await w.answerProbes(ids);
+      expect(w.meetings.length).toBe(1);
+      const at = w.meetings[0]!.at;
+      await w.run(at + 3 * HOUR - w.clock.now());
+      if (scenario !== "no-feedback") for (const id of ids) {
+        expect(w.net.memberList().find(m => m.id === id)?.awaiting?.kind).toBe("feedback");
+        await w.say(id, scenario === "one-sided" && id === "b" ? "It was fine."
+          : scenario === "negative" && id === "b" ? "It was awkward."
+          : scenario === "no-show" && id === "b" ? "I couldn't make it."
+          : scenario === "explicit-again" ? "It was great, we really clicked. Would do it again."
+          : "It was great, loved talking about board games.");
+      }
+      w.restart();
+      const history = w.net.engineInput(w.clock.now());
+      if (scenario !== "no-feedback") {
+        expect(history.interactions?.filter(r => r.id.startsWith(`${first}:fb:`)).length).toBe(2);
+        expect(history.feedback?.every(f => f.opportunityId === first)).toBe(true);
+      }
+      if (scenario === "prior-rejection") {
+        const rejected = w.propose(ids, { category: "social", objective: "another board games meetup" });
+        expect(await w.runUntil(() => w.net.reviewQueue().some(q => q.oppId === rejected), DAY)).toBe(true);
+        expect(w.net.decide(rejected, "reject", { reviewer: "sim_staff", reason: "other", note: "This pair should not be proposed again." })).toEqual({ ok: true });
+      }
+      if (scenario === "blocked") {
+        await w.say("a", "block Ben");
+        expect(w.net.exportState().blocks).toContain("a|b");
+      }
+      w.clock.set(at + 8 * DAY + 3 * HOUR);
+      const mark = w.mark();
+      await w.net.tick(w.clock.now());
+      const queue = w.net.reviewQueue().filter(q => q.proposal.generator === "second_encounter");
+      expect(w.meetings.length).toBe(1);
+      expect(w.sent.slice(mark).filter(m => m.meta.probe || m.meta.booked)).toEqual([]);
+      w.restart();
+      for (const q of queue) {
+        expect(q.proposal.participants.slice().sort()).toEqual(ids);
+        expect(q.origin).toBe(scenario === "explicit-again" ? "second_encounter" : "engine");
+        if (scenario === "blocked-before-approval") {
+          await w.say("a", "block Ben");
+          expect(w.net.decide(q.oppId, "approve", { reviewer: "sim_staff" }).ok).toBe(false);
+          continue;
+        }
+        expect(w.net.decide(q.oppId, scenario === "review-rejected" ? "reject" : "approve", {
+          reviewer: "sim_staff", ...(scenario === "review-rejected" ? { reason: "other", note: "This follow-up does not fit." } : {}),
+        })).toEqual({ ok: true });
+      }
+      w.restart();
+      if (queue.length && !["review-rejected", "blocked-before-approval"].includes(scenario)) await w.answerProbes(ids, () => scenario === "fresh-no" ? "no thanks" : "yes");
+      const booked = w.meetings.slice(1);
+      for (const m of booked) expect(m.participants.slice().sort()).toEqual(ids);
+      const wantQueue = ["mutual", "review-rejected", "fresh-no", "explicit-again", "blocked-before-approval"].includes(scenario) ? 1 : 0;
+      const wantBooked = ["mutual", "explicit-again"].includes(scenario) ? 1 : 0;
+      rows.push({ seed, scenario, queued: queue.length, booked: booked.length, correct: queue.length === wantQueue && booked.length === wantBooked });
+    }
+    const detail = JSON.stringify({ rows });
+    console.log("SECOND_ENCOUNTER_FEEDBACK", detail);
+    expect(rows.every(r => r.correct)).toBe(true);
+    return detail;
+  });
   // ---- invariants: NYC, 10 days, seed 3, simulated reviewer ---------------------------------------
   const run = await world(10);
   await run.w.advanceTo(run.w.end);

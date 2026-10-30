@@ -1741,19 +1741,15 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /**
    * Pair history (network-consent-5, -26, matching-e2e-3): a member said no to this pair (a probe or
-   * a requester's confirm), a reviewer turned it down, or the two already met or had a no-show, within
-   * `days`. Blocks and avoid edges are separate (blocked(), avoid).
+   * a requester's confirm), or a reviewer turned it down within `days`. Meetings and no-shows
+   * count for 60 days; repeat generators exempt completed meetings only. Blocks and avoid edges
+   * are separate (blocked(), avoid).
    */
-  private pairHistory(a: MemberId, b: MemberId, days: number): boolean {
+  private pairHistory(a: MemberId, b: MemberId, days: number, repeat = false): boolean {
     const k = pairKey(a, b);
     if ((this.declined.get(k) ?? -Infinity) > this.now() - days * DAY) return true;
-    return this.metRecently(a, b, 60);
-  }
-
-  /** The two had a meeting (held, or a no-show) within `days`. */
-  private metRecently(a: MemberId, b: MemberId, days: number): boolean {
-    const since = this.now() - days * DAY;
-    return this.interactions.some(x => x.at >= since && (x.outcome === "completed" || x.outcome === "no_show") && x.participants.includes(a) && x.participants.includes(b));
+    const since = this.now() - 60 * DAY;
+    return this.interactions.some(x => x.at >= since && (x.outcome === "no_show" || (!repeat && x.outcome === "completed")) && x.participants.includes(a) && x.participants.includes(b));
   }
 
   /**
@@ -3626,9 +3622,14 @@ export class ConsentNetwork implements NetworkUnderTest {
       // Speculative (no one asked): only for well-known, warm or clearly overlapping people.
       if (p.components.warmPath < 0.3 && p.components.fit < 0.45) return "speculative";
     }
+    // F19: the engine's second encounter needs a completed meeting with mutual positive feedback.
+    // Keep explicit mutual "meet again" requests on localEncounters' existing member-request path.
+    const repeat = p.kind === "second_encounter" && p.generator === "second_encounter" && p.participants.length === 2
+      && !!p.anchor && ["interaction", "event"].includes(p.anchor.type)
+      && (this.again.get(pairKey(p.participants[0]!, p.participants[1]!))?.size ?? 0) < 2;
     for (let i = 0; i < p.participants.length; i++) for (let j = i + 1; j < p.participants.length; j++) {
       const k = pairKey(p.participants[i]!, p.participants[j]!);
-      if (this.avoid.has(k) || this.blocked(p.participants[i]!, p.participants[j]!) || this.pairHistory(p.participants[i]!, p.participants[j]!, 60)) return "pair_history";
+      if (this.avoid.has(k) || this.blocked(p.participants[i]!, p.participants[j]!) || this.pairHistory(p.participants[i]!, p.participants[j]!, 60, repeat)) return "pair_history";
     }
     return undefined;
   }
