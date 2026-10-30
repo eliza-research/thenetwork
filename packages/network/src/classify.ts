@@ -261,11 +261,15 @@ export function agesStated(body: string): { age?: number; explicit?: number } {
 export const statedAge = (body: string): number | undefined => agesStated(body).age;
 
 const KIN = "son|daughter|kid|kids|child|baby|brother|sister|nephew|niece|cousin|dog|cat|puppy|car|lease|apartment|building|startup|company|record|streak|bike|laptop|phone";
+const OTHER_SUBJ = "(?:he|she|they|my (?:date|match)|the (?:guy|girl|person)|this (?:guy|girl|person)|[a-z][a-z'-]+)";
+const OTHER_COPULA = "(?:'s|'re| is| was| are| were)";
 const OTHER_AGE_RX: AgeRule[] = [
-  { rx: new RegExp(`\\b(?!(?:${KIN}|i|it|that|this|there|which|what|who)\\b)(he|she|they|[a-z][a-z'-]+)(?:'s|'re| is| are)\\s+${SAME}(\\d{1,2})${AGE_END}`), age: m => Number(m[2]) },
-  { rx: new RegExp(`\\b(?!(?:${KIN}|i|it|that|this|there|which|what|who)\\b)(he|she|they|[a-z][a-z'-]+)(?:'s|'re| is| are)\\s+${SAME}(${NUM_WORD})${AGE_END}`), age: m => AGE_WORDS[m[2]!]! },
-  { rx: /\b(he|she|they)(?:'s|'re| is| are)\s+(?:still\s+)?(?:a minor|underage|under 18|in (?:high|middle) school|a (?:high school|hs|middle school) (?:student|freshman|sophomore|junior|senior)|a (?:freshman|sophomore|junior|senior) in (?:high school|hs)|a kid|a teen(?:ager)?)\b/, age: () => 17 },
-  { rx: /\b(?:he|she|they) (?:said|told me|says|mentioned) (?:he|she|they)(?:'s|'re| is| are| was| were) (?:only |just )?(\d{1,2})\b/, age: m => Number(m[1]) },
+  { rx: new RegExp(`\\b(?!(?:${KIN}|i|it|that|this|there|which|what|who)\\b)(${OTHER_SUBJ})${OTHER_COPULA}\\s+${SAME}(\\d{1,2})${AGE_END}`), age: m => Number(m[2]) },
+  { rx: new RegExp(`\\b(?!(?:${KIN}|i|it|that|this|there|which|what|who)\\b)(${OTHER_SUBJ})${OTHER_COPULA}\\s+${SAME}(${NUM_WORD})${AGE_END}`), age: m => AGE_WORDS[m[2]!]! },
+  { rx: new RegExp(`\\b${OTHER_SUBJ}${OTHER_COPULA}\\s+(?:still\\s+)?(?:a minor|underage|under 18|in (?:high|middle) school|a (?:high school|hs|middle school) (?:student|freshman|sophomore|junior|senior)|a (?:freshman|sophomore|junior|senior) in (?:high school|hs)|a kid|a teen(?:ager)?)\\b`), age: () => 17 },
+  { rx: /\b(?:he|she|they|my (?:date|match)|the (?:guy|girl|person)|this (?:guy|girl|person)|[a-z][a-z'-]+) (?:said|told me|says|mentioned) (?:he|she|they)(?:'s|'re| is| are| was| were) (?:only |just )?(\d{1,2})\b/, age: m => Number(m[1]) },
+  { rx: new RegExp(`\\b(?:${OTHER_SUBJ}${OTHER_COPULA}\\s+)?a\\s+(\\d{1,2})[\\s-]?(?:years?|yrs?)[\\s-]?old\\b`), age: m => Number(m[1]) },
+  { rx: new RegExp(`\\b${OTHER_SUBJ}${OTHER_COPULA}\\s+${SAME}(\\d{1,2})[\\s-]?(?:yo|y\\/?o)\\b`), age: m => Number(m[1]) },
 ];
 
 /** An age the sender states about someone else ("he's only 15", "she's in high school"); under 18 only. */
