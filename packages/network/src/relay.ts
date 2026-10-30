@@ -77,6 +77,8 @@ export interface RelayHost {
   ratesPhotos: boolean;
   /** Send `body` to `to` through the Network's send path. `key` is the outbound id. "sent", "deferred" or "refused". */
   send(to: MemberId, body: string, o: { from: MemberId; matchId: string; key: string; contact?: string; photoIds?: string[]; approvedPhotos?: ApprovedRelayPhoto[] }): "sent" | "deferred" | "refused";
+  /** A member disclosed a minor age in relay: the host flags the member as a minor, cancels open meetings and audits prior contacts. */
+  onAgeSignal?(memberId: MemberId, text?: string): void;
 }
 
 /** A held item waiting for staff. `text` only while held (dropped on release or reject). */
@@ -231,6 +233,7 @@ export class RelayDesk {
   /** Log the decision, deliver a pass, queue a hold; the answer for the sender. */
   private apply(res: RelayResult, match: RelayMatch, item: RelayItem, o: RelayCallOptions, contact?: string): RelayOutcome {
     this.log(res.record);
+    if (res.record.ageSignal) this.host.onAgeSignal?.(item.from, item.text);
     if (res.decision === "block") return { itemId: item.id, decision: "refused", reason: res.senderNotice };
     if (res.decision === "hold") {
       // A hold that is only the rate limit or consent is answered, not queued: the member can try again.

@@ -37,7 +37,7 @@ import {
 } from "@thenetwork/engine";
 import { HELP_TEXT, STOP_CONFIRMATION, type InboundMessage, type NetworkContext, type NetworkUnderTest, type SimMeta } from "@thenetwork/core";
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
-import { ageAnswer, availabilityTags, checkinTags, classify, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, type Classified, type TimeOption } from "./classify.ts";
+import { ageAnswer, availabilityTags, checkinTags, classify, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, statedAge, type Classified, type TimeOption } from "./classify.ts";
 import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import { brandOf, copy, copyFor, type Copy, whenPhrase } from "./copy.ts";
 import { APPS, type AppId, type AppInfo } from "../../platform/src/apps.ts";
@@ -715,17 +715,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     const age = Math.min(...[attested, m.statedAge].filter(validAge));
     if ((isMinor(age) || c.minorSignal) && !m.minor) {
-      m.minor = true; m.minorSignal = true;
-      // Safety record first: the adults this member met, before anything is dropped (network-consent-3).
-      this.minorAfterContact(m.id);
-      this.dropMember(m.id, "minors policy");
-      this.ctx.log("minor_signal", { memberId: m.id });
-      if (this.app.minJoinAge > 13) {
-        // An 18+ app: no teen copy and no teen service; out of matching, and staff review (network-consent-19).
-        this.caseEvent(m.id, { at: now, kind: "age_review", points: 0 });
-        return;
-      }
-      if (m.stage !== "new") { this.send(m, copy.minorNotice, { type: "info" }, "safety"); return; }
+      this.handleMinorSignal(m.id);
+      return;
     }
     if (m.stage === "new") return this.welcome(m);
     if (m.stage === "age" && this.afterAgeQuestion(m, known !== undefined)) return;
@@ -1540,6 +1531,32 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.ctx.log(`${p.verb}_unresolved`, { memberId: m.id });
     this.send(m, copy.whoUnresolved, { type: "info" }, "reply");
     return true;
+  }
+
+  /**
+   * A member stated an age under 18 or gave a minor signal (inbound message or relay).
+   * Drops them from matching, audits adult counterparts with minorAfterContact, and opens staff review.
+   */
+  handleMinorSignal(memberId: MemberId, text?: string) {
+    const m = this.members.get(memberId);
+    if (!m) return;
+    const now = this.now();
+    if (text) {
+      const a = statedAge(text);
+      if (a !== undefined && (m.statedAge === undefined || a < m.statedAge)) m.statedAge = a;
+      if (a !== undefined) this.opts.onAgeStated?.(m.id, a, { explicit: true, declined: false });
+    }
+    if (m.minor) return;
+    m.minor = true;
+    m.minorSignal = true;
+    this.minorAfterContact(m.id);
+    this.dropMember(m.id, "minors policy");
+    this.ctx.log("minor_signal", { memberId: m.id });
+    if (this.app.minJoinAge > 13) {
+      this.caseEvent(m.id, { at: now, kind: "age_review", points: 0 });
+      return;
+    }
+    if (m.stage !== "new") this.send(m, copy.minorNotice, { type: "info" }, "safety");
   }
 
   /**
@@ -4779,6 +4796,7 @@ export class ConsentNetwork implements NetworkUnderTest {
           ...(o.approvedPhotos?.length ? { approvedPhotos: o.approvedPhotos } : {}) }, "relay", { about: [o.from], key: o.key, relayFrom: o.from, ...(o.contact ? { relayContact: o.contact } : {}) });
         return r === "sent" ? "sent" : r === "deferred" ? "deferred" : "refused";
       },
+      onAgeSignal: (id, text) => this.handleMinorSignal(id, text),
     };
   }
   /** A member's relay request (POST /internal/relay): decided by the engine, delivered as its rendered text only. */

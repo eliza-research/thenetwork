@@ -228,7 +228,7 @@ export const RELAY_RULES: { code: string; re: RegExp }[] = [
 ];
 
 /** A self-disclosed minor age or school year (blocks and flags the age for the platform). */
-export const MINOR_SIGNAL = R("\\b(?:i'?m|i am|im)\\s+(?:only\\s+|just\\s+)?(?:1[3-7])(?!\\s*(?:min|mins|minutes|blocks|miles|mi|km|away|%|stops|floors|hours|hrs|seconds|cm|lbs|k)\\b)(?:\\b|\\s*(?:yo|y/o|years? old)\\b)|\\b(?:1[3-7])\\s*(?:yo|y/o|years? old)\\b|\\b(?:i'?m|i am|im) (?:still )?(?:in|at) (?:high school|middle school|hs)\\b|\\bmy (?:mom|dad|parents) (?:won'?t|wont|don'?t|dont) let me\\b|\\bnot 18 (?:yet|until)\\b|\\b(?:i'?m|i am|im) (?:under ?18|underage|a minor)\\b|\\bhomeroom\\b");
+export const MINOR_SIGNAL = R("\\b(?:i'?m|i am|im)\\s+(?:only\\s+|just\\s+)?(?:1[0-7]|[1-9])(?!\\s*(?:min|mins|minutes|blocks|miles|mi|km|away|%|stops|floors|hours|hrs|seconds|cm|lbs|k|years?|yrs?|months?|weeks?|days?|decades?)\\b)(?:\\b|\\s*(?:yo|y/o|years? old)\\b)|\\b(?:1[0-7]|[1-9])\\s*(?:yo|y/o|years? old)\\b|\\b(?:i'?m|i am|im) (?:still )?(?:in|at) (?:high school|middle school|hs)\\b|\\bmy (?:mom|dad|parents) (?:won'?t|wont|don'?t|dont) let me\\b|\\bnot 18 (?:yet|until)\\b|\\b(?:i'?m|i am|im) (?:under ?18|underage|a minor)\\b|\\bhomeroom\\b");
 
 const DIGIT_WORDS: Record<string, string> = { zero: "0", oh: "0", o: "0", one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9" };
 /** A phone number spelled in words or digits with any separators ("three four seven, five five five, ..."): 7+ digits in a row. */
