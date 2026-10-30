@@ -15,7 +15,7 @@
 // Then the slop-live arm (scripts/sim/slop-live.ts): the service's slop wiring and onboarding loop in
 // the sim World (seeds 21-22, 30 days); its invariant gates block.
 import type { Facet, MemberId } from "../../packages/core/src/index.ts";
-import { canBeMatched, DAY } from "../../packages/core/src/index.ts";
+import { canBeMatched, DAY, HOUR } from "../../packages/core/src/index.ts";
 import type { AssignContext } from "../../packages/engine/src/pack.ts";
 import type { SelectionResult } from "../../packages/engine/src/policy.ts";
 import type { Scored } from "../../packages/engine/src/scoring.ts";
@@ -89,7 +89,7 @@ export function slopWorld(seed: number, o: { perCity?: number; minorShare?: numb
 
 export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> {
   const cancelledRows = [];
-  for (const seed of [1, 2, 3]) for (const scenario of ["cancel-a", "cancel-b", "anonymous-timeout"] as const) {
+  for (const seed of [1, 2, 3]) for (const scenario of ["cancel-a", "cancel-b", "booked-no-feedback", "anonymous-timeout"] as const) {
     const wiring = appWiring("slop");
     const w = new Mini([
       { id: "a", name: "Alex", age: 30, interests: ["climbing"], shareable: true, romance: { is: "man", seeks: ["woman"] } },
@@ -114,13 +114,16 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
       await w.answerProbes(["a", "b"]);
       if (w.meetings.length !== 1) throw new Error("cancelled date: not booked");
       if (!await w.runUntil(() => ["a", "b"].every(p => w.sent.some(m => m.to === p && m.meta.proposalId === id && m.meta.type === "proposal")), DAY)) throw new Error("cancelled date: reveal not delivered");
-      await w.say(scenario === "cancel-a" ? "a" : "b", "Sorry, I can't make it.");
+      if (scenario === "booked-no-feedback") {
+        w.net.setMatchingEnabled(false, "sim_staff");
+        await w.run(w.meetings[0]!.at + 3 * HOUR - w.clock.now());
+      } else await w.say(scenario === "cancel-a" ? "a" : "b", "Sorry, I can't make it.");
     }
-    const history = () => (w.net.packInput(w.clock.now()).interactions ?? []).filter(r => r.id === id);
+    const history = () => (w.net.packInput(w.clock.now()).interactions ?? []).filter(r => r.id === id || r.id === `${id}:introduced`);
     const beforeRestart = JSON.stringify(history());
     w.net.setMatchingEnabled(false, "sim_staff"); w.restart();
     const stable = JSON.stringify(history()) === beforeRestart;
-    if (scenario !== "anonymous-timeout") await w.say(scenario === "cancel-a" ? "a" : "b", "Sorry, I can't make it.");
+    if (scenario.startsWith("cancel-")) await w.say(scenario === "cancel-a" ? "a" : "b", "Sorry, I can't make it.");
     const records = history();
     const closed = w.net.exportState().opps.find(o => o.id === id)!;
     // Let the recent-proposal window expire. The original confirmed dating intents remain live.
@@ -132,17 +135,21 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
     w.net.setMatchingEnabled(true, "sim_staff");
     await w.runUntil(() => w.net.reviewQueue().some(q => q.oppId !== id), 2 * DAY);
     const repeatReviews = w.net.exportState().opps.filter(o => o.id !== id && o.participants.includes("a") && o.participants.includes("b")).length;
-    const anonymous = scenario === "anonymous-timeout";
+    const anonymous = scenario === "anonymous-timeout", cancelled = scenario.startsWith("cancel-");
+    const introductions = records.filter(r => r.id === `${id}:introduced` && r.outcome === "accepted");
+    const closures = records.filter(r => r.id === id);
     const cancellations = w.sent.filter(m => m.meta.proposalId === id && m.meta.type === "cancellation").length;
-    const correct = beforeReview === 0 && stable && closed.stage === "closed" && records.length === 1
-      && records[0]?.outcome === (anonymous ? "expired" : "cancelled")
-      && records[0]?.participants.length === 2 && records[0].participants.includes("a") && records[0].participants.includes("b")
-      && w.meetings.length === Number(!anonymous) && cancellations === Number(!anonymous)
+    const correct = beforeReview === 0 && stable && closed.stage === (scenario === "booked-no-feedback" ? "done" : "closed")
+      && records.length === (cancelled ? 2 : 1) && introductions.length === Number(!anonymous)
+      && closures.length === Number(scenario !== "booked-no-feedback")
+      && (!closures.length || closures[0]?.outcome === (anonymous ? "expired" : "cancelled"))
+      && records.every(r => r.participants.length === 2 && r.participants.includes("a") && r.participants.includes("b"))
+      && w.meetings.length === Number(!anonymous) && cancellations === Number(cancelled)
       && repeated === Number(anonymous) && repeatReviews === Number(anonymous);
-    cancelledRows.push({ seed, scenario, beforeReview, stable, records: records.length, outcome: records[0]?.outcome ?? null,
+    cancelledRows.push({ seed, scenario, beforeReview, stable, introductions: introductions.length, closures: closures.length,
       meetings: w.meetings.length, cancellations, repeated, repeatReviews, correct });
   }
-  b.gate("a cancelled booked date stays introduced after restart and the proposal window expires", cancelledRows.every(r => r.correct), JSON.stringify({ rows: cancelledRows }));
+  b.gate("a delivered date introduction survives cancellation or missing feedback without a repeat match", cancelledRows.every(r => r.correct), JSON.stringify({ rows: cancelledRows }));
 
   // ---- launch gates on the pinned seeds -------------------------------------------------------------
   const spec = o.quick ? { seeds: [13], weeks: 2, perCity: 150 } : SLOP_PINNED;

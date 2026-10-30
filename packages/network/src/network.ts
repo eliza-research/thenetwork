@@ -4082,6 +4082,11 @@ export class ConsentNetwork implements NetworkUnderTest {
         onSent: () => {
           if (!o) return;
           this.expect(m, { kind: "booked", oppId: o.id, at: now() });
+          // Slop never introduces the same pair twice, even if neither answers the later check-in.
+          // Record the delivered introduction once; it does not claim the date happened.
+          if (this.app.id === "slop" && !o.bookedTold?.length) {
+            this.interactions.push({ id: `${o.id}:introduced`, kind: o.kind, category: o.category, participants: [...o.participants], at: now(), outcome: "accepted" });
+          }
           o.bookedTold = [...(o.bookedTold ?? []), h.id]; this.counters.reveals++;
           // The member accepted a plan at this time (NC plan_accepted; silence for 48 hours confirms it).
           o.bookedAt = { ...o.bookedAt, [h.id]: now() };
