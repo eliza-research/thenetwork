@@ -9,6 +9,7 @@ import { classifyYesNo, findLeaks, parseOptOut, parseReply, type ReplyAnswer } f
 import { classify, extractProfile, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
 import { detectKeyword, leaveTarget, optOutPhrase } from "../../packages/platform/src/consent.ts";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
+import { ageAnswer } from "../../packages/network/src/classify.ts";
 import { APPS, type AppId } from "../../packages/platform/src/apps.ts";
 import { MemoryPeopleStore } from "../../packages/platform/src/store.ts";
 import { outputLeaks } from "../../packages/mcp/src/leaks.ts";
@@ -86,6 +87,9 @@ export async function evalsBlock(b: Block): Promise<void> {
   b.gate("teen ages: 0 adults (or teachers) read as minors", adultAsMinor.length === 0, adultAsMinor.slice(0, 5).join(" | "));
   const thirdParty = teen.filter(l => l.other !== undefined && (otherAgeStated(l.text) ?? null) !== (l.other ?? null)).map(l => l.text);
   b.gate("third-party ages are read exactly", thirdParty.length === 0, thirdParty.slice(0, 5).join(" | "));
+  const answers = await jsonl<{ text: string; age: number | null }>("network/age-answers.jsonl");
+  const answerMiss = answers.filter(l => (ageAnswer(l.text) ?? null) !== l.age).map(l => `${JSON.stringify(l.text)} -> ${ageAnswer(l.text) ?? null} (want ${l.age})`);
+  b.gate(`answers to "how old are you?" (n ${answers.length}): every row read as labelled`, answers.length >= 30 && answerMiss.length === 0, answerMiss.slice(0, 5).join("; "));
 
   const para = await jsonl<{ text: string; desire: string | null }>("network/paraphrases.jsonl");
   const ids = [...new Set(para.map(l => l.desire).filter((x): x is string => !!x))];

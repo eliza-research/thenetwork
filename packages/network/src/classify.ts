@@ -281,15 +281,22 @@ export function otherAgeStated(body: string): number | undefined {
   return best;
 }
 
+/** Spelled-out ages from 20 to 99 ("thirty", "twenty-five", "forty one"); the teens are in AGE_WORDS. */
+const TENS: Record<string, number> = { twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
+const TENS_WORD = Object.keys(TENS).join("|");
+const UNIT_WORD = "one|two|three|four|five|six|seven|eight|nine";
+
 /**
  * The answer to "How old are you?": the whole message is an age ("34", "I'm 34.", "15 years old",
- * "fifteen"). Anything more is not read as an answer here (classify() reads ages in sentences).
+ * "fifteen", "thirty-two"). Anything more is not read as an answer here (classify() reads ages in
+ * sentences).
  */
 export function ageAnswer(body: string): number | undefined {
   const t = normText(body).trim();
-  const m = new RegExp(`^(?:${ME}\\s+)?(\\d{1,3}|${Object.keys(AGE_WORDS).join("|")})(?:\\s*${YEARS_OLD})?\\s*[.!]*$`).exec(t);
+  const m = new RegExp(`^(?:${ME}\\s+)?(\\d{1,3}|(?:${TENS_WORD})(?:[\\s-]+(?:${UNIT_WORD}))?|${Object.keys(AGE_WORDS).join("|")})(?:\\s*${YEARS_OLD})?\\s*[.!]*$`).exec(t);
   if (!m) return undefined;
-  const n = /^\d/.test(m[1]!) ? Number(m[1]) : AGE_WORDS[m[1]!]!;
+  const [w, unit] = m[1]!.split(/[\s-]+/);
+  const n = /^\d/.test(w!) ? Number(w) : (TENS[w!] ?? AGE_WORDS[w!]!) + (unit ? AGE_WORDS[unit]! : 0);
   return n > 0 && n < 120 ? n : undefined;
 }
 
