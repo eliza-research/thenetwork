@@ -496,7 +496,7 @@ export function feedbackOf(body: string): { sentiment: "positive" | "neutral" | 
   const again = !negative && /again|clicked/.test(t) && !/\b(wouldn'?t|won'?t|not|never)\b[^.!?]*\bagain\b/.test(t);
   return { sentiment, selfNoShow, otherNoShow, again };
 }
-const NEGATIVE_FEEDBACK = /\b((was|is|it's|that's)?\s*(not|n't|wasn't|isn't)\s+(that |very |really |so |too |super )?(great|good|fun|nice|amazing)|not much in common|nothing in common|didn't (really |quite )?(click|connect|enjoy)|didn't have much|not (really )?for me|not my (thing|type)|awkward|terrible|rude|creepy|bummer|uncomfortable)/;
+const NEGATIVE_FEEDBACK = /\b((was|is|it's|that's)?\s*(not|n't|wasn't|isn't)\s+(that |very |really |so |too |super )?(great|good|fun|nice|amazing)|not much in common|nothing in common|didn't (really |quite )?(click|connect|enjoy)|(didn'?t|did not|never|don'?t think we|not sure we)\s+((really|quite|feel like we|totally)\s+)*click|(not|never|didn'?t|did not|wasn'?t|isn'?t)\s+((have|had|really)\s+)*an?\s+((that|very|really|so|too|super)\s+)?(great|good|fun|nice|amazing)\b|didn't have much|not (really )?for me|not my (thing|type)|awkward|terrible|rude|creepy|bummer|uncomfortable)/;
 
 
 // ------------------------------------------------------------------ consent: yes, no or unclear
