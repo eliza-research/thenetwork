@@ -61,6 +61,23 @@ const AREAS = [...BOROUGHS, ...NEIGHBORHOODS.map(n => n.name.toLowerCase())].sor
 export const POSTING_COMMAND = /^\s*(?:(?:we(?:'| a)?re|i(?:'| a)?m|we are|i am|now)\s+hiring\b|hiring\s*:|post(?:ing)?\s+(?:a\s+)?(?:new\s+)?job\b|new\s+job\s+post|job\s+post(?:ing)?\s*:|update\s+(?:my|our|the)\s+[\w ]{0,40}?(?:job|post|posting|role)\b|(?:close|take\s+down|remove)\s+(?:my|our|the)\s+[\w ]{0,40}?(?:job|post|posting|role)\b|we\s+(?:filled|hired\s+for)\s+(?:the|our|my)\b)/i;
 const CLOSE_COMMAND = /^\s*(?:(?:close|take\s+down|remove)\s+(?:my|our|the)\b|we\s+(?:filled|hired\s+for)\b)/i;
 
+/** Read complete monetary amounts and normalize annual dollars to the pack's thousands. */
+function payRange(text: string): [number, number] | undefined {
+  const ranges = text.matchAll(/(?<![\w.,])(\$?\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s*k?)\s*(?:-|–|to)\s*(\$?\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s*k?)(?!\w|[.,]\d)/gi);
+  for (const m of ranges) {
+    const amounts = [m[1]!, m[2]!];
+    // Experience or headcount ranges are not pay. A shared "k" still permits "90-120k".
+    if (!amounts.some(s => /\$|k/i.test(s))) continue;
+    const sharedK = amounts.some(s => /k\s*$/i.test(s));
+    const [lo, hi] = amounts.map(s => {
+      const n = Number(s.replace(/[$,\sk]/gi, ""));
+      return /k\s*$/i.test(s) || (sharedK && n < 1000 && !s.includes(",")) ? n : n / 1000;
+    }) as [number, number];
+    return Number.isFinite(lo) && Number.isFinite(hi) && lo >= 10 && hi >= lo && hi <= 999 ? [lo, hi] : undefined;
+  }
+  return undefined;
+}
+
 /** Read job-post fields from one text (rules only). Fields not in the text stay undefined. */
 export function parsePosting(body: string): PostingDraft {
   const t = body.replace(/\s+/g, " ").trim();
@@ -72,8 +89,8 @@ export function parsePosting(body: string): PostingDraft {
   }
   const open = /\b(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:open(?:ing)?s?|roles?|seats?|positions?|hires?|people|spots?)\b/i.exec(t) ?? /\bx\s?(\d{1,2})\b/i.exec(t);
   if (open) { const n = WORDS[open[1]!.toLowerCase()] ?? Number(open[1]); if (Number.isInteger(n) && n >= 1 && n <= MAX_OPENINGS) d.openings = n; }
-  const pay = /\$?\s*(\d{2,3})(?:,000|k)?\s*(?:-|–|to)\s*\$?\s*(\d{2,3})(?:,000)?\s*k\b/i.exec(t) ?? /\$\s*(\d{2,3})(?:,000|k)\s*(?:-|–|to)\s*\$?\s*(\d{2,3})(?:,000|k)?/i.exec(t);
-  if (pay) { const a = Number(pay[1]), b = Number(pay[2]); if (a >= 10 && b >= a && b <= 999) { d.payMin = a; d.payMax = b; } }
+  const pay = payRange(t);
+  if (pay) { d.payMin = pay[0]; d.payMax = pay[1]; }
   if (/\bremote\b/i.test(t)) d.mode = "remote"; else if (/\bhybrid\b/i.test(t)) d.mode = "hybrid"; else if (/\b(on-?site|in[- ]office|in person)\b/i.test(t)) d.mode = "onsite";
   const lower = ` ${t.toLowerCase().replace(/[^a-z0-9' -]+/g, " ")} `;
   const area = AREAS.find(a => lower.includes(` ${a} `));

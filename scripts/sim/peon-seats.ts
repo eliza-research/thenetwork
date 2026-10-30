@@ -44,10 +44,10 @@ class SeatWorld {
   private seq = 0;
   private readonly opts: NetworkOptions;
 
-  constructor() {
+  constructor(seed = 7) {
     const w = appWiring("peon");
     this.opts = {
-      app: APPS.peon, seed: 7, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
+      app: APPS.peon, seed, review: "human", reviewSlaHours: 120, maxNewPerDay: 20, matchingEnabled: true, plans: false,
       pack: w.pack!, hooks: w.hooks!, engine: { ...PEON_ENGINE_CONFIG, cities: ["nyc"] },
       onPosting: p => this.write(p),
     };
@@ -128,6 +128,48 @@ const startsWith = (body: string, re: RegExp) => re.test(body.replace(ACK, ""));
 const POST = "We're hiring a data analyst (level 2), 2 openings, $90k-$120k, hybrid in Brooklyn, must have SQL";
 
 export async function peonSeatsBlock(b: Block): Promise<void> {
+  const payRows = [];
+  const payCases = [
+    { name: "full-dollar-fraction", text: "$90,000-$120,500", pay: [90, 120.5], floor: 120.25 },
+    { name: "decimal-k", text: "$90.5k-$120.5k", pay: [90.5, 120.5], floor: 120.25 },
+    { name: "full-dollars", text: "$90000-$120000", pay: [90, 120], floor: 85 },
+    { name: "whole-comma-control", text: "$90,000-$120,000", pay: [90, 120], floor: 85 },
+    { name: "k-control", text: "$90k-$120k", pay: [90, 120], floor: 85 },
+    { name: "shared-k-control", text: "90-120k", pay: [90, 120], floor: 85 },
+    { name: "non-pay-range-control", text: "2-3 years of experience; salary $90k-$120k", pay: [90, 120], floor: 85 },
+    { name: "out-of-bounds", text: "$90k-$1200k", pay: null, floor: 85 },
+    { name: "malformed-comma", text: "$90,000-$120,50", pay: null, floor: 85 },
+  ];
+  for (const seed of [1, 2, 3]) for (const c of payCases) {
+    const x = new SeatWorld(seed);
+    x.add("hm", "Rowan Abbott", 34, { verified: "Acme" });
+    x.add("cand", "Casey Bell", 29, { candidate: true });
+    x.facets.find(f => f.id === "cand-p")!.tags = [`peon:pay_floor:${c.floor}`];
+    for (const id of ["hm", "cand"]) for (const text of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await x.say(id, text);
+    await x.say("hm", POST.replace("2 openings", "1 opening").replace("$90k-$120k", c.text));
+    const readBack = x.last("hm"), ready = x.net.memberList().find(m => m.id === "hm")?.posting?.ready === true;
+    x.restart(); await x.say("hm", "yes"); x.restart();
+    const saved = x.saved.at(-1), seat = saved && seatIdOf(saved.id);
+    const storedPay = saved ? [saved.payMin, saved.payMax] : null;
+    const input = x.net.packInput(x.clock.now());
+    const enginePay = input.facets.filter(f => f.memberId === seat).flatMap(f => f.tags).find(t => t.startsWith("peon:pay:")) ?? null;
+    await x.runUntil(() => x.net.reviewQueue().length > 0);
+    const queue = x.net.reviewQueue(), beforeReview = x.sent.filter(s => s.meta.probe).length;
+    if (queue.length) {
+      if (!x.net.review(queue[0]!.oppId, "approve", { reviewer: "sim_staff" })) throw new Error("pay range: review refused");
+      if (!await x.runUntil(() => x.probedFor("cand", queue[0]!.oppId))) throw new Error("pay range: no candidate probe");
+    }
+    const probes = x.sent.filter(s => s.to === "cand" && s.meta.probe);
+    const valid = c.pay !== null, payText = c.pay && `$${c.pay[0]}k-$${c.pay[1]}k`;
+    const correct = beforeReview === 0 && ready === valid && x.saved.length === Number(valid)
+      && JSON.stringify(storedPay) === JSON.stringify(c.pay)
+      && enginePay === (c.pay ? `peon:pay:${c.pay[0]}-${c.pay[1]}` : null)
+      && queue.length === Number(valid) && probes.length === Number(valid)
+      && (payText ? readBack.includes(`${payText} a year`) && probes[0]?.body.includes(payText) : readBack === POSTING_COPY.askPay);
+    payRows.push({ seed, scenario: c.name, ready, storedPay, enginePay, beforeReview, reviews: queue.length, probes: probes.length, correct });
+  }
+  b.gate("job pay ranges retain their full amount through confirmation, restart and candidate matching", payRows.every(r => r.correct), JSON.stringify({ rows: payRows }));
+
   await b.run("intake rules: a job post is read from text, read back, and needs a title and a pay range", () => {
     const d = parsePosting(POST);
     expect(d).toMatchObject({ title: "data analyst", openings: 2, payMin: 90, payMax: 120, mode: "hybrid", area: "brooklyn", seniority: 2, must: [{ skill: "sql", level: 2 }] });
