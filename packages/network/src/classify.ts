@@ -66,7 +66,8 @@ const RX = {
   sexual: /\b(send|sending|share|text|dm) (me )?(some |your |a )?(nudes?|nude (pics?|photos?|selfies?)|naked (pics?|photos?|selfies?)|dick pics?|pics of your (body|tits|boobs|ass))\b|\b(wanna|want to|let me) see (you )?naked\b/i,
   invite: /\b[Mm]y (?:friend|buddy|pal|coworker|roommate|cousin) ([A-Z][a-z]+)\b/,
   inviteIntent: /\b(invite|bring|add|sign \w+ up|sign up|refer|include|loop in)\b|\bwould (love|like|enjoy|be into) (this|it|that|joining)\b|\b(wants?|wanted) (to join|in)\b|\bhas been (wanting|looking)\b|\bshould (join|be here|get an invite)\b|\blooking for something like this\b/i,
-  cancel: /\b(can'?t make it|have to bail|can'?t come|need to cancel|something came up)\b/i,
+  // "No need to cancel" keeps the plan.
+  cancel: /\b(can'?t make it|have to bail|can'?t come|(?<!\b(?:no|not|don'?t|dont|do not|won'?t)\s+)need to cancel|something came up)\b/i,
   block: /^\s*(?:please\s+)?block\s+(?!(?:back|on|out|off|of|time|my|the|this|that|it|in|for|a)\b)(.+)$/i,
   report: /^\s*(?:please\s+|i (?:want|need|'d like) to\s+)?report\s+(?!(?:back|on|to|that|this|it|in|for|my|the|when)\b)(.+)$/i,
   plans: /\b(anything fun|what'?s (on|happening|good)|something to do|plans? (this|for the) (weekend|week|tonight)|fun (going on|this weekend)|any (events|plans))\b/i,
@@ -531,6 +532,7 @@ const REFUSAL_RX: RegExp[] = [
   /\b(?:i'?m|im|i am) (?:good|ok|okay|fine|all set)(?:,? (?:thanks?|thank you|tho|though|for now))?\s*$/,
   /\bcount me out\b|\b(?:i'?m|im) out\b|\bskip(?:ping)? (?:this|it|that)\b|\bi'?ll sit (?:this|that) one out\b/,
   /\b(?:not gonna|won'?t|can'?t|cannot|couldn'?t|not going to) make it\b/,
+  /\b(?:not|no longer) (?:comfortable|ok|okay|cool) (?:with )?(?:meeting|going|coming|the (?:date|plan|meetup))\b/,
   /(?<!not )\btoo (?:busy|swamped|slammed|far|tired)\b/,
   /\b(?:maybe|perhaps|some|next) (?:other |another )?time\b(?!s)|^\s*(?:another|other) time\s*$/,
   /👎|🙅|❌/,
@@ -546,8 +548,8 @@ const AFFIRM_NEG_BEFORE = /\b(?:not|never|don'?t|didn'?t|wouldn'?t|won'?t|isn'?t
 const HEDGE_RX = /\b(?:maybe|perhaps|possibly|probably|might|could be|not sure|unsure|idk|i don'?t know|dunno|no idea|let me (?:check|think|see|get back|look)|i'?ll (?:check|think|see|let you know|get back)|who is (?:it|this|that|he|she|they)|who'?s (?:it|this|that)|what'?s (?:it|this) about|depends|kinda|sort of|i guess|we'?ll see|tbd|on the fence|torn|not certain|hard to say|remind me|need to check|have to check)\b|^\s*\?+\s*$/;
 const COND_RX = /\b(?:only if|only with|only when|only for|as long as|so long as|provided(?: that)?|unless|depends on|on (?:the )?condition|assuming|but only|if and only|as long|if (?:it'?s|its|it is|they|she|he|there|the|you|i|we|that|this|someone|nobody|no one|everyone|it|a|an|my|their|his|her))\b/;
 const COUNTER_RX = /\b(?:different (?:day|time|week)|another (?:day|week)|next week|later (?:in the week|this month|on)|reschedule|instead|rain ?check|some other (?:day|time)|how about|what about|later date|the week after|push it)\b/;
-/** "No problem", "no worries", "no rush", "no plans", "no doubt": not refusals. */
-const HARMLESS_NO = /\bno (?:problem|prob|probs|worries|worry|rush|pressure|biggie|doubt|plans?|stress|sweat|complaints)\b/g;
+/** "No problem", "no worries", "no rush", "no plans", "no doubt", "we don't need to cancel": not refusals. */
+const HARMLESS_NO = /\bno (?:problem|prob|probs|worries|worry|rush|pressure|biggie|doubt|plans?|stress|sweat|complaints)\b|\b(?:no need|(?:don'?t|do not|doesn'?t|does not) need) to (?:cancel|call (?:it|this|that) off)\b/g;
 
 /** Read a reply as yes, no, a counter-offer or unclear, refusal first and sentence by sentence. */
 export function consentOf(body: string): Consent {
