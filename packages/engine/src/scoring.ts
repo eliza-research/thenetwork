@@ -134,7 +134,7 @@ export function computeComponents(w: World, c: Candidate, verdict?: JudgeVerdict
   for (const [a, b] of pairs) {
     const k = pairKey(a, b);
     const recent = w.recentPairs.get(k);
-    if (recent !== undefined && w.now - recent < 30 * DAY) repetition = Math.max(repetition, 0.6);
+    if (recent !== undefined && w.now - recent < 30 * DAY && c.kind !== "second_encounter") repetition = Math.max(repetition, 0.6);
     for (const r of w.pairInteractions.get(k) ?? []) {
       if (r.outcome === "completed" && r.kind === c.kind && w.now - r.at < 30 * DAY && c.kind !== "second_encounter") repetition = Math.max(repetition, 0.4);
     }
