@@ -169,6 +169,12 @@ export class Oracle {
     // Intent liveness (persona.ts): judge on the wants each persona still holds at `at`. A lapsed
     // want never counts; a held want counts whether or not the Network's intent record is live.
     const people = ps.filter((p): p is Persona => !!p).map(p => withLiveDesires(p, at));
+    // Each person visiting the city sometime in the window is insufficient: they
+    // must be present together. Presence changes only at trip-day boundaries.
+    const presenceEnd = Math.min(prop.window?.end ?? at, at + 7 * DAY);
+    const presenceTimes = [at, ...people.flatMap(p => p.hidden.trips.flatMap(tr => [tr.fromDay, tr.toDay + 1])
+      .map(day => this.worldStart + day * DAY).filter(t => t > at && t < presenceEnd))];
+    if (!presenceTimes.some(t => people.every(p => this.presentIn(p, prop.city, t)))) flags.add("city_mismatch");
     // Minors policy: checked over every participant, not only per pair, so a one-person
     // proposal (growth ask, relay) involving a minor is flagged too.
     if (people.some(p => p.hidden.trueAge < 18)) flags.add("minor_included");
