@@ -3,12 +3,15 @@
 // over 21 days; every NYC scenario; every sim/scenarios/*.json at pass^3 against the push stub; the
 // attention and plans invariants on the consent arms; and the shared conformance rules for networkPack.
 import { readdirSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DAY, HOUR, MINUTE, type MemberId } from "../../packages/core/src/index.ts";
 import { DEFAULT_ATTENTION } from "../../packages/engine/src/index.ts";
 import { networkPack } from "../../packages/engine/src/packs/network/index.ts";
 import type { RunRecord } from "../../packages/core/src/index.ts";
 import { computeMetrics } from "../../packages/sim/src/judge/metrics.ts";
-import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, loadScenario, runScenario as runSimScenario, runScenarioPassK } from "../../packages/sim/src/index.ts";
+import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, loadScenario, scenarioWorldOptions, runScenario as runSimScenario, runScenarioPassK } from "../../packages/sim/src/index.ts";
 import { friendFactory, nycPersonas, runArm, runScenario, SCENARIOS, type ArmResult } from "../../packages/network/harness/index.ts";
 import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, VENUES, type NetworkOptions } from "../../packages/network/src/index.ts";
 import { styleViolations } from "../../packages/network/src/copy.ts";
@@ -312,6 +315,28 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     const r = await runSimScenario({ ...s, background: { personas: 6 } }, { network: () => new StubNetwork({ seed: 1, leakyExplanations: true, introRate: 1 }) });
     b.gate("negative control: the canary check fails against a leaky network", r.results.find(x => x.expectation.check === "canary_not_leaked")?.status === "fail");
   }
+
+  await b.run("growth records: invited friends remain in the returned and persisted run roster", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "network-growth-"));
+    try {
+      const opts = scenarioWorldOptions({
+        name: "growth-roster", description: "A run retains its members who joined through growth.", seed: 83, days: 1,
+        personas: ["host", "friend"].map(ref => ({ ref, age: 30, city: "nyc" as const })), actions: [], expectations: [],
+      }, { network: () => new StubNetwork({ seed: 83, randomIntros: false }) });
+      const initial = [opts.personas[0]!];
+      const w = new World({ ...opts, personas: initial, writeLog: true, runsDir: dir, runId: "growth-roster" });
+      await w.begin();
+      w.spawn(opts.personas[1]!, w.clock.now() + HOUR);
+      await w.advanceTo(w.end);
+      const r = await w.complete();
+      expect(r.metrics.run.joined).toBe(2);
+      expect(r.records.filter(x => x.type === "persona").length).toBe(2);
+      const saved = await Bun.file(join(r.dir!, "personas.json")).json() as { id: string }[];
+      expect({ returned: r.personas.map(p => p.id).sort(), saved: saved.map(p => p.id).sort() })
+        .toEqual({ returned: ["friend", "host"], saved: ["friend", "host"] });
+      expect(initial.length).toBe(1);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
 
   // ---- conformance rules for networkPack (engine level) ---------------------------------------------------
   await conformance(b, networkPack, { seeds: o.quick ? [1, 2] : [1, 2, 3, 4] });
