@@ -8,7 +8,7 @@ import { DEFAULT_ATTENTION } from "../../packages/engine/src/index.ts";
 import { networkPack } from "../../packages/engine/src/packs/network/index.ts";
 import type { RunRecord } from "../../packages/core/src/index.ts";
 import { computeMetrics } from "../../packages/sim/src/judge/metrics.ts";
-import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, loadScenario, runScenario as runSimScenario, runScenarioPassK } from "../../packages/sim/src/index.ts";
+import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, loadScenario, networkStateFromRecords, scenarioWorldOptions, runScenario as runSimScenario, runScenarioPassK } from "../../packages/sim/src/index.ts";
 import { friendFactory, nycPersonas, runArm, runScenario, SCENARIOS, type ArmResult } from "../../packages/network/harness/index.ts";
 import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, VENUES, type NetworkOptions } from "../../packages/network/src/index.ts";
 import { styleViolations } from "../../packages/network/src/copy.ts";
@@ -312,6 +312,24 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     const r = await runSimScenario({ ...s, background: { personas: 6 } }, { network: () => new StubNetwork({ seed: 1, leakyExplanations: true, introRate: 1 }) });
     b.gate("negative control: the canary check fails against a leaky network", r.results.find(x => x.expectation.check === "canary_not_leaked")?.status === "fail");
   }
+
+  await b.run("delivery history: a failed invitation is not an unanswered invitation", async () => {
+    const scenario = {
+      name: "delivery-history", description: "Only delivered invitations create response history.", seed: 83, days: 5,
+      personas: ["a", "b"].map(ref => ({ ref, age: 30, city: "nyc" as const, interests: ["film", "books", "coffee"], desires: ["new_friends"], capacity: 1, socialEnergy: 1, join: { day: 0, hour: 9 } })),
+      actions: [
+        ...["a", "b"].map(persona => ({ at: { day: 0, hour: 12 }, do: "go_silent" as const, persona })),
+        { at: { day: 0, hour: 13 }, do: "propose" as const, kind: "intro" as const, participants: ["a", "b"], objective: "coffee", city: "nyc" as const },
+      ], expectations: [],
+    };
+    for (const failureRate of [1, 0]) {
+      const w = new World({ ...scenarioWorldOptions(scenario, { network: () => new StubNetwork({ seed: 83, randomIntros: false }) }), failureRate });
+      const r = await w.run();
+      const invites = r.records.filter((x): x is Msg => x.type === "message" && x.msg.meta?.type === "proposal");
+      expect(invites.map(x => x.msg.status)).toEqual([failureRate ? "failed" : "delivered"]);
+      expect(networkStateFromRecords(r.records, w.clock.now()).interactions.flatMap(x => x.noResponse ?? [])).toEqual(failureRate ? [] : ["a"]);
+    }
+  });
 
   // ---- conformance rules for networkPack (engine level) ---------------------------------------------------
   await conformance(b, networkPack, { seeds: o.quick ? [1, 2] : [1, 2, 3, 4] });
