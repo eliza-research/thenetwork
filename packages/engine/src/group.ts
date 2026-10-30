@@ -65,7 +65,8 @@ export function evaluateGroup(w: World, ids: MemberId[], opts: ComposeOptions, c
   const minBest = ids.length > 1 ? Math.min(...ids.map(id => best.get(id) ?? 0)) : 1;
   if (ids.length > 1 && minBest < opts.minPairwise) return null;
   const avgPairwise = n ? sum / n : 0.5;
-  const hasHost = ids.some(id => w.get(id)!.isHost);
+  const hasHost = ids.some(id => w.get(id)!.isHost
+    && !memberReason(w, id, { category: opts.category, role: "host", format: opts.format ?? "small_group", timeSensitive: false }));
   const roleCoverage = opts.needHost ? (hasHost ? 1 : 0) : (hasHost ? 1 : 0.7);
   const warmScore = warm === 0 ? 0.3 : warm <= 2 ? 1 : Math.max(0, 1 - 0.25 * (warm - 2));
   const clusters = new Set(ids.map(id => w.get(id)!.cluster));
