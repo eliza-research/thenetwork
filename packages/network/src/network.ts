@@ -4292,6 +4292,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     const interestTags = new Set(INTERESTS.map(i => i.tag)), skillTags = new Set(SKILLS.map(s => s.tag));
     for (const f of snap.facets) {
       if (f.scope === "agent_private" || this.declinedIds.has(f.memberId)) continue;
+      if (f.validFrom !== undefined && f.validFrom > now) continue;
+      if (f.validTo !== undefined && f.validTo < now) continue;
       // Skeptical: an unconfirmed inference (e.g. a skill guessed from a LinkedIn title) is not
       // evidence of what someone wants or can do until the member confirms it.
       if (f.inferred && !f.confirmedByMember) continue;
