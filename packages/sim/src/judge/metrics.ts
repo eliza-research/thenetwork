@@ -318,7 +318,8 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
     if (r.type === "decision") {
       const opp = r.proposalId ?? msgOpp.get(r.messageId);
       if (opp) {
-        const yes = r.decision === "accept" || r.decision === "counter" || r.intent === "accept" || r.intent === "probe_yes" || r.intent === "confirm_schedule" && r.decision !== "decline";
+        // Only a yes is consent (AGENTS.md 11, policy.ts): a counter asks for another time and stays out of `accept`.
+        const yes = r.decision === "accept" || r.intent === "accept" || r.intent === "probe_yes" || r.intent === "confirm_schedule" && r.decision !== "decline";
         const no = r.decision === "decline" || r.intent === "decline" || r.intent === "probe_no";
         if (yes) accept(r.memberId, opp);
         else if (no && !hasAccepted(r.memberId, opp)) { if (!decliners.has(opp)) decliners.set(opp, new Set()); decliners.get(opp)!.add(r.memberId); }
@@ -644,7 +645,7 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
       oracleGap: { engineWelfare: r3(engineWelfare), oracleWelfare: r3(oracleWelfare), gap: r3(oracleWelfare - engineWelfare), ratio: r3(safeDiv(engineWelfare, oracleWelfare)) },
       unsafe,
     },
-    responses: { invitesDelivered: invites, accepted: acceptedN, declined, countered, ignored, acceptRate: r3(safeDiv(acceptedN + countered, invites)), probes },
+    responses: { invitesDelivered: invites, accepted: acceptedN, declined, countered, ignored, acceptRate: r3(safeDiv(acceptedN, invites)), probes },
     experience: {
       worthwhileRate: r3(safeDiv(worthwhile, judgments.length)), judged: judgments.length,
       messagesPerMemberPerWeek: r3(safeDiv(outboundCount, memberWeeks)), proactivePerMemberPerWeek: r3(safeDiv(proactiveCount, memberWeeks)),
