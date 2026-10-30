@@ -577,6 +577,8 @@ export function recordPlanAnswer(run: PlanRun, member: MemberId, yes: boolean, n
     const y = yesOf(r);
     if (y.length >= p.quorum) { r.stage = "booked"; return { run: r, action: { kind: "book", going: y } }; }
     if (p.partner && now < p.probeDeadline) { const nx = nextOnBench(r, opts); if (nx) { r.answers[nx] = "pending"; return { run: r, action: { kind: "probe_partner", member: nx } }; } }
+    // The last pending answer was a yes but quorum is still out of reach: over, as after a last no.
+    if (!pendingOf(r).length) { r.stage = "closed"; return { run: r, action: { kind: "fallback" } }; }
     return { run: r, action: { kind: "none" } };
   }
   if (r.stage === "booked") return { run: r, action: { kind: "none" } };
