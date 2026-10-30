@@ -3,7 +3,7 @@
 // routine, or a dated trip that overrides home) and can meet when they share enough hours in one
 // run city. The Network and friends.help use it. A radius model (slop.date: within X miles of a zip
 // or point, mutual radius) implements the same interface plus `pairReason` / `displayDistance`.
-import type { City, MemberId, Presence } from "@thenetwork/core";
+import type { City, MemberId, Presence, Proposal } from "@thenetwork/core";
 import { HOUR } from "@thenetwork/core";
 import type { GeoModel } from "./pack.ts";
 import { intersect, subtract, union, type Interval } from "./interval.ts";
@@ -52,10 +52,34 @@ export const cityBucketGeo: GeoModel = {
     return best;
   },
 
-  /** Activation cost input: every member lists one common area (neighbourhood) in the configuration's city. */
-  sharesArea(w: World, ids: MemberId[], market: City | undefined): boolean {
-    const areasOf = (id: MemberId) => new Set(w.get(id)!.presence.filter(p => p.city === market).flatMap(p => p.areas));
-    const areaSets = ids.map(areasOf);
-    return areaSets.length > 1 && [...areaSets[0]!].some(a => areaSets.every(s => s.has(a)));
+  /** Activation cost input: all members can be in one area at the same time inside the meeting window. */
+  sharesArea(w: World, ids: MemberId[], market: City | undefined, window?: Proposal["window"]): boolean {
+    if (ids.length < 2) return false;
+    const start = window?.start ?? w.now, end = window?.end ?? start + 1;
+    const areasOf = (id: MemberId) => {
+      const areas = new Map<string, Interval[]>(), dated: Presence[] = [];
+      const add = (p: Presence, s: number, e: number) => {
+        if (p.city === market) for (const area of p.areas) areas.set(area, union([...(areas.get(area) ?? []), [s, e]]));
+      };
+      for (const p of w.get(id)!.presence) {
+        if (p.from === undefined && p.to === undefined && p.type !== "temporary") add(p, start, end);
+        else dated.push(p);
+      }
+      for (const p of dated) {
+        const s = Math.max(start, p.from ?? start), e = Math.min(end, p.to ?? end);
+        if (e <= s) continue;
+        // A dated visit overrides home/routine areas during that interval, including within one city.
+        for (const [area, intervals] of areas) areas.set(area, subtract(intervals, [s, e]));
+        add(p, s, e);
+      }
+      return areas;
+    };
+    const locations = ids.map(areasOf);
+    for (const [area, intervals] of locations[0]!) {
+      let common = intervals;
+      for (const location of locations.slice(1)) common = intersect(common, location.get(area) ?? []);
+      if (common.length) return true;
+    }
+    return false;
   },
 };
