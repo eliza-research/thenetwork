@@ -12,6 +12,7 @@ import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, loadScenario, runSce
 import { friendFactory, nycPersonas, runArm, runScenario, SCENARIOS, type ArmResult } from "../../packages/network/harness/index.ts";
 import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, VENUES, type NetworkOptions } from "../../packages/network/src/index.ts";
 import { styleViolations } from "../../packages/network/src/copy.ts";
+import { Mini } from "../../packages/network/test/mini.ts";
 import { DATA_DIR } from "../synthetic/common.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
@@ -36,6 +37,74 @@ async function world(days: number, seed = 3, network: NetworkOptions = { review:
 }
 
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
+  const crewRows = [];
+  for (const seed of [1, 2, 3]) for (const scenario of ["rejected", "declined", "attended", "mixed", "unknown", "one-present"] as const) {
+    const ids = ["ada", "ben", "cam", "dan"];
+    const attended: { t: number; id: string; member: string }[] = [];
+    const w = new Mini(ids.map((id, i) => ({ id, name: ["Ada Ames", "Ben Brown", "Cam Clark", "Dan Davis"][i]!, age: 30,
+      area: "Williamsburg", interests: ["running", "coffee", "board_games"], shareable: true })), {
+      seed, review: "human", plans: true, matchingEnabled: true, maxNewPerDay: 0, growth: false,
+      onLedger: e => { if (e.type === "plan_attended") attended.push({ t: e.t, id: e.planId, member: e.member }); },
+    });
+    // Replies occur after delivery, so the attention ledger can observe their ordering.
+    const reply = async (id: MemberId, body: string) => { w.clock.advance(MINUTE); await w.say(id, body); };
+    for (const id of ids) for (const answer of ["hi", "I want people to run with", "Weekends mostly", "Small groups"]) await reply(id, answer);
+    await w.runUntil(() => w.net.reviewQueue().some(q => q.proposal.generator === "plan"), 10 * DAY);
+    const first = w.net.reviewQueue().find(q => q.proposal.generator === "plan");
+    if (!first) throw new Error(`crew setup: no founding plan, seed ${seed}`);
+    w.net.review(first.oppId, "approve", { reviewer: "sim_staff" });
+    await w.answerProbes(ids, () => { w.clock.advance(MINUTE); return "yes"; });
+    await w.runUntil(() => w.net.exportState().opps.find(p => p.id === first.oppId)?.stage === "done", 10 * DAY);
+    for (const id of ids) await reply(id, "I came and had a great time. Yes, I'd do it again with this group.");
+    for (let h = 0; h < 80 && !w.net.crews.length; h++) {
+      for (const m of w.net.memberList()) if (m.awaiting?.kind === "crew") await reply(m.id, "yes");
+      await w.run(HOUR);
+    }
+    if (w.net.crews.length !== 1) throw new Error(`crew setup: opt-in failed, seed ${seed}`);
+    w.restart();
+    const crewId = w.net.crews[0]!.id;
+    const crewOpps = () => w.net.exportState().opps.filter(p => p.plan?.crewId === crewId);
+    const held = (at = Infinity) => {
+      const crewIds = new Set(crewOpps().map(p => p.id));
+      const byPlan = new Map<string, Set<string>>();
+      for (const e of attended) if (e.t <= at && crewIds.has(e.id)) {
+        if (!byPlan.has(e.id)) byPlan.set(e.id, new Set());
+        byPlan.get(e.id)!.add(e.member);
+      }
+      return [...byPlan.values()].filter(m => m.size >= 2).length;
+    };
+    let attempts = 0;
+    // Drive the real review, probe, feedback and daily crew scheduler for eight weeks.
+    // Other new plans are rejected so they cannot occupy the same members while testing the crew.
+    for (let step = 0; step < 56 * 24 * 12; step++) {
+      for (const q of w.net.reviewQueue()) {
+        const crew = crewOpps().some(p => p.id === q.oppId);
+        if (crew) attempts++;
+        const reject = !crew || scenario === "rejected" || (scenario === "mixed" && attempts <= 2);
+        w.net.review(q.oppId, reject ? "reject" : "approve", { reviewer: "sim_staff", ...(reject ? { reason: "other", note: "Controlled review outcome in the crew lifecycle simulation" } : {}) });
+      }
+      for (const m of w.net.memberList()) {
+        const aw = m.awaiting;
+        if (!aw?.oppId || !crewOpps().some(p => p.id === aw.oppId)) continue;
+        if (aw.kind === "probe") await reply(m.id, scenario === "declined" ? "no" : "yes");
+        if (aw.kind === "feedback" && scenario !== "unknown") await reply(m.id, scenario === "one-present" && m.id !== "ada"
+          ? "I couldn't make it." : "I came and had a great time. Yes, I'd do it again with this group.");
+      }
+      // Learned send windows need finer ticks than Mini.run's hourly default.
+      w.clock.advance(5 * MINUTE); await w.net.tick(w.clock.now());
+      if (step % (7 * 24 * 12) === 0) w.restart();
+    }
+    const sessions = crewOpps(), handoff = w.log("crew_handoff");
+    const shouldHandoff = scenario === "attended" || scenario === "mixed";
+    const duplicateWindows = sessions.length - new Set(sessions.map(p => p.plan!.window.start)).size;
+    const heldAtHandoff = handoff.length ? held(handoff[0]!.t) : null;
+    const correct = sessions.length > 0 && duplicateWindows === 0 && (shouldHandoff
+      ? w.net.crews[0]!.handedOff && handoff.length === 1 && heldAtHandoff === 3 && held() === 3
+      : !w.net.crews[0]!.handedOff && handoff.length === 0 && held() === 0);
+    crewRows.push({ seed, scenario, attempts, sessions: sessions.length, duplicateWindows, held: held(), heldAtHandoff, handedOff: w.net.crews[0]!.handedOff, correct });
+  }
+  b.gate("crews hand off after three attended sessions, never repeated or unsuccessful proposals", crewRows.every(r => r.correct), JSON.stringify({ rows: crewRows }));
+
   // ---- invariants: NYC, 10 days, seed 3, simulated reviewer ---------------------------------------
   const run = await world(10);
   await run.w.advanceTo(run.w.end);
