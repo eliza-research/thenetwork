@@ -120,3 +120,40 @@ Pair quality remains above 0.9. The returned visitor stays incompatible in NYC.
 Run `bun run sim --only network` and expect both travel gates to pass.
 Focused gates pass. The change uses no model calls and adds no external client qualification.
 The earlier five-patch qualification above predates this extension.
+
+## Qualification of the cooldown, locality, and recall changes
+
+These results combine `fix/response-derived-cooldowns`, `fix/meeting-window-locality`, and the updated `fix/sim-common-presence`.
+They are one combined validation run, not three separate full-suite runs.
+Each independent branch also passes its focused gate and type checking.
+The Network baseline is the previously recorded run of unchanged base `a0ed7bc`.
+No baseline rerun or threshold adjustment was needed.
+
+| Check | Result |
+|---|---|
+| Base `bun run sim --only network` | 61/61 blocking gates pass |
+| Updated Network block | 65/65 blocking gates pass |
+| `REQUIRE_PG=1 bun run sim` | 334/334 blocking gates pass; 14 tracked targets off target; 354.5 seconds |
+| `bun run typecheck` | Pass |
+| `REQUIRE_PG=1 bun run test:integration` | 681 pass, 8 skip, 0 fail |
+| `REQUIRE_PG=1 bun run security` | 176 pass, 0 fail |
+| `REQUIRE_PG=1 bun run test:e2e` | 42 pass, 1 skip, 0 fail |
+
+PostgreSQL 16.10 used an isolated synthetic test cluster on localhost port 54339.
+No simulation gate was skipped. Integration skips remain the existing optional cleanup-reconciliation tests.
+The end-to-end skip remains the existing security-feedback SDK recovery test.
+The tracked quality targets are not counted as passes.
+Network invariants, minor contacts, canary leaks, and errors remain zero.
+
+The record fingerprints change because this scope corrects history and oracle recall.
+They are recorded for transparency, not asserted as a byte-identity guarantee:
+
+| Network fingerprint | Base | Combined |
+|---|---|---|
+| Seed 3, ten days | `24bb81f068060b33` | `7f24b1663d905a96` |
+| Consent versus push | `361f8cc2648fb9a6` | `d060a27d2d63c0d0` |
+
+Before/after control measurements also run every assertion without stopping at the first mismatch.
+The baseline exhibits the reported recipient, timestamp, locality, and visitor-recall defects.
+Every corrected control passes. No safety threshold or fixture expectation was weakened.
+General real-model evidence and external-client qualification remain unfulfilled, as disclosed above.
