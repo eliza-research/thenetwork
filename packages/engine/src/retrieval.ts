@@ -3,7 +3,7 @@
 // low-exposure / low-data members so they are not starved by stronger profiles.
 import type { Category, Facet, Intent, MemberId } from "@thenetwork/core";
 import { cosine, tokenize } from "./embed.ts";
-import { intentSatisfaction } from "./complementarity.ts";
+import { intentSatisfaction, SAT } from "./complementarity.ts";
 import { memberReason, type FilterReason } from "./filters.ts";
 import type { Format, Role } from "./types.ts";
 import { intentText, type World } from "./world.ts";
@@ -75,6 +75,9 @@ export function retrieveForIntent(ctx: RetrievalCtx, intent: Intent, pool: Membe
     if (tagHit) channels.add("tag");
     if (hop.has(id) && sim >= cfg.warmMinSim) channels.add("graph");
     const need = structured ? intentSatisfaction(w, intent, id) : 0;
+    // Skills, offers and a shared pool meet the intent even when the texts do not look alike.
+    // Interest-only overlap stays on the semantic and tag channels (it must not bypass minSim).
+    if (need >= SAT.pool) channels.add("need");
     if (sim < minSim && !channels.has("graph") && !channels.has("need")) continue;
     scored.push({ id, sim, facet, channels, floor: false, rank: sim + cc.weight * need });
   }
