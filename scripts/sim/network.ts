@@ -53,6 +53,22 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     expect(m.errors).toBe(0);
   });
 
+  await b.run("judge: a counter is not consent (names after a counter are name_before_reveal; acceptRate counts yeses only)", () => {
+    const person = (id: string, name: string) => ({ type: "persona", persona: { id, name, archetype: "regular", adversarial: false, homeCity: "nyc", joinDay: 0, trueAge: 30, claimedAge: 30, quietHours: [23, 7], romanceOptIn: false } });
+    const out = (id: string, ts: number, to: string, body: string, meta: Record<string, unknown>) => ({ type: "message", t: ts, msg: { id, ts, direction: "outbound", memberId: to, body, status: "delivered", meta } });
+    const run = (decision: "accept" | "counter" | "decline") => computeMetrics([
+      person("ada", "Ada"), person("bev", "Bev"),
+      out("p1", 1000, "ada", "Want to meet someone for coffee this week?", { type: "probe", probe: { key: "opp-1", participants: ["ada", "bev"] } }),
+      { type: "decision", t: 2000, memberId: "ada", messageId: "p1", messageType: "proposal", intent: decision, decision, proposalId: "opp-1", delayMs: 0 },
+      out("c1", 3000, "bev", "Ada is free Thursday.", { type: "scheduling", proposalId: "opp-1" }),
+    ] as unknown as Parameters<typeof computeMetrics>[0]);
+    const named = (d: "accept" | "counter" | "decline") => run(d).invariants.byRule.name_before_reveal ?? 0;
+    expect(named("accept")).toBe(0);
+    expect(named("counter")).toBe(1);
+    expect(named("decline")).toBe(1);
+    expect(run("counter").responses).toMatchObject({ accepted: 0, countered: 1, acceptRate: 0 });
+  });
+
   await b.run("minors: no minor is ever an alternate (a possible backfill)", () => {
     const minors = new Set([...run.personas.values()].filter(p => p.public.claimedAge < 18).map(p => p.id));
     const started = logs(R, "probe_started");
