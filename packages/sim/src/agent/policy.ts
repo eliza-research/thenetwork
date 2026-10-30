@@ -168,9 +168,10 @@ export function decide(ctx: PersonaContext, msg: SimMessage, worldStart: number,
     case "reminder": {
       const pid = meta.proposalId;
       const pr = pid ? mem.proposals[pid] : undefined;
+      const forced = !mem.forceFlakeFor || mem.forceFlakeFor === pid ? mem.forceFlake : undefined;
       // Flakers sometimes give notice when reminded; others silently no-show.
       // A persona who knows the time clashes with its week (timeAware) gives notice more often.
-      if (pr && !pr.plannedShow && (mem.forceFlake === "notice" || rng.bool(pr.timeConflict ? 0.8 : 0.5))) d = { ...base, intent: "flake_notice", proposalId: pid };
+      if (pr && !pr.plannedShow && forced !== "no_show" && (forced === "notice" || rng.bool(pr.timeConflict ? 0.8 : 0.5))) d = { ...base, intent: "flake_notice", proposalId: pid };
       else d = { ...base, intent: rng.bool(0.5) ? "ack" : "ignore", proposalId: pid };
       break;
     }
@@ -300,8 +301,9 @@ function decideProposal(ctx: PersonaContext, msg: SimMessage, worldStart: number
   }
   if (decision === "accept" && p.hidden.capacity < 0.4 && rng.bool(0.15)) decision = "counter";
   // Scenario hook: a forced flaker says yes now and cancels later.
-  if (mem.forceFlake) decision = "accept";
-  const plannedShow = decision !== "decline" && mine.wouldShow && !mem.forceFlake;
+  const forced = !!mem.forceFlake && (!mem.forceFlakeFor || mem.forceFlakeFor === pid);
+  if (forced) decision = "accept";
+  const plannedShow = decision !== "decline" && mine.wouldShow && !forced;
   mem.proposals[pid] = { decision, plannedShow, enjoyment: mine.enjoyment, others, at: prop?.window?.start, category, decidedAt: ctx.now };
   mem.recentMatches = [...others, ...mem.recentMatches].slice(0, 5);
   return {
