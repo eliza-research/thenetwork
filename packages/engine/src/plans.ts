@@ -566,6 +566,7 @@ export const pendingOf = (r: PlanRun) => Object.keys(r.answers).filter(x => r.an
  */
 export function recordPlanAnswer(run: PlanRun, member: MemberId, yes: boolean, now: number, pcfg: PlansConfig = DEFAULT_PLANS, opts: PlanRunOpts = {}): { run: PlanRun; action: PlanAction } {
   if (run.stage === "closed" || run.answers[member] !== "pending") return { run, action: { kind: "none" } };
+  if (run.stage === "probing" && now >= run.plan.probeDeadline) return checkPlanDeadline(run, now);
   const r: PlanRun = { ...run, answers: { ...run.answers, [member]: yes ? "yes" : "no" }, bench: [...run.bench] };
   const p = r.plan;
   if (yes) {
