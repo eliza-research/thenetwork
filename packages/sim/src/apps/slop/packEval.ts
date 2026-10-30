@@ -49,6 +49,9 @@ export interface Extra {
 
 const WEEKS_PER_MONTH = 4.345;
 
+/** Median as the rest of the sim defines it (friends/metrics, peon/gates): sorted input, even counts average the two middle values. */
+const medianOfSorted = (xs: number[]) => { if (!xs.length) return 0; const m = xs.length >> 1; return xs.length % 2 ? xs[m]! : (xs[m - 1]! + xs[m]!) / 2; };
+
 export function extraOf(res: SlopRunResult, m: SlopMetrics): Extra {
 
   const reach = new Map<MemberId, Set<MemberId>>();
@@ -109,7 +112,7 @@ export function extraOf(res: SlopRunResult, m: SlopMetrics): Extra {
   for (const f of res.flows) if (f.stage === "date") { nd++; soft += res.world.oracle.softLabel(f.first, f.partner, f.activity, 32).pSecond; }
   return {
     softSecondRate: nd ? soft / nd : 0, softSecondDates: soft,
-    scammerMedianReach: rs.length ? rs[Math.floor((rs.length - 1) / 2)]! : 0,
+    scammerMedianReach: medianOfSorted(rs),
     groups, feasibleGroups, overall: { dates: m.datesPerMemberMonth * m.members * months, memberMonths: m.members * months },
     asksSent: res.asks?.sent ?? 0, asksAnswered: res.asks?.answered ?? 0,
     contactsByKind, harmsByKind, demo, outcomes, harassment, scamHarms, coreAdversaryContacts, harmsNoDeception,
