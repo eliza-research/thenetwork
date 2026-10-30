@@ -23,10 +23,22 @@ const KINDS: [ReportKind, RegExp][] = [
   ["no_show", /\b(no[- ]?show(ed)?|never (showed|came|turned up)|didn'?t (show|come|turn up)|stood me up|ghosted me)\b/i],
 ];
 
+/**
+ * A negation just before a report word: "not rude", "wasn't scared at all", "never made me feel
+ * unsafe", "nothing inappropriate", "wasn't rude or pushy". Only these filler words can come between
+ * them, so "never been so scared" and "didn't know he would be aggressive" are still reports.
+ */
+const NEGATED_BEFORE = /(?:\b(?:not|never|no|nothing|nobody|none|without)|\b(?:is|are|was|were|do|does|did|would|could|should|has|have|had|ca|wo)n'?t)\s+(?:(?:at all|even|really|remotely|once|ever|the least bit|a bit|in any way|super|very|too|being|be|act(?:ed|ing)?|feel|felt|make me feel|made me feel|seem(?:ed)?|look(?:ed)?|was|were|been|is|me|kind of|kinda|one|any|anything|or|nor|rude|creepy|pushy|aggressive|hostile|abusive|mean|weird|fake|scared|afraid|unsafe)\s+)*$/i;
+/** Kinds whose words a negation cancels. A minor or a no-show report is never cancelled this way. */
+const NEGATABLE: ReadonlySet<ReportKind> = new Set(["unsafe", "harassment", "scam", "lying"]);
+
 /** The kind of a report from its words (most serious first). "other" when nothing names a kind. */
 export function reportKindOf(text: string): ReportKind {
   const t = text.normalize("NFKC").replace(/[‘’]/g, "'");
-  for (const [k, re] of KINDS) if (re.test(t)) return k;
+  for (const [k, re] of KINDS) {
+    if (!NEGATABLE.has(k)) { if (re.test(t)) return k; continue; }
+    for (const m of t.matchAll(new RegExp(re.source, "gi"))) if (!NEGATED_BEFORE.test(t.slice(0, m.index))) return k;
+  }
   return "other";
 }
 
