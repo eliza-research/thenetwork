@@ -450,9 +450,10 @@ export type RelayRequest = { kind: "contact_share" } | { kind: "photo" } | { kin
 const NEG = /\b(?:don'?t|dont|do not|never|not yet|no need to|stop|shouldn'?t|won'?t|wont|rather not|hold off|wait (?:to|before)|not until)\b/;
 const HEDGE = /^\s*(?:should i|do you think|is it ok(?:ay)? (?:to|if)|would it be|what if|maybe|if)\b|\b(?:later|after the date|after we meet|eventually|at some point|one day|tomorrow)\b|\b(?:should i|or not)\b/;
 const OTHER = "(?:them|him|her|my (?:match|date)|(?!(?:me|us|it|everyone|everybody|nobody|anyone|this|that)\\b)\\p{L}[\\p{L}'-]{1,30})";
-const CONTACT_REQ = new RegExp(`\\b(?:send|give|share|pass|forward|text)\\s+${OTHER}\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\b|\\b(?:share|send|give|pass)\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\s+(?:with|to)\\s+${OTHER}|^\\s*(?:yes|yeah|yep|ok|okay|sure)[,!.]?\\s+(?:send|share|give)\\s+(?:it|my number|them my number)\\b|\\b(?:they|she|he) can have my (?:number|digits|phone number)\\b`, "iu");
-const PHOTO_REQ = new RegExp(`\\b(?:send|share|forward|pass|show)\\s+${OTHER}\\s+(?:this|that|the|my|these)\\s+(?:photos?|pics?|pictures?|selfies?|images?)\\b|\\b(?:send|share|forward)\\s+(?:this|that|these|my)\\s+(?:photos?|pics?|pictures?|selfies?)\\s+(?:to|with)\\s+${OTHER}`, "iu");
-const TEXT_REQ = new RegExp(`^\\s*(?:please\\s+)?(?:tell|let|ask)\\s+${OTHER}\\s+(?:know\\s+)?(?:that\\s+)?(.{2,})$`, "isu");
+const CONTACT_REQ = new RegExp(`\\b(?:send|give|share|pass|forward|text)\\s+${OTHER}\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\b|\\b(?:share|send|give|pass|forward|text)\\s+my\\s+(?:phone number|number|phone|digits|cell|contact(?: info)?|email)\\s+(?:with|to)\\s+${OTHER}|^\\s*(?:yes|yeah|yep|ok|okay|sure)[,!.]?\\s+(?:send|share|give)\\s+(?:it|my number|them my number)\\b|\\b(?:they|she|he) can have my (?:number|digits|phone number)\\b`, "iu");
+const PHOTO_REQ = new RegExp(`\\b(?:send|share|forward|pass|show)\\s+${OTHER}\\s+(?:this|that|the|my|these)\\s+(?:photos?|pics?|pictures?|selfies?|images?)\\b|\\b(?:send|share|forward|pass|show)\\s+(?:this|that|the|these|my)\\s+(?:photos?|pics?|pictures?|selfies?|images?)\\s+(?:to|with)\\s+${OTHER}`, "iu");
+const MODAL_PREFIX = "(?:(?:can|could|would)\\s+(?:you|u)\\s+(?:please\\s+)?|please\\s+(?:(?:can|could|would)\\s+(?:you|u)\\s+)?|please\\s+)?";
+const TEXT_REQ = new RegExp(`^\\s*${MODAL_PREFIX}(tell|let|ask)\\s+${OTHER}\\s+(?:know\\s+)?(?:that\\s+)?(.{2,})$`, "isu");
 
 /**
  * What a member asks the agent to do with their match. Only an explicit, unhedged, unnegated request
@@ -462,11 +463,26 @@ const TEXT_REQ = new RegExp(`^\\s*(?:please\\s+)?(?:tell|let|ask)\\s+${OTHER}\\s
 export function parseRelayRequest(text: string): RelayRequest {
   const t = text.replace(/[’‘`´]/g, "'").trim();
   const low = t.toLowerCase();
-  const negated = NEG.test(low), hedged = HEDGE.test(low) || (/\?\s*$/.test(t) && /^\s*(?:should|would|could i|is it|do you|can i)\b/i.test(t));
-  if (CONTACT_REQ.test(t)) return negated || hedged ? { kind: "none" } : { kind: "contact_share" };
-  if (PHOTO_REQ.test(t)) return negated || hedged ? { kind: "none" } : { kind: "photo" };
+  const hedged = HEDGE.test(low) || (/\?\s*$/.test(t) && /^\s*(?:should|would (?:it|that|i)|could i|is it|do you|can i)\b/i.test(t));
+  if (CONTACT_REQ.test(t)) {
+    const contactNeg = NEG.test(low);
+    return contactNeg || hedged ? { kind: "none" } : { kind: "contact_share" };
+  }
+  if (PHOTO_REQ.test(t)) {
+    const photoNeg = NEG.test(low);
+    return photoNeg || hedged ? { kind: "none" } : { kind: "photo" };
+  }
   const m = TEXT_REQ.exec(t);
-  if (m && !negated) return { kind: "text", body: m[1]!.trim() };
+  if (m) {
+    const verb = m[1]!.toLowerCase();
+    let body = m[2]!.trim();
+    if (/^\s*(?:can|could|would)\s+(?:you|u)\b/i.test(t) && /\?\s*$/.test(t) && (verb === "tell" || verb === "let")) {
+      body = body.replace(/\?+\s*$/, "").trim();
+    }
+    const preVerb = t.slice(0, m.index + m[0].indexOf(m[1]!)).toLowerCase();
+    const requestNegated = /\b(?:don'?t|do not|never|no need to|not)\b/.test(preVerb);
+    if (!requestNegated) return { kind: "text", body };
+  }
   return { kind: "none" };
 }
 
