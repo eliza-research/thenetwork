@@ -333,6 +333,34 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     }
   });
 
+  await b.run("traveler recall: count compatible pairs in their actual shared city once", async () => {
+    for (const arm of ["visitor", "returned", "both-away", "two-cities"] as const) {
+      const opts = scenarioWorldOptions({
+        name: `traveler-recall-${arm}`, description: "Recall follows actual presence rather than home city.", seed: 83, days: 2,
+        personas: ["a", "b"].map(ref => ({ ref, age: 30, city: "nyc" as const, interests: ["film", "books", "coffee"], desires: ["new_friends"], capacity: 1, socialEnergy: 1, join: { day: 0, hour: 9 } })),
+        actions: [], expectations: [],
+      }, { network: () => new StubNetwork({ seed: 83, randomIntros: false }) });
+      for (const p of opts.personas) { p.hidden.boundaries = []; p.hidden.openness = 1; p.relationships = []; p.secondaryCity = undefined; p.hidden.trips = []; }
+      const [a, peer] = opts.personas;
+      if (arm === "visitor" || arm === "returned") {
+        peer!.homeCity = "sf";
+        peer!.hidden.trips = [{ city: "nyc", fromDay: 0, toDay: arm === "visitor" ? 3 : 0 }];
+      } else if (arm === "both-away") {
+        for (const p of opts.personas) p.hidden.trips = [{ city: "sf", fromDay: 0, toDay: 3 }];
+      } else {
+        for (const p of opts.personas) p.secondaryCity = "sf";
+      }
+      const w = new World(opts), r = await w.run();
+      const latent = r.records.find((x): x is Extract<RunRecord, { type: "latent_opportunities" }> => x.type === "latent_opportunities")!;
+      const city = arm === "both-away" ? "sf" : "nyc";
+      const verdict = w.oracle.evaluate({ id: `latent:${a!.id}:${peer!.id}`, kind: "intro", participants: [a!.id, peer!.id], city, window: { start: latent.t, end: latent.t } });
+      expect(verdict.quality).toBeGreaterThan(0.9);
+      expect(verdict.compatible).toBe(arm !== "returned");
+      expect(latent.pairs.length).toBe(arm === "returned" ? 0 : 1);
+      if (latent.pairs.length) expect(latent.pairs[0]!.quality).toBe(verdict.quality);
+    }
+  });
+
   // ---- conformance rules for networkPack (engine level) ---------------------------------------------------
   await conformance(b, networkPack, { seeds: o.quick ? [1, 2] : [1, 2, 3, 4] });
 }

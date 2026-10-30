@@ -92,3 +92,31 @@ Tracked quality targets are not counted as passes or weakened.
 Network invariant violations, canary leaks, and minor contacts remain zero.
 Both network fingerprints are identical before and after:
 `24bb81f068060b33` for the ten-day seed-3 run and `361f8cc2648fb9a6` for consent versus push.
+
+## Traveler recall extension
+
+The recall denominator also used home cities instead of actual presence (PRD 34.4).
+A compatible NYC resident and SF visitor were omitted, even while both could meet in NYC.
+Two NYC residents visiting SF were also omitted because evaluation used their empty home city.
+
+Enumerate each persona's currently available cities with the existing `presentIn` rule.
+Evaluate shared cities until one compatible opportunity is found, then count the pair once.
+Keep the pair identifier, chemistry, relationship exclusion, and adult-only policy unchanged.
+Checking only home cities loses visitors. Counting each shared city would inflate the denominator.
+
+One additional gate runs four complete two-day worlds with seed 83 and two synthetic adults.
+The same fixture and command run before and after the recall change.
+The original common-presence fix remains present in the before version.
+
+| Recall arm | Before pairs | After pairs |
+|---|---|---|
+| NYC resident and visiting SF resident | 0 | 1 |
+| Visitor returned before measurement | 0 | 0 |
+| Both NYC residents visiting SF | 0 | 1 |
+| Both available in NYC and SF | 1 | 1 |
+
+Each arm checks the actual World `latent_opportunities` record against the oracle verdict.
+Pair quality remains above 0.9. The returned visitor stays incompatible in NYC.
+Run `bun run sim --only network` and expect both travel gates to pass.
+Focused gates pass. The change uses no model calls and adds no external client qualification.
+The earlier five-patch qualification above predates this extension.
