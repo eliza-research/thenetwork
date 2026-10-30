@@ -401,8 +401,11 @@ export function gates(a: ArmResult, random: ArmResult): Gate[] {
 export function gates3(a: ArmResult, random: ArmResult): Gate[] {
   const M = (f: (m: SlopMetrics) => number, r = a) => mean(r.metrics.map(f));
   const X = (f: (e: Extra) => number, r = a) => mean(r.extra.map(f));
-  const cut = (f: (e: Extra) => number) => 1 - X(f) / Math.max(1e-9, X(f, random));
-  const cutM = (f: (m: SlopMetrics) => number) => 1 - M(f) / Math.max(1e-9, M(f, random));
+  // A zero random-arm baseline makes a cut undefined, not 100%: the 1e-9 floor
+  // let an arm pair with no events at all report a perfect cut and pass.
+  // gates() above divides raw, so 0/0 is NaN and the gate cannot pass; match it.
+  const cut = (f: (e: Extra) => number) => { const b = X(f, random); return b > 0 ? 1 - X(f) / b : NaN; };
+  const cutM = (f: (m: SlopMetrics) => number) => { const b = M(f, random); return b > 0 ? 1 - M(f) / b : NaN; };
   const sdr = M(m => m.secondDateRate), sdrR = M(m => m.secondDateRate, random);
   const sec = M(m => m.secondDateRate * m.dates), secR = M(m => m.secondDateRate * m.dates, random);
   const fair = fairnessRatios(a), fairF = fairnessRatios(a, true);
