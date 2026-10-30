@@ -65,7 +65,8 @@ export function peonSeats<S extends SnapshotLike>(snap: S): S {
     if (typeof owner.age !== "number" || !Number.isInteger(owner.age) || owner.age < 18) continue;
     const id = seatIdOf(p.id);
     if (byId.has(id)) continue;
-    members.push({ ...owner, id, age: 18, joinedAt: p.createdAt, seatOwner: owner.id } as Member);
+    // Normal managers' postings use the job slate; keep quieter participation states in force.
+    members.push({ ...owner, id, state: owner.state === "normal" ? "open" : owner.state, age: 18, joinedAt: p.createdAt, seatOwner: owner.id } as Member);
     let posted: number | undefined;
     for (const f of snap.facets) {
       if (f.memberId !== owner.id) continue;
