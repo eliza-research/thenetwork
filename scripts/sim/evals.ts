@@ -13,6 +13,7 @@ import { APPS, type AppId } from "../../packages/platform/src/apps.ts";
 import { MemoryPeopleStore } from "../../packages/platform/src/store.ts";
 import { outputLeaks } from "../../packages/mcp/src/leaks.ts";
 import { Block, expect } from "./gate.ts";
+import { planAgainOf } from "../../packages/network/src/classify.ts";
 
 const ROOT = `${import.meta.dir}/../../evals`;
 const jsonl = async <T>(name: string): Promise<T[]> => (await Bun.file(`${ROOT}/${name}`).text()).trim().split("\n").filter(Boolean).map(l => JSON.parse(l) as T);
@@ -108,6 +109,10 @@ export async function evalsBlock(b: Block): Promise<void> {
   const neg = await jsonl<{ text: string }>("network/negations.jsonl");
   const negBad = neg.filter(l => { const x = extractProfile(l.text); return x.desireIds.length || x.interests.length || classify(l.text).kind === "people_request"; }).map(l => l.text);
   b.gate(`negated wants (n ${neg.length}): 0 read as a want, interest or request`, neg.length >= 100 && negBad.length === 0, negBad.slice(0, 5).join(" | "));
+
+  const again = await jsonl<{ text: string; label: "yes" | "no" | "unclear" }>("network/plan-again.jsonl");
+  const againMiss = again.filter(l => planAgainOf(l.text) !== l.label).map(l => `${JSON.stringify(l.text)} -> ${planAgainOf(l.text)} (want ${l.label})`);
+  b.gate(`plan again answers (n ${again.length}): every row read as labelled`, again.length >= 40 && againMiss.length === 0, againMiss.slice(0, 5).join("; "));
 
   // ---- core reply parser -------------------------------------------------------------------------
   const replies = await jsonl<{ text: string; label: ReplyAnswer }>("replies.jsonl");
