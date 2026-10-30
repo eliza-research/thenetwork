@@ -474,7 +474,18 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       for (const id of [a, b]) count.set(id, (count.get(id) ?? 0) + 1);
     }
   }
-  // Alternates are never invited elsewhere this run.
-  for (const p of out.plans) p.alternates = p.alternates.filter(id => !p.invited.includes(id) && !out.plans.some(q => q !== p && q.invited.includes(id)));
+  // Alternates are never invited elsewhere this run, nor duplicated across plans.
+  const allInvited = new Set<MemberId>([
+    ...out.sessions.flatMap(p => p.invited),
+    ...out.offers.flatMap(o => o.first.invited),
+    ...out.repeats.flatMap(p => p.invited),
+    ...out.plans.flatMap(p => p.invited),
+    ...out.partners.flatMap(p => p.invited),
+  ]);
+  const seenAlternates = new Set<MemberId>();
+  for (const p of [...out.repeats, ...out.plans]) {
+    p.alternates = p.alternates.filter(id => !allInvited.has(id) && !seenAlternates.has(id));
+    for (const id of p.alternates) seenAlternates.add(id);
+  }
   return out;
 }

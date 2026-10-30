@@ -108,6 +108,15 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
       const plans = allPlans(wk);
       expect(plans.length).toBeGreaterThan(0);
       for (const p of plans) for (const id of [...p.invited, ...p.alternates, ...(p.hostId ? [p.hostId] : [])]) expect(canBeMatched(w.get(id)!.m.age)).toBe(true);
+      const invitedIds = new Set<MemberId>(plans.flatMap(p => p.invited));
+      const seenAlts = new Set<MemberId>();
+      for (const p of plans) {
+        for (const alt of p.alternates) {
+          expect(invitedIds.has(alt)).toBe(false);
+          expect(seenAlts.has(alt)).toBe(false);
+          seenAlts.add(alt);
+        }
+      }
     }
   });
 
