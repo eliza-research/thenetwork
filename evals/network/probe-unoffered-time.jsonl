@@ -1,0 +1,14 @@
+{"text":"Friday night works","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":[]}
+{"text":"Friday works","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":[]}
+{"text":"Friday evening works","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":[]}
+{"text":"Friday after work works","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":[]}
+{"text":"Saturday 11am works for me","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":["b"]}
+{"text":"Sunday 2pm works","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":["c"]}
+{"text":"How about a different day?","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"yes","keys":[]}
+{"text":"Friday night please","options":["Thursday 7pm","Saturday 11am","Sunday 2pm"],"answer":"unclear","keys":[]}
+{"text":"Friday works","options":["Saturday 10am","Sunday 10am"],"answer":"yes","keys":[]}
+{"text":"Yes, that works. I get off work at 6pm","options":["Saturday 10am","Sunday 10am"],"answer":"yes","keys":["a","b"]}
+{"text":"yes! I'm free, I usually finish work at 6pm","options":["Saturday 10am","Sunday 10am"],"answer":"yes","keys":["a","b"]}
+{"text":"6pm works","options":["Saturday 10am","Sunday 10am"],"answer":"yes","keys":[]}
+{"text":"yes, I get out of work at 6pm","options":["Saturday 10am","Sunday 10am"],"answer":"yes","keys":["a","b"]}
+{"text":"yes, I'm free after work at 6pm","options":["Saturday 10am","Sunday 10am"],"answer":"yes","keys":["a","b"]}
