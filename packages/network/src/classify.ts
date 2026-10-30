@@ -237,22 +237,35 @@ const AGE_RX: AgeRule[] = [
   { rx: new RegExp(`\\b${ME}\\s+a\\s+(?:high schooler|hs student|high school student)\\b`), age: () => 15 },
 ];
 
+/** Every match of one rule. A rule can match more than once in one message. */
+function allMatches(rx: RegExp, text: string): RegExpExecArray[] {
+  const re = new RegExp(rx.source, rx.flags.includes("g") ? rx.flags : `${rx.flags}g`);
+  const out: RegExpExecArray[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    out.push(m);
+    if (m[0].length === 0) re.lastIndex++;
+  }
+  return out;
+}
+
 /**
  * The youngest age the sender states about themselves, and the youngest they state in the explicit
- * form ("I am 12 years old"). First person and present tense only, so "my son is 12", "I teach
- * middle school" or "I act like I'm 12" never change the member's age.
+ * form ("I am 12 years old"). Every occurrence counts: "I'm 30. I'm 15." is 15, and
+ * "I am 40 years old. I am 12 years old." is 12. First person and present tense only, so
+ * "my son is 12", "I teach middle school" or "I act like I'm 12" never change the member's age.
  */
 export function agesStated(body: string): { age?: number; explicit?: number } {
   const t = normText(body);
   const out: { age?: number; explicit?: number } = {};
   for (const { rx, age, explicit } of AGE_RX) {
-    const m = rx.exec(t);
-    if (!m) continue;
-    if (NOT_NOW.test(t.slice(Math.max(0, m.index - 24), m.index))) continue;
-    const a = age(m);
-    if (!Number.isFinite(a)) continue;
-    if (out.age === undefined || a < out.age) out.age = a;
-    if (explicit && (out.explicit === undefined || a < out.explicit)) out.explicit = a;
+    for (const m of allMatches(rx, t)) {
+      if (NOT_NOW.test(t.slice(Math.max(0, m.index - 24), m.index))) continue;
+      const a = age(m);
+      if (!Number.isFinite(a)) continue;
+      if (out.age === undefined || a < out.age) out.age = a;
+      if (explicit && (out.explicit === undefined || a < out.explicit)) out.explicit = a;
+    }
   }
   return out;
 }
@@ -268,15 +281,15 @@ const OTHER_AGE_RX: AgeRule[] = [
   { rx: /\b(?:he|she|they) (?:said|told me|says|mentioned) (?:he|she|they)(?:'s|'re| is| are| was| were) (?:only |just )?(\d{1,2})\b/, age: m => Number(m[1]) },
 ];
 
-/** An age the sender states about someone else ("he's only 15", "she's in high school"); under 18 only. */
+/** The youngest age the sender states about someone else ("he's 20. She's 14." is 14). Under 18 only. */
 export function otherAgeStated(body: string): number | undefined {
   const t = normText(body);
   let best: number | undefined;
   for (const { rx, age } of OTHER_AGE_RX) {
-    const m = rx.exec(t);
-    if (!m) continue;
-    const a = age(m);
-    if (Number.isFinite(a) && a < 18 && a > 0 && (best === undefined || a < best)) best = a;
+    for (const m of allMatches(rx, t)) {
+      const a = age(m);
+      if (Number.isFinite(a) && a < 18 && a > 0 && (best === undefined || a < best)) best = a;
+    }
   }
   return best;
 }
