@@ -397,6 +397,8 @@ interface Request {
   toldRetryNone?: boolean;
   /** The requester's own "no" to candidates; the second one closes the request (matching-e2e-3). */
   noCount?: number; closed?: boolean;
+  /** An explicit withdrawal ends this search; a later explicit ask is a new request. */
+  withdrawn?: boolean;
   /** When the requester last got a confirm question for it: at most one per 72 hours. */
   lastConfirmAt?: number;
 }
@@ -1031,7 +1033,16 @@ export class ConsentNetwork implements NetworkUnderTest {
     x.interests.forEach(t => m.learned.interests.add(t));
     x.skills.forEach(t => m.learned.skills.add(t));
     x.desireIds.forEach(t => m.learned.desires.set(t, now));
-    for (const d of x.notWanted) m.learned.desires.delete(d);
+    for (const d of x.notWanted) {
+      m.learned.desires.delete(d);
+      for (const r of this.requests) {
+        if (r.memberId !== m.id || r.kind !== "people" || r.desireId !== d || (r.outcome !== "none" && r.outcome !== "probing")) continue;
+        const opp = r.oppId ? this.opps.get(r.oppId) : undefined;
+        if (opp && (opp.stage === "review" || opp.stage === "probing")) this.close(opp, "requester unavailable");
+        r.closed = true; r.withdrawn = true; r.outcome = "none";
+        this.ctx.log("request_result", { requestId: r.id, memberId: m.id, outcome: "withdrawn" });
+      }
+    }
     if (x.area && NEIGHBORHOOD.has(x.area)) { m.learned.area = x.area; m.area = x.area; m.areaUnknown = false; }
     else if (x.areaUnknown && !m.area && !m.areaUnknown) { m.areaUnknown = true; this.ctx.log("area_unknown", { memberId: m.id }); }
     if (x.eveningsOpen !== undefined) m.learned.eveningsOpen = x.eveningsOpen;
@@ -1584,7 +1595,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const now = this.now();
     // Repeat asks ("still hoping to...") are the same request: don't open another one while one is
     // in progress, and don't re-search the same want more than once every 3 days.
-    const prior = [...this.requests].reverse().find(r => r.memberId === m.id && r.kind === "people" && r.outcome !== "booked" && r.outcome !== "fulfilled" && (r.desireId ?? r.category) === (c.desireId ?? c.category));
+    const prior = [...this.requests].reverse().find(r => r.memberId === m.id && r.kind === "people" && r.outcome !== "booked" && r.outcome !== "fulfilled" && !r.withdrawn && (r.desireId ?? r.category) === (c.desireId ?? c.category));
     // The re-search interval is the member's effort overlay (NC; the floor is 3 days).
     if (prior && (prior.outcome === "probing" || now - prior.at < this.effort(m.id).intentReSearchDays * DAY)) {
       if (o.quiet) return;
