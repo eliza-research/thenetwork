@@ -144,16 +144,8 @@ export function activityFit(w: World, id: MemberId, pcfg: PlansConfig = DEFAULT_
  * holds, category opt-out, only-when-asked and the reliability hold-out all exclude.
  */
 export function planMemberReason(w: World, id: MemberId, role: Role = "guest"): string | null {
-  const check = { category: plansOf(w).lane, role, format: "small_group" as const, timeSensitive: true };
-  const exempt = (reason: string | null) => reason === "interruption_budget" || (reason === "contribution_budget" && role !== "host");
-  const r = memberReason(w, id, check);
-  if (!exempt(r)) return r;
-  // A budget exception must not hide a later quota, cooldown or reliability rule.
-  for (const rule of w.pack.eligibility.memberRules) {
-    const reason = rule.check(w, id, w.get(id)!, check);
-    if (reason && !exempt(reason)) return reason;
-  }
-  return null;
+  const r = memberReason(w, id, { category: plansOf(w).lane, role, format: "small_group", timeSensitive: true });
+  return r === "interruption_budget" || (r === "contribution_budget" && role !== "host") ? null : r;
 }
 
 // ------------------------------------------------------------------------------------------------
