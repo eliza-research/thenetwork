@@ -14,6 +14,7 @@ import { allowedAt, ConsentNetwork, NY, OUTREACH, SIM_AUTO_REVIEWER, VENUES, typ
 import { styleViolations } from "../../packages/network/src/copy.ts";
 import { DATA_DIR } from "../synthetic/common.ts";
 import { conformance } from "./conformance.ts";
+import { expansionDesireGate } from "./engine-expansion-desire.ts";
 import { Block, digest, expect } from "./gate.ts";
 
 type Msg = Extract<RunRecord, { type: "message" }>;
@@ -36,6 +37,7 @@ async function world(days: number, seed = 3, network: NetworkOptions = { review:
 }
 
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
+  await expansionDesireGate(b);
   // ---- invariants: NYC, 10 days, seed 3, simulated reviewer ---------------------------------------
   const run = await world(10);
   await run.w.advanceTo(run.w.end);
