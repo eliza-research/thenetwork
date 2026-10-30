@@ -334,6 +334,8 @@ type PStatus = "queued" | "probing" | "available" | "unavailable" | "yes" | "no"
 interface Opp {
   id: string; origin: Origin; kind: Proposal["kind"]; category: Category; objective: string; detail: string;
   participants: MemberId[]; alternates: MemberId[]; primed: Set<MemberId>; requester?: MemberId;
+  /** Job application replies, kept apart from availability and later cancellations. Optional for stored states predating this field. */
+  seatResponses?: Record<MemberId, "yes" | "no" | "expired">;
   status: Map<MemberId, PStatus>; explanations: Record<MemberId, string>;
   stage: "review" | "probing" | "scheduled" | "done" | "closed"; deadline: number; createdAt: number;
   score: number; components: ScoreComponents; generator: string; exploration: boolean;
@@ -2290,6 +2292,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   private onProbeAnswer(m: MemberState, oppId: string, yes: boolean, keys: string[] = []) {
     const o = this.opps.get(oppId);
     if (!o || o.stage !== "probing" || o.status.get(m.id) !== "probing") return;
+    if (o.seat) o.seatResponses = { ...o.seatResponses, [m.id]: yes ? "yes" : "no" };
     const retry = !!o.timeRetry?.includes(m.id);
     const offered = o.offered?.[m.id] ?? [];
     const picked = offered.filter(x => keys.includes(x.key));
@@ -2556,7 +2559,18 @@ export class ConsentNetwork implements NetworkUnderTest {
       }
     }
     // A review rejection or expiry is not something the members did: no interaction record.
-    if (!wasReview) this.interactions.push({ id: o.id, kind: o.kind, category: o.category, participants: [...o.participants], at: this.now(), outcome: reason === "declined" ? "declined" : wasProbing ? "expired" : "cancelled", declinedBy: o.participants.filter(p => o.status.get(p) === "no") });
+    if (!wasReview) {
+      const responses = o.seatResponses;
+      const declinedBy = o.participants.filter(p => responses ? responses[p] === "no" : o.status.get(p) === "no");
+      this.interactions.push({
+        id: o.id, kind: o.kind, category: o.category, participants: [...o.participants], at: this.now(),
+        outcome: reason === "declined" || (responses && declinedBy.length) ? "declined" : wasProbing ? "expired" : "cancelled", declinedBy,
+        ...(responses ? {
+          acceptedBy: o.participants.filter(p => responses[p] === "yes"),
+          noResponse: o.participants.filter(p => responses[p] === "expired"),
+        } : {}),
+      });
+    }
     this.ctx.log(wasProbing ? "probe_closed" : "opportunity_closed", { proposalId: o.id, reason: wasProbing ? `not sent: ${reason}` : reason });
   }
 
@@ -3377,6 +3391,8 @@ export class ConsentNetwork implements NetworkUnderTest {
         // They said yes and were offered other times: no answer keeps the yes (the best time for everyone).
         if (o.timeRetry?.includes(p)) { o.status.set(p, "available"); continue; }
         if (o.contacted.has(p)) { this.counters.probeExpired++; this.ctx.log("probe_answer", { oppId: o.id, memberId: p, yes: false, expired: true }); }
+        // An unsent probe or another cancellation is not an unanswered application.
+        if (o.seat && sent !== undefined) o.seatResponses = { ...o.seatResponses, [p]: "expired" };
         const m = this.members.get(p);
         if (m?.awaiting?.oppId === o.id) m.awaiting = undefined;
         o.status.set(p, "unavailable");
