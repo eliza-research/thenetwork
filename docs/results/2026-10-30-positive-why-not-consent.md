@@ -94,25 +94,28 @@ I don't see why not, but I can't -> no
 
 ## Verification
 
+Linux x64 with Bash and PostgreSQL 16:
+
 ```text
 bun run sim --quick
-275/276 blocking gates pass; 23 tracked gates stay off target
+PASS: 301/301 blocking gates, 17 tracked gates off target
 
 bun run typecheck
 exit 0
 
 bun run test:integration
-359 pass, 252 skip, 28 fail
+681 pass, 8 skip, 0 fail
 
 bun run test:e2e
-0 pass, 47 skip, 0 fail
+42 pass, 1 skip, 0 fail
 ```
 
-The full simulation has one failure on this Windows host:
-`sites-infra-4` runs the Wrangler shell guard through `/bin/bash`. The same
-gate failed on the unmodified base. The integration suite has the same host
-limits: it has no `/bin/bash` and no PostgreSQL server, and several site-build
-checks assume a Linux path.
+The eight integration skips need isolated PostgreSQL cleanup authority. The
+one e2e skip is the optional browser feedback case.
+
+The first Windows host run could not execute the Bash deploy guard or the
+PostgreSQL suites. The Linux run above covers both. The full simulation still
+exits 0 with tracked gates off target.
 
 ## Provider and model
 
