@@ -190,6 +190,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
   const homeOf = (id: MemberId): Neighborhood | undefined => info.get(id)?.home;
   const tolOf = (id: MemberId) => info.get(id)?.tolerance ?? 40;
   const eligible = (id: MemberId) => !!w.get(id) && !isMinor(w, id) && !planMemberReason(w, id);
+  const isPairBlocked = (a: MemberId, b: MemberId) => w.blocked.has(a < b ? `${a}|${b}` : `${b}|${a}`);
   const venueById = new Map(inp.venues.map(v => [v.id, v]));
   const taken = new Set<MemberId>();
   const out: FriendsWeek = { sessions: [], offers: [], repeats: [], plans: [], partners: [] };
@@ -212,7 +213,11 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
     let invited = p.invited.filter(fits);
     let alternates = p.alternates.filter(fits);
     // Fill dropped seats from alternates (group plans only).
-    while (!p.partner && invited.length < p.invited.length && alternates.length) invited.push(alternates.shift()!);
+    while (!p.partner && invited.length < p.invited.length && alternates.length) {
+      const cand = alternates.shift()!;
+      if (!invited.some(x => isPairBlocked(cand, x))) invited.push(cand);
+    }
+    alternates = alternates.filter(alt => !invited.some(x => isPairBlocked(alt, x)));
     if (invited.length < (p.partner ? 2 : Math.min(p.quorum, 3))) return null;
     if (!p.partner && invited.length < pcfg.size.min && source === "new") return null;
     const plan: FriendsPlan = {
@@ -285,17 +290,26 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       // (pairs, groups without crews, and groups whose crew offer did not form).
       if (pos.length < 2) continue;
       const ids = pos.slice(0, 6).sort();
-      if (ids.some((x, i) => ids.slice(i + 1).some(y => w.blocked.has(x < y ? `${x}|${y}` : `${y}|${x}`)))) continue;
+      if (ids.some((x, i) => ids.slice(i + 1).some(y => isPairBlocked(x, y)))) continue;
       const a = activityById.get(o.activityId);
       if (!a) continue;
       const start = nextSameSlot(o.at, now, pcfg);
       if (start > now + pcfg.horizonDays * DAY + DAY) continue;
       const v = o.venueId ? venueById.get(o.venueId) : undefined;
       const partner = ids.length === 2;
+      const altPool: MemberId[] = [];
+      if (!partner) {
+        for (const id of o.attended) {
+          if (ids.includes(id) || !eligible(id) || taken.has(id)) continue;
+          if (ids.some(x => isPairBlocked(id, x)) || altPool.some(x => isPairBlocked(id, x))) continue;
+          altPool.push(id);
+          if (altPool.length >= 2) break;
+        }
+      }
       const base: Plan = {
         id: `plan_${sha256(`repeat|${o.planId}|${start}|${ids.join(",")}`).slice(0, 16)}`, city: "nyc", activityId: a.id, ...(v ? { venueId: v.id } : {}),
         place: v ? { name: v.name, area: v.area } : { name: "the same spot" }, window: { start, end: start + a.durationMin * 60_000 },
-        invited: ids, alternates: o.attended.filter(id => !ids.includes(id) && eligible(id) && !taken.has(id)).slice(0, partner ? 0 : 2), partner,
+        invited: ids, alternates: altPool, partner,
         size: partner ? { min: 2, target: 2, max: 2 } : { min: 3, target: ids.length, max: 6 }, quorum: partner ? 2 : Math.min(3, ids.length),
         probeDeadline: start - pcfg.deadlineBeforeStartHours * HOUR, score: 0.7, u: {}, familiar: {}, createdAt: now, category: "social",
       };

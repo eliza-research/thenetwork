@@ -121,4 +121,23 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
       for (const p of allPlans(wk)) for (const id of [...p.invited, ...p.alternates]) expect(flagged.has(id)).toBe(false);
     }
   });
+
+  await b.run("conformance friends: blocked pairs never co-occur in invited or alternates across plans", () => {
+    for (const seed of seeds) {
+      const { w, wk } = weekOf(seed);
+      const isBlocked = (a: MemberId, b: MemberId) => w.blocked.has(a < b ? `${a}|${b}` : `${b}|${a}`);
+      for (const p of allPlans(wk)) {
+        for (let i = 0; i < p.invited.length; i++) {
+          for (let j = i + 1; j < p.invited.length; j++) {
+            expect(isBlocked(p.invited[i]!, p.invited[j]!)).toBe(false);
+          }
+        }
+        for (const alt of p.alternates) {
+          for (const inv of p.invited) {
+            expect(isBlocked(alt, inv)).toBe(false);
+          }
+        }
+      }
+    }
+  });
 }
