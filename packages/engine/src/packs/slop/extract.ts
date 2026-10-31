@@ -399,8 +399,6 @@ const decadeOf = (token: string): number => DECADE_WORD[token] ?? Number(token.r
 const DECADE_TOKEN = "(?:20|30|40|50|60)'?s|twenties|thirties|forties|fifties|sixties";
 const DECADE = `(?:(early|mid|late)[\\s-]*)?(${DECADE_TOKEN})`;
 const RANGE_CTX = /\b(?:their|his|her|range|ages?|aged|looking|lookin|into|date|dating|seeking|prefer|want|anyone|someone|somebody|people|folks|guys|girls|women|men|ladies|dudes|between|from|around|older|younger|nb|enbies|partner|ideally|preferably)\b/;
-/** Words that make a following age about someone the member seeks, not about the member. */
-const SEEK_CTX = /\b(?:looking for|lookin for|into|seeking|prefer|want|dating|date|someone|somebody|anyone)\b/;
 function decadeBounds(part: string | undefined, d: number): [number, number] {
   return part === "early" ? [d, d + 3] : part === "mid" ? [d + 3, d + 6] : part === "late" ? [d + 6, d + 9] : [d, d + 9];
 }
@@ -426,16 +424,25 @@ function readAgeRange(t: string, asked: OnboardField | undefined, selfAge?: numb
       range = cand([lo, hi] as [number, number], s, m, 0.95);
     }
     // Two halves of one decade: "early to mid thirties", "early-to-mid 30s" -> [30, 36].
+    // A descending pair ("late to early thirties") is not a usable range: refuse it and swallow the
+    // whole phrase so the general matcher below cannot read a misleading suffix ("early thirties").
+    let skipDecadeUntil = -1;
     for (const m of all(new RegExp(`\\b(early|mid|late)\\s*(?:-|to|through|thru|–|and)\\s*(early|mid|late)\\s+(${DECADE_TOKEN})(?![a-z])`), s.text)) {
+      const d = decadeOf(m[3]!);
+      const a = decadeBounds(m[1], d), b = decadeBounds(m[2], d);
+      if (b[0] < a[0]) {
+        skipDecadeUntil = m.index + m[0].length;
+        continue;
+      }
       const before = s.text.slice(Math.max(0, m.index - 12), m.index);
       if (/\b(?:my|i'?m in|im in|in my)\s*$/.test(before) || /\bmy\b/.test(before.slice(-4))) continue;
       if (!isBare && !RANGE_CTX.test(s.text)) continue;
       if (negated(s.text, m.index, 2)) continue;
-      const d = decadeOf(m[3]!);
-      range = cand([Math.max(18, decadeBounds(m[1], d)[0]), decadeBounds(m[2], d)[1]] as [number, number], s, m, 0.85);
+      range = cand([Math.max(18, a[0]), b[1]] as [number, number], s, m, 0.85);
     }
     // Decades: "in their 30s", "late 20s to mid 30s", "late twenties" (never "I'm in my 30s").
     for (const m of all(new RegExp(`\\b${DECADE}(?:\\s*(?:-|to|or|and|through|thru|–)\\s*${DECADE})?(?![a-z])`), s.text)) {
+      if (m.index < skipDecadeUntil) continue;
       const before = s.text.slice(Math.max(0, m.index - 12), m.index);
       if (/\b(?:my|i'?m in|im in|in my)\s*$/.test(before) || /\bmy\b/.test(before.slice(-4))) continue;
       if (!isBare && !RANGE_CTX.test(s.text)) continue;
@@ -454,15 +461,17 @@ function readAgeRange(t: string, asked: OnboardField | undefined, selfAge?: numb
       if (v[1]! < v[0]! || v[1]! < 18 || v[1]! > 99) continue;
       range = cand([Math.max(18, v[0]!), v[1]!] as [number, number], s, m, 0.85);
     }
-    // Fuzzy, one number: "around 30", "about 40", "30ish" -> +/- 3 years. A hedge on the member's own
-    // age ("i'm around 30", "about 30 years old") is an age statement, not a range: never read it as one.
+    // Fuzzy, one number: "around 30", "about 40", "30ish" -> +/- 3 years. A hedge predicated of a
+    // person ("i'm around 30", "my sister is about 30", "he is roughly 35") states that person's
+    // age, not a dating range: never read it as one, not even as a bare answer to the age question.
     if (!range) for (const m of all(/(?<![\d.$])(?:around|about|roughly|approximately|approx\.?|close to)\s+(\d{2})\b|(?<![\d.$])(\d{2})\s*(?:ish|or so)\b/, s.text)) {
       const v = Number(m[1] ?? m[2]);
       if (v < 18 || v > 99) continue;
       const after = s.text.slice(m.index + m[0].length);
       if (RANGE_UNIT_AFTER.test(after) || /^\s*(?:years? old|yrs? old|yo|y\/o)\b/.test(after)) continue;
-      const before = s.text.slice(Math.max(0, m.index - 14), m.index);
-      if (/\b(?:i'?m|im|i am|he'?s|she'?s|they'?re)\s*$/i.test(before) && !SEEK_CTX.test(s.text)) continue;
+      const before = s.text.slice(Math.max(0, m.index - 32), m.index);
+      const cop = /(?:\b(?:i'?m|im|i am|he'?s|she'?s|it'?s|they'?re|we'?re|you'?re|is|are|am|was|were)|'s)\s*$/i.exec(before);
+      if (cop && !/\b(?:someone|somebody|anyone|who|that|whom)\s*$/i.test(before.slice(0, cop.index))) continue;
       if (!isBare && !RANGE_CTX.test(s.text)) continue;
       if (negated(s.text, m.index, 2)) continue;
       range = cand([Math.max(18, v - 3), Math.min(99, v + 3)] as [number, number], s, m, 0.8);
