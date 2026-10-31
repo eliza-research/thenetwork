@@ -46,6 +46,7 @@ const topShare = (xs: number[], q = 0.1) => {
   return s ? v.slice(0, Math.max(1, Math.round(v.length * q))).reduce((a, b) => a + b, 0) / s : 0;
 };
 const div = (a: number, b: number) => (b ? a / b : 0);
+const median = (xs: number[]) => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2; };
 const WEEKS_PER_MONTH = 4.345;
 
 export function slopMetrics(res: SlopRunResult): SlopMetrics {
@@ -126,7 +127,7 @@ export function slopMetrics(res: SlopRunResult): SlopMetrics {
       top10ProposalShare: topShare(realVals(proposalsOf)), top10ProbeShare: topShare(realVals(probesOf)),
     },
     safety,
-    timeToFirstDate: { medianDays: days.length ? days[Math.floor(days.length / 2)]! : null, shareWithDate: div(days.length, real.length) },
+    timeToFirstDate: { medianDays: median(days), shareWithDate: div(days.length, real.length) },
     fairness: { byGroup, byGender, minMaxDateRatio: rates.length ? div(Math.min(...rates), Math.max(...rates)) : 0 },
   };
 }
