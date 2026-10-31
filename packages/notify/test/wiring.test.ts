@@ -106,6 +106,31 @@ describe.skipIf(!pgAvailable)("notify + the Postgres outbound queue", () => {
     expect(await queue.statusOf(sent[0]!.deliveryId)).toBe("suppressed_ineligible");
   });
 
+  test("an assistant whose links went unused twice is pointed at again once the member uses it", async () => {
+    const { clock, now, notifier, sink, r } = await setup({ channel: "imessage", explicit: "claude" });
+    await notifier.setActive(r.personId, "claude", true);
+    const send = async (subject: string) => {
+      await notifier.add(req(r.personId, subject), now());
+      const { sent } = await notifier.dispatch(now(), sink);
+      expect(sent).toHaveLength(1);
+      return sent[0]!;
+    };
+    // Two Claude links nobody tapped: each closes as ignored after the outcome window, so Claude drops out.
+    for (const subject of ["u1", "u2"]) {
+      expect((await send(subject)).delivery).toMatchObject({ mode: "deeplink", assistant: "claude" });
+      clock.advance(notifier.cfg.outcomeWindowMs + 60_000);
+      await notifier.sweep(now());
+    }
+    expect((await send("u3")).delivery).toMatchObject({ mode: "thread", reason: "explicit_link_unused" });
+    // The member opens Claude and asks for their updates there (get_updates through the grant).
+    clock.advance(60_000);
+    await notifier.readUpdates(r.personId, "claude", now());
+    // Claude is in use again: the next update points there.
+    const next = await send("u4");
+    expect(next.delivery).toMatchObject({ mode: "deeplink", assistant: "claude" });
+    expect(next.text).toContain("https://claude.ai/new?q=");
+  });
+
   test("thread hooks: readUpdates clears the inbox; an inbound message counts as acting", async () => {
     const { now, store, notifier, sink, r } = await setup();
     await notifier.add(req(r.personId, "m1", "You have a new match."), now());
