@@ -2979,7 +2979,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (allowance) {
       const item = plans.planItem(o.plan, id, { now, reviewState: "approved", stage: o.plan.partner && id !== o.plan.invited[0] ? "partner" : "first", pcfg: this.pcfg });
       const r = attention.composeMessage({
-        member: this.view(m, now), items: [item], ledger: planLedger(m.id, m.planInvites ?? [], m.replies ?? []), conversation: { outboundSinceInbound: m.outbound ?? 0 },
+        member: this.view(m, now), items: [item], ledger: planLedger(m.id, m.planInvites ?? [], m.replies ?? []),
+        // The member's last message lifts the two-unanswered pause on the plan ledger too (heardFrom resets it for intros).
+        conversation: { outboundSinceInbound: m.outbound ?? 0, ...(m.lastInbound ? { lastInboundAt: m.lastInbound } : {}) },
         now, mode: "digest", cfg: plans.planAllowanceConfig(DEFAULT_ATTENTION, this.pcfg),
       });
       if (!r.send) return this.planDefer(o, id, r.reason || "compose", now);
