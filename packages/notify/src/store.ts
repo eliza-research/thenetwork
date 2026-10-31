@@ -53,6 +53,7 @@ export interface NotifyStore {
 
   signals(personId: string): Promise<SurfaceSignal[]>;
   setActive(personId: string, surface: Surface, active: boolean): Promise<void>;
+  /** The member used this surface: lastUsedAt = at, and its ignored streak ends (surface.ts: a dropped surface comes back). */
   touch(personId: string, surface: Surface, at: number): Promise<void>;
   /** acted: +1 acted, streak reset, lastUsed = at. ignored: +1 ignored, +1 streak. */
   recordOutcome(personId: string, surface: Surface, outcome: "acted" | "ignored", at: number): Promise<void>;
@@ -183,7 +184,9 @@ export class MemoryNotifyStore implements NotifyStore {
   }
 
   async touch(personId: string, surface: Surface, at: number) {
-    this.sig(personId, surface).lastUsedAt = at;
+    const s = this.sig(personId, surface);
+    s.lastUsedAt = at;
+    s.ignoredStreak = 0;
   }
 
   async recordOutcome(personId: string, surface: Surface, outcome: "acted" | "ignored", at: number) {

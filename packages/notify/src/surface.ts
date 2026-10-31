@@ -14,7 +14,7 @@ export interface SurfaceSignal {
   acted: number;
   /** Notifications pointed at this surface that went unused. */
   ignored: number;
-  /** Unused notifications in a row, reset when the member acts on one. */
+  /** Unused notifications in a row, reset when the member acts on one or uses the surface again. */
   ignoredStreak: number;
 }
 
