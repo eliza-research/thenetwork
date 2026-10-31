@@ -266,6 +266,10 @@ interface MemberState {
   weekly?: boolean; lastCheckinAt?: number;
   /** "Only when I ask" (F28): no proactive messages until the member writes again. */
   onlyWhenAsked: boolean;
+  /** The invite-only ntwrk app was joined on the shared line with no invitation (prefs.inviteHold,
+   *  founder decision 2, mvp-gaps "ntwrk"): held out of matching until staff invite them. The
+   *  conversation and their app memberships continue; only matching and proactive are closed. */
+  inviteHold?: boolean;
   /** The one re-engagement after 14 days of silence was used (reset by an inbound message). */
   reengaged: boolean;
   /** An acknowledgement waiting to be folded into the next message. */
@@ -1717,6 +1721,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       // Never two people with one first name in a request: the reveal "meet Bilal B." must be unambiguous.
       if (x.first.toLowerCase() === m.first.toLowerCase()) continue;
       if (x.state === "receiving") continue; // Receiving members are never asked to help others (support-only)
+      if (x.inviteHold) continue; // The invite-only ntwrk app joined with no invitation: never the answer to an ask
       if (this.pairHistory(m.id, x.id, 30)) continue;
       if (!known.has(x.id) || (this.opts.selective && this.responsiveness(x.id) < this.opts.minResponsiveness)) continue;
       const { fit, why, whyBack } = this.askFit(m.id, x.id, req, known);
@@ -3595,6 +3600,9 @@ export class ConsentNetwork implements NetworkUnderTest {
   private gateReason(p: SeatProposal, exceptOpp?: string): string | undefined {
     if (!this.allowedCategories.has(p.category ?? "social")) return "category_not_allowed";
     if (p.participants.some(id => !this.eligibleIn(p, id, exceptOpp))) return "participant_unavailable";
+    // ntwrk is invite-only: a member who joined it on the shared line with no invitation (prefs.inviteHold)
+    // is held out of matching until staff invite them, in any role of any proposal (mvp-gaps "ntwrk").
+    if (p.participants.some(id => this.members.get(id)?.inviteHold)) return "invite_hold";
     if (p.category === "romance") { const why = this.romanceGate(p.participants); if (why) return why; }
     // Receiving is support-only (founder default D1-D18): never ask them to give, host or connect.
     if (p.participants.some(id => this.members.get(id)?.state === "receiving" && CONTRIBUTOR_ROLES.has(p.roles?.[id] as never))) return "receiving_contributor";
@@ -3660,6 +3668,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   private fromProposal(p: Proposal & { seat?: Opp["seat"] }, origin: Origin, now: number): Opp | undefined {
+    if (p.participants.some(id => this.members.get(id)?.inviteHold)) { if (origin === "player") this.ctx.log("proposal_skipped", { proposalId: p.id, reason: "invite_hold" }); return undefined; }
     if (p.participants.some(id => !this.eligibleIn(p, id))) { if (origin === "player") this.ctx.log("proposal_skipped", { proposalId: p.id, reason: "participant unavailable" }); return undefined; }
     const tags = [...new Set(p.participants.flatMap(id => [...(this.knownProfiles().get(id)?.interests ?? [])]))].slice(0, 6);
     // Engine explanations may name the other person ("Sam K.: lives near..."); members only ever see
@@ -4413,6 +4422,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (r) {
       const q = r.prefs?.quietHours;
       if (q && (q[0] !== m.quietHours[0] || q[1] !== m.quietHours[1])) m.quietHours = [q[0], q[1]];
+      if (r.prefs?.inviteHold) m.inviteHold = true;
       if (r.state && r.state !== m.state) {
         m.state = r.state;
         if (["open", "normal", "quiet", "receiving", "paused"].includes(r.state)) this.emit({ type: "state_changed", member: m.id, state: r.state as "open" }, `${m.id}:${r.state}:${this.now()}`);
@@ -4446,7 +4456,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         quietHours: mem?.prefs.quietHours ?? [21, 9], state: mem?.state ?? "normal",
         // Fail closed: no valid adult age means treated as a minor (core policy).
         age: mem?.age, minor: isMinor(mem?.age), minorSignal: false, stage: "new",
-        optedOut: false, pendingAsks: [], unanswered: 0, onlyWhenAsked: false, reengaged: false,
+        optedOut: false, pendingAsks: [], unanswered: 0, onlyWhenAsked: false, reengaged: false, ...(mem?.prefs.inviteHold ? { inviteHold: true } : {}),
         proactive: [], outbound: 0, lastInbound: 0, lastAskAt: 0, joinedAt: this.now(), invitedBy: mem?.invitedBy,
         invites: [], invitesBlockedUntil: 0, lastGrowthAsk: 0,
         learned: { interests: new Set(), skills: new Set(), desires: new Map() }, noShows: 0, completedSinceNoShow: 0, msgsIn: 0, asked: 0, answered: 0,

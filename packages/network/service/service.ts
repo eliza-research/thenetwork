@@ -720,11 +720,11 @@ export class NetworkService implements RuntimeHost {
    * first name, age) and what the person gave at join (neighborhood, interests). The phone stays in
    * platform.phone_identities. Written with app.app_id set (migration 0004).
    */
-  async createMember(rt: NetworkRuntime, m: Membership, info: { age: number; firstName: string; homeCity?: string; neighborhood?: string; interests?: string[]; zip?: string }) {
+  async createMember(rt: NetworkRuntime, m: Membership, info: { age: number; firstName: string; homeCity?: string; neighborhood?: string; interests?: string[]; zip?: string; inviteHold?: boolean }) {
     const now = new Date(this.clock.now());
     const homeCity = info.homeCity ?? homeCityOf(m.profile.homeCity) ?? rt.city;
     // The app's categories (packs.ts): slop is dating and only for adults; peon is work; friends is social and hobby.
-    const prefs = { ...rt.wiring.prefs(info.age), quietHours: [21, 9], formats: ["one_to_one", "small_group", "event"], maxTravelMinutes: 45, onlyWhenAsked: false };
+    const prefs = { ...rt.wiring.prefs(info.age), quietHours: [21, 9], formats: ["one_to_one", "small_group", "event"], maxTravelMinutes: 45, onlyWhenAsked: false, ...(info.inviteHold ? { inviteHold: true } : {}) };
     await this.sql.begin(async tx => {
       await tx`select set_config('app.app_id', ${rt.app.id}, true)`;
       await tx`insert into network.members (app_id, id, person_id, name, home_city, home_area, account_status, age, prefs, joined_at)
@@ -1447,7 +1447,10 @@ export class NetworkService implements RuntimeHost {
     await this.accounts.recordConsent({ e164, app: app.id, line: ev.to ? normalizeAddress(ev.to) : null, state: "opted_in", source: "inbound_message", wording: ask, ref: rowId, at: this.consentAt(ev) });
     if (membership.state !== "active") return "joined";
     rt = this.runtimeForHome(app.id, homeCity ?? rt.city) ?? rt;
-    await this.createMember(rt, membership, { age: Math.min(age, check.effective ?? age), firstName: name, homeCity });
+    // The shared line's no-keyword join (founder decision 2) enters the invite-only ntwrk app with no
+    // invitation: the conversation and the app enrollments go on (enroll, below), but the member
+    // stays out of matching (inviteHold) until staff invite them, because ntwrk is invite-only.
+    await this.createMember(rt, membership, { age: Math.min(age, check.effective ?? age), firstName: name, homeCity, inviteHold: app.id === "ntwrk" && route.shared && !invited });
     // Their answer is their first message: the Network welcomes them as a reply to it.
     await this.memberMessage(rt, membership.memberId, ev, rowId, undefined);
     // A person who uses another app with this number: the link notice (never names the other app).
