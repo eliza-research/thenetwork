@@ -4,8 +4,12 @@
 // attention and plans invariants on the consent arms; and the shared conformance rules for networkPack.
 import { readdirSync } from "node:fs";
 import { DAY, HOUR, MINUTE, type MemberId } from "../../packages/core/src/index.ts";
+import { resolveConfig } from "../../packages/engine/src/config.ts";
+import { localEmbed } from "../../packages/engine/src/embed.ts";
 import { DEFAULT_ATTENTION } from "../../packages/engine/src/index.ts";
 import { networkPack } from "../../packages/engine/src/packs/network/index.ts";
+import { baseMember, emptyInput } from "../../packages/engine/src/testkit.ts";
+import { World as EngineWorld } from "../../packages/engine/src/world.ts";
 import type { RunRecord } from "../../packages/core/src/index.ts";
 import { computeMetrics } from "../../packages/sim/src/judge/metrics.ts";
 import { INTERESTS, PolicyPersonaAgent, StubNetwork, World, loadScenario, runScenario as runSimScenario, runScenarioPassK } from "../../packages/sim/src/index.ts";
@@ -35,7 +39,49 @@ async function world(days: number, seed = 3, network: NetworkOptions = { review:
   return { w, net, records, start, personas: new Map(w.personaList().map(p => [p.id, p])) };
 }
 
+/**
+ * Invite chains may be stored under alias ids (ME-006). The walk must finish.
+ * A repeated canonical id stops the walk. A chain stops before a minor (PRD 33.8).
+ * Seed 1. The input is fixed. The walk does not use the model.
+ */
+export async function inviteRootGate(b: Block): Promise<void> {
+  await b.run("inviter cohort resolves alias invite chains and stops on a repeated canonical id", () => {
+    const now = Date.UTC(2026, 9, 5, 16);
+    const input = emptyInput(now);
+    input.members = [
+      baseMember("a", { invitedBy: "phone:b" }),
+      baseMember("b", { invitedBy: "phone:a" }),
+      baseMember("c", { invitedBy: "phone:a" }),
+      baseMember("d", { invitedBy: "phone:e" }),
+      baseMember("e", { invitedBy: "f" }),
+      baseMember("f"),
+      baseMember("g", { invitedBy: "phone:teen" }),
+      baseMember("p", { invitedBy: "q" }),
+      baseMember("q", { invitedBy: "p" }),
+      baseMember("s", { invitedBy: "phone:s" }),
+      baseMember("teen", { age: 16 }),
+    ];
+    input.idAliases = { "phone:a": "a", "phone:b": "b", "phone:e": "e", "phone:s": "s", "phone:teen": "teen" };
+    const w = new EngineWorld(input, resolveConfig({ seed: 1 }), localEmbed);
+    const root = (id: string) => w.get(id)!.inviterRoot;
+    // a <-> b through aliases. Stop on the repeated canonical id, as a direct id cycle does.
+    expect(root("a")).toBe("b");
+    expect(root("b")).toBe("a");
+    expect(root("c")).toBe("b");
+    expect(root("d")).toBe("f");
+    expect(root("e")).toBe("f");
+    expect(root("f")).toBe("f");
+    expect(root("g")).toBe("g");
+    expect(root("p")).toBe("q");
+    expect(root("q")).toBe("p");
+    expect(root("s")).toBe("s");
+    expect(root("teen")).toBe("teen");
+    expect(w.minors.has("teen")).toBe(true);
+  });
+}
+
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
+  await inviteRootGate(b);
   // ---- invariants: NYC, 10 days, seed 3, simulated reviewer ---------------------------------------
   const run = await world(10);
   await run.w.advanceTo(run.w.end);
@@ -315,4 +361,11 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
 
   // ---- conformance rules for networkPack (engine level) ---------------------------------------------------
   await conformance(b, networkPack, { seeds: o.quick ? [1, 2] : [1, 2, 3, 4] });
+}
+
+if (import.meta.main) {
+  const b = new Block("network");
+  await inviteRootGate(b);
+  const failed = b.gates.some(g => g.blocking && !g.pass);
+  process.exit(failed ? 1 : 0);
 }
