@@ -2573,7 +2573,12 @@ export class ConsentNetwork implements NetworkUnderTest {
       // Anyone dropped (minor signal, opt-out, hold) leaves every open alternate list.
       o.alternates = o.alternates.filter(x => x !== id);
       if (wasAlternate && !o.participants.includes(id) && o.stage !== "scheduled") { this.close(o, reason); continue; }
-      if (!o.participants.includes(id)) continue;
+      // A probe already reached them, then someone else took their place. The judge still
+      // counts a later message on this opportunity as a contact with that minor.
+      if (!o.participants.includes(id)) {
+        if (minor && o.contacted.has(id) && o.stage !== "scheduled") this.close(o, reason);
+        continue;
+      }
       if (minor && o.stage !== "scheduled") this.close(o, reason);
       else if (o.stage === "review") this.close(o, reason);
       else if (o.stage === "probing" && o.plan) this.planOut(o, id);
@@ -3827,6 +3832,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       const mine = known.get(m.id);
       if (!mine) continue;
       const host = [...this.members.values()].filter(x => x.id !== m.id && x.id !== m.invitedBy && x.state !== "receiving" && this.eligible(x.id) && x.noShows === 0 && now - x.joinedAt > 7 * DAY
+        && !this.pairHistory(m.id, x.id, 60)
         && (this.minutesBetween(m.area, x.area) ?? Infinity) <= 30 && [...(known.get(x.id)?.interests ?? [])].some(t => mine.interests.has(t)))
         .sort((a, b) => this.minutesBetween(m.area, a.area)! - this.minutesBetween(m.area, b.area)! || seededTie(this.opts.seed, m.id, a.id) - seededTie(this.opts.seed, m.id, b.id))[0];
       if (!host) continue;

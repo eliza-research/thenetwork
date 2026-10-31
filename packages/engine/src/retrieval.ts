@@ -3,7 +3,7 @@
 // low-exposure / low-data members so they are not starved by stronger profiles.
 import type { Category, Facet, Intent, MemberId } from "@thenetwork/core";
 import { cosine, tokenize } from "./embed.ts";
-import { intentSatisfaction } from "./complementarity.ts";
+import { intentSatisfaction, SAT } from "./complementarity.ts";
 import { memberReason, type FilterReason } from "./filters.ts";
 import type { Format, Role } from "./types.ts";
 import { intentText, type World } from "./world.ts";
@@ -62,8 +62,8 @@ export function retrieveForIntent(ctx: RetrievalCtx, intent: Intent, pool: Membe
   const cfg = w.cfg.retrieval;
   const toks = new Set(tokenize(intentText(intent)));
   const hop = twoHop(w, intent.memberId);
-  // Structured "need" channel (complementarity.ts): members whose skills / offers / pool meet the
-  // intent are kept even below minSim, and structured satisfaction joins the ordering.
+  // Structured "need" channel (complementarity.ts): a skill, an offer, a shared pool, or a
+  // mutual romance preference can meet the intent below minSim. Satisfaction also joins the rank.
   const cc = w.cfg.complementarity;
   const structured = cc.weight > 0;
   const scored: Retrieved[] = [];
@@ -75,6 +75,12 @@ export function retrieveForIntent(ctx: RetrievalCtx, intent: Intent, pool: Membe
     if (tagHit) channels.add("tag");
     if (hop.has(id) && sim >= cfg.warmMinSim) channels.add("graph");
     const need = structured ? intentSatisfaction(w, intent, id) : 0;
+    // SAT.pool (0.85) is the lowest level that opens this channel.
+    // A skill or an offer is SAT.need (1). A mutual romance preference is SAT.romance (0.9).
+    // Romance is above the pool bar, so this one test admits it. A test against SAT.romance
+    // alone would drop a shared pool. Interest overlap is SAT.interest (0.45), so it stays
+    // on the semantic and tag channels and cannot bypass minSim.
+    if (need >= SAT.pool) channels.add("need");
     if (sim < minSim && !channels.has("graph") && !channels.has("need")) continue;
     scored.push({ id, sim, facet, channels, floor: false, rank: sim + cc.weight * need });
   }
