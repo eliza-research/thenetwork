@@ -329,6 +329,8 @@ const ASK_HOLD_MS = 24 * HOUR;
 const MEMBER_ASK = /\?|\b(looking for|i'?d (really )?(like|love)|i want|i need|can you|could you|help me|find me|anything (come|came) up|still hoping)\b/i;
 /** A bare acknowledgement ("thx", "ok") answers logistics, not an earlier unsolicited message. */
 const ACK_ONLY = /^(?:ok(?:ay)?|k|kk|thx|thanks?(?: you)?|ty|cool|great|nice|perfect|got it|sounds good|will do|see you( then)?|yep|yup|sure|[\s.!,:;)(-]|\p{Extended_Pictographic})+$/iu;
+/** More than an "ok" to a booked plan: a question, a hedge or a change ("ok wait, I might not make it", "cool, can we do Friday?"). */
+const BOOKED_NOT_YET = /\?|\b(?:but|though|although|(?<!\b(?:can['’]?t|cannot) )wait|actually|might|maybe|not sure|unless|instead|move|reschedule|push|change|late|earlier|skip|bail|cancel)\b/i;
 
 type PStatus = "queued" | "probing" | "available" | "unavailable" | "yes" | "no" | "dropped";
 interface Opp {
@@ -782,7 +784,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       const o = this.opps.get(aw.oppId!);
       const yn = this.yesNoOf(body);
       if (o && o.stage === "scheduled" && o.status.get(m.id) === "yes" && (c.kind === "cancel" || yn === "no")) { m.awaiting = undefined; return this.handleDrop(m, o); }
-      if (yn === "yes" || c.kind === "ack") { m.awaiting = undefined; if (o && o.stage === "scheduled") this.confirmPlan(o, m.id, true); this.ack(m, copy.bookedThanks); return; }
+      // A yes or an "ok" with a question, hedge or change in it is not a confirmation: the message goes on to be answered
+      // (silence still confirms after 48 hours).
+      if ((yn === "yes" || c.kind === "ack") && !BOOKED_NOT_YET.test(body)) { m.awaiting = undefined; if (o && o.stage === "scheduled") this.confirmPlan(o, m.id, true); this.ack(m, copy.bookedThanks); return; }
     }
     if (aw?.kind === "checkin") {
       m.awaiting = undefined;
