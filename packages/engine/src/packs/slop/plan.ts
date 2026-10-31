@@ -35,6 +35,9 @@ function freeScore(p: SlopProfile, s: number): number {
 }
 
 export function planFirstDate(first: SlopProfile, partner: SlopProfile, markets: readonly City[], o: SlopPackOptions = SLOP_DEFAULT_OPTIONS): DatePlan | null {
+  if (first.id === partner.id) return null;
+  if (!first.adult || !partner.adult || !canBeMatched(first.age) || !canBeMatched(partner.age)) return null;
+  if (!first.optedIn || !partner.optedIn || first.paused || partner.paused) return null;
   const mm = mutualMarkets(first, partner, o, markets);
   if (!mm.length) return null;
   const activity = dateActivity(first, partner);
@@ -50,6 +53,9 @@ export function planFirstDate(first: SlopProfile, partner: SlopProfile, markets:
 
 /** Plan from an engine input (the platform and the simulator call this after the mutual yes, or to fill probe time options). */
 export function planFromInput(input: EngineInput, first: MemberId, partner: MemberId, markets: readonly City[], o: SlopPackOptions = SLOP_DEFAULT_OPTIONS): DatePlan | null {
+  if (first === partner) return null;
+  if (input.edges?.some(e => e.type === "blocked" && ((e.from === first && e.to === partner) || (e.from === partner && e.to === first)))) return null;
+  if (input.safetyHolds?.some(h => (h.memberId === first || h.memberId === partner) && (h.to === undefined || h.to > input.now))) return null;
   const P = slopProfiles(input);
   const a = P.get(first), b = P.get(partner);
   return a && b ? planFirstDate(a, b, markets, o) : null;
