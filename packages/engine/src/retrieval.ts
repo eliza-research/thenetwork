@@ -6,7 +6,7 @@ import { cosine, tokenize } from "./embed.ts";
 import { intentSatisfaction } from "./complementarity.ts";
 import { memberReason, type FilterReason } from "./filters.ts";
 import type { Format, Role } from "./types.ts";
-import { intentText, type World } from "./world.ts";
+import { intentText, pairKey, type World } from "./world.ts";
 
 export interface Retrieved {
   id: MemberId; sim: number; facet?: Facet; channels: Set<string>; floor: boolean;
@@ -40,11 +40,15 @@ export function twoHop(w: World, a: MemberId): Map<MemberId, { via: MemberId; st
   const out = new Map<MemberId, { via: MemberId; strength: number }>();
   const direct = w.positive.get(a) ?? new Map<MemberId, number>();
   for (const x of [...direct.keys()].sort()) {
-    // An intermediary on a safety hold or paused never carries a warm path (hard filter on `via`).
-    if (w.holds.has(x) || w.get(x)?.m.state === "paused") continue;
+    // An intermediary on a safety hold, paused, or blocked with `a` never carries a warm path (hard filter on `via`).
+    const mx = w.get(x);
+    if (!mx || w.holds.has(x) || mx.m.state === "paused" || w.blocked.has(pairKey(a, x))) continue;
     const sx = direct.get(x)!;
     for (const [b, sb] of [...(w.positive.get(x) ?? new Map<MemberId, number>()).entries()].sort((p, q) => (p[0] < q[0] ? -1 : 1))) {
       if (b === a || direct.has(b)) continue;
+      const mb = w.get(b);
+      if (!mb || w.holds.has(b) || mb.m.state === "paused") continue;
+      if (w.blocked.has(pairKey(x, b)) || w.blocked.has(pairKey(a, b))) continue;
       const s = sx * sb;
       const cur = out.get(b);
       if (!cur || s > cur.strength) out.set(b, { via: x, strength: s });
