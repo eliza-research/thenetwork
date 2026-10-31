@@ -64,12 +64,39 @@ export type Keyword = "stop" | "stop_all" | "start" | "help";
 
 export function detectKeyword(text: string): Keyword | undefined {
   const k = keywordKey(text);
+  // "STOP STOP", "STOP. STOP.", "basta basta": a keyword said more than once is that keyword.
+  const kw = tableKeyword(unrepeat(k));
+  if (kw) return kw;
+  // "I SAID STOP", "I already said stop", "STOP I SAID": the person says their STOP again.
+  const said = /^I (?:ALREADY |JUST )?SAID (.+)$/.exec(k)?.[1] ?? /^(.+) I SAID$/.exec(k)?.[1];
+  const again = said === undefined ? undefined : unrepeat(said);
+  if (again !== undefined && !EVERYDAY_STOP_WORDS.has(again)) {
+    const w = tableKeyword(again);
+    if (w === "stop" || w === "stop_all") return w;
+  }
+  return optOutPhrase(text) ? "stop" : undefined;
+}
+
+/** The keyword for a whole-message keyword key, from the table only. */
+function tableKeyword(k: string): Keyword | undefined {
   if (STOP_ALL_WORDS.has(k)) return "stop_all";
   // "STOPP", "STOOOP": a misspelt STOP is still a STOP.
-  if (STOP_WORDS.has(k) || SPANISH_STOP_WORDS.has(k) || /^S+T+O+P+$/.test(k) || optOutPhrase(text)) return "stop";
+  if (STOP_WORDS.has(k) || SPANISH_STOP_WORDS.has(k) || /^S+T+O+P+$/.test(k)) return "stop";
   if (START_WORDS.has(k)) return "start";
   if (HELP_WORDS.has(k)) return "help";
   return undefined;
+}
+
+/** Stop keywords with an everyday meaning: alone they are a STOP, but "I said cancel" is about a plan. */
+const EVERYDAY_STOP_WORDS = new Set(["CANCEL", "END", "QUIT"]);
+
+/** The repeated unit of a key that is one phrase said two or more times ("STOP STOP STOP" -> "STOP"), else the key. */
+function unrepeat(k: string): string {
+  const w = k.split(" ");
+  for (let n = 1; n <= w.length / 2; n++) {
+    if (w.length % n === 0 && w.every((x, i) => x === w[i % n])) return w.slice(0, n).join(" ");
+  }
+  return k;
 }
 
 /** True when a short message asks, in the person's own words, to stop getting texts (core optOutPhrase; a per-app leave is not one). */
