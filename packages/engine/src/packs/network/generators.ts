@@ -345,27 +345,48 @@ export function helpRequest(ctx: GenCtx): Candidate[] {
         return { ...r, s, acquainted };
       }).filter(r => !pairReason(w, a, r.id, "help"))
         .sort((p, q) => (q.s - p.s) || (p.id < q.id ? -1 : 1));
-      if (home && need === 1 && !ranked[0]?.acquainted) need = 2;
+      // If entering a home and no acquainted helper is available, at least 2 helpers are required by F14.
+      if (home && need === 1 && !ranked.some(r => r.acquainted)) need = 2;
       if (ranked.length < need) { ctx.unmatchedIntents.add(intent.id); continue; }
       // Up to three helper-set variants so one busy helper does not sink the whole request.
       const seenSets = new Set<string>();
       for (let v = 0; v < 3; v++) {
+        const slice = ranked.slice(v);
+        if (!slice.length) break;
+        const firstHelper = slice[0]!;
+        // F14: help that enters a home needs 2+ helpers or helpers who already met the requester.
+        const targetNeed = (home && need === 1 && !firstHelper.acquainted) ? 2 : need;
+        if (targetNeed > 1 && memberReason(w, a, { category: "help", role: "seeker", format: "small_group", timeSensitive: false, ownIntentCreatedAt: intent.createdAt })) continue;
+
         const helpers: typeof ranked = [];
-        for (const r of ranked.slice(v)) {
-          if (helpers.length >= need) break;
+        for (const r of slice) {
+          if (helpers.length >= targetNeed) break;
           if (helpers.some(h => pairReason(w, h.id, r.id, "help"))) continue;
+          if (!w.canMeet([a, ...helpers.map(h => h.id), r.id])) continue;
+          if (targetNeed > 1 && memberReason(w, r.id, { category: "help", role: "helper", format: "small_group", timeSensitive: false })) continue;
           helpers.push(r);
         }
-        if (helpers.length < need) break;
+        if (helpers.length < targetNeed) continue;
+        if (home && helpers.length < 2 && !helpers.every(h => h.acquainted)) continue;
+
         const setKey = helpers.map(h => h.id).sort().join(",");
         if (seenSets.has(setKey)) continue;
         seenSets.add(setKey);
         const ids = [a, ...helpers.map(h => h.id)];
-        // Alternates must be able to join this group: no pair rule with any participant (engine-pipeline-9).
-        const alternates = ranked.filter(r => !ids.includes(r.id) && helpers.every(h => !pairReason(w, h.id, r.id, "help"))).slice(0, 3).map(r => r.id);
+        const format: Format = helpers.length > 1 ? "small_group" : "one_to_one";
+
+        // Alternates must be able to join this group: no pair rule with any participant or each other (engine-pipeline-9).
+        const alternates: MemberId[] = [];
+        for (const r of ranked.filter(r => !ids.includes(r.id) && helpers.every(h => !pairReason(w, h.id, r.id, "help")))) {
+          if (alternates.length >= 3) break;
+          if (!w.canMeet([a, r.id])) continue;
+          if (format === "small_group" && memberReason(w, r.id, { category: "help", role: "helper", format: "small_group", timeSensitive: false })) continue;
+          if (home && helpers.length === 1 && !r.acquainted) continue;
+          if (alternates.every(alt => !pairReason(w, alt, r.id, "help"))) alternates.push(r.id);
+        }
         out.push(makeCandidate({
           kind: "help", generator: "help_request", category: "help",
-          participants: ids, roles: Object.fromEntries([[a, "seeker"], ...helpers.map(h => [h.id, "helper"])]), format: need > 1 ? "small_group" : "one_to_one",
+          participants: ids, roles: Object.fromEntries([[a, "seeker"], ...helpers.map(h => [h.id, "helper"])]), format,
           objective: `Help with: ${label(helpers[0]!.facet) ?? "a bounded task"}`, anchor: { type: "intent", id: intent.id },
           preferredCity: ma.m.homeCity, channels: new Set(helpers.flatMap(h => [...h.channels])),
           evidence: Object.fromEntries([[a, []], ...helpers.map(h => [h.id, [h.facet?.id].filter(Boolean)])]),
