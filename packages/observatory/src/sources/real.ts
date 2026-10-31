@@ -945,7 +945,13 @@ export function appSnapshotSql(sql: SQL, app: string): SQL {
     if (!strings.some(x => x.includes("platform.person_blocks") || x.includes("platform.matching_ages"))) return (sql as any)(strings, ...values);
     const swapped = strings.map(x => x.replaceAll("platform.person_blocks", `platform.person_blocks_${suffix}`)
       .replaceAll("platform.matching_ages", `platform.matching_ages_${suffix}`));
-    return (sql as any)(Object.assign(swapped, { raw: swapped }) as unknown as TemplateStringsArray, ...values);
+    // A real tagged template gives `raw` as a frozen, non-enumerable property. Object.assign made it
+    // enumerable, so Bun 1.4.4 and later refuse the array ("use sql.unsafe(), or define 'raw' with
+    // Object.defineProperty()") and every rewritten query failed. Build it the way the parser builds
+    // it, so the rewritten query runs on Bun 1.4.2 and on 1.4.4 and later.
+    const raw = Object.freeze([...swapped]);
+    const rebuilt = Object.freeze(Object.defineProperty([...swapped], "raw", { value: raw, enumerable: false })) as unknown as TemplateStringsArray;
+    return (sql as any)(rebuilt, ...values);
   };
   return new Proxy(tag, { get: (_t, k) => { const v = (sql as any)[k]; return typeof v === "function" ? v.bind(sql) : v; } }) as unknown as SQL;
 }
