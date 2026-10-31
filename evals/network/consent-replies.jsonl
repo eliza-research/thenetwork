@@ -334,3 +334,8 @@
 {"text":"How about Friday? 👍","label":"unclear"}
 {"text":"Interested only if it's outdoors — how about Friday?","label":"unclear"}
 {"text":"Maybe I'm interested — how about Friday?","label":"unclear"}
+{"text":"sounds good, Friday instead?","label":"yes","keys":[]}
+{"text":"yes! Friday instead?","label":"yes","keys":[]}
+{"text":"works for me. Saturday instead?","label":"yes","keys":[]}
+{"text":"perfect, Monday instead?","label":"yes","keys":[]}
+{"text":"I'm up for it — Friday instead?","label":"yes","keys":[]}

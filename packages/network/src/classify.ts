@@ -565,7 +565,7 @@ function consentScan(body: string): ConsentScan {
   for (const s of sentencesOf(t)) {
     // A question of the member's own ("Anyone around who'd want to meet someone to date?") is not an
     // answer: a yes elsewhere in the message ("Honestly this is great timing") is not consent to the probe.
-    if (/\?/.test(s.text) && !/\b(?:can|could) we\b|\b(?:how|what) about\b/.test(s.text)) question = true;
+    if (/\?/.test(s.text) && !/\b(?:can|could) we\b|\b(?:how|what) about\b/.test(s.text) && !COUNTER_RX.test(s.text)) question = true;
     // Clauses inside a sentence: "yes, but only with a woman" keeps "only with" in its own clause.
     for (const c of s.text.matchAll(/[^,]+/g)) {
       const x = c[0];
