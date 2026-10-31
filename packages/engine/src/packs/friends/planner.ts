@@ -266,7 +266,13 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
   if (pol.crews) {
     const proposed = detectCrews(recent, [...inp.crews, ...inp.offered], id => w.get(id)?.isHost ?? false, pcfg);
     for (const crew of proposed) {
-      const members = crew.members.filter(id => eligible(id) && !taken.has(id));
+      const active = crew.members.filter(id => eligible(id) && !taken.has(id));
+      const members: MemberId[] = [];
+      for (const id of active) {
+        if (members.every(x => !w.blocked.has(x < id ? `${x}|${id}` : `${id}|${x}`) && w.canMeet([x, id]))) {
+          members.push(id);
+        }
+      }
       if (members.length < pcfg.crews.minMembers) continue;
       const v = crew.venueId ? venueById.get(crew.venueId) : undefined;
       const c2: Crew = { ...crew, members, hostRotation: crew.hostRotation.filter(m => members.includes(m)).length ? crew.hostRotation.filter(m => members.includes(m)) : members };

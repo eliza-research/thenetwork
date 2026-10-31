@@ -1995,8 +1995,10 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (m.minor) return "participant_minor";
       if (this.busy(id, o.id)) return "busy_elsewhere";
     }
-    for (let i = 0; i < o.participants.length; i++) for (let j = i + 1; j < o.participants.length; j++)
+    for (let i = 0; i < o.participants.length; i++) for (let j = i + 1; j < o.participants.length; j++) {
       if (this.blocked(o.participants[i]!, o.participants[j]!)) return "blocked_pair";
+      if (this.avoid.has(pairKey(o.participants[i]!, o.participants[j]!))) return "pair_history";
+    }
     if (o.origin === "engine") return this.gateReason({ ...this.toProposal(o), roles: o.roles ?? {}, anchor: o.anchor, ...(o.seat ? { seat: o.seat } : {}) } as SeatProposal, o.id);
     return undefined;
   }
@@ -3224,7 +3226,15 @@ export class ConsentNetwork implements NetworkUnderTest {
       if ([...this.opps.values()].some(o => o.plan?.crewId === crew.id && OPEN_STAGES.has(o.stage))) continue;
       const v = PLAN_VENUES.find(x => x.id === crew.venueId);
       const place = v ? { name: v.name, area: v.area } : { name: "the usual spot" };
-      const members = crew.members.filter(id => { const m = this.members.get(id); return !!m && this.planSeatOk(m); });
+      const active = crew.members.filter(id => { const m = this.members.get(id); return !!m && this.planSeatOk(m); });
+      const host = crew.hostRotation[crew.sessions.length % crew.hostRotation.length];
+      const ordered = host && active.includes(host) ? [host, ...active.filter(id => id !== host)] : active;
+      const members: MemberId[] = [];
+      for (const id of ordered) {
+        if (members.every(x => !this.blocked(x, id) && !this.avoid.has(pairKey(x, id)))) {
+          members.push(id);
+        }
+      }
       if (members.length < this.pcfg.crews.minMembers) continue;
       const next = plans.crewSessionPlan({ ...crew, members, hostRotation: crew.hostRotation.filter(h => members.includes(h)).length ? crew.hostRotation.filter(h => members.includes(h)) : members }, now, place, this.pcfg);
       if (!next || crew.sessions.some(id => this.opps.get(id)?.plan?.window.start === next.window.start)) continue;
@@ -3248,12 +3258,18 @@ export class ConsentNetwork implements NetworkUnderTest {
     const w = this.planWorld(now);
     const a = plans.activityById.get(plan.activityId)!;
     const last = this.lastParticipation(now);
-    const add = [...this.members.values()]
+    const add: MemberId[] = [];
+    const candidates = [...this.members.values()]
       .filter(m => !invited.includes(m.id) && this.planSeatOk(m) && (m.age ?? m.statedAge ?? 0) >= a.ageMin && !this.bookedNear(m.id, plan.window.start)
         && invited.every(x => !this.blocked(x, m.id) && !this.avoid.has(pairKey(x, m.id)))
         && (plans.activityFit(w, m.id, this.pcfg).get(plan.activityId) ?? 0) >= this.pcfg.minFit)
-      .sort((x, y) => ((last.get(x.id) ?? -Infinity) - (last.get(y.id) ?? -Infinity)) || (x.id < y.id ? -1 : 1))
-      .slice(0, extra).map(m => m.id);
+      .sort((x, y) => ((last.get(x.id) ?? -Infinity) - (last.get(y.id) ?? -Infinity)) || (x.id < y.id ? -1 : 1));
+    for (const m of candidates) {
+      if (add.length >= extra) break;
+      if (add.every(x => !this.blocked(x, m.id) && !this.avoid.has(pairKey(x, m.id)))) {
+        add.push(m.id);
+      }
+    }
     this.plansCounters.reachExtra += add.length;
     this.ctx.log("organizing_reach", { planId: plan.id, host, max: reach.max, reserved: reach.reservedForLowExposure, added: add.length });
     return { ...plan, invited: [...invited, ...add], size: { ...plan.size, target: invited.length + add.length, max: Math.max(plan.size.max, invited.length + add.length) } };
