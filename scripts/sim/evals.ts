@@ -77,6 +77,13 @@ export async function evalsBlock(b: Block): Promise<void> {
   const wrongKind = abuse.filter(l => classify(l.text).abuse.length && !classify(l.text).abuse.includes(l.kind as never));
   b.gate(`abuse: recall >= 95% (n ${abuse.length})`, abuse.length >= 100 && caught.length / abuse.length >= 0.95, pct(caught.length / abuse.length));
   b.gate("abuse: wrong kind <= 5%", wrongKind.length / abuse.length <= 0.05, pct(wrongKind.length / abuse.length));
+  // Phones type a curly apostrophe by default ("can’t", "what’s"): every row reads the same with it.
+  const readAs = (t: string) => { const c = classify(t); return JSON.stringify([c.kind, [...c.abuse].sort(), c.minorSignal, c.statedAge ?? null, c.desireId ?? null, c.target ?? null]); };
+  const benignLines = benign.map(text => ({ text }));
+  const replyLines = await jsonl<{ text: string }>("replies.jsonl");
+  const apos = [...abuse, ...benignLines, ...replyLines].filter(l => l.text.includes("'"));
+  const curlyMiss = apos.filter(l => readAs(l.text.replace(/'/g, "’")) !== readAs(l.text)).map(l => `${JSON.stringify(l.text.replace(/'/g, "’"))} -> ${readAs(l.text.replace(/'/g, "’"))}`);
+  b.gate(`curly apostrophes (n ${apos.length} rows with '): classify reads every row the same with ’`, apos.length >= 100 && curlyMiss.length === 0, curlyMiss.slice(0, 5).join("; "));
 
   const teen = await jsonl<{ text: string; teen?: boolean; other?: number | null }>("network/teen-age.jsonl");
   const minor = (t: string) => { const c = classify(t); return c.minorSignal || (c.statedAge !== undefined && c.statedAge < 18); };
