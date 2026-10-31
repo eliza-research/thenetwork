@@ -475,6 +475,28 @@ describe.skipIf(!pgAvailable)("the service as the platform's channel (Postgres)"
     expect(await consentOf(q, "ntwrk")).toBe("opted_in");
   }, T);
 
+  test("the START hint stays at one in 30 days when the retention purge runs between texts", async () => {
+    // service.ts stopHint: "at most once in 30 days per number and app". The tick's purge keeps platform rows 2 days.
+    await fresh();
+    const clock = new SimClock(START);
+    const { s, directs } = service(clock);
+    const hint = (to: string) => directs.filter(d => d.to === to && /Reply START to resume/.test(d.body) && !/won't get more messages/.test(d.body));
+    const p = newPhone();
+    await text(s, clock, p, "Ivy 28", { app: "friends" });
+    await text(s, clock, p, "STOP", { app: "friends" });
+    await text(s, clock, p, "hi", { app: "friends" });
+    expect(hint(p)).toHaveLength(1);
+    clock.advance(3 * DAY);
+    await s.purge();
+    await text(s, clock, p, "hello?", { app: "friends" });
+    expect(hint(p)).toHaveLength(1);
+    // After 30 days the next text gets the hint again.
+    clock.advance(30 * DAY);
+    await s.purge();
+    await text(s, clock, p, "hey", { app: "friends" });
+    expect(hint(p)).toHaveLength(2);
+  }, T);
+
   test("SVC-10 a STOP survives a unit that fails once: one ledger event, opted out after the retry, one confirmation", async () => {
     await fresh();
     const clock = new SimClock(START);
