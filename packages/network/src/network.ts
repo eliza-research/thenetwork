@@ -1713,7 +1713,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const o of this.opps.values()) if (o.origin === "request" && now - o.createdAt < 7 * DAY) for (const p of o.participants) if (p !== o.requester) load.set(p, (load.get(p) ?? 0) + 1);
     const out: { id: MemberId; score: number; fit: number; why: string; whyBack: string; tie: number }[] = [];
     for (const x of this.members.values()) {
-      if (x.id === m.id || !this.eligible(x.id) || this.blocked(m.id, x.id) || this.avoid.has(pairKey(m.id, x.id))) continue;
+      if (x.id === m.id || !this.eligible(x.id) || this.blocked(m.id, x.id) || this.avoided(m.id, x.id)) continue;
       // Never two people with one first name in a request: the reveal "meet Bilal B." must be unambiguous.
       if (x.first.toLowerCase() === m.first.toLowerCase()) continue;
       if (x.state === "receiving") continue; // Receiving members are never asked to help others (support-only)
@@ -1996,7 +1996,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (this.busy(id, o.id)) return "busy_elsewhere";
     }
     for (let i = 0; i < o.participants.length; i++) for (let j = i + 1; j < o.participants.length; j++)
-      if (this.blocked(o.participants[i]!, o.participants[j]!)) return "blocked_pair";
+      if (this.blocked(o.participants[i]!, o.participants[j]!) || this.avoided(o.participants[i]!, o.participants[j]!)) return "blocked_pair";
     if (o.origin === "engine") return this.gateReason({ ...this.toProposal(o), roles: o.roles ?? {}, anchor: o.anchor, ...(o.seat ? { seat: o.seat } : {}) } as SeatProposal, o.id);
     return undefined;
   }
@@ -2014,7 +2014,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const out = opts.swapOut ?? (swappable.length === 1 ? swappable[0] : undefined);
     if (out !== undefined && !swappable.includes(out)) { this.ctx.log("review_refused", { oppId: o.id, decision: "reroll", reason: "cannot_swap" }); return { ok: false, reason: "cannot_swap" }; }
     const stay = o.participants.filter(p => p !== out);
-    const alt = out === undefined ? undefined : o.alternates.find(a => this.eligible(a) && !this.sharesFirstName(o, a) && !stay.some(p => this.blocked(p, a) || this.avoid.has(pairKey(p, a)) || this.pairHistory(p, a, 60)));
+    const alt = out === undefined ? undefined : o.alternates.find(a => this.eligible(a) && !this.sharesFirstName(o, a) && !stay.some(p => this.blocked(p, a) || this.avoided(p, a) || this.pairHistory(p, a, 60)));
     this.counters.reviewRerolled++;
     o.review!.rerolls = [...(o.review!.rerolls ?? []), { at: now, out, in: alt, reviewer, note: opts.note }];
     this.ctx.log("review_decision", { ...logged, decision: "reroll", out: out ?? null, in: alt ?? null, next: alt ? "review" : "engine" });
@@ -2375,7 +2375,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     while (!alt && o.alternates.length && o.replacements < 3) {
       const a = o.alternates.shift()!;
       // The same checks as a reroll: blocks, avoid edges and pair history with everyone staying (network-consent-26).
-      if (this.eligible(a) && !this.sharesFirstName(o, a) && !o.participants.some(p => p !== out && (this.blocked(p, a) || this.avoid.has(pairKey(p, a)) || this.pairHistory(p, a, 60)))) alt = a;
+      if (this.eligible(a) && !this.sharesFirstName(o, a) && !o.participants.some(p => p !== out && (this.blocked(p, a) || this.avoided(p, a) || this.pairHistory(p, a, 60)))) alt = a;
     }
     if (o.picks?.[out]) { const { [out]: _, ...rest } = o.picks; o.picks = rest; }
     if (alt) {
@@ -3250,7 +3250,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const last = this.lastParticipation(now);
     const add = [...this.members.values()]
       .filter(m => !invited.includes(m.id) && this.planSeatOk(m) && (m.age ?? m.statedAge ?? 0) >= a.ageMin && !this.bookedNear(m.id, plan.window.start)
-        && invited.every(x => !this.blocked(x, m.id) && !this.avoid.has(pairKey(x, m.id)))
+        && invited.every(x => !this.blocked(x, m.id) && !this.avoided(x, m.id))
         && (plans.activityFit(w, m.id, this.pcfg).get(plan.activityId) ?? 0) >= this.pcfg.minFit)
       .sort((x, y) => ((last.get(x.id) ?? -Infinity) - (last.get(y.id) ?? -Infinity)) || (x.id < y.id ? -1 : 1))
       .slice(0, extra).map(m => m.id);
@@ -3604,7 +3604,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       // pair history and responsiveness still apply.
       for (let i = 0; i < p.participants.length; i++) for (let j = i + 1; j < p.participants.length; j++) {
         const [a, b] = [p.participants[i]!, p.participants[j]!];
-        if (this.avoid.has(pairKey(a, b)) || this.blocked(a, b) || this.pairHistory(a, b, 60)) return "pair_history";
+        if (this.avoided(a, b) || this.blocked(a, b) || this.pairHistory(a, b, 60)) return "pair_history";
       }
       if (this.opts.selective && p.participants.some(id => this.responsiveness(id) < this.opts.minResponsiveness)) return "unresponsive";
       return undefined;
@@ -3628,7 +3628,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     for (let i = 0; i < p.participants.length; i++) for (let j = i + 1; j < p.participants.length; j++) {
       const k = pairKey(p.participants[i]!, p.participants[j]!);
-      if (this.avoid.has(k) || this.blocked(p.participants[i]!, p.participants[j]!) || this.pairHistory(p.participants[i]!, p.participants[j]!, 60)) return "pair_history";
+      if (this.avoided(p.participants[i]!, p.participants[j]!) || this.blocked(p.participants[i]!, p.participants[j]!) || this.pairHistory(p.participants[i]!, p.participants[j]!, 60)) return "pair_history";
     }
     return undefined;
   }
@@ -3827,6 +3827,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       const mine = known.get(m.id);
       if (!mine) continue;
       const host = [...this.members.values()].filter(x => x.id !== m.id && x.id !== m.invitedBy && x.state !== "receiving" && this.eligible(x.id) && x.noShows === 0 && now - x.joinedAt > 7 * DAY
+        && !this.blocked(m.id, x.id) && !this.avoided(m.id, x.id) && !this.pairHistory(m.id, x.id, 60)
         && (this.minutesBetween(m.area, x.area) ?? Infinity) <= 30 && [...(known.get(x.id)?.interests ?? [])].some(t => mine.interests.has(t)))
         .sort((a, b) => this.minutesBetween(m.area, a.area)! - this.minutesBetween(m.area, b.area)! || seededTie(this.opts.seed, m.id, a.id) - seededTie(this.opts.seed, m.id, b.id))[0];
       if (!host) continue;
@@ -3967,7 +3968,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       // whoever proposed it (search, engine, planner, player or scenario).
       const am = this.members.get(a);
       if (!am || am.minor || am.minorSignal) continue;
-      if (participants.includes(a) || [...participants, ...out].some(p => this.blocked(p, a))) continue;
+      if (participants.includes(a) || [...participants, ...out].some(p => this.blocked(p, a) || this.avoided(p, a))) continue;
       const f = this.members.get(a)?.first.toLowerCase();
       if (f && firsts.has(f)) continue;
       if (f) firsts.add(f);
@@ -4227,7 +4228,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (!this.trust.ok(id)) return no("on_watch");
       for (const x of o.about ?? []) {
         if (x === id) continue;
-        if (this.blocked(id, x)) return no("blocked_pair");
+        if (this.blocked(id, x) || this.avoided(id, x)) return no("blocked_pair");
         const other = this.members.get(x);
         if (other) this.syncRecord(other);
         if (!other || other.minor || other.account || this.declinedIds.has(x)) return no("other_not_matchable");
@@ -4387,10 +4388,18 @@ export class ConsentNetwork implements NetworkUnderTest {
   private blocked(a: MemberId, b: MemberId) { return this.blocks.has(pairKey(a, b)) || this.snapshotBlocks().has(pairKey(a, b)); }
   private snapBlocks?: { snap: WorldSnapshot; set: Set<string> };
   private snapshotBlocks(): ReadonlySet<string> {
-    const snap = this.snapCache?.snap;
+    const snap = this.ctx ? this.snapshotCached() : undefined;
     if (!snap) return EMPTY_SET;
     if (this.snapBlocks?.snap !== snap) this.snapBlocks = { snap, set: new Set(snap.edges.filter(e => e.type === "blocked").map(e => pairKey(e.from, e.to))) };
     return this.snapBlocks.set;
+  }
+  private avoided(a: MemberId, b: MemberId) { return this.avoid.has(pairKey(a, b)) || this.snapshotAvoid().has(pairKey(a, b)); }
+  private snapAvoid?: { snap: WorldSnapshot; set: Set<string> };
+  private snapshotAvoid(): ReadonlySet<string> {
+    const snap = this.ctx ? this.snapshotCached() : undefined;
+    if (!snap) return EMPTY_SET;
+    if (this.snapAvoid?.snap !== snap) this.snapAvoid = { snap, set: new Set(snap.edges.filter(e => e.type === "avoid").map(e => pairKey(e.from, e.to))) };
+    return this.snapAvoid.set;
   }
 
   /** The member record from the snapshot (indexed once per snapshot). The production snapshot adds the account status (service/snapshot.ts). */
@@ -4764,7 +4773,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         }
         return out;
       },
-      blocked: (a, b) => this.blocked(a, b),
+      blocked: (a, b) => this.blocked(a, b) || this.avoided(a, b),
       privateFacts: () => {
         const priv = this.snapshotCached().facets.filter(f => f.scope === "agent_private");
         return { forbidden: priv.map(f => ({ text: f.value, owner: f.memberId })), canaries: priv.flatMap(f => [...f.value.matchAll(CANARY_RE)].map(x => x[1]!)) };
@@ -4925,7 +4934,7 @@ export function relayDispatchCheck(st: NetworkState, o: { matchId: string; from:
     if (v.optedOut) return "party:opted_out";
     if (v.held) return "party:held";
   }
-  if (st.blocks.includes(pairKey(o.from, o.to))) return "party:blocked";
+  if (st.blocks.includes(pairKey(o.from, o.to)) || (st.avoid ?? []).includes(pairKey(o.from, o.to))) return "party:blocked";
   return null;
 }
 
