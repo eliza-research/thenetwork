@@ -15,12 +15,12 @@ export interface SafetyReport {
 export const URGENT_REPORTS: ReadonlySet<ReportKind> = new Set(["harassment", "unsafe", "scam", "minor"]);
 
 const KINDS: [ReportKind, RegExp][] = [
-  ["minor", /\b(under ?age|underage|a minor|(he|she|they)(?:'s|'re| is| was| are| were) (?:only |just )?(1[0-7]|[0-9])(?![\d:.'"]|\s*(min|mins|minutes|hours?|hrs?|days?|weeks?|dollars|bucks|blocks|stops|am|pm|ft|foot|feet|out of|years? (older|younger))\b)|(1[0-7]|[0-9]) years? old|in (high|middle) school|a (kid|child|teen(ager)?))\b/i],
-  ["unsafe", /\b(unsafe|not safe|scared|afraid|threat(en(ed|ing)?)?|follow(ed|ing) me|wouldn'?t let me (go|leave)|grabbed|touched me|assault(ed)?|drugged|spiked|forced|hurt me|violent)\b/i],
-  ["harassment", /\b(harass(ed|ing|ment)?|creep(y)?|kept (texting|messaging|calling)|wouldn'?t stop|rude|insult(ed|ing)?|aggressive|hostile|abusive|slur|pushy|inappropriate|sexual comments?)\b/i],
-  ["scam", /\b(scam(mer|med)?|asked (me )?for money|venmo|cash ?app|zelle|crypto|bitcoin|gift cards?|invest(ment)?|wire (me|money))\b/i],
+  ["minor", /\b(under ?age|underage|a minor|(?:he|she|they|the (?:guy|girl|dude|person|date|man|woman)|[A-Z][a-z]+)(?:'s|'re| is| was| are| were) (?:only |just )?(1[0-7]|[0-9])(?![\d:.'"]|\s*(years?|yrs?|months?|min|mins|minutes|hours?|hrs?|days?|weeks?|dollars|bucks|blocks|stops|am|pm|ft|foot|feet|out of)\b)|(1[0-7]|[0-9])\s*(?:years?|yrs?|yo)?\s*old|(1[0-7]|[0-9])\s*yo\b|in (high|middle) school|a (kid|child|teen(ager)?))\b/i],
+  ["unsafe", /\b(unsafe|not safe|scared|afraid|threat(en(ed|ing)?)?|follow(ed|ing) me|wouldn'?t let me (go|leave)|grabbed|touched me|assault(ed)?|attack(ed)?|drugged|spiked|forced|hurt me|violent|violence|weapon|knife|gun|punched|hit me|struck me|shoved me|beat me)\b/i],
+  ["harassment", /\b(harass(ed|ing|ment)?|creep(y)?|kept (texting|messaging|calling)|wouldn'?t stop|rude|insult(ed|ing)?|aggressive|hostile|abusive|slur|pushy|inappropriate|sexual comments?|stalk(ed|ing)?)\b/i],
+  ["scam", /\b(scam(mer|med)?|asked (?:me )?(?:for|to send) (?:money|cash)|asked for (?:cash|money)|borrow(ed)? money|venmo|cash ?app|zelle|paypal|apple ?pay|crypto|bitcoin|usdt|gift cards?|invest(ment)?|wire (?:me|money)|ponzi|pyramid scheme)\b/i],
   ["lying", /\b(lied|lying|liar|fake|catfish(ed)?|not (who|what) (they|he|she) said|(didn'?t|doesn'?t) look like (their|his|her) (photos?|pics?|pictures?)|old photos?|(lied|lying) about (their|his|her) age|older than|younger than (they|he|she) said|married|has a (girlfriend|boyfriend|wife|husband|partner))\b/i],
-  ["no_show", /\b(no[- ]?show(ed)?|never (showed|came|turned up)|didn'?t (show|come|turn up)|stood me up|ghosted me)\b/i],
+  ["no_show", /\b(no[- ]?show(ed)?|never (showed( up)?|came|turned up|arrived)|didn'?t (show( up)?|come|turn up|arrive)|stood me up|ghosted( me)?|bailed( on me)?)\b/i],
 ];
 
 /** The kind of a report from its words (most serious first). "other" when nothing names a kind. */
