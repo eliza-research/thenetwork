@@ -108,6 +108,9 @@ export async function evalsBlock(b: Block): Promise<void> {
   const neg = await jsonl<{ text: string }>("network/negations.jsonl");
   const negBad = neg.filter(l => { const x = extractProfile(l.text); return x.desireIds.length || x.interests.length || classify(l.text).kind === "people_request"; }).map(l => l.text);
   b.gate(`negated wants (n ${neg.length}): 0 read as a want, interest or request`, neg.length >= 100 && negBad.length === 0, negBad.slice(0, 5).join(" | "));
+  const plansAsks = await jsonl<{ text: string; plans: boolean }>("network/plans-asks.jsonl");
+  const plansMiss = plansAsks.filter(l => (classify(l.text).kind === "plans_request") !== l.plans).map(l => `${JSON.stringify(l.text)} -> ${classify(l.text).kind}`);
+  b.gate(`plans asks (n ${plansAsks.length}): plans_request exactly for asks about things to do`, plansAsks.length >= 30 && plansMiss.length === 0, plansMiss.slice(0, 5).join("; "));
 
   // ---- core reply parser -------------------------------------------------------------------------
   const replies = await jsonl<{ text: string; label: ReplyAnswer }>("replies.jsonl");
