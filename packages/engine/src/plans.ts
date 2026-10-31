@@ -379,12 +379,13 @@ export function planProposals(w: World, inp: PlannerInput, pcfg: PlansConfig = D
   for (const c of cands) {
     if (out.length >= pcfg.maxPlansPerCityRun) break;
     if (c.plan.invited.some(id => used.has(id))) continue;
-    c.plan.alternates = c.plan.alternates.filter(id => !used.has(id) && !out.some(p => p.invited.includes(id)));
+    c.plan.alternates = c.plan.alternates.filter(id => !used.has(id) && !out.some(p => p.invited.includes(id) || p.alternates.includes(id)));
     for (const id of c.plan.invited) used.add(id);
+    for (const id of c.plan.alternates) used.add(id);
     out.push(c.plan);
   }
-  // Alternates are never someone already invited elsewhere this run.
-  for (const p of out) p.alternates = p.alternates.filter(id => !used.has(id));
+  // Alternates are never someone already invited or assigned as alternate elsewhere this run.
+  for (const p of out) p.alternates = p.alternates.filter(id => !out.some(o => o !== p && (o.invited.includes(id) || o.alternates.includes(id))));
   return out;
 }
 

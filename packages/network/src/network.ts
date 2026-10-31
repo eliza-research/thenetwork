@@ -1995,8 +1995,10 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (m.minor) return "participant_minor";
       if (this.busy(id, o.id)) return "busy_elsewhere";
     }
-    for (let i = 0; i < o.participants.length; i++) for (let j = i + 1; j < o.participants.length; j++)
+    for (let i = 0; i < o.participants.length; i++) for (let j = i + 1; j < o.participants.length; j++) {
       if (this.blocked(o.participants[i]!, o.participants[j]!)) return "blocked_pair";
+      if (this.avoid.has(pairKey(o.participants[i]!, o.participants[j]!))) return "pair_history";
+    }
     if (o.origin === "engine") return this.gateReason({ ...this.toProposal(o), roles: o.roles ?? {}, anchor: o.anchor, ...(o.seat ? { seat: o.seat } : {}) } as SeatProposal, o.id);
     return undefined;
   }
@@ -3054,10 +3056,11 @@ export class ConsentNetwork implements NetworkUnderTest {
       const chk = this.checkRecipient(id, "reveal", { about: [...seated, id], reply: false });
       const why = !chk.ok ? chk.reason : attention.canSendLogistics({ outboundSinceInbound: this.member(id).outbound ?? 0 }) ? undefined : "conversation_streak";
       if (why) { this.refuse(id, "reveal", why); o.status.set(id, "unavailable"); continue; }
+      if (seated.some(s => this.avoid.has(pairKey(s, id)))) { this.refuse(id, "reveal", "pair_history"); o.status.set(id, "unavailable"); continue; }
       seated.push(id);
     }
     keep = seated;
-    const enough = keep.length >= plan.quorum || (keep.length >= 2 && a.groupSize[0] <= 2);
+    const enough = plan.partner ? keep.length >= 2 : keep.length >= plan.quorum;
     if (!enough) {
       o.planRun = { ...o.planRun!, stage: "closed" };
       if (fromFallback || keep.length < 2) { for (const id of keep) this.noteFor(id, copy.planNotTogether); return this.close(o, "plan did not come together"); }
@@ -3115,7 +3118,20 @@ export class ConsentNetwork implements NetworkUnderTest {
     const { fallback, carry } = plans.planFallback(run, now, w.events, this.pcfg);
     this.planCarry.push(...carry);
     this.ctx.log("plan_fallback", { oppId: o.id, kind: fallback.kind, members: fallback.kind === "none" ? 0 : fallback.members.length });
-    if (fallback.kind === "smaller") return this.bookPlan(o, fallback.members, true);
+    if (fallback.kind === "smaller") {
+      if (fallback.partnerPlan) {
+        this.close(o, "plan did not come together");
+        const [a, b] = fallback.members as [MemberId, MemberId];
+        const ma = this.members.get(a), mb = this.members.get(b);
+        if (ma && mb && this.eligible(a) && this.eligible(b) && !this.blocked(a, b) && !this.avoid.has(pairKey(a, b)) && !this.pairHistory(a, b, 60) && ma.first.toLowerCase() !== mb.first.toLowerCase()) {
+          this.submitPlan(fallback.partnerPlan, now);
+          return;
+        }
+        for (const id of fallback.members) this.noteFor(id, copy.planNotTogether);
+        return;
+      }
+      return this.bookPlan(o, fallback.members, true);
+    }
     this.close(o, "plan did not come together");
     if (fallback.kind === "solo_event") {
       const ev = w.events.find(e => e.id === fallback.eventId);
@@ -3967,7 +3983,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       // whoever proposed it (search, engine, planner, player or scenario).
       const am = this.members.get(a);
       if (!am || am.minor || am.minorSignal) continue;
-      if (participants.includes(a) || [...participants, ...out].some(p => this.blocked(p, a))) continue;
+      if (participants.includes(a) || [...participants, ...out].some(p => this.blocked(p, a) || this.avoid.has(pairKey(p, a)) || this.pairHistory(p, a, 60))) continue;
       const f = this.members.get(a)?.first.toLowerCase();
       if (f && firsts.has(f)) continue;
       if (f) firsts.add(f);
