@@ -598,7 +598,8 @@ export function consentOf(body: string): Consent {
   if (hedge || question) return { answer: "unclear", why: "hedged" };
   // A yes needs the shared reader (core parseReply, AGENTS decision 11) not to read a refusal: when the
   // two disagree the member is asked again, never booked.
-  if (affirmAt < Infinity) return parseReply(body).answer === "no" ? { answer: "unclear", why: "mixed" } : { answer: "yes", why: "affirm" };
+  const pr = parseReply(body).answer;
+  if (affirmAt < Infinity) return pr === "no" ? { answer: "unclear", why: "mixed" } : { answer: "yes", why: "affirm" };
   return { answer: "unclear", why: "none" };
 }
 
@@ -663,7 +664,7 @@ function clauseAt(t: string, i: number, len: number): string {
 export function parseProbeReply(body: string, options: readonly TimeOption[] = []): { answer: "yes" | "no" | "unclear"; keys: string[]; why: ConsentWhy } {
   const t = normText(body);
   const c = consentOf(body);
-  if (!options.length) return { answer: c.answer === "no" ? "no" : c.answer === "yes" || c.answer === "counter" ? "yes" : "unclear", keys: [], why: c.why };
+  if (!options.length) return { answer: c.answer === "no" ? "no" : c.answer === "yes" ? "yes" : "unclear", keys: [], why: c.why };
   const all = options.map(o => o.key);
   // Every mention of an option, as a pick or a refusal. A key both picked and refused counts as picked.
   const pos = new Set<string>(), neg = new Set<string>(), strong = new Set<string>();
@@ -710,14 +711,13 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   if (c.why === "mixed" || c.why === "conditional" || c.why === "hedged") return unclear;
   // A time they name and do not refuse is a yes to it ("no plans Thursday, so Thursday works").
   // A named time with a yes or a firm pick ("Saturday works"); a bare mention ("I'm at a wedding saturday") is not a yes.
-  if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return { answer: "yes", keys: picked.filter(k => strong.has(k) || c.answer === "yes"), why: c.why };
-  if (NEITHER.test(t)) return { answer: "yes", keys: [], why: c.why };
+  if (c.answer !== "counter" && picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return { answer: "yes", keys: picked.filter(k => strong.has(k) || c.answer === "yes"), why: c.why };
+  if (c.answer === "yes" && NEITHER.test(t)) return { answer: "yes", keys: [], why: c.why };
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
   const allAt = ALL.exec(t) ?? ALL_WEAK.exec(t);
   if (allAt && c.answer !== "counter" && !negatedAt(t, allAt.index, allAt[0].length)) return open.length ? { answer: "yes", keys: open, why: c.why } : unclear;
   if (c.answer === "yes") return { answer: "yes", keys: open, why: c.why };
-  if (c.answer === "counter") return { answer: "yes", keys: [], why: c.why };
-  // Only refusals ("Thursday doesn't work") are not a yes: the probe stays open for a clear answer.
+  // Refusals of offered times and counter-offers are not consent: the probe stays open for a clear answer.
   return unclear;
 }
 

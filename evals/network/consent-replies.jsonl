@@ -87,13 +87,13 @@
 {"text":"Yes! Saturday is perfect","label":"yes","keys":["b"]}
 {"text":"yeah thursday evening is good","label":"yes","keys":["a"]}
 {"text":"I'd be up for it, but none of those times work.","label":"yes","keys":[]}
-{"text":"interested, but none of those days work for me","label":"yes","keys":[]}
-{"text":"neither works this week sorry","label":"yes","keys":[]}
-{"text":"none of those, but I'm up for it another day","label":"yes","keys":[]}
-{"text":"would love to, can we find another time?","label":"yes"}
-{"text":"Interested, but could we do a different day?","label":"yes"}
-{"text":"yes but next week would be better","label":"yes"}
-{"text":"Sounds fun! how about next week instead","label":"yes"}
+{"text":"interested, but none of those days work for me","label":"unclear","keys":[]}
+{"text":"neither works this week sorry","label":"unclear","keys":[]}
+{"text":"none of those, but I'm up for it another day","label":"unclear","keys":[]}
+{"text":"would love to, can we find another time?","label":"unclear"}
+{"text":"Interested, but could we do a different day?","label":"unclear"}
+{"text":"yes but next week would be better","label":"unclear"}
+{"text":"Sounds fun! how about next week instead","label":"unclear"}
 {"text":"yeah im in lol","label":"yes"}
 {"text":"ya im down","label":"yes"}
 {"text":"sure sure","label":"yes"}
