@@ -596,9 +596,10 @@ export function consentOf(body: string): Consent {
   if (counter) return { answer: "counter", why: "counter" };
   if (cond) return { answer: "unclear", why: "conditional" };
   if (hedge || question) return { answer: "unclear", why: "hedged" };
-  // Only a yes from the shared reader is consent (AGENTS decision 11). A counter-offer, condition,
-  // hedge or conflict stays unclear, even when this reader also found an affirmative phrase.
-  if (affirmAt < Infinity) return parseReply(body).answer === "yes" ? { answer: "yes", why: "affirm" } : { answer: "unclear", why: "mixed" };
+  // A yes needs the shared reader (core parseReply, AGENTS decision 11) not to read a refusal: when the
+  // two disagree the member is asked again, never booked.
+  const pr = parseReply(body).answer;
+  if (affirmAt < Infinity) return pr === "no" ? { answer: "unclear", why: "mixed" } : { answer: "yes", why: "affirm" };
   return { answer: "unclear", why: "none" };
 }
 
