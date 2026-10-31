@@ -242,7 +242,7 @@ export function eventAnchor(ctx: GenCtx): Candidate[] {
     let pairs = 0;
     for (let i = 0; i < top.length && pairs < 6; i++) for (let j = i + 1; j < top.length && pairs < 6; j++) {
       const a = top[i]!, b = top[j]!;
-      if (pairReason(w, a.id, b.id, ev.category)) continue;
+      if (pairReason(w, a.id, b.id, ev.category) || !w.canMeet([a.id, b.id])) continue;
       pairs++;
       out.push(makeCandidate({
         kind: "event_coattend", generator: "event_anchor", category: ev.category,
@@ -253,7 +253,7 @@ export function eventAnchor(ctx: GenCtx): Candidate[] {
         fit: (a.sim + b.sim) / 2, benefit: { [a.id]: a.sim, [b.id]: b.sim }, riskText: eventRiskText(ev), riskFlags: ev.riskTags,
       }));
     }
-    if (got.length >= w.cfg.group.minSize) {
+    if (ev.category !== "romance" && got.length >= w.cfg.group.minSize) {
       const g = composeGroup(w, {
         pool: got.slice(0, w.cfg.group.poolSize).map(r => ({ id: r.id, affinity: r.sim })), category: ev.category,
         minSize: w.cfg.group.minSize, maxSize: Math.min(4, w.cfg.group.maxSize), window: { start: ev.start, end: ev.end },
