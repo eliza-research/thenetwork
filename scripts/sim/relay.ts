@@ -551,13 +551,14 @@ async function deskGates(b: Block): Promise<void> {
 
 // ------------------------------------------------------------------------------------ adversarial
 const ADV_SEEDS = [13, 14, 15, 16];
-const ADV_MIN: Record<AdversarialResult["scenario"], number> = { scam_after_reveal: 200, swap_before_yes: 1000, leak_other_member: 400, minor_in_relay: 400, photo_in_probe: 1500 };
+const ADV_MIN: Record<AdversarialResult["scenario"], number> = { scam_after_reveal: 200, swap_before_yes: 1000, leak_other_member: 400, minor_in_relay: 400, photo_in_probe: 1500, catfish_photos: 1000 };
 const ADV_NAME: Record<AdversarialResult["scenario"], string> = {
   scam_after_reveal: "scam after the reveal: scammer reach <= 1 scam item, a sender hold, then nothing delivered from them",
   swap_before_yes: "number swap (share, number in text, photo) before both yeses: every item blocked, no number in the output or the log",
   leak_other_member: "leak of the other member's details (full name, number, private fact, canary): none delivered, stopped by the leak guard, a canary blocks",
   minor_in_relay: "minor in the relay (age slip, declared minor, unknown age): the slip blocks, then every item both ways blocked",
   photo_in_probe: "photo in the probe with the flag off, no consent, a minor or a held member: never a photo or the photo line; relayed photo never passes",
+  catfish_photos: "catfish photos (the match's, a third member's, an unowned id, one smuggled among the sender's own): never delivered, never a partial set; the sender's own photo passes",
 };
 
 async function adversarialGates(b: Block): Promise<void> {
