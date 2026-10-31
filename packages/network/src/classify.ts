@@ -492,11 +492,11 @@ export function feedbackOf(body: string): { sentiment: "positive" | "neutral" | 
   const selfNoShow = /couldn'?t make it|didn'?t make it|had to bail/.test(t);
   const otherNoShow = /\b(never|didn'?t|did not) (show(ed)?( up)?|turn(ed)? up|come)\b(?! (me|us|you|him|her|them|off|around|any|much))|\bno[- ]show\b|\bstood (me|us) up\b/.test(t);
   const negative = otherNoShow || NEGATIVE_FEEDBACK.test(t);
-  const sentiment = negative ? "negative" : /great|clicked|loved|amazing|nice|easy to talk/.test(t) ? "positive" : "neutral";
-  const again = !negative && /again|clicked/.test(t) && !/\b(wouldn'?t|won'?t|not|never)\b[^.!?]*\bagain\b/.test(t);
+  const sentiment = negative ? "negative" : /\b(great|clicked|loved|amazing|nice|easy to talk|fun|enjoy(ed|ing|able)?|wonderful|awesome|fantastic|blast|hit it off|delightful|lovely|good time)\b|\bwent (really |super |very )?well\b/.test(t) ? "positive" : "neutral";
+  const again = !negative && /\b(again|clicked|hit it off)\b/.test(t) && !/\b(wouldn'?t|won'?t|not|never)\b[^.!?]*\bagain\b/.test(t);
   return { sentiment, selfNoShow, otherNoShow, again };
 }
-const NEGATIVE_FEEDBACK = /\b((was|is|it's|that's)?\s*(not|n't|wasn't|isn't)\s+(that |very |really |so |too |super )?(great|good|fun|nice|amazing)|not much in common|nothing in common|didn't (really |quite )?(click|connect|enjoy)|didn't have much|not (really )?for me|not my (thing|type)|awkward|terrible|rude|creepy|bummer|uncomfortable)/;
+const NEGATIVE_FEEDBACK = /\b((was|is|it's|that's)?\s*(not|n't|wasn't|isn't)\s+(that |very |really |so |too |super )?(great|good|fun|nice|amazing|wonderful|awesome|fantastic)|not much in common|nothing in common|didn't (really |quite )?(click|connect|enjoy|hit it off)|didn't have much|not (really )?for me|not my (thing|type)|awkward|terrible|rude|creepy|bummer|uncomfortable)/;
 
 
 // ------------------------------------------------------------------ consent: yes, no or unclear
