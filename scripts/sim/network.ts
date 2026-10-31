@@ -149,6 +149,28 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
     expect(outbound(R).filter(m => m.msg.meta?.type === "scheduling" && (m.msg.meta?.meetingAt || !m.msg.meta?.timeOptions))).toEqual([]);
   });
 
+  await b.run("the booked plan: an \"ok\" that asks, hedges or counters is not a confirmation; a plain one is", async () => {
+    // Scripted replies to the booked message, sent while the Network waits on it.
+    const replies: [string, boolean][] = [["cool, can we move it to Friday instead?", false], ["ok wait, actually I might not make it", false], ["nice, wait is it at 7 or 8?", false], ["ok thanks!", true], ["perfect, can't wait!", true]];
+    const s = await world(4);
+    const said = new Map<MemberId, { text: string; confirm: boolean; at: number }>();
+    for (let t = s.start; t < s.start + 4 * DAY && said.size < replies.length; t += 5 * MINUTE) {
+      await s.w.advanceTo(t);
+      for (const m of s.net.memberList()) {
+        if (m.awaiting?.kind !== "booked" || said.has(m.id) || said.size >= replies.length) continue;
+        const [text, confirm] = replies[said.size]!;
+        said.set(m.id, { text, confirm, at: s.records.length });
+        s.w.act({ do: "say", persona: m.id, text });
+      }
+    }
+    await s.w.advanceTo(s.w.clock.now() + 10 * MINUTE);
+    expect(said.size).toBe(replies.length);
+    for (const [id, x] of said) {
+      const said = logs(s.records.slice(x.at), "plan_confirmed").some(l => l.detail.memberId === id && l.detail.how === "said");
+      expect([x.text, said]).toEqual([x.text, x.confirm]);
+    }
+  });
+
   await b.run("attention caps: each member's cap on initial invites, the plan lane (1 / 7 days), the Blooio streak, only-when-asked", () => {
     const state = new Map(run.w.snapshot().members.map(m => [m.id, m.state]));
     const by = new Map<MemberId, number[]>(), plan = new Map<MemberId, number[]>();
