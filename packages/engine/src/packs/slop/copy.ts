@@ -34,6 +34,9 @@ export function slopProbeText(ctx: { when: string; times?: boolean }, activity: 
   const clean = (s: string) => s.replace(/[.\s]+$/, "");
   const act = clean(activity);
   // Keep the probe under the Network style cap (copy.ts styleViolations: 360 chars).
+  // The network prepends a one-sentence ack (30 chars + space) and appends
+  // " Reply STOP anytime to opt out." (31 chars), so cap the core text at 298.
+  const CAP = 360 - 62;
   // Drop optional parts longest-last: attribute, then about, then shorten the ask.
   const askLong = " Want me to check if they're up for it? I'll only tell you who it is if you both say yes.";
   const askShort = " Interested? Names only if you both say yes.";
@@ -42,15 +45,15 @@ export function slopProbeText(ctx: { when: string; times?: boolean }, activity: 
   let who = about ? ` They're ${clean(about)}.` : "";
   let also = attribute ? ` They're into ${clean(attribute)}.` : "";
   let text = `There's someone I think you might like to go on a date with: ${act}, ${ctx.when}.${who}${also}${tailLong}`;
-  if (text.length > 360) {
+  if (text.length > CAP) {
     also = "";
     text = `There's someone I think you might like to go on a date with: ${act}, ${ctx.when}.${who}${also}${tailLong}`;
   }
-  if (text.length > 360) {
+  if (text.length > CAP) {
     who = "";
     text = `There's someone I think you might like to go on a date with: ${act}, ${ctx.when}.${who}${also}${tailLong}`;
   }
-  if (text.length > 360) {
+  if (text.length > CAP) {
     text = `There's someone I think you might like to go on a date with: ${act}, ${ctx.when}.${who}${also}${tailShort}`;
   }
   return text;
