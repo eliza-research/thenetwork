@@ -776,8 +776,8 @@ export function availabilityTags(body: string): string[] {
 export function planAgainOf(body: string): "yes" | "no" | "unclear" {
   const t = body.toLowerCase().replace(/[‘’ʼ]/g, "'");
   if (/\b(couldn'?t make it|didn'?t (go|make it)|nobody else|no one else|never showed|didn'?t show)\b/.test(t)) return "unclear";
-  if (/\b(probably not|not really|no\b|nah|nope|wouldn'?t|won'?t|not again|never again)\b/.test(t)) return "no";
-  if (/\b(yes|yeah|yep|definitely|absolutely|for sure|again|count me in)\b/.test(t)) return "yes";
+  if (/\b(probably not|not really|no\b|nah|nope|wouldn'?t|won'?t|not again|never again|pass\b|hard pass|i'll pass|i will pass|rather not|i'd rather not|not for me|not my thing|don't think so|i don't think so|no thanks|decline)\b/.test(t)) return "no";
+  if (/\b(?:yes|yeah|yep|definitely|absolutely|for sure|again|count me in|i'd love to|would love to|love that|loved it|had a blast|sure thing|sure|totally|of course|sign me up|i'm down|im down|down to|down|anytime|let's do it|lets do it)\b|100%|💯/.test(t)) return "yes";
   return "unclear";
 }
 
