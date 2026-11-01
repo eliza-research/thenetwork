@@ -1582,9 +1582,27 @@ export class ConsentNetwork implements NetworkUnderTest {
   // ================================================================== requests
   private openRequest(m: MemberState, c: Classified, o: { quiet?: boolean }) {
     const now = this.now();
+    const cat = c.category ?? "social";
+    // Only what this app does (matching-e2e-2): a request outside its categories is not searched.
+    if (!this.allowedCategories.has(cat)) {
+      this.ctx.log("request_out_of_scope", { memberId: m.id, category: cat });
+      if (!o.quiet) this.send(m, copy.requestOutOfScope, { type: "info" }, "reply");
+      return;
+    }
+    const rm = this.record(m.id);
+    if (rm?.prefs?.categoriesOptIn && !rm.prefs.categoriesOptIn.includes(cat)) {
+      this.ctx.log("request_out_of_scope", { memberId: m.id, category: cat });
+      if (!o.quiet) this.send(m, copy.requestOutOfScope, { type: "info" }, "reply");
+      return;
+    }
+    if (cat === "romance" && (!rm?.prefs?.romanceOptIn || !rm.prefs.categoriesOptIn?.includes("romance") || !validAge(rm?.age) || (rm?.age ?? 0) < 18 || m.minor || m.minorSignal || m.ageConflict)) {
+      this.ctx.log("request_out_of_scope", { memberId: m.id, category: cat });
+      if (!o.quiet) this.send(m, copy.requestOutOfScope, { type: "info" }, "reply");
+      return;
+    }
     // Repeat asks ("still hoping to...") are the same request: don't open another one while one is
     // in progress, and don't re-search the same want more than once every 3 days.
-    const prior = [...this.requests].reverse().find(r => r.memberId === m.id && r.kind === "people" && r.outcome !== "booked" && r.outcome !== "fulfilled" && (r.desireId ?? r.category) === (c.desireId ?? c.category));
+    const prior = [...this.requests].reverse().find(r => r.memberId === m.id && r.kind === "people" && r.outcome !== "booked" && r.outcome !== "fulfilled" && (r.desireId ?? r.category) === (c.desireId ?? cat));
     // The re-search interval is the member's effort overlay (NC; the floor is 3 days).
     if (prior && (prior.outcome === "probing" || now - prior.at < this.effort(m.id).intentReSearchDays * DAY)) {
       if (o.quiet) return;
@@ -1597,14 +1615,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       this.tellNoneYet(m, prior);
       return;
     }
-    // Only what this app does (matching-e2e-2): a request outside its categories is not searched.
-    if (!this.allowedCategories.has(c.category ?? "social")) {
-      this.ctx.log("request_out_of_scope", { memberId: m.id, category: c.category ?? "social" });
-      if (!o.quiet) this.send(m, copy.requestOutOfScope, { type: "info" }, "reply");
-      return;
-    }
     this.counters.requests++;
-    const req: Request = { id: this.sid(`rq${++this.reqSeq}`), memberId: m.id, at: now, kind: "people", category: c.category ?? "social", desireId: c.desireId, tags: c.tags };
+    const req: Request = { id: this.sid(`rq${++this.reqSeq}`), memberId: m.id, at: now, kind: "people", category: cat, desireId: c.desireId, tags: c.tags };
     this.requests.push(req);
     this.emit({ type: "help_asked", member: m.id }, req.id);
     if (c.desireId) m.learned.desires.set(c.desireId, now);
@@ -1696,6 +1708,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (r.lastConfirmAt !== undefined && now - r.lastConfirmAt < 72 * HOUR) continue;
       const m = this.members.get(r.memberId);
       if (!m || !this.eligible(m.id, undefined, true) || this.busy(m.id)) continue;
+      const rm = this.record(r.memberId);
+      if (rm?.prefs?.categoriesOptIn && !rm.prefs.categoriesOptIn.includes(r.category)) continue;
+      if (r.category === "romance" && (!rm?.prefs?.romanceOptIn || !rm.prefs.categoriesOptIn?.includes("romance"))) continue;
       const o = this.tryRequest(m, r);
       if (!o) continue;
       this.counters.requestRetries++;
@@ -1718,6 +1733,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (x.first.toLowerCase() === m.first.toLowerCase()) continue;
       if (x.state === "receiving") continue; // Receiving members are never asked to help others (support-only)
       if (this.pairHistory(m.id, x.id, 30)) continue;
+      const rx = this.record(x.id);
+      if (rx?.prefs?.categoriesOptIn && !rx.prefs.categoriesOptIn.includes(req.category)) continue;
+      if (req.category === "romance" && this.romanceGate([m.id, x.id]) !== undefined) continue;
       if (!known.has(x.id) || (this.opts.selective && this.responsiveness(x.id) < this.opts.minResponsiveness)) continue;
       const { fit, why, whyBack } = this.askFit(m.id, x.id, req, known);
       if (fit < 0.45) continue;
@@ -1760,7 +1778,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    * How well candidate `x` answers member `id`'s ask, from what we know only: the fit, the reason
    * the requester hears ("they play bass") and the reason the candidate hears ("you're both into X").
    */
-  private askFit(id: MemberId, x: MemberId, req: { desireId?: string; tags: string[] }, known = this.knownProfiles()): { fit: number; why: string; whyBack: string } {
+  private askFit(id: MemberId, x: MemberId, req: { category?: Category; desireId?: string; tags: string[] }, known = this.knownProfiles()): { fit: number; why: string; whyBack: string } {
     const def = req.desireId ? desireById.get(req.desireId) : undefined;
     const k = known.get(x);
     if (!k) return { fit: 0, why: "", whyBack: GOOD_FIT };
@@ -1781,7 +1799,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       const shared = req.tags.filter(t => k.interests.has(t));
       if (shared.length) { s = 0.35 + 0.15 * shared.length; const t = shared.find(x => k.sharedInterests.has(x)); why = t ? `they're into ${interestLabel(t)}` : ""; }
     }
-    if (def?.category === "romance") s = 0; // romance only via the engine's opt-in checks
+    if (req.category === "romance" || def?.category === "romance") s = 0; // romance only via the engine's opt-in checks
     const mine = known.get(id);
     const sharedBack = mine ? [...mine.sharedInterests].find(t => k.interests.has(t)) : undefined;
     return { fit: s, why: why || GOOD_FIT, whyBack: sharedBack ? `you're both into ${interestLabel(sharedBack)}` : GOOD_FIT };
