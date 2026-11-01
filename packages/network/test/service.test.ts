@@ -219,6 +219,36 @@ describe.skipIf(!pgAvailable)("network service (Postgres)", () => {
     expect(h.lastTick.thisInstance).toEqual({ at: clock.now(), ran: true });
   }, T);
 
+  test("a review decision after the SLA deadline expires the item unsent instead of approving it", async () => {
+    await reset();
+    const clock = new SimClock(START);
+    const s = service(clock, "late-review");
+    await staff(s, "adm-tok", "POST", "/matching", { on: true });
+    for (const id of ["a", "b", "c", "r"]) for (const text of ONBOARD) await say(s, clock, id, text);
+    // A member request composes an item and queues it for staff review.
+    expect(await say(s, clock, "r", "Anyone around who'd want to find a regular climbing partner? I'm near Greenpoint.")).toBe("handled");
+    const item = (await (await staff(s, "rev-tok", "GET", "/review")).json()).items.find((i: any) => i.origin === "request");
+    expect(item).toBeDefined();
+    const oppId = item.oppId as string;
+    const aboutOpp = async () => (await sql`select count(*)::int as n from network.messages where opportunity_id = ${oppId}`)[0].n;
+    expect(await aboutOpp()).toBe(0); // nobody hears about it before review
+
+    // Past the deadline, before any tick for it: advance() has not expired it yet.
+    clock.set(item.deadline + MINUTE);
+    const late = await staff(s, "rev-tok", "POST", `/review/${oppId}`, { decision: "approve" });
+    expect(await late.json()).toEqual({ ok: false, reason: "review_expired" });
+    // The item is gone from the queue, nobody was contacted and the saved decision says expired.
+    expect((await (await staff(s, "rev-tok", "GET", "/review")).json()).items.map((i: any) => i.oppId)).toEqual([]);
+    expect(await aboutOpp()).toBe(0);
+    expect((await sql`select decision from network.review_items where opportunity_id = ${oppId}`)[0].decision).toBe("expired");
+    // The next tick does not send it either, and the expiry is counted once.
+    expect(await s.tick()).toBe(true);
+    expect(await aboutOpp()).toBe(0);
+    expect((await sql`select (state->'counters'->>'reviewExpired')::int as n from network.network_state`)[0].n).toBe(1);
+    // The audit row records the refusal, not an approval.
+    expect((await sql`select ok, detail->>'reason' as reason from network.staff_audit where action = 'review' and detail->>'phase' = 'result'`)[0]).toEqual({ ok: false, reason: "review_expired" });
+  }, T);
+
   test("two instances never tick at once; the second sees the lock holder and skips", async () => {
     await reset();
     const clock = new SimClock(START);
