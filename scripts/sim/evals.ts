@@ -151,6 +151,8 @@ export async function evalsBlock(b: Block): Promise<void> {
     // A stray "all" is not a request to join dating and work: an opt-out answer must never enroll anyone.
     expect(["not interested at all", sorted("not interested at all")]).toEqual(["not interested at all", []]);
     expect(["just friends, that's all", sorted("just friends, that's all")]).toEqual(["just friends, that's all", ["friends"]]);
+    // A negated "all apps"/"everything" answer must not enroll anyone (the all-apps branch obeys the negation guard).
+    for (const t of ["I don't want all apps", "not everything", "dont want all of them", "without all apps"]) expect([t, sorted(t)]).toEqual([t, []]);
   });
 
   // ---- leak guard ------------------------------------------------------------------------------------
