@@ -162,3 +162,4 @@
 {"text":"Within 50 miles, I date in SF and NYC","expect":{"distance":{"mode":"multi","markets":["nyc","sf"],"miles":50}}}
 {"text":"I date in SF and NYC. My distance limit is 50 miles.","expect":{"distance":{"mode":"multi","markets":["nyc","sf"],"miles":50}}}
 {"text":"I date in SF and NYC","expect":{"distance":{"mode":"multi","markets":["nyc","sf"]}}}
+{"text":"29F seeking M 30-40","expect":{"gender":"woman","seeks":["man"],"ageRange":[30,40]}}
