@@ -125,6 +125,37 @@ describe.skipIf(!pgAvailable)("outbound queue on Postgres", () => {
     expect(calls.length).toBe(2);
   });
 
+  test("unknown acceptance: the TTL runs from when acceptance became unknown, not from enqueue, so a text that waited out quiet hours still gets its receipt lookup", async () => {
+    // 23:00 in New York: a transactional text waits for quiet hours to end (09:00, ten hours later).
+    const night = new SimClock(Date.UTC(2026, 9, 11, 3));
+    const calls: SendRequest[] = [];
+    let mode: "timeout" | "ok" = "timeout";
+    const provider: ChannelAdapter = {
+      kind: "sim",
+      async send(req) {
+        calls.push(req);
+        if (mode === "timeout") throw new ChannelSendError("provider timed out", "unknown");
+        return { providerMessageId: `sim:${req.idempotencyKey}`, chatId: req.to, status: "sent", transport: "sim" };
+      },
+      async receipt() { throw new ChannelSendError("lookup", "unknown", 404, "not_found"); },
+    };
+    const alerts: string[] = [];
+    const q = queue(a, provider, { clock: night, onAlert: (id, why) => alerts.push(`${id}:${why}`) });
+    await q.enqueue(a, [{ id: "unk-quiet", to: "+12125556010", kind: "transactional", text: "Your plan is at 7 tonight.", timeZone: NY }]);
+    await q.drain();
+    expect(await q.statusOf("unk-quiet")).toBe("deferred_quiet_hours");
+    night.advance(10 * 60 * 60_000 + 60_000);
+    await q.drain();
+    expect(await q.statusOf("unk-quiet")).toBe("unknown_acceptance");
+    // One minute later the lookup says the provider never admitted it: it goes again with the same key.
+    mode = "ok";
+    night.advance(60_000);
+    await q.drain();
+    expect(alerts).not.toContain("unk-quiet:unknown_acceptance_expired");
+    expect(await q.statusOf("unk-quiet")).toBe("sent");
+    expect(calls.map(c => c.idempotencyKey)).toEqual(["tn:unk-quiet", "tn:unk-quiet"]);
+  });
+
   test("the leak guard reads the recent thread to the same address", async () => {
     const { calls, provider } = recorder();
     const leaks = { forbidden: ["secret orchid garden party"] };

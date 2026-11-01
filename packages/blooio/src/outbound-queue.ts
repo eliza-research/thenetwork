@@ -165,8 +165,9 @@ export interface QueueOptions {
   leaseMs?: number;
   /**
    * A row whose provider acceptance stays unknown (unknown_acceptance: the worker stopped mid-call, or the
-   * provider timed out) and that no receipt lookup resolves within this long after it was created ends as
-   * failed_unknown, with an alert. Default 6 hours.
+   * provider timed out) and that no receipt lookup resolves within this long after it became unknown ends as
+   * failed_unknown, with an alert. Default 6 hours. The clock starts at the failed call (next_attempt_at),
+   * not at enqueue: a text that waited out quiet hours still gets its lookups.
    */
   unknownTtlMs?: number;
   /** A proactive row older than this is never sent (expired). Default 24 h. Any other row: 3 days. */
@@ -582,7 +583,7 @@ export class OutboundQueue {
     const changes:StatusChange[]=[];
     const ttl=this.opt("unknownTtlMs",6*HOUR);
     for (const stored of await this.sql`select * from platform.outbound where app_id=${this.app} and line=${this.line}
-      and status='unknown_acceptance' and created_at<${new Date(this.now-ttl)} order by created_at,id limit 50`) {
+      and status='unknown_acceptance' and next_attempt_at<${new Date(this.now-ttl)} order by next_attempt_at,id limit 50`) {
       const row=this.rowOf(stored);
       this.o.onAlert?.(row.id,"unknown_acceptance_expired");
       changes.push(await this.end(row,"failed_unknown","provider acceptance never resolved"));
