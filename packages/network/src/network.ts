@@ -1891,11 +1891,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (fi) return this.decideFraud(fi, decision, opts);
     const o = this.opps.get(oppId);
     if (!o || o.stage !== "review" || !o.review) return { ok: false, reason: "not_in_review" };
+    // Past the SLA the item expires unsent (PRD 32.8), whichever comes first: the tick (advance) or this decision.
+    const now = this.now();
+    if (now >= o.review.deadline) { this.expireReview(o, now); return { ok: false, reason: "review_expired" }; }
     const refuse = (reason: string): ActionResult => { this.ctx.log("review_refused", { oppId, decision, reason }); return { ok: false, reason }; };
     if (!REVIEW_DECISIONS.has(decision)) return refuse("unknown_decision");
     const blocked = this.reviewBlock(oppId, decision, opts) ?? (decision === "edit" ? this.editBlock(o, opts) : undefined);
     if (blocked) return refuse(blocked);
-    const now = this.now();
     const reviewer = opts.reviewer ?? "reviewer";
     const seconds = typeof opts.secondsSpent === "number" && Number.isFinite(opts.secondsSpent) && opts.secondsSpent >= 0 ? opts.secondsSpent : undefined;
     if (seconds !== undefined) o.review.secondsSpent = (o.review.secondsSpent ?? 0) + seconds;
@@ -3341,13 +3343,18 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
   }
 
+  /** One review-stage item past its SLA: expired unsent (advance() at the tick, decide() at a late decision). */
+  private expireReview(o: Opp, now: number) {
+    o.review!.decision = "expired"; o.review!.decidedAt = now;
+    this.counters.reviewExpired++;
+    this.ctx.log("review_expired", { oppId: o.id });
+    this.close(o, "review expired");
+  }
+
   private advance(o: Opp, now: number) {
     if (o.stage === "review" && o.review && now >= o.review.deadline) {
       // Missed its SLA: expires instead of being sent late (PRD 32.8).
-      o.review.decision = "expired"; o.review.decidedAt = now;
-      this.counters.reviewExpired++;
-      this.ctx.log("review_expired", { oppId: o.id });
-      this.close(o, "review expired");
+      this.expireReview(o, now);
       return;
     }
     if (o.plan && o.planRun && (o.stage === "probing" || o.stage === "scheduled")) {
