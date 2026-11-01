@@ -269,6 +269,7 @@ export function networkStateFromRecords(records: readonly RunRecord[], now: numb
   const props = new Map<string, Proposal>();
   const skipped = new Set<string>();
   const declines = new Map<string, MemberId[]>(), yes = new Map<string, Set<MemberId>>(), invited = new Map<string, Map<MemberId, number>>();
+  const declinedAt = new Map<string, number>();
   const scheduled = new Map<string, { at: number; participants: MemberId[] }>();
   const outcome = new Map<string, Extract<RunRecord, { type: "outcome" }>>();
   const answered = new Set<string>();
@@ -292,7 +293,11 @@ export function networkStateFromRecords(records: readonly RunRecord[], now: numb
         const a = inviteAnswer(m.body);
         if (!a) continue;
         answered.add(key);
-        if (a === "no") { if (!declines.has(th.proposalId)) declines.set(th.proposalId, []); declines.get(th.proposalId)!.push(m.memberId); }
+        if (a === "no") {
+          if (!declines.has(th.proposalId)) declines.set(th.proposalId, []);
+          declines.get(th.proposalId)!.push(m.memberId);
+          declinedAt.set(th.proposalId, Math.max(declinedAt.get(th.proposalId) ?? -Infinity, m.ts));
+        }
         else { if (!yes.has(th.proposalId)) yes.set(th.proposalId, new Set()); yes.get(th.proposalId)!.add(m.memberId); }
       }
     } else if (r.type === "meeting_scheduled") scheduled.set(r.proposalId, { at: r.at, participants: r.participants });
@@ -314,7 +319,7 @@ export function networkStateFromRecords(records: readonly RunRecord[], now: numb
     const dec = declines.get(pid);
     const o = outcome.get(pid);
     const sched = scheduled.get(pid);
-    if (dec?.length) out = "declined";
+    if (dec?.length) { out = "declined"; at = declinedAt.get(pid)!; }
     else if (o) {
       const shows = Object.values(o.attendance).filter(a => a.showed).length;
       out = shows >= 2 ? "completed" : "no_show"; at = o.at;
@@ -325,7 +330,7 @@ export function networkStateFromRecords(records: readonly RunRecord[], now: numb
     else openOpportunities.push({ id: pid, participants: [...p.participants], stage: "inviting", until: p.createdAt + 3 * DAY });
     interactions.push({
       id: pid, kind: p.kind, category: p.category ?? "social", participants: [...p.participants], at, outcome: out,
-      ...(dec?.length ? { declinedBy: dec } : {}), ...(acceptedBy.length ? { acceptedBy } : {}), ...(noResponse.length ? { noResponse } : {}),
+      ...(dec?.length ? { declinedBy: dec } : {}), ...(acceptedBy.length ? { acceptedBy } : {}), ...(out === "expired" || noResponse.length ? { noResponse } : {}),
     });
   }
   for (const f of said) {
