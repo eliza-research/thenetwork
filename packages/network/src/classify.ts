@@ -739,6 +739,17 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   
   const open = all.filter(k => !neg.has(k) || pos.has(k));
   const unclear = { answer: "unclear" as const, keys: [], why: c.why };
+ 
+  // An affirmative for an unoffered day is a counter-offer.
+  // Do not book any of the offered options.
+  if (
+    unofferedStrongDay &&
+    picked.length === 0 &&
+    (c.answer === "yes" || c.why === "mixed")
+  ) {
+    return { answer: "yes", keys: [], why: "counter" };
+  }
+  
   // Refusal first. A pick after a refusal ("no, Saturday works") is mixed: ask again.
   if (c.why === "refusal") return all.some(k => strong.has(k)) ? { ...unclear, why: "mixed" } : { answer: "no", keys: [], why: c.why };
   if (c.why === "mixed" || c.why === "conditional" || c.why === "hedged") return unclear;
