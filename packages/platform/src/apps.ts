@@ -117,7 +117,9 @@ export function lookingFor(text: string): AppId[] {
   if (want("friends?|friendship|friendships|new people|people to hang out with|hanging out|hang out|social life|crew")) out.push("friends");
   if (want("dating|date|dates|love|romance|romantic|relationship|a relationship|partner|boyfriend|girlfriend|someone to date")) out.push("slop");
   if (want("work|job|jobs|hiring|hire|career|employment|recruiting|a job|clients|gigs?")) out.push("peon");
-  if (/ (all|all of (them|it|these)|everything|all three) /.test(t)) for (const a of ["friends", "slop", "peon"] as const) if (!out.includes(a)) out.push(a);
+  // "all apps" / "everything" enrolls in every app; a bare "all" does not ("not interested at all",
+  // "that's all", "all my friends" are not a request to join dating and work too).
+  if (/ (all apps|all of (them|it|these|the apps)|everything|all three) /.test(t)) for (const a of ["friends", "slop", "peon"] as const) if (!out.includes(a)) out.push(a);
   return out;
 }
 

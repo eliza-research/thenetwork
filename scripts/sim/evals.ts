@@ -9,7 +9,7 @@ import { classifyYesNo, findLeaks, parseOptOut, parseReply, type ReplyAnswer } f
 import { classify, extractProfile, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
 import { detectKeyword, leaveTarget, optOutPhrase } from "../../packages/platform/src/consent.ts";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
-import { APPS, type AppId } from "../../packages/platform/src/apps.ts";
+import { APPS, lookingFor, type AppId } from "../../packages/platform/src/apps.ts";
 import { MemoryPeopleStore } from "../../packages/platform/src/store.ts";
 import { outputLeaks } from "../../packages/mcp/src/leaks.ts";
 import { Block, expect } from "./gate.ts";
@@ -143,6 +143,14 @@ export async function evalsBlock(b: Block): Promise<void> {
     }
     for (const t of ["cancel the date", "stop by at 7", "quit my job", "I have to leave early", "leave slop alone lol"]) expect([t, leaveTarget(t) ?? null]).toEqual([t, null]);
     expect(optOutPhrase(`${"I had a long day at work and the train was late again. ".repeat(3)}stop texting me`)).toBe(false);
+  });
+  await b.run("platform lookingFor: 'all apps'/'everything' joins every app; a bare 'all' does not", () => {
+    const sorted = (t: string) => [...lookingFor(t)].sort();
+    // Explicit "every app" answers still enroll in all three (founder decision 2).
+    for (const t of ["I want everything", "all three", "give me all of them", "all apps please"]) expect([t, sorted(t)]).toEqual([t, ["friends", "peon", "slop"]]);
+    // A stray "all" is not a request to join dating and work: an opt-out answer must never enroll anyone.
+    expect(["not interested at all", sorted("not interested at all")]).toEqual(["not interested at all", []]);
+    expect(["just friends, that's all", sorted("just friends, that's all")]).toEqual(["just friends, that's all", ["friends"]]);
   });
 
   // ---- leak guard ------------------------------------------------------------------------------------
