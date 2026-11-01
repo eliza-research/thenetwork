@@ -171,7 +171,8 @@ const AGE_RULES: { rx: RegExp; age: (m: RegExpExecArray) => number; strict: bool
   { rx: new RegExp(`\\bi(?:'ll| will) be\\s+(\\d{1,2}|${NUM_WORD_RX})\\s+(?:in|on|next|this|soon)\\b`), age: m => (/^\d/.test(m[1]!) ? Number(m[1]) : wordNum(m[1]!)) - 1, strict: false },
   // Shorthand "27f", "27 m", "27/nb", "f27", "m 31": an age and a gender together.
   { rx: /(?:^|[\s,(\/])(\d{2})\s*\/?\s*(?:f|m|nb|enby|w)(?![a-z0-9'])/, age: m => Number(m[1]), strict: false },
-  { rx: /(?:^|[\s,(])(?:f|m)\s*\/?\s*(\d{2})(?![\d'])(?!\s*(?:mi|miles|km|min))/, age: m => Number(m[1]), strict: false },
+  // Never the start of a range: in "seeking F 28-35" the letter and range are who they seek.
+  { rx: /(?:^|[\s,(])(?:f|m)\s*\/?\s*(\d{2})(?![\d'])(?!\s*(?:-|to)\s*\d)(?!\s*(?:mi|miles|km|min))/, age: m => Number(m[1]), strict: false },
   // "straight guy here, 34", "woman, 29", "29, woman", "m4w 31".
   { rx: new RegExp(`(?:\\b(?:${G_WOMAN}|${G_MAN}|${G_NB})|\\bhere|\\b[mwf]4[mwfa])\\s*[,\\/:-]?\\s*(\\d{2})(?![\\d'])(?!\\s*(?:-|to)\\s*\\d)(?!\\s*(?:mi\\b|miles|km|min|mins|minutes|blocks|hours|%))`), age: m => Number(m[1]), strict: false },
   { rx: new RegExp(`^\\W*(\\d{2})\\s*[,\\/]\\s*(?:(?:${ADJ_LITE})\\s+)?(?:${G_WOMAN}|${G_MAN}|${G_NB})\\b`), age: m => Number(m[1]), strict: false },
@@ -263,7 +264,7 @@ function readGender(t: string, asked?: OnboardField): GenderReading {
     }
     // Shorthand: "27f", "f27", "(m)", "m4w" (self + seek).
     for (const m of all(/(?:^|[\s,(\/])\d{2}\s*\/?\s*(f|m|nb|enby)(?![a-z0-9'])/, s.text)) out.gender = cand(m[1] === "f" ? "woman" : m[1] === "m" ? "man" : "nonbinary", s, m, 0.9);
-    for (const m of all(/(?:^|[\s,(])(f|m)\s*\/?\s*\d{2}(?![\d'])(?!\s*(?:mi|miles|km|min))/, s.text)) out.gender = cand(m[1] === "f" ? "woman" : "man", s, m, 0.9);
+    for (const m of all(/(?:^|[\s,(])(f|m)\s*\/?\s*\d{2}(?![\d'])(?!\s*(?:-|to)\s*\d)(?!\s*(?:mi|miles|km|min))/, s.text)) out.gender = cand(m[1] === "f" ? "woman" : "man", s, m, 0.9);
     for (const m of all(/\((f|m|nb)\)/, s.text)) out.gender = cand(m[1] === "f" ? "woman" : m[1] === "m" ? "man" : "nonbinary", s, m, 0.9);
     for (const m of all(/\b(m|w|f|nb)4(?:m|w|f|nb|a|any|mw|wm|all)\b/, s.text)) out.gender = cand(m[1] === "m" ? "man" : m[1] === "nb" ? "nonbinary" : "woman", s, m, 0.9);
     // Orientation said alone: "I'm bi", "gay btw", "straight here", "I'm a woman, lesbian".
