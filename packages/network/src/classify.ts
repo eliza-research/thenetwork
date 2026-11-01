@@ -703,6 +703,40 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   residue = residue.replace(/\b\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b|\b(?:the|one|option|or|and|either|works?|please|pls|lol|at|on|in the|morning|evening|afternoon|night|[abc])\b|[\W_]+/g, "");
   if (!residue) for (const k of pos) strong.add(k);
   const picked = all.filter(k => pos.has(k));
+  
+  // A member may name a day that was not offered.
+  // Treat a clear acceptance of that day as a counter-offer,
+  // not as acceptance of every offered option.
+  const offeredDays = new Set(
+    DAY_WORDS
+      .filter(([, dayName]) =>
+        options.some(o =>
+          o.label.toLowerCase().startsWith(dayName.toLowerCase())
+        )
+      )
+      .map(([, dayName]) => dayName)
+  );
+
+  const unofferedStrongDay = DAY_WORDS.some(([re, dayName]) => {
+    if (offeredDays.has(dayName)) return false;
+
+    return [...t.matchAll(re)].some(m => {
+      const i = m.index!;
+      const len = m[0].length;
+
+      return (
+        !negatedAt(t, i, len) &&
+        (
+          onlyPick(i, len) ||
+          (
+            POSITIVE_PICK.test(clauseAt(t, i, len)) &&
+            !/\?/.test(t.slice(i + len, i + len + 2))
+          )
+        )
+      );
+    });
+  });
+  
   const open = all.filter(k => !neg.has(k) || pos.has(k));
   const unclear = { answer: "unclear" as const, keys: [], why: c.why };
   // Refusal first. A pick after a refusal ("no, Saturday works") is mixed: ask again.
