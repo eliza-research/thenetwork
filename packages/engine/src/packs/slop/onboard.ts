@@ -90,10 +90,11 @@ export function applyCorrection(p: SlopOnboarding, text: string, o: ExtractOptio
   const next = extractSlopProfile([{ text, asked: o.asked }], p, o);
   const changed = JSON.stringify(view(next)) !== JSON.stringify(view(p));
   if (changed) return finalize({ ...next, confirmed: false });
-  const yes = classifyYesNo(text) === "yes" || /^\s*(?:right|correct|exactly|that'?s (?:it|right)|you got it|perfect|yup|yep|ya|ye|100|👍)\b/i.test(text);
-  return finalize({ ...next, confirmed: yes && !p.minor && !p.declined });
+  const yn = classifyYesNo(text);
+  const yes = yn === "yes" || (yn !== "no" && /^\s*(?:right|correct|exactly|that'?s (?:it|right)|you got it|perfect|yup|yep|ya|ye|100|👍)\b/i.test(text));
+  return finalize({ ...next, confirmed: yes && !next.minor && !next.declined });
 }
-const view = (p: SlopOnboarding) => ({ g: p.gender?.value, s: p.seeks?.value, a: p.ageRange?.value, d: p.distance?.value, l: p.location?.value, goal: p.goal?.value, db: p.dealbreakers.map(d => d.value).sort(), i: p.interests.map(x => x.value).sort(), ac: p.activities.map(x => x.value).sort(), f: p.free.map(x => x.value).sort(), age: p.age?.value, v: Object.fromEntries(Object.entries(p.values).map(([k, x]) => [k, x?.value])) });
+const view = (p: SlopOnboarding) => ({ g: p.gender?.value, s: p.seeks?.value, o: p.orientation?.value, a: p.ageRange?.value, d: p.distance?.value, l: p.location?.value, goal: p.goal?.value, db: p.dealbreakers.map(d => d.value).sort(), ndb: !!p.noDealbreakers, i: p.interests.map(x => x.value).sort(), ac: p.activities.map(x => x.value).sort(), f: p.free.map(x => x.value).sort(), age: p.age?.value, m: p.minor, dec: p.declined, v: Object.fromEntries(Object.entries(p.values).map(([k, x]) => [k, x?.value])) });
 
 // ------------------------------------------------------------------------------------------ next question
 

@@ -815,6 +815,9 @@ export function mergeReading(p0: SlopOnboarding, r: Reading, text: string): Slop
   if (r.gender) p.gender = field(r.gender, turn, text);
   if (r.identity) p.identity = field(r.identity, turn, text);
   if (r.orientation) p.orientation = field(r.orientation, turn, text);
+  if (!r.seeks && (r.gender || r.orientation) && p.seeks && p.seeks.confidence <= 0.7) {
+    delete p.seeks;
+  }
   if (r.seeks) {
     const derived = p.seeks && p.seeks.confidence <= 0.7;
     const value = r.additive && p.seeks && !derived ? [...new Set([...p.seeks.value, ...r.seeks.value])].sort() : r.seeks.value;
@@ -841,7 +844,7 @@ export function mergeReading(p0: SlopOnboarding, r: Reading, text: string): Slop
 }
 
 /** What a confirmation covers: the hard fields and the age (a change to them needs a new read-back). */
-const stripMeta = (p: SlopOnboarding) => ({ age: p.age?.value, seeks: p.seeks?.value, gender: p.gender?.value, ageRange: p.ageRange?.value, distance: p.distance?.value, location: p.location?.value });
+const stripMeta = (p: SlopOnboarding) => ({ age: p.age?.value, seeks: p.seeks?.value, gender: p.gender?.value, orientation: p.orientation?.value, minor: p.minor, ageRange: p.ageRange?.value, distance: p.distance?.value, location: p.location?.value });
 
 /** Derived values, the minor and decline rules, and matchability. */
 export function finalize(p: SlopOnboarding, changed = false): SlopOnboarding {
