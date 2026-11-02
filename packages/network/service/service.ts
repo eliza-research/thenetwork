@@ -949,8 +949,8 @@ export class NetworkService implements RuntimeHost {
    *  2. the whole message is an app's word ("slop", "slop.date", "join friends.help"): that app;
    *  3. a join the person started (they sent the app's word) takes the answer that follows, if the
    *     answer reads as a join answer or the person is not a member anywhere;
-   *  4. a member: the app with the newest open item (a probe, a plan they have not answered), else the
-   *     app that wrote to them last;
+   *  4. a member: the app with the newest open item (a probe, a plan they have not answered, while its
+   *     opportunity is still open), else the app that wrote to them last;
    *  5. otherwise The Network (a stranger joins it).
    * An app's name inside a sentence ("my ex is on slop.date") never routes a member's message.
    */
@@ -980,9 +980,12 @@ export class NetworkService implements RuntimeHost {
     return { app: "ntwrk", shared: true };
   }
 
-  /** The apps this address is a joined member of, across apps (platform.member_apps: ids and times only). */
+  /**
+   * The apps this address is a joined member of, across apps (platform.member_apps: ids and times only).
+   * `lastItem`: the newest message about an opportunity the member can still answer (migration 0042), at this clock.
+   */
   async memberApps(address: string): Promise<{ app: AppId; memberId: MemberId; lastOut: number | null; lastItem: number | null }[]> {
-    const rows = await this.sql`select app_id, member_id, last_out, last_item from platform.member_apps(${normalizeAddress(address)})`;
+    const rows = await this.sql`select app_id, member_id, last_out, last_item from platform.member_apps(${normalizeAddress(address)}, ${new Date(this.clock.now())})`;
     return (rows as any[]).filter(r => isAppId(r.app_id)).map(r => ({
       app: r.app_id as AppId, memberId: r.member_id, lastOut: r.last_out ? new Date(r.last_out).getTime() : null, lastItem: r.last_item ? new Date(r.last_item).getTime() : null,
     }));
