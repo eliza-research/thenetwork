@@ -12,6 +12,7 @@ import type { ApprovedRelayPhoto } from "../../core/src/svc/contract.ts";
 import type { SQL } from "bun";
 import type { MemberId } from "@thenetwork/core";
 import { blooioRecipientPolicy, forbiddenProvider } from "../src/network.ts";
+import { resolveTimeZone } from "../../blooio/src/quiet-hours.ts";
 import { OutboundQueue, WAITING, type AppChecks, type MessageKind } from "../../blooio/src/outbound-queue.ts";
 import type { Clock, ChannelAdapter as ProviderAdapter, StatusUpdate } from "../../blooio/src/types.ts";
 import type { NetworkRuntime } from "./runtime.ts";
@@ -123,7 +124,7 @@ export interface BlooioAdapterOptions {
   from?: string;
   /** The app this adapter sends for (its live flag). Default "ntwrk". */
   app?: string;
-  /** The network's city: its zone is the quiet-hours fallback. Default "nyc". */
+  /** The network's city: the quiet-hours zone for a text to a non-member or a member with no known home city. Default "nyc". */
   city?: string;
   /** Read for the live flags on every send. Default process.env. */
   env?: Record<string, string | undefined>;
@@ -150,6 +151,8 @@ export class BlooioAdapter implements ChannelAdapter {
   private readonly city: string;
   private readonly gate?: (app: string) => boolean;
   private q?: OutboundQueue;
+  /** A member's home city (after attach): quiet hours run in the member's zone, not the network's. */
+  private homeOf?: (id: MemberId) => string | undefined;
 
   constructor(private readonly o: BlooioAdapterOptions) {
     this.env = o.env ?? process.env;
@@ -171,6 +174,7 @@ export class BlooioAdapter implements ChannelAdapter {
   }
 
   attach(rt: NetworkRuntime) {
+    this.homeOf = id => rt.homeCityOf(id);
     const policy = blooioRecipientPolicy(rt.net, rt.memberOf);
     const leaks = forbiddenProvider(rt.net, to => rt.memberOf(to));
     const num = (k: string) => { const v = Number(this.env[k]); return Number.isFinite(v) && v > 0 ? v : undefined; };
@@ -226,9 +230,17 @@ export class BlooioAdapter implements ChannelAdapter {
     await this.queue.enqueue(tx, go.map(m => ({
       // A member the unit forgets gets the one decline as a text to a non-member: nothing about them is kept.
       id: m.id, ...(forgotten.has(m.memberId) ? {} : { memberId: m.memberId }), to: m.to!, kind: m.kind, text: m.body,
-      ...(m.mediaUrls?.length ? { mediaUrls: m.mediaUrls } : {}), ...(m.approvedPhotos?.length ? { approvedPhotos: m.approvedPhotos } : {}), ...(m.oppId ? { oppId: m.oppId } : {}), city: this.city,
+      ...(m.mediaUrls?.length ? { mediaUrls: m.mediaUrls } : {}), ...(m.approvedPhotos?.length ? { approvedPhotos: m.approvedPhotos } : {}), ...(m.oppId ? { oppId: m.oppId } : {}),
+      // Quiet hours in the member's own zone: a San Francisco member served by the New York network waits for 9am in San Francisco.
+      city: this.quietHoursCity(m.memberId),
     })));
     return out;
+  }
+
+  /** The member's home city when it has a known zone, else the network's city (a home city with no zone never parks a text). */
+  private quietHoursCity(memberId: MemberId): string {
+    const home = this.homeOf?.(memberId);
+    return home && resolveTimeZone(undefined, home) ? home : this.city;
   }
 
   async deliver(_msgs: Outbound[]): Promise<Delivery[]> { return this.queue.drain(); }

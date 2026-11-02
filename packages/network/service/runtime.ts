@@ -123,6 +123,8 @@ export class NetworkRuntime {
   private snap?: WorldSnapshot;
   private addrToMember = new Map<string, MemberId>();
   private memberToAddr = new Map<MemberId, string>();
+  /** Each member's home city (network.members.home_city), from the last refresh: the zone of their quiet hours. */
+  private memberHome = new Map<MemberId, string>();
   /** The unit being built. The service adds system sends (keyword confirmations) to it. */
   unit = newUnit();
   /** Sends committed with their state, waiting to be delivered (in commit order). */
@@ -394,19 +396,22 @@ export class NetworkRuntime {
       await tx`select m.id as member_id, ph.e164 as address, m.home_city from network.members m join platform.phone_identities ph on ph.person_id = m.person_id
         where m.app_id = ${this.app.id} and m.account_status not in ('invited', 'removed') and ph.hold is null order by m.id`,
     ]);
-    this.addrToMember.clear(); this.memberToAddr.clear();
+    this.addrToMember.clear(); this.memberToAddr.clear(); this.memberHome.clear();
     const homes = this.host.conversationCities?.(this);
     for (const r of [...platform, ...legacy] as any[]) {
       if (homes && !homes.includes(r.home_city)) continue;
       const a = normalizeAddress(r.address);
       this.addrToMember.set(a, r.member_id);
       if (!this.memberToAddr.has(r.member_id)) this.memberToAddr.set(r.member_id, a);
+      if (typeof r.home_city === "string" && r.home_city) this.memberHome.set(r.member_id, r.home_city);
     }
   }
 
   /** Address to member of this app (E.164 or Apple ID, normalized), from the last refresh. */
   memberOf = (address: string): MemberId | undefined => this.addrToMember.get(normalizeAddress(address));
   addressOf = (id: MemberId): string | undefined => this.memberToAddr.get(id);
+  /** A member's home city, from the last refresh; undefined when unknown (the network's city is the fallback). */
+  homeCityOf = (id: MemberId): string | undefined => this.memberHome.get(id);
 
   private context(): NetworkContext {
     const ev = (rec: unknown) => { const e = eventOf(rec as RunRecord); if (e) this.unit.events.push(e); };

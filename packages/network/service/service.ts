@@ -649,12 +649,13 @@ export class NetworkService implements RuntimeHost {
   private async notifyRecipient(personId: string): Promise<Recipient | undefined> {
     const rts = [...this.runtimes.values()].sort((a, b) => Number(b.app.id === "ntwrk") - Number(a.app.id === "ntwrk"));
     for (const rt of rts) {
-      const rows = await rt.scoped(tx => tx`select id from network.members where app_id = ${rt.app.id} and person_id = ${personId} and not opted_out`);
+      const rows = await rt.scoped(tx => tx`select id, home_city from network.members where app_id = ${rt.app.id} and person_id = ${personId} and not opted_out`);
       for (const r of rows as any[]) {
         const to = rt.addressOf(r.id);
         if (!to) continue;
         this.notifyTargets.set(normalizeAddress(to), { rt, memberId: r.id });
-        return { personId, to, timeZone: resolveTimeZone(undefined, rt.city) ?? "America/New_York", prefs: { channel: "imessage" }, proactiveAllowed: true };
+        // The member's own zone (their home city), then the network's: the scheduler holds for quiet hours in it.
+        return { personId, to, timeZone: resolveTimeZone(undefined, r.home_city) ?? resolveTimeZone(undefined, rt.city) ?? "America/New_York", prefs: { channel: "imessage" }, proactiveAllowed: true };
       }
     }
     return undefined;
