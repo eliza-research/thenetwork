@@ -181,7 +181,13 @@ export class Notifier {
       const fresh = (await this.store.getItems(p.itemIds)).filter(i => i.seenAt === undefined && i.notifiedAt === undefined);
       if (fresh.length === 0) { cancelled.push(p.deliveryId); continue; }
       const final = fresh.length === p.itemIds.length ? p : await this.build((await this.directory.get(p.personId))!, fresh, now);
-      const target: Surface = final.delivery.mode === "deeplink" ? final.delivery.assistant : final.channel;
+      // The surface the message pointed at (DeliveryRecord.target): the channel for a thread message,
+      // else the assistant. A button page steers at its primary assistant (assistants[0]), so an
+      // unanswered page lands the "ignored" streak on that assistant, matching the acted path and
+      // the two-strikes drop-out (surface.ts). Blaming the channel left the drop-out dead for every
+      // SMS / Telegram member.
+      const d = final.delivery;
+      const target: Surface = d.mode === "deeplink" ? d.assistant : d.mode === "button_page" ? d.assistants[0]! : final.channel;
       // Record first: a crash after this and before enqueue loses one text, never sends two.
       const recorded = await this.store.recordDelivery({
         deliveryId: final.deliveryId, personId: final.personId, itemIds: final.itemIds, target,
