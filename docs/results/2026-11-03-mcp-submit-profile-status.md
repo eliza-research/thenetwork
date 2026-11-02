@@ -65,5 +65,14 @@ Schema check: `bun test packages/mcp/test/output-schemas.integration.test.ts` ->
 `bun run typecheck` -> pass.
 
 Offline test only; no model is called. Sample size and seeds do not apply.
-</content>
-</invoke>
+
+## Required gates (run on the PR head, Linux box without Postgres)
+
+- `bun run sim` -> `PASS: 305/305 blocking gates, 20 tracked off target, 437.9s`
+- `bun run typecheck` -> pass (exit 0)
+- `bun run test:integration` -> `365 pass, 252 skip, 23 fail` (Ran 640 tests across 68 files). All 23 failures come from 5 files that need a local Postgres (`error: initdb not found: install Postgres`): profile-suggestions, profile-suggestion-withdrawal, profile-suggestion-disconnect and staging-authority integration tests in `packages/network/test`, and `packages/mcp/test/cloud-authority.pg.test.ts`. None of them touch the changed code path. Every `packages/mcp` test that does not need Postgres passes.
+- `bun run test:e2e` -> `0 pass, 47 skip, 0 fail` (Ran 47 tests across 3 files; the e2e stack needs Postgres, so it skips here).
+
+## Agent clients tested
+
+N/A: the change is one return value inside the `submit_profile` MCP tool handler. No skill text, plugin, transport or OAuth flow changes. The in-process MCP test drives the same tool call an agent client makes and checks the JSON result. No live agent client session was run for this fix.
