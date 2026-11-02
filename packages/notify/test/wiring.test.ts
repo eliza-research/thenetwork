@@ -11,6 +11,7 @@ import { OutboundQueue } from "../../blooio/src/outbound-queue.ts";
 import type { ChannelAdapter, SendRequest } from "../../blooio/src/types.ts";
 import { APPS } from "../../platform/src/apps.ts";
 import { Notifier, queuePolicy, queueSink, threadHooks, type Recipient } from "../src/index.ts";
+import type { SchedulerConfig } from "../src/scheduler.ts";
 
 import { PgNotifyStore } from "../src/pg-store.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
@@ -23,7 +24,7 @@ let admin: SQL, sql: SQL;
 let n = 0;
 
 /** One person, a Notifier, and the queue with an adapter that records what it would have sent. */
-async function setup(prefs: Recipient["prefs"] = { channel: "imessage" }) {
+async function setup(prefs: Recipient["prefs"] = { channel: "imessage" }, cfg: Partial<SchedulerConfig> = {}) {
   // 12:00 in New York: outside quiet hours. Each setup has its own person and number.
   const clock = new SimClock(Date.UTC(2026, 9, 9, 16));
   const now = () => clock.now();
@@ -38,7 +39,7 @@ async function setup(prefs: Recipient["prefs"] = { channel: "imessage" }) {
   const person = await people.createPerson({ id: randomUUID(), e164: to, method: "inbound_message", at: now(), lowestAge: 28 });
   await people.putMembership({ app: "friends", personId: person.id, memberId: `friends_${n}`, state: "active", review: null, firstName: "Synthetic", profile: {}, joinedAt: now(), leftAt: null });
   const r: Recipient = { personId: person.id, to, timeZone: NY, prefs, proactiveAllowed: true };
-  const notifier = new Notifier(store, { get: id => (id === r.personId ? r : undefined) }, { isQuiet: () => false });
+  const notifier = new Notifier(store, { get: id => (id === r.personId ? r : undefined) }, { isQuiet: () => false, ...cfg });
   const queue = new OutboundQueue({
     sql, clock, provider, line: "+12125550100", app: "friends",
     checks: { live: () => true, recipient: queuePolicy(notifier, clock) },
@@ -87,6 +88,36 @@ describe.skipIf(!pgAvailable)("notify + the Postgres outbound queue", () => {
     expect(calls.length).toBe(0);
   });
 
+
+  // PRD 32.9 / 1240: the weekly cap counts messages sent; "just before sending, items are re-checked and the
+  // message is cancelled if they were already seen elsewhere". A cancelled text was never sent.
+  test("a text cancelled at send time (seen in an assistant first) spends no weekly-cap slot and is not an ignored outcome", async () => {
+    const HOUR = 3600_000;
+    const { clock, now, store, notifier, queue, sink, sent: calls, r } = await setup({ channel: "imessage" }, { weeklyCap: 1, digestDelayMs: 10 * 60_000 });
+    // Normal items wait for the digest (10 minutes here); 12:00 to 13:00 in New York, outside quiet hours.
+    await notifier.add({ ...req(r.personId, "cap-a", "A new run club starts Tuesday."), urgency: "normal" }, now());
+    clock.advance(15 * 60_000);
+    const first = await notifier.dispatch(now(), sink);
+    expect(first.sent).toHaveLength(1);
+    // The member asks their assistant for updates before the queue sends the text.
+    expect((await notifier.readUpdates(r.personId, "claude", now())).map(i => i.subjectId)).toEqual(["cap-a"]);
+    await queue.drain();
+    expect(calls).toHaveLength(0);
+    expect(await queue.statusOf(first.sent[0]!.deliveryId)).toBe("suppressed_ineligible");
+    // A new normal item: the cap of one was never used, so it goes. Before the fix: held "weekly_cap".
+    clock.advance(15 * 60_000);
+    await notifier.add({ ...req(r.personId, "cap-b", "Saturday's hike has two spots left."), urgency: "normal" }, now());
+    clock.advance(15 * 60_000);
+    const second = await notifier.dispatch(now(), sink);
+    expect(second.holds).toEqual([]);
+    expect(second.sent.map(p => p.itemIds.length)).toEqual([1]);
+    await queue.drain();
+    expect(calls).toHaveLength(1);
+    // Past the outcome window: the cancelled text is no ignored outcome for the surface it would have used.
+    clock.advance(80 * HOUR);
+    await notifier.sweep(now());
+    expect((await store.signals(r.personId)).reduce((n, s) => n + (s.ignored ?? 0), 0)).toBe(1);
+  });
 
   test.each(["expired", "mixed", "erased", "left_app"] as const)("queued notification with %s content is suppressed", async mode => {
     const { clock, now, notifier, queue, sink, sent: calls, r } = await setup();

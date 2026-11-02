@@ -141,6 +141,11 @@ export class PgNotifyStore implements NotifyStore {
     return rows.map(delivery);
   }
 
+  async withdrawDelivery(id: string) {
+    const rows = await this.sql`delete from notify.deliveries where delivery_id = ${id} and outcome is null returning delivery_id`;
+    return rows.length > 0;
+  }
+
   async expireDeliveries(before: number, at: number) {
     const rows = await this.sql`
       update notify.deliveries set outcome = 'ignored', outcome_at = ${new Date(at)}
