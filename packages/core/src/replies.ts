@@ -103,6 +103,9 @@ const RULES: Rule[] = [
   // words ("Great!", "oh perfect", "but friday works"), not inside a statement ("it was nice",
   // "honestly this is great timing").
   r("yes", "(?<=(?:^|[.,!?;:]\\s*)(?:(?:not|never|i'm|im|but|and|so|oh|ah|ok|okay|yeah|yes|that|that's|thats|sounds|very|really|super|totally|then|also|pero|y|muy|mon|monday|tue|tuesday|wed|wednesday|thu|thursday|fri|friday|sat|saturday|sun|sunday|tonight|today|tomorrow|lunes|martes|miercoles|jueves|viernes|sabado|domingo) ){0,2})(?:works|perfect|great|awesome|cool|deal|bet|nice|fine|down|interested|va|perfecto|genial|bueno|listo)\\b"),
+  // A refused day plus another day that works, with no comma: "not thursday but friday works".
+  // Strong: the "not" belongs to the refused day, not to this clause.
+  r("yes", "\\bbut\\s+(?:mon(?:day)?s?|tue(?:s|sday)?s?|wed(?:nesday)?s?|thu(?:r|rs|rsday)?s?|fri(?:day)?s?|sat(?:urday)?s?|sun(?:day)?s?|tonight|today|tomorrow|this weekend|next week|this week)\\s+works\\b", true),
   r("yes", "^in[!. ]*$"),
   r("no", "^pass[!. ]*$", true),
   // "si" is "yes" when it stands alone; "si + verb" is "if".
