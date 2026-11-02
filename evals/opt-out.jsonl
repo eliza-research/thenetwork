@@ -102,3 +102,6 @@
 {"text": "stop slop", "label": "not_stop", "lang": "en"}
 {"text": "quit peon", "label": "not_stop", "lang": "en"}
 {"text": "remove me from the group chat with Ana?", "label": "not_stop", "lang": "en"}
+{"text": "I said stop", "label": "stop", "lang": "en"}
+{"text": "I already said stop", "label": "stop", "lang": "en"}
+{"text": "I told you to stop", "label": "stop", "lang": "en"}

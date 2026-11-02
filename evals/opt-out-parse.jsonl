@@ -38,3 +38,6 @@
 {"text":"stop by later","match":"none"}
 {"text":"Stop it, I love this","match":"none"}
 {"text":"I'll stop at the store","match":"none"}
+{"text":"i said stop","match":"likely"}
+{"text":"i already said stop","match":"likely"}
+{"text":"i told you to stop","match":"likely"}
