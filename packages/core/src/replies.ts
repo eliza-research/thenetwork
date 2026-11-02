@@ -274,6 +274,14 @@ const LIKELY_EN = /\b(?:stop (?:texting|messaging|sending|contacting|writing|bot
 const LIKELY_ES = /\b(?:no me (?:escribas|mandes|envies|contactes|mensajees)|deja de (?:escribirme|mandarme|enviarme|mensajearme)|dejen de (?:escribirme|mandarme|enviarme)|no (?:mas|quiero) mensajes|ya no (?:quiero|me) (?:mensajes|escriban|manden)|darme de baja|dame de baja|me quiero dar de baja|quitame de|borrame de|sacame de|numero equivocado)\b/;
 
 /**
+ * A member who repeats their own request ("I said stop", "I already said stop", "I told you to stop")
+ * is asking us to stop. A preposition after "stop" ("I said stop by", "I said stop after work") is
+ * something else. Both readers use this one pattern, so they always agree.
+ */
+const OWN_STOP = "\\bi (?:already |just )?(?:said|told you to) stop\\b(?!\\s*(?:by|at|on|in|after|before|during|until)\\b)";
+const OWN_STOP_RE = new RegExp(OWN_STOP);
+
+/**
  * Does `text` ask us to stop messaging? Exact keywords as the whole message are "exact"; free-text
  * requests ("please stop texting me", "no me escribas más") are "likely". Quoted or reported speech
  * ("my friend said stop") and questions about stopping ("how do I stop?") are "none".
@@ -282,8 +290,10 @@ export function parseOptOut(text: string, o: { apps?: readonly string[] } = {}):
   const t = normalize(text ?? "").replace(/[^a-z0-9.' -]/g, " ").replace(/\s+/g, " ").replace(/[. ]+$/, "").trim();
   const lang: "en" | "es" = LIKELY_ES.test(t) || EXACT_ES.test(t) ? "es" : "en";
   if (EXACT_EN.test(t) || EXACT_ES.test(t)) return { match: "exact", scope: "all", lang };
-  // Reported speech and how-to questions do not opt out.
-  if (/\b(?:said|says|told|asked) (?:me )?(?:to )?["']?stop\b/.test(t) || /\bhow (?:do|can) i (?:stop|unsubscribe|opt out)\b/.test(t)) return { match: "none", scope: "all", lang };
+  // Reported speech in the third person ("my friend said stop") and how-to questions do not opt out.
+  // A member who repeats their own request ("I said stop") is asking us to stop.
+  const ownStop = OWN_STOP_RE.test(t);
+  if (!ownStop && (/\b(?:said|says|told|asked) (?:me )?(?:to )?["']?stop\b/.test(t) || /\bhow (?:do|can) i (?:stop|unsubscribe|opt out)\b/.test(t))) return { match: "none", scope: "all", lang };
   // "don't stop", "can't stop laughing", "stop by later", "stop it, I love this": not opt-outs.
   if (/\b(?:don't|dont|do not|never|won't|wont|can't|cant|cannot|not)\s+stop\b/.test(t) || /\bstop (?:by|at|in|over|for|on by)\b/.test(t)
     || /^stop (?:it|this)\b.*\b(?:love|lol|haha|lmao|omg|amazing|cute|funny|so good|too good)\b/.test(t)) return { match: "none", scope: "all", lang };
@@ -344,6 +354,9 @@ const OPT_OUT_EN: RegExp[] = [
   new RegExp(`\\bi (?:don't|do not|dont) want (?:these|your|any|any more|anymore|more|the) ${MSGS}\\b`),
   /\bleave me alone\b/,
   /\bwrong number\b/,
+  // A member who repeats their own request ("I said stop", "I told you to stop").
+  // A member who repeats their own request ("I said stop", "I told you to stop"): see OWN_STOP.
+  OWN_STOP_RE,
   // "remove me", "take me off", "take me off the list" on their own.
   /^(?:please |pls )?(?:remove|take) me(?: off| out)?(?: (?:the|your|this) list)?(?: please| pls)?$/,
 ];
