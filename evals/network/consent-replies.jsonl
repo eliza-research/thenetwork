@@ -326,3 +326,4 @@
 {"text":"please do not","label":"no"}
 {"text":"deal me out","label":"no"}
 {"text":"why not ask someone else","label":"no"}
+{"text":"Yes, please don't cancel","label":"unclear"}
