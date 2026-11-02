@@ -64,7 +64,7 @@ import type { PeerInfo } from "../../platform/src/api.ts";
 import { PHOTO_APPS, PgPhotoStore, PhotoService, photoStorageFromEnv, type PhotoRater, type PhotoStorage } from "../../platform/src/photos.ts";
 import { PhotoRelayService, PgPhotoRelayStore, type PhotoRelayPolicy, type PhotoRelayItem } from "../../platform/src/photo-relay.ts";
 import { appearanceFacet, type AppearanceScore, type RatingSubject } from "../../engine/src/packs/slop/appearance.ts";
-import { fetchMediaCapped, PhotoIntake, type PhotoIntakeDeps } from "./photoIntake.ts";
+import { fetchMediaCapped, PHOTO_APP, PhotoIntake, type PhotoIntakeDeps } from "./photoIntake.ts";
 import { BIAS_EVERY_MS, biasAlerts, biasReport, type BiasMember, type StoredBiasReport } from "./bias.ts";
 import { DEFAULT_SLA_HOURS } from "../../observatory/src/apps.ts";
 import type { Ban } from "../../platform/src/store.ts";
@@ -1068,7 +1068,9 @@ export class NetworkService implements RuntimeHost {
     // from a minor, an unknown age, a banned person or a non-member of slop is dropped before it is fetched.
     // Only an explicit YES PHOTOS / NO PHOTOS routed to slop: a bare yes or no goes on to the Network (a probe, a date ask, another app).
     if (e164 && !kw && !profileRead && (await this.photoIntake.consentAnswer(e164, ev.text, rowId, route.app))) return "handled";
-    if (e164 && ev.mediaUrls?.length && !profileRead) {
+    // The shared line's photos are slop.date's. A photo on another app's own line (a per-app webhook path or
+    // platform.app_lines) is that app's message: nothing is fetched, asked or stored about slop photos.
+    if (e164 && ev.mediaUrls?.length && !profileRead && (route.shared || route.app === PHOTO_APP)) {
       // A provider retry of the same message takes no photo twice.
       const first = (await this.people.hit(`photo_msg:${rowId}`, DAY, t)).count === 1;
       const r = first ? await this.photoIntake.photosIn(e164, ev.mediaUrls, rowId) : { outcome: "duplicate" as const };
