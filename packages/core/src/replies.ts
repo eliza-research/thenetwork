@@ -355,7 +355,6 @@ const OPT_OUT_EN: RegExp[] = [
   /\bleave me alone\b/,
   /\bwrong number\b/,
   // A member who repeats their own request ("I said stop", "I told you to stop").
-  // A member who repeats their own request ("I said stop", "I told you to stop"): see OWN_STOP.
   OWN_STOP_RE,
   // "remove me", "take me off", "take me off the list" on their own.
   /^(?:please |pls )?(?:remove|take) me(?: off| out)?(?: (?:the|your|this) list)?(?: please| pls)?$/,
