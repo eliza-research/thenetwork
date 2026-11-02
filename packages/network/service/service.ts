@@ -1024,7 +1024,10 @@ export class NetworkService implements RuntimeHost {
     }
     if (ev.isGroup) return "ignored_group";
     // Legacy webhooks own transport engagement. A signed turn admits its canonical member after policy processing.
-    if (!this.inboundTurn()) await this.lineAdapter()?.engaged?.(ev.from);
+    // A STOP is not an engagement: it never releases texts held for the person's answer (queue.inbound), which
+    // a tick could send before the opt-out below is recorded (a STOP that arrives while a message waits wins).
+    const keyword = platformKeyword(ev.text);
+    if (!this.inboundTurn() && keyword !== "stop" && keyword !== "stop_all") await this.lineAdapter()?.engaged?.(ev.from);
     const route = await this.route(ev, o.app);
     const app = this.apps[route.app];
     const joinedMember = (await this.memberApps(ev.from)).find(m => m.app === route.app);
@@ -1046,7 +1049,7 @@ export class NetworkService implements RuntimeHost {
     const e164 = normalizePhone(ev.from);
     const t = this.clock.now();
     const rowId = `in:${ev.channel}:${ev.messageId}`;
-    const kw = platformKeyword(ev.text);
+    const kw = keyword;
     const profileRead = !kw ? profileReadRequest(ev.text, this.apps) : undefined;
     const line = ev.to ? normalizeAddress(ev.to) : undefined;
 
