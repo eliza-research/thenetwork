@@ -227,8 +227,14 @@ export const RELAY_RULES: { code: string; re: RegExp }[] = [
   { code: "harass:sexual", re: R("\\b(?:send|show)\\s+(?:me\\s+)?(?:nudes?|noods|naughty pics?|(?:a |some |more )?(?:pics?|photos?|pictures?|selfies?) of (?:your|ur) (?:body|tits|boobs|ass|chest|dick|butt|legs|feet)|(?:a |some |more )?(?:body|bikini|lingerie|bed(?:room)?) (?:pics?|photos?|selfies?)|something sexy|a sexy (?:pic|photo))\\b|\\bnudes\\b|\\bnude (?:pics?|photos?|selfies?)\\b|\\bdtf\\b|\\bdon'?t be (?:a |so |such a )?(?:prude|tease|frigid|uptight)\\b|\\b(?:you|u) know (?:you|u) want (?:it|this|me)\\b|\\bwe both know (?:why|what) (?:we'?re|this is|you)\\b|\\b(?:you|u) owe me\\b|\\bwhat are (?:you|u) wearing\\b|\\b(?:bring|wear)\\b[^.?!]{0,15}\\b(?:lingerie|condoms?)\\b|\\b(?:sex|fuck|smash|bang|hook ?up|sleep together|sleep with (?:me|you))\\b[^.?!]{0,40}\\b(?:tonight|first|after|right after|instead|now|before)\\b|\\b(?:skip|forget)\\b[^.?!]{0,15}\\b(?:the )?(?:coffee|date|drinks|dinner|museum|walk)\\b[^.?!]{0,30}\\b(?:my|your) (?:place|apartment|bed)\\b|\\b(?:back to|come over to|come to) (?:my|your) (?:place|apartment|bed|room|hotel)\\b") },
 ];
 
-/** A self-disclosed minor age or school year (blocks and flags the age for the platform). */
-export const MINOR_SIGNAL = R("\\b(?:i'?m|i am|im)\\s+(?:only\\s+|just\\s+)?(?:1[3-7])(?!\\s*(?:min|mins|minutes|blocks|miles|mi|km|away|%|stops|floors|hours|hrs|seconds|cm|lbs|k)\\b)(?:\\b|\\s*(?:yo|y/o|years? old)\\b)|\\b(?:1[3-7])\\s*(?:yo|y/o|years? old)\\b|\\b(?:i'?m|i am|im) (?:still )?(?:in|at) (?:high school|middle school|hs)\\b|\\bmy (?:mom|dad|parents) (?:won'?t|wont|don'?t|dont) let me\\b|\\bnot 18 (?:yet|until)\\b|\\b(?:i'?m|i am|im) (?:under ?18|underage|a minor)\\b|\\bhomeroom\\b");
+/**
+ * A self-disclosed minor age or school year (blocks and flags the age for the platform). The
+ * age-and-sex shorthand ("im 17m", "16f", "15/x") is how teens introduce themselves; it is read the
+ * same way `packages/network/src/classify.ts` reads it (AGE_SEX_END), so a missing separator
+ * ("17m", not "17 m" or "17/m") no longer slips the minor signal. Units and sums ("17m away", a
+ * "15m" raise, "16k") stay out through the end guard and the unit lookahead.
+ */
+export const MINOR_SIGNAL = R("\\b(?:i'?m|i am|im)\\s+(?:only\\s+|just\\s+)?(?:1[3-7])(?!\\s*(?:min|mins|minutes|blocks|miles|mi|km|away|%|stops|floors|hours|hrs|seconds|cm|lbs|k)\\b)(?:\\b|\\s*(?:yo|y/o|years? old)\\b)|\\b(?:i'?m|i am|im)\\s+(?:only\\s+|just\\s+)?(?:1[3-7])\\s*/?\\s*[mfx](?![a-z])(?=\\s*(?:$|[.,!?;:)]|here\\b|lol\\b|btw\\b|from\\b|in\\b|looking\\b|nyc\\b|bk\\b))|\\b(?:1[3-7])\\s*(?:yo|y/o|years? old)\\b|\\b(?:i'?m|i am|im) (?:still )?(?:in|at) (?:high school|middle school|hs)\\b|\\bmy (?:mom|dad|parents) (?:won'?t|wont|don'?t|dont) let me\\b|\\bnot 18 (?:yet|until)\\b|\\b(?:i'?m|i am|im) (?:under ?18|underage|a minor)\\b|\\bhomeroom\\b");
 
 const DIGIT_WORDS: Record<string, string> = { zero: "0", oh: "0", o: "0", one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9" };
 /** A phone number spelled in words or digits with any separators ("three four seven, five five five, ..."): 7+ digits in a row. */
