@@ -80,8 +80,8 @@ its source, so both rows become one and the period case works.
 
 Base: `a0ed7bc6495d9e524afc3d500738212a28dc7bc2`. Bun 1.4.4, macOS.
 The evals block scores hand-written corpora offline. It calls no model and needs
-no database. The areas corpus is hand-written; the three new rows are too. The
-block uses its pinned inputs; this path has no seed and no clock.
+no database. The three phrasings in the new gate are hand-written. The block uses
+its pinned inputs; this path has no seed and no clock.
 
 ```sh
 bun install
@@ -89,25 +89,22 @@ bun run sim --only evals
 bun run typecheck
 ```
 
-New corpus rows in `evals/network/areas.jsonl` (the short form, found by review of
-real phrasings; the corpus is append-only, `scripts/sim/evals.ts` header):
-
-```
-{"text":"based in Ft Greene","area":"Fort Greene"}
-{"text":"I'm in ft. greene","area":"Fort Greene"}
-{"text":"live in ft greene near the park","area":"Fort Greene"}
-```
-
-New gate in `scripts/sim/evals.ts`, next to the existing area gates:
+New gate in `scripts/sim/evals.ts`, next to the existing area gates. It reads three
+phrasings of the short form:
 
 ```
 areas: the Ft/Ft. abbreviation of Fort Greene resolves
+  "based in Ft Greene" | "I'm in ft. greene" | "live in ft greene near the park"
 ```
 
-| | areas recall (n 200) | new gate | evals block |
-|---|---|---|---|
-| base `a0ed7bc` + rows + gate | 0.978 | **FAIL** (3 phrasings miss) | 25/26 |
-| this branch | **1.000** | **PASS** | 26/26 |
+The fix adds this one check only (CONTRIBUTING 12.1). A row in
+`evals/network/areas.jsonl` alone does not fail before the fix: the existing recall
+gate has a 0.9 threshold, and it passes with three misses.
+
+| | new gate | evals block |
+|---|---|---|
+| base `a0ed7bc` + gate | **FAIL** (3 phrasings miss) | 25/26 |
+| this branch | **PASS** | 26/26 |
 
 Before the fix the gate reports `based in Ft Greene | I'm in ft. greene |
 live in ft greene near the park`. After the fix all three read as Fort Greene.
@@ -124,17 +121,19 @@ Edge cases checked by hand (each returns the correct result on this branch):
 
 `bun run typecheck`: exit 0.
 
-`bun run sim` ran the full validation layer on this branch. The dev PostgreSQL on
-:54339 was present on this machine, so the safety, ops, pipeline and audit blocks
-ran as well as the deterministic blocks. The summary line:
+`bun run sim` ran the full validation layer at commit `6b38971`. The dev PostgreSQL
+on :54339 was present on this machine, so the safety, ops, pipeline and audit
+blocks ran as well as the deterministic blocks. The summary line:
 
 `PASS: 328/328 blocking gates, 15 tracked off target, 211.2s`
 
 The branch adds exactly one gate (the Ft/Ft. gate), so the base `a0ed7bc` scores
-327/327. No other gate changed state. The evals block alone reports 26/26 with
-`PASS areas: the Ft/Ft. abbreviation of Fort Greene resolves` and `PASS areas:
-recall >= 0.9 (n 200): 1.000`; the before and after of that block is the table
-above (25/26 at recall 0.978 -> 26/26 at recall 1.000, same command and data).
+327/327. No other gate changed state. Commit `6b38971` also had three corpus rows.
+This branch removes them, so the change keeps one check. Only the evals block reads
+`evals/network/areas.jsonl` (`scripts/sim/evals.ts:101`), so the evals block was run
+again on this branch: 26/26, with `PASS areas: the Ft/Ft. abbreviation of Fort
+Greene resolves`. The before and after of that block is the table above (25/26 ->
+26/26, same command and data).
 
 ## Limits
 
