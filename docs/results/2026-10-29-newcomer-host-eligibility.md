@@ -45,24 +45,60 @@ The gate is `newcomer welcome: an unavailable host does not hide an eligible hos
 Restore only `packages/engine/src/group.ts` from the base commit and rerun to see the failure.
 The original result is an empty proposal list; the expected result contains the newcomer, guest, and eligible host.
 
-## Validation and limits
+## Validation and limits (2026-11-03)
 
-- The isolated regression gate failed before the fix and passed after it with the same input and seed.
-- Type checking passed after the fix.
-- `bun run sim --json ../slop-apollo-preflight/host-full-sim.json`: 306/306 blocking gates pass, 20 tracked off target, 510 seconds.
-- The network block passes 62/62 blocking gates, including the new gate. Unchanged main passed its original 61/61 gates.
-- Seed 3's invariant-run fingerprint remains `24bb81f068060b33` before and after. Reported consent metrics remain 0.847 everyone-yes, 0.919 invite-yes, and 144 pooled meetings.
-- The consent-arm fingerprint changed from `361f8cc2648fb9a6` to `cf66385a85b8ff71`. These results do not claim identical outputs everywhere.
-- `bun run test:integration` with normal host access: 364 pass, 252 skip, 23 fail, 7,108 assertions, 169.91 seconds.
-  The failures are missing-`initdb` setup failures and follow-on cleanup errors. The initial sandbox attempt also failed to bind local HTTP listeners.
-- `bun run test:e2e`: zero pass, 47 skip, zero fail. Every case skipped; this is not end-to-end validation.
-- PostgreSQL 16 is unavailable in this environment. Database-backed checks cannot be treated as passing if skipped or blocked.
-- No real-model run was made. The changed path is deterministic group composition and does not invoke a model.
-- No agent-client flow changed or was tested. No MCP schema, onboarding prompt, consent flow, or member-facing text changed.
-- This also corrects the host-coverage score of optional-host groups. Full pack conformance checks cover those callers.
-- No live messages, deployments, or real member data were used.
+Tested source head: `ad041a90d653ab803a8fca6430b2afc16a818d3d`.
+Base and current upstream main: `a0ed7bc6495d9e524afc3d500738212a28dc7bc2`.
+Both refs were checked again after the runs. No tracked source file changed during validation.
+These results describe that immutable source head; they do not describe a later report commit.
+
+Environment: Bun 1.4.2 (`744846f84`), PostgreSQL 16.15, Linux x86_64.
+Postgres used only disposable local databases. The image was the CI-pinned
+`postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d`.
+Provider keys were blank. `REQUIRE_PG=1` was set. No paid call or live send ran.
+
+- The original sim gate's body was run unchanged through the repository's assertion helper on separate base and head worktrees. Base failed: the result was empty while the positive control contained the newcomer, guest and available host. Head passed.
+- `bun run typecheck`: pass across packages, sites, Observatory and deploy.
+- `bun run sim --json /workspace/validation-227/sim-head.json`: 331/331 blocking gates pass; 14 tracked metrics off target; 366.7 seconds. No Postgres gate was skipped. The Network simulation uses its simulated reviewer.
+- Network block on head: 62/62 blocking gates pass. `bun run sim --only network --json /workspace/validation-227/network-base.json` on unchanged base: 61/61 pass, 201.4 seconds. The added newcomer gate is the only added Network gate.
+- Seed 3's invariant fingerprint is `24bb81f068060b33` on both trees. Reported consent metrics remain 0.847 everyone-yes, 0.919 invite-yes, and 144 pooled meetings.
+- The consent-arm fingerprint changes from `361f8cc2648fb9a6` to `cf66385a85b8ff71`. This report does not claim identical outputs everywhere.
+- `bun run test:integration`: 687 pass, zero skip, zero fail; 14,044 assertions across 68 files; 210.80 seconds. This final run used a network-disabled container, a separate local dev cluster, `NETWORK_RETRY_RECONCILIATION_TEST=1`, and the initially empty `NETWORK_RETRY_POSTGRES_URL=postgres://agent@127.0.0.1:54339/network_retry_227a0001`. The initial proxy-configured attempt had 677 pass, eight skip and four failures because local fake-S3 requests received `Domain forbidden` from the proxy. The final run kept all services on loopback and enabled the isolated retry lane; all of those cases then executed and passed.
+- `bun run test:e2e`, with `PLAYWRIGHT_MODULE=/workspace/validation-227/playwright-container.mjs`: 43 pass, zero skip, zero fail; 670 assertions; 16.09 seconds. This ran in a network-disabled container with disposable Postgres, Playwright Core 1.64.1 and system Chromium 154.0.8037.57. The external launch adapter selected Chromium and local fonts, with `--no-sandbox`, `--disable-dev-shm-usage` and `--disable-gpu`. Test source stayed unchanged. An earlier container browser attempt failed because that image had no fonts; supplying local font files resolved it.
+- `bun run plugins/build.ts --check`: pass.
+- `DEPLOY_TARGET=production bun run sites/sites.ts`: pass, with the expected warning that no Turnstile site key was configured. This was a local build, not a deploy.
+- No real-model run was made. The changed path is deterministic group composition and does not invoke a model. CONTRIBUTING.md 7.2 still requires paid real-model evidence; that requirement remains unmet.
+- No interactive agent-client flow was tested. No MCP schema, onboarding prompt, consent flow or member-facing text changed. The browser case above is the repository's existing local e2e case, not a multi-client agent test.
+- Optional-host groups also receive corrected host-coverage scores. The full pack conformance checks passed.
+- No production data, live message, external comment, deployment, push or merge was used.
+
+## Overlap with PR #288
+
+PR #227 was opened by `water-bear86` on 2026-10-30 at 07:18:42 UTC.
+PR #288 was opened by `danghuy174` on 2026-10-30 at 22:05:00 UTC.
+Both have the same base. PR #288's tested comparison head is
+`b46bc1f0b882acd266e8c5eda1fb19a4c4340ffe`.
+
+Both changes make `evaluateGroup` require the existing host-role eligibility check
+before awarding host coverage. The original #227 scenario also passes against
+#288's exact head. This confirms overlapping behavior; it does not establish how
+either author developed the change.
+
+PR #288 also uses its `canHost` helper to sort unforced host-required seeds and
+extracts the existing role-assignment predicate into that helper. The seed-sort
+change is distinct, but the only production `needHost: true` caller is
+`newcomerWelcome`, which supplies `forced: [n]` and bypasses that seed-sort branch.
+No separate shipped newcomer improvement from seed ordering is claimed here.
+
+Do not copy #288's code or tests into this PR without preserving its authorship.
+Keep #227's existing sim gate and disclose the overlap to the maintainer when
+publication is approved. Maintainers should consolidate the overlapping work;
+this report does not request a duplicate contribution or claim credit for #288.
 
 ## Authoring disclosure
+
+The original implementation disclosure below is retained. The 2026-11-03 validation used OpenAI Codex. Its exact runtime model ID is not exposed in this task and is not inferred from the original implementation disclosure. No production change from PR #288 was incorporated.
+
 
 The operator reported the task's model selector as "Sol 6.1".
 OpenAI's model documentation maps "6.1 Sol" to `gpt-6.1-sol`: <https://learn.chatgpt.com/docs/models>.
