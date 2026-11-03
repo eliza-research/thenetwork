@@ -274,6 +274,15 @@ const LIKELY_EN = /\b(?:stop (?:texting|messaging|sending|contacting|writing|bot
 const LIKELY_ES = /\b(?:no me (?:escribas|mandes|envies|contactes|mensajees)|deja de (?:escribirme|mandarme|enviarme|mensajearme)|dejen de (?:escribirme|mandarme|enviarme)|no (?:mas|quiero) mensajes|ya no (?:quiero|me) (?:mensajes|escriban|manden)|darme de baja|dame de baja|me quiero dar de baja|quitame de|borrame de|sacame de|numero equivocado)\b/;
 
 /**
+ * "I never want to hear from you again": a permanent refusal of all contact, said as a wish about the
+ * future. The member makes the same request as "do not contact me again", which both readers already
+ * read as a stop. The pattern needs "from you", so "I never want to hear that song again" and
+ * "I never want to hear from my ex again" are not matches. Both readers use this one pattern.
+ */
+const NO_HEAR_FROM_YOU = "\\bi (?:(?:never|do not|don't|dont)(?: ever)?) want to hear (?:anything )?from you\\b";
+const NO_HEAR_FROM_YOU_RE = new RegExp(NO_HEAR_FROM_YOU);
+
+/**
  * Does `text` ask us to stop messaging? Exact keywords as the whole message are "exact"; free-text
  * requests ("please stop texting me", "no me escribas más") are "likely". Quoted or reported speech
  * ("my friend said stop") and questions about stopping ("how do I stop?") are "none".
@@ -290,7 +299,7 @@ export function parseOptOut(text: string, o: { apps?: readonly string[] } = {}):
   // "leave slop" / "stop slop": one app only (when the caller names its apps).
   const app = t.match(/^(?:leave|stop|quit|salir de|dejar) ([a-z0-9.]+)$/)?.[1];
   if (app && o.apps?.some(a => a.toLowerCase() === app || a.toLowerCase().split(".")[0] === app.split(".")[0])) return { match: "likely", scope: "app", lang };
-  if (LIKELY_EN.test(t) || LIKELY_ES.test(t)) return { match: "likely", scope: "all", lang };
+  if (LIKELY_EN.test(t) || LIKELY_ES.test(t) || NO_HEAR_FROM_YOU_RE.test(t)) return { match: "likely", scope: "all", lang };
   if ((/^(?:stop|unsubscribe|para|basta)\b/.test(t) || /\b(?:stop|unsubscribe)$/.test(t)) && !/\?\s*$/.test(text.trim())) return { match: "likely", scope: "all", lang };
   return { match: "none", scope: "all", lang };
 }
@@ -344,6 +353,8 @@ const OPT_OUT_EN: RegExp[] = [
   new RegExp(`\\bi (?:don't|do not|dont) want (?:these|your|any|any more|anymore|more|the) ${MSGS}\\b`),
   /\bleave me alone\b/,
   /\bwrong number\b/,
+  // "I never want to hear from you again": the same refusal as "do not contact me again".
+  NO_HEAR_FROM_YOU_RE,
   // "remove me", "take me off", "take me off the list" on their own.
   /^(?:please |pls )?(?:remove|take) me(?: off| out)?(?: (?:the|your|this) list)?(?: please| pls)?$/,
 ];
