@@ -270,7 +270,7 @@ export interface OptOutReading {
 
 const EXACT_EN = /^(?:stop|stopall|stop all|unsubscribe|cancel|end|quit|optout|opt out|opt-out|revoke)$/;
 const EXACT_ES = /^(?:para|parar|alto|baja|cancelar|detener|basta|no mas)$/;
-const LIKELY_EN = /\b(?:stop (?:texting|messaging|sending|contacting|writing|bothering)|don't (?:text|message|contact|send me)|do not (?:text|message|contact|send)|no more (?:texts|messages|msgs)|take me off|remove me|unsubscribe me|leave me alone|opt (?:me )?out|i want out|delete my (?:number|account)|lose my number|wrong number|stop (?:it|this|pls|please)|please stop|pls stop|stop already)\b/;
+const LIKELY_EN = /\b(?:(?:stop|quit|cease) (?:texting|messaging|sending|contacting|writing|bothering)|don't (?:text|message|contact|send me)|do not (?:text|message|contact|send)|no more (?:texts|messages|msgs)|take me off|remove me|unsubscribe me|leave me alone|opt (?:me )?out|i want out|delete my (?:number|account)|lose my number|wrong number|stop (?:it|this|pls|please)|please stop|pls stop|stop already)\b/;
 const LIKELY_ES = /\b(?:no me (?:escribas|mandes|envies|contactes|mensajees)|deja de (?:escribirme|mandarme|enviarme|mensajearme)|dejen de (?:escribirme|mandarme|enviarme)|no (?:mas|quiero) mensajes|ya no (?:quiero|me) (?:mensajes|escriban|manden)|darme de baja|dame de baja|me quiero dar de baja|quitame de|borrame de|sacame de|numero equivocado)\b/;
 
 /**
