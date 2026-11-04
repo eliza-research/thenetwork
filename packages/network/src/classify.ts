@@ -639,13 +639,18 @@ function negatedAt(t: string, i: number, len: number): boolean {
   for (const m of t.slice(0, i).matchAll(CLAUSE_START)) from = m.index! + m[0].length;
   return NEG_CUE.test(t.slice(from, i)) || NEG_AFTER.test(t.slice(i + len));
 }
-/** The clause (between punctuation) around position i. */
-function clauseAt(t: string, i: number, len: number): string {
+/** The clause start and end bounds around position i. */
+function clauseBounds(t: string, i: number, len: number): [number, number] {
   let from = 0;
   for (const m of t.slice(0, i).matchAll(/[.,;!?\n]|\bbut\b/g)) from = m.index! + m[0].length;
   const rest = t.slice(i + len);
   const end = rest.search(/[.,;!?\n]|\bbut\b/);
-  return t.slice(from, end < 0 ? t.length : i + len + end);
+  return [from, end < 0 ? t.length : i + len + end];
+}
+/** The clause (between punctuation) around position i. */
+function clauseAt(t: string, i: number, len: number): string {
+  const [from, to] = clauseBounds(t, i, len);
+  return t.slice(from, to);
 }
 
 /**
@@ -689,13 +694,43 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
     [ord("third|3rd"), 2], [/(?<![\d:])\b3\b(?!\s*(am|pm|:|\d|of|more|people|hours?|mins?))/g, 2], [/\b(last|later|latest) one\b/g, options.length - 1],
   ];
   for (const [re, i] of ordinals) if (options[i]) for (const m of t.matchAll(re)) mark([options[i]!.key], m.index!, m[0].length);
-  for (const [re, dayName] of DAY_WORDS) {
-    const keys = options.filter(o => o.label.startsWith(dayName)).map(o => o.key);
-    if (keys.length) for (const m of t.matchAll(re)) mark(keys, m.index!, m[0].length);
+  const clockMatches = [...t.matchAll(/\b(\d{1,2})(?::\d\d)?\s*(am|pm)\b|\bnoon\b/g)].map(m => ({
+    label: m[0].toLowerCase() === "noon" ? "12pm" : `${Number(m[1])}${m[2]}`,
+    at: m.index!,
+    len: m[0].length,
+  }));
+
+  let unofferedClock = false;
+  for (const cm of clockMatches) {
+    const clockKeys = options.filter(o => o.label.endsWith(` ${cm.label}`)).map(o => o.key);
+    if (!clockKeys.length && !negatedAt(t, cm.at, cm.len)) {
+      unofferedClock = true;
+    }
   }
-  for (const m of t.matchAll(/\b(\d{1,2})(?::\d\d)?\s*(am|pm)\b/g)) {
-    const label = `${Number(m[1])}${m[2]}`;
-    mark(options.filter(o => o.label.endsWith(` ${label}`)).map(o => o.key), m.index!, m[0].length);
+
+  for (const [re, dayName] of DAY_WORDS) {
+    const dayKeys = options.filter(o => o.label.startsWith(dayName)).map(o => o.key);
+    if (!dayKeys.length) continue;
+    for (const m of t.matchAll(re)) {
+      const [from, to] = clauseBounds(t, m.index!, m[0].length);
+      const clocksInClause = clockMatches.filter(cm => cm.at >= from && cm.at < to);
+      if (clocksInClause.length) {
+        const matchingClocks = clocksInClause.flatMap(cm => options.filter(o => o.label.endsWith(` ${cm.label}`)).map(o => o.key));
+        const intersected = dayKeys.filter(k => matchingClocks.includes(k));
+        if (intersected.length) mark(intersected, m.index!, m[0].length);
+      } else {
+        mark(dayKeys, m.index!, m[0].length);
+      }
+    }
+  }
+
+  for (const cm of clockMatches) {
+    const [from, to] = clauseBounds(t, cm.at, cm.len);
+    const dayInClause = DAY_WORDS.some(([re]) => { re.lastIndex = 0; return re.test(t.slice(from, to)); });
+    if (!dayInClause) {
+      const matching = options.filter(o => o.label.endsWith(` ${cm.label}`)).map(o => o.key);
+      if (matching.length) mark(matching, cm.at, cm.len);
+    }
   }
   // A reply that is only time words ("sat 11am", "thursday or sunday") picks them all firmly.
   let residue = t;
@@ -715,7 +750,10 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
   const allAt = ALL.exec(t) ?? ALL_WEAK.exec(t);
   if (allAt && c.answer !== "counter" && !negatedAt(t, allAt.index, allAt[0].length)) return open.length ? { answer: "yes", keys: open, why: c.why } : unclear;
-  if (c.answer === "yes") return { answer: "yes", keys: open, why: c.why };
+  if (c.answer === "yes") {
+    if (unofferedClock && !picked.length) return { answer: "yes", keys: [], why: "counter" };
+    return { answer: "yes", keys: open, why: c.why };
+  }
   if (c.answer === "counter") return { answer: "yes", keys: [], why: c.why };
   // Only refusals ("Thursday doesn't work") are not a yes: the probe stays open for a clear answer.
   return unclear;
