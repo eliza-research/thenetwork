@@ -73,7 +73,7 @@ const DEFAULT = ["evals", "onboard", "network", "slop", "relay", "peon", "peon-s
 const argv = process.argv.slice(2);
 const values = (k: string) => argv.flatMap((x, i) => (x === `--${k}` ? (argv[i + 1] ?? "").split(",") : x.startsWith(`--${k}=`) ? x.slice(k.length + 3).split(",") : [])).filter(Boolean);
 const only = values("only");
-const unknown = only.filter(x => !BLOCKS[x]);
+const unknown = only.filter(x => !Object.hasOwn(BLOCKS, x));
 if (unknown.length) { console.error(`unknown block: ${unknown.join(", ")}; known: ${Object.keys(BLOCKS).join(", ")}`); process.exit(2); }
 const run = only.length ? only : [...DEFAULT, ...(argv.includes("--with-capital") || argv.includes("--nightly") ? ["capital"] : [])];
 const opts: Opts = { quick: argv.includes("--quick"), llm: argv.includes("--llm") };
