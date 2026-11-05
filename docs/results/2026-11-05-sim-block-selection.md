@@ -106,3 +106,66 @@ No other agent client is claimed as tested.
 
 The regression covers selection and exit behavior, not the scientific validity of each simulation.
 It does not change the behavior of registered blocks or other command-line options.
+
+## Review follow-up: empty and repeated selectors
+
+Date: 2026-11-06 (Asia/Tokyo). Before revision: `1a2deb299404d6c6139e966fc8271daf3d53bf25`.
+This addresses [both selector findings in review](https://github.com/eliza-research/thenetwork/pull/355#pullrequestreview-5785638780).
+The runtime remains Bun 1.4.2 on Windows.
+
+The argument reader removed empty comma-separated fields before validation.
+An explicit empty selector therefore became indistinguishable from no selector and selected the default suite.
+The dispatch list also retained duplicate names, so repeated blocks inflated gate counts and replaced their first timing entry.
+
+Keep raw fields until validation, trim each block name, and use a `Set` to retain each name's first occurrence.
+An empty name now uses the existing unknown-block exit code 2, with `<empty>` in the diagnostic.
+The JSON output option still selects its first nonempty value.
+
+Alternatives considered:
+
+1. Reject repeated valid names. Deduplication preserves repeatable flags without running a block twice.
+2. Add a separate selector parser or argument library. The existing reader already preserves raw fields with one change.
+
+### measurement
+
+The same real CLI calls ran before and after the fix, without replacement blocks or mocked output.
+For the four empty-selector reproductions, the harness stopped the process when the first block banner appeared.
+This proves incorrect dispatch without running the full suite again; exit 143 below is the harness termination.
+
+| Arguments to `bun run sim` | Before | After |
+|---|---|---|
+| `--only ""`, `--only=`, `--only ,`, trailing `--only` | Started default `evals`; stopped with exit 143 | Exit 2; no block started |
+| `--only evals,` | Exit 0; 25/25 gates | Exit 2; no block started |
+| `--only evals,evals` | Exit 0; two runs; 50/50 gates | Exit 0; one run; 25/25 gates |
+| `--only evals --only evals` | Exit 0; two runs; 50/50 gates | Exit 0; one run; 25/25 gates |
+| Expanded CLI integration case | 0 pass, 1 fail at `evals,` | 1 pass, 0 fail; 19 assertions |
+| `bun run sim --only evals --json <output>` | 25/25 gates | 25/25 gates |
+
+All 25 gate names, results, classifications, and details match between the JSON reports; elapsed times are excluded.
+The existing single integration case now checks 13 invalid argument lists, one valid control, and four repeated selections.
+It includes whitespace, missing values, both flag syntaxes, and an empty value after a valid selection.
+Each child has a ten-second deadline; the case has sixty seconds for all subprocesses.
+The fixed case completed in 4.50 seconds locally.
+
+Commands:
+
+```sh
+bun test --conditions eliza-source packages/sim/test/cli.integration.test.ts
+bun run sim --only evals --json <output>
+bun run typecheck
+```
+
+Typecheck passes all four configurations.
+The selector has no random seed; the eval corpus is unchanged.
+No gate threshold, safety behavior, or model-backed behavior changes.
+The earlier `safety_gates`, `llm_evidence`, and `agent_clients` declarations still apply.
+The full simulation was not repeated: AGENTS.md permits at most one full run per agent, already recorded above.
+
+`bun run test:integration`: 676 pass, 8 skip, 6 fail; 13,760 assertions across 69 files, 560.24 seconds.
+The expanded CLI case passed inside this official suite in 3.07 seconds.
+The six failures are the same base-reproduced Windows failures described above; no new failure appeared.
+This run includes the security suite and uses the isolated PostgreSQL 16.15 cluster on port 54339.
+
+`bun run test:e2e`: 42 pass, 1 skip, 0 fail; 654 assertions, 73.15 seconds.
+The optional browser SDK case remains skipped. No browser or computer use was performed.
+The isolated database was stopped after validation.
