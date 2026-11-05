@@ -160,3 +160,22 @@
 {"text":"See you there。 In the morning we can walk.","want":"clean","note":"core-2 benign defanged dot"}
 {"text":"Your order #555·0102 is confirmed.","want":"clean","note":"core-2 benign defanged dot"}
 {"text":"• in the park at noon","want":"clean","note":"core-2 benign defanged dot"}
+{"text":"visit example (.) ai","want":"contact","note":"core-2 spaced defanged dot"}
+{"text":"visit example [.] co","want":"contact","note":"core-2 spaced defanged dot"}
+{"text":"visit example [.] dev","want":"contact","note":"core-2 spaced defanged dot"}
+{"text":"visit example {.} ai","want":"contact","note":"core-2 spaced defanged dot"}
+{"text":"see example <.> dev","want":"contact","note":"core-2 spaced defanged dot"}
+{"text":"example 。 co","want":"contact","note":"core-2 spaced defanged dot"}
+{"text":"visit example . ai","want":"contact","note":"core-2 spaced defanged dot"}
+{"text":"example<dot>com","want":"contact","note":"core-2 angle-bracket dot"}
+{"text":"example <dot> dev","want":"contact","note":"core-2 angle-bracket dot"}
+{"text":"sam<at>example<dot>ai","want":"contact","note":"core-2 angle-bracket at"}
+{"text":"sam<at>gmail","want":"contact","note":"core-2 angle-bracket at"}
+{"text":"sam <at> outlook","want":"contact","note":"core-2 angle-bracket at"}
+{"text":"sam{at}proton","want":"contact","note":"core-2 angle-bracket at"}
+{"text":"sam[@]gmail","want":"contact","note":"core-2 defanged at"}
+{"text":"sam(@)outlook","want":"contact","note":"core-2 defanged at"}
+{"text":"sam{@}yahoo","want":"contact","note":"core-2 defanged at"}
+{"text":"sam<@>icloud","want":"contact","note":"core-2 defanged at"}
+{"text":"use items[@]length in the code","want":"clean","note":"core-2 benign defanged at"}
+{"text":"wave (@) if you see me","want":"clean","note":"core-2 benign defanged at"}
