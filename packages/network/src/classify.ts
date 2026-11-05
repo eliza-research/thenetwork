@@ -541,6 +541,8 @@ const CANT = /\b(?:can'?t|cannot|can not|won'?t be able to|unable to|not able to
 const DEFER = /\b(?:ask|text|message|ping|try) me (?:later|again|tomorrow|tmrw|tonight|in a bit)\b|\bget back to you\b|\btalk later\b|\btext later\b/;
 const CANT_HARMLESS = /^\s*(?:wait|believe|say no|complain|go wrong|resist|beat|miss (?:it|this))/;
 const AFFIRM_RX = /(?:^|[^\w'])(?:yes+|yess+|yeah+|yea|yah|yep|yup|sure|surely|ok+|okay+|okey|kk?|alright|aight|absolutely|definitely|def|of course|for sure|fosho|bet|deal|perfect|great|awesome|amazing|love (?:to|that|it)|i'?d love|would love|i'?d like that|would like that|happy to|glad to|let'?s (?:do (?:it|this|that)|go)|lets (?:do it|go)|(?:i'?m|im|i am) (?:totally |so |definitely |all |fully )?in|count me in|sign me up|i'?m down|im down|i am down|down for (?:it|that|this)|down to\b|so down|totally down|i'?m game|im game|(?:i'?m |i am |i'?d be |i would be |would be )?up for (?:it|that|this)|works for me|that works|works|sounds (?:good|great|fun|lovely|perfect|nice|like a plan|amazing|awesome)|why not|please do|go for it|go ahead|yes please|can do|i can (?:make it|do (?:it|that))|that'?d be (?:great|nice|fun|lovely)|would be (?:great|nice|fun)|count on me|can'?t wait|^\s*down\s*[!.]*\s*$|good with (?:that|it|me|this)|that'?s (?:good|great|fine|perfect)|fine by me|fine with me)(?![\w'])|💯|👍|🙌|✅|👌|🤝/;
+/** The shared reader treats "interested" at the start of a clause as a weak yes. */
+const INTERESTED_AFFIRM = /^\s*(?:(?:i'?m|im|i am|very|really|so)\s+)?interested\b/;
 /** A word just before a yes that negates it ("not ok", "never down", "don't love it"). "Not sure" is a hedge. */
 const AFFIRM_NEG_BEFORE = /\b(?:not|never|don'?t|didn'?t|wouldn'?t|won'?t|isn'?t)\s+(?:\w+\s+)?$/;
 const HEDGE_RX = /\b(?:maybe|perhaps|possibly|probably|might|could be|not sure|unsure|idk|i don'?t know|dunno|no idea|let me (?:check|think|see|get back|look)|i'?ll (?:check|think|see|let you know|get back)|who is (?:it|this|that|he|she|they)|who'?s (?:it|this|that)|what'?s (?:it|this) about|depends|kinda|sort of|i guess|we'?ll see|tbd|on the fence|torn|not certain|hard to say|remind me|need to check|have to check)\b|^\s*\?+\s*$/;
@@ -572,7 +574,7 @@ export function consentOf(body: string): Consent {
         if (CANT_HARMLESS.test(x.slice(m.index! + m[0].length)) || TIME_AHEAD.test(x.slice(m.index! + m[0].length))) continue;
         refusalAt = Math.min(refusalAt, at + m.index!);
       }
-      const am0 = AFFIRM_RX.exec(y);
+      const am0 = AFFIRM_RX.exec(y) ?? INTERESTED_AFFIRM.exec(y);
       // An emoji is a yes only in a short reply with no question: "Still hoping to meet someone. Anything
       // come up? 💯" is an ask with decoration, not consent (the same rule as core parseReply).
       const am = am0 && !/[a-z]/.test(am0[0]) && (wordsIn > 3 || /\?/.test(t)) ? null : am0;
@@ -598,8 +600,10 @@ export function consentOf(body: string): Consent {
   if (hedge || question) return { answer: "unclear", why: "hedged" };
   // A yes needs the shared reader (core parseReply, AGENTS decision 11) not to read a refusal: when the
   // two disagree the member is asked again, never booked.
-  const pr = parseReply(body).answer;
-  if (affirmAt < Infinity) return pr === "no" ? { answer: "unclear", why: "mixed" } : { answer: "yes", why: "affirm" };
+  if (affirmAt < Infinity) {
+    const pr = parseReply(body).answer;
+    return pr === "no" ? { answer: "unclear", why: "mixed" } : { answer: "yes", why: "affirm" };
+  }
   return { answer: "unclear", why: "none" };
 }
 
@@ -634,6 +638,7 @@ const NEG_AFTER = /^\s*(?:(?:one|option|time|slot)\b\s*)?(?:\d{1,2}(?::\d\d)?\s*
 const CLAUSE_START = /[.,;!?]|\b(but|though|however|although|so)\b/g;
 /** Words that make a named time a pick ("Saturday works", "free Sunday"), not just a mention ("Saturday I'm at a wedding"). */
 const POSITIVE_PICK = /\b(works|work for (?:me|us)|does|good|fine|great|perfect|best|better|free|open|i can|let'?s|is ok|okay|please|for me|yes|yeah|sure)\b/;
+const COUNTER_PICK = /\b(?:how|what) about\b/;
 /** True when the words at `i` (of length `len`) are refused: a negation cue earlier in their clause, or a refusal right after them. */
 function negatedAt(t: string, i: number, len: number): boolean {
   let from = 0;
@@ -674,7 +679,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
       if (negatedAt(t, i, len)) { neg.add(k); continue; }
       pos.add(k);
       const cl = clauseAt(t, i, len);
-      if (onlyPick(i, len) || (POSITIVE_PICK.test(cl) && !/\?/.test(t.slice(i + len, i + len + 2)))) strong.add(k);
+      if (onlyPick(i, len) || COUNTER_PICK.test(cl) || (POSITIVE_PICK.test(cl) && !/\?/.test(t.slice(i + len, i + len + 2)))) strong.add(k);
     }
   };
   // Option letters only where they cannot be the article "a": "a or b", "(b)", "option c", or alone.
@@ -711,7 +716,7 @@ export function parseProbeReply(body: string, options: readonly TimeOption[] = [
   if (c.why === "mixed" || c.why === "conditional" || c.why === "hedged") return unclear;
   // A time they name and do not refuse is a yes to it ("no plans Thursday, so Thursday works").
   // A named time with a yes or a firm pick ("Saturday works"); a bare mention ("I'm at a wedding saturday") is not a yes.
-  if (c.answer !== "counter" && picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return { answer: "yes", keys: picked.filter(k => strong.has(k) || c.answer === "yes"), why: c.why };
+  if (picked.length && (c.answer === "yes" || picked.some(k => strong.has(k)))) return { answer: "yes", keys: picked.filter(k => strong.has(k) || c.answer === "yes"), why: c.why };
   if (c.answer === "yes" && NEITHER.test(t)) return { answer: "yes", keys: [], why: c.why };
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
   const allAt = ALL.exec(t) ?? ALL_WEAK.exec(t);
