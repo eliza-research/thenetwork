@@ -2733,19 +2733,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   private finalize(o: Opp) {
     if (o.finalized || o.meetingAt === undefined) return;
     o.finalized = true;
-    const going = o.participants.filter(p => o.status.get(p) === "yes" && o.bookedAt?.[p] !== undefined);
+    const { going, said, host, checkIn, vouchers, present, absent } = attendanceOf(o);
     if (!going.length) return;
-    const post = o.post ?? {};
-    const said = (p: MemberId) => post[p];
-    const host = o.plan?.hostId && going.includes(o.plan.hostId) && said(o.plan.hostId)?.came ? o.plan.hostId : undefined;
-    const hp = host ? said(host)! : undefined;
-    // The host's check-in: the people they named as there; when they reported someone missing, the
-    // named ones are the missing and only those who said they came count; otherwise everyone who did not say they missed it.
-    const checkIn = !hp ? [] : hp.otherNoShow ? going.filter(p => p !== host && said(p)?.came && !hp.named.includes(p))
-      : hp.named.length ? hp.named : going.filter(p => p !== host && said(p)?.came !== false);
-    // A counterpart who came and reported nobody missing confirms everyone booked (the mutual check-in).
-    const vouchers = (p: MemberId) => going.filter(x => x !== p && said(x)?.came && !said(x)!.otherNoShow);
-    const present = going.filter(p => said(p)?.came === true || (said(p)?.came !== false && (vouchers(p).length > 0 || checkIn.includes(p))));
     const origin = this.originOf(o);
     for (const p of going) {
       const key = `${o.id}:${p}`;
@@ -2757,8 +2746,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         continue;
       }
       if (said(p)?.came === false) { this.emit({ type: "plan_no_show", member: p, planId: o.id }, key); continue; }
-      const reported = going.length === 2 && going.some(x => x !== p && said(x)?.came && said(x)!.otherNoShow);
-      if (!reported) continue;
+      if (!absent.includes(p)) continue;
       if (!(o.explicit ?? []).includes(p)) this.emit({ type: "plan_ghosted", member: p, planId: o.id }, key);
       else this.emit({ type: "plan_no_show", member: p, planId: o.id }, key);
     }
@@ -4927,6 +4915,26 @@ export function relayDispatchCheck(st: NetworkState, o: { matchId: string; from:
   }
   if (st.blocks.includes(pairKey(o.from, o.to))) return "party:blocked";
   return null;
+}
+
+/** Attendance evidence shared by finalization and stored console rows; silence alone proves neither outcome. */
+export function attendanceOf(o: Opp | OppJSON) {
+  const status = new Map(o.status);
+  const going = o.participants.filter(p => status.get(p) === "yes" && o.bookedAt?.[p] !== undefined);
+  const post = o.post ?? {};
+  const said = (p: MemberId) => post[p];
+  const host = o.plan?.hostId && going.includes(o.plan.hostId) && said(o.plan.hostId)?.came ? o.plan.hostId : undefined;
+  const hp = host ? said(host)! : undefined;
+  // The host's check-in: the people they named as there; when they reported someone missing, the
+  // named ones are the missing and only those who said they came count; otherwise everyone who did not say they missed it.
+  const checkIn = !hp ? [] : hp.otherNoShow ? going.filter(p => p !== host && said(p)?.came && !hp.named.includes(p))
+    : hp.named.length ? hp.named : going.filter(p => p !== host && said(p)?.came !== false);
+  // A counterpart who came and reported nobody missing confirms everyone booked (the mutual check-in).
+  const vouchers = (p: MemberId) => going.filter(x => x !== p && said(x)?.came && !said(x)!.otherNoShow);
+  const present = going.filter(p => said(p)?.came === true || (said(p)?.came !== false && (vouchers(p).length > 0 || checkIn.includes(p))));
+  const absent = going.filter(p => !present.includes(p) && (said(p)?.came === false
+    || (going.length === 2 && going.some(x => x !== p && said(x)?.came && said(x)!.otherNoShow))));
+  return { going, said, host, checkIn, vouchers, present, absent };
 }
 
 /** The stored-state format version (exportState). importState refuses any other. */
