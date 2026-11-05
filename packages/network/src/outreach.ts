@@ -68,7 +68,7 @@ export function nyParts(t: number) {
 
 /** Next time (>= t) at local NY hour h on a day accepted by `dayOk`. */
 export function nextAt(t: number, h: number, dayOk: (wd: string) => boolean = () => true): number {
-  let x = t - (t % (15 * MINUTE)) + 15 * MINUTE;
+  let x = Math.ceil(t / (15 * MINUTE)) * 15 * MINUTE;
   for (let i = 0; i < 24 * 4 * 9; i++, x += 15 * MINUTE) {
     const p = nyParts(x);
     if (Math.abs(p.hour - h) < 0.01 && dayOk(p.weekday)) return x;
