@@ -193,8 +193,13 @@ const SCHOOL_YEAR: Record<string, number> = { freshman: 14, sophomore: 15, junio
 /**
  * Words just before "I'm 12" that make it not a statement of the sender's age today: "I act like
  * I'm 12", "when I was 12", "if I'm 12", "she said I'm 12" (network-service-1).
+ * A quote is not one of these words. An age inside a quote that is still open is dropped in
+ * `agesStated`. A quote that has already closed does not drop the next statement
+ * (`he said "hi" I'm 15`, `"Hey" I'm 15`).
  */
-const NOT_NOW = /(?:\blike|\bas if|\bas though|\bpretend(?:ing)?(?: that)?|\bwhen|\bif|\bimagine|\bsays?|\bsaid|\bfeel(?:s|ing)? like|\bacts?|\bacting|\bthink|\bthinks|\bthought|"|')\s*$/;
+const NOT_NOW = /(?:\blike|\bas if|\bas though|\bpretend(?:ing)?(?: that)?|\bwhen|\bif|\bimagine|\bsays?|\bsaid|\bfeel(?:s|ing)? like|\bacts?|\bacting|\bthink|\bthinks|\bthought)\s*$/;
+/** A clause break. The words before it do not apply to an age after it. */
+const CLAUSE_BREAK = /[.,;!?\n]|\b(?:but|though|however|although)\b/g;
 type AgeRule = { rx: RegExp; age: (m: RegExpExecArray) => number; explicit?: boolean };
 const AGE_RX: AgeRule[] = [
   // Explicit: "I am 12 years old", "im 15 y/o", "my age is 12", "15 y/o here", "age: 15".
@@ -250,21 +255,67 @@ function allMatches(rx: RegExp, text: string): RegExpExecArray[] {
 }
 
 /**
+ * True when `prefix` (the text before an age) leaves a quotation open, so the age is inside it
+ * (`she said "I'm 15"`, `"I'm 15"`). Apostrophes in "I'm" and "don't", and a foot mark (`5'6`, `5'`),
+ * are not quotes. A quote that has closed is not open: `he said "hi" I'm 15` is a real age.
+ */
+function quoteStillOpen(prefix: string): boolean {
+  let double = false, single = false;
+  for (let i = 0; i < prefix.length; i++) {
+    const c = prefix[i]!;
+    const prev = i > 0 ? prefix[i - 1]! : "";
+    const next = i + 1 < prefix.length ? prefix[i + 1]! : "";
+    if (c === "\"") {
+      // 6" is inches, unless this mark closes a quote that is already open.
+      if (!double && /[0-9]/.test(prev)) continue;
+      double = !double;
+      continue;
+    }
+    if (c !== "'") continue;
+    if (/[a-z0-9]/.test(prev) && /[a-z0-9]/.test(next)) continue;
+    if (!single && (/[0-9]/.test(prev) || /[a-z]/.test(prev))) continue;
+    single = !single;
+  }
+  return double || single;
+}
+
+/**
+ * The age is not the sender's age today when a not-now word sits immediately before it in the same
+ * clause, or when the age is still inside a quote. Quote state is read from the whole message, so
+ * a period inside quotes (`"Hey." I'm 15.`) does not turn the closing quote into a new opener.
+ * The word lookbehind stops at the previous clause, so that closer cannot cancel the next statement.
+ */
+function notNowBefore(text: string, at: number): boolean {
+  const before = text.slice(0, at);
+  if (quoteStillOpen(before)) return true;
+  let from = 0;
+  CLAUSE_BREAK.lastIndex = 0;
+  for (const m of before.matchAll(CLAUSE_BREAK)) from = m.index! + m[0].length;
+  return NOT_NOW.test(before.slice(from).slice(-24));
+}
+
+/**
  * The youngest age the sender states about themselves, and the youngest they state in the explicit
- * form ("I am 12 years old"). Every occurrence counts: "I'm 30. I'm 15." is 15, and
- * "I am 40 years old. I am 12 years old." is 12. First person and present tense only, so
- * "my son is 12", "I teach middle school" or "I act like I'm 12" never change the member's age.
+ * form ("I am 12 years old"). Every occurrence counts, in every sentence: "I'm 30. I'm 15." is 15,
+ * "I'm 30. Age: 15." is 15, and "I am 40 years old. I am 12 years old." is 12. First person and
+ * present tense only, so "my son is 12", "I teach middle school" or "I act like I'm 12" never
+ * change the member's age. An age inside a quote that is still open is not theirs; a quote that
+ * has closed does not hide the next statement (`he said "hi" I'm 15`).
  */
 export function agesStated(body: string): { age?: number; explicit?: number } {
   const t = normText(body);
   const out: { age?: number; explicit?: number } = {};
-  for (const { rx, age, explicit } of AGE_RX) {
-    for (const m of allMatches(rx, t)) {
-      if (NOT_NOW.test(t.slice(Math.max(0, m.index - 24), m.index))) continue;
-      const a = age(m);
-      if (!Number.isFinite(a)) continue;
-      if (out.age === undefined || a < out.age) out.age = a;
-      if (explicit && (out.explicit === undefined || a < out.explicit)) out.explicit = a;
+  // Rules that start at the beginning of the text ("age: 15", "15 y/o here", "15f", "f15", "15 here")
+  // are read on each sentence. On the whole message they would see only the first sentence.
+  for (const s of sentencesOf(t)) {
+    for (const { rx, age, explicit } of AGE_RX) {
+      for (const m of allMatches(rx, s.text)) {
+        if (notNowBefore(t, s.at + m.index)) continue;
+        const a = age(m);
+        if (!Number.isFinite(a)) continue;
+        if (out.age === undefined || a < out.age) out.age = a;
+        if (explicit && (out.explicit === undefined || a < out.explicit)) out.explicit = a;
+      }
     }
   }
   return out;

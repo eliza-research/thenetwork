@@ -177,3 +177,19 @@
 {"text":"He's 20. She's 14.","other":14}
 {"text":"He's 16. She's 12.","other":12}
 {"text":"Alex is 30. Sam is 13.","other":13}
+{"text":"I'm 30. Age: 15.","teen":true,"age":15}
+{"text":"30 y/o here. 15 y/o here.","teen":true,"age":15}
+{"text":"I'm 30. 15f here.","teen":true,"age":15}
+{"text":"30m. f15.","teen":true,"age":15}
+{"text":"I'm 30. 15 here.","teen":true,"age":15}
+{"text":"He said \"hi\" I'm 15","teen":true,"age":15}
+{"text":"\"Hey\" I'm 15","teen":true,"age":15}
+{"text":"\"Hey.\" I'm 15.","teen":true,"age":15}
+{"text":"I'm 28. I'm 15 minutes away.","teen":false,"age":28}
+{"text":"I'm 40. I'm 12 years into this career.","teen":false,"age":40}
+{"text":"she said \"I'm 15\"","teen":false}
+{"text":"\"I'm 15\"","teen":false}
+{"text":"I'm 30. \"I'm 15\"","teen":false,"age":30}
+{"text":"He said \"I'm 12\" but I'm 30","teen":false,"age":30}
+{"text":"I act like I'm 12","teen":false}
+{"text":"I think I'm 16","teen":false}
