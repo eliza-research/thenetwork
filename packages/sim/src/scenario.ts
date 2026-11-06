@@ -200,7 +200,13 @@ export function evaluateExpectations(s: Scenario, w: WorldResult, networkName: s
       }
       case "silent_after": {
         const t = start + e.day * DAY;
-        const n = msgs.filter(x => x.direction === "inbound" && x.memberId === e.persona && x.ts > t + 60 * MINUTE).length;
+        // A scripted cutoff can be later in the day. Log order also distinguishes
+        // replies immediately before and after the action at the same timestamp.
+        const silence = recs.findIndex(r => r.type === "scenario" && r.action === "go_silent"
+          && r.detail?.persona === e.persona && r.t >= t && r.t < t + DAY);
+        const n = silence >= 0
+          ? recs.slice(silence + 1).filter(r => r.type === "message" && r.msg.direction === "inbound" && r.msg.memberId === e.persona).length
+          : msgs.filter(x => x.direction === "inbound" && x.memberId === e.persona && x.ts > t + 60 * MINUTE).length;
         return ok(n === 0, `${n} inbound messages after day ${e.day}`);
       }
       case "no_messages_after_stop": {
