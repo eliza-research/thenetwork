@@ -221,8 +221,9 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
         for (const b of going.filter(id => oracle.p(id).hidden.adversary === "bot"))
           for (const v of going.filter(id => isReal(oracle.p(id)))) g.harms.push({ kind: "bot_contact", offender: b, victim: v, reported: oracle.u("report", tkey, b, v) < 0.25 });
         const out = going.filter(id => oracle.backsOut(id, tkey, going.some(j => j !== id && world.disliked.has(dk(id, j)))));
-        g.booked = going.filter(id => !out.includes(id));
-        if (g.booked.length < 2) { g.stage = "backout"; record(tkey, "cancelled", going, at); applyHarms(g.harms, at); return; }
+        const remaining = going.filter(id => !out.includes(id));
+        if (remaining.length < 2) { g.stage = "backout"; record(tkey, "cancelled", going, at); applyHarms(g.harms, at); return; }
+        g.booked = remaining;
         for (const id of g.booked) { booked.set(id, (booked.get(id) ?? 0) + 1); bookedSlots.add(`${id}|${slot}`); }
         // 4. the meetup
         g.attended = g.booked.filter(id => oracle.attends(id, tkey, week, slot, pr.venueHood));
