@@ -45,6 +45,9 @@ import { BASELINES } from "../../packages/sim/src/apps/slop/baselines.ts";
 import { slopMetrics } from "../../packages/sim/src/apps/slop/metrics.ts";
 import { runSlopWorld, runSlopWorldAsync } from "../../packages/sim/src/apps/slop/world.ts";
 import { mergeRelayStats } from "../../packages/sim/src/apps/slop/relay.ts";
+import { friendsPackMatcher } from "../../packages/sim/src/apps/friends/packMatcher.ts";
+import { buildFriendsSnapshot } from "../../packages/sim/src/apps/friends/snapshot.ts";
+import { runFriendsWorld } from "../../packages/sim/src/apps/friends/world.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
 
@@ -166,6 +169,8 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
     expect(viaCheckin).toBeGreaterThan(0);
     for (const id of firstReport.keys()) expect(r.world.state.safetyHolds.some(x => x.memberId === id)).toBe(true);
   });
+
+  await feedbackClockGate(b);
 
   // ---- conformance: core rules, then the stated filters and the never-shared rating -------------------
   await conformance(b, slopPack, { world: seed => slopWorld(seed), cfg: SLOP_ENGINE_CONFIG, seeds: o.quick ? [1, 2] : [1, 2, 3, 4] });
@@ -338,4 +343,48 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
 
   // ---- slop-live: the production ConsentNetwork with the slop wiring (scripts/sim/slop-live.ts) -----
   await slopLiveArm(b, o);
+}
+
+/** Weekly worlds can queue Sunday feedback for Monday, after the next planner tick. */
+async function feedbackClockGate(b: Block): Promise<void> {
+  const c = { pendingFriends: 0, pendingSlop: 0, earlyFeedback: 0, earlyPositive: 0, invalidEdges: 0, boundaries: 0, boundaryFailures: 0 };
+  runFriendsWorld({ seed: 5, n: 400, weeks: 8, matcher: world => {
+    const matcher = friendsPackMatcher();
+    return { ...matcher, propose(ctx) {
+      const s = ctx.snapshot, pending = world.state.feedback.filter(f => f.at > s.now);
+      c.pendingFriends += pending.length;
+      c.earlyFeedback += s.feedback.filter(f => f.at > s.now).length;
+      c.earlyPositive += s.outcomes.flatMap(o => o.positive.filter(id => pending.some(f => f.opportunityId === o.planId && f.from === id))).length;
+      c.invalidEdges += s.edges.filter(e => e.type === "would_interact_again" && (e.createdAt > s.now ||
+        !world.state.feedback.some(f => f.from === e.from && f.about === e.to && f.wouldMeetAgain && f.at === e.createdAt))).length;
+      const sample = pending.find(f => world.state.outcomes.some(o => o.planId === f.opportunityId && o.positive.includes(f.from)));
+      if (sample) {
+        const before = buildFriendsSnapshot(world.personas, { ...world.state, now: sample.at - 1 });
+        const due = buildFriendsSnapshot(world.personas, { ...world.state, now: sample.at });
+        c.boundaries++;
+        if (before.feedback.some(f => f.id === sample.id) || !due.feedback.some(f => f.id === sample.id) ||
+          before.outcomes.some(o => o.planId === sample.opportunityId && o.positive.includes(sample.from)) ||
+          !due.outcomes.some(o => o.planId === sample.opportunityId && o.positive.includes(sample.from))) c.boundaryFailures++;
+      }
+      return matcher.propose(ctx);
+    } };
+  } });
+  await runSlopWorldAsync({ seed: 13, perCity: 150, weeks: 4, matcher: world => {
+    const matcher = slopEngineMatcher({ seed: 13 });
+    return { ...matcher, propose(ctx) {
+      const s = ctx.snapshot, pending = world.state.feedback.filter(f => f.at > s.now);
+      c.pendingSlop += pending.length;
+      c.earlyFeedback += s.feedback.filter(f => f.at > s.now).length;
+      const sample = pending[0];
+      if (sample) {
+        const before = buildSlopSnapshot(world.personas, { ...world.state, now: sample.at - 1 });
+        const due = buildSlopSnapshot(world.personas, { ...world.state, now: sample.at });
+        c.boundaries++;
+        if (before.feedback.some(f => f.id === sample.id) || !due.feedback.some(f => f.id === sample.id)) c.boundaryFailures++;
+      }
+      return matcher.propose(ctx);
+    } };
+  } });
+  b.gate("world: Friends and Slop expose feedback and derived signals only when received",
+    c.pendingFriends > 0 && c.pendingSlop > 0 && c.boundaries > 0 && c.earlyFeedback + c.earlyPositive + c.invalidEdges + c.boundaryFailures === 0, JSON.stringify(c));
 }

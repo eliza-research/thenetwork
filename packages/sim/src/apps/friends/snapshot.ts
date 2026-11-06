@@ -184,6 +184,8 @@ export function emptyFriendsState(): FriendsNetworkState {
 
 export function buildFriendsSnapshot(personas: readonly FriendsPersona[], state: FriendsNetworkState): FriendsSnapshot {
   const members: Member[] = [], facets: Facet[] = [], intents: Intent[] = [], presence: Presence[] = [];
+  // Sunday replies may arrive after Monday's planner. Keep their positive outcome signals pending too.
+  const pendingAnswers = new Set(state.feedback.filter(f => f.at > state.now).map(f => JSON.stringify([f.opportunityId, f.from])));
   const joinedAt = FRIENDS_WORLD_START;
   for (const p of personas) {
     members.push(friendsMemberOf(p, joinedAt));
@@ -192,10 +194,10 @@ export function buildFriendsSnapshot(personas: readonly FriendsPersona[], state:
     presence.push({ memberId: p.id, city: "nyc", type: "home", areas: [hoodOf(p.stated.home).name, ...p.stated.often.map(h => hoodOf(h).name)] });
   }
   return {
-    now: state.now, members, facets, intents, presence, edges: state.edges.map(e => ({ ...e })), recentProposals: [],
-    interactions: state.interactions.map(i => ({ ...i })), feedback: state.feedback.map(f => ({ ...f })), safetyHolds: state.safetyHolds.map(h => ({ ...h })),
+    now: state.now, members, facets, intents, presence, edges: state.edges.filter(e => e.createdAt <= state.now).map(e => ({ ...e })), recentProposals: [],
+    interactions: state.interactions.map(i => ({ ...i })), feedback: state.feedback.filter(f => f.at <= state.now).map(f => ({ ...f })), safetyHolds: state.safetyHolds.map(h => ({ ...h })),
     crews: state.crews.map(c => ({ ...c, members: [...c.members], sessions: [...c.sessions] })), offered: state.offered.map(c => ({ ...c })),
-    outcomes: state.outcomes.map(o => ({ ...o })), checkIns: Object.fromEntries([...state.checkIns].map(([k, v]) => [k, [...v]])),
+    outcomes: state.outcomes.map(o => ({ ...o, positive: o.positive.filter(id => !pendingAnswers.has(JSON.stringify([o.planId, id]))) })), checkIns: Object.fromEntries([...state.checkIns].map(([k, v]) => [k, [...v]])),
     lastPlannedAt: Object.fromEntries(state.lastPlannedAt), week: state.week,
   };
 }

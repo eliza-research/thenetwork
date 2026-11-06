@@ -232,6 +232,7 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
         g.harms.push(...res.harms);
         record(tkey, "completed", g.attended, at);
         // Feedback the Network receives (private): rating and "see again?" per person.
+        const feedbackAt = at + 20 * 3600_000;
         const reportedPositive: MemberId[] = [];
         for (const i of g.attended) {
           const h = oracle.p(i).hidden;
@@ -244,8 +245,8 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
             if (j === i) continue;
             const truth = res.seeAgain[i]!.includes(j);
             const said = honest ? truth : !truth;
-            state.feedback.push({ id: `fb:${tkey}:${i}:${j}`, from: i, about: j, opportunityId: tkey, at: at + 20 * 3600_000, sentiment: honest ? sentiment : "neutral", wouldMeetAgain: said });
-            if (said) state.edges.push({ from: i, to: j, type: "would_interact_again", strength: 0.7, explicit: true, createdAt: at });
+            state.feedback.push({ id: `fb:${tkey}:${i}:${j}`, from: i, about: j, opportunityId: tkey, at: feedbackAt, sentiment: honest ? sentiment : "neutral", wouldMeetAgain: said });
+            if (said) state.edges.push({ from: i, to: j, type: "would_interact_again", strength: 0.7, explicit: true, createdAt: feedbackAt });
           }
         }
         state.outcomes.push({ planId: tkey, activityId: pr.activity, ...(pr.venueId ? { venueId: pr.venueId } : {}), city: "nyc", at, attended: [...g.attended], positive: reportedPositive, recurringWant: [] });
