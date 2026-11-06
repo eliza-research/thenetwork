@@ -33,9 +33,20 @@ const emptyState = (pop: PeonPopulation, week = 0): PeonNetworkState => ({
 export async function peonBlock(b: Block, o: { quick: boolean }): Promise<void> {
   const spec = o.quick ? { seeds: [13], weeks: 4 } : PEON_PINNED;
   const all: Record<"pack" | "keyword" | "oracle", PeonMetrics[]> = { pack: [], keyword: [], oracle: [] };
+  const budget = { reads: 0, interviews: 0, hours: 0, expected: 0, mismatchedRuns: 0 };
   for (const arm of ["pack", "keyword", "oracle"] as const) for (const seed of spec.seeds) {
-    all[arm].push(peonMetrics(await runPeonWorld({ seed, perCity: 400, jobsPerCity: 80, weeks: spec.weeks, matcher: ARMS[arm]!.matcher, realism: REALISM_V2 })));
+    const run = await runPeonWorld({ seed, perCity: 400, jobsPerCity: 80, weeks: spec.weeks, matcher: ARMS[arm]!.matcher, realism: REALISM_V2 });
+    all[arm].push(peonMetrics(run));
+    // A read can remain on file; an interview reservation costs time even if it later cancels.
+    const reads = run.flows.filter(f => f.reviewed || f.onFile).length;
+    const interviews = run.flows.filter(f => f.interviewWeek !== undefined).length;
+    const expected = reads * REALISM_V2.screening!.readHours + interviews * REALISM_V2.screening!.interviewHours;
+    budget.reads += reads; budget.interviews += interviews; budget.hours += run.recruiterHours; budget.expected += expected;
+    if (Math.abs(run.recruiterHours - expected) > 1e-7) budget.mismatchedRuns++;
   }
+  b.gate("world: recruiter hours count each application review and interview reservation once",
+    budget.reads > 0 && budget.interviews > 0 && budget.mismatchedRuns === 0,
+    JSON.stringify({ ...budget, hours: +budget.hours.toFixed(6), expected: +budget.expected.toFixed(6) }));
   b.track("fingerprint: pack, keyword and oracle arms", true, digest(all));
   for (const g of officialGates(all.pack, all.keyword, all.oracle)) b.gate(`gate ${g.gate}`, g.pass, g.value, SAFETY.has(g.id) || !o.quick);
   b.gate("positive control: the keyword board reaches unverified, no-range and scam jobs", all.keyword.some(m => m.safety.unverifiedIntros > 0) && all.keyword.some(m => m.safety.noRangeIntros > 0) && all.keyword.some(m => m.safety.scamIntros > 0));
