@@ -305,7 +305,12 @@ export class World {
 
     s.on<{ personaId: MemberId }>("join", ev => this.onJoin(ev.data.personaId));
     s.on<{ msg: SimMessage }>("deliver", ev => this.onDeliver(ev.data.msg));
-    s.on<{ personaId: MemberId; text: string; reaction?: Reaction }>("persona_send", ev => { this.personaSend(this.personas.get(ev.data.personaId)!, ev.data.text, ev.data.reaction); });
+    s.on<{ personaId: MemberId; text: string; reaction?: Reaction }>("persona_send", ev => {
+      const mem = this.memories.get(ev.data.personaId);
+      // Silence may begin after a reply was queued. Explicit scenario actions use personaSend directly.
+      if (mem?.silentFrom !== undefined && this.clock.now() >= mem.silentFrom) return;
+      this.personaSend(this.personas.get(ev.data.personaId)!, ev.data.text, ev.data.reaction);
+    });
     s.on<{ msg: SimMessage }>("network_inbound", async ev => {
       const m = ev.data.msg;
       const inbound: InboundMessage = { id: m.id, memberId: m.memberId, body: m.body, ts: m.ts, channel: m.channel, keyword: m.keyword };
@@ -448,6 +453,7 @@ export class World {
     const p = this.personas.get(personaId);
     const mem = this.memories.get(personaId);
     if (!m || !p || !mem || mem.optedOut) return;
+    if (mem.silentFrom !== undefined && this.clock.now() >= mem.silentFrom) return;
     const pr = mem.proposals[m.proposalId];
     const key = `${m.proposalId}|${personaId}`;
     // Time-aware: a participant booked at a time that clashes with its week drops out (and says so more often).
