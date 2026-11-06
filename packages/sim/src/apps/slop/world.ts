@@ -15,7 +15,7 @@ import type { InteractionRecord } from "@thenetwork/engine/src/types.ts";
 import { Rng, hash32 } from "@thenetwork/core";
 import { SlopBehavior, type HarmEvent } from "./behavior.ts";
 import type { SlopCity } from "./geo.ts";
-import { SlopOracle, type DateOutcome } from "./oracle.ts";
+import { isSafe, SlopOracle, type DateOutcome } from "./oracle.ts";
 import { SLOTS, SLOT_DAY, generateSlopPersonas, type DateActivity, type SlopGenOptions, type SlopPersona } from "./persona.ts";
 import { SLOP_WORLD_START, buildSlopSnapshot, reviewDecision, type PlatformModel, type SlopAskField, type SlopNetworkState, type SlopSnapshot, type VerificationModel } from "./snapshot.ts";
 import { visibleProfiles, type VisibleProfile } from "./visible.ts";
@@ -78,6 +78,8 @@ export interface SlopRunOptions extends Omit<SlopGenOptions, "seed"> {
 
 export interface SlopWorld {
   seed: number; weeks: number; personas: SlopPersona[]; oracle: SlopOracle; behavior: SlopBehavior;
+  /** Real members with a stated-mutual real partner in week 0, before any widening answers. */
+  initiallyFeasible: ReadonlySet<MemberId>;
   state: SlopNetworkState;
 }
 
@@ -99,8 +101,10 @@ export function createSlopWorld(o: Omit<SlopRunOptions, "matcher">): SlopWorld {
   const weeks = o.weeks ?? 4;
   const personas = o.personas ?? generateSlopPersonas({ ...o, seed: o.seed, weeks });
   const oracle = new SlopOracle(personas, o.seed, o.bodyTypes);
+  const real = personas.filter(isSafe);
+  const initiallyFeasible = new Set(real.filter(p => real.some(q => oracle.statedMutual(p, q, 0))).map(p => p.id));
   return {
-    seed: o.seed, weeks, personas, oracle, behavior: new SlopBehavior(oracle, o.seed),
+    seed: o.seed, weeks, personas, oracle, behavior: new SlopBehavior(oracle, o.seed), initiallyFeasible,
     state: { now: SLOP_WORLD_START, week: 0, interactions: [], feedback: [], safetyHolds: [], inboundAsks: [], edges: [], paused: new Set(), asks: [], learned: new Map(), ...(o.verification ? { verification: o.verification } : {}), ...(o.platform ? { platform: o.platform } : {}), ...(o.bodyTypes ? { bodyTypes: o.bodyTypes } : {}) },
   };
 }
