@@ -114,6 +114,7 @@ export class World {
   private proposals = new Map<string, Proposal>();
   private meetings = new Map<string, MeetingReport & { id: string }>();
   private notices = new Set<string>(); // `${proposalId}|${memberId}` flake notices given
+  private cancellationsReceived = new Set<string>(); // whole-meeting cancellations delivered by the Network
   private nameIndex: { re: RegExp; id: MemberId }[] = [];
   private meetingSeq = 0;
   private spawnSeq = 0;
@@ -403,6 +404,12 @@ export class World {
     const p = this.personas.get(msg.memberId);
     const mem = this.memories.get(msg.memberId);
     if (!p || !mem || mem.optedOut) return;
+    const pid = msg.meta?.proposalId;
+    if (msg.meta?.type === "cancellation" && msg.meta.meetingCancelled && pid) {
+      this.cancellationsReceived.add(`${pid}|${p.id}`);
+      const proposal = mem.proposals[pid];
+      if (proposal) proposal.plannedShow = false;
+    }
     const pctx = this.personaCtx(p, msg.id);
     const reply = await this.agent.respond(pctx, msg);
     this.rec({ type: "decision", memberId: p.id, messageId: msg.id, messageType: reply.messageType, intent: reply.intent, decision: reply.decision, proposalId: reply.proposalId, delayMs: reply.delayMs });
@@ -452,7 +459,7 @@ export class World {
     const key = `${m.proposalId}|${personaId}`;
     // Time-aware: a participant booked at a time that clashes with its week drops out (and says so more often).
     const clash = this.clashes(m, p);
-    if (this.notices.has(key) || (!clash && (!pr || pr.plannedShow))) return;
+    if (this.notices.has(key) || this.cancellationsReceived.has(key) || (!clash && (!pr || pr.plannedShow))) return;
     const r = this.rng.fork("flake", meetingId, personaId);
     if (mem.forceFlake === "notice" || (!mem.forceFlake && r.bool(clash ? 0.8 : 0.45))) {
       this.notices.add(key);
@@ -470,14 +477,15 @@ export class World {
   private onMeeting(meetingId: string) {
     const m = this.meetings.get(meetingId)!;
     const prop = this.proposals.get(m.proposalId);
-    const attendance: Record<MemberId, { showed: boolean; cancelledWithNotice: boolean; enjoyment: number }> = {};
+    const attendance: Extract<RunRecord, { type: "outcome" }>["attendance"] = {};
     const showed: MemberId[] = [];
     for (const id of m.participants) {
       const mem = this.memories.get(id)!;
       const pr = mem.proposals[m.proposalId];
       const notice = this.notices.has(`${m.proposalId}|${id}`);
-      const s = !!pr && pr.decision !== "decline" && pr.plannedShow && !notice && !mem.optedOut && !this.clashes(m, this.personas.get(id)!);
-      attendance[id] = { showed: s, cancelledWithNotice: notice, enjoyment: 0 };
+      const cancelledByNetwork = this.cancellationsReceived.has(`${m.proposalId}|${id}`);
+      const s = !!pr && pr.decision !== "decline" && pr.plannedShow && !notice && !cancelledByNetwork && !mem.optedOut && !this.clashes(m, this.personas.get(id)!);
+      attendance[id] = { showed: s, cancelledWithNotice: notice, ...(cancelledByNetwork ? { cancelledByNetwork: true } : {}), enjoyment: 0 };
       if (s) showed.push(id);
     }
     const plan = this.opts.plans ? this.planOf(m, prop) : undefined;
