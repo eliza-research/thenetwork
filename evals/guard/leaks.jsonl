@@ -11,6 +11,16 @@
 {"text":"call 555-0102","want":"contact","note":"core-2 contact in disguise"}
 {"text":"text 5550102","want":"contact","note":"core-2 contact in disguise"}
 {"text":"my cell is five five five oh one oh two","want":"contact","note":"core-2 contact in disguise"}
+{"text":"my cell is five five five double oh one two","want":"contact","note":"core-2 spoken double"}
+{"text":"text me at five five five double zero one two","want":"contact","note":"core-2 spoken double"}
+{"text":"call two one two triple five double oh one two","want":"contact","note":"core-2 spoken triple"}
+{"text":"ring 212 triple 5 0102","want":"contact","note":"core-2 spoken triple"}
+{"text":"call five five five double-oh one two","want":"contact","note":"core-2 spoken double hyphen"}
+{"text":"llamame al cinco cinco cinco doble cero uno dos","want":"contact","note":"core-2 spoken doble"}
+{"text":"the double feature starts at 7","want":"clean","note":"core-2 spoken repeat benign"}
+{"text":"I'll have a triple shot","want":"clean","note":"core-2 spoken repeat benign"}
+{"text":"seeing double after one drink","want":"clean","note":"core-2 spoken repeat benign"}
+{"text":"transfer me $500 and I'll double it","want":"clean","note":"core-2 spoken repeat benign"}
 {"text":"llamame al dos uno dos cinco cinco cinco cero uno cero dos","want":"contact","note":"core-2 contact in disguise"}
 {"text":"WhatsApp +44 20 7946 0958","want":"contact","note":"core-2 contact in disguise"}
 {"text":"212​555​0102","want":"contact","note":"core-2 contact in disguise"}
