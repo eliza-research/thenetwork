@@ -185,7 +185,10 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
       }
       const bestOption = () => {
         let best = pr.options[0]!, n = -1;
-        for (const s of pr.options) { const c = [...picks.values()].filter(x => x.includes(s)).length; if (c > n) { n = c; best = s; } }
+        for (const s of pr.options) {
+          const c = [...picks].filter(([id, slots]) => slots.includes(s) && canBook(id, s)).length;
+          if (c > n) { n = c; best = s; }
+        }
         return { slot: best, n };
       };
       const quorum = pr.kind === "crew_session" || pr.kind === "crew_offer" ? Math.min(pr.quorum, 2) : pr.quorum;

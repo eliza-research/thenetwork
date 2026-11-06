@@ -18,8 +18,8 @@ import { BASELINES } from "../../packages/sim/src/apps/friends/baselines.ts";
 import { officialGates, trackedMetrics } from "../../packages/sim/src/apps/friends/gates.ts";
 import { friendsMetrics, type FriendsMetrics } from "../../packages/sim/src/apps/friends/metrics.ts";
 import { engineInputOf, evidenceOf, friendsPackMatcher } from "../../packages/sim/src/apps/friends/packMatcher.ts";
-import { buildFriendsSnapshot, NYC_TZ, type FriendsSnapshot } from "../../packages/sim/src/apps/friends/snapshot.ts";
-import { runFriendsWorld, VENUES } from "../../packages/sim/src/apps/friends/world.ts";
+import { buildFriendsSnapshot, NYC_TZ, slotTime, type FriendsSnapshot } from "../../packages/sim/src/apps/friends/snapshot.ts";
+import { runFriendsWorld, VENUES, type FriendsProposal } from "../../packages/sim/src/apps/friends/world.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
 
@@ -43,7 +43,52 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
   const spec = o.quick ? { seeds: [5], weeks: 4, n: 200 } : FRIENDS_PINNED;
   const all: Record<"pack" | "random" | "oracle", FriendsMetrics[]> = { pack: [], random: [], oracle: [] };
   const matchers = { pack: friendsPackMatcher(), random: BASELINES.random, oracle: BASELINES.oracle };
-  for (const arm of ["pack", "random", "oracle"] as const) for (const seed of spec.seeds) all[arm].push(friendsMetrics(runFriendsWorld({ seed, n: spec.n, weeks: spec.weeks, matcher: matchers[arm] })));
+  let feasiblePartners = 0, firstSlotBusy = 0;
+  const missedPartners: string[] = [];
+  for (const arm of ["pack", "random", "oracle"] as const) for (const seed of spec.seeds) {
+    const proposals = new Map<string, FriendsProposal>();
+    const matcher = matchers[arm];
+    const r = runFriendsWorld({ seed, n: spec.n, weeks: spec.weeks, matcher: world => {
+      const delegate = typeof matcher === "function" ? matcher(world) : matcher;
+      return {
+        name: delegate.name,
+        propose(ctx) {
+          const ps = delegate.propose(ctx);
+          ps.forEach((p, i) => proposals.set(`w${ctx.week}:${i}:${p.kind}`, structuredClone(p)));
+          return ps;
+        },
+      };
+    } });
+    all[arm].push(friendsMetrics(r));
+    // Reconstruct reservations from completed flows, including people who later
+    // no-show. A pair's two yeses mean both picked their shared hidden-free slots.
+    const reservations = new Map<string, number[]>();
+    const records = new Map(r.world.state.interactions.map(x => [x.id, x]));
+    for (const f of r.flows) {
+      const p = proposals.get(f.key);
+      if (p?.kind === "partner" && p.invited.length === 2 && f.yes === 2) {
+        const available = p.options.filter(slot => p.invited.every(id => {
+          const used = reservations.get(`${f.week}|${id}`) ?? [];
+          return used.length < 2 && !used.includes(slotTime(f.week, slot))
+            && (r.world.oracle.p(id).hidden.adversary === "bot" || r.world.oracle.free(id, f.week, slot));
+        }));
+        if (available.length) {
+          feasiblePartners++;
+          if (!available.includes(p.options[0]!)) firstSlotBusy++;
+          if (f.going.length !== 2 || !available.some(slot => slotTime(f.week, slot) === records.get(f.key)?.at))
+            missedPartners.push(`${arm}:${seed}:${f.key}`);
+        }
+      }
+      if (f.stage !== "held" && f.stage !== "no_show") continue;
+      for (const id of f.booked) {
+        const key = `${f.week}|${id}`;
+        reservations.set(key, [...(reservations.get(key) ?? []), records.get(f.key)!.at]);
+      }
+    }
+  }
+  b.gate("harness: mutually accepted partner plans use an offered slot that fits existing bookings",
+    feasiblePartners > 0 && missedPartners.length === 0,
+    `${feasiblePartners} feasible pairs, ${firstSlotBusy} with first option unavailable, ${missedPartners.length} lost: ${missedPartners.join(", ")}`);
   b.track("fingerprint: pack, random and oracle arms", true, digest(all));
   for (const g of officialGates(all.pack, all.random, all.oracle)) b.gate(`gate ${g.gate}`, g.pass, g.value, SAFETY.has(g.id) || !o.quick);
   for (const g of trackedMetrics(all.pack, all.random)) b.track(`tracked ${g.gate}`, g.pass, g.value);
