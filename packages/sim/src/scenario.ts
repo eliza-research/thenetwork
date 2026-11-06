@@ -131,7 +131,7 @@ export function scenarioWorldOptions(s: Scenario, o: ScenarioRunOptions): WorldO
   const personas = [...scripted, ...background];
   const cityOf = (ref: string) => scripted.find(p => p.id === ref)?.homeCity ?? "sf";
   const actions: WorldOptions["actions"] = [];
-  for (const spec of s.personas) if (spec.join) actions.push({ at: resolveAt(spec.join, start, spec.city ?? "sf"), action: { do: "join", persona: spec.ref } });
+  for (const spec of s.personas) if (spec.join) actions.push({ at: resolveAt(spec.join, start, cityOf(spec.ref)), action: { do: "join", persona: spec.ref } });
   for (const a of s.actions) {
     let action: WorldAction;
     if (a.do === "propose") {
