@@ -62,6 +62,8 @@ export interface SimInteraction {
   id: string; kind: OpportunityKind; category: Category; participants: MemberId[]; at: number;
   outcome: "pending" | "accepted" | "declined" | "expired" | "completed" | "no_show";
   declinedBy?: MemberId[]; acceptedBy?: MemberId[]; noResponse?: MemberId[];
+  /** Individual refusal times when the rest of the group was subsequently booked or held. */
+  declinedAt?: Record<MemberId, number>;
 }
 export interface SimFeedback { id: string; from: MemberId; about: MemberId; opportunityId: string; at: number; sentiment: "positive" | "neutral" | "negative"; wouldMeetAgain: boolean }
 export type SimOpenOpportunity = import("@thenetwork/core").OpenOpportunity;
@@ -269,6 +271,7 @@ export function networkStateFromRecords(records: readonly RunRecord[], now: numb
   const props = new Map<string, Proposal>();
   const skipped = new Set<string>();
   const declines = new Map<string, MemberId[]>(), yes = new Map<string, Set<MemberId>>(), invited = new Map<string, Map<MemberId, number>>();
+  const declineTimes = new Map<string, Record<MemberId, number>>();
   const scheduled = new Map<string, { at: number; participants: MemberId[] }>();
   const outcome = new Map<string, Extract<RunRecord, { type: "outcome" }>>();
   const answered = new Set<string>();
@@ -292,7 +295,12 @@ export function networkStateFromRecords(records: readonly RunRecord[], now: numb
         const a = inviteAnswer(m.body);
         if (!a) continue;
         answered.add(key);
-        if (a === "no") { if (!declines.has(th.proposalId)) declines.set(th.proposalId, []); declines.get(th.proposalId)!.push(m.memberId); }
+        if (a === "no") {
+          if (!declines.has(th.proposalId)) declines.set(th.proposalId, []);
+          declines.get(th.proposalId)!.push(m.memberId);
+          if (!declineTimes.has(th.proposalId)) declineTimes.set(th.proposalId, {});
+          declineTimes.get(th.proposalId)![m.memberId] = m.ts;
+        }
         else { if (!yes.has(th.proposalId)) yes.set(th.proposalId, new Set()); yes.get(th.proposalId)!.add(m.memberId); }
       }
     } else if (r.type === "meeting_scheduled") scheduled.set(r.proposalId, { at: r.at, participants: r.participants });
@@ -311,21 +319,28 @@ export function networkStateFromRecords(records: readonly RunRecord[], now: numb
     }
     let out: SimInteraction["outcome"] = "pending";
     let at = p.createdAt;
+    let participants = [...p.participants];
     const dec = declines.get(pid);
     const o = outcome.get(pid);
     const sched = scheduled.get(pid);
-    if (dec?.length) out = "declined";
-    else if (o) {
-      const shows = Object.values(o.attendance).filter(a => a.showed).length;
-      out = shows >= 2 ? "completed" : "no_show"; at = o.at;
+    const meetingRoster = (ids: MemberId[]) => [...new Set([...p.participants, ...ids])].filter(id => ids.includes(id));
+    // One invitee's no does not cancel a group that was subsequently booked or held.
+    // Keep their answer below, but derive the meeting's state and roster from its records.
+    if (o) {
+      const shows = Object.entries(o.attendance).filter(([, a]) => a.showed).map(([id]) => id);
+      out = shows.length >= 2 ? "completed" : "no_show"; at = o.at;
+      participants = meetingRoster(shows.length >= 2 ? shows : Object.keys(o.attendance));
     } else if (sched) {
       out = "accepted";
-      if (sched.at > now) openOpportunities.push({ id: pid, participants: [...p.participants], stage: "scheduled", until: sched.at });
-    } else if (now - p.createdAt > 3 * DAY) out = "expired";
+      participants = meetingRoster(sched.participants);
+      if (sched.at > now) openOpportunities.push({ id: pid, participants: [...participants], stage: "scheduled", until: sched.at });
+    } else if (dec?.length) out = "declined";
+    else if (now - p.createdAt > 3 * DAY) out = "expired";
     else openOpportunities.push({ id: pid, participants: [...p.participants], stage: "inviting", until: p.createdAt + 3 * DAY });
     interactions.push({
-      id: pid, kind: p.kind, category: p.category ?? "social", participants: [...p.participants], at, outcome: out,
+      id: pid, kind: p.kind, category: p.category ?? "social", participants, at, outcome: out,
       ...(dec?.length ? { declinedBy: dec } : {}), ...(acceptedBy.length ? { acceptedBy } : {}), ...(noResponse.length ? { noResponse } : {}),
+      ...(dec?.length && (o || sched) ? { declinedAt: declineTimes.get(pid)! } : {}),
     });
   }
   for (const f of said) {
