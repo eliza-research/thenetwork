@@ -97,7 +97,8 @@ export const slotTime = (week: number, slot: number) =>
 
 export function createSlopWorld(o: Omit<SlopRunOptions, "matcher">): SlopWorld {
   const weeks = o.weeks ?? 4;
-  const personas = o.personas ?? generateSlopPersonas({ ...o, seed: o.seed, weeks });
+  // Widening answers update profiles within this world, not the caller's replay population.
+  const personas = o.personas ? structuredClone(o.personas) : generateSlopPersonas({ ...o, seed: o.seed, weeks });
   const oracle = new SlopOracle(personas, o.seed, o.bodyTypes);
   return {
     seed: o.seed, weeks, personas, oracle, behavior: new SlopBehavior(oracle, o.seed),
