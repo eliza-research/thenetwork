@@ -18,8 +18,9 @@ import { BASELINES } from "../../packages/sim/src/apps/friends/baselines.ts";
 import { officialGates, trackedMetrics } from "../../packages/sim/src/apps/friends/gates.ts";
 import { friendsMetrics, type FriendsMetrics } from "../../packages/sim/src/apps/friends/metrics.ts";
 import { engineInputOf, evidenceOf, friendsPackMatcher } from "../../packages/sim/src/apps/friends/packMatcher.ts";
-import { buildFriendsSnapshot, NYC_TZ, type FriendsSnapshot } from "../../packages/sim/src/apps/friends/snapshot.ts";
-import { runFriendsWorld, VENUES } from "../../packages/sim/src/apps/friends/world.ts";
+import { SLOTS } from "../../packages/sim/src/apps/friends/persona.ts";
+import { buildFriendsSnapshot, NYC_TZ, slotTime, type FriendsSnapshot } from "../../packages/sim/src/apps/friends/snapshot.ts";
+import { runFriendsWorld, slotOfCrew, VENUES } from "../../packages/sim/src/apps/friends/world.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
 
@@ -43,7 +44,37 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
   const spec = o.quick ? { seeds: [5], weeks: 4, n: 200 } : FRIENDS_PINNED;
   const all: Record<"pack" | "random" | "oracle", FriendsMetrics[]> = { pack: [], random: [], oracle: [] };
   const matchers = { pack: friendsPackMatcher(), random: BASELINES.random, oracle: BASELINES.oracle };
-  for (const arm of ["pack", "random", "oracle"] as const) for (const seed of spec.seeds) all[arm].push(friendsMetrics(runFriendsWorld({ seed, n: spec.n, weeks: spec.weeks, matcher: matchers[arm] })));
+  let metEvents = 0, crewMetEvents = 0, unexpectedTimes = 0, missingEvents = 0;
+  const eventKey = (a: MemberId, b: MemberId, at: number | undefined) => `${[a, b].sort().join("|")}|${at}`;
+  for (const arm of ["pack", "random", "oracle"] as const) for (const seed of spec.seeds) {
+    const r = runFriendsWorld({ seed, n: spec.n, weeks: spec.weeks, matcher: matchers[arm] });
+    all[arm].push(friendsMetrics(r));
+    const interactions = new Map(r.world.state.interactions.map(x => [x.id, x]));
+    const crews = new Map(r.world.state.crews.map(c => [c.id, c]));
+    // Build an independent multiset from held meetups and their booked times.
+    // Self-organized crews use their agreed weekly slot, not a Network interaction.
+    const expected = new Map<string, number>();
+    for (const m of r.meetups) {
+      const at = m.kind === "crew_self"
+        ? slotTime(m.week, SLOTS.indexOf(slotOfCrew(crews.get(m.crewId!)!)))
+        : interactions.get(m.key)?.at;
+      for (let i = 0; i < m.attendees.length; i++) for (const b of m.attendees.slice(i + 1)) {
+        if (at === undefined) { missingEvents++; continue; }
+        const key = eventKey(m.attendees[i]!, b, at);
+        expected.set(key, (expected.get(key) ?? 0) + 1);
+        if (m.kind === "crew_self") crewMetEvents++;
+      }
+    }
+    for (const e of buildFriendsSnapshot(r.world.personas, r.world.state).edges.filter(e => e.type === "met")) {
+      metEvents++;
+      const key = eventKey(e.from, e.to, e.createdAt), left = expected.get(key) ?? 0;
+      if (left) expected.set(key, left - 1); else unexpectedTimes++;
+    }
+    missingEvents += [...expected.values()].reduce((sum, n) => sum + n, 0);
+  }
+  b.gate("harness: met edges use the actual meetup time, including independent crews",
+    metEvents > 0 && unexpectedTimes === 0 && missingEvents === 0,
+    `${metEvents} met events (${crewMetEvents} from independent crews), ${unexpectedTimes} unexpected times, ${missingEvents} missing events`);
   b.track("fingerprint: pack, random and oracle arms", true, digest(all));
   for (const g of officialGates(all.pack, all.random, all.oracle)) b.gate(`gate ${g.gate}`, g.pass, g.value, SAFETY.has(g.id) || !o.quick);
   for (const g of trackedMetrics(all.pack, all.random)) b.track(`tracked ${g.gate}`, g.pass, g.value);

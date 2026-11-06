@@ -228,7 +228,7 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
         g.attended = g.booked.filter(id => oracle.attends(id, tkey, week, slot, pr.venueHood));
         if (g.attended.length < 2) { g.stage = "no_show"; record(tkey, "no_show", g.booked, at); applyHarms(g.harms, at); return; }
         g.stage = "held";
-        const res = held(tkey, pr.kind, g.attended, pr.activity, pr.venueHood, week, day, pr.crewId ?? (pr.kind === "crew_offer" ? state.crews[state.crews.length - 1]!.id : undefined));
+        const res = held(tkey, pr.kind, g.attended, pr.activity, pr.venueHood, week, slot, pr.crewId ?? (pr.kind === "crew_offer" ? state.crews[state.crews.length - 1]!.id : undefined));
         g.harms.push(...res.harms);
         record(tkey, "completed", g.attended, at);
         // Feedback the Network receives (private): rating and "see again?" per person.
@@ -269,7 +269,7 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
       const slot = SLOTS.indexOf(slotOfCrew(c));
       const came = c.members.filter(id => !state.safetyHolds.some(h => h.memberId === id) && oracle.u("crewself", c.id, id, week) < 0.75 * Math.pow(0.97, age) * (1 - oracle.p(id).hidden.flakiness) && (booked.get(id) ?? 0) < bookCap);
       if (came.length < 2 || slot < 0) continue;
-      held(`self:${c.id}:w${week}`, "crew_self", came, c.activityId, hoodOfVenue(c.venueId) ?? oracle.p(c.members[0]!).hidden.home, week, slotDay(week, slot), c.id);
+      held(`self:${c.id}:w${week}`, "crew_self", came, c.activityId, hoodOfVenue(c.venueId) ?? oracle.p(c.members[0]!).hidden.home, week, slot, c.id);
     }
     // Hidden hangouts between pairs who both want more.
     for (const k of [...world.mutual].sort()) {
@@ -279,7 +279,8 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
   }
   return { world, flows, meetups, contacts, matcher: matcher.name, valueDays };
 
-  function held(key: string, kind: MeetupRecord["kind"], attendees: MemberId[], activity: string, venueHood: string, week: number, day: number, crewId?: string) {
+  function held(key: string, kind: MeetupRecord["kind"], attendees: MemberId[], activity: string, venueHood: string, week: number, slot: number, crewId?: string) {
+    const day = slotDay(week, slot), at = slotTime(week, slot);
     const res = oracle.meetup(key, attendees, activity, venueHood, (a, b) => world.bond.get(pk(a, b)) ?? 0);
     const dur = activityById.get(activity)?.durationMin ?? 120;
     const travel: Record<MemberId, number> = {};
@@ -292,7 +293,7 @@ export function runFriendsWorld(o: FriendsRunOptions): FriendsRunResult {
       if (res.seeAgain[a]!.includes(b) && res.seeAgain[b]!.includes(a)) { world.mutual.add(k); world.bond.set(k, (world.bond.get(k) ?? 0) + h); }
       if (!res.seeAgain[a]!.includes(b)) world.disliked.add(dk(a, b));
       if (!res.seeAgain[b]!.includes(a)) world.disliked.add(dk(b, a));
-      state.edges.push({ from: a, to: b, type: "met", strength: 0.5, explicit: true, createdAt: slotTime(week, 0) });
+      state.edges.push({ from: a, to: b, type: "met", strength: 0.5, explicit: true, createdAt: at });
     }
     meetups.push({ key, week, day, kind, activity, venueHood, attendees: [...attendees], enjoy: res.enjoy, good: res.good, travel, ...(crewId ? { crewId } : {}) });
     return res;
