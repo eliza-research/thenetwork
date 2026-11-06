@@ -18,8 +18,9 @@ import { BASELINES } from "../../packages/sim/src/apps/friends/baselines.ts";
 import { officialGates, trackedMetrics } from "../../packages/sim/src/apps/friends/gates.ts";
 import { friendsMetrics, type FriendsMetrics } from "../../packages/sim/src/apps/friends/metrics.ts";
 import { engineInputOf, evidenceOf, friendsPackMatcher } from "../../packages/sim/src/apps/friends/packMatcher.ts";
-import { buildFriendsSnapshot, NYC_TZ, type FriendsSnapshot } from "../../packages/sim/src/apps/friends/snapshot.ts";
-import { runFriendsWorld, VENUES } from "../../packages/sim/src/apps/friends/world.ts";
+import { SLOTS } from "../../packages/sim/src/apps/friends/persona.ts";
+import { buildFriendsSnapshot, NYC_TZ, slotTime, type FriendsSnapshot } from "../../packages/sim/src/apps/friends/snapshot.ts";
+import { runFriendsWorld, slotOfCrew, VENUES } from "../../packages/sim/src/apps/friends/world.ts";
 import { conformance } from "./conformance.ts";
 import { Block, digest, expect } from "./gate.ts";
 
@@ -43,8 +44,38 @@ export async function friendsBlock(b: Block, o: { quick: boolean }): Promise<voi
   const spec = o.quick ? { seeds: [5], weeks: 4, n: 200 } : FRIENDS_PINNED;
   const all: Record<"pack" | "random" | "oracle", FriendsMetrics[]> = { pack: [], random: [], oracle: [] };
   const matchers = { pack: friendsPackMatcher(), random: BASELINES.random, oracle: BASELINES.oracle };
-  for (const arm of ["pack", "random", "oracle"] as const) for (const seed of spec.seeds) all[arm].push(friendsMetrics(runFriendsWorld({ seed, n: spec.n, weeks: spec.weeks, matcher: matchers[arm] })));
+  const bookings = { crewMeetups: 0, slotConflicts: 0, overCapBookings: 0, duplicateCrewWeeks: 0 };
+  for (const arm of ["pack", "random", "oracle"] as const) for (const seed of spec.seeds) {
+    const r = runFriendsWorld({ seed, n: spec.n, weeks: spec.weeks, matcher: matchers[arm] });
+    const slots = new Set<string>(), weekly = new Map<string, number>();
+    const reserve = (id: MemberId, week: number, at: number) => {
+      const key = `${id}|${at}`, wk = `${id}|${week}`;
+      if (slots.has(key)) bookings.slotConflicts++;
+      slots.add(key);
+      const n = (weekly.get(wk) ?? 0) + 1;
+      weekly.set(wk, n);
+      if (n > 2) bookings.overCapBookings++;
+    };
+    const at = new Map(r.world.state.interactions.map(x => [x.id, x.at]));
+    // Booked platform slots stay occupied even when somebody does not attend.
+    for (const f of r.flows) if (f.booked.length >= 2) for (const id of f.booked) reserve(id, f.week, at.get(f.key)!);
+    const crewWeeks = new Set<string>();
+    for (const m of r.meetups) if (m.crewId) {
+      const key = `${m.crewId}|${m.week}`;
+      if (crewWeeks.has(key)) bookings.duplicateCrewWeeks++;
+      crewWeeks.add(key);
+    }
+    for (const m of r.meetups) if (m.kind === "crew_self") {
+      const crew = r.world.state.crews.find(c => c.id === m.crewId)!;
+      const when = slotTime(m.week, SLOTS.indexOf(slotOfCrew(crew)));
+      for (const id of m.attendees) reserve(id, m.week, when);
+      bookings.crewMeetups++;
+    }
+    all[arm].push(friendsMetrics(r));
+  }
   b.track("fingerprint: pack, random and oracle arms", true, digest(all));
+  b.gate("harness: independent crews meet once a week and share the slot and weekly booking caps",
+    bookings.slotConflicts === 0 && bookings.overCapBookings === 0 && bookings.duplicateCrewWeeks === 0 && (o.quick || bookings.crewMeetups > 0), JSON.stringify(bookings));
   for (const g of officialGates(all.pack, all.random, all.oracle)) b.gate(`gate ${g.gate}`, g.pass, g.value, SAFETY.has(g.id) || !o.quick);
   for (const g of trackedMetrics(all.pack, all.random)) b.track(`tracked ${g.gate}`, g.pass, g.value);
   b.gate("pack: 0 declared-minor proposals", all.pack.every(m => m.safety.declaredMinorProposals === 0));
