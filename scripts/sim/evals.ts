@@ -126,7 +126,10 @@ export async function evalsBlock(b: Block): Promise<void> {
   await b.run("platform: STOP ALL of every app is read with a courtesy or urgency word beside it", () => {
     // A whole-message STOP ALL opts out of every app. A member who writes "STOP ALL NOW" or
     // "STOP ALL PLEASE" asked for the same thing, and an unread STOP ALL leaves them subscribed.
-    for (const t of ["STOP ALL NOW", "STOP ALL PLEASE", "please stop all", "stop all now please", "stopall now", "STOP ALL RIGHT NOW"]) expect([t, detectKeyword(t) ?? null]).toEqual([t, "stop_all"]);
+    for (const t of ["STOP ALL NOW", "STOP ALL PLEASE", "please stop all", "stop all now please", "stopall now", "STOP ALL RIGHT NOW", "NOW STOP ALL", "PLEASE PLEASE STOP ALL", "PLS PLS STOP ALL", "STOP ALL THX", "STOP ALL TY"]) expect([t, detectKeyword(t) ?? null]).toEqual([t, "stop_all"]);
+    // "FOR NOW" is a temporary pass, not a permanent global opt-out: the
+    // conversational layer already reads "for now" that way.
+    expect(detectKeyword("STOP ALL FOR NOW") ?? null).toBe(null);
     // Only a courtesy or urgency word is tolerated: a number, a second request or a negation keeps its
     // current reading, and "stop all the texts" stays the plain STOP it always was.
     expect(detectKeyword("STOP ALL 2") ?? null).toBe(null);

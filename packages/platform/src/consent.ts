@@ -58,16 +58,25 @@ const STOP_ALL_WORDS = new Set<string>(KEYWORDS.stopAll);
 /**
  * A courtesy or urgency word a person may put next to a whole-message STOP ALL: "STOP ALL NOW",
  * "STOP ALL PLEASE", "PLEASE STOP ALL". The word never changes the request, and a STOP ALL that is
- * not read at all leaves the member subscribed to every app. Only that word is tolerated: anything
+ * not read at all leaves the member subscribed to every app. Only these words are tolerated: anything
  * else to the side of it (a number, a second request) keeps its current reading, and a negated
- * "don't stop all" is not a stop because the negation survives the strip.
+ * "don't stop all" is not a stop because the negation survives the strip. "FOR NOW" is deliberately
+ * not tolerated: it is a temporary pass, not a permanent global opt-out, and the conversational layer
+ * already reads "for now" that way.
  */
-const STOP_ALL_HEAD = /^(?:PLEASE |PLS )/;
-const STOP_ALL_TAIL = / (?:RIGHT NOW|THANK YOU|FOR NOW|IMMEDIATELY|PLEASE|THANKS|ALREADY|ASAP|PLS|NOW)$/;
-/** "STOP ALL NOW" -> "STOP ALL"; anything else is returned unchanged. */
+const STOP_ALL_SIDE_WORDS =
+  "(?:RIGHT NOW|THANK YOU|IMMEDIATELY|PLEASE|THANKS|ALREADY|ASAP|NOW|PLS|THX|TY)";
+const STOP_ALL_HEAD = new RegExp(`^(?:${STOP_ALL_SIDE_WORDS}\\s+)+`);
+const STOP_ALL_TAIL = new RegExp(`\\s(?:${STOP_ALL_SIDE_WORDS})$`);
+/** "PLEASE PLEASE STOP ALL NOW" -> "STOP ALL"; anything else is returned unchanged. */
 const stopAllKey = (key: string): string => {
   let s = key.replace(STOP_ALL_HEAD, "");
-  for (let i = 0; i < 2; i++) s = s.replace(STOP_ALL_TAIL, "");
+  // A courtesy word can sit at both ends and repeat ("PLEASE PLEASE STOP ALL NOW");
+  // strip until none remains, so the order or count of the words cannot change the verdict.
+  for (let prev = ""; prev !== s; ) {
+    prev = s;
+    s = s.replace(STOP_ALL_HEAD, "").replace(STOP_ALL_TAIL, "");
+  }
   return s;
 };
 const STOP_WORDS = new Set<string>([...KEYWORDS.stop, ...KEYWORDS.stopPolite]);
