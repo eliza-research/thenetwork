@@ -404,10 +404,16 @@ export class Projector {
       case "probe_replaced": {
         const o = s.opps.get(d.oppId);
         if (!o) return true;
-        o.participants = o.participants.map(x => (x === d.out ? d.in : x));
-        delete o.status[d.out]; o.status[d.in] = "checking";
+        // A plan backfill adds a seat without an `out`. The snapshot also removes consumed alternates.
+        const p = d.proposal as Proposal | undefined;
+        o.participants = p ? [...p.participants] : d.out
+          ? o.participants.map(x => (x === d.out ? d.in : x))
+          : [...new Set([...o.participants, d.in])];
+        o.alternates = p ? [...(p.alternates ?? [])] : o.alternates.filter(x => x !== d.in);
+        if (d.out) delete o.status[d.out];
+        o.status[d.in] = "checking";
         // The Network rebuilds every reason after a swap; show the new ones.
-        if (d.proposal?.explanations) o.explanations = { ...d.proposal.explanations };
+        if (p?.explanations) o.explanations = { ...p.explanations };
         this.changed(o, r);
         return true;
       }
