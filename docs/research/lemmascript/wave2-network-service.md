@@ -61,14 +61,13 @@ The old inline logic is gone at each site. `collectGate` is the proof of the col
 
 ## Defects fixed
 
-New test: `packages/network/test/collected-gate.integration.test.ts`, 9 cases. Before the fix: 5 of the first 7 failed, and the leave case failed when added.
+New test: `packages/network/test/collected-gate.integration.test.ts`, 9 cases. Before the fix, 5 of the first 7 failed: the stranger after STOP, the banned member, the late START, the replay after a ban and the member flag. The leave case failed when it was added. The opted-out member case passed before the fix, because the Network sends no reply to an opted-out member. It stays as a guard.
 
 | Defect | Evidence before | Fix |
 |---|---|---|
-| 7: join prompt after STOP in a signed turn, duplicate id | The case failed (an ask was collected with the hint). The gate-free run reproduced it | `collectGate` in `direct`. The hint takes its own id `hint:<rowId>`, which also clears the queue path conflict |
+| 7: join prompt after STOP in a signed turn, duplicate id | A temporary copy of the service without the gate (since deleted) gave replyIds `["notice:…","sys:in:blooio:SMcg2","sys:in:blooio:SMcg2"]`: the join ask and the hint, under one id | `collectGate` in `direct`. The hint takes its own id `hint:<rowId>`, which also clears the queue path conflict |
 | 8: banned member gets collected replies | `"I couldn't match that name..."` collected for a banned member | `collectGate` in `writeUnit`. The reply is stored `refused_opted_out`, not collected, not queued |
 | 9: stale START from a non-member reports `opted_in` | `consent: {state: "opted_in", ...}` | Both branches call `startOutcome`. A stale START returns handled with no join |
-| Opted-out member: Network reply collected | Failed with the reply collected | `collectGate` |
 | `network.members.opted_out` with no ledger event | Failed with the reply collected | `memberOptedOut` fact |
 | Replay of a stored reply after a later ban | 200 with the old replies | `storedTurnAdmitted`: 409 `turn_context_changed` |
 | B3 (part): leave reports `at: now` | Case failed | `turn.consent.at` is `consentAt(ev)`. The ledger half needs a platform change, below |
@@ -100,4 +99,7 @@ Behavior change to note: a fixed compliance text (a STOP confirmation) no longer
 
 ## Runs
 
-@@RUNS@@
+- `lsc check --backend=dafny packages/network/service/decisions.ts`: 51 verified, 0 errors.
+- `heavy bunx tsc --noEmit -p .`: no error in `packages/network/service` or the new test. Other agents' files had errors in engine slop, mcp oauth.test and network.ts:669 during the run.
+- `heavy bun test` (one file at a time), all pass: eliza-takeover 11, collected-gate 9, shared-agent 14, service-platform 19, service-apps 17, shared-actions 4, inbox-order 8, cloud-outbound 5, shared-relay 10, profile-suggestion-disconnect 4, profile-suggestion-withdrawal 4, profile-suggestions 51.
+- `bun run sim --only pipeline`: 15/15 blocking gates pass, 1 tracked. `bun run sim --only safety`: 17/17 blocking gates pass. The simulator uses a simulated reviewer (`review: "auto"`). No model calls.
