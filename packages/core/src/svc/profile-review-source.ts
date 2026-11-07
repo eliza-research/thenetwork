@@ -1,3 +1,4 @@
+import { proofWindowOk } from "./proof-window.js";
 import { parseProfileReviewOwnerRequest, type ProfileReviewOwnerRequest } from "./profile-review-owner.js";
 
 export const PROFILE_REVIEW_SOURCE_PATH = "/api/internal/network/profile-review-source";
@@ -64,7 +65,6 @@ export function parseProfileReviewSourceProof(value: unknown, request: ProfileRe
     || typeof v.chatId !== "string" || !/^personal:[0-9a-f-]{36}$/i.test(v.chatId)
     || !Number.isSafeInteger(v.pendingExpiresAt) || (v.pendingExpiresAt as number) < (v.expiresAt as number)
     || !Number.isSafeInteger(now) || !Number.isSafeInteger(v.issuedAt) || !Number.isSafeInteger(v.expiresAt)
-    || (v.issuedAt as number) > now || (v.expiresAt as number) <= now
-    || (v.expiresAt as number) <= (v.issuedAt as number) || (v.expiresAt as number) - (v.issuedAt as number) > 5_000) return undefined;
+    || !proofWindowOk(v.issuedAt as number, v.expiresAt as number, now, 5_000)) return undefined;
   return value as ProfileReviewSourceProof;
 }

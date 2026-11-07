@@ -130,3 +130,15 @@
 {"text":"FYI she can't climb, knee surgery recovery","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"leak","note":"paraphrased private fact"}
 {"text":"they get anxious in big groups, social anxiety","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"leak","note":"paraphrased private fact"}
 {"text":"careful, with an ex who stalks them","facts":["is going through a divorce and doesn't want anyone to know yet (ref XE-4029-THISTLE)","feeling isolated since the move","job search is secret from her manager","still lives near Hell's Kitchen with an ex who stalks them","recovering from knee surgery, can't climb until spring","struggles with social anxiety in big groups"],"canaries":["XE-4029-THISTLE"],"allow":["Reply STOP to opt out."],"publicPhrases":["Hell's Kitchen"],"want":"leak","note":"paraphrased private fact"}
+{"text":"id 2125550102","want":"contact","note":"defect 13: id prefix on a phone-shaped number"}
+{"text":"my id: 2125550102","want":"contact","note":"defect 13: id prefix on a phone-shaped number"}
+{"text":"case 2125550102","want":"contact","note":"defect 13: case prefix on a phone-shaped number"}
+{"text":"ref 212-555-0102","want":"contact","note":"defect 13: ref prefix on a phone-shaped number"}
+{"text":"account 2125550102","want":"contact","note":"defect 13: account prefix on a phone-shaped number"}
+{"text":"order #2125550102","want":"contact","note":"defect 13: order prefix on a phone-shaped number"}
+{"text":"#2125550102","want":"contact","note":"defect 13: hash prefix on a phone-shaped number"}
+{"text":"ticket 12125550102","want":"contact","note":"defect 13: country code 1 after a ticket prefix"}
+{"text":"id +44 7911 123456","want":"contact","note":"defect 13: a plus sign marks a phone number"}
+{"text":"Your order #1034567890 is confirmed.","want":"clean","note":"defect 13: ten digits that are not a NANP number stay an order number"}
+{"text":"Booking ref 2100550102 at the front desk.","want":"clean","note":"defect 13: exchange 055 is not a NANP number"}
+{"text":"Tracking 940011189922385536","want":"clean","note":"defect 13: a long tracking number stays clean"}

@@ -1,3 +1,4 @@
+import { proofWindowOk } from "./proof-window.js";
 import { parseNetworkCollectionCommand, networkCollectionDeadline, NETWORK_COLLECTION_RETENTION_MS, type NetworkCollectionSelection } from "./learning-collection-command.js";
 import { parseProfileReviewOwnerRequest, type ProfileReviewOwnerRequest } from "./profile-review-owner.js";
 
@@ -58,8 +59,7 @@ export function parseLearningConsentContextProof(value: unknown, request: Learni
     || (v.expiresAt as number) > (v.collectionExpiresAt as number)
     || (request.selection !== undefined && (request.selection.expiresAt !== v.collectionExpiresAt
       || request.selection.pendingExpiresAt > (v.collectionExpiresAt as number)))
-    || (v.issuedAt as number) > now || (v.expiresAt as number) <= now || (v.expiresAt as number) <= (v.issuedAt as number)
-    || (v.expiresAt as number) - (v.issuedAt as number) > 30_000) return undefined;
+    || !proofWindowOk(v.issuedAt as number, v.expiresAt as number, now, 30_000)) return undefined;
   return value as LearningConsentContextProof;
 }
 

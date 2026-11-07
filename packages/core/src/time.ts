@@ -33,9 +33,18 @@ export function fromLocal(y: number, mo: number, d: number, h: number, tz: strin
   return ts;
 }
 
+/** True if hour `h` is in [s, e) (wrapping past midnight); s === e means no window. */
+function hourInWindow(h: number, s: number, e: number): boolean {
+  //@ verify
+  //@ pure
+  //@ ensures s === e ==> !\result
+  //@ ensures s < e ==> (\result === (s <= h && h < e))
+  //@ ensures s > e ==> (\result === (s <= h || h < e))
+  if (s === e) return false;
+  return s < e ? h >= s && h < e : h >= s || h < e;
+}
+
 /** True if `ts` falls in local quiet hours [s, e) (wrapping past midnight); s === e means none. */
 export function inQuietHours(ts: number, tz: string, [s, e]: [number, number]): boolean {
-  if (s === e) return false;
-  const h = localParts(ts, tz).hour;
-  return s < e ? h >= s && h < e : h >= s || h < e;
+  return s !== e && hourInWindow(localParts(ts, tz).hour, s, e);
 }

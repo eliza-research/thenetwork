@@ -5,6 +5,7 @@
 // attention.ts): learnSendProfile, inSendWindow, inMemberQuietHours, canInterrupt, canSendLogistics.
 import { DAY, HOUR, MINUTE, type ParticipationState } from "@thenetwork/core";
 import { DEFAULT_ATTENTION } from "@thenetwork/engine";
+import { inHourWindow } from "./transitions.ts";
 
 export const NY = "America/New_York";
 
@@ -76,14 +77,12 @@ export function nextAt(t: number, h: number, dayOk: (wd: string) => boolean = ()
   return t + DAY;
 }
 
-const inWindow = (h: number, [s, e]: [number, number]) => (s === e ? false : s < e ? h >= s && h < e : h >= s || h < e);
-
 /**
  * May a logistics text reach a member with these quiet hours at time t? Quiet hours always win.
  * (Interruptions also need the member's send window: ConsentNetwork.timingOk.)
  */
 export function allowedAt(t: number, quietHours: [number, number]): boolean {
-  return !inWindow(nyParts(t).hour, quietHours);
+  return !inHourWindow(nyParts(t).hour, quietHours[0], quietHours[1]);
 }
 
 /**

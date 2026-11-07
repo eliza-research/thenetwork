@@ -5,7 +5,8 @@ import { parseProfileReviewWithdrawalProof, type ProfileReviewWithdrawalRequest,
   type ProfileReviewWithdrawalProof } from "../../core/src/svc/profile-review-withdrawal.ts";
 import { parseProfileReviewDisconnectProof, parseProfileReviewDisconnectRequest,
   type ProfileReviewDisconnectRequest, type ProfileReviewDisconnectProof } from "../../core/src/svc/profile-review-disconnect.ts";
-import { fold, isSensitiveTerm, type AppId } from "@thenetwork/core";
+import { fold, isSensitiveTerm, RealClock, type AppId } from "@thenetwork/core";
+import { cleanupAction, reviewPath } from "./decisions.ts";
 
 /** These values come from authenticated server context, never an assistant's arguments. */
 export interface SuggestionOwner { userId: string; organizationId: string; personId: string; app: AppId; chatId: string }
@@ -61,6 +62,9 @@ function completedCleanupCounts(value: unknown): { pending: number; retainedAcce
     || ![v.pending, v.retainedAccepted, v.linkedFacts].every(n => Number.isSafeInteger(n) && (n as number) >= 0)) return undefined;
   return { pending: v.pending as number, retainedAccepted: v.retainedAccepted as number, linkedFacts: v.linkedFacts as number };
 }
+
+/** The time of a store with no authority fence: network code reads time only from a Clock. */
+const wallClock = new RealClock();
 
 /** Private review storage; only accepted values enter the existing canonical facet table. */
 export class ProfileSuggestions {
@@ -223,7 +227,8 @@ export class ProfileSuggestions {
       }
       this.checkAuthority(b);
       // An edit or scope change is always a new preview, never an implicit acceptance.
-      if (input.decisions.some(d => d.editedValue !== undefined || (d.scope !== undefined && d.scope !== rows.find((r: any) => r.id === d.suggestionId).privacy_scope))) {
+      const anyEdit = input.decisions.some(d => d.editedValue !== undefined), anyScope = input.decisions.some(d => d.scope !== undefined && d.scope !== rows.find((r: any) => r.id === d.suggestionId).privacy_scope);
+      if (reviewPath(anyEdit, anyScope) === "preview") {
         for (const d of input.decisions) if (d.action === "accept") await tx`update platform.profile_suggestions
           set value=coalesce(${d.editedValue?.trim() ?? null},value),privacy_scope=coalesce(${d.scope ?? null},privacy_scope),
             tags=case when ${d.editedValue !== undefined} then '{}'::text[] else tags end where id=${d.suggestionId}`;
@@ -274,7 +279,7 @@ export class ProfileSuggestions {
       for (const b of batches) {
         const rows = await tx`select * from platform.profile_suggestions where batch_id=${b.id} and connection_id=${connectionId} for update`;
         for (const s of rows) {
-          if (s.status === "accepted" && b.retain_on_disconnect) continue;
+          if (cleanupAction("disconnect", s.status, b.retain_on_disconnect) === "keep") continue;
           if (s.fact_id) await tx`delete from network.facets where id=${s.fact_id} and app_id=${owner.app}`;
           await tx`update platform.profile_suggestions set status='withdrawn',value=null,tags='{}',fact_id=null where id=${s.id}`;
         }
@@ -288,7 +293,7 @@ export class ProfileSuggestions {
     proof: ProfileReviewDisconnectProof, fence: () => boolean): Promise<{ pending: number; retainedAccepted: number; linkedFacts: number } | null> {
     const denied = new Error("Revoked connection authority changed");
     const valid = () => {
-      const now = this.fence?.now() ?? Date.now();
+      const now = this.fence?.now() ?? wallClock.now();
       return !!this.authorizeOwner && fence() && !!parseProfileReviewDisconnectRequest(request)
         && !!parseProfileReviewDisconnectProof(proof, request, proof.requestSha256, now)
         && owner.personId === proof.personId && owner.app === proof.app && owner.userId === proof.userId
@@ -325,10 +330,10 @@ export class ProfileSuggestions {
             where app_id=${owner.app} and batch_id=${batch.id} and connection_id=${request.connectionId} order by id for update`;
           let changed = false;
           for (const row of rows) {
-            if (request.operation === "readback") continue;
-            if (request.operation === "disconnect" && row.status === "accepted" && batch.retain_on_disconnect) continue;
+            const action = cleanupAction(request.operation, row.status, batch.retain_on_disconnect);
+            if (action === "keep") continue;
             if (row.fact_id) await tx`delete from network.facets where id=${row.fact_id} and app_id=${owner.app} and member_id=${member.id}`;
-            if (request.operation === "delete") await tx`delete from platform.profile_suggestions where id=${row.id} and app_id=${owner.app} and batch_id=${batch.id}`;
+            if (action === "delete") await tx`delete from platform.profile_suggestions where id=${row.id} and app_id=${owner.app} and batch_id=${batch.id}`;
             else await tx`update platform.profile_suggestions set status='withdrawn',value=null,tags='{}',fact_id=null
               where id=${row.id} and app_id=${owner.app} and batch_id=${batch.id}`;
             changed = true;
@@ -365,7 +370,7 @@ export class ProfileSuggestions {
     proof: ProfileReviewWithdrawalProof, fence: () => boolean): Promise<{ pending: number; retainedAccepted: number; linkedFacts: number } | null> {
     const denied = new Error("Owner withdrawal authority changed");
     const valid = () => !!this.authorizeOwner && fence()
-      && !!parseProfileReviewWithdrawalProof(proof, request, proof.requestSha256, this.fence?.now() ?? Date.now())
+      && !!parseProfileReviewWithdrawalProof(proof, request, proof.requestSha256, this.fence?.now() ?? wallClock.now())
       && owner.personId === proof.personId && owner.app === proof.app && owner.userId === proof.userId
       && owner.organizationId === proof.organizationId && owner.chatId === proof.chatId;
     if (!valid()) return null;
@@ -416,8 +421,9 @@ export class ProfileSuggestions {
             and batch_id=${batch.id} and connection_id=${request.connectionId} order by id for update`;
           let changed = false;
           for (const row of rows) {
-            if (request.operation === 'readback' || (request.operation === 'withdraw' && row.status !== 'proposed')) continue;
-            if (request.operation === 'delete') {
+            const action = cleanupAction(request.operation, row.status, false);
+            if (action === 'keep') continue;
+            if (action === 'delete') {
               if (row.fact_id) await tx`delete from network.facets where app_id=${owner.app} and member_id=${member.id} and id=${row.fact_id}`;
               await tx`delete from platform.profile_suggestions where id=${row.id} and app_id=${owner.app} and batch_id=${batch.id}`;
             } else {

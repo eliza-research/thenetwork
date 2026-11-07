@@ -34,7 +34,7 @@ import { isDeepStrictEqual } from "node:util";
 import { DAY, LLMBudget, RealClock, recommenderLLM, type Clock, type City, type MemberId } from "@thenetwork/core";
 import type { ActionResult, NetworkOptions, NetworkState, ReviewDecision, ReviewOptions } from "../src/network.ts";
 import { brandOf, copy as ntwrkCopy, copyFor, ELIZA_NOTICE, type Copy } from "../src/copy.ts";
-import { isMinor } from "@thenetwork/core";
+import { canBeMatched, isMinor } from "@thenetwork/core";
 import { ageAnswer, agesStated } from "../src/classify.ts";
 import { NetworkRuntime, type RuntimeHost } from "./runtime.ts";
 import { effectiveParticipation, automatedFacetPredicate } from "./snapshot.ts";
@@ -46,13 +46,14 @@ import { networkRoutePolicy, routeEnvelopeAllowed, sameNetworkAuthority, type Ne
 import { TURN_PATH, TURN_RECEIPT_PATH, SET_STATE_PATH, SIGNALS_PATH, UPDATES_PATH, RELAY_PHOTO_RESOLVE_PATH, parseApprovedRelayPhotos, type SetStateRequest, type TurnRequest, type TurnResponse } from "../../core/src/svc/contract.ts";
 import { SVC_MIN_SECRET, svcVerify } from "../../core/src/svc/svc-auth.ts";
 import { readCapped } from "../../platform/src/body.ts";
-import { canJoin } from "../../core/src/policy.ts";
+import { canJoin, MAX_AGE, validAge } from "../../core/src/policy.ts";
 import { CostLedger, costRatesFromEnv, PgCostSink } from "./cost.ts";
 import { BlooioAdapter, type ChannelAdapter, type DirectKind, type Outbound } from "./channel.ts";
 import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { Accounts, homeCityOf, type AccountHooks, type HomeInput, type JoinHookContext, type MemberHookContext } from "../../platform/src/accounts.ts";
-import { joinAgeCheck } from "../../platform/src/age.ts";
 import { detectKeyword as platformKeyword, keywordEvent, leaveTarget, resolveConsent, stopScope, type StopScope } from "../../platform/src/consent.ts";
+import { joinAgeCheck } from "../../platform/src/age.ts";
+import { accountEligible, accountFreeReply, collectGate, contextWanted, effectiveAge, isScheduled, joinAgeUsable, joinStep, keepsMember, mayEnroll, numberAllowed, receiptAction, receiptStatus, recordedAge, replyKindOf, sendRefusal, startOutcome, stateUnchanged, stopHintDue, stopScopeOf, storedTurnAdmitted, turnDecision, type ConsentState, type JoinFacts, type ReceiptOutcome, type StartOutcome, type TurnFacts } from "./decisions.ts";
 import { devShortcutsAllowed, isProduction, platformEnv, type Env } from "../../platform/src/env.ts";
 import { keyedHash, maskPhone, normalizePhone, safeEqual } from "../../platform/src/phone.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
@@ -127,7 +128,7 @@ export const LOOKING_FOR_ASK = `What are you looking for: friends, dating, work,
 /** The same question to a member aged 13-17: dating is never offered (slop is never enrolled from it). */
 export const LOOKING_FOR_ASK_MINOR = `What are you looking for: friends, work, or both? ${LOOKING_FOR_DISCLOSURE} ${POWERED_BY}`;
 /** The question for an age: minors never see dating. */
-export const lookingForAsk = (age: number | undefined) => (age === undefined || age < 18 ? LOOKING_FOR_ASK_MINOR : LOOKING_FOR_ASK);
+export const lookingForAsk = (age: number | undefined) => (isMinor(age) ? LOOKING_FOR_ASK_MINOR : LOOKING_FOR_ASK);
 const listApps = (apps: AppInfo[]) => apps.map(a => a.domain).join(apps.length === 2 ? " and " : ", ");
 /** The Network's answer after it enrolled the person in the apps they named. */
 export const enrolledText = (apps: AppInfo[]) =>
@@ -454,6 +455,8 @@ export class NetworkService implements RuntimeHost {
       const nets = await sql`select id, matching_enabled from platform.networks order by (app_id = 'ntwrk') desc, id`;
       const rows = await sql`select id, name, domain, min_join_age, min_match_age, join_mode from platform.apps`;
       const apps = { ...APPS };
+      // recordedAge needs a join age of 13 to 17: a changed row stops the start, it never turns a stated minor into an adult.
+      for (const r of rows as any[]) if (isAppId(r.id) && !joinAgeUsable(r.min_join_age)) throw new Error(`platform.apps: ${r.id} has an unusable min_join_age`);
       for (const r of rows as any[]) if (isAppId(r.id)) apps[r.id as AppId] = { ...APPS[r.id as AppId], name: r.name, domain: r.domain, minJoinAge: r.min_join_age, minMatchAge: r.min_match_age, joinMode: r.join_mode };
       return new NetworkService({ ...o, apps, networks: (nets as any[]).map(r => ({ id: r.id, matchingEnabled: r.matching_enabled })) });
     } finally { await sql.close(); }
@@ -703,15 +706,28 @@ export class NetworkService implements RuntimeHost {
     }
     for (const [e164, sends] of byPhone) {
       // A number that deleted everything stays suppressed until the person opts in again (platform-15).
-      const suppressed = await this.people.isSuppressed(this.phoneKey(e164));
       // A banned number or person gets nothing but compliance texts, on every app (PRD 40.5).
-      const banned = !suppressed && (await this.people.isBanned(this.phoneKey(e164), (await this.people.findPhone(e164))?.personId ?? null));
-      if (banned) { for (const b of sends) out.add(b.id); this.log(`[ban] ${sends.length} send(s) to a banned number refused (${rt.id})`); continue; }
-      if (!suppressed && resolveConsent(await this.people.lastConsent(e164, rt.app.id)) !== "opted_out") continue;
+      const n = await this.numberFacts(e164, rt.app.id);
+      const refusal = sendRefusal("reply", n.suppressed, n.banned, n.consent);
+      if (refusal === "allowed") continue;
       for (const b of sends) out.add(b.id);
-      this.log(`[consent] ${sends.length} send(s) to an opted-out number refused (${rt.id})`);
+      this.log(refusal === "banned" ? `[ban] ${sends.length} send(s) to a banned number refused (${rt.id})` : `[consent] ${sends.length} send(s) to an opted-out number refused (${rt.id})`);
     }
     return out;
+  }
+
+  /**
+   * What the platform knows about one number, for one app, at this moment: suppression, a ban of the number
+   * or its person, the recycled-number hold and the consent ledger. `tx`: read inside that open transaction,
+   * without another pool lease.
+   */
+  async numberFacts(e164: string, app: AppId | undefined, tx?: SQL): Promise<{ suppressed: boolean; banned: boolean; held: boolean; consent: ConsentState | undefined }> {
+    const people = tx ? new PgPeopleStore(tx) : this.people;
+    const key = this.phoneKey(e164), phone = await people.findPhone(e164);
+    return {
+      suppressed: await people.isSuppressed(key), banned: await people.isBanned(key, phone?.personId ?? null), held: phone?.hold != null,
+      consent: app ? resolveConsent(await people.lastConsent(e164, app)) : undefined,
+    };
   }
 
   // ------------------------------------------------------------------ members from the platform
@@ -776,7 +792,7 @@ export class NetworkService implements RuntimeHost {
   private async ageLowered(personId: string, age: number) {
     // Photos and any rating of looks are for adults only: a person who is now under 18 on any app loses
     // every photo and every rating, on every app (also ratings whose photo is already gone).
-    if (age < 18) { await this.photos.deleteFor(personId); await this.dropRatings(personId); }
+    if (isMinor(age)) { await this.photos.deleteFor(personId); await this.dropRatings(personId); }
     for (const m of await this.people.memberships(personId)) {
       const rt = this.runtimeFor(m.app);
       if (!rt || m.state === "removed") continue;
@@ -1052,7 +1068,7 @@ export class NetworkService implements RuntimeHost {
 
     // STOP / STOP ALL: the consent ledger first (with or without a membership; once per message), then every member it covers.
     if (kw === "stop" || kw === "stop_all") {
-      const scope: StopScope = kw === "stop_all" || route.shared ? "global" : stopScope(this.env);
+      const scope: StopScope = stopScopeOf(kw, route.shared, stopScope(this.env));
       return this.stop(kw, ev.from, app, rt, scope, rowId, line, ev);
     }
 
@@ -1087,7 +1103,7 @@ export class NetworkService implements RuntimeHost {
         const person = await this.accounts.personFor(e164);
         if (person) await this.accounts.leave(leaving, { e164, personId: person.id });
         else { await this.accounts.recordConsent({ e164, app: leaving.id, line, state: "opted_out", source: "leave", ref: rowId, at: this.consentAt(ev) }); await this.forget(leaving, lid); }
-        if (turn) { turn.app = leaving.id; turn.memberId = lid; turn.consent = {state: "opted_out", scope: "app", app: leaving.id, at: t}; turn.confirmation = {id: `sys:${rowId}`, body: this.copyOf(leaving).leftApp}; }
+        if (turn) { turn.app = leaving.id; turn.memberId = lid; turn.consent = {state: "opted_out", scope: "app", app: leaving.id, at: this.consentAt(ev)}; turn.confirmation = {id: `sys:${rowId}`, body: this.copyOf(leaving).leftApp}; }
         await this.direct(lrt, ev.from, this.copyOf(leaving).leftApp, `sys:${rowId}`, "compliance");
         return "left";
       }
@@ -1098,14 +1114,10 @@ export class NetworkService implements RuntimeHost {
 
     if (memberId) {
       if (kw === "start" && e164) {
-        // The recycled-number hold is checked above (seen). A banned number or person is never opted back in.
+        // The recycled-number hold is checked above (seen).
+        const start = await this.startKeyword(rt, app, e164, ev, rowId, line);
+        if (start !== "opted_in") return start === "stale" ? "handled" : "held";
         const person = await this.accounts.personFor(e164);
-        if (await this.accounts.banned(e164, person)) { this.log(`[inbound] START from a banned number (${rt.id}): not opted in`); return "held"; }
-        const at = this.consentAt(ev);
-        await this.accounts.recordConsent({ e164, app: app.id, line, state: "opted_in", source: "keyword:start", wording: "START keyword", ref: rowId, at });
-        // The ledger orders events by their time: an older START (a late gateway retry) never undoes a newer STOP.
-        if (!(await this.accounts.optedIn(app.id, e164))) { this.log(`[inbound] START older than the last STOP (${rt.id}): not opted in`); return "handled"; }
-        if (turn) turn.consent = {state: "opted_in", scope: "app", app: app.id, at};
         const m = person && (await this.people.getMembership(person.id, app.id));
         if (m?.state === "paused") await this.people.putMembership({ ...m, state: "active" });
       }
@@ -1128,19 +1140,18 @@ export class NetworkService implements RuntimeHost {
     if (!e164) { this.log(`[inbound] unknown sender (not a phone), ${ev.text.length} chars, not stored`); return "unknown_sender"; }
     if (kw === "help") { await this.direct(rt, ev.from, app.brand.help, `sys:${rowId}`, "compliance"); return "handled"; }
     // START from someone who is not a member (they sent STOP before joining): opt them back in, then the join
-    // flow asks for name and age as usual. A banned number or person is never opted back in.
+    // flow asks for name and age as usual. A late START (older than the STOP) changes nothing and opens nothing.
     if (kw === "start") {
-      const person = await this.accounts.personFor(e164);
-      if (await this.accounts.banned(e164, person)) { this.log(`[inbound] START from a banned number (${rt.id}): not opted in`); return "held"; }
-      await this.accounts.recordConsent({ e164, app: app.id, line, state: "opted_in", source: "keyword:start", wording: "START keyword", ref: rowId, at: this.consentAt(ev) });
-      if (turn) turn.consent = { state: "opted_in", scope: "app", app: app.id, at: this.consentAt(ev) };
+      const start = await this.startKeyword(rt, app, e164, ev, rowId, line);
+      if (start !== "opted_in") return start === "stale" ? "handled" : "held";
     }
     // One text join per phone at a time (the same lock as a web join). In a signed turn, a person who is not a
     // member of any app first gets the one-time Eliza notice, then the normal join flow.
     return this.people.withLock(`join:${e164}`, async () => {
       await this.elizaNotice(app, e164, ev, rowId);
       const out = await this.join(rt, app, e164, ev, rowId, route);
-      // The join question to someone who sent STOP is refused at send time: they get the one hint instead.
+      // The join question to someone who sent STOP is refused (collectGate in a signed turn, the send time
+      // check on a webhook): they get the one hint instead.
       if (out === "join_asked" && !kw) await this.stopHint(rt, app, e164, ev, rowId);
       // Under the join age: nothing is kept, the notice row included (the phone's age floor keeps a later notice away).
       if (out === "under_age" && this.inboundTurn()) await this.sql`delete from platform.eliza_notices where phone_hash = ${this.noticeKey(e164)}`;
@@ -1154,11 +1165,27 @@ export class NetworkService implements RuntimeHost {
    * erased everything (suppressed) or a banned one: those stay quiet.
    */
   private async stopHint(rt: NetworkRuntime, app: AppInfo, e164: string, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string): Promise<void> {
-    const key = this.phoneKey(e164);
-    if (resolveConsent(await this.people.lastConsent(e164, app.id)) !== "opted_out" || (await this.people.isSuppressed(key))) return;
-    if (await this.people.isBanned(key, (await this.people.findPhone(e164))?.personId ?? null)) return;
-    const { ok } = await this.people.hit(`stop_hint:${app.id}:${key}`, 30 * DAY, this.clock.now(), { minGapMs: 30 * DAY });
-    if (ok) await this.direct(rt, ev.from, app.brand.stoppedHint, `sys:${rowId}`, "compliance");
+    const n = await this.numberFacts(e164, app.id);
+    if (!stopHintDue(n.suppressed, n.banned, n.consent)) return;
+    const { ok } = await this.people.hit(`stop_hint:${app.id}:${this.phoneKey(e164)}`, 30 * DAY, this.clock.now(), { minGapMs: 30 * DAY });
+    // Its own id: the refused join question of this message holds `sys:` on the queue path.
+    if (ok) await this.direct(rt, ev.from, app.brand.stoppedHint, `hint:${rowId}`, "compliance");
+  }
+
+  /**
+   * START: never for a banned number or person. The ledger orders events by their time, so an older START
+   * (a late gateway retry) never undoes a newer STOP: only a ledger that reads opted in after the write
+   * reports an opt-in to the gateway.
+   */
+  private async startKeyword(rt: NetworkRuntime, app: AppInfo, e164: string, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, line: string | undefined): Promise<StartOutcome> {
+    const at = this.consentAt(ev), turn = this.inboundTurn();
+    const banned = await this.accounts.banned(e164, await this.accounts.personFor(e164));
+    if (!banned) await this.accounts.recordConsent({ e164, app: app.id, line, state: "opted_in", source: "keyword:start", wording: "START keyword", ref: rowId, at });
+    const out = startOutcome(banned, !banned && (await this.accounts.optedIn(app.id, e164)));
+    if (out === "refused_banned") this.log(`[inbound] START from a banned number (${rt.id}): not opted in`);
+    if (out === "stale") this.log(`[inbound] START older than the last STOP (${rt.id}): not opted in`);
+    if (out === "opted_in" && turn) turn.consent = { state: "opted_in", scope: "app", app: app.id, at };
+    return out;
   }
 
   private noticeKey(e164: string) { return keyedHash(this.hashKey, `eliza_notice:${e164}`); }
@@ -1297,7 +1324,7 @@ export class NetworkService implements RuntimeHost {
     // An under-13 statement the Network did not decline for (an attested adult: it holds them for
     // staff, audit network-service-1) is recorded as 13: a minor on every app, never matched, but no
     // other app deletes the person's data before staff decide.
-    const recorded = ages.map(a => (a.declined ? a.age : Math.max(a.age, app.minJoinAge)));
+    const recorded = ages.map(a => recordedAge(a.age, a.declined, app.minJoinAge));
     await this.accounts.recordAge(e164, person, Math.min(...recorded));
     if (!person || !ages.some(a => a.declined)) return;
     const at = this.clock.now();
@@ -1367,7 +1394,14 @@ export class NetworkService implements RuntimeHost {
   private async direct(rt: NetworkRuntime, to: string, body: string, id: string, kind: DirectKind) {
     const turn = this.inboundTurn();
     if (turn && normalizeAddress(to) === normalizeAddress(turn.from)) {
-      await this.sql.begin(tx => this.inbox.collect(tx, [{id, body, kind: kind === "compliance" ? "compliance" : "reply"}]));
+      // A collected text never reaches the queue, so this is its consent, ban and hold check. Every direct text is fixed copy.
+      const replyKind = kind === "compliance" ? "compliance" : "reply";
+      const e164 = normalizePhone(to);
+      const n = replyKind === "compliance" || !e164 ? undefined : await this.numberFacts(e164, rt.app.id);
+      const gate = collectGate({ kind: replyKind, suppressed: n?.suppressed ?? false, banned: n?.banned ?? false, held: n?.held ?? false, optedOut: n?.consent === "opted_out",
+        memberOptedOut: false, leakChecked: false, leakClean: false, fixedCopy: true });
+      if (gate !== "collect") { this.log(`[inbound] a direct reply refused at collection (${rt.id}): the number is not admitted`); return; }
+      await this.sql.begin(tx => this.inbox.collect(tx, [{id, body, kind: replyKind}]));
       return;
     }
     await rt.adapter.direct(to, body, id, kind);
@@ -1386,68 +1420,70 @@ export class NetworkService implements RuntimeHost {
     const t = this.clock.now();
     const c = this.copyOf(app);
     const person = await this.accounts.personFor(e164);
-    // A banned number or person never joins any app; nothing is stored and nothing is answered.
-    if (await this.accounts.banned(e164, person)) { this.log(`[inbound] a banned number wrote to ${app.id}: not joined, not stored`); return "held"; }
+    const banned = await this.accounts.banned(e164, person);
     const existing = person ? await this.people.getMembership(person.id, app.id) : undefined;
     const invited = existing?.state === "invited";
-    if (app.joinMode === "invite" && !invited && !(route.shared && app.id === "ntwrk")) {
+    let p = await this.pendingOf(e164, "join");
+    if (p && p.app !== app.id) p = undefined;
+    const said = parseJoinText(ev.text, this.appWords(), !!p);
+    const age = said.age ?? p?.age ?? undefined, name = said.name ?? p?.name ?? undefined;
+    const homeCity = said.homeCity ?? p?.homeCity;
+    const floor = await this.accounts.lowestAge(e164, person);
+    const facts: JoinFacts = { banned, held: await this.accounts.held(e164), inviteOnly: app.joinMode === "invite" && !(route.shared && app.id === "ntwrk"), invited,
+      hasAge: age !== undefined, stated: age ?? 0, hasFloor: validAge(floor), floor: floor ?? 0, minJoinAge: app.minJoinAge, maxAge: MAX_AGE, hasName: !!name, invalidHome: !!said.invalidHome };
+    const step = joinStep(facts);
+    // A banned number or person never joins any app; nothing is stored and nothing is answered.
+    if (step === "refuse_banned") { this.log(`[inbound] a banned number wrote to ${app.id}: not joined, not stored`); return "held"; }
+    if (step === "invite_only") {
       // The same answer whether or not the number uses another app; at most once a day per number.
       const { count } = await this.people.hit(`invite_only:${app.id}:${key}`, DAY, t);
       if (count === 1) await this.direct(rt, ev.from, app.brand.inviteOnly, `sys:${rowId}`, "reply");
       this.log(`[inbound] not a member of invite-only ${app.id}: ${count === 1 ? "invite-only reply" : "no reply (sent today)"}, not stored`);
       return "invite_only";
     }
-    let p = await this.pendingOf(e164, "join");
-    if (p && p.app !== app.id) p = undefined;
-    const said = parseJoinText(ev.text, this.appWords(), !!p);
-    const age = said.age ?? p?.age ?? undefined, name = said.name ?? p?.name ?? undefined;
-    const homeCity = said.homeCity ?? p?.homeCity;
     const ask = invited ? c.invited(app.minJoinAge) : c.joinAsk(app.minJoinAge);
-    if (age === undefined) {
-      if (said.invalidHome) {
-        await this.direct(rt, ev.from, "Tell me your home city: New York or San Francisco / Bay Area. Include your first name and age.", `sys:${rowId}`, "reply");
-        return "join_asked";
-      }
+    if (step === "ask") {
       await this.people.putPending({ phoneHash: key, kind: "join", app: app.id, name: name ?? null, age: null, ...(homeCity ? { homeCity } : {}), at: t });
       const { count } = await this.people.hit(`join_ask:${app.id}:${key}`, DAY, t);
       if (count <= 3) await this.direct(rt, ev.from, ask, `sys:${rowId}`, "reply");
       return "join_asked";
     }
-    const check = joinAgeCheck(age, await this.accounts.lowestAge(e164, person), app);
-    if (!check.ok) {
+    if (step === "decline_under_age") {
       // Nothing is stored for this app: only the age, on the phone's age floor (and the person, if any),
       // so a second try with an older age is refused too.
-      await this.accounts.recordAge(e164, person, age);
+      await this.accounts.recordAge(e164, person, age!);
       await this.people.deletePending(key, "join");
       await this.direct(rt, ev.from, app.brand.underAge, `sys:${rowId}`, "compliance");
       this.log(`[inbound] under the join age for ${app.id}: declined, nothing stored`);
       return "under_age";
     }
-    if (said.invalidHome) {
+    if (step === "need_home") {
       await this.direct(rt, ev.from, "Tell me your home city: New York or San Francisco / Bay Area. Include your first name and age.", `sys:${rowId}`, "reply");
       return "join_asked";
     }
-    if (!name) {
-      await this.people.putPending({ phoneHash: key, kind: "join", app: app.id, name: null, age, ...(homeCity ? { homeCity } : {}), at: t });
+    if (step === "need_name") {
+      await this.people.putPending({ phoneHash: key, kind: "join", app: app.id, name: null, age: age ?? null, ...(homeCity ? { homeCity } : {}), at: t });
       await this.direct(rt, ev.from, c.joinNeedName, `sys:${rowId}`, "reply");
       return "join_asked";
     }
+    // joinStep: `age` and `name` are present here.
+    const joinAge = age!, firstName = name!, lowestNow = effectiveAge(facts);
     await this.people.deletePending(key, "join");
     // Join: the person (new or known), the membership, the opt-in (with the words they answered), then the member and the welcome.
-    const who: Person = person ?? (await this.accounts.createPerson(e164, "inbound_message", check.effective ?? age));
-    await this.accounts.recordAge(e164, who, age);
+    const who: Person = person ?? (await this.accounts.createPerson(e164, "inbound_message", lowestNow));
+    await this.accounts.recordAge(e164, who, joinAge);
     // Their answer is a new opt-in: a delete of everything no longer suppresses the number.
     await this.people.unsuppress(key);
     const others = (await this.people.memberships(who.id)).filter(m => m.app !== app.id && m.state !== "removed" && m.state !== "invited");
     const membership: Membership = {
       app: app.id, personId: who.id, memberId: existing?.state === "invited" ? existing.memberId : `${app.id}_${randomUUID()}`,
-      state: app.joinMode === "waitlist" ? "onboarding" : "active", review: null, firstName: name, profile: homeCity ? { homeCity } : {}, joinedAt: t, leftAt: null,
+      state: app.joinMode === "waitlist" ? "onboarding" : "active", review: null, firstName, profile: homeCity ? { homeCity } : {}, joinedAt: t, leftAt: null,
     };
     await this.people.putMembership(membership);
     await this.accounts.recordConsent({ e164, app: app.id, line: ev.to ? normalizeAddress(ev.to) : null, state: "opted_in", source: "inbound_message", wording: ask, ref: rowId, at: this.consentAt(ev) });
     if (membership.state !== "active") return "joined";
     rt = this.runtimeForHome(app.id, homeCity ?? rt.city) ?? rt;
-    await this.createMember(rt, membership, { age: Math.min(age, check.effective ?? age), firstName: name, homeCity });
+    await this.createMember(rt, membership, { age: lowestNow, firstName, homeCity });
     // Their answer is their first message: the Network welcomes them as a reply to it.
     await this.memberMessage(rt, membership.memberId, ev, rowId, undefined);
     // A person who uses another app with this number: the link notice (never names the other app).
@@ -1456,7 +1492,7 @@ export class NetworkService implements RuntimeHost {
       await this.people.putPending({ phoneHash: key, kind: "share", app: app.id, name: null, age: null, at: t });
     } else if (app.id === "ntwrk" && route.shared && !invited) {
       // No keyword: The Network asks what they are looking for, then enrolls them (founder decision 2).
-      const askText = lookingForAsk(Math.min(age, check.effective ?? age));
+      const askText = lookingForAsk(lowestNow);
       await rt.unitOfWork(() => { rt.system(membership.memberId, `ask:${rowId}`, askText, "transactional", "info"); });
       await this.people.putPending({ phoneHash: key, kind: "looking_for", app: "ntwrk", name: null, age: null, at: t });
     }
@@ -1478,7 +1514,7 @@ export class NetworkService implements RuntimeHost {
       const asked = lookingForAsk(lowest);
       // A member under 18 (or of unknown age) is never enrolled in slop.date from this question; they may
       // still join it on its own site (founder decision 1), where matching and photos stay 18+.
-      for (const id of wants.filter(a => a !== "slop" || (lowest !== undefined && lowest >= 18))) {
+      for (const id of wants.filter(a => mayEnroll(a, canBeMatched(lowest)))) {
         const app = this.apps[id], homeCity = homeCityOf(ntwrk.profile.homeCity), art = this.runtimeForHome(id, homeCity ?? this.runtimeFor(id)!.city)!;
         const existing = await this.people.getMembership(person.id, id);
         if (existing && existing.state !== "removed" && existing.state !== "invited") { joined.push(app); continue; }
@@ -1582,7 +1618,7 @@ export class NetworkService implements RuntimeHost {
     const read = (tx: SQL) => tx`select m.age, f.tags, f.valid_from from network.members m left join network.facets f on f.app_id = m.app_id and f.member_id = m.id and f.status <> 'rejected' and ${automatedFacetPredicate(tx, true)}
       and exists (select 1 from unnest(f.tags) t where t like 'verify:age:%') where m.app_id = ${app} and m.id = ${m.memberId} order by f.valid_from desc nulls last, f.id desc`;
     const rows = (transaction ? await read(transaction) : await rt.scoped(read)) as any[];
-    if (!rows.length || !(rows[0].age >= 18)) return false;
+    if (!rows.length || !canBeMatched(rows[0].age)) return false;
     // Founder decision 9 (AGENTS.md): no ID check; the stated age (18+ on the person and the member) is
     // enough. A staff-recorded failed age check still refuses.
     const last = rows.find(r => r.tags)?.tags as string[] | undefined;
@@ -1936,10 +1972,10 @@ export class NetworkService implements RuntimeHost {
           const [member] = await tx`select participation_state,participation_window from network.members where app_id=${app} and id=${memberId}`;
           const participation = effectiveParticipation(member,this.clock.now()), prior = participation.window;
           const previous = participation.active ? prior!.state : participation.state === "quiet" ? "busy" : participation.state === "paused" ? "paused" : "open";
-          const scheduled = window.state === "traveling" || window.from !== null || window.until !== null || window.note !== null;
+          const scheduled = isScheduled(window.state, window.from !== null, window.until !== null, window.note !== null);
           const nextWindow = scheduled ? window : null;
           const base = scheduled ? member.participation_state : effectiveParticipation({...member,participation_window:window},this.clock.now()).state;
-          const unchanged = base === member.participation_state && (nextWindow === null ? prior === null : !!prior
+          const unchanged = stateUnchanged(base === member.participation_state, scheduled, !!prior, !!prior && !!nextWindow
             && nextWindow.state === prior.state && nextWindow.from === prior.from && nextWindow.until === prior.until && nextWindow.note === prior.note);
           result = {eventId:null,previous,current:window.state,from:window.from,until:window.until,committedAt:new Date(this.clock.now()).toISOString(),replayed:false,unchanged};
           if (!unchanged) {
@@ -2006,38 +2042,42 @@ export class NetworkService implements RuntimeHost {
         || !Array.isArray(b.replyIds) || !b.replyIds.every(x => typeof x === "string")
         || !Array.isArray(b.providerMessageIds) || !b.providerMessageIds.every(x => typeof x === "string" && x.trim())
         || typeof b.historyRecorded !== "boolean" || !["accepted", "unknown", "rejected"].includes(b.outcome as string)) return json({error: "invalid_request"}, 400);
+      const outcome = b.outcome as ReceiptOutcome;
       const result = await this.sql.begin(async tx => {
         const [claim] = await tx`select status,response,receipt_hash,receipt,replies,network_authority from platform.inbound where id=${id} for update`;
-        if (!claim || claim.status !== "done" || claim.response?.outcome !== "handled") return json({error: "turn_unavailable", retryable: false}, 409);
-        if (this.routePolicy && !routeEnvelopeAllowed(this.routePolicy, claim.network_authority, this.clock.now()))
+        const collected = (claim?.replies ?? []) as CollectedReply[];
+        const action = receiptAction({
+          turnDone: claim?.status === "done", handled: claim?.response?.outcome === "handled", hasPrior: !!claim?.receipt_hash,
+          // Cloud and Gateway independently acknowledge the same acceptance. JSON
+          // object key order may differ; the authenticated receipt values may not.
+          identical: claim?.receipt_hash === digest || isDeepStrictEqual(claim?.receipt, b), priorUnknown: claim?.receipt?.outcome === "unknown",
+          collected: collected.length, replyIds: (b.replyIds as string[]).length, idsMatch: JSON.stringify(collected.map(r => r.id)) === JSON.stringify(b.replyIds),
+          providerIds: (b.providerMessageIds as string[]).length, history: b.historyRecorded as boolean,
+          // No-history acceptance belongs only to a persisted policy reply or
+          // canonical join prompt; a normal member reply still needs its history.
+          accountFree: accountFreeReply(claim?.response?.accountEligible !== false, claim?.response?.replyKind === "compliance" ? "compliance" : "reply",
+            claim?.response?.reason === "onboarding_asked" && claim?.response?.replyKind === "reply", claim?.response?.memberId === null, isAppId(claim?.response?.app)),
+          outcome,
+        });
+        if (action === "unavailable") return json({error: "turn_unavailable", retryable: false}, 409);
+        if (this.routePolicy && !routeEnvelopeAllowed(this.routePolicy, claim!.network_authority, this.clock.now()))
           return json({error:"route_authority_invalid",retryable:false},403);
-        // Cloud and Gateway independently acknowledge the same acceptance. JSON
-        // object key order may differ; the authenticated receipt values may not.
-        if (claim.receipt_hash === digest || (claim.receipt_hash && isDeepStrictEqual(claim.receipt, b))) return json({ok: true, replayed: true});
-        if (claim.receipt_hash && !(claim.receipt?.outcome === "unknown" && ["accepted", "rejected"].includes(b.outcome as string))) return json({error: "receipt_conflict", retryable: false}, 409);
-        const collected = claim.replies as CollectedReply[];
+        if (action === "replay") return json({ok: true, replayed: true});
+        if (action === "conflict") return json({error: "receipt_conflict", retryable: false}, 409);
+        if (action === "scope_invalid") return json({error: "receipt_scope_invalid", retryable: false}, 409);
+        if (action === "invalid") return json({error: "invalid_receipt", retryable: false}, 400);
         // A handled turn with no reply (a quiet acknowledgement, an under-13 decline) takes an empty receipt and is done.
         if (!collected.length) {
-          if ((b.replyIds as string[]).length || (b.providerMessageIds as string[]).length || b.historyRecorded) return json({error: "receipt_scope_invalid", retryable: false}, 409);
           await tx`update platform.inbound set receipt_hash=${digest},receipt=${b}::jsonb where id=${id}`;
           return json({ok: true, replayed: false});
         }
-        if (JSON.stringify(collected.map(r => r.id)) !== JSON.stringify(b.replyIds)) return json({error: "receipt_scope_invalid", retryable: false}, 409);
-        // No-history acceptance belongs only to a persisted policy reply or
-        // canonical join prompt; a normal member reply still needs its history.
-        const accountFree = claim.response.accountEligible === false &&
-          (claim.response.replyKind === "compliance" ||
-            (claim.response.reason === "onboarding_asked" && claim.response.replyKind === "reply" &&
-              claim.response.memberId === null && isAppId(claim.response.app)));
-        if ((b.outcome === "accepted" && (!(b.providerMessageIds as string[]).length || (!b.historyRecorded && !accountFree)))
-          || (b.outcome !== "accepted" && b.historyRecorded)) return json({error: "invalid_receipt", retryable: false}, 400);
-        const status = b.outcome === "accepted" ? "sent" : b.outcome === "unknown" ? "send_unknown" : "refused_gateway";
+        const status = receiptStatus(outcome);
         if (isAppId(claim.response.app)) {
           await tx`select set_config('app.app_id', ${claim.response.app}, true)`;
           await tx`update network.messages set status=${status} where app_id=${claim.response.app} and inbound_id=${id} and id in ${tx(b.replyIds as string[])} and status in ('collected','send_unknown')`;
           // The same replies in the line's thread history (the leak guard's core-14 check reads accepted ones).
           const lrt = claim.response.memberId ? await this.runtimeOfMember(claim.response.app, claim.response.memberId) : this.runtimeFor(claim.response.app);
-          if (lrt?.adapter instanceof BlooioAdapter) await lrt.adapter.queue.collectedReceipt(tx, b.replyIds as string[], b.outcome as "accepted" | "unknown" | "rejected", this.clock.now());
+          if (lrt?.adapter instanceof BlooioAdapter) await lrt.adapter.queue.collectedReceipt(tx, b.replyIds as string[], outcome, this.clock.now());
         }
         await tx`update platform.inbound set receipt_hash=${digest},receipt=${b}::jsonb where id=${id}`;
         return json({ok: true, replayed: false});
@@ -2059,9 +2099,8 @@ export class NetworkService implements RuntimeHost {
     const admission = async (app: AppId | undefined) => {
       const person = await this.accounts.personFor(input.from);
       const age = await this.accounts.lowestAge(input.from, person);
-      const allowed = !(await this.accounts.held(input.from)) && !(await this.accounts.banned(input.from, person))
-        && !(await this.people.isSuppressed(this.phoneKey(input.from)))
-        && (!app || resolveConsent(await this.people.lastConsent(input.from, app)) !== "opted_out");
+      const n = await this.numberFacts(input.from, app);
+      const allowed = numberAllowed(n.held, n.suppressed, n.banned, n.consent);
       return {person, age, allowed};
     };
     const result = await this.inbox.signed(input, digest, async turn => {
@@ -2077,23 +2116,22 @@ export class NetworkService implements RuntimeHost {
         collected.push(conf);
       }
       const {person, age, allowed: policyAllowed} = await admission(turn.app);
-      if (outcome === "left" || (age !== undefined && !canJoin(age))) turn.memberId = undefined;
-      // Unknown age never admits an account, history or matching. Only the
-      // canonical join prompt gets the signed account-free onboarding reason.
-      const accountEligible = policyAllowed && age !== undefined && canJoin(age);
-      const onboarding = policyAllowed && age === undefined && outcome === "join_asked" && !turn.memberId;
+      if (!keepsMember(outcome === "left", age !== undefined, canJoin(age))) turn.memberId = undefined;
       const rt = turn.app ? (turn.memberId ? await this.runtimeOfMember(turn.app, turn.memberId) : this.runtimeFor(turn.app)) : undefined;
       const binding = rt && turn.memberId ? await this.accounts.activeMembership(rt.app, {e164: input.from, personId: person?.id ?? null}) : undefined;
+      const bound = !!turn.memberId && binding?.membership.memberId === turn.memberId;
+      // Unknown age never admits an account, history or matching. Only the
+      // canonical join prompt gets the signed account-free onboarding reason.
+      const facts: TurnFacts = {outcome, replies: collected.length, hasApp: !!turn.app, hasMember: !!turn.memberId, bound, contextReady: false, policyAllowed, ageKnown: age !== undefined, joinableAge: canJoin(age)};
       // activeMembership owns the known join-age check; first contact, STOP, leave and policy denials create no service counter.
-      if (accountEligible && binding && binding.membership.memberId === turn.memberId) await this.lineAdapter()?.engaged?.(input.from);
-      if (outcome === "open" && !collected.length && turn.app && turn.memberId) {
-        const context = binding?.membership.memberId === turn.memberId ? await rt!.sharedContext(turn.memberId) : null;
-        if (context) return {outcome: "open", channel: input.channel, app: turn.app, memberId: turn.memberId, context};
-      }
-      if (outcome === "no_network" || outcome === "unknown_sender") return {outcome: "ignored", reason: outcome};
+      if (accountEligible(facts) && bound) await this.lineAdapter()?.engaged?.(input.from);
+      const context = contextWanted(facts) ? await rt!.sharedContext(turn.memberId!) : null;
+      const decision = turnDecision({...facts, contextReady: !!context});
+      if (decision.tag === "open") return {outcome: "open", channel: input.channel, app: turn.app!, memberId: turn.memberId!, context: context!};
+      if (decision.tag === "ignored") return {outcome: "ignored", reason: outcome};
       return {outcome: "handled", replies: collected.map(r => r.body), replyIds: collected.map(r => r.id), delivery: "collected",
-        replyKind: collected.length && collected.every(r => r.kind === "compliance") ? "compliance" : "reply", accountEligible,
-        app: turn.app ?? null, memberId: turn.memberId ?? null, reason: onboarding ? "onboarding_asked" : outcome === "open" ? "context_unavailable" : outcome, ...(turn.consent ? {consent: turn.consent} : {})} satisfies TurnResponse;
+        replyKind: replyKindOf(collected.map(r => r.kind)), accountEligible: decision.accountEligible,
+        app: turn.app ?? null, memberId: turn.memberId ?? null, reason: decision.onboarding ? "onboarding_asked" : decision.contextLost ? "context_unavailable" : outcome, ...(turn.consent ? {consent: turn.consent} : {})} satisfies TurnResponse;
     }, this.routePolicy?.admitUntil);
     if (result.status === 200 && result.body && typeof result.body === "object" && "outcome" in result.body && result.body.outcome === "open") {
       const cached = result.body as Extract<TurnResponse, {outcome: "open"}>;
@@ -2104,9 +2142,12 @@ export class NetworkService implements RuntimeHost {
     }
     if (result.status===200 && result.body && typeof result.body==="object" && "outcome" in result.body && result.body.outcome==="handled") {
       const handled=result.body as Extract<TurnResponse,{outcome:"handled"}>;
-      if (handled.reason === "onboarding_asked") {
+      const onboarding = handled.reason === "onboarding_asked";
+      // A stored reply is read again only while the number is still admitted: a replay after a later STOP or ban hands out nothing.
+      if (onboarding || (handled.replyKind === "reply" && handled.replies.length)) {
         const current = await admission(handled.app ?? undefined);
-        if (!current.allowed || current.age !== undefined) return json({error: "turn_onboarding_changed", retryable: false}, 409);
+        if (!storedTurnAdmitted(onboarding, handled.replyKind, handled.replies.length, current.allowed, current.age !== undefined))
+          return json({error: onboarding ? "turn_onboarding_changed" : "turn_context_changed", retryable: false}, 409);
       }
       if (handled.app) await (handled.memberId ? await this.runtimeOfMember(handled.app, handled.memberId) : this.runtimeFor(handled.app))?.projectNotifications();
     }

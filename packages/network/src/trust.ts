@@ -14,8 +14,9 @@
 // accountable: when someone they vouched for reaches hold, the inviter loses invites for 30 days.
 import { DAY, type MemberId } from "@thenetwork/core";
 import type { Abuse } from "./classify.ts";
+import { decayedScore, HOLD, nextLevel, REPORT_POINTS, reportCounts, reportPoints, WATCH, type TrustLevel } from "./transitions.ts";
 
-export type TrustLevel = "ok" | "watch" | "hold";
+export { HOLD, WATCH, type TrustLevel };
 export interface TrustEvent { at: number; kind: Abuse | "report_received" | "block_abuse" | "invitee_held" | "decay" | "hold_lifted" | "staff_hold"; points: number; by?: MemberId }
 export interface TrustRecord {
   score: number; level: TrustLevel; events: TrustEvent[]; reportsFrom: Set<MemberId>; blocksMade: number[];
@@ -24,7 +25,6 @@ export interface TrustRecord {
   heldAt?: number; lastDecay?: number;
 }
 
-export const WATCH = 3, HOLD = 6;
 /** A Trust as plain JSON (exportState). */
 export type TrustState = { id: MemberId; score: number; level: TrustLevel; events: TrustEvent[]; reportsFrom: MemberId[]; blocksMade: number[]; blockedStrangers?: MemberId[]; heldAt?: number; lastDecay?: number }[];
 const DECAY_DAYS = 14;
@@ -113,10 +113,10 @@ export class Trust {
     const r = this.get(target);
     const reporter = this.get(by);
     const reporterCredible = reporter.level === "ok" && reporter.blocksMade.filter(t => now - t < 14 * DAY).length < 3;
-    if (!reporterCredible || !o.met) return 0; // a serial reporter's or a stranger's reports don't count toward corroboration
-    if (r.reportsFrom.has(by)) return 0; // one weight per reporter
+    // A serial reporter's or a stranger's reports don't count toward corroboration, and each reporter weighs once.
+    if (!reportCounts(reporterCredible, !!o.met, r.reportsFrom.has(by))) return 0;
     r.reportsFrom.add(by);
-    if (r.reportsFrom.size >= 2 || r.score > 0) { this.add(target, now, "report_received", 3, by); return 3; }
+    if (reportPoints(r.reportsFrom.size, r.score) === REPORT_POINTS) { this.add(target, now, "report_received", REPORT_POINTS, by); return REPORT_POINTS; }
     return 0;
   }
 
@@ -128,7 +128,7 @@ export class Trust {
       if (steps <= 0) continue;
       r.lastDecay += steps * DECAY_DAYS * DAY;
       if (r.level === "hold" || r.score <= 0) continue; // holds are lifted by a person, not by time
-      r.score = Math.max(0, r.score - steps);
+      r.score = decayedScore(r.level, r.score, steps);
       this.relevel(id, now, "decay");
     }
   }
@@ -136,7 +136,7 @@ export class Trust {
   private relevel(id: MemberId, now: number, why: string) {
     const r = this.get(id);
     const prev = r.level;
-    const next: TrustLevel = r.level === "hold" || r.score >= HOLD ? "hold" : r.score >= WATCH ? "watch" : "ok";
+    const next = nextLevel(prev, r.score);
     if (next === prev) return;
     r.level = next;
     if (next === "hold") r.heldAt = now;

@@ -1,3 +1,4 @@
+import { proofWindowOk } from "./proof-window.js";
 /** Revoked-connection cleanup authority; deliberately independent of active source-read consent. */
 export const PROFILE_REVIEW_DISCONNECT_PATH = "/internal/profile-suggestions/connection";
 export const PROFILE_REVIEW_DISCONNECT_PROOF_PATH = "/api/internal/network/profile-review-disconnect";
@@ -48,7 +49,6 @@ export function parseProfileReviewDisconnectProof(value: unknown, request: Profi
     || !uuid(v.userId) || !uuid(v.organizationId) || typeof v.chatId !== "string" || !v.chatId.startsWith("personal:") || !uuid(v.chatId.slice(9))
     || !Number.isSafeInteger(now) || !Number.isSafeInteger(v.issuedAt) || !Number.isSafeInteger(v.expiresAt)
     || !Number.isSafeInteger(v.revokedAt) || (v.revokedAt as number) < 0 || (v.revokedAt as number) > (v.issuedAt as number)
-    || (v.issuedAt as number) > now || (v.expiresAt as number) <= now
-    || (v.expiresAt as number) <= (v.issuedAt as number) || (v.expiresAt as number) - (v.issuedAt as number) > 30_000) return;
+    || !proofWindowOk(v.issuedAt as number, v.expiresAt as number, now, 30_000)) return;
   return value as ProfileReviewDisconnectProof;
 }

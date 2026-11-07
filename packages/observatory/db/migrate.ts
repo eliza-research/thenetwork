@@ -17,6 +17,7 @@ import { createHash } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { SQL } from "bun";
+import { dupAt } from "./numbers.ts";
 
 const REPO = resolve(import.meta.dir, "../../..");
 export const MIGRATIONS_DIR = join(import.meta.dir, "migrations");
@@ -24,9 +25,7 @@ export const MIGRATIONS_DIR = join(import.meta.dir, "migrations");
 export interface Migration { id: string; file: string; repeatable: boolean }
 
 export function migrations(): Migration[] {
-  const numbered = readdirSync(MIGRATIONS_DIR)
-    .filter(f => /^\d{4}_[a-z0-9_]+\.sql$/.test(f))
-    .sort()
+  const numbered = numberedFiles(readdirSync(MIGRATIONS_DIR))
     .map(f => ({ id: f.replace(/\.sql$/, ""), file: join(MIGRATIONS_DIR, f), repeatable: false }));
   checkNumbers(numbered.map(m => m.id));
   return [
@@ -42,6 +41,14 @@ export function migrations(): Migration[] {
   ];
 }
 
+/** The files the runner applies, in order. A .sql file with another name would be skipped with no error, so it is refused. */
+export function numberedFiles(names: string[]): string[] {
+  const good = (f: string) => /^\d{4}_[a-z0-9_]+\.sql$/.test(f);
+  const stray = names.filter(f => f.endsWith(".sql") && !good(f));
+  if (stray.length) throw new Error(`migrations: ${stray.join(", ")} in ${MIGRATIONS_DIR} do not match NNNN_name.sql, so the runner would skip them.`);
+  return names.filter(good).sort();
+}
+
 /** Reserved numbers: the baselines and the repeatable schemas outside migrations/. */
 const RESERVED = new Set(["0001", "0002", "9001", "9002", "9003"]);
 
@@ -54,14 +61,11 @@ const RESERVED = new Set(["0001", "0002", "9001", "9002", "9003"]);
  * exists, on conflict do nothing), or the old ledger row must be renamed in the same change.
  */
 export function checkNumbers(ids: string[]): void {
-  const seen = new Map<string, string>();
-  const bad: string[] = [];
-  for (const id of ids) {
-    const n = id.slice(0, 4);
-    if (RESERVED.has(n)) bad.push(`${id} uses the reserved number ${n}`);
-    const prev = seen.get(n);
-    if (prev) bad.push(`${prev} and ${id} share the number ${n}`);
-    else seen.set(n, id);
+  const bad = ids.filter(id => RESERVED.has(id.slice(0, 4))).map(id => `${id} uses the reserved number ${id.slice(0, 4)}`);
+  const at = dupAt(ids);
+  if (at >= 0) {
+    const n = ids[at]!.slice(0, 4);
+    bad.push(`${ids.find(id => id.slice(0, 4) === n)} and ${ids[at]} share the number ${n}`);
   }
   if (bad.length) throw new Error(`migrations: duplicate or reserved numbers in ${MIGRATIONS_DIR}: ${bad.join("; ")}. Give the later file the next free number.`);
 }

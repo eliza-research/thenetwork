@@ -9,24 +9,10 @@
 //   - pair logistics: a stated common free slot for the booked date.
 // Unknown fields use expected factors (never zero, never a guess presented as a fact). Nothing here
 // reads race or ethnicity (there is no such field) or any hidden truth.
+import { dealbreakerHit } from "../decisions.ts";
 import type { SlopPackOptions } from "./options.ts";
 import type { SlopProfile } from "./profile.ts";
 
-/** Lifestyle values that, held by the other person, someone with that dealbreaker would refuse. */
-function dealbreakerHit(d: string, v: SlopProfile["values"]): boolean | undefined {
-  switch (d) {
-    case "smoker": return v.smoking === undefined ? undefined : v.smoking === "regular";
-    case "heavy_drinker": return v.drinking === undefined ? undefined : v.drinking === "regular";
-    case "has_kids": return v.hasKids === undefined ? undefined : v.hasKids === "yes";
-    case "wants_kids": return v.wantsKids === undefined ? undefined : v.wantsKids === "yes";
-    case "no_kids_ever": return v.wantsKids === undefined ? undefined : v.wantsKids === "no";
-    case "religious": return v.religionImportance === undefined ? undefined : v.religionImportance >= 2;
-    case "nonreligious": return v.religionImportance === undefined ? undefined : v.religionImportance === 0;
-    case "right_politics": return v.politics === undefined ? undefined : v.politics === "right";
-    case "left_politics": return v.politics === undefined ? undefined : v.politics === "left";
-    default: return undefined;
-  }
-}
 /** A stated dealbreaker of `a` that `b`'s known values hit (the hard filter). Unknown values never count. */
 export function statedDealbreaker(a: SlopProfile, b: SlopProfile): string | undefined {
   return a.dealbreakers.find(d => dealbreakerHit(d, b.values) === true);

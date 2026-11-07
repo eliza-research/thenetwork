@@ -17,7 +17,7 @@
 //    network-service-2).
 //  - Nothing here reads another app's rows; the person cap across apps (service.ts) goes through a
 //    SECURITY DEFINER function that returns ids only.
-import { DAY } from "@thenetwork/core";
+import { DAY, LeakGuard } from "@thenetwork/core";
 import { randomUUID } from "node:crypto";
 import type { SQL } from "bun";
 import type { City, Clock, MemberId, WorldSnapshot } from "@thenetwork/core";
@@ -47,6 +47,7 @@ import { NOT_SENT, type RecipientCheck } from "../../blooio/src/outbound-queue.t
 import { summarizeRun } from "../../observatory/src/engineCapture.ts";
 import type { JobPosting } from "../src/jobs.ts";
 import { savePosting } from "./postings.ts";
+import { collectGate, outboundKind, pairReason, relayCanonical, type ConsentState } from "./decisions.ts";
 
 type Row = Record<string, unknown>;
 
@@ -65,8 +66,10 @@ export interface Unit {
   completeAction?: (tx: SQL) => Promise<void>;
   /** peon job postings saved in this unit (a manager's confirmed text, or staff): their rows go in the save transaction. */
   postings: JobPosting[];
+  /** Replies of a signed turn that collectGate refused: stored as refused, never collected and never queued. */
+  refused: Set<string>;
 }
-const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set(), postings: [] });
+const newUnit = (): Unit => ({ sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set(), postings: [], refused: new Set() });
 
 /** What the service gives each runtime: the shared connection and clock, and the checks that span apps. */
 export interface RuntimeHost {
@@ -80,6 +83,8 @@ export interface RuntimeHost {
   /** Canonical read checks inside an existing admission transaction, without another pool lease. */
   accountsFor?(tx: SQL): Pick<Accounts, "activeMembership" | "lowestAge" | "phoneHash">;
   inboundTurn?(): InboundTurn | undefined;
+  /** Suppression, bans, the hold and the consent ledger of one number for one app, read inside `tx`. */
+  numberFacts(e164: string, app: AppInfo["id"], tx: SQL): Promise<{ suppressed: boolean; banned: boolean; held: boolean; consent: ConsentState | undefined }>;
   collectReplies?(tx: SQL, replies: CollectedReply[]): Promise<void>;
   /** Proactive sends of this batch the person-level daily cap refuses (ids). Called before delivery. */
   capRefused(rt: NetworkRuntime, batch: Outbound[]): Promise<Set<string>>;
@@ -220,7 +225,7 @@ export class NetworkRuntime {
         const binding = await accounts.activeMembership(this.app, { e164, personId: r.person_id as string });
         if (binding?.membership.memberId === id) { bound = true; adult = canBeMatched(await accounts.lowestAge(e164, binding.person)); }
       }
-      out.set(id, { adult, optedOut: !r || r.opted_out === true || !bound, held: !r || r.account_status !== "active" });
+      out.set(id, relayCanonical(!!r, r?.opted_out === true, r?.account_status === "active", bound, adult));
     }
     return out;
   }
@@ -278,12 +283,8 @@ export class NetworkRuntime {
       union all select 1 from platform.person_blocks pb join network.members f on f.app_id=${app} and f.id=${from} join network.members t on t.app_id=${app} and t.id=${to}
       where (pb.from_person=f.person_id and pb.to_person=t.person_id) or (pb.from_person=t.person_id and pb.to_person=f.person_id) limit 1`;
     if (blocked) return no("party:blocked");
-    for (const [, c] of await this.relayParties([from, to], tx)) {
-      if (!c.adult) return no("party:age");
-      if (c.optedOut) return no("party:opted_out");
-      if (c.held) return no("party:held");
-    }
-    return { ok: true };
+    const reason = pairReason([...(await this.relayParties([from, to], tx)).values()]);
+    return reason === "ok" ? { ok: true } : no(reason);
   }
 
   /** Current canonical parties for a selected photo; no participant or phone is selected by the model. */
@@ -365,7 +366,7 @@ export class NetworkRuntime {
         const u = this.unit;
         // PgStore.save sets app.app_id for its own transaction; the unit's rows go in the same one.
         await this.pg.save(state, tx => this.writeUnit(tx, u));
-        this.committed.push(...u.sends.filter(s => !u.collected.has(s.id)));
+        this.committed.push(...u.sends.filter(s => !u.collected.has(s.id) && !u.refused.has(s.id)));
         this.unit = newUnit();
       },
       withTickLock: fn => this.pg.withTickLock(fn),
@@ -426,7 +427,7 @@ export class NetworkRuntime {
           id, memberId, to: this.memberToAddr.get(memberId), body,
           // "reply" only when the Network says so (send(): never a proactive send, a growth ask, a
           // re-engagement or a check-in), so the queue's quiet hours and caps still apply to those.
-          kind: o?.reply && (causal || this.replyingTo === memberId) ? "reply" : meta.proactive ? "proactive" : "transactional",
+          kind: outboundKind(!!o?.reply, !!causal, this.replyingTo === memberId, !!meta.proactive),
           // A probe names its opportunity only in meta.probe (anonymous to the member); the row links it either way.
           ...(approvedPhotos ? { approvedPhotos } : {}),
           type: meta.type, oppId: meta.proposalId ?? meta.probe?.key, proactive: !!meta.proactive, system: false, ts: t,
@@ -462,18 +463,32 @@ export class NetworkRuntime {
     }
     const named = new Set<string>([...u.sends.map(s => s.memberId), ...(u.inbound ? [u.inbound.member_id as string] : []), ...u.blocks.flat(), ...u.optOut.keys(), ...u.postings.map(p => p.managerId)]);
     const known = new Set<string>();
-    if (named.size) for (const r of await tx`select id from network.members where app_id = ${app} and id in ${tx([...named])}`) known.add(r.id);
+    const memberOut = new Set<string>();
+    if (named.size) for (const r of await tx`select id, opted_out from network.members where app_id = ${app} and id in ${tx([...named])}`) { known.add(r.id); if (r.opted_out) memberOut.add(r.id); }
     const ok = (id: string) => known.has(id) && !u.forget.has(id);
     if (u.inbound && ok(u.inbound.member_id as string)) await tx`insert into network.messages ${tx({ ...u.inbound, app_id: app })} on conflict (id) do nothing`;
     const turn = this.host.inboundTurn?.();
     const queue = this.adapter instanceof BlooioAdapter ? this.adapter.queue : undefined;
-    // Collected replies (Cloud sends them) get the queue's own leak guard first: canary shapes, contacts,
-    // the recipient's leak sources and the thread check. One that fails is not collected; it goes into
-    // the queue like any other send, where the same guard parks it for staff (parked_leak_review).
-    if (queue) for (const s of u.sends) {
-      if (!u.collected.has(s.id) || !s.to) continue;
-      const reasons = await queue.collectedLeaks(tx, { id: s.id, ...(u.forget.has(s.memberId) ? {} : { memberId: s.memberId }), to: s.to, kind: s.kind, text: s.body });
-      if (reasons.length) { u.collected.delete(s.id); this.host.log(`[alert] a collected reply failed the leak guard and goes to the queue for review (${this.id}, ${s.id})`); }
+    // A collected reply never reaches the queue's send-time checks, so collectGate reads the same answers here.
+    // A non-compliance reply to a banned, suppressed, opted-out or held number is refused: it stays in the
+    // member's history as refused and goes nowhere. The text gets the queue's own leak guard (canary shapes,
+    // contacts, the recipient's leak sources and the thread check), or the plain guard with a dry-run adapter:
+    // one that fails is not collected; it goes into the queue like any other send, where the same guard parks
+    // it for staff (parked_leak_review). A fixed compliance text (a STOP confirmation) always goes.
+    for (const s of u.sends) {
+      if (!u.collected.has(s.id)) continue;
+      const kind = s.kind === "compliance" ? "compliance" : "reply", fixedCopy = s.system && s.type !== "profile_read";
+      const always = kind === "compliance" && fixedCopy;
+      const n = always || !s.to ? undefined : await this.host.numberFacts(s.to, app, tx);
+      const reasons = always || !s.to ? [] : queue
+        ? await queue.collectedLeaks(tx, { id: s.id, ...(u.forget.has(s.memberId) ? {} : { memberId: s.memberId }), to: s.to, kind: s.kind, text: s.body })
+        : fixedCopy ? [] : new LeakGuard({ canaryShapes: true, contacts: kind !== "compliance" }).check(s.body, { exceptOwner: s.memberId });
+      const gate = collectGate({ kind, suppressed: n?.suppressed ?? false, banned: n?.banned ?? false, held: n?.held ?? false, optedOut: n?.consent === "opted_out",
+        memberOptedOut: u.optOut.get(s.memberId) ?? memberOut.has(s.memberId), leakChecked: !always && !!s.to && (!!queue || !fixedCopy), leakClean: reasons.length === 0, fixedCopy });
+      if (gate === "collect") continue;
+      u.collected.delete(s.id);
+      if (gate === "refuse") { u.refused.add(s.id); this.host.log(`[inbound] a collected reply refused: the number is not admitted (${this.id}, ${s.id})`); }
+      else this.host.log(`[alert] a collected reply failed the leak guard and goes to the queue for review (${this.id}, ${s.id})`);
     }
     const captured = u.sends.filter(s => u.collected.has(s.id) && (ok(s.memberId) || u.forget.has(s.memberId)));
     if (captured.length) {
@@ -481,7 +496,7 @@ export class NetworkRuntime {
       await this.host.collectReplies(tx, captured.map(s => ({id:s.id, body:s.body, kind:s.kind === "compliance" ? "compliance" : "reply"})));
     }
     const out = u.sends.filter(s => ok(s.memberId)).map(s => ({
-      id: s.id, app_id: app, member_id: s.memberId, direction: "outbound", channel: "imessage", body: s.body, status: u.collected.has(s.id) ? "collected" : this.adapter.storedStatus,
+      id: s.id, app_id: app, member_id: s.memberId, direction: "outbound", channel: "imessage", body: s.body, status: u.refused.has(s.id) ? "refused_opted_out" : u.collected.has(s.id) ? "collected" : this.adapter.storedStatus,
       inbound_id: u.collected.has(s.id) ? turn!.id : null,
       type: s.type ?? null, opportunity_id: s.oppId ?? null, proactive: s.proactive, system: s.system, ts: new Date(s.ts),
     }));
@@ -553,7 +568,7 @@ export class NetworkRuntime {
     // decline to a member the unit forgets goes as a text to a non-member. Sends it does not queue (the live
     // flags are off, no address) get their status here.
     if (this.adapter.enqueue) {
-      const queued = u.sends.filter(s => !u.collected.has(s.id) && (ok(s.memberId) || u.forget.has(s.memberId)));
+      const queued = u.sends.filter(s => !u.collected.has(s.id) && !u.refused.has(s.id) && (ok(s.memberId) || u.forget.has(s.memberId)));
       const refused = await this.adapter.enqueue(tx, queued, u.forget);
       for (const [id, status] of refused) await tx`update network.messages set status = ${status} where app_id = ${app} and id = ${id} and direction = 'outbound'`;
     }
