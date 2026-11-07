@@ -489,7 +489,7 @@ export class Projector {
     }
     const b = meta.booked;
     const o = b ? this.store.opps.get(b.proposalId) : undefined;
-    if (b && o) {
+    if (b && o && msg.status === "delivered") {
       o.booked = { at: b.at, optOutHours: b.optOutHours, told: { ...o.booked?.told, [msg.memberId]: msg.ts }, cancelled: { ...o.booked?.cancelled } };
       this.changed(o, r);
     }
