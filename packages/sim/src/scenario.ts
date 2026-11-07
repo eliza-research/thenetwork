@@ -227,10 +227,16 @@ export function evaluateExpectations(s: Scenario, w: WorldResult, networkName: s
         const [a, b] = e.personas;
         const block = recs.find(r => r.type === "block" && ((r.from === a && r.to === b) || (r.from === b && r.to === a)));
         if (!block) return ok(false, "no block or report between them happened");
-        const name = (id: string) => w.personas.find(p => p.id === id)?.name;
+        const name = (id: string) => {
+          const first = w.personas.find(p => p.id === id)?.name.trim().split(/\s+/)[0];
+          // A name inside another name (Al in Alex) is not a mention of the blocked member.
+          // Unicode boundaries retain non-Latin names and treat combining marks as part of a word.
+          return first ? new RegExp(`(?<![\\p{L}\\p{M}\\p{N}_])${first.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{M}\\p{N}_])`, "u") : undefined;
+        };
+        const aName = name(a), bName = name(b);
         const together = recs.filter(r => r.type === "proposal" && r.source !== "scenario" && r.t >= block.t && r.proposal.participants.includes(a) && r.proposal.participants.includes(b)).length;
         const named = msgs.filter(x => x.direction === "outbound" && !x.system && x.ts >= block.t && (
-          (x.memberId === a && !!name(b) && x.body.includes(name(b)!.split(" ")[0]!)) || (x.memberId === b && !!name(a) && x.body.includes(name(a)!.split(" ")[0]!)))).length;
+          (x.memberId === a && bName?.test(x.body)) || (x.memberId === b && aName?.test(x.body)))).length;
         return ok(together + named === 0, `after the block: ${together} proposals together, ${named} messages naming the other`);
       }
       case "no_contact": {
