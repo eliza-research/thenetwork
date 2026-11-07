@@ -67,6 +67,10 @@ bun run test:e2e                                      # tests/e2e
 
 There are no unit or smoke tests ([docs/tests-policy.md](docs/tests-policy.md)). Runs with real LLM calls and the matching-algorithm measurements are in [CONTRIBUTING.md](CONTRIBUTING.md) section 7. [AGENTS.md](AGENTS.md) has every other command.
 
+## Formal modeling
+
+All code in the app must be modeled at two levels: Quint at the high level (flows, states and invariants) and LemmaScript at the low level (proved contracts on the functions that the shipping code calls). A change to code updates both. This requirement is not yet met: most existing code has no model, and the repository has no Quint models yet. [docs/formal-verification.md](docs/formal-verification.md) lists what is proved and what is not. [CONTRIBUTING.md](CONTRIBUTING.md) section 14 has the rule.
+
 ## The Eliza seam
 
 The member conversation runs in Eliza, upstream in elizaOS/eliza (`plugins/plugin-network`). This repository has no plugin package and no eliza submodule. It talks to Eliza only over the signed contract mirrored in `packages/core/src/svc/contract.ts` and `svc-auth.ts`: `/internal/turn`, `/internal/turn-receipt`, `/internal/set-state`, `/internal/signals`, `/internal/updates` and `/internal/relay` on this backend, and `/api/internal/network/deliver` on Eliza Cloud.
