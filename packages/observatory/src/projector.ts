@@ -87,7 +87,15 @@ export class Projector {
         if (msg.system) return;
         c.messages++;
         const k = this.counters(msg.memberId);
-        if (msg.direction === "inbound") { c.inbound++; if (k) k.msgsIn++; return; }
+        if (msg.direction === "inbound") {
+          c.inbound++; if (k) k.msgsIn++;
+          const m = msg.keyword === "START" ? s.member(msg.memberId) : undefined;
+          if (m?.state === "opted_out") {
+            m.state = m.joined ? this.opts.joinState?.(m.id) ?? "normal" : "not_joined";
+            c.optOuts--; s.touchMember(m.id);
+          }
+          return;
+        }
         c.outbound++;
         if (k) k.msgsOut++;
         if (msg.body === UNDER_MIN_AGE_DECLINE) this.declineTo = msg.memberId;
@@ -221,9 +229,8 @@ export class Projector {
         return;
       }
       case "opt_out": {
-        c.optOuts++;
         const m = s.member(r.memberId);
-        if (m) { m.state = "opted_out"; s.touchMember(m.id); }
+        if (m && m.state !== "opted_out") { c.optOuts++; m.state = "opted_out"; s.touchMember(m.id); }
         s.pushFeed({ t: r.t, kind: "opt_out", text: `${this.name(r.memberId)} texted STOP`, members: [r.memberId], severity: "warn" });
         return;
       }
