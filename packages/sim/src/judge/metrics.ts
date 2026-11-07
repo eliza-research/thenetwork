@@ -36,8 +36,9 @@ export interface Metrics {
     unsafe: { minor: number; adversarial: number; cityMismatch: number; romanceMismatch: number; exPartners: number };
   };
   responses: {
+    /** In reply-tracked logs, ignored includes replies pending or suppressed at the cutoff. */
     invitesDelivered: number; accepted: number; declined: number; countered: number; ignored: number; acceptRate: number;
-    /** Real member decisions on consent probes (simulator decision records, messageType "probe"). */
+    /** Replies to consent probes (decision records with messageType "probe", backed by delivery in tracked logs). */
     probes: { asked: number; yes: number; no: number; ignored: number };
   };
   experience: {
@@ -579,17 +580,24 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
   }
 
   // ---------------- responses to invitations
+  // New logs link an actual inbound reply to its prompt. Pending or suppressed replies are
+  // unanswered at the cutoff; older logs retain their decision-only interpretation.
+  const replyKey = (memberId: string, messageId: string) => JSON.stringify([memberId, messageId]);
+  const replies = new Set(records.flatMap(r => r.type === "message" && r.msg.direction === "inbound" && r.msg.status === "delivered" && typeof r.msg.meta?.inReplyTo === "string"
+    ? [replyKey(r.msg.memberId, r.msg.meta.inReplyTo)] : []));
+  const hasReply = (r: Extract<RunRecord, { type: "decision" }>) => start?.config.replyTracking !== true || replies.has(replyKey(r.memberId, r.messageId));
   let invites = 0, acceptedN = 0, declined = 0, countered = 0, ignored = 0;
   const probes = { asked: 0, yes: 0, no: 0, ignored: 0 };
   for (const r of records) if (r.type === "decision" && r.messageType === "probe") {
     probes.asked++;
-    if (r.intent === "probe_yes") probes.yes++;
+    if (!hasReply(r)) probes.ignored++;
+    else if (r.intent === "probe_yes") probes.yes++;
     else if (r.intent === "probe_no") probes.no++;
     else probes.ignored++;
   }
   for (const r of records) if (r.type === "decision" && r.messageType === "proposal") {
     invites++;
-    if (r.intent === "ignore") ignored++;
+    if (r.intent === "ignore" || !hasReply(r)) ignored++;
     else if (r.decision === "accept") acceptedN++;
     else if (r.decision === "decline") declined++;
     else if (r.decision === "counter") countered++;

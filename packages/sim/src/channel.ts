@@ -80,13 +80,14 @@ export class SimChannel {
    * Member -> network. Handles carrier keywords before forwarding to the webhook. With `reaction`, the
    * message is a tapback: it carries meta.reaction and is never a keyword.
    */
-  receive(from: MemberId, body: string, opts: { reaction?: Reaction } = {}): SimMessage {
+  receive(from: MemberId, body: string, opts: { reaction?: Reaction; inReplyTo?: string } = {}): SimMessage {
     const keyword = opts.reaction ? undefined : detectKeyword(body);
     const m: SimMessage = {
       id: this.nextId("i"), ts: this.clock.now(), direction: "inbound", channel: this.kinds.get(from) ?? "imessage",
       from, to: "network", memberId: from, body, status: "delivered", keyword,
     };
     if (opts.reaction) m.meta = { reaction: opts.reaction };
+    if (opts.inReplyTo) m.meta = { ...m.meta, inReplyTo: opts.inReplyTo };
     this.record(m);
     if (keyword === "STOP") {
       this.optedOut.add(from);
