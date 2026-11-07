@@ -319,6 +319,15 @@ export class RealSource implements DataSource {
     ]);
     this.ages = ages;
     const reviewBy = new Map((reviews as any[]).map(r => [r.opportunity_id as string, r]));
+    // Like Projector.count, count reviewed proposals only after approval, unless its re-check failed.
+    // Reuse the review query so older databases retain its existing compatibility fallback.
+    const withheldByMember = new Map<string, number>();
+    for (const p of parts as any[]) {
+      const rv = reviewBy.get(p.opportunity_id);
+      if (p.role === "participant" && rv && (rv.decision !== "approve" || rv.invalidated)) {
+        withheldByMember.set(p.member_id, (withheldByMember.get(p.member_id) ?? 0) + 1);
+      }
+    }
     const t = totals[0]!;
     this.lastActivity = ms(t.last_activity) ?? 0;
     const start = ms(t.first_join);
@@ -344,7 +353,7 @@ export class RealSource implements DataSource {
         ...(opt?.calendar ? { calendar: true } : {}), ...(opt?.weekly ? { weekly: true } : {}),
         counters: {
           ...emptyCounters(), msgsIn: mm?.msgs_in ?? 0, msgsOut: mm?.msgs_out ?? 0, proactive: mm?.proactive ?? 0,
-          proposals: pp?.proposals ?? 0, accepted: pp?.accepted ?? 0, meetings: pp?.meetings ?? 0,
+          proposals: (pp?.proposals ?? 0) - (withheldByMember.get(r.id) ?? 0), accepted: pp?.accepted ?? 0, meetings: pp?.meetings ?? 0,
           enjoymentSum: pp?.enjoyment_sum ?? 0, enjoymentN: pp?.enjoyment_n ?? 0,
         },
       };
