@@ -24,7 +24,7 @@ No defect here is confirmed by this synthesis. All verdicts are `pending`. Repor
 - Duplicates can remain in section 5 among reports that were not read line by line, because the merge used titles for them. Two merges that join close but not identical defects are marked by the wider title (for example the row that joins `journey-match` M8 and `journey-exit-safety` JE18). Check these before fixing.
 - Trigger text for the 19 reports is a script cut of the report text. It can stop mid-sentence, and a few rows hold the first sentence of the defect, not a true trigger. Read the source defect before acting.
 - Priority: the highest stated priority of merged entries. Where a report gave none, I assigned one: `implicit-sweep` by the rule it touches; `capital` P2, or P1 and P0 for the entries that touch replay, forget, or age; `sim` P1 when its "effect on proof" column says yes or partly, else P2; `gap-bias-monitor` P1 for high severity, else P2.
-- Each Quint module in section 6 reflects the Quint proposal of each report, but module authors must read `doc_refs` in `quint-plan.json` in full.
+- Each Quint module in section 6 reflects the Quint proposal of each report, but module authors must read `doc_refs` in the [Quint module plan](state-machines/quint-plan.json) in full.
 
 **Limits inherited from the reports.** The Eliza gateway and Eliza Cloud are upstream and not in this repository, so statements about them are unverified. The reports' scratch probes are outside the repository. I ran no test, no model and no database for this synthesis. I did not check any file:line against the code.
 
@@ -336,7 +336,7 @@ The table lists shared state and required ordering. Each row can break even when
 
 ## 5. Suspected-defect register
 
-The ids are stable from this file on. Rows were deduplicated by hand from 610 report entries to 510 rows. Priority is the highest priority of the merged entries; where a report gave none, the rule in section 1 applies. `file:line` uses the short file names of the source report. Trigger text is copied from the report, cut to 230 characters. Verdict stays `pending` until wave 2.
+The ids are stable from this file on. Rows were deduplicated by hand from 610 report entries to 510 rows. Priority is the highest priority of the merged entries; where a report gave none, the rule in section 1 applies. `file:line` uses the short file names of the source report. Trigger text is copied from the report, cut to 230 characters. Verdict stays `pending` until review. See the [wave 1 defect checks](state-machines/defect-checks.md) for the recovered verifier votes.
 
 | Id | Title | file:line | Trigger | Confidence | Source report | Pri | Quint module | Verdict |
 |---|---|---|---|---|---|---|---|---|
