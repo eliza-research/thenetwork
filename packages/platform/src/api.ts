@@ -374,7 +374,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
       const origin = req.headers.get("origin");
       if (origin) {
         let originHost: string | undefined;
-        try { originHost = new URL(origin).host; } catch { /* not a URL */ }
+        // A site is https; plain http is a loopback dev host only.
+        try { const u = new URL(origin); if (u.protocol === "https:" || (dev && u.protocol === "http:" && ["localhost", "127.0.0.1"].includes(u.hostname))) originHost = u.host; } catch { /* not a URL */ }
         if (appForHost(originHost, hostMap) !== appId) return json(403, { ok: false, error: "origin" });
       }
     }
@@ -468,7 +469,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           if (!phoneOtpOnlyApps.has(appId) && o.turnstile && !(await o.turnstile.verify(typeof b.turnstileToken === "string" ? b.turnstileToken : undefined, ip, dev ? undefined : siteHosts(appId, env)))) {
             return json(400, { ok: false, error: "turnstile" });
           }
-          const r = await otp.start(app, e164, ip);
+          // A banned number: the same answer and the same limits as any number, and no code goes out.
+          const r = await otp.start(app, e164, ip, !(await accounts.banned(e164)));
           if (!r.ok) return json(429, { ok: false, error: "rate_limited" }, { "retry-after": String(Math.ceil(r.retryAfterMs / 1000)) });
           return json(200, { ok: true });
         } finally {
@@ -482,7 +484,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         try {
           const e164 = normalizePhone(b.phone);
           const code = typeof b.code === "string" ? b.code.trim() : "";
-          if (!e164 || !(await otp.verify(appId, e164, code, ip))) return json(400, { ok: false, error: "invalid_code" });
+          if (!e164 || !(await otp.verify(appId, e164, code, ip)) || await accounts.banned(e164)) return json(400, { ok: false, error: "invalid_code" });
           // A new session at every login (the old cookie on this request is revoked: no fixation).
           await sessions.revoke(cookies.get(cookieName(appId)));
           // A number not seen for 12 months goes on hold: the session gets no person until staff decide.
@@ -504,6 +506,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
 
       case "GET /api/me":
         return withSession(async who => {
+          // A session from before a ban reads nothing (like a review: the answer never says why).
+          if (await accounts.banned(who.e164)) return json(403, { ok: false, error: "review", message: REVIEW_MESSAGE });
           const c = await accounts.canJoin(app, who);
           const live = c.reason === "member" && c.membership && c.person ? c.membership : undefined;
           const participation = live && o.participation ? await o.participation({ app, personId: live.personId, memberId: live.memberId, e164: who.e164 }) : null;
@@ -572,7 +576,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
         });
 
       case "GET /api/me/export":
-        return withSession(async who => (await accounts.held(who.e164))
+        return withSession(async who => (await accounts.held(who.e164) || await accounts.banned(who.e164))
           ? json(403, { ok: false, error: "review", message: REVIEW_MESSAGE })
           : json(200, await accounts.exportApp(app, who), { "content-disposition": `attachment; filename="${appId}-export.json"` }));
 

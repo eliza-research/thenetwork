@@ -7,10 +7,12 @@
 // for their default `pack` argument (evaluated at call time). Its top level therefore reads only
 // leaf data; function values from non-leaf modules are wrapped in arrows, and `generators` is a
 // getter.
+import { canBeMatched } from "@thenetwork/core";
 import { DEFAULT_ATTENTION, DEFAULT_CONFIG, DEFAULT_PLANS } from "../../config.ts";
 import { cityBucketGeo } from "../../geo.ts";
 import { mutualBenefit } from "../../scoring.ts";
 import type { AppPack, EligibilityPolicy, GeneratorSpec } from "../../pack.ts";
+import { romanceItemAllowed } from "../decisions.ts";
 import { buildPassContext } from "./judgeContext.ts";
 import { ACTIVITIES } from "./activities.ts";
 import { DEFAULT_ENJOY_BY_CATEGORY, DEFAULT_ENJOY_KNOTS } from "./calibrator.ts";
@@ -86,7 +88,7 @@ export const networkPack: AppPack = {
     noWarmMentionLanes: ["romance"],
     // Was attention.ts itemGate: romance items only for opted-in adults. A view without
     // categoriesOptIn has no romance consent: fail closed (engine-attention-plans-7).
-    itemGate: (m, it) => (it.category === "romance" && (!(typeof m.age === "number" && Number.isFinite(m.age) && m.age >= 18) || !(m.categoriesOptIn ?? []).includes("romance")) ? "romance_not_allowed" : null),
+    itemGate: (m, it) => (it.category === "romance" && !romanceItemAllowed(canBeMatched(m.age), m.categoriesOptIn, "romance") ? "romance_not_allowed" : null),
     probeAllowed: (lane, othersCount) => !(lane === "romance" && othersCount !== 1),
     laneActivity: GENERIC_ACTIVITY,
     probeText: (ctx, activity, a, ar) => networkProbeText(ctx, activity, a, ar),

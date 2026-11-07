@@ -2,14 +2,17 @@
 // packages/platform (the same OTP service, sessions and people store as the sites' /api/*).
 // The human signs in with the platform phone code on our page; the client and the agent never
 // send or see a phone number or a code.
-import type { Accounts, AppInfo, MembershipState, OtpService, PeopleStore, SessionService } from "@thenetwork/platform";
+import type { Accounts, AppInfo, OtpService, PeopleStore, SessionService } from "@thenetwork/platform";
 import { canJoinApp, canMatchInApp, lowestAge, normalizePhone } from "@thenetwork/platform";
 import type { McpAppId } from "./apps.ts";
 import type { CloudGrantAuthority } from "../../core/src/svc/network-delegation.ts";
+import { type PublicStatus, publicStatus } from "./decisions.ts";
 import type { Grant } from "./store.ts";
+import type { PublicUpdate } from "./update-gate.ts";
+import { cookieValue } from "./util.ts";
 
-/** A membership state as the person's own agent may see it. No age, no member id, nothing about others. */
-export type PublicStatus = "not_joined" | "invited" | "onboarding" | "active" | "stopped" | "on_hold";
+export { publicStatus };
+export type { PublicStatus, PublicUpdate };
 
 export interface SignedIn {
   e164: string;
@@ -20,9 +23,6 @@ export interface SignedIn {
 
 /** The assistant behind an OAuth client, by its redirect hosts (handler.ts assistantOf). */
 export type AssistantKind = "chatgpt" | "claude" | "grok" | "web";
-
-/** One update for the person's assistant: a member-safe line from the inbox (packages/notify). */
-export interface PublicUpdate { summary: string; at: string; kind: string }
 
 export interface PlatformHooks {
   cloudAuthorityRequired?(app: McpAppId): boolean;
@@ -50,6 +50,8 @@ export interface PlatformHooks {
   withSignupAgePolicy?<T>(phoneKey: string, app: McpAppId, fn: (allowed: boolean) => Promise<T>): Promise<T>;
   /** Wire the one temporary-draft cleanup consumer to canonical age recording, including null-person phones. */
   setSignupAgeCleanup?(fn: (phoneKey: string, app: McpAppId) => Promise<void>): void;
+  /** True when this keyed number, or this person, is banned. A ban ends every grant of theirs, however old. */
+  banned?(phoneKey: string, personId: string | null): Promise<boolean>;
   /** The person's own state in one app. */
   status(personId: string, app: McpAppId): Promise<PublicStatus>;
   /** Current adult Slop member and phone owner, with no safety hold or ban. Never enrolls anyone. */
@@ -70,20 +72,6 @@ export interface PlatformHooks {
   session?(app: McpAppId, req: Request): Promise<SignedIn | "unavailable" | undefined>;
   /** Start a site session after a verified code, so the person is signed in on the site too. Returns a Set-Cookie value. */
   createSession?(app: McpAppId, who: SignedIn): Promise<string | undefined>;
-}
-
-/** Platform membership state -> what the person's agent sees. */
-export function publicStatus(state: MembershipState | undefined, review: string | null | undefined): PublicStatus {
-  if (review) return "on_hold";
-  switch (state) {
-    case undefined: case "removed": return "not_joined";
-    case "invited": return "invited";
-    case "onboarding": return "onboarding";
-    case "active": return "active";
-    case "paused": return "stopped";
-    // A safety restriction is not explained to an agent; the person sees the details on the site.
-    case "restricted": return "on_hold";
-  }
 }
 
 export interface PlatformParts {
@@ -110,14 +98,6 @@ export interface PlatformParts {
   updates?: PlatformHooks["updates"];
   /** Surface signals for the inbox (NetworkService.assistantLinked). */
   assistantLinked?: PlatformHooks["assistantLinked"];
-}
-
-function cookieValue(header: string | null, name: string): string | undefined {
-  for (const part of (header ?? "").split(";")) {
-    const i = part.indexOf("=");
-    if (i > 0 && part.slice(0, i).trim() === name) return decodeURIComponent(part.slice(i + 1).trim());
-  }
-  return undefined;
 }
 
 /**
@@ -155,9 +135,8 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       if(p.cloudAuthorityRequired?.(id))return {ok:false,error:"unavailable"};
       const app = p.app(id);
       if (!app) return { ok: false, error: "unavailable" };
-      // A banned number gets the same answer as any other, and no code is sent (no sign-in, no grant).
-      if (await p.accounts.banned(e164)) return { ok: true };
-      const r = await p.otp.start(app, e164, ip);
+      // A banned number gets the same answer and limits as any other, and no code is sent (no sign-in, no grant).
+      const r = await p.otp.start(app, e164, ip, !(await p.accounts.banned(e164)));
       return r.ok ? { ok: true } : { ok: false, error: "rate_limited" };
     },
     async verifyOtp(id, e164, code, ip) {
@@ -172,6 +151,7 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       return (await p.accounts.personFor(e164))?.id ?? null;
     },
     phoneKey: e164 => p.accounts.phoneHash(e164),
+    banned: (key, personId) => p.store.isBanned(key, personId),
     async personForKey(key) {
       return (await p.accounts.byPhoneHash(key))?.person.id ?? null;
     },

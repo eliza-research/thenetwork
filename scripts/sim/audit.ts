@@ -285,6 +285,7 @@ async function deployGuard(b: Block) {
     const refuse = [
       ["deploy"], ["--config", "x.toml", "deploy"], ["-c", "wrangler.toml", "deploy"], ["--env", "production", "deploy"],
       ["--some-new-flag", "deploy", "whoami"], ["deploy", "--dry-run", "--no-dry-run"], ["deploy", "--dry-run=false"],
+      ["deploy", "--dry-run", "--dryRun=false"], ["deploy", "--dry-run", "--no-dryRun"], ["--help", "--no-help", "deploy"], ["--help", "--help=false", "deploy"], ["dev", "--remote=1"],
       ["pages", "deploy", "dist", "--project-name", "slop-date", "--branch", "main"], ["pages", "project", "create", "x"],
       ["versions", "upload"], ["versions", "deploy"], ["secret", "put", "X"], ["pages", "secret", "put", "X"],
       ["kv", "key", "put", "k", "v"], ["r2", "object", "put", "b/k"], ["r2", "bucket", "create", "b"], ["d1", "execute", "db"],

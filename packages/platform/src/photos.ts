@@ -35,9 +35,12 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { S3Client, type SQL } from "bun";
+import { isMinor } from "../../core/src/policy.ts";
 import { PgPeopleStore } from "./pg-store.ts";
 import type { AppId } from "./apps.ts";
 import { readCapped } from "./body.ts";
+import { adultGate } from "./decisions.ts";
+import { riffSpans } from "./riff.ts";
 import type { MembershipState, PeopleStore } from "./store.ts";
 import type { AppearanceRater, AppearanceScore, RatingSubject } from "../../engine/src/packs/slop/appearance.ts";
 import { makeClefRaterFromEnv, type ClefRaterOptions } from "../../engine/src/packs/slop/clef.ts";
@@ -260,13 +263,13 @@ const WEBP_KEEP = new Set(["VP8 ", "VP8L", "VP8X", "ALPH", "ANIM", "ANMF"]);
 const WEBP_FRAME_KEEP = new Set(["ALPH", "VP8 ", "VP8L"]);
 /** RIFF chunks from `at` to `end`, each with its padding; only the types in `keep`. */
 function riffChunks(b: Uint8Array, at: number, end: number, keep: Set<string>): Uint8Array[] {
+  // Bytes are all the walk reads: index and length, the same on a Uint8Array.
+  const spans = riffSpans(b as unknown as readonly number[], at, end);
+  if (!spans) throw new BadImage("webp: bad chunk");
   const chunks: Uint8Array[] = [];
-  let i = at;
-  while (i + 8 <= end) {
+  for (const { at: i, len } of spans) {
     const type = ascii(b, i, 4);
-    const len = b[i + 4]! | (b[i + 5]! << 8) | (b[i + 6]! << 16) | ((b[i + 7]! << 24) >>> 0);
     const padded = len + (len & 1);
-    if (i + 8 + len > end) throw new BadImage("webp: bad chunk");
     if (keep.has(type)) {
       if (type === "ANMF") {
         // A frame: its 16-byte header, then its own chunks (only the image ones are kept).
@@ -282,7 +285,6 @@ function riffChunks(b: Uint8Array, at: number, end: number, keep: Set<string>): 
         chunks.push(c);
       }
     }
-    i += 8 + padded;
   }
   return chunks;
 }
@@ -438,9 +440,10 @@ export class PhotoService {
   /** An adult on this app: lowest age 18+ (an unknown age fails) and the app's own check (slop: no failed staff age check). */
   async adult(personId: string, app: AppId, tx?: SQL): Promise<PhotoRefusal | undefined> {
     const p = await (tx ? new PgPeopleStore(tx) : this.o.people).getPerson(personId);
-    if (!p || p.deletedAt !== null || p.lowestAge === null || p.lowestAge < 18) return "adults_only";
-    if (!(await (this.o.eligible?.(personId, app, tx) ?? Promise.resolve(false)))) return "not_verified";
-    return undefined;
+    const live = !!p && p.deletedAt === null, adult = !!p && !isMinor(p.lowestAge);
+    const eligible = live && adult && await (this.o.eligible?.(personId, app, tx) ?? Promise.resolve(false));
+    const gate = adultGate(adult, live, eligible);
+    return gate === "ok" ? undefined : gate;
   }
 
   /**

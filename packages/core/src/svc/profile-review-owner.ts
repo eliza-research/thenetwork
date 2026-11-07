@@ -1,3 +1,4 @@
+import { proofWindowOk } from "./proof-window.js";
 import { parseNetworkRouteAuthorityV1, type NetworkRouteAuthorityV1 } from "./contract.js";
 
 export const PROFILE_REVIEW_OWNER_PATH = "/api/internal/network/profile-review-owner";
@@ -49,7 +50,6 @@ export function parseProfileReviewOwnerProof(value: unknown, request: ProfileRev
     || v.purpose !== "network-profile-review-owner-v1" || !digest(selectorSha256) || v.selectorSha256 !== selectorSha256
     || !uuid(v.userId) || !uuid(v.organizationId) || typeof v.chatId !== "string" || !/^personal:[0-9a-f-]{36}$/i.test(v.chatId)
     || !Number.isSafeInteger(now) || !Number.isSafeInteger(v.issuedAt) || !Number.isSafeInteger(v.expiresAt)
-    || (v.issuedAt as number) > now || (v.expiresAt as number) <= now || (v.expiresAt as number) <= (v.issuedAt as number)
-    || (v.expiresAt as number) - (v.issuedAt as number) > 30_000) return undefined;
+    || !proofWindowOk(v.issuedAt as number, v.expiresAt as number, now, 30_000)) return undefined;
   return value as ProfileReviewOwnerProof;
 }

@@ -7,6 +7,7 @@
 // groupings such as the rating quintile (to check that low-rated members are not starved of dates).
 // Iteration 3 showed a biased rater moves match QUALITY (second dates) before it moves volume
 // (dates), so the second-date ratio is the one to watch. Nothing here is member-facing.
+import { isAlert, quintileOf } from "../decisions.ts";
 
 export interface MemberOutcome {
   group: string;
@@ -46,7 +47,7 @@ export function biasMonitor(rows: Iterable<MemberOutcome>, o: { minN?: number; t
   for (const m of OUTCOME_METRICS) {
     const elig = Object.entries(groups).filter(([, g]) => g.n >= minN).sort((x, y) => x[1].ratio[m] - y[1].ratio[m]);
     min[m] = elig.length ? { group: elig[0]![0], ratio: elig[0]![1].ratio[m] } : { group: "-", ratio: 1 };
-    for (const [k, g] of elig) if (g.ratio[m] < threshold) alerts.push({ group: k, metric: m, ratio: g.ratio[m] });
+    for (const [k, g] of elig) if (isAlert(g.n, g.ratio[m], minN, threshold)) alerts.push({ group: k, metric: m, ratio: g.ratio[m] });
   }
   return { overall, groups, min, alerts };
 }
@@ -54,5 +55,5 @@ export function biasMonitor(rows: Iterable<MemberOutcome>, o: { minN?: number; t
 /** Quintile of the overall rating (1 = lowest), for the internal "are low-rated members starved?" check. */
 export function ratingQuintiles(overall: ReadonlyMap<string, number>): Map<string, string> {
   const xs = [...overall.entries()].sort((a, b) => a[1] - b[1] || (a[0] < b[0] ? -1 : 1));
-  return new Map(xs.map(([id], i) => [id, `q${1 + Math.floor((5 * i) / Math.max(1, xs.length))}`]));
+  return new Map(xs.map(([id], i) => [id, `q${quintileOf(i, xs.length)}`]));
 }

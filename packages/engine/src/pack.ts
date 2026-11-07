@@ -219,8 +219,10 @@ export interface SelectionPolicy {
   /**
    * Optional global assignment that replaces the core greedy selection (slopPack: stable matching per
    * tick, or a pack greedy with inbound caps). It receives the scored configurations after every
-   * hard filter and must only choose among `eligible` ones; the core minors guard still runs on its
-   * output (engine.ts). Absent for networkPack, so the core greedy (and its bytes) are unchanged.
+   * hard filter and must only choose among `eligible` ones; the core guard still runs on its output
+   * (selectionGuard.ts: minors in any role, repeated pairs, members in an open opportunity or held
+   * for an ask), but the pack owns its budgets and city caps. Absent for networkPack, so the core
+   * greedy (and its bytes) are unchanged.
    */
   assign?(w: World, scored: readonly Scored[], ctx: AssignContext): SelectionResult;
   /** Ask-before-proposing questions by reason (policy.ts planAsks). */

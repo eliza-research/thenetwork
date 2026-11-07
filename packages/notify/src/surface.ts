@@ -3,6 +3,7 @@
 // a web page whether an app is installed, so we never guess silently: a surface whose links went
 // unused twice in a row drops out until the member uses it again.
 
+import { explicitRoute } from "./decide.ts";
 import { isAssistant, type Assistant, type Channel, type Surface } from "./types.ts";
 
 export interface SurfaceSignal {
@@ -54,14 +55,10 @@ export function resolveDelivery(prefs: SurfacePrefs, signals: SurfaceSignal[], n
 
   const explicit = prefs.explicit;
   if (explicit !== undefined) {
-    if (!isAssistant(explicit)) return { mode: "thread", reason: "explicit_thread" };
     const sig = bySurface.get(explicit);
-    if (sig?.active) {
-      // An explicit choice is honoured even after ignored links, but a dead link twice in a row falls back to the thread.
-      if (sig.ignoredStreak >= MAX_IGNORED_STREAK) return { mode: "thread", reason: "explicit_link_unused" };
-      return toAssistant(explicit, "explicit");
-    }
-    return { mode: "thread", reason: "explicit_not_connected" };
+    // An explicit choice is honoured even after ignored links, but a dead link twice in a row falls back to the thread.
+    const route = explicitRoute(isAssistant(explicit), sig?.active === true, sig?.ignoredStreak ?? 0, MAX_IGNORED_STREAK);
+    return route === "explicit" ? toAssistant(explicit as Assistant, route) : { mode: "thread", reason: route };
   }
 
   const channelSig = bySurface.get(prefs.channel);

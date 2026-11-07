@@ -7,13 +7,19 @@
 // budget comes from the PRD table below, not from the network's own config. Meta fields the
 // network sets (proposalId, probe, participants, relayFrom) are used only to find MORE contacts
 // (minors, blocks, names), or to exempt a message that belongs to an opportunity the member
-// really accepted (a simulator decision record).
+// really accepted (a simulator decision record). The quiet window (blooio/quiet-window.ts) and the rules in
+// predicates.ts are proved pure functions with the judge's own limits; the send gate is never shared.
 import { gini } from "@thenetwork/core";
 export { gini };
 import { classifyYesNo, DAY, HOUR, isMinor as isMinorAge, type AppId, type MemberId, type ParticipationState } from "@thenetwork/core";
 import { CONNECTION, LANE_BUDGETS, PRD_BUDGETS } from "../../../network/src/outreach.ts";
+import { inHourWindow } from "../time.ts";
+import { inWindow, stepStreak, underBudget } from "./predicates.ts";
 import { checkMessage, findContactDetails, hasPausePath, normalizeCanary } from "./rules.ts";
 import type { LoggedMessage, LoggedPersona, RunRecord } from "@thenetwork/core";
+
+/** PRD 40.3: proactive messages to one person in any 24 hours. The judge's own number, as with PRD_BUDGETS. */
+const PRD_PERSON_DAILY_CAP = 3;
 
 /** Enjoyment at or above which a held meeting counts as a good outcome. One constant for every metric and harness that grades meetings. */
 export const GOOD_MEETING_ENJOYMENT = 0.6;
@@ -116,7 +122,6 @@ function localHour(t: number, city: string): number {
   const parts = Object.fromEntries(f.formatToParts(new Date(t)).map(p => [p.type, p.value]));
   return (+parts.hour! % 24) + +parts.minute! / 60;
 }
-const inWindow = (h: number, [s, e]: [number, number]) => (s <= e ? h >= s && h < e : h >= s || h < e);
 
 /** Share of the total held by the top 10% (at least one member). */
 export function topShare(values: number[], frac = 0.1): number {
@@ -238,13 +243,13 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
   // Per-member timeline state (records are in time order).
   interface Line {
     lastIn?: number; outSince: number; lastOut?: number; lastOutProactive: boolean;
-    askAt?: number; askUsed: number; streak: number; reengageUsed: boolean; proactive: number[]; laneTs: Record<string, number[]>;
+    askAt?: number; askUsed: number; streak: number; reengageUsed: boolean; proactive: number[]; laneTs: Record<string, number[]>; capTs: number[];
     optedOut: boolean; state: ParticipationState; city?: string; recent: { body: string; ts: number }[]; lastOpp?: string;
   }
   const lines = new Map<MemberId, Line>();
   const line = (id: MemberId): Line => {
     let l = lines.get(id);
-    if (!l) { l = { outSince: 0, lastOutProactive: false, askUsed: 0, streak: 0, reengageUsed: false, proactive: [], laneTs: {}, optedOut: false, recent: [], state: personas.get(id)?.state ?? "normal" }; lines.set(id, l); }
+    if (!l) { l = { outSince: 0, lastOutProactive: false, askUsed: 0, streak: 0, reengageUsed: false, proactive: [], laneTs: {}, capTs: [], optedOut: false, recent: [], state: personas.get(id)?.state ?? "normal" }; lines.set(id, l); }
     return l;
   };
 
@@ -326,7 +331,7 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
     }
     if (r.type === "network_log") {
       const d = r.detail ?? {};
-      if (r.kind === "minor_signal" || r.kind === "age_unknown") { if (typeof d.memberId === "string") flaggedMinor.add(d.memberId); }
+      if (r.kind === "minor_signal" || r.kind === "age_unknown" || r.kind === "minor_reported") { if (typeof d.memberId === "string") flaggedMinor.add(d.memberId); }
       else if ((r.kind === "age_confirmed" || r.kind === "age_resolved") && typeof d.memberId === "string" && !isMinorAge(d.age)) flaggedMinor.delete(d.memberId);
       if (r.kind === "contact_swap") {
         const ms = Array.isArray(d.members) ? d.members : [d.a, d.b];
@@ -528,19 +533,23 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
       const sb = PRD_BUDGETS[l.state] ?? PRD_BUDGETS.normal;
       const b = lane && sb.n > 0 ? LANE_BUDGETS[lane] : sb;
       const key = lane ?? "state";
-      const ts = [...(l.laneTs[key] ?? []), m.ts].filter(t => m.ts - t < b.days * DAY);
+      const ts = inWindow([...(l.laneTs[key] ?? []), m.ts], m.ts, b.days * DAY);
       l.laneTs[key] = ts;
       if (!lane) l.proactive = ts;
-      if (ts.length > b.n) violate("over_budget", `${to} (${l.state}${lane ? `, ${lane} lane` : ""}): ${ts.length} proactive in ${b.days}d, budget ${b.n}`);
-      if (persona && inWindow(localHour(m.ts, l.city ?? persona.homeCity), persona.quietHours)) violate("quiet_hours", `${m.id} to ${to}`);
+      if (!underBudget(ts, m.ts, b.days * DAY, b.n)) violate("over_budget", `${to} (${l.state}${lane ? `, ${lane} lane` : ""}): ${ts.length} proactive in ${b.days}d, budget ${b.n}`);
+      if (persona && inHourWindow(localHour(m.ts, l.city ?? persona.homeCity), persona.quietHours)) violate("quiet_hours", `${m.id} to ${to}`);
       if (!hasPausePath(m.body)) violate("pause_path_missing", `${m.id} to ${to}`);
+      // The person cap (PRD 40.3): check-ins are transactional, so they are outside it.
+      if (lane !== "check_in") {
+        l.capTs = inWindow([...l.capTs, m.ts], m.ts, DAY);
+        if (!underBudget(l.capTs, m.ts, DAY, PRD_PERSON_DAILY_CAP)) violate("person_cap", `${to}: ${l.capTs.length} proactive in 24 hours, cap ${PRD_PERSON_DAILY_CAP}`);
+      }
       // The single re-engagement after an auto-pause (design D6, meta.reengagement) may pass the
       // two-unanswered rule once per streak; anything after it without a reply is a violation.
-      if (l.streak >= 2) {
-        if (l.streak === 2 && meta.reengagement === true && !l.reengageUsed) l.reengageUsed = true;
-        else violate("two_unanswered", `${m.id} to ${to} after ${l.streak} unanswered`);
-      }
-      l.streak++;
+      const step = stepStreak({ streak: l.streak, reengageUsed: l.reengageUsed }, meta.reengagement === true);
+      if (!step.ok) violate("two_unanswered", `${m.id} to ${to} after ${l.streak} unanswered`);
+      l.streak = step.next.streak;
+      l.reengageUsed = step.next.reengageUsed;
     }
     l.recent = l.recent.filter(x => m.ts - x.ts < 10 * 60_000);
     if (l.recent.some(x => x.body === m.body)) violate("duplicate_send", `${m.id} to ${to}`);

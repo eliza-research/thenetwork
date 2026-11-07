@@ -1,3 +1,4 @@
+import { proofWindowOk } from "./proof-window.js";
 /** Owner intake withdrawal is distinct from provider OAuth revocation. */
 export const PROFILE_REVIEW_WITHDRAWAL_PATH = "/internal/profile-suggestions/withdrawal";
 export const PROFILE_REVIEW_WITHDRAWAL_PROOF_PATH = "/api/internal/network/profile-review-withdrawal";
@@ -43,8 +44,7 @@ export function parseProfileReviewWithdrawalProof(value: unknown, request: Profi
     || !uuid(v.userId) || !uuid(v.organizationId) || typeof v.chatId !== "string" || !v.chatId.startsWith("personal:") || !uuid(v.chatId.slice(9))
     || !Number.isSafeInteger(now) || !Number.isSafeInteger(v.cutoffAt) || !Number.isSafeInteger(v.issuedAt) || !Number.isSafeInteger(v.expiresAt)
     || (v.cutoffAt as number) < 0 || (v.cutoffAt as number) > (v.issuedAt as number)
-    || (v.issuedAt as number) > now || (v.expiresAt as number) <= now || (v.expiresAt as number) <= (v.issuedAt as number)
-    || (v.expiresAt as number) - (v.issuedAt as number) > 30_000
+    || !proofWindowOk(v.issuedAt as number, v.expiresAt as number, now, 30_000)
     || !["blooio", "twilio"].includes(String(v.channel))
     || typeof v.messageId !== "string" || !/^[A-Za-z0-9_:.-]{1,200}$/u.test(v.messageId) || !digest(v.commandSha256)) return;
   return value as ProfileReviewWithdrawalProof;

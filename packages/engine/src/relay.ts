@@ -32,6 +32,7 @@
 // Deterministic and offline: no clock reads (the caller passes `now`), no randomness, no model call
 // unless the caller passes a hook. Network code, so it never reads hidden persona truth.
 import { canBeMatched, labelHash, LeakGuard, textVariants, type MemberId, type Owned } from "@thenetwork/core";
+import { consentReason, decisionOf, partyReasons, reasonFamily, withHookReasons, type PartyFacts } from "./relayCore.ts";
 
 export const RELAY_POLICY_VERSION = "relay-1.0.0";
 
@@ -173,7 +174,7 @@ export const RELAY_REASON_FAMILIES = {
   block: ["state", "party", "minor", "optout", "consent", "photo", "contact_share", "canary", "harass_severe", "format", "llm_severe", "clef_severe"],
   hold: ["safety", "leak", "contact", "rating", "scam", "offplatform", "fishing", "injection", "harass", "rate", "text", "llm", "clef"],
 } as const;
-const BLOCK_PREFIX = new Set<string>(RELAY_REASON_FAMILIES.block);
+const BLOCK_FAMILIES: string[] = [...RELAY_REASON_FAMILIES.block];
 
 // ------------------------------------------------------------------------------------------ rules
 // Rules-first classifier. Patterns run on core textVariants (lowercase, NFKC, homoglyphs mapped,
@@ -303,26 +304,13 @@ export function relayItem(item: RelayItem, ctx: RelayContext): RelayResult {
   const { opportunity: op, sender: s, recipient: r } = ctx;
   let ageSignal = false;
 
-  // 1. parties
-  if (s.id !== item.from || r.id !== item.to || item.from === item.to || !op.participants.includes(item.from) || !op.participants.includes(item.to)) reasons.add("party:not_participant");
-  if (!canBeMatched(s.age) || !canBeMatched(r.age)) reasons.add("minor:party");
-  if (ctx.blocked) reasons.add("party:blocked");
-  if (r.optedOut) reasons.add("optout:recipient");
-  if (s.optedOut) reasons.add("optout:sender");
-  if (s.held) reasons.add("safety:sender_held");
-  if (r.held) reasons.add("safety:recipient_held");
-  // 2. state
-  if (op.status !== "mutual") reasons.add(`state:${op.status}`);
-  else if (!op.participants.every(p => op.acceptedBy.includes(p))) reasons.add("state:not_mutual");
+  // 1-2. parties and state (relayCore.ts, proved)
+  const facts = (p: RelayParty): PartyFacts => ({ id: p.id, matchable: canBeMatched(p.age), optedOut: !!p.optedOut, held: !!p.held });
+  const opFacts = { participants: [...op.participants], acceptedBy: [...op.acceptedBy], status: op.status };
+  for (const code of partyReasons(item, opFacts, facts(s), facts(r), !!ctx.blocked)) reasons.add(code);
 
   // 3. consent and the item itself
-  const freshConsent = (kind: RelayConsent["kind"]) => {
-    const c = item.consent;
-    if (!c) return "consent:missing";
-    if (c.kind !== kind || c.by !== item.from || c.itemId !== item.id) return "consent:mismatch";
-    if (c.at > item.at || item.at - c.at > L.consentTtlMs) return "consent:stale";
-    return null;
-  };
+  const freshConsent = (kind: RelayConsent["kind"]) => consentReason(item, item.consent, kind, L.consentTtlMs);
   const text = (item.text ?? "").trim();
   let contactValue: string | null = null;
   let photos: string[] = [];
@@ -380,8 +368,7 @@ export function relayItem(item: RelayItem, ctx: RelayContext): RelayResult {
 }
 
 function finish(item: RelayItem, ctx: RelayContext, reasons: string[], x: { contactValue: string | null; photos: string[]; text: string; ageSignal: boolean }): RelayResult {
-  const fam = (r: string) => r.split(":")[0]!;
-  const decision: RelayDecision = reasons.some(r => BLOCK_PREFIX.has(fam(r))) ? "block" : reasons.length ? "hold" : "pass";
+  const decision: RelayDecision = decisionOf(reasons, BLOCK_FAMILIES);
   const name = cleanName(ctx.sender.firstName);
   let rendered = "";
   if (decision === "pass") {
@@ -394,10 +381,10 @@ function finish(item: RelayItem, ctx: RelayContext, reasons: string[], x: { cont
     decision, reasons, photoCount: decision === "pass" ? x.photos.length : 0, contactShared: decision === "pass" && item.kind === "contact_share",
     ageSignal: x.ageSignal, policy: RELAY_POLICY_VERSION,
   };
-  const has = (f: string) => reasons.some(r => fam(r) === f);
+  const has = (f: string) => reasons.some(r => reasonFamily(r) === f);
   const senderNotice = decision === "pass" ? NOTICE.pass!
     : decision === "block" ? (has("consent") ? NOTICE.consent! : NOTICE.block!)
-    : has("rating") ? NOTICE.rating! : has("contact") || has("fishing") ? NOTICE.contact! : reasons.every(r => fam(r) === "rate") ? NOTICE.rate! : NOTICE.hold!;
+    : has("rating") ? NOTICE.rating! : has("contact") || has("fishing") ? NOTICE.contact! : reasons.every(r => reasonFamily(r) === "rate") ? NOTICE.rate! : NOTICE.hold!;
   return { decision, reasons, rendered, photos: decision === "pass" ? x.photos : [], record, senderNotice };
 }
 
@@ -441,7 +428,7 @@ export async function relayItemAsync(item: RelayItem, ctx: RelayContext, o: { ho
     ...(out?.block ?? []).map(f => `${src}_severe:${flagCode(f)}`),
   ])];
   if (!extra.length) return first;
-  return finish(item, ctx, [...new Set([...first.reasons, ...extra])].sort(), { contactValue: null, photos: [], text, ageSignal: first.record.ageSignal });
+  return finish(item, ctx, withHookReasons(first.reasons, extra, BLOCK_FAMILIES).sort(), { contactValue: null, photos: [], text, ageSignal: first.record.ageSignal || extra.includes("clef:minor_signal") });
 }
 
 // --------------------------------------------------------------------------- member requests

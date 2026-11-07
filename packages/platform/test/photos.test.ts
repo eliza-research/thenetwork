@@ -98,6 +98,21 @@ describe("metadata strip: an allowlist", () => {
     const at = Buffer.from(a).indexOf(Buffer.from("ANMF"));
     expect(a[at + 4]! | (a[at + 5]! << 8)).toBe(16 + rchunk("VP8 ", enc("FRAME1")).length);
   });
+  test("a WebP chunk length with the top bit set is a bad image, and the strip ends", async () => {
+    // A hang here is synchronous, so a test timeout cannot end it: each file runs in a process of its own with a limit.
+    const lengths = [[0xf8, 0xff, 0xff, 0xff], [0xff, 0xff, 0xff, 0xff], [0x00, 0x00, 0x00, 0x80]];
+    const files = lengths.flatMap(l => ["XXXX", "VP8 "].map(t => [...cat(enc("RIFF"), [0, 0, 0, 0], enc("WEBP"), enc(t), l)]));
+    const inner = [...cat(enc("RIFF"), [0, 0, 0, 0], enc("WEBP"), enc("ANMF"), [28, 0, 0, 0], new Uint8Array(16), enc("VP8 "), [0xf8, 0xff, 0xff, 0xff], [0, 0, 0, 0])];
+    const code = `import { stripMetadata } from ${JSON.stringify(join(import.meta.dir, "../src/photos.ts"))};
+      for (const f of ${JSON.stringify([...files, inner])}) {
+        try { stripMetadata(Uint8Array.from(f), "image/webp"); console.log("stripped"); } catch (e) { console.log(e.constructor.name); }
+      }`;
+    const p = Bun.spawn([process.execPath, "--conditions", "eliza-source", "-e", code], { stdout: "pipe", stderr: "pipe", timeout: 15_000 });
+    const out = await new Response(p.stdout).text();
+    expect(await p.exited).toBe(0);
+    expect(out.trim().split("\n")).toEqual(Array(files.length + 1).fill("BadImage"));
+  }, 30_000);
+
   test("the type comes from the bytes; a text file named .jpg, or a broken JPEG, is refused", () => {
     expect(sniffType(jpeg())).toBe("image/jpeg");
     expect(sniffType(png())).toBe("image/png");
