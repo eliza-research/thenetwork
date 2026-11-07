@@ -19,6 +19,7 @@ const REVIEWER = "rev@example.org";
 describe.skipIf(!pgAvailable)("real mode: staff actions through the Network service", () => {
   let url: string;
   let svc: NetworkService;
+  let clock: SimClock;
   let http: ReturnType<typeof Bun.serve>;
   let real: RealSource;
   const seen: { path: string; staff: string | null; body: unknown }[] = [];
@@ -28,12 +29,13 @@ describe.skipIf(!pgAvailable)("real mode: staff actions through the Network serv
     const g = new GameSource({ pushMs: 3_600_000, tickMs: 3_600_000, seed: 1, review: "human", scenario: "spam_wave" });
     await g.init();
     await g.control({ type: "step", ms: 2 * DAY });
+    clock = new SimClock(g.world.clock.now());
     const sql = new SQL(url);
     await writeRows(sql, rowsFromGame(g), { truncate: true });
     await sql.close();
     await g.dispose();
     // The console's own token: only it may name the reviewer of record (X-Network-Staff-Id).
-    svc = new NetworkService({ url, clock: new SimClock(Date.now()), tokens: `admin:${SERVICE_TOKEN}`, consoleToken: SERVICE_TOKEN, log: () => {} });
+    svc = new NetworkService({ url, clock, tokens: `admin:${SERVICE_TOKEN}`, consoleToken: SERVICE_TOKEN, log: () => {} });
     http = Bun.serve({
       port: 0, hostname: "127.0.0.1",
       async fetch(req) {
@@ -93,11 +95,14 @@ describe.skipIf(!pgAvailable)("real mode: staff actions through the Network serv
     expect(seen.filter(x => x.path === "/matching").map(x => [x.staff, x.body])).toEqual([["admin@example.org", { on: false }]]);
     // Matching off: an approval is refused with the Network's reason.
     const item = real.state().opportunities.find(o => o.state === "IN_REVIEW");
-    if (item) expect(await real.control({ type: "review", oppId: item.id, decision: "approve" }, "rev@example.org")).toMatchObject({ ok: false, code: "matching_paused" });
+    expect(item).toBeDefined();
+    expect(await real.control({ type: "review", oppId: item!.id, decision: "approve" }, "rev@example.org")).toMatchObject({ ok: false, code: "matching_paused" });
   }, T);
 
   test("health: the service's state is in the alerts strip; a service that does not answer is a bad alert and actions refuse", async () => {
     const keys = () => (real.state().stats.alerts ?? []).map(a => `${a.level}:${a.key}`);
+    // The real console compares the last tick with wall time.
+    clock.set(Math.max(clock.now(), Date.now()));
     await svc.tick();
     await real.control({ type: "refresh" });
     expect(keys()).toContain("info:service_ok");

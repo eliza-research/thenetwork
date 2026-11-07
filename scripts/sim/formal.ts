@@ -42,7 +42,17 @@ export function trustCounts(files: string[]): Record<string, number> {
     if (existsSync(proof)) {
       const dfy = readFileSync(proof, "utf8");
       counts.assume += (dfy.match(/^\s*assume\b/gm) ?? []).length;
-      counts.axiom += (dfy.match(/\{:axiom\}/g) ?? []).length;
+      // Dafny generates an axiom for each LemmaScript extern. Count it once,
+      // under extern, only when the declaration matches the generated proof.
+      const externs = new Set(Array.from(text.matchAll(/\/\/@ extern[^\S\r\n]*\r?\n\s*(?:export\s+)?function\s+(\w+)/g), match => match[1]));
+      const generated = existsSync(`${proof}.gen`) ? readFileSync(`${proof}.gen`, "utf8") : "";
+      const externAxioms = new Set(generated.split("\n").map(line => line.trim()).filter(line => {
+        const name = /^function \{:axiom\} (\w+)\(/.exec(line)?.[1];
+        return name !== undefined && externs.has(name);
+      }));
+      for (const line of dfy.split("\n")) {
+        if (!externAxioms.delete(line.trim())) counts.axiom += (line.match(/\{:axiom\}/g) ?? []).length;
+      }
     }
   }
   return counts;

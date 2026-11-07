@@ -270,6 +270,7 @@ describe("production host map", () => {
 test("phone form blocks native GET during mode discovery, then restores OTP/fallback and Cloud handlers", async () => {
   const { mountAuth } = await import("../../../sites/shared/auth.ts");
   const { api } = await import("../../../sites/shared/api.ts");
+  const { flowNext, initialFlow, NO_FIELDS } = await import("../../../sites/shared/join-core.ts");
   const saved = {authMode: api.authMode, otpStart: api.otpStart, cloudAuthStart: api.cloudAuthStart};
   const documentDescriptor = Object.getOwnPropertyDescriptor(globalThis, "document");
   const locationDescriptor = Object.getOwnPropertyDescriptor(globalThis, "location");
@@ -298,7 +299,12 @@ test("phone form blocks native GET during mode discovery, then restores OTP/fall
       api.authMode = () => new Promise(resolve => {resolveMode = resolve;});
       api.otpStart = async e164 => {expect(e164).toBe("+12125550101"); otpCalls++; return {ok: true, data: {ok: true}};};
       api.cloudAuthStart = async path => {expect(path).toBe("/join"); cloudCalls++; return {ok: true, data: {url: "https://cloud-staging.eliza.app/network/sign-in"}};};
-      mountAuth(root as unknown as HTMLElement, () => {});
+      let flow = flowNext(initialFlow(NO_FIELDS), { tag: "loaded", signedInAs: "", canJoin: false, member: false, inviteOnly: false, notice: "" });
+      mountAuth(root as unknown as HTMLElement, {
+        current: () => flow,
+        dispatch: event => flow = flowNext(flow, event),
+        onSignedIn: () => {},
+      });
       const earlyEnter = new Event("submit", {cancelable: true});
       expect(phone.dispatchEvent(earlyEnter)).toBe(false);
       expect(earlyEnter.defaultPrevented).toBe(true);
@@ -322,7 +328,7 @@ test("phone form blocks native GET during mode discovery, then restores OTP/fall
       expect(otpCalls).toBe(mode === "cloud" ? 0 : 1);
       expect(cloudCalls).toBe(mode === "cloud" ? 1 : 0);
       if (mode === "cloud") expect(destination).toBe("https://cloud-staging.eliza.app/network/sign-in");
-      else expect(root.dataset.current).toBe("code");
+      else expect(flow).toMatchObject({ step: "code", phone: "+12125550101", shown: "+12125550101" });
     }
   } finally {
     Object.assign(api, saved);
