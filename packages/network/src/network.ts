@@ -427,7 +427,7 @@ interface SendOpts {
 type SendHook =
   | { t: "interview" } | { t: "age" } | { t: "suggested"; venues: string[] } | { t: "retry_found"; oppId: string }
   | { t: "probe"; oppId: string; id: MemberId } | { t: "reveal"; oppId: string; id: MemberId } | { t: "times"; oppId: string; id: MemberId }
-  | { t: "drop_notice"; oppId: string } | { t: "feedback"; oppId: string }
+  | { t: "drop_notice"; oppId: string; keep?: boolean } | { t: "feedback"; oppId: string }
   | { t: "growth"; kind: string } | { t: "reengage" } | { t: "ask"; reason: AskRecord["reason"]; also?: string[]; follow?: boolean } | { t: "checkin" }
   | { t: "plan_probe"; oppId: string; id: MemberId } | { t: "crew_offer"; crewId: string };
 interface HookFns { valid?: () => boolean; onSent?: () => void; onRefused?: () => void }
@@ -2444,18 +2444,24 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.ctx.recordMeeting({ proposalId: o.id, participants: [...o.participants], at: o.meetingAt, city: "nyc", kind: o.kind });
     for (const id of [...o.participants]) {
       if (o.stage !== "scheduled" || o.status.get(id) !== "yes") continue;
-      const m = this.member(id);
-      const others = o.participants.filter(x => x !== id).map(x => this.member(x).display);
-      const why = capitalize(o.explanations[id] ?? GOOD_FIT);
-      const where = `${o.venue} (${o.venueArea})`, when = whenPhrase(o.meetingAt);
-      // The calendar and weekly check-in offer rides once, in the member's first booked plan (decision 4c, 4d).
-      const offer = !m.offerMade && !m.minor;
-      const text = this.opts.hooks?.booked?.(this.hookOpp(o), id, { others, where, when }) ?? copy.booked(others, why, where, when, offer);
-      this.send(m, text, {
-        type: "proposal", proposalId: o.id, participants: [...o.participants], meetingAt: o.meetingAt,
-        booked: { proposalId: o.id, at: o.meetingAt, optOutHours: OPT_OUT_HOURS }, proactive: !this.opts.probes && !o.primed.has(id),
-      }, "reveal", { about: o.participants, fallback: copy.booked(others, capitalize(GOOD_FIT), where, when, offer), hook: { t: "reveal", oppId: o.id, id } });
+      this.dateReveal(o, id);
     }
+  }
+
+  /** The booked date as one member hears it: the people still going, the place and the time. */
+  private dateReveal(o: Opp, id: MemberId) {
+    const m = this.member(id);
+    const going = o.participants.filter(p => o.status.get(p) === "yes");
+    const others = going.filter(x => x !== id).map(x => this.member(x).display);
+    const why = capitalize(o.explanations[id] ?? GOOD_FIT);
+    const where = `${o.venue} (${o.venueArea})`, when = whenPhrase(o.meetingAt!);
+    // The calendar and weekly check-in offer rides once, in the member's first booked plan (decision 4c, 4d).
+    const offer = !m.offerMade && !m.minor;
+    const text = this.opts.hooks?.booked?.(this.hookOpp(o), id, { others, where, when }) ?? copy.booked(others, why, where, when, offer);
+    this.send(m, text, {
+      type: "proposal", proposalId: o.id, participants: [...going], meetingAt: o.meetingAt,
+      booked: { proposalId: o.id, at: o.meetingAt!, optOutHours: OPT_OUT_HOURS }, proactive: !this.opts.probes && !o.primed.has(id),
+    }, "reveal", { about: going, fallback: copy.booked(others, capitalize(GOOD_FIT), where, when, offer), hook: { t: "reveal", oppId: o.id, id } });
   }
 
   /**
@@ -2514,7 +2520,15 @@ export class ConsentNetwork implements NetworkUnderTest {
     const keep = o.participants.length > 2 && still.length >= 2;
     // Only members who were told about the plan hear that it changed.
     for (const id of still) if (o.bookedTold?.includes(id)) this.send(this.member(id), copy.dropNotice(m.first, keep), { type: "cancellation", proposalId: o.id }, "cancellation",
-      { hook: { t: "drop_notice", oppId: o.id } });
+      { hook: { t: "drop_notice", oppId: o.id, keep } });
+    if (keep) {
+      // A reveal still held for quiet hours names everyone who was going when it was written: write it again.
+      const held = this.deferred.filter(d => d.o.hook?.t === "reveal" && d.o.hook.oppId === o.id && d.memberId !== m.id);
+      if (held.length) {
+        this.deferred = this.deferred.filter(d => !held.includes(d));
+        for (const d of held) if (o.status.get(d.memberId) === "yes") o.plan ? this.planReveal(o, d.memberId) : this.dateReveal(o, d.memberId);
+      }
+    }
     if (!keep) { this.expireReveals(o); o.closedFrom = o.stage; o.closedReason = "participant dropped"; o.stage = "closed"; this.ctx.log("opportunity_closed", { proposalId: o.id, reason: "participant dropped" }); }
   }
 
@@ -4102,7 +4116,8 @@ export class ConsentNetwork implements NetworkUnderTest {
         valid: () => this.crewOffers.some(c => c.crew.id === h.crewId && !c.resolved),
         onSent: () => this.expect(m, { kind: "crew", crewId: h.crewId, at: now() }),
       };
-      case "drop_notice": return { valid: () => !!o && now() < (o.meetingAt ?? Infinity) };
+      // "Still on" holds only while the plan does; either notice only for someone still going.
+      case "drop_notice": return { valid: () => !!o && now() < (o.meetingAt ?? Infinity) && o.status.get(m.id) === "yes" && (!h.keep || o.stage === "scheduled") };
       case "feedback": return { onSent: () => { if (o) this.expect(m, { kind: "feedback", oppId: o.id, at: now() }); } };
       case "growth": return { onSent: () => { this.expect(m, { kind: "growth", at: now() }); this.counters.growthAsks++; this.ctx.log("growth_ask", { memberId: m.id, kind: h.kind }); } };
       case "reengage": return { onSent: () => { this.counters.reengagements++; this.ctx.log("reengagement", { memberId: m.id }); } };
