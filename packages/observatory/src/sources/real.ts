@@ -287,7 +287,7 @@ export class RealSource implements DataSource {
             count(*) filter (where p.status = any(${`{${SAID_YES.join(",")}}`}::text[]))::int as accepted,
             count(*) filter (where p.status = 'attended')::int as meetings,
             coalesce(sum(p.enjoyment) filter (where p.status = 'attended' and o.state = any(${`{${HELD.join(",")}}`}::text[])), 0)::float8 as enjoyment_sum,
-            count(*) filter (where p.status = 'attended' and o.state = any(${`{${HELD.join(",")}}`}::text[]))::int as enjoyment_n
+            count(p.enjoyment) filter (where p.status = 'attended' and o.state = any(${`{${HELD.join(",")}}`}::text[]))::int as enjoyment_n
           from network.participations p join network.opportunities o on o.app_id = p.app_id and o.id = p.opportunity_id
           where p.app_id = ${app} and p.role = 'participant' group by p.member_id`,
       sql`select from_id, to_id, type, strength::text::float8 as strength, explicit, created_at from network.edges where app_id = ${app}`,
