@@ -317,6 +317,8 @@ interface MemberState {
 
 /** The PRD 32.9 reply window: a send this soon after the member's own message (at most 3 of them) is a reply. */
 const REPLY_WINDOW_MS = 15 * MINUTE;
+/** Words in a booking's objective or place that say nothing about which booking it is. */
+const BOOKING_FILLER = new Set(["about", "with", "from", "into", "plan", "some", "someone", "people", "your", "their"]);
 const REPLY_BURST = 3;
 /** A member's own ask may get up to 2 follow-ups within 48 hours (requestAck, "found someone", "none yet"). */
 const ASK_FOLLOWUPS = 2;
@@ -781,7 +783,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       // The booked plan: silence is a yes; "can't" or "no" cancels it (the other member is told, without the reason).
       const o = this.opps.get(aw.oppId!);
       const yn = this.yesNoOf(body);
-      if (o && o.stage === "scheduled" && o.status.get(m.id) === "yes" && (c.kind === "cancel" || yn === "no")) { m.awaiting = undefined; return this.handleDrop(m, o); }
+      if (o && o.stage === "scheduled" && o.status.get(m.id) === "yes" && (c.kind === "cancel" || yn === "no")) { m.awaiting = undefined; return this.handleDrop(m, this.bookingToCancel(m, body, o)!); }
       if (yn === "yes" || c.kind === "ack") { m.awaiting = undefined; if (o && o.stage === "scheduled") this.confirmPlan(o, m.id, true); this.ack(m, copy.bookedThanks); return; }
     }
     if (aw?.kind === "checkin") {
@@ -797,7 +799,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       }
     }
     if (c.kind === "cancel") {
-      const o = [...this.opps.values()].find(o => o.stage === "scheduled" && o.status.get(m.id) === "yes");
+      const o = this.bookingToCancel(m, body);
       if (o) return this.handleDrop(m, o);
     }
     const isRequest = c.kind === "people_request" || c.kind === "plans_request";
@@ -3153,6 +3155,31 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /** Does the text name this member (full name, "First L." or first name, whole words)? */
+  /**
+   * The booked plan a cancel is about when the member holds more than one: the one the text names
+   * (its day, place, activity or another person going), else `preferred` (the plan being asked
+   * about), else the soonest. A word that fits more than one booking names none of them.
+   */
+  private bookingToCancel(m: MemberState, text: string, preferred?: Opp): Opp | undefined {
+    const booked = [...this.opps.values()].filter(o => o.stage === "scheduled" && o.status.get(m.id) === "yes");
+    if (booked.length <= 1) return booked[0];
+    const said = new Set(text.toLowerCase().split(/[^\p{L}\p{N}]+/u));
+    const words = (o: Opp) => {
+      const w = new Set<string>();
+      const add = (s?: string) => { for (const x of (s ?? "").toLowerCase().split(/[^\p{L}\p{N}]+/u)) if (x.length >= 4 && !BOOKING_FILLER.has(x)) w.add(x); };
+      if (o.meetingAt !== undefined) add(whenPhrase(o.meetingAt).split(" ")[0]);
+      add(o.venue); add(o.venueArea); add(o.objective);
+      if (o.plan) add(plans.activityById.get(o.plan.activityId)?.label);
+      for (const p of o.participants) if (p !== m.id) add(this.members.get(p)?.first);
+      return w;
+    };
+    const all = booked.map(words);
+    const named = booked.filter((_, i) => [...all[i]!].some(x => said.has(x) && all.every((other, j) => j === i || !other.has(x))));
+    if (named.length === 1) return named[0];
+    if (preferred && booked.includes(preferred)) return preferred;
+    return booked.reduce((a, b) => (b.meetingAt ?? Infinity) < (a.meetingAt ?? Infinity) ? b : a);
+  }
+
   private namedIn(text: string, id: MemberId): boolean {
     const t = ` ${text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ")} `;
     const x = this.members.get(id);
