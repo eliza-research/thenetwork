@@ -500,13 +500,16 @@ export function buildPlanProbe(w: World, plan: Plan, recipient: MemberId, tz: st
     if (plan.partner) return `Up for ${a.label} with someone${i}, ${when} at ${plan.place.name}${near}? ${cost} I'll only share who it is if you both say yes.`;
     return `${when}: ${a.label} at ${plan.place.name}${near} with ${others.length} others${i}. ${cost} Want in? I'll share who's coming once enough people say yes.`;
   };
-  const names = new Set(others.flatMap(id => tokenize(w.get(id)!.m.name).map(t => t.toLowerCase())));
   // The plan's own public content (taxonomy activity label and tags, the public place) is what the
   // probe is about, not a fact about any member, so its words are not private vocabulary here. Any
   // other private word of the others (canaries, agent_private values, matchable facets) still blocks.
   // The fixed copy (PLAN_COPY_PUBLIC) and the time phrase are the Network's own words, also allowed.
   const own = new Set([...tokenize(`${a.label} ${a.tags.join(" ")} ${plan.place.name} ${plan.place.area ?? ""} ${when}`).map(t => t.toLowerCase()), ...PLAN_COPY_PUBLIC]);
   const vocab = new Set([...privateVocabulary(w, others)].filter(t => !own.has(t.toLowerCase())));
+  // Name tokens block too, except a word of that public content: "Park" in "Prospect Park" is the
+  // place, not Dee Park. Without this, one invitee named Park, Maria or Bryant dropped every other
+  // invitee's probe at most venues and the plan could never fill.
+  const names = new Set(others.flatMap(id => tokenize(w.get(id)!.m.name).map(t => t.toLowerCase())).filter(t => !own.has(t)));
   for (const [i, ar] of [[true, true], [false, true], [false, false]] as const) {
     if (i && !into) continue;
     const text = frame(i, ar);
