@@ -145,7 +145,11 @@ export function scorecard(x: ScoreInput): ScoreMetric[] {
   }
 
   // Completion: held meetings over mutually accepted opportunities whose meeting time has passed.
-  const agreed = opps.filter(o => AGREED.has(o.state) && !(o.state === "SCHEDULED" && (o.meetingAt ?? 0) > x.now) && o.state !== "MUTUALLY_ACCEPTED" && o.state !== "QUORUM_MET");
+  const agreed = opps.filter(o => {
+    // Cancelling a booking does not erase its earlier agreement; wait until its meeting time is due.
+    if (o.state === "CANCELLED") return o.meetingAt !== undefined && o.meetingAt <= x.now;
+    return AGREED.has(o.state) && !(o.state === "SCHEDULED" && (o.meetingAt ?? 0) > x.now) && o.state !== "MUTUALLY_ACCEPTED" && o.state !== "QUORUM_MET";
+  });
   const held = opps.filter(o => HELD.has(o.state));
 
   // Repeat edges: pairs whose first held meeting was positive for both, who met again within 60 days.
