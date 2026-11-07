@@ -1064,4 +1064,3 @@ These are ordered by the rule they touch. Each one is suspected, not confirmed.
 - Is one replica a firm rule, or must models use two?
 - Which rule wins between the SKILL flow and the MCP contract on phone and code (SD-058)?
 - Is peon and friends matching local only on the service (SD-088)?
-

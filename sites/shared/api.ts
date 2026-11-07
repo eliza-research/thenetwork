@@ -1,5 +1,6 @@
 // Same-origin client for the shared platform API (PUBLIC API CONTRACT in sites/README.md).
 // Every site calls only /api/* on its own origin. The server picks the app from the Host.
+import { phoneE164 } from "../../packages/core/src/phone-core.ts";
 
 /**
  * Every error the pages can show. The platform's codes (packages/platform/src/api.ts) map onto these
@@ -55,6 +56,7 @@ export const PLATFORM_ERRORS: Record<string, ApiError> = {
   unknown_app: "unknown",
   method: "unknown",
   not_found: "unknown",
+  not_member: "unknown",
   api_unreachable: "api_unreachable",
   // A member's own number change (/api/me/phone/start and /confirm).
   same_number: "same_number",
@@ -136,7 +138,8 @@ export async function call<T>(method: "GET" | "POST", path: string, body?: unkno
   if (res.ok) return isObject ? { ok: true, data: json as T } : { ok: false, error: "api_unreachable", status: res.status };
   if (res.status === 401) return { ok: false, error: "unauthorized", status: 401 };
   if (res.status === 429) return { ok: false, error: "rate_limited", status: 429 };
-  const named = isObject && typeof json.error === "string" ? PLATFORM_ERRORS[json.error as string] : undefined;
+  // Object.hasOwn: a code such as "constructor" must not find a key of Object.prototype.
+  const named = isObject && typeof json.error === "string" && Object.hasOwn(PLATFORM_ERRORS, json.error) ? PLATFORM_ERRORS[json.error as string] : undefined;
   if (named) return { ok: false, error: named, status: res.status };
   // No JSON body: the edge or the dev proxy answered, so the API is not there.
   if (!isObject) return { ok: false, error: "api_unreachable", status: res.status };
@@ -163,15 +166,8 @@ export const api = {
   demo: () => call<unknown>("GET", "/api/demo"),
 };
 
-/** Normalizes a US number to E.164 (+1XXXXXXXXXX). Returns null for anything else. */
-export function toE164(input: string): string | null {
-  const digits = input.replace(/\D/g, "");
-  const national = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
-  if (national.length !== 10) return null;
-  // NANP: area code and exchange cannot start with 0 or 1.
-  if (/^[01]/.test(national) || /^[01]/.test(national.slice(3))) return null;
-  return `+1${national}`;
-}
+/** Normalizes a US number to E.164 (+1XXXXXXXXXX), by the server's own rule. Returns null for anything else. */
+export const toE164: (input: string) => string | null = phoneE164;
 
 export const MESSAGES: Record<ApiError, string> = {
   cloud_auth_unavailable: "Phone sign-in is unavailable right now. Please try again in a minute.",

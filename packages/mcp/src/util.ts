@@ -25,7 +25,7 @@ export function json(status: number, body: unknown, headers: Record<string, stri
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8", ...NO_STORE, ...headers } });
 }
 
-export const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+export { esc } from "./html-core.ts";
 
 /** A form body (application/x-www-form-urlencoded), at most 16 KiB. Undefined when it is not one. */
 export async function readForm(req: Request): Promise<URLSearchParams | undefined> {

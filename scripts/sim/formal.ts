@@ -10,7 +10,7 @@ import { dirname, join, relative } from "node:path";
 import { type Block, expect } from "./gate.ts";
 
 const ROOT = join(import.meta.dir, "..", "..");
-const SCAN = ["packages", "deploy", "scripts", "sites", "tests"];
+const SCAN = ["packages", "deploy", "scripts", "sites", "tests", "tools"];
 const LSC = join(ROOT, "node_modules", ".bin", "lsc");
 const CHECK_TIMEOUT_MS = 600_000;
 
@@ -91,7 +91,8 @@ export async function formalBlock(b: Block): Promise<void> {
 function resolvesTo(from: string, text: string, target: string): boolean {
   for (const m of text.matchAll(/(?:from\s+|import\()"(\.[^"]+)"/g)) {
     const p = join(dirname(from), m[1]!);
-    if (p === target || `${p}.ts` === target) return true;
+    const tsPath = p.endsWith(".js") ? p.replace(/\.js$/, ".ts") : `${p}.ts`;
+    if (p === target || tsPath === target) return true;
   }
   return false;
 }

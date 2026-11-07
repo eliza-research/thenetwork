@@ -106,8 +106,10 @@ function PersonView({ id }: { id: string }) {
   const [p, setP] = useState<PersonSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
+    let live = true;
     setP(null); setError(null);
-    store.person(id).then(r => { if (r.data) setP(r.data); else setError(r.status === 403 ? "Your role cannot open the cross-app view." : r.error); });
+    store.person(id).then(r => { if (!live) return; if (r.data) setP(r.data); else setError(r.status === 403 ? "Your role cannot open the cross-app view." : r.error); });
+    return () => { live = false; };
   }, [id]);
   return (
     <div className="panel person">

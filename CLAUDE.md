@@ -68,12 +68,24 @@ CONTRIBUTING.md is the full text. In one line each:
 - Keep the proofs passing. LemmaScript proves the safety decisions: a change to a proved function updates its spec and proof, and new decision logic goes in a proved core that production calls ([docs/formal-verification.md](docs/formal-verification.md)).
 - Validate with `bun run sim`, `bun run test:integration` and `bun run test:e2e`. A bug fix adds a sim gate, a scenario, a corpus row or an integration or e2e case that fails before the fix. No unit tests and no smoke tests ([docs/tests-policy.md](docs/tests-policy.md)).
 - Defend the design: give two other implementations.
+- Model the code: Quint at the high level, LemmaScript at the low level (see below).
 - Fill in the PR evidence checklist (CONTRIBUTING.md section 12.2).
 - Write in ASD-STE100 Simplified Technical English (CONTRIBUTING.md section 13).
 
 **Security suite** (`bun run security`, also part of `bun run test:integration`; the same list is in docs/tests-policy.md): `packages/platform/test/db.test.ts`, `packages/platform/test/api-security.test.ts`, `packages/platform/test/proxy.test.ts`, `packages/platform/test/cloud-auth.pg.test.ts`, `packages/platform/test/notify-retention.pg.test.ts`, `packages/mcp/test/oauth.test.ts`, `packages/mcp/test/pg.test.ts`, `deploy/backend/backend.test.ts`, `deploy/router.test.ts`, `packages/network/test/shared-agent.integration.test.ts`, `packages/observatory/test/staff.test.ts`.
 
 **Postgres in the simulations.** The safety, ops, pipeline and audit blocks use the dev Postgres (:54339) when it is there and record a tracked "skipped" gate when it is not. CI's sim job has a Postgres service and `REQUIRE_PG=1`, and it fails on any such skip. The migration runner (`packages/observatory/db/migrate.ts`) refuses two numbered migrations with the same NNNN prefix: take the next free number.
+
+## Formal modeling requirement (2026-11-07)
+
+All code in the app must be modeled at two levels:
+
+- **High level, Quint.** Each flow is a Quint model: its states, its transitions and its invariants, across the browser and the server.
+- **Low level, LemmaScript.** Each function that takes a step in a flow has `//@ ` contracts that `lsc` and Dafny prove, and the shipping code calls that function.
+
+A change to code must add or update both levels in the same PR. Use the same invariant name at both levels. When code cannot be expressed in LemmaScript (the DOM, React components, `await`, SQL, regex tables, crypto), move its decisions into an import-free core that LemmaScript can prove, and keep the rest as a thin shell that calls the core and does not recompute the decision. Say in the PR what stays outside the model and which test covers it.
+
+**Status: not yet met.** Most existing code has no model. The repository has no Quint models yet. This rule does not mean that a flow is verified: [docs/formal-verification.md](docs/formal-verification.md) lists what is proved and what is not. Do not write "verified" about a flow unless every seam of the flow calls the proved function.
 
 ## Code invariants
 
