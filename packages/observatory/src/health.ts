@@ -85,8 +85,8 @@ export interface MsgMeta { memberId: MemberId; ts: number; direction: "inbound" 
 export interface ScoreInput {
   now: number; start: number;
   members: ObsMember[]; opps: ObsOpportunity[]; messages: MsgMeta[]; requests: ObsRequest[];
-  /** When each member opted out. */
-  optOutAt: Map<MemberId, number>;
+  /** Every opt-out time: resuming and stopping again must not erase an earlier rejected interruption. */
+  optOutTimes: ReadonlyMap<MemberId, readonly number[]>;
   invites: number; accepts: number;
   /** Review seconds recorded, and the proposals a person approved that started (not invalidated; the simulated reviewer excluded). */
   reviewSeconds: number; sentProposals: number;
@@ -133,13 +133,13 @@ export function scorecard(x: ScoreInput): ScoreMetric[] {
   for (const [id, ms] of byMember) {
     ms.sort((a, b) => a.ts - b.ts);
     const inbound = ms.filter(m => m.direction === "inbound").map(m => m.ts);
-    const stop = x.optOutAt.get(id);
+    const stops = x.optOutTimes.get(id) ?? [];
     for (const m of ms) {
       if (m.direction !== "outbound" || !m.proactive || m.status !== "delivered") continue;
       if (x.now - m.ts < ANSWER_WINDOW && !inbound.some(t => t > m.ts)) continue; // still inside its window
       proactive++;
       const answered = inbound.some(t => t > m.ts && t - m.ts <= ANSWER_WINDOW);
-      const stopped = stop !== undefined && stop >= m.ts && stop - m.ts <= ANSWER_WINDOW;
+      const stopped = stops.some(t => t >= m.ts && t - m.ts <= ANSWER_WINDOW);
       if (answered && !stopped) worthwhile++;
     }
   }
