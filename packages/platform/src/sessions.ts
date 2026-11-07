@@ -7,6 +7,7 @@
 //  - Delete everything needs a fresh login (within 10 minutes): a stolen old cookie cannot do it.
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import type { AppId } from "./apps.ts";
+import { sessionExpiry, sessionLive } from "./decisions.ts";
 import type { PeopleStore, Session } from "./store.ts";
 
 export const SESSION_TTL_MS = 30 * 24 * 3_600_000;
@@ -33,7 +34,7 @@ export class SessionService {
   /** A new session. `startedAt` is the OTP login time (a rotation keeps it). */
   async create(app: AppId, e164: string, personId: string | null, rotatedFrom: string | null = null, startedAt?: number, expiresBefore?: number, delegatedCloud?: true): Promise<{ token: string; session: Session }> {
     const token = `${delegatedCloud ? "cloud." : ""}${newToken()}`, at = this.now(), started = startedAt ?? at;
-    const expiresAt = Math.min(at + (this.opts.ttlMs ?? SESSION_TTL_MS), started + (this.opts.maxMs ?? SESSION_MAX_MS), expiresBefore ?? Infinity);
+    const expiresAt = sessionExpiry(at, this.opts.ttlMs ?? SESSION_TTL_MS, started, this.opts.maxMs ?? SESSION_MAX_MS, expiresBefore);
     const session: Session = { tokenHash: this.hash(token), app, e164, personId, createdAt: at, startedAt: started, expiresAt, rotatedFrom, revokedAt: null };
     await this.store.putSession(session);
     return { token, session };
@@ -47,7 +48,7 @@ export class SessionService {
     if (!token || token.length > 128) return undefined;
     const at = this.now();
     const s = await this.store.getSession(this.hash(token));
-    if (!s || s.app !== app || (s.revokedAt !== null && s.revokedAt <= at) || s.expiresAt <= at) return undefined;
+    if (!s || !sessionLive(s.app, app, s.revokedAt, s.expiresAt, at)) return undefined;
     // Already rotated (in its grace time), young, or at the end of its chain: use it as it is.
     if (!rotate || s.revokedAt !== null || at - s.createdAt < (this.opts.rotateMs ?? SESSION_ROTATE_MS)) return { session: s, token, rotated: false };
     await this.store.revokeSession(s.tokenHash, at + SESSION_GRACE_MS);

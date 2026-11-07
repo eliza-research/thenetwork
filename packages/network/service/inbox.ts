@@ -28,6 +28,7 @@ import type { Clock } from "@thenetwork/core";
 import { normalizeAddress } from "../../blooio/src/phone.ts";
 import type { InboundMessage } from "../../blooio/src/types.ts";
 import { detectKeyword, leaveTarget } from "../../platform/src/consent.ts";
+import { pickWaiting, priorAnswer, replyKindOf, rescueAction, turnHeldBack } from "./decisions.ts";
 
 const MAX_ATTEMPTS = 5;
 /** How many waiting rows of one sender are read to find a compliance keyword among them. */
@@ -91,20 +92,24 @@ export class Inbox {
       // A turn whose worker stopped (no completion within the lease) is unresolved, not processing forever.
       await tx`update platform.inbound set status='unresolved',event=null,sender=null
         where sender_hash=${senderHash} and status='processing' and request_hash is not null and arrived_at<${new Date(now - PROCESSING_LEASE_MS)}`;
+      const [waiting] = await tx`select coalesce(bool_or(status='processing'),false) as processing,coalesce(bool_or(status='pending'),false) as pending,
+        coalesce(bool_or(status='unresolved' and arrived_at>${new Date(now - UNRESOLVED_BLOCK_MS)}),false) as unresolved
+        from platform.inbound where sender_hash=${senderHash}`;
+      if (turnHeldBack(keyword, waiting.processing, waiting.pending, waiting.unresolved)) return [];
       return tx`insert into platform.inbound(id,line,sender,received_at,arrived_at,event,status,request_hash,sender_hash,network_authority)
       select ${id},null,null,${new Date(input.receivedAt)},${new Date(now)},null,'processing',${requestHash},${senderHash},${input.networkAuthority ?? null}::jsonb
-      where ${admitUntil === undefined || now < admitUntil} and not exists(select 1 from platform.inbound where sender_hash=${senderHash} and (status='processing'
-        or (not ${keyword} and (status='pending' or (status='unresolved' and arrived_at>${new Date(now - UNRESOLVED_BLOCK_MS)})))))
+      where ${admitUntil === undefined || now < admitUntil}
       on conflict do nothing returning id`;
     });
     if (!wrote.length) {
       const [prior] = await this.o.sql`select request_hash,status,response from platform.inbound where id=${id}`;
-      if (!prior) return {status:409,body:{error:"turn_busy",retryable:true}};
-      if (prior.request_hash !== requestHash) return {status:409,body:{error:"turn_conflict",retryable:false}};
-      if (prior.status === "done" && prior.response) return {status:200,body:prior.response};
-      // The same turn is still running (a gateway timeout and its retry): the caller may try again; the worker's answer is kept for that replay.
-      if (prior.status === "processing") return {status:409,body:{error:"turn_busy",retryable:true}};
-      return {status:409,body:{error:"turn_unresolved",retryable:false}};
+      switch (priorAnswer(!!prior, prior?.request_hash === requestHash, prior?.status === "done", !!prior?.response, prior?.status === "processing")) {
+        case "conflict": return {status:409,body:{error:"turn_conflict",retryable:false}};
+        case "replay": return {status:200,body:prior!.response};
+        // The same turn is still running (a gateway timeout and its retry): the caller may try again; the worker's answer is kept for that replay.
+        case "busy": return {status:409,body:{error:"turn_busy",retryable:true}};
+        case "unresolved": return {status:409,body:{error:"turn_unresolved",retryable:false}};
+      }
     }
     const turn: InboundTurn = {id,from:input.from};
     // Renew the lease while the turn runs, so a slow turn (an LLM read, lock waits) is never swept as abandoned after its effects committed.
@@ -145,7 +150,7 @@ export class Inbox {
     const [row] = await this.o.sql`select status,replies from platform.inbound where id=${id}`;
     if (!row || row.status !== "processing") return undefined;
     const collected = ((typeof row.replies === "string" ? JSON.parse(row.replies) : row.replies) ?? []) as CollectedReply[];
-    if (!turn.consent && !collected.length) {
+    if (rescueAction(!!turn.consent, collected.length) === "release") {
       const released = await this.o.sql`delete from platform.inbound where id=${id} and status='processing' returning id`;
       if (!released.length) return undefined;
       await this.undo(turn);
@@ -154,7 +159,7 @@ export class Inbox {
     const replies = [...collected];
     if (turn.confirmation && !replies.some(r => r.kind === "compliance")) replies.push({...turn.confirmation, kind: "compliance"});
     const body: TurnResponse = {outcome: "handled", replies: replies.map(r => r.body), replyIds: replies.map(r => r.id), delivery: "collected",
-      replyKind: replies.length && replies.every(r => r.kind === "compliance") ? "compliance" : "reply", accountEligible: false,
+      replyKind: replyKindOf(replies.map(r => r.kind)), accountEligible: false,
       app: turn.app ?? null, memberId: turn.memberId ?? null, reason: "compliance_partial", ...(turn.consent ? {consent: turn.consent} : {})};
     const rows = await this.o.sql`update platform.inbound set status='done',response=${body}::jsonb,replies=(${{items: replies}}::jsonb->'items'),
       handled_at=${new Date(this.o.clock.now())},handled_order=nextval('platform.inbound_handled_seq'),event=null,sender=null,
@@ -248,7 +253,8 @@ export class Inbox {
       if (!waiting.length) return n;
       const parsed = (waiting as any[]).map(w => ({ ...w, ...((typeof w.event === "string" ? JSON.parse(w.event) : w.event) as { ev: InboundMessage; app: string | null }) }));
       // A compliance keyword goes ahead of an earlier row (one that keeps failing must not hold back a STOP).
-      const compliance = parsed.find(w => isComplianceText(w.ev?.text));
+      const flags = parsed.map(w => isComplianceText(w.ev?.text));
+      const compliance = flags.includes(true);
       // A signed turn of this sender that is running (or ended unresolved a short while ago) holds back
       // their ordinary rows only: STOP, STOP ALL, leave, START and HELP are handled at once, as signed() does.
       if (!compliance) {
@@ -256,7 +262,7 @@ export class Inbox {
         if ((await this.o.sql`select 1 from platform.inbound where sender_hash=${this.o.senderKey(sender)} and request_hash is not null
           and ((status='processing' and arrived_at>${stale}) or (status='unresolved' and arrived_at>${blockedSince})) limit 1`).length) return n;
       }
-      const r = compliance ?? parsed[0]!;
+      const r = parsed[pickWaiting(flags)]!;
       const { ev, app } = r;
       try {
         const outcome = await this.o.handle(ev, app ?? undefined);

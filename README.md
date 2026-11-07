@@ -60,12 +60,17 @@ cp .env.example .env                                  # never commit .env
 bun install --frozen-lockfile
 bun run packages/observatory/db/dev-pg.ts up          # dev Postgres on localhost:54339
 bun run sim                                           # every simulation, offline, no LLM; exits 1 on a blocking gate
+bun run formal                                        # LemmaScript proofs of the safety decisions (needs Dafny; docs/formal-verification.md)
 bun run typecheck
 bun run test:integration                              # real Postgres and HTTP; includes the security suite
 bun run test:e2e                                      # tests/e2e
 ```
 
 There are no unit or smoke tests ([docs/tests-policy.md](docs/tests-policy.md)). Runs with real LLM calls and the matching-algorithm measurements are in [CONTRIBUTING.md](CONTRIBUTING.md) section 7. [AGENTS.md](AGENTS.md) has every other command.
+
+## Formal modeling
+
+All code in the app must be modeled at two levels: Quint at the high level (flows, states and invariants) and LemmaScript at the low level (proved contracts on the functions that the shipping code calls). A change to code updates both. This requirement is not yet met: most existing code has no model, and the repository has no Quint models yet. [docs/formal-verification.md](docs/formal-verification.md) lists what is proved and what is not. [CONTRIBUTING.md](CONTRIBUTING.md) section 14 has the rule.
 
 ## The Eliza seam
 

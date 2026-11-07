@@ -6,6 +6,7 @@ import { DAY, HOUR } from "@thenetwork/core";
 import type { CandidateRule, GeoModel, MemberRule, PairRule } from "../../pack.ts";
 import { pairKey, type World } from "../../world.ts";
 import type { Interval } from "../../interval.ts";
+import { type CandidatePlace, placeAllowed, workAuthAllowed } from "../decisions.ts";
 import { candidateOf, historyOf, jobOf, profileOf, sides, type CandidateProfile, type JobProfile } from "./profile.ts";
 
 /** Simultaneous intros in flight per candidate (domain research B4: about 5). */
@@ -32,18 +33,9 @@ export const PEON_MEMBER_RULES: readonly MemberRule[] = [
 ];
 
 /** Work authorization: only the neutral yes/no questions are asked; sponsorship must be offered if needed. */
-export function workAuthOk(c: CandidateProfile, j: JobProfile): boolean {
-  if (c.auth === false) return false;
-  if (c.needsSponsor && !j.sponsors) return false;
-  return true;
-}
+export const workAuthOk = (c: CandidateProfile, j: JobProfile): boolean => workAuthAllowed(c.auth, c.needsSponsor, j.sponsors);
 /** Onsite / hybrid: same market and a site area the candidate said they will commute to. Remote: the candidate wants remote. */
-export function locationOk(c: CandidateProfile, j: JobProfile): boolean {
-  if (!j.mode) return false;
-  if (j.mode === "remote") return c.modes.has("remote");
-  if (!c.modes.has(j.mode)) return false;
-  return c.market === j.market && !!j.area && c.areas.has(j.area);
-}
+export const locationOk = (c: CandidateProfile, j: JobProfile): boolean => placeAllowed(c as CandidatePlace, j);
 
 export const PEON_PAIR_RULES: readonly PairRule[] = [
   { id: "not_candidate_job", check: (w, a, b) => (sides(w, [a, b]) ? null : "not_candidate_job") },

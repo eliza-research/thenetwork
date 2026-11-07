@@ -1,3 +1,4 @@
+import { collectionExpiry } from "./proof-window.js";
 /** Explicit same-turn Google collection scope. Identity, connector ownership and consent are server-owned. */
 export type NetworkCollectionSource = "gmail" | "google_calendar";
 export type NetworkCollectionField = "interest" | "goal" | "availability_pattern";
@@ -63,9 +64,9 @@ export function parseNetworkCollectionCommand(text: string): NetworkCollectionCo
 
 /** Fixed lifetime from the verified stored turn, never from retry/collection execution time. */
 export function networkCollectionDeadline(turnReceivedAt: number, now: number): number | undefined {
-  if (!Number.isSafeInteger(turnReceivedAt) || turnReceivedAt <= 0 || !Number.isSafeInteger(now) || now < turnReceivedAt) return undefined;
-  const expiresAt = turnReceivedAt + NETWORK_COLLECTION_RETENTION_MS;
-  return Number.isSafeInteger(expiresAt) && now < expiresAt ? expiresAt : undefined;
+  if (!Number.isSafeInteger(turnReceivedAt) || !Number.isSafeInteger(now)) return undefined;
+  const expiresAt = collectionExpiry(turnReceivedAt, now, NETWORK_COLLECTION_RETENTION_MS);
+  return Number.isSafeInteger(expiresAt) ? expiresAt : undefined;
 }
 
 /** Stable key order, explicit source order from the command, exact connector IDs; no identity fields. */

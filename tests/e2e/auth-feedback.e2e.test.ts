@@ -4,7 +4,7 @@
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
 import { MemoryPeopleStore } from "../../packages/platform/src/store.ts";
 
@@ -13,9 +13,10 @@ const browserTest = process.env.PLAYWRIGHT_MODULE ? test : test.skip;
 browserTest("failed security checks give recovery feedback and a later SDK success clears only that feedback", async () => {
   const { chromium } = await import(process.env.PLAYWRIGHT_MODULE!);
   const out = mkdtempSync(join(tmpdir(), "auth-feedback-build-"));
-  const bundle = await Bun.build({ entrypoints: [join(import.meta.dir, "../../sites/shared/auth.ts")], target: "browser", outdir: out });
+  const entrypoints = ["auth.ts", "join-core.ts"].map(file => join(import.meta.dir, "../../sites/shared", file));
+  const bundle = await Bun.build({ entrypoints, target: "browser", outdir: out });
   expect(bundle.success).toBe(true);
-  const script = await bundle.outputs[0]!.text();
+  const scripts = new Map(bundle.outputs.map(output => [`/${basename(output.path)}`, output]));
   let otpSends = 0;
   let otpRequests = 0;
   const platform = createPublicApi({
@@ -27,7 +28,8 @@ browserTest("failed security checks give recovery feedback and a later SDK succe
     hostname: "127.0.0.1", port: 0,
     async fetch(req) {
       const path = new URL(req.url).pathname;
-      if (path === "/auth.js") return new Response(script, { headers: { "content-type": "text/javascript" } });
+      const script = scripts.get(path);
+      if (script) return new Response(script, { headers: { "content-type": "text/javascript" } });
       if (path.startsWith("/api/")) {
         if (path === "/api/auth/otp/start") otpRequests++;
         return (await platform.fetch(req)) ?? new Response("Not found", { status: 404 });
@@ -37,7 +39,12 @@ browserTest("failed security checks give recovery feedback and a later SDK succe
         <section data-step="phone"><form data-form="phone"><label>Phone <input name="phone" value="2125550142"></label>
         <div data-turnstile></div><p data-error role="alert"></p><button type="submit">Send code</button></form></section>
         <section data-step="code" hidden><form data-form="code"><input name="code"><p data-error></p></form></section></main>
-        <script type="module">import {mountAuth} from '/auth.js';mountAuth(document.querySelector('#flow'),()=>{});</script>`,
+        <script type="module">
+          import {mountAuth} from '/auth.js';
+          import {flowNext, initialFlow, NO_FIELDS} from '/join-core.js';
+          let flow = flowNext(initialFlow(NO_FIELDS), {tag:'loaded',signedInAs:'',canJoin:false,member:false,inviteOnly:false,notice:''});
+          mountAuth(document.querySelector('#flow'), {current: () => flow, dispatch: event => flow = flowNext(flow, event), onSignedIn: () => {}});
+        </script>`,
         { headers: { "content-type": "text/html" } });
     },
   });

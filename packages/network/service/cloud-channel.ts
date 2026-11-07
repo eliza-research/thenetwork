@@ -5,6 +5,7 @@ import {normalizePhone} from "../../platform/src/phone.ts";
 import {DELIVER_PATH, NETWORK_APP_IDS, parseApprovedRelayPhotos, type DeliverRequest, type NetworkAppId} from "../../core/src/svc/contract.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {BlooioAdapter, type BlooioAdapterOptions} from "./channel.ts";
+import {classifyDeliver} from "./decisions.ts";
 
 /**
  * Receipt lookup only (never a send) for a deliver whose acceptance is unknown: the same signed body as
@@ -48,23 +49,24 @@ export class CloudChannelAdapter extends BlooioAdapter {
       // Accepted is accepted: history is false for a recipient with no Eliza account yet (the contract), and
       // acceptedAt is optional (the queue uses its own clock without it). A malformed acceptedAt is not trusted.
       const acceptedAt=typeof result?.acceptedAt==="string" ? Date.parse(result.acceptedAt) : undefined;
-      if (response.status===200 && result?.ok===true && typeof result.history==="boolean" && typeof result.replayed==="boolean"
+      const wellFormedAccept=typeof result?.history==="boolean" && typeof result.replayed==="boolean"
         && Array.isArray(result.providerMessageIds) && result.providerMessageIds.length>0 && result.providerMessageIds.every(id=>typeof id==="string" && id.trim())
-        && (result.acceptedAt===undefined || Number.isFinite(acceptedAt))) {
-        return {providerMessageId:result.providerMessageIds[0] as string,providerMessageIds:result.providerMessageIds as string[],status:"queued",
-          replayed:result.replayed,...(acceptedAt!==undefined?{acceptedAt}:{}),historyRecorded:result.history};
+        && (result.acceptedAt===undefined || Number.isFinite(acceptedAt));
+      const error=result?.error;
+      switch (classifyDeliver({status:response.status,ok:result?.ok===true?"yes":result?.ok===false?"no":"other",
+        error:error==="opted_out" || error==="rejected" || error==="unknown"?error:"other",retryable:result?.retryable===true,wellFormedAccept},receiptOnly)) {
+        case "accepted":
+          return {providerMessageId:(result!.providerMessageIds as string[])[0]!,providerMessageIds:result!.providerMessageIds as string[],status:"queued",
+            replayed:result!.replayed as boolean,...(acceptedAt!==undefined?{acceptedAt}:{}),historyRecorded:result!.history as boolean};
+        // A receipt lookup that Cloud answers with a retryable "rejected" means Cloud never admitted this id
+        // (the same meaning as on the deliver path: refused before dispatch). The queue then sends it again
+        // with the same key. Any other answer stays unknown.
+        case "not_admitted": throw new ChannelSendError("Cloud never admitted this id","unknown",response.status,"not_found");
+        case "blocked": throw new ChannelSendError("Recipient opted out","blocked",response.status,"opted_out");
+        case "retryable": throw new ChannelSendError("Cloud refused admission before dispatch","retryable",response.status);
+        case "invalid": throw new ChannelSendError("Cloud refused delivery","invalid",response.status);
+        case "unknown": throw new ChannelSendError("Cloud acceptance is unknown","unknown",response.status);
       }
-      // A receipt lookup that Cloud answers with a retryable "rejected" means Cloud never admitted this id
-      // (the same meaning as on the deliver path: refused before dispatch). The queue then sends it again
-      // with the same key. Any other answer stays unknown.
-      if (receiptOnly && result?.ok===false && result.error==="rejected" && result.retryable===true)
-        throw new ChannelSendError("Cloud never admitted this id","unknown",response.status,"not_found");
-      if (!receiptOnly && result?.ok===false && result.error!=="unknown") {
-        if (result.error==="opted_out") throw new ChannelSendError("Recipient opted out","blocked",response.status,"opted_out");
-        if (result.error==="rejected" && result.retryable===true) throw new ChannelSendError("Cloud refused admission before dispatch","retryable",response.status);
-        if ([400,401,403,404,409,422].includes(response.status)) throw new ChannelSendError("Cloud refused delivery","invalid",response.status);
-      }
-      throw new ChannelSendError("Cloud acceptance is unknown","unknown",response.status);
     };
     super({...options,provider:{kind:"blooio",send:request=>post(request,false),receipt:request=>post(request,true)}});
   }

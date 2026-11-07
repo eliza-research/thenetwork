@@ -13,6 +13,8 @@
 // within 60 s; otherwise it uses the socket address and its own Host map. Pure functions on Web
 // Crypto, so the site routers (Workers) can copy or import this file as it is.
 
+import { withinSkew } from "./decisions.ts";
+
 export const PROXY_HEADERS = {
   ip: "x-network-proxy-ip",
   host: "x-network-proxy-host",
@@ -76,7 +78,7 @@ export async function verifyProxyHeaders(req: Request, secret: string | undefine
   const ip = h.get(PROXY_HEADERS.ip), host = h.get(PROXY_HEADERS.host), ts = h.get(PROXY_HEADERS.ts), sig = h.get(PROXY_HEADERS.sig);
   if (!ip || !host || !ts || !sig || !/^\d{1,12}$/.test(ts) || ip.length > 64 || host.length > 253) return undefined;
   const t = Number(ts);
-  if (Math.abs(nowS - t) > PROXY_MAX_SKEW_S) return undefined;
+  if (!withinSkew(nowS, t, PROXY_MAX_SKEW_S)) return undefined;
   const want = await proxySignature(secret, { method: req.method, path: signedPath(new URL(req.url)), host, ip, ts: t });
   return sameString(want, sig) ? { ip, host: host.toLowerCase() } : undefined;
 }

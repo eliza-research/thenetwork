@@ -59,14 +59,20 @@ decide() {
   local words=() dry_run=0 remote=0 help=0 skip_next=0 a
   for a in "$@"; do
     if [ "$skip_next" = 1 ]; then skip_next=0; continue; fi
-    case "$a" in
+    # yargs also reads camel case and --no- forms: "--dryRun=false" and "--no-dryRun" turn the switch off.
+    local flag=""
+    case "$a" in -*) flag="$(printf '%s' "${a%%=*}" | tr -d '_-' | tr '[:upper:]' '[:lower:]')" ;; esac
+    case "$flag" in
       # wrangler (yargs) takes the LAST value of a switch: "--dry-run --no-dry-run" is a real deploy.
-      --dry-run|--dry-run=true) dry_run=1 ;;
-      --no-dry-run|--dry-run=*) dry_run=0 ;;
+      dryrun) case "$a" in --dry-run|--dry-run=true) dry_run=1 ;; *) dry_run=0 ;; esac; continue ;;
+      nodryrun) dry_run=0; continue ;;
       # "dev --remote" runs on Cloudflare (it uploads to the account): not read-only.
-      --remote|--remote=true|-r) remote=1 ;;
-      --no-remote|--remote=*) remote=0 ;;
-      --help|-h) help=1 ;;
+      remote|r) case "$a" in *=false) remote=0 ;; *) remote=1 ;; esac; continue ;;
+      noremote) remote=0; continue ;;
+      help|h) case "$a" in --help|-h) help=1 ;; *) help=0 ;; esac; continue ;;
+      nohelp) help=0; continue ;;
+    esac
+    case "$a" in
       --*=*) ;;
       -*)
         if value_flag "$a"; then skip_next=1

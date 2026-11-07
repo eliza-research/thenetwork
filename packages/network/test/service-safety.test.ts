@@ -7,7 +7,7 @@ import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SQL } from "bun";
-import { MINUTE, SimClock } from "@thenetwork/core";
+import { HOUR, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { APPS, type AppId } from "../../platform/src/apps.ts";
@@ -157,6 +157,8 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     expect(await level("slop", b)).toBe("hold");
     expect(await level("friends", bf)).toBe("hold");
 
+    // Keep a session issued before the ban to exercise join and deletion after it.
+    await web.login("peon", ben);
     // Ban by phone.
     expect((await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: b, by: "number", note: "confirmed by staff" })).status).toBe(400);
     expect(await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: b, by: "phone", note: "confirmed by staff", reportId })).json()).toEqual({ ok: true });
@@ -174,14 +176,21 @@ describe.skipIf(!pgAvailable)("reports, holds, bans and photos through the servi
     const before = directs.length;
     expect(await text(s, clock, ben, "peon")).toBe("held");
     expect(directs.length).toBe(before);
-    await web.login("peon", ben);
     expect((await web.join("peon", 32, "Ben")).body).toMatchObject({ ok: false, error: "review" });
     expect(await memberOf("peon", ben)).toBeUndefined();
+    const newBrowser = site(s, clock, otp);
+    const checkLoginBlocked = async () => {
+      const sends = otp.sent;
+      expect(await newBrowser.json("peon", "POST", "/api/auth/otp/start", { phone: ben })).toEqual({ status: 200, body: { ok: true } });
+      expect(otp.sent).toBe(sends);
+      expect(await newBrowser.json("peon", "POST", "/api/auth/otp/verify", { phone: ben, code: otp.codes.get(ben) }))
+        .toEqual({ status: 400, body: { ok: false, error: "invalid_code" } });
+    };
+    await checkLoginBlocked();
     // Delete everything does not lift a ban: the same number still cannot join.
-    clock.advance(MINUTE);
     expect((await web.json("peon", "POST", "/api/me/delete", { scope: "all" })).status).toBe(200);
-    await web.login("peon", ben);
-    expect((await web.join("peon", 32, "Ben")).body).toMatchObject({ ok: false, error: "review" });
+    clock.advance(HOUR);
+    await checkLoginBlocked();
     expect((await sql`select count(*)::int as n from platform.bans`)[0].n).toBe(1);
 
     // Audit: requested before result, for the hold and the ban.

@@ -17,8 +17,49 @@ function nonceOf(text: string): string {
   return a.toString(16).padStart(8, "0") + b.toString(16).padStart(8, "0");
 }
 
-/** Break up "<<<" and ">>>" so the text cannot contain a fence marker. */
-const defang = (text: string) => text.replace(/<{3,}/g, m => m.split("").join(" ")).replace(/>{3,}/g, m => m.split("").join(" "));
+function isMarker(c: number): boolean {
+  //@ verify
+  //@ pure
+  return c === 60 || c === 62;
+}
+
+/** Three equal markers in a row start at `k`. */
+function tripleAt(s: string, k: number): boolean {
+  //@ verify
+  //@ pure
+  //@ requires 0 <= k && k + 2 < s.length
+  return isMarker(s.charCodeAt(k)) && s.charCodeAt(k) === s.charCodeAt(k + 1) && s.charCodeAt(k + 1) === s.charCodeAt(k + 2);
+}
+
+/**
+ * True when a space goes after the marker at `i`: it has an equal marker after it, and one more on
+ * either side, so the two are part of a run of three or more.
+ */
+function splitAfter(text: string, i: number): boolean {
+  //@ verify
+  //@ pure
+  //@ requires 0 <= i && i < text.length
+  const c = text.charCodeAt(i);
+  if (!isMarker(c) || i + 1 >= text.length || text.charCodeAt(i + 1) !== c) return false;
+  return (i + 2 < text.length && text.charCodeAt(i + 2) === c) || (i >= 1 && text.charCodeAt(i - 1) === c);
+}
+
+/** Break up "<<<" and ">>>" so the text cannot contain a fence marker: "<<<<" becomes "< < < <". */
+function defang(text: string): string {
+  //@ verify
+  //@ ensures forall(k: nat, k + 2 < \result.length ==> !tripleAt(\result, k))
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    //@ invariant 0 <= i && i <= text.length
+    //@ invariant forall(k: nat, k + 2 < out.length ==> !tripleAt(out, k))
+    //@ decreases text.length - i
+    out = out + text.slice(i, i + 1);
+    if (splitAfter(text, i)) out = out + " ";
+    i = i + 1;
+  }
+  return out;
+}
 
 /**
  * Wrap untrusted text for a prompt. `label` names the content ("message", "explanation").

@@ -315,6 +315,48 @@ describe("banned numbers", () => {
     expect(env.provider.sent.length).toBe(sends);
     expect(flow.location).toBeNull();
   });
+
+  test("a ban ends a grant made before it: no updates, no status, no refresh, and the grant is revoked", async () => {
+    let reads = 0;
+    const env = setup({ updates: async () => { reads++; return [{ summary: "Dev is free Thursday.", at: "t", kind: "update" }]; } });
+    await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);
+    const { client, token } = await connect(env, PEON, PHONE_A);
+    const url = `${origin(PEON)}/mcp`;
+    expect((await call(env, url, "get_updates", {}, { token: token.access_token })).res.status).toBe(200);
+    expect(reads).toBe(1);
+    await (env.people as PeopleStore).ban({ id: "ban_2", scope: "phone", personId: null, phoneHash: env.accounts.phoneHash(PHONE_A), reason: "staff", reportId: null, bannedBy: "staff:1", at: env.clock.t });
+    expect((await tokenRequest(env, PEON, { grant_type: "refresh_token", refresh_token: token.refresh_token, client_id: client.client_id })).body.error).toBe("invalid_grant");
+    expect((await call(env, url, "get_updates", {}, { token: token.access_token })).res.status).toBe(401);
+    expect(reads).toBe(1);
+    expect((await call(env, url, "check_status", {}, { token: token.access_token })).res.status).toBe(401);
+  });
+});
+
+describe("malformed input and a second tab", () => {
+  test("a bad percent escape in a cookie or in Basic auth is a clean refusal, never a 500", async () => {
+    const env = setup();
+    const reg = await register(env, PEON);
+    const q = new URLSearchParams({ response_type: "code", client_id: reg.body.client_id, redirect_uri: "https://client.example/callback", code_challenge: CHALLENGE, code_challenge_method: "S256", state: "s" });
+    const page = await env.fetch(new Request(`${origin(PEON)}/oauth/authorize?${q}`, { headers: { cookie: "sid_peon=%E0%A4%A" } }));
+    expect(page.status).toBe(200);
+    const basic = await env.fetch(new Request(`${origin(PEON)}/oauth/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", authorization: `Basic ${btoa("%E0:x")}` }, body: "grant_type=authorization_code" }));
+    expect(basic.status).toBe(401);
+  });
+
+  test("a second authorize in the same browser leaves the first tab working", async () => {
+    const env = setup();
+    await addMember(env, PHONE_A, [{ app: "peon", state: "active" }]);
+    const reg = await register(env, PEON);
+    const q = new URLSearchParams({ response_type: "code", client_id: reg.body.client_id, redirect_uri: "https://client.example/callback", code_challenge: CHALLENGE, code_challenge_method: "S256", state: "s" });
+    const first = await env.fetch(new Request(`${origin(PEON)}/oauth/authorize?${q}`));
+    const cookie = /((?:__Host-)?mcp_auth=[^;]+)/.exec(first.headers.get("set-cookie") ?? "")![1]!;
+    const rid = /name="rid" value="([^"]+)"/.exec(await first.text())![1]!;
+    const second = await env.fetch(new Request(`${origin(PEON)}/oauth/authorize?${q}`, { headers: { cookie } }));
+    const jar = /((?:__Host-)?mcp_auth=[^;]+)/.exec(second.headers.get("set-cookie") ?? "")![1]!;
+    const step = await env.fetch(new Request(`${origin(PEON)}/oauth/authorize/phone`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", cookie: jar, origin: origin(PEON) }, body: new URLSearchParams({ rid, phone: PHONE_A }).toString() }));
+    expect(await step.text()).not.toContain("expired");
+    expect(step.status).toBe(200);
+  });
 });
 
 describe("the person's consent records", () => {

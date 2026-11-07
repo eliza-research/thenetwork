@@ -133,7 +133,8 @@ The validation layer is the simulations plus the integration and e2e tests ([doc
 
 | Command | What it does | Needs |
 |---|---|---|
-| `bun run sim` | Every simulation block on pinned seeds: the `evals/` corpora, onboarding, the Network, slop, relay, peon, friends, Clef, safety, ops, pipeline and audit. Exits 1 when a blocking gate fails. Offline. No LLM. | Dev Postgres for the safety, ops, pipeline and audit blocks (they skip without it) |
+| `bun run sim` | Every simulation block on pinned seeds: the LemmaScript proofs (`formal`), the `evals/` corpora, onboarding, the Network, slop, relay, peon, friends, Clef, safety, ops, pipeline and audit. Exits 1 when a blocking gate fails. Offline. No LLM. | Dev Postgres for the safety, ops, pipeline and audit blocks (they skip without it) |
+| `bun run formal` | The LemmaScript proofs ([docs/formal-verification.md](docs/formal-verification.md)). | Dafny 4.11.0 (the block skips without it) |
 | `bun run sim --only <block>` | One block. You can repeat `--only`. Use it while you work. | |
 | `bun run sim --quick` | Fewer seeds and shorter runs. Quality gates become tracked. | |
 | `bun run sim --with-capital` | Adds the slow network-capital block. | |
@@ -330,6 +331,7 @@ Every PR must include each item. Write `N/A: <reason>` only when an item does no
 
 - [ ] The repository is starred and the PR comes from your fork.
 - [ ] Linked issue or approved requirement (PRD or MVP-plan section).
+- [ ] Quint model and LemmaScript contracts added or updated for the changed code, with one mutation that `lsc` catches for each new contract. List what stays outside the model and the test that covers it (section 14).
 - [ ] The root cause, in plain words.
 - [ ] The fix, and two other implementations you did not use.
 - [ ] The before and after results, with the same command, seeds and data.
@@ -402,5 +404,6 @@ Write every issue and PR so that a person who is not technical can understand it
 - Network code never reads hidden persona truth. Only the simulator, the oracle and the judges can read it.
 - Every outbound message goes through the leak guard (`packages/core/src/guard.ts`). Every proactive proposal and member request goes through human review (PRD 28.5, 32.8). Simulator runs use a simulated reviewer (`review: "auto"`). Say so when you report a run.
 - Members under 18 are never matched or connected to other members.
+- All code in the app must be modeled at two levels: Quint at the high level (each flow: states, transitions, invariants) and LemmaScript at the low level (each function that takes a step in a flow, with `//@ ` contracts that `lsc` and Dafny prove, called by the shipping code). A change to code adds or updates both levels in the same PR, with the same invariant names. Code that LemmaScript cannot express (the DOM, React components, `await`, SQL, regex tables, crypto) moves its decisions into an import-free core, and the rest stays a thin shell that does not recompute them. Status: not yet met. Most existing code has no model, and the repository has no Quint models yet. [docs/formal-verification.md](docs/formal-verification.md) lists what is proved and what is not.
 - Use `defaultLLM()`, `judgeLLM()` and `recommenderLLM()` in `packages/core/src/llm.ts`. Do not add a new LLM client or provider.
 - Do not commit `.env`, `runs/` or real member data.

@@ -26,6 +26,7 @@
 // `bun run sim` never calls Clef.
 import { sha256, stableStringify } from "./hash.ts";
 import { maskPii } from "../../core/src/pii.ts";
+import { headOutcome } from "./relayCore.ts";
 import { CLEF_PRICE_PER_M_INPUT, ClefError, clefFeatureNames, clefFeatureRow, clefRun, type ClefCallOptions, type ClefModel, type ClefQuestion, type ClefResult } from "./packs/slop/clef.ts";
 import type { RelayClassifierHook, RelayClassifierInput, RelayClassifierOutput } from "./relay.ts";
 
@@ -172,9 +173,9 @@ export function relayClefDecide(w: RelayClefWeights, x: Record<string, number>, 
     const h = w.heads[c];
     const p = relayClefProb(h, x);
     scores[c] = p;
-    if (p < h.hold) continue;
-    if (h.severe && h.severe.features.some(f => (x[f] ?? 0) >= h.severe!.min)) block.push(c);
-    else hold.push(c);
+    const outcome = headOutcome(p, h.hold, !!h.severe && h.severe.features.some(f => (x[f] ?? 0) >= h.severe!.min));
+    if (outcome === "block") block.push(c);
+    else if (outcome === "hold") hold.push(c);
   }
   const uncertain = !hold.length && !block.length && confidence < w.uncertain.minConfidence && RELAY_CLEF_HIGH_RISK.some(c => scores[c] >= w.uncertain.floor);
   return { scores, hold, block, uncertain };

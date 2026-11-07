@@ -86,6 +86,12 @@ export const NUMBER_BLOCK_CODES = new Set([
 ]);
 
 export function classifyFailure(status: number, code: string | undefined, retryAfterMs?: number): FailureClass {
+  //@ verify
+  //@ ensures code !== undefined && CONVERSATION_WAIT_CODES.has(code) ==> \result === "await_recipient"
+  //@ ensures code !== undefined && NUMBER_BLOCK_CODES.has(code) && !CONVERSATION_WAIT_CODES.has(code) ==> \result === "blocked"
+  //@ ensures \result !== "unknown"
+  //@ ensures status === 401 && code === undefined ==> \result === "auth"
+  //@ ensures status >= 500 && code === undefined ==> \result === "retryable"
   if (code && CONVERSATION_WAIT_CODES.has(code)) return "await_recipient";
   if (code && NUMBER_BLOCK_CODES.has(code)) return "blocked";
   if (status >= 500) return "retryable"; // includes 503 "no active number available"

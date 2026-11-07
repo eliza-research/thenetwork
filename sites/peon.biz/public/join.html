@@ -47,7 +47,7 @@
   <section data-step="profile" hidden>
     <h2>Confirm your details</h2>
     <form data-form="profile" novalidate>
-      <div class="field"><label for="firstName">First name</label><input id="firstName" name="firstName" type="text" autocomplete="given-name" required data-focus></div>
+      <div class="field"><label for="firstName">First name</label><input id="firstName" name="firstName" type="text" autocomplete="given-name" maxlength="50" required data-focus></div>
       <div class="field"><label for="age">Age</label><input id="age" name="age" type="number" inputmode="numeric" min="1" max="120" required aria-describedby="age-hint">
         <p class="hint" id="age-hint">Join at <span data-slot="minJoinAge">13</span>+. Matching is 18+ only.</p></div>
 

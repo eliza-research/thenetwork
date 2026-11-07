@@ -7,12 +7,14 @@ import type { EngineConfig } from "./config.ts";
 import { centroid, cosine, tokenize, type EmbedFn } from "./embed.ts";
 import { sha256, stableStringify } from "./hash.ts";
 import type { AppPack } from "./pack.ts";
+import { pairKey } from "./pairKey.ts";
+import { acceptanceEstimate } from "./scoreCore.ts";
 import { networkPack } from "./packs/network/index.ts";
 import type { EngineInput, FeedbackRecord, InteractionRecord, NetworkEvent, ReliabilityEvidence, Role } from "./types.ts";
 
 import type { Interval } from "./interval.ts";
 export type { Interval };
-export const pairKey = (a: MemberId, b: MemberId) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+export { pairKey };
 
 const BLOCKING_EDGES: ReadonlySet<EdgeType> = new Set<EdgeType>(["blocked", "avoid"]);
 const CAP_KINDS: ReadonlySet<FacetKind> = new Set<FacetKind>(["skill", "offer", "resource"]);
@@ -148,6 +150,7 @@ export class World {
     // --- interactions ----------------------------------------------------------------------
     this.interactions = (input.interactions ?? []).map(r => ({
       ...r, participants: r.participants.map(C), declinedBy: r.declinedBy?.map(C), contributors: r.contributors?.map(C),
+      acceptedBy: r.acceptedBy?.map(C), noResponse: r.noResponse?.map(C),
     }));
     for (const r of this.interactions) {
       for (let i = 0; i < r.participants.length; i++) for (let j = i + 1; j < r.participants.length; j++) {
@@ -402,7 +405,7 @@ export function responseHistory(interactions: InteractionRecord[], now: number):
  */
 export function acceptanceOf(cfg: EngineConfig, hist: { yes: number; n: number } | undefined): number {
   const A = cfg.acceptance;
-  return ((hist?.yes ?? 0) + A.prior * A.strength) / ((hist?.n ?? 0) + A.strength);
+  return acceptanceEstimate(hist?.yes ?? 0, hist?.n ?? 0, A.prior, A.strength);
 }
 
 export function intentText(i: Intent): string {
