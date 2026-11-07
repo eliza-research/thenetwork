@@ -313,7 +313,10 @@ export class RealSource implements DataSource {
         .catch(() => sql`select opportunity_id, queued_at, deadline, decision, reason, note, reviewer, decided_at from network.review_items where app_id = ${app}`).catch(() => []),
       this.ageInfo(sql),
       // The booked plan: when it reached each member (the reveal), and who called it off.
-      sql`select opportunity_id, member_id, min(ts) as ts from network.messages where app_id = ${app} and direction = 'outbound' and type = 'proposal' and opportunity_id is not null group by 1, 2`,
+      // Successful-send statuses match NetworkRuntime.deliver, including local dry runs.
+      sql`select opportunity_id, member_id, min(ts) as ts from network.messages
+          where app_id = ${app} and direction = 'outbound' and type = 'proposal' and opportunity_id is not null
+            and status in ('accepted', 'sent', 'delivered', 'read', 'dry_run') group by 1, 2`,
       // The time keys each member picked (the offered labels are in the message text only).
       sql`select at, type, payload from network.events where app_id = ${app} and type in ('probe_answer', 'time_answer', 'booked_cancelled') order by at, id`,
     ]);
