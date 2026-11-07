@@ -167,6 +167,12 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
   });
   const postingId = w.saved[0]?.id ?? "none", seat = seatIdOf(postingId);
 
+  await b.run("age: a manager whose age is not a valid adult age gets no seat, and a valid one does", () => {
+    const seats = (age: number) => peonSeats({ now: w.clock.now(), members: w.members.map(m => (m.id === "hm1" ? { ...m, age } : m)), facets: [...w.facets], intents: [...w.intents], presence: [...w.presence], edges: [], recentProposals: [] }).members.filter(m => (m as { seatOwner?: string }).seatOwner === "hm1").length;
+    expect(seats(30)).toBe(1);
+    for (const age of [150, 17, Number.NaN]) expect(seats(age)).toBe(0);
+  });
+
   await b.run("intake: a minor and a member not opted in to work cannot post (text and staff path)", async () => {
     await w.say("hm2", "We're hiring a cashier, 1 opening, $30k-$35k, onsite in Queens");
     expect(w.last("hm2")).toBe(POSTING_COPY.adultsOnly);

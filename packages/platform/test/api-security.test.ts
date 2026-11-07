@@ -5,6 +5,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { APPS, type AppId } from "../src/apps.ts";
 import { createPublicApi, MAX_API_BODY_BYTES, parseCookies, type PublicApi } from "../src/api.ts";
+import { challengeClaimable, hitPasses } from "../src/decisions.ts";
 import { PgPeopleStore } from "../src/pg-store.ts";
 import { MemoryPeopleStore, type PeopleStore } from "../src/store.ts";
 import { dropDb, migratedDb, pgAvailable } from "./pg.ts";
@@ -40,7 +41,7 @@ function make(store: PeopleStore) {
     clock.t += 31_000;
     return v.cookie!;
   };
-  return { api, clock, call, login, joined, sends: () => sends };
+  return { api, clock, call, login, joined, codes, sends: () => sends };
 }
 
 const urls: string[] = [];
@@ -88,14 +89,78 @@ for (const s of stores) describe.skipIf(s.skip)(`API defences (${s.name})`, () =
           // Whatever age was typed, the member gets the lowest age the phone ever stated.
           expect(c.joined.at(-1)!.age).toBe(Math.min(lowest, age));
         }
-        // Only an age the join read counts (an invite-only refusal never reads it).
-        if (res.status === 200 || res.body?.error === "under_age") lowest = Math.min(lowest, age);
+        // Every age the join was told counts, an invite-only refusal too.
+        if (res.status === 200 || res.body?.error === "under_age" || res.body?.error === "invite_only") lowest = Math.min(lowest, age);
         if (res.body?.error === "under_age") expect(lowest).toBeLessThan(13);
         if (res.status === 200) expect(lowest).toBeGreaterThanOrEqual(13);
         await c.api.accounts.leave(APPS[app], { e164: phone, personId: null });
         c.joined.length = 0;
       }
     }
+  });
+
+  test("a stated age survives every exit: 15 on an invite-only app or with the wrong wording, then 25, stays 15", async () => {
+    const c = make(store);
+    const invited = newPhone(), wording = newPhone();
+    const first = await c.call("ntwrk", "POST", "/api/join", { firstName: "Ana", age: 15, consent: { sms: true, version: APPS.ntwrk.consent.version } }, { cookie: await c.login("ntwrk", invited) });
+    expect(first.body.error).toBe("invite_only");
+    const second = await c.call("slop", "POST", "/api/join", { firstName: "Ana", age: 15, consent: { sms: true, version: "not-the-version" } }, { cookie: await c.login("slop", wording) });
+    expect(second.body.error).toBe("consent_wording");
+    for (const phone of [invited, wording]) {
+      expect(await c.api.accounts.lowestAge(phone)).toBe(15);
+      const later = await c.call("slop", "POST", "/api/join", { firstName: "Ana", age: 25, consent: { sms: true, version: APPS.slop.consent.version } }, { cookie: await c.login("slop", phone) });
+      // slop is open at 13: the join stands, and the member carries the age 15, never 25.
+      expect([later.status, c.joined.at(-1)?.age]).toEqual([200, 15]);
+    }
+  });
+
+  test("a banned number gets no code and no session on the site path; the answers and the limits are those of any number", async () => {
+    const c = make(store);
+    const ban = (phone: string) => store.ban({ id: `ban_${phone}`, scope: "phone", personId: null, phoneHash: c.api.accounts.phoneHash(phone), reason: "sim", reportId: null, bannedBy: "staff:1", at: c.clock.t });
+    const banned = newPhone(), late = newPhone();
+    await ban(banned);
+    const sends = c.sends(), statuses: number[] = [];
+    for (let i = 0; i < 4; i++) { statuses.push((await c.call("slop", "POST", "/api/auth/otp/start", { phone: banned })).status); c.clock.t += 31_000; }
+    expect(c.sends()).toBe(sends);
+    expect(statuses).toEqual([200, 200, 200, 429]);
+    // A code sent before the ban landed no longer gives a session.
+    await c.call("slop", "POST", "/api/auth/otp/start", { phone: late });
+    await ban(late);
+    const v = await c.call("slop", "POST", "/api/auth/otp/verify", { phone: late, code: c.codes.get(late) });
+    expect([v.status, v.body, v.cookie]).toEqual([400, { ok: false, error: "invalid_code" }, undefined]);
+    // A session from before the ban reads nothing, and STOP still works.
+    const member = newPhone(), cookie = await c.login("friends", member);
+    expect((await c.call("friends", "POST", "/api/join", { firstName: "Ana", age: 30, consent: { sms: true, version: APPS.friends.consent.version } }, { cookie })).status).toBe(200);
+    expect((await c.call("friends", "GET", "/api/me", undefined, { cookie })).status).toBe(200);
+    await ban(member);
+    for (const path of ["/api/me", "/api/me/export"]) {
+      const r = await c.call("friends", "GET", path, undefined, { cookie });
+      expect([path, r.status, r.body.error, r.body.phoneMasked]).toEqual([path, 403, "review", undefined]);
+    }
+    expect((await c.call("friends", "POST", "/api/me/stop", {}, { cookie })).status).toBe(200);
+  });
+
+  test("claimAttempt and hit answer as the proved rules do, on this store", async () => {
+    const at = 1_000_000;
+    for (const consumedAt of [null, at - 1]) for (const expiresAt of [at - 1, at, at + 1]) for (const attempts of [4, 5, 6]) {
+      const id = await store.putChallenge({ app: "slop", e164: newPhone(), provider: "fake", providerRef: null, codeHash: null, attempts, createdAt: at - 2, expiresAt, consumedAt });
+      expect([consumedAt, expiresAt, attempts, await store.claimAttempt(id, 5, at)]).toEqual([consumedAt, expiresAt, attempts, challengeClaimable(consumedAt, expiresAt, attempts, 5, at)]);
+    }
+    const bucket = `grid:${newPhone()}`, hours = 3_600_000, t0 = hours * 500_000;
+    let count = 0, prevAt: number | null = null;
+    for (const dt of [0, 10, 40, 40, 40, 40]) {
+      const t: number = t0 + (prevAt === null ? 0 : prevAt - t0) + dt, want = hitPasses(count, prevAt, t, 3, 30);
+      expect((await store.hit(bucket, hours, t, { limit: 3, minGapMs: 30 })).ok).toBe(want);
+      if (want) { count++; prevAt = t; }
+    }
+  });
+
+  test("an Origin with the site's host on plain http is refused; only a loopback dev host may use http", async () => {
+    const hostMap = { "slop.date": "slop" as const };
+    const prod = createPublicApi({ store, env: { PLATFORM_ENV: "production", PLATFORM_SESSION_SECRET: "s".repeat(40), PLATFORM_HASH_KEY: "k".repeat(40) } as never, hostMap, hashKey: "k".repeat(40), sessionSecret: "s".repeat(40), minStartMs: 0, log: () => {}, turnstile: { verify: async () => true }, otp: { name: "fake", send: async () => ({ code: "123456" }) } } as never);
+    const start = (origin: string) => prod.fetch(new Request("https://slop.date/api/auth/otp/start", { method: "POST", headers: { host: "slop.date", "content-type": "application/json", origin }, body: JSON.stringify({ phone: newPhone() }) }));
+    expect((await start("http://slop.date"))!.status).toBe(403);
+    expect((await start("https://slop.date"))!.status).toBe(200);
   });
 
   test("PLAT-21 a malformed cookie on the domain is ignored: /api/me answers 401, never 500", async () => {

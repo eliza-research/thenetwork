@@ -22,6 +22,7 @@
 // The question bank asks nothing about race, ethnicity, age, gender or disability.
 import { canRatePhotos, adultsOnly, BODY_TYPES, type AppearanceRater, type AppearanceScore, type BodyType, type PhotoRef, type RatingSubject } from "./appearance.ts";
 import { DEFAULT_CLEF_WEIGHTS, validateClefWeights, type ClefWeights } from "./clefWeights.ts";
+import { photoPasses } from "../decisions.ts";
 
 export const CLEF_MODEL_IDS = { clef: "@cf/cloudflare/clef", "clef-flash": "@cf/cloudflare/clef-flash" } as const;
 export type ClefModel = keyof typeof CLEF_MODEL_IDS;
@@ -85,7 +86,7 @@ export function clefFeatureNames(questions: Record<string, ClefQuestion>): strin
 /**
  * Answers -> a feature row (0..1 per feature) for any question bank, and the mean Clef confidence of
  * the questions `confidenceOf` selects (0.7 when none reported one). Missing answers read as 0.5
- * (noul, score) or a uniform 0 (choice).
+ * (noul, score) or a uniform 0 (choice), except a missing gate.* answer, which stays absent.
  */
 export function clefFeatureRow(questions: Record<string, ClefQuestion>, answers: Record<string, ClefAnswer>, confidenceOf: (id: string) => boolean = () => true): { x: Record<string, number>; confidence: number } {
   const x: Record<string, number> = {};
@@ -93,7 +94,8 @@ export function clefFeatureRow(questions: Record<string, ClefQuestion>, answers:
   for (const [id, q] of Object.entries(questions)) {
     const a = answers[id];
     if (confidenceOf(id) && Number.isFinite(Number(a?.confidence))) confs.push(clamp01(Number(a!.confidence)));
-    if (q.type === "noul") { x[id] = clamp01(Number(a?.noul ?? 0.5)); continue; }
+    // A gate question stays visibly unanswered: `photoPasses` drops a photo with no gate answer.
+    if (q.type === "noul") { if (a?.noul !== undefined || !id.startsWith("gate.")) x[id] = clamp01(Number(a?.noul ?? 0.5)); continue; }
     if (q.type === "score") {
       // Expected level (0-based) over the ordered levels, scaled to 0..1; 0.5 when missing.
       let s = Number(a?.score);
@@ -217,7 +219,7 @@ export class WorkersAIClefRater implements AppearanceRater {
 
   async rate(subject: RatingSubject, photos: readonly PhotoRef[]): Promise<AppearanceScore | null> {
     if (!canRatePhotos(subject) || !photos.length) return null; // adults only, before any photo is touched
-    const rows = (await this.features(subject, photos)).filter(r => (r.x["gate.one_adult"] ?? 0) >= this.w.gate.oneAdult);
+    const rows = (await this.features(subject, photos)).filter(r => photoPasses(r.x["gate.one_adult"], this.w.gate.oneAdult));
     if (!rows.length) return null;
     const per = rows.map(r => ({ z: applyHead(this.w, r.x), g: r.x["gate.one_adult"]!, faceVis: r.x["gate.face_visible"] ?? 0.5, c: r.confidence }));
     const wsum = per.reduce((s, p) => s + p.g, 0);

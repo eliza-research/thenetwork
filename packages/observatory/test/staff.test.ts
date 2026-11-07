@@ -215,6 +215,11 @@ describe("staff roles, audit and PII reveal", () => {
       const ana = await read(TOK.analyst);
       expect(ana.messages).toEqual([]);
       expect(ana.members.every(m => m.name.startsWith("Member ") && m.age === undefined)).toBe(true);
+      // The event history keeps its shape: no line names a member, and no event points at one.
+      const full = await read(TOK.safety);
+      expect(ana.events.map(e => e.type)).toEqual(full.events.map(e => e.type));
+      const people = full.members.map(m => m.name.split(" ")[0]!);
+      expect(ana.events.filter(e => e.memberId || e.detail || people.some(p => e.text.includes(p)))).toEqual([]);
       expect(saf.length).toBeGreaterThan(0);
       if (++checked >= 3) break;
     }

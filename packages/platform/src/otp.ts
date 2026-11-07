@@ -162,8 +162,11 @@ export class OtpService {
   }
   private now() { return (this.opts.now ?? Date.now)(); }
 
-  /** Rate-limit, then send. A provider error is logged and not shown (the response stays the same). */
-  async start(app: AppInfo, e164: string, ip: string): Promise<OtpStart> {
+  /**
+   * Rate-limit, then send. A provider error is logged and not shown (the response stays the same).
+   * `send` false (a banned number): the limits count and the answer is the same, and no code goes out.
+   */
+  async start(app: AppInfo, e164: string, ip: string, send = true): Promise<OtpStart> {
     const at = this.now(), L = this.limits;
     const hourLeft = HOUR - (at % HOUR);
     const limited = (retryAfterMs = hourLeft): OtpStart => ({ ok: false, error: "rate_limited", retryAfterMs });
@@ -182,6 +185,7 @@ export class OtpService {
       this.opts.log?.(`[otp] ALERT: the global budget of ${L.globalPerHour} codes an hour is used up; sends are refused until the hour ends`);
       return limited();
     }
+    if (!send) return { ok: true };
     try {
       const { code, ref, chatId } = await this.provider.send(e164, app);
       await this.store.putChallenge({

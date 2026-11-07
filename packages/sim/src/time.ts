@@ -1,6 +1,7 @@
 // Local-time helpers for the simulated cities (DST-correct via Intl). Simulated time is always a UTC
 // epoch millisecond value read from a Clock; these helpers only interpret it. The zone table and the
 // local-time parts are core's (packages/core/src/time.ts); this module keys them by city.
+import { isQuietMinute } from "../../blooio/src/quiet-window.ts";
 import { CITY_TZ, DAY, HOUR, localParts as zoneParts, MINUTE, type City } from "@thenetwork/core";
 
 export { CITY_TZ };
@@ -21,7 +22,7 @@ export function localHour(t: number, city: City): number {
 
 /** True if local hour h is inside [start, end) with wrap-around past midnight. */
 export function inHourWindow(h: number, [start, end]: readonly [number, number]): boolean {
-  return start <= end ? h >= start && h < end : h >= start || h < end;
+  return isQuietMinute(h * 60, { startHour: start, endHour: end });
 }
 
 /**

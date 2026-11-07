@@ -6,6 +6,7 @@ import type { Facet, MemberId, ScoreComponents } from "@thenetwork/core";
 import { DAY, HOUR } from "@thenetwork/core";
 import type { Candidate, JudgeVerdict } from "./types.ts";
 import { complementarity } from "./complementarity.ts";
+import { netValueOf } from "./scoreCore.ts";
 import { pairKey, provenanceWeight, type World } from "./world.ts";
 
 export interface Scored {
@@ -179,7 +180,7 @@ export function netValue(w: World, k: ScoreComponents): number {
   const pos = W.fit * k.fit + W.mutualBenefit * k.mutualBenefit + W.warmPath * k.warmPath + W.novelty * k.novelty + W.timingFit * k.timingFit;
   const neg = W.activationCost * k.activationCost + W.interruptionCost * k.interruptionCost + W.load * k.load + W.repetition * k.repetition + W.socialRisk * k.socialRisk;
   const norm = W.fit + W.mutualBenefit + W.warmPath + W.novelty + W.timingFit;
-  return ((pos - neg) / norm) * k.confidence;
+  return netValueOf(pos, neg, norm, k.confidence);
 }
 
 /** Floors and dealbreakers (any violation => ineligible, never compensated by other terms). */

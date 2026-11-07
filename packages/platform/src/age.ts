@@ -3,11 +3,12 @@
 // decides. A person who said 15 on ntwrk cannot join slop later by saying 25.
 import { isMinor, validAge } from "../../core/src/policy.ts";
 import type { AppInfo } from "./apps.ts";
+import { lowestOf } from "./decisions.ts";
 
 /** The lowest valid age of the ones given (undefined if none is valid). Unknown never raises an age. */
 export function lowestAge(...ages: unknown[]): number | undefined {
   const ok = ages.filter(validAge);
-  return ok.length ? Math.min(...ok) : undefined;
+  return ok.length ? lowestOf(ok) : undefined;
 }
 
 /** True if a person of this age may join the app. Missing or invalid ages fail closed. */

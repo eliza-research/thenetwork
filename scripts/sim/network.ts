@@ -183,7 +183,9 @@ export async function networkBlock(b: Block, o: { quick: boolean }): Promise<voi
   });
 
   await b.run("trust: no honest member is flagged; bad actors who acted are restricted", () => {
-    for (const r of logs(R, "abuse")) expect([r.detail.memberId, !!run.personas.get(String(r.detail.memberId))?.hidden.adversarial]).toEqual([r.detail.memberId, true]);
+    // Friends invited during the run are not in run.personas: read the world's list after the run.
+    const everyone = new Map(run.w.personaList().map(p => [p.id, p]));
+    for (const r of logs(R, "abuse")) expect([r.detail.memberId, !!everyone.get(String(r.detail.memberId))?.hidden.adversarial]).toEqual([r.detail.memberId, true]);
     const acted = new Set(R.filter(r => r.type === "adversarial_attempt" && ["spammer", "scammer", "harasser", "prompt_injector"].includes(r.kind)).map(r => (r as { memberId: string }).memberId));
     for (const id of acted) expect([id, run.net.trust.level(id)]).not.toEqual([id, "ok"]);
   });

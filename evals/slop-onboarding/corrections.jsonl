@@ -46,3 +46,16 @@
 {"messages":["I date in SF and NYC within 100 miles"],"correction":"Change only my distance to 50 miles, not 100 miles.","expect":{"distance":{"mode":"multi","markets":["nyc","sf"],"miles":50}},"confirmed":false}
 {"messages":["Within 50 miles"],"correction":"I date in SF and NYC","expect":{"distance":{"mode":"multi","markets":["nyc","sf"],"miles":50}},"confirmed":false}
 {"messages":["I date in SF and NYC within 50 miles"],"correction":"only NYC","expect":{"distance":{"mode":"city"}},"confirmed":false}
+{"messages": ["woman looking for men 28-38 within 5 mi of 11211"], "correction": "right now i'm not sure about that", "expect": {"ageRange": [28, 38]}, "confirmed": false}
+{"messages": ["woman looking for men 28-38 within 5 mi of 11211"], "correction": "right, no wait that is wrong", "expect": {"ageRange": [28, 38]}, "confirmed": false}
+{"messages": ["woman looking for men 28-38 within 5 mi of 11211"], "correction": "perfect would be someone else entirely", "expect": {"ageRange": [28, 38]}, "confirmed": false}
+{"messages": ["woman looking for men 28-38 within 5 mi of 11211"], "correction": "correct me if I'm wrong but that isn't it", "expect": {"ageRange": [28, 38]}, "confirmed": false}
+{"messages": ["woman looking for men 28-38 within 5 mi of 11211"], "correction": "100 percent not", "expect": {"ageRange": [28, 38]}, "confirmed": false}
+{"messages": ["woman looking for men 28-38 within 5 mi of 11211"], "correction": "right", "expect": {"ageRange": [28, 38]}, "confirmed": true}
+{"messages": ["woman looking for men 28-38 within 5 mi of 11211"], "correction": "correct!", "expect": {"ageRange": [28, 38]}, "confirmed": true}
+{"messages": ["woman looking for men 28-38 within 5 mi of 11211"], "correction": "that's right", "expect": {"ageRange": [28, 38]}, "confirmed": true}
+{"messages": ["woman looking for men 28-38 within 5 mi of 11211"], "correction": "you got it", "expect": {"ageRange": [28, 38]}, "confirmed": true}
+{"messages": ["woman looking for men 28-38 within 5 mi of 11211"], "correction": "100", "expect": {"ageRange": [28, 38]}, "confirmed": true}
+{"messages": ["woman looking for men 28-38 within 5 mi of 11211"], "correction": "👍", "expect": {"ageRange": [28, 38]}, "confirmed": true}
+{"messages": ["woman looking for men 28-38 within 5 mi of 11211"], "correction": "right thanks", "expect": {"ageRange": [28, 38]}, "confirmed": true}
+{"messages": ["woman looking for men 28-38 within 5 mi of 11211"], "correction": "correct, thanks", "expect": {"ageRange": [28, 38]}, "confirmed": true}

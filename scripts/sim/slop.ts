@@ -279,6 +279,17 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
     for (const p of (await runEngine({ ...input, facets: forged }, cfg(5), { pack: slopPack })).proposals) for (const t of Object.values(p.explanations)) { expect(appearanceLeak(t)).toBeNull(); expect(t).not.toMatch(/looks|attractive|athletic|top 10/i); }
   });
 
+  await b.run("conformance slop: a romance item needs an adult with the lane in a stated opt-in list; a missing list is no consent", () => {
+    const gate = slopPack.attention!.itemGate!, item = { category: "romance" } as Parameters<typeof gate>[1];
+    const view = (v: object) => v as Parameters<typeof gate>[0];
+    expect(gate(view({ age: 30, categoriesOptIn: ["romance"] }), item)).toBeNull();
+    expect(gate(view({ age: 30 }), item)).toBe("romance_not_allowed");
+    expect(gate(view({ age: 30, categoriesOptIn: [] }), item)).toBe("romance_not_allowed");
+    expect(gate(view({ age: 17, categoriesOptIn: ["romance"] }), item)).toBe("romance_not_allowed");
+    expect(gate(view({ categoriesOptIn: ["romance"] }), item)).toBe("romance_not_allowed");
+    expect(appearanceLeak("they are plus_size")).not.toBeNull();
+  });
+
   await b.run("conformance slop: adults only; minors are never rated, never get a body-type preference, never shown in a photo", () => {
     let minors = 0;
     for (const p of res.world.personas) if (!canBeMatched(p.stated.claimedAge)) {
