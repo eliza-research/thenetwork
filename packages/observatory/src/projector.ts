@@ -419,7 +419,12 @@ export class Projector {
       }
       case "probe_closed": {
         const o = s.opps.get(d.proposalId);
-        if (o && !isTerminal(o.state)) { this.setState(o, "SKIPPED", String(d.reason ?? "not sent")); this.changed(o, r); }
+        if (!o) return true;
+        const wasOpen = !isTerminal(o.state), hasAlternates = Array.isArray(d.alternates);
+        // Trying the last candidates can exhaust the list without another replacement event.
+        if (hasAlternates) o.alternates = [...d.alternates];
+        if (wasOpen) this.setState(o, "SKIPPED", String(d.reason ?? "not sent"));
+        if (wasOpen || hasAlternates) this.changed(o, r);
         return true;
       }
       case "venue": {

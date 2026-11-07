@@ -7,20 +7,23 @@ import { RealSource } from "../src/sources/real.ts";
 import { rowsFromGame, writeRows } from "../db/writer.ts";
 import { dropTestDb, pgAvailable, testDb } from "./pg.ts";
 
-test.skipIf(!pgAvailable)("plan backfills and replacements retain the Network roster through persistence", async () => {
-  const game = new GameSource({ seed: 4, personas: 80, days: 7, network: "consent", review: "auto", city: "all", pushMs: HOUR, tickMs: HOUR });
+test.skipIf(!pgAvailable)("replacement and closed-probe rosters survive persistence", async () => {
+  const game = new GameSource({ seed: 4, personas: 80, days: 21, network: "consent", review: "auto", city: "all", pushMs: HOUR, tickMs: HOUR });
   let sql: SQL | undefined, real: RealSource | undefined;
   try {
     await game.init();
-    expect(await game.control({ type: "step", ms: 7 * DAY })).toMatchObject({ ok: true });
+    expect(await game.control({ type: "step", ms: 21 * DAY })).toMatchObject({ ok: true });
     const run = await game.world.complete();
     const changes = run.records.filter(r => r.type === "network_log" && r.kind === "probe_replaced");
     const backfills = changes.filter(r => r.type === "network_log" && !r.detail.out);
     expect(backfills.length).toBeGreaterThan(0);
     expect(changes.length).toBeGreaterThan(backfills.length); // Ordinary replacements are the control.
-    const ids = new Set(changes.map(r => r.type === "network_log" ? String(r.detail.oppId) : ""));
+    const closures = run.records.filter(r => r.type === "network_log" && r.kind === "probe_closed");
+    expect(closures.length).toBeGreaterThan(0);
+    const ids = new Set([...changes, ...closures].map(r => r.type === "network_log" ? String(r.detail.oppId ?? r.detail.proposalId) : ""));
     const native = game.consent!.exportState().opps.filter(o => ids.has(o.id));
     expect(native.length).toBe(ids.size);
+    expect(native.some(o => o.stage === "closed" && o.alternates.length > 0)).toBe(true);
     const url = await testDb();
     sql = new SQL(url);
     await writeRows(sql, rowsFromGame(game), { truncate: true });

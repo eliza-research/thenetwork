@@ -2557,7 +2557,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     // A review rejection or expiry is not something the members did: no interaction record.
     if (!wasReview) this.interactions.push({ id: o.id, kind: o.kind, category: o.category, participants: [...o.participants], at: this.now(), outcome: reason === "declined" ? "declined" : wasProbing ? "expired" : "cancelled", declinedBy: o.participants.filter(p => o.status.get(p) === "no") });
-    this.ctx.log(wasProbing ? "probe_closed" : "opportunity_closed", { proposalId: o.id, reason: wasProbing ? `not sent: ${reason}` : reason });
+    this.ctx.log(wasProbing ? "probe_closed" : "opportunity_closed", {
+      proposalId: o.id, reason: wasProbing ? `not sent: ${reason}` : reason,
+      ...(wasProbing ? { alternates: [...o.alternates] } : {}),
+    });
   }
 
   /** Remove a member from everything open (opt-out, hold, minor signal, decline). */
