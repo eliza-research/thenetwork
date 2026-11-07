@@ -348,6 +348,8 @@ interface Opp {
   anchor?: EngineProposal["anchor"]; roles?: EngineProposal["roles"];
   /** The stage it was in when it closed, and why (console). */
   closedFrom?: string; closedReason?: string;
+  /** When it closed or finished. A queued text about it is stale only if it was queued before this. */
+  endedAt?: number;
   sameDay: boolean;
   /** Members a probe or a reveal actually reached. */
   contacted: Set<MemberId>;
@@ -2515,7 +2517,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     // Only members who were told about the plan hear that it changed.
     for (const id of still) if (o.bookedTold?.includes(id)) this.send(this.member(id), copy.dropNotice(m.first, keep), { type: "cancellation", proposalId: o.id }, "cancellation",
       { hook: { t: "drop_notice", oppId: o.id } });
-    if (!keep) { this.expireReveals(o); o.closedFrom = o.stage; o.closedReason = "participant dropped"; o.stage = "closed"; this.ctx.log("opportunity_closed", { proposalId: o.id, reason: "participant dropped" }); }
+    if (!keep) { this.expireReveals(o); o.closedFrom = o.stage; o.closedReason = "participant dropped"; o.stage = "closed"; o.endedAt = this.now(); this.ctx.log("opportunity_closed", { proposalId: o.id, reason: "participant dropped" }); }
   }
 
   /** Members the booked plan reached who neither confirmed nor dropped before it closed: an expired reveal. */
@@ -2530,7 +2532,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const wasReview = o.stage === "review";
     const wasProbing = o.stage === "probing" || wasReview;
     if (o.stage === "probing") this.counters.oppsNotAvailable++;
-    o.stage = "closed";
+    o.stage = "closed"; o.endedAt = this.now();
     const told = new Set<MemberId>();
     for (const id of o.participants) {
       const m = this.members.get(id);
@@ -3403,7 +3405,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         this.send(m, copy.reminder(whenPhrase(o.meetingAt), `${o.venue}`), { type: "reminder", proposalId: o.id }, "reminder", { about: o.participants.filter(p => o.status.get(p) === "yes") });
       }
       if (!o.feedbackSent && now >= o.meetingAt + 3 * HOUR) {
-        o.feedbackSent = true; o.stage = "done";
+        o.feedbackSent = true; o.stage = "done"; o.endedAt = this.now();
         // A plan's probes still waiting are over: the plan has happened.
         if (o.planRun) for (const [p, a] of Object.entries(o.planRun.answers)) if (a === "pending") {
           o.status.set(p, "unavailable");

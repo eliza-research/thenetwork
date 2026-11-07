@@ -114,6 +114,8 @@ export class DryRunAdapter implements ChannelAdapter {
 
 /** Opportunity stages after which a waiting message about it is stale. */
 const CLOSED_STAGES = new Set(["done", "closed"]);
+const endedBefore = (o: { stage: string; endedAt?: number } | undefined, queuedAt: number) =>
+  !!o && CLOSED_STAGES.has(o.stage) && (o.endedAt === undefined || queuedAt < o.endedAt);
 
 export interface BlooioAdapterOptions {
   /** The provider (packages/blooio BlooioAdapter over a BlooioClient). The simulations pass a recording fake. */
@@ -177,8 +179,10 @@ export class BlooioAdapter implements ChannelAdapter {
     const checks: AppChecks = {
       live: () => this.live,
       // A relayed item still goes after the date (the thread stays open for a week); a closed match stops it.
+      // Other texts expire only when queued before the date ended: the drop notice and the feedback ask are
+      // written as it ends.
       stale: async row => row.id.startsWith("ntf_") ? !await rt.notificationCurrent(row.id)
-        : !!row.oppId && (row.id.startsWith("relay:") ? (rt.net.opps.get(row.oppId)?.stage ?? "closed") === "closed" : CLOSED_STAGES.has(rt.net.opps.get(row.oppId)?.stage ?? "")),
+        : !!row.oppId && (row.id.startsWith("relay:") ? (rt.net.opps.get(row.oppId)?.stage ?? "closed") === "closed" : endedBefore(rt.net.opps.get(row.oppId), row.createdAt)),
       optedOut: row => rt.optedOut(row.id, row.memberId as MemberId | undefined, row.to),
       // A direct text to someone who is not a member of this app (no member on the row, none at the address)
       // is fixed copy: the member policy has nobody to check. Consent, quiet hours, caps and the leak guard still apply.
