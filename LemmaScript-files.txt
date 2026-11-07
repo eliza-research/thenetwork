@@ -1,0 +1,8 @@
+packages/observatory/web/logic/review.ts
+packages/observatory/web/logic/sync.ts
+packages/observatory/web/logic/filters.ts
+packages/observatory/web/logic/views.ts
+sites/shared/join-core.ts
+packages/core/src/phone-core.ts
+packages/mcp/src/html-core.ts
+tools/clef-label/core.ts

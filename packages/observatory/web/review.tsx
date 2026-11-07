@@ -7,6 +7,7 @@ import { useEffect, useRef, useState, type ReactNode, type RefObject } from "rea
 import type { ReviewReason } from "../src/types.ts";
 import { VENUES } from "@thenetwork/network/geo";
 import { OPEN, originLabel, originOf, REVIEW_REASONS, store, useStore, type DecideOpts, type Opp } from "./store.ts";
+import { approveBlock as approveCore, choose, keyStep, rebind, reviewStatus, settle, toggleMode, type Block, type Ctl, type Key, type Mode } from "./logic/review.ts";
 import { AreaLink, Badge, Components, Countdown, dur, humanize, MemberLink, OppLink, oppDot, stamp, StatusLine } from "./ui.tsx";
 
 /** "you" for the signed-in reviewer, "sim" for the simulated one, else the staff id without the token prefix. */
@@ -29,11 +30,13 @@ export function reviewLine(o: Opp): ReactNode {
     rv.secondsSpent ? `${rv.secondsSpent < 60 ? `${rv.secondsSpent}s` : dur(rv.secondsSpent * 1000)} on it` : "",
   ].filter(Boolean).join(" · ");
   const tail = extra ? <span className="muted"> · {extra}</span> : null;
-  if (!rv.decision) return <span><Countdown deadline={rv.deadline} prefix="Due in " />{tail}</span>;
-  if (rv.decision === "expired") return <span className="bad">Expired unsent</span>;
+  const status = reviewStatus({ decision: rv.decision ?? "pending", invalidated: !!rv.invalidated, inReview: o.state === "IN_REVIEW" });
+  if (status === "waiting") return <span><Countdown deadline={rv.deadline} prefix="Due in " />{tail}</span>;
+  if (status === "closed_unsent") return <span>{humanize(o.state)}{tail}</span>;
+  if (status === "expired_unsent") return <span className="bad">Expired unsent</span>;
   const after = rv.decidedAt ? ` · ${dur(Math.max(0, rv.decidedAt - rv.queuedAt))} after queue` : "";
-  if (rv.invalidated) return <span className="warn-text">Approved by {reviewerName(rv.reviewer) || "reviewer"}, stopped on re-check ({humanize(rv.invalidated)}){tail}</span>;
-  if (rv.decision === "approve") return <span>Approved by {reviewerName(rv.reviewer) || "reviewer"}{after}{tail}</span>;
+  if (status === "stopped") return <span className="warn-text">Approved by {reviewerName(rv.reviewer) || "reviewer"}, stopped on re-check ({humanize(rv.invalidated!)}){tail}</span>;
+  if (status === "approved") return <span>Approved by {reviewerName(rv.reviewer) || "reviewer"}{after}{tail}</span>;
   const why = reasonOf(rv);
   return <span>Rejected in review{why.reason ? ` · ${reasonLabel(why.reason)}` : ""}{rv.reviewer ? ` · by ${reviewerName(rv.reviewer)}` : ""}{why.note ? ` · “${why.note}”` : ""}{tail}</span>;
 }
@@ -53,10 +56,13 @@ export function wantsOf(o: Opp, id: string): string | undefined {
 export const swappable = (o: Opp) => o.participants.filter((id, i) => !(originOf(o) === "request" && i === 0));
 
 // ---------------------------------------------------------------- actions
-type ReviewMode = "none" | "reject" | "edit" | "reroll";
 type ReviewError = { code?: string; text: string; oppId?: string };
 interface ReviewCtl {
-  mode: ReviewMode; setMode(v: ReviewMode): void;
+  /** The proved controller (logic/review.ts), current even before the next render. */
+  core(): Ctl; commit(next: Ctl): void;
+  /** True while the controller belongs to this item. */
+  owns(id: string): boolean;
+  mode: Mode; draftsId: string;
   note: string; setNote(v: string): void;
   awaitingOther: boolean; setAwaitingOther(v: boolean): void;
   noteRef: RefObject<HTMLInputElement | null>;
@@ -64,26 +70,37 @@ interface ReviewCtl {
   drafts: Record<string, string>; setDrafts(v: Record<string, string>): void;
   /** Last refusal, shown under the card it came from (guard errors from an edit, a blocked approve). */
   error: ReviewError | null; setError(v: ReviewError | null): void;
-  reset(): void;
 }
-function useReviewCtl(): ReviewCtl {
-  const [mode, setMode] = useState<ReviewMode>("none");
+function useReviewCtl(initial: string): ReviewCtl {
+  const [core, setCore] = useState<Ctl>({ mode: "idle", boundId: initial, draftsId: "", chosen: initial !== "" });
   const [note, setNote] = useState("");
   const [awaitingOther, setAwaitingOther] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [error, setError] = useState<ReviewError | null>(null);
   const noteRef = useRef<HTMLInputElement>(null);
-  const reset = () => { setMode("none"); setNote(""); setAwaitingOther(false); setDrafts({}); setError(null); };
-  return { mode, setMode, note, setNote, awaitingOther, setAwaitingOther, noteRef, drafts, setDrafts, error, setError, reset };
+  const latest = useRef(core);
+  // Every move goes through here. What is typed for one item leaves with that item.
+  const commit = (next: Ctl) => {
+    const left = next.boundId !== latest.current.boundId;
+    if (left) { setNote(""); setError(null); }
+    if (left || !next.draftsId) setDrafts({});
+    if (left || next.mode !== latest.current.mode) setAwaitingOther(false);
+    latest.current = next; setCore(next);
+  };
+  return { core: () => latest.current, commit, owns: id => latest.current.boundId === id, mode: core.mode, draftsId: core.draftsId, note, setNote, awaitingOther, setAwaitingOther, noteRef, drafts, setDrafts, error, setError };
 }
 
-/** Why approval is blocked for this opportunity, if it is. */
+const BLOCK_TEXT: Record<Exclude<Block, "idle">, string> = {
+  read_only: "Read-only source",
+  minor: "Members under 18 are never introduced",
+  declined: "A participant was declined at join",
+  matching_off: "Proactive matching is off (admin switch)",
+  expired: "Expired unsent",
+};
+/** Why approval is blocked for this opportunity, if it is. No review record means no deadline: it stays blocked. */
 export function approveBlock(o: Opp): string | undefined {
-  if (!store.canAct()) return "Read-only source";
-  if (o.participants.some(id => store.members.get(id)?.minor)) return "Members under 18 are never introduced";
-  if (o.participants.some(id => store.members.get(id)?.declined)) return "A participant was declined at join";
-  if (store.network?.matchingEnabled === false) return "Proactive matching is off (admin switch)";
-  return undefined;
+  const block = approveCore(store.canAct(), o.participants, store.members, store.network?.matchingEnabled === false, store.now(), o.review?.deadline ?? 0);
+  return block === "idle" ? undefined : BLOCK_TEXT[block];
 }
 
 /** The edits that differ from the current texts. Undefined when nothing changed. */
@@ -95,38 +112,64 @@ function editsOf(o: Opp, drafts: Record<string, string>): Pick<DecideOpts, "expl
   return { ...(Object.keys(explanations).length ? { explanations } : {}), ...(objective !== undefined ? { objective } : {}) };
 }
 
-/** Send a decision with the controller's note and edits; errors stay on the card. */
-async function act(o: Opp, c: ReviewCtl, decision: "approve" | "reject" | "reroll", extra: DecideOpts = {}): Promise<boolean> {
-  const edits = decision === "approve" && c.mode === "edit" ? editsOf(o, c.drafts) : undefined;
+/** Send a decision with the controller's note and edits; errors stay on the card, or become a toast when the card has gone. */
+async function act(o: Opp, c: ReviewCtl, decision: "approve" | "reject" | "reroll", withEdits: boolean, extra: DecideOpts = {}): Promise<boolean> {
+  const edits = withEdits ? editsOf(o, c.drafts) : undefined;
   const r = await store.decide(o, edits ? "edit" : decision, { ...extra, ...edits, note: c.note }, true);
-  if (r.ok) { c.reset(); return true; }
+  if (r.ok) { c.commit(settle(c.core(), o.id)); return true; }
   // A second press while the first is on its way: nothing was sent.
-  if (r.code !== "in_flight") c.setError({ code: r.code, text: r.error ?? "refused", oppId: o.id });
+  if (r.code === "in_flight") return false;
+  const text = r.error ?? "refused";
+  if (c.owns(o.id) && store.opps.get(o.id)?.state === "IN_REVIEW") c.setError({ code: r.code, text, oppId: o.id });
+  else store.toast(text, "bad");
   return false;
+}
+
+/** Commit a controller step. Load the drafts when it opened the editor; a new mode clears the last refusal. */
+function applyStep(o: Opp, c: ReviewCtl, next: Ctl) {
+  const before = c.core();
+  c.commit(next);
+  if (next.draftsId === o.id && before.draftsId !== o.id) c.setDrafts({ ...Object.fromEntries(o.participants.map(id => [id, o.explanations[id] ?? ""])), "": o.objective });
+  if (next.mode !== before.mode) c.setError(null);
+}
+
+/** One key or button press on item o: the proved reducer decides, this runs what it returned. */
+function press(o: Opp, c: ReviewCtl, key: Key, digit: number, repeat: boolean, onDone?: () => void) {
+  const reasons = store.reasons(), swap = swappable(o);
+  const { ctl, cmd } = keyStep(c.core(), o.id, { key, digit, repeat, blocked: !!approveBlock(o), canAct: store.canReview(), reasons: reasons.length, swaps: swap.length });
+  applyStep(o, c, ctl);
+  const done = (ok: boolean) => { if (ok) onDone?.(); };
+  if (cmd.tag === "approve") act(o, c, "approve", cmd.withEdits).then(done);
+  else if (cmd.tag === "reject") {
+    const reason = reasons[cmd.digit - 1]![0] as ReviewReason;
+    if (reason === "other" && !c.note.trim()) { c.setAwaitingOther(true); c.noteRef.current?.focus(); return; }
+    act(o, c, "reject", false, { reason }).then(done);
+  }
+  // A re-roll keeps the item waiting with the new person (or closes it): stay on it.
+  else if (cmd.tag === "reroll") act(o, c, "reroll", false, { swapOut: swap[cmd.digit - 1]! });
 }
 
 /** Approve, edit, re-roll and reject with one of the app's reason codes. Shared by the queue and the opportunity view. */
 export function ReviewActions({ o, ctl, onDone }: { o: Opp; ctl?: ReviewCtl; onDone?: () => void }) {
-  const local = useReviewCtl();
+  const local = useReviewCtl(o.id);
   const c = ctl ?? local;
   useEffect(() => { store.reviewOpen(o.id); }, [o.id]);
+  // A refusal shown here must not end with the card: when the item closes, it stays as a toast.
+  const shown = useRef(c.error); shown.current = c.error;
+  useEffect(() => () => {
+    const e = shown.current;
+    if (e?.oppId === o.id && store.opps.get(o.id)?.state !== "IN_REVIEW") store.toast(e.text, "bad");
+  }, [o.id]);
   if (!store.canReview()) return null;
   const block = approveBlock(o);
-  const edits = c.mode === "edit" ? editsOf(o, c.drafts) : undefined;
+  const edits = c.draftsId === o.id ? editsOf(o, c.drafts) : undefined;
   const swap = swappable(o);
-  const toggle = (m: ReviewMode) => {
-    c.setError(null); c.setAwaitingOther(false);
-    if (c.mode === m) { c.setMode("none"); return; }
-    if (m === "edit") c.setDrafts({ ...Object.fromEntries(o.participants.map(id => [id, o.explanations[id] ?? ""])), "": o.objective });
-    c.setMode(m);
-  };
-  const reject = async (reason: ReviewReason) => {
-    if (reason === "other" && !c.note.trim()) { c.setAwaitingOther(true); c.noteRef.current?.focus(); return; }
-    if (await act(o, c, "reject", { reason })) onDone?.();
-  };
-  const approve = async () => { if (!block && await act(o, c, "approve")) onDone?.(); };
-  // A re-roll keeps the item waiting with the new person (or closes it): stay on it.
-  const reroll = (out: string) => act(o, c, "reroll", { swapOut: out });
+  /** A click on this card is the reviewer's choice of this card. */
+  const click = (key: Key, digit = 0) => { c.commit(choose(c.core(), o.id)); press(o, c, key, digit, false, onDone); };
+  const toggle = (m: Mode) => { c.setError(null); c.setAwaitingOther(false); applyStep(o, c, toggleMode(c.core(), o.id, m)); };
+  const reject = (reason: ReviewReason) => click("digit", store.reasons().findIndex(x => x[0] === reason) + 1);
+  const approve = () => click("a");
+  const reroll = (i: number) => click("digit", i + 1);
   return (
     <div className="review-act">
       {c.mode === "edit" && (
@@ -146,7 +189,7 @@ export function ReviewActions({ o, ctl, onDone }: { o: Opp; ctl?: ReviewCtl; onD
       {c.mode === "reroll" && (
         <div className="review-actions">
           <span className="muted small">Swap out</span>
-          {swap.map((id, i) => <button key={id} className="chip" onClick={() => reroll(id)}><kbd>{i + 1}</kbd> {store.firstName(id)}</button>)}
+          {swap.map((id, i) => <button key={id} className="chip" onClick={() => reroll(i)}><kbd>{i + 1}</kbd> {store.firstName(id)}</button>)}
           <span className="muted small">{o.alternates.length ? `${o.alternates.length} alternate${o.alternates.length > 1 ? "s" : ""}` : "No alternates: it closes and the engine composes again"}</span>
         </div>
       )}
@@ -167,7 +210,7 @@ export function ReviewActions({ o, ctl, onDone }: { o: Opp; ctl?: ReviewCtl; onD
           onChange={e => c.setNote(e.target.value)}
           onKeyDown={e => {
             if (e.key === "Enter") { e.preventDefault(); if (c.awaitingOther && c.note.trim()) reject("other"); }
-            if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); (e.target as HTMLInputElement).blur(); if (c.mode !== "none") { c.setMode("none"); c.setAwaitingOther(false); } }
+            if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); (e.target as HTMLInputElement).blur(); if (c.mode !== "idle") press(o, c, "esc", 0, false); }
           }}
         />
       </div>
@@ -186,18 +229,29 @@ export function ReviewQueue() {
   const f = s.ui.focus;
   const [selId, setSelId] = useState<string>();
   const [scoreOpen, setScoreOpen] = useState(false);
-  const ctl = useReviewCtl();
   const sel = (f?.kind === "opportunity" && pending.find(o => o.id === f.id)) || pending.find(o => o.id === selId) || pending[0];
+  const ctl = useReviewCtl(sel?.id ?? "");
   const counts = s.network?.review ?? countDecisions();
+  // The controller follows the selection in this render, so no frame shows one item's mode on another.
+  // A focus link is the reviewer's choice. Any other move (the card left, the filter changed) is not.
+  if (sel && !ctl.owns(sel.id)) ctl.commit(f?.kind === "opportunity" && f.id === sel.id ? choose(ctl.core(), sel.id) : rebind(ctl.core(), sel.id));
+  // Hold the card on view: an item with a sooner deadline must not take its place.
+  useEffect(() => { if (sel) setSelId(sel.id); }, [sel?.id]);
 
   const select = (o: Opp | undefined, mapFocus = true) => {
     if (!o) return;
-    if (o.id !== sel?.id) ctl.reset();
+    ctl.commit(choose(ctl.core(), o.id));
     setSelId(o.id); setScoreOpen(false);
     if (mapFocus) store.focus({ kind: "opportunity", id: o.id }, { replace: store.ui.focus?.kind === "opportunity" });
   };
-  const next = () => { const i = sel ? pending.indexOf(sel) : -1; return pending[i + 1] ?? pending[i - 1]; };
-  const afterDecision = () => { const n = next(); if (n) select(n); else setSelId(undefined); };
+  /** The answer for item id arrived: move on, unless the reviewer has already chosen another card. */
+  const afterDecision = (id: string) => {
+    const { pending, sel, ctl, select } = live.current, core = ctl.core();
+    if (core.chosen && core.boundId !== id) return;
+    const i = pending.findIndex(o => o.id === id);
+    const n = i < 0 ? sel : pending[i + 1] ?? pending[i - 1];
+    if (n) select(n); else setSelId(undefined);
+  };
 
   // The queue owns its keyboard while mounted (capture phase, so Esc leaves a mode before the global chain).
   const live = useRef({ pending, sel, ctl, view, select, afterDecision });
@@ -205,36 +259,28 @@ export function ReviewQueue() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if ((e.target as Element | null)?.closest?.("input, textarea, select")) return;
+      const target = e.target as Element | null;
+      if (target?.closest?.("input, textarea, select")) return;
+      // An open popover has the keyboard. A focused control keeps Enter; a card head only opens the card.
+      if (store.ui.popover) return;
+      if (e.key === "Enter" && target?.closest?.("button:not(.review-head), a, summary")) return;
       const { pending, sel, ctl, view, select, afterDecision } = live.current;
       if (view !== "pending") return;
       const handled = () => { e.preventDefault(); e.stopImmediatePropagation(); };
-      if (e.key === "Escape" && ctl.mode !== "none") { handled(); ctl.setMode("none"); ctl.setAwaitingOther(false); return; }
+      if (e.key === "Escape" && sel && ctl.core().mode !== "idle") { handled(); press(sel, ctl, "esc", 0, false); return; }
       if (!sel) return;
       const i = pending.indexOf(sel);
       const canAct = store.canReview();
+      const mode = ctl.core().mode;
+      const send = (key: Key, digit = 0) => { handled(); press(sel, ctl, key, digit, e.repeat, () => afterDecision(sel.id)); };
       if (e.key === "j") { handled(); select(pending[Math.min(pending.length - 1, i + 1)]); }
       else if (e.key === "k") { handled(); select(pending[Math.max(0, i - 1)]); }
-      else if (e.key === "a" && canAct) { handled(); if (!approveBlock(sel)) act(sel, ctl, "approve").then(ok => { if (ok) afterDecision(); }); }
-      else if (e.key === "r" && canAct) { handled(); ctl.setError(null); ctl.setMode("reject"); ctl.setAwaitingOther(false); }
-      else if (e.key === "s" && canAct && swappable(sel).length) { handled(); ctl.setError(null); ctl.setMode("reroll"); }
-      else if (e.key === "e" && canAct) {
-        handled(); ctl.setError(null);
-        ctl.setDrafts({ ...Object.fromEntries(sel.participants.map(id => [id, sel.explanations[id] ?? ""])), "": sel.objective });
-        ctl.setMode("edit");
-      }
-      else if (ctl.mode === "reject" && /^[1-8]$/.test(e.key)) {
-        handled();
-        const pick = store.reasons()[Number(e.key) - 1];
-        if (!pick) return;
-        const reason = pick[0] as ReviewReason;
-        if (reason === "other" && !ctl.note.trim()) { ctl.setAwaitingOther(true); ctl.noteRef.current?.focus(); return; }
-        act(sel, ctl, "reject", { reason }).then(ok => { if (ok) afterDecision(); });
-      }
-      else if (ctl.mode === "reroll" && /^[1-6]$/.test(e.key)) {
-        const out = swappable(sel)[Number(e.key) - 1];
-        if (out) { handled(); act(sel, ctl, "reroll", { swapOut: out }); }
-      }
+      else if (e.key === "a" && canAct) send("a");
+      else if (e.key === "r" && canAct) send("r");
+      else if (e.key === "s" && canAct && swappable(sel).length) send("s");
+      else if (e.key === "e" && canAct) send("e");
+      else if (mode === "reject" && /^[1-8]$/.test(e.key)) send("digit", Number(e.key));
+      else if (mode === "reroll" && /^[1-6]$/.test(e.key) && swappable(sel)[Number(e.key) - 1]) send("digit", Number(e.key));
       else if (e.key === "n") { handled(); ctl.noteRef.current?.focus(); }
       else if (e.key === "x") { handled(); setScoreOpen(v => !v); }
       else if (e.key === "Enter") { handled(); store.focus({ kind: "opportunity", id: sel.id }); }
@@ -267,7 +313,7 @@ export function ReviewQueue() {
         pending.length ? (
           <div className="review-list">
             {pending.map(o => (
-              <ReviewCard key={o.id} o={o} selected={o.id === sel?.id} onSelect={() => select(o)} ctl={ctl} scoreOpen={scoreOpen} setScoreOpen={setScoreOpen} onDone={afterDecision} />
+              <ReviewCard key={o.id} o={o} selected={o.id === sel?.id} onSelect={() => select(o)} ctl={ctl} scoreOpen={scoreOpen} setScoreOpen={setScoreOpen} onDone={() => afterDecision(o.id)} />
             ))}
           </div>
         ) : <div className="muted small pad">{s.nothing()}</div>

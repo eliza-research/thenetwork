@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { AppProfile360, BookedPlan, HealthAlert, MemberDetail, MemberPhoto, PeonProfile360, SlopProfile360, MemberTimeline, ObsFeedItem, ObsMember, ObsMessage, OpportunityDetail, SystemEvent, TimeChoice } from "../src/types.ts";
 import { STATE_COLOR } from "./graph.ts";
 import { historyBetween, isBusyElsewhere, ReviewActions, reviewLine, VenueLink, wantsOf } from "./review.tsx";
+import { planCloses, planView, photoHeld, photoView, readCancel, readLand, readNew, readStart, yesCounts, type ReadGate } from "./logic/views.ts";
 import { isMemberActive, OPEN, originLabel, originOf, store, useStore, type DrawerTab, type Fetched, type Opp } from "./store.ts";
 import {
   ago, AreaLink, Badge, Components, Countdown, Disclosure, dur, humanize, Kpi, MemberLink, num, OppLink, oppDot, pct, Section, sentence, shortDate,
@@ -17,10 +18,6 @@ const STATUS_TONE: Record<string, string> = {
   accepted: "good", confirmed: "good", attended: "good", countered: "info", declined: "bad", no_show: "bad", ignored: "warn", expired: "warn",
   cancelled_with_notice: "warn", dropped: "neutral", invited: "info", pending: "neutral",
 };
-/** Participant statuses from the reveal on (the member has seen who it is). */
-const REVEALED = new Set(["invited", "accepted", "declined", "countered", "ignored", "expired", "dropped", "confirmed", "attended", "no_show", "cancelled_with_notice"]);
-/** Said yes after the reveal (a later no-show or cancellation still said yes). */
-const SAID_YES = new Set(["accepted", "confirmed", "attended", "no_show", "cancelled_with_notice"]);
 const MET = new Set(["COMPLETED", "FEEDBACK_COLLECTED"]);
 const STUCK_MS = 72 * 3_600_000, REQUEST_WAIT_MS = 3 * 86_400_000;
 const plural = (n: number, word: string) => `${num(n)} ${word}${n === 1 ? "" : "s"}`;
@@ -43,10 +40,15 @@ export function Inspector() {
 const RELOAD_GAP_MS = 3000;
 function useLive<T>(load: () => Promise<Fetched<T>>, key: string, deps: unknown[]): Fetched<T> | undefined {
   const [d, setD] = useState<Fetched<T>>();
-  const last = useRef(0), prevKey = useRef(key), gen = useRef(0);
+  const last = useRef(0), prevKey = useRef(key), gate = useRef<ReadGate>(readNew());
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const run = () => { const g = gen.current; last.current = Date.now(); load().then(x => { if (g === gen.current) setD(x); }); };
-  useEffect(() => { gen.current++; run(); return () => { gen.current++; clearTimeout(timer.current); }; }, deps);
+  const run = () => {
+    gate.current = readStart(gate.current);
+    const ticket = gate.current.last;
+    last.current = Date.now();
+    load().then(x => { const l = readLand(gate.current, ticket); gate.current = l.gate; if (l.show) setD(x); });
+  };
+  useEffect(() => { gate.current = readCancel(gate.current); run(); return () => { gate.current = readCancel(gate.current); clearTimeout(timer.current); }; }, deps);
   useEffect(() => {
     if (prevKey.current === key) return;
     prevKey.current = key;
@@ -58,7 +60,7 @@ function useLive<T>(load: () => Promise<Fetched<T>>, key: string, deps: unknown[
 /** What changes a member's detail: their counters and state, and the opportunities they are in. */
 function memberKey(id: string): string {
   const m = store.members.get(id);
-  let k = m ? `${m.state}|${m.trust}|${m.counters.msgsIn}|${m.counters.msgsOut}|${m.counters.proposals}|${m.counters.meetings}` : "";
+  let k = m ? `${m.state}|${m.trust}|${m.minor}|${m.counters.msgsIn}|${m.counters.msgsOut}|${m.counters.proposals}|${m.counters.meetings}` : "";
   for (const o of store.opps.values()) if (o.participants.includes(id)) k += `|${o.id}:${o.state}:${o.updatedAt}`;
   return k;
 }
@@ -137,11 +139,10 @@ function KpiGrid({ area }: { area?: string }) {
   const dueSoon = inReview.some(o => o.review && o.review.deadline - now < 3_600_000);
   const reviewOff = s.network?.kind === "stub";
   const proposals = opps.filter(o => originOk(o) && s.inRange(o.createdAt)).length;
-  const revealed = opps.filter(o => originOk(o) && s.inRange(o.updatedAt) && o.participants.every(id => REVEALED.has(o.status[id] ?? "")));
-  const allYes = revealed.filter(o => o.participants.every(id => SAID_YES.has(o.status[id] ?? ""))).length;
-  const yesRate = revealed.length ? allYes / revealed.length : undefined;
-  const met = opps.filter(o => MET.has(o.state) && o.meetingAt !== undefined && s.inRange(o.meetingAt)).length;
-  const upcoming = opps.filter(o => o.state === "SCHEDULED").length;
+  const yes = yesCounts(opps.filter(o => originOk(o) && s.inRange(o.updatedAt)).map(o => o.participants.map(id => o.status[id] ?? "")));
+  const yesRate = yes.revealed ? yes.yes / yes.revealed : undefined;
+  const met = opps.filter(o => MET.has(o.state) && originOk(o) && o.meetingAt !== undefined && s.inRange(o.meetingAt)).length;
+  const upcoming = opps.filter(o => o.state === "SCHEDULED" && originOk(o)).length;
   const requests = s.network && !area && f.borough === "all"
     ? s.network.requests.waiting + s.network.requests.probing
     : opps.filter(o => OPEN.has(o.state) && originOf(o) === "request").length;
@@ -157,7 +158,7 @@ function KpiGrid({ area }: { area?: string }) {
       {reviewOff
         ? <Kpi label={`Proposals · ${range}`} value={num(proposals)} title="Opportunities created in the range" onClick={() => store.setUI({ drawer: "pipeline", drawerOpen: true })} />
         : <Kpi label="In review" value={num(inReview.length)} tone={dueSoon ? "warn" : undefined} title="Waiting for a human reviewer before anyone is contacted (PRD 32.8). Amber: one is due in under 1 h." onClick={() => store.setUI(s.showReviewTab() ? { drawer: "review", drawerOpen: true, reviewView: "pending" } : { drawer: "pipeline", drawerOpen: true })} />}
-      <Kpi label="Everyone-yes" value={yesRate === undefined ? "–" : pct(yesRate)} tone={yesRate !== undefined && yesRate >= 0.85 ? "good" : undefined} title={`Of ${revealed.length} opportunities revealed in the range, the share where every participant said yes. Target 85%.`} onClick={() => store.setUI({ drawer: "pipeline", drawerOpen: true })} />
+      <Kpi label="Everyone-yes" value={yesRate === undefined ? "–" : pct(yesRate)} tone={yesRate !== undefined && yesRate >= 0.85 ? "good" : undefined} title={`Of ${yes.revealed} opportunities revealed in the range, the share where every participant said yes. Target 85%.`} onClick={() => store.setUI({ drawer: "pipeline", drawerOpen: true })} />
       <Kpi label={`Meetings · ${range}`} value={num(met)} title={`Meetings held in the range. ${upcoming} scheduled.`} onClick={() => go({ stateGroup: "met" }, "pipeline")} />
       <Kpi label="Open requests" value={num(requests)} tone={requests ? "warn" : undefined} title="People requests still being worked on (probing or waiting)" onClick={() => go({ origin: "request" }, "pipeline")} />
       <Kpi label="Safety holds" value={num(holds)} tone={holds ? "bad" : undefined} title="Members on trust hold (never matched until cleared)" onClick={() => go({ members: "hold" }, "safety")} />
@@ -515,14 +516,16 @@ function BookedPlanView({ o, b }: { o: Opp; b: BookedPlan }) {
     <>
       <div className="small">Booked for {stamp(b.at)}{o.venue ? <> at <VenueLink venue={o.venue} /></> : null}. Each member can say they can't within {b.optOutHours} h; silence is a yes.</div>
       {o.participants.map(x => {
-        const told = b.told[x], off = b.cancelled[x];
-        const closes = told === undefined ? undefined : Math.min(told + b.optOutHours * 3_600_000, b.at);
+        // The proof models whole numbers: a value that is not one counts as not told.
+        const sane = Number.isFinite(b.told[x]) && b.optOutHours >= 0;
+        const told = sane ? b.told[x] : undefined, off = b.cancelled[x];
+        const view = planView(!!off, told, sane ? b.optOutHours : 0, b.at, now);
         return (
           <div className="small participant" key={x}>
             <MemberLink id={x} first />
-            {off ? <Badge tone="warn" title={off.told ? "They told us they can't make it" : "They dropped out without replying to us"}>called off {stamp(off.at)}{off.told ? "" : " · silently"}</Badge>
-              : told === undefined ? <span className="muted">not told yet</span>
-              : closes! > now ? <span><span className="muted">told {stamp(told)} · opt-out closes </span><Countdown deadline={closes!} prefix="in " what="Opt-out window closes" /></span>
+            {view === "called_off" ? <Badge tone="warn" title={off!.told ? "They told us they can't make it" : "They dropped out without replying to us"}>called off {stamp(off!.at)}{off!.told ? "" : " · silently"}</Badge>
+              : view === "not_told" ? <span className="muted">not told yet</span>
+              : view === "open" ? <span><span className="muted">told {stamp(told!)} · opt-out closes </span><Countdown deadline={planCloses(told!, b.optOutHours, b.at)} prefix="in " what="Opt-out window closes" /></span>
               : <Badge tone="good" title="The opt-out window passed: silence counts as confirmed">confirmed</Badge>}
           </div>
         );
@@ -578,6 +581,11 @@ function SlopPanel({ id, p }: { id: string; p: SlopProfile360 }) {
   const [reason, setReason] = useState("");
   const [photos, setPhotos] = useState<MemberPhoto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // `minor` is the live store flag: the rule is a detail read and can lag it by seconds.
+  const m = s.members.get(id);
+  const gate = { rule: p.photos, canSafety: s.can("safety"), minor: !m || m.minor };
+  const view = photoView(gate, !!photos), held = photoHeld(gate, !!photos);
+  useEffect(() => { if (photos && !held) setPhotos(null); }, [photos, held]);
   const show = async () => {
     const r = await store.photos(id, reason.trim());
     if (r.data?.photos) { setPhotos(r.data.photos); setError(null); } else setError(r.error ?? r.data?.error ?? "refused");
@@ -589,14 +597,14 @@ function SlopPanel({ id, p }: { id: string; p: SlopProfile360 }) {
         ? <div className="muted small">Dating preferences hidden ({p.prefs.count} facts). {s.env?.capabilities.hiddenTruth ? "Simulated world: the truth lens shows hidden facts." : s.can("safety") ? "Reveal this member (logged) to see them." : "Safety or admin only."}</div>
         : <SlopPrefsView prefs={p.prefs.prefs} />}
       <div className="muted small">{PHOTO_TEXT[p.photos]} Scores and ratings are never shown.</div>
-      {p.photos === "reason_required" && s.can("safety") && !photos && (
+      {view === "form" && (
         <form className="person-reason" onSubmit={e => { e.preventDefault(); if (reason.trim().length >= 5) show(); }}>
           <input className="input grow" placeholder="Reason (logged)" value={reason} onChange={e => setReason(e.target.value)} aria-label="Reason to see photos" />
           <button className="btn" type="submit" disabled={reason.trim().length < 5}>Show photos</button>
           {error && <span className="bad small" role="alert">{error}</span>}
         </form>
       )}
-      {photos && (photos.length
+      {view === "gallery" && photos && (photos.length
         ? <div className="photos">{photos.map(ph => <img key={ph.id} src={ph.url} alt="Member photo" referrerPolicy="no-referrer" loading="lazy" />)}</div>
         : <div className="muted small">No photos.</div>)}
     </>

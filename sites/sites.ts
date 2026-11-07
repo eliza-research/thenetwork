@@ -95,10 +95,18 @@ export function skillDescription(text: string): string {
 /** Files that may hold placeholders. Bundled JS and CSS never do (minified JS can contain "{{" legitimately). */
 const TEXT = /\.(html|md|txt|json|xml)$/;
 
+const turnstileKey = (env: Record<string, string | undefined>) => (env.TURNSTILE_SITE_KEY ?? "").trim();
+
+/** The production warning for a build whose phone step would show no Turnstile check. Spaces are no key. */
+export function turnstileWarning(domain: string, env: Record<string, string | undefined>): string | undefined {
+  if (env.DEPLOY_TARGET !== "production" || turnstileKey(env)) return undefined;
+  return `warning: ${domain}: no TURNSTILE_SITE_KEY; the phone step shows no check and a production API that requires Turnstile refuses codes`;
+}
+
 /** Placeholders that the build fills: {{BACKEND_ORIGIN}}, {{MCP_URL}} (this site's MCP endpoint), {{TEXT_LINE}} and {{TURNSTILE_SITE_KEY}}. */
 export function fill(text: string, env: Record<string, string | undefined> = process.env, domain = "ntwrk.party"): string {
   const cfg = skillsConfig(env);
-  const key = (env.TURNSTILE_SITE_KEY ?? "").trim();
+  const key = turnstileKey(env);
   if (key && !/^[0-9A-Za-z_-]{1,64}$/.test(key)) throw new Error("TURNSTILE_SITE_KEY has unexpected characters");
   let filled = text
     .replaceAll("{{BACKEND_ORIGIN}}", cfg.BACKEND_ORIGIN)
@@ -236,7 +244,8 @@ export async function buildSite(s: Site, outdir: string, env: Record<string, str
         for (const m of DRAFT_MARKERS) if (m.test(after)) problems.push(`${f} says ${m} (draft legal text cannot ship to production)`);
       }
     }
-    if (env.DEPLOY_TARGET === "production" && !env.TURNSTILE_SITE_KEY) logs.push(`warning: ${s.domain}: no TURNSTILE_SITE_KEY; the phone step shows no check and a production API that requires Turnstile refuses codes`);
+    const warning = turnstileWarning(s.domain, env);
+    if (warning) logs.push(warning);
     if (problems.length) return { ok: false, logs: [...logs, ...problems.map((p) => `${relative(here, outdir)}: ${p}`)] };
   } catch (e) {
     return { ok: false, logs: [...logs, (e as Error).message] };

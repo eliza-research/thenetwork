@@ -16,4 +16,10 @@ These edits record founder decisions from October 9 and 11. They do not claim a 
 
 ## Pending
 
-None from the six-item list. Add later decisions here only when they have not yet reached the canonical document.
+**[DECIDE] Formal modeling requirement (proposed 2026-11-07, add to Section 34).** Add a subsection:
+
+> All code in the app is modeled at two levels. High level: each flow is a Quint model of its states, transitions and invariants, across the browser and the server. Low level: each function that takes a step in a flow has LemmaScript contracts that Dafny proves, and the shipping code calls that function. A change to code updates both levels. Code that LemmaScript cannot express (the DOM, React components, `await`, SQL, regex tables, crypto) moves its decisions into an import-free core, and the rest stays a thin shell. Integration tests, end-to-end tests and `bun run sim` stay the validation layer for what the models do not cover.
+
+The rule changes what the bounty accepts, so it needs founder confirmation. It is not yet met: most existing code has no model, and the repository has no Quint models yet. Do not add it to `docs/prd-snapshot.md` until it is in the Google Doc.
+
+Nothing else from the six-item list. Add later decisions here only when they have not yet reached the canonical document.
