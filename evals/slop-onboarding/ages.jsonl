@@ -74,3 +74,10 @@
 {"text":"I'm a 25 year old woman","minor":false,"age":25}
 {"text":"I'm a 30 year old man looking for women","minor":false,"age":30}
 {"text":"I'm a dad of a 12 year old","minor":false}
+{"text":"I'm a 17 year old trans girl","minor":true,"age":17}
+{"text":"I'm a 16 year old single boy","minor":true,"age":16}
+{"text":"I'm just a 17 year old girl","minor":true,"age":17}
+{"text":"I'm only a 16 year old","minor":true,"age":16}
+{"text":"I'm a seventeen year old girl","minor":true,"age":17}
+{"text":"I'm a 12 year old scotch drinker","minor":false}
+{"text":"I'm a 10 year old dog owner","minor":false}
