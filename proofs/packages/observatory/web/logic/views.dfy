@@ -357,12 +357,14 @@ method yesCounts(opps: seq<seq<string>>) returns (res: YesCount)
 {
   var revealed := 0;
   var yes := 0;
+  ghost var yesWitness: nat := 0;
   var i := 0;
   while (i < |opps|)
     invariant (0 <= i)
     invariant (i <= |opps|)
     invariant ((yes > 0) ==> exists k: nat :: ((k < i) && forall j: nat :: ((j < |opps[k]|) ==> saidYes(opps[k][j]))))
     invariant ((forall k: nat :: ((k < i) ==> forall j: nat :: ((j < |opps[k]|) ==> saidYes(opps[k][j])))) ==> ((yes == i) && (revealed == i)))
+    invariant yes > 0 ==> yesWitness < i && (forall j: nat :: j < |opps[yesWitness]| ==> saidYes(opps[yesWitness][j]))
     invariant (0 <= yes)
     invariant (yes <= revealed)
     invariant (revealed <= i)
@@ -376,9 +378,16 @@ method yesCounts(opps: seq<seq<string>>) returns (res: YesCount)
       revealed := (revealed + 1);
     }
     if y {
+      yesWitness := i;
       yes := (yes + 1);
     }
     i := (i + 1);
+    if yes > 0 {
+      assert exists k: nat :: k == yesWitness && k < i && (forall j: nat :: j < |opps[k]| ==> saidYes(opps[k][j]));
+    }
+  }
+  if yes > 0 {
+    assert exists k: nat :: k == yesWitness && k < |opps| && (forall j: nat :: j < |opps[k]| ==> saidYes(opps[k][j]));
   }
   return YesCount(revealed, yes);
 }
