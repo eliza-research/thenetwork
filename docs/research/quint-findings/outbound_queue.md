@@ -6,13 +6,100 @@ Model: [quint/outbound_queue.qnt](../../../quint/outbound_queue.qnt). Plan: sect
 [blooio-notify.md](../state-machines/blooio-notify.md).
 
 This file is hand-written. The traces are the output of `quint run` and `quint test` on the model, shortened by hand.
-No code was changed. No test in the repository was run for this step.
 
-Code abbreviations: `oq` = `packages/blooio/src/outbound-queue.ts`, `ch` = `packages/network/service/channel.ts`,
-`cc` = `packages/network/service/cloud-channel.ts`, `rt` = `packages/network/service/runtime.ts`,
-`svc` = `packages/network/service/service.ts`. Line numbers are from commit ad67275.
+## 0. Final state (after the fix wave on branch wave2/outbound_queue)
 
-## 1. What the model contains
+The model now follows the code after the fix commits 6cc9d1b .. 1e3585b. Sections 1-6 below are the first state
+of the model (commit ad67275, before the fixes); they stay as the record of what the model found.
+
+### 0.1 Check results (fixed code)
+
+| Check | Bounds | Result |
+|---|---|---|
+| `quint typecheck` | - | ok |
+| `quint test` | 28 run tests, seed 0x5eed | 28 passing |
+| `safety` (simulation) | seed 0x5eed, 40 steps, 8000 samples | no violation |
+| 6 witnesses | same bounds | all reachable |
+| `quint verify --invariant safety` (Apalache) | `--max-steps 3` (the file's `verify-steps`) | no violation (about 60 s) |
+| `quint verify --invariant safety` (Apalache) | `--max-steps 4` (run by hand) | no violation (277 s) |
+
+Commands: `bun run quint:check quint/outbound_queue.qnt` and `bun run quint:check --verify quint/outbound_queue.qnt`.
+The 4-step Apalache run took 277 s on a shared machine, so the file keeps `verify-steps=3`. A send needs at least 7
+steps (enqueue, drainStart, sweepCollected, lockLine, decide, applyDecision, providerCall), so for the send-path
+invariants the evidence is the simulation and the run tests, not Apalache.
+
+Each invariant was also simulated alone (seed 0x5eed, 40 steps, 8000 samples): every invariant in `safety` holds.
+Two values are kept out of `safety` and still fail; each has a comment in the model:
+
+| Value | Simulation alone | Why it is not in `safety` |
+|---|---|---|
+| `noStatusRegress` | violated | SD-099: register verdict "refuted", no fix. `noStatusRegressLive` (every row that is not a row of a forgotten member) is in `safety`. Run test `sd099WaitOverErasureTest`. |
+| `mirrorSettles` | violated | New defects Q-outbound_queue-3 and Q-outbound_queue-4 (section 0.4). `mirrorNotStuckWaiting` (the part that the SD-136 and SD-336 fixes give) is in `safety`. Run tests `q3StaleStoreTest`, `q4SweepLostTest`. |
+
+### 0.2 Model changes for each fix
+
+| Defect | Commit | Model change | Run test(s) (fixed trace) |
+|---|---|---|---|
+| SD-020 | 6cc9d1b | Each view carries the stored state version (`ver`); `holdToggle` and `closeItem` save a new version. `drainStart` of a runtime drain needs a current view; the admission transaction returns `stale_view` (row left as it is) when the version moved. | `sd020StaleReplicaTest`, `sd020HoldDuringDispatchTest` |
+| SD-090 | a8e4b55 | `ttlSelect` counts the TTL from `nextAt` (when acceptance became unknown). `failed_unknown` left `NOT_SENT`: it keeps its cap slot. | `sd090UnknownTtlTest`, `sd090TtlKeepsSlotTest` |
+| SD-091 | 0a787a8 | `acceptedRow`: under Cloud a non-member row loses text and address at acceptance (respond and lookup). | `sd091NonMemberBodyTest` |
+| SD-094 | 9e763d7 | Gate 7 (line safety) skips compliance rows. | `sd094ComplianceHeldTest` |
+| SD-100 | b6ea5e1 | New action `sweepCollected` in reconcileUnknown (every transport): collected and send_unknown rows older than the TTL end `failed_unknown`. `lockLine` comes after it. `collectedResolvable` now says no such row is older than the TTL at the last sweep. | `sd100CollectedStuckTest`, `sd100SendUnknownTest` |
+| SD-101 | ca25f43 | `collect` with a failed guard writes the row `parked_leak_review` at once. `guardFailedReachesStaff` now says such a row is parked until staff decide. | `sd101GuardFailedReplyTest` |
+| SD-117 | 2d901dd | `dispatchErr`: a database error in dispatch adds one attempt and waits `retry_scheduled`; it parks the row `parked_error` only when the attempts are used up. | `sd117TransientParksTest`, `sd117RepeatedErrorParksTest` |
+| SD-120 | 016eeed | None: the leak guard is an oracle in the model (quint/README.md rule 7). The corpus rows in evals/guard/leaks.jsonl test the reader. | - |
+| SD-131 | bdd0698 | `turnStart(acct)`; a collected row records `acctFree`. A no-history accepted receipt is refused only for an account-eligible turn. New invariant `noHistoryReceiptRecorded`. | `sd131NoHistoryReceiptTest` |
+| SD-132 | 5a6cf8e | A drain decides only the rows of its own network (`row.net == wk.net`); `enqueue` takes any network. | `sd132ForeignNetworkTest` |
+| SD-136 | eb5a589 | `flush` stores the changes of a direct() drain too. | `sd136DirectDropsTest` |
+| SD-147 | dde38c4 | `holdAct` (hold()): when the person wrote after dispatch read the conversation, the row goes back to `pending`. Used for the unanswered cap and for `await_recipient`. | `sd147LostWakeupTest` |
+| SD-148 | cdd106f | An accepted gateway receipt runs `convAfterAccept` (countSend). | `sd148CollectedNotCountedTest` |
+| SD-299 | 8495b7a | A throwing stale hook gives decision `dispatch_error` (drain()'s catch), not "current". | `sd299StaleFailsOpenTest` |
+| SD-300 | 66f1601 | `hookWrite` is conditional on the status it read; a miss reads again and decides on the current status. | `sd300ReceiptRegressTest` |
+| SD-316 | eb0a9c4 | None: the text of collected replies lives in `platform.inbound` (turn_consent model). This model already drops an unresolved turn's receipt path (`turnFinish(false)`). | - |
+| SD-334 | 255a42d | A missed accept commit (respond and lookup) reports the stored status, not `dropped_forgotten`. | `sd334LostRaceTest` |
+| SD-336 | efb98a0 | After a runtime drain, `flush` copies the row status to each message that still shows a waiting status. Ghost `lost` marks a change a crash discarded. | `sd336CrashLosesStatusTest` |
+| SD-337 | aba939e | A send receipt with status failed writes no `sent_at`. | `sd337FailedSetsSentAtTest` |
+| Q-outbound_queue-1 | 1f86525 | Admission reads the consent ledger for every non-compliance row. | `q1NonMemberStopTest` |
+| Q-outbound_queue-2 | 1e3585b | A failed accept commit waits `unknown_acceptance` (keeps its slot); the lookup resolves it. | `q2AcceptDbErrorTest` |
+
+Not fixed (the fix wave skipped them):
+
+- **SD-257** skipped: needs a founder decision (what failure text the member gets). The model has no member view of
+  failures; no invariant depends on it.
+- **SD-304** skipped: needs a maintainer or founder decision (a per-app leave cannot tell which earlier inbox rows
+  are its app's). It lives in `platform.inbound` (turn_consent model); this model does not contain it.
+- **SD-099** (not in the fix wave; register verdict "refuted"): still reachable; see 0.1.
+
+### 0.3 Other model changes
+
+- The random walk: with no drain in progress, half of the steps now start a drain, add a row or let time pass;
+  `holdToggle` and `closeItem` come in an eighth of the draws. These change weights only (each action is still in
+  `worldSteps`). Without them, after the SD-020 fence two witnesses were not reached in 8000 samples: before the
+  fix the walk reached them through the stale-view defect itself.
+- `notSentMeansNotOut` leaves out a row that `recover()` put back to `retry_scheduled` in webhook mode (ghost
+  `resent`). With no receipt provider there is no lookup: the code marks the row `in_doubt` and sends it again with
+  the same provider key, and a later gate (a STOP, a repeated database error) can end it with a NOT_SENT status
+  although the stopped call went out. The first model reached this trace too but did not report it, because SD-090
+  failed first. Webhook mode runs only in development; production (Cloud) has the lookup and is checked in full.
+
+### 0.4 New defects found on the fixed code (not fixed in this step)
+
+**Q-outbound_queue-3: storeStatuses overwrites a newer message status with a drain's older one.**
+`NetworkRuntime.storeStatuses` writes each change of a drain with no condition (runtime.ts storeStatuses). A staff
+leak-review decision (service.ts `/queue/leak-review`: decideLeak, then storeStatuses) or a Blooio delivery receipt
+that commits between the queue commit and the drain's store is overwritten. Trace (`q3StaleStoreTest`): a drain parks
+r1 (`parked_leak_review`); staff drop r1 (row and message `dropped_leak_review`); the drain stores
+`parked_leak_review`. The SD-336 repair does not fix it (it reads only waiting statuses). Effect: the message status
+is wrong; both statuses are "not sent", so no text goes out and no cap changes.
+
+**Q-outbound_queue-4: the SD-336 repair does not cover the SD-100 sweep.** The repair in `drainQueue` copies the
+queue status only to messages in `WAITING_STATUSES`. A collected reply's message has status `collected`. When the
+process stops after the sweep commit and before storeStatuses, the message keeps `collected` for good
+(`q4SweepLostTest`). Fix direction: include `collected` and `send_unknown` in the repair's message statuses.
+
+Both need a code fix with an integration test that fails before it; that is outside this modeling step.
+
+## 1. What the model contains (first state, commit ad67275)
 
 - State: the queue rows (`platform.outbound`: status, kind, member or not, lease, attempts, `person_cap`, text kept or
   cleared, `sent_at`, `leak_released_by`, `in_doubt`), the workers (one per replica or runtime) with their in-memory
@@ -35,7 +122,7 @@ Code abbreviations: `oq` = `packages/blooio/src/outbound-queue.ts`, `ch` = `pack
 - Left out: the per-recipient hourly cap and the line caps (three rows cannot reach them), invalid time zones, relay
   rows (the relay model covers them), the live flags as a variable (they are process env; the model fixes them on).
 
-## 2. Check results
+## 2. Check results (first state, before the fixes)
 
 | Check | Result |
 |---|---|
@@ -73,7 +160,7 @@ Each invariant was also simulated alone (same seed and bounds):
 "Holds in simulation" with a run test: the random walk did not find the trace in 8000 samples, and the run test
 replays it step by step, so the state is reachable.
 
-## 3. New defects (need a code fix)
+## 3. New defects of the first state (fixed since: 1f86525, 1e3585b)
 
 ### Q-outbound_queue-1: admission does not recheck consent for a direct text to a non-member
 
@@ -116,7 +203,7 @@ SD-117 (a throw before the call parks a row), but here the provider already took
 await this.acceptReceipt(...)`, and treat an accept commit failure as `unknown_acceptance` (resolved by receipt
 lookup), never as an end.
 
-## 4. Register defects the model reproduces
+## 4. Register defects the first model reproduced (code lines from ad67275)
 
 Each one is a run test in the model (the name is in section 2) and, where marked, a trace the simulator found alone.
 
