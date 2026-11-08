@@ -102,6 +102,25 @@ describe("plan run", () => {
     expect(w.net.crews[0]!.sessions).toHaveLength(1);
   });
 
+  // SD-423: the plan probe expires at the probe deadline. The deadline runs on the tick, so a yes that
+  // came after the deadline and before the next tick still counted and booked the plan.
+  test("a yes after the probe deadline does not book the plan", async () => {
+    const w = await world(["a", "b", "c"]);
+    const deadline = w.clock.now() + 20 * HOUR;
+    const id = submit(w, { ...groupPlan(w, ["a", "b", "c"]), probeDeadline: deadline });
+    expect(await w.runUntil(() => ["a", "b", "c"].every(x => w.probed(x)), DAY)).toBe(true);
+    await w.say("a", "yes");
+    await w.say("b", "yes");
+    // Between two ticks: the deadline passed and the tick has not run yet.
+    await w.run(deadline - w.clock.now() - HOUR);
+    w.clock.set(deadline + 15 * 60_000);
+    await w.say("c", "yes");
+    expect(w.meetings).toHaveLength(0);
+    expect(opp(w, id).stage).toBe("closed");
+    // c's yes came too late: c hears that the plan did not come together in the next message.
+    expect((w.net as any).members.get("c").note?.text).toBe("That plan didn't come together this time.");
+  });
+
   // SD-268: a yes to a plan still waiting for quorum does not make the member busy, so an intro can
   // probe them and they can pick the plan's time. The plan was booked first, and the intro's reveal
   // did not look at the member's other bookings: the member was booked twice at the same time.

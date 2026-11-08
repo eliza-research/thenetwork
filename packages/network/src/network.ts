@@ -2350,6 +2350,9 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** The answer to a plan probe. "Can't make that time" is a no, and a time this member is not free (availability evidence). */
   private onPlanProbeAnswer(m: MemberState, o: Opp, yes: boolean, body: string) {
     if (!o.planRun || o.planRun.answers[m.id] !== "pending") return;
+    // The probe expires at the probe deadline (plans.ts): an answer after it, before the tick ran the deadline, comes too late.
+    this.planDeadline(o, this.now());
+    if (o.stage === "closed") { if (yes) this.noteFor(m.id, copy.planNotTogether); return; }
     m.answered++;
     this.ctx.log("probe_answer", { oppId: o.id, memberId: m.id, yes, plan: true });
     if (yes) this.counters.probeYes++; else { this.counters.probeNo++; this.emit({ type: "declined", member: m.id, planId: o.id }, `${o.id}:${m.id}`); }
@@ -3025,6 +3028,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.ctx.log("send_deferred", { memberId: id, kind: "plan_probe", oppId: o.id, reason, until: m ? Math.max(now, this.openAt(m, "slot", now)) : now });
   }
 
+  /** At the probe deadline without quorum: the fallback runs. */
+  private planDeadline(o: Opp, now: number) {
+    if (o.stage !== "probing" || o.planRun?.stage !== "probing") return;
+    const r = plans.checkPlanDeadline(o.planRun, now);
+    if (r.action.kind === "fallback") { o.planRun = r.run; this.planFallback(o); }
+  }
+
   /** A plan probe answer (or silence, or a seat that is no longer possible): the quorum run decides what happens next. */
   private planAnswer(o: Opp, id: MemberId, yes: boolean, silent = false) {
     if (!o.planRun) return;
@@ -3390,10 +3400,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (m?.awaiting?.oppId === o.id) m.awaiting = undefined;
         this.planAnswer(o, p, false, true);
       }
-      if (o.stage === "probing" && o.planRun.stage === "probing") {
-        const r = plans.checkPlanDeadline(o.planRun, now);
-        if (r.action.kind === "fallback") { o.planRun = r.run; this.planFallback(o); }
-      }
+      this.planDeadline(o, now);
       this.planLane(o, now);
     }
     if (o.stage === "probing" && !o.plan) {
