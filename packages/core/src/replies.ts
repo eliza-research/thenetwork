@@ -236,6 +236,11 @@ export function parseReply(text: string): ParsedReply {
   }
 
   // first.kind === "yes"
+  // A yes word inside a question ("are you sure?", "ok?", "sounds good?") asks, it does not answer.
+  // Idioms that are a yes as a question ("why not?") are strong and stay a yes.
+  const starts = sentenceBounds(t);
+  const firstSentence = t.slice(starts[first.sentence], starts[first.sentence + 1] ?? t.length);
+  if (!first.strong && firstSentence.includes("?")) return done("unsure", "question", { counter });
   const laterNo = sig.filter(s => after(s) && s.kind === "no");
   if (laterNo.length) {
     const sameSentence = laterNo.find(s => s.sentence === first.sentence && !CONTRAST.test(t.slice(first.end, s.at)));
