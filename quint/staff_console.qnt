@@ -302,7 +302,7 @@ module staff_console {
     s' = { ...s, age: { ...s.age, netMinor: true, viaEvent: s.age.viaEvent or viaEvent } }
 
   // One poll (real.ts:264-272, 420-449): stateRow catches its error and returns [] (real.ts:269-270); the
-  // events query catches its error and returns [] (real.ts:425). ageInfo replaces this.ages (real.ts:322).
+  // events query catches its error and returns [] (real.ts:424). ageInfo replaces this.ages (real.ts:320).
   action agePoll(rowOk: bool, eventsOk: bool): bool = {
     val hasNet = rowOk or (eventsOk and s.age.viaEvent)
     val netMinor = if (rowOk) s.age.netMinor else true
