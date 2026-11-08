@@ -3025,6 +3025,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       case "probe_partner": case "backfill": {
         const id = action.member;
         if (!o.participants.includes(id)) o.participants.push(id);
+        // Plan.invited is the primary group plus alternates once backfilled: the probe copy is built for invitees only.
+        if (!o.plan!.invited.includes(id)) { o.plan = { ...o.plan!, invited: [...o.plan!.invited, id] }; o.planRun = { ...o.planRun!, plan: o.plan }; }
         o.alternates = o.alternates.filter(x => x !== id);
         o.status.set(id, "probing");
         o.turnAt = { ...o.turnAt, [id]: this.now() };

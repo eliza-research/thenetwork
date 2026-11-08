@@ -101,4 +101,14 @@ describe("plan run", () => {
     expect(sessions().map((o: any) => o.plan.window.start)).toEqual([sat]);
     expect(w.net.crews[0]!.sessions).toHaveLength(1);
   });
+
+  // SD-204: a backfilled alternate was not in plan.invited, so the engine gave no probe text for them
+  // (plan_copy) and the bench drained with no message sent.
+  test("a backfilled alternate gets the plan probe", async () => {
+    const w = await world(["a", "b", "c", "e"]);
+    submit(w, groupPlan(w, ["a", "b", "c"], { alternates: ["e"] }));
+    await answer(w, { a: "no thanks", b: "yes", c: "yes", e: "yes" });
+    expect(w.log("send_refused").filter(l => l.detail.reason === "plan_copy")).toEqual([]);
+    expect(w.meetings.map(m => [...m.participants].sort())).toEqual([["b", "c", "e"]]);
+  });
 });
