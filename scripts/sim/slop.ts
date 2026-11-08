@@ -33,6 +33,7 @@ import { ageRangeOf } from "../../packages/engine/src/packs/slop/rules.ts";
 import { statedDealbreaker } from "../../packages/engine/src/packs/slop/score.ts";
 import { cellMiles } from "../../packages/engine/src/packs/slop/zips.ts";
 import { EngineRng as Rng } from "../../packages/core/src/index.ts";
+import { SLOP_PROBE_PHOTOS } from "../../packages/network/service/packs.ts";
 import { slopLiveArm } from "./slop-live.ts";
 import type { EngineInput, EngineProposal } from "../../packages/engine/src/types.ts";
 import { World, pairKey } from "../../packages/engine/src/world.ts";
@@ -55,8 +56,9 @@ const POPULATION: WorldSpec = { catfish: 0.005, bodyTypes: true };
 // Founder decision 9: no ID check (production has no verification step), so the pinned world has none.
 const WORLD: WorldSpec = { relay: { engine: true }, review: 3, widen: true, checkin: true };
 // Founder decision 2026-10-11 (#22): no photo is shown between members (no photo in the probe, no photo relay);
-// the AI only rates photos. The sim matches the product: the rater is on, the probe photo is off.
-const PACK_WORLD: WorldSpec = { rater: true };
+// the AI only rates photos. The sim follows the product: the rater is on, and the probe photo path is on only when
+// the live flag SLOP_PROBE_PHOTOS is on, so the "0 probes carry a photo" gate fails if the product turns photos on.
+const PACK_WORLD: WorldSpec = { rater: true, ...(SLOP_PROBE_PHOTOS ? { photos: 1 } : {}) };
 /** Gates that fail in every photos arm on held-out seeds today (docs/results/2026-10-08-slop-pack.md I5.4): tracked, not blocking. */
 const TRACKED = [/^Dates per member-month vs random/, /^Minor contacts \(age liars\) cut/, /^Adversary contacts cut/, /^Lowest group vs overall/, /^Same, feasible members/,
   // Not in the founder's tracked list, but it does not pass on the pinned seeds (86.9%; I5.4 reports 87% on seeds 13-16 at 4 weeks).
