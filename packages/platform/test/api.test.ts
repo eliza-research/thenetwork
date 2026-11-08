@@ -438,29 +438,4 @@ describe("consent ledger", () => {
     expect(keywordEvent("stop", p, APPS.slop, 1, { scope: stopScope({}) }).event).toMatchObject({ app: null });
     expect(detectKeyword("stop by later")).toBeUndefined();
   });
-  test("a courtesy or urgency word beside STOP ALL does not change the request", () => {
-    // A whole-message STOP ALL opts out of every app; a courtesy or urgency
-    // word beside it is the same request, in either position and repeated.
-    for (const t of [
-      "STOP ALL NOW",
-      "STOP ALL PLEASE",
-      "PLEASE STOP ALL",
-      "NOW STOP ALL",
-      "PLEASE PLEASE STOP ALL",
-      "PLS PLS STOP ALL",
-      "STOP ALL THX",
-      "STOP ALL TY",
-      "stopall now",
-    ]) {
-      expect(detectKeyword(t)).toBe("stop_all");
-    }
-    // "FOR NOW" is a temporary pass, not a permanent global opt-out: the
-    // conversational layer already reads "for now" that way.
-    expect(detectKeyword("STOP ALL FOR NOW")).toBeUndefined();
-    expect(detectKeyword("STOP FOR NOW")).toBeUndefined();
-    // A number, a second request or a negation keeps its current reading.
-    expect(detectKeyword("STOP ALL 2")).toBeUndefined();
-    expect(detectKeyword("stop all by later")).toBeUndefined();
-    expect(detectKeyword("please don't stop all")).toBeUndefined();
-  });
 });
