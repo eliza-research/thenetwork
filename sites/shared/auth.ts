@@ -7,9 +7,9 @@
 // The server answers otp/start the same way for every number, so this code shows the same
 // screen for every number too.
 import { api, toE164 } from "./api.ts";
-import type { Flow, FlowEvent } from "./join-core.ts";
+import { type Flow, type FlowEvent, NO_FIELDS, flowNext, initialFlow } from "./join-core.ts";
 import { mountTurnstile } from "./turnstile.ts";
-import { $, busy, fill, message, setError } from "./ui.ts";
+import { $, busy, fill, message, setError, showStep } from "./ui.ts";
 
 export function maskPhone(e164: string): string {
   return `(•••) •••-${e164.slice(-4)}`;
@@ -22,7 +22,23 @@ export interface AuthFlow {
   onSignedIn(): Promise<void> | void;
 }
 
-export function mountAuth(root: HTMLElement, flow: AuthFlow): void {
+/** A sign-in form without a Join form: the same flowNext decides the step. */
+function signInOnly(root: HTMLElement, onSignedIn: () => Promise<void> | void): AuthFlow {
+  let flow = flowNext(initialFlow(NO_FIELDS), { tag: "loaded", signedInAs: "", canJoin: false, member: false, inviteOnly: false, notice: "" });
+  return {
+    current: () => flow,
+    dispatch: event => {
+      const prev = flow;
+      flow = flowNext(prev, event);
+      if (flow.step !== prev.step) showStep(root, flow.step);
+      return flow;
+    },
+    onSignedIn,
+  };
+}
+
+export function mountAuth(root: HTMLElement, flowOrSignedIn: AuthFlow | (() => Promise<void> | void)): void {
+  const flow = typeof flowOrSignedIn === "function" ? signInOnly(root, flowOrSignedIn) : flowOrSignedIn;
   const form = root.querySelector<HTMLFormElement>('form[data-form="phone"]');
   if (!form) return;
   // The static form defaults to GET; block native submission before any await.

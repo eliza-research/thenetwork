@@ -358,6 +358,7 @@ method yesCounts(opps: seq<seq<string>>) returns (res: YesCount)
   var revealed := 0;
   var yes := 0;
   var i := 0;
+  ghost var w: nat := 0;
   while (i < |opps|)
     invariant (0 <= i)
     invariant (i <= |opps|)
@@ -366,6 +367,7 @@ method yesCounts(opps: seq<seq<string>>) returns (res: YesCount)
     invariant (0 <= yes)
     invariant (yes <= revealed)
     invariant (revealed <= i)
+    invariant ((yes > 0) ==> ((w < i) && forall j: nat :: ((j < |opps[w]|) ==> saidYes(opps[w][j]))))
     decreases (|opps| - i)
   {
     var i_t4 := allOf(opps[i], false);
@@ -376,10 +378,12 @@ method yesCounts(opps: seq<seq<string>>) returns (res: YesCount)
       revealed := (revealed + 1);
     }
     if y {
+      w := i;
       yes := (yes + 1);
     }
     i := (i + 1);
   }
+  assert (yes > 0) ==> ((w < |opps|) && forall j: nat :: ((j < |opps[w]|) ==> saidYes(opps[w][j])));
   return YesCount(revealed, yes);
 }
 
