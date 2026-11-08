@@ -3,8 +3,8 @@
 // invariants, and the conformance rules for slopPack (core rules, the stated filters, no rating text).
 //
 // PINNED (CI): seeds 13-16, 4 weeks, 300 per city; the iteration-5 world: population
-// {catfish 0.005, body types on}, world {verification, relay through the engine's relay.ts, 3-day review, widen, check-in, photo in
-// the probe (sd 1), rater on}; arms "random" (baseline) and the default slopPack (slop-pack-1.4.0, d+b).
+// {catfish 0.005, body types on}, world {relay through the engine's relay.ts, 3-day review, widen, check-in, rater on; no
+// verification step and no probe photo, as in production}; arms "random" (baseline) and the default slopPack (slop-pack-1.4.0, d+b).
 // Gate policy (decided for the founder, 2026-10-08):
 //   - BLOCKING: the safety gates (0 declared-minor contacts, 0 stated-filter violations, scammer
 //     median reach <= 1, 0 leaks, no rating / score text) and the quality gates that pass on the pinned seeds.
@@ -38,7 +38,7 @@ import type { EngineInput, EngineProposal } from "../../packages/engine/src/type
 import { World, pairKey } from "../../packages/engine/src/world.ts";
 import { BODY_TYPE_DEFAULTS } from "../../packages/sim/src/apps/slop/bodyType.ts";
 import { slopEngineInput, slopEngineMatcher } from "../../packages/sim/src/apps/slop/enginePack.ts";
-import { gates3, runArm, type WorldSpec } from "../../packages/sim/src/apps/slop/packEval.ts";
+import { gates3, runArm, worldOptions, type WorldSpec } from "../../packages/sim/src/apps/slop/packEval.ts";
 import { generateSlopPersonas, type SlopPersona } from "../../packages/sim/src/apps/slop/persona.ts";
 import { buildSlopSnapshot, RATER_DEFAULTS, SLOP_WORLD_START, type SlopNetworkState } from "../../packages/sim/src/apps/slop/snapshot.ts";
 import { BASELINES } from "../../packages/sim/src/apps/slop/baselines.ts";
@@ -52,7 +52,8 @@ const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 
 export const SLOP_PINNED = { seeds: [13, 14, 15, 16], weeks: 4, perCity: 300 };
 const POPULATION: WorldSpec = { catfish: 0.005, bodyTypes: true };
-const WORLD: WorldSpec = { verification: true, relay: { engine: true }, review: 3, widen: true, checkin: true };
+// Founder decision 9: no ID check (production has no verification step), so the pinned world has none.
+const WORLD: WorldSpec = { relay: { engine: true }, review: 3, widen: true, checkin: true };
 // Founder decision 2026-10-11 (#22): no photo is shown between members (no photo in the probe, no photo relay);
 // the AI only rates photos. The sim matches the product: the rater is on, the probe photo is off.
 const PACK_WORLD: WorldSpec = { rater: true };
@@ -116,6 +117,13 @@ export async function slopBlock(b: Block, o: { quick: boolean }): Promise<void> 
   b.gate("relay world: relay log rows carry no message body or contact value", rs.logBodies === 0, String(rs.logBodies));
   const ph = pack.extra.reduce((s, e) => s + (e.photos?.withPhoto ?? 0), 0), noPh = pack.extra.reduce((s, e) => s + (e.photos?.withoutPhoto ?? 0), 0);
   await b.run(`no photo is shown between members: 0 probes carry a photo (${ph} with, ${noPh} without)`, () => expect(ph).toBe(0));
+  // Founder decision 9: no ID check, and production writes no verify:* fact (packages/network/service/packs.ts). The pinned world
+  // of the slop arm must not hold members on a check that does not exist live, or the safety gates above measure a filter production lacks.
+  await b.run("pinned world matches production: no verify:* fact in the slop arm's snapshot (decision 9, no ID check)", () => {
+    const wo = worldOptions({ ...POPULATION, ...WORLD, ...PACK_WORLD });
+    const snap = buildSlopSnapshot(generateSlopPersonas({ seed: SLOP_PINNED.seeds[0]!, perCity: 60 }), { ...emptySlopState(), ...(wo.verification ? { verification: wo.verification } : {}), ...(wo.platform ? { platform: wo.platform } : {}) });
+    expect(snap.facets.filter(f => f.tags.some(t => t.startsWith("verify:"))).length).toBe(0);
+  });
 
   // ---- world invariants: no hidden truth in the agent's view; baselines; the ban loop ----------------
   await b.run("world: personas deterministic by seed; the snapshot carries no hidden truth, canary or adversary label", () => {
