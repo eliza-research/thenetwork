@@ -3,7 +3,7 @@
 // findings (docs/research/quint-findings/auth_edge.md) that failed before its fix.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createPublicApi, type PublicApi } from "../src/api.ts";
-import type { AppId } from "../src/apps.ts";
+import { APPS, type AppId } from "../src/apps.ts";
 import { PgPeopleStore } from "../src/pg-store.ts";
 import { dropDb, migratedDb, pgAvailable } from "./pg.ts";
 
@@ -29,7 +29,14 @@ function make(store: PgPeopleStore, opts: { globalPerHour?: number } = {}) {
     const text = await res.text();
     return { status: res.status, body: text ? JSON.parse(text) : null, cookie: res.headers.get("set-cookie")?.split(";")[0] };
   };
-  return { api, clock, call, codes, sent };
+  const login = async (app: AppId, phone: string) => {
+    expect((await call(app, "POST", "/api/auth/otp/start", { phone })).status).toBe(200);
+    const v = await call(app, "POST", "/api/auth/otp/verify", { phone, code: codes.get(phone) });
+    expect(v.status).toBe(200);
+    clock.t += 31_000;
+    return v.cookie!;
+  };
+  return { api, clock, call, codes, sent, login };
 }
 
 const urls: string[] = [];
@@ -54,5 +61,36 @@ describe.skipIf(!pgAvailable)("auth edge (Postgres)", () => {
     c.clock.t += 31_000;
     expect((await c.call("slop", "POST", "/api/auth/otp/start", { phone })).status).toBe(200);
     expect(c.sent).toEqual([phone]);
+  });
+
+  // The old holder of a number logged in on the web before the number had a person: the session row is
+  // (number, no person). The carrier gives the number to a new holder, who joins. The old cookie must not
+  // act for the new holder's person (accounts.ts: own data only; the age policy: an age comes from the person).
+  const joinBody = (age: number) => ({ firstName: "Ana", age, consent: { sms: true, wording: APPS.slop.consent.text } });
+
+  test("SD-054 a session from before a text join does not act for the person the join made", async () => {
+    const c = make(store), phone = newPhone();
+    const old = await c.login("slop", phone);
+    // The new holder joins by text: the service makes the person with accounts.createPerson (service.ts join path).
+    const person = await c.api.accounts.createPerson(phone, "inbound_message", 30);
+    await store.putMembership({ app: "slop", personId: person.id, memberId: `slop_ae_${seq}`, state: "active", review: null, firstName: "Alice", profile: {}, joinedAt: c.clock.t, leftAt: null });
+    await c.api.accounts.recordConsent({ e164: phone, app: "slop", state: "opted_in", source: "inbound_message", at: c.clock.t });
+    expect((await c.call("slop", "GET", "/api/me/export", undefined, { cookie: old })).status).toBe(401);
+    expect((await c.call("slop", "POST", "/api/join", joinBody(15), { cookie: old })).status).toBe(401);
+    expect((await c.call("slop", "POST", "/api/me/delete", { scope: "app" }, { cookie: old })).status).toBe(401);
+    expect((await store.getPerson(person.id))!.lowestAge).toBe(30);
+    expect((await store.getMembership(person.id, "slop"))!.state).toBe("active");
+    // The new holder's own login works.
+    const own = await c.login("slop", phone);
+    expect((await c.call("slop", "GET", "/api/me/export", undefined, { cookie: own })).body.membership.firstName).toBe("Alice");
+  });
+
+  test("SD-054 a web join binds only the joining session, not an earlier holder's session", async () => {
+    const c = make(store), phone = newPhone();
+    const old = await c.login("slop", phone);
+    const own = await c.login("slop", phone);
+    expect((await c.call("slop", "POST", "/api/join", joinBody(30), { cookie: own })).status).toBe(200);
+    expect((await c.call("slop", "GET", "/api/me/export", undefined, { cookie: old })).status).toBe(401);
+    expect((await c.call("slop", "GET", "/api/me/export", undefined, { cookie: own })).body.membership.firstName).toBe("Ana");
   });
 });

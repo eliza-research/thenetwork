@@ -222,8 +222,10 @@ export class PgPeopleStore implements PeopleStore {
   async revokeSession(tokenHash: string, at: number) {
     await this.sql`update platform.sessions set revoked_at = least(coalesce(revoked_at, ${ts(at)}), ${ts(at)}) where token_hash = ${tokenHash}`;
   }
-  async attachPerson(e164: string, personId: string) {
-    await this.sql`update platform.sessions set person_id = ${personId} where e164 = ${e164} and person_id is null`;
+  async bindSessions(e164: string, personId: string, keep: string | null, at: number) {
+    await this.sql`update platform.sessions set person_id = case when token_hash = ${keep} then ${personId}::uuid else person_id end,
+      revoked_at = case when token_hash = ${keep} then revoked_at else least(coalesce(revoked_at, ${ts(at)}), ${ts(at)}) end
+      where e164 = ${e164} and person_id is null`;
   }
 
   async hit(bucket: string, windowMs: number, at: number, rule: HitRule = {}): Promise<HitResult> {

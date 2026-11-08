@@ -135,8 +135,11 @@ export interface PeopleStore {
   putSession(s: Session): Promise<void>;
   getSession(tokenHash: string): Promise<Session | undefined>;
   revokeSession(tokenHash: string, at: number): Promise<void>;
-  /** Sessions of a verified phone that had no person get the person after a join. */
-  attachPerson(e164: string, personId: string): Promise<void>;
+  /**
+   * The number has a person now. Of its sessions with no person, `keep` (the web join's own session)
+   * gets the person, and every other one ends at `at`: it may belong to an earlier holder of the number.
+   */
+  bindSessions(e164: string, personId: string, keep: string | null, at: number): Promise<void>;
 
   /**
    * Count one hit in a fixed window, atomically. With a rule, a hit that would pass the limit or come
@@ -302,7 +305,12 @@ export class MemoryPeopleStore implements PeopleStore {
   async putSession(s: Session) { this.sessions.set(s.tokenHash, { ...s }); }
   async getSession(tokenHash: string) { const s = this.sessions.get(tokenHash); return s && { ...s }; }
   async revokeSession(tokenHash: string, at: number) { const s = this.sessions.get(tokenHash); if (s) s.revokedAt = s.revokedAt === null ? at : Math.min(s.revokedAt, at); }
-  async attachPerson(e164: string, personId: string) { for (const s of this.sessions.values()) if (s.e164 === e164 && s.personId === null) s.personId = personId; }
+  async bindSessions(e164: string, personId: string, keep: string | null, at: number) {
+    for (const s of this.sessions.values()) if (s.e164 === e164 && s.personId === null) {
+      if (s.tokenHash === keep) s.personId = personId;
+      else s.revokedAt = s.revokedAt === null ? at : Math.min(s.revokedAt, at);
+    }
+  }
 
   async hit(bucket: string, windowMs: number, at: number, rule: HitRule = {}) {
     const windowStart = at - (at % windowMs);

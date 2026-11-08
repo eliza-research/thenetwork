@@ -164,9 +164,12 @@ for (const s of stores) describe.skipIf(s.skip)(`public API (${s.name} store)`, 
 
   test("age is person-level: 15 on ntwrk (invited), then 25 on slop joins as 15 (a minor: never matched)", async () => {
     const c = make(store), phone = newPhone();
-    const ntwrk = await login(c, "ntwrk", phone);
-    expect((await join(c, "ntwrk", ntwrk, 15)).body.error).toBe("invite_only");
+    const before = await login(c, "ntwrk", phone);
+    expect((await join(c, "ntwrk", before, 15)).body.error).toBe("invite_only");
     const inv = await c.api.accounts.invite(APPS.ntwrk, phone);
+    // The invite made the person: a session from before it ends (SD-054), and a new login gets the person.
+    expect((await call(c, "ntwrk", "GET", "/api/me", undefined, before)).status).toBe(401);
+    const ntwrk = await login(c, "ntwrk", phone);
     expect((await call(c, "ntwrk", "GET", "/api/me", undefined, ntwrk)).body).toMatchObject({ membership: { state: "invited" }, canJoin: true });
     expect((await join(c, "ntwrk", ntwrk, 15)).status).toBe(200);
     // The join keeps the invited member id (an invite may already name it).
