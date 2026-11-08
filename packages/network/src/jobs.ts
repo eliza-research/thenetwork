@@ -82,9 +82,9 @@ export function parsePosting(body: string): PostingDraft {
   const lvl = /\blevel\s*([1-5])\b/i.exec(t); if (lvl) d.seniority = Number(lvl[1]);
   const list = (s: string) => s.split(/,|\band\b|\/|;/i).map(x => x.trim().toLowerCase()).filter(x => x && x.length <= 40 && !/^(?:a|an|the|some)$/.test(x));
   const must = /\bmust(?:[- ]haves?|\s+have|\s+know)?\s*:?\s*([^.;]+?)(?=\.|;|\bnice to have\b|$)/i.exec(t);
-  if (must) d.must = list(must[1]!).map(x => { const m = /^(.*?)\s*(?:\(?(?:level\s*)?([0-5])\)?)$/i.exec(x); return { skill: slug(m?.[1] || x), level: m?.[2] ? Number(m[2]) : 2 }; }).filter(x => x.skill);
+  if (must) d.must = list(must[1]!).map(x => { const m = /^(.*?)\s*(?:\(?(?:level\s*)?([0-5])\)?)$/i.exec(x); return { skill: slug(m?.[1] || x), level: m?.[2] ? Number(m[2]) : 2 }; }).filter((x, i, all) => x.skill && all.findIndex(y => y.skill === x.skill) === i);
   const nice = /\bnice[- ]to[- ]haves?\s*:?\s*([^.;]+)/i.exec(t);
-  if (nice) d.nice = list(nice[1]!).map(slug).filter(Boolean);
+  if (nice) d.nice = [...new Set(list(nice[1]!).map(slug).filter(Boolean))];
   if (/\b(can|will|we)\s+sponsor\b|\bsponsorship (?:available|ok|yes)\b/i.test(t)) d.sponsors = true;
   else if (/\bno (?:visa )?sponsorship\b|\b(?:can(?:'|no)?t|cannot|won'?t|don'?t) sponsor\b/i.test(t)) d.sponsors = false;
   return d;
@@ -204,7 +204,8 @@ export function postingProblem(p: JobPosting): string | undefined {
   if (!Number.isInteger(p.openings) || p.openings < 1 || p.openings > MAX_OPENINGS) return "invalid_openings";
   if (!Number.isFinite(p.payMin) || !Number.isFinite(p.payMax) || p.payMin < 10 || p.payMax < p.payMin || p.payMax > 999) return "pay_range_required";
   if (!["onsite", "hybrid", "remote"].includes(p.mode)) return "invalid_mode";
-  if (p.must.length > 12 || p.nice.length > 12 || p.must.some(m => !m.skill || !Number.isInteger(m.level) || m.level < 0 || m.level > 5)) return "invalid_skills";
+  if (p.must.length > 12 || p.nice.length > 12 || p.must.some(m => !m.skill || !Number.isInteger(m.level) || m.level < 0 || m.level > 5)
+    || new Set(p.must.map(m => m.skill)).size < p.must.length || new Set(p.nice).size < p.nice.length) return "invalid_skills";
   return undefined;
 }
 

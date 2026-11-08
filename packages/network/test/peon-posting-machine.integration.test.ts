@@ -1,7 +1,7 @@
 // The peon job posting machine through NetworkService on Postgres (docs/research/2026-11-07-state-machines.md,
 // module matching_engine). SD-225: the staff postings API (service/postings.ts) answers on the service's
-// own staff router, so staff can verify an employer and close a posting as filled over HTTP. Postgres in a
-// database of its own; dry-run sends; fictional numbers (+1 212 555 01xx). Nothing is sent.
+// own staff router, so staff can verify an employer and close a posting as filled over HTTP. SD-227: a
+// repeated must-have does not break the save. Postgres in a database of its own; dry-run sends; fictional numbers (+1 212 555 01xx). Nothing is sent.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { SQL } from "bun";
@@ -108,6 +108,27 @@ describe.skipIf(!pgAvailable)("peon posting machine (NetworkService, Postgres)",
 
       const audit = (await sql`select action, ok from network.staff_audit where app_id = 'peon' and action in ('read_postings', 'verify_employer', 'close_posting') order by id`) as any[];
       expect(audit.map(r => `${r.action}:${r.ok}`)).toEqual(["read_postings:true", "verify_employer:true", "close_posting:true"]);
+    } finally { await s.close(); svc = undefined; }
+  }, T);
+  // SD-227: two must-haves with the same skill gave two facets with one id (network.facets primary key),
+  // so the save transaction failed after the manager's yes and nothing was stored.
+  test("a repeated must-have is saved once and the posting is stored", async () => {
+    const clock = new SimClock(START);
+    const s = svc = service(clock, "peon-posting-dup");
+    await s.start();
+    try {
+      const kim = await manager(s, clock, "+12125550192", "Kim, 41");
+      await text(s, clock, "+12125550192", "We're hiring a nurse, $80k-$90k, hybrid in Queens, must have SQL and sql");
+      expect(await last(kim)).toMatch(/^Here's your job post: Nurse,.* Must-haves: sql\. /);
+      await text(s, clock, "+12125550192", "yes");
+      expect(await last(kim)).toMatch(/^Posted: nurse\./);
+      const [p] = await postings(kim);
+      expect(p).toMatchObject({ status: "active", objective: "Hire: nurse" });
+      const must = (await sql`select id from network.facets where app_id = 'peon' and member_id = ${kim} and id like ${`${p.id}-must-%`}`) as any[];
+      expect(must.map(r => r.id)).toEqual([`${p.id}-must-sql`]);
+      // The staff API refuses a repeated skill before it writes anything.
+      const dup = await staff(s, ADMIN, "POST", "/apps/peon/postings", { managerId: kim, title: "nurse", payMin: 80, payMax: 90, mode: "remote", must: ["sql", "sql"] });
+      expect(dup).toEqual({ status: 400, body: { ok: false, error: "invalid_skills" } });
     } finally { await s.close(); svc = undefined; }
   }, T);
 });
