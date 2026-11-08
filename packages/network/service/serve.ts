@@ -99,7 +99,9 @@ export async function createServiceMcp(svc: NetworkService, o: ServiceMcpOptions
   });
   svc.onForget(async ctx => {
     // Leaving an app (or deleting everything) also deletes the grants: no row keeps the phone next to the app.
-    if (isMcpAppId(ctx.app.id)) await mcp.revokeAllFor(ctx.e164, ctx.app.id, { forget: true });
+    // No app: every app's grants, also of an app the person never joined.
+    if (!ctx.app) await mcp.revokeAllFor(ctx.e164, undefined, { forget: true });
+    else if (isMcpAppId(ctx.app.id)) await mcp.revokeAllFor(ctx.e164, ctx.app.id, { forget: true });
   });
   return mcp;
 }

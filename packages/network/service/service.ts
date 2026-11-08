@@ -133,6 +133,9 @@ const listApps = (apps: AppInfo[]) => apps.map(a => a.domain).join(apps.length =
 export const enrolledText = (apps: AppInfo[]) =>
   `Done: you're in ${listApps(apps)}. Text an app's name (like ${apps[0]!.domain}) to talk to it, or "leave ${apps[0]!.domain}" to leave one. ${POWERED_BY}`;
 /** Safety on every app (safety@* or admin@*): what a hold on other apps and a ban need. */
+/** A forget listener's context: one app (leave, or delete everything per membership), or no app (every app of the number). */
+export type ForgetContext = { e164: string; app?: AppInfo };
+
 const crossAppSafety = (u: StaffUser) => hasEverywhere(u, "safety") || hasEverywhere(u, "admin");
 /** Staff review actions the API takes, and the reason codes (PRD 32.8 and the per-app lists). */
 const DECISIONS = new Set(["approve", "reject", "edit", "reroll"]);
@@ -305,7 +308,7 @@ export class NetworkService implements RuntimeHost {
   private readonly apiOptions: ServiceOptions["publicApi"];
   private api?: PublicApi;
   private readonly copies = new Map<AppId, Copy>();
-  private readonly forgetListeners: Array<(ctx: MemberHookContext) => Promise<unknown> | unknown> = [];
+  private readonly forgetListeners: Array<(ctx: ForgetContext) => Promise<unknown> | unknown> = [];
   /** Private member photos (slop; verified adults only). */
   readonly photos: PhotoService;
   readonly photoRelay: PhotoRelayService;
@@ -760,10 +763,10 @@ export class NetworkService implements RuntimeHost {
         await this.photos.deleteFor(ctx.personId, ctx.app.id);
         await this.forget(ctx.app, ctx.memberId);
         // Other parts of the backend that hold data about the person in this app (the MCP server's OAuth grants).
-        for (const f of this.forgetListeners) {
-          try { await f(ctx); } catch (e) { this.log(`[forget] listener failed for ${ctx.app.id}: ${(e as Error).message}`); }
-        }
+        // A failure stops the leave or the delete before the membership goes, so the person can try again.
+        for (const f of this.forgetListeners) await f(ctx);
       },
+      onForgetPhone: ctx => this.forgetPhone(ctx.e164),
       onExport: (ctx: MemberHookContext) => this.exportMember(ctx.app, ctx.memberId),
       onAgeLowered: ctx => this.ageLowered(ctx.personId, ctx.age),
     };
@@ -812,10 +815,16 @@ export class NetworkService implements RuntimeHost {
   }
 
   /**
-   * Run `fn` after a person leaves an app or deletes everything (once per app), with the person's phone.
-   * The backend uses it to revoke the MCP server's OAuth grants of that app (packages/mcp revokeAllFor).
+   * Run `fn` after a person leaves an app or deletes everything (once per app, then once with no app),
+   * and after an under-13 decline (no app), with the person's phone. The backend uses it to revoke the
+   * MCP server's OAuth grants of that app, or of every app (packages/mcp revokeAllFor).
    */
-  onForget(fn: (ctx: MemberHookContext) => Promise<unknown> | unknown) { this.forgetListeners.push(fn); }
+  onForget(fn: (ctx: ForgetContext) => Promise<unknown> | unknown) { this.forgetListeners.push(fn); }
+
+  /** Delete everything on a number, or an under-13 decline: the forget listeners for every app (no `app`). */
+  private async forgetPhone(e164: string) {
+    for (const f of this.forgetListeners) await f({ e164 });
+  }
 
   /** Leave one app: the Network forgets the member, then the save deletes every row that names them (the forget path). */
   private async forget(app: AppInfo, memberId: MemberId) {
@@ -1301,6 +1310,7 @@ export class NetworkService implements RuntimeHost {
     await this.accounts.recordAge(e164, person, Math.min(...recorded));
     if (!person || !ages.some(a => a.declined)) return;
     const at = this.clock.now();
+    await this.forgetPhone(e164);
     for (const m of await this.people.memberships(person.id)) {
       if (m.state === "removed") continue;
       if (m.app !== app.id) await this.forget(this.apps[m.app], m.memberId as MemberId);

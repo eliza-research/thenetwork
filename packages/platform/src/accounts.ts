@@ -115,6 +115,8 @@ export interface AccountHooks {
   onStop?(ctx: Omit<MemberHookContext, "memberId"> & { memberId?: string; scope: StopScope }): Promise<void> | void;
   /** Delete the member's network rows for this app (the generalized forget path). */
   onForget?(ctx: MemberHookContext): Promise<void> | void;
+  /** Delete everything on a number (after onForget for each live membership): data kept by number for any app, also an app with no membership (OAuth grants). */
+  onForgetPhone?(ctx: { e164: string }): Promise<void> | void;
   /** The member's own network data for this app (facets, intents, opportunities, messages). */
   onExport?(ctx: MemberHookContext): Promise<unknown> | unknown;
   /** The person's lowest age went down (a stated age on any app): every app's member must follow (a minor is never matched anywhere). */
@@ -203,6 +205,7 @@ export class Accounts {
     for (const m of await this.store.memberships(ph.personId)) {
       if (m.state !== "removed") await this.hooks.onForget?.({ app: this.opts.apps(m.app), personId: ph.personId, memberId: m.memberId, e164 });
     }
+    await this.hooks.onForgetPhone?.({ e164 });
     const hash = this.phoneHash(e164);
     await this.store.deleteAll(ph.personId, e164, hash, at);
     // The old owner's tombstone keeps its blocks, but is never revived for the new owner of the number.
@@ -440,6 +443,7 @@ export class Accounts {
         if (m.state !== "removed") await this.hooks.onForget?.({ app: this.opts.apps(m.app), personId: person.id, memberId: m.memberId, e164: who.e164 });
       }
     }
+    await this.hooks.onForgetPhone?.({ e164: who.e164 });
     await this.store.deleteAll(person?.id ?? null, who.e164, this.phoneHash(who.e164), at);
   }
 
