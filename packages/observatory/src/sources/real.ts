@@ -138,6 +138,8 @@ export class RealSource implements DataSource {
   readonly mode = "real" as const;
   readonly store: Store;
   private sql?: SQL;
+  /** The connection until its login check answers (checkLogin): nothing is read through it. */
+  private unchecked?: SQL;
   private listeners = new Listeners<ObsDelta>();
   private timers: ReturnType<typeof setInterval>[] = [];
   private reveal: boolean;
@@ -196,40 +198,63 @@ export class RealSource implements DataSource {
 
   async init() {
     if (!this.url) { this.store.setEnv(this.env("No database configured. Set NETWORK_DATABASE_URL to the Network's Postgres (network schema).")); return; }
-    this.sql = new SQL({ url: this.url, max: 4, idleTimeout: 30, connection: { default_transaction_read_only: "on", application_name: `network-observatory-${this.app}`, statement_timeout: "20000" } });
-    // The login is checked, not assumed: read-only, the app's role for an app login, and never a superuser outside this machine.
-    try {
-      const [who] = await this.sql`select r.rolsuper as su, r.rolbypassrls as bypass, current_setting('transaction_read_only') as ro,
-          (select pg_has_role(current_user, oid, 'member') from pg_roles where rolname = ${`network_observatory_${this.app}`}) as in_app_role
-        from pg_roles r where r.rolname = current_user` as any[];
-      const why = loginProblem({ su: !!who?.su, bypass: !!who?.bypass, ro: String(who?.ro), inAppRole: who?.in_app_role ?? null }, { local: isLocal(this.url), isolation: this.isolation, app: this.app });
-      if (why) { this.refused = `Refused: ${why}.`; await this.sql.close(); this.sql = undefined; this.store.setEnv(this.env()); return; }
-    } catch (e) { this.store.setEnv(this.env(`Could not check the database login: ${(e as Error).message}`)); }
-    if (this.reveal) {
-      // The global reveal needs a development database as well as a local one (a tunnel to production also looks local).
-      const env = await this.sql!`select value from platform.settings where key = 'environment'`.then((r: any[]) => r[0]?.value as string | undefined, () => undefined);
-      if (env !== "dev") { this.reveal = false; this.revealRefused = true; }
-    }
-    try {
-      await this.load();
-      this.store.setEnv(this.env());
-    } catch (e) {
-      this.store.setEnv(this.env(`Could not read the network schema: ${(e as Error).message}`));
+    this.unchecked = new SQL({ url: this.url, max: 4, idleTimeout: 30, connection: { default_transaction_read_only: "on", application_name: `network-observatory-${this.app}`, statement_timeout: "20000" } });
+    await this.checkLogin();
+    if (this.refused) return;
+    if (this.sql) {
+      try {
+        await this.load();
+        this.store.setEnv(this.env());
+      } catch (e) {
+        this.store.setEnv(this.env(`Could not read the network schema: ${(e as Error).message}`));
+      }
     }
     this.timers.push(setInterval(() => { this.reload(); }, this.opts.pollMs ?? 10_000));
     this.timers.push(setInterval(() => this.push(), this.opts.pushMs ?? 500));
+  }
+
+  /**
+   * The login is checked, not assumed: read-only, the app's role for an app login, and never a superuser
+   * outside this machine. Nothing is read through the connection until the check answers: an error leaves
+   * it unchecked, and the next poll checks again (audit observatory D02).
+   */
+  private async checkLogin() {
+    const sql = this.unchecked!;
+    let why: string | undefined;
+    try {
+      const [who] = await sql`select r.rolsuper as su, r.rolbypassrls as bypass, current_setting('transaction_read_only') as ro,
+          (select pg_has_role(current_user, oid, 'member') from pg_roles where rolname = ${`network_observatory_${this.app}`}) as in_app_role
+        from pg_roles r where r.rolname = current_user` as any[];
+      why = loginProblem({ su: !!who?.su, bypass: !!who?.bypass, ro: String(who?.ro), inAppRole: who?.in_app_role ?? null }, { local: isLocal(this.url!), isolation: this.isolation, app: this.app });
+    } catch (e) { this.store.setEnv(this.env(`Could not check the database login: ${(e as Error).message}`)); return; }
+    this.unchecked = undefined;
+    if (why) {
+      this.refused = `Refused: ${why}.`;
+      for (const t of this.timers) clearInterval(t);
+      this.timers = [];
+      await sql.close();
+      this.store.setEnv(this.env());
+      return;
+    }
+    if (this.reveal) {
+      // The global reveal needs a development database as well as a local one (a tunnel to production also looks local).
+      const env = await sql`select value from platform.settings where key = 'environment'`.then((r: any[]) => r[0]?.value as string | undefined, () => undefined);
+      if (env !== "dev") { this.reveal = false; this.revealRefused = true; }
+    }
+    this.sql = sql;
   }
 
   async dispose() {
     for (const t of this.timers) clearInterval(t);
     this.timers = [];
     await this.sql?.close();
+    await this.unchecked?.close();
   }
 
   private reload() {
-    if (this.loading || !this.sql) return this.loading ?? Promise.resolve();
-    this.loading = this.load()
-      .then(() => { if (this.store.env.error) this.store.setEnv(this.env()); })
+    if (this.loading || !(this.sql || this.unchecked)) return this.loading ?? Promise.resolve();
+    this.loading = (this.sql ? Promise.resolve() : this.checkLogin())
+      .then(() => this.sql && this.load().then(() => { if (this.store.env.error) this.store.setEnv(this.env()); }))
       .catch(e => { this.store.setEnv(this.env(`Read failed: ${(e as Error).message}`)); })
       .finally(() => { this.loading = null; });
     return this.loading;
