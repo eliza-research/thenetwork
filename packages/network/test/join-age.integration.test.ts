@@ -186,3 +186,15 @@ test("SD-066: a member the Network holds as a minor from a school sign is single
   expect(r.memberId).toBe(memberId);
   expect(r.context.singlePlayer).toBe(true);
 }, 60_000);
+
+test("SD-125: the answer to the looking-for question is a turn of The Network that carries the enroll confirmation", async () => {
+  const phone = "+12125550312";
+  await say(phone, "hi");
+  const joined = await say(phone, "Sam, 25");
+  expect(joined.reason).toBe("joined");
+  const r = await say(phone, "friends please");
+  expect(r.app).toBe("ntwrk");
+  expect(r.memberId).toBe(joined.memberId);
+  expect(r.replies.some((t: string) => t.startsWith("Done: you're in friends.help"))).toBe(true);
+  expect(await liveMemberships(phone)).toContain("friends");
+}, 60_000);

@@ -1484,6 +1484,8 @@ export class NetworkService implements RuntimeHost {
     const person = await this.accounts.personFor(e164);
     const ntwrk = person && (await this.people.getMembership(person.id, "ntwrk"));
     const joined: AppInfo[] = [];
+    // createMember names each new member in the turn; this turn stays The Network's, which confirms below.
+    const turn = this.inboundTurn(), own = turn && { app: turn.app, memberId: turn.memberId };
     if (person && ntwrk && !(await this.accounts.banned(e164, person))) {
       const lowest = await this.accounts.lowestAge(e164, person);
       const asked = lookingForAsk(lowest);
@@ -1504,6 +1506,7 @@ export class NetworkService implements RuntimeHost {
         joined.push(app);
       }
     }
+    if (turn && own) { turn.app = own.app; turn.memberId = own.memberId; }
     await this.people.deletePending(key, "looking_for");
     if (joined.length) await rt.unitOfWork(() => { rt.system(memberId, `sys:${rowId}`, enrolledText(joined), "reply", "info"); });
   }
