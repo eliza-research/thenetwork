@@ -622,8 +622,10 @@ export class NetworkService implements RuntimeHost {
     for (const b of items) {
       const personId = person.get(b.memberId);
       if (!personId) continue;
+      // The subject is the text itself: the inbox dedupes on it, so a second text about one opportunity
+      // is its own item, and only a repeat of the same text (the projection after a crash) is one item.
       await this.notify.recordSent(
-        { personId, app: rt.app.id, eventType: b.type!, subjectId: b.oppId ?? b.id, urgency: b.proactive ? "normal" : "requested", summary: b.body.trim().slice(0, NOTIFY_SUMMARY_MAX) || "An update from the Network." },
+        { personId, app: rt.app.id, eventType: b.type!, subjectId: b.id, urgency: b.proactive ? "normal" : "requested", summary: b.body.trim().slice(0, NOTIFY_SUMMARY_MAX) || "An update from the Network." },
         { deliveryId: `net:${b.id}`, channel: "imessage", countsTowardCap: b.proactive || b.kind === "proactive", sentAt: b.acceptedAt ?? b.ts },
       );
     }
