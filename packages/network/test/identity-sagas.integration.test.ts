@@ -645,4 +645,37 @@ describe.skipIf(!pgAvailable)("identity sagas: stop half way, retry, races (Post
     expect((await memberOf("slop", b))).toBeDefined();
     expect(await s.people.isSuppressed(s.accounts.phoneHash(b))).toBe(false);
   }, T);
+
+  test("Q-identity_sagas-2: delete everything that runs with a number change suppresses the new number and keeps no row with it", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const s = service(clock), other = service(clock);
+    const [a, b] = [newPhone(), newPhone()];
+    expect(await text(s, clock, a, "slop")).toBe("join_asked");
+    expect(await text(s, clock, a, "Yul, 38")).toBe("joined");
+    const move = await startMove(other, clock, a, b);
+    // The member deletes everything on the site (logged in on a).
+    const api = site(s);
+    clock.advance(31_000);
+    expect((await api("/api/auth/otp/start", { phone: a })).status).toBe(200);
+    expect((await api("/api/auth/otp/verify", { phone: a, code: "123456" })).status).toBe(200);
+
+    // The delete read the person on a; the number change (another replica) commits before the delete's transaction.
+    const people = s.people as unknown as Record<string, (...x: unknown[]) => Promise<unknown>>;
+    const real = people.deleteAll!.bind(s.people);
+    let moved: unknown;
+    people.deleteAll = async (...x: unknown[]) => {
+      moved ??= (await move("/api/me/phone/confirm", { code: "123456" })).body;
+      return real(...x);
+    };
+    expect((await api("/api/me/delete", { scope: "all" })).body).toEqual({ ok: true });
+    expect(moved).toMatchObject({ ok: true });
+
+    // The person's current number is suppressed, and no row keeps it in plain form.
+    expect(await s.people.isSuppressed(s.accounts.phoneHash(b))).toBe(true);
+    expect(await s.people.isSuppressed(s.accounts.phoneHash(a))).toBe(true);
+    expect((await sql`select count(*)::int as n from platform.phone_identities where e164 = ${b}`)[0].n).toBe(0);
+    expect((await sql`select count(*)::int as n from platform.consent_events where e164 = ${b}`)[0].n).toBe(0);
+    expect((await sql`select count(*)::int as n from platform.line_conversations where address = ${b}`)[0].n).toBe(0);
+  }, T);
 });

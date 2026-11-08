@@ -333,20 +333,28 @@ export class PgPeopleStore implements PeopleStore {
   async deleteAll(personId: string | null, e164: string, phoneHash: string, at: number, newOwner = false) {
     await this.sql.begin(async tx => {
       if (personId) await tx`select id from platform.people where id = ${personId} for update`;
-      if (!newOwner) await tx`insert into platform.suppression (phone_hash, reason, at) values (${phoneHash}, 'deleted', ${ts(at)}) on conflict do nothing`;
+      // The person's number now (read under the person lock): a number change that committed after the
+      // caller read `e164` moved the person, and that number goes too.
+      const [now] = personId && !newOwner ? await tx`select ph.e164, p.phone_hash from platform.phone_identities ph join platform.people p on p.id = ph.person_id
+        where ph.person_id = ${personId}::uuid and ph.e164 <> ${e164} and p.phone_hash is not null` : [];
+      const numbers = [{ e164, phoneHash }, ...(now ? [{ e164: now.e164 as string, phoneHash: now.phone_hash as string }] : [])];
       // A new owner: consent events after the old owner's last message are the new holder's (a STOP works before
       // and during the hold). They stay; only the old owner's events go.
       const [seen] = newOwner ? await tx`select last_seen_at from platform.phone_identities where e164 = ${e164}` : [];
       const keepAfter = (seen?.last_seen_at as Date | null | undefined) ?? null;
-      await tx`update platform.inbound set status = 'unresolved', response = null, replies = '[]'::jsonb, action_receipts = '{}'::jsonb,
-        receipt = null, receipt_hash = null, sender = null, event = null, sender_hash = null, member_id = null, app_id = null
-        where request_hash is not null and sender_hash = ${phoneHash}`;
-      await tx`delete from platform.sessions where e164 = ${e164} or (${personId}::uuid is not null and person_id = ${personId}::uuid)`;
-      await tx`delete from platform.otp_challenges where e164 = ${e164}`;
-      await tx`delete from platform.consent_events where e164 = ${e164} and (${keepAfter}::timestamptz is null or at <= ${keepAfter})`;
-      // The line's conversation counters hold the number in plain form (the retention purge keeps a row with
-      // an unanswered text). A new owner's counters are theirs: their own text reset them.
-      if (!newOwner) await tx`delete from platform.line_conversations where address = ${e164}`;
+      for (const n of numbers) {
+        if (!newOwner) await tx`insert into platform.suppression (phone_hash, reason, at) values (${n.phoneHash}, 'deleted', ${ts(at)}) on conflict do nothing`;
+        await tx`update platform.inbound set status = 'unresolved', response = null, replies = '[]'::jsonb, action_receipts = '{}'::jsonb,
+          receipt = null, receipt_hash = null, sender = null, event = null, sender_hash = null, member_id = null, app_id = null
+          where request_hash is not null and sender_hash = ${n.phoneHash}`;
+        await tx`delete from platform.sessions where e164 = ${n.e164} or (${personId}::uuid is not null and person_id = ${personId}::uuid)`;
+        await tx`delete from platform.otp_challenges where e164 = ${n.e164}`;
+        await tx`delete from platform.consent_events where e164 = ${n.e164} and (${keepAfter}::timestamptz is null or at <= ${keepAfter})`;
+        // The line's conversation counters hold the number in plain form (the retention purge keeps a row with
+        // an unanswered text). A new owner's counters are theirs: their own text reset them.
+        if (!newOwner) await tx`delete from platform.line_conversations where address = ${n.e164}`;
+        await tx`delete from platform.pending_texts where phone_hash = ${n.phoneHash}`;
+      }
       if (personId) {
         await tx`delete from platform.memberships where person_id = ${personId}`;
         await tx`delete from platform.share_grants where person_id = ${personId}`;
@@ -356,7 +364,6 @@ export class PgPeopleStore implements PeopleStore {
         await tx`select notify.forget_data(${personId}, null)`;
       }
       await tx`delete from platform.phone_identities where e164 = ${e164}`;
-      await tx`delete from platform.pending_texts where phone_hash = ${phoneHash}`;
       if (personId) await tx`delete from platform.phone_changes where person_id = ${personId}::uuid`;
       if (newOwner) {
         // The number starts clean for its new holder, in the same transaction: no suppression and no age

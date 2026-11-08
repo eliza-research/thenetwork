@@ -413,6 +413,10 @@ export class MemoryPeopleStore implements PeopleStore {
   async deleteAll(personId: string | null, e164: string, phoneHash: string, at: number, newOwner = false) {
     // A new owner keeps the consent events after the old owner's last message (theirs).
     const keepAfter = newOwner ? this.phones.get(e164)?.lastSeenAt ?? null : null;
+    // The person's number now: a number change that ran after the caller read `e164` moved the person, and that number goes too.
+    const moved = personId && !newOwner ? [...this.phones.values()].find(ph => ph.personId === personId && ph.e164 !== e164) : undefined;
+    const movedHash = moved && personId ? this.personHash.get(personId) : undefined;
+    if (moved && movedHash) await this.deleteAll(null, moved.e164, movedHash, at);
     if (!newOwner) await this.suppress(phoneHash, "deleted", at);
     if (personId) {
       for (const [k, m] of this.members) if (m.personId === personId) this.members.delete(k);
