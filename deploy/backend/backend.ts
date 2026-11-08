@@ -155,7 +155,15 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   if (!e.BLOOIO_WEBHOOK_SECRET) warnings.push("BLOOIO_WEBHOOK_SECRET is not set: the shared-line webhook answers 503");
   if (!deployed && !proxySecret) warnings.push("PLATFORM_PROXY_SECRET is not set: /api answers only for a Host the platform knows (local site ports)");
   const build = (e.BUILD_ID || e.RAILWAY_GIT_COMMIT_SHA || "dev").slice(0, 40);
-  const tickMs = Number(e.TICK_MS ?? 60_000);
+  // An empty value takes the default; anything else must be a whole number of milliseconds (as opsConfigFromEnv checks its numbers, SD-370).
+  const ms = (name: string, dflt: number, min: number) => {
+    const v = e[name];
+    if (v === undefined || v.trim() === "") return dflt;
+    const x = Number(v);
+    if (!Number.isInteger(x) || x < min) throw new Error(`${name} must be a whole number of milliseconds of ${min} or more (got ${JSON.stringify(v)})`);
+    return x;
+  };
+  const tickMs = ms("TICK_MS", 60_000, 1);
   const ops = opsConfigFromEnv(e, { env, build, deployed });
   if (deployed && !ops.webhookUrl) warnings.push("ALERT_WEBHOOK_URL is not set: alerts are log lines only (docs/deploy.md 7.2)");
 
@@ -166,9 +174,9 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
     build,
     migrateOnBoot,
     channel,
-    shutdownGraceMs: Number(e.SHUTDOWN_GRACE_MS ?? 25_000),
+    shutdownGraceMs: ms("SHUTDOWN_GRACE_MS", 25_000, 0),
     tickMs,
-    tickLateMs: Number(e.TICK_LATE_MS ?? Math.max(15 * 60_000, 3 * tickMs)),
+    tickLateMs: ms("TICK_LATE_MS", Math.max(15 * 60_000, 3 * tickMs), 1),
     ops,
     ...(leakLabelKey ? { leakLabelKey } : {}),
     warnings,
