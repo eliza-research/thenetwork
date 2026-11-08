@@ -17,8 +17,14 @@
 //   close       closing a posting by text ends its open items (a candidate who said yes is told), and
 //               no new item is proposed for it
 //   decline     a candidate's no to one job keeps them from that job only, not from the manager's others
+//   history     the engine's peon history counts the manager's answers (pending, no, yes) and silences,
+//               and an answer still counts after the check-in
 import { DAY, HOUR, SimClock, type Facet, type Intent, type Member, type MemberId, type NetworkContext, type Presence, type SimMessage, type SimMeta } from "../../packages/core/src/index.ts";
-import { PEON_ENGINE_CONFIG } from "../../packages/engine/src/packs/peon/index.ts";
+import { resolveConfig } from "../../packages/engine/src/config.ts";
+import { localEmbed } from "../../packages/engine/src/embed.ts";
+import { PEON_ENGINE_CONFIG, peonPack } from "../../packages/engine/src/packs/peon/index.ts";
+import { historyOf } from "../../packages/engine/src/packs/peon/profile.ts";
+import { World } from "../../packages/engine/src/world.ts";
 import { peonSeats, seatIdOf } from "../../packages/engine/src/packs/peon/seats.ts";
 import { ConsentNetwork, type NetworkOptions } from "../../packages/network/src/network.ts";
 import { parsePosting, postingFacts, POSTING_COPY, readPostingText, SEAT_COPY, type JobPosting } from "../../packages/network/src/jobs.ts";
@@ -297,5 +303,51 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
     expect(v.net.exportState().opps.some(o => o.seat?.id === seatB && o.participants.includes(x))).toBe(true);
     // Job A stays closed to them.
     expect(v.net.exportState().opps.filter(o => o.seat?.id === seatA && o.participants.includes(x)).map(o => o.id)).toEqual([a]);
+  });
+  // SD-441: the engine's peon history (responsiveness, the probation budget, the review slate) reads the
+  // manager's answers from the interaction log, and the Network wrote none of them that stayed.
+  await b.run("history: the manager's pending review, no, yes and silence reach the engine's peon history, and stay after the check-in", async () => {
+    const v = new SeatWorld();
+    v.add("hm1", "Rowan Abbott", 34, { verified: "Acme" });
+    for (const c of ["c1", "c2", "c3"]) v.add(c, `Cand ${c.toUpperCase()}`, 29, { candidate: true });
+    for (const id of ["hm1", "c1", "c2", "c3"]) for (const a of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await v.say(id, a);
+    await v.say("hm1", POST.replace("2 openings", "1 opening"));
+    await v.say("hm1", "yes");
+    const seatId = seatIdOf(v.saved[0]!.id);
+    const hist = () => historyOf(new World(v.net.packInput(v.clock.now()), resolveConfig(PEON_ENGINE_CONFIG), localEmbed, peonPack), seatId);
+    const seen = new Set<string>();
+    /** The next seat item: approved, the candidate's yes, and the manager's blind review sent. */
+    const next = async () => {
+      const item = () => v.net.reviewQueue().find(i => i.proposal.participants.includes("hm1") && !seen.has(i.oppId));
+      expect(await v.runUntil(() => !!item(), 4 * DAY)).toBe(true);
+      const id = item()!.oppId; seen.add(id);
+      const c = v.opp(id)!.participants.find(p => p !== "hm1")!;
+      expect(v.net.review(id, "approve", { reviewer: "sim_staff" })).toBe(true);
+      expect(await v.runUntil(() => v.probedFor(c, id))).toBe(true);
+      await v.say(c, "yes");
+      expect(await v.runUntil(() => v.probedFor("hm1", id))).toBe(true);
+      return { id, c };
+    };
+    expect(hist()).toMatchObject({ pendingReview: 0, answered: 0, ghosted: 0 });
+    // A candidate said yes and the manager has not answered yet: one application waits for review.
+    await next();
+    expect(hist().pendingReview).toBe(1);
+    // The manager's no is an answer.
+    await v.say("hm1", "no");
+    expect(hist()).toMatchObject({ pendingReview: 0, answered: 1, ghosted: 0 });
+    // The manager lets the next one expire: a ghosted application.
+    const second = await next();
+    await v.runUntil(() => v.opp(second.id)?.stage === "closed", 3 * DAY);
+    expect(hist()).toMatchObject({ pendingReview: 0, answered: 1, ghosted: 1 });
+    // The manager's yes is an answer, and it still counts after both sides answer the check-in.
+    const third = await next();
+    await v.say("hm1", "yes");
+    expect(v.opp(third.id)?.stage).toBe("scheduled");
+    const asked = (id: MemberId) => v.to(id).some(s => s.meta.proposalId === third.id && /how it went/.test(s.body));
+    expect(await v.runUntil(() => asked(third.c) && asked("hm1"), 8 * DAY)).toBe(true);
+    expect(hist()).toMatchObject({ answered: 2, ghosted: 1 });
+    for (const id of [third.c, "hm1"]) await v.say(id, "It went well, we talked for half an hour.");
+    expect(v.net.exportState().interactions.filter(x => x.id.startsWith(`${third.id}:fb:`)).length).toBe(2);
+    expect(hist()).toMatchObject({ answered: 2, ghosted: 1 });
   });
 }

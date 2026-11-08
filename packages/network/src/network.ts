@@ -369,6 +369,8 @@ interface Opp {
   declinedTimes?: number[];
   /** Members who said "neither" and were offered other times once. */
   timeRetry?: MemberId[];
+  /** Members whose probe reached them and expired without an answer (peon history: an employer who did not answer). */
+  noAnswer?: MemberId[];
   /** Members the booked plan reached (only they hear if it changes). */
   bookedTold?: MemberId[];
   /** Participants who answered the feedback question. */
@@ -453,6 +455,8 @@ const LEARNED_DESIRE_DAYS = 60;
 const PAIR_HISTORY_DAYS = 60;
 const OPEN_STAGES = new Set(["review", "probing", "scheduled"]);
 const EMPTY_SET: ReadonlySet<string> = new Set();
+/** A yes to the probe ("available" while the others are still asked), or to the booked item. */
+const saidYes = (s: PStatus | undefined) => s === "available" || s === "yes";
 const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 /** The id a seat item's pair history is kept under: the seat for its hiring manager, else the member. */
 const seatSide = (id: MemberId, seat: { id: MemberId; manager: MemberId } | undefined) => (seat && id === seat.manager ? seat.id : id);
@@ -2365,7 +2369,8 @@ export class ConsentNetwork implements NetworkUnderTest {
         const r = this.requests.find(x => x.oppId === o.id && x.memberId === m.id);
         if (r) { r.noCount = (r.noCount ?? 0) + 1; if (r.noCount >= 2) r.closed = true; }
       }
-      o.status.set(m.id, "unavailable"); this.ack(m, "No problem."); this.replaceOrClose(o, m.id);
+      // A seat item keeps the no: the engine's peon history counts the manager's answer.
+      o.status.set(m.id, o.seat ? "no" : "unavailable"); this.ack(m, "No problem."); this.replaceOrClose(o, m.id);
     }
     this.advanceProbes(o);
   }
@@ -2590,7 +2595,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       }
     }
     // A review rejection or expiry is not something the members did: no interaction record.
-    if (!wasReview) this.interactions.push({ id: o.id, kind: o.kind, category: o.category, participants: [...o.participants], at: this.now(), outcome: reason === "declined" ? "declined" : wasProbing ? "expired" : "cancelled", declinedBy: o.participants.filter(p => o.status.get(p) === "no") });
+    if (!wasReview) this.interactions.push({ id: o.id, kind: o.kind, category: o.category, participants: [...o.participants], at: this.now(), outcome: reason === "declined" ? "declined" : wasProbing ? "expired" : "cancelled", declinedBy: o.participants.filter(p => o.status.get(p) === "no"),
+      // A seat item: who said yes and who let the probe expire (the engine's peon history: answered, ghosted).
+      ...(o.seat ? { acceptedBy: o.participants.filter(p => saidYes(o.status.get(p))), noResponse: (o.noAnswer ?? []).filter(p => o.participants.includes(p)) } : {}) });
     this.ctx.log(wasProbing ? "probe_closed" : "opportunity_closed", { proposalId: o.id, reason: wasProbing ? `not sent: ${reason}` : reason });
   }
 
@@ -2672,7 +2679,10 @@ export class ConsentNetwork implements NetworkUnderTest {
         s.add(m.id); this.again.set(k, s);
       }
     }
-    this.interactions.push({ id: `${o.id}:fb:${m.id}`, kind: o.kind, category: o.category, participants: [...o.participants], at: this.now(), outcome: f.selfNoShow ? "no_show" : "completed", contributors: [] });
+    // A seat item's first check-in answer keeps both yeses (the engine's peon history: the manager answered).
+    const firstSeat = o.seat && !this.interactions.some(x => x.id.startsWith(`${o.id}:fb:`));
+    this.interactions.push({ id: `${o.id}:fb:${m.id}`, kind: o.kind, category: o.category, participants: [...o.participants], at: this.now(), outcome: f.selfNoShow ? "no_show" : "completed", contributors: [],
+      ...(firstSeat ? { acceptedBy: o.participants.filter(p => o.status.get(p) === "yes") } : {}) });
     // Growth: a good experience is the best moment to ask (at most monthly, while invites last).
     if (!crewId && this.invitesWork && f.sentiment === "positive" && this.canInvite(m) && this.now() - m.lastGrowthAsk > 30 * DAY) {
       m.lastGrowthAsk = this.now();
@@ -3410,7 +3420,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (now < (sent !== undefined ? sent + PROBE_TTL : (o.turnAt?.[p] ?? o.createdAt) + PROBE_WAIT)) continue;
         // They said yes and were offered other times: no answer keeps the yes (the best time for everyone).
         if (o.timeRetry?.includes(p)) { o.status.set(p, "available"); continue; }
-        if (o.contacted.has(p)) { this.counters.probeExpired++; this.ctx.log("probe_answer", { oppId: o.id, memberId: p, yes: false, expired: true }); }
+        if (o.contacted.has(p)) { this.counters.probeExpired++; this.ctx.log("probe_answer", { oppId: o.id, memberId: p, yes: false, expired: true }); o.noAnswer = [...(o.noAnswer ?? []), p]; }
         const m = this.members.get(p);
         if (m?.awaiting?.oppId === o.id) m.awaiting = undefined;
         o.status.set(p, "unavailable");
@@ -4575,7 +4585,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    * The engine's view of seat items: the hiring manager is the seat again in recent proposals,
    * interactions and open items, so the pack counts each seat's openings (engine seatFills) and its
    * pair rules see the seat. A seat item both sides said yes to holds its opening ("accepted") until
-   * it closes or its check-in is answered.
+   * it closes or its check-in is answered; one the candidate said yes to waits for the manager ("pending").
    */
   private seatView(input: EngineInput): EngineInput {
     const seats = new Map<string, NonNullable<Opp["seat"]>>();
@@ -4591,6 +4601,10 @@ export class ConsentNetwork implements NetworkUnderTest {
       ...(x.contributors ? { contributors: view(x.id, x.contributors) } : {}), ...(x.noResponse ? { noResponse: view(x.id, x.noResponse) } : {}),
     }));
     for (const o of this.opps.values()) {
+      if (o.seat && o.stage === "probing" && o.participants.some(p => saidYes(o.status.get(p)))) {
+        interactions.push({ id: `${o.id}:seat`, kind: o.kind, category: o.category, participants: view(o.id, o.participants), at: o.createdAt, outcome: "pending", acceptedBy: view(o.id, o.participants.filter(p => saidYes(o.status.get(p)))) });
+        continue;
+      }
       if (!o.seat || o.meetingAt === undefined || o.stage === "closed" || interactions.some(x => x.id.startsWith(`${o.id}:fb:`))) continue;
       interactions.push({ id: `${o.id}:seat`, kind: o.kind, category: o.category, participants: view(o.id, o.participants), at: o.meetingAt, outcome: "accepted", acceptedBy: view(o.id, o.participants) });
     }
