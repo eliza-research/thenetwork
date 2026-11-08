@@ -331,6 +331,8 @@ export function evaluate(m: Pick<OpsMetrics, "networks" | "cost"> & { uptimeMs?:
 export interface AlertState {
   key: string; level: AlertLevel; count: number; text: string; open: boolean; firstAt: number; lastAt: number;
   lastSentAt?: number; lastSentLevel?: AlertLevel; lastSentCount?: number;
+  /** The last failed post that carried this alert (the webhook did not take it). */
+  lastFailedAt?: number;
 }
 export interface AlertTx {
   load(): Promise<AlertState[]>;
@@ -368,14 +370,17 @@ export class PgAlertStore implements AlertStore {
         load: async () => ((await tx`select * from network.ops_alerts`) as any[]).map(r => ({
           key: r.key, level: r.level, count: r.count, text: r.text, open: r.open, firstAt: ms(r.first_at)!, lastAt: ms(r.last_at)!,
           lastSentAt: ms(r.last_sent_at), lastSentLevel: r.last_sent_level ?? undefined, lastSentCount: r.last_sent_count ?? undefined,
+          lastFailedAt: ms(r.last_failed_at),
         })),
         save: async ss => {
           for (const s of ss) {
-            await tx`insert into network.ops_alerts (key, level, count, text, open, first_at, last_at, last_sent_at, last_sent_level, last_sent_count)
+            await tx`insert into network.ops_alerts (key, level, count, text, open, first_at, last_at, last_sent_at, last_sent_level, last_sent_count, last_failed_at)
               values (${s.key}, ${s.level}, ${s.count}, ${s.text.slice(0, 500)}, ${s.open}, ${new Date(s.firstAt)}, ${new Date(s.lastAt)},
-                ${s.lastSentAt === undefined ? null : new Date(s.lastSentAt)}, ${s.lastSentLevel ?? null}, ${s.lastSentCount ?? null})
+                ${s.lastSentAt === undefined ? null : new Date(s.lastSentAt)}, ${s.lastSentLevel ?? null}, ${s.lastSentCount ?? null},
+                ${s.lastFailedAt === undefined ? null : new Date(s.lastFailedAt)})
               on conflict (key) do update set level = excluded.level, count = excluded.count, text = excluded.text, open = excluded.open, first_at = excluded.first_at,
-                last_at = excluded.last_at, last_sent_at = excluded.last_sent_at, last_sent_level = excluded.last_sent_level, last_sent_count = excluded.last_sent_count`;
+                last_at = excluded.last_at, last_sent_at = excluded.last_sent_at, last_sent_level = excluded.last_sent_level, last_sent_count = excluded.last_sent_count,
+                last_failed_at = excluded.last_failed_at`;
           }
         },
         postsSince: async t => Number(((await tx`select count(*)::int as n from network.ops_alert_posts where at > ${new Date(t)}`) as any[])[0]?.n ?? 0),
@@ -447,8 +452,9 @@ export class AlertDispatcher {
       const unknown = unread(current);
       for (const s of states.values()) {
         if (!s.open || seen.has(s.key) || unknown(s.key)) continue;
-        // Never posted (it started and ended between rate-limited rounds): close it quietly.
-        if (s.lastSentAt === undefined) { s.open = false; continue; }
+        // Never posted and no post of it failed (it started and ended between rate-limited rounds): close it quietly.
+        // A post of it that failed means nobody heard of it: its end is posted (SD-235).
+        if (s.lastSentAt === undefined && s.lastFailedAt === undefined) { s.open = false; continue; }
         resolved.push(s);
         notices.push({ key: s.key, level: s.level, count: s.count, text: s.text, state: "resolved" });
       }
@@ -464,7 +470,7 @@ export class AlertDispatcher {
           if (ok) {
             for (const s of firing) { s.lastSentAt = now; s.lastSentLevel = s.level; s.lastSentCount = s.count; }
             for (const s of resolved) s.open = false;
-          }
+          } else for (const s of firing) s.lastFailedAt = now;
         }
       }
       await tx.save([...states.values()]);
