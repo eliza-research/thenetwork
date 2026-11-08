@@ -200,5 +200,18 @@ Not reached:
 `bun run quint:check quint/join_age.qnt` (seed 0x5eed, max-steps 40, max-samples 4000): typecheck ok, 20 run
 tests ok, `safety` FAIL (expected: the defects above), 7 witnesses reachable.
 
-`quint verify --invariant safety --max-steps 10` (Apalache): a counterexample at depth 4 in about 7 s. Shortest
-Apalache counterexample per invariant: see section 7.
+`quint verify --invariant safety --max-steps 10` (Apalache, Java 21): a counterexample at depth 4 in about 7 s.
+
+Apalache per invariant (bounded model checking, so the depth is the shortest counterexample):
+
+| Invariant | Max steps | Depth | Trace (short) | Defect |
+|---|---|---|---|---|
+| `lowestWins` | 24 | 4 | web join friends age 0 -> error, nothing stored -> staff invite makes the person | SD-383 |
+| `noticeSpentImpliesDelivered` | 12 | 3 | first text -> notice row -> crash | SD-276 |
+| `inviteReplyJoinsInvitedApp` | 12 | 4 | staff invite friends -> reply with name and age -> join routed to ntwrk | SD-488 |
+| `activeImpliesMember` | 12 | 6 | web join friends -> putMembership -> crash | Q-join_age-2 |
+| `under13StoresNothing` | 12 | 7 | web join slop 12 -> floor 12 -> text "hi" -> pending join and join question | SD-315 |
+
+The other invariants were not run one by one with Apalache: the Apalache server on this shared machine dropped
+the connection under load ("Connection dropped") for `noOrphanMember` and `minorNeverMatched`, and a depth-24 run
+of `minorNeverMatched` did not finish in 15 minutes. The simulator finds all 15 (section 4).
