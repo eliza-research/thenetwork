@@ -96,3 +96,47 @@ test.skipIf(!pgAvailable)("backup.ts --out without --local uploads and keeps no 
       .toEqual({ code: 0, uploaded: true, objects: expect.arrayContaining(["db.dump.enc", "manifest.json"]), kept: [] });
   } finally { b.stop(); await rm(out, { recursive: true, force: true }); }
 }, T);
+
+/**
+ * The restore command of docs/deploy.md section 8.2, as written: the variables it sets and the arguments
+ * it passes. A "..." value is a secret or an account value the operator fills in; the test fills it.
+ */
+async function documentedRestore(): Promise<{ vars: Record<string, string>; args: string[] }> {
+  const doc = await Bun.file(join(import.meta.dir, "../../docs/deploy.md")).text();
+  const section = doc.slice(doc.indexOf("### 8.2 Restore"));
+  const block = /```bash\n([\s\S]*?)```/.exec(section)![1]!;
+  const command = block.split("\n").filter(l => !l.trim().startsWith("#")).join("\n").replace(/\\\n/g, " ");
+  const words = command.trim().split(/\s+/);
+  const vars: Record<string, string> = {};
+  let i = 0;
+  for (; /^[A-Z][A-Z0-9_]*=/.test(words[i]!); i++) { const [k, ...v] = words[i]!.split("="); vars[k!] = v.join("="); }
+  expect(words.slice(i, i + 3)).toEqual(["bun", "run", "deploy/backup/restore.ts"]);
+  return { vars, args: words.slice(i + 3) };
+}
+
+test.skipIf(!pgAvailable)("the restore command of docs/deploy.md 8.2 restores the latest backup that the 8.1 job uploaded", async () => {
+  const doc = await documentedRestore();
+  const b = fakeBucket(doc.vars.BACKUP_R2_BUCKET!);
+  const scratch = `restore_doc_${process.pid}`;
+  try {
+    // The backup job with the variables of docs/deploy.md 8.1 (BACKUP_PREFIX postgres/production, an encryption key).
+    const up = await cli(BACKUP_SCRIPT, [], { BACKUP_DATABASE_URL: SRC_URL, ...b.env, BACKUP_PREFIX: "postgres/production", BACKUP_ENCRYPTION_KEY: KEY });
+    expect(up.lines.some(l => l.msg === "backup uploaded")).toBe(true);
+    // The operator fills in each "..." value; a literal value in the document stays as written.
+    const fill: Record<string, string> = { RESTORE_DATABASE_URL: ADMIN, BACKUP_R2_ACCESS_KEY_ID: b.env.BACKUP_R2_ACCESS_KEY_ID, BACKUP_R2_SECRET_ACCESS_KEY: b.env.BACKUP_R2_SECRET_ACCESS_KEY, BACKUP_ENCRYPTION_KEY: KEY };
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(doc.vars)) {
+      // The account id names the R2 endpoint; here the stub's endpoint stands for it.
+      if (k === "BACKUP_R2_ACCOUNT_ID") { env.BACKUP_R2_ENDPOINT = b.env.BACKUP_R2_ENDPOINT; continue; }
+      env[k] = v === "..." ? fill[k] ?? v : v;
+    }
+    const args = doc.args.map((a, j) => doc.args[j - 1] === "--db" ? scratch : a);
+    const r = await cli(join(import.meta.dir, "restore.ts"), args, env);
+    const checked = r.lines.find(l => l.msg === "restore checked");
+    expect({ code: r.code, failed: r.lines.find(l => l.msg === "restore failed")?.error, mismatches: checked?.mismatches }).toEqual({ code: 0, failed: undefined, mismatches: 0 });
+  } finally {
+    b.stop();
+    const a = new SQL({ url: ADMIN, max: 1 });
+    try { await a.unsafe(`drop database if exists ${scratch} with (force)`).catch(() => {}); } finally { await a.close(); }
+  }
+}, T);

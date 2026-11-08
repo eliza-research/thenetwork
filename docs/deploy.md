@@ -525,7 +525,9 @@ A restore never changes a role or a privilege on the source server:
 
 ```bash
 # RESTORE_DATABASE_URL: an owner login on the target server (any database; usually the maintenance one).
+# BACKUP_PREFIX: the prefix of the backup job (8.1). Without it, "latest" looks under postgres/dev.
 RESTORE_DATABASE_URL=... BACKUP_R2_ACCOUNT_ID=... BACKUP_R2_BUCKET=ntwrk-backups BACKUP_R2_ACCESS_KEY_ID=... BACKUP_R2_SECRET_ACCESS_KEY=... \
+  BACKUP_PREFIX=postgres/production BACKUP_ENCRYPTION_KEY=... \
   bun run deploy/backup/restore.ts --r2 latest --db restore_drill_20261008
 # or a backup on disk: --from <dir with manifest.json>
 ```
