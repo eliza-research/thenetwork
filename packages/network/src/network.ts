@@ -3057,7 +3057,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       seated.push(id);
     }
     keep = seated;
-    const enough = keep.length >= plan.quorum || (keep.length >= 2 && a.groupSize[0] <= 2);
+    // A smaller group of 3 or more is booked like the original; a group plan is never booked as a pair.
+    const enough = keep.length >= plan.quorum || (keep.length >= 3 && a.groupSize[0] <= 2);
     if (!enough) {
       o.planRun = { ...o.planRun!, stage: "closed" };
       if (fromFallback || keep.length < 2) { for (const id of keep) this.noteFor(id, copy.planNotTogether); return this.close(o, "plan did not come together"); }
@@ -3102,7 +3103,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /**
    * No quorum by the deadline (plans ask 7): a smaller plan of the yes-sayers when the activity
-   * allows it; else a public event for each yes-sayer; else next week (the demand is carried to the
+   * allows it (two of them get a fresh activity-partner plan, never a direct booking); else a public event for each yes-sayer; else next week (the demand is carried to the
    * next planner runs). Yes-sayers hear "that plan didn't come together" in their next message, and
    * never who declined.
    */
@@ -3115,8 +3116,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     const { fallback, carry } = plans.planFallback(run, now, w.events, this.pcfg);
     this.planCarry.push(...carry);
     this.ctx.log("plan_fallback", { oppId: o.id, kind: fallback.kind, members: fallback.kind === "none" ? 0 : fallback.members.length });
-    if (fallback.kind === "smaller") return this.bookPlan(o, fallback.members, true);
+    if (fallback.kind === "smaller" && !fallback.partnerPlan) return this.bookPlan(o, fallback.members, true);
     this.close(o, "plan did not come together");
+    // Two yes-sayers said yes to a group, not to a one-to-one meeting: the pair is never booked
+    // directly. The engine's fresh activity-partner plan asks each of them again, after review.
+    if (fallback.kind === "smaller") { this.submitPlan(fallback.partnerPlan!, now); return; }
     if (fallback.kind === "solo_event") {
       const ev = w.events.find(e => e.id === fallback.eventId);
       for (const id of fallback.members) {
