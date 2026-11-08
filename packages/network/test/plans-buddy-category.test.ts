@@ -42,17 +42,21 @@ describe("plans buddy and app categories", () => {
     expect(w.net.exportState().opps.filter(o => o.origin === "plans")).toEqual([]);
     expect(w.log("gate").filter(l => l.detail.reason === "category_not_allowed")).toHaveLength(0);
   });
-  // The second encounter is a social item too: on slop it closed at submit and the mutual wish was deleted.
-  test("slop: a mutual 'meet again' composes no item outside the app's categories and keeps the wish", async () => {
+  // The second encounter was a social item: on slop it closed at submit and the mutual wish was deleted.
+  // It now has the category of the pair's meeting (SD-236): on slop a romance item.
+  test("slop: a mutual 'meet again' composes an item in the app's categories, not one closed as not allowed", async () => {
     const w = new Mini([friend("a", "Ana Diaz"), friend("b", "Ben Ito")], { app: "slop", review: "human" });
     await w.onboard("a", "b");
     const st = w.net.exportState();
     st.again = [[pairKey("a", "b"), ["a", "b"]]];
+    st.interactions = [...st.interactions, { id: "date-1:fb:a", kind: "romantic_intro", category: "romance", participants: ["a", "b"], at: w.clock.now(), outcome: "completed", by: "a" } as never];
     w.net.importState(st);
     await w.run(DAY);
     const after = w.net.exportState();
-    expect(after.opps.filter(o => o.origin === "second_encounter")).toEqual([]);
+    // Nobody reviews it in this run, so it may end by the review deadline, never as "category not allowed".
+    const second = after.opps.filter(o => o.origin === "second_encounter");
+    expect(second.map(o => o.category)).toEqual(["romance"]);
+    expect(second.filter(o => o.closedReason === "category not allowed")).toEqual([]);
     expect(w.log("gate").filter(l => l.detail.reason === "category_not_allowed")).toHaveLength(0);
-    expect(after.again).toEqual([[pairKey("a", "b"), ["a", "b"]]]);
   });
 });

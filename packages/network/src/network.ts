@@ -4039,9 +4039,9 @@ export class ConsentNetwork implements NetworkUnderTest {
   private localEncounters(now: number) {
     this.growthTasks(now);
     if (!this.opts.matchingEnabled) return;
-    // A second encounter is a social item: an app without that category (slop, peon) composes none and
-    // keeps the mutual wish (a would_interact_again edge in the engine input).
-    for (const [k, s] of this.allowedCategories.has("social") ? this.again : []) {
+    // A second encounter has the category of the pair's meeting (SD-236), a category of the app, so submit
+    // never closes it as not allowed and the mutual wish is never lost to a closed item (SD-260).
+    for (const [k, s] of this.again) {
       if (s.size < 2) continue;
       const [a, b] = k.split("|") as [MemberId, MemberId];
       this.again.delete(k);
