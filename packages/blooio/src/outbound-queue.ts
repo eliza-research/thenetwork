@@ -544,6 +544,9 @@ export class OutboundQueue {
     const acceptedAt=receipt.acceptedAt??this.now;
     if (!Number.isFinite(acceptedAt) || !receipt.providerMessageId) throw new ChannelSendError("Invalid acceptance receipt","unknown");
     const at=new Date(acceptedAt),providerIds=receipt.providerMessageIds??[receipt.providerMessageId];
+    // A receipt owner (Eliza Cloud) sends no delivery receipts to this queue: acceptance is the last status a
+    // row gets, so a row to a non-member ends here and keeps no address and no text (applyStatus does it otherwise).
+    const final=status==="delivered"||status==="read"||status==="failed",forget=!!this.o.provider.receipt;
     const committed=await this.sql.begin(async tx=>{
       await tx`select set_config('app.app_id',${this.app},true)`;
       if (row.memberId) await tx`select person.id from platform.people person join network.members member on member.person_id=person.id
@@ -552,7 +555,8 @@ export class OutboundQueue {
         provider_message_ids=${{ids:providerIds}}::jsonb->'ids',history_recorded=${receipt.historyRecorded??null},chat_id=${receipt.chatId??null},
         transport=${receipt.transport??null},sent_at=coalesce(sent_at,${at}),lease_owner=null,lease_until=null,updated_at=${new Date(this.now)},
         note=${receipt.replayed?"idempotent replay":null},delivered_at=${status==="delivered"||status==="read"?at:null},
-        ended_at=${status==="delivered"||status==="read"||status==="failed"?at:null}
+        ended_at=case when ${final} or (member_id is null and ${forget}) then ${at}::timestamptz else null end,
+        to_address=case when member_id is null and ${forget} then null else to_address end,body=case when member_id is null and ${forget} then null else body end
         where id=${row.id} and app_id=${row.app} and line=${this.line} and status in ('sending','unknown_acceptance')
         and to_address=${row.to} and body=${row.text} and fingerprint=${fingerprint(row.to,row.text,row.mediaUrls,row.kind,row.approvedPhotos)} returning id`;
       if (!wrote.length) return false;

@@ -139,3 +139,15 @@ test("SD-090: an unknown acceptance gets its receipt lookups for the whole TTL, 
   expect(dispatched.filter(id=>id==="sd090-second").length).toBe(1);
   cloudMode.deliver="accept";
 },60_000);
+
+test("SD-091: under Cloud a text to a non-member ends at acceptance and keeps no address and no text",async()=>{
+  const rt=await primary();
+  const stranger="+12125550184";
+  // A staff invite to someone who is not a member: a direct text. Cloud takes it; no delivery receipt ever reaches this service.
+  expect(await rt.adapter.direct(stranger,"You're invited to friends.help. Reply JOIN to start.","sd091-invite","transactional")).toBe("accepted");
+  expect(dispatched).toContain("sd091-invite");
+  const [row]=await sql`select status,member_id,to_address,body,ended_at,sent_at from platform.outbound where id='sd091-invite'`;
+  expect(row.status).toBe("accepted");expect(row.member_id).toBeNull();expect(row.sent_at).not.toBeNull();
+  expect({to:row.to_address,body:row.body}).toEqual({to:null,body:null});
+  expect(row.ended_at).not.toBeNull();
+},60_000);
