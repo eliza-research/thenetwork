@@ -152,6 +152,7 @@ export class BlooioAdapter implements ChannelAdapter {
   private readonly city: string;
   private readonly gate?: (app: string) => boolean;
   private q?: OutboundQueue;
+  private rt?: NetworkRuntime;
 
   constructor(private readonly o: BlooioAdapterOptions) {
     this.env = o.env ?? process.env;
@@ -173,6 +174,7 @@ export class BlooioAdapter implements ChannelAdapter {
   }
 
   attach(rt: NetworkRuntime) {
+    this.rt = rt;
     const policy = blooioRecipientPolicy(rt.net, rt.memberOf);
     const leaks = forbiddenProvider(rt.net, to => rt.memberOf(to));
     const num = (k: string) => { const v = Number(this.env[k]); return Number.isFinite(v) && v > 0 ? v : undefined; };
@@ -241,7 +243,9 @@ export class BlooioAdapter implements ChannelAdapter {
   async direct(to: string, body: string, id: string, kind: DirectKind): Promise<string> {
     if (!this.live) { this.log(`[blooio] refused a direct send: live sending needs ${this.flags}`); return "refused_not_approved"; }
     await this.queue.enqueue(this.queue.sql, [{ id, to, kind, text: body, city: this.city }]);
-    await this.queue.drain();
+    // The drain moves this app's other rows too: their network.messages status follows, as after the runtime's own drain.
+    const changes = await this.queue.drain();
+    await this.rt!.storeStatuses(changes.filter(d => d.memberId && d.app === this.app));
     return (await this.queue.statusOf(id)) ?? "failed";
   }
 

@@ -297,3 +297,18 @@ test("SD-132: a second network of the same app on the same line never drains the
   expect(dispatched).toContain("sd132-reminder");
   expect(await statusOf("sd132-reminder")).toBe("accepted");
 },60_000);
+
+test("SD-136: a direct text's drain writes the statuses it changed to network.messages",async()=>{
+  const rt=await primary();
+  const phone="+12125550192",memberId=await join(services[0]!,phone,"Ida");
+  await rt.unitOfWork(()=>undefined);
+  await rt.adapter.engaged!(phone);
+  // A reminder at 22:00 in New York waits for quiet hours to end.
+  toNewYork(22,0);
+  await rt.unitOfWork(()=>{rt.system(memberId as never,"sd136-reminder","Your plan reminder is ready.","transactional");});
+  expect(await both("sd136-reminder")).toEqual({outbound:"deferred_quiet_hours",ended:false,message:"deferred_quiet_hours"});
+  // Three days later the first drain is the one a direct text (a staff invite) runs: the reminder is past its time.
+  clock.advance(3*86_400_000);toNewYork(11,0);
+  expect(await rt.adapter.direct("+12125550193","You're invited to friends.help. Reply JOIN to start.","sd136-invite","transactional")).toBe("accepted");
+  expect(await both("sd136-reminder")).toEqual({outbound:"expired",ended:true,message:"expired"});
+},60_000);
