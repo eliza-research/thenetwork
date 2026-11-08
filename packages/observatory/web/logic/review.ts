@@ -142,6 +142,20 @@ export function settle(ctl: Ctl, id: string): Ctl {
   return { mode: "idle", boundId: id, draftsId: "", chosen: ctl.chosen };
 }
 
+/**
+ * The answer for item id arrived in one queue instance. That instance can move the selection only
+ * when it is still mounted, and only when the reviewer did not choose another card. A queue that is
+ * unmounted holds an old controller: its move would put a card that the reviewer did not choose in
+ * front of the new queue.
+ */
+export function moveOnAfter(mounted: boolean, ctl: Ctl, id: string): boolean {
+  //@ verify
+  //@ ensures !mounted ==> !\result
+  //@ ensures ctl.chosen && ctl.boundId !== id ==> !\result
+  //@ ensures \result <==> (mounted && (!ctl.chosen || ctl.boundId === id))
+  return mounted && (!ctl.chosen || ctl.boundId === id);
+}
+
 export interface Person { minor: boolean; declined?: boolean }
 export type Block = "read_only" | "minor" | "declined" | "matching_off" | "expired" | "idle";
 

@@ -12,6 +12,12 @@ datatype Sequenced = Sequenced(seq_: int)
 
 datatype RevealState = RevealState(server: bool, badge: bool)
 
+datatype RevealRead = RevealRead(gen: int, server: bool)
+
+datatype RevealPage = RevealPage(server: bool, badge: bool, known: bool, gen: int, reads_: seq<RevealRead>)
+
+datatype RevealEvent = granted | lost | refused | ended(status: int, acted: bool) | expire | send | answer(i: int, ok: bool, atSend: bool) | other
+
 datatype Grant = Grant(role: string, app: string)
 
 function initialSync(app: string): SyncState
@@ -190,6 +196,73 @@ lemma unrevealStep_ensures(s: RevealState, status: int)
 {
 }
 
+function revealMerge(gen: int, sentGen: int, ok: bool): bool
+{
+  (ok && (sentGen == gen))
+}
+
+lemma revealMerge_ensures(gen: int, sentGen: int, ok: bool)
+  ensures (revealMerge(gen, sentGen, ok) == (ok && (sentGen == gen)))
+{
+}
+
+function revealReread(gen: int, sentGen: int, ok: bool): bool
+{
+  (ok && (sentGen != gen))
+}
+
+lemma revealReread_ensures(gen: int, sentGen: int, ok: bool)
+  ensures (revealReread(gen, sentGen, ok) == (ok && (sentGen != gen)))
+{
+}
+
+function revealGood(s: RevealPage): bool
+{
+  ((if (s.known && s.server) then s.badge else true) && Std.Collections.Seq.All(s.reads_, (r: RevealRead) => ((r.gen <= s.gen) && (if ((r.gen == s.gen) && s.server) then r.server else true))))
+}
+
+function revealStep(s: RevealPage, e: RevealEvent): RevealPage
+  requires revealGood(s)
+{
+  match e {
+    case granted =>
+      s.(server := true, badge := true, known := true, gen := (s.gen + 1))
+    case lost =>
+      s.(server := true, known := false, gen := (s.gen + 1))
+    case refused =>
+      s.(gen := (s.gen + 1))
+    case ended(i_e_status, i_e_acted) =>
+      s.(server := (if (serverEnded(i_e_status) || ((i_e_status == 0) && i_e_acted)) then false else s.server), badge := (if badgeEnds(i_e_status) then false else s.badge), gen := (s.gen + 1))
+    case expire =>
+      s.(server := false, badge := false)
+    case send =>
+      s.(reads_ := (s.reads_ + [RevealRead(s.gen, s.server)]))
+    case answer(i_e_i, i_e_ok, i_e_atSend) =>
+      if ((i_e_i < 0) || (i_e_i >= |s.reads_|)) then
+        s
+      else
+        var r := s.reads_[i_e_i];
+        if revealReread(s.gen, r.gen, i_e_ok) then
+          s.(reads_ := (s.reads_ + [RevealRead(s.gen, s.server)]))
+        else
+          if !(revealMerge(s.gen, r.gen, i_e_ok)) then
+            s
+          else
+            s.(badge := (if i_e_atSend then r.server else s.server), known := true)
+    case other =>
+      s.(gen := (s.gen + 1))
+  }
+}
+
+lemma revealStep_ensures(s: RevealPage, e: RevealEvent)
+  requires revealGood(s)
+  ensures revealGood(revealStep(s, e))
+  ensures (e.lost? ==> (revealStep(s, e).server && !(revealStep(s, e).known)))
+  ensures (e.answer? ==> !(e.ok) ==> ((revealStep(s, e).badge == s.badge) && (revealStep(s, e).known == s.known)))
+  ensures (e.answer? ==> e.ok ==> (0 <= e.i) ==> (e.i < |s.reads_|) ==> (s.reads_[e.i].gen != s.gen) ==> ((|revealStep(s, e).reads_| == (|s.reads_| + 1)) && (revealStep(s, e).reads_[|s.reads_|].gen == revealStep(s, e).gen)))
+{
+}
+
 function counts(g: Grant, app: string, real_: bool): bool
 {
   ((((g.app == "*") || (g.app == app)) && (g.role != "cross_app_safety")) && !(((g.role == "engineer") && real_)))
@@ -328,6 +401,25 @@ method unrevealRun(s: RevealState, statuses: seq<int>) returns (res: RevealState
     decreases (|statuses| - i)
   {
     c := unrevealStep(c, statuses[i]);
+    i := (i + 1);
+  }
+  return c;
+}
+
+method revealRun(s: RevealPage, es: seq<RevealEvent>) returns (res: RevealPage)
+  requires revealGood(s)
+  ensures revealGood(res)
+  ensures (res.known ==> res.server ==> res.badge)
+{
+  var c := s;
+  var i := 0;
+  while (i < |es|)
+    invariant (0 <= i)
+    invariant (i <= |es|)
+    invariant revealGood(c)
+    decreases (|es| - i)
+  {
+    c := revealStep(c, es[i]);
     i := (i + 1);
   }
   return c;

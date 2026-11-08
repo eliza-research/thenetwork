@@ -258,6 +258,51 @@ test("ending a reveal keeps the badge until the server confirms", async () => {
   expect(t.store.reveals.length).toBe(0);
 });
 
+const GRANT = { memberId: "m1", until: 9e15, reason: "x", at: 1 };
+
+test("a failed reveal list read keeps the badge", async () => {
+  let list: unknown = J([GRANT]);
+  const t = open(path => path === "/api/reveal" ? list : undefined);
+  await t.store.loadReveals();
+  expect(t.store.revealFor("m1")).toBeDefined();
+  list = J({ error: "boom" }, 500);
+  await t.store.loadReveals();
+  expect(t.store.revealFor("m1")).toBeDefined();
+  list = new Error("network");
+  await t.store.loadReveals();
+  expect(t.store.revealFor("m1")).toBeDefined();
+});
+
+test("a reveal list read made before the grant does not remove the badge", async () => {
+  const old = defer<Response>();
+  const t = open((path, _u, init) => path === "/api/reveal" ? (init?.method === "POST" ? J({ ok: true, ...GRANT }) : old.p) : undefined);
+  const read = t.store.loadReveals(); await tick();
+  expect(await t.store.reveal("m1", "a reason", 15)).toBe(true);
+  old.open(J([])); await read;
+  expect(t.store.revealFor("m1")).toBeDefined();
+});
+
+test("a reveal list read made before the grant of another member is read again, so the first grant keeps its badge", async () => {
+  const old = defer<Response>();
+  const G2 = { ...GRANT, memberId: "m2" };
+  let reads = 0;
+  const t = open((path, _u, init) => path !== "/api/reveal" ? undefined
+    : init?.method === "POST" ? J({ ok: true, ...G2 }) : ++reads === 1 ? old.p : J([GRANT, G2]));
+  const read = t.store.loadReveals(); await tick();
+  expect(await t.store.reveal("m2", "a reason", 15)).toBe(true);
+  old.open(J([GRANT])); await read;
+  for (let i = 0; i < 20 && !t.store.revealFor("m1"); i++) await tick();
+  expect(t.store.revealFor("m1")).toBeDefined();
+  expect(t.store.revealFor("m2")).toBeDefined();
+});
+
+test("a lost reveal answer reads the list again, so the badge shows the grant that the server made", async () => {
+  const t = open((path, _u, init) => path === "/api/reveal" ? (init?.method === "POST" ? new Error("lost") : J([GRANT])) : undefined);
+  expect(await t.store.reveal("m1", "a reason", 15)).toBe(false);
+  for (let i = 0; i < 20 && !t.store.revealFor("m1"); i++) await tick();
+  expect(t.store.revealFor("m1")).toBeDefined();
+});
+
 const decided = (id: string, over: object) => opp(id, "APPROVED", { review: { decision: "approve", decidedAt: 0 }, ...over });
 const DAY = 86_400_000;
 

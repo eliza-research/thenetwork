@@ -6,7 +6,7 @@ datatype JoinFields = JoinFields(firstName: string, age: string, ticked: bool)
 
 datatype Flow = Flow(step: FlowStep, phone: string, shown: string, account: string, fields: JoinFields, owner: string, consented: bool, notice: string)
 
-datatype FlowEvent = loaded(signedInAs: string, canJoin: bool, member: bool, inviteOnly: bool, notice: string) | typed(fields: JoinFields) | otpStarted(number: string) | changeNumber | verified(canJoin: bool, member: bool) | rerouted(account: string, canJoin: bool, member: bool, notice: string) | sessionEnded(notice: string) | refused | joined
+datatype FlowEvent = loaded(signedInAs: string, canJoin: bool, member: bool, inviteOnly: bool, notice: string) | typed(fields: JoinFields) | otpStarted(number: string) | changeNumber | verified(phone: string, account: string, canJoin: bool, member: bool) | rerouted(account: string, canJoin: bool, member: bool, notice: string) | sessionEnded(notice: string) | refused | joined
 
 datatype JoinForm = JoinForm(firstName: string, age: int, wholeAge: bool, zip: string, ticked: bool)
 
@@ -82,11 +82,11 @@ function flowNext(s: Flow, e: FlowEvent): Flow
         s
       else
         s.(step := FlowStep.phone)
-    case verified(i_e_canJoin, i_e_member) =>
-      if (!s.step.code?) then
+    case verified(i_e_phone, i_e_account, i_e_canJoin, i_e_member) =>
+      if (((!s.step.code?) || (i_e_phone != s.phone)) || (i_e_account == "")) then
         s
       else
-        signIn(s, s.phone, i_e_canJoin, i_e_member, "")
+        signIn(s, i_e_account, i_e_canJoin, i_e_member, "")
     case rerouted(i_e_account, i_e_canJoin, i_e_member, i_e_notice) =>
       if ((!s.step.profile?) || (i_e_account == "")) then
         s
@@ -115,10 +115,12 @@ lemma flowNext_ensures(s: Flow, e: FlowEvent)
   ensures (s.step.done? ==> (flowNext(s, e) == s))
   ensures (flowNext(s, e).step.done? ==> (!s.step.done?) ==> (s.step.profile? && s.fields.ticked))
   ensures (e.changeNumber? ==> (flowNext(s, e).fields == s.fields))
-  ensures (flowOk(s) ==> s.step.code? ==> e.verified? ==> (flowNext(s, e).account == s.shown))
+  ensures (e.verified? ==> (e.phone != s.phone) ==> (flowNext(s, e) == s))
+  ensures (s.step.code? ==> e.verified? ==> (e.phone == s.phone) ==> (e.account != "") ==> (flowNext(s, e).account == e.account))
+  ensures ((flowNext(s, e).account != s.account) ==> (flowNext(s, e).account != "") ==> (((e.loaded? && (flowNext(s, e).account == e.signedInAs)) || (e.verified? && (flowNext(s, e).account == e.account))) || (e.rerouted? && (flowNext(s, e).account == e.account))))
   ensures (s.step.code? ==> (s.owner == "") ==> e.verified? ==> (flowNext(s, e).fields == s.fields))
   ensures (s.step.loading? ==> (s.owner == "") ==> e.loaded? ==> (flowNext(s, e).fields == s.fields))
-  ensures (s.step.code? ==> (s.owner != "") ==> (s.owner != s.phone) ==> e.verified? ==> formResets(s, flowNext(s, e)))
+  ensures (s.step.code? ==> (s.owner != "") ==> e.verified? ==> (e.phone == s.phone) ==> (e.account != "") ==> (s.owner != e.account) ==> formResets(s, flowNext(s, e)))
   ensures (flowOk(s) ==> (s.owner == "") ==> !(isEmpty(s.fields)) ==> !(formResets(s, flowNext(s, e))))
   ensures (((e.loaded? || e.verified?) || e.rerouted?) ==> !(e.canJoin) ==> flowNext(s, e).step.profile? ==> (flowNext(s, e) == s))
   ensures (e.refused? ==> s.step.profile? ==> ((!flowNext(s, e).step.profile?) && (!flowNext(s, e).step.done?)))

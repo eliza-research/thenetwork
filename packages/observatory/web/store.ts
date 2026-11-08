@@ -6,7 +6,7 @@
 import { useSyncExternalStore } from "react";
 import { APP_IDS } from "../../core/src/types.ts";
 import { boroughOk, membersOk, passes, rangeOk, visible, type FilterRow, type FilterView } from "./logic/filters.ts";
-import { admits, appendNew, clientRoles, deltaMove, initialSync, owns, step, unrevealStep } from "./logic/sync.ts";
+import { admits, appendNew, clientRoles, deltaMove, initialSync, owns, revealMerge, revealReread, step, unrevealStep } from "./logic/sync.ts";
 import { NEIGHBORHOOD, type Borough } from "@thenetwork/network/geo"; // geo only: the package root pulls server code into the browser bundle
 import type { ConsoleApp } from "../src/apps.ts";
 import type {
@@ -231,6 +231,8 @@ class ObsStore {
   me?: Me;
   /** This viewer's active PII reveals (wall-clock expiry). */
   reveals: RevealGrant[] = [];
+  /** The count of POST and DELETE /api/reveal answers. A GET answer sent before the newest one is old. */
+  private revealGen = 0;
   /** When each review card was opened (wall clock): the decision sends the seconds since. */
   private reviewOpened = new Map<string, number>();
   get version(): number { return this.sync.version; }
@@ -588,10 +590,15 @@ class ObsStore {
   canSim() { return this.can("reviewer", "safety", "engineer"); }
   realOnly() { return !!(this.me?.realOnly || this.env?.realOnly); }
   async loadReveals() {
-    const app = this.app;
+    const app = this.app, gen = this.revealGen;
     const r = await this.fetch<RevealGrant[]>("/api/reveal");
     if (app !== this.app) return;
-    this.reveals = r.data ?? [];
+    // A failed answer, or an answer older than a reveal or end answer, keeps the current list (B10).
+    // An old answer that came starts a new read: the list of the server can have grants of other members.
+    const ok = Array.isArray(r.data);
+    if (revealReread(this.revealGen, gen, ok)) { this.loadReveals(); return; }
+    if (!revealMerge(this.revealGen, gen, ok)) return;
+    this.reveals = r.data as RevealGrant[];
     this.notify();
   }
   revealFor(memberId: string): RevealGrant | undefined { return this.reveals.find(g => g.memberId === memberId && g.until > Date.now()); }
@@ -599,13 +606,16 @@ class ObsStore {
   async unreveal(memberId: string): Promise<void> {
     let status = 0;
     try { status = (await this.api(`/api/reveal?memberId=${encodeURIComponent(memberId)}`, { method: "DELETE" })).status; } catch { /* the 401 prompt shows */ }
+    this.revealGen++;
     if (unrevealStep({ server: true, badge: true }, status).badge) return; // the server may still serve it: the badge stays
     this.reveals = this.reveals.filter(g => g.memberId !== memberId);
     this.notify();
   }
   async reveal(memberId: string, reason: string, minutes: number): Promise<boolean> {
     const r = await this.fetch<RevealGrant & { ok: boolean }>("/api/reveal", { memberId, reason, minutes });
-    if (!r.data) { this.toast(r.error, "bad"); return false; }
+    this.revealGen++;
+    // No grant in the answer: the server can still have made it (a lost answer). Read the list again.
+    if (!r.data) { this.toast(r.error, "bad"); this.loadReveals(); return false; }
     this.reveals = [...this.reveals.filter(g => g.memberId !== memberId), r.data];
     this.toast(`Revealed for ${minutes} min · logged`, "info");
     return true;

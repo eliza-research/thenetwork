@@ -195,6 +195,18 @@ lemma settle_ensures(ctl: Ctl, id: string)
 {
 }
 
+function moveOnAfter(mounted: bool, ctl: Ctl, id: string): bool
+{
+  (mounted && (!(ctl.chosen) || (ctl.boundId == id)))
+}
+
+lemma moveOnAfter_ensures(mounted: bool, ctl: Ctl, id: string)
+  ensures (!(mounted) ==> !(moveOnAfter(mounted, ctl, id)))
+  ensures (ctl.chosen ==> (ctl.boundId != id) ==> !(moveOnAfter(mounted, ctl, id)))
+  ensures (moveOnAfter(mounted, ctl, id) <==> (mounted && (!(ctl.chosen) || (ctl.boundId == id))))
+{
+}
+
 function backendHold(s: ReportStatus): bool
 {
   s.open?

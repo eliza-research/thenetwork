@@ -2,7 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import { defaultApps } from "../src/apps.ts";
 import { codePage, consentPage, messagePage } from "../src/pages.ts";
-import { CHALLENGE, origin, register, setup } from "./harness.ts";
+import { CHALLENGE, origin, PHONE_A, register, setup } from "./harness.ts";
 
 const PEON = "peon.biz";
 const app = defaultApps().peon;
@@ -35,6 +35,28 @@ describe("Cancel reaches the client", () => {
     expect(formAction(codePage(app, "rid", "0123", { redirectHost: "client.example" }))).toBe("form-action 'self' https://client.example");
     expect(formAction(codePage(app, "rid", "0123", { redirectHost: "127.0.0.1:5299" }))).toBe("form-action 'self' http://127.0.0.1:5299");
     expect(formAction(codePage(app, "rid", "0123"))).toBe("form-action 'self'");
+  });
+
+  // The handler must give the redirect host to both code pages: after the phone step, and after a wrong code.
+  test.each([["https://client.example/callback", "https://client.example"], ["http://127.0.0.1:5299/callback", "http://127.0.0.1:5299"], ["http://localhost:6274/oauth/callback", "http://localhost:6274"]])("code pages of %s from the handler allow the redirect origin", async (redirectUri, source) => {
+    const env = setup();
+    const reg = await register(env, PEON, { redirect_uris: [redirectUri] });
+    const q = new URLSearchParams({ response_type: "code", client_id: reg.body.client_id, redirect_uri: redirectUri, code_challenge: CHALLENGE, code_challenge_method: "S256", state: "x" });
+    const start = await env.fetch(new Request(`${origin(PEON)}/oauth/authorize?${q}`));
+    const rid = /name="rid" value="([^"]+)"/.exec(await start.clone().text())![1]!;
+    const cookie = /((?:__Host-)?mcp_auth=[^;]+)/.exec(start.headers.get("set-cookie")!)![1]!;
+    const post = (path: string, form: Record<string, string>) => env.fetch(new Request(`${origin(PEON)}${path}`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", cookie, origin: origin(PEON) }, body: new URLSearchParams({ rid, ...form }).toString() }));
+    env.clock.t += 31_000;
+    const code = await post("/oauth/authorize/phone", { phone: PHONE_A });
+    expect(code.status).toBe(200);
+    expect(await code.clone().text()).toContain('action="/oauth/authorize/code"');
+    expect(formAction(code)).toBe(`form-action 'self' ${source}`);
+    const wrong = env.provider.last(PHONE_A) === "999999" ? "888888" : "999999";
+    const again = await post("/oauth/authorize/code", { code: wrong });
+    expect(again.status).toBe(400);
+    expect(await again.clone().text()).toContain("did not work");
+    expect(await again.clone().text()).toContain('action="/oauth/authorize/code"');
+    expect(formAction(again)).toBe(`form-action 'self' ${source}`);
   });
 
   test("a host that only starts like a loopback name stays https", async () => {

@@ -15,7 +15,7 @@
 //     switch value from a fetch that can be stale.
 //   Each LemmaScript step function in packages/observatory/web/logic/review.ts is a pure def here with
 //   the same name and the same decision: ctlOk, rebind, choose, leaveMode, keyStep, toggleMode, settle,
-//   approveBlock, flip. Each shell event is an action that calls it and does not decide again.
+//   moveOnAfter, approveBlock, flip. Each shell event is an action that calls it and does not decide again.
 //   The server and the other reviewer are a nondeterministic environment.
 //
 // BOUNDS
@@ -31,11 +31,12 @@
 //   quint run quint/frontend/review_desk.qnt --invariant=<name> --max-samples=2000 --max-steps=20 --seed=11
 //   Each witness_<name> must be VIOLATED (the state is reachable). witness_lateAnswerElsewhere is a
 //   long path: use --max-samples=20000 --max-steps=30 (lateAnswerStaysTest also reaches it).
+//   decisionOnlyToReviewerChoice (the remount variant of bug 3) is fixed and is now part of safety:
+//   quint run quint/frontend/review_desk.qnt --invariant=decisionOnlyToReviewerChoice --max-samples=20000 --max-steps=20 --seed=11
+//   (and --seed=29). remountMovesChoiceTest replays the old trace and shows that it now holds.
 //   KNOWN DEFECTS (expected to be violated today, see the comments at each one):
 //   serverApproveBeforeDeadline (bug 4 of the slice report, server side; random run finds it),
-//   approveMatchesSeenPeople (gap G6, server side; random run finds it), decisionOnlyToReviewerChoice
-//   (a remount variant of bug 3, shell side; the random run does not reach it in 200000 samples, the
-//   replayed trace remountMovesChoiceTest shows it).
+//   approveMatchesSeenPeople (gap G6, server side; random run finds it).
 //
 // OUTSIDE THE MODEL
 //   - React timing. ASSUMPTION: after each store change or state set, React renders before the next
@@ -134,6 +135,10 @@ module review_desk {
   pure def settle(ctl: Ctl, id: int): Ctl =
     if (ctl.boundId != id) ctl
     else { mode: "idle", boundId: id, draftsId: 0, chosen: ctl.chosen }
+
+  // An answer moves the selection only in a mounted queue, and only when the reviewer did not choose another card.
+  pure def moveOnAfter(mounted: bool, ctl: Ctl, id: int): bool =
+    mounted and (not(ctl.chosen) or ctl.boundId == id)
 
   // Block: "read_only" | "minor" | "declined" | "matching_off" | "expired" | "idle".
   // A person that the page does not know blocks like a minor.
@@ -274,11 +279,12 @@ module review_desk {
       else st1
     { ...st2, choice: if (not(repeat) and key != "esc") o else st2.choice }
 
-  // afterDecision (the live queue, or the closure of an unmounted one): move on, unless the reviewer
-  // has already chosen another card. `allowed` is the ghost rule: the move counts as the reviewer's
-  // choice only when their last choice was the decided item, or is no longer in the queue.
+  // afterDecision (the live queue, or the closure of an unmounted one): moveOnAfter decides. An
+  // unmounted queue (live = false) does nothing: its `mounted` ref is false. `allowed` is the ghost
+  // rule: the move counts as the reviewer's choice only when their last choice was the decided item,
+  // or is no longer in the queue.
   pure def afterDecision(st: State, core: Ctl, pend: List[int], sel: int, id: int, live: bool): State =
-    if (core.chosen and core.boundId != id) st
+    if (not(moveOnAfter(live, core, id))) st
     else
       val i = indexOf(pend, id)
       val n = if (i < 0) sel
@@ -287,9 +293,7 @@ module review_desk {
               else 0
       val allowed = st.choice == id or not(has(st.br.pending, st.choice))
       val st1 = if (n == 0) (if (live) { ...st, br: { ...st.br, selHeld: 0 } } else st)
-                else if (live) selectB(st, n)
-                // An unmounted queue: its commit and setSelId do nothing; store.focus still runs.
-                else { ...st, focus: n }
+                else selectB(st, n)
       if (n != 0 and allowed) { ...st1, choice: n } else st1
 
   // ---------------------------------------------------------------- init
@@ -553,9 +557,9 @@ module review_desk {
 
   // Rule: as above, judged by a ghost that does not read the core: the card that the reviewer last
   // chose (j, k, a click, a focus link, a key press, the mount default, or the move after their own
-  // decision). Shell: afterDecision and select in review.tsx. LemmaScript: none (the shell closure).
-  // KNOWN DEFECT (this model, a remount variant of bug 3): an answer for an unmounted queue runs its
-  // stale afterDecision, which calls store.focus; the new queue then chooses that card.
+  // decision). Shell: afterDecision and select in review.tsx. LemmaScript: moveOnAfter, ensures
+  // `!mounted ==> !\result` and `ctl.chosen && ctl.boundId !== id ==> !\result`. The remount variant
+  // of bug 3 is fixed: an answer for an unmounted queue no longer calls store.focus.
   val decisionOnlyToReviewerChoice = s.sent.forall(r => r.id == r.choiceBefore)
 
   // Rule: slice report I2 (bug 2), "a person reviews every proposal". LemmaScript: keyStep, ensures
@@ -603,9 +607,9 @@ module review_desk {
     ITEMS.forall(i => s.srv.get(i).decision == "approve" and s.srv.get(i).approvedVersion >= 0
                       implies s.srv.get(i).approvedVersion == s.srv.get(i).version)
 
-  // The invariants that hold today. The three KNOWN DEFECT invariants are checked one by one.
+  // The invariants that hold today. The two KNOWN DEFECT invariants are checked one by one.
   val safety = and {
-    ctlOkHolds, decisionOnlyToChosenItem, repeatNeverDecides, approveOnlyBeforeDeadline,
+    ctlOkHolds, decisionOnlyToChosenItem, decisionOnlyToReviewerChoice, repeatNeverDecides, approveOnlyBeforeDeadline,
     confirmSendsAskedDirection, draftsBoundToItem, approveCarriesOwnDrafts,
   }
 
@@ -672,16 +676,18 @@ module review_desk {
     .then(serverMatchingOf(1)).then(adminReloadOf(1)).then(adminPressOf(1))
     .then(all { assert(not(s.matchingOn) and s.msent.size() == 1 and s.raceSkips == 1), s' = s })
 
-  // A remount variant of bug 3 (found by this model): approve 1, close and open the drawer, choose 3.
-  // The late answer for 1 runs the old queue's afterDecision, which calls store.focus(2). The new
-  // queue chooses 2, and the next press approves 2, a card the reviewer did not choose.
+  // The remount variant of bug 3 is fixed (found by this model): approve 1, close and open the
+  // drawer, choose 3. The late answer for 1 reaches the old queue. Its afterDecision does nothing
+  // (moveOnAfter: not mounted), so the card stays on 3 and the next press approves 3.
+  // Before the fix, the old queue called store.focus(2) and the next press approved 2.
   run remountMovesChoiceTest = threeItems.then(selectCardOf(1))
     .then(keyPressOf("a", 0, false))
     .then(remount)
     .then(selectCardOf(3))
     .then(serverApplyReq(1, false, true, false, [1, 2]))
     .then(deliverAns(1))
-    .then(all { assert(s.br.sel == 2 and s.br.ctl.chosen and s.choice == 3), s' = s })
+    .then(all { assert(s.br.sel == 3 and s.br.ctl.chosen and s.choice == 3 and s.oldAnswers == 1), s' = s })
     .then(keyPressOf("a", 0, false))
-    .then(all { assert(not(decisionOnlyToReviewerChoice) and decisionOnlyToChosenItem), s' = s })
+    .then(all { assert(decisionOnlyToReviewerChoice and decisionOnlyToChosenItem
+                       and s.sent.exists(r => r.id == 3 and r.kind == "approve")), s' = s })
 }

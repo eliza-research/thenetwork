@@ -29,7 +29,8 @@ export type FlowEvent =
   | { tag: "typed"; fields: JoinFields }
   | { tag: "otpStarted"; number: string }
   | { tag: "changeNumber" }
-  | { tag: "verified"; canJoin: boolean; member: boolean }
+  // phone: the number that otp/verify used. account: the account of the session that /api/me read after it.
+  | { tag: "verified"; phone: string; account: string; canJoin: boolean; member: boolean }
   | { tag: "rerouted"; account: string; canJoin: boolean; member: boolean; notice: string }
   | { tag: "sessionEnded"; notice: string }
   | { tag: "refused" }
@@ -91,10 +92,12 @@ export function flowNext(s: Flow, e: FlowEvent): Flow {
   //@ ensures s.step === "done" ==> \result === s
   //@ ensures \result.step === "done" && s.step !== "done" ==> s.step === "profile" && s.fields.ticked
   //@ ensures e.tag === "changeNumber" ==> \result.fields === s.fields
-  //@ ensures flowOk(s) && s.step === "code" && e.tag === "verified" ==> \result.account === s.shown
+  //@ ensures e.tag === "verified" && e.phone !== s.phone ==> \result === s
+  //@ ensures s.step === "code" && e.tag === "verified" && e.phone === s.phone && e.account !== "" ==> \result.account === e.account
+  //@ ensures \result.account !== s.account && \result.account !== "" ==> (e.tag === "loaded" && \result.account === e.signedInAs) || (e.tag === "verified" && \result.account === e.account) || (e.tag === "rerouted" && \result.account === e.account)
   //@ ensures s.step === "code" && s.owner === "" && e.tag === "verified" ==> \result.fields === s.fields
   //@ ensures s.step === "loading" && s.owner === "" && e.tag === "loaded" ==> \result.fields === s.fields
-  //@ ensures s.step === "code" && s.owner !== "" && s.owner !== s.phone && e.tag === "verified" ==> formResets(s, \result)
+  //@ ensures s.step === "code" && s.owner !== "" && e.tag === "verified" && e.phone === s.phone && e.account !== "" && s.owner !== e.account ==> formResets(s, \result)
   //@ ensures flowOk(s) && s.owner === "" && !isEmpty(s.fields) ==> !formResets(s, \result)
   //@ ensures (e.tag === "loaded" || e.tag === "verified" || e.tag === "rerouted") && !e.canJoin && \result.step === "profile" ==> \result === s
   //@ ensures e.tag === "refused" && s.step === "profile" ==> \result.step !== "profile" && \result.step !== "done"
@@ -114,8 +117,10 @@ export function flowNext(s: Flow, e: FlowEvent): Flow {
       if (s.step !== "code") return s;
       return { ...s, step: "phone" };
     case "verified":
-      if (s.step !== "code") return s;
-      return signIn(s, s.phone, e.canJoin, e.member, "");
+      // A late answer for a number that is no longer on screen does nothing. The flow signs in as the
+      // session that /api/me read, not as the number on screen: a second tab can change the cookie.
+      if (s.step !== "code" || e.phone !== s.phone || e.account === "") return s;
+      return signIn(s, e.account, e.canJoin, e.member, "");
     case "rerouted":
       if (s.step !== "profile" || e.account === "") return s;
       return signIn(s, e.account, e.canJoin, e.member, e.notice);

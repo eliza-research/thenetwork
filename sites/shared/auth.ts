@@ -19,7 +19,8 @@ export function maskPhone(e164: string): string {
 export interface AuthFlow {
   current(): Flow;
   dispatch(event: FlowEvent): Flow;
-  onSignedIn(): Promise<void> | void;
+  /** Runs after otp/verify passes for this number. The code form stays busy until it ends. */
+  onSignedIn(phone: string): Promise<void> | void;
 }
 
 /** A sign-in form without a Join form: the same flowNext decides the step. */
@@ -136,14 +137,21 @@ function mountOtpAuth(root: HTMLElement, flow: AuthFlow): void {
       return;
     }
     input.removeAttribute("aria-invalid");
-    const res = await busy(codeForm, () => api.otpVerify(flow.current().phone, code));
+    const phone = flow.current().phone;
+    // Keep the code form (and its change-number button) busy until onSignedIn has read /api/me.
+    // Otherwise the person can start a new number while the old answer is in flight (JF-1).
+    const res = await busy(codeForm, async () => {
+      const verified = await api.otpVerify(phone, code);
+      if (verified.ok) {
+        setError(codeForm, "");
+        await flow.onSignedIn(phone);
+      }
+      return verified;
+    });
     if (!res.ok) {
       setError(codeForm, message(root, res.error));
       input.select();
-      return;
     }
-    setError(codeForm, "");
-    await flow.onSignedIn();
   });
 
   root.querySelector('[data-action="resend"]')?.addEventListener("click", async () => {

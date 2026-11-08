@@ -60,11 +60,15 @@ export async function mountJoin(root: HTMLElement): Promise<void> {
   const edited = new Set<string>();
   profile?.addEventListener("input", ev => { const input = ev.target as HTMLInputElement; if (input.name) edited.add(input.name); typed(); });
   profile?.addEventListener("change", ev => { const input = ev.target as HTMLInputElement; if (input.name) edited.add(input.name); typed(); });
-  let generation = 0, account: string | undefined, loading = false;
+  // account: the signupView marker of the shown account. /api/join sends it, so the server joins only
+  // that account (409 account_changed for another cookie). marked: the server gave a marker for it.
+  let generation = 0, account: string | undefined, marked = false, loading = false;
   // A new session cancels the answers in flight. flowNext decides what happens to the fields.
   const resetAccount = () => {
     generation++; loading = false; account = undefined; edited.clear();
   };
+  // Take the marker of the account that the next sign-in step shows, on every site.
+  const takeAccount = (me: Me) => { marked = !!me.signupView; account = me.canJoin ? me.signupView : undefined; };
   const prefill = async (me: Me) => {
     if (!me.canJoin || !["friends", "ntwrk"].includes(me.app) || !me.signupView || loading || !profile) return;
     if (account && account !== me.signupView) resetAccount();
@@ -104,11 +108,13 @@ export async function mountJoin(root: HTMLElement): Promise<void> {
   const notice = !app.ok && app.error === "api_unreachable" ? "api_unreachable" : "";
   // A signed-in person who changes account mid-Join goes through the same step as a sign-in.
   const routeTo = (me: Me, reason: string) => {
+    takeAccount(me);
     route(root, me, inviteOnly);
     dispatch({ tag: "rerouted", account: accountOf(me), canJoin: me.canJoin, member: !!me.membership, notice: reason });
   };
 
   if (me.ok) {
+    takeAccount(me.data);
     route(root, me.data, inviteOnly);
     dispatch({ tag: "loaded", signedInAs: accountOf(me.data), canJoin: me.data.canJoin, member: !!me.data.membership, inviteOnly, notice });
     void prefill(me.data);
@@ -120,14 +126,20 @@ export async function mountJoin(root: HTMLElement): Promise<void> {
   mountAuth(root, {
     current: () => flow,
     dispatch,
-    onSignedIn: async () => {
+    onSignedIn: async (phone: string) => {
       resetAccount();
-      const again = await api.me();
+      const signInGeneration = generation, again = await api.me();
+      // An answer from an older generation never moves the step.
+      if (signInGeneration !== generation) return;
       if (again.ok) {
+        takeAccount(again.data);
         route(root, again.data, inviteOnly);
-        dispatch({ tag: "verified", canJoin: again.data.canJoin, member: !!again.data.membership });
+        // Sign in as the session that /api/me read. flowNext ignores it when the number changed.
+        // The key is the verified number when me shows its last 4 digits: two numbers can share a masked form.
+        const key = again.data.signupView ?? (again.data.phoneMasked.endsWith(phone.slice(-4)) ? phone : again.data.phoneMasked);
+        dispatch({ tag: "verified", phone, account: key, canJoin: again.data.canJoin, member: !!again.data.membership });
         void prefill(again.data);
-      } else dispatch({ tag: "sessionEnded", notice: again.error });
+      } else if (flow.step === "code" && flow.phone === phone) dispatch({ tag: "sessionEnded", notice: again.error });
     },
   });
 
@@ -158,6 +170,8 @@ export async function mountJoin(root: HTMLElement): Promise<void> {
       setError(form, problems.join(" "));
       return;
     }
+    // Never send a join without the marker of the shown account when the server gave one.
+    if (marked && !account) return;
     setError(form, "");
     const interests = f.getAll("interests").map(String).filter(Boolean);
     const body = {
@@ -172,36 +186,39 @@ export async function mountJoin(root: HTMLElement): Promise<void> {
       consent: { sms: true as const, wording: plainText($(form, "[data-consent-wording]")) },
     };
     const submitGeneration = generation, submitAccount = account;
-    const res = await busy(form, () => api.join(body));
-    if (submitGeneration !== generation) return;
-    if (res.ok) {
-      generation++; loading = false;
-      // Deliberate successful Join ends the draft, without changing the normal Join contract.
-      if (submitAccount) void fetch("/oauth/signup-draft/discard", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ signupView: submitAccount }) }).catch(() => {});
-      fill(root, { firstName: res.data.membership?.firstName ?? firstName });
-      const done = $(root, '[data-step="done"]');
-      if (new URLSearchParams(location.search).get("via") === "agent" && done && !done.querySelector("[data-agent-return]")) {
-        const next = document.createElement("p");
-        next.dataset.agentReturn = "";
-        next.textContent = "Go back to the same chat to finish setting up your profile.";
-        done.append(next);
+    // The form stays busy until the account_changed reroute has read /api/me (JF-3).
+    await busy(form, async () => {
+      const res = await api.join(body);
+      if (submitGeneration !== generation) return;
+      if (res.ok) {
+        generation++; loading = false;
+        // Deliberate successful Join ends the draft, without changing the normal Join contract.
+        if (submitAccount) void fetch("/oauth/signup-draft/discard", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ signupView: submitAccount }) }).catch(() => {});
+        fill(root, { firstName: res.data.membership?.firstName ?? firstName });
+        const done = $(root, '[data-step="done"]');
+        if (new URLSearchParams(location.search).get("via") === "agent" && done && !done.querySelector("[data-agent-return]")) {
+          const next = document.createElement("p");
+          next.dataset.agentReturn = "";
+          next.textContent = "Go back to the same chat to finish setting up your profile.";
+          done.append(next);
+        }
+        dispatch({ tag: "joined" });
+      } else if (res.error === "account_changed") {
+        resetAccount();
+        const changedGeneration = generation, current = await api.me();
+        if (changedGeneration !== generation) return;
+        if (current.ok) { routeTo(current.data, "account_changed"); void prefill(current.data); }
+        else dispatch({ tag: "sessionEnded", notice: "account_changed" });
+      } else if (res.error === "under_age" || res.error === "invite_only" || res.error === "review") {
+        block(root, res.error);
+        dispatch({ tag: "refused" });
+      } else if (res.error === "unauthorized") {
+        resetAccount();
+        dispatch({ tag: "sessionEnded", notice: "unauthorized" });
+      } else {
+        setError(form, message(root, res.error));
       }
-      dispatch({ tag: "joined" });
-    } else if (res.error === "account_changed") {
-      resetAccount();
-      const changedGeneration = generation, current = await api.me();
-      if (changedGeneration !== generation) return;
-      if (current.ok) { routeTo(current.data, "account_changed"); void prefill(current.data); }
-      else dispatch({ tag: "sessionEnded", notice: "account_changed" });
-    } else if (res.error === "under_age" || res.error === "invite_only" || res.error === "review") {
-      block(root, res.error);
-      dispatch({ tag: "refused" });
-    } else if (res.error === "unauthorized") {
-      resetAccount();
-      dispatch({ tag: "sessionEnded", notice: "unauthorized" });
-    } else {
-      setError(form, message(root, res.error));
-    }
+    });
   });
 }
 

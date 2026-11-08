@@ -126,6 +126,22 @@ test("a late answer leaves the card and the mode the reviewer has moved to",asyn
   expect(decisions().map(d=>d.oppId)).toEqual(["A","C"]);
 });
 
+test("a late answer for an unmounted queue does not move the reviewer to another card",async()=>{
+  await queue([opp("A",T+H),opp("B",T+2*H),opp("C",T+3*H)]);
+  let release:(r:Response)=>void=()=>{};
+  answer=(_p,_a,body)=>body?.oppId==="A"?new Promise(r=>{release=r;}):Response.json({ok:true});
+  await key("a");
+  // The drawer closes and opens again: the queue unmounts and mounts while A is on its way.
+  await render(createElement("div"),5);await render(createElement(ui.ReviewQueue),5);
+  await key("j");await key("j");
+  expect(selected()).toBe("C");
+  await act(async()=>{release(Response.json({ok:true}));await sleep(20);});
+  await notified();
+  expect(selected()).toBe("C");
+  await key("a");await settle();
+  expect(decisions().map(d=>d.oppId)).toEqual(["A","C"]);
+});
+
 test("the page refuses an approve at the deadline, and for a participant it does not know",async()=>{
   await queue([opp("A",T)]);
   await key("a");await settle();

@@ -7,7 +7,7 @@ import { useEffect, useRef, useState, type ReactNode, type RefObject } from "rea
 import type { ReviewReason } from "../src/types.ts";
 import { VENUES } from "@thenetwork/network/geo";
 import { OPEN, originLabel, originOf, REVIEW_REASONS, store, useStore, type DecideOpts, type Opp } from "./store.ts";
-import { approveBlock as approveCore, choose, keyStep, rebind, reviewStatus, settle, toggleMode, type Block, type Ctl, type Key, type Mode } from "./logic/review.ts";
+import { approveBlock as approveCore, choose, keyStep, moveOnAfter, rebind, reviewStatus, settle, toggleMode, type Block, type Ctl, type Key, type Mode } from "./logic/review.ts";
 import { AreaLink, Badge, Components, Countdown, dur, humanize, MemberLink, OppLink, oppDot, stamp, StatusLine } from "./ui.tsx";
 
 /** "you" for the signed-in reviewer, "sim" for the simulated one, else the staff id without the token prefix. */
@@ -244,10 +244,10 @@ export function ReviewQueue() {
     setSelId(o.id); setScoreOpen(false);
     if (mapFocus) store.focus({ kind: "opportunity", id: o.id }, { replace: store.ui.focus?.kind === "opportunity" });
   };
-  /** The answer for item id arrived: move on, unless the reviewer has already chosen another card. */
+  /** The answer for item id arrived: move on, unless this queue is unmounted or the reviewer has already chosen another card. */
   const afterDecision = (id: string) => {
-    const { pending, sel, ctl, select } = live.current, core = ctl.core();
-    if (core.chosen && core.boundId !== id) return;
+    const { pending, sel, ctl, select } = live.current;
+    if (!moveOnAfter(mounted.current, ctl.core(), id)) return;
     const i = pending.findIndex(o => o.id === id);
     const n = i < 0 ? sel : pending[i + 1] ?? pending[i - 1];
     if (n) select(n); else setSelId(undefined);
@@ -256,6 +256,9 @@ export function ReviewQueue() {
   // The queue owns its keyboard while mounted (capture phase, so Esc leaves a mode before the global chain).
   const live = useRef({ pending, sel, ctl, view, select, afterDecision });
   live.current = { pending, sel, ctl, view, select, afterDecision };
+  // False after unmount: an answer that arrives later must not move the focus of the store.
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;

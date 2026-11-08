@@ -263,6 +263,108 @@ function unrevealRun(s: RevealState, statuses: number[]): RevealState {
   return c;
 }
 
+/**
+ * The rule of loadReveals in web/store.ts: a GET /api/reveal answer replaces the list only when it
+ * came (ok), and no reveal or end got its answer after the GET was sent (the reveal generation is
+ * the same). A failed answer, or an answer older than a local change, keeps the current list.
+ */
+export function revealMerge(gen: number, sentGen: number, ok: boolean): boolean {
+  //@ verify
+  //@ ensures \result === (ok && sentGen === gen)
+  return ok && sentGen === gen;
+}
+
+/**
+ * The second rule of loadReveals: a GET answer that came but is older than a reveal or end answer
+ * is not applied, and the list is read again. The old answer can hold the grants of other members.
+ */
+export function revealReread(gen: number, sentGen: number, ok: boolean): boolean {
+  //@ verify
+  //@ ensures \result === (ok && sentGen !== gen)
+  return ok && sentGen !== gen;
+}
+
+/** One GET /api/reveal: the reveal generation when it was sent, and the grant of the server then. */
+export interface RevealRead { gen: number; server: boolean }
+
+/**
+ * The reveal badge of one member on the page, against the server grant. known: the list is loaded,
+ * and no reveal answer was lost after it. gen: the count of POST and DELETE answers (store.ts revealGen).
+ */
+export interface RevealPage { server: boolean; badge: boolean; known: boolean; gen: number; reads: RevealRead[] }
+
+/**
+ * One event of the page. granted, lost, refused: the POST answer (lost: no answer, so the server can
+ * hold the grant). ended: the DELETE answer (acted: with status 0, the server ended the grant).
+ * expire: the grant time ends on both sides. send: a GET is sent. answer: GET number i answers; the
+ * server read the grant at the send (atSend) or later, and no POST or DELETE answer came between.
+ * other: a POST or DELETE answer for another member.
+ */
+export type RevealEvent =
+  | { kind: "granted" }
+  | { kind: "lost" }
+  | { kind: "refused" }
+  | { kind: "ended"; status: number; acted: boolean }
+  | { kind: "expire" }
+  | { kind: "send" }
+  | { kind: "answer"; i: number; ok: boolean; atSend: boolean }
+  | { kind: "other" };
+
+/** While the server holds the grant and the list is known, the badge shows. Each open GET knows the grant of its generation. */
+function revealGood(s: RevealPage): boolean {
+  //@ verify
+  return (s.known && s.server ? s.badge : true)
+    && s.reads.every(r => r.gen <= s.gen && (r.gen === s.gen && s.server ? r.server : true));
+}
+
+export function revealStep(s: RevealPage, e: RevealEvent): RevealPage {
+  //@ verify
+  //@ requires revealGood(s)
+  //@ ensures revealGood(\result)
+  //@ ensures e.kind === "lost" ==> \result.server && !\result.known
+  //@ ensures e.kind === "answer" && !e.ok ==> \result.badge === s.badge && \result.known === s.known
+  //@ ensures e.kind === "answer" && e.ok && 0 <= e.i && e.i < s.reads.length && s.reads[e.i].gen !== s.gen ==> \result.reads.length === s.reads.length + 1 && \result.reads[s.reads.length].gen === \result.gen
+  switch (e.kind) {
+    case "granted":
+      return { ...s, server: true, badge: true, known: true, gen: s.gen + 1 };
+    case "lost":
+      return { ...s, server: true, known: false, gen: s.gen + 1 };
+    case "refused":
+      return { ...s, gen: s.gen + 1 };
+    case "ended":
+      return { ...s, server: serverEnded(e.status) || (e.status === 0 && e.acted) ? false : s.server, badge: badgeEnds(e.status) ? false : s.badge, gen: s.gen + 1 };
+    case "expire":
+      return { ...s, server: false, badge: false };
+    case "send":
+      return { ...s, reads: [...s.reads, { gen: s.gen, server: s.server }] };
+    case "answer": {
+      if (e.i < 0 || e.i >= s.reads.length) return s;
+      const r = s.reads[e.i];
+      if (revealReread(s.gen, r.gen, e.ok)) return { ...s, reads: [...s.reads, { gen: s.gen, server: s.server }] };
+      if (!revealMerge(s.gen, r.gen, e.ok)) return s;
+      return { ...s, badge: e.atSend ? r.server : s.server, known: true };
+    }
+    case "other":
+      return { ...s, gen: s.gen + 1 };
+  }
+}
+
+/** Any order of reveals, ends, expiries, GETs and their answers: the badge stays on while the server holds the grant and the list is known. */
+function revealRun(s: RevealPage, es: RevealEvent[]): RevealPage {
+  //@ verify
+  //@ requires revealGood(s)
+  //@ ensures revealGood(\result)
+  //@ ensures \result.known && \result.server ==> \result.badge
+  let c = s;
+  for (let i = 0; i < es.length; i++) {
+    //@ invariant 0 <= i && i <= es.length
+    //@ invariant revealGood(c)
+    //@ decreases es.length - i
+    c = revealStep(c, es[i]);
+  }
+  return c;
+}
+
 export interface Grant { role: string; app: string }
 
 /** A grant counts for this app and mode. */

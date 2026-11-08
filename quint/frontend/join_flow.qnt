@@ -29,16 +29,17 @@
 // RUN (from the repository root; quint 0.33.1; there is no Apalache in this setup)
 //   quint typecheck quint/frontend/join_flow.qnt
 //   quint run quint/frontend/join_flow.qnt --invariant=<name> --max-samples=2000 --max-steps=20 --seed=11
-//   Each witness_<name> must be VIOLATED (the state is reachable).
-//   signInMatchesSession, staleAnswerNeverMovesStep, joinAppliesToShownAccount and
-//   joinAppliesToShownAccountWithMarker are VIOLATED by the shipping shell today (defects JF-1,
-//   JF-2, JF-3; see the notes before them). Three of them need more samples to show:
+//   Each witness_<name> must be VIOLATED (the state is reachable), except witness_noStaleAnswer (below).
+//   Defects JF-1 and JF-3 are fixed in the shell and the core. These hold (seeds 11 and 29):
 //   quint run quint/frontend/join_flow.qnt --invariant=<name> --max-samples=20000 --max-steps=20 --seed=29
+//   for signInMatchesSession, staleAnswerNeverMovesStep, joinAppliesToShownAccountWithMarker, safety.
+//   joinAppliesToShownAccount is still VIOLATED when markerApp is false: slop.date and peon.biz get no
+//   signupView from /api/me (api.ts), so the page has no marker to send (JF-2 needs a server change).
 //   `safety` is the conjunction of the invariants that hold.
 //
 // ABSTRACTIONS
-//   - Account keys. The shell uses E.164 after verified, and signupView or phoneMasked after loaded
-//     and rerouted. Here one person has one key (A or B). Two keys for one person only clear
+//   - Account keys. The shell uses signupView, else E.164 after verified (when /api/me shows the last
+//     4 digits of the verified number), and signupView or phoneMasked after loaded and rerouted. Here one person has one key (A or B). Two keys for one person only clear
 //     fields that could stay. Two people with the same last 4 digits share a phoneMasked key on
 //     slop.date and peon.biz; the model does not have that collision.
 //   - phoneE164 maps an input to itself when it is A or B, and to "" for X. Formats ("(212) ...",
@@ -72,7 +73,8 @@ module join_flow {
   }
 
   type LoadedEv = { signedInAs: str, canJoin: bool, member: bool, inviteOnly: bool, notice: str }
-  type AuthEv = { canJoin: bool, member: bool }
+  // phone: the number that otp/verify used. account: the session that /api/me read after it.
+  type AuthEv = { phone: str, account: str, canJoin: bool, member: bool }
   type RerouteEv = { account: str, canJoin: bool, member: bool, notice: str }
 
   type FlowEvent =
@@ -135,7 +137,7 @@ module join_flow {
     | Typed(f) => if (s.step != Profile) s else { ...s, fields: f, owner: s.account }
     | OtpStarted(n) => if (s.step != Phone or n == "") s else { ...s, step: Code, phone: n, shown: n }
     | ChangeNumber => if (s.step != Code) s else { ...s, step: Phone }
-    | Verified(a) => if (s.step != Code) s else signIn(s, s.phone, a.canJoin, a.member, "")
+    | Verified(a) => if (s.step != Code or a.phone != s.phone or a.account == "") s else signIn(s, a.account, a.canJoin, a.member, "")
     | Rerouted(r) => if (s.step != Profile or r.account == "") s else signIn(s, r.account, r.canJoin, r.member, r.notice)
     | SessionEnded(n) => if (s.step == Done) s else { ...s, account: "", consented: false, step: Phone, notice: n }
     | Refused => if (s.step != Profile) s else { ...s, step: Blocked }
@@ -173,7 +175,7 @@ module join_flow {
     dom: JoinFields,        // the profile form in the page
     generation: int,
     marker: str,            // join.ts `account`: the signupView sent with /api/join
-    markerApp: bool,        // friends and ntwrk send a marker; slop and peon do not
+    markerApp: bool,        // /api/me gives a signupView: friends and ntwrk today; slop and peon need a server change
     phoneBusy: bool,
     codeBusy: bool,
     profileBusy: bool,
@@ -221,9 +223,10 @@ module join_flow {
   // join.ts resetAccount: generation++, account = undefined.
   pure def resetAccount(s: St): St = { ...s, sh: { ...s.sh, generation: s.sh.generation + 1, marker: "" } }
 
-  // prefill sets `account` to the signupView of a person who can join (friends and ntwrk only).
+  // join.ts takeAccount, at each sign-in step on every site: `account` is the signupView of a person
+  // who can join, when /api/me gives one. `marked` is markerApp here.
   pure def takeMarker(s: St, account: str, canJoin: bool): St =
-    if (s.sh.markerApp and canJoin) { ...s, sh: { ...s.sh, marker: account } } else s
+    { ...s, sh: { ...s.sh, marker: if (s.sh.markerApp and canJoin) account else "" } }
 
   pure def canJoinOf(srv: Server, a: str): bool = not(srv.members.contains(a)) and not(srv.refused.contains(a))
 
@@ -242,13 +245,13 @@ module join_flow {
       val s2 = dispatch(s1, OtpStarted(m.num))
       { ...s2, hist: { ...s2.hist, started: s2.hist.started.union(Set(m.num)) } }
 
-  // auth.ts code submit, after api.otpVerify; then onSignedIn: resetAccount, api.me().
+  // auth.ts code submit, after api.otpVerify; then onSignedIn: resetAccount, api.me(). The code form
+  // stays busy until that answer lands (busy() wraps both requests).
   pure def onOtpVerify(s0: St, m: Msg, failed: bool, rightCode: bool): St =
-    val s = { ...s0, sh: { ...s0.sh, codeBusy: false } }
-    if (failed or not(rightCode) or not(s.srv.codes.contains(m.num))) s
+    if (failed or not(rightCode) or not(s0.srv.codes.contains(m.num))) { ...s0, sh: { ...s0.sh, codeBusy: false } }
     else
-      val s1 = { ...s, srv: { ...s.srv, cookie: m.num, codes: s.srv.codes.exclude(Set(m.num)) } }
-      send(resetAccount(s1), KMeVerify, "", NO_FIELDS)
+      val s1 = { ...s0, srv: { ...s0.srv, cookie: m.num, codes: s0.srv.codes.exclude(Set(m.num)) } }
+      send(resetAccount(s1), KMeVerify, m.num, NO_FIELDS)
 
   // join.ts first load: api.me() then loaded.
   pure def onMeLoad(s: St, failed: bool): St =
@@ -260,17 +263,22 @@ module join_flow {
       val s1 = dispatch(s, Loaded({ signedInAs: c, canJoin: cj, member: s.srv.members.contains(c), inviteOnly: s.srv.inviteOnly, notice: "" }))
       takeMarker(checkSignIn(s, s1, c), c, cj)
 
-  // join.ts onSignedIn, after api.me(). The shipping code has no generation check here.
-  pure def onMeVerify(s: St, failed: bool): St =
+  // join.ts onSignedIn, after api.me(): the generation check, then verified with the verified number
+  // and the account that me read. busy() ends here.
+  pure def onMeVerify(s0: St, m: Msg, failed: bool): St =
+    val s = { ...s0, sh: { ...s0.sh, codeBusy: false } }
     val c = s.srv.cookie
-    if (failed or c == "") dispatch(s, SessionEnded("unauthorized"))
+    if (m.gen != s.sh.generation) s
+    else if (failed or c == "")
+      (if (s.flow.step == Code and s.flow.phone == m.num) dispatch(s, SessionEnded("unauthorized")) else s)
     else
       val cj = canJoinOf(s.srv, c)
-      val s1 = dispatch(s, Verified({ canJoin: cj, member: s.srv.members.contains(c) }))
+      val s1 = dispatch(s, Verified({ phone: m.num, account: c, canJoin: cj, member: s.srv.members.contains(c) }))
       takeMarker(checkSignIn(s, s1, c), c, cj)
 
-  // join.ts account_changed branch, after api.me(): routeTo, or sessionEnded.
-  pure def onMeReroute(s: St, m: Msg, failed: bool): St =
+  // join.ts account_changed branch, after api.me(): routeTo, or sessionEnded. busy() ends here.
+  pure def onMeReroute(s0: St, m: Msg, failed: bool): St =
+    val s = { ...s0, sh: { ...s0.sh, profileBusy: false } }
     val c = s.srv.cookie
     if (m.gen != s.sh.generation) s
     else if (failed or c == "") dispatch(s, SessionEnded("account_changed"))
@@ -280,13 +288,15 @@ module join_flow {
       takeMarker(checkSignIn(s, s1, c), c, cj)
 
   // join.ts profile submit, after api.join. The server acts first; the page then checks generation.
+  // On account_changed the form stays busy until the reroute answer lands (JF-3 fix).
   pure def onJoin(s0: St, m: Msg, failed: bool): St =
     val s = { ...s0, sh: { ...s0.sh, profileBusy: false } }
     val c = s.srv.cookie
     val current = m.gen == s.sh.generation
     if (failed) s
     else if (c == "") (if (current) dispatch(resetAccount(s), SessionEnded("unauthorized")) else s)
-    else if (m.marker != "" and m.marker != c) (if (current) send(resetAccount(s), KMeReroute, "", NO_FIELDS) else s)
+    else if (m.marker != "" and m.marker != c)
+      (if (current) send(resetAccount({ ...s, sh: { ...s.sh, profileBusy: true } }), KMeReroute, "", NO_FIELDS) else s)
     else if (s.srv.refused.contains(c)) (if (current) dispatch(s, Refused) else s)
     else if (s.srv.members.contains(c)) s
     else
@@ -298,7 +308,7 @@ module join_flow {
     | KMeLoad => onMeLoad(s, failed)
     | KOtpStart => onOtpStart(s, m, failed)
     | KOtpVerify => onOtpVerify(s, m, failed, rightCode)
-    | KMeVerify => onMeVerify(s, failed)
+    | KMeVerify => onMeVerify(s, m, failed)
     | KJoin => onJoin(s, m, failed)
     | KMeReroute => onMeReroute(s, m, failed)
   }
@@ -369,12 +379,14 @@ module join_flow {
     go(dispatch(st, ChangeNumber)),
   }
 
-  // join.ts profile submit: typed(), formProblems, formPasses, then api.join.
+  // join.ts profile submit: typed(), formProblems, formPasses, the marker guard, then api.join.
   action userSubmitJoin = all {
     st.flow.step == Profile, not(st.sh.profileBusy),
     val s1 = dispatch(st, Typed(st.sh.dom))
     all {
       formPasses(toForm(s1.sh.dom)),
+      // `if (marked && !account) return;`
+      not(st.sh.markerApp) or st.sh.marker != "",
       val s2 = { ...s1, sh: { ...s1.sh, profileBusy: true },
                         hist: { ...s1.hist, sentUnticked: s1.hist.sentUnticked or not(s1.sh.dom.ticked) } }
       go(send(s2, KJoin, "", s1.sh.dom)),
@@ -445,8 +457,8 @@ module join_flow {
 
   // Rule: "fields of one account never shown to another" (frontend-sites.md 2.2, invariant 5, bug B2 fix).
   // The ghost author is who typed the fields; flowOk's owner is rewritten by signIn, so this is the
-  // stronger check. LemmaScript: flowNext `ensures s.step === "code" && s.owner !== "" && s.owner !== s.phone
-  // && e.tag === "verified" ==> formResets(s, \result)` and fieldsFor.
+  // stronger check. LemmaScript: flowNext `ensures s.step === "code" && s.owner !== "" && e.tag === "verified"
+  // && e.phone === s.phone && e.account !== "" && s.owner !== e.account ==> formResets(s, \result)` and fieldsFor.
   val fieldsNeverShownToOtherAccount =
     st.flow.step != Profile or isEmpty(st.sh.dom) or st.hist.author == "" or st.hist.author == st.flow.account
 
@@ -474,23 +486,26 @@ module join_flow {
 
   // Rule: a stale answer never moves the step. An answer is stale when the step, the number or the
   // account changed after its request left. LemmaScript: the flowNext guards (each event acts only from
-  // its own step). EXPECTED TO FAIL today: onSignedIn's api.me() answer has no generation check, and
-  // the verified event signs in as s.phone (DEFECT JF-1).
+  // its own step); flowNext `ensures e.tag === "verified" && e.phone !== s.phone ==> \result === s`.
+  // Fixed (DEFECT JF-1): the code form stays busy until onSignedIn's api.me() answer lands, that answer
+  // has a generation check, and verified carries the verified number.
   val staleAnswerNeverMovesStep = not(st.hist.staleMoved)
 
   // Rule: a sign-in step takes the account of the session that the server holds.
-  // LemmaScript: flowNext `ensures flowOk(s) && s.step === "code" && e.tag === "verified" ==> \result.account === s.shown`
-  // (this assumes the verify answer is for s.shown). EXPECTED TO FAIL today (DEFECT JF-1).
+  // LemmaScript: flowNext `ensures s.step === "code" && e.tag === "verified" && e.phone === s.phone
+  // && e.account !== "" ==> \result.account === e.account`, and each new account comes from its event.
+  // Fixed (DEFECT JF-1): verified carries the account that /api/me read, not the number on screen.
   val signInMatchesSession = not(st.hist.signInMismatch)
 
   // Rule: the server joins the account that the page showed (api.ts account_changed check).
-  // No LemmaScript function: the marker is shell state. EXPECTED TO FAIL on slop.date and peon.biz,
-  // which send no marker (DEFECT JF-2), and through JF-1 on all sites.
+  // No LemmaScript function: the marker is shell state. The shell now takes the marker on every site
+  // (DEFECT JF-2), but STILL FAILS on slop.date and peon.biz: /api/me gives them no signupView, so the
+  // server joins the cookie account. It holds when markerApp is true (the next invariant).
   val joinAppliesToShownAccount = st.hist.joinedAs == st.hist.joinedFor
 
-  // Rule: the same, on friends.help and ntwrk.party, which send the signupView marker. EXPECTED TO FAIL
-  // today (DEFECT JF-3): after account_changed, resetAccount clears the marker, and the profile form is
-  // live again while the shell waits for api.me(). A second submit leaves with no marker.
+  // Rule: the same, on a site where /api/me gives the signupView marker. Fixed (DEFECT JF-3): after
+  // account_changed the profile form stays busy until the api.me() answer lands, and no join leaves
+  // without the marker when the server gave one.
   val joinAppliesToShownAccountWithMarker = not(st.sh.markerApp) or st.hist.joinedAs == st.hist.joinedFor
 
   val safety = and {
@@ -505,7 +520,9 @@ module join_flow {
   val witness_neverMember = st.flow.step != Member
   // A sign-in as another account cleared fields (fieldsFor and formResets act).
   val witness_noCrossClear = st.hist.crossClears == 0
-  // A stale answer arrives.
+  // A stale answer arrives. After the JF-1 fix each form stays busy until its last answer, so in these
+  // bounds no answer is stale: this witness now HOLDS. With the code form released after otp/verify
+  // (the old busy), it is VIOLATED and staleAnswerNeverMovesStep still holds by the core guard.
   val witness_noStaleAnswer = not(st.hist.staleSeen)
   // Link prefill fields survive into profile (bug B2 fix: the first session keeps them).
   val witness_noPrefillInProfile = not(st.flow.step == Profile and st.flow.fields.firstName == "Ann" and st.hist.author == "")
