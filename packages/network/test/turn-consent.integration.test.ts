@@ -401,4 +401,19 @@ describe.skipIf(!pgAvailable)("turn and consent", () => {
     const [row] = await sql`select status, outcome from platform.inbound where id = 'msg:sim:sd493-join'`;
     expect([row.status, row.outcome]).toEqual(["done", "cancelled_by_stop"]);
   }, 60_000);
+  test("SD-496: a turn that renews its lease keeps its arrival time", async () => {
+    const box = new Inbox({sql, clock, log: () => {}, senderKey: x => `key:${x}`, handle: async () => "handled", leaseRenewMs: 10});
+    const input = turn("sd496-slow", "+12125550496", "what's on this weekend?");
+    const arrival = clock.now();
+    // A slow turn (an LLM read, lock waits): 45 s pass on the Clock and the lease is renewed while it runs.
+    const r = await box.signed(input, "sd496-hash", async () => {
+      clock.advance(45_000);
+      await Bun.sleep(100);
+      return {outcome: "handled", replies: [], replyIds: [], delivery: "collected", replyKind: "reply", accountEligible: false, app: null, memberId: null, reason: "handled"} as never;
+    });
+    expect(r.status).toBe(200);
+    // Profile collection deadlines read arrived_at as the Network arrival: the lease must not move it.
+    const [row] = await sql`select arrived_at from platform.inbound where id = 'msg:blooio:sd496-slow'`;
+    expect(new Date(row.arrived_at).getTime()).toBe(arrival);
+  }, 60_000);
 });

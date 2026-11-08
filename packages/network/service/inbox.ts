@@ -14,7 +14,7 @@
 //    answer handled late would opt them back in). Rows received after the STOP are handled as usual.
 //  - Privacy: the row keeps the sender and the event only while it waits. A handled row keeps the id,
 //    the times and the outcome.
-//  - Signed turns (/internal/turn): one ordinary and one compliance turn at a time per sender. A running turn renews its lease (arrived_at)
+//  - Signed turns (/internal/turn): one ordinary and one compliance turn at a time per sender. A running turn renews its lease (lease_at; arrived_at stays the arrival)
 //    every 30 seconds; a turn still "processing" 2 minutes after its last renewal lost its worker and reads
 //    as unresolved. An unresolved turn holds the sender back for 10 minutes at most; STOP, START and HELP are
 //    never held back (on either path); staff can resolve a stuck turn (POST /inbound/resolve). A retry of
@@ -90,17 +90,17 @@ export class Inbox {
       if (admitUntil !== undefined && this.o.clock.now() >= admitUntil) return [];
       // A turn whose worker stopped (no completion within the lease) is unresolved, not processing forever.
       await tx`update platform.inbound set status='unresolved',event=null,sender=null
-        where sender_hash=${senderHash} and status='processing' and request_hash is not null and arrived_at<${new Date(now - PROCESSING_LEASE_MS)}`;
+        where sender_hash=${senderHash} and status='processing' and request_hash is not null and coalesce(lease_at,arrived_at)<${new Date(now - PROCESSING_LEASE_MS)}`;
       // A compliance turn waits only for another compliance turn of the sender (its own claim slot, migration 0042).
-      const inserted = await tx`insert into platform.inbound(id,line,sender,received_at,arrived_at,event,status,request_hash,sender_hash,network_authority,compliance)
-      select ${id},null,null,${new Date(input.receivedAt)},${new Date(now)},null,'processing',${requestHash},${senderHash},${input.networkAuthority ?? null}::jsonb,${keyword}
+      const inserted = await tx`insert into platform.inbound(id,line,sender,received_at,arrived_at,lease_at,event,status,request_hash,sender_hash,network_authority,compliance)
+      select ${id},null,null,${new Date(input.receivedAt)},${new Date(now)},${new Date(now)},null,'processing',${requestHash},${senderHash},${input.networkAuthority ?? null}::jsonb,${keyword}
       where ${admitUntil === undefined || now < admitUntil} and not exists(select 1 from platform.inbound where sender_hash=${senderHash} and ((status='processing' and (not ${keyword} or compliance))
-        or (not ${keyword} and (status='pending' or (status='unresolved' and arrived_at>${new Date(now - UNRESOLVED_BLOCK_MS)})))))
+        or (not ${keyword} and (status='pending' or (status='unresolved' and coalesce(lease_at,arrived_at)>${new Date(now - UNRESOLVED_BLOCK_MS)})))))
       on conflict do nothing returning id`;
       if (inserted.length || !keyword) return this.stopCancels(tx, input, inserted);
       // A compliance turn that never answered (its worker died, or staff resolved it) runs again on the retry of
       // the same request: the consent ledger and the member's unit are idempotent per message.
-      return this.stopCancels(tx, input, await tx`update platform.inbound set status='processing',arrived_at=${new Date(now)},sender_hash=${senderHash},compliance=true
+      return this.stopCancels(tx, input, await tx`update platform.inbound set status='processing',lease_at=${new Date(now)},sender_hash=${senderHash},compliance=true
         where id=${id} and request_hash=${requestHash} and status='unresolved' and handled_at is null and response is null
         and ${admitUntil === undefined || now < admitUntil} and not exists(select 1 from platform.inbound where sender_hash=${senderHash} and status='processing' and compliance)
         returning id`);
@@ -117,7 +117,7 @@ export class Inbox {
     const turn: InboundTurn = {id,from:input.from};
     // Renew the lease while the turn runs, so a slow turn (an LLM read, lock waits) is never swept as abandoned after its effects committed.
     const renew = setInterval(() => {
-      this.o.sql`update platform.inbound set arrived_at=${new Date(this.o.clock.now())} where id=${id} and status='processing'`.catch(() => {});
+      this.o.sql`update platform.inbound set lease_at=${new Date(this.o.clock.now())} where id=${id} and status='processing'`.catch(() => {});
     }, this.o.leaseRenewMs ?? LEASE_RENEW_MS);
     (renew as {unref?: () => void}).unref?.();
     try {
@@ -226,7 +226,7 @@ export class Inbox {
     // A signed turn that lost its worker and whose sender never wrote again (the claim's sweep never ran for it):
     // an unresolved tombstone, with nothing about the sender kept past the retention window.
     const orphans = await this.o.sql`update platform.inbound set status='unresolved',sender=null,event=null,sender_hash=null,member_id=null,app_id=null
-      where request_hash is not null and status='processing' and arrived_at<${new Date(before)} returning id`;
+      where request_hash is not null and status='processing' and coalesce(lease_at,arrived_at)<${new Date(before)} returning id`;
     const removed = await this.o.sql`delete from platform.inbound where request_hash is null and status not in ('pending','processing','unresolved') and arrived_at < ${new Date(before)} returning id`;
     // Signed-turn tombstones keep replays refused for a while, then go: platform.inbound does not grow without bound.
     const tombstones = await this.o.sql`delete from platform.inbound where request_hash is not null and status='unresolved' and arrived_at < ${new Date(before - TOMBSTONE_KEEP_MS)} returning id`;
@@ -283,7 +283,7 @@ export class Inbox {
       if (!compliance) {
         const blockedSince = new Date(this.o.clock.now() - UNRESOLVED_BLOCK_MS), stale = new Date(this.o.clock.now() - PROCESSING_LEASE_MS);
         if ((await this.o.sql`select 1 from platform.inbound where sender_hash=${this.o.senderKey(sender)} and request_hash is not null
-          and ((status='processing' and arrived_at>${stale}) or (status='unresolved' and arrived_at>${blockedSince})) limit 1`).length) return n;
+          and ((status='processing' and coalesce(lease_at,arrived_at)>${stale}) or (status='unresolved' and coalesce(lease_at,arrived_at)>${blockedSince})) limit 1`).length) return n;
       }
       const r = compliance ?? parsed[0]!;
       const { ev, app } = r;

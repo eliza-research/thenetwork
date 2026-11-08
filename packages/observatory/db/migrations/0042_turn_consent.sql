@@ -10,3 +10,6 @@ alter table platform.rate_limits add column if not exists keep_until timestamptz
 -- SD-318: a global STOP keeps the app its confirmation named ("Reply START to resume <app>"), so the next START
 -- resumes that app and not the app that routing picks then.
 alter table platform.consent_events add column if not exists named_app text references platform.apps (id);
+-- SD-496: a running signed turn renews its lease in its own column, so arrived_at stays the Network arrival
+-- (profile collection deadlines read it). A row without a lease (claimed before this migration) uses arrived_at.
+alter table platform.inbound add column if not exists lease_at timestamptz;
