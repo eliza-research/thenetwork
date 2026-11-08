@@ -371,6 +371,20 @@ export class OutboundQueue {
     return { id: row.id, app: row.app, memberId: row.memberId, status };
   }
 
+  /**
+   * The row waits until the person writes (inbound() releases it). `seenInbound` is the conversation's
+   * last_inbound_at that dispatch read: when the person wrote since, inbound() may have run before this write
+   * and found nothing to release, so the row is due again at once instead.
+   */
+  private async hold(row: QueueRow, note: string, seenInbound: unknown): Promise<StatusChange> {
+    const now = new Date(this.now), seen = ms(seenInbound);
+    const [r] = await this.sql`update platform.outbound set status = case when exists (select 1 from platform.line_conversations c
+        where c.line = ${this.line} and c.address = ${row.to} and c.last_inbound_at is distinct from ${seen === undefined ? null : new Date(seen)}::timestamptz)
+        then 'pending' else 'held_awaiting_reply' end,
+      next_attempt_at = ${now}, note = ${note}, updated_at = ${now}, lease_owner = null, lease_until = null where id = ${row.id} returning status`;
+    return { id: row.id, app: row.app, memberId: row.memberId, status: String(r?.status ?? "held_awaiting_reply") };
+  }
+
   private async guarded<T>(fn: () => T | Promise<T>, failed: T): Promise<T> {
     try { return await fn(); } catch { return failed; }
   }
@@ -417,7 +431,7 @@ export class OutboundQueue {
     if (!compliance && conv && conv.unanswered >= this.opt("maxUnanswered", 3)) {
       const quietFor = now - (ms(conv.last_outbound_at) ?? -Infinity);
       if (agent && !conv.reengagement_used && quietFor >= this.opt("reengageAfterMs", 14 * DAY)) reengagement = true;
-      else return this.wait(row, "held_awaiting_reply", now, conv.reengagement_used ? "unanswered cap: re-engagement used" : "unanswered cap");
+      else return this.hold(row, conv.reengagement_used ? "unanswered cap: re-engagement used" : "unanswered cap", conv.last_inbound_at);
     }
     // 7. Blooio's safety state of the line: new and agent texts wait; compliance texts (STOP, HELP) still go.
     const isNew = !conv;
@@ -450,7 +464,7 @@ export class OutboundQueue {
       this.o.onAlert?.(row.id, "leak_blocked");
       return this.end(row, "parked_leak_review", `leak: ${leaks.join(",")}`);
     }
-    return this.send(row, isNew, reengagement);
+    return this.send(row, isNew, reengagement, conv?.last_inbound_at);
   }
 
   private async leakReasons(row: QueueRow, db: SQL = this.sql): Promise<string[]> {
@@ -479,7 +493,7 @@ export class OutboundQueue {
     return (rows as any[]).map(r => String(r.body)).reverse();
   }
 
-  private async send(row: QueueRow, isNew: boolean, reengagement: boolean): Promise<StatusChange | undefined> {
+  private async send(row: QueueRow, isNew: boolean, reengagement: boolean, seenInbound: unknown): Promise<StatusChange | undefined> {
     const start = this.now;
     // Admit only the current canonical member and immutable payload, after the async gates.
     // Erasure and admission share the person/member row fences. No remote I/O holds these locks.
@@ -538,7 +552,7 @@ export class OutboundQueue {
           return this.wait(row, "retry_scheduled", this.now + backoff, e.code ?? "retry");
         }
         case "await_recipient":
-          return this.wait(row, "held_awaiting_reply", this.now, e.code ?? "conversation limit");
+          return this.hold(row, e.code ?? "conversation limit", seenInbound);
         case "blocked":
           this.o.onAlert?.(row.id, e.code ?? "blocked");
           return this.end(row, "blocked", e.code, error);

@@ -312,3 +312,27 @@ test("SD-136: a direct text's drain writes the statuses it changed to network.me
   expect(await rt.adapter.direct("+12125550193","You're invited to friends.help. Reply JOIN to start.","sd136-invite","transactional")).toBe("accepted");
   expect(await both("sd136-reminder")).toEqual({outbound:"expired",ended:true,message:"expired"});
 },60_000);
+
+test("SD-147: a row the unanswered cap holds while the person writes back is not left held",async()=>{
+  toNewYork(12,0);
+  const rt=await primary();
+  const phone="+12125550194",memberId=await join(services[0]!,phone,"Jo");
+  await rt.unitOfWork(()=>undefined);
+  await rt.adapter.engaged!(phone);
+  // Three texts with no answer: the conversation is at the unanswered cap.
+  for (const n of [1,2,3]) await rt.unitOfWork(()=>{rt.system(memberId as never,`sd147-${n}`,`Plan note ${n} is ready.`,"transactional");});
+  expect((await sql`select unanswered from platform.line_conversations where address=${phone}`)[0].unanswered).toBe(3);
+  // The drain reads the conversation at the cap; the person's message commits before the drain writes the hold.
+  clock.advance(60_000);
+  const q=queueOf(rt) as unknown as {conversation:(address:string)=>Promise<unknown>},read=q.conversation;
+  q.conversation=async address=>{const c=await read.call(q,address);if (address===phone) {q.conversation=read;await rt.adapter.engaged!(phone);}return c;};
+  await rt.unitOfWork(()=>{rt.system(memberId as never,"sd147-fourth","Plan note 4 is ready.","transactional");});
+  q.conversation=read;
+  expect((await sql`select unanswered from platform.line_conversations where address=${phone}`)[0].unanswered).toBe(0);
+  expect(await statusOf("sd147-fourth")).not.toBe("held_awaiting_reply");
+  // The next drain sends it: nothing else would wake a held row.
+  clock.advance(60_000);
+  await rt.deliver();
+  expect(dispatched).toContain("sd147-fourth");
+  expect(await statusOf("sd147-fourth")).toBe("accepted");
+},60_000);
