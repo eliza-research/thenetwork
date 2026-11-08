@@ -15,6 +15,7 @@ import { RECYCLED_AFTER_MS } from "../../platform/src/accounts.ts";
 import type { AppId } from "../../platform/src/apps.ts";
 import { LocalDiskPhotoStorage } from "../../platform/src/photos.ts";
 import { DryRunAdapter, type Outbound } from "../service/channel.ts";
+import { CloudChannelAdapter } from "../service/cloud-channel.ts";
 import { NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/service.ts";
 import { START } from "./mini.ts";
 
@@ -353,5 +354,32 @@ describe.skipIf(!pgAvailable)("identity sagas: stop half way, retry, races (Post
     expect((await memberOf("slop", c))?.id).toBe(h);
     expect(await s.accounts.banned(d)).toBe(false);
     expect(await memberOf("slop", d)).toBeUndefined();
+  }, T);
+
+  test("SD-092: delete everything leaves no line counter that holds the number", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    // The production line: the persisted queue (Eliza Cloud delivery; no live flags, so nothing is sent).
+    const s = service(clock, { adapter: (_net, rt) => new CloudChannelAdapter({ clock, app: rt.app.id, city: rt.city, from: "+12125550299", origin: "http://127.0.0.1:9/", secret: "synthetic-identity-sagas-signing-secret", env: { PLATFORM_ENV: "dev" } }) });
+    const ivy = newPhone();
+    expect(await text(s, clock, ivy, "slop")).toBe("join_asked");
+    expect(await text(s, clock, ivy, "Ivy, 27")).toBe("joined");
+    // The member's texts opened the line's conversation counters for the number.
+    expect((await sql`select count(*)::int as n from platform.line_conversations where address = ${ivy}`)[0].n).toBe(1);
+    // One proactive text went out and is not answered yet (as the queue's acceptance writes it).
+    await sql`update platform.line_conversations set unanswered = 1, first_outbound_at = ${new Date(clock.now())}, last_outbound_at = ${new Date(clock.now())} where address = ${ivy}`;
+
+    // The member deletes everything on the site.
+    const api = site(s);
+    clock.advance(31_000);
+    expect((await api("/api/auth/otp/start", { phone: ivy })).status).toBe(200);
+    expect((await api("/api/auth/otp/verify", { phone: ivy, code: "123456" })).status).toBe(200);
+    expect((await api("/api/me/delete", { scope: "all" })).body).toEqual({ ok: true });
+
+    // No row keeps the number in plain form, now or after the retention purge.
+    expect((await sql`select count(*)::int as n from platform.line_conversations where address = ${ivy}`)[0].n).toBe(0);
+    clock.advance(2 * DAY);
+    await s.purge();
+    expect((await sql`select count(*)::int as n from platform.line_conversations where address = ${ivy}`)[0].n).toBe(0);
   }, T);
 });

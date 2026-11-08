@@ -342,6 +342,9 @@ export class PgPeopleStore implements PeopleStore {
       await tx`delete from platform.sessions where e164 = ${e164} or (${personId}::uuid is not null and person_id = ${personId}::uuid)`;
       await tx`delete from platform.otp_challenges where e164 = ${e164}`;
       await tx`delete from platform.consent_events where e164 = ${e164} and (${keepAfter}::timestamptz is null or at <= ${keepAfter})`;
+      // The line's conversation counters hold the number in plain form (the retention purge keeps a row with
+      // an unanswered text). A new owner's counters are theirs: their own text reset them.
+      if (!newOwner) await tx`delete from platform.line_conversations where address = ${e164}`;
       if (personId) {
         await tx`delete from platform.memberships where person_id = ${personId}`;
         await tx`delete from platform.share_grants where person_id = ${personId}`;
