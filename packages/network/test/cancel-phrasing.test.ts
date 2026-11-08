@@ -64,6 +64,14 @@ describe("cancellation phrasing classification", () => {
     "I'm looking for someone who won't cancel",
     "sounds good, see you tonight",
     "let's do dinner tonight",
+    "glad we didn't have to cancel",
+    "I didn't want to cancel",
+    "definitely not cancelling — I would never want to cancel",
+    "I promise not to cancel our date",
+    "I'm not going to cancel tonight",
+    "let's not cancel our dinner",
+    "I'll cancel my meeting so I can make our dinner!",
+    "can't make Friday, how about Saturday?",
   ];
 
   for (const text of nonCancelPhrases) {
@@ -85,4 +93,15 @@ describe("cancellation phrasing in Network service", () => {
       expect(toA.some(s => s.body.includes("No worries"))).toBe(true);
     });
   }
+  test("can't make Friday does not drop a meeting scheduled on Sunday", async () => {
+    const w = await bookedWorld();
+    const o = [...(w.net as any).opps.values()].find((x: any) => x.stage === "scheduled");
+    // Force meetingAt to a Sunday: 2026-11-08 is a Sunday
+    // Sunday in localParts is weekday 6
+    o.meetingAt = new Date("2026-11-08T18:00:00-05:00").getTime();
+
+    await w.say("a", "can't make Friday");
+    // Meeting on Sunday should NOT be dropped
+    expect(scheduled(w)).toBe(true);
+  });
 });
