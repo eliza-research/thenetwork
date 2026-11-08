@@ -3,7 +3,7 @@
 import { SQL } from "bun";
 import type { AppId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
-import type { Ban, HitResult, HitRule, Membership, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, PhoneMove, PhoneMoveResult, Session, ShareGrant } from "./store.ts";
+import type { Ban, HitResult, HitRule, Membership, MembershipState, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, PhoneMove, PhoneMoveResult, Session, ShareGrant } from "./store.ts";
 
 type Row = Record<string, any>;
 const ms = (v: unknown): number | null => (v === null || v === undefined ? null : new Date(v as string | Date).getTime());
@@ -123,6 +123,12 @@ export class PgPeopleStore implements PeopleStore {
       values (${m.app}, ${m.personId}, ${m.memberId}, ${m.state}, ${m.review}, ${m.firstName}, ${m.profile}::jsonb, ${ts(m.joinedAt)}, ${ts(m.leftAt)})
       on conflict (app_id, person_id) do update set member_id = excluded.member_id, state = excluded.state, review = excluded.review,
         first_name = excluded.first_name, profile = excluded.profile, joined_at = excluded.joined_at, left_at = excluded.left_at`;
+  }
+
+  async updateMembership(personId: string, app: AppId, from: MembershipState[], patch: { state?: MembershipState; profile?: Record<string, unknown> }) {
+    const r = await this.sql`update platform.memberships set state = coalesce(${patch.state ?? null}, state), profile = profile || ${patch.profile ?? {}}::jsonb
+      where person_id = ${personId} and app_id = ${app} and state = any(${this.sql.array(from, "TEXT")}) returning 1`;
+    return r.length > 0;
   }
 
   async addConsent(e: ConsentEvent) {

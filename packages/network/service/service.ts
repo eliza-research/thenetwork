@@ -801,7 +801,7 @@ export class NetworkService implements RuntimeHost {
   private async stopped(app: AppInfo, personId: string, scope: StopScope, skip?: { rt: NetworkRuntime; memberId: MemberId }) {
     const ms = (await this.people.memberships(personId)).filter(m => m.state !== "removed" && m.state !== "invited" && (scope === "global" || m.app === app.id));
     for (const m of ms) {
-      if (m.state === "active") await this.people.putMembership({ ...m, state: "paused" });
+      await this.people.updateMembership(personId, m.app, ["active"], { state: "paused" });
       const rt = await this.runtimeOfMember(m.app, m.memberId);
       if (!rt || (skip && skip.rt === rt && skip.memberId === m.memberId)) continue;
       await rt.unitOfWork(async n => {
@@ -1108,8 +1108,7 @@ export class NetworkService implements RuntimeHost {
         // The ledger orders events by their time: an older START (a late gateway retry) never undoes a newer STOP.
         if (!(await this.accounts.optedIn(app.id, e164))) { this.log(`[inbound] START older than the last STOP (${rt.id}): not opted in`); return "handled"; }
         if (turn) turn.consent = {state: "opted_in", scope: "app", app: app.id, at};
-        const m = person && (await this.people.getMembership(person.id, app.id));
-        if (m?.state === "paused") await this.people.putMembership({ ...m, state: "active" });
+        if (person) await this.people.updateMembership(person.id, app.id, ["paused"], { state: "active" });
       }
       const reply = kw === "help" ? app.brand.help : undefined;
       if (!kw && e164 && /^\s*share\W*$/i.test(ev.text) && (await this.pendingOf(e164, "share", app.id))) return this.share(rt, app, memberId, e164, ev, rowId);
@@ -1754,7 +1753,7 @@ export class NetworkService implements RuntimeHost {
       for (const h of hashes) await this.people.suppress(h, "banned", at);
       // No rating of looks is kept for a banned person (they are never matched again). The photos stay for the safety team.
       await this.dropRatings(personId);
-      for (const m of await this.people.memberships(personId)) if (m.state !== "removed" && m.state !== "invited") await this.people.putMembership({ ...m, state: "restricted" });
+      for (const m of await this.people.memberships(personId)) await this.people.updateMembership(personId, m.app, ["onboarding", "active", "paused"], { state: "restricted" });
       let out: ActionResult = { ok: true };
       for (const x of members) {
         const mine = x.rt === rt && x.memberId === memberId;

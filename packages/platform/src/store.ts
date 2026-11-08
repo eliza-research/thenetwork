@@ -98,6 +98,11 @@ export interface PeopleStore {
   memberships(personId: string): Promise<Membership[]>;
   getMembership(personId: string, app: AppId): Promise<Membership | undefined>;
   putMembership(m: Membership): Promise<void>;
+  /**
+   * Change one membership only while its state is one of `from` (a ban, a leave or a STOP written since the
+   * caller read it is never undone): a new state, and profile fields merged in. True when it changed.
+   */
+  updateMembership(personId: string, app: AppId, from: MembershipState[], patch: { state?: MembershipState; profile?: Record<string, unknown> }): Promise<boolean>;
 
   /** Append an event. False when an event with the same (e164, ref) is already there (a retried message). */
   addConsent(e: ConsentEvent): Promise<boolean>;
@@ -252,6 +257,12 @@ export class MemoryPeopleStore implements PeopleStore {
 
   async memberships(personId: string) { return [...this.members.values()].filter(m => m.personId === personId).map(m => ({ ...m })); }
   async getMembership(personId: string, app: AppId) { const m = this.members.get(`${app}:${personId}`); return m && { ...m }; }
+  async updateMembership(personId: string, app: AppId, from: MembershipState[], patch: { state?: MembershipState; profile?: Record<string, unknown> }) {
+    const m = this.members.get(`${app}:${personId}`);
+    if (!m || !from.includes(m.state)) return false;
+    Object.assign(m, { state: patch.state ?? m.state, profile: { ...m.profile, ...patch.profile } });
+    return true;
+  }
   async putMembership(m: Membership) {
     for (const x of this.members.values()) if (x.memberId === m.memberId && (x.app !== m.app || x.personId !== m.personId)) throw new Error("member id in use");
     this.members.set(`${m.app}:${m.personId}`, { ...m, profile: { ...m.profile } });

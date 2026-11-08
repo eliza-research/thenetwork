@@ -4,13 +4,16 @@
 // retry finishes the saga and that no safety state is undone. Real NetworkService, real Postgres in a
 // database of its own per test process; dry-run sends; fictional numbers (+1 212 555 02xx).
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { SQL } from "bun";
 import { DAY, MINUTE, SimClock } from "@thenetwork/core";
 import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { RECYCLED_AFTER_MS } from "../../platform/src/accounts.ts";
 import type { AppId } from "../../platform/src/apps.ts";
+import { LocalDiskPhotoStorage } from "../../platform/src/photos.ts";
 import { DryRunAdapter, type Outbound } from "../service/channel.ts";
 import { NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/service.ts";
 import { START } from "./mini.ts";
@@ -201,5 +204,36 @@ describe.skipIf(!pgAvailable)("identity sagas: stop half way, retry, races (Post
     // finishes (before the fix both went to the join flow and the membership stayed active with no member).
     await text(s, clock, cy, "leave slop.date");
     expect((await sql`select state, first_name from platform.memberships where app_id = 'slop'`).map((r: any) => [r.state, r.first_name])).toEqual([["removed", null]]);
+  }, T);
+
+  test("SD-017: a YES PHOTOS that read the membership before a ban does not write it back as active", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const dir = mkdtempSync(join(tmpdir(), "sagas-photos-"));
+    const s = service(clock, { photoStorage: new LocalDiskPhotoStorage(dir), photoBaseUrl: "https://slop.date" });
+    try {
+      const di = newPhone();
+      expect(await text(s, clock, di, "slop")).toBe("join_asked");
+      expect(await text(s, clock, di, "Di, 38")).toBe("joined");
+      const d = (await memberOf("slop", di))!.id;
+      // The photo consent ask is waiting (a photo by text asked it).
+      await s.people.putPending({ phoneHash: s.accounts.phoneHash(di), kind: "photo_consent", app: "slop", name: null, age: null, at: clock.now() });
+
+      // Staff ban the person while the YES PHOTOS turn is between its read of the membership and its write.
+      const photos = s.photos as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>;
+      const mayTake = photos.mayTake!.bind(s.photos);
+      let banned: unknown;
+      photos.mayTake = async (...a: unknown[]) => {
+        const r = await mayTake(...a);
+        banned ??= await (await staff(s, "saf-tok", "POST", "/apps/slop/safety/ban", { memberId: d, by: "person", note: "scam confirmed" })).json();
+        return r;
+      };
+      expect(await text(s, clock, di, "YES PHOTOS")).toBe("handled");
+      expect(banned).toEqual({ ok: true });
+      // The ban stays: the membership reads restricted, not active.
+      expect((await sql`select state from platform.memberships where app_id = 'slop'`).map((r: any) => r.state)).toEqual(["restricted"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }, T);
 });
