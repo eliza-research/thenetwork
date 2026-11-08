@@ -653,10 +653,11 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         const key=revealKey(u,app,`relay-photo:${id}`);photoPreviews.delete(key);
         const response=await src.heldPhoto(id,u.id,reason),token=response.headers.get("x-network-photo-review-token"),until=Number(token?.split(".")[0]);
         if(!response.ok)return response;
-        if(!token||!Number.isSafeInteger(until)||until<=Date.now()||until>Date.now()+5*60_000){await response.body?.cancel();return json({error:"This photo preview expired. Load it again."},409);}
+        if(!token||!Number.isSafeInteger(until)||until<=Date.now()){await response.body?.cancel();return json({error:"This photo preview expired. Load it again."},409);}
         for(const [k,v]of photoPreviews)if(v.until<=Date.now())photoPreviews.delete(k);
         if(photoPreviews.size>=1000){await response.body?.cancel();return json({error:"Too many active previews. Retry shortly."},429);}
-        photoPreviews.set(key,{token,until});
+        // The service sets until on its own clock: the console keeps the preview at most 5 minutes on its clock.
+        photoPreviews.set(key,{token,until:Math.min(until,Date.now()+5*60_000)});
         const headers=new Headers(response.headers);headers.delete("x-network-photo-review-token");
         headers.set("cache-control","no-store");headers.set("referrer-policy","no-referrer");
         return new Response(response.body,{status:200,headers});
