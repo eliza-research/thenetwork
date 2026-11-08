@@ -172,15 +172,17 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
 }
 
 /**
- * Why the service login may not run a deployed backend, or undefined. A superuser, a BYPASSRLS role or
+ * Why the service login may not run a deployed backend, or undefined. A login outside network_service has no grants. A superuser, a BYPASSRLS role or
  * the owner of the platform tables skips row-level security, so the per-app scoping (app.app_id), the
  * least-privilege grants and the never-updated consent events would not hold (audit: backend superuser).
  */
 export async function serviceLoginProblem(query: (q: string) => Promise<Record<string, unknown>[]>): Promise<string | undefined> {
   const [r] = await query(`select r.rolsuper, r.rolbypassrls,
-      exists (select 1 from pg_tables t where t.schemaname in ('platform', 'network') and pg_has_role(current_user, t.tableowner, 'USAGE')) as owner
+      exists (select 1 from pg_tables t where t.schemaname in ('platform', 'network') and pg_has_role(current_user, t.tableowner, 'USAGE')) as owner,
+      pg_has_role(current_user, 'network_service', 'MEMBER') as member
     from pg_roles r where r.rolname = current_user`);
   if (!r) return "the service login is not a role";
+  if (!r.member) return "the service login is not a member of network_service";
   if (r.rolsuper) return "the service login is a superuser";
   if (r.rolbypassrls) return "the service login has BYPASSRLS";
   if (r.owner) return "the service login owns (or is a member of the owner of) platform or network tables";
@@ -464,8 +466,16 @@ export async function ensureServiceLogin(query: (q: string) => Promise<Record<st
   if (exists) return { role, created: false };
   if (password.length < 24) throw new Error("the service login password must be at least 24 characters");
   const lit = `'${password.replace(/'/g, "''")}'`;
-  await query(`create role ${role} login password ${lit} nosuperuser nobypassrls nocreaterole nocreatedb`);
-  await query(`grant network_service to ${role}`);
-  await query(`do $$ begin execute format('grant connect on database %I to ${role}', current_database()); end $$`);
+  // One transaction: a crash after create role must not leave a login without its grants (SD-163).
+  await query("begin");
+  try {
+    await query(`create role ${role} login password ${lit} nosuperuser nobypassrls nocreaterole nocreatedb`);
+    await query(`grant network_service to ${role}`);
+    await query(`do $$ begin execute format('grant connect on database %I to ${role}', current_database()); end $$`);
+    await query("commit");
+  } catch (e) {
+    await query("rollback").catch(() => {});
+    throw e;
+  }
   return { role, created: true };
 }
