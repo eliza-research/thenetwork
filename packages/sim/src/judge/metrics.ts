@@ -405,6 +405,8 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
       for (const id of r.participants) accept(id, r.proposalId);
       addOpp(r.proposalId, r.participants); addRoster(r.proposalId, r.participants);
     }
+    // A blocked pair must not meet, also when the block came after the meeting was booked.
+    if (r.type === "outcome") blockCheck(Object.keys(r.attendance).filter(id => r.attendance[id]!.showed), "blocked_pair_meeting", `outcome of meeting ${r.meetingId}`);
     if (r.type !== "message") continue;
     onMessage(r.msg);
   }

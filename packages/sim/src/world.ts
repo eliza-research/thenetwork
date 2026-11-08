@@ -114,6 +114,7 @@ export class World {
   private proposals = new Map<string, Proposal>();
   private meetings = new Map<string, MeetingReport & { id: string }>();
   private notices = new Set<string>(); // `${proposalId}|${memberId}` flake notices given
+  private cancelled = new Set<string>(); // meeting ids the Network called off before they happened
   private nameIndex: { re: RegExp; id: MemberId }[] = [];
   private meetingSeq = 0;
   private spawnSeq = 0;
@@ -201,6 +202,9 @@ export class World {
         this.rec({ type: "block", from, to });
       },
       log: (kind, detail) => {
+        // The Network called off an opportunity: a meeting of it that is still ahead does not happen.
+        if ((kind === "opportunity_closed" || kind === "meeting_cancelled") && typeof detail.proposalId === "string")
+          for (const m of this.meetings.values()) if (m.proposalId === detail.proposalId && m.at > this.clock.now()) this.cancelled.add(m.id);
         if (kind === "feedback") this.rec({ type: "feedback", memberId: detail.memberId as string, proposalId: detail.proposalId as string, text: String(detail.text ?? "") });
         else this.rec({ type: "network_log", kind, detail });
       },
@@ -468,6 +472,7 @@ export class World {
   }
 
   private onMeeting(meetingId: string) {
+    if (this.cancelled.has(meetingId)) return; // called off: no one meets, no outcome
     const m = this.meetings.get(meetingId)!;
     const prop = this.proposals.get(m.proposalId);
     const attendance: Record<MemberId, { showed: boolean; cancelledWithNotice: boolean; enjoyment: number }> = {};
