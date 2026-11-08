@@ -3710,7 +3710,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     const holds = [...this.members.values()].filter(m => !this.trust.ok(m.id) || m.minor || m.minorSignal || this.reportHeld(m.id)).map(m => ({ memberId: m.id, from: now - HOUR }));
     const reliability = Object.fromEntries([...this.members.values()].filter(m => m.noShows > 0).map(m => [m.id, { noShows: m.noShows, completedSinceLastNoShow: m.completedSinceNoShow }]));
-    const recent = [...this.opps.values()].filter(o => now - o.createdAt < 30 * DAY).map(o => this.toProposal(o));
+    const recentOpps = [...this.opps.values()].filter(o => now - o.createdAt < 30 * DAY);
+    const recent = recentOpps.map(o => this.toProposal(o));
+    // Rejected, expired or invalidated in review: nobody was contacted (engine dispatch.billOnlySent).
+    const unsent = recentOpps.filter(o => o.review && (o.review.decision === "reject" || o.review.decision === "expired" || o.review.invalidated)).map(o => o.id);
     const engineInput: EngineInput = {
       // A member with no valid age on the record who told us they are an adult (6.3) goes in with that age.
       now, members: snap.members.filter(m => nyc.has(m.id)).map(x => { const m = this.members.get(x.id); return !validAge(x.age) && m && !m.minor && validAge(m.statedAge) ? { ...x, age: m.statedAge } : x; }),
@@ -3722,7 +3725,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         // Attendees of a plan who both said they'd do it again (plans ask 8).
         ...[...this.planAgain].map(([k, at]) => { const [a, b] = k.split("|") as [string, string]; return { from: a, to: b, type: "would_interact_again" as const, strength: 0.8, explicit: false, createdAt: at }; }),
       ],
-      recentProposals: recent, safetyHolds: holds, feedback: this.feedback, interactions: this.interactions, reliability,
+      recentProposals: recent, unsentProposalIds: unsent, safetyHolds: holds, feedback: this.feedback, interactions: this.interactions, reliability,
       recentAsks: this.asks.map(a => ({ ...a })),
       exposureDebt: { ...this.exposureDebt },
     };
