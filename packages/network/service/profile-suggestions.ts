@@ -37,6 +37,9 @@ export interface SuggestionProposal {
 }
 /** Internal server context, never inferred from a suggestion or a model-selected owner. */
 export interface SuggestionCollectionClaim { batchId: string; turnId: string; requestSha256: string; commandSha256?: string }
+/** The signed review turn and request of a decide or delete; its result is stored on that turn for an exact retry. */
+export interface SuggestionReviewClaim { turnId: string; requestSha256: string }
+type StoredReview = { kind: "saved"; accepted: string[]; rejected: string[] } | { kind: "preview"; revision: number } | { kind: "deleted" };
 /** Collection scope is authority only when it exactly matches the original explicit member turn. */
 export function collectionProposalMatchesStoredCommand(input: SuggestionProposal, text: string, batchId: string, arrivedAt: number, now: number): boolean {
   const command = parseNetworkCollectionCommand(text), deadline = networkCollectionDeadline(arrivedAt, now);
@@ -113,6 +116,37 @@ export class ProfileSuggestions {
       and person_id=${owner.personId} and member_id=${member.id} and user_id=${owner.userId}
       and organization_id=${owner.organizationId} and chat_id=${owner.chatId} for update`;
     return rows[0] ? { ...rows[0], eligible: member.eligible } : undefined;
+  }
+
+  /** The review turn row, locked; its action receipts hold the result of an applied decide or delete. */
+  private async reviewTurn(tx: SQL, owner: SuggestionOwner, memberId: string, claim: SuggestionReviewClaim) {
+    const [turn] = await tx`select i.action_receipts from platform.inbound i join platform.people p on p.phone_hash=i.sender_hash and p.id=${owner.personId}
+      where i.id=${claim.turnId} and i.status='done' and i.response->>'app'=${owner.app} and i.response->>'memberId'=${memberId} for update of i`;
+    return turn as { action_receipts: Record<string, any> | null } | undefined;
+  }
+
+  private async storeReview(tx: SQL, claim: SuggestionReviewClaim, key: string, response: StoredReview) {
+    await tx`update platform.inbound set action_receipts=jsonb_set(coalesce(action_receipts,'{}'::jsonb),array[${key}],
+      ${{ state: "completed", requestHash: claim.requestSha256, response }}::jsonb) where id=${claim.turnId}`;
+  }
+
+  /** An exact retry of an applied decide or delete gets its stored result. undefined: not applied yet; null: denied. */
+  async priorReview(owner: SuggestionOwner, action: "decide" | "delete", batchId: string, claim: SuggestionReviewClaim, now: number):
+    Promise<SuggestionDecisionResult | { kind: "deleted" } | null | undefined> {
+    return this.sql.begin(async tx => {
+      const member = await this.owned(tx, owner);
+      if (!member) return null;
+      const turn = await this.reviewTurn(tx, owner, member.id, claim);
+      const prior = turn?.action_receipts?.[`profile-${action}:${batchId}`];
+      if (!prior) return undefined;
+      if (prior.state !== "completed" || prior.requestHash !== claim.requestSha256) return null;
+      const r = prior.response as StoredReview;
+      if (r.kind !== "preview") return r;
+      const b = await this.batch(tx, owner, batchId);
+      const preview = b && b.revision === r.revision ? await this.view(tx, b, this.fence?.now() ?? now) : null;
+      this.checkAuthority(preview ? b : undefined);
+      return preview ? { kind: "preview", batch: preview } : null;
+    });
   }
 
   private async view(tx: SQL, b: any, now: number): Promise<SuggestionReviewBatch | null> {
@@ -217,10 +251,16 @@ export class ProfileSuggestions {
     });
   }
 
-  async decide(owner: SuggestionOwner, input: { batchId: string; revision: number; decisions: SuggestionDecision[] }, now: number): Promise<SuggestionDecisionResult> {
+  async decide(owner: SuggestionOwner, input: { batchId: string; revision: number; decisions: SuggestionDecision[] }, now: number,
+    claim?: SuggestionReviewClaim): Promise<SuggestionDecisionResult> {
     if (!Number.isFinite(now)) return { kind: "denied" };
     return this.sql.begin(async tx => {
       const b = await this.batch(tx, owner, input.batchId);
+      const key = `profile-decide:${input.batchId}`;
+      if (claim) {
+        const turn = b && await this.reviewTurn(tx, owner, b.member_id, claim);
+        if (!turn || turn.action_receipts?.[key] || Object.keys(turn.action_receipts ?? {}).length >= 16) return { kind: "denied" };
+      }
       if (b && new Date(b.expires_at).getTime() <= (this.fence?.now() ?? now)) {
         await tx`update platform.profile_suggestions set status='expired',value=null,tags='{}' where batch_id=${b.id} and status='proposed'`;
         return { kind: "denied" };
@@ -244,6 +284,7 @@ export class ProfileSuggestions {
           set value=coalesce(${d.editedValue?.trim() ?? null},value),privacy_scope=coalesce(${d.scope ?? null},privacy_scope),
             tags=case when ${d.editedValue !== undefined} then '{}'::text[] else tags end where id=${d.suggestionId}`;
         const [updated] = await tx`update platform.profile_suggestion_batches set revision=revision+1 where id=${b.id} returning *`;
+        if (claim) await this.storeReview(tx, claim, key, { kind: "preview", revision: updated.revision });
         const preview = await this.view(tx, updated, this.fence?.now() ?? now);
         this.checkAuthority(b);
         return { kind: "preview", batch: preview! };
@@ -264,17 +305,24 @@ export class ProfileSuggestions {
         }
       }
       await tx`update platform.profile_suggestion_batches set revision=revision+1 where id=${b.id}`;
+      if (claim) await this.storeReview(tx, claim, key, { kind: "saved", accepted, rejected });
       this.checkAuthority(b);
       return { kind: "saved", accepted, rejected };
     });
   }
 
-  async deleteBatch(owner: SuggestionOwner, id: string): Promise<boolean> {
+  async deleteBatch(owner: SuggestionOwner, id: string, claim?: SuggestionReviewClaim): Promise<boolean> {
     return this.sql.begin(async tx => {
       const b = await this.batch(tx, owner, id);
       if (!b) return false;
+      const key = `profile-delete:${id}`;
+      if (claim) {
+        const turn = await this.reviewTurn(tx, owner, b.member_id, claim);
+        if (!turn || turn.action_receipts?.[key] || Object.keys(turn.action_receipts ?? {}).length >= 16) return false;
+      }
       this.checkAuthority();
       await tx`delete from platform.profile_suggestion_batches where id=${b.id}`;
+      if (claim) await this.storeReview(tx, claim, key, { kind: "deleted" });
       this.checkAuthority();
       return true;
     });

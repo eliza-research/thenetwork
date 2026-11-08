@@ -1,4 +1,4 @@
-import type { ProfileSuggestions, SuggestionOwner, SuggestionReviewBatch, SuggestionDecision } from "./profile-suggestions.ts";
+import type { ProfileSuggestions, SuggestionOwner, SuggestionReviewBatch, SuggestionDecision, SuggestionReviewClaim } from "./profile-suggestions.ts";
 
 export type { SuggestionReviewBatch } from "./profile-suggestions.ts";
 
@@ -50,10 +50,11 @@ export function parseSuggestionReview(text: string, batch: SuggestionReviewBatch
 }
 
 /** Only this store-backed entry verifies the full user/org binding and applies decisions. */
-export async function reviewSuggestionMessage(store: Pick<ProfileSuggestions, "getPendingBatch" | "decide">, owner: SuggestionOwner, batchId: string, text: string, now: number) {
+export async function reviewSuggestionMessage(store: Pick<ProfileSuggestions, "getPendingBatch" | "decide">, owner: SuggestionOwner, batchId: string, text: string, now: number,
+  claim?: SuggestionReviewClaim) {
   const batch = await store.getPendingBatch(owner, batchId, now);
   if (!batch) return null;
   const input = parseSuggestionReview(text, batch, owner, now);
   if (!input) return null;
-  return store.decide(owner, input, now);
+  return claim ? store.decide(owner, input, now, claim) : store.decide(owner, input, now);
 }
