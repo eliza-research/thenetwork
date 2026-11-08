@@ -351,4 +351,15 @@ describe.skipIf(!pgAvailable)("turn and consent", () => {
     expect([r.status, body.outcome, body.memberId]).toEqual([200, "open", opened.memberId]);
     expect(body.context.state).toBe("paused");
   }, 60_000);
+  test("SD-433: a member's free-chat reply (an open turn) counts as a reply in the thread", async () => {
+    const phone = "+12125550433";
+    await friendsByText("sd433", phone, "Kai, 29");
+    const person = (await service.accounts.personFor(phone))!;
+    clock.advance(10 * MINUTE);
+    const opened = await (await post(turn("sd433-open", phone, "Tell me something about the weather", "friends"))).json() as any;
+    expect(opened.outcome).toBe("open");
+    // The thread reply is recorded now: pending notify deliveries count as acted on and the channel is in use.
+    const [signal] = await sql`select last_used_at from notify.surface_signals where person_id = ${person.id} and surface = 'imessage'`;
+    expect(new Date(signal.last_used_at).getTime()).toBe(clock.now());
+  }, 60_000);
 });

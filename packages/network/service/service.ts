@@ -1262,8 +1262,9 @@ export class NetworkService implements RuntimeHost {
   private async memberMessage(rt: NetworkRuntime, memberId: MemberId, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, kw: ReturnType<typeof platformKeyword>, systemReply?: string, fromThread = true): Promise<InboundOutcome> {
     // Not from the thread: a profile from the member's AI assistant, learned but never an answer (InboundMessage.source).
     const out = await this.memberUnit(rt, memberId, ev, rowId, kw, systemReply, !fromThread);
-    // The member wrote in the thread: pending notify deliveries count as acted on (an assistant's submit_profile does not).
-    if (out === "handled" && fromThread && this.notify && kw !== "stop" && kw !== "stop_all" && !profileReadRequest(ev.text, this.apps)) {
+    // The member wrote in the thread (a handled turn, or free chat with the agent): pending notify deliveries count as
+    // acted on (an assistant's submit_profile does not).
+    if ((out === "handled" || out === "open") && fromThread && this.notify && kw !== "stop" && kw !== "stop_all" && !profileReadRequest(ev.text, this.apps)) {
       const personId = await this.personOfMember(rt, memberId);
       if (personId) await this.notify.threadReply(personId, ev.transport === "sms" ? "sms" : "imessage", this.clock.now()).catch(e => this.log(`[notify] thread reply not recorded: ${(e as Error).message}`));
     }
