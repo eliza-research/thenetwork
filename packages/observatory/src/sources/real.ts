@@ -20,7 +20,7 @@ import { describe, onTimeline, requestLabel, type EventRow } from "../events.ts"
 import { ALERT_WINDOW, growthStats, healthAlerts, hours, reportsFromCases, safetyInfo, scorecard, type MsgMeta } from "../health.ts";
 import { memberFacets } from "../appProfile.ts";
 import { displayName, scrubFacet, scrubText } from "../scrub.ts";
-import { emptyCounters, Store, zeroCounts } from "../store.ts";
+import { edgeId, emptyCounters, Store, zeroCounts } from "../store.ts";
 import type {
   BiasReportView, HeldQueue, HeldText, BookedPlan, ConfigChange, ConfigInfo, ControlCommand, ControlResult, EngineRunSummary, EnvInfo, FeedKind, MemberDetail, MemberPhoto, MemberStatus, MemberTimeline, NetworkInfo,
   ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsMessage, ObsOpportunity, ObsRequest, ObsState, OpportunityDetail, ParticipantStatus, ReviewInfo,
@@ -378,11 +378,10 @@ export class RealSource implements DataSource {
       };
       upsertIfChanged(s.members, m, x => s.upsertMember(x));
     }
-    for (const r of edges as any[]) {
-      if (!s.members.has(r.from_id) || !s.members.has(r.to_id)) continue;
-      const e = { from: r.from_id, to: r.to_id, type: r.type as EdgeType, strength: r.strength, createdAt: ms(r.created_at) ?? 0, origin: (r.explicit ? "graph" : "learned") as ObsEdge["origin"] };
-      s.addEdge(e);
-    }
+    // Exactly the database's edges: the forget path deletes the ones that name a member who left.
+    s.setEdges((edges as any[]).filter(r => s.members.has(r.from_id) && s.members.has(r.to_id)).map(r => ({
+      id: edgeId(r.type, r.from_id, r.to_id), from: r.from_id, to: r.to_id, type: r.type as EdgeType, strength: r.strength, createdAt: ms(r.created_at) ?? 0, origin: (r.explicit ? "graph" : "learned") as ObsEdge["origin"],
+    })));
     const partsBy = new Map<string, any[]>();
     for (const p of parts as any[]) { if (!partsBy.has(p.opportunity_id)) partsBy.set(p.opportunity_id, []); partsBy.get(p.opportunity_id)!.push(p); }
     const told = new Map<string, Record<string, number>>(), times = new Map<string, NonNullable<ObsOpportunity["times"]>>(), cancelled = new Map<string, BookedPlan["cancelled"]>();
@@ -412,6 +411,9 @@ export class RealSource implements DataSource {
       if (o.meetingAt !== undefined && told.has(r.id)) o.booked = { at: o.meetingAt, optOutHours: BOOKED_OPT_OUT_HOURS, told: told.get(r.id)!, cancelled: cancelled.get(r.id) ?? {} };
       upsertIfChanged(s.opps, o, x => s.upsertOpp(x));
     }
+    // An opportunity the database no longer has (the forget path, PgStore.save) leaves too; shadow runs are the console's own.
+    const dbOpps = new Set((opps as any[]).map(r => r.id as string));
+    for (const o of [...s.opps.values()]) if (o.source !== "shadow" && !dbOpps.has(o.id)) s.removeOpp(o.id);
     const dbRuns = (runs as any[]).map(r => r.summary as EngineRunSummary).reverse();
     const allRuns = [...dbRuns, ...this.shadowRuns];
     if (JSON.stringify(allRuns.map(r => r.id)) !== JSON.stringify(s.runs.map(r => r.id))) { s.runs.length = 0; for (const r of allRuns) s.addRun(r); }
