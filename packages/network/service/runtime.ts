@@ -338,8 +338,8 @@ export class NetworkRuntime {
    * about an opportunity that closed.
    */
   async start() {
-    // The ledger starts from what is stored (events this process did not emit), oldest first.
-    for (const r of await this.scoped(tx => tx`select event from network.capital_events where app_id = ${this.app.id} order by t, id`) as any[]) {
+    // The ledger starts from what is stored (events this process did not emit), in the order it accepted them (seq).
+    for (const r of await this.scoped(tx => tx`select event from network.capital_events where app_id = ${this.app.id} order by seq`) as any[]) {
       try { this.capital.ledger.record(typeof r.event === "string" ? JSON.parse(r.event) : r.event); } catch { /* out of order: counted by the wiring only for new events */ }
     }
     if (!this.adapter.enqueue) {await this.projectNotifications();return;}

@@ -86,4 +86,30 @@ describe.skipIf(!pgAvailable)("the network capital ledger in the service (Postgr
     await restarted.start();
     expect(restarted.runtimeFor("friends")!.capital.ledger.isEligible(id)).toBe(false);
   }, T);
+
+  test("SD-153 a restart replays the stored ledger events in the order the ledger accepted them", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const s = service(clock);
+    const hp = newPhone(), rp = newPhone();
+    await text(s, clock, hp, "Sol 36");
+    await text(s, clock, rp, "Ana 29");
+    const helper = (await memberOf("friends", hp))!, recipient = (await memberOf("friends", rp))!;
+    const rt = s.runtimeFor("friends")!;
+    // One help round: the Network's emitter sends help_given, then help_confirmed, at one time (helpFeedback, network.ts).
+    await rt.unitOfWork(n => {
+      const emit = (n as unknown as { emit(e: object, key: string): void }).emit.bind(n);
+      emit({ type: "help_given", helper, recipient, helpId: "o_help" }, "o_help");
+      emit({ type: "help_confirmed", helpId: "o_help", recipient, useful: true }, "o_help");
+    });
+    expect((await sql`select type from network.capital_events where app_id = 'friends' and id like 'help_%'`).length).toBe(2);
+    const live = rt.capital.ledger.balance(helper);
+    expect(live).toBeGreaterThan(0);
+    await s.close();
+    const restarted = service(clock);
+    await restarted.start();
+    const replayed = restarted.runtimeFor("friends")!.capital.ledger;
+    expect(replayed.balance(helper)).toBe(live);
+    expect(replayed.rejected()).toEqual([]);
+  }, T);
 });
