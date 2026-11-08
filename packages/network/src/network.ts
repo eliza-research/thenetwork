@@ -3277,6 +3277,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.lastTick = now;
     // The member records can change between units (staff edits, the member's settings): read them again first.
     for (const m of [...this.members.values()]) this.syncMember(m);
+    for (const r of this.snapshotCached().members as MemberRecord[]) this.personHold(r);
     // Deferred sends whose window may have come. Each one runs every send-time check again.
     const waiting = this.deferred; this.deferred = [];
     for (const d of waiting) {
@@ -4444,6 +4445,21 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** At the start of a unit: read the record again, and take a member the record now keeps out of matching out of every open opportunity. */
   private syncMember(m: MemberState) {
     if (this.syncRecord(m) && this.busy(m.id, undefined, true)) this.dropMember(m.id, m.account ? `account ${m.account}` : "minors policy");
+    this.personHold(this.record(m.id));
+  }
+
+  /**
+   * A safety hold is on the person (PRD 40.3): the production snapshot names the actor of a hold that
+   * covers this member (platform.person_holds). A join on another app, a rejoin under a new member id
+   * and an app the staff hold loop did not reach are held here like a staff hold (SD-021, SD-022).
+   */
+  private personHold(r: MemberRecord | undefined) {
+    if (r?.safetyHold && !this.declinedIds.has(r.id) && this.trust.level(r.id) !== "hold") this.holdMember(r.id, r.safetyHold);
+  }
+
+  /** Safety state that a leave must not clear (SD-021): a hold, an urgent report waiting for staff, or a report that they are a minor. */
+  safetyHeld(id: MemberId): boolean {
+    return this.trust.level(id) === "hold" || this.reportHeld(id) || !!this.members.get(id)?.minorReported;
   }
 
   member(id: MemberId): MemberState {
@@ -4980,7 +4996,7 @@ export interface NetworkState {
 }
 
 /** A member record as the snapshot gives it. The production snapshot also carries the account status (service/snapshot.ts). */
-type MemberRecord = WorldSnapshot["members"][number] & { accountStatus?: string };
+type MemberRecord = WorldSnapshot["members"][number] & { accountStatus?: string; safetyHold?: string };
 /** An engine proposal, routed to a seat's hiring manager when it was for a job seat (seatRoute). */
 type SeatProposal = EngineProposal & { seat?: { id: MemberId; manager: MemberId } };
 

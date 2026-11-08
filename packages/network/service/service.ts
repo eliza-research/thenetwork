@@ -109,7 +109,7 @@ export function turnSecretProblem(env: Record<string, string | undefined> = proc
 /** The tables the service needs (bun run db:migrate). */
 const REQUIRED_TABLES = [
   ...["members", "channel_identities", "facets", "intents", "presence", "edges", "messages", "events", "matching_runs", "staff_audit", "network_state", "opportunities", "review_items", "requests"].map(t => `network.${t}`),
-  ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "app_lines", "share_grants", "eliza_notices"].map(t => `platform.${t}`),
+  ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "person_holds", "app_lines", "share_grants", "eliza_notices"].map(t => `platform.${t}`),
 ];
 /** The dev-only key for keyed phone hashes (the platform's own default). Production needs PLATFORM_HASH_KEY. */
 const DEV_HASH_KEY = "dev-only-platform-hash-key";
@@ -758,7 +758,7 @@ export class NetworkService implements RuntimeHost {
       onForget: async (ctx: MemberHookContext) => {
         // The app's photos go first (leave, delete everything, a new owner of the number).
         await this.photos.deleteFor(ctx.personId, ctx.app.id);
-        await this.forget(ctx.app, ctx.memberId);
+        await this.forget(ctx.app, ctx.memberId, ctx.personId);
         // Other parts of the backend that hold data about the person in this app (the MCP server's OAuth grants).
         for (const f of this.forgetListeners) {
           try { await f(ctx); } catch (e) { this.log(`[forget] listener failed for ${ctx.app.id}: ${(e as Error).message}`); }
@@ -818,9 +818,14 @@ export class NetworkService implements RuntimeHost {
   onForget(fn: (ctx: MemberHookContext) => Promise<unknown> | unknown) { this.forgetListeners.push(fn); }
 
   /** Leave one app: the Network forgets the member, then the save deletes every row that names them (the forget path). */
-  private async forget(app: AppInfo, memberId: MemberId) {
+  private async forget(app: AppInfo, memberId: MemberId, personId?: string) {
     const rt = await this.runtimeOfMember(app.id, memberId) ?? this.runtimeFor(app.id);
     if (!rt) return;
+    // A leave never clears a hold, an urgent report waiting for staff or a minor report (SD-021): the
+    // person keeps a hold on this app until staff lift it, and a rejoin under a new member id is held.
+    if (personId && (await rt.readState(n => n.safetyHeld(memberId)))) {
+      await this.sql`insert into platform.person_holds (person_id, app_id, held_by, at) values (${personId}, ${app.id}, 'safety_carryover', ${new Date(this.clock.now())}) on conflict do nothing`;
+    }
     await rt.unitOfWork(n => { n.forgetMember(memberId); rt.unit.forget.add(memberId); });
   }
 
@@ -1537,8 +1542,29 @@ export class NetworkService implements RuntimeHost {
     return this.staffAction(rt, user, "review", { type: "opportunity", id: oppId }, detail, n => n.decide(oppId, decision, opts));
   }
 
-  liftHold(user: StaffUser, memberId: MemberId, note?: string, rt = this.main) {
-    return this.staffAction(rt, user, "safety", { type: "member", id: memberId }, { safety: "lift_hold" }, n => n.liftHold(memberId, user.id, note));
+  /**
+   * Lift a member's hold on this app (only a person can). The hold on the person goes too
+   * (platform.person_holds): this app's row, and a hold on every app, which only safety@* (or admin@*)
+   * may lift. The other apps of a hold on every app keep a row each, so each app's hold still follows
+   * the person until staff of that app lift it.
+   */
+  async liftHold(user: StaffUser, memberId: MemberId, note?: string, rt = this.main): Promise<ActionResult> {
+    const target = { type: "member" as const, id: memberId };
+    const personId = await this.personOfMember(rt, memberId);
+    const everyApp = personId ? (await this.sql`select held_by from platform.person_holds where person_id = ${personId} and app_id = '*'`)[0] as { held_by: string } | undefined : undefined;
+    if (everyApp && !crossAppSafety(user)) return this.refused(user, rt, "lift_hold", target, "needs_safety_everywhere");
+    return this.audited(rt, user, target, { safety: "lift_hold" }, async () => {
+      if (personId) await this.sql.begin(async tx => {
+        if (everyApp) {
+          const at = new Date(this.clock.now());
+          for (const m of await this.people.memberships(personId)) if (m.app !== rt.app.id && m.state !== "removed" && m.state !== "invited") {
+            await tx`insert into platform.person_holds (person_id, app_id, held_by, at) values (${personId}, ${m.app}, ${everyApp.held_by}, ${at}) on conflict do nothing`;
+          }
+        }
+        await tx`delete from platform.person_holds where person_id = ${personId} and app_id in (${rt.app.id}, '*')`;
+      });
+      return rt.unitOfWork(n => n.liftHold(memberId, user.id, note));
+    });
   }
 
   closeCase(user: StaffUser, caseId: string, note?: string, rt = this.main) {
@@ -1678,8 +1704,16 @@ export class NetworkService implements RuntimeHost {
     const all = await this.membersOfPerson(rt, memberId);
     const members = crossAppSafety(user) ? all.members : all.members.filter(x => x.rt === rt);
     return this.audited(rt, user, { type: "member", id: memberId }, { safety: "hold", reportId: reportId ?? null, scope: members.length > 1 ? "every_app" : "this_app" }, async () => {
+      // The hold is on the person first (PRD 40.3): a join on another app, a rejoin under a new member id,
+      // and an app this loop does not reach (a stop between units) are held from the snapshot (SD-021, SD-022).
+      const scope = crossAppSafety(user) ? "*" : rt.app.id;
+      const wrote = !!all.personId && (await this.sql`insert into platform.person_holds (person_id, app_id, held_by, at)
+        values (${all.personId}, ${scope}, ${user.id}, ${new Date(this.clock.now())}) on conflict do nothing returning 1`).length > 0;
       const r = await rt.unitOfWork(n => n.holdMember(memberId, user.id, note, reportId));
-      if (!r.ok) return r;
+      if (!r.ok) {
+        if (wrote) await this.sql`delete from platform.person_holds where person_id = ${all.personId!} and app_id = ${scope}`;
+        return r;
+      }
       // One network at a time (never one unit inside another: no lock order to get wrong).
       for (const x of members) if (!(x.rt === rt && x.memberId === memberId)) await x.rt.unitOfWork(o => o.holdMember(x.memberId, user.id, note));
       return r;
