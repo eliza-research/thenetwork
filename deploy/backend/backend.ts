@@ -22,7 +22,7 @@ import { otpConfigProblems } from "../../packages/platform/src/otp-config.ts";
 // request loses every proxy and forwarding header, so a client can never pick either one.
 import { appForHost, stagingSiteOrigins, DEFAULT_HOST_MAP, isAppId, type AppId } from "../../packages/platform/src/apps.ts";
 import { requirePlatformEnv, type Env, type PlatformEnv } from "../../packages/platform/src/env.ts";
-import { isProxyHeader, PROXY_HEADERS, verifyProxyHeaders } from "../../packages/platform/src/proxy.ts";
+import { isProxyHeader, PROXY_HEADERS, signedPath, signProxyHeaders, verifyProxyHeaders } from "../../packages/platform/src/proxy.ts";
 import { timingSafeEqual } from "node:crypto";
 import { opsConfigFromEnv, type OpsConfig } from "./ops.ts";
 import { networkRoutePolicy } from "../../packages/network/service/route-authority.ts";
@@ -58,6 +58,8 @@ export interface BackendConfig {
   /** The staff API listener; undefined when BACKEND_STAFF=off. */
   staff?: { host: string; port: number };
   proxySecret?: string;
+  /** PLATFORM_PROXY_SECRET_PREVIOUS: during a rotation, the old value that sites not yet deployed still sign with (docs/deploy.md 3.4). */
+  proxySecretPrevious?: string;
   /** Extra site hosts for previews and staging: BACKEND_EXTRA_HOSTS="pr-1-slop.example.workers.dev=slop,...". */
   hostMap: Record<string, AppId>;
   build: string;
@@ -88,6 +90,7 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   const missing: string[] = [];
   if (!databaseUrl) missing.push("DATABASE_URL (or NETWORK_DATABASE_URL)");
   const proxySecret = e.PLATFORM_PROXY_SECRET || undefined;
+  const proxySecretPrevious = (proxySecret && e.PLATFORM_PROXY_SECRET_PREVIOUS) || undefined;
   if (deployed) {
     for (const k of ["PLATFORM_HASH_KEY", "PLATFORM_SESSION_SECRET", "TURNSTILE_SECRET_KEY"]) if (!e[k]) missing.push(k);
     missing.push(...otpConfigProblems(e));
@@ -100,7 +103,7 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   if (deployed && migrateOnBoot && !migrationUrl) missing.push("MIGRATION_DATABASE_URL (or MIGRATE_ON_BOOT=0)");
   if (deployed && migrationUrl && databaseUrl && migrationUrl === databaseUrl) throw new Error("MIGRATION_DATABASE_URL must be a different login from the service's NETWORK_DATABASE_URL");
   if (missing.length) throw new Error(`PLATFORM_ENV=${env} needs ${missing.join(", ")}`);
-  if (proxySecret && proxySecret.length < SECRET_MIN) throw new Error(`PLATFORM_PROXY_SECRET must be at least ${SECRET_MIN} characters`);
+  for (const [k, v] of [["PLATFORM_PROXY_SECRET", proxySecret], ["PLATFORM_PROXY_SECRET_PREVIOUS", proxySecretPrevious]] as const) if (v && v.length < SECRET_MIN) throw new Error(`${k} must be at least ${SECRET_MIN} characters`);
   // The session token hashes have a key of their own (packages/platform/src/env.ts bootConfigProblems), never the hash key (SD-164).
   for (const k of ["PLATFORM_HASH_KEY", "PLATFORM_SESSION_SECRET"]) if (deployed && e[k]!.length < SECRET_MIN) throw new Error(`${k} must be at least ${SECRET_MIN} characters`);
   // The leak guard's log labels are keyed in staging and production (core-6); dev and sims stay unkeyed and reproducible.
@@ -159,7 +162,7 @@ export function loadConfig(e: Env = process.env, argv: string[] = []): BackendCo
   return {
     env, deployed, databaseUrl: databaseUrl!, migrationUrl: migrationUrl ?? databaseUrl!, host, port,
     staff: staffOff ? undefined : { host: staffHost, port: staffPort },
-    proxySecret, hostMap,
+    proxySecret, ...(proxySecretPrevious ? { proxySecretPrevious } : {}), hostMap,
     build,
     migrateOnBoot,
     channel,
@@ -235,15 +238,24 @@ export function captureConsole(log: Logger) {
  * host is a site the platform knows): Host and the URL become the site's host, and the signed headers
  * stay, so the same check further in still passes. Otherwise every proxy and forwarding header is
  * removed and the app comes from the request's own Host (which, on the deployed origin, names no app).
+ * `previous` (a secret rotation): a request signed with it is signed again with `secret`, so the checks
+ * further in, which know only `secret`, pass too.
  */
-export async function normalizeEdge(req: Request, secret: string | undefined, hostMap: Record<string, AppId>, nowMs: number = Date.now()): Promise<{ req: Request; app?: AppId; edge: boolean }> {
+export async function normalizeEdge(req: Request, secret: string | undefined, hostMap: Record<string, AppId>, nowMs: number = Date.now(), previous?: string): Promise<{ req: Request; app?: AppId; edge: boolean }> {
   const headers = new Headers(req.headers);
   const url = new URL(req.url);
-  const v = await verifyProxyHeaders(req, secret, Math.floor(nowMs / 1000));
+  const nowS = Math.floor(nowMs / 1000);
+  let v = await verifyProxyHeaders(req, secret, nowS);
+  let resign = false;
+  if (!v && secret && previous) { v = await verifyProxyHeaders(req, previous, nowS); resign = !!v; }
   const signedApp = v ? appForHost(v.host, hostMap) : undefined;
   let app = signedApp;
   for (const h of STRIP) headers.delete(h);
   if (v && app) {
+    if (resign) {
+      const signed = await signProxyHeaders(secret!, { method: req.method, path: signedPath(url), host: v.host, ip: v.ip, ts: Number(req.headers.get(PROXY_HEADERS.ts)) });
+      for (const [k, val] of Object.entries(signed)) headers.set(k, val);
+    }
     headers.set("host", v.host);
     url.host = v.host;
     url.protocol = "https:";
@@ -355,7 +367,7 @@ export function createBackend(d: BackendDeps) {
       } else if (draining) {
         res = json(503, { ok: false, error: "shutting_down" });
       } else if (path === "/api" || path.startsWith("/api/")) {
-        const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)());
+        const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)(), c.proxySecretPrevious);
         app = n.app;
         // Deployed, only a request a site router signed may name a site (audit: a direct request with
         // Host: slop.date was served as slop.date, and every such request shared one socket IP).
@@ -365,7 +377,7 @@ export function createBackend(d: BackendDeps) {
         res = INTERNAL_PATHS.has(path) && Number(req.headers.get("content-length") ?? "0") > internalCap(path) ? json(413, { ok: false, error: "payload_too_large" }) : await track(svc.fetch(req));
       } else if (MCP_PATH.test(path)) {
         // The MCP server sees the same normalized request as the public API: Host is the site's host only via a verified edge.
-        const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)());
+        const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)(), c.proxySecretPrevious);
         app = n.app;
         res = c.deployed && !n.edge ? json(421, { ok: false, error: "edge_required" }) : (d.mcp && (await track(d.mcp(n.req)))) || json(404, { ok: false, error: "mcp_not_enabled" });
       } else {

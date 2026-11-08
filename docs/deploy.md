@@ -118,6 +118,7 @@ Set these in **Variables**. Mark each **secret** row as a sealed variable. Never
 | `PLATFORM_SESSION_SECRET` | **yes** | 32+ random bytes, for example `openssl rand -base64 48` | Keys the stored session token hashes and the Cloud seal. Use a value of its own, not `PLATFORM_HASH_KEY`. `loadConfig` refuses to start staging or production without it. A change ends every open session. |
 | `LEAK_LABEL_KEY` | **yes** | 32+ random bytes, for example `openssl rand -base64 48` | Keys the leak guard's log labels (core-6), so a stored label cannot be matched against guessed values. `loadConfig` refuses to start staging or production without it. Dev and the simulations stay unkeyed. |
 | `PLATFORM_PROXY_SECRET` | **yes** | 32+ random characters | The same value goes into each site Worker (section 3). |
+| `PLATFORM_PROXY_SECRET_PREVIOUS` | no | unset; during a rotation, the old `PLATFORM_PROXY_SECRET` | The backend also accepts a site signature made with this value (section 3.4). Remove it when every site has the new value. |
 | `TURNSTILE_SECRET_KEY` | **yes** | From Cloudflare Turnstile | One widget per site domain, or one widget listing all four |
 | `TURNSTILE_SITE_KEY` | no (public) | The same Turnstile widget | The MCP sign-in page (`/oauth/authorize` on each site) shows the widget. Without it the MCP server stays off (404 `mcp_not_enabled`). The `oauth` schema is a migration (`9001_oauth_schema`, packages/mcp/db/oauth.sql); the service login only reads and writes it. The widget's hostnames: each domain, its `www` name and its `<project>.pages.dev`. |
 | `MCP_CUSTOM_CHATGPT_SLOP` | no | unset or `off` | Default off. `on` requires founder approval for the private real-account pilot at `https://slop.date/mcp`. Keep the public OpenAI plugin exclusion. |
@@ -329,6 +330,12 @@ for S in https://ntwrk-party.pages.dev https://slop-date.pages.dev https://peon-
 done
 curl -s https://api.ntwrk.party/api/app                      # 421 edge_required: the origin alone names no site
 ```
+
+### 3.4 Rotating PLATFORM_PROXY_SECRET (founder approval only)
+
+1. On the backend, set `PLATFORM_PROXY_SECRET_PREVIOUS` to the current value and `PLATFORM_PROXY_SECRET` to the new value, then redeploy it. The backend now accepts both signatures, so every site keeps working.
+2. Put the new value into each Pages project and deploy it (3.1). A site that is not yet deployed still signs with the old value and still works.
+3. When all four sites are deployed with the new value, remove `PLATFORM_PROXY_SECRET_PREVIOUS` from the backend and redeploy it.
 
 ### Isolated staging site authorities
 
