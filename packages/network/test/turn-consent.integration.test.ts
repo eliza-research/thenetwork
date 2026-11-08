@@ -5,7 +5,8 @@
 import {afterAll, beforeAll, describe, expect, test} from "bun:test";
 import {createHash, randomUUID} from "node:crypto";
 import {SQL} from "bun";
-import {SimClock, MINUTE} from "@thenetwork/core";
+import {SimClock, MINUTE, DAY} from "@thenetwork/core";
+import {APPS} from "../../platform/src/apps.ts";
 import {applySchema, devPgUp, DEV_PG_PORT} from "../../observatory/db/dev-pg.ts";
 import {pgAvailable} from "../../observatory/test/pg.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
@@ -93,5 +94,18 @@ describe.skipIf(!pgAvailable)("turn and consent", () => {
     // An ordinary turn still waits for the running one.
     clock.advance(1000);
     expect(await (await post(turn("sd002-chat-2", phone, "hello?"))).json()).toEqual({error: "turn_busy", retryable: true});
+  }, 60_000);
+  test("SD-004: the 2-day retention purge does not cut the 30-day STOP hint gap", async () => {
+    const phone = "+12125550204", hint = APPS.ntwrk.brand.stoppedHint;
+    expect((await post(turn("sd004-stop", phone, "STOP"))).status).toBe(200);
+    clock.advance(MINUTE);
+    const first = await (await post(turn("sd004-hi", phone, "hi there"))).json() as any;
+    expect(first.replies).toContain(hint);
+    // The retention tick runs every minute in production (serve.ts startTicks).
+    clock.advance(3 * DAY);
+    await service.purge();
+    const second = await (await post(turn("sd004-hi-again", phone, "hello again"))).json() as any;
+    expect(second.outcome).toBe("handled");
+    expect(second.replies).not.toContain(hint);
   }, 60_000);
 });

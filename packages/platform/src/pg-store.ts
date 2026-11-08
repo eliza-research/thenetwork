@@ -234,8 +234,10 @@ export class PgPeopleStore implements PeopleStore {
       const [prev] = await tx`select max(last_at) as last_at, coalesce(sum(count) filter (where window_start = ${start}), 0)::int as n from platform.rate_limits where bucket = ${bucket}`;
       const prevAt = ms(prev?.last_at), n = (prev?.n as number) ?? 0;
       if ((rule.limit !== undefined && n >= rule.limit) || (rule.minGapMs !== undefined && prevAt !== null && at - prevAt < rule.minGapMs)) return { count: n + 1, prevAt, ok: false };
-      const [r] = await tx`insert into platform.rate_limits (bucket, window_start, count, last_at) values (${bucket}, ${start}, 1, ${ts(at)})
-        on conflict (bucket, window_start) do update set count = platform.rate_limits.count + 1, last_at = excluded.last_at returning count`;
+      // A minimum gap outlives the retention purge: the row stays until the gap ends.
+      const keepUntil = rule.minGapMs !== undefined ? ts(at + rule.minGapMs) : null;
+      const [r] = await tx`insert into platform.rate_limits (bucket, window_start, count, last_at, keep_until) values (${bucket}, ${start}, 1, ${ts(at)}, ${keepUntil})
+        on conflict (bucket, window_start) do update set count = platform.rate_limits.count + 1, last_at = excluded.last_at, keep_until = excluded.keep_until returning count`;
       // Old windows are not needed after the next one starts.
       await tx`delete from platform.rate_limits where bucket = ${bucket} and window_start < ${new Date(start.getTime() - windowMs)}`;
       return { count: r!.count as number, prevAt, ok: true };
@@ -283,7 +285,7 @@ export class PgPeopleStore implements PeopleStore {
       let n = 0;
       n += (await tx`delete from platform.otp_challenges where expires_at < ${b} returning 1`).length;
       n += (await tx`delete from platform.sessions where expires_at < ${b} or revoked_at < ${b} returning 1`).length;
-      n += (await tx`delete from platform.rate_limits where last_at < ${b} returning 1`).length;
+      n += (await tx`delete from platform.rate_limits where last_at < ${b} and (keep_until is null or keep_until < ${b}) returning 1`).length;
       n += (await tx`delete from platform.pending_texts where at < ${b} returning 1`).length;
       n += (await tx`delete from platform.phone_changes where confirmed_at is null and requested_at < ${b} returning 1`).length;
       return n;
