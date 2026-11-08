@@ -815,11 +815,11 @@ export function mergeReading(p0: SlopOnboarding, r: Reading, text: string): Slop
   if (r.gender) p.gender = field(r.gender, turn, text);
   if (r.identity) p.identity = field(r.identity, turn, text);
   if (r.orientation) p.orientation = field(r.orientation, turn, text);
-  if ((r.gender || r.orientation) && !r.seeks && !r.seeksNeg.length && p.seeks && p.seeks.confidence <= 0.7) {
+  if ((r.gender || r.orientation) && !r.seeks && !r.seeksNeg.length && p.seeks && p.seeks.source !== "llm" && p.seeks.confidence <= 0.7) {
     delete p.seeks;
   }
   if (r.seeks) {
-    const derived = p.seeks && p.seeks.confidence <= 0.7;
+    const derived = p.seeks && p.seeks.source !== "llm" && p.seeks.confidence <= 0.7;
     const value = r.additive && p.seeks && !derived ? [...new Set([...p.seeks.value, ...r.seeks.value])].sort() : r.seeks.value;
     p.seeks = field({ ...r.seeks, value: value.filter(g => !r.seeksNeg.includes(g)) }, turn, text);
   } else if (r.seeksNeg.length && p.seeks) {
