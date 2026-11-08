@@ -114,7 +114,8 @@ The suites ran one after the other, with `nice -n 10`, on a shared machine (load
 |---|---|
 | `bun run typecheck` | exit 0 |
 | `bun run test:e2e` | 42 pass, 1 skip (Playwright), 0 fail |
-| `bun run test:integration` | 766 pass, 8 skip, 22 fail (these also fail on main, see below) |
+| `bun run test:integration` (Bun 1.4.2, as pinned in CI) | 788 pass, 8 skip, 0 fail (796 tests, 76 files) |
+| `bun run test:integration` (local Bun 1.3.14) | 766 pass, 8 skip, 22 fail (see below) |
 | `bun run sim` | 327/327 blocking gates pass |
 
 All 22 failures are in Observatory real-mode and network Postgres files, which this branch does not change (`git diff main -- packages/observatory/src packages/observatory/db packages/network` is empty). The errors came from the shared dev database, for example `relation "network.network_state_console_cross_app" does not exist`, while other sessions used it. The `relation ... does not exist` lines are noise: `apps.test.ts` renames that view on purpose. The real error is `Could not read the network schema: Failed to read data`, from the Postgres driver. Postgres had 19 of 100 connections in use, so the cause is not too many connections.
@@ -127,7 +128,9 @@ When each file ran alone on this branch, `shared-agent.integration` (14 pass) an
 - `apps`: 2
 - `server`, `consent` and `staff`: 1 each
 
-On a clean `main` worktree with the same database, `real-console` failed with the same 6 tests and the same error. `real-service` and `apps` failed with the same 5 tests. So these failures exist on main in this environment, and they are not from this branch. They are not diagnosed further here.
+On a clean `main` worktree with the same database, `real-console` failed with the same 6 tests and the same error. `real-service` and `apps` failed with the same 5 tests. So these failures exist on main in this environment, and they are not from this branch.
+
+**Cause:** the local Bun version. This machine has Bun 1.3.14, but `.github/workflows/ci.yml` pins Bun 1.4.2. `Failed to read data` is an error from Bun's built-in SQL client. With Bun 1.4.2 (`npm i bun@1.4.2`), the full `bun run test:integration` passes: 788 pass, 8 skip, 0 fail.
 
 `bun run sim` (one full run, at the end): exit 0, 327 of 327 blocking gates pass, 14 tracked gates off target, 364.6 s. The run made no model calls (the sim clears the provider keys).
 
