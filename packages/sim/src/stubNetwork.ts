@@ -135,11 +135,12 @@ export class StubNetwork implements NetworkUnderTest {
 
   // ------------------------------------------------------------------ tick
   async tick(now: number) {
-    // Deferred proactive invites (they came due during someone's quiet hours).
+    // Deferred proactive invites (they came due during someone's quiet hours). Only to a member who is still
+    // invited: STOP during the deferral drops the invite (dropFromOpenOpps).
     const waiting = this.deferred; this.deferred = [];
     for (const d of waiting) {
       const opp = this.opps.get(d.pid);
-      if (opp?.stage === "inviting") this.invite(this.member(d.memberId), opp, now);
+      if (opp?.stage === "inviting" && opp.invites.get(d.memberId)?.status === "pending") this.invite(this.member(d.memberId), opp, now);
     }
     for (const opp of this.opps.values()) this.advance(opp, now);
     for (const city of ["sf", "nyc"] as City[]) {
