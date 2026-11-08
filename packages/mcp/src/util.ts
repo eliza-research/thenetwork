@@ -1,5 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { readCappedText } from "@thenetwork/platform/src/body.ts";
+import { cookiePartIndex, cookiePartValue, hasDuplicateKey, pkceChallengeShape, pkceVerifierShape } from "./request-core.ts";
 
 export const sha256hex = (s: string) => createHash("sha256").update(s).digest("hex");
 export const randomToken = (prefix = "") => prefix + randomBytes(32).toString("base64url");
@@ -14,10 +15,10 @@ export function safeEqual(a: string, b: string): boolean {
 export function pkceS256(verifier: string): string {
   return createHash("sha256").update(verifier, "ascii").digest("base64url");
 }
-/** RFC 7636 4.1: 43-128 characters of [A-Z a-z 0-9 - . _ ~]. */
-export const validVerifier = (v: unknown): v is string => typeof v === "string" && /^[A-Za-z0-9\-._~]{43,128}$/.test(v);
-/** A S256 challenge is 43 base64url characters. */
-export const validChallenge = (v: unknown): v is string => typeof v === "string" && /^[A-Za-z0-9\-_]{43}$/.test(v);
+/** RFC 7636 4.1: 43-128 characters of [A-Z a-z 0-9 - . _ ~] (request-core.ts, proved). */
+export const validVerifier = (v: unknown): v is string => typeof v === "string" && pkceVerifierShape(v);
+/** A S256 challenge is 43 base64url characters (request-core.ts, proved). */
+export const validChallenge = (v: unknown): v is string => typeof v === "string" && pkceChallengeShape(v);
 
 export const NO_STORE = { "cache-control": "no-store", pragma: "no-cache" };
 
@@ -34,10 +35,8 @@ export async function readForm(req: Request): Promise<URLSearchParams | undefine
   const text = await readCappedText(req, 16_384);
   if (text === "too_large") return undefined;
   const form = new URLSearchParams(text);
-  // RFC 6749 3.1 / 3.2: a parameter must not appear more than once.
-  const seen = new Set<string>();
-  for (const k of form.keys()) { if (seen.has(k)) return undefined; seen.add(k); }
-  return form;
+  // RFC 6749 3.1 / 3.2: a parameter must not appear more than once (request-core.ts, proved).
+  return hasDuplicateKey([...form.keys()]) ? undefined : form;
 }
 
 /** A JSON object body of at most 16 KiB, or undefined. */
@@ -52,14 +51,12 @@ export async function readJson(req: Request): Promise<Record<string, unknown> | 
   }
 }
 
+/** The first cookie with the name (request-core.ts, proved), decoded. Undefined when absent or not decodable. */
 export function cookieValue(header: string | null, name: string): string | undefined {
-  for (const part of (header ?? "").split(";")) {
-    const i = part.indexOf("=");
-    if (i > 0 && part.slice(0, i).trim() === name) {
-      try { return decodeURIComponent(part.slice(i + 1).trim()); } catch { return undefined; }
-    }
-  }
-  return undefined;
+  const parts = (header ?? "").split(";");
+  const i = cookiePartIndex(parts, name);
+  if (i < 0) return undefined;
+  try { return decodeURIComponent(cookiePartValue(parts[i]!)); } catch { return undefined; }
 }
 
 export const isLoopbackHost = (hostname: string) => hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";

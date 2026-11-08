@@ -141,10 +141,48 @@ On a clean `main` worktree with the same database, `real-console` failed with th
 
 `bun run sim` (one full run, at the end): exit 0, 327 of 327 blocking gates pass, 14 tracked gates off target, 364.6 s. The run made no model calls (the sim clears the provider keys).
 
-## 6. Not done, and limits
+## 6. Whole-app gaps
+
+Hand-written summary of generated agent reports. Date: 2026-11-08.
+
+**Ledger.** Six agents classified the 425 source files of the app (every `.ts`, `.tsx`, `.js`, `.mjs`, `.sql`, `.sh` and `.py` file in git, without tests, e2e files and `proofs/`) against the models on the three branches. Result: 145 covered, 258 not applicable (with a reason), 22 gaps. The ledger is [docs/formal-coverage.md](../formal-coverage.md).
+
+**Gap closing.** Nine implementer agents closed the 22 gaps. Each agent had an adversarial verifier that made its own mutants and re-ran every check. Rules: no change in behavior, the shell calls the core, and a bug is reported but not fixed.
+
+| Gap files | LemmaScript core (Dafny result) | Quint model |
+|---|---|---|
+| observatory people.ts, shape.ts, web/apps.tsx | observatory/src/privacy-core.ts (16 verified) | console_privacy |
+| network/service profile-read.ts, profile-suggestion-review.ts | network/service/profile-core.ts (10) | profile_read |
+| blooio/src/phone.ts | core/src/phone-core.ts, now called by `toE164` (21) | phone_identity |
+| platform api.ts, apps.ts | platform/src/routing-core.ts (19) | auth_edge, join_age (other branch) |
+| platform env.ts | platform/src/env-core.ts (12) | boot_config |
+| platform otp.ts | platform/src/otp-core.ts (9) | auth_edge (other branch), phone_identity |
+| platform photo-relay.ts | platform/src/photo-relay-core.ts (11) | photo_relay_item |
+| mcp/src/util.ts | mcp/src/request-core.ts (23) | oauth_mcp (other branch) |
+| deploy/backup/restore.ts | deploy/backup/restore-core.ts (8) | backup_restore |
+| engine packs/network/rules.ts, packs/slop/geo.ts | packs/network/rulesCore.ts (17), packs/slop/geoCore.ts (2) | engine_rules |
+| engine retrieval.ts, geo.ts, group.ts, complementarity.ts, packs/friends/rules.ts, packs/friends/planner.ts | filterCore.ts (backend branch); the rest is World search and scores | candidate_pool |
+| core/src/chatJson.ts | core/src/chatjson-core.ts (5) | chatjson_loop |
+
+**Proof force.** Each core has at least two mutants (one from the implementer, one from the verifier), and Dafny rejected each one. Verifiers found four specs that were too weak and made them stronger: `attemptGate` and `afterFailure` (chatjson-core, now `<==>`), `currentBatch` (profile-core, now states each condition), and `anyE164` (phone-core, the `00` and non-US branches). Each Quint model has a mutant for each invariant that gives `[violation]`. Verifiers found three models that had no force and fixed them. In candidate_pool, guided actions applied the guard themselves, and one flag was `X and not X`. In chatjson_loop, `Ok.validated` was a literal `true`.
+
+**Equivalence.** The agents compared the old code (from git HEAD) and the new code in scratch scripts, not in the repo. Results: shape.ts on 20,000 random objects, people.ts on 50,000 row sets, profile-read on 200,815 inputs and the batch on 14,400 inputs, phone.ts on a large input table. Each comparison found 0 differences.
+
+**Bugs found and not fixed** (no behavior change in this step; each fix needs its own failing test):
+- `packages/platform/src/api.ts:462-495`: a banned number can start web OTP and get a session (SD-013).
+- `packages/platform/src/otp.ts` start: a refused start still uses the earlier rate buckets (SD-380).
+- `packages/platform/src/apps.ts:180-183` `appForHost`: the Host `constructor` or `__proto__` returns an Object.prototype member, not undefined.
+- `packages/observatory/web/apps.tsx:127` and `people.ts` summary: the person view shows the lowest age and the dates to every cross-app viewer before a reason is typed, also for a person whose only membership is in a private app.
+- `packages/network/service/profile-suggestions.ts:128`: only Gmail rows refuse a future `observedAt` (SD-240).
+- `deploy/backup/restore.ts:45`: `--roles` is refused only when the target host:port string equals the source (SD-165).
+- `packages/engine/src/group.ts:137-146`: alternates are not checked for blocks against each other.
+- `packages/engine/src/packs/friends/planner.ts:215-298`: repeat alternates, crew sessions and crew offers have no block check, and a crew session does not read `taken`. Only the friends sim calls the planner, so production sends are not affected.
+- `packages/core/src/chatJson.ts:79`: `attempts: 0` makes `chatJson()` throw `undefined`.
+
+## 7. Not done, and limits
 
 - `tests/e2e/auth-feedback.e2e.test.ts` skipped, because Playwright is not installed on this machine (`PLAYWRIGHT_MODULE` is not set). The callback path of `mountAuth` is covered by `api-security.test.ts`.
-- The modeling rule in AGENTS.md is still "not yet met" for the whole app. Only the frontend flows above have Quint models and LemmaScript cores. The backend modules are planned by the state-machine session.
+- The whole app is covered only when this branch, `claude/lemmascript-backend` and `claude/quint-state-machines` are merged (section 6). Until then main does not meet the modeling rule.
 - Quint checks are random simulation with fixed seeds (no Apalache). A pass is a bounded search, not a proof.
 - Bugs left, with reasons, from the implementer reports:
   - Backend: `reviewBlock` accepts an approve after the deadline; the OTP ban bypass is at `api.ts:471`.

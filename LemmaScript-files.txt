@@ -6,3 +6,14 @@ sites/shared/join-core.ts
 packages/core/src/phone-core.ts
 packages/mcp/src/html-core.ts
 tools/clef-label/core.ts
+packages/observatory/src/privacy-core.ts
+packages/network/service/profile-core.ts
+packages/platform/src/routing-core.ts
+packages/platform/src/env-core.ts
+packages/platform/src/otp-core.ts
+packages/platform/src/photo-relay-core.ts
+packages/mcp/src/request-core.ts
+deploy/backup/restore-core.ts
+packages/engine/src/packs/network/rulesCore.ts
+packages/engine/src/packs/slop/geoCore.ts
+packages/core/src/chatjson-core.ts

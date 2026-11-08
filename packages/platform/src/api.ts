@@ -18,6 +18,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:
 import { type AccountHooks, Accounts, type HomeInput, type MemberHookContext, parseHome, parseJoin, publicMembership, type Who } from "./accounts.ts";
 import { APPS, type AppId, type AppInfo, appForHost, DEFAULT_HOST_MAP, DEV_HOST_MAP, isAppId, publicAppInfo, siteHosts, stagingSiteOrigins } from "./apps.ts";
 import { devShortcutsAllowed, type Env } from "./env.ts";
+import { cookieNameEnd, isCloudReturnPath } from "./routing-core.ts";
 import { type OtpProvider, OtpService, type OtpLimits } from "./otp.ts";
 import { maskPhone, normalizePhone } from "./phone.ts";
 import { readCappedText } from "./body.ts";
@@ -117,8 +118,8 @@ export const REAUTH_CHANGE_MESSAGE = "For your safety, log in again with a new c
 export function parseCookies(header: string | null): Map<string, string> {
   const out = new Map<string, string>();
   for (const part of (header ?? "").split(";")) {
-    const i = part.indexOf("=");
-    if (i <= 0) continue;
+    const i = cookieNameEnd(part);
+    if (i < 0) continue;
     const k = part.slice(0, i).trim(), raw = part.slice(i + 1).trim();
     try { out.set(k, decodeURIComponent(raw)); } catch { /* not ours, or broken: ignore it */ }
   }
@@ -245,8 +246,8 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
   };
   // Secure (and the __Host- prefix) outside dev, like the session cookie. Cloud auth runs only in dev today;
   // this keeps the cookies safe if the gate is ever widened.
-  const oauthReturnPath = (path: unknown): path is string => typeof path === "string" && path.length === "/oauth/cloud-return?rid=".length+22 && /^\/oauth\/cloud-return\?rid=[A-Za-z0-9_-]{22}$/.test(path);
-  const cloudReturnPath = (path: unknown) => path === "/join" || oauthReturnPath(path);
+  // routing-core.ts: a return path is "/join" or the OAuth return, always a same-origin relative path.
+  const cloudReturnPath = (path: unknown): path is string => typeof path === "string" && isCloudReturnPath(path);
   const startCloudHandoff = async (app: AppId, returnPath: string) => {
     const cloud=cloudFor(app);if(!cloud || !cloudReturnPath(returnPath))return;
     const state=randomBytes(32).toString("hex"),verifier=randomBytes(32).toString("hex");

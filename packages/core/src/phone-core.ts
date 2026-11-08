@@ -1,6 +1,7 @@
 // The one rule for US and Canadian phone digits. Import-free, proved by LemmaScript
 // (docs/formal-verification.md). The sites' toE164 and the platform's normalizePhone both call
-// phoneE164, so the client and the server cannot disagree on a number.
+// phoneE164, so the client and the server cannot disagree on a number. The Blooio keys (toE164,
+// normalizeAddress) call anyE164, which gives the same result on every number phoneE164 accepts.
 // The scanners below replace the old regex tests: isSpace is the JavaScript \s set, and it is also
 // the set that String.prototype.trim removes.
 
@@ -63,6 +64,14 @@ function startsWithPlus(s: string): boolean {
   return s.length > 0 && (s.charCodeAt(0) === 43 || (isSpace(s.charCodeAt(0)) && startsWithPlus(s.slice(1))));
 }
 
+/** True when the first two characters after any leading space are 0 0 (an international 00 prefix). */
+function startsWithZeros(s: string): boolean {
+  //@ verify
+  //@ decreases s.length
+  //@ ensures \result ==> digitsOf(s).length >= 2 && digitsOf(s).charCodeAt(0) === 48 && digitsOf(s).charCodeAt(1) === 48
+  return s.length > 1 && ((s.charCodeAt(0) === 48 && s.charCodeAt(1) === 48) || (isSpace(s.charCodeAt(0)) && startsWithZeros(s.slice(1))));
+}
+
 /** A geographic US or Canadian area code. The reserved N11, N9X, 37X and 96X ranges are refused. */
 function usOrCanadaArea(area: string): boolean {
   //@ verify
@@ -108,4 +117,60 @@ export function phoneE164(input: string): string | null {
   if (input.length > MAX_INPUT || !allPhoneChars(input)) return null;
   const national = nationalDigits(startsWithPlus(input), digitsOf(input));
   return national === "" ? null : `+1${national}`;
+}
+
+/**
+ * True for an E.164 text: a plus, a first digit 1-9, then 7 to 14 more digits. The same as
+ * /^\+[1-9]\d{7,14}$/.test(s).
+ */
+export function isE164(s: string): boolean {
+  //@ verify
+  return s.length >= 9 && s.length <= 16 && s.charCodeAt(0) === 43 && s.charCodeAt(1) >= 49 && allDigits(s.slice(1));
+}
+
+/**
+ * E.164 for a phone number of any country, or null. The outbound queue and the inbound keys
+ * (packages/blooio/src/phone.ts toE164) call it. The caller applies NFKC first. A leading + or 00
+ * marks the country code. Without one, 10 digits are a +1 number and other digits are read as
+ * written. When phoneE164 accepts the input, the result is the same, so the queue key and the
+ * platform identity key cannot disagree on a US or Canadian number.
+ * The scans are loops, not recursion, so a long input cannot overflow the stack.
+ */
+export function anyE164(s: string): string | null {
+  //@ verify
+  //@ ensures \result !== null ==> isE164(\result)
+  //@ ensures !allPhoneChars(s) ==> \result === null
+  //@ ensures phoneE164(s) !== null ==> \result === phoneE164(s)
+  //@ ensures startsWithZeros(s) && digitsOf(s).length >= 2 ==> \result === (allPhoneChars(s) && isE164("+" + digitsOf(s).slice(2)) ? "+" + digitsOf(s).slice(2) : null)
+  //@ ensures !startsWithZeros(s) && (startsWithPlus(s) || digitsOf(s).length !== 10) ==> \result === (allPhoneChars(s) && isE164("+" + digitsOf(s)) ? "+" + digitsOf(s) : null)
+  //@ ensures !startsWithZeros(s) && !startsWithPlus(s) && digitsOf(s).length === 10 ==> \result === (allPhoneChars(s) && isE164("+1" + digitsOf(s)) ? "+1" + digitsOf(s) : null)
+  let start = 0;
+  while (start < s.length && isSpace(s.charCodeAt(start))) {
+    //@ invariant 0 <= start && start <= s.length
+    //@ invariant startsWithPlus(s) === startsWithPlus(s.slice(start))
+    //@ invariant digitsOf(s) === digitsOf(s.slice(start))
+    //@ invariant startsWithZeros(s) === startsWithZeros(s.slice(start))
+    //@ decreases s.length - start
+    start = start + 1;
+  }
+  const plus = start < s.length && s.charCodeAt(start) === 43;
+  const zeros = start + 1 < s.length && s.charCodeAt(start) === 48 && s.charCodeAt(start + 1) === 48;
+  let ok = true;
+  let digits = "";
+  let i = s.length;
+  while (i > 0) {
+    //@ invariant 0 <= i && i <= s.length
+    //@ invariant ok === allPhoneChars(s.slice(i))
+    //@ invariant digits === digitsOf(s.slice(i))
+    //@ decreases i
+    i = i - 1;
+    const c = s.charCodeAt(i);
+    ok = isPhoneChar(c) && ok;
+    if (isDigit(c)) digits = s.slice(i, i + 1) + digits;
+  }
+  if (!ok) return null;
+  const d = zeros ? digits.slice(2) : digits;
+  if (d.length === 0) return null;
+  const out = plus || zeros || d.length !== 10 ? "+" + d : "+1" + d;
+  return isE164(out) ? out : null;
 }

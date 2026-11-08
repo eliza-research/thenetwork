@@ -53,6 +53,17 @@ function startsWithPlus(s: string): bool
   ((|s| > 0) && (((s[0] as int) == 43) || (isSpace((s[0] as int)) && startsWithPlus(s[1..]))))
 }
 
+function startsWithZeros(s: string): bool
+  decreases |s|
+{
+  ((|s| > 1) && ((((s[0] as int) == 48) && ((s[1] as int) == 48)) || (isSpace((s[0] as int)) && startsWithZeros(s[1..]))))
+}
+
+lemma startsWithZeros_ensures(s: string)
+  ensures (startsWithZeros(s) ==> (((|digitsOf(s)| >= 2) && ((digitsOf(s)[0] as int) == 48)) && ((digitsOf(s)[1] as int) == 48)))
+{
+}
+
 function usOrCanadaArea(area: string): bool
 {
   ((((((((|area| == 3) && allDigits(area)) && ((area[0] as int) >= 50)) && !((area in NOT_US_CA))) && !((((area[1] as int) == 49) && ((area[2] as int) == 49)))) && ((area[1] as int) != 57)) && !((((area[0] as int) == 51) && ((area[1] as int) == 55)))) && !((((area[0] as int) == 57) && ((area[1] as int) == 54))))
@@ -130,9 +141,113 @@ lemma phoneE164_ensures(input: string)
   }
 }
 
+function isE164(s: string): bool
+{
+  (((((|s| >= 9) && (|s| <= 16)) && ((s[0] as int) == 43)) && ((s[1] as int) >= 49)) && allDigits(s[1..]))
+}
+
 const NOT_US_CA: seq<string> := ["242", "246", "264", "268", "284", "345", "441", "473", "649", "658", "664", "721", "758", "767", "784", "809", "829", "849", "868", "869", "876", "500", "521", "522", "523", "524", "525", "526", "527", "528", "529", "532", "533", "535", "538", "542", "543", "544", "545", "546", "547", "549", "550", "552", "553", "554", "556", "566", "569", "577", "578", "588", "589", "600", "622", "700", "710", "800", "833", "844", "855", "866", "877", "888", "900"]
 
 const MAX_INPUT: int := 40
+
+method anyE164(s: string) returns (res: Option<string>)
+  ensures (match res { case Some(i_result_val) => isE164(i_result_val) case None => true })
+  ensures (!(allPhoneChars(s)) ==> (match res { case Some(i_) => false case None => true }))
+  ensures ((match phoneE164(s) { case Some(i_) => true case None => false }) ==> (res == phoneE164(s)))
+  ensures (startsWithZeros(s) ==> (|digitsOf(s)| >= 2) ==> (res == (if (allPhoneChars(s) && isE164(("+" + digitsOf(s)[2..]))) then Option.Some(("+" + digitsOf(s)[2..])) else Option.None)))
+  ensures (!(startsWithZeros(s)) ==> (startsWithPlus(s) || (|digitsOf(s)| != 10)) ==> (res == (if (allPhoneChars(s) && isE164(("+" + digitsOf(s)))) then Option.Some(("+" + digitsOf(s))) else Option.None)))
+  ensures (!(startsWithZeros(s)) ==> !(startsWithPlus(s)) ==> (|digitsOf(s)| == 10) ==> (res == (if (allPhoneChars(s) && isE164(("+1" + digitsOf(s)))) then Option.Some(("+1" + digitsOf(s))) else Option.None)))
+{
+  var start := 0;
+  while ((start < |s|) && isSpace((s[start] as int)))
+    invariant (0 <= start)
+    invariant (start <= |s|)
+    invariant (startsWithPlus(s) == startsWithPlus(s[start..]))
+    invariant (digitsOf(s) == digitsOf(s[start..]))
+    invariant (startsWithZeros(s) == startsWithZeros(s[start..]))
+    decreases (|s| - start)
+  {
+    assert s[start..][1..] == s[(start + 1)..];
+    start := (start + 1);
+  }
+  var plus := ((start < |s|) && ((s[start] as int) == 43));
+  var zeros := ((((start + 1) < |s|) && ((s[start] as int) == 48)) && ((s[(start + 1)] as int) == 48));
+  var ok := true;
+  var digits := "";
+  var i := |s|;
+  while (i > 0)
+    invariant (0 <= i)
+    invariant (i <= |s|)
+    invariant (ok == allPhoneChars(s[i..]))
+    invariant (digits == digitsOf(s[i..]))
+    decreases i
+  {
+    i := (i - 1);
+    var c := (s[i] as int);
+    assert s[i..][1..] == s[(i + 1)..];
+    assert s[i..][0..1] == s[i..(i + 1)];
+    var i_t0 := isPhoneChar(c);
+    ok := (i_t0 && ok);
+    var i_t1 := isDigit(c);
+    if i_t1 {
+      digits := (s[i..(i + 1)] + digits);
+    }
+  }
+  assert s[0..] == s;
+  phoneE164_ensures(s);
+  digitsOf_ensures(s);
+  if start < |s| {
+    assert s[start..][1..] == s[(start + 1)..];
+    assert plus == startsWithPlus(s);
+  } else {
+    assert s[start..] == [];
+    assert plus == startsWithPlus(s);
+  }
+  if zeros {
+    assert s[start..][1..] == s[(start + 1)..];
+    assert s[(start + 1)..][1..] == s[(start + 2)..];
+    assert digitsOf(s[start..]) == s[start..(start + 1)] + digitsOf(s[(start + 1)..]);
+    assert digitsOf(s[(start + 1)..]) == s[(start + 1)..(start + 2)] + digitsOf(s[(start + 2)..]);
+    assert |digits| >= 2 && digits[0] == '0' && digits[1] == '0';
+    nationalDigits_ensures(plus, digits);
+    assert nationalDigits(plus, digits) == "";
+    assert phoneE164(s).None?;
+  }
+  if ok && !zeros && phoneE164(s).Some? {
+    var n := nationalDigits(plus, digits);
+    nationalDigits_ensures(plus, digits);
+    assert n != "";
+    assert n[0..3][0] == n[0];
+    var r := "+1" + n;
+    assert phoneE164(s) == Option.Some(r);
+    if plus {
+      assert digits[0] == '1';
+      assert n != digits;
+      assert n == digits[1..];
+      assert "+" + digits == r;
+    } else if |digits| == 10 {
+      assert n == digits;
+      assert "+1" + digits == r;
+    } else {
+      assert n == digits[1..];
+      assert digits == "1" + n;
+      assert "+" + digits == r;
+    }
+    assert r[1..] == "1" + n;
+    assert isE164(r);
+  }
+  if !(ok) {
+    return None;
+  }
+  var d := (if zeros then digits[2..] else digits);
+  if (|d| == 0) {
+    return None;
+  }
+  var out := (if ((plus || zeros) || (|d| != 10)) then ("+" + d) else ("+1" + d));
+  var i_t2 := isE164(out);
+  return (if i_t2 then Option.Some(out) else Option.None);
+}
+
 
 lemma digitsOfDigits(s: string)
   requires allDigits(s)

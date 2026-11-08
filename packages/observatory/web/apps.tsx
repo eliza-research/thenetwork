@@ -1,7 +1,9 @@
 // Four apps in one console (platform plan section 5): the app switcher, the health of every app
 // ("All"), and the cross-app person view (cross_app_safety or admin only; each app's panel opens
-// with a typed reason, and the server writes the audit row before it reads).
+// with a typed reason, and the server writes the audit row before it reads). The privacy decisions
+// are in src/privacy-core.ts (proved).
 import { useEffect, useState } from "react";
+import { crossAppShown, namesApp, reasonOk } from "../src/privacy-core.ts";
 import type { AppHealth, PersonAppPanel, PersonSummary } from "../src/types.ts";
 import { store, useStore } from "./store.ts";
 import { ago, Badge, humanize, localDate } from "./ui.tsx";
@@ -126,13 +128,13 @@ function PersonView({ id }: { id: string }) {
           </div>
           {p.holds.length > 0 && (
             <div className="callout bad small">
-              Hold on every app: {p.holds.map(h => (h.app === "*" ? "account restricted (on an app not shown)" : `${humanize(h.level)} (${h.app})`)).join(", ")}
+              Hold on every app: {p.holds.map(h => (!namesApp(h.app) ? "account restricted (on an app not shown)" : `${humanize(h.level)} (${h.app})`)).join(", ")}
             </div>
           )}
           <div className="small">
             Blocks made {p.blocks.made.length} · received {p.blocks.received.length}
             {p.blocks.made.concat(p.blocks.received).length > 0 && (
-              <span className="muted"> · {[...p.blocks.made.map(b => `→ ${b.person.slice(0, 8)}${b.originApp === "*" ? "" : ` (${b.originApp})`}`), ...p.blocks.received.map(b => `← ${b.person.slice(0, 8)}${b.originApp === "*" ? "" : ` (${b.originApp})`}`)].join(", ")}</span>
+              <span className="muted"> · {[...p.blocks.made.map(b => `→ ${b.person.slice(0, 8)}${!namesApp(b.originApp) ? "" : ` (${b.originApp})`}`), ...p.blocks.received.map(b => `← ${b.person.slice(0, 8)}${!namesApp(b.originApp) ? "" : ` (${b.originApp})`}`)].join(", ")}</span>
             )}
           </div>
           {p.memberships.map(m => <AppPanel key={m.app} personId={p.personId} m={m} />)}
@@ -167,7 +169,7 @@ function AppPanel({ personId, m, hidden }: { personId: string; m: PersonSummary[
       {open && !panel && (
         <form className="person-reason" onSubmit={e => { e.preventDefault(); read(); }}>
           <input className="input grow" autoFocus placeholder="Reason (logged)" value={reason} onChange={e => setReason(e.target.value)} aria-label={`Reason to open ${m.app}`} />
-          <button className="btn" type="submit" disabled={reason.trim().length < 5}>Open</button>
+          <button className="btn" type="submit" disabled={!reasonOk(reason.trim())}>Open</button>
           {error && <span className="bad small" role="alert">{error}</span>}
         </form>
       )}
@@ -186,7 +188,7 @@ function AppPanel({ personId, m, hidden }: { personId: string; m: PersonSummary[
 export function CrossAppButton({ memberId }: { memberId: string }) {
   const s = useStore();
   const [error, setError] = useState<string | null>(null);
-  if (!s.me?.crossApp || s.mode !== "real") return null;
+  if (!crossAppShown(!!s.me?.crossApp, s.mode === "real")) return null;
   return (
     <>
       <button className="btn" onClick={async () => { const r = await store.findPerson(memberId); if (r.data) store.openPerson(r.data.personId); else setError(r.error); }}>Cross-app view</button>
