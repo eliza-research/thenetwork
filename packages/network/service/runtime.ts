@@ -24,7 +24,7 @@ import type { City, Clock, MemberId, WorldSnapshot } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import type { NetworkContext, SimMessage } from "@thenetwork/core";
 import { ConsentNetwork, presentInNyc, relayDispatchCheck, type NetworkOptions, type NetworkState } from "../src/network.ts";
-import { SWAP_WITHDRAWN, type RelayCanonical } from "../src/relay.ts";
+import { RELAY_SWAP_TTL_MS, SWAP_WITHDRAWN, type RelayCanonical } from "../src/relay.ts";
 import { loadRelayRows, PgStore, runStored, runTick, type NetworkStore } from "../src/store.ts";
 import { capitalWiring, type CapitalEvent } from "../src/capital.ts";
 import type { AppInfo } from "../../platform/src/apps.ts";
@@ -248,6 +248,9 @@ export class NetworkRuntime {
       // The swap question names no item of its own: the match is the row's, the sender its other member.
       matchId = row.oppId;
       from = state.opps.find(o => o.id === matchId)?.participants.find(p => p !== to);
+      // The question asks for an answer "in the next 15 minutes": it goes only while its swap still waits.
+      const now = this.clock.now();
+      if (!state.relay?.swaps.some(x => x.itemId === id[1] && x.matchId === matchId && x.from === from && x.to === to && x.at <= now && now - x.at <= RELAY_SWAP_TTL_MS)) return no("relay:ask_expired");
     } else {
       const [rec] = await tx`select opportunity_id,from_member,to_member,decision,review,reasons from network.relay_records where app_id=${app} and item_id=${id[1]!}`;
       if (!rec || rec.to_member !== to || rec.decision !== "pass" || rec.review === "rejected") return no("relay:not_passed");

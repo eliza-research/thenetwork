@@ -138,6 +138,8 @@ test("a swap request lasts only as long as the engine's consent (15 min, never b
   expect(await numbers()).toBe(0);
   // Ari takes theirs back through the relay action ("don't send my number" is nothing to relay, and confirmed).
   expect(await (await post(await ask("ari","ttl-ari-cancel","actually don't send my number"))).json()).toEqual({decision:"none",senderNotice:"Okay, I won't share your number.",delivered:false,replayed:false});
+  // Past the send path's 10-minute duplicate window: Ari is asked again (a swap waits only on a question that went out).
+  clock.advance(10*MINUTE);
   expect(await (await post(await ask("bo","ttl-bo-2","send Ari my number"))).json()).toMatchObject({decision:"hold"});
   expect(await numbers()).toBe(0);
   // Clean slate for the next test: Bo's request is withdrawn too.
@@ -145,6 +147,8 @@ test("a swap request lasts only as long as the engine's consent (15 min, never b
 },60_000);
 
 test("a number goes out only after both members asked for the swap",async()=>{
+  // Past the duplicate window of the earlier question to Bo, so that Bo is asked again.
+  clock.advance(10*MINUTE);
   const first=await post(await ask("ari","swap-ari","send Bo my number"));
   expect(await first.json()).toMatchObject({decision:"hold",delivered:false});
   expect((await sql`select id from network.messages where app_id='friends' and body like ${"%"+phones.ari.slice(2)+"%"}`).length).toBe(0);

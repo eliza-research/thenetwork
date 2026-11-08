@@ -4776,7 +4776,7 @@ export class ConsentNetwork implements NetworkUnderTest {
           || o.photoIds.some((id, i) => id !== o.approvedPhotos![i]!.photoId))) return "refused";
         this.dirty = true;
         const r = this.send(m, body, { type: "relay", proposalId: o.matchId,
-          ...(o.approvedPhotos?.length ? { approvedPhotos: o.approvedPhotos } : {}) }, "relay", { about: [o.from], key: o.key, relayFrom: o.from, ...(o.contact ? { relayContact: o.contact } : {}) });
+          ...(o.approvedPhotos?.length ? { approvedPhotos: o.approvedPhotos } : {}) }, "relay", { about: [o.from], key: o.key, relayFrom: o.from, ...(o.contact ? { relayContact: o.contact } : {}), ...(o.noDefer ? { noDefer: true } : {}) });
         return r === "sent" ? "sent" : r === "deferred" ? "deferred" : "refused";
       },
     };

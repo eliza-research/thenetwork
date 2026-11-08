@@ -78,7 +78,7 @@ export interface RelayHost {
   /** The app rates photos (slop): run `appearanceLeak` on relayed text. */
   ratesPhotos: boolean;
   /** Send `body` to `to` through the Network's send path. `key` is the outbound id. "sent", "deferred" or "refused". */
-  send(to: MemberId, body: string, o: { from: MemberId; matchId: string; key: string; contact?: string; photoIds?: string[]; approvedPhotos?: ApprovedRelayPhoto[] }): "sent" | "deferred" | "refused";
+  send(to: MemberId, body: string, o: { from: MemberId; matchId: string; key: string; contact?: string; photoIds?: string[]; approvedPhotos?: ApprovedRelayPhoto[]; noDefer?: boolean }): "sent" | "deferred" | "refused";
 }
 
 /** A held item waiting for staff. `text` only while held (dropped on release or reject). */
@@ -278,9 +278,11 @@ export class RelayDesk {
       // Check the request itself first (parties, state, consent, rate) with the engine; only a pass waits.
       const probe = await this.decide(this.share(ask.itemId, ask.from, to, now, mineValue), match, o);
       if (probe.decision !== "pass") return this.apply(probe, match, this.share(ask.itemId, ask.from, to, now, mineValue), o);
-      this.s.swaps.push({ itemId: ask.itemId, matchId: match.id, from: ask.from, to, at: now });
       const name = this.host.member(ask.from)?.firstName ?? "Your match";
-      this.host.send(to, swapAsk(name), { from: ask.from, matchId: match.id, key: `relay:${ask.itemId}:ask` });
+      // The question says "in the next 15 minutes": it goes now or not at all (never after quiet hours), and only an asked swap waits.
+      const asked = this.host.send(to, swapAsk(name), { from: ask.from, matchId: match.id, key: `relay:${ask.itemId}:ask`, noDefer: true });
+      if (asked !== "sent") return { itemId: ask.itemId, decision: "refused", reason: NOTICE.undelivered };
+      this.s.swaps.push({ itemId: ask.itemId, matchId: match.id, from: ask.from, to, at: now });
       return { itemId: ask.itemId, decision: "held", reason: NOTICE.swapWait };
     }
     // Both asked. Each share runs through the engine with its own consent (the other member's was given at

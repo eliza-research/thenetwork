@@ -12,6 +12,7 @@ import {svcSign,svcVerify} from "../../core/src/svc/svc-auth.ts";
 import {CloudChannelAdapter} from "../service/cloud-channel.ts";
 import {NetworkService} from "../service/service.ts";
 import type {NetworkState} from "../src/network.ts";
+import type {QueueOptions} from "../../blooio/src/outbound-queue.ts";
 
 const db=`network_relay_sm_${randomUUID().replaceAll("-","")}`,url=`postgres://${process.env.USER??"postgres"}@127.0.0.1:54339/${db}`;
 const admin=new SQL({url:`postgres://${process.env.USER??"postgres"}@127.0.0.1:54339/postgres`,max:1});
@@ -50,6 +51,8 @@ const fixturePair=async(id:string)=>service.runtimeFor("friends")!.unitOfWork(n=
 });
 /** Advance the clock to the next New York hour `h` (the members' quiet hours are evening and night there). */
 const toNyHour=(h:number)=>{for(let i=0;i<48;i++){const hour=Number(new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",hour:"numeric",hourCycle:"h23"}).format(clock.now()));if(hour===h)return;clock.advance(HOUR);}};
+/** Advance the clock to the next New York time h:m (minute steps). */
+const toNyTime=(h:number,m:number)=>{for(let i=0;i<48*60;i++){const [hour,minute]=new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",hour:"numeric",minute:"numeric",hourCycle:"h23"}).format(clock.now()).split(":").map(Number);if(hour===h&&minute===m)return;clock.advance(MINUTE);}};
 
 beforeAll(async()=>{
   await admin.unsafe(`create database ${db}`);await applySchema(url,{lockTimeout:"5s"});sql=new SQL({url,max:4});
@@ -68,8 +71,10 @@ beforeAll(async()=>{
 afterAll(async()=>{server?.stop(true);await service?.close();cloud?.stop(true);await sql?.close();await admin.unsafe(`drop database if exists ${db} with (force)`);await admin.close();});
 
 test("relay-swap: a withdrawal stops a number share that waits for quiet hours to end (SD-039)",async()=>{
-  await fixturePair("swap-withdraw");toNyHour(22);
+  // Ari asks at 20:58 (Sam is asked at once); Sam answers at 21:02, inside both members' quiet hours (21-9).
+  await fixturePair("swap-withdraw");toNyTime(20,57);
   expect((await relay("withdraw-ask-ari","send Sam my number")).body).toMatchObject({decision:"hold"});
+  toNyTime(21,1);
   expect((await relay("withdraw-ask-sam","send Ari my number",b)).body).toMatchObject({decision:"pass",delivered:false});
   // Both shares passed and wait in Network.deferred for the morning. Ari takes the number back.
   expect((await relay("withdraw-ari","actually don't send my number")).body).toMatchObject({decision:"none"});
@@ -120,6 +125,47 @@ test("action-receipt: a delivery error after the unit committed does not answer 
   expect(sent.some(x=>x.to===b&&x.text.includes("north gate"))).toBe(true);
   expect(r.status).toBe(200);
   expect(await r.json()).toMatchObject({decision:"pass",delivered:true,replayed:false});
+},60_000);
+
+test("relay-swap: a refused swap question does not leave the swap waiting (SD-138)",async()=>{
+  await fixturePair("ask-refused");toNyHour(12);
+  for(const [phone,id] of [[a,"ask-refused-ari-reply"],[b,"ask-refused-sam-reply"]] as const){clock.advance(MINUTE);expect((await post(TURN_PATH,turn(phone,id,"Sounds good, thanks"))).status).toBe(200);}
+  // Three unanswered texts to Sam: the send path refuses a fourth logistics message (the conversation streak).
+  for(const [i,text] of ["tell Sam I'm leaving now","tell Sam I'll be there in ten","tell Sam I found parking"].entries()){clock.advance(3*MINUTE);expect((await relay(`ask-refused-text-${i}`,text)).body).toMatchObject({decision:"pass"});}
+  const before=sent.length;clock.advance(3*MINUTE);
+  const out=(await relay("ask-refused-share","send Sam my number")).body;
+  expect(sent.slice(before).filter(x=>/would like to swap numbers/.test(x.text))).toHaveLength(0);
+  // Sam was never asked: Ari is not told that the number goes when Sam says so, and no swap waits.
+  expect(out.decision).not.toBe("hold");
+  const swaps=await service.runtimeFor("friends")!.readState(n=>n.exportState().relay?.swaps??[]);
+  expect(swaps.filter(x=>x.matchId==="ask-refused")).toHaveLength(0);
+},60_000);
+
+test("relay-swap: a swap question that waits past the swap window is never sent (SD-138)",async()=>{
+  await fixturePair("ask-late");toNyHour(22);
+  for(const [phone,id] of [[a,"ask-late-ari-reply"],[b,"ask-late-sam-reply"]] as const){clock.advance(MINUTE);expect((await post(TURN_PATH,turn(phone,id,"Sounds good, thanks"))).status).toBe(200);}
+  const before=sent.length;
+  await relay("ask-late-share","send Sam my number");
+  // Sam's quiet hours: the question waits. In the morning the 15-minute swap window has long closed.
+  toNyHour(10);await service.runtimeFor("friends")!.tick();await service.runtimeFor("friends")!.deliver();
+  expect(sent.slice(before).filter(x=>/would like to swap numbers/.test(x.text))).toHaveLength(0);
+},60_000);
+
+test("relay-swap: a swap question held in the outbound queue past the swap window is never sent (SD-138)",async()=>{
+  await fixturePair("ask-queued");toNyHour(12);
+  for(const [phone,id] of [[a,"ask-queued-ari-reply"],[b,"ask-queued-sam-reply"]] as const){clock.advance(MINUTE);expect((await post(TURN_PATH,turn(phone,id,"Sounds good, thanks"))).status).toBe(200);}
+  // Hold the question's dispatch after its asynchronous checks, before the final admission.
+  const checks=((service.runtimeFor("friends")!.adapter as CloudChannelAdapter).queue as unknown as {o:QueueOptions}).o.checks,original=checks.leaks!;
+  let resume!:()=>void,arrive!:()=>void;
+  const gate=new Promise<void>(r=>{resume=r;}),atGate=new Promise<void>(r=>{arrive=r;});
+  checks.leaks=async row=>{const result=await original(row);if(row.id.endsWith(":ask")){arrive();await gate;}return result;};
+  const before=sent.length;
+  try {
+    const pending=post(RELAY_PATH,await open("ask-queued-share","send Sam my number"));
+    await atGate;clock.advance(20*MINUTE);resume();
+    expect((await (await pending).json() as any).decision).toBe("hold");
+  } finally { resume();checks.leaks=original; }
+  expect(sent.slice(before).filter(x=>/would like to swap numbers/.test(x.text))).toHaveLength(0);
 },60_000);
 
 // Keep this case last: Ari deletes everything.
