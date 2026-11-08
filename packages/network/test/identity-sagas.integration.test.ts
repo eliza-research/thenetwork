@@ -592,4 +592,39 @@ describe.skipIf(!pgAvailable)("identity sagas: stop half way, retry, races (Post
     expect(await s.accounts.held(phone)).toBe(false);
   }, T);
 
+  test("SD-385: delete everything removes the person's connection receipts and the relay items addressed to them", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const s = service(clock);
+    const [ida, sam] = [newPhone(), newPhone()];
+    expect(await text(s, clock, ida, "slop")).toBe("join_asked");
+    expect(await text(s, clock, ida, "Ida, 30")).toBe("joined");
+    expect(await text(s, clock, sam, "slop")).toBe("join_asked");
+    expect(await text(s, clock, sam, "Sam, 32")).toBe("joined");
+    const personOf = async (e164: string) => (await sql`select person_id from platform.phone_identities where e164 = ${e164}`)[0]!.person_id as string;
+    const [pi, ps] = [await personOf(ida), await personOf(sam)];
+    const [mi, ms] = [(await memberOf("slop", ida))!.id, (await memberOf("slop", sam))!.id];
+    const at = new Date(clock.now()), until = new Date(clock.now() + DAY);
+    // Ida disconnected a source connection (a replay receipt), and Sam chose to send Ida a photo through the relay.
+    await sql`insert into platform.profile_suggestion_connection_receipts (request_nonce, request_hash, event_id, operation, app_id, person_id, member_id, user_id, organization_id, chat_id, connection_id, revoked_at)
+      values (gen_random_uuid(), ${"a".repeat(64)}, 'evt_rcpt', 'disconnect', 'slop', ${pi}, ${mi}, 'user_ida', 'org_ida', 'chat_ida', 'conn_ida', ${at})`;
+    await sql`insert into platform.photos (id, person_id, app_id, storage_key, content_type, bytes, sha256, consent_version, created_at)
+      values ('photo_sam', ${ps}, 'slop', 'key_sam', 'image/jpeg', 100, 'sha', 'v1', ${at})`;
+    await sql`insert into platform.photo_relay_items (id, app_id, sender_person_id, recipient_person_id, photo_id, thread_id, sender_member_id, recipient_member_id,
+        content_sha256, content_type, content_bytes, consent_id, consented_at, expires_at, policy_version, policy_notice, notice, state)
+      values (${`pri_${"b".repeat(32)}`}, 'slop', ${ps}, ${pi}, 'photo_sam', 'thread_1', ${ms}, ${mi}, ${"c".repeat(64)}, 'image/jpeg', 100, 'consent_1', ${at}, ${until},
+        'v1', 'notice', 'Send this photo to Ida?', 'pending')`;
+
+    const api = site(s);
+    clock.advance(31_000);
+    expect((await api("/api/auth/otp/start", { phone: ida })).status).toBe(200);
+    expect((await api("/api/auth/otp/verify", { phone: ida, code: "123456" })).status).toBe(200);
+    expect((await api("/api/me/delete", { scope: "all" })).body).toEqual({ ok: true });
+
+    expect((await sql`select count(*)::int as n from platform.profile_suggestion_connection_receipts where person_id = ${pi}::uuid`)[0].n).toBe(0);
+    expect((await sql`select count(*)::int as n from platform.photo_relay_items where recipient_person_id = ${pi}::uuid`)[0].n).toBe(0);
+    // Sam's photo is Sam's: it stays.
+    expect((await sql`select count(*)::int as n from platform.photos where id = 'photo_sam'`)[0].n).toBe(1);
+  }, T);
+
 });
