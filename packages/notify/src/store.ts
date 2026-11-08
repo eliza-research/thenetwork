@@ -33,6 +33,12 @@ export interface NotifyStore {
   /** Mark unseen items seen. `ids` omitted = all of the person's. Returns the ids changed. */
   markSeen(personId: string, surface: Surface, now: number, ids?: string[]): Promise<string[]>;
 
+  /**
+   * A message another sender already delivered: insert the item (or find it by its dedupe key) and,
+   * when it is not notified yet, record this delivery of it alone, in one transaction. An item that
+   * was delivered is never left pending for the scheduler.
+   */
+  addDelivered(input: InboxItemInput, d: Pick<DeliveryRecord, "deliveryId" | "target" | "countsTowardCap" | "sentAt">): Promise<{ item: InboxItem; created: boolean }>;
   /** Record a delivery and mark its items notified, atomically. False if the delivery id exists. */
   recordDelivery(d: DeliveryRecord): Promise<boolean>;
   getDelivery(deliveryId: string): Promise<DeliveryRecord | undefined>;
@@ -76,6 +82,15 @@ export class MemoryNotifyStore implements NotifyStore {
     this.items.set(item.id, item);
     this.byKey.set(key, item.id);
     return { item: { ...item }, created: true };
+  }
+
+  async addDelivered(input: InboxItemInput, d: Pick<DeliveryRecord, "deliveryId" | "target" | "countsTowardCap" | "sentAt">) {
+    const r = await this.addItem(input, d.sentAt);
+    if (r.item.notifiedAt === undefined && (await this.recordDelivery({ ...d, personId: input.personId, itemIds: [r.item.id] }))) {
+      r.item.notifiedAt = d.sentAt;
+      r.item.deliveryId = d.deliveryId;
+    }
+    return r;
   }
 
   async getItems(ids: string[]) {

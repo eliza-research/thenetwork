@@ -53,15 +53,30 @@ export class PgNotifyStore implements NotifyStore {
   }
 
   async addItem(input: InboxItemInput, now: number) {
+    return this.addItemIn(this.sql, input, now);
+  }
+
+  private async addItemIn(q: SQL, input: InboxItemInput, now: number) {
     const key = dedupeKey(input);
-    const inserted = await this.sql`
+    const inserted = await q`
       insert into notify.inbox_items (dedupe_key, person_id, app_id, event_type, subject_id, urgency, summary, created_at, expires_at)
       values (${key}, ${input.personId}, ${input.app}, ${input.eventType}, ${input.subjectId}, ${input.urgency}, ${input.summary}, ${new Date(now)}, ${ts(input.expiresAt)})
       on conflict (dedupe_key) do nothing
       returning *`;
     if (inserted.length) return { item: item(inserted[0]), created: true };
-    const [existing] = await this.sql`select * from notify.inbox_items where dedupe_key = ${key}`;
+    const [existing] = await q`select * from notify.inbox_items where dedupe_key = ${key}`;
     return { item: item(existing), created: false };
+  }
+
+  async addDelivered(input: InboxItemInput, d: Pick<DeliveryRecord, "deliveryId" | "target" | "countsTowardCap" | "sentAt">) {
+    return this.sql.begin(async tx => {
+      const r = await this.addItemIn(tx, input, d.sentAt);
+      if (r.item.notifiedAt === undefined && (await this.deliveryIn(tx, { ...d, personId: input.personId, itemIds: [r.item.id] }))) {
+        r.item.notifiedAt = d.sentAt;
+        r.item.deliveryId = d.deliveryId;
+      }
+      return r;
+    });
   }
 
   async getItems(ids: string[]) {
@@ -102,18 +117,20 @@ export class PgNotifyStore implements NotifyStore {
   }
 
   async recordDelivery(d: DeliveryRecord) {
-    return this.sql.begin(async tx => {
-      const ins = await tx`
-        insert into notify.deliveries (delivery_id, person_id, item_ids, target, counts_toward_cap, sent_at)
-        values (${d.deliveryId}, ${d.personId}, ${tx.array(numIds(d.itemIds), "int8")}, ${d.target}, ${d.countsTowardCap}, ${new Date(d.sentAt)})
-        on conflict (delivery_id) do nothing
-        returning delivery_id`;
-      if (!ins.length) return false;
-      await tx`
-        update notify.inbox_items set notified_at = ${new Date(d.sentAt)}, delivery_id = ${d.deliveryId}
-        where id = any(${tx.array(numIds(d.itemIds), "int8")}) and notified_at is null`;
-      return true;
-    });
+    return this.sql.begin(tx => this.deliveryIn(tx, d));
+  }
+
+  private async deliveryIn(tx: SQL, d: DeliveryRecord) {
+    const ins = await tx`
+      insert into notify.deliveries (delivery_id, person_id, item_ids, target, counts_toward_cap, sent_at)
+      values (${d.deliveryId}, ${d.personId}, ${tx.array(numIds(d.itemIds), "int8")}, ${d.target}, ${d.countsTowardCap}, ${new Date(d.sentAt)})
+      on conflict (delivery_id) do nothing
+      returning delivery_id`;
+    if (!ins.length) return false;
+    await tx`
+      update notify.inbox_items set notified_at = ${new Date(d.sentAt)}, delivery_id = ${d.deliveryId}
+      where id = any(${tx.array(numIds(d.itemIds), "int8")}) and notified_at is null`;
+    return true;
   }
 
   async getDelivery(id: string) {
