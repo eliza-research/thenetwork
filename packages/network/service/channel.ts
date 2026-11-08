@@ -38,6 +38,8 @@ export interface Outbound {
   system: boolean;
   ts: number;
   acceptedAt?: number;
+  /** A collected reply that failed the queue's leak guard (runtime writeUnit): the queue parks it for staff. */
+  leakReasons?: string[];
 }
 
 /** Statuses that still wait for delivery (the queue's, and "queued" before the first drain). */
@@ -220,12 +222,14 @@ export class BlooioAdapter implements ChannelAdapter {
     }
     const go = msgs.filter(m => {
       if (m.approvedPhotos?.length && this.name !== "eliza_cloud") { out.set(m.id, "refused_photo_transport"); return false; }
+      if (m.to && m.leakReasons?.length) out.set(m.id, "parked_leak_review");
       return m.to ? true : (out.set(m.id, "failed_no_address"), false);
     });
     await this.queue.enqueue(tx, go.map(m => ({
       // A member the unit forgets gets the one decline as a text to a non-member: nothing about them is kept.
       id: m.id, ...(forgotten.has(m.memberId) ? {} : { memberId: m.memberId }), to: m.to!, kind: m.kind, text: m.body,
       ...(m.mediaUrls?.length ? { mediaUrls: m.mediaUrls } : {}), ...(m.approvedPhotos?.length ? { approvedPhotos: m.approvedPhotos } : {}), ...(m.oppId ? { oppId: m.oppId } : {}), city: this.city,
+      ...(m.leakReasons?.length ? { leakReasons: m.leakReasons } : {}),
     })));
     return out;
   }

@@ -470,11 +470,12 @@ export class NetworkRuntime {
     const queue = this.adapter instanceof BlooioAdapter ? this.adapter.queue : undefined;
     // Collected replies (Cloud sends them) get the queue's own leak guard first: canary shapes, contacts,
     // the recipient's leak sources and the thread check. One that fails is not collected; it goes into
-    // the queue like any other send, where the same guard parks it for staff (parked_leak_review).
+    // the queue parked for staff (parked_leak_review) at once: a send-time gate (a reply whose inbound is old
+    // because engaged runs after the turn's unit) must not end it before staff see it.
     if (queue) for (const s of u.sends) {
       if (!u.collected.has(s.id) || !s.to) continue;
       const reasons = await queue.collectedLeaks(tx, { id: s.id, ...(u.forget.has(s.memberId) ? {} : { memberId: s.memberId }), to: s.to, kind: s.kind, text: s.body });
-      if (reasons.length) { u.collected.delete(s.id); this.host.log(`[alert] a collected reply failed the leak guard and goes to the queue for review (${this.id}, ${s.id})`); }
+      if (reasons.length) { u.collected.delete(s.id); s.leakReasons = reasons; this.host.log(`[alert] a collected reply failed the leak guard and goes to the queue for review (${this.id}, ${s.id})`); }
     }
     const captured = u.sends.filter(s => u.collected.has(s.id) && (ok(s.memberId) || u.forget.has(s.memberId)));
     if (captured.length) {

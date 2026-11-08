@@ -215,3 +215,17 @@ test("SD-100: a collected reply whose gateway receipt never comes, or comes as u
   expect(await both("sd100-lost-reply")).toEqual({outbound:"failed_unknown",ended:true,message:"failed_unknown"});
   expect(await both("sd100-unknown-reply")).toEqual({outbound:"failed_unknown",ended:true,message:"failed_unknown"});
 },60_000);
+
+test("SD-101: a reply that fails the leak guard in a signed turn is parked for staff, also when the member's last message is hours old",async()=>{
+  const s=services[0]!,rt=await primary();
+  const phone="+12125550188",memberId=await join(s,phone,"Fay");
+  await rt.unitOfWork(()=>undefined);
+  // The real turn order: the unit (and its drain) runs inside inbound(); engaged runs after it returns.
+  const before=dispatched.length;
+  expect(await signedTurn(s,rt,"sd101-turn",phone,memberId,[["sd101-canary","Your code is CANARY_TEST_77_x"],["sd101-clean","See you Saturday."]],false)).toEqual(["sd101-clean"]);
+  expect(dispatched.length).toBe(before);
+  const [o]=await sql`select status,note from platform.outbound where id='sd101-canary'`;
+  expect(o.status).toBe("parked_leak_review");expect(String(o.note)).toStartWith("leak: ");
+  expect((await sql`select status from network.messages where id='sd101-canary'`)[0].status).toBe("parked_leak_review");
+  expect((await queueOf(rt).parkedLeaks()).map(x=>x.id)).toContain("sd101-canary");
+},60_000);

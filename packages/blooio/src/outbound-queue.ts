@@ -79,6 +79,8 @@ export interface EnqueueInput {
   timeZone?: string;
   /** The member's city: its zone is the fallback for quiet hours. */
   city?: string;
+  /** The leak guard already failed this text (a collected reply, collectedLeaks): the row is written parked for staff. */
+  leakReasons?: string[];
 }
 
 /** A queued row as the checks see it. */
@@ -236,17 +238,19 @@ export class OutboundQueue {
       const agent = isAgentInitiated(i.kind);
       const zone = resolveTimeZone(i.timeZone, i.city);
       const fp = fingerprint(to, i.text, media, i.kind, photos);
-      // An agent-initiated message whose local time cannot be computed is parked, never sent at night.
-      const status = agent && !zone ? "parked_invalid_timezone" : "pending";
+      // An agent-initiated message whose local time cannot be computed is parked, never sent at night. A text
+      // the leak guard already failed is parked for staff at once: no send-time gate may end it before they see it.
+      const status = agent && !zone ? "parked_invalid_timezone" : i.leakReasons?.length ? "parked_leak_review" : "pending";
       const row = {
         id: i.id, app_id: this.app, member_id: i.memberId ?? null, line: this.line, to_address: to, kind: i.kind, body: i.text,
         media_urls: tx.array(media, "TEXT"), fingerprint: fp, opportunity_id: i.oppId ?? null, time_zone: zone ?? "UTC", status,
         next_attempt_at: now, created_at: now, updated_at: now, ended_at: status === "pending" ? null : now,
+        note: status === "parked_leak_review" ? `leak: ${i.leakReasons!.join(",")}` : null,
       };
       const wrote = await tx`insert into platform.outbound ${tx(row)} on conflict (id) do nothing returning id`;
       if (wrote.length) {
         if (photos) await tx`update platform.outbound set approved_photos=${{photos}}::jsonb->'photos' where id=${i.id} and app_id=${this.app}`;
-        if (status !== "pending") this.o.onAlert?.(i.id, "invalid_timezone");
+        if (status !== "pending") this.o.onAlert?.(i.id, status === "parked_leak_review" ? "leak_blocked" : "invalid_timezone");
         continue;
       }
       const [old] = await tx`select fingerprint from platform.outbound where id = ${i.id}`;
