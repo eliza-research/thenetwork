@@ -3,7 +3,7 @@
 import { join } from "node:path";
 import { SQL } from "bun";
 import type { McpAppId } from "./apps.ts";
-import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, type AuditRow, type AuthCode, type AuthRequest, type Grant, type OAuthClient, type OAuthStore, type Token } from "./store.ts";
+import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, type AuditRow, type AuthCode, type AuthRequest, type Grant, type Mint, type OAuthClient, type OAuthStore, type Token } from "./store.ts";
 
 export const OAUTH_SQL = join(import.meta.dir, "..", "db", "oauth.sql");
 
@@ -142,12 +142,23 @@ export class PgOAuthStore implements OAuthStore {
     const rows=await this.sql`select * from oauth.codes where hash=${hash}`;
     return rows[0]?code(rows[0]):undefined;
   }
-  async takeCode(hash: string, at: number) {
-    // One statement: the first caller gets used_at = null back, every later caller sees the earlier use.
-    const [r] = await this.sql`with prev as (select * from oauth.codes where hash = ${hash} for update)
-      update oauth.codes c set used_at = coalesce(c.used_at, ${ts(at)}) from prev where c.hash = prev.hash
-      returning prev.*`;
-    return r ? code(r) : undefined;
+  async redeemCode<M extends Mint>(hash: string, at: number, mint: (c: AuthCode) => M | undefined) {
+    return this.sql.begin(async tx => {
+      // The first caller gets used_at = null back, every later caller sees the earlier use.
+      const [r] = await tx`with prev as (select * from oauth.codes where hash = ${hash} for update)
+        update oauth.codes c set used_at = coalesce(c.used_at, ${ts(at)}) from prev where c.hash = prev.hash
+        returning prev.*`;
+      if (!r) return undefined;
+      const before = code(r);
+      const minted = before.usedAt === null ? mint(before) : undefined;
+      if (!minted) return { code: before };
+      // Same transaction: a failed insert leaves the code unused, so the client's retry is not a replay.
+      for (const t of minted.pair) await tx`insert into oauth.tokens (hash, kind, grant_id, client_id, app_id, resource, scopes, created_at, expires_at, revoked_at, rotated_at)
+        values (${t.hash}, ${t.kind}, ${t.grantId}, ${t.clientId}, ${t.app}, ${t.resource}, ${tx.array(t.scopes, "TEXT")}, ${ts(t.createdAt)}, ${ts(t.expiresAt)}, ${ts(t.revokedAt)}, ${ts(t.rotatedAt)})`;
+      const a = minted.audit;
+      await tx`insert into oauth.audit (at, kind, client_id, grant_id, app_id, detail) values (${ts(a.at)}, ${a.kind}, ${a.clientId}, ${a.grantId}, ${a.app}, ${a.detail})`;
+      return { code: before, minted };
+    });
   }
 
   async putToken(t: Token) {

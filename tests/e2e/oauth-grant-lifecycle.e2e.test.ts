@@ -4,7 +4,8 @@
 //   bun test tests/e2e/oauth-grant-lifecycle.e2e.test.ts
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { SQL } from "bun";
-import { Browser, connectMcp, newPhone, pgAvailable, rpc, startStack, webJoin, type Stack } from "./harness.ts";
+import { pkceS256, sha256hex } from "../../packages/mcp/src/util.ts";
+import { Browser, connectMcp, newPhone, pgAvailable, REDIRECT, rpc, startStack, VERIFIER, webJoin, type Stack } from "./harness.ts";
 
 const T = 180_000;
 if (!pgAvailable && process.env.REQUIRE_PG === "1") throw new Error("tests/e2e needs Postgres (REQUIRE_PG=1)");
@@ -88,5 +89,36 @@ describe.skipIf(!pgAvailable)("OAuth grants after account events", () => {
     expect((await st.site("peon", "/api/me/delete", { browser: b, json: { scope: "app" } })).status).toBe(200);
     expect(await live()).toBe(0);
     expect(await grantRows(phone)).toEqual([]);
+  }, T);
+
+  // SD-184: the code is used and the tokens are stored in one transaction. Before the fix the code was
+  // marked used first; when the token insert failed, the client's retry counted as a code replay, the
+  // grant was revoked and the access token of the failed try stayed as an orphan row.
+  test("a failed token mint leaves the code unused, and the retry gets the tokens", async () => {
+    const phone = newPhone(), b = new Browser();
+    expect((await webJoin(st, "friends", phone, { age: 30, browser: b })).res.status).toBe(200);
+    const client = (await (await st.site("friends", "/oauth/register", { json: { client_name: "E2E Assistant", redirect_uris: [REDIRECT], token_endpoint_auth_method: "none" } })).json()) as { client_id: string };
+    const resource = `${st.sites.friends.origin}/mcp`;
+    const q = new URLSearchParams({ response_type: "code", client_id: client.client_id, redirect_uri: REDIRECT, code_challenge: pkceS256(VERIFIER), code_challenge_method: "S256", state: "e2e", resource });
+    const rid = /name="rid" value="([^"]+)"/.exec(await (await st.site("friends", `/oauth/authorize?${q}`, { browser: b })).text())![1]!;
+    const approved = await st.site("friends", "/oauth/authorize/consent", { browser: b, form: { rid, decision: "approve" } });
+    const code = new URL(approved.headers.get("location")!).searchParams.get("code")!;
+    const grantId = ((await sql`select grant_id from oauth.codes where hash = ${sha256hex(code)}`)[0] as { grant_id: string }).grant_id;
+    const exchange = () => st.site("friends", "/oauth/token", { form: { grant_type: "authorization_code", code, redirect_uri: REDIRECT, client_id: client.client_id, code_verifier: VERIFIER, resource } });
+
+    await sql.unsafe(`create function oauth.e2e_mint_fault() returns trigger language plpgsql as $$
+      begin if NEW.grant_id = '${grantId}' and NEW.kind = 'refresh' then raise exception 'synthetic mint failure'; end if; return NEW; end $$;
+      create trigger e2e_mint_fault before insert on oauth.tokens for each row execute function oauth.e2e_mint_fault();`);
+    try {
+      expect((await exchange()).status).toBe(500);
+    } finally {
+      await sql.unsafe("drop trigger e2e_mint_fault on oauth.tokens; drop function oauth.e2e_mint_fault();");
+    }
+    expect((await sql`select count(*)::int as n from oauth.tokens where grant_id = ${grantId}`)[0].n).toBe(0);
+
+    const retry = await exchange();
+    expect(retry.status).toBe(200);
+    expect((await sql`select revoked_at from oauth.grants where id = ${grantId}`)[0].revoked_at).toBeNull();
+    expect((await sql`select count(*)::int as n from oauth.tokens where grant_id = ${grantId}`)[0].n).toBe(2);
   }, T);
 });

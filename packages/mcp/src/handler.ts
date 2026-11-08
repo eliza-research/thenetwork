@@ -593,18 +593,20 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       if(cloudStatus!=="valid")return bad("invalid_grant");
       // The Cloud check may be slow: recheck expiry and atomically consume only after it succeeds.
       if(ac.expiresAt<=now() || grant.expiresAt<=now())return bad("invalid_grant");
-      const consumed=await store.takeCode(ac.hash,now());
-      if(!consumed)return bad("invalid_grant");
-      if(consumed.usedAt!==null){
+      // The code's use and the tokens are one transaction: a failed mint leaves the code unused for the retry.
+      const redeemed=await store.redeemCode(ac.hash,now(),consumed=>{
+        if(consumed.expiresAt<=now() || grant.expiresAt<=now())return undefined;
+        const pair = tokenPair(client, grant, ac.scopes, ac.resource);
+        return { pair: pair.tokens, response: pair.response, audit: { at, kind: "token_issued" as const, clientId: client.id, grantId: grant.id, app: c.app.id, detail: ac.scopes.join(" ") } };
+      });
+      if(!redeemed)return bad("invalid_grant");
+      if(redeemed.code.usedAt!==null){
         await revokeGrant(ac.grantId,now());
         await store.audit({at:now(),kind:"code_replay",clientId:client.id,grantId:ac.grantId,app:c.app.id,detail:"grant revoked"});
         return bad("invalid_grant");
       }
-      if(consumed.expiresAt<=now() || grant.expiresAt<=now())return bad("invalid_grant");
-      const pair = tokenPair(client, grant, ac.scopes, ac.resource);
-      for (const token of pair.tokens) await store.putToken(token);
-      await store.audit({ at, kind: "token_issued", clientId: client.id, grantId: grant.id, app: c.app.id, detail: ac.scopes.join(" ") });
-      return json(200, pair.response);
+      if(!redeemed.minted)return bad("invalid_grant");
+      return json(200, redeemed.minted.response);
     }
 
     if (grantType === "refresh_token") {

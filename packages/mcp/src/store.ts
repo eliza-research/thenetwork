@@ -96,6 +96,9 @@ export type AuditKind =
 /** One audit row. Never a token, a code, a secret or a phone number. */
 export interface AuditRow { at: number; kind: AuditKind; clientId: string | null; grantId: string | null; app: McpAppId | null; detail: string | null }
 
+/** What a code exchange stores with the code's use: the access and refresh tokens and the success audit row. */
+export interface Mint { pair: readonly [Token, Token]; audit: AuditRow }
+
 /** Approved editable Join fields only. No phone, age, consent or dating preferences. */
 export interface SignupDraftFields { firstName: string; homeCity?: "nyc" | "sf" }
 export interface SignupDraft { grantId: string; app: McpAppId; phoneKey: string; fields: SignupDraftFields; expiresAt: number; consumedAt: number | null }
@@ -127,8 +130,12 @@ export interface OAuthStore {
   putCode(c: AuthCode): Promise<void>;
   /** Read without consuming; transient authority outages must leave a code retryable. */
   getCode(hash: string): Promise<AuthCode | undefined>;
-  /** Mark the code used and return it as it was before (usedAt shows an earlier use: a replay). */
-  takeCode(hash: string, at: number): Promise<AuthCode | undefined>;
+  /**
+   * Mark the code used and return it as it was before (usedAt shows an earlier use: a replay). On the
+   * first use, store what `mint` returns (both tokens and the audit row) in the same transaction: a
+   * failed insert leaves the code unused. `mint` returns undefined to use the code and store nothing.
+   */
+  redeemCode<M extends Mint>(hash: string, at: number, mint: (c: AuthCode) => M | undefined): Promise<{ code: AuthCode; minted?: M } | undefined>;
 
   putToken(t: Token): Promise<void>;
   getToken(hash: string): Promise<Token | undefined>;
@@ -226,12 +233,17 @@ export class MemoryOAuthStore implements OAuthStore {
 
   async putCode(c: AuthCode) { this.codes.set(c.hash, structuredClone(c)); }
   async getCode(hash: string) { return copy(this.codes.get(hash)); }
-  async takeCode(hash: string, at: number) {
+  async redeemCode<M extends Mint>(hash: string, at: number, mint: (c: AuthCode) => M | undefined) {
     const c = this.codes.get(hash);
     if (!c) return undefined;
     const before = structuredClone(c);
-    if (c.usedAt === null) c.usedAt = at;
-    return before;
+    if (c.usedAt !== null) return { code: before };
+    c.usedAt = at;
+    const minted = mint(before);
+    if (!minted) return { code: before };
+    for (const token of minted.pair) this.tokens.set(token.hash, structuredClone(token));
+    this.rows.push({ ...minted.audit });
+    return { code: before, minted };
   }
 
   async putToken(t: Token) { this.tokens.set(t.hash, structuredClone(t)); }
