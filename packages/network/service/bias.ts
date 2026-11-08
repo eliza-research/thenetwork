@@ -19,9 +19,11 @@ const MONTH = 30.44 * DAY;
 
 export interface BiasMember { id: MemberId; age: number | null; joinedAt: number | null; tags: readonly string[] }
 export interface BiasOpp {
-  participants: readonly MemberId[]; stage: string; createdAt: number; meetingAt?: number;
+  createdAt: number;
   /** The members a probe or a reveal reached (a probe waiting for its turn or its send window has reached nobody). */
   contacted: ReadonlySet<MemberId>;
+  /** The booked members that attendance found present, once it is resolved (none before). */
+  attended?: readonly MemberId[];
 }
 
 /** One outcome row per adult member (18+) with at least one day in the window. */
@@ -31,16 +33,17 @@ export function biasRows(members: readonly BiasMember[], opps: readonly BiasOpp[
   const overall = new Map<string, number>();
   for (const m of adults) { const a = parseAppearance(m.tags); if (a) overall.set(m.id, a.overall); }
   const quintile = ratingQuintiles(overall);
-  // Reached: a probe or a reveal went out to the member (SD-450). Held: done, meeting in the past.
+  // Reached: a probe or a reveal went out to the member (SD-450). Held: attendance found the member and
+  // someone else there; a booked date that one side missed or ghosted is not a date held (SD-451).
   const recent = opps.filter(o => o.createdAt >= from && o.createdAt <= now);
-  const held = recent.filter(o => o.stage === "done" && o.meetingAt !== undefined && o.meetingAt <= now);
+  const held = recent.filter(o => (o.attended?.length ?? 0) >= 2);
   const pairDates = new Map<string, number>();
-  for (const o of held) if (o.participants.length === 2) { const k = [...o.participants].sort().join("|"); pairDates.set(k, (pairDates.get(k) ?? 0) + 1); }
+  for (const o of held) if (o.attended!.length === 2) { const k = [...o.attended!].sort().join("|"); pairDates.set(k, (pairDates.get(k) ?? 0) + 1); }
   return adults.map(m => ({
     group: quintile.get(m.id) ?? "unrated",
     memberMonths: (now - Math.max(m.joinedAt!, from)) / MONTH,
     proposals: recent.filter(o => o.contacted.has(m.id)).length,
-    dates: held.filter(o => o.participants.includes(m.id)).length,
+    dates: held.filter(o => o.attended!.includes(m.id)).length,
     secondDates: [...pairDates].filter(([k, n]) => n >= 2 && k.split("|").includes(m.id)).length,
   }));
 }

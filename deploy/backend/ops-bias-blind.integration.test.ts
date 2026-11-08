@@ -63,7 +63,7 @@ describe.skipIf(!pgAvailable)("ops alerts: a bias report that measures nothing (
     now += 7 * DAY;
     const all = Array.from({ length: 40 }, (_, i): BiasMember => ({ id: `r${i}` as never, age: 30, joinedAt: T0 - 20 * DAY,
       tags: [`appearance:face=${i / 40}`, `appearance:body=${i / 40}`, `appearance:overall=${i / 40}`, "appearance:conf=0.9"] }));
-    const opps = all.slice(0, 20).map((m, i) => ({ participants: [m.id, all[39 - i]!.id], contacted: new Set([m.id, all[39 - i]!.id]), stage: "done", createdAt: now - 10 * DAY, meetingAt: now - 9 * DAY }));
+    const opps = all.slice(0, 20).map((m, i) => ({ contacted: new Set([m.id, all[39 - i]!.id]), attended: [m.id, all[39 - i]!.id], createdAt: now - 10 * DAY }));
     const seen = await store(now - MIN, all, opps);
     expect(Object.values(seen.report.groups).filter(g => g.n >= 8).length).toBeGreaterThanOrEqual(2);
     await ops.tick();

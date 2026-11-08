@@ -18,6 +18,8 @@ const ADMIN_URL = `postgres://${user}@localhost:${DEV_PG_PORT}/postgres`;
 const URL_ = `postgres://${user}@localhost:${DEV_PG_PORT}/${DB}`;
 async function admin(q: string) { const sql = new SQL({ url: ADMIN_URL, max: 1 }); try { await sql.unsafe("set lock_timeout = '5s'"); await sql.unsafe(q); } finally { await sql.close(); } }
 const DAY = 86_400_000;
+/** One slop network per case; every service runs all of them, so each owns the members of its own city only. */
+const CITIES = ["nyc", "sf", "la"];
 
 let sql: SQL;
 const services: NetworkService[] = [];
@@ -42,13 +44,12 @@ const date = (id: string, a: string, b: string, daysAgo: number, post: Record<st
 
 /** One network (`slop:<city>`) with these adult members, these stored opportunities and one tick; then a forced report. */
 async function report(city: string, members: { id: string; joinedDaysAgo: number }[], opps: (now: number) => [string, never][]) {
-  if (city !== "nyc") await sql`insert into platform.networks (id, app_id, city, matching_enabled) values (${`slop:${city}`}, 'slop', ${city}, false) on conflict (id) do nothing`;
   for (const m of members) {
     await sql`insert into network.members (app_id, id, name, home_city, account_status, age, joined_at)
       values ('slop', ${m.id}, ${`Member ${m.id}`}, ${city}, 'active', 30, ${new Date(START - m.joinedDaysAgo * DAY)})`;
   }
   const clock = new SimClock(START);
-  const svc = new NetworkService({ url: URL_, clock, env: { PLATFORM_ENV: "dev" }, instance: `bias-${city}`, networks: [{ id: `slop:${city}` }], notify: false, log: () => {} });
+  const svc = new NetworkService({ url: URL_, clock, env: { PLATFORM_ENV: "dev" }, instance: `bias-${city}`, networks: CITIES.map(c => ({ id: `slop:${c}` })), notify: false, log: () => {} });
   services.push(svc);
   const rt = svc.runtimeFor("slop", city)!;
   await rt.unitOfWork(n => { for (const [id, o] of opps(clock.now())) n.opps.set(id, o); });
@@ -67,6 +68,8 @@ describe.skipIf(!pgAvailable)("weekly bias report: the outcomes it counts", () =
     await admin(`create database ${DB}`);
     await applySchema(URL_, { lockTimeout: "5s" });
     sql = new SQL({ url: URL_, max: 2 });
+    await sql`insert into platform.cities (id, name, tz) values ('la', 'Los Angeles', 'America/Los_Angeles') on conflict (id) do nothing`;
+    for (const c of CITIES.filter(c => c !== "nyc")) await sql`insert into platform.networks (id, app_id, city, matching_enabled) values (${`slop:${c}`}, 'slop', ${c}, false) on conflict (id) do nothing`;
   }, 120_000);
   afterAll(async () => {
     for (const s of services) await s.close().catch(() => {});
@@ -81,5 +84,15 @@ describe.skipIf(!pgAvailable)("weekly bias report: the outcomes it counts", () =
     ]);
     expect(r.members).toBe(2);
     expect(r.proposals).toBe(1);
+  }, 120_000);
+
+  test("a date counts as held only when the Network found that both came (SD-451)", async () => {
+    // g2 ghosted g1 (g1 came and reported nobody there; g2 never answered); h1 and h2 both came.
+    const r = await report("la", ["g1", "g2", "h1", "h2"].map(id => ({ id, joinedDaysAgo: 20 })), () => [
+      ["sd451g", date("sd451g", "g1", "g2", 5, { g1: { came: true, otherNoShow: true } })],
+      ["sd451h", date("sd451h", "h1", "h2", 5, { h1: { came: true, otherNoShow: false }, h2: { came: true, otherNoShow: false } })],
+    ]);
+    expect(r.members).toBe(4);
+    expect(r.dates).toBe(2);
   }, 120_000);
 });
