@@ -112,7 +112,7 @@ export class StubNetwork implements NetworkUnderTest {
     }
     if (/can'?t make it|have to bail|can'?t come|cancel/i.test(body)) {
       const opp = [...this.opps.values()].find(o => o.stage === "scheduled" && o.invites.get(m.id)?.status === "yes");
-      if (opp) return this.handleDrop(m, opp);
+      if (opp) { this.handleDrop(m, opp); return; }
     }
     if (m.awaiting?.kind === "feedback") {
       this.ctx.log("feedback", { memberId: m.id, proposalId: m.awaiting.pid, text: body });
@@ -311,8 +311,8 @@ export class StubNetwork implements NetworkUnderTest {
     }
   }
 
-  /** `ack` false: the member sent STOP, so they get no reply. */
-  private handleDrop(m: MemberState, opp: Opp, ack = true) {
+  /** `ack` false: the member sent STOP, so they get no reply. Returns true when the meeting is called off. */
+  private handleDrop(m: MemberState, opp: Opp, ack = true): boolean {
     opp.invites.set(m.id, { ...opp.invites.get(m.id)!, status: "dropped" });
     if (ack) this.send(m, "No worries, thanks for the heads up.", { type: "info" });
     const still = [...opp.invites].filter(([, i]) => i.status === "yes").map(([id]) => id);
@@ -324,6 +324,7 @@ export class StubNetwork implements NetworkUnderTest {
         { type: "cancellation", proposalId: opp.p.id });
     }
     if (!keep) { opp.stage = "cancelled"; this.release(opp); }
+    return !keep;
   }
 
   /**
@@ -409,8 +410,7 @@ export class StubNetwork implements NetworkUnderTest {
         if (opp.p.participants.length === 2) this.cancel(opp, "opted_out");
       } else if (opp.stage === "scheduled" && opp.invites.get(id)?.status === "yes") {
         // A booked meeting: no reminder or feedback request to this member, and the others are told.
-        this.handleDrop(this.member(id), opp, false);
-        if (opp.stage === "cancelled") this.ctx.log("opportunity_closed", { proposalId: opp.p.id, reason: "opted_out" });
+        if (this.handleDrop(this.member(id), opp, false)) this.ctx.log("opportunity_closed", { proposalId: opp.p.id, reason: "opted_out" });
       }
     }
   }
