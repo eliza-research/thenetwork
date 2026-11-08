@@ -789,6 +789,7 @@ export class NetworkService implements RuntimeHost {
     const rt = this.runtimeForHome(ctx.app.id, ctx.input.homeCity ?? this.runtimeFor(ctx.app.id)?.city ?? "");
     if (!rt) throw new Error(`no network runs for ${ctx.app.id}`);
     if (ctx.membership.state !== "active") return; // waitlist or a recycled number: staff first
+    if (await this.runtimeOfMember(ctx.app.id, ctx.membership.memberId)) return; // a repeated web join of a complete member
     await this.createMember(rt, ctx.membership, { age: ctx.age, firstName: ctx.input.firstName, homeCity: ctx.input.homeCity, neighborhood: ctx.input.neighborhood, interests: ctx.input.interests, zip: ctx.input.zip });
     await rt.unitOfWork(n => { n.welcomeJoined(ctx.membership.memberId); });
   }
@@ -963,10 +964,12 @@ export class NetworkService implements RuntimeHost {
   /**
    * The app of an inbound message on the shared line (platform plan 4.4, founder decision 2):
    *  1. a per-app webhook path or a line in platform.app_lines names the app;
-   *  2. the whole message is an app's word ("slop", "slop.date", "join friends.help"): that app;
+   *  2. the whole message is an app's word ("slop", "slop.date", "join friends.help"): that app, except as the
+   *     answer of a member of The Network to "what are you looking for?" (The Network enrolls them);
    *  2b. START after a global STOP: the app that the STOP confirmation named;
    *  3. a join the person started (they sent the app's word) takes the answer that follows, if the
    *     answer reads as a join answer or the person is not a member anywhere;
+   *     the same for an app that invited the person (a staff invite);
    *  4. a member: SHARE goes to the app that asked for it (the link notice); else the app with the newest open item (a probe, a plan they have not answered), else the
    *     app that wrote to them last;
    *  5. otherwise The Network (a stranger joins it).
@@ -982,17 +985,23 @@ export class NetworkService implements RuntimeHost {
     const read = profileReadRequest(ev.text, this.apps);
     if (read?.kind === "read" && read.app) return { app: read.app, shared: true };
     const named = this.namedApp(ev.text);
-    if (named) return { app: named, shared: true };
+    const mine = (await this.memberApps(ev.from)).filter(x => this.runtimeFor(x.app));
     const e164 = normalizePhone(ev.from);
+    // The bare answer "friends" to The Network's "what are you looking for?" is that answer, not a new join.
+    if (named && named !== "ntwrk" && e164 && mine.some(x => x.app === "ntwrk") && (await this.pendingOf(e164, "looking_for"))) return { app: "ntwrk", shared: true };
+    if (named) return { app: named, shared: true };
     // START after a global STOP: the app that the STOP confirmation named ("Reply START to resume <app>").
     if (e164 && platformKeyword(ev.text) === "start") {
       const stop = (await this.people.lastConsent(e164, "ntwrk")).global; // the global row (not the ntwrk row)
       if (stop?.state === "opted_out" && stop.namedApp && this.runtimeFor(stop.namedApp)) return { app: stop.namedApp, shared: true };
     }
-    const mine = (await this.memberApps(ev.from)).filter(x => this.runtimeFor(x.app));
     const pending = e164 ? await this.pendingOf(e164, "join") : undefined;
     if (pending && !mine.some(x => x.app === pending.app)
       && (!mine.length || parseJoinText(ev.text, this.appWords(), true).age !== undefined)) return { app: pending.app, shared: true };
+    // A staff invite the person did not answer yet: the reply joins the invited app (the same rule as a pending join).
+    const person = !pending && e164 ? await this.accounts.personFor(e164) : null;
+    const invited = person ? (await this.people.memberships(person.id)).find(m => m.state === "invited" && this.runtimeFor(m.app)) : undefined;
+    if (invited && (!mine.length || parseJoinText(ev.text, this.appWords(), true).age !== undefined)) return { app: invited.app, shared: true };
     if (mine.length) {
       // SHARE answers the link notice: the app that asked for it (the newest pending ask of an app they are a member of).
       const share = e164 && /^\s*share\W*$/i.test(ev.text) ? await this.pendingOf(e164, "share") : undefined;
@@ -1152,8 +1161,18 @@ export class NetworkService implements RuntimeHost {
       if (!kw && e164 && /^\s*share\W*$/i.test(ev.text) && (await this.pendingOf(e164, "share", app.id))) return this.share(rt, app, memberId, e164, ev, rowId);
       // The answer to The Network's "what are you looking for?": enroll in the apps they named.
       if (!kw && !profileRead && e164 && app.id === "ntwrk" && (await this.pendingOf(e164, "looking_for"))) {
-        const wants = lookingFor(ev.text).filter(a => a !== "ntwrk" && this.runtimeFor(a));
-        if (wants.length) return this.enroll(rt, memberId, e164, wants, ev, rowId);
+        const named = this.namedApp(ev.text);
+        const wants = [...new Set([...lookingFor(ev.text), ...(named ? [named] : [])])].filter(a => a !== "ntwrk" && this.runtimeFor(a));
+        if (wants.length) {
+          // The answer is read like any other message first (ages, minor signals, reports, blocks):
+          // an age stated in it counts before any app is joined.
+          const out = await this.memberMessage(rt, memberId, ev, rowId, undefined);
+          await this.statedAge(app, rt, memberId, e164);
+          await this.enroll(rt, memberId, e164, wants, ev, rowId);
+          return out;
+        }
+        // A reply that names no app answers the question too: it closes, so a later chance word enrolls nothing.
+        await this.people.deletePending(this.phoneKey(e164), "looking_for");
       }
       // After STOP the member's texts still reach the Network (a report is never dropped), but its replies are
       // refused: the person gets one hint instead (founder decision 2026-10-11, #22).
@@ -1215,7 +1234,8 @@ export class NetworkService implements RuntimeHost {
    * first contact gets it. It enrolls nobody: joining still needs the age check and the opt-in.
    */
   private async elizaNotice(app: AppInfo, e164: string, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string): Promise<boolean> {
-    if (!this.inboundTurn()) return false;
+    const turn = this.inboundTurn();
+    if (!turn) return false;
     if ((await this.memberApps(e164)).length) return false;
     for (const other of this.runtimes.values()) { await other.identities(); if (other.memberOf(e164)) return false; }
     const person = await this.accounts.personFor(e164);
@@ -1227,14 +1247,14 @@ export class NetworkService implements RuntimeHost {
     if ((age !== undefined && !joinAgeCheck(age, floor, app).ok) || (floor !== undefined && !canJoin(floor))) return false;
     const key = this.noticeKey(e164);
     const wrote = await this.sql.begin(async tx => {
-      const rows = await tx`insert into platform.eliza_notices (phone_hash, sent_at) values (${key}, ${new Date(this.clock.now())}) on conflict (phone_hash) do nothing returning phone_hash`;
+      const rows = await tx`insert into platform.eliza_notices (phone_hash, sent_at, turn_id) values (${key}, ${new Date(this.clock.now())}, ${turn.id}) on conflict (phone_hash) do nothing returning phone_hash`;
       if (rows.length) await this.inbox.collect(tx, [{ id: `notice:${rowId}`, body: ELIZA_NOTICE, kind: "compliance" }]);
       return rows.length > 0;
     });
     // The notice row commits before the join runs: a turn that then fails (its collected notice never
     // reaches Cloud) takes the row back, so the retry or the next first contact still gets the notice.
-    const turn = this.inboundTurn();
-    if (wrote && turn) (turn.onFail ??= []).push(() => this.sql`delete from platform.eliza_notices where phone_hash = ${key}`);
+    // A worker that stops cannot run this: the inbox sweep deletes the row of its turn (turn_id).
+    if (wrote) (turn.onFail ??= []).push(() => this.sql`delete from platform.eliza_notices where phone_hash = ${key}`);
     return wrote;
   }
 
@@ -1331,7 +1351,7 @@ export class NetworkService implements RuntimeHost {
    * onAgeStated, runtime.ts). The person keeps the lowest age on every app (Accounts.recordAge ->
    * ageLowered): an explicit age, a minor's age, or the age the Network declined them for. The phone's
    * age floor too, so a member from before the platform (no person) cannot join again older. When the
-   * Network declined them (under 13), every membership goes: under 13 cannot use any app.
+   * Network declined them (under 13), every membership and a pending text join go: under 13 cannot use any app.
    */
   private async statedAge(app: AppInfo, rt: NetworkRuntime, memberId: MemberId, e164: string) {
     const ages = rt.takeAges(memberId).filter(a => a.explicit || a.declined || isMinor(a.age));
@@ -1342,7 +1362,10 @@ export class NetworkService implements RuntimeHost {
     // other app deletes the person's data before staff decide.
     const recorded = ages.map(a => (a.declined ? a.age : Math.max(a.age, app.minJoinAge)));
     await this.accounts.recordAge(e164, person, Math.min(...recorded));
-    if (!person || !ages.some(a => a.declined)) return;
+    if (!ages.some(a => a.declined)) return;
+    // Under 13 stores nothing: a text join the phone started (its pending row) goes too.
+    await this.people.deletePending(this.phoneKey(e164), "join");
+    if (!person) return;
     const at = this.clock.now();
     for (const m of await this.people.memberships(person.id)) {
       if (m.state === "removed") continue;
@@ -1451,6 +1474,13 @@ export class NetworkService implements RuntimeHost {
     const homeCity = said.homeCity ?? p?.homeCity;
     const ask = invited ? c.invited(app.minJoinAge) : c.joinAsk(app.minJoinAge);
     if (age === undefined) {
+      // A phone whose age floor is under 13 (a decline on the web or by text) is declined again: no pending join, no join question.
+      const floor = await this.accounts.lowestAge(e164, person);
+      if (floor !== undefined && !canJoin(floor)) {
+        await this.people.deletePending(key, "join");
+        await this.direct(rt, ev.from, app.brand.underAge, `sys:${rowId}`, "compliance");
+        return "under_age";
+      }
       if (said.invalidHome) {
         await this.direct(rt, ev.from, "Tell me your home city: New York or San Francisco / Bay Area. Include your first name and age.", `sys:${rowId}`, "reply");
         return "join_asked";
@@ -1465,6 +1495,7 @@ export class NetworkService implements RuntimeHost {
       // Nothing is stored for this app: only the age, on the phone's age floor (and the person, if any),
       // so a second try with an older age is refused too.
       await this.accounts.recordAge(e164, person, age);
+      await this.accounts.declineUnderAge(e164, person);
       await this.people.deletePending(key, "join");
       await this.direct(rt, ev.from, app.brand.underAge, `sys:${rowId}`, "compliance");
       this.log(`[inbound] under the join age for ${app.id}: declined, nothing stored`);
@@ -1475,6 +1506,9 @@ export class NetworkService implements RuntimeHost {
       return "join_asked";
     }
     if (!name) {
+      // The age is a statement now: the phone's age floor keeps it, so a later, older age or an expired
+      // pending row never replaces it (the lowest age wins).
+      await this.accounts.recordAge(e164, person, age);
       await this.people.putPending({ phoneHash: key, kind: "join", app: app.id, name: null, age, ...(homeCity ? { homeCity } : {}), at: t });
       await this.direct(rt, ev.from, c.joinNeedName, `sys:${rowId}`, "reply");
       return "join_asked";
@@ -1486,9 +1520,11 @@ export class NetworkService implements RuntimeHost {
     // Their answer is a new opt-in: a delete of everything no longer suppresses the number.
     await this.people.unsuppress(key);
     const others = (await this.people.memberships(who.id)).filter(m => m.app !== app.id && m.state !== "removed" && m.state !== "invited");
+    // An invited or live membership (a web join of the same phone that committed after this text was routed) keeps its member id and review.
+    const kept = existing && existing.state !== "removed" ? existing : undefined;
     const membership: Membership = {
-      app: app.id, personId: who.id, memberId: existing?.state === "invited" ? existing.memberId : `${app.id}_${randomUUID()}`,
-      state: app.joinMode === "waitlist" ? "onboarding" : "active", review: null, firstName: name, profile: homeCity ? { homeCity } : {}, joinedAt: t, leftAt: null,
+      app: app.id, personId: who.id, memberId: kept ? kept.memberId : `${app.id}_${randomUUID()}`,
+      state: app.joinMode === "waitlist" ? "onboarding" : "active", review: kept?.review ?? null, firstName: name, profile: homeCity ? { homeCity } : {}, joinedAt: t, leftAt: null,
     };
     await this.people.putMembership(membership);
     const joinAt = this.consentAt(ev);
@@ -1521,11 +1557,13 @@ export class NetworkService implements RuntimeHost {
    * app's own join age check (13+ everywhere today), its own opt-in and its own member. The Network
    * confirms in one text. Apps the age check refuses are left out without saying why.
    */
-  private async enroll(rt: NetworkRuntime, memberId: MemberId, e164: string, wants: AppId[], ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string): Promise<InboundOutcome> {
+  private async enroll(rt: NetworkRuntime, memberId: MemberId, e164: string, wants: AppId[], ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string): Promise<void> {
     const key = this.phoneKey(e164), t = this.clock.now();
     const person = await this.accounts.personFor(e164);
     const ntwrk = person && (await this.people.getMembership(person.id, "ntwrk"));
     const joined: AppInfo[] = [];
+    // createMember names each new member in the turn; this turn stays The Network's, which confirms below.
+    const turn = this.inboundTurn(), own = turn && { app: turn.app, memberId: turn.memberId };
     if (person && ntwrk && !(await this.accounts.banned(e164, person))) {
       const lowest = await this.accounts.lowestAge(e164, person);
       const asked = lookingForAsk(lowest);
@@ -1546,12 +1584,9 @@ export class NetworkService implements RuntimeHost {
         joined.push(app);
       }
     }
+    if (turn && own) { turn.app = own.app; turn.memberId = own.memberId; }
     await this.people.deletePending(key, "looking_for");
-    return rt.unitOfWork(async () => {
-      rt.unit.inbound = { id: rowId, member_id: memberId, direction: "inbound", channel: ev.transport === "sms" ? "sms" : "imessage", body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
-      if (joined.length) rt.system(memberId, `sys:${rowId}`, enrolledText(joined), "reply", "info");
-      return "handled" as const;
-    });
+    if (joined.length) await rt.unitOfWork(() => { rt.system(memberId, `sys:${rowId}`, enrolledText(joined), "reply", "info"); });
   }
 
   /** SHARE after the link notice: base-profile grants from the person's other apps (a grant copies nothing). */

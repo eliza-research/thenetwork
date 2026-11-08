@@ -91,8 +91,10 @@ export class Inbox {
       // Admission is checked again after acquiring the sender lock, before any write.
       if (admitUntil !== undefined && this.o.clock.now() >= admitUntil) return [];
       // A turn whose worker stopped (no completion within the lease) is unresolved, not processing forever.
-      await tx`update platform.inbound set status='unresolved',event=null,sender=null
-        where sender_hash=${senderHash} and status='processing' and request_hash is not null and coalesce(lease_at,arrived_at)<${new Date(now - PROCESSING_LEASE_MS)}`;
+      // Its one-time notice was never delivered: the row goes with it (the in-memory undo died with the worker).
+      await tx`with swept as (update platform.inbound set status='unresolved',event=null,sender=null
+        where sender_hash=${senderHash} and status='processing' and request_hash is not null and coalesce(lease_at,arrived_at)<${new Date(now - PROCESSING_LEASE_MS)} returning id)
+        delete from platform.eliza_notices where turn_id in (select id from swept)`;
       // A compliance turn waits only for another compliance turn of the sender (its own claim slot, migration 0042).
       const inserted = await tx`insert into platform.inbound(id,line,sender,received_at,arrived_at,lease_at,event,status,request_hash,sender_hash,network_authority,compliance)
       select ${id},null,null,${new Date(input.receivedAt)},${new Date(now)},${new Date(now)},null,'processing',${requestHash},${senderHash},${input.networkAuthority ?? null}::jsonb,${keyword}
@@ -258,9 +260,11 @@ export class Inbox {
    * longer holds back the sender's later messages. Returns false when the row is not a stuck signed turn.
    */
   async resolve(id: string): Promise<boolean> {
-    const rows = await this.o.sql`update platform.inbound set status='unresolved',sender_hash=null,event=null,sender=null
-      where id=${id} and request_hash is not null and status in ('processing','unresolved') returning id`;
-    return rows.length > 0;
+    const [r] = await this.o.sql`with resolved as (update platform.inbound set status='unresolved',sender_hash=null,event=null,sender=null
+      where id=${id} and request_hash is not null and status in ('processing','unresolved') returning id),
+      notices as (delete from platform.eliza_notices where turn_id in (select id from resolved))
+      select count(*)::int as n from resolved`;
+    return r.n > 0;
   }
 
   /** One sender at a time, in this process (a promise chain) and across processes (an advisory lock). */

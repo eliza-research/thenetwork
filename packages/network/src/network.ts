@@ -719,6 +719,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       // Safety record first: the adults this member met, before anything is dropped (network-consent-3).
       this.minorAfterContact(m.id);
       this.dropMember(m.id, "minors policy");
+      // The adult interview stops: a minor is onboarded as "active", like welcome() does.
+      if (m.stage === "q1" || m.stage === "q2" || m.stage === "q3") { m.stage = "active"; if (m.awaiting?.kind === "interview") m.awaiting = undefined; }
       this.ctx.log("minor_signal", { memberId: m.id });
       if (this.app.minJoinAge > 13) {
         // An 18+ app: no teen copy and no teen service; out of matching, and staff review (network-consent-19).
@@ -832,7 +834,6 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (isRequest && m.stage !== "active") { this.activate(m); m.awaiting = undefined; }
     if (c.kind === "people_request" && !m.minor) return this.openRequest(m, c, {});
     if (c.kind === "plans_request" || (c.kind === "people_request" && m.minor)) return this.onPlans(m, c);
-    if (m.minor && c.kind === "other" && body.length > 12) return this.concierge(m);
     if (ACK_ONLY.test(body)) return;
     return "open" as const;
   }
@@ -1817,19 +1818,6 @@ export class ConsentNetwork implements NetworkUnderTest {
       req.oppId = o.id; other.oppId = o.id;
       this.submit(o);
     }
-  }
-
-  /**
-   * A member aged 13-17 chats: suggest public places for what they are into. Several short messages
-   * in a row get different places each time, and nothing once the nearby ideas are used up.
-   */
-  private concierge(m: MemberState) {
-    const known = this.knownProfiles().get(m.id);
-    const topic = known ? [...known.interests][0] : undefined;
-    const v = nearbyVenues(m.area, topic ? [topic] : [], 2, this.recentVenues(m));
-    if (!v.length) return;
-    this.send(m, copy.minorConcierge(topic ? interestLabel(topic) : "something new", `try ${v.map(x => x.name).join(" or ")}; they're public and run free things often`), { type: "concierge", proactive: false }, "reply",
-      { hook: { t: "suggested", venues: v.map(x => x.id) } });
   }
 
   /** Venues suggested to the member in the last VENUE_REPEAT_DAYS. */

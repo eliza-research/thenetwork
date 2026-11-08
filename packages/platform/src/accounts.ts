@@ -20,7 +20,7 @@
 import { randomUUID } from "node:crypto";
 import type { City } from "../../core/src/types.ts";
 import { DAY } from "../../core/src/clock.ts";
-import { validAge } from "../../core/src/policy.ts";
+import { canJoin, validAge } from "../../core/src/policy.ts";
 import { canJoinApp, joinAgeCheck, lowestAge } from "./age.ts";
 import type { AppId, AppInfo } from "./apps.ts";
 import { type ConsentEvent, resolveConsent, type StopScope, stopScope } from "./consent.ts";
@@ -109,7 +109,7 @@ export interface JoinHookContext { app: AppInfo; person: Person; membership: Mem
 export interface MemberHookContext { app: AppInfo; personId: string; memberId: string; e164: string }
 
 export interface AccountHooks {
-  /** Create the network member (the service mounts this). A throw undoes the join. */
+  /** Create the network member (the service mounts this). A throw undoes a new join. It runs again on a repeated join, so it must do nothing for a member that exists. */
   onJoin?(ctx: JoinHookContext): Promise<void> | void;
   /** STOP from the web. memberId is this app's member, when there is one (a global stop runs without one). */
   onStop?(ctx: Omit<MemberHookContext, "memberId"> & { memberId?: string; scope: StopScope }): Promise<void> | void;
@@ -358,7 +358,12 @@ export class Accounts {
       // A repeated join is still an age statement. Keep the membership and consent unchanged,
       // but propagate a lower age before returning the existing membership.
       await this.recordAge(who.e164, person, input.age);
-      if (!joinAgeCheck(input.age, await this.lowestAge(who.e164, person), app).ok) return { ok: false, error: "under_age" };
+      const again = joinAgeCheck(input.age, await this.lowestAge(who.e164, person), app);
+      if (!again.ok) { await this.declineUnderAge(who.e164, person); return { ok: false, error: "under_age" }; }
+      // A first join can stop after its membership committed and before the hook made the network member:
+      // the repeat completes it (the hook does nothing for a member that already exists).
+      await this.store.attachPerson(who.e164, person!.id);
+      await this.hooks.onJoin?.({ app, person: person!, membership: existing, e164: who.e164, age: again.effective ?? input.age, input });
       return { ok: true, membership: existing };
     }
     if (app.joinMode === "invite" && existing?.state !== "invited") return { ok: false, error: "invite_only" };
@@ -366,11 +371,13 @@ export class Accounts {
     if (!age.ok) {
       // Nothing is stored for this app: only the age, on the phone's age floor (and the person, if any).
       await this.recordAge(who.e164, person, input.age);
+      await this.declineUnderAge(who.e164, person);
       return { ok: false, error: "under_age" };
     }
     if (!person) person = await this.createPerson(who.e164, "otp_sms", age.effective ?? input.age);
     await this.recordAge(who.e164, person, input.age);
     // A new opt-in by the person: a delete of everything no longer suppresses the number.
+    const suppressed = await this.store.isSuppressed(this.phoneHash(who.e164));
     await this.store.unsuppress(this.phoneHash(who.e164));
     const membership: Membership = {
       // An invited membership keeps its member id (the invite may already name it).
@@ -387,8 +394,15 @@ export class Accounts {
       // The network member gets the person's lowest age, not the one typed now (a minor anywhere is a minor here).
       await this.hooks.onJoin?.({ app, person, membership, e164: who.e164, age: age.effective ?? input.age, input });
     } catch (e) {
-      await this.store.forgetMembership(person.id, app.id, at);
-      await this.store.addConsent({ e164: who.e164, app: app.id, state: "opted_out", source: "join_failed", at });
+      // The hook can fail after the network member committed (the welcome): it goes through the forget path
+      // too. No opt-in stands, so a number that deleted everything is suppressed again (banned numbers never get here).
+      try {
+        await this.hooks.onForget?.({ app, personId: person.id, memberId: membership.memberId, e164: who.e164 });
+      } finally {
+        await this.store.forgetMembership(person.id, app.id, at);
+        await this.store.addConsent({ e164: who.e164, app: app.id, state: "opted_out", source: "join_failed", at });
+        if (suppressed) await this.store.suppress(this.phoneHash(who.e164), "deleted", at);
+      }
       throw e;
     }
     return { ok: true, membership };
@@ -404,6 +418,25 @@ export class Accounts {
     const m = person && (await this.store.getMembership(person.id, app.id));
     const live = m && m.state !== "removed" ? m : undefined;
     if (person && (live || scope === "global")) await this.hooks.onStop?.({ app, personId: person.id, memberId: live?.memberId, e164: who.e164, scope });
+  }
+
+  /**
+   * Under 13 cannot use any app (core canJoin): when the phone's lowest age is under 13, a text join the
+   * phone started (its pending row) is deleted, and every membership of the person goes through the
+   * forget path, with an opt-out in the ledger (as the Network's decline).
+   */
+  async declineUnderAge(e164: string, person: Person | undefined): Promise<void> {
+    const lowest = await this.lowestAge(e164, person);
+    if (lowest === undefined || canJoin(lowest)) return;
+    await this.store.deletePending(this.phoneHash(e164), "join");
+    if (!person) return;
+    const at = this.now();
+    for (const m of await this.store.memberships(person.id)) {
+      if (m.state === "removed") continue;
+      await this.hooks.onForget?.({ app: this.opts.apps(m.app), personId: person.id, memberId: m.memberId, e164 });
+      await this.store.forgetMembership(person.id, m.app, at);
+      await this.store.addConsent({ e164, app: m.app, state: "opted_out", source: "join_declined", at });
+    }
   }
 
   /** Record any consent event (keywords on a line, staff). */
