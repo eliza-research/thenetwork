@@ -1,272 +1,149 @@
 # Quint findings: matching_engine
 
 Model: [quint/matching_engine.qnt](../../../quint/matching_engine.qnt). Module plan: section 6.16 of
-[2026-11-07-state-machines.md](../2026-11-07-state-machines.md). Code base: ad67275. This file is
-hand-written. The check output below is copied from the tools.
+[2026-11-07-state-machines.md](../2026-11-07-state-machines.md). Code base: branch `wave2/matching_engine`
+(ad67275 plus the defect fixes in section 3). This file is hand-written. The check output below is copied
+from the tools.
 
-## 1. What the model contains
+## 1. Final state
+
+`safety` passes in simulation and in bounded model checking. Each fixed defect has its invariant in
+`safety`, and each action that a fix changed follows the fixed code. The defects that are not fixed are
+kept out of `safety`. Each one has its own named value with the defect id and the reason (section 4).
+Those values are still violated on the current code, so the model still shows them.
+
+## 2. What the model contains
 
 - **slop part.** Three adults (a, b, c; b smokes) and one member aged 15 (k). The onboarding loop
-  (`memberSays`, `agentNext`, `sweep`), the persisted app tags, the engine ask for the basics, the daily
-  run (engine pick and the Network gate in one action), review, the probe outcome and the booked date.
-- **peon part.** One hiring manager with postings A and B, one candidate. Drafts by text (`sms` or
-  `mcp`), the manager's yes, the staff postings API, employer verification, the engine run for a seat,
-  review, the candidate's and the manager's answers, and `checkSeats` at each tick.
+  (`memberSays`, `agentNext`, `sweep`, and the late answer after the sweep), the persisted app tags, the
+  location ask and its 7-day silent fallback, the engine's basics ask, the daily run (engine pick, judge
+  cache and the Network gate in one action), review, the probe outcome and the booked date.
+- **peon part.** One hiring manager with postings A and B, one candidate. Drafts by text (`sms`) or by the
+  assistant (`mcp`), the manager's yes, the staff postings API (served in prod), employer verification,
+  the engine run for a seat, review, the candidate's and the manager's answers, and `checkSeats` at each
+  tick.
 - **probe-flow part.** The `ProbeFlow` library with one or two participants.
 - **plan part.** The member-rule chain that `planMemberReason` reads.
-- Oracles: the message reader (a message is one "kind"), the score (any eligible pair), the judge.
+- Oracles: the message reader (a message is one "kind"), the score (any eligible pair), the judge verdict.
 - The parts share only `now`. A trace steps one part (`focus`). "slopSafety" and "peonSafety" add holds
   and late minor ages. "slop" and "peon" leave them out, so that the deep witnesses stay reachable.
-- peon runs on two environments: `prod` (the service as deployed: `jobPostingRoutes` is not
-  registered and nothing writes candidate facts) and `harness` (the integration tests call
-  `jobPostingRoutes` and seed candidate rows, as `packages/network/test/peon-postings.integration.test.ts`).
+- peon runs on two environments: `prod` (the service as deployed: nothing writes candidate facts, SD-224)
+  and `harness` (the integration tests seed candidate rows).
 
-## 2. Check output
+## 3. Defects: status and model change
 
-`bun run quint:check quint/matching_engine.qnt` (seed 0x5eed, max-steps 40, max-samples 4000):
+| Id | Status | Commit | Model change | Invariant (in `safety`) | Run |
+|---|---|---|---|---|---|
+| SD-063 | fixed | dcf24da | `flowAnswer`: the first yes of a one-participant flow reveals it | probeFlowProgresses | oneParticipantFlowTest |
+| SD-042 | fixed | 7c08084 | `mgrYes("mcp")` changes nothing (postingTurn runs only for the member's own text) | confirmedInOwnThread | mcpPostingTest |
+| SD-114 | fixed | ce667b2 | `mgrYes` drops a draft for a stored posting that is not active; `staffSave` refuses it (409) | closedTerminal, openingsPreserved | staffReopenTest, staleDraftTest |
+| SD-061 | fixed | 8a14083 | `tagsAfter`: `slop:dealbreaker:` is always replaced | deletedFieldClearsTag | deletedDealbreakerTest, takenBackDealbreakerTest |
+| SD-206 | fixed | 7ca8fa2 | `planReason`: the budgets are forgiven, the later rules still run | planSeatHonorsHoldout | planHoldoutTest |
+| SD-207 | fixed | 8d018ed | `engineMemberOk`: a member with no budget left is not usable | budgetAcrossAssign | overBudgetTest |
+| SD-209 | fixed | 60eecb2 | `engineMemberOk`: a location tag, or a location ask silent for 7 days | locatedBeforeMatch | locationAskedTest, locationSilentTest |
+| SD-210 | fixed | 3c059f6 | `slopReview` reject: the item is in unsentProposalIds; the engine does not count it | unsentNotBilled | rejectedBilledTest |
+| SD-262 | fixed | 3c059f6 (test 0bc735d) | same as SD-210 (reject and SLA expiry are one action in the model) | unsentNotBilled | rejectedBilledTest |
+| SD-223 | fixed | 8e9120e | `enginePairOk`: pairs the gate refuses for 60 days are avoid edges | engineAgreesWithGate | reprobeGateTest, rejectAvoidTest |
+| SD-225 | fixed | f581d75 | staff actions no longer need `harness` (`STAFF_API_SERVED`) | witness_prodEmployerVerified (reachable) | prodVerifyTest |
+| SD-227 | fixed | 6e5a4c4 | a repeated must-have is saved once; the unit commits | acceptedPostingPersists | dupMustTest |
+| SD-260 | fixed | ca8b67a | none: the plans buddy belongs to quint/plan_run.qnt | - | - |
+| SD-296 | fixed | d2921d3 | `engineSeatOk`: the seat is held with its manager | engineNeverSelectsHeld | heldSeatTest |
+| SD-327 | fixed | dc84661 | `mgrYes`: closedReason "filled" for "we filled it" | filledRecorded | filledTest |
+| SD-419 | fixed | 45c479e | `basicsAskDue`: at most MAX_ASKS (2) basics asks | askTerminates | basicsLoopTest |
+| SD-420 | fixed | cdce14f | `slopDailyRun`: the judge reads every candidate pair, and a pair judged within the TTL is a cache hit | judgeCacheReused | judgeCacheTest |
+| SD-422 | fixed | 07b88dd | none: exploration trimming is inside selection scoring (an oracle) | - | - |
+| SD-427 | fixed | 461b02e | `memberSays`: with no open wait, a text that changes the onboarding state is read as the answer to the last unanswered ask | answersReachLoop, witness_lateAnswerRead | sweptAnswerTest, lateNothingTest |
+| SD-435 | fixed | 0f14a56 | none: the venue table is data, not state | - | - |
+| SD-439 | fixed | c05b9b2 | the decline is kept per seat (`declAt` per posting); the engine gets a (candidate, seat) avoid edge | declineScopedToJob | crossJobTest |
+| SD-441 | fixed | f36c9c5 | none: peon history inputs feed scores and the history profile only (abstracted) | - | - |
+| SD-443 | fixed | 8f3673a | `slopProbe`: a hike books a day slot only | activityFitsSlot | hikeSlotTest |
+| SD-329 | not reproduced | - | none | - | - |
+| SD-418 | not reproduced | - | none | readBackHasPath (not in `safety`) | readBackCapTest |
+| SD-060 | skipped | - | none | readBackBeforeMatch (not in `safety`) | unconfirmedMatchTest |
+| SD-121 | skipped | - | none | activeIsLive (not in `safety`) | silentExpiryTest |
+| SD-224 | skipped | - | none | candidatesWritable (not in `safety`) | - |
+| SD-226 | skipped | - | none | postedCanMatch (not in `safety`) | - |
+| SD-228 | skipped | - | none (no hire or offer states exist) | - | - |
+| SD-415 | skipped | - | none (the need channel is part of scoring, an oracle) | - | - |
+| SD-440 | skipped | - | none | inFlightMatchesPosting (not in `safety`) | staleYesTest |
+
+Notes on the fixed rows:
+
+- **SD-225.** The old invariant `postedVerifiable` stood in for "a path to verify an employer exists in
+  prod". An invariant cannot say that a state is reachable, so the model now has the witness
+  `witness_prodEmployerVerified`. The check fails if prod cannot reach a verified employer.
+- **SD-209.** The fix keeps the silent fallback of the zip ask (`rules.ts:38`): when the location
+  question has had no answer for 7 days, the member is matched at the market anchor cell. The model
+  follows this. `locatedBeforeMatch` (in `safety`) says that the engine asked first.
+  `locatedBeforeMatchStrict` (not in `safety`) says that both members have a location. It is violated
+  through the fallback (`locationSilentTest`). This is by design in the fix (the same "never a lockout"
+  rule as for the zip). A change needs a founder decision, because without the fallback a silent member
+  is never matched.
+- **SD-419.** `askTerminates` now says that the basics ask stops (at most 2 asks). The old form said that
+  no basics ask is sent after the member answered. The fix does not give that: `needsBasics` reads tags
+  only, so a member who said "no dealbreakers" still gets up to two asks. That old form is kept as
+  `noBasicsAfterAnswer`, not in `safety`.
+- **SD-420.** The model now lets the judge read every eligible pair of a run, not only the picked one.
+  Without this, the 60-day avoid edges (SD-223) would stop every repeat judge call in the model and the
+  cache would never be used.
+- **SD-262.** The model has one review action for reject and SLA expiry, so the expiry path is the same
+  trace as the reject path. The integration test `engine-unsent.integration.test.ts` covers both.
+
+## 4. Defects that are not fixed
+
+| Id | Status | Reason | Model value |
+|---|---|---|---|
+| SD-060 | skipped | Founder decision. Gating slop matching on the read-back locks out members who onboard only through their AI assistant (no thread read-back; platform decision 10). | `readBackBeforeMatch`, violated (unconfirmedMatchTest) |
+| SD-418 | not reproduced | The stop after two read-backs is the designed MAX_ASKS_PER_QUESTION cap. No production code reads `confirmed`, so there is no harmful result. | `readBackHasPath`, violated (readBackCapTest) |
+| SD-329 | not reproduced | `endSeat` keeps only booked intros, which are done. Only copy could change, and copy changes are not accepted. | not modeled |
+| SD-121 | skipped | Founder decision on posting expiry (close at 90 days with a message, renew on update, or no horizon). | `activeIsLive`, violated (silentExpiryTest) |
+| SD-224 | skipped | A missing peon candidate onboarding: new scope, and peon matching runs locally only. | `candidatesWritable`, violated in `prod` |
+| SD-226 | skipped | Founder decision: new intake questions or a change to the peon matching rules. | `postedCanMatch`, violated |
+| SD-228 | skipped | No interview, offer or hire states exist. It is a missing feature, not a reachable state. | not modeled |
+| SD-415 | skipped | A recorded design decision (the need retrieval channel was removed on purpose). It is scoring, an oracle here. | not modeled |
+| SD-440 | skipped | Founder decision and new member-facing copy (ask again with the new terms, or end the item). | `inFlightMatchesPosting`, violated by staleYesTest; random simulation does not find it at the default bounds |
+
+## 5. Checks run
+
+`bun run quint:check quint/matching_engine.qnt` (seed 0x5eed, max-steps 40, max-samples 4000; 43 s):
 
 ```
 ok   quint/matching_engine.qnt typecheck
-ok   quint/matching_engine.qnt test            (25 runs)
-FAIL quint/matching_engine.qnt safety
+ok   quint/matching_engine.qnt test
+ok   quint/matching_engine.qnt safety
 ok   quint/matching_engine.qnt witness_readBackConfirmed (must be reachable)
 ok   quint/matching_engine.qnt witness_matchedAfterConfirm (must be reachable)
 ok   quint/matching_engine.qnt witness_postingActive (must be reachable)
 ok   quint/matching_engine.qnt witness_postingFilled (must be reachable)
 ok   quint/matching_engine.qnt witness_flowRevealed (must be reachable)
 ok   quint/matching_engine.qnt witness_probeDeclined (must be reachable)
-1 models, 1 failures
+ok   quint/matching_engine.qnt witness_prodEmployerVerified (must be reachable)
+ok   quint/matching_engine.qnt witness_postingClosedFilled (must be reachable)
+ok   quint/matching_engine.qnt witness_lateAnswerRead (must be reachable)
+
+1 models, 0 failures
 ```
 
-`safety` fails as expected: it shows the defects below. Each invariant was also run alone with the same
-seed and bounds (`quint run ... --invariant <name>`):
+`quint test`: 32 runs pass.
 
-| Invariant | Simulation | Register id |
-|---|---|---|
-| minorNeverCandidate | holds | - |
-| heldNeverCandidate | holds | - |
-| readBackBeforeMatch | violated | SD-060 |
-| locatedBeforeMatch | violated | SD-209 |
-| deletedFieldClearsTag | violated | SD-061 |
-| readBackHasPath | violated | SD-418 |
-| answersReachLoop | violated | SD-427 |
-| askTerminates | violated | SD-419 |
-| engineAgreesWithGate | violated | SD-223 |
-| unsentNotBilled | violated | SD-262, SD-210 |
-| budgetAcrossAssign | violated | SD-207 |
-| judgeCacheReused | violated (judge on only) | SD-420 |
-| activityFitsSlot | violated | SD-443 |
-| closedTerminal | violated (harness only) | SD-114 |
-| openingsPreserved | violated (harness only) | SD-114 |
-| confirmedInOwnThread | violated | SD-042 |
-| filledRecorded | violated | SD-327 |
-| acceptedPostingPersists | violated | SD-227 |
-| activeIsLive | violated | SD-121 |
-| postedCanMatch | violated | SD-226 |
-| postedVerifiable | violated (prod) | SD-225 |
-| candidatesWritable | violated (prod) | SD-224 |
-| inFlightMatchesPosting | not found by simulation; the run `staleYesTest` shows it | SD-440 |
-| declineScopedToJob | violated (harness) | SD-439 |
-| engineNeverSelectsHeld | found on some seeds; the run `heldSeatTest` shows it | SD-296 |
-| seatCapacity | holds | - |
-| probeFlowProgresses | violated | SD-063 |
-| planSeatHonorsHoldout | violated | SD-206 |
+`bun run quint:check --verify quint/matching_engine.qnt` (Apalache 0.62.4, Java 21, verify-steps 6): every
+step above passes and `verify safety` passes (no violation to 6 steps; about 4 minutes on a shared machine).
+`quint verify --invariant safety --max-steps 3` takes 19 s. The bound stays at 6, because one more step
+makes the run much longer while other agents use the machine.
 
-`quint verify` (Apalache, Java 21):
+The values that are not in `safety` were each run alone with the same seed and bounds
+(`quint run ... --invariant <name>`): `readBackBeforeMatch`, `readBackHasPath`,
+`locatedBeforeMatchStrict`, `noBasicsAfterAnswer`, `activeIsLive`, `postedCanMatch` and
+`candidatesWritable` are violated. `inFlightMatchesPosting` is not found by random simulation; the run
+`staleYesTest` shows it.
 
-- `--invariant safety --max-steps 6`: counterexample in 5 s, at step 1 (`setPlanFacts` with
-  budgetFull and reliabilityHold: SD-206).
-- `minorNeverCandidate`, `heldNeverCandidate`: no violation to 5 steps (31 s and 33 s).
-  `seatCapacity`: no violation to 6 steps (116 s). At 6 steps, two runs stopped with "Connection
-  dropped" from the Apalache server (other agents use the machine).
+## 6. New observations
 
-## 3. Defects the model reproduces
-
-Each trace is the short form of a `run` in the model. All of them are real defects (the model follows
-the code). None is a model error.
-
-### SD-060: slop matching does not wait for the read-back (P0)
-
-`run unconfirmedMatchTest`: a and b each state the hard fields (`agentNext`, `core`, `loc`); the
-read-back goes out and nobody answers; `slopDailyRun(a,b)` puts the pair in review.
-
-- Tags are written on every read: `network.ts:1048-1060` (`learnAppTags`), and `packInput` sends every
-  app tag to the engine (`network.ts:3752`). Nothing reads `SlopOnboarding.confirmed` or `matchable`
-  (`extract.ts:865`) on the match path.
-- Rule: `extract.ts:77` (matchable = adult, every hard field set, and confirmed); `onboard.ts:1-4`.
-
-### SD-209: a member with no location matches (P1)
-
-`run unlocatedMatchTest`: a and c state only gender, seeks, age range and distance. The run proposes them.
-`rules.ts:28-38` asks for a zip only when `zipUnknown`; with no zip tag that is false.
-`extract.ts:41` lists `location` as a hard field. Same root as SD-060 (tags persist before the loop
-is complete).
-
-### SD-061: a deleted dealbreaker leaves its tag (P0)
-
-`run deletedDealbreakerTest`: `dbAdd` ("no smokers"), then `dbRemove` ("smoking is fine"). The onboarding
-state has no dealbreaker; `slop:dealbreaker:smoker` stays. `run staleTagFiltersTest` shows that the
-stale tag still filters a from b (a smoker).
-
-- `extract.ts:832` removes it from the list; `extract.ts:939` adds the `slop:dealbreaker:` prefix to
-  `replaces` only when the list is not empty or `noDealbreakers` is set; `network.ts:1055-1056` keeps
-  every old tag that no prefix replaces.
-
-### SD-418: the read-back cap leaves a stuck state (P2)
-
-`run readBackCapTest`: hard fields, read-back 1, a correction, a goal, read-back 2, a correction. Now
-`readBacks = 2`, `confirmed = false`, and `next()` never sends a read-back again
-(`service/packs.ts:140`). Simulation also finds a second path: read-back 2 gets no answer, and the
-3-day sweep (`network.ts:3285`) clears it.
-
-### SD-427: an answer after the 3-day sweep is lost (P2)
-
-`run sweptAnswerTest`: `agentNext(a)` (a question), `tick(3)`, `tick(1)`, `sweep(a)`, then the answer.
-With `awaiting` cleared, the text goes to an open turn; the loop does not read it (`network.ts:3285`,
-`network.ts:1115-1130`). The same path drops a "yes" to a read-back, so the confirmation is lost too.
-
-### SD-419: the basics ask repeats for ever (P2)
-
-`run basicsLoopTest`: a answers every hard field, a goal and "no dealbreakers", and confirms. Then
-`engineBasicsAsk(a)` fires, and again every 21 days. `needsBasics` (`rules.ts:41-43`) reads tags; "no
-dealbreakers" leaves no tag and no politics value. `index.ts:137` has no `capped` check. The loop has
-nothing left, so `sendAsks` sends the engine's own text (`network.ts:3497-3499`).
-
-### SD-223: the engine re-proposes a declined pair that the gate drops (P1)
-
-`run reprobeGateTest`: a probe "no" on day 0; `tick(7)`; `slopDailyRun(a,b)` picks the same pair again.
-The engine allows a re-probe after 7 days (`options.ts:158`, `rules.ts:92-99`); the gate refuses for
-60 days (`network.ts:2041-2044`, `network.ts:3607`). With `perMemberPerTick: 1` the dropped pick takes
-the member's one slot. Simulation also reaches it through a review reject: `network.ts:1930` marks
-the pair declined for the Network only, and the engine never sees a review reject at all.
-
-### SD-262 and SD-210: unsent proposals still count (P1)
-
-`run rejectedBilledTest`: `slopDailyRun(a,c)`, `slopReview(a,c, reject)`. The engine bills a for a
-proposal nobody received: `engineCount(a) = 1`, `sentCount(a) = 0`. `SLOP_ENGINE_CONFIG` sets
-`dispatch.billOnlySent` (`index.ts:50`), but `engineInput` never sets `unsentProposalIds`
-(`network.ts:3712-3725`; `world.ts:171`).
-
-### SD-207: slop selection ignores budgets (P1)
-
-`run overBudgetTest`: two proposals for a in one week (both rejected in review), then the engine
-selects a a third time. `slopMemberRules` has no `interruption_budget` rule and `slopAssign`
-(`assign.ts:60-118`) does not read budgets. The Network gate (`network.ts:4199-4203`, `eligible`)
-refuses by sent count, so no member gets a third invite in production. The engine still wastes the
-pick (same effect as SD-223).
-
-### SD-420: the judge cache does not persist (P2)
-
-Simulation, `judgeOn = true`: the daily run on two days within 7 days judges the same pair twice.
-`dailyRun` passes no `judgeCache` (`network.ts:3443`), so `engine.ts:184` builds a new cache per run.
-The judge is off unless `NETWORK_ENGINE_JUDGE=1`.
-
-### SD-443: an evening slot for a daytime activity (P2)
-
-Simulation: `slopProbe(p, yes, hike, eve)`. The slot logic does not read the activity, while the copy
-says "a daytime hike" (`service/packs.ts:153`).
-
-### SD-042: an MCP profile starts and confirms a job post (P0)
-
-`run mcpPostingTest`: `mgrDraftNew(A, ...)`, `mgrYes(mcp)`. `postingTurn` runs before the `mcp` branch
-(`network.ts:755` before `network.ts:758-759`), so the assistant's text is read as the manager's yes.
-The register note says a bare "yes" is too short for the MCP tool; a longer text ("yes, post it") is not.
-
-### SD-327: "we filled it" closes as "closed" (P2)
-
-`run filledTest`: `mgrDraftClose(A, filled)`, `mgrYes(sms)`. `postingFromDraft` always writes
-`closedReason: "closed"` (`jobs.ts:188`), so `applyPosting` logs "posting closed" (`network.ts:4600`).
-
-### SD-227: a repeated must-have fails the save (P1)
-
-`run dupMustTest`: a draft with the same must-have twice, then yes. The manager is told "Posted", but
-`savePosting` inserts two facets with the same id (`jobs.ts:225`, `postings.ts:33-36`) and the unit's
-transaction fails. The posting is not stored.
-
-### SD-121: silent expiry after 90 days (P1)
-
-`run silentExpiryTest`: post on day 0, `tick(30)` three times. The intent has `horizonDays: 90`
-(`jobs.ts:229`); `world.ts:207` drops it; `peon/profile.ts:188` sets `open = false`. The row stays
-`active` and nobody is told.
-
-### SD-226: "Posted" for a job that can never match (P1)
-
-Simulation: `mgrDraftNew(A, n, seniority=false, ...)`, `mgrYes`. `postingProblem` (`jobs.ts:201-209`)
-accepts a post with no seniority, and `seniority_band` (`peon/rules.ts:57-59`) then fails for every
-candidate. An onsite post with no area fails `locationOk` (`peon/rules.ts:45`) the same way.
-
-### SD-225 and SD-224: no production writer for verification or candidates (P1)
-
-Simulation in `prod`: any posting that becomes active violates `postedVerifiable` and
-`candidatesWritable`. `jobPostingRoutes` and `verifyEmployer` have no caller outside
-`peon-postings.integration.test.ts` (grep of `packages` and `deploy`), so `peon:verified` is never
-written and `employer_unverified` always fires. Nothing in `packages/network`, `packages/mcp` or
-`packages/platform` writes `peon:entity` for a candidate. In `prod` no posting can fill; the witness
-`witness_postingFilled` is reached only in `harness`.
-
-### SD-114: a closed posting reopens, openings reset to 1 (P1; harness only)
-
-`run staffReopenTest` (harness): post with 2 openings, `staffClose(A, filled)`, `staffSave(A)` with no
-openings. The posting is active again with 1 opening. `postings.ts:149` forces `status: "active"`;
-`jobs.ts:242` reads the closed openings facet (0) as `Number("0") || 1`. A stale update draft confirmed
-after a staff close does the same through `jobs.ts:196`. Both paths need the staff API, which is not
-registered in production (SD-225). The text path alone cannot reopen a post (`jobs.ts:168-174` picks
-active posts only).
-
-### SD-439: a decline for job A blocks job B (P2; harness only)
-
-`run crossJobTest`: postings A and B, the candidate says no to A; `peonEngineRun(B)` is gated with
-`pair_history`. `seatRoute` swaps the seat for the manager, so `markDeclined` keys the pair as
-(candidate, manager) (`network.ts:2328`, `network.ts:4468-4480`); the engine keys it by seat and keeps
-proposing B.
-
-### SD-440: an edit does not touch items in flight (P2; harness only)
-
-`run staleYesTest`: the candidate says yes to version 1; the manager confirms an update; the item stays
-at `candYes` on version 1. `applyPosting` calls `endSeat` only for a closed posting (`network.ts:4600`).
-Random simulation did not find this trace at the default bounds.
-
-### SD-296: a held manager's seat stays in the engine input (P2; harness only)
-
-`run heldSeatTest`: `setMgrHold(true)`, `peonEngineRun(A)`. The engine selects the seat (holds list
-member ids, `network.ts:3710`; the seat id has none); the gate refuses it (`managerProblem`,
-`network.ts:4497-4506`). Nobody is contacted. The engine wastes the pick.
-
-### SD-063: a one-participant probe flow sticks (P0 in the register; library not wired)
-
-`run oneParticipantFlowTest`: `flowStart(1)`, `flowAnswer(x, yes)`. The stage is `probing_partners` and
-`toProbe` is empty (`attention.ts:805-808`, `attention.ts:819`). No production code calls
-`startProbeFlow` or `recordProbeAnswer` (grep of `packages`), so this is a library defect only.
-
-### SD-206: planMemberReason masks later rules (P1)
-
-`run planHoldoutTest`: a member at the weekly budget and in the reliability hold-out. `memberReason`
-returns `interruption_budget` first; `planMemberReason` maps it to null (`plans.ts:146-149`), so the
-hold-out (`network/rules.ts:41-46`) is never checked. `planSeatOk` (`network.ts:2888-2891`) does not
-check reliability either.
-
-## 4. Register defects of this module that the model does not reach
-
-| Id | Why not |
-|---|---|
-| SD-228 | No hire, offer or 90-day states exist in production code. It is a missing feature, not a reachable state. |
-| SD-260 | Repeat plans and the plans buddy belong to the plan machines (quint/plan_run.qnt). This model has no plans category path. |
-| SD-329 | A copy text ("intros not done yet end") against `endSeat`, which keeps booked items. The model shows that booked items stay; the text itself is not a state. |
-| SD-415 | The retrieval "need" channel is part of scoring, which is an oracle here. |
-| SD-422 | Exploration trimming is inside selection scoring; slop runs with exploration rate 0. Abstracted. |
-| SD-435 | The venue table (`geo.ts:45`) is data, not state. |
-| SD-441 | Peon history inputs (`acceptedBy`, `declinedBy`) feed scores and the history profile only. Abstracted. |
-
-## 5. Invariants that hold
-
-`minorNeverCandidate` and `heldNeverCandidate` hold in simulation and to 5 steps in Apalache:
-`packInput` (`network.ts:3747-3753`) keeps every minor, minor signal and unknown age out of the engine
-input, and the gate (`network.ts:4357-4366`) refuses held members. `seatCapacity` holds to 6 steps.
-
-## 6. New defects
-
-None. Every violation maps to a register id. Two traces extend existing rows:
-
-- SD-223 also happens after a review reject: `network.ts:1930` marks the pair declined for 60 days, but
-  a review reject is not an interaction, so the engine proposes the pair again on the next day.
-- SD-418 also happens when the second read-back gets no answer and the 3-day sweep clears it.
+- The SD-209 silent fallback (section 3) matches a member with no location at the market anchor cell
+  after 7 days of silence. This is the same harm as SD-209, delayed by a week. It is a design choice in
+  the fix, not a new register row. It needs a founder decision.
+- A member who answers the location question with other content marks the ask as answered without a
+  location. The ask then never goes silent, and the member stays held back until a new location ask is
+  answered with a location. This is safe (no match) but it can lock the member out. The model shows the
+  state (`locAnswered` without a `loc` tag); no invariant covers it. This is read from `rules.ts` and
+  `profile.ts` (silentAsks); no test ran it against the code.
