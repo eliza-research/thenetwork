@@ -86,4 +86,19 @@ describe("plan run", () => {
     for (const x of ["a", "b"]) expect(w.to(x, from).map(s => s.body)).toEqual([expect.stringMatching(/this one is off now/)]);
     expect(opp(w, id).stage).toBe("closed");
   });
+
+  // SD-144: crew sessions are kept by plan id, but the dedupe looked them up as opportunity ids, so a
+  // session rejected in review was proposed again for the same week (and counted toward the handoff).
+  test("a crew session rejected in review is not proposed again for the same week", async () => {
+    const w = await world(["a", "b", "c"], { review: "human" });
+    const sat = START + 4 * DAY + 22 * HOUR;
+    w.net.crews.push({ id: "crew_test", activityId: "bouldering", city: "nyc", members: ["a", "b", "c"], cadenceDays: 7, hostRotation: ["a", "b", "c"], sessions: [], handedOff: false, slot: { start: sat - 7 * DAY } });
+    const sessions = () => [...(w.net as any).opps.values()].filter((o: any) => o.plan?.crewId === "crew_test");
+    expect(await w.runUntil(() => sessions().length > 0, 2 * DAY)).toBe(true);
+    expect(sessions()[0].plan.window.start).toBe(sat);
+    expect(w.net.review(sessions()[0].id, "reject")).toBe(true);
+    await w.run(2 * DAY);
+    expect(sessions().map((o: any) => o.plan.window.start)).toEqual([sat]);
+    expect(w.net.crews[0]!.sessions).toHaveLength(1);
+  });
 });
