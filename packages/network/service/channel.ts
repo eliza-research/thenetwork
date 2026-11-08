@@ -38,6 +38,8 @@ export interface Outbound {
   system: boolean;
   ts: number;
   acceptedAt?: number;
+  /** A collected reply that failed the queue's leak guard (runtime writeUnit): the queue parks it for staff. */
+  leakReasons?: string[];
 }
 
 /** Statuses that still wait for delivery (the queue's, and "queued" before the first drain). */
@@ -150,6 +152,7 @@ export class BlooioAdapter implements ChannelAdapter {
   private readonly city: string;
   private readonly gate?: (app: string) => boolean;
   private q?: OutboundQueue;
+  private rt?: NetworkRuntime;
 
   constructor(private readonly o: BlooioAdapterOptions) {
     this.env = o.env ?? process.env;
@@ -171,6 +174,7 @@ export class BlooioAdapter implements ChannelAdapter {
   }
 
   attach(rt: NetworkRuntime) {
+    this.rt = rt;
     const policy = blooioRecipientPolicy(rt.net, rt.memberOf);
     const leaks = forbiddenProvider(rt.net, to => rt.memberOf(to));
     const num = (k: string) => { const v = Number(this.env[k]); return Number.isFinite(v) && v > 0 ? v : undefined; };
@@ -194,10 +198,9 @@ export class BlooioAdapter implements ChannelAdapter {
         return number ? { ...base, allow: [number] } : base;
       },
       // PgStore.save locks the state before erasing members. Dispatch takes the
-      // same order, then the existing admit check revalidates current parties.
-      lockAdmission: async (row, tx) => {
-        if (row.id.startsWith("relay:")) await tx`select id from network.network_state where id=${rt.pg.id} for share`;
-      },
+      // same order, then the existing admit check revalidates current parties. Every check above read this
+      // replica's in-memory state: when another replica saved since, the row waits for a current one.
+      lockAdmission: (_row, tx) => rt.stateCurrent(tx),
       // A relayed item: its match and both members are read again inside the admission transaction (runtime.ts).
       admit: (row, tx) => row.approvedPhotos?.length && this.name !== "eliza_cloud"
         ? Promise.resolve({ ok: false as const, reason: "approved_photos_require_cloud" })
@@ -206,7 +209,7 @@ export class BlooioAdapter implements ChannelAdapter {
       capRelease: row => rt.capRelease(row.id),
     };
     this.q = new OutboundQueue({
-      sql: rt.db, clock: this.o.clock, provider: this.o.provider, line: this.o.from!, app: this.app, checks, instance: rt.instance,
+      sql: rt.db, clock: this.o.clock, provider: this.o.provider, line: this.o.from!, app: this.app, network: rt.id, checks, instance: rt.instance,
       perLinePerDay: num("BLOOIO_LINE_DAILY_CAP"), newChatsPerLinePerDay: num("BLOOIO_LINE_NEW_CHATS_PER_DAY"), ...this.o.limits, leakAllow: OWN_DOMAINS,
       onAlert: (id, why) => this.log(`[blooio] alert ${why} on ${id} (${this.app})`),
     });
@@ -221,12 +224,14 @@ export class BlooioAdapter implements ChannelAdapter {
     }
     const go = msgs.filter(m => {
       if (m.approvedPhotos?.length && this.name !== "eliza_cloud") { out.set(m.id, "refused_photo_transport"); return false; }
+      if (m.to && m.leakReasons?.length) out.set(m.id, "parked_leak_review");
       return m.to ? true : (out.set(m.id, "failed_no_address"), false);
     });
     await this.queue.enqueue(tx, go.map(m => ({
       // A member the unit forgets gets the one decline as a text to a non-member: nothing about them is kept.
       id: m.id, ...(forgotten.has(m.memberId) ? {} : { memberId: m.memberId }), to: m.to!, kind: m.kind, text: m.body,
       ...(m.mediaUrls?.length ? { mediaUrls: m.mediaUrls } : {}), ...(m.approvedPhotos?.length ? { approvedPhotos: m.approvedPhotos } : {}), ...(m.oppId ? { oppId: m.oppId } : {}), city: this.city,
+      ...(m.leakReasons?.length ? { leakReasons: m.leakReasons } : {}),
     })));
     return out;
   }
@@ -238,7 +243,9 @@ export class BlooioAdapter implements ChannelAdapter {
   async direct(to: string, body: string, id: string, kind: DirectKind): Promise<string> {
     if (!this.live) { this.log(`[blooio] refused a direct send: live sending needs ${this.flags}`); return "refused_not_approved"; }
     await this.queue.enqueue(this.queue.sql, [{ id, to, kind, text: body, city: this.city }]);
-    await this.queue.drain();
+    // The drain moves this app's other rows too: their network.messages status follows, as after the runtime's own drain.
+    const changes = await this.queue.drain();
+    await this.rt!.storeStatuses(changes.filter(d => d.memberId && d.app === this.app));
     return (await this.queue.statusOf(id)) ?? "failed";
   }
 

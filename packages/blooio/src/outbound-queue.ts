@@ -20,8 +20,8 @@
 //    state of the line; the per-recipient hourly cap, the per-line daily cap and the per-line daily cap on new
 //    conversations (retry later); the person cap of proactive messages (refused_person_cap); the leak guard
 //    on the new text and on the recent thread to the same address (core-14; parked_leak_review). Compliance
-//    texts (STOP/HELP/START and leave confirmations) skip the opt-out, the recipient check, quiet hours and
-//    the caps, but never the leak guard's canary and fact checks on their own text.
+//    texts (STOP/HELP/START and leave confirmations) skip the opt-out, the recipient check, quiet hours, the
+//    line safety state and the caps, but never the leak guard's canary and fact checks on their own text.
 //  - More than one worker: every replica may run drain(). The per-line advisory lock lets one drain run at a
 //    time; a row is claimed with a conditional update to "sending" plus a lease (status unchanged, no lease),
 //    so a second worker that read the same row finds it claimed and skips it, and a worker that stopped
@@ -79,6 +79,8 @@ export interface EnqueueInput {
   timeZone?: string;
   /** The member's city: its zone is the fallback for quiet hours. */
   city?: string;
+  /** The leak guard already failed this text (a collected reply, collectedLeaks): the row is written parked for staff. */
+  leakReasons?: string[];
 }
 
 /** A queued row as the checks see it. */
@@ -112,7 +114,7 @@ export interface StatusChange { id: string; app: string; memberId?: string; stat
 export interface AppChecks {
   /** The live flags for this app (BLOOIO_ALLOW_SEND, NTWRK_LIVE_APPROVED, <APP>_LIVE_APPROVED). */
   live(): boolean;
-  /** True when the message is about something that closed (it is stored as expired). */
+  /** True when the message is about something that closed (it is stored as expired). A throw: the row waits (drain's error path). */
   stale?(row: QueueRow): boolean | Promise<boolean>;
   /** True when the consent ledger or the member's own flag says the person opted out of this app. */
   optedOut?(row: QueueRow): boolean | Promise<boolean>;
@@ -124,8 +126,11 @@ export interface AppChecks {
   capTake?(row: QueueRow): Promise<boolean>;
   /** Give the slot back (the message did not go out). */
   capRelease?(row: QueueRow): Promise<void>;
-  /** Acquire app-owned row fences before the shared person/member fences, in this transaction. SQL only; no remote I/O. */
-  lockAdmission?(row: QueueRow, tx: SQL): Promise<void>;
+  /**
+   * Acquire app-owned row fences before the shared person/member fences, in this transaction. SQL only; no remote I/O.
+   * False: the app state the hooks above read is older than the stored one; the row is left as it is for a later drain.
+   */
+  lockAdmission?(row: QueueRow, tx: SQL): Promise<boolean>;
   /**
    * The app's last word, inside the admission transaction after every asynchronous gate (app.app_id is
    * set; short row locks only, no remote I/O). Not ok: the row ends suppressed. A throw parks the row.
@@ -143,6 +148,12 @@ export interface QueueOptions {
   line: string;
   /** The app whose rows this queue enqueues and drains. */
   app: string;
+  /**
+   * The network ('<app>:<city>') whose rows this queue enqueues and drains: every network of an app has a
+   * queue with the same app and line, and each decides only its own rows with its own checks. Without it the
+   * queue drains every row of its app (one network).
+   */
+  network?: string;
   checks: AppChecks;
   /** The worker's name on its leases. */
   instance?: string;
@@ -165,8 +176,8 @@ export interface QueueOptions {
   leaseMs?: number;
   /**
    * A row whose provider acceptance stays unknown (unknown_acceptance: the worker stopped mid-call, or the
-   * provider timed out) and that no receipt lookup resolves within this long after it was created ends as
-   * failed_unknown, with an alert. Default 6 hours.
+   * provider timed out) and that no receipt lookup resolves within this long after its acceptance became
+   * unknown ends as failed_unknown, with an alert. Default 6 hours.
    */
   unknownTtlMs?: number;
   /** A proactive row older than this is never sent (expired). Default 24 h. Any other row: 3 days. */
@@ -191,8 +202,8 @@ export const WAITING = ["pending", "retry_scheduled", "deferred_quiet_hours", "h
 const IN_FLIGHT = ["accepted", "sent"];
 const DUE = ["pending", "retry_scheduled", "deferred_quiet_hours"];
 const PROVIDER_RANK: Record<string, number> = { accepted: 1, queued: 1, sent: 2, delivered: 3, read: 4 };
-/** Statuses that did not go out: their person-cap slot goes back. */
-export const NOT_SENT = /^(refused|suppressed|blocked|parked|failed|expired|dropped)/;
+/** Statuses that did not go out: their person-cap slot goes back. failed_unknown may have gone out: it keeps its slot. */
+export const NOT_SENT = /^(refused|suppressed|blocked|parked|failed(?!_unknown)|expired|dropped)/;
 
 const fingerprint = (to: string, text: string, media: string[], kind: string, photos?: ApprovedRelayPhoto[]) =>
   // Retain legacy text/media fingerprints; approved selections additionally bind their full immutable payload.
@@ -233,17 +244,19 @@ export class OutboundQueue {
       const agent = isAgentInitiated(i.kind);
       const zone = resolveTimeZone(i.timeZone, i.city);
       const fp = fingerprint(to, i.text, media, i.kind, photos);
-      // An agent-initiated message whose local time cannot be computed is parked, never sent at night.
-      const status = agent && !zone ? "parked_invalid_timezone" : "pending";
+      // An agent-initiated message whose local time cannot be computed is parked, never sent at night. A text
+      // the leak guard already failed is parked for staff at once: no send-time gate may end it before they see it.
+      const status = agent && !zone ? "parked_invalid_timezone" : i.leakReasons?.length ? "parked_leak_review" : "pending";
       const row = {
-        id: i.id, app_id: this.app, member_id: i.memberId ?? null, line: this.line, to_address: to, kind: i.kind, body: i.text,
+        id: i.id, app_id: this.app, network_id: this.o.network ?? null, member_id: i.memberId ?? null, line: this.line, to_address: to, kind: i.kind, body: i.text,
         media_urls: tx.array(media, "TEXT"), fingerprint: fp, opportunity_id: i.oppId ?? null, time_zone: zone ?? "UTC", status,
         next_attempt_at: now, created_at: now, updated_at: now, ended_at: status === "pending" ? null : now,
+        note: status === "parked_leak_review" ? `leak: ${i.leakReasons!.join(",")}` : null,
       };
       const wrote = await tx`insert into platform.outbound ${tx(row)} on conflict (id) do nothing returning id`;
       if (wrote.length) {
         if (photos) await tx`update platform.outbound set approved_photos=${{photos}}::jsonb->'photos' where id=${i.id} and app_id=${this.app}`;
-        if (status !== "pending") this.o.onAlert?.(i.id, "invalid_timezone");
+        if (status !== "pending") this.o.onAlert?.(i.id, status === "parked_leak_review" ? "leak_blocked" : "invalid_timezone");
         continue;
       }
       const [old] = await tx`select fingerprint from platform.outbound where id = ${i.id}`;
@@ -286,15 +299,21 @@ export class OutboundQueue {
     return this.withLine(async () => {
       const changes: StatusChange[] = [...receipts, ...await this.expireHeld()];
       const rows = await this.sql`select * from platform.outbound where app_id = ${this.app} and line = ${this.line}
-        and status = any(${`{${DUE.join(",")}}`}::text[]) and next_attempt_at <= ${new Date(this.now)} order by next_attempt_at, created_at, id`;
+        and (${this.o.network ?? null}::text is null or network_id = ${this.o.network ?? null}) and status = any(${`{${DUE.join(",")}}`}::text[]) and next_attempt_at <= ${new Date(this.now)} order by next_attempt_at, created_at, id`;
       for (const r of rows as any[]) {
         const row = this.rowOf(r);
         let c: StatusChange | undefined;
         try {
           c = await this.dispatch(row);
         } catch (e) {
-          // One bad row never stops the drain: it is parked for a person and the drain goes on.
-          c = await this.end(row, "parked_error", (e as Error).message);
+          // One bad row never stops the drain. A database error (a deadlock, a lock timeout, a lost connection) is
+          // not about the row: it waits with a backoff and goes through every check again with the same provider key.
+          // An error that repeats until the attempts are used up parks the row for a person.
+          const error = (e as Error).message.slice(0, 500);
+          const [r] = await this.sql`update platform.outbound set attempts = attempts + 1, last_error = ${error} where id = ${row.id} returning attempts`;
+          const tries = Number(r?.attempts ?? row.attempts + 1);
+          c = tries >= this.opt("maxAttempts", 6) ? await this.end(row, "parked_error", error)
+            : await this.wait(row, "retry_scheduled", this.now + Math.min(this.opt("baseBackoffMs", 30_000) * 2 ** (tries - 1), 30 * MINUTE), "dispatch error");
           this.o.onAlert?.(row.id, "dispatch_error");
         }
         if (c) changes.push(c);
@@ -352,6 +371,20 @@ export class OutboundQueue {
     return { id: row.id, app: row.app, memberId: row.memberId, status };
   }
 
+  /**
+   * The row waits until the person writes (inbound() releases it). `seenInbound` is the conversation's
+   * last_inbound_at that dispatch read: when the person wrote since, inbound() may have run before this write
+   * and found nothing to release, so the row is due again at once instead.
+   */
+  private async hold(row: QueueRow, note: string, seenInbound: unknown): Promise<StatusChange> {
+    const now = new Date(this.now), seen = ms(seenInbound);
+    const [r] = await this.sql`update platform.outbound set status = case when exists (select 1 from platform.line_conversations c
+        where c.line = ${this.line} and c.address = ${row.to} and c.last_inbound_at is distinct from ${seen === undefined ? null : new Date(seen)}::timestamptz)
+        then 'pending' else 'held_awaiting_reply' end,
+      next_attempt_at = ${now}, note = ${note}, updated_at = ${now}, lease_owner = null, lease_until = null where id = ${row.id} returning status`;
+    return { id: row.id, app: row.app, memberId: row.memberId, status: String(r?.status ?? "held_awaiting_reply") };
+  }
+
   private async guarded<T>(fn: () => T | Promise<T>, failed: T): Promise<T> {
     try { return await fn(); } catch { return failed; }
   }
@@ -361,14 +394,15 @@ export class OutboundQueue {
     return c as { unanswered: number; reengagement_used: boolean; last_outbound_at: unknown; last_inbound_at: unknown } | undefined;
   }
 
-  private async dispatch(row: QueueRow): Promise<StatusChange> {
+  private async dispatch(row: QueueRow): Promise<StatusChange | undefined> {
     const now = this.now;
     const c = this.o.checks;
     const agent = isAgentInitiated(row.kind);
     const compliance = row.kind === "compliance";
 
-    // 0. Too old, or about something that closed.
-    if (this.tooOld(row) || (await this.guarded(() => c.stale?.(row) ?? false, false))) return this.end(row, "expired");
+    // 0. Too old, or about something that closed. A stale check that throws is not "current": the error goes to
+    // drain(), and the row waits and runs every check again (it is never sent on a check that did not answer).
+    if (this.tooOld(row) || (await (c.stale?.(row) ?? false))) return this.end(row, "expired");
     // 1. The live flags (founder approval), checked again at send time.
     if (!(await this.guarded(() => c.live(), false))) return this.end(row, "refused_not_approved");
     if (!compliance) {
@@ -398,11 +432,11 @@ export class OutboundQueue {
     if (!compliance && conv && conv.unanswered >= this.opt("maxUnanswered", 3)) {
       const quietFor = now - (ms(conv.last_outbound_at) ?? -Infinity);
       if (agent && !conv.reengagement_used && quietFor >= this.opt("reengageAfterMs", 14 * DAY)) reengagement = true;
-      else return this.wait(row, "held_awaiting_reply", now, conv.reengagement_used ? "unanswered cap: re-engagement used" : "unanswered cap");
+      else return this.hold(row, conv.reengagement_used ? "unanswered cap: re-engagement used" : "unanswered cap", conv.last_inbound_at);
     }
-    // 7. Blooio's safety state of the line.
+    // 7. Blooio's safety state of the line: new and agent texts wait; compliance texts (STOP, HELP) still go.
     const isNew = !conv;
-    const [safety] = await this.sql`select action from platform.line_safety where line = ${this.line}`;
+    const [safety] = compliance ? [] : await this.sql`select action from platform.line_safety where line = ${this.line}`;
     const action = safety?.action as string | undefined;
     if (action === "review" || (action === "reply_only" && (agent || isNew)) || (action === "pause_new" && isNew)) {
       this.o.onAlert?.(row.id, `line_safety_${action}`);
@@ -431,7 +465,7 @@ export class OutboundQueue {
       this.o.onAlert?.(row.id, "leak_blocked");
       return this.end(row, "parked_leak_review", `leak: ${leaks.join(",")}`);
     }
-    return this.send(row, isNew, reengagement);
+    return this.send(row, isNew, reengagement, conv?.last_inbound_at);
   }
 
   private async leakReasons(row: QueueRow, db: SQL = this.sql): Promise<string[]> {
@@ -460,13 +494,13 @@ export class OutboundQueue {
     return (rows as any[]).map(r => String(r.body)).reverse();
   }
 
-  private async send(row: QueueRow, isNew: boolean, reengagement: boolean): Promise<StatusChange> {
+  private async send(row: QueueRow, isNew: boolean, reengagement: boolean, seenInbound: unknown): Promise<StatusChange | undefined> {
     const start = this.now;
     // Admit only the current canonical member and immutable payload, after the async gates.
     // Erasure and admission share the person/member row fences. No remote I/O holds these locks.
     const admission = await this.sql.begin(async tx => {
       await tx`select set_config('app.app_id',${this.app},true)`;
-      await this.o.checks.lockAdmission?.(row, tx);
+      if (await this.o.checks.lockAdmission?.(row, tx) === false) return "stale_view";
       if (row.memberId) {
         await tx`select person.id from platform.people person join network.members member on member.person_id=person.id
           where member.app_id=${row.app} and member.id=${row.memberId} order by person.id for update of person`;
@@ -485,8 +519,10 @@ export class OutboundQueue {
             for share of membership,phone`;
           if (!binding) return "dropped_forgotten";
         }
-        if (row.kind!=="compliance" && (member.opted_out || await this.guarded(()=>this.o.checks.optedOut?.(row)??false,true))) return "refused_opted_out";
+        if (row.kind!=="compliance" && member.opted_out) return "refused_opted_out";
       }
+      // The consent ledger again, for every row (a direct text to a non-member too): a STOP that came during the gates wins.
+      if (row.kind!=="compliance" && await this.guarded(()=>this.o.checks.optedOut?.(row)??false,true)) return "refused_opted_out";
       // Recheck eligibility after person/member fences; app state fences were acquired first, as in canonical erasure.
       if (this.o.checks.admit && !(await this.o.checks.admit(row, tx)).ok) return "suppressed_ineligible";
       const claimed = await tx`update platform.outbound set status='sending',attempts=attempts+1,lease_owner=${this.instance},
@@ -500,11 +536,15 @@ export class OutboundQueue {
       return "dropped_forgotten";
     });
     if (typeof admission==="object") return {id:row.id,app:row.app,memberId:row.memberId,status:admission.busy};
+    if (admission==="stale_view") return undefined;
     if (admission!=="admitted") return this.end(row,admission);
     const attempts = row.attempts + 1;
     try {
       const receipt = await this.o.provider.send(this.request(row));
-      return this.acceptReceipt({...row,newConversation:isNew,reengagement}, receipt);
+      // The provider took the text: when its acceptance cannot be recorded (a database error), it is unknown, never an end.
+      return await this.acceptReceipt({...row,newConversation:isNew,reengagement}, receipt).catch(e => {
+        throw e instanceof ChannelSendError ? e : new ChannelSendError(`acceptance not recorded: ${e instanceof Error ? e.message : String(e)}`, "unknown");
+      });
     } catch (err) {
       const e = err instanceof ChannelSendError ? err : new ChannelSendError(err instanceof Error ? err.message : String(err), "retryable");
       const error = `${e.failure}${e.status ? ` ${e.status}` : ""}${e.code ? ` ${e.code}` : ""}: ${e.message}`.slice(0, 500);
@@ -518,7 +558,7 @@ export class OutboundQueue {
           return this.wait(row, "retry_scheduled", this.now + backoff, e.code ?? "retry");
         }
         case "await_recipient":
-          return this.wait(row, "held_awaiting_reply", this.now, e.code ?? "conversation limit");
+          return this.hold(row, e.code ?? "conversation limit", seenInbound);
         case "blocked":
           this.o.onAlert?.(row.id, e.code ?? "blocked");
           return this.end(row, "blocked", e.code, error);
@@ -540,52 +580,73 @@ export class OutboundQueue {
     const acceptedAt=receipt.acceptedAt??this.now;
     if (!Number.isFinite(acceptedAt) || !receipt.providerMessageId) throw new ChannelSendError("Invalid acceptance receipt","unknown");
     const at=new Date(acceptedAt),providerIds=receipt.providerMessageIds??[receipt.providerMessageId];
+    // A send the provider reports failed did not go out: it gets no sent_at (the caps and the thread history read it).
+    // A receipt owner (Eliza Cloud) sends no delivery receipts to this queue: acceptance is the last status a
+    // row gets, so a row to a non-member ends here and keeps no address and no text (applyStatus does it otherwise).
+    const final=status==="delivered"||status==="read"||status==="failed",forget=!!this.o.provider.receipt;
     const committed=await this.sql.begin(async tx=>{
       await tx`select set_config('app.app_id',${this.app},true)`;
       if (row.memberId) await tx`select person.id from platform.people person join network.members member on member.person_id=person.id
         where member.app_id=${row.app} and member.id=${row.memberId} order by person.id for update of person`;
       const wrote=await tx`update platform.outbound set status=${status},provider_message_id=${receipt.providerMessageId},
         provider_message_ids=${{ids:providerIds}}::jsonb->'ids',history_recorded=${receipt.historyRecorded??null},chat_id=${receipt.chatId??null},
-        transport=${receipt.transport??null},sent_at=coalesce(sent_at,${at}),lease_owner=null,lease_until=null,updated_at=${new Date(this.now)},
+        transport=${receipt.transport??null},sent_at=case when ${status==="failed"} then sent_at else coalesce(sent_at,${at}) end,lease_owner=null,lease_until=null,updated_at=${new Date(this.now)},
         note=${receipt.replayed?"idempotent replay":null},delivered_at=${status==="delivered"||status==="read"?at:null},
-        ended_at=${status==="delivered"||status==="read"||status==="failed"?at:null}
+        ended_at=case when ${final} or (member_id is null and ${forget}) then ${at}::timestamptz else null end,
+        to_address=case when member_id is null and ${forget} then null else to_address end,body=case when member_id is null and ${forget} then null else body end
         where id=${row.id} and app_id=${row.app} and line=${this.line} and status in ('sending','unknown_acceptance')
         and to_address=${row.to} and body=${row.text} and fingerprint=${fingerprint(row.to,row.text,row.mediaUrls,row.kind,row.approvedPhotos)} returning id`;
       if (!wrote.length) return false;
-      if (status!=="failed") {
-        const unanswered=row.kind==="compliance"?0:1;
-        // A send accepted at the same instant as the person's last message counts toward the streak (a reply
-        // follows the message it answers); only a send accepted before their message is already answered.
-        await tx`insert into platform.line_conversations(line,address,unanswered,reengagement_used,first_outbound_at,last_outbound_at)
-          values(${this.line},${row.to},${unanswered},${row.reengagement},${at},${at})
-          on conflict(line,address) do update set
-            unanswered=case when line_conversations.last_inbound_at>${at} then line_conversations.unanswered else line_conversations.unanswered+${unanswered} end,
-            last_outbound_at=greatest(line_conversations.last_outbound_at,excluded.last_outbound_at),
-            first_outbound_at=least(line_conversations.first_outbound_at,excluded.first_outbound_at),
-            reengagement_used=case when line_conversations.last_inbound_at>${at} then line_conversations.reengagement_used else line_conversations.reengagement_used or excluded.reengagement_used end`;
-      }
+      if (status!=="failed") await this.countSend(tx,this.line,row.to,row.kind,row.reengagement,at);
       return true;
     });
-    if (!committed) return {id:row.id,app:row.app,memberId:row.memberId,status:"dropped_forgotten"};
+    if (!committed) {
+      // Another drain recorded this acceptance first (a parallel receipt lookup), or erasure ended the row: report the stored status.
+      const [cur]=await this.sql`select status from platform.outbound where id=${row.id}`;
+      return {id:row.id,app:row.app,memberId:row.memberId,status:String(cur?.status??"dropped_forgotten")};
+    }
     if (status==="failed") return this.end(row,"failed","provider reported failure");
     if (status==="delivered"||status==="read") return this.end(row,status);
     return {id:row.id,app:row.app,memberId:row.memberId,status};
   }
 
+  /** A send the provider (or another transport) accepted joins the conversation's streak (Apple line safety) and its 14-day clock. */
+  private async countSend(tx: SQL, line: string, to: string, kind: MessageKind, reengagement: boolean, at: Date): Promise<void> {
+    const unanswered=kind==="compliance"?0:1;
+    // A send accepted at the same instant as the person's last message counts toward the streak (a reply
+    // follows the message it answers); only a send accepted before their message is already answered.
+    await tx`insert into platform.line_conversations(line,address,unanswered,reengagement_used,first_outbound_at,last_outbound_at)
+      values(${line},${to},${unanswered},${reengagement},${at},${at})
+      on conflict(line,address) do update set
+        unanswered=case when line_conversations.last_inbound_at>${at} then line_conversations.unanswered else line_conversations.unanswered+${unanswered} end,
+        last_outbound_at=greatest(line_conversations.last_outbound_at,excluded.last_outbound_at),
+        first_outbound_at=least(line_conversations.first_outbound_at,excluded.first_outbound_at),
+        reengagement_used=case when line_conversations.last_inbound_at>${at} then line_conversations.reengagement_used else line_conversations.reengagement_used or excluded.reengagement_used end`;
+  }
+
   /**
    * Bounded read-only remote recovery; unknown rows never enter the dispatch queue on an ambiguous answer.
    * An authoritative "never admitted" (ChannelSendError code "not_found") puts the row back to the queue
-   * with the same "tn:<id>" key (idempotent at the provider). A row still unknown after unknownTtlMs ends
-   * as failed_unknown with an alert, so nothing waits forever unseen.
+   * with the same "tn:<id>" key (idempotent at the provider). A row still unknown unknownTtlMs after it became
+   * unknown (next_attempt_at: wait() and recover() set it then, and a lookup leaves it) ends as failed_unknown
+   * with an alert, so nothing waits forever unseen.
    */
   private async reconcileUnknown(): Promise<StatusChange[]> {
     const changes:StatusChange[]=[];
     const ttl=this.opt("unknownTtlMs",6*HOUR);
     for (const stored of await this.sql`select * from platform.outbound where app_id=${this.app} and line=${this.line}
-      and status='unknown_acceptance' and created_at<${new Date(this.now-ttl)} order by created_at,id limit 50`) {
+      and status='unknown_acceptance' and next_attempt_at<${new Date(this.now-ttl)} order by next_attempt_at,id limit 50`) {
       const row=this.rowOf(stored);
       this.o.onAlert?.(row.id,"unknown_acceptance_expired");
       changes.push(await this.end(row,"failed_unknown","provider acceptance never resolved"));
+    }
+    // A reply another transport took over (collectedReceipt) whose receipt never came, or came as "unknown":
+    // after the same TTL it ends failed_unknown (the gateway may have sent it), so nothing waits forever unseen.
+    for (const r of await this.sql`update platform.outbound set status='failed_unknown',ended_at=${new Date(this.now)},updated_at=${new Date(this.now)},
+      note='gateway receipt never resolved' where app_id=${this.app} and line=${this.line} and status in ('collected','send_unknown')
+      and created_at<${new Date(this.now-ttl)} returning id,member_id`) {
+      this.o.onAlert?.(r.id,"collected_receipt_expired");
+      changes.push({id:r.id,app:this.app,...(r.member_id?{memberId:r.member_id}:{}),status:"failed_unknown"});
     }
     if (!this.o.provider.receipt) return changes;
     const rows=await this.sql`select * from platform.outbound where app_id=${this.app} and line=${this.line}
@@ -610,25 +671,32 @@ export class OutboundQueue {
 
   /** A delivery receipt (any app on the line). Undefined when the provider id is not ours. Never goes back. */
   async applyStatus(u: StatusUpdate): Promise<StatusChange | undefined> {
-    const [r] = await this.sql`select * from platform.outbound where provider_message_id = ${u.providerMessageId}`;
-    if (!r) return undefined;
-    const row = this.rowOf(r);
-    const at = new Date(this.now);
-    if (u.status === "failed") {
-      if (!IN_FLIGHT.includes(row.status)) return undefined; // a late failure after delivery
-      await this.sql`update platform.outbound set transport = coalesce(${u.transport ?? null}, transport) where id = ${row.id}`;
-      return this.end(row, "failed", "receipt: failed", `${u.errorCode ?? ""} ${u.errorMessage ?? ""}`.trim() || "failed");
+    // Each write is conditional on the status this receipt read. When another receipt wrote first, read again:
+    // the rank check then decides on the current status (two receipts in parallel never move a status back).
+    for (;;) {
+      const [r] = await this.sql`select * from platform.outbound where provider_message_id = ${u.providerMessageId}`;
+      if (!r) return undefined;
+      const row = this.rowOf(r);
+      const at = new Date(this.now);
+      if (u.status === "failed") {
+        if (!IN_FLIGHT.includes(row.status)) return undefined; // a late failure after delivery
+        const won = await this.sql`update platform.outbound set status = 'failed', transport = coalesce(${u.transport ?? null}, transport)
+          where id = ${row.id} and status = ${row.status} returning id`;
+        if (!won.length) continue;
+        return this.end(row, "failed", "receipt: failed", `${u.errorCode ?? ""} ${u.errorMessage ?? ""}`.trim() || "failed");
+      }
+      const cur = PROVIDER_RANK[row.status];
+      if (cur === undefined || (PROVIDER_RANK[u.status] ?? 0) <= cur) return undefined; // a row that did not go out, or a status that would go back
+      const final = u.status === "delivered" || u.status === "read";
+      const won = await this.sql`update platform.outbound set status = ${u.status}, transport = coalesce(${u.transport ?? null}, transport), updated_at = ${at},
+        delivered_at = case when ${final} then coalesce(delivered_at, ${at}) else delivered_at end,
+        read_at = case when ${u.status === "read"} then ${at} else read_at end,
+        ended_at = case when ${final} then coalesce(ended_at, ${at}) else ended_at end,
+        to_address = case when ${final} and member_id is null then null else to_address end, body = case when ${final} and member_id is null then null else body end
+        where id = ${row.id} and status = ${row.status} returning id`;
+      if (!won.length) continue;
+      return { id: row.id, app: row.app, memberId: row.memberId, status: u.status };
     }
-    const cur = PROVIDER_RANK[row.status];
-    if (cur === undefined || (PROVIDER_RANK[u.status] ?? 0) <= cur) return undefined; // a row that did not go out, or a status that would go back
-    const final = u.status === "delivered" || u.status === "read";
-    await this.sql`update platform.outbound set status = ${u.status}, transport = coalesce(${u.transport ?? null}, transport), updated_at = ${at},
-      delivered_at = case when ${final} then coalesce(delivered_at, ${at}) else delivered_at end,
-      read_at = case when ${u.status === "read"} then ${at} else read_at end,
-      ended_at = case when ${final} then coalesce(ended_at, ${at}) else ended_at end,
-      to_address = case when ${final} and member_id is null then null else to_address end, body = case when ${final} and member_id is null then null else body end
-      where id = ${row.id}`;
-    return { id: row.id, app: row.app, memberId: row.memberId, status: u.status };
   }
 
   /**
@@ -686,20 +754,25 @@ export class OutboundQueue {
     for (const i of items) {
       const to = normalizeAddress(i.to);
       await tx`insert into platform.outbound ${tx({
-        id: i.id, app_id: this.app, member_id: i.memberId, line: this.line, to_address: to, kind: i.kind, body: i.text, media_urls: tx.array([], "TEXT"),
+        id: i.id, app_id: this.app, network_id: this.o.network ?? null, member_id: i.memberId, line: this.line, to_address: to, kind: i.kind, body: i.text, media_urls: tx.array([], "TEXT"),
         fingerprint: fingerprint(to, i.text, [], i.kind), opportunity_id: null, time_zone: "UTC", status: "collected", next_attempt_at: now, created_at: now, updated_at: now, ended_at: null,
       })} on conflict (id) do nothing`;
     }
   }
 
-  /** Cloud's turn receipt for collected replies: accepted ones enter the thread history (sent_at); the others end. */
+  /**
+   * Cloud's turn receipt for collected replies: accepted ones enter the thread history (sent_at) and the
+   * conversation's streak, as a send this queue made; the others end. A receipt after unknownTtlMs finds the
+   * row ended (reconcileUnknown).
+   */
   async collectedReceipt(tx: SQL, ids: string[], outcome: "accepted" | "unknown" | "rejected", at: number): Promise<void> {
     if (!ids.length) return;
     const status = outcome === "accepted" ? "sent" : outcome === "unknown" ? "send_unknown" : "refused_gateway";
-    await tx`update platform.outbound set status = ${status}, updated_at = ${new Date(this.now)},
+    const moved = await tx`update platform.outbound set status = ${status}, updated_at = ${new Date(this.now)},
       sent_at = case when ${outcome === "accepted"} then coalesce(sent_at, ${new Date(at)}) else sent_at end,
       ended_at = case when ${outcome === "unknown"} then null else coalesce(ended_at, ${new Date(this.now)}) end
-      where app_id = ${this.app} and id = any(${tx.array(ids, "TEXT")}) and status in ('collected', 'send_unknown')`;
+      where app_id = ${this.app} and id = any(${tx.array(ids, "TEXT")}) and status in ('collected', 'send_unknown') returning line, to_address, kind`;
+    if (outcome === "accepted") for (const r of moved as any[]) await this.countSend(tx, r.line, r.to_address, r.kind, false, new Date(at));
   }
 
   /** Rows of this app the leak guard parked for a person (GET /queue/leak-review), oldest first. */

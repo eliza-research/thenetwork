@@ -2138,12 +2138,9 @@ export class NetworkService implements RuntimeHost {
           return json({ok: true, replayed: false});
         }
         if (JSON.stringify(collected.map(r => r.id)) !== JSON.stringify(b.replyIds)) return json({error: "receipt_scope_invalid", retryable: false}, 409);
-        // No-history acceptance belongs only to a persisted policy reply or
-        // canonical join prompt; a normal member reply still needs its history.
-        const accountFree = claim.response.accountEligible === false &&
-          (claim.response.replyKind === "compliance" ||
-            (claim.response.reason === "onboarding_asked" && claim.response.replyKind === "reply" &&
-              claim.response.memberId === null && isAppId(claim.response.app)));
+        // No-history acceptance belongs only to a turn the service gave no Cloud account (accountEligible false:
+        // Cloud has no history to record); a reply in an account-eligible turn still needs its history.
+        const accountFree = claim.response.accountEligible === false;
         if ((b.outcome === "accepted" && (!(b.providerMessageIds as string[]).length || (!b.historyRecorded && !accountFree)))
           || (b.outcome !== "accepted" && b.historyRecorded)) return json({error: "invalid_receipt", retryable: false}, 400);
         const status = b.outcome === "accepted" ? "sent" : b.outcome === "unknown" ? "send_unknown" : "refused_gateway";

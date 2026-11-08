@@ -13,7 +13,8 @@
 //    (outcome "cancelled_by_stop"): nothing the person wrote before STOP is acted on after it (a join
 //    answer handled late would opt them back in). Rows received after the STOP are handled as usual.
 //  - Privacy: the row keeps the sender and the event only while it waits. A handled row keeps the id,
-//    the times and the outcome.
+//    the times and the outcome. An unresolved signed turn keeps no collected reply text (no receipt can
+//    reach it: a receipt needs a done turn).
 //  - Signed turns (/internal/turn): one ordinary and one compliance turn at a time per sender. A running turn renews its lease (lease_at; arrived_at stays the arrival)
 //    every 30 seconds; a turn still "processing" 2 minutes after its last renewal lost its worker and reads
 //    as unresolved. An unresolved turn holds the sender back for 10 minutes at most; STOP, START and HELP are
@@ -92,7 +93,7 @@ export class Inbox {
       if (admitUntil !== undefined && this.o.clock.now() >= admitUntil) return [];
       // A turn whose worker stopped (no completion within the lease) is unresolved, not processing forever.
       // Its one-time notice was never delivered: the row goes with it (the in-memory undo died with the worker).
-      await tx`with swept as (update platform.inbound set status='unresolved',event=null,sender=null
+      await tx`with swept as (update platform.inbound set status='unresolved',event=null,sender=null,replies='[]'::jsonb
         where sender_hash=${senderHash} and status='processing' and request_hash is not null and coalesce(lease_at,arrived_at)<${new Date(now - PROCESSING_LEASE_MS)} returning id)
         delete from platform.eliza_notices where turn_id in (select id from swept)`;
       // A compliance turn waits only for another compliance turn of the sender (its own claim slot, migration 0042).
@@ -137,7 +138,7 @@ export class Inbox {
         const rescued = await this.rescueCompliance(id, turn).catch(() => undefined);
         if (rescued) { this.o.log(`[inbound] compliance turn ${id} failed after its consent change: ${(e as Error).message}`); return rescued; }
       }
-      await this.o.sql`update platform.inbound set status='unresolved',event=null,sender=null where id=${id} and status='processing'`;
+      await this.o.sql`update platform.inbound set status='unresolved',event=null,sender=null,replies='[]'::jsonb where id=${id} and status='processing'`;
       await this.undo(turn);
       if (keyword) {
         // A compliance turn is never final without an answer: another run of the same request answered it (replay that
@@ -260,7 +261,7 @@ export class Inbox {
    * longer holds back the sender's later messages. Returns false when the row is not a stuck signed turn.
    */
   async resolve(id: string): Promise<boolean> {
-    const [r] = await this.o.sql`with resolved as (update platform.inbound set status='unresolved',sender_hash=null,event=null,sender=null
+    const [r] = await this.o.sql`with resolved as (update platform.inbound set status='unresolved',sender_hash=null,event=null,sender=null,replies='[]'::jsonb
       where id=${id} and request_hash is not null and status in ('processing','unresolved') returning id),
       notices as (delete from platform.eliza_notices where turn_id in (select id from resolved))
       select count(*)::int as n from resolved`;

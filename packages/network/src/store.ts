@@ -233,6 +233,8 @@ export class PgStore implements NetworkStore {
   private readonly owned: boolean;
   readonly app: string;
   readonly city: string;
+  /** The row version (xmin) of the network_state row this process last loaded or saved: another writer changes it. */
+  seen?: string;
   constructor(db: string | SQL, readonly id = "ntwrk:nyc") {
     ({ app: this.app, city: this.city } = splitNetworkId(id));
     this.owned = typeof db === "string";
@@ -249,8 +251,9 @@ export class PgStore implements NetworkStore {
   async load(): Promise<NetworkState | undefined> {
     return this.sql.begin(async tx => {
       await tx`select set_config('app.app_id', ${this.app}, true)`;
-      const rows = await tx`select state from network.network_state where id = ${this.id}`;
+      const rows = await tx`select state, xmin::text as v from network.network_state where id = ${this.id}`;
       const s = rows[0]?.state;
+      this.seen = rows[0]?.v;
       return loadRelayRows(tx, s === undefined ? undefined : ((typeof s === "string" ? JSON.parse(s) : s) as NetworkState), this.app, this.id);
     }) as Promise<NetworkState | undefined>;
   }
@@ -285,8 +288,9 @@ export class PgStore implements NetworkStore {
         for (let i = 0; i < ids.length; i += 500) for (const r of await tx`select id from network.members where id in ${tx(ids.slice(i, i + 500))}`) known.add(r.id);
         parts = parts.filter(p => known.has(p.member_id as string));
       }
-      await tx`insert into network.network_state (id, version, state, saved_at) values (${this.id}, ${state.version}, ${state}::jsonb, now())
-        on conflict (id) do update set version = excluded.version, state = excluded.state, saved_at = excluded.saved_at`;
+      const [saved] = await tx`insert into network.network_state (id, version, state, saved_at) values (${this.id}, ${state.version}, ${state}::jsonb, now())
+        on conflict (id) do update set version = excluded.version, state = excluded.state, saved_at = excluded.saved_at returning xmin::text as v`;
+      this.seen = saved.v;
       for (let i = 0; i < rows.opportunities.length; i += 500) await tx`insert into network.opportunities ${tx(rows.opportunities.slice(i, i + 500))}
         on conflict (id) do update set state = excluded.state, objective = excluded.objective, explanations = excluded.explanations, meeting_at = excluded.meeting_at,
           reason = excluded.reason, updated_at = excluded.updated_at`;

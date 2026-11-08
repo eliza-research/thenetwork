@@ -326,8 +326,9 @@ export class NetworkRuntime {
   /** The stored state of this network (inside an app-scoped transaction). */
   private async loadState(): Promise<NetworkState | undefined> {
     return this.scoped(async tx => {
-      const [r] = await tx`select state from network.network_state where id = ${this.pg.id}`;
+      const [r] = await tx`select state, xmin::text as v from network.network_state where id = ${this.pg.id}`;
       const s = r?.state;
+      this.pg.seen = r?.v;
       // A state without its relay log gets it back from network.relay_records (store.ts).
       return loadRelayRows(tx, s === undefined ? undefined : ((typeof s === "string" ? JSON.parse(s) : s) as NetworkState), this.app.id, this.pg.id);
     });
@@ -488,11 +489,12 @@ export class NetworkRuntime {
     const queue = this.adapter instanceof BlooioAdapter ? this.adapter.queue : undefined;
     // Collected replies (Cloud sends them) get the queue's own leak guard first: canary shapes, contacts,
     // the recipient's leak sources and the thread check. One that fails is not collected; it goes into
-    // the queue like any other send, where the same guard parks it for staff (parked_leak_review).
+    // the queue parked for staff (parked_leak_review) at once: a send-time gate (a reply whose inbound is old
+    // because engaged runs after the turn's unit) must not end it before staff see it.
     if (queue) for (const s of u.sends) {
       if (!u.collected.has(s.id) || !s.to) continue;
       const reasons = await queue.collectedLeaks(tx, { id: s.id, ...(u.forget.has(s.memberId) ? {} : { memberId: s.memberId }), to: s.to, kind: s.kind, text: s.body });
-      if (reasons.length) { u.collected.delete(s.id); this.host.log(`[alert] a collected reply failed the leak guard and goes to the queue for review (${this.id}, ${s.id})`); }
+      if (reasons.length) { u.collected.delete(s.id); s.leakReasons = reasons; this.host.log(`[alert] a collected reply failed the leak guard and goes to the queue for review (${this.id}, ${s.id})`); }
     }
     const captured = u.sends.filter(s => u.collected.has(s.id) && (ok(s.memberId) || u.forget.has(s.memberId)));
     if (captured.length) {
@@ -633,11 +635,26 @@ export class NetworkRuntime {
    * out to the host (the inbox). An error leaves the rows in the queue for the next tick.
    */
   private async drainQueue() {
+    // Another replica saved the state since this one loaded it (a hold, a closed match, a new member): every
+    // send-time check here would read old state. The rows wait for a replica whose state is current.
+    if (!(await this.stateCurrent())) { this.host.log(`[deliver] the stored state is newer than this replica's: the queue waits (${this.id})`); return; }
     let ds: Delivery[];
     try { ds = await this.adapter.deliver([]); } catch (e) { this.host.log(`[deliver] the queue waits for the next tick (${this.id}): ${(e as Error).message}`); return; }
     const mine = ds.filter(d => d.memberId && (d.app ?? this.app.id) === this.app.id);
     await this.storeStatuses(mine);
+    // A drain that stopped after the queue commit (a crash, an error) lost its changes in memory: a message that
+    // still shows a waiting status takes the status of its queue row once that row left the waiting statuses.
+    await this.scoped(tx => tx`update network.messages m set status = o.status from platform.outbound o
+      where m.app_id = ${this.app.id} and m.direction = 'outbound' and m.status = any(${`{${WAITING_STATUSES.join(",")}}`}::text[])
+      and o.id = m.id and o.app_id = m.app_id and o.status <> all(${`{${WAITING_STATUSES.join(",")}}`}::text[])`);
     await this.projectNotifications();
+  }
+
+  /** True when the stored Network state is the one this replica last loaded or saved (or none is stored). `tx`: lock it for share until the caller commits. */
+  async stateCurrent(tx?: SQL): Promise<boolean> {
+    const read = (t: SQL) => tx ? t`select xmin::text as v from network.network_state where id = ${this.pg.id} for share` : t`select xmin::text as v from network.network_state where id = ${this.pg.id}`;
+    const [r] = tx ? await read(tx) : await this.scoped(read);
+    return !r || r.v === this.pg.seen;
   }
 
   /** Repair the existing Notify projection after acceptance, including a crash after its SQL commit. */
