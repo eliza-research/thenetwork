@@ -274,3 +274,12 @@ test("SD-315: a number whose age floor is under 13 is declined by text and gets 
   expect(r.reason).toBe("under_age");
   expect(await (service as any).pendingOf(phone, "join")).toBeUndefined();
 }, 60_000);
+
+test("SD-383: a web join with age 0 is declined as under age and the age floor keeps it", async () => {
+  const phone = "+12125550318";
+  expect(await webJoin("friends", phone, 0)).toEqual({ok: false, error: "under_age"});
+  expect(await service.accounts.lowestAge(phone)).toBe(0);
+  // The lowest stated age wins: a later, older age does not join.
+  expect(await webJoin("friends", phone, 25)).toEqual({ok: false, error: "under_age"});
+  expect(await liveMemberships(phone)).toEqual([]);
+}, 60_000);
