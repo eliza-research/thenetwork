@@ -325,3 +325,7 @@
 {"text":"sure hmm","label":"unclear"}
 {"text":"ok if","label":"unclear"}
 {"text":"sure if","label":"unclear"}
+{"text":"not at all interested","label":"no"}
+{"text":"no longer interested","label":"no"}
+{"text":"less interested now","label":"unclear"}
+{"text":"I'm interested in something else","label":"unclear"}

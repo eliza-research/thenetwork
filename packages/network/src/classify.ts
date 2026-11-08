@@ -528,6 +528,7 @@ const REFUSAL_RX: RegExp[] = [
   /\b(?:don'?t|do not) think (?:i can|i could|i'?ll make it|i'?ll be able)\b/,
   /\b(?:don'?t|do not|doesn'?t) (?:think so|want to|wanna|feel like it|really want|have (?:time|the time|room|the bandwidth)|need)\b/,
   /\b(?:i'?m|im|i am) (?:not|no longer) (?:in|down|up for (?:it|that)|interested|free|available|keen|able|looking)\b/,
+  /\b(?:not at all|no longer) interested\b/,
   /\b(?:i'?m|im|i am) (?:good|ok|okay|fine|all set)(?:,? (?:thanks?|thank you|tho|though|for now))?\s*$/,
   /\bcount me out\b|\b(?:i'?m|im) out\b|\bskip(?:ping)? (?:this|it|that)\b|\bi'?ll sit (?:this|that) one out\b/,
   /\b(?:not gonna|won'?t|can'?t|cannot|couldn'?t|not going to) make it\b/,
@@ -540,7 +541,13 @@ const CANT = /\b(?:can'?t|cannot|can not|won'?t be able to|unable to|not able to
 /** "Busy now, ask me later": a deferral, not a refusal of the offer. */
 const DEFER = /\b(?:ask|text|message|ping|try) me (?:later|again|tomorrow|tmrw|tonight|in a bit)\b|\bget back to you\b|\btalk later\b|\btext later\b/;
 const CANT_HARMLESS = /^\s*(?:wait|believe|say no|complain|go wrong|resist|beat|miss (?:it|this))/;
-const AFFIRM_RX = /(?:^|[^\w'])(?:yes+|yess+|yeah+|yea|yah|yep|yup|sure|surely|ok+|okay+|okey|kk?|alright|aight|absolutely|definitely|def|interested|of course|for sure|fosho|bet|deal|perfect|great|awesome|amazing|love (?:to|that|it)|i'?d love|would love|i'?d like that|would like that|happy to|glad to|let'?s (?:do (?:it|this|that)|go)|lets (?:do it|go)|(?:i'?m|im|i am) (?:totally |so |definitely |all |fully )?in|count me in|sign me up|i'?m down|im down|i am down|down for (?:it|that|this)|down to\b|so down|totally down|i'?m game|im game|(?:i'?m |i am |i'?d be |i would be |would be )?up for (?:it|that|this)|works for me|that works|works|sounds (?:good|great|fun|lovely|perfect|nice|like a plan|amazing|awesome)|why not|please do|go for it|go ahead|yes please|can do|i can (?:make it|do (?:it|that))|that'?d be (?:great|nice|fun|lovely)|would be (?:great|nice|fun)|count on me|can'?t wait|^\s*down\s*[!.]*\s*$|good with (?:that|it|me|this)|that'?s (?:good|great|fine|perfect)|fine by me|fine with me)(?![\w'])|💯|👍|🙌|✅|👌|🤝/;
+const AFFIRM_RX = /(?:^|[^\w'])(?:yes+|yess+|yeah+|yea|yah|yep|yup|sure|surely|ok+|okay+|okey|kk?|alright|aight|absolutely|definitely|def|of course|for sure|fosho|bet|deal|perfect|great|awesome|amazing|love (?:to|that|it)|i'?d love|would love|i'?d like that|would like that|happy to|glad to|let'?s (?:do (?:it|this|that)|go)|lets (?:do it|go)|(?:i'?m|im|i am) (?:totally |so |definitely |all |fully )?in|count me in|sign me up|i'?m down|im down|i am down|down for (?:it|that|this)|down to\b|so down|totally down|i'?m game|im game|(?:i'?m |i am |i'?d be |i would be |would be )?up for (?:it|that|this)|works for me|that works|works|sounds (?:good|great|fun|lovely|perfect|nice|like a plan|amazing|awesome)|why not|please do|go for it|go ahead|yes please|can do|i can (?:make it|do (?:it|that))|that'?d be (?:great|nice|fun|lovely)|would be (?:great|nice|fun)|count on me|can'?t wait|^\s*down\s*[!.]*\s*$|good with (?:that|it|me|this)|that'?s (?:good|great|fine|perfect)|fine by me|fine with me)(?![\w'])|💯|👍|🙌|✅|👌|🤝/;
+/**
+ * "Interested" is a yes only as the answer itself, at the start of its clause with at most a few intensifiers
+ * ("interested!", "definitely interested", "I'm interested, but another day"). "Not at all interested", "no longer
+ * interested", "less interested now" and "I'm interested in something else" are not consent (AGENTS decision 11).
+ */
+const INTERESTED_RX = /^[\s\W]*(?:(?:yes|yeah|yep|oh|ok|okay|so|very|really|super|definitely|def|totally|still|i'?m|im|i am)\s+)*interested(?![\w'])(?!\s+in\b)/;
 /** A word just before a yes that negates it ("not ok", "never down", "don't love it"). "Not sure" is a hedge. */
 const AFFIRM_NEG_BEFORE = /\b(?:not|never|don'?t|didn'?t|wouldn'?t|won'?t|isn'?t)\s+(?:\w+\s+)?$/;
 const HEDGE_RX = /\b(?:maybe|perhaps|possibly|probably|might|could be|not sure|unsure|idk|i don'?t know|dunno|no idea|let me (?:check|think|see|get back|look)|i'?ll (?:check|think|see|let you know|get back)|who is (?:it|this|that|he|she|they)|who'?s (?:it|this|that)|what'?s (?:it|this) about|depends|kinda|sort of|i guess|we'?ll see|tbd|on the fence|torn|not certain|hard to say|remind me|need to check|have to check)\b|^\s*\?+\s*$/;
@@ -572,7 +579,7 @@ export function consentOf(body: string): Consent {
         if (CANT_HARMLESS.test(x.slice(m.index! + m[0].length)) || TIME_AHEAD.test(x.slice(m.index! + m[0].length))) continue;
         refusalAt = Math.min(refusalAt, at + m.index!);
       }
-      const am0 = AFFIRM_RX.exec(y);
+      const am0 = AFFIRM_RX.exec(y) ?? INTERESTED_RX.exec(y);
       // An emoji is a yes only in a short reply with no question: "Still hoping to meet someone. Anything
       // come up? 💯" is an ask with decoration, not consent (the same rule as core parseReply).
       const am = am0 && !/[a-z]/.test(am0[0]) && (wordsIn > 3 || /\?/.test(t)) ? null : am0;
