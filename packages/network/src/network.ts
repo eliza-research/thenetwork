@@ -3824,7 +3824,11 @@ export class ConsentNetwork implements NetworkUnderTest {
       const [a, b] = k.split("|") as [MemberId, MemberId];
       this.again.delete(k);
       if (!this.eligible(a) || !this.eligible(b)) continue;
-      const o = this.newOpp({ origin: "second_encounter", kind: "second_encounter", category: "social", objective: "meet again", detail: "meeting up again", participants: [a, b], alternates: [], primed: [], explanations: { [a]: "you both said you'd meet again", [b]: "you both said you'd meet again" }, score: 0.8, generator: "second_encounter", tags: [] });
+      // The second encounter keeps the category of the meeting the two answered for: on slop (dating only) a
+      // "social" one was closed at once as not allowed, so a second date was never proposed (SD-236).
+      // Feedback writes the interaction with the "again" answer, and forget() removes both.
+      const met = this.interactions.filter(x => x.participants.includes(a) && x.participants.includes(b)).at(-1)!;
+      const o = this.newOpp({ origin: "second_encounter", kind: "second_encounter", category: met.category, objective: "meet again", detail: "meeting up again", participants: [a, b], alternates: [], primed: [], explanations: { [a]: "you both said you'd meet again", [b]: "you both said you'd meet again" }, score: 0.8, generator: "second_encounter", tags: [] });
       this.submit(o);
     }
     // Newcomer welcome: members who joined in the last week and finished onboarding, paired with a
