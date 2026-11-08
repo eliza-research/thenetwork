@@ -1452,9 +1452,11 @@ export class NetworkService implements RuntimeHost {
     // Their answer is a new opt-in: a delete of everything no longer suppresses the number.
     await this.people.unsuppress(key);
     const others = (await this.people.memberships(who.id)).filter(m => m.app !== app.id && m.state !== "removed" && m.state !== "invited");
+    // An invited or live membership (a web join of the same phone that committed after this text was routed) keeps its member id and review.
+    const kept = existing && existing.state !== "removed" ? existing : undefined;
     const membership: Membership = {
-      app: app.id, personId: who.id, memberId: existing?.state === "invited" ? existing.memberId : `${app.id}_${randomUUID()}`,
-      state: app.joinMode === "waitlist" ? "onboarding" : "active", review: null, firstName: name, profile: homeCity ? { homeCity } : {}, joinedAt: t, leftAt: null,
+      app: app.id, personId: who.id, memberId: kept ? kept.memberId : `${app.id}_${randomUUID()}`,
+      state: app.joinMode === "waitlist" ? "onboarding" : "active", review: kept?.review ?? null, firstName: name, profile: homeCity ? { homeCity } : {}, joinedAt: t, leftAt: null,
     };
     await this.people.putMembership(membership);
     await this.accounts.recordConsent({ e164, app: app.id, line: ev.to ? normalizeAddress(ev.to) : null, state: "opted_in", source: "inbound_message", wording: ask, ref: rowId, at: this.consentAt(ev) });

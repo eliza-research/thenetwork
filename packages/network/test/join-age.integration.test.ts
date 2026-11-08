@@ -208,3 +208,28 @@ test("SD-179: a reply that names no app closes the looking-for question; a later
   expect(await liveMemberships(phone)).toEqual(["ntwrk"]);
   expect(await service.accounts.optedIn("friends", phone)).toBe(false);
 }, 60_000);
+
+test("SD-127: a text join that waits on a web join of the same phone keeps the web join's member id", async () => {
+  const phone = "+12125550314";
+  // The text turn finds no member; a web join of the same phone commits before the text takes the join lock.
+  const withLock = service.people.withLock;
+  let reached!: () => void, release!: () => void;
+  const atLock = new Promise<void>(r => { reached = r; }), go = new Promise<void>(r => { release = r; });
+  service.people.withLock = (async (key: string, fn: () => Promise<unknown>) => {
+    if (key === `join:${phone}`) { service.people.withLock = withLock; reached(); await go; }
+    return withLock.call(service.people, key, fn);
+  }) as typeof withLock;
+  const text = post(phone, "Sam, 25", "friends");
+  await atLock;
+  const web = await webJoin("friends", phone, 25, "Sam");
+  release();
+  const turn = await text;
+  expect(web.ok).toBe(true);
+  const memberId = (web as any).membership.memberId as string;
+  const person = await service.accounts.personFor(phone);
+  // The live membership keeps the member id of its network member.
+  expect((await service.people.getMembership(person!.id, "friends"))?.memberId).toBe(memberId);
+  expect(turn.status).toBe(200);
+  const active = await sql`select id from network.members where app_id = 'friends' and person_id = ${person!.id} and account_status = 'active'`;
+  expect(active.map((r: any) => r.id)).toEqual([memberId]);
+}, 60_000);
