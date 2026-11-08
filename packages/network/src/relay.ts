@@ -55,6 +55,8 @@ export interface RelayMember {
   /** A safety hold, a paused or restricted account. */
   held: boolean;
 }
+/** Block families that are about what the sender wrote (RELAY_REASON_FAMILIES.block): a threat, a slur, a severe classifier label. */
+const SEVERE_FAMILIES: ReadonlySet<string> = new Set(["harass_severe", "llm_severe", "clef_severe"]);
 /** A two-person match as the relay sees it. */
 export interface RelayMatch {
   id: string;
@@ -77,6 +79,8 @@ export interface RelayHost {
   privateFacts(): { forbidden: Owned[]; canaries: string[] };
   /** The app rates photos (slop): run `appearanceLeak` on relayed text. */
   ratesPhotos: boolean;
+  /** The relay blocked what `id` wrote (SEVERE_FAMILIES): a staff case event for them, with the reason families only. */
+  severeBlock(id: MemberId, families: string[]): void;
   /** Send `body` to `to` through the Network's send path. `key` is the outbound id. "sent", "deferred" or "refused". */
   send(to: MemberId, body: string, o: { from: MemberId; matchId: string; key: string; contact?: string; photoIds?: string[]; approvedPhotos?: ApprovedRelayPhoto[]; noDefer?: boolean }): "sent" | "deferred" | "refused";
 }
@@ -233,10 +237,15 @@ export class RelayDesk {
   /** Log the decision, deliver a pass, queue a hold; the answer for the sender. */
   private apply(res: RelayResult, match: RelayMatch, item: RelayItem, o: RelayCallOptions, contact?: string): RelayOutcome {
     this.log(res.record);
-    if (res.decision === "block") return { itemId: item.id, decision: "refused", reason: res.senderNotice };
+    const fam = (r: string) => r.split(":")[0]!;
+    if (res.decision === "block") {
+      // A threat, a slur or a severe classifier label is about the sender's own words: staff see it (SD-254).
+      const severe = [...new Set(res.reasons.map(fam).filter(f => SEVERE_FAMILIES.has(f)))].sort();
+      if (severe.length) this.host.severeBlock(item.from, severe);
+      return { itemId: item.id, decision: "refused", reason: res.senderNotice };
+    }
     if (res.decision === "hold") {
       // A hold that is only the rate limit or consent is answered, not queued: the member can try again.
-      const fam = (r: string) => r.split(":")[0]!;
       if (res.reasons.every(r => fam(r) === "rate")) return { itemId: item.id, decision: "held", reason: res.senderNotice };
       this.s.held.push({
         itemId: item.id, matchId: match.id, app: this.host.app, kind: item.kind, from: item.from, to: item.to, at: item.at, reasons: res.reasons, status: "held",

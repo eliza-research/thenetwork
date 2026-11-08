@@ -1,12 +1,13 @@
 // The evals block: hand-written corpora (evals/, append-only) scored against the offline parsers.
 // Every row was written by hand in members' own words, never by the simulator's templates. A misread
 // found in the wild is added to the corpus, then fixed; never delete a row to make a change pass.
-//   network/*      the Network's understanding rules (consent replies, abuse, teen ages, wants, areas, negations)
+//   network/*      the Network's understanding rules (consent replies, abuse, teen ages, wants, areas, negations, check-in reports)
 //   replies.jsonl  core parseReply (yes / no / unsure)
 //   opt-out*.jsonl the opt-out readers (core parseOptOut; the platform consent ledger's detectKeyword)
 //   guard/         the shared leak guard (contacts in disguise, private facts, homoglyphs, benign text)
 import { classifyYesNo, findLeaks, parseOptOut, parseReply, type ReplyAnswer } from "../../packages/core/src/index.ts";
 import { classify, extractProfile, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
+import { checkInReport } from "../../packages/network/src/reports.ts";
 import { detectKeyword, leaveTarget, optOutPhrase } from "../../packages/platform/src/consent.ts";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
 import { APPS, type AppId } from "../../packages/platform/src/apps.ts";
@@ -108,6 +109,12 @@ export async function evalsBlock(b: Block): Promise<void> {
   const neg = await jsonl<{ text: string }>("network/negations.jsonl");
   const negBad = neg.filter(l => { const x = extractProfile(l.text); return x.desireIds.length || x.interests.length || classify(l.text).kind === "people_request"; }).map(l => l.text);
   b.gate(`negated wants (n ${neg.length}): 0 read as a want, interest or request`, neg.length >= 100 && negBad.length === 0, negBad.slice(0, 5).join(" | "));
+
+  // The answer to slop's check-in after a date (reports.ts checkInReport): a happy answer files no
+  // report (no block, no minor flag), and each report kind is read as labelled (SD-067).
+  const checkIns = await jsonl<{ text: string; kind: string | null }>("network/check-in-reports.jsonl");
+  const checkInMiss = checkIns.filter(l => (checkInReport(l.text) ?? null) !== l.kind).map(l => `${l.text} -> ${checkInReport(l.text) ?? "none"}`);
+  b.gate(`check-in answers (n ${checkIns.length}): every row read as labelled, no happy answer read as a report`, checkInMiss.length === 0, checkInMiss.slice(0, 5).join(" | "));
 
   // ---- core reply parser -------------------------------------------------------------------------
   const replies = await jsonl<{ text: string; label: ReplyAnswer }>("replies.jsonl");

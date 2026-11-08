@@ -443,7 +443,8 @@ export class NetworkRuntime {
           id, memberId, to: this.memberToAddr.get(memberId), body,
           // "reply" only when the Network says so (send(): never a proactive send, a growth ask, a
           // re-engagement or a check-in), so the queue's quiet hours and caps still apply to those.
-          kind: o?.reply && (causal || this.replyingTo === memberId) ? "reply" : meta.proactive ? "proactive" : "transactional",
+          // A safety notice (the hold notice, meta.safety) goes at once, also to a held member.
+          kind: o?.reply && (causal || this.replyingTo === memberId) ? "reply" : meta.safety ? "safety" : meta.proactive ? "proactive" : "transactional",
           // A probe names its opportunity only in meta.probe (anonymous to the member); the row links it either way.
           ...(approvedPhotos ? { approvedPhotos } : {}),
           type: meta.type, oppId: meta.proposalId ?? meta.probe?.key, proactive: !!meta.proactive, system: false, ts: t,

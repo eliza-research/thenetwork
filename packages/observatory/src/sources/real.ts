@@ -936,15 +936,15 @@ const FEED_TYPES = [
 
 /**
  * The SQL client for the snapshot builder under an app's read login: every reference to
- * platform.person_blocks and platform.matching_ages read the app's own views instead.
+ * platform.person_blocks, platform.matching_ages and platform.person_holds read the app's own views instead.
  * The builder's queries are otherwise passed through unchanged.
  */
 export function appSnapshotSql(sql: SQL, app: string): SQL {
   const suffix = app.replace(/[^a-z]/g, "");
   const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    if (!strings.some(x => x.includes("platform.person_blocks") || x.includes("platform.matching_ages"))) return (sql as any)(strings, ...values);
+    if (!strings.some(x => x.includes("platform.person_blocks") || x.includes("platform.matching_ages") || x.includes("platform.person_holds"))) return (sql as any)(strings, ...values);
     const swapped = strings.map(x => x.replaceAll("platform.person_blocks", `platform.person_blocks_${suffix}`)
-      .replaceAll("platform.matching_ages", `platform.matching_ages_${suffix}`));
+      .replaceAll("platform.matching_ages", `platform.matching_ages_${suffix}`).replaceAll("platform.person_holds", `platform.person_holds_${suffix}`));
     return (sql as any)(Object.assign(swapped, { raw: swapped }) as unknown as TemplateStringsArray, ...values);
   };
   return new Proxy(tag, { get: (_t, k) => { const v = (sql as any)[k]; return typeof v === "function" ? v.bind(sql) : v; } }) as unknown as SQL;

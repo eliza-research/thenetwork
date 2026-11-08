@@ -43,6 +43,7 @@ export type MessageKind =
   | "reply"          // the answer to the member's own message; quiet-hours exempt
   | "compliance"     // STOP/START/HELP confirmations and declines; exempt from the opt-out and quiet hours
   | "proactive"      // Network-initiated; quiet hours, consent, the person cap and the line caps apply
+  | "safety"         // a safety notice (a hold); consent and the leak guard apply; quiet hours, the streak and the line caps do not
   | "transactional"; // everything else the Network starts (reminders, scheduling); quiet hours apply
 
 /** Everything except a direct reply and a compliance text is agent-initiated (any new kind is too). */
@@ -399,6 +400,7 @@ export class OutboundQueue {
     const c = this.o.checks;
     const agent = isAgentInitiated(row.kind);
     const compliance = row.kind === "compliance";
+    const notice = row.kind === "safety";
 
     // 0. Too old, or about something that closed. A stale check that throws is not "current": the error goes to
     // drain(), and the row waits and runs every check again (it is never sent on a check that did not answer).
@@ -422,14 +424,14 @@ export class OutboundQueue {
       }
     }
     // 5. Quiet hours in the recipient's zone.
-    if (agent) {
+    if (agent && !notice) {
       if (!isValidTimeZone(row.timeZone)) return this.end(row, "parked_invalid_timezone");
       const quiet = this.o.quiet ?? DEFAULT_QUIET;
       if (isQuietAt(now, row.timeZone, quiet)) return this.wait(row, "deferred_quiet_hours", nextAllowedAt(now, row.timeZone, quiet), "quiet hours");
     }
     // 6. Apple line safety: the unanswered streak and the one re-engagement.
     let reengagement = false;
-    if (!compliance && conv && conv.unanswered >= this.opt("maxUnanswered", 3)) {
+    if (!compliance && !notice && conv && conv.unanswered >= this.opt("maxUnanswered", 3)) {
       const quietFor = now - (ms(conv.last_outbound_at) ?? -Infinity);
       if (agent && !conv.reengagement_used && quietFor >= this.opt("reengageAfterMs", 14 * DAY)) reengagement = true;
       else return this.hold(row, conv.reengagement_used ? "unanswered cap: re-engagement used" : "unanswered cap", conv.last_inbound_at);
@@ -450,8 +452,8 @@ export class OutboundQueue {
         count(*) filter (where new_conversation and sent_at > ${new Date(now - DAY)})::int as new_chats
         from platform.outbound where line = ${this.line} and sent_at > ${new Date(now - DAY)}`;
       if (counts.recipient >= this.opt("perRecipientPerHour", 10)) return this.wait(row, "retry_scheduled", now + 5 * MINUTE, "per-recipient hourly cap");
-      if (agent && counts.line >= this.opt("perLinePerDay", 200)) return this.wait(row, "retry_scheduled", now + HOUR, "per-line daily cap");
-      if (agent && isNew && counts.new_chats >= this.opt("newChatsPerLinePerDay", 20)) return this.wait(row, "retry_scheduled", now + HOUR, "per-line new conversation cap");
+      if (agent && !notice && counts.line >= this.opt("perLinePerDay", 200)) return this.wait(row, "retry_scheduled", now + HOUR, "per-line daily cap");
+      if (agent && !notice && isNew && counts.new_chats >= this.opt("newChatsPerLinePerDay", 20)) return this.wait(row, "retry_scheduled", now + HOUR, "per-line new conversation cap");
     }
     // 9. The person cap (proactive only, at send time; a redelivered id is never counted twice).
     if (row.kind === "proactive" && c.capTake) {
