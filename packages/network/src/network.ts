@@ -1803,7 +1803,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     const venues = nearbyVenues(named ?? m.area, tags, this.effort(m.id).planBuildingOptions, this.recentVenues(m));
     // The "see if anyone else is up" offer only where it can be kept: never to a minor, a member who
     // cannot be matched, or while matching is off (judge minor_contact: a minor offered a connection).
-    const offer = !m.minor && this.eligible(m.id) && this.opts.matchingEnabled;
+    // The plans buddy is an events item, or a social one where the app's plans are social (friends);
+    // an app with neither category (slop, peon) makes no offer.
+    const buddyCategory = (["events", "social"] as const).find(x => this.allowedCategories.has(x));
+    const offer = !m.minor && this.eligible(m.id) && this.opts.matchingEnabled && !!buddyCategory;
     if (venues.length) this.send(m, (offer ? this.copy.plans : this.copy.plansNoOffer)(venues.map(v => v.name)), { type: "concierge", proactive: false }, "reply", { hook: { t: "suggested", venues: venues.map(v => v.id) } });
     if (!offer) return;
     // Plans buddy: someone else who asked for plans in the last 3 days, nearby. Asking for plans is
@@ -1812,7 +1815,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       && this.eligible(r.memberId) && !this.blocked(m.id, r.memberId) && (this.minutesBetween(m.area, this.member(r.memberId).area) ?? Infinity) <= 35);
     if (other && venues[0]) {
       const o = this.newOpp({
-        origin: "plans", kind: "event_coattend", category: "events", objective: `go to ${venues[0].name} together`, detail: `going to ${venues[0].name} with someone`,
+        origin: "plans", kind: "event_coattend", category: buddyCategory!, objective: `go to ${venues[0].name} together`, detail: `going to ${venues[0].name} with someone`,
         participants: [m.id, other.memberId], alternates: [], primed: [], explanations: { [m.id]: "you were both looking for plans nearby", [other.memberId]: "you were both looking for plans nearby" },
         score: 0.5, generator: "plans_buddy", tags,
       });
@@ -3822,7 +3825,9 @@ export class ConsentNetwork implements NetworkUnderTest {
   private localEncounters(now: number) {
     this.growthTasks(now);
     if (!this.opts.matchingEnabled) return;
-    for (const [k, s] of this.again) {
+    // A second encounter is a social item: an app without that category (slop, peon) composes none and
+    // keeps the mutual wish (a would_interact_again edge in the engine input).
+    for (const [k, s] of this.allowedCategories.has("social") ? this.again : []) {
       if (s.size < 2) continue;
       const [a, b] = k.split("|") as [MemberId, MemberId];
       this.again.delete(k);
