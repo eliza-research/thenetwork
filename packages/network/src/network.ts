@@ -238,6 +238,7 @@ interface MemberState {
   age?: number; statedAge?: number;
   /** A stated age under 13 contradicted a valid attested age: treated as a minor, logged for staff. */
   ageConflict?: boolean;
+  ageReview?: boolean;
   /** No valid age on the record and none stated yet: treated as a minor until they tell us (6.3). */
   ageUnknown?: boolean;
   minor: boolean; minorSignal: boolean; stage: "new" | "age" | "q1" | "q2" | "q3" | "active";
@@ -703,7 +704,6 @@ export class ConsentNetwork implements NetworkUnderTest {
       this.ctx.log("age_conflict", { memberId: m.id, attestedAge: attested, statedAge: m.statedAge });
       this.caseEvent(m.id, { at: now, kind: "age_conflict", points: 0 });
     }
-    if (c.minorSignal && m.minor) m.minorSignal = true;
     if (known === undefined) {
       // Unknown age (6.3): treated as a minor (single-player, never matched) and asked once, early.
       if (!m.ageUnknown) { m.ageUnknown = true; this.ctx.log("age_unknown", { memberId: m.id }); }
@@ -714,7 +714,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (m.ageUnknown) { m.ageUnknown = false; this.ctx.log("age_resolved", { memberId: m.id, minor: m.minor }); if (m.stage !== "new") this.ledgerJoined(m); }
     }
     const age = Math.min(...[attested, m.statedAge].filter(validAge));
-    if ((isMinor(age) || c.minorSignal) && !m.minor) {
+    const newMinor = (isMinor(age) && !m.minor) || (c.minorSignal && !m.minorSignal);
+    if (newMinor) {
       m.minor = true; m.minorSignal = true;
       // Safety record first: the adults this member met, before anything is dropped (network-consent-3).
       this.minorAfterContact(m.id);
@@ -722,13 +723,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       this.ctx.log("minor_signal", { memberId: m.id });
       if (this.app.minJoinAge > 13) {
         // An 18+ app: no teen copy and no teen service; out of matching, and staff review (network-consent-19).
-        this.caseEvent(m.id, { at: now, kind: "age_review", points: 0 });
-        return;
+        this.logAgeReview(m, now);
       }
-      if (m.stage !== "new") { this.send(m, copy.minorNotice, { type: "info" }, "safety"); return; }
     }
-    if (m.stage === "new") return this.welcome(m);
-    if (m.stage === "age" && this.afterAgeQuestion(m, known !== undefined)) return;
 
     // Blocks and reports first: their words describe someone else, so they are never scored as the
     // sender's abuse, and a member on hold can still block (network-consent-4).
@@ -738,11 +735,20 @@ export class ConsentNetwork implements NetworkUnderTest {
     // text in the thread does those.
     const mcp = msg.source === "mcp";
     if ((c.kind === "block" || c.kind === "report") && !mcp) return this.handleBlock(m, c);
-    // Nor is the assistant's block or report scored as the member's abuse: its words describe someone
-    // else (network-consent-4), and a watch would drop the member and cancel a booked date. Learned only.
     if ((c.kind === "block" || c.kind === "report") && mcp) return this.learnFrom(m, body);
-    // The answer to "Who do you mean?" (a block or report waiting for its target): the member's own text only.
     if (m.pendingSafety && !mcp && this.answerWho(m, body)) return;
+
+    if (this.app.minJoinAge > 13 && m.minor && (!m.ageUnknown || m.minorSignal)) {
+      this.dropMember(m.id, "minors policy");
+      this.logAgeReview(m, now);
+      return;
+    }
+    if (newMinor && m.stage !== "new" && m.stage !== "age") {
+      this.send(m, copy.minorNotice, { type: "info" }, "safety");
+      return;
+    }
+    if (m.stage === "new") return this.welcome(m);
+    if (m.stage === "age" && this.afterAgeQuestion(m, known !== undefined)) return;
     if (this.trust.level(m.id) === "hold") { if (c.abuse.length) this.trust.add(m.id, now, c.abuse[0]!, 0); return; }
     // "He asked me to venmo him $50": what someone else did, never the sender's abuse (ids and kinds only).
     if (c.disclosure?.length) this.ctx.log("abuse_disclosed", { memberId: m.id, kinds: c.disclosure });
@@ -982,7 +988,16 @@ export class ConsentNetwork implements NetworkUnderTest {
       this.send(m, this.copy.welcomeAskAge(m.first), { type: "onboarding", proactive: false, firstContact: true }, "interview", { hook: { t: "age" } });
       return;
     }
-    if (m.minor) { m.stage = "active"; this.send(m, this.copy.welcomeMinor(m.first), { type: "onboarding", proactive: false, firstContact: true }, "interview"); return; }
+    if (m.minor && (!m.ageUnknown || m.minorSignal)) {
+      if (this.app.minJoinAge > 13) {
+        this.dropMember(m.id, "minors policy");
+        this.logAgeReview(m, this.now());
+        return;
+      }
+      m.stage = "active";
+      this.send(m, this.copy.welcomeMinor(m.first), { type: "onboarding", proactive: false, firstContact: true }, "interview");
+      return;
+    }
     m.stage = "q1";
     this.send(m, this.copy.welcome(m.first, this.members.get(snapMember?.invitedBy ?? "")?.first), { type: "onboarding", proactive: false, firstContact: true }, "interview",
       { hook: { t: "interview" } });
@@ -1004,9 +1019,18 @@ export class ConsentNetwork implements NetworkUnderTest {
    */
   private afterAgeQuestion(m: MemberState, resolved: boolean): boolean {
     if (m.awaiting?.kind === "age") m.awaiting = undefined;
+    if (m.minor && (!m.ageUnknown || m.minorSignal)) {
+      if (this.app.minJoinAge > 13) {
+        this.dropMember(m.id, "minors policy");
+        this.logAgeReview(m, this.now());
+        return true;
+      }
+      m.stage = "active";
+      this.send(m, copy.minorNotice, { type: "info" }, "reply");
+      return true;
+    }
     m.stage = "active";
     if (!resolved) return false;
-    if (m.minor) { this.send(m, copy.minorNotice, { type: "info" }, "reply"); return true; }
     m.stage = "q1";
     this.send(m, copy.welcomeAfterAge, { type: "onboarding", proactive: false }, "interview", { hook: { t: "interview" } });
     this.inviteeJoined(m);
@@ -1211,6 +1235,17 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!c) { c = { id: `sc${++this.caseSeq}`, memberId: id, opened: e.at, level: this.trust.level(id), events: [], status: "open" }; this.cases.push(c); }
     else if (c.status === "lifted" && e.kind !== "hold_lifted") c.status = "open";
     c.events.push({ at: e.at, kind: e.kind, points: e.points, ...(e.by ? { by: e.by } : {}) });
+  }
+
+  private logAgeReview(m: MemberState, at: number = this.now()) {
+    if (m.ageReview) return;
+    const c = this.openCase(m.id);
+    if (c?.events.some(e => e.kind === "age_review")) {
+      m.ageReview = true;
+      return;
+    }
+    m.ageReview = true;
+    this.caseEvent(m.id, { at, kind: "age_review", points: 0 });
   }
   /**
    * A member found to be under 18 after the Network revealed adults to them (a plan was booked):
@@ -1571,7 +1606,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (record === undefined) return { ok: false, reason: "age_unknown" };
     if (record < 18) return { ok: false, reason: "record_minor" };
     if (m.statedAge !== undefined && m.statedAge < 18) return { ok: false, reason: "stated_minor" };
-    m.minor = false; m.minorSignal = false; m.minorReported = false; m.ageConflict = false;
+    m.minor = false; m.minorSignal = false; m.minorReported = false; m.ageConflict = false; m.ageReview = false;
     this.dirty = true;
     const c = this.openCase(memberId);
     this.caseEvent(memberId, { at: this.now(), kind: "minor_signal_cleared", points: 0 });
@@ -4829,6 +4864,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (m.stage !== "new") return false;
     this.syncMember(m);
     if (validAge(m.age) && !this.canJoinApp(m.age)) { this.declineUnderMinAge(m); return false; }
+    if (this.app.minJoinAge > 13 && (m.minor || m.minorSignal) && !m.ageUnknown) {
+      this.dropMember(m.id, "minors policy");
+      this.logAgeReview(m, this.now());
+      return false;
+    }
     // The answer to the person's own action (the join), so it goes now, not at a picked send time.
     this.replyTo = m.id;
     try { this.welcome(m); } finally { this.replyTo = undefined; }
