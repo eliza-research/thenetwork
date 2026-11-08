@@ -336,12 +336,16 @@ export class NetworkRuntime {
     }) as Promise<T>;
   }
 
-  /** The stored state of this network (inside an app-scoped transaction). */
-  private async loadState(): Promise<NetworkState | undefined> {
+  /**
+   * The stored state of this network (inside an app-scoped transaction). `fence`: the caller imports the state into
+   * `this.net`, so its row version becomes the one the queue fence compares (stateCurrent). A read that only looks at
+   * the stored state (health, the shared context) must not move the fence: this replica's memory stays old.
+   */
+  private async loadState(fence = false): Promise<NetworkState | undefined> {
     return this.scoped(async tx => {
       const [r] = await tx`select state, xmin::text as v from network.network_state where id = ${this.pg.id}`;
       const s = r?.state;
-      this.pg.seen = r?.v;
+      if (fence) this.pg.seen = r?.v;
       // A state without its relay log gets it back from network.relay_records (store.ts).
       return loadRelayRows(tx, s === undefined ? undefined : ((typeof s === "string" ? JSON.parse(s) : s) as NetworkState), this.app.id, this.pg.id);
     });
@@ -373,7 +377,7 @@ export class NetworkRuntime {
       load: async () => {
         this.unit = newUnit();
         await this.refresh();
-        const state = await this.loadState();
+        const state = await this.loadState(true);
         // The registry's switch wins: a network whose matching is not allowed never matches, whatever was stored.
         if (state && !this.matchingAllowed) state.matchingEnabled = false;
         return state;
