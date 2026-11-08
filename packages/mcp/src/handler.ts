@@ -538,17 +538,17 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     const cloudStatus = await cloudGrantCurrent(grant);
     if (cloudStatus === "unavailable") return consentUnavailable(c, r, client);
     if (cloudStatus !== "valid") return messagePage(c.app, "Connect again", "This connection is no longer valid. Return to your agent or text conversation and connect again.", 403);
-    const approved = await store.takeConsentRequest(r.id, now());
-    if (!approved?.e164 || approved.e164 !== r.e164 || approved.personId !== r.personId
-      || approved.expiresAt <= now() || grant.expiresAt <= now())
-      return messagePage(c.app, "This page has expired", "Go back to the assistant and connect again.");
-    await store.putGrant(grant);
-    await linked(grant, true);
     const code = randomToken("ntwc_");
     const ac: AuthCode = { hash: sha256hex(code), grantId: grant.id, clientId: client.id, redirectUri: r.redirectUri, codeChallenge: r.codeChallenge, resource: r.resource, scopes: r.scopes, createdAt: at, expiresAt: at + ttl.codeMs, usedAt: null };
-    await store.putCode(ac);
-    await store.audit({ at, kind: "consent_granted", clientId: client.id, grantId: grant.id, app: c.app.id, detail: r.scopes.join(" ") });
-    await store.audit({ at, kind: "code_issued", clientId: client.id, grantId: grant.id, app: c.app.id, detail: null });
+    // The approval's use, the grant, its code and the audit rows are one transaction: no grant without a code.
+    const approved = await store.approveConsent(r.id, now(), req =>
+      !req.e164 || req.e164 !== r.e164 || req.personId !== r.personId || req.expiresAt <= now() || grant.expiresAt <= now() ? undefined
+        : { grant, code: ac, audit: [
+          { at, kind: "consent_granted" as const, clientId: client.id, grantId: grant.id, app: c.app.id, detail: r.scopes.join(" ") },
+          { at, kind: "code_issued" as const, clientId: client.id, grantId: grant.id, app: c.app.id, detail: null },
+        ] });
+    if (!approved?.issued) return messagePage(c.app, "This page has expired", "Go back to the assistant and connect again.");
+    await linked(grant, true);
     return redirectTo(r.redirectUri, { code, state: r.state, iss: c.issuer }, 303, { "set-cookie": clearCookie });
   }
 

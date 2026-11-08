@@ -3,7 +3,7 @@
 import { join } from "node:path";
 import { SQL } from "bun";
 import type { McpAppId } from "./apps.ts";
-import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, type AuditRow, type AuthCode, type AuthRequest, type Grant, type Mint, type OAuthClient, type OAuthStore, type Token } from "./store.ts";
+import { CLIENT_UNUSED_MS, GRANT_KEEP_MS, type AuditRow, type AuthCode, type AuthRequest, type Grant, type Issue, type Mint, type OAuthClient, type OAuthStore, type Token } from "./store.ts";
 
 export const OAUTH_SQL = join(import.meta.dir, "..", "db", "oauth.sql");
 
@@ -111,6 +111,25 @@ export class PgOAuthStore implements OAuthStore {
       where id = ${id} and step = 'consent' and e164 is not null and expires_at > ${ts(at)}
       returning *`;
     return r ? request(r) : undefined;
+  }
+  async approveConsent<I extends Issue>(id: string, at: number, issue: (r: AuthRequest) => I | undefined) {
+    return this.sql.begin(async tx => {
+      const [row] = await tx`delete from oauth.auth_requests
+        where id = ${id} and step = 'consent' and e164 is not null and expires_at > ${ts(at)}
+        returning *`;
+      if (!row) return undefined;
+      const r = request(row);
+      const issued = issue(r);
+      if (!issued) return { request: r };
+      // Same transaction: a failed insert keeps the approval and stores no grant without its code.
+      const g = issued.grant, c = issued.code;
+      await tx`insert into oauth.grants (id, client_id, app_id, phone_key, person_id, scopes, resource, created_at, expires_at, revoked_at, cloud_authority)
+        values (${g.id}, ${g.clientId}, ${g.app}, ${g.phoneKey}, ${g.personId}, ${tx.array(g.scopes, "TEXT")}, ${g.resource}, ${ts(g.createdAt)}, ${ts(g.expiresAt)}, ${ts(g.revokedAt)}, ${g.cloudAuthority ?? null}::jsonb)`;
+      await tx`insert into oauth.codes (hash, grant_id, client_id, redirect_uri, code_challenge, resource, scopes, created_at, expires_at, used_at)
+        values (${c.hash}, ${c.grantId}, ${c.clientId}, ${c.redirectUri}, ${c.codeChallenge}, ${c.resource}, ${tx.array(c.scopes, "TEXT")}, ${ts(c.createdAt)}, ${ts(c.expiresAt)}, ${ts(c.usedAt)})`;
+      for (const a of issued.audit) await tx`insert into oauth.audit (at, kind, client_id, grant_id, app_id, detail) values (${ts(a.at)}, ${a.kind}, ${a.clientId}, ${a.grantId}, ${a.app}, ${a.detail})`;
+      return { request: r, issued };
+    });
   }
   async deleteAuthRequest(id: string) { await this.sql`delete from oauth.auth_requests where id = ${id}`; }
 

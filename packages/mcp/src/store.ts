@@ -99,6 +99,9 @@ export interface AuditRow { at: number; kind: AuditKind; clientId: string | null
 /** What a code exchange stores with the code's use: the access and refresh tokens and the success audit row. */
 export interface Mint { pair: readonly [Token, Token]; audit: AuditRow }
 
+/** What an approval stores with its use: the grant, its authorization code and the audit rows. */
+export interface Issue { grant: Grant; code: AuthCode; audit: AuditRow[] }
+
 /** Approved editable Join fields only. No phone, age, consent or dating preferences. */
 export interface SignupDraftFields { firstName: string; homeCity?: "nyc" | "sf" }
 export interface SignupDraft { grantId: string; app: McpAppId; phoneKey: string; fields: SignupDraftFields; expiresAt: number; consumedAt: number | null }
@@ -118,6 +121,12 @@ export interface OAuthStore {
   updateAuthRequest(id: string, patch: Partial<Pick<AuthRequest, "e164" | "personId" | "step">>): Promise<void>;
   /** Atomically consume one unexpired, phone-verified client approval. */
   takeConsentRequest(id: string, at: number): Promise<AuthRequest | undefined>;
+  /**
+   * Consume the approval (as takeConsentRequest) and store what `issue` returns (the grant, its code and
+   * the audit rows) in the same transaction: a failed insert leaves the approval for a retry and stores no
+   * grant. `issue` returns undefined to consume the approval and store nothing.
+   */
+  approveConsent<I extends Issue>(id: string, at: number, issue: (r: AuthRequest) => I | undefined): Promise<{ request: AuthRequest; issued?: I } | undefined>;
   deleteAuthRequest(id: string): Promise<void>;
 
   putGrant(g: Grant): Promise<void>;
@@ -211,6 +220,16 @@ export class MemoryOAuthStore implements OAuthStore {
     if (!r || r.step !== "consent" || !r.e164 || r.expiresAt <= at) return undefined;
     this.requests.delete(id);
     return structuredClone(r);
+  }
+  async approveConsent<I extends Issue>(id: string, at: number, issue: (r: AuthRequest) => I | undefined) {
+    const request = await this.takeConsentRequest(id, at);
+    if (!request) return undefined;
+    const issued = issue(request);
+    if (!issued) return { request };
+    await this.putGrant(issued.grant);
+    await this.putCode(issued.code);
+    for (const a of issued.audit) this.rows.push({ ...a });
+    return { request, issued };
   }
   async deleteAuthRequest(id: string) { this.requests.delete(id); }
 

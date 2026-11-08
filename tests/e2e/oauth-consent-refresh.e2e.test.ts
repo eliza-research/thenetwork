@@ -6,8 +6,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { SQL } from "bun";
 import type { Outbound } from "../../packages/network/service/channel.ts";
 import type { NetworkRuntime } from "../../packages/network/service/runtime.ts";
-import { sha256hex } from "../../packages/mcp/src/util.ts";
-import { Browser, connectMcp, newPhone, pgAvailable, rpc, signIn, startStack, toolData, webJoin, type Stack } from "./harness.ts";
+import { pkceS256, sha256hex } from "../../packages/mcp/src/util.ts";
+import { Browser, connectMcp, newPhone, pgAvailable, REDIRECT, rpc, signIn, startStack, toolData, VERIFIER, webJoin, type Stack } from "./harness.ts";
 
 const T = 180_000;
 const CLAUDE = "https://claude.ai/api/mcp/auth_callback";
@@ -119,5 +119,33 @@ describe.skipIf(!pgAvailable)("OAuth consent, refresh and assistant signals", ()
     const claim = await st.site("friends", "/oauth/signup-draft", { browser: onFriends, json: {} });
     expect(claim.status).toBe(200);
     expect(((await claim.json()) as { draft: unknown }).draft).toEqual({ firstName: "Rae" });
+  }, T);
+
+  // SD-389: an approval stores the grant, its code and the audit rows in one transaction. Before the fix
+  // they were separate statements: when the code insert failed, a live grant stayed with no code and no
+  // consent_granted row, and the approval was used up.
+  test("a failed code insert stores no grant, and the person can approve again", async () => {
+    const phone = newPhone(), b = new Browser();
+    expect((await webJoin(st, "friends", phone, { age: 30, browser: b })).res.status).toBe(200);
+    const client = (await (await st.site("friends", "/oauth/register", { json: { client_name: "E2E Assistant", redirect_uris: [REDIRECT], token_endpoint_auth_method: "none" } })).json()) as { client_id: string };
+    const q = new URLSearchParams({ response_type: "code", client_id: client.client_id, redirect_uri: REDIRECT, code_challenge: pkceS256(VERIFIER), code_challenge_method: "S256", state: "e2e", resource: `${st.sites.friends.origin}/mcp` });
+    const rid = /name="rid" value="([^"]+)"/.exec(await (await st.site("friends", `/oauth/authorize?${q}`, { browser: b })).text())![1]!;
+    const approve = () => st.site("friends", "/oauth/authorize/consent", { browser: b, form: { rid, decision: "approve" } });
+    const grants = async () => (await sql`select id from oauth.grants where client_id = ${client.client_id}`).length;
+
+    await sql.unsafe(`create function oauth.e2e_code_fault() returns trigger language plpgsql as $$
+      begin if NEW.client_id = '${client.client_id}' then raise exception 'synthetic code failure'; end if; return NEW; end $$;
+      create trigger e2e_code_fault before insert on oauth.codes for each row execute function oauth.e2e_code_fault();`);
+    try {
+      expect((await approve()).status).toBe(500);
+    } finally {
+      await sql.unsafe("drop trigger e2e_code_fault on oauth.codes; drop function oauth.e2e_code_fault();");
+    }
+    expect(await grants()).toBe(0);
+
+    const again = await approve();
+    expect(again.status).toBe(303);
+    expect(new URL(again.headers.get("location")!).searchParams.get("code")).toBeString();
+    expect(await grants()).toBe(1);
   }, T);
 });
