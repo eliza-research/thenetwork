@@ -161,7 +161,8 @@ export interface PeopleStore {
   /**
    * Delete everything for a person and phone; keep a tombstone (people.deleted_at and its phone hash), the blocks and the suppression hash.
    * newOwner (staff decided a held number has a new owner): in the same step, the tombstone loses its phone hash (it is never
-   * revived for the new owner) and the number keeps no suppression and no age floor.
+   * revived for the new owner) and the number keeps no suppression and no age floor. The consent events after the old
+   * owner's last message (phone last_seen_at) are the new holder's, such as a STOP: they stay.
    */
   deleteAll(personId: string | null, e164: string, phoneHash: string, at: number, newOwner?: boolean): Promise<void>;
 
@@ -380,6 +381,8 @@ export class MemoryPeopleStore implements PeopleStore {
   }
 
   async deleteAll(personId: string | null, e164: string, phoneHash: string, at: number, newOwner = false) {
+    // A new owner keeps the consent events after the old owner's last message (theirs).
+    const keepAfter = newOwner ? this.phones.get(e164)?.lastSeenAt ?? null : null;
     if (!newOwner) await this.suppress(phoneHash, "deleted", at);
     if (personId) {
       for (const [k, m] of this.members) if (m.personId === personId) this.members.delete(k);
@@ -390,7 +393,7 @@ export class MemoryPeopleStore implements PeopleStore {
       if (p) Object.assign(p, { lowestAge: null, deletedAt: at });
     }
     this.phones.delete(e164);
-    for (let i = this.consent.length - 1; i >= 0; i--) if (this.consent[i]!.e164 === e164) this.consent.splice(i, 1);
+    for (let i = this.consent.length - 1; i >= 0; i--) if (this.consent[i]!.e164 === e164 && (keepAfter === null || this.consent[i]!.at <= keepAfter)) this.consent.splice(i, 1);
     for (const [k, c] of this.challenges) if (c.e164 === e164) this.challenges.delete(k);
     for (const [k, s] of this.sessions) if (s.e164 === e164 || (personId && s.personId === personId)) this.sessions.delete(k);
     for (const [k, p] of this.pending) if (p.phoneHash === phoneHash) this.pending.delete(k);

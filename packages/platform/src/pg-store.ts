@@ -302,12 +302,16 @@ export class PgPeopleStore implements PeopleStore {
     await this.sql.begin(async tx => {
       if (personId) await tx`select id from platform.people where id = ${personId} for update`;
       if (!newOwner) await tx`insert into platform.suppression (phone_hash, reason, at) values (${phoneHash}, 'deleted', ${ts(at)}) on conflict do nothing`;
+      // A new owner: consent events after the old owner's last message are the new holder's (a STOP works before
+      // and during the hold). They stay; only the old owner's events go.
+      const [seen] = newOwner ? await tx`select last_seen_at from platform.phone_identities where e164 = ${e164}` : [];
+      const keepAfter = (seen?.last_seen_at as Date | null | undefined) ?? null;
       await tx`update platform.inbound set status = 'unresolved', response = null, replies = '[]'::jsonb, action_receipts = '{}'::jsonb,
         receipt = null, receipt_hash = null, sender = null, event = null, sender_hash = null, member_id = null, app_id = null
         where request_hash is not null and sender_hash = ${phoneHash}`;
       await tx`delete from platform.sessions where e164 = ${e164} or (${personId}::uuid is not null and person_id = ${personId}::uuid)`;
       await tx`delete from platform.otp_challenges where e164 = ${e164}`;
-      await tx`delete from platform.consent_events where e164 = ${e164}`;
+      await tx`delete from platform.consent_events where e164 = ${e164} and (${keepAfter}::timestamptz is null or at <= ${keepAfter})`;
       if (personId) {
         await tx`delete from platform.memberships where person_id = ${personId}`;
         await tx`delete from platform.share_grants where person_id = ${personId}`;

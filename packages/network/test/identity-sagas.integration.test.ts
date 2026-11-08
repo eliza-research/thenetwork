@@ -11,7 +11,7 @@ import { signBlooioPayload } from "../../blooio/src/blooio/webhook.ts";
 import { applySchema, DEV_PG_PORT, devPgUp } from "../../observatory/db/dev-pg.ts";
 import { RECYCLED_AFTER_MS } from "../../platform/src/accounts.ts";
 import type { AppId } from "../../platform/src/apps.ts";
-import { DryRunAdapter } from "../service/channel.ts";
+import { DryRunAdapter, type Outbound } from "../service/channel.ts";
 import { NetworkService, WEBHOOK_PATH, type ServiceOptions } from "../service/service.ts";
 import { START } from "./mini.ts";
 
@@ -152,5 +152,22 @@ describe.skipIf(!pgAvailable)("identity sagas: stop half way, retry, races (Post
     const now = (await sql`select person_id from platform.phone_identities where e164 = ${phone}`)[0]!.person_id as string;
     expect(now).not.toBe(old);
     expect((await sql`select deleted_at is not null as gone from platform.people where id = ${old}::uuid`)[0].gone).toBe(true);
+  }, T);
+
+  test("SD-051: a new_owner decision keeps the STOP that the number's new holder sent", async () => {
+    await fresh();
+    const clock = new SimClock(START);
+    const s = service(clock);
+    const { phone } = await heldNumber(s, clock);
+    // The new holder's first text is STOP (it always works, also on a stale number); the next one puts the number on hold.
+    expect(await text(s, clock, phone, "STOP")).toBe("handled");
+    expect(await text(s, clock, phone, "who is this?")).toBe("held");
+    expect(await (await staff(s, "adm-tok", "POST", "/apps/slop/holds", { phone, decision: "new_owner" })).json()).toEqual({ ok: true });
+
+    // The old owner's account is gone, but the holder's STOP still refuses every send that is not a compliance text
+    // (a staff invite is transactional).
+    const rt = s.runtimeFor("slop")!;
+    const send: Outbound = { id: "invite_1", memberId: "slop_nobody", to: phone, body: "x", kind: "transactional", proactive: false, system: false, ts: clock.now() };
+    expect([...(await s.consentRefused(rt, [send]))]).toEqual(["invite_1"]);
   }, T);
 });
