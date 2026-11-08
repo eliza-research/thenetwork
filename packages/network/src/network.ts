@@ -815,6 +815,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       return;
     }
     if (aw?.kind === "interview" && aw.ask) return this.onAskAnswer(m, aw.ask, c, body);
+    // The tick ends the wait for an answer after 3 days: a later message that answers the last question is still its answer (SD-427).
+    const late = aw ? undefined : this.lateAnswer(m, body);
+    if (late) return this.onAskAnswer(m, late, c, body);
     // A growth ask's answer can be just the friend's name ("My friend Maya!", "Maya").
     // A one-word answer is a name only when it is not an answer word: "Yes!" invites nobody called "Yes".
     const lone = /^\W*([A-Z][a-z]+)\W*$/.exec(body)?.[1];
@@ -1109,6 +1112,23 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (aw?.kind === "interview" && aw.ask) return this.onAskAnswer(m, aw.ask, c, body);
     if (aw?.kind === "interview" && m.stage !== "active") return this.onInterviewAnswer(m, body);
     this.learnFrom(m, body);
+  }
+
+  /**
+   * The member's last question from the app's onboarding loop, still unanswered, when this message
+   * answers it: reading it as that answer adds a tag, or moves the loop to another question.
+   */
+  private lateAnswer(m: MemberState, body: string): AskRecord | undefined {
+    const ob = this.opts.hooks?.onboarding;
+    if (!ob || m.minor) return undefined;
+    const ask = this.asks.filter(a => a.memberId === m.id).at(-1);
+    if (!ask || ask.answeredAt !== undefined) return undefined;
+    const reasons = this.asks.filter(a => a.memberId === m.id && a.at === ask.at).map(a => a.reason);
+    const age = this.ageOf(m);
+    const r = ob.read(m.onboarding, body, reasons, { now: this.now(), age });
+    const had = new Set((m.appTags ?? []).map(t => t.tag));
+    const moved = ob.next(r.state, { age })?.reason !== ob.next(m.onboarding, { age })?.reason;
+    return moved || r.tags.some(t => !had.has(t.tag)) ? ask : undefined;
   }
 
   /**
