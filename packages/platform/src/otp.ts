@@ -167,21 +167,24 @@ export class OtpService {
     const at = this.now(), L = this.limits;
     const hourLeft = HOUR - (at % HOUR);
     const limited = (retryAfterMs = hourLeft): OtpStart => ({ ok: false, error: "rate_limited", retryAfterMs });
-    // The client IP (the socket address, or the IP a trusted site router signed: proxy.ts).
-    if (!(await this.store.hit(`otp:ip:${keyedHash(this.opts.hashKey, ipBucket(ip))}`, HOUR, at, { limit: L.perIpPerHour })).ok) return limited();
-    // The number alone, not the app: one number gets 3 codes an hour and 6 a day whatever site asks.
     const phoneKey = keyedHash(this.opts.hashKey, e164);
-    const byPhone = await this.store.hit(`otp:phone:${phoneKey}`, HOUR, at, { limit: L.perPhonePerHour, minGapMs: L.minGapMs });
-    if (!byPhone.ok) {
-      const gap = byPhone.prevAt !== null && at - byPhone.prevAt < L.minGapMs;
-      return limited(gap ? L.minGapMs - (at - byPhone.prevAt!) : hourLeft);
+    // All limits as one request: a refusal by any of them counts in none (the header rule).
+    const results = await this.store.hitAll([
+      // The client IP (the socket address, or the IP a trusted site router signed: proxy.ts).
+      { bucket: `otp:ip:${keyedHash(this.opts.hashKey, ipBucket(ip))}`, windowMs: HOUR, rule: { limit: L.perIpPerHour } },
+      // The number alone, not the app: one number gets 3 codes an hour and 6 a day whatever site asks.
+      { bucket: `otp:phone:${phoneKey}`, windowMs: HOUR, rule: { limit: L.perPhonePerHour, minGapMs: L.minGapMs } },
+      { bucket: `otp:phone_day:${phoneKey}`, windowMs: DAY, rule: { limit: L.perPhonePerDay } },
+      { bucket: "otp:global", windowMs: HOUR, rule: { limit: L.globalPerHour } },
+    ], at);
+    const refused = results.findIndex(r => !r.ok);
+    if (refused === 1) {
+      const prevAt = results[1]!.prevAt;
+      return limited(prevAt !== null && at - prevAt < L.minGapMs ? L.minGapMs - (at - prevAt) : hourLeft);
     }
-    if (!(await this.store.hit(`otp:phone_day:${phoneKey}`, DAY, at, { limit: L.perPhonePerDay })).ok) return limited(DAY - (at % DAY));
-    const all = await this.store.hit("otp:global", HOUR, at, { limit: L.globalPerHour });
-    if (!all.ok) {
-      this.opts.log?.(`[otp] ALERT: the global budget of ${L.globalPerHour} codes an hour is used up; sends are refused until the hour ends`);
-      return limited();
-    }
+    if (refused === 2) return limited(DAY - (at % DAY));
+    if (refused === 3) this.opts.log?.(`[otp] ALERT: the global budget of ${L.globalPerHour} codes an hour is used up; sends are refused until the hour ends`);
+    if (refused !== -1) return limited();
     try {
       const { code, ref, chatId } = await this.provider.send(e164, app);
       await this.store.putChallenge({

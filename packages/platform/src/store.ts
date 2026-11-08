@@ -69,6 +69,8 @@ export type PhoneMoveResult = "ok" | "number_in_use" | "no_phone";
 /** A rate-limit rule for hit(): a hit over `limit` in the window, or within `minGapMs` of the last counted hit, is refused and not counted. */
 export interface HitRule { limit?: number; minGapMs?: number }
 export interface HitResult { count: number; prevAt: number | null; ok: boolean }
+/** One bucket of hitAll(). */
+export interface Hit { bucket: string; windowMs: number; rule?: HitRule }
 
 export interface PeopleStore {
   findPhone(e164: string): Promise<PhoneIdentity | undefined>;
@@ -147,6 +149,11 @@ export interface PeopleStore {
    * Returns the count with this hit (or the count so far when refused) and the last counted hit before it.
    */
   hit(bucket: string, windowMs: number, at: number, rule?: HitRule): Promise<HitResult>;
+  /**
+   * hit() for several buckets as one request, atomically: the buckets are checked in order, and the
+   * hit is counted in all of them or in none. The results stop at the first refused bucket.
+   */
+  hitAll(hits: Hit[], at: number): Promise<HitResult[]>;
 
   /** Run fn while holding a lock on `key` (one holder per key across processes on Postgres). */
   withLock<T>(key: string, fn: () => Promise<T>): Promise<T>;
@@ -313,15 +320,20 @@ export class MemoryPeopleStore implements PeopleStore {
   }
 
   async hit(bucket: string, windowMs: number, at: number, rule: HitRule = {}) {
-    const windowStart = at - (at % windowMs);
-    const cur = this.limits.get(bucket);
-    const prevAt = cur?.lastAt ?? null;
-    const count = cur && cur.windowStart === windowStart ? cur.count : 0;
-    if ((rule.limit !== undefined && count >= rule.limit) || (rule.minGapMs !== undefined && prevAt !== null && at - prevAt < rule.minGapMs)) {
-      return { count: count + 1, prevAt, ok: false };
+    return (await this.hitAll([{ bucket, windowMs, rule }], at))[0]!;
+  }
+  async hitAll(hits: Hit[], at: number) {
+    const results: HitResult[] = [];
+    for (const { bucket, windowMs, rule = {} } of hits) {
+      const cur = this.limits.get(bucket);
+      const prevAt = cur?.lastAt ?? null;
+      const count = cur && cur.windowStart === at - (at % windowMs) ? cur.count : 0;
+      const ok = !((rule.limit !== undefined && count >= rule.limit) || (rule.minGapMs !== undefined && prevAt !== null && at - prevAt < rule.minGapMs));
+      results.push({ count: count + 1, prevAt, ok });
+      if (!ok) return results;
     }
-    this.limits.set(bucket, { windowStart, count: count + 1, lastAt: at });
-    return { count: count + 1, prevAt, ok: true };
+    for (const [i, { bucket, windowMs }] of hits.entries()) this.limits.set(bucket, { windowStart: at - (at % windowMs), count: results[i]!.count, lastAt: at });
+    return results;
   }
 
   async withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {

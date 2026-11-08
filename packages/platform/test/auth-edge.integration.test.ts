@@ -3,6 +3,7 @@
 // findings (docs/research/quint-findings/auth_edge.md) that failed before its fix.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createPublicApi, type PublicApi } from "../src/api.ts";
+import type { OtpLimits } from "../src/otp.ts";
 import { APPS, type AppId } from "../src/apps.ts";
 import { PgPeopleStore } from "../src/pg-store.ts";
 import { NETWORK_FRESH_PERSON_SITES, networkTarget } from "../../core/src/svc/network-delegation.ts";
@@ -13,14 +14,14 @@ const HOST: Record<AppId, string> = { ntwrk: "localhost:5101", slop: "localhost:
 let seq = 0;
 const newPhone = () => { seq++; return `+1646555${String(1000 + seq)}`; };
 
-function make(store: PgPeopleStore, opts: { globalPerHour?: number } = {}) {
+function make(store: PgPeopleStore, otpLimits?: Partial<OtpLimits>) {
   const clock = { t: Date.UTC(2026, 10, 7, 15) };
   const codes = new Map<string, string>();
   const sent: string[] = [];
   const api: PublicApi = createPublicApi({
     store, env: { PLATFORM_ENV: "dev" }, now: () => clock.t, minStartMs: 0, minVerifyMs: 0, log: () => {},
     ipOf: req => req.headers.get("x-real-ip") ?? "198.51.100.10",
-    otpLimits: opts.globalPerHour !== undefined ? { globalPerHour: opts.globalPerHour } : undefined,
+    otpLimits,
     otp: { name: "fake", send: async e164 => { sent.push(e164); const code = String(100000 + sent.length * 7919 % 900000); codes.set(e164, code); return { code }; } },
   });
   const call = async (app: AppId, method: string, path: string, body?: unknown, headers: Record<string, string> = {}) => {
@@ -48,6 +49,19 @@ describe.skipIf(!pgAvailable)("auth edge (Postgres)", () => {
   let store: PgPeopleStore;
   beforeAll(async () => { const u = await migratedDb("authedge"); urls.push(u); store = new PgPeopleStore(u); }, 120_000);
   afterAll(async () => { await store?.close(); });
+
+  test("SD-380 a code request refused by a later limit is not counted in the earlier limits", async () => {
+    // otp.ts:4-5: a refused request is not counted. Two code requests a hour from this IP.
+    const c = make(store, { perIpPerHour: 2 }), a = newPhone(), b = newPhone(), ip = { "x-real-ip": "198.51.100.77" };
+    expect((await c.call("slop", "POST", "/api/auth/otp/start", { phone: a }, ip)).status).toBe(200);
+    // Again for the same number after 1 s: refused by the 30 s gap of the number (after the IP limit is checked).
+    c.clock.t += 1_000;
+    expect((await c.call("slop", "POST", "/api/auth/otp/start", { phone: a }, ip)).status).toBe(429);
+    // One request from this IP was accepted, so a second number still gets its code.
+    c.clock.t += 1_000;
+    expect((await c.call("slop", "POST", "/api/auth/otp/start", { phone: b }, ip)).status).toBe(200);
+    expect(c.sent).toEqual([a, b]);
+  });
 
   test("SD-013 a banned number gets no code and no session from web OTP", async () => {
     const c = make(store), phone = newPhone();
