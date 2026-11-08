@@ -79,4 +79,19 @@ describe.skipIf(!pgAvailable)("turn and consent", () => {
     // The replay returns the same answer.
     expect(await (await post(input)).json()).toEqual(body);
   }, 60_000);
+
+  test("SD-002: a STOP is handled while another turn of the sender is still processing", async () => {
+    const phone = "+12125550202";
+    // An ordinary turn of the sender holds its claim (running, or dead inside its lease).
+    await deadClaim(turn("sd002-chat", phone, "what's new this week"));
+    clock.advance(1000);
+    const r = await post(turn("sd002-stop", phone, "STOP"));
+    const body = await r.json() as any;
+    expect([r.status, body.error]).toEqual([200, undefined]);
+    expect(body.consent).toMatchObject({state: "opted_out", scope: "all", app: null});
+    expect((await service.people.lastConsent(phone, "slop")).global?.state).toBe("opted_out");
+    // An ordinary turn still waits for the running one.
+    clock.advance(1000);
+    expect(await (await post(turn("sd002-chat-2", phone, "hello?"))).json()).toEqual({error: "turn_busy", retryable: true});
+  }, 60_000);
 });

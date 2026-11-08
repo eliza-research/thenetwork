@@ -14,7 +14,7 @@
 //    answer handled late would opt them back in). Rows received after the STOP are handled as usual.
 //  - Privacy: the row keeps the sender and the event only while it waits. A handled row keeps the id,
 //    the times and the outcome.
-//  - Signed turns (/internal/turn): one at a time per sender. A running turn renews its lease (arrived_at)
+//  - Signed turns (/internal/turn): one ordinary and one compliance turn at a time per sender. A running turn renews its lease (arrived_at)
 //    every 30 seconds; a turn still "processing" 2 minutes after its last renewal lost its worker and reads
 //    as unresolved. An unresolved turn holds the sender back for 10 minutes at most; STOP, START and HELP are
 //    never held back (on either path); staff can resolve a stuck turn (POST /inbound/resolve). A retry of
@@ -77,7 +77,7 @@ export class Inbox {
   constructor(private readonly o: InboxOptions) {}
   currentTurn = () => this.turns.getStore();
 
-  /** A committed claim precedes effects; the partial index admits one signed turn per sender. */
+  /** A committed claim precedes effects; the partial index admits one ordinary and one compliance signed turn per sender. */
   async signed(input: TurnRequest, requestHash: string, run: (turn: InboundTurn) => Promise<TurnResponse>, admitUntil?: number): Promise<{status: number; body: unknown}> {
     const id = `msg:${input.channel}:${input.messageId}`, senderHash = this.o.senderKey(input.from);
     const now = this.o.clock.now();
@@ -91,17 +91,18 @@ export class Inbox {
       // A turn whose worker stopped (no completion within the lease) is unresolved, not processing forever.
       await tx`update platform.inbound set status='unresolved',event=null,sender=null
         where sender_hash=${senderHash} and status='processing' and request_hash is not null and arrived_at<${new Date(now - PROCESSING_LEASE_MS)}`;
-      const inserted = await tx`insert into platform.inbound(id,line,sender,received_at,arrived_at,event,status,request_hash,sender_hash,network_authority)
-      select ${id},null,null,${new Date(input.receivedAt)},${new Date(now)},null,'processing',${requestHash},${senderHash},${input.networkAuthority ?? null}::jsonb
-      where ${admitUntil === undefined || now < admitUntil} and not exists(select 1 from platform.inbound where sender_hash=${senderHash} and (status='processing'
+      // A compliance turn waits only for another compliance turn of the sender (its own claim slot, migration 0042).
+      const inserted = await tx`insert into platform.inbound(id,line,sender,received_at,arrived_at,event,status,request_hash,sender_hash,network_authority,compliance)
+      select ${id},null,null,${new Date(input.receivedAt)},${new Date(now)},null,'processing',${requestHash},${senderHash},${input.networkAuthority ?? null}::jsonb,${keyword}
+      where ${admitUntil === undefined || now < admitUntil} and not exists(select 1 from platform.inbound where sender_hash=${senderHash} and ((status='processing' and (not ${keyword} or compliance))
         or (not ${keyword} and (status='pending' or (status='unresolved' and arrived_at>${new Date(now - UNRESOLVED_BLOCK_MS)})))))
       on conflict do nothing returning id`;
       if (inserted.length || !keyword) return inserted;
       // A compliance turn that never answered (its worker died, or staff resolved it) runs again on the retry of
       // the same request: the consent ledger and the member's unit are idempotent per message.
-      return tx`update platform.inbound set status='processing',arrived_at=${new Date(now)},sender_hash=${senderHash}
+      return tx`update platform.inbound set status='processing',arrived_at=${new Date(now)},sender_hash=${senderHash},compliance=true
         where id=${id} and request_hash=${requestHash} and status='unresolved' and handled_at is null and response is null
-        and ${admitUntil === undefined || now < admitUntil} and not exists(select 1 from platform.inbound where sender_hash=${senderHash} and status='processing')
+        and ${admitUntil === undefined || now < admitUntil} and not exists(select 1 from platform.inbound where sender_hash=${senderHash} and status='processing' and compliance)
         returning id`;
     });
     if (!wrote.length) {
