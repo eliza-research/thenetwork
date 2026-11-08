@@ -536,6 +536,8 @@ export class NetworkRuntime {
         or jsonb_exists(coalesce(payload->'attendance', '{}'::jsonb), ${id}))`;
       await tx`delete from network.capital_events where app_id = ${app} and (member_id = ${id} or position(${`"${id}"`} in event::text) > 0)`;
       await tx`delete from network.facets where app_id = ${app} and member_id = ${id}`;
+      // Profile suggestion batches go in this transaction too, not only when the membership row is removed later.
+      await tx`delete from platform.profile_suggestion_batches where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.intents where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.presence where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.edges where app_id = ${app} and (from_id = ${id} or to_id = ${id})`;

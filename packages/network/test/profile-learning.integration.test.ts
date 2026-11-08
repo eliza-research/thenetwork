@@ -7,6 +7,8 @@ import { applySchema, devPgUp, DEV_PG_PORT } from "../../observatory/db/dev-pg.t
 import { ProfileSuggestions, type SuggestionOwner, type SourceSuggestion } from "../service/profile-suggestions.ts";
 import { renderSuggestionReview, reviewSuggestionMessage } from "../service/profile-suggestion-review.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
+import { SimClock } from "@thenetwork/core";
+import { NetworkService } from "../service/service.ts";
 import type { ProfileReviewDisconnectProof, ProfileReviewDisconnectRequest } from "../../core/src/svc/profile-review-disconnect.ts";
 
 const now = Date.UTC(2026, 9, 17, 12);
@@ -99,4 +101,20 @@ test("revoked-connection cleanup reads time only from the store clock, never the
   const onClock = v1(now);
   expect(await clocked.applyRevokedConnection(who, onClock.request, onClock.proof, () => true)).toEqual({ pending: 0, retainedAccepted: 0, linkedFacts: 0 });
   expect((await sql`select status from platform.profile_suggestions`)[0].status).toBe("withdrawn");
+});
+
+// SD-463: leave runs the Network forget, then removes the membership in a second transaction.
+// A crash between the two kept the batches and their pending text, and owned() could no longer reach them.
+test("a leave that stops after the Network forget leaves no suggestion batches", async () => {
+  await store.propose(owner, input(), now);
+  const service = new NetworkService({ url: `${base}/${db}`, clock: new SimClock(now), networks: [{ id: "ntwrk:nyc" }], log: () => {},
+    env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: "local-profile-learning-fixture-secret-only", PLATFORM_HASH_KEY: "synthetic-profile-learning-hash-key" } });
+  try {
+    service.people.forgetMembership = async () => { throw new Error("crash after the Network forget"); };
+    await expect(service.accounts.leave(service.apps.ntwrk, { e164, personId: owner.personId })).rejects.toThrow("crash after the Network forget");
+    expect((await sql`select person_id from network.members where id='owned-member'`)[0].person_id).toBeNull();
+    expect((await sql`select state from platform.memberships where person_id=${owner.personId}`)[0].state).toBe("active");
+    expect(await sql`select id from platform.profile_suggestion_batches`).toHaveLength(0);
+    expect(await sql`select id from platform.profile_suggestions`).toHaveLength(0);
+  } finally { await service.close(); }
 });
