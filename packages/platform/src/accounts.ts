@@ -20,7 +20,7 @@
 import { randomUUID } from "node:crypto";
 import type { City } from "../../core/src/types.ts";
 import { DAY } from "../../core/src/clock.ts";
-import { validAge } from "../../core/src/policy.ts";
+import { canJoin, validAge } from "../../core/src/policy.ts";
 import { canJoinApp, joinAgeCheck, lowestAge } from "./age.ts";
 import type { AppId, AppInfo } from "./apps.ts";
 import { type ConsentEvent, resolveConsent, type StopScope, stopScope } from "./consent.ts";
@@ -358,7 +358,7 @@ export class Accounts {
       // A repeated join is still an age statement. Keep the membership and consent unchanged,
       // but propagate a lower age before returning the existing membership.
       await this.recordAge(who.e164, person, input.age);
-      if (!joinAgeCheck(input.age, await this.lowestAge(who.e164, person), app).ok) return { ok: false, error: "under_age" };
+      if (!joinAgeCheck(input.age, await this.lowestAge(who.e164, person), app).ok) { await this.declineUnderAge(who.e164, person); return { ok: false, error: "under_age" }; }
       return { ok: true, membership: existing };
     }
     if (app.joinMode === "invite" && existing?.state !== "invited") return { ok: false, error: "invite_only" };
@@ -366,6 +366,7 @@ export class Accounts {
     if (!age.ok) {
       // Nothing is stored for this app: only the age, on the phone's age floor (and the person, if any).
       await this.recordAge(who.e164, person, input.age);
+      await this.declineUnderAge(who.e164, person);
       return { ok: false, error: "under_age" };
     }
     if (!person) person = await this.createPerson(who.e164, "otp_sms", age.effective ?? input.age);
@@ -404,6 +405,22 @@ export class Accounts {
     const m = person && (await this.store.getMembership(person.id, app.id));
     const live = m && m.state !== "removed" ? m : undefined;
     if (person && (live || scope === "global")) await this.hooks.onStop?.({ app, personId: person.id, memberId: live?.memberId, e164: who.e164, scope });
+  }
+
+  /**
+   * Under 13 cannot use any app (core canJoin): when the person's lowest age is under 13, every
+   * membership goes through the forget path, with an opt-out in the ledger (as the Network's decline).
+   */
+  async declineUnderAge(e164: string, person: Person | undefined): Promise<void> {
+    const lowest = person && await this.lowestAge(e164, person);
+    if (!person || lowest === undefined || canJoin(lowest)) return;
+    const at = this.now();
+    for (const m of await this.store.memberships(person.id)) {
+      if (m.state === "removed") continue;
+      await this.hooks.onForget?.({ app: this.opts.apps(m.app), personId: person.id, memberId: m.memberId, e164 });
+      await this.store.forgetMembership(person.id, m.app, at);
+      await this.store.addConsent({ e164, app: m.app, state: "opted_out", source: "join_declined", at });
+    }
   }
 
   /** Record any consent event (keywords on a line, staff). */

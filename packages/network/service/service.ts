@@ -1418,6 +1418,7 @@ export class NetworkService implements RuntimeHost {
       // Nothing is stored for this app: only the age, on the phone's age floor (and the person, if any),
       // so a second try with an older age is refused too.
       await this.accounts.recordAge(e164, person, age);
+      await this.accounts.declineUnderAge(e164, person);
       await this.people.deletePending(key, "join");
       await this.direct(rt, ev.from, app.brand.underAge, `sys:${rowId}`, "compliance");
       this.log(`[inbound] under the join age for ${app.id}: declined, nothing stored`);

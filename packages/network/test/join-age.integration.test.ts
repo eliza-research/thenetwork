@@ -11,6 +11,7 @@ import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {TURN_PATH, type TurnRequest} from "../../core/src/svc/contract.ts";
 import {DryRunAdapter} from "../service/channel.ts";
 import {NetworkService} from "../service/service.ts";
+import {APPS} from "../../platform/src/apps.ts";
 
 const db = `network_join_age_${randomUUID().replaceAll("-", "")}`;
 const admin = new SQL({url: `postgres://${process.env.USER ?? "postgres"}@127.0.0.1:54339/postgres`, max: 1});
@@ -95,4 +96,40 @@ test("SD-011: a minor age stated in chat stays recorded when the step after the 
   expect(await service.accounts.lowestAge(phone, await service.accounts.personFor(phone))).toBe(15);
   // The other app's member is no longer matchable as an adult.
   expect(await matchingAge("slop", slop)).toBe(15);
+}, 60_000);
+
+const webJoin = (app: "friends" | "slop", phone: string, age: number) =>
+  service.accounts.join(APPS[app], {e164: phone, personId: null}, {firstName: "Rae", age, consent: {sms: true, wording: APPS[app].consent.text}});
+const liveMemberships = async (phone: string) => {
+  const person = await service.accounts.personFor(phone);
+  return person ? (await service.people.memberships(person.id)).filter(m => m.state !== "removed").map(m => m.app) : [];
+};
+const networkMember = async (app: string, memberId: string) =>
+  (await sql`select account_status from network.members where app_id = ${app} and id = ${memberId}`)[0]?.account_status as string | undefined;
+
+test("SD-014: an under-13 web join on a new app removes the person's other memberships", async () => {
+  const phone = "+12125550304";
+  const friends = await webJoin("friends", phone, 25);
+  expect(friends.ok).toBe(true);
+  expect(await webJoin("slop", phone, 12)).toEqual({ok: false, error: "under_age"});
+  expect(await liveMemberships(phone)).toEqual([]);
+  expect(await service.accounts.optedIn("friends", phone)).toBe(false);
+  expect(await networkMember("friends", (friends as any).membership.memberId)).not.toBe("active");
+}, 60_000);
+
+test("SD-014: an under-13 repeated web join removes the memberships", async () => {
+  const phone = "+12125550305";
+  expect((await webJoin("friends", phone, 25)).ok).toBe(true);
+  expect(await webJoin("friends", phone, 12)).toEqual({ok: false, error: "under_age"});
+  expect(await liveMemberships(phone)).toEqual([]);
+}, 60_000);
+
+test("SD-014: an under-13 text join on a new app removes the person's other memberships", async () => {
+  const phone = "+12125550306";
+  const friends = await join(phone, "friends.help", "friends", "Sam, 25");
+  await say(phone, "slop.date", "slop");
+  expect((await say(phone, "Sam, 12", "slop")).reason).toBe("under_age");
+  expect(await liveMemberships(phone)).toEqual([]);
+  expect(await service.accounts.optedIn("friends", phone)).toBe(false);
+  expect(await networkMember("friends", friends)).not.toBe("active");
 }, 60_000);
