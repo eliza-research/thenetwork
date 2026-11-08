@@ -2175,8 +2175,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     const askOpen = this.askOpen(m, now);
     // The same for a probe they still owe an answer on (a hiring manager reviews several candidates):
     // the member has one answer slot, and a second probe would take it from the first.
-    const owedOn = this.owedAnswer(m, o.id);
-    const owed = owedOn?.kind === "probe" ? owedOn : undefined;
+    // And for "How did it go?": "Great time, thanks!" answers the meeting, never a yes to a new probe.
+    const owedOn = this.owedAnswer(m, o.id) ?? (m.awaiting?.kind === "feedback" ? m.awaiting : undefined);
+    const owed = owedOn?.kind === "probe" || owedOn?.kind === "feedback" ? owedOn : undefined;
     if (askOpen || owed || !this.timingOk(m, timing, now)) {
       if (!o.deferLogged?.includes(id)) {
         o.deferLogged = [...(o.deferLogged ?? []), id];
@@ -2991,7 +2992,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     // In another open opportunity: the plan probe waits (one open question at a time) until the deadline.
     if (this.busy(m.id, o.id)) return this.planDefer(o, id, "busy", now);
     if (!this.timingOk(m, "slot", now)) return this.planDefer(o, id, "send_window", now);
-    if (m.awaiting?.kind === "probe" || m.awaiting?.kind === "booked" || this.askOpen(m, now)) return this.planDefer(o, id, "one_question", now);
+    if (m.awaiting?.kind === "probe" || m.awaiting?.kind === "booked" || m.awaiting?.kind === "feedback" || this.askOpen(m, now)) return this.planDefer(o, id, "one_question", now);
     const day = nyParts(now).day;
     if (m.planDay === day) return this.planDefer(o, id, "one_a_day", now);
     const allowance = this.pcfg.allowance.enabled && plans.planAllowanceEligible(this.planEvidence(m, now), !!m.weekly, now);
