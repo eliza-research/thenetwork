@@ -20,8 +20,8 @@
 //    state of the line; the per-recipient hourly cap, the per-line daily cap and the per-line daily cap on new
 //    conversations (retry later); the person cap of proactive messages (refused_person_cap); the leak guard
 //    on the new text and on the recent thread to the same address (core-14; parked_leak_review). Compliance
-//    texts (STOP/HELP/START and leave confirmations) skip the opt-out, the recipient check, quiet hours and
-//    the caps, but never the leak guard's canary and fact checks on their own text.
+//    texts (STOP/HELP/START and leave confirmations) skip the opt-out, the recipient check, quiet hours, the
+//    line safety state and the caps, but never the leak guard's canary and fact checks on their own text.
 //  - More than one worker: every replica may run drain(). The per-line advisory lock lets one drain run at a
 //    time; a row is claimed with a conditional update to "sending" plus a lease (status unchanged, no lease),
 //    so a second worker that read the same row finds it claimed and skips it, and a worker that stopped
@@ -403,9 +403,9 @@ export class OutboundQueue {
       if (agent && !conv.reengagement_used && quietFor >= this.opt("reengageAfterMs", 14 * DAY)) reengagement = true;
       else return this.wait(row, "held_awaiting_reply", now, conv.reengagement_used ? "unanswered cap: re-engagement used" : "unanswered cap");
     }
-    // 7. Blooio's safety state of the line.
+    // 7. Blooio's safety state of the line: new and agent texts wait; compliance texts (STOP, HELP) still go.
     const isNew = !conv;
-    const [safety] = await this.sql`select action from platform.line_safety where line = ${this.line}`;
+    const [safety] = compliance ? [] : await this.sql`select action from platform.line_safety where line = ${this.line}`;
     const action = safety?.action as string | undefined;
     if (action === "review" || (action === "reply_only" && (agent || isNew)) || (action === "pause_new" && isNew)) {
       this.o.onAlert?.(row.id, `line_safety_${action}`);

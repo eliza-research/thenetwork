@@ -151,3 +151,23 @@ test("SD-091: under Cloud a text to a non-member ends at acceptance and keeps no
   expect({to:row.to_address,body:row.body}).toEqual({to:null,body:null});
   expect(row.ended_at).not.toBeNull();
 },60_000);
+
+test("SD-094: under a Blooio line safety action compliance texts still go; other texts wait",async()=>{
+  const rt=await primary();
+  const phone="+12125550185",memberId=await join(services[0]!,phone,"Dee");
+  await rt.unitOfWork(()=>undefined);
+  await rt.adapter.engaged!(phone);
+  try {
+    // safety.number_banned: the line is under review.
+    await rt.adapter.lineSafety!("review","safety.number_banned");
+    await rt.unitOfWork(()=>{
+      rt.system(memberId as never,"sd094-stop","You're unsubscribed from friends.help. Text START to come back.","compliance");
+      rt.system(memberId as never,"sd094-reminder","Your plan reminder is ready.","transactional");
+    });
+    expect(await statusOf("sd094-reminder")).toBe("retry_scheduled");
+    expect(await statusOf("sd094-stop")).toBe("accepted");
+    // pause_new: a STOP confirmation to an address the line has no conversation with yet still goes.
+    await rt.adapter.lineSafety!("pause_new","safety.state_changed");
+    expect(await rt.adapter.direct("+12125550186","You're unsubscribed. Text START to come back.","sd094-stranger-stop","compliance")).toBe("accepted");
+  } finally {await rt.adapter.lineSafety!(undefined);}
+},60_000);
