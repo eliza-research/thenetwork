@@ -1668,7 +1668,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     req.toldNone = true;
     const def = req.desireId ? desireById.get(req.desireId) : undefined;
     const what = def ? def.text.replace(/^(find|meet|get|be part of|try|start|make|play|join|go on) /, "").replace(/^learn to /, "learning to ") : "that";
-    const v = nearbyVenues(m.area, def ? def.needsInterests : req.tags, 1)[0];
+    const v = this.inNyc(m.id, this.now(), this.now()) ? nearbyVenues(m.area, def ? def.needsInterests : req.tags, 1)[0] : undefined;
     this.send(m, `${copy.requestNoneYet(what, this.invitesWork)}${v ? ` Meanwhile, ${v.name} is a good public spot for it.` : ""}`, { type: "info" }, "info");
     if (this.invitesWork && this.canInvite(m)) m.awaiting = { kind: "growth", at: this.now() };
   }
@@ -1811,6 +1811,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   private onPlans(m: MemberState, c: Classified) {
+    // Every venue (geo.ts) is in New York: a member elsewhere gets the agent, not New York places (SD-435).
+    if (!this.inNyc(m.id, this.now(), this.now())) return "open" as const;
     const now = this.now();
     this.counters.plansAnswered++;
     const req: Request = { id: this.sid(`rq${++this.reqSeq}`), memberId: m.id, at: now, kind: "plans", category: "events", tags: c.tags, outcome: "answered" };
@@ -1850,6 +1852,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    * in a row get different places each time, and nothing once the nearby ideas are used up.
    */
   private concierge(m: MemberState) {
+    if (!this.inNyc(m.id, this.now(), this.now())) return "open" as const;
     const known = this.knownProfiles().get(m.id);
     const topic = known ? [...known.interests][0] : undefined;
     const v = nearbyVenues(m.area, topic ? [topic] : [], 2, this.recentVenues(m));
