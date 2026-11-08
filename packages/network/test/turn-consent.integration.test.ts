@@ -364,9 +364,10 @@ describe.skipIf(!pgAvailable)("turn and consent", () => {
   }, 60_000);
   test("SD-490: \"leave slop\" during a pending slop join ends that join, so a later name does not join", async () => {
     const phone = "+12125550490";
-    for (const [i, text] of ["slop.date", "29"].entries()) {
+    // The age answer goes on the phone's age floor (SD-010), so that turn is no longer account-free onboarding.
+    for (const [i, [text, reason]] of [["slop.date", "onboarding_asked"], ["29", "join_asked"]].entries()) {
       clock.advance(MINUTE);
-      expect((await (await post(turn(`sd490-${i}`, phone, text))).json() as any).reason).toBe("onboarding_asked");
+      expect((await (await post(turn(`sd490-${i}`, phone, text))).json() as any).reason).toBe(reason);
     }
     clock.advance(MINUTE);
     const left = await (await post(turn("sd490-leave", phone, "leave slop"))).json() as any;
