@@ -112,4 +112,31 @@ describe.skipIf(!pgAvailable)("the network capital ledger in the service (Postgr
     expect(replayed.balance(helper)).toBe(live);
     expect(replayed.rejected()).toEqual([]);
   }, T);
+
+  test("SD-156 an event the live ledger refuses (the wall clock stepped back) is not stored, so a restart does not accept it", async () => {
+    await fresh();
+    /** A wall clock that NTP can step back. */
+    class WallClock extends SimClock { back(ms: number) { (this as unknown as { t: number }).t -= ms; } }
+    const clock = new WallClock(START);
+    const s = service(clock);
+    const ap = newPhone(), bp = newPhone(), cp = newPhone();
+    await text(s, clock, ap, "Sol 36");
+    clock.advance(60 * MINUTE);
+    await text(s, clock, bp, "Ana 29");
+    clock.back(30 * MINUTE);
+    await text(s, clock, cp, "Lee 41");
+    const c = (await memberOf("friends", cp))!;
+    const rt = s.runtimeFor("friends")!;
+    // The live ledger refuses member_joined for c: its t is before the last event's.
+    expect(rt.capital.rejects().map(r => r.id)).toContain(`member_joined:${c}`);
+    expect(rt.capital.ledger.isEligible(c)).toBe(false);
+    const stored = (await sql`select id from network.capital_events where app_id = 'friends'`).map((r: { id: string }) => r.id);
+    expect(stored).not.toContain(`member_joined:${c}`);
+    // b leaves: the rows that name b go. A replay must still not know c, as the live ledger did not.
+    await text(s, clock, bp, "leave friends");
+    await s.close();
+    const restarted = service(clock);
+    await restarted.start();
+    expect(restarted.runtimeFor("friends")!.capital.ledger.isEligible(c)).toBe(false);
+  }, T);
 });

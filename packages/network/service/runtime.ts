@@ -159,7 +159,8 @@ export class NetworkRuntime {
         const s = summarizeRun(log, proposals, { at, city: this.city as City, wallMs: Math.round(log.timingsMs.total ?? 0) });
         this.unit.runs.push({ id: this.app.id === "ntwrk" ? s.id : `${this.app.id}.${s.id}`, app_id: this.app.id, at: new Date(at), city: this.city, engine_version: s.engineVersion, proposals: s.proposals, wall_ms: s.wallMs, summary: s });
       },
-      onLedger: e => { this.capital.onLedger(e); this.unit.capital.push(e); },
+      // Only an event the live ledger accepted is stored: a replay must give the live ledger (SD-156).
+      onLedger: e => { if (this.capital.onLedger(e)) this.unit.capital.push(e); },
       // An age a member stated (network-consent-12): the service writes it to the person after the unit.
       onAgeStated: (memberId, age, o) => { this.statedAges.push({ memberId, age, ...o }); },
       // peon (#9): a posting the manager confirmed (or staff saved) is written with the unit (writeUnit).
