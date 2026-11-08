@@ -176,7 +176,7 @@ export const PRECISION_TARGET = 0.8;
 /** Final outcomes of a send that reached (or tried to reach) the provider. */
 const FAILED = /^(failed|parked_error|undeliverable)/;
 const REFUSED = /^(refused|suppressed|blocked|parked|dropped|expired)/;
-const WAITING = new Set(["queued", "pending", "sending", "deferred_quiet_hours", "held_awaiting_reply", "retry_scheduled"]);
+const WAITING = new Set(["queued", "pending", "sending", "deferred_quiet_hours", "held_awaiting_reply", "retry_scheduled", "unknown_acceptance"]);
 
 export function sendOutcomes(statuses: Record<string, number>): NetworkMetrics["sends24h"] {
   const out = { attempted: 0, failed: 0, refused: 0, dryRun: 0, smsFallback: 0 };
