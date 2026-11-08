@@ -454,6 +454,8 @@ const PAIR_HISTORY_DAYS = 60;
 const OPEN_STAGES = new Set(["review", "probing", "scheduled"]);
 const EMPTY_SET: ReadonlySet<string> = new Set();
 const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+/** The id a seat item's pair history is kept under: the seat for its hiring manager, else the member. */
+const seatSide = (id: MemberId, seat: { id: MemberId; manager: MemberId } | undefined) => (seat && id === seat.manager ? seat.id : id);
 /** A tie-break in [0, 1) from the seed and two ids (FNV-1a): stable per run, not id order. */
 function seededTie(seed: number, a: string, b: string): number {
   let h = 0x811c9dc5 ^ seed;
@@ -1767,8 +1769,8 @@ export class ConsentNetwork implements NetworkUnderTest {
    * a requester's confirm), a reviewer turned it down, or the two already met or had a no-show, within
    * `days`. Blocks and avoid edges are separate (blocked(), avoid).
    */
-  private pairHistory(a: MemberId, b: MemberId, days: number): boolean {
-    const k = pairKey(a, b);
+  private pairHistory(a: MemberId, b: MemberId, days: number, seat?: Opp["seat"]): boolean {
+    const k = pairKey(seatSide(a, seat), seatSide(b, seat));
     if ((this.declined.get(k) ?? -Infinity) > this.now() - days * DAY) return true;
     return this.metRecently(a, b, 60);
   }
@@ -1956,7 +1958,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       this.counters.reviewApproved++; this.begin(o); return { ok: true };
     }
     this.counters.reviewRejected++;
-    this.markDeclined(o.participants, now);
+    this.markDeclined(o.participants, now, undefined, o.seat);
     this.close(o, "rejected in review");
     return { ok: true };
   }
@@ -2043,13 +2045,13 @@ export class ConsentNetwork implements NetworkUnderTest {
     const out = opts.swapOut ?? (swappable.length === 1 ? swappable[0] : undefined);
     if (out !== undefined && !swappable.includes(out)) { this.ctx.log("review_refused", { oppId: o.id, decision: "reroll", reason: "cannot_swap" }); return { ok: false, reason: "cannot_swap" }; }
     const stay = o.participants.filter(p => p !== out);
-    const alt = out === undefined ? undefined : o.alternates.find(a => this.eligible(a) && !this.sharesFirstName(o, a) && !stay.some(p => this.blocked(p, a) || this.avoid.has(pairKey(p, a)) || this.pairHistory(p, a, 60)));
+    const alt = out === undefined ? undefined : o.alternates.find(a => this.eligible(a) && !this.sharesFirstName(o, a) && !stay.some(p => this.blocked(p, a) || this.avoid.has(pairKey(p, a)) || this.pairHistory(p, a, 60, o.seat)));
     this.counters.reviewRerolled++;
     o.review!.rerolls = [...(o.review!.rerolls ?? []), { at: now, out, in: alt, reviewer, note: opts.note }];
     this.ctx.log("review_decision", { ...logged, decision: "reroll", out: out ?? null, in: alt ?? null, next: alt ? "review" : "engine" });
     if (!alt) {
       // The engine composes again at its next run; this configuration does not come back for a while.
-      this.markDeclined(o.participants, now, out);
+      this.markDeclined(o.participants, now, out, o.seat);
       this.close(o, "rerolled in review");
       return { ok: true };
     }
@@ -2060,16 +2062,19 @@ export class ConsentNetwork implements NetworkUnderTest {
     delete o.explanations[out!];
     this.reexplain(o);
     o.review!.deadline = now + (o.sameDay ? 1 : this.opts.reviewSlaHours) * HOUR;
-    this.markDeclined(stay.concat(out!), now, out);
+    this.markDeclined(stay.concat(out!), now, out, o.seat);
     this.ctx.log("review_queued", { proposal: this.toProposal(o), origin: o.origin, deadline: o.review!.deadline, runId: o.runId, rerolled: true });
     if (this.opts.review === "auto") this.review(o.id, "approve", { reviewer: SIM_AUTO_REVIEWER });
     return { ok: true };
   }
 
-  /** Pairs not to propose again for a while (60 days engine, 30 days requests). With `only`, just the pairs that include it. */
-  private markDeclined(ids: MemberId[], now: number, only?: MemberId) {
+  /**
+   * Pairs not to propose again for a while (60 days engine, 30 days requests). With `only`, just the pairs that include it.
+   * In a seat item the manager answers for one job: the pair is kept with the seat, so the manager's other jobs stay open (SD-439).
+   */
+  private markDeclined(ids: MemberId[], now: number, only?: MemberId, seat?: Opp["seat"]) {
     for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++)
-      if (only === undefined || ids[i] === only || ids[j] === only) this.declined.set(pairKey(ids[i]!, ids[j]!), now);
+      if (only === undefined || ids[i] === only || ids[j] === only) this.declined.set(pairKey(seatSide(ids[i]!, seat), seatSide(ids[j]!, seat)), now);
   }
 
   /** Every opportunity goes to review first, whatever its origin (staff-composed and scenario proposals too). */
@@ -2354,7 +2359,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     } else {
       this.counters.probeNo++; this.emit({ type: "declined", member: m.id, planId: o.id }, `${o.id}:${m.id}`);
       // A no is remembered for the pair (network-consent-5): never probed again for a while, from any path.
-      this.markDeclined(o.participants, this.now(), m.id);
+      this.markDeclined(o.participants, this.now(), m.id, o.seat);
       if (o.requester === m.id) {
         // The requester turned this candidate down. A second no on the same request closes it (matching-e2e-3).
         const r = this.requests.find(x => x.oppId === o.id && x.memberId === m.id);
@@ -2404,7 +2409,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     while (!alt && o.alternates.length && o.replacements < 3) {
       const a = o.alternates.shift()!;
       // The same checks as a reroll: blocks, avoid edges and pair history with everyone staying (network-consent-26).
-      if (this.eligible(a) && !this.sharesFirstName(o, a) && !o.participants.some(p => p !== out && (this.blocked(p, a) || this.avoid.has(pairKey(p, a)) || this.pairHistory(p, a, 60)))) alt = a;
+      if (this.eligible(a) && !this.sharesFirstName(o, a) && !o.participants.some(p => p !== out && (this.blocked(p, a) || this.avoid.has(pairKey(p, a)) || this.pairHistory(p, a, 60, o.seat)))) alt = a;
     }
     if (o.picks?.[out]) { const { [out]: _, ...rest } = o.picks; o.picks = rest; }
     if (alt) {
@@ -3644,7 +3649,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       // pair history and responsiveness still apply.
       for (let i = 0; i < p.participants.length; i++) for (let j = i + 1; j < p.participants.length; j++) {
         const [a, b] = [p.participants[i]!, p.participants[j]!];
-        if (this.avoid.has(pairKey(a, b)) || this.blocked(a, b) || this.pairHistory(a, b, PAIR_HISTORY_DAYS)) return "pair_history";
+        if (this.avoid.has(pairKey(a, b)) || this.blocked(a, b) || this.pairHistory(a, b, PAIR_HISTORY_DAYS, p.seat)) return "pair_history";
       }
       if (this.opts.selective && p.participants.some(id => this.responsiveness(id) < this.opts.minResponsiveness)) return "unresponsive";
       return undefined;

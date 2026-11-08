@@ -16,6 +16,7 @@
 //   restart     the state survives an export and import between the two yeses
 //   close       closing a posting by text ends its open items (a candidate who said yes is told), and
 //               no new item is proposed for it
+//   decline     a candidate's no to one job keeps them from that job only, not from the manager's others
 import { DAY, HOUR, SimClock, type Facet, type Intent, type Member, type MemberId, type NetworkContext, type Presence, type SimMessage, type SimMeta } from "../../packages/core/src/index.ts";
 import { PEON_ENGINE_CONFIG } from "../../packages/engine/src/packs/peon/index.ts";
 import { peonSeats, seatIdOf } from "../../packages/engine/src/packs/peon/seats.ts";
@@ -264,5 +265,37 @@ export async function peonSeatsBlock(b: Block): Promise<void> {
   await b.run("exclusions: no minor or held member was in any item or got any seat message", () => {
     for (const o of w.net.exportState().opps) for (const p of o.participants) expect(["c5", "c6", "hm2", "hm3"]).not.toContain(p);
     for (const id of ["c5", "c6"]) expect(w.to(id).some(s => s.meta.probe || s.meta.proposalId)).toBe(false);
+  });
+
+  // SD-439: a seat item is the manager's, so a "no" was kept for the pair (candidate, manager), and the
+  // gate then refused the candidate for every other job of that manager for 60 days (pair_history).
+  await b.run("decline scope: a candidate's no to job A keeps them from job A only, not from job B of the same manager", async () => {
+    const v = new SeatWorld();
+    // One candidate, so the employer's probation budget (3 probes a week) is not what keeps them out.
+    v.add("hm1", "Rowan Abbott", 34, { verified: "Acme" });
+    v.add("c1", "Cand C1", 29, { candidate: true });
+    for (const id of ["hm1", "c1"]) for (const a of ["hi!", "Work, mostly.", "Weekday evenings.", "One-on-one is good."]) await v.say(id, a);
+    const items = () => v.net.reviewQueue().filter(i => i.proposal.participants.includes("hm1"));
+    await v.say("hm1", POST.replace("2 openings", "1 opening"));
+    await v.say("hm1", "yes");
+    const seatA = seatIdOf(v.saved[0]!.id);
+    expect(await v.runUntil(() => items().length > 0, 2 * DAY)).toBe(true);
+    const a = items()[0]!.oppId;
+    const x = "c1";
+    expect(v.opp(a)!.participants).toContain(x);
+    expect(v.net.review(a, "approve", { reviewer: "sim_staff" })).toBe(true);
+    expect(await v.runUntil(() => v.probedFor(x, a))).toBe(true);
+    await v.say(x, "no");
+    // Job B, the same kind of role.
+    await v.say("hm1", POST.replace("2 openings", "1 opening"));
+    await v.say("hm1", "yes");
+    const seatB = seatIdOf(v.saved.at(-1)!.id);
+    expect(seatB).not.toBe(seatA);
+    await v.run(8 * DAY);
+    const refused = v.logs.filter(l => l.kind === "gate_reason" && l.detail.reason === "pair_history" && (l.detail.members as string[]).includes(x));
+    expect(refused.length).toBe(0);
+    expect(v.net.exportState().opps.some(o => o.seat?.id === seatB && o.participants.includes(x))).toBe(true);
+    // Job A stays closed to them.
+    expect(v.net.exportState().opps.filter(o => o.seat?.id === seatA && o.participants.includes(x)).map(o => o.id)).toEqual([a]);
   });
 }
