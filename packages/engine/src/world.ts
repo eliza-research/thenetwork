@@ -206,9 +206,10 @@ export class World {
     for (const it of input.intents) {
       const id = C(it.memberId);
       const relabel = pack.ontology.relabelIntent?.(it, cfg);
-      if (relabel) { if (!growthAsHobby.has(id)) growthAsHobby.set(id, []); if (!growthAsHobby.get(id)!.includes(relabel)) growthAsHobby.get(id)!.push(relabel); }
       const live = it.status === "active" && it.createdAt + it.horizonDays * DAY > now;
       if (!live) continue;
+      // Only a live intent opts the member in: a closed or expired one says nothing about today.
+      if (relabel) { if (!growthAsHobby.has(id)) growthAsHobby.set(id, []); if (!growthAsHobby.get(id)!.includes(relabel)) growthAsHobby.get(id)!.push(relabel); }
       const intent: Intent = { ...it, memberId: id, ...(relabel ? { category: relabel } : {}) };
       if (!intentsBy.has(id)) intentsBy.set(id, []);
       intentsBy.get(id)!.push(intent);

@@ -43,7 +43,7 @@ import { outputLeaks } from "../../mcp/src/leaks.ts";
 // The Observatory's event shape and run summaries, so the console reads what this writes.
 import { eventOf, membersOf, type EventRow } from "../../observatory/src/events.ts";
 
-import { NOT_SENT, type RecipientCheck } from "../../blooio/src/outbound-queue.ts";
+import { isNotSent, type OutboundStatus, type RecipientCheck } from "../../blooio/src/outbound-queue.ts";
 import { summarizeRun } from "../../observatory/src/engineCapture.ts";
 import type { JobPosting } from "../src/jobs.ts";
 import { savePosting } from "./postings.ts";
@@ -604,7 +604,7 @@ export class NetworkRuntime {
       const ds = await this.adapter.deliver(go);
       await this.storeStatuses(ds, new Set(go.map(b => b.id)));
       // A send the adapter refused did not go out: its person-cap slot goes back (dry-run counts as sent).
-      const notSent = ds.filter(d => NOT_SENT.test(d.status)).map(d => d.id);
+      const notSent = ds.filter(d => isNotSent(d.status as OutboundStatus)).map(d => d.id);
       if (notSent.length) await this.host.capRelease?.(notSent);
       if (this.host.delivered) {
         const accepted = new Set(ds.filter(d => /^(accepted|sent|delivered|read|dry_run)$/.test(d.status)).map(d => d.id));

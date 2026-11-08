@@ -1101,7 +1101,7 @@ export class NetworkService implements RuntimeHost {
       const lid = lrt?.memberOf(ev.from);
       if (lrt && lid) {
         const person = await this.accounts.personFor(e164);
-        if (person) await this.accounts.leave(leaving, { e164, personId: person.id });
+        if (person) await this.accounts.leave(leaving, { e164, personId: person.id }, this.consentAt(ev));
         else { await this.accounts.recordConsent({ e164, app: leaving.id, line, state: "opted_out", source: "leave", ref: rowId, at: this.consentAt(ev) }); await this.forget(leaving, lid); }
         if (turn) { turn.app = leaving.id; turn.memberId = lid; turn.consent = {state: "opted_out", scope: "app", app: leaving.id, at: this.consentAt(ev)}; turn.confirmation = {id: `sys:${rowId}`, body: this.copyOf(leaving).leftApp}; }
         await this.direct(lrt, ev.from, this.copyOf(leaving).leftApp, `sys:${rowId}`, "compliance");
@@ -1434,11 +1434,13 @@ export class NetworkService implements RuntimeHost {
     const step = joinStep(facts);
     // A banned number or person never joins any app; nothing is stored and nothing is answered.
     if (step === "refuse_banned") { this.log(`[inbound] a banned number wrote to ${app.id}: not joined, not stored`); return "held"; }
+    // A stated age counts on every exit past the ban check, so a later, older answer never lifts it.
+    if (age !== undefined && (step === "invite_only" || step === "need_home")) await this.accounts.recordAge(e164, person, age);
     if (step === "invite_only") {
       // The same answer whether or not the number uses another app; at most once a day per number.
       const { count } = await this.people.hit(`invite_only:${app.id}:${key}`, DAY, t);
       if (count === 1) await this.direct(rt, ev.from, app.brand.inviteOnly, `sys:${rowId}`, "reply");
-      this.log(`[inbound] not a member of invite-only ${app.id}: ${count === 1 ? "invite-only reply" : "no reply (sent today)"}, not stored`);
+      this.log(`[inbound] not a member of invite-only ${app.id}: ${count === 1 ? "invite-only reply" : "no reply (sent today)"}, only a stated age kept`);
       return "invite_only";
     }
     const ask = invited ? c.invited(app.minJoinAge) : c.joinAsk(app.minJoinAge);

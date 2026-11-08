@@ -119,3 +119,16 @@ describe("the World keeps a member's own choices", () => {
     expect(aliased.get("a")!.acceptance).toBeGreaterThan(0.8);
   });
 });
+
+describe("the World opts a member in only on a live intent", () => {
+  test("a closed or expired personal-growth intent does not add the hobby lane", () => {
+    const inp = emptyInput(NOW);
+    const m = baseMember("a");
+    inp.members = [{ ...m, prefs: { ...m.prefs, categoriesOptIn: ["social"] } }];
+    const growth = (id: string, status: string, createdAt: number) => ({ id, memberId: "a", objective: "learn to paint with watercolors", category: "growth", horizonDays: 30, status, createdAt } as EngineInput["intents"][number]);
+    inp.intents = [growth("closed", "closed", NOW - DAY), growth("expired", "active", NOW - 60 * DAY)];
+    expect(new World(inp, resolveConfig({}), localEmbed).get("a")!.m.prefs.categoriesOptIn).toEqual(["social"]);
+    inp.intents = [growth("live", "active", NOW - DAY)];
+    expect(new World(inp, resolveConfig({}), localEmbed).get("a")!.m.prefs.categoriesOptIn).toEqual(["social", "hobby"]);
+  });
+});

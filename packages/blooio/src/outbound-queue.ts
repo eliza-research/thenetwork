@@ -180,8 +180,6 @@ export class IdempotencyConflictError extends Error {
 /** Statuses that still wait for the worker (the console's backlog). */
 export const WAITING = ["pending", "retry_scheduled", "deferred_quiet_hours", "held_awaiting_reply", "sending", "unknown_acceptance"];
 const DUE = ["pending", "retry_scheduled", "deferred_quiet_hours"];
-/** Statuses that did not go out, for callers that hold a plain string (see isNotSent in gate.ts). */
-export const NOT_SENT = { test: (status: string): boolean => isNotSent(status as OutboundStatus) };
 
 const fingerprint = (to: string, text: string, media: string[], kind: string, photos?: ApprovedRelayPhoto[]) =>
   // Retain legacy text/media fingerprints; approved selections additionally bind their full immutable payload.

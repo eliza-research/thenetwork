@@ -101,7 +101,7 @@ const RULES: Rule[] = [
   // Hedges.
   r("unsure", "\\b(?:are you sure|r u sure|you sure|u sure|what do you mean|i have a question|not (?:sure|certain|100%|positive|definitely|decided)|unsure|uncertain|maybe|mayb|perhaps|possibly|might|probably|prob|potentially|idk|i don't know|don't know|dunno|let me (?:check|see|think|get back)|lemme (?:check|see|think)|i'll (?:think|check|see|let you know|get back)|think about it|get back to you|depends|it depends|we'll see|tbd|kinda|kind of|sort of|hmm+|hm+|who is (?:it|this)|who's (?:coming|going|it)|who else|tal vez|talvez|quizas|quiza|a lo mejor|no se|puede ser|depende|lo pienso|dejame (?:ver|pensar)|ya veremos|no estoy segur[oa])\\b"),
   // Counter-offers.
-  r("counter", "\\b(?:different (?:day|time|date|week)|another (?:day|time|date|week)|some ?other (?:day|time)|other day|next week instead|instead|reschedule|rain ?check|raincheck|later in the week|otro dia|otra fecha|otra hora|mas adelante|la proxima)\\b"),
+  r("counter", "\\b(?:different (?:day|time|date|week)|another (?:day|time|date|week)|some ?other (?:day|time)|other day|next week instead|instead|reschedule|rain ?check|raincheck|later in the week|otro dia|otra fecha|otra hora|mas adelante|la proxima|some(?:one|body) else|some(?:one|body) different|(?:a )?different (?:person|match|one)|otra persona|alguien mas)\\b"),
   // Conditions.
   r("cond", "\\b(?:only if|if|as long as|provided|assuming|unless|only with|only on|only after|only before|only|solo si|solo con|siempre que|siempre y cuando|con tal (?:de )?que)\\b"),
   // Yes.

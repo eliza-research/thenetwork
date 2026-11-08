@@ -16,7 +16,7 @@
 // keyword routing; restart, crash, outage, dedupe, ordering, Apple line safety and the STOP/HELP owner.
 import { SQL } from "bun";
 import { DAY, HOUR, MINUTE, SimClock } from "../../packages/core/src/index.ts";
-import { NOT_SENT, OutboundQueue, WAITING } from "../../packages/blooio/src/outbound-queue.ts";
+import { isNotSent, OutboundQueue, type OutboundStatus, WAITING } from "../../packages/blooio/src/outbound-queue.ts";
 import { BlooioAdapter, liveSendAllowed } from "../../packages/network/service/channel.ts";
 import type { NetworkService } from "../../packages/network/service/service.ts";
 import { Block, expect } from "./gate.ts";
@@ -306,7 +306,7 @@ async function gates(b: Block, w: World) {
   await b.run("pipeline: every outbound row ends delivered or failed (no row waits, sends or sits accepted without a receipt)", () => {
     const open = rows.filter(r => WAITING.includes(r.status) || r.status === "accepted" || r.status === "sent");
     expect(open.map(r => `${r.id}:${r.status}`)).toEqual([]);
-    const other = rows.filter(r => !DELIVERED.has(r.status) && !NOT_SENT.test(r.status));
+    const other = rows.filter(r => !DELIVERED.has(r.status) && !isNotSent(r.status as OutboundStatus));
     expect(other.map(r => `${r.id}:${r.status}`)).toEqual([]);
     expect(rows.filter(r => DELIVERED.has(r.status)).length).toBeGreaterThan(40);
     // No member text here carries a private fact: nothing is parked (the Network's own copy names the app domains, which the guard allows).

@@ -42,7 +42,9 @@ export function trustCounts(files: string[]): Record<string, number> {
     if (existsSync(proof)) {
       const dfy = readFileSync(proof, "utf8");
       counts.assume += (dfy.match(/^\s*assume\b/gm) ?? []).length;
-      counts.axiom += (dfy.match(/\{:axiom\}/g) ?? []).length;
+      // An extern generates its own {:axiom} in the .dfy.gen and is counted as an extern: count only added ones.
+      const gen = existsSync(`${proof}.gen`) ? readFileSync(`${proof}.gen`, "utf8") : "";
+      counts.axiom += (dfy.match(/\{:axiom\}/g) ?? []).length - (gen.match(/\{:axiom\}/g) ?? []).length;
     }
   }
   return counts;
@@ -90,7 +92,7 @@ export async function formalBlock(b: Block): Promise<void> {
 /** True when an import in `from` names the file `target` (a basename match alone is not enough). */
 function resolvesTo(from: string, text: string, target: string): boolean {
   for (const m of text.matchAll(/(?:from\s+|import\()"(\.[^"]+)"/g)) {
-    const p = join(dirname(from), m[1]!);
+    const p = join(dirname(from), m[1]!).replace(/\.js$/, ".ts");
     if (p === target || `${p}.ts` === target) return true;
   }
   return false;

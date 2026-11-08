@@ -146,6 +146,20 @@ test("a late leave reports the time the person sent it, as every other consent e
   const left = await say(phone, `leave ${APPS.friends.domain}`, {receivedAt: sentAt});
   expect(left.reason).toBe("left");
   expect(left.consent).toEqual({state: "opted_out", scope: "app", app: "friends", at: sentAt});
+  // The ledger row carries the same time, so a retried leave never sorts after a newer join.
+  const sql = new SQL({url, max: 1});
+  const [row] = await sql`select (extract(epoch from at) * 1000)::bigint as at from platform.consent_events where e164 = ${phone} and app_id = 'friends' and source = 'leave'`;
+  await sql.close();
+  expect(Number(row.at)).toBe(sentAt);
+}, 60_000);
+
+test("an age stated in a join that asks again for the home city is kept: the lowest age wins", async () => {
+  const phone = "+12125550311";
+  await say(phone, "friends.help", {app: "friends"});
+  expect((await say(phone, "Kim, 15, I live in Boston", {app: "friends"})).reason).not.toBe("joined");
+  await say(phone, "Kim, 25, I live in New York", {app: "friends"});
+  const person = await service.accounts.personFor(phone);
+  expect(await service.accounts.lowestAge(phone, person)).toBe(15);
 }, 60_000);
 
 test("the service reads time only from a Clock", () => {

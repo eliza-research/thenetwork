@@ -413,9 +413,8 @@ export class Accounts {
     return resolveConsent(await this.store.lastConsent(e164, app)) === "opted_in";
   }
 
-  /** Leave one app: the forget path. The phone and other memberships stay. */
-  async leave(app: AppInfo, who: Who): Promise<void> {
-    const at = this.now();
+  /** Leave one app: the forget path. The phone and other memberships stay. `at` is when the person asked (a turn's receivedAt). */
+  async leave(app: AppInfo, who: Who, at = this.now()): Promise<void> {
     const person = await this.personFor(who.e164);
     const m = person && (await this.store.getMembership(person.id, app.id));
     await this.store.addConsent({ e164: who.e164, app: app.id, state: "opted_out", source: "leave", at });
