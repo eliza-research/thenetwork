@@ -1740,27 +1740,39 @@ export class NetworkService implements RuntimeHost {
     const hashes = await this.people.phoneHashesOf(personId);
     if (by === "phone" && !hashes.length) return this.refused(user, rt, "ban", target, "no_phone");
     const already = by === "person" ? await this.people.isBanned("", personId) : (await Promise.all(hashes.map(h => this.people.isBanned(h)))).every(Boolean);
-    if (already) return this.refused(user, rt, "ban", target, "already_banned");
+    // A ban that stopped half way (its rows are in, a later step failed) is finished by the retry.
+    if (already && !(await this.banUnfinished(personId, members))) return this.refused(user, rt, "ban", target, "already_banned");
     return this.audited(rt, user, target, { safety: "ban", by, reportId: reportId ?? null }, async () => {
       const at = this.clock.now();
       const rows: Ban[] = by === "person"
         ? [{ id: `ban_${randomUUID()}`, scope: "person", personId, phoneHash: hashes[0] ?? null, reason: note, reportId: reportId ?? null, bannedBy: user.id, at },
           ...hashes.slice(1).map(h => ({ id: `ban_${randomUUID()}`, scope: "person" as const, personId, phoneHash: h, reason: note, reportId: reportId ?? null, bannedBy: user.id, at }))]
         : hashes.map(h => ({ id: `ban_${randomUUID()}`, scope: "phone" as const, personId, phoneHash: h, reason: note, reportId: reportId ?? null, bannedBy: user.id, at }));
-      for (const b of rows) await this.people.ban(b);
+      if (!already) for (const b of rows) await this.people.ban(b);
       for (const h of hashes) await this.people.suppress(h, "banned", at);
       // No rating of looks is kept for a banned person (they are never matched again). The photos stay for the safety team.
       await this.dropRatings(personId);
       for (const m of await this.people.memberships(personId)) if (m.state !== "removed" && m.state !== "invited") await this.people.putMembership({ ...m, state: "restricted" });
       let out: ActionResult = { ok: true };
       for (const x of members) {
-        await x.rt.scoped(tx => tx`update network.members set account_status = 'restricted' where app_id = ${x.rt.app.id} and id = ${x.memberId}`);
         const mine = x.rt === rt && x.memberId === memberId;
         const r = await x.rt.unitOfWork(o => o.markBanned(x.memberId, user.id, note, mine ? reportId : undefined));
+        // Last step for this member: a restricted member row tells a retry that the Network holds them.
+        await x.rt.scoped(tx => tx`update network.members set account_status = 'restricted' where app_id = ${x.rt.app.id} and id = ${x.memberId}`);
         if (mine) out = r;
       }
       return out;
     });
+  }
+
+  /** True when a ban of this person did not reach every step: a live membership or a Network member that is not restricted. */
+  private async banUnfinished(personId: string, members: { rt: NetworkRuntime; memberId: MemberId }[]): Promise<boolean> {
+    if ((await this.people.memberships(personId)).some(m => m.state !== "removed" && m.state !== "invited" && m.state !== "restricted")) return true;
+    for (const x of members) {
+      const [m] = await x.rt.scoped(tx => tx`select account_status from network.members where app_id = ${x.rt.app.id} and id = ${x.memberId}`);
+      if (m && !["restricted", "removed", "invited"].includes(m.account_status as string)) return true;
+    }
+    return false;
   }
 
   /** A safety action that spans networks: the audit row first (no row, no action), then `fn`, then a result row. */
