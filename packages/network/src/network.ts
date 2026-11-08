@@ -752,7 +752,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (c.abuse.length && !this.handleAbuse(m, c, body)) return;
 
     // peon (#9): a job post by text, read back and saved only on the manager's yes (rules only, never an open-turn LLM output).
-    if (this.opts.hooks?.postings && this.postingTurn(m, body)) return;
+    // Only the manager's own text in the thread starts or confirms a post; the assistant's profile is learned below.
+    if (this.opts.hooks?.postings && !mcp && this.postingTurn(m, body)) return;
 
     // Answers to what we asked (never from the assistant's profile: it can only teach, below).
     const aw = mcp && m.awaiting?.kind !== "interview" ? undefined : m.awaiting;
