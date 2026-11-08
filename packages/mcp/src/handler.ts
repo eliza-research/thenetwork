@@ -733,6 +733,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
   }
 
   async function cloudGrantCurrent(grant: Grant): Promise<"valid" | "invalid" | "unavailable"> {
+    // A ban ends every grant of the number or person: no tool call, no code exchange, no refresh (founder 2026-10-09 #3).
+    if(await o.platform.banned(grant.phoneKey,grant.personId))return "invalid";
     if(!grant.id.startsWith("grant_cloud_") && grant.cloudAuthority==null)return "valid";
     const authority=grant.cloudAuthority;
     if(!authority || grant.expiresAt<=now() || grant.expiresAt>authority.expiresAt || authority.expiresAt<=now())return "invalid";
