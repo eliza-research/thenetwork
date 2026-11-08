@@ -292,4 +292,21 @@ describe.skipIf(!pgAvailable)("turn and consent", () => {
     expect(body.consent).toMatchObject({state: "opted_out", scope: "app", app: "slop"});
     expect(await service.accounts.optedIn("slop", phone)).toBe(false);
   }, 60_000);
+  test("SD-317: SHARE goes to the app that asked for it, also when another app wrote to the member last", async () => {
+    const phone = "+12125550317";
+    expect((await (await post(turn("sd317-join", phone, "Sam, 29"))).json() as any).reason).toBe("joined");
+    // The member joins friends.help with the same number: friends asks to SHARE (the link notice).
+    await friendsByText("sd317-friends", phone, "Sam, 29");
+    const person = (await service.accounts.personFor(phone))!;
+    expect((await sql`select app_id from platform.pending_texts where phone_hash = ${phoneKey(phone)} and kind = 'share'`).map(r => r.app_id)).toEqual(["friends"]);
+    // Then The Network writes to the member (a newer outbound on another app).
+    clock.advance(MINUTE);
+    const ntwrk = (await service.people.getMembership(person.id, "ntwrk"))!;
+    await sql`insert into network.messages (id, app_id, member_id, direction, channel, body, status, proactive, system, ts)
+      values ('sd317-out', 'ntwrk', ${ntwrk.memberId}, 'outbound', 'imessage', 'A note from The Network', 'sent', true, true, ${new Date(clock.now())})`;
+    clock.advance(MINUTE);
+    const body = await (await post(turn("sd317-share", phone, "SHARE"))).json() as any;
+    expect(body.app).toBe("friends");
+    expect((await sql`select from_app, to_app from platform.share_grants where person_id = ${person.id} and revoked_at is null`).map(r => [r.from_app, r.to_app])).toEqual([["ntwrk", "friends"]]);
+  }, 60_000);
 });

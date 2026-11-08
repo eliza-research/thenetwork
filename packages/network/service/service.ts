@@ -966,7 +966,7 @@ export class NetworkService implements RuntimeHost {
    *  2. the whole message is an app's word ("slop", "slop.date", "join friends.help"): that app;
    *  3. a join the person started (they sent the app's word) takes the answer that follows, if the
    *     answer reads as a join answer or the person is not a member anywhere;
-   *  4. a member: the app with the newest open item (a probe, a plan they have not answered), else the
+   *  4. a member: SHARE goes to the app that asked for it (the link notice); else the app with the newest open item (a probe, a plan they have not answered), else the
    *     app that wrote to them last;
    *  5. otherwise The Network (a stranger joins it).
    * An app's name inside a sentence ("my ex is on slop.date") never routes a member's message.
@@ -988,6 +988,9 @@ export class NetworkService implements RuntimeHost {
     if (pending && !mine.some(x => x.app === pending.app)
       && (!mine.length || parseJoinText(ev.text, this.appWords(), true).age !== undefined)) return { app: pending.app, shared: true };
     if (mine.length) {
+      // SHARE answers the link notice: the app that asked for it (the newest pending ask of an app they are a member of).
+      const share = e164 && /^\s*share\W*$/i.test(ev.text) ? await this.pendingOf(e164, "share") : undefined;
+      if (share && mine.some(x => x.app === share.app)) return { app: share.app, shared: true };
       const open = mine.filter(x => x.lastItem !== null).sort((a, b) => b.lastItem! - a.lastItem!)[0];
       if (open) return { app: open.app, shared: true };
       // Several apps: the reply goes to the app that wrote to this person last.
