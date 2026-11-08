@@ -496,7 +496,7 @@ export function newcomerWelcome(ctx: GenCtx): Candidate[] {
       .filter(id => {
         const mi = w.get(id)!;
         return !mi.newcomer && (mi.m.homeCity === city) && (mi.m.state === "open" || mi.m.state === "normal")
-          && !pairReason(w, n, id, "social") && w.canMeet([n, id]);
+          && !pairReason(w, n, id, "social") && Boolean(w.overlap([n, id], w.now, w.now + w.cfg.windowDays * DAY, city));
       })
       .map(id => {
         const mi = w.get(id)!;

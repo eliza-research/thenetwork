@@ -258,4 +258,27 @@ describe("newcomerWelcome pair constraints and schedule overlap", () => {
     expect(res.ok).toBe(false);
     expect(res.reason).toBe("blocked_pair");
   });
+  test("distinctAlternates and checkRecipient respect snapshot avoid edges", async () => {
+    const w = new Mini([
+      { id: "a", name: "Alice Adams", age: 28, area: "Greenpoint", interests: ["coffee"] },
+      { id: "b", name: "Bob Brown", age: 30, area: "Greenpoint", interests: ["coffee"] },
+      { id: "c", name: "Charlie Clark", age: 29, area: "Greenpoint", interests: ["coffee"] },
+      { id: "d", name: "David Davis", age: 31, area: "Greenpoint", interests: ["coffee"] },
+    ]);
+    await w.onboard("a", "b", "c", "d");
+
+    // Add avoid edge between b and c in snapshot
+    const snap = (w.net as any).snapshotCached();
+    snap.edges.push({ from: "b", to: "c", type: "avoid", createdAt: 0 });
+
+    // distinctAlternates with participants [a, b] and alternates [c, d]
+    const alts = (w.net as any).distinctAlternates(["a", "b"], ["c", "d"]);
+    // c has a snapshot avoid edge with b, so c must be excluded
+    expect(alts).toEqual(["d"]);
+
+    // checkRecipient: b recipient, message about c
+    const res = (w.net as any).recipientPolicy("b", "probe", { about: ["c"] });
+    expect(res.ok).toBe(false);
+    expect(res.reason).toBe("blocked_pair");
+  });
 });
