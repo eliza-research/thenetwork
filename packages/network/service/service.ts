@@ -545,8 +545,19 @@ export class NetworkService implements RuntimeHost {
       where m.app_id = ${rt.app.id} and m.account_status in ('active', 'paused', 'restricted') group by m.id, m.age, m.joined_at order by m.id`) as any[];
     const members: BiasMember[] = rows.map(r => ({ id: r.id, age: r.age, joinedAt: r.joined_at ? new Date(r.joined_at).getTime() : null, tags: r.tags ?? [] }));
     const r = biasReport(rt.id, rt.app.id, members, [...rt.net.opps.values()], now);
-    await rt.scoped(tx => tx`insert into network.bias_reports (app_id, id, network_id, at, members, alerts, report)
-      values (${rt.app.id}, ${`bias_${rt.id}_${now}`}, ${rt.id}, ${new Date(now)}, ${r.members}, ${r.report.alerts.length}, ${r.report as unknown as Row}::jsonb)`);
+    // afterTick runs after the tick lock is released, so another replica can be here too: one writer per
+    // network at a time, and the week is checked again inside that lock (SD-446).
+    const stored = await rt.scoped(async tx => {
+      await tx`select pg_advisory_xact_lock(hashtext(${`bias-report-${rt.id}`}))`;
+      if (!force) {
+        const [again] = await tx`select max(at) as at from network.bias_reports where app_id = ${rt.app.id} and network_id = ${rt.id}`;
+        if (again?.at && now - new Date(again.at as string).getTime() < BIAS_EVERY_MS) return false;
+      }
+      await tx`insert into network.bias_reports (app_id, id, network_id, at, members, alerts, report)
+        values (${rt.app.id}, ${`bias_${rt.id}_${now}`}, ${rt.id}, ${new Date(now)}, ${r.members}, ${r.report.alerts.length}, ${r.report as unknown as Row}::jsonb)`;
+      return true;
+    });
+    if (!stored) return undefined;
     this.log(`[bias] ${rt.id}: ${r.members} adult member(s), ${r.report.alerts.length} alert(s)`);
     for (const line of biasAlerts(r)) this.log(line);
     return r;
