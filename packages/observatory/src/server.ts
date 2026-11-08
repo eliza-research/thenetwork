@@ -162,10 +162,11 @@ const remoteDb = (url: string) => { try { return !LOCAL_DB_HOSTS.has(new URL(url
  * server can switch to real mode). Then:
  *  - PLATFORM_ENV must be set (dev, staging or production);
  *  - staging and production need Cloudflare Access (no tokens);
+ *  - staging and production need the Postgres audit log (a redeploy loses the file);
  *  - PLATFORM_ENV=dev may use tokens only with local databases; a remote one needs Cloudflare Access too.
  * Returns why the server must not start, or undefined.
  */
-export function deployGuard(o: { realOnly: boolean; trustCfAccess: boolean; platformEnv?: string; databaseUrls: (string | undefined)[] }): string | undefined {
+export function deployGuard(o: { realOnly: boolean; trustCfAccess: boolean; platformEnv?: string; databaseUrls: (string | undefined)[]; audit: AuditSink["kind"] }): string | undefined {
   const remote = o.databaseUrls.some(u => !!u && remoteDb(u));
   if (!o.realOnly && !remote) return undefined;
   const env = o.platformEnv?.trim();
@@ -173,8 +174,9 @@ export function deployGuard(o: { realOnly: boolean; trustCfAccess: boolean; plat
   const access = "needs Cloudflare Access: OBSERVATORY_TRUST_CF_ACCESS=1 with OBSERVATORY_CF_ACCESS_TEAM and OBSERVATORY_CF_ACCESS_AUD";
   if (!env) return `real data (${why}) needs PLATFORM_ENV (dev, staging or production)`;
   if (env !== "dev" && env !== "staging" && env !== "production") return `unknown PLATFORM_ENV "${env}" (dev, staging or production)`;
+  if (env !== "dev" && !o.trustCfAccess) return `a deployed console (${why}, PLATFORM_ENV ${env}) ${access}`;
+  if (env !== "dev" && o.audit !== "postgres") return `a deployed console (${why}, PLATFORM_ENV ${env}) needs OBSERVATORY_AUDIT_DATABASE_URL (a redeploy loses the file audit log)`;
   if (o.trustCfAccess) return undefined;
-  if (env !== "dev") return `a deployed console (${why}, PLATFORM_ENV ${env}) ${access}`;
   if (remote) return `PLATFORM_ENV=dev with a database that is not on this machine ${access} (tokens are for local databases only)`;
   return undefined;
 }
@@ -268,10 +270,12 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
   const hostname = opts.hostname ?? process.env.OBSERVATORY_HOST ?? "127.0.0.1";
   const tokens = parseTokenGrants(opts.tokens ?? process.env.OBSERVATORY_TOKENS, { explicitApp: process.env.NODE_ENV === "production" || process.env.PLATFORM_ENV === "production", minLength: opts.minTokenLength ?? 32 });
   const trustCfAccess = opts.trustCfAccess ?? process.env.OBSERVATORY_TRUST_CF_ACCESS === "1";
+  // The audit sink createAudit will make (it is made after the guard, which may refuse it).
+  const auditKind: AuditSink["kind"] = opts.audit && "write" in opts.audit ? opts.audit.kind : (opts.audit?.url ?? process.env.OBSERVATORY_AUDIT_DATABASE_URL) ? "postgres" : "file";
   // A deployed console signs staff in through Cloudflare Access only: without it the server would make an
   // admin token and print it into the host's logs (docs/deploy.md 2.6). Fail closed (deployGuard).
   const refusal = deployGuard({
-    realOnly, trustCfAccess, platformEnv: opts.platformEnv ?? process.env.PLATFORM_ENV,
+    realOnly, trustCfAccess, audit: auditKind, platformEnv: opts.platformEnv ?? process.env.PLATFORM_ENV,
     databaseUrls: [opts.real?.url ?? process.env.NETWORK_DATABASE_URL ?? process.env.DATABASE_URL,
       ...APP_IDS.map(a => opts.real?.appUrls?.[a] ?? process.env[appUrlEnv(a)]), process.env.OBSERVATORY_PLATFORM_DATABASE_URL,
       typeof opts.peopleUrl === "string" ? opts.peopleUrl : undefined, typeof opts.staffRolesUrl === "string" ? opts.staffRolesUrl : undefined],
