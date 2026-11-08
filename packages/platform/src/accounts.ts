@@ -417,13 +417,17 @@ export class Accounts {
     return resolveConsent(await this.store.lastConsent(e164, app)) === "opted_in";
   }
 
-  /** Leave one app: the forget path. The phone and other memberships stay. */
-  async leave(app: AppInfo, who: Who): Promise<void> {
-    const at = this.now();
+  /**
+   * Leave one app: the forget path. The phone and other memberships stay. A leave by text gives the time the
+   * person sent it and the message ref: the ledger orders by that time, so an older leave (a late gateway retry)
+   * never undoes a newer opt-in, and the membership then stays as the ledger reads.
+   */
+  async leave(app: AppInfo, who: Who, sent?: { at: number; ref: string }): Promise<void> {
+    const at = sent?.at ?? this.now();
     const person = await this.personFor(who.e164);
     const m = person && (await this.store.getMembership(person.id, app.id));
-    await this.store.addConsent({ e164: who.e164, app: app.id, state: "opted_out", source: "leave", at });
-    if (!person || !m || m.state === "removed") return;
+    await this.store.addConsent({ e164: who.e164, app: app.id, state: "opted_out", source: "leave", ref: sent?.ref ?? null, at });
+    if (!person || !m || m.state === "removed" || (await this.optedIn(app.id, who.e164))) return;
     await this.hooks.onForget?.({ app, personId: person.id, memberId: m.memberId, e164: who.e164 });
     await this.store.forgetMembership(person.id, app.id, at);
   }

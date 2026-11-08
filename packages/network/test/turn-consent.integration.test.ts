@@ -149,6 +149,22 @@ describe.skipIf(!pgAvailable)("turn and consent", () => {
     const [row] = await sql`select opted_out from network.members where app_id = 'ntwrk' and id = ${m.memberId}`;
     expect(row.opted_out).toBe(false);
   }, 60_000);
+  test("SD-105: an older leave that arrives after a newer START is ordered by its own time", async () => {
+    const phone = "+12125550105";
+    expect((await (await post(turn("sd105-join", phone, "Sam, 29"))).json() as any).reason).toBe("joined");
+    clock.advance(MINUTE);
+    const leaveSentAt = clock.now();
+    clock.advance(MINUTE);
+    expect((await post(turn("sd105-start", phone, "START"))).status).toBe(200);
+    clock.advance(MINUTE);
+    const body = await (await post({...turn("sd105-leave", phone, "leave ntwrk"), receivedAt: leaveSentAt})).json() as any;
+    // The gateway fence orders the leave by the time the person sent it.
+    expect(body.consent).toMatchObject({state: "opted_out", scope: "app", app: "ntwrk", at: leaveSentAt});
+    // The ledger orders by send time: the newer START wins, and the membership stays as the ledger reads.
+    expect(await service.accounts.optedIn("ntwrk", phone)).toBe(true);
+    const person = (await service.accounts.personFor(phone))!;
+    expect((await service.people.getMembership(person.id, "ntwrk"))?.state).toBe("active");
+  }, 60_000);
   test("SD-073: a banned member's text is not stored, handled or answered", async () => {
     const phone = "+12125550073";
     expect((await (await post(turn("sd073-join", phone, "Sam, 29"))).json() as any).reason).toBe("joined");
