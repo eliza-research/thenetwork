@@ -534,6 +534,11 @@ class ObsStore {
     return [...new Set(this.me?.grants?.filter(x => x.app === "*" || x.app === this.app).map(x => x.role) ?? this.me?.roles ?? [])];
   }
   isAdmin() { return this.can(); }
+  /** The caller holds one of these roles, or admin, on every app ("*"): the service's cross-app safety rule. */
+  canEverywhere(...roles: StaffRole[]): boolean {
+    const g = this.me?.grants ?? this.me?.roles.map(role => ({ role, app: "*" })) ?? [];
+    return g.some(x => x.app === "*" && (x.role === "admin" || roles.includes(x.role)));
+  }
   /** Game controls (play, step, propose, take over, god): the simulation lab is for reviewers and safety staff. */
   canSim() { return this.can("reviewer", "safety", "engineer"); }
   realOnly() { return !!(this.me?.realOnly || this.env?.realOnly); }

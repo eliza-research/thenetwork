@@ -249,6 +249,8 @@ function ReportRow({ r, canBan, canAct, onDone }: { r: SafetyReport; canBan: boo
     if (res.data?.ok) { store.toast(done, "good"); setNote(""); onDone(); } else store.toast(res.data?.error ?? res.error ?? "refused", "bad");
   };
   const n = note.trim(), ok = n.length >= 5 && !busy;
+  // The service holds and clears on every app of the person only for safety@* or admin@* (service.ts hold, clearMinor).
+  const scope = store.canEverywhere("safety") ? "every app" : "this app";
   return (
     <div className={`case ${open ? "open" : ""}`}>
       <button type="button" className="case-head" onClick={() => setOpen(!open)}>
@@ -265,7 +267,7 @@ function ReportRow({ r, canBan, canAct, onDone }: { r: SafetyReport; canBan: boo
           {canBan && store.can("safety") && r.status === "open" && (
             <div className="review-actions">
               <input className="input grow" placeholder="Decision note (logged, at least 5 characters)" value={note} onChange={e => setNote(e.target.value)} />
-              <button className="btn" disabled={!ok} title="Hold the person on every app until a review" onClick={() => act({ action: "hold", memberId: r.subjectId, note: n, reportId: r.id }, "Person held on every app")}>Hold</button>
+              <button className="btn" disabled={!ok} title={`Hold the person on ${scope} until a review`} onClick={() => act({ action: "hold", memberId: r.subjectId, note: n, reportId: r.id }, `Person held on ${scope}`)}>Hold</button>
               <button className="btn" disabled={!ok} title="This phone number can never join again" onClick={() => act({ action: "ban", memberId: r.subjectId, by: "phone", note: n, reportId: r.id }, "Banned by phone")}>Ban phone</button>
               <button className="btn" disabled={!ok} title="Every phone of this person, on every app" onClick={() => act({ action: "ban", memberId: r.subjectId, by: "person", note: n, reportId: r.id }, "Banned by person")}>Ban person</button>
               <button className="btn ghost" disabled={!ok} onClick={() => act({ action: "dismiss", reportId: r.id, note: n }, "Report dismissed")}>Dismiss</button>
@@ -274,8 +276,8 @@ function ReportRow({ r, canBan, canAct, onDone }: { r: SafetyReport; canBan: boo
           {r.kind === "minor" && canAct && store.can("safety") && r.status === "open" && (
             <div className="review-actions">
               {!canBan && <input className="input grow" placeholder="Why the record says adult (logged, at least 5 characters)" value={note} onChange={e => setNote(e.target.value)} />}
-              <button className="btn" disabled={!ok} title="Only after the person's record says 18 or over. Clears the minor signal on every app you may act on and dismisses this person's minor reports. Refused while any age says under 18."
-                onClick={() => act({ action: "clear_minor", memberId: r.subjectId, note: n }, "Minor signal cleared on every app")}>Clear minor signal (every app)</button>
+              <button className="btn" disabled={!ok} title={`Only after the person's record says 18 or over. Clears the minor signal on ${scope} and dismisses this person's minor reports. Refused while any age says under 18.`}
+                onClick={() => act({ action: "clear_minor", memberId: r.subjectId, note: n }, `Minor signal cleared on ${scope}`)}>Clear minor signal ({scope})</button>
             </div>
           )}
         </div>
