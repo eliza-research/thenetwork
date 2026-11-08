@@ -309,9 +309,10 @@ export class StubNetwork implements NetworkUnderTest {
     }
   }
 
-  private handleDrop(m: MemberState, opp: Opp) {
+  /** `ack` false: the member sent STOP, so they get no reply. */
+  private handleDrop(m: MemberState, opp: Opp, ack = true) {
     opp.invites.set(m.id, { ...opp.invites.get(m.id)!, status: "dropped" });
-    this.send(m, "No worries, thanks for the heads up.", { type: "info" });
+    if (ack) this.send(m, "No worries, thanks for the heads up.", { type: "info" });
     const still = [...opp.invites].filter(([, i]) => i.status === "yes").map(([id]) => id);
     const keep = still.length >= Math.min(opp.quorum, 2) && (opp.p.participants.length > 2 ? still.length >= 2 : false);
     for (const id of still) {
@@ -380,9 +381,15 @@ export class StubNetwork implements NetworkUnderTest {
   }
 
   private dropFromOpenOpps(id: MemberId) {
-    for (const opp of this.opps.values()) if (opp.stage === "inviting" && opp.invites.has(id)) {
-      opp.invites.get(id)!.status = "dropped";
-      if (opp.p.participants.length === 2) this.cancel(opp, "opted_out");
+    for (const opp of this.opps.values()) {
+      if (opp.stage === "inviting" && opp.invites.has(id)) {
+        opp.invites.get(id)!.status = "dropped";
+        if (opp.p.participants.length === 2) this.cancel(opp, "opted_out");
+      } else if (opp.stage === "scheduled" && opp.invites.get(id)?.status === "yes") {
+        // A booked meeting: no reminder or feedback request to this member, and the others are told.
+        this.handleDrop(this.member(id), opp, false);
+        if (opp.stage === "cancelled") this.ctx.log("opportunity_closed", { proposalId: opp.p.id, reason: "opted_out" });
+      }
     }
   }
 

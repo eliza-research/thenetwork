@@ -29,4 +29,23 @@ export async function stubBlock(b: Block): Promise<void> {
     expect(toSam.length).toBe(0);
     expect(r.world.metrics.invariants.byRule.send_after_stop ?? 0).toBe(0);
   });
+  // SD-411 (sim S-19): STOP dropped the member only from inviting opportunities. A member who had said yes to
+  // a booked meeting kept the reminder and the feedback request, and the others were never told.
+  await b.run("stub: STOP after a booked meeting stops the reminder and tells the other member", async () => {
+    const s = {
+      name: "stub-stop-after-schedule", description: "Ana and Ben say yes and the stub books the meeting; Ana texts STOP the next day.", seed: 61, days: 7,
+      stub: { randomIntros: false },
+      personas: [adult("ana", "Ana Lindqvist", "sf", 9), adult("ben", "Ben Okafor", "sf", 10)],
+      actions: [
+        { at: { day: 1, hour: 11 }, do: "propose", kind: "intro", participants: ["ana", "ben"], objective: "coffee and a hike", city: "sf", explanation: "you both hike" },
+        { at: { day: 3, hour: 12 }, do: "opt_out", persona: "ana" },
+      ], expectations: [],
+    } as Scenario;
+    const r = await runScenario(s, { network: stub });
+    const out = (id: string, type: string) => r.world.records.filter(x => x.type === "message" && x.msg.memberId === id && x.msg.direction === "outbound" && x.msg.meta?.type === type);
+    expect(r.world.metrics.meetings.scheduled).toBe(1);
+    expect(out("ana", "reminder").length + out("ana", "feedback_request").length).toBe(0);
+    expect(r.world.metrics.invariants.byRule.send_after_stop ?? 0).toBe(0);
+    expect(out("ben", "cancellation").length).toBe(1);
+  });
 }
