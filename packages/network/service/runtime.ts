@@ -619,6 +619,11 @@ export class NetworkRuntime {
     try { ds = await this.adapter.deliver([]); } catch (e) { this.host.log(`[deliver] the queue waits for the next tick (${this.id}): ${(e as Error).message}`); return; }
     const mine = ds.filter(d => d.memberId && (d.app ?? this.app.id) === this.app.id);
     await this.storeStatuses(mine);
+    // A drain that stopped after the queue commit (a crash, an error) lost its changes in memory: a message that
+    // still shows a waiting status takes the status of its queue row once that row left the waiting statuses.
+    await this.scoped(tx => tx`update network.messages m set status = o.status from platform.outbound o
+      where m.app_id = ${this.app.id} and m.direction = 'outbound' and m.status = any(${`{${WAITING_STATUSES.join(",")}}`}::text[])
+      and o.id = m.id and o.app_id = m.app_id and o.status <> all(${`{${WAITING_STATUSES.join(",")}}`}::text[])`);
     await this.projectNotifications();
   }
 

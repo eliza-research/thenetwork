@@ -449,3 +449,25 @@ test("SD-334: two drains that look up one unknown acceptance never store dropped
   try {clock.advance(60_000);await rt.deliver();} finally {provider.receipt=receipt;cloudMode.receipt="unknown";}
   expect(await both("sd334-reminder")).toEqual({outbound:"accepted",ended:false,message:"accepted"});
 },60_000);
+
+test("SD-336: a status change that a drain did not store (the process stopped after the queue commit) reaches network.messages on the next drain",async()=>{
+  const rt=await primary();
+  const phone="+12125550202",memberId=await join(services[0]!,phone,"Rex");
+  await rt.unitOfWork(()=>undefined);
+  await rt.adapter.engaged!(phone);
+  // A reminder at 22:00 in New York waits for quiet hours to end.
+  toNewYork(22,0);
+  await rt.unitOfWork(()=>{rt.system(memberId as never,"sd336-reminder","Your plan reminder is ready.","transactional");});
+  expect(await both("sd336-reminder")).toEqual({outbound:"deferred_quiet_hours",ended:false,message:"deferred_quiet_hours"});
+  // Three days later a drain ends it expired; the process stops after the queue commit, before it stores the change.
+  clock.advance(3*86_400_000);toNewYork(11,0);
+  const store=rt.storeStatuses;
+  rt.storeStatuses=async()=>{rt.storeStatuses=store;throw new Error("the process stopped");};
+  await expect(rt.deliver()).rejects.toThrow("the process stopped");
+  rt.storeStatuses=store;
+  expect((await both("sd336-reminder")).outbound).toBe("expired");
+  // The next drain (this replica or another one) has no change list for that row.
+  clock.advance(60_000);
+  await rt.deliver();
+  expect(await both("sd336-reminder")).toEqual({outbound:"expired",ended:true,message:"expired"});
+},60_000);

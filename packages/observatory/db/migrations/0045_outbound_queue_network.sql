@@ -7,3 +7,8 @@
 -- or a test of the queue alone) writes null and drains every row of its app. Idempotent.
 alter table platform.outbound add column if not exists network_id text;
 update platform.outbound set network_id = app_id || ':nyc' where network_id is null;
+
+-- A drain that stopped after the queue commit lost its status changes in memory. The next drain copies the
+-- status of each queue row that left the waiting statuses to its message that still shows one (runtime.ts
+-- drainQueue). This index lets that read find the outbound messages of an app by status.
+create index if not exists messages_outbound_status on network.messages (app_id, status) where direction = 'outbound';
