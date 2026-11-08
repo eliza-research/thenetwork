@@ -399,6 +399,8 @@ interface Request {
   noCount?: number; closed?: boolean;
   /** When the requester last got a confirm question for it: at most one per 72 hours. */
   lastConfirmAt?: number;
+  /** Matching came back on while it waited: its standing week of retries starts here, not at `at` (SD-267). */
+  openFrom?: number;
 }
 
 type SendResult = "sent" | "deferred" | "refused";
@@ -1702,7 +1704,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    */
   private retryRequests(now: number) {
     for (const r of this.requests) {
-      if (r.kind !== "people" || r.outcome !== "none" || r.closed || now - r.at > 7 * DAY || (r.lastTry && now - r.lastTry < 20 * HOUR)) continue;
+      if (r.kind !== "people" || r.outcome !== "none" || r.closed || now - (r.openFrom ?? r.at) > 7 * DAY || (r.lastTry && now - r.lastTry < 20 * HOUR)) continue;
       if (r.lastConfirmAt !== undefined && now - r.lastConfirmAt < 72 * HOUR) continue;
       const m = this.members.get(r.memberId);
       if (!m || !this.eligible(m.id, undefined, true) || this.busy(m.id)) continue;
@@ -1879,6 +1881,11 @@ export class ConsentNetwork implements NetworkUnderTest {
    * standing requests. What a reviewer already approved continues.
    */
   setMatchingEnabled(on: boolean, actor: string) {
+    // Requests told "I'll keep your request open" get their full week of retries from now (SD-267).
+    if (on && !this.opts.matchingEnabled && this.ctx) {
+      const now = this.now();
+      for (const r of this.requests) if (r.kind === "people" && r.outcome === "none" && !r.closed) r.openFrom = now;
+    }
     this.opts.matchingEnabled = on;
     this.ctx?.log("matching_switch", { on, actor });
   }
