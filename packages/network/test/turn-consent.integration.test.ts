@@ -181,6 +181,37 @@ describe.skipIf(!pgAvailable)("turn and consent", () => {
     const [row] = await sql`select status from platform.inbound where id = 'msg:sim:sd129-stop'`;
     expect(row.status).toBe("done");
   }, 60_000);
+  /** A friends member by text: the join, then the three interview answers. */
+  const friendsByText = async (tag: string, phone: string, nameAge: string) => {
+    for (const [i, text] of ["friends.help", nameAge, "I enjoy hiking and cooking", "Saturday afternoons work for me", "Small groups are good"].entries()) {
+      clock.advance(MINUTE);
+      expect((await post(turn(`${tag}-setup-${i}`, phone, text, "friends"))).status).toBe(200);
+    }
+  };
+  test("SD-212: a member whose first name is a city code does not silence the other members of that city", async () => {
+    await friendsByText("sd212-nyc", "+12125550212", "Nyc, 29");
+    const phone = "+12125552120";
+    await friendsByText("sd212-bea", phone, "Bea, 31");
+    clock.advance(MINUTE);
+    const body = await (await post(turn("sd212-open", phone, "Tell me something about the weather", "friends"))).json() as any;
+    expect([body.outcome, body.reason]).toEqual(["open", undefined]);
+    expect(body.context.city).toBe("nyc");
+  }, 60_000);
+  test("SD-215: a compound first name that contains another member's first name still gets an open turn", async () => {
+    await friendsByText("sd215-ann", "+12125550215", "Ann, 33");
+    const phone = "+12125552150";
+    const joined = await service.accounts.join(APPS.friends, {e164: phone, personId: null},
+      {firstName: "Ann-Marie", age: 30, homeCity: "nyc", consent: {sms: true, version: APPS.friends.consent.version}});
+    expect(joined.ok).toBe(true);
+    for (const [i, text] of ["I enjoy hiking and cooking", "Saturday afternoons work for me", "Small groups are good"].entries()) {
+      clock.advance(MINUTE);
+      expect((await post(turn(`sd215-setup-${i}`, phone, text, "friends"))).status).toBe(200);
+    }
+    clock.advance(MINUTE);
+    const body = await (await post(turn("sd215-open", phone, "Tell me something about the weather", "friends"))).json() as any;
+    expect([body.outcome, body.reason]).toEqual(["open", undefined]);
+    expect(body.context.firstName).toBe("Ann-Marie");
+  }, 60_000);
   test("SD-073: a banned member's text is not stored, handled or answered", async () => {
     const phone = "+12125550073";
     expect((await (await post(turn("sd073-join", phone, "Sam, 29"))).json() as any).reason).toBe("joined");
