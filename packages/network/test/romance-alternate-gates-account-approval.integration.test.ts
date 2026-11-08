@@ -207,4 +207,105 @@ describe("ConsentNetwork: romance alternate gates and account approval", () => {
 
     expect((w.net as any).approvalCheck(opp)).toBe("romance_mismatch");
   });
+  test("replaceOrClose syncs member record and rejects alternate when snapshot record was updated to paused", async () => {
+    const w = new Mini([
+      person("a", "Alice Wu"),
+      person("b", "Bob Smith"),
+      person("c", "Charlie Brown"),
+    ], miniOpts);
+    await w.onboard("a", "b", "c");
+
+    // Initially c is normal in memory
+    const cMem = (w.net as any).member("c");
+    expect(cMem.state).toBe("normal");
+
+    // Later, snapshot record is updated to paused (e.g. from platform/account sync)
+    const cRec = (w.net as any).record("c");
+    cRec.state = "paused";
+
+    const opp = (w.net as any).newOpp({
+      origin: "engine", kind: "intro", category: "social", objective: "coffee",
+      participants: ["a", "b"], alternates: ["c"], primed: [],
+      explanations: { a: "match", b: "match" }, score: 0.8,
+    });
+    (w.net as any).submit(opp);
+
+    // Bob becomes unavailable
+    opp.status.set("b", "unavailable");
+    (w.net as any).replaceOrClose(opp, "b");
+
+    // altOk should have synced c's record to paused and rejected c as alternate
+    expect(cMem.state).toBe("paused");
+    expect(opp.stage).toBe("closed");
+    expect(opp.closedReason).toBe("no one available");
+  });
+
+  test("altOk accepts alternate for hobby category when opted in via personal-growth intent", async () => {
+    const w = new Mini([
+      person("a", "Alice Wu"),
+      person("b", "Bob Smith"),
+      person("g", "Grace Hopper"),
+    ], miniOpts);
+    await w.onboard("a", "b", "g");
+
+    // Grace only has 'social' explicitly in categoriesOptIn (not 'hobby')
+    const gRec = (w.net as any).record("g");
+    gRec.prefs.categoriesOptIn = ["social"];
+
+    // Add personal-growth intent for Grace to snapshot
+    const snap = (w.net as any).snapshotCached();
+    snap.intents.push({
+      id: "intent-g-growth",
+      memberId: "g",
+      category: "growth",
+      objective: "learn ceramics and pottery",
+      createdAt: 0,
+      horizonDays: 30,
+      status: "active",
+    });
+
+    const opp = (w.net as any).newOpp({
+      origin: "engine", kind: "activity", category: "hobby", objective: "pottery workshop",
+      participants: ["a", "b"], alternates: ["g"], primed: [],
+      explanations: { a: "pottery", b: "pottery" }, score: 0.85,
+    });
+    (w.net as any).submit(opp);
+
+    // Bob becomes unavailable
+    opp.status.set("b", "unavailable");
+    (w.net as any).replaceOrClose(opp, "b");
+
+    // Grace is accepted because personal-growth intent maps to hobby opt-in
+    expect(opp.stage).toBe("probing");
+    expect(opp.participants).toEqual(["a", "g"]);
+    expect(opp.status.get("g")).toBe("queued");
+  });
+
+  test("altOk rejects alternate in receiving state when replacing a contributor role and updates o.roles", async () => {
+    const w = new Mini([
+      person("a", "Alice Wu"),
+      person("b", "Bob Smith"),
+      person("c", "Charlie Brown", { state: "receiving" as any }),
+      person("d", "David Miller"),
+    ], miniOpts);
+    await w.onboard("a", "b", "c", "d");
+
+    const opp = (w.net as any).newOpp({
+      origin: "engine", kind: "group", category: "social", objective: "hiking trip",
+      participants: ["a", "b"], alternates: ["c", "d"], primed: [],
+      explanations: { a: "hiking", b: "hiking" }, score: 0.8,
+    });
+    opp.roles = { a: "participant", b: "host" };
+    (w.net as any).submit(opp);
+
+    // Host Bob becomes unavailable
+    opp.status.set("b", "unavailable");
+    (w.net as any).replaceOrClose(opp, "b");
+
+    // Charlie is in receiving state, so he cannot take the 'host' contributor role
+    // David is chosen instead, and host role is transferred to David
+    expect(opp.participants).toEqual(["a", "d"]);
+    expect(opp.roles.d).toBe("host");
+    expect(opp.roles.b).toBeUndefined();
+  });
 });

@@ -37,6 +37,7 @@ import {
 } from "@thenetwork/engine";
 import { HELP_TEXT, STOP_CONFIRMATION, type InboundMessage, type NetworkContext, type NetworkUnderTest, type SimMeta } from "@thenetwork/core";
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
+import { isPersonalGrowth } from "@thenetwork/engine/src/packs/network/taxonomy.ts";
 import { ageAnswer, availabilityTags, checkinTags, classify, extractProfile, feedbackOf, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, type Classified, type TimeOption } from "./classify.ts";
 import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import { brandOf, copy, copyFor, type Copy, whenPhrase } from "./copy.ts";
@@ -2007,12 +2008,19 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /** An alternate candidate may step in for an opportunity: eligible, active, name distinct, no blocks/avoid/history, category-opted-in, and romance-compatible if romance. */
-  private altOk(o: Opp, a: MemberId, stay: MemberId[]): boolean {
+  private altOk(o: Opp, a: MemberId, stay: MemberId[], out?: MemberId): boolean {
     const ma = this.members.get(a);
-    if (!ma || ma.state === "paused" || !this.eligible(a) || this.sharesFirstName(o, a)) return false;
+    if (!ma) return false;
+    this.syncRecord(ma);
+    if (ma.state === "paused" || !this.eligible(a, o.id) || this.sharesFirstName(o, a)) return false;
+    if (out && o.roles?.[out] && CONTRIBUTOR_ROLES.has(o.roles[out] as never) && ma.state === "receiving") return false;
     if (stay.some(p => this.blocked(p, a) || this.avoid.has(pairKey(p, a)) || this.pairHistory(p, a, 60))) return false;
     const r = this.record(a);
-    if (r?.prefs?.categoriesOptIn && !r.prefs.categoriesOptIn.includes(o.category)) return false;
+    if (r?.prefs?.categoriesOptIn) {
+      const opted = r.prefs.categoriesOptIn.includes(o.category)
+        || (o.category === "hobby" && this.snapshotCached().intents.some(i => i.memberId === a && isPersonalGrowth(i)));
+      if (!opted) return false;
+    }
     if (o.category === "romance") {
       if (stay.length !== 1 || this.romanceGate([stay[0]!, a]) !== undefined) return false;
     }
@@ -2032,7 +2040,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const out = opts.swapOut ?? (swappable.length === 1 ? swappable[0] : undefined);
     if (out !== undefined && !swappable.includes(out)) { this.ctx.log("review_refused", { oppId: o.id, decision: "reroll", reason: "cannot_swap" }); return { ok: false, reason: "cannot_swap" }; }
     const stay = o.participants.filter(p => p !== out);
-    const alt = out === undefined ? undefined : o.alternates.find(a => this.altOk(o, a, stay));
+    const alt = out === undefined ? undefined : o.alternates.find(a => this.altOk(o, a, stay, out));
     this.counters.reviewRerolled++;
     o.review!.rerolls = [...(o.review!.rerolls ?? []), { at: now, out, in: alt, reviewer, note: opts.note }];
     this.ctx.log("review_decision", { ...logged, decision: "reroll", out: out ?? null, in: alt ?? null, next: alt ? "review" : "engine" });
@@ -2044,6 +2052,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     o.alternates = o.alternates.filter(a => a !== alt);
     o.participants = o.participants.map(p => (p === out ? alt : p));
+    if (o.roles && out !== undefined && o.roles[out]) {
+      o.roles[alt] = o.roles[out];
+      delete o.roles[out];
+    }
     o.status.delete(out!); o.status.set(alt, "queued");
     o.primed.delete(out!);
     delete o.explanations[out!];
@@ -2394,13 +2406,17 @@ export class ConsentNetwork implements NetworkUnderTest {
     while (!alt && o.alternates.length && o.replacements < 3) {
       const a = o.alternates.shift()!;
       // The same checks as a reroll: blocks, avoid edges, pair history with staying participants (network-consent-26), category opt-in and romance gate.
-      if (this.altOk(o, a, stay)) alt = a;
+      if (this.altOk(o, a, stay, out)) alt = a;
     }
     if (o.picks?.[out]) { const { [out]: _, ...rest } = o.picks; o.picks = rest; }
     if (alt) {
       o.replacements++; this.counters.replacements++;
       o.participants = o.participants.map(p => (p === out ? alt! : p));
       if (o.first === out) o.first = alt;
+      if (o.roles && o.roles[out]) {
+        o.roles[alt] = o.roles[out];
+        delete o.roles[out];
+      }
       o.status.delete(out); o.status.set(alt, "queued");
       delete o.explanations[out];
       this.reexplain(o);
