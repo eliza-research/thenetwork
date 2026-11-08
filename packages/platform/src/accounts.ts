@@ -109,7 +109,7 @@ export interface JoinHookContext { app: AppInfo; person: Person; membership: Mem
 export interface MemberHookContext { app: AppInfo; personId: string; memberId: string; e164: string }
 
 export interface AccountHooks {
-  /** Create the network member (the service mounts this). A throw undoes the join. */
+  /** Create the network member (the service mounts this). A throw undoes a new join. It runs again on a repeated join, so it must do nothing for a member that exists. */
   onJoin?(ctx: JoinHookContext): Promise<void> | void;
   /** STOP from the web. memberId is this app's member, when there is one (a global stop runs without one). */
   onStop?(ctx: Omit<MemberHookContext, "memberId"> & { memberId?: string; scope: StopScope }): Promise<void> | void;
@@ -358,7 +358,12 @@ export class Accounts {
       // A repeated join is still an age statement. Keep the membership and consent unchanged,
       // but propagate a lower age before returning the existing membership.
       await this.recordAge(who.e164, person, input.age);
-      if (!joinAgeCheck(input.age, await this.lowestAge(who.e164, person), app).ok) { await this.declineUnderAge(who.e164, person); return { ok: false, error: "under_age" }; }
+      const again = joinAgeCheck(input.age, await this.lowestAge(who.e164, person), app);
+      if (!again.ok) { await this.declineUnderAge(who.e164, person); return { ok: false, error: "under_age" }; }
+      // A first join can stop after its membership committed and before the hook made the network member:
+      // the repeat completes it (the hook does nothing for a member that already exists).
+      await this.store.attachPerson(who.e164, person!.id);
+      await this.hooks.onJoin?.({ app, person: person!, membership: existing, e164: who.e164, age: again.effective ?? input.age, input });
       return { ok: true, membership: existing };
     }
     if (app.joinMode === "invite" && existing?.state !== "invited") return { ok: false, error: "invite_only" };

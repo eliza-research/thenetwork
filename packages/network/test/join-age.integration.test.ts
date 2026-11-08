@@ -305,3 +305,26 @@ test("Q-join_age-1: the bare answer \"friends\" to the looking-for question enro
   expect(await (service as any).pendingOf(phone, "join")).toBeUndefined();
   expect((await liveMemberships(phone)).sort()).toEqual(["friends", "ntwrk"]);
 }, 60_000);
+
+test("Q-join_age-2: a web join that stops after its membership commits gets its network member on the retry", async () => {
+  const phone = "+12125550321";
+  // The worker stops after putMembership and the opt-in, before the join hook (the network member) runs.
+  const attach = service.people.attachPerson;
+  service.people.attachPerson = (async () => { service.people.attachPerson = attach; throw new Error("synthetic worker stop"); }) as typeof attach;
+  try {
+    await expect(webJoin("friends", phone, 25, "Sam")).rejects.toThrow("synthetic worker stop");
+  } finally {
+    service.people.attachPerson = attach;
+  }
+  // The client sends the same join again: the live membership gets its network member.
+  const retry = await webJoin("friends", phone, 25, "Sam");
+  expect(retry.ok).toBe(true);
+  const memberId = (retry as any).membership.memberId as string;
+  expect(await liveMemberships(phone)).toEqual(["friends"]);
+  expect(await networkMember("friends", memberId)).toBe("active");
+  // A second repeat changes nothing: still one network member for the app.
+  expect((await webJoin("friends", phone, 25, "Sam")).ok).toBe(true);
+  const person = await service.accounts.personFor(phone);
+  const rows = await sql`select id from network.members where app_id = 'friends' and person_id = ${person!.id}`;
+  expect(rows.map((r: any) => r.id)).toEqual([memberId]);
+}, 60_000);
