@@ -54,8 +54,16 @@ export function BiasMonitor() {
 }
 
 // ---------------------------------------------------------------- safety console (gap 7)
-/** Cases (urgent first), evidence events and lift/close actions; the minor-safety view. Safety and admin only. */
+/**
+ * Cases (urgent first), evidence events and lift/close actions; the minor-safety view. Safety and admin only.
+ * One mount per app: case ids have no app prefix, so a row of the earlier app must not stay on screen and
+ * send its action to the new app.
+ */
 export function SafetyCases() {
+  const s = useStore();
+  return <AppSafetyCases key={s.app} />;
+}
+function AppSafetyCases() {
   const s = useStore();
   const r = useFetch<SafetyInfo>(() => store.safety(), `${s.mode}|${s.network?.trust.hold}|${s.network?.trust.watch}|${s.stats?.blocks}`, 10_000);
   const [show, setShow] = useState<"open" | "all">("open");
