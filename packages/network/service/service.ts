@@ -1487,7 +1487,7 @@ export class NetworkService implements RuntimeHost {
     const e164 = normalizePhone(from), t = this.clock.now();
     await rt.identities();
     const memberId = rt.memberOf(from);
-    const { event, reply } = keywordEvent(kw, e164 ?? from, app, this.consentAt(ev), { line, scope, ref });
+    const { event, reply } = keywordEvent(kw, e164 ?? from, app, await this.stopAt(e164, app, scope, ev), { line, scope, ref });
     // The person is read before the write: a number change that commits between them does not lose the STOP.
     const person = e164 ? await this.accounts.personFor(e164) : undefined;
     if (e164 && event) await this.accounts.recordConsent(event, person?.id);
@@ -1520,6 +1520,20 @@ export class NetworkService implements RuntimeHost {
   private lineAdapter(): ChannelAdapter | undefined {
     for (const rt of this.runtimes.values()) if (rt.adapter.enqueue) return rt.adapter;
     return undefined;
+  }
+
+  /**
+   * The time of a STOP. Against other texts it is the person's send time (consentAt): a late STOP never undoes a
+   * newer START or join by text, which carry the same gateway time. An opt-in made off the line (the web form) has
+   * no message ref and the backend's time, and the gateway's clock can be behind the backend's: a STOP that reaches
+   * the backend after such an opt-in is never ordered before it.
+   */
+  private async stopAt(e164: string | undefined, app: AppInfo, scope: StopScope, ev?: { receivedAt: number }): Promise<number> {
+    let at = this.consentAt(ev);
+    if (!e164) return at;
+    for (const id of scope === "global" ? Object.keys(this.apps) as AppId[] : [app.id])
+      for (const e of await this.people.consentEvents(e164, id)) if (e.state === "opted_in" && !e.ref && e.at > at) at = e.at;
+    return at;
   }
 
   /**
