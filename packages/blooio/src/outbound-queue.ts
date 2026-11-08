@@ -299,6 +299,10 @@ export class OutboundQueue {
     const receipts = await this.reconcileUnknown();
     return this.withLine(async () => {
       const changes: StatusChange[] = [...receipts, ...await this.expireHeld()];
+      // Code from before migration 0045 writes no network. It can still run after the migration (old and new
+      // replicas overlap in a deploy, or a rollback): its rows take the app's first city, as in 0045, so a queue drains them.
+      if (this.o.network) await this.sql`update platform.outbound set network_id = app_id || ':nyc'
+        where app_id = ${this.app} and line = ${this.line} and network_id is null`;
       const rows = await this.sql`select * from platform.outbound where app_id = ${this.app} and line = ${this.line}
         and (${this.o.network ?? null}::text is null or network_id = ${this.o.network ?? null}) and status = any(${`{${DUE.join(",")}}`}::text[]) and next_attempt_at <= ${new Date(this.now)} order by next_attempt_at, created_at, id`;
       for (const r of rows as any[]) {
