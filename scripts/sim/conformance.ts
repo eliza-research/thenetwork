@@ -151,6 +151,20 @@ export async function conformance(b: Block, pack: AppPack, o: ConformanceOptions
     }
   });
 
+  // SD-063: a flow with nobody left to probe is revealed or closed (a one-participant network_growth
+  // proposal moved to probing_partners on its yes and stayed there).
+  await b.run(name("probe flows never stall (nobody left to probe means revealed or closed, every proposal, random answers)"), async () => {
+    const rng = new Rng(98);
+    for (const { seed } of worlds) {
+      for (const p of (await run(seed)).proposals) {
+        let f = A.startProbeFlowFor(p as EngineProposal, pack);
+        for (let step = 0; step < 2 * p.participants.length && A.toProbe(f).length; step++) for (const id of A.toProbe(f)) f = A.recordProbeAnswer(f, id, rng.next() < 0.8);
+        expect(A.toProbe(f)).toEqual([]);
+        expect(["revealed", "closed"]).toContain(f.stage);
+      }
+    }
+  });
+
   await b.run(name("member-facing leak gate (explanations, objectives, probes pass LeakGuard; no canary in any output)"), async () => {
     for (const { seed, input } of worlds) {
       const r = await run(seed);
