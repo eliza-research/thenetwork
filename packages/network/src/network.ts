@@ -450,6 +450,8 @@ const EMPLOYER_TEXT = /\b(works? (at|for)|employer|employed|company|job|occupati
 /** How long a want a member told us about stays fresh (the engine's intent horizon). */
 const LEARNED_DESIRE_DAYS = 60;
 const OPEN_STAGES = new Set(["review", "probing", "scheduled"]);
+/** A plan member who has left the plan (a no, silence, opt-out, watch): a plan probe is no longer about them. */
+const PLAN_OUT = new Set<PStatus>(["no", "unavailable", "dropped"]);
 const EMPTY_SET: ReadonlySet<string> = new Set();
 const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 /** A tie-break in [0, 1) from the seed and two ids (FNV-1a): stable per run, not id order. */
@@ -2992,7 +2994,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const res = this.send(m, text, {
       type: "plan_probe", proactive: true, planInvite: allowance, ...(allowance ? { lane: "plan" } : {}),
       plan: { planId: o.id, activity: a.id, window: { ...o.plan.window }, size: o.plan.invited.length, ...(o.plan.place.area ? { area: o.plan.place.area } : {}) },
-    }, "probe", { about: o.plan.invited, hook: { t: "plan_probe", oppId: o.id, id }, noDefer: true, planInvite: allowance });
+    }, "probe", { about: o.participants.filter(x => !PLAN_OUT.has(o.status.get(x)!)), hook: { t: "plan_probe", oppId: o.id, id }, noDefer: true, planInvite: allowance });
     if (res === "sent") { m.planDay = day; if (allowance) this.plansCounters.planInvitesAllowance++; else this.plansCounters.planInvitesIntroCap++; }
   }
 

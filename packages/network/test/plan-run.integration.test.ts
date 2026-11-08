@@ -61,4 +61,16 @@ describe("plan run", () => {
     expect(partner.map((o: any) => [...o.participants].sort())).toEqual([["a", "b"]]);
     expect(partner[0].review?.decision).toBe("approve");
   });
+
+  // SD-046: the probe's `about` list was the plan's invited list as approved. A member who left the
+  // plan (here: on watch) stayed in it, so every later probe was refused with other_on_watch.
+  test("a member who left the plan does not stop the probes to the others", async () => {
+    const w = await world(["a", "b", "c", "d"]);
+    const id = submit(w, groupPlan(w, ["a", "b", "c", "d"]));
+    (w.net as any).trust.add("c", w.clock.now(), "report_received", 3);
+    expect(opp(w, id).status.get("c")).toBe("unavailable");
+    await answer(w, { a: "yes", b: "yes", d: "yes" });
+    expect(w.log("send_refused").filter(l => l.detail.reason === "other_on_watch")).toEqual([]);
+    expect(w.meetings.map(m => [...m.participants].sort())).toEqual([["a", "b", "d"]]);
+  });
 });
