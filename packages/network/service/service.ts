@@ -949,6 +949,7 @@ export class NetworkService implements RuntimeHost {
    *  2. the whole message is an app's word ("slop", "slop.date", "join friends.help"): that app;
    *  3. a join the person started (they sent the app's word) takes the answer that follows, if the
    *     answer reads as a join answer or the person is not a member anywhere;
+   *     the same for an app that invited the person (a staff invite);
    *  4. a member: the app with the newest open item (a probe, a plan they have not answered), else the
    *     app that wrote to them last;
    *  5. otherwise The Network (a stranger joins it).
@@ -970,6 +971,10 @@ export class NetworkService implements RuntimeHost {
     const pending = e164 ? await this.pendingOf(e164, "join") : undefined;
     if (pending && !mine.some(x => x.app === pending.app)
       && (!mine.length || parseJoinText(ev.text, this.appWords(), true).age !== undefined)) return { app: pending.app, shared: true };
+    // A staff invite the person did not answer yet: the reply joins the invited app (the same rule as a pending join).
+    const person = !pending && e164 ? await this.accounts.personFor(e164) : null;
+    const invited = person ? (await this.people.memberships(person.id)).find(m => m.state === "invited" && this.runtimeFor(m.app)) : undefined;
+    if (invited && (!mine.length || parseJoinText(ev.text, this.appWords(), true).age !== undefined)) return { app: invited.app, shared: true };
     if (mine.length) {
       const open = mine.filter(x => x.lastItem !== null).sort((a, b) => b.lastItem! - a.lastItem!)[0];
       if (open) return { app: open.app, shared: true };

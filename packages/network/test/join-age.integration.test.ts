@@ -283,3 +283,13 @@ test("SD-383: a web join with age 0 is declined as under age and the age floor k
   expect(await webJoin("friends", phone, 25)).toEqual({ok: false, error: "under_age"});
   expect(await liveMemberships(phone)).toEqual([]);
 }, 60_000);
+
+test("SD-488: the reply to a staff invite with name and age joins the invited app", async () => {
+  const phone = "+12125550319";
+  const staff = {id: "staff@example.com", roles: ["admin"], grants: [{role: "admin", app: "*"}], via: "sso"} as any;
+  expect(await service.invite(staff, service.runtimeFor("friends")!, phone)).toEqual({ok: true});
+  const r = await say(phone, "Sam, 29");
+  expect(r.reason).toBe("joined");
+  expect(r.app).toBe("friends");
+  expect(await liveMemberships(phone)).toEqual(["friends"]);
+}, 60_000);
