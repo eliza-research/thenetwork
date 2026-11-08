@@ -141,8 +141,9 @@ export interface OAuthStore {
   getToken(hash: string): Promise<Token | undefined>;
   revokeToken(hash: string, at: number): Promise<void>;
   /** Atomically rotate a live refresh token, persist its pair and success audit.
-   * False on replay/revocation (one winner under a race); errors leave everything unchanged. */
-  rotateRefresh(hash: string, at: number, pair: readonly [Token, Token], audit: AuditRow): Promise<boolean>;
+   * "replay": the token was already rotated or revoked (one winner under a race). "stale": the grant is
+   * gone, revoked or expired, or the pair outlives it; nothing was rotated. Errors leave everything unchanged. */
+  rotateRefresh(hash: string, at: number, pair: readonly [Token, Token], audit: AuditRow): Promise<"rotated" | "replay" | "stale">;
 
   audit(row: AuditRow): Promise<void>;
   auditRows(limit?: number): Promise<AuditRow[]>;
@@ -250,13 +251,15 @@ export class MemoryOAuthStore implements OAuthStore {
   async getToken(hash: string) { return copy(this.tokens.get(hash)); }
   async revokeToken(hash: string, at: number) { const t = this.tokens.get(hash); if (t && t.revokedAt === null) t.revokedAt = at; }
   async rotateRefresh(hash: string, at: number, pair: readonly [Token, Token], audit: AuditRow) {
+    const g = this.grants.get(pair[0].grantId);
+    if (!g || g.revokedAt !== null || g.expiresAt <= at || pair.some(t => t.expiresAt > g.expiresAt)) return "stale" as const;
     const t = this.tokens.get(hash);
-    if (!t || t.kind !== "refresh" || t.rotatedAt !== null || t.revokedAt !== null) return false;
+    if (!t || t.kind !== "refresh" || t.rotatedAt !== null || t.revokedAt !== null) return "replay" as const;
     const prepared = structuredClone({ pair, audit });
     t.rotatedAt = at;
     for (const token of prepared.pair) this.tokens.set(token.hash, token);
     this.rows.push(prepared.audit);
-    return true;
+    return "rotated" as const;
   }
 
   async audit(row: AuditRow) { this.rows.push({ ...row }); }

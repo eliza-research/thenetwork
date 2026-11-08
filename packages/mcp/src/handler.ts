@@ -627,7 +627,10 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
       const refreshedAt=now();
       if(t.expiresAt<=refreshedAt || grant.expiresAt<=refreshedAt)return bad("invalid_grant");
       const pair = tokenPair(client, grant, asked, t.resource);
-      if (t.rotatedAt !== null || !(await store.rotateRefresh(t.hash, refreshedAt, pair.tokens, { at:refreshedAt, kind: "token_refreshed", clientId: client.id, grantId: grant.id, app: c.app.id, detail: asked.join(" ") }))) {
+      const rotated = t.rotatedAt !== null ? "replay" : await store.rotateRefresh(t.hash, refreshedAt, pair.tokens, { at:refreshedAt, kind: "token_refreshed", clientId: client.id, grantId: grant.id, app: c.app.id, detail: asked.join(" ") });
+      // The grant ended while this refresh waited (revoked, expired, deleted): no token was used twice.
+      if (rotated === "stale") return bad("invalid_grant");
+      if (rotated === "replay") {
         // A refresh token used twice: someone else has a copy. End the whole grant.
         await revokeGrant(t.grantId, at);
         await store.audit({ at, kind: "refresh_replay", clientId: client.id, grantId: t.grantId, app: c.app.id, detail: "grant revoked" });
