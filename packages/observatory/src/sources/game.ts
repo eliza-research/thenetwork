@@ -250,6 +250,8 @@ export class GameSource implements DataSource {
     this.timers = [];
     this.store.clock.playing = false;
     await this.takeover?.releaseAll();
+    // A running step ends here, before a reset builds the next world: its records go to this world only.
+    await this.advancing;
   }
 
   private onRecord(r: RunRecord) {
