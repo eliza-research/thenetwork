@@ -164,8 +164,9 @@ export class Projector {
         o.meetingAt = r.at;
         for (const id of r.participants) {
           // A booked plan (attention v1.2) is booked before anyone is told: a member who had not said yes in
-          // words is in by default (silence = in), so they count as a yes here.
-          if (o.status[id] !== "accepted" && o.status[id] !== "countered" && o.status[id] !== "cancelled_with_notice") { c.accepts++; const k = this.counters(id); if (k) k.accepted++; }
+          // words is in by default (silence = in), so they count as a yes here. A meeting reported again (a late
+          // joiner) finds the others already confirmed: they are not counted twice.
+          if (!["accepted", "countered", "confirmed", "cancelled_with_notice"].includes(o.status[id] ?? "")) { c.accepts++; const k = this.counters(id); if (k) k.accepted++; }
           if (o.status[id] !== "cancelled_with_notice") o.status[id] = "confirmed";
         }
         for (const [id, st] of Object.entries(o.status)) if (st === "pending" || st === "invited" || st === "ignored") o.status[id] = "dropped";
