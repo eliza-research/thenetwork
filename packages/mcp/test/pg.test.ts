@@ -174,8 +174,8 @@ describe.skipIf(!EXPLICIT_PG && !pgAvailable)("PgOAuthStore", () => {
     const c = await connect(env, "slop.date", PHONE_A);
     const g = (await store.grantsFor(env.accounts.phoneHash(PHONE_A), "slop", env.clock.t))[0]!;
     await store.putCode({ hash: "race", grantId: g.id, clientId: c.client.client_id, redirectUri: "https://client.example/callback", codeChallenge: "x".repeat(43), resource: "https://slop.date/mcp", scopes: ["apps:read"], createdAt: env.clock.t, expiresAt: env.clock.t + 60_000, usedAt: null });
-    const taken = await Promise.all([1, 2, 3, 4].map(() => store.takeCode("race", env.clock.t)));
-    expect(taken.filter(t => t!.usedAt === null)).toHaveLength(1);
+    const taken = await Promise.all([1, 2, 3, 4].map(() => store.redeemCode("race", env.clock.t, () => undefined)));
+    expect(taken.filter(t => t!.code.usedAt === null)).toHaveLength(1);
     const t0 = 3_600_000 * 1000;
     expect(await store.hit("b", 60_000, t0)).toBe(1);
     expect(await store.hit("b", 60_000, t0 + 1)).toBe(2);

@@ -46,6 +46,8 @@ export interface PlatformHooks {
   phoneKey(e164: string): string;
   /** The person whose number has this keyed hash now, or null (no person, deleted, or on hold). */
   personForKey(phoneKey: string): Promise<string | null>;
+  /** True when the number with this keyed hash, or the person (the grant's, else the number's owner now), is banned. */
+  banned(phoneKey: string, personId: string | null): Promise<boolean>;
   /** Internal canonical phone-age guard. No age is exposed to the agent. Missing support disables drafts. */
   withSignupAgePolicy?<T>(phoneKey: string, app: McpAppId, fn: (allowed: boolean) => Promise<T>): Promise<T>;
   /** Wire the one temporary-draft cleanup consumer to canonical age recording, including null-person phones. */
@@ -110,6 +112,8 @@ export interface PlatformParts {
   updates?: PlatformHooks["updates"];
   /** Surface signals for the inbox (NetworkService.assistantLinked). */
   assistantLinked?: PlatformHooks["assistantLinked"];
+  /** True when the app's Network holds this member (a staff or trust hold until a review). The membership row does not show it. */
+  memberHeld?: (app: AppInfo["id"], memberId: string) => Promise<boolean>;
 }
 
 function cookieValue(header: string | null, name: string): string | undefined {
@@ -175,6 +179,9 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
     async personForKey(key) {
       return (await p.accounts.byPhoneHash(key))?.person.id ?? null;
     },
+    async banned(key, personId) {
+      return p.store.isBanned(key, personId ?? (await p.store.findPhoneByHash(key))?.personId ?? null);
+    },
     async customChatGptSlopEligible(personId, key) {
       const app = p.app("slop");
       const who = await p.accounts.byPhoneHash(key);
@@ -196,7 +203,9 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       const app = p.app(id);
       if (!app) return "not_joined";
       const m = await p.store.getMembership(personId, app.id);
-      return publicStatus(m?.state, m?.review);
+      const status = publicStatus(m?.state, m?.review);
+      // A held member is not signed up as usual: the agent reads on_hold, and submit_profile never reaches them.
+      return m && (status === "active" || status === "onboarding") && (await p.memberHeld?.(app.id, m.memberId)) ? "on_hold" : status;
     },
     session: p.sessions && (async (id, req) => {
       const app = p.app(id);

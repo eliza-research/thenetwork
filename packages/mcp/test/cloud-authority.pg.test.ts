@@ -83,8 +83,8 @@ test("refresh waiting on the grant lock cannot publish tokens after the original
  cloudAuthority:{version:1,app:"friends",resource:"https://friends.help/mcp",phoneKey:"fixture-key",issuedAt:Math.floor(at/1000),expiresAt,sealed:"fixture"}};await store.putGrant(grant);
  const old:Token={hash:randomUUID(),kind:"refresh",grantId:id,clientId,app:"friends",resource:grant.resource,scopes:grant.scopes,createdAt:at,expiresAt,revokedAt:null,rotatedAt:null};await store.putToken(old);
  const pair:[Token,Token]=[{...old,hash:randomUUID(),kind:"access"},{...old,hash:randomUUID()}];
- let pending:Promise<boolean>|undefined;
+ let pending:Promise<"rotated"|"replay"|"stale">|undefined;
  await store.sql.begin(async tx=>{await tx`select id from oauth.grants where id=${id} for update`;
  pending=store.rotateRefresh(old.hash,at,pair,{at,kind:"token_refreshed",clientId,grantId:id,app:"friends",detail:null});await Bun.sleep(150);});
- expect(await pending).toBe(false);expect(await store.getToken(pair[0].hash)).toBeUndefined();expect((await store.getToken(old.hash))?.rotatedAt).toBeNull();
+ expect(await pending).toBe("stale");expect(await store.getToken(pair[0].hash)).toBeUndefined();expect((await store.getToken(old.hash))?.rotatedAt).toBeNull();
 });

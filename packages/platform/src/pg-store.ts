@@ -454,6 +454,8 @@ export class PgPeopleStore implements PeopleStore {
         const cloud = tx`(id like 'grant_cloud_%' or cloud_authority is not null)`;
         await tx`update oauth.grants set revoked_at = ${ts(m.at)} where phone_key = ${m.oldHash} and revoked_at is null and ${cloud}`;
         await tx`update oauth.grants set phone_key = ${m.newHash} where phone_key = ${m.oldHash} and not ${cloud}`;
+        // A grant's signup draft is claimed by the same key as the grant (packages/mcp/db/oauth.sql).
+        await tx`update oauth.signup_drafts set phone_key = ${m.newHash} where phone_key = ${m.oldHash}`;
       }
       const changed = await tx`update platform.phone_changes set confirmed_at = ${ts(m.at)}, new_e164 = null, old_hash = ${m.oldHash}, new_hash = ${m.newHash}
         where id = ${m.changeId}::uuid and person_id = ${m.personId}::uuid and confirmed_at is null returning id`;
