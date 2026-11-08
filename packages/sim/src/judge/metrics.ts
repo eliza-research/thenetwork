@@ -442,16 +442,15 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
     // Carrier auto-replies: only a system message next to the member's own keyword (STOP/START/HELP).
     const carrier = !!m.system && (keywordTimes.get(to) ?? []).some(t => Math.abs(t - m.ts) <= 60_000);
     const probe = (meta.probe ?? undefined) as { key?: unknown; participants?: unknown } | undefined;
-    const plan = (meta.plan ?? undefined) as { id?: unknown; invited?: unknown; alternates?: unknown; participants?: unknown; hostId?: unknown } | undefined;
-    const oppId = [meta.proposalId, probe?.key, plan?.id].find((x): x is string => typeof x === "string" && !!x);
+    // A plan probe names its plan by core PlanMeta.planId; its roster comes from probe_started and the recipients.
+    const plan = (meta.plan ?? undefined) as { planId?: unknown } | undefined;
+    const oppId = [meta.proposalId, probe?.key, plan?.planId].find((x): x is string => typeof x === "string" && !!x);
     if (oppId) {
       msgOpp.set(m.id, oppId);
       if (m.status === "delivered") l.lastOpp = oppId;
       addOpp(oppId, meta.participants); addOpp(oppId, probe?.participants);
-      addOpp(oppId, plan?.invited); addOpp(oppId, plan?.alternates); addOpp(oppId, plan?.participants); addOpp(oppId, [plan?.hostId]);
       // The recipient was contacted about it (a backfilled alternate joins the roster here).
       addRoster(oppId, [to]); addRoster(oppId, meta.participants); addRoster(oppId, probe?.participants);
-      addRoster(oppId, plan?.invited); addRoster(oppId, plan?.participants); addRoster(oppId, [plan?.hostId]);
       if (meta.type === "probe" || probe) probed.add(oppId);
     }
     const relayFrom = typeof meta.relayFrom === "string" ? meta.relayFrom : undefined;

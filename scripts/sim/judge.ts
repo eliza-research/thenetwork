@@ -43,4 +43,11 @@ export async function judgeBlock(b: Block): Promise<void> {
     // Control: a sent accept exempts the logistics of that opportunity.
     expect(run("accept").two_unanswered ?? 0).toBe(0);
   });
+  // SD-190 (sim S-13): a plan probe carries meta.plan.planId (core PlanMeta). The judge read plan.id, so a
+  // plan probe was about no opportunity, and a plan probe to a declared minor was not a minor contact.
+  await b.run("judge: a plan probe to a declared minor is a minor contact", () => {
+    const recs: RunRecord[] = [...base(), persona("k", "Kai Moreno", 16), { t: T0, type: "join", memberId: "k" },
+      out(T0 + DAY, "k", { type: "plan_probe", plan: { planId: "plan-1", activity: "bouldering" } }, "Up for bouldering Thursday evening with 3 others? Reply STOP to pause.")];
+    expect(computeMetrics(recs).safety.minorContacts).toBe(1);
+  });
 }
