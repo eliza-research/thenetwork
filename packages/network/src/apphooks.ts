@@ -62,7 +62,7 @@ export interface AppHooks {
   booked?(o: HookOpp, id: MemberId, ctx: { others: string[]; where: string; when: string }): string | undefined;
   /** The question after the meeting; undefined: the Network's own ("How did it go with ...?"). */
   checkIn?(o: HookOpp, id: MemberId, others: string): string | undefined;
-  /** Answers to the check-in can file a report about the other person (slop: harassment, lying, a no-show, an unsafe date). */
+  /** Answers to the check-in can file a report about the other person (slop and peon: harassment, lying, a no-show, an unsafe date, a scam). */
   postDateReports?: boolean;
   /** peon: hiring managers post, update and close jobs by text in a handled turn, read back and confirmed (jobs.ts). */
   postings?: boolean;

@@ -310,5 +310,7 @@ export function peonHooks(): AppHooks {
       const seat = seatOf(o);
       return seat ? SEAT_COPY.checkIn({ title: seat.title ?? "the role", must: [] }, others) : undefined;
     },
+    // The check-in asks "tell me if anything felt off": a scam, a no-show or harassment there is a report (SD-221).
+    postDateReports: true,
   };
 }
