@@ -89,10 +89,14 @@ export class ServiceClient {
     return { status: r.status, json: await r.json().catch(() => ({})) as Record<string, any> };
   }
 
-  /** A staff action. 200: done. 409: the Network refused it (its reason as the code). Anything else: the service did not act. */
+  /**
+   * A staff action. 200: done. 409: the Network refused it (its reason as the code). A timeout: the
+   * request went out, so the service may have acted ("service_timeout"). Anything else: the service did not act.
+   */
   private async act(path: string, staff: string, body: unknown, errors: Record<string, string>): Promise<ControlResult> {
     let res: { status: number; json: Record<string, any> };
     try { res = await this.call("POST", path, staff, body); } catch (e) {
+      if ((e as Error).name === "TimeoutError") return { ok: false, code: "service_timeout", error: "the Network service did not answer in time: the action may have run. Check the current state before you try again" };
       return { ok: false, code: "service_unavailable", error: `the Network service did not answer: ${(e as Error).message}` };
     }
     const { status, json } = res;
