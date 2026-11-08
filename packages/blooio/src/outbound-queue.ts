@@ -168,8 +168,8 @@ export interface QueueOptions {
   leaseMs?: number;
   /**
    * A row whose provider acceptance stays unknown (unknown_acceptance: the worker stopped mid-call, or the
-   * provider timed out) and that no receipt lookup resolves within this long after it was created ends as
-   * failed_unknown, with an alert. Default 6 hours.
+   * provider timed out) and that no receipt lookup resolves within this long after its acceptance became
+   * unknown ends as failed_unknown, with an alert. Default 6 hours.
    */
   unknownTtlMs?: number;
   /** A proactive row older than this is never sent (expired). Default 24 h. Any other row: 3 days. */
@@ -194,8 +194,8 @@ export const WAITING = ["pending", "retry_scheduled", "deferred_quiet_hours", "h
 const IN_FLIGHT = ["accepted", "sent"];
 const DUE = ["pending", "retry_scheduled", "deferred_quiet_hours"];
 const PROVIDER_RANK: Record<string, number> = { accepted: 1, queued: 1, sent: 2, delivered: 3, read: 4 };
-/** Statuses that did not go out: their person-cap slot goes back. */
-export const NOT_SENT = /^(refused|suppressed|blocked|parked|failed|expired|dropped)/;
+/** Statuses that did not go out: their person-cap slot goes back. failed_unknown may have gone out: it keeps its slot. */
+export const NOT_SENT = /^(refused|suppressed|blocked|parked|failed(?!_unknown)|expired|dropped)/;
 
 const fingerprint = (to: string, text: string, media: string[], kind: string, photos?: ApprovedRelayPhoto[]) =>
   // Retain legacy text/media fingerprints; approved selections additionally bind their full immutable payload.
@@ -579,14 +579,15 @@ export class OutboundQueue {
   /**
    * Bounded read-only remote recovery; unknown rows never enter the dispatch queue on an ambiguous answer.
    * An authoritative "never admitted" (ChannelSendError code "not_found") puts the row back to the queue
-   * with the same "tn:<id>" key (idempotent at the provider). A row still unknown after unknownTtlMs ends
-   * as failed_unknown with an alert, so nothing waits forever unseen.
+   * with the same "tn:<id>" key (idempotent at the provider). A row still unknown unknownTtlMs after it became
+   * unknown (next_attempt_at: wait() and recover() set it then, and a lookup leaves it) ends as failed_unknown
+   * with an alert, so nothing waits forever unseen.
    */
   private async reconcileUnknown(): Promise<StatusChange[]> {
     const changes:StatusChange[]=[];
     const ttl=this.opt("unknownTtlMs",6*HOUR);
     for (const stored of await this.sql`select * from platform.outbound where app_id=${this.app} and line=${this.line}
-      and status='unknown_acceptance' and created_at<${new Date(this.now-ttl)} order by created_at,id limit 50`) {
+      and status='unknown_acceptance' and next_attempt_at<${new Date(this.now-ttl)} order by next_attempt_at,id limit 50`) {
       const row=this.rowOf(stored);
       this.o.onAlert?.(row.id,"unknown_acceptance_expired");
       changes.push(await this.end(row,"failed_unknown","provider acceptance never resolved"));

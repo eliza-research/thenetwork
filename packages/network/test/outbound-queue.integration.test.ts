@@ -41,6 +41,11 @@ const join=async(s:NetworkService,phone:string,firstName:string)=>{
   if (!joined.ok) throw new Error("Fixture join refused");
   return joined.membership.memberId;
 };
+/** The first replica: the one every later test drains with (it loads the stored state first). */
+const primary=async()=>{const rt=runtime(services[0] ?? await replica("replica-a"));await rt.unitOfWork(()=>undefined);return rt;};
+/** Set the shared clock forward to the next time it is hh:mm in New York (EDT, UTC-4, in October 2026). */
+const toNewYork=(hh:number,mm:number)=>{const d=new Date(clock.now()),t=Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate(),hh+4,mm);
+  clock.advance(((t-clock.now())%86_400_000+86_400_000)%86_400_000||86_400_000);};
 const statusOf=async(id:string)=>(await sql`select status from platform.outbound where id=${id}`)[0]?.status as string|undefined;
 
 beforeAll(async()=>{
@@ -95,4 +100,42 @@ test("SD-020: a replica whose Network state is older than the stored one never c
   expect(await statusOf("sd020-race")).toBe("pending");
   await rtA.unitOfWork(()=>undefined);
   expect(dispatched).toContain("sd020-race");
+},60_000);
+
+test("SD-090: an unknown acceptance gets its receipt lookups for the whole TTL, counted from when it became unknown; failed_unknown keeps the person-cap slot",async()=>{
+  const rt=await primary();
+  const phone="+12125550183",memberId=await join(services[0]!,phone,"Cal");
+  await rt.unitOfWork(()=>undefined);
+  const slots=async(id:string)=>(await sql`select count(*)::int as n from platform.person_sends where msg_id=${id}`)[0].n as number;
+  // A proactive text is written at 21:30 in New York: quiet hours hold it until 09:00.
+  toNewYork(21,30);
+  await queueOf(rt).enqueue(sql,[{id:"sd090-intro",memberId,to:phone,kind:"proactive",text:"Someone near you also runs on Sundays.",city:"nyc"}]);
+  await rt.deliver();
+  expect(await statusOf("sd090-intro")).toBe("deferred_quiet_hours");
+  // 09:01: the deliver call times out after Cloud may have taken the text. The row takes its cap slot.
+  toNewYork(9,1);cloudMode.deliver="unknown";cloudMode.receipt="accept";
+  await rt.deliver();
+  expect(dispatched.filter(id=>id==="sd090-intro").length).toBe(1);
+  expect(await statusOf("sd090-intro")).toBe("unknown_acceptance");
+  expect(await slots("sd090-intro")).toBe(1);
+  // The next drain, a minute later: the row is 11.5 hours old, but its acceptance has been unknown for one minute.
+  // The receipt lookup finds that Cloud took it; the slot stays counted.
+  clock.advance(60_000);
+  await rt.deliver();
+  expect(await statusOf("sd090-intro")).toBe("accepted");
+  expect(await slots("sd090-intro")).toBe(1);
+  // A text whose acceptance stays unknown for the whole TTL ends failed_unknown. Cloud may have sent it, so its slot stays counted.
+  cloudMode.receipt="unknown";
+  await queueOf(rt).enqueue(sql,[{id:"sd090-second",memberId,to:phone,kind:"proactive",text:"A second runner near you is free on Sunday.",city:"nyc"}]);
+  await rt.deliver();
+  expect(await statusOf("sd090-second")).toBe("unknown_acceptance");
+  clock.advance(6*3_600_000-60_000);
+  await rt.deliver();
+  expect(await statusOf("sd090-second")).toBe("unknown_acceptance");
+  clock.advance(2*60_000);
+  await rt.deliver();
+  expect(await statusOf("sd090-second")).toBe("failed_unknown");
+  expect(await slots("sd090-second")).toBe(1);
+  expect(dispatched.filter(id=>id==="sd090-second").length).toBe(1);
+  cloudMode.deliver="accept";
 },60_000);
