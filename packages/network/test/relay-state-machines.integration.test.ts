@@ -23,6 +23,8 @@ const sent:Array<{id:string;text:string;kind:string;to:string}>=[];
 /** What the classifier boundary answers next: hold flags (Clef categories). */
 let clefFlags:string[]=[];
 const logs:string[]=[];
+/** Cloud refuses delivery (422 invalid, final) of the deliveries this predicate names. */
+let cloudRefuses:(input:{id:string;text:string;to:string})=>boolean=()=>false;
 const start=async()=>{
   service=new NetworkService({url,clock,photoStorage:null,env:{PLATFORM_ENV:"dev",CLEF_RATINGS:"off",SERVICE_TURN_SECRET:secret},
     networks:[{id:"friends:nyc",matchingEnabled:false}],log:line=>{logs.push(line);},
@@ -59,6 +61,7 @@ beforeAll(async()=>{
   cloud=Bun.serve({hostname:"127.0.0.1",port:0,fetch:async req=>{
     const path=new URL(req.url).pathname,raw=await req.text(),auth=await svcVerify(secret,{method:req.method,path,headers:req.headers,body:raw,nowS:Math.floor(clock.now()/1000)});
     expect(auth.ok).toBe(true);const input=JSON.parse(raw);
+    if(path===DELIVER_PATH&&cloudRefuses(input))return Response.json({ok:false,error:"invalid",retryable:false},{status:422});
     if(path===DELIVER_PATH)sent.push(input);
     return Response.json({ok:true,replayed:path!==DELIVER_PATH,providerMessageIds:[`owned:${input.id}`],acceptedAt:new Date(clock.now()).toISOString(),history:true});
   }});await start();
@@ -166,6 +169,56 @@ test("relay-swap: a swap question held in the outbound queue past the swap windo
     expect((await (await pending).json() as any).decision).toBe("hold");
   } finally { resume();checks.leaks=original; }
   expect(sent.slice(before).filter(x=>/would like to swap numbers/.test(x.text))).toHaveLength(0);
+},60_000);
+
+test("relay-swap: a number share that the provider refused does not count as shared (SD-252)",async()=>{
+  await fixturePair("share-refused");toNyHour(12);
+  for(const [phone,id] of [[a,"share-refused-ari-reply"],[b,"share-refused-sam-reply"]] as const){clock.advance(MINUTE);expect((await post(TURN_PATH,turn(phone,id,"Sounds good, thanks"))).status).toBe(200);}
+  expect((await relay("share-refused-ari","send Sam my number")).body).toMatchObject({decision:"hold"});
+  // Cloud refuses the row that carries Ari's number to Sam: the row ends failed, and Sam never gets the number.
+  cloudRefuses=x=>x.to===b&&x.text.includes(a);
+  try { await relay("share-refused-sam","send Ari my number",b); }
+  finally { cloudRefuses=()=>false; }
+  expect(sent.some(x=>x.to===b&&x.text.includes(a))).toBe(false);
+  const [row]=await sql`select o.status from platform.outbound o join network.relay_records r on o.id='relay:'||r.item_id
+    where r.opportunity_id='share-refused' and r.from_member=${ariId} and r.kind='contact_share'`;
+  expect(row?.status).toMatch(/^failed/);
+  // Ari asks again (after the 10-minute duplicate window): the failed share does not block a new swap.
+  clock.advance(11*MINUTE);
+  expect((await relay("share-refused-ari-again","send Sam my number")).body).toMatchObject({decision:"hold"});
+  const log=await service.runtimeFor("friends")!.readState(n=>n.relayLog());
+  expect(log.filter(r=>r.opportunityId==="share-refused"&&r.from===ariId&&r.contactShared)).toEqual([]);
+},60_000);
+
+test("relay-item: the relay thread keeps only wording that went to the other member (Q-relay-1)",async()=>{
+  await fixturePair("thread-unsent");toNyHour(12);
+  for(const [phone,id] of [[a,"thread-unsent-ari-reply"],[b,"thread-unsent-sam-reply"]] as const){clock.advance(MINUTE);expect((await post(TURN_PATH,turn(phone,id,"Sounds good, thanks"))).status).toBe(200);}
+  cloudRefuses=x=>x.to===b&&x.text.includes("blue umbrella");
+  try { await relay("thread-unsent-1","tell Sam I have a blue umbrella"); }
+  finally { cloudRefuses=()=>false; }
+  expect(sent.some(x=>x.text.includes("blue umbrella"))).toBe(false);
+  clock.advance(3*MINUTE);
+  expect((await relay("thread-unsent-2","tell Sam I am by the fountain")).body).toMatchObject({decision:"pass"});
+  const threads=await service.runtimeFor("friends")!.readState(n=>n.exportState().relay?.threads??[]);
+  const words=JSON.stringify(threads.find(t=>t.id==="thread-unsent")?.messages??[]);
+  expect(words).toContain("fountain");
+  expect(words).not.toContain("blue umbrella");
+},60_000);
+
+test("relay-swap: a deferred number share that the morning send refuses does not count as shared (SD-252)",async()=>{
+  // Ari asks at 20:57; Sam answers at 21:01, inside both members' quiet hours (21-9): both shares wait.
+  await fixturePair("share-deferred");toNyTime(20,57);
+  expect((await relay("share-deferred-ari","send Sam my number")).body).toMatchObject({decision:"hold"});
+  toNyTime(21,1);
+  expect((await relay("share-deferred-sam","send Ari my number",b)).body).toMatchObject({decision:"pass",delivered:false});
+  // Ari sends STOP before the morning: the morning send of Sam's number to Ari is refused. Ari then texts START.
+  clock.advance(MINUTE);expect((await post(TURN_PATH,turn(a,"share-deferred-stop","STOP"))).status).toBe(200);
+  const before=sent.length;
+  toNyHour(10);await service.runtimeFor("friends")!.tick();await service.runtimeFor("friends")!.deliver();
+  expect(sent.slice(before).some(x=>x.to===a&&x.text.includes(b))).toBe(false);
+  clock.advance(MINUTE);expect((await post(TURN_PATH,turn(a,"share-deferred-start","START"))).status).toBe(200);
+  const log=await service.runtimeFor("friends")!.readState(n=>n.relayLog());
+  expect(log.filter(r=>r.opportunityId==="share-deferred"&&r.from===samId&&r.contactShared)).toEqual([]);
 },60_000);
 
 // Keep this case last: Ari deletes everything.

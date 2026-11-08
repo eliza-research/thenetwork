@@ -255,6 +255,18 @@ export class RelayDesk {
     this.log({ ...r, decision: "block", contactShared: false, reasons: [...new Set([...r.reasons, "send:refused"])].sort() });
   }
 
+  /**
+   * Passed items whose outbound row ended unsent (the queue refused, parked, dropped or expired it, or the
+   * provider refused it): the log says not delivered (so no number counts as shared and a new swap can
+   * start), and the thread drops their wording (it keeps only what the other member got).
+   */
+  unsent(itemIds: ReadonlySet<string>): number {
+    let n = 0;
+    for (const r of [...this.s.log]) if (itemIds.has(r.itemId) && r.decision === "pass") { this.undelivered(r); n++; }
+    for (const t of this.s.threads) t.messages = t.messages.filter(x => !itemIds.has(x.itemId));
+    return n;
+  }
+
   private deliver(res: RelayResult, match: RelayMatch, item: RelayItem, o: RelayCallOptions, contact?: string): "sent" | "deferred" | "refused" {
     const sent = this.host.send(item.to, res.rendered, { from: item.from, matchId: match.id, key: `relay:${item.id}`, ...(contact ? { contact } : {}), ...(res.photos?.length ? { photoIds: res.photos, approvedPhotos: o.photos?.approved } : {}) });
     if (sent === "refused") return sent;

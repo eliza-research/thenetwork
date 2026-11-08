@@ -225,6 +225,14 @@ export class NetworkRuntime {
     return out;
   }
 
+  /** The relay items of this match that the desk passed and whose outbound row ended unsent (NOT_SENT). */
+  async relayUnsent(matchId: string): Promise<Set<string>> {
+    const rows = await this.scoped(tx => tx`select r.item_id from network.relay_records r
+      join platform.outbound o on o.app_id = r.app_id and o.id = 'relay:' || r.item_id
+      where r.app_id = ${this.app.id} and r.opportunity_id = ${matchId} and r.decision = 'pass' and o.status ~ ${NOT_SENT.source}`);
+    return new Set((rows as Row[]).map(r => r.item_id as string));
+  }
+
   /**
    * Final dispatch admission of a relayed row, inside the outbound queue's admission transaction after
    * every asynchronous gate (outbound ids "relay:<item>", and "relay:<item>:ask" for the swap question).
