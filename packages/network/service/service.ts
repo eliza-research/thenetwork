@@ -648,7 +648,15 @@ export class NetworkService implements RuntimeHost {
     // them, also items from before they stated their age (founder decision 1).
     const lowest = (await this.people.getPerson(personId))?.lowestAge;
     if (lowest != null && isMinor(lowest)) return [];
-    const items: InboxItem[] = await this.notify.readUpdates(personId, surface, this.clock.now(), token, { app });
+    let items: InboxItem[] = await this.notify.readUpdates(personId, surface, this.clock.now(), token, { app });
+    // An item about an opportunity that closed (completed, cancelled or skipped) is not new: a reply to
+    // it answers nothing. Reading still marks it seen. The states are the console's (network store oppState).
+    const rt = this.runtimeFor(app), subjects = [...new Set(items.map(i => i.subjectId))];
+    if (rt && subjects.length) {
+      const rows = await rt.scoped(tx => tx`select id from network.opportunities where app_id = ${app} and id in ${tx(subjects)} and state in ('COMPLETED', 'CANCELLED', 'SKIPPED')`);
+      const closed = new Set((rows as any[]).map(r => r.id as string));
+      items = items.filter(i => !closed.has(i.subjectId));
+    }
     return items.map(i => ({ summary: i.summary, at: new Date(i.createdAt).toISOString(), kind: i.eventType }));
   }
 
