@@ -300,8 +300,14 @@ export class OutboundQueue {
         try {
           c = await this.dispatch(row);
         } catch (e) {
-          // One bad row never stops the drain: it is parked for a person and the drain goes on.
-          c = await this.end(row, "parked_error", (e as Error).message);
+          // One bad row never stops the drain. A database error (a deadlock, a lock timeout, a lost connection) is
+          // not about the row: it waits with a backoff and goes through every check again with the same provider key.
+          // An error that repeats until the attempts are used up parks the row for a person.
+          const error = (e as Error).message.slice(0, 500);
+          const [r] = await this.sql`update platform.outbound set attempts = attempts + 1, last_error = ${error} where id = ${row.id} returning attempts`;
+          const tries = Number(r?.attempts ?? row.attempts + 1);
+          c = tries >= this.opt("maxAttempts", 6) ? await this.end(row, "parked_error", error)
+            : await this.wait(row, "retry_scheduled", this.now + Math.min(this.opt("baseBackoffMs", 30_000) * 2 ** (tries - 1), 30 * MINUTE), "dispatch error");
           this.o.onAlert?.(row.id, "dispatch_error");
         }
         if (c) changes.push(c);

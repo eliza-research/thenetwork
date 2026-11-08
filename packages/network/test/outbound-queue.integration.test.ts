@@ -229,3 +229,29 @@ test("SD-101: a reply that fails the leak guard in a signed turn is parked for s
   expect((await sql`select status from network.messages where id='sd101-canary'`)[0].status).toBe("parked_leak_review");
   expect((await queueOf(rt).parkedLeaks()).map(x=>x.id)).toContain("sd101-canary");
 },60_000);
+
+test("SD-117: a database error in the admission transaction does not end the row; it waits and goes on the next drain",async()=>{
+  toNewYork(12,0);
+  const rt=await primary();
+  const phone="+12125550189",memberId=await join(services[0]!,phone,"Gus");
+  await rt.unitOfWork(()=>undefined);
+  await rt.adapter.engaged!(phone);
+  const [{person_id:personId}]=await sql`select person_id from network.members where app_id='friends' and id=${memberId}`;
+  await queueOf(rt).enqueue(sql,[{id:"sd117-reminder",memberId,to:phone,kind:"transactional",text:"Your plan reminder is ready.",city:"nyc"}]);
+  // Another transaction holds the person row (an erasure, a ban); the admission transaction's lock wait times out.
+  const checks=(queueOf(rt) as unknown as {o:{checks:{lockAdmission:(row:unknown,tx:SQL)=>Promise<boolean>}}}).o.checks,lock=checks.lockAdmission;
+  checks.lockAdmission=async(row,tx)=>{checks.lockAdmission=lock;const ok=await lock(row,tx);await tx`set local lock_timeout='200ms'`;return ok;};
+  const holder=await sql.reserve();
+  try {
+    await holder`begin`;
+    await holder`select id from platform.people where id=${personId} for update`;
+    await rt.deliver();
+  } finally {await holder`rollback`;holder.release();}
+  expect(dispatched).not.toContain("sd117-reminder");
+  expect(await statusOf("sd117-reminder")).toBe("retry_scheduled");
+  // The lock is free again: the next drain after the backoff sends the reminder.
+  clock.advance(60_000);
+  await rt.deliver();
+  expect(dispatched).toContain("sd117-reminder");
+  expect(await statusOf("sd117-reminder")).toBe("accepted");
+},60_000);
