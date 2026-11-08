@@ -1,5 +1,5 @@
 // -*- mode: Bluespec; -*-
-// quint-check: max-steps=24 max-samples=6000 verify-steps=5
+// quint-check: max-steps=30 max-samples=50000 verify-steps=5
 //
 // Runtime and operations machines (docs/research/2026-11-07-state-machines.md section 6.14):
 //   M-088 store-unit-of-work     packages/network/src/store.ts:53-79, 306-333
@@ -20,8 +20,11 @@
 // Time is an integer tick. The named thresholds keep the order of the real values, not their size.
 // Oracles (a read error, a webhook result, a rate limit, an LLM reply, an operator choice) are nondet.
 //
-// Expected `safety` failures and their register ids: SD-003, SD-050, SD-110, SD-111, SD-113, SD-158,
-// SD-159, SD-161, SD-163, SD-165, SD-168, SD-169, SD-233, SD-235, SD-360, SD-368, SD-446, SD-448.
+// Wave 2 (branch wave2/runtime_ops): the model follows the code after the fixes of SD-003, SD-110, SD-111,
+// SD-113, SD-158, SD-161, SD-163, SD-165, SD-168, SD-233, SD-235, SD-360, SD-368, SD-446 and SD-448, and
+// `safety` holds. Three defects stay open (skipped, see the invariants section): SD-050 (founder decision),
+// SD-159 (no Workers runtime to test the fix), SD-169 (founder decision). Their invariants are named values
+// outside `safety`, and a run test replays each counterexample.
 module runtime_ops {
 
   // ------------------------------------------------------------------ constants
@@ -50,8 +53,9 @@ module runtime_ops {
   pure val MAX_REGROWS = 2
   pure val MAX_SIG = 3
   /** The tokens the wrangler guard model gives after "deploy". */
-  pure val WR_TOKENS = Set("--dry-run", "--no-dry-run", "--dry-run=false", "--help", "--no-help", "--help=false")
-  pure val ALERT_KEYS = Set("sig", "tick", "bias", "read")
+  pure val WR_TOKENS = Set("--dry-run", "--no-dry-run", "--dry-run=false", "--help", "--no-help", "--help=false", "true", "false")
+  /** "late" is bias_late (ops.ts evaluate, SD-233). */
+  pure val ALERT_KEYS = Set("sig", "tick", "bias", "late", "read")
 
   // ------------------------------------------------------------------ types
 
@@ -74,7 +78,7 @@ module runtime_ops {
     rolesOnSource: bool,
     twoCities: bool,
     oppSeq: str -> int,
-    oppRows: int -> str,
+    oppRows: (str, int) -> str,
     minted: Set[(str, int)],
   }
 
@@ -101,11 +105,13 @@ module runtime_ops {
     bumpMissed: bool,
     silentClose: bool,
     heartbeatLie: bool,
+    lateUnseen: bool,
   }
 
   /** M-151, M-152: network.bias_reports and the per-replica afterTick step. */
   type Bias = {
     phase: str -> str,
+    startedAt: str -> int,
     reports: Set[(int, int, str)],
     failedSinceReport: bool,
     dirtyRead: bool,
@@ -138,8 +144,8 @@ module runtime_ops {
   pure def maxOf(xs: Set[int], dflt: int): int = xs.fold(dflt, (acc, x) => if (x > acc) x else acc)
   pure def abs(x: int): int = if (x < 0) -x else x
 
-  /** ops.ts:201: the newer of the stored tick and the row's saved_at. */
-  pure def lastSeen(tk: Ticks): int = if (tk.lastTickRan > tk.lastSave) tk.lastTickRan else tk.lastSave
+  /** ops.ts collectNetwork: only the stored tick (SD-368 fix, dc7e3d0); a unit's saved_at no longer counts. */
+  pure def lastSeen(tk: Ticks): int = tk.lastTickRan
 
   /** ops.ts:246: sum(alerts) of bias reports written after now - 24 h. */
   pure def biasAlerts24h(bi: Bias, now: int): int =
@@ -147,6 +153,12 @@ module runtime_ops {
 
   pure def lastReportAt(bi: Bias): int = maxOf(bi.reports.map(r => r._1), -WEEK)
 
+  /**
+   * ops.ts evaluate bias_late (SD-233 fix, e8a3171): the newest report is older than BIAS_EVERY_MS + 24 h, or
+   * there is none and the process has run longer than that (uptime; the process starts at time 0 here).
+   */
+  pure def biasLate(bi: Bias, now: int): bool =
+    if (bi.reports.size() == 0) now > WEEK + DAY else now - lastReportAt(bi) > WEEK + DAY
   /** evaluate() (ops.ts:270-297) for one network. A read error gives only ops_read (ops.ts:274). */
   pure def current(x: S, readOk: bool): str -> Cur =
     if (not(readOk))
@@ -156,39 +168,54 @@ module runtime_ops {
         if (k == "sig") { on: x.al.sigWaiting > 0, count: x.al.sigWaiting, bump: true }
         else if (k == "tick") { on: x.now - lastSeen(x.tk) > TICK_LATE, count: 1, bump: false }
         else if (k == "bias") { on: biasAlerts24h(x.bi, x.now) > 0, count: biasAlerts24h(x.bi, x.now), bump: true }
+        else if (k == "late") { on: biasLate(x.bi, x.now), count: 1, bump: false }
         else OFF)
 
-  /** ops.ts:405-407. */
+  /**
+   * ops.ts dispatch: the open state takes the new count. A count under the last sent count lowers that
+   * baseline, so the next rise is posted (SD-161 fix, 3b29163).
+   */
   pure def nextA(prev: AState, c: Cur): AState =
-    if (prev.open) { ...prev, count: c.count } else { ...CLOSED, open: true, count: c.count }
+    if (prev.open)
+      { ...prev, count: c.count, lastSentCount: if (prev.sent and c.count < prev.lastSentCount) c.count else prev.lastSentCount }
+    else { ...CLOSED, open: true, count: c.count }
 
   /** ops.ts:408-411 (one level per key here, so the level clause is left out). */
   pure def isDue(a: AState, c: Cur, now: int): bool =
     or { not(a.sent), and { c.bump, c.count > a.lastSentCount }, now - a.lastSentAt >= REPEAT }
 
-  /** wrangler.sh decide(): one token. Classes follow the case arms at :64-75 for the tokens in WR_TOKENS. */
-  type D = { dry: bool, help: bool, skip: bool, words: List[str] }
+  /**
+   * wrangler.sh decide() after the SD-168 fix (0706658): one token. The last value of a switch wins for
+   * --help as for --dry-run, and a "true" or "false" word right after --dry-run or --help is its value.
+   * Every token in WR_TOKENS matches an explicit case arm, so both modes ("switch", "value") read them the same.
+   */
+  type D = { dry: bool, help: bool, last: str, words: List[str] }
   pure def decideStep(mode: str, d: D, a: str): D =
-    if (d.skip) { ...d, skip: false }
-    else if (a == "--dry-run") { ...d, dry: true }
-    else if (a == "--no-dry-run" or a == "--dry-run=false") { ...d, dry: false }
-    else if (a == "--help") { ...d, help: true }
-    else if (a == "--help=false") d
-    else if (a == "--no-help") (if (mode == "value") { ...d, skip: true } else d)
-    else { ...d, words: d.words.append(a) }
+    if (d.last != "" and (a == "true" or a == "false"))
+      (if (d.last == "dry") { ...d, dry: a == "true", last: "" } else { ...d, help: a == "true", last: "" })
+    else if (a == "--dry-run") { ...d, dry: true, last: "dry" }
+    else if (a == "--no-dry-run" or a == "--dry-run=false") { ...d, dry: false, last: "" }
+    else if (a == "--help") { ...d, help: true, last: "help" }
+    else if (a == "--no-help" or a == "--help=false") { ...d, help: false, last: "" }
+    else { ...d, words: d.words.append(a), last: "" }
   pure def decide(mode: str, args: List[str]): bool =
-    val d = args.foldl({ dry: false, help: false, skip: false, words: List() }, (acc, a) => decideStep(mode, acc, a))
+    val d = args.foldl({ dry: false, help: false, last: "", words: List() }, (acc, a) => decideStep(mode, acc, a))
     or { d.words.length() == 0, and { d.words[0] == "deploy", d.dry }, d.help }
-  /** What wrangler (yargs) does: the last value of a switch wins; "--no-x" and "--x=false" set it false. Assumption, not run. */
-  type Y = { dry: bool, help: bool }
+  /**
+   * What wrangler (yargs) does: the last value of a switch wins; "--no-x" and "--x=false" set it false; a
+   * "true" or "false" word right after a boolean switch is its value; any other word is a positional. Assumption, not run.
+   */
+  type Y = { dry: bool, help: bool, last: str }
   pure def yargsStep(y: Y, a: str): Y =
-    if (a == "--dry-run") { ...y, dry: true }
-    else if (a == "--no-dry-run" or a == "--dry-run=false") { ...y, dry: false }
-    else if (a == "--help") { ...y, help: true }
-    else if (a == "--no-help" or a == "--help=false") { ...y, help: false }
-    else y
+    if (y.last != "" and (a == "true" or a == "false"))
+      (if (y.last == "dry") { ...y, dry: a == "true", last: "" } else { ...y, help: a == "true", last: "" })
+    else if (a == "--dry-run") { ...y, dry: true, last: "dry" }
+    else if (a == "--no-dry-run" or a == "--dry-run=false") { ...y, dry: false, last: "" }
+    else if (a == "--help") { ...y, help: true, last: "help" }
+    else if (a == "--no-help" or a == "--help=false") { ...y, help: false, last: "" }
+    else { ...y, last: "" }
   pure def wranglerDeploys(args: List[str]): bool =
-    val y = args.foldl({ dry: false, help: false }, (acc, a) => yargsStep(acc, a))
+    val y = args.foldl({ dry: false, help: false, last: "" }, (acc, a) => yargsStep(acc, a))
     and { args[0] == "deploy", not(y.dry), not(y.help) }
 
   /** deploy/cloudflare/worker.ts:70: every request goes to the public port. The staff port (backend.ts:14-15) has no route. */
@@ -196,7 +223,8 @@ module runtime_ops {
 
   // ------------------------------------------------------------------ init
 
-  action initWith(tickSet: str, channel: str, twoCities: bool, args: List[str]): bool = s' = {
+  /** handMade: an operator made the service login by hand, without network_service (the second SD-163 test). */
+  action initWith(tickSet: str, channel: str, twoCities: bool, args: List[str], handMade: bool): bool = s' = {
     now: 0,
     st: {
       committed: Set(), lockHolder: "", lostConn: false,
@@ -208,10 +236,10 @@ module runtime_ops {
     },
     tk: { tickSet: tickSet, inboxAge: -1, expiredAge: -1, lastTickRan: 0, lastSave: 0, lastRoundAt: -1 },
     al: { st: ALERT_KEYS.mapBy(_ => CLOSED), sigWaiting: 0, lastOpsAt: -1, posts: 0,
-          badResolve: false, bumpMissed: false, silentClose: false, heartbeatLie: false },
-    bi: { phase: REPLICAS.mapBy(_ => "idle"), reports: Set(), failedSinceReport: false, dirtyRead: false },
+          badResolve: false, bumpMissed: false, silentClose: false, heartbeatLie: false, lateUnseen: false },
+    bi: { phase: REPLICAS.mapBy(_ => "idle"), startedAt: REPLICAS.mapBy(_ => 0), reports: Set(), failedSinceReport: false, dirtyRead: false },
     pr: { phase: "running", stuck: "none", sigtermAt: -1, graceAt: -1, clean: false },
-    bt: { roleExists: false, member: false, connect: false, step: "start", checkPassedIncomplete: false, ledger: false, applied: 0 },
+    bt: { roleExists: handMade, member: false, connect: handMade, step: "start", checkPassedIncomplete: false, ledger: false, applied: 0 },
     ll: { e: 0, retries: 0, regrows: 0, attempts: 0, done: "" },
     wr: { args: args, ran: false, allowed: false, deploys: false },
     cf: { target: "railway", enabled: false, buildIdOk: false, containerRunning: false, cronSinceInactive: false },
@@ -223,7 +251,8 @@ module runtime_ops {
     nondet two = oneOf(Set(true, false))
     nondet a1 = oneOf(WR_TOKENS)
     nondet a2 = oneOf(WR_TOKENS)
-    initWith(tickSet, channel, two, List("deploy", a1, a2))
+    nondet handMade = oneOf(Set(true, false))
+    initWith(tickSet, channel, two, List("deploy", a1, a2), handMade)
   }
 
   // ------------------------------------------------------------------ time
@@ -231,6 +260,7 @@ module runtime_ops {
   /** A timer that is due fires before time passes: s.stop(false) with nothing in flight, and the grace timer. */
   def urgent(x: S): bool = or {
     and { x.pr.phase == "stopping", x.pr.stuck != "http" },
+    and { x.pr.phase == "stopping", x.now >= x.pr.graceAt + GRACE },
     and { x.pr.phase == "waiting", x.pr.stuck == "none" },
     and { x.pr.phase == "waiting", x.now >= x.pr.graceAt + GRACE },
   }
@@ -254,9 +284,12 @@ module runtime_ops {
     s.st.unit.get(r).phase == "applied", not(s.st.mem.get(r).contains(s.st.unit.get(r).ev)),
     s' = { ...s, st: { ...s.st, mem: s.st.mem.set(r, s.st.mem.get(r).union(Set(s.st.unit.get(r).ev))) } },
   }
-  /** store.ts:288-289: upsert of the whole state with no version compare; then the unlock (:329) and release. */
+  /**
+   * store.ts PgStore.save: the upsert runs on the reserved connection that holds the lock (SD-110 fix, 7240e5b);
+   * then the unlock and release. When that connection was lost, the save cannot commit (only saveFails is enabled).
+   */
   action save(r: str): bool = all {
-    s.st.unit.get(r).phase == "applied", s.st.mem.get(r).contains(s.st.unit.get(r).ev),
+    s.st.unit.get(r).phase == "applied", s.st.mem.get(r).contains(s.st.unit.get(r).ev), s.st.lockHolder == r,
     s' = { ...s, now: s.now, st: { ...s.st,
       committed: s.st.mem.get(r),
       acked: s.st.acked.union(Set(s.st.unit.get(r).ev)),
@@ -264,7 +297,7 @@ module runtime_ops {
       unit: s.st.unit.set(r, { phase: "idle", ev: "" }) },
       tk: { ...s.tk, lastSave: s.now } },
   }
-  /** The save transaction throws: nothing is committed, the lock is released, memory keeps the change (SD-448). */
+  /** The save transaction throws (or its lock connection is gone): nothing is committed, the lock is released, memory keeps the change. */
   action saveFails(r: str): bool = all {
     s.st.unit.get(r).phase == "applied", s.st.mem.get(r).contains(s.st.unit.get(r).ev),
     s' = { ...s, st: { ...s.st,
@@ -277,11 +310,15 @@ module runtime_ops {
     s' = { ...s, st: { ...s.st, lockHolder: "", lostConn: true } },
   }
 
-  /** SD-111: an opportunity id is `slop.nw-<seed>-<oppSeq>` (network.ts:891, 2100); every network has seed NETWORK_SEED (server.ts:81). */
+  /**
+   * network.ts sid(): an opportunity id is `slop.nw-<seed>-<oppSeq>` in slop:nyc and `slop.<city>.nw-<seed>-<oppSeq>`
+   * in any other city (SD-111 fix, d351405). Every network still has seed NETWORK_SEED (server.ts:81).
+   */
+  pure def oppId(n: str, seq: int): (str, int) = (if (n == "slop:nyc") "slop" else n, seq)
   action mint(n: str): bool = all {
     s.st.twoCities or n == "slop:nyc", s.st.oppSeq.get(n) < 2,
-    val id = s.st.oppSeq.get(n) + 1
-    s' = { ...s, st: { ...s.st, oppSeq: s.st.oppSeq.set(n, id), oppRows: s.st.oppRows.put(id, n), minted: s.st.minted.union(Set((n, id))) } },
+    val seq = s.st.oppSeq.get(n) + 1
+    s' = { ...s, st: { ...s.st, oppSeq: s.st.oppSeq.set(n, seq), oppRows: s.st.oppRows.put(oppId(n, seq), n), minted: s.st.minted.union(Set((n, seq))) } },
   }
 
   // ------------------------------------------------------------------ M-089 backup and restore
@@ -298,13 +335,14 @@ module runtime_ops {
       rolledBack: s.st.acked.filter(e => not(s.st.backup.contains(e))) } },
   }
   /**
-   * restore.ts:44-46 with lib.ts:201-204 sameServer: --roles is refused only when the target host:port string equals the source one.
-   * The documented setup reaches one server as postgres.railway.internal and through the TCP proxy.
+   * restore.ts: --roles is refused when the target host:port string equals the source one, or when the target
+   * server's pg_control_system() system identifier equals the one the manifest recorded (SD-165 fix, cadd3c3).
+   * The documented setup reaches one server as postgres.railway.internal and through the TCP proxy: one system id.
    */
   action restoreRoles(target: str): bool = all {
-    val onSourceString = target == "source-internal-host"
     val reallySource = target != "new-server"
-    s' = { ...s, st: { ...s.st, rolesOnSource: s.st.rolesOnSource or (not(onSourceString) and reallySource) } },
+    val onSource = target == "source-internal-host" or reallySource
+    s' = { ...s, st: { ...s.st, rolesOnSource: s.st.rolesOnSource or (not(onSource) and reallySource) } },
   }
 
   // ------------------------------------------------------------------ M-140, M-141 tick loop
@@ -322,15 +360,15 @@ module runtime_ops {
   pure def older(age: int): int = if (age < 0) -1 else age + 1
 
   /**
-   * One round of the tick loop. "backend": backend.ts:388-416 runs rt.tick() then notifyTick, beside opsTick.
-   * "serve": serve.ts:122-136 runs inboxTick, every rt.tick(), purge, notifyTick. tickOk: rt.tick() did not throw.
+   * One round of the tick loop. "serve": serve.ts:122-136 runs inboxTick, every rt.tick(), purge, notifyTick.
+   * "backend": backend.ts createBackend tickAll now runs the same steps (SD-003 fix, b862c95): inboxTick, the
+   * network ticks, purge, notifyTick, beside opsTick. tickOk: rt.tick() did not throw.
    */
   action tickRound(tickOk: bool): bool = all {
     s.tk.lastRoundAt < s.now, s.pr.phase == "running",
-    val serve = s.tk.tickSet == "serve"
     s' = { ...s, tk: { ...s.tk,
-      inboxAge: if (serve) -1 else older(s.tk.inboxAge),
-      expiredAge: if (serve) -1 else older(s.tk.expiredAge),
+      inboxAge: -1,
+      expiredAge: -1,
       lastTickRan: if (tickOk) s.now else s.tk.lastTickRan,
       lastSave: if (tickOk) s.now else s.tk.lastSave,
       lastRoundAt: s.now } },
@@ -359,11 +397,16 @@ module runtime_ops {
     val cur = current(s, readOk)
     val truth = current(s, true)
     val prev = s.al.st
+    // ops.ts unread(): a failed read of the network leaves its keys unknown; they neither resolve nor close (SD-113 fix, 7717e2b).
+    val known = ALERT_KEYS.filter(k => readOk or k == "read")
     val firing = ALERT_KEYS.filter(k => and { cur.get(k).on, isDue(nextA(prev.get(k), cur.get(k)), cur.get(k), s.now) })
-    val resolving = ALERT_KEYS.filter(k => and { not(cur.get(k).on), prev.get(k).open, prev.get(k).sent })
-    val quiet = ALERT_KEYS.filter(k => and { not(cur.get(k).on), prev.get(k).open, not(prev.get(k).sent) })
+    // failedWhileOpen is lastFailedAt: an alert whose post failed is resolved with a notice, never closed quietly (SD-235 fix, 0f6ca0f).
+    val resolving = known.filter(k => and { not(cur.get(k).on), prev.get(k).open, prev.get(k).sent or prev.get(k).failedWhileOpen })
+    val quiet = known.filter(k => and { not(cur.get(k).on), prev.get(k).open, not(prev.get(k).sent), not(prev.get(k).failedWhileOpen) })
     val posted = and { firing.union(resolving).size() > 0, not(limited) }
     val ok = and { posted, postOk }
+    // createOps().tick: no heartbeat after a round whose alert post failed (SD-360 fix, 6a25b4c).
+    val pinged = not(posted and not(ok))
     val nextSt = ALERT_KEYS.mapBy(k =>
       if (cur.get(k).on)
         val a = nextA(prev.get(k), cur.get(k))
@@ -372,7 +415,6 @@ module runtime_ops {
         else a
       else if (quiet.contains(k)) { ...prev.get(k), open: false }
       else if (ok and resolving.contains(k)) { ...prev.get(k), open: false }
-      else if (posted and resolving.contains(k)) { ...prev.get(k), failedWhileOpen: true }
       else prev.get(k))
     s' = { ...s, al: { ...s.al,
       st: nextSt, lastOpsAt: s.now, posts: if (posted) s.al.posts + 1 else s.al.posts,
@@ -380,7 +422,8 @@ module runtime_ops {
       bumpMissed: s.al.bumpMissed or ALERT_KEYS.exists(k => and {
         cur.get(k).on, cur.get(k).bump, prev.get(k).open, cur.get(k).count > prev.get(k).count, not(firing.contains(k)) }),
       silentClose: s.al.silentClose or quiet.exists(k => prev.get(k).failedWhileOpen),
-      heartbeatLie: s.al.heartbeatLie or (posted and not(ok)) } },
+      heartbeatLie: s.al.heartbeatLie or (pinged and posted and not(ok)),
+      lateUnseen: s.al.lateUnseen or and { readOk, s.bi.failedSinceReport, biasLate(s.bi, s.now), not(cur.get("late").on) } } },
   }
 
   // ------------------------------------------------------------------ M-151, M-152 weekly bias
@@ -391,17 +434,28 @@ module runtime_ops {
    */
   action biasCheck(r: str, memberReadOk: bool): bool = all {
     s.bi.phase.get(r) == "idle", s.now - lastReportAt(s.bi) >= WEEK,
-    if (memberReadOk) s' = { ...s, bi: { ...s.bi, phase: s.bi.phase.set(r, "read") } }
+    if (memberReadOk) s' = { ...s, bi: { ...s.bi, phase: s.bi.phase.set(r, "read"), startedAt: s.bi.startedAt.set(r, s.now) } }
     else s' = { ...s, bi: { ...s.bi, failedSinceReport: true } },
   }
-  /** service.ts:546-549: biasReport on rt.net.opps (process memory, outside the lock), then the insert. */
+  /**
+   * service.ts weeklyBias after the fixes:
+   * - rt.readState (SD-448 fix, b75d5b2): under the Network lock (it waits for this process's unit and for the
+   *   advisory lock), load the newest stored state into rt.net and report on its opps.
+   * - the insert under pg_advisory_xact_lock("bias-report-<id>") checks max(at) again with the `now` the run
+   *   took at its start, and skips when a report is newer than a week (SD-446 fix, ba5ec1b).
+   */
   action biasInsert(r: str, alerts: int): bool = all {
-    s.bi.phase.get(r) == "read",
-    s' = { ...s, bi: { ...s.bi,
-      phase: s.bi.phase.set(r, "idle"),
-      reports: s.bi.reports.union(Set((s.now, alerts, r))),
-      failedSinceReport: false,
-      dirtyRead: s.bi.dirtyRead or s.st.mem.get(r).exists(e => not(s.st.committed.contains(e)) and not(s.st.rolledBack.contains(e))) } },
+    s.bi.phase.get(r) == "read", s.st.lockHolder == "", s.st.unit.get(r).phase == "idle",
+    val at = s.bi.startedAt.get(r)
+    val view = s.st.committed
+    val fresh = at - lastReportAt(s.bi) >= WEEK
+    s' = { ...s,
+      st: { ...s.st, mem: s.st.mem.set(r, view) },
+      bi: { ...s.bi,
+        phase: s.bi.phase.set(r, "idle"),
+        reports: if (fresh) s.bi.reports.union(Set((at, alerts, r))) else s.bi.reports,
+        failedSinceReport: if (fresh) false else s.bi.failedSinceReport,
+        dirtyRead: s.bi.dirtyRead or view.exists(e => not(s.st.committed.contains(e)) and not(s.st.rolledBack.contains(e))) } },
   }
 
   // ------------------------------------------------------------------ M-142 process lifecycle
@@ -411,24 +465,24 @@ module runtime_ops {
     s.pr.phase == "running", s.pr.stuck == "none",
     s' = { ...s, pr: { ...s.pr, stuck: kind } },
   }
-  /** backend.ts:426-428: draining, clear the timer, then await s.stop(false) for each server. */
+  /** backend.ts shutdown: draining, clear the timer, start the grace timer (SD-158 fix, 9f40c5e), then await s.stop(false) for each server. */
   action sigterm: bool = all {
     s.pr.phase == "running",
-    s' = { ...s, pr: { ...s.pr, phase: "stopping", sigtermAt: s.now } },
+    s' = { ...s, pr: { ...s.pr, phase: "stopping", sigtermAt: s.now, graceAt: s.now } },
   }
   /** Bun 1.4.2: server.stop(false) resolves only when the in-flight requests end (checked by a local run). */
   action serversStopped: bool = all {
     s.pr.phase == "stopping", s.pr.stuck != "http",
-    s' = { ...s, pr: { ...s.pr, phase: "waiting", graceAt: s.now } },
+    s' = { ...s, pr: { ...s.pr, phase: "waiting" } },
   }
   /** backend.ts:430-435: every tracked promise settled before the grace timer: svc.close, clean. */
   action drained: bool = all {
     s.pr.phase == "waiting", s.pr.stuck == "none",
     s' = { ...s, pr: { ...s.pr, phase: "closed", clean: true } },
   }
-  /** backend.ts:431-434: the grace timer wins the race: svc.close anyway, not clean. */
+  /** backend.ts shutdown: the grace timer wins the race against the HTTP drain and the tracked work: stop(true), svc.close anyway, not clean. */
   action graceFires: bool = all {
-    s.pr.phase == "waiting", s.now >= s.pr.graceAt + GRACE,
+    s.pr.phase == "stopping" or s.pr.phase == "waiting", s.now >= s.pr.graceAt + GRACE,
     s' = { ...s, pr: { ...s.pr, phase: "closed", clean: false } },
   }
   /** Railway sends SIGKILL 30 s after SIGTERM. */
@@ -449,15 +503,13 @@ module runtime_ops {
     s.bt.step == "migrated",
     s' = { ...s, bt: { ...s.bt, step: if (s.bt.roleExists) "check" else "create" } },
   }
-  /** backend.ts:457, :458, :459: three statements, each its own transaction. */
-  action bootCreate: bool = all { s.bt.step == "create", s' = { ...s, bt: { ...s.bt, roleExists: true, step: "grant" } } }
-  action bootGrant: bool = all { s.bt.step == "grant", s' = { ...s, bt: { ...s.bt, member: true, step: "connect" } } }
-  action bootConnect: bool = all { s.bt.step == "connect", s' = { ...s, bt: { ...s.bt, connect: true, step: "check" } } }
-  /** server.ts:58-63 serviceLoginProblem (backend.ts:179-188) checks superuser, BYPASSRLS and ownership only. */
+  /** backend.ts ensureServiceLogin: create role, grant network_service and grant connect in one transaction (SD-163 fix, 2a3408b). */
+  action bootCreate: bool = all { s.bt.step == "create", s' = { ...s, bt: { ...s.bt, roleExists: true, member: true, connect: true, step: "check" } } }
+  /** server.ts serviceLoginProblem: also refuses a login that is not a member of network_service (SD-163 fix). */
   action loginCheck: bool = all {
     s.bt.step == "check",
     s' = { ...s, bt: { ...s.bt, step: if (s.bt.member) "up" else "failed",
-      checkPassedIncomplete: s.bt.checkPassedIncomplete or not(s.bt.member and s.bt.connect) } },
+      checkPassedIncomplete: s.bt.checkPassedIncomplete or (s.bt.member and not(s.bt.connect)) } },
   }
   /** The process exits (crash, "start failed") at any boot step; the host restarts it. */
   action bootCrash: bool = all {
@@ -538,7 +590,7 @@ module runtime_ops {
     any { biasCheck(r, ok), biasInsert(r, alerts) },
     nondet kind = oneOf(Set("http", "tick")) stuckWork(kind),
     sigterm, serversStopped, drained, graceFires, sigkill,
-    migrate, ensureLoginStart, bootCreate, bootGrant, bootConnect, loginCheck, bootCrash,
+    migrate, ensureLoginStart, bootCreate, loginCheck, bootCrash,
     nondet outcome = oneOf(Set("ok", "empty", "retryable", "fatal")) llmAttempt(outcome),
     runWrangler,
     cfActivate,
@@ -560,6 +612,8 @@ module runtime_ops {
    * A recovery must not undo an acknowledged STOP. On the eliza_cloud channel the gateway's send-time
    * fence (AGENTS.md consent path, upstream assumption) still holds the opt-out; the direct blooio
    * channel has no copy outside the database. SD-050.
+   * NOT IN `safety`: SD-050 is open, skipped for a founder decision (which consent record outside the
+   * restored database to replay, and whether sends stay dry-run after a restore). restoreRollsBackStopTest replays it.
    */
   val restoreKeepsStops = s.st.channel == "eliza_cloud" or s.st.rolledBack.forall(e => s.st.committed.contains(e))
 
@@ -570,7 +624,7 @@ module runtime_ops {
    * schema.sql: network.opportunities id is the primary key shared by every network; each network owns
    * the rows it writes (store.ts:267-278 deletes only "rows this store wrote"). SD-111.
    */
-  val oppIdsOwned = s.st.minted.forall(m => s.st.oppRows.get(m._2) == m._1)
+  val oppIdsOwned = s.st.minted.forall(m => s.st.oppRows.get(oppId(m._1, m._2)) == m._1)
 
   /**
    * dueHasCaller: every row with a due rule has a caller in the production tick set. service.ts:561
@@ -581,7 +635,7 @@ module runtime_ops {
 
   /**
    * docs/deploy.md 7.2: tick_late fires when "No tick stored for the network for ALERT_TICK_LATE_MS".
-   * Evaluated on the code's own condition (ops.ts:201, :275). SD-368.
+   * Evaluated on the code's own condition (ops.ts collectNetwork and evaluate). SD-368.
    */
   val tickLateSeen = (s.now - s.tk.lastTickRan > TICK_LATE) implies (s.now - lastSeen(s.tk) > TICK_LATE)
 
@@ -605,9 +659,12 @@ module runtime_ops {
 
   /**
    * AGENTS.md item 12 (weekly bias monitor, alert below 0.8x): a weekly run that failed and was not
-   * followed by a report is visible as an alert within a day. The code has no such alert. SD-233.
+   * followed by a report is visible as an alert once it is a day late. SD-233.
+   * Wave 2: the first form, not(failedSinceReport and late), asked that no week is ever late, which no
+   * alert can give (an alert does not write a report, and the oracle can fail every run). The rule is about
+   * being seen: every ops round that reads the network while a failed week is late must have the alert on.
    */
-  val skippedWeekSeen = not(s.bi.failedSinceReport and s.now - lastReportAt(s.bi) > WEEK + DAY)
+  val skippedWeekSeen = not(s.al.lateUnseen)
 
   /** AGENTS.md: the weekly bias report is computed from committed network state (the store is the truth). SD-448. */
   val biasReadsCommitted = not(s.bi.dirtyRead)
@@ -627,18 +684,28 @@ module runtime_ops {
   /** AGENTS.md Environment: wrangler.sh "refuses deploy (except --dry-run) ... unless NTWRK_ALLOW_DEPLOY=1". SD-168. */
   val guardSound = not(s.wr.deploys)
 
-  /** README rollback: an inactive Worker stops the container (worker.ts:56-58 comment: SIGTERM). SD-159. */
+  /**
+   * README rollback: an inactive Worker stops the container (worker.ts:56-58 comment: SIGTERM). SD-159.
+   * NOT IN `safety`: SD-159 is open, skipped because the fix needs a test in workerd (Durable Objects and
+   * Containers), and no Workers runtime is in the repository; a Bun stub would be mock-only proof. cfNoBuildIdTest replays it.
+   */
   val inactiveStops = (not(s.cf.enabled) and s.cf.cronSinceInactive) implies not(s.cf.containerRunning)
 
-  /** AGENTS.md: every proactive proposal waits for human review; the console must reach the staff API. SD-169. */
+  /**
+   * AGENTS.md: every proactive proposal waits for human review; the console must reach the staff API. SD-169.
+   * NOT IN `safety`: SD-169 is open, skipped for a founder decision (how the console reaches the staff API
+   * after the Cloudflare cutover changes the staff API's security boundary). Fails closed: review items expire unsent.
+   */
   val staffRouted = staffRouteExists(s.cf.target)
 
   val safety = and {
-    noLostWrite, restoreKeepsStops, restoreRolesNotOnSource, oppIdsOwned, dueHasCaller, tickLateSeen,
+    noLostWrite, restoreRolesNotOnSource, oppIdsOwned, dueHasCaller, tickLateSeen,
     alertResolvedOnlyOnRead, bumpPosted, noSilentClose, heartbeatHonest, oneReportPerWeek, skippedWeekSeen,
     biasReadsCommitted, closeBeforeKill, bootLoginComplete, migrationOnce, llmAttemptBound, guardSound,
-    inactiveStops, staffRouted,
   }
+
+  /** The invariants of the open defects (SD-050, SD-159, SD-169). Each fails; see its comment. */
+  val openDefects = and { restoreKeepsStops, inactiveStops, staffRouted }
 
   // ------------------------------------------------------------------ witnesses (must be reachable)
 
@@ -654,18 +721,26 @@ module runtime_ops {
   val witness_llmRegrowOk = not(s.ll.done == "ok" and s.ll.regrows > 0 and s.ll.e > 0)
   val witness_wranglerDryRun = not(s.wr.ran and s.wr.allowed)
   val witness_cfStopped = not(s.cf.cronSinceInactive and not(s.cf.containerRunning) and s.cf.buildIdOk)
+  val witness_biasLateAlert = not(s.al.st.get("late").open and s.al.st.get("late").sent)
+  val witness_lockLostSaveFails = not(s.st.lostConn and s.st.acked.size() == 1)
+  val witness_handMadeLoginRefused = not(s.bt.roleExists and not(s.bt.member) and s.bt.step == "failed")
 
   // ------------------------------------------------------------------ run tests (concrete traces)
 
-  action initProd = initWith("backend", "blooio", false, List("deploy", "--dry-run", "--dry-run"))
-  action initServe = initWith("serve", "blooio", false, List("deploy", "--dry-run", "--dry-run"))
+  action initProd = initWith("backend", "blooio", false, List("deploy", "--dry-run", "--dry-run"), false)
+  action initServe = initWith("serve", "blooio", false, List("deploy", "--dry-run", "--dry-run"), false)
 
-  /** SD-110: A loads, loses its lock connection, B commits stop2, A saves its old copy plus stop1. */
+  /**
+   * SD-110 fixed: A loads, loses its lock connection, B commits stop2. A's save runs on the lost lock
+   * connection and cannot commit: only saveFails is enabled, and stop2 stays committed.
+   * (Before the fix: A's save committed {stop1} and lost the acknowledged stop2.)
+   */
   run lostLockTest = initProd
     .then(takeLock("A", "stop1")).then(load("A")).then(loseConnection("A"))
     .then(takeLock("B", "stop2")).then(load("B")).then(apply("B")).then(save("B"))
-    .then(apply("A")).then(save("A"))
-    .expect(not(noLostWrite) and s.st.committed == Set("stop1"))
+    .then(apply("A")).expect(s.st.lockHolder != "A")
+    .then(saveFails("A"))
+    .expect(noLostWrite and s.st.committed == Set("stop2") and s.st.acked == Set("stop2"))
 
   /** With the lock held the whole time, the same two units keep both STOPs. */
   run lockedUnitsTest = initProd
@@ -673,26 +748,25 @@ module runtime_ops {
     .then(takeLock("B", "stop2")).then(load("B")).then(apply("B")).then(save("B"))
     .expect(noLostWrite and s.st.committed == Set("stop1", "stop2"))
 
-  /** SD-050: backup, STOP acknowledged, restore: the member reads as opted in again. */
+  /** SD-050 (open, founder decision): backup, STOP acknowledged, restore: the member reads as opted in again on blooio. */
   run restoreRollsBackStopTest = initProd
     .then(backupRun)
     .then(takeLock("A", "stop1")).then(load("A")).then(apply("A")).then(save("A"))
     .then(restore)
-    .expect(not(restoreKeepsStops) and noLostWrite)
+    .expect(not(restoreKeepsStops) and noLostWrite and safety)
 
-  /** SD-003: the deployed tick set never drains a waiting inbound row; serve.ts does. */
+  /** SD-003 fixed: the deployed tick set drains a waiting inbound row and purges expired rows, as serve.ts does. */
   run backendTickSetTest = initProd
-    .then(inboundLeftWaiting)
-    .then(advance).then(tickRound(true)).then(advance).then(tickRound(true))
-    .then(advance).then(tickRound(true)).then(advance).then(tickRound(true))
-    .expect(not(dueHasCaller))
+    .then(inboundLeftWaiting).then(rowExpires)
+    .then(advance).then(tickRound(true))
+    .expect(dueHasCaller and s.tk.inboxAge == -1 and s.tk.expiredAge == -1)
   run serveTickSetTest = initServe
     .then(inboundLeftWaiting).then(rowExpires)
     .then(advance).then(tickRound(true)).then(advance).then(tickRound(true))
     .then(advance).then(tickRound(true)).then(advance).then(tickRound(true))
     .expect(dueHasCaller and s.tk.inboxAge == -1)
 
-  /** SD-161: sent at 3, staff clear to 1, two new signals: count 3 is not above 3, so no post. */
+  /** SD-161 fixed: sent at 3, staff clear to 1 (the baseline falls to 1), two new signals: the rise to 3 is posted at once. */
   run bumpAfterClearTest = initProd
     .then(signalArrives).then(signalArrives).then(signalArrives)
     .then(advance).then(opsRound(true, true, false))
@@ -700,88 +774,119 @@ module runtime_ops {
     .then(advance).then(opsRound(true, true, false))
     .then(signalArrives).then(signalArrives)
     .then(advance).then(opsRound(true, true, false))
-    .expect(not(bumpPosted))
+    .expect(bumpPosted and s.al.posts == 2 and s.al.st.get("sig").lastSentCount == 3 and s.al.st.get("sig").lastSentAt == 3)
 
-  /** SD-113: an open, posted safety alert, then one failed read: a "resolved" notice is posted. */
+  /** SD-113 fixed: an open, posted safety alert, then one failed read: the alert stays open and no "resolved" is posted. */
   run readErrorResolvesTest = initProd
     .then(signalArrives)
     .then(advance).then(opsRound(true, true, false))
     .then(advance).then(opsRound(false, true, false))
-    .expect(not(alertResolvedOnlyOnRead))
+    .expect(alertResolvedOnlyOnRead and s.al.st.get("sig").open and s.al.st.get("read").open)
 
-  /** SD-235 and SD-360: the webhook fails while the alert lasts; the alert then closes with no notice, and the heartbeat was green. */
+  /**
+   * SD-235 and SD-360 fixed: the webhook fails while the alert lasts (no heartbeat that round); when the
+   * signal is decided, the end of the alert is posted, not closed quietly.
+   */
   run silentCloseTest = initProd
     .then(signalArrives)
     .then(advance).then(opsRound(true, false, false))
     .then(staffDecides(0))
     .then(advance).then(opsRound(true, true, false))
-    .expect(not(noSilentClose) and not(heartbeatHonest))
+    .expect(noSilentClose and heartbeatHonest and s.al.posts == 2 and not(s.al.st.get("sig").open))
 
-  /** SD-368: ticks throw each round, an inbound save refreshes saved_at, tick_late stays silent. */
+  /** SD-368 fixed: ticks throw each round and an inbound save refreshes saved_at; tick_late still fires on the stored tick. */
   run tickLateMaskedTest = initProd
     .then(advance).then(tickRound(false)).then(advance).then(tickRound(false))
     .then(takeLock("A", "stop1")).then(load("A")).then(apply("A")).then(save("A"))
     .then(advance).then(tickRound(false))
-    .expect(not(tickLateSeen))
+    .then(opsRound(true, true, false))
+    .expect(tickLateSeen and s.al.st.get("tick").open and s.al.st.get("tick").sent)
 
-  /** SD-446: both replicas read the old max(at) before either inserts. */
+  /** SD-446 fixed: both replicas read the old max(at); the second insert checks again under the lock and skips. */
   run twoReportsTest = initProd
     .then(biasCheck("A", true)).then(biasCheck("B", true))
     .then(biasInsert("A", 0)).then(advance).then(biasInsert("B", 0))
-    .expect(not(oneReportPerWeek))
+    .expect(oneReportPerWeek and s.bi.reports.size() == 1)
 
-  /** SD-158: a stuck HTTP request holds s.stop(false); the grace timer never starts; SIGKILL. */
-  run stuckRequestKilledTest = initProd
+  /** SD-158 fixed: a stuck HTTP request holds s.stop(false), but the grace timer started at SIGTERM ends the shutdown before SIGKILL. */
+  run stuckRequestGraceTest = initProd
     .then(stuckWork("http")).then(sigterm)
-    .then(advance).then(advance).then(advance).then(sigkill)
-    .expect(not(closeBeforeKill))
+    .then(advance).then(advance).expect(urgent(s) and s.now < s.pr.sigtermAt + KILL)
+    .then(graceFires)
+    .expect(closeBeforeKill and s.pr.phase == "closed" and not(s.pr.clean))
   /** A hung tick (not an HTTP request) is ended by the grace timer before SIGKILL. */
   run stuckTickGraceTest = initProd
     .then(stuckWork("tick")).then(sigterm).then(serversStopped)
     .then(advance).then(advance).then(graceFires)
     .expect(closeBeforeKill and s.pr.phase == "closed")
 
-  /** SD-163: crash after create role; the next boot skips creation and the check passes. */
+  /** SD-163 fixed: a crash before the one-transaction create leaves no role; the next boot makes a complete login. */
   run halfRoleTest = initProd
-    .then(migrate).then(ensureLoginStart).then(bootCreate).then(bootCrash)
+    .then(migrate).then(ensureLoginStart).then(bootCrash)
+    .then(migrate).then(ensureLoginStart).then(bootCreate).then(loginCheck)
+    .expect(bootLoginComplete and s.bt.step == "up" and s.bt.member and s.bt.connect and migrationOnce)
+  /** SD-163 fixed: a login made by hand without network_service is refused by the boot check. */
+  run handMadeLoginTest = initWith("backend", "blooio", false, List("deploy", "--dry-run", "--dry-run"), true)
     .then(migrate).then(ensureLoginStart).then(loginCheck)
-    .expect(not(bootLoginComplete) and s.bt.step == "failed" and migrationOnce)
+    .expect(bootLoginComplete and s.bt.step == "failed")
 
-  /** SD-168: "deploy --help --no-help" passes the guard, and wrangler deploys. */
-  run helpFlagTest = initWith("backend", "blooio", false, List("deploy", "--help", "--no-help"))
+  /** SD-168 fixed: "deploy --help --no-help" and "deploy --help false" are refused by the guard. */
+  run helpFlagTest = initWith("backend", "blooio", false, List("deploy", "--help", "--no-help"), false)
     .then(runWrangler)
-    .expect(not(guardSound))
-  run dryRunTest = initWith("backend", "blooio", false, List("deploy", "--dry-run", "--help=false"))
+    .expect(guardSound and not(s.wr.allowed))
+  run helpFalseTest = initWith("backend", "blooio", false, List("deploy", "--help", "false"), false)
+    .then(runWrangler)
+    .expect(guardSound and not(s.wr.allowed))
+  run dryRunTest = initWith("backend", "blooio", false, List("deploy", "--dry-run", "--help=false"), false)
+    .then(runWrangler)
+    .expect(guardSound and s.wr.allowed)
+  run dryRunTrueTest = initWith("backend", "blooio", false, List("deploy", "--dry-run", "true"), false)
     .then(runWrangler)
     .expect(guardSound and s.wr.allowed)
 
-  /** SD-159: rollback without BUILD_ID: the cron cannot stop the container. */
+  /** SD-159 (open, no Workers runtime to test the fix): rollback without BUILD_ID: the cron cannot stop the container. */
   run cfNoBuildIdTest = initProd
     .then(cfActivate).then(cfDeactivate(false)).then(cfCron)
-    .expect(not(inactiveStops))
+    .expect(not(inactiveStops) and safety)
 
-  /** SD-111: slop:nyc and slop:la both mint slop.nw-1-1; the second save takes the first one's row. */
-  run idCollisionTest = initWith("backend", "blooio", true, List("deploy", "--dry-run", "--dry-run"))
+  /** SD-169 (open, founder decision): after the cutover no route reaches the staff API. */
+  run cfStaffRouteTest = initProd
+    .then(cfActivate)
+    .expect(not(staffRouted) and safety)
+
+  /** SD-111 fixed: slop:nyc mints slop.nw-1-1 and slop:la mints slop.slop:la.nw-1-1: two rows. */
+  run idCollisionTest = initWith("backend", "blooio", true, List("deploy", "--dry-run", "--dry-run"), false)
     .then(mint("slop:nyc")).then(mint("slop:la"))
-    .expect(not(oppIdsOwned))
+    .expect(oppIdsOwned and s.st.oppRows.keys().size() == 2)
 
-  /** SD-448: an inbound unit has changed memory; the bias report reads it before the save fails. */
+  /**
+   * SD-448 fixed: an inbound unit has changed memory; the bias report waits for the unit (readState takes the
+   * Network lock), the save fails, and the report reads the stored state.
+   */
   run dirtyBiasReadTest = initProd
     .then(takeLock("A", "stop1")).then(load("A")).then(apply("A"))
-    .then(biasCheck("A", true)).then(biasInsert("A", 0))
-    .then(saveFails("A"))
-    .expect(not(biasReadsCommitted))
+    .then(biasCheck("A", true)).expect(s.st.unit.get("A").phase != "idle")
+    .then(saveFails("A")).then(biasInsert("A", 0))
+    .expect(biasReadsCommitted and s.bi.reports.size() == 1 and s.st.mem.get("A") == Set())
 
-  /** SD-165: --roles with the TCP proxy URL of the same server runs roles.sql on the source. */
+  /** SD-165 fixed: --roles through the TCP proxy name of the source server is refused (same system identifier). */
   run rolesOnSourceTest = initProd
-    .then(restoreRoles("source-proxy-host"))
-    .expect(not(restoreRolesNotOnSource))
+    .then(restoreRoles("source-proxy-host")).then(restoreRoles("source-internal-host")).then(restoreRoles("new-server"))
+    .expect(restoreRolesNotOnSource)
 
-  /** SD-233: the member query fails at the weekly run; a week and a day later nothing has alerted. */
+  /** SD-233 fixed: the member query fails at the weekly run; once a week and a day pass, the ops round raises bias_late. */
   run skippedWeekTest = initProd
     .then(biasCheck("A", false))
-    .then(advance).then(advance).then(advance)
-    .expect(not(skippedWeekSeen))
+    .then(advance).then(advance).then(advance).then(advance).then(advance).then(advance).then(advance)
+    .then(opsRound(true, true, false))
+    .expect(skippedWeekSeen and s.al.st.get("late").open and s.al.st.get("late").sent)
+  /** A new report ends bias_late with one resolved notice. */
+  run biasLateEndsTest = initProd
+    .then(advance).then(advance).then(advance).then(advance).then(advance).then(advance).then(advance)
+    .then(opsRound(true, true, false))
+    .then(biasCheck("A", true)).then(biasInsert("A", 0))
+    .then(advance).then(opsRound(true, true, false))
+    .expect(skippedWeekSeen and not(s.al.st.get("late").open) and s.al.posts == 2)
 
   /** The LLM bound: fallback, two retries, two regrows, then ok: 6 attempts, the bound. */
   run llmBoundTest = initProd

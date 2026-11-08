@@ -26,7 +26,7 @@ Left out of the model (no state machine to check, or a fact outside the code): M
 flags, M-146 Railway rollout overlap (the model gives two replicas at all times instead), M-148 the
 sites deploy workflow, M-184 in-process registries.
 
-Bounds: two replicas, two STOP events, one lost connection, four alert keys, time 0..14 with
+Bounds: two replicas, two STOP events, one lost connection, five alert keys (wave 2 adds `late`, bias_late), time 0..14 with
 DAY=2, WEEK=4, TICK_LATE=2, REPEAT=4, GRACE=2 < KILL=3, EPS=2, MAX_RETRIES=2, MAX_REGROWS=2.
 
 Facts checked outside Quint:
@@ -39,52 +39,160 @@ Facts checked outside Quint:
 - A Cloudflare deploy creates new Durable Object instances, so the `NetworkBackend` constructor
   runs again with the new `env` before `stop()`. This is an assumption of the model (`cfCron`).
 
-## 2. Check output
+## 2. Final state (wave 2, branch `wave2/runtime_ops`)
 
-`bun run quint:check quint/runtime_ops.qnt` (seed 0x5eed, max-steps 24, max-samples 6000):
+The model now follows the code after the fixes on this branch (commits `ad67275..HEAD`). `safety` holds.
+Three defects stay open. Their invariants are out of `safety` and are joined in the named value
+`openDefects`, which fails; a run test replays each one.
+
+What changed in the model, by action:
+
+| Action or helper | Change | Fix |
+|---|---|---|
+| `save` | enabled only while `lockHolder == r`: the save runs on the lock connection; after `loseConnection` only `saveFails` is enabled | SD-110, 7240e5b |
+| `mint`, `oppId` | the id of a network outside nyc carries the city, so two networks mint two rows | SD-111, d351405 |
+| `tickRound` | both tick sets drain waiting inbound rows and purge expired rows | SD-003, b862c95 |
+| `lastSeen` | only the stored tick; `saved_at` of a unit no longer counts | SD-368, dc7e3d0 |
+| `opsRound` (`known`) | after a failed read, the network's keys neither resolve nor close quietly | SD-113, 7717e2b |
+| `nextA` | a count under `lastSentCount` lowers that baseline | SD-161, 3b29163 |
+| `opsRound` (`resolving`, `quiet`) | an alert with a failed post (`failedWhileOpen` = `lastFailedAt`) is resolved with a notice, never closed quietly; the failed resolve no longer sets the flag (the code sets `lastFailedAt` on firing alerts only) | SD-235, 0f6ca0f |
+| `opsRound` (`pinged`) | no heartbeat after a round whose post failed | SD-360, 6a25b4c |
+| `current`, `biasLate`, key `late` | bias_late is on when the newest report is older than WEEK + DAY, or there is none and uptime is past that | SD-233, e8a3171 |
+| `biasCheck`, `biasInsert` | the run keeps the `now` it took at the start; the insert reads the stored state under the Network lock (`rt.readState`: waits for this replica's unit and the advisory lock, and loads `committed` into memory), then checks `max(at)` again under `pg_advisory_xact_lock` and skips when a report is newer than a week | SD-448 b75d5b2, SD-446 ba5ec1b |
+| `sigterm`, `serversStopped`, `graceFires`, `urgent` | the grace timer starts at SIGTERM and also ends a drain that a hung HTTP request holds | SD-158, 9f40c5e |
+| `bootCreate`, `loginCheck`, init `handMade` | create role, grant and connect are one transaction (one action); the check refuses a login outside `network_service`; init can start with a login made by hand without membership | SD-163, 2a3408b |
+| `restoreRoles` | `--roles` is refused when the server's system identifier is the source's, whatever host name reaches it | SD-165, cadd3c3 |
+| `decide`, `yargsStep`, tokens `true`, `false` | the last `--help` / `--no-help` / `--help=false` wins, and a `true` or `false` word after `--help` or `--dry-run` is its value, in the guard and in the yargs assumption | SD-168, 0706658 |
+
+Invariant changes:
+
+- `skippedWeekSeen` (SD-233) is now `not(lateUnseen)`: every ops round that reads the network while a failed
+  weekly run is more than WEEK + DAY late has bias_late on. The first form, `not(failedSinceReport and late)`,
+  asked that no week is ever late. No alert can give that (an alert writes no report, and the oracle can fail
+  every run), so the first form described the defect loosely, not the rule. The new form is the rule as
+  AGENTS.md item 12 and docs/deploy.md 7.2 state it (the failure is seen). No other invariant was changed.
+- `restoreKeepsStops` (SD-050), `inactiveStops` (SD-159) and `staffRouted` (SD-169) moved out of `safety`
+  into `openDefects`, each with a comment that gives the reason.
+
+## 3. Check output
+
+The bounds line is now `max-steps=30 max-samples=50000 verify-steps=5` (it was 24 x 6000). With 24 x 6000
+the random simulation did not reach `witness_biasLateAlert`: the bias_late alert needs about seven `advance`
+steps and an ops round before any SIGTERM. The full check takes about 37 s.
+
+`bun run quint:check quint/runtime_ops.qnt` (seed 0x5eed, max-steps 30, max-samples 50000):
 
 ```
 ok   typecheck
-ok   test                      (21 run tests passing)
-FAIL safety                    (expected: the model shows the defects below)
+ok   test                      (26 run tests passing)
+ok   safety
 ok   witness_stopCommitted, witness_cleanRestore, witness_tickRan, witness_alertPosted,
      witness_alertResolved, witness_biasReport, witness_cleanShutdown, witness_graceShutdown,
-     witness_bootUp, witness_llmRegrowOk, witness_wranglerDryRun, witness_cfStopped  (all reachable)
+     witness_bootUp, witness_llmRegrowOk, witness_wranglerDryRun, witness_cfStopped,
+     witness_biasLateAlert, witness_lockLostSaveFails, witness_handMadeLoginRefused  (all reachable)
 ```
 
-Each invariant alone (`quint run ... --backend rust --seed 0x5eed --invariant <name>`):
+Larger run, one invariant at a time (`quint run ... --backend rust --seed 0x5eed --max-steps 40 --max-samples 100000`):
 
-| Invariant | 24 steps x 6000 | 40 steps x 100000 | Register id |
+| Invariant | Result |
+|---|---|
+| `safety` | no violation (33 s) |
+| `openDefects` | violation (expected: SD-050, SD-159, SD-169) |
+| `restoreKeepsStops` | violation (SD-050) |
+| `inactiveStops` | violation (SD-159) |
+| `staffRouted` | violation (SD-169) |
+
+`bun run quint:check --verify quint/runtime_ops.qnt` (Apalache 0.62.4, `quint verify --invariant safety
+--max-steps 5`): all steps ok, `1 models, 0 failures`. Apalache alone took about 270 s for 5 steps
+(`[ok] No violation found`), so verify-steps stays 5. On this shared machine two earlier tries of the same
+command stopped with `error: Connection dropped` from the Apalache server before a result; this was not a
+counterexample, and the next try passed.
+
+## 4. Run tests
+
+Each fixed trace from the first wave is now a run test that shows the fixed behavior:
+
+| Test | What it shows |
+|---|---|
+| `lostLockTest` | A loses its lock connection, B commits stop2; A's `save` is disabled, `saveFails` runs; stop2 stays committed |
+| `backendTickSetTest` | one deployed round drains the waiting inbound row and the expired row |
+| `bumpAfterClearTest` | sent at 3, cleared to 1, rise to 3: posted in the same round |
+| `readErrorResolvesTest` | a failed read keeps safety_signal open; no resolved notice |
+| `silentCloseTest` | a failed post, then the end: a resolved notice is posted; no heartbeat in the failed round |
+| `tickLateMaskedTest` | ticks fail, a unit saves; tick_late fires and is sent |
+| `twoReportsTest` | two replicas: one report |
+| `stuckRequestGraceTest` | a hung HTTP request: the grace timer is due before SIGKILL; the shutdown closes, not clean |
+| `halfRoleTest`, `handMadeLoginTest` | a crash before the one-transaction create, then a complete login; a hand-made login without membership is refused |
+| `helpFlagTest`, `helpFalseTest`, `dryRunTest`, `dryRunTrueTest` | `--help --no-help` and `--help false` are refused; `--dry-run --help=false` and `--dry-run true` pass |
+| `idCollisionTest` | slop:nyc and slop:la mint two rows |
+| `dirtyBiasReadTest` | the report waits for the unit; after the failed save it reads the stored state |
+| `rolesOnSourceTest` | `--roles` through either source host name is refused |
+| `skippedWeekTest`, `biasLateEndsTest` | a failed week raises bias_late once it is a day late; a new report resolves it |
+| `restoreRollsBackStopTest`, `cfNoBuildIdTest`, `cfStaffRouteTest` | the open defects SD-050, SD-159, SD-169 (and `safety` holds on each trace) |
+
+## 5. Register ids of this module
+
+| Id | Status | Model | Why / test |
 |---|---|---|---|
-| `noLostWrite` | ok | **violation** | SD-110 |
-| `restoreKeepsStops` | **violation** | | SD-050 |
-| `restoreRolesNotOnSource` | **violation** | | SD-165 |
-| `oppIdsOwned` | **violation** | | SD-111 |
-| `dueHasCaller` | **violation** | | SD-003 |
-| `tickLateSeen` | **violation** | | SD-368 |
-| `alertResolvedOnlyOnRead` | **violation** | | SD-113 |
-| `bumpPosted` | ok | **violation** | SD-161 |
-| `noSilentClose` | **violation** | | SD-235 |
-| `heartbeatHonest` | **violation** | | SD-360 |
-| `oneReportPerWeek` | **violation** | | SD-446 |
-| `skippedWeekSeen` | **violation** | | SD-233 |
-| `biasReadsCommitted` | **violation** | | SD-448 |
-| `closeBeforeKill` | **violation** | | SD-158 |
-| `bootLoginComplete` | **violation** | | SD-163 |
-| `migrationOnce` | ok | ok | holds |
-| `llmAttemptBound` | ok | ok | holds |
-| `guardSound` | **violation** | | SD-168 |
-| `inactiveStops` | **violation** | | SD-159 |
-| `staffRouted` | **violation** | | SD-169 |
+| SD-003 | fixed (b862c95) | `tickRound`; `dueHasCaller` holds | deploy/backend/backend-ticks.integration.test.ts |
+| SD-110 | fixed (7240e5b) | `save`; `noLostWrite` holds | packages/network/test/store-unit-of-work.integration.test.ts |
+| SD-111 | fixed (d351405) | `mint`; `oppIdsOwned` holds | packages/network/test/network-ids.integration.test.ts |
+| SD-113 | fixed (7717e2b) | `opsRound`; `alertResolvedOnlyOnRead` holds | deploy/backend/ops-alerts.integration.test.ts |
+| SD-158 | fixed (9f40c5e, test type fix 38b6901) | `sigterm`, `graceFires`; `closeBeforeKill` holds | deploy/backend/backend-shutdown.integration.test.ts |
+| SD-161 | fixed (3b29163) | `nextA`; `bumpPosted` holds | deploy/backend/ops-alert-bump.integration.test.ts |
+| SD-162 | fixed (433183a) | not modeled (a status table, not a state change) | deploy/backend/ops-send-outcomes.integration.test.ts |
+| SD-163 | fixed (2a3408b) | `bootCreate`, `loginCheck`; `bootLoginComplete` holds | deploy/backend/service-login.integration.test.ts |
+| SD-164 | fixed (1282420) | not modeled (config parsing) | deploy/backend/boot-secrets.integration.test.ts |
+| SD-165 | fixed (cadd3c3) | `restoreRoles`; `restoreRolesNotOnSource` holds | deploy/backup/restore-source.integration.test.ts |
+| SD-166 | fixed (749ede3) | not modeled (secret rotation across deploys) | deploy/backend/proxy-rotation.integration.test.ts |
+| SD-167 | fixed (107be19) | not modeled (CI path filter) | deploy/deploy-sites-paths.integration.test.ts |
+| SD-168 | fixed (0706658) | `decide`, `yargsStep`; `guardSound` holds | deploy/wrangler-help.integration.test.ts |
+| SD-233 | fixed (e8a3171) | key `late`; `skippedWeekSeen` holds | deploy/backend/ops-bias-late.integration.test.ts |
+| SD-235 | fixed (0f6ca0f) | `opsRound`; `noSilentClose` holds | deploy/backend/ops-alert-delivery.integration.test.ts |
+| SD-360 | fixed (6a25b4c) | `opsRound`; `heartbeatHonest` holds | deploy/backend/ops-alert-delivery.integration.test.ts |
+| SD-236 | fixed (d329af0) | not modeled (matching category; matching_engine) | packages/network/test/slop-second-date.integration.test.ts |
+| SD-237 | fixed (7f58576) | not modeled (report content; the model has no group data) | deploy/backend/ops-bias-blind.integration.test.ts |
+| SD-361 | fixed (5ec4275) | not modeled (one-process script flags) | deploy/backup/backup-cli.integration.test.ts |
+| SD-362 | fixed (f3d2e5f) | not modeled (documentation command) | deploy/backup/backup-cli.integration.test.ts |
+| SD-363 | fixed (818df9d) | not modeled (script cleanup) | deploy/backup/restore-failure.integration.test.ts |
+| SD-367 | fixed (d35a04c) | not modeled (documentation text) | no test: a doc-text check is not accepted by the test policy |
+| SD-368 | fixed (dc7e3d0) | `lastSeen`; `tickLateSeen` holds | deploy/backend/ops-tick-late.integration.test.ts |
+| SD-370 | fixed (240c932) | not modeled (config parsing) | deploy/backend/backend-timing-config.integration.test.ts |
+| SD-446 | fixed (ba5ec1b) | `biasInsert`; `oneReportPerWeek` holds | packages/network/test/bias-report-cadence.integration.test.ts |
+| SD-447 | fixed (8a0bb3a) | not modeled (report content) | packages/network/test/bias-report-scope.integration.test.ts |
+| SD-448 | fixed (b75d5b2) | `biasInsert`; `biasReadsCommitted` holds | packages/network/test/bias-report-read.integration.test.ts |
+| SD-450, SD-451, SD-454 | fixed (5826f19, 66be84a, 678f942) | not modeled (report content) | packages/network/test/bias-report-outcomes.integration.test.ts |
+| SD-369 | not reproduced | `migrate` is atomic; `migrationOnce` holds | `migrate.ts` sets lock_timeout: a migration behind the pg_dump locks fails cleanly and Railway restarts the backend. No wrong state. |
+| SD-050 | skipped (founder decision) | `restoreKeepsStops` fails, out of `safety` | the restore procedure must replay consent from a record outside the restored database (blooio channel); which record, and whether sends stay dry-run after a restore, is a founder or ops decision |
+| SD-159 | skipped (no Workers runtime) | `inactiveStops` fails, out of `safety` | the fix needs a test in workerd with Durable Objects and Containers; no such runtime is in the repository, and a Bun stub is mock-only proof |
+| SD-169 | skipped (founder decision) | `staffRouted` fails, out of `safety` | the console path to the staff API after the Cloudflare cutover changes the staff API's security boundary; review items expire unsent meanwhile |
+| SD-096 | skipped (design decision) | not modeled (latency) | three separate waits in a turn; consent is not affected |
+| SD-239 | skipped (founder decision) | not modeled | the monitor needs a consented demographic attribute |
+| SD-324 | skipped (needs upstream contract change) | not modeled | DeliverResponse has no transport field |
+| SD-364 | skipped (founder or operator decision) | not modeled | the BACKEND_LIVE gate of the push smoke check |
+| SD-366 | skipped (cannot reproduce here) | not modeled | needs the GitHub API |
+| SD-371 | skipped (founder or operator decision) | not modeled | GitHub Actions concurrency of deploy-sites.yml |
+| SD-453 | skipped (founder decision) | not modeled | erasure against the bias metric |
 
-`--verify` (Apalache, `quint verify --invariant safety --max-steps 5`): a counterexample in 8 s, as expected.
-Apalache on the two invariants that hold: no violation at `--max-steps 6` (section 5).
+## 6. Invariants that hold
 
-## 3. Counterexamples and the code
+All invariants in `safety`: `noLostWrite`, `restoreRolesNotOnSource`, `oppIdsOwned`, `dueHasCaller`,
+`tickLateSeen`, `alertResolvedOnlyOnRead`, `bumpPosted`, `noSilentClose`, `heartbeatHonest`,
+`oneReportPerWeek`, `skippedWeekSeen`, `biasReadsCommitted`, `closeBeforeKill`, `bootLoginComplete`,
+`migrationOnce`, `llmAttemptBound`, `guardSound`.
+
+## 7. New defects
+
+None.
+
+## Appendix: the first-wave counterexamples (before the fixes)
+
+The traces below are kept as the record of what the model found against `ad67275`. The run tests of the
+same names now show the fixed behavior (section 4), except SD-050, SD-159 and SD-169, which are still open.
 
 Each trace below is a `run` test in the model, so `quint test` replays it.
 
-### SD-110 lost lock connection, last writer wins (`lostLockTest`)
+### (before the fix) SD-110 lost lock connection, last writer wins (`lostLockTest`)
 
 ```
 A takeLock(stop1), A load {}        store.ts:322-324 lock on reserved conn; :54 load on a pool conn
@@ -107,7 +215,7 @@ On `eliza_cloud` the model assumes that the gateway's send-time fence keeps the 
 consent path; upstream, not in this repository). The invariant fails only for the direct `blooio`
 channel. This agrees with the disputed vote in the register.
 
-### SD-003 the deployed tick set has no caller for inboxTick and purge (`backendTickSetTest`)
+### (before the fix) SD-003 the deployed tick set has no caller for inboxTick and purge (`backendTickSetTest`)
 
 ```
 inboundLeftWaiting; 4 x (advance, tickRound(ok))   tickSet = backend
@@ -120,7 +228,7 @@ and `afterTick` (`service.ts:533-536`) do not call them. `serve.ts:124-135` does
 (`serveTickSetTest` passes). Rows that wait forever: `platform.inbound` left by a crash
 (`service.ts:561-565`), expired OTP challenges, sessions, rate windows and inbox ids (`service.ts:567-577`).
 
-### SD-368 tick_late masked by saves (`tickLateMaskedTest`)
+### (before the fix) SD-368 tick_late masked by saves (`tickLateMaskedTest`)
 
 ```
 2 x tickRound(false)                rt.tick() throws; no tick stored
@@ -129,7 +237,7 @@ tickRound(false)
 => now - lastTickRan > TICK_LATE, but ops.ts:201 takes max(stored, savedAt): no tick_late alert
 ```
 
-### SD-113 a read error resolves a safety alert (`readErrorResolvesTest`)
+### (before the fix) SD-113 a read error resolves a safety alert (`readErrorResolvesTest`)
 
 ```
 signalArrives; opsRound(readOk, postOk)     safety_signal fires and is sent
@@ -137,7 +245,7 @@ opsRound(readError, postOk)                 ops.ts:218-220 returns `error`; ops.
 => ops.ts:416-421 posts "resolved" for safety_signal while 1 signal still waits
 ```
 
-### SD-161 bump compares with the last sent count (`bumpAfterClearTest`)
+### (before the fix) SD-161 bump compares with the last sent count (`bumpAfterClearTest`)
 
 ```
 3 signals; opsRound -> sent, lastSentCount 3
@@ -146,7 +254,7 @@ staffDecides(1); opsRound -> count 1, no post
 => no post until ALERT_REPEAT_MS; deploy.md 7.2 says "when a safety alert's count goes up"
 ```
 
-### SD-235 and SD-360 an alert vanishes unsent; the heartbeat stays green (`silentCloseTest`)
+### (before the fix) SD-235 and SD-360 an alert vanishes unsent; the heartbeat stays green (`silentCloseTest`)
 
 ```
 signalArrives; opsRound(postFails)          ops.ts:429 ok=false; lastSentAt stays unset
@@ -158,7 +266,7 @@ staffDecides(0); opsRound(postOk)           ops.ts:419 "never posted": closed qu
 The same path closes a `bias_report` alert after its 24 h window (`ops.ts:246`) when the webhook
 failed for that day, which is the trigger in SD-235.
 
-### SD-446 two bias reports in one week (`twoReportsTest`)
+### (before the fix) SD-446 two bias reports in one week (`twoReportsTest`)
 
 ```
 A biasCheck (max(at) old), B biasCheck (same max(at))   service.ts:541 runs after the tick lock (runtime.ts:666)
@@ -166,7 +274,7 @@ A biasInsert at t; B biasInsert at t+1                  service.ts:548 primary k
 => two reports less than WEEK apart
 ```
 
-### SD-233 a skipped week is not seen (`skippedWeekTest`)
+### (before the fix) SD-233 a skipped week is not seen (`skippedWeekTest`)
 
 ```
 biasCheck(A, memberReadFails)               service.ts:543 throws; runtime.ts:666 logs "[tick] after-tick work failed"
@@ -174,7 +282,7 @@ biasCheck(A, memberReadFails)               service.ts:543 throws; runtime.ts:66
 => now - last report > WEEK + DAY with no alert
 ```
 
-### SD-448 the bias report reads uncommitted state (`dirtyBiasReadTest`)
+### (before the fix) SD-448 the bias report reads uncommitted state (`dirtyBiasReadTest`)
 
 ```
 A takeLock, load, apply(stop1)              an inbound unit changed rt.net in memory
@@ -186,7 +294,7 @@ A saveFails                                 the stage is never committed
 In the code the Queue serializes units in one process, but `afterTick` runs outside it after
 `runTick` returns (`runtime.ts:660-666`), so this interleaving is in one replica.
 
-### SD-158 the grace timer starts after the HTTP drain (`stuckRequestKilledTest`)
+### (before the fix) SD-158 the grace timer starts after the HTTP drain (now `stuckRequestGraceTest`)
 
 ```
 stuckWork(http); sigterm                    backend.ts:428 awaits s.stop(false): Bun 1.4.2 waits for the request
@@ -196,7 +304,7 @@ stuckWork(http); sigterm                    backend.ts:428 awaits s.stop(false):
 
 A hung tick (not an HTTP request) is ended by the grace timer before SIGKILL (`stuckTickGraceTest`).
 
-### SD-163 a half-made service login passes the boot check (`halfRoleTest`)
+### (before the fix) SD-163 a half-made service login passes the boot check (`halfRoleTest`)
 
 ```
 migrate; ensureLoginStart; bootCreate       backend.ts:457 create role (own statement)
@@ -206,7 +314,7 @@ loginCheck                                  backend.ts:179-188 checks super, BYP
 => check passes with no membership; fromDatabase fails; every restart repeats it
 ```
 
-### SD-111 opportunity ids collide between two networks of one app (`idCollisionTest`)
+### (before the fix) SD-111 opportunity ids collide between two networks of one app (`idCollisionTest`)
 
 ```
 twoCities (platform.networks has slop:nyc and slop:la)
@@ -214,14 +322,14 @@ mint(slop:nyc) -> slop.nw-1-1; mint(slop:la) -> slop.nw-1-1    network.ts:891, 2
 => the second save takes the row (store.ts:290-292 on conflict (id) do update) and rewrites its participations (:278)
 ```
 
-### SD-165 --roles on the source server through a second host name (`rolesOnSourceTest`)
+### (before the fix) SD-165 --roles on the source server through a second host name (`rolesOnSourceTest`)
 
 ```
 restoreRoles(source-proxy-host)             restore.ts:44 sameServer compares host:port strings (lib.ts:201-204)
 => onSource false; roles.sql runs on the source server
 ```
 
-### SD-168 help flag passes the deploy guard (`helpFlagTest`)
+### (before the fix) SD-168 help flag passes the deploy guard (`helpFlagTest`)
 
 ```
 args: deploy --help --no-help
@@ -244,39 +352,3 @@ cfActivate                                  worker.ts:70 forwards every request 
 => staffRouteExists(cf) is false: the console cannot reach /review, /safety/*, /matching
 ```
 
-## 4. Register ids of this module
-
-Reproduced by the model (the invariant fails, a run test replays it): SD-003, SD-050 (blooio channel
-only), SD-110, SD-111, SD-113, SD-158, SD-159, SD-161, SD-163, SD-165, SD-168, SD-169, SD-233, SD-235,
-SD-360, SD-368, SD-446, SD-448.
-
-Not reached, with the reason:
-
-| Id | Why the model cannot reach it |
-|---|---|
-| SD-096 | Latency. The model has no durations inside a turn; consent is safe (the register says so). |
-| SD-162 | How `sendOutcomes` (`ops.ts:181-191`) classes `unknown_acceptance` is a table, not a state change. A test on `sendOutcomes` with that status shows it. |
-| SD-164, SD-370 | Config parsing (`env.ts:57`, `backend.ts:154-167`). No state machine; a `loadConfig` case shows it. |
-| SD-166 | Secret rotation spans five deploys outside the process. One secret, fail closed. |
-| SD-167, SD-364, SD-366, SD-371 | CI workflow files and GitHub behaviour, outside the code the model follows. |
-| SD-236 | Category gating in the matching engine (`network.ts:2050-2053`); belongs to `matching_engine.qnt`. |
-| SD-237, SD-239, SD-447, SD-450, SD-451, SD-453, SD-454 | What the bias report counts (`bias.ts`, `service.ts:545`): data semantics of one report, not the cadence or the alert. A sim gate or an integration case on `biasReport` input fits them. |
-| SD-324 | Dead status `fell_back`: no writer exists, so there is no transition to model. |
-| SD-361, SD-363 | Flag handling and cleanup in `backup.ts` and `restore.ts` scripts; one process, no interleaving. |
-| SD-362, SD-367 | Documentation text. |
-| SD-369 | `pg_dump` lock against a boot migration: `migrate.ts:82` sets `lock_timeout`, and the boot fails cleanly. The model's `migrate` is atomic and `migrationOnce` holds. |
-
-## 5. Invariants that hold
-
-- `migrationOnce` (`migrate.ts:3-4`): the runner is one transaction under `pg_advisory_xact_lock`. No
-  violation in 100000 samples of 40 steps.
-- `llmAttemptBound` (`llm.ts:189-193`): one call makes at most EPS + LLM_MAX_RETRIES + MAX_REGROWS
-  attempts. No violation in 100000 samples of 40 steps. This agrees with the refuted SD-119.
-
-Apalache, one invariant at a time: `migrationOnce` and `llmAttemptBound` have no violation at
-`--max-steps 6` (59 s and 88 s). At `--max-steps 8` Apalache stopped with an error before a result
-(resources), so 6 is the verified bound.
-
-## 6. New defects
-
-None. Every violation maps to an existing register id.
