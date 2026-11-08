@@ -2435,6 +2435,15 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     const t = this.meetingTime(o, now);
     if (!t) return this.closeNoCommonTime(o, o.participants[0]!);
+    // A yes to a plan waiting for quorum does not make a member busy, so the plan can be booked while
+    // this item waits: a member booked elsewhere within 4 hours of the time is left out, as bookPlan does.
+    const clash = o.participants.find(id => this.bookedNear(id, t.at, o.id));
+    if (clash) {
+      this.refuse(clash, "reveal", "booked_elsewhere");
+      o.status.set(clash, "unavailable");
+      this.replaceOrClose(o, clash);
+      return this.maybeReveal(o);
+    }
     const areas = o.participants.map(p => this.member(p).area);
     // The app's pack may pick the place (slop: a public place near the midpoint of the two homes). Never a home.
     const packVenue = o.fixedVenue ? undefined : this.opts.hooks?.venue?.({ ...this.hookOpp(o), meetingAt: t.at }, this.inputOnce());

@@ -102,6 +102,28 @@ describe("plan run", () => {
     expect(w.net.crews[0]!.sessions).toHaveLength(1);
   });
 
+  // SD-268: a yes to a plan still waiting for quorum does not make the member busy, so an intro can
+  // probe them and they can pick the plan's time. The plan was booked first, and the intro's reveal
+  // did not look at the member's other bookings: the member was booked twice at the same time.
+  test("an intro is not booked at the time of the member's booked plan", async () => {
+    const w = await world(["a", "b", "c", "f"]);
+    // Saturday 2026-10-10 10:00 New York: the first time the intro below offers a.
+    const sat = Date.UTC(2026, 9, 10, 14);
+    submit(w, { ...groupPlan(w, ["a", "b", "c"]), window: { start: sat, end: sat + 2 * HOUR }, probeDeadline: sat - 30 * HOUR });
+    expect(await answer(w, { a: "yes" })).toBe(true);
+    const intro = w.propose(["a", "f"]);
+    expect(await w.runUntil(() => w.probed("a"), 3 * DAY)).toBe(true);
+    expect(opp(w, intro).offered.a[0].start).toBe(sat);
+    await w.say("a", "yes, Saturday works");
+    expect(await answer(w, { b: "yes", c: "yes" })).toBe(true);
+    expect(w.meetings.map(m => [m.kind, [...m.participants].sort()])).toEqual([["plan", ["a", "b", "c"]]]);
+    expect(await w.runUntil(() => w.probed("f"), 2 * DAY)).toBe(true);
+    await w.say("f", "yes, Saturday works");
+    const forA = w.meetings.filter(m => m.participants.includes("a"));
+    expect(forA.map(m => m.kind)).toEqual(["plan"]);
+    expect(opp(w, intro).stage).toBe("closed");
+  });
+
   // SD-204: a backfilled alternate was not in plan.invited, so the engine gave no probe text for them
   // (plan_copy) and the bench drained with no message sent.
   test("a backfilled alternate gets the plan probe", async () => {
