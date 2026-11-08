@@ -266,6 +266,10 @@ export interface ServiceLike {
   runtimes: Map<string, { id: string; tick(): Promise<boolean> }>;
   /** The single inbox's tick (packages/notify): outcome sweep, then due notifications. Optional. */
   notifyTick?(): Promise<void>;
+  /** Inbound rows a crash or an error left waiting (platform.inbound), handled before the networks tick. Optional. */
+  inboxTick?(): Promise<void>;
+  /** Retention: expired OTP challenges and sessions, old rate windows, old inbound ids. After the networks tick. Optional. */
+  purge?(): Promise<unknown>;
   close(): Promise<void>;
 }
 
@@ -385,7 +389,16 @@ export function createBackend(d: BackendDeps) {
   // Every network ticks on its own; a running tick is tracked so that shutdown waits for it.
   const busy = new Set<string>();
   let timer: ReturnType<typeof setInterval> | undefined;
-  const networksThenNotify = () => Promise.all([...svc.runtimes.values()].map(async rt => {
+  /** One service-wide step of the round, tracked, and never two at once in this process. */
+  const step = async (name: string, fn: (() => Promise<unknown>) | undefined) => {
+    if (draining || !fn || busy.has(name)) return;
+    busy.add(name);
+    try { await track(fn()); }
+    catch (e) { log.error(`${name} tick failed`, { error: (e as Error).message }); }
+    finally { busy.delete(name); }
+  };
+  // The round is the one serve.ts startTicks runs: waiting inbound rows first (in order per sender), then the networks, retention, the inbox.
+  const networksThenNotify = () => step("inbound", svc.inboxTick && (() => svc.inboxTick!())).then(() => Promise.all([...svc.runtimes.values()].map(async rt => {
     if (draining || busy.has(rt.id)) return;
     busy.add(rt.id);
     try {
@@ -394,7 +407,7 @@ export function createBackend(d: BackendDeps) {
     }
     catch (e) { log.error("tick failed", { network: rt.id, error: (e as Error).message }); }
     finally { busy.delete(rt.id); }
-  })).then(() => notifyTick());
+  }))).then(() => step("purge", svc.purge && (() => svc.purge!()))).then(() => notifyTick());
   // The ops round runs beside the networks, so a network tick that hangs does not stop its alert.
   const opsTick = async () => {
     if (draining || !d.ops || busy.has("ops")) return;
@@ -406,13 +419,7 @@ export function createBackend(d: BackendDeps) {
   const tickAll = () => Promise.all([networksThenNotify(), opsTick()]).then(() => undefined);
   // The inbox ticks once per round, after the networks (their sends are recorded by then). Replicas may overlap: a delivery id is recorded once
   // (notify.deliveries primary key), so a second replica cancels instead of sending again.
-  const notifyTick = async () => {
-    if (draining || !svc.notifyTick || busy.has("notify")) return;
-    busy.add("notify");
-    try { await track(svc.notifyTick()); }
-    catch (e) { log.error("notify tick failed", { error: (e as Error).message }); }
-    finally { busy.delete("notify"); }
-  };
+  const notifyTick = () => step("notify", svc.notifyTick && (() => svc.notifyTick!()));
   const startTicks = () => { ticksFrom = now(); const first = tickAll(); timer = setInterval(tickAll, c.tickMs); return first; };
 
   /**
