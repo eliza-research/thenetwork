@@ -843,6 +843,31 @@ test("internal collect joins canonical signed owner/source proofs to one pending
   } finally { await http.stop(); f.stop(); }
 });
 
+// SD-455: one batch shares the earliest five-second source proof. Each Cloud source call takes time,
+// so one call per row for ten rows on one connection runs past that proof.
+test("a ten-row collect on one connection makes one source call and commits inside the five-second proof", async () => {
+  const f = await ownerProofFixture();
+  const batchId = randomUUID(), connectionId = randomUUID();
+  const proposal = input(Array.from({ length: 10 }, () => ({ ...candidate(), connectionId })));
+  const text = collectionText(batchId);
+  let clock: SimClock;
+  const callbacks = profileReviewFactory({ ...f.options, now: () => clock?.now() ?? now });
+  const http = await reviewHttp(callbacks.profileSuggestionIdentity, async (who, consent, tx) => {
+    const allowed = await callbacks.profileSuggestionAuthorization(who, consent, tx);
+    clock.advance(600); // Cloud round trip of one source call
+    return allowed;
+  }, f.policy);
+  clock = http.clock;
+  try {
+    f.setSourceAllowed(r => r.review.action === "collect" && r.consent.connectionId === connectionId);
+    await reviewCommandTurn(f, "ten-row-collect", text);
+    const result = await http.post("collect", "ten-row-collect", batchId, { text, proposal, networkAuthority: f.policy.authority });
+    expect(f.sourceCalls).toBe(1);
+    expect(result.status).toBe(200);
+    expect(result.body.batch.suggestions).toHaveLength(10);
+  } finally { await http.stop(); f.stop(); }
+});
+
 test("collect wire rejects raw source payloads, foreign identities, fake commands and malformed scope before import", async () => {
   const f = await ownerProofFixture();
   const batchId = randomUUID();

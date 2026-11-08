@@ -161,7 +161,10 @@ export class ProfileSuggestions {
           || (claim.commandSha256 !== undefined && hash(collectionTurn.body) !== claim.commandSha256)
           || !collectionProposalMatchesStoredCommand(input, collectionTurn.body, id, new Date(collectionTurn.arrived_at).getTime(), this.fence?.now() ?? now)) return null;
       }
-      for (const s of input.suggestions) if (!await this.authorize(owner, { connectionId: s.connectionId, source: s.source,
+      // One source check per (source, connection): the batch shares the earliest source proof, so one
+      // Cloud call per row would let a full batch run past that proof.
+      const scopes = new Map(input.suggestions.map(s => [`${s.source}\u0000${s.connectionId}`, s]));
+      for (const s of scopes.values()) if (!await this.authorize(owner, { connectionId: s.connectionId, source: s.source,
         windowStart: input.windowStart, windowEnd: input.windowEnd, timezone: input.timezone,
         allowedKinds: input.allowedKinds, retainOnDisconnect: input.retainOnDisconnect }, tx)) return null;
       this.checkAuthority({ expires_at: new Date(input.expiresAt) });
