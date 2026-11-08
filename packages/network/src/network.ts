@@ -381,6 +381,8 @@ interface Opp {
   post?: Record<MemberId, { came: boolean; again: boolean; otherNoShow: boolean; named: MemberId[] }>;
   /** Attendance resolved and the ledger told (plan_attended / plan_no_show / plan_ghosted). */
   finalized?: boolean;
+  /** Members whose no-show `finalize` counted: a late feedback answer does not count it again (SD-328). */
+  noShowCounted?: MemberId[];
   /**
    * peon (#9): the engine proposed a job seat. `id` is the seat (`job:<posting>`), `manager` the hiring
    * manager who owns it and stands in for it here: they get the blind review after the candidate's
@@ -2668,7 +2670,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       const a = plans.activityById.get(o.plan!.activityId)!;
       this.send(m, `${copy.feedbackThanks} ${copy.crewOffer(a.label)}`, { type: "crew_offer", crew: { crewId, activity: a.id } }, "reply", { about: others, hook: { t: "crew_offer", crewId } });
     } else this.ack(m, copy.feedbackThanks);
-    if (f.selfNoShow) { m.noShows++; m.completedSinceNoShow = 0; }
+    if (f.selfNoShow) { if (!o.noShowCounted?.includes(m.id)) m.noShows++; m.completedSinceNoShow = 0; }
     else m.completedSinceNoShow++;
     for (const other of others) {
       this.feedback.push({ id: `fb${this.feedback.length + 1}`, from: m.id, about: other, opportunityId: o.id, at: this.now(), sentiment: f.sentiment, wouldMeetAgain: f.again });
@@ -2820,7 +2822,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     // not come, or they were asked how it went and stayed silent (finalize runs 4 days after).
     for (const p of going) {
       if (present.includes(p) || said(p)) continue;
-      if (going.some(x => x !== p && said(x)?.came && said(x)!.otherNoShow)) { const x = this.members.get(p); if (x) { x.noShows++; x.completedSinceNoShow = 0; } }
+      if (going.some(x => x !== p && said(x)?.came && said(x)!.otherNoShow)) { const x = this.members.get(p); if (x) { x.noShows++; x.completedSinceNoShow = 0; o.noShowCounted = [...(o.noShowCounted ?? []), p]; } }
     }
     // A request is fulfilled only when the requester and someone else attended (matching-e2e-7).
     if (o.requester && present.includes(o.requester) && present.some(p => p !== o.requester)) {
