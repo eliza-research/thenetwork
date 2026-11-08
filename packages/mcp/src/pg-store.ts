@@ -244,11 +244,13 @@ export class PgOAuthStore implements OAuthStore {
   }
 
   async forgetPhone(phoneKey: string, e164: string, app?: McpAppId) {
+    // The sign-in requests first: an approval that took its request holds that row until it commits
+    // (approveConsent), so this delete waits for it, and the grant delete after it sees the new grant.
+    if (app) await this.sql`delete from oauth.auth_requests where e164 = ${e164} and app_id = ${app}`;
+    else await this.sql`delete from oauth.auth_requests where e164 = ${e164}`;
     const rows = app
       ? await this.sql`delete from oauth.grants where phone_key = ${phoneKey} and app_id = ${app} returning id`
       : await this.sql`delete from oauth.grants where phone_key = ${phoneKey} returning id`;
-    if (app) await this.sql`delete from oauth.auth_requests where e164 = ${e164} and app_id = ${app}`;
-    else await this.sql`delete from oauth.auth_requests where e164 = ${e164}`;
     return rows.length;
   }
 }
