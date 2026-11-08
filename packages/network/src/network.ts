@@ -126,6 +126,11 @@ export interface NetworkOptions {
    * declined kindly and nothing is kept). Matching stays 18+ in every app.
    */
   app?: AppId | AppInfo;
+  /**
+   * The city of this network ('<app>:<city>', default "nyc"). Two networks of one app share the
+   * id tables, so the ids of every city but nyc carry the city ("ntwrk.sf.nw-1-1").
+   */
+  city?: string;
   seed?: number;
   /** Consent-first probes (default true). false = reveal straight away (the push baseline). */
   probes?: boolean;
@@ -572,7 +577,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!this.app) throw new Error(`unknown app "${opts.app}"`);
     this.copy = this.app.id === "ntwrk" ? copy : copyFor(brandOf(this.app));
     this.opts = {
-      seed: opts.seed ?? 1, probes: opts.probes ?? true, selective: opts.selective ?? true, maxNewPerDay: opts.maxNewPerDay ?? 20,
+      city: opts.city ?? "nyc", seed: opts.seed ?? 1, probes: opts.probes ?? true, selective: opts.selective ?? true, maxNewPerDay: opts.maxNewPerDay ?? 20,
       minScore: opts.minScore ?? 0, minKnowledge: opts.minKnowledge ?? 2, minWantMet: opts.minWantMet ?? 0.8, minResponsiveness: opts.minResponsiveness ?? 0.6, runHour: opts.runHour ?? 9, growth: opts.growth ?? true,
       invitesPerMonth: opts.invitesPerMonth ?? 3, maxGrowthAsksPerDay: opts.maxGrowthAsksPerDay ?? 8, onboardingRequests: opts.onboardingRequests ?? false,
       review: opts.review ?? "human", reviewSlaHours: opts.reviewSlaHours ?? 12, matchingEnabled: opts.matchingEnabled ?? true,
@@ -886,9 +891,13 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   /**
    * Ids that leave this Network (opportunities, requests, engine runs) are stored in tables every app
-   * shares, so another app's ids get the app as a prefix ("slop.nw-1-4"). The Network's ids stay as they were.
+   * shares, so another app's ids get the app as a prefix ("slop.nw-1-4"), and a city other than nyc
+   * gets the app and the city ("ntwrk.sf.nw-1-1"). The ids of ntwrk:nyc stay as they were.
    */
-  private sid(id: string) { return this.app.id === "ntwrk" ? id : `${this.app.id}.${id}`; }
+  private sid(id: string) {
+    if (this.opts.city !== "nyc") return `${this.app.id}.${this.opts.city}.${id}`;
+    return this.app.id === "ntwrk" ? id : `${this.app.id}.${id}`;
+  }
 
   /** The app's join age (core canJoin: 13+; an 18+ app also declines 13-17). */
   private canJoinApp(age: number) { return canJoin(age) && age >= this.app.minJoinAge; }

@@ -154,7 +154,7 @@ export class NetworkRuntime {
       ...(w.pack ? { pack: w.pack } : {}), ...(w.hooks ? { hooks: w.hooks } : {}), ...(w.plansConfig ? { plansConfig: w.plansConfig } : {}), ...(w.plans !== undefined ? { plans: w.plans } : {}),
       ...o.network,
       ...(w.engine || o.network?.engine ? { engine: { ...w.engine, ...o.network?.engine } } : {}),
-      app: o.app, review: "human", store: this.store,
+      app: o.app, city: o.city, review: "human", store: this.store,
       onEngineRun: (log, proposals, at) => {
         const s = summarizeRun(log, proposals, { at, city: this.city as City, wallMs: Math.round(log.timingsMs.total ?? 0) });
         this.unit.runs.push({ id: this.app.id === "ntwrk" ? s.id : `${this.app.id}.${s.id}`, app_id: this.app.id, at: new Date(at), city: this.city, engine_version: s.engineVersion, proposals: s.proposals, wall_ms: s.wallMs, summary: s });
