@@ -10,7 +10,7 @@ import {APPS} from "../../platform/src/apps.ts";
 import {applySchema, devPgUp, DEV_PG_PORT} from "../../observatory/db/dev-pg.ts";
 import {pgAvailable} from "../../observatory/test/pg.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
-import {SIGNALS_PATH, TURN_PATH, type TurnRequest} from "../../core/src/svc/contract.ts";
+import {SET_STATE_PATH, SIGNALS_PATH, TURN_PATH, type TurnRequest} from "../../core/src/svc/contract.ts";
 import {DryRunAdapter} from "../service/channel.ts";
 import {NetworkService} from "../service/service.ts";
 import {Inbox} from "../service/inbox.ts";
@@ -211,6 +211,25 @@ describe.skipIf(!pgAvailable)("turn and consent", () => {
     const body = await (await post(turn("sd215-open", phone, "Tell me something about the weather", "friends"))).json() as any;
     expect([body.outcome, body.reason]).toEqual(["open", undefined]);
     expect(body.context.firstName).toBe("Ann-Marie");
+  }, 60_000);
+  test("SD-217: \"resume\" after a pause by text ends the pause", async () => {
+    const phone = "+12125550217";
+    await friendsByText("sd217", phone, "Dee, 29");
+    clock.advance(MINUTE);
+    const opened = await (await post(turn("sd217-open", phone, "pause for now", "friends"))).json() as any;
+    expect(opened.outcome).toBe("open");
+    // The agent records the pause the member asked for (no dates).
+    const raw = JSON.stringify({channel: "blooio", messageId: "sd217-open", idempotencyKey: "sd217-pause", app: "friends", memberId: opened.memberId, state: "paused", from: null, until: null, note: null});
+    const paused = await fetch(new URL(SET_STATE_PATH, server.url), {method: "POST", body: raw, headers: {"content-type": "application/json",
+      ...await svcSign(secret, {method: "POST", path: SET_STATE_PATH, id: "sd217-pause", body: raw, nowS: Math.floor(clock.now() / 1000)})}});
+    expect(paused.status).toBe(200);
+    const state = async () => (await sql`select participation_state, participation_window from network.members where app_id = 'friends' and id = ${opened.memberId}`)[0];
+    expect((await state()).participation_state).toBe("paused");
+    clock.advance(14 * DAY);
+    const resumed = await (await post(turn("sd217-resume", phone, "resume", "friends"))).json() as any;
+    expect(resumed.outcome).toBe("handled");
+    // The member asked to resume and was told "welcome back": the pause must end.
+    expect(await state()).toEqual({participation_state: "normal", participation_window: null});
   }, 60_000);
   test("SD-073: a banned member's text is not stored, handled or answered", async () => {
     const phone = "+12125550073";

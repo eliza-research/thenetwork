@@ -881,6 +881,21 @@ export class NetworkService implements RuntimeHost {
     });
   }
 
+  /**
+   * START by text ("start", "resume", "unstop"): the member asks for messages again, so a pause the agent
+   * set ends (a paused state, or a paused window). A busy or traveling window stays. The request is an event.
+   */
+  private async endPause(rt: NetworkRuntime, memberId: MemberId): Promise<void> {
+    await rt.scoped(async tx => {
+      const ended = await tx`update network.members set participation_window = case when participation_window->>'state' = 'paused' then null else participation_window end,
+        participation_state = case when participation_state = 'paused' then 'normal' else participation_state end
+        where app_id = ${rt.app.id} and id = ${memberId} and (participation_state = 'paused' or participation_window->>'state' = 'paused') returning id`;
+      if (!ended.length) return;
+      await tx`insert into network.events(app_id, at, actor_type, actor_id, type, object_type, object_id, payload)
+        values (${rt.app.id}, ${new Date(this.clock.now())}, 'member', ${memberId}, 'member_state_requested', 'member', ${memberId}, ${{ state: "open", from: null, until: null, source: "text" }}::jsonb)`;
+    });
+  }
+
   private async memberHome(ctx: MemberHookContext): Promise<HomeInput | null> {
     const [row] = await this.runtimeFor(ctx.app.id)?.scoped(tx => tx`select home_city, home_area from network.members where app_id=${ctx.app.id} and id=${ctx.memberId} and person_id=${ctx.personId}::uuid`) ?? [];
     const homeCity = homeCityOf(row?.home_city);
@@ -1118,6 +1133,8 @@ export class NetworkService implements RuntimeHost {
         if (turn) turn.consent = {state: "opted_in", scope: "app", app: app.id, at};
         const m = person && (await this.people.getMembership(person.id, app.id));
         if (m?.state === "paused") await this.people.putMembership({ ...m, state: "active" });
+        // The member asked for messages again: an availability pause (set by the agent) ends too.
+        await this.endPause(rt, memberId);
       }
       const reply = kw === "help" ? app.brand.help : undefined;
       if (!kw && e164 && /^\s*share\W*$/i.test(ev.text) && (await this.pendingOf(e164, "share", app.id))) return this.share(rt, app, memberId, e164, ev, rowId);
